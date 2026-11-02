@@ -1767,6 +1767,22 @@
         "No routerd 1.0 configuration/database import, migration or in-place upgrade was performed or required.",
         "Physical ISP behavior, WAN IPv6 RA discovery, PPPoE/DS-Lite, overlapping multi-prefix forwarding, host reboot/power-loss recovery, FreeBSD runtime, and complete routerd 1.0 parity or release qualification."
       ]
+    },
+    "linux-pppoe-ipv6-disable-f8ef5e59": {
+      "level": "packaged-daemon-independent-peer",
+      "outcome": "pass",
+      "revision": "f8ef5e5970168802d75933564abf3459cee33ab0",
+      "reference": "docs/design/routerd15-audit.md#linux-pppoe-clean-install-independent-client-and-recovery-2026-11-02",
+      "archive_sha256": "f1773b5e6b1153b343ee5cc0ba1e7be8f95736ac42138a7e459693bada6bed6f",
+      "environment": "Dedicated isolated PVE candidate, PPPoE access concentrator and LAN client on separate VLANs; actual systemd service and pppd.",
+      "checks": [
+        "Rendered IPv6-disabled PPPoE configuration contained -ipv6; the native PPP interface had no IPv6 link-local address.",
+        "The independent LAN client reached the upstream peer through the candidate's IPv4 forwarding and NAT44 path with 3/3 ICMP replies."
+      ],
+      "excludes": [
+        "The candidate snapshot contained an earlier routerd binary, so this is an update/config-state-reset check rather than clean-install evidence.",
+        "IPv6CP enablement, peer DNS, CHAP/dual authentication, upstream failure recovery on this revision, provider interoperability and complete PPPoE parity."
+      ]
     }
   },
   "features": [
@@ -4004,7 +4020,9 @@
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "linux-pppoe-ipv6-disable-f8ef5e59"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",

@@ -2229,6 +2229,17 @@ authentication, IPv6CP, peer DNS, multi-session or provider interoperability,
 host reboot/power-loss recovery, FreeBSD behavior, or complete routerd 1.0
 PPPoE parity.
 
+Follow-up source `f8ef5e5970168802d75933564abf3459cee33ab0` was built as
+archive SHA-256 `f1773b5e6b1153b343ee5cc0ba1e7be8f95736ac42138a7e459693bada6bed6f`.
+The disposable PVE candidate snapshot contained an earlier routerd binary, so
+the package operation was an update rather than a clean-install result; its
+routerd configuration and state were reset before the test. The rendered
+`pppd` configuration contained `-ipv6`, `ppp-rd15` had no IPv6 link-local
+address, and the independent client again reached the upstream peer with 3/3
+ICMP replies. This recheck qualifies the explicit Linux IPv6CP-disable setting
+for this package and configuration only; it does not replace the earlier
+clean-install or upstream-recovery evidence.
+
 #### Plugin process and effective-configuration checks
 
 At `e4097d0b966aeabbbe8fb01eb6d43ab42d5adc3c`, the actual subscription
