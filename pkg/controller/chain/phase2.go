@@ -1812,7 +1812,7 @@ const (
 // condition that the caller surfaces as Pending and re-reconciles, distinct from
 // a genuinely invalid configured address, which is returned as an error.
 func dsliteInnerLocalIPv4(router *api.Router, store Store, spec api.DSLiteTunnelSpec) (string, string, error) {
-	value := ""
+	value := strings.TrimSpace(spec.InnerLocalIPv4)
 	if strings.TrimSpace(spec.LocalAddressFrom.Resource) != "" {
 		values, err := resourcequery.ReadValuesFromStoreOrRouter(store, router, spec.LocalAddressFrom)
 		if err != nil {

@@ -275,6 +275,15 @@ func validateWANResource(res api.Resource, targetOS platform.OS) (bool, error) {
 				return true, fmt.Errorf("%s spec.localAddress must be an IPv6 address", res.ID())
 			}
 		}
+		if spec.InnerLocalIPv4 != "" {
+			addr, err := netip.ParseAddr(spec.InnerLocalIPv4)
+			if err != nil || !addr.Is4() || addr.IsUnspecified() || addr.IsMulticast() || addr.IsLoopback() {
+				return true, fmt.Errorf("%s spec.innerLocalIPv4 must be a usable IPv4 address", res.ID())
+			}
+		}
+		if spec.InnerLocalIPv4 != "" && spec.LocalAddressFrom.Resource != "" {
+			return true, fmt.Errorf("%s spec.innerLocalIPv4 and spec.localAddressFrom are mutually exclusive", res.ID())
+		}
 		if spec.LocalAddressFrom.Resource != "" && spec.LocalAddressFrom.Field == "" {
 			return true, fmt.Errorf("%s spec.localAddressFrom.field is required", res.ID())
 		}

@@ -215,7 +215,16 @@ func (c DSLiteTunnelController) cleanupDelegatedEndpoints(ctx context.Context) e
 		}
 	}
 	for _, receipt := range receipts {
-		if source, exists := wanted[receipt.Name]; exists && !source.SharedLAN && source.Interface == receipt.Interface && source.Address+"/128" == receipt.Address && source.PDName == receipt.PDName && source.PDPrefix == receipt.PDPrefix {
+		source, exists := wanted[receipt.Name]
+		if !exists {
+			for _, candidate := range wanted {
+				if !candidate.SharedLAN && candidate.Interface == receipt.Interface && candidate.Address+"/128" == receipt.Address && candidate.PDName == receipt.PDName && candidate.PDPrefix == receipt.PDPrefix {
+					source, exists = candidate, true
+					break
+				}
+			}
+		}
+		if exists && !source.SharedLAN && source.Interface == receipt.Interface && source.Address+"/128" == receipt.Address && source.PDName == receipt.PDName && source.PDPrefix == receipt.PDPrefix {
 			observed, err := c.observeEndpoint(ctx, receipt.Interface, receipt.Address)
 			if err != nil {
 				return err
@@ -512,7 +521,7 @@ func (c DSLiteTunnelController) ensureDelegatedEndpoint(ctx context.Context, nam
 			return "LocalIPv6NotReady", nil
 		}
 		receipt.OS, receipt.Scope, receipt.IfIndex = c.currentOS(), observed.Scope, observed.IfIndex
-		owned := false
+		owned, shared := false, false
 		for _, previous := range receipts {
 			if previous.Name == name {
 				owned = previous.Interface == ifname && previous.Address == receipt.Address && previous.PDName == source.PDName && previous.PDPrefix == source.PDPrefix
@@ -531,9 +540,19 @@ func (c DSLiteTunnelController) ensureDelegatedEndpoint(ctx context.Context, nam
 				}
 
 			}
+			if previous.Name != name && previous.Interface == ifname && previous.Address == receipt.Address && previous.PDName == source.PDName && previous.PDPrefix == source.PDPrefix {
+				same, err := c.endpointReceiptIdentity(previous, observed)
+				if err != nil {
+					return "", err
+				}
+				shared = same
+			}
 		}
-		if observed.OtherPrefix || (observed.Present && !owned) {
+		if observed.OtherPrefix || (observed.Present && !owned && !shared) {
 			return "", fmt.Errorf("foreign IPv6 address occupies DS-Lite source %s", receipt.Address)
+		}
+		if shared {
+			return "", nil
 		}
 		if err := c.setEndpointReceipt(receipt, false); err != nil {
 			return "", err

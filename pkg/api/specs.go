@@ -1677,13 +1677,16 @@ type DSLiteTunnelSpec struct {
 	AFTRDNSServers     []string `yaml:"aftrDNSServers,omitempty" json:"aftrDNSServers,omitempty"`
 	AFTRAddressOrdinal int      `yaml:"aftrAddressOrdinal,omitempty" json:"aftrAddressOrdinal,omitempty" jsonschema:"minimum=1"`
 	// AFTRAddressSelection controls how multiple AAAA records are selected; ordinalModulo wraps the ordinal by the answer count.
-	AFTRAddressSelection string                `yaml:"aftrAddressSelection,omitempty" json:"aftrAddressSelection,omitempty" jsonschema:"enum=ordinal,enum=ordinalModulo"`
-	RemoteAddress        string                `yaml:"remoteAddress,omitempty" json:"remoteAddress,omitempty"`
-	LocalAddress         string                `yaml:"localAddress,omitempty" json:"localAddress,omitempty"`
-	LocalAddressFrom     StatusValueSourceSpec `yaml:"localAddressFrom,omitempty" json:"localAddressFrom,omitempty"`
-	LocalIPv6Source      string                `yaml:"localIPv6Source,omitempty" json:"-"`
-	AFTRFrom             StatusValueSourceSpec `yaml:"aftrFrom,omitempty" json:"aftrFrom,omitempty"`
-	AFTRSource           string                `yaml:"aftrSource,omitempty" json:"-"`
+	AFTRAddressSelection string `yaml:"aftrAddressSelection,omitempty" json:"aftrAddressSelection,omitempty" jsonschema:"enum=ordinal,enum=ordinalModulo"`
+	RemoteAddress        string `yaml:"remoteAddress,omitempty" json:"remoteAddress,omitempty"`
+	LocalAddress         string `yaml:"localAddress,omitempty" json:"localAddress,omitempty"`
+	// InnerLocalIPv4 is the B4 endpoint address inside this DS-Lite tunnel.
+	// Set it explicitly when more than one tunnel is active at once.
+	InnerLocalIPv4   string                `yaml:"innerLocalIPv4,omitempty" json:"innerLocalIPv4,omitempty"`
+	LocalAddressFrom StatusValueSourceSpec `yaml:"localAddressFrom,omitempty" json:"localAddressFrom,omitempty"`
+	LocalIPv6Source  string                `yaml:"localIPv6Source,omitempty" json:"-"`
+	AFTRFrom         StatusValueSourceSpec `yaml:"aftrFrom,omitempty" json:"aftrFrom,omitempty"`
+	AFTRSource       string                `yaml:"aftrSource,omitempty" json:"-"`
 	// LocalAddressSource defaults to interface; delegatedAddress derives the tunnel source from localDelegatedAddress.
 	LocalAddressSource    string                   `yaml:"localAddressSource,omitempty" json:"localAddressSource,omitempty" jsonschema:"enum=interface,enum=static,enum=delegatedAddress"`
 	LocalDelegatedAddress string                   `yaml:"localDelegatedAddress,omitempty" json:"localDelegatedAddress,omitempty"`
