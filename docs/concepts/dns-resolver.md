@@ -106,11 +106,11 @@ resource changes, and the record is published after the field resolves.
 
 ## Network-constrained upstreams
 
-`DNSUpstream.spec.sourceInterface` binds outgoing queries to a specific interface on Linux.
-Use a literal OS interface name, for example `ens18` or `wg0`.
-When a tunnel or VRF resource creates that interface, make the dependency
-explicit with resource ownership or ordering and keep the resolver pending
-until the interface exists.
+`DNSUpstream.spec.sourceInterface` refers to a declared `Interface` or
+`WireGuardInterface` resource. On Linux, routerd resolves that resource name
+to its kernel device name before binding outgoing queries. For example, use
+`wan` when `Interface/wan` declares `ifname: ens18`. Keep the resolver pending
+until the referenced interface exists.
 
 `DNSUpstream.spec.bootstrap` supplies DNS server addresses for resolving DoH and DoT endpoint names.
 `DNSUpstream.spec.bootstrapFrom` can derive those resolver addresses from another

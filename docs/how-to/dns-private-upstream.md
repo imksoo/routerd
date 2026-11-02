@@ -110,7 +110,7 @@ The order in `DNSForwarder.spec.upstreams` is the priority order. routerd tries 
     protocol: doh
     address: dns.example-provider.net
     path: /dns-query
-    sourceInterface: ens18
+    sourceInterface: wan
     bootstrap: [1.1.1.1, 2606:4700:4700::1111]
 - apiVersion: net.routerd.net/v1alpha1
   kind: DNSUpstream
@@ -119,7 +119,7 @@ The order in `DNSForwarder.spec.upstreams` is the priority order. routerd tries 
   spec:
     protocol: dot
     address: dns.example-provider.net
-    sourceInterface: ens18
+    sourceInterface: wan
     bootstrap: [1.1.1.1, 2606:4700:4700::1111]
 - apiVersion: net.routerd.net/v1alpha1
   kind: DNSUpstream
@@ -206,7 +206,7 @@ The `DNSUpstream.spec.bootstrap` field provides the same protection at a finer g
 
 ## Interface binding
 
-`DNSUpstream.spec.sourceInterface` binds outgoing DNS queries to a specific Linux interface name. Use a literal OS interface name such as `ens18`. If the interface is created by another resource (e.g. a tunnel), declare the relationship with `ownerRefs` or resource ordering and keep the resolver pending until the interface exists.
+`DNSUpstream.spec.sourceInterface` refers to a declared `Interface` or `WireGuardInterface` resource. On Linux, routerd resolves that resource name to its kernel device name before binding outgoing DNS queries. For example, use `wan` when `Interface/wan` declares `ifname: ens18`. Keep the resolver pending until the referenced interface exists.
 
 FreeBSD does not currently provide the same `SO_BINDTODEVICE` enforcement, so platform-specific docs do not promise identical behaviour there.
 
