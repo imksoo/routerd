@@ -121,6 +121,13 @@ and returned when the peer resumed advertisement. This does not qualify
 IPv6 BGP, ECMP, a peer implementation other than routerd, or a downstream
 endpoint behind the peer.
 
+`bc3a51bf` repeats the isolated VLAN 3132 exchange with an independent
+FRRouting peer and an explicit endpoint `198.18.16.1:179`. The candidate
+reported the peer as Established, installed only the allowed `10.77.60.0/24`
+kernel route, withdrew and restored it on peer advertisement changes, and did
+not restart `routerd-bgp`. The setup, observations and rollback are recorded in
+[`routerd15-bc3a51bf-bgp-explicit-port-pve-20261102.md`](../../evidence/routerd15-bc3a51bf-bgp-explicit-port-pve-20261102.md).
+
 The BFD result is recorded at `79e947b5`. The Linux systemd unit now grants the
 running routerd process `CAP_DAC_OVERRIDE`, allowing its BFD controller to read
 FRR's protected `vtysh.conf` and access the `frrvty` control socket. In the same
