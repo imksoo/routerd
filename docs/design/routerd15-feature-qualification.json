@@ -68,15 +68,15 @@
     "example_inventory_rule": "examples[] is the exact set of 90 baseline tracked paths. Presence is verified at the pinned current revision; complete semantic/example execution is unknown. Only declared-kind changes are listed separately."
   },
   "linux_execution_progress": {
-    "as_of_revision": "ea892a6bc0e9b62cb1c8ac292509d50f380921f5",
+    "as_of_revision": "c1aa14222e72a041cab390e4abe06196d13b9179",
     "feature_functions_total": 50,
     "feature_functions_with_scoped_linux_evidence": 42,
-    "scoped_linux_evidence_references": 170,
+    "scoped_linux_evidence_references": 171,
     "feature_functions_fully_qualified": 0,
     "open_check_statements": 94,
     "counting_note": "Open check statements are the managed backlog. They are not represented as a fictitious count of packet cases: each statement is decomposed into a concrete peer, traffic, withdrawal and recovery observation when it enters the execution board.",
-    "last_closed_scope": "PPPoESession: 現行 Linux PVE の IPv6CP、独立アクセスコンセントレーター通信、停止、構成撤回、復旧",
-    "next_scope": "PPPoE: 別実装のアクセスコンセントレーター、資格情報更新、長時間切断復旧",
+    "last_closed_scope": "PPPoESession: 現行 Linux PVE の空状態資格情報変更、IPv6CP、撤回、再適用",
+    "next_scope": "PPPoE: 別実装のアクセスコンセントレーター、長時間切断復旧",
     "execution_board": {
       "rule": "A board item closes only the named observation. A passing item neither qualifies its whole feature nor reduces a different required_remaining_checks statement.",
       "active": {
@@ -2025,7 +2025,7 @@
       "revision": "ea892a6bc0e9b62cb1c8ac292509d50f380921f5",
       "reference": "evidence/routerd15-ea892a6b-pppoe-ipv6-pve-20261102.md",
       "source_binding": "Candidate archive SHA-256 505d386a29fa9d7506c3005389bf828d64689b011d7f0652643b5c0f160fc7a3; running routerd reported ea892a6b.",
-      "environment": "Authorized PVE VLAN 3132. VM219 ran the current Linux candidate with fresh test state. Independent VM220 ran rp-pppoe as a PAP/IPCP/IPv6CP access concentrator. The candidate configuration used a new 1.5 Router document and an explicit untrusted-zone ICMPv6 echo-request permit.",
+      "environment": "Authorized PVE VLAN 3132. VM219 ran the Linux candidate from the base VM state; this observation did not use a fresh routerd state database. Independent VM220 ran rp-pppoe as a PAP/IPCP/IPv6CP access concentrator. The candidate configuration used a new 1.5 Router document and an explicit untrusted-zone ICMPv6 echo-request permit.",
       "checks": [
         "VM219 created ppp-v6, negotiated IPv6CP link-local peer addressing with the independent VM220 access concentrator, and received three of three ICMPv6 replies over the PPP interface.",
         "Stopping the independent access concentrator removed ppp-v6 within the observed three seconds and routerd published ERROR. Restarting the same concentrator restored PPPoE, IPv6CP and three of three ICMPv6 replies; the observed recovery time is not an acceptance target.",
@@ -2033,7 +2033,26 @@
         "VM219 and VM220 were restored to their pre-test snapshots. The test ISO, staging directory, snapshots and stale test CD-ROM attachments were removed; both original routerd services were active and VM224 was stopped."
       ],
       "excludes": [
+        "Fresh-state installation: superseded by linux-pve-pppoe-credential-rotation-c1aa1422.",
         "IPv6 prefix delegation/forwarding, LAN client traffic, another access concentrator implementation, CHAP, authentication failure, credential rotation, MTU boundaries, concurrent sessions, extended outage, physical access loops and FreeBSD.",
+        "A whole-feature or whole-platform qualification verdict."
+      ]
+    },
+    "linux-pve-pppoe-credential-rotation-c1aa1422": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "c1aa14222e72a041cab390e4abe06196d13b9179",
+      "reference": "evidence/routerd15-c1aa1422-pppoe-credential-rotation-pve-20261102.md",
+      "source_binding": "Candidate archive SHA-256 963d570586aa40d02628ea82350efb254b28657e17e354783b3a3685e78a6545; PPPoE source paths were unchanged from ea892a6b to c1aa1422. c1aa1422 declares Linux routerd_nat base-table ownership.",
+      "environment": "Authorized PVE VLAN 3132. Snapshot-protected VM219 moved its existing state directory aside and started a new 4 KiB routerd database. Independent VM220 used rp-pppoe with PAP, IPCP and IPv6CP.",
+      "checks": [
+        "Initial PAP/IPCP/IPv6CP connection from fresh state returned three of three ICMPv6 replies. Changing the VM220 credentials removed ppp-v6 within the observed three seconds and routerd published ERROR.",
+        "routerctl apply --replace with a new rotated-credential 1.5 configuration reached Connected generation 1, restored IPv6CP and three of three ICMPv6 replies, with one PPP supervisor and one pppd process.",
+        "After installing c1aa1422, the rotated configuration reached Healthy without orphan warnings; one PPP supervisor/pppd pair, IPv6CP and three of three ICMPv6 replies remained.",
+        "Empty-configuration withdrawal removed ppp-v6 and the scoped ICMPv6 rule; reapplication reached Connected generation 3 and restored three of three ICMPv6 replies. Test snapshots and assets were removed and the baseline VM state was restored."
+      ],
+      "excludes": [
+        "IPv6 prefix delegation/forwarding, LAN client traffic, another access concentrator implementation, CHAP, authentication-failure reason handling, MTU boundaries, concurrent sessions, extended outage, physical access loops and FreeBSD.",
         "A whole-feature or whole-platform qualification verdict."
       ]
     },
@@ -5011,7 +5030,8 @@
         "scoped_evidence": [
           "linux-pve-pppoe-nat-lifecycle-99d44d33",
           "linux-pve-pppoe-recovery-883dacbd",
-          "linux-pve-pppoe-ipv6-ea892a6b"
+          "linux-pve-pppoe-ipv6-ea892a6b",
+          "linux-pve-pppoe-credential-rotation-c1aa1422"
         ]
       },
       "freebsd": {
