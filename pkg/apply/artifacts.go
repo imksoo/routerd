@@ -460,8 +460,16 @@ func routerArtifactIntentsForOS(router *api.Router, aliases map[string]string, t
 	}
 	var intents []resource.Intent
 	if targetOS == platform.OSLinux {
+		owner := api.RouterAPIVersion + "/Router/" + router.Metadata.Name
+		// The live Linux NAT controller always owns this empty hook table, even
+		// when no NAT44 rule is declared. Declare that owner here so the orphan
+		// check does not report the controller's fail-safe base table as stale.
+		intents = append(intents, resource.Intent{
+			Artifact:  newNftTableArtifact(owner, "ip", "routerd_nat"),
+			Action:    resource.ActionEnsure,
+			ApplyWith: "nft",
+		})
 		if wants, err := render.RouterWantsTCPMSSClamp(router); err == nil && wants {
-			owner := api.RouterAPIVersion + "/Router/" + router.Metadata.Name
 			intents = append(intents, resource.Intent{
 				Artifact:  newNftTableArtifact(owner, "inet", "routerd_mss"),
 				Action:    resource.ActionEnsure,
@@ -469,7 +477,6 @@ func routerArtifactIntentsForOS(router *api.Router, aliases map[string]string, t
 			})
 		}
 		if wants, err := render.RouterWantsL2TCPMSSClamp(router); err == nil && wants {
-			owner := api.RouterAPIVersion + "/Router/" + router.Metadata.Name
 			intents = append(intents, resource.Intent{
 				Artifact:  newNftTableArtifact(owner, "bridge", "routerd_l2_mss"),
 				Action:    resource.ActionEnsure,
@@ -477,7 +484,6 @@ func routerArtifactIntentsForOS(router *api.Router, aliases map[string]string, t
 			})
 		}
 		if wants, err := render.RouterWantsIPv4ForceFragment(router); err == nil && wants {
-			owner := api.RouterAPIVersion + "/Router/" + router.Metadata.Name
 			intents = append(intents, resource.Intent{
 				Artifact:  newNftTableArtifact(owner, "ip", "routerd_forcefrag"),
 				Action:    resource.ActionEnsure,
