@@ -76,18 +76,18 @@
     "open_check_statements": 96,
     "counting_note": "Open check statements are the managed backlog. They are not represented as a fictitious count of packet cases: each statement is decomposed into a concrete peer, traffic, withdrawal and recovery observation when it enters the execution board.",
     "last_closed_scope": "VRRP virtual-address traffic, two-router failover, restart, withdrawal and recovery on independent PVE VLAN peers",
-    "next_scope": null,
+    "next_scope": "LIN-FIREWALL-VLAN-RECOVERY-007",
     "execution_board": {
       "rule": "A board item closes only the named observation. A passing item neither qualifies its whole feature nor reduces a different required_remaining_checks statement.",
       "active": {
-        "id": "LIN-HA-VIP-TRAFFIC-006",
-        "feature": "cluster-ha-and-virtual-address",
-        "state": "passed",
-        "objective": "Send client traffic through an elected virtual address, then observe failover, restart and withdrawal with two independent routers.",
+        "id": "LIN-FIREWALL-VLAN-RECOVERY-007",
+        "feature": "firewall-policy-and-address-sets",
+        "state": "ready",
+        "objective": "Use independent PVE VLAN peers to observe one declared forwarding permission, two denied cross-zone paths, configuration withdrawal and recovery.",
         "pass_requires": [
-          "An elected virtual address carries traffic through one candidate router",
-          "Failover, restart and withdrawal preserve the declared ownership boundary",
-          "No unrelated address, route or firewall-policy broadening"
+          "The declared LAN-to-WAN path reaches an independent peer through the candidate router",
+          "WAN-to-LAN and LAN-to-management traffic remain denied without reaching their targets",
+          "Withdrawal blocks the declared forwarding path and reapplying the same new configuration restores it"
         ]
       },
       "ready_next": [
