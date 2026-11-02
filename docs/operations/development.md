@@ -737,6 +737,18 @@ Before the first apply, set `Interface/management.spec.ifname` in the generated
 The generated admin zone already references that resource. This keeps management
 access in the intended firewall zone while test VLANs remain on the trunk.
 
+Dual-stack expansion is in progress. The prepared
+`tests/fixtures/linux-dualstack-reboot.json` replaces the static WAN IPv4 setup
+with DHCPv4, and combines managed WAN RA reception with PD, delegated LAN
+addressing, DHCPv6/RA and dual-stack DNS. Its configuration passes the real CLI
+validator. Router setup supplies a disabled networkd RA baseline on the fixture
+WAN; desired product resources enable reception. A third `setup-router` argument
+(after the candidate path) can name the separate management NIC.
+The independent radvd peer was checked locally with real SLAAC, a learned
+default route and peer-observed HTTP source. Peer/probe integration and the
+combined two-VM reboot campaign remain pending; the earlier IPv4 result does
+not qualify this new path.
+
 The reboot fixture's DNS source has the default three-second per-upstream query
 deadline. Its independent-client DNS probes use a five-second `dig` deadline so
 the test client does not abandon a query that the resolver is still allowed to

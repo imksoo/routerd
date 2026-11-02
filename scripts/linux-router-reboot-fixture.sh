@@ -37,6 +37,10 @@ esac
 case "$role" in
  setup-router)
   candidate=${1:?candidate JSON}
+  management_iface=${2:-$management}
+  [[ "$management_iface" =~ ^[a-zA-Z0-9_.-]{1,15}$ ]]
+  ip link show "$management_iface" >/dev/null
+  sysctl -n net.ipv6.conf.all.forwarding > "$work/ip6_forward.before"
   sysctl -n net.ipv4.ip_forward > "$work/ip_forward.before"
   case "$(cat "$work/ip_forward.before")" in
    0|1) ;;
@@ -71,9 +75,25 @@ UNIT
 Requires=rd15-links.service
 After=rd15-links.service
 UNIT
+  test ! -e /etc/systemd/network/10-netplan-rd15-wan.network
+  test ! -e /etc/systemd/network/10-netplan-rd15-wan.network.d
+  test ! -e /etc/sysctl.d/90-routerd-accept-ra-rd15-wan.conf
+  cat > /etc/systemd/network/10-netplan-rd15-wan.network <<'NETWORK'
+[Match]
+Name=rd15-wan
+[Network]
+DHCP=no
+IPv6AcceptRA=no
+LinkLocalAddressing=ipv6
+NETWORK
   systemctl daemon-reload
   systemctl start rd15-links
-  python3 - "$candidate" "$management" "$work/candidate.json" <<'PY'
+  networkctl reload
+  networkctl reconfigure rd15-wan
+  # The product's IPv6RAAddress resource owns enabling RA reception. The boot
+  # fixture supplies only ports and the disabled networkd baseline.
+  test "$(sysctl -n net.ipv6.conf.rd15-wan.accept_ra)" = 0
+  python3 - "$candidate" "$management_iface" "$work/candidate.json" <<'PY'
 import json,sys
 x=json.load(open(sys.argv[1]));r=x['spec']['resources']
 r.append({'apiVersion':'net.routerd.net/v1alpha1','kind':'Interface','metadata':{'name':'management'},'spec':{'ifname':sys.argv[2],'managed':False,'owner':'external'}})
@@ -188,6 +208,16 @@ JSON
    ip link del "rd15-$side"
   done
   systemctl stop rd15-links
+  # Remove the fixture's networkd baseline and its adoption directory only
+  # after empty intent; this teardown does not prove automatic RA rollback.
+  if [ -d /etc/systemd/network/10-netplan-rd15-wan.network.d ]; then
+   rm -r -- /etc/systemd/network/10-netplan-rd15-wan.network.d
+  fi
+  if [ -f /etc/sysctl.d/90-routerd-accept-ra-rd15-wan.conf ]; then
+   rm -- /etc/sysctl.d/90-routerd-accept-ra-rd15-wan.conf
+  fi
+  rm -- /etc/systemd/network/10-netplan-rd15-wan.network
+  networkctl reload
   rm -- /etc/systemd/system/rd15-links.service /etc/systemd/system/routerd.service.d/90-rd15-links.conf
   systemctl daemon-reload
   # Stopping the fixture unit also stops routerd through Requires=. Once that
@@ -198,6 +228,11 @@ JSON
   case "$forward_before" in
    0|1) sysctl -w "net.ipv4.ip_forward=$forward_before" ;;
    *) echo 'recorded IPv4 forwarding value is invalid' >&2; exit 1 ;;
+  esac
+  forward6_before=$(cat "$work/ip6_forward.before")
+  case "$forward6_before" in
+   0|1) sysctl -w "net.ipv6.conf.all.forwarding=$forward6_before" ;;
+   *) echo 'recorded IPv6 forwarding value is invalid' >&2; exit 1 ;;
   esac
   rm -r -- "$work"
   ;;

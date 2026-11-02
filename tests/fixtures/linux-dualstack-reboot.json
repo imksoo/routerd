@@ -1,0 +1,316 @@
+{
+  "apiVersion": "routerd.net/v1alpha1",
+  "kind": "Router",
+  "metadata": {
+    "name": "home-readiness"
+  },
+  "spec": {
+    "resources": [
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "Interface",
+        "metadata": {
+          "name": "lan"
+        },
+        "spec": {
+          "ifname": "rd15-lan",
+          "managed": false,
+          "owner": "external"
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "IPv4StaticAddress",
+        "metadata": {
+          "name": "lan-v4"
+        },
+        "spec": {
+          "interface": "lan",
+          "address": "198.18.15.1/24"
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "Interface",
+        "metadata": {
+          "name": "wan"
+        },
+        "spec": {
+          "ifname": "rd15-wan",
+          "managed": false,
+          "owner": "external"
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "DHCPv4Client",
+        "metadata": {
+          "name": "wan"
+        },
+        "spec": {
+          "interface": "wan",
+          "useRoutes": true,
+          "useDNS": true,
+          "routeMetric": 42
+        }
+      },
+      {
+        "apiVersion": "system.routerd.net/v1alpha1",
+        "kind": "Sysctl",
+        "metadata": {
+          "name": "forward-v4"
+        },
+        "spec": {
+          "key": "net.ipv4.ip_forward",
+          "value": "1"
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "NAT44Rule",
+        "metadata": {
+          "name": "lan-to-wan"
+        },
+        "spec": {
+          "type": "masquerade",
+          "egressInterface": "wan",
+          "sourceRanges": [
+            "198.18.15.0/24"
+          ]
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "DHCPv4Server",
+        "metadata": {
+          "name": "lan"
+        },
+        "spec": {
+          "interface": "lan",
+          "server": "dnsmasq",
+          "managed": true,
+          "addressPool": {
+            "start": "198.18.15.100",
+            "end": "198.18.15.110",
+            "leaseTime": "2m"
+          },
+          "gateway": "198.18.15.1",
+          "dnsServers": [
+            "198.18.15.1"
+          ],
+          "domain": "home.arpa"
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "DNSResolver",
+        "metadata": {
+          "name": "lan"
+        },
+        "spec": {
+          "listen": [
+            {
+              "name": "lan",
+              "port": 53,
+              "sources": [
+                "local",
+                "upstream"
+              ],
+              "addressFrom": [
+                {
+                  "resource": "IPv4StaticAddress/lan-v4",
+                  "field": "address"
+                },
+                {
+                  "resource": "IPv6DelegatedAddress/lan-v6",
+                  "field": "address"
+                }
+              ]
+            }
+          ],
+          "cache": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "DNSZone",
+        "metadata": {
+          "name": "home"
+        },
+        "spec": {
+          "zone": "home.arpa",
+          "records": [
+            {
+              "hostname": "router",
+              "ipv4From": {
+                "resource": "IPv4StaticAddress/lan-v4",
+                "field": "address"
+              },
+              "ipv6From": {
+                "resource": "IPv6DelegatedAddress/lan-v6",
+                "field": "address"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "DNSForwarder",
+        "metadata": {
+          "name": "local"
+        },
+        "spec": {
+          "resolver": "DNSResolver/lan",
+          "match": [
+            "home.arpa"
+          ],
+          "zoneRefs": [
+            "DNSZone/home"
+          ]
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "DNSForwarder",
+        "metadata": {
+          "name": "upstream"
+        },
+        "spec": {
+          "resolver": "DNSResolver/lan",
+          "match": [
+            "."
+          ],
+          "upstreams": [
+            "DNSUpstream/peer"
+          ]
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "DNSUpstream",
+        "metadata": {
+          "name": "peer"
+        },
+        "spec": {
+          "protocol": "udp",
+          "address": "198.18.16.1"
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "Interface",
+        "metadata": {
+          "name": "admin"
+        },
+        "spec": {
+          "ifname": "rd15-admin",
+          "managed": false,
+          "owner": "external"
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "IPv4StaticAddress",
+        "metadata": {
+          "name": "admin-v4"
+        },
+        "spec": {
+          "interface": "admin",
+          "address": "198.18.17.1/24"
+        }
+      },
+      {
+        "apiVersion": "system.routerd.net/v1alpha1",
+        "kind": "Sysctl",
+        "metadata": {
+          "name": "forward-v6"
+        },
+        "spec": {
+          "key": "net.ipv6.conf.all.forwarding",
+          "value": "1"
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "DHCPv6Server",
+        "metadata": {
+          "name": "lan-dhcpv6"
+        },
+        "spec": {
+          "interface": "lan",
+          "mode": "both",
+          "defaultRoute": true,
+          "dnsSource": "none",
+          "logDHCP": true,
+          "addressPool": {
+            "start": "::100",
+            "end": "::110",
+            "leaseTime": "2m"
+          }
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "DHCPv6PrefixDelegation",
+        "metadata": {
+          "name": "wan-pd"
+        },
+        "spec": {
+          "interface": "wan",
+          "profile": "ntt-hgw-lan-pd"
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "IPv6DelegatedAddress",
+        "metadata": {
+          "name": "lan-v6"
+        },
+        "spec": {
+          "prefixDelegation": "wan-pd",
+          "interface": "lan",
+          "subnetID": "0",
+          "addressSuffix": "::1",
+          "announce": true
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "IPv6RouterAdvertisement",
+        "metadata": {
+          "name": "lan-v6"
+        },
+        "spec": {
+          "interface": "lan",
+          "mFlag": true,
+          "prefixFrom": {
+            "resource": "IPv6DelegatedAddress/lan-v6",
+            "field": "address"
+          },
+          "rdnssFrom": [
+            {
+              "resource": "IPv6DelegatedAddress/lan-v6",
+              "field": "address"
+            }
+          ],
+          "oFlag": true
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "IPv6RAAddress",
+        "metadata": {
+          "name": "wan-ra"
+        },
+        "spec": {
+          "interface": "wan",
+          "managed": true,
+          "required": true
+        }
+      }
+    ]
+  }
+}

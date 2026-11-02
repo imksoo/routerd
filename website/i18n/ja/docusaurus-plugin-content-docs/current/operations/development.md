@@ -558,6 +558,15 @@ Python HTTP server、curl、dig を使います。両方に iproute2、jq、syst
 生成済みの admin zone はこの resource を参照するため、管理経路と試験 VLAN を
 それぞれ適切な NIC に割り当てられます。
 
+dual-stack 拡張は作業中です。`tests/fixtures/linux-dualstack-reboot.json` は静的 WAN IPv4 を
+DHCPv4 に置き換え、WAN RA 受信、PD、LAN の委譲 address・DHCPv6/RA、dual-stack DNS を
+組み合わせた設定で、実 CLI の validate が通っています。router 側 fixture は WAN の
+networkd RA 受信を無効にした初期状態を作り、製品 resource が受信を有効にします。
+`setup-router` の設定パスの次の引数には、別の管理 NIC を指定できます。
+独立 radvd peer はローカルで SLAAC・学習 default route・HTTP 対向の送信元観測を
+確認しました。peer/probe の統合と2 VM 再起動試験は未実施で、旧 IPv4 の合格結果を
+この経路の合格とは扱いません。
+
 上流 DNS の問い合わせ期限は既定で3秒です。`dig` は5秒待ち、resolver が許容された
 期限内に応答する前に試験クライアントが諦めることを防ぎます。応答時間の目標値では
 ありません。正対照は timeout・SERVFAIL・空応答・誤ったアドレスで失敗し、WAN からの
