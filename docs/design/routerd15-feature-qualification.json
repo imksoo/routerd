@@ -83,10 +83,10 @@
         "id": "LIN-IPV6-DNS-WITHDRAW-003",
         "feature": "delegated-ipv6-and-ra",
         "state": "ready",
-        "objective": "Distribute DHCPv6-provided DNS on the PVE VLAN topology, then withdraw and restore it with client-observed resolver behavior.",
+        "objective": "Distribute an RDNSS endpoint derived from independent DHCPv6-PD on the PVE VLAN topology, then withdraw and restore it with client-observed resolver behavior.",
         "pass_requires": [
-          "An independent client receives and uses the DHCPv6-provided DNS server through the candidate router",
-          "DNS withdrawal removes the stale resolver result and restoration recovers client-observed resolution",
+          "An independent client receives and uses the RDNSS endpoint derived from the delegated prefix through the candidate router",
+          "Delegated-prefix withdrawal removes the stale RDNSS endpoint and restoration recovers client-observed resolution",
           "No unrelated IPv6 route, LAN forwarding or firewall-policy broadening"
         ]
       },
