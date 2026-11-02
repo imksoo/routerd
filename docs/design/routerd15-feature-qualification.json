@@ -68,35 +68,29 @@
     "example_inventory_rule": "examples[] is the exact set of 90 baseline tracked paths. Presence is verified at the pinned current revision; complete semantic/example execution is unknown. Only declared-kind changes are listed separately."
   },
   "linux_execution_progress": {
-    "as_of_revision": "b380bc12cb072e00e18eb2f5404a8054e59ddc6e",
+    "as_of_revision": "3a18c5e35ef5ec2f694c30368448068278857417",
     "feature_functions_total": 50,
     "feature_functions_with_scoped_linux_evidence": 41,
-    "scoped_linux_evidence_references": 141,
+    "scoped_linux_evidence_references": 142,
     "feature_functions_fully_qualified": 0,
     "open_check_statements": 96,
     "counting_note": "Open check statements are the managed backlog. They are not represented as a fictitious count of packet cases: each statement is decomposed into a concrete peer, traffic, withdrawal and recovery observation when it enters the execution board.",
-    "last_closed_scope": "WAN DHCPv4 initial acquisition through the candidate router's untrusted VLAN, including an independent DHCP server and a firewall count confirming only UDP/68 reply delivery",
-    "next_scope": "LIN-DHCP4-WAN-RENEW-001",
+    "last_closed_scope": "WAN DHCPv4 initial DORA and two T1 renewals through the candidate router's untrusted VLAN, with one independent DHCP server and no DHCP client process replacement",
+    "next_scope": "LIN-DHCP4-WAN-RESTART-002",
     "execution_board": {
       "rule": "A board item closes only the named observation. A passing item neither qualifies its whole feature nor reduces a different required_remaining_checks statement.",
       "active": {
-        "id": "LIN-DHCP4-WAN-RENEW-001",
+        "id": "LIN-DHCP4-WAN-RESTART-002",
         "feature": "dhcpv4-client",
-        "state": "diagnosing",
-        "objective": "Keep the supervised Linux DHCPv4 client alive through T1 and observe a renewal from the independent PVE VLAN server without reacquiring after a child-process exit.",
-        "observed_blocker": "The integrated client bound once, then its child process ended about ten seconds later and the supervisor started a new acquisition. This is not a renewal pass.",
+        "state": "ready",
+        "objective": "Withdraw and restore the independent DHCPv4 server, then observe rebind or expiry and address/default-route/DNS recovery.",
         "pass_requires": [
-          "Same client process remains present until the recorded T1 renewal exchange",
-          "Renewal ACK preserves or updates address, default route and DNS as supplied by the independent server",
+          "Server withdrawal produces the expected renewal, rebind or expiry result without retaining an obsolete address, default route or DNS server",
+          "Restoring the independent server produces a valid lease and restores address, default route and DNS as supplied by that server",
           "No unrequested LAN forwarding or firewall-policy broadening"
         ]
       },
       "ready_next": [
-        {
-          "id": "LIN-DHCP4-WAN-RESTART-002",
-          "feature": "dhcpv4-client",
-          "objective": "Withdraw and restore the independent DHCPv4 server, then observe rebind or expiry and address/default-route/DNS recovery."
-        },
         {
           "id": "LIN-IPV6-DNS-WITHDRAW-003",
           "feature": "delegated-ipv6-and-ra",
@@ -918,6 +912,22 @@
         "Physical or separate-host failure domains",
         "Other DHCP servers, WAN hardware and multi-WAN failover",
         "WAN DHCP reboot/NAK/server identity changes and complete 1.0 parity"
+      ]
+    },
+    "linux-pve-wan-dhcpv4-vlan-renewal-3a18c5e3": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "3a18c5e35ef5ec2f694c30368448068278857417",
+      "reference": "evidence/routerd15-3a18c5e3-wan-dhcpv4-vlan-renewal-pve-20261102.md",
+      "environment": "Isolated PVE VLAN 3132: VM219 candidate router with a new 1.5 configuration and no pre-existing WAN IPv4 address; VM220 independent dnsmasq DHCPv4 server at 198.18.46.1/24.",
+      "checks": [
+        "VM220 packet capture records initial DHCP Discover, Offer, Request and ACK; VM219 reaches Bound at 198.18.46.100/24 with the supplied default route metric 4242 and DNS server.",
+        "The same Linux DHCPv4 client process records two T1 Renewing-to-Bound transitions and refreshes its 120-second lease without a supervised-child exit."
+      ],
+      "excludes": [
+        "A retained packet capture of the renewal ACK",
+        "Server withdrawal, rebind, expiry, server identity changes, multiple WANs, forwarding and recovery",
+        "FreeBSD DHCPv4 dataplane"
       ]
     },
     "linux-wan-first-apply-4ac07b78": {
@@ -3220,6 +3230,7 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-wan-dhcpv4-31d5f4d4",
+          "linux-pve-wan-dhcpv4-vlan-renewal-3a18c5e3",
           "linux-wan-first-apply-4ac07b78",
           "normal-code-gate-31d5f4d4"
         ]
