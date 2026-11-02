@@ -253,7 +253,7 @@ daemon の ACK 受信だけでは libpcap のカーネルバッファから保�
 Kea/ndisc6 パッケージの展開先、独立した管理 interface 名です。fixture の management
 interface を実環境の名前に置換してから設定を検証します。管理 interface は trust zone に
 入るため、WAN/LAN の firewall 試験中も管理接続を維持します。VM には独立した管理経路と、`ip`、`ss`、systemd、
-`nft`、`dnsmasq`、BusyBox、`curl`、`dig`、`jq`、Python 3、`timeout`、
+`nft`、`dnsmasq`、BusyBox、`dhcpcd`、`curl`、`dig`、`jq`、Python 3、`timeout`、
 `/proc/sys/net/netfilter/nf_conntrack_count` が必要です。
 
 routerd の既存バイナリ、正規設定、`/var/lib/routerd`、service、試験用 interface/netns が
@@ -271,10 +271,11 @@ sudo scripts/linux-home-router-lifecycle-smoke.sh --disposable-vm \
 
 Kea 展開先には `usr/sbin/kea-dhcp6`、`usr/bin/rdisc6`、
 `usr/lib/x86_64-linux-gnu` が必要です。`rdisc6` は root 所有にしてください。
-この同一設定の統合試験は、DHCPv4 取得・更新、IPv4/IPv6 クライアントからの DNS A/AAAA
-UDP/TCP、IPv4 NAT の対向送信元確認、WAN から LAN への未要求通信拒否、DHCPv6-PD の
-更新・prefix 変更・期限切れ・再取得、RA/SLAAC、委譲 IPv6 を使った転送、service 再起動、
-WAN 断・復帰、managed resource の撤去を確認します。物理 ISP との相互接続、WAN 発見・
+この同一設定の統合試験は、DHCPv4 取得・更新、実際の委譲 LAN prefix からの DHCPv6 IA_NA
+取得、IPv4/IPv6 クライアントからの DNS A/AAAA UDP/TCP、IPv4 NAT の対向送信元確認、WAN
+から LAN への未要求通信拒否、DHCPv6-PD の更新・prefix 変更・期限切れ・再取得、RA/SLAAC、
+委譲 IPv6 を使った転送、service 再起動、WAN 断・復帰、managed resource の撤去を確認します。
+物理 ISP との相互接続、WAN 発見・
 PPPoE・DS-Lite、再起動復旧、FreeBSD 全機能、routerd 1.0 の全機能維持を証明する試験ではありません。
 
 上流 IPv6 の default route は、上流ルーターから学習済みの状態を模した disposable WAN fixture が

@@ -330,8 +330,8 @@ Run `scripts/linux-home-router-lifecycle-smoke.sh --disposable-vm` only on a
 dedicated Linux VM with independent management access. The command takes a
 prepared routerd 1.5 JSON config, an extracted Linux `make dist` package root,
 and an extracted Kea/ndisc6 package root. The VM must have `ip`, `ss`, `nft`,
-systemd, `dnsmasq`, BusyBox, `curl`, `dig`, `jq`, Python 3 and `timeout` installed,
-with `/proc/sys/net/netfilter/nf_conntrack_count` available.
+systemd, `dnsmasq`, BusyBox, `dhcpcd`, `curl`, `dig`, `jq`, Python 3 and `timeout`
+installed, with `/proc/sys/net/netfilter/nf_conntrack_count` available.
 
 The final argument is the VM's independent management interface. The fixture has
 a `management` interface and trust zone; the script substitutes this interface
@@ -354,12 +354,13 @@ sudo scripts/linux-home-router-lifecycle-smoke.sh --disposable-vm \
 
 The Kea package root must contain `usr/sbin/kea-dhcp6`, `usr/bin/rdisc6` and
 `usr/lib/x86_64-linux-gnu`; keep `rdisc6` root-owned. The single config exercises
-DHCPv4 acquisition and natural renewal, DNS A/AAAA over UDP/TCP from IPv4 and
-IPv6 clients, firewall-denied unsolicited WAN-to-LAN traffic, IPv4 NAT with the
-translated source observed by an independent peer, DHCPv6-PD renewal and
-renumbering, RA/SLAAC, routed IPv6 with the delegated client source, service
-restart, WAN loss/return, PD expiry/reacquisition and managed withdrawal. This
-is the integrated Linux home-router gate; it does not establish physical ISP
+DHCPv4 acquisition and natural renewal, DHCPv6 IA_NA assignment from the active
+delegated LAN prefix, DNS A/AAAA over UDP/TCP from IPv4 and IPv6 clients,
+firewall-denied unsolicited WAN-to-LAN traffic, IPv4 NAT with the translated
+source observed by an independent peer, DHCPv6-PD renewal and renumbering,
+RA/SLAAC, routed IPv6 with the delegated client source, service restart, WAN
+loss/return, PD expiry/reacquisition and managed withdrawal. This is the
+integrated Linux home-router gate; it does not establish physical ISP
 interoperability, WAN discovery/PPPoE/DS-Lite, reboot recovery, FreeBSD parity or
 the complete routerd 1.0 function inventory.
 

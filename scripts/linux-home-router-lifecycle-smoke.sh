@@ -25,7 +25,7 @@ ip -6 route show dev "$management_iface" | grep -q '^fe80::/64' || {
  echo "management interface has no link-local IPv6 route: $management_iface" >&2
  exit 2
 }
-for x in ip ss nft curl jq python3 dig busybox dnsmasq systemctl journalctl timeout; do command -v "$x" >/dev/null; done
+for x in ip ss nft curl jq python3 dig busybox dnsmasq dhcpcd systemctl journalctl timeout; do command -v "$x" >/dev/null; done
 test -r /proc/sys/net/netfilter/nf_conntrack_count
 test -x "$package_root/install.sh"
 test -x "$package_root/uninstall.sh"
@@ -88,6 +88,7 @@ sysctl -n net.ipv4.ip_forward > "$work/forward4.before"
 sysctl -n net.ipv6.conf.all.forwarding > "$work/forward.before"
 installed=0
 dhcp_pid=
+dhcp6_pid=
 peer_kea_pid=
 peer_http_pid=
 peer_dns_pid=
@@ -133,6 +134,7 @@ finish() {
    tail -80 "$work/v6-recovery-packets.txt" > "$work/failure-v6-recovery-packets.txt" 2>/dev/null || true
    tail -100 "$work/kea.log" > "$work/failure-kea.txt" 2>/dev/null || true
    tail -100 "$work/udhcpc.log" > "$work/failure-dhcpv4.txt" 2>/dev/null || true
+   tail -100 "$work/dhcpcd6.log" > "$work/failure-dhcpv6.txt" 2>/dev/null || true
    if [ "$installed" -eq 1 ] && [ -x /usr/local/sbin/routerctl ] && systemctl is-active --quiet routerd.service; then
      cat > "$work/failure-empty.json" <<'JSON'
 {"apiVersion":"routerd.net/v1alpha1","kind":"Router","metadata":{"name":"home-failure-cleanup"},"spec":{"resources":[]}}
@@ -150,6 +152,7 @@ JSON
      fi
    fi
  fi
+ stop_pid "$dhcp6_pid"
  stop_pid "$dhcp_pid"
  stop_pid "$peer_kea_pid"
  stop_pid "$peer_http_pid"
@@ -308,6 +311,66 @@ done
 # is the assertion for this independent observer.
 ip netns exec "$lan_ns" "$rdisc" -1 -r 5 -w 2000 peer0 > "$work/ra.txt" || true
 grep '2001:db8:1500::/64' "$work/ra.txt"
+cat > "$work/dhcpcd6.conf" <<'EOF'
+interface peer0
+  ia_na 42
+EOF
+# Keep dhcpcd's pid and lease files private to the client namespace while the
+# real routerd service owns DHCPv6, RA and the dynamic delegated LAN prefix.
+# shellcheck disable=SC2016 # evaluated inside the client's private mount namespace
+ip netns exec "$lan_ns" unshare -m sh -ec '
+	mount --make-rprivate /
+	mount -t tmpfs tmpfs /run
+	mount -t tmpfs tmpfs /var/lib
+	mkdir -p /run/dhcpcd /var/lib/dhcpcd
+	exec timeout -k 2 420 "$1" -d -6 -B --waitip=6 -t 20 -f "$2" -c /bin/true peer0
+' sh "$(command -v dhcpcd)" "$work/dhcpcd6.conf" > "$work/dhcpcd6.log" 2>&1 &
+dhcp6_pid=$!
+assigned_ia_na=
+for _ in {1..45}; do
+	assigned_ia_na=$(python3 - "$work/dhcpcd6.log" <<'PY'
+import re
+import sys
+
+text = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+addresses = re.findall(r"\bADV\s+([0-9a-fA-F:]+)(?:/\d+)?", text)
+print(addresses[-1] if addresses else "")
+PY
+)
+	if [[ -n "$assigned_ia_na" ]]; then break; fi
+	kill -0 "$dhcp6_pid" 2>/dev/null || { cat "$work/dhcpcd6.log" >&2; echo "dhcpcd exited before receiving IA_NA" >&2; exit 1; }
+	sleep 1
+done
+[[ -n "$assigned_ia_na" ]] || { cat "$work/dhcpcd6.log" >&2; echo "client received no DHCPv6 IA_NA address" >&2; exit 1; }
+python3 - "$assigned_ia_na" <<'PY'
+import ipaddress
+import sys
+
+address = ipaddress.ip_address(sys.argv[1])
+prefix = ipaddress.ip_network("2001:db8:1500::/64")
+if address not in prefix:
+    raise SystemExit(f"DHCPv6 IA_NA address is outside the active delegated LAN prefix: {address}")
+if not ipaddress.ip_address("2001:db8:1500::100") <= address <= ipaddress.ip_address("2001:db8:1500::110"):
+    raise SystemExit(f"DHCPv6 IA_NA address is outside the configured pool: {address}")
+PY
+for _ in {1..15}; do
+	if ip netns exec "$lan_ns" ip -6 -j addr show dev peer0 | jq -e --arg address "$assigned_ia_na" 'any(.[0].addr_info[]; .local == $address and .scope == "global" and .tentative != true and .dadfailed != true)' >/dev/null; then break; fi
+	sleep 1
+done
+ip netns exec "$lan_ns" ip -6 -j addr show dev peer0 | jq -e --arg address "$assigned_ia_na" 'any(.[0].addr_info[]; .local == $address and .scope == "global" and .tentative != true and .dadfailed != true)' >/dev/null || {
+	cat "$work/dhcpcd6.log" >&2
+	echo "DHCPv6 IA_NA address did not pass client DAD: $assigned_ia_na" >&2
+	exit 1
+}
+grep -q 'REPLY6 received' "$work/dhcpcd6.log"
+printf 'PASS: systemd home-router DHCPv6 IA_NA from delegated prefix %s\n' "$assigned_ia_na"
+# The later PD-renumbering check exercises SLAAC source withdrawal. Remove the
+# independently verified IA_NA client address first so it cannot mask that path.
+stop_pid "$dhcp6_pid"
+dhcp6_pid=
+if ip netns exec "$lan_ns" ip -6 -o addr show dev peer0 | grep -Fq "$assigned_ia_na/64"; then
+	ip -n "$lan_ns" -6 addr del "$assigned_ia_na/64" dev peer0
+fi
 probe_v4() {
  local source answer
  for mode in +notcp +tcp; do
@@ -529,4 +592,4 @@ ip -6 route show default | grep -F 'via 2001:db8:16::1 dev rd15-wan' >/dev/null 
 if ip netns exec "$lan_ns" curl --noproxy '*' --fail --silent --max-time 2 http://198.18.17.1:8080/; then echo 'IPv4 traffic survived config withdrawal' >&2; exit 1; fi
 if ip netns exec "$lan_ns" curl --noproxy '*' --fail --silent --max-time 2 'http://[2001:db8:17::1]:8080/'; then echo 'IPv6 traffic survived config withdrawal' >&2; exit 1; fi
 printf 'PASS: 1.5 empty-config withdrawal removes IPv4/IPv6 resources and traffic paths\n'
-printf 'PASS: clean-install home-router lifecycle: DHCPv4 renew, DNS UDP/TCP, NAT44, DHCPv6-PD renew/renumber/expiry/reacquire, RA/SLAAC, IPv6 forwarding, restart, upstream loss/return and withdrawal\n'
+printf 'PASS: clean-install home-router lifecycle: DHCPv4 renew, DHCPv6 IA_NA, DNS UDP/TCP, NAT44, DHCPv6-PD renew/renumber/expiry/reacquire, RA/SLAAC, IPv6 forwarding, restart, upstream loss/return and withdrawal\n'
