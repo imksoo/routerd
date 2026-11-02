@@ -953,7 +953,15 @@ func (c SystemdUnitController) reconcileDNSResolverUnits(ctx context.Context, st
 		}
 		unitName := dnsResolverUnitName(resource.Metadata.Name)
 		configPath := filepath.Join(stateDir, "dns-resolver", resource.Metadata.Name, "config.json")
+		// DNS runtime configuration is written by DNSResolverController.  The
+		// systemd unit can be created first on a clean host, so remember whether
+		// a process was already active and hand the first written configuration
+		// to that process on the next status-triggered reconciliation.
+		wasActive := systemdUnitActive(ctx, command, unitName)
 		if err := c.reconcileLongLivedSystemdHelperUnit(ctx, unitName, "Router/"+c.Router.Metadata.Name+"/DNSResolver/"+resource.Metadata.Name, render.DNSResolverSystemdSpec(resource.Metadata.Name, spec, "/usr/local/sbin/routerd-dns-resolver", configPath), command); err != nil {
+			return err
+		}
+		if err := c.applyDNSResolverConfig(ctx, stateDir, resource.Metadata.Name, unitName, wasActive, command); err != nil {
 			return err
 		}
 	}
@@ -962,6 +970,46 @@ func (c SystemdUnitController) reconcileDNSResolverUnits(ctx context.Context, st
 
 func dnsResolverUnitName(name string) string {
 	return "routerd-dns-resolver@" + name + ".service"
+}
+
+// applyDNSResolverConfig records the exact runtime configuration acknowledged
+// by the systemd-owned resolver. A helper that was started before its runtime
+// config exists cannot serve or accept a reload; restart it once after the
+// config first appears. Later digest changes use the same bounded handoff.
+func (c SystemdUnitController) applyDNSResolverConfig(ctx context.Context, stateDir, name, unitName string, wasActive bool, command outputCommandFunc) error {
+	if c.DryRun {
+		return nil
+	}
+	configPath := filepath.Join(stateDir, "dns-resolver", name, "config.json")
+	digest, found, err := runtimeConfigDigest(configPath)
+	if err != nil {
+		return fmt.Errorf("digest DNS resolver config %s: %w", configPath, err)
+	}
+	if !found {
+		return nil
+	}
+	markerPath := filepath.Join(stateDir, "dns-resolver", name, "config.applied.sha256")
+	marker, err := os.ReadFile(markerPath)
+	if err == nil && strings.TrimSpace(string(marker)) == digest {
+		return nil
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read DNS resolver config marker %s: %w", markerPath, err)
+	}
+	if wasActive {
+		if _, err := command(ctx, "systemctl", "restart", unitName); err != nil {
+			return fmt.Errorf("restart DNS resolver helper %s after config change: %w", unitName, err)
+		}
+		if !systemdUnitActive(ctx, command, unitName) {
+			return fmt.Errorf("DNS resolver helper %s is not active after config restart", unitName)
+		}
+	} else if !systemdUnitActive(ctx, command, unitName) {
+		return nil
+	}
+	if _, err := writeFileIfChanged(markerPath, []byte(digest+"\n"), 0o644, false); err != nil {
+		return fmt.Errorf("record applied DNS resolver config %s: %w", markerPath, err)
+	}
+	return nil
 }
 
 func (c SystemdUnitController) reconcileEventFederationUnits(ctx context.Context, stateDir string, command outputCommandFunc) error {
@@ -1047,6 +1095,10 @@ func (c SystemdUnitController) applyEventFederationConfig(ctx context.Context, s
 }
 
 func eventFederationConfigDigest(path string) (string, bool, error) {
+	return runtimeConfigDigest(path)
+}
+
+func runtimeConfigDigest(path string) (string, bool, error) {
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return "", false, nil

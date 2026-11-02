@@ -1547,6 +1547,61 @@ func TestSystemdUnitControllerRestartsEventdOnlyForChangedRuntimeConfig(t *testi
 	}
 }
 
+func TestSystemdUnitControllerRestartsDNSResolverForNewRuntimeConfig(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
+	stateDir := t.TempDir()
+	name := "lan"
+	unitName := dnsResolverUnitName(name)
+	configPath := filepath.Join(stateDir, "dns-resolver", name, "config.json")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeConfig := func(value string) {
+		t.Helper()
+		if err := os.WriteFile(configPath, []byte(value+"\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeConfig(`{"resource":"lan","listen":["127.0.0.1:53"]}`)
+	active := true
+	restarts := 0
+	controller := SystemdUnitController{StateDir: stateDir, Command: func(_ context.Context, command string, args ...string) ([]byte, error) {
+		if command != "systemctl" {
+			return []byte("ok"), nil
+		}
+		switch strings.Join(args, " ") {
+		case "is-active --quiet " + unitName:
+			if active {
+				return []byte("active"), nil
+			}
+			return nil, errors.New("inactive")
+		case "restart " + unitName:
+			restarts++
+			active = true
+		}
+		return []byte("ok"), nil
+	}}
+	if err := controller.applyDNSResolverConfig(t.Context(), stateDir, name, unitName, true, controller.Command); err != nil {
+		t.Fatalf("initial config handoff: %v", err)
+	}
+	if restarts != 1 {
+		t.Fatalf("initial DNS resolver restarts = %d, want 1", restarts)
+	}
+	if err := controller.applyDNSResolverConfig(t.Context(), stateDir, name, unitName, true, controller.Command); err != nil {
+		t.Fatalf("unchanged config handoff: %v", err)
+	}
+	if restarts != 1 {
+		t.Fatalf("unchanged DNS resolver restarts = %d, want 1", restarts)
+	}
+	writeConfig(`{"resource":"lan","listen":["127.0.0.1:1053"]}`)
+	if err := controller.applyDNSResolverConfig(t.Context(), stateDir, name, unitName, true, controller.Command); err != nil {
+		t.Fatalf("changed config handoff: %v", err)
+	}
+	if restarts != 2 {
+		t.Fatalf("changed DNS resolver restarts = %d, want 2", restarts)
+	}
+}
+
 func TestSystemdUnitControllerRemovesIdentityOnlyEventFederationUnit(t *testing.T) {
 	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()
