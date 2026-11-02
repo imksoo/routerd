@@ -569,9 +569,9 @@ func validateForOS(router *api.Router, targetOS platform.OS, allowRuntimePayload
 			for i, name := range spec.Interfaces {
 				refKind, refName := splitFirewallInterfaceRef(name)
 				switch refKind {
-				case "Interface", "PPPoESession", "WireGuardInterface":
+				case "Interface", "PPPoESession", "WireGuardInterface", "TunnelInterface":
 					if !idx.Interfaces[refName] && !idx.DSLiteTunnels[refName] {
-						return fmt.Errorf("%s spec.idx.Interfaces[%d] references missing Interface, PPPoESession, WireGuardInterface, or DSLiteTunnel %q", res.ID(), i, refName)
+						return fmt.Errorf("%s spec.idx.Interfaces[%d] references missing Interface, PPPoESession, WireGuardInterface, TunnelInterface, or DSLiteTunnel %q", res.ID(), i, refName)
 					}
 				case "DSLiteTunnel":
 					if !idx.DSLiteTunnels[refName] {

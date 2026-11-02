@@ -42,13 +42,13 @@ func TestNftablesIPIPUsesIPv4Protocol(t *testing.T) {
 func TestNftablesTunnelInterfaceZoneUsesTunnelName(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"}, Metadata: api.ObjectMeta{Name: "tun-ipip"}, Spec: api.TunnelInterfaceSpec{Mode: "ipip", Local: "198.51.100.1", Remote: "198.51.100.2", TrustedUnderlay: true}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "tunnel"}, Spec: api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"TunnelInterface/tun-ipip"}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "tunnel"}, Spec: api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"tun-ipip"}}},
 	}}}
 	data, err := NftablesFirewall(router, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), `elements = { "tun-ipip" }`) {
+	if !strings.Contains(string(data), "set if_tunnel {") || !strings.Contains(string(data), `elements = { "tun-ipip" }`) || !strings.Contains(string(data), "iifname @if_tunnel jump tunnel_to_self") {
 		t.Fatalf("TunnelInterface zone lost its kernel name:\n%s", data)
 	}
 }
