@@ -25,7 +25,9 @@ ip -6 route show dev "$management_iface" | grep -q '^fe80::/64' || {
  echo "management interface has no link-local IPv6 route: $management_iface" >&2
  exit 2
 }
-for x in ip ss nft curl jq python3 dig busybox dnsmasq dhcpcd systemctl journalctl timeout; do command -v "$x" >/dev/null; done
+for x in ip ss nft curl jq python3 dig busybox dnsmasq dhcpcd resolvectl systemctl journalctl timeout; do command -v "$x" >/dev/null; done
+systemctl is-active --quiet systemd-resolved
+test "$(readlink -f /etc/resolv.conf)" = /run/systemd/resolve/stub-resolv.conf
 test -r /proc/sys/net/netfilter/nf_conntrack_count
 test -x "$package_root/install.sh"
 test -x "$package_root/uninstall.sh"
@@ -33,8 +35,10 @@ test -x "$package_root/bin/routerd"
 test -x "$package_root/bin/routerctl"
 export LD_LIBRARY_PATH="$fixture/usr/lib/x86_64-linux-gnu"
 kea=$fixture/usr/sbin/kea-dhcp6
+kea4=$fixture/usr/sbin/kea-dhcp4
 rdisc=$fixture/usr/bin/rdisc6
 "$kea" -v
+"$kea4" -v
 test "$(stat -c %u "$rdisc")" = 0
 lan_ns=rd15-client
 wan_ns=rd15-upstream
@@ -89,6 +93,7 @@ installed=0
 dhcp_pid=
 dhcp6_pid=
 peer_kea_pid=
+peer_kea4_pid=
 peer_http_pid=
 peer_dns_pid=
 client_http_pid=
@@ -107,6 +112,10 @@ start_kea() {
  ip netns exec "$wan_ns" "$kea" -d -c "$work/kea.json" >> "$work/kea.log" 2>&1 &
  peer_kea_pid=$!
 }
+start_kea4() {
+ ip netns exec "$wan_ns" "$kea4" -d -c "$work/kea4.json" >> "$work/kea4.log" 2>&1 &
+ peer_kea4_pid=$!
+}
 finish() {
  rc=$?
  trap - EXIT ERR
@@ -118,6 +127,9 @@ finish() {
    ip -j addr show dev rd15-lan > "$work/failure-router-addresses.json" 2>&1 || true
    ip -j addr show dev rd15-wan > "$work/failure-wan-addresses.json" 2>&1 || true
    ip -4 route show table main | head -40 > "$work/failure-host-ipv4-routes.txt" 2>&1 || true
+   resolvectl status rd15-wan > "$work/failure-wan-dns.txt" 2>&1 || true
+   cp /var/lib/routerd/dhcpv4-client/wan/lease.json "$work/failure-wan-dhcp4-lease.json" 2>/dev/null || true
+   tail -100 "$work/kea4.log" > "$work/failure-kea4.txt" 2>/dev/null || true
    ip -6 route show table main | head -40 > "$work/failure-host-ipv6-routes.txt" 2>&1 || true
    ip -6 neigh show dev rd15-wan > "$work/failure-host-ipv6-neighbors.txt" 2>&1 || true
    timeout 5 nft list table inet routerd_filter | head -200 > "$work/failure-firewall.txt" 2>&1 || true
@@ -168,6 +180,7 @@ JSON
  stop_pid "$dhcp6_pid"
  stop_pid "$dhcp_pid"
  stop_pid "$peer_kea_pid"
+ stop_pid "$peer_kea4_pid"
  stop_pid "$peer_http_pid"
  stop_pid "$peer_dns_pid"
  stop_pid "$client_http_pid"
@@ -251,6 +264,16 @@ cat > "$work/kea.json" <<EOF
 }}
 EOF
 ip netns exec "$wan_ns" "$kea" -t "$work/kea.json"
+cat > "$work/kea4.json" <<EOF
+{"Dhcp4": {
+ "interfaces-config":{"interfaces":["peer0"]},
+ "lease-database":{"type":"memfile","persist":false,"name":"$work/leases4.csv"},
+ "renew-timer":20,"rebind-timer":40,"valid-lifetime":90,
+ "subnet4":[{"id":16,"subnet":"198.18.16.0/24","interface":"peer0","pools":[{"pool":"198.18.16.2-198.18.16.2"}],
+ "option-data":[{"name":"routers","data":"198.18.16.1"},{"name":"domain-name-servers","data":"198.18.16.1"}]}]
+}}
+EOF
+ip netns exec "$wan_ns" "$kea4" -t "$work/kea4.json"
 cat > "$work/peer_http.py" <<'PY'
 import socket
 import threading
@@ -266,18 +289,20 @@ threading.Event().wait()
 PY
 export LD_LIBRARY_PATH
 start_kea
+start_kea4
 ip netns exec "$wan_ns" python3 "$work/peer_http.py" > "$work/peer-http.log" 2>&1 &
 peer_http_pid=$!
-ip netns exec "$wan_ns" dnsmasq --keep-in-foreground --conf-file=/dev/null --user=root --no-resolv --bind-dynamic --interface=peer0 --interface=lo --listen-address=198.18.17.1 --listen-address=2001:db8:17::1 --address=/peer.test/198.18.17.1 --address=/peer.test/2001:db8:17::1 > "$work/peer-dns.log" 2>&1 &
+ip netns exec "$wan_ns" dnsmasq --keep-in-foreground --conf-file=/dev/null --user=root --no-resolv --bind-dynamic --interface=peer0 --interface=lo --listen-address=198.18.16.1 --listen-address=198.18.17.1 --listen-address=2001:db8:17::1 --address=/peer.test/198.18.17.1 --address=/peer.test/2001:db8:17::1 > "$work/peer-dns.log" 2>&1 &
 peer_dns_pid=$!
 for _ in {1..15}; do
- if kill -0 "$peer_kea_pid" 2>/dev/null && ip netns exec "$wan_ns" ss -unl | grep -q ':547 ' && ip netns exec "$wan_ns" curl --noproxy '*' --silent --fail --max-time 1 'http://[2001:db8:17::1]:8080/' >/dev/null; then break; fi
+ if kill -0 "$peer_kea_pid" 2>/dev/null && kill -0 "$peer_kea4_pid" 2>/dev/null && ip netns exec "$wan_ns" ss -unl | grep -q ':547 ' && ip netns exec "$wan_ns" ss -unl | grep -q ':67 ' && ip netns exec "$wan_ns" curl --noproxy '*' --silent --fail --max-time 1 'http://[2001:db8:17::1]:8080/' >/dev/null; then break; fi
  sleep 1
 done
 ip netns exec "$wan_ns" ss -unl | grep ':547 '
 ip netns exec "$wan_ns" curl --noproxy '*' --fail --max-time 2 'http://[2001:db8:17::1]:8080/'
 test "$(ip netns exec "$wan_ns" dig +short +time=2 +tries=1 @2001:db8:17::1 peer.test AAAA)" = 2001:db8:17::1
 test "$(ip netns exec "$wan_ns" dig +short +time=2 +tries=1 @198.18.17.1 peer.test A)" = 198.18.17.1
+test "$(ip netns exec "$wan_ns" dig +short +time=2 +tries=1 @198.18.16.1 peer.test A)" = 198.18.17.1
 printf 'Environment fixtures ready: Kea, dual-stack HTTP/DNS peers, and WAN return routes.\n'
 install -D -m 0600 "$effective_candidate" /usr/local/etc/routerd/router.yaml
 installed=1
@@ -286,6 +311,20 @@ test "$(/usr/local/sbin/routerd --version)" = "$package_version"
 systemctl is-active --quiet routerd.service
 /usr/local/sbin/routerd validate --config /usr/local/etc/routerd/router.yaml
 /usr/local/sbin/routerctl apply -f "$effective_candidate" --replace > "$work/apply.txt"
+wan4_lease=/var/lib/routerd/dhcpv4-client/wan/lease.json
+for _ in {1..45}; do
+ if jq -e '.state == "Bound" and .currentAddress == "198.18.16.2"' "$wan4_lease" >/dev/null 2>&1 &&
+    ip -4 -j addr show dev rd15-wan | jq -e 'any(.[0].addr_info[]?; .local == "198.18.16.2" and .prefixlen == 24)' >/dev/null &&
+    ip -4 -j route show default | jq -e 'any(.[]; .gateway == "198.18.16.1" and .dev == "rd15-wan" and .metric == 4242)' >/dev/null &&
+    resolvectl dns rd15-wan | grep -q '198.18.16.1' && resolvectl domain rd15-wan | grep -q '~\.'; then break; fi
+ sleep 1
+done
+jq -e '.state == "Bound" and .currentAddress == "198.18.16.2"' "$wan4_lease" >/dev/null
+ip -4 -j route show default | jq -e 'any(.[]; .gateway == "198.18.16.1" and .dev == "rd15-wan" and .metric == 4242)' >/dev/null
+resolvectl dns rd15-wan | grep '198.18.16.1'
+resolvectl domain rd15-wan | grep '~\.'
+wan4_initial_acquired=$(jq -r .acquiredAt "$wan4_lease")
+printf 'PASS: WAN DHCPv4 acquisition supplies the address, metric-qualified route and DNS to the clean-installed dual-stack router\n'
 cat > "$work/udhcpc-hook" <<EOF
 #!/bin/sh
 set -eu
@@ -498,6 +537,12 @@ for _ in {1..90}; do
 done
 grep '^renew ' "$work/dhcpv4-events.txt" > "$work/dhcpv4-renew.txt"
 printf 'PASS: DHCPv4 client renewed the active lease without restart\n'
+for _ in {1..50}; do
+ if jq -e --arg first "$wan4_initial_acquired" '.state == "Bound" and .acquiredAt > $first' "$wan4_lease" >/dev/null 2>&1; then break; fi
+ sleep 1
+done
+jq -e --arg first "$wan4_initial_acquired" '.state == "Bound" and .acquiredAt > $first' "$wan4_lease" >/dev/null
+printf 'PASS: WAN DHCPv4 T1 renewal advances the acknowledged lease while IPv6 PD/RA remains active\n'
 # Both families must fail when the independent WAN peer is disconnected and
 # recover after the same link returns.
 ip netns exec "$wan_ns" ip link set peer0 down
@@ -612,10 +657,12 @@ done
 jq -e '.status.phase == "Healthy" and (.status.resourceCount // 0) == 0 and ((.status.resourcePhaseIssues // []) | length) == 0 and all(.status.controllers[]?; (.currentError // "") == "")' "$work/empty-status.json" >/dev/null
 if ip -4 addr show dev rd15-lan | grep -q '198.18.15.1/'; then echo 'LAN IPv4 address survived withdrawal' >&2; exit 1; fi
 if ip -4 addr show dev rd15-wan | grep -q '198.18.16.2/'; then echo 'WAN IPv4 address survived withdrawal' >&2; exit 1; fi
+if resolvectl dns rd15-wan | grep -q '198.18.16.1'; then echo 'WAN DHCP DNS survived withdrawal' >&2; exit 1; fi
+if resolvectl domain rd15-wan | grep -q '~\.'; then echo 'WAN DHCP routing domain survived withdrawal' >&2; exit 1; fi
 if ip -6 addr show dev rd15-lan | grep -q '2001:db8:1501::1/64'; then echo 'LAN IPv6 address survived withdrawal' >&2; exit 1; fi
 if ip -4 route show default | grep -Fq 'via 198.18.16.1'; then echo 'test IPv4 default route survived withdrawal' >&2; exit 1; fi
 ip -6 route show default | grep -F 'via 2001:db8:16::1 dev rd15-wan' >/dev/null || { echo 'routerd withdrawal changed the fixture-owned IPv6 upstream route' >&2; exit 1; }
 if ip netns exec "$lan_ns" curl --noproxy '*' --fail --silent --max-time 2 http://198.18.17.1:8080/; then echo 'IPv4 traffic survived config withdrawal' >&2; exit 1; fi
 if ip netns exec "$lan_ns" curl --noproxy '*' --fail --silent --max-time 2 'http://[2001:db8:17::1]:8080/'; then echo 'IPv6 traffic survived config withdrawal' >&2; exit 1; fi
 printf 'PASS: 1.5 empty-config withdrawal removes IPv4/IPv6 resources and traffic paths\n'
-printf 'PASS: clean-install home-router lifecycle: DHCPv4 renew, DHCPv6 IA_NA, DNS UDP/TCP, NAT44, DHCPv6-PD renew/renumber/expiry/reacquire, RA/SLAAC, IPv6 forwarding, restart, upstream loss/return and withdrawal\n'
+printf 'PASS: clean-install home-router lifecycle: WAN DHCPv4 acquire/renew/withdrawal, LAN DHCPv4 renew, DHCPv6 IA_NA, DNS UDP/TCP, NAT44, DHCPv6-PD renew/renumber/expiry/reacquire, RA/SLAAC, IPv6 forwarding, restart, upstream loss/return and withdrawal\n'

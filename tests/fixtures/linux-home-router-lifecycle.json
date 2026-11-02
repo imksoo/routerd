@@ -55,13 +55,16 @@
       },
       {
         "apiVersion": "net.routerd.net/v1alpha1",
-        "kind": "IPv4StaticAddress",
+        "kind": "DHCPv4Client",
         "metadata": {
-          "name": "wan-v4"
+          "name": "wan"
         },
         "spec": {
           "interface": "wan",
-          "address": "198.18.16.2/24"
+          "hostname": "rd15-wan",
+          "useRoutes": true,
+          "useDNS": true,
+          "routeMetric": 4242
         }
       },
       {
@@ -73,18 +76,6 @@
         "spec": {
           "key": "net.ipv4.ip_forward",
           "value": "1"
-        }
-      },
-      {
-        "apiVersion": "net.routerd.net/v1alpha1",
-        "kind": "IPv4Route",
-        "metadata": {
-          "name": "default-v4"
-        },
-        "spec": {
-          "destination": "0.0.0.0/0",
-          "device": "rd15-wan",
-          "gateway": "198.18.16.1"
         }
       },
       {
@@ -237,7 +228,12 @@
         },
         "spec": {
           "protocol": "udp",
-          "address": "2001:db8:17::1"
+          "addressFrom": [
+            {
+              "resource": "DHCPv4Client/wan",
+              "field": "dnsServers"
+            }
+          ]
         }
       },
       {
