@@ -3375,7 +3375,8 @@
           "linux-dhcp-firewall-lifecycle-5431ad2a",
           "linux-dhcpv4-reservation-lifecycle-329dfd9c",
           "linux-pve-home-integration-2a43a0e8",
-          "linux-pve-dns-forward-withdrawal-409719ba"
+          "linux-pve-dns-forward-withdrawal-409719ba",
+          "linux-pve-dns-forward-withdrawal-5d71ee8c"
         ]
       },
       "freebsd": {
@@ -3387,7 +3388,7 @@
       },
       "required_remaining_checks": [
         "All baseline source/query policies, private containment and DNS transports",
-        "Lease update/tombstone/negative replies, runtime changes and restart"
+        "Lease update/tombstone/negative replies and configuration withdrawal"
       ]
     },
     {
