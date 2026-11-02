@@ -927,8 +927,12 @@ Preflight checks:
 The same checks are surfaced by `routerctl doctor mgmt`, which never
 applies anything.
 
-`spec.allowSourceCIDRs` is informational today (recorded in status and
-shown by doctor) and is not yet enforced by the firewall guard.
+On Linux, a non-empty `spec.allowSourceCIDRs` emits an nftables input guard
+for each declared management interface.  The guard accepts IPv4 and IPv6
+sources in the declared CIDRs before the management-zone jump, then logs and
+drops other sources on that interface.  An empty list leaves the management
+zone's ordinary policy unchanged.  This is an admission guard for the router
+itself; it does not alter forwarded traffic.
 
 `--allow-mgmt-lockout` is an **emergency override**, intended for the case
 where you must apply a config that would otherwise be blocked and have a

@@ -1851,6 +1851,24 @@
         "Complete routerd 1.0 functional parity and a whole-feature or whole-platform qualification verdict."
       ]
     },
+    "linux-pve-management-source-guard-54cc8e23": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "54cc8e2310f9f1654a9332524ac4990115101cbc",
+      "reference": "docs/design/routerd15-security-functional-map.md",
+      "source_binding": "routerd SHA-256 25ddd0f63b9c350f77ed89637cfb8fde59cb1e91f7b6929e41940ddfaab0c73b; routerctl SHA-256 20530210d9636b3fe4d81f7d9056a65fd6865205f4cebe60a90538fe483da019.",
+      "environment": "Authorized PVE VLAN 3133. VM219 ran the checksum-verified Linux candidate with fresh test state and ManagementAccess on rd15-admin. Independent VM220 used the same VLAN with allowed source 198.18.63.10/32 and denied source 198.18.63.11/32. VM224 was not involved.",
+      "checks": [
+        "With allowSourceCIDRs set to 198.18.63.10/32, VM220 reached the VM219 HTTP listener from 198.18.63.10. The nftables management allow counter increased.",
+        "From VM220 source 198.18.63.11, the same connection timed out. The nftables management deny counter increased and the VM219 listener received no HTTP request.",
+        "Replacing the valid 1.5 configuration without ManagementAccess reached Healthy and allowed the 198.18.63.11 source to reach the same listener.",
+        "Reapplying the source-restricted configuration reached Healthy, restored 198.18.63.10 access and again timed out 198.18.63.11. VM219 and VM220 were restored to their original binaries, configuration, state and run status; the temporary ISO and test assets were removed."
+      ],
+      "excludes": [
+        "IPv6 source CIDRs, SSH, WebConsole, multiple interfaces or CIDRs, data-plane-fault continuity, existing connections and FreeBSD.",
+        "Complete routerd 1.0 functional parity and a whole-feature or whole-platform qualification verdict."
+      ]
+    },
     "linux-dhcp-firewall-lifecycle-5431ad2a": {
       "level": "independent-peer",
       "outcome": "pass",
@@ -3841,7 +3859,9 @@
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "linux-pve-management-source-guard-54cc8e23"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",
