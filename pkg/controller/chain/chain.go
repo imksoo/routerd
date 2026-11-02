@@ -1191,6 +1191,11 @@ func dnsResolverStatusSubscriptions(router *api.Router) []bus.Subscription {
 	return subs
 }
 
+func dhcpv6InformationSubscriptions() []bus.Subscription {
+	subs := statusSubscriptions("DHCPv6PrefixDelegation")
+	return append(subs, bus.Subscription{Topics: []string{"routerd.dhcpv6.client.info.*"}})
+}
+
 func firewallStatusSubscriptions(router *api.Router) []bus.Subscription {
 	subs := statusSubscriptionsWithWhen(router,
 		[]string{"FirewallZone", "FirewallPolicy", "FirewallRule", "ClientPolicy", "PortForward", "IngressService", "LocalServiceRedirect", "FirewallFlowPinhole"},
@@ -2988,7 +2993,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		r.vxlanSegmentController(store, VXLANSegmentController{StateDir: defaults.StateDir, DryRun: opts.DryRunVXLANTunnel}),
-		framework.FuncController{ControllerName: "dhcpv6-information", Every: 30 * time.Second, Subs: statusSubscriptions("DHCPv6PrefixDelegation"), ReconcileFunc: func(ctx context.Context, event daemonapi.DaemonEvent) error {
+		framework.FuncController{ControllerName: "dhcpv6-information", Every: 30 * time.Second, Subs: dhcpv6InformationSubscriptions(), ReconcileFunc: func(ctx context.Context, event daemonapi.DaemonEvent) error {
 			observation, err := effectiveForReconcile()
 			if err != nil {
 				return err

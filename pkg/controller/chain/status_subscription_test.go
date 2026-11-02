@@ -437,6 +437,16 @@ func TestDNSResolverSubscriptionsKeepLeaseAndDNSEvents(t *testing.T) {
 	}
 }
 
+func TestDHCPv6InformationSubscriptionsIncludeClientInformationReply(t *testing.T) {
+	subs := dhcpv6InformationSubscriptions()
+	if !subscriptionSetAccepts(subs, daemonapi.DaemonEvent{Type: "routerd.dhcpv6.client.info.reply"}) {
+		t.Fatal("dhcpv6-information did not accept DHCPv6 information reply")
+	}
+	if !subscriptionSetAccepts(subs, statusChangedEvent("DHCPv6PrefixDelegation", "wan-pd")) {
+		t.Fatal("dhcpv6-information did not accept DHCPv6 prefix delegation status change")
+	}
+}
+
 func TestFirewallSubscriptionsKeepFirewallEvents(t *testing.T) {
 	subs := firewallStatusSubscriptions(&api.Router{})
 	if !subscriptionSetAccepts(subs, daemonapi.DaemonEvent{
