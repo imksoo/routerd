@@ -67,6 +67,17 @@
     },
     "example_inventory_rule": "examples[] is the exact set of 90 baseline tracked paths. Presence is verified at the pinned current revision; complete semantic/example execution is unknown. Only declared-kind changes are listed separately."
   },
+  "linux_execution_progress": {
+    "as_of_revision": "59a55f8bf93031e5464b5bd7de3fdfaf362708ac",
+    "feature_functions_total": 50,
+    "feature_functions_with_scoped_linux_evidence": 41,
+    "scoped_linux_evidence_references": 141,
+    "feature_functions_fully_qualified": 0,
+    "open_check_statements": 96,
+    "counting_note": "Open check statements are planning items, not a claim of 96 independent packet-level test cases. They are decomposed further before execution when a statement covers multiple protocol or recovery behaviors.",
+    "last_closed_scope": "DHCPv4 active dynamic lease recovery after an interrupted apply on an independent PVE VLAN client",
+    "next_scope": "WAN DHCP client behavior; Linux IPv6, PPPoE, routing, redundancy, and security behavior remain separately tracked in features[].required_remaining_checks."
+  },
   "examples": [
     "examples/README.md",
     "examples/basic-dhcp.yaml",
@@ -2096,6 +2107,21 @@
         "Interrupted-apply recovery, WAN DHCP client behavior, IPv6, FreeBSD, complete routerd 1.0 functional parity, and a whole-feature or whole-platform qualification verdict."
       ]
     },
+    "linux-pve-dhcp-active-lease-interrupted-apply-59a55f8b": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "59a55f8bf93031e5464b5bd7de3fdfaf362708ac",
+      "reference": "evidence/routerd15-59a55f8b-dhcp-active-lease-interrupted-apply-pve-20261102.md",
+      "environment": "Authorized PVE VLAN 3131 with VM219 candidate and independent VM224 BusyBox DHCP client.",
+      "checks": [
+        "An in-flight routerctl apply was interrupted by SIGKILL to the routerd main process. The client reported an unconfirmed outcome rather than success.",
+        "Systemd restarted routerd once. The previously committed DNS configuration was present, the interrupted DNS record was absent, and routerd-dnsmasq again listened on UDP/67.",
+        "VM224 retained its active DHCPv4 lease and completed an independent forced renewal with the same address, gateway, DNS server, domain, and 120-second lease."
+      ],
+      "excludes": [
+        "WAN DHCP client behavior, server identity changes, multiple WANs, IPv6, FreeBSD, complete routerd 1.0 functional parity, and a whole-feature or whole-platform qualification verdict."
+      ]
+    },
     "linux-pve-home-integration-2a43a0e8": {
       "level": "independent-peer",
       "outcome": "pass",
@@ -3203,6 +3229,7 @@
           "linux-dhcpv4-expiry-conflict-pve-6420b8ba",
           "linux-pve-dhcp-dns-nat-withdrawal-3763f102",
           "linux-pve-dhcp-active-lease-reboot-3763f102",
+          "linux-pve-dhcp-active-lease-interrupted-apply-59a55f8b",
           "linux-pve-home-integration-2a43a0e8"
         ]
       },
@@ -3211,7 +3238,7 @@
         "scoped_evidence": []
       },
       "required_remaining_checks": [
-        "Interrupted-apply recovery with active dynamic leases and WAN DHCP client behavior"
+        "WAN DHCP client behavior, including reboot, NAK, server identity changes, multiple WANs, and remaining baseline options or peer modes"
       ]
     },
     {
@@ -3321,8 +3348,7 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-pd-ra-lifecycle-1ff438ee",
-          "linux-pve-pd-ra-lifecycle-905e0537",
-          "linux-pve-pd-ra-lifecycle-4f11316e"
+          "linux-pve-pd-ra-lifecycle-905e0537"
         ]
       },
       "freebsd": {
@@ -3499,7 +3525,6 @@
           "linux-dhcpv4-reservation-lifecycle-329dfd9c",
           "linux-pve-home-integration-2a43a0e8",
           "linux-pve-dns-forward-withdrawal-409719ba",
-          "linux-pve-dns-forward-withdrawal-5d71ee8c",
           "linux-pve-dns-three-vm-vlan-485b0f7b",
           "linux-pve-dhcp-dns-nat-withdrawal-3763f102"
         ]
