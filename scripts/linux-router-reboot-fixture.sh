@@ -144,8 +144,8 @@ HOOK
   client=$(wait_for_lease)
   ip netns exec rd15-lan-peer ip -4 -j addr show dev peer0 | jq -e --arg ip "$client" '.[0].addr_info | any(.local==$ip)' >/dev/null
   for mode in +notcp +tcp; do
-   test "$(ip netns exec rd15-lan-peer dig +time=1 +tries=1 +short "$mode" @198.18.15.1 router.home.arpa A)" = 198.18.15.1
-   test "$(ip netns exec rd15-lan-peer dig +time=1 +tries=1 +short "$mode" @198.18.15.1 peer.test A)" = 198.18.16.1
+   test "$(ip netns exec rd15-lan-peer dig +time=5 +tries=1 +short "$mode" @198.18.15.1 router.home.arpa A)" = 198.18.15.1
+   test "$(ip netns exec rd15-lan-peer dig +time=5 +tries=1 +short "$mode" @198.18.15.1 peer.test A)" = 198.18.16.1
   done
   test "$(ip netns exec rd15-lan-peer curl --noproxy '*' --fail --silent --max-time 2 http://198.18.16.1:8080/forward)" = 198.18.16.2
   test "$(ip netns exec rd15-admin-peer curl --noproxy '*' --fail --silent --max-time 2 "http://$client:8080/control")" = 198.18.17.2
@@ -160,7 +160,7 @@ HOOK
   if ip netns exec rd15-lan-peer curl --noproxy '*' --fail --silent --max-time 2 "http://198.18.17.2:8080/$tag"; then echo 'LAN leaked into management' >&2; exit 1; fi
   if grep -Fq "/$tag " "$work/admin-http.log"; then echo 'denied packet reached management' >&2; exit 1; fi
   for mode in +notcp +tcp; do
-   if ip netns exec rd15-wan-peer dig +time=1 +tries=1 "$mode" @198.18.15.1 router.home.arpa A > "$work/denied-dns" 2>&1; then echo 'WAN reached DNS' >&2; exit 1; fi
+   if ip netns exec rd15-wan-peer dig +time=5 +tries=1 "$mode" @198.18.15.1 router.home.arpa A > "$work/denied-dns" 2>&1; then echo 'WAN reached DNS' >&2; exit 1; fi
   done
   echo 'PASS: WAN/LAN/management and DNS isolation'
   ;;

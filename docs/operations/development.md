@@ -709,6 +709,13 @@ management access. The fixture changes only guest networking and creates a
 boot unit for the router's external test ports. It does not create hypervisor
 networks. Do not use a segment whose VLAN IDs collide with other work.
 
+The reboot fixture's DNS source has the default three-second per-upstream query
+deadline. Its independent-client DNS probes use a five-second `dig` deadline so
+the test client does not abandon a query that the resolver is still allowed to
+complete. This is not a DNS latency target: a timeout, SERVFAIL, empty answer or
+wrong address still fails the positive probe, and any DNS response still fails
+the WAN-isolation probe.
+
 Extract the current Linux `make dist` package on the router VM and install it
 from that package directory with `sudo ./install.sh --no-install-deps --enable-service`.
 Do this on a clean VM with no existing routerd binary,
