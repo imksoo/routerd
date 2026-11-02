@@ -116,6 +116,14 @@ routerd_service_has_ownership_marker()
     grep -Fqx '# routerd-managed-service: v1' "${service_path}"
 }
 
+routerd_generated_service_has_ownership_marker()
+{
+    service_path=$1
+    [ -f "${service_path}" ] || return 1
+    grep -Fqx '# Managed by routerd. Do not edit by hand.' "${service_path}" ||
+        grep -Fqx '# Managed by routerd.' "${service_path}"
+}
+
 manage_owned_service_artifact()
 {
     service_path=$1
@@ -154,6 +162,26 @@ case "${os}" in
         fi
         if [ "${manage_host_service}" -eq 1 ]; then
             rm_path "${systemd_system_dir}/routerd.service"
+
+            for service_path in "${systemd_system_dir}"/routerd-*.service; do
+                if [ ! -e "${service_path}" ] && [ ! -L "${service_path}" ]; then
+                    continue
+                fi
+                unit_name=${service_path##*/}
+                if routerd_generated_service_has_ownership_marker "${service_path}"; then
+                    if command -v systemctl >/dev/null 2>&1; then
+                        run systemctl disable --now "${unit_name}"
+                    else
+                        echo "cannot stop owned ${unit_name}: systemctl is unavailable" >&2
+                        exit 1
+                    fi
+                    rm_path "${service_path}"
+                    service_artifact_present=1
+                else
+                    echo "preserving foreign systemd service: ${service_path}" >&2
+                fi
+            done
+
             if [ "${service_artifact_present}" -eq 1 ]; then
                 run systemctl daemon-reload
             fi

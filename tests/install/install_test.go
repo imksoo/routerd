@@ -908,6 +908,86 @@ exec /bin/rm "$@"
 	}
 }
 
+func TestUninstallStopsOwnedGeneratedSystemdUnits(t *testing.T) {
+	requireLinuxSystemdFixture(t)
+	dir := t.TempDir()
+	prefix := filepath.Join(dir, "prefix")
+	systemdDir := filepath.Join(dir, "systemd")
+	binDir := filepath.Join(dir, "bin")
+	commandLog := filepath.Join(dir, "systemctl.log")
+	for _, name := range []string{
+		"routerd.service",
+		"routerd-dns-resolver@lan.service",
+		"routerd-dhcpv6-client@wan-pd.service",
+		"routerd-dnsmasq.service",
+	} {
+		path := filepath.Join(systemdDir, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		marker := "# Managed by routerd. Do not edit by hand.\n"
+		if name == "routerd.service" {
+			marker = "# routerd-managed-service: v1\n"
+		}
+		if err := os.WriteFile(path, []byte(marker+"[Service]\nRestart=always\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	foreign := filepath.Join(systemdDir, "routerd-foreign@operator.service")
+	if err := os.WriteFile(foreign, []byte("[Service]\nExecStart=/operator/owned\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeExecutable(t, filepath.Join(binDir, "uname"), "#!/bin/sh\necho Linux\n")
+	writeExecutable(t, filepath.Join(binDir, "systemctl"), fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$*\" >> %q\nexit 0\n", commandLog))
+	writeExecutable(t, filepath.Join(binDir, "rm"), `#!/bin/sh
+for arg in "$@"; do
+  case "$arg" in /run/routerd|/var/run/routerd) exit 0 ;; esac
+done
+exec /bin/rm "$@"
+`)
+
+	cmd := exec.Command(filepath.Join(repoRoot(t), "packaging", "uninstall.sh"), "--prefix", prefix, "--yes")
+	cmd.Env = append(os.Environ(),
+		"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"ROUTERD_UNINSTALL_FORCE_SERVICE_MANAGER=1",
+		"ROUTERD_UNINSTALL_SYSTEMD_SYSTEM_DIR="+systemdDir,
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("uninstall failed: %v\n%s", err, out)
+	}
+	for _, name := range []string{
+		"routerd.service",
+		"routerd-dns-resolver@lan.service",
+		"routerd-dhcpv6-client@wan-pd.service",
+		"routerd-dnsmasq.service",
+	} {
+		if _, err := os.Lstat(filepath.Join(systemdDir, name)); !os.IsNotExist(err) {
+			t.Errorf("owned systemd unit remains: %s (err=%v)", name, err)
+		}
+	}
+	if _, err := os.Stat(foreign); err != nil {
+		t.Errorf("foreign systemd unit was removed: %v", err)
+	}
+	commands, err := os.ReadFile(commandLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"disable --now routerd.service",
+		"disable --now routerd-dns-resolver@lan.service",
+		"disable --now routerd-dhcpv6-client@wan-pd.service",
+		"disable --now routerd-dnsmasq.service",
+		"daemon-reload",
+	} {
+		if !strings.Contains(string(commands), want) {
+			t.Errorf("systemd cleanup command missing %q:\n%s", want, commands)
+		}
+	}
+	if strings.Contains(string(commands), "routerd-foreign@operator.service") {
+		t.Errorf("foreign unit was passed to systemctl:\n%s", commands)
+	}
+}
+
 func TestInstallDryRunCreatesRouterdGroupBeforeSystemdUnit(t *testing.T) {
 	requireLinuxSystemdFixture(t)
 	dir := t.TempDir()
