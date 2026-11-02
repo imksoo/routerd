@@ -709,6 +709,14 @@ management access. The fixture changes only guest networking and creates a
 boot unit for the router's external test ports. It does not create hypervisor
 networks. Do not use a segment whose VLAN IDs collide with other work.
 
+If management and the isolated trunk use separate NICs, pass the trunk NIC to
+`setup-router` and `setup-peer`. Configure that trunk to come up at boot using
+the guest's network manager, without adding a test-subnet address to its parent.
+Before the first apply, set `Interface/management.spec.ifname` in the generated
+`candidate.json` to the actual management NIC and validate the candidate again.
+The generated admin zone already references that resource. This keeps management
+access in the intended firewall zone while test VLANs remain on the trunk.
+
 The reboot fixture's DNS source has the default three-second per-upstream query
 deadline. Its independent-client DNS probes use a five-second `dig` deadline so
 the test client does not abandon a query that the resolver is still allowed to
@@ -787,3 +795,14 @@ and removes its namespaces. Router setup records the initial
 fixture. These actions delete the temporary raw output.
 Retain the procedure, revisions and verdict instead. This gate does not prove
 power-loss durability, every possible interruption point, or IPv6 reboot.
+
+Latest scoped run: Linux package `603126ea073f6d8e4ce3729975a2e97411d36850`
+passed fresh installation, independent-client DNS A over UDP/TCP, NAT and
+management/isolation checks, then router reboot, main-process SIGKILL and an
+apply interrupted after canonical replacement before the client response.
+All three recovery phases retained the peer boot ID and DHCP PID and observed
+an actual renewal of the same lease. The interrupted apply returned failure;
+automatic recovery served its new DNS record. A reboot capture paired the
+client's first upstream query with the upstream reply and client response.
+This scoped result does not establish the cause of the earlier one-second
+probe failure or qualify IPv6 reboot or full 1.0 preservation.

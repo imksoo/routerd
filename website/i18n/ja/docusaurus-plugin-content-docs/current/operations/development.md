@@ -532,6 +532,18 @@ Python HTTP server、curl、dig を使います。両方に iproute2、jq、syst
 管理経路が必要です。ゲストの試験ポート用 boot unit を作成します。hypervisor の
 ネットワーク設定は変更しません。
 
+管理 NIC と隔離 trunk が別の場合、`setup-router` と `setup-peer` には trunk NIC を
+渡します。ゲストの network manager で trunk を起動時に up にし、親 NIC には試験用
+サブネットのアドレスを付けません。初回 apply 前に生成された `candidate.json` の
+`Interface/management.spec.ifname` を実際の管理 NIC に設定し、再度 validate します。
+生成済みの admin zone はこの resource を参照するため、管理経路と試験 VLAN を
+それぞれ適切な NIC に割り当てられます。
+
+上流 DNS の問い合わせ期限は既定で3秒です。`dig` は5秒待ち、resolver が許容された
+期限内に応答する前に試験クライアントが諦めることを防ぎます。応答時間の目標値では
+ありません。正対照は timeout・SERVFAIL・空応答・誤ったアドレスで失敗し、WAN からの
+遮断試験は DNS 応答があれば失敗します。
+
 router VM は routerd の binary・設定・DB がない clean state とし、1.5 形式に整えた設定を
 用意します。現在の Linux `make dist` パッケージを展開して
 `sudo ./install.sh --no-install-deps --enable-service` で導入します。
@@ -588,6 +600,15 @@ isolation は client 失敗と対向 HTTP ログへの非到達、WAN DNS 遮断
 fixture を撤去してから同じ値に戻します。一時出力は削除されます。残すのは手順・revision・判定です。
 電源断の永続性、全中断位置、IPv6 再起動はこの試験の対象外です。
 
+
+直近の限定検証では Linux 正式パッケージ `603126ea073f6d8e4ce3729975a2e97411d36850`
+の新規導入、独立クライアントの DNS A（UDP/TCP）、NAT、管理経路と遮断を確認しました。
+router 再起動、main process の SIGKILL、設定ファイル置換後かつ応答前の apply 中断の
+3経路とも自動復旧し、peer の boot ID・DHCP PID は同一のまま、同じ lease の実更新を
+確認しました。中断 apply は失敗応答となり、復旧後は追加 DNS record が引けました。
+再起動後の最初の上流問い合わせは client query・upstream reply・client response を
+capture で対応付けました。過去の1秒 probe 失敗の原因、IPv6 再起動、1.0 全機能維持を
+証明する結果ではありません。
 
 ## Linux WAN RA/SLAAC ライフサイクル試験
 

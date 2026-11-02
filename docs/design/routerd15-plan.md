@@ -51,8 +51,12 @@ routerd 1.0 baseline: `e3b49dbb69c7de97bab9595884745eb7cbe93d92`.
   three- and five-second client deadlines succeeded. Commit `603126ea` changes
   the reboot probe to five seconds, allowing the configured three-second
   upstream query deadline to complete. This does not identify the cause of the
-  earlier PVE observation. The current-revision independent-peer reboot check
-  is still required before closing this item.
+  earlier PVE observation. The independent-peer Linux campaign at `603126ea`
+  subsequently passed fresh install, DNS UDP/TCP, NAT, isolation, router reboot,
+  SIGKILL and interrupted apply, with unchanged peer identity and actual renewal
+  after each interruption. The reboot capture paired the first upstream query
+  through its reply to the client. This current scoped path is qualified;
+  broader dual-stack and 1.0 preservation checks remain open.
 
 ## Work sequence
 
