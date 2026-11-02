@@ -50,6 +50,22 @@ func TestReconcileWritesConfigButRemainsDegradedWhenSocketMissing(t *testing.T) 
 	}
 }
 
+func TestAttachForwardersResolvesUpstreamSourceInterface(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "rd15-wan"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.DNSResolverSpec{}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSForwarder"}, Metadata: api.ObjectMeta{Name: "upstream"}, Spec: api.DNSForwarderSpec{Resolver: "DNSResolver/lan", Match: []string{"."}, Upstreams: []string{"DNSUpstream/peer"}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSUpstream"}, Metadata: api.ObjectMeta{Name: "peer"}, Spec: api.DNSUpstreamSpec{Protocol: "udp", Address: "198.51.100.53", SourceInterface: "wan"}},
+	}}}
+	resolved, err := (Controller{Router: router}).attachForwarders("lan", api.DNSResolverSpec{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resolved.Sources) != 1 || resolved.Sources[0].ViaInterface != "rd15-wan" {
+		t.Fatalf("resolved sources = %#v", resolved.Sources)
+	}
+}
+
 func TestRuntimeConfigCapturesStickyDNSMasqHosts(t *testing.T) {
 	dir := t.TempDir()
 	runtimeDir := filepath.Join(dir, "run")

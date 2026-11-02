@@ -517,7 +517,11 @@ func (c Controller) attachForwarders(resolverName string, spec api.DNSResolverSp
 					source.BootstrapResolverFrom = append(source.BootstrapResolverFrom, requiredFieldStatusValueSources(upstream.BootstrapFrom)...)
 				}
 				if source.ViaInterface == "" && strings.TrimSpace(upstream.SourceInterface) != "" {
-					source.ViaInterface = upstream.SourceInterface
+					ifname, err := dnsUpstreamSourceIfName(c.Router, upstream.SourceInterface)
+					if err != nil {
+						return spec, fmt.Errorf("DNSUpstream/%s: %w", name, err)
+					}
+					source.ViaInterface = ifname
 				}
 			}
 		}
@@ -528,6 +532,42 @@ func (c Controller) attachForwarders(resolverName string, spec api.DNSResolverSp
 	}
 	spec.Sources = sources
 	return spec, nil
+}
+
+// dnsUpstreamSourceIfName resolves the configuration resource reference to the
+// kernel device name required by the resolver's socket binding. The public
+// DNSUpstream contract deliberately refers to Interface or WireGuardInterface
+// resources, rather than leaking their OS-specific names into configuration.
+func dnsUpstreamSourceIfName(router *api.Router, reference string) (string, error) {
+	if router == nil {
+		return "", fmt.Errorf("sourceInterface %q has no router", reference)
+	}
+	name := refName(reference)
+	for _, resource := range router.Spec.Resources {
+		if resource.Metadata.Name != name {
+			continue
+		}
+		switch resource.Kind {
+		case "Interface":
+			spec, err := resource.InterfaceSpec()
+			if err != nil {
+				return "", err
+			}
+			if ifname := strings.TrimSpace(spec.IfName); ifname != "" {
+				return ifname, nil
+			}
+		case "WireGuardInterface":
+			spec, err := resource.WireGuardInterfaceSpec()
+			if err != nil {
+				return "", err
+			}
+			if ifname := strings.TrimSpace(spec.IfName); ifname != "" {
+				return ifname, nil
+			}
+			return name, nil
+		}
+	}
+	return "", fmt.Errorf("sourceInterface %q has no kernel device", reference)
 }
 
 func dnsUpstreamURL(spec api.DNSUpstreamSpec, address string) (string, error) {
