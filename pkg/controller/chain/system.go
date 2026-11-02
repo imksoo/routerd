@@ -493,6 +493,7 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 		} else if err := c.cleanupStaleClientDaemonUnits(ctx, command); err != nil {
 			return err
 		}
+		firewallLoggerEnabled := false
 		for _, resource := range c.Router.Spec.Resources {
 			if resource.Kind != "TailscaleNode" {
 				continue
@@ -684,6 +685,7 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 			if !spec.Enabled {
 				continue
 			}
+			firewallLoggerEnabled = true
 			dpiSocket := ""
 			if render.RouterWantsDPIClassifier(c.Router) {
 				dpiSocket = "/run/routerd/dpi-classifier/default.sock"
@@ -691,6 +693,11 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 			unit := render.FirewallLoggerSystemdSpec(spec, dpiSocket)
 			unit.Environment = mergeStringEnvs(unit.Environment, telemetryEnv)
 			if err := c.reconcileSyntheticSystemdHelperUnit(ctx, "routerd-firewall-logger.service", "FirewallEventLog/"+resource.Metadata.Name, unit, command); err != nil {
+				return err
+			}
+		}
+		if !firewallLoggerEnabled {
+			if err := c.cleanupLongLivedSystemdHelperUnit(ctx, "routerd-firewall-logger.service", "FirewallEventLog", command); err != nil {
 				return err
 			}
 		}
