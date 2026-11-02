@@ -245,6 +245,18 @@ func TestAppliedPeerRestoresDefaultActiveMode(t *testing.T) {
 	}
 }
 
+func TestAppliedPeerSeparatesExplicitRemotePort(t *testing.T) {
+	for input, address := range map[string]string{
+		"198.18.16.1:179":   "198.18.16.1",
+		"[2001:db8::1]:179": "2001:db8::1",
+	} {
+		peer := appliedPeer(bgpdaemon.AppliedPeer{Address: input, ASN: 64501}, bgpdaemon.AppliedGlobal{ASN: 64500})
+		if peer.GetConf().GetNeighborAddress() != address || peer.GetTransport().GetRemotePort() != 179 {
+			t.Fatalf("applied peer for %q = %#v", input, peer)
+		}
+	}
+}
+
 func TestAppliedPoliciesRestorePeerImportPolicyWithCommunities(t *testing.T) {
 	scopeName := "routerd-restore-import-effective-peer-10-99-0-2"
 	plan := bgpdaemon.BuildPolicyPlan(bgpdaemon.PolicyIntent{RouterName: "restore", Scopes: []bgpdaemon.PolicyScope{{
