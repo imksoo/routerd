@@ -33,10 +33,6 @@ func listenDHCPv4(ifname string) (dhcpv4PacketConn, error) {
 		_ = unix.Close(broadcastFD)
 		return nil, err
 	}
-	if err := unix.SetsockoptInt(broadcastFD, unix.SOL_SOCKET, unix.SO_BROADCAST, 1); err != nil {
-		_ = unix.Close(broadcastFD)
-		return nil, err
-	}
 	if err := bindSocketToDevice(broadcastFD, ifname); err != nil {
 		_ = unix.Close(broadcastFD)
 		return nil, err
