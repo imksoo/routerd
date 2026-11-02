@@ -25,9 +25,16 @@ routerd 1.0 baseline: `e3b49dbb69c7de97bab9595884745eb7cbe93d92`.
 - `origin/main` is `e3b49dbb69c7de97bab9595884745eb7cbe93d92`; the active proposal
   is PR #1365. Its checks pass for the submitted revision, but it is a 1,490-file
   rewrite and is not a functional-parity verdict.
-- Independent open PRs #1366–#1369 cover DHCPv4 relay source selection,
+- Open main-based PRs #1366–#1369 cover DHCPv4 relay source selection,
   PortForward dataplane tests, firewall dataplane tests, and FreeBSD artifact
-  plans. Read their current diffs and avoid duplicating their scope.
+  plans. Their open status does not establish an integration gap in this branch.
+  Relay source selection is already implemented here by `1195c7fc`, including
+  runtime interface observations. PR #1366 instead requires exactly one static
+  address declaration, so it must not be transplanted without reconciling that
+  restriction. The relay observation regression covers validation without a
+  static declaration, renumbering, missing source, recovery and removal at the
+  config-generation boundary; live service lifecycle and FreeBSD remain open.
+  Read the other current diffs before selecting integration work.
 - The feature ledger maps 87 baseline resource kinds, 90 example artifacts,
   and 50 feature scopes, including 11 non-resource scopes. Every preservation
   verdict is still `unknown`; `full_feature_pass_count` is 0. This means the

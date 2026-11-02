@@ -2988,6 +2988,7 @@
         "related_test_files": [
           "pkg/render/dnsmasq_test.go",
           "pkg/controller/chain/dnsmasq_test.go",
+          "pkg/controller/chain/dhcpv4_relay_observation_test.go",
           "tests/netns/dhcpv4-relay.sh",
           "tests/netns/dhcpv4-relay-render/main.go"
         ]
