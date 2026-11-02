@@ -85,8 +85,11 @@ func vlanParent(ifname string) (string, uint16, bool, error) {
 	var vlanID uint64
 	for _, line := range strings.Split(string(data), "\n") {
 		fields := strings.Fields(line)
-		if len(fields) >= 2 && fields[0] == "VID:" {
-			vlanID, err = strconv.ParseUint(fields[1], 10, 12)
+		for i, field := range fields[:len(fields)-1] {
+			if field != "VID:" {
+				continue
+			}
+			vlanID, err = strconv.ParseUint(fields[i+1], 10, 12)
 			if err != nil {
 				return "", 0, false, err
 			}
