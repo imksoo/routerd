@@ -259,6 +259,14 @@ VM224 を内部 HTTP サーバーとして、VM219 の TCP 宛先変換を確認
 転送応答が戻りました。この結果は一つの UDP 上流とクライアント側 UDP/TCP に限ります。DNSSEC、
 DoT/DoH、否定応答、リース名、再起動、IPv6 および旧構成の全 DNS ポリシー対照は未検証です。
 
+現行リビジョン `477e57a3` では、VM219 を新しい状態 DB から開始し、VLAN 3131 の独立 VM224 と
+VLAN 3132 の独立 VM220 を使って IPv6 DNS を確認しました。VM224 は UDP/TCP とも候補のローカル
+AAAA 応答と、VM220 上流を経由する AAAA 応答を受けました。`routerd-dns-resolver@lan.service` を再起動し、
+PID の交代後にも同じ通信を確認しました。空構成への置換は `HEALTHY`、警告なしで DNS 常駐プロセスと
+IPv4/IPv6 の待受を撤回しました。空の既定遮断用 `inet routerd_filter` 表を孤立資源と報告する不具合は、
+同表の routerd 所有を明示して修正しました。保存した新規構成の再適用は `HEALTHY` となりました。詳細は
+`evidence/routerd15-477e57a3-dns-ipv6-restart-pve-20261102.md` に記録します。
+
 `e83b639b` の候補実行物では、静的な `IPv4Route/private-10-blackhole` を VLAN 3131 と
 VLAN 3132 の独立 VM で確認しました。黒穴経路がある間、VM224 の `10.23.45.67` 宛て ICMP は
 すべて失敗し、VM220 の上流捕捉は 0 でした。黒穴経路を撤回すると同じ要求 1 回を上流で捕捉し、

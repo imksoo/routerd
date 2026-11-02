@@ -68,14 +68,14 @@
     "example_inventory_rule": "examples[] is the exact set of 90 baseline tracked paths. Presence is verified at the pinned current revision; complete semantic/example execution is unknown. Only declared-kind changes are listed separately."
   },
   "linux_execution_progress": {
-    "as_of_revision": "c1aa14222e72a041cab390e4abe06196d13b9179",
+    "as_of_revision": "477e57a346b3df60ad49d2fef5b833fd51a44b3c",
     "feature_functions_total": 50,
     "feature_functions_with_scoped_linux_evidence": 42,
-    "scoped_linux_evidence_references": 171,
+    "scoped_linux_evidence_references": 172,
     "feature_functions_fully_qualified": 0,
     "open_check_statements": 94,
     "counting_note": "Open check statements are the managed backlog. They are not represented as a fictitious count of packet cases: each statement is decomposed into a concrete peer, traffic, withdrawal and recovery observation when it enters the execution board.",
-    "last_closed_scope": "PPPoESession: 現行 Linux PVE の空状態資格情報変更、IPv6CP、撤回、再適用",
+    "last_closed_scope": "DNS: 現行 Linux PVE の IPv6 通信、DNS 常駐プロセス再起動、撤回、再適用",
     "next_scope": "PPPoE: 別実装のアクセスコンセントレーター、長時間切断復旧",
     "execution_board": {
       "rule": "A board item closes only the named observation. A passing item neither qualifies its whole feature nor reduces a different required_remaining_checks statement.",
@@ -2202,6 +2202,23 @@
         "Complete routerd 1.0 functional parity and a whole-feature or whole-platform qualification verdict."
       ]
     },
+    "linux-pve-dns-ipv6-restart-withdrawal-477e57a3": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "477e57a346b3df60ad49d2fef5b833fd51a44b3c",
+      "reference": "evidence/routerd15-477e57a3-dns-ipv6-restart-pve-20261102.md",
+      "source_binding": "Candidate archive SHA-256 7655b14d6649b54353f9118b71dbc90071d95f728f5d116acdd04052c669a745. 477e57a3 declares the persistent Linux inet/routerd_filter base table as router-owned.",
+      "environment": "Authorized PVE VLANs. Snapshot-protected VM219 ran the Linux candidate from a new state database. Independent VM220 provided the IPv6 dnsmasq upstream on VLAN 3132; independent VM224 was the IPv6 DNS client on VLAN 3131.",
+      "checks": [
+        "VM224 received the local AAAA response and independent VM220 upstream AAAA response through VM219 over UDP and TCP.",
+        "Restarting routerd-dns-resolver@lan.service changed the worker PID and the same UDP/TCP IPv6 queries succeeded after restart.",
+        "Empty configuration reached Healthy without orphan warnings and removed the DNS worker plus IPv4/IPv6 UDP/TCP listeners. Explicit reapplication of the saved new configuration reached Healthy generation 3."
+      ],
+      "excludes": [
+        "DNSSEC, DoT, DoH, private containment, cache expiry, DHCP-derived names, complete negative-answer policy, physical access and FreeBSD.",
+        "Complete routerd 1.0 functional parity and a whole-feature or whole-platform qualification verdict."
+      ]
+    },
     "linux-pve-dns-three-vm-vlan-485b0f7b": {
       "level": "independent-peer",
       "outcome": "pass",
@@ -4006,6 +4023,7 @@
           "linux-pve-dns-three-vm-vlan-485b0f7b",
           "linux-pve-dhcp-dns-nat-withdrawal-3763f102",
           "linux-pve-dns-negative-vlan-883dacbd",
+          "linux-pve-dns-ipv6-restart-withdrawal-477e57a3",
           "linux-pve-home-router-composite-8dc7e08e"
         ]
       },
