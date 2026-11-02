@@ -2240,6 +2240,33 @@ ICMP replies. This recheck qualifies the explicit Linux IPv6CP-disable setting
 for this package and configuration only; it does not replace the earlier
 clean-install or upstream-recovery evidence.
 
+#### Linux DS-Lite independent AFTR, client and configuration withdrawal, 2026-11-03
+
+The same product source `f8ef5e5970168802d75933564abf3459cee33ab0` and
+archive SHA-256 `f1773b5e6b1153b343ee5cc0ba1e7be8f95736ac42138a7e459693bada6bed6f`
+were installed in an isolated PVE candidate. The restored candidate snapshot
+contained an earlier routerd binary, so this was an update/configuration-state
+reset test rather than clean-install evidence.
+
+The candidate's external WAN IPv6 address and the AFTR's external IPv6 address
+were distinct addresses on the isolated WAN VLAN. `routerd` created the
+candidate `ip6tnl` device `ds-rd15`, assigned its inner IPv4 endpoint,
+installed the IPv4 default route, and reported the `DSLiteTunnel` as `Up`.
+An independent AFTR VM used only its own Linux `ip6tnl` device and exposed an
+IPv4 endpoint behind it. A separate LAN-client VM reached that endpoint through
+candidate IPv4 forwarding and NAT44 with 3/3 ICMP replies; the AFTR tunnel
+receive counter increased from 47 to 63 packets.
+
+Replacing the candidate configuration with an empty Router configuration and
+restarting the service removed `ds-rd15` and the `routerd_nat` table; client
+traffic then failed. Restoring the same DS-Lite configuration and restarting
+the service recreated the tunnel, restored the default route and NAT44, and
+returned 3/3 replies from the independent client. This qualifies the observed
+Linux DS-Lite static-AFTR IPv4 transit and configuration withdrawal/recovery
+path only. Source-address expiry, other NAT/MSS/firewall bindings, host reboot,
+provider interoperability, FreeBSD behavior and complete routerd 1.0 parity
+remain unqualified.
+
 #### Plugin process and effective-configuration checks
 
 At `e4097d0b966aeabbbe8fb01eb6d43ab42d5adc3c`, the actual subscription

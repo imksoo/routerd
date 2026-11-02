@@ -1783,6 +1783,22 @@
         "The candidate snapshot contained an earlier routerd binary, so this is an update/config-state-reset check rather than clean-install evidence.",
         "IPv6CP enablement, peer DNS, CHAP/dual authentication, upstream failure recovery on this revision, provider interoperability and complete PPPoE parity."
       ]
+    },
+    "linux-dslite-pve-f8ef5e59": {
+      "level": "packaged-daemon-independent-peer",
+      "outcome": "pass",
+      "revision": "f8ef5e5970168802d75933564abf3459cee33ab0",
+      "reference": "docs/design/routerd15-audit.md#linux-ds-lite-independent-aftr-client-and-configuration-withdrawal-2026-11-03",
+      "archive_sha256": "f1773b5e6b1153b343ee5cc0ba1e7be8f95736ac42138a7e459693bada6bed6f",
+      "environment": "Dedicated isolated PVE candidate, Linux ip6tnl AFTR and LAN client on separate VLANs; actual systemd service and nftables NAT44.",
+      "checks": [
+        "routerd created the owned ip6tnl device, inner IPv4 endpoint and default route; independent AFTR receive counters increased while the LAN client received 3/3 replies.",
+        "Empty Router configuration removed the DS-Lite device and routerd NAT44 table and stopped traffic; restoring the DS-Lite configuration recreated both and restored 3/3 replies."
+      ],
+      "excludes": [
+        "The candidate snapshot contained an earlier routerd binary, so this is an update/config-state-reset check rather than clean-install evidence.",
+        "Source-address expiry, dynamic AFTR discovery, other NAT/MSS/firewall bindings, host reboot, provider interoperability, FreeBSD behavior and complete DS-Lite parity."
+      ]
     }
   },
   "features": [
@@ -3058,7 +3074,8 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "linux-combined-native-3e58c93a"
+          "linux-combined-native-3e58c93a",
+          "linux-dslite-pve-f8ef5e59"
         ]
       },
       "freebsd": {
@@ -3068,8 +3085,8 @@
         ]
       },
       "required_remaining_checks": [
-        "Independent AFTR and inside IPv4 through-traffic",
-        "Source expiry, NAT/MSS/PF binding, restart and withdrawal"
+        "Source-address expiry and recovery; NAT/MSS/PF bindings beyond the observed masquerade path",
+        "Host reboot, provider interoperability and complete platform parity"
       ]
     },
     {
