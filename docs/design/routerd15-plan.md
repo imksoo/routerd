@@ -118,6 +118,10 @@ DNS 配布、プレフィックス再採番、`routerd` の再起動・ホスト
 [`routerd15-b5ecacd5-nat44-flow-dnat-isolated-pve-20261102.md`](../../evidence/routerd15-b5ecacd5-nat44-flow-dnat-isolated-pve-20261102.md)
 に記録しています。
 
+現行リビジョン `4aa5339e` では、静的 `PortForward` と二バックエンドの `IngressService` を隔離 PVE VM219 で確認しました。外部要求元と LAN クライアントの双方から通常・ヘアピン接続を確認し、バックエンド停止時の切替、復旧、明示的な排出と解除、`routerd` 再起動後の復旧を確認しました。`PortForward` の撤回後は既存 TCP 接続が継続し、新規接続は拒否されました。空設定への撤回後は NAT 表が消え、routerd 所有の防火壁は既定拒否を維持し、新規入口接続を拒否しました。これは VM220・VM224 と VLAN 3131・3132 を使う三 VM 構成ではありません。対象、観測、復元、範囲外は
+[`routerd15-4aa5339e-ingress-service-isolated-pve-20261102.md`](../../evidence/routerd15-4aa5339e-ingress-service-isolated-pve-20261102.md)
+に記録しています。
+
 Linux DHCPv4 サーバーと予約の PVE 試験は `2c3fe143` に記録しています。VM219 を候補ルーター、
 VM224 を予約済み MAC アドレスのクライアント、VM220 を別 MAC アドレスの動的クライアントとして
 VLAN 3131 に接続しました。VM224 は予約アドレス `198.18.15.50`、VM220 は同じアドレスを要求しても
