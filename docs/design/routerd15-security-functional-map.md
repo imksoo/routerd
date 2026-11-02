@@ -19,7 +19,8 @@ routerd 1.5 は、旧設定形式を読み込まず、新しい設定で同じ�
 | 管理インターフェースを指定 CIDR に限定し、設定変更でのロックアウトを防止 | `ManagementAccess/mgmt-lockout-guard` と管理用 `FirewallZone` | VLAN 3133 で、許可した `198.18.63.10/32` の HTTP 到達、非許可 `198.18.63.11/32` の遮断、制限撤回時の到達、再適用後の再遮断を実測済み | IPv6、SSH と WebConsole、複数 CIDR、データプレーン障害中の管理経路 |
 | BGP の受入・広告範囲を限定 | `BGPRouter` の `importPolicy`、`exportPolicy`、`redistribute` | VLAN 3132 の BGP 経路導入・撤回・復旧は実測済み。接頭辞方針は未検証 | 許可接頭辞、拒否接頭辞、撤回、再広告とカーネル経路 |
 | 私設網宛の不用意な外部転送を防止 | `IPv4Route/private-10-blackhole` と `EgressRoutePolicy` の除外 CIDR | 静的黒穴経路と `EgressRoutePolicy` の除外 CIDRを、VLAN 3131 から VLAN 3132 への実通信、撤回、再適用で確認済み | 他の私設 CIDR、既存通信の扱い |
-| 防火壁の拒否と通信記録を監査可能にする | `FirewallEventLog/default`、`TrafficFlowLog/default`、`LogSink` | 未検証 | 許可・拒否の記録、対象識別、設定撤回後の停止 |
+| 防火壁の拒否を監査可能にする | `FirewallEventLog/default`、`LogSink` | 未検証 | 許可・拒否の記録、対象識別、設定撤回後の停止 |
+| 許可済み通信の記録を監査可能にする | `TrafficFlowLog/flows` | VLAN 3131 の VM224 から VLAN 3132 の VM220 へ HTTP を実通信し、双方向の接続追跡記録を確認。設定撤回中は通信を維持して記録を停止し、再投入後は記録を再開 | 拒否通信の `FirewallEventLog`、UDP、記録容量と保持期間 |
 
 ## 試験の共通条件
 
@@ -69,3 +70,24 @@ NTP 要求は 48 バイトの応答を受け、応答種別 4 と識別子 `RD15
 DNS は到達不能、NTP は 2 秒でタイムアウトしました。規則を再投入すると、同じ DNS
 応答と NTP 応答が復旧し、各規則のパケット数は再び 1 になりました。既存の通信を
 撤回時にどう扱うかは、この UDP 要求応答試験では未確認です。
+
+## TrafficFlowLog の実通信・撤回・復旧記録
+
+`58632f2a` の候補実行物を VM219 に一時導入しました。VLAN 3131 の独立 VM224 は
+`198.18.91.10/24`、候補の LAN 側は `198.18.91.1/24`、VLAN 3132 の独立 VM220 は
+`198.18.92.2/24` としました。VM220 は TCP 18080 の HTTP 応答器だけを実行し、VM219 の
+`FirewallZone` と `FirewallRule/allow-lan-web` はこのポートの LAN から WAN への通信だけを許可しました。
+
+VM224 の HTTP 要求は成功しました。VM219 の `lan_to_wan` 規則は 1 パケットを受理し、
+接続追跡は `198.18.91.10` と `198.18.92.2:18080` の双方向接続を `ASSURED` として記録しました。
+30 秒間隔の `TrafficFlowLog/flows` 観測は、送信 452 バイト・受信 1,603 バイト、送信 7 パケット・
+受信 5 パケットとして同じ接続を記録しました。
+
+`TrafficFlowLog` だけを除いた新しい設定へ置換すると、同じ HTTP 要求は継続成功し、
+`TrafficFlowLog/flows` は取得不能になりました。32 秒後も SQLite 記録ファイルの更新時刻と容量は変わらず、
+接続追跡だけが新しい接続を保持しました。`TrafficFlowLog` を再投入後、同じ HTTP 要求は成功し、
+32 秒後に送信 400 バイト・受信 1,603 バイトの新しい双方向記録と SQLite 記録ファイルの更新を確認しました。
+
+この記録は許可済み TCP 通信の接続追跡記録に限ります。拒否通信の `FirewallEventLog`、UDP、
+記録容量・保持期間、プロセス再起動後の継続は未確認です。試験後は VM219、VM220、VM224 の
+実行物、設定、状態、起動状態を試験前の状態へ戻しました。
