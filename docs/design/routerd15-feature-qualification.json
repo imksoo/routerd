@@ -1869,6 +1869,24 @@
         "Complete routerd 1.0 functional parity and a whole-feature or whole-platform qualification verdict."
       ]
     },
+    "linux-pve-legacy-cidr-firewall-withdrawal-54cc8e23": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "54cc8e2310f9f1654a9332524ac4990115101cbc",
+      "reference": "docs/design/routerd15-security-functional-map.md",
+      "source_binding": "routerd SHA-256 25ddd0f63b9c350f77ed89637cfb8fde59cb1e91f7b6929e41940ddfaab0c73b; routerctl SHA-256 20530210d9636b3fe4d81f7d9056a65fd6865205f4cebe60a90538fe483da019.",
+      "environment": "Authorized PVE VLANs. VM219 ran the checksum-verified Linux candidate with fresh test state. Independent VM224 used VLAN 3131 with allowed source 198.18.71.10/32 and denied source 198.18.71.11/32. Independent VM220 used VLAN 3132 as the HTTP endpoint 198.18.72.1:18082. The pre-existing dnsmasq service was stopped and its unit removed from the candidate before the no-DNS configuration was applied, then restored after the test.",
+      "checks": [
+        "The legacy-to-LAN FirewallRule with source 198.18.71.10/32, destination 198.18.72.1/32 and TCP port 18082 allowed VM224 HTTP from the permitted source.",
+        "The same VM224 request from 198.18.71.11 timed out. The VM219 legacy_to_lan deny counter increased while VM220 received no request.",
+        "Replacing the valid 1.5 configuration without the FirewallRule reached Healthy and blocked the previously permitted source.",
+        "Reapplying the source- and destination-limited FirewallRule reached Healthy, restored the permitted source and kept the denied source blocked. VM219, VM220 and VM224 were restored to their original binaries, configuration, state and run status; the temporary ISO and test assets were removed."
+      ],
+      "excludes": [
+        "Other destination CIDRs and ports, UDP, IPv6, existing connections, address-set selectors, logging delivery and FreeBSD.",
+        "Complete routerd 1.0 functional parity and a whole-feature or whole-platform qualification verdict."
+      ]
+    },
     "linux-dhcp-firewall-lifecycle-5431ad2a": {
       "level": "independent-peer",
       "outcome": "pass",
@@ -3818,7 +3836,8 @@
         "scoped_evidence": [
           "linux-two-vm-recovery-0cb82866",
           "linux-dhcp-firewall-lifecycle-5431ad2a",
-          "linux-pve-firewall-zone-withdrawal-409719ba"
+          "linux-pve-firewall-zone-withdrawal-409719ba",
+          "linux-pve-legacy-cidr-firewall-withdrawal-54cc8e23"
         ]
       },
       "freebsd": {
