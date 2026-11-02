@@ -1,0 +1,44 @@
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: pve07-dslite-nat-through-traffic
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata: {name: lan}
+      spec: {ifname: rd15-lan, managed: false, mtu: 1500}
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata: {name: wan}
+      spec: {ifname: rd15-wan, managed: false, mtu: 1500}
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DSLiteTunnel
+      metadata: {name: isolated-aftr}
+      spec:
+        interface: wan
+        tunnelName: rd15-dslite
+        localAddressSource: static
+        localAddress: 2001:db8:16::2
+        aftrIPv6: 2001:db8:16::1
+        defaultRoute: true
+        mtu: 1454
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: NAT44Rule
+      metadata: {name: lan-to-dslite}
+      spec:
+        type: masquerade
+        egressInterface: isolated-aftr
+        sourceRanges: [198.18.15.0/24]
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallZone
+      metadata: {name: lan}
+      spec: {role: trust, interfaces: [lan]}
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallZone
+      metadata: {name: wan}
+      spec: {role: untrust, interfaces: [wan, isolated-aftr]}
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallPolicy
+      metadata: {name: default}
+      spec: {logDeny: true}

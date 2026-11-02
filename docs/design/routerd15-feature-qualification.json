@@ -68,15 +68,15 @@
     "example_inventory_rule": "examples[] is the exact set of 90 baseline tracked paths. Presence is verified at the pinned current revision; complete semantic/example execution is unknown. Only declared-kind changes are listed separately."
   },
   "linux_execution_progress": {
-    "as_of_revision": "477e57a346b3df60ad49d2fef5b833fd51a44b3c",
+    "as_of_revision": "7fbafbbc3a2e3ee2ac89243091094865c0352721",
     "feature_functions_total": 50,
     "feature_functions_with_scoped_linux_evidence": 42,
-    "scoped_linux_evidence_references": 172,
+    "scoped_linux_evidence_references": 173,
     "feature_functions_fully_qualified": 0,
     "open_check_statements": 94,
     "counting_note": "Open check statements are the managed backlog. They are not represented as a fictitious count of packet cases: each statement is decomposed into a concrete peer, traffic, withdrawal and recovery observation when it enters the execution board.",
-    "last_closed_scope": "DNS: 現行 Linux PVE の IPv6 通信、DNS 常駐プロセス再起動、撤回、再適用",
-    "next_scope": "PPPoE: 別実装のアクセスコンセントレーター、長時間切断復旧",
+    "last_closed_scope": "DS-Lite: 独立 AFTR と IPv4 HTTP、NAT44、TCP MSS、候補再起動、撤回、再適用",
+    "next_scope": "DS-Lite: 委譲 IPv6 送信元の失効と再取得",
     "execution_board": {
       "rule": "A board item closes only the named observation. A passing item neither qualifies its whole feature nor reduces a different required_remaining_checks statement.",
       "active": {
@@ -2219,6 +2219,24 @@
         "Complete routerd 1.0 functional parity and a whole-feature or whole-platform qualification verdict."
       ]
     },
+    "linux-pve-dslite-nat-restart-withdrawal-7fbafbbc": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "7fbafbbc3a2e3ee2ac89243091094865c0352721",
+      "reference": "evidence/routerd15-7fbafbbc-dslite-nat-restart-withdrawal-pve-20261102.md",
+      "source_binding": "Candidate archive SHA-256 0c204dcc1b8a5e99526b0eb8ee59320ae2b32b5792f64f9f78b67b850a7df9df.",
+      "environment": "Authorized PVE VLANs. Snapshot-protected VM219 ran the candidate from a new state directory. Independent VM220 provided the AFTR and HTTP endpoint on VLAN 3132; independent VM224 was the IPv4 client on VLAN 3131.",
+      "checks": [
+        "VM224 HTTP reached VM220 through VM219 DS-Lite. VM220 recorded the translated inner source 192.0.0.2, while VM219 conntrack retained the original 198.18.15.10 tuple.",
+        "The independent AFTR captured the forwarded TCP SYN with MSS 1414. Candidate nftables rendered NAT44 on rd15-dslite and the corresponding TCP MSS clamp.",
+        "Restarting routerd preserved the DS-Lite path and a new VM224 HTTP request succeeded.",
+        "Empty configuration removed the tunnel, DS-Lite default route and NAT rule; the independent client failed. The same stabilized empty configuration then reached Healthy without warnings. Explicit reapplication of the saved new configuration reached Healthy generation 4 and restored HTTP."
+      ],
+      "excludes": [
+        "Delegated IPv6 source expiry/reacquisition, AFTR FQDN and redundancy, IPv6 client traffic, multipath, performance, physical access and FreeBSD PF.",
+        "Complete routerd 1.0 functional parity and a whole-feature or whole-platform qualification verdict."
+      ]
+    },
     "linux-pve-dns-three-vm-vlan-485b0f7b": {
       "level": "independent-peer",
       "outcome": "pass",
@@ -4069,7 +4087,8 @@
         "scoped_evidence": [
           "linux-combined-native-3e58c93a",
           "linux-vlan-clients-39156bb6",
-          "linux-vlan-ha-dslite-c-r3-88927a4a"
+          "linux-vlan-ha-dslite-c-r3-88927a4a",
+          "linux-pve-dslite-nat-restart-withdrawal-7fbafbbc"
         ]
       },
       "freebsd": {
@@ -4079,8 +4098,8 @@
         ]
       },
       "required_remaining_checks": [
-        "Independent AFTR and inside IPv4 through-traffic",
-        "Source expiry, NAT/MSS/PF binding, restart and withdrawal"
+        "Delegated IPv6 source expiry and automatic re-acquisition",
+        "FreeBSD PF binding and independent packaged traffic"
       ]
     },
     {

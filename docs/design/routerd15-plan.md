@@ -267,6 +267,12 @@ IPv4/IPv6 の待受を撤回しました。空の既定遮断用 `inet routerd_f
 同表の routerd 所有を明示して修正しました。保存した新規構成の再適用は `HEALTHY` となりました。詳細は
 `evidence/routerd15-477e57a3-dns-ipv6-restart-pve-20261102.md` に記録します。
 
+現行リビジョン `7fbafbbc` では、VM219 を新しい状態領域から開始し、VLAN 3131 の独立 VM224、VLAN 3132 の独立 VM220 AFTR を使って DS-Lite を確認しました。VM224 の IPv4 HTTP は、候補の `rd15-dslite` を通り、VM220 では内側送信元 `192.0.0.2` として記録されました。候補の接続追跡は元の `198.18.15.10` を保持しました。AFTR 側で捕捉した TCP SYN の MSS は1414で、候補の NAT44 と TCP MSS 制御に一致しました。
+
+`routerd` の再起動後にも新規 HTTP は成功しました。空構成の適用では DS-Lite、既定経路、NAT44 が撤回され、VM224 の新規 HTTP は失敗しました。直後の一回目は削除処理中の `routerd_mss` を一時的に孤立資源と警告しましたが、表の削除後に同じ空構成を再適用すると警告なしで `Healthy` になりました。保存した新規構成の再適用では世代4、7資源が `Healthy` となり、HTTP は復旧しました。
+
+この証跡は静的 IPv6 送信元の DS-Lite、NAT44、TCP MSS、候補再起動、撤回、再適用に限ります。DHCPv6-PD の送信元失効・再取得、AFTR 名解決・冗長化、FreeBSD の PF、物理ネットワークは未確認です。詳細は `evidence/routerd15-7fbafbbc-dslite-nat-restart-withdrawal-pve-20261102.md` に記録します。
+
 `e83b639b` の候補実行物では、静的な `IPv4Route/private-10-blackhole` を VLAN 3131 と
 VLAN 3132 の独立 VM で確認しました。黒穴経路がある間、VM224 の `10.23.45.67` 宛て ICMP は
 すべて失敗し、VM220 の上流捕捉は 0 でした。黒穴経路を撤回すると同じ要求 1 回を上流で捕捉し、
