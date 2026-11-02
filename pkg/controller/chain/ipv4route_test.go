@@ -47,6 +47,24 @@ func TestIPv4RouteControllerRendersBlackholeRouteInDryRun(t *testing.T) {
 	}
 }
 
+func TestIPv4RouteControllerRendersIPv6StaticRouteInDryRun(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6StaticRoute"}, Metadata: api.ObjectMeta{Name: "lan-v6"}, Spec: api.IPv6StaticRouteSpec{
+			Interface: "lan", Destination: "2001:db8:10::/64", Via: "fe80::1", Metric: 42,
+		}},
+	}}}
+	store := mapStore{}
+	controller := IPv4RouteController{Router: router, Store: store, DryRun: true}
+
+	if err := controller.reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "IPv6StaticRoute", "lan-v6")
+	if status["phase"] != "Rendered" || status["dryRun"] != true || status["routeOwner"] != nil || status["destination"] != "2001:db8:10::/64" || status["gateway"] != "fe80::1" || status["interface"] != "lan" || status["metric"] != 42 {
+		t.Fatalf("IPv6StaticRoute was not rendered through the route controller: %#v", status)
+	}
+}
+
 func TestIPv4RouteControllerMarksDisabledDependencyNotApplicable(t *testing.T) {
 	enabled := false
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
@@ -592,4 +610,66 @@ func ordinaryMutationCommands(commands [][]string) [][]string {
 		}
 	}
 	return writes
+}
+
+func TestIPv4RouteControllerAppliesAndWithdrawsIPv6StaticRoute(t *testing.T) {
+	route := ipv6StaticRoute{Destination: "2001:db8:10::/64", Gateway: "fe80::1", Device: "lan0", Metric: "42"}
+	installed := false
+	var commands [][]string
+	command := func(_ context.Context, name string, args ...string) ([]byte, error) {
+		commands = append(commands, append([]string{name}, args...))
+		if name != "ip" {
+			t.Fatalf("command = %s %v", name, args)
+		}
+		if reflect.DeepEqual(args, []string{"-j", "-d", "-6", "route", "show", route.Destination}) {
+			if !installed {
+				return []byte("[]"), nil
+			}
+			return []byte(`[{"dst":"2001:db8:10::/64","gateway":"fe80::1","dev":"lan0","metric":42,"protocol":"boot"}]`), nil
+		}
+		if reflect.DeepEqual(args, []string{"-6", "route", "add", route.Destination, "via", route.Gateway, "dev", route.Device, "metric", route.Metric, "proto", "boot"}) {
+			installed = true
+			return nil, nil
+		}
+		if reflect.DeepEqual(args, []string{"-6", "route", "del", route.Destination, "via", route.Gateway, "dev", route.Device, "metric", route.Metric, "proto", "boot"}) {
+			installed = false
+			return nil, nil
+		}
+		t.Fatalf("unexpected command: %s %v", name, args)
+		return nil, nil
+	}
+	resource := api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6StaticRoute"}, Metadata: api.ObjectMeta{Name: "lan-v6"}, Spec: api.IPv6StaticRouteSpec{Interface: "lan", Destination: route.Destination, Via: route.Gateway, Metric: 42}}
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: route.Device}}, resource,
+	}}}
+	store := mapStore{}
+	controller := IPv4RouteController{
+		Router: router, Store: store, Command: command,
+		DeviceLookup: func(context.Context, string) (int, bool, error) { return 7, true, nil },
+		NativeScope:  func(context.Context) (string, error) { return "test-scope", nil },
+	}
+	if err := controller.reconcile(context.Background()); err != nil {
+		t.Fatalf("install reconcile: %v", err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "IPv6StaticRoute", "lan-v6")
+	if status["phase"] != "Installed" || status["device"] != route.Device || status["gateway"] != route.Gateway || status["routeOwner"] == nil {
+		t.Fatalf("installed status = %#v", status)
+	}
+	if !installed {
+		t.Fatal("route was not installed")
+	}
+
+	controller.Router = &api.Router{}
+	if err := controller.reconcile(context.Background()); err != nil {
+		t.Fatalf("withdraw reconcile: %v", err)
+	}
+	if installed {
+		t.Fatal("route was not withdrawn")
+	}
+	if status := store.ObjectStatus(api.NetAPIVersion, "IPv6StaticRoute", "lan-v6"); len(status) != 0 {
+		t.Fatalf("removed route status = %#v", status)
+	}
+	if len(commands) < 5 {
+		t.Fatalf("commands = %#v, want observation, add, readback, delete, readback", commands)
+	}
 }
