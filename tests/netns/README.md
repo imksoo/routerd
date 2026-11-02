@@ -18,6 +18,7 @@ namespace/veth/VXLAN/bridge/firewall kernel facilities used by the selected case
 | `ingress-conntrack-survive`, `forcefrag-df-forward`, `vxlan-l2-mss-clamp` | nftables; forcefrag also needs ping |
 | `nat44-portforward` | curl; Go builds the current routerd validator and NAT controller |
 | `nat44-source-snat` | curl; Go builds the current routerd validator and NAT controller |
+| `nat44-flow-dnat-pinhole` | nftables; Go builds the current routerd validator and NAT controller |
 | `local-service-redirect` | dnsmasq, `dig`; Go builds the current routerd validator and NAT controller |
 | `sam-empty-forward-chain` | iptables/nftables; Go or `ROUTERD_SAM_FORWARD_PROBE` |
 | `arp-observer-ignore-member-mac`, standalone `vxlan-when-ha-active-standby` | Go builds the observer/controller |
@@ -46,6 +47,7 @@ sudo ./graceful-vrrp-activation.sh
 sudo ./ingress-conntrack-survive.sh
 sudo ./nat44-portforward.sh
 sudo ./nat44-source-snat.sh
+sudo ./nat44-flow-dnat-pinhole.sh
 sudo ./local-service-redirect.sh
 sudo ./forcefrag-df-forward.sh
 sudo ./sam-empty-forward-chain.sh
@@ -69,6 +71,7 @@ The scripts cover:
 | `ingress-conntrack-survive.sh` | Existing DNAT conntrack flows stay on the old backend while new flows use the new backend. |
 | `nat44-portforward.sh` | A prepared 1.5 config passes validation; the production NAT controller serves WAN DNAT and LAN hairpin traffic, then withdrawal resets an existing flow and blocks new flows. |
 | `nat44-source-snat.sh` | An independent WAN HTTP peer observes selected static SNAT, excluded destination/source behavior, address-reference updates and withdrawal through the production NAT controller. |
+| `nat44-flow-dnat-pinhole.sh` | Independent UDP peers verify production flow learning and response DNAT, source/destination/interface/port filters, timeout, withdrawal, and changed-policy re-add without reviving the prior client's learned tuple. |
 | `local-service-redirect.sh` | The production NAT controller redirects selected IPv4/IPv6 TCP/UDP DNS traffic by destination and LAN interface, applies an interface change, and restores upstream delivery after withdrawal. |
 | `forcefrag-df-forward.sh` | Linux nftables `routerd_forcefrag` clears IPv4 DF on an oversized forwarded packet before a low-MTU egress link. |
 | `sam-empty-forward-chain.sh` | The real SAM controller treats an absent forwarding chain as a no-op, preserves incompatible existing chains as errors, and removes stale owned forwarding rules and `accept_local`. Run with both Ubuntu 22.04 iptables-nft 1.8.7 and a newer backend. |
@@ -190,6 +193,25 @@ sudo ./tests/netns/nat44-source-snat.sh
 
 The test needs Linux network namespaces, iproute2, nftables, curl, Python 3 and
 Go.
+
+## NAT44 dynamic UDP response pinhole
+
+`nat44-flow-dnat-pinhole.sh` validates a prepared 1.5 configuration and runs
+the production NAT44 controller with nftables in isolated router, WAN and LAN
+namespaces. Independent UDP peers verify outbound learning, permitted response
+DNAT, denied source/destination/port/interface cases, timeout and withdrawal.
+It then changes the authorized source set and re-adds the pinhole under the same
+resource name; an old learned client tuple must not be reused by the changed
+policy. The nft map identity is scoped to the pinhole's policy and referenced
+address sets. This is a clean 1.5 config test; it does not import 1.0 config or
+state. Successful temporary output is deleted; a failed run keeps only its
+current diagnostic directory until the cause is resolved.
+
+```sh
+sudo ./tests/netns/nat44-flow-dnat-pinhole.sh
+```
+
+The test needs Linux network namespaces, iproute2, nftables, Python 3 and Go.
 
 ## LocalServiceRedirect DNS interception
 

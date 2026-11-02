@@ -3316,6 +3316,8 @@
           "tests/netns/nat44-portforward-runtime/main.go",
           "tests/netns/nat44-source-snat.sh",
           "tests/netns/nat44-source-snat-runtime/config.yaml",
+          "tests/netns/nat44-flow-dnat-pinhole.sh",
+          "tests/netns/nat44-flow-dnat-pinhole-runtime/config.yaml",
           "tests/netns/local-service-redirect.sh",
           "tests/netns/local-service-redirect-runtime/config.yaml"
         ]
@@ -3343,7 +3345,7 @@
         ]
       },
       "required_remaining_checks": [
-        "Remaining NAT44Rule modes/selectors (including masquerade, pools/port mapping and EgressRoutePolicy-selected egress), NAT44FlowDNATPinhole and NAT44SessionSync paths",
+        "Remaining NAT44Rule modes/selectors (including masquerade, pools/port mapping and EgressRoutePolicy-selected egress), NAT44FlowDNATPinhole localEndpoint correlation, and NAT44SessionSync paths",
         "FQDN-backed IPAddressSet refresh/expiry, routerd DNSResolver/service integration and the remaining Linux/FreeBSD runtime scope"
       ]
     },

@@ -228,10 +228,21 @@ func TestNftablesNAT44FlowDNATPinhole(t *testing.T) {
 		t.Fatalf("render nftables: %v", err)
 	}
 	got := string(data)
+	mapName := ""
+	for _, line := range strings.Split(got, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "map flow_dnat_atomcam_cloud_udp_") {
+			mapName = strings.Fields(line)[1]
+			break
+		}
+	}
+	if mapName == "" {
+		t.Fatalf("nat44 output missing policy-scoped flow pinhole map:\n%s", got)
+	}
 	for _, want := range []string{
-		`map flow_dnat_atomcam_cloud_udp { type inet_service : ipv4_addr . inet_service; flags dynamic,timeout; }`,
-		`iifname "ds-lite-a" udp sport 32099 dnat ip addr . port to udp dport map @flow_dnat_atomcam_cloud_udp comment "routerd NAT44FlowDNATPinhole atomcam-cloud-udp dnat"`,
-		`oifname "ds-lite-a" ip saddr @ip_address_set_atomcam_clients udp dport 32100 update @flow_dnat_atomcam_cloud_udp { udp sport timeout 180s : ip saddr . udp sport } counter comment "routerd NAT44FlowDNATPinhole atomcam-cloud-udp learn"`,
+		`map ` + mapName + ` { type inet_service : ipv4_addr . inet_service; flags dynamic,timeout; }`,
+		`iifname "ds-lite-a" udp sport 32099 dnat ip addr . port to udp dport map @` + mapName + ` comment "routerd NAT44FlowDNATPinhole atomcam-cloud-udp dnat"`,
+		`oifname "ds-lite-a" ip saddr @ip_address_set_atomcam_clients udp dport 32100 update @` + mapName + ` { udp sport timeout 180s : ip saddr . udp sport } counter comment "routerd NAT44FlowDNATPinhole atomcam-cloud-udp learn"`,
 		`oifname "ds-lite-a" ip saddr 172.18.0.0/16 masquerade`,
 	} {
 		if !strings.Contains(got, want) {
