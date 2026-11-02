@@ -71,11 +71,11 @@
     "as_of_revision": "883dacbd3df3f0725e07f2985ccfcf559089b3f4",
     "feature_functions_total": 50,
     "feature_functions_with_scoped_linux_evidence": 42,
-    "scoped_linux_evidence_references": 153,
+    "scoped_linux_evidence_references": 154,
     "feature_functions_fully_qualified": 0,
     "open_check_statements": 94,
     "counting_note": "Open check statements are the managed backlog. They are not represented as a fictitious count of packet cases: each statement is decomposed into a concrete peer, traffic, withdrawal and recovery observation when it enters the execution board.",
-    "last_closed_scope": "Management access: independent VLAN management continuity during data-plane failure and recovery",
+    "last_closed_scope": "DHCPv6 information: independent DNS option acquisition and candidate DNS forwarding on PVE VLANs",
     "next_scope": null,
     "execution_board": {
       "rule": "A board item closes only the named observation. A passing item neither qualifies its whole feature nor reduces a different required_remaining_checks statement.",
@@ -2200,6 +2200,24 @@
         "Complete routerd 1.0 functional parity and a whole-feature or whole-platform qualification verdict."
       ]
     },
+    "linux-pve-dhcpv6-information-dns-883dacbd": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "883dacbd3df3f0725e07f2985ccfcf559089b3f4",
+      "reference": "docs/releases/evidence/routerd15-883dacbd-dhcpv6-information-dns-pve-20261102.md",
+      "source_binding": "routerd Linux package SHA-256 cd763b1a1356053dd6e7400358119a0edfbf23c674a16a4fd07ff580d7de83ad.",
+      "environment": "Isolated PVE VLAN 3131 and 3132. VM219 ran the candidate with DHCPv6PrefixDelegation, DHCPv6Information and a DNSUpstream addressFrom DHCPv6Information/wan-info.dnsServers. Independent VM220 ran Kea DHCPv6 and a UDP DNS endpoint. Independent VM224 queried the candidate LAN resolver.",
+      "checks": [
+        "Kea allocated 2001:db8:1500::/60 and the candidate installed 2001:db8:1500::1/64 on its LAN interface.",
+        "Candidate events recorded DHCPv6 information replies with DNS server 2001:db8:17::53 and domain search info.test.",
+        "The generated DNS resolver configuration contained udp://[2001:db8:17::53]:53 and the WAN source interface from the DHCPv6Information status-derived upstream.",
+        "VM224 queried the candidate at 2001:db8:1500::1 and received the independent upstream AAAA answer 2001:db8:17::53 for router.info.test."
+      ],
+      "excludes": [
+        "Information option update, withdrawal and reacquisition; multiple DNS servers; SNTP; AFTR; WAN forwarding; ordinary candidate systemd service operation and FreeBSD.",
+        "Complete routerd 1.0 functional parity and a whole-feature or whole-platform qualification verdict."
+      ]
+    },
     "linux-pve-legacy-cidr-firewall-withdrawal-54cc8e23": {
       "level": "independent-peer",
       "outcome": "pass",
@@ -3538,7 +3556,8 @@
           "linux-dhcpv6-native-d05524de",
           "linux-pd-ra-lifecycle-1ff438ee",
           "linux-pve-pd-ra-lifecycle-905e0537",
-          "linux-pve-home-integration-2a43a0e8"
+          "linux-pve-home-integration-2a43a0e8",
+          "linux-pve-dhcpv6-information-dns-883dacbd"
         ]
       },
       "freebsd": {
