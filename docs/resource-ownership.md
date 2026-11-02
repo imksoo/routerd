@@ -44,7 +44,7 @@ the same distinction as the apply path.
 | `MobilityPool` | Dynamic SAM capture/control-plane resources, BGP `/32` advertisements, provider action plans, and ownership observations |
 | `IPAddressSet` | nftables IPv4/IPv6 named sets when referenced by a Linux renderer |
 | `IPv4Route` | Kernel route |
-| `ClusterNetworkRoute` | Generated `IPv4StaticRoute` intents for Pod / Service CIDRs through configured next hops |
+| `ClusterNetworkRoute` | Generated `IPv4StaticRoute` resources that own Pod / Service CIDR kernel routes through configured next hops |
 | `NAT44Rule` | nftables `routerd_nat` table |
 | `PortForward` / `IngressService` | Linux nftables `routerd_nat` / `routerd_filter` DNAT, optional hairpin SNAT, or FreeBSD `pf.conf` `rdr pass` / optional NAT reflection rules |
 | `BGPRouter` / `BGPPeer` | Long-lived `routerd-bgp` daemon state controlled through local GoBGP gRPC; learned IPv4 best paths installed into the kernel FIB with routerd-owned protocol/metric values |

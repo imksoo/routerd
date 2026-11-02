@@ -48,6 +48,70 @@ func TestIPv4RouteControllerRendersBlackholeRouteInDryRun(t *testing.T) {
 	}
 }
 
+func TestIPv4RouteControllerAppliesAndWithdrawsExpandedClusterNetworkRoute(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
+	initial := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ens18"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "ClusterNetworkRoute"}, Metadata: api.ObjectMeta{Name: "k8s"}, Spec: api.ClusterNetworkRouteSpec{
+			Pods: api.ClusterNetworkRouteCIDRSpec{CIDRs: []string{"203.0.113.0/24"}},
+			Via:  []api.ClusterNetworkRouteViaSpec{{Interface: "wan", NextHop: "198.51.100.1", Weight: 200}},
+		}},
+	}}}
+	store := mapStore{}
+	installed := false
+	var commands [][]string
+	controller := IPv4RouteController{
+		Router:       api.ExpandClusterNetworkRoutes(initial),
+		ParentRouter: &api.Router{},
+		Store:        store,
+		DeviceLookup: func(context.Context, string) (int, bool, error) { return 17, true, nil },
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			call := append([]string{name}, args...)
+			commands = append(commands, call)
+			if reflect.DeepEqual(call, []string{"ip", "-j", "-d", "-4", "route", "show", "203.0.113.0/24"}) {
+				if installed {
+					return []byte(`[{"dst":"203.0.113.0/24","dev":"ens18","gateway":"198.51.100.1","metric":800,"protocol":"boot"}]`), nil
+				}
+				return []byte(`[]`), nil
+			}
+			if reflect.DeepEqual(call, []string{"ip", "route", "add", "203.0.113.0/24", "via", "198.51.100.1", "dev", "ens18", "metric", "800", "proto", "boot"}) {
+				installed = true
+			}
+			if reflect.DeepEqual(call, []string{"ip", "route", "del", "203.0.113.0/24", "via", "198.51.100.1", "dev", "ens18", "metric", "800", "proto", "boot"}) {
+				installed = false
+			}
+			return nil, nil
+		},
+	}
+	if err := controller.reconcile(context.Background()); err != nil {
+		t.Fatalf("install expanded cluster route: %v", err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "IPv4StaticRoute", "k8s-pods-01-via-01")
+	if status["phase"] != "Installed" || status["interface"] != "wan" || status["device"] != "ens18" || status["gateway"] != "198.51.100.1" || status["metric"] != 800 {
+		t.Fatalf("expanded cluster route status = %#v", status)
+	}
+
+	controller.Router = api.ExpandClusterNetworkRoutes(&api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ens18"}},
+	}}})
+	if err := controller.reconcile(context.Background()); err != nil {
+		t.Fatalf("withdraw removed cluster route: %v", err)
+	}
+	if installed {
+		t.Fatalf("removed ClusterNetworkRoute remains installed; commands = %#v", commands)
+	}
+	if status := store.ObjectStatus(api.NetAPIVersion, "IPv4StaticRoute", "k8s-pods-01-via-01"); len(status) != 0 {
+		t.Fatalf("removed ClusterNetworkRoute status remains: %#v", status)
+	}
+	want := [][]string{
+		{"ip", "route", "add", "203.0.113.0/24", "via", "198.51.100.1", "dev", "ens18", "metric", "800", "proto", "boot"},
+		{"ip", "route", "del", "203.0.113.0/24", "via", "198.51.100.1", "dev", "ens18", "metric", "800", "proto", "boot"},
+	}
+	if got := ordinaryMutationCommands(commands); !reflect.DeepEqual(got, want) {
+		t.Fatalf("commands = %#v, want %#v", got, want)
+	}
+}
+
 func TestIPv4RouteControllerRendersIPv6StaticRouteInDryRun(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6StaticRoute"}, Metadata: api.ObjectMeta{Name: "lan-v6"}, Spec: api.IPv6StaticRouteSpec{

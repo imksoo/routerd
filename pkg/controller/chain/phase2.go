@@ -503,6 +503,21 @@ func (c IPv4RouteController) reconcile(ctx context.Context) error {
 			if err := c.reconcileOrdinaryRoute(ctx, resource, spec); err != nil {
 				failures = append(failures, fmt.Sprintf("%s: %v", resource.Metadata.Name, err))
 			}
+		case "IPv4StaticRoute":
+			spec, err := resource.IPv4StaticRouteSpec()
+			if err != nil {
+				failures = append(failures, fmt.Sprintf("%s: %v", resource.Metadata.Name, err))
+				continue
+			}
+			ordinary := api.IPv4RouteSpec{
+				Destination: spec.Destination,
+				Device:      api.ResolveInterfaceIfName(c.Router, spec.Interface),
+				Gateway:     spec.Via,
+				Metric:      spec.Metric,
+			}
+			if err := c.reconcileOrdinaryRoute(ctx, resource, ordinary); err != nil {
+				failures = append(failures, fmt.Sprintf("%s: %v", resource.Metadata.Name, err))
+			}
 		case "IPv6StaticRoute":
 			spec, err := resource.IPv6StaticRouteSpec()
 			if err != nil {
@@ -625,7 +640,7 @@ func (c IPv4RouteController) cleanupRemovedRoutes(ctx context.Context) error {
 	}
 	desired := map[string]bool{}
 	for _, resource := range c.Router.Spec.Resources {
-		if resource.APIVersion == api.NetAPIVersion && resource.Kind == "IPv4Route" {
+		if resource.APIVersion == api.NetAPIVersion && (resource.Kind == "IPv4Route" || resource.Kind == "IPv4StaticRoute") {
 			desired[lifecycle.OwnerKey(resource.APIVersion, resource.Kind, resource.Metadata.Name)] = true
 		}
 	}
@@ -635,7 +650,7 @@ func (c IPv4RouteController) cleanupRemovedRoutes(ctx context.Context) error {
 			continue
 		}
 		status := action.Status
-		if status.APIVersion != api.NetAPIVersion || status.Kind != "IPv4Route" {
+		if status.APIVersion != api.NetAPIVersion || (status.Kind != "IPv4Route" && status.Kind != "IPv4StaticRoute") {
 			continue
 		}
 		deleter, ok := c.Store.(interface {
@@ -660,16 +675,17 @@ func (c IPv4RouteController) teardownRemovedRoute(ctx context.Context, status ro
 		return err
 	}
 	if receipt != nil {
-		if err := c.withdrawOrdinaryReceipt(ctx, status.Name, map[string]any{"phase": "Withdrawing", "dryRun": false}, receipt); err != nil {
-			return fmt.Errorf("delete removed IPv4Route %s: %w", status.Name, err)
+		resource := api.Resource{TypeMeta: api.TypeMeta{APIVersion: status.APIVersion, Kind: status.Kind}, Metadata: api.ObjectMeta{Name: status.Name}}
+		if err := c.withdrawOrdinaryReceipt(ctx, resource, map[string]any{"phase": "Withdrawing", "dryRun": false}, receipt); err != nil {
+			return fmt.Errorf("delete removed %s %s: %w", status.Kind, status.Name, err)
 		}
 	}
-	if err := deleter.DeleteObject(api.NetAPIVersion, "IPv4Route", status.Name); err != nil {
+	if err := deleter.DeleteObject(api.NetAPIVersion, status.Kind, status.Name); err != nil {
 		return err
 	}
 	if c.Bus != nil {
 		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.ipv4.route.removed", daemonapi.SeverityInfo)
-		event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "IPv4Route", Name: status.Name}
+		event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: status.Kind, Name: status.Name}
 		if receipt != nil {
 			event.Attributes = map[string]string{"destination": receipt.Route.Destination, "device": receipt.Route.Device}
 		}

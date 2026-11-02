@@ -259,6 +259,9 @@ func resourceLifecycleObjectStatus(status routerstate.ObjectStatus) bool {
 	if !routerdManagedStatus(status) {
 		return false
 	}
+	if status.APIVersion == api.NetAPIVersion && status.Kind == "IPv4StaticRoute" {
+		return true
+	}
 	declaration, ok := Lookup(status.APIVersion, status.Kind)
 	if !ok || declaration.TeardownLifecycle != TeardownLifecycleResource {
 		return false

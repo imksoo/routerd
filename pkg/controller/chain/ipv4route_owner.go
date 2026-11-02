@@ -172,7 +172,7 @@ func (c IPv4RouteController) ordinaryRoutePremise(ctx context.Context, spec api.
 }
 
 func (c IPv4RouteController) reconcileOrdinaryRoute(ctx context.Context, resource api.Resource, spec api.IPv4RouteSpec) error {
-	previous, err := c.Store.ReadObjectStatus(api.NetAPIVersion, "IPv4Route", resource.Metadata.Name)
+	previous, err := c.Store.ReadObjectStatus(api.NetAPIVersion, resource.Kind, resource.Metadata.Name)
 	if err != nil {
 		return err
 	}
@@ -200,7 +200,7 @@ func (c IPv4RouteController) reconcileOrdinaryRoute(ctx context.Context, resourc
 			}
 			status["phase"], status["dependencies"] = phase, dependencies
 		}
-		return c.withdrawInactiveOrdinaryRoute(ctx, resource.Metadata.Name, status, receipt)
+		return c.withdrawInactiveOrdinaryRoute(ctx, resource, status, receipt)
 	}
 	desired := premise.Route
 	status = map[string]any{"phase": "Installed", "type": desired.Type, "destination": desired.Destination, "device": desired.Device, "gateway": desired.Gateway, "preferredSource": strings.TrimSpace(spec.PreferredSource), "effectivePreferredSource": desired.PreferredSource, "metric": spec.Metric, "dryRun": c.DryRun}
@@ -213,93 +213,93 @@ func (c IPv4RouteController) reconcileOrdinaryRoute(ctx context.Context, resourc
 	}
 	if c.DryRun {
 		status["phase"] = "Rendered"
-		return c.saveOrdinaryRouteStatus(resource.Metadata.Name, status, receipt)
+		return c.saveOrdinaryRouteStatus(resource, status, receipt)
 	}
 	if platform.CurrentOS() == platform.OSFreeBSD && spec.Metric != 0 {
-		return c.failOrdinaryRoute(resource.Metadata.Name, status, receipt, "UnsupportedMetric", errors.New("FreeBSD IPv4Route does not support a Linux route metric"))
+		return c.failOrdinaryRoute(resource, status, receipt, "UnsupportedMetric", errors.New("FreeBSD IPv4Route does not support a Linux route metric"))
 	}
 	if receipt != nil {
 		matching, _, err := c.observeOrdinaryRoute(ctx, receipt.Route)
 		if err != nil {
-			return c.failOrdinaryRoute(resource.Metadata.Name, status, receipt, "ObserveFailed", err)
+			return c.failOrdinaryRoute(resource, status, receipt, "ObserveFailed", err)
 		}
 		if matching && receipt.Pending {
-			return c.failOrdinaryRoute(resource.Metadata.Name, status, receipt, "OwnershipUnknown", errors.New("pending IPv4Route is present without a private native ownership cookie; inspect and remove it before retrying"))
+			return c.failOrdinaryRoute(resource, status, receipt, "OwnershipUnknown", errors.New("pending IPv4Route is present without a private native ownership cookie; inspect and remove it before retrying"))
 		}
 		if matching && receipt.Route == desired {
 			if err := c.verifyOrdinaryRouteIdentity(ctx, *receipt); err != nil {
-				return c.failOrdinaryRoute(resource.Metadata.Name, status, receipt, "OwnershipUnknown", err)
+				return c.failOrdinaryRoute(resource, status, receipt, "OwnershipUnknown", err)
 			}
 			status["changed"], status["kernelRouteAlreadyCurrent"] = changed, true
-			return c.saveOrdinaryRouteStatus(resource.Metadata.Name, status, receipt)
+			return c.saveOrdinaryRouteStatus(resource, status, receipt)
 		}
-		if err := c.withdrawOrdinaryReceipt(ctx, resource.Metadata.Name, status, receipt); err != nil {
-			return c.failOrdinaryRoute(resource.Metadata.Name, status, receipt, "WithdrawFailed", err)
+		if err := c.withdrawOrdinaryReceipt(ctx, resource, status, receipt); err != nil {
+			return c.failOrdinaryRoute(resource, status, receipt, "WithdrawFailed", err)
 		}
 		receipt = nil
-		if err := c.saveOrdinaryRouteStatus(resource.Metadata.Name, map[string]any{"phase": "Pending", "dryRun": false}, nil); err != nil {
+		if err := c.saveOrdinaryRouteStatus(resource, map[string]any{"phase": "Pending", "dryRun": false}, nil); err != nil {
 			return err
 		}
 	}
 	_, collision, err := c.observeOrdinaryRoute(ctx, desired)
 	if err != nil {
-		return c.failOrdinaryRoute(resource.Metadata.Name, status, receipt, "ObserveFailed", err)
+		return c.failOrdinaryRoute(resource, status, receipt, "ObserveFailed", err)
 	}
 	if collision {
-		return c.failOrdinaryRoute(resource.Metadata.Name, status, nil, "ForeignRoutePreserved", errors.New("existing route has no matching applied ownership"))
+		return c.failOrdinaryRoute(resource, status, nil, "ForeignRoutePreserved", errors.New("existing route has no matching applied ownership"))
 	}
 	receipt = &ipv4RouteReceipt{Route: desired, Scope: premise.Scope, IfIndex: premise.IfIndex, ParentToken: premise.ParentToken, Pending: true}
 	status["phase"] = "Applying"
-	if err := c.saveOrdinaryRouteStatus(resource.Metadata.Name, status, receipt); err != nil {
+	if err := c.saveOrdinaryRouteStatus(resource, status, receipt); err != nil {
 		return err
 	}
 	// Persistence can wait. Recheck both observations and desired authority before
 	// the exclusive acquisition; this attempt has not issued a native write yet.
 	fresh, err := c.ordinaryRoutePremise(ctx, spec)
 	if err != nil {
-		return c.failOrdinaryRoute(resource.Metadata.Name, status, receipt, "ObserveFailed", err)
+		return c.failOrdinaryRoute(resource, status, receipt, "ObserveFailed", err)
 	}
 	_, collision, err = c.observeOrdinaryRoute(ctx, desired)
 	if err != nil {
-		return c.failOrdinaryRoute(resource.Metadata.Name, status, receipt, "ObserveFailed", err)
+		return c.failOrdinaryRoute(resource, status, receipt, "ObserveFailed", err)
 	}
 	if fresh != premise || collision {
-		return c.failOrdinaryRoute(resource.Metadata.Name, status, nil, "AcquisitionPremiseChanged", errors.New("IPv4Route premise changed after pending persistence; no native add was issued"))
+		return c.failOrdinaryRoute(resource, status, nil, "AcquisitionPremiseChanged", errors.New("IPv4Route premise changed after pending persistence; no native add was issued"))
 	}
 	name, args := ordinaryRouteApplyCommand(desired)
 	out, err := c.run(ctx, name, args...)
 	if err != nil {
-		return c.failOrdinaryRoute(resource.Metadata.Name, status, receipt, "ApplyFailed", fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(out))))
+		return c.failOrdinaryRoute(resource, status, receipt, "ApplyFailed", fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(out))))
 	}
 	matching, _, err := c.observeOrdinaryRoute(ctx, desired)
 	if err != nil || !matching {
-		return c.failOrdinaryRoute(resource.Metadata.Name, status, receipt, "ApplyUnconfirmed", errors.Join(err, errors.New("IPv4Route add did not read back the exact native tuple")))
+		return c.failOrdinaryRoute(resource, status, receipt, "ApplyUnconfirmed", errors.Join(err, errors.New("IPv4Route add did not read back the exact native tuple")))
 	}
 	if err := c.verifyOrdinaryRouteIdentity(ctx, *receipt); err != nil {
-		return c.failOrdinaryRoute(resource.Metadata.Name, status, receipt, "ApplyUnconfirmed", err)
+		return c.failOrdinaryRoute(resource, status, receipt, "ApplyUnconfirmed", err)
 	}
 	fresh, err = c.ordinaryRoutePremise(ctx, spec)
 	if err != nil {
-		return c.failOrdinaryRoute(resource.Metadata.Name, status, receipt, "ObserveFailed", err)
+		return c.failOrdinaryRoute(resource, status, receipt, "ObserveFailed", err)
 	}
 	if fresh != premise {
 		// This invocation has the exclusive-add acknowledgement and exact readback.
 		// It may withdraw that known effect without publishing Installed first.
 		known := *receipt
 		known.Pending = false
-		if err := c.withdrawOrdinaryReceipt(ctx, resource.Metadata.Name, status, &known); err != nil {
-			return c.failOrdinaryRoute(resource.Metadata.Name, status, &known, "WithdrawFailed", err)
+		if err := c.withdrawOrdinaryReceipt(ctx, resource, status, &known); err != nil {
+			return c.failOrdinaryRoute(resource, status, &known, "WithdrawFailed", err)
 		}
-		return c.saveOrdinaryRouteStatus(resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "PremiseChanged", "dryRun": false}, nil)
+		return c.saveOrdinaryRouteStatus(resource, map[string]any{"phase": "Pending", "reason": "PremiseChanged", "dryRun": false}, nil)
 	}
 	receipt.Pending = false
 	status["phase"], status["changed"], status["installedAt"] = "Installed", true, time.Now().UTC().Format(time.RFC3339Nano)
-	if err := c.saveOrdinaryRouteStatus(resource.Metadata.Name, status, receipt); err != nil {
+	if err := c.saveOrdinaryRouteStatus(resource, status, receipt); err != nil {
 		return err
 	}
 	if c.Bus != nil {
 		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.ipv4.route.installed", daemonapi.SeverityInfo)
-		event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "IPv4Route", Name: resource.Metadata.Name}
+		event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: resource.Kind, Name: resource.Metadata.Name}
 		event.Attributes = map[string]string{"type": desired.Type, "destination": desired.Destination, "device": desired.Device, "gateway": desired.Gateway, "dryRun": "false"}
 		return c.Bus.Publish(ctx, event)
 	}
@@ -345,7 +345,7 @@ func (c IPv4RouteController) verifyOrdinaryRouteIdentity(ctx context.Context, re
 	return nil
 }
 
-func (c IPv4RouteController) withdrawOrdinaryReceipt(ctx context.Context, name string, status map[string]any, receipt *ipv4RouteReceipt) error {
+func (c IPv4RouteController) withdrawOrdinaryReceipt(ctx context.Context, resource api.Resource, status map[string]any, receipt *ipv4RouteReceipt) error {
 	matching, _, err := c.observeOrdinaryRoute(ctx, receipt.Route)
 	if err != nil || !matching {
 		return err
@@ -356,7 +356,7 @@ func (c IPv4RouteController) withdrawOrdinaryReceipt(ctx context.Context, name s
 	if err := c.verifyOrdinaryRouteIdentity(ctx, *receipt); err != nil {
 		return err
 	}
-	previous, err := c.Store.ReadObjectStatus(api.NetAPIVersion, "IPv4Route", name)
+	previous, err := c.Store.ReadObjectStatus(api.NetAPIVersion, resource.Kind, resource.Metadata.Name)
 	if err != nil {
 		return err
 	}
@@ -365,11 +365,11 @@ func (c IPv4RouteController) withdrawOrdinaryReceipt(ctx context.Context, name s
 	pending.Pending = true
 	pendingStatus := copyStatusMap(status)
 	pendingStatus["phase"] = "Withdrawing"
-	if err := c.saveOrdinaryRouteStatus(name, pendingStatus, &pending); err != nil {
+	if err := c.saveOrdinaryRouteStatus(resource, pendingStatus, &pending); err != nil {
 		return err
 	}
 	*receipt = pending
-	current, err := c.ordinaryRoutePremiseForName(ctx, name)
+	current, err := c.ordinaryRoutePremiseForResource(ctx, resource)
 	if err != nil {
 		return err
 	}
@@ -383,7 +383,7 @@ func (c IPv4RouteController) withdrawOrdinaryReceipt(ctx context.Context, name s
 		if err != nil || !matching {
 			return errors.Join(err, errors.New("reactivated IPv4Route native presence is unconfirmed"))
 		}
-		if err := c.saveOrdinaryRouteStatus(name, copyStatusMap(previous), &known); err != nil {
+		if err := c.saveOrdinaryRouteStatus(resource, copyStatusMap(previous), &known); err != nil {
 			return err
 		}
 		*receipt = known
@@ -394,29 +394,48 @@ func (c IPv4RouteController) withdrawOrdinaryReceipt(ctx context.Context, name s
 	return c.removeOrdinaryRoute(ctx, pending.Route)
 }
 
-func (c IPv4RouteController) ordinaryRoutePremiseForName(ctx context.Context, name string) (ordinaryRoutePremise, error) {
+func (c IPv4RouteController) ordinaryRoutePremiseForResource(ctx context.Context, wanted api.Resource) (ordinaryRoutePremise, error) {
 	if c.Router == nil {
 		return ordinaryRoutePremise{}, errors.New("IPv4Route current router is unavailable")
 	}
 	for _, resource := range c.Router.Spec.Resources {
-		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "IPv4Route" || resource.Metadata.Name != name {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != wanted.Kind || resource.Metadata.Name != wanted.Metadata.Name {
 			continue
 		}
-		spec, err := resource.IPv4RouteSpec()
-		if err != nil {
-			return ordinaryRoutePremise{}, err
+		switch resource.Kind {
+		case "IPv4Route":
+			spec, err := resource.IPv4RouteSpec()
+			if err != nil {
+				return ordinaryRoutePremise{}, err
+			}
+			return c.ordinaryRoutePremise(ctx, spec)
+		case "IPv4StaticRoute":
+			spec, err := resource.IPv4StaticRouteSpec()
+			if err != nil {
+				return ordinaryRoutePremise{}, err
+			}
+			return c.ordinaryRoutePremise(ctx, api.IPv4RouteSpec{
+				Destination: spec.Destination,
+				Device:      api.ResolveInterfaceIfName(c.Router, spec.Interface),
+				Gateway:     spec.Via,
+				Metric:      spec.Metric,
+			})
 		}
-		return c.ordinaryRoutePremise(ctx, spec)
 	}
 	return ordinaryRoutePremise{}, nil
 }
 
-func (c IPv4RouteController) saveOrdinaryRouteStatus(name string, status map[string]any, receipt *ipv4RouteReceipt) error {
+func (c IPv4RouteController) saveOrdinaryRouteStatus(resource api.Resource, status map[string]any, receipt *ipv4RouteReceipt) error {
+	if resource.Kind == "IPv4StaticRoute" {
+		if spec, err := resource.IPv4StaticRouteSpec(); err == nil {
+			status["interface"] = spec.Interface
+		}
+	}
 	delete(status, "routeOwner")
 	if receipt != nil {
 		status["routeOwner"], status["managedBy"] = *receipt, "routerd"
 	}
-	return c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4Route", name, status)
+	return c.Store.SaveObjectStatus(api.NetAPIVersion, resource.Kind, resource.Metadata.Name, status)
 }
 
 func (c IPv4RouteController) ordinaryRoutePreferredSourceIsLocal(ctx context.Context, source string) (bool, error) {
@@ -455,19 +474,19 @@ func (c IPv4RouteController) ordinaryRoutePreferredSourceIsLocal(ctx context.Con
 	return false, nil
 }
 
-func (c IPv4RouteController) failOrdinaryRoute(name string, status map[string]any, receipt *ipv4RouteReceipt, reason string, effectErr error) error {
+func (c IPv4RouteController) failOrdinaryRoute(resource api.Resource, status map[string]any, receipt *ipv4RouteReceipt, reason string, effectErr error) error {
 	status["phase"], status["reason"], status["error"] = "Error", reason, effectErr.Error()
-	return errors.Join(effectErr, c.saveOrdinaryRouteStatus(name, status, receipt))
+	return errors.Join(effectErr, c.saveOrdinaryRouteStatus(resource, status, receipt))
 }
 
-func (c IPv4RouteController) withdrawInactiveOrdinaryRoute(ctx context.Context, name string, status map[string]any, receipt *ipv4RouteReceipt) error {
+func (c IPv4RouteController) withdrawInactiveOrdinaryRoute(ctx context.Context, resource api.Resource, status map[string]any, receipt *ipv4RouteReceipt) error {
 	if receipt != nil && !c.DryRun {
-		if err := c.withdrawOrdinaryReceipt(ctx, name, status, receipt); err != nil {
-			return c.failOrdinaryRoute(name, status, receipt, "WithdrawFailed", err)
+		if err := c.withdrawOrdinaryReceipt(ctx, resource, status, receipt); err != nil {
+			return c.failOrdinaryRoute(resource, status, receipt, "WithdrawFailed", err)
 		}
 		receipt = nil
 	}
-	return c.saveOrdinaryRouteStatus(name, status, receipt)
+	return c.saveOrdinaryRouteStatus(resource, status, receipt)
 }
 
 func ordinaryRouteExternallyManaged(status map[string]any) bool {
