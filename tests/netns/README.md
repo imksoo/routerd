@@ -17,6 +17,7 @@ namespace/veth/VXLAN/bridge/firewall kernel facilities used by the selected case
 | `graceful-vrrp-activation` | arping; Go or `ROUTERD_GRACEFUL_VRRP_DRIVER` |
 | `ingress-conntrack-survive`, `forcefrag-df-forward`, `vxlan-l2-mss-clamp` | nftables; forcefrag also needs ping |
 | `nat44-portforward` | curl; Go builds the current routerd validator and NAT controller |
+| `local-service-redirect` | dnsmasq, `dig`; Go builds the current routerd validator and NAT controller |
 | `sam-empty-forward-chain` | iptables/nftables; Go or `ROUTERD_SAM_FORWARD_PROBE` |
 | `arp-observer-ignore-member-mac`, standalone `vxlan-when-ha-active-standby` | Go builds the observer/controller |
 | `sam-proxy-arp-garp-transition`, `vxlan-l2-control-plane-transparency` | Common iproute2/Python/timeout and corresponding kernel facilities |
@@ -43,6 +44,7 @@ sudo ./keepalived-no-spurious-restart.sh
 sudo ./graceful-vrrp-activation.sh
 sudo ./ingress-conntrack-survive.sh
 sudo ./nat44-portforward.sh
+sudo ./local-service-redirect.sh
 sudo ./forcefrag-df-forward.sh
 sudo ./sam-empty-forward-chain.sh
 sudo ./vxlan-l2-control-plane-transparency.sh
@@ -64,6 +66,7 @@ The scripts cover:
 | `vrrp-vmac-lan-address-lifecycle.sh` | The role hook retains staged delegated IPv6 addresses, records graceful election ownership, removes the deferred VIP before BACKUP, and never publishes it directly on MASTER. |
 | `ingress-conntrack-survive.sh` | Existing DNAT conntrack flows stay on the old backend while new flows use the new backend. |
 | `nat44-portforward.sh` | A prepared 1.5 config passes validation; the production NAT controller serves WAN DNAT and LAN hairpin traffic, then withdrawal resets an existing flow and blocks new flows. |
+| `local-service-redirect.sh` | The production NAT controller redirects selected IPv4/IPv6 TCP/UDP DNS traffic by destination and LAN interface, applies an interface change, and restores upstream delivery after withdrawal. |
 | `forcefrag-df-forward.sh` | Linux nftables `routerd_forcefrag` clears IPv4 DF on an oversized forwarded packet before a low-MTU egress link. |
 | `sam-empty-forward-chain.sh` | The real SAM controller treats an absent forwarding chain as a no-op, preserves incompatible existing chains as errors, and removes stale owned forwarding rules and `accept_local`. Run with both Ubuntu 22.04 iptables-nft 1.8.7 and a newer backend. |
 | `arp-observer-ignore-member-mac.sh` | `routerd-arp-observer` ignores configured SAM member sender MACs while preserving real-client observations on passive packet and ARP table scan paths. |
@@ -165,6 +168,25 @@ sudo ./tests/netns/nat44-portforward.sh
 The test needs Linux network namespaces, iproute2, nftables, curl, Python 3 and
 Go. Successful runs remove temporary state and logs; failures retain the
 temporary directory for local diagnosis.
+
+## LocalServiceRedirect DNS interception
+
+`local-service-redirect.sh` validates a prepared routerd 1.5 configuration and
+runs the production NAT controller with real nftables in a private router
+namespace. Independent LAN clients and a WAN-side dnsmasq distinguish the local
+DNS answer from the upstream answer over IPv4/IPv6 and TCP/UDP. The checks cover
+the configured destination-address set, destination port, ingress interface,
+changing the selected LAN interface, and withdrawing the redirect so queries
+reach the upstream again. This exercises a fresh 1.5 config; it does not import
+old config or state. Successful temporary output is deleted; a failed run keeps
+its current diagnostic directory for reproduction.
+
+```sh
+sudo ./tests/netns/local-service-redirect.sh
+```
+
+The test needs Linux network namespaces, iproute2, nftables, dnsmasq, BIND
+`dig`, Python 3, Go and IPv6 support in the kernel.
 
 ## Stateful DHCPv6 server
 

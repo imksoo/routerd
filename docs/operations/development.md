@@ -229,6 +229,21 @@ retain the temporary directory for diagnosis. This is not a 1.0 configuration
 or state import, packaged install, service-manager test, or qualification of
 pinholes, session synchronization, multi-backend ingress or FreeBSD.
 
+## Linux LocalServiceRedirect DNS interception check
+
+Run `sudo ./tests/netns/local-service-redirect.sh` on an isolated Linux host
+with iproute2, nftables, dnsmasq, BIND `dig`, Python 3, Go and IPv6 support.
+The test validates a prepared routerd 1.5 config, then runs the production NAT
+controller with real nftables in a private router namespace. Independent LAN
+clients and a WAN-side DNS server check that the configured destination set,
+port and ingress interface select local DNS for IPv4/IPv6 TCP/UDP queries; an
+unselected address, port or interface must continue to the upstream. Changing
+the selected LAN interface must move the redirect, and withdrawing it must
+restore upstream answers and remove both NAT tables. This starts with a 1.5
+config and fresh state; it does not import 1.0 config or state. Successful
+temporary output is deleted; failures retain only the current diagnostic
+directory for reproduction.
+
 ## Linux packaged DHCPv6 server lifecycle VM gate
 
 Build the candidate with `make dist`, extract its Linux archive on a dedicated,

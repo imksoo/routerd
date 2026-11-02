@@ -101,3 +101,11 @@ sudo ./tests/netns/dns-resolver-runtime.sh
 撤銷規則後，既有 WAN TCP 連線必須 reset，routerd NAT table 必須移除，新的 WAN 連線不得抵達 backend。成功時刪除暫存狀態和記錄，
 失敗時保留暫存目錄供診斷。此測試不匯入 1.0 設定或狀態，也不涵蓋 package install、service manager、pinhole、session 同步、
 多 backend ingress 或 FreeBSD。
+
+## Linux LocalServiceRedirect DNS 攔截檢查
+
+在具備 iproute2、nftables、dnsmasq、BIND `dig`、Python 3、Go 和 IPv6 核心支援的隔離 Linux 環境中執行
+`sudo ./tests/netns/local-service-redirect.sh`。測試驗證準備好的 routerd 1.5 設定，然後在私有 router namespace 中執行實際 NAT controller 與 nftables。
+獨立 LAN 用戶端和 WAN 側 DNS 伺服器驗證：只有符合目標位址集、連接埠和入口介面的 IPv4/IPv6 TCP/UDP 查詢會抵達本機 DNS；不符合的目標、連接埠或介面仍會抵達 upstream。
+變更所選 LAN 介面後，重新導向必須隨之切換；撤銷後應恢復 upstream 回應並刪除兩個 NAT table。測試從新的 routerd 1.5 設定和狀態開始，不匯入 1.0 設定或狀態。
+成功時刪除暫存輸出；失敗時只保留本次用於重現的診斷目錄。

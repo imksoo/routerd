@@ -1224,6 +1224,23 @@
         "Multi-backend IngressService behavior, packaged service-manager lifecycle, FreeBSD runtime or complete 1.0 function preservation"
       ]
     },
+    "linux-local-service-redirect-3bb5e7c3": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "3bb5e7c3e5bd77165837a2c670da232524a173a5",
+      "reference": "tests/netns/README.md#localserviceredirect-dns-interception",
+      "environment": "Ubuntu 24.04; Linux 6.8.0-136-generic; private network namespaces/veth; nftables 1.0.9; dnsmasq 2.90; BIND dig 9.18.39; Go 1.25.9.",
+      "reproduction": "sudo ./tests/netns/local-service-redirect.sh",
+      "checks": [
+        "Prepared routerd 1.5 YAML passed validation; the production NAT controller applied real IPv4 and IPv6 nftables rules in a private router namespace.",
+        "Independent LAN clients received the local DNS answer for selected IPAddressSet destinations over IPv4/IPv6 TCP/UDP; an unselected address, port and LAN interface received the upstream answer.",
+        "Changing the selected LAN interface moved interception; withdrawing the redirect removed both routerd NAT tables and restored upstream answers. Successful temporary output was removed."
+      ],
+      "excludes": [
+        "FQDN-backed IPAddressSet refresh/expiry, routerd DNSResolver process/service integration and FreeBSD runtime",
+        "NAT44Rule outbound SNAT variants, NAT44FlowDNATPinhole, NAT44SessionSync or complete 1.0 function qualification"
+      ]
+    },
     "dhcpv6-partial-recovery-87761c0e": {
       "level": "ordinary-tests",
       "outcome": "pass",
@@ -3279,7 +3296,9 @@
           "pkg/controller/nat44/controller_test.go",
           "pkg/controller/chain/nat44sessionsync_test.go",
           "tests/netns/nat44-portforward.sh",
-          "tests/netns/nat44-portforward-runtime/main.go"
+          "tests/netns/nat44-portforward-runtime/main.go",
+          "tests/netns/local-service-redirect.sh",
+          "tests/netns/local-service-redirect-runtime/config.yaml"
         ]
       },
       "preservation_verdict": "unknown",
@@ -3292,7 +3311,8 @@
           "linux-dhcp-firewall-1f9fc319",
           "linux-wan-dhcpv4-1f9fc319",
           "linux-portforward-f6502ea2",
-          "linux-portforward-b57fc473"
+          "linux-portforward-b57fc473",
+          "linux-local-service-redirect-3bb5e7c3"
         ]
       },
       "freebsd": {
@@ -3304,7 +3324,7 @@
       },
       "required_remaining_checks": [
         "NAT44Rule outbound SNAT/masquerade selectors; NAT44FlowDNATPinhole and NAT44SessionSync paths",
-        "LocalServiceRedirect behavior, interface/policy changes and the remaining Linux/FreeBSD runtime scope"
+        "FQDN-backed IPAddressSet refresh/expiry, routerd DNSResolver/service integration and the remaining Linux/FreeBSD runtime scope"
       ]
     },
     {

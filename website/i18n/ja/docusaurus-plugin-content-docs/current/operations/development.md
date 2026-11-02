@@ -192,6 +192,16 @@ routerd NAT table が消え、新しい WAN 接続が backend に届かないこ
 失敗時は調査用 directory を残します。1.0 設定や state の import、package install、service manager、pinhole、session 同期、
 複数 backend の ingress、FreeBSD は対象外です。
 
+## Linux LocalServiceRedirect DNS 振り分け試験
+
+iproute2、nftables、dnsmasq、BIND `dig`、Python 3、Go と IPv6 対応カーネルを備えた隔離 Linux 環境で
+`sudo ./tests/netns/local-service-redirect.sh` を実行します。用意済みの routerd 1.5 設定を validate し、
+private router namespace 内で実際の NAT controller と nftables を動かします。独立した LAN client と WAN 側 DNS server を使い、
+宛先 address set・port・受信 interface に一致する IPv4/IPv6 の TCP/UDP query だけが local DNS に届き、
+一致しない宛先・port・interface は upstream に届くことを確認します。選択する LAN interface を設定変更で切り替え、
+redirect 撤去後に upstream 応答へ戻り、両方の NAT table が消えることも確認します。1.5 設定と新しい state から開始し、
+1.0 設定や state は取り込みません。成功時は一時出力を削除し、失敗時は再現用の今回の診断 directory だけを残します。
+
 ## Linux の packaged DHCPv6 server lifecycle VM 試験
 
 `make dist` で candidate を build し、専用の破棄可能な systemd Linux VM に展開してから実行します。
