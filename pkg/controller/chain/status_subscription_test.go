@@ -432,6 +432,9 @@ func TestDNSResolverSubscriptionsKeepLeaseAndDNSEvents(t *testing.T) {
 	if !subscriptionSetAccepts(subs, daemonapi.DaemonEvent{Type: daemonapi.EventDHCPLeaseAdded}) {
 		t.Fatal("dns-resolver did not accept DHCP lease event")
 	}
+	if !subscriptionSetAccepts(subs, daemonapi.DaemonEvent{Type: "routerd.dhcpv6.info.updated"}) {
+		t.Fatal("dns-resolver did not accept DHCPv6 information update")
+	}
 	if subscriptionSetAccepts(subs, daemonapi.DaemonEvent{Type: "routerd.dhcp.lease.add"}) {
 		t.Fatal("dns-resolver accepted removed DHCP lease topic")
 	}

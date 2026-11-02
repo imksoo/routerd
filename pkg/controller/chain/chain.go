@@ -1188,6 +1188,7 @@ func dnsResolverStatusSubscriptions(router *api.Router) []bus.Subscription {
 	subs := statusSubscriptionsWithWhen(router, []string{"DNSResolver", "DNSForwarder", "DNSUpstream", "DNSZone"},
 		"DNSResolver", "DNSForwarder", "DNSUpstream", "DNSZone", "IPv6DelegatedAddress", "DHCPv6Information", "VirtualAddress", "Interface", "IngressService")
 	subs = append(subs, bus.Subscription{Topics: []string{daemonapi.EventDHCPLeaseAdded, daemonapi.EventDHCPLeaseRenewed, daemonapi.EventDHCPLeaseRemoved}})
+	subs = append(subs, bus.Subscription{Topics: []string{"routerd.dhcpv6.info.updated"}})
 	return subs
 }
 
