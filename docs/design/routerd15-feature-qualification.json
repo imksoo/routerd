@@ -4045,7 +4045,8 @@
           "linux-gue-candidate-5be3b91e",
           "linux-fou-gue-candidate-fedafe49",
           "linux-ipip-pve-0067d447",
-          "linux-fou-pve-ea892a6b"
+          "linux-fou-pve-ea892a6b",
+          "linux-gue-pve-ea892a6b"
         ]
       },
       "freebsd": {
@@ -4055,7 +4056,6 @@
         ]
       },
       "required_remaining_checks": [
-        "現行 Linux 実行物での独立 GUE ピアと経路",
         "複数トンネルの経路制御、クラウドまたはオンプレミスの送信元識別"
       ],
       "finding_references": [
