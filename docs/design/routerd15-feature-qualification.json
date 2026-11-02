@@ -1833,6 +1833,24 @@
         "Complete routerd 1.0 functional parity and a whole-feature or whole-platform qualification verdict."
       ]
     },
+    "linux-pve-ipv4-route-withdrawal-d467ab70": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "d467ab70ffff3e1b7763f084a945ea1ba9939db3",
+      "reference": "evidence/routerd15-d467ab70-ipv4-route-pve-qualification-20261102.md",
+      "source_binding": "Candidate ISO SHA-256 11fca32ba8886e2ba4f961569ef2a0fe915a09625e70125dac40ae28791f88a8. The current 1f0b694a differs only in qualification documentation.",
+      "environment": "Authorized PVE VLANs. VM219 ran the Linux candidate with fresh test state. Independent VM220 used VLAN 3132 as the upstream and target network, and independent VM224 used VLAN 3131 as the static IPv4 client.",
+      "checks": [
+        "IPv4Route installed 203.0.113.0/24 via 198.18.92.2 on VM219. VM224 ICMP to the independent VM220 target succeeded 3/3 through that route.",
+        "Replacing the configuration without IPv4Route removed the kernel route. A new VM224 ICMP received Destination Net Unreachable from VM219 and did not reach VM220.",
+        "Reapplying IPv4Route restored the kernel next hop and VM224 ICMP 3/3. A routerd restart retained both the route and the independent ICMP path.",
+        "VM219, VM220 and VM224 were restored to their original binaries, configuration, state and run status; the candidate ISO and test assets were removed."
+      ],
+      "excludes": [
+        "ClusterNetworkRoute, dynamic cluster updates, policy routing, BGP-to-kernel route behavior, multiple paths and failure selection.",
+        "IPv6 routes, FreeBSD, physical access, complete routerd 1.0 functional parity and a whole-feature or whole-platform qualification verdict."
+      ]
+    },
     "linux-pve-dns-forward-withdrawal-409719ba": {
       "level": "independent-peer",
       "outcome": "pass",
@@ -2863,7 +2881,8 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "linux-independent-ipv4-6135bb03"
+          "linux-independent-ipv4-6135bb03",
+          "linux-pve-ipv4-route-withdrawal-d467ab70"
         ]
       },
       "freebsd": {
