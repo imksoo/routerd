@@ -101,6 +101,8 @@ for _ in {1..10}; do
  sleep 1
 done
 test "$(ip netns exec rd15-wan-peer dig +time=1 +tries=1 +short @198.18.16.1 peer.test A)" = 198.18.16.1
+install -D -m 0600 "$work/base.json" /usr/local/etc/routerd/router.yaml
+/usr/local/sbin/routerd validate --config /usr/local/etc/routerd/router.yaml
 systemctl start routerd
 /usr/local/sbin/routerctl apply -f "$work/base.json" --replace > "$work/base-apply.txt"
 lease_events() {
@@ -209,6 +211,7 @@ cat > "$work/empty.json" <<'JSON'
 {"apiVersion":"routerd.net/v1alpha1","kind":"Router","metadata":{"name":"home-readiness"},"spec":{"resources":[]}}
 JSON
 /usr/local/sbin/routerctl apply -f "$work/empty.json" --replace > "$work/withdraw.txt"
+install -m 0600 "$work/empty.json" /usr/local/etc/routerd/router.yaml
 for dev in rd15-lan rd15-wan rd15-admin; do
  ip -4 addr show dev "$dev" > "$work/$dev-addresses.txt"
  if grep -q 'inet 198.18.' "$work/$dev-addresses.txt"; then echo "address survived withdrawal: $dev" >&2; exit 1; fi
