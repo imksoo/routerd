@@ -199,6 +199,19 @@ IPv6 PPP、CHAP、認証失敗、資格情報更新、MTU 境界、複数同時�
 他実装のアクセスコンセントレーターは未検証です。詳細は
 `evidence/routerd15-99d44d33-pppoe-pve-qualification-20261102.md` に記録します。
 
+現行リビジョン `883dacbd` では、同じ三 VM・独立 VLAN 構成を新しい Linux 候補パッケージで再実行しました。
+VM219 は VM220 の rp-pppoe アクセスコンセントレーターと PAP/IPCP を確立し、`ppp-lab` に
+`100.64.0.10`、PPP 既定経路、LAN から PPPoE への NAT44 規則を構成しました。VM224 の ICMP は
+3/3 成功し、VM220 の HTTP 応答は変換後の送信元 `100.64.0.10` を記録しました。
+
+VM220 のアクセスコンセントレーターとセッション PPP プロセスを停止すると、VM219 は `Failed` と
+`Connection terminated.` を公開し、`ppp-lab` は消え、既定経路は `rd15-wan` へ戻りました。VM224 の
+HTTP は接続時間切れでした。同じアクセスコンセントレーターの再起動後、候補は自動的に
+PAP/IPCP、`100.64.0.10`、PPP 既定経路を回復し、VM224 の ICMP 3/3 と HTTP も回復しました。
+試験後は三 VM を元のスナップショットへ戻し、候補 VM219 と VM220 の既存 `routerd` は `active`、
+VM224 は停止状態へ復元しました。詳細は
+`evidence/routerd15-883dacbd-pppoe-recovery-pve-20261102.md` に記録します。
+
 `409719ba` の PVE 再試験では、VLAN 3132 の VM220 を外部 HTTP 要求元、VLAN 3131 の
 VM224 を内部 HTTP サーバーとして、VM219 の TCP 宛先変換を確認しました。外部側から
 `198.18.53.2:18080` へ接続すると VM224 の `198.18.51.10:8080` が応答しました。ポート転送を
