@@ -122,6 +122,10 @@ DNS 配布、プレフィックス再採番、`routerd` の再起動・ホスト
 [`routerd15-4aa5339e-ingress-service-isolated-pve-20261102.md`](../../evidence/routerd15-4aa5339e-ingress-service-isolated-pve-20261102.md)
 に記録しています。
 
+現行リビジョン `ed074267` では、IPv6 静的経路を VM219・VM220・VM224 と VLAN 3131・3132 を使う三 VM 構成で再確認しました。VM224 から VM220 の IPv6 ループバックへ、VM219 が導入した指定ゲートウェイ・装置・メトリックの経路を通じて ICMP 3/3 を確認しました。空設定への置換で経路と通信は撤回され、再適用と `routerd` 再起動の後に復旧しました。さらに WAN 側 VLAN インターフェースを削除すると通信は停止し、同名・同一 VLAN の復元後は設定置換や `routerd` 再起動なしに 6 秒で経路と通信が復旧しました。対象、観測、復元、範囲外は
+[`routerd15-ed074267-ipv6-static-route-vlan-pve-20261102.md`](../../evidence/routerd15-ed074267-ipv6-static-route-vlan-pve-20261102.md)
+に記録しています。
+
 Linux DHCPv4 サーバーと予約の PVE 試験は `2c3fe143` に記録しています。VM219 を候補ルーター、
 VM224 を予約済み MAC アドレスのクライアント、VM220 を別 MAC アドレスの動的クライアントとして
 VLAN 3131 に接続しました。VM224 は予約アドレス `198.18.15.50`、VM220 は同じアドレスを要求しても
