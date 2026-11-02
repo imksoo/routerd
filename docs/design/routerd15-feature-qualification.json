@@ -71,11 +71,11 @@
     "as_of_revision": "883dacbd3df3f0725e07f2985ccfcf559089b3f4",
     "feature_functions_total": 50,
     "feature_functions_with_scoped_linux_evidence": 42,
-    "scoped_linux_evidence_references": 149,
+    "scoped_linux_evidence_references": 150,
     "feature_functions_fully_qualified": 0,
     "open_check_statements": 96,
     "counting_note": "Open check statements are the managed backlog. They are not represented as a fictitious count of packet cases: each statement is decomposed into a concrete peer, traffic, withdrawal and recovery observation when it enters the execution board.",
-    "last_closed_scope": "DNS negative answers: local-zone and independent-upstream NXDOMAIN over UDP and TCP on PVE VLAN peers",
+    "last_closed_scope": "IPv4Route: independent VLAN client forwarding, kernel withdrawal and configuration recovery through the candidate router",
     "next_scope": null,
     "execution_board": {
       "rule": "A board item closes only the named observation. A passing item neither qualifies its whole feature nor reduces a different required_remaining_checks statement.",
@@ -1999,6 +1999,24 @@
         "Complete routerd 1.0 functional parity and a whole-feature or whole-platform qualification verdict."
       ]
     },
+    "linux-pve-ipv4-route-vlan-recovery-883dacbd": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "883dacbd3df3f0725e07f2985ccfcf559089b3f4",
+      "reference": "docs/releases/evidence/routerd15-883dacbd-ipv4-route-vlan-pve-20261102.md",
+      "source_binding": "routerd and routerctl came from routerd-linux-amd64.tar.gz SHA-256 cd763b1a1356053dd6e7400358119a0edfbf23c674a16a4fd07ff580d7de83ad.",
+      "environment": "Authorized PVE VLANs. VM219 ran the Linux candidate. VM220 was the independent VLAN 3132 next hop and HTTP target. VM224 was the independent VLAN 3131 client.",
+      "checks": [
+        "IPv4Route installed 203.0.113.0/24 via 198.18.16.1 on rd15-wan with metric 79, and VM224 HTTP reached the VM220 target 203.0.113.10 through VM219.",
+        "Replacing the valid new configuration with an empty configuration reached Healthy, removed the kernel route and made a new VM224 HTTP connection time out.",
+        "Reapplying the same new configuration copied from the immutable ISO reached Healthy, restored the exact route and restored VM224 HTTP.",
+        "VM219, VM220 and VM224 were restored to their original binaries, configuration, state and run status; the temporary ISO, snapshots and staging assets were removed."
+      ],
+      "excludes": [
+        "ClusterNetworkRoute, dynamic cluster updates, multiple paths, policy routing, BGP-learned routes, restart, IPv6 and FreeBSD.",
+        "Complete routerd 1.0 functional parity and a whole-feature or whole-platform qualification verdict."
+      ]
+    },
     "linux-pve-ipv4-route-withdrawal-d467ab70": {
       "level": "independent-peer",
       "outcome": "pass",
@@ -3151,7 +3169,8 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-independent-ipv4-6135bb03",
-          "linux-pve-ipv4-route-withdrawal-d467ab70"
+          "linux-pve-ipv4-route-withdrawal-d467ab70",
+          "linux-pve-ipv4-route-vlan-recovery-883dacbd"
         ]
       },
       "freebsd": {
