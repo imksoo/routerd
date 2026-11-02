@@ -2267,6 +2267,35 @@ path only. Source-address expiry, other NAT/MSS/firewall bindings, host reboot,
 provider interoperability, FreeBSD behavior and complete routerd 1.0 parity
 remain unqualified.
 
+#### Linux VRRP virtual address independent client failover and recovery, 2026-11-03
+
+Product source `81bc17680e3200ccda65eaa1f5a6b4190f908668` was packaged as
+`routerd v20261027.1620 (81bc176)` with archive SHA-256
+`90e10e039d8a4f694a48ef65f0709c03cc7b13f8428d83eb53faf3bf75b9da25`.
+Two isolated PVE candidates used separate node addresses on LAN VLAN 3131 and
+WAN VLAN 3132. A third isolated VM contained separate client and upstream Linux
+network namespaces: the client used only `198.18.40.254` as its default gateway,
+while the upstream endpoint used `203.0.113.1`.
+
+The higher-priority candidate reported `VirtualAddress/lan-vip` as `master` and
+was the sole owner of `198.18.40.254`; the other candidate reported `backup`.
+The independent client reached the upstream endpoint through the virtual address,
+IPv4 forwarding and routerd NAT44 with 3/3 ICMP replies. Direct ICMP to each
+candidate from the WAN namespace was denied by the configured untrust-zone
+policy, while the routed client flow succeeded.
+
+Stopping the initial master promoted the remaining candidate to `master`, moved
+the virtual address to it, and preserved the client's unchanged default route;
+the client again received 3/3 upstream replies. After the stopped candidate
+booted, it reported `backup` with `preempt: false`; the surviving candidate
+remained master and the client again received 3/3 replies. This is an
+update/configuration-state-reset check because both candidate snapshots contained
+an earlier routerd binary. It qualifies the observed Linux IPv4 VRRP election,
+client forwarding, primary withdrawal and node recovery path only. Split-brain
+and fencing behavior, PVE-host failure, configuration withdrawal, IPv6 virtual
+addresses, physical-site failure domains, FreeBSD behavior and complete routerd
+1.0 parity remain unqualified.
+
 #### Plugin process and effective-configuration checks
 
 At `e4097d0b966aeabbbe8fb01eb6d43ab42d5adc3c`, the actual subscription

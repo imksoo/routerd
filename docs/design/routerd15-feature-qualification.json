@@ -1799,6 +1799,22 @@
         "The candidate snapshot contained an earlier routerd binary, so this is an update/config-state-reset check rather than clean-install evidence.",
         "Source-address expiry, dynamic AFTR discovery, other NAT/MSS/firewall bindings, host reboot, provider interoperability, FreeBSD behavior and complete DS-Lite parity."
       ]
+    },
+    "linux-vrrp-pve-81bc1768": {
+      "level": "packaged-daemon-independent-peer",
+      "outcome": "pass",
+      "revision": "81bc17680e3200ccda65eaa1f5a6b4190f908668",
+      "reference": "docs/design/routerd15-audit.md#linux-vrrp-virtual-address-independent-client-failover-and-recovery-2026-11-03",
+      "archive_sha256": "90e10e039d8a4f694a48ef65f0709c03cc7b13f8428d83eb53faf3bf75b9da25",
+      "environment": "Two isolated PVE candidates on separate LAN and WAN VLANs; a third VM with separate Linux client and upstream namespaces; actual systemd service, keepalived and nftables NAT44.",
+      "checks": [
+        "The higher-priority candidate was master and sole IPv4 VIP owner; the other candidate was backup. The independent client used only the VIP as its default gateway and reached the independent upstream endpoint through forwarding and NAT44 with 3/3 ICMP replies.",
+        "Stopping the master promoted the backup, moved the VIP and preserved the unchanged client default route with 3/3 replies. Restarting the stopped candidate returned it as non-preempting backup while the surviving master retained traffic with 3/3 replies."
+      ],
+      "excludes": [
+        "The candidate snapshots contained an earlier routerd binary, so this is an update/config-state-reset check rather than clean-install evidence.",
+        "Split-brain/fencing, PVE-host outage, configuration withdrawal, IPv6 virtual addresses, physical-site failure domains, FreeBSD behavior and complete routerd 1.0 parity."
+      ]
     }
   },
   "features": [
@@ -2146,15 +2162,17 @@
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "linux-vrrp-pve-81bc1768"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",
         "scoped_evidence": []
       },
       "required_remaining_checks": [
-        "Independent two-router election and fencing",
-        "Actual VIP client traffic, failover, restart and withdrawal on both OSes"
+        "Linux split-brain/fencing and configuration-withdrawal behavior",
+        "FreeBSD two-router election, VIP client traffic, failover, restart and withdrawal"
       ]
     },
     {
