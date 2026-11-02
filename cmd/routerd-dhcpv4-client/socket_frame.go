@@ -32,6 +32,15 @@ func ethernetBroadcast(src net.HardwareAddr, packet dhcpv4client.Packet) []byte 
 	return frame
 }
 
+func vlanEthernetFrame(frame []byte, vlanID uint16) []byte {
+	tagged := make([]byte, len(frame)+4)
+	copy(tagged[:12], frame[:12])
+	binary.BigEndian.PutUint16(tagged[12:14], 0x8100)
+	binary.BigEndian.PutUint16(tagged[14:16], vlanID&0x0fff)
+	copy(tagged[16:], frame[12:])
+	return tagged
+}
+
 func ipv4Checksum(header []byte) uint16 {
 	var sum uint32
 	for i := 0; i+1 < len(header); i += 2 {
