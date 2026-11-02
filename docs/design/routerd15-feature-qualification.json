@@ -1596,6 +1596,27 @@
         "Complete routerd 1.0 feature parity",
         "Production deployment"
       ]
+    },
+    "linux-home-router-dualstack-57bf7e35": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "57bf7e35c99845e803b69321030e0ca8a52f1a79",
+      "reference": "docs/operations/development.md#linux-home-router-clean-install-lifecycle-gate",
+      "environment": "Ubuntu 24.04.4 PVE VM 131; isolated client/upstream network namespaces with BusyBox DHCPv4, Kea 2.4.1-3ubuntu0.2 and ndisc6 1.0.7-1ubuntu2; routerd v20261027.1620 Linux package SHA-256 cd015848fb73a6a507b9e6be4e05a4f2f083d16c8012f556857f9e077f0ea48a.",
+      "checks": [
+        "Clean package installation and a prepared routerd 1.5-format home-router configuration reached Healthy through the actual systemd service.",
+        "Independent BusyBox client acquired and renewed DHCPv4 without restarting routerd; DNS A/AAAA over UDP/TCP worked from IPv4 and IPv6 clients.",
+        "IPv4 NAT source and delegated IPv6 client source were observed by the upstream HTTP peer; unsolicited WAN-to-LAN IPv4 and IPv6 traffic was blocked.",
+        "DHCPv6-PD renewed and renumbered from 2001:db8:1500::/60 to 2001:db8:1501::/60; old address/route was withdrawn and new RA/SLAAC, DNS and forwarding worked.",
+        "WAN loss/return and real PD expiry/reacquisition automatically withdrew and restored forwarding; empty apply withdrew managed IPv4/IPv6 resources and traffic paths.",
+        "Successful cleanup removed routerd, namespaces, interfaces and temporary output, and restored IPv4/IPv6 forwarding to their initial values."
+      ],
+      "excludes": [
+        "Physical ISP interoperability, WAN discovery/RA, PPPoE and DS-Lite",
+        "IPv6StaticRoute rendering",
+        "Host reboot and process-crash recovery",
+        "Complete routerd 1.0 function parity or production qualification"
+      ]
     }
   },
   "features": [
@@ -1765,7 +1786,8 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "linux-system-native-2e99c7e7"
+          "linux-system-native-2e99c7e7",
+          "linux-home-router-dualstack-57bf7e35"
         ]
       },
       "freebsd": {
@@ -2236,7 +2258,8 @@
         "scoped_evidence": [
           "linux-bridge-aa9f3cac",
           "linux-bridge-vxlan-native-f54ceecb",
-          "linux-vrf-peer-9735f25e"
+          "linux-vrf-peer-9735f25e",
+          "linux-home-router-dualstack-57bf7e35"
         ]
       },
       "freebsd": {
@@ -2282,7 +2305,8 @@
         "scoped_evidence": [
           "linux-independent-ipv4-6135bb03",
           "linux-portforward-f6502ea2",
-          "linux-home-router-recovery-13b7a5b9"
+          "linux-home-router-recovery-13b7a5b9",
+          "linux-home-router-dualstack-57bf7e35"
         ]
       },
       "freebsd": {
@@ -2509,7 +2533,8 @@
         "scoped_evidence": [
           "linux-independent-ipv4-6135bb03",
           "linux-dhcpv4-reservation-82f2d159",
-          "linux-home-router-recovery-13b7a5b9"
+          "linux-home-router-recovery-13b7a5b9",
+          "linux-home-router-dualstack-57bf7e35"
         ]
       },
       "freebsd": {
@@ -2587,7 +2612,8 @@
           "linux-dhcpv6-native-1392082f",
           "linux-pd-ra-lifecycle-1392082f",
           "linux-dhcpv6-native-d05524de",
-          "linux-wan-ra-lifecycle-1392082f"
+          "linux-wan-ra-lifecycle-1392082f",
+          "linux-home-router-dualstack-57bf7e35"
         ]
       },
       "freebsd": {
@@ -2630,7 +2656,8 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "linux-pd-ra-lifecycle-1392082f"
+          "linux-pd-ra-lifecycle-1392082f",
+          "linux-home-router-dualstack-57bf7e35"
         ]
       },
       "freebsd": {
@@ -2805,7 +2832,8 @@
         "scoped_evidence": [
           "linux-independent-ipv4-6135bb03",
           "linux-dns-resolver-runtime-4ed306f9",
-          "linux-home-router-recovery-13b7a5b9"
+          "linux-home-router-recovery-13b7a5b9",
+          "linux-home-router-dualstack-57bf7e35"
         ]
       },
       "freebsd": {
@@ -3172,7 +3200,8 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-independent-ipv4-6135bb03",
-          "linux-home-router-recovery-13b7a5b9"
+          "linux-home-router-recovery-13b7a5b9",
+          "linux-home-router-dualstack-57bf7e35"
         ]
       },
       "freebsd": {
@@ -3266,7 +3295,8 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "linux-home-router-recovery-13b7a5b9"
+          "linux-home-router-recovery-13b7a5b9",
+          "linux-home-router-dualstack-57bf7e35"
         ]
       },
       "freebsd": {
