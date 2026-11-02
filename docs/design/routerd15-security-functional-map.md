@@ -19,7 +19,7 @@ routerd 1.5 は、旧設定形式を読み込まず、新しい設定で同じ�
 | 管理インターフェースを指定 CIDR に限定し、設定変更でのロックアウトを防止 | `ManagementAccess/mgmt-lockout-guard` と管理用 `FirewallZone` | VLAN 3133 で、許可した `198.18.63.10/32` の HTTP 到達、非許可 `198.18.63.11/32` の遮断、制限撤回時の到達、再適用後の再遮断を実測済み | IPv6、SSH と WebConsole、複数 CIDR、データプレーン障害中の管理経路 |
 | BGP の受入・広告範囲を限定 | `BGPRouter` の `importPolicy`、`exportPolicy`、`redistribute` | VLAN 3132 の BGP 経路導入・撤回・復旧は実測済み。接頭辞方針は未検証 | 許可接頭辞、拒否接頭辞、撤回、再広告とカーネル経路 |
 | 私設網宛の不用意な外部転送を防止 | `IPv4Route/private-10-blackhole` と `EgressRoutePolicy` の除外 CIDR | 静的黒穴経路と `EgressRoutePolicy` の除外 CIDRを、VLAN 3131 から VLAN 3132 への実通信、撤回、再適用で確認済み | 他の私設 CIDR、既存通信の扱い |
-| 防火壁の拒否を監査可能にする | `FirewallEventLog/default`、`LogSink` | 未検証 | 許可・拒否の記録、対象識別、設定撤回後の停止 |
+| 防火壁の拒否を監査可能にする | `FirewallEventLog/events`、`LogSink` | VLAN 3132 の独立 VM220 から VLAN 3131 宛ての拒否 TCP を NFLOG で記録。設定撤回中は遮断を維持して記録と収集 unit を停止し、再投入後に記録を再開 | 許可通信、UDP、LogSink、保持期間 |
 | 許可済み通信の記録を監査可能にする | `TrafficFlowLog/flows` | VLAN 3131 の VM224 から VLAN 3132 の VM220 へ HTTP を実通信し、双方向の接続追跡記録を確認。設定撤回中は通信を維持して記録を停止し、再投入後は記録を再開 | 拒否通信の `FirewallEventLog`、UDP、記録容量と保持期間 |
 
 ## 試験の共通条件
