@@ -109,6 +109,7 @@ cat > "$work/base.json" <<'JSON'
     {"apiVersion":"firewall.routerd.net/v1alpha1","kind":"FirewallZone","metadata":{"name":"wan"},"spec":{"role":"untrust","interfaces":["wan"]}},
     {"apiVersion":"firewall.routerd.net/v1alpha1","kind":"FirewallPolicy","metadata":{"name":"default"},"spec":{"logDeny":true}},
     {"apiVersion":"firewall.routerd.net/v1alpha1","kind":"FirewallRule","metadata":{"name":"allow-camera-outbound"},"spec":{"fromZone":"lan","toZone":"wan","protocol":"udp","destinationCIDRs":["198.18.71.10/32"],"destinationPorts":["32100"],"action":"accept"}},
+    {"apiVersion":"firewall.routerd.net/v1alpha1","kind":"FirewallFlowPinhole","metadata":{"name":"camera"},"spec":{"fromZone":"lan","toZone":"wan","outbound":{"sourceSetRef":"IPAddressSet/client","protocol":"udp","destinationCIDRs":["198.18.71.10/32"],"destinationPorts":["32100"]},"inbound":{"sourcePorts":["32099"]},"timeout":"5s"}},
     {"apiVersion":"net.routerd.net/v1alpha1","kind":"IPAddressSet","metadata":{"name":"client"},"spec":{"addresses":["198.18.70.100"]}},
     {"apiVersion":"net.routerd.net/v1alpha1","kind":"NAT44Rule","metadata":{"name":"masquerade"},"spec":{"type":"masquerade","egressInterface":"wan","sourceRanges":["198.18.70.0/24"]}},
     {"apiVersion":"net.routerd.net/v1alpha1","kind":"NAT44FlowDNATPinhole","metadata":{"name":"camera"},"spec":{"fromInterfaceRefs":["Interface/wan"],"outbound":{"sourceSetRef":"IPAddressSet/client","protocol":"udp","destinationCIDRs":["198.18.71.10/32"],"destinationPorts":["32100"]},"inbound":{"sourcePorts":["32099"]},"timeout":"5s"}}
