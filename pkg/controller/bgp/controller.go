@@ -455,7 +455,11 @@ func (c *Controller) removeLocked(ctx context.Context, stop func(context.Context
 	if os.IsNotExist(statErr) && !pending && c.removal == removalCompleted && !fibOwned {
 		return nil
 	}
-	managed := fibOwned || c.removal == removalInProgress || c.started || c.Server != nil
+	// Start owns the controller's observation lifetime, not the BGP daemon.
+	// A router without BGP still starts this controller so it can observe a
+	// future configuration.  Treating that lifetime as daemon ownership made
+	// an empty/new configuration repeatedly try to stop a non-existent helper.
+	managed := fibOwned || c.removal == removalInProgress || c.Server != nil
 	if c.ManagedHelperPath != "" {
 		_, helperErr := os.Stat(c.ManagedHelperPath)
 		if helperErr != nil && !os.IsNotExist(helperErr) {

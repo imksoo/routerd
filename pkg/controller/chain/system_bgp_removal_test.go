@@ -100,6 +100,29 @@ func TestBGPHelperRemovalOrdersIntentStopAndFIBAcrossSupervisors(t *testing.T) {
 	}
 }
 
+func TestBGPHelperRemovalWithoutManagedStateDoesNotStopSupervisor(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "applied.json")
+	stopped := false
+	actor := &bgpcontroller.Controller{
+		Store:  bgpRemovalStore(t),
+		Daemon: manageddaemon.Spec{StatePath: path},
+		FIB:    &removalFIB{stopped: &stopped},
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	done := actor.Start(ctx)
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+	controller := SystemdUnitController{BGPStatePath: path, BGPController: actor}
+	if err := controller.cleanupBGPDaemon(context.Background(), platform.Defaults{}, platform.Features{HasSystemd: true}, func(context.Context, string, ...string) ([]byte, error) {
+		t.Fatal("unmanaged BGP controller lifetime stopped the supervisor")
+		return nil, nil
+	}); err != nil {
+		t.Fatalf("cleanup empty BGP state: %v", err)
+	}
+}
+
 func TestBGPOnlyRunnerKeepsAcknowledgedRemovalDependency(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "applied.json")
 	if err := bgpdaemon.WriteApplied(path, bgpdaemon.AppliedConfig{Global: bgpdaemon.AppliedGlobal{ASN: 64512, RouterID: "192.0.2.1"}}); err != nil {
