@@ -15,7 +15,7 @@ routerd 1.5 は、旧設定形式を読み込まず、新しい設定で同じ�
 | LAN から管理網への必要な到達だけを許可 | `FirewallRule/allow-lan-to-management` | HTTP は到達し、規則撤回後は遮断、再投入後は復旧 | プロトコル・CIDR 限定、既存通信の扱い |
 | 旧 LAN セグメントから通常 LAN への限定許可 | `FirewallRule/allow-legacy-172-to-lan` | VLAN 3131 から VLAN 3132 へ、許可した送信元・宛先 CIDR と TCP ポートだけを到達させ、非許可送信元は遮断。規則撤回後は許可元も遮断し、再適用後に許可元だけ復旧 | 別の宛先 CIDR・ポート、UDP、既存通信の扱い |
 | WAN から LAN、ルーター自身への不要な到達を拒否 | `FirewallZone/wan` と既定 `FirewallPolicy` | 独立 WAN クライアントから LAN HTTP への TCP は遮断され、`wan_to_lan` の拒否カウンターを確認 | ルーター自身への拒否、UDP、設定撤回後の既存通信 |
-| 公開 DNS/NTP 宛の LAN 通信をローカルサービスへ誘導 | `IPAddressSet/public-dns`、`IPAddressSet/public-ntp`、`LocalServiceRedirect/lan-local-services` | 未検証 | DNS と NTP の転送先、規則撤回、既存通信と新規通信 |
+| 公開 DNS/NTP 宛の LAN 通信をローカルサービスへ誘導 | `IPAddressSet/public-dns`、`IPAddressSet/public-ntp`、`LocalServiceRedirect/lan-local-services` | VLAN 3131 から公開宛て相当の TCP をローカルサービスへ転送し、規則撤回後は接続拒否、再適用後は復旧を実測済み | 実際の DNS と NTP、既存通信の扱い |
 | 管理インターフェースを指定 CIDR に限定し、設定変更でのロックアウトを防止 | `ManagementAccess/mgmt-lockout-guard` と管理用 `FirewallZone` | VLAN 3133 で、許可した `198.18.63.10/32` の HTTP 到達、非許可 `198.18.63.11/32` の遮断、制限撤回時の到達、再適用後の再遮断を実測済み | IPv6、SSH と WebConsole、複数 CIDR、データプレーン障害中の管理経路 |
 | BGP の受入・広告範囲を限定 | `BGPRouter` の `importPolicy`、`exportPolicy`、`redistribute` | VLAN 3132 の BGP 経路導入・撤回・復旧は実測済み。接頭辞方針は未検証 | 許可接頭辞、拒否接頭辞、撤回、再広告とカーネル経路 |
 | 私設網宛の不用意な外部転送を防止 | `IPv4Route/private-10-blackhole` と `EgressRoutePolicy` の除外 CIDR | 未検証 | ブラックホール経路、除外先、通常宛先の転送、撤回 |

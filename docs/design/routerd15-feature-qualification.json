@@ -1887,6 +1887,24 @@
         "Complete routerd 1.0 functional parity and a whole-feature or whole-platform qualification verdict."
       ]
     },
+    "linux-pve-local-service-redirect-withdrawal-54cc8e23": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "54cc8e2310f9f1654a9332524ac4990115101cbc",
+      "reference": "docs/design/routerd15-security-functional-map.md",
+      "source_binding": "routerd SHA-256 25ddd0f63b9c350f77ed89637cfb8fde59cb1e91f7b6929e41940ddfaab0c73b; routerctl SHA-256 20530210d9636b3fe4d81f7d9056a65fd6865205f4cebe60a90538fe483da019.",
+      "environment": "Authorized PVE VLAN 3131. VM219 ran the checksum-verified Linux candidate with fresh test state, one LAN address and a new LocalServiceRedirect configuration. Independent VM224 used source 198.18.81.10/24. VM219 ran an HTTP listener on TCP 18084. The candidate's pre-existing dnsmasq service was stopped and its unit removed before configuration replacement, then the original service unit was restored after the test.",
+      "checks": [
+        "The new 1.5 configuration used IPAddressSet 198.18.83.53 and LocalServiceRedirect for TCP 18083 to local TCP 18084. VM224 reached the VM219 listener through 198.18.83.53:18083.",
+        "Replacing the valid 1.5 configuration without LocalServiceRedirect reached Healthy at generation 1. The same VM224 connection was refused.",
+        "Reapplying LocalServiceRedirect reached Healthy at generation 2. The same VM224 connection again reached the listener, and the rendered nftables NAT rule matched the VLAN 3131 interface, address set and TCP ports.",
+        "The withdrawal response included one orphaned managed-artifact warning. It did not prevent the observed withdrawal or recovery, but its cause is outside this test case. VM219, VM220 and VM224 were restored to their original binaries, configuration, state and run status; the temporary ISO and test assets were removed."
+      ],
+      "excludes": [
+        "Actual DNS and NTP payloads, UDP, IPv6, multiple destination addresses, existing connections, logging delivery and FreeBSD.",
+        "The no-DNS dnsmasq managed-artifact warning, complete routerd 1.0 functional parity and a whole-feature or whole-platform qualification verdict."
+      ]
+    },
     "linux-dhcp-firewall-lifecycle-5431ad2a": {
       "level": "independent-peer",
       "outcome": "pass",
@@ -3837,7 +3855,8 @@
           "linux-two-vm-recovery-0cb82866",
           "linux-dhcp-firewall-lifecycle-5431ad2a",
           "linux-pve-firewall-zone-withdrawal-409719ba",
-          "linux-pve-legacy-cidr-firewall-withdrawal-54cc8e23"
+          "linux-pve-legacy-cidr-firewall-withdrawal-54cc8e23",
+          "linux-pve-local-service-redirect-withdrawal-54cc8e23"
         ]
       },
       "freebsd": {
