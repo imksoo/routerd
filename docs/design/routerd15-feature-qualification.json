@@ -71,11 +71,11 @@
     "as_of_revision": "883dacbd3df3f0725e07f2985ccfcf559089b3f4",
     "feature_functions_total": 50,
     "feature_functions_with_scoped_linux_evidence": 42,
-    "scoped_linux_evidence_references": 152,
+    "scoped_linux_evidence_references": 153,
     "feature_functions_fully_qualified": 0,
-    "open_check_statements": 95,
+    "open_check_statements": 94,
     "counting_note": "Open check statements are the managed backlog. They are not represented as a fictitious count of packet cases: each statement is decomposed into a concrete peer, traffic, withdrawal and recovery observation when it enters the execution board.",
-    "last_closed_scope": "Management access: independent VLAN source admission, valid configuration expansion and strict-configuration recovery",
+    "last_closed_scope": "Management access: independent VLAN management continuity during data-plane failure and recovery",
     "next_scope": null,
     "execution_board": {
       "rule": "A board item closes only the named observation. A passing item neither qualifies its whole feature nor reduces a different required_remaining_checks statement.",
@@ -2182,6 +2182,24 @@
         "Complete routerd 1.0 functional parity and a whole-feature or whole-platform qualification verdict."
       ]
     },
+    "linux-pve-management-datafault-883dacbd": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "883dacbd3df3f0725e07f2985ccfcf559089b3f4",
+      "reference": "docs/releases/evidence/routerd15-883dacbd-management-datafault-pve-20261102.md",
+      "source_binding": "routerd Linux package SHA-256 cd763b1a1356053dd6e7400358119a0edfbf23c674a16a4fd07ff580d7de83ad.",
+      "environment": "Isolated PVE VLANs 3131, 3132 and 3133. VM219 ran the candidate with fresh state, external lan/wan/admin interfaces, a static route to 203.0.113.0/24 and strict ManagementAccess. VM224 was the LAN client. Independent VM220 was both the WAN HTTP endpoint and the management source on distinct VLAN subinterfaces.",
+      "checks": [
+        "Before failure, VM224 reached the WAN HTTP endpoint and VM220 reached the candidate management listener; both responses were HTTP 200.",
+        "Stopping VM220's VLAN 3132 endpoint interface made VM224 data HTTP time out while VM220's independent VLAN 3133 management HTTP continued to return HTTP 200.",
+        "Restoring the VLAN 3132 endpoint interface and its explicit return route restored data HTTP 200 and retained management HTTP 200. The candidate management allow counter reached six packets.",
+        "The endpoint's baseline routerd service was runtime-masked before the final run because it otherwise recreated its own firewall table and blocked new endpoint TCP. This preparation correction does not alter the candidate firewall result."
+      ],
+      "excludes": [
+        "Management-path failure, existing connections, IPv6, SSH, multiple interfaces, ordinary candidate systemd service operation and FreeBSD.",
+        "Complete routerd 1.0 functional parity and a whole-feature or whole-platform qualification verdict."
+      ]
+    },
     "linux-pve-legacy-cidr-firewall-withdrawal-54cc8e23": {
       "level": "independent-peer",
       "outcome": "pass",
@@ -4274,16 +4292,15 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-pve-management-source-guard-54cc8e23",
-          "linux-pve-management-vlan-reconfiguration-883dacbd"
+          "linux-pve-management-vlan-reconfiguration-883dacbd",
+          "linux-pve-management-datafault-883dacbd"
         ]
       },
       "freebsd": {
         "qualification": "unknown",
         "scoped_evidence": []
       },
-      "required_remaining_checks": [
-        "Real management path while data-plane faults"
-      ]
+      "required_remaining_checks": []
     },
     {
       "id": "configuration-lifecycle",
