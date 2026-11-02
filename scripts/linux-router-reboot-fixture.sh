@@ -181,6 +181,7 @@ HOOK
 {"apiVersion":"routerd.net/v1alpha1","kind":"Router","metadata":{"name":"home-readiness"},"spec":{"resources":[]}}
 JSON
   /usr/local/sbin/routerctl apply -f "$work/empty.json" --replace > "$work/withdraw.json"
+  install -m 0600 "$work/empty.json" /usr/local/etc/routerd/router.yaml
   nft -j list tables | jq -e '[.nftables[].table? | select(.name=="routerd_filter")] | length==0' >/dev/null
   for side in lan wan admin; do
    ip -4 -j addr show dev "rd15-$side" | jq -e '.[0].addr_info | length==0' >/dev/null

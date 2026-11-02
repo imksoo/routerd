@@ -1346,6 +1346,23 @@ IPv6 renumbering/WAN RA/IA_NA and all other unqualified 1.0 functions remain
 required. Existing tables without the native marker require explicit
 operator resolution; automatic old-format adoption is not provided.
 
+### Current-source clean-install rerun, 2026-11-02
+
+Product `1f9fc3190455d61988865aa8fef0233dcb338af2` was built with `make dist`
+and installed in a dedicated Ubuntu 24.04 VM (Linux 6.8.0-124-generic) from a
+prepared, validated routerd 1.5 configuration and fresh state. The first
+invocation exposed a test setup defect: it started systemd before creating the
+canonical config, so the expected clean-install startup failed. The smoke
+procedure now installs and validates the prepared config before service start,
+and persists the empty 1.5 config during cleanup. The corrected procedure
+`scripts/linux-dhcp-firewall-lifecycle-smoke.sh` passed: DHCP acquisition and
+timer renewal, local/upstream DNS over UDP/TCP, peer-observed NAT, verified
+baseline reachability, three-zone firewall isolation and counters, management
+positive control, exception add/remove, service restart, firewall withdrawal,
+and empty-config withdrawal. No raw logs were retained; the package and test
+VM were returned to a clean state. This run does not qualify host reboot, WAN
+DHCP/PPPoE/DS-Lite, IPv6 behavior, or complete routerd 1.0 parity.
+
 ## Independent Linux peer across VM reboot and interrupted apply
 
 The same formal product `ad686135` passed on the dedicated Ubuntu 24.04.4 router
@@ -1378,6 +1395,11 @@ module; it was corrected during preparation before product apply. No new product
 code was needed for these successful recovery paths. IPv6 reboot/renumbering,
 WAN protocol modes and remaining 1.0 parity stay open. Cross-version 1.0 cutback
 is outside the acceptance scope.
+
+This pass remains bound to product revision `13b7a5b9`. Review of the source
+changes through `1f9fc319` found only PD-expiry and DHCPv4-relay changes after
+that pass; neither path is present in this gate's fixture. I have not rerun the
+same recovery campaign and do not claim a new revision's reboot pass.
 
 ## Native ownership and FreeBSD lifecycle checkpoint (2026-10-31)
 

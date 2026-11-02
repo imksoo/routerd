@@ -1618,6 +1618,25 @@
         "Complete routerd 1.0 function parity or production qualification"
       ]
     },
+    "linux-dhcp-firewall-1f9fc319": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "1f9fc3190455d61988865aa8fef0233dcb338af2",
+      "reference": "docs/design/routerd15-audit.md#current-source-clean-install-rerun-2026-11-02",
+      "environment": "Dedicated Ubuntu 24.04 VM, Linux 6.8.0-124-generic; make dist package, actual systemd service, BusyBox DHCP client and separate LAN/WAN/management network namespaces.",
+      "checks": [
+        "Fresh package install with a prepared and validated routerd 1.5 config; DHCP acquisition and timer-driven renewal.",
+        "Local/upstream DNS over UDP/TCP and upstream observation of the translated IPv4 NAT source.",
+        "Proved baseline reachability before enforcing WAN-to-LAN, LAN-to-management and WAN-to-router DNS isolation; denied packets were absent at destinations and nft counters increased.",
+        "Management positive control, exception add/remove, service restart, firewall withdrawal restoring baseline traffic, and empty-config withdrawal.",
+        "Cleaned the package, config/state, test namespaces and forwarding setting; retained no raw logs."
+      ],
+      "excludes": [
+        "WAN DHCP client, PPPoE and DS-Lite",
+        "IPv6 behavior and host reboot recovery",
+        "Complete routerd 1.0 function parity or production qualification"
+      ]
+    },
     "linux-dhcpv4-relay-1195c7fc": {
       "level": "independent-peer",
       "outcome": "pass",
@@ -2552,7 +2571,8 @@
           "linux-independent-ipv4-6135bb03",
           "linux-dhcpv4-reservation-82f2d159",
           "linux-home-router-recovery-13b7a5b9",
-          "linux-home-router-dualstack-57bf7e35"
+          "linux-home-router-dualstack-57bf7e35",
+          "linux-dhcp-firewall-1f9fc319"
         ]
       },
       "freebsd": {
@@ -2855,7 +2875,8 @@
           "linux-independent-ipv4-6135bb03",
           "linux-dns-resolver-runtime-4ed306f9",
           "linux-home-router-recovery-13b7a5b9",
-          "linux-home-router-dualstack-57bf7e35"
+          "linux-home-router-dualstack-57bf7e35",
+          "linux-dhcp-firewall-1f9fc319"
         ]
       },
       "freebsd": {
@@ -3223,7 +3244,8 @@
         "scoped_evidence": [
           "linux-independent-ipv4-6135bb03",
           "linux-home-router-recovery-13b7a5b9",
-          "linux-home-router-dualstack-57bf7e35"
+          "linux-home-router-dualstack-57bf7e35",
+          "linux-dhcp-firewall-1f9fc319"
         ]
       },
       "freebsd": {
@@ -3318,7 +3340,8 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-home-router-recovery-13b7a5b9",
-          "linux-home-router-dualstack-57bf7e35"
+          "linux-home-router-dualstack-57bf7e35",
+          "linux-dhcp-firewall-1f9fc319"
         ]
       },
       "freebsd": {
