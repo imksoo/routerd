@@ -240,16 +240,33 @@ func tunnelFOUHandle() (*netlink.Handle, error) {
 	return handle, nil
 }
 
+func listTunnelNativeFOU(ctx context.Context) ([]netlink.Fou, error) {
+	for attempt := 0; attempt < 2; attempt++ {
+		handle, err := tunnelFOUHandle()
+		if err != nil {
+			return nil, err
+		}
+		listeners, listErr := handle.FouList(netlink.FAMILY_V4)
+		handle.Close()
+		if listErr == nil {
+			return listeners, nil
+		}
+		if attempt != 0 || !errors.Is(listErr, syscall.ENOENT) {
+			return nil, listErr
+		}
+		out, modprobeErr := exec.CommandContext(ctx, "modprobe", "fou").CombinedOutput()
+		if modprobeErr != nil {
+			return nil, fmt.Errorf("load native FOU module: %w: %s", modprobeErr, strings.TrimSpace(string(out)))
+		}
+	}
+	return nil, errors.New("native FOU listener retry exhausted")
+}
+
 func observeTunnelNativeFOU(ctx context.Context, listener fouListener) (bool, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, false, err
 	}
-	handle, err := tunnelFOUHandle()
-	if err != nil {
-		return false, false, err
-	}
-	defer handle.Close()
-	listeners, err := handle.FouList(netlink.FAMILY_V4)
+	listeners, err := listTunnelNativeFOU(ctx)
 	if err != nil {
 		return false, false, err
 	}
