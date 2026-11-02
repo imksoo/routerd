@@ -71,11 +71,11 @@
     "as_of_revision": "8dc7e08ec3f286ace9cc1e30cf408971e0506735",
     "feature_functions_total": 50,
     "feature_functions_with_scoped_linux_evidence": 42,
-    "scoped_linux_evidence_references": 161,
+    "scoped_linux_evidence_references": 162,
     "feature_functions_fully_qualified": 0,
     "open_check_statements": 94,
     "counting_note": "Open check statements are the managed backlog. They are not represented as a fictitious count of packet cases: each statement is decomposed into a concrete peer, traffic, withdrawal and recovery observation when it enters the execution board.",
-    "last_closed_scope": "DHCPv6-PD: independent renewal, expiry withdrawal and automatic recovery on PVE VLANs",
+    "last_closed_scope": "Firewall zone isolation: PVE VLAN zone permit, established-flow retention, WAN denial, rule withdrawal and recovery",
     "next_scope": "LIN-FIREWALL-ZONE-ISOLATION-010",
     "execution_board": {
       "rule": "A board item closes only the named observation. A passing item neither qualifies its whole feature nor reduces a different required_remaining_checks statement.",
@@ -94,7 +94,7 @@
         {
           "id": "LIN-FIREWALL-ZONE-ISOLATION-010",
           "feature": "firewall policy and address sets",
-          "state": "ready",
+          "state": "passed",
           "objective": "Use isolated PVE VLAN clients and an independent WAN peer to observe declared zone permits, WAN-originated denial, and policy withdrawal without changing management access.",
           "pass_requires": [
             "A trusted LAN client reaches only the declared WAN services through the firewall policy",
