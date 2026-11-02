@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"net"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -1071,7 +1072,17 @@ func peerHasImportPolicy(spec routerapi.BGPImportPolicySpec) bool {
 }
 
 func neighborSetAddress(value string) string {
-	address, err := netip.ParseAddr(strings.TrimSpace(value))
+	value = strings.TrimSpace(value)
+	address, err := netip.ParseAddr(value)
+	if err != nil {
+		// A static peer keeps its host:port value for the GoBGP transport.
+		// Neighbor policy sets, however, match the peer address only.
+		value, _, err = net.SplitHostPort(value)
+		if err != nil {
+			return ""
+		}
+		address, err = netip.ParseAddr(value)
+	}
 	if err != nil {
 		return ""
 	}

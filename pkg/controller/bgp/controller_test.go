@@ -520,6 +520,18 @@ func TestImportAllowedPrefixesIncludesCompleteAppliedPolicyScopes(t *testing.T) 
 	}
 }
 
+func TestNeighborSetAddressUsesHostPartOfExplicitPeerPort(t *testing.T) {
+	for input, want := range map[string]string{
+		"198.18.16.1:179":   "198.18.16.1/32",
+		"[2001:db8::1]:179": "2001:db8::1/128",
+		"198.18.16.1":       "198.18.16.1/32",
+	} {
+		if got := neighborSetAddress(input); got != want {
+			t.Fatalf("neighborSetAddress(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
 func TestApplyRouterBGPDynamicDefaultsInheritsExactRouterImportPolicy(t *testing.T) {
 	routerSpec := api.BGPRouterSpec{
 		ConvergenceProfile: "fast",
