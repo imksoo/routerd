@@ -1206,6 +1206,24 @@
         "Multi-backend IngressService behavior, packaged service-manager lifecycle, FreeBSD runtime or complete 1.0 function preservation"
       ]
     },
+    "linux-portforward-b57fc473": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "b57fc47394da209e6916df1cecb991b084aace36",
+      "reference": "tests/netns/README.md#portforward-dnat-and-hairpin",
+      "environment": "Ubuntu 24.04, Linux 6.8.0-136-generic; private network namespaces/veth; nftables 1.0.9; Go 1.25.9.",
+      "reproduction": "sudo ./tests/netns/nat44-portforward.sh",
+      "checks": [
+        "Prepared routerd 1.5 YAML passed routerd validate; the production NAT44 controller applied the live nftables rules.",
+        "Independent WAN client reached the LAN HTTP backend through DNAT; LAN hairpin traffic used the WAN address and the router LAN source address; direct LAN traffic preserved the client source address.",
+        "Withdrawing PortForward removed the routerd NAT table, reset the established WAN TCP flow at the router, and prevented a new WAN flow from reaching the backend. Successful temporary state and logs were removed."
+      ],
+      "excludes": [
+        "Cross-version 1.0 configuration/state import or binary cutback",
+        "NAT44Rule outbound SNAT variants, NAT44FlowDNATPinhole, NAT44SessionSync or LocalServiceRedirect",
+        "Multi-backend IngressService behavior, packaged service-manager lifecycle, FreeBSD runtime or complete 1.0 function preservation"
+      ]
+    },
     "dhcpv6-partial-recovery-87761c0e": {
       "level": "ordinary-tests",
       "outcome": "pass",
@@ -3259,7 +3277,9 @@
         ],
         "related_test_files": [
           "pkg/controller/nat44/controller_test.go",
-          "pkg/controller/chain/nat44sessionsync_test.go"
+          "pkg/controller/chain/nat44sessionsync_test.go",
+          "tests/netns/nat44-portforward.sh",
+          "tests/netns/nat44-portforward-runtime/main.go"
         ]
       },
       "preservation_verdict": "unknown",
@@ -3270,7 +3290,9 @@
           "linux-home-router-recovery-13b7a5b9",
           "linux-home-router-dualstack-57bf7e35",
           "linux-dhcp-firewall-1f9fc319",
-          "linux-wan-dhcpv4-1f9fc319"
+          "linux-wan-dhcpv4-1f9fc319",
+          "linux-portforward-f6502ea2",
+          "linux-portforward-b57fc473"
         ]
       },
       "freebsd": {
