@@ -172,7 +172,7 @@ func selftest(args []string, stdout io.Writer) error {
 		return err
 	}
 	config.Spec = dnsresolver.NormalizeSpec(config.Spec)
-	if err := dnsresolver.Validate(config.Spec); err != nil {
+	if err := dnsresolver.ValidateRuntimeConfig(config); err != nil {
 		return err
 	}
 	return json.NewEncoder(stdout).Encode(config)
@@ -250,7 +250,7 @@ func loadConfig(opts options) (dnsresolver.RuntimeConfig, error) {
 		return config, err
 	}
 	config.Spec = dnsresolver.NormalizeSpec(config.Spec)
-	return config, dnsresolver.Validate(config.Spec)
+	return config, dnsresolver.ValidateRuntimeConfig(config)
 }
 
 func newDaemon(opts options, config dnsresolver.RuntimeConfig) (*daemon, error) {

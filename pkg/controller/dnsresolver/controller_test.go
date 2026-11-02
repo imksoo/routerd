@@ -533,6 +533,36 @@ func TestReconcilePendingWhenUpstreamFromUnresolved(t *testing.T) {
 	}
 }
 
+func TestReconcileWithdrawsPreviouslyAppliedDynamicUpstream(t *testing.T) {
+	dir := t.TempDir()
+	withResolverHTTPClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(resolverruntime.ReloadResult{Reloaded: true, ConfigDigest: r.Header.Get(resolverruntime.ConfigDigestHeader)})
+	}))
+	store := mapStore{api.NetAPIVersion + "/DHCPv6Information/wan-info": {"dnsServers": []string{"2001:db8::53"}}}
+	controller := Controller{Router: dnsResolverRouterWithUpstreamFrom(api.StatusValueSourceSpec{Resource: "DHCPv6Information/wan-info", Field: "dnsServers"}), Store: store, RuntimeDir: filepath.Join(dir, "run"), StateDir: filepath.Join(dir, "state")}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	store[api.NetAPIVersion+"/DHCPv6Information/wan-info"] = map[string]any{}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "state", "dns-resolver", "lan-resolver", "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config resolverruntime.RuntimeConfig
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	if !config.NoUsableSources || len(config.Spec.Sources) != 0 {
+		t.Fatalf("withdrawn config = %#v", config)
+	}
+	if status := store.ObjectStatus(api.NetAPIVersion, "DNSResolver", "lan-resolver"); status["phase"] != "Pending" {
+		t.Fatalf("status = %#v", status)
+	}
+}
+
 func TestReconcilePlansWhileOneSourceWaitsForUpstream(t *testing.T) {
 	store := mapStore{}
 	controller := Controller{

@@ -177,6 +177,20 @@ func (c Controller) Reconcile(ctx context.Context) (reconcileErr error) {
 		}
 		config.Spec = spec
 		if blockReason != "" {
+			if !c.DryRun && blockReason == "UpstreamUnresolved: no usable DNS sources" {
+				config.NoUsableSources = true
+				if _, err := c.ensureRunning(ctx, resolver.name, config); err != nil {
+					var reloadErr resolverReloadError
+					if errors.As(err, &reloadErr) {
+						if statusErr := c.saveStatus(resolver.name, spec, "Degraded", err.Error(), waiting); statusErr != nil {
+							return statusErr
+						}
+						reconcileErr = errors.Join(reconcileErr, fmt.Errorf("DNSResolver/%s: %w", resolver.name, err))
+						continue
+					}
+					return err
+				}
+			}
 			if err := c.saveStatus(resolver.name, spec, "Pending", blockReason, waiting); err != nil {
 				return err
 			}

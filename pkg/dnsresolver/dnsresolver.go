@@ -26,6 +26,7 @@ type RuntimeConfig struct {
 	Resource         string              `json:"resource"`
 	LeaseJournalPath string              `json:"leaseJournalPath,omitempty"`
 	Spec             api.DNSResolverSpec `json:"spec"`
+	NoUsableSources  bool                `json:"noUsableSources,omitempty"`
 	Zones            []RuntimeZone       `json:"zones,omitempty"`
 }
 
@@ -212,6 +213,16 @@ func NormalizeSpec(spec api.DNSResolverSpec) api.DNSResolverSpec {
 }
 
 func Validate(spec api.DNSResolverSpec) error {
+	return validate(spec, false)
+}
+
+// ValidateRuntimeConfig accepts an empty source set only when the controller
+// explicitly withdrew every dynamically resolved upstream.
+func ValidateRuntimeConfig(config RuntimeConfig) error {
+	return validate(config.Spec, config.NoUsableSources)
+}
+
+func validate(spec api.DNSResolverSpec, allowEmptySources bool) error {
 	spec = NormalizeSpec(spec)
 	if _, err := RequestTimeout(spec); err != nil {
 		return err
@@ -250,7 +261,7 @@ func Validate(spec api.DNSResolverSpec) error {
 			}
 		}
 	}
-	if len(spec.Sources) == 0 {
+	if len(spec.Sources) == 0 && !allowEmptySources {
 		return fmt.Errorf("at least one source is required")
 	}
 	for _, source := range spec.Sources {
