@@ -286,19 +286,23 @@ and an extracted Kea/ndisc6 package root. The VM must have `ip`, `ss`, `nft`,
 systemd, `dnsmasq`, BusyBox, `curl`, `dig`, `jq`, Python 3 and `timeout` installed,
 with `/proc/sys/net/netfilter/nf_conntrack_count` available.
 
-The gate refuses to start if routerd binaries, canonical config, `/var/lib/routerd`,
-the routerd service, or its test interfaces/namespaces already exist. It validates
-the prepared config with that package's own binary, installs the package, starts
-the real systemd service, and tests that same config. It imports no old config or
-database and has no routerd 1.0 upgrade step. After a successful run it uninstalls
-the package and removes its state and temporary output. A failure stops and
-removes the fixture, then retains only bounded diagnostics and the config for
-local reproduction.
+The final argument is the VM's independent management interface. The fixture has
+a `management` interface and trust zone; the script substitutes this interface
+name before validating the effective routerd 1.5 config. This keeps the VM's
+management connection allowed by the input firewall while WAN/LAN behavior is
+tested. The gate refuses to start if routerd binaries, canonical config,
+`/var/lib/routerd`, the routerd service, or its test interfaces/namespaces already
+exist. It validates the prepared config with that package's own binary, installs
+the package, starts the real systemd service, and tests that same config. It imports
+no old config or database and has no routerd 1.0 upgrade step. After a successful
+run it uninstalls the package and removes its state and temporary output. On
+failure, it first applies an empty config to withdraw routerd-managed state, then
+removes the fixture and retains only bounded diagnostics and the config for local reproduction.
 
 ```sh
 sudo scripts/linux-home-router-lifecycle-smoke.sh --disposable-vm \
   tests/fixtures/linux-home-router-lifecycle.json \
-  /path/to/extracted/routerd-package /opt/routerd15-fixtures/kea
+  /path/to/extracted/routerd-package /opt/routerd15-fixtures/kea eth0
 ```
 
 The Kea package root must contain `usr/sbin/kea-dhcp6`, `usr/bin/rdisc6` and

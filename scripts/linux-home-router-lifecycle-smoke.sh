@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Isolated disposable VM only: clean-installed make dist product; independent dual-stack peers.
 set -euo pipefail
-if [ "${1:-}" != --disposable-vm ] || [ "$#" -ne 4 ]; then
- echo "usage: $0 --disposable-vm CANDIDATE_1_5_JSON PACKAGE_ROOT KEA_PACKAGE_ROOT" >&2
+if [ "${1:-}" != --disposable-vm ] || [ "$#" -ne 5 ]; then
+ echo "usage: $0 --disposable-vm CANDIDATE_1_5_JSON PACKAGE_ROOT KEA_PACKAGE_ROOT MANAGEMENT_INTERFACE" >&2
  echo 'Dedicated Linux VM only; performs a clean 1.5 package install with a prepared config, never 1.0 migration.' >&2
  exit 2
 fi
@@ -12,7 +12,17 @@ systemd-detect-virt --vm --quiet
 candidate=${1:?candidate config}
 package_root=${2:?extracted routerd package root}
 fixture=${3:?extracted Kea and ndisc6 package root}
+management_iface=${4:?independent management interface}
 test "$(id -u)" = 0
+if [[ ! "$management_iface" =~ ^[[:alnum:]_.-]{1,15}$ ]] || [[ "$management_iface" == rd15-* ]] || [[ "$management_iface" == lo ]]; then
+ echo "invalid independent management interface: $management_iface" >&2
+ exit 2
+fi
+ip link show dev "$management_iface" >/dev/null
+ip -6 route show dev "$management_iface" | grep -q '^fe80::/64' || {
+ echo "management interface has no link-local IPv6 route: $management_iface" >&2
+ exit 2
+}
 for x in ip ss nft curl jq python3 dig busybox dnsmasq systemctl journalctl timeout; do command -v "$x" >/dev/null; done
 test -r /proc/sys/net/netfilter/nf_conntrack_count
 test -x "$package_root/install.sh"
@@ -42,7 +52,13 @@ for binary in "$package_root"/bin/*; do
  if [ -e "$path" ] || [ -L "$path" ]; then echo "clean-install precondition failed: $path exists" >&2; exit 2; fi
 done
 test "$(systemctl show -p LoadState --value routerd.service)" = not-found
-"$package_root/bin/routerd" validate --config "$candidate"
+for service_path in /etc/systemd/system/routerd-*.service; do
+ if [ ! -e "$service_path" ] && [ ! -L "$service_path" ]; then continue; fi
+ if grep -Fqx '# Managed by routerd. Do not edit by hand.' "$service_path" || grep -Fqx '# Managed by routerd.' "$service_path"; then
+   echo "clean-install precondition failed: routerd-owned service unit remains: $service_path" >&2
+   exit 2
+ fi
+done
 package_version=$("$package_root/bin/routerd" --version)
 work=$(mktemp -d /var/tmp/routerd15-home.XXXXXX)
 active_prefix=2001:db8:1500
@@ -50,6 +66,20 @@ active_prefix=2001:db8:1500
 # fixture; the extracted package has no host-wide /run/kea service directory.
 export KEA_PIDFILE_DIR="$work"
 export KEA_LOCKFILE_DIR="$work"
+effective_candidate="$work/candidate.json"
+jq -e '[.spec.resources[] | select(.kind == "Interface" and .metadata.name == "management")] | length == 1' "$candidate" >/dev/null
+jq --arg ifname "$management_iface" '
+  .spec.resources |= map(
+    if .kind == "Interface" and .metadata.name == "management" then .spec.ifname = $ifname else . end
+  )
+' "$candidate" > "$effective_candidate" || {
+ rm -r -- "$work"
+ exit 1
+}
+if ! "$package_root/bin/routerd" validate --config "$effective_candidate"; then
+ rm -r -- "$work"
+ exit 1
+fi
 printf '%s\n' "$work"
 printf '%s\n' "$package_version" > "$work/package-version.txt"
 sysctl -n net.ipv4.ip_forward > "$work/forward4.before"
@@ -79,9 +109,12 @@ finish() {
  trap - EXIT
  if [ "$rc" -ne 0 ]; then
    # Keep bounded diagnostics from the failing run, then restore the disposable VM.
-   cp "$candidate" "$work/failure-candidate.json" 2>/dev/null || true
+   cp "$effective_candidate" "$work/failure-candidate.json" 2>/dev/null || true
    ip -j addr show dev rd15-lan > "$work/failure-router-addresses.json" 2>&1 || true
    ip -j addr show dev rd15-wan > "$work/failure-wan-addresses.json" 2>&1 || true
+   ip -4 route show table main | head -40 > "$work/failure-host-ipv4-routes.txt" 2>&1 || true
+   ip -6 route show table main | head -40 > "$work/failure-host-ipv6-routes.txt" 2>&1 || true
+   timeout 5 nft list table inet routerd_filter | head -200 > "$work/failure-firewall.txt" 2>&1 || true
    ip netns exec "$lan_ns" ip -6 -j addr show dev peer0 > "$work/failure-client-addresses.json" 2>&1 || true
    ip netns exec "$lan_ns" ip -4 -j addr show dev peer0 > "$work/failure-client4-addresses.json" 2>&1 || true
    ip netns exec "$lan_ns" ip -6 route show > "$work/failure-client-routes.txt" 2>&1 || true
@@ -89,6 +122,22 @@ finish() {
    journalctl -u routerd.service --since "$run_start" --no-pager -n 100 > "$work/failure-routerd-journal.txt" 2>&1 || true
    tail -100 "$work/kea.log" > "$work/failure-kea.txt" 2>/dev/null || true
    tail -100 "$work/udhcpc.log" > "$work/failure-dhcpv4.txt" 2>/dev/null || true
+   if [ "$installed" -eq 1 ] && [ -x /usr/local/sbin/routerctl ] && systemctl is-active --quiet routerd.service; then
+     cat > "$work/failure-empty.json" <<'JSON'
+{"apiVersion":"routerd.net/v1alpha1","kind":"Router","metadata":{"name":"home-failure-cleanup"},"spec":{"resources":[]}}
+JSON
+     if timeout 20 /usr/local/sbin/routerctl apply -f "$work/failure-empty.json" --replace > "$work/failure-withdraw.txt" 2>&1; then
+       for _ in {1..30}; do
+         if timeout 5 /usr/local/sbin/routerctl get status -o json > "$work/failure-withdraw-status.json" 2>&1 && jq -e '.status.phase == "Healthy" and (.status.resourceCount // 0) == 0 and ((.status.resourcePhaseIssues // []) | length) == 0' "$work/failure-withdraw-status.json" >/dev/null; then
+           printf 'failure cleanup withdrew routerd-managed state before stopping the service\n' >&2
+           break
+         fi
+         sleep 1
+       done
+     else
+       printf 'failure cleanup could not apply the empty config; see %s/failure-withdraw.txt\n' "$work" >&2
+     fi
+   fi
  fi
  stop_pid "$dhcp_pid"
  stop_pid "$peer_kea_pid"
@@ -196,13 +245,13 @@ ip netns exec "$wan_ns" curl --noproxy '*' --fail --max-time 2 'http://[2001:db8
 test "$(ip netns exec "$wan_ns" dig +short +time=2 +tries=1 @2001:db8:17::1 peer.test AAAA)" = 2001:db8:17::1
 test "$(ip netns exec "$wan_ns" dig +short +time=2 +tries=1 @198.18.17.1 peer.test A)" = 198.18.17.1
 printf 'Environment fixtures ready: Kea, dual-stack HTTP/DNS peers, and WAN return routes.\n'
-install -D -m 0600 "$candidate" /usr/local/etc/routerd/router.yaml
+install -D -m 0600 "$effective_candidate" /usr/local/etc/routerd/router.yaml
 installed=1
 (cd "$package_root" && ./install.sh --prefix /usr/local --no-install-deps --no-config-update --enable-service --start-service) > "$work/install.log" 2>&1
 test "$(/usr/local/sbin/routerd --version)" = "$package_version"
 systemctl is-active --quiet routerd.service
 /usr/local/sbin/routerd validate --config /usr/local/etc/routerd/router.yaml
-/usr/local/sbin/routerctl apply -f "$candidate" --replace > "$work/apply.txt"
+/usr/local/sbin/routerctl apply -f "$effective_candidate" --replace > "$work/apply.txt"
 cat > "$work/udhcpc-hook" <<EOF
 #!/bin/sh
 set -eu
@@ -277,6 +326,11 @@ probe_v6() {
  done
  printf 'PASS: SLAAC, RA default route, IPv6 DNS UDP/TCP and peer-observed source %s\n' "$source"
 }
+for _ in {1..20}; do
+ if ip -6 route get 2001:db8:17::1 > "$work/upstream-route.txt" 2>&1; then break; fi
+ sleep 1
+done
+ip -6 route get 2001:db8:17::1 > "$work/upstream-route.txt"
 probe() {
  probe_v4
  probe_v6

@@ -213,7 +213,9 @@ daemon の ACK 受信だけでは libpcap のカーネルバッファから保�
 
 専用 Linux VM で `scripts/linux-home-router-lifecycle-smoke.sh --disposable-vm` を実行します。
 引数は、事前に用意した routerd 1.5 JSON 設定、Linux `make dist` パッケージの展開先、
-Kea/ndisc6 パッケージの展開先です。VM には独立した管理経路と、`ip`、`ss`、systemd、
+Kea/ndisc6 パッケージの展開先、独立した管理 interface 名です。fixture の management
+interface を実環境の名前に置換してから設定を検証します。管理 interface は trust zone に
+入るため、WAN/LAN の firewall 試験中も管理接続を維持します。VM には独立した管理経路と、`ip`、`ss`、systemd、
 `nft`、`dnsmasq`、BusyBox、`curl`、`dig`、`jq`、Python 3、`timeout`、
 `/proc/sys/net/netfilter/nf_conntrack_count` が必要です。
 
@@ -221,12 +223,13 @@ routerd の既存バイナリ、正規設定、`/var/lib/routerd`、service、�
 残っていれば開始しません。パッケージ内の routerd で設定を検証し、新しい 1.5 パッケージを
 導入して実 systemd service で同じ設定を試験します。旧設定・DBは読み込まず、routerd 1.0 の
 アップグレード試験もしません。成功時はパッケージ、状態DB、一時出力を削除します。
-失敗時は fixture を撤去し、原因を再現できる上限付き診断情報と設定だけを残します。
+失敗時は停止前に空設定を適用してrouterd管理の状態を撤去し、fixture を片付けます。
+原因を再現できる上限付き診断情報と設定だけを残します。
 
 ```sh
 sudo scripts/linux-home-router-lifecycle-smoke.sh --disposable-vm \
   tests/fixtures/linux-home-router-lifecycle.json \
-  /path/to/extracted/routerd-package /opt/routerd15-fixtures/kea
+  /path/to/extracted/routerd-package /opt/routerd15-fixtures/kea eth0
 ```
 
 Kea 展開先には `usr/sbin/kea-dhcp6`、`usr/bin/rdisc6`、

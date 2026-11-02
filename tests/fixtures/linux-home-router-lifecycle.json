@@ -10,6 +10,18 @@
         "apiVersion": "net.routerd.net/v1alpha1",
         "kind": "Interface",
         "metadata": {
+          "name": "management"
+        },
+        "spec": {
+          "ifname": "replace-at-runtime",
+          "managed": false,
+          "owner": "external"
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "Interface",
+        "metadata": {
           "name": "lan"
         },
         "spec": {
@@ -262,6 +274,19 @@
             }
           ],
           "oFlag": true
+        }
+      },
+      {
+        "apiVersion": "firewall.routerd.net/v1alpha1",
+        "kind": "FirewallZone",
+        "metadata": {
+          "name": "management"
+        },
+        "spec": {
+          "role": "trust",
+          "interfaces": [
+            "management"
+          ]
         }
       },
       {
