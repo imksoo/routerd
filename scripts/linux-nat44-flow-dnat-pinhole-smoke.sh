@@ -133,10 +133,10 @@ for _ in {1..30}; do
 done
 nft list table ip routerd_nat | grep -F 'flow_dnat_camera' >/dev/null
 for _ in {1..30}; do
- if nft list table inet routerd_filter | grep -F 'allow-camera-outbound' >/dev/null; then break; fi
+ if nft list table inet routerd_filter | grep -F 'udp dport 32100' >/dev/null; then break; fi
  sleep 1
 done
-nft list table inet routerd_filter | grep -F 'allow-camera-outbound' >/dev/null
+nft list table inet routerd_filter | grep -F 'udp dport 32100' >/dev/null
 
 expect_peer_drop() {
  local name=$1
