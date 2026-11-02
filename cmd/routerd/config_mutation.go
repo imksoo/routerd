@@ -204,6 +204,11 @@ var runtimeShapeKinds = map[string]bool{
 	"Plugin":              true,
 	"SAMTransportProfile": true,
 	"MobilityPool":        true, "ServiceUnit": true,
+	// Firewall controllers retain the Router used when their generation was
+	// prepared. A policy change therefore needs a generation reload; a
+	// shape-preserving RunOnce would otherwise render the previous ruleset.
+	"FirewallZone": true, "FirewallPolicy": true, "FirewallRule": true,
+	"FirewallFlowPinhole": true, "ClientPolicy": true, "LocalServiceRedirect": true,
 }
 
 func runtimeShapeChanged(current, next *api.Router) (bool, []string) {

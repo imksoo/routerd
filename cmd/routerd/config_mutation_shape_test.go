@@ -31,13 +31,18 @@ func TestRuntimeShapeChangedRejectsLifecycleResources(t *testing.T) {
 	}
 }
 
-func TestRuntimeShapeChangedAllowsDataplaneOnlyChange(t *testing.T) {
+func TestRuntimeShapeChangedReloadsFirewallRuleChange(t *testing.T) {
 	current := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallRule"}, Metadata: api.ObjectMeta{Name: "allow"}},
 	}}}
 	next := &api.Router{Spec: api.RouterSpec{Resources: nil}}
-	if changed, resources := runtimeShapeChanged(current, next); changed {
+	changed, resources := runtimeShapeChanged(current, next)
+	if !changed {
 		t.Fatalf("changed=%v resources=%v", changed, resources)
+	}
+	want := api.FirewallAPIVersion + "/FirewallRule/allow"
+	if len(resources) != 1 || resources[0] != want {
+		t.Fatalf("resources=%v, want [%s]", resources, want)
 	}
 }
 
