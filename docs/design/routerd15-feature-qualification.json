@@ -1617,6 +1617,24 @@
         "Host reboot and process-crash recovery",
         "Complete routerd 1.0 function parity or production qualification"
       ]
+    },
+    "linux-dhcpv4-relay-1195c7fc": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "1195c7fceeeecf8bcedc34a70e87ad5b8505708b",
+      "reference": "docs/operations/development.md#linux-dhcpv4-relay-packet-check",
+      "environment": "Isolated Ubuntu 24.04 Linux VM; Linux 6.8.0-124-generic, dnsmasq 2.91 and BusyBox udhcpc 1.36.1; independent router, upstream-server and client network namespaces.",
+      "checks": [
+        "Rendered relay forwarded an independent client's DHCPDISCOVER and delivered a pool lease with the configured gateway, DNS server and upstream server identifier.",
+        "Stopping the upstream server prevented a lease; restoring it allowed a second independent client to acquire one.",
+        "Withdrawing the relay prevented a lease; restarting the rendered relay restored acquisition.",
+        "The successful harness removed test namespaces and processes; the VM remained healthy."
+      ],
+      "excludes": [
+        "Routerd service-manager supervision and full reconcile/application lifecycle",
+        "FreeBSD relay runtime",
+        "Complete routerd 1.0 function parity or production qualification"
+      ]
     }
   },
   "features": [
@@ -2778,21 +2796,25 @@
         ],
         "related_test_files": [
           "pkg/render/dnsmasq_test.go",
-          "pkg/controller/chain/dnsmasq_test.go"
+          "pkg/controller/chain/dnsmasq_test.go",
+          "tests/netns/dhcpv4-relay.sh",
+          "tests/netns/dhcpv4-relay-render/main.go"
         ]
       },
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "linux-dhcpv4-relay-1195c7fc"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",
         "scoped_evidence": []
       },
       "required_remaining_checks": [
-        "Independent relay/client/server exchange",
-        "Interface/server identity, packet options, failure and withdrawal"
+        "Routerd-owned dnsmasq configuration application/withdrawal and interface address lifecycle through the service/controller",
+        "FreeBSD independent relay/client/server exchange"
       ]
     },
     {
