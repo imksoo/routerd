@@ -71,18 +71,18 @@
     "as_of_revision": "883dacbd3df3f0725e07f2985ccfcf559089b3f4",
     "feature_functions_total": 50,
     "feature_functions_with_scoped_linux_evidence": 42,
-    "scoped_linux_evidence_references": 147,
+    "scoped_linux_evidence_references": 148,
     "feature_functions_fully_qualified": 0,
     "open_check_statements": 96,
     "counting_note": "Open check statements are the managed backlog. They are not represented as a fictitious count of packet cases: each statement is decomposed into a concrete peer, traffic, withdrawal and recovery observation when it enters the execution board.",
-    "last_closed_scope": "VRRP virtual-address traffic, two-router failover, restart, withdrawal and recovery on independent PVE VLAN peers",
-    "next_scope": "LIN-FIREWALL-VLAN-RECOVERY-007",
+    "last_closed_scope": "Firewall zones: independent VLAN forwarding, two denied cross-zone paths, withdrawal and recovery through the candidate router",
+    "next_scope": null,
     "execution_board": {
       "rule": "A board item closes only the named observation. A passing item neither qualifies its whole feature nor reduces a different required_remaining_checks statement.",
       "active": {
         "id": "LIN-FIREWALL-VLAN-RECOVERY-007",
         "feature": "firewall-policy-and-address-sets",
-        "state": "ready",
+        "state": "passed",
         "objective": "Use independent PVE VLAN peers to observe one declared forwarding permission, two denied cross-zone paths, configuration withdrawal and recovery.",
         "pass_requires": [
           "The declared LAN-to-WAN path reaches an independent peer through the candidate router",
@@ -2050,6 +2050,25 @@
       ],
       "excludes": [
         "DNSSEC, DoT, DoH, private containment, IPv6, lease-derived names, tombstones and negative-answer policy coverage.",
+        "Complete routerd 1.0 functional parity and a whole-feature or whole-platform qualification verdict."
+      ]
+    },
+    "linux-pve-firewall-vlan-recovery-883dacbd": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "883dacbd3df3f0725e07f2985ccfcf559089b3f4",
+      "reference": "docs/releases/evidence/routerd15-883dacbd-firewall-vlan-recovery-pve-20261102.md",
+      "source_binding": "routerd and routerctl came from routerd-linux-amd64.tar.gz SHA-256 cd763b1a1356053dd6e7400358119a0edfbf23c674a16a4fd07ff580d7de83ad.",
+      "environment": "Authorized PVE VLANs. VM219 ran the Linux candidate. VM224 was the independent LAN peer on VLAN 3131. VM220 provided independent WAN and management peers on VLANs 3132 and 3133.",
+      "checks": [
+        "VM224 HTTP to the VM220 WAN peer reached its target through VM219, and the WAN peer observed translated source 198.18.16.2.",
+        "VM224 LAN-to-management HTTP timed out; VM219 lan_to_admin deny counter increased by three packets and 180 bytes.",
+        "VM220 WAN-to-LAN HTTP, explicitly sourced on VLAN 3132, timed out; VM219 wan_to_lan deny counter increased by three packets and 180 bytes.",
+        "Replacing the valid new configuration with an empty configuration reached Healthy, removed routerd_filter and blocked the declared LAN-to-WAN forwarding path.",
+        "Reapplying the immutable new configuration reached Healthy with all nine resources Healthy, restored LAN-to-WAN traffic, and retained both denied cross-zone paths. VM219, VM220 and VM224 were restored to their original binaries, configuration, state and run status; the temporary ISO and staging assets were removed."
+      ],
+      "excludes": [
+        "IPv6, port forwarding, address sets, selectors, LocalServiceRedirect, logging delivery, existing-flow behavior, PPPoE, DHCP and DNS payload behavior, route protocol behavior, high availability and FreeBSD.",
         "Complete routerd 1.0 functional parity and a whole-feature or whole-platform qualification verdict."
       ]
     },
@@ -4135,7 +4154,8 @@
           "linux-pve-firewall-zone-withdrawal-409719ba",
           "linux-pve-legacy-cidr-firewall-withdrawal-54cc8e23",
           "linux-pve-local-service-redirect-withdrawal-54cc8e23",
-          "linux-pve-dhcp-dns-nat-withdrawal-3763f102"
+          "linux-pve-dhcp-dns-nat-withdrawal-3763f102",
+          "linux-pve-firewall-vlan-recovery-883dacbd"
         ]
       },
       "freebsd": {
