@@ -164,6 +164,9 @@ func (c Controller) Reconcile(ctx context.Context) error {
 		return err
 	}
 	path := stringutil.FirstNonEmpty(c.NftablesPath, "/run/routerd/nat44.nft")
+	if len(data) == 0 && retainsNAT44ConnectionTrackingHooks(path) {
+		data = render.NftablesNAT44ConnectionTrackingHooks()
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
@@ -214,6 +217,11 @@ func (c Controller) Reconcile(ctx context.Context) error {
 		return err
 	}
 	return c.saveRuleStatuses(ctx, rules, path, changed, true)
+}
+
+func retainsNAT44ConnectionTrackingHooks(path string) bool {
+	previous, err := os.ReadFile(path)
+	return err == nil && strings.Contains(string(previous), "table ip routerd_nat")
 }
 
 func clearNftablesTable(ctx context.Context, nft, family string) error {

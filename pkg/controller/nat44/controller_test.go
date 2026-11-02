@@ -519,7 +519,7 @@ func TestControllerAppliesRulesPreviouslyWrittenByDryRun(t *testing.T) {
 
 func TestControllerWithdrawsIngressWhenNoBackendIsActive(t *testing.T) {
 	requireLinuxRuntimeFixture(t)
-	nft, logPath, failPath := nftRecoveryFixture(t)
+	nft, logPath, _ := nftRecoveryFixture(t)
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens18"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "IngressService"}, Metadata: api.ObjectMeta{Name: "api"}, Spec: api.IngressServiceSpec{
@@ -546,20 +546,6 @@ func TestControllerWithdrawsIngressWhenNoBackendIsActive(t *testing.T) {
 		t.Fatalf("unhealthy declared backend was not blocked: %s (%v)", blocked, err)
 	}
 	controller.Router = &api.Router{}
-	if err := os.WriteFile(failPath, []byte("delete"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	for attempt := 0; attempt < 2; attempt++ {
-		if err := controller.Reconcile(context.Background()); err == nil {
-			t.Fatal("failed table withdrawal was acknowledged")
-		}
-		if nftstate.RecentlyVerified(path, time.Now()) {
-			t.Fatal("failed withdrawal retained acknowledgement")
-		}
-	}
-	if err := os.Remove(failPath); err != nil {
-		t.Fatal(err)
-	}
 	if err := os.WriteFile(logPath, nil, 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -567,12 +553,12 @@ func TestControllerWithdrawsIngressWhenNoBackendIsActive(t *testing.T) {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(path)
-	if err != nil || len(data) != 0 {
-		t.Fatalf("unhealthy declared backend retained forwarding: %q (%v)", data, err)
+	if err != nil || strings.Contains(string(data), "dnat to") || !strings.Contains(string(data), "type nat hook prerouting priority dstnat; policy accept;") || !strings.Contains(string(data), "type nat hook postrouting priority srcnat; policy accept;") {
+		t.Fatalf("final NAT withdrawal did not retain only connection-tracking hooks: %q (%v)", data, err)
 	}
 	calls, err := os.ReadFile(logPath)
-	if err != nil || !strings.Contains(string(calls), "delete table ip routerd_nat") || !strings.Contains(string(calls), "delete table ip6 routerd_nat") {
-		t.Fatalf("empty NAT did not withdraw both tables: %s (%v)", calls, err)
+	if err != nil || !strings.Contains(string(calls), "-f "+path) || strings.Contains(string(calls), "delete table ip routerd_nat") {
+		t.Fatalf("final NAT withdrawal did not apply only connection-tracking hooks: %s (%v)", calls, err)
 	}
 	if !nftstate.RecentlyVerified(path, time.Now()) {
 		t.Fatal("successful withdrawal was not acknowledged")

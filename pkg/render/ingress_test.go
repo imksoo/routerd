@@ -9,6 +9,23 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 )
 
+func TestNftablesNAT44ConnectionTrackingHooks(t *testing.T) {
+	data := NftablesNAT44ConnectionTrackingHooks()
+	text := string(data)
+	for _, want := range []string{
+		"table ip routerd_nat",
+		"type nat hook prerouting priority dstnat; policy accept;",
+		"type nat hook postrouting priority srcnat; policy accept;",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing NAT hook %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "dnat to") || strings.Contains(text, "masquerade") {
+		t.Fatalf("empty router rendered a NAT rule:\n%s", text)
+	}
+}
+
 func TestIngressUnavailablePolicyBlocksOnlySelectedListener(t *testing.T) {
 	for _, tc := range []struct {
 		name, protocol, policy, verdict string
