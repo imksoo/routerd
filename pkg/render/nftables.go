@@ -820,6 +820,8 @@ func outboundAliasesForOS(router *api.Router, targetOS platform.OS, intents []dy
 				return nil, err
 			}
 			aliases[res.Metadata.Name] = defaultString(spec.IfName, res.Metadata.Name)
+		case "TunnelInterface":
+			aliases[res.Metadata.Name] = res.Metadata.Name
 		}
 	}
 	for _, iface := range pathMTUForwardedPathInterfacesWithLocalCaptureIntents(router, intents) {

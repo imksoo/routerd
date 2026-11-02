@@ -39,6 +39,20 @@ func TestNftablesIPIPUsesIPv4Protocol(t *testing.T) {
 	}
 }
 
+func TestNftablesTunnelInterfaceZoneUsesTunnelName(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"}, Metadata: api.ObjectMeta{Name: "tun-ipip"}, Spec: api.TunnelInterfaceSpec{Mode: "ipip", Local: "198.51.100.1", Remote: "198.51.100.2", TrustedUnderlay: true}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "tunnel"}, Spec: api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"TunnelInterface/tun-ipip"}}},
+	}}}
+	data, err := NftablesFirewall(router, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `elements = { "tun-ipip" }`) {
+		t.Fatalf("TunnelInterface zone lost its kernel name:\n%s", data)
+	}
+}
+
 func TestNftablesIPv6ForwardingUsesZonePolicy(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		netResource("Interface", "wan", api.InterfaceSpec{IfName: "eth0"}),
