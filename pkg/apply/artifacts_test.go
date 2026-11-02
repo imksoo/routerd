@@ -260,6 +260,26 @@ func TestLinuxNATBaseTableIsRouterOwnedNotOrphan(t *testing.T) {
 	}
 }
 
+func TestLinuxFirewallBaseTableIsRouterOwnedNotOrphan(t *testing.T) {
+	requireLinuxArtifactFixture(t)
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+	}
+	desired := desiredArtifactsByKind(router, nil, "nft.table")
+	if !hasArtifact(desired, "nft.table", "inet/routerd_filter", api.RouterAPIVersion+"/Router/test") {
+		t.Fatalf("desired nft artifacts = %+v, want router-owned routerd_filter", desired)
+	}
+	engine := &Engine{Command: fakeCommand(map[string]string{
+		"nft list tables": "table inet routerd_filter\\n",
+	})}
+	for _, orphan := range engine.observeNftTableOrphans(router, nil) {
+		if orphan.Kind == "NftTable" && orphan.Name == "inet/routerd_filter" {
+			t.Fatalf("routerd_filter reported as orphan: %+v", orphan)
+		}
+	}
+}
+
 func TestMobilityPathMTUNftTablesAreRouterOwnedNotOrphan(t *testing.T) {
 	requireLinuxArtifactFixture(t)
 	router := &api.Router{

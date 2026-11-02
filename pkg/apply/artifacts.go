@@ -461,11 +461,17 @@ func routerArtifactIntentsForOS(router *api.Router, aliases map[string]string, t
 	var intents []resource.Intent
 	if targetOS == platform.OSLinux {
 		owner := api.RouterAPIVersion + "/Router/" + router.Metadata.Name
-		// The live Linux NAT controller always owns this empty hook table, even
-		// when no NAT44 rule is declared. Declare that owner here so the orphan
-		// check does not report the controller's fail-safe base table as stale.
+		// The live Linux NAT and firewall controllers keep their empty base
+		// tables even when no NAT44 or firewall resource is declared. Declare
+		// those owners here so the orphan check does not report fail-safe tables
+		// as stale after an empty configuration is applied.
 		intents = append(intents, resource.Intent{
 			Artifact:  newNftTableArtifact(owner, "ip", "routerd_nat"),
+			Action:    resource.ActionEnsure,
+			ApplyWith: "nft",
+		})
+		intents = append(intents, resource.Intent{
+			Artifact:  newNftTableArtifact(owner, "inet", "routerd_filter"),
 			Action:    resource.ActionEnsure,
 			ApplyWith: "nft",
 		})
