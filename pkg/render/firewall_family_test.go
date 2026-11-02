@@ -29,6 +29,16 @@ func TestNftablesExcludedAddressSetsStayWithinOnePacketFamily(t *testing.T) {
 	}
 }
 
+func TestNftablesIPIPUsesIPv4Protocol(t *testing.T) {
+	expressions, err := nftFirewallRuleExprs("allow-ipip", api.FirewallRuleSpec{Protocol: "ipip", Action: "accept"}, firewallLogging{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(expressions) != 1 || expressions[0] != "ip protocol 4 counter accept" {
+		t.Fatalf("invalid IPv4 IPIP rule: %v", expressions)
+	}
+}
+
 func TestNftablesIPv6ForwardingUsesZonePolicy(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		netResource("Interface", "wan", api.InterfaceSpec{IfName: "eth0"}),

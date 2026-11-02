@@ -12,6 +12,12 @@ import (
 	"github.com/imksoo/routerd/pkg/platform"
 )
 
+func TestPFIPIPUsesIPv4Protocol(t *testing.T) {
+	if got := pfFirewallProtocol("ipip"); got != "inet proto 4" {
+		t.Fatalf("invalid IPv4 IPIP rule: %q", got)
+	}
+}
+
 func TestPFRenderFirewallAndNAT(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{

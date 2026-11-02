@@ -1849,7 +1849,7 @@ func nftFirewallProtocol(protocol string) string {
 	case "icmpv6", "ipv6-icmp":
 		return "meta l4proto ipv6-icmp"
 	case "ipip":
-		return "meta nfproto ipv6 meta l4proto 4"
+		return "ip protocol 4"
 	case "vrrp":
 		return "ip protocol 112"
 	case "vrrp6":
@@ -1863,8 +1863,10 @@ func nftFirewallProtocolFamily(protocol string) string {
 	switch protocol {
 	case "icmp", "vrrp":
 		return "ip"
-	case "icmpv6", "ipv6-icmp", "ipip", "vrrp6":
+	case "icmpv6", "ipv6-icmp", "vrrp6":
 		return "ip6"
+	case "ipip":
+		return "ip"
 	default:
 		return ""
 	}
