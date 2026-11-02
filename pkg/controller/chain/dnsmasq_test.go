@@ -2959,6 +2959,33 @@ func TestDSLiteTunnelResolveRemoteDirectIPv6SkipsDNS(t *testing.T) {
 	}
 }
 
+func TestSelectAFTRIPv6UsesStableOrdinal(t *testing.T) {
+	addrs := []net.IPAddr{
+		{IP: net.ParseIP("2001:db8::2")},
+		{IP: net.ParseIP("192.0.2.1")},
+		{IP: net.ParseIP("2001:db8::1")},
+		{IP: net.ParseIP("2001:db8::2")},
+	}
+	for _, tc := range []struct {
+		name, selection, want string
+		ordinal               int
+	}{
+		{name: "first", ordinal: 1, want: "2001:db8::1"},
+		{name: "second", ordinal: 2, want: "2001:db8::2"},
+		{name: "modulo", ordinal: 3, selection: "ordinalModulo", want: "2001:db8::1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := selectAFTRIPv6(addrs, tc.ordinal, tc.selection, "aftr.test")
+			if err != nil || got != tc.want {
+				t.Fatalf("selectAFTRIPv6() = %q, %v; want %q, nil", got, err, tc.want)
+			}
+		})
+	}
+	if _, err := selectAFTRIPv6(addrs, 3, "ordinal", "aftr.test"); err == nil {
+		t.Fatal("selectAFTRIPv6() accepted an out-of-range ordinal")
+	}
+}
+
 func TestDSLiteWhenFalseDoesNotRemainInEffectiveDesiredSet(t *testing.T) {
 	declared := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite"}, Spec: api.DSLiteTunnelSpec{TunnelName: "ds-lite"}},

@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -407,7 +408,7 @@ func (c DSLiteTunnelController) resolveRemote(ctx context.Context, spec api.DSLi
 		if firstName == "" {
 			firstName = candidate
 		}
-		remote, err := resolveAFTRIPv6(ctx, candidate, c.ResolverPort)
+		remote, err := resolveAFTRIPv6(ctx, candidate, c.ResolverPort, spec.AFTRAddressOrdinal, spec.AFTRAddressSelection)
 		if err == nil {
 			return candidate, remote, nil
 		}
@@ -1551,10 +1552,10 @@ func (c DSLiteTunnelController) localDelegatedAddress(spec api.DSLiteTunnelSpec)
 	return source.Address, source.Interface, nil
 }
 
-func resolveAFTRIPv6(ctx context.Context, value string, resolverPort int) (string, error) {
+func resolveAFTRIPv6(ctx context.Context, value string, resolverPort, ordinal int, selection string) (string, error) {
 	if addr, err := netip.ParseAddr(value); err == nil {
 		if addr.Is6() {
-			return addr.String(), nil
+			return selectAFTRIPv6([]net.IPAddr{{IP: net.IP(addr.AsSlice())}}, ordinal, selection, value)
 		}
 		return "", fmt.Errorf("%s is not an IPv6 address", value)
 	}
@@ -1572,13 +1573,42 @@ func resolveAFTRIPv6(ctx context.Context, value string, resolverPort int) (strin
 	if err != nil {
 		return "", err
 	}
+	return selectAFTRIPv6(addrs, ordinal, selection, value)
+}
+
+func selectAFTRIPv6(addrs []net.IPAddr, ordinal int, selection, name string) (string, error) {
+	selected := make([]netip.Addr, 0, len(addrs))
+	seen := map[netip.Addr]bool{}
 	for _, addr := range addrs {
 		parsed, ok := netip.AddrFromSlice(addr.IP)
-		if ok && parsed.Is6() {
-			return parsed.String(), nil
+		if ok && parsed.Is6() && !parsed.Is4In6() && !seen[parsed] {
+			seen[parsed] = true
+			selected = append(selected, parsed)
 		}
 	}
-	return "", fmt.Errorf("no IPv6 address for %s", value)
+	if len(selected) == 0 {
+		return "", fmt.Errorf("no IPv6 address for %s", name)
+	}
+	sort.Slice(selected, func(i, j int) bool { return selected[i].Less(selected[j]) })
+	if ordinal == 0 {
+		ordinal = 1
+	}
+	var index int
+	if selection == "" {
+		selection = "ordinal"
+	}
+	switch selection {
+	case "ordinal":
+		if ordinal > len(selected) {
+			return "", fmt.Errorf("AFTR address ordinal %d exceeds %d IPv6 addresses for %s", ordinal, len(selected), name)
+		}
+		index = ordinal - 1
+	case "ordinalModulo":
+		index = (ordinal - 1) % len(selected)
+	default:
+		return "", fmt.Errorf("unsupported AFTR address selection %q", selection)
+	}
+	return selected[index].String(), nil
 }
 
 func localIPv6Address(value string) string {
