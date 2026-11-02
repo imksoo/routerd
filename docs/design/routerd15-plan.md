@@ -45,10 +45,14 @@ routerd 1.0 baseline: `e3b49dbb69c7de97bab9595884745eb7cbe93d92`.
   upstream-DNS probe failed after router reboot and later succeeded without a
   configuration change. The capture did not pair the first client query with
   the corresponding upstream response. Treat this as an unresolved observation,
-  not a confirmed product defect or a pass. The runbook's client probe uses a
-  one-second deadline while the default upstream query timeout is three
-  seconds; determine whether that mismatch explains the observation by
-  measuring the actual exchange before changing either behavior.
+  not a confirmed product defect or a pass. Local characterization with the
+  actual resolver and an independent upstream delaying its response by 1.5
+  seconds reproduced a client-only failure at the old one-second deadline;
+  three- and five-second client deadlines succeeded. Commit `603126ea` changes
+  the reboot probe to five seconds, allowing the configured three-second
+  upstream query deadline to complete. This does not identify the cause of the
+  earlier PVE observation. The current-revision independent-peer reboot check
+  is still required before closing this item.
 
 ## Work sequence
 
