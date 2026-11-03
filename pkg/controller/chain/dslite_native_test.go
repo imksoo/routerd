@@ -22,6 +22,7 @@ type dsliteNativeStore struct {
 	path string
 	*routerstate.SQLiteStore
 	failPending, failComplete, failRead bool
+	failStatusDelete                    bool
 	afterPending                        func()
 }
 
@@ -54,6 +55,13 @@ func (s *dsliteNativeStore) SaveObjectStatus(version, kind, name string, status 
 		return nil
 	}
 	return s.SQLiteStore.SaveObjectStatus(version, kind, name, status)
+}
+
+func (s *dsliteNativeStore) DeleteObject(version, kind, name string) error {
+	if version == api.NetAPIVersion && kind == "DSLiteTunnel" && s.failStatusDelete {
+		return errors.New("DS-Lite status deletion rejected")
+	}
+	return s.SQLiteStore.DeleteObject(version, kind, name)
 }
 
 // This fixture supplies only command observations and effects. The real actor
@@ -847,5 +855,83 @@ func TestDSLiteNativeDefaultRoutePreferredSourceReplacementIsForeign(t *testing.
 	}
 	if f.defaultRoute == nil || f.defaultRoute.PreferredSource != "192.0.2.10" {
 		t.Fatalf("foreign route changed: %+v", f.defaultRoute)
+	}
+}
+
+func TestDSLiteRemovedDeclarationDoesNotLeaveOrResurrectPublicStatus(t *testing.T) {
+	for _, predeleted := range []bool{false, true} {
+		t.Run(fmt.Sprint(predeleted), func(t *testing.T) {
+			c, native, store := newDSLiteNativeController(t, platform.OSLinux)
+			if err := c.reconcile(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if predeleted {
+				if err := store.DeleteObject(api.NetAPIVersion, "DSLiteTunnel", "ds"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			c.Router = &api.Router{}
+			c.DeclaredRouter = c.Router
+			if err := c.reconcile(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			records, err := c.nativeTunnelReceipts()
+			if err != nil || len(records) != 0 || len(native.links) != 0 || native.defaultRoute != nil {
+				t.Fatalf("native withdrawal incomplete: %+v %v", records, err)
+			}
+			if status := store.ObjectStatus(api.NetAPIVersion, "DSLiteTunnel", "ds"); len(status) != 0 {
+				t.Fatalf("removed resource still affects router status: %#v", status)
+			}
+		})
+	}
+}
+
+func TestDSLiteStatusDeletionFailureRetainsWithdrawalRecovery(t *testing.T) {
+	c, native, store := newDSLiteNativeController(t, platform.OSLinux)
+	if err := c.reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	c.Router = &api.Router{}
+	c.DeclaredRouter = c.Router
+	store.failStatusDelete = true
+	if err := c.reconcile(t.Context()); err == nil {
+		t.Fatal("status deletion failure reported successful withdrawal")
+	}
+	records, err := c.nativeTunnelReceipts()
+	if err != nil || len(records) != 1 || !records[0].Pending || len(native.links) != 0 || native.defaultRoute != nil {
+		t.Fatalf("withdrawal lost recovery authority: %+v %v", records, err)
+	}
+	if err := store.SQLiteStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := routerstate.OpenSQLite(store.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	store.SQLiteStore = reopened
+	store.failStatusDelete = false
+	if err := c.reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	records, err = c.nativeTunnelReceipts()
+	if err != nil || len(records) != 0 || len(store.ObjectStatus(api.NetAPIVersion, "DSLiteTunnel", "ds")) != 0 {
+		t.Fatalf("reopened withdrawal did not finish: %+v %v", records, err)
+	}
+}
+
+func TestDSLiteConditionallyInactiveDeclarationKeepsPublicStatus(t *testing.T) {
+	c, _, store := newDSLiteNativeController(t, platform.OSLinux)
+	if err := c.reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	c.DeclaredRouter = c.Router
+	c.Router = &api.Router{}
+	if err := c.reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "DSLiteTunnel", "ds")
+	if status["phase"] != "Disabled" || status["reason"] != "WhenFalse" {
+		t.Fatalf("declared inactive resource lost status: %#v", status)
 	}
 }
