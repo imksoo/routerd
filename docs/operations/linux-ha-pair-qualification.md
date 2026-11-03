@@ -130,7 +130,7 @@ The next input is [linux-ha-dslite-pd.json](../../tests/fixtures/linux-ha-dslite
 It adds the deployed legacy LAN subnet, shared PD identity, four delegated
 outer source addresses, explicit inner IPv4 addresses/SNAT, stateless DHCPv6,
 RA, IPv6 upstream DNS and three routing policies. Keep the unconditional SNAT
-rules and the 60-second Internet policy hysteresis. A `Ready` policy may still
+rules and the 60-second Internet policy hysteresis. `datapathState: Ready` may still
 be using the legacy fallback: observe the selected balanced candidate before
 starting connections intended to prove DS-Lite continuity.
 
@@ -158,6 +158,16 @@ placed on its tunnel endpoint. The fixture MTUs (1430 underlay/1390 DS-Lite)
 allow a guest overlay without changing a virtualization host's networking.
 For an external/unmanaged physical WAN, certify the OS IPv6 RA client before
 qualification; routerd's host IPv6 policy needs that interface's usable source.
+If the test segments themselves use an IPv6 overlay, keep its transport outside
+that policy with guest-owned routes/rules for the exact overlay peers. Otherwise
+the policy can route the overlay's own packets back into the overlay: a local
+capture sees a DHCPv6 solicit that never reaches Kea. Certify multicast from a
+temporary macvlan through the complete overlay with the host policy present,
+then remove that temporary stimulus before product startup. Do not change the
+virtualization host or alter product behavior to repair test transport.
+The deployed graceful-activation gate observes the policy's `datapathState`,
+not `phase`: the latter is `Applied` in 1.5. Keep the observed field and its
+value together when preparing a configuration.
 
 On the LAN client acquire a real DHCPv4 lease and SLAAC address/default route;
 check the offered DNS through an independent stateless DHCPv6 client. Check

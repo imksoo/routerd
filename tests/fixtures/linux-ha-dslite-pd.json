@@ -120,7 +120,7 @@
               "timeout": "45s",
               "readyWhen": {
                 "state": {
-                  "IPv4StaticAddress/lan-host.phase": {
+                  "IPv4StaticAddress/lan-legacy.phase": {
                     "equals": "Applied"
                   },
                   "DHCPv6PrefixDelegation/wan-pd.phase": {
@@ -132,7 +132,7 @@
                   "IPv6RouterAdvertisement/lan-ra.phase": {
                     "equals": "Applied"
                   },
-                  "EgressRoutePolicy/internet.phase": {
+                  "EgressRoutePolicy/internet.datapathState": {
                     "equals": "Ready"
                   }
                 }
