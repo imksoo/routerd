@@ -199,6 +199,20 @@ assert all(x['source']=='192.0.0.2' for x in rows),rows
 PY
  echo "PASS: $label; 64-source affinity, AFTR selection $expected and peer-observed NAT source"
 }
+# Fresh installation can legitimately queue a main-unit handoff. Complete
+# that already-observed startup operation before asserting steady-state PID
+# preservation during a later independent DHCP pool change.
+await_startup_handoff() {
+ local deadline=$((SECONDS+90)) pending
+ while (( SECONDS < deadline )); do
+  pending=$(systemctl list-units --all --plain --no-legend 'routerd-self-restart-*.timer' 'routerd-self-restart-*.service' | awk '$3=="active" || $3=="activating" || $3=="deactivating"{print $1}')
+  if [ -z "$pending" ]; then return; fi
+  sleep .2
+ done
+ echo 'initial main-unit handoff did not complete' >&2; return 1
+}
+await_ready 2001:db8:1500
+await_startup_handoff
 await_ready 2001:db8:1500
 sample abc delegated-initial
 first_reply=$(jq -r .leaseUpdatedAt "$lease_file")
@@ -231,7 +245,9 @@ python3 - "$work/renumbered-addresses.json" <<'PY'
 import json,sys
 assert all(not a['local'].startswith('2001:db8:1500:') for link in json.load(open(sys.argv[1])) for a in link['addr_info'])
 PY
-test "$(systemctl show routerd.service -p MainPID --value)" = "$main_pid"
+if [ "$(systemctl show routerd.service -p MainPID --value)" != "$main_pid" ]; then
+ echo "main process changed during steady-state renumber (expected $main_pid)" >&2; exit 1
+fi
 kill -0 "$kea_pid"
 sample abc delegated-renumbered
 systemctl restart routerd.service

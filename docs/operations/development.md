@@ -543,6 +543,11 @@ sudo bash scripts/linux-dslite-pd-smoke.sh --disposable-vm \
   tests/fixtures/linux-dslite-pd.json /opt/routerd15-fixtures/kea eth0
 ```
 
+Fresh install may already have scheduled a main-unit restart. The gate observes
+native timer/service completion and rechecks readiness before entering the
+steady-state renumber test; it does not sleep an arbitrary fixed settling delay
+or treat an initial handoff as a DHCP-triggered restart.
+
 Pass requires actual delegated /128 sources with finite native lifetimes,
 matching kernel tunnel endpoints and 64-source stable forwarding observed by
 independent AFTRs. Natural Renew must advance the lease transaction. Changing

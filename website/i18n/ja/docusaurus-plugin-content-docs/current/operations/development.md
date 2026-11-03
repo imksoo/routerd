@@ -425,6 +425,11 @@ sudo bash scripts/linux-dslite-pd-smoke.sh --disposable-vm \
   tests/fixtures/linux-dslite-pd.json /opt/routerd15-fixtures/kea eth0
 ```
 
+新規導入時にメイン unit の再起動が既に予約されている場合は、実際のタイマー・
+サービスの完了を観測し、準備完了を再確認してから定常状態の番号変更試験へ
+進みます。固定時間の待機や、起動時の予約を DHCP による再起動と見なす判定は
+使いません。
+
 合格条件は、有限の期限を持つ /128 と一致するトンネル送信元、独立相手が
 観測する64送信元の安定した転送、自然な Renew での取得時刻更新です。
 Kea のプールと相手 AFTR の戻り先だけを変更した場合、両デーモンを再起動せずに
