@@ -137,7 +137,12 @@ routerd_signal_owned()
     [ "${_signal_kind}" != child ] || _signal_comm=${procname##*/}
     pkill "-${_signal}" -L -F "${_signal_file}" -x "${_signal_comm}"
     _rc=$?
-    [ "${_rc}" -eq 0 ] || [ "${_rc}" -eq 1 ]
+    [ "${_rc}" -eq 0 ] && return 0
+    # The supervisor may have completed child shutdown after the ownership
+    # check but before pkill opened the pidfile. Confirm absence again rather
+    # than turning an already completed stop into a failed package update.
+    routerd_read_pidfile "${_signal_file}" "${_signal_kind}" >/dev/null
+    [ "$?" -eq 1 ]
 }
 
 routerd_any_owned_running()
