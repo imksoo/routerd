@@ -51,11 +51,11 @@ func TestDebOwnsNativeFilesAndLeavesOperatorConfigurationAbsent(t *testing.T) {
 		t.Fatalf("build: %v\n%s", err, output)
 	}
 	packageFile := filepath.Join(out, "routerd_1.5.0~202611030100_amd64.deb")
-	metadata, err := exec.Command("dpkg-deb", "-f", packageFile, "Package", "Version", "Architecture").CombinedOutput()
+	metadata, err := exec.Command("dpkg-deb", "-f", packageFile, "Package", "Version", "Architecture", "Depends").CombinedOutput()
 	if err != nil {
 		t.Fatalf("metadata: %v\n%s", err, metadata)
 	}
-	for _, want := range []string{"Package: routerd", "Version: 1.5.0~202611030100", "Architecture: amd64"} {
+	for _, want := range []string{"Package: routerd", "Version: 1.5.0~202611030100", "Architecture: amd64", "Depends: systemd (>= 249)"} {
 		if !strings.Contains(string(metadata), want) {
 			t.Errorf("missing %q in %s", want, metadata)
 		}
