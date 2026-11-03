@@ -212,3 +212,19 @@ those states. Package-to-package updates remain required.
   checks explicit. The native-package work remains incomplete until both OS
   package paths are implemented and tested; this does not reduce full 1.0
   function preservation or authorize a release, main merge or production deploy.
+
+
+Native Linux checkpoint (2026-11-03): runtime paths `072e57ec`, builder and
+maintainer lifecycle `2eb09193`, reusable apt gate `4e225c85`. Two packages built
+from the shared inventory, versions `1.5.0~20261103021000` and
+`1.5.0~20261103022000`, passed actual apt install/update/remove in a fresh Ubuntu
+24.04 VM (Linux `6.8.0-124-generic`). The second daemon binary was rebuilt with a
+different version; this was actual executable replacement, not metadata alone.
+Independent UDP/TCP DNS, old daemon/helper exit, configuration digest, retained
+value in the actual SQLite database, package file verification and generated-unit
+removal passed. The guest and both disk volumes were deleted after the test.
+Full Linux Go suite, schema/examples and four-locale website build passed for
+this checkpoint's code; packaging tests and shell lint passed. This does not
+certify all network functions after the native-path change. FreeBSD pkg lifecycle,
+release asset integration, native image installation and public repository delivery
+remain unfinished. No manual-install compatibility path was added.

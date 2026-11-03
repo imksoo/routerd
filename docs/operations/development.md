@@ -15,6 +15,45 @@ The release workflow is intentionally separate because it builds multiple
 operating system and architecture archives and publishes GitHub Release assets.
 
 
+## routerd 1.5 native package gate
+
+The 1.5 baseline is a clean OS followed by apt/pkg installation. Updates from
+previous native packages must retain operator configuration and durable state.
+Source installs, `make install`, manual copies and tar-installed systems are
+outside this contract. Do not add migration or adoption tests for those states.
+Native packaging remains under development, including FreeBSD lifecycle and
+release integration; no public apt/pkg repository or release is announced here.
+
+Build Linux artifacts with `make dist-deb PACKAGE_VERSION=<native-version>`.
+The shared distribution inventory supplies native `/usr` files and a vendor
+systemd unit. The actual `/etc/routerd/router.yaml` and state database are not
+package contents. Examples live under `/usr/share/doc/routerd/examples` and are
+never applied automatically. Fresh installation leaves the service inactive;
+prepare a 1.5 configuration before explicitly enabling/starting it. Removal and
+purge retain operator configuration and database.
+
+The following opt-in gate requires root in a fresh, disposable systemd VM,
+working apt sources, and two local packages with increasing versions and different
+daemon binaries. It installs test dependencies and changes guest services. Never
+run it on an operator workstation or existing router.
+
+```sh
+sudo sh scripts/linux-deb-lifecycle-smoke.sh --isolated-vm /tmp/prior.deb /tmp/current.deb
+```
+
+PASS requires inactive initial installation, package-owned CLI/binaries,
+independent UDP/TCP DNS replies, actual binary replacement and old main/helper
+process exit, unchanged configuration, preservation of a value in the actual
+SQLite database, and removal with retained configuration/state and removed
+generated units. Local `go test ./tests/nativepackage` checks payload ownership,
+wrong-architecture rejection, failed-stop refusal, restoration of previously
+active services and failure of a native writer without publishing partial output.
+Those service tests execute the real maintainer scripts with isolated fake commands.
+
+The VM caller discards the guest and disks after the test. Failure prints bounded
+apt/journal diagnostics; reproduce and fix locally before another guest gate.
+Retain procedures, assertions and scoped results instead of permanent run logs.
+
 ## Mandatory test and harness design rules
 
 These rules apply to unit tests, offline fixtures, runtime smoke and reusable
