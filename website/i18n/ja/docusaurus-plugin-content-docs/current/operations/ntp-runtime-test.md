@@ -35,7 +35,8 @@ reference では隔離 address、subnet allowlist、`local stratum 8` の別 chr
 reference は `-x` でも構いませんが、製品が管理する router の chrony service は通常どおり動かします。
 reference が有効な NTP 応答を返すことを確認してから router の時計を変更します。
 
-`make dist` の checksum を確認し、その installer で導入します。専用 router のみに
+`make dist` の checksum を確認して展開先の `bin/` を含むディレクトリへ移動し、
+`sudo ./install.sh --prefix /usr/local` で導入します。専用 router のみに
 測定済みの10秒の時計差を作り、外部の dummy link `ntp-gate` を up にしてから
 `tests/fixtures/linux-ntp-packaged.json` で routerd を起動します。
 この link の観測 phase を server 条件に使い、upstream と管理通信は実リンクに残します。
@@ -59,3 +60,19 @@ up に戻して応答復帰を確認します。routerd restart 後にも再確�
 
 失敗時は service・設定・packet の実状態を確認してローカル再現します。
 この試験は timesyncd 単独、FreeBSD rc.d、storage crash、物理時計の精度の合格には広げません。
+
+
+2026-11-03 の限定検証では製品 package `1d012587`、fixture/probe `5f7275ec`、
+Ubuntu 24.04 / Linux、chrony 4.5 の専用 PVE VM 2台で上記を確認しました。
+通常の systemd chronyd が作った時計差を -9.997554 秒補正し、独立した stratum-8 reference
+を選択して通常 leap 状態になりました。許可・拒否・許可、WhenFalse 時の同期維持と応答停止、
+WhenTrue 復帰、routerd restart/SQLite recovery、chrony client のみへの変更、空設定での
+fragment・参照元撤去、uninstall が通り、VM・disk・snippet を削除しました。
+reference のみ `-x` を使い、製品 service には使っていません。
+
+NTPClient/NTPServer は Applied、NTP controller error はありません。全体 status は
+未ロードの nf_conntrack による自動生成 ConntrackObserver の Unavailable を表示しており、
+これを手修正したりルーター全体の正常と読み替えたりしていません。
+相対的な時計差補正と上記経路の検証で、外部 UTC 精度、timesyncd 単独、provider package 交換、
+FreeBSD rc.d の合格には広げません。FreeBSD wrapper の成功時出力削除は構文・lint 確認のみで、
+この campaign では native 実行を再実施していません。
