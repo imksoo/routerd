@@ -197,7 +197,13 @@ Exercise this locally with `go test ./cmd/routerd-vrrp-vmac ./pkg/controller/vrr
 before a native campaign; it is not a native qualification result.
 
 On the LAN client acquire a real DHCPv4 lease and SLAAC address/default route;
-check the offered DNS through an independent stateless DHCPv6 client. Check
+check the offered DNS through an independent stateless DHCPv6 client. On Ubuntu,
+use the stock AppArmor-supported hook path `/etc/dhcp/dhclient-script`, lease
+path `/var/lib/dhcp/dhclient6-rd15.leases` and PID path `/run/dhclient6-rd15.pid`;
+a hook under a private temporary directory is denied. This information-request
+probe may finish after its successful reply; it need not stay alive during a
+router fault. Keep OS protection enabled. Each product DNS listener must include
+both `local` and `upstream-test` in `sources` to authorize both query paths. Check
 local DNS and forwarded A/AAAA answers over IPv4 and IPv6. Add test source
 aliases `198.18.30.120/24` through `.183/24` to its `eth0`, then run:
 
@@ -224,7 +230,8 @@ resume. Renew the LAN lease, return A as standby, inspect reverse v4/v6/PD
 synchronization and absence of duplicate shared-address announcements. Restart
 active B's main service while retaining helpers/flows, then power off B only
 and require the same observations after automatic promotion of A. The third
-VM's peer/client processes must remain unchanged throughout both fault tests.
+VM's persistent application and DHCPv4 client processes must remain unchanged
+throughout both fault tests.
 Use the same withdrawal criteria as the basic lifecycle on both routers.
 
 Bound each observation wait (allow over 60 seconds for the configured routing
@@ -233,3 +240,24 @@ retain only diagnostics needed for local reproduction. A passing setup or an
 unexecuted phase is not an integrated passing result. Destroy this run's three
 disposable VMs and disks after the campaign; retain the commands, input/source
 identities and scoped outcome rather than successful-run raw logs.
+
+## Native IPv6 default-route selection regression
+
+`ip -6 route show default dev <VMAC>` omits `dev` from the displayed routes.
+The helper's device-aware parsers therefore need the unfiltered default-route
+listing. Otherwise they neither recognize existing VMAC RA state nor promote
+its finite default route, allowing a competing management default to win.
+Run this component test from the repository root:
+
+```sh
+go test -c -o /var/tmp/routerd-vrrp-native.test ./cmd/routerd-vrrp-vmac
+sudo unshare -n -m env ROUTERD_RUN_NETNS=1 /var/tmp/routerd-vrrp-native.test \
+  -test.run=TestVMACDefaultPreferenceNativeIPRouteOutput -test.v -test.timeout=25s
+rm -- /var/tmp/routerd-vrrp-native.test
+```
+
+It uses real iproute2 and kernel FIB selection with a competing default, checks
+the VMAC route's source and finite RA lifetime, retains the other default and
+repeats activation without unnecessary solicitation. It refuses the initial
+network namespace. This is a native FIB component check; the integrated gate
+must still demonstrate the original IPv6 application socket through failover.

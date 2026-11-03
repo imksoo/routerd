@@ -316,7 +316,9 @@ func runWithHooks(args []string, hooks runHooks) (runErr error) {
 				continue
 			}
 			observedAt := time.Now()
-			output, err := hooks.command("ip", "-6", "route", "show", "default", "dev", vmac.ifname)
+			// A dev selector makes iproute2 omit the device field, which the
+			// parsers below need to identify this VMAC's existing RA default.
+			output, err := hooks.command("ip", "-6", "route", "show", "default")
 			if err != nil {
 				return fmt.Errorf("read IPv6 default route for %s: %w: %s", vmac.ifname, err, strings.TrimSpace(string(output)))
 			}

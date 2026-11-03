@@ -351,7 +351,7 @@ func TestGracefulReconcileDiscardsRoleObservedBeforeTransitionLock(t *testing.T)
 		command: func(name string, args ...string) ([]byte, error) {
 			line := name + " " + strings.Join(args, " ")
 			switch line {
-			case "ip -6 route show default dev wan-vmac":
+			case "ip -6 route show default":
 				return []byte("default via fe80::1 dev wan-vmac metric 50 src 2001:db8::13\n"), nil
 			case "ip -6 -o addr show dev wan-vmac scope global":
 				return []byte("7: wan-vmac inet6 2001:db8::13/64 scope global dynamic\n"), nil
@@ -484,7 +484,7 @@ func TestRepeatedActivateKeepsReadyVMACLinkAndRAStable(t *testing.T) {
 			line := name + " " + strings.Join(args, " ")
 			commands = append(commands, line)
 			switch line {
-			case "ip -6 route show default dev wan-vmac":
+			case "ip -6 route show default":
 				return []byte("default via fe80::1 dev wan-vmac metric 50 src 2001:db8:1200::13\n"), nil
 			case "ip -6 -o addr show dev wan-vmac scope global":
 				return []byte("7: wan-vmac inet6 2001:db8:1200::13/64 scope global dynamic valid_lft 100sec preferred_lft 50sec\n"), nil
@@ -569,7 +569,7 @@ func TestRepeatedActivateRepairsWANDefaultRouteWithoutSolicitingRA(t *testing.T)
 			line := name + " " + strings.Join(args, " ")
 			commands = append(commands, line)
 			switch line {
-			case "ip -6 route show default dev wan-vmac":
+			case "ip -6 route show default":
 				return []byte("default via fe80::1 dev wan-vmac proto ra metric 1024 expires 100sec pref medium\n"), nil
 			case "ip -6 -o addr show dev wan-vmac scope global":
 				return []byte("7: wan-vmac inet6 2001:db8:1200::13/64 scope global dynamic valid_lft 100sec preferred_lft 50sec\n"), nil
@@ -880,7 +880,7 @@ func TestRoleTransitionNotifiesRouterdOnlyAfterDurableRoleWrite(t *testing.T) {
 	}, runHooks{
 		command: func(name string, args ...string) ([]byte, error) {
 			line := name + " " + strings.Join(args, " ")
-			if line == "ip -6 route show default dev wan-vmac" {
+			if line == "ip -6 route show default" {
 				return []byte("default via fe80::1 dev wan-vmac metric 50 src 2001:db8::13\n"), nil
 			}
 			if line == "ip -6 -o addr show dev wan-vmac scope global" {

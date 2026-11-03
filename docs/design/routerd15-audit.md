@@ -3312,3 +3312,35 @@ machinery is added. The public input is 66 resources and both full private
 candidates validate with 105 resources, preserving four tunnels and SNAT paths.
 Existing client sockets and either-direction integrated power-loss qualification
 remain unexecuted for this input.
+
+## Linux integrated IPv4 forwarding and IPv6 default-route defect, 2026-11-03
+
+At product `854648e8`, the corrected 66-resource input reached real DHCPv4,
+SLAAC and stateless DHCPv6 DNS/domain acquisition, local DNS and IPv4/IPv6
+listener forwarding of A/AAAA answers through the independent IPv6 upstream.
+The first client attempt used an AppArmor-denied temporary hook; the valid probe
+used stock permitted paths without disabling OS protection. DNS source selection
+was corrected in input `9649bc8a` through ordinary configuration application,
+so the earlier listener's configured NXDOMAIN is not a resolver defect.
+
+Initial application observations contain 72 IPv4 source/port-collision flows
+through the three primary routed AFTRs (20/31/21 flows) plus one TCP flow through
+the learned BGP prefix. The native IPv6 TCP socket failed before fault injection.
+The client's progress file stopped updating after that worker failed because
+executor shutdown waited for the other workers; later elapsed time must not be
+counted as measured success. The probe now cancels sibling loops on error and
+bounds server reads. No integrated power-loss verdict is claimed.
+
+Kernel route lookup sent the forwarded IPv6 client toward the management default
+(metric 100), while the usable WAN VMAC RA default remained at metric 1024.
+The helper queried routes with a `dev` selector, whose real iproute2 output omits
+that same field; its device-aware parsers silently skipped route promotion.
+Native local FIB test `8b787835` fails before the repair and passes after querying
+all default routes and letting the existing parser select the VMAC. Focused
+helper/controller tests pass. This component result is not native application
+or failover qualification of the repaired candidate.
+
+The integrated attempt ended and both router configurations withdrew to Healthy,
+without current errors or owned helper/VMAC/FIB state. Subsequent native work must
+use a newly built formal package containing the route-query repair. The complete
+105-resource replacement verdict and both-direction HA session tests remain open.
