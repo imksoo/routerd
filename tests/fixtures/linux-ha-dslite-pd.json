@@ -564,10 +564,6 @@
               }
             }
           },
-          "localAddressFrom": {
-            "resource": "IPv4StaticAddress/inner-a",
-            "field": "address"
-          },
           "dependsOn": [
             {
               "resource": "IPv6DelegatedAddress/source-a",
@@ -631,10 +627,6 @@
                 "equals": "master"
               }
             }
-          },
-          "localAddressFrom": {
-            "resource": "IPv4StaticAddress/inner-b",
-            "field": "address"
           },
           "dependsOn": [
             {
@@ -700,10 +692,6 @@
               }
             }
           },
-          "localAddressFrom": {
-            "resource": "IPv4StaticAddress/inner-c",
-            "field": "address"
-          },
           "dependsOn": [
             {
               "resource": "IPv6DelegatedAddress/source-c",
@@ -767,10 +755,6 @@
                 "equals": "master"
               }
             }
-          },
-          "localAddressFrom": {
-            "resource": "IPv4StaticAddress/inner-d",
-            "field": "address"
           },
           "dependsOn": [
             {
@@ -904,24 +888,6 @@
       },
       {
         "apiVersion": "net.routerd.net/v1alpha1",
-        "kind": "IPv4StaticAddress",
-        "metadata": {
-          "name": "inner-a"
-        },
-        "spec": {
-          "interface": "ds-a",
-          "address": "192.0.0.2/32",
-          "when": {
-            "state": {
-              "VirtualAddress/lan-gw.role": {
-                "equals": "master"
-              }
-            }
-          }
-        }
-      },
-      {
-        "apiVersion": "net.routerd.net/v1alpha1",
         "kind": "NAT44Rule",
         "metadata": {
           "name": "nat-a"
@@ -932,35 +898,14 @@
           "sourceRanges": [
             "198.18.30.0/24"
           ],
-          "snatAddressFrom": {
-            "resource": "IPv4StaticAddress/inner-a",
-            "field": "address"
+          "when": {
+            "state": {
+              "VirtualAddress/lan-gw.role": {
+                "equals": "master"
+              }
+            }
           },
-          "when": {
-            "state": {
-              "VirtualAddress/lan-gw.role": {
-                "equals": "master"
-              }
-            }
-          }
-        }
-      },
-      {
-        "apiVersion": "net.routerd.net/v1alpha1",
-        "kind": "IPv4StaticAddress",
-        "metadata": {
-          "name": "inner-b"
-        },
-        "spec": {
-          "interface": "ds-b",
-          "address": "192.0.0.2/32",
-          "when": {
-            "state": {
-              "VirtualAddress/lan-gw.role": {
-                "equals": "master"
-              }
-            }
-          }
+          "snatAddress": "192.0.0.2"
         }
       },
       {
@@ -975,35 +920,14 @@
           "sourceRanges": [
             "198.18.30.0/24"
           ],
-          "snatAddressFrom": {
-            "resource": "IPv4StaticAddress/inner-b",
-            "field": "address"
+          "when": {
+            "state": {
+              "VirtualAddress/lan-gw.role": {
+                "equals": "master"
+              }
+            }
           },
-          "when": {
-            "state": {
-              "VirtualAddress/lan-gw.role": {
-                "equals": "master"
-              }
-            }
-          }
-        }
-      },
-      {
-        "apiVersion": "net.routerd.net/v1alpha1",
-        "kind": "IPv4StaticAddress",
-        "metadata": {
-          "name": "inner-c"
-        },
-        "spec": {
-          "interface": "ds-c",
-          "address": "192.0.0.2/32",
-          "when": {
-            "state": {
-              "VirtualAddress/lan-gw.role": {
-                "equals": "master"
-              }
-            }
-          }
+          "snatAddress": "192.0.0.2"
         }
       },
       {
@@ -1018,35 +942,14 @@
           "sourceRanges": [
             "198.18.30.0/24"
           ],
-          "snatAddressFrom": {
-            "resource": "IPv4StaticAddress/inner-c",
-            "field": "address"
+          "when": {
+            "state": {
+              "VirtualAddress/lan-gw.role": {
+                "equals": "master"
+              }
+            }
           },
-          "when": {
-            "state": {
-              "VirtualAddress/lan-gw.role": {
-                "equals": "master"
-              }
-            }
-          }
-        }
-      },
-      {
-        "apiVersion": "net.routerd.net/v1alpha1",
-        "kind": "IPv4StaticAddress",
-        "metadata": {
-          "name": "inner-d"
-        },
-        "spec": {
-          "interface": "ds-d",
-          "address": "192.0.0.2/32",
-          "when": {
-            "state": {
-              "VirtualAddress/lan-gw.role": {
-                "equals": "master"
-              }
-            }
-          }
+          "snatAddress": "192.0.0.2"
         }
       },
       {
@@ -1061,17 +964,14 @@
           "sourceRanges": [
             "198.18.30.0/24"
           ],
-          "snatAddressFrom": {
-            "resource": "IPv4StaticAddress/inner-d",
-            "field": "address"
-          },
           "when": {
             "state": {
               "VirtualAddress/lan-gw.role": {
                 "equals": "master"
               }
             }
-          }
+          },
+          "snatAddress": "192.0.0.2"
         }
       },
       {

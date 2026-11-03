@@ -37,10 +37,14 @@ firewall/management access and application classification. The earlier private
 19-resource candidate is not a replacement-equivalence proof. Keep live inputs
 and access details in the private lab directory, never in this public repository.
 
-The prepared full 1.5 candidate currently validates with 109 resources. Four
+The prepared full 1.5 candidate currently validates with 105 resources. Four
 unused Interface role fields were removed, an intended firewall source selector
 was expressed using srcCIDRs, and the non-delivering OTLP LogSink/reference was
-removed while retaining Telemetry logs/metrics/traces. In baseline source,
+removed while retaining Telemetry logs/metrics/traces. Four redundant static
+inner-address declarations were also removed: 1.5's DS-Lite owner programs the
+standard inner endpoint, and the prepared rules explicitly SNAT to that address.
+The prior 109-resource candidate retained the former separate address owners;
+the full configuration is revalidated after preparation. In baseline source,
 OTLPSink.Emit returns without sending; do not count its old configuration as
 successful delivery or claim Telemetry proves firewall-log delivery. Source
 configuration preparation is not migration compatibility or native qualification.

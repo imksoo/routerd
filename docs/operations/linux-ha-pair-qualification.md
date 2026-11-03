@@ -128,11 +128,22 @@ An ordinary `go test` skips this explicit native test.
 
 The next input is [linux-ha-dslite-pd.json](../../tests/fixtures/linux-ha-dslite-pd.json).
 It adds the deployed legacy LAN subnet, shared PD identity, four delegated
-outer source addresses, explicit inner IPv4 addresses/SNAT, stateless DHCPv6,
+outer source addresses, tunnel-owned inner IPv4 endpoints and explicit SNAT, stateless DHCPv6,
 RA, IPv6 upstream DNS and three routing policies. Keep the unconditional SNAT
 rules and the 60-second Internet policy hysteresis. `datapathState: Ready` may still
 be using the legacy fallback: observe the selected balanced candidate before
 starting connections intended to prove DS-Lite continuity.
+
+The 1.5 tunnel owns its standard `192.0.0.2` inner endpoint. Configure each
+tunnel's SNAT address directly and omit redundant `IPv4StaticAddress` resources
+on that same tunnel. Copying the former separate inner-address declarations
+creates competing owners, and changing their prefix to `/32` duplicates the
+endpoint exactly. The integrated input therefore has 66 resources; preparing
+the full deployed configuration the same way reduces 109 declarations to 105
+without removing any of its four tunnels or their SNAT forwarding functions.
+The deployed former `.2`/`.3`/`.4`/`.5` inner source choices need no configuration
+compatibility path: the prepared 1.5 configuration uses the standard endpoint
+on each independent tunnel. LAN and AFTR addresses are unaffected.
 
 Use a third disposable Linux VM outside both router failure domains. Connect
 its `rd15-lan`/`rd15-wan` to the two isolated segments. Before product startup,

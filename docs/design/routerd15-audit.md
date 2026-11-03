@@ -3290,3 +3290,25 @@ VMACs and learned FIB, but stale `Disabled/WhenFalse` DS-Lite statuses prevented
 an empty Healthy verdict. This is an unresolved withdrawal defect, not a passing
 result. Both router main services are stopped. The three dedicated guests are
 being reused for the next integrated campaign; no production cutover occurred.
+
+The `854648e8` repair candidate passed all 122 Go packages (14 no-test packages),
+`make check-schema`, `make validate-example` and formal `make dist-deb`.
+Package `1.5.0~20261103153846+g854648e8c5ef` has SHA256
+`26fc1d71fec0e1126eda729136bbf99fdf4dd83eff625d2d0373514e2be0e4f4`;
+both Ubuntu guests updated through apt and passed package integrity checks.
+The native follow-up reached exclusive MASTER/BACKUP, real PD acquisition and
+published gateway, passing the previously stalled startup path. Both nodes then
+withdrew to Healthy with no current errors, owned helpers/VMACs/FIB, or declared
+benchmark IPv4 addresses. This confirms the scoped startup/withdrawal repairs;
+it is not integrated forwarding/fault qualification.
+
+That follow-up also exposed a mistake in the prepared test input: separate
+`IPv4StaticAddress` declarations duplicated the DS-Lite owner's inner `/32`.
+The deployed older declarations use `/29` and distinct standard-range sources,
+so the synthetic `/32` duplication must not be claimed as a deployed failure.
+The prepared 1.5 configuration now has one inner-endpoint owner per tunnel and
+explicit SNAT to its standard `192.0.0.2`; no old-configuration compatibility
+machinery is added. The public input is 66 resources and both full private
+candidates validate with 105 resources, preserving four tunnels and SNAT paths.
+Existing client sockets and either-direction integrated power-loss qualification
+remain unexecuted for this input.
