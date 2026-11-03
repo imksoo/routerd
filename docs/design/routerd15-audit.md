@@ -2947,6 +2947,8 @@ website build passed at the final product revision; existing unrelated website
 link warnings remain. Root filesystem and non-root user-manager checks above
 were separate opt-in native checks. All disposable Linux guests, disks, the retained pristine snapshot and staging
 are removed after recording these scoped results.
+One qualified current .deb is retained for the next authorized Linux campaign;
+prior packages, duplicated payloads and successful raw logs are discarded.
 
 This does not qualify delegated/RA outer-source expiry, real ISP AFTRs, existing
 conntrack-flow continuity, router reboot, BGP, HA/lease/NAT-session synchronization,
