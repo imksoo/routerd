@@ -298,8 +298,8 @@ PY
 deadline=$((SECONDS+60))
 while (( SECONDS < deadline )); do
  routerctl get status -o json > "$work/empty-status.json"
- if jq -e '.status.phase=="Healthy" and .status.resourceCount==0 and ((.status.resourcePhaseIssues // [])|length)==0 and all(.status.controllers[]?; .currentError != true)' "$work/empty-status.json" >/dev/null; then break; fi
+ if jq -e '.status.phase=="Healthy" and (.status.resourceCount // 0)==0 and ((.status.resourcePhaseIssues // [])|length)==0 and all(.status.controllers[]?; .currentError != true)' "$work/empty-status.json" >/dev/null; then break; fi
  sleep 1
 done
-jq -e '.status.phase=="Healthy" and .status.resourceCount==0 and ((.status.resourcePhaseIssues // [])|length)==0 and all(.status.controllers[]?; .currentError != true)' "$work/empty-status.json" >/dev/null
+jq -e '.status.phase=="Healthy" and (.status.resourceCount // 0)==0 and ((.status.resourcePhaseIssues // [])|length)==0 and all(.status.controllers[]?; .currentError != true)' "$work/empty-status.json" >/dev/null
 echo 'PASS: delegated-source acquisition, natural renewal, renumber, restart, expiry, peer-only recovery and declaration withdrawal'

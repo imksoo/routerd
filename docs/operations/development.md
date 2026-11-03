@@ -559,6 +559,13 @@ forwarding. Restarting only that peer must recover forwarding without product
 repair. Empty apply must withdraw sources/tunnels and converge to Healthy with
 zero resources and no current controller errors.
 
+A removed tunnel declaration must not be recreated as a Disabled display row
+by native withdrawal. Public status is deleted after actual native absence and
+before releasing the owner receipt; a failed deletion keeps durable retry
+input. A declaration retained but conditionally inactive still keeps its status.
+The zero resource count may be omitted by the control API's existing JSON shape;
+the gate treats that omitted numeric zero consistently with the schema.
+
 The two peer prefixes are documentation addresses. AFTR return endpoints are
 prepared for the replacement prefix before Kea advertises it; this changes the
 independent network, never product state. Successful raw output and namespace

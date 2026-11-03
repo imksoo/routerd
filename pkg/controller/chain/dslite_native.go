@@ -20,6 +20,7 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/resourcequery"
+	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 const dsliteNativeStatusName = "dslite-native"
@@ -573,8 +574,35 @@ func (c DSLiteTunnelController) withdrawNativeTunnel(ctx context.Context, record
 			return errors.New("DS-Lite interface remains after withdrawal")
 		}
 	}
-	if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", record.Resource, map[string]any{"phase": PhaseDisabled, "reason": "Withdrawn", "interface": record.Plan.Name, "dryRun": false}); err != nil {
-		return err
+	declared := c.DeclaredRouter
+	if declared == nil {
+		declared = c.Router
+	}
+	retained := false
+	if declared != nil {
+		for _, resource := range declared.Spec.Resources {
+			if resource.Kind == "DSLiteTunnel" && resource.Metadata.Name == record.Resource {
+				retained = true
+				break
+			}
+		}
+	}
+	if retained {
+		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", record.Resource, map[string]any{"phase": PhaseDisabled, "reason": "Withdrawn", "interface": record.Plan.Name, "dryRun": false}); err != nil {
+			return err
+		}
+	} else {
+		// Native absence has been acknowledged. Do not recreate a removed
+		// declaration's display row after configuration activation pruned it.
+		// Retain the owner receipt until deletion succeeds so a store failure
+		// remains retryable across restart even though the tunnel is gone.
+		deleter, ok := c.Store.(routerstate.ObjectDeleteStore)
+		if !ok {
+			return errors.New("DS-Lite status deletion unavailable")
+		}
+		if err := deleter.DeleteObject(api.NetAPIVersion, "DSLiteTunnel", record.Resource); err != nil {
+			return err
+		}
 	}
 	return c.saveNativeTunnel(&record, record, true)
 }
