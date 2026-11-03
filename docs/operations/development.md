@@ -758,8 +758,9 @@ ssh router-fixture 'sudo bash /home/ubuntu/linux-router-reboot-fixture.sh --disp
 ssh peer-fixture 'sudo bash /home/ubuntu/linux-router-reboot-fixture.sh --disposable-vm setup-peer ens19 <router-wan-link-local> /opt/routerd15-fixtures/kea'
 ```
 
-Peer setup checks the RA/PD/DNS service state, DHCP sockets and independent
-IPv6 HTTP/DNS before the router apply. The existing `probe` and `isolation`
+Peer setup waits for WAN link-local DAD before starting Kea, then checks
+RA/PD/DNS service state, DHCP sockets and independent IPv6 HTTP/DNS before the
+router apply. An active Kea process without a DHCPv6 socket is not ready. The existing `probe` and `isolation`
 commands then require dual-stack DNS A/AAAA over UDP/TCP, delegated client
 SLAAC/default route, peer-observed IPv6 forwarding, and IPv6 WAN-to-LAN/DNS
 isolation in addition to the IPv4 checks. The LAN IPv6 client is kernel SLAAC;

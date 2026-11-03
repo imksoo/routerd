@@ -574,7 +574,8 @@ ssh peer-fixture 'sudo bash /home/ubuntu/linux-router-reboot-fixture.sh --dispos
 ```
 
 この link-local は PD pool の戻り next hop とし、router 再起動後も同一であることを確認します。
-peer setup は RA/PD/DNS unit、DHCP socket、IPv6 HTTP/DNS の正対照を確認します。
+peer setup は WAN link-local の DAD 完了後に Kea を起動し、RA/PD/DNS unit、
+DHCP socket、IPv6 HTTP/DNS の正対照を確認します。Kea の active だけでは準備完了としません。
 通常の `probe` と `isolation` が IPv4/IPv6 の DNS A/AAAA UDP/TCP、委譲 prefix の
 SLAAC/default route、対向が観測した IPv6 送信元、IPv6 WAN-to-LAN/DNS 遮断も検査します。
 LAN IPv6 client は kernel SLAAC で、DHCPv6 IA_NA の更新・再起動はこの probe では未確認です。

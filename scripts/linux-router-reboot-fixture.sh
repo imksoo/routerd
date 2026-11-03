@@ -95,11 +95,11 @@ NETWORK
   # The product's IPv6RAAddress resource owns enabling RA reception. The boot
   # fixture supplies only ports and the disabled networkd baseline.
   for _ in {1..30}; do
-   if networkctl status rd15-wan --no-pager | grep -Fq /etc/systemd/network/10-netplan-rd15-wan.network &&
+   if networkctl status rd15-wan --no-pager | grep -F /etc/systemd/network/10-netplan-rd15-wan.network >/dev/null &&
       [ "$(sysctl -n net.ipv6.conf.rd15-wan.accept_ra)" = 0 ]; then break; fi
    sleep 1
   done
-  networkctl status rd15-wan --no-pager | grep -Fq /etc/systemd/network/10-netplan-rd15-wan.network
+  networkctl status rd15-wan --no-pager | grep -F /etc/systemd/network/10-netplan-rd15-wan.network >/dev/null
   test "$(sysctl -n net.ipv6.conf.rd15-wan.accept_ra)" = 0
   python3 - "$candidate" "$management_iface" "$work/candidate.json" <<'PY'
 import json,sys
@@ -148,6 +148,12 @@ PY6
    ip netns exec rd15-wan-peer ip -6 route add 2001:db8:1500::/60 via "$router_wan_ll" dev peer0
    ip netns exec rd15-wan-peer sysctl -qw net.ipv6.conf.all.forwarding=1
    ip netns exec rd15-lan-peer sysctl -qw net.ipv6.conf.peer0.accept_ra=2 net.ipv6.conf.peer0.autoconf=1
+   # Kea can remain active without any sockets if started before link-local DAD.
+   for _ in {1..20}; do
+    if ip netns exec rd15-wan-peer ip -6 -j addr show dev peer0 | jq -e 'any(.[0].addr_info[]; .scope=="link") and all(.[0].addr_info[]; .tentative!=true and .dadfailed!=true and ((.flags//[])|index("tentative")|not))' >/dev/null; then break; fi
+    sleep 0.5
+   done
+   ip netns exec rd15-wan-peer ip -6 -j addr show dev peer0 | jq -e 'any(.[0].addr_info[]; .scope=="link") and all(.[0].addr_info[]; .tentative!=true and .dadfailed!=true and ((.flags//[])|index("tentative")|not))' >/dev/null
    cat > "$work/radvd.conf" <<'RA'
 interface peer0 {
  AdvSendAdvert on;
@@ -204,14 +210,14 @@ PY
   if [ -f "$work/peer-ipv6" ]; then
    for _ in {1..20}; do
     if systemctl is-active --quiet rd15-upstream-ra rd15-upstream-pd rd15-upstream-dns &&
-       ip netns exec rd15-wan-peer ss -unl | grep -q ':547 ' &&
-       ip netns exec rd15-wan-peer ss -unl | grep -q ':67 ' &&
+       ip netns exec rd15-wan-peer ss -unl | grep ':547 ' >/dev/null &&
+       ip netns exec rd15-wan-peer ss -unl | grep ':67 ' >/dev/null &&
        ip netns exec rd15-wan-peer curl --noproxy '*' --fail --silent --max-time 1 'http://[2001:db8:17::1]:8080/ready6' >/dev/null; then break; fi
     sleep 1
    done
    systemctl is-active --quiet rd15-upstream-ra rd15-upstream-pd rd15-upstream-dns
-   ip netns exec rd15-wan-peer ss -unl | grep -q ':547 '
-   ip netns exec rd15-wan-peer ss -unl | grep -q ':67 '
+   ip netns exec rd15-wan-peer ss -unl | grep ':547 ' >/dev/null
+   ip netns exec rd15-wan-peer ss -unl | grep ':67 ' >/dev/null
    test "$(ip netns exec rd15-wan-peer dig +time=5 +tries=1 +short @2001:db8:17::1 peer.test AAAA)" = 2001:db8:17::1
    ip netns exec rd15-wan-peer curl --noproxy '*' --fail --silent --max-time 1 'http://[2001:db8:17::1]:8080/ready6' >/dev/null
   fi
@@ -245,7 +251,7 @@ HOOK
   if [ -f "$work/peer-ipv6" ]; then
    deadline=$((SECONDS + 45))
    until ip netns exec rd15-lan-peer ip -6 -j addr show dev peer0 | jq -e 'any(.[0].addr_info[]; (.local|startswith("2001:db8:1500:")) and .preferred_life_time>0 and .tentative!=true and ((.flags//[])|index("tentative")|not))' >/dev/null &&
-         ip netns exec rd15-lan-peer ip -6 route show default | grep -q 'proto ra'; do
+         ip netns exec rd15-lan-peer ip -6 route show default | grep 'proto ra' >/dev/null; do
     if (( SECONDS >= deadline )); then echo 'Delegated client address/default route not ready within 45 seconds' >&2; exit 1; fi
     sleep 0.5
    done
