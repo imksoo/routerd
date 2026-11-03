@@ -946,7 +946,7 @@ func (c SystemdUnitController) reconcileDNSResolverUnits(ctx context.Context, st
 		}
 		unitName := dnsResolverUnitName(resource.Metadata.Name)
 		configPath := filepath.Join(stateDir, "dns-resolver", resource.Metadata.Name, "config.json")
-		if err := c.reconcileLongLivedSystemdHelperUnit(ctx, unitName, "Router/"+c.Router.Metadata.Name+"/DNSResolver/"+resource.Metadata.Name, render.DNSResolverSystemdSpec(resource.Metadata.Name, spec, "/usr/local/sbin/routerd-dns-resolver", configPath), command); err != nil {
+		if err := c.reconcileLongLivedSystemdHelperUnit(ctx, unitName, "Router/"+c.Router.Metadata.Name+"/DNSResolver/"+resource.Metadata.Name, render.DNSResolverSystemdSpec(resource.Metadata.Name, spec, platform.BinaryPath("routerd-dns-resolver"), configPath), command); err != nil {
 			return err
 		}
 	}
@@ -976,7 +976,7 @@ func (c SystemdUnitController) reconcileEventFederationUnits(ctx context.Context
 		// current config itself; only an already-running helper needs an explicit
 		// restart when the digest changes.
 		wasActive := systemdUnitActive(ctx, command, unitName)
-		if err := c.reconcileLongLivedSystemdHelperUnit(ctx, unitName, "Router/"+c.Router.Metadata.Name+"/EventGroup/"+group, render.EventdSystemdSpec(group, "/usr/local/sbin/routerd-eventd", configPath), command); err != nil {
+		if err := c.reconcileLongLivedSystemdHelperUnit(ctx, unitName, "Router/"+c.Router.Metadata.Name+"/EventGroup/"+group, render.EventdSystemdSpec(group, platform.BinaryPath("routerd-eventd"), configPath), command); err != nil {
 			return err
 		}
 		if err := c.applyEventFederationConfig(ctx, stateDir, group, unitName, wasActive, command); err != nil {
@@ -1450,7 +1450,7 @@ func interfaceAliases(router *api.Router) map[string]string {
 
 func dhcpv4ClientUnitSpec(resource, ifname string, spec api.DHCPv4ClientSpec, telemetryEnv []string) api.SystemdUnitSpec {
 	noNewPrivileges := true
-	exec := []string{"/usr/local/sbin/routerd-dhcpv4-client", "daemon", "--resource", resource, "--interface", ifname}
+	exec := []string{platform.BinaryPath("routerd-dhcpv4-client"), "daemon", "--resource", resource, "--interface", ifname}
 	if spec.Hostname != "" {
 		exec = append(exec, "--hostname", spec.Hostname)
 	}
@@ -1484,7 +1484,7 @@ func dhcpv4ClientUnitSpec(resource, ifname string, spec api.DHCPv4ClientSpec, te
 
 func dhcpv6ClientUnitSpec(resource, ifname string, spec api.DHCPv6PrefixDelegationSpec, telemetryEnv []string) api.SystemdUnitSpec {
 	noNewPrivileges := true
-	exec := []string{"/usr/local/sbin/routerd-dhcpv6-client", "daemon", "--resource", resource, "--interface", ifname}
+	exec := []string{platform.BinaryPath("routerd-dhcpv6-client"), "daemon", "--resource", resource, "--interface", ifname}
 	if spec.IAID != "" {
 		exec = append(exec, "--iaid", spec.IAID)
 	}
@@ -1513,7 +1513,7 @@ func dhcpv6ClientUnitSpec(resource, ifname string, spec api.DHCPv6PrefixDelegati
 func raObserverUnitSpec(resource, ifname string, telemetryEnv []string) api.SystemdUnitSpec {
 	noNewPrivileges := true
 	exec := []string{
-		"/usr/local/sbin/routerd-ra-observer", "daemon",
+		platform.BinaryPath("routerd-ra-observer"), "daemon",
 		"--resource", resource,
 		"--interface", ifname,
 		"--socket", "/run/routerd/ra-observer/" + resource + ".sock",

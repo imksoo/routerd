@@ -72,8 +72,8 @@ func TestSyncFailoverVMACFollowsObservedVRRPRole(t *testing.T) {
 		t.Fatalf("sync backup: %v", err)
 	}
 	want := []string{
-		"/usr/local/sbin/routerd-vrrp-vmac activate --parent ens18 --interface wan-vmac --mac 02:00:5e:00:01:13",
-		"/usr/local/sbin/routerd-vrrp-vmac deactivate --parent ens18 --interface wan-vmac --mac 02:00:5e:00:01:13",
+		platform.BinaryPath("routerd-vrrp-vmac") + " activate --parent ens18 --interface wan-vmac --mac 02:00:5e:00:01:13",
+		platform.BinaryPath("routerd-vrrp-vmac") + " deactivate --parent ens18 --interface wan-vmac --mac 02:00:5e:00:01:13",
 	}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("VMAC sync calls = %#v, want %#v", calls, want)
@@ -105,8 +105,8 @@ func TestSyncFailoverVMACKeepsWANAndLANInOneRoleTransition(t *testing.T) {
 		t.Fatalf("sync backup: %v", err)
 	}
 	want := []string{
-		"/usr/local/sbin/routerd-vrrp-vmac activate --vmac ens18,wan-vmac,02:00:5e:00:01:13,,false --vmac ens19,lan-vrrp,02:00:5e:00:01:12,fe80::5eff:fe00:112,true",
-		"/usr/local/sbin/routerd-vrrp-vmac deactivate --vmac ens18,wan-vmac,02:00:5e:00:01:13,,false --vmac ens19,lan-vrrp,02:00:5e:00:01:12,fe80::5eff:fe00:112,true",
+		platform.BinaryPath("routerd-vrrp-vmac") + " activate --vmac ens18,wan-vmac,02:00:5e:00:01:13,,false --vmac ens19,lan-vrrp,02:00:5e:00:01:12,fe80::5eff:fe00:112,true",
+		platform.BinaryPath("routerd-vrrp-vmac") + " deactivate --vmac ens18,wan-vmac,02:00:5e:00:01:13,,false --vmac ens19,lan-vrrp,02:00:5e:00:01:12,fe80::5eff:fe00:112,true",
 	}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("VMAC sync calls = %#v, want %#v", calls, want)
@@ -1305,7 +1305,7 @@ func TestReconcilePublishesRoleBeforeVMACRepairFailure(t *testing.T) {
 	router.Spec.Resources[1].Spec = spec
 	failRepair := true
 	controller := &Controller{Router: router, Store: store, OperatingSystem: platform.OSLinux, ConfigPath: filepath.Join(t.TempDir(), "keepalived.conf"), Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
-		if name == "/usr/local/sbin/routerd-vrrp-vmac" && failRepair {
+		if name == platform.BinaryPath("routerd-vrrp-vmac") && failRepair {
 			return []byte("repair failed"), errors.New("exit status 1")
 		}
 		if name == "ip" {

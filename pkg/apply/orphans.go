@@ -9,6 +9,7 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/lifecycle"
+	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/resource"
 )
 
@@ -274,12 +275,13 @@ func (e *Engine) actualSystemdServiceArtifacts() []resource.Artifact {
 }
 
 func (e *Engine) actualFileArtifacts() []resource.Artifact {
+	defaults, _ := platform.Current()
 	paths := []string{
 		"/etc/ppp/chap-secrets",
 		"/etc/ppp/pap-secrets",
-		"/usr/local/etc/routerd/dnsmasq.conf",
-		"/usr/local/etc/routerd/nftables.nft",
-		"/usr/local/etc/routerd/default-route.nft",
+		defaults.DnsmasqConfigFile,
+		defaults.NftablesFile,
+		defaults.DefaultRouteNftablesFile,
 	}
 	if out, err := e.Command("find", "/etc/ppp/peers", "-maxdepth", "1", "-type", "f", "-name", "routerd-*", "-print"); err == nil {
 		for _, line := range strings.Split(string(out), "\n") {
@@ -292,7 +294,7 @@ func (e *Engine) actualFileArtifacts() []resource.Artifact {
 	var artifacts []resource.Artifact
 	seen := map[string]bool{}
 	for _, path := range paths {
-		if seen[path] {
+		if path == "" || seen[path] {
 			continue
 		}
 		seen[path] = true

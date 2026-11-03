@@ -4215,7 +4215,7 @@ func routerdClientBinary(name string) string {
 			return candidate
 		}
 	}
-	return filepath.Join("/usr/local/sbin", name)
+	return platform.BinaryPath(name)
 }
 
 func defaultClientSocket(binary, resource string) string {
@@ -6062,9 +6062,9 @@ func (c LANAddressController) ensureStagingVMAC(ctx context.Context, logical str
 		args = append(args, "--guard-resource", owner, "--reconcile")
 	}
 	if command != nil {
-		return command(ctx, "/usr/local/sbin/routerd-vrrp-vmac", args...)
+		return command(ctx, platform.BinaryPath("routerd-vrrp-vmac"), args...)
 	}
-	output, err := exec.CommandContext(ctx, "/usr/local/sbin/routerd-vrrp-vmac", args...).CombinedOutput()
+	output, err := exec.CommandContext(ctx, platform.BinaryPath("routerd-vrrp-vmac"), args...).CombinedOutput()
 	if err != nil {
 		return vmacHelperCommandError(args, err, output)
 	}
@@ -6322,7 +6322,7 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) ([]string, error) {
 		}
 		tag := sanitizeChainTag(resource.Metadata.Name)
 		lines = append(lines, "interface="+ifname)
-		lines = append(lines, "dhcp-script=/usr/local/libexec/routerd/dhcp-event-relay")
+		lines = append(lines, "dhcp-script="+platform.DHCPEventRelayHook())
 		start := stringutil.FirstNonEmpty(spec.AddressPool.Start, spec.RangeStart)
 		end := stringutil.FirstNonEmpty(spec.AddressPool.End, spec.RangeEnd)
 		leaseTime := stringutil.FirstNonEmpty(spec.AddressPool.LeaseTime, spec.LeaseTime, "12h")

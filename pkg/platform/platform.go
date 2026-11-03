@@ -11,9 +11,10 @@ import (
 type OS string
 
 const (
-	OSLinux   OS = "linux"
-	OSFreeBSD OS = "freebsd"
-	OSOther   OS = "other"
+	OSLinux        OS = "linux"
+	OSFreeBSD      OS = "freebsd"
+	OSOther        OS = "other"
+	linuxBinaryDir    = "/usr/sbin"
 )
 
 // Defaults groups OS-specific filesystem locations used by routerd.
@@ -24,7 +25,7 @@ const (
 type Defaults struct {
 	OS OS
 
-	// PrefixDir is the install prefix used by source builds.
+	// PrefixDir is the platform's native package installation prefix.
 	PrefixDir string
 	// BinDir holds routerd and routerctl binaries.
 	BinDir string
@@ -118,6 +119,21 @@ func Current() (Defaults, Features) {
 // CurrentOS returns the OS identifier for the build.
 func CurrentOS() OS {
 	return currentDefaults().OS
+}
+
+// BinaryPath is the canonical path shipped by this OS's routerd package.
+func BinaryPath(name string) string {
+	return filepath.Join(currentDefaults().BinDir, name)
+}
+
+// LinuxBinaryPath is used when rendering Linux service files on another OS.
+func LinuxBinaryPath(name string) string {
+	return filepath.Join(linuxBinaryDir, name)
+}
+
+// DHCPEventRelayHook is the package-owned dnsmasq lease-event hook.
+func DHCPEventRelayHook() string {
+	return filepath.Join(currentDefaults().PrefixDir, "libexec", "routerd", "dhcp-event-relay")
 }
 
 // StatusFile returns the default status file path.

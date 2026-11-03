@@ -2,7 +2,10 @@
 
 package render
 
-import "github.com/imksoo/routerd/pkg/api"
+import (
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/platform"
+)
 
 const RouterdUnitName = "routerd.service"
 
@@ -17,7 +20,7 @@ func RouterdServiceSystemdSpec() api.SystemdUnitSpec {
 		Description: "routerd daemon",
 		Type:        "notify",
 		ExecStart: []string{
-			"/usr/local/sbin/routerd",
+			platform.LinuxBinaryPath("routerd"),
 			"serve",
 		},
 		RuntimeDirectory:         []string{"routerd", "routerd/bgp", "routerd/dhcpv6-client", "routerd/dhcpv4-client", "routerd/pppoe-client", "routerd/dns-resolver"},

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/platform"
 )
 
 type vrrpInstance struct {
@@ -290,7 +291,7 @@ func writeKeepalivedInstance(buf *bytes.Buffer, instance vrrpInstance) {
 		buf.WriteString("  }\n")
 	}
 	if len(instance.FailoverVMACs) > 0 || instance.GracefulActivation != nil {
-		hook := "/usr/local/sbin/routerd-vrrp-vmac"
+		hook := platform.LinuxBinaryPath("routerd-vrrp-vmac")
 		args := ""
 		if instance.GracefulActivation != nil {
 			args += " --resource " + strings.TrimSpace(instance.Name)

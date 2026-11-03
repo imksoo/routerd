@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/platform"
 )
 
 const (
@@ -19,7 +20,7 @@ func NDPIAgentSystemdSpec(runtimeRoot string) api.SystemdUnitSpec {
 	socket := filepath.Join(runtimeRoot, "routerd/ndpi-agent/default.sock")
 	return api.SystemdUnitSpec{
 		Description:              "routerd nDPI analysis agent",
-		ExecStart:                []string{"/usr/local/sbin/routerd-ndpi-agent", "daemon", "--socket", socket},
+		ExecStart:                []string{platform.LinuxBinaryPath("routerd-ndpi-agent"), "daemon", "--socket", socket},
 		Wants:                    []string{"network-online.target"},
 		After:                    []string{"network-online.target"},
 		WantedBy:                 []string{"multi-user.target"},
@@ -37,7 +38,7 @@ func DPIClassifierSystemdSpec(runtimeRoot string) api.SystemdUnitSpec {
 	agentSocket := filepath.Join(runtimeRoot, "routerd/ndpi-agent/default.sock")
 	return api.SystemdUnitSpec{
 		Description:      "routerd DPI classifier",
-		ExecStart:        []string{"/usr/local/sbin/routerd-dpi-classifier", "daemon", "--socket", socket, "--engine", "auto", "--ndpi-agent-socket", agentSocket},
+		ExecStart:        []string{platform.LinuxBinaryPath("routerd-dpi-classifier"), "daemon", "--socket", socket, "--engine", "auto", "--ndpi-agent-socket", agentSocket},
 		Wants:            []string{"network-online.target", NDPIAgentUnitName},
 		After:            []string{"network-online.target", NDPIAgentUnitName},
 		WantedBy:         []string{"multi-user.target"},

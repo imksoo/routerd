@@ -26,6 +26,7 @@ func freeBSDRCDScripts(router *api.Router) (map[string][]byte, error) {
 		return FreeBSDRCDScript(name, spec)
 	}
 	routerdSpec := RouterdServiceInitSpec()
+	routerdSpec.ExecStart[0] = "/usr/local/sbin/routerd"
 	routerdData, err := renderService("routerd", routerdSpec)
 	if err != nil {
 		return nil, err
@@ -47,7 +48,9 @@ func freeBSDRCDScripts(router *api.Router) (map[string][]byte, error) {
 	wantsNDPIAgent := RouterWantsNDPIAgent(router)
 	if RouterWantsDPIClassifier(router) {
 		name := freeBSDServiceName(DPIClassifierUnitName)
-		data, err := renderService(name, DPIClassifierSystemdSpec("/var/run"))
+		unit := DPIClassifierSystemdSpec("/var/run")
+		unit.ExecStart[0] = "/usr/local/sbin/routerd-dpi-classifier"
+		data, err := renderService(name, unit)
 		if err != nil {
 			return nil, err
 		}
@@ -56,7 +59,9 @@ func freeBSDRCDScripts(router *api.Router) (map[string][]byte, error) {
 	if wantsNDPIAgent {
 		name := freeBSDServiceName(NDPIAgentUnitName)
 		if !explicit[name] {
-			data, err := renderService(name, NDPIAgentSystemdSpec("/var/run"))
+			unit := NDPIAgentSystemdSpec("/var/run")
+			unit.ExecStart[0] = "/usr/local/sbin/routerd-ndpi-agent"
+			data, err := renderService(name, unit)
 			if err != nil {
 				return nil, err
 			}
@@ -138,6 +143,7 @@ func freeBSDRCDScripts(router *api.Router) (map[string][]byte, error) {
 		if err != nil {
 			return nil, err
 		}
+		unit.ExecStart[0] = "/usr/local/sbin/routerd-healthcheck"
 		data, err := renderService(name, unit)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", res.ID(), err)

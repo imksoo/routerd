@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/platform"
 )
 
 // EventdSystemdSpec renders the systemd unit for one CloudEdge Event Federation
@@ -13,7 +14,7 @@ import (
 // long-lived (Restart=always) and reads its runtime config from configPath.
 func EventdSystemdSpec(group, binaryPath, configPath string) api.SystemdUnitSpec {
 	if strings.TrimSpace(binaryPath) == "" {
-		binaryPath = "/usr/local/sbin/routerd-eventd"
+		binaryPath = platform.LinuxBinaryPath("routerd-eventd")
 	}
 	if strings.TrimSpace(configPath) == "" {
 		configPath = "/var/lib/routerd/eventd/" + group + "/config.json"

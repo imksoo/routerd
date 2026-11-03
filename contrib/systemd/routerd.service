@@ -7,7 +7,7 @@ Wants=network-online.target
 
 [Service]
 Type=notify
-ExecStart=/usr/local/sbin/routerd serve
+ExecStart=/usr/sbin/routerd serve
 Restart=always
 RestartSec=5s
 RuntimeDirectory=routerd routerd/bgp routerd/dhcpv6-client routerd/dhcpv4-client routerd/pppoe-client routerd/dns-resolver

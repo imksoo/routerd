@@ -7,12 +7,13 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/dnsresolver"
+	"github.com/imksoo/routerd/pkg/platform"
 )
 
 func DNSResolverSystemdSpec(name string, spec api.DNSResolverSpec, binaryPath, configPath string) api.SystemdUnitSpec {
 	_ = dnsresolver.NormalizeSpec(spec)
 	if strings.TrimSpace(binaryPath) == "" {
-		binaryPath = "/usr/local/sbin/routerd-dns-resolver"
+		binaryPath = platform.LinuxBinaryPath("routerd-dns-resolver")
 	}
 	if strings.TrimSpace(configPath) == "" {
 		configPath = "/var/lib/routerd/dns-resolver/" + name + "/config.json"

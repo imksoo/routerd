@@ -9,6 +9,7 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/healthcheck"
+	"github.com/imksoo/routerd/pkg/platform"
 )
 
 type HealthCheckSystemdOptions struct {
@@ -65,7 +66,7 @@ func HealthCheckDaemonSystemdSpec(options HealthCheckDaemonUnitOptions) (api.Sys
 		sourceAddress = value
 	}
 	socket := runtimeRoot + "/routerd/healthcheck/" + resource + ".sock"
-	execStart := []string{"/usr/local/sbin/routerd-healthcheck", "daemon", "--resource", resource}
+	execStart := []string{platform.LinuxBinaryPath("routerd-healthcheck"), "daemon", "--resource", resource}
 	appendFlag := func(flag, value string) {
 		if strings.TrimSpace(value) != "" {
 			execStart = append(execStart, flag, value)
@@ -132,7 +133,7 @@ func healthCheckCapabilities(fwmark int) []string {
 func HealthCheckSystemdUnit(options HealthCheckSystemdOptions) []byte {
 	binaryPath := options.BinaryPath
 	if binaryPath == "" {
-		binaryPath = "/usr/local/sbin/routerd-healthcheck"
+		binaryPath = platform.LinuxBinaryPath("routerd-healthcheck")
 	}
 	resource := options.Resource
 	if resource == "" {

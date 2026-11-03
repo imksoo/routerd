@@ -283,12 +283,12 @@ func TestSystemdUnitControllerRendersAndEnablesUnit(t *testing.T) {
 		t.Fatalf("read unit: %v", err)
 	}
 	gotUnit := string(data)
-	for _, want := range []string{"ExecStart=/usr/local/sbin/routerd serve", "RuntimeDirectory=routerd routerd/bgp routerd/dhcpv6-client routerd/dhcpv4-client routerd/pppoe-client routerd/dns-resolver", "StateDirectory=routerd", "AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID CAP_CHOWN", "NoNewPrivileges=no"} {
+	for _, want := range []string{"ExecStart=/usr/sbin/routerd serve", "RuntimeDirectory=routerd routerd/bgp routerd/dhcpv6-client routerd/dhcpv4-client routerd/pppoe-client routerd/dns-resolver", "StateDirectory=routerd", "AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID CAP_CHOWN", "NoNewPrivileges=no"} {
 		if !strings.Contains(gotUnit, want) {
 			t.Fatalf("unit missing %q:\n%s", want, gotUnit)
 		}
 	}
-	for _, notWant := range []string{"ExecStartPre=/usr/local/sbin/routerd check", "ReadWritePaths=", "ProtectSystem=", "ProtectHome=", "PrivateTmp=", "RestrictAddressFamilies="} {
+	for _, notWant := range []string{"ExecStartPre=/usr/sbin/routerd check", "ReadWritePaths=", "ProtectSystem=", "ProtectHome=", "PrivateTmp=", "RestrictAddressFamilies="} {
 		if strings.Contains(gotUnit, notWant) {
 			t.Fatalf("routerd.service must not contain %q:\n%s", notWant, gotUnit)
 		}
@@ -381,7 +381,7 @@ func TestSystemdUnitControllerAugmentsRouterdServiceForBGPVRRPIngress(t *testing
 	}
 	gotBGPUnit := string(bgpUnit)
 	for _, want := range []string{
-		"ExecStart=/usr/local/sbin/routerd-bgp daemon --socket /run/routerd/bgp/gobgp.sock --control-socket /run/routerd/bgp/control.sock --state-file " + controller.BGPStatePath,
+		"ExecStart=/usr/sbin/routerd-bgp daemon --socket /run/routerd/bgp/gobgp.sock --control-socket /run/routerd/bgp/control.sock --state-file " + controller.BGPStatePath,
 		"RuntimeDirectory=routerd/bgp",
 		"StateDirectory=routerd/bgp",
 		"Restart=always",
@@ -546,7 +546,7 @@ func TestSystemdUnitControllerSynthesizesNDPIAgentForAutoClassifier(t *testing.T
 	if err != nil {
 		t.Fatalf("read ndpi agent unit: %v", err)
 	}
-	if !strings.Contains(string(agentData), "ExecStart=/usr/local/sbin/routerd-ndpi-agent daemon --socket /run/routerd/ndpi-agent/default.sock") {
+	if !strings.Contains(string(agentData), "ExecStart=/usr/sbin/routerd-ndpi-agent daemon --socket /run/routerd/ndpi-agent/default.sock") {
 		t.Fatalf("ndpi agent unit =\n%s", string(agentData))
 	}
 	classifierData, err := os.ReadFile(filepath.Join(dir, "routerd-dpi-classifier.service"))
@@ -638,7 +638,7 @@ func TestSystemdUnitControllerDefersActiveStaleClientDaemonCleanup(t *testing.T)
 	dir := t.TempDir()
 	unitName := "routerd-dhcpv4-client@wan.service"
 	unitPath := filepath.Join(dir, unitName)
-	if err := os.WriteFile(unitPath, []byte("# Managed by routerd. Do not edit by hand.\n[Service]\nExecStart=/usr/local/sbin/routerd-dhcpv4-client daemon\n"), 0644); err != nil {
+	if err := os.WriteFile(unitPath, []byte("# Managed by routerd. Do not edit by hand.\n[Service]\nExecStart=/usr/sbin/routerd-dhcpv4-client daemon\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	router := &api.Router{Spec: api.RouterSpec{}}
@@ -696,7 +696,7 @@ func TestSystemdUnitControllerReportsInactiveStaleClientDaemonCleanup(t *testing
 	dir := t.TempDir()
 	unitName := "routerd-dhcpv4-client@wan.service"
 	unitPath := filepath.Join(dir, unitName)
-	if err := os.WriteFile(unitPath, []byte("# Managed by routerd. Do not edit by hand.\n[Service]\nExecStart=/usr/local/sbin/routerd-dhcpv4-client daemon\n"), 0644); err != nil {
+	if err := os.WriteFile(unitPath, []byte("# Managed by routerd. Do not edit by hand.\n[Service]\nExecStart=/usr/sbin/routerd-dhcpv4-client daemon\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	router := &api.Router{Spec: api.RouterSpec{}}
@@ -1060,7 +1060,7 @@ func TestSystemdUnitControllerSynthesizesHealthCheckDaemonUnits(t *testing.T) {
 	for _, want := range []string{
 		"BindsTo=routerd.service",
 		"After=routerd.service network-online.target",
-		`ExecStart=/usr/local/sbin/routerd-healthcheck --resource "internet-via-dslite-a" --target "1.1.1.1" --protocol "tcp" --fwmark 0x110 --require-dslite-binding --source-interface "ds-lite-a" --source-address "172.18.0.1" --port 443 --interval "30s" --timeout "3s" --healthy-threshold 1 --unhealthy-threshold 3`,
+		`ExecStart=/usr/sbin/routerd-healthcheck --resource "internet-via-dslite-a" --target "1.1.1.1" --protocol "tcp" --fwmark 0x110 --require-dslite-binding --source-interface "ds-lite-a" --source-address "172.18.0.1" --port 443 --interval "30s" --timeout "3s" --healthy-threshold 1 --unhealthy-threshold 3`,
 		`--socket "/run/routerd/healthcheck/internet-via-dslite-a.sock"`,
 		"RuntimeDirectory=routerd/healthcheck",
 		"RuntimeDirectoryPreserve=yes",
@@ -1166,7 +1166,7 @@ func TestSystemdUnitControllerRemovesStaleHealthCheckDaemonUnits(t *testing.T) {
 	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()
 	stale := filepath.Join(dir, "routerd-healthcheck@stale.service")
-	if err := os.WriteFile(stale, []byte("# Managed by routerd. Do not edit by hand.\n[Service]\nExecStart=/usr/local/sbin/routerd-healthcheck\n"), 0644); err != nil {
+	if err := os.WriteFile(stale, []byte("# Managed by routerd. Do not edit by hand.\n[Service]\nExecStart=/usr/sbin/routerd-healthcheck\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
@@ -1248,7 +1248,7 @@ func TestSystemdUnitControllerReconcilesDNSResolverLongLivedUnit(t *testing.T) {
 	}
 	unit := string(data)
 	for _, want := range []string{
-		"ExecStart=/usr/local/sbin/routerd-dns-resolver daemon",
+		"ExecStart=/usr/sbin/routerd-dns-resolver daemon",
 		"--resource lan-resolver",
 		"--config-file /var/lib/routerd/dns-resolver/lan-resolver/config.json",
 		"Restart=always",
@@ -1280,7 +1280,7 @@ func TestSystemdUnitControllerRemovesStaleDNSResolverUnits(t *testing.T) {
 	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()
 	stale := filepath.Join(dir, "routerd-dns-resolver@old.service")
-	if err := os.WriteFile(stale, []byte("# Managed by routerd. Do not edit by hand.\n[Service]\nExecStart=/usr/local/sbin/routerd-dns-resolver\n"), 0644); err != nil {
+	if err := os.WriteFile(stale, []byte("# Managed by routerd. Do not edit by hand.\n[Service]\nExecStart=/usr/sbin/routerd-dns-resolver\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	router := &api.Router{Metadata: api.ObjectMeta{Name: "home"}, Spec: api.RouterSpec{Resources: []api.Resource{
@@ -1328,11 +1328,11 @@ func TestSystemdUnitControllerRemovesStaleEventFederationUnits(t *testing.T) {
 	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()
 	stale := filepath.Join(dir, "routerd-eventd@old.service")
-	if err := os.WriteFile(stale, []byte("# Managed by routerd. Do not edit by hand.\n[Service]\nExecStart=/usr/local/sbin/routerd-eventd\n"), 0644); err != nil {
+	if err := os.WriteFile(stale, []byte("# Managed by routerd. Do not edit by hand.\n[Service]\nExecStart=/usr/sbin/routerd-eventd\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	legacy := filepath.Join(dir, "routerd-eventd.service")
-	if err := os.WriteFile(legacy, []byte("# Managed by routerd. Do not edit by hand.\n[Service]\nExecStart=/usr/local/sbin/routerd-eventd daemon --config-file /var/lib/routerd/eventd/cloudedge/config.json\n"), 0644); err != nil {
+	if err := os.WriteFile(legacy, []byte("# Managed by routerd. Do not edit by hand.\n[Service]\nExecStart=/usr/sbin/routerd-eventd daemon --config-file /var/lib/routerd/eventd/cloudedge/config.json\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	kept := filepath.Join(dir, "routerd-eventd@current.service")
@@ -1551,7 +1551,7 @@ func TestSystemdUnitControllerRemovesIdentityOnlyEventFederationUnit(t *testing.
 	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()
 	stale := filepath.Join(dir, "routerd-eventd@identity.service")
-	if err := os.WriteFile(stale, []byte("# Managed by routerd. Do not edit by hand.\n[Service]\nExecStart=/usr/local/sbin/routerd-eventd\n"), 0644); err != nil {
+	if err := os.WriteFile(stale, []byte("# Managed by routerd. Do not edit by hand.\n[Service]\nExecStart=/usr/sbin/routerd-eventd\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	router := &api.Router{Metadata: api.ObjectMeta{Name: "home"}, Spec: api.RouterSpec{Resources: []api.Resource{
@@ -1660,7 +1660,7 @@ func TestSystemdUnitControllerSynthesizesDHCPClientUnits(t *testing.T) {
 		{
 			unit: "routerd-dhcpv4-client@wan-v4.service",
 			want: []string{
-				`ExecStart=/usr/local/sbin/routerd-dhcpv4-client daemon --resource wan-v4 --interface ens18 --hostname routerd-test`,
+				`ExecStart=/usr/sbin/routerd-dhcpv4-client daemon --resource wan-v4 --interface ens18 --hostname routerd-test`,
 				`RuntimeDirectory=routerd/dhcpv4-client`,
 				`AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN CAP_NET_BIND_SERVICE`,
 			},
@@ -1668,7 +1668,7 @@ func TestSystemdUnitControllerSynthesizesDHCPClientUnits(t *testing.T) {
 		{
 			unit: "routerd-dhcpv6-client@wan-pd.service",
 			want: []string{
-				`ExecStart=/usr/local/sbin/routerd-dhcpv6-client daemon --resource wan-pd --interface ens18 --iaid 1 --client-duid 00030001020000000103`,
+				`ExecStart=/usr/sbin/routerd-dhcpv6-client daemon --resource wan-pd --interface ens18 --iaid 1 --client-duid 00030001020000000103`,
 				`RuntimeDirectory=routerd/dhcpv6-client`,
 				`AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN CAP_NET_BIND_SERVICE`,
 			},
@@ -1676,7 +1676,7 @@ func TestSystemdUnitControllerSynthesizesDHCPClientUnits(t *testing.T) {
 		{
 			unit: "routerd-ra-observer@lan-ra.service",
 			want: []string{
-				`ExecStart=/usr/local/sbin/routerd-ra-observer daemon --resource lan-ra --interface ens19 --socket /run/routerd/ra-observer/lan-ra.sock --event-file /var/log/routerd/ra-observer-lan-ra.events.jsonl`,
+				`ExecStart=/usr/sbin/routerd-ra-observer daemon --resource lan-ra --interface ens19 --socket /run/routerd/ra-observer/lan-ra.sock --event-file /var/log/routerd/ra-observer-lan-ra.events.jsonl`,
 				`RuntimeDirectory=routerd/ra-observer`,
 				`AmbientCapabilities=CAP_NET_RAW`,
 			},

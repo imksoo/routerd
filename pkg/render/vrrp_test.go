@@ -64,8 +64,8 @@ func TestKeepalivedConfigRendersSingleOwnerFailoverVMAC(t *testing.T) {
 	got := string(data)
 	for _, want := range []string{
 		"vrrp_instance lan_gw",
-		"notify_master \"/usr/local/sbin/routerd-vrrp-vmac activate --parent eth0 --interface wan-vmac --mac 02:00:5e:00:01:13\"",
-		"notify_backup \"/usr/local/sbin/routerd-vrrp-vmac deactivate --parent eth0 --interface wan-vmac --mac 02:00:5e:00:01:13\"",
+		"notify_master \"/usr/sbin/routerd-vrrp-vmac activate --parent eth0 --interface wan-vmac --mac 02:00:5e:00:01:13\"",
+		"notify_backup \"/usr/sbin/routerd-vrrp-vmac deactivate --parent eth0 --interface wan-vmac --mac 02:00:5e:00:01:13\"",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("keepalived config missing %q:\n%s", want, got)
@@ -95,7 +95,7 @@ func TestKeepalivedConfigRendersWANAndLANFailoverVMACsInOneVRRPTransition(t *tes
 	}
 	got := string(data)
 	wantArgs := "--vmac eth0,wan-vmac,02:00:5e:00:01:13,,false --vmac ens19,lan-vrrp,02:00:5e:00:01:12,fe80::5eff:fe00:112,true"
-	for _, state := range []string{"notify_master \"/usr/local/sbin/routerd-vrrp-vmac activate ", "notify_backup \"/usr/local/sbin/routerd-vrrp-vmac deactivate ", "notify_fault \"/usr/local/sbin/routerd-vrrp-vmac deactivate ", "notify_stop \"/usr/local/sbin/routerd-vrrp-vmac deactivate "} {
+	for _, state := range []string{"notify_master \"/usr/sbin/routerd-vrrp-vmac activate ", "notify_backup \"/usr/sbin/routerd-vrrp-vmac deactivate ", "notify_fault \"/usr/sbin/routerd-vrrp-vmac deactivate ", "notify_stop \"/usr/sbin/routerd-vrrp-vmac deactivate "} {
 		if !strings.Contains(got, state+wantArgs+"\"") {
 			t.Fatalf("keepalived config missing %q:\n%s", state+wantArgs, got)
 		}
@@ -131,7 +131,7 @@ func TestKeepalivedConfigDefersGracefulVRRPAddressUntilRouterdReadiness(t *testi
 		for _, line := range strings.Split(got, "\n") {
 			if strings.HasPrefix(strings.TrimSpace(line), state+" ") {
 				matches++
-				if !strings.Contains(line, state+" \"/usr/local/sbin/routerd-vrrp-vmac ") || !strings.Contains(line, args+" --parent ens18 --interface wan-vmac --mac 02:00:5e:00:01:13") {
+				if !strings.Contains(line, state+" \"/usr/sbin/routerd-vrrp-vmac ") || !strings.Contains(line, args+" --parent ens18 --interface wan-vmac --mac 02:00:5e:00:01:13") {
 					t.Fatalf("incomplete graceful %s hook: %s", state, line)
 				}
 			}

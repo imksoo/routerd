@@ -14,13 +14,13 @@ func TestRouterdServiceSystemdSpecDoesNotConstrainWritePaths(t *testing.T) {
 	if !strings.Contains(unit, "Type=notify") {
 		t.Fatalf("routerd.service must expose runtime status through systemd:\n%s", unit)
 	}
-	for _, notWant := range []string{"ExecStartPre=/usr/local/sbin/routerd check", "ProtectSystem=", "ProtectHome=", "PrivateTmp=", "ReadWritePaths=", "RestrictAddressFamilies="} {
+	for _, notWant := range []string{"ExecStartPre=/usr/sbin/routerd check", "ProtectSystem=", "ProtectHome=", "PrivateTmp=", "ReadWritePaths=", "RestrictAddressFamilies="} {
 		if strings.Contains(unit, notWant) {
 			t.Fatalf("routerd.service must not contain %q:\n%s", notWant, unit)
 		}
 	}
 	for _, want := range []string{
-		"ExecStart=/usr/local/sbin/routerd serve",
+		"ExecStart=/usr/sbin/routerd serve",
 		"RuntimeDirectory=routerd routerd/bgp routerd/dhcpv6-client routerd/dhcpv4-client routerd/pppoe-client routerd/dns-resolver",
 		"StateDirectory=routerd",
 		"AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID CAP_CHOWN",

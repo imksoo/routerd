@@ -243,7 +243,7 @@ func syncFailoverVMACs(ctx context.Context, c *Controller, aliases map[string]st
 				args = append(args, "--vmac", parent+","+vmac.Interface+","+vmac.MACAddress+","+vmac.LinkLocalAddress+","+fmt.Sprintf("%t", vmac.WithdrawRouterAdvertisement))
 			}
 		}
-		if out, err := c.run(ctx, "/usr/local/sbin/routerd-vrrp-vmac", args...); err != nil {
+		if out, err := c.run(ctx, platform.BinaryPath("routerd-vrrp-vmac"), args...); err != nil {
 			return fmt.Errorf("sync failover VMAC for %s: %w: %s", resource.ID(), err, strings.TrimSpace(string(out)))
 		}
 	}
