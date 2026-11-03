@@ -111,7 +111,6 @@ def deb(root, output, version, arch, name="routerd"):
     phases = ("prerm", "postinst", "postrm")
     if name != "routerd":
         service = service[:service.index('case "$phase:${1:-}" in')]
-        service = service.replace("set -eu\n", "set -eu\nservice_scope=ndpi\n", 1)
         service += (REPO / "packaging/native/debian-ndpi-service.sh").read_text()
         phases = ("preinst", "prerm", "postinst", "postrm")
     for phase in phases:

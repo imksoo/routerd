@@ -132,8 +132,10 @@ probe_agent false
 agent_pid=$(systemctl show -p MainPID --value routerd-ndpi-agent.service)
 apt-get -o DPkg::Lock::Timeout=300 install -y "$addon_prior" >> "$work/apt.log" 2>&1
 probe_agent true
-[ "$(systemctl show -p MainPID --value routerd.service)" = "$main_pid" ]
-[ "$(systemctl show -p MainPID --value routerd-dns-resolver@package.service)" = "$helper_pid" ]
+[ ! -d "/proc/$main_pid" ]
+[ ! -d "/proc/$helper_pid" ]
+main_pid=$(systemctl show -p MainPID --value routerd.service)
+helper_pid=$(systemctl show -p MainPID --value routerd-dns-resolver@package.service)
 [ ! -d "/proc/$agent_pid" ]
 wait_dns
 [ "$(dpkg-divert --listpackage /usr/sbin/routerd-ndpi-agent)" = routerd-ndpi-agent-libndpi ]
@@ -168,8 +170,10 @@ main_pid=$(systemctl show -p MainPID --value routerd.service)
 helper_pid=$(systemctl show -p MainPID --value routerd-dns-resolver@package.service)
 apt-get -o DPkg::Lock::Timeout=300 remove -y routerd-ndpi-agent-libndpi >> "$work/apt.log" 2>&1
 probe_agent false
-[ "$(systemctl show -p MainPID --value routerd.service)" = "$main_pid" ]
-[ "$(systemctl show -p MainPID --value routerd-dns-resolver@package.service)" = "$helper_pid" ]
+[ ! -d "/proc/$main_pid" ]
+[ ! -d "/proc/$helper_pid" ]
+main_pid=$(systemctl show -p MainPID --value routerd.service)
+helper_pid=$(systemctl show -p MainPID --value routerd-dns-resolver@package.service)
 [ -z "$(dpkg-divert --listpackage /usr/sbin/routerd-ndpi-agent)" ]
 [ ! -e /usr/sbin/routerd-ndpi-agent.routerd-static ]
 [ -z "$(dpkg -V routerd)" ]
@@ -183,4 +187,4 @@ systemctl is-active --quiet "$foreign"
 [ ! -e /etc/systemd/system/routerd-dns-resolver@package.service ]
 [ "$(sha256sum /etc/routerd/router.yaml)" = "$configuration" ]
 [ -s /var/lib/routerd/routerd.db ]
-printf 'native-ndpi-deb PASS: native addon install/update/removal, unaffected main/DNS on addon-only changes, fresh install, UDP/TCP DNS, update %s -> %s, old process exit, config/database retention, removal\n' "$prior_version" "$current_version"
+printf 'native-ndpi-deb PASS: native addon install/update/removal, owned service stop/recovery on addon-only changes, fresh install, UDP/TCP DNS, update %s -> %s, old process exit, config/database retention, removal\n' "$prior_version" "$current_version"
