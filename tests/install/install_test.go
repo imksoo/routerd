@@ -1162,7 +1162,7 @@ func TestBootstrapInstallerPassesShellcheck(t *testing.T) {
 	}
 }
 
-func TestBootstrapInstallerIsPublishedByReleaseWorkflow(t *testing.T) {
+func TestNativePackagesArePublishedByReleaseWorkflow(t *testing.T) {
 	root := repoRoot(t)
 	workflow, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "release.yaml"))
 	if err != nil {
@@ -1170,12 +1170,18 @@ func TestBootstrapInstallerIsPublishedByReleaseWorkflow(t *testing.T) {
 	}
 	content := string(workflow)
 	for _, needle := range []string{
-		"packaging/bootstrap.sh",
-		"install.sh",
+		"make dist-deb",
+		"gmake dist-pkg",
+		"PACKAGE_VERSION=",
+		"- build-deb",
+		"- build-pkg",
 	} {
 		if !strings.Contains(content, needle) {
-			t.Fatalf("release workflow missing bootstrap installer reference %q", needle)
+			t.Fatalf("release workflow missing native package contract %q", needle)
 		}
+	}
+	if strings.Contains(content, "packaging/bootstrap.sh") || strings.Contains(content, "./install.sh") {
+		t.Fatal("release workflow must not publish or exercise manual base installation")
 	}
 }
 
