@@ -70,6 +70,23 @@ class Handler(http.server.BaseHTTPRequestHandler):
  def log_message(self,*args):pass
 http.server.HTTPServer(('203.0.113.80',8080),Handler).serve_forever()
 PY
+cat > "$work/udp-peer.py" <<'PYUDP'
+import json,socket,sys
+s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
+s.bind(('203.0.113.80',8081))
+while True:
+ data,addr=s.recvfrom(128)
+ s.sendto(json.dumps({'aftr':sys.argv[1],'source':addr[0]}).encode(),addr)
+PYUDP
+cat > "$work/udp-client.py" <<'PYUDP'
+import json,socket
+for index in range(10,74):
+ with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as s:
+  s.bind(('198.18.25.'+str(index),44000));s.settimeout(3)
+  s.sendto(b'existing-flow',('203.0.113.80',8081))
+  row=json.loads(s.recv(1024));row['client']='198.18.25.'+str(index)
+  print(json.dumps(row),flush=True)
+PYUDP
 # Environment preparation: no routerd is installed or running yet.
 modprobe ip6_tunnel
 ip link add rd15-mwan type bridge
@@ -90,11 +107,18 @@ for letter in a b c d; do
  ip -n "$ns" link set aftr mtu 1460 up
  ip -n "$ns" -4 address add 203.0.113.80/32 dev lo
  ip netns exec "$ns" python3 "$work/peer.py" "$letter" > "$work/peer-$letter.txt" 2>&1 & peers+=("$!")
+ ip netns exec "$ns" python3 "$work/udp-peer.py" "$letter" > "$work/udp-peer-$letter.txt" 2>&1 & peers+=("$!")
  for _ in {1..30}; do
   if ip netns exec "$ns" curl --noproxy '*' -fsS --max-time 1 http://203.0.113.80:8080/ > /dev/null 2>&1; then break; fi
   sleep .1
  done
  ip netns exec "$ns" curl --noproxy '*' -fsS --max-time 2 http://203.0.113.80:8080/ | jq -e --arg letter "$letter" '.aftr==$letter' >/dev/null
+ ip netns exec "$ns" python3 - "$letter" <<'PYUDP'
+import json,socket,sys
+with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as s:
+ s.settimeout(2);s.sendto(b'certify',('203.0.113.80',8081))
+ assert json.loads(s.recv(1024))['aftr']==sys.argv[1]
+PYUDP
  ping -6 -I rd15-mwan -c 1 -W 2 "2001:db8:25::$index" >/dev/null
  index=$((index+1))
 done
@@ -209,6 +233,47 @@ test "$(systemctl show routerd.service -p MainPID --value)" != "$old"
 if kill -0 "$old" 2>/dev/null; then echo "old main process remains: $old" >&2; exit 1; fi
 await_health 'a b c d' Healthy
 sample abc apt-updated
+# Reuse identical UDP tuples after the fixed package is installed. Native
+# conntrack IDs must survive every stage; new connections cannot mask failure.
+existing_sample() {
+ local expected=$1 label=$2
+ ip netns exec rd15-mclient python3 "$work/udp-client.py" > "$work/existing.jsonl"
+ conntrack -L -p udp --orig-src 198.18.25.0/24 --dport 8081 -o extended,id > "$work/existing-ct.txt" 2> "$work/existing-ct-summary.txt"
+ python3 - "$work/existing.jsonl" "$work/existing-ct.txt" "$work/existing-ids.json" "$expected" <<'PYUDP'
+import json,re,sys
+rows=[json.loads(line) for line in open(sys.argv[1])]
+assert len(rows)==64 and {r['aftr'] for r in rows}==set(sys.argv[4]),rows
+assert all(r['source']=='192.0.0.2' for r in rows),rows
+entries={}
+for line in open(sys.argv[2]):
+ source=re.search(r'\bsrc=(198\.18\.25\.\d+)\b',line)
+ identity=re.search(r'\bid=(\d+)\b',line)
+ mark=re.search(r'\bmark=(\d+)\b',line)
+ assert source and identity and mark,line
+ assert int(mark[1]) in {272+'abcd'.index(c) for c in sys.argv[4]},line
+ entries[source[1]]=identity[1]
+assert set(entries)=={r['client'] for r in rows},entries
+try:
+ with open(sys.argv[3]) as f: assert json.load(f)==entries,'existing conntrack IDs were lost/replaced'
+except FileNotFoundError:
+ with open(sys.argv[3],'w') as f: json.dump(entries,f)
+PYUDP
+ echo "PASS: $label; 64 unchanged UDP conntrack IDs, peer paths $expected and translated sources"
+}
+existing_sample abc existing-initial
+ip -n rd15-aftr-b link set aftr down
+await_health b Unhealthy
+sample ac existing-one-primary-down
+existing_sample ac existing-one-primary-down
+ip -n rd15-aftr-a link set aftr down
+ip -n rd15-aftr-c link set aftr down
+await_health 'a b c' Unhealthy
+sample d existing-all-primary-down
+existing_sample d existing-all-primary-down
+for letter in a b c; do ip -n "rd15-aftr-$letter" link set aftr up; done
+await_health 'a b c d' Healthy
+sample abc recovered
+existing_sample d existing-healthy-fallback-retained
 routerctl apply -f "$work/empty.json" --replace > "$work/withdraw.txt"
 for letter in a b c d; do
  if ip link show "ds-$letter" >/dev/null 2>&1; then echo "owned tunnel remains: ds-$letter" >&2; exit 1; fi

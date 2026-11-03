@@ -578,7 +578,14 @@ regression, not proof of remote TCP-session continuity across ISP NAT changes.
 dedicated disposable Ubuntu VM. It creates four independent kernel AFTR
 namespaces with HTTP receivers and a separate LAN client. Three primary paths
 use source-address hashing; a lower-weight fourth path provides fallback.
-The fixture uses documentation/benchmark addresses, not deployed configuration.
+The fixture uses documentation/benchmark addresses, not deployed configuration. After updating to
+the candidate package, the gate also sends 64 fixed UDP tuples through real
+DS-Lite/NAT peers. Pass requires unchanged native conntrack IDs across member
+failure, total primary failure and restoration; receivers must observe surviving
+primary paths, fallback, then continued healthy fallback respectively. UDP peers
+are positively checked during environment certification. These are actual
+forwarded UDP results, not a promise that remote TCP sessions survive ISP NAT.
+
 
 Before qualification, finish OS initialization/reboot and install `iproute2`,
 `nftables`, `jq`, `curl`, `python3`, `conntrack`, `tcpdump` and `dnsmasq-base`.
