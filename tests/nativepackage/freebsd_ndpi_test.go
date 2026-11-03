@@ -1,0 +1,62 @@
+// SPDX-License-Identifier: BSD-3-Clause
+package nativepackage_test
+
+import (
+	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"testing"
+)
+
+// This unit captures the manifest passed to pkg; it does not claim native
+// package-format or ELF qualification. The FreeBSD test uses native tools.
+func TestFreeBSDManifestRetainsNativeNDPIRequirements(t *testing.T) {
+	payload, out, bin := fixture(t), t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(payload, "share/doc/TARGET"), []byte("freebsd-amd64\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(payload, "bin/routerd-ndpi-agent"), []byte("fixture ELF supplied by native build"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	fake := `#!/usr/bin/env python3
+import pathlib,shutil,sys
+args=sys.argv[1:]
+if args[0]=='query':
+ print('dnsmasq\t2.93\tdns/dnsmasq\nca_root_nss\t3.132\tsecurity/ca_root_nss\nndpi\t5.0\tnet/ndpi')
+else:
+ shutil.copyfile(args[args.index('-M')+1],pathlib.Path(args[args.index('-o')+1])/'manifest.json')
+`
+	if err := os.WriteFile(filepath.Join(bin, "pkg"), []byte(fake), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "readelf"), []byte("#!/bin/sh\necho '0x00000001 (NEEDED) Shared library: [libndpi.so.5]'\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("python3", "../../scripts/build-native-package.py", "--format", "pkg", "--payload", payload, "--output", out, "--version", "1.5.0.a20261103060000", "--arch", "amd64")
+	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"))
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("manifest construction: %v %s", err, output)
+	}
+	data, err := os.ReadFile(filepath.Join(out, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest struct {
+		Deps map[string]struct {
+			Version string `json:"version"`
+			Origin  string `json:"origin"`
+		} `json:"deps"`
+		Libraries []string `json:"shlibs_required"`
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	dep, ok := manifest.Deps["ndpi"]
+	if !ok || dep.Version != "5.0" || dep.Origin != "net/ndpi" {
+		t.Errorf("missing native ndpi dependency: %+v", manifest.Deps)
+	}
+	if len(manifest.Libraries) != 1 || manifest.Libraries[0] != "libndpi.so.5" {
+		t.Errorf("missing exact ELF library requirement: %+v", manifest.Libraries)
+	}
+}

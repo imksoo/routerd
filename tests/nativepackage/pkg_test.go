@@ -18,11 +18,23 @@ func TestFreeBSDNativePackageOwnershipAndUpgradeHooks(t *testing.T) {
 		t.Skip("requires native FreeBSD pkg")
 	}
 	payload, out := fixture(t), t.TempDir()
-	if err := os.WriteFile(filepath.Join(payload, "share/doc/TARGET"), []byte("freebsd-amd64\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(payload, "share/doc/TARGET"), []byte("freebsd-"+runtime.GOARCH+"\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	version := "1.5.0.a202611030100"
-	cmd := exec.Command("python3", "../../scripts/build-native-package.py", "--format", "pkg", "--payload", payload, "--output", out, "--version", version, "--arch", "amd64")
+	source := filepath.Join(t.TempDir(), "native.c")
+	if err := os.WriteFile(source, []byte("#include <stdio.h>\n#include <ndpi_api.h>\nint main(void) { puts(ndpi_revision()); return 0; }\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	flags, err := exec.Command("pkg-config", "--cflags", "--libs", "libndpi").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := append([]string{source, "-o", filepath.Join(payload, "bin/routerd-ndpi-agent")}, strings.Fields(string(flags))...)
+	if output, err := exec.Command("cc", args...).CombinedOutput(); err != nil {
+		t.Fatalf("native ELF fixture: %v %s", err, output)
+	}
+	cmd := exec.Command("python3", "../../scripts/build-native-package.py", "--format", "pkg", "--payload", payload, "--output", out, "--version", version, "--arch", runtime.GOARCH)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("native build: %v %s", err, output)
 	}
@@ -40,8 +52,15 @@ func TestFreeBSDNativePackageOwnershipAndUpgradeHooks(t *testing.T) {
 	if err := json.Unmarshal(metadata, &manifest); err != nil {
 		t.Fatalf("manifest: %v %s", err, metadata)
 	}
-	if manifest.Name != "routerd" || manifest.ABI != "FreeBSD:14:amd64" {
+	abiArch := runtime.GOARCH
+	if abiArch == "arm64" {
+		abiArch = "aarch64"
+	}
+	if manifest.Name != "routerd" || manifest.ABI != "FreeBSD:14:"+abiArch {
 		t.Fatalf("incorrect native metadata: %+v", manifest)
+	}
+	if _, ok := manifest.Deps["ndpi"]; !ok {
+		t.Error("missing native ndpi runtime dependency")
 	}
 	if _, ok := manifest.Deps["dnsmasq"]; !ok {
 		t.Error("missing native dnsmasq dependency")
