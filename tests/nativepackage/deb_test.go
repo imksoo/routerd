@@ -87,3 +87,46 @@ func TestDebRejectsWrongPayloadArchitecture(t *testing.T) {
 		t.Fatalf("invalid input created artifacts: %v", entries)
 	}
 }
+
+// Execute the package's actual maintainer script with isolated state and fake
+// service commands. No package installation or host service operation occurs.
+func TestDebUpgradeRefusesReplacementWhenOldServiceDoesNotStop(t *testing.T) {
+	if _, err := exec.LookPath("dpkg-deb"); err != nil {
+		t.Skip("requires native dpkg-deb")
+	}
+	payload, out := fixture(t), t.TempDir()
+	if output, err := build(t, payload, out, "amd64"); err != nil {
+		t.Fatalf("build: %v %s", err, output)
+	}
+	control := t.TempDir()
+	file := filepath.Join(out, "routerd_1.5.0~202611030100_amd64.deb")
+	if output, err := exec.Command("dpkg-deb", "-e", file, control).CombinedOutput(); err != nil {
+		t.Fatalf("control: %v %s", err, output)
+	}
+	prerm := filepath.Join(control, "prerm")
+	script, err := os.ReadFile(prerm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := filepath.Join(t.TempDir(), "state")
+	runtime := t.TempDir()
+	script = []byte(strings.ReplaceAll(string(script), "/run/routerd-package", state))
+	script = []byte(strings.ReplaceAll(string(script), "/run/systemd/system", runtime))
+	if err := os.WriteFile(prerm, script, 0755); err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	fake := "#!/bin/sh\ncase \"$1\" in\nlist-units) echo 'routerd.service loaded active running routerd';;\nshow) echo active;;\nstop) exit 0;;\n*) exit 91;;\nesac\n"
+	if err := os.WriteFile(filepath.Join(bin, "systemctl"), []byte(fake), 0755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("sh", prerm, "upgrade", "1.5.0~202611030200")
+	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"))
+	output, err := cmd.CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "still active") {
+		t.Fatalf("upgrade must refuse an acknowledged but ineffective stop: %v %s", err, output)
+	}
+	if _, err := os.Stat(filepath.Join(state, "restart-units")); err != nil {
+		t.Fatalf("failed stop must retain recovery intent: %v", err)
+	}
+}
