@@ -3491,7 +3491,9 @@ rewrote imported connections during local path preparation.
 RED `32369d6d` fixes the contract at the controller-to-renderer boundary. While
 MASTER has an explicitly unconfirmed VIP publication, retain the declared
 connection marks. New flows still use the available selected candidate. After
-publication is confirmed, ordinary unhealthy-path reassignment resumes. The
-focused regression and prior datapath convergence tests must pass before native
-qualification. This scoped correction is not yet a complete HA or full
-105-resource replacement verdict.
+publication is confirmed, ordinary unhealthy-path reassignment resumes. Product correction `84b5d854` passes the focused regression and prior datapath
+convergence tests. An explicit isolated real-kernel test also preserves the
+original UDP conntrack mark during pending admission, then reassigns a failed
+member after admission and retains a healthy fallback on recovery. Formal
+package creation and the full local checks are running. Native VM qualification
+of this correction and the full 105-resource replacement verdict remain pending.

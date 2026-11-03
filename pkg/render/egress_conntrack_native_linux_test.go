@@ -161,6 +161,18 @@ for line in sys.stdin:
 		{Name: "c", Mark: 0x112, RuntimeReady: &ready},
 	}}
 	fallback := api.EgressRoutePolicyCandidate{Name: "fallback", Mark: 0x113}
+	// During deferred HA admission the controller supplies declared marks,
+	// including paths still being prepared, to protect replicated bindings.
+	declared := primary
+	declared.Targets = append([]api.EgressRoutePolicyTarget(nil), primary.Targets...)
+	for index := range declared.Targets {
+		declared.Targets[index].RuntimeReady = nil
+	}
+	spec.Candidates = []api.EgressRoutePolicyCandidate{fallback}
+	apply(spec, []api.EgressRoutePolicyCandidate{declared, fallback})
+	if got := exchangeMark("promotion-before-admission"); got != 0x111 {
+		t.Fatalf("replicated mark changed before gateway publication: %#x", got)
+	}
 	spec.Candidates = []api.EgressRoutePolicyCandidate{primary}
 	apply(spec, []api.EgressRoutePolicyCandidate{primary, fallback})
 	got := exchangeMark("b-failed")
