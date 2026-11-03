@@ -369,7 +369,7 @@ dist-pkg: dist-payload
 	@test "$(ROUTERD_OS)" = freebsd || { echo 'dist-pkg requires ROUTERD_OS=freebsd' >&2; exit 1; }
 	python3 scripts/build-native-package.py --format pkg --payload $(DISTROOT) --output $(DISTDIR) --version '$(PACKAGE_VERSION)' --arch $(DISTARCH)
 
-dist-ndpi-agent-libndpi:
+dist-ndpi-agent-libndpi-payload:
 	@if [ "$(ROUTERD_OS)" != "linux" ]; then echo "libndpi agent archive is Linux-only" >&2; exit 2; fi
 	rm -rf $(ROUTERD_NDPI_AGENT_LIBNDPI_DISTROOT) $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR) $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR).sha256 $(ROUTERD_NDPI_AGENT_LIBNDPI_ALIAS) $(ROUTERD_NDPI_AGENT_LIBNDPI_ALIAS).sha256
 	$(MAKE) build-ndpi-agent-libndpi
@@ -378,9 +378,16 @@ dist-ndpi-agent-libndpi:
 	install -m 0755 $(ROUTERD_NDPI_AGENT_BIN) $(ROUTERD_NDPI_AGENT_LIBNDPI_DISTROOT)/bin/routerd-ndpi-agent
 	install -d $(ROUTERD_NDPI_AGENT_LIBNDPI_DISTROOT)/share/doc
 	install -m 0644 docs/operations/ndpi-agent-libndpi.md $(ROUTERD_NDPI_AGENT_LIBNDPI_DISTROOT)/share/doc/README.md
+	install -m 0644 LICENSE $(ROUTERD_NDPI_AGENT_LIBNDPI_DISTROOT)/share/doc/LICENSE
 	printf '%s\n' '$(VERSION)' > $(ROUTERD_NDPI_AGENT_LIBNDPI_DISTROOT)/share/doc/VERSION
 	printf '%s\n' '$(DISTPLATFORM)' > $(ROUTERD_NDPI_AGENT_LIBNDPI_DISTROOT)/share/doc/TARGET
 	install -d $(DISTDIR)
+.PHONY: dist-ndpi-agent-libndpi-payload dist-ndpi-agent-libndpi-deb
+
+dist-ndpi-agent-libndpi-deb: dist-ndpi-agent-libndpi-payload
+	python3 scripts/build-native-package.py --format deb --component routerd-ndpi-agent-libndpi --payload $(ROUTERD_NDPI_AGENT_LIBNDPI_DISTROOT) --output $(DISTDIR) --version '$(PACKAGE_VERSION)' --arch $(DISTARCH)
+
+dist-ndpi-agent-libndpi: dist-ndpi-agent-libndpi-payload
 	tar -C $(ROUTERD_NDPI_AGENT_LIBNDPI_DISTROOT) -czf $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR) .
 	scripts/check-tar-safe-paths.sh $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR)
 	cp $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR) $(ROUTERD_NDPI_AGENT_LIBNDPI_ALIAS)

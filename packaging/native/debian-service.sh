@@ -27,9 +27,14 @@ invoke_service()
 
 capture_active()
 {
+    if [ "${service_scope:-base}" = ndpi ]; then
+        set -- routerd-ndpi-agent.service routerd-dpi-classifier.service
+    else
+        set -- 'routerd*.service' 'routerd-self-restart-*.timer'
+    fi
     listing=$(systemctl list-units --all --type=service,timer \
         --state=active,activating,reloading,deactivating --plain --no-legend \
-        'routerd*.service' 'routerd-self-restart-*.timer')
+        "$@")
     install -d -m 0700 "$state"
     temporary=$state/restart-units.new
     trap 'rm -f "$temporary"' EXIT
