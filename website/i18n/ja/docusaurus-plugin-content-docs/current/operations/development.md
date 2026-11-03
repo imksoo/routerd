@@ -404,6 +404,21 @@ WAN Router Advertisement の取得までは検証しません。
 
 ## Linux の複数 DS-Lite 経路・パッケージ試験
 
+メインの遅延再起動タイマーには
+[`StopPropagatedFrom=routerd.service`](https://www.freedesktop.org/software/systemd/man/249/systemd.unit.html#PropagatesStopTo=)
+を設定し、明示的な停止で予約も取り消します。通常の自己再起動でタイマーまで
+再起動して繰り返さないこと、notify 型サービスの起動待ち中にも予約できることを
+確認します。必要な systemd 249 以降は Debian パッケージの依存関係で宣言します。
+
+次の任意試験は、一般ユーザーの systemd と一時 unit ファイルだけを使います。
+停止後の復活を再現し、修正後の停止維持・一度の再起動・起動待ち中の予約を
+検査します。本番サービスやホストのネットワークは操作しません。
+
+```sh
+ROUTERD_RUN_USER_SYSTEMD=1 go test ./pkg/controller/chain \
+  -run '^TestSelfRestartUserSystemdLifecycle$' -count=1 -v
+```
+
 メインサービス内の Package コントローラーは、apt のダウンロード用ユーザーが
 所有するキャッシュの権限変更に `CAP_FOWNER`、非公開ディレクトリからの取得済み
 ファイルの移動に `CAP_DAC_OVERRIDE` を必要とします。制限された権限セットでは
@@ -445,6 +460,9 @@ IPv6 リンクと独立 HTTP 受信を環境認証した後に routerd を導入
 内部送信元を観測することを要求します。1本断、主系3本断、復帰、実サービス
 再起動、apt 更新、設定保持・旧プロセス終了・パッケージ整合性、空設定での
 トンネル撤回・通信停止まで確認します。製品状態の手動修復は合格にしません。
+撤回後はローカル宛ての Telemetry 設定で実際のメイン unit を変更し、予約タイマー
+を観測してから停止します。10秒の遅延を過ぎても停止が維持されることを要求します。
+この設定は再起動の起点であり、コレクターへの配送試験ではありません。
 
 終了後は呼出側が VM とディスクを片付けます。成功ログ・キャプチャは削除し、
 失敗時だけ診断と最大2個の1MBキャプチャを残してローカル再現に使います。

@@ -70,7 +70,7 @@ def deb(root, output, version, arch, name="routerd"):
     control = root / "DEBIAN"
     control.mkdir()
     control.chmod(0o755)
-    dependencies = "systemd, init-system-helpers, iproute2, nftables, dnsmasq-base, ca-certificates"
+    dependencies = "systemd (>= 249), init-system-helpers, iproute2, nftables, dnsmasq-base, ca-certificates"
     if name != "routerd":
         scanner = root.parent / "debian"
         scanner.mkdir()

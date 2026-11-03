@@ -520,6 +520,23 @@ WAN router-advertisement discovery.
 
 ## Linux multi-path DS-Lite package gate
 
+Deferred main-service handoffs use a timer with
+[`StopPropagatedFrom=routerd.service`](https://www.freedesktop.org/software/systemd/man/249/systemd.unit.html#PropagatesStopTo=).
+An operator stop must cancel that handoff, while a normal self-restart must not
+restart its own timer. Do not order the timer after the notify service: queuing
+must finish while that service is still activating. This requires systemd 249
+or later, declared by the native Debian package.
+
+The opt-in test below uses uniquely named dummy services and temporary runtime
+unit files in the ordinary user's manager. It reproduces actual resurrection,
+then checks persistent stop, a single successful restart and scheduling during
+notify activation. It never targets system services or host networking:
+
+```sh
+ROUTERD_RUN_USER_SYSTEMD=1 go test ./pkg/controller/chain \
+  -run '^TestSelfRestartUserSystemdLifecycle$' -count=1 -v
+```
+
 The main service's Package controller needs `CAP_FOWNER` for apt's downloader-owned
 cache directory modes and `CAP_DAC_OVERRIDE` to move downloads out of private
 cache directories. UID 0 under a restricted capability bounding set is
@@ -570,6 +587,10 @@ fourth AFTR; restoration must restore the primary set. Actual systemd restart
 and apt update must retain the configuration, replace old processes, preserve
 package integrity and restore traffic without product-state repair. Empty
 configuration must remove the tunnels and stop that forwarded traffic.
+After withdrawal, a local-only Telemetry intent changes the actual main unit.
+The gate then observes a pending restart timer, checks its stop propagation,
+stops main and requires it to remain inactive past the ten-second handoff delay.
+This intent is a restart trigger, not a collector delivery qualification.
 
 The caller discards the VM and its disks afterwards. Successful captures/logs
 are removed; a failure retains bounded diagnostics and two one-megabyte outer

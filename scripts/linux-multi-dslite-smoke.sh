@@ -26,7 +26,7 @@ for dev in rd15-mwan rd15-mlan ds-{a,b,c,d}; do
  ! ip link show "$dev" >/dev/null 2>&1
 done
 work=$(mktemp -d /var/tmp/routerd-multi-dslite.XXXXXX)
-peers=(); capture=; installed=0
+peers=(); capture=; installed=0; network_withdrawn=0
 cleanup() {
  result=$?
  trap - EXIT
@@ -39,7 +39,9 @@ cleanup() {
  fi
  if [ -n "$capture" ]; then kill "$capture" 2>/dev/null || true; wait "$capture" 2>/dev/null || true; fi
  if [ "$installed" = 1 ]; then
-  timeout 45 routerctl apply -f "$work/empty.json" --replace > "$work/withdraw.txt" 2>&1 || result=1
+  if [ "$network_withdrawn" = 0 ]; then
+   timeout 45 routerctl apply -f "$work/empty.json" --replace > "$work/withdraw.txt" 2>&1 || result=1
+  fi
   systemctl stop routerd.service || result=1
  fi
  for pid in "${peers[@]}"; do kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; done
@@ -212,4 +214,30 @@ for letter in a b c d; do ! ip link show "ds-$letter" >/dev/null 2>&1; done
 if ip netns exec rd15-mclient curl --noproxy '*' -fsS --max-time 3 http://203.0.113.80:8080/ >/dev/null 2>&1; then
  echo 'withdrawal left the routed path usable' >&2; exit 1
 fi
+network_withdrawn=1
+# Change actual main-unit intent, then stop before the deferred handoff fires.
+# The new OTLP environment never becomes active: the explicit stop cancels the
+# pending restart. No collector delivery claim is made by this fixture.
+jq '.spec.resources=[{apiVersion:"observability.routerd.net/v1alpha1",kind:"Telemetry",metadata:{name:"restart-intent"},spec:{otlp:{endpoint:"http://127.0.0.1:4317",insecure:true},signals:["metrics"]}}]' "$work/empty.json" > "$work/restart-intent.json"
+routerctl apply -f "$work/restart-intent.json" --replace > "$work/restart-apply.txt"
+deadline=$((SECONDS+9)); timers=
+while (( SECONDS < deadline )); do
+ timers=$(systemctl list-units --all --type=timer --plain --no-legend 'routerd-self-restart-*.timer' | awk '$3=="active"{print $1}')
+ [ -z "$timers" ] || break
+ sleep .1
+done
+test -n "$timers"
+for timer in $timers; do
+ systemctl show "$timer" -p StopPropagatedFrom --value | tr ' ' '\n' | grep -Fxq routerd.service
+done
+systemctl stop routerd.service
+for timer in $timers; do
+ test "$(systemctl show "$timer" -p ActiveState --value)" != active
+done
+deadline=$((SECONDS+12))
+while (( SECONDS < deadline )); do
+ test "$(systemctl show routerd.service -p ActiveState --value)" = inactive
+ sleep .1
+done
+echo 'PASS: explicit stop cancelled deferred main restart and remained stopped'
 echo 'PASS: clean apt install/update, four DS-Lite paths, source-hash selection, peer failure/recovery, restart and withdrawal'

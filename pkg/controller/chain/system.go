@@ -2162,6 +2162,10 @@ func scheduleRouterdServiceRestart(ctx context.Context, command outputCommandFun
 		"systemd-run",
 		"--unit", unitName,
 		"--description", "Restart routerd after managed unit update",
+		// Explicit stop requests cancel the handoff without propagating restart
+		// back to its timer. Ordering After the notify service would deadlock
+		// bootstrap while it waits for this timer to be queued.
+		"--timer-property=StopPropagatedFrom=routerd.service",
 		"--on-active=10s",
 		"--collect",
 		"systemctl", "restart", "routerd.service",

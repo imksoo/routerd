@@ -13,10 +13,10 @@ routerd は cross-OS を前提に設計されています。
 
 ## Linux (Ubuntu / Debian)
 
-systemd を使う Linux が主対象です。
-リリースインストーラーの配置先は、既定で `/usr/local` 配下です。
-Linux 用のリリースアーカイブを展開し、`sudo ./install.sh` を実行します。
-インストーラーは `apt-get`、`dnf`、`pacman` のいずれかで、ランタイムのパッケージを導入できます。
+systemd を使う Linux が主対象です。1.5 提案版はクリーン OS へ apt で導入し、
+配布ファイルを `/usr` 配下に配置します。必要な systemd 249 以降はパッケージの
+依存関係で宣言します。[導入・更新手順](./install-and-upgrade.md)に従ってください。
+手動・ソース導入からの引き継ぎや、routerd 1.0 設定の移行は導入経路に含みません。
 
 routerd が Linux 上で利用する OS 機能は次の通りです。
 

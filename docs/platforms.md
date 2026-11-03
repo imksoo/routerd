@@ -17,9 +17,11 @@ behavior on every OS.
 
 ## Linux (Ubuntu / Debian)
 
-Linux with systemd is the primary platform. Release installs land under `/usr/local` by default.
-Install from the Linux release archive and run `sudo ./install.sh`.
-The installer can install runtime packages with `apt-get`, `dnf`, or `pacman`.
+Linux with systemd is the primary platform. The 1.5 proposal uses clean-OS apt
+installation under `/usr`, with systemd 249 or later declared in package metadata.
+Use the [native package installation and update procedure](./install-and-upgrade.md).
+Manual/source-install adoption and routerd 1.0 configuration migration are not
+installation paths for this proposal.
 
 routerd uses the following OS surfaces on Linux:
 
