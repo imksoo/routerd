@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/logstore"
 	"github.com/imksoo/routerd/pkg/platform"
 )
 
@@ -34,9 +35,10 @@ type fileSyncJob struct {
 }
 
 type fileSyncSource struct {
-	Name     string
-	Path     string
-	Required bool
+	Name           string
+	Path           string
+	Required       bool
+	SQLiteSnapshot bool
 }
 
 type fileSyncTarget struct {
@@ -124,8 +126,24 @@ func (c FileSyncController) reconcileJob(ctx context.Context, job fileSyncJob) e
 		if !fileSyncSourcePresent(sources, source.Path) {
 			continue
 		}
+		transferPath := source.Path
+		if source.SQLiteSnapshot {
+			snapshotCtx, cancel := fileSyncCommandContext(ctx)
+			snapshot, cleanup, err := fileSyncStickySnapshot(snapshotCtx, source.Path)
+			cancel()
+			if err != nil {
+				return c.save(job.APIVersion, job.Kind, job.Name, map[string]any{
+					"phase": "Error", "reason": "SnapshotFailed", "source": source.Path,
+					"error": err.Error(), "dryRun": false,
+				})
+			}
+			defer cleanup()
+			transferPath = snapshot
+		}
 		for _, target := range job.Targets {
 			args := fileSyncRsyncArgs(source, target, len(job.Sources))
+			// Preserve the configured receiver path; only the input is temporary.
+			args[len(args)-2] = transferPath
 			runCtx, cancel := fileSyncCommandContext(ctx)
 			out, err := run(runCtx, command, args...)
 			contextErr := runCtx.Err()
@@ -258,13 +276,9 @@ func (c FileSyncController) dhcpv4StickyLogFiles(resourceName string) []fileSync
 		if err != nil || spec.StickyHoldDays <= 0 {
 			return nil
 		}
-		// SQLite rebuilds its machine-local WAL index (-shm) from the WAL.
-		// It may vanish when the last connection closes; never replicate it.
-		path := defaultDHCPStickyLogFile()
-		return []fileSyncSource{
-			{Name: "stickyLog", Path: path},
-			{Name: "stickyLogWAL", Path: path + "-wal"},
-		}
+		// Snapshot the committed database, including WAL, before transferring it.
+		// Independently copying DB and WAL can acknowledge an incomplete replica.
+		return []fileSyncSource{{Name: "stickyLog", Path: defaultDHCPStickyLogFile(), SQLiteSnapshot: true}}
 	}
 	return nil
 }
@@ -611,4 +625,33 @@ func fileSyncDestination(target fileSyncTarget, remotePath string) string {
 
 func fileSyncShellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}
+
+// fileSyncStickySnapshot owns a private, short-lived transfer input. Neither WAL
+// nor its machine-local index is a separately transferred source.
+func fileSyncStickySnapshot(ctx context.Context, source string) (string, func(), error) {
+	dir, err := os.MkdirTemp("", "routerd-leasesync-")
+	if err != nil {
+		return "", nil, err
+	}
+	cleanup := func() { _ = os.RemoveAll(dir) }
+	snapshot := filepath.Join(dir, filepath.Base(source))
+	log, err := logstore.OpenDHCPStickyLogReadOnly(source)
+	if err != nil {
+		cleanup()
+		return "", nil, err
+	}
+	err = log.WriteSnapshot(ctx, snapshot)
+	closeErr := log.Close()
+	if err == nil {
+		err = closeErr
+	}
+	if err == nil {
+		err = os.Chmod(snapshot, 0600)
+	}
+	if err != nil {
+		cleanup()
+		return "", nil, err
+	}
+	return snapshot, cleanup, nil
 }

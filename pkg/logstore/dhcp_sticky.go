@@ -238,3 +238,11 @@ func unixNanoTime(value int64) time.Time {
 	}
 	return time.Unix(0, value).UTC()
 }
+
+// WriteSnapshot writes a consistent standalone database, including committed WAL
+// contents, without modifying the live database. Destination must be absent or
+// empty. Callers must discard incomplete output after any error.
+func (l *DHCPStickyLog) WriteSnapshot(ctx context.Context, destination string) error {
+	_, err := l.db.ExecContext(ctx, "VACUUM INTO ?", destination)
+	return err
+}
