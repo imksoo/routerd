@@ -209,13 +209,9 @@ func runWithHooks(args []string, hooks runHooks) (runErr error) {
 		// keepalived notification acquired the transition lock. Re-read the
 		// durable marker after acquiring that lock and discard the stale repair
 		// rather than undoing the completed MASTER/BACKUP transition.
-		if want := conntrackdRoleForAction(opts.action); role != "" && role != want {
+		if want := conntrackdRoleForAction(opts.action); role != "" && role != want && !(opts.action == "activate" && role == "activating") {
 			return nil
 		}
-	}
-	conntrackdTransition, err := hooks.conntrackdTransitionNeeded(opts.action)
-	if err != nil {
-		return err
 	}
 	electionTransition := false
 	if opts.resource != "" {
@@ -223,6 +219,17 @@ func runWithHooks(args []string, hooks runHooks) (runErr error) {
 		if err != nil {
 			return err
 		}
+		if opts.action == "activate" && electionTransition {
+			// Keep unfinished native election work across failed cache/link/RA
+			// operations without authorizing master consumers before completion.
+			if err := hooks.writeElectionRole(opts.resource, "activating"); err != nil {
+				return err
+			}
+		}
+	}
+	conntrackdTransition, err := hooks.conntrackdTransitionNeeded(opts.action)
+	if err != nil {
+		return err
 	}
 	notified := false
 	if opts.action == "deactivate" && opts.resource != "" {
@@ -233,7 +240,7 @@ func runWithHooks(args []string, hooks runHooks) (runErr error) {
 		// Always refresh the BACKUP marker and wake routerd. If the immediate
 		// delete failed, the controller must see BACKUP and retry withdrawal;
 		// conntrack remains primary until that retry can complete.
-		if err := hooks.writeElectionRole(opts.resource, opts.action); err != nil {
+		if err := hooks.writeElectionRole(opts.resource, "backup"); err != nil {
 			return err
 		}
 		if hooks.notifyRouterd != nil && (electionTransition || !opts.reconcile) {
@@ -347,7 +354,7 @@ func runWithHooks(args []string, hooks runHooks) (runErr error) {
 		// state, VMAC identity and the initial RA solicitation are complete.
 		// routerd can then reconcile PD-derived addresses and DS-Lite while the
 		// deferred LAN VIP is still absent.
-		if err := hooks.writeElectionRole(opts.resource, opts.action); err != nil {
+		if err := hooks.writeElectionRole(opts.resource, "master"); err != nil {
 			return err
 		}
 	}
@@ -567,7 +574,7 @@ func readElectionRole(resource string) (string, error) {
 		return "", err
 	}
 	role := strings.TrimSpace(string(data))
-	if role != "master" && role != "backup" {
+	if role != "master" && role != "backup" && role != "activating" {
 		return "", fmt.Errorf("invalid persisted VRRP election role %q", role)
 	}
 	return role, nil
@@ -585,10 +592,9 @@ func electionRoleTransitionNeeded(resource, action string) (bool, error) {
 	return role != want, nil
 }
 
-func writeElectionRole(resource, action string) error {
-	role := conntrackdRoleForAction(action)
-	if role == "" || strings.TrimSpace(resource) == "" {
-		return nil
+func writeElectionRole(resource, role string) error {
+	if (role != "master" && role != "backup" && role != "activating") || strings.TrimSpace(resource) == "" {
+		return fmt.Errorf("invalid VRRP election role %q or empty resource", role)
 	}
 	if err := os.MkdirAll(vrrpRuntimeDir, 0755); err != nil {
 		return err

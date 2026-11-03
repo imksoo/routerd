@@ -37,6 +37,17 @@ func TestInterruptedMasterActivationRetainsRetryWithoutPublishingAuthority(t *te
 	if role != "activating" || conntrackRole != "backup" || commands != 0 {
 		t.Fatalf("failed import lost retry or exposed identity: role=%q cache=%q commands=%d", role, conntrackRole, commands)
 	}
+	// An authoritative BACKUP notification cancels the unfinished election.
+	// A queued activation repair must not revive it after taking the lock.
+	role = "backup"
+	fail = false
+	if err := runWithHooks(append(args, "--reconcile"), hooks); err != nil {
+		t.Fatal(err)
+	}
+	if role != "backup" || conntrackRole != "backup" || commands != 0 {
+		t.Fatal("stale activation undid BACKUP")
+	}
+	role = "activating"
 	fail = false
 	if err := runWithHooks(append(args, "--reconcile"), hooks); err != nil {
 		t.Fatal(err)

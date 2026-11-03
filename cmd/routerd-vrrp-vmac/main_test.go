@@ -219,7 +219,7 @@ func TestGracefulActivatePublishesElectionOnlyAfterVMACAndRA(t *testing.T) {
 		electionTransitionNeeded: func(string, string) (bool, error) {
 			return true, nil
 		},
-		writeElectionRole:   func(string, string) error { events = append(events, "election-master"); return nil },
+		writeElectionRole:   func(_ string, role string) error { events = append(events, "election-"+role); return nil },
 		withdrawDeferredVIP: func(options) error { return nil },
 		notifyRouterd:       func() error { events = append(events, "notify-routerd"); return nil },
 	})
@@ -378,8 +378,8 @@ func TestGracefulReconcileDiscardsRoleObservedBeforeTransitionLock(t *testing.T)
 		electionTransitionNeeded: func(_ string, action string) (bool, error) {
 			return role != conntrackdRoleForAction(action), nil
 		},
-		writeElectionRole: func(_ string, action string) error {
-			role = conntrackdRoleForAction(action)
+		writeElectionRole: func(_ string, next string) error {
+			role = next
 			return nil
 		},
 		withdrawDeferredVIP: func(options) error { return nil },

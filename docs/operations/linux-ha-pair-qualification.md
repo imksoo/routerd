@@ -169,6 +169,15 @@ The deployed graceful-activation gate observes the policy's `datapathState`,
 not `phase`: the latter is `Applied` in 1.5. Keep the observed field and its
 value together when preparing a configuration.
 
+An interrupted native promotion must remain retryable. A runtime election
+marker of `activating` records unfinished cache/VMAC/RA preparation; it does not
+authorize master-gated resources or publication of the deferred gateway. The
+controller reports an unknown role and retries the preparation while keepalived
+is active. Only successful preparation publishes `master`. An authoritative
+BACKUP notification supersedes pending activation, including queued repairs.
+Exercise this locally with `go test ./cmd/routerd-vrrp-vmac ./pkg/controller/vrrp`
+before a native campaign; it is not a native qualification result.
+
 On the LAN client acquire a real DHCPv4 lease and SLAAC address/default route;
 check the offered DNS through an independent stateless DHCPv6 client. Check
 local DNS and forwarded A/AAAA answers over IPv4 and IPv6. Add test source

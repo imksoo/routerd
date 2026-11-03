@@ -3262,3 +3262,31 @@ power loss, arbitrary session-sync names or the complete 109-resource deployed
 configuration. The next integrated campaign places its independent peers outside
 both router failure domains and reuses the current formal candidate. Full feature
 and full replacement verdicts remain unknown; FreeBSD remains deferred.
+
+## Linux shared-PD HA startup follow-up, 2026-11-03
+
+The `70cade06` formal apt candidate has not qualified the combined 70-resource
+HA/PD/four-AFTR input. Independent Kea, radvd, routed AFTRs, FRR and application
+peers were prepared outside both router failure domains. Certification caught
+and locally reproduced an IPv6-overlay transport interaction with the tested
+host-traffic policy; exact guest transport-peer routing exceptions restored
+multicast, verified from both temporary VMACs before restarting qualification.
+The fixture's activation predicate was also corrected to the deployed policy
+`datapathState: Ready`, rather than the invalid `phase: Ready`.
+
+The recertified attempt found keepalived MASTER while routerd's election marker
+remained BACKUP, preventing PD acquisition and gateway publication. Native logs
+show cache import and a conntrackd unit restart in the same promotion interval;
+the original notification's exact failing operation was not captured, so its
+cause is not asserted. Local test `ae168692` demonstrates that an interrupted
+activation loses its retry authority, including a cache-import interruption.
+The repair records `activating` before preparation, permits the controller to
+retry that pending election and publishes master authority only after successful
+cache/VMAC/RA preparation. A later BACKUP cancels stale activation repair.
+Focused helper/controller tests pass; native confirmation is still pending.
+
+The run ended without client fault injection. Withdrawal removed native helpers,
+VMACs and learned FIB, but stale `Disabled/WhenFalse` DS-Lite statuses prevented
+an empty Healthy verdict. This is an unresolved withdrawal defect, not a passing
+result. Both router main services are stopped. The three dedicated guests are
+being reused for the next integrated campaign; no production cutover occurred.

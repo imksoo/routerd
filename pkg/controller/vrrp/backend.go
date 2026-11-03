@@ -216,7 +216,7 @@ func syncFailoverVMACs(ctx context.Context, c *Controller, aliases map[string]st
 			continue
 		}
 		action := "deactivate"
-		if roles[resource.Metadata.Name] == "master" {
+		if roles[resource.Metadata.Name] == "master" || (roles[resource.Metadata.Name] == "unknown" && spec.VRRP.GracefulActivation != nil && gracefulElectionRole(c, resource.Metadata.Name) == "activating") {
 			action = "activate"
 		}
 		args := []string{action}
@@ -463,7 +463,7 @@ func gracefulElectionRole(c *Controller, resource string) string {
 		return ""
 	}
 	role := strings.TrimSpace(string(data))
-	if role == "master" || role == "backup" {
+	if role == "master" || role == "backup" || role == "activating" {
 		return role
 	}
 	return ""
@@ -546,9 +546,11 @@ func observeKeepalivedRolesWithWait(ctx context.Context, c *Controller, aliases 
 		}
 		if spec.VRRP.GracefulActivation != nil {
 			role := gracefulElectionRole(c, resource.Metadata.Name)
-			if role == "master" || role == "backup" {
+			if role == "master" || role == "backup" || role == "activating" {
 				if !c.refreshKeepalivedServiceActive(ctx) {
 					role = "inactive"
+				} else if role == "activating" {
+					role = "unknown"
 				}
 				roles[resource.Metadata.Name] = role
 				continue
