@@ -1904,6 +1904,81 @@
         "FreeBSD rc.d lifecycle and native execution of the wrapper output-cleanup change",
         "Other source/interface/fallback modes and complete routerd 1.0 parity"
       ]
+    },
+    "linux-native-apt-59baa653": {
+      "level": "native-loopback",
+      "outcome": "pass",
+      "revision": "bbbb9e79a71d22dc499eafddd6169dfbaa8c4cde",
+      "native_builder_revision": "59baa653c2e138cfd9aae8d8264cf2bc23c3dd9d",
+      "fixture_revision": "4ae4af43d5355e0e62bae9c48f4e0cf18d478d51",
+      "reference": "docs/operations/development.md#routerd-15-native-package-gate",
+      "environment": "Fresh disposable Ubuntu 24.04 / Linux 6.8.0-124 amd64 guest; real apt install/update/remove; independent dig caller over loopback.",
+      "checks": [
+        "Native versions 1.5.0~20261103034000 -> 1.5.0~20261103035000 with different daemon binaries; fresh service inactive.",
+        "UDP/TCP DNS, old main/helper exit, configuration and actual SQLite value retention, package verification and generated-unit removal passed.",
+        "Unrelated prefixed service retained; guest/disks/snippet removed."
+      ],
+      "excludes": [
+        "Other CPU architectures and all network-feature regression paths",
+        "Native package reboot/interrupted-install and public repository/release delivery"
+      ]
+    },
+    "freebsd-native-pkg-626774d7": {
+      "level": "native-loopback",
+      "outcome": "pass",
+      "revision": "bbbb9e79a71d22dc499eafddd6169dfbaa8c4cde",
+      "native_builder_revision": "626774d7b3fc27f5a0d767a149043c3247e74028",
+      "fixture_revision": "626774d7b3fc27f5a0d767a149043c3247e74028",
+      "reference": "docs/operations/development.md#routerd-15-native-package-gate",
+      "environment": "Disposable FreeBSD 14.3-RELEASE-p16 amd64 guest, native pkg 2.8.4, HANDLE_RC_SCRIPTS=true and enabled rc.d main service; independent dig caller over loopback.",
+      "checks": [
+        "Fresh inactive install; native versions 1.5.0.a20261103034000 -> 1.5.0.a20261103035000 with different binaries.",
+        "Injected stop failure refused replacement while prior DNS served; normal update restored UDP/TCP DNS after pkg hook cleanup.",
+        "Old main/helper exit, configuration/SQLite value retention, root ownership, native rc.d modes, package verification and removal passed.",
+        "Guest/disks/snippet and downloaded image staging removed."
+      ],
+      "excludes": [
+        "Service restoration without native pkg service handling",
+        "Other CPU architectures, package reboot/interrupted-install and all network-feature regression paths"
+      ]
+    },
+    "linux-native-ndpi-addon-be382e44": {
+      "level": "native-loopback",
+      "outcome": "pass",
+      "revision": "be382e44b7e795a5c42c6c6d8f1432e4af6b6510",
+      "payload_revision": "916b486996ea773df6357a1b6c6c822f8923ac80",
+      "fixture_revision": "be382e44b7e795a5c42c6c6d8f1432e4af6b6510",
+      "reference": "docs/operations/ndpi-agent-libndpi.md#build-and-test",
+      "environment": "Fresh disposable Ubuntu 24.04 / Linux 6.8.0-124 amd64 guest; libndpi4.2t64 4.2-2.1build1; real apt, dpkg diversion and generated TrafficFlowLog service path.",
+      "checks": [
+        "Matching base/addon versions 1.5.0~20261103050000 -> 1.5.0~20261103051000, with different executables.",
+        "Static-to-native addon install, matched base/addon update, and addon removal restoring the updated static file passed native package-file verification.",
+        "Real libnDPI TLS/SNI detection and backend socket status passed; old owned process exit/recovery, UDP/TCP DNS, configuration/SQLite value retention and unrelated-service preservation passed.",
+        "Final base removal retained operator state; VM and disks removed.",
+        "Follow-up d5cc0924 is a locally reproduced/fixed failing-selftest exit-code gate; it was not part of these positive VM artifacts."
+      ],
+      "excludes": [
+        "Forwarded-client packet capture/classification and exporter interoperability",
+        "arm64, other OS/library ABIs, interruption/power-loss durability and full feature parity"
+      ]
+    },
+    "linux-native-live-iso-1ee100ee": {
+      "level": "packaged-daemon-independent-peer",
+      "outcome": "pass",
+      "revision": "1ee100eebe1cc9e9fee322f398574477c7cb7369",
+      "fixture_revision": "5e5e9a76bb7513b1f5580589c8c0d8946c599b60",
+      "iso_sha256": "7a37b6fca06d489ae4b2c57cb66cc620386dae2c20a97ffebc5444ac9ebca138",
+      "reference": "docs/how-to/pve-live-iso-nocloud.md#independent-client-boot-check",
+      "environment": "Ubuntu 24.04 / Linux 6.8.0-147 amd64 ISO guest with no writable OS disk; separate continuously running Ubuntu peer VM.",
+      "checks": [
+        "Image installed native .deb with apt; file verification clean, Healthy 19 resources and native /usr paths.",
+        "Four natural same-address DHCP renewals with unchanged peer boot ID/DHCP PID; DNS A UDP/TCP, NAT, default-route transit, isolation and nonzero deny counters passed.",
+        "Stable routerd PID/zero automatic restarts; empty withdrawal and apt removal passed; guests/disks and temporary boot media removed."
+      ],
+      "excludes": [
+        "IPv6 image, provider URL bootstrap, persistent installation and full feature parity",
+        "Warning-free diagnostics; a pre-apply orphan-artifact warning was observed"
+      ]
     }
   },
   "features": [
@@ -2029,7 +2104,9 @@
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "linux-native-ndpi-addon-be382e44"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",
@@ -3870,12 +3947,20 @@
       "current": {
         "body_and_entrypoint_files": [
           "Makefile",
-          "scripts/release.sh",
-          "scripts/collect-third-party-licenses.sh"
+          ".github/workflows/release.yaml",
+          "scripts/build-native-package.py",
+          "packaging/native/debian-service.sh",
+          "packaging/native/debian-ndpi-service.sh",
+          "packaging/native/freebsd-service.sh",
+          "contrib/freebsd/routerd"
         ],
         "related_test_files": [
-          "tests/install/install_test.go",
-          "scripts/release-prepare-only-test.sh"
+          "tests/nativepackage/deb_test.go",
+          "tests/nativepackage/pkg_test.go",
+          "tests/nativepackage/ndpi_test.go",
+          "scripts/linux-deb-lifecycle-smoke.sh",
+          "scripts/linux-ndpi-deb-lifecycle-smoke.sh",
+          "scripts/freebsd-pkg-lifecycle-smoke.sh"
         ]
       },
       "preservation_verdict": "unknown",
@@ -3885,12 +3970,16 @@
           "linux-nonresource-code-c7f89dda",
           "linux-normal-gate-dc14c486",
           "linux-home-router-clean-install-999dfd4",
-          "linux-live-iso-boot-0ee9777e"
+          "linux-live-iso-boot-0ee9777e",
+          "linux-native-apt-59baa653",
+          "linux-native-ndpi-addon-be382e44"
         ]
       },
       "freebsd": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "freebsd-native-pkg-626774d7"
+        ]
       },
       "required_remaining_checks": [
         "All baseline artifacts/architectures and retained notices",
@@ -3910,13 +3999,21 @@
       },
       "current": {
         "body_and_entrypoint_files": [
-          "packaging/install.sh",
-          "pkg/render/routerd_systemd.go",
-          "pkg/render/freebsd_rcd.go"
+          "Makefile",
+          ".github/workflows/release.yaml",
+          "scripts/build-native-package.py",
+          "packaging/native/debian-service.sh",
+          "packaging/native/debian-ndpi-service.sh",
+          "packaging/native/freebsd-service.sh",
+          "contrib/freebsd/routerd"
         ],
         "related_test_files": [
-          "tests/install/install_test.go",
-          "scripts/install-sh-cwd-smoke.sh"
+          "tests/nativepackage/deb_test.go",
+          "tests/nativepackage/pkg_test.go",
+          "tests/nativepackage/ndpi_test.go",
+          "scripts/linux-deb-lifecycle-smoke.sh",
+          "scripts/linux-ndpi-deb-lifecycle-smoke.sh",
+          "scripts/freebsd-pkg-lifecycle-smoke.sh"
         ]
       },
       "preservation_verdict": "unknown",
@@ -3927,13 +4024,16 @@
           "linux-nonresource-code-c7f89dda",
           "linux-home-router-clean-install-999dfd4",
           "linux-dualstack-recovery-6977c66e",
-          "linux-live-iso-boot-0ee9777e"
+          "linux-live-iso-boot-0ee9777e",
+          "linux-native-apt-59baa653",
+          "linux-native-ndpi-addon-be382e44"
         ]
       },
       "freebsd": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "freebsd-smokes-86ffc265"
+          "freebsd-smokes-86ffc265",
+          "freebsd-native-pkg-626774d7"
         ]
       },
       "required_remaining_checks": [
@@ -3965,7 +4065,8 @@
         "scoped_evidence": [
           "linux-nonresource-code-c7f89dda",
           "linux-liveiso-boot-dc14c486",
-          "linux-live-iso-boot-0ee9777e"
+          "linux-live-iso-boot-0ee9777e",
+          "linux-native-live-iso-1ee100ee"
         ]
       },
       "freebsd": {

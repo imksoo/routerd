@@ -79,6 +79,19 @@ func TestNDPIAddonUsesNativeDiversionAndRestoresBaseFile(t *testing.T) {
 			t.Fatalf("%s %s success=%v want=%v: %v %s", phase, action, err == nil, wantSuccess, err, output)
 		}
 	}
+	foreign := func(action string) {
+		t.Helper()
+		cmd := exec.Command("dpkg-divert", "--root", root, "--package", "foreign-addon", "--divert", agent+".foreign", "--"+action, "--rename", agent)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("foreign diversion fixture: %v %s", err, output)
+		}
+	}
+	foreign("add")
+	run("preinst", "install", false)
+	if contents, err := os.ReadFile(target + ".foreign"); err != nil || string(contents) != string(base) {
+		t.Fatalf("foreign file changed: %q %v", contents, err)
+	}
+	foreign("remove")
 	run("preinst", "install", true)
 	diverted, err := os.ReadFile(target + ".routerd-static")
 	if err != nil || string(diverted) != string(base) {
@@ -118,6 +131,12 @@ func TestNDPIAddonUsesNativeDiversionAndRestoresBaseFile(t *testing.T) {
 	} // dpkg removes addon-owned file.
 	run("postrm", "remove", true)
 	run("postrm", "purge", true)
+	foreign("add")
+	run("postrm", "purge", false)
+	if contents, err := os.ReadFile(target + ".foreign"); err != nil || string(contents) != string(base) {
+		t.Fatalf("foreign diversion removed: %q %v", contents, err)
+	}
+	foreign("remove")
 	restored, err := os.ReadFile(target)
 	if err != nil || string(restored) != string(base) {
 		t.Fatalf("base not restored: %q %v", restored, err)

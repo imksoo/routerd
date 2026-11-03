@@ -145,5 +145,6 @@ The reproducible installation/update/removal gates and their pass criteria are i
 [Development](./operations/development.md). They run only in disposable OS guests.
 They check real package replacement, independent DNS traffic, old process exit,
 configuration and SQLite value retention, and removal. They do not certify every
-routerd function. Optional native libnDPI distribution remains separate from the
-base package; do not overwrite package-owned agent files with an archive.
+routerd function. Optional native libnDPI uses a matching
+[addon package](./operations/ndpi-agent-libndpi.md); do not overwrite
+package-owned agent files with an archive.

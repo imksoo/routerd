@@ -22,7 +22,8 @@ previous native packages must retain operator configuration and durable state.
 Source installs, `make install`, manual copies and tar-installed systems are
 outside this contract. Do not add migration or adoption tests for those states.
 The release workflow builds native base packages; no public apt/pkg repository
-or release is announced here. Optional native libnDPI packaging remains separate.
+or release is announced here. Native libnDPI uses a matching optional addon package; see its
+[package lifecycle gate](./ndpi-agent-libndpi.md#build-and-test).
 
 Build Linux artifacts with `make dist-deb PACKAGE_VERSION=<native-version>`.
 The shared distribution inventory supplies native `/usr` files and a vendor

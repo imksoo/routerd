@@ -125,5 +125,5 @@ release workflow は amd64/arm64 の両方を生成しますが、定義を追�
 再実行できる導入・更新・削除試験と合否基準は[開発手順](./operations/development.md)
 にあります。使い捨て OS ゲストで実際の置換、独立した DNS 疎通、旧プロセス終了、
 設定と SQLite の値の保持、削除を確認します。全機能の認証ではありません。
-追加の native libnDPI 配布は基本パッケージと別の残件です。パッケージ管理下の
+native libnDPI は本体と同じ版の[追加パッケージ](./operations/ndpi-agent-libndpi.md)を使います。パッケージ管理下の
 agent をアーカイブで上書きしないでください。

@@ -21,7 +21,7 @@ Release ワークフローは複数の OS と CPU アーキテクチャーを対
 1.5 はクリーン OS へ apt/pkg で導入し、その後の更新もパッケージ間で行います。
 更新時は利用者の設定と永続状態を保持します。ソースからの導入、`make install`、
 手動コピー、tar 展開からの移行・引き取りは対象外です。
-release workflow は native 基本パッケージを生成します。追加の native libnDPI パッケージ化は別の残件です。
+release workflow は native 基本パッケージを生成します。native libnDPI は本体と同じ版の[追加パッケージ](./ndpi-agent-libndpi.md)を使います。
 ここでは公開 apt/pkg リポジトリの提供やリリースを宣言していません。
 
 Linux は `make dist-deb PACKAGE_VERSION=<native-version>` で生成します。

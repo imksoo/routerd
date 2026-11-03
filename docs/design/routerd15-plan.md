@@ -279,3 +279,44 @@ Reviewed implementation/test paths include `cmd/routerd/cmd_serve.go`,
 `scripts/freebsd-pkg-lifecycle-smoke.sh`, `tests/nativepackage/deb_test.go`,
 `tests/nativepackage/pkg_test.go`, `tests/install/freebsd_rcd_boundary_test.go`,
 `tests/install/install_test.go`, `Makefile` and `.github/workflows/release.yaml`.
+
+## Native libnDPI addon checkpoint (2026-11-03)
+
+The earlier optional libnDPI package gap now has a native Debian addon. The
+existing libnDPI payload is built by `make dist-ndpi-agent-libndpi-deb`; native
+`dpkg-shlibdeps` calculates runtime library dependencies. The addon pins the
+matching base package version and owns the active agent path through its own
+dpkg diversion. Base updates target the diverted static file; addon removal
+restores the current base's static agent. No manual-install adoption was added.
+The release workflow publishes this `.deb` rather than a manual overlay archive;
+the workflow was linted, not executed as a release.
+
+Native package artifacts at `be382e44`, payloads `916b4869`, passed the maintained
+`linux-ndpi-deb-lifecycle-smoke.sh` on a fresh Ubuntu 24.04 / Linux 6.8.0-124 amd64
+VM with libndpi4.2t64 4.2-2.1build1. Matched base/addon versions
+`1.5.0~20261103050000` -> `1.5.0~20261103051000` had different executables.
+TrafficFlowLog requested the actual generated agent/classifier service path;
+independent loopback UDP/TCP DNS, real libnDPI TLS/SNI detection, socket backend
+status, old owned process exit and automatic recovery, native file verification,
+configuration/SQLite value retention and an unrelated prefixed service passed.
+Addon removal restored the updated static agent and cleared its diversion;
+final base removal retained user state. The guest, disks and temporary public
+key staging were deleted. This does not qualify forwarded-client traffic capture
+or classification, exporter interoperability, other architectures/ABIs or all
+1.0 features. Those remain in the feature ledger with unknown global verdicts.
+
+An initial addon-only helper stop was replaced after reading
+`SystemdUnitController.applySystemdUnit`: main would restart stopped helpers
+while files were being exchanged. The addon now uses the known owned-service
+stop/restore cycle including main, so maintenance may interrupt traffic and cause
+protocol reconvergence. No masking/recovery framework was added. Follow-up
+`d5cc0924` locally reproduces and fixes a nonzero selftest exit masked by a shell
+pipeline; this failure gate is separate from the positive VM artifacts above.
+
+Read/reviewed paths include `scripts/build-native-package.py`,
+`packaging/native/debian-service.sh`, `packaging/native/debian-ndpi-service.sh`,
+`pkg/render/dpi_systemd.go`, `pkg/controller/chain/system.go`,
+`cmd/routerd-ndpi-agent/main.go`, `pkg/api/specs.go`, `pkg/api/legacy.go`,
+`tests/nativepackage/ndpi_test.go`, `scripts/linux-ndpi-deb-lifecycle-smoke.sh`,
+`Makefile` and `.github/workflows/release.yaml`. Debian's dpkg-divert and
+shlibdeps documentation was checked before implementing the native ownership.
