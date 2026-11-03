@@ -42,7 +42,8 @@ func TestLiveISOIncludesRouterdPayload(t *testing.T) {
 		"cp -a \"${payload_root}/libexec/.\" \"${rootfs}/usr/local/libexec/\"",
 		"cp -a \"${payload_root}/share/doc/.\" \"${rootfs}/usr/local/share/doc/routerd/\"",
 		"router.yaml.sample",
-		"/cdrom/routerd/install.sh configure",
+		"cd /cdrom/routerd",
+		"sudo ./install.sh configure",
 	} {
 		if !strings.Contains(script, needle) {
 			t.Fatalf("Ubuntu live ISO payload script missing %q", needle)

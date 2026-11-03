@@ -273,8 +273,9 @@ This debootstrap-based Ubuntu live image carries routerd binaries and installer
 assets under /cdrom/routerd after boot.
 
 Suggested first steps:
-  sudo /cdrom/routerd/install.sh --prefix /usr/local --no-start-service
-  sudo /cdrom/routerd/install.sh configure
+  cd /cdrom/routerd
+  sudo ./install.sh --prefix /usr/local
+  sudo ./install.sh configure
 
 For a persistent router, install Ubuntu Server to disk and then run the
 routerd installer from the release payload.

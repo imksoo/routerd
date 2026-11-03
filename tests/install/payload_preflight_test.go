@@ -43,3 +43,16 @@ exit 71
 		})
 	}
 }
+
+func TestInstallDependenciesOnlyDoesNotRequireReleasePayload(t *testing.T) {
+	dir := t.TempDir()
+	out, err := runInstallWithEnv(t, dir, filepath.Join(dir, "prefix"), []string{
+		"ROUTERD_INSTALL_PACKAGE_MANAGER=apt",
+	}, "--deps-only", "--dry-run")
+	if err != nil || !strings.Contains(out, "dry-run: apt-get install -y") {
+		t.Fatalf("standalone dependency bootstrap failed: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "required payload") {
+		t.Fatalf("dependency bootstrap incorrectly requires a release payload:\n%s", out)
+	}
+}

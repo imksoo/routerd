@@ -2001,17 +2001,17 @@ if [ "${command_mode}" = "configure" ]; then
     exit 0
 fi
 
-run_dependency_install
-if [ "${list_deps}" -eq 1 ] || [ "${deps_only}" -eq 1 ]; then
-    completed=1
-    exit 0
-fi
-
-if [ ! -x bin/routerd ]; then
+if [ "${list_deps}" -eq 0 ] && [ "${deps_only}" -eq 0 ] && [ ! -x bin/routerd ]; then
     echo "install.sh: required payload bin/routerd not found in current directory ($(pwd))" >&2
     echo "install.sh: extract the routerd release archive and run install.sh from inside the directory containing bin/, etc/, systemd//, ..." >&2
     echo "install.sh: do NOT run as 'cd <other-dir> && ./<release>/install.sh' — that leaves cwd outside the payload tree and every 'bin/*' glob would be empty." >&2
     exit 2
+fi
+
+run_dependency_install
+if [ "${list_deps}" -eq 1 ] || [ "${deps_only}" -eq 1 ]; then
+    completed=1
+    exit 0
 fi
 
 backup_dir=$(mktemp -d "${TMPDIR:-/tmp}/routerd-install.XXXXXX")

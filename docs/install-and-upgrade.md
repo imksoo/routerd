@@ -82,6 +82,13 @@ On systemd hosts, the installer creates the `routerd` group for local socket
 access. Add an operator with `sudo usermod -aG routerd <user>` to allow
 `routerctl get status` and other local control socket operations without sudo.
 
+For the routerd 1.5 proposal installer, run `install.sh` from the extracted
+payload directory containing `bin/` and `etc/`. A normal installation checks
+that `bin/routerd` is executable before invoking a package manager, so launching
+from the wrong directory does not install dependencies first. `--list-deps` and
+`--deps-only` remain usable without an extracted payload. These checks do not
+validate every optional archive or replace the release checksum verification.
+
 ## First configuration
 
 For a first lab, follow [Getting started safely](./tutorials/getting-started.md)

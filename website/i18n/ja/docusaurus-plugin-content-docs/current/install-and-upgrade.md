@@ -45,6 +45,12 @@ arm64 では `linux-amd64` を `linux-arm64` に読み替えます。
 routerd --version
 ```
 
+routerd 1.5 proposal の installer は、展開先の `bin/` と `etc/` があるディレクトリから
+実行します。通常の導入では `bin/routerd` が実行可能かをパッケージ操作より先に検査し、
+実行場所を間違えたときに依存パッケージだけが先に導入されることを防ぎます。
+`--list-deps` と `--deps-only` は配布物なしでも使えます。この検査は optional archive 全体や
+配布 checksum の検証を代替するものではありません。
+
 ## 最初の設定は、起動前に確認する
 
 [安全なはじめ方](./tutorials/getting-started.md)でオフラインの確認を行い、
