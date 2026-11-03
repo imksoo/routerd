@@ -40,11 +40,16 @@ def stage(payload, root, package_format):
         rc = prefix / "etc/rc.d"
         rc.mkdir(parents=True)
         shutil.copy2(REPO / "contrib/freebsd/routerd", rc)
+        (rc / "routerd").chmod(0o555)
     # Directory creation must not inherit a developer's group-writable umask.
     root.chmod(0o755)
-    for directory in root.rglob("*"):
-        if directory.is_dir() and not directory.is_symlink():
-            directory.chmod(0o755)
+    for path in root.rglob("*"):
+        if path.is_symlink():
+            continue
+        if path.is_dir():
+            path.chmod(0o755)
+        elif path.is_file():
+            path.chmod(path.stat().st_mode & 0o755)
 
 
 def deb(root, output, version, arch):
