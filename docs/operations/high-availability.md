@@ -55,3 +55,12 @@ live owned gateway as master, preserving its dependent services. Role observatio
 happens before the first controller generation; configuration reloads retain
 their existing generation ordering. This is not a claim that complete HA
 qualification has passed; see the Linux pair qualification record.
+
+On complete BGP withdrawal, public BGPRouter/BGPPeer observations retire only
+after acknowledged daemon stop, owned FIB removal and managed systemd helper
+removal. Failed cleanup retains its observation and retry acknowledgement.
+Lease-sync declarations removed from the configuration retire their public
+observations after the previous controller generation stops; source and receiver
+lease files are preserved. A declaration disabled by `when` remains visible.
+Normal generation cancellation does not publish a new sync failure; a transfer
+timeout while the generation is running still does.

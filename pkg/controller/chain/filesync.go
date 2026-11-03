@@ -15,6 +15,7 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/logstore"
 	"github.com/imksoo/routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/state"
 )
 
 const (
@@ -51,15 +52,19 @@ type fileSyncTarget struct {
 }
 
 type FileSyncController struct {
-	Logger  *slog.Logger
-	Router  *api.Router
-	Store   Store
-	DryRun  bool
-	Command fileSyncCommandFunc
-	Now     func() time.Time
+	Logger         *slog.Logger
+	Router         *api.Router
+	DeclaredRouter *api.Router
+	Store          Store
+	DryRun         bool
+	Command        fileSyncCommandFunc
+	Now            func() time.Time
 }
 
 func (c FileSyncController) Reconcile(ctx context.Context) error {
+	if err := c.cleanupRemovedStatuses(ctx); err != nil {
+		return err
+	}
 	for _, resource := range c.fileSyncResources() {
 		job, err := c.fileSyncJobFromResource(resource)
 		if err != nil {
@@ -69,6 +74,49 @@ func (c FileSyncController) Reconcile(ctx context.Context) error {
 			continue
 		}
 		if err := c.reconcileJob(ctx, job); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Transfers have no persistent local helper to stop. The old generation is
+// joined before a replacement generation runs; only absent declarations retire
+// their public observations. Source and receiver lease data remain untouched.
+func (c FileSyncController) cleanupRemovedStatuses(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if c.Router == nil || c.Store == nil || c.DryRun {
+		return nil
+	}
+	store, ok := c.Store.(interface {
+		state.ObjectStatusLister
+		state.ObjectDeleteStore
+	})
+	if !ok {
+		return fmt.Errorf("lease synchronization status cleanup store unavailable")
+	}
+	declared := c.DeclaredRouter
+	if declared == nil {
+		declared = c.Router
+	}
+	wanted := make(map[string]bool)
+	for _, resource := range declared.Spec.Resources {
+		wanted[resource.APIVersion+"/"+resource.Kind+"/"+resource.Metadata.Name] = true
+	}
+	statuses, err := store.ListObjectStatuses()
+	if err != nil {
+		return err
+	}
+	for _, object := range statuses {
+		if object.APIVersion != api.NetAPIVersion || (object.Kind != "DHCPv4ServerLeaseSync" && object.Kind != "DHCPv6ServerLeaseSync" && object.Kind != "DHCPv6PrefixDelegationLeaseSync") || wanted[object.APIVersion+"/"+object.Kind+"/"+object.Name] {
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := store.DeleteObject(object.APIVersion, object.Kind, object.Name); err != nil {
 			return err
 		}
 	}
@@ -89,6 +137,9 @@ func (c FileSyncController) fileSyncResources() []api.Resource {
 }
 
 func (c FileSyncController) reconcileJob(ctx context.Context, job fileSyncJob) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	now := c.now()
 	if c.shouldSkip(job, now) {
 		return nil
@@ -132,6 +183,9 @@ func (c FileSyncController) reconcileJob(ctx context.Context, job fileSyncJob) e
 			snapshot, cleanup, err := fileSyncStickySnapshot(snapshotCtx, source.Path)
 			cancel()
 			if err != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
 				return c.save(job.APIVersion, job.Kind, job.Name, map[string]any{
 					"phase": "Error", "reason": "SnapshotFailed", "source": source.Path,
 					"error": err.Error(), "dryRun": false,
@@ -148,6 +202,9 @@ func (c FileSyncController) reconcileJob(ctx context.Context, job fileSyncJob) e
 			out, err := run(runCtx, command, args...)
 			contextErr := runCtx.Err()
 			cancel()
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			if err != nil {
 				failure := map[string]any{
 					"phase":   "Error",
@@ -163,6 +220,9 @@ func (c FileSyncController) reconcileJob(ctx context.Context, job fileSyncJob) e
 				return c.save(job.APIVersion, job.Kind, job.Name, failure)
 			}
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	return c.save(job.APIVersion, job.Kind, job.Name, map[string]any{
 		"phase":       "Synced",

@@ -473,6 +473,13 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 			if err := c.cleanupLongLivedSystemdHelperUnit(ctx, render.BGPUnitName, "Router/"+c.Router.Metadata.Name+"/BGPRouter", command); err != nil {
 				return err
 			}
+			// cleanupBGPDaemon acknowledged process stop and FIB withdrawal above;
+			// the helper's Removed status also acknowledges artifact retirement.
+			for _, kind := range []string{"BGPRouter", "BGPPeer"} {
+				if err := c.cleanupRemovedSystemdResourceStatuses(kind, func(string) string { return render.BGPUnitName }); err != nil {
+					return err
+				}
+			}
 		}
 		if err := c.reconcileDNSResolverUnits(ctx, defaults.StateDir, command); err != nil {
 			return err

@@ -16,6 +16,18 @@ import (
 	"github.com/imksoo/routerd/pkg/render"
 )
 
+type bgpStatusDeleteStore struct {
+	mapStore
+	fail bool
+}
+
+func (s *bgpStatusDeleteStore) DeleteObject(version, kind, name string) error {
+	if s.fail && version == api.NetAPIVersion && (kind == "BGPRouter" || kind == "BGPPeer") {
+		return errors.New("status deletion unavailable")
+	}
+	return s.mapStore.DeleteObject(version, kind, name)
+}
+
 func TestEmptyRouterRetiresBGPStatusesAfterAcknowledgedWithdrawal(t *testing.T) {
 	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()
@@ -56,6 +68,18 @@ func TestEmptyRouterRetiresBGPStatusesAfterAcknowledgedWithdrawal(t *testing.T) 
 		t.Fatal("failed native removal retired public status")
 	}
 	failStop = false
+	retiring := &bgpStatusDeleteStore{mapStore: store, fail: true}
+	c.Store = retiring
+	if err := c.Reconcile(t.Context()); err == nil {
+		t.Fatal("status deletion failure hidden")
+	}
+	if _, err := os.Stat(unit); !os.IsNotExist(err) {
+		t.Fatalf("native unit not removed before status retirement: %v", err)
+	}
+	if store.ObjectStatus(api.SystemAPIVersion, "ServiceUnit", render.BGPUnitName)["phase"] != "Removed" {
+		t.Fatal("retry acknowledgement lost")
+	}
+	retiring.fail = false
 	if err := c.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -122,5 +146,32 @@ func TestCanceledLeaseSyncDoesNotPublishCurrentFailure(t *testing.T) {
 	}
 	if s := store.ObjectStatus(api.NetAPIVersion, job.Kind, job.Name); s["phase"] != "Synced" {
 		t.Errorf("canceled old generation published current error: %v", s)
+	}
+}
+
+func TestLeaseSyncWithdrawalPreservesWhenFalseDeclaration(t *testing.T) {
+	const kind = "DHCPv4ServerLeaseSync"
+	store := mapStore{api.NetAPIVersion + "/" + kind + "/leases": {"phase": "Pending", "reason": "WhenFalse"}}
+	declared := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: kind}, Metadata: api.ObjectMeta{Name: "leases"}}}}}
+	c := FileSyncController{Router: &api.Router{}, DeclaredRouter: declared, Store: store}
+	if err := c.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if s := store.ObjectStatus(api.NetAPIVersion, kind, "leases"); s["reason"] != "WhenFalse" {
+		t.Fatalf("disabled declaration retired: %v", s)
+	}
+}
+
+func TestBGPWithdrawalPreservesWhenFalseDeclaration(t *testing.T) {
+	store := mapStore{api.NetAPIVersion + "/BGPRouter/edge": {"phase": "Pending", "reason": "WhenFalse"}, api.NetAPIVersion + "/BGPPeer/peer": {"phase": "Pending", "reason": "WhenFalse"}, api.SystemAPIVersion + "/ServiceUnit/" + render.BGPUnitName: {"phase": "Removed"}}
+	declared := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "edge"}}, {TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"}, Metadata: api.ObjectMeta{Name: "peer"}}}}}
+	c := SystemdUnitController{Router: &api.Router{}, DeclaredRouter: declared, Store: store}
+	for _, kind := range []string{"BGPRouter", "BGPPeer"} {
+		if err := c.cleanupRemovedSystemdResourceStatuses(kind, func(string) string { return render.BGPUnitName }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "edge")["reason"] != "WhenFalse" || store.ObjectStatus(api.NetAPIVersion, "BGPPeer", "peer")["reason"] != "WhenFalse" {
+		t.Fatal("disabled BGP declaration retired")
 	}
 }

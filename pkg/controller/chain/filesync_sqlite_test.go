@@ -184,7 +184,17 @@ func TestLeaseSyncSnapshotFailureDoesNotTransferOrAcknowledge(t *testing.T) {
 				t.Fatal("transferred an incomplete snapshot")
 				return nil, nil
 			}}
-			if err := controller.reconcileJob(ctx, job); err != nil {
+			err := controller.reconcileJob(ctx, job)
+			if canceled {
+				if !errors.Is(err, context.Canceled) {
+					t.Fatalf("cancellation not returned: %v", err)
+				}
+				if status := controller.Store.ObjectStatus(job.APIVersion, job.Kind, job.Name); len(status) != 0 {
+					t.Fatalf("canceled generation published snapshot failure: %v", status)
+				}
+				return
+			}
+			if err != nil {
 				t.Fatal(err)
 			}
 			status := controller.Store.ObjectStatus(job.APIVersion, job.Kind, job.Name)

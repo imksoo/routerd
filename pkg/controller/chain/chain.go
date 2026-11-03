@@ -2763,6 +2763,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			effective := observation.EffectiveRouter
 			current := leaseSync
 			current.Router = effective
+			current.DeclaredRouter = observation.DeclaredRouter
 			current.Store = store.withRouter(observation.DeclaredRouter)
 			return didWorkError(current.Reconcile(ctx))
 		}},
