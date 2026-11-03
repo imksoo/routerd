@@ -44,3 +44,14 @@ Status fields:
 | `leasePath` | Lease file path |
 
 See `examples/ha-2-node.yaml` for a minimal two-node shape.
+
+### Linux daemon startup and persisted VRRP roles
+
+Before startup controllers evaluate `when`, routerd refreshes Linux VRRP roles
+from its owned keepalived configuration and current native observations. A saved
+`master` value cannot authorize a shared address or dependent service after a
+rebooted node returns as standby. An ordinary daemon restart still recognizes a
+live owned gateway as master, preserving its dependent services. Role observation
+happens before the first controller generation; configuration reloads retain
+their existing generation ordering. This is not a claim that complete HA
+qualification has passed; see the Linux pair qualification record.

@@ -1810,6 +1810,13 @@ func (r *Runner) Start(ctx context.Context) error {
 		logger = slog.Default()
 	}
 	store := eventedStore{Store: r.Store, Bus: r.Bus, Router: r.currentRouter()}
+	// Refresh live role authority before any startup when-gated consumer. This
+	// is initial observation only; candidate reloads retain their generation
+	// ordering and the running router's native ownership.
+	initialVRRP := vrrpcontroller.Controller{Router: r.currentRouter(), Store: store, DryRun: r.Opts.DryRunVRRP}
+	if err := initialVRRP.RefreshInitialRoles(ctx); err != nil {
+		return fmt.Errorf("observe initial VRRP roles: %w", err)
+	}
 
 	first, err := r.prepareControllerGeneration(ctx, logger, store)
 	if err != nil {
