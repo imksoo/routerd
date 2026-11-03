@@ -40,7 +40,7 @@ import json,os,subprocess,sys
 programs={'/usr/local/sbin/routerd','/usr/local/sbin/routerd-dns-resolver'}
 def processes():
     result={}
-    for row in subprocess.check_output(['ps','-axww','-o','pid=,args='],text=True).splitlines():
+    for row in subprocess.check_output(['ps','-axww','-o','pid=','-o','args='],text=True).splitlines():
         fields=row.strip().split(None,1)
         if len(fields)==2 and fields[1].split()[0] in programs:
             result[int(fields[0])]=fields[1].split()[0]
