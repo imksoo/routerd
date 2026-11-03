@@ -108,8 +108,14 @@ cleanup() {
   if [ ! -f "$work/body.exit" ] && [ "$final_result" -eq 0 ]; then final_result=70; fi
   printf '%s\n' "$final_result" >"$work/native.exit"
   echo "freebsd-ntpd-body-exit=$body_result cleanup-failed=$cleanup_bad"
-  if [ "$final_result" -eq 0 ]; then echo 'freebsd-ntpd-result=PASS'; fi
-  echo "ntpd-native-evidence=$work"
+  if [ "$final_result" -eq 0 ]; then
+    if rm -r -- "$work"; then
+      echo 'freebsd-ntpd-result=PASS; temporary output removed'
+    else
+      final_result=70
+    fi
+  fi
+  if [ "$final_result" -ne 0 ]; then echo "ntpd-native-failure-diagnostics=$work"; fi
   exit "$final_result"
 }
 trap cleanup EXIT

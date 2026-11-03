@@ -8,7 +8,7 @@ PATH="$PATH:/usr/sbin:/sbin"
 export PATH
 for tool in go chronyd chronyc unshare mount ip sha256sum; do command -v "$tool" >/dev/null; done
 work=$(mktemp -d "${TMPDIR:-/tmp}/routerd15-ntp-native.XXXXXX")
-printf 'native NTP evidence: %s\n' "$work"
+printf 'native NTP temporary output: %s\n' "$work"
 go version >"$work/go-version.txt"
 git rev-parse HEAD >"$work/revision.txt"
 git status --porcelain >"$work/working-tree.txt"
@@ -23,4 +23,16 @@ printf '%s\n' "$result" >"$work/native.exit"
 while IFS= read -r source; do sha256sum "$source"; done <"$work/source-files.txt" >"$work/source-after.sha256"
 cmp "$work/source-before.sha256" "$work/source-after.sha256"
 cat "$work/native.log"
+if [ "$result" -eq 0 ]; then
+    if ! grep -q '^--- PASS: TestNTPChronyNativeLinuxControllerLifecycle' "$work/native.log" ||
+       grep -q '^--- SKIP:' "$work/native.log"; then
+        result=1
+    fi
+fi
+if [ "$result" -eq 0 ]; then
+    rm -r -- "$work"
+    echo 'PASS: native NTP checks completed; temporary output removed'
+else
+    printf 'native NTP failure diagnostics: %s\n' "$work" >&2
+fi
 exit "$result"

@@ -1,0 +1,61 @@
+# NTP の実機試験
+
+管理対象の NTPClient / NTPServer は生成した設定 fragment を所有します。
+resource・provider・path・marker・digest の receipt で確認し、未取得の既存ファイルや
+外部で差し替わったファイルは保持します。共有する provider は NTPServer が所有し、
+有効な NTPClient の upstream を含めます。Linux の timesyncd 要求を chrony server に
+委ねた場合、client は実効 provider を別途表示します。条件が false の server は
+client の upstream を残して downstream への応答を止めます。
+
+## 隔離した controller 試験
+
+Linux では `make check-routerd15-ntp-native-linux` を使います。
+Go、chronyd/chronyc、iproute2、unshare、mount と user/network/mount namespace が必要です。
+`chronyd -x` によって共有時計を変更せず、独立した UDP caller で同期済み応答、許可・拒否、
+条件変更、process restart、SQLite reopen と撤去を確認します。単なる SKIP は合格ではありません。
+
+FreeBSD 14.3 では専用 VM に正確な source から作った chain test binary を置き、
+`make check-routerd15-ntp-native-freebsd NTP_TEST_BINARY=/absolute/path/chain.test` を root で実行します。
+VNET jail 内で時計変更権限が拒否されることを事前確認し、共有時計・rc.d 設定を変更せず
+実 ntpd と UDP caller を使います。共有サービスの制御や時計の精度を証明する試験ではありません。
+
+成功時は必要な cleanup の後で一時出力を削除します。失敗時だけ原因特定に必要な範囲を保持し、
+再現条件・判定は手順と PR/台帳へ戻します。
+
+## 正式パッケージと OS サービスによる時刻同期
+
+独立した管理経路と隔離リンクを持つ、専用 Ubuntu VM 2台を使います。
+router=`198.18.97.1/24`、reference=`198.18.97.2/24`、reference の caller 用 alias を
+`198.18.97.10` / `198.18.97.20` とします。共有ホスト、container、network namespace、
+FreeBSD jail で時計変更の手順を実行しないでください。
+
+製品起動前に OS を準備します。router の時計サービスを停止し、chrony の既定の drift・
+makestep 設定と `confdir /etc/chrony/conf.d` を残して、この fixture の既定の外部 pool を除きます。
+reference では隔離 address、subnet allowlist、`local stratum 8` の別 chronyd を起動します。
+reference は `-x` でも構いませんが、製品が管理する router の chrony service は通常どおり動かします。
+reference が有効な NTP 応答を返すことを確認してから router の時計を変更します。
+
+`make dist` の checksum を確認し、その installer で導入します。専用 router のみに
+測定済みの10秒の時計差を作り、外部の dummy link `ntp-gate` を up にしてから
+`tests/fixtures/linux-ntp-packaged.json` で routerd を起動します。
+この link の観測 phase を server 条件に使い、upstream と管理通信は実リンクに残します。
+
+2分以内に NTPServer の設定確認、NTPClient の共有 chrony 経由の Applied、reference 選択、
+chronyc tracking の通常 leap 状態と、作った時計差の実際の補正を確認します。
+これは準備した fixture の時間上限で、任意の時刻サーバーに対する精度・収束 SLO ではありません。
+client の timesyncd 要求と実効 chrony provider を確認し、競合サービスを起動させません。
+
+```sh
+python3 scripts/ntp-peer-query.py --server 198.18.97.1 --source 198.18.97.10
+python3 scripts/ntp-peer-query.py --server 198.18.97.1 --source 198.18.97.20 --expect silence
+```
+
+拒否検査の後にも許可検査を行い、provider 停止を拒否の根拠にしません。caller は時計を変更せず、
+originate timestamp の一致、同期済み mode-4 応答、stratum を確認します。
+dummy gate を down にして WhenFalse と応答停止、client の upstream 選択維持を確認し、
+up に戻して応答復帰を確認します。routerd restart 後にも再確認します。
+その後 chrony の NTPClient のみへ設定を置き換え、server fragment・downstream 応答の撤去と
+同期維持を確認し、最後に空設定・uninstall・VM/disk/media/一時出力の削除まで行います。
+
+失敗時は service・設定・packet の実状態を確認してローカル再現します。
+この試験は timesyncd 単独、FreeBSD rc.d、storage crash、物理時計の精度の合格には広げません。
