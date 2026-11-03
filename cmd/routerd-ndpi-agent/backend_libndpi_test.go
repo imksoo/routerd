@@ -16,8 +16,9 @@ import (
 func TestLibNDPIBackendClassifiesTLSPacket(t *testing.T) {
 	agent := newAgent(options{flowTTL: time.Hour, flowLimit: 100, firstPayloadPackets: 3}, nil)
 	if !agent.Status().LibNDPILoaded {
-		t.Skip("libndpi backend is not loaded")
+		t.Fatal("native build did not load its required libndpi backend")
 	}
+	defer agent.Close()
 	payload := dpi.MinimalTLSClientHello("routerd.example")
 	packet := append([]byte{
 		0x45, 0x00, 0x00, 0x00, 0, 0, 0, 0, 64, 6, 0, 0,
@@ -33,7 +34,7 @@ func TestLibNDPIBackendClassifiesTLSPacket(t *testing.T) {
 	if got.Engine != "ndpi-agent" || got.Source != "ndpi-agent" {
 		t.Fatalf("classification source = %+v", got)
 	}
-	if got.AppName == "" || got.AppName == "unknown" {
+	if got.Reason != "libndpi_protocol_detection" || got.TLSSNI != "routerd.example" || got.AppName == "" || got.AppName == "unknown" {
 		t.Fatalf("classification = %+v", got)
 	}
 }
