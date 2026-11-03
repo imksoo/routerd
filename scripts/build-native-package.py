@@ -139,20 +139,43 @@ def pkg(root, output, version, arch):
     # Record dependency versions/origins from the native build environment,
     # exactly as a normal ports build does; never fabricate package metadata.
     installed = subprocess.check_output(["pkg", "query", "-a", "%n\t%v\t%o"], text=True)
-    dependencies = {}
+    packages = {}
     for line in installed.splitlines():
         name, dep_version, origin = line.split("\t")
-        if name in ("dnsmasq", "ca_root_nss", "ndpi"):
-            dependencies[name] = {"version": dep_version, "origin": origin}
-    if set(dependencies) != {"dnsmasq", "ca_root_nss", "ndpi"}:
+        packages[name] = {"version": dep_version, "origin": origin}
+    baseline = {"dnsmasq", "ca_root_nss", "ndpi"}
+    if not baseline.issubset(packages):
         raise SystemExit("native pkg build requires installed dnsmasq, ca_root_nss and ndpi build dependencies")
-    dynamic = subprocess.check_output([
-        "readelf", "-d", str(root / "usr/local/sbin/routerd-ndpi-agent")
-    ], text=True)
-    libraries = sorted({name for name in re.findall(r"\(NEEDED\).*?\[([^\]]+)\]", dynamic)
-                        if name.startswith("libndpi.so.")})
-    if not libraries:
+    dependencies = {name: packages[name] for name in sorted(baseline)}
+    agent = root / "usr/local/sbin/routerd-ndpi-agent"
+    dynamic = subprocess.check_output(["readelf", "-d", str(agent)], text=True)
+    needed = set(re.findall(r"\bNEEDED\b[^\n]*?\[([^\]]+)\]", dynamic))
+    if not any(name.startswith("libndpi.so.") for name in needed):
         raise SystemExit("FreeBSD package must contain the native libndpi-linked agent ELF")
+    loaded = subprocess.check_output(["ldd", "-f", "%o\t%p\n", str(agent)], text=True)
+    paths = {}
+    for line in loaded.splitlines():
+        name, separator, path = line.partition("\t")
+        if separator and name in needed:
+            paths[name] = path.strip()
+    libraries = []
+    for library in sorted(needed):
+        path = paths.get(library, "")
+        if not path.startswith("/"):
+            raise SystemExit(f"cannot resolve native runtime library {library}")
+        # FreeBSD's base system supplies these paths; package-provided direct
+        # dependencies need their actual installed owner and exact SONAME.
+        if path.startswith(("/lib/", "/usr/lib/")):
+            continue
+        owner = subprocess.check_output(["pkg", "which", "-q", path], text=True).strip()
+        name = next((name for name, metadata in packages.items()
+                     if f"{name}-{metadata['version']}" == owner), None)
+        if name is None:
+            raise SystemExit(f"cannot establish package ownership of {library}")
+        dependencies[name] = packages[name]
+        libraries.append(library)
+    if not any(name.startswith("libndpi.so.") for name in libraries):
+        raise SystemExit("native libndpi must be supplied by an installed package")
     service = (REPO / "packaging/native/freebsd-service.sh").read_text()
     scripts = {phase: service.replace("set -eu\n", f"set -eu\nphase={phase}\n", 1)
                for phase in ("pre-install", "post-install", "pre-deinstall", "post-deinstall")}
