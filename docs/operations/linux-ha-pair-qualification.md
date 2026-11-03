@@ -170,12 +170,19 @@ allow a guest overlay without changing a virtualization host's networking.
 For an external/unmanaged physical WAN, certify the OS IPv6 RA client before
 qualification; routerd's host IPv6 policy needs that interface's usable source.
 If the test segments themselves use an IPv6 overlay, keep its transport outside
-that policy with guest-owned routes/rules for the exact overlay peers. Otherwise
+that policy with OS-declared routes/rules for the exact overlay peers. With
+networkd, declare these rules in the fixture interface's `.network` file so
+its lifecycle also preserves them; an ad hoc rule alone is insufficient. Otherwise
 the policy can route the overlay's own packets back into the overlay: a local
 capture sees a DHCPv6 solicit that never reaches Kea. Certify multicast from a
 temporary macvlan through the complete overlay with the host policy present,
 then remove that temporary stimulus before product startup. Do not change the
 virtualization host or alter product behavior to repair test transport.
+Make a failed certification terminate its caller before product startup. In a
+shell, use `if command; then exit 1; fi` for a forbidden presence: `set -e` does
+not make a standalone `! command` abort when that negation fails. A missing
+precondition or failed client reset invalidates the run even if the product
+later reaches a healthy status.
 The deployed graceful-activation gate observes the policy's `datapathState`,
 not `phase`: the latter is `Applied` in 1.5. Keep the observed field and its
 value together when preparing a configuration.

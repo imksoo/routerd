@@ -7,7 +7,10 @@ if [ "${ROUTERD_DISPOSABLE_PEER:-}" != yes ] || [ "$EUID" != 0 ] || [ "$#" != 1 
  exit 64
 fi
 systemd-detect-virt --vm --quiet
-! systemctl is-active --quiet routerd.service
+if systemctl is-active --quiet routerd.service; then
+ echo 'requires inactive routerd service' >&2
+ exit 1
+fi
 ip link show rd15-lan >/dev/null
 ip link show rd15-wan >/dev/null
 kea_root=$(realpath "$1")
@@ -15,7 +18,10 @@ kea=$kea_root/usr/sbin/kea-dhcp6
 work=/var/tmp/rd15-integrated-peer
 test ! -e "$work"
 for ns in rd15-inet-server rd15-ha-client rd15-aftr-{a,b,c,d}; do
- ! ip netns list | awk '{print $1}' | grep -Fxq "$ns"
+ if ip netns list | awk '{print $1}' | grep -Fxq "$ns"; then
+  echo "existing namespace: $ns" >&2
+  exit 1
+ fi
 done
 install -d -m 700 "$work" "$work/vty"
 export LD_LIBRARY_PATH="$kea_root/usr/lib/x86_64-linux-gnu"
