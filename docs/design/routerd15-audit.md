@@ -3011,7 +3011,9 @@ silently losing diagnostics when tcpdump drops privileges in a private directory
 Final readback found product ee50d674, clean dpkg verification, inactive main
 with MainPID 0, no fixture namespaces/interfaces or routerd nft tables, and no
 successful raw output directory. The earlier failed VM and disks were deleted;
-the successful guest is temporarily retained for the next Linux-only gate.
+the successful guest and its disks were also removed after final readback.
+Only one qualified current .deb is retained for the next Linux campaign; the old
+package, duplicated payload/binaries and temporary failure/success output are removed.
 
 The full ordinary Go suite (122 passing packages), schemas, all examples,
 format/diff checks and four-locale website build passed. Native mark and
