@@ -125,8 +125,6 @@ start_kea() {
  done
  ip netns exec rd15-pdserver ss -unl | grep ':547 ' > "$work/listener.txt"
 }
-start_kea
-ping -6 -I rd15-mwan -c 1 -W 2 2001:db8:25::2 >/dev/null
 for _ in {1..30}; do
  if ! ip -6 address show dev rd15-mwan | grep -q tentative && ! ip -n rd15-pdserver -6 address show dev uplink | grep -q tentative; then break; fi
  sleep .1
@@ -134,6 +132,8 @@ done
 ip -6 address show dev rd15-mwan > "$work/bridge-dad.txt"
 ip -n rd15-pdserver -6 address show dev uplink > "$work/peer-dad.txt"
 if grep -q tentative "$work/bridge-dad.txt" "$work/peer-dad.txt"; then echo 'fixture link-local DAD incomplete' >&2; exit 1; fi
+start_kea
+ping -6 -I rd15-mwan -c 1 -W 2 2001:db8:25::2 >/dev/null
 echo 'CERTIFIED: independent Kea listener, four AFTR HTTP listeners and IPv6 underlay, separate client'
 tcpdump -Z root -i rd15-mwan -U -C 1 -W 2 -w "$work/outer.pcap" 'ip6 proto 4 or udp port 546 or udp port 547' > "$work/capture.txt" 2>&1 & capture=$!
 sleep .1
