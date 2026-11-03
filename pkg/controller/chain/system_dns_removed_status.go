@@ -11,6 +11,9 @@ import (
 
 // Retire public status only after the owning supervisor acknowledged removal.
 func (c SystemdUnitController) cleanupRemovedSystemdResourceStatuses(kind string, unitName func(string) string) error {
+	if c.DryRun {
+		return nil
+	}
 	store, ok := c.Store.(interface {
 		state.ObjectStatusLister
 		state.ObjectDeleteStore
@@ -34,7 +37,7 @@ func (c SystemdUnitController) cleanupRemovedSystemdResourceStatuses(kind string
 	}
 	removed := map[string]bool{}
 	for _, object := range statuses {
-		if object.APIVersion == api.SystemAPIVersion && object.Kind == "ServiceUnit" && object.Status["phase"] == "Removed" {
+		if object.APIVersion == api.SystemAPIVersion && object.Kind == "ServiceUnit" && object.Status["phase"] == "Removed" && object.Status["dryRun"] != true {
 			removed[object.Name] = true
 		}
 	}
