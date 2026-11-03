@@ -30,7 +30,7 @@ finish()
         tail -80 "$work/pkg.log" >&2 || true
         tail -80 /var/log/routerd.log >&2 || true
     fi
-    rm -f "$work/pkg.log" "$work/processes.py" "$work/before.json"
+    rm -f "$work/pkg.log" "$work/processes.py" "$work/before.json" "$work/routerd.rc"
     rmdir "$work"
     exit "$result"
 }
@@ -120,6 +120,26 @@ with sqlite3.connect('/var/db/routerd/routerd.db') as db:
     db.execute('CREATE TABLE package_upgrade_probe (value TEXT)')
     db.execute("INSERT INTO package_upgrade_probe VALUES ('durable-before-upgrade')")
 PY
+# Exercise the native package manager's failure gate, not merely a shell hook.
+# The fixture makes the old rc.d stop fail, then removes that injected fault.
+cp -p /usr/local/etc/rc.d/routerd "$work/routerd.rc"
+python3 - <<'PY'
+from pathlib import Path
+p=Path('/usr/local/etc/rc.d/routerd')
+s=p.read_text()
+needle='routerd_stop()\n{\n'
+assert needle in s
+p.write_text(s.replace(needle, needle+'    echo native-test-stop-failure >&2\n    return 42\n', 1))
+PY
+if pkg install -y "$current" >> "$work/pkg.log" 2>&1; then
+    echo 'pkg replaced files despite a failed old-service stop' >&2
+    exit 1
+fi
+grep -Fq native-test-stop-failure "$work/pkg.log"
+[ "$(pkg query '%v' routerd)" = "$prior_version" ]
+[ "$(sha256 -q /usr/local/sbin/routerd)" = "$old_binary" ]
+wait_dns
+cp -p "$work/routerd.rc" /usr/local/etc/rc.d/routerd
 pkg install -y "$current" >> "$work/pkg.log" 2>&1
 [ "$(pkg query '%v' routerd)" = "$current_version" ]
 [ "$(sha256 -q /usr/local/etc/routerd/router.yaml)" = "$configuration" ]

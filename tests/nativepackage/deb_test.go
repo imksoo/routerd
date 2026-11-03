@@ -203,7 +203,10 @@ list-units)
     [ -f "$file" ] || continue
     echo "${file##*/} loaded active running routerd"
   done;;
-show) if [ -f "$TEST_STATE/active/$unit" ]; then echo active; else echo inactive; fi;;
+show)
+  if [ "$2" = --property=FragmentPath ]; then
+    if [ "$unit" = routerd-unrelated.service ]; then echo "$TEST_STATE/unrelated-unit"; else echo "$TEST_STATE/owned-unit"; fi
+  elif [ -f "$TEST_STATE/active/$unit" ]; then echo active; else echo inactive; fi;;
 stop)
   echo "stop $unit" >> "$TEST_STATE/actions"
   rm -f "$TEST_STATE/active/$unit"
@@ -224,6 +227,11 @@ esac
 	if err := os.Mkdir(filepath.Join(state, "active"), 0755); err != nil {
 		t.Fatal(err)
 	}
+	for name, body := range map[string]string{"owned-unit": "# Managed by routerd. Do not edit by hand.\n", "unrelated-unit": "# Image setup or an operator service\n"} {
+		if err := os.WriteFile(filepath.Join(state, name), []byte(body), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	run := func(phase, arg string) {
 		t.Helper()
 		cmd := exec.Command("sh", filepath.Join(control, phase), arg)
@@ -239,10 +247,13 @@ esac
 	if err := os.WriteFile(filepath.Join(state, "active/routerd.service"), nil, 0600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(state, "active/routerd-unrelated.service"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
 	run("prerm", "upgrade")
 	entries, err := os.ReadDir(filepath.Join(state, "active"))
-	if err != nil || len(entries) != 0 {
-		t.Fatalf("old processes must all stop, including a late helper: %v %v", entries, err)
+	if err != nil || len(entries) != 1 || entries[0].Name() != "routerd-unrelated.service" {
+		t.Fatalf("stop owned services and late helpers, preserving unrelated services: %v %v", entries, err)
 	}
 	run("postinst", "configure")
 	actions, err := os.ReadFile(filepath.Join(state, "actions"))
