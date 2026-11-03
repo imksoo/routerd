@@ -175,3 +175,14 @@ func TestBGPWithdrawalPreservesWhenFalseDeclaration(t *testing.T) {
 		t.Fatal("disabled BGP declaration retired")
 	}
 }
+
+func TestBGPWithdrawalDryRunKeepsObservedStatus(t *testing.T) {
+	store := mapStore{api.NetAPIVersion + "/BGPRouter/edge": {"phase": "Reconverging"}, api.SystemAPIVersion + "/ServiceUnit/" + render.BGPUnitName: {"phase": "Removed", "dryRun": true}}
+	c := SystemdUnitController{Router: &api.Router{}, Store: store, DryRun: true}
+	if err := c.cleanupRemovedSystemdResourceStatuses("BGPRouter", func(string) string { return render.BGPUnitName }); err != nil {
+		t.Fatal(err)
+	}
+	if s := store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "edge"); s["phase"] != "Reconverging" {
+		t.Fatalf("dry-run removal retired live observation: %v", s)
+	}
+}
