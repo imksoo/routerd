@@ -60,6 +60,12 @@ else:
         raise AssertionError('old routerd process remains: '+pid)
     if sys.argv[1]=='removed': assert not processes(),processes()
 PY
+check_native_agent()
+{
+    native_status=$(/usr/local/sbin/routerd-ndpi-agent selftest)
+    printf '%s\n' "$native_status" | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["libndpiLoaded"] is True; assert x["libndpiVersion"]; assert x["selftest"]["reason"] == "libndpi_protocol_detection"; assert x["selftest"]["tlsSNI"] == "routerd-ndpi-selftest.example"'
+    pkg query '%B' routerd | grep -E '^libndpi[.]so[.]'
+}
 pkg -o HANDLE_RC_SCRIPTS=true install -y "$prior" > "$work/pkg.log" 2>&1
 [ "$(pkg query '%v' routerd)" = "$prior_version" ]
 if service routerd onestatus >/dev/null 2>&1; then
@@ -70,6 +76,7 @@ fi
 [ ! -e /var/db/routerd/routerd.db ]
 command -v routerctl
 pkg check -s routerd
+check_native_agent
 [ "$(stat -f '%u:%g' /usr/local/sbin/routerd)" = 0:0 ]
 install -d -m 0700 /usr/local/etc/routerd
 cat > /usr/local/etc/routerd/router.yaml <<'EOF'
@@ -153,6 +160,7 @@ pkg -o HANDLE_RC_SCRIPTS=true install -y "$current" >> "$work/pkg.log" 2>&1
 python3 "$work/processes.py" replaced "$work/before.json"
 wait_dns
 pkg check -s routerd
+check_native_agent
 python3 - <<'PY'
 import sqlite3
 with sqlite3.connect('/var/db/routerd/routerd.db') as db:
@@ -165,4 +173,4 @@ python3 "$work/processes.py" removed "$work/before.json"
 [ ! -e /usr/local/etc/rc.d/routerd ]
 [ "$(sha256 -q /usr/local/etc/routerd/router.yaml)" = "$configuration" ]
 [ -s /var/db/routerd/routerd.db ]
-printf 'native-pkg PASS: fresh install, UDP/TCP DNS, update %s -> %s, old process exit, config/database retention, removal\n' "$prior_version" "$current_version"
+printf 'native-pkg PASS: fresh install, native libnDPI TLS/SNI detection, exact shared-library dependency, UDP/TCP DNS, update %s -> %s, old process exit, config/database retention, removal\n' "$prior_version" "$current_version"
