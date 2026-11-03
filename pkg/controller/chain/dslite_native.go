@@ -27,6 +27,61 @@ const dsliteNativeStatusName = "dslite-native"
 
 var errDSLiteInputsChanged = errors.New("DS-Lite source or dependency changed")
 
+// Called after native tunnel and delegated endpoint cleanup. A tunnel that has
+// never activated has no native receipt to drive withdrawal/status retirement.
+func (c DSLiteTunnelController) cleanupRemovedDormantTunnelStatuses() error {
+	if c.DryRun {
+		return nil
+	}
+	store, ok := c.Store.(interface {
+		routerstate.ObjectStatusLister
+		routerstate.ObjectDeleteStore
+	})
+	if !ok {
+		return errors.New("DS-Lite status cleanup store unavailable")
+	}
+	declared := c.DeclaredRouter
+	if declared == nil {
+		declared = c.Router
+	}
+	retained := map[string]bool{}
+	for _, resource := range declared.Spec.Resources {
+		if resource.Kind == "DSLiteTunnel" {
+			retained[resource.Metadata.Name] = true
+		}
+	}
+	tunnels, err := c.nativeTunnelReceipts()
+	if err != nil {
+		return err
+	}
+	for _, receipt := range tunnels {
+		retained[receipt.Resource] = true
+	}
+	endpoints, err := c.endpointReceipts()
+	if err != nil {
+		return err
+	}
+	for _, receipt := range endpoints {
+		retained[receipt.Name] = true
+	}
+	statuses, err := store.ListObjectStatuses()
+	if err != nil {
+		return err
+	}
+	for _, object := range statuses {
+		if object.APIVersion != api.NetAPIVersion || object.Kind != "DSLiteTunnel" || retained[object.Name] || object.Status["dryRun"] == true || object.Status["phase"] != PhaseDisabled {
+			continue
+		}
+		if reason := object.Status["reason"]; reason != "WhenFalse" && reason != "Disabled" {
+			continue
+		}
+		if err := store.DeleteObject(object.APIVersion, object.Kind, object.Name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (c DSLiteTunnelController) checkTunnelInputs(ctx context.Context, name string, spec api.DSLiteTunnelSpec, plan dsliteTunnelPlan) error {
 	ready, err := resourcequery.ReadDependenciesReady(c.Store, spec.DependsOn)
 	if err != nil {

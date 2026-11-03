@@ -191,6 +191,9 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 	if err := c.cleanupDelegatedEndpoints(ctx); err != nil {
 		return err
 	}
+	if err := c.cleanupRemovedDormantTunnelStatuses(); err != nil {
+		return err
+	}
 	var failures []string
 	declared := c.DeclaredRouter
 	if declared == nil {
