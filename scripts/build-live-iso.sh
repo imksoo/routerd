@@ -229,39 +229,24 @@ if [ "${rootfs_only}" = true ]; then
     exit 0
 fi
 
-# Reuse the release payload inventory, including provider Plugin manifests and
-# their executable paths. A separate list here silently omitted libexec assets.
-make dist ROUTERD_OS=linux GOARCH=amd64 GIT_COMMIT="${git_commit}" DISTBASE="${distbase}" DISTROOT="${payload_root}"
+# Install the same native package used on persistent clean-OS systems. Keep
+# package ownership and dependencies intact inside the image root filesystem.
+install_routerd_package()
+{
+    local native_version native_package
+    native_version=$(make -s --no-print-directory package-version ROUTERD_OS=linux)
+    make dist-deb ROUTERD_OS=linux GOARCH=amd64 GIT_COMMIT="${git_commit}" VERSION="${version}" DISTBASE="${distbase}" PACKAGE_VERSION="${native_version}"
+    native_package="${distbase}/linux-amd64/routerd_${native_version}_amd64.deb"
+    install -m 0644 "${native_package}" "${rootfs}/tmp/routerd-live.deb"
+    chroot_run apt-get install -y --no-install-recommends /tmp/routerd-live.deb
+    [ -x "${rootfs}/usr/sbin/routerd" ]
+    [ -f "${rootfs}/usr/lib/systemd/system/routerd.service" ]
+    rm -f "${rootfs}/tmp/routerd-live.deb"
+    install -m 0644 "${native_package}" "${payload_root}/${native_package##*/}"
+}
 
-install -d "${rootfs}/opt/routerd-live" "${rootfs}/usr/local/sbin" "${rootfs}/usr/local/libexec" "${rootfs}/usr/local/etc/routerd" "${rootfs}/usr/local/share/doc/routerd"
-cp -a "${payload_root}/." "${rootfs}/opt/routerd-live/"
-cp -a "${payload_root}/bin/." "${rootfs}/usr/local/sbin/"
-cp -a "${payload_root}/libexec/." "${rootfs}/usr/local/libexec/"
-cp -a "${payload_root}/share/doc/." "${rootfs}/usr/local/share/doc/routerd/"
-install -m 0644 "${payload_root}/etc/routerd/router.yaml.sample" "${rootfs}/usr/local/etc/routerd/router.yaml.sample"
-
-install -d "${rootfs}/etc/systemd/system"
-if [ -f contrib/systemd/routerd.service ]; then
-    install -m 0644 contrib/systemd/routerd.service "${rootfs}/etc/systemd/system/routerd.service"
-else
-    cat > "${rootfs}/etc/systemd/system/routerd.service" <<'EOF'
-[Unit]
-Description=routerd network router daemon
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-ExecStart=/usr/local/sbin/routerd serve --config /usr/local/etc/routerd/router.yaml --socket /run/routerd/routerd.sock --status-socket /run/routerd/routerd-status.sock --apply-interval 10s
-Restart=always
-RestartSec=5
-RuntimeDirectory=routerd
-StateDirectory=routerd
-
-[Install]
-WantedBy=multi-user.target
-EOF
-fi
+install_routerd_package
+install -d "${rootfs}/opt/routerd-live" "${rootfs}/etc/routerd" "${rootfs}/etc/systemd/system"
 
 # The systemd controller renders and owns DNS units for configured resources.
 # A generic image template has no receipt and becomes a stale foreign artifact.
@@ -269,16 +254,16 @@ fi
 cat > "${payload_root}/README.txt" <<EOF
 routerd live payload ${version}
 
-This debootstrap-based Ubuntu live image carries routerd binaries and installer
-assets under /cdrom/routerd after boot.
+This Ubuntu live image installs routerd through the native package manager.
+The same .deb package is available under /cdrom/routerd after boot.
 
-Suggested first steps:
+For a persistent router, install Ubuntu Server to disk, then:
   cd /cdrom/routerd
-  sudo ./install.sh --prefix /usr/local
-  sudo ./install.sh configure
+  sudo apt install ./routerd_*.deb
 
-For a persistent router, install Ubuntu Server to disk and then run the
-routerd installer from the release payload.
+Prepare /etc/routerd/router.yaml in the 1.5 format, then explicitly enable
+and start routerd.service. Subsequent updates use apt with a newer package.
+Source/manual installation states are outside the package update contract.
 EOF
 
 cat > "${rootfs}/opt/routerd-live/firstboot.sh" <<'EOF'
@@ -287,8 +272,8 @@ set -euo pipefail
 
 cloudinit_mount_dir=/media/routerd-cloudinit
 config_mount_dir=/media/routerd-config
-config_file=/usr/local/etc/routerd/router.yaml
-config_dir=/usr/local/etc/routerd
+config_file=/etc/routerd/router.yaml
+config_dir=/etc/routerd
 provider_userdata_file=/run/routerd/cloudinit-provider-user-data
 validated_cache_dir=/var/lib/routerd/validated-config
 validated_cache_file=/var/lib/routerd/validated-config/router.yaml
@@ -800,7 +785,7 @@ install_config_bundle()
 cache_validated_config()
 {
     [ -f "${config_file}" ] || return 1
-    /usr/local/sbin/routerd validate --config "${config_file}" || return 1
+    /usr/sbin/routerd validate --config "${config_file}" || return 1
     install -d -m 0700 "${validated_cache_dir}" || return 1
     install -m 0600 "${config_file}" "${validated_cache_file}" || return 1
     log "cached validated config at ${validated_cache_file}"
@@ -809,7 +794,7 @@ cache_validated_config()
 restore_validated_config_cache()
 {
     [ -f "${validated_cache_file}" ] || return 1
-    /usr/local/sbin/routerd validate --config "${validated_cache_file}" || return 1
+    /usr/sbin/routerd validate --config "${validated_cache_file}" || return 1
     install -m 0600 "${validated_cache_file}" "${config_file}" || return 1
     log "restored config from validated cache (fetch failed)"
 }
@@ -921,7 +906,7 @@ disable_bootstrap_dhcp()
 prepare_routerd_service()
 {
     tmp=$(mktemp /etc/systemd/system/.routerd.service.XXXXXX)
-    if ! /usr/local/sbin/routerd render systemd-service --config "${config_file}" > "${tmp}"; then
+    if ! /usr/sbin/routerd render systemd-service --config "${config_file}" > "${tmp}"; then
         rm -f "${tmp}"
         log "failed to render routerd.service from restored configuration"
         return 1
@@ -938,13 +923,13 @@ enable_qemu_guest_agent
 apply_ssh_bootstrap
 
 if ! restore_config_disk_config && ! restore_cloudinit_configs && ! restore_provider_config; then
-    if [ ! -f "${config_file}" ] && [ -f /usr/local/etc/routerd/router.yaml.sample ]; then
-        cp /usr/local/etc/routerd/router.yaml.sample "${config_file}"
+    if [ ! -f "${config_file}" ] && [ -f /usr/share/doc/routerd/examples/router.yaml.sample ]; then
+        cp /usr/share/doc/routerd/examples/router.yaml.sample "${config_file}"
     fi
 fi
 
 # Invalid input or a failed unit render must retain bootstrap management.
-/usr/local/sbin/routerd validate --config "${config_file}"
+/usr/sbin/routerd validate --config "${config_file}"
 prepare_routerd_service
 disable_bootstrap_dhcp
 
@@ -974,7 +959,7 @@ ln -sf /usr/lib/systemd/system/systemd-resolved.service "${rootfs}/etc/systemd/s
 # can start, so its first process already has the intended environment and
 # capabilities.  Starting routerd dynamically from firstboot.sh left a second,
 # late start job that could briefly remove its control sockets.
-ln -sf ../routerd.service "${rootfs}/etc/systemd/system/multi-user.target.wants/routerd.service"
+ln -sf /usr/lib/systemd/system/routerd.service "${rootfs}/etc/systemd/system/multi-user.target.wants/routerd.service"
 
 install -d "${rootfs}/etc/systemd/system" "${rootfs}/etc/systemd/system/multi-user.target.wants"
 cat > "${rootfs}/etc/systemd/system/routerd-live-setup.service" <<'EOF'

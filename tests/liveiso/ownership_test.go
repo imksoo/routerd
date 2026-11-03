@@ -35,6 +35,61 @@ func runLiveShell(t *testing.T, body string) (string, error) {
 	return string(out), err
 }
 
+func TestLiveImageUsesPackageManagerAndDoesNotPublishFailedInstall(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		t.Run(strconv.FormatBool(fail), func(t *testing.T) {
+			dir := t.TempDir()
+			root, payload, dist := filepath.Join(dir, "root"), filepath.Join(dir, "iso"), filepath.Join(dir, "dist")
+			for _, path := range []string{filepath.Join(root, "tmp"), payload, filepath.Join(dist, "linux-amd64")} {
+				if err := os.MkdirAll(path, 0755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			prefix := "rootfs=" + shellLiteral(root) + "\npayload_root=" + shellLiteral(payload) + "\ndistbase=" + shellLiteral(dist) + "\nversion=fixture\ngit_commit=fixture\n"
+			fakeMake := `
+make() {
+  if [ "$1" = -s ]; then printf '1.5.0~fixture\n'; return; fi
+  [ "$1" = dist-deb ]
+  printf native-package > "$distbase/linux-amd64/routerd_1.5.0~fixture_amd64.deb"
+  printf stale-package > "$distbase/linux-amd64/routerd_1.5.0~old_amd64.deb"
+}
+`
+			fakeInstall := `
+chroot_run() {
+  [ "$1 $2 $3 $4 $5" = 'apt-get install -y --no-install-recommends /tmp/routerd-live.deb' ]
+  [ "$(cat "$rootfs/tmp/routerd-live.deb")" = native-package ]
+  install -d "$rootfs/usr/sbin" "$rootfs/usr/lib/systemd/system"
+  touch "$rootfs/usr/sbin/routerd" "$rootfs/usr/lib/systemd/system/routerd.service"
+  chmod 0755 "$rootfs/usr/sbin/routerd"
+}
+`
+			if fail {
+				fakeInstall = "chroot_run() { return 39; }\n"
+			}
+			out, err := runLiveShell(t, prefix+fakeMake+fakeInstall+liveFunction(t, "install_routerd_package")+"\ninstall_routerd_package\n")
+			if (err != nil) != fail {
+				t.Fatalf("image package install result: %v %s", err, out)
+			}
+			entries, err := os.ReadDir(payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if fail {
+				if len(entries) != 0 {
+					t.Fatalf("failed rootfs install published image payload: %v", entries)
+				}
+			} else {
+				if len(entries) != 1 || entries[0].Name() != "routerd_1.5.0~fixture_amd64.deb" {
+					t.Fatalf("image did not carry exactly the installed native package: %v", entries)
+				}
+				if _, err := os.Stat(filepath.Join(root, "tmp/routerd-live.deb")); !os.IsNotExist(err) {
+					t.Fatalf("temporary package retained: %v", err)
+				}
+			}
+		})
+	}
+}
+
 func TestLiveBuildRefusesMountedWorkdirBeforeTraversal(t *testing.T) {
 	base := t.TempDir()
 	work := filepath.Join(base, "build with spaces")
@@ -120,6 +175,9 @@ func TestFirstbootInvalidConfigCannotReplaceValidatedCache(t *testing.T) {
 				name, retained, want = "restore_validated_config_cache", config, "current"
 			}
 			fn := strings.ReplaceAll(liveFunction(t, name), "/usr/sbin/routerd", validator)
+			if strings.Contains(fn, "/usr/local/sbin/routerd") {
+				t.Fatal("non-native validator would escape the isolated command fixture")
+			}
 			body := "config_file=" + shellLiteral(config) + "\nvalidated_cache_file=" + shellLiteral(cache) + "\nvalidated_cache_dir=" + shellLiteral(dir) + "\nlog() { :; }\n" + fn + "\n" + name + "\n"
 			if out, err := runLiveShell(t, body); err == nil {
 				t.Fatalf("failed validation was acknowledged: %s", out)
@@ -166,6 +224,9 @@ func TestFirstbootKeepsBootstrapDHCPUntilValidationAndRenderSucceed(t *testing.T
 			tail := script[start : start+end]
 			tail = strings.ReplaceAll(tail, "install -d /run/routerd /var/lib/routerd", "install -d "+shellLiteral(filepath.Join(dir, "runtime")))
 			body := liveFunction(t, "prepare_routerd_service") + "\n" + liveFunction(t, "disable_bootstrap_dhcp") + "\n" + tail
+			if strings.Contains(body, "/usr/local/sbin/routerd") {
+				t.Fatal("non-native validator would escape the isolated command fixture")
+			}
 			body = strings.NewReplacer("/usr/sbin/routerd-dns-resolver", filepath.Join(dir, "absent-resolver"), "/usr/sbin/routerd", validator, "/etc/systemd/system", units, "/etc/systemd/network", network).Replace(body)
 			prefix := "config_file=" + shellLiteral(config) + "\nconfig_dir=" + shellLiteral(dir) + "\nlog() { :; }\nsystemctl() { :; }\napply_cloudinit_hostname() { :; }\nenable_qemu_guest_agent() { :; }\napply_ssh_bootstrap() { :; }\nrestore_config_disk_config() { return 0; }\n"
 			out, err := runLiveShell(t, prefix+body)

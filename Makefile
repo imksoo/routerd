@@ -295,7 +295,10 @@ check-build-deps:
 	done; \
 	exit $$missing
 
-.PHONY: dist-payload dist-deb dist-pkg
+.PHONY: dist-payload dist-deb dist-pkg package-version
+
+package-version:
+	@printf '%s\n' '$(PACKAGE_VERSION)'
 
 # One inventory feeds native packages and the internal image/archive staging.
 dist-payload:
