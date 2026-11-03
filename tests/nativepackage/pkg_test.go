@@ -83,9 +83,20 @@ func TestFreeBSDNativePackageOwnershipAndUpgradeHooks(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(bin, "service"), []byte(fake), 0755); err != nil {
 				t.Fatal(err)
 			}
-			for _, phase := range []string{"pre-install", "post-install"} {
+			for _, phase := range []string{"pre-install", "post-install", "post-start"} {
 				// pkg raw manifests URL-encode script bytes; pkg decodes them before execution.
 				body, err := url.PathUnescape(manifest.Scripts[phase])
+				if phase == "post-start" {
+					data, readErr := os.ReadFile(filepath.Join(root, "usr/local/libexec/routerd/package-service-restore"))
+					if readErr != nil {
+						t.Fatal(readErr)
+					}
+					body = string(data)
+					// The native rc.d start outside pkg has already started main.
+					if err := os.WriteFile(running, nil, 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -100,7 +111,7 @@ func TestFreeBSDNativePackageOwnershipAndUpgradeHooks(t *testing.T) {
 				if output, err := cmd.CombinedOutput(); err != nil {
 					t.Fatalf("%s with native BSD file utilities: %v %s", phase, err, output)
 				}
-				if phase == "pre-install" {
+				if phase != "post-start" {
 					if _, err := os.Stat(running); !os.IsNotExist(err) {
 						t.Fatalf("old service remained: %v", err)
 					}
@@ -110,7 +121,7 @@ func TestFreeBSDNativePackageOwnershipAndUpgradeHooks(t *testing.T) {
 				}
 			}
 			if _, err := os.Stat(running); err != nil {
-				t.Fatal("prior active service was not restored:", err)
+				t.Fatal("native rc.d service did not remain running:", err)
 			}
 			if _, err := os.Stat(state); !os.IsNotExist(err) {
 				t.Fatalf("native hook left temporary state: %v", err)
