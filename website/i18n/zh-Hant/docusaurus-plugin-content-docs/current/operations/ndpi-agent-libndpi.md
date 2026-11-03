@@ -44,4 +44,4 @@ sudo apt remove routerd-ndpi-agent-libndpi
 
 建構使用 `make dist-ndpi-agent-libndpi-deb ROUTERD_OS=linux GOARCH=amd64`，需要 Go、
 C compiler、`libndpi-dev`、`pkg-config`、`dpkg-dev`、`file` 與 `readelf`。
-隔離 OS 的安裝、更新、移除與合格標準見[英文測試流程](/docs/operations/ndpi-agent-libndpi#build-and-test)。
+隔離 OS 的安裝、更新、移除與合格標準見[英文測試流程](https://routerd.net/docs/operations/ndpi-agent-libndpi#build-and-test)。
