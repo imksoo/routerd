@@ -73,7 +73,7 @@
         },
         "spec": {
           "destination": "0.0.0.0/0",
-          "device": "rd15-wan",
+          "device": "ens19",
           "gateway": "198.18.16.1"
         }
       },
