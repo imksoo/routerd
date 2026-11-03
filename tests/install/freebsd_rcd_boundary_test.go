@@ -20,7 +20,7 @@ func TestFreeBSDServiceRequiresNativePIDOwnershipBeforeSignals(t *testing.T) {
 	body = strings.Replace(body, ". /etc/rc.subr", "", 1)
 	body = strings.Replace(body, `load_rc_config "$name"`, "", 1)
 	body = strings.Replace(body, `run_rc_command "$1"`, "", 1)
-	for _, scenario := range []string{"absent", "reused", "wrong-source", "read-error", "unlocked", "owned"} {
+	for _, scenario := range []string{"absent", "reused", "wrong-source", "read-error", "unlocked", "removed-during-lock", "owned"} {
 		t.Run(scenario, func(t *testing.T) {
 			dir := t.TempDir()
 			child, supervisor := filepath.Join(dir, "child.pid"), filepath.Join(dir, "supervisor.pid")
@@ -48,6 +48,11 @@ ps() {
 pgrep() {
   [ "$1 $2" = '-L -F' ] || return 99
   [ "$SCENARIO" != unlocked ] || return 3
+  if [ "$SCENARIO" = removed-during-lock ] && [ "$3" = "$pidfile" ]; then
+    rm -f "$3"
+    : > "$STOPPED"
+    return 3
+  fi
   cat "$3"
 }
 pkill() {
@@ -65,7 +70,7 @@ routerd_stop
 			cmd := exec.Command("sh", script)
 			cmd.Env = append(os.Environ(), "SCENARIO="+scenario, "SIGNALS="+signals, "STOPPED="+filepath.Join(dir, "stopped"))
 			out, err := cmd.CombinedOutput()
-			wantOK := scenario == "absent" || scenario == "owned"
+			wantOK := scenario == "absent" || scenario == "owned" || scenario == "removed-during-lock"
 			if (err == nil) != wantOK {
 				t.Fatalf("stop success=%v want=%v: %v\n%s", err == nil, wantOK, err, out)
 			}
