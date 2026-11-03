@@ -114,7 +114,12 @@ routerd_read_pidfile()
         _child=${_child%]}
         case "${_child}" in ''|*[!0-9]*) return 2 ;; esac
     fi
-    _locked_pid=$(pgrep -L -F "${_file}" -x "${_comm##*/}") || return 2
+    _locked_pid=$(pgrep -L -F "${_file}" -x "${_comm##*/}") || {
+        # daemon(8) removes its locked pidfiles as it exits. It may finish
+        # between the process snapshot and this lock check during stop.
+        [ -e "${_file}" ] || return 1
+        return 2
+    }
     [ "${_locked_pid}" = "${_pid}" ] || return 2
     printf '%s\n' "${_pid}"
 }

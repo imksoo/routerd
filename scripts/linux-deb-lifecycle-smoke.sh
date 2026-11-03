@@ -24,10 +24,14 @@ fi
 for path in /etc/routerd/router.yaml /var/lib/routerd/routerd.db /usr/sbin/routerd; do
     [ ! -e "$path" ] || { echo "requires absent $path" >&2; exit 1; }
 done
+foreign=routerd-native-package-foreign.service
+[ "$(systemctl show -p LoadState --value "$foreign")" = not-found ]
+foreign_started=0
 work=$(mktemp -d /tmp/routerd-deb-lifecycle.XXXXXX)
 finish()
 {
     result=$?
+    if [ "$foreign_started" -eq 1 ]; then systemctl stop "$foreign" || result=1; fi
     if [ "$result" -ne 0 ]; then
         tail -80 "$work/apt.log" >&2 || true
         journalctl --no-pager -n 80 -u routerd.service -u routerd-dns-resolver@package.service >&2 || true
@@ -37,6 +41,8 @@ finish()
     exit "$result"
 }
 trap finish EXIT
+systemd-run --collect --unit="$foreign" --property=Type=exec /bin/sleep infinity
+foreign_started=1
 export DEBIAN_FRONTEND=noninteractive
 apt-get -o DPkg::Lock::Timeout=300 install -y bind9-dnsutils python3 "$prior" > "$work/apt.log" 2>&1
 [ "$(dpkg-query -W -f='${Version}' routerd)" = "$prior_version" ]
@@ -113,6 +119,7 @@ apt-get -o DPkg::Lock::Timeout=300 install -y "$current" >> "$work/apt.log" 2>&1
 [ ! -d "/proc/$main_pid" ]
 [ ! -d "/proc/$helper_pid" ]
 wait_dns
+systemctl is-active --quiet "$foreign"
 verification=$(dpkg -V routerd)
 [ -z "$verification" ]
 python3 - <<'PY'
@@ -123,6 +130,7 @@ PY
 main_pid=$(systemctl show -p MainPID --value routerd.service)
 helper_pid=$(systemctl show -p MainPID --value routerd-dns-resolver@package.service)
 apt-get -o DPkg::Lock::Timeout=300 remove -y routerd >> "$work/apt.log" 2>&1
+systemctl is-active --quiet "$foreign"
 [ ! -e /usr/sbin/routerd ]
 [ ! -d "/proc/$main_pid" ]
 [ ! -d "/proc/$helper_pid" ]
