@@ -60,7 +60,7 @@ else:
         raise AssertionError('old routerd process remains: '+pid)
     if sys.argv[1]=='removed': assert not processes(),processes()
 PY
-pkg install -y "$prior" > "$work/pkg.log" 2>&1
+pkg -o HANDLE_RC_SCRIPTS=true install -y "$prior" > "$work/pkg.log" 2>&1
 [ "$(pkg query '%v' routerd)" = "$prior_version" ]
 if service routerd onestatus >/dev/null 2>&1; then
     echo 'fresh package unexpectedly started routerd' >&2
@@ -136,7 +136,7 @@ needle='routerd_stop()\n{\n'
 assert needle in s
 p.write_text(s.replace(needle, needle+'    echo native-test-stop-failure >&2\n    return 42\n', 1))
 PY
-if pkg install -y "$current" >> "$work/pkg.log" 2>&1; then
+if pkg -o HANDLE_RC_SCRIPTS=true install -y "$current" >> "$work/pkg.log" 2>&1; then
     echo 'pkg replaced files despite a failed old-service stop' >&2
     exit 1
 fi
@@ -146,7 +146,7 @@ grep -Fq native-test-stop-failure "$work/pkg.log"
 wait_dns
 cp -p "$work/routerd.rc" /usr/local/etc/rc.d/routerd
 fault_injected=0
-pkg install -y "$current" >> "$work/pkg.log" 2>&1
+pkg -o HANDLE_RC_SCRIPTS=true install -y "$current" >> "$work/pkg.log" 2>&1
 [ "$(pkg query '%v' routerd)" = "$current_version" ]
 [ "$(sha256 -q /usr/local/etc/routerd/router.yaml)" = "$configuration" ]
 [ "$(sha256 -q /usr/local/sbin/routerd)" != "$old_binary" ]
@@ -159,7 +159,7 @@ with sqlite3.connect('/var/db/routerd/routerd.db') as db:
     assert db.execute('SELECT value FROM package_upgrade_probe').fetchall() == [('durable-before-upgrade',)]
 PY
 python3 "$work/processes.py" snapshot "$work/before.json"
-pkg delete -y routerd >> "$work/pkg.log" 2>&1
+pkg -o HANDLE_RC_SCRIPTS=true delete -y routerd >> "$work/pkg.log" 2>&1
 python3 "$work/processes.py" removed "$work/before.json"
 [ ! -e /usr/local/sbin/routerd ]
 [ ! -e /usr/local/etc/rc.d/routerd ]

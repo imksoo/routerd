@@ -41,6 +41,10 @@ def stage(payload, root, package_format):
         rc.mkdir(parents=True)
         shutil.copy2(REPO / "contrib/freebsd/routerd", rc)
         (rc / "routerd").chmod(0o555)
+        restore = prefix / "libexec/routerd/package-service-restore"
+        restore.write_text((REPO / "packaging/native/freebsd-service.sh").read_text().replace(
+            "set -eu\n", "set -eu\nphase=post-start\n", 1))
+        restore.chmod(0o555)
     # Directory creation must not inherit a developer's group-writable umask.
     root.chmod(0o755)
     for path in root.rglob("*"):

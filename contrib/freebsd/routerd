@@ -154,6 +154,12 @@ routerd_any_owned_running()
     routerd_supervisor_pid >/dev/null
 }
 
+routerd_restore_package_services()
+{
+    _restore=/usr/local/libexec/routerd/package-service-restore
+    [ ! -x "${_restore}" ] || "${_restore}"
+}
+
 routerd_start()
 {
     routerd_any_owned_running
@@ -161,14 +167,16 @@ routerd_start()
     [ "${_rc}" -ne 2 ] || { warn "native service ownership is unknown; refusing start"; return 1; }
     if [ "${_rc}" -eq 0 ]; then
         echo "${name} is already running."
-        return 0
+        routerd_restore_package_services
+        return $?
     fi
     routerd_prestart || return 1
     echo "Starting ${name}."
     eval "${command} ${command_args}"
     for _ in 1 2 3 4 5 6 7 8 9 10; do
         if routerd_pid >/dev/null 2>&1; then
-            return 0
+            routerd_restore_package_services
+            return $?
         fi
         sleep 1
     done

@@ -68,7 +68,6 @@ stop_services()
 restore_services()
 {
     [ -f "$state/restart-units" ] || return 0
-    if grep -Fxq routerd "$state/restart-units"; then service routerd onestart; fi
     while IFS= read -r unit; do
         case "$unit" in
             routerd|'') continue ;;
@@ -86,7 +85,10 @@ case "$phase" in
         # No discovery/adoption of source or manual installations is performed.
         if [ -x "$rcdir/routerd" ]; then stop_services; fi
         ;;
-    post-install) restore_services ;;
+    # pkg reaps descendants started inside hooks. Native HANDLE_RC_SCRIPTS
+    # starts enabled rc.d services after script cleanup; rc.d restores helpers.
+    post-install) : ;;
+    post-start) restore_services ;;
     pre-deinstall)
         if [ "${PKG_UPGRADE:-false}" != true ]; then stop_services; fi
         ;;
