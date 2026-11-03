@@ -86,8 +86,15 @@ Prioritize the real returned-node authority defect (`2e9b15e8` RED,
 `479f24d7` initial fix) and actual deployed standby policy. Both inspected routers
 retain two unconditional SNAT rules; do not make an unused zero-rule case delay
 this first replacement milestone. Preserve it in the final regression scope.
-Finish native return/reverse-sync/restart/withdrawal with corrected startup,
-then combine HA with shared PD/four AFTRs and the full target configuration.
+The `1a96b8c0` follow-up now passes the 20-resource pair lifecycle: exclusive
+node-bound unicast election, original TCP/UDP continuity, capture-correct shared
+SNAT, renewed sticky replication, cold return, active main restart and complete
+Healthy withdrawal. It also fixed a native receive-socket bind to a pre-existing
+shared VIP. See the [scoped result](routerd15-audit.md#linux-packaged-ha-lifecycle-with-declared-unicast-source-2026-11-03).
+Next combine this HA path with shared PD/four AFTRs and the full target
+configuration. Place independent application/client peers outside both router
+failure domains; verify translated-port collision continuity and both-direction
+router power loss, rather than adding another basic single-client demo.
 This is not the full deployed-router qualification. Next Linux work must cover
 the real BGP/HA/when-role and lease/session synchronization combinations,
 remaining session modes and reboot with those combinations alongside the already

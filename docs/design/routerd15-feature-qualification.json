@@ -2145,6 +2145,34 @@
         "Native qualification of the startup-role fix at 479f24d7; active daemon restart and full shared-PD/four-AFTR HA.",
         "Separate FIB-withdrawal readback and complete deployed-router or baseline parity/release verdict."
       ]
+    },
+    "linux-ha-pair-lifecycle-apt-1a96b8c0": {
+      "level": "packaged-daemon-independent-peer",
+      "outcome": "pass",
+      "revision": "1a96b8c0383062a06e7e31faea1dbbf2d19375db",
+      "reference": "docs/design/routerd15-audit.md#linux-packaged-ha-lifecycle-with-declared-unicast-source-2026-11-03",
+      "environment": "Two cold-boot-certified dedicated Ubuntu 24.04 / Linux 6.8.0-147 guests; apt/systemd/keepalived 2.2.8/conntrackd; independent FRR and application/client namespaces outside the injected active-router failure.",
+      "package_versions": [
+        "1.5.0~20261103132525+g1a96b8c03830"
+      ],
+      "package_sha256": [
+        "1daade5c3749ccd6713caee1eb255cc18baf9e85d7c46ccc23d5768287c1d6c5"
+      ],
+      "fixture_sha256": "6034bd8cc00bc0ccd00526e5518a747195f638e25db07a8398da491a105fbeee",
+      "checks": [
+        "Formal apt update/integrity; exclusive election; actual node-specific raw receive bindings; backup VMACs DOWN and no competing shared IPv4 address.",
+        "Actual DHCP/DNS, both independent FRR sessions, permitted/forbidden FIB prefixes, source and receiver sticky SQLite contents.",
+        "Active guest power loss: original TCP socket and UDP port survived, client/surviving-main PIDs unchanged, one TCP server accept; 10.121-second maximum response gap.",
+        "All 115 captured forwarded application packets retained shared SNAT source; independent unconditional node-SNAT paths exercised.",
+        "Same DHCP client renewed through promoted node; returned guest backup with zero shared-WAN ARP claims, latest renewed lease copied back exactly and original TCP/UDP continued.",
+        "Active main restart preserved keepalived/BGP/client PIDs and original sockets; both routers Healthy after return.",
+        "Complete withdrawal Healthy, zero resources/issues/current errors, all fixture host/shared IPv4 addresses/VMACs/helpers/configs/FIB/NAT table absent, package intact and explicit main stop persisted."
+      ],
+      "excludes": [
+        "Shared-PD/four-AFTR HA, DHCPv6/PD lease synchronization and IPv6 client continuity.",
+        "Translated-port collision continuity and both-direction router power loss; next campaign uses independent peers outside both failure domains.",
+        "Zero-NAT-rule standby regression, arbitrary session-sync names, full 109-resource deployed-router/baseline parity and release verdict."
+      ]
     }
   },
   "features": [
@@ -2498,7 +2526,8 @@
         "scoped_evidence": [
           "linux-vrrp-pve-81bc1768",
           "linux-ha-pair-initial-apt-83414e60",
-          "linux-ha-pair-followup-apt-b698cb1d"
+          "linux-ha-pair-followup-apt-b698cb1d",
+          "linux-ha-pair-lifecycle-apt-1a96b8c0"
         ]
       },
       "freebsd": {
@@ -2933,7 +2962,8 @@
           "bgp-peer-readiness-64f4a479",
           "linux-bfd-both-modes-6aab35b5",
           "linux-ha-pair-initial-apt-83414e60",
-          "linux-ha-pair-followup-apt-b698cb1d"
+          "linux-ha-pair-followup-apt-b698cb1d",
+          "linux-ha-pair-lifecycle-apt-1a96b8c0"
         ]
       },
       "freebsd": {
@@ -3081,7 +3111,8 @@
           "linux-dhcp-firewall-1f9fc319",
           "linux-home-router-clean-install-999dfd4",
           "linux-dualstack-recovery-6977c66e",
-          "linux-ha-pair-initial-apt-83414e60"
+          "linux-ha-pair-initial-apt-83414e60",
+          "linux-ha-pair-lifecycle-apt-1a96b8c0"
         ]
       },
       "freebsd": {
@@ -3302,7 +3333,8 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-ha-pair-initial-apt-83414e60",
-          "linux-ha-pair-followup-apt-b698cb1d"
+          "linux-ha-pair-followup-apt-b698cb1d",
+          "linux-ha-pair-lifecycle-apt-1a96b8c0"
         ]
       },
       "freebsd": {
@@ -3402,7 +3434,8 @@
           "linux-wan-dhcpv4-1f9fc319",
           "linux-home-router-clean-install-999dfd4",
           "linux-dualstack-recovery-6977c66e",
-          "linux-ha-pair-initial-apt-83414e60"
+          "linux-ha-pair-initial-apt-83414e60",
+          "linux-ha-pair-lifecycle-apt-1a96b8c0"
         ]
       },
       "freebsd": {
@@ -3798,7 +3831,8 @@
           "linux-dslite-existing-flows-ee50d674",
           "linux-dslite-pd-apt-197bd70f",
           "linux-ha-pair-initial-apt-83414e60",
-          "linux-ha-pair-followup-apt-b698cb1d"
+          "linux-ha-pair-followup-apt-b698cb1d",
+          "linux-ha-pair-lifecycle-apt-1a96b8c0"
         ]
       },
       "freebsd": {

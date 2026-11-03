@@ -3184,3 +3184,81 @@ Both disposable guests and all their virtual disks were removed after the run;
 the base image remained and both production guests were read back as running.
 Only bounded current packet inputs for the unresolved regressions remain private.
 Do not mark a whole HA feature, full deployed replacement or release as passed.
+
+### Linux packaged HA lifecycle with declared unicast source, 2026-11-03
+
+**Scoped PASS: the 20-resource IPv4 pair lifecycle, not full deployed-router
+qualification.** Product `1a96b8c0383062a06e7e31faea1dbbf2d19375db`, formal apt
+package `1.5.0~20261103132525+g1a96b8c03830`, SHA256
+`1daade5c3749ccd6713caee1eb255cc18baf9e85d7c46ccc23d5768287c1d6c5`.
+Two dedicated Ubuntu 24.04 / Linux 6.8.0-147 guests; real systemd, keepalived
+2.2.8, conntrackd, rsync/OpenSSH and independent FRR/application/client namespaces.
+Both guests were cold-booted during certification with clean product inputs,
+no old volatile election state and persistent isolated LAN/WAN links. The
+[pair fixture](../../tests/fixtures/linux-ha-pair.json) at `9440c932` has SHA256
+`6034bd8cc00bc0ccd00526e5518a747195f638e25db07a8398da491a105fbeee`.
+Unlike the initial fixture, its standby retains an unconditional SNAT rule,
+matching the inspected deployed condition.
+
+The intermediate `479f24d7` retest confirmed cold-return WAN ownership and the
+original TCP socket, reverse sticky synchronization and active daemon restart.
+Its UDP result was invalid: changing the independent server to a wildcard UDP
+bind changed its reply source. A local kernel reproduction established that
+fixture error; the corrected server uses explicitly bound destination sockets
+and certifies reply identity before product startup. Subsequent injection requires
+both TCP and UDP success; no result from that invalid UDP path is counted here.
+
+A later `7f7b5779` start exposed a real two-master failure. Both directions carried
+correct VRRP advertisements, while the standby raw receive socket was bound to
+the shared VIP and its received-advertisement count remained zero. Its current
+transmit source had already changed to the node address. Isolated Linux 6.8.0-136
+and real keepalived reproduced the retained receive bind after VIP withdrawal.
+`2d1fc893` fixes this failure as a regression requirement; `1a96b8c0` renders an
+explicit source from the unique unconditional node IPv4 address. The corrected
+native fixture fails against the previous renderer and passes the fix. Its
+independent peer uses the same zero-VIP advertisement format as graceful VRRP;
+the component test owns VIP withdrawal and omits VMAC notify commands. The
+packaged gate below executes the full generated hooks.
+
+| Acceptance path | Executed result |
+| --- | --- |
+| Formal package and exclusive startup | Apt update and `dpkg -V` passed on both guests. Generated configuration and actual raw sockets selected each node's own unicast address. Active owned the gateway/VMACs; backup links were DOWN without competing shared IPv4 addresses. |
+| Real clients, DNS and BGP | DHCP supplied the configured gateway/DNS and sticky identity. Both independent FRR sessions established; allowed learned routes entered both kernel FIBs, a forbidden prefix stayed absent, and application traffic traversed the learned route. |
+| Synchronization and source reads | Source and receiving SQLite queries confirmed the actual client hostname/lease. The standby external cache contained the specific established TCP and assured UDP tuples before injection. |
+| Active guest power loss | The original TCP connection and UDP source port resumed automatically. Client and surviving main PIDs stayed unchanged; the peer accepted exactly one TCP connection. Maximum combined successful-response gap was 10.121 seconds, not hitless operation. |
+| Handover packet source | All 115 captured outgoing application TCP/UDP packets retained the shared SNAT source. Independent new flows also exercised the unconditional node-specific SNAT path. This does not qualify the separate zero-NAT-rule standby case. |
+| Promoted-node lease renewal | The same independent DHCP client renewed through the promoted node without a client restart or manual product repair. |
+| Non-preemptive return | The returned guest remained backup; its WAN capture contained two physical-MAC ARP frames and zero shared-WAN claims. Final shared LAN/WAN IPv4 ownership stayed on the active node. The latest renewed SQLite timestamp synchronized back exactly, and original TCP/UDP traffic continued. |
+| Active main restart | Main PID changed while keepalived, BGP daemon and client PIDs stayed unchanged. The original TCP/UDP sockets and learned-route forwarding continued; live master ownership was retained. Both routers reported Healthy with 20 resources and no current errors after return. |
+| Complete withdrawal and explicit stop | Both reported Healthy, zero resources/issues/current errors. All fixture host/shared IPv4 addresses, both VMACs, managed keepalived/conntrackd configuration/unit files, learned FIB prefixes and the owned NAT table were absent. No owned helper remained, package integrity passed, and both main PIDs stayed zero without pending deferred restart units. |
+
+Withdrawal status retirement has RED `f04eaf62`, fixes `497f40c3` / `7f7b5779`:
+BGP observations retire after acknowledged process/FIB/systemd removal; removed
+lease-sync declarations retire after the old generation stops. Failed stop or
+status deletion remains retryable, `when`-disabled declarations stay visible,
+and dry-run acknowledgements cannot authorize live status deletion. Parent
+cancellation no longer fabricates a current sync failure; a real transfer timeout
+still does. These checks and native withdrawal passed, rather than filtering old
+errors out of the aggregate health result.
+
+Local verification: full Linux Go suite exit zero, 122 passing packages / 14
+without tests, at `a5a9aaa6` with the same product code; generated schema/example
+checks, formatting/diff checks and the four-locale website at the product
+checkpoint passed. The Linux golden output changed only by the two explicit
+source directives; its example name does not imply a FreeBSD native test. The
+new result publication receives a separate website build.
+
+Reviewed paths include `pkg/render/vrrp.go`, `pkg/controller/vrrp/backend.go`,
+`controller.go`, `initial_roles.go`, `pkg/controller/chain/chain.go`, `system.go`,
+`system_dns_removed_status.go`, `filesync.go`, `pkg/controller/bgp/controller.go`,
+`cmd/routerd-vrrp-vmac/main.go`, `removal.go` and the related focused/native tests.
+The maintained [procedure](../operations/linux-ha-pair-qualification.md) records
+the native regression command, prerequisites and acceptance. Private access and
+infrastructure details remain private; successful raw packet logs are disposable.
+
+This does not qualify shared PD/four-AFTR HA, PD/v6 lease synchronization,
+translated-port collisions across HA, IPv6 client continuity, both-direction VM
+power loss, arbitrary session-sync names or the complete 109-resource deployed
+configuration. The next integrated campaign places its independent peers outside
+both router failure domains and reuses the current formal candidate. Full feature
+and full replacement verdicts remain unknown; FreeBSD remains deferred.
