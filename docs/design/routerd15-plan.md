@@ -334,9 +334,9 @@ path and native OS verification. Do not label it unsupported, drop it from the
 and conflict contracts before choosing a native package layout; retain the shared
 inventory, existing runtime paths and operator configuration/state semantics.
 
-## nDPI 6 dependency decision (2026-11-03)
+## nDPI 6 dependency decision
 
-The current FreeBSD repository installs `ndpi 6.0.d20260909,1`, not the nDPI 5.0
+On 2026-11-03 the current FreeBSD repository installs `ndpi 6.0.d20260909,1`, not the nDPI 5.0
 recorded in the baseline platform qualification. Actual FreeBSD 14.3-RELEASE-p16
 native format tests passed at `fdd5692c`, including root ownership, native hooks,
 real ELF parsing and the exact package owners of direct shared-library
