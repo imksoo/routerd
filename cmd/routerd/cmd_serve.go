@@ -1298,7 +1298,9 @@ func configureServeSandbox(root string, setFlags map[string]bool, configPath, st
 
 func configureServeDaemonSupervision(opts *controllerchain.Options, features platform.Features) {
 	opts.SuperviseClientDaemons = true
-	opts.SuperviseDNSResolvers = false
+	// Linux's service controller owns DNS systemd units. FreeBSD's rc.d
+	// service starts the main daemon; its existing supervisor owns DNS workers.
+	opts.SuperviseDNSResolvers = features.HasRCD
 }
 
 func applySandboxControllerOptions(opts *controllerchain.Options, dnsmasqConfigPath, nftablesPath string) {
