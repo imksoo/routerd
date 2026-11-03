@@ -580,11 +580,29 @@ namespaces with HTTP receivers and a separate LAN client. Three primary paths
 use source-address hashing; a lower-weight fourth path provides fallback.
 The fixture uses documentation/benchmark addresses, not deployed configuration. After updating to
 the candidate package, the gate also sends 64 fixed UDP tuples through real
-DS-Lite/NAT peers. Pass requires unchanged native conntrack IDs across member
-failure, total primary failure and restoration; receivers must observe surviving
-primary paths, fallback, then continued healthy fallback respectively. UDP peers
-are positively checked during environment certification. These are actual
-forwarded UDP results, not a promise that remote TCP sessions survive ISP NAT.
+DS-Lite/NAT peers. Healthy flows must keep their native conntrack IDs and peer
+paths. Linux masquerade removes a flow and drops its first packet when its
+output interface changes; affected tuples must recover with at most one client
+retransmission. Receivers must observe surviving primary paths, fallback, then
+continued healthy fallback respectively. UDP peers are positively checked during
+environment certification. These are actual forwarded UDP results, not a promise
+that remote TCP sessions survive ISP NAT.
+
+The kernel behavior is directly reproducible, without routerd or product-state
+repairs, using the same UDP socket across two masqueraded output interfaces:
+
+```sh
+sudo env ROUTERD_RUN_NETNS=1 ROUTERD_HOST_NETNS="$(readlink /proc/self/ns/net)" \
+  unshare -n python3 tests/netns/masquerade-oif.py
+```
+
+The reference requires an observed deletion before retransmission and successful
+peer response with the replacement NAT source. This matches Linux 6.8's
+[nf_nat_oif_changed](https://github.com/torvalds/linux/blob/v6.8/include/net/netfilter/nf_nat.h#L51-L63)
+and [drop/removal path](https://github.com/torvalds/linux/blob/v6.8/net/netfilter/nf_nat_core.c#L802-L809).
+Requiring every masqueraded flow to retain its original ID through interface
+changes is an invalid test assumption. ID preservation remains required for
+unaffected paths and the healthy fallback after primary recovery.
 
 
 Before qualification, finish OS initialization/reboot and install `iproute2`,

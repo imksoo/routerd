@@ -458,10 +458,27 @@ ISP 側 NAT が変わる場合の相手 TCP セッション継続を保証する
 動かします。3本を送信元アドレスで分散し、低優先度の4本目へ退避します。
 設定例は文書・ベンチマーク用アドレスを使い、実ホストの設定は含みません。
 候補パッケージへの更新後には、64組の同じ UDP 通信情報を DS-Lite・NAT の
-相手へ送ります。回線断・主系全断・復旧の前後でカーネルの conntrack ID が
-変わらず、相手が正常な主系・予備・引き続き正常な予備の順に受信することを
-合格条件とします。UDP 相手の応答は環境認証時にも確認します。
-これは実際の UDP 転送の検証で、ISP 側 NAT 変更時の TCP セッション継続保証ではありません。
+相手へ送ります。正常経路の通信は conntrack ID と相手経路を維持し、
+切替対象は1回のクライアント再送までで復旧することを合格条件とします。
+相手は正常な主系・予備・引き続き正常な予備の順に受信し、UDP 相手の応答は
+環境認証時にも確認します。これは実際の UDP 転送の検証で、ISP 側 NAT 変更時の
+TCP セッション継続保証ではありません。
+
+Linux の MASQUERADE は送出インターフェースが変わると古い項目を削除し、
+そのパケットを落とします。次の単独試験で、同じ UDP ソケットを維持したまま
+古い項目の削除を観測し、次の送信が新しい変換元で相手へ届くことを確認します。
+routerd や製品状態への手動修復は使いません。
+
+```sh
+sudo env ROUTERD_RUN_NETNS=1 ROUTERD_HOST_NETNS="$(readlink /proc/self/ns/net)" \
+  unshare -n python3 tests/netns/masquerade-oif.py
+```
+
+根拠は Linux 6.8 の
+[送出インターフェース変更判定](https://github.com/torvalds/linux/blob/v6.8/include/net/netfilter/nf_nat.h#L51-L63)
+と[破棄・削除処理](https://github.com/torvalds/linux/blob/v6.8/net/netfilter/nf_nat_core.c#L802-L809)です。
+全通信の ID 維持という試験条件は不適切です。正常な経路と主系復旧後の
+正常な予備通信については、ID 維持を引き続き検査します。
 
 
 事前に OS 初期化・再起動を済ませ、`iproute2`、`nftables`、`jq`、`curl`、

@@ -83,8 +83,13 @@ import json,socket
 for index in range(10,74):
  with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as s:
   s.bind(('198.18.25.'+str(index),44000));s.settimeout(3)
-  s.sendto(b'existing-flow',('203.0.113.80',8081))
-  row=json.loads(s.recv(1024));row['client']='198.18.25.'+str(index)
+  for attempt in range(2):
+   s.sendto(b'existing-flow',('203.0.113.80',8081))
+   try:
+    row=json.loads(s.recv(1024));break
+   except socket.timeout:
+    if attempt==1: raise
+  row.update(client='198.18.25.'+str(index),attempts=attempt+1)
   print(json.dumps(row),flush=True)
 PYUDP
 # Environment preparation: no routerd is installed or running yet.
@@ -130,7 +135,9 @@ ip -n rd15-mclient link set client0 up
 for index in {10..73}; do ip -n rd15-mclient address add "198.18.25.$index/24" dev client0; done
 ip -n rd15-mclient route add default via 198.18.25.1
 echo 'CERTIFIED: clean VM, four independent AFTR HTTP listeners and IPv6 links, separate client'
-tcpdump -i rd15-mwan -U -C 1 -W 2 -w "$work/outer.pcap" 'ip6 proto 4' > "$work/capture.txt" 2>&1 & capture=$!
+tcpdump -Z root -i rd15-mwan -U -C 1 -W 2 -w "$work/outer.pcap" 'ip6 proto 4' > "$work/capture.txt" 2>&1 & capture=$!
+sleep .1
+kill -0 "$capture"
 export DEBIAN_FRONTEND=noninteractive
 apt-get -o DPkg::Lock::Timeout=180 install -y "$prior" > "$work/apt.txt" 2>&1
 installed=1
@@ -234,7 +241,9 @@ if kill -0 "$old" 2>/dev/null; then echo "old main process remains: $old" >&2; e
 await_health 'a b c d' Healthy
 sample abc apt-updated
 # Reuse identical UDP tuples after the fixed package is installed. Native
-# conntrack IDs must survive every stage; new connections cannot mask failure.
+# Healthy flows must keep their IDs. A changed masquerade output interface
+# destroys its old flow and drops one packet in Linux; allow one client resend
+# only for those affected tuples, never flush or repair product state manually.
 existing_sample() {
  local expected=$1 label=$2
  ip netns exec rd15-mclient python3 "$work/udp-client.py" > "$work/existing.jsonl"
@@ -251,14 +260,23 @@ for line in open(sys.argv[2]):
  mark=re.search(r'\bmark=(\d+)\b',line)
  assert source and identity and mark,line
  assert int(mark[1]) in {272+'abcd'.index(c) for c in sys.argv[4]},line
- entries[source[1]]=identity[1]
+ entries[source[1]]={'id':identity[1]}
 assert set(entries)=={r['client'] for r in rows},entries
 try:
- with open(sys.argv[3]) as f: assert json.load(f)==entries,'existing conntrack IDs were lost/replaced'
+ with open(sys.argv[3]) as f: previous=json.load(f)
 except FileNotFoundError:
- with open(sys.argv[3],'w') as f: json.dump(entries,f)
+ previous={}
+for row in rows:
+ client=row['client'];old=previous.get(client)
+ entries[client]['aftr']=row['aftr']
+ if old and old['aftr'] in sys.argv[4]:
+  assert entries[client]['id']==old['id'] and row['aftr']==old['aftr'] and row['attempts']==1,('healthy flow disturbed',old,row,entries[client])
+ else:
+  assert row['attempts'] in (1,2),row
+with open(sys.argv[3],'w') as f: json.dump(entries,f)
+print('UDP client retransmissions:',sum(r['attempts']-1 for r in rows))
 PYUDP
- echo "PASS: $label; 64 unchanged UDP conntrack IDs, peer paths $expected and translated sources"
+ echo "PASS: $label; 64 UDP tuples, healthy conntrack IDs retained, peer paths $expected and translated sources"
 }
 existing_sample abc existing-initial
 ip -n rd15-aftr-b link set aftr down
