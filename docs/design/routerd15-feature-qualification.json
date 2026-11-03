@@ -2119,6 +2119,32 @@
         "Cause of the observed interruption; arbitrary conntrackd instance names; PD/v6 lease synchronization.",
         "Shared-PD/four-AFTR HA, complete deployed-router equivalence, production cutover, release and full 1.0 parity."
       ]
+    },
+    "linux-ha-pair-followup-apt-b698cb1d": {
+      "level": "packaged-daemon-independent-peer",
+      "outcome": "fail",
+      "revision": "b698cb1df10520fe60a65910e8b99202866a68c8",
+      "reference": "docs/design/routerd15-audit.md#linux-packaged-ha-lifecycle-follow-up-2026-11-03",
+      "environment": "Two recertified dedicated Ubuntu 24.04 Linux guests; persistent isolated test links and cold boot; apt/systemd/keepalived/conntrackd; independent FRR and application/client namespaces.",
+      "package_versions": [
+        "1.5.0~20261103110542+gb698cb1df105"
+      ],
+      "package_sha256": [
+        "fcf1775ffdc18dc7fc9d38737a2f988ae747b7544d8cafa083ffcf02acd42c54"
+      ],
+      "fixture_sha256": "87a8bd94a9fe606f9de55358556e149106ab767c87778711eb6fb312c886ae04",
+      "checks": [
+        "Formal apt update/integrity, DHCP/DNS/BGP/FIB forwarding, sticky replication and original socket recovery executed successfully.",
+        "Packet capture exposed untranslated source packets during the 26.870-second recovery gap in the zero-NAT-rule standby fixture.",
+        "Returned node eventually became backup and received the latest renewed sticky lease, but transiently announced the shared WAN address using persisted master state.",
+        "New conntrackd and VMAC removal logic removed their native helpers, configuration/unit files and links.",
+        "Full withdrawal status still failed on removed BGP/lease-sync observations; full lifecycle verdict remains failed."
+      ],
+      "excludes": [
+        "Zero-rule standby NAT is not the inspected production condition: both deployed configurations retain two unconditional SNAT rules. Do not turn that unused condition into the first-target blocking gate.",
+        "Native qualification of the startup-role fix at 479f24d7; active daemon restart and full shared-PD/four-AFTR HA.",
+        "Separate FIB-withdrawal readback and complete deployed-router or baseline parity/release verdict."
+      ]
     }
   },
   "features": [
@@ -2471,7 +2497,8 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-vrrp-pve-81bc1768",
-          "linux-ha-pair-initial-apt-83414e60"
+          "linux-ha-pair-initial-apt-83414e60",
+          "linux-ha-pair-followup-apt-b698cb1d"
         ]
       },
       "freebsd": {
@@ -2905,7 +2932,8 @@
           "linux-bfd-bgp-native-d1cfff8a",
           "bgp-peer-readiness-64f4a479",
           "linux-bfd-both-modes-6aab35b5",
-          "linux-ha-pair-initial-apt-83414e60"
+          "linux-ha-pair-initial-apt-83414e60",
+          "linux-ha-pair-followup-apt-b698cb1d"
         ]
       },
       "freebsd": {
@@ -3273,7 +3301,8 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "linux-ha-pair-initial-apt-83414e60"
+          "linux-ha-pair-initial-apt-83414e60",
+          "linux-ha-pair-followup-apt-b698cb1d"
         ]
       },
       "freebsd": {
@@ -3768,7 +3797,8 @@
           "linux-multi-dslite-apt-fc5d7816",
           "linux-dslite-existing-flows-ee50d674",
           "linux-dslite-pd-apt-197bd70f",
-          "linux-ha-pair-initial-apt-83414e60"
+          "linux-ha-pair-initial-apt-83414e60",
+          "linux-ha-pair-followup-apt-b698cb1d"
         ]
       },
       "freebsd": {
@@ -3950,7 +3980,8 @@
         "scoped_evidence": [
           "linux-nonresource-code-c7f89dda",
           "linux-home-router-clean-install-999dfd4",
-          "linux-dualstack-recovery-6977c66e"
+          "linux-dualstack-recovery-6977c66e",
+          "linux-ha-pair-followup-apt-b698cb1d"
         ]
       },
       "freebsd": {

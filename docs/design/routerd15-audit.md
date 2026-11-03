@@ -3148,3 +3148,39 @@ reverse synchronization, active daemon restart/withdrawal, PD/v6 state and the
 shared-PD/four-AFTR combination with this HA path. The current promotion hook also
 uses the deployed `dslite-sessions` instance name; arbitrary sync resource names
 are not qualified. All full-feature and full-replacement verdicts remain unknown.
+
+### Linux packaged HA lifecycle follow-up, 2026-11-03
+
+**Not qualified.** Product `b698cb1df10520fe60a65910e8b99202866a68c8`,
+package `1.5.0~20261103110542+gb698cb1df105`, SHA256
+`fcf1775ffdc18dc7fc9d38737a2f988ae747b7544d8cafa083ffcf02acd42c54`.
+The two Linux guests were recertified after fixing the fixture's persistent
+LAN/WAN setup and performing an actual guest cold boot with clean product state.
+The same public pair fixture at `41640dc3` was used. Native observations refined
+the earlier socket-continuity result; recovering a socket is insufficient to
+qualify all packets or absence of competing ownership.
+
+| Executed path | Observed result |
+| --- | --- |
+| Packaged update | Both guests updated from the previous formal candidate through apt; package integrity and executed product revision matched. |
+| DHCP/DNS/BGP and sticky replication | Real acquisition, independent FRR sessions, allowed/denied FIB prefixes, traffic and receiver SQLite reads passed again. |
+| Power-loss recovery | Original TCP socket and UDP source port recovered without a client or standby-daemon restart. Response gap was 26.870 seconds. |
+| Packets during that gap | **Failed.** Before recovery the standby emitted the client's original source address. Successful later traffic did not make this interval correct. Both lab and production lacked bridge-netfilter hooks, ruling out the initially suspected bridge-filtering difference. |
+| Applicability to the first deployed target | The minimal fixture removes every NAT rule on backup. Both inspected deployed configurations retain two unconditional SNAT rules. The zero-rule condition remains a real regression scope, but is not imposed as a prerequisite on the first target that does not use it. Next target testing must preserve the deployed standby NAT condition. |
+| Returned active guest | Final role was backup and the latest renewed sticky lease synchronized back. **Failed transient ownership:** packet capture saw that guest announce the shared WAN address before settling as backup. Persisted master state reached startup consumers before live VRRP observation. |
+| Complete declaration withdrawal | The conntrackd/VMAC fixes stopped and removed their native helpers, files and links on both guests. Full runtime status still failed: removed BGP observations remained Reconverging, and an old lease-sync failure also survived in current issues. FIB withdrawal was not separately read back in this campaign. |
+| Local verification of the follow-up fixes | `d8c021c7` retires removed conntrackd instances with durable retries. Actual unprivileged systemd verified a retry after unit unlink; isolated kernel checks verified owned VMAC deletion and foreign-link preservation at `b698cb1d`. Full Go suite at that checkpoint: 122 passing packages, 14 without tests, exit 0; schema/examples and four-locale website passed. |
+
+The returned-node authority failure has a local RED at `2e9b15e8` and an initial
+fix at `479f24d7`: `Runner.Start` refreshes native VRRP role observations before
+building any controller generation or evaluating role-gated effects. Focused
+checks cover inactive/backup roles, preserving a live master on daemon restart,
+foreign configuration and cancellation. Native return with that fix is pending.
+The zero-rule NAT experiment also reproduced source leakage locally; retaining
+only empty base chains was insufficient, while retaining a conntrack expression
+preserved the existing binding. No speculative production NAT change was made.
+
+Both disposable guests and all their virtual disks were removed after the run;
+the base image remained and both production guests were read back as running.
+Only bounded current packet inputs for the unresolved regressions remain private.
+Do not mark a whole HA feature, full deployed replacement or release as passed.

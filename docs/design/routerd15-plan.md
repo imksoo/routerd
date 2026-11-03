@@ -77,8 +77,17 @@ sockets after active VM power loss. It observed a 26.902-second response gap,
 not hitless operation. Return was not qualified because the fixture network did
 not survive reboot; that campaign ended before environment repair. See the
 [scoped result](routerd15-audit.md#linux-packaged-ha-pair-initial-handover-2026-11-03).
-Finish cold-boot certification and return/reverse-sync/restart/withdrawal, then
-combine this HA path with shared PD/four AFTRs and the full target configuration.
+The recertified `b698cb1d` follow-up did not qualify the lifecycle: capture found
+transient shared-WAN ownership on return and untranslated packets in the minimal
+zero-rule-backup fixture. Native helper/VMAC withdrawal succeeded, while old BGP
+and lease-sync statuses still polluted empty-runtime health. See the
+[follow-up result](routerd15-audit.md#linux-packaged-ha-lifecycle-follow-up-2026-11-03).
+Prioritize the real returned-node authority defect (`2e9b15e8` RED,
+`479f24d7` initial fix) and actual deployed standby policy. Both inspected routers
+retain two unconditional SNAT rules; do not make an unused zero-rule case delay
+this first replacement milestone. Preserve it in the final regression scope.
+Finish native return/reverse-sync/restart/withdrawal with corrected startup,
+then combine HA with shared PD/four AFTRs and the full target configuration.
 This is not the full deployed-router qualification. Next Linux work must cover
 the real BGP/HA/when-role and lease/session synchronization combinations,
 remaining session modes and reboot with those combinations alongside the already
