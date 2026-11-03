@@ -3115,3 +3115,36 @@ this source combination. Existing results for those other client paths remain
 revision-bound. These are the next Linux integration concerns; they do not
 restore a FreeBSD prerequisite or declare the full deployed-router replacement
 ready. FreeBSD remains deferred and its nDPI exclusion remains in effect.
+
+### Linux packaged HA pair, initial handover, 2026-11-03
+
+Scoped checkpoint, not complete HA or deployed-router qualification. Product
+`83414e60824d0e097ca3b102668c8470c873153c`, formal package
+`1.5.0~20261103102340+g83414e60824d` (SHA256
+`19446957240f92a55d06710586fe3684685722dcffadd77d99f297e8d36127e1`),
+two dedicated Ubuntu 24.04 amd64 / Linux 6.8.0-124 guests with real systemd,
+keepalived, conntrackd, rsync/OpenSSH, busybox DHCP and independent FRR.
+The synthetic [pair fixture](../../tests/fixtures/linux-ha-pair.json) at
+`41640dc3` has SHA256
+`87a8bd94a9fe606f9de55358556e149106ab767c87778711eb6fb312c886ae04`.
+Its [procedure and remaining acceptance](../operations/linux-ha-pair-qualification.md)
+are the reproducible record; private VM identities and credentials stay private.
+
+| Executed path | Result and limit |
+| --- | --- |
+| SQLite synchronization checkpoint race | Actual local rsync previously reported Synced while losing a lease committed before synchronization. RED `abe522f1`; fix `83414e60` snapshots the read-only database with committed WAL contents before transfer. Real checkpoint/receiver reads, writer close, original receiver path, shared snapshot, failure/cancellation and cleanup checks pass. |
+| Native DHCP and sticky lease replication | Actual client acquired the offered gateway/DNS; source and standby SQLite queries found its hostname and lease after successful sync. This is DHCPv4 plus the shared sticky database, not PD/v6 lease qualification. |
+| BGP and forwarding | Both independent FRR sessions established; peer received the permitted LAN prefix. Both kernels installed the allowed learned prefix; an unpermitted advertised prefix stayed absent. TCP/UDP application traffic traversed the learned route with the shared SNAT source. |
+| Exclusive election and VMACs | Active node published the gateway and both VMACs; backup retained its VMAC links DOWN and did not publish the gateway. An initial test incorrectly required absent backup links; a local real-kernel fixture confirmed the correct DOWN contract before continuation. |
+| Actual active-VM power loss | Backup automatically promoted and published the gateway/VMACs. Original TCP socket and UDP source port resumed with the shared SNAT source; client and standby main PIDs remained unchanged. The independent server accepted exactly one TCP connection; no manual VIP or conntrack commit occurred. |
+| Interruption observation | Maximum application-response gap was **26.902 seconds**, between consecutive numbered responses; this is recovery with interruption, not hitless failover. Cause was not established by the later successful-flow capture. |
+| Active-node return | Not qualified. The test Ethernet scaffolding was not persistent across guest reboot, so the returned guest lacked its external LAN/WAN links. Ended this campaign and returned to environment certification; do not count this as a product pass or repair the environment inside qualification. |
+| Local checks | Full Go suite exit 0: 122 passing packages / 14 without tests; schema/examples, gofmt/diff and four-locale website at the snapshot-fix checkpoint pass. |
+
+The source snapshot protects against concurrent source writes/checkpoints; it
+does not fence receiver writers or atomically group all lease files. Remaining
+work includes the corrected cold-boot environment, non-preemptive return and
+reverse synchronization, active daemon restart/withdrawal, PD/v6 state and the
+shared-PD/four-AFTR combination with this HA path. The current promotion hook also
+uses the deployed `dslite-sessions` instance name; arbitrary sync resource names
+are not qualified. All full-feature and full-replacement verdicts remain unknown.

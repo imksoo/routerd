@@ -2092,6 +2092,33 @@
         "Custom/non-shared or RA source lifecycle; IPv6/SLAAC/IA_NA forwarding qualification in this gate",
         "BGP/HA/when-role transitions, lease/session synchronization, host reboot with this combination and the complete deployed-router replacement verdict"
       ]
+    },
+    "linux-ha-pair-initial-apt-83414e60": {
+      "level": "packaged-daemon-independent-peer",
+      "outcome": "pass",
+      "revision": "83414e60824d0e097ca3b102668c8470c873153c",
+      "reference": "docs/design/routerd15-audit.md#linux-packaged-ha-pair-initial-handover-2026-11-03",
+      "environment": "Two dedicated Ubuntu 24.04 amd64 / Linux 6.8.0-124 guests; formal apt packages, keepalived, conntrackd, real rsync/SSH, busybox DHCP client and independent FRR/application namespaces.",
+      "package_versions": [
+        "1.5.0~20261103102340+g83414e60824d"
+      ],
+      "package_sha256": [
+        "19446957240f92a55d06710586fe3684685722dcffadd77d99f297e8d36127e1"
+      ],
+      "fixture_sha256": "87a8bd94a9fe606f9de55358556e149106ab767c87778711eb6fb312c886ae04",
+      "reproduction": "docs/operations/linux-ha-pair-qualification.md; private infrastructure orchestration remains in the lab repository.",
+      "checks": [
+        "Real DHCPv4 lease and hostname present in source and standby SQLite after snapshot synchronization.",
+        "Both FRR sessions established; permitted LAN advertisement and learned kernel FIB route carry actual client traffic; unpermitted prefix absent.",
+        "Single active gateway and two VMACs; backup VMACs retained DOWN.",
+        "Active VM power loss automatically promoted standby and recovered the original TCP socket and UDP source port with shared SNAT source; one accepted TCP connection and unchanged client/standby main PIDs.",
+        "Observed maximum response gap 26.902 seconds; not a hitless handover claim."
+      ],
+      "excludes": [
+        "Full HA lifecycle: returned guest lacked nonpersistent test links, so return/reverse synchronization were not qualified; environment certification must precede another campaign.",
+        "Cause of the observed interruption; arbitrary conntrackd instance names; PD/v6 lease synchronization.",
+        "Shared-PD/four-AFTR HA, complete deployed-router equivalence, production cutover, release and full 1.0 parity."
+      ]
     }
   },
   "features": [
@@ -2443,7 +2470,8 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "linux-vrrp-pve-81bc1768"
+          "linux-vrrp-pve-81bc1768",
+          "linux-ha-pair-initial-apt-83414e60"
         ]
       },
       "freebsd": {
@@ -2876,7 +2904,8 @@
           "linux-combined-native-3e58c93a",
           "linux-bfd-bgp-native-d1cfff8a",
           "bgp-peer-readiness-64f4a479",
-          "linux-bfd-both-modes-6aab35b5"
+          "linux-bfd-both-modes-6aab35b5",
+          "linux-ha-pair-initial-apt-83414e60"
         ]
       },
       "freebsd": {
@@ -3023,7 +3052,8 @@
           "linux-home-router-dualstack-57bf7e35",
           "linux-dhcp-firewall-1f9fc319",
           "linux-home-router-clean-install-999dfd4",
-          "linux-dualstack-recovery-6977c66e"
+          "linux-dualstack-recovery-6977c66e",
+          "linux-ha-pair-initial-apt-83414e60"
         ]
       },
       "freebsd": {
@@ -3242,7 +3272,9 @@
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "linux-ha-pair-initial-apt-83414e60"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",
@@ -3340,7 +3372,8 @@
           "linux-dhcp-firewall-1f9fc319",
           "linux-wan-dhcpv4-1f9fc319",
           "linux-home-router-clean-install-999dfd4",
-          "linux-dualstack-recovery-6977c66e"
+          "linux-dualstack-recovery-6977c66e",
+          "linux-ha-pair-initial-apt-83414e60"
         ]
       },
       "freebsd": {
@@ -3734,7 +3767,8 @@
           "linux-dualstack-recovery-6977c66e",
           "linux-multi-dslite-apt-fc5d7816",
           "linux-dslite-existing-flows-ee50d674",
-          "linux-dslite-pd-apt-197bd70f"
+          "linux-dslite-pd-apt-197bd70f",
+          "linux-ha-pair-initial-apt-83414e60"
         ]
       },
       "freebsd": {

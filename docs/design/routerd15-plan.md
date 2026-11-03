@@ -71,6 +71,14 @@ removed DS and Interface statuses that had incorrectly degraded an empty router.
 See the [delegated-source result](routerd15-audit.md#linux-packaged-delegated-ds-lite-lifecycle-2026-11-03).
 All four deployed AFTRs use static IPv6 addresses; DNS-based AFTR discovery is
 not an additional prerequisite for this first replacement milestone.
+The `83414e60` snapshot fix also qualified a first two-guest HA handover with
+actual DHCP/sticky replication, BGP/FIB forwarding and the original TCP/UDP
+sockets after active VM power loss. It observed a 26.902-second response gap,
+not hitless operation. Return was not qualified because the fixture network did
+not survive reboot; that campaign ended before environment repair. See the
+[scoped result](routerd15-audit.md#linux-packaged-ha-pair-initial-handover-2026-11-03).
+Finish cold-boot certification and return/reverse-sync/restart/withdrawal, then
+combine this HA path with shared PD/four AFTRs and the full target configuration.
 This is not the full deployed-router qualification. Next Linux work must cover
 the real BGP/HA/when-role and lease/session synchronization combinations,
 remaining session modes and reboot with those combinations alongside the already
