@@ -34,7 +34,8 @@ case "$phase:${1:-}" in
         if [ -d /run/systemd/system ]; then stop_services; fi
         ;;
     postinst:configure)
-        "$agent" selftest | grep -q '"libndpiLoaded":true'
+        native_status=$("$agent" selftest)
+        printf '%s\n' "$native_status" | grep -q '"libndpiLoaded":true'
         if [ -d /run/systemd/system ]; then restore_services; fi
         ;;
     postinst:abort-upgrade|postinst:abort-remove|postinst:abort-deconfigure)
