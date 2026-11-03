@@ -79,8 +79,9 @@ while True:
  s.sendto(json.dumps({'aftr':sys.argv[1],'source':addr[0]}).encode(),addr)
 PYUDP
 cat > "$work/udp-client.py" <<'PYUDP'
+from concurrent.futures import ThreadPoolExecutor
 import json,socket
-for index in range(10,74):
+def exchange(index):
  with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as s:
   s.bind(('198.18.25.'+str(index),44000));s.settimeout(3)
   for attempt in range(2):
@@ -90,6 +91,11 @@ for index in range(10,74):
    except socket.timeout:
     if attempt==1: raise
   row.update(client='198.18.25.'+str(index),attempts=attempt+1)
+  return row
+# Bound wall time so unrelated healthy UDP entries do not expire while other
+# clients wait for the one kernel masquerade transition drop.
+with ThreadPoolExecutor(max_workers=16) as pool:
+ for row in pool.map(exchange,range(10,74)):
   print(json.dumps(row),flush=True)
 PYUDP
 # Environment preparation: no routerd is installed or running yet.
