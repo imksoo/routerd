@@ -155,6 +155,31 @@ func (s *RouterAdvertisementService) Reconcile(ctx context.Context, declared, ef
 		s.mu.Unlock()
 		return err
 	}
+	// A cold boot destroys the old kernel's advertised interface identity.
+	// Retire those receipts before opening sockets: a returning BACKUP VMAC
+	// is down and has no link-local source, and its peer now owns the shared
+	// identity. An old receipt must neither withdraw that peer's prefixes nor
+	// make an empty configuration depend on an unavailable socket.
+	if len(journal) > 0 {
+		scope, err := s.scope(ctx)
+		if err != nil {
+			s.mu.Unlock()
+			return err
+		}
+		retired := false
+		for ifname, receipt := range journal {
+			if receipt.Scope != scope {
+				delete(journal, ifname)
+				retired = true
+			}
+		}
+		if retired {
+			if err := saveRAJournal(store, journal); err != nil {
+				s.mu.Unlock()
+				return err
+			}
+		}
+	}
 	interfaces := map[string]bool{}
 	for ifname := range plans {
 		interfaces[ifname] = true

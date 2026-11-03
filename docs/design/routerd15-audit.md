@@ -3396,4 +3396,9 @@ existing convergence test. The fix requires MASTER exclusively, keeping
 `datapathState: Converging` while only that fallback is ready. Local policy
 regressions pass; integrated promotion remains unqualified until rerun. The
 cold-return/withdrawal cleanup also encountered an RA receipt from the prior
-boot before opening an unavailable link-local socket; that path is under repair.
+boot before opening an unavailable link-local socket. RED `a0d3da44` reproduces
+this through the actual SQLite journal and RA service. The service now retires
+receipts from another kernel scope before opening sockets or sending withdrawals;
+the old receipt cannot operate on a shared identity now owned by the active peer.
+Local RA and route-policy regressions pass. Post-handover native withdrawal is
+still unqualified; a stopped daemon is not a successful withdrawal result.

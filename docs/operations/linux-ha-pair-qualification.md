@@ -237,6 +237,11 @@ and require the same observations after automatic promotion of A. The third
 VM's persistent application and DHCPv4 client processes must remain unchanged
 throughout both fault tests.
 Use the same withdrawal criteria as the basic lifecycle on both routers.
+After cold return, an RA receipt from the previous boot must be retired before
+opening a socket on a standby VMAC without a link-local source. It must not send
+prefix withdrawal using the active peer's shared identity. Wait for both healthy
+empty status and actual native effect removal within the bounded cleanup wait;
+main-daemon stop alone is not confirmation of successful withdrawal.
 
 Bound each observation wait (allow over 60 seconds for the configured routing
 hysteresis) and the complete run to 30 minutes. Stop at a product failure;
