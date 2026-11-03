@@ -767,9 +767,8 @@ Before the first apply, set `Interface/management.spec.ifname` in the generated
 The generated admin zone already references that resource. This keeps management
 access in the intended firewall zone while test VLANs remain on the trunk.
 
-Dual-stack expansion is in progress. The prepared
-`tests/fixtures/linux-dualstack-reboot.json` replaces the static WAN IPv4 setup
-with DHCPv4, and combines managed WAN RA reception with PD, delegated LAN
+The dual-stack mode uses `tests/fixtures/linux-dualstack-reboot.json`, which
+replaces the static WAN IPv4 setup with DHCPv4 and combines managed WAN RA reception with PD, delegated LAN
 addressing, DHCPv6/RA and dual-stack DNS. Its configuration passes the real CLI
 validator. Router setup supplies a disabled networkd RA baseline on the fixture
 WAN; desired product resources enable reception. A third `setup-router` argument
@@ -795,8 +794,9 @@ commands then require dual-stack DNS A/AAAA over UDP/TCP, delegated client
 SLAAC/default route, peer-observed IPv6 forwarding, and IPv6 WAN-to-LAN/DNS
 isolation in addition to the IPv4 checks. The LAN IPv6 client is kernel SLAAC;
 this probe does not yet establish DHCPv6 IA_NA renewal/reboot behavior.
-The combined two-VM reboot campaign remains pending; the earlier IPv4 result
-does not qualify this new path.
+The combined two-VM reboot campaign passed at product `6977c66e` with fixture
+`96e00032`; see the scoped result below. The earlier IPv4 result alone does not
+qualify this path.
 
 The reboot fixture's DNS source has the default three-second per-upstream query
 deadline. Its independent-client DNS probes use a five-second `dig` deadline so
@@ -889,3 +889,29 @@ automatic recovery served its new DNS record. A reboot capture paired the
 client's first upstream query with the upstream reply and client response.
 This scoped result does not establish the cause of the earlier one-second
 probe failure or qualify IPv6 reboot or full 1.0 preservation.
+
+Two-VM dual-stack scoped result (2026-11-03): formal Linux package
+`6977c66e9b3eb31074aaac502d3618f8ff159a57`, archive SHA-256
+`c10fa0115dc98ba028e722d357c836b711bd40f7727d7d855ef3649f33887575`,
+with fixture `96e0003240341d4638ef5837cdfc430f645660f9`, passed fresh
+installation and all three recovery stages above. The Ubuntu 24.04 router
+booted Linux 6.8.0-147 after reboot; its independent peer stayed running.
+WAN DHCPv4, managed WAN RA/default-route discovery, DHCPv6-PD, delegated
+SLAAC/default route, local/upstream DNS A/AAAA over IPv4/IPv6 UDP/TCP,
+peer-observed IPv4 NAT and delegated IPv6 forwarding, management positive
+control and IPv4/IPv6 isolation passed before and after each interruption.
+The peer's boot ID, DHCPv4 PID and upstream RA/PD/DNS PIDs stayed unchanged;
+the same DHCPv4 address renewed after each interruption. SIGKILL and interrupted
+apply each caused one automatic systemd restart. The interrupted client reported
+an unconfirmed outcome; the new canonical DNS record resolved over both families
+and transports after recovery. WAN link-local identity stayed unchanged, and
+native deny counters were nonzero.
+
+The first attempt exposed a product regression: the Linux packet socket lost
+kernel checksum-offload metadata and discarded an independent dnsmasq OFFER.
+The real-kernel regression failed before `6977c66e` and passed after it; the
+package was then uninstalled and freshly installed before this successful run.
+This result covers the stated two-VM path, not LAN DHCPv6 IA_NA renewal/reboot,
+power-loss durability, other platforms or all routerd 1.0 functions.
+Successful teardown withdrew managed state, uninstalled the package and removed
+the two disposable VMs, their disks and temporary fixture media.

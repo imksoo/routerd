@@ -69,6 +69,15 @@ routerd 1.0 baseline: `e3b49dbb69c7de97bab9595884745eb7cbe93d92`.
   through its reply to the client. This current scoped path is qualified;
   broader dual-stack and 1.0 preservation checks remain open.
 
+- The independent two-VM dual-stack campaign passed at product `6977c66e`
+  with fixture `96e00032`: fresh install, WAN DHCPv4 and RA discovery, PD/SLAAC,
+  DNS A/AAAA UDP/TCP, NAT/IPv6 forwarding, isolation and automatic recovery after
+  router reboot, SIGKILL and interrupted apply. Peer processes stayed unchanged
+  and the same DHCPv4 lease renewed after each interruption. The initial native
+  OFFER loss exposed discarded checksum-offload metadata; a real-kernel
+  test-first regression and fix preceded the successful fresh-install run.
+  LAN DHCPv6 IA_NA renewal/reboot and broader feature/platform checks remain open.
+
 ## Work sequence
 
 ### 1. Resolve the post-reboot DNS observation

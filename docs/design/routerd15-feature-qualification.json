@@ -1,6 +1,6 @@
 {
   "format": "routerd15-feature-qualification/v1",
-  "updated_date": "2026-11-02",
+  "updated_date": "2026-11-03",
   "purpose": "Track preservation and qualification of every pre-1.5 routerd 1.0 function, including non-resource surfaces. This static design ledger is not a product registry, a release result or proof of functional parity.",
   "baseline_revision": "e3b49dbb69c7de97bab9595884745eb7cbe93d92",
   "inventory_snapshot_revision": "3da8d066e19535d27610d632391807db7968d1fc",
@@ -1836,6 +1836,29 @@
         "Packaged routerd boot-service installation or reboot in this daemon-only harness",
         "Complete routerd 1.0 functional preservation"
       ]
+    },
+    "linux-dualstack-recovery-6977c66e": {
+      "level": "packaged-daemon-independent-peer",
+      "outcome": "pass",
+      "revision": "6977c66e9b3eb31074aaac502d3618f8ff159a57",
+      "fixture_revision": "96e0003240341d4638ef5837cdfc430f645660f9",
+      "archive_sha256": "c10fa0115dc98ba028e722d357c836b711bd40f7727d7d855ef3649f33887575",
+      "reference": "docs/operations/development.md#two-vm-reboot-and-interrupted-apply-gate",
+      "environment": "Two dedicated Ubuntu 24.04 KVM guests; router kernel 6.8.0-147 after reboot; independent BusyBox DHCPv4, dnsmasq, radvd, Kea and HTTP peer.",
+      "checks": [
+        "Fresh formal-package install reached Healthy with 25 resources; independent peer verified WAN DHCPv4, WAN RA/default route, DHCPv6-PD, delegated SLAAC, dual-stack local/upstream DNS A/AAAA UDP/TCP, IPv4 NAT and IPv6 forwarding.",
+        "Router reboot, SIGKILL and interrupted apply each recovered automatically within the maintained bounds; both family probes, management positive control and isolation passed after each stage.",
+        "Independent peer boot ID, DHCPv4 PID and RA/PD/DNS PIDs remained unchanged; the same DHCPv4 address renewed after each interruption.",
+        "Interrupted apply returned an unconfirmed failure; its new canonical DNS record resolved over IPv4/IPv6 UDP/TCP after automatic restart. WAN link-local stayed unchanged and native deny counters were nonzero.",
+        "Initial OFFER loss was reproduced locally with actual kernel pending-checksum metadata: test-first 0f419f96 failed, fix 6977c66e passed; successful campaign followed a fresh install.",
+        "Empty-config withdrawal and formal uninstall passed; removed both disposable VMs, their disks and temporary fixture media."
+      ],
+      "excludes": [
+        "LAN DHCPv6 IA_NA renewal/reboot",
+        "Power-loss durability, other interruption points and physical ISP behavior",
+        "FreeBSD/NixOS runtime and complete routerd 1.0 parity",
+        "Production deployment or release qualification"
+      ]
     }
   },
   "features": [
@@ -2711,7 +2734,8 @@
           "linux-wan-first-apply-4ac07b78",
           "normal-code-gate-31d5f4d4",
           "linux-wan-dhcpv4-1f9fc319",
-          "linux-home-router-clean-install-999dfd4"
+          "linux-home-router-clean-install-999dfd4",
+          "linux-dualstack-recovery-6977c66e"
         ]
       },
       "freebsd": {
@@ -2761,7 +2785,8 @@
           "linux-home-router-recovery-13b7a5b9",
           "linux-home-router-dualstack-57bf7e35",
           "linux-dhcp-firewall-1f9fc319",
-          "linux-home-router-clean-install-999dfd4"
+          "linux-home-router-clean-install-999dfd4",
+          "linux-dualstack-recovery-6977c66e"
         ]
       },
       "freebsd": {
@@ -2841,7 +2866,8 @@
           "linux-dhcpv6-native-d05524de",
           "linux-wan-ra-lifecycle-1392082f",
           "linux-home-router-dualstack-57bf7e35",
-          "linux-home-router-clean-install-999dfd4"
+          "linux-home-router-clean-install-999dfd4",
+          "linux-dualstack-recovery-6977c66e"
         ]
       },
       "freebsd": {
@@ -2886,7 +2912,8 @@
         "scoped_evidence": [
           "linux-pd-ra-lifecycle-1392082f",
           "linux-home-router-dualstack-57bf7e35",
-          "linux-home-router-clean-install-999dfd4"
+          "linux-home-router-clean-install-999dfd4",
+          "linux-dualstack-recovery-6977c66e"
         ]
       },
       "freebsd": {
@@ -3073,7 +3100,8 @@
           "linux-home-router-dualstack-57bf7e35",
           "linux-dhcp-firewall-1f9fc319",
           "linux-wan-dhcpv4-1f9fc319",
-          "linux-home-router-clean-install-999dfd4"
+          "linux-home-router-clean-install-999dfd4",
+          "linux-dualstack-recovery-6977c66e"
         ]
       },
       "freebsd": {
@@ -3457,7 +3485,8 @@
           "linux-portforward-b57fc473",
           "linux-nat44-source-snat-fb971db4",
           "linux-local-service-redirect-3bb5e7c3",
-          "linux-home-router-clean-install-999dfd4"
+          "linux-home-router-clean-install-999dfd4",
+          "linux-dualstack-recovery-6977c66e"
         ]
       },
       "freebsd": {
@@ -3554,7 +3583,8 @@
           "linux-home-router-recovery-13b7a5b9",
           "linux-home-router-dualstack-57bf7e35",
           "linux-dhcp-firewall-1f9fc319",
-          "linux-home-router-clean-install-999dfd4"
+          "linux-home-router-clean-install-999dfd4",
+          "linux-dualstack-recovery-6977c66e"
         ]
       },
       "freebsd": {
@@ -3637,7 +3667,8 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-nonresource-code-c7f89dda",
-          "linux-home-router-clean-install-999dfd4"
+          "linux-home-router-clean-install-999dfd4",
+          "linux-dualstack-recovery-6977c66e"
         ]
       },
       "freebsd": {
@@ -3720,7 +3751,8 @@
           "linux-packaged-service-6135bb03",
           "linux-serviceunit-feedback-919499c4",
           "linux-wan-ra-lifecycle-1392082f",
-          "linux-home-router-clean-install-999dfd4"
+          "linux-home-router-clean-install-999dfd4",
+          "linux-dualstack-recovery-6977c66e"
         ]
       },
       "freebsd": {
@@ -3846,7 +3878,8 @@
         "scoped_evidence": [
           "linux-packaged-service-6135bb03",
           "linux-nonresource-code-c7f89dda",
-          "linux-home-router-clean-install-999dfd4"
+          "linux-home-router-clean-install-999dfd4",
+          "linux-dualstack-recovery-6977c66e"
         ]
       },
       "freebsd": {

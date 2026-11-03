@@ -584,7 +584,7 @@ Python HTTP server、curl、dig を使います。両方に iproute2、jq、syst
 生成済みの admin zone はこの resource を参照するため、管理経路と試験 VLAN を
 それぞれ適切な NIC に割り当てられます。
 
-dual-stack 拡張は作業中です。`tests/fixtures/linux-dualstack-reboot.json` は静的 WAN IPv4 を
+dual-stack mode の `tests/fixtures/linux-dualstack-reboot.json` は静的 WAN IPv4 を
 DHCPv4 に置き換え、WAN RA 受信、PD、LAN の委譲 address・DHCPv6/RA、dual-stack DNS を
 組み合わせた設定で、実 CLI の validate が通っています。router 側 fixture は WAN の
 networkd RA 受信を無効にした初期状態を作り、製品 resource が受信を有効にします。
@@ -605,7 +605,8 @@ DHCP socket、IPv6 HTTP/DNS の正対照を確認します。Kea の active だ�
 通常の `probe` と `isolation` が IPv4/IPv6 の DNS A/AAAA UDP/TCP、委譲 prefix の
 SLAAC/default route、対向が観測した IPv6 送信元、IPv6 WAN-to-LAN/DNS 遮断も検査します。
 LAN IPv6 client は kernel SLAAC で、DHCPv6 IA_NA の更新・再起動はこの probe では未確認です。
-統合した2 VM 再起動試験は未実施で、旧 IPv4 の合格結果をこの経路の合格とは扱いません。
+統合した2 VM 再起動試験は製品 `6977c66e`・fixture `96e00032` で合格しました。
+旧 IPv4 の結果だけをこの経路の合格とは扱いません。
 
 上流 DNS の問い合わせ期限は既定で3秒です。`dig` は5秒待ち、resolver が許容された
 期限内に応答する前に試験クライアントが諦めることを防ぎます。応答時間の目標値では
@@ -677,6 +678,25 @@ router 再起動、main process の SIGKILL、設定ファイル置換後かつ�
 再起動後の最初の上流問い合わせは client query・upstream reply・client response を
 capture で対応付けました。過去の1秒 probe 失敗の原因、IPv6 再起動、1.0 全機能維持を
 証明する結果ではありません。
+
+2 VM dual-stack 限定検証（2026-11-03）では正式 Linux パッケージ
+`6977c66e9b3eb31074aaac502d3618f8ff159a57`、archive SHA-256
+`c10fa0115dc98ba028e722d357c836b711bd40f7727d7d855ef3649f33887575`、
+fixture `96e0003240341d4638ef5837cdfc430f645660f9` を使いました。
+Ubuntu 24.04 router は再起動後 Linux 6.8.0-147 で動作し、独立 peer は動かし続けました。
+新規導入・router 再起動・SIGKILL・設定適用中断の各段階で、WAN DHCPv4、WAN RA による
+アドレスと default route、PD、LAN SLAAC、両 family の DNS A/AAAA UDP/TCP、
+対向で確認した NAT と IPv6 転送、管理経路、IPv4/IPv6 遮断が通りました。
+peer の boot ID・DHCP PID・上流 RA/PD/DNS PID は同一で、各中断後も同じ DHCPv4
+アドレスの更新を確認しました。SIGKILL と適用中断はそれぞれ systemd の自動再起動1回で
+復旧しました。中断 apply は結果未確認の失敗を返し、復旧後に追加 DNS record を
+両 family・UDP/TCP で確認しました。WAN link-local は同一、native deny counter も非ゼロです。
+
+初回は checksum offload metadata を捨てたため独立 dnsmasq の OFFER を受信できない
+製品回帰がありました。実 kernel 回帰試験の修正前 FAIL・修正後 PASS を確認し、
+旧 package を撤去して修正版を新規導入してから上記を確認しました。
+LAN DHCPv6 IA_NA の更新・再起動、電源断、他 OS、1.0 全機能維持はこの結果の対象外です。
+成功後は管理状態の撤去と package uninstall を確認し、専用 VM 2台・disk・一時 media も削除しました。
 
 ## Linux WAN RA/SLAAC ライフサイクル試験
 
