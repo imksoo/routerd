@@ -7,6 +7,25 @@
   "spec": {
     "resources": [
       {
+        "apiVersion": "system.routerd.net/v1alpha1",
+        "kind": "Package",
+        "metadata": {
+          "name": "conntrackd"
+        },
+        "spec": {
+          "state": "present",
+          "packages": [
+            {
+              "os": "ubuntu",
+              "manager": "apt",
+              "names": [
+                "conntrackd"
+              ]
+            }
+          ]
+        }
+      },
+      {
         "apiVersion": "net.routerd.net/v1alpha1",
         "kind": "Interface",
         "metadata": {
@@ -190,6 +209,27 @@
                 "equals": "master"
               }
             }
+          }
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "NAT44Rule",
+        "metadata": {
+          "name": "always-peer-snat"
+        },
+        "spec": {
+          "type": "snat",
+          "egressInterface": "wan",
+          "sourceRanges": [
+            "198.18.30.0/24"
+          ],
+          "destinationCIDRs": [
+            "198.18.31.10/32"
+          ],
+          "snatAddressFrom": {
+            "resource": "IPv4StaticAddress/wan-host",
+            "field": "address"
           }
         }
       },

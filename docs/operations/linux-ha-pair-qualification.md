@@ -8,6 +8,15 @@ gated DHCP/DNS/NAT, sticky leases, SSH lease synchronization, conntrackd and BGP
 It does not yet include the previously qualified shared PD/four-AFTR topology,
 so passing this procedure alone is not full deployed-router equivalence.
 
+The deployed pair retains unconditional SNAT rules on the standby. The fixture
+models that condition with `always-peer-snat`: LAN traffic to `198.18.31.10`
+uses the node's own WAN address, while traffic to the BGP-learned application
+prefix uses the role-gated shared address. Make the application peer listen on
+both addresses and check the independent unconditional path as well. Removing
+this rule creates a separate zero-NAT-rules standby regression case; do not
+confuse its result with qualification of the deployed condition. Initial results
+from the older fixture did not include this unconditional rule.
+
 ## Environment certification
 
 Before starting routerd, finish OS initialization, install package dependencies
@@ -18,6 +27,8 @@ LAN/WAN. Connect the guests through two isolated Ethernet segments; do not add
 routes or change bridges on a production host. Test both segments and peer SSH
 before qualification. Stop distribution FRR/conntrackd/keepalived services before
 routerd takes ownership; do not repair the environment during qualification.
+Make guest test links persistent and cold-boot both guests during certification,
+so a later router power-cycle does not require repairing the test network.
 
 The checked-in fixture describes node A. For B, change the LAN and WAN host
 addresses from `.2` to `.3`, VRRP priority from 150 to 100 and its peer to `.2`,
@@ -59,6 +70,9 @@ successful new connections do not prove existing connection survival.
    traffic must remain usable through B's established peer session.
 6. Start A again and verify non-preemptive standby behavior, no competing shared
    addresses, reverse lease/session synchronization and new client service.
+   Capture the WAN segment before A boots and inspect the whole startup interval
+   for shared-address ARP announcements from A's physical MAC. A final backup
+   status alone cannot exclude transient duplicate ownership during startup.
    Restart the active main daemon without manually changing native state and
    verify service/ownership recovery. Withdraw the configuration on both nodes:
    zero declared resources, no current controller errors and no owned helpers,
