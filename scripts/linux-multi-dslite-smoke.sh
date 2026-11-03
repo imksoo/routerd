@@ -138,11 +138,11 @@ sample() {
   if python3 - "$work/policy-native.txt" "$work/default-native.txt" "$expected" <<'PY'
 import re,sys
 policy=open(sys.argv[1]).read(); default=open(sys.argv[2]).read(); expected=sys.argv[3]
-marks={int(x,16) for line in policy.splitlines() if 'jhash' in line for x in re.findall(r':\s*(0x[0-9a-f]+)',line)}
+marks={int(x,16) for x in re.findall(r':\s*(0x[0-9a-f]+)',policy)}
 if expected=='d':
  assert not marks and any(int(x,16)==275 for x in re.findall(r'meta mark set (0x[0-9a-f]+)',default))
 else:
- assert marks=={272+'abcd'.index(letter) for letter in expected}
+ assert 'jhash' in policy and marks=={272+'abcd'.index(letter) for letter in expected}
 PY
   then ready=1; break; fi
   sleep 1
