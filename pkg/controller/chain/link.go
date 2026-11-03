@@ -15,11 +15,12 @@ import (
 )
 
 type LinkController struct {
-	Router        *api.Router
-	Store         Store
-	Command       func(context.Context, string, ...string) error
-	Lookup        func(string) (*net.Interface, error)
-	ReadAddresses func(*net.Interface) ([]net.Addr, error)
+	Router         *api.Router
+	DeclaredRouter *api.Router
+	Store          Store
+	Command        func(context.Context, string, ...string) error
+	Lookup         func(string) (*net.Interface, error)
+	ReadAddresses  func(*net.Interface) ([]net.Addr, error)
 }
 
 func (c LinkController) Reconcile(ctx context.Context) error {
