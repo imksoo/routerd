@@ -27,8 +27,8 @@ const dsliteNativeStatusName = "dslite-native"
 
 var errDSLiteInputsChanged = errors.New("DS-Lite source or dependency changed")
 
-// Called after native tunnel and delegated endpoint cleanup. A tunnel that has
-// never activated has no native receipt to drive withdrawal/status retirement.
+// Called after native tunnel and delegated endpoint cleanup. Pending and
+// disabled tunnels can have no remaining receipt to drive status retirement.
 func (c DSLiteTunnelController) cleanupRemovedDormantTunnelStatuses() error {
 	if c.DryRun {
 		return nil
@@ -69,10 +69,14 @@ func (c DSLiteTunnelController) cleanupRemovedDormantTunnelStatuses() error {
 		return err
 	}
 	for _, object := range statuses {
-		if object.APIVersion != api.NetAPIVersion || object.Kind != "DSLiteTunnel" || retained[object.Name] || object.Status["dryRun"] == true || object.Status["phase"] != PhaseDisabled {
+		if object.APIVersion != api.NetAPIVersion || object.Kind != "DSLiteTunnel" || retained[object.Name] || object.Status["dryRun"] == true {
 			continue
 		}
-		if reason := object.Status["reason"]; reason != "WhenFalse" && reason != "Disabled" {
+		phase, reason := object.Status["phase"], object.Status["reason"]
+		if phase != "Pending" && phase != PhaseDisabled {
+			continue
+		}
+		if phase == PhaseDisabled && reason != "WhenFalse" && reason != "Disabled" {
 			continue
 		}
 		if err := store.DeleteObject(object.APIVersion, object.Kind, object.Name); err != nil {

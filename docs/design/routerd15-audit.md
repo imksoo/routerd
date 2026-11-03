@@ -3520,6 +3520,23 @@ pins withdrawal order, retry after absent VMACs, foreign protection and failure
 propagation. The correction validates all retained VMAC identities, explicitly
 withdraws each configured deferred gateway, then revalidates and deletes the
 links. A failure retains the generated configuration for retry. Focused ordinary
-and isolated kernel checks now pass. Formal-package native withdrawal of this
-correction remains pending; the successful communication results above retain
-their narrower scope.
+and isolated kernel checks now pass. The formal package at `4cb2451b` passed all Go/schema/example/website checks.
+A focused three-VM run confirmed that the master could restart with its VIP
+published, then empty configuration removed the VIP, VMACs, helpers, configuration
+and learned FIB on both routers. The complete empty-health check failed on A
+because an undeclared DS-Lite Pending status remained. B reached Healthy.
+The successful communication results above retain their narrower scope.
+
+
+### Retiring withdrawn pending DS-Lite status (2026-11-03)
+
+The focused `4cb2451b` withdrawal retained only `DSLiteTunnel/ds-a` status
+Pending/SourceOrDependencyChanged after all native effects had disappeared.
+The endpoint/native tunnel journals were already clear. The existing dormant
+status cleanup handled Disabled declarations but skipped Pending records left
+by an interrupted source/dependency check. RED `47bf1c7b` reproduces this and
+other unactivated Pending reasons. After native cleanup, an undeclared Pending
+record with no retained tunnel or endpoint receipt is now retired through the
+same checked deletion path. Declared resources, native receipts, dry-run and
+read/delete errors retain their existing protections. Focused tests pass;
+formal-package empty-health/reopen confirmation remains pending.
