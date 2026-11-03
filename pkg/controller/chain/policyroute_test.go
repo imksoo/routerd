@@ -457,7 +457,7 @@ func TestIPv4PolicyRoutePublishesHADatapathConvergence(t *testing.T) {
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "ipv4-default"}, Spec: api.EgressRoutePolicySpec{
 			Mode: "priority", HashFields: []string{"sourceAddress"}, Candidates: []api.EgressRoutePolicyCandidate{
 				{Name: "dslite", Weight: 120, When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"VirtualAddress/lan-gw.role": {Equals: "master"}}}, Targets: []api.EgressRoutePolicyTarget{{Name: "a", Interface: "ds-lite-a", Table: 110, Priority: 10110, Mark: 0x110, HealthCheck: "internet-a"}}},
-				{Name: "fallback", Weight: 60, Interface: "lo", GatewaySource: "none", Table: 114, Priority: 10114, Mark: 0x114},
+				{Name: "fallback", Weight: 60, Interface: "lo", GatewaySource: "none", Table: 114, Priority: 10114, Mark: 0x114, When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"VirtualAddress/lan-gw.role": {In: []string{"master", "backup"}}}}},
 			},
 		}},
 	}}}
