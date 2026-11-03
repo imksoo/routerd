@@ -3983,7 +3983,8 @@
       },
       "required_remaining_checks": [
         "All baseline artifacts/architectures and retained notices",
-        "Release provenance and target-package clean-install qualification using a validated routerd 1.5 configuration"
+        "Release provenance and target-package clean-install qualification using a validated routerd 1.5 configuration",
+        "Package-owned FreeBSD native libnDPI 5.0 clean install/update; baseline native backend must not be reduced to the static agent"
       ]
     },
     {
