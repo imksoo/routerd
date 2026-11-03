@@ -59,7 +59,7 @@ trap cleanup EXIT
 printf '%s\n' '{"apiVersion":"routerd.net/v1alpha1","kind":"Router","metadata":{"name":"empty"},"spec":{"resources":[]}}' > "$work/empty.json"
 jq --arg dev "$management" '.spec.resources |= map(if .kind=="Interface" and .metadata.name=="management" then .spec.ifname=$dev else . end)' "$fixture" > "$work/router.json"
 /usr/sbin/routerd validate --config "$work/router.json"
-cat > "$work/http.py" <<'PY'
+cat > "$work/aftr-peer.py" <<'PY'
 import http.server,json,sys
 class Handler(http.server.BaseHTTPRequestHandler):
  def do_GET(self):
@@ -88,7 +88,7 @@ for letter in a b c d; do
  ip -n "$ns" -4 address add 192.0.0.1/32 peer 192.0.0.2/32 dev aftr
  ip -n "$ns" link set aftr mtu 1460 up
  ip -n "$ns" -4 address add 203.0.113.80/32 dev lo
- ip netns exec "$ns" python3 "$work/http.py" "$letter" > "$work/peer-$letter.txt" 2>&1 & peers+=("$!")
+ ip netns exec "$ns" python3 "$work/aftr-peer.py" "$letter" > "$work/peer-$letter.txt" 2>&1 & peers+=("$!")
  for _ in {1..30}; do
   if ip netns exec "$ns" curl --noproxy '*' -fsS --max-time 1 http://203.0.113.80:8080/ >/dev/null 2>&1; then break; fi
   sleep .1
