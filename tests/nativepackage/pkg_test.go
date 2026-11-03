@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -65,5 +66,49 @@ func TestFreeBSDNativePackageOwnershipAndUpgradeHooks(t *testing.T) {
 		if _, err := os.Lstat(filepath.Join(root, path)); !os.IsNotExist(err) {
 			t.Errorf("package must not ship %s: %v", path, err)
 		}
+	}
+	if manifest.Scripts["pre-install"] != "" {
+		t.Run("native hook stop and restore", func(t *testing.T) {
+			base, bin, rc := t.TempDir(), t.TempDir(), t.TempDir()
+			state := filepath.Join(base, "restart")
+			running := filepath.Join(base, "running")
+			if err := os.WriteFile(running, nil, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(rc, "routerd"), []byte("#!/bin/sh\n"), 0755); err != nil {
+				t.Fatal(err)
+			}
+			fake := "#!/bin/sh\ncase \"$2\" in\nonestatus) test -f \"$TEST_RUNNING\";;\nonestop) rm -f \"$TEST_RUNNING\";;\nonestart) touch \"$TEST_RUNNING\";;\n*) exit 91;;\nesac\n"
+			if err := os.WriteFile(filepath.Join(bin, "service"), []byte(fake), 0755); err != nil {
+				t.Fatal(err)
+			}
+			for _, phase := range []string{"pre-install", "post-install"} {
+				body := strings.ReplaceAll(manifest.Scripts[phase], "/usr/local/etc/rc.d", rc)
+				body = strings.ReplaceAll(body, "/var/run/routerd-package", state)
+				script := filepath.Join(base, phase)
+				if err := os.WriteFile(script, []byte(body), 0755); err != nil {
+					t.Fatal(err)
+				}
+				cmd := exec.Command("sh", script)
+				cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "TEST_RUNNING="+running)
+				if output, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("%s with native BSD file utilities: %v %s", phase, err, output)
+				}
+				if phase == "pre-install" {
+					if _, err := os.Stat(running); !os.IsNotExist(err) {
+						t.Fatalf("old service remained: %v", err)
+					}
+					if intent, err := os.ReadFile(filepath.Join(state, "restart-units")); err != nil || string(intent) != "routerd\n" {
+						t.Fatalf("missing recovery intent: %q %v", intent, err)
+					}
+				}
+			}
+			if _, err := os.Stat(running); err != nil {
+				t.Fatal("prior active service was not restored:", err)
+			}
+			if _, err := os.Stat(state); !os.IsNotExist(err) {
+				t.Fatalf("native hook left temporary state: %v", err)
+			}
+		})
 	}
 }
