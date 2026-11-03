@@ -93,13 +93,26 @@ def pkg(root, output, version, arch):
                 "uname": "root", "gname": "wheel", "perm": f"{path.stat().st_mode & 0o777:04o}"
             }
             size += path.stat().st_size
+    # Record dependency versions/origins from the native build environment,
+    # exactly as a normal ports build does; never fabricate package metadata.
+    installed = subprocess.check_output(["pkg", "query", "-a", "%n\t%v\t%o"], text=True)
+    dependencies = {}
+    for line in installed.splitlines():
+        name, dep_version, origin = line.split("\t")
+        if name in ("dnsmasq", "ca_root_nss"):
+            dependencies[name] = {"version": dep_version, "origin": origin}
+    if set(dependencies) != {"dnsmasq", "ca_root_nss"}:
+        raise SystemExit("native pkg build requires installed dnsmasq and ca_root_nss build dependencies")
+    service = (REPO / "packaging/native/freebsd-service.sh").read_text()
+    scripts = {phase: service.replace("set -eu\n", f"set -eu\nphase={phase}\n", 1)
+               for phase in ("pre-install", "post-install", "pre-deinstall", "post-deinstall")}
     manifest = {
         "name": "routerd", "version": version, "origin": "net/routerd",
         "comment": "Declarative router daemon", "desc": "Clean-OS native routerd installation",
         "maintainer": "kirino.minato@gmail.com", "www": "https://github.com/imksoo/routerd",
         "prefix": "/usr/local", "abi": f"FreeBSD:14:{'aarch64' if arch == 'arm64' else arch}",
         "licenselogic": "single", "licenses": ["BSD3CLAUSE"],
-        "flatsize": size, "files": files,
+        "flatsize": size, "files": files, "deps": dependencies, "scripts": scripts,
     }
     metadata = root.parent / "+MANIFEST"
     metadata.write_text(json.dumps(manifest))
