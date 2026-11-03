@@ -71,6 +71,15 @@ func TestDebOwnsNativeFilesAndLeavesOperatorConfigurationAbsent(t *testing.T) {
 			t.Errorf("package must not ship %s: %v", path, err)
 		}
 	}
+	for _, path := range []string{"usr", "usr/bin", "usr/lib", "usr/lib/systemd/system", "usr/share/doc/routerd/examples"} {
+		info, err := os.Stat(filepath.Join(root, path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0755 {
+			t.Errorf("native directory %s has mode %o, want 755 independent of build umask", path, info.Mode().Perm())
+		}
+	}
 }
 
 func TestDebRejectsWrongPayloadArchitecture(t *testing.T) {
