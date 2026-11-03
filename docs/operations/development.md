@@ -518,6 +518,51 @@ the isolated WAN, and cleanup removes that exact fixture route. This gate exerci
 through that route; it does not claim to qualify `IPv6StaticRoute` rendering or
 WAN router-advertisement discovery.
 
+## Linux delegated-source DS-Lite package gate
+
+`scripts/linux-dslite-pd-smoke.sh` extends independent PD/DS-Lite checks to the
+four-source deployment path: one real Kea /60, four managed WAN /128 addresses
+shared by four DS-Lite tunnels, delegated LAN addressing, source-hash primary
+routing and lower-weight fallback. It uses the apt-installed service and native
+paths under `/usr`, `/etc/routerd` and `/var/lib/routerd`. No old-install adoption
+or configuration migration is involved.
+
+Use a clean dedicated Ubuntu VM with independent management access. Install the
+formal `.deb` with apt but do not start or configure it. Complete OS preparation
+first and install iproute2, nftables, jq, curl, Python 3, conntrack, tcpdump and
+`kea-common`. Extract a matching `kea-dhcp6-server` package into a root-owned
+fixture directory. Its private executable avoids the installed server profile's
+restrictions on temporary fixture configuration; it is an independent peer, not
+an alternate product binary. Verify `ldd` has no missing libraries and `kea-dhcp6
+-v` succeeds. The local peer preparation uses real DHCP acquisition before the
+VM campaign; the VM gate itself checks the peer configuration/listener, IPv6
+underlay, DAD and independent HTTP listeners before starting routerd.
+
+```sh
+sudo bash scripts/linux-dslite-pd-smoke.sh --disposable-vm \
+  tests/fixtures/linux-dslite-pd.json /opt/routerd15-fixtures/kea eth0
+```
+
+Pass requires actual delegated /128 sources with finite native lifetimes,
+matching kernel tunnel endpoints and 64-source stable forwarding observed by
+independent AFTRs. Natural Renew must advance the lease transaction. Changing
+only Kea's pool and independent AFTR return endpoints must replace the four
+sources and remove the revoked prefix without restarting routerd or Kea.
+Restart must recover the new delegated paths. Stopping only Kea must naturally
+expire the lease and remove all four sources/tunnels, the LAN address and client
+forwarding. Restarting only that peer must recover forwarding without product
+repair. Empty apply must withdraw sources/tunnels and converge to Healthy with
+zero resources and no current controller errors.
+
+The two peer prefixes are documentation addresses. AFTR return endpoints are
+prepared for the replacement prefix before Kea advertises it; this changes the
+independent network, never product state. Successful raw output and namespace
+fixtures are removed. Failures retain bounded capture/status output for local
+reproduction; stop the run before debugging and remove the disposable VM when
+finished. This gate does not prove ISP AFTR/DNS discovery, BGP/HA or lease/session
+synchronization. The maintained procedure is not a pass until its executed
+product/harness revisions and outcome are recorded in the qualification ledger.
+
 ## Linux multi-path DS-Lite package gate
 
 Deferred main-service handoffs use a timer with

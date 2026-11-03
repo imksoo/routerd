@@ -402,6 +402,45 @@ fixture の上流 IPv6 default route は metric 50 とし、管理 NIC の metri
 与えます。この試験はその経路を通る IPv6 転送を確認しますが、`IPv6StaticRoute` の設定レンダリングや
 WAN Router Advertisement の取得までは検証しません。
 
+## Linux の PD 由来 DS-Lite 送信元・パッケージ試験
+
+`scripts/linux-dslite-pd-smoke.sh` は、独立した Kea から /60 を取得し、
+4つの管理された WAN /128 を4本の DS-Lite が共用する実装経路を検査します。
+委譲 LAN アドレス、送信元ハッシュの主系と低優先度の予備を含みます。
+apt で導入したサービスと `/usr`・`/etc/routerd`・`/var/lib/routerd` の
+標準パスを使い、旧導入状態の取り込みや設定移行は行いません。
+
+独立した管理経路を持つクリーンな専用 Ubuntu VM に正式な `.deb` を apt で
+導入し、サービスを起動・設定する前に実行します。OS 準備を済ませ、iproute2、
+nftables、jq、curl、Python 3、conntrack、tcpdump、`kea-common` を導入します。
+対応する `kea-dhcp6-server` を root 所有の試験ディレクトリへ展開し、`ldd` の
+不足がなく `kea-dhcp6 -v` が動くことを確認してください。独立相手の実行ファイルを
+別のパスに置くのは、通常サーバー用の制限と一時設定の競合を避けるためです。
+製品バイナリの差し替えは行いません。VM 試験前のローカル準備では実 DHCP 取得を
+確認し、VM 側では設定・待受・IPv6 経路・DAD・各 HTTP 相手を確認してから
+routerd を起動します。
+
+```sh
+sudo bash scripts/linux-dslite-pd-smoke.sh --disposable-vm \
+  tests/fixtures/linux-dslite-pd.json /opt/routerd15-fixtures/kea eth0
+```
+
+合格条件は、有限の期限を持つ /128 と一致するトンネル送信元、独立相手が
+観測する64送信元の安定した転送、自然な Renew での取得時刻更新です。
+Kea のプールと相手 AFTR の戻り先だけを変更した場合、両デーモンを再起動せずに
+4送信元を置換し、失効した旧プレフィックスを除去することを確認します。
+routerd 再起動後も復旧し、Kea だけの停止では自然失効によって4送信元・
+トンネル・LAN アドレス・転送が撤回されること、相手だけの再起動で自動復旧する
+ことを要求します。空設定への置換は、送信元とトンネルを撤回し、リソース0・
+コントローラーの現在エラーなしの Healthy に収束することを確認します。
+
+相手側の戻り先は、新しい PD を通知する前に文書用プレフィックスへ準備します。
+製品状態の手動修復ではありません。成功した生ログと名前空間は削除し、失敗時は
+限定したパケット・状態を残して試験を終了してからローカルで再現します。
+使い終わった VM は削除します。ISP の AFTR/DNS 発見、BGP/HA、リース・
+セッション同期は別の検証です。手順が存在するだけでは合格とせず、実行した
+製品版・手順版・結果を qualification ledger に記録します。
+
 ## Linux の複数 DS-Lite 経路・パッケージ試験
 
 メインの遅延再起動タイマーには
