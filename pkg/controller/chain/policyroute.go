@@ -558,7 +558,19 @@ func (c IPv4PolicyRouteController) applyDefaultRoutePolicies(ctx context.Context
 			results = append(results, policyStatus{name: res.Metadata.Name, status: map[string]any{"phase": "Pending", "reason": "NoReadyCandidates", "dryRun": c.DryRun}})
 			continue
 		}
-		data, err := render.NftablesEgressRoutePolicyDefaultMarks(res.ID(), spec, active, healthy)
+		role, err := c.readHADatapathRole(res.Metadata.Name)
+		if err != nil {
+			return err
+		}
+		connectionCandidates := healthy
+		if role.publicationPending {
+			// Existing clients can still send to the shared MAC while the
+			// promoted node is preparing its deferred gateway. Preserve imported
+			// marks until admission so temporary local unavailability cannot
+			// move those NAT bindings to a different AFTR.
+			connectionCandidates = spec.Candidates
+		}
+		data, err := render.NftablesEgressRoutePolicyDefaultMarks(res.ID(), spec, active, connectionCandidates)
 		if err != nil {
 			return err
 		}
@@ -590,10 +602,6 @@ func (c IPv4PolicyRouteController) applyDefaultRoutePolicies(ctx context.Context
 			status["selectedMetric"] = active.EffectiveMetric()
 		}
 		previous, err := c.Store.ReadObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", res.Metadata.Name)
-		if err != nil {
-			return err
-		}
-		role, err := c.readHADatapathRole(res.Metadata.Name)
 		if err != nil {
 			return err
 		}
@@ -636,8 +644,9 @@ func (g egressVRRPMasterGate) reference() string {
 }
 
 type egressRoleObservation struct {
-	role         string
-	transitionAt string
+	role               string
+	transitionAt       string
+	publicationPending bool
 }
 
 func (c IPv4PolicyRouteController) readHADatapathRole(policyName string) (egressRoleObservation, error) {
@@ -653,7 +662,13 @@ func (c IPv4PolicyRouteController) readHADatapathRole(policyName string) (egress
 	if err != nil {
 		return egressRoleObservation{}, err
 	}
-	return egressRoleObservation{role: cleanStatusString(status["role"]), transitionAt: cleanStatusString(status["lastRoleTransitionAt"])}, nil
+	role := cleanStatusString(status["role"])
+	published, confirmed := status["vipPublicationConfirmed"].(bool)
+	return egressRoleObservation{
+		role:               role,
+		transitionAt:       cleanStatusString(status["lastRoleTransitionAt"]),
+		publicationPending: role == "master" && confirmed && !published,
+	}, nil
 }
 
 func (c IPv4PolicyRouteController) addHADatapathStatus(policyName string, active api.EgressRoutePolicyCandidate, previous, status map[string]any, now time.Time, observation egressRoleObservation) {

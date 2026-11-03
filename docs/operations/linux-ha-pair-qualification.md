@@ -300,3 +300,11 @@ Pending refresh intent with loss of the existing address. Shortened authority,
 withdrawal, foreign identity and expired acquisitions still require fencing.
 Check the original flow tuples and tunnel identity after renewal, then inject
 power loss; waiting for a new connection after renewal is insufficient.
+
+
+During graceful promotion, capture existing client forwarding as well as VIP
+publication. Clients may retain the shared MAC in their neighbour cache while
+the VMAC is already up and the VIP remains deferred. Replicated connection marks
+must survive this preparation interval. Verify that original AFTR marks and
+translated identities remain unchanged, then verify ordinary failed-path
+reassignment after confirmed gateway admission.

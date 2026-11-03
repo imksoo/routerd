@@ -3463,4 +3463,35 @@ a defect in the deployed peer path. RED `e601b7a2` pins peer exclusion and keeps
 the public Internet application eligible. The input now carries the original
 RFC1918 exclusions and the corresponding synthetic LAN/legacy/WAN subnets.
 Both prepared full inputs already contain the required private exclusions.
-Native qualification of the corrected input is pending.
+The corrected input passed the bounded native synchronization diagnostic in
+143.04 seconds on the same formal product package. Initial actual sticky
+SQLite/PD contents, power loss, promotion, same-client renewal, cold return,
+latest reverse SQLite/PD contents and all three synchronization statuses passed.
+Both empty configurations reached Healthy and withdrew native effects.
+
+
+### Preserving replicated marks during HA admission (2026-11-03)
+
+The following 74-flow campaign passed initial forwarding, actual same-prefix
+PD renewal with unchanged tunnel indices and original sockets, sticky/PD copy,
+and all 73 external-cache IPv4 tuples with their original AFTR marks. A power
+loss then exposed another admission failure. UDP translated identities changed,
+and original TCP flows failed to resume. Later return, restart and reverse
+power-loss phases were not executed. Both empty configurations subsequently
+withdrew successfully and all three dedicated VMs were stopped.
+
+Native state showed replicated primary marks rewritten to fallback mark `0x113`
+while the promoted node was still preparing its gateway. The WAN and LAN shared
+MACs become active before the deferred VIP, so withholding the VIP alone does
+not prevent existing clients from forwarding packets into intermediate policy
+rules. `applyDefaultRoutePolicies` supplied only currently healthy marks to
+`NftablesEgressRoutePolicyDefaultMarks`, whose unmatched nonzero-mark rule then
+rewrote imported connections during local path preparation.
+
+RED `32369d6d` fixes the contract at the controller-to-renderer boundary. While
+MASTER has an explicitly unconfirmed VIP publication, retain the declared
+connection marks. New flows still use the available selected candidate. After
+publication is confirmed, ordinary unhealthy-path reassignment resumes. The
+focused regression and prior datapath convergence tests must pass before native
+qualification. This scoped correction is not yet a complete HA or full
+105-resource replacement verdict.
