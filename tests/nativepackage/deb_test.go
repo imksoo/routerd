@@ -88,6 +88,23 @@ func TestDebRejectsWrongPayloadArchitecture(t *testing.T) {
 	}
 }
 
+func TestFailedNativeBuildDoesNotPublishPartialPackage(t *testing.T) {
+	payload, out, bin := fixture(t), t.TempDir(), t.TempDir()
+	fake := "#!/bin/sh\nfor target; do :; done\nprintf partial > \"$target\"\nexit 42\n"
+	if err := os.WriteFile(filepath.Join(bin, "dpkg-deb"), []byte(fake), 0755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("python3", "../../scripts/build-native-package.py", "--format", "deb", "--payload", payload, "--output", out, "--version", "1.5.0~202611030100", "--arch", "amd64")
+	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"))
+	if output, err := cmd.CombinedOutput(); err == nil {
+		t.Fatalf("native tool failure must propagate: %s", output)
+	}
+	entries, err := os.ReadDir(out)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("failed build exposed partial artifacts: %v %v", entries, err)
+	}
+}
+
 // Execute the package's actual maintainer script with isolated state and fake
 // service commands. No package installation or host service operation occurs.
 func TestDebUpgradeRefusesReplacementWhenOldServiceDoesNotStop(t *testing.T) {
