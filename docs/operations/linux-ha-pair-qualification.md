@@ -69,3 +69,10 @@ specific failure locally and repair it before designing another native run.
 Retain the reproducible procedure, source/package identity and scoped verdict;
 remove successful-run raw logs, temporary snapshots, disposable guests and their
 disks. Never change the ledger to “pass” until these paths actually execute.
+
+Complete withdrawal stops conntrackd and removes its managed unit/configuration.
+After stopping the final keepalived instance, routerd removes its declared VMACs
+using the saved generated configuration and native type/parent/mode/MAC checks.
+It retains that configuration if removal fails, permitting a later retry.
+Backup role changes continue to retain their VMACs DOWN; declaration withdrawal
+and a standby role are separate cases. A link name alone never authorizes deletion.

@@ -127,6 +127,11 @@ func (c *Controller) stopVirtualAddressBackend(ctx context.Context) error {
 	if out, err := c.run(ctx, systemctl, "stop", "keepalived.service"); err != nil {
 		return fmt.Errorf("%s stop keepalived.service: %w: %s", systemctl, err, strings.TrimSpace(string(out)))
 	}
+	if bytes.Contains(data, []byte("notify_master ")) {
+		if out, err := c.run(ctx, platform.BinaryPath("routerd-vrrp-vmac"), "remove-config", path); err != nil {
+			return fmt.Errorf("remove stopped keepalived VMACs: %w: %s", err, strings.TrimSpace(string(out)))
+		}
+	}
 	return os.Remove(path)
 }
 

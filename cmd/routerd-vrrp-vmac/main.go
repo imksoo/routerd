@@ -178,6 +178,9 @@ func vmacStateReadyForAction(action string, entry vmac, state vmacRuntimeState) 
 }
 
 func runWithHooks(args []string, hooks runHooks) (runErr error) {
+	if len(args) == 2 && args[0] == "remove-config" {
+		return removeConfiguredVMACs(args[1], hooks)
+	}
 	opts, err := parseOptions(args)
 	if err != nil {
 		return err
