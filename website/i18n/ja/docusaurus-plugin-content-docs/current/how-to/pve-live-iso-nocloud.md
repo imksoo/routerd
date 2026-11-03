@@ -69,6 +69,19 @@ routerd の `DHCPv4Client`、`IPv4StaticAddress`、route resource がネット�
 より大きな bootstrap が必要な場合は、routerd の設定メディアを使うか、Ubuntu Server
 をディスクへインストールして通常の cloud-init で管理してください。
 
+cache 回帰試験の `security.capability` 検査には明示的な root 実行が必要です。
+一般ユーザーでの通常実行は `user.*` のみを確認します。リポジトリのルートから実行してください。
+
+```sh
+cache_test_dir=$(mktemp -d /tmp/routerd-live-cache.XXXXXX)
+go test -c -o "$cache_test_dir/cache.test" ./tests/liveiso
+(cd tests/liveiso && sudo "$cache_test_dir/cache.test" -test.run '^TestLiveRootfsCacheStoresPortableNumericOwnership$' -test.v -test.timeout 30s)
+rm -r -- "$cache_test_dir"
+```
+
+実際の cache writer/reader が `security.capability` を保持した旨の出力を確認します。
+fixture は実行しないデータファイルで、ホストのネットワークは変更しません。
+
 ## 独立クライアントによる起動確認
 
 専用の使い捨て VM を `make live-iso` の正規イメージから起動します。

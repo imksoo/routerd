@@ -120,6 +120,20 @@ package configuration from user-data.
 For richer bootstrap behavior, keep using routerd configuration media or install
 Ubuntu Server to disk and manage normal cloud-init there.
 
+The cache regression checks `security.capability` when explicitly run as root;
+ordinary unprivileged runs cover `user.*` only. From the repository root:
+
+```sh
+cache_test_dir=$(mktemp -d /tmp/routerd-live-cache.XXXXXX)
+go test -c -o "$cache_test_dir/cache.test" ./tests/liveiso
+(cd tests/liveiso && sudo "$cache_test_dir/cache.test" -test.run '^TestLiveRootfsCacheStoresPortableNumericOwnership$' -test.v -test.timeout 30s)
+rm -r -- "$cache_test_dir"
+```
+
+Require the log stating that the actual cache writer/reader preserved
+`security.capability`. The fixture is inert data and is never executed; this
+checks native file metadata without changing the host network.
+
 ## Independent-client boot check
 
 Use the canonical `make live-iso` image in a dedicated disposable VM, with a

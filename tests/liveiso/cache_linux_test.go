@@ -6,6 +6,8 @@ package liveiso_test
 
 import (
 	"archive/tar"
+	"bytes"
+	"encoding/binary"
 	"io"
 	"os"
 	"path/filepath"
@@ -32,6 +34,19 @@ func TestLiveRootfsCacheStoresPortableNumericOwnership(t *testing.T) {
 	wantAttribute := []byte("package metadata round trip")
 	if err := unix.Setxattr(payload, attribute, wantAttribute, 0); err != nil {
 		t.Fatal(err)
+	}
+	// Root can also exercise the security namespace that GNU tar does not
+	// restore with --xattrs alone. The fixture is inert data, never executed.
+	var capability []byte
+	if os.Geteuid() == 0 {
+		capability = make([]byte, 20)
+		binary.LittleEndian.PutUint32(capability, 0x02000001) // VFS_CAP_REVISION_2 | EFFECTIVE
+		binary.LittleEndian.PutUint32(capability[4:], 1<<unix.CAP_NET_RAW)
+		if err := unix.Setxattr(payload, "security.capability", capability, 0); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		t.Log("security.capability check requires root; checking user attributes only")
 	}
 	script := liveISOScript(t)
 	start := strings.Index(script, "if [ -n \"${rootfs_cache}\" ]; then\n")
@@ -96,6 +111,16 @@ func TestLiveRootfsCacheStoresPortableNumericOwnership(t *testing.T) {
 	}
 	if string(gotAttribute[:n]) != string(wantAttribute) {
 		t.Fatalf("cache changed package extended attribute: got=%q want=%q", gotAttribute[:n], wantAttribute)
+	}
+	if capability != nil {
+		n, err := unix.Getxattr(restoredPayload, "security.capability", gotAttribute)
+		if err != nil {
+			t.Fatalf("cache lost file capabilities: %v", err)
+		}
+		if !bytes.Equal(gotAttribute[:n], capability) {
+			t.Fatalf("cache changed file capabilities: got=%x want=%x", gotAttribute[:n], capability)
+		}
+		t.Log("actual cache writer/reader preserved security.capability")
 	}
 }
 
