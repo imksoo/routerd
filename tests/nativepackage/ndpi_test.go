@@ -61,7 +61,7 @@ func TestNDPIAddonUsesNativeDiversionAndRestoresBaseFile(t *testing.T) {
 	if err := os.WriteFile(target, base, 0755); err != nil {
 		t.Fatal(err)
 	}
-	run := func(phase, action string) {
+	run := func(phase, action string, wantSuccess bool) {
 		t.Helper()
 		body, err := os.ReadFile(filepath.Join(control, phase))
 		if err != nil {
@@ -75,11 +75,11 @@ func TestNDPIAddonUsesNativeDiversionAndRestoresBaseFile(t *testing.T) {
 		}
 		cmd := exec.Command("sh", script, action)
 		cmd.Env = append(os.Environ(), "DPKG_ROOT="+root)
-		if output, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("%s %s: %v %s", phase, action, err, output)
+		if output, err := cmd.CombinedOutput(); (err == nil) != wantSuccess {
+			t.Fatalf("%s %s success=%v want=%v: %v %s", phase, action, err == nil, wantSuccess, err, output)
 		}
 	}
-	run("preinst", "install")
+	run("preinst", "install", true)
 	diverted, err := os.ReadFile(target + ".routerd-static")
 	if err != nil || string(diverted) != string(base) {
 		t.Fatalf("base was not diverted: %q %v", diverted, err)
@@ -87,8 +87,15 @@ func TestNDPIAddonUsesNativeDiversionAndRestoresBaseFile(t *testing.T) {
 	if err := os.WriteFile(target, []byte(native), 0755); err != nil {
 		t.Fatal(err)
 	}
-	run("postinst", "configure")
-	run("preinst", "upgrade")
+	if err := os.WriteFile(target, []byte(native+"exit 42\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	run("postinst", "configure", false)
+	if err := os.WriteFile(target, []byte(native), 0755); err != nil {
+		t.Fatal(err)
+	}
+	run("postinst", "configure", true)
+	run("preinst", "upgrade", true)
 	// Native dpkg resolves a base package's logical path to this diverted name.
 	cmd = exec.Command("dpkg-divert", "--root", root, "--truename", agent)
 	destination, err := cmd.Output()
@@ -105,12 +112,12 @@ func TestNDPIAddonUsesNativeDiversionAndRestoresBaseFile(t *testing.T) {
 	if contents, err := os.ReadFile(target); err != nil || string(contents) != native {
 		t.Fatalf("base update overwrote native agent: %q %v", contents, err)
 	}
-	run("prerm", "remove")
+	run("prerm", "remove", true)
 	if err := os.Remove(target); err != nil {
 		t.Fatal(err)
 	} // dpkg removes addon-owned file.
-	run("postrm", "remove")
-	run("postrm", "purge")
+	run("postrm", "remove", true)
+	run("postrm", "purge", true)
 	restored, err := os.ReadFile(target)
 	if err != nil || string(restored) != string(base) {
 		t.Fatalf("base not restored: %q %v", restored, err)
