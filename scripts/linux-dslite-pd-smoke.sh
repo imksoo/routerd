@@ -142,7 +142,6 @@ install -d -m 0700 /etc/routerd
 install -m 0600 "$work/router.json" /etc/routerd/router.yaml
 started=1
 systemctl start routerd.service
-main_pid=$(systemctl show routerd.service -p MainPID --value)
 lease_file=/var/lib/routerd/dhcpv6-client/wan-pd/lease.json
 pd_status() { curl --fail --silent --max-time 2 --unix-socket /run/routerd/dhcpv6-client/wan-pd.sock http://unix/v1/status; }
 cat > "$work/check-sources.py" <<'PY'
@@ -181,10 +180,10 @@ sample() {
  local expected=$1 label=$2 index first second deadline=$((SECONDS+90))
  while (( SECONDS < deadline )); do
   routerctl get status -o json > "$work/runtime-status.json"
-  if jq -e 'all(.status.controllers[]?; .currentError != true)' "$work/runtime-status.json" >/dev/null; then break; fi
+  if jq -e '.status.phase=="Healthy" and all(.status.controllers[]?; .currentError != true)' "$work/runtime-status.json" >/dev/null; then break; fi
   sleep 1
  done
- jq -e 'all(.status.controllers[]?; .currentError != true)' "$work/runtime-status.json" >/dev/null
+ jq -e '.status.phase=="Healthy" and all(.status.controllers[]?; .currentError != true)' "$work/runtime-status.json" >/dev/null
  : > "$work/sample.jsonl"
  for index in {10..73}; do
   first=$(ip netns exec rd15-mclient curl --noproxy '*' --interface "198.18.25.$index" -fsS --max-time 3 http://203.0.113.80:8080/)
@@ -212,6 +211,7 @@ jq -e --arg first "$first_reply" '.state=="bound" and .leaseUpdatedAt>$first' "$
 grep -q RENEW "$work/kea.txt"
 await_ready 2001:db8:1500
 sample abc delegated-renewed
+main_pid=$(systemctl show routerd.service -p MainPID --value)
 # Configure independent AFTR return endpoints for the network's replacement
 # prefix before the independent DHCP server advertises it. No product state edit.
 index=11; suffix=101
@@ -235,6 +235,7 @@ test "$(systemctl show routerd.service -p MainPID --value)" = "$main_pid"
 kill -0 "$kea_pid"
 sample abc delegated-renumbered
 systemctl restart routerd.service
+test "$(systemctl show routerd.service -p MainPID --value)" != "$main_pid"
 await_ready 2001:db8:1501
 sample abc delegated-restarted
 # Natural lease expiry: only the independent DHCP server is stopped.
