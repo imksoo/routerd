@@ -324,8 +324,9 @@ shlibdeps documentation was checked before implementing the native ownership.
 Next native distribution check: do not treat optional native nDPI as Linux-only
 for the full preservation goal. Baseline `e3b49dbb` already compiles/runs
 `CGO_ENABLED=1 -tags libndpi` in `scripts/freebsd-native-vm-smoke.sh`; its
-`docs/platforms.md` explicitly identifies the FreeBSD ports ndpi 5.0 ABI, backed
-by `cmd/routerd-ndpi-agent/backend_freebsd.go`. The default 1.5 native pkg inventory
+`docs/platforms.md` explicitly identifies the FreeBSD ports ndpi 5.0 ABI, implemented
+by the Linux/FreeBSD CGO path in `cmd/routerd-ndpi-agent/backend_libndpi.go`.
+`backend_freebsd.go` is the explicit unavailable fallback for non-CGO/non-libndpi builds. The default 1.5 native pkg inventory
 currently carries the static agent, while the new optional addon is Debian-only.
 FreeBSD native nDPI therefore still needs a package-owned clean-install/update
 path and native OS verification. Do not label it unsupported, drop it from the
