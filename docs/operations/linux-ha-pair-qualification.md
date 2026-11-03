@@ -1,6 +1,8 @@
 # Linux packaged two-router HA qualification
 
-This is the next qualification design, not a passing result. Use clean dedicated
+The basic lifecycle has a scoped result in the
+[audit](../design/routerd15-audit.md); this procedure alone does not qualify the
+shared-PD/four-AFTR combination below. Use clean dedicated
 Ubuntu guests with the same formal routerd `.deb`; never use production routers.
 The synthetic [fixture](../../tests/fixtures/linux-ha-pair.json) represents the
 deployed combinations: non-preemptive VRRP, one election owning WAN/LAN VMACs,
@@ -121,3 +123,76 @@ bound to its own address, and have no shared VIP. The component fixture omits
 notify commands and owns that withdrawal stimulus; it does not claim to test the
 VMAC/conntrackd hooks. The packaged pair procedure above covers those hooks.
 An ordinary `go test` skips this explicit native test.
+
+## Shared PD and four AFTRs: integrated qualification
+
+The next input is [linux-ha-dslite-pd.json](../../tests/fixtures/linux-ha-dslite-pd.json).
+It adds the deployed legacy LAN subnet, shared PD identity, four delegated
+outer source addresses, explicit inner IPv4 addresses/SNAT, stateless DHCPv6,
+RA, IPv6 upstream DNS and three routing policies. Keep the unconditional SNAT
+rules and the 60-second Internet policy hysteresis. A `Ready` policy may still
+be using the legacy fallback: observe the selected balanced candidate before
+starting connections intended to prove DS-Lite continuity.
+
+Use a third disposable Linux VM outside both router failure domains. Connect
+its `rd15-lan`/`rd15-wan` to the two isolated segments. Before product startup,
+assign `198.18.29.1/24` and `198.18.30.10/24` to LAN, `198.18.31.10/24`,
+`2001:db8:25::2/64` and `fe80::15:30ff:fe00:402/64` to WAN. Install FRR, radvd,
+dnsmasq-base, busybox, isc-dhcp-client, Python, nftables and iproute2. Provide
+an independently packaged Kea tree. From the repository root run, inside that
+VM only:
+
+```sh
+sudo env ROUTERD_DISPOSABLE_PEER=yes bash scripts/linux-ha-dslite-peer.sh /opt/independent-kea
+sudo systemd-run --unit=rd15-integrated-app --property=Type=exec \
+  ip netns exec rd15-inet-server python3 "$PWD/scripts/linux-ha-traffic.py" \
+  server /var/tmp/rd15-integrated-peer
+```
+
+The setup refuses a reused work directory and an active routerd service.
+Certify the independent services and application replies before starting the
+product. Four AFTR namespaces decapsulate into a separate Internet namespace
+and apply their own IPv4 NAT; the server reports the public tuple it actually
+receives. This exercises routed traffic through the AFTR, not an application
+placed on its tunnel endpoint. The fixture MTUs (1430 underlay/1390 DS-Lite)
+allow a guest overlay without changing a virtualization host's networking.
+For an external/unmanaged physical WAN, certify the OS IPv6 RA client before
+qualification; routerd's host IPv6 policy needs that interface's usable source.
+
+On the LAN client acquire a real DHCPv4 lease and SLAAC address/default route;
+check the offered DNS through an independent stateless DHCPv6 client. Check
+local DNS and forwarded A/AAAA answers over IPv4 and IPv6. Add test source
+aliases `198.18.30.120/24` through `.183/24` to its `eth0`, then run:
+
+```sh
+sudo systemd-run --unit=rd15-integrated-traffic --property=Type=exec \
+  ip netns exec rd15-ha-client python3 "$PWD/scripts/linux-ha-traffic.py" \
+  client /var/tmp/rd15-integrated-peer
+```
+
+The probe owns eight persistent TCP sockets with the same source port across
+different LAN addresses, 64 fixed UDP tuples sharing a source port, a BGP-path
+TCP socket and a native IPv6 TCP socket. TCP exchanges 16 KiB in each direction;
+there is no reconnect path. `traffic.json` records each flow's actual translated
+tuple, last successful exchange, maximum interruption and any tuple change.
+`accepts.jsonl` records application connections independently. Require all 74
+flows to progress, no tuple changes, and the expected single accept per TCP
+identity before and after faults. For initial DS-Lite flows, verify the public
+sources belong to the three selected primary AFTRs rather than the legacy
+fallback or fourth AFTR. Both peers must have usable synchronized leases and
+conntrack entries before power loss.
+
+Power off A only; require automatic B promotion and all original flows to
+resume. Renew the LAN lease, return A as standby, inspect reverse v4/v6/PD
+synchronization and absence of duplicate shared-address announcements. Restart
+active B's main service while retaining helpers/flows, then power off B only
+and require the same observations after automatic promotion of A. The third
+VM's peer/client processes must remain unchanged throughout both fault tests.
+Use the same withdrawal criteria as the basic lifecycle on both routers.
+
+Bound each observation wait (allow over 60 seconds for the configured routing
+hysteresis) and the complete run to 30 minutes. Stop at a product failure;
+retain only diagnostics needed for local reproduction. A passing setup or an
+unexecuted phase is not an integrated passing result. Destroy this run's three
+disposable VMs and disks after the campaign; retain the commands, input/source
+identities and scoped outcome rather than successful-run raw logs.
