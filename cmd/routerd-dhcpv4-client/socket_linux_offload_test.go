@@ -117,3 +117,11 @@ s.sendto(bytes.fromhex(sys.argv[1]),('255.255.255.255',68))
 		t.Fatalf("unexpected received OFFER: source=%v bytes=%d", src, n)
 	}
 }
+
+func TestPacketUDPChecksumPendingRejectsUnrelatedAncillaryData(t *testing.T) {
+	for _, data := range [][]byte{nil, {1, 2, 3}, unix.UnixRights(8, 0, 0, 0, 0)} {
+		if packetUDPChecksumPending(data) {
+			t.Fatal("unrelated or malformed ancillary data authorized checksum bypass")
+		}
+	}
+}

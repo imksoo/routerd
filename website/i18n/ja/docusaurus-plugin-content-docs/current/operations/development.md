@@ -236,6 +236,32 @@ peer を停止し、元の service を再開したうえで、ローカル再現
 この gate は DNS 応答、IPv4 NAT、forwarding、reboot recovery、package の clean install、
 router 全体の qualification を証明しません。
 
+## Linux DHCPv4 checksum offload 回帰試験
+
+Linux packet socket は `PACKET_AUXDATA` を読みます。仮想リンクでは UDP checksum の
+計算完了前の OFFER が `TP_STATUS_CSUMNOTREADY` 付きで届くため、capture 上の不一致だけで
+破損 packet と判断しません。通常の frame の UDP checksum と、両経路の IP checksum・
+長さ・fragment・UDP port の検証は維持します。
+
+リポジトリのルートから通常ユーザーで `go test -c -o /tmp/routerd-dhcp-offload.test ./cmd/routerd-dhcpv4-client`
+を実行し、明示的な隔離環境で次を実行します。
+
+```sh
+sudo unshare --net --mount bash -c '
+  set -eu
+  mount --make-rprivate /
+  mkdir -p /run/netns
+  mount -t tmpfs tmpfs /run/netns
+  ROUTERD_DHCPV4_OFFLOAD_TEST=1 /tmp/routerd-dhcp-offload.test -test.run=^TestLinuxReceivesChecksumOffloadedOffer$ -test.v -test.timeout=30s
+'
+rm -- /tmp/routerd-dhcp-offload.test
+```
+
+独立 UDP peer が veth 経由で OFFER を送り、kernel の checksum 未完了属性と実 transport の
+受信を確認します。属性の観測と PASS を要求し、SKIP は合格としません。通常の unit test では
+skip し、opt-in 時もホストの初期 network namespace なら実行を拒否します。DHCP 全交換、
+VM 再起動、FreeBSD の合格を示す試験ではありません。
+
 ## Linux の WAN DHCPv4 ライフサイクル VM 試験
 
 `scripts/linux-wan-dhcpv4-lifecycle-smoke.sh` は `make dist` で導入した製品を

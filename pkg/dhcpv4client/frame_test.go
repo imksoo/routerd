@@ -55,6 +55,21 @@ func TestEthernetReplyValidatesIPAndOptionalUDPChecksums(t *testing.T) {
 		binary.BigEndian.PutUint16(ip[10:12], checksumValue(checksumSum(ip[:20])))
 	}
 	fixIP()
+	// A pending kernel checksum is not a wire checksum, but does not relax IP
+	// integrity or framing checks.
+	binary.BigEndian.PutUint16(udp[6:8], 0x1234)
+	if payload, _ := EthernetReply(frame); payload != nil {
+		t.Fatal("accepted unfinished UDP checksum without offload metadata")
+	}
+	if payload, _ := EthernetReplyOffloaded(frame); len(payload) != 5 {
+		t.Fatal("rejected kernel-offloaded UDP payload")
+	}
+	ip[8] ^= 1
+	if payload, _ := EthernetReplyOffloaded(frame); payload != nil {
+		t.Fatal("offload metadata bypassed IPv4 integrity")
+	}
+	ip[8] ^= 1
+	binary.BigEndian.PutUint16(udp[6:8], 0)
 	if payload, _ := EthernetReply(frame); len(payload) != 5 {
 		t.Fatal("rejected permitted zero IPv4 UDP checksum")
 	}

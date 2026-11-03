@@ -317,6 +317,36 @@ ROUTERD_SKIP_PRE_COMMIT=1 git commit
 Use that only when the follow-up fix is already clear.
 CI still runs after the branch is pushed.
 
+## Linux DHCPv4 receive checksum offload regression
+
+The Linux packet socket must consume `PACKET_AUXDATA`: virtual links can deliver
+an OFFER with `TP_STATUS_CSUMNOTREADY` before UDP checksum completion. Such a
+kernel-marked packet is not a malformed wire reply. Ordinary frames still need
+UDP checksum validation; IP integrity, bounds, fragmentation and UDP ports remain
+checked in both paths. A capture showing a bad checksum alone cannot distinguish
+this case from corruption; inspect the kernel metadata.
+
+The native regression sends an independent UDP OFFER across a veth, requires the
+kernel's pending-checksum marker, and checks delivery through the production
+transport. Ordinary unit tests skip this case. From the repository root:
+
+```sh
+offload_dir=$(mktemp -d /tmp/routerd-dhcp-offload.XXXXXX)
+go test -c -o "$offload_dir/dhcp.test" ./cmd/routerd-dhcpv4-client
+sudo unshare --net --mount bash -c '
+  set -eu
+  mount --make-rprivate /
+  mkdir -p /run/netns
+  mount -t tmpfs tmpfs /run/netns
+  ROUTERD_DHCPV4_OFFLOAD_TEST=1 "$1" -test.run=^TestLinuxReceivesChecksumOffloadedOffer$ -test.v -test.timeout=30s
+' sh "$offload_dir/dhcp.test"
+rm -r -- "$offload_dir"
+```
+
+Require the pending-checksum observation and PASS, not SKIP. The explicit opt-in
+also refuses the initial host network namespace. This is a real-kernel transport
+regression, not a complete DHCP exchange, a VM reboot verdict, or FreeBSD proof.
+
 ## Linux WAN DHCPv4 lifecycle VM gate
 
 `scripts/linux-wan-dhcpv4-lifecycle-smoke.sh` tests the installed `make dist`

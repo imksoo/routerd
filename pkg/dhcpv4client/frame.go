@@ -10,6 +10,18 @@ import (
 // EthernetReply returns a bounded, unfragmented DHCP server UDP payload. Packet
 // sockets and BPF capture do not provide an IP socket's framing validation.
 func EthernetReply(frame []byte) ([]byte, netip.Addr) {
+	return ethernetReply(frame, false)
+}
+
+// EthernetReplyOffloaded decodes a frame whose trusted kernel receive metadata
+// says the UDP checksum is pending offload completion. IP checksum, framing,
+// fragmentation, UDP ports and lengths are still validated. Callers receiving
+// ordinary wire frames must use EthernetReply.
+func EthernetReplyOffloaded(frame []byte) ([]byte, netip.Addr) {
+	return ethernetReply(frame, true)
+}
+
+func ethernetReply(frame []byte, udpChecksumPending bool) ([]byte, netip.Addr) {
 	if len(frame) < 14+20+8 || binary.BigEndian.Uint16(frame[12:14]) != 0x0800 {
 		return nil, netip.Addr{}
 	}
@@ -28,7 +40,7 @@ func EthernetReply(frame []byte) ([]byte, netip.Addr) {
 	if binary.BigEndian.Uint16(udp[:2]) != 67 || binary.BigEndian.Uint16(udp[2:4]) != 68 || length < 8 || length > len(udp) {
 		return nil, netip.Addr{}
 	}
-	if binary.BigEndian.Uint16(udp[6:8]) != 0 {
+	if !udpChecksumPending && binary.BigEndian.Uint16(udp[6:8]) != 0 {
 		sum := checksumSum(ip[12:20]) + uint32(ip[9]) + uint32(length) + checksumSum(udp[:length])
 		if checksumValue(sum) != 0 {
 			return nil, netip.Addr{}

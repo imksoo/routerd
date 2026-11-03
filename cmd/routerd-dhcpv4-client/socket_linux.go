@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"encoding/binary"
 	"net"
 	"net/netip"
 	"os"
@@ -33,6 +34,10 @@ func listenDHCPv4(ifname string) (dhcpv4PacketConn, error) {
 	}
 	rawFD, err := unix.Socket(unix.AF_PACKET, unix.SOCK_RAW|unix.SOCK_CLOEXEC, int(htons(etherTypeIPv4)))
 	if err != nil {
+		return nil, err
+	}
+	if err := unix.SetsockoptInt(rawFD, unix.SOL_PACKET, unix.PACKET_AUXDATA, 1); err != nil {
+		_ = unix.Close(rawFD)
 		return nil, err
 	}
 	if err := attachDHCPv4Filter(rawFD); err != nil {
@@ -107,11 +112,13 @@ type linuxDHCPv4PacketConn struct {
 
 func (c *linuxDHCPv4PacketConn) ReadFromUDP(buf []byte) (int, *net.UDPAddr, error) {
 	frame := make([]byte, 2048)
+	// Linux packet_auxdata is 20 bytes, including checksum and VLAN status.
+	aux := make([]byte, unix.CmsgSpace(20))
 	for {
 		if !c.deadline.IsZero() && !time.Now().Before(c.deadline) {
 			return 0, nil, os.ErrDeadlineExceeded
 		}
-		n, _, err := unix.Recvfrom(c.rawFD, frame, 0)
+		n, auxn, flags, _, err := unix.Recvmsg(c.rawFD, frame, aux, 0)
 		if err != nil {
 			if err == unix.EINTR {
 				continue
@@ -119,9 +126,12 @@ func (c *linuxDHCPv4PacketConn) ReadFromUDP(buf []byte) (int, *net.UDPAddr, erro
 			if err == unix.EAGAIN || err == unix.EWOULDBLOCK {
 				return 0, nil, linuxTimeoutError{err: err}
 			}
-			return 0, nil, os.NewSyscallError("recvfrom", err)
+			return 0, nil, os.NewSyscallError("recvmsg", err)
 		}
-		payload, src := c.dhcpPayload(frame[:n])
+		if flags&(unix.MSG_TRUNC|unix.MSG_CTRUNC) != 0 {
+			continue
+		}
+		payload, src := c.dhcpPayload(frame[:n], packetUDPChecksumPending(aux[:auxn]))
 		if len(payload) == 0 {
 			continue
 		}
@@ -150,14 +160,34 @@ func (e linuxTimeoutError) Unwrap() error {
 	return e.err
 }
 
-func (c *linuxDHCPv4PacketConn) dhcpPayload(frame []byte) ([]byte, net.IP) {
+// Only kernel ancillary data can authorize skipping an unfinished UDP checksum.
+func packetUDPChecksumPending(aux []byte) bool {
+	messages, err := unix.ParseSocketControlMessage(aux)
+	if err != nil {
+		return false
+	}
+	for _, message := range messages {
+		if message.Header.Level == unix.SOL_PACKET && message.Header.Type == unix.PACKET_AUXDATA && len(message.Data) >= 20 {
+			return binary.NativeEndian.Uint32(message.Data)&unix.TP_STATUS_CSUMNOTREADY != 0
+		}
+	}
+	return false
+}
+
+func (c *linuxDHCPv4PacketConn) dhcpPayload(frame []byte, udpChecksumPending bool) ([]byte, net.IP) {
 	if len(frame) < ethHeaderLen+20 {
 		return nil, nil
 	}
 	if len(c.hwaddr) > 0 && len(frame) >= 12 && net.HardwareAddr(frame[6:12]).String() == c.hwaddr.String() {
 		return nil, nil
 	}
-	payload, source := dhcpv4client.EthernetReply(frame)
+	var payload []byte
+	var source netip.Addr
+	if udpChecksumPending {
+		payload, source = dhcpv4client.EthernetReplyOffloaded(frame)
+	} else {
+		payload, source = dhcpv4client.EthernetReply(frame)
+	}
 	if len(payload) == 0 {
 		return nil, nil
 	}
