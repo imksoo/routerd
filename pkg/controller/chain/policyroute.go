@@ -735,7 +735,7 @@ func egressPolicyVRRPMasterGate(spec api.EgressRoutePolicySpec) (egressVRRPMaste
 
 func firstVRRPMasterGate(when api.ResourceWhenSpec) (egressVRRPMasterGate, bool) {
 	for reference, match := range when.State {
-		if !stateMatchIncludesMaster(match) {
+		if !stateMatchRequiresMaster(match) {
 			continue
 		}
 		kind, name, ok := whenStatusDependencyRef(reference)
@@ -756,16 +756,22 @@ func whenHasVRRPMasterGate(when api.ResourceWhenSpec, want egressVRRPMasterGate)
 	return ok && gate == want
 }
 
-func stateMatchIncludesMaster(match api.StateMatchSpec) bool {
+func stateMatchRequiresMaster(match api.StateMatchSpec) bool {
 	if strings.EqualFold(strings.TrimSpace(match.Equals), "master") {
 		return true
 	}
+	// A fallback available on both roles does not prove that this node's
+	// master-only forwarding path has converged. Publishing the gateway on
+	// that evidence can move replicated DS-Lite flows before their path exists.
+	if len(match.In) == 0 {
+		return false
+	}
 	for _, value := range match.In {
-		if strings.EqualFold(strings.TrimSpace(value), "master") {
-			return true
+		if !strings.EqualFold(strings.TrimSpace(value), "master") {
+			return false
 		}
 	}
-	return false
+	return true
 }
 
 func whenStateReferenceField(reference string) string {

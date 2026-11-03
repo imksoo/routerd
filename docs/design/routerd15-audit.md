@@ -3379,3 +3379,21 @@ tunnel token/index, reject expired or overlong acquisition authority, and verify
 Applied dependencies never observe an unconfirmed extension. Focused DS-Lite,
 LAN and held-RA tests pass; native confirmation of the repaired candidate and
 both-direction power-loss qualification remain pending.
+
+### Linux combined HA admission follow-up (2026-11-03)
+
+Product `04ff8deb` passed the real same-prefix renewal with the original 74
+application flows and unchanged four tunnel indices; the maximum observed
+response gap at that stage was 0.520 seconds. All Go packages, schema/examples,
+the formal `.deb` and four-locale website build passed. The subsequent power
+loss did **not** qualify: BGP and native IPv6 resumed, while DS-Lite connections
+retained their NAT tuples but acquired the legacy route's conntrack mark. A
+bounded packet capture confirmed `192.0.0.2` packets leaving on the legacy LAN.
+
+The policy counted a role predicate accepting both MASTER and BACKUP as a
+master-only readiness gate. RED `317e78f6` uses the deployed predicate in the
+existing convergence test. The fix requires MASTER exclusively, keeping
+`datapathState: Converging` while only that fallback is ready. Local policy
+regressions pass; integrated promotion remains unqualified until rerun. The
+cold-return/withdrawal cleanup also encountered an RA receipt from the prior
+boot before opening an unavailable link-local socket; that path is under repair.

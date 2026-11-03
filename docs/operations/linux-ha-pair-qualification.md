@@ -185,7 +185,11 @@ precondition or failed client reset invalidates the run even if the product
 later reaches a healthy status.
 The deployed graceful-activation gate observes the policy's `datapathState`,
 not `phase`: the latter is `Applied` in 1.5. Keep the observed field and its
-value together when preparing a configuration.
+value together when preparing a configuration. A candidate permitted in both
+MASTER and BACKUP is a standby-capable fallback, not proof of convergence of a
+master-only path. Keep the gateway withheld while only that fallback is ready:
+otherwise the initial packets can overwrite imported DS-Lite conntrack marks
+with a route incompatible with their preserved NAT mapping.
 
 An interrupted native promotion must remain retryable. A runtime election
 marker of `activating` records unfinished cache/VMAC/RA preparation; it does not
