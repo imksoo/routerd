@@ -3402,3 +3402,44 @@ receipts from another kernel scope before opening sockets or sending withdrawals
 the old receipt cannot operate on a shared identity now owned by the active peer.
 Local RA and route-policy regressions pass. Post-handover native withdrawal is
 still unqualified; a stopped daemon is not a successful withdrawal result.
+
+### Linux combined packaged HA result at a1d8ef19 (2026-11-03)
+
+The complete lifecycle remains **unqualified**. On three dedicated Ubuntu 24.04
+guests (two Linux 6.8.0-147 routers and an independent 6.8.0-124 peer/client),
+formal package `1.5.0~20261103173704+ga1d8ef19cd4c` passed apt update, native
+file verification, full local Go (122 packages; 14 without tests), schema and
+example checks, and the four-locale website build. Both prepared 105-resource
+full target configurations also passed validation; the actual native input was
+the 66-resource integrated fixture, not those full configurations.
+
+Observed subpaths:
+
+- Real DHCPv4, SLAAC, stateless DHCPv6, local/forwarded A/AAAA through IPv4/IPv6
+  DNS listeners; 72 colliding-port DS-Lite flows through three primary AFTRs,
+  BGP TCP and native IPv6 TCP.
+- A genuine same-prefix Kea renewal with all original 74 flows, ten single TCP
+  accepts, no translated-tuple changes and unchanged four tunnel indices.
+- Source/receiver sticky SQLite contents and PD identity, plus all 73 IPv4
+  external conntrack entries including their original AFTR routing marks.
+- A power loss and automatic B promotion: all original 74 flows resumed with no
+  TCP reconnects or tuple changes and unchanged independent peer/client and
+  surviving-main processes. Maximum observed response gap **106.696 seconds**;
+  this is connection survival, not hitless or short-interruption failover.
+- The same DHCP client/lease renewed on B; local and forwarded DNS still worked.
+- A returned as non-preemptive backup while the original flows continued, but
+  the latest sticky lease did not replicate back. B reported rsync exit 30 /
+  60-second I/O timeout; A's actual SQLite request timestamp remained old.
+  The transport cause is unresolved. The available return capture observes
+  A-to-independent-peer overlay traffic, not the direct A/B SSH conversation.
+  Do not blame the file-copy implementation or test transport without that
+  missing observation. Main restart and reverse power loss were not executed.
+- After ending the run, both routers applied an empty configuration, reached
+  Healthy with no current errors, removed native helpers/VMACs/configuration
+  and learned FIB effects, and were explicitly stopped. This includes the
+  old-boot RA withdrawal path fixed above.
+
+Next isolate reverse synchronization after cold return, obtaining both ends of
+the direct SSH/TCP transaction before proposing a repair. Do not repeat the
+whole campaign to guess at the cause. Public procedures and these scoped results
+replace permanent raw logs; private access/topology details remain private.

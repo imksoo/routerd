@@ -231,7 +231,12 @@ conntrack entries before power loss.
 
 Power off A only; require automatic B promotion and all original flows to
 resume. Renew the LAN lease, return A as standby, inspect reverse v4/v6/PD
-synchronization and absence of duplicate shared-address announcements. Restart
+synchronization and absence of duplicate shared-address announcements. If a
+replica stays old, read both SQLite values and the sync worker's actual error.
+For SSH transport diagnosis capture both router endpoints before the return;
+an independent third peer's segment capture does not see direct unicast overlay
+traffic between the two routers. Keep diagnostics commands independent so a
+no-match process search cannot prevent the packet capture from starting. Restart
 active B's main service while retaining helpers/flows, then power off B only
 and require the same observations after automatic promotion of A. The third
 VM's persistent application and DHCPv4 client processes must remain unchanged

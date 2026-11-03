@@ -2173,6 +2173,34 @@
         "Translated-port collision continuity and both-direction router power loss; next campaign uses independent peers outside both failure domains.",
         "Zero-NAT-rule standby regression, arbitrary session-sync names, full 109-resource deployed-router/baseline parity and release verdict."
       ]
+    },
+    "linux-ha-shared-pd-four-aftr-a1d8ef19": {
+      "level": "packaged-daemon-independent-peer",
+      "outcome": "fail",
+      "revision": "a1d8ef19cd4c9864c3f101af57c6d0028f007373",
+      "reference": "docs/design/routerd15-audit.md#linux-combined-packaged-ha-result-at-a1d8ef19-2026-11-03",
+      "environment": "Three dedicated Ubuntu 24.04 amd64 guests; routers Linux 6.8.0-147, independent peer/client Linux 6.8.0-124; formal apt package, Kea, radvd, four routed AFTR namespaces, FRR, DNS and persistent applications.",
+      "package_versions": [
+        "1.5.0~20261103173704+ga1d8ef19cd4c"
+      ],
+      "package_sha256": [
+        "cd8948b75d7b6c379fe9e502711fa82ba3af26272a4424fe47fdad7bffd735c8"
+      ],
+      "fixture_sha256": "91b64e302c9e55a465b8460e84227589b65615c03c360831e7859beb1daf5a7a",
+      "checks": [
+        "All 74 original flows progressed through genuine same-prefix PD renewal; ten TCP accepts once each, translated tuples unchanged and four tunnel indices unchanged.",
+        "Actual sticky/PD replica contents and all 73 IPv4 external-cache entries including original AFTR routing marks verified before power loss.",
+        "Active A power loss automatically promoted B; all original 74 flows resumed, no reconnect/tuple changes, peer/client and surviving-main processes retained. Maximum response gap 106.696 seconds, not hitless failover.",
+        "Same DHCP client/lease renewed on B and local/forwarded DNS A/AAAA over IPv4/IPv6 listeners passed.",
+        "Returned A remained backup and original application flows continued, but latest sticky reverse synchronization failed with rsync I/O timeout; transport cause unresolved.",
+        "Both empty configurations reached Healthy with no current errors and native helper/VMAC/configuration/FIB withdrawal; explicit daemon stops persisted.",
+        "Full local Linux Go suite, schema/examples, four-locale website and formal package build passed at this product revision."
+      ],
+      "excludes": [
+        "Complete HA lifecycle: reverse latest-lease replication failed; active main restart and reverse power loss were not executed.",
+        "Native full 105-resource equivalence and production replacement readiness; prepared full inputs passed validation only.",
+        "No assertion of the timeout cause without direct two-ended SSH/TCP observations; the independent-peer capture is insufficient for that path."
+      ]
     }
   },
   "features": [
