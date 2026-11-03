@@ -98,7 +98,10 @@ restore_services()
 
 case "$phase:${1:-}" in
     prerm:upgrade|prerm:remove)
-        if [ -d /run/systemd/system ]; then stop_services; fi
+        if [ -d /run/systemd/system ]; then
+            stop_services
+            if [ "$1" = remove ]; then systemctl disable -- routerd.service; fi
+        fi
         ;;
     postinst:configure|postinst:abort-upgrade|postinst:abort-remove|postinst:abort-deconfigure)
         if [ -d /run/systemd/system ]; then restore_services; fi

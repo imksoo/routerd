@@ -49,6 +49,7 @@ def deb(root, output, version, arch):
         f"Package: routerd\nVersion: {version}\nArchitecture: {arch}\n"
         "Maintainer: Kirino Minato <kirino.minato@gmail.com>\n"
         "Section: net\nPriority: optional\n"
+        f"Installed-Size: {sum(p.stat().st_size for p in root.rglob('*') if p.is_file() and not p.is_symlink()) // 1024 + 1}\n"
         "Depends: systemd, init-system-helpers, iproute2, nftables, dnsmasq-base, ca-certificates\n"
         "Suggests: wireguard-tools, chrony, bind9-dnsutils, tcpdump, cron, jq, ppp, "
         "pppoe, conntrack, iputils-ping, iputils-tracepath, net-tools, kmod, "
@@ -78,15 +79,19 @@ def pkg(root, output, version, arch):
     size = 0
     for path in sorted(root.rglob("*")):
         if path.is_symlink():
-            files["/" + str(path.relative_to(root))] = "-"
+            files["/" + str(path.relative_to(root))] = {
+                "uname": "root", "gname": "wheel", "perm": "0755"
+            }
         elif path.is_file():
-            files["/" + str(path.relative_to(root))] = hashlib.sha256(path.read_bytes()).hexdigest()
+            files["/" + str(path.relative_to(root))] = {
+                "uname": "root", "gname": "wheel", "perm": f"{path.stat().st_mode & 0o777:04o}"
+            }
             size += path.stat().st_size
     manifest = {
         "name": "routerd", "version": version, "origin": "net/routerd",
         "comment": "Declarative router daemon", "desc": "Clean-OS native routerd installation",
         "maintainer": "kirino.minato@gmail.com", "www": "https://github.com/imksoo/routerd",
-        "prefix": "/usr/local", "abi": f"FreeBSD:14:{arch}",
+        "prefix": "/usr/local", "abi": f"FreeBSD:14:{'aarch64' if arch == 'arm64' else arch}",
         "licenselogic": "single", "licenses": ["BSD3CLAUSE"],
         "flatsize": size, "files": files,
     }
@@ -119,10 +124,16 @@ def main():
     with tempfile.TemporaryDirectory(prefix="routerd-native-package-") as temporary:
         root = Path(temporary) / "root"
         stage(args.payload, root, args.format)
-        if args.format == "deb":
-            deb(root, args.output.resolve(), args.version, args.arch)
-        else:
-            pkg(root, args.output.resolve(), args.version, args.arch)
+        # The native writer can leave a truncated archive on failure. Publish
+        # only after success, with a rename on the destination filesystem.
+        with tempfile.TemporaryDirectory(prefix=".routerd-build-", dir=args.output) as pending:
+            pending = Path(pending).resolve()
+            if args.format == "deb":
+                deb(root, pending, args.version, args.arch)
+            else:
+                pkg(root, pending, args.version, args.arch)
+            for artifact in pending.iterdir():
+                artifact.replace(args.output / artifact.name)
 
 
 if __name__ == "__main__":
