@@ -2884,3 +2884,62 @@ syntax/actionlint checks passed; the workflow itself was not run to publish a
 release. Optional libnDPI native packaging, arm64 runtime and full 1.0 feature
 qualification remain separate work. No main merge or production deployment was
 performed.
+
+
+### Linux apt multi-path DS-Lite and explicit-stop checkpoint, 2026-11-03
+
+Product source `fc5d7816237758bcf15f68e320aff505f27b3b60` passed on a clean
+Ubuntu 24.04 amd64 VM with Linux 6.8.0-124, real apt/dpkg and systemd. Four
+independent kernel AFTR namespaces ran standard-library HTTP receivers; a
+separate client namespace exercised the configured source-address hash policy.
+The maintained [procedure](https://github.com/imksoo/routerd/blob/fc5d7816237758bcf15f68e320aff505f27b3b60/docs/operations/development.md#linux-multi-path-ds-lite-package-gate)
+and `tests/fixtures/linux-multi-dslite.json` define the inputs and assertions.
+
+The first clean package start exposed apt chmod/rename failures in its private
+cache under the main service's capability bound. Root UID alone did not suffice.
+Test-first `dd1c748d` reproduced both actual filesystem failures locally without
+changing packages, services or networking. `559e0349` supplied CAP_FOWNER and
+CAP_DAC_OVERRIDE in both vendor and runtime units; the native filesystem checks
+passed. `81d84f43` retained existing capability ordering. The subsequent VM start
+installed its missing derived packages and reached Healthy with no controller
+errors; a functioning tunnel alone was not accepted as a healthy router.
+
+Post-run inspection also observed an explicitly stopped daemon being revived by
+an already queued ten-second self-restart. Test-first `e41104e8` reproduced that
+actual resurrection using persistent dummy services in the ordinary user's real
+systemd manager. `fc5d7816` propagates stop requests to the timer without replaying
+restart requests. Native checks passed persistent stop, exactly one intended
+restart, and scheduling while the notify parent was still activating. The .deb
+requires systemd 249 or later, the API version needed by that dependency.
+
+The final fresh-OS campaign installed package
+`1.5.0~20261103065539+g559e03494009` and updated it to
+`1.5.0~20261103073215+gfc5d78162377`. It passed:
+
+- 64 independent source addresses, two new connections each, stable per-source
+  selection and traffic through all three primary AFTRs; receivers observed the
+  NAT-translated inner source `192.0.0.2`.
+- One primary peer down selecting only the other two; all three down selecting
+  the fourth AFTR; peer restoration selecting the primary pool again. Only
+  independent peer links changed; product state was not repaired manually.
+- Real systemd restart and apt update, unchanged configuration, prior main-process
+  exit, native file verification, Healthy steady states and restored forwarding.
+- Empty configuration withdrawing the tunnels and forwarded path. A subsequent
+  local-only Telemetry intent created a pending main-unit handoff; explicit stop
+  cancelled its timer and remained inactive beyond the handoff delay. This did
+  not qualify collector delivery.
+- Post-run readback: installed binary identifies `fc5d7816`, dpkg verification is
+  clean, main is inactive, no fixture namespaces/interfaces or routerd nft tables
+  remain, and the temporary successful capture/log directory is absent.
+
+The full ordinary Go suite, generated schemas, all examples and four-locale
+website build passed at the final product revision; existing unrelated website
+link warnings remain. Root filesystem and non-root user-manager checks above
+were separate opt-in native checks. Both test VMs, disks, the retained pristine
+snapshot and staging are removed after recording these scoped results.
+
+This does not qualify delegated/RA outer-source expiry, real ISP AFTRs, existing
+conntrack-flow continuity, router reboot, BGP, HA/lease/NAT-session synchronization,
+or the complete deployed 110-resource router. The prepared full 1.5 configuration
+validates, but validation is not its native replacement verdict. Linux remains
+first; FreeBSD work is deferred and nDPI is explicitly excluded there by the user.

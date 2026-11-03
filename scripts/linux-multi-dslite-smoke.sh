@@ -216,8 +216,8 @@ if ip netns exec rd15-mclient curl --noproxy '*' -fsS --max-time 3 http://203.0.
 fi
 network_withdrawn=1
 # Change actual main-unit intent, then stop before the deferred handoff fires.
-# The new OTLP environment never becomes active: the explicit stop cancels the
-# pending restart. No collector delivery claim is made by this fixture.
+# The collector endpoint is loopback-only. The explicit stop must cancel the
+# pending restart; no collector delivery claim is made by this fixture.
 jq '.spec.resources=[{apiVersion:"observability.routerd.net/v1alpha1",kind:"Telemetry",metadata:{name:"restart-intent"},spec:{otlp:{endpoint:"http://127.0.0.1:4317",insecure:true},signals:["metrics"]}}]' "$work/empty.json" > "$work/restart-intent.json"
 routerctl apply -f "$work/restart-intent.json" --replace > "$work/restart-apply.txt"
 deadline=$((SECONDS+9)); timers=

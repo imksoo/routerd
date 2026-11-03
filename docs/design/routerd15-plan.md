@@ -54,6 +54,16 @@ failures locally before another native run. Do not substitute another basic
 single-uplink demo or a FreeBSD gate for this milestone. Production cutover still
 requires a separate explicit decision.
 
+The first integrated multi-AFTR apt gate now passes at `fc5d7816`, including
+three-way source-hash routing, fourth-path fallback, recovery, actual restart and
+package update, withdrawal and explicit-stop persistence. It exposed/fixed main
+apt-cache capability failures and delayed self-restart resurrection. See the
+[scoped result](routerd15-audit.md#linux-apt-multi-path-ds-lite-and-explicit-stop-checkpoint-2026-11-03).
+This is not the full deployed-router qualification. Next Linux work must cover
+the real BGP/HA/lease-and-session synchronization combinations, dynamic DS-Lite
+sources, persistent flows and reboot alongside the already qualified client
+services, without restoring a FreeBSD acceptance dependency.
+
 ## Current inventory
 
 - `origin/main` is `e3b49dbb69c7de97bab9595884745eb7cbe93d92`; the active proposal

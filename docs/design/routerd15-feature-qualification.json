@@ -1996,6 +1996,37 @@
       "excludes": [
         "Not a provider/network failure, native runtime qualification pass, or evidence that a restricted SDK 6 profile preserves all 1.0 functions."
       ]
+    },
+    "linux-multi-dslite-apt-fc5d7816": {
+      "level": "packaged-daemon-independent-peer",
+      "outcome": "pass",
+      "revision": "fc5d7816237758bcf15f68e320aff505f27b3b60",
+      "reference": "docs/design/routerd15-audit.md#linux-apt-multi-path-ds-lite-and-explicit-stop-checkpoint-2026-11-03",
+      "environment": "Fresh dedicated Ubuntu 24.04 amd64 VM, Linux 6.8.0-124, native apt/dpkg/systemd; four independent kernel AFTR namespaces and a separate client namespace.",
+      "package_versions": [
+        "1.5.0~20261103065539+g559e03494009",
+        "1.5.0~20261103073215+gfc5d78162377"
+      ],
+      "package_sha256": [
+        "9659994af1aacf398d0a3220c5be552f79fd85ae79945320db0a26a4627f5954",
+        "b519b0420a0a811dac23e4a8909bac3663202ae62769b52111bdf34e526bc2a6"
+      ],
+      "reproduction": "sudo bash scripts/linux-multi-dslite-smoke.sh --disposable-vm tests/fixtures/linux-multi-dslite.json PRIOR.deb CURRENT.deb MANAGEMENT_INTERFACE",
+      "harness_sha256": "984f2648486f1a584242f1b012e9e4e4099df7add38b98f1e447acd303face26",
+      "fixture_sha256": "56b46ce5feb3f89861794932089a396570965cd2260fa474f162e3f8312b072c",
+      "checks": [
+        "Clean apt installation reached Healthy after the actual Package owner installed missing dependencies under corrected main-service capabilities.",
+        "64 client source addresses retained affinity across two new TCP connections per stage; all three primary AFTRs received translated traffic.",
+        "One primary peer outage selected the surviving pair; total primary outage selected the fourth AFTR; restoration returned to the primary pool without manual product repair.",
+        "Actual systemd restart and apt update preserved configuration, replaced the old main process, passed dpkg verification and restored forwarding.",
+        "Empty configuration withdrew tunnels and traffic. A real main-unit intent change queued a timer; explicit stop cancelled it and remained inactive past the handoff delay.",
+        "Final native readback found no routerd nft tables or fixture namespaces/interfaces; successful raw output was removed."
+      ],
+      "excludes": [
+        "Delegated/RA outer-source expiry and real ISP AFTR interoperability",
+        "Existing conntrack-flow continuity and host reboot",
+        "BGP, HA, lease/NAT-session synchronization and the complete deployed-router replacement verdict"
+      ]
     }
   },
   "features": [
@@ -3285,7 +3316,8 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-combined-native-3e58c93a",
-          "linux-dslite-pve-f8ef5e59"
+          "linux-dslite-pve-f8ef5e59",
+          "linux-multi-dslite-apt-fc5d7816"
         ]
       },
       "freebsd": {
@@ -3515,7 +3547,8 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "linux-health-pbr-native-58bef4e9"
+          "linux-health-pbr-native-58bef4e9",
+          "linux-multi-dslite-apt-fc5d7816"
         ]
       },
       "freebsd": {
@@ -3626,7 +3659,8 @@
           "linux-nat44-source-snat-fb971db4",
           "linux-local-service-redirect-3bb5e7c3",
           "linux-home-router-clean-install-999dfd4",
-          "linux-dualstack-recovery-6977c66e"
+          "linux-dualstack-recovery-6977c66e",
+          "linux-multi-dslite-apt-fc5d7816"
         ]
       },
       "freebsd": {
@@ -3892,7 +3926,8 @@
           "linux-serviceunit-feedback-919499c4",
           "linux-wan-ra-lifecycle-1392082f",
           "linux-home-router-clean-install-999dfd4",
-          "linux-dualstack-recovery-6977c66e"
+          "linux-dualstack-recovery-6977c66e",
+          "linux-multi-dslite-apt-fc5d7816"
         ]
       },
       "freebsd": {
@@ -3989,7 +4024,8 @@
           "linux-home-router-clean-install-999dfd4",
           "linux-live-iso-boot-0ee9777e",
           "linux-native-apt-59baa653",
-          "linux-native-ndpi-addon-be382e44"
+          "linux-native-ndpi-addon-be382e44",
+          "linux-multi-dslite-apt-fc5d7816"
         ]
       },
       "freebsd": {
@@ -4045,7 +4081,8 @@
           "linux-dualstack-recovery-6977c66e",
           "linux-live-iso-boot-0ee9777e",
           "linux-native-apt-59baa653",
-          "linux-native-ndpi-addon-be382e44"
+          "linux-native-ndpi-addon-be382e44",
+          "linux-multi-dslite-apt-fc5d7816"
         ]
       },
       "freebsd": {
