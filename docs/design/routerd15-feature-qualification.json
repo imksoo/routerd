@@ -1859,6 +1859,28 @@
         "FreeBSD/NixOS runtime and complete routerd 1.0 parity",
         "Production deployment or release qualification"
       ]
+    },
+    "linux-live-iso-boot-0ee9777e": {
+      "level": "packaged-daemon-independent-peer",
+      "outcome": "pass",
+      "revision": "0ee9777ec922a5aafff8d95bd6d109c563d7d742",
+      "fixture_revision": "5e5e9a76bb7513b1f5580589c8c0d8946c599b60",
+      "iso_sha256": "fba24c3b714c8779e608de047d952ad45735fb0a302ade9252e6cc1d62b6a569",
+      "reference": "docs/how-to/pve-live-iso-nocloud.md#independent-client-boot-check",
+      "environment": "Canonical debootstrap ISO; Ubuntu 24.04 / Linux 6.8.0-147 guest with read-only config/ISO media and no writable system disk; separate Ubuntu independent-client VM.",
+      "checks": [
+        "Successful firstboot/config-drive restore; canonical config hash matched; bootstrap DHCP removed; Healthy with 19 resources and no controller errors; no foreign legacy DNS template.",
+        "All 24 installed binary/plugin artifacts matched canonical release payload hashes; setuid owner/mode, shadow group/mode, sticky directories and ping capability preserved.",
+        "Fresh v3 cache restoration preserved exact capability bytes and unprivileged raw ICMP in an isolated native network namespace; root cache-writer/reader regression at 04a11b37 passed.",
+        "Independent peer DHCP acquisition and same-address natural renewal with unchanged peer boot ID/DHCP PID; DNS A UDP/TCP, NAT, management positive control and firewall isolation passed.",
+        "Additional endpoint beyond connected WAN subnet proved actual default-route transit/NAT; deny counters nonzero, stable routerd PID and zero automatic restarts.",
+        "Empty intent reached Healthy with zero resources, withdrew firewall/IPv4 addresses; peer cleanup and deletion of both VMs, disks and media passed."
+      ],
+      "excludes": [
+        "IPv6 image behavior and physical ISP interoperability",
+        "NoCloud/provider URL bootstrap and persistent validated-config cache recovery",
+        "Persistent disk install, power-loss durability and complete 1.0 parity"
+      ]
     }
   },
   "features": [
@@ -3838,7 +3860,8 @@
         "scoped_evidence": [
           "linux-nonresource-code-c7f89dda",
           "linux-normal-gate-dc14c486",
-          "linux-home-router-clean-install-999dfd4"
+          "linux-home-router-clean-install-999dfd4",
+          "linux-live-iso-boot-0ee9777e"
         ]
       },
       "freebsd": {
@@ -3879,7 +3902,8 @@
           "linux-packaged-service-6135bb03",
           "linux-nonresource-code-c7f89dda",
           "linux-home-router-clean-install-999dfd4",
-          "linux-dualstack-recovery-6977c66e"
+          "linux-dualstack-recovery-6977c66e",
+          "linux-live-iso-boot-0ee9777e"
         ]
       },
       "freebsd": {
@@ -3916,7 +3940,8 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-nonresource-code-c7f89dda",
-          "linux-liveiso-boot-dc14c486"
+          "linux-liveiso-boot-dc14c486",
+          "linux-live-iso-boot-0ee9777e"
         ]
       },
       "freebsd": {
@@ -3926,8 +3951,8 @@
         ]
       },
       "required_remaining_checks": [
-        "Actual image build, modes, boot and firstboot on independent VM",
-        "Failure/cleanup and installed router traffic"
+        "NoCloud/provider URL and secret/config-cache bootstrap on native image",
+        "IPv6 image paths, persistent disk installation, and remaining baseline platform/artifact scope"
       ]
     },
     {

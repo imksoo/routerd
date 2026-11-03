@@ -161,6 +161,11 @@ runtime binary replacement or manual product-state repair is allowed.
 Run the peer's `probe` and `isolation` modes: DHCP acquisition, local/upstream
 DNS A over UDP/TCP, peer-observed NAT source and management-to-LAN access must
 work; WAN-to-LAN, LAN-to-management and WAN-to-router DNS must be denied.
+For default-route transit, add `198.18.18.1/32` to the WAN peer namespace loopback
+and require a LAN HTTP request to `http://198.18.18.1:8080/routed-default` to
+return the NAT source `198.18.16.2`. This destination lies beyond the connected
+WAN subnet; a request to the connected WAN address alone cannot prove the
+default route.
 Require a natural renewal by the same DHCP process and address, plus stable
 routerd PID/restart count during the observation. Check native firewall deny
 counters rather than relying on a client timeout alone.
@@ -181,3 +186,13 @@ stop that qualification attempt. On success, withdraw with an empty 1.5 config,
 run peer cleanup, and remove both disposable VMs, their disks, ISO/config media,
 rootfs cache and build staging. Keep this procedure and scoped result instead
 of the successful raw logs.
+
+
+Scoped result (2026-11-03): ISO source `0ee9777e`, corrected boot fixture
+`5e5e9a76`, Ubuntu 24.04 / Linux 6.8.0-147, passed this two-VM clean-boot and
+IPv4 procedure, including natural renewal, default-route transit, exact payload
+hashes, native package metadata and empty-intent withdrawal. The ISO SHA-256 is
+`fba24c3b714c8779e608de047d952ad45735fb0a302ade9252e6cc1d62b6a569`.
+The initial wrong raw device name was a fixture preparation failure; the final
+result used a corrected config drive and cold boot of the unchanged ISO.
+VMs, disks and temporary media were removed after the successful check.

@@ -260,12 +260,15 @@ SAM tests do not establish independent RR/leaf interoperability.
   pre-walk mount refusal and error-preserving owned unmounts. Recursive chown and
   all-root image rewriting are removed; old mode-damaged caches are rejected.
   Firstboot validates before caching and before service generation/DHCP removal.
-  Actual shell-body failure regressions pass. The first native image built and
-  booted, but readiness failed on an unowned builder-created DNS template and
-  status-event feedback. The runtime feedback fix passes an actual VM replay;
-  the corrected distribution payload/template builder still needs a clean boot.
-  A separate real cache restore lost ping's file capability, so that cache is
-  excluded from further qualification until preservation is fixed and verified.
+  Actual shell-body failure regressions pass. The initial native image failed
+  on an unowned builder-created DNS template and status-event feedback. The
+  corrected canonical image at `0ee9777e` now passes clean boot, config-drive
+  restore and independent-client IPv4 DHCP/DNS/NAT/default-route/isolation checks.
+  Empty withdrawal and VM/media cleanup passed. Fresh v3 rootfs cache restoration
+  preserves actual capability bytes and unprivileged raw-ping behavior; the old
+  damaged cache remains excluded. IPv6 image behavior, NoCloud/provider URL and
+  persistent-storage bootstrap remain separate checks. See the
+  [current native result](routerd15-audit.md#corrected-live-iso-clean-boot-and-independent-client-traffic-2026-11-03).
 - Release QA lifecycle ownership is implemented: lock before state/auth changes,
   durable STARTING admission before child effects, native birth/session checks
   with pidfd signaling, exact consumed-input pins and acknowledged stop before

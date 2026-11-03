@@ -2789,3 +2789,44 @@ template (`27a70036`, `363678de`). A corrected image must still be built and
 booted. Separately, real cache restoration lost ping's file capability despite
 retaining numeric ownership and modes; unprivileged raw ICMP failed after
 restore. That cache is not accepted for subsequent image qualification.
+
+
+## Corrected live ISO clean boot and independent-client traffic, 2026-11-03
+
+Canonical ISO product source `0ee9777ec922a5aafff8d95bd6d109c563d7d742`,
+ISO SHA-256 `fba24c3b714c8779e608de047d952ad45735fb0a302ade9252e6cc1d62b6a569`,
+booted in a fresh Ubuntu 24.04 / Linux 6.8.0-147 PVE guest with read-only ISO
+and `ROUTERD_CONFIG` media and no writable system disk. The prepared 1.5 fixture
+is `tests/fixtures/linux-live-iso-boot.json` at `5e5e9a76`; its SHA-256 is
+`0b4e9e42993045b81198b3df1cbf13e4b8053f2c92806a07f7bcc3eee2e1928e`.
+An initial preparation error retained a nonexistent raw route device name;
+correcting that fixture and cold-booting the same unchanged ISO resolved it.
+No runtime binary replacement or manual product-state repair was used.
+
+Firstboot succeeded, bootstrap DHCP was removed, the canonical config matched
+the input, and all 19 resources became Healthy. The former foreign DNS template
+was absent. All 24 installed binary/plugin artifacts matched the canonical
+release payload. Numeric owner/mode checks preserved root-owned setuid passwd,
+shadow group/mode and sticky temporary directories. A fresh v3 rootfs cache
+round trip preserved ping's exact capability bytes; its restored binary also
+sent raw ICMP as an unprivileged user in an isolated network namespace.
+The maintained cache test at `04a11b37` explicitly checks `security.capability`
+when run as root; its native writer/reader check passed.
+
+A separate continuously running Ubuntu peer VM passed DHCP acquisition and
+same-address natural renewal with unchanged boot ID/DHCP PID; local/upstream DNS
+A over UDP/TCP; peer-observed IPv4 NAT; management-to-LAN positive control; and
+WAN-to-LAN, LAN-to-management and WAN-to-router DNS denial. A WAN peer loopback
+endpoint outside the connected WAN subnet additionally proved default-route
+transit and NAT. Native deny counters were nonzero. Routerd retained its PID
+and zero automatic restarts, and the guest reported systemd running.
+
+Empty intent reached Healthy with zero resources, removed the native filter
+and withdrew all three managed IPv4 addresses. Peer cleanup completed; both
+disposable VMs, disks and their ISO/config/snippet media were removed.
+This is the clean-boot/IPv4 scope of the
+[maintained procedure](../how-to/pve-live-iso-nocloud.md#independent-client-boot-check),
+not IPv6 image qualification, NoCloud/provider URL bootstrap, persistent storage
+or whole routerd 1.0 parity. The earlier failed ISO observations remain historical;
+the previously missing corrected-image clean boot and v3 capability restoration
+now have native results.

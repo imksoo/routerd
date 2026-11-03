@@ -114,3 +114,16 @@ format marker の存在だけでは属性保存を証明できません。
 製品不具合をローカル再現してから次の lab 試験を設計します。成功時は空設定で撤去し、
 peer cleanup、専用 VM・disk・ISO/config media・rootfs cache・build staging の削除まで行います。
 残すのは手順と限定した判定結果です。
+
+
+default route も検査する場合は WAN peer namespace の loopback に `198.18.18.1/32`
+を付け、LAN から `http://198.18.18.1:8080/routed-default` にアクセスして NAT 送信元
+`198.18.16.2` が返ることを確認します。WAN の直結範囲内への通信だけでは default route を証明できません。
+
+2026-11-03 の限定検証では ISO 製品 source `0ee9777e`、修正した boot fixture `5e5e9a76`、
+Ubuntu 24.04 / Linux 6.8.0-147 の2 VM で上記の clean boot と IPv4 経路が通りました。
+DHCP の自然更新、default route 経由の転送、配布物 hash 一致、package の native 属性、
+空設定による撤去も確認しました。ISO SHA-256 は
+`fba24c3b714c8779e608de047d952ad45735fb0a302ade9252e6cc1d62b6a569` です。
+初回の raw device 名の書き換え漏れは fixture 準備の失敗で、修正 config drive から
+同じ ISO を cold boot して確認しました。成功後は VM・disk・一時 media を削除しました。
