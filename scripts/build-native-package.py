@@ -40,11 +40,17 @@ def stage(payload, root, package_format):
         rc = prefix / "etc/rc.d"
         rc.mkdir(parents=True)
         shutil.copy2(REPO / "contrib/freebsd/routerd", rc)
+    # Directory creation must not inherit a developer's group-writable umask.
+    root.chmod(0o755)
+    for directory in root.rglob("*"):
+        if directory.is_dir() and not directory.is_symlink():
+            directory.chmod(0o755)
 
 
 def deb(root, output, version, arch):
     control = root / "DEBIAN"
     control.mkdir()
+    control.chmod(0o755)
     (control / "control").write_text(
         f"Package: routerd\nVersion: {version}\nArchitecture: {arch}\n"
         "Maintainer: Kirino Minato <kirino.minato@gmail.com>\n"
