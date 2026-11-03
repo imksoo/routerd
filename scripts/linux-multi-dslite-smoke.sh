@@ -20,10 +20,10 @@ test "$(dpkg-deb -f "$prior" Package)" = routerd
 test "$(dpkg-deb -f "$current" Package)" = routerd
 dpkg --compare-versions "$(dpkg-deb -f "$current" Version)" gt "$(dpkg-deb -f "$prior" Version)"
 for ns in rd15-mclient rd15-aftr-{a,b,c,d}; do
- ! ip netns list | awk '{print $1}' | grep -Fxq "$ns"
+ if ip netns list | awk '{print $1}' | grep -Fxq "$ns"; then echo "existing namespace: $ns" >&2; exit 1; fi
 done
 for dev in rd15-mwan rd15-mlan ds-{a,b,c,d}; do
- ! ip link show "$dev" >/dev/null 2>&1
+ if ip link show "$dev" >/dev/null 2>&1; then echo "existing interface: $dev" >&2; exit 1; fi
 done
 work=$(mktemp -d /var/tmp/routerd-multi-dslite.XXXXXX)
 peers=(); capture=; installed=0; network_withdrawn=0
@@ -90,7 +90,7 @@ for letter in a b c d; do
  ip -n "$ns" link set aftr mtu 1460 up
  ip -n "$ns" -4 address add 203.0.113.80/32 dev lo
  ip netns exec "$ns" python3 "$work/peer.py" "$letter" > "$work/peer-$letter.txt" 2>&1 & peers+=("$!")
- for attempt in {1..30}; do
+ for _ in {1..30}; do
   if ip netns exec "$ns" curl --noproxy '*' -fsS --max-time 1 http://203.0.113.80:8080/ > /dev/null 2>&1; then break; fi
   sleep .1
  done
@@ -110,7 +110,7 @@ tcpdump -i rd15-mwan -U -C 1 -W 2 -w "$work/outer.pcap" 'ip6 proto 4' > "$work/c
 export DEBIAN_FRONTEND=noninteractive
 apt-get -o DPkg::Lock::Timeout=180 install -y "$prior" > "$work/apt.txt" 2>&1
 installed=1
-! systemctl is-active --quiet routerd.service
+if systemctl is-active --quiet routerd.service; then echo 'fresh install started main unexpectedly' >&2; exit 1; fi
 test -z "$(dpkg -V routerd)"
 /usr/sbin/routerd validate --config "$work/router.json"
 install -d -m 0700 /etc/routerd
@@ -137,7 +137,7 @@ sample() {
  while (( SECONDS < deadline )); do
   nft -nn list table ip routerd_policy > "$work/policy-native.txt" 2>/dev/null || : > "$work/policy-native.txt"
   nft -nn list table ip routerd_default_route > "$work/default-native.txt" 2>/dev/null || : > "$work/default-native.txt"
-  if python3 - "$work/policy-native.txt" "$work/default-native.txt" "$expected" <<'PY'
+  if python3 - "$work/policy-native.txt" "$work/default-native.txt" "$expected" 2> "$work/policy-await.txt" <<'PY'
 import re,sys
 policy=open(sys.argv[1]).read(); default=open(sys.argv[2]).read(); expected=sys.argv[3]
 marks={int(x,16) for x in re.findall(r':\s*(0x[0-9a-f]+)',policy)}
@@ -206,11 +206,13 @@ test "$(sha256sum /etc/routerd/router.yaml)" = "$before"
 test "$(dpkg-query -W -f='${Version}' routerd)" = "$(dpkg-deb -f "$current" Version)"
 test -z "$(dpkg -V routerd)"
 test "$(systemctl show routerd.service -p MainPID --value)" != "$old"
-! kill -0 "$old" 2>/dev/null
+if kill -0 "$old" 2>/dev/null; then echo "old main process remains: $old" >&2; exit 1; fi
 await_health 'a b c d' Healthy
 sample abc apt-updated
 routerctl apply -f "$work/empty.json" --replace > "$work/withdraw.txt"
-for letter in a b c d; do ! ip link show "ds-$letter" >/dev/null 2>&1; done
+for letter in a b c d; do
+ if ip link show "ds-$letter" >/dev/null 2>&1; then echo "owned tunnel remains: ds-$letter" >&2; exit 1; fi
+done
 if ip netns exec rd15-mclient curl --noproxy '*' -fsS --max-time 3 http://203.0.113.80:8080/ >/dev/null 2>&1; then
  echo 'withdrawal left the routed path usable' >&2; exit 1
 fi
