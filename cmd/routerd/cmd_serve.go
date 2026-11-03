@@ -677,26 +677,25 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		}
 	}
 	controllerOpts = controllerchain.Options{
-		SuperviseClientDaemons: true,
-		SuperviseDNSResolvers:  false,
-		DnsmasqCommand:         "dnsmasq",
-		DnsmasqConfig:          *dnsmasqConfigPath,
-		DnsmasqPID:             filepath.Join(platformDefaults.RuntimeDir, "dnsmasq.pid"),
-		DnsmasqPort:            53,
-		DnsmasqListen:          []string{"127.0.0.1"},
-		NftablesPath:           *nftablesPath,
-		FirewallPath:           "/run/routerd/firewall.nft",
-		LedgerPath:             *ledgerPath,
-		NftCommand:             "nft",
-		BGPSocketPath:          *bgpSocketPath,
-		BGPControlSocketPath:   *bgpControlSocketPath,
-		BGPStatePath:           *bgpStatePath,
-		ConntrackInterval:      30 * time.Second,
-		ControllerObserver:     controllerRuntime,
-		EnabledControllers:     enabledControllers,
-		PeerGroupSyncClient:    peerGroupSyncClient,
-		MutationGate:           mutationGate,
+		DnsmasqCommand:       "dnsmasq",
+		DnsmasqConfig:        *dnsmasqConfigPath,
+		DnsmasqPID:           filepath.Join(platformDefaults.RuntimeDir, "dnsmasq.pid"),
+		DnsmasqPort:          53,
+		DnsmasqListen:        []string{"127.0.0.1"},
+		NftablesPath:         *nftablesPath,
+		FirewallPath:         "/run/routerd/firewall.nft",
+		LedgerPath:           *ledgerPath,
+		NftCommand:           "nft",
+		BGPSocketPath:        *bgpSocketPath,
+		BGPControlSocketPath: *bgpControlSocketPath,
+		BGPStatePath:         *bgpStatePath,
+		ConntrackInterval:    30 * time.Second,
+		ControllerObserver:   controllerRuntime,
+		EnabledControllers:   enabledControllers,
+		PeerGroupSyncClient:  peerGroupSyncClient,
+		MutationGate:         mutationGate,
 	}
+	configureServeDaemonSupervision(&controllerOpts, platformFeatures)
 	if *sandbox {
 		applySandboxControllerOptions(&controllerOpts, *dnsmasqConfigPath, *nftablesPath)
 	}
@@ -1295,6 +1294,11 @@ func configureServeSandbox(root string, setFlags map[string]bool, configPath, st
 		return err
 	}
 	return nil
+}
+
+func configureServeDaemonSupervision(opts *controllerchain.Options, features platform.Features) {
+	opts.SuperviseClientDaemons = true
+	opts.SuperviseDNSResolvers = false
 }
 
 func applySandboxControllerOptions(opts *controllerchain.Options, dnsmasqConfigPath, nftablesPath string) {
