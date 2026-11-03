@@ -2112,3 +2112,26 @@ func TestNftablesClientPolicyExcludeTrustedMACs(t *testing.T) {
 		}
 	}
 }
+
+func TestDefaultRouteMarksExcludeRuntimeUnreadyTarget(t *testing.T) {
+	ready, unready := true, false
+	active := api.EgressRoutePolicyCandidate{Name: "primary", Targets: []api.EgressRoutePolicyTarget{
+		{Name: "a", Mark: 0x110, RuntimeReady: &ready},
+		{Name: "b", Mark: 0x111, RuntimeReady: &unready},
+		{Name: "c", Mark: 0x112},
+	}}
+	fallback := api.EgressRoutePolicyCandidate{Name: "fallback", Mark: 0x113}
+	data, err := NftablesEgressRoutePolicyDefaultMarks("EgressRoutePolicy/wan", api.EgressRoutePolicySpec{}, active, []api.EgressRoutePolicyCandidate{active, fallback})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(data)
+	if strings.Contains(got, nftMark(0x111)) {
+		t.Fatalf("failed target's existing flows remain pinned: %s", got)
+	}
+	for _, mark := range []int{0x110, 0x112, 0x113} {
+		if !strings.Contains(got, nftMark(mark)) {
+			t.Fatalf("healthy mark %#x lost: %s", mark, got)
+		}
+	}
+}

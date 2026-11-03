@@ -780,3 +780,58 @@ func loopbackPolicyLinkObservation(ctx context.Context, name string, args ...str
 	}
 	return nil, fmt.Errorf("fixture has no observation for %s %v", name, args)
 }
+
+// A surviving member must not make a failed member's conntrack mark eligible.
+func TestDefaultRouteCandidatesRetainOnlyAvailableTargets(t *testing.T) {
+	for _, failure := range []string{"none", "unhealthy", "missing-link", "all-unhealthy"} {
+		t.Run(failure, func(t *testing.T) {
+			router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+				{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "a"}, Spec: api.InterfaceSpec{IfName: "wan-a"}},
+				{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "b"}, Spec: api.InterfaceSpec{IfName: "wan-b"}},
+			}}}
+			store := mapStore{}
+			for _, name := range []string{"a", "b"} {
+				router.Spec.Resources = append(router.Spec.Resources, api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"}, Metadata: api.ObjectMeta{Name: name}, Spec: api.HealthCheckSpec{Target: "192.0.2.1"}})
+				phase := "Healthy"
+				if failure == "all-unhealthy" || (failure == "unhealthy" && name == "b") {
+					phase = "Unhealthy"
+				}
+				store[api.NetAPIVersion+"/HealthCheck/"+name] = healthProbeStatusForTest(t, router, store, name, phase, time.Now().UTC(), 0)
+			}
+			spec := api.EgressRoutePolicySpec{Mode: "priority", Candidates: []api.EgressRoutePolicyCandidate{{Name: "primary", Weight: 120, Targets: []api.EgressRoutePolicyTarget{
+				{Name: "a", Interface: "a", Mark: 0x110, HealthCheck: "a"},
+				{Name: "b", Interface: "b", Mark: 0x111, HealthCheck: "b"},
+			}}}}
+			controller := IPv4PolicyRouteController{Router: router, Store: store}
+			controller.CommandOutput = func(_ context.Context, name string, args ...string) ([]byte, error) {
+				if name == "ip" && strings.Join(args, " ") == "link show dev wan-a" {
+					return nil, nil
+				}
+				if name == "ip" && strings.Join(args, " ") == "link show dev wan-b" && failure != "missing-link" {
+					return nil, nil
+				}
+				return nil, fmt.Errorf("fixture missing link: %s %v", name, args)
+			}
+			got, err := controller.availableDefaultRouteCandidates(t.Context(), spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if failure == "all-unhealthy" {
+				if len(got) != 0 {
+					t.Fatalf("no ready targets, got %#v", got)
+				}
+			} else {
+				want := 1
+				if failure == "none" {
+					want = 2
+				}
+				if len(got) != 1 || len(got[0].Targets) != want || got[0].Targets[0].Name != "a" || got[0].Weight != 120 {
+					t.Fatalf("available candidates = %#v, want primary with %d ready targets", got, want)
+				}
+			}
+			if len(spec.Candidates[0].Targets) != 2 || spec.Candidates[0].Targets[1].Name != "b" {
+				t.Fatal("availability filtering mutated desired targets")
+			}
+		})
+	}
+}
