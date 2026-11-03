@@ -2856,3 +2856,31 @@ The peer fixture was cleaned up and the ISO VM, disks and temporary boot media
 were removed. The separate build guest was later removed after the native apt
 gate. This result does not qualify IPv6 image behavior, provider-URL bootstrap,
 persistent installation or all routerd 1.0 functions.
+
+## Native apt/pkg update checkpoint (2026-11-03)
+
+The [native package plan](./routerd15-plan.md#native-package-installation-baseline-2026-11-03)
+records the exact versions and revisions. Final actual lifecycle gates passed on
+Ubuntu 24.04 / Linux 6.8.0-124 and FreeBSD 14.3-RELEASE-p16 / pkg 2.8.4, both amd64.
+The new daemon executable differed from the prior one. Independent UDP/TCP DNS,
+old main/helper process exit, unchanged configuration, a retained value in the
+actual SQLite database, native package-file verification and removal passed.
+Linux also retained an unrelated prefixed service. FreeBSD's injected stop failure
+prevented replacement while the old daemon continued serving DNS.
+
+The FreeBSD update command uses `HANDLE_RC_SCRIPTS=true` and an enabled native
+service. Services launch through pkg's native post-hook rc.d handling; a hook's
+descendants are reaped by pkg, so merely seeing an early startup log was not
+accepted as recovery. Root file ownership, native rc.d mode 0555 and hook behavior
+were also checked with native pkg tools. Native hook unit tests include pkg's
+POSIX environment; local rc.d tests retain unknown-ownership refusal while
+accepting a confirmed normal exit during lock/signal operations. The FreeBSD DNS
+worker now has its existing native supervisor as owner (`bbbb9e79`).
+
+Both disposable guests, disks and snippets were deleted; downloaded FreeBSD image
+staging was removed. Successful temporary payloads and logs are discarded after
+recording the reusable procedures and these scoped results. Release workflow
+syntax/actionlint checks passed; the workflow itself was not run to publish a
+release. Optional libnDPI native packaging, arm64 runtime and full 1.0 feature
+qualification remain separate work. No main merge or production deployment was
+performed.

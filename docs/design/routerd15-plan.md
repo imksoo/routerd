@@ -228,3 +228,54 @@ this checkpoint's code; packaging tests and shell lint passed. This does not
 certify all network functions after the native-path change. FreeBSD pkg lifecycle,
 release asset integration, native image installation and public repository delivery
 remain unfinished. No manual-install compatibility path was added.
+
+Native base-package checkpoint (2026-11-03, supersedes the unfinished base-package
+items above): file ownership/modes, lifecycle hooks and shared inventory now
+produce `.deb` and native `.pkg`; release workflow `17072a01` builds both native
+formats for amd64/arm64, and no longer publishes a manual base installer. That
+workflow has local actionlint validation, not an executed release. Native image
+installation `1ee100ee` also passed its separate clean-boot IPv4 campaign.
+
+Final Linux package gate: Ubuntu 24.04 / Linux 6.8.0-124, versions
+`1.5.0~20261103034000` -> `1.5.0~20261103035000`, lifecycle `59baa653`, fixture
+`4ae4af43`. Actual apt install/update/remove passed independent UDP/TCP DNS,
+old executable/process replacement, configuration and SQLite value retention,
+package-file verification and generated-unit removal. An unrelated prefixed
+transient service remained active through update/removal. The VM and disks were
+removed after the test.
+
+Final FreeBSD package gate: FreeBSD 14.3-RELEASE-p16, pkg 2.8.4, versions
+`1.5.0.a20261103034000` -> `1.5.0.a20261103035000`. Daemon code `bbbb9e79`, native
+lifecycle/rc.d `626774d7` and its maintained fixture passed fresh inactive install,
+independent UDP/TCP DNS, failed-stop refusal without replacing or losing service
+from the prior version, normal update with old process exit, configuration/SQLite
+value retention, package-file verification and removal with retained user state.
+The gate uses native `HANDLE_RC_SCRIPTS=true`; enabled rc.d services start after
+pkg's hook descendant cleanup. Without that policy, automatic restoration is not
+claimed. The earlier direct hook startup was actually killed by pkg and is no
+longer used. Native hook unit tests passed on FreeBSD with pkg's POSIX environment;
+PID-lock/signal exit races have local rc.d regression tests. The VM, disks, snippet
+and downloaded image staging were removed after the gate.
+
+The reusable commands and assertions are in `scripts/linux-deb-lifecycle-smoke.sh`,
+`scripts/freebsd-pkg-lifecycle-smoke.sh` and the development runbook. Retain these
+procedures and scoped results, not the successful campaign's raw logs/payloads.
+These checks qualify native base-package lifecycle on the two amd64 OS guests,
+not all 1.0 features or arm64 runtime. Optional libnDPI native packaging remains
+unfinished; its existing separate archive must not overwrite package-owned files.
+Public repository hosting/release publication, main merge and production rollout
+were not performed. The complete 1.0 functional goal remains unchanged.
+
+Final local checks for the native-package checkpoint: `git diff --check`, Go
+format checks, the complete Linux `go test ./...`, native lifecycle shell lint,
+release actionlint, generated-schema checks, example validation and the four-locale
+website build passed. The website build still reports unresolved documentation
+links; successful compilation is not a claim of link-clean documentation. No
+release workflow, arm64 guest lifecycle or production deployment was executed.
+Reviewed implementation/test paths include `cmd/routerd/cmd_serve.go`,
+`contrib/freebsd/routerd`, `packaging/native/debian-service.sh`,
+`packaging/native/freebsd-service.sh`, `scripts/build-native-package.py`,
+`scripts/build-live-iso.sh`, `scripts/linux-deb-lifecycle-smoke.sh`,
+`scripts/freebsd-pkg-lifecycle-smoke.sh`, `tests/nativepackage/deb_test.go`,
+`tests/nativepackage/pkg_test.go`, `tests/install/freebsd_rcd_boundary_test.go`,
+`tests/install/install_test.go`, `Makefile` and `.github/workflows/release.yaml`.
