@@ -12,6 +12,9 @@ const RouterdUnitName = "routerd.service"
 // The native dnsmasq owner must inspect and signal its helper after the helper
 // drops UID. CAP_SYS_PTRACE permits exact procfs identity checks; CAP_KILL
 // permits pidfd signaling across UIDs. Neither bypasses the ownership checks.
+// The Package owner also runs apt/dpkg: CAP_FOWNER permits chmod on downloader-
+// owned cache directories, and CAP_DAC_OVERRIDE permits publishing downloads
+// from those private directories. UID 0 alone does not bypass a bounding set.
 func RouterdServiceSystemdSpec() api.SystemdUnitSpec {
 	noNewPrivileges := false
 	enabled := true
@@ -27,8 +30,8 @@ func RouterdServiceSystemdSpec() api.SystemdUnitSpec {
 		RuntimeDirectoryPreserve: "yes",
 		StateDirectory:           []string{"routerd"},
 		LogsDirectory:            []string{"routerd"},
-		AmbientCapabilities:      []string{"CAP_NET_ADMIN", "CAP_NET_RAW", "CAP_NET_BIND_SERVICE", "CAP_SETUID", "CAP_SETGID", "CAP_CHOWN", "CAP_SYS_PTRACE", "CAP_KILL"},
-		CapabilityBoundingSet:    []string{"CAP_NET_ADMIN", "CAP_NET_RAW", "CAP_NET_BIND_SERVICE", "CAP_SETUID", "CAP_SETGID", "CAP_CHOWN", "CAP_SYS_PTRACE", "CAP_KILL"},
+		AmbientCapabilities:      []string{"CAP_NET_ADMIN", "CAP_NET_RAW", "CAP_NET_BIND_SERVICE", "CAP_SETUID", "CAP_SETGID", "CAP_CHOWN", "CAP_SYS_PTRACE", "CAP_KILL", "CAP_FOWNER", "CAP_DAC_OVERRIDE"},
+		CapabilityBoundingSet:    []string{"CAP_NET_ADMIN", "CAP_NET_RAW", "CAP_NET_BIND_SERVICE", "CAP_SETUID", "CAP_SETGID", "CAP_CHOWN", "CAP_SYS_PTRACE", "CAP_KILL", "CAP_FOWNER", "CAP_DAC_OVERRIDE"},
 		NoNewPrivileges:          &noNewPrivileges,
 		Enabled:                  &enabled,
 		Started:                  &started,

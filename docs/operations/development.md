@@ -520,6 +520,20 @@ WAN router-advertisement discovery.
 
 ## Linux multi-path DS-Lite package gate
 
+The main service's Package controller needs `CAP_FOWNER` for apt's downloader-owned
+cache directory modes and `CAP_DAC_OVERRIDE` to move downloads out of private
+cache directories. UID 0 under a restricted capability bounding set is
+insufficient. The runtime renderer and packaged vendor unit must agree.
+`TestRouterdPackageCachePermissionsNative` reproduces the actual chmod/rename
+operations in temporary directories under the rendered capability set. It is an
+explicit root filesystem-only check, not a package installation or network test:
+
+```sh
+go test -c -o /tmp/routerd-package-caps.test ./pkg/render
+sudo env ROUTERD_RUN_PACKAGE_CAPS=1 /tmp/routerd-package-caps.test \
+  -test.run '^TestRouterdPackageCachePermissionsNative$' -test.v
+```
+
 `scripts/linux-multi-dslite-smoke.sh` tests a clean apt-installed product on a
 dedicated disposable Ubuntu VM. It creates four independent kernel AFTR
 namespaces with HTTP receivers and a separate LAN client. Three primary paths

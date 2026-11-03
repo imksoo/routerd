@@ -404,6 +404,19 @@ WAN Router Advertisement の取得までは検証しません。
 
 ## Linux の複数 DS-Lite 経路・パッケージ試験
 
+メインサービス内の Package コントローラーは、apt のダウンロード用ユーザーが
+所有するキャッシュの権限変更に `CAP_FOWNER`、非公開ディレクトリからの取得済み
+ファイルの移動に `CAP_DAC_OVERRIDE` を必要とします。制限された権限セットでは
+UID 0 だけでは足りません。生成 unit と配布用 unit の両方を同期してください。
+次の回帰試験は、一時ディレクトリで実際の chmod・rename を実行します。
+パッケージ導入やホストのネットワーク変更は行いません。
+
+```sh
+go test -c -o /tmp/routerd-package-caps.test ./pkg/render
+sudo env ROUTERD_RUN_PACKAGE_CAPS=1 /tmp/routerd-package-caps.test \
+  -test.run '^TestRouterdPackageCachePermissionsNative$' -test.v
+```
+
 `scripts/linux-multi-dslite-smoke.sh` は、専用の使い捨て Ubuntu VM に apt で
 新規導入し、4つの独立したカーネル AFTR と LAN クライアントを別の名前空間で
 動かします。3本を送信元アドレスで分散し、低優先度の4本目へ退避します。

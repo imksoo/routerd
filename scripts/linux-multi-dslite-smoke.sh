@@ -89,7 +89,7 @@ for letter in a b c d; do
  ip -n "$ns" -4 address add 203.0.113.80/32 dev lo
  ip netns exec "$ns" python3 "$work/peer.py" "$letter" > "$work/peer-$letter.txt" 2>&1 & peers+=("$!")
  for attempt in {1..30}; do
-  if ip netns exec "$ns" curl --noproxy '*' -fsS --max-time 1 http://203.0.113.80:8080/ > /dev/null; then break; fi
+  if ip netns exec "$ns" curl --noproxy '*' -fsS --max-time 1 http://203.0.113.80:8080/ > /dev/null 2>&1; then break; fi
   sleep .1
  done
  ip netns exec "$ns" curl --noproxy '*' -fsS --max-time 2 http://203.0.113.80:8080/ | jq -e --arg letter "$letter" '.aftr==$letter' >/dev/null
@@ -119,7 +119,7 @@ await_health() {
  while (( SECONDS < deadline )); do
   okay=1
   for letter in $letters; do
-   if ! curl --fail --silent --max-time 2 --unix-socket "/run/routerd/healthcheck/hc-$letter.sock" http://unix/v1/status | jq -e --arg phase "$phase" '.phase==$phase' >/dev/null; then okay=0; fi
+   if ! curl --fail --silent --max-time 2 --unix-socket "/run/routerd/healthcheck/hc-$letter.sock" http://unix/v1/status | jq -e --arg phase "$phase" --arg name "hc-$letter" 'any(.resources[]?; .resource.name==$name and .phase==$phase)' >/dev/null; then okay=0; fi
   done
   if [ "$okay" = 1 ]; then return; fi
   sleep 1
