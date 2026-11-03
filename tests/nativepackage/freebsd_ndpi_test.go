@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -58,5 +59,25 @@ else:
 	}
 	if len(manifest.Libraries) != 1 || manifest.Libraries[0] != "libndpi.so.5" {
 		t.Errorf("missing exact ELF library requirement: %+v", manifest.Libraries)
+	}
+}
+
+func TestNativeAgentBuildCheckRequiresSuccessfulSelftest(t *testing.T) {
+	bin := t.TempDir()
+	agent := filepath.Join(bin, "agent")
+	if err := os.WriteFile(agent, []byte("#!/bin/sh\necho '{\"libndpiLoaded\":true}'\nexit 42\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "file"), []byte("#!/bin/sh\necho 'ELF dynamically linked'\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	tool := "make"
+	if runtime.GOOS == "freebsd" {
+		tool = "gmake"
+	}
+	cmd := exec.Command(tool, "-C", "../..", "check-ndpi-agent-libndpi", "ROUTERD_OS=linux", "ROUTERD_NDPI_AGENT_BIN="+agent)
+	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"))
+	if output, err := cmd.CombinedOutput(); err == nil {
+		t.Fatalf("native build accepted a failed selftest: %s", output)
 	}
 }
