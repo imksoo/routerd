@@ -3443,3 +3443,24 @@ Next isolate reverse synchronization after cold return, obtaining both ends of
 the direct SSH/TCP transaction before proposing a repair. Do not repeat the
 whole campaign to guess at the cause. Public procedures and these scoped results
 replace permanent raw logs; private access/topology details remain private.
+
+### Correction to combined HA synchronization input (2026-11-03)
+
+The authorized diagnostic rerun on product `a1d8ef19` failed during initial
+A-to-B sticky synchronization, before power loss or cold return. Both endpoint
+captures show a successful SSH handshake followed by the server source changing
+from its node LAN address to its legacy-subnet address and a TCP reset. The
+requested post-return phase therefore did not execute. Withdrawal on A had an
+unconfirmed API timeout; B withdrew successfully. Both daemons and all three
+VMs were stopped after collection.
+
+Comparison with **both original deployed inputs and both prepared 105-resource
+inputs** found that their legacy LAN SNAT already excludes all private
+synchronization targets. The synthetic fixture omitted these exclusions when
+mapping the private topology to benchmark addresses. This was a fixture
+preparation error. The previously observed synchronization failures do not prove
+a defect in the deployed peer path. RED `e601b7a2` pins peer exclusion and keeps
+the public Internet application eligible. The input now carries the original
+RFC1918 exclusions and the corresponding synthetic LAN/legacy/WAN subnets.
+Both prepared full inputs already contain the required private exclusions.
+Native qualification of the corrected input is pending.

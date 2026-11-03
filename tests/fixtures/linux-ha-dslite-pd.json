@@ -991,7 +991,15 @@
           "snatAddressFrom": {
             "resource": "IPv4StaticAddress/lan-legacy",
             "field": "address"
-          }
+          },
+          "excludeDestinationCIDRs": [
+            "10.0.0.0/8",
+            "172.16.0.0/12",
+            "192.168.0.0/16",
+            "198.18.29.0/24",
+            "198.18.30.0/24",
+            "198.18.31.0/24"
+          ]
         }
       },
       {

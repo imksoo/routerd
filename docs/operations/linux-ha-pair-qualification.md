@@ -183,6 +183,14 @@ shell, use `if command; then exit 1; fi` for a forbidden presence: `set -e` does
 not make a standalone `! command` abort when that negation fails. A missing
 precondition or failed client reset invalidates the run even if the product
 later reaches a healthy status.
+Carry the deployed NAT exclusions forward when translating private topology
+addresses into benchmark prefixes. The legacy LAN SNAT excludes RFC1918
+private destinations in both deployed inputs. Its synthetic counterpart must
+also exclude the translated LAN/legacy/WAN subnets. Otherwise inter-router SSH
+is source-translated, and the fixture introduces an address-changing control
+connection absent from the deployed configuration. Verify both peer addresses
+are excluded and the independent Internet application remains eligible for SNAT.
+
 The deployed graceful-activation gate observes the policy's `datapathState`,
 not `phase`: the latter is `Applied` in 1.5. Keep the observed field and its
 value together when preparing a configuration. A candidate permitted in both
