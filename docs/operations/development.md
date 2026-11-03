@@ -21,8 +21,8 @@ The 1.5 baseline is a clean OS followed by apt/pkg installation. Updates from
 previous native packages must retain operator configuration and durable state.
 Source installs, `make install`, manual copies and tar-installed systems are
 outside this contract. Do not add migration or adoption tests for those states.
-Native packaging remains under development, including FreeBSD lifecycle and
-release integration; no public apt/pkg repository or release is announced here.
+The release workflow builds native base packages; no public apt/pkg repository
+or release is announced here. Optional native libnDPI packaging remains separate.
 
 Build Linux artifacts with `make dist-deb PACKAGE_VERSION=<native-version>`.
 The shared distribution inventory supplies native `/usr` files and a vendor
@@ -53,6 +53,25 @@ Those service tests execute the real maintainer scripts with isolated fake comma
 The VM caller discards the guest and disks after the test. Failure prints bounded
 apt/journal diagnostics; reproduce and fix locally before another guest gate.
 Retain procedures, assertions and scoped results instead of permanent run logs.
+
+FreeBSD uses native `gmake dist-pkg ROUTERD_OS=freebsd` with Python, `pkg`,
+`dnsmasq` and `ca_root_nss` installed. In a disposable FreeBSD 14 guest, provide
+`dig` and Python SQLite support, then run:
+
+```sh
+sudo sh scripts/freebsd-pkg-lifecycle-smoke.sh --isolated-vm /tmp/prior.pkg /tmp/current.pkg
+```
+
+The same configuration/database, independent DNS and real executable/process
+criteria apply. The gate uses `pkg -o HANDLE_RC_SCRIPTS=true`: enabled services
+are started by pkg after hook descendant cleanup, then native main rc.d startup
+restores owned helpers. No global pkg policy is changed. The FreeBSD gate additionally injects a failed old-service stop
+and requires native pkg to reject replacement while the prior daemon still
+answers DNS. It then removes the fixture fault and tests normal update/removal.
+Native hook unit tests run on FreeBSD with pkg's `POSIXLY_CORRECT` environment;
+the rc.d boundary test covers ownership errors and normal process exit during
+pidfile lock and signal operations. An owned foreign-prefixed transient service
+must remain active through the Linux update and removal gate.
 
 ## Mandatory test and harness design rules
 

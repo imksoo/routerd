@@ -2830,3 +2830,29 @@ not IPv6 image qualification, NoCloud/provider URL bootstrap, persistent storage
 or whole routerd 1.0 parity. The earlier failed ISO observations remain historical;
 the previously missing corrected-image clean boot and v3 capability restoration
 now have native results.
+
+## Native-package live ISO checkpoint (2026-11-03)
+
+ISO integration `1ee100ee` installs the shared native `.deb` with apt into the
+image; the image and config-drive startup use `/usr/sbin` and `/etc/routerd`.
+ISO SHA-256 `7a37b6fca06d489ae4b2c57cb66cc620386dae2c20a97ffebc5444ac9ebca138`
+booted on Ubuntu 24.04 / Linux 6.8.0-147 with no writable OS disk and package
+`1.5.0~20261103022751+g1ee100eebe1c`. Native package file verification was clean,
+there was no `/usr/local/sbin/routerd`, and the reviewed config-drive fixture
+reached Healthy with 19 resources. Sticky temporary-directory modes and ping's
+file capability were preserved.
+
+A separate continuously running peer passed DHCP acquisition and four natural
+renewals of the same address without a boot-ID or DHCP-PID change, DNS A over
+UDP/TCP, IPv4 NAT and transit to an endpoint beyond the connected WAN subnet,
+management positive control and isolation with nonzero native deny counters.
+The router daemon kept its PID with zero automatic restarts. Empty intent reached
+Healthy with zero resources and withdrew managed addresses and filtering; actual
+apt removal retained configuration/state and removed owned files/helpers. The
+zero-resource status omits its zero-valued resourceCount field; inspect it with
+the maintained procedure's default-to-zero rule. A pre-apply orphan-artifact
+warning was observed; this result does not assert warning-free diagnostics.
+The peer fixture was cleaned up and the ISO VM, disks and temporary boot media
+were removed. The separate build guest was later removed after the native apt
+gate. This result does not qualify IPv6 image behavior, provider-URL bootstrap,
+persistent installation or all routerd 1.0 functions.

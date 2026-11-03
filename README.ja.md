@@ -87,7 +87,7 @@ DHCPv6またはIPv6の経路広告に使う宣言がある場合は、準備待�
 # Debian/Ubuntu
 sudo apt install ./routerd_<version>_amd64.deb
 # FreeBSD 14
-sudo pkg install ./routerd-<version>.pkg
+sudo pkg -o HANDLE_RC_SCRIPTS=true install ./routerd-<version>.pkg
 ```
 
 実際のファイル名と CPU に合わせて置き換えてください。提案版のパッケージや

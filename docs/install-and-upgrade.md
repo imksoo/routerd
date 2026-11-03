@@ -27,7 +27,7 @@ sudo apt install ./routerd_<version>_amd64.deb
 For FreeBSD 14, use the native package manager:
 
 ```sh
-sudo pkg install ./routerd-<version>.pkg
+sudo pkg -o HANDLE_RC_SCRIPTS=true install ./routerd-<version>.pkg
 ```
 
 Replace the placeholders with the actual downloaded filename; use arm64 packages
@@ -92,10 +92,18 @@ newer local package with the same apt/pkg command used for initial installation.
 The package manager tracks distributed binaries and service files; do not replace
 those files with `make install` or manual copies.
 
-The update hooks remember previously active owned services, stop the old daemon
+Debian update hooks remember previously active owned services, stop the old daemon
 and helpers before replacement, and restore active services after installation.
-A fresh or previously inactive service is not started just because a package was
-installed. Configuration and database contents are retained. A package update can
+Previously inactive Debian services stay inactive. FreeBSD uses pkg's native
+`HANDLE_RC_SCRIPTS=true` service policy: enable `routerd_enable=YES` for an
+operating router, and use the option in the command above when updating. Native
+pkg starts enabled rc.d services after hook cleanup; main rc.d startup then
+restores previously active owned helpers. An enabled but previously stopped
+FreeBSD service can therefore start during the update. The option applies to that
+pkg invocation and does not alter global pkg configuration. Without native service
+handling, an update can leave routerd stopped. Starting daemons directly from a
+pkg hook is insufficient because pkg reaps hook descendants.
+A fresh installation without an enabled service remains inactive. Configuration and database contents are retained. A package update can
 interrupt traffic and cause protocol reconvergence; verify independent client
 traffic after the update. The package hooks do not implement a database-format
 migration contract or guarantee uninterrupted BGP sessions.

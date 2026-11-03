@@ -88,7 +88,7 @@ and verifying the matching build's package:
 # Debian/Ubuntu
 sudo apt install ./routerd_<version>_amd64.deb
 # FreeBSD 14
-sudo pkg install ./routerd-<version>.pkg
+sudo pkg -o HANDLE_RC_SCRIPTS=true install ./routerd-<version>.pkg
 ```
 
 Use the actual filename and CPU architecture. Packages and a public repository

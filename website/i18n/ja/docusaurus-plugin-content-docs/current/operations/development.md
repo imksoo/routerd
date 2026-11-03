@@ -21,7 +21,7 @@ Release ワークフローは複数の OS と CPU アーキテクチャーを対
 1.5 はクリーン OS へ apt/pkg で導入し、その後の更新もパッケージ間で行います。
 更新時は利用者の設定と永続状態を保持します。ソースからの導入、`make install`、
 手動コピー、tar 展開からの移行・引き取りは対象外です。
-FreeBSD のライフサイクルとリリース経路の統合を含め、パッケージ化は実装途中です。
+release workflow は native 基本パッケージを生成します。追加の native libnDPI パッケージ化は別の残件です。
 ここでは公開 apt/pkg リポジトリの提供やリリースを宣言していません。
 
 Linux は `make dist-deb PACKAGE_VERSION=<native-version>` で生成します。
@@ -48,6 +48,24 @@ sudo sh scripts/linux-deb-lifecycle-smoke.sh --isolated-vm /tmp/prior.deb /tmp/c
 
 実行側は試験後に VM とディスクを削除します。失敗時は限定した apt/journal 診断を表示し、
 ローカルで再現・修正してから再試験します。恒久的な実行ログではなく、手順・判定・簡潔な結果を残します。
+
+FreeBSD は native 環境で `gmake dist-pkg ROUTERD_OS=freebsd` を使います。
+Python、`pkg`、`dnsmasq`、`ca_root_nss` が必要です。使い捨て FreeBSD 14 ゲストに
+`dig` と Python SQLite を用意し、次を実行します。
+
+```sh
+sudo sh scripts/freebsd-pkg-lifecycle-smoke.sh --isolated-vm /tmp/prior.pkg /tmp/current.pkg
+```
+
+設定・DB 保持、独立 DNS 疎通、実行ファイル交換と旧プロセス終了の基準は共通です。
+試験では `pkg -o HANDLE_RC_SCRIPTS=true` を使い、hook の子孫プロセスの後処理後に
+pkg が有効な rc.d サービスを起動し、main rc.d が自分の補助サービスを復帰させます。
+グローバルな pkg ポリシーは変更しません。
+さらに停止失敗を注入し、旧 daemon が DNS 応答を維持したまま pkg が置換を拒否することを
+確認します。注入を解除して通常更新・削除を試験します。
+native hook の単体試験では pkg の `POSIXLY_CORRECT` 環境を再現します。
+rc.d 試験は所有者不明の拒否と、PID ファイル確認・シグナル操作中の正常終了を確認します。
+Linux の更新・削除では、名前だけが routerd で始まる無関係なサービスの継続も確認します。
 
 ## 試験・ハーネス設計の必須規範
 
