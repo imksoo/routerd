@@ -119,3 +119,51 @@ package configuration from user-data.
 
 For richer bootstrap behavior, keep using routerd configuration media or install
 Ubuntu Server to disk and manage normal cloud-init there.
+
+## Independent-client boot check
+
+Use the canonical `make live-iso` image in a dedicated disposable VM, with a
+read-only `ROUTERD_CONFIG` drive containing
+`tests/fixtures/linux-live-iso-boot.json` as `router.yaml`. This prepared 1.5
+configuration uses three physical guest ports: `ens18` for LAN, `ens19` for
+WAN and `ens20` for management. Check the hypervisor MAC-to-port mapping before
+judging the product result; rewrite these three names for a different guest
+layout and run `routerd validate --config router.yaml` before boot. Keep these
+ports on isolated lab segments. Control the trial through the hypervisor guest
+agent or serial console, independently of the tested IP paths.
+
+The independent peer is another Linux VM. On a trunk carrying the corresponding
+LAN/WAN/management segments as VLANs 3131/3132/3133, use
+`scripts/linux-router-reboot-fixture.sh --disposable-vm setup-peer TRUNK_IF`.
+This IPv4 peer mode supplies the upstream DNS/HTTP servers, management positive
+control and a BusyBox DHCP client. Start it before the ISO router boots.
+
+Within 120 seconds after guest-agent availability, require successful
+`routerd-live-setup.service`, active `routerd.service`, and Healthy control
+status with no controller errors. Confirm that the canonical configuration
+matches the config-drive input, bootstrap DHCP has been withdrawn, and the
+image commit marker and installed executables match the built image. No
+runtime binary replacement or manual product-state repair is allowed.
+Run the peer's `probe` and `isolation` modes: DHCP acquisition, local/upstream
+DNS A over UDP/TCP, peer-observed NAT source and management-to-LAN access must
+work; WAN-to-LAN, LAN-to-management and WAN-to-router DNS must be denied.
+Require a natural renewal by the same DHCP process and address, plus stable
+routerd PID/restart count during the observation. Check native firewall deny
+counters rather than relying on a client timeout alone.
+
+Also verify distribution metadata: package executors and plugin manifests must
+exist at their canonical paths, temporary directories must have mode 1777,
+setuid package files must retain their package owner/mode, and the image's ping
+must retain `security.capability`. If a rootfs cache is used, compare numeric
+owner, mode and capability bytes before and after an actual cache restore.
+A cache format marker alone is not proof that attributes survived.
+
+This check qualifies the image's clean boot and the stated IPv4 router path.
+It does not cover IPv6, physical ISP behavior, persistent disk installation,
+power-loss recovery or complete feature/platform parity. On failure, preserve
+only the bounded output needed to identify the failed boot/configuration or
+packet path, reproduce product failures locally before another lab run, and
+stop that qualification attempt. On success, withdraw with an empty 1.5 config,
+run peer cleanup, and remove both disposable VMs, their disks, ISO/config media,
+rootfs cache and build staging. Keep this procedure and scoped result instead
+of the successful raw logs.

@@ -68,3 +68,36 @@ routerd の `DHCPv4Client`、`IPv4StaticAddress`、route resource がネット�
 
 より大きな bootstrap が必要な場合は、routerd の設定メディアを使うか、Ubuntu Server
 をディスクへインストールして通常の cloud-init で管理してください。
+
+## 独立クライアントによる起動確認
+
+専用の使い捨て VM を `make live-iso` の正規イメージから起動します。
+`tests/fixtures/linux-live-iso-boot.json` を `router.yaml` として読み取り専用の
+`ROUTERD_CONFIG` ドライブへ入れてください。1.5 形式で準備したこの設定は
+LAN=`ens18`、WAN=`ens19`、管理=`ens20` の3ポートを使います。起動前に MAC と
+ポート名の対応を確認し、異なる構成では3つの名前を書き換えて実 CLI の validate を通します。
+各ポートは隔離 lab segment に接続し、制御経路には guest agent または serial console を使います。
+
+対向は別の Linux VM とします。LAN/WAN/管理の segment を VLAN 3131/3132/3133 として
+渡した trunk で `scripts/linux-router-reboot-fixture.sh --disposable-vm setup-peer TRUNK_IF`
+を実行してください。IPv4 peer mode が独立した上流 DNS/HTTP、管理経路の正対照、
+BusyBox DHCP client を起動します。ISO router より先に対向を準備します。
+
+guest agent が応答してから120秒以内に setup service 成功、routerd active、
+control status Healthy と controller error なしを確認します。canonical config と入力の一致、
+bootstrap DHCP 撤去、image commit と実行ファイルの一致も確認し、稼働中の binary 差し替えや
+製品状態の手修正で合格にしません。対向の `probe` と `isolation` で DHCP 取得、
+ローカル・上流 DNS A（UDP/TCP）、対向が確認した NAT 送信元、管理→LAN の通信と、
+WAN→LAN・LAN→管理・WAN→router DNS の遮断を検査します。同じ DHCP process と
+アドレスの自然更新、観測中の routerd PID・再起動回数の安定、native deny counter も必要です。
+
+配布物も検査します。executor・plugin manifest の正規配置、一時ディレクトリの1777、
+package の setuid file の owner/mode、ping の `security.capability` を確認します。
+rootfs cache を使う場合は実際に復元し、前後の数値 owner・mode・capability bytes を比較します。
+format marker の存在だけでは属性保存を証明できません。
+
+対象は clean boot と上記 IPv4 経路です。IPv6、実 ISP、永続 disk install、電源断、
+全機能・全 OS の合格には広げません。失敗時は原因特定に必要な範囲の出力だけを一時保存し、
+製品不具合をローカル再現してから次の lab 試験を設計します。成功時は空設定で撤去し、
+peer cleanup、専用 VM・disk・ISO/config media・rootfs cache・build staging の削除まで行います。
+残すのは手順と限定した判定結果です。
