@@ -67,8 +67,10 @@ timeout while the generation is running still does.
 
 For IPv4 unicast VRRP, a unique unconditional `IPv4StaticAddress` on the election
 interface supplies keepalived's explicit `unicast_src_ip` and `track_src_ip`.
+If that interface also has legacy subnet addresses, routerd selects the unique
+declared source whose subnet contains all configured VRRP peers.
 This keeps the receive socket on the node address even if a shared VIP existed
 first and is subsequently withdrawn by a BACKUP notification. A missing tracked
 source is a fault, not permission to use a shared address. Multicast and an
-interface without a unique declared static source retain native source selection;
+interface without a unique declared source or peer-subnet match retain native source selection;
 the static-source qualification does not cover those other cases.

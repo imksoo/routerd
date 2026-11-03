@@ -126,7 +126,7 @@ func vrrpInstances(router *api.Router, aliases map[string]string, opts Keepalive
 		sort.Strings(peers)
 		unicastSource := ""
 		if len(peers) > 0 && spec.Family == "ipv4" {
-			unicastSource, err = keepalivedStaticNodeAddress(router, spec.Interface, address)
+			unicastSource, err = keepalivedStaticNodeAddress(router, spec.Interface, address, peers)
 			if err != nil {
 				return nil, err
 			}
@@ -159,10 +159,12 @@ func vrrpInstances(router *api.Router, aliases map[string]string, opts Keepalive
 
 // Keepalived's implicit unicast receive bind can select a pre-existing shared
 // VIP and remain bound to it after a BACKUP hook withdraws that VIP. Pin the
-// unique unconditional node address already declared on this interface. With
-// no unambiguous static source, retain the existing native selection behavior.
-func keepalivedStaticNodeAddress(router *api.Router, iface, vip string) (string, error) {
-	var source string
+// unconditional node address already declared on this interface, using the peer
+// subnet to distinguish a legacy LAN subnet when necessary. Without a unique
+// candidate, retain the existing native selection behavior.
+func keepalivedStaticNodeAddress(router *api.Router, iface, vip string, peers []string) (string, error) {
+	sources := map[netip.Addr]bool{}
+	peerSources := map[netip.Addr]bool{}
 	for _, resource := range router.Spec.Resources {
 		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "IPv4StaticAddress" {
 			continue
@@ -182,12 +184,32 @@ func keepalivedStaticNodeAddress(router *api.Router, iface, vip string) (string,
 		if !prefix.Addr().Is4() || address == renderAddressValue(vip) {
 			continue
 		}
-		if source != "" && source != address {
-			return "", nil
+		sources[prefix.Addr()] = true
+		coversPeers := true
+		for _, peer := range peers {
+			peerAddress, err := netip.ParseAddr(peer)
+			if err != nil || !prefix.Contains(peerAddress) {
+				coversPeers = false
+				break
+			}
 		}
-		source = address
+		if coversPeers {
+			peerSources[prefix.Addr()] = true
+		}
 	}
-	return source, nil
+	if len(sources) == 1 {
+		for address := range sources {
+			return address.String(), nil
+		}
+	}
+	// A legacy LAN subnet on the same link is not an alternative election
+	// source when only one declared subnet contains the configured peers.
+	if len(peerSources) == 1 {
+		for address := range peerSources {
+			return address.String(), nil
+		}
+	}
+	return "", nil
 }
 
 type virtualAddressSpec struct {

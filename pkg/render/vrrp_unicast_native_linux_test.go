@@ -64,6 +64,7 @@ func TestKeepalivedUnicastNativeAddressOrder(t *testing.T) {
 	// but an implicitly bound raw socket can remain attached to its old address.
 	command("ip", "-n", "rd15-vrrp-b", "addr", "add", "198.18.30.1/32", "dev", "eth0")
 	command("ip", "-n", "rd15-vrrp-b", "addr", "add", "198.18.30.3/24", "dev", "eth0")
+	command("ip", "-n", "rd15-vrrp-b", "addr", "add", "198.18.29.3/24", "dev", "eth0")
 	peer := []byte("global_defs {\n router_id independent\n}\nvrrp_instance peer {\n state BACKUP\n interface eth0\n virtual_router_id 130\n priority 150\n advert_int 1\n nopreempt\n unicast_src_ip 198.18.30.2\n unicast_peer {\n 198.18.30.3\n }\n no_virtual_ipaddress\n}\n")
 	start := func(node string, data []byte) string {
 		t.Helper()
@@ -110,6 +111,7 @@ func TestKeepalivedUnicastNativeAddressOrder(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	router := unicastSourceRouter()
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "legacy-lan"}, Spec: api.IPv4StaticAddressSpec{Interface: "lan", Address: "198.18.29.3/24"}})
 	spec, _ := router.Spec.Resources[1].VirtualAddressSpec()
 	spec.VRRP.GracefulActivation = &api.VirtualAddressVRRPGracefulActivationSpec{ReadyWhen: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"IPv4StaticAddress/node.phase": {Equals: "Applied"}}}}
 	spec.VRRP.FailoverVMAC = &api.VirtualAddressVRRPFailoverVMACSpec{ParentInterface: "lan", Interface: "test-vmac", MACAddress: "02:00:5e:00:01:30"}
