@@ -59,7 +59,7 @@ At boot, the live setup service:
 Supported bundle URLs currently end in `.tar.zst`, `.tzst`, `.tar.gz`, `.tgz`,
 or `.tar`. Bundles must contain `router.yaml` at the archive root. Optional
 `secrets/` and `metadata.json` entries are installed under
-`/usr/local/etc/routerd/`.
+`/etc/routerd/`.
 
 A persistent `ROUTERD_CONFIG` filesystem uses the same minimal layout:
 
@@ -69,7 +69,7 @@ secrets/
   wg-l2.key
 ```
 
-Secret files are installed under `/usr/local/etc/routerd/secrets` with mode
+Secret files are installed under `/etc/routerd/secrets` with mode
 `0600`; the directory itself is mode `0700`. Keep the config filesystem
 root-only at the hypervisor/storage layer because it contains private keys.
 

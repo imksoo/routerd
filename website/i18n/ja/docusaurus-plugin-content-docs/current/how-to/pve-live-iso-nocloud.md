@@ -50,7 +50,7 @@ qm reboot 169
 
 対応する bundle URL は `.tar.zst`、`.tzst`、`.tar.gz`、`.tgz`、`.tar` です。
 bundle には archive root に `router.yaml` が必要です。任意の `secrets/` と
-`metadata.json` は `/usr/local/etc/routerd/` 以下に配置されます。
+`metadata.json` は `/etc/routerd/` 以下に配置されます。
 
 fetch と checksum 検証が成功すると、配置済みの `router.yaml` は
 `/var/lib/routerd/validated-config/router.yaml` に cache されます。次回 boot で
