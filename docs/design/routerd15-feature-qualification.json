@@ -4351,5 +4351,13 @@
         "Router"
       ]
     }
+  ],
+  "approved_scope_decisions": [
+    {
+      "date": "2026-11-03",
+      "decision": "Exclude nDPI from FreeBSD; Linux nDPI remains in scope. Prioritize a real deployed Linux router replacement candidate before FreeBSD implementation and qualification.",
+      "implementation_status": "FreeBSD nDPI removal deferred with FreeBSD work; not yet implemented.",
+      "reference": "docs/design/routerd15-plan.md#linux-replacement-priority-2026-11-03-user-decision"
+    }
   ]
 }

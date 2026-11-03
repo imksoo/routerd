@@ -20,6 +20,40 @@ routerd 1.0 baseline: `e3b49dbb69c7de97bab9595884745eb7cbe93d92`.
 - Do not merge to `main`, release, or cut over a production router without the
   user's explicit decision.
 
+## Linux replacement priority (2026-11-03 user decision)
+
+The next deliverable is a Linux candidate ready for an explicitly authorized
+replacement trial of a deployed router. FreeBSD implementation, packaging,
+nDPI investigation and native qualification must not delay that deliverable.
+FreeBSD nDPI is excluded by the user's explicit decision; do not bundle nDPI 5
+or request an SDK 6 license-profile choice. Removal of that platform's current
+nDPI build/runtime integration is deferred with FreeBSD work, not claimed done.
+Other baseline functions remain in scope after the Linux replacement milestone.
+
+A read-only inspection of a deployed Linux router found 110 declared resources,
+including four DS-Lite tunnels, policy-based egress, BGP, DHCPv4/v6 and prefix
+lease synchronization, NAT session synchronization, DNS, NTP, virtual addresses,
+firewall/management access and application classification. The earlier private
+19-resource candidate is not a replacement-equivalence proof. Keep live inputs
+and access details in the private lab directory, never in this public repository.
+
+The prepared full 1.5 candidate currently validates with 109 resources. Four
+unused Interface role fields were removed, an intended firewall source selector
+was expressed using srcCIDRs, and the non-delivering OTLP LogSink/reference was
+removed while retaining Telemetry logs/metrics/traces. In baseline source,
+OTLPSink.Emit returns without sending; do not count its old configuration as
+successful delivery or claim Telemetry proves firewall-log delivery. Source
+configuration preparation is not migration compatibility or native qualification.
+
+Use the actual deployed function combinations to select the next Linux gates:
+clean apt install and update; independent DS-Lite/egress/NAT traffic and failover;
+BGP route exchange; DNS/DHCP/PD/RA and peer lease/session behavior; management
+isolation; restart/reboot, withdrawal and automatic recovery. Reuse already
+qualified procedures, extend only the missing combinations, and fix observed
+failures locally before another native run. Do not substitute another basic
+single-uplink demo or a FreeBSD gate for this milestone. Production cutover still
+requires a separate explicit decision.
+
 ## Current inventory
 
 - `origin/main` is `e3b49dbb69c7de97bab9595884745eb7cbe93d92`; the active proposal
@@ -336,6 +370,9 @@ inventory, existing runtime paths and operator configuration/state semantics.
 
 ## nDPI 6 dependency decision
 
+Superseded by the user decision above: exclude FreeBSD nDPI and prioritize Linux.
+The observations below remain historical; no dependency choice is pending.
+
 On 2026-11-03 the current FreeBSD repository installs `ndpi 6.0.d20260909,1`, not the nDPI 5.0
 recorded in the baseline platform qualification. Actual FreeBSD 14.3-RELEASE-p16
 native format tests passed at `fdd5692c`, including root ownership, native hooks,
@@ -374,25 +411,8 @@ and the actual installed headers were inspected. The native Linux tagged backend
 unit test at `2264b989` now fails rather than skips a missing backend, and requires
 actual library detection plus the expected TLS SNI; it passed against libnDPI 4.2.
 
-Decision required before changing the dependency distribution:
-
-- Recommended: retain the baseline LGPL nDPI 5.0 runtime in a package-owned private
-  prefix such as `/usr/local/lib/routerd/ndpi5`, with the native agent linked to
-  that private location. Build it from a verified upstream source revision and
-  include the required source/notice provenance. The routerd pkg owns those
-  files; it must not downgrade, overwrite or impersonate the OS ndpi 6 package.
-  External runtime dependencies still come from actual ELF/native package
-  ownership. This adds a bundled third-party runtime and maintenance obligation;
-  the layout/build change needs explicit design approval before implementation.
-- Alternative: explicitly specify the intended nDPI 6 usage/license profile and
-  authorize its operator-visible configuration. SDK 6's extra API argument and
-  component selection must reflect that decision while preserving required
-  functions. A successful restricted-mode HTTP probe is not full DPI support.
-
-Until that choice is authorized, the default native FreeBSD pkg build remains
-unqualified/blocked at the SDK compile step. Earlier static-agent pkg lifecycle
-results remain historical and do not qualify this new path. Main, releases and
-production remain untouched. Keep the current native test guest stopped while
-awaiting the decision; it contains SDK/test preparation only, with no routerd
-installed. Retain only the minimal unresolved diagnostics and reusable procedures;
-remove the already-imported image staging.
+The user subsequently excluded FreeBSD nDPI. The proposed bundled nDPI 5
+runtime and SDK 6 profile adaptation are not authorized implementation work and
+are not prerequisites for Linux replacement readiness. Native FreeBSD integration
+removal is deferred until Linux's first replacement gate is ready. Earlier
+static-agent package results and the SDK failure remain historical scoped facts.

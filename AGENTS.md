@@ -23,6 +23,14 @@ selectively port proven routerd2 fixes. Neither existing architecture nor a new
 architecture is a requirement in itself. The working plan is
 [docs/design/routerd15-plan.md](docs/design/routerd15-plan.md).
 
+## Current execution priority
+
+Finish Linux readiness for a real deployed-router replacement trial before
+resuming FreeBSD implementation or qualification. The user explicitly excludes
+nDPI from FreeBSD; do not make Linux progress depend on a FreeBSD nDPI decision.
+Keep the other baseline functions in the overall goal. Production cutover,
+release and main merge still require a separate decision.
+
 ## Compatibility decision
 
 The user authorizes replacing configuration, internal APIs/IPC, and event/state DB
