@@ -20,7 +20,7 @@ func TestParseOptions(t *testing.T) {
 	if opts.action != "activate" || opts.parent != "eth0" || opts.ifname != "wan-vmac" {
 		t.Fatalf("unexpected options: %#v", opts)
 	}
-	if got := commandsFor(opts); len(got) != 7 || got[0][0] != "ip" || got[0][1] != "link" || got[0][2] != "add" || got[4][0] != "sysctl" || got[4][2] != "net.ipv6.conf.wan-vmac.accept_ra=2" || got[6][0] != "ip" || got[6][4] != "wan-vmac" {
+	if got := commandsFor(opts); len(got) != 8 || got[0][0] != "ip" || got[0][1] != "link" || got[0][2] != "add" || got[4][2] != "net.ipv6.conf.wan-vmac.ra_defrtr_metric=50" || got[5][2] != "net.ipv6.conf.wan-vmac.accept_ra=2" || got[7][0] != "ip" || got[7][4] != "wan-vmac" {
 		t.Fatalf("activate commands: %#v", got)
 	}
 }
@@ -433,6 +433,7 @@ func TestWANFailoverVMACKeepsDelegatedAddressesAcrossDown(t *testing.T) {
 		{"ip", "link", "set", "dev", "wan-vmac", "address", "02:00:5e:00:01:13"},
 		{"sysctl", "-w", "net.ipv4.conf.wan.arp_ignore=1"},
 		{"sysctl", "-w", "net.ipv4.conf.wan-vmac.arp_ignore=1"},
+		{"sysctl", "-w", "net.ipv6.conf.wan-vmac.ra_defrtr_metric=50"},
 		{"sysctl", "-w", "net.ipv6.conf.wan-vmac.accept_ra=2"},
 		{"sysctl", "-w", "net.ipv6.conf.wan-vmac.keep_addr_on_down=1"},
 		{"ip", "link", "set", "dev", "wan-vmac", "up"},
@@ -441,7 +442,7 @@ func TestWANFailoverVMACKeepsDelegatedAddressesAcrossDown(t *testing.T) {
 		t.Fatalf("WAN commands = %#v, want %#v", got, want)
 	}
 	wan.action = "deactivate"
-	if got, want := commandsFor(wan), [][]string{{"ip", "link", "add", "link", "wan", "name", "wan-vmac", "type", "macvlan", "mode", "private"}, {"ip", "link", "set", "dev", "wan-vmac", "address", "02:00:5e:00:01:13"}, {"sysctl", "-w", "net.ipv4.conf.wan.arp_ignore=1"}, {"sysctl", "-w", "net.ipv4.conf.wan-vmac.arp_ignore=1"}, {"sysctl", "-w", "net.ipv6.conf.wan-vmac.accept_ra=2"}, {"sysctl", "-w", "net.ipv6.conf.wan-vmac.keep_addr_on_down=1"}, {"ip", "link", "set", "dev", "wan-vmac", "down"}}; !reflect.DeepEqual(got, want) {
+	if got, want := commandsFor(wan), [][]string{{"ip", "link", "add", "link", "wan", "name", "wan-vmac", "type", "macvlan", "mode", "private"}, {"ip", "link", "set", "dev", "wan-vmac", "address", "02:00:5e:00:01:13"}, {"sysctl", "-w", "net.ipv4.conf.wan.arp_ignore=1"}, {"sysctl", "-w", "net.ipv4.conf.wan-vmac.arp_ignore=1"}, {"sysctl", "-w", "net.ipv6.conf.wan-vmac.ra_defrtr_metric=50"}, {"sysctl", "-w", "net.ipv6.conf.wan-vmac.accept_ra=2"}, {"sysctl", "-w", "net.ipv6.conf.wan-vmac.keep_addr_on_down=1"}, {"ip", "link", "set", "dev", "wan-vmac", "down"}}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("WAN deactivate commands = %#v, want %#v", got, want)
 	}
 }
@@ -559,7 +560,7 @@ func TestRepeatedActivateRequestsRAOnlyWhenWANStateIsIncomplete(t *testing.T) {
 	}
 }
 
-func TestRepeatedActivateRepairsWANDefaultRouteWithoutSolicitingRA(t *testing.T) {
+func TestRepeatedActivateSolicitsRAAfterSettingKernelDefaultMetric(t *testing.T) {
 	var commands []string
 	requests := 0
 	err := runWithHooks([]string{
@@ -589,12 +590,12 @@ func TestRepeatedActivateRepairsWANDefaultRouteWithoutSolicitingRA(t *testing.T)
 	if err != nil {
 		t.Fatalf("repair WAN default: %v", err)
 	}
-	want := "ip -6 route replace default via fe80::1 dev wan-vmac proto ra metric 50 src 2001:db8:1200::13 expires 99 pref medium"
-	if !slicesContain(commands, want) {
-		t.Fatalf("default route repair omitted %q: %#v", want, commands)
+	want := "sysctl -w net.ipv6.conf.wan-vmac.ra_defrtr_metric=50"
+	if !slicesContain(commands, want) || slicesContainPrefix(commands, "ip -6 route replace ") {
+		t.Fatalf("RA route authority was not left with the kernel: %#v", commands)
 	}
-	if requests != 0 {
-		t.Fatalf("router solicitations = %d, want 0", requests)
+	if requests != 1 {
+		t.Fatalf("router solicitations = %d, want 1 for unpreferred RA state", requests)
 	}
 }
 
@@ -810,34 +811,6 @@ func TestParseOptionsRejectsInvalidInterface(t *testing.T) {
 func TestParseOptionsRejectsWithdrawRAAction(t *testing.T) {
 	if _, err := parseOptions([]string{"withdraw-ra", "--parent", "eth0"}); err == nil || !strings.Contains(err.Error(), "activate or deactivate") {
 		t.Fatalf("withdraw-ra action error = %v", err)
-	}
-}
-
-func TestPreferVMACDefaultCommand(t *testing.T) {
-	command, ok, err := preferVMACDefaultCommand("default via fe80::1 dev wan-vmac proto ra metric 1024 expires 100sec pref medium\n", "wan-vmac", "2001:db8:1200::13", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !ok {
-		t.Fatal("expected VMAC default route")
-	}
-	want := []string{"ip", "-6", "route", "replace", "default", "via", "fe80::1", "dev", "wan-vmac", "proto", "ra", "metric", "50", "src", "2001:db8:1200::13", "expires", "100", "pref", "medium"}
-	if len(command) != len(want) {
-		t.Fatalf("command = %#v", command)
-	}
-	for i := range want {
-		if command[i] != want[i] {
-			t.Fatalf("command = %#v, want %#v", command, want)
-		}
-	}
-	if _, ok, _ := preferVMACDefaultCommand("default via fe80::1 dev eth0 proto ra\n", "wan-vmac", "2001:db8:1200::13", 0); ok {
-		t.Fatal("physical route must not be selected")
-	}
-	if _, ok, _ := preferVMACDefaultCommand("default via fe80::1 dev wan-vmac proto ra\n", "wan-vmac", "", 0); ok {
-		t.Fatal("VMAC default must wait for an eligible RA source")
-	}
-	if command, ok, _ := preferVMACDefaultCommand("default via fe80::1 dev wan-vmac metric 50 src 2001:db8:1200::13\n", "wan-vmac", "2001:db8:1200::13", 0); ok || command != nil {
-		t.Fatalf("already preferred VMAC default command = %#v, ok = %t", command, ok)
 	}
 }
 
@@ -1145,20 +1118,5 @@ func assertCommandBefore(t *testing.T, commands [][]string, first, second []stri
 	}
 	if firstIndex < 0 || secondIndex < 0 || firstIndex >= secondIndex {
 		t.Fatalf("commands %#v must place %#v before %#v", commands, first, second)
-	}
-}
-
-func TestPreferredVMACDefaultNeverMintsPermanentRouteFromUnknownExpiry(t *testing.T) {
-	for _, line := range []string{"default via fe80::1 dev wan-vmac proto ra metric 1024", "default via fe80::1 dev wan-vmac proto ra expires forever metric 1024"} {
-		if command, ok, err := preferVMACDefaultCommand(line, "wan-vmac", "2001:db8::1", 0); err == nil || ok || command != nil {
-			t.Fatalf("unknown RA expiry accepted: %v %t %v", command, ok, err)
-		}
-	}
-	command, ok, err := preferVMACDefaultCommand("default via fe80::1 dev wan-vmac proto ra metric 1024 expires 3sec pref high", "wan-vmac", "2001:db8::1", 1500*time.Millisecond)
-	if err != nil || !ok || !strings.Contains(strings.Join(command, " "), "expires 1 pref high") {
-		t.Fatalf("expiry extended or lost preference: %v %t %v", command, ok, err)
-	}
-	if command, ok, err := preferVMACDefaultCommand("default via fe80::1 dev wan-vmac proto static metric 5", "wan-vmac", "2001:db8::1", 0); err != nil || ok || command != nil {
-		t.Fatalf("foreign route changed: %v %t %v", command, ok, err)
 	}
 }

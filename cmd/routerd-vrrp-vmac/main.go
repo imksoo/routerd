@@ -315,7 +315,6 @@ func runWithHooks(args []string, hooks runHooks) (runErr error) {
 			if vmac.withdraw {
 				continue
 			}
-			observedAt := time.Now()
 			// A dev selector makes iproute2 omit the device field, which the
 			// parsers below need to identify this VMAC's existing RA default.
 			output, err := hooks.command("ip", "-6", "route", "show", "default")
@@ -335,20 +334,6 @@ func runWithHooks(args []string, hooks runHooks) (runErr error) {
 			if !ready[index] || source == "" || !hasVMACDefaultRoute(string(output), vmac.ifname) {
 				if err := hooks.requestRA(vmac.ifname); err != nil {
 					return err
-				}
-			}
-			// Linux installs RA routes per interface. The physical WAN's RA route
-			// normally has a lower metric, which would send packets sourced from
-			// the shared VMAC over the standby-specific physical MAC. Promote the
-			// VMAC route after RA is learned; repeated MASTER reconciliation makes
-			// this converge even when RA arrives after the link is raised.
-			command, ok, err := preferVMACDefaultCommand(string(output), vmac.ifname, source, time.Since(observedAt))
-			if err != nil {
-				return err
-			}
-			if ok {
-				if output, err := hooks.command(command[0], command[1:]...); err != nil {
-					return fmt.Errorf("%s: %w: %s", strings.Join(command, " "), err, strings.TrimSpace(string(output)))
 				}
 			}
 		}
@@ -713,75 +698,37 @@ func requestRouterAdvertisement(ifname string) error {
 	return err
 }
 
-func preferVMACDefaultCommand(routes, ifname, source string, elapsed time.Duration) ([]string, bool, error) {
-	if strings.TrimSpace(source) == "" {
-		return nil, false, nil
-	}
-	for _, line := range strings.Split(routes, "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 5 || fields[0] != "default" {
-			continue
-		}
-		var gateway, device, metric, routeSource, protocol, expires, preference string
-		for index := 0; index+1 < len(fields); index++ {
-			switch fields[index] {
-			case "via":
-				gateway = fields[index+1]
-			case "dev":
-				device = fields[index+1]
-			case "metric":
-				metric = fields[index+1]
-			case "src":
-				routeSource = fields[index+1]
-			case "proto":
-				protocol = fields[index+1]
-			case "expires":
-				expires = fields[index+1]
-			case "pref":
-				preference = fields[index+1]
-			}
-		}
-		if device != ifname || gateway == "" || protocol != "ra" {
-			continue
-		}
-		if metric == "50" && routeSource == source {
-			return nil, false, nil
-		}
-		seconds, err := strconv.ParseUint(strings.TrimSuffix(expires, "sec"), 10, 32)
-		if err != nil {
-			return nil, false, fmt.Errorf("RA default on %s has no interpretable expiry %q", ifname, expires)
-		}
-		remaining := time.Duration(seconds)*time.Second - max(elapsed, 0)
-		if remaining < time.Second {
-			continue
-		}
-		gatewayAddress, err := netip.ParseAddr(gateway)
-		if err != nil || !gatewayAddress.Is6() {
-			return nil, false, fmt.Errorf("RA default on %s has invalid gateway %q", ifname, gateway)
-		}
-		if preference != "" && preference != "low" && preference != "medium" && preference != "high" {
-			return nil, false, fmt.Errorf("RA default on %s has unknown preference %q", ifname, preference)
-		}
-		command := []string{"ip", "-6", "route", "replace", "default", "via", gateway, "dev", ifname, "proto", "ra", "metric", "50", "src", source, "expires", strconv.FormatInt(int64(remaining/time.Second), 10)}
-		if preference != "" {
-			command = append(command, "pref", preference)
-		}
-		return command, true, nil
-	}
-	return nil, false, nil
-}
-
+// The kernel owns the route and its RA lifetime. A stale or unpreferred
+// default requires a fresh RA after setting the per-interface metric.
 func hasVMACDefaultRoute(routes, ifname string) bool {
 	for _, line := range strings.Split(routes, "\n") {
 		fields := strings.Fields(line)
 		if len(fields) == 0 || fields[0] != "default" {
 			continue
 		}
+		var device, protocol, metric, expires string
 		for index := 0; index+1 < len(fields); index++ {
-			if fields[index] == "dev" && fields[index+1] == ifname {
-				return true
+			switch fields[index] {
+			case "dev":
+				device = fields[index+1]
+			case "proto":
+				protocol = fields[index+1]
+			case "metric":
+				metric = fields[index+1]
+			case "expires":
+				expires = fields[index+1]
 			}
 		}
+		if device != ifname {
+			continue
+		}
+		if protocol == "ra" {
+			seconds, err := strconv.ParseInt(strings.TrimSuffix(expires, "sec"), 10, 64)
+			if err != nil || seconds <= 0 || metric != "50" {
+				continue
+			}
+		}
+		return true
 	}
 	return false
 }
@@ -961,7 +908,11 @@ func steadyStateCommands(entry vmac) [][]string {
 			[]string{"sysctl", "-w", "net.ipv6.conf." + entry.ifname + ".accept_ra=0"},
 		)
 	} else {
-		commands = append(commands, []string{"sysctl", "-w", "net.ipv6.conf." + entry.ifname + ".accept_ra=2"})
+		// Let kernel RA reception own preference, renewal and withdrawal.
+		commands = append(commands,
+			[]string{"sysctl", "-w", "net.ipv6.conf." + entry.ifname + ".ra_defrtr_metric=50"},
+			[]string{"sysctl", "-w", "net.ipv6.conf." + entry.ifname + ".accept_ra=2"},
+		)
 	}
 	return append(commands, []string{"sysctl", "-w", "net.ipv6.conf." + entry.ifname + ".keep_addr_on_down=1"})
 }
@@ -996,7 +947,11 @@ func commandsFor(opts options) [][]string {
 					[]string{"sysctl", "-w", "net.ipv6.conf." + entry.ifname + ".accept_ra=0"},
 				)
 			} else {
-				commands = append(commands, []string{"sysctl", "-w", "net.ipv6.conf." + entry.ifname + ".accept_ra=2"})
+				// Let kernel RA reception own preference, renewal and withdrawal.
+				commands = append(commands,
+					[]string{"sysctl", "-w", "net.ipv6.conf." + entry.ifname + ".ra_defrtr_metric=50"},
+					[]string{"sysctl", "-w", "net.ipv6.conf." + entry.ifname + ".accept_ra=2"},
+				)
 			}
 			if entry.linkLocal != "" {
 				commands = append(commands, []string{"ip", "-6", "addr", "flush", "dev", entry.ifname, "scope", "link"})
@@ -1019,7 +974,11 @@ func commandsFor(opts options) [][]string {
 				[]string{"sysctl", "-w", "net.ipv6.conf." + entry.ifname + ".accept_ra=0"},
 			)
 		} else {
-			commands = append(commands, []string{"sysctl", "-w", "net.ipv6.conf." + entry.ifname + ".accept_ra=2"})
+			// Let kernel RA reception own preference, renewal and withdrawal.
+			commands = append(commands,
+				[]string{"sysctl", "-w", "net.ipv6.conf." + entry.ifname + ".ra_defrtr_metric=50"},
+				[]string{"sysctl", "-w", "net.ipv6.conf." + entry.ifname + ".accept_ra=2"},
+			)
 		}
 		commands = append(commands, []string{"sysctl", "-w", "net.ipv6.conf." + entry.ifname + ".keep_addr_on_down=1"})
 		// Global addresses belong to their configured address owners. A finite

@@ -241,23 +241,29 @@ unexecuted phase is not an integrated passing result. Destroy this run's three
 disposable VMs and disks after the campaign; retain the commands, input/source
 identities and scoped outcome rather than successful-run raw logs.
 
-## Native IPv6 default-route selection regression
+## Native IPv6 RA route lifecycle regression
 
-`ip -6 route show default dev <VMAC>` omits `dev` from the displayed routes.
-The helper's device-aware parsers therefore need the unfiltered default-route
-listing. Otherwise they neither recognize existing VMAC RA state nor promote
-its finite default route, allowing a competing management default to win.
-Run this component test from the repository root:
+Query the unfiltered default-route listing: iproute2 omits the `dev` field when
+that same field is a selector. Set the WAN VMAC's `ra_defrtr_metric=50` before
+accepting RAs, so the kernel owns preference, refresh, withdrawal and expiry of
+one RA route. Do not clone it into another userspace-programmed route: that
+copy can expire while fresh RAs maintain a different metric and leave IPv6
+forwarding stuck on the management default. The per-interface setting is
+specified in the [kernel documentation](https://www.kernel.org/doc/html/v6.1/networking/ip-sysctl.html).
+
+From the repository root, with iproute2, util-linux and independent radvd installed:
 
 ```sh
 go test -c -o /var/tmp/routerd-vrrp-native.test ./cmd/routerd-vrrp-vmac
 sudo unshare -n -m env ROUTERD_RUN_NETNS=1 /var/tmp/routerd-vrrp-native.test \
-  -test.run=TestVMACDefaultPreferenceNativeIPRouteOutput -test.v -test.timeout=25s
+  -test.run=TestVMACNativeRARenewalWithdrawalAndExpiry -test.v -test.timeout=45s
 rm -- /var/tmp/routerd-vrrp-native.test
 ```
 
-It uses real iproute2 and kernel FIB selection with a competing default, checks
-the VMAC route's source and finite RA lifetime, retains the other default and
-repeats activation without unnecessary solicitation. It refuses the initial
-network namespace. This is a native FIB component check; the integrated gate
-must still demonstrate the original IPv6 application socket through failover.
+The test refuses the initial network namespace, starts radvd in an independent
+router namespace and checks kernel FIB selection beyond the first RA lifetime.
+Graceful peer stop must withdraw the preferred default; abrupt peer loss must
+let it expire. Both preserve the independent management default. A static route
+fixture alone cannot establish these RA lifecycle semantics. This is a native
+FIB component check; the integrated gate must still demonstrate the original
+IPv6 application socket through failover.

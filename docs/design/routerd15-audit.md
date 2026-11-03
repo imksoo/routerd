@@ -3344,3 +3344,19 @@ The integrated attempt ended and both router configurations withdrew to Healthy,
 without current errors or owned helper/VMAC/FIB state. Subsequent native work must
 use a newly built formal package containing the route-query repair. The complete
 105-resource replacement verdict and both-direction HA session tests remain open.
+
+The formal `624f885e` follow-up reached all 74 application flows, including the
+original native IPv6 TCP socket, and actual sticky/PD replication on the standby.
+Before any power fault, IPv6 stopped after the first upstream RA lifetime. The
+copied metric-50 route remained expired while fresh RAs renewed metric 1024;
+the helper's existing-route shortcut never renewed the copy. Fault injection was
+not performed, and both configurations withdrew to Healthy and stopped.
+
+`d605f312` adds a real-radvd/local-kernel regression. The final fixture fails
+against the prior product via a Go overlay and passes with the repair: configure
+`ra_defrtr_metric=50` on the VMAC, leaving native RA route ownership and lifetime
+with the kernel. Repeated activation, live RA refresh beyond the first lifetime,
+explicit withdrawal and natural expiry preserve the independent management
+route. The obsolete copied-route builder and its static-route-only test are
+removed. Focused helper/controller tests pass; the repaired formal package and
+integrated power-loss paths are not yet qualified.
