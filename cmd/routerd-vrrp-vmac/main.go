@@ -11,6 +11,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log/syslog"
 	"net"
 	"net/netip"
 	"os"
@@ -75,6 +76,12 @@ type runHooks struct {
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, err)
+		// keepalived may discard notification stderr. Preserve the failing
+		// operation in the native system log as well as the caller's output.
+		if logger, logErr := syslog.New(syslog.LOG_DAEMON|syslog.LOG_ERR, "routerd-vrrp-vmac"); logErr == nil {
+			_ = logger.Err(err.Error())
+			_ = logger.Close()
+		}
 		os.Exit(1)
 	}
 }
