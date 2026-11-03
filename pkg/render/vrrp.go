@@ -25,6 +25,7 @@ type vrrpInstance struct {
 	Preempt            *bool
 	PreemptDelay       time.Duration
 	Peers              []string
+	UnicastSource      string
 	AdvertInterval     time.Duration
 	Authentication     string
 	FailoverVMACs      []api.VirtualAddressVRRPFailoverVMACSpec
@@ -123,6 +124,13 @@ func vrrpInstances(router *api.Router, aliases map[string]string, opts Keepalive
 		}
 		peers := compactStrings(spec.VRRP.Peers)
 		sort.Strings(peers)
+		unicastSource := ""
+		if len(peers) > 0 && spec.Family == "ipv4" {
+			unicastSource, err = keepalivedStaticNodeAddress(router, spec.Interface, address)
+			if err != nil {
+				return nil, err
+			}
+		}
 		authentication, err := secretValue(spec.VRRP.Authentication, spec.VRRP.AuthenticationFrom)
 		if err != nil {
 			return nil, fmt.Errorf("%s spec.vrrp.authenticationFrom: %w", res.ID(), err)
@@ -138,6 +146,7 @@ func vrrpInstances(router *api.Router, aliases map[string]string, opts Keepalive
 			Preempt:            spec.VRRP.Preempt,
 			PreemptDelay:       preemptDelay,
 			Peers:              peers,
+			UnicastSource:      unicastSource,
 			AdvertInterval:     advert,
 			Authentication:     authentication,
 			FailoverVMACs:      failoverVMACs,
@@ -146,6 +155,39 @@ func vrrpInstances(router *api.Router, aliases map[string]string, opts Keepalive
 	}
 	sort.Slice(instances, func(i, j int) bool { return instances[i].Name < instances[j].Name })
 	return instances, nil
+}
+
+// Keepalived's implicit unicast receive bind can select a pre-existing shared
+// VIP and remain bound to it after a BACKUP hook withdraws that VIP. Pin the
+// unique unconditional node address already declared on this interface. With
+// no unambiguous static source, retain the existing native selection behavior.
+func keepalivedStaticNodeAddress(router *api.Router, iface, vip string) (string, error) {
+	var source string
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "IPv4StaticAddress" {
+			continue
+		}
+		spec, err := resource.IPv4StaticAddressSpec()
+		if err != nil {
+			return "", err
+		}
+		if spec.Interface != iface || len(spec.When.State)+len(spec.When.All)+len(spec.When.Any) != 0 {
+			continue
+		}
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Address))
+		if err != nil {
+			return "", fmt.Errorf("%s: %w", resource.ID(), err)
+		}
+		address := prefix.Addr().String()
+		if !prefix.Addr().Is4() || address == renderAddressValue(vip) {
+			continue
+		}
+		if source != "" && source != address {
+			return "", nil
+		}
+		source = address
+	}
+	return source, nil
 }
 
 type virtualAddressSpec struct {
@@ -278,6 +320,10 @@ func writeKeepalivedInstance(buf *bytes.Buffer, instance vrrpInstance) {
 		buf.WriteString(fmt.Sprintf("  preempt_delay %d\n", keepalivedAdvertSeconds(instance.PreemptDelay)))
 	}
 	if len(instance.Peers) > 0 {
+		if instance.UnicastSource != "" {
+			buf.WriteString("  unicast_src_ip " + instance.UnicastSource + "\n")
+			buf.WriteString("  track_src_ip\n")
+		}
 		buf.WriteString("  unicast_peer {\n")
 		for _, peer := range instance.Peers {
 			buf.WriteString("    " + peer + "\n")

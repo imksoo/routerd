@@ -64,3 +64,11 @@ observations after the previous controller generation stops; source and receiver
 lease files are preserved. A declaration disabled by `when` remains visible.
 Normal generation cancellation does not publish a new sync failure; a transfer
 timeout while the generation is running still does.
+
+For IPv4 unicast VRRP, a unique unconditional `IPv4StaticAddress` on the election
+interface supplies keepalived's explicit `unicast_src_ip` and `track_src_ip`.
+This keeps the receive socket on the node address even if a shared VIP existed
+first and is subsequently withdrawn by a BACKUP notification. A missing tracked
+source is a fault, not permission to use a shared address. Multicast and an
+interface without a unique declared static source retain native source selection;
+the static-source qualification does not cover those other cases.

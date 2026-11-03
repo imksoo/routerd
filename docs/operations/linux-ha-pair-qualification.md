@@ -94,3 +94,30 @@ using the saved generated configuration and native type/parent/mode/MAC checks.
 It retains that configuration if removal fails, permitting a later retry.
 Backup role changes continue to retain their VMACs DOWN; declaration withdrawal
 and a standby role are separate cases. A link name alone never authorizes deletion.
+
+## Local unicast receive regression
+
+Before repeating a failed native election, reproduce the address-order failure
+with the actual renderer, kernel and installed independent keepalived. From the
+repository root, on Linux with `ip` and `keepalived` installed:
+
+```sh
+go test -c -o /var/tmp/routerd-vrrp-render.test ./pkg/render
+sudo unshare -n -m bash -euc '
+  mount --make-rprivate /
+  mount -t tmpfs tmpfs /run
+  mkdir /run/netns
+  exec env ROUTERD_RUN_NETNS=1 /var/tmp/routerd-vrrp-render.test \
+    -test.run=TestKeepalivedUnicastNativeAddressOrder -test.v -test.timeout=35s
+'
+rm -- /var/tmp/routerd-vrrp-render.test
+```
+
+The opt-in test refuses the host network namespace. It creates two isolated
+namespaces and runs a real independent active peer. A shared VIP precedes the
+standby's own address; the fixture then withdraws that old VIP. After the native
+master-down interval, the standby must still be BACKUP, have a receive socket
+bound to its own address, and have no shared VIP. The component fixture omits
+notify commands and owns that withdrawal stimulus; it does not claim to test the
+VMAC/conntrackd hooks. The packaged pair procedure above covers those hooks.
+An ordinary `go test` skips this explicit native test.

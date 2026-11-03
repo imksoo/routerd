@@ -64,7 +64,7 @@ func TestKeepalivedUnicastNativeAddressOrder(t *testing.T) {
 	// but an implicitly bound raw socket can remain attached to its old address.
 	command("ip", "-n", "rd15-vrrp-b", "addr", "add", "198.18.30.1/32", "dev", "eth0")
 	command("ip", "-n", "rd15-vrrp-b", "addr", "add", "198.18.30.3/24", "dev", "eth0")
-	peer := []byte("global_defs {\n router_id independent\n}\nvrrp_instance peer {\n state BACKUP\n interface eth0\n virtual_router_id 130\n priority 150\n advert_int 1\n nopreempt\n unicast_src_ip 198.18.30.2\n unicast_peer {\n 198.18.30.3\n }\n virtual_ipaddress {\n 198.18.30.1/32 dev eth0\n }\n}\n")
+	peer := []byte("global_defs {\n router_id independent\n}\nvrrp_instance peer {\n state BACKUP\n interface eth0\n virtual_router_id 130\n priority 150\n advert_int 1\n nopreempt\n unicast_src_ip 198.18.30.2\n unicast_peer {\n 198.18.30.3\n }\n no_virtual_ipaddress\n}\n")
 	start := func(node string, data []byte) string {
 		t.Helper()
 		path := filepath.Join(work, node+".conf")
