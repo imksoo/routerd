@@ -22,15 +22,26 @@ lock = threading.Lock()
 
 def server():
     def handle(conn, peer):
-        with conn, conn.makefile('rb') as stream:
+        with conn:
+            conn.settimeout(1)
             first = True
-            for line in stream:
-                request = json.loads(line)
-                if first:
-                    with lock, (work / 'accepts.jsonl').open('a') as output:
-                        output.write(json.dumps({'id': request['id'], 'peer': peer}) + '\n')
-                    first = False
-                conn.sendall((json.dumps({**request, 'peer': peer}) + '\n').encode())
+            pending = b''
+            while time.monotonic() < end:
+                try:
+                    data = conn.recv(65536)
+                except socket.timeout:
+                    continue
+                if not data:
+                    return
+                pending += data
+                while b'\n' in pending:
+                    line, pending = pending.split(b'\n', 1)
+                    request = json.loads(line)
+                    if first:
+                        with lock, (work / 'accepts.jsonl').open('a') as output:
+                            output.write(json.dumps({'id': request['id'], 'peer': peer}) + '\n')
+                        first = False
+                    conn.sendall((json.dumps({**request, 'peer': peer}) + '\n').encode())
 
     def tcp(address, port):
         family = socket.AF_INET6 if ':' in address else socket.AF_INET
@@ -72,6 +83,7 @@ def server():
 
 
 def client():
+    global end
     states = {}
 
     def received(label, request, reply, local):
@@ -157,17 +169,22 @@ def client():
         futures = [pool.submit(tcp, f'tcp-{i}', '203.0.113.80', f'198.18.30.{120+i}') for i in range(8)]
         futures += [pool.submit(tcp, 'bgp', '10.250.0.1'),
                     pool.submit(tcp, 'ipv6', '2001:db8:ffff::80'), pool.submit(udp)]
-        while time.monotonic() < end:
-            for future in futures:
-                if future.done():
-                    future.result()
-                    raise RuntimeError('application worker ended early')
-            with lock:
-                result = {'time': time.time(), 'flows': dict(states)}
-                temporary = work / 'traffic.next'
-                temporary.write_text(json.dumps(result))
-                temporary.replace(work / 'traffic.json')
-            time.sleep(1)
+        try:
+            while time.monotonic() < end:
+                for future in futures:
+                    if future.done():
+                        future.result()
+                        raise RuntimeError('application worker ended early')
+                with lock:
+                    result = {'time': time.time(), 'flows': dict(states)}
+                    temporary = work / 'traffic.next'
+                    temporary.write_text(json.dumps(result))
+                    temporary.replace(work / 'traffic.json')
+                time.sleep(1)
+        finally:
+            # Executor shutdown waits for workers. End their loops first so a
+            # failed connection is reported immediately, not after 30 minutes.
+            end = time.monotonic()
 
 
 if mode == 'server':
