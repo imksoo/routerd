@@ -705,6 +705,9 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 }
 
 func (c SystemdUnitController) reconcileConntrackdSyncUnits(ctx context.Context, command outputCommandFunc) error {
+	if err := c.cleanupStaleConntrackdSyncUnits(ctx, conntrackdConfigDir, command); err != nil {
+		return err
+	}
 	aliases := interfaceAliases(c.Router)
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "NAT44SessionSync" {
@@ -731,12 +734,12 @@ func (c SystemdUnitController) reconcileConntrackdSyncUnits(ctx context.Context,
 		if err := c.ensureStockConntrackdMasked(ctx, command); err != nil {
 			return fmt.Errorf("protect conntrackd sync for %s: %w", resource.ID(), err)
 		}
-		configPath := filepath.Join("/etc/conntrackd", "routerd-"+resource.Metadata.Name+".conf")
+		configPath := filepath.Join(conntrackdConfigDir, "routerd-"+resource.Metadata.Name+".conf")
 		configChanged, err := writeFileIfChanged(configPath, data, 0644, c.DryRun)
 		if err != nil {
 			return err
 		}
-		unitName := "routerd-conntrackd@" + resource.Metadata.Name + ".service"
+		unitName := conntrackdUnitName(resource.Metadata.Name)
 		unit := conntrackdSystemdSpec(resource.Metadata.Name, configPath)
 		unitPath := filepath.Join(c.SystemdSystemDir, unitName)
 		unitChanged, err := c.applySystemdUnit(ctx, resource.Metadata.Name, unitPath, unitName, unit, data, command)
@@ -1769,7 +1772,7 @@ func (c SystemdUnitController) cleanupStaleDNSResolverUnits(ctx context.Context,
 			return err
 		}
 	}
-	return c.cleanupRemovedDNSResolverStatuses()
+	return c.cleanupRemovedSystemdResourceStatuses("DNSResolver", dnsResolverUnitName)
 }
 
 func (c SystemdUnitController) cleanupStaleEventFederationUnits(ctx context.Context, command outputCommandFunc) error {

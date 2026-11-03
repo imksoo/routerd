@@ -9,13 +9,14 @@ import (
 	"github.com/imksoo/routerd/pkg/state"
 )
 
-func (c SystemdUnitController) cleanupRemovedDNSResolverStatuses() error {
+// Retire public status only after the owning supervisor acknowledged removal.
+func (c SystemdUnitController) cleanupRemovedSystemdResourceStatuses(kind string, unitName func(string) string) error {
 	store, ok := c.Store.(interface {
 		state.ObjectStatusLister
 		state.ObjectDeleteStore
 	})
 	if !ok {
-		return fmt.Errorf("DNS resolver status cleanup store unavailable")
+		return fmt.Errorf("%s status cleanup store unavailable", kind)
 	}
 	statuses, err := store.ListObjectStatuses()
 	if err != nil {
@@ -27,7 +28,7 @@ func (c SystemdUnitController) cleanupRemovedDNSResolverStatuses() error {
 	}
 	wanted := map[string]bool{}
 	for _, resource := range declared.Spec.Resources {
-		if resource.Kind == "DNSResolver" {
+		if resource.Kind == kind {
 			wanted[resource.Metadata.Name] = true
 		}
 	}
@@ -38,7 +39,7 @@ func (c SystemdUnitController) cleanupRemovedDNSResolverStatuses() error {
 		}
 	}
 	for _, object := range statuses {
-		if object.APIVersion != api.NetAPIVersion || object.Kind != "DNSResolver" || wanted[object.Name] || !removed[dnsResolverUnitName(object.Name)] {
+		if object.APIVersion != api.NetAPIVersion || object.Kind != kind || wanted[object.Name] || !removed[unitName(object.Name)] {
 			continue
 		}
 		// The service owner publishes Removed only after disable --now,
