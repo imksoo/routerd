@@ -333,3 +333,66 @@ path and native OS verification. Do not label it unsupported, drop it from the
 1.0 goal, or solve it with a manual binary overlay. Inspect pkg's actual ownership
 and conflict contracts before choosing a native package layout; retain the shared
 inventory, existing runtime paths and operator configuration/state semantics.
+
+## nDPI 6 dependency decision (2026-11-03)
+
+The current FreeBSD repository installs `ndpi 6.0.d20260909,1`, not the nDPI 5.0
+recorded in the baseline platform qualification. Actual FreeBSD 14.3-RELEASE-p16
+native format tests passed at `fdd5692c`, including root ownership, native hooks,
+real ELF parsing and the exact package owners of direct shared-library
+requirements. The native routerd backend build then failed: `routerd_ndpi_init`
+calls `ndpi_init_detection_module(NULL)`, while SDK 6 requires a second
+`enum ndpi_license_type` argument. No native routerd pkg was built or installed,
+and the native-agent install/update runtime campaign has not run.
+
+This is more than an argument-count fix. A separate SDK-only probe against the
+installed library, using `NDPI_LICENSE_FOR_PROFIT_LGPL`, explicitly reported that
+TLS, DHCP, QUIC and DNS dissectors were not loaded. An HTTP packet was detected;
+the paired TLS packet remained Unknown with empty SNI. The same generated inputs
+against native Linux libnDPI 4.2 detected HTTP and TLS/SNI. Selecting the restricted
+SDK 6 mode would therefore lose existing functions. Do not make that the product
+fix, silently select a not-for-profit or licensed mode, skip the native test, or
+substitute the static agent to claim the native requirement passed.
+
+The independent diagnostic is reproducible without changing a router:
+
+```sh
+# From the repository root; requires cc/pkg-config and the installed SDK.
+work=$(mktemp -d)
+go run tests/nativepackage/testdata/ndpi-sdk-packets.go "$work"
+cc tests/nativepackage/testdata/ndpi-sdk-probe.c -o "$work/probe" $(pkg-config --cflags --libs libndpi)
+"$work/probe" "$work/http.packet"
+"$work/probe" "$work/tls.packet"
+rm -f "$work/probe" "$work/http.packet" "$work/tls.packet"
+rmdir "$work"
+```
+
+The SDK 6 probe deliberately uses only its LGPL mode; it does not assert any
+operator entitlement or determine the project's commercial classification.
+The [upstream license/API policy](https://github.com/ntop/nDPI/blob/dev/README.license.md)
+and the actual installed headers were inspected. The native Linux tagged backend
+unit test at `2264b989` now fails rather than skips a missing backend, and requires
+actual library detection plus the expected TLS SNI; it passed against libnDPI 4.2.
+
+Decision required before changing the dependency distribution:
+
+- Recommended: retain the baseline LGPL nDPI 5.0 runtime in a package-owned private
+  prefix such as `/usr/local/lib/routerd/ndpi5`, with the native agent linked to
+  that private location. Build it from a verified upstream source revision and
+  include the required source/notice provenance. The routerd pkg owns those
+  files; it must not downgrade, overwrite or impersonate the OS ndpi 6 package.
+  External runtime dependencies still come from actual ELF/native package
+  ownership. This adds a bundled third-party runtime and maintenance obligation;
+  the layout/build change needs explicit design approval before implementation.
+- Alternative: explicitly specify the intended nDPI 6 usage/license profile and
+  authorize its operator-visible configuration. SDK 6's extra API argument and
+  component selection must reflect that decision while preserving required
+  functions. A successful restricted-mode HTTP probe is not full DPI support.
+
+Until that choice is authorized, the default native FreeBSD pkg build remains
+unqualified/blocked at the SDK compile step. Earlier static-agent pkg lifecycle
+results remain historical and do not qualify this new path. Main, releases and
+production remain untouched. Keep the current native test guest stopped while
+awaiting the decision; it contains SDK/test preparation only, with no routerd
+installed. Retain only the minimal unresolved diagnostics and reusable procedures;
+remove the already-imported image staging.

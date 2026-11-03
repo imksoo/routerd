@@ -1979,6 +1979,23 @@
         "IPv6 image, provider URL bootstrap, persistent installation and full feature parity",
         "Warning-free diagnostics; a pre-apply orphan-artifact warning was observed"
       ]
+    },
+    "freebsd-native-ndpi-sdk6-fdd5692c": {
+      "level": "native-os-tests",
+      "outcome": "fail",
+      "revision": "fdd5692c040bf8b6edbfe55b8fbd2b6203142bfd",
+      "reference": "docs/design/routerd15-plan.md#ndpi-6-dependency-decision",
+      "environment": "Disposable FreeBSD 14.3-RELEASE-p16 amd64 guest; pkg 2.8.4; ndpi 6.0.d20260909,1 from the current OS repository; Go 1.25.9.",
+      "checks": [
+        "Native package format/ownership/hook tests passed, including actual FreeBSD readelf/ldd/pkg metadata.",
+        "Tagged native backend compilation failed: SDK 6 requires an explicit second license-profile argument to ndpi_init_detection_module.",
+        "Independent SDK LGPL-only probe detected HTTP but not TLS/SNI; SDK explicitly disabled TLS, DHCP, QUIC and DNS. The same input pair was detected with native Linux libnDPI 4.2.",
+        "No production routerd package was built/installed and no native-agent update runtime campaign ran."
+      ],
+      "required_decision": "Approve a package-private baseline LGPL nDPI 5 runtime, or explicitly specify/authorize a suitable SDK 6 usage/license profile; do not reduce the baseline functions.",
+      "excludes": [
+        "Not a provider/network failure, native runtime qualification pass, or evidence that a restricted SDK 6 profile preserves all 1.0 functions."
+      ]
     }
   },
   "features": [
@@ -3976,9 +3993,10 @@
         ]
       },
       "freebsd": {
-        "qualification": "unknown",
+        "qualification": "fail",
         "scoped_evidence": [
-          "freebsd-native-pkg-626774d7"
+          "freebsd-native-pkg-626774d7",
+          "freebsd-native-ndpi-sdk6-fdd5692c"
         ]
       },
       "required_remaining_checks": [
