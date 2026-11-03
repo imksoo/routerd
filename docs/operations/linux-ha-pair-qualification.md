@@ -16,6 +16,10 @@ both addresses and check the independent unconditional path as well. Removing
 this rule creates a separate zero-NAT-rules standby regression case; do not
 confuse its result with qualification of the deployed condition. Initial results
 from the older fixture did not include this unconditional rule.
+For UDP, use a socket explicitly bound to each destination address. A wildcard
+UDP listener can reply using the peer's connected-subnet address instead of the
+request's destination; that invalidates the reverse NAT tuple. Certify both
+application paths and require successful TCP and UDP sequences before injection.
 
 ## Environment certification
 
