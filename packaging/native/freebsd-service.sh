@@ -13,7 +13,9 @@ rcdir=/usr/local/etc/rc.d
 capture_active()
 {
     install -d -m 0700 "$state"
-    temporary=$(mktemp "$state/restart.XXXXXX")
+    temporary=$state/restart-units.new
+    trap 'rm -f "$temporary"' EXIT
+    : > "$temporary"
     if [ -f "$state/restart-units" ]; then cat "$state/restart-units" > "$temporary"; fi
     for path in "$rcdir/routerd" "$rcdir"/routerd_*; do
         [ -x "$path" ] || continue
@@ -31,7 +33,7 @@ capture_active()
             *) echo "routerd: cannot establish $unit service ownership/status" >&2; return 1 ;;
         esac
     done
-    sort -u "$temporary" -o "$temporary"
+    sort -u -o "$temporary" "$temporary"
     mv -f "$temporary" "$state/restart-units"
 }
 

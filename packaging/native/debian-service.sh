@@ -31,7 +31,9 @@ capture_active()
         --state=active,activating,reloading,deactivating --plain --no-legend \
         'routerd*.service' 'routerd-self-restart-*.timer')
     install -d -m 0700 "$state"
-    temporary=$(mktemp "$state/restart.XXXXXX")
+    temporary=$state/restart-units.new
+    trap 'rm -f "$temporary"' EXIT
+    : > "$temporary"
     if [ -f "$state/restart-units" ]; then
         cat "$state/restart-units" > "$temporary"
     fi
@@ -50,7 +52,7 @@ capture_active()
         esac
         printf '%s\n' "$unit"
     done >> "$temporary"
-    sort -u "$temporary" -o "$temporary"
+    sort -u -o "$temporary" "$temporary"
     mv -f "$temporary" "$state/restart-units"
 }
 

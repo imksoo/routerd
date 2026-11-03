@@ -23,9 +23,13 @@ for path in /usr/local/sbin/routerd /usr/local/etc/routerd/router.yaml /var/db/r
     [ ! -e "$path" ] || { echo "requires absent $path" >&2; exit 1; }
 done
 work=$(mktemp -d /tmp/routerd-pkg-lifecycle.XXXXXX)
+fault_injected=0
 finish()
 {
     result=$?
+    if [ "$fault_injected" -eq 1 ]; then
+        cp -p "$work/routerd.rc" /usr/local/etc/rc.d/routerd || { echo "failed to restore injected fixture fault; backup: $work/routerd.rc" >&2; exit 1; }
+    fi
     if [ "$result" -ne 0 ]; then
         tail -80 "$work/pkg.log" >&2 || true
         tail -80 /var/log/routerd.log >&2 || true
@@ -123,6 +127,7 @@ PY
 # Exercise the native package manager's failure gate, not merely a shell hook.
 # The fixture makes the old rc.d stop fail, then removes that injected fault.
 cp -p /usr/local/etc/rc.d/routerd "$work/routerd.rc"
+fault_injected=1
 python3 - <<'PY'
 from pathlib import Path
 p=Path('/usr/local/etc/rc.d/routerd')
@@ -140,6 +145,7 @@ grep -Fq native-test-stop-failure "$work/pkg.log"
 [ "$(sha256 -q /usr/local/sbin/routerd)" = "$old_binary" ]
 wait_dns
 cp -p "$work/routerd.rc" /usr/local/etc/rc.d/routerd
+fault_injected=0
 pkg install -y "$current" >> "$work/pkg.log" 2>&1
 [ "$(pkg query '%v' routerd)" = "$current_version" ]
 [ "$(sha256 -q /usr/local/etc/routerd/router.yaml)" = "$configuration" ]
