@@ -60,7 +60,11 @@ func TestFreeBSDNativePackageOwnershipAndUpgradeHooks(t *testing.T) {
 	if manifest.Name != "routerd" || manifest.ABI != "FreeBSD:14:"+abiArch {
 		t.Fatalf("incorrect native metadata: %+v", manifest)
 	}
-	if len(manifest.Libraries) == 0 || !strings.HasPrefix(manifest.Libraries[0], "libndpi.so.") {
+	hasNDPI := false
+	for _, library := range manifest.Libraries {
+		hasNDPI = hasNDPI || strings.HasPrefix(library, "libndpi.so.")
+	}
+	if !hasNDPI {
 		t.Errorf("missing native ELF library contract: %v", manifest.Libraries)
 	}
 	if _, ok := manifest.Deps["ndpi"]; !ok {
