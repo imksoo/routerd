@@ -235,7 +235,7 @@ func TestControllerReportsUnsupportedSelection(t *testing.T) {
 func TestControllerRequiresHealthyHealthCheck(t *testing.T) {
 	now := time.Date(2026, 5, 2, 10, 0, 0, 0, time.UTC)
 	store := mapStore{
-		api.NetAPIVersion + "/DSLiteTunnel/ds-lite":        {"phase": "Up", "interface": "ds-routerd-test"},
+		api.NetAPIVersion + "/DSLiteTunnel/ds-lite": {"phase": "Up", "interface": "ds-routerd-test"},
 	}
 	controller := Controller{
 		Router: routerWithPolicy(api.EgressRoutePolicySpec{
@@ -248,7 +248,6 @@ func TestControllerRequiresHealthyHealthCheck(t *testing.T) {
 		Store: store,
 		Now:   func() time.Time { return now },
 	}
-
 
 	controller.Router.Spec.Resources = append(controller.Router.Spec.Resources, healthCheckResource("internet-tcp443", api.HealthCheckSpec{TargetSource: "static", Target: "192.0.2.1", Protocol: "tcp"}))
 	storeHealthObservation(t, controller.Router, store, "internet-tcp443", "Unhealthy", now, 0)
@@ -319,8 +318,8 @@ func TestControllerRejectsHealthSampleFromPreviousTarget(t *testing.T) {
 func TestControllerKeepsCandidateReadyDuringHealthCheckGraceFailures(t *testing.T) {
 	now := time.Date(2026, 5, 2, 10, 0, 0, 0, time.UTC)
 	store := mapStore{
-		api.NetAPIVersion + "/DSLiteTunnel/ds-lite":        {"phase": "Up", "interface": "ds-routerd-test"},
-		api.NetAPIVersion + "/Link/fallback":               {"phase": "Up", "ifname": "wan0"},
+		api.NetAPIVersion + "/DSLiteTunnel/ds-lite": {"phase": "Up", "interface": "ds-routerd-test"},
+		api.NetAPIVersion + "/Link/fallback":        {"phase": "Up", "ifname": "wan0"},
 	}
 	controller := Controller{
 		Router: routerWithResources(
@@ -369,7 +368,7 @@ func TestControllerKeepsCandidateReadyDuringHealthCheckGraceFailures(t *testing.
 func TestControllerRejectsStaleHealthCheckStatus(t *testing.T) {
 	now := time.Date(2026, 5, 2, 10, 0, 0, 0, time.UTC)
 	store := mapStore{
-		api.NetAPIVersion + "/DSLiteTunnel/ds-lite":        {"phase": "Up", "interface": "ds-routerd-test"},
+		api.NetAPIVersion + "/DSLiteTunnel/ds-lite": {"phase": "Up", "interface": "ds-routerd-test"},
 	}
 	controller := Controller{
 		Router: routerWithResources(
@@ -394,7 +393,7 @@ func TestControllerRejectsStaleHealthCheckStatus(t *testing.T) {
 		Now:   func() time.Time { return now },
 	}
 
-	storeHealthObservation(t, controller.Router, store, "internet-tcp443", "Healthy", now.Add(-10 * time.Minute), 0)
+	storeHealthObservation(t, controller.Router, store, "internet-tcp443", "Healthy", now.Add(-10*time.Minute), 0)
 
 	if err := controller.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
@@ -416,8 +415,7 @@ func TestControllerRejectsStaleHealthCheckStatus(t *testing.T) {
 
 func TestControllerUsesHealthyOutputWhenSourceHasNoStatus(t *testing.T) {
 	now := time.Date(2026, 5, 2, 10, 0, 0, 0, time.UTC)
-	store := mapStore{
-	}
+	store := mapStore{}
 	controller := Controller{
 		Router: routerWithPolicy(api.EgressRoutePolicySpec{
 			Selection: SelectionHighestWeightReady,
@@ -435,7 +433,6 @@ func TestControllerUsesHealthyOutputWhenSourceHasNoStatus(t *testing.T) {
 		Store: store,
 		Now:   func() time.Time { return now },
 	}
-
 
 	controller.Router.Spec.Resources = append(controller.Router.Spec.Resources, healthCheckResource("internet-via-pppoe", api.HealthCheckSpec{TargetSource: "static", Target: "192.0.2.1", Protocol: "tcp"}))
 	storeHealthObservation(t, controller.Router, store, "internet-via-pppoe", "Healthy", now, 0)
@@ -456,7 +453,7 @@ func TestControllerSkipsDisabledCandidate(t *testing.T) {
 	enabled := false
 	now := time.Date(2026, 5, 2, 10, 0, 0, 0, time.UTC)
 	store := mapStore{
-		api.NetAPIVersion + "/DSLiteTunnel/ds-lite":           {"phase": "Up", "device": "ds-lite"},
+		api.NetAPIVersion + "/DSLiteTunnel/ds-lite": {"phase": "Up", "device": "ds-lite"},
 	}
 	controller := Controller{
 		Router: routerWithPolicy(api.EgressRoutePolicySpec{
@@ -470,7 +467,6 @@ func TestControllerSkipsDisabledCandidate(t *testing.T) {
 		Store: store,
 		Now:   func() time.Time { return now },
 	}
-
 
 	controller.Router.Spec.Resources = append(controller.Router.Spec.Resources, healthCheckResource("internet-via-pppoe", api.HealthCheckSpec{TargetSource: "static", Target: "192.0.2.1", Protocol: "tcp"}))
 	storeHealthObservation(t, controller.Router, store, "internet-via-pppoe", "Healthy", now, 0)
@@ -488,7 +484,7 @@ func TestControllerSkipsDisabledPPPoESource(t *testing.T) {
 	enabled := false
 	now := time.Date(2026, 5, 2, 10, 0, 0, 0, time.UTC)
 	store := mapStore{
-		api.NetAPIVersion + "/DSLiteTunnel/ds-lite":           {"phase": "Up", "device": "ds-lite"},
+		api.NetAPIVersion + "/DSLiteTunnel/ds-lite": {"phase": "Up", "device": "ds-lite"},
 	}
 	controller := Controller{
 		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
@@ -513,7 +509,6 @@ func TestControllerSkipsDisabledPPPoESource(t *testing.T) {
 		Store: store,
 		Now:   func() time.Time { return now },
 	}
-
 
 	controller.Router.Spec.Resources = append(controller.Router.Spec.Resources, healthCheckResource("internet-via-pppoe", api.HealthCheckSpec{TargetSource: "static", Target: "192.0.2.1", Protocol: "tcp"}))
 	storeHealthObservation(t, controller.Router, store, "internet-via-pppoe", "Healthy", now, 0)
