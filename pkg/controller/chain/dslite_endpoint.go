@@ -469,7 +469,8 @@ func (c DSLiteTunnelController) sharedEndpointReady(ctx context.Context, source 
 		return false, err
 	}
 	dryRun, known := status["dryRun"].(bool)
-	if status["phase"] != "Applied" || !known || dryRun || status["ifname"] != source.Interface || status["address"] != source.Address+"/128" || status["prefixSource"] != source.PDName || status["validUntil"] != pdLifetimeDeadline(source.Lease.LastReplyAt, source.Lease.ValidSeconds) {
+	heldRefresh := status["phase"] == "Pending" && status["reason"] == "AddressApplying"
+	if (status["phase"] != "Applied" && !heldRefresh) || !known || dryRun || status["ifname"] != source.Interface || status["address"] != source.Address+"/128" || status["prefixSource"] != source.PDName {
 		return false, nil
 	}
 	receipt, err := delegatedReceipt(status)
@@ -479,8 +480,15 @@ func (c DSLiteTunnelController) sharedEndpointReady(ctx context.Context, source 
 	if receipt == nil || receipt.IfName != source.Interface || receipt.PrefixDelegation != source.PDName {
 		return false, nil
 	}
-	preferred, valid := nativePDAddressDeadlines(source.Lease, c.currentOS() == platform.OSLinux)
-	if !receipt.matches(source.Address+"/128", preferred, valid) {
+	address := source.Address + "/128"
+	if !receipt.ownedAt(address, c.now()) {
+		return false, nil
+	}
+	// A renewed lease can extend the address owner's authority before that
+	// actor refreshes its native lifetime. Its confirmed shorter acquisition
+	// remains usable, including while that same owner records a refresh. A
+	// shortened lease still needs the owner to clamp the native lifetime first.
+	if receipt.entry(address).ValidUntil.After(nativePDDeadline(source.Lease.LastReplyAt, source.Lease.ValidSeconds)) {
 		return false, nil
 	}
 	observed, err := c.observeEndpoint(ctx, source.Interface, source.Address+"/128")

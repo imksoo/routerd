@@ -5645,6 +5645,13 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 				pending["previousAddresses"] = history
 			}
 			nativePreferred, nativeValid = nativePDAddressDeadlines(lease, dsliteSource)
+			if currentOwned && observation.usable && previousStatus["phase"] == "Applied" && receipt.ownedAt(addr, c.now()) && !receipt.entry(addr).ValidUntil.After(nativeValid) {
+				// Refreshing a still-held address does not revoke its confirmed
+				// shorter lifetime. Keep that actual Applied observation for
+				// dependent forwarding; publish the extension only after success.
+				pending = copyStatusMap(previousStatus)
+				pending["reason"] = "AddressRefreshing"
+			}
 			receipt.claim(addr, nativePreferred, nativeValid)
 			if err := c.saveDelegatedReceipt(resource.Metadata.Name, pending, receipt); err != nil {
 				return err

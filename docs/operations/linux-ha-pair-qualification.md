@@ -267,3 +267,14 @@ let it expire. Both preserve the independent management default. A static route
 fixture alone cannot establish these RA lifecycle semantics. This is a native
 FIB component check; the integrated gate must still demonstrate the original
 IPv6 application socket through failover.
+
+Before router power loss, observe an actual same-prefix PD renewal while all
+application sockets are already open. Keep the delegated address's confirmed
+Applied observation during a still-valid lifetime refresh; publish the extended
+lifetime only after the address update succeeds. A DS-Lite borrower may keep
+using that shorter confirmed acquisition, with current native scope/index and
+address readback, while the renewed lease still covers it. Do not confuse a
+Pending refresh intent with loss of the existing address. Shortened authority,
+withdrawal, foreign identity and expired acquisitions still require fencing.
+Check the original flow tuples and tunnel identity after renewal, then inject
+power loss; waiting for a new connection after renewal is insufficient.

@@ -145,7 +145,7 @@ func (c DSLiteTunnelController) recheckTunnelLease(spec api.DSLiteTunnelSpec, pr
 	if err != nil {
 		return err
 	}
-	if !active || fresh.Interface != prior.Interface || fresh.Address != prior.Address || fresh.PDName != prior.PDName || fresh.PDPrefix != prior.PDPrefix || !fresh.Lease.LastReplyAt.Equal(prior.Lease.LastReplyAt) || fresh.Lease.PreferredSeconds != prior.Lease.PreferredSeconds || fresh.Lease.ValidSeconds != prior.Lease.ValidSeconds {
+	if !active || fresh.Interface != prior.Interface || fresh.Address != prior.Address || fresh.PDName != prior.PDName || fresh.PDPrefix != prior.PDPrefix || fresh.SharedLAN != prior.SharedLAN || fresh.LANName != prior.LANName || nativePDDeadline(fresh.Lease.LastReplyAt, fresh.Lease.ValidSeconds).Before(nativePDDeadline(prior.Lease.LastReplyAt, prior.Lease.ValidSeconds)) {
 		return errDSLiteInputsChanged
 	}
 	if _, _, err := currentPDAddressLifetimes(fresh.Lease, c.now(), true); err != nil {

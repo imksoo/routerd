@@ -62,8 +62,15 @@ func TestDSLiteSharedSourceRenewalKeepsValidHeldAddressAndTunnel(t *testing.T) {
 	if ready, err := c.sharedEndpointReady(t.Context(), current); err != nil || !ready {
 		t.Fatalf("valid held address rejected: %t %v", ready, err)
 	}
+	owner.claim(f.present, preferred, nativePDDeadline(current.Lease.LastReplyAt, current.Lease.ValidSeconds))
+	if err := f.store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-source", map[string]any{"phase": "Pending", "reason": "AddressApplying", "dryRun": false, "ifname": "wan0", "address": f.present, "prefixSource": "wan-pd", "nativeReceipt": owner}); err != nil {
+		t.Fatal(err)
+	}
+	if ready, err := c.sharedEndpointReady(t.Context(), current); err != nil || !ready {
+		t.Fatalf("confirmed address rejected during its owner's refresh: %t %v", ready, err)
+	}
 	// A newly shortened authority must first clamp the native owner's lifetime.
-	f.changeLease(func(lease *routerstate.PDLease) { lease.ValidSeconds = 30 })
+	f.changeLease(func(lease *routerstate.PDLease) { lease.ValidSeconds = 30; lease.PreferredSeconds = 15 })
 	shortened, _, err := c.delegatedEndpointSource(spec)
 	if err != nil {
 		t.Fatal(err)
@@ -73,6 +80,10 @@ func TestDSLiteSharedSourceRenewalKeepsValidHeldAddressAndTunnel(t *testing.T) {
 	}
 	if err := c.recheckTunnelLease(spec, current); err == nil {
 		t.Fatal("shortened authority accepted without native lifetime clamp")
+	}
+	f.now = valid.Add(time.Second)
+	if ready, err := c.sharedEndpointReady(t.Context(), current); err != nil || ready {
+		t.Fatalf("unconfirmed extension outlived the held acquisition: %t %v", ready, err)
 	}
 }
 

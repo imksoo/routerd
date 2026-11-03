@@ -3360,3 +3360,22 @@ explicit withdrawal and natural expiry preserve the independent management
 route. The obsolete copied-route builder and its static-route-only test are
 removed. Focused helper/controller tests pass; the repaired formal package and
 integrated power-loss paths are not yet qualified.
+
+At `565de4b2`, kernel-owned RA preference remained healthy, but the first shared
+PD renewal coincided with a DS-Lite health failure and an application TCP reset
+before any power fault. The run ended and both configurations withdrew Healthy.
+Local RED `4d3c527f` reproduces a still-valid shared source becoming
+Pending/LocalIPv6NotReady when its lease extends. RED `737b40f7` also demonstrates
+that the address actor publishes Pending/AddressApplying and an unconfirmed new
+expiry during an existing held address's refresh, disabling Applied dependencies.
+
+The repair reuses the existing held-acquisition predicate used by RA consumers.
+A confirmed address covered by the current lease remains Applied with its old
+confirmed lifetime until refresh succeeds; the DS-Lite borrower accepts that
+shorter live acquisition while checking the actual native scope/index/address.
+The in-flight lease recheck permits positive same-prefix renewal but rejects
+shortened authority, identity changes and stale leases. Tests retain the native
+tunnel token/index, reject expired or overlong acquisition authority, and verify
+Applied dependencies never observe an unconfirmed extension. Focused DS-Lite,
+LAN and held-RA tests pass; native confirmation of the repaired candidate and
+both-direction power-loss qualification remain pending.
