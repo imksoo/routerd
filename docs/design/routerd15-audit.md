@@ -3025,3 +3025,93 @@ This is not delegated/RA outer-source expiry, real ISP AFTR or remote TCP-sessio
 continuity qualification. Dynamic delegated sources, BGP/HA, lease/session
 synchronization and the full deployed-router replacement remain active Linux
 work. FreeBSD does not gate that work; its nDPI exclusion remains in effect.
+
+### Linux packaged delegated DS-Lite lifecycle, 2026-11-03
+
+Product and gate source `197bd70f7f49e2d81c30bcf629a3a444b90b7c8f` passed the
+maintained `scripts/linux-dslite-pd-smoke.sh` procedure on a fresh dedicated
+Ubuntu 24.04 amd64 VM, Linux 6.8.0-124, with real apt/dpkg/systemd and independent
+Kea 2.4.1. The active proposal is PR #1365; the 1.0 baseline remains origin/main
+`e3b49dbb69c7de97bab9595884745eb7cbe93d92`. No main merge, release or production
+cutover was performed.
+
+The test follows the deployed source ownership path: one delegated /60 supplies
+four WAN /128 declarations, each shared by its DS-Lite tunnel, and a delegated
+LAN /64. Four independent kernel AFTR namespaces and a separate IPv4 client
+exercise the source-hash policy, with peer-observed NAT sources. AFTR addresses
+are fixed IPv6 values, matching the deployed selection mode; DNS-based AFTR
+discovery is outside this result. Existing qualification of new/existing-flow
+failover remains separate.
+
+The actual installed package is
+`1.5.0~20261103094404+g197bd70f7f49`, SHA-256
+`c2ee14430b84d393c51726186c58208c0e533a67729369e71ca70d781f712b41`.
+The maintained driver SHA-256 is
+`a2ba25e6db4bc3dd788129f0455510c3cd22bdf8e59008df7d97615e81a6e308`;
+`tests/fixtures/linux-dslite-pd.json` is
+`6b9b169f81b6789a07f577aa7e8ce263d06d96dd84a3b80b4790f12ff91b1921`.
+The complete remote gate recorded exit zero, followed by separate native
+readback. The [EN/JA procedure](../operations/development.md#linux-delegated-source-ds-lite-package-gate)
+contains prerequisites, commands and pass criteria.
+
+| Requirement | Executed result |
+| --- | --- |
+| Acquisition and usable native authority | Real Kea /60 exchange; four finite /128 lifetimes and kernel tunnel local endpoints matched; LAN /64 present |
+| Stable forwarded traffic | All 64 IPv4 sources made two connections per stage, retained source affinity and reached all three primary AFTRs; receivers observed `192.0.0.2` |
+| Natural renewal | Helper lease transaction timestamp advanced with an independent Kea RENEW observation; finite sources and forwarding remained usable |
+| Independent prefix replacement | Kea pool and AFTR return endpoints changed; four sources/tunnels moved to the new prefix, revoked old addresses disappeared and forwarding recovered; routerd and Kea PIDs stayed unchanged |
+| Daemon restart | Actual systemd restart changed the main PID and restored the new-prefix source/tunnel/forwarding state |
+| Natural expiry | Only Kea stopped; all four WAN sources/tunnels and delegated LAN address disappeared at lease expiry; client forwarding failed while routerd remained active |
+| Peer-only return | Restarting only Kea restored the sources, tunnels and 64-source forwarding; no product-state repair or manual restart manufactured recovery |
+| Declaration withdrawal | Empty apply removed sources/tunnels and converged to Healthy with zero resources, zero phase issues and no current controller errors |
+| Native final state | Correct binary revision and clean dpkg verification; empty canonical configuration, inactive main/MainPID 0, no owned helpers, fixture interfaces/namespaces, routerd nft tables or successful raw-output directory |
+
+This campaign found two product defects after successful forwarding and expiry:
+
+- Native DS-Lite withdrawal unconditionally recreated a removed declaration's
+  public row as Disabled/Withdrawn. `0f67b3de` reproduced both retained and
+  already-pruned rows. `67b8e838` deletes public state only after native absence,
+  keeps the owner receipt until deletion succeeds, and preserves a declaration
+  retained but conditionally inactive. A failed deletion remains retryable after
+  SQLite close/reopen. Native ownership and foreign-object checks are unchanged.
+- The link observer updated current Interface rows but never retired removed
+  observations. `adb8576f` reproduced a stale Down/InterfaceNotFound row making
+  an empty router Degraded. `197bd70f` passes the full declaration into the
+  observer and deletes only removed Interface observations of the owning API.
+  Tests preserve conditionally inactive declarations, other APIs/kinds and retry
+  input on enumeration/deletion errors. Observation cleanup makes no native
+  interface changes; the native gate confirms the final aggregate state.
+
+Environment preparation also corrected a Python receiver filename shadowing the
+standard library and Kea startup before link-local DAD completed. Both were
+reproduced locally; qualification starts only after independent peer readiness.
+The gate observes completion of an already-scheduled initial main-unit handoff
+before asserting steady-state PID preservation during renumbering. A local
+user-manager timer/service check verified that observation; arbitrary fixed
+settling sleeps do not substitute for it. Optional JSON omission of a numeric
+zero resource count is handled according to the existing control API shape.
+
+Files read for the implementation/call-path review include
+`pkg/api/specs.go`, `pkg/controller/chain/phase2.go`, `dslite_endpoint.go`,
+`dslite_native.go`, `link.go`, `chain.go`, `prepared_router.go`,
+`runtime_outcome.go`, `pd_observation.go`, `pd_address_lifetime.go`,
+`lan_native_receipt.go`, `system.go`, `pkg/controlapi/types.go` and
+`pkg/state/sqlite.go`, plus their related tests. The prior multi-DS-Lite and PD/RA
+procedures and private deployed input were checked before defining this gate;
+private topology and credentials were not committed.
+
+The full Linux Go suite at the final product revision recorded exit zero:
+122 passing packages and 14 without test files. Schema/example checks, format/diff
+checks and shell syntax/lint passed. Four-locale website verification is recorded
+with the final result publication; existing unrelated link warnings remain.
+All disposable guests/disks and temporary diagnostic/build staging are removed
+after recording the scoped result. One current qualified .deb is retained for
+reuse, rather than rebuilding it for unchanged product code.
+
+This does not qualify actual ISP interoperability, custom/non-shared or RA-based
+tunnel source modes, forwarded IPv6/SLAAC or IA_NA service behavior in this gate,
+BGP/HA/when-role transitions, lease/session synchronization or host reboot with
+this source combination. Existing results for those other client paths remain
+revision-bound. These are the next Linux integration concerns; they do not
+restore a FreeBSD prerequisite or declare the full deployed-router replacement
+ready. FreeBSD remains deferred and its nDPI exclusion remains in effect.

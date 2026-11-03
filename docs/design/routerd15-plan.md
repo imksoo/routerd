@@ -64,10 +64,17 @@ tuples through real DS-Lite/NAT partial/total failure and recovery, preserving
 unaffected and healthy fallback traffic. It fixed failed-member mark restoration
 and corrected an invalid blanket conntrack-ID continuity test. See the
 [existing-flow result](routerd15-audit.md#linux-packaged-ds-lite-existing-flow-checkpoint-2026-11-03).
+The shared delegated-source follow-up `197bd70f` also passed real Kea renewal,
+renumbering, finite WAN /128/tunnel authority, natural expiry, peer-only recovery,
+daemon restart and empty withdrawal with 64-source forwarding. It repaired
+removed DS and Interface statuses that had incorrectly degraded an empty router.
+See the [delegated-source result](routerd15-audit.md#linux-packaged-delegated-ds-lite-lifecycle-2026-11-03).
+All four deployed AFTRs use static IPv6 addresses; DNS-based AFTR discovery is
+not an additional prerequisite for this first replacement milestone.
 This is not the full deployed-router qualification. Next Linux work must cover
-the real BGP/HA/lease-and-session synchronization combinations, dynamic DS-Lite
-sources, remaining session modes and reboot alongside the already qualified client
-services, without restoring a FreeBSD acceptance dependency.
+the real BGP/HA/when-role and lease/session synchronization combinations,
+remaining session modes and reboot with those combinations alongside the already
+qualified client services, without restoring a FreeBSD acceptance dependency.
 
 ## Current inventory
 

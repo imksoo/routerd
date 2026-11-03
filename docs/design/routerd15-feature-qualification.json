@@ -2061,6 +2061,37 @@
         "BGP/HA/lease/session synchronization and the complete deployed-router replacement verdict"
       ],
       "harness_revision": "509d061333bc0f7a930055a01be1e14a1a4295a8"
+    },
+    "linux-dslite-pd-apt-197bd70f": {
+      "level": "packaged-daemon-independent-peer",
+      "outcome": "pass",
+      "revision": "197bd70f7f49e2d81c30bcf629a3a444b90b7c8f",
+      "harness_revision": "197bd70f7f49e2d81c30bcf629a3a444b90b7c8f",
+      "reference": "docs/design/routerd15-audit.md#linux-packaged-delegated-ds-lite-lifecycle-2026-11-03",
+      "environment": "Fresh dedicated Ubuntu 24.04 amd64 VM, Linux 6.8.0-124, native apt/dpkg/systemd, Kea 2.4.1 peer, four independent kernel AFTR namespaces and separate IPv4 client.",
+      "package_versions": [
+        "1.5.0~20261103094404+g197bd70f7f49"
+      ],
+      "package_sha256": [
+        "c2ee14430b84d393c51726186c58208c0e533a67729369e71ca70d781f712b41"
+      ],
+      "harness_sha256": "a2ba25e6db4bc3dd788129f0455510c3cd22bdf8e59008df7d97615e81a6e308",
+      "fixture_sha256": "6b9b169f81b6789a07f577aa7e8ce263d06d96dd84a3b80b4790f12ff91b1921",
+      "reproduction": "sudo bash scripts/linux-dslite-pd-smoke.sh --disposable-vm tests/fixtures/linux-dslite-pd.json KEA_PACKAGE_ROOT MANAGEMENT_INTERFACE",
+      "checks": [
+        "Real delegated /60 produced four finite WAN /128 sources shared by DS-Lite and a delegated LAN /64; native tunnel endpoints matched.",
+        "64 source addresses retained affinity across two new connections per stage and reached all three primary AFTRs with peer-observed NAT source.",
+        "Natural Renew advanced actual lease evidence. Independent pool/AFTR return-endpoint replacement revoked old sources and recovered forwarding without restarting routerd or Kea.",
+        "Actual daemon restart recovered the delegated paths. Peer-only stop naturally expired all four sources/tunnels, LAN address and traffic; peer-only return restored forwarding.",
+        "Empty declaration withdrawal converged to Healthy, zero resources/phase issues/current errors. Removed DS public status and Interface observation defects were reproduced and fixed locally before the final run.",
+        "Final readback verified source revision, dpkg integrity, empty canonical config, inactive main and absence of owned helpers, fixture network state and successful raw output.",
+        "Final full Go suite: exit zero, 122 passing packages and 14 without test files; schema/examples, formatting/diff and shell checks passed."
+      ],
+      "excludes": [
+        "Actual ISP AFTR interoperability and DNS-based AFTR discovery",
+        "Custom/non-shared or RA source lifecycle; IPv6/SLAAC/IA_NA forwarding qualification in this gate",
+        "BGP/HA/when-role transitions, lease/session synchronization, host reboot with this combination and the complete deployed-router replacement verdict"
+      ]
     }
   },
   "features": [
@@ -2455,7 +2486,8 @@
         "scoped_evidence": [
           "linux-bridge-aa9f3cac",
           "linux-bridge-vxlan-native-f54ceecb",
-          "linux-combined-native-3e58c93a"
+          "linux-combined-native-3e58c93a",
+          "linux-dslite-pd-apt-197bd70f"
         ]
       },
       "freebsd": {
@@ -3072,7 +3104,8 @@
           "linux-wan-ra-lifecycle-1392082f",
           "linux-home-router-dualstack-57bf7e35",
           "linux-home-router-clean-install-999dfd4",
-          "linux-dualstack-recovery-6977c66e"
+          "linux-dualstack-recovery-6977c66e",
+          "linux-dslite-pd-apt-197bd70f"
         ]
       },
       "freebsd": {
@@ -3118,7 +3151,8 @@
           "linux-pd-ra-lifecycle-1392082f",
           "linux-home-router-dualstack-57bf7e35",
           "linux-home-router-clean-install-999dfd4",
-          "linux-dualstack-recovery-6977c66e"
+          "linux-dualstack-recovery-6977c66e",
+          "linux-dslite-pd-apt-197bd70f"
         ]
       },
       "freebsd": {
@@ -3352,7 +3386,8 @@
           "linux-combined-native-3e58c93a",
           "linux-dslite-pve-f8ef5e59",
           "linux-multi-dslite-apt-fc5d7816",
-          "linux-dslite-existing-flows-ee50d674"
+          "linux-dslite-existing-flows-ee50d674",
+          "linux-dslite-pd-apt-197bd70f"
         ]
       },
       "freebsd": {
@@ -3362,7 +3397,7 @@
         ]
       },
       "required_remaining_checks": [
-        "Source-address expiry and recovery; NAT/MSS/PF bindings beyond the observed masquerade path",
+        "Custom/non-shared and interface/RA source lifecycle beyond the observed shared-WAN /128 path; NAT/MSS/PF bindings beyond the observed Linux masquerade path",
         "Host reboot, provider interoperability and complete platform parity"
       ]
     },
@@ -3584,7 +3619,8 @@
         "scoped_evidence": [
           "linux-health-pbr-native-58bef4e9",
           "linux-multi-dslite-apt-fc5d7816",
-          "linux-dslite-existing-flows-ee50d674"
+          "linux-dslite-existing-flows-ee50d674",
+          "linux-dslite-pd-apt-197bd70f"
         ]
       },
       "freebsd": {
@@ -3697,7 +3733,8 @@
           "linux-home-router-clean-install-999dfd4",
           "linux-dualstack-recovery-6977c66e",
           "linux-multi-dslite-apt-fc5d7816",
-          "linux-dslite-existing-flows-ee50d674"
+          "linux-dslite-existing-flows-ee50d674",
+          "linux-dslite-pd-apt-197bd70f"
         ]
       },
       "freebsd": {
