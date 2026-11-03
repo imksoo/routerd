@@ -119,7 +119,7 @@ func TestFirstbootInvalidConfigCannotReplaceValidatedCache(t *testing.T) {
 			if restore {
 				name, retained, want = "restore_validated_config_cache", config, "current"
 			}
-			fn := strings.ReplaceAll(liveFunction(t, name), "/usr/local/sbin/routerd", validator)
+			fn := strings.ReplaceAll(liveFunction(t, name), "/usr/sbin/routerd", validator)
 			body := "config_file=" + shellLiteral(config) + "\nvalidated_cache_file=" + shellLiteral(cache) + "\nvalidated_cache_dir=" + shellLiteral(dir) + "\nlog() { :; }\n" + fn + "\n" + name + "\n"
 			if out, err := runLiveShell(t, body); err == nil {
 				t.Fatalf("failed validation was acknowledged: %s", out)
@@ -166,7 +166,7 @@ func TestFirstbootKeepsBootstrapDHCPUntilValidationAndRenderSucceed(t *testing.T
 			tail := script[start : start+end]
 			tail = strings.ReplaceAll(tail, "install -d /run/routerd /var/lib/routerd", "install -d "+shellLiteral(filepath.Join(dir, "runtime")))
 			body := liveFunction(t, "prepare_routerd_service") + "\n" + liveFunction(t, "disable_bootstrap_dhcp") + "\n" + tail
-			body = strings.NewReplacer("/usr/local/sbin/routerd-dns-resolver", filepath.Join(dir, "absent-resolver"), "/usr/local/sbin/routerd", validator, "/etc/systemd/system", units, "/etc/systemd/network", network).Replace(body)
+			body = strings.NewReplacer("/usr/sbin/routerd-dns-resolver", filepath.Join(dir, "absent-resolver"), "/usr/sbin/routerd", validator, "/etc/systemd/system", units, "/etc/systemd/network", network).Replace(body)
 			prefix := "config_file=" + shellLiteral(config) + "\nconfig_dir=" + shellLiteral(dir) + "\nlog() { :; }\nsystemctl() { :; }\napply_cloudinit_hostname() { :; }\nenable_qemu_guest_agent() { :; }\napply_ssh_bootstrap() { :; }\nrestore_config_disk_config() { return 0; }\n"
 			out, err := runLiveShell(t, prefix+body)
 			if (failure == "none") != (err == nil) {

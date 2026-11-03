@@ -36,24 +36,18 @@ func TestLiveISOIncludesRouterdPayload(t *testing.T) {
 	script := liveISOScript(t)
 	for _, needle := range []string{
 		"payload_root=\"${iso_root}/routerd\"",
-		"rootfs=\"${workdir}/rootfs\"",
-		"make dist ROUTERD_OS=linux GOARCH=amd64",
-		"DISTROOT=\"${payload_root}\"",
-		"cp -a \"${payload_root}/libexec/.\" \"${rootfs}/usr/local/libexec/\"",
-		"cp -a \"${payload_root}/share/doc/.\" \"${rootfs}/usr/local/share/doc/routerd/\"",
-		"router.yaml.sample",
-		"cd /cdrom/routerd",
-		"sudo ./install.sh configure",
+		"make dist-deb ROUTERD_OS=linux GOARCH=amd64",
+		"chroot_run apt-get install -y --no-install-recommends /tmp/routerd-live.deb",
+		"sudo apt install ./routerd_*.deb",
 	} {
 		if !strings.Contains(script, needle) {
-			t.Fatalf("Ubuntu live ISO payload script missing %q", needle)
+			t.Fatalf("native package image path missing %q", needle)
 		}
 	}
-	build := strings.Index(script, "make dist ROUTERD_OS=linux")
-	copy := strings.Index(script, "cp -a \"${payload_root}/bin/.\"")
-	plugins := strings.Index(script, "cp -a \"${payload_root}/libexec/.\"")
-	if build < 0 || copy < build || plugins < build {
-		t.Fatal("rootfs binaries and plugins must come from the completed release payload")
+	for _, stale := range []string{"sudo ./install.sh", "cp -a \"${payload_root}/bin/.\"", "cp -a \"${payload_root}/libexec/.\""} {
+		if strings.Contains(script, stale) {
+			t.Fatalf("image bypasses package ownership: %s", stale)
+		}
 	}
 }
 
@@ -110,21 +104,16 @@ func TestLiveISOUsesSystemdFirstBootSetup(t *testing.T) {
 func TestLiveISOInstallsRouterdSystemdUnits(t *testing.T) {
 	script := liveISOScript(t)
 	for _, needle := range []string{
-		"contrib/systemd/routerd.service",
-		"${rootfs}/etc/systemd/system/routerd.service",
-		"Description=routerd network router daemon",
-		"ExecStart=/usr/local/sbin/routerd serve --config /usr/local/etc/routerd/router.yaml --socket /run/routerd/routerd.sock --status-socket /run/routerd/routerd-status.sock --apply-interval 10s",
+		"[ -x \"${rootfs}/usr/sbin/routerd\" ]",
+		"[ -f \"${rootfs}/usr/lib/systemd/system/routerd.service\" ]",
 	} {
 		if !strings.Contains(script, needle) {
-			t.Fatalf("Ubuntu live ISO systemd unit install missing %q", needle)
+			t.Fatalf("image must verify native package files: %s", needle)
 		}
 	}
-	for _, stale := range []string{
-		"cat > \"${rootfs}/etc/systemd/system/routerd-dns-resolver@.service\"",
-		"systemctl enable routerd-dns-resolver@lan-resolver.service",
-	} {
+	for _, stale := range []string{"Description=routerd network router daemon", "contrib/systemd/routerd.service"} {
 		if strings.Contains(script, stale) {
-			t.Fatalf("image bypasses the configured DNS unit owner: %s", stale)
+			t.Fatalf("image bypasses packaged vendor unit: %s", stale)
 		}
 	}
 }
@@ -196,7 +185,7 @@ func TestLiveISODisablesBootstrapDHCPBeforeRouterdStarts(t *testing.T) {
 	if configIdx < 0 || disableIdx < 0 || prepareIdx < 0 || setupIdx < 0 {
 		t.Fatal("missing config restore, bootstrap DHCP teardown, unit preparation, or static routerd ordering marker")
 	}
-	validateIdx := strings.Index(script, "\n/usr/local/sbin/routerd validate --config \"${config_file}\"\n")
+	validateIdx := strings.Index(script, "\n/usr/sbin/routerd validate --config \"${config_file}\"\n")
 	if !(configIdx < validateIdx && validateIdx < prepareIdx && prepareIdx < disableIdx && disableIdx < setupIdx) {
 		t.Fatal("validation and service preparation must succeed before bootstrap DHCP is disabled")
 	}
@@ -232,7 +221,7 @@ func TestLiveISORejectsCloudInitConfigSHA256Mismatch(t *testing.T) {
 		"cloud-init config_url sha256 mismatch",
 		"verify_sha256 \"${tmp}\" \"${config_sha256}\" || { rm -f \"${tmp}\"; return 1; }",
 		"if ! restore_config_disk_config && ! restore_cloudinit_configs && ! restore_provider_config; then",
-		"cp /usr/local/etc/routerd/router.yaml.sample \"${config_file}\"",
+		"cp /usr/share/doc/routerd/examples/router.yaml.sample \"${config_file}\"",
 	} {
 		if !strings.Contains(script, needle) {
 			t.Fatalf("Ubuntu live ISO cloud-init sha256 handling missing %q", needle)
@@ -278,7 +267,7 @@ func TestLiveISOConfigDiskTakesPrecedenceOverCloudInit(t *testing.T) {
 	}
 
 	precedenceIdx := strings.Index(script, "if ! restore_config_disk_config && ! restore_cloudinit_configs && ! restore_provider_config; then")
-	sampleIdx := strings.Index(script, "cp /usr/local/etc/routerd/router.yaml.sample \"${config_file}\"")
+	sampleIdx := strings.Index(script, "cp /usr/share/doc/routerd/examples/router.yaml.sample \"${config_file}\"")
 	if precedenceIdx < 0 || sampleIdx < 0 {
 		t.Fatal("missing config precedence chain or sample fallback")
 	}
