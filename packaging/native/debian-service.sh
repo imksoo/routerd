@@ -35,9 +35,23 @@ capture_active()
     if [ -f "$state/restart-units" ]; then
         cat "$state/restart-units" > "$temporary"
     fi
-    printf '%s\n' "$listing" | awk 'NF {print $1}' >> "$temporary"
-    sort -u "$temporary" > "$state/restart-units"
-    rm -f "$temporary"
+    printf '%s\n' "$listing" | awk 'NF {print $1}' | while IFS= read -r unit; do
+        case "$unit" in
+            routerd.service|routerd-self-restart-*.service|routerd-self-restart-*.timer) ;;
+            routerd-*.service)
+                fragment=$(systemctl show --property=FragmentPath --value -- "$unit")
+                if [ -z "$fragment" ] || [ ! -r "$fragment" ]; then
+                    echo "routerd: cannot inspect $unit ownership" >&2
+                    exit 1
+                fi
+                grep -Fxq '# Managed by routerd. Do not edit by hand.' "$fragment" || continue
+                ;;
+            *) continue ;;
+        esac
+        printf '%s\n' "$unit"
+    done >> "$temporary"
+    sort -u "$temporary" -o "$temporary"
+    mv -f "$temporary" "$state/restart-units"
 }
 
 stop_services()
