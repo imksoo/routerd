@@ -130,3 +130,92 @@ func TestDebUpgradeRefusesReplacementWhenOldServiceDoesNotStop(t *testing.T) {
 		t.Fatalf("failed stop must retain recovery intent: %v", err)
 	}
 }
+
+func TestDebUpgradeRestoresActiveServicesWithoutEnablingFreshInstall(t *testing.T) {
+	if _, err := exec.LookPath("dpkg-deb"); err != nil {
+		t.Skip("requires native dpkg-deb")
+	}
+	out, control, runtime, state := t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
+	if output, err := build(t, fixture(t), out, "amd64"); err != nil {
+		t.Fatalf("build: %v %s", err, output)
+	}
+	file := filepath.Join(out, "routerd_1.5.0~202611030100_amd64.deb")
+	if output, err := exec.Command("dpkg-deb", "-e", file, control).CombinedOutput(); err != nil {
+		t.Fatalf("control: %v %s", err, output)
+	}
+	for _, phase := range []string{"prerm", "postinst"} {
+		path := filepath.Join(control, phase)
+		script, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		isolated := strings.ReplaceAll(string(script), "/run/routerd-package", filepath.Join(state, "restart"))
+		isolated = strings.ReplaceAll(isolated, "/run/systemd/system", runtime)
+		if err := os.WriteFile(path, []byte(isolated), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bin := t.TempDir()
+	fake := `#!/bin/sh
+set -eu
+for unit; do :; done
+case "$1" in
+list-units)
+  for file in "$TEST_STATE"/active/*; do
+    [ -f "$file" ] || continue
+    echo "${file##*/} loaded active running routerd"
+  done;;
+show) if [ -f "$TEST_STATE/active/$unit" ]; then echo active; else echo inactive; fi;;
+stop)
+  echo "stop $unit" >> "$TEST_STATE/actions"
+  rm -f "$TEST_STATE/active/$unit"
+  # Reproduce a helper appearing during the daemon's shutdown.
+  if [ "$unit" = routerd.service ]; then touch "$TEST_STATE/active/routerd-late.service"; fi;;
+start)
+  echo "start $unit" >> "$TEST_STATE/actions"
+  touch "$TEST_STATE/active/$unit";;
+daemon-reload) :;;
+*) echo "unexpected systemctl $*" >&2; exit 91;;
+esac
+`
+	for name, body := range map[string]string{"systemctl": fake, "policy-rc.d": "#!/bin/sh\nexit 0\n"} {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(body), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Mkdir(filepath.Join(state, "active"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	run := func(phase, arg string) {
+		t.Helper()
+		cmd := exec.Command("sh", filepath.Join(control, phase), arg)
+		cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "TEST_STATE="+state)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%s %s: %v %s", phase, arg, err, output)
+		}
+	}
+	run("postinst", "configure")
+	if _, err := os.Stat(filepath.Join(state, "actions")); !os.IsNotExist(err) {
+		t.Fatalf("fresh install must leave network services inactive: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(state, "active/routerd.service"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	run("prerm", "upgrade")
+	entries, err := os.ReadDir(filepath.Join(state, "active"))
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("old processes must all stop, including a late helper: %v %v", entries, err)
+	}
+	run("postinst", "configure")
+	actions, err := os.ReadFile(filepath.Join(state, "actions"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "stop routerd.service\nstop routerd-late.service\nstart routerd.service\nstart routerd-late.service\n"
+	if string(actions) != want {
+		t.Fatalf("restart must preserve prior activation, including disabled active units: %q", actions)
+	}
+	if _, err := os.Stat(filepath.Join(state, "restart")); !os.IsNotExist(err) {
+		t.Fatalf("successful update must consume restart state: %v", err)
+	}
+}

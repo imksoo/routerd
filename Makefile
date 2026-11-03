@@ -6,6 +6,9 @@ DISTDIR ?= $(DISTBASE)/$(DISTPLATFORM)
 DISTROOT ?= $(DISTDIR)/package
 DISTTAR ?= $(DISTDIR)/routerd-$(VERSION)-$(DISTPLATFORM).tar.gz
 DISTTAR_ALIAS ?= $(DISTDIR)/routerd-$(DISTPLATFORM).tar.gz
+PACKAGE_STAMP := $(shell git show -s --format=%cd --date=format:%Y%m%d%H%M%S)
+PACKAGE_REVISION := $(shell git rev-parse --short=12 HEAD)
+PACKAGE_VERSION ?= $(if $(filter freebsd,$(ROUTERD_OS)),1.5.0.a$(PACKAGE_STAMP).g$(PACKAGE_REVISION),1.5.0~$(PACKAGE_STAMP)+g$(PACKAGE_REVISION))
 CONFIG ?=
 UNAME_S := $(shell uname -s)
 
@@ -292,7 +295,10 @@ check-build-deps:
 	done; \
 	exit $$missing
 
-dist:
+.PHONY: dist-payload dist-deb dist-pkg
+
+# One inventory feeds native packages and the internal image/archive staging.
+dist-payload:
 	rm -rf $(DISTROOT) $(DISTTAR) $(DISTTAR).sha256 $(DISTTAR_ALIAS) $(DISTTAR_ALIAS).sha256
 	$(MAKE) build-daemons
 	$(MAKE) build-provider-executors
@@ -343,12 +349,22 @@ dist:
 		install -d $(DISTROOT)/systemd; \
 		install -m 0644 contrib/systemd/routerd.service contrib/systemd/routerd-bgp.service $(DISTROOT)/systemd/; \
 	fi
+
+dist: dist-payload
 	install -d $(DISTDIR)
 	tar -C $(DISTROOT) -czf $(DISTTAR) .
 	scripts/check-tar-safe-paths.sh $(DISTTAR)
 	cp $(DISTTAR) $(DISTTAR_ALIAS)
 	if command -v sha256sum >/dev/null 2>&1; then (cd $(DISTDIR) && sha256sum $(notdir $(DISTTAR)) > $(notdir $(DISTTAR)).sha256); elif command -v shasum >/dev/null 2>&1; then (cd $(DISTDIR) && shasum -a 256 $(notdir $(DISTTAR)) > $(notdir $(DISTTAR)).sha256); elif command -v sha256 >/dev/null 2>&1; then (cd $(DISTDIR) && sha256 -r $(notdir $(DISTTAR)) > $(notdir $(DISTTAR)).sha256); else echo "missing sha256 tool" >&2; exit 1; fi
 	if command -v sha256sum >/dev/null 2>&1; then (cd $(DISTDIR) && sha256sum $(notdir $(DISTTAR_ALIAS)) > $(notdir $(DISTTAR_ALIAS)).sha256); elif command -v shasum >/dev/null 2>&1; then (cd $(DISTDIR) && shasum -a 256 $(notdir $(DISTTAR_ALIAS)) > $(notdir $(DISTTAR_ALIAS)).sha256); elif command -v sha256 >/dev/null 2>&1; then (cd $(DISTDIR) && sha256 -r $(notdir $(DISTTAR_ALIAS)) > $(notdir $(DISTTAR_ALIAS)).sha256); else echo "missing sha256 tool" >&2; exit 1; fi
+
+dist-deb: dist-payload
+	@test "$(ROUTERD_OS)" = linux || { echo 'dist-deb requires ROUTERD_OS=linux' >&2; exit 1; }
+	python3 scripts/build-native-package.py --format deb --payload $(DISTROOT) --output $(DISTDIR) --version '$(PACKAGE_VERSION)' --arch $(DISTARCH)
+
+dist-pkg: dist-payload
+	@test "$(ROUTERD_OS)" = freebsd || { echo 'dist-pkg requires ROUTERD_OS=freebsd' >&2; exit 1; }
+	python3 scripts/build-native-package.py --format pkg --payload $(DISTROOT) --output $(DISTDIR) --version '$(PACKAGE_VERSION)' --arch $(DISTARCH)
 
 dist-ndpi-agent-libndpi:
 	@if [ "$(ROUTERD_OS)" != "linux" ]; then echo "libndpi agent archive is Linux-only" >&2; exit 2; fi
