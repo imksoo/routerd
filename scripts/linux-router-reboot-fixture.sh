@@ -92,6 +92,12 @@ NETWORK
   networkctl reconfigure rd15-wan
   # The product's IPv6RAAddress resource owns enabling RA reception. The boot
   # fixture supplies only ports and the disabled networkd baseline.
+  for _ in {1..30}; do
+   if networkctl status rd15-wan --no-pager | grep -Fq /etc/systemd/network/10-netplan-rd15-wan.network &&
+      [ "$(sysctl -n net.ipv6.conf.rd15-wan.accept_ra)" = 0 ]; then break; fi
+   sleep 1
+  done
+  networkctl status rd15-wan --no-pager | grep -Fq /etc/systemd/network/10-netplan-rd15-wan.network
   test "$(sysctl -n net.ipv6.conf.rd15-wan.accept_ra)" = 0
   python3 - "$candidate" "$management_iface" "$work/candidate.json" <<'PY'
 import json,sys
