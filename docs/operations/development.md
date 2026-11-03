@@ -745,9 +745,27 @@ validator. Router setup supplies a disabled networkd RA baseline on the fixture
 WAN; desired product resources enable reception. A third `setup-router` argument
 (after the candidate path) can name the separate management NIC.
 The independent radvd peer was checked locally with real SLAAC, a learned
-default route and peer-observed HTTP source. Peer/probe integration and the
-combined two-VM reboot campaign remain pending; the earlier IPv4 result does
-not qualify this new path.
+default route and peer-observed HTTP source. Dual-stack peer mode requires
+radvd and a root-extracted, matching Kea DHCPv6 package root, including its
+shared libraries; installed confined Kea executables may reject fixture paths.
+After router setup, read its non-tentative `rd15-wan` link-local address and pass
+it to peer setup. It is the independent upstream's return next hop for the PD
+pool, and must remain unchanged across router reboot.
+
+```sh
+ssh router-fixture 'sudo bash /home/ubuntu/linux-router-reboot-fixture.sh --disposable-vm setup-router ens19 /home/ubuntu/linux-dualstack-reboot.json eth0'
+# Read rd15-wan's link-local address on the router, then substitute it below.
+ssh peer-fixture 'sudo bash /home/ubuntu/linux-router-reboot-fixture.sh --disposable-vm setup-peer ens19 <router-wan-link-local> /opt/routerd15-fixtures/kea'
+```
+
+Peer setup checks the RA/PD/DNS service state, DHCP sockets and independent
+IPv6 HTTP/DNS before the router apply. The existing `probe` and `isolation`
+commands then require dual-stack DNS A/AAAA over UDP/TCP, delegated client
+SLAAC/default route, peer-observed IPv6 forwarding, and IPv6 WAN-to-LAN/DNS
+isolation in addition to the IPv4 checks. The LAN IPv6 client is kernel SLAAC;
+this probe does not yet establish DHCPv6 IA_NA renewal/reboot behavior.
+The combined two-VM reboot campaign remains pending; the earlier IPv4 result
+does not qualify this new path.
 
 The reboot fixture's DNS source has the default three-second per-upstream query
 deadline. Its independent-client DNS probes use a five-second `dig` deadline so
@@ -826,7 +844,9 @@ and removes its namespaces. Router setup records the initial
 `net.ipv4.ip_forward` value; cleanup restores that value after withdrawing the
 fixture. These actions delete the temporary raw output.
 Retain the procedure, revisions and verdict instead. This gate does not prove
-power-loss durability, every possible interruption point, or IPv6 reboot.
+power-loss durability or every possible interruption point. IPv6 recovery
+requires dual-stack peer mode and the IPv6 checks; the IPv4 mode alone cannot
+qualify it.
 
 Latest scoped run: Linux package `603126ea073f6d8e4ce3729975a2e97411d36850`
 passed fresh installation, independent-client DNS A over UDP/TCP, NAT and

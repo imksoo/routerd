@@ -564,8 +564,21 @@ DHCPv4 に置き換え、WAN RA 受信、PD、LAN の委譲 address・DHCPv6/RA�
 networkd RA 受信を無効にした初期状態を作り、製品 resource が受信を有効にします。
 `setup-router` の設定パスの次の引数には、別の管理 NIC を指定できます。
 独立 radvd peer はローカルで SLAAC・学習 default route・HTTP 対向の送信元観測を
-確認しました。peer/probe の統合と2 VM 再起動試験は未実施で、旧 IPv4 の合格結果を
-この経路の合格とは扱いません。
+確認しました。dual-stack peer には radvd と、root で専用ディレクトリへ展開した
+同一 OS 用 Kea DHCPv6（共有 library を含む）が必要です。router setup 後の `rd15-wan` の
+DAD 完了済み link-local address を読み、次のように渡します。
+
+```sh
+ssh router-fixture 'sudo bash /home/ubuntu/linux-router-reboot-fixture.sh --disposable-vm setup-router ens19 /home/ubuntu/linux-dualstack-reboot.json eth0'
+ssh peer-fixture 'sudo bash /home/ubuntu/linux-router-reboot-fixture.sh --disposable-vm setup-peer ens19 <router-wan-link-local> /opt/routerd15-fixtures/kea'
+```
+
+この link-local は PD pool の戻り next hop とし、router 再起動後も同一であることを確認します。
+peer setup は RA/PD/DNS unit、DHCP socket、IPv6 HTTP/DNS の正対照を確認します。
+通常の `probe` と `isolation` が IPv4/IPv6 の DNS A/AAAA UDP/TCP、委譲 prefix の
+SLAAC/default route、対向が観測した IPv6 送信元、IPv6 WAN-to-LAN/DNS 遮断も検査します。
+LAN IPv6 client は kernel SLAAC で、DHCPv6 IA_NA の更新・再起動はこの probe では未確認です。
+統合した2 VM 再起動試験は未実施で、旧 IPv4 の合格結果をこの経路の合格とは扱いません。
 
 上流 DNS の問い合わせ期限は既定で3秒です。`dig` は5秒待ち、resolver が許容された
 期限内に応答する前に試験クライアントが諦めることを防ぎます。応答時間の目標値では
