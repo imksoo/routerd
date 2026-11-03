@@ -219,7 +219,7 @@
         "apiVersion": "net.routerd.net/v1alpha1",
         "kind": "NAT44SessionSync",
         "metadata": {
-          "name": "sessions"
+          "name": "dslite-sessions"
         },
         "spec": {
           "mode": "conntrackd",
