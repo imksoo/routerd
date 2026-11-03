@@ -4,6 +4,7 @@ package nativepackage_test
 
 import (
 	"encoding/json"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -83,14 +84,19 @@ func TestFreeBSDNativePackageOwnershipAndUpgradeHooks(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, phase := range []string{"pre-install", "post-install"} {
-				body := strings.ReplaceAll(manifest.Scripts[phase], "/usr/local/etc/rc.d", rc)
+				// pkg raw manifests URL-encode script bytes; pkg decodes them before execution.
+				body, err := url.PathUnescape(manifest.Scripts[phase])
+				if err != nil {
+					t.Fatal(err)
+				}
+				body = strings.ReplaceAll(body, "/usr/local/etc/rc.d", rc)
 				body = strings.ReplaceAll(body, "/var/run/routerd-package", state)
 				script := filepath.Join(base, phase)
 				if err := os.WriteFile(script, []byte(body), 0755); err != nil {
 					t.Fatal(err)
 				}
 				cmd := exec.Command("sh", script)
-				cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "TEST_RUNNING="+running)
+				cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "TEST_RUNNING="+running, "POSIXLY_CORRECT=1")
 				if output, err := cmd.CombinedOutput(); err != nil {
 					t.Fatalf("%s with native BSD file utilities: %v %s", phase, err, output)
 				}
