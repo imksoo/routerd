@@ -795,6 +795,8 @@ func (c IPv4PolicyRouteController) availableDefaultRouteCandidates(ctx context.C
 			continue
 		}
 		if len(candidate.Targets) > 0 {
+			availableCandidate := candidate
+			availableCandidate.Targets = nil
 			for _, target := range candidate.Targets {
 				healthy, err := c.targetHealthy(target.HealthCheck)
 				if err != nil {
@@ -810,10 +812,13 @@ func (c IPv4PolicyRouteController) availableDefaultRouteCandidates(ctx context.C
 				if !available {
 					continue
 				}
-				if ifname := aliases[target.EffectiveInterface()]; ifname != "" && c.linkExists(ctx, ifname) {
-					out = append(out, candidate)
-					break
-				}
+				availableCandidate.Targets = append(availableCandidate.Targets, target)
+			}
+			// Only live members may restore a connection's mark. Keeping the
+			// declared group here pins existing flows to failed members even
+			// after the new-flow hash map has withdrawn those members.
+			if len(availableCandidate.Targets) > 0 {
+				out = append(out, availableCandidate)
 			}
 			continue
 		}

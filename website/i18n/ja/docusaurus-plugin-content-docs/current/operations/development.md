@@ -432,6 +432,27 @@ sudo env ROUTERD_RUN_PACKAGE_CAPS=1 /tmp/routerd-package-caps.test \
   -test.run '^TestRouterdPackageCachePermissionsNative$' -test.v
 ```
 
+既存通信の回帰試験は、本番の nft 生成処理と単一の UDP ソケットを使います。
+Linux、root、`unshare`、`nsenter`、iproute2、nftables、conntrack、Python 3 が必要です。
+外側の名前空間の隔離を検査し、ホストの `/run/netns` へ登録しません。
+ネットワーク変更は隔離した名前空間の終了で消えます。
+
+```sh
+work=$(mktemp -d)
+CGO_ENABLED=0 go test -c -o "$work/render.test" ./pkg/render
+sudo env ROUTERD_RUN_NETNS=1 ROUTERD_HOST_NETNS="$(readlink /proc/self/ns/net)" \
+  unshare -n "$work/render.test" -test.run '^TestEgressExistingFlowNative$' \
+  -test.v -test.timeout=45s
+rm "$work/render.test"
+rmdir "$work"
+```
+
+合格条件は、同じ UDP 通信の識別値が故障回線から正常回線へ移ること、
+正常な間は維持されること、主系全断で予備へ移り、主系復旧時も正常な予備の
+通信を維持することです。通常の単体試験では異常判定・インターフェース消失の
+除外と、設定を変更しないことも検査します。実カーネルの経路識別値の試験であり、
+ISP 側 NAT が変わる場合の相手 TCP セッション継続を保証するものではありません。
+
 `scripts/linux-multi-dslite-smoke.sh` は、専用の使い捨て Ubuntu VM に apt で
 新規導入し、4つの独立したカーネル AFTR と LAN クライアントを別の名前空間で
 動かします。3本を送信元アドレスで分散し、低優先度の4本目へ退避します。

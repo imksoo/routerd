@@ -558,7 +558,9 @@ func NftablesEgressRoutePolicyDefaultMarks(resourceID string, spec api.EgressRou
 	for _, candidate := range healthy {
 		if len(candidate.Targets) > 0 {
 			for _, target := range candidate.Targets {
-				healthyMarks = append(healthyMarks, nftMark(target.Mark))
+				if target.RuntimeReady == nil || *target.RuntimeReady {
+					healthyMarks = append(healthyMarks, nftMark(target.Mark))
+				}
 			}
 			continue
 		}

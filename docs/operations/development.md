@@ -551,6 +551,29 @@ sudo env ROUTERD_RUN_PACKAGE_CAPS=1 /tmp/routerd-package-caps.test \
   -test.run '^TestRouterdPackageCachePermissionsNative$' -test.v
 ```
 
+The existing-flow regression uses the real production nft renderers and one
+persistent UDP socket across state changes. It requires Linux, root, `unshare`,
+`nsenter`, iproute2, nftables, conntrack and Python 3. It refuses an unverified
+outer namespace and never registers namespaces under the host's `/run/netns`.
+All networking changes disappear with the isolated namespaces:
+
+```sh
+work=$(mktemp -d)
+CGO_ENABLED=0 go test -c -o "$work/render.test" ./pkg/render
+sudo env ROUTERD_RUN_NETNS=1 ROUTERD_HOST_NETNS="$(readlink /proc/self/ns/net)" \
+  unshare -n "$work/render.test" -test.run '^TestEgressExistingFlowNative$' \
+  -test.v -test.timeout=45s
+rm "$work/render.test"
+rmdir "$work"
+```
+
+Pass requires the same UDP tuple to leave a failed member's conntrack mark,
+retain its new healthy mark, move to fallback when all primary members fail,
+and remain on healthy fallback when primary members return. Normal unit tests
+also check that unhealthy or absent interfaces cannot enter the restore set and
+that filtering does not mutate desired configuration. This is a real-kernel mark
+regression, not proof of remote TCP-session continuity across ISP NAT changes.
+
 `scripts/linux-multi-dslite-smoke.sh` tests a clean apt-installed product on a
 dedicated disposable Ubuntu VM. It creates four independent kernel AFTR
 namespaces with HTTP receivers and a separate LAN client. Three primary paths
