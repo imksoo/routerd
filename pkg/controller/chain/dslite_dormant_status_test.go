@@ -49,3 +49,25 @@ func TestDSLiteNeverActivatedThenRemovedRetiresOnlyAfterLiveCleanup(t *testing.T
 		t.Fatal(err)
 	}
 }
+
+func TestDSLiteRemovedPendingStatusesRetireAfterNativeCleanup(t *testing.T) {
+	for _, reason := range []string{"SourceOrDependencyChanged", "AFTRMissing", "LocalIPv6Missing", "DependsOnFalse"} {
+		t.Run(reason, func(t *testing.T) {
+			c, native, store := newDSLiteNativeController(t, platform.OSLinux)
+			c.Router = &api.Router{}
+			c.DeclaredRouter = c.Router
+			if err := store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", "ds", map[string]any{"phase": "Pending", "reason": reason}); err != nil {
+				t.Fatal(err)
+			}
+			if err := c.reconcile(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if len(native.links) != 0 {
+				t.Fatal("withdrawn pending resource created native effects")
+			}
+			if got := store.ObjectStatus(api.NetAPIVersion, "DSLiteTunnel", "ds"); len(got) != 0 {
+				t.Fatalf("withdrawn pending status pollutes health: %v", got)
+			}
+		})
+	}
+}
