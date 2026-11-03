@@ -58,6 +58,9 @@ func TestFreeBSDNativePackageOwnershipAndUpgradeHooks(t *testing.T) {
 			t.Errorf("missing native path %s: %v", path, err)
 		}
 	}
+	if info, err := os.Stat(filepath.Join(root, "usr/local/etc/rc.d/routerd")); err != nil || info.Mode().Perm() != 0555 {
+		t.Errorf("native rc.d script must be executable and mode 0555: %v %v", info, err)
+	}
 	for _, path := range []string{"usr/local/etc/routerd/router.yaml", "var/db/routerd/routerd.db", "install.sh", "uninstall.sh"} {
 		if _, err := os.Lstat(filepath.Join(root, path)); !os.IsNotExist(err) {
 			t.Errorf("package must not ship %s: %v", path, err)

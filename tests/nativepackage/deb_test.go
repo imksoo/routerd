@@ -44,6 +44,9 @@ func TestDebOwnsNativeFilesAndLeavesOperatorConfigurationAbsent(t *testing.T) {
 		t.Skip("requires native dpkg-deb")
 	}
 	payload, out := fixture(t), t.TempDir()
+	if err := os.Chmod(filepath.Join(payload, "share/doc/LICENSE"), 0666); err != nil {
+		t.Fatal(err)
+	}
 	if output, err := build(t, payload, out, "amd64"); err != nil {
 		t.Fatalf("build: %v\n%s", err, output)
 	}
@@ -78,6 +81,15 @@ func TestDebOwnsNativeFilesAndLeavesOperatorConfigurationAbsent(t *testing.T) {
 		}
 		if info.Mode().Perm() != 0755 {
 			t.Errorf("native directory %s has mode %o, want 755 independent of build umask", path, info.Mode().Perm())
+		}
+	}
+	for _, path := range []string{"usr/lib/systemd/system/routerd.service", "usr/share/doc/routerd/LICENSE"} {
+		info, err := os.Stat(filepath.Join(root, path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm()&0022 != 0 {
+			t.Errorf("native package file %s is group/world writable: %o", path, info.Mode().Perm())
 		}
 	}
 }
