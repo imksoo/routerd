@@ -2955,3 +2955,71 @@ conntrack-flow continuity, router reboot, BGP, HA/lease/NAT-session synchronizat
 or the complete deployed 110-resource router. The prepared full 1.5 configuration
 validates, but validation is not its native replacement verdict. Linux remains
 first; FreeBSD work is deferred and nDPI is explicitly excluded there by the user.
+
+
+### Linux packaged DS-Lite existing-flow checkpoint, 2026-11-03
+
+Product `ee50d67423fb9e49911fc4b42f9bc633c78a14b2` and maintained gate
+`509d061333bc0f7a930055a01be1e14a1a4295a8` passed on a fresh dedicated
+Ubuntu 24.04 amd64 VM, Linux 6.8.0-124, with actual apt/dpkg/systemd, four
+independent kernel AFTRs and a separate LAN namespace. The package updated from
+`1.5.0~20261103073215+gfc5d78162377` to
+`1.5.0~20261103081632+gee50d67423fb`; the new .deb SHA-256 is
+`b8edaff8cb47db612fe433a87ab9801f998790a640f6e7fa9ea8c0ebcdddf052`.
+The driver SHA-256 is
+`3c464e06ab915f7290d1297e4213b2db07dabfe720f2bde43d6993b806bb27b7`;
+the fixture remains `56b46ce5feb3f89861794932089a396570965cd2260fa474f162e3f8312b072c`.
+
+`2c69b2ac` first reproduced a defect: a surviving group member admitted the
+entire original target list into the conntrack mark restore set. Failed members
+therefore remained eligible even though new-flow hashing had withdrawn them.
+The real-kernel regression retained failed mark 0x111 on an unchanged live UDP
+socket. `ee50d674` copies only available members for restoration and excludes
+explicit runtime-unready targets in the renderer. The same native test then
+moved to 0x112, retained that healthy mark, moved to fallback 0x113 on total
+failure, and kept healthy fallback after primary recovery. Controller tests
+cover unhealthy probes, missing interfaces, total loss and desired-spec integrity.
+
+The first extended VM attempt also exposed an incorrect test assumption: it
+required every masqueraded flow to keep its original conntrack ID through an
+output-interface change. Linux 6.8 explicitly removes that flow and drops the
+transition packet in
+[nf_nat_inet_fn](https://github.com/torvalds/linux/blob/v6.8/net/netfilter/nf_nat_core.c#L802-L809).
+`tests/netns/masquerade-oif.py` reproduced the removal and recovery on the next
+send using the same UDP socket, without routerd or manual state repair. IDs may
+be reused after deletion, so an observed absence and successful replacement NAT
+response matter more than comparing the old/new ID alone. The corrected gate
+preserves IDs and paths for unaffected traffic and permits at most one client
+retransmission for affected tuples. Bounded concurrent clients avoid expiring
+healthy entries merely while serial clients await the transition drop.
+
+The final fresh-OS campaign passed all previous new-TCP install/update, affinity,
+partial/total failure, recovery, restart, withdrawal and explicit-stop checks.
+After update it additionally passed 64 fixed UDP tuples through real DS-Lite/NAT:
+
+- Initially all three primary AFTRs received translated traffic, with no resend.
+- Partial primary loss moved 27 affected tuples to the surviving pair, each with
+  one resend. Healthy tuples retained their conntrack IDs and AFTRs without resend.
+- Total primary loss moved all 64 tuples to fallback, each with one resend.
+- Primary recovery restored new TCP distribution while all 64 healthy fallback
+  tuples retained their IDs and AFTR without resend.
+
+No product conntrack flush or manual repair manufactured recovery. Independent
+AFTR receivers verified the translated source. UDP peer response is certified
+before qualification. Packet capture startup now fails on error rather than
+silently losing diagnostics when tcpdump drops privileges in a private directory.
+Final readback found product ee50d674, clean dpkg verification, inactive main
+with MainPID 0, no fixture namespaces/interfaces or routerd nft tables, and no
+successful raw output directory. The earlier failed VM and disks were deleted;
+the successful guest is temporarily retained for the next Linux-only gate.
+
+The full ordinary Go suite (122 passing packages), schemas, all examples,
+format/diff checks and four-locale website build passed. Native mark and
+masquerade reference tests ran separately on development Linux 6.8.0-136 and the
+6.8.0-124 guest. Shell syntax/lint and installation tests passed. The runbooks in
+English/Japanese carry commands and pass criteria; raw success logs are temporary.
+
+This is not delegated/RA outer-source expiry, real ISP AFTR or remote TCP-session
+continuity qualification. Dynamic delegated sources, BGP/HA, lease/session
+synchronization and the full deployed-router replacement remain active Linux
+work. FreeBSD does not gate that work; its nDPI exclusion remains in effect.

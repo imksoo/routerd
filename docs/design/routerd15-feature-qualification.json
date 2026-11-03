@@ -2029,6 +2029,38 @@
         "BGP, HA, lease/NAT-session synchronization and the complete deployed-router replacement verdict"
       ],
       "harness_revision": "8faaafe28c069b69f379e16e42f2a0d877b7e0d5"
+    },
+    "linux-dslite-existing-flows-ee50d674": {
+      "level": "packaged-daemon-independent-peer",
+      "outcome": "pass",
+      "revision": "ee50d67423fb9e49911fc4b42f9bc633c78a14b2",
+      "reference": "docs/design/routerd15-audit.md#linux-packaged-ds-lite-existing-flow-checkpoint-2026-11-03",
+      "environment": "Fresh dedicated Ubuntu 24.04 amd64 VM, Linux 6.8.0-124, native apt/dpkg/systemd; four independent kernel AFTR namespaces and a separate client namespace.",
+      "package_versions": [
+        "1.5.0~20261103073215+gfc5d78162377",
+        "1.5.0~20261103081632+gee50d67423fb"
+      ],
+      "package_sha256": [
+        "b519b0420a0a811dac23e4a8909bac3663202ae62769b52111bdf34e526bc2a6",
+        "b8edaff8cb47db612fe433a87ab9801f998790a640f6e7fa9ea8c0ebcdddf052"
+      ],
+      "reproduction": "sudo bash scripts/linux-multi-dslite-smoke.sh --disposable-vm tests/fixtures/linux-multi-dslite.json PRIOR.deb CURRENT.deb MANAGEMENT_INTERFACE",
+      "harness_sha256": "3c464e06ab915f7290d1297e4213b2db07dabfe720f2bde43d6993b806bb27b7",
+      "fixture_sha256": "56b46ce5feb3f89861794932089a396570965cd2260fa474f162e3f8312b072c",
+      "checks": [
+        "Native regression reproduced failed-member conntrack mark retention before correction and healthy mark/fallback behavior after correction.",
+        "Clean apt install/update, new TCP affinity/failover/recovery, restart, withdrawal and persistent explicit stop passed.",
+        "64 fixed UDP tuples traversed independent DS-Lite/NAT receivers. Partial outage affected 27 tuples; total outage affected 64; each affected tuple recovered with one client resend.",
+        "Unaffected flows and healthy fallback after primary recovery retained conntrack IDs and AFTRs without resend.",
+        "Standalone kernel reference observed masquerade flow deletion on output-interface change and same-socket retransmission recovery; blanket original-ID continuity was an invalid test assumption.",
+        "Final readback: correct product binary, clean dpkg, inactive main, no fixture network state or successful output directory."
+      ],
+      "excludes": [
+        "Delegated/RA outer-source lifecycle and real ISP AFTR interoperability",
+        "Remote TCP session continuity across ISP NAT changes",
+        "BGP/HA/lease/session synchronization and the complete deployed-router replacement verdict"
+      ],
+      "harness_revision": "509d061333bc0f7a930055a01be1e14a1a4295a8"
     }
   },
   "features": [
@@ -3319,7 +3351,8 @@
         "scoped_evidence": [
           "linux-combined-native-3e58c93a",
           "linux-dslite-pve-f8ef5e59",
-          "linux-multi-dslite-apt-fc5d7816"
+          "linux-multi-dslite-apt-fc5d7816",
+          "linux-dslite-existing-flows-ee50d674"
         ]
       },
       "freebsd": {
@@ -3550,7 +3583,8 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-health-pbr-native-58bef4e9",
-          "linux-multi-dslite-apt-fc5d7816"
+          "linux-multi-dslite-apt-fc5d7816",
+          "linux-dslite-existing-flows-ee50d674"
         ]
       },
       "freebsd": {
@@ -3662,7 +3696,8 @@
           "linux-local-service-redirect-3bb5e7c3",
           "linux-home-router-clean-install-999dfd4",
           "linux-dualstack-recovery-6977c66e",
-          "linux-multi-dslite-apt-fc5d7816"
+          "linux-multi-dslite-apt-fc5d7816",
+          "linux-dslite-existing-flows-ee50d674"
         ]
       },
       "freebsd": {

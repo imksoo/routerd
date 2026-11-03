@@ -59,9 +59,14 @@ three-way source-hash routing, fourth-path fallback, recovery, actual restart an
 package update, withdrawal and explicit-stop persistence. It exposed/fixed main
 apt-cache capability failures and delayed self-restart resurrection. See the
 [scoped result](routerd15-audit.md#linux-apt-multi-path-ds-lite-and-explicit-stop-checkpoint-2026-11-03).
+The follow-up `ee50d674` / `509d0613` campaign also qualified 64 existing UDP
+tuples through real DS-Lite/NAT partial/total failure and recovery, preserving
+unaffected and healthy fallback traffic. It fixed failed-member mark restoration
+and corrected an invalid blanket conntrack-ID continuity test. See the
+[existing-flow result](routerd15-audit.md#linux-packaged-ds-lite-existing-flow-checkpoint-2026-11-03).
 This is not the full deployed-router qualification. Next Linux work must cover
 the real BGP/HA/lease-and-session synchronization combinations, dynamic DS-Lite
-sources, persistent flows and reboot alongside the already qualified client
+sources, remaining session modes and reboot alongside the already qualified client
 services, without restoring a FreeBSD acceptance dependency.
 
 ## Current inventory
