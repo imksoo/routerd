@@ -32,7 +32,8 @@ sudo pkg -o HANDLE_RC_SCRIPTS=true install ./routerd-<version>.pkg
 プレースホルダーは取得した実際のファイル名に置き換えてください。
 arm64 ホストには arm64 用を使います。FreeBSD の ABI 名では `aarch64` です。
 Linux の routerd バイナリは `CGO_ENABLED=0` で静的リンクしますが、OS の実行ツール
-は別途必要です。基本依存はパッケージ情報で宣言します。追加機能が要求する
+は別途必要です。FreeBSD の標準パッケージには native libnDPI agent と実ライブラリの依存を含めます。
+基本依存はパッケージ情報で宣言します。追加機能が要求する
 OS パッケージも、選択した設定に合わせて適用前に確認してください。
 
 初回導入ではファイルとサービス定義を配置するだけで、daemon の起動、ルーティングの
@@ -118,12 +119,12 @@ sudo pkg delete routerd
 Linux は `make dist-deb ROUTERD_OS=linux`、FreeBSD 実機では
 `gmake dist-pkg ROUTERD_OS=freebsd` を使います。リリース成果物では `GOARCH` と
 `PACKAGE_VERSION` を指定します。FreeBSD の生成には native `pkg`、Python、
-`dnsmasq`、`ca_root_nss`、Linux には `dpkg-deb` と Python が必要です。
+`dnsmasq`、`ca_root_nss`、`ndpi`、C compiler、`pkgconf`、`readelf`、Linux には `dpkg-deb` と Python が必要です。
 release workflow は amd64/arm64 の両方を生成しますが、定義を追加しただけでは
 リリース実行や両 CPU の実行時検証が済んだことにはなりません。
 
 再実行できる導入・更新・削除試験と合否基準は[開発手順](./operations/development.md)
 にあります。使い捨て OS ゲストで実際の置換、独立した DNS 疎通、旧プロセス終了、
 設定と SQLite の値の保持、削除を確認します。全機能の認証ではありません。
-native libnDPI は本体と同じ版の[追加パッケージ](./operations/ndpi-agent-libndpi.md)を使います。パッケージ管理下の
+Linux の native libnDPI は本体と同じ版の[追加パッケージ](./operations/ndpi-agent-libndpi.md)を使います。パッケージ管理下の
 agent をアーカイブで上書きしないでください。

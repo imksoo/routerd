@@ -22,7 +22,8 @@ previous native packages must retain operator configuration and durable state.
 Source installs, `make install`, manual copies and tar-installed systems are
 outside this contract. Do not add migration or adoption tests for those states.
 The release workflow builds native base packages; no public apt/pkg repository
-or release is announced here. Native libnDPI uses a matching optional addon package; see its
+or release is announced here. Linux native libnDPI uses a matching optional addon
+package; see its
 [package lifecycle gate](./ndpi-agent-libndpi.md#build-and-test).
 
 Build Linux artifacts with `make dist-deb PACKAGE_VERSION=<native-version>`.
@@ -56,7 +57,14 @@ apt/journal diagnostics; reproduce and fix locally before another guest gate.
 Retain procedures, assertions and scoped results instead of permanent run logs.
 
 FreeBSD uses native `gmake dist-pkg ROUTERD_OS=freebsd` with Python, `pkg`,
-`dnsmasq` and `ca_root_nss` installed. In a disposable FreeBSD 14 guest, provide
+a C compiler, `pkgconf`, `readelf`, `dnsmasq`, `ca_root_nss` and `ndpi` installed.
+The standard FreeBSD package includes the native libnDPI agent, records the actual
+ELF SONAME in `shlibs_required`, and declares the native ndpi package dependency.
+The gate checks real native TLS/SNI detection before and after package update.
+For a fresh dependency-resolution check, keep routerd absent and remove the build
+environment's ndpi SDK/runtime package after generating the artifacts; the actual
+routerd pkg installation must pull it from the OS repository. Perform that cleanup
+only in the disposable build/test guest, after native unit/build checks. In a disposable FreeBSD 14 guest, provide
 `dig` and Python SQLite support, then run:
 
 ```sh

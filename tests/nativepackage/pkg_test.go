@@ -44,10 +44,11 @@ func TestFreeBSDNativePackageOwnershipAndUpgradeHooks(t *testing.T) {
 		t.Fatalf("native manifest: %v %s", err, metadata)
 	}
 	var manifest struct {
-		Name    string                     `json:"name"`
-		ABI     string                     `json:"abi"`
-		Deps    map[string]json.RawMessage `json:"deps"`
-		Scripts map[string]string          `json:"scripts"`
+		Name      string                     `json:"name"`
+		ABI       string                     `json:"abi"`
+		Deps      map[string]json.RawMessage `json:"deps"`
+		Scripts   map[string]string          `json:"scripts"`
+		Libraries []string                   `json:"shlibs_required"`
 	}
 	if err := json.Unmarshal(metadata, &manifest); err != nil {
 		t.Fatalf("manifest: %v %s", err, metadata)
@@ -58,6 +59,9 @@ func TestFreeBSDNativePackageOwnershipAndUpgradeHooks(t *testing.T) {
 	}
 	if manifest.Name != "routerd" || manifest.ABI != "FreeBSD:14:"+abiArch {
 		t.Fatalf("incorrect native metadata: %+v", manifest)
+	}
+	if len(manifest.Libraries) == 0 || !strings.HasPrefix(manifest.Libraries[0], "libndpi.so.") {
+		t.Errorf("missing native ELF library contract: %v", manifest.Libraries)
 	}
 	if _, ok := manifest.Deps["ndpi"]; !ok {
 		t.Error("missing native ndpi runtime dependency")

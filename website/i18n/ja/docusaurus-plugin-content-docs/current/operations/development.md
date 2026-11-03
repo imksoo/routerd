@@ -21,7 +21,7 @@ Release ワークフローは複数の OS と CPU アーキテクチャーを対
 1.5 はクリーン OS へ apt/pkg で導入し、その後の更新もパッケージ間で行います。
 更新時は利用者の設定と永続状態を保持します。ソースからの導入、`make install`、
 手動コピー、tar 展開からの移行・引き取りは対象外です。
-release workflow は native 基本パッケージを生成します。native libnDPI は本体と同じ版の[追加パッケージ](./ndpi-agent-libndpi.md)を使います。
+release workflow は native 基本パッケージを生成します。Linux の native libnDPI は本体と同じ版の[追加パッケージ](./ndpi-agent-libndpi.md)を使います。
 ここでは公開 apt/pkg リポジトリの提供やリリースを宣言していません。
 
 Linux は `make dist-deb PACKAGE_VERSION=<native-version>` で生成します。
@@ -50,7 +50,12 @@ sudo sh scripts/linux-deb-lifecycle-smoke.sh --isolated-vm /tmp/prior.deb /tmp/c
 ローカルで再現・修正してから再試験します。恒久的な実行ログではなく、手順・判定・簡潔な結果を残します。
 
 FreeBSD は native 環境で `gmake dist-pkg ROUTERD_OS=freebsd` を使います。
-Python、`pkg`、`dnsmasq`、`ca_root_nss` が必要です。使い捨て FreeBSD 14 ゲストに
+Python、`pkg`、`dnsmasq`、`ca_root_nss`、`ndpi`、C compiler、`pkgconf`、`readelf` が必要です。
+FreeBSD の標準 pkg に native libnDPI agent を含め、実 ELF の SONAME を
+`shlibs_required` に記録します。新旧両方で実ライブラリの TLS/SNI 分類も確認します。
+依存解決の初回導入試験では、成果物生成と native 単体試験の後に、使い捨てビルドゲストの
+ndpi SDK/runtime パッケージを削除し、routerd の pkg 導入が OS リポジトリから
+再導入することを確認してください。共有ホストでは行いません。使い捨て FreeBSD 14 ゲストに
 `dig` と Python SQLite を用意し、次を実行します。
 
 ```sh

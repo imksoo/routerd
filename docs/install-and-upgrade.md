@@ -33,7 +33,9 @@ sudo pkg -o HANDLE_RC_SCRIPTS=true install ./routerd-<version>.pkg
 Replace the placeholders with the actual downloaded filename; use arm64 packages
 on arm64 hosts. FreeBSD's native ABI names that architecture `aarch64`. Linux
 routerd binaries are statically linked with `CGO_ENABLED=0`; OS tools still have
-runtime dependencies. Package metadata declares baseline dependencies. Additional
+runtime dependencies. The standard FreeBSD package includes the native libnDPI
+agent and its actual shared-library/runtime-package dependencies. Package metadata
+declares baseline dependencies. Additional
 features can require additional OS packages; review the selected configuration's
 requirements before applying it.
 
@@ -136,8 +138,8 @@ only when the operator explicitly intends to discard them.
 
 Use `make dist-deb ROUTERD_OS=linux` or native FreeBSD
 `gmake dist-pkg ROUTERD_OS=freebsd`. Set `GOARCH` and `PACKAGE_VERSION` explicitly
-when building release artifacts. FreeBSD packaging requires native `pkg`, Python,
-`dnsmasq` and `ca_root_nss`; Linux packaging requires `dpkg-deb` and Python. The
+when building release artifacts. FreeBSD packaging requires native `pkg`, Python, a C compiler, `pkgconf`,
+`readelf`, `dnsmasq`, `ca_root_nss` and `ndpi`; Linux packaging requires `dpkg-deb` and Python. The
 release workflow builds both amd64 and arm64 packages; a workflow definition does
 not itself constitute an executed release or runtime qualification for both CPUs.
 
@@ -145,6 +147,6 @@ The reproducible installation/update/removal gates and their pass criteria are i
 [Development](./operations/development.md). They run only in disposable OS guests.
 They check real package replacement, independent DNS traffic, old process exit,
 configuration and SQLite value retention, and removal. They do not certify every
-routerd function. Optional native libnDPI uses a matching
+routerd function. Linux native libnDPI uses a matching
 [addon package](./operations/ndpi-agent-libndpi.md); do not overwrite
 package-owned agent files with an archive.
