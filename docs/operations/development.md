@@ -518,6 +518,51 @@ the isolated WAN, and cleanup removes that exact fixture route. This gate exerci
 through that route; it does not claim to qualify `IPv6StaticRoute` rendering or
 WAN router-advertisement discovery.
 
+## Linux multi-path DS-Lite package gate
+
+`scripts/linux-multi-dslite-smoke.sh` tests a clean apt-installed product on a
+dedicated disposable Ubuntu VM. It creates four independent kernel AFTR
+namespaces with HTTP receivers and a separate LAN client. Three primary paths
+use source-address hashing; a lower-weight fourth path provides fallback.
+The fixture uses documentation/benchmark addresses, not deployed configuration.
+
+Before qualification, finish OS initialization/reboot and install `iproute2`,
+`nftables`, `jq`, `curl`, `python3`, `conntrack`, `tcpdump` and `dnsmasq-base`.
+Use a management NIC independent of the test interfaces. The guest must have no
+routerd installation/configuration/database or colliding fixture interfaces.
+Build two genuine Linux candidate `.deb` revisions through `make dist-deb`, with
+increasing package versions. Do not copy standalone development binaries into
+the guest. Validate the fixture locally and check the shell syntax first:
+
+```sh
+go run ./cmd/routerd validate --config tests/fixtures/linux-multi-dslite.json
+bash -n scripts/linux-multi-dslite-smoke.sh
+# Transfer the script, fixture and both packages to the disposable guest.
+sudo bash scripts/linux-multi-dslite-smoke.sh --disposable-vm \
+  tests/fixtures/linux-multi-dslite.json /tmp/prior.deb /tmp/current.deb eth0
+```
+
+The script certifies the IPv6 links and independent HTTP listeners before
+installing routerd. Health probes must bind to their actual routing target.
+Before testing a changed path set, it observes the native nft marking rules;
+health publication alone does not acknowledge route reconciliation. The
+90-second observation bounds are test timeouts, not a product failover SLA.
+
+Pass requires all 64 source addresses to retain their selected AFTR across new
+connections, all three primary AFTRs to receive traffic, and each independent
+receiver to observe the translated inner source. Failure of one primary must
+remove it from new-flow selection. Failure of all primaries must select the
+fourth AFTR; restoration must restore the primary set. Actual systemd restart
+and apt update must retain the configuration, replace old processes, preserve
+package integrity and restore traffic without product-state repair. Empty
+configuration must remove the tunnels and stop that forwarded traffic.
+
+The caller discards the VM and its disks afterwards. Successful captures/logs
+are removed; a failure retains bounded diagnostics and two one-megabyte outer
+packet captures for local reproduction before another qualification run. This
+gate does not qualify delegated/RA source expiry, real ISP AFTRs, host reboot,
+DHCP/DNS, BGP, HA/session synchronization or complete deployed-router replacement.
+
 ## Linux PD/RA lifecycle VM gate
 
 `scripts/linux-pd-ra-lifecycle-smoke.sh` exercises an installed `make dist`

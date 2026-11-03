@@ -402,6 +402,42 @@ fixture の上流 IPv6 default route は metric 50 とし、管理 NIC の metri
 与えます。この試験はその経路を通る IPv6 転送を確認しますが、`IPv6StaticRoute` の設定レンダリングや
 WAN Router Advertisement の取得までは検証しません。
 
+## Linux の複数 DS-Lite 経路・パッケージ試験
+
+`scripts/linux-multi-dslite-smoke.sh` は、専用の使い捨て Ubuntu VM に apt で
+新規導入し、4つの独立したカーネル AFTR と LAN クライアントを別の名前空間で
+動かします。3本を送信元アドレスで分散し、低優先度の4本目へ退避します。
+設定例は文書・ベンチマーク用アドレスを使い、実ホストの設定は含みません。
+
+事前に OS 初期化・再起動を済ませ、`iproute2`、`nftables`、`jq`、`curl`、
+`python3`、`conntrack`、`tcpdump`、`dnsmasq-base` を導入してください。
+試験用と独立した管理 NIC を使い、routerd・設定・DB や試験名と競合する
+インターフェースがないクリーンな VM を用意します。版の異なる2つの候補を
+`make dist-deb` でビルドし、新しい方のパッケージ版が大きいことを確認します。
+開発用バイナリの手動配置で代用しません。
+
+```sh
+go run ./cmd/routerd validate --config tests/fixtures/linux-multi-dslite.json
+bash -n scripts/linux-multi-dslite-smoke.sh
+# スクリプト・設定・両パッケージを専用 VM に転送して実行します。
+sudo bash scripts/linux-multi-dslite-smoke.sh --disposable-vm \
+  tests/fixtures/linux-multi-dslite.json /tmp/prior.deb /tmp/current.deb eth0
+```
+
+IPv6 リンクと独立 HTTP 受信を環境認証した後に routerd を導入します。
+経路変更時はヘルス結果だけで判断せず、カーネルの nft マーク規則の更新を
+待ちます。90秒は試験の観測上限であり、製品の切替時間要件ではありません。
+
+64送信元それぞれの接続先が安定し、3本すべてで通信し、AFTR が変換後の
+内部送信元を観測することを要求します。1本断、主系3本断、復帰、実サービス
+再起動、apt 更新、設定保持・旧プロセス終了・パッケージ整合性、空設定での
+トンネル撤回・通信停止まで確認します。製品状態の手動修復は合格にしません。
+
+終了後は呼出側が VM とディスクを片付けます。成功ログ・キャプチャは削除し、
+失敗時だけ診断と最大2個の1MBキャプチャを残してローカル再現に使います。
+PD・RA 送信元の期限切れ、実 ISP、ホスト再起動、DHCP/DNS、BGP、HA・セッション
+同期や、実ホスト全体の置き換え品質をこの試験だけで証明するものではありません。
+
 ## Linux の PD・RA ライフサイクル VM 試験
 
 `scripts/linux-pd-ra-lifecycle-smoke.sh` は `make dist` から導入した製品を
