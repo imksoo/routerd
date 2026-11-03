@@ -3538,5 +3538,16 @@ by an interrupted source/dependency check. RED `47bf1c7b` reproduces this and
 other unactivated Pending reasons. After native cleanup, an undeclared Pending
 record with no retained tunnel or endpoint receipt is now retired through the
 same checked deletion path. Declared resources, native receipts, dry-run and
-read/delete errors retain their existing protections. Focused tests pass;
-formal-package empty-health/reopen confirmation remains pending.
+read/delete errors retain their existing protections. Focused tests and the complete Go suite (122 packages passed, 14 without tests),
+schema/examples, four-locale website and formal package creation passed. Product
+`6dc12c92` was installed through apt on both dedicated routers with package
+integrity verification. The focused native check passed in 87.93 seconds through
+confirmed MASTER VIP, active-main restart, complete empty configuration and
+empty-state daemon reopen/repeated withdrawal on both routers. Each ended
+Healthy with no current errors/issues and no native VIP/VMAC/helper/config/FIB
+effects. All three VMs were then stopped. The private cleanup wait now allows
+45 seconds, covering the observed 15-second and default 30-second controller
+periods instead of assuming every status is synchronous within 15 seconds.
+The full 74-flow lifecycle remains revision-bound to `84b5d854`; later changes
+are limited to removal and withdrawn-status cleanup and have focused native
+retesting. Full 105-resource native replacement qualification remains open.

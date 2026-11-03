@@ -2200,6 +2200,73 @@
         "Complete HA lifecycle: reverse latest-lease replication failed; active main restart and reverse power loss were not executed.",
         "Native full 105-resource equivalence and production replacement readiness; prepared full inputs passed validation only.",
         "No assertion of the timeout cause without direct two-ended SSH/TCP observations; the independent-peer capture is insufficient for that path."
+      ],
+      "later_diagnosis": "Direct two-ended SSH observations and both original/full candidate inputs identified omitted private-destination NAT exclusions in the synthetic input. This historical failed run does not establish a deployed-path synchronization defect; corrected input e14ae3a1 passed the focused native diagnostic."
+    },
+    "linux-ha-corrected-sync-e14ae3a1": {
+      "level": "packaged-daemon-independent-peer",
+      "outcome": "pass",
+      "revision": "a1d8ef19cd4c9864c3f101af57c6d0028f007373",
+      "fixture_revision": "e14ae3a1e46be7fe49425a4bdf160dadc825b26f",
+      "fixture_sha256": "5c151fdfea0f31fdb2c02319f59bad795fde83eae3d92e043df72a8790068246",
+      "checks": [
+        "143.04 seconds; initial actual sticky SQLite/PD replication, active power loss, promotion, same DHCP client/lease renewal, cold return and latest reverse contents/all three sync statuses.",
+        "Both routers Healthy after complete native withdrawal."
+      ],
+      "excludes": [
+        "One DHCP client diagnostic; full 74-flow or 105-resource qualification."
+      ]
+    },
+    "linux-ha-shared-pd-four-aftr-84b5d854": {
+      "level": "packaged-daemon-independent-peer",
+      "outcome": "fail",
+      "revision": "84b5d854dc6c6f04fe82c0221886558c6a2b0e6d",
+      "fixture_sha256": "5c151fdfea0f31fdb2c02319f59bad795fde83eae3d92e043df72a8790068246",
+      "reference": "docs/design/routerd15-audit.md#preserving-replicated-marks-during-ha-admission-2026-11-03",
+      "environment": "Three dedicated Ubuntu 24.04 amd64 guests; router kernels 6.8.0-147 and independent peer/client kernel 6.8.0-124.",
+      "package_versions": [
+        "1.5.0~20261103231824+g84b5d854dc6c"
+      ],
+      "package_sha256": [
+        "810401c14d099f96c0b281d8822cf65480017af610b2cdf09265b9e8fad72032"
+      ],
+      "checks": [
+        "354.90-second communication lifecycle; genuine same-prefix PD renewal preserved all four tunnel indices and 74 original flows.",
+        "Actual sticky/PD contents and 73 external-cache IPv4 tuples with original AFTR marks verified before each power loss.",
+        "Both-direction router power loss, both non-preemptive cold returns and active-main restart on each side passed with the same 74 flows, ten TCP accepts once each and zero translated-identity changes.",
+        "Maximum observed response gap 53.209 seconds; independent client/peer and surviving main processes retained.",
+        "Latest same-client DHCP renewal, local/upstream DNS A/AAAA through IPv4/IPv6 listeners and reverse sticky/PD synchronization passed.",
+        "Both returned routers emitted zero shared MAC/IP/ARP claims.",
+        "Final withdrawal failed because A retained its deferred LAN VIP. B withdrew completely."
+      ],
+      "excludes": [
+        "Complete empty-health/native withdrawal; repaired and retested separately below.",
+        "Full 105-resource native equivalence and production replacement readiness."
+      ]
+    },
+    "linux-ha-withdraw-reopen-6dc12c92": {
+      "level": "packaged-daemon-independent-peer",
+      "outcome": "pass",
+      "revision": "6dc12c9278fb3fc4673e11eee6cb5a1ac0e262f0",
+      "fixture_sha256": "5c151fdfea0f31fdb2c02319f59bad795fde83eae3d92e043df72a8790068246",
+      "reference": "docs/design/routerd15-audit.md#retiring-withdrawn-pending-ds-lite-status-2026-11-03",
+      "package_versions": [
+        "1.5.0~20261103234309+g6dc12c92"
+      ],
+      "package_sha256": [
+        "4f0f07ecc63881d95311d2a9fc43edcb96393588efd3b29d8282203fb3f26b72"
+      ],
+      "checks": [
+        "Formal apt update/integrity on both dedicated routers; confirmed MASTER VIP followed by active-main restart.",
+        "87.93-second focused native check: empty configuration on both routers, empty-state daemon reopen and repeated withdrawal.",
+        "Each withdrawal ended Healthy with zero current errors/issues and no native VIP/VMAC/helper/config/learned FIB effects.",
+        "Deferred VIP retention reproduced before 4cb2451b in an isolated real kernel; corrected removal and foreign/failure/absent-link retry tests passed.",
+        "Withdrawn Pending DS-Lite statuses reproduced before 6dc12c92; normal cleanup now retires them after native receipts clear.",
+        "Full local Go 122 passed/14 no-test, schema/examples, four-locale website and formal package build passed. All three VMs stopped."
+      ],
+      "excludes": [
+        "This focused check does not repeat the 74-flow lifecycle; that result remains pinned to 84b5d854.",
+        "Full 105-resource native equivalence and production replacement readiness."
       ]
     }
   },

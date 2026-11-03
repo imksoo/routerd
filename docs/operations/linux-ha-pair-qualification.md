@@ -257,7 +257,9 @@ After cold return, an RA receipt from the previous boot must be retired before
 opening a socket on a standby VMAC without a link-local source. It must not send
 prefix withdrawal using the active peer's shared identity. Wait for both healthy
 empty status and actual native effect removal within the bounded cleanup wait;
-main-daemon stop alone is not confirmation of successful withdrawal.
+main-daemon stop alone is not confirmation of successful withdrawal. Allow
+45 seconds for this cleanup check, covering the configured 15-second or default
+30-second periodic reconciliation instead of requiring synchronous status retirement.
 
 Bound each observation wait (allow over 60 seconds for the configured routing
 hysteresis) and the complete run to 30 minutes. Stop at a product failure;

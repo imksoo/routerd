@@ -104,6 +104,16 @@ the real BGP/HA/when-role and lease/session synchronization combinations,
 remaining session modes and reboot with those combinations alongside the already
 qualified client services, without restoring a FreeBSD acceptance dependency.
 
+The corrected integrated HA input now preserves the deployed private-destination
+NAT exclusions. Product `84b5d854` passed both-direction power loss, both cold
+returns, latest lease/PD synchronization and active-main restarts with the same
+74 application flows, zero TCP reconnects/translated-identity changes and a
+53.209-second maximum response gap. Follow-up `4cb2451b` and `6dc12c92` fixed
+explicit deferred-VIP withdrawal and retirement of withdrawn Pending DS-Lite
+status. A focused formal-package native withdrawal/reopen check passed on both
+routers. Next assess the full 105-resource target function combinations and
+remaining differences, carrying forward these executed scoped checks.
+
 ## Current inventory
 
 - `origin/main` is `e3b49dbb69c7de97bab9595884745eb7cbe93d92`; the active proposal
