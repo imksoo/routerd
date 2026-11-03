@@ -57,3 +57,15 @@ func TestKeepalivedUnicastDoesNotInventSourceWithoutUniqueStaticNodeAddress(t *t
 		})
 	}
 }
+
+func TestKeepalivedUnicastSelectsPeerSubnetWithLegacyLANAddress(t *testing.T) {
+	router := unicastSourceRouter()
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "legacy-lan"}, Spec: api.IPv4StaticAddressSpec{Interface: "lan", Address: "198.18.29.3/24"}})
+	data, err := KeepalivedConfig(router, map[string]string{"lan": "eth0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "  unicast_src_ip 198.18.30.3\n") {
+		t.Fatalf("legacy LAN subnet prevented election on the node address used by its peer:\n%s", data)
+	}
+}
