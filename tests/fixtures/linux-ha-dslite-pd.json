@@ -380,7 +380,8 @@
               "name": "lan",
               "port": 53,
               "sources": [
-                "local"
+                "local",
+                "upstream-test"
               ],
               "addresses": [
                 "198.18.30.1"
@@ -396,7 +397,8 @@
               ],
               "port": 53,
               "sources": [
-                "local"
+                "local",
+                "upstream-test"
               ]
             }
           ],
