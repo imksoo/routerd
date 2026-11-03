@@ -184,3 +184,31 @@ cutover proposal only after qualification; do not execute it without approval.
   `make website-build`. Run those that cover the changed scope and report every
   required check that was not run; never claim a skipped or compile-only path
   passed.
+
+## Native package installation baseline (2026-11-03)
+
+The user requires apt/pkg as the routerd 1.5 installation and update model on a
+clean OS. Existing 1.5 users, source/manual installs and tar-installed systems
+are not compatibility targets. Do not add discovery, adoption or migration for
+those states. Package-to-package updates remain required.
+
+- Linux uses native `/usr` binaries/helpers, `/etc/routerd` configuration,
+  `/usr/lib/systemd/system` vendor units, `/run/routerd` and `/var/lib/routerd`.
+  FreeBSD uses the normal `/usr/local` pkg prefix and rc.d integration.
+- The package database owns distributed files. Desired configuration and runtime
+  generated files keep their own explicit ownership; do not let the runtime
+  overwrite package-owned service/configuration files.
+- Declare dependencies in package metadata. A fresh install with no operator
+  configuration must not apply the bundled example or change router networking.
+- Updates must preserve configuration and durable state, stop/join the old
+  service/owned helpers before replacement, and recover through the actual
+  service manager. Do not silently report a failed lifecycle operation as success.
+- Build reproducible `.deb` and native FreeBSD `.pkg` artifacts through Makefile
+  and release workflows. Test actual apt/pkg fresh installation, package update,
+  configuration/state retention, failure handling and removal on clean isolated
+  target OS environments. An archive/manifest or cross-build alone is not a pass.
+- Implement and verify native paths first, then metadata/lifecycle/builds, then
+  the isolated package-manager gates. Push coherent checkpoints with incomplete
+  checks explicit. The native-package work remains incomplete until both OS
+  package paths are implemented and tested; this does not reduce full 1.0
+  function preservation or authorize a release, main merge or production deploy.
