@@ -2495,7 +2495,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	logRetention.Data, _ = r.Store.(logRetentionData)
 	ntpClient, ntpServer := ntpControllersForOptions(r.currentRouter(), r.Bus, store, opts)
 	info := DHCPv6InformationController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DaemonSockets: opts.DaemonSockets, Logger: logger}
-	link := LinkController{Router: r.currentRouter(), Store: store}
+	link := LinkController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Store: store}
 	tunnel := TunnelInterfaceController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, OS: platform.CurrentOS(), Logger: logger}
 	wireGuard := WireGuardController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, Logger: logger}
 	vrfs := VRFController{Router: r.currentRouter(), Store: store, DryRun: opts.DryRunRoute}
@@ -2885,7 +2885,8 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			effective := observation.EffectiveRouter
 			current := link
 			current.Router = effective
-			current.Store = store.withRouter(effective)
+			current.DeclaredRouter = observation.DeclaredRouter
+			current.Store = store.withRouter(observation.DeclaredRouter)
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "sam-enrollment-client", Every: time.Minute, Subs: statusSubscriptions("SAMEnrollmentClient", "SAMEnrollmentClaim"), NextAfter: func() time.Duration {

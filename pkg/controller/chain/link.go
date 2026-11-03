@@ -12,6 +12,7 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/platform"
+	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 type LinkController struct {
@@ -26,6 +27,9 @@ type LinkController struct {
 func (c LinkController) Reconcile(ctx context.Context) error {
 	if c.Router == nil || c.Store == nil {
 		return errors.New("link reconciliation requires current Router and Store")
+	}
+	if err := c.cleanupRemovedObservations(ctx); err != nil {
+		return err
 	}
 	for _, resource := range c.Router.Spec.Resources {
 		if err := ctx.Err(); err != nil {
@@ -90,6 +94,47 @@ func (c LinkController) Reconcile(ctx context.Context) error {
 			return err
 		}
 		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "Interface", resource.Metadata.Name, status); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Interface observations own no native effects. Retire only rows whose
+// declarations are gone; a when-filtered declaration still owns its status.
+func (c LinkController) cleanupRemovedObservations(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	store, ok := c.Store.(interface {
+		routerstate.ObjectStatusLister
+		routerstate.ObjectDeleteStore
+	})
+	if !ok {
+		return errors.New("interface observation cleanup store unavailable")
+	}
+	declared := c.DeclaredRouter
+	if declared == nil {
+		declared = c.Router
+	}
+	wanted := map[string]bool{}
+	for _, resource := range declared.Spec.Resources {
+		if resource.Kind == "Interface" {
+			wanted[resource.Metadata.Name] = true
+		}
+	}
+	observations, err := store.ListObjectStatuses()
+	if err != nil {
+		return err
+	}
+	for _, observation := range observations {
+		if observation.APIVersion != api.NetAPIVersion || observation.Kind != "Interface" || wanted[observation.Name] {
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := store.DeleteObject(observation.APIVersion, observation.Kind, observation.Name); err != nil {
 			return err
 		}
 	}

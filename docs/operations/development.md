@@ -566,6 +566,11 @@ input. A declaration retained but conditionally inactive still keeps its status.
 The zero resource count may be omitted by the control API's existing JSON shape;
 the gate treats that omitted numeric zero consistently with the schema.
 
+The link observer similarly retires only Interface observation rows absent from
+the full declaration. It retains conditionally inactive declarations and other
+APIs/resource kinds, propagates enumeration/deletion errors for retry, and never
+changes native interfaces while removing stale display state.
+
 The two peer prefixes are documentation addresses. AFTR return endpoints are
 prepared for the replacement prefix before Kea advertises it; this changes the
 independent network, never product state. Successful raw output and namespace
