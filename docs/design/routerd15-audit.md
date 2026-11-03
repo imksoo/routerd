@@ -3494,6 +3494,32 @@ connection marks. New flows still use the available selected candidate. After
 publication is confirmed, ordinary unhealthy-path reassignment resumes. Product correction `84b5d854` passes the focused regression and prior datapath
 convergence tests. An explicit isolated real-kernel test also preserves the
 original UDP conntrack mark during pending admission, then reassigns a failed
-member after admission and retains a healthy fallback on recovery. Formal
-package creation and the full local checks are running. Native VM qualification
-of this correction and the full 105-resource replacement verdict remain pending.
+member after admission and retains a healthy fallback on recovery. The formal package and full local checks passed. The subsequent native lifecycle
+passed in 354.90 seconds through both-direction power loss, both cold returns,
+latest real lease/PD replication and active-main restarts on both sides. All
+74 original flows survived with ten single TCP accepts and zero translated
+identity changes. Maximum observed response gap was 53.209 seconds. Returned
+nodes emitted zero shared MAC/IP/ARP claims. Both prepared 105-resource inputs
+validated at this revision. Complete withdrawal failed as described below, so
+the complete lifecycle and full replacement verdict remain unqualified.
+
+
+### Deferred gateway removal after keepalived stop (2026-11-03)
+
+The final empty-configuration check after the `84b5d854` lifecycle found the
+active router's deferred LAN VIP still present. Its base addresses, helpers,
+VMACs and generated configuration had been removed, and status incorrectly
+appeared Healthy. The other router withdrew completely. Both daemons and all
+three VMs were stopped after collecting the remaining address and statuses.
+
+`removeConfiguredVMACs` parsed the owned generated hook but discarded its
+deferred-VIP options, relying on keepalived's transition callback to delete the
+VIP. Stopping keepalived does not guarantee that callback finishes the deletion.
+RED `f55a4808` reproduces the retained VIP in an isolated real Linux kernel and
+pins withdrawal order, retry after absent VMACs, foreign protection and failure
+propagation. The correction validates all retained VMAC identities, explicitly
+withdraws each configured deferred gateway, then revalidates and deletes the
+links. A failure retains the generated configuration for retry. Focused ordinary
+and isolated kernel checks now pass. Formal-package native withdrawal of this
+correction remains pending; the successful communication results above retain
+their narrower scope.

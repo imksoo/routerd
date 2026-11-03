@@ -21,6 +21,7 @@ func removeConfiguredVMACs(path string, hooks runHooks) error {
 		return fmt.Errorf("keepalived config %s is not owned by routerd", path)
 	}
 	var entries []vmac
+	var deferred []options
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if !strings.HasPrefix(line, "notify_master ") {
@@ -39,21 +40,34 @@ func removeConfiguredVMACs(path string, hooks runHooks) error {
 			return err
 		}
 		entries = append(entries, opts.vmacs...)
+		if opts.resource != "" {
+			deferred = append(deferred, opts)
+		}
+	}
+	// A stopped daemon may not complete its transition hook. Validate every
+	// retained link before withdrawing the gateway ourselves, including when
+	// an earlier attempt already removed some or all VMACs.
+	for _, entry := range entries {
+		if _, err := inspectRemovalVMAC(entry, hooks); err != nil {
+			return err
+		}
+	}
+	for _, opts := range deferred {
+		if hooks.withdrawDeferredVIP == nil {
+			return fmt.Errorf("deferred VIP withdrawal unavailable")
+		}
+		if err := hooks.withdrawDeferredVIP(opts); err != nil {
+			return err
+		}
 	}
 	for _, entry := range entries {
-		if hooks.inspectVMAC == nil {
-			return fmt.Errorf("VMAC removal ownership inspection unavailable")
-		}
 		// Production inspection verifies private macvlan type, parent and mode.
-		state, err := hooks.inspectVMAC(entry)
+		state, err := inspectRemovalVMAC(entry, hooks)
 		if err != nil {
 			return err
 		}
 		if !state.exists {
 			continue
-		}
-		if !state.macMatches {
-			return fmt.Errorf("refuse to remove VMAC %s: MAC differs from owned keepalived configuration", entry.ifname)
 		}
 		if hooks.command == nil {
 			return fmt.Errorf("VMAC removal command unavailable")
@@ -64,4 +78,18 @@ func removeConfiguredVMACs(path string, hooks runHooks) error {
 		}
 	}
 	return nil
+}
+
+func inspectRemovalVMAC(entry vmac, hooks runHooks) (vmacRuntimeState, error) {
+	if hooks.inspectVMAC == nil {
+		return vmacRuntimeState{}, fmt.Errorf("VMAC removal ownership inspection unavailable")
+	}
+	state, err := hooks.inspectVMAC(entry)
+	if err != nil {
+		return state, err
+	}
+	if state.exists && !state.macMatches {
+		return state, fmt.Errorf("refuse to remove VMAC %s: MAC differs from owned keepalived configuration", entry.ifname)
+	}
+	return state, nil
 }
