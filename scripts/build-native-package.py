@@ -62,6 +62,11 @@ def deb(root, output, version, arch):
         if path.is_file() and not path.is_symlink() and control not in path.parents:
             checksums.append(f"{hashlib.md5(path.read_bytes()).hexdigest()}  {path.relative_to(root)}\n")
     (control / "md5sums").write_text("".join(checksums))
+    service = (REPO / "packaging/native/debian-service.sh").read_text()
+    for phase in ("prerm", "postinst", "postrm"):
+        script = control / phase
+        script.write_text(service.replace("set -eu\n", f"set -eu\nphase={phase}\n", 1))
+        script.chmod(0o755)
     subprocess.run(
         ["dpkg-deb", "--root-owner-group", "--build", str(root),
          str(output / f"routerd_{version}_{arch}.deb")], check=True
