@@ -148,6 +148,21 @@ PY
   sleep 1
  done
  test "$ready" = 1
+ # A working tunnel must not conceal an unrelated bootstrap failure, such as
+ # the Package owner failing under the main unit's capability restrictions.
+ deadline=$((SECONDS+90)); ready=0
+ while (( SECONDS < deadline )); do
+  if routerctl get status -o json > "$work/runtime-status.json" &&
+     jq -e 'all(.status.controllers[]?; .currentError != true)' "$work/runtime-status.json" >/dev/null; then
+   case "$label" in
+    initial|recovered|restarted|apt-updated)
+     if jq -e '.status.phase=="Healthy"' "$work/runtime-status.json" >/dev/null; then ready=1; break; fi;;
+    *) ready=1; break;;
+   esac
+  fi
+  sleep 1
+ done
+ test "$ready" = 1
  : > "$work/sample.jsonl"
  for index in {10..73}; do
   first=$(ip netns exec rd15-mclient curl --noproxy '*' --interface "198.18.25.$index" -fsS --max-time 3 http://203.0.113.80:8080/)
