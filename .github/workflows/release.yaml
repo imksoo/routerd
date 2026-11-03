@@ -140,7 +140,7 @@ jobs:
           arch: ${{ matrix.vmarch }}
           mem: 6144
           envs: 'RELEASE_TAG PACKAGE_ARCH'
-          prepare: pkg install -y go gmake python3 dnsmasq ca_root_nss
+          prepare: pkg install -y go gmake python3 dnsmasq ca_root_nss ndpi pkgconf
           run: |
             set -eu
             export GOTOOLCHAIN=$(awk '$1 == "toolchain" { print $2 }' go.mod)

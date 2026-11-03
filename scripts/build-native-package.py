@@ -142,10 +142,17 @@ def pkg(root, output, version, arch):
     dependencies = {}
     for line in installed.splitlines():
         name, dep_version, origin = line.split("\t")
-        if name in ("dnsmasq", "ca_root_nss"):
+        if name in ("dnsmasq", "ca_root_nss", "ndpi"):
             dependencies[name] = {"version": dep_version, "origin": origin}
-    if set(dependencies) != {"dnsmasq", "ca_root_nss"}:
-        raise SystemExit("native pkg build requires installed dnsmasq and ca_root_nss build dependencies")
+    if set(dependencies) != {"dnsmasq", "ca_root_nss", "ndpi"}:
+        raise SystemExit("native pkg build requires installed dnsmasq, ca_root_nss and ndpi build dependencies")
+    dynamic = subprocess.check_output([
+        "readelf", "-d", str(root / "usr/local/sbin/routerd-ndpi-agent")
+    ], text=True)
+    libraries = sorted({name for name in re.findall(r"\(NEEDED\).*?\[([^\]]+)\]", dynamic)
+                        if name.startswith("libndpi.so.")})
+    if not libraries:
+        raise SystemExit("FreeBSD package must contain the native libndpi-linked agent ELF")
     service = (REPO / "packaging/native/freebsd-service.sh").read_text()
     scripts = {phase: service.replace("set -eu\n", f"set -eu\nphase={phase}\n", 1)
                for phase in ("pre-install", "post-install", "pre-deinstall", "post-deinstall")}
@@ -156,6 +163,7 @@ def pkg(root, output, version, arch):
         "prefix": "/usr/local", "abi": f"FreeBSD:14:{'aarch64' if arch == 'arm64' else arch}",
         "licenselogic": "single", "licenses": ["BSD3CLAUSE"],
         "flatsize": size, "files": files, "deps": dependencies, "scripts": scripts,
+        "shlibs_required": libraries,
     }
     metadata = root.parent / "+MANIFEST"
     metadata.write_text(json.dumps(manifest))
@@ -181,6 +189,8 @@ def main():
         parser.error("invalid native package version")
     required = ("bin/routerd", "bin/routerctl", "bin/routerd-dhcp-event-relay",
                 "share/doc/LICENSE", "etc/routerd/router.yaml.sample")
+    if args.format == "pkg":
+        required += ("bin/routerd-ndpi-agent",)
     if args.component != "routerd":
         if args.format != "deb":
             parser.error("native libnDPI addon is Linux Debian-only")

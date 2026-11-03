@@ -151,7 +151,7 @@ check-linux-static:
 	done
 
 check-ndpi-agent-libndpi:
-	@if [ "$(ROUTERD_OS)" != "linux" ]; then echo "libndpi agent archive is Linux-only" >&2; exit 2; fi
+	@case "$(ROUTERD_OS)" in linux|freebsd) ;; *) echo 'native libndpi agent requires Linux or FreeBSD' >&2; exit 2 ;; esac
 	@if [ ! -x "$(ROUTERD_NDPI_AGENT_BIN)" ]; then echo "missing binary: $(ROUTERD_NDPI_AGENT_BIN)" >&2; exit 1; fi
 	@if ! command -v file >/dev/null 2>&1; then echo "missing file(1), cannot verify libndpi agent binary" >&2; exit 1; fi
 	@info=$$(file "$(ROUTERD_NDPI_AGENT_BIN)"); \
@@ -160,7 +160,8 @@ check-ndpi-agent-libndpi:
 		*) echo "libndpi agent binary is expected to be dynamically linked: $(ROUTERD_NDPI_AGENT_BIN)" >&2; echo "$$info" >&2; exit 1 ;; \
 	esac
 	@if [ "$(DISTARCH)" = "$$(go env GOARCH)" ]; then \
-		if ! "$(ROUTERD_NDPI_AGENT_BIN)" selftest | grep -q '"libndpiLoaded":true'; then \
+		selftest=$$("$(ROUTERD_NDPI_AGENT_BIN)" selftest) || exit $$?; \
+		if ! printf '%s\n' "$$selftest" | grep -q '"libndpiLoaded":true'; then \
 			echo "libndpi agent selftest did not load libndpi" >&2; \
 			exit 1; \
 		fi; \
@@ -367,6 +368,9 @@ dist-deb: dist-payload
 
 dist-pkg: dist-payload
 	@test "$(ROUTERD_OS)" = freebsd || { echo 'dist-pkg requires ROUTERD_OS=freebsd' >&2; exit 1; }
+	$(MAKE) build-ndpi-agent-libndpi
+	$(MAKE) check-ndpi-agent-libndpi
+	install -m 0755 $(ROUTERD_NDPI_AGENT_BIN) $(DISTROOT)/bin/routerd-ndpi-agent
 	python3 scripts/build-native-package.py --format pkg --payload $(DISTROOT) --output $(DISTDIR) --version '$(PACKAGE_VERSION)' --arch $(DISTARCH)
 
 dist-ndpi-agent-libndpi-payload:
