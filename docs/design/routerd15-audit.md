@@ -2892,7 +2892,7 @@ Product source `fc5d7816237758bcf15f68e320aff505f27b3b60` passed on a clean
 Ubuntu 24.04 amd64 VM with Linux 6.8.0-124, real apt/dpkg and systemd. Four
 independent kernel AFTR namespaces ran standard-library HTTP receivers; a
 separate client namespace exercised the configured source-address hash policy.
-The maintained [procedure](https://github.com/imksoo/routerd/blob/fc5d7816237758bcf15f68e320aff505f27b3b60/docs/operations/development.md#linux-multi-path-ds-lite-package-gate)
+The maintained [procedure](https://github.com/imksoo/routerd/blob/8faaafe28c069b69f379e16e42f2a0d877b7e0d5/docs/operations/development.md#linux-multi-path-ds-lite-package-gate)
 and `tests/fixtures/linux-multi-dslite.json` define the inputs and assertions.
 
 The first clean package start exposed apt chmod/rename failures in its private
@@ -2911,6 +2911,16 @@ systemd manager. `fc5d7816` propagates stop requests to the timer without replay
 restart requests. Native checks passed persistent stop, exactly one intended
 restart, and scheduling while the notify parent was still activating. The .deb
 requires systemd 249 or later, the API version needed by that dependency.
+
+The final campaign used gate `8faaafe2`. Review found that bare shell negation
+under errexit did not enforce several absence checks; the gate now rejects
+collisions, unexpected startup, old-process survival and remaining tunnels with
+explicit failing branches. `1f27a937` reproduced both namespace/interface
+collision escapes before fixture creation on a clean guest; the corrected gate
+passed both negative cases, shell syntax/lint, and the full fresh-OS campaign.
+The ordinary development-host guard test explicitly skips because that host has
+an existing state database; the compiled guard test ran before product
+installation in the clean guest, rather than counting that skip as a pass.
 
 The final fresh-OS campaign installed package
 `1.5.0~20261103065539+g559e03494009` and updated it to
@@ -2935,8 +2945,8 @@ The final fresh-OS campaign installed package
 The full ordinary Go suite, generated schemas, all examples and four-locale
 website build passed at the final product revision; existing unrelated website
 link warnings remain. Root filesystem and non-root user-manager checks above
-were separate opt-in native checks. Both test VMs, disks, the retained pristine
-snapshot and staging are removed after recording these scoped results.
+were separate opt-in native checks. All disposable Linux guests, disks, the retained pristine snapshot and staging
+are removed after recording these scoped results.
 
 This does not qualify delegated/RA outer-source expiry, real ISP AFTRs, existing
 conntrack-flow continuity, router reboot, BGP, HA/lease/NAT-session synchronization,

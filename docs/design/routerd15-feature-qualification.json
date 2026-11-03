@@ -2012,7 +2012,7 @@
         "b519b0420a0a811dac23e4a8909bac3663202ae62769b52111bdf34e526bc2a6"
       ],
       "reproduction": "sudo bash scripts/linux-multi-dslite-smoke.sh --disposable-vm tests/fixtures/linux-multi-dslite.json PRIOR.deb CURRENT.deb MANAGEMENT_INTERFACE",
-      "harness_sha256": "984f2648486f1a584242f1b012e9e4e4099df7add38b98f1e447acd303face26",
+      "harness_sha256": "29d19f08bb61a0f85fe2e514bf14061cf0dffdebc987d517a662260e3abadfd7",
       "fixture_sha256": "56b46ce5feb3f89861794932089a396570965cd2260fa474f162e3f8312b072c",
       "checks": [
         "Clean apt installation reached Healthy after the actual Package owner installed missing dependencies under corrected main-service capabilities.",
@@ -2020,13 +2020,15 @@
         "One primary peer outage selected the surviving pair; total primary outage selected the fourth AFTR; restoration returned to the primary pool without manual product repair.",
         "Actual systemd restart and apt update preserved configuration, replaced the old main process, passed dpkg verification and restored forwarding.",
         "Empty configuration withdrew tunnels and traffic. A real main-unit intent change queued a timer; explicit stop cancelled it and remained inactive past the handoff delay.",
-        "Final native readback found no routerd nft tables or fixture namespaces/interfaces; successful raw output was removed."
+        "Final native readback found no routerd nft tables or fixture namespaces/interfaces; successful raw output was removed.",
+        "Negative namespace/interface collision guards failed before correction and passed on the clean guest before product installation; explicit absence checks, shell syntax and lint passed."
       ],
       "excludes": [
         "Delegated/RA outer-source expiry and real ISP AFTR interoperability",
         "Existing conntrack-flow continuity and host reboot",
         "BGP, HA, lease/NAT-session synchronization and the complete deployed-router replacement verdict"
-      ]
+      ],
+      "harness_revision": "8faaafe28c069b69f379e16e42f2a0d877b7e0d5"
     }
   },
   "features": [
