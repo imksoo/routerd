@@ -1746,11 +1746,11 @@ func (c SystemdUnitController) cleanupStaleHealthCheckUnits(ctx context.Context,
 		if desired[unitName] {
 			continue
 		}
-		if _, err := c.removeSystemdArtifact(ctx, path, unitName, command); err != nil {
+		if err := c.cleanupLongLivedSystemdHelperUnit(ctx, unitName, "HealthCheck", command); err != nil {
 			return err
 		}
 	}
-	return nil
+	return c.cleanupRemovedSystemdResourceStatuses("HealthCheck", healthCheckUnitName)
 }
 
 func (c SystemdUnitController) cleanupStaleDNSResolverUnits(ctx context.Context, command outputCommandFunc) error {
