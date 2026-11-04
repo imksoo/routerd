@@ -355,5 +355,11 @@ product defect retained withdrawn `LogRetention` warnings indefinitely. Revision
 passed on both packaged routers, with no remaining helper, VMAC, FIB or NAT effect,
 no health issues and no pending self-restart. Conditional DNS/DoH, reservations,
 allowed WebConsole access, telemetry/syslog and Tailscale subnet TCP also passed.
-Static-route payload, denied-source HTTP admission, archive expiry and full
-combined restart qualification are not established by that result.
+A subsequent scoped check at the same revision passed TCP payload to the added
+host route, gateway subnet route and on-link WAN route. Preserve both policy/NAT
+exclusions and the independent endpoint's return path when substituting prefixes.
+A co-hosted Tailscale client's accepted subnet route must not capture endpoint
+replies; direct return bypassing the router also fails to exercise a symmetric
+stateful forwarding path. The route check used one active router and does not
+qualify endpoint failover. Denied-source HTTP admission, archive expiry and full
+combined restart qualification remain unverified.

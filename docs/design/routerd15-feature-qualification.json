@@ -2368,6 +2368,21 @@
         "Excluded-source WebConsole request timed out before HTTP admission could be verified. Archive expiry and full combined restart/recovery remain unqualified.",
         "No full replacement-readiness or complete 1.0 parity claim."
       ]
+    },
+    "linux-static-route-payload-76464310": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "76464310421b480b084c11279e556b9072dc0dbb",
+      "reference": "docs/operations/linux-ha-pair-qualification.md#deployed-resource-combination-gate",
+      "environment": "One active dedicated Linux router with the formal 76464310 base/addon packages and corrected 107-resource input; independent reserved client and TCP endpoints.",
+      "checks": [
+        "TCP payload and endpoint-specific reply passed for the additional host route, gateway subnet route and on-link WAN route.",
+        "The original synthetic input omitted deployed egress/NAT exclusions. Its correction exposed an independent-peer return-path problem: accepted Tailscale subnet routing and then direct same-LAN return bypassed the router. Dedicated endpoint source routing through the active router restored the intended symmetric path without product changes."
+      ],
+      "excludes": [
+        "No static-endpoint HA failover claim; standby was not needed for this scoped forwarding check.",
+        "No full configuration or complete 1.0 parity claim."
+      ]
     }
   },
   "features": [
