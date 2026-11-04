@@ -44,3 +44,16 @@ func TestTailscaleSystemdSpecCanRemoveUnit(t *testing.T) {
 		t.Fatalf("unexpected absent spec: %#v", spec)
 	}
 }
+
+func TestTailscaleSystemdStopDisconnectsWithoutLogout(t *testing.T) {
+	for _, binary := range []string{"/usr/bin/tailscale", "/opt/lab/tailscale"} {
+		spec := TailscaleSystemdSpec("owned", api.TailscaleNodeSpec{BinaryPath: binary})
+		unit := string(SystemdUnit(spec.UnitName, spec))
+		if !strings.Contains(unit, "ExecStop="+binary+" down\n") {
+			t.Fatalf("owned Tailscale service has no disconnect on stop:\n%s", unit)
+		}
+		if strings.Contains(unit, "logout") {
+			t.Fatal("withdrawal must retain node identity")
+		}
+	}
+}
