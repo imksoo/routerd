@@ -2299,6 +2299,22 @@
       "excludes": [
         "Full 105-resource deployment, collector outage/recovery, fresh HA power-loss campaign and all-platform parity."
       ]
+    },
+    "linux-reservation-dns-bootstrap-6696bff6": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "6696bff6ec313a77994fc9b4a7d9bd10f7c48f7d",
+      "reference": "tests/netns/README.md",
+      "reproduction": "sudo unshare --mount --net --propagation private bash tests/netns/dhcpv4-reservation.sh; separately run tests/netns/dns-resolver-runtime.sh in the same isolation; go test ./cmd/routerd-dns-resolver -run TestDoHUsesConfiguredTLSNameForIPServer -count=1",
+      "environment": "Isolated Linux network/mount namespaces, independent busybox DHCP clients and dnsmasq; separate loopback DNS bootstrap and TLS DoH fixture.",
+      "checks": [
+        "Reserved and dynamic DHCP acquisition, router/DNS options, same leases after real dnsmasq restart and client renewal.",
+        "Actual DNS worker local/forwarded UDP/TCP replies, configuration reload and restart recovery.",
+        "Independent hostname bootstrap precedes authenticated DoH request; configured TLS name succeeds, wrong/missing override fails certificate verification."
+      ],
+      "excludes": [
+        "Combined deployed 105-resource configuration, package/VM reservation path, external DoH provider behavior and TLS trust-store deployment."
+      ]
     }
   },
   "features": [
@@ -3241,7 +3257,8 @@
           "linux-home-router-clean-install-999dfd4",
           "linux-dualstack-recovery-6977c66e",
           "linux-ha-pair-initial-apt-83414e60",
-          "linux-ha-pair-lifecycle-apt-1a96b8c0"
+          "linux-ha-pair-lifecycle-apt-1a96b8c0",
+          "linux-reservation-dns-bootstrap-6696bff6"
         ]
       },
       "freebsd": {
@@ -3564,7 +3581,8 @@
           "linux-home-router-clean-install-999dfd4",
           "linux-dualstack-recovery-6977c66e",
           "linux-ha-pair-initial-apt-83414e60",
-          "linux-ha-pair-lifecycle-apt-1a96b8c0"
+          "linux-ha-pair-lifecycle-apt-1a96b8c0",
+          "linux-reservation-dns-bootstrap-6696bff6"
         ]
       },
       "freebsd": {
