@@ -11,6 +11,7 @@ import (
 	"crypto/x509/pkix"
 	"io"
 	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -93,7 +94,48 @@ func TestDoHUsesConfiguredTLSNameForIPServer(t *testing.T) {
 			}
 		})
 	}
-	if requests.Load() != 1 {
-		t.Fatalf("verified HTTP requests=%d, want only configured name", requests.Load())
+	t.Run("hostname-via-independent-bootstrap", func(t *testing.T) {
+		var bootstrapQueries atomic.Int32
+		bootstrap := failoverDualDNSServer(t, dns.HandlerFunc(func(w dns.ResponseWriter, query *dns.Msg) {
+			reply := new(dns.Msg)
+			reply.SetReply(query)
+			for _, question := range query.Question {
+				if question.Name != "resolver.test." {
+					t.Errorf("unexpected bootstrap query: %s", question.Name)
+				}
+				if question.Qtype == dns.TypeA {
+					bootstrapQueries.Add(1)
+					reply.Answer = append(reply.Answer, &dns.A{Hdr: dns.RR_Header{Name: question.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 1}, A: net.ParseIP("127.0.0.1")})
+				}
+			}
+			if err := w.WriteMsg(reply); err != nil {
+				t.Error(err)
+			}
+		}))
+		endpoint, err := url.Parse(server.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pool, err := newUpstreamPool([]string{"https://" + net.JoinHostPort("resolver.test", endpoint.Port()) + "/dns-query?endpoint=primary"}, upstreamPoolConfig{QueryTimeout: time.Second, BootstrapResolver: []string{bootstrap}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		transport := pool.upstreams[0].client.Transport.(*http.Transport)
+		transport.TLSClientConfig.RootCAs = roots
+		defer transport.CloseIdleConnections()
+		response, err := pool.Exchange(t.Context(), dnsProbeQuery(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var answer dns.Msg
+		if err := answer.Unpack(response); err != nil {
+			t.Fatal(err)
+		}
+		if len(answer.Answer) != 1 || bootstrapQueries.Load() == 0 {
+			t.Fatalf("missing bootstrap or DoH answer: queries=%d answer=%v", bootstrapQueries.Load(), answer.Answer)
+		}
+	})
+	if requests.Load() != 2 {
+		t.Fatalf("verified HTTP requests=%d, want configured name and bootstrapped hostname", requests.Load())
 	}
 }
