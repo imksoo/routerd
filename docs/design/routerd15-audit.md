@@ -1,5 +1,23 @@
 # routerd 1.5 repository-wide rewrite audit
 
+## Linux name-backed local-service redirection, 2026-11-04
+
+Product source `6dc12c92` (documentation HEAD `84672341`) passed the extended
+`tests/netns/local-service-redirect.sh` on Linux 6.8.0-136-generic. Independent
+dnsmasq and dig peers exercised both address families and TCP/UDP. The production
+IPAddressSet controller resolved A/AAAA through a private resolver mount, stored
+status in SQLite and refreshed real nftables sets after the configured interval.
+Changing the independent DNS answers moved interception from the old addresses
+to the new addresses without a NAT-table rebuild or status repair. Static
+destination/port/interface selection, interface changes and empty withdrawal
+also passed. Successful temporary files and namespaces were removed automatically.
+
+This fills the earlier name-refresh gap in the local-service redirect check;
+it does not qualify DNS outage/expiry policy, daemon scheduling, NTP interception
+or the complete deployed-router combination. The reusable command and criteria
+are in `tests/netns/README.md`. Test files and SQLite used executable tmpfs to
+avoid observed host disk stalls; this is not persistent-media durability evidence.
+
 Status: in progress. This is a coverage record, not a declaration of compliance.
 The user expanded the task from example fixes to the entire repository. Source
 inventory and compilation do not establish semantic audit or interoperability.

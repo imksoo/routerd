@@ -10,6 +10,8 @@ require_cmd nft
 require_cmd dig
 require_cmd dnsmasq
 require_cmd go
+require_cmd unshare
+require_cmd mount
 
 ROUTER="$TEST_ID-router"
 WAN="$TEST_ID-wan"
@@ -52,9 +54,12 @@ ip netns exec "$ROUTER" sysctl -qw net.ipv6.conf.all.forwarding=1
 	cd "$ROOT_DIR"
 	go build -o "$WORKDIR/routerd" ./cmd/routerd
 	go build -o "$WORKDIR/nat44-controller" ./tests/netns/nat44-portforward-runtime
+	go build -o "$WORKDIR/ipaddressset-refresh" ./tests/netns/ipaddressset-refresh
 )
 CONFIG="$SCRIPT_DIR/local-service-redirect-runtime/config.yaml"
 "$WORKDIR/routerd" validate --config "$CONFIG"
+SELECTED_HOSTS="$WORKDIR/selected.hosts"
+printf '198.18.16.53 selected.test\nfd42:16::53 selected.test\n' >"$SELECTED_HOSTS"
 
 start_dnsmasq() {
 	local ns="$1" label="$2" port="$3" answer4="$4" answer6="$5"
@@ -68,6 +73,7 @@ start_dnsmasq() {
 		--port="$port"
 		--address="/probe.test/$answer4"
 		--address="/probe.test/$answer6"
+		--addn-hosts="$SELECTED_HOSTS"
 		--log-facility="$WORKDIR/$label.log"
 		--pid-file="$WORKDIR/$label.pid"
 	)
@@ -77,11 +83,13 @@ start_dnsmasq() {
 	done
 	ip netns exec "$ns" "$DNSMASQ" "${args[@]}" >"$WORKDIR/$label.stderr" 2>&1 &
 	local pid=$!
+	LAST_DNSMASQ_PID="$pid"
 	add_cleanup "if kill -0 '$pid' 2>/dev/null; then kill '$pid'; fi"
 }
 
 start_dnsmasq "$ROUTER" local-dns 53 192.0.2.11 2001:db8::11 lan0 lan1
 start_dnsmasq "$WAN" wan-dns 53 192.0.2.22 2001:db8::22 eth0
+WAN_DNSMASQ_PID="$LAST_DNSMASQ_PID"
 start_dnsmasq "$WAN" wan-dns-alt 5354 192.0.2.22 2001:db8::22 eth0
 
 dns_query() {
@@ -149,6 +157,38 @@ for transport in udp tcp; do
 	expect_answer "$LAN1" AAAA "$transport" fd42:16::53 53 2001:db8::11 "switched rule lan1 IPv6 $transport"
 done
 
+# Resolve the production name-backed set through the independent WAN server.
+# A private mount namespace supplies resolv.conf only to this controller call.
+sed '/        addresses:/,+2c\        names: [selected.test]\n        refreshInterval: 1s' "$CONFIG" >"$WORKDIR/named.yaml"
+"$WORKDIR/routerd" validate --config "$WORKDIR/named.yaml"
+printf 'nameserver 198.18.16.54\n' >"$WORKDIR/resolv.conf"
+refresh_named_set() {
+	ip netns exec "$ROUTER" unshare --mount --propagation private sh -ec '
+		mount --bind "$1" /etc/resolv.conf
+		exec "$2" "$3" "$4"
+	' sh "$WORKDIR/resolv.conf" "$WORKDIR/ipaddressset-refresh" "$WORKDIR/named.yaml" "$WORKDIR"
+}
+apply_config "$WORKDIR/named.yaml" named
+refresh_named_set
+for transport in udp tcp; do
+	expect_answer "$LAN0" A "$transport" 198.18.16.53 53 192.0.2.11 "resolved IPv4 $transport"
+	expect_answer "$LAN0" AAAA "$transport" fd42:16::53 53 2001:db8::11 "resolved IPv6 $transport"
+done
+
+printf '198.18.16.54 selected.test\nfd42:16::54 selected.test\n' >"$SELECTED_HOSTS"
+kill -HUP "$WAN_DNSMASQ_PID"
+wait_for 10 bash -c "ip netns exec '$ROUTER' dig +time=1 +tries=1 +short @198.18.16.54 selected.test A | grep -Fxq 198.18.16.54" || fail "independent DNS answer did not change"
+# Use the configured refresh interval and persisted status, without editing it
+# or recreating NAT tables to force an update.
+sleep 1.1
+refresh_named_set
+for transport in udp tcp; do
+	expect_answer "$LAN0" A "$transport" 198.18.16.53 53 192.0.2.22 "old resolved IPv4 $transport retired"
+	expect_answer "$LAN0" AAAA "$transport" fd42:16::53 53 2001:db8::22 "old resolved IPv6 $transport retired"
+	expect_answer "$LAN0" A "$transport" 198.18.16.54 53 192.0.2.11 "new resolved IPv4 $transport selected"
+	expect_answer "$LAN0" AAAA "$transport" fd42:16::54 53 2001:db8::11 "new resolved IPv6 $transport selected"
+done
+
 cat >"$WORKDIR/empty.yaml" <<'YAML'
 apiVersion: routerd.net/v1alpha1
 kind: Router
@@ -170,4 +210,4 @@ for transport in udp tcp; do
 	expect_answer "$LAN1" AAAA "$transport" fd42:16::53 53 2001:db8::22 "withdrawn rule lan1 IPv6 $transport"
 done
 
-printf 'PASS: production NAT controller LocalServiceRedirect, IPv4/IPv6 TCP/UDP, destination/interface/port matching, interface update and withdrawal\n'
+printf 'PASS: production LocalServiceRedirect and IPAddressSet, IPv4/IPv6 TCP/UDP, destination/interface/port matching, interface update, DNS answer refresh and withdrawal\n'

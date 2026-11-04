@@ -221,7 +221,14 @@ namespace. Independent LAN clients and a WAN-side dnsmasq distinguish the local
 DNS answer from the upstream answer over IPv4/IPv6 and TCP/UDP. The checks cover
 the configured destination-address set, destination port, ingress interface,
 changing the selected LAN interface, and withdrawing the redirect so queries
-reach the upstream again. This exercises a fresh 1.5 config; it does not import
+reach the upstream again. A name-backed set then uses the production DNS resolver,
+SQLite status and nftables updater. Changing the independent server's A/AAAA
+answers must retire interception of the old addresses and intercept the new
+addresses over TCP/UDP, without recreating NAT tables or editing stored status.
+The configured one-second refresh interval elapses between controller calls;
+this checks refresh decisions, not the daemon's scheduling loop. The resolver
+configuration is bind-mounted only inside a private mount namespace.
+This exercises a fresh 1.5 config; it does not import
 old config or state. Successful temporary output is deleted; a failed run keeps
 its current diagnostic directory for reproduction.
 
@@ -230,7 +237,7 @@ sudo ./tests/netns/local-service-redirect.sh
 ```
 
 The test needs Linux network namespaces, iproute2, nftables, dnsmasq, BIND
-`dig`, Python 3, Go and IPv6 support in the kernel.
+`dig`, Python 3, Go, util-linux `unshare`/`mount` and IPv6 support in the kernel.
 
 ## Stateful DHCPv6 server
 
