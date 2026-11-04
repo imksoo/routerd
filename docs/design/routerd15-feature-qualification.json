@@ -1,6 +1,6 @@
 {
   "format": "routerd15-feature-qualification/v1",
-  "updated_date": "2026-11-03",
+  "updated_date": "2026-11-04",
   "purpose": "Track preservation and qualification of every pre-1.5 routerd 1.0 function, including non-resource surfaces. This static design ledger is not a product registry, a release result or proof of functional parity.",
   "baseline_revision": "e3b49dbb69c7de97bab9595884745eb7cbe93d92",
   "inventory_snapshot_revision": "3da8d066e19535d27610d632391807db7968d1fc",
@@ -2268,6 +2268,22 @@
         "This focused check does not repeat the 74-flow lifecycle; that result remains pinned to 84b5d854.",
         "Full 105-resource native equivalence and production replacement readiness."
       ]
+    },
+    "linux-named-redirect-9400f03c": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "9400f03c3c131db939cb6c68556c2d569f635b5c",
+      "reference": "tests/netns/README.md#localserviceredirect-dns-interception",
+      "reproduction": "sudo ./tests/netns/local-service-redirect.sh",
+      "environment": "Linux 6.8.0-136-generic; isolated network/mount namespaces; independent dnsmasq/dig; executable tmpfs for temporary files and SQLite.",
+      "checks": [
+        "Production system DNS resolution, persisted SQLite refresh state and actual nftables update follow changed independent A/AAAA answers.",
+        "Old destinations stop redirecting and new destinations redirect over IPv4/IPv6 TCP/UDP without NAT-table rebuild or status repair.",
+        "Static destination/port/interface selection, interface change and empty withdrawal pass; temporary files and namespaces removed."
+      ],
+      "excludes": [
+        "DNS outage/expiry policy, daemon scheduling, NTP interception, persistent-media durability and full target configuration."
+      ]
     }
   },
   "features": [
@@ -3927,7 +3943,8 @@
           "linux-dslite-pd-apt-197bd70f",
           "linux-ha-pair-initial-apt-83414e60",
           "linux-ha-pair-followup-apt-b698cb1d",
-          "linux-ha-pair-lifecycle-apt-1a96b8c0"
+          "linux-ha-pair-lifecycle-apt-1a96b8c0",
+          "linux-named-redirect-9400f03c"
         ]
       },
       "freebsd": {
@@ -4025,7 +4042,8 @@
           "linux-home-router-dualstack-57bf7e35",
           "linux-dhcp-firewall-1f9fc319",
           "linux-home-router-clean-install-999dfd4",
-          "linux-dualstack-recovery-6977c66e"
+          "linux-dualstack-recovery-6977c66e",
+          "linux-named-redirect-9400f03c"
         ]
       },
       "freebsd": {
