@@ -2284,6 +2284,21 @@
       "excludes": [
         "DNS outage/expiry policy, daemon scheduling, NTP interception, persistent-media durability and full target configuration."
       ]
+    },
+    "linux-combined-telemetry-261e6675": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "261e6675062f0efe70061e2bd82b1e26b7e3347e",
+      "reference": "docs/operations/observability.md#packaged-combined-linux-gate",
+      "environment": "Two dedicated Ubuntu 24.04 router VMs with matching base/native-addon apt packages; separate peer VM running Collector contrib 0.151.0 and UDP syslog receiver; 78 resources.",
+      "checks": [
+        "Both main daemons deliver controller logs, metrics and traces with their own resource attributes; both syslog tags received.",
+        "74 client flows and ten single TCP accepts; DNS UDP/TCP interception, native TLS SNI and DNS names without false SNI, direct/redirected NTP replies.",
+        "Both empty withdrawals Healthy with no helper, VMAC, learned route or owned NAT table; package verification passed; all three guests stopped and temporary collector executable removed."
+      ],
+      "excludes": [
+        "Full 105-resource deployment, collector outage/recovery, fresh HA power-loss campaign and all-platform parity."
+      ]
     }
   },
   "features": [
@@ -2367,7 +2382,9 @@
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "linux-combined-telemetry-261e6675"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",
@@ -2410,7 +2427,8 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "linux-native-ndpi-addon-be382e44"
+          "linux-native-ndpi-addon-be382e44",
+          "linux-combined-telemetry-261e6675"
         ]
       },
       "freebsd": {

@@ -84,3 +84,21 @@ Linuxの`TestServeTelemetryDeliversReconcileLogs`はsandboxで実際の`run`/`se
 子プロセス起動し、gRPC受信、ローカル出力、SIGTERM終了を確認します。
 実行コマンドは`go test ./cmd/routerd -run '^TestServeTelemetryDeliversReconcileLogs$' -count=1`です。
 パッケージ導入や外部collectorの停止・復旧をこの結果に含めません。
+
+
+### パッケージのLinux組合せ試験
+
+本体とnative addonの版が一致する隔離ルーター2台と、独立したcollector・UDP syslog受信側を使います。
+設定適用前にcollector設定・待受・空き容量・ネットワークを確認します。
+Telemetryの3 signal、namespace、ルーター識別属性を維持し、通常起動後90秒以内に
+両ルーターの`service.name=routerd`について、ログ本文`controller reconcile completed`、
+metric `routerd.controller.reconcile`、span `controller.reconcile`を受信側で照合します。
+helperの記録だけでは合格にしません。syslogは両送信元のtagを照合します。
+同じ構成でパッケージ整合性・クライアント通信・DNS/NTP転送・native分類を確認し、
+empty適用後のHealthyとhelper・アドレス・経路・NATの実撤去を要求します。
+終了後はVMを停止し、一時collector実行ファイルを削除します。生ログの恒久保管は不要です。
+
+`1.5.0~20261104040833+g261e6675`はUbuntu 24.04、Collector contrib 0.151.0、
+78リソース構成で合格しました。74通信・10 TCP single accepts、DNS転送、native TLS SNI、
+DNS名の誤SNI表示修正、NTP応答、両empty撤去を確認しました。
+全105リソース、collector停止・復旧、新たなHA電源断試験の合格を意味しません。

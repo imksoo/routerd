@@ -192,3 +192,32 @@ through a real gRPC receiver, checks local output, and stops the daemon with
 SIGTERM. Run it with `go test ./cmd/routerd -run
 '^TestServeTelemetryDeliversReconcileLogs$' -count=1`. It does not qualify native
 package deployment or external collector outage/recovery.
+
+
+### Packaged combined Linux gate
+
+Use two isolated routers installed from matching base/native-addon packages and
+an independent peer running OpenTelemetry Collector and a UDP syslog receiver.
+Certify collector configuration, listeners, free storage and network reachability
+before applying the candidate. Preserve the candidate's three Telemetry signals,
+service namespace and a distinct per-router resource attribute. Keep this peer
+outside either router's process/failure domain.
+
+After normal daemon startup/reconciliation, allow up to 90 seconds for delivery
+(the metric reader uses a 30-second interval). Decode the collector's OTLP output
+and require **both** router identities with `service.name=routerd`: the log body
+`controller reconcile completed`, metric `routerd.controller.reconcile`, and span
+`controller.reconcile`. A helper's records do not satisfy this check. Require
+both configured tags in the independent syslog receiver. Check package integrity,
+client forwarding, DNS/NTP redirects and native flow classification in the same
+configuration, then apply empty configurations and require Healthy status and
+actual helper/address/route/NAT withdrawal on both routers. Stop the guests and
+remove temporary collector executables. Retain procedure/results rather than
+permanent raw collector streams.
+
+Matching package `1.5.0~20261104040833+g261e6675` passed this gate on Ubuntu 24.04
+with Collector contrib 0.151.0 in a 78-resource combined configuration. The 74
+client flows, ten single TCP accepts, DNS redirects, native TLS SNI, corrected DNS
+hostname classification, NTP replies and both empty withdrawals passed. This does
+not qualify all 105 deployed resources, collector outage/recovery, or a new HA
+power-loss campaign.
