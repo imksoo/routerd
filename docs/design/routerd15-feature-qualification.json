@@ -2315,6 +2315,23 @@
       "excludes": [
         "Combined deployed 105-resource configuration, package/VM reservation path, external DoH provider behavior and TLS trust-store deployment."
       ]
+    },
+    "linux-tailscale-withdrawal-6112f0bc": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "6112f0bc3bbf40358734e6b73d6390b69235b023",
+      "reference": "docs/how-to/tailscale.md#disconnect-and-withdraw",
+      "environment": "Two dedicated Ubuntu 24.04 router VMs, matching base/native-addon apt packages 1.5.0~20261104044442+g6112f0bc, 78 resources; independent Headscale 0.28.0 and Tailscale 1.104.5 peer.",
+      "checks": [
+        "Both nodes join the independent control plane; subnet and exit prefixes advertised. Peer direct Tailscale connectivity and TCP SSH banners from router and another LAN host via the approved subnet route.",
+        "state: absent disconnects the node. Reactivation without auth key preserves its Tailscale address and restores subnet TCP forwarding.",
+        "Empty configuration on both routers removes managed Tailscale units, reports WantRunning=false and BackendState=Stopped, and ends Healthy with no current controller errors or remaining managed helper/VMAC/learned-route/NAT effects.",
+        "Reproduced missing disconnect and stale-unit cleanup before the fix. Focused retry regression and full Go suite pass (122 packages); schema/examples/four-locale website and formal package builds pass. Three dedicated guests stopped."
+      ],
+      "excludes": [
+        "Exit-node payload forwarding, credential expiration and control-plane outage recovery.",
+        "Full 105-resource deployment and production replacement readiness."
+      ]
     }
   },
   "features": [
@@ -2796,21 +2813,25 @@
           "pkg/render/tailscale_systemd.go"
         ],
         "related_test_files": [
-          "pkg/tailscale/tailscale_test.go"
+          "pkg/tailscale/tailscale_test.go",
+          "pkg/render/tailscale_systemd_test.go",
+          "pkg/controller/chain/system_tailscale_withdraw_test.go"
         ]
       },
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "linux-tailscale-withdrawal-6112f0bc"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",
         "scoped_evidence": []
       },
       "required_remaining_checks": [
-        "Independent control plane/peer session",
-        "Exit-node/subnet routing, expiration, withdrawal and service recovery"
+        "Exit-node payload forwarding, credential expiration and control-plane outage recovery",
+        "Combined deployed configuration and all-platform parity"
       ]
     },
     {

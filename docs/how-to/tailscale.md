@@ -239,3 +239,12 @@ and cleanup error in place for reconciliation to retry.
 Verify withdrawal with `tailscale debug prefs` (`WantRunning: false`) and
 `tailscale status --json` (`BackendState: Stopped`), as well as the absence
 of the managed unit. Empty routerd resource status alone is insufficient.
+
+For an isolated interoperability check, use an independent tailnet peer and an
+SSH server behind the router. Approve the advertised subnet at the control
+plane, enable route acceptance on the peer, and check `ip route get <server-IP>`
+selects `tailscale0`. A bounded `nc -w 5 <server-IP> 22` must return an SSH banner;
+a Tailscale ping alone does not prove subnet forwarding. Repeat after
+`state: absent` and reactivation without an auth key, checking the node keeps
+its Tailscale address. Finally remove the resource and check the stopped state
+above. Run these steps on disposable hosts, not a production routing path.

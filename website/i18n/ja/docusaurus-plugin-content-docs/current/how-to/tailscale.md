@@ -217,3 +217,12 @@ Linux では `TailscaleNode` の削除、`state: absent` の指定、または `
 撤去時は管理対象 unit の消失に加え、`tailscale debug prefs` の
 `WantRunning: false` と `tailscale status --json` の `BackendState: Stopped`
 を確認してください。routerd のリソース状態が空になっただけでは撤去の証明になりません。
+
+隔離環境での相互運用確認には、独立した tailnet peer とルーター配下の SSH サーバーを
+使います。制御プレーンで広告サブネットを承認し、peer で経路の受入れを有効化した後、
+`ip route get <サーバーIP>` が `tailscale0` を選ぶことを確認します。
+`nc -w 5 <サーバーIP> 22` で SSH バナーを受信できることが合格条件です。
+Tailscale ping だけではサブネット転送の証明になりません。
+`state: absent` と認証キーなしの再有効化後にも通信を確認し、Tailscale アドレスが
+維持されることを検証します。最後にリソースを削除し、前述の停止状態を確認します。
+本番経路ではなく、使い捨て可能な隔離ホストで実施してください。
