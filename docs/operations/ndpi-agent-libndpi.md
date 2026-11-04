@@ -53,6 +53,13 @@ agent; an installed file alone does not prove runtime classification.
 
 ## Remove the addon
 
+Removing or disabling the last `FirewallEventLog` stops its managed collector.
+When no enabled `TrafficFlowLog` requests application classification or TLS SNI
+and no enabled `FirewallEventLog` remains, reconciliation also stops and removes
+the generated classifier and agent units. Stop acknowledgement precedes unit
+removal; a failed stop retains the unit for retry. Re-enabling the resources
+recreates the required units using the installed package.
+
 ```sh
 sudo apt remove routerd-ndpi-agent-libndpi
 ```

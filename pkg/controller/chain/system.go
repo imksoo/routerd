@@ -666,12 +666,32 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 		if err := c.cleanupStaleHealthCheckUnits(ctx, explicitUnits, command); err != nil {
 			return err
 		}
+		wantsFirewallLogger := false
+		for _, resource := range c.Router.Spec.Resources {
+			if resource.Kind != "FirewallEventLog" {
+				continue
+			}
+			spec, err := resource.FirewallEventLogSpec()
+			if err != nil {
+				return err
+			}
+			wantsFirewallLogger = wantsFirewallLogger || spec.Enabled
+		}
+		// Retire consumers before their classification dependencies. Use the
+		// same acknowledged, ownership-checked removal path as other helpers.
+		if !wantsFirewallLogger {
+			if err := c.cleanupLongLivedSystemdHelperUnit(ctx, "routerd-firewall-logger.service", "FirewallEventLog", command); err != nil {
+				return err
+			}
+		}
 		if render.RouterWantsDPIClassifier(c.Router) {
 			dpiSpec := render.DPIClassifierSystemdSpec("/run")
 			dpiSpec.Environment = mergeStringEnvs(dpiSpec.Environment, telemetryEnv)
 			if err := c.reconcileSyntheticSystemdHelperUnit(ctx, render.DPIClassifierUnitName, "TrafficFlowLog/FirewallEventLog", dpiSpec, command); err != nil {
 				return err
 			}
+		} else if err := c.cleanupLongLivedSystemdHelperUnit(ctx, render.DPIClassifierUnitName, "TrafficFlowLog/FirewallEventLog", command); err != nil {
+			return err
 		}
 		if render.RouterWantsNDPIAgent(c.Router) {
 			ndpiSpec := render.NDPIAgentSystemdSpec("/run")
@@ -679,6 +699,8 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 			if err := c.reconcileSyntheticSystemdHelperUnit(ctx, render.NDPIAgentUnitName, "TrafficFlowLog/FirewallEventLog", ndpiSpec, command); err != nil {
 				return err
 			}
+		} else if err := c.cleanupLongLivedSystemdHelperUnit(ctx, render.NDPIAgentUnitName, "TrafficFlowLog/FirewallEventLog", command); err != nil {
+			return err
 		}
 		for _, resource := range c.Router.Spec.Resources {
 			if resource.Kind != "FirewallEventLog" {

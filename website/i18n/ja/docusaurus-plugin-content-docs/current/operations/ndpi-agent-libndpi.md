@@ -47,6 +47,12 @@ native 版の自己試験では `libndpiLoaded: true` が必要です。実ラ�
 
 ## 追加パッケージの削除
 
+最後の `FirewallEventLog` を削除または無効化すると、管理対象の収集プロセスを停止します。
+有効な `FirewallEventLog` がなく、アプリケーション分類や TLS SNI を要求する
+有効な `TrafficFlowLog` もなくなると、分類器とエージェントを停止し、生成した unit を撤去します。
+停止の成功を確認してから unit を削除します。停止に失敗した場合は unit を残して再試行します。
+リソースを再度有効化すると、導入済みパッケージを使って必要な unit を再生成します。
+
 ```sh
 sudo apt remove routerd-ndpi-agent-libndpi
 ```
