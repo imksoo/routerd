@@ -91,3 +91,10 @@ sudo sh scripts/linux-ndpi-deb-lifecycle-smoke.sh --isolated-vm \
 確認します。無関係な routerd 接頭辞のサービスも継続する必要があります。
 結果を簡潔に記録してから VM・ディスク・成功ログを削除します。
 転送中の実クライアントのパケット取得・分類や 1.0 全機能の合格を、この試験だけでは主張しません。
+
+転送クライアントの分類は `routerctl get traffic-flows -o json` で確認します。
+実際のTLS通信について `engine: ndpi-agent`、
+`metadata.reason: libndpi_protocol_detection`、期待した `tlsSNI` を照合します。
+firewallイベントは設定したサンプリングに依存し、flow確認の代用にはなりません。
+DNS名は `dnsQuery`、HTTPのホスト名は `httpHost`、TLS/QUIC名は `tlsSNI` に表示します。
+他のプロトコルのホスト名をSNIとして表示しません。

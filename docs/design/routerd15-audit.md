@@ -3569,3 +3569,30 @@ periods instead of assuming every status is synchronous within 15 seconds.
 The full 74-flow lifecycle remains revision-bound to `84b5d854`; later changes
 are limited to removal and withdrawn-status cleanup and have focused native
 retesting. Full 105-resource native replacement qualification remains open.
+
+
+## 2026-11-04 combined Linux services checkpoint
+
+Formal matching base/native-addon packages at `77f05a09` passed a 76-resource
+combined run on two dedicated Ubuntu 24.04 routers with a separate independent
+peer VM. The original 74 flows progressed through the DS-Lite paths with ten
+single TCP accepts. Chained local/upstream DNS and forced external-destination
+DNS over UDP/TCP returned the expected answers. An independent TLS server served
+a forwarded client; the actual traffic-flow API recorded its SNI with native
+libnDPI provenance. Direct and redirected NTP each returned three correlated,
+synchronized replies at router stratum 3 (independent peer stratum 8).
+
+Both routers then applied an empty configuration and became Healthy with no
+resource errors, helper processes, VMACs, learned routes or owned NAT table.
+This verifies the DPI-helper withdrawal fix `4efea2b8` and removed HealthCheck
+status fix `77f05a09`. All three guests were stopped afterward and retained for
+the remaining combined tests; no new guest was created. This is not the full
+105-resource replacement verdict or another power-loss campaign.
+
+The initial redirected DNS input had omitted the deployed node-address listener;
+the input was corrected before this run. The initial SNI assertion queried
+firewall events even though accept-event sampling was disabled; the actual
+traffic-flow API proved native detection. Neither was a product defect.
+A separate observed defect mislabeled native DNS names as TLS SNI. Its focused
+native-library regression reproduces the erroneous DNS result before the fix;
+that subsequent fix is not included in the `77f05a09` VM result.

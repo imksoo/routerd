@@ -49,7 +49,13 @@ sudo curl --fail --silent --unix-socket /run/routerd/ndpi-agent/default.sock \
 The native package's self-test requires `libndpiLoaded: true`. Its TLS self-test
 uses the real library and reports `reason: libndpi_protocol_detection` with the
 expected SNI. A running socket exists only when router configuration requests the
-agent; an installed file alone does not prove runtime classification.
+agent; an installed file alone does not prove runtime classification. For forwarded
+client traffic, inspect `routerctl get traffic-flows -o json`: native TLS detection
+has `engine: ndpi-agent`, `metadata.reason: libndpi_protocol_detection` and the
+expected `tlsSNI`. Firewall event logs depend on the configured event sampling and
+are not a substitute for the flow query. DNS names are reported as `dnsQuery`,
+HTTP hostnames as `httpHost`, and TLS/QUIC names as `tlsSNI`; an arbitrary native
+protocol hostname must not be labeled as TLS SNI.
 
 ## Remove the addon
 

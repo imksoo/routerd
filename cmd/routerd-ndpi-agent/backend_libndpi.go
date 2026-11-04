@@ -234,13 +234,13 @@ func (b *libndpiBackend) resultFromProtocol(req dpi.ClassifyRequest, flow *C.str
 	result.AppConfidence = confidencePercent(int(C.routerd_ndpi_confidence(flow)))
 	host := C.GoString(C.routerd_ndpi_hostname(flow))
 	if host != "" {
-		switch result.AppName {
-		case "tls", "quic":
+		switch {
+		case masterProto == C.NDPI_PROTOCOL_TLS || masterProto == C.NDPI_PROTOCOL_QUIC || appProto == C.NDPI_PROTOCOL_TLS || appProto == C.NDPI_PROTOCOL_QUIC:
 			result.TLSSNI = host
-		case "http":
+		case masterProto == C.NDPI_PROTOCOL_HTTP || appProto == C.NDPI_PROTOCOL_HTTP:
 			result.HTTPHost = host
-		default:
-			result.TLSSNI = host
+		case masterProto == C.NDPI_PROTOCOL_DNS || appProto == C.NDPI_PROTOCOL_DNS:
+			result.DNSQuery = host
 		}
 	}
 	result.Reason = "libndpi_protocol_detection"
