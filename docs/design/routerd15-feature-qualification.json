@@ -2332,6 +2332,22 @@
         "Exit-node payload forwarding, credential expiration and control-plane outage recovery.",
         "Full 105-resource deployment and production replacement readiness."
       ]
+    },
+    "linux-deployed-combination-6112f0bc": {
+      "level": "independent-peer",
+      "outcome": "fail",
+      "revision": "6112f0bc3bbf40358734e6b73d6390b69235b023",
+      "reference": "docs/operations/linux-ha-pair-qualification.md#deployed-resource-combination-gate",
+      "environment": "Two dedicated packaged Linux routers and an independent peer; deployed 105-resource kind/count coverage plus two existing fixture resources.",
+      "checks": [
+        "Both fixed DHCP reservations acquired; both WebConsole resource APIs respond to allowed independent clients. Five conditional DNS branches returned their independent upstream answers.",
+        "A fixture-only suffix overlap selected an earlier DNS bootstrap rule; corrected isolated input validates, without a product change.",
+        "Both empty apply responses reported Healthy, followed by unavailable read-only Unix socket paths. Withdrawal qualification failed. Local actual-daemon sandbox checks retained the sockets."
+      ],
+      "excludes": [
+        "Unresolved native Unix API disappearance; no full configuration or replacement-readiness pass.",
+        "Remaining conditional/DoH communication, denial paths, archive behavior and combined recovery are not established by this run."
+      ]
     }
   },
   "features": [

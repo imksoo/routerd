@@ -313,3 +313,35 @@ the VMAC is already up and the VIP remains deferred. Replicated connection marks
 must survive this preparation interval. Verify that original AFTR marks and
 translated identities remain unchanged, then verify ordinary failed-path
 reassignment after confirmed gateway admission.
+
+## Deployed resource combination gate
+
+Compare the deployed configuration against the isolated input by resource kind,
+count, conditional activation, dependency and protocol. Endpoint substitution
+must preserve the routing relationships. Matching counts alone do not establish
+functional parity. Keep DNS match domains disjoint when the deployed domains
+are disjoint: forwarder matching follows declaration order, so introducing a
+shared parent suffix can accidentally select the bootstrap forwarder.
+
+The current combined input covers the deployed 105-resource multiplicities,
+with two existing fixture-only NAT/sysctl resources. Check both fixed DHCP
+assignments with independent clients, query every conditional DNS branch using
+an upstream-specific answer, and test default DoH with hostname bootstrap and a
+trusted certificate. Exercise WebConsole resource reads from an allowed client,
+source rejection, routed destinations, telemetry and syslog delivery. Reservation
+addresses must not overlap the synthetic multi-flow client's address aliases.
+
+For withdrawal, preserve the control API's apply response, then separately verify
+that the daemon and read-only Unix API remain available while managed listeners,
+units, routes and forwarding effects disappear. Check the WebConsole TCP listener
+and Tailscale's own stopped state before stopping the main daemon. An apply
+response labelled `Healthy` is insufficient if the subsequent status query fails.
+On failure, record the daemon PID/exit status and the timing of socket removal;
+use a bounded syscall trace when the process causing removal is unknown. Do not
+restart the daemon merely to make the withdrawal check pass.
+
+At revision `6112f0bc`, the first 107-resource run acquired both reservations and
+served both WebConsoles, but did not complete this gate. One DNS check encountered
+a fixture suffix collision. After empty apply returned `Healthy`, both read-only
+Unix socket paths were unavailable. The cause remains unresolved; local sandbox
+process checks retained their sockets. This is not a full-configuration pass.
