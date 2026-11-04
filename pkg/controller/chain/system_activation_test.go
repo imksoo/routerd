@@ -189,7 +189,7 @@ func TestHealthCheckStopFailurePreservesUnitAndUnacknowledgedInput(t *testing.T)
 	path := filepath.Join(dir, "routerd-healthcheck@fixture.service")
 	enabled := false
 	spec := api.HealthCheckSpec{Enabled: &enabled, Target: "192.0.2.1"}
-	c := SystemdUnitController{Router: &api.Router{}, SystemdSystemDir: dir}
+	c := SystemdUnitController{Router: &api.Router{}, Store: mapStore{}, SystemdSystemDir: dir}
 	failure := errors.New("stop failed")
 	fail := true
 	var commands []string
