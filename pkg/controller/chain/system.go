@@ -591,6 +591,9 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 		if err := c.cleanupWhenFalseSystemdUnits(ctx, command); err != nil {
 			return err
 		}
+		if err := c.cleanupStaleTailscaleUnits(ctx, explicitUnits, command); err != nil {
+			return err
+		}
 		for _, resource := range c.Router.Spec.Resources {
 			if resource.Kind != "HealthCheck" {
 				continue
@@ -1718,6 +1721,39 @@ func (c SystemdUnitController) applyHealthCheckSystemdUnit(ctx context.Context, 
 		return true, true, nil
 	}
 	return changed, false, nil
+}
+
+func (c SystemdUnitController) cleanupStaleTailscaleUnits(ctx context.Context, explicitUnits map[string]bool, command outputCommandFunc) error {
+	if c.DryRun {
+		return nil
+	}
+	desired := map[string]bool{}
+	for unitName := range explicitUnits {
+		desired[unitName] = true
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.Kind != "TailscaleNode" {
+			continue
+		}
+		if _, err := resource.TailscaleNodeSpec(); err != nil {
+			return err
+		}
+		desired[render.TailscaleUnitName(resource.Metadata.Name)] = true
+	}
+	matches, err := systemdArtifactPaths(c.SystemdSystemDir, "routerd-tailscale-*.service")
+	if err != nil {
+		return err
+	}
+	for _, path := range matches {
+		unitName := filepath.Base(path)
+		if desired[unitName] {
+			continue
+		}
+		if err := c.cleanupLongLivedSystemdHelperUnit(ctx, unitName, "TailscaleNode", command); err != nil {
+			return err
+		}
+	}
+	return c.cleanupRemovedSystemdResourceStatuses("TailscaleNode", render.TailscaleUnitName)
 }
 
 func (c SystemdUnitController) cleanupStaleHealthCheckUnits(ctx context.Context, explicitUnits map[string]bool, command outputCommandFunc) error {

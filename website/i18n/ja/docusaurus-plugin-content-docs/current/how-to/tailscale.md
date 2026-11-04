@@ -206,3 +206,14 @@ curl -f http://100.64.0.1:8080/
 - exit node と subnet route の承認は Tailscale 側で行います。
 - auth key は examples や Git 履歴に残さないでください。
   実機では `authKeyFile` を使います。
+
+## 接続の停止と撤去
+
+Linux では `TailscaleNode` の削除、`state: absent` の指定、または `when` 条件が
+偽になると、管理対象 unit を停止して `tailscale down` を実行します。
+ログアウトや `tailscaled` 自体の停止は行わず、再有効化に使うノードの認証状態を
+保持します。停止に失敗した場合は unit と撤去エラーを保持し、reconcile で再試行します。
+
+撤去時は管理対象 unit の消失に加え、`tailscale debug prefs` の
+`WantRunning: false` と `tailscale status --json` の `BackendState: Stopped`
+を確認してください。routerd のリソース状態が空になっただけでは撤去の証明になりません。

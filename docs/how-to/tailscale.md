@@ -227,3 +227,15 @@ Replace the address with the actual Tailscale IP of the router.
 - Exit-node and subnet-route approval happens in Tailscale, not in routerd.
 - Keep auth keys out of examples and Git history. Use `authKeyFile` for local
   deployments.
+
+## Disconnect and withdraw
+
+On Linux, removing a `TailscaleNode`, setting `state: absent`, or making its
+`when` condition false stops the managed unit and runs `tailscale down`.
+This disconnects the node without logging out or stopping `tailscaled`; its
+identity remains available for reactivation. A failed stop leaves the unit
+and cleanup error in place for reconciliation to retry.
+
+Verify withdrawal with `tailscale debug prefs` (`WantRunning: false`) and
+`tailscale status --json` (`BackendState: Stopped`), as well as the absence
+of the managed unit. Empty routerd resource status alone is insufficient.

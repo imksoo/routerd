@@ -269,6 +269,7 @@ type SystemdUnitSpec struct {
 	Type                     string   `yaml:"type,omitempty" json:"type,omitempty" jsonschema:"enum=,enum=simple,enum=oneshot"`
 	ExecStartPre             []string `yaml:"execStartPre,omitempty" json:"execStartPre,omitempty"`
 	ExecStart                []string `yaml:"execStart,omitempty" json:"execStart,omitempty"`
+	ExecStop                 []string `yaml:"execStop,omitempty" json:"execStop,omitempty"`
 	Environment              []string `yaml:"environment,omitempty" json:"environment,omitempty"`
 	EnvironmentFiles         []string `yaml:"environmentFiles,omitempty" json:"environmentFiles,omitempty"`
 	Wants                    []string `yaml:"wants,omitempty" json:"wants,omitempty"`
