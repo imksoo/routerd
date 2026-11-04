@@ -177,3 +177,18 @@ A failed flow observation or `TrafficFlowLog` database write marks that resource
 counts and threshold events continue. Successful writes restore `Observed`;
 disabling the log changes its status to `Skipped` without reading its destination.
 Failure to save the required resource status remains an error.
+
+
+### Controller log delivery
+
+With OTLP logs enabled, `routerd serve` sends controller reconciliation records
+to the configured OTLP exporter and retains the normal supervised local output.
+Disabling log export keeps local output. `LogSink` operational events and
+`ObservabilityPipeline` journal delivery remain separate streams.
+
+The Linux subprocess regression `TestServeTelemetryDeliversReconcileLogs` runs
+the actual `run`/`serve` path in sandbox mode, receives reconciliation records
+through a real gRPC receiver, checks local output, and stops the daemon with
+SIGTERM. Run it with `go test ./cmd/routerd -run
+'^TestServeTelemetryDeliversReconcileLogs$' -count=1`. It does not qualify native
+package deployment or external collector outage/recovery.

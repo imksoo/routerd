@@ -72,3 +72,15 @@ OTLP のフィールドは、routerd が管理するユニットの標準的な 
 EventRule は `all_of`、`any_of`、`sequence`、`window`、`absence`、`throttle`、`debounce`、`count` をサポートします。throttle の時間には `interval` を指定してください。意味が実装されていない非ゼロの `rate` は拒否します。相関状態の上限はルールごとに4096キー、シリアライズ後の checkpoint は8 MiBです。どちらかを超える場合、最後に一致した入力の時刻が古いキーから、上限に収まるまで削除します。削除したキーにまたがるパターンは完了できません。削除ごとに `status.warningCount` を増やし、checkpoint と同じ transaction で公開します。設定の選択時に有効なルールを初期化し、削除したルールの checkpoint を廃止します。選択していない候補設定の準備だけでは消費状態を変更しません。
 
 [Event federation](../reference/event-federation.md) は別の配送履歴を持ち、ローカル status 通知キューを永続的な正本には使いません。
+
+
+### Controllerログの配送
+
+OTLPのlogsを有効にすると、`routerd serve`はcontrollerのreconcileログを
+OTLP exporterへ送り、従来のローカル出力も維持します。logs無効時もローカル出力は残ります。
+`LogSink`の運用イベントと`ObservabilityPipeline`のjournal配送は別のストリームです。
+
+Linuxの`TestServeTelemetryDeliversReconcileLogs`はsandboxで実際の`run`/`serve`を
+子プロセス起動し、gRPC受信、ローカル出力、SIGTERM終了を確認します。
+実行コマンドは`go test ./cmd/routerd -run '^TestServeTelemetryDeliversReconcileLogs$' -count=1`です。
+パッケージ導入や外部collectorの停止・復旧をこの結果に含めません。

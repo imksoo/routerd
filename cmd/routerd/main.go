@@ -71,7 +71,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		fmt.Fprintf(stdout, "routerd %s\n", version)
 		return nil
 	case "serve":
-		return serveCommand(args[1:], stdout, stderr)
+		return serveCommandWithLogger(args[1:], stdout, stderr, telemetry.LoggerWithLocalOutput())
 	case "apply":
 		return applyCommand(args[1:], stdout, stderr)
 	case "rollback":

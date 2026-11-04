@@ -364,7 +364,11 @@ func warnIgnoredLegacyServeFlags(stderr io.Writer, setFlags map[string]bool) {
 	fmt.Fprintf(stderr, "warning: routerd serve ignored legacy flag(s): %s\n", strings.Join(ignored, ", "))
 }
 
-func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
+func serveCommand(args []string, stdout, stderr io.Writer) error {
+	return serveCommandWithLogger(args, stdout, stderr, nil)
+}
+
+func serveCommandWithLogger(args []string, stdout, stderr io.Writer, controllerLogger *slog.Logger) (err error) {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	defaultBGPSocket, defaultBGPControlSocket, defaultBGPState := bgpServeDefaultPaths(platformDefaults)
@@ -677,6 +681,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		}
 	}
 	controllerOpts = controllerchain.Options{
+		Logger:               controllerLogger,
 		DnsmasqCommand:       "dnsmasq",
 		DnsmasqConfig:        *dnsmasqConfigPath,
 		DnsmasqPID:           filepath.Join(platformDefaults.RuntimeDir, "dnsmasq.pid"),
