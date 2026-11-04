@@ -228,3 +228,32 @@ func TestLogRetentionKeepsSameNamedReplacementStateDatabase(t *testing.T) {
 		t.Fatalf("opened source lost original records: %v %v", oldRows, readErr)
 	}
 }
+
+func TestLogRetentionActualGenerationWithdrawsStatus(t *testing.T) {
+	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	router := &api.Router{TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"}, Metadata: api.ObjectMeta{Name: "withdraw"}, Spec: api.RouterSpec{Resources: []api.Resource{{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "LogRetention"}, Metadata: api.ObjectMeta{Name: "logs"}, Spec: api.LogRetentionSpec{Retention: "7d", Signals: []string{"events"}}}}}}
+	opts := Options{EnabledControllers: []string{"log-retention"}, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	runner := &Runner{Router: router, Store: store, Bus: bus.New(), Opts: opts}
+	if err := runner.ReconcileOnce(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := store.ObjectStatus(api.SystemAPIVersion, "LogRetention", "logs"); got["phase"] != "Degraded" {
+		t.Fatalf("initial status: %v", got)
+	}
+	empty := &api.Router{TypeMeta: router.TypeMeta, Metadata: router.Metadata}
+	runner = &Runner{Router: empty, Store: store, Bus: bus.New(), Opts: opts}
+	if err := runner.ReconcileOnce(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.ReadObjectStatus(api.SystemAPIVersion, "LogRetention", "logs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != nil {
+		t.Fatalf("withdrawn LogRetention still affects health: %v", got)
+	}
+}
