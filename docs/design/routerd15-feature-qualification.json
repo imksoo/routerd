@@ -2342,11 +2342,13 @@
       "checks": [
         "Both fixed DHCP reservations acquired; both WebConsole resource APIs respond to allowed independent clients. Five conditional DNS branches returned their independent upstream answers.",
         "A fixture-only suffix overlap selected an earlier DNS bootstrap rule; corrected isolated input validates, without a product change.",
-        "Both empty apply responses reported Healthy, followed by unavailable read-only Unix socket paths. Withdrawal qualification failed. Local actual-daemon sandbox checks retained the sockets."
+        "Both empty apply responses reported Healthy, followed by unavailable read-only Unix socket paths. Withdrawal qualification failed. Local actual-daemon sandbox checks retained the sockets.",
+        "With the corrected disjoint bootstrap match, the 107-resource run passed both DHCP reservations, both WebConsole resource reads, every conditional UDP branch, DHCP-derived DNS and authenticated hostname-bootstrap DoH. Both main daemons delivered telemetry and syslog; Tailscale subnet TCP passed.",
+        "Traced withdrawal on the first router exceeded the CLI deadline; its socket unlink followed the fixture shutdown SIGTERM and does not identify a product defect. The untraced second router again returned Healthy before its status socket was unavailable. Native withdrawal remains unqualified."
       ],
       "excludes": [
-        "Unresolved native Unix API disappearance; no full configuration or replacement-readiness pass.",
-        "Remaining conditional/DoH communication, denial paths, archive behavior and combined recovery are not established by this run."
+        "The cause of the untraced status socket loss remains unresolved; no full configuration or replacement-readiness pass.",
+        "Denied-source WebConsole access, archive deletion, payload on added static routes and combined restart/recovery remain unverified."
       ]
     }
   },
