@@ -130,6 +130,11 @@ as its durable source of truth.
 
 ## Log retention archives
 
+Removing a `LogRetention` declaration retires its status, including previous
+retention warnings, so it cannot keep the router degraded after withdrawal.
+A declared but inactive policy retains its last-run state; dry-run does not
+remove it. The independent event-journal safety limits still apply.
+
 `LogRetention.sinks` selects the `LogSink` destinations that must accept each
 expired record before its local transaction can delete it. Missing, disabled or
 severity-filtered selected sinks fail the run and preserve the local rows.

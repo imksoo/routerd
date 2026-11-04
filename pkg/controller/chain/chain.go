@@ -2857,6 +2857,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 				return false, err
 			}
 			current := logRetention
+			current.DeclaredRouter = prepared.declared
 			current.Router = prepared.startup.Router()
 			current.Store = store.withRouter(prepared.declared)
 			return didWorkError(current.Reconcile(ctx))

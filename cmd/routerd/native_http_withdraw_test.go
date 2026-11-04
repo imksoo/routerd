@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/controlapi"
 )
@@ -34,6 +35,7 @@ func TestNativeApplyWithdrawalKeepsUnixAPIs(t *testing.T) {
 		t.Fatal(err)
 	}
 	initial.Spec.Resources = append(initial.Spec.Resources, dns.Spec.Resources...)
+	initial.Spec.Resources = append(initial.Spec.Resources, api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "LogRetention"}, Metadata: api.ObjectMeta{Name: "logs"}, Spec: api.LogRetentionSpec{Retention: "7d", Signals: []string{"events"}}})
 	data, err := json.Marshal(initial)
 	if err != nil {
 		t.Fatal(err)
@@ -95,8 +97,12 @@ spec:
 		}
 	}
 	for _, path := range []string{socket, statusSocket} {
-		if _, err := controlapi.NewUnixClient(path).Status(ctx); err != nil {
+		status, err := controlapi.NewUnixClient(path).Status(ctx)
+		if err != nil {
 			t.Fatalf("Unix API unavailable after native withdrawal: %s: %v", path, err)
+		}
+		if status.Status.Phase != "Healthy" {
+			t.Fatalf("withdrawn policy still affects native health on %s: %+v", path, status.Status)
 		}
 	}
 }

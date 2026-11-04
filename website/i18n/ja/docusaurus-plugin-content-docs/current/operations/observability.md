@@ -102,3 +102,5 @@ empty適用後のHealthyとhelper・アドレス・経路・NATの実撤去を�
 78リソース構成で合格しました。74通信・10 TCP single accepts、DNS転送、native TLS SNI、
 DNS名の誤SNI表示修正、NTP応答、両empty撤去を確認しました。
 全105リソース、collector停止・復旧、新たなHA電源断試験の合格を意味しません。
+
+`LogRetention` の宣言を削除すると、以前の保持期間警告を含む status も撤去します。撤去済みポリシーがルーターを Degraded にし続けることはありません。宣言が残る非稼働ポリシーの前回実行状態は保持し、dry-run では削除しません。イベントジャーナル独自の安全上限は引き続き適用します。

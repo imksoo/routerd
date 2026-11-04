@@ -257,3 +257,27 @@ func TestLogRetentionActualGenerationWithdrawsStatus(t *testing.T) {
 		t.Fatalf("withdrawn LogRetention still affects health: %v", got)
 	}
 }
+
+func TestLogRetentionWithdrawalPreservesInactiveDeclarationAndDryRun(t *testing.T) {
+	for _, dryRun := range []bool{false, true} {
+		store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = store.Close() })
+		if err := store.SaveObjectStatus(api.SystemAPIVersion, "LogRetention", "logs", map[string]any{"phase": "Degraded", "lastRunAt": "2026-01-01T00:00:00Z"}); err != nil {
+			t.Fatal(err)
+		}
+		declared := &api.Router{}
+		if !dryRun {
+			declared.Spec.Resources = []api.Resource{{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "LogRetention"}, Metadata: api.ObjectMeta{Name: "logs"}}}
+		}
+		c := LogRetentionController{Router: &api.Router{}, DeclaredRouter: declared, Store: store, Data: store, DryRun: dryRun}
+		if err := c.Reconcile(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if got := store.ObjectStatus(api.SystemAPIVersion, "LogRetention", "logs"); got["lastRunAt"] != "2026-01-01T00:00:00Z" {
+			t.Fatalf("dryRun=%v lost retained policy schedule: %v", dryRun, got)
+		}
+	}
+}

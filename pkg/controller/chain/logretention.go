@@ -16,6 +16,7 @@ import (
 	"github.com/imksoo/routerd/pkg/eventlog"
 	"github.com/imksoo/routerd/pkg/logstore"
 	"github.com/imksoo/routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/state"
 )
 
 // Status and journal data have different owners in a controller generation:
@@ -26,11 +27,12 @@ type logRetentionData interface {
 }
 
 type LogRetentionController struct {
-	Router *api.Router
-	Bus    *bus.Bus
-	Store  Store
-	Data   logRetentionData
-	DryRun bool
+	Router         *api.Router
+	DeclaredRouter *api.Router
+	Bus            *bus.Bus
+	Store          Store
+	Data           logRetentionData
+	DryRun         bool
 }
 
 const eventRetentionWarning = "The event journal's independent write-time age and capacity limits take precedence; archives include only retained rows."
@@ -160,6 +162,41 @@ func (c LogRetentionController) Reconcile(ctx context.Context) error {
 			return err
 		}
 		if _, err := c.Data.PruneEventsOlderThan(time.Now().UTC().Add(-24 * time.Hour)); err != nil {
+			return err
+		}
+	}
+	return c.cleanupRemovedStatuses()
+}
+
+// Retention has no running helper to stop. Its result must disappear with the
+// declaration so an old warning cannot degrade an otherwise empty router.
+func (c LogRetentionController) cleanupRemovedStatuses() error {
+	store, ok := c.Store.(interface {
+		state.ObjectStatusLister
+		state.ObjectDeleteStore
+	})
+	if !ok {
+		return nil
+	}
+	statuses, err := store.ListObjectStatuses()
+	if err != nil {
+		return err
+	}
+	declared := c.DeclaredRouter
+	if declared == nil {
+		declared = c.Router
+	}
+	wanted := make(map[string]bool)
+	for _, resource := range declared.Spec.Resources {
+		if resource.APIVersion == api.SystemAPIVersion && resource.Kind == "LogRetention" {
+			wanted[resource.Metadata.Name] = true
+		}
+	}
+	for _, object := range statuses {
+		if object.APIVersion != api.SystemAPIVersion || object.Kind != "LogRetention" || wanted[object.Name] {
+			continue
+		}
+		if err := store.DeleteObject(object.APIVersion, object.Kind, object.Name); err != nil {
 			return err
 		}
 	}
