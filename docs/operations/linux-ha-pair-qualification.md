@@ -318,7 +318,8 @@ reassignment after confirmed gateway admission.
 
 Compare the deployed configuration against the isolated input by resource kind,
 count, conditional activation, dependency and protocol. Endpoint substitution
-must preserve the routing relationships. Matching counts alone do not establish
+must preserve the routing relationships, including egress-policy and NAT
+exclusions for substituted static destinations. Matching counts alone do not establish
 functional parity. Keep DNS match domains disjoint when the deployed domains
 are disjoint: forwarder matching follows declaration order, so introducing a
 shared parent suffix can accidentally select the bootstrap forwarder.
@@ -332,8 +333,12 @@ source rejection, routed destinations, telemetry and syslog delivery. Reservatio
 addresses must not overlap the synthetic multi-flow client's address aliases.
 
 For withdrawal, preserve the control API's apply response, then separately verify
-that the daemon and read-only Unix API remain available while managed listeners,
-units, routes and forwarding effects disappear. Check the WebConsole TCP listener
+that the daemon and read-only Unix API are available after managed listeners,
+units, routes and forwarding effects disappear. A managed unit update can queue
+a deferred daemon restart. Poll within a bounded recovery window, allowing the
+resulting temporary socket absence, and require `Healthy`, no current errors and
+no pending self-restart unit at the end. Do not report uninterrupted API service
+from this recovery check. Check the WebConsole TCP listener
 and Tailscale's own stopped state before stopping the main daemon. An apply
 response labelled `Healthy` is insufficient if the subsequent status query fails.
 On failure, record the daemon PID/exit status and the timing of socket removal;
@@ -343,5 +348,12 @@ restart the daemon merely to make the withdrawal check pass.
 At revision `6112f0bc`, the first 107-resource run acquired both reservations and
 served both WebConsoles, but did not complete this gate. One DNS check encountered
 a fixture suffix collision. After empty apply returned `Healthy`, both read-only
-Unix socket paths were unavailable. The cause remains unresolved; local sandbox
-process checks retained their sockets. This is not a full-configuration pass.
+Unix socket paths were unavailable. Later native observation found a managed deferred restart replacing the daemon.
+The original check stopped immediately on a transient socket failure. A separate
+product defect retained withdrawn `LogRetention` warnings indefinitely. Revision
+`76464310` removes that obsolete status; the bounded native withdrawal check then
+passed on both packaged routers, with no remaining helper, VMAC, FIB or NAT effect,
+no health issues and no pending self-restart. Conditional DNS/DoH, reservations,
+allowed WebConsole access, telemetry/syslog and Tailscale subnet TCP also passed.
+Static-route payload, denied-source HTTP admission, archive expiry and full
+combined restart qualification are not established by that result.

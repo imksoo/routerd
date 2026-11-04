@@ -2350,6 +2350,24 @@
         "The cause of the untraced status socket loss remains unresolved; no full configuration or replacement-readiness pass.",
         "Denied-source WebConsole access, archive deletion, payload on added static routes and combined restart/recovery remain unverified."
       ]
+    },
+    "linux-combined-withdrawal-76464310": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "76464310421b480b084c11279e556b9072dc0dbb",
+      "reference": "docs/operations/linux-ha-pair-qualification.md#deployed-resource-combination-gate",
+      "environment": "Two dedicated Ubuntu Linux routers installed with matching base/native-addon apt packages 1.5.0~20261104054541+g76464310; 107-resource isolated combination and independent peers.",
+      "checks": [
+        "Actual generation and native daemon process reproduce then remove withdrawn LogRetention health status; dry-run and declared inactive policy state remain intact.",
+        "Both reserved DHCP leases, all selected conditional DNS branches, DHCP-derived upstream and certificate-verified DoH, both allowed WebConsole resource reads, both main telemetry/syslog senders and Tailscale subnet TCP passed.",
+        "Both empty configurations converged to Healthy with no resource issues or controller errors, no managed helpers/configs/VMACs/learned FIB/NAT/WebConsole listener and stopped Tailscale providers. The bounded check waits for deferred self-restarts to finish."
+      ],
+      "excludes": [
+        "Not continuous Unix API availability during managed daemon restart.",
+        "Static route payload failed in the synthetic input because substituted destinations were omitted from deployed policy/NAT exclusions; corrected isolated input validates but is not included in this pass.",
+        "Excluded-source WebConsole request timed out before HTTP admission could be verified. Archive expiry and full combined restart/recovery remain unqualified.",
+        "No full replacement-readiness or complete 1.0 parity claim."
+      ]
     }
   },
   "features": [
