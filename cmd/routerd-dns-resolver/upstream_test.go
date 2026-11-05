@@ -341,3 +341,48 @@ func TestLengthPrefixedExchange(t *testing.T) {
 		t.Fatalf("response = %x, want %x", resp, query)
 	}
 }
+
+func TestProbeRefusalKeepsConditionalUpstreamUsable(t *testing.T) {
+	conn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &dns.Server{PacketConn: conn, Handler: dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+		reply := new(dns.Msg)
+		reply.SetReply(r)
+		if r.Question[0].Name == "dns.example." {
+			reply.Rcode = dns.RcodeRefused
+		} else {
+			reply.Answer = []dns.RR{&dns.A{Hdr: dns.RR_Header{Name: r.Question[0].Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 60}, A: net.ParseIP("203.0.113.80")}}
+		}
+		_ = w.WriteMsg(reply)
+	})}
+	go func() { _ = server.ActivateAndServe() }()
+	defer server.Shutdown()
+	pool, err := newUpstreamPool([]string{"udp://" + conn.LocalAddr().String()}, upstreamPoolConfig{PassThreshold: 1, FailThreshold: 1, ProbeTimeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool.probe(t.Context(), pool.upstreams[0], nil)
+	if got := pool.Snapshot()[0]; got.Phase != upstreamHealthy {
+		t.Fatalf("responsive conditional resolver disabled by unrelated probe: %+v", got)
+	}
+	q := new(dns.Msg)
+	q.SetQuestion("service.upstream.test.", dns.TypeA)
+	wire, _ := q.Pack()
+	answer, err := pool.Exchange(t.Context(), wire, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response dns.Msg
+	if err := response.Unpack(answer); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Answer) != 1 || response.Answer[0].(*dns.A).A.String() != "203.0.113.80" {
+		t.Fatalf("response: %v", &response)
+	}
+	// A rejected ordinary query remains a query failure, not a fabricated answer.
+	if _, err := pool.exchangeOne(t.Context(), pool.upstreams[0], dnsProbeQuery()); err == nil {
+		t.Fatal("ordinary REFUSED query silently accepted")
+	}
+}
