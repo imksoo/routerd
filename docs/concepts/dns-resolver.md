@@ -195,3 +195,14 @@ See [the NextDNS example](../how-to/dns-private-upstream.md#nextdns-with-a-one-s
 dnsmasq is now limited to DHCPv4, DHCPv6, DHCP relay, and RA.
 It does not generate `server=`, `local=`, or `host-record=` lines.
 All DNS answering and forwarding goes through `routerd-dns-resolver`.
+
+### Conditional upstream health probes
+
+A private or authoritative upstream can refuse names outside its configured
+zones while correctly answering its own domain. A matching DNS reply to the
+background probe, including REFUSED, SERVFAIL or NOTIMP, demonstrates upstream
+reachability and does not disable that server. Malformed or mismatched replies,
+transport failures and deadlines still fail the probe. Truncated UDP replies
+still require a matching TCP response. Ordinary client-query response validation
+and failover semantics are unchanged; probe reachability is not a guarantee that
+every name can be resolved by that upstream.

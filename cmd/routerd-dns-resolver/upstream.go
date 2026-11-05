@@ -233,7 +233,7 @@ func (p *upstreamPool) probeLoop(ctx context.Context, upstream *dnsUpstream, pub
 func (p *upstreamPool) probe(ctx context.Context, upstream *dnsUpstream, publish func(string, string, string, string, map[string]string)) {
 	queryCtx, cancel := context.WithTimeout(ctx, p.config.ProbeTimeout)
 	defer cancel()
-	_, err := p.exchangeOne(queryCtx, upstream, dnsProbeQuery())
+	_, err := p.exchangeValidated(queryCtx, upstream, dnsProbeQuery(), validateUpstreamProbeResponse)
 	if ctx.Err() != nil {
 		return
 	}
@@ -292,6 +292,10 @@ func (p *upstreamPool) Exchange(ctx context.Context, query []byte, publish func(
 }
 
 func (p *upstreamPool) exchangeOne(ctx context.Context, upstream *dnsUpstream, query []byte) ([]byte, error) {
+	return p.exchangeValidated(ctx, upstream, query, validateUpstreamResponse)
+}
+
+func (p *upstreamPool) exchangeValidated(ctx context.Context, upstream *dnsUpstream, query []byte, validate func(query, response []byte) error) ([]byte, error) {
 	var resp []byte
 	var err error
 	switch upstream.Scheme {
@@ -311,7 +315,7 @@ func (p *upstreamPool) exchangeOne(ctx context.Context, upstream *dnsUpstream, q
 	if err != nil {
 		return nil, err
 	}
-	if err := validateUpstreamResponse(query, resp); err != nil {
+	if err := validate(query, resp); err != nil {
 		if upstream.Scheme != "udp" || !errors.Is(err, errTruncatedUpstreamResponse) {
 			return nil, err
 		}
@@ -321,7 +325,7 @@ func (p *upstreamPool) exchangeOne(ctx context.Context, upstream *dnsUpstream, q
 		if err != nil {
 			return nil, fmt.Errorf("retry truncated DNS response over TCP: %w", err)
 		}
-		if err := validateUpstreamResponse(query, resp); err != nil {
+		if err := validate(query, resp); err != nil {
 			return nil, err
 		}
 	}
@@ -329,6 +333,14 @@ func (p *upstreamPool) exchangeOne(ctx context.Context, upstream *dnsUpstream, q
 }
 
 func validateUpstreamResponse(query, response []byte) error {
+	return validateDNSResponse(query, response, false)
+}
+
+func validateUpstreamProbeResponse(query, response []byte) error {
+	return validateDNSResponse(query, response, true)
+}
+
+func validateDNSResponse(query, response []byte, healthProbe bool) error {
 	var req, resp dns.Msg
 	if err := req.Unpack(query); err != nil {
 		return fmt.Errorf("invalid DNS query: %w", err)
@@ -353,7 +365,9 @@ func validateUpstreamResponse(query, response []byte) error {
 	}
 	// NXDOMAIN and NOERROR (including NODATA and filtered answers) are final
 	// DNS answers, not evidence that another provider should be queried.
-	if resp.Rcode != dns.RcodeSuccess && resp.Rcode != dns.RcodeNameError {
+	// A conditional server may refuse the unrelated probe name while serving
+	// its configured domains. A correlated DNS reply proves probe reachability.
+	if !healthProbe && resp.Rcode != dns.RcodeSuccess && resp.Rcode != dns.RcodeNameError {
 		return fmt.Errorf("DNS upstream returned failure rcode %s (%d)", dns.RcodeToString[resp.Rcode], resp.Rcode)
 	}
 	return nil

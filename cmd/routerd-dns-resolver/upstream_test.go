@@ -386,3 +386,37 @@ func TestProbeRefusalKeepsConditionalUpstreamUsable(t *testing.T) {
 		t.Fatal("ordinary REFUSED query silently accepted")
 	}
 }
+
+func TestProbeResponseStillRequiresMatchingCompleteDNSMessage(t *testing.T) {
+	var query dns.Msg
+	if err := query.Unpack(dnsProbeQuery()); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name   string
+		mutate func(*dns.Msg)
+		valid  bool
+	}{
+		{"refused", func(r *dns.Msg) { r.Rcode = dns.RcodeRefused }, true},
+		{"servfail", func(r *dns.Msg) { r.Rcode = dns.RcodeServerFailure }, true},
+		{"not-implemented", func(r *dns.Msg) { r.Rcode = dns.RcodeNotImplemented }, true},
+		{"wrong-id", func(r *dns.Msg) { r.Id++ }, false},
+		{"wrong-question", func(r *dns.Msg) { r.Question[0].Name = "unrelated.example." }, false},
+		{"truncated", func(r *dns.Msg) { r.Truncated = true }, false},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			response := new(dns.Msg)
+			response.SetReply(query.Copy())
+			tt.mutate(response)
+			wire, err := response.Pack()
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = validateUpstreamProbeResponse(dnsProbeQuery(), wire)
+			if (err == nil) != tt.valid {
+				t.Fatalf("valid=%v error=%v", tt.valid, err)
+			}
+		})
+	}
+}
