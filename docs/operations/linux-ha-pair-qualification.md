@@ -363,3 +363,24 @@ replies; direct return bypassing the router also fails to exercise a symmetric
 stateful forwarding path. The route check used one active router and does not
 qualify endpoint failover. Denied-source HTTP admission, archive expiry and full
 combined restart qualification remain unverified.
+
+## Management and restart follow-up
+
+Use an allowed client and a distinct excluded client with a valid route to each
+router's own management address. Each next hop must be that target router;
+routing the negative probe through its peer can create an unrelated asymmetric
+flow. Check successful resource reads from the allowed client, then send the same
+request from the excluded client with an allowed address forged in
+`X-Forwarded-For`. At `76464310`, both routers returned HTTP 403, before and after
+an active daemon restart. Require a changed main PID, recovered gateway and DNS
+service, and no current controller errors after restart.
+
+The subsequent VM cold-return gate failed. Standby promotion and client DNS
+worked, and the returning daemon reestablished BGP. Its Tailscale unit repeatedly
+timed out: client health reported a forced TLS connection to port 443 while the
+isolated control plane served HTTP on a different port. Record this failed path
+and certify a proper TLS control plane before another campaign. The observed
+error does not establish a routerd defect or authorize a provider restart
+workaround. First-router teardown also failed its complete assertions; second
+router teardown passed. Neither partial service recovery nor stopping the VMs
+makes this campaign a cold-return pass.

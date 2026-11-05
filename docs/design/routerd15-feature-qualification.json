@@ -2401,6 +2401,38 @@
         "UDP reception is not remote durable storage or guaranteed delivery under packet loss.",
         "This scoped native check does not cover every retained signal, sink-outage recovery or the complete 107-resource restart gate."
       ]
+    },
+    "linux-management-daemon-restart-76464310": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "76464310421b480b084c11279e556b9072dc0dbb",
+      "reference": "docs/operations/linux-ha-pair-qualification.md#management-and-restart-follow-up",
+      "environment": "Two dedicated packaged Linux routers with the corrected 107-resource input and independent allowed/excluded clients.",
+      "checks": [
+        "Allowed clients received both WebConsole resource responses; the excluded client received HTTP 403 from both routers despite a spoofed X-Forwarded-For value.",
+        "The active main daemon was restarted; its PID changed, advertised gateway returned and controller current errors cleared.",
+        "The same allowed/denied checks passed after restart, and the reserved client obtained independent DNS answers."
+      ],
+      "excludes": [
+        "Daemon restart is not VM cold-boot qualification or proof of existing-flow continuity."
+      ]
+    },
+    "linux-combined-cold-return-76464310": {
+      "level": "independent-peer",
+      "outcome": "fail",
+      "revision": "76464310421b480b084c11279e556b9072dc0dbb",
+      "reference": "docs/operations/linux-ha-pair-qualification.md#management-and-restart-follow-up",
+      "environment": "Same packaged pair and independent peers; active VM stopped and started.",
+      "checks": [
+        "Standby promoted and answered the reserved client DNS query.",
+        "Returned daemon started and reestablished BGP, but service-unit errors persisted and the recovery gate failed.",
+        "The Tailscale client reported NoState and a TLS-forced dial to port 443, while the configured HTTP control endpoint health check responded. Exact installed upstream source revision could not be retrieved; no routerd root cause is asserted.",
+        "Final withdrawal passed on the second router; first-router teardown did not complete every assertion and remains unqualified. Both dedicated routers and peer were stopped after observation."
+      ],
+      "excludes": [
+        "No full cold-return or complete Linux replacement-readiness claim.",
+        "Prepare a properly certified TLS control-plane fixture before repeating qualification; do not hide the failure with periodic provider restarts."
+      ]
     }
   },
   "features": [
