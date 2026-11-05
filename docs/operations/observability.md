@@ -226,3 +226,29 @@ client flows, ten single TCP accepts, DNS redirects, native TLS SNI, corrected D
 hostname classification, NTP replies and both empty withdrawals passed. This does
 not qualify all 105 deployed resources, collector outage/recovery, or a new HA
 power-loss campaign.
+
+### Packaged archive/expiry check
+
+Use a disposable packaged Linux VM with an empty canonical configuration and
+an independent syslog receiver; never seed an operating router's database.
+Stop the daemon before preparing two completed `plugin_runs` fixture rows:
+`rd15-native-retention-old` started eight days ago and
+`rd15-native-retention-fresh` started now. Record the two-row baseline.
+Prepare a `LogRetention` with `retention: 7d`, `schedule: daily`,
+`signals: [pluginRuns]` and an explicit syslog `LogSink` reference. The selected
+sink must allow `info` archive records. Certify receiver reachability before
+starting the daemon, and bound the receiver to two minutes and 8 MiB.
+
+Start the packaged daemon with that configuration and run
+`routerctl get LogRetention/archive -o json`. Require `phase: Applied` and
+`deleted: 1`; independently inspect the receiver for the old marker and query
+the database read-only to require only the fresh row. A status counter alone
+is insufficient. Finally apply an empty candidate with
+`routerctl apply --timeout 90s -f empty.yaml --replace`, wait for pending managed
+restarts to complete, and require `Healthy` without the retention status.
+The request wait covers the daemon's one-minute apply budget plus response
+handling; it does not remove the operation deadline or relax the final checks.
+
+This path passed with formal Linux packages at `76464310`. It checks expiry and
+observed UDP delivery for plugin history, not packet-loss recovery, remote durable
+storage, all log tables, or a complete event audit archive.

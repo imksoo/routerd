@@ -104,3 +104,11 @@ DNS名の誤SNI表示修正、NTP応答、両empty撤去を確認しました。
 全105リソース、collector停止・復旧、新たなHA電源断試験の合格を意味しません。
 
 `LogRetention` の宣言を削除すると、以前の保持期間警告を含む status も撤去します。撤去済みポリシーがルーターを Degraded にし続けることはありません。宣言が残る非稼働ポリシーの前回実行状態は保持し、dry-run では削除しません。イベントジャーナル独自の安全上限は引き続き適用します。
+
+### 実パッケージでのアーカイブ・期限切れ削除試験
+
+空設定の隔離 Linux VM と独立 syslog 受信側を使います。実運用ルーターの DB に試験行を追加してはいけません。daemon 停止中に `plugin_runs` へ完了済みの試験行を 2 件用意し、8 日前の `rd15-native-retention-old` と現在時刻の `rd15-native-retention-fresh` を確認します。`LogRetention` は `retention: 7d`、`schedule: daily`、`signals: [pluginRuns]` とし、info レベルのアーカイブを許可する syslog `LogSink` を明示的に参照します。起動前に受信側への到達を確認し、受信処理を 2 分・8 MiB 以内に制限します。
+
+正式パッケージの daemon を起動し、`routerctl get LogRetention/archive -o json` が `Applied`、`deleted: 1` になることを確認します。別途、受信側で古い行のマーカーを確認し、DB の読み取り専用検査で新しい行だけが残っていることを確認します。件数表示だけで合格にしません。最後に `routerctl apply --timeout 90s -f empty.yaml --replace` で撤去し、予約済み自己再起動の完了後に retention status が消え、`Healthy` になることを確認します。90 秒は daemon の 1 分の適用期限と応答処理を含む待機時間であり、処理期限や最終判定の緩和ではありません。
+
+この経路は `76464310` の正式 Linux パッケージで通過しました。plugin 履歴の期限切れ削除と実際の UDP 受信の確認であり、パケット損失時の回復、受信側の永続保存、全ログテーブル、完全なイベント監査履歴の保証ではありません。

@@ -1,6 +1,6 @@
 {
   "format": "routerd15-feature-qualification/v1",
-  "updated_date": "2026-11-04",
+  "updated_date": "2026-11-05",
   "purpose": "Track preservation and qualification of every pre-1.5 routerd 1.0 function, including non-resource surfaces. This static design ledger is not a product registry, a release result or proof of functional parity.",
   "baseline_revision": "e3b49dbb69c7de97bab9595884745eb7cbe93d92",
   "inventory_snapshot_revision": "3da8d066e19535d27610d632391807db7968d1fc",
@@ -2381,7 +2381,25 @@
       ],
       "excludes": [
         "No static-endpoint HA failover claim; standby was not needed for this scoped forwarding check.",
-        "No full configuration or complete 1.0 parity claim."
+        "No full configuration or complete 1.0 parity claim.",
+        "Immediate post-start withdrawal overlapped a deferred restart; a subsequent 30-second request timed out after committing empty state. Empty reopen and withdrawal recovery were verified separately, not treated as uninterrupted request success."
+      ]
+    },
+    "linux-retention-archive-76464310": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "76464310421b480b084c11279e556b9072dc0dbb",
+      "reference": "docs/operations/observability.md#packaged-archiveexpiry-check",
+      "environment": "Formal Linux base/native-addon packages 1.5.0~20261104054541+g76464310 on a dedicated VM and an independent bounded syslog receiver.",
+      "checks": [
+        "Prepared two completed plugin-history rows with eight-day-old and current timestamps while the daemon was stopped.",
+        "The actual packaged daemon archived the expired marker to the independent UDP syslog receiver, reported Applied/deleted=1 and retained only the fresh row.",
+        "Empty configuration withdrawal passed with Healthy status, no retained policy issue and no managed runtime effects.",
+        "Both earlier routers also reopened their empty canonical configurations Healthy after the prior request timeout; complete withdrawal checks passed again."
+      ],
+      "excludes": [
+        "UDP reception is not remote durable storage or guaranteed delivery under packet loss.",
+        "This scoped native check does not cover every retained signal, sink-outage recovery or the complete 107-resource restart gate."
       ]
     }
   },
