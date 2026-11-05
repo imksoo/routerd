@@ -384,3 +384,29 @@ error does not establish a routerd defect or authorize a provider restart
 workaround. First-router teardown also failed its complete assertions; second
 router teardown passed. Neither partial service recovery nor stopping the VMs
 makes this campaign a cold-return pass.
+
+## TLS control-plane cold-return follow-up
+
+Certify the independent Headscale endpoint with a trusted certificate and TLS
+listener. Provision node authentication before qualification, remove temporary
+bootstrap addresses, and start from the declared packaged configuration. Before
+issuing restart probes, wait for both management listeners and for queued startup
+self-restarts to finish. Test the same excluded client with a forged forwarding
+header before and after replacing the active daemon PID.
+
+At `2da31049`, the corrected 107-resource input passed these checks, conditional
+DNS/DoH and both reservations. Stopping the active VM promoted its peer and the
+reserved client obtained the intended conditional A/AAAA answers. After cold
+return, the returning node was backup and the existing master remained the sole
+observed VIP publisher. Controller errors cleared; DNS, allowed management and
+HTTP 403 checks passed again. New IPv4 DS-Lite/NAT and native IPv6 TCP payloads
+also returned from the independent application server. This does not requalify
+the earlier 74 established-flow continuity campaign or prove absence of every
+transient duplicate claim between snapshots.
+
+The local probe correction removes an erroneous Down classification for a
+conditional DNS server that refuses an unrelated probe name. Ordinary requests
+can still attempt Down upstreams, so that classification alone does not prove the
+cause of the previous incorrect conditional reply. The successful campaign also
+changed the control-plane fixture to TLS and checked startup readiness; record
+its scope rather than attributing every recovery difference to one code change.

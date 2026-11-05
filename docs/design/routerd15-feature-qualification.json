@@ -2433,6 +2433,40 @@
         "No full cold-return or complete Linux replacement-readiness claim.",
         "Prepare a properly certified TLS control-plane fixture before repeating qualification; do not hide the failure with periodic provider restarts."
       ]
+    },
+    "linux-dns-probe-local-2da31049": {
+      "level": "code-passed",
+      "outcome": "pass",
+      "revision": "2da31049b7ec856a9ec40be6d113d4c8a70cf672",
+      "reference": "docs/concepts/dns-resolver.md#conditional-upstream-health-probes",
+      "environment": "Real loopback UDP DNS server and production upstream-pool methods in the resolver unit suite.",
+      "checks": [
+        "RED 1d3731e8 reproduces erroneous Down status when the conditional server refuses the unrelated background probe but answers its own domain.",
+        "Probe validation now treats correlated REFUSED/SERVFAIL/NOTIMP replies as reachable; mismatched ID/question and truncated messages remain rejected.",
+        "Ordinary REFUSED query errors remain errors. Full resolver suite and all Go packages, schemas, examples and website pass."
+      ],
+      "excludes": [
+        "Incorrect probe health classification alone does not establish the cause of the earlier promotion forwarding failure: ordinary requests may still attempt Down upstreams."
+      ]
+    },
+    "linux-tls-combined-cold-return-2da31049": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "2da31049b7ec856a9ec40be6d113d4c8a70cf672",
+      "reference": "docs/operations/linux-ha-pair-qualification.md#tls-control-plane-cold-return-follow-up",
+      "environment": "Dedicated Ubuntu pair with formal matching base/addon 1.5.0~20261105094131+g2da31049, corrected 107-resource input, trusted TLS Headscale and independent DHCP/DNS/application peers.",
+      "checks": [
+        "Both reservations and allowed WebConsole reads, all conditional DNS branches, DHCP-derived DNS and certificate-verified DoH passed.",
+        "Excluded-source requests received HTTP 403 on both routers despite a forged forwarding header; these checks and independent DNS passed after active daemon PID replacement.",
+        "Active VM power loss promoted the standby and returned the correct conditional A/AAAA answers. Cold returning node became backup, observed VIP publisher remained the existing master, controller errors cleared and DNS/management checks passed.",
+        "Post-return reserved client TCP payload passed over IPv4 DS-Lite/NAT with AFTR-translated source and native IPv6 with RA-derived client source. Both nodes had no Error/Unhealthy/Pending resource issues or current controller errors.",
+        "Both empty configuration withdrawals passed Healthy with no controller/resource issues, managed helpers, VMACs, learned FIB, owned NAT table or WebConsole listener; Tailscale providers stopped and no self-restart remained pending."
+      ],
+      "excludes": [
+        "New post-return connections only; this campaign does not requalify continuity of all earlier 74 established flows.",
+        "TLS fixture and startup readiness were also changed; this result does not isolate the cause of the earlier HTTP-control-plane or conditional-forwarding failures.",
+        "Not full routerd 1.0 parity or production-cutover approval."
+      ]
     }
   },
   "features": [
