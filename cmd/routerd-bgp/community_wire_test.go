@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"io"
 	"net"
 	"net/netip"
@@ -190,8 +191,30 @@ func TestCommunitySelectionOnBGPUpdate(t *testing.T) {
 						continue
 					}
 					attrs := map[gobgp.BGPAttrType]bool{}
+					if len(update.NLRI) != 1 || update.NLRI[0].NLRI.String() != "10.77.60.11/32" {
+						t.Fatalf("advertised NLRI=%v", update.NLRI)
+					}
 					for _, a := range update.PathAttributes {
 						attrs[a.GetType()] = true
+						// Compare actual received attribute bytes with literal wire values,
+						// independently of the constructors used to originate the path.
+						want := ""
+						switch a.GetType() {
+						case gobgp.BGP_ATTR_TYPE_COMMUNITIES:
+							want = "c00804fc000007"
+						case gobgp.BGP_ATTR_TYPE_EXTENDED_COMMUNITIES:
+							want = "c010080002fc0000000007"
+						case gobgp.BGP_ATTR_TYPE_IP6_EXTENDED_COMMUNITIES:
+							want = "c01914000220010db80000000000000000000000010007"
+						case gobgp.BGP_ATTR_TYPE_LARGE_COMMUNITY:
+							want = "c0200c0000fc000000000700000008"
+						}
+						if want != "" {
+							wire, err := a.Serialize()
+							if err != nil || hex.EncodeToString(wire) != want {
+								t.Fatalf("received community attr %d = %x, error=%v; want %s", a.GetType(), wire, err, want)
+							}
+						}
 					}
 					for typ, want := range map[gobgp.BGPAttrType]bool{gobgp.BGP_ATTR_TYPE_COMMUNITIES: mode.standard, gobgp.BGP_ATTR_TYPE_EXTENDED_COMMUNITIES: mode.extended, gobgp.BGP_ATTR_TYPE_IP6_EXTENDED_COMMUNITIES: mode.extended, gobgp.BGP_ATTR_TYPE_LARGE_COMMUNITY: true} {
 						if attrs[typ] != want {
