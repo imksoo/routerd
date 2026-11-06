@@ -67,6 +67,27 @@ func TestNativeNATAddressSetReplacement(t *testing.T) {
 					}
 				}
 			}
+			// DNS-resolved members are owned by the address-set controller;
+			// an unrelated NAT render must not discard them.
+			router.Spec.Resources[1].Spec = api.IPAddressSetSpec{Addresses: []string{"192.0.2.2", "2001:db8::2"}, Names: []string{"peer.example"}}
+			nft(t, "add element ip routerd_nat ip_address_set_allowed { 192.0.2.99 }\nadd element ip6 routerd_nat ip_address_set_allowed { 2001:db8::99 }\n", "-f", "-")
+			var data []byte
+			var err error
+			if mode == "runtime" {
+				data, err = NftablesNAT44RulesForRouter(router, nil)
+			} else {
+				data, err = NftablesNAT44Rule(router)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			nft(t, string(data), "-f", "-")
+			for i, family := range []string{"ip", "ip6"} {
+				out := nft(t, "", "list", "set", family, "routerd_nat", "ip_address_set_allowed")
+				if !strings.Contains(out, []string{"192.0.2.99", "2001:db8::99"}[i]) {
+					t.Errorf("%s discarded DNS-owned member: %s", family, out)
+				}
+			}
 			nft(t, "", "delete", "table", "ip", "routerd_nat")
 			nft(t, "", "delete", "table", "ip6", "routerd_nat")
 		})

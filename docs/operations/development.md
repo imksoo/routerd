@@ -1264,3 +1264,11 @@ The fixture removes namespaces and temporary files on completion. On failure,
 inspect the peer receipt, response identity and owned map before changing code.
 This covers the controller and real kernel, not normal-daemon restart or every
 collision/translation combination.
+
+NAT and policy renders replace statically declared address-set membership in the
+same nft transaction as their rules; removed addresses must not remain authorized.
+DNS-populated sets keep their existing address-controller ownership. The opt-in
+`TestNativeNATAddressSetReplacement` checks IPv4/IPv6 replacement and repeated
+apply with real nftables, plus preservation of DNS-owned members. Run it in an
+isolated user/network namespace with `ROUTERD_RUN_NETNS=1` and
+`ROUTERD_HOST_NETNS` set to the parent namespace, as in the NAT pool syntax check.

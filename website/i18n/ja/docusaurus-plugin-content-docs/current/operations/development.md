@@ -1019,3 +1019,9 @@ source-SNAT 試験と同じ `ROUTERD_TEST_BINARY` と `ROUTERD_NAT44_TEST_DRIVER
 受信を確認し、外向き通信の失敗を成功扱いしません。終了時は namespace と一時ファイルを
 撤去します。失敗時は peer の受信、応答の識別情報、所有 map を確認してから修正します。
 通常 daemon の再起動や全てのポート衝突・変換の組み合わせは、この試験の証明範囲外です。
+
+NAT・ポリシーの静的アドレス集合はルールと同じ nft トランザクションで置換し、削除した
+アドレスを許可対象に残しません。DNS 解決で更新する集合は既存の address controller が
+所有します。`TestNativeNATAddressSetReplacement` は実 nftables で IPv4/IPv6 の置換、
+再適用、DNS 所有の要素の保持を検査します。NAT pool の構文試験と同じ隔離 user/network
+namespace で `ROUTERD_RUN_NETNS=1`、親 namespace を `ROUTERD_HOST_NETNS` に指定します。
