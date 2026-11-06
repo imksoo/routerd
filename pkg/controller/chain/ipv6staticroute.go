@@ -82,6 +82,12 @@ func (c IPv4RouteController) ipv6StaticRoutePremise(ctx context.Context, spec ap
 	if err != nil {
 		return ipv6StaticRoutePremise{}, err
 	}
+	// Linux assigns priority 1024 when an IPv6 route metric is omitted or
+	// zero. Persist that effective tuple so readback and withdrawal agree
+	// with the kernel instead of leaving a successfully added route pending.
+	if platform.CurrentOS() == platform.OSLinux && route.Metric == "0" {
+		route.Metric = "1024"
+	}
 	result := ipv6StaticRoutePremise{Route: route}
 	if c.DryRun {
 		return result, nil
