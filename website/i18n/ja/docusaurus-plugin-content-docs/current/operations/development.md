@@ -1231,3 +1231,30 @@ SQLite 再オープン後も繰り返し、片側の VRF・アドレス削除後
 継続することを確認します。最後に両 VRF・所有アドレス・所有権記録の撤去を
 確認します。実カーネルを使う controller 試験であり、パッケージ daemon の
 再起動、通過トラフィックの転送、委譲 IPv6・RA の合格を意味しません。
+
+## Tailscale の広告解除と復旧
+
+`ROUTERD_TEST_TAILSCALE=/absolute/path/to/tailscale make check-routerd15-tailscale-cli`
+は、実 Tailscale CLI と専用 Unix LocalAPI fixture を使います。ホスト daemon や
+tailnet には接続しません。
+
+通常 daemon の検証では、独立した Linux ゲスト 2 台、試験用 Headscale/TLS、
+認証済みの試験専用ノード、ルーター配下の HTTP 応答元を先に準備・確認します。
+制御経路は試験するデータ経路から分離し、転送と宛先経路を Sysctl・IPv4Route
+リソースで宣言します。
+
+1. subnet と exit-node を広告する TailscaleNode を適用し、試験サーバーで承認します。
+   独立クライアントから subnet 経由と、その subnet 外の宛先への exit-node 経由で
+   期待する HTTP 本文を取得できることを確認します。
+2. クライアントの exit-node 選択を解除してから、YAML の広告経路を削除し、
+   `advertiseExitNode: false` を適用します。Running/Healthy、daemon の広告なし、
+   Headscale の available routes なし、クライアントの経路なし、旧 HTTP 応答の不達を
+   要求します。空の `available_routes` は省略される場合があります。approved routes
+   が残っているだけで広告継続とは判定しません。
+3. 再広告して両経路の通信を確認し、routerd 再起動後にも exit-node 通信を確認します。
+   製品状態の手動修復や再認証で合格にしません。
+4. 空構成を適用し、Healthy、管理ユニット・経路の撤去、`WantRunning: false` を
+   確認します。独立 peer と制御サーバーを停止し、試験用転送設定・namespace・
+   ファイルを復旧・撤去してゲストを停止します。
+
+IPv6 exit 通信、認証期限切れ、制御サーバー断からの回復は別の検証項目です。

@@ -1537,3 +1537,38 @@ Repeat after SQLite reopen. Withdraw one VRF and its address and require the
 other peer to remain reachable. Final withdrawal must remove both VRFs, owned
 addresses and receipts. This is a native controller test, not packaged-daemon
 restart, transit forwarding or delegated IPv6/RA qualification.
+
+## Tailscale advertisement removal and recovery
+
+The upstream CLI regression uses a private Unix LocalAPI fixture, with no host
+daemon or tailnet access:
+
+```sh
+ROUTERD_TEST_TAILSCALE=/absolute/path/to/tailscale make check-routerd15-tailscale-cli
+```
+
+For the packaged-daemon check, certify two disposable Linux guests, independent
+Headscale/TLS, authenticated test-only node identities, and an HTTP endpoint
+behind the router before qualification. Keep the control path outside the data
+path under test. Use the declared Sysctl and IPv4Route resources for forwarding
+and the remote destination.
+
+1. Apply a TailscaleNode with subnet and exit-node advertisements through the
+   normal daemon. Approve those routes on the test control server. Require an
+   independent client to retrieve the exact HTTP payload through the subnet
+   route, then a destination outside that subnet through the selected exit node.
+2. Deselect the exit node on the client. Remove advertised routes and set
+   `advertiseExitNode: false` in YAML, then apply. Require Running/Healthy, empty
+   daemon advertisements, empty control-server available routes, absent client
+   subnet route, and failure to retrieve the old subnet payload. Headscale may
+   omit an empty `available_routes` field; approved routes alone are not proof
+   that a node still advertises them.
+3. Reapply the advertisements. Require both payload paths to recover. Restart
+   routerd and require the exit-node payload again without repairing product
+   state or reauthenticating.
+4. Apply an empty configuration. Require Healthy, no managed unit/route and
+   `WantRunning: false`. Stop independent peers/control services, restore fixture
+   forwarding settings, remove fixture namespaces/files and stop the guests.
+
+IPv6 exit traffic, expired credentials and control-server outage recovery need
+separate checks; IPv4 forwarding does not qualify them.

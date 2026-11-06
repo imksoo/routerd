@@ -4229,3 +4229,41 @@ No product fix was needed. The reusable procedure is in
 [development](../operations/development.md#linux-overlapping-vrf-isolation).
 This adds host-originated overlapping-VRF isolation coverage; it does not prove
 transit forwarding, packaged-daemon restart/reboot, delegated IPv6/RA or FreeBSD.
+
+## Packaged Tailscale advertisement withdrawal and exit-node traffic
+
+Product `5feec40ca72529341da6501929894226f0af7fb0`, formal matching base/addon
+`1.5.0~20261106221256+g5feec40c`, passed the following scoped checks on two
+disposable Ubuntu guests with Tailscale 1.104.5 and independent Headscale 0.28.0:
+
+- Normal-daemon apply and exact independent HTTP payloads through an advertised
+  IPv4 subnet and an exit-node destination outside that subnet.
+- Removing both advertisements through YAML leaves the node Running/Healthy,
+  clears daemon and control-server available routes, removes the client subnet
+  route and makes the old subnet payload unavailable.
+- Re-advertisement restores both paths; normal routerd restart preserves working
+  exit-node traffic without product-state repair or reauthentication.
+- Empty configuration becomes Healthy, withdraws the managed unit/route and
+  disconnects the node. Fixture services, namespace, veth and current staging
+  files were removed, and forwarding settings restored.
+
+The original renderer omitted flags when settings returned to defaults. Actual
+Tailscale 1.90.6 CLI validation against a private LocalAPI fixture reproduced
+rejection of the change before any preference patch. `--reset` fixes the complete
+declared-configuration path; the regression now observes an explicit empty
+advertisement patch. No logout or forced reauthentication was added.
+
+The native script was resumed, not an uninterrupted pass: its empty-count
+preflight initially mishandled an omitted zero field; after certification, its
+Headscale empty-route check raised KeyError for an omitted field. Actual daemon
+and provider routes were already empty. Correcting that fixture predicate
+confirmed withdrawal. A resume-only missing-variable error occurred after
+successful re-advertisement; reading the current node address allowed restart
+and cleanup checks to complete. No product repair was used for these resumes.
+The full Go gate subsequently passed after regenerating two shared FreeBSD CLI
+golden outputs, followed by schema/example checks and all website locales.
+
+[The maintained procedure](../operations/development.md#tailscale-advertisement-removal-and-recovery)
+requires both positive payloads and explicit withdrawal checks. This result does
+not qualify IPv6 exit forwarding, credential expiry, control-server outage
+recovery, production deployment or full baseline parity.

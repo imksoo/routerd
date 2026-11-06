@@ -2919,6 +2919,26 @@
         "Delegated IPv6/RA",
         "FreeBSD"
       ]
+    },
+    "linux-tailscale-advertisements-5feec40c": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "5feec40ca72529341da6501929894226f0af7fb0",
+      "reference": "docs/design/routerd15-audit.md#packaged-tailscale-advertisement-withdrawal-and-exit-node-traffic",
+      "checks": [
+        "Formal matching apt packages; normal daemon against independent Headscale 0.28.0 and Tailscale 1.104.5 peer guest",
+        "IPv4 subnet and exit-node exact HTTP payloads",
+        "Declared advertisement removal verified in daemon, provider, client route and failed old subnet request",
+        "Re-advertisement and normal main restart restore payloads without product repair",
+        "Empty Healthy withdrawal and fixture cleanup; fixture predicates/resume repaired as documented"
+      ],
+      "excludes": [
+        "IPv6 exit-node traffic",
+        "Credential expiry",
+        "Control-server outage recovery",
+        "Production deployment",
+        "An uninterrupted native script pass"
+      ]
     }
   },
   "features": [
@@ -3412,14 +3432,16 @@
         "related_test_files": [
           "pkg/tailscale/tailscale_test.go",
           "pkg/render/tailscale_systemd_test.go",
-          "pkg/controller/chain/system_tailscale_withdraw_test.go"
+          "pkg/controller/chain/system_tailscale_withdraw_test.go",
+          "pkg/render/tailscale_cli_test.go"
         ]
       },
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "linux-tailscale-withdrawal-6112f0bc"
+          "linux-tailscale-withdrawal-6112f0bc",
+          "linux-tailscale-advertisements-5feec40c"
         ]
       },
       "freebsd": {
@@ -3427,7 +3449,7 @@
         "scoped_evidence": []
       },
       "required_remaining_checks": [
-        "Exit-node payload forwarding, credential expiration and control-plane outage recovery",
+        "IPv6 exit-node payload forwarding, credential expiration and control-plane outage recovery",
         "Combined deployed configuration and all-platform parity"
       ]
     },
