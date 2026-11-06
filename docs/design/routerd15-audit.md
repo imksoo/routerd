@@ -3637,3 +3637,42 @@ To repeat in an approved dedicated Linux guest:
 This closes the native full-service restart/renewal slice. It does not prove lease
 expiry, prefix replacement, separate routed-LAN transit, host reboot, or FreeBSD.
 Earlier qualification remains revision-scoped; complete 1.0 parity is not claimed.
+
+## Bounded LogSink syslog delivery and packaged receiver recovery
+
+2026-11-06, product `cfdc0a3f925677e8c33f20655ba1759687d4e5aa`, formal matching
+base/addon `1.5.0~20261106193134+gcfdc0a3f`: a dedicated Ubuntu guest passed actual
+TCP LogSink delivery to an independent Python receiver. The receiver checked the
+syslog priority, configured tag and startup/operation messages. Stopping the
+receiver did not prevent log-level operations or Healthy status responses within
+eight seconds. Restarting it restored delivery from the same daemon/LogSink.
+Empty configuration and daemon shutdown passed before receiver/file cleanup.
+
+The preceding local test `a65258db` reproduced an unbounded write to a TCP receiver
+that accepted but never read. The fix gives each serialized event a shared
+five-second connection/write/reconnect deadline, closes a failed connection, and
+returns its error. `pkg/eventlog` passed its real TCP deadline/recovery and
+concurrent close tests; chain log-retention/archive tests passed. Archive delivery
+failure remains an error, so retention cannot delete the original rows on that
+basis. Full Go passed (122 packages, 15 without tests), schemas/examples and the
+four website locales passed at the product revision.
+
+Repeat the package check only in an approved dedicated guest:
+
+1. Verify the formal package version, file integrity, empty canonical configuration
+   and unused receiver port. Stop the empty daemon. Run a separate bounded TCP
+   receiver (600-second lifetime, 1 MiB output cap).
+2. Before normal systemd service startup, configure a syslog LogSink pointing to
+   that receiver, facility `daemon` and a distinctive tag. Validate the config.
+   Require Healthy status and the received `<30>` startup record within 60 seconds.
+3. Run `routerctl log-level debug`, requiring its operation record at the receiver.
+   Stop the receiver. Bound `routerctl log-level info` and `routerctl get status`
+   individually with an eight-second timeout; require Healthy status.
+4. Restart the receiver and require a new debug-operation record within 30 seconds
+   without restarting routerd. Restore the default log level, apply empty config,
+   stop the daemon, then stop the receiver and remove temporary files.
+
+This package gate covers startup-configured LogSink and receiver loss/recovery.
+The non-reading receiver deadline is proved by the local real-TCP test, not this
+native gate. Dynamic LogSink destination replacement, remote collector products,
+FreeBSD and complete 1.0 parity are not established by this result.

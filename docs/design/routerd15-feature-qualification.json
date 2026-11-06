@@ -2591,6 +2591,25 @@
         "Lease expiry, prefix changes, independent routed-LAN transit and host reboot",
         "FreeBSD and complete routerd 1.0 parity"
       ]
+    },
+    "linux-syslog-delivery-cfdc0a3f": {
+      "level": "packaged-daemon-independent-peer",
+      "outcome": "pass",
+      "revision": "cfdc0a3f925677e8c33f20655ba1759687d4e5aa",
+      "reference": "docs/design/routerd15-audit.md#bounded-logsink-syslog-delivery-and-packaged-receiver-recovery",
+      "environment": "Dedicated Ubuntu Linux guest with formal matching base/addon 1.5.0~20261106193134+gcfdc0a3f; normal systemd daemon and independent bounded Python TCP receiver.",
+      "checks": [
+        "Syslog startup and control-operation delivery with expected priority/tag.",
+        "Receiver shutdown retained log-level/status API responsiveness; receiver restart restored delivery from the same daemon.",
+        "Empty configuration, daemon stop and receiver/file cleanup completed.",
+        "Local real-TCP non-reading-peer regression failed before the fix and passed with a five-second delivery deadline; existing TCP recovery/close and retention/archive tests passed.",
+        "Full Go suite (122 packages, 15 without tests), schemas/examples and four website locales passed at the product revision."
+      ],
+      "excludes": [
+        "Dynamic LogSink destination replacement and independent remote collector products",
+        "Native non-reading-peer backpressure and target-storage retention failure campaign",
+        "FreeBSD and full routerd 1.0 parity"
+      ]
     }
   },
   "features": [
@@ -2664,18 +2683,22 @@
         "body_and_entrypoint_files": [
           "pkg/controller/chain/chain.go",
           "pkg/observabilitypipeline/exporter.go",
-          "pkg/controller/chain/logretention.go"
+          "pkg/controller/chain/logretention.go",
+          "pkg/eventlog/eventlog.go"
         ],
         "related_test_files": [
           "pkg/controller/chain/logretention_test.go",
-          "pkg/controller/chain/pipeline_generation_test.go"
+          "pkg/controller/chain/pipeline_generation_test.go",
+          "pkg/eventlog/transport_lifecycle_test.go",
+          "pkg/eventlog/syslog_lifetime_test.go"
         ]
       },
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "linux-combined-telemetry-261e6675"
+          "linux-combined-telemetry-261e6675",
+          "linux-syslog-delivery-cfdc0a3f"
         ]
       },
       "freebsd": {
