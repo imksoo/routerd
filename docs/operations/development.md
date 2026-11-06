@@ -1431,3 +1431,26 @@ stop the guest. On failure retain bounded DHCP service/callback and DNS status
 output, inspect actual lease/journal state, and reproduce locally before repair.
 This gate covers acquisition, main restart and release, not natural lease expiry,
 HA failover, DHCPv6 names or all transport/policy combinations.
+
+
+### Packaged IngressService distribution and complete outage
+
+Reuse the isolated three-peer setup above, with `onNoHealthyBackends: reject`.
+Certify both echo servers directly before product apply. Add 17 distinct source
+addresses to the independent client, then select `sourceHash` through normal
+configuration apply. Within 45 seconds require both active backends and the
+requested effective selection. From each address open four new TCP connections,
+send a newline-terminated payload and verify the exact backend-tagged response.
+Require the same backend for each source's four connections and both backends
+across the sample. This checks affinity within an unchanged ruleset, not stable
+mapping across configuration replacement. Repeat with `random`, requiring every
+response from an allowed backend and both backends represented; this finite sample
+is not a statistical uniformity guarantee. Bound each connect/read to three seconds.
+
+Stop both independent backend processes; within 45 seconds require zero healthy
+backends. A new client connection must fail with connection refused, not silently
+time out or establish. Restart backend2, requiring actual backend2 payloads;
+restart backend1 and repeat the sourceHash response checks with both active.
+Finally use the empty-intent/peer/link/forwarding cleanup above. Preserve no raw
+output beyond current failure investigation. Dynamic address sources, alternate
+outage policies, UDP and physical failure domains remain separate checks.

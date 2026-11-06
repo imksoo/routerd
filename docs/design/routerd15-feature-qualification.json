@@ -2868,6 +2868,22 @@
       "excludes": [
         "Natural expiry, DHCPv6 names, HA failover and complete DNS policy/transport coverage"
       ]
+    },
+    "linux-ingress-selection-59373f17": {
+      "level": "packaged-daemon-native",
+      "outcome": "pass",
+      "revision": "59373f17446d41843cf750903d26fe65c6e16bbf",
+      "reference": "docs/design/routerd15-audit.md#packaged-ingressservice-selection-and-complete-outage",
+      "environment": "Dedicated Ubuntu guest normal packaged daemon; independent TCP client and two echo-server namespaces.",
+      "checks": [
+        "17 sources x 4 new connections: sourceHash affinity and both backend payloads; random reaches both with exact allowed replies.",
+        "All servers stopped: healthy count zero and connection refused; single then dual backend recovery restores payloads.",
+        "Empty Healthy, helpers/NAT withdrawn, peer/link/staging cleanup and forwarding restored."
+      ],
+      "excludes": [
+        "Dynamic source addresses, UDP, alternate outage policies and physical fault domains",
+        "Stable source mapping across ruleset replacement or statistical random uniformity"
+      ]
     }
   },
   "features": [
@@ -4619,7 +4635,8 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-ingress-daemon-7012214a",
-          "linux-firewall-pinhole-daemon-5645fcf8"
+          "linux-firewall-pinhole-daemon-5645fcf8",
+          "linux-ingress-selection-59373f17"
         ]
       },
       "freebsd": {
@@ -4627,7 +4644,7 @@
         "scoped_evidence": []
       },
       "required_remaining_checks": [
-        "IngressService all-backend outage, sourceHash/random selection and dynamic address sources; packaged failover/drain, surviving sockets, main restart and withdrawal already have scoped evidence",
+        "IngressService dynamic address sources, UDP and alternate outage policies; TCP failover/drain, sourceHash/random, all-backend reject/recovery, surviving sockets and main restart have scoped evidence",
         "FirewallFlowPinhole remaining source/destination/zone selector combinations; both correlation modes, tested response port/expiry, main restart and withdrawal have scoped independent-peer evidence"
       ]
     },

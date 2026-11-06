@@ -4143,3 +4143,18 @@ No direct lease event injection, SQLite repair or resolver restart was used.
 Empty intent was Healthy with no current errors and all helpers removed; client,
 namespace/veth and staging were cleaned. Local DNS worker/controller and daemonapi
 tests also passed. Natural expiry, DHCPv6 naming and HA are not qualified here.
+
+
+## Packaged IngressService selection and complete outage
+
+Formal product `59373f17` passed the normal-daemon distribution/outage procedure
+on a dedicated Ubuntu guest. For 17 source addresses and four new connections
+each, sourceHash kept each source on one backend and reached both independent
+servers. Random selection also returned only valid backend-tagged payloads and
+reached both servers. With both servers stopped, zero healthy backends converged
+and a new connection was actively refused. Backend2-only recovery delivered real
+payloads; both-server recovery passed the sourceHash sample again. Empty intent
+was Healthy, helpers/NAT absent, peer namespaces/veths/staging removed and original
+forwarding restored. Focused ingress controller/renderer tests passed. No product
+repair was needed. This does not qualify dynamic address sources, other outage
+policies, UDP or affinity across ruleset replacement.

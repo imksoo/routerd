@@ -1143,3 +1143,21 @@ dig は各回 `+time=2 +tries=1` を指定する。systemd で routerd を再起
 namespace/veth/staging 撤去、VM 停止まで行う。失敗時は DHCP callback、DNS、実リース・
 journal を観測しローカル再現へ落とす。取得・main 再起動・解放の試験であり、自然失効、
 HA、DHCPv6 名、全 transport/policy の合格とはしない。
+
+
+### パッケージ版 IngressService の分散と全停止
+
+既存の隔離 client/backend 2 台の構成に `onNoHealthyBackends: reject` を指定する。
+両 echo server の直接応答を先に確認する。独立 client に送信元アドレスを 17 個用意し、
+通常 apply で `sourceHash` を選ぶ。45 秒以内に両 backend と effective selection を確認。
+各送信元から新規 TCP 接続を 4 回開き、改行付き payload に対する backend 名付き応答を
+照合する。同じ送信元の 4 回が同じ backend、標本全体で両 backend を使うこと。
+これは同じ ruleset 内の affinity であり、設定置換をまたぐ対応の固定ではない。
+`random` でも全応答が許可 backend に由来し、両方を使うことを確認する。
+有限標本による均等性の保証ではない。connect/read は各 3 秒で打ち切る。
+
+両 backend を停止し、45 秒以内に healthy 数 0 を確認する。新規接続が timeout や成功でなく
+connection refused になること。backend2 のみ復旧して実応答、backend1 も復旧して
+sourceHash を再確認する。空設定の Healthy、helper/NAT 撤去、peer 停止、namespace/link/
+staging 撤去、forwarding 復元、VM 停止まで行う。動的アドレス、別の全停止ポリシー、
+UDP、物理故障は別の試験とする。
