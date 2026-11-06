@@ -1055,3 +1055,31 @@ WAN 応答へ戻ることを確認します。各問い合わせ判定の収束�
 停止します。失敗時は原因調査に必要な status・nft 集合/ルール・client 結果だけを保持。
 この試験は通常 daemon の静的集合変更と再起動が対象です。DNS 解決集合の更新、
 policy routing 通信、guest reboot、全 flow-pinhole 組み合わせの証明ではありません。
+
+
+## パッケージ版 FirewallFlowPinhole の応答試験
+
+正式パッケージ・空 canonical 設定の専用 Ubuntu VM で通常 service を使います。独立
+LAN client/WAN peer namespace をルーティング接続し、元の forwarding 値を保存。
+管理 interface は external Interface と `mgmt` FirewallZone に明示し、SSH の新規接続を
+維持します。LAN は `trust`、WAN は `untrust`。NAT は構成しません。導入済み routerd で
+validate し、`routerctl apply --timeout 90s -f CONFIG --replace` 後45秒以内に Healthy を要求。
+
+独立 UDP peer は最初の WAN アドレスの32100で要求を受け、IDを記録してから32099で応答。
+応答元は同じアドレスまたは許可 destination 範囲の別アドレスを選びます。client は試行毎に
+新しい source port を使い、指定遅延+2秒待ちます。要求先と応答元の port を変えることで、
+通常の established 許可で pinhole の欠落を隠さないようにします。FirewallFlowPinhole は
+LAN→WAN、client source 範囲、WAN destination 範囲、outbound32100、inbound32099、timeout5秒。
+
+`remoteAddress` で同じ応答元を許可し、別アドレスを拒否することを確認します。
+`localEndpoint` へ apply すると別アドレスを許可し、port32098は拒否することを要求。
+応答を6秒遅らせた場合は期限切れで拒否。main service 再起動の観測期限は停止期限を含め120秒。
+Healthy 後は新しい許可通信を
+確認します。zoneを残してpinholeだけ撤去すると、新しい応答が拒否されることを確認。
+全拒否試験で peer の要求受信を確認し、送信不通を合格と扱いません。client port は再利用しません。
+
+最後に空設定・Healthy・helperと所有filter tableの不在を確認。service/peer停止、
+namespace/veth/一時ファイル撤去、forwarding復元、VM停止まで実施します。失敗時は
+nft集合/counterと要求・応答identityを取得し、ローカル再現へ進みます。IPv4 firewallの
+2相関方式・応答port・期限切れ・再起動・撤去が対象で、NAT応答map、全selector、guest reboot、
+FreeBSDを確認したものではありません。

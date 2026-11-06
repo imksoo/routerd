@@ -4044,3 +4044,27 @@ traffic. The ledger now keeps that independent firewall packet check separate
 from the completed NAT response-pinhole and static redirect campaigns. It also
 removes already-qualified basic IngressService drain/failover from the remaining
 work description without promoting the whole feature to qualified.
+
+
+### Packaged FirewallFlowPinhole independent traffic
+
+Formal product `5645fcf8` passed the maintained firewall response-pinhole
+procedure in a dedicated Ubuntu guest using the normal service. Independent
+client/WAN namespaces exchanged UDP without NAT. Replies used a different
+source port from the request destination, avoiding ordinary established-flow
+acceptance. `remoteAddress` admitted the original remote address and rejected
+the second allowed-range address. `localEndpoint` admitted the second address,
+rejected an unlisted response port and rejected a response delayed beyond the
+five-second learning timeout. Each negative check also verified peer receipt.
+
+The fixture's 30-second SSH restart observation expired. Systemd timestamps
+showed stop/start completed in about 34 seconds, with a configured 90-second
+stop deadline, a new active process and Healthy status. No second restart was
+issued: the remaining checks resumed from the observed completed restart. A
+fresh permitted exchange passed, then pinhole withdrawal with zones retained
+blocked a new response. The fixture now allows 120 seconds for the restart
+command; the complete campaign was not rerun merely to remove the observation
+interruption. Empty withdrawal reached Healthy with no owned filter or helpers.
+Peers, namespaces and staging were removed, forwarding restored and the VM
+stopped. This establishes the two IPv4 firewall correlation modes and tested
+port/expiry/lifecycle paths, not every selector, NAT map, reboot or platform.

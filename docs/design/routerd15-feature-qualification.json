@@ -1271,7 +1271,7 @@
         "After changing the referenced source set and re-adding the resource under the same name, the active map did not contain the old client tuple and an injected WAN packet did not reach that former client. Successful temporary namespaces and output were removed."
       ],
       "excludes": [
-        "NAT44FlowDNATPinhole localEndpoint correlation, DNS-refreshed IPAddressSet runtime, NAT44SessionSync and FreeBSD runtime",
+        "FirewallFlowPinhole localEndpoint correlation, DNS-refreshed IPAddressSet runtime, NAT44SessionSync and FreeBSD runtime",
         "Complete NAT44 feature or routerd 1.0 function qualification"
       ]
     },
@@ -2786,6 +2786,23 @@
       "excludes": [
         "DNS-populated refresh/expiry and policy-routing traffic",
         "Guest reboot, complete flow-pinhole combinations and full 1.0 parity"
+      ]
+    },
+    "linux-firewall-pinhole-daemon-5645fcf8": {
+      "level": "packaged-daemon-independent-peer",
+      "outcome": "pass",
+      "revision": "5645fcf847fbfbf9020e7e971c7139896ebcc658",
+      "reference": "docs/design/routerd15-audit.md#packaged-firewallflowpinhole-independent-traffic",
+      "environment": "Dedicated Ubuntu guest, normal formal-package daemon, routed independent IPv4 UDP client/peer, no NAT.",
+      "checks": [
+        "remoteAddress requires the original peer; localEndpoint accepts another address within the configured range.",
+        "Unlisted response source port and expired learning are rejected; peer receipt required for negatives.",
+        "After observing the completed service restart, a fresh flow passes; pinhole withdrawal blocks new responses.",
+        "Empty Healthy withdrawal removes filter/helpers; peer/namespace/file cleanup, forwarding restore and VM stop."
+      ],
+      "excludes": [
+        "Initial 30-second restart observation expired; remaining stages resumed without a second restart, not an uninterrupted campaign",
+        "Every source/destination selector combination, guest reboot, NAT map behavior and FreeBSD"
       ]
     }
   },
@@ -4532,7 +4549,8 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "linux-ingress-daemon-7012214a"
+          "linux-ingress-daemon-7012214a",
+          "linux-firewall-pinhole-daemon-5645fcf8"
         ]
       },
       "freebsd": {
@@ -4541,7 +4559,7 @@
       },
       "required_remaining_checks": [
         "IngressService all-backend outage, sourceHash/random selection and dynamic address sources; packaged failover/drain, surviving sockets, main restart and withdrawal already have scoped evidence",
-        "FirewallFlowPinhole remoteAddress/localEndpoint correlation with independent peers, learning/expiry/restart/withdrawal and selector boundaries; NAT44FlowDNATPinhole evidence does not qualify this separate firewall resource"
+        "FirewallFlowPinhole remaining source/destination/zone selector combinations; both correlation modes, tested response port/expiry, main restart and withdrawal have scoped independent-peer evidence"
       ]
     },
     {

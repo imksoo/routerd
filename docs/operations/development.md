@@ -1310,3 +1310,41 @@ the guest. On failure retain only the current status, nft sets/rules and client
 results needed to distinguish apply, membership and forwarding failures. This
 qualifies normal-daemon static selection and restart, not DNS-populated refresh,
 policy-routing traffic, guest reboot or every NAT flow-pinhole combination.
+
+
+## Packaged firewall response-pinhole check
+
+Use the normal service from a formal package in a dedicated Ubuntu guest with
+an empty canonical configuration. Create separate routed LAN-client and WAN-peer
+namespaces, save forwarding settings, and explicitly include the management
+interface in an external Interface and `mgmt` FirewallZone so new SSH connections
+remain possible. Use `trust` for LAN and `untrust` for WAN. This is a firewall
+forwarding test without NAT. Validate inputs with the installed routerd and apply
+with `routerctl apply --timeout 90s -f CONFIG --replace`; require Healthy within
+45 seconds before sending traffic.
+
+An independent UDP peer listens on port 32100 at its first WAN address, records
+each request ID, and responds from port 32099 on either that address or a second
+address in the allowed destination range. The client binds a fresh source port
+for each request and waits two seconds beyond the requested peer response delay.
+Different request/response ports ensure ordinary established-flow acceptance
+cannot substitute for the pinhole. Configure FirewallFlowPinhole from LAN to
+WAN with the client's source range, the WAN destination range, outbound port
+32100, inbound port 32099 and a five-second timeout.
+
+With `correlation.key: remoteAddress`, require a same-address response and reject
+a response from the second address. Apply `localEndpoint` and require the second
+address response, while still rejecting source port 32098. Delay a response six
+seconds and require timeout after expiry. Allow 120 seconds to observe the
+service restart (including its configured stop deadline), then wait for
+Healthy and verify a fresh permitted exchange. Remove just the pinhole, retaining
+the zones, and require rejection of a new response. Every negative assertion
+also requires an independent peer receipt for that request; never accept missing
+outbound connectivity as success. Do not reuse client ports across assertions.
+
+End with empty configuration, Healthy and no helpers or owned filter table. Stop
+the service and peer, remove namespaces/veths/files, restore forwarding and stop
+the guest. On failure collect the relevant nft set/counters and request/response
+identity before local reproduction. This checks the two IPv4 firewall correlation
+modes, configured response port, expiry, restart and withdrawal; it does not
+qualify NAT response maps, every selector combination, guest reboot or FreeBSD.
