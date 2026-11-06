@@ -220,3 +220,34 @@ FreeBSD does not currently provide the same `SO_BINDTODEVICE` enforcement, so pl
 
 - [Local DNS zones](./dns-local-zone.md)
 - [DNS resolver concept](../concepts/dns-resolver.md)
+
+## Verify listener isolation during source withdrawal
+
+The local regression exercises when filtering, controller-generated runtime
+configuration, worker reload and actual UDP/TCP questions:
+
+```sh
+go test ./cmd/routerd-dns-resolver -run '^TestWhenFilteredListenerCannotSelectAnotherDNSView$' -count=1
+```
+
+For a native package check, use an isolated Linux guest with two DNS listeners.
+Select only `public` on the first and only `private` on the second. Give each
+forwarder a separate zone and record. Gate the public forwarder on a HealthCheck
+against a disposable TCP service; keep the private forwarder unconditional.
+
+1. With the health peer available, verify each listener's own record using
+   `dig` over UDP and TCP. The public listener must not return the private record.
+2. Stop only the health peer. Wait for `HealthCheck` to report `Unhealthy` and
+   for the generated resolver configuration to omit the public source. Repeat
+   the private-record queries against both listeners. Only the private listener
+   may answer it.
+3. Restart the health peer. Wait for `Healthy` and the public source to return;
+   verify the original answers and isolation without restarting routerd.
+4. Withdraw the test configuration. Require a healthy empty resource set and
+   no remaining resolver helper or test DNS listener. Stop the health peer.
+
+Use a bounded wait for the configured probe thresholds and reconciliation.
+A timeout, a leaked private answer, or recovery requiring product-state repair
+fails the check. Record the executed package revision and outcome; retain raw
+output only while investigating a failure. This check covers explicit listener
+source selection, not every conditional-domain or dynamic-upstream policy.

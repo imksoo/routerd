@@ -219,3 +219,33 @@ FreeBSD には同等の `SO_BINDTODEVICE` の強制がないため、プラッ�
 
 - [ローカル DNS ゾーン](./dns-local-zone.md)
 - [DNS リゾルバのコンセプト](../concepts/dns-resolver.md)
+
+## 参照元の停止時に待受の分離を確認する
+
+次の回帰テストは when の選別、controller の設定生成、worker の reload と
+実際の UDP/TCP 問い合わせを通します。
+
+```sh
+go test ./cmd/routerd-dns-resolver -run '^TestWhenFilteredListenerCannotSelectAnotherDNSView$' -count=1
+```
+
+実パッケージでは、隔離 Linux ゲストに 2 つの DNS 待受を作ります。一方は
+`public`、もう一方は `private` だけを参照させ、それぞれ別のゾーンとレコードを
+設定します。公開用 forwarder は試験用 TCP サービスへの HealthCheck で有効化し、
+非公開用 forwarder は常時有効にします。
+
+1. 対向サービスが動いている状態で、各待受のレコードを `dig` の UDP/TCP で確認します。
+   公開用待受から非公開レコードが返ってはいけません。
+2. 対向サービスだけを停止します。HealthCheck の `Unhealthy` と、生成された
+   resolver 設定から公開用参照元が消えたことを確認します。非公開レコードが
+   返るのは非公開用待受だけであることを、UDP/TCP で確認します。
+3. 対向を再開し、`Healthy` と公開用参照元の復帰を待ちます。routerd を再起動せずに、
+   元の応答と待受の分離が戻ることを確認します。
+4. 試験設定を撤去し、空のリソース集合が Healthy になり、resolver helper と DNS
+   待受が残っていないことを確認します。対向サービスも停止します。
+
+待機は設定した probe 回数と reconcile に応じた有限時間にします。タイムアウト、
+非公開レコードの漏出、製品状態を手で直さないと復旧しない場合は失敗です。
+実行パッケージの版と結果を記録し、生ログは障害調査中だけ保持します。
+この試験の対象は明示的な待受の参照元制限であり、条件付きドメイン転送や動的上流の
+全ポリシーを検証したことにはなりません。

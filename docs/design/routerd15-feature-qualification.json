@@ -2484,6 +2484,23 @@
         "Deterministic process crash after durable commit, not arbitrary power-loss storage certification.",
         "Does not qualify recovery for every lease/resource owner."
       ]
+    },
+    "linux-dns-listener-selection-5b25593d": {
+      "level": "native-kernel",
+      "outcome": "pass",
+      "revision": "5b25593d3f4ffc4095404231cb3028bde2edefea",
+      "reference": "docs/how-to/dns-private-upstream.md#verify-listener-isolation-during-source-withdrawal",
+      "environment": "Dedicated isolated Linux VM, matching base/native nDPI addon apt update to 1.5.0~20261106175706+g5b25593d; actual systemd daemon and dig UDP/TCP clients on loopback.",
+      "checks": [
+        "Local test 652e4163 reproduced a private-zone answer on a public-only listener after its selected forwarder became when=false. The fix retains declared listener source selections.",
+        "Native HealthCheck-driven source withdrawal and return preserved both listener isolation and private-listener availability without manual product-state repair.",
+        "Empty configuration withdrawal was Healthy with no resolver helpers or test DNS listeners remaining. Independent health peer stopped and VM stopped.",
+        "Full Go suite passed (122 packages, 15 without tests), schema/example checks and all four website locale builds passed."
+      ],
+      "excludes": [
+        "Clean OS installation on this revision (this was an apt update)",
+        "External-host DNS traffic, all conditional-domain/dynamic-upstream policies, complete 1.0 parity and FreeBSD"
+      ]
     }
   },
   "features": [
@@ -3756,7 +3773,8 @@
           "linux-dualstack-recovery-6977c66e",
           "linux-ha-pair-initial-apt-83414e60",
           "linux-ha-pair-lifecycle-apt-1a96b8c0",
-          "linux-reservation-dns-bootstrap-6696bff6"
+          "linux-reservation-dns-bootstrap-6696bff6",
+          "linux-dns-listener-selection-5b25593d"
         ]
       },
       "freebsd": {
