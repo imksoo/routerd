@@ -264,7 +264,7 @@ routerd_tailscale_mesh_start() {
       return 124
     fi
   fi
-  /usr/bin/timeout -k 2 45 '/usr/local/bin/tailscale' 'up' '--timeout=30s' '--hostname=routerd-mesh' "--auth-key=${auth_key}" '--accept-routes=true' '--accept-dns=false' >/dev/null 2>&1
+  /usr/bin/timeout -k 2 45 '/usr/local/bin/tailscale' 'up' '--timeout=30s' '--reset' '--hostname=routerd-mesh' "--auth-key=${auth_key}" '--accept-routes=true' '--accept-dns=false' >/dev/null 2>&1
   rc=$?
   if [ "${rc}" -ne 0 ]; then
     routerd_tailscale_mesh_rollback || true
