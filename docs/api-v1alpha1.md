@@ -125,6 +125,10 @@ and logs emitted by managed daemons. `LogSink` describes log forwarding routes
 for operational events and observed network logs. Direct `LogSink` OTLP delivery
 is unsupported; use the configured `Telemetry` or `ObservabilityPipeline` export.
 
+After a configuration becomes active, ordinary `LogSink` destinations follow
+that configuration without restarting routerd. Replacement closes the previous
+sinks after their in-flight deliveries complete; removal stops subsequent delivery.
+
 Syslog delivery has a five-second connection/write deadline per serialized event,
 including its reconnect attempt. A timeout returns a delivery error. In particular,
 `LogRetention` does not delete rows whose archive delivery failed; this deadline

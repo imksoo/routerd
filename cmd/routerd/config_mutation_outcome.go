@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 
 	"github.com/imksoo/routerd/pkg/api"
 	controllerchain "github.com/imksoo/routerd/pkg/controller/chain"
@@ -40,6 +41,10 @@ func (m serveConfigMutator) mutateRuntime(next *api.Router, configYAML string) (
 		outcome.Runtime.Active = m.activeRuntime()
 	}
 	m.publishConfirmedRuntime(outcome.Runtime.Active)
+	active := outcome.Runtime.Active
+	if active.Known && active.Available && active.Router != nil {
+		err = errors.Join(err, m.logger.Reconfigure(active.Router))
+	}
 	return outcome, err
 }
 

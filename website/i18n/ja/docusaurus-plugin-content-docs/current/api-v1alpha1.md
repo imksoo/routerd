@@ -562,6 +562,9 @@ OpenTelemetry のエンドポイントへ出すための resource です。`LogS
 や観測ログの転送経路を表します。`LogSink` の直接 OTLP 送信は未対応です。
 OTLP 送信には `Telemetry` または `ObservabilityPipeline` を使ってください。
 
+設定が稼働状態になると、通常の `LogSink` 送信先も routerd の再起動なしで切り替わります。
+送信中の処理が完了してから旧 sink を閉じ、削除後のイベント配送を停止します。
+
 syslog の接続・送信には、直列処理するイベントごとに再接続を含む 5 秒の期限があります。
 期限超過は送信エラーです。`LogRetention` はアーカイブ送信に失敗した行を削除しません。
 

@@ -54,8 +54,11 @@ type Sink interface {
 }
 
 type Logger struct {
-	router string
-	sinks  []Sink
+	mu            sync.RWMutex
+	configuration *api.Router
+	closed        bool
+	router        string
+	sinks         []Sink
 }
 
 func New(router *api.Router) (*Logger, error) {
@@ -116,7 +119,7 @@ func NewSelected(router *api.Router, refs []string) (*Logger, error) {
 		sort.Strings(missing)
 		return nil, fmt.Errorf("selected LogSink not found: %s", strings.Join(missing, ", "))
 	}
-	return &Logger{router: router.Metadata.Name, sinks: sinks}, nil
+	return &Logger{configuration: router, router: router.Metadata.Name, sinks: sinks}, nil
 }
 
 func NewSink(spec api.LogSinkSpec) (Sink, error) {
@@ -161,7 +164,12 @@ func NewSink(spec api.LogSinkSpec) (Sink, error) {
 }
 
 func (l *Logger) Emit(level Level, command, message string, fields map[string]string) {
-	if l == nil || len(l.sinks) == 0 {
+	if l == nil {
+		return
+	}
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	if l.closed || len(l.sinks) == 0 {
 		return
 	}
 	event := Event{
@@ -181,7 +189,15 @@ func (l *Logger) Emit(level Level, command, message string, fields map[string]st
 // schema on sinks that only understand Event. The encoded record is preserved
 // as JSON so downstream log systems can parse it independently.
 func (l *Logger) EmitRecord(signal string, record map[string]any) error {
-	if l == nil || len(l.sinks) == 0 {
+	if l == nil {
+		return nil
+	}
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	if l.closed {
+		return errors.New("logger is closed")
+	}
+	if len(l.sinks) == 0 {
 		return nil
 	}
 	data, err := json.Marshal(record)
@@ -208,10 +224,45 @@ func (l *Logger) EmitRecord(signal string, record map[string]any) error {
 	return nil
 }
 
+// Reconfigure publishes sinks for a confirmed active configuration. Holding the
+// writer lock joins existing deliveries before old destinations are closed.
+func (l *Logger) Reconfigure(router *api.Router) error {
+	if l == nil {
+		return nil
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.closed {
+		return errors.New("logger is closed")
+	}
+	if l.configuration == router {
+		return nil
+	}
+	next, err := New(router)
+	if err != nil {
+		return err
+	}
+	previous := l.sinks
+	l.configuration, l.router, l.sinks = router, next.router, next.sinks
+	var failures []error
+	for _, sink := range previous {
+		if err := sink.Close(); err != nil {
+			failures = append(failures, err)
+		}
+	}
+	return errors.Join(failures...)
+}
+
 func (l *Logger) Close() error {
 	if l == nil {
 		return nil
 	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.closed {
+		return nil
+	}
+	l.closed = true
 	var errs []string
 	for _, sink := range l.sinks {
 		if err := sink.Close(); err != nil {
