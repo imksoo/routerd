@@ -4290,3 +4290,30 @@ Local tests cover this distinction and machine-approval state; native expiry
 does not qualify every observation failure or control-server outage. The
 [reusable procedure](../operations/development.md#tailscale-authentication-expiry)
 keeps the existing reconciliation interval and uses no product-state repair.
+
+## Tailscale dual-stack exit and independent control recovery
+
+Formal product `db41e03eae9648dc6d068892b3ec361d8a5696c1` passed a fresh
+uninterrupted two-guest run after correcting the control-path fixture. The
+independent client retrieved exact HTTP payloads over IPv4 and IPv6 exit paths,
+including an IPv6 destination outside the connected control LAN and an observed
+`tailscale0` route. With Headscale stopped and HTTPS health unreachable from
+both guests, 24 new TCP requests (12 per family) succeeded. The router main PID
+and Running backend remained unchanged. Recreating the same control server
+restored both provider-observed online nodes and payloads without reauthentication.
+Normal routerd restart retained IPv6 traffic; empty Healthy withdrawal removed
+both destination routes and disconnected the node. Fixture processes, network
+namespace, veth and staging were removed and forwarding settings restored.
+
+The earlier run did not qualify recovery. First its restart command addressed
+a collected transient unit. After recreating the server, packet capture showed
+LAN SYNs with SYN-ACKs sent through the peer's selected exit node instead of the
+control LAN. A local isolated route-table reproduction confirmed that selection.
+The failed run was fully withdrawn before recertification. The corrected fixture
+retains its connected control LAN using the independent client's LAN-access
+option and verifies a new control connection after exit selection. No product
+change or product-state repair was needed. See the
+[reproduction criteria](../operations/development.md#dual-stack-exit-traffic-and-control-server-outage).
+
+This proves bounded control-server outage/recovery with established peer keys,
+not full platform parity or unlimited disconnected operation.

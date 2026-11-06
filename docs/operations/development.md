@@ -1589,3 +1589,28 @@ configuration API. Require Running/Healthy, cleared old reason/runtimeError and
 restored independent payload. Complete empty withdrawal and remove the one-use
 credential with the fixture. This verifies expired node credentials and explicit
 credential renewal, not automatic secret generation or control-server outage.
+
+### Dual-stack exit traffic and control-server outage
+
+Extend the isolated endpoint with IPv6 and declare an IPv6StaticRoute to a
+destination outside the control LAN. Before applying, require that the independent
+client cannot already reach it. After selecting the router as exit node, require
+the expected IPv4 and IPv6 HTTP payloads and an IPv6 route through `tailscale0`.
+
+Keep the control server's reply path independent of the selected exit path. If
+Headscale and the test client share a guest, use the client's
+`--exit-node-allow-lan-access=true` and verify the server-to-router connected-LAN
+route and a fresh HTTPS health request after exit selection. Without this, a
+SYN can arrive on the LAN while its SYN-ACK leaves through the exit node. A
+cached connection is not sufficient certification. For a transient systemd-run
+server, recreate the same command after stopping it; the stopped transient unit
+may have been collected.
+
+Stop the control server, require failed health requests from both nodes, and
+make repeated fresh TCP HTTP requests over both address families. Restart the
+control server without reauthenticating either node, require both nodes online
+in its current observations, and repeat both payload paths. Restart routerd and
+check IPv6 traffic again. Empty withdrawal must remove both owned destination
+routes, disconnect the node and return Healthy. Reset the independent client's
+exit selection/LAN exception and remove the fixture as above. This is a bounded
+outage check, not a promise of forwarding through arbitrary credential expiry.

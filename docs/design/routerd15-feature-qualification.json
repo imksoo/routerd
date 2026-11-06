@@ -2957,6 +2957,24 @@
         "IPv6 exit traffic",
         "All native CLI-observation failure paths"
       ]
+    },
+    "linux-tailscale-dualstack-db41e03e": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "db41e03eae9648dc6d068892b3ec361d8a5696c1",
+      "reference": "docs/design/routerd15-audit.md#tailscale-dual-stack-exit-and-independent-control-recovery",
+      "checks": [
+        "Normal packaged daemon: independent IPv4/IPv6 exit HTTP payload and IPv6 tailscale0 route",
+        "Verified control-server outage with 24 new dual-stack TCP requests and unchanged main PID",
+        "Both provider-observed nodes online and dual-stack payload recovery without reauthentication",
+        "Main restart IPv6 traffic and empty Healthy dual-stack route/node withdrawal",
+        "Fresh uninterrupted run after failed control-path fixture withdrawal and recertification"
+      ],
+      "excludes": [
+        "Unlimited control-server outage",
+        "Full combined deployed configuration",
+        "All-platform parity"
+      ]
     }
   },
   "features": [
@@ -3461,7 +3479,8 @@
         "scoped_evidence": [
           "linux-tailscale-withdrawal-6112f0bc",
           "linux-tailscale-advertisements-5feec40c",
-          "linux-tailscale-expiry-db41e03e"
+          "linux-tailscale-expiry-db41e03e",
+          "linux-tailscale-dualstack-db41e03e"
         ]
       },
       "freebsd": {
@@ -3469,7 +3488,6 @@
         "scoped_evidence": []
       },
       "required_remaining_checks": [
-        "IPv6 exit-node payload forwarding and control-plane outage recovery",
         "Combined deployed configuration and all-platform parity"
       ]
     },
