@@ -112,3 +112,11 @@ DNS名の誤SNI表示修正、NTP応答、両empty撤去を確認しました。
 正式パッケージの daemon を起動し、`routerctl get LogRetention/archive -o json` が `Applied`、`deleted: 1` になることを確認します。別途、受信側で古い行のマーカーを確認し、DB の読み取り専用検査で新しい行だけが残っていることを確認します。件数表示だけで合格にしません。最後に `routerctl apply --timeout 90s -f empty.yaml --replace` で撤去し、予約済み自己再起動の完了後に retention status が消え、`Healthy` になることを確認します。90 秒は daemon の 1 分の適用期限と応答処理を含む待機時間であり、処理期限や最終判定の緩和ではありません。
 
 この経路は `76464310` の正式 Linux パッケージで通過しました。plugin 履歴の期限切れ削除と実際の UDP 受信の確認であり、パケット損失時の回復、受信側の永続保存、全ログテーブル、完全なイベント監査履歴の保証ではありません。
+
+
+### conntrack 観測が取得できない場合
+
+conntrack のスナップショットを取得できない場合、observer は `Unavailable`、
+有効な `TrafficFlowLog` は `Degraded / ConntrackUnavailable` を報告します。
+空のテーブルと見なして履歴を終了・削除せず、保存済みフローとカウンターを保持します。
+観測が復旧し、履歴への書き込みが成功すると `Observed` に戻ります。

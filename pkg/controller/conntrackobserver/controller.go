@@ -143,7 +143,18 @@ func (c *Controller) recordUnavailable(snapshotErr error) error {
 		"message":    snapshotErr.Error(),
 		"observedAt": time.Now().UTC().Format(time.RFC3339Nano),
 	}
-	return c.Store.SaveObjectStatus(api.NetAPIVersion, "ConntrackObserver", "default", status)
+	observerErr := c.Store.SaveObjectStatus(api.NetAPIVersion, "ConntrackObserver", "default", status)
+	resource, spec, configured := trafficFlowLogSpec(c.Router)
+	if !configured || !spec.Enabled {
+		return observerErr
+	}
+	// An unavailable snapshot cannot refresh or retire flow history. Publish
+	// the loss of observation instead of leaving the previous success current.
+	flowErr := c.Store.SaveObjectStatus(resource.APIVersion, "TrafficFlowLog", resource.Metadata.Name, map[string]any{
+		"phase": "Degraded", "reason": "ConntrackUnavailable", "message": snapshotErr.Error(),
+		"path": spec.Path, "source": spec.Source, "observedAt": status["observedAt"],
+	})
+	return errors.Join(observerErr, flowErr)
 }
 
 func (c *Controller) recordTrafficFlows(ctx context.Context, count int) error {

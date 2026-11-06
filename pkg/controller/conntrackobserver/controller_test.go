@@ -162,6 +162,9 @@ func TestControllerRecordsTrafficFlowLog(t *testing.T) {
 	if err != nil || len(retained) != 1 {
 		t.Fatalf("history lost after unavailable snapshot: %v, rows=%d", err, len(retained))
 	}
+	if !retained[0].EndedAt.IsZero() || retained[0].BytesOut == nil || *retained[0].BytesOut != 300 {
+		t.Fatalf("unavailable snapshot changed active history: %#v", retained[0])
+	}
 	if err := os.WriteFile(countPath, []byte("1\n"), 0644); err != nil {
 		t.Fatal(err)
 	}

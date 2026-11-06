@@ -181,7 +181,11 @@ A failed flow observation or `TrafficFlowLog` database write marks that resource
 `Degraded`, with a failure message instead of old active-flow counts. Connection
 counts and threshold events continue. Successful writes restore `Observed`;
 disabling the log changes its status to `Skipped` without reading its destination.
-Failure to save the required resource status remains an error.
+Failure to save the required resource status remains an error. When the native
+conntrack snapshot itself is unavailable, the observer reports `Unavailable` and
+an enabled flow log reports `Degraded / ConntrackUnavailable`. No empty table is
+invented: stored flows and counters remain unchanged until observation recovers.
+
 
 
 ### Controller log delivery
