@@ -410,3 +410,41 @@ can still attempt Down upstreams, so that classification alone does not prove th
 cause of the previous incorrect conditional reply. The successful campaign also
 changed the control-plane fixture to TLS and checked startup readiness; record
 its scope rather than attributing every recovery difference to one code change.
+
+## Current-package combined lifecycle
+
+Use the full deployed resource multiplicities and dependencies with independent
+peers; keep any fixture-only declarations explicit. Use disjoint reserved-client
+and load-client address sets. Generate the Tailscale input with the certified TLS
+control endpoint directly, rather than depending on a later manual URL rewrite.
+Before recreating disposable AFTR links on a persistent peer bridge, remove only
+the fixture destinations' obsolete neighbor entries; a cached old veth MAC is
+not proof that the new AFTR is unreachable. Certify independent peers, matching
+formal packages, empty Healthy state and synchronization SSH before qualification.
+Certify storage headroom too: place bounded collector output alongside the
+temporary executable on a capacity-limited tmpfs, leaving space for all three
+signals. Verify root filesystem headroom before start; a per-file size limit
+alone does not protect a nearly full filesystem.
+
+After initial startup, poll the API across the declared managed self-restart
+window and require no queued restart before client tests. A one-shot status read
+can catch the intentionally replaced socket. Report the actual aggregate phase:
+a declared event retention longer than the journal's independent safety bound
+reports `LogRetention/default: Degraded / EventJournalSafetyBound`; a standby
+also exposes its disabled DS-Lite resources and down external observations of
+those tunnels/VMACs. These specific observations do not prove failed forwarding.
+Do not suppress unrelated Pending/Error/Degraded resources or change declared
+retention just to obtain a green aggregate. Require stable expected roles, no
+current controller errors, and only the explicitly accounted observations before
+each fully restored pair checkpoint. A deliberately powered-off peer can produce
+synchronization errors; those must clear after it returns.
+
+Exercise both reserved clients, all conditional DNS branches and authenticated
+DoH, allowed/excluded management requests, redirected DNS and NTP, native TLS
+classification, and both routers' telemetry. Keep the same 74 independent flows
+through natural PD renewal, both-direction power loss and cold return, latest
+lease/PD synchronization, and active-daemon restart in each direction. Compare
+application payloads, original translated tuples and single TCP accepts; inspect
+returning-node packets for competing shared claims. Report the largest response
+gap rather than calling preserved TCP connections uninterrupted service. Finish
+with empty Healthy on both nodes, actual withdrawal and independent-peer cleanup.

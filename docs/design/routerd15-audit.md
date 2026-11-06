@@ -4348,3 +4348,32 @@ The maintained EN/JA observability procedure specifies input identity, peer
 setup, bounded waits/counts and teardown. Long outages, buffer exhaustion,
 TLS/mTLS, durable remote storage, complete attribution and the full deployed
 configuration remain unqualified by this scoped test.
+
+## Current-package combined gate preparation — db41e03e
+
+The current formal packages were installed on both dedicated Linux routers.
+The first attempt stopped when an old fixture read status only once across a
+managed self-restart. Both empty withdrawals passed. The harness now polls that
+socket replacement and reports the actual known retention/standby observations
+instead of demanding an unjustified all-Healthy aggregate. The existing explicit
+retention-policy regression passed locally.
+
+The corrected 107-resource core lifecycle completed in 529.1 seconds: both DHCP
+reservations, conditional DNS/DoH, management admission, DNS/NTP replies, native
+TLS classification, telemetry, natural PD renewal, both-direction power loss,
+cold return, latest lease synchronization and active-main restarts. All 74
+original application flows resumed with unchanged tuples and single TCP accepts;
+the largest response gap was 53.853 seconds. Both returning-node captures had
+no observed shared MAC/IP/ARP claims.
+
+This is **not a completed latest combined qualification**: a subsequent static
+route payload check could not create its peer script because the peer root
+filesystem was full. The initial capacity certification was insufficient. The
+receiver's roughly 23 MiB of current JSON output exhausted the remaining root
+space; the collector executable was already on tmpfs. Both product withdrawals
+then passed with empty Healthy, and the temporary peer fixture was removed.
+The revised receiver writes its three bounded output files to the existing
+512 MiB tmpfs and checks at least 100 MiB of root headroom before setup. Only
+rebuildable APT binary index caches were removed to restore that headroom.
+A new certification and uninterrupted final run are required before claiming
+this complete gate passed; none of these observations establish a product fix.
