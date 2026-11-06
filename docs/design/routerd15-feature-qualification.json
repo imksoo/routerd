@@ -2752,6 +2752,24 @@
         "Flow-pinhole expiry and guest reboot",
         "FreeBSD and complete 1.0 parity"
       ]
+    },
+    "linux-address-set-pinhole-5645fcf8": {
+      "level": "production-controller-independent-peer",
+      "outcome": "pass",
+      "revision": "5645fcf847fbfbf9020e7e971c7139896ebcc658",
+      "reference": "docs/design/routerd15-audit.md#static-address-set-replacement-and-udp-response-authorization",
+      "environment": "Dedicated Ubuntu guest, formal-package validator, same-revision NAT44 test driver, independent UDP peers and real nftables.",
+      "checks": [
+        "Static source replacement permits the new client and rejects the removed client; negative checks require outbound peer receipt.",
+        "Response source/destination/interface/port boundaries, expiry, withdrawal and changed-policy re-add pass.",
+        "Local real-kernel regression covers runtime/full-render IPv4/IPv6 replacement and preservation of DNS-owned learned members.",
+        "Formal apt update and integrity checks pass; fixture namespaces and staging removed, guest stopped."
+      ],
+      "excludes": [
+        "Normal-daemon apply/restart path and policy-routing traffic",
+        "DNS resolution refresh/expiry and localEndpoint correlation",
+        "FreeBSD, guest reboot and complete 1.0 parity"
+      ]
     }
   },
   "features": [
@@ -4448,7 +4466,8 @@
           "linux-named-redirect-9400f03c",
           "linux-nat-translation-b318d75b",
           "linux-nat-daemon-176f42fb",
-          "linux-nat-pool-2ee9f2a2"
+          "linux-nat-pool-2ee9f2a2",
+          "linux-address-set-pinhole-5645fcf8"
         ]
       },
       "freebsd": {
@@ -4494,7 +4513,8 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "linux-ingress-daemon-7012214a"
+          "linux-ingress-daemon-7012214a",
+          "linux-address-set-pinhole-5645fcf8"
         ]
       },
       "freebsd": {
@@ -4549,7 +4569,8 @@
           "linux-dhcp-firewall-1f9fc319",
           "linux-home-router-clean-install-999dfd4",
           "linux-dualstack-recovery-6977c66e",
-          "linux-named-redirect-9400f03c"
+          "linux-named-redirect-9400f03c",
+          "linux-address-set-pinhole-5645fcf8"
         ]
       },
       "freebsd": {
