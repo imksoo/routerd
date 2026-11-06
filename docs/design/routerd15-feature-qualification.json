@@ -2661,6 +2661,24 @@
         "Arbitrary address pools and other port mapping modes",
         "FreeBSD and full 1.0 parity"
       ]
+    },
+    "linux-nat-daemon-176f42fb": {
+      "level": "packaged-daemon-independent-peer",
+      "outcome": "pass",
+      "revision": "176f42fb3395d2667bea600dce24d3dba839711e",
+      "reference": "docs/design/routerd15-audit.md#packaged-nat-source-translation-lifecycle",
+      "environment": "Dedicated Ubuntu guest, formal matching base/addon 1.5.0~20261106201835+g176f42fb, normal systemd daemon, independent LAN client and WAN HTTP namespaces.",
+      "checks": [
+        "API apply established the configured source address and TCP source port range.",
+        "Live address change retained daemon PID; daemon restart recovered the same desired translation.",
+        "NAT removal restored original client source and removed the table while routing continued.",
+        "Empty Healthy configuration and daemon/peer/namespace/file cleanup completed; guest stopped."
+      ],
+      "excludes": [
+        "Arbitrary pools and all mapping modes",
+        "Guest reboot and FreeBSD",
+        "Native conntrack-source loss/recovery"
+      ]
     }
   },
   "features": [
@@ -4352,7 +4370,8 @@
           "linux-ha-pair-followup-apt-b698cb1d",
           "linux-ha-pair-lifecycle-apt-1a96b8c0",
           "linux-named-redirect-9400f03c",
-          "linux-nat-translation-b318d75b"
+          "linux-nat-translation-b318d75b",
+          "linux-nat-daemon-176f42fb"
         ]
       },
       "freebsd": {

@@ -3811,3 +3811,27 @@ No new retry loop, extra startup deadline or relaxed process identity was added.
 The deterministic launcher regression in `1bfe0900` fails before this change;
 its companion test retains rejection of a persistently different executable.
 Raw executable/argv diagnostics were removed after investigation.
+
+
+### Packaged NAT source translation lifecycle
+
+The formal matching base/addon `1.5.0~20261106201835+g176f42fb` subsequently
+passed through the normal systemd daemon in a dedicated Ubuntu guest. The
+configuration contained two external Interface resources, an explicit runtime
+IPv4 forwarding Sysctl and one translation-shaped NAT44Rule. Independent LAN
+client and WAN HTTP-server namespaces observed the actual source tuple.
+
+The server observed the configured SNAT address and TCP port range after initial
+API apply. Changing the address through the API changed new connections while
+the daemon PID stayed unchanged. Restarting the main service retained the desired
+translation. Removing only NAT preserved forwarding and restored the original
+client source, with the owned nftables table absent. Empty configuration then
+returned Healthy; the daemon, HTTP server and namespace fixtures were stopped,
+temporary files were removed, the fixture's original forwarding setting was
+restored and the guest was stopped. No product-state repair occurred.
+
+This result is pinned to `176f42fb3395d2667bea600dce24d3dba839711e` and extends
+the controller-only result above to normal API activation and daemon restart.
+It does not qualify arbitrary pools, every mapping mode, guest reboot or FreeBSD.
+The earlier conntrack-observer status fix is present in the package, but native
+conntrack-source loss/recovery was not injected in this campaign.
