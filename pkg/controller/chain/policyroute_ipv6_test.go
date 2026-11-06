@@ -423,3 +423,21 @@ func TestPolicyIPv6ClearedSourceWithoutAcknowledgementIsNotAdopted(t *testing.T)
 		})
 	}
 }
+
+func TestPolicyIPv6WithdrawnPendingStatusIsRetired(t *testing.T) {
+	c, store, native, _ := newPolicyIPv6Fixture(t)
+	native.source = ""
+	if err := c.reconcileIPv6HostPolicies(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "host-ipv6-ra"); got["phase"] != "Pending" {
+		t.Fatal(got)
+	}
+	c.Router = hostPolicyRouter(false)
+	if err := c.reconcileIPv6HostPolicies(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "host-ipv6-ra"); len(got) != 0 {
+		t.Fatalf("withdrawn policy still has status: %v", got)
+	}
+}
