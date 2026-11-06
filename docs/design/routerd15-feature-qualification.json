@@ -2575,6 +2575,22 @@
         "Separate LAN-client transit, multi-WAN and other DHCP peer modes",
         "FreeBSD and complete routerd 1.0 parity"
       ]
+    },
+    "linux-dhcpv6-server-restart-a6d4e3bb": {
+      "level": "packaged-daemon-independent-peer",
+      "outcome": "pass",
+      "revision": "a6d4e3bb45376ade0d5119c435bd47e97c965764",
+      "reference": "docs/design/routerd15-audit.md#dhcpv6-server-renewal-across-the-packaged-main-service-restart",
+      "environment": "Dedicated Ubuntu Linux VM with formal base/addon 1.5.0~20261106191737+ga6d4e3bb; normal systemd routerd/dnsmasq and independent dhcpcd in isolated network/mount namespaces.",
+      "checks": [
+        "Stateful IA_NA pool allocation, client DAD, routerd RA default route and independent IPv6 HTTP payload passed.",
+        "Natural DHCPRENEW observed before and after main routerd restart; client PID and address unchanged, HTTP payload passed after each renewal.",
+        "Empty configuration Healthy, helpers absent and dnsmasq inactive before client/HTTP/namespace/veth/files cleanup; guest stopped."
+      ],
+      "excludes": [
+        "Lease expiry, prefix changes, independent routed-LAN transit and host reboot",
+        "FreeBSD and complete routerd 1.0 parity"
+      ]
     }
   },
   "features": [
@@ -3711,7 +3727,8 @@
           "linux-dhcpv6-server-ia-na-f6be5a58",
           "linux-dhcpv6-server-packaged-lifecycle-038381c2",
           "linux-dhcp-family-isolation-2f9534d7",
-          "linux-home-router-clean-install-999dfd4"
+          "linux-home-router-clean-install-999dfd4",
+          "linux-dhcpv6-server-restart-a6d4e3bb"
         ]
       },
       "freebsd": {
@@ -3719,7 +3736,7 @@
         "scoped_evidence": []
       },
       "required_remaining_checks": [
-        "DHCPv6 renewal/expiry and restart through full routerd supervision",
+        "DHCPv6 lease expiry and host reboot through full routerd supervision",
         "Routed IPv6 client behavior across prefix changes, withdrawal and failure recovery"
       ]
     },

@@ -3596,3 +3596,44 @@ traffic-flow API proved native detection. Neither was a product defect.
 A separate observed defect mislabeled native DNS names as TLS SNI. Its focused
 native-library regression reproduces the erroneous DNS result before the fix;
 that subsequent fix is not included in the `77f05a09` VM result.
+
+## DHCPv6 server renewal across the packaged main-service restart
+
+2026-11-06: product `a6d4e3bb45376ade0d5119c435bd47e97c965764`, formal matching
+base/addon `1.5.0~20261106191737+ga6d4e3bb`, passed on a dedicated Ubuntu Linux VM.
+The normal installed systemd routerd service owned dnsmasq; independent dhcpcd ran
+in a separate network namespace with private `/run` and `/var/lib` mounts.
+
+The stateful server supplied a two-minute IA_NA lease from its configured pool.
+The client completed DAD, obtained a default route from routerd RA and fetched a
+fixed IPv6 HTTP payload. An actual `DHCPRENEW` was observed before restarting
+routerd. After restarting **only routerd**, a later natural `DHCPRENEW` succeeded;
+the client PID and address were unchanged and the IPv6 HTTP payload still matched.
+Empty configuration became Healthy with no managed helper or active dnsmasq before
+the client, HTTP endpoint, namespace/veth and temporary files were removed. The VM
+was then stopped. No product changes or repairs were needed for this gate.
+
+To repeat in an approved dedicated Linux guest:
+
+1. Verify the formal package revision/file integrity, empty canonical config and
+   absent fixture links. Stop the empty main service. Create an isolated veth with
+   a client namespace, wait for link-local/global DAD, and give only the SUT link a
+   fixture IPv6 /64 address. Keep the client's global address unconfigured.
+2. Validate and apply an external Interface plus stateful DHCPv6Server resource,
+   `defaultRoute: true`, `logDHCP: true`, a /64 pool and `leaseTime: 2m`. Use normal
+   installed systemd service ownership, not a controller-filtered shadow daemon.
+3. Start independent `dhcpcd -d -6 -B --waitip=6 -t 30` with `ia_na 42` in its own
+   mount/network namespaces. Within 60 seconds verify an address inside the pool,
+   completed DAD, `proto ra` default route and an IPv6 HTTP payload from the SUT.
+4. Record the client PID/address. Within 100 seconds require a dnsmasq
+   `DHCPRENEW(<interface>)` event and successful HTTP; initial REQUEST/REPLY alone
+   do not prove renewal. Record the current RENEW count, restart routerd, and within
+   another 100 seconds require that count to increase with the same PID/address
+   and payload. Do not restart the client or inject a lease/address.
+5. Apply empty config and require Healthy/no helpers/dnsmasq inactive before
+   removing fixture processes/network/files. Stop the guest. If a stage fails,
+   retain the relevant bounded status and client/server errors for local diagnosis.
+
+This closes the native full-service restart/renewal slice. It does not prove lease
+expiry, prefix replacement, separate routed-LAN transit, host reboot, or FreeBSD.
+Earlier qualification remains revision-scoped; complete 1.0 parity is not claimed.
