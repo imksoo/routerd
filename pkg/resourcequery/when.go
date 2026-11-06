@@ -423,7 +423,6 @@ func clearFilteredDNSRefs(resources []api.Resource) []api.Resource {
 	zones := dnsResourceNames(resources, "DNSZone")
 	retained := resourceNamesByKind(resources)
 	resources = clearFilteredDNSZoneStatusRefs(resources, retained)
-	forwarders := map[string]bool{}
 	prunedForwarders := make([]api.Resource, 0, len(resources))
 	for _, res := range resources {
 		if res.APIVersion != api.NetAPIVersion || res.Kind != "DNSForwarder" {
@@ -434,25 +433,12 @@ func clearFilteredDNSRefs(resources []api.Resource) []api.Resource {
 		if err != nil || !dnsForwarderRefsRetained(spec, resolvers, upstreams, zones) {
 			continue
 		}
-		forwarders[res.Metadata.Name] = true
 		prunedForwarders = append(prunedForwarders, res)
 	}
-	out := make([]api.Resource, 0, len(prunedForwarders))
-	for _, res := range prunedForwarders {
-		if res.APIVersion != api.NetAPIVersion || res.Kind != "DNSResolver" {
-			out = append(out, res)
-			continue
-		}
-		spec, err := res.DNSResolverSpec()
-		if err != nil {
-			out = append(out, res)
-			continue
-		}
-		spec.Listen = filterDNSResolverListenSources(spec.Listen, forwarders)
-		res.Spec = spec
-		out = append(out, res)
-	}
-	return out
+	// Explicit listener sources are an access boundary, not a list of live
+	// dependencies. Removing the final selected source would turn it into the
+	// worker's empty-list default (all sources) and expose other DNS views.
+	return prunedForwarders
 }
 
 func clearFilteredDNSZoneStatusRefs(resources []api.Resource, retained map[string]map[string]bool) []api.Resource {
@@ -608,25 +594,6 @@ func dnsForwarderRefsRetained(spec api.DNSForwarderSpec, resolvers, upstreams, z
 		}
 	}
 	return true
-}
-
-func filterDNSResolverListenSources(listens []api.DNSResolverListenSpec, forwarders map[string]bool) []api.DNSResolverListenSpec {
-	out := make([]api.DNSResolverListenSpec, 0, len(listens))
-	for _, listen := range listens {
-		if len(listen.Sources) == 0 {
-			out = append(out, listen)
-			continue
-		}
-		sources := make([]string, 0, len(listen.Sources))
-		for _, source := range listen.Sources {
-			if forwarders[dnsRefName(source)] {
-				sources = append(sources, source)
-			}
-		}
-		listen.Sources = sources
-		out = append(out, listen)
-	}
-	return out
 }
 
 func dnsRefName(ref string) string {

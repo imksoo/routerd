@@ -33,6 +33,12 @@ slug: /how-to/dns-private-upstream
 `DNSUpstream.spec.addressFrom` を使うと、上流アドレスの一覧を別リソースの status から取れます。
 DHCPv6 information-request で得た DNS サーバーを使うときの仕組みです。
 
+`DNSResolver.spec.listen[].sources` に名前を指定すると、その待受は指定した
+forwarder だけを使います。選択した forwarder が `when` や依存先の条件によって
+無効になっても、他の forwarder を使えるようにはなりません。選択した参照元が
+すべて利用できなくなった場合も、この制限を維持します。`sources` を省略すると、
+そのリゾルバのすべての参照元を使います。
+
 ## 条件付き転送の例
 
 ```yaml

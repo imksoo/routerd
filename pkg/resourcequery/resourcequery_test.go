@@ -334,7 +334,7 @@ func TestFilterRouterByWhenPrunesDNSForwarderForFilteredResolver(t *testing.T) {
 	}
 }
 
-func TestFilterRouterByWhenPrunesDNSResolverListenSourcesForFilteredForwarder(t *testing.T) {
+func TestFilterRouterByWhenPreservesDNSResolverListenSelectionForFilteredForwarder(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"},
@@ -384,8 +384,8 @@ func TestFilterRouterByWhenPrunesDNSResolverListenSourcesForFilteredForwarder(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(spec.Listen) != 1 || len(spec.Listen[0].Sources) != 1 || spec.Listen[0].Sources[0] != "local" {
-		t.Fatalf("listen sources = %#v, want only local", spec.Listen)
+	if len(spec.Listen) != 1 || len(spec.Listen[0].Sources) != 2 || spec.Listen[0].Sources[0] != "local" || spec.Listen[0].Sources[1] != "default" {
+		t.Fatalf("listen sources = %#v, want declared selection preserved", spec.Listen)
 	}
 }
 

@@ -31,6 +31,12 @@ The order in `DNSForwarder.spec.upstreams` is the priority order. routerd tries 
 
 `DNSUpstream.spec.addressFrom` lets the upstream address list come from another resource's status. This is the mechanism for using DNS servers learned through DHCPv6 information request.
 
+A non-empty `DNSResolver.spec.listen[].sources` list restricts that listener to
+the named forwarders. When a selected forwarder becomes ineligible through
+`when` or loses an eligible dependency, the listener must not gain access to
+other forwarders. The declared selection remains in force when none of its
+sources are available. Omitting `sources` selects all of the resolver's sources.
+
 ## Conditional forwarding example
 
 ```yaml
