@@ -257,3 +257,31 @@ A timeout, a leaked private answer, or recovery requiring product-state repair
 fails the check. Record the executed package revision and outcome; retain raw
 output only while investigating a failure. This check covers explicit listener
 source selection, not every conditional-domain or dynamic-upstream policy.
+
+## Verify DHCP-derived private DNS withdrawal
+
+Use an isolated Linux guest and an independent DHCP/DNS peer. Advertise that
+peer as the DHCP DNS server, select it through `DNSUpstream.addressFrom`, and
+place its private-domain forwarder before a separate default forwarder. Gate the
+DHCP client on a disposable HealthCheck peer. Log queries at the default DNS
+peer so a private question sent there is detectable, even if no answer returns.
+
+1. With the health peer stopped and no WAN lease, require `Unhealthy` and the
+   private source in runtime `pendingSources`. Private UDP/TCP questions must
+   return SERVFAIL; public questions must still resolve.
+2. Start the health peer. Within 90 seconds, require an actual DHCP lease and
+   its DNS server in status, then verify private and public UDP/TCP answers.
+3. Stop the health peer. Within 60 seconds, require `Unhealthy`, removal of the
+   DHCP-owned IPv4 address, and the private source pending again. Repeat step 1.
+4. Withdraw the configuration. Require healthy empty status, no managed helpers,
+   no test DNS listener, and no DHCP-owned address **before** deleting the test
+   network. Stop independent peers and remove their isolated network afterward.
+
+Any private question in the default peer's log, retained DHCP address, timeout,
+or manual repair of product state fails the check. Record the package revision
+and stage that failed. The local ownership regression also verifies that a failed
+address deletion retains its receipt and error until a later retry succeeds:
+
+```sh
+go test ./pkg/controller/chain -run '^TestWhenStatusPublicationCannotEraseDHCPv4WithdrawalOwnership$' -count=1
+```

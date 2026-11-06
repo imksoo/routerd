@@ -2501,6 +2501,25 @@
         "Clean OS installation on this revision (this was an apt update)",
         "External-host DNS traffic, all conditional-domain/dynamic-upstream policies, complete 1.0 parity and FreeBSD"
       ]
+    },
+    "linux-dhcp-derived-private-dns-d279d919": {
+      "level": "native-kernel",
+      "outcome": "pass",
+      "revision": "d279d919df2670c8b1bbb6b5d8e968a7537a0301",
+      "reference": "docs/how-to/dns-private-upstream.md#verify-dhcp-derived-private-dns-withdrawal",
+      "environment": "Dedicated isolated Linux VM, matching base/native nDPI addon apt update to 1.5.0~20261106182508+gd279d919; actual systemd daemon, independent dnsmasq DHCP/DNS in a network namespace, UDP/TCP dig clients on loopback.",
+      "checks": [
+        "Cold unresolved private upstream returned SERVFAIL while public DNS remained available; actual DHCP acquisition supplied the private DNS endpoint and private queries then resolved.",
+        "HealthCheck-driven DHCP withdrawal removed its owned IPv4 address and restored private SERVFAIL without manual product-state repair. No private query reached the independently logged default DNS peer.",
+        "Empty configuration withdrawal was Healthy with no managed helpers, test DNS listener or DHCP-owned address before fixture network cleanup.",
+        "Local regression ef623676 reproduced ownership erasure before the lease callback. d279d919 retains the lease actor as sole status owner; failed deletion preserves its receipt and diagnostic until a successful retry.",
+        "Full Go retry passed (122 packages, 15 without tests), schema/examples and four website locales passed. Initial concurrent run failed the listener UDP timeout and dnsmasq startup identity tests; both passed five isolated repetitions without changes. Their initial failure conditions remain unresolved and are not attributed to an environment cause."
+      ],
+      "excludes": [
+        "Fresh OS installation on this revision (apt update only)",
+        "External-host DNS clients, all conditional policies, FreeBSD and full 1.0 parity",
+        "Resolution of the two intermittent full-suite failures"
+      ]
     }
   },
   "features": [
@@ -3395,7 +3414,8 @@
           "normal-code-gate-31d5f4d4",
           "linux-wan-dhcpv4-1f9fc319",
           "linux-home-router-clean-install-999dfd4",
-          "linux-dualstack-recovery-6977c66e"
+          "linux-dualstack-recovery-6977c66e",
+          "linux-dhcp-derived-private-dns-d279d919"
         ]
       },
       "freebsd": {
@@ -3774,7 +3794,8 @@
           "linux-ha-pair-initial-apt-83414e60",
           "linux-ha-pair-lifecycle-apt-1a96b8c0",
           "linux-reservation-dns-bootstrap-6696bff6",
-          "linux-dns-listener-selection-5b25593d"
+          "linux-dns-listener-selection-5b25593d",
+          "linux-dhcp-derived-private-dns-d279d919"
         ]
       },
       "freebsd": {
