@@ -87,7 +87,10 @@ for ifname in lan-vrrp wan-vmac; do
   ip -o link show dev "$ifname" | grep -q 'state DOWN'
 done
 for ifname in lan-vrrp wan-vmac; do
-  ! ip -o -6 addr show dev "$ifname" scope link | grep -q .
+  if ip -o -6 addr show dev "$ifname" scope link | grep -q .; then
+    printf '%s\n' 'FAIL: unexpected success: ip -o -6 addr show dev "$ifname" scope link | grep -q .' >&2
+    exit 1
+  fi
 done
 
 # PD-derived addresses are staged while both VMACs remain down.
@@ -99,7 +102,10 @@ assert_backup() {
   ip -6 addr show dev lan-vrrp scope global | grep -Fq "${lan_global%/*}"
   ip -6 addr show dev wan-vmac scope global | grep -Fq "${wan_global%/*}"
   for ifname in lan-vrrp wan-vmac; do
-    ! ip -o -6 addr show dev "$ifname" scope link | grep -q .
+    if ip -o -6 addr show dev "$ifname" scope link | grep -q .; then
+      printf '%s\n' 'FAIL: unexpected success: ip -o -6 addr show dev "$ifname" scope link | grep -q .' >&2
+      exit 1
+    fi
   done
   for ifname in lan-vrrp wan-vmac; do
     ip -o link show dev "$ifname" | grep -q 'state DOWN'
@@ -139,7 +145,10 @@ ip -4 addr add "$vip" dev lan-parent
   --resource "$resource" --deferred-address "$vip" --deferred-interface lan-parent \
   --vmac "lan-parent,lan-vrrp,02:00:5e:00:01:12,${shared_ll},true" \
   --vmac "wan-parent,wan-vmac,02:00:5e:00:01:13,${wan_ll},false"
-! ip -4 -o addr show dev lan-parent | grep -Fq "${vip%/*}"
+if ip -4 -o addr show dev lan-parent | grep -Fq "${vip%/*}"; then
+  printf '%s\n' 'FAIL: unexpected success: ip -4 -o addr show dev lan-parent | grep -Fq "${vip%/*}"' >&2
+  exit 1
+fi
 state_hash="$(printf '%s' "$resource" | sha256sum | cut -c1-16)"
 grep -Fxq backup "/run/routerd/vrrp-election-${state_hash}.role"
 assert_backup
@@ -148,7 +157,10 @@ assert_backup
   --resource "$resource" --deferred-address "$vip" --deferred-interface lan-parent \
   --vmac "lan-parent,lan-vrrp,02:00:5e:00:01:12,${shared_ll},true" \
   --vmac "wan-parent,wan-vmac,02:00:5e:00:01:13,${wan_ll},false"
-! ip -4 -o addr show dev lan-parent | grep -Fq "${vip%/*}"
+if ip -4 -o addr show dev lan-parent | grep -Fq "${vip%/*}"; then
+  printf '%s\n' 'FAIL: unexpected success: ip -4 -o addr show dev lan-parent | grep -Fq "${vip%/*}"' >&2
+  exit 1
+fi
 grep -Fxq master "/run/routerd/vrrp-election-${state_hash}.role"
 assert_master
 INNER

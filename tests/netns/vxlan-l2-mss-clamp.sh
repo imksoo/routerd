@@ -89,7 +89,12 @@ probe() {
 # Build and invoke the production controller/renderer; this test carries no
 # hand-written nft policy.
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-(cd "$REPO_ROOT" && go build -o "$WORKDIR/path-mtu-driver" ./tests/netns/path-mtu-controller-driver)
+if [[ -n "${ROUTERD_PATH_MTU_DRIVER:-}" ]]; then
+  [[ "$ROUTERD_PATH_MTU_DRIVER" == /* && -x "$ROUTERD_PATH_MTU_DRIVER" ]] || fail "prebuilt PathMTU test driver must be an absolute executable path"
+  cp "$ROUTERD_PATH_MTU_DRIVER" "$WORKDIR/path-mtu-driver"
+else
+  (cd "$REPO_ROOT" && go build -o "$WORKDIR/path-mtu-driver" ./tests/netns/path-mtu-controller-driver)
+fi
 OWNER="$WORKDIR/l2-mss.owner"
 POLICY="$WORKDIR/l2-mss.nft"
 
@@ -99,8 +104,14 @@ cat >"$WORKDIR/rollback.nft" <<'NFT'
 create table bridge routerd_l2_rollback
 add rule bridge routerd_l2_rollback missing_chain counter
 NFT
-! ip netns exec "$LEFT" nft -f "$WORKDIR/rollback.nft" >/dev/null 2>&1
-! ip netns exec "$LEFT" nft list table bridge routerd_l2_rollback >/dev/null 2>&1
+if ip netns exec "$LEFT" nft -f "$WORKDIR/rollback.nft" >/dev/null 2>&1; then
+  printf '%s\n' 'FAIL: invalid nft batch was accepted' >&2
+  exit 1
+fi
+if ip netns exec "$LEFT" nft list table bridge routerd_l2_rollback >/dev/null 2>&1; then
+  printf '%s\n' 'FAIL: failed nft batch left a table' >&2
+  exit 1
+fi
 
 # Exclusive-create collision: a foreign table occupying the random candidate
 # name makes the entire production batch fail with EEXIST and remains intact.
@@ -108,9 +119,15 @@ collision_token=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 collision_table=routerd_l2_aaaaaaaaaaaa
 ip netns exec "$LEFT" nft create table bridge "$collision_table"
 ip netns exec "$LEFT" nft create chain bridge "$collision_table" foreign_before_create
-! ip netns exec "$LEFT" env ROUTERD_NETNS_TEST_TOKEN="$collision_token" "$WORKDIR/path-mtu-driver" enable "$WORKDIR/collision.nft" "$WORKDIR/collision.owner" >/dev/null 2>&1
+if ip netns exec "$LEFT" env ROUTERD_NETNS_TEST_TOKEN="$collision_token" "$WORKDIR/path-mtu-driver" enable "$WORKDIR/collision.nft" "$WORKDIR/collision.owner" >/dev/null 2>&1; then
+  printf '%s\n' 'FAIL: foreign table collision was accepted' >&2
+  exit 1
+fi
 ip netns exec "$LEFT" nft list chain bridge "$collision_table" foreign_before_create >/dev/null
-! ip netns exec "$LEFT" nft list chain bridge "$collision_table" rules_aaaaaaaaaaaa >/dev/null 2>&1
+if ip netns exec "$LEFT" nft list chain bridge "$collision_table" rules_aaaaaaaaaaaa >/dev/null 2>&1; then
+  printf '%s\n' 'FAIL: foreign table acquired an owned chain' >&2
+  exit 1
+fi
 ip netns exec "$LEFT" nft delete table bridge "$collision_table"
 
 # Crash boundary 1: phase-one creation is deliberately inert until its exact
@@ -118,10 +135,16 @@ ip netns exec "$LEFT" nft delete table bridge "$collision_table"
 # a hooked chain, and recovery must quarantine rather than adopt handle zero.
 stage_token=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 stage_table=routerd_l2_bbbbbbbbbbbb
-! ip netns exec "$LEFT" env ROUTERD_NETNS_TEST_TOKEN="$stage_token" ROUTERD_NETNS_FAILPOINT=stage-created-before-handle-journal \
-  "$WORKDIR/path-mtu-driver" enable "$WORKDIR/stage-crash.nft" "$WORKDIR/stage-crash.owner" >/dev/null 2>&1
+if ip netns exec "$LEFT" env ROUTERD_NETNS_TEST_TOKEN="$stage_token" ROUTERD_NETNS_FAILPOINT=stage-created-before-handle-journal \
+  "$WORKDIR/path-mtu-driver" enable "$WORKDIR/stage-crash.nft" "$WORKDIR/stage-crash.owner" >/dev/null 2>&1; then
+  printf '%s\n' 'FAIL: staged crash failpoint did not fail' >&2
+  exit 1
+fi
 ip netns exec "$LEFT" nft list chain bridge "$stage_table" rules_bbbbbbbbbbbb >"$WORKDIR/stage-chain.txt"
-! grep -q 'hook forward' "$WORKDIR/stage-chain.txt"
+if grep -q 'hook forward' "$WORKDIR/stage-chain.txt"; then
+  printf '%s\n' 'FAIL: staged chain has a forwarding hook' >&2
+  exit 1
+fi
 python3 -c 'import json,sys;m=json.load(open(sys.argv[1]));g=m["generations"][0];assert g["state"]=="staged" and g.get("handle",0)==0 and not m.get("activeToken")' "$WORKDIR/stage-crash.owner"
 ip netns exec "$LEFT" "$WORKDIR/path-mtu-driver" enable "$WORKDIR/stage-crash.nft" "$WORKDIR/stage-crash.owner"
 python3 -c 'import json,sys;m=json.load(open(sys.argv[1]));assert any(g["state"]=="foreign" and g.get("handle",0)==0 for g in m["generations"]);assert sum(g["state"]=="active" for g in m["generations"])==1' "$WORKDIR/stage-crash.owner"
@@ -137,16 +160,22 @@ probe 6 1440 1440
 # A crash after B's exact handle is durable but before promotion leaves two
 # hooks; recovery must promote B and retire/delete A in the same journal step.
 ip netns exec "$LEFT" "$WORKDIR/path-mtu-driver" enable "$POLICY" "$OWNER"
-read -r prior_table prior_handle < <(python3 -c 'import json,sys;m=json.load(open(sys.argv[1]));g=next(x for x in m["generations"] if x["state"]=="active");print(g["table"],g["handle"])' "$OWNER")
-! ip netns exec "$LEFT" env ROUTERD_NETNS_MTU=1290 ROUTERD_NETNS_FAILPOINT=active-hook-created-before-promotion \
-  "$WORKDIR/path-mtu-driver" enable "$POLICY" "$OWNER" >/dev/null 2>&1
+read -r prior_table _prior_handle < <(python3 -c 'import json,sys;m=json.load(open(sys.argv[1]));g=next(x for x in m["generations"] if x["state"]=="active");print(g["table"],g["handle"])' "$OWNER")
+if ip netns exec "$LEFT" env ROUTERD_NETNS_MTU=1290 ROUTERD_NETNS_FAILPOINT=active-hook-created-before-promotion \
+  "$WORKDIR/path-mtu-driver" enable "$POLICY" "$OWNER" >/dev/null 2>&1; then
+  printf '%s\n' 'FAIL: activation crash failpoint did not fail' >&2
+  exit 1
+fi
 read -r crash_table crash_handle < <(python3 -c 'import json,sys;m=json.load(open(sys.argv[1]));g=next(x for x in m["generations"] if x["state"]=="activating");assert g["handle"]>0;print(g["table"],g["handle"])' "$OWNER")
 ip netns exec "$LEFT" nft list table bridge "$prior_table" >/dev/null
 ip netns exec "$LEFT" nft list table bridge "$crash_table" >/dev/null
 ip netns exec "$LEFT" env ROUTERD_NETNS_MTU=1290 "$WORKDIR/path-mtu-driver" enable "$POLICY" "$OWNER"
 read -r recovered_table recovered_handle < <(python3 -c 'import json,sys;m=json.load(open(sys.argv[1]));g=next(x for x in m["generations"] if x["state"]=="active");print(g["table"],g["handle"])' "$OWNER")
 [[ "$crash_table" == "$recovered_table" && "$crash_handle" == "$recovered_handle" ]]
-! ip netns exec "$LEFT" nft list table bridge "$prior_table" >/dev/null 2>&1
+if ip netns exec "$LEFT" nft list table bridge "$prior_table" >/dev/null 2>&1; then
+  printf '%s\n' 'FAIL: previous table survived recovery' >&2
+  exit 1
+fi
 # Restore the normal 1280-byte policy for the A/B data-plane assertions.
 ip netns exec "$LEFT" "$WORKDIR/path-mtu-driver" enable "$POLICY" "$OWNER"
 
@@ -187,13 +216,19 @@ fi
 exec nft "$@"
 SH
 chmod 0755 "$WORKDIR/nft-delete-error"
-! ip netns exec "$LEFT" env ROUTERD_NETNS_NFT="$WORKDIR/nft-delete-error" "$WORKDIR/path-mtu-driver" enable "$POLICY" "$OWNER" >/dev/null 2>&1
+if ip netns exec "$LEFT" env ROUTERD_NETNS_NFT="$WORKDIR/nft-delete-error" "$WORKDIR/path-mtu-driver" enable "$POLICY" "$OWNER" >/dev/null 2>&1; then
+  printf '%s\n' 'FAIL: delete failure was acknowledged' >&2
+  exit 1
+fi
 python3 -c 'import json,sys;m=json.load(open(sys.argv[1]));h=int(sys.argv[2]);assert any(g["state"]=="retired" and g["handle"]==h for g in m["generations"]);assert sum(g["state"]=="active" for g in m["generations"])==1' "$OWNER" "$drop_handle"
 ip netns exec "$LEFT" nft list table bridge "$drop_table" >/dev/null
 ip netns exec "$LEFT" "$WORKDIR/path-mtu-driver" enable "$POLICY" "$OWNER"
 read -r drop_repaired_table drop_repaired_handle < <(python3 -c 'import json,sys;m=json.load(open(sys.argv[1]));g=next(x for x in m["generations"] if x["state"]=="active");print(g["table"],g["handle"])' "$OWNER")
 [[ "$drop_repaired_table" != "$drop_table" && "$drop_repaired_handle" != "$drop_handle" ]]
-! ip netns exec "$LEFT" nft list table bridge "$drop_table" >/dev/null 2>&1
+if ip netns exec "$LEFT" nft list table bridge "$drop_table" >/dev/null 2>&1; then
+  printf '%s\n' 'FAIL: retired DROP table survived retry' >&2
+  exit 1
+fi
 probe 4 1460 1240
 
 # Keep the exact durable table handle but replace both chains without their
@@ -217,7 +252,10 @@ proof_same_handle="$(ip netns exec "$LEFT" nft -a list table bridge "$proof_tabl
 ip netns exec "$LEFT" "$WORKDIR/path-mtu-driver" enable "$POLICY" "$OWNER"
 read -r proof_repaired_table proof_repaired_handle < <(python3 -c 'import json,sys;m=json.load(open(sys.argv[1]));g=next(x for x in m["generations"] if x["state"]=="active");print(g["table"],g["handle"])' "$OWNER")
 [[ "$proof_repaired_table" != "$proof_table" && "$proof_repaired_handle" != "$proof_handle" ]]
-! ip netns exec "$LEFT" nft list table bridge "$proof_table" >/dev/null 2>&1
+if ip netns exec "$LEFT" nft list table bridge "$proof_table" >/dev/null 2>&1; then
+  printf '%s\n' 'FAIL: proof-loss table survived repair' >&2
+  exit 1
+fi
 probe 4 1460 1240
 
 # Deterministic proof-replay replacement: dump and recreate the exact owned
@@ -244,7 +282,10 @@ if [ "$1" = "--json" ]; then echo 'Operation not permitted' >&2; exit 1; fi
 exec nft "$@"
 SH
 chmod 0755 "$WORKDIR/nft-list-error"
-! ip netns exec "$LEFT" env ROUTERD_NETNS_NFT="$WORKDIR/nft-list-error" "$WORKDIR/path-mtu-driver" enable "$POLICY" "$OWNER" >/dev/null 2>&1
+if ip netns exec "$LEFT" env ROUTERD_NETNS_NFT="$WORKDIR/nft-list-error" "$WORKDIR/path-mtu-driver" enable "$POLICY" "$OWNER" >/dev/null 2>&1; then
+  printf '%s\n' 'FAIL: list failure was acknowledged' >&2
+  exit 1
+fi
 cmp "$WORKDIR/owner.before-list-error" "$OWNER"
 
 # Removal also goes through the production controller and leaves non-TCP/L2
@@ -257,5 +298,8 @@ ip netns exec "$LEFT" nft list chain bridge "$old_table" "$old_chain" >/dev/null
 ip netns exec "$LEFT" nft delete table bridge "$old_table"
 probe 4 1460 1460
 probe udp 0 udp-pass
-! ip netns exec "$LEFT" nft list chain bridge "$new_table" "$new_chain" >/dev/null 2>&1
+if ip netns exec "$LEFT" nft list chain bridge "$new_table" "$new_chain" >/dev/null 2>&1; then
+  printf '%s\n' 'FAIL: owned chain survived disable' >&2
+  exit 1
+fi
 echo "vxlan L2 MSS clamp A/B PASS"

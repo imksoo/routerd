@@ -4188,3 +4188,26 @@ read-only observation proved link absence; cleanup resumed without repeating
 product mutations, verified policy absence and failed HTTP, and removed staging.
 The maintained procedure now bounds the veth teardown wait to five seconds.
 Do not describe the initial script exit as a complete uninterrupted pass.
+
+
+## Namespace negative-assertion repair
+
+The VXLAN L2 MSS and VRRP VMAC scripts contained standalone `! command` checks
+whose unexpected success did not abort under `set -e`. These now have explicit
+failure branches; prior success alone did not prove those negative assertions.
+Shell syntax, ShellCheck warning-level checks and diff checks pass.
+
+The corrected VRRP gate passed with formal `e6590007` helper: cold backup and
+master transitions preserve delegated globals, enforce link-local absence in
+backup, and remove the deferred IPv4 VIP. The corrected VXLAN gate passed with
+the current-source test driver through the production PathMTU controller:
+invalid nft batch rollback, collision rejection, staged/active crash recovery,
+MSS A/B packet observations for IPv4/IPv6, non-TCP transparency, drift repair,
+proof-replay protection, failed-list preservation and exact withdrawal. Cleanup
+completed. Product code was unchanged.
+
+The first VXLAN attempt in a user namespace failed before controller execution
+because the driver could not read the host namespace identity; a direct driver
+invocation reproduced the guard rejection. A root-owned private mount/network
+namespace with the same prebuilt test driver then completed. This is local
+real-kernel/controller evidence, not a new packaged whole-router campaign.

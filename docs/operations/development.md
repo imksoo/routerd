@@ -1500,3 +1500,24 @@ allow up to five seconds for the paired veth to disappear, then remove staging
 and stop the guest. This is host-originated IPv6 traffic, not transit/hash policy
 or all dynamic WAN modes. Use explicit `if unexpected-command; then exit 1; fi`
 for negative shell assertions: a bare `! command` is not enforced by `set -e`.
+
+
+### Enforced negative assertions in namespace gates
+
+`tests/netns/vxlan-l2-mss-clamp.sh` and
+`tests/netns/vrrp-vmac-lan-address-lifecycle.sh` explicitly exit on unexpected
+success of forbidden operations or unexpected presence of withdrawn objects.
+Bare `! command` under `set -e` is insufficient for an assertion followed by
+another command. Conditions used by `if`/loops or a checked function return are
+not the same problem; inspect the surrounding control flow before changing them.
+
+The VXLAN gate accepts `ROUTERD_PATH_MTU_DRIVER` as an absolute executable path
+to the test driver built from the current source. This permits building as the
+normal user and running only the namespace test with explicit sudo. It remains
+a controller/real-kernel test, not a packaged normal-daemon qualification.
+Use a private outer mount/network namespace as well as the test's peer namespaces;
+its driver must be able to inspect `/proc/1/ns/net` to prove isolation. Run the
+VRRP gate with `ROUTERD_RUN_NETNS=1` and `ROUTERD_VRRP_VMAC_BIN` pointing to the
+formal package helper; it creates its own private mount/network namespaces.
+Bound each gate with `timeout`, require exit 0 and successful cleanup, and retain
+only unresolved failure diagnostics.

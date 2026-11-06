@@ -1197,3 +1197,20 @@ main 再起動（120 秒以内）後も通信を確認する。空設定で Heal
 staging と VM を片付ける。host 自身の IPv6 通信の試験であり transit/hash 全般ではない。
 シェルの否定判定は `if unexpected-command; then exit 1; fi` を使う。
 単独の `! command` は `set -e` で失敗停止するとは限らない。
+
+
+### namespace 試験の否定判定
+
+`tests/netns/vxlan-l2-mss-clamp.sh` と
+`tests/netns/vrrp-vmac-lan-address-lifecycle.sh` は、拒否対象の操作が成功した場合や
+撤去対象が残る場合に明示的に終了する。後続コマンドのある単独 `! command` は
+`set -e` だけでは assertion にならない。if/loop の条件や、戻り値を呼出元が確認する
+関数は別なので、前後の制御構造を読んで判断する。
+
+VXLAN gate は現ソースから通常ユーザーで作った試験 driver の絶対実行パスを
+`ROUTERD_PATH_MTU_DRIVER` で受け取れる。明示 sudo で外側も mount/network namespace
+に隔離して実行する。driver は隔離確認のため `/proc/1/ns/net` を読める必要がある。
+controller と実カーネルの試験であり通常 daemon のパッケージ試験とは区別する。
+VRRP gate は `ROUTERD_RUN_NETNS=1` と正式 package helper の
+`ROUTERD_VRRP_VMAC_BIN` を指定し、内部で mount/network namespace に隔離する。
+両 gate は timeout で上限を付け、終了 0 と後片付けを要求する。
