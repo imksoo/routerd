@@ -1399,3 +1399,35 @@ stop the daemon, close browser/tunnel, remove inputs and stop the guest. This
 qualifies actual packaged display/current-config/read-only behavior, not every
 UI workflow, admission policy or unavailable-observation display; retain the
 separate controlled browser tests for stale response ordering and unknown data.
+
+
+### Packaged DHCP lease to DNS lifecycle
+
+Use a dedicated Ubuntu guest with checksum-verified formal Debian packages,
+empty router intent, independent management, busybox and dig. Prepare an isolated
+veth/client namespace: router `198.19.87.1/24`, client with no static IPv4 address.
+Declare the external Interface, managed dnsmasq DHCPv4Server pool
+`198.19.87.100`–`198.19.87.110` with one-minute leases, a DNSZone `lease.test`
+whose `dhcpDerived.sources` selects that named server, and DNSResolver/Forwarder
+on the router address selecting that zone for forward and reverse queries.
+Validate, start the normal packaged service and apply with a 90-second deadline.
+
+Run independent `busybox udhcpc -f -n -i eth0 -t 10 -T 2
+-x hostname:lease-client -s <fixture-hook>` in the client namespace under a
+bounded service. Its bound/renew hook installs the offered address and records
+it; deconfig clears only the client's address. Within 60 seconds require `dig`
+UDP and TCP A queries for `lease-client.lease.test` to return that exact lease,
+and PTR queries to return the exact hostname. Each dig uses `+time=2 +tries=1`.
+Restart routerd using systemd (allow 120 seconds); require the named A record
+again without replaying a lease or editing SQLite. Send SIGUSR2 to the independent
+udhcpc process to request DHCP RELEASE. Within 60 seconds require actual
+NXDOMAIN responses with ANSWER 0 for A and PTR over both transports; silence is
+not a negative DNS answer. This exercises the product lease callback/journal,
+not a synthetic event injection.
+
+Apply empty intent and require Healthy, no current errors and no product helper
+processes. Stop the client, remove its namespace/veth and private staging, then
+stop the guest. On failure retain bounded DHCP service/callback and DNS status
+output, inspect actual lease/journal state, and reproduce locally before repair.
+This gate covers acquisition, main restart and release, not natural lease expiry,
+HA failover, DHCPv6 names or all transport/policy combinations.

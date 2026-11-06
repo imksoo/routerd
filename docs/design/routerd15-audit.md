@@ -4131,3 +4131,15 @@ does not qualify native DHCP/per-interface/fallback transitions, arbitrary
 provider switching, external UTC precision, FreeBSD service behavior or a new
 full combined-router run. The local dynamic-source loss/fallback/return test
 `92eeaa5a` passes with a fake OS service executor and is not native evidence.
+
+
+## Packaged DHCP lease DNS lifecycle
+
+Formal product `59373f17` on a dedicated Ubuntu guest passed the maintained
+DHCP lease to DNS procedure: independent busybox DHCP acquisition, exact A/PTR
+responses over UDP/TCP, main service restart retaining the name, and independent
+DHCP RELEASE followed by NXDOMAIN/zero-answer A/PTR over both transports.
+No direct lease event injection, SQLite repair or resolver restart was used.
+Empty intent was Healthy with no current errors and all helpers removed; client,
+namespace/veth and staging were cleaned. Local DNS worker/controller and daemonapi
+tests also passed. Natural expiry, DHCPv6 naming and HA are not qualified here.

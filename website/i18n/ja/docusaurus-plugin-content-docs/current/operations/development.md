@@ -1119,3 +1119,27 @@ loopback portへ転送。既存ChromeとPlaywright coreを使い、API差替え�
 page errorが無いことを確認。空設定でHealthy・Web listener/helper不在を確認し、daemon停止、
 browser/tunnel終了、入力削除、VM停止まで行います。全UI操作・admission・未観測表示の証明では
 ありません。応答順序やunknown表示には既存の独立したfixtureブラウザ試験も使います。
+
+
+### パッケージ版 DHCP リースから DNS への反映
+
+正式 Debian パッケージ、空の設定、独立管理経路、busybox/dig を備えた専用 Ubuntu
+VM を使う。隔離 veth のルーター側を `198.19.87.1/24`、クライアント側は固定 IPv4
+なしとする。external Interface、dnsmasq DHCPv4Server の `.100`–`.110`/1 分 pool、
+その named server を `dhcpDerived.sources` に指定する DNSZone `lease.test`、
+正引き・逆引きで同 zone を選ぶ DNSResolver/Forwarder を宣言する。
+validate 後に通常サービスを起動し、90 秒期限で apply する。
+
+独立クライアント namespace で `busybox udhcpc -f -n -i eth0 -t 10 -T 2
+-x hostname:lease-client -s <fixture-hook>` を期限付きサービスとして動かす。
+bound/renew hook は提示アドレスを設定・記録し、deconfig はクライアントだけを撤去する。
+60 秒以内に UDP/TCP の A が提示アドレス、PTR が完全なホスト名と一致すること。
+dig は各回 `+time=2 +tries=1` を指定する。systemd で routerd を再起動（最大 120 秒）し、
+リース注入や SQLite 編集なしで A を確認する。udhcpc に SIGUSR2 を送り DHCP RELEASE
+させ、60 秒以内に両 transport の A/PTR が NXDOMAIN・ANSWER 0 になること。
+応答なしを負応答と扱わない。
+
+空設定を apply し Healthy・現在エラーなし・helper 撤去を確認する。クライアント停止、
+namespace/veth/staging 撤去、VM 停止まで行う。失敗時は DHCP callback、DNS、実リース・
+journal を観測しローカル再現へ落とす。取得・main 再起動・解放の試験であり、自然失効、
+HA、DHCPv6 名、全 transport/policy の合格とはしない。

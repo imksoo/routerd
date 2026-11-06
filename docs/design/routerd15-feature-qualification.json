@@ -2853,6 +2853,21 @@
         "Native DHCP/per-interface/fallback transitions and arbitrary provider-switch lifecycle",
         "FreeBSD service qualification"
       ]
+    },
+    "linux-dhcp-dns-release-59373f17": {
+      "level": "packaged-daemon-native",
+      "outcome": "pass",
+      "revision": "59373f17446d41843cf750903d26fe65c6e16bbf",
+      "reference": "docs/design/routerd15-audit.md#packaged-dhcp-lease-dns-lifecycle",
+      "environment": "Dedicated Ubuntu guest with independent busybox DHCP client namespace and actual UDP/TCP dig queries.",
+      "checks": [
+        "Acquired hostname A/PTR equals offered lease over UDP/TCP.",
+        "Main restart retains A; independent DHCP RELEASE withdraws A/PTR with NXDOMAIN over UDP/TCP.",
+        "Empty Healthy, no current errors/helpers, client/link/staging cleanup."
+      ],
+      "excludes": [
+        "Natural expiry, DHCPv6 names, HA failover and complete DNS policy/transport coverage"
+      ]
     }
   },
   "features": [
@@ -3820,7 +3835,8 @@
           "linux-dualstack-recovery-6977c66e",
           "linux-ha-pair-initial-apt-83414e60",
           "linux-ha-pair-lifecycle-apt-1a96b8c0",
-          "linux-reservation-dns-bootstrap-6696bff6"
+          "linux-reservation-dns-bootstrap-6696bff6",
+          "linux-dhcp-dns-release-59373f17"
         ]
       },
       "freebsd": {
@@ -4148,7 +4164,8 @@
           "linux-reservation-dns-bootstrap-6696bff6",
           "linux-dns-listener-selection-5b25593d",
           "linux-dhcp-derived-private-dns-d279d919",
-          "linux-dns-writer-7012214a"
+          "linux-dns-writer-7012214a",
+          "linux-dhcp-dns-release-59373f17"
         ]
       },
       "freebsd": {
