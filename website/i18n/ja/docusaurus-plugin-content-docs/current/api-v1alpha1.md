@@ -55,7 +55,7 @@ spec:
 | `Hostname` | ホスト名を設定します。 |
 | `NTPClient` | OS の NTP クライアントを有効にします。DHCPv4 / DHCPv6 の状態から時刻サーバーを導出し、空なら public NTP サーバーへ戻せます。 |
 | `NTPServer` | LAN 向けのローカル NTP サーバーを動かします。クライアント許可範囲は、静的な `allowCIDRs` に加えて、`allowCIDRFrom` で `IPv6DelegatedAddress/<name>.address` や `DHCPv6PrefixDelegation/<name>.currentPrefix` などの status field から導出できます。 |
-| `LogSink` | log event を syslog、OTLP、webhook、file、journald へ転送します。 |
+| `LogSink` | log event を syslog、webhook、file、journald へ転送します。 |
 | `ObservabilityPipeline` | OTLP の environment と、stdout / syslog / Loki への routerd event の転送を設定します。 |
 | `RouterdCluster` | file lease により、leader だけが host configuration を変更し、standby は status 観測に回ります。 |
 | `LogRetention` | イベント、DNS、通信フロー、firewall event log の保管期間を管理します。 |
@@ -67,7 +67,7 @@ spec:
 | --- | --- |
 | `Telemetry` | 外部の OTLP エンドポイントを宣言し、生成されたサービスユニットに OpenTelemetry の環境変数を注入します。 |
 
-`Telemetry` は、管理対象デーモンが出力する metrics、traces、logs の送信先エンドポイントを記述します。`LogSink` は、運用イベントや観測ログの転送経路を記述します。ログシンクが OTLP を使う場合は、collector のエンドポイントを重複して書かず、`LogSink.spec.otlp.telemetryRef` で `Telemetry` リソースを参照してください。
+`Telemetry` は、管理対象デーモンが出力する metrics、traces、logs の送信先エンドポイントを記述します。`LogSink` は、運用イベントや観測ログの転送経路を記述します。`LogSink` の直接 OTLP 送信は未対応です。OTLP 送信には `Telemetry` または `ObservabilityPipeline` を使ってください。
 
 ## インターフェース
 
@@ -559,8 +559,11 @@ FreeBSD には、Linux と同じ socket option がないためです。
 
 `Telemetry` は、routerd 自身と管理対象デーモンの metrics / traces / logs を
 OpenTelemetry のエンドポイントへ出すための resource です。`LogSink` は、運用イベント
-や観測ログの転送経路を表します。OTLP へログ転送する場合は、collector のエンドポイントを
-重複して書かず、`LogSink.spec.otlp.telemetryRef` で `Telemetry` を参照してください。
+や観測ログの転送経路を表します。`LogSink` の直接 OTLP 送信は未対応です。
+OTLP 送信には `Telemetry` または `ObservabilityPipeline` を使ってください。
+
+syslog の接続・送信には、直列処理するイベントごとに再接続を含む 5 秒の期限があります。
+期限超過は送信エラーです。`LogRetention` はアーカイブ送信に失敗した行を削除しません。
 
 `WebConsole.spec.listenAddressFrom` は、ほかのリソースの状態から HTTP の待ち受けアドレスを導出します。
 たとえば、`Interface/mgmt.status.ipv4Addresses` を参照できます。

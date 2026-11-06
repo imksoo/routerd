@@ -56,7 +56,7 @@ spec:
 | `Hostname` | Sets the host name. |
 | `NTPClient` | Enables the OS NTP client. It can use static servers or derive servers from DHCPv4 / DHCPv6 status with public fallback servers. |
 | `NTPServer` | Runs a local LAN NTP server. Client allow ranges can be static `allowCIDRs` or derived with `allowCIDRFrom` from status fields such as `IPv6DelegatedAddress/<name>.address` or `DHCPv6PrefixDelegation/<name>.currentPrefix`. |
-| `LogSink` | Routes log events to syslog, OTLP, webhook, file, or journald sinks. |
+| `LogSink` | Routes log events to syslog, webhook, file, or journald sinks. |
 | `ObservabilityPipeline` | Configures OTLP environment and built-in routerd event forwarding to stdout, syslog, or Loki. |
 | `RouterdCluster` | Uses a file lease so only the leader mutates host configuration while standby nodes observe status. |
 | `LogRetention` | Manages retention for events, DNS queries, traffic flows, and firewall event logs. |
@@ -122,9 +122,13 @@ listener requires and verifies client certificates signed by that CA.
 
 `Telemetry` describes routerd's own signal export endpoint for metrics, traces,
 and logs emitted by managed daemons. `LogSink` describes log forwarding routes
-for operational events and observed network logs. When a log sink uses OTLP,
-prefer `LogSink.spec.otlp.telemetryRef` so the sink reuses a `Telemetry`
-resource instead of duplicating collector endpoints.
+for operational events and observed network logs. Direct `LogSink` OTLP delivery
+is unsupported; use the configured `Telemetry` or `ObservabilityPipeline` export.
+
+Syslog delivery has a five-second connection/write deadline per serialized event,
+including its reconnect attempt. A timeout returns a delivery error. In particular,
+`LogRetention` does not delete rows whose archive delivery failed; this deadline
+does not turn a failed archive into an acknowledgement.
 
 ## Interfaces
 

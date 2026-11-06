@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"log/syslog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -229,7 +231,7 @@ type SyslogSink struct {
 	address  string
 	facility syslog.Priority
 	tag      string
-	writer   *syslog.Writer
+	conn     net.Conn
 	minLevel int
 }
 
@@ -242,24 +244,79 @@ func (s *SyslogSink) Emit(event Event) error {
 	if s.closed {
 		return fmt.Errorf("syslog sink is closed")
 	}
-	if s.writer == nil {
-		writer, err := syslog.Dial(s.network, s.address, s.facility|syslog.LOG_INFO, s.tag)
-		if err != nil {
-			return err
-		}
-		s.writer = writer
-	}
-	line := formatEvent(event)
+	deadline := time.Now().Add(5 * time.Second)
+	priority := syslog.LOG_INFO
 	switch event.Level {
 	case LevelDebug:
-		return s.writer.Debug(line)
+		priority = syslog.LOG_DEBUG
 	case LevelWarning:
-		return s.writer.Warning(line)
+		priority = syslog.LOG_WARNING
 	case LevelError:
-		return s.writer.Err(line)
-	default:
-		return s.writer.Info(line)
+		priority = syslog.LOG_ERR
 	}
+	message := formatEvent(event)
+	if !strings.HasSuffix(message, "\n") {
+		message += "\n"
+	}
+	var err error
+	// Reconnect once after a failed write, sharing the original deadline.
+	for attempt := 0; attempt < 2; attempt++ {
+		if s.conn == nil {
+			s.conn, err = s.dial(deadline)
+			if err != nil {
+				return err
+			}
+		}
+		local := s.network == "" || s.network == "unix" || s.network == "unixgram"
+		header := time.Now().Format(time.Stamp)
+		if !local {
+			host, _ := os.Hostname()
+			if host == "" {
+				host = s.conn.LocalAddr().String()
+			}
+			header = time.Now().Format(time.RFC3339) + " " + host
+		}
+		frame := fmt.Sprintf("<%d>%s %s[%d]: %s", s.facility|priority, header, s.tag, os.Getpid(), message)
+		err = s.conn.SetDeadline(deadline)
+		if err == nil {
+			var n int
+			n, err = s.conn.Write([]byte(frame))
+			if err == nil && n != len(frame) {
+				err = io.ErrShortWrite
+			}
+		}
+		if err == nil {
+			return nil
+		}
+		_ = s.conn.Close()
+		s.conn = nil
+		if !time.Now().Before(deadline) {
+			return err
+		}
+	}
+	return err
+}
+
+// dial preserves local socket discovery and bounds all attempts by one deadline.
+func (s *SyslogSink) dial(deadline time.Time) (net.Conn, error) {
+	dialer := net.Dialer{Deadline: deadline}
+	if s.network != "" {
+		return dialer.Dial(s.network, s.address)
+	}
+	var lastErr error
+	for _, network := range []string{"unixgram", "unix"} {
+		for _, path := range []string{"/dev/log", "/var/run/syslog", "/var/run/log"} {
+			conn, err := dialer.Dial(network, path)
+			if err == nil {
+				return conn, nil
+			}
+			lastErr = err
+			if !time.Now().Before(deadline) {
+				return nil, err
+			}
+		}
+	}
+	return nil, fmt.Errorf("local syslog delivery: %w", lastErr)
 }
 
 func (s *SyslogSink) Close() error {
@@ -269,10 +326,10 @@ func (s *SyslogSink) Close() error {
 		return nil
 	}
 	s.closed = true
-	if s.writer == nil {
+	if s.conn == nil {
 		return nil
 	}
-	return s.writer.Close()
+	return s.conn.Close()
 }
 
 type WebhookSink struct {
