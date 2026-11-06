@@ -4369,8 +4369,13 @@ no observed shared MAC/IP/ARP claims.
 This is **not a completed latest combined qualification**: a subsequent static
 route payload check could not create its peer script because the peer root
 filesystem was full. The initial capacity certification was insufficient. The
-receiver's roughly 23 MiB of current JSON output exhausted the remaining root
-space; the collector executable was already on tmpfs. Both product withdrawals
+receiver had roughly 23 MiB of current JSON output on the full root filesystem;
+the collector executable was already on tmpfs. Initial headroom was not
+measured, so the first space-consuming write is not established. Subsequent
+inspection found approximately 121 MiB of repeated rsyslog disk-full errors
+(over 215,000 repetitions each of two messages). After recording those reasons
+and counts, the disposable peer's redundant syslog stream was cleared and its
+logger restarted during certification. Both product withdrawals
 then passed with empty Healthy, and the temporary peer fixture was removed.
 The revised receiver writes its three bounded output files to the existing
 512 MiB tmpfs and checks at least 100 MiB of root headroom before setup. Only
