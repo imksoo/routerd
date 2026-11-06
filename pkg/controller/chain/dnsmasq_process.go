@@ -354,10 +354,13 @@ func waitStartedDnsmasq(ctx context.Context, spec dnsmasqProcessSpec, pid int, d
 	for {
 		process, err := readNativeDnsmasqProcess(ctx, pid)
 		if err == nil && process.PID != 0 {
-			if !dnsmasqProcessMatches(process, spec) {
-				return process, errors.New("dnsmasq startup native identity does not match")
+			if dnsmasqProcessMatches(process, spec) {
+				return process, nil
 			}
-			return process, nil
+			// Start may return while procfs still exposes the child's pre-exec
+			// image. Only acknowledge the expected identity, within the same
+			// bounded startup deadline; never adopt the mismatching image.
+			err = errors.New("dnsmasq startup native identity does not match")
 		}
 		last = err
 		select {

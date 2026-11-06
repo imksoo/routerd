@@ -27,3 +27,19 @@ func TestDnsmasqStartWaitsForExecutableTransition(t *testing.T) {
 		t.Fatal("startup accepted an unverified process")
 	}
 }
+
+func TestDnsmasqStartRejectsPersistentIdentityMismatch(t *testing.T) {
+	binary := buildDnsmasqProcessFixture(t)
+	spec := dnsmasqFixtureSpec(t, binary, "enable-ra\n")
+	cmd := exec.Command("sleep", "5")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait(); close(done) }()
+	defer func() { _ = cmd.Process.Kill(); <-done }()
+	process, err := waitStartedDnsmasq(t.Context(), spec, cmd.Process.Pid, done)
+	if err == nil || process.PID != 0 {
+		t.Fatal("startup adopted a persistently mismatching executable")
+	}
+}

@@ -3792,3 +3792,22 @@ reload/reboot, arbitrary address pools, all port mappings or FreeBSD. In
 particular, the existing pool renderer joins address strings with hyphens;
 multiple/noncontiguous addresses still require investigation rather than a
 blanket pool-support claim.
+
+
+## Dnsmasq pre-exec startup observation
+
+The full Go suite after the NAT translation change failed in
+`TestDnsmasqNoDHCPControllerWithdrawsOwnedProcess` with a native identity mismatch.
+A successful isolated rerun was not accepted as resolution. Temporary diagnostics
+and a bounded direct-start probe observed the child's PID/birth/namespace with
+its parent's test executable and argv before the expected image became visible.
+The same observation also reproduced in `TestDnsmasqNativeOwnerLifecycle`.
+
+`waitStartedDnsmasq` previously rejected the first nonempty mismatching process
+immediately. It now continues observation within its existing one-second deadline,
+acknowledging only the expected executable, arguments and namespace. Child exit
+and deadline expiration still fail; persistent mismatches are never adopted.
+No new retry loop, extra startup deadline or relaxed process identity was added.
+The deterministic launcher regression in `1bfe0900` fails before this change;
+its companion test retains rejection of a persistently different executable.
+Raw executable/argv diagnostics were removed after investigation.
