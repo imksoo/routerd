@@ -133,3 +133,60 @@ func TestLANHeldRenewalKeepsAppliedDependencyAndConfirmedLifetime(t *testing.T) 
 		t.Fatalf("completed renewal was not published: %v", after)
 	}
 }
+
+// Publish the renewal immediately after a reader obtains the old lease. This
+// reproduces independent PD and address actors advancing during a tunnel check.
+type dsliteRenewAfterReadStore struct {
+	*dsliteEndpointFixtureStore
+	afterRead func()
+}
+
+func (s *dsliteRenewAfterReadStore) ReadPDLease(name string) (routerstate.PDLease, bool, error) {
+	lease, found, err := s.dsliteEndpointFixtureStore.ReadPDLease(name)
+	if err == nil && found && s.afterRead != nil {
+		action := s.afterRead
+		s.afterRead = nil
+		action()
+	}
+	return lease, found, err
+}
+
+func TestDSLiteSharedRenewalBetweenLeaseAndOwnerReadKeepsTunnel(t *testing.T) {
+	c, f, spec := newDSLiteEndpointFixture(t, true)
+	source, _, err := c.delegatedEndpointSource(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.present = source.Address + "/128"
+	preferred, valid := nativePDAddressDeadlines(source.Lease, true)
+	owner := delegatedNativeReceipt{IfName: "wan0", IfIndex: f.index, Scope: f.scope, PrefixDelegation: "wan-pd", Addresses: []delegatedNativeAddress{{Address: f.present, PreferredUntil: preferred, ValidUntil: valid, Held: true}}}
+	saveOwner := func() {
+		t.Helper()
+		if err := f.store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-source", map[string]any{"phase": "Applied", "dryRun": false, "ifname": "wan0", "address": f.present, "prefixSource": "wan-pd", "nativeReceipt": owner}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	saveOwner()
+	if err := c.reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	before, err := c.nativeTunnelReceipts()
+	if err != nil || len(before) != 1 {
+		t.Fatalf("initial tunnel: %v %v", before, err)
+	}
+	writes := len(f.native.writes)
+	c.Store = &dsliteRenewAfterReadStore{dsliteEndpointFixtureStore: f.store, afterRead: func() {
+		f.now = f.now.Add(20 * time.Second)
+		f.changeLease(func(lease *routerstate.PDLease) { lease.LastReplyAt = f.now })
+		owner.Addresses[0].PreferredUntil = preferred.Add(30 * time.Second)
+		owner.Addresses[0].ValidUntil = valid.Add(30 * time.Second)
+		saveOwner()
+	}}
+	if err := c.requireTunnelInputs(t.Context(), before[0], spec); err != nil {
+		t.Fatalf("same-prefix renewal withdrew a valid tunnel: %v; writes=%v", err, f.native.writes[writes:])
+	}
+	after, err := c.nativeTunnelReceipts()
+	if err != nil || len(after) != 1 || after[0] != before[0] || len(f.native.writes) != writes {
+		t.Fatalf("renewal changed tunnel ownership: before=%v after=%v writes=%v err=%v", before, after, f.native.writes[writes:], err)
+	}
+}
