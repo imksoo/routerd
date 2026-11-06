@@ -57,3 +57,19 @@ func TestTailscaleSystemdStopDisconnectsWithoutLogout(t *testing.T) {
 		}
 	}
 }
+
+func TestTailscaleDeclaredConfigurationResetsRemovedOptions(t *testing.T) {
+	args := TailscaleUpArgs(api.TailscaleNodeSpec{Hostname: "test-router"})
+	count := 0
+	for _, arg := range args {
+		if arg == "--reset" {
+			count++
+		}
+		if arg == "--force-reauth" {
+			t.Fatal("configuration updates must retain node authentication")
+		}
+	}
+	if count != 1 {
+		t.Fatalf("complete declared settings need one --reset: %v", args)
+	}
+}
