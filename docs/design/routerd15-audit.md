@@ -3881,3 +3881,41 @@ the guest was stopped. No manual product-state repair was needed.
 The packet test qualifies TCP range mapping and normal daemon restart. Syntax
 validation alone does not qualify preserve/auto packet semantics, every
 protocol, guest reboot, FreeBSD or complete routerd 1.0 parity.
+
+
+### Packaged DerivedEvent to EventRule lifecycle
+
+`TestServeDerivedEventFeedsRuleAcrossApplyAndRestart` starts the actual serve
+entry point in separate sandboxed processes with only event owners enabled,
+a private control socket and real SQLite files. It applies a DerivedEvent with
+a literal configuration predicate and `emitInitial: true`, feeding asserted
+and retracted topics into an `any_of` EventRule. It checks both committed output
+events and the durable rule fire count. Initial assertion, changed definition,
+process restart and a subsequent assertion produce counts 1, 2, 2 and 3.
+Run from the repository root:
+
+```sh
+go test ./cmd/routerd -run '^TestServeDerivedEventFeedsRuleAcrossApplyAndRestart$' -count=1 -v
+```
+
+The same sequence passed in a dedicated Ubuntu VM using the unmodified formal
+base/addon `1.5.0~20261106202522+g2ee9f2a2` and its normal systemd daemon.
+Prerequisites were an empty canonical configuration, functioning management/API
+access and the existing conntrack module required by the guest's observer.
+Use a unique output topic per run, and the same two resources as the process
+test. Apply enabled then disabled predicate definitions through routerctl;
+query `get events --topic <output> --limit 20 -o json` and
+`get EventRule/<name> -o json`. Require event count and fireCount 1 then 2,
+and an unchanged main PID across apply. Restart the service, require count 2,
+then reapply enabled and require count 3. Use bounded 30-second observation
+windows and 90-second apply deadlines. On failure, compare current config,
+resource status and committed events before retrying; do not inject events into
+SQLite or reset the checkpoint to make the test pass.
+
+The packaged test passed without product-state repair. Empty withdrawal returned
+Healthy, the service was stopped, temporary configurations were removed and the
+VM was stopped. This proves actual DerivedEvent publication, EventRule consumption,
+API generation changes and durable restart in a normal daemon. The source here
+is a supported literal configuration predicate, not a HealthCheck or routing
+observation. Timed operators, hysteresis, retention pressure and downstream
+routing effects remain separate qualification requirements.

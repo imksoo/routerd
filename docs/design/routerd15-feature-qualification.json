@@ -2697,6 +2697,24 @@
         "Guest reboot and FreeBSD",
         "Complete routerd 1.0 parity"
       ]
+    },
+    "linux-events-daemon-2ee9f2a2": {
+      "level": "packaged-daemon-control-plane",
+      "outcome": "pass",
+      "revision": "2ee9f2a272ce553c9284e687ea8283a35dc2c223",
+      "reference": "docs/design/routerd15-audit.md#packaged-derivedevent-to-eventrule-lifecycle",
+      "environment": "Dedicated Ubuntu guest, formal base/addon package, normal systemd daemon and real control API/journal.",
+      "checks": [
+        "DerivedEvent literal configuration predicate emits to an any_of EventRule.",
+        "API definition change retains daemon PID; committed event count and fireCount advance once.",
+        "Restart retains counts; subsequent definition change produces the next output.",
+        "Empty Healthy withdrawal, temporary config cleanup and guest stop completed."
+      ],
+      "excludes": [
+        "HealthCheck or routing observations as input",
+        "Timed operators, hysteresis and retention pressure",
+        "Downstream routing effects, FreeBSD and full 1.0 parity"
+      ]
     }
   },
   "features": [
@@ -4315,7 +4333,9 @@
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "linux-events-daemon-2ee9f2a2"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",
