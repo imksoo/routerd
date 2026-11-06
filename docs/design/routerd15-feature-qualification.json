@@ -2836,6 +2836,23 @@
         "Initial fixture title assertion corrected before resuming browser checks; no fresh full setup rerun",
         "Every UI workflow, independent admission policy and controlled unknown/stale observation cases"
       ]
+    },
+    "linux-timesyncd-daemon-59373f17": {
+      "level": "packaged-daemon-native",
+      "outcome": "pass",
+      "revision": "59373f17446d41843cf750903d26fe65c6e16bbf",
+      "reference": "docs/operations/ntp-runtime-test.md#packaged-linux-timesyncd-only-lifecycle",
+      "environment": "Dedicated Ubuntu guest, normal formal-package daemon and timesyncd; independent chronyd reference in isolated namespace.",
+      "checks": [
+        "Selected timesyncd remains installed; static source synchronization with normal leap and positive packet count.",
+        "Source change without main restart, main restart retaining new source, empty Healthy and owned fragment withdrawal.",
+        "Original chrony restored; reference, namespace, staging removed and guest stopped."
+      ],
+      "excludes": [
+        "External UTC precision or injected clock-offset correction",
+        "Native DHCP/per-interface/fallback transitions and arbitrary provider-switch lifecycle",
+        "FreeBSD service qualification"
+      ]
     }
   },
   "features": [
@@ -3061,7 +3078,8 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "ntp-linux-59104e2a",
-          "linux-ntp-packaged-clock-1d012587"
+          "linux-ntp-packaged-clock-1d012587",
+          "linux-timesyncd-daemon-59373f17"
         ]
       },
       "freebsd": {
@@ -3072,7 +3090,7 @@
         ]
       },
       "required_remaining_checks": [
-        "Native timesyncd-only, per-interface/static/dynamic/fallback source modes and package-provider replacement",
+        "Native per-interface/dynamic/fallback source transitions and arbitrary package-provider switching",
         "FreeBSD actual rc.d service/clock lifecycle; remaining baseline platform semantics and target-storage recovery"
       ]
     },

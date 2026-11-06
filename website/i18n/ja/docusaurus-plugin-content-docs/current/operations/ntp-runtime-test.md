@@ -83,3 +83,40 @@ FreeBSD rc.d の合格には広げません。FreeBSD wrapper の成功時出力
 競合するtimesyncdを要求しません。管理対象外のNTP宣言はproviderを導入せず、FreeBSDの
 標準ntpdにも追加packageは不要です。timesyncd単独試験ではapply後もtimesyncdが導入済みで、
 chronyへ勝手に置換されていないことを確認します。
+
+
+## Linux パッケージの timesyncd 単独試験
+
+独立した管理経路を持つ専用 Ubuntu VM を使う。準備時に元の時刻サービスの
+パッケージ版・有効化・稼働状態を記録し、復元用の同じ版の配布パッケージを確保する。
+systemd-timesyncd の導入による chrony の削除は準備段階で確認する。
+`make dist-deb dist-ndpi-agent-libndpi-deb` の正式パッケージを checksum 確認後に導入する。
+
+隔離リンクでルーターを `198.19.86.1`、独立 chronyd 参照を `.2` と `.3` に置く。
+参照は `-x`、local stratum 8、ルーターの許可リストを使用する。製品起動前に
+`scripts/ntp-peer-query.py` で各アドレスから相関の取れた有効な応答を 3 回確認する。
+参照を network namespace に置く場合も VM の時計は共有されるため、時計差を注入しない。
+これは実同期通信の試験であり、外部 UTC 精度や注入した時計差の補正の証明ではない。
+
+1. managed NTPClient のみを宣言し、`provider: systemd-timesyncd`、
+   `source: static`、`servers: [198.19.86.2]` とする。validate 後、通常の
+   パッケージ版 routerd に `routerctl apply --timeout 90s -f <config> --replace` を実行する。
+2. 120 秒以内に Applied、正しい provider/server、timesyncd 稼働を要求する。
+   `dpkg-query -W -f='${Status}' systemd-timesyncd` が `install ok installed`、
+   `timedatectl show-timesync -p ServerAddress --value` が指定アドレス、
+   `NTPSynchronized=yes`、`LC_ALL=C timedatectl timesync-status` の leap が normal、
+   packet count が正数であること。Applied や以前の同期フラグだけでは合格にしない。
+3. `.3` に変更して apply し、同じ判定と routerd MainPID 維持を確認する。
+   systemd で routerd を再起動し、追加 apply なしで再度同期を確認する。
+4. 空の設定を apply し、Healthy、resource/helper の撤去、status に記録した所有
+   fragment の消失を確認する。試験サービスを停止し namespace/link/staging を撤去、
+   元の時刻パッケージと有効化・稼働状態を復元し、専用 VM を停止する。
+
+失敗時は依存パッケージの実行コマンド、dpkg 状態、provider unit、所有 fragment、
+参照応答を確認し、ローカル回帰試験へ落とす。試験中にパッケージを手直しして合格にしない。
+
+2026-11-06、正式製品 `59373f17`、パッケージ
+`1.5.0~20261106212625+g59373f17` で両アドレス・動的 apply・再起動・撤去を通過。
+各同期観測は normal leap、stratum 8、packet count 1。元の chrony を復元し VM を停止した。
+DHCP 由来・インターフェース別・fallback の実機切替は別の残件。
+ローカルの source 消失・復帰テストのサービス実行は fake である。

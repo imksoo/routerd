@@ -160,3 +160,50 @@ discipline and the stated native NTP path, not an external UTC-precision claim,
 a timesyncd-only/package-provider replacement or FreeBSD rc.d execution.
 The FreeBSD wrapper's successful-output removal change has syntax/lint checks;
 its native execution was not repeated in this campaign.
+
+
+## Packaged Linux timesyncd-only lifecycle
+
+Use a dedicated Ubuntu VM with independent management access. Before qualification,
+save the original time-provider package version and enabled/active state, download
+its exact distro package for restoration, and certify systemd-timesyncd installation.
+APT may remove a conflicting chrony package: handle that during fixture preparation.
+Install checksum-verified base/addon Debian packages from `make dist-deb
+ dist-ndpi-agent-libndpi-deb`; do not copy a manually built binary.
+
+Prepare an isolated link with router address `198.19.86.1` and an independent
+chronyd reference listening on `198.19.86.2` and `198.19.86.3`. Run the reference
+with `-x`, local stratum 8 and an allowlist for the router. Before starting routerd,
+use `scripts/ntp-peer-query.py` to require three usable, correlated replies from
+each address. The reference can run in a network namespace; do not introduce a
+clock offset because it shares the guest clock. This checks actual synchronization
+exchanges, not external UTC accuracy or correction of an injected offset.
+
+1. Validate and apply a Router containing only a managed NTPClient with
+   `provider: systemd-timesyncd`, `source: static`, and `servers: [198.19.86.2]`.
+   Use the normal packaged routerd service and `routerctl apply --timeout 90s
+   -f <config> --replace`.
+2. Within 120 seconds require Applied, the exact effective provider/server,
+   active systemd-timesyncd, and `dpkg-query -W -f='${Status}' systemd-timesyncd`
+   equal to `install ok installed`. Require `timedatectl show-timesync -p
+   ServerAddress --value` to match the selected address, `NTPSynchronized=yes`,
+   and `LC_ALL=C timedatectl timesync-status` to show normal leap and a positive
+   packet count. Applied or a pre-existing synchronization flag alone is insufficient.
+3. Change the server to `198.19.86.3`, apply, repeat those assertions, and require
+   the routerd MainPID unchanged. Restart routerd through systemd and repeat the
+   same synchronization assertions without another apply.
+4. Apply empty intent. Require Healthy, no active resource/helper, and absence of
+   the owned fragment recorded in NTPClient status. Stop the fixture services,
+   remove its namespace/link/staging, and restore the original provider package
+   and enabled/active state. Stop the disposable VM when finished.
+
+On failure inspect dependency install commands, dpkg state, provider unit status,
+owned fragment and reference replies before constructing a local regression.
+Do not repair packages during qualification and count the repaired run as passing.
+
+Executed on 2026-11-06 with formal product `59373f17`, package
+`1.5.0~20261106212625+g59373f17`: both addresses, live change, service restart and
+withdrawal passed; each synchronization observation had normal leap, stratum 8
+and packet count 1. Original chrony was restored and the VM stopped. Dynamic
+DHCP sources, per-interface modes and native fallback transitions remain separate
+checks; the local source-loss/return regression uses a fake service executor.

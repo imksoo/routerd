@@ -4105,3 +4105,29 @@ reached Healthy, removed the listener/helpers, and daemon/tunnel/browser/input
 cleanup and guest stop completed. This establishes live packaged behavior, not
 every UI page or authorization policy. The controlled stale-response and
 unknown-observation tests remain separately scoped.
+
+
+## Packaged timesyncd dependency and synchronization
+
+The timesyncd-only native run on `5645fcf8` exposed a product defect: generic
+NTP dependency derivation installed chrony, causing APT to remove the configured
+timesyncd provider. `TestNTPPackagesFollowManagedProvider` reproduced the wrong
+Ubuntu/Debian package plans in test-first commit `6798dfd8`. Product `59373f17`
+derives dependencies from managed providers, including shared-chrony ownership,
+defaults and unmanaged declarations; all hostdeps tests then passed.
+
+After restoring and certifying the fixture, formal base/addon package
+`1.5.0~20261106212625+g59373f17` passed the maintained timesyncd-only procedure.
+The normal daemon kept timesyncd installed, synchronized to each independent
+reference address, changed source with the same main PID, and retained the new
+source after service restart. Each observation included normal leap, stratum 8
+and positive packet count. Empty intent was Healthy and removed the owned
+fragment; original chrony was restored, fixture resources removed and VM stopped.
+Both private deployment candidates validated with the same formal binary.
+
+`go test ./...`, schema checks, example validation and website build passed
+(exit 0); website still emits existing translation-link warnings. This result
+does not qualify native DHCP/per-interface/fallback transitions, arbitrary
+provider switching, external UTC precision, FreeBSD service behavior or a new
+full combined-router run. The local dynamic-source loss/fallback/return test
+`92eeaa5a` passes with a fake OS service executor and is not native evidence.
