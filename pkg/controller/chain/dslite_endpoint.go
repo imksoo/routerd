@@ -488,7 +488,20 @@ func (c DSLiteTunnelController) sharedEndpointReady(ctx context.Context, source 
 	// actor refreshes its native lifetime. Its confirmed shorter acquisition
 	// remains usable, including while that same owner records a refresh. A
 	// shortened lease still needs the owner to clamp the native lifetime first.
-	if receipt.entry(address).ValidUntil.After(nativePDDeadline(source.Lease.LastReplyAt, source.Lease.ValidSeconds)) {
+	// The address owner may already have applied a renewal after the caller
+	// read source.Lease. Compare its receipt with current authority, not that
+	// older snapshot, or a valid extension becomes a destructive withdrawal.
+	lease, found, err := livePDLease(c.Store, source.PDName, c.now())
+	if err != nil {
+		return false, err
+	}
+	if !found || lease.Phase != daemonapi.ResourcePhaseBound || !lease.HasFreshTransactionEvidence(c.now()) || lease.CurrentPrefix != source.PDPrefix {
+		return false, nil
+	}
+	if _, _, err := currentPDAddressLifetimes(lease, c.now(), true); err != nil {
+		return false, nil
+	}
+	if receipt.entry(address).ValidUntil.After(nativePDDeadline(lease.LastReplyAt, lease.ValidSeconds)) {
 		return false, nil
 	}
 	observed, err := c.observeEndpoint(ctx, source.Interface, source.Address+"/128")

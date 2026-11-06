@@ -468,3 +468,14 @@ Keep private keys out of YAML and source control. Test unattended authentication
 in both intended directions, then require actual latest lease/PD values at the
 receiver; SSH success alone is not a synchronization verdict. A fresh 1.5 install
 does not require copying the old router's private keys or state database.
+
+### Renewal observation ordering
+
+A shared delegated address can finish extending its native lifetime after a
+DS-Lite controller reads the previous PD snapshot. The shared-owner check must
+compare the confirmed address receipt with current PD authority. A still-bound,
+same-prefix extension must retain the tunnel; expiry, prefix replacement and
+an address lifetime exceeding current authority remain withdrawal conditions.
+The local regression test forces that read ordering and checks that no tunnel
+delete is issued. The native gate still requires unchanged tunnel indices and
+original application flows through an actual peer-driven renewal.
