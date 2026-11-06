@@ -1201,3 +1201,43 @@ application, client forwarding and withdrawal. The local regression command is:
 ```sh
 go test ./pkg/controller/chain -run '^TestIPv4RouteControllerAppliesAndWithdrawsIPv6StaticRoute$' -count=1
 ```
+
+
+## Packaged IngressService failover and drain
+
+Use a dedicated Linux VM with the matching formal packages, an empty canonical
+configuration, management access independent of test links, and no existing test
+namespaces. Never run this against a production router. The lower-level
+`tests/netns/ingress-conntrack-survive.sh` uses handwritten nft rules and does not
+qualify the IngressService controller or daemon.
+
+Create three isolated peer namespaces: a client and two independent TCP echo
+backends, each on a separate veth subnet with a return route through the router.
+Declare the three router links as external Interface resources, an explicit
+runtime forwarding Sysctl, and one IngressService: TCP listener on the client
+link, two named backend IP/port pairs, failover selection, hairpin off, TCP checks
+with 500ms timeout and healthy/unhealthy thresholds one. Certify direct peer
+responses before applying the configuration through the normal daemon API.
+
+1. Require `routerctl get IngressService/service -o json` to select backend1 and
+   a new independent client connection to receive backend1's response.
+2. Keep one TCP connection open, sending and checking backend1 echo replies
+   every 200ms. The client must never reconnect.
+3. Run `routerctl ingress drain ingress/service backend=backend1`. Within a
+   bounded 45-second convergence window, require status and new connections to
+   select backend2 while the original connection continues on backend1.
+4. Restart the main daemon. Require the drain and backend2 selection to persist,
+   and the original TCP connection to continue making progress.
+5. Run `routerctl ingress undrain ingress/service backend=backend1`; require new
+   connections on backend1 and then finish the original client normally.
+6. Stop backend1's process. Require automatic selection and actual new traffic
+   to backend2; restart backend1 and require automatic return to backend1.
+7. Apply empty configuration. Require Healthy and no owned NAT table or helper;
+   stop peers, join their clients, remove namespaces/veths and temporary files,
+   and restore the fixture's original forwarding setting before stopping the VM.
+
+Status alone is insufficient: compare backend identity on actual TCP responses.
+On failure, capture the current resource status, owned nft table and client result
+before ending the run; do not manually change product state. This procedure
+covers failover/drain with surviving connections, not all-backend outage policy,
+sourceHash/random distribution, every address source or guest reboot.

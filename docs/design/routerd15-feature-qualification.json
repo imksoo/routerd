@@ -2734,6 +2734,24 @@
         "Load capacity, guest reboot and integrated HA power loss",
         "FreeBSD and complete routerd 1.0 parity"
       ]
+    },
+    "linux-ingress-daemon-7012214a": {
+      "level": "packaged-daemon-independent-peer",
+      "outcome": "pass",
+      "revision": "7012214a46b1f5bef79c8ee204a77ecb4c2ed29c",
+      "reference": "docs/design/routerd15-audit.md#packaged-ingressservice-drain-and-backend-failure",
+      "environment": "Dedicated Ubuntu guest, normal formal-package daemon, independent TCP client and two backend namespaces.",
+      "checks": [
+        "Actual new connections follow selected backend through drain, persisted main restart and undrain.",
+        "One original TCP socket continues receiving backend1 replies without reconnect during drain/restart/undrain.",
+        "Real backend process loss and recovery switch new connections automatically.",
+        "Empty Healthy withdrawal removes NAT/helpers; namespace/files/forwarding fixture cleanup and VM stop complete."
+      ],
+      "excludes": [
+        "All-backend outage policy, sourceHash/random and dynamic address sources",
+        "Flow-pinhole expiry and guest reboot",
+        "FreeBSD and complete 1.0 parity"
+      ]
     }
   },
   "features": [
@@ -4475,7 +4493,9 @@
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "linux-ingress-daemon-7012214a"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",

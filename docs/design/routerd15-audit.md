@@ -3968,3 +3968,20 @@ DNS listener, stopped health peer and removed temporary inputs. These cleanup
 checks and VM stop passed. Both prepared full deployment configurations validate
 with the same formal binary. This result does not rerun the older integrated HA
 power-loss campaign or establish whole-project parity.
+
+
+### Packaged IngressService drain and backend failure
+
+The packaged IngressService procedure in the development runbook passed with
+formal base/addon `1.5.0~20261106204111+g7012214a` in a dedicated Ubuntu VM.
+Normal daemon reconciliation programmed native NAT from real backend health.
+Independent client/backend namespaces verified initial backend1 selection,
+drain to backend2, persisted drain after main restart, undrain to backend1,
+backend1 process loss and recovery. The original client used one TCP socket
+through drain, daemon restart and undrain, receiving backend1 replies without
+reconnect while new flows selected backend2. Empty Healthy withdrawal removed
+the NAT table and helpers; peers, namespaces, temporary inputs and forwarding
+fixture changes were cleaned up, and the guest was stopped. Existing focused
+ingress, drain and NAT controller tests also passed. No product change or manual
+product-state repair was required. The runbook states the remaining unverified
+selection modes, all-backend outage, address sources and guest-reboot scope.

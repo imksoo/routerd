@@ -973,3 +973,32 @@ Linux では `IPv6StaticRoute.metric` の省略またはゼロ指定を実効値
 ```sh
 go test ./pkg/controller/chain -run '^TestIPv4RouteControllerAppliesAndWithdrawsIPv6StaticRoute$' -count=1
 ```
+
+
+## パッケージ版 IngressService の切り替えと drain
+
+正式パッケージを入れた専用 Linux VM、空の canonical 設定、試験用リンクと独立した
+管理経路を使います。本番では実行しません。`tests/netns/ingress-conntrack-survive.sh`
+は手書き nft ルールの試験であり、IngressService の製品経路の証明には使いません。
+
+独立クライアントと2つの TCP echo backend を別々の namespace/veth サブネットに置き、
+ルーター経由の戻り経路を用意します。外部所有 Interface 3件、実行時の forwarding
+Sysctl、IngressService を宣言します。client 側 TCP listener、2つの名前付き backend、
+failover、hairpin off、TCP 検査 timeout 500ms、正常・異常しきい値1を使います。
+直接の backend 応答を確認してから通常 daemon の API で適用します。
+
+1. status の選択と独立クライアントの実応答が backend1 で一致することを確認します。
+2. TCP 接続を1本維持し、200msごとに backend1 の echo 応答を検査します。再接続は禁止です。
+3. `routerctl ingress drain ingress/service backend=backend1` 後、45秒以内に新規接続が
+   backend2 へ向かい、元の接続は backend1 のまま進行することを確認します。
+4. main daemon を再起動し、drain、backend2 への新規接続、元の接続の継続を確認します。
+5. `routerctl ingress undrain ingress/service backend=backend1` 後、新規接続が backend1
+   に戻ることを確認し、元のクライアントを正常終了します。
+6. backend1 を停止して backend2 への自動切り替え、復帰後の backend1 への自動復帰を
+   status と実際の新規 TCP 応答で確認します。
+7. 空設定で Healthy、所有 NAT table・helper の撤去を確認します。peer と client の終了、
+   namespace/veth・一時ファイル削除、fixture の forwarding 設定復元後に VM を停止します。
+
+失敗時は status、所有 nft table、クライアント結果を確認して終了し、製品状態を手修正して
+通しません。全 backend 障害時の方針、sourceHash/random、各種アドレスソース、guest reboot
+はこの試験の証明範囲外です。
