@@ -25,7 +25,17 @@ func main() {
 		Metadata: api.ObjectMeta{Name: "lan"},
 		Spec:     api.InterfaceSpec{IfName: "lan0"},
 	}}
+	resources = append(resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+		Metadata: api.ObjectMeta{Name: "lan-second"},
+		Spec:     api.InterfaceSpec{IfName: "lan1"},
+	})
 	if mode == "relay" {
+		resources = append(resources, api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
+			Metadata: api.ObjectMeta{Name: "lan-second-address"},
+			Spec:     api.IPv4StaticAddressSpec{Interface: "lan-second", Address: "198.18.2.1/24"},
+		})
 		resources = append(resources,
 			api.Resource{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
@@ -35,7 +45,7 @@ func main() {
 			api.Resource{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Relay"},
 				Metadata: api.ObjectMeta{Name: "lan-relay"},
-				Spec:     api.DHCPv4RelaySpec{Interfaces: []string{"lan"}, Upstream: "198.51.100.2"},
+				Spec:     api.DHCPv4RelaySpec{Interfaces: []string{"lan", "lan-second"}, Upstream: "198.51.100.2"},
 			},
 		)
 	}
