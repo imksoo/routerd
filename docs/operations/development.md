@@ -1272,3 +1272,41 @@ DNS-populated sets keep their existing address-controller ownership. The opt-in
 apply with real nftables, plus preservation of DNS-owned members. Run it in an
 isolated user/network namespace with `ROUTERD_RUN_NETNS=1` and
 `ROUTERD_HOST_NETNS` set to the parent namespace, as in the NAT pool syntax check.
+
+
+## Packaged address-set redirect lifecycle
+
+Use a dedicated Ubuntu guest with the formal base/addon packages, an empty
+canonical configuration and the normal routerd service. The independent peers
+need iproute2, dnsmasq and dig. Create separate client and WAN namespaces joined
+by separate veth pairs to the guest. Give both links IPv4 and IPv6 addresses,
+provide client default routes and WAN return routes, and record original
+forwarding sysctls for cleanup. These are fixture prerequisites, not manual
+repairs of product state. Do not run this on a production host.
+
+Run an independent DNS server on the WAN with two addresses per family, replying
+`192.0.2.22` for `probe.test`, and another on the guest LAN at port 15353 replying
+`192.0.2.11`. Configure external Interface resources, forwarding Sysctl resources,
+an IPAddressSet containing the first WAN address in each family, and a
+LocalServiceRedirect selecting that set on the LAN for TCP/UDP port 53 to 15353.
+The shape is in `tests/netns/local-service-redirect-runtime/config.yaml`. Validate
+each input with the installed routerd, then use
+`routerctl apply --timeout 90s -f CONFIG --replace` from the fixture directory.
+
+After each apply, allow at most 45 seconds for Healthy status. From the independent
+client run `dig +short +time=2 +tries=1 @ADDRESS probe.test A`, both without and
+with `+tcp`, over each IPv4 and IPv6 WAN address. The selected addresses must
+return the local answer and unselected addresses the WAN answer. Change the set
+to the second address in each family, apply, and require both directions of the
+switch while the main PID is unchanged. Restart the service and require the same
+selection. Remove the set and redirect together and require all queries to
+return the WAN answer. Each query assertion has a bounded 15-second convergence
+window; missing replies never count as successful exclusion.
+
+Finally apply the empty configuration and require Healthy, zero resources, no
+owned NAT tables or managed helpers. Stop the service and independent DNS peers,
+remove fixture namespaces/veths/files, restore saved forwarding values and stop
+the guest. On failure retain only the current status, nft sets/rules and client
+results needed to distinguish apply, membership and forwarding failures. This
+qualifies normal-daemon static selection and restart, not DNS-populated refresh,
+policy-routing traffic, guest reboot or every NAT flow-pinhole combination.

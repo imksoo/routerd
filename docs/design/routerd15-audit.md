@@ -4010,3 +4010,20 @@ staging were removed. This establishes the production controller and real-kernel
 path, not normal-daemon configuration delivery, policy-routing traffic, guest
 reboot, FreeBSD or full routerd 1.0 parity. The maintained reproduction and
 acceptance procedure is in the development runbook.
+
+
+### Packaged static address-set redirect lifecycle
+
+Formal product `5645fcf8` passed the packaged address-set redirect lifecycle
+procedure in a dedicated Ubuntu guest. The normal service received configurations
+through routerctl; independent dnsmasq peers returned distinguishable local and
+WAN answers. IPv4 and IPv6 clients using UDP and TCP verified first-address
+selection, live replacement with the second address while the main PID remained
+unchanged, persistence after service restart, and return to WAN answers after
+set/redirect withdrawal. Both selected and excluded destinations had to return
+the expected answer; timeout was not a passing exclusion. Empty configuration
+reached Healthy without owned NAT tables or helpers. The service and DNS peers
+stopped, namespaces/veths/files were removed, forwarding values were restored,
+and the VM was stopped. No product-state repair or additional product change
+was needed. DNS-populated refresh, policy-routing traffic, guest reboot and
+whole-project parity remain outside this result.

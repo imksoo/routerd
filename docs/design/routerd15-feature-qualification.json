@@ -2770,6 +2770,23 @@
         "DNS resolution refresh/expiry and localEndpoint correlation",
         "FreeBSD, guest reboot and complete 1.0 parity"
       ]
+    },
+    "linux-address-set-daemon-5645fcf8": {
+      "level": "packaged-daemon-independent-peer",
+      "outcome": "pass",
+      "revision": "5645fcf847fbfbf9020e7e971c7139896ebcc658",
+      "reference": "docs/design/routerd15-audit.md#packaged-static-address-set-redirect-lifecycle",
+      "environment": "Dedicated Ubuntu guest, formal package, normal service and independent client/WAN DNS peers.",
+      "checks": [
+        "IPv4/IPv6 UDP/TCP queries select local DNS only for current static members.",
+        "Live replacement changes both old/new destination answers without changing main PID.",
+        "Service restart preserves selection; withdrawal returns all destinations to independent WAN DNS.",
+        "Empty Healthy withdrawal, helper/table absence, fixture cleanup and VM stop."
+      ],
+      "excludes": [
+        "DNS-populated refresh/expiry and policy-routing traffic",
+        "Guest reboot, complete flow-pinhole combinations and full 1.0 parity"
+      ]
     }
   },
   "features": [
@@ -4467,7 +4484,8 @@
           "linux-nat-translation-b318d75b",
           "linux-nat-daemon-176f42fb",
           "linux-nat-pool-2ee9f2a2",
-          "linux-address-set-pinhole-5645fcf8"
+          "linux-address-set-pinhole-5645fcf8",
+          "linux-address-set-daemon-5645fcf8"
         ]
       },
       "freebsd": {
@@ -4514,7 +4532,8 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-ingress-daemon-7012214a",
-          "linux-address-set-pinhole-5645fcf8"
+          "linux-address-set-pinhole-5645fcf8",
+          "linux-address-set-daemon-5645fcf8"
         ]
       },
       "freebsd": {
@@ -4570,7 +4589,8 @@
           "linux-home-router-clean-install-999dfd4",
           "linux-dualstack-recovery-6977c66e",
           "linux-named-redirect-9400f03c",
-          "linux-address-set-pinhole-5645fcf8"
+          "linux-address-set-pinhole-5645fcf8",
+          "linux-address-set-daemon-5645fcf8"
         ]
       },
       "freebsd": {

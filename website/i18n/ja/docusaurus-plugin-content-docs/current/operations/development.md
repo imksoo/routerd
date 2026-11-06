@@ -1025,3 +1025,33 @@ NAT・ポリシーの静的アドレス集合はルールと同じ nft トラン
 所有します。`TestNativeNATAddressSetReplacement` は実 nftables で IPv4/IPv6 の置換、
 再適用、DNS 所有の要素の保持を検査します。NAT pool の構文試験と同じ隔離 user/network
 namespace で `ROUTERD_RUN_NETNS=1`、親 namespace を `ROUTERD_HOST_NETNS` に指定します。
+
+
+## パッケージ版のアドレス集合・転送先変更試験
+
+正式 base/addon を導入した専用 Ubuntu VM、空の canonical 設定、通常 routerd service を
+使います。iproute2・dnsmasq・dig を用意し、独立 client/WAN namespace を別々の veth で
+VM へ接続します。IPv4/IPv6、client default route、WAN の戻り経路を設定し、元の
+forwarding sysctl 値を保存します。本番ホストでは実行しません。
+
+WAN DNS に各 family の2アドレスを持たせ、`probe.test` に `192.0.2.22` を応答させます。
+VM LAN の独立 DNS は port 15353 で `192.0.2.11` を応答します。external Interface、
+forwarding Sysctl、各 family の最初の WAN アドレスを含む IPAddressSet、LAN の
+TCP/UDP port 53 を15353へ転送する LocalServiceRedirect を構成します。設定形式は
+`tests/netns/local-service-redirect-runtime/config.yaml` を参照します。各入力を導入済み
+routerd で validate し、fixture ディレクトリで
+`routerctl apply --timeout 90s -f CONFIG --replace` を実行します。
+
+各 apply 後45秒以内に Healthy を要求します。独立 client から全 WAN アドレスへ
+`dig +short +time=2 +tries=1 @ADDRESS probe.test A` を、`+tcp` 有無の両方で実行します。
+選択対象だけ local 応答、それ以外は WAN 応答を要求します。集合を2番目のアドレスへ
+変更して apply し、main PID が不変のまま旧対象・新対象の両方が切り替わることを確認。
+service 再起動後も同じ結果を要求します。集合と redirect を同時撤去すると、全てが
+WAN 応答へ戻ることを確認します。各問い合わせ判定の収束待ちは15秒以内とし、
+応答欠落を除外成功と扱いません。
+
+最後に空設定で Healthy・resource 0・所有 NAT table/helper の不在を確認し、service と
+独立 DNS を停止。namespace/veth/一時ファイルを撤去し、forwarding を元へ戻して VM を
+停止します。失敗時は原因調査に必要な status・nft 集合/ルール・client 結果だけを保持。
+この試験は通常 daemon の静的集合変更と再起動が対象です。DNS 解決集合の更新、
+policy routing 通信、guest reboot、全 flow-pinhole 組み合わせの証明ではありません。
