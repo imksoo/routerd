@@ -4158,3 +4158,33 @@ was Healthy, helpers/NAT absent, peer namespaces/veths/staging removed and origi
 forwarding restored. Focused ingress controller/renderer tests passed. No product
 repair was needed. This does not qualify dynamic address sources, other outage
 policies, UDP or affinity across ruleset replacement.
+
+
+## Packaged IPv6 preferred-source recovery
+
+Product `59373f17` failed source-return recovery: Linux retained the policy
+route while clearing its preferred source, and exact observation discarded the
+receipt during withdrawal. Return then collided with the orphan route. An
+isolated real-kernel reproduction and test-first `cdc1f4e1` established the
+failure. Fix `0cf9566b` recognizes the otherwise identical cleared-source route
+only through its recorded identity; unowned and pending acquisitions stay fenced.
+The real-kernel controller regression passes. A second reproduced failure,
+`d0d68488`, left Pending status after successful removal. Fix `e6590007` retires
+removed policy status only after effect reconciliation, preserving declarations,
+dry-run status and failed withdrawals.
+
+Formal base/addon `1.5.0~20261106215319+ge6590007` passed installed checksum/version
+verification and automatically cleared the old Pending status to empty Healthy.
+A fresh dedicated-guest run then passed real IPv6 host HTTP through the policy,
+source-loss rule/route withdrawal and failed traffic, source return with the same
+main PID, service restart with restored HTTP, and empty Healthy with no stale
+policy status. Both private 105-resource deployment candidates validated with
+this formal binary. This does not qualify transit/hash policy or all WAN modes.
+
+The original fixture used bare shell negation, which is insufficient with
+`set -e`; the rerun used explicit failure branches. Final namespace deletion
+completed but the immediate veth absence check raced kernel teardown. Subsequent
+read-only observation proved link absence; cleanup resumed without repeating
+product mutations, verified policy absence and failed HTTP, and removed staging.
+The maintained procedure now bounds the veth teardown wait to five seconds.
+Do not describe the initial script exit as a complete uninterrupted pass.

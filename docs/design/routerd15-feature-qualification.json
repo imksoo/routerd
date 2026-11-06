@@ -2884,6 +2884,22 @@
         "Dynamic source addresses, UDP, alternate outage policies and physical fault domains",
         "Stable source mapping across ruleset replacement or statistical random uniformity"
       ]
+    },
+    "linux-ipv6-host-policy-e6590007": {
+      "level": "packaged-daemon-native",
+      "outcome": "pass",
+      "revision": "e659000730eda4fb0a944b51a8fe289a39a16510",
+      "reference": "docs/design/routerd15-audit.md#packaged-ipv6-preferred-source-recovery",
+      "environment": "Dedicated Ubuntu guest normal formal Debian packages and independent HTTP peer namespace.",
+      "checks": [
+        "Host IPv6 HTTP through exact preferred-source route and iif lo rule.",
+        "Source loss withdraws route/rule and traffic; return restores with unchanged main PID.",
+        "Main restart restores payload; empty Healthy removes policy status and native effects."
+      ],
+      "excludes": [
+        "Final veth teardown observation resumed after asynchronous namespace deletion; initial script exited nonzero at cleanup",
+        "Transit/hash policies and all dynamic WAN modes"
+      ]
     }
   },
   "features": [
@@ -4461,7 +4477,8 @@
           "linux-health-pbr-native-58bef4e9",
           "linux-multi-dslite-apt-fc5d7816",
           "linux-dslite-existing-flows-ee50d674",
-          "linux-dslite-pd-apt-197bd70f"
+          "linux-dslite-pd-apt-197bd70f",
+          "linux-ipv6-host-policy-e6590007"
         ]
       },
       "freebsd": {

@@ -1180,3 +1180,20 @@ reconcile の間に消失・復帰した場合も対象。同一カーネル・i
 policy の実効果の撤去成功後、削除済み EgressRoutePolicy の status も取り除く。
 以前の PreferredSourceUnavailable/Pending を空設定の不健康判定に残さない。
 宣言が残る無効条件、dry-run、撤去失敗の status は保持する。
+
+
+パッケージ版の IPv6 host policy 試験は空設定・独立管理経路の専用 Ubuntu VM で実施する。
+veth 上の source `2001:db8:88::1/64`、peer gateway `fe80::88`、peer loopback の
+HTTP 宛先 `2001:db8:89::99/128` を準備する。製品 apply 前に peer の直結 HTTP 成功、
+loopback 宛 HTTP 失敗を確認する。external WAN Interface と IPv6 priority
+EgressRoutePolicy を宣言し、hostTraffic、preferredSource interface、static gateway、
+table 128、priority 10128、metric 50 を指定する。90 秒期限で通常 daemon に apply。
+60 秒以内に Applied、src 付き実経路、iif lo rule、loopback HTTP payload を要求する。
+
+fixture の外部 source アドレスだけを削除し、PreferredSourceUnavailable/Pending、
+経路・rule 不在、HTTP 失敗を確認する。source を戻し main PID 維持で通信復帰、
+main 再起動（120 秒以内）後も通信を確認する。空設定で Healthy、古い status・経路・rule
+不在、HTTP 失敗を確認。peer 停止・namespace 削除後、対向 veth 消滅を最大 5 秒待ち、
+staging と VM を片付ける。host 自身の IPv6 通信の試験であり transit/hash 全般ではない。
+シェルの否定判定は `if unexpected-command; then exit 1; fi` を使う。
+単独の `! command` は `set -e` で失敗停止するとは限らない。

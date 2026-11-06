@@ -1477,3 +1477,26 @@ After successful policy-effect withdrawal, removed EgressRoutePolicy status is
 retired so a former PreferredSourceUnavailable/Pending result cannot keep an
 empty router unhealthy. Declared but disabled policies, dry-run observations and
 failed withdrawals retain their status.
+
+
+For the packaged IPv6 host-policy gate, use a dedicated Ubuntu VM with empty
+intent and independent management. Certify a veth-linked independent HTTP peer:
+router source `2001:db8:88::1/64`, peer link-local gateway `fe80::88` and an
+HTTP destination on peer loopback `2001:db8:89::99/128`. Direct peer-link HTTP must
+work before product apply; the loopback destination must be unreachable. Declare
+an external WAN Interface and IPv6 priority EgressRoutePolicy with hostTraffic,
+preferredSource interface, static link-local gateway, table 128, priority 10128
+and metric 50. Apply through the normal formal-package daemon with a 90-second
+limit. Within 60 seconds require Applied, the exact kernel route with preferred
+source and `iif lo` rule, and the loopback HTTP payload.
+
+Remove only the fixture's external source address. Require Pending with
+PreferredSourceUnavailable, both policy route and rule absent, and HTTP failure.
+Restore that source and require automatic rule/route/payload recovery without
+changing the main PID. Restart the main service (120-second bound), then require
+the same payload. Apply empty intent and require Healthy, no stale policy status,
+no policy route/rule and failed HTTP. Stop the peer and remove its namespace;
+allow up to five seconds for the paired veth to disappear, then remove staging
+and stop the guest. This is host-originated IPv6 traffic, not transit/hash policy
+or all dynamic WAN modes. Use explicit `if unexpected-command; then exit 1; fi`
+for negative shell assertions: a bare `! command` is not enforced by `set -e`.
