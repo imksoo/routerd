@@ -292,3 +292,81 @@ func TestDaemonTimersRenewAndRebindWithinOneSecondLease(t *testing.T) {
 		t.Fatal("one-second lease did not expire")
 	}
 }
+
+func TestRestoreLeaseIdentityChangeStartsFreshDiscovery(t *testing.T) {
+	for _, field := range []string{"interface", "hardware", "client", "resource"} {
+		t.Run(field, func(t *testing.T) {
+			d, conn, now := testDaemon(t)
+			saved := d.client.Snapshot()
+			saved.State = dhcpv4client.StateBound
+			saved.CurrentAddress, saved.ServerID = "192.0.2.99", "192.0.2.1"
+			saved.PrefixLength, saved.LeaseTimeSeconds = 24, 120
+			saved.AcquiredAt, saved.ExpiresAt = *now, now.Add(120*time.Second)
+			switch field {
+			case "interface":
+				saved.Interface = "previous0"
+			case "hardware":
+				saved.HardwareAddress = "02:00:00:00:00:01"
+			case "client":
+				saved.ClientID = "01020000000001"
+			case "resource":
+				saved.Resource = "previous"
+			}
+			data, err := json.Marshal(saved)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(d.opts.leaseFile, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := d.restoreLease(); err != nil {
+				t.Fatalf("identity change prevents acquisition: %v", err)
+			}
+			if s := d.client.Snapshot(); s.CurrentAddress != "" {
+				t.Fatalf("foreign lease gained authority: %+v", s)
+			}
+			if err := d.advance(t.Context(), d.client.Start); err != nil {
+				t.Fatal(err)
+			}
+			discover := conn.request(t)
+			if discover.MessageType() != dhcpv4client.MessageDiscover || len(discover.Options[dhcpv4client.OptionRequestedIP]) != 0 || !discover.CIAddr.IsUnspecified() {
+				t.Fatalf("old lease reused instead of fresh discovery: %+v", discover)
+			}
+			data, err = os.ReadFile(d.opts.leaseFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var persisted dhcpv4client.Snapshot
+			if err := json.Unmarshal(data, &persisted); err != nil {
+				t.Fatal(err)
+			}
+			current := d.client.Snapshot()
+			if persisted.Interface != current.Interface || persisted.HardwareAddress != current.HardwareAddress || persisted.ClientID != current.ClientID || persisted.Resource != current.Resource || persisted.CurrentAddress != "" {
+				t.Fatalf("new acquisition did not replace obsolete lease identity: %+v", persisted)
+			}
+		})
+	}
+}
+
+func TestRestoreLeasePreservesInvalidDataError(t *testing.T) {
+	d, _, _ := testDaemon(t)
+	if err := os.WriteFile(d.opts.leaseFile, []byte("{invalid"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.restoreLease(); err == nil {
+		t.Fatal("invalid saved JSON silently accepted")
+	}
+	saved := d.client.Snapshot()
+	saved.CurrentAddress = "192.0.2.99"
+	saved.LeaseTimeSeconds = -1
+	data, err := json.Marshal(saved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(d.opts.leaseFile, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.restoreLease(); err == nil {
+		t.Fatal("invalid matching lease silently accepted")
+	}
+}
