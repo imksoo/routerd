@@ -1371,3 +1371,31 @@ as above. After stopping the daemon remove the runtime drop-in and reload
 systemd before removing fixture files. This qualifies successful DNS answer
 replacement, not resolver outage, NXDOMAIN/empty-answer policy or TTL-expiry
 withdrawal; those are distinct from a configured refresh interval.
+
+
+## Packaged WebConsole browser check
+
+Use a dedicated Ubuntu guest with formal packages and an empty canonical config.
+Apply a WebConsole bound only to loopback, with a distinctive title and unused
+port, through the normal routerctl/service path. Forward that port with SSH to
+a loopback-only local port; use an existing Chrome and Playwright core without
+API interception or seeded SQLite observations. Keep the tunnel lifetime bounded
+and terminate it even if a browser assertion fails.
+
+Open `/#resources` and require the configured WebConsole resource in
+`#resources-table` within 30 seconds. The document title includes both the
+selected page and configured title (`Resources - TITLE`). From that page, POST
+to `/api/v1/config` and require 405/read-only; WebConsole is not a configuration
+mutation API. Add an unreferenced static IPAddressSet through routerctl and,
+without reloading the browser, require its row within 45 seconds and its name
+in GET `/api/v1/config`. Remove it through routerctl and require its row to
+disappear or explicitly say it is not declared in current config; retained
+withdrawal observations must not be misrepresented as current declarations.
+
+Restart the normal service with a 120-second observation bound, reload the page
+and require the remaining resource to render without page JavaScript errors.
+Finally apply empty intent, require Healthy and no WebConsole listener/helpers,
+stop the daemon, close browser/tunnel, remove inputs and stop the guest. This
+qualifies actual packaged display/current-config/read-only behavior, not every
+UI workflow, admission policy or unavailable-observation display; retain the
+separate controlled browser tests for stale response ordering and unknown data.

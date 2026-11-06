@@ -2820,6 +2820,22 @@
         "DNS outage, NXDOMAIN/empty answers and TTL-expiry withdrawal",
         "Other address-set consumers, FreeBSD and complete 1.0 parity"
       ]
+    },
+    "linux-webconsole-packaged-5645fcf8": {
+      "level": "packaged-daemon-browser",
+      "outcome": "pass",
+      "revision": "5645fcf847fbfbf9020e7e971c7139896ebcc658",
+      "reference": "docs/design/routerd15-audit.md#packaged-webconsole-live-browser",
+      "environment": "Dedicated Ubuntu guest normal formal-package daemon, loopback SSH tunnel, existing Chrome and Playwright core 1.59.1; no response mocks.",
+      "checks": [
+        "Resources render with configured page title; CLI add/withdraw updates without page reload.",
+        "Current config includes added resource; POST config rejected with 405 read-only.",
+        "Service restart/page reload pass without JavaScript page errors; empty Healthy listener withdrawal and cleanup."
+      ],
+      "excludes": [
+        "Initial fixture title assertion corrected before resuming browser checks; no fresh full setup rerun",
+        "Every UI workflow, independent admission policy and controlled unknown/stale observation cases"
+      ]
     }
   },
   "features": [
@@ -3089,7 +3105,8 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-nonresource-code-c7f89dda",
-          "linux-webconsole-browser-c7f89dda"
+          "linux-webconsole-browser-c7f89dda",
+          "linux-webconsole-packaged-5645fcf8"
         ]
       },
       "freebsd": {
@@ -3099,8 +3116,8 @@
         ]
       },
       "required_remaining_checks": [
-        "Browser operation against packaged running daemon",
-        "Live current/unknown observations, configuration/control permissions and baseline UI workflows"
+        "Remaining baseline UI workflows and unavailable observations against native inputs; packaged resource display/current-config/add-withdraw/restart and read-only rejection are scoped separately",
+        "Management admission boundaries; fixture browser checks cover stale response ordering and unknown observations independently"
       ]
     },
     {

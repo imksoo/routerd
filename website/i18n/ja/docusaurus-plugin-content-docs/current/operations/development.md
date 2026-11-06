@@ -1100,3 +1100,22 @@ IPAddressSet statusが新アドレス対だけになることを要求。旧/新
 daemon停止後はruntime drop-inを削除してdaemon-reloadし、一時ファイルを撤去します。
 成功応答の変更を検証する試験であり、DNS障害、NXDOMAIN/空応答、TTL期限切れでの撤去
 方針は未確認です。refresh間隔とTTL期限切れを混同しません。
+
+
+## パッケージ版 WebConsole のブラウザ試験
+
+専用Ubuntu VM・正式パッケージ・空canonical設定から、loopbackだけにbindするWebConsoleを
+通常routerctl/service経由でapplyします。固有titleと未使用portを指定し、SSHでローカルの
+loopback portへ転送。既存ChromeとPlaywright coreを使い、API差替えやSQLiteへの観測値注入は
+しません。失敗時もブラウザとSSH tunnelを閉じます。
+
+`/#resources` を開き、30秒以内に `#resources-table` にWebConsole resourceが表示されることを
+要求。titleは `Resources - TITLE` です。ページから `/api/v1/config` にPOSTし、405/read-onlyを
+確認します。CLIで未参照の静的IPAddressSetを追加し、ブラウザ再読込なしで45秒以内にrowが
+現れ、GET `/api/v1/config` にも含まれることを確認。CLIで撤去後、rowが消えるか現在の設定に
+宣言されていないと明記されることを要求します。保持された撤去statusを現行宣言と混同しません。
+
+通常service再起動を120秒以内で観測し、ページ再読込後も残るresourceを表示、JavaScript
+page errorが無いことを確認。空設定でHealthy・Web listener/helper不在を確認し、daemon停止、
+browser/tunnel終了、入力削除、VM停止まで行います。全UI操作・admission・未観測表示の証明では
+ありません。応答順序やunknown表示には既存の独立したfixtureブラウザ試験も使います。

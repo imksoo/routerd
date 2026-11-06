@@ -4085,3 +4085,23 @@ reload, forwarding restoration and guest stop completed. Focused address-set
 controller tests also passed. No product change was needed. DNS outage and
 NXDOMAIN/empty-answer behavior remain outside this successful-answer refresh
 check; it does not establish TTL-expiry withdrawal or full functional parity.
+
+
+### Packaged WebConsole live browser
+
+Formal product `5645fcf8` passed the packaged browser procedure through a
+loopback SSH tunnel to a dedicated Ubuntu guest's normal service, using existing
+Chrome and Playwright core 1.59.1. No API response or SQLite state was mocked.
+The initial fixture incorrectly expected only the configured title; source
+`webconsole/src/main.tsx` appends the selected page, and the observed title was
+`Resources - routerd native UI`. After correcting that fixture, browser checks
+resumed against the already configured daemon without repeating VM setup.
+
+The real resource table rendered, POST config returned 405/read-only, CLI add
+appeared without page reload, current config included it, and CLI withdrawal
+was reflected without reload. Service restart and page reload retained the
+remaining resource; no page JavaScript errors occurred. Empty configuration
+reached Healthy, removed the listener/helpers, and daemon/tunnel/browser/input
+cleanup and guest stop completed. This establishes live packaged behavior, not
+every UI page or authorization policy. The controlled stale-response and
+unknown-observation tests remain separately scoped.
