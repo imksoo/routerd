@@ -16,6 +16,9 @@ func TestDaemonCarriesConfiguredPPPoESessionOptions(t *testing.T) {
 		"--ifname", "ppp-uplink",
 		"--username", "subscriber",
 		"--password", "secret",
+		"--auth-method", "pap",
+		"--service-name", "internet service",
+		"--ac-name", "access concentrator",
 		"--mtu", "1480",
 		"--mru", "1480",
 		"--default-route",
@@ -38,7 +41,7 @@ func TestDaemonCarriesConfiguredPPPoESessionOptions(t *testing.T) {
 		t.Fatalf("daemon config lost PPPoE settings: %#v", cfg)
 	}
 	peer := string(pppoeclient.LinuxPeer(cfg))
-	for _, want := range []string{"ifname ppp-uplink\n", "defaultroute\n", "usepeerdns\n", "+ipv6\n", "lcp-echo-interval 17\n", "lcp-echo-failure 5\n"} {
+	for _, want := range []string{"ifname ppp-uplink\n", "defaultroute\n", "usepeerdns\n", "+ipv6\n", "lcp-echo-interval 17\n", "lcp-echo-failure 5\n", "-chap\n", "rp_pppoe_service \"internet service\"\n", "rp_pppoe_ac \"access concentrator\"\n", "mtu 1480\n", "mru 1480\n"} {
 		if !strings.Contains(peer, want) {
 			t.Errorf("rendered peer missing %q:\n%s", want, peer)
 		}
