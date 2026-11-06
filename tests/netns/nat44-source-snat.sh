@@ -36,7 +36,11 @@ ip netns exec "$ROUTER" sysctl -qw net.ipv4.ip_forward=1
 
 (
 	cd "$ROOT_DIR"
-	go build -o "$WORKDIR/routerd" ./cmd/routerd
+	if [[ -n "${ROUTERD_TEST_BINARY:-}" ]]; then
+		cp "$ROUTERD_TEST_BINARY" "$WORKDIR/routerd"
+	else
+		go build -o "$WORKDIR/routerd" ./cmd/routerd
+	fi
 	go build -o "$WORKDIR/nat44-controller" ./tests/netns/nat44-portforward-runtime
 )
 CONFIG="$SCRIPT_DIR/nat44-source-snat-runtime/config.yaml"
@@ -47,7 +51,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        body = (self.client_address[0] + "\n").encode()
+        body = (("%s:%d" % self.client_address) if self.path == "/tuple" else self.client_address[0]).encode() + b"\n"
         self.send_response(200)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Connection", "close")
@@ -114,6 +118,34 @@ PY
 apply_config "$WORKDIR/secondary.yaml" secondary
 expect_source "$LAN0" 198.18.16.53 198.18.16.11 "updated SNAT address reference"
 expect_source "$LAN0" 198.18.16.54 198.18.15.101 "excluded destination after update"
+
+# Exercise the translation-shaped resource through the same production
+# controller, including the real source port observed by an independent server.
+python3 - "$CONFIG" "$WORKDIR/translation.yaml" <<'PYCONFIG'
+import sys
+from pathlib import Path
+source = Path(sys.argv[1]).read_text()
+head, separator, _ = source.partition("        type: snat\n")
+if not separator:
+    raise SystemExit("expected SNAT fixture")
+Path(sys.argv[2]).write_text(head + """        outboundInterface: wan
+        sourceCIDRs: [198.18.15.0/24]
+        translation:
+          type: address
+          address: 198.18.16.10
+          portMapping:
+            type: range
+            start: 40000
+            end: 40010
+""")
+PYCONFIG
+"$WORKDIR/routerd" validate --config "$WORKDIR/translation.yaml"
+apply_config "$WORKDIR/translation.yaml" translation
+tuple=$(ip netns exec "$LAN0" curl --noproxy '*' --fail --silent --show-error --max-time 3 http://198.18.16.53:8080/tuple)
+[[ "${tuple%:*}" == 198.18.16.10 ]] || fail "translation address: $tuple"
+port=${tuple##*:}
+[[ "$port" =~ ^[0-9]+$ ]] && ((port >= 40000 && port <= 40010)) || fail "translation source port: $tuple"
+expect_source "$LAN1" 198.18.16.53 198.18.17.101 "translation unmatched source"
 
 cat >"$WORKDIR/empty.yaml" <<'YAML'
 apiVersion: routerd.net/v1alpha1

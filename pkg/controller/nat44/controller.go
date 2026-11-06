@@ -98,6 +98,17 @@ func (c Controller) Reconcile(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		if targetOS == platform.OSLinux && spec.Translation.Type != "" {
+			ifname := aliases[spec.OutboundInterface]
+			if ifname == "" {
+				return fmt.Errorf("%s references outbound interface with empty ifname", resource.ID())
+			}
+			rules = append(rules, render.NAT44RenderRule{
+				Name: resource.Metadata.Name, EgressInterface: ifname,
+				SourceRanges: spec.SourceCIDRs, Translation: spec.Translation,
+			})
+			continue
+		}
 		ifname, reason, err := c.resolveEgressInterface(spec, aliases)
 		if err != nil {
 			return err

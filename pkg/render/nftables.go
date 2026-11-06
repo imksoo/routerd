@@ -599,6 +599,7 @@ func NftablesEgressRoutePolicyDefaultMarks(resourceID string, spec api.EgressRou
 }
 
 type NAT44RenderRule struct {
+	Translation               api.IPv4NATTranslationSpec
 	Name                      string
 	Type                      string
 	EgressInterface           string
@@ -2589,6 +2590,22 @@ func ingressRuleTargets(rule ingressNATRule) []ingressNATTarget {
 func writeNAT44RenderRule(buf *bytes.Buffer, rule NAT44RenderRule, addressSets map[string]nftIPAddressSet) error {
 	if rule.EgressInterface == "" {
 		return fmt.Errorf("nat44 rule %q has empty egress interface", rule.Name)
+	}
+	if rule.Translation.Type != "" {
+		for _, cidr := range rule.SourceRanges {
+			prefix, err := netip.ParsePrefix(cidr)
+			if err != nil || !prefix.Addr().Is4() {
+				return fmt.Errorf("nat44 rule %q has invalid IPv4 source CIDR %q", rule.Name, cidr)
+			}
+			lines, err := nftSourceNATRules(rule.EgressInterface, prefix.Masked().String(), rule.Translation)
+			if err != nil {
+				return err
+			}
+			for _, line := range lines {
+				buf.WriteString("    " + line + "\n")
+			}
+		}
+		return nil
 	}
 	matches, err := nftIPv4Matches("nat44 rule "+rule.Name, nftIPv4MatchSpec{
 		SourceCIDRs:               rule.SourceRanges,

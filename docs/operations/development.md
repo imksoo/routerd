@@ -311,6 +311,9 @@ applies real nftables rules in a private router namespace. An independent WAN
 HTTP peer observes the translated source. Only the selected source and
 destination CIDRs may use the configured SNAT address; an excluded destination
 and a client outside the source range must preserve their original addresses.
+The translation-shaped `outboundInterface/sourceCIDRs/translation` rule must also
+translate the address and constrain the TCP source port to its declared range.
+Set `ROUTERD_TEST_BINARY` to a formal distribution binary when running on a guest.
 Updating `snatAddressFrom` must affect new connections, and withdrawing the rule
 must remove the NAT table and restore the original source. Successful temporary
 output is deleted; failures retain only the current diagnostic directory.
