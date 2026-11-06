@@ -1535,6 +1535,12 @@ func (r *Runner) saveWhenFalseStatuses(store eventedStore) error {
 	}
 	now := time.Now().UTC()
 	for _, res := range declared.Spec.Resources {
+		// The lease actor consumes declared resources and owns conditional
+		// withdrawal, including receipts and retryable failures. Publishing a
+		// generic WhenFalse status here would erase its cleanup ownership.
+		if res.Kind == "DHCPv4Client" {
+			continue
+		}
 		when := resourcequery.ResourceWhen(res)
 		if !resourcequery.ResourceWhenPresent(when) {
 			continue
