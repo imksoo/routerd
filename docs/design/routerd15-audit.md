@@ -3712,3 +3712,50 @@ was corrected to use the actual control API and the remaining checks resumed
 against the existing PID/counters, without restarting or repairing the product.
 This result does not establish every sink type, concurrent delivery/activation
 failure, FreeBSD, or full routerd 1.0 parity.
+
+
+## WireGuard live identity rotation and connected health
+
+At product revision `b25b264cdb4822e6e0f3b193c91e6dad7ef8fdeb`, the formal
+matching base/addon package `1.5.0~20261106195738+gb25b264c` passed a dedicated
+Ubuntu guest test through the normal systemd daemon and configuration API.
+An independent kernel WireGuard peer lived in a separate network namespace.
+The guest required `wireguard-tools` (a package suggestion) and a loaded
+`nf_conntrack` module before the empty-daemon health preflight. This result
+therefore does not prove automatic optional dependency installation or module
+loading after a clean boot.
+
+Reproduce with an isolated underlay veth pair, a WireGuardInterface with an
+explicit listen port, one WireGuardPeer, and owned IPv4 address/route resources:
+
+1. Generate temporary keys without printing them; configure the independent peer
+   with its own key, the router public key and matching AllowedIPs/endpoints.
+2. Apply the router configuration through `routerctl apply --timeout 90s --replace`.
+   Generate bounded traffic in both directions **before** waiting for Healthy;
+   an idle peer legitimately has no handshake. Require nonzero handshake times,
+   successful packets and no current controller error.
+3. Save the daemon PID and native link index/ownership alias. Apply a new router
+   private key and update the independent peer's trusted public key. Require new
+   bidirectional communication, Healthy status and unchanged PID/index/alias.
+4. Restart the normal daemon and require bidirectional communication and Healthy
+   status again, without repairing product state.
+5. Apply an empty configuration. Require Healthy, absent owned link/route and no
+   helper process before stopping the daemon. Remove the independent namespace,
+   veth and generated key/configuration files, then stop the disposable guest.
+
+The first exchange exposed a product defect: the peer controller published
+`Connected`, but `statusPhaseRank` and `canonicalOverallPhase` omitted this
+successful phase. The full daemon reported it as a resource issue despite real
+bidirectional traffic. Test commit `70747dea` reproduced the aggregate status and
+issue-list error; `b25b264c` fixes both normalization paths. The corrected packaged
+run passed all five steps. The existing local real-kernel peer test was extended
+in `1f069e18` to verify key rotation, child ownership and cleanup.
+
+Preparation attempts also exposed fixture mistakes: a missing peer tool,
+health-before-handshake ordering, and an incomplete temporary-file cleanup that
+caused an unnecessary repeat. These were corrected before the final run; no
+failed attempt is counted as successful qualification. Full Go tests (122 tested
+packages, 15 without tests), schema/example checks and four website locales passed
+at the product revision. This establishes local identity rotation and daemon
+restart on Linux, not all peer-source integrations, PSK rotation, guest reboot,
+FreeBSD or complete routerd 1.0 parity.

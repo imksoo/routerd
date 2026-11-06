@@ -2628,6 +2628,22 @@
         "All sink types and concurrent delivery/activation failure combinations",
         "FreeBSD and complete routerd 1.0 parity"
       ]
+    },
+    "linux-wireguard-rotation-b25b264c": {
+      "level": "packaged-daemon-independent-peer",
+      "outcome": "pass",
+      "revision": "b25b264cdb4822e6e0f3b193c91e6dad7ef8fdeb",
+      "reference": "docs/design/routerd15-audit.md#wireguard-live-identity-rotation-and-connected-health",
+      "environment": "Dedicated Ubuntu guest, formal matching base/addon 1.5.0~20261106195738+gb25b264c; independent kernel peer namespace, wireguard-tools installed and nf_conntrack loaded before qualification.",
+      "checks": [
+        "Bidirectional traffic and Healthy status before and after live local identity rotation; daemon PID, native link index and ownership alias unchanged.",
+        "Normal daemon restart recovered communication; empty configuration withdrew link/route, then fixture keys and namespace were removed.",
+        "Connected health aggregation failed locally before the fix and passed afterward; full Go122/15, schemas/examples and four website locales passed."
+      ],
+      "excludes": [
+        "Guest reboot and automatic optional-package/module provisioning",
+        "All peer sources, remote identity/PSK rotation, FreeBSD and complete 1.0 parity"
+      ]
     }
   },
   "features": [
@@ -3072,7 +3088,8 @@
         ],
         "related_test_files": [
           "pkg/controller/chain/wireguard_test.go",
-          "pkg/wireguard/wireguard_test.go"
+          "pkg/wireguard/wireguard_test.go",
+          "pkg/controller/chain/wireguard_child_parent_native_linux_test.go"
         ]
       },
       "preservation_verdict": "unknown",
@@ -3080,7 +3097,8 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-wireguard-peer-f54ceecb",
-          "linux-combined-native-3e58c93a"
+          "linux-combined-native-3e58c93a",
+          "linux-wireguard-rotation-b25b264c"
         ]
       },
       "freebsd": {
