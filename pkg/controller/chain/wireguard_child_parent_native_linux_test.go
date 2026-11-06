@@ -248,6 +248,39 @@ func TestWireGuardParentNativeLinuxPeerLifecycle(t *testing.T) {
 		t.Fatalf("native parent receipt changed after reopen: %v", err)
 	}
 	run("ping", "-c", "1", "-W", "3", "-I", "192.0.2.1", "192.0.2.2")
+	// Rotate the configured local identity without replacing the owned link or
+	// its children. The independent peer must authenticate the new public key.
+	rotatedPrivate, err := wireguard.GeneratePrivateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rotatedPublic, err := wireguard.PublicKeyFromPrivateKey(rotatedPrivate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ifaceSpec, err := router.Spec.Resources[0].WireGuardInterfaceSpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ifaceSpec.PrivateKey = rotatedPrivate
+	router.Spec.Resources[0].Spec = ifaceSpec
+	if err := parent.Reconcile(ctx); err != nil {
+		t.Fatalf("native private key rotation: %v", err)
+	}
+	rotated, err := parent.interfaceStatus(ctx, "wg-proof")
+	if err != nil || rotated.PublicKey != rotatedPublic {
+		t.Fatalf("native identity did not rotate: %v", err)
+	}
+	rotatedLink, err := parent.observeNativeWireGuard(ctx, "wg-proof")
+	if err != nil || rotatedLink.IfIndex != record.IfIndex || rotatedLink.Token != record.Token {
+		t.Fatalf("key rotation replaced the owned parent: %v", err)
+	}
+	peerConfig = fmt.Sprintf("[Interface]\nPrivateKey = %s\nListenPort = 51821\n\n[Peer]\nPublicKey = %s\nAllowedIPs = 192.0.2.1/32\nEndpoint = 198.18.0.1:%d\n", peerPrivate, rotatedPublic, rotated.ListenPort)
+	peerRun(peerConfig, "wg", "setconf", "wg-peer", "/dev/stdin")
+	run("ping", "-c", "2", "-W", "3", "-I", "192.0.2.1", "192.0.2.2")
+	checkTraffic("wg-proof", run("wg", "show", "wg-proof", "dump"))
+	checkTraffic("wg-peer", peerRun("", "wg", "show", "wg-peer", "dump"))
+	checkChildProof()
 	route.Router, address.Router = &api.Router{}, &api.Router{}
 	if err := route.reconcile(ctx); err != nil {
 		t.Fatalf("native recorded child route withdrawal: %v", err)
