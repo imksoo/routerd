@@ -441,3 +441,31 @@ func TestPolicyIPv6WithdrawnPendingStatusIsRetired(t *testing.T) {
 		t.Fatalf("withdrawn policy still has status: %v", got)
 	}
 }
+
+func TestPolicyIPv6StatusRetainedForDeclarationAndFailedWithdrawal(t *testing.T) {
+	for _, mode := range []string{"disabled", "dry-run", "failed-withdrawal"} {
+		t.Run(mode, func(t *testing.T) {
+			c, store, native, _ := newPolicyIPv6Fixture(t)
+			if err := c.reconcileIPv6HostPolicies(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			declared := c.Router
+			c.Router = hostPolicyRouter(false)
+			switch mode {
+			case "disabled":
+				c.DeclaredRouter = declared
+			case "dry-run":
+				c.DryRun = true
+			case "failed-withdrawal":
+				native.readFailure = true
+			}
+			err := c.reconcileIPv6HostPolicies(t.Context())
+			if (err != nil) != (mode == "failed-withdrawal") {
+				t.Fatalf("reconcile: %v", err)
+			}
+			if got := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "host-ipv6-ra"); len(got) == 0 {
+				t.Fatal("status prematurely retired")
+			}
+		})
+	}
+}

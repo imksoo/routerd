@@ -1472,3 +1472,8 @@ namespaces, a real veth and SQLite with the production controller. It checks act
 kernel clearing, route/rule withdrawal, source return and final removal. Ordinary
 unit tests skip this explicitly enabled kernel case. Package/service and independent
 payload qualification are separate from this local controller regression.
+
+After successful policy-effect withdrawal, removed EgressRoutePolicy status is
+retired so a former PreferredSourceUnavailable/Pending result cannot keep an
+empty router unhealthy. Declared but disabled policies, dry-run observations and
+failed withdrawals retain their status.

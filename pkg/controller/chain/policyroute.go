@@ -24,6 +24,7 @@ import (
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/render"
 	"github.com/imksoo/routerd/pkg/resourcequery"
+	"github.com/imksoo/routerd/pkg/state"
 )
 
 type IPv4PolicyRouteController struct {
@@ -118,6 +119,44 @@ func (c IPv4PolicyRouteController) reconcileIPv6HostPolicies(ctx context.Context
 			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", policy.Name, map[string]any{"phase": "Applied", "dryRun": c.DryRun}); err != nil {
 				return err
 			}
+		}
+	}
+	return c.cleanupRemovedPolicyStatuses()
+}
+
+// Runs after both IPv4 and IPv6 effect reconciliation has succeeded. Retain
+// when-disabled declarations and any status whose withdrawal failed.
+func (c IPv4PolicyRouteController) cleanupRemovedPolicyStatuses() error {
+	if c.DryRun {
+		return nil
+	}
+	store, ok := c.Store.(interface {
+		state.ObjectStatusLister
+		state.ObjectDeleteStore
+	})
+	if !ok {
+		return nil
+	}
+	declared := c.DeclaredRouter
+	if declared == nil {
+		declared = c.Router
+	}
+	wanted := map[string]bool{}
+	for _, r := range declared.Spec.Resources {
+		if r.APIVersion == api.NetAPIVersion && r.Kind == "EgressRoutePolicy" {
+			wanted[r.Metadata.Name] = true
+		}
+	}
+	objects, err := store.ListObjectStatuses()
+	if err != nil {
+		return err
+	}
+	for _, object := range objects {
+		if object.APIVersion != api.NetAPIVersion || object.Kind != "EgressRoutePolicy" || wanted[object.Name] {
+			continue
+		}
+		if err := store.DeleteObject(object.APIVersion, object.Kind, object.Name); err != nil {
+			return err
 		}
 	}
 	return nil

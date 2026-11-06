@@ -1176,3 +1176,7 @@ reconcile の間に消失・復帰した場合も対象。同一カーネル・i
 実 veth、SQLite と製品 controller を使い、kernel の src 消失、route/rule 撤去、復帰、
 最終撤去を確認する。通常 unit test では明示有効化がないため skip する。
 正式パッケージのサービス・独立 payload 試験とは区別する。
+
+policy の実効果の撤去成功後、削除済み EgressRoutePolicy の status も取り除く。
+以前の PreferredSourceUnavailable/Pending を空設定の不健康判定に残さない。
+宣言が残る無効条件、dry-run、撤去失敗の status は保持する。
