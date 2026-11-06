@@ -199,23 +199,29 @@ open failure.
 
 ### 2. Qualify the first real-use router path
 
-Execution status, 2026-11-06: the maintained ledger links the clean-install and
+Execution status, 2026-11-06: the maintained ledger links clean-install and
 dual-stack recovery checks (`999dfd4`, `6977c66e`), the deployed-combination
-cold-return check (`2da31049`), saved-generation crash/rollback, and the later
-DNS/DHCP fixes. Both private 105-resource deployment candidates validate with
-the formal `d279d919` binary. Since the combined check, product changes are
-limited to DNS source selection/pending handling and DHCP conditional status
-ownership; their native checks are recorded separately.
-
+cold-return check (`2da31049`), saved-generation crash/rollback and subsequent
+DNS/DHCP, logging, WireGuard, NAT and event-owner checks. Both private 105-resource
+deployment candidates were last validated with formal product `7012214a`.
 These are accumulated, revision-scoped results, not a claim that the complete
-combined scenario ran at `d279d919`. The full Go retry passed, but the earlier
-listener UDP timeout and dnsmasq startup identity failure remain unexplained;
-both tests passed five isolated repetitions without changes. Preserve these
-open observations in the trial assessment. Prepare the target-specific clean
-installation and return-to-existing-router procedure before requesting a
-production cutover decision. Other baseline feature work continues independently
-of that decision. Do not repeat already qualified gates merely to clear a
-stale remaining-check label.
+combined scenario ran on the latest revision.
+
+The earlier dnsmasq startup identity failure was reproduced as an observation
+of the child's pre-exec image and fixed in `176f42fb` without relaxing identity
+checks. The former DNS listener UDP timeout remains historically unattributed.
+Investigation reproduced a concrete UDP response loss when the previous reply
+had reached the client but its writer had not released the shared lock.
+Product `7012214a` replaces immediate contention drops with waiting and sending
+inside the same two-second budget. The real UDP regression and complete resolver
+package tests pass; formal-package qualification is tracked in the audit.
+Do not infer that a historical timeout had this cause without its packet/error
+observations, or use successful reruns alone to close an unexplained failure.
+
+Prepare the target-specific clean installation and return-to-existing-router
+procedure before requesting a production cutover decision. Other baseline
+feature work continues independently of that decision. Do not repeat already
+qualified gates merely to clear a stale remaining-check label.
 
 Use a clean package installation and a 1.5 configuration on isolated Linux
 router and independent-client VMs. Combine the existing clean-install,

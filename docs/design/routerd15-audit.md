@@ -3935,3 +3935,36 @@ helper/server shutdown, temporary-file removal and guest stop all passed.
 This additional run qualifies actual health observation loss/recovery through
 the event chain. Timed operators, hysteresis, retention pressure and downstream
 routing effects remain separate qualification requirements.
+
+
+### UDP response writer overlap and packaged DNS views
+
+The real UDP regression `b11da908` receives the first response while its server
+writer has not yet returned. A second writer sharing the socket previously
+failed immediately with `DNS UDP response writer is busy`. Product `7012214a`
+serializes waiting and sending within the existing two-second write budget;
+it preserves the 128-query admission limit. The regression now receives both
+packets, and an occupied writer expires without releasing another writer's slot.
+The complete resolver package and full Go/schema/examples/website checks passed.
+The older one-off listener timeout has no captured writer error and is not
+retroactively attributed to this race.
+
+Formal base/addon `1.5.0~20261106204111+g7012214a` passed apt update and integrity
+checks in a dedicated Ubuntu VM. In its normal daemon, two listener views served
+independent dig clients over UDP and TCP. A separate TCP health target controlled
+the public source: stopping and restarting that target withdrew and restored
+the source while the private listener retained its answer and the public listener
+never disclosed it. With the target healthy, eight independent client workers
+each issued sixteen UDP queries, alternating public and private listeners.
+All 128 responses matched their expected address, with two-second client timeouts
+and no client retries. Main-daemon restart retained view isolation and another
+128 queries passed. The deterministic overlap regression establishes the race;
+this bounded concurrent run validates the packaged path, not a throughput limit.
+
+Reproduce with the two-listener/health-conditioned source procedure above,
+then run the bounded independent-client batch before and after main restart.
+Use the standard empty-withdrawal gate afterward: Healthy, no owned helper or
+DNS listener, stopped health peer and removed temporary inputs. These cleanup
+checks and VM stop passed. Both prepared full deployment configurations validate
+with the same formal binary. This result does not rerun the older integrated HA
+power-loss campaign or establish whole-project parity.

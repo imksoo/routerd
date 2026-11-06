@@ -2716,6 +2716,24 @@
         "Timed operators, hysteresis and retention pressure",
         "Downstream routing effects, FreeBSD and full 1.0 parity"
       ]
+    },
+    "linux-dns-writer-7012214a": {
+      "level": "packaged-daemon-independent-client",
+      "outcome": "pass",
+      "revision": "7012214a46b1f5bef79c8ee204a77ecb4c2ed29c",
+      "reference": "docs/design/routerd15-audit.md#udp-response-writer-overlap-and-packaged-dns-views",
+      "environment": "Dedicated Ubuntu guest, formal matching base/addon, normal daemon, independent dig clients and TCP health target.",
+      "checks": [
+        "Real UDP regression proves a reply survives overlap with the preceding writer; busy wait remains bounded.",
+        "UDP/TCP listener views preserve private isolation during public-source health loss and recovery.",
+        "Eight independent workers receive all 128 expected UDP responses before and after daemon restart.",
+        "Empty Healthy withdrawal removes owned helpers/listeners; peer/config cleanup and VM stop complete."
+      ],
+      "excludes": [
+        "Attribution of the historical one-off timeout without captured writer errors",
+        "Load capacity, guest reboot and integrated HA power loss",
+        "FreeBSD and complete routerd 1.0 parity"
+      ]
     }
   },
   "features": [
@@ -4008,7 +4026,8 @@
           "linux-ha-pair-lifecycle-apt-1a96b8c0",
           "linux-reservation-dns-bootstrap-6696bff6",
           "linux-dns-listener-selection-5b25593d",
-          "linux-dhcp-derived-private-dns-d279d919"
+          "linux-dhcp-derived-private-dns-d279d919",
+          "linux-dns-writer-7012214a"
         ]
       },
       "freebsd": {
