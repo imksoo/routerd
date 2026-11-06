@@ -19,6 +19,16 @@ routerd は `tailscale up` を実行する systemd ユニットを生成し、�
 Tailscale のアカウント、制御プレーン、経路承認は Tailscale 側に残します。
 routerd はホスト上の宣言設定を管理します。
 
+## 設定の変更
+
+routerd は宣言設定全体を `tailscale up --reset` で適用します。
+`advertiseRoutes` を削除するか `advertiseExitNode: false` にすると、
+過去の非既定フラグの省略エラーを起こさず、以前の広告を解除します。
+省略した設定は Tailscale の既定値に戻るため、無効化を維持する設定は
+`acceptDNS: false` などで明示してください。YAML にない手動の
+`tailscale up` 設定には依存しないでください。ノードのログアウトや
+強制再認証は行いません。経路の承認は引き続き tailnet 管理者が行います。
+
 ## tailscale を導入する
 
 依存パッケージを `Package` で宣言します。

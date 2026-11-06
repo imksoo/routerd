@@ -556,3 +556,9 @@ export IPSEC_ROUTERD_BINARY IPSEC_DEPENDENCY_ROOT IPSEC_EVIDENCE_DIR IPSEC_NATIV
 .PHONY: check-routerd15-ipsec-native-linux
 check-routerd15-ipsec-native-linux:
 	ROUTERD_RUN_IPSEC_DEDICATED_VM=1 bash scripts/linux-ipsec-netns-smoke.sh --routerd "$$IPSEC_ROUTERD_BINARY" --dependency-root "$$IPSEC_DEPENDENCY_ROOT" --evidence-dir "$$IPSEC_EVIDENCE_DIR" --mode "$$IPSEC_NATIVE_MODE"
+
+# An upstream CLI talks only to the test's private Unix LocalAPI fixture.
+.PHONY: check-routerd15-tailscale-cli
+check-routerd15-tailscale-cli:
+	@test -n "$(ROUTERD_TEST_TAILSCALE)" || { echo 'Set ROUTERD_TEST_TAILSCALE to an upstream tailscale executable' >&2; exit 1; }
+	ROUTERD_TEST_TAILSCALE="$(ROUTERD_TEST_TAILSCALE)" go test ./pkg/render -run '^TestTailscaleCLIWithdrawsAdvertisedRoutes$$' -count=1 -v

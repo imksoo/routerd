@@ -19,6 +19,17 @@ that runs `tailscale up` with the declared node options. This keeps the
 Tailscale account, control plane, and route approval workflow in Tailscale,
 while routerd owns the host-local intent.
 
+## Configuration changes
+
+routerd applies the complete declared options with `tailscale up --reset`.
+Removing `advertiseRoutes` or setting `advertiseExitNode: false` therefore clears
+previous advertisements instead of failing Tailscale's missing-flags check.
+Omitted settings return to Tailscale's defaults; declare settings such as
+`acceptDNS: false` whenever they must remain disabled. Do not depend on manual
+`tailscale up` preferences that are absent from the YAML. This does not log out
+the node or force reauthentication. Route approval remains with the tailnet
+administrator.
+
 ## Install tailscale
 
 Declare the OS package so the dependency is visible in the router config.

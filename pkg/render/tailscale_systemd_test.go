@@ -24,7 +24,7 @@ func TestTailscaleSystemdSpecRendersExitNodeAndSubnetRoutes(t *testing.T) {
 		"Type=oneshot",
 		"RemainAfterExit=yes",
 		"EnvironmentFile=/usr/local/etc/routerd/secrets/tailscale.env",
-		"ExecStart=/usr/bin/tailscale up --timeout=30s --hostname=homert02 --auth-key=${TS_AUTHKEY} --advertise-exit-node --advertise-routes=172.18.0.0/16,192.168.123.0/24 --accept-dns=false",
+		"ExecStart=/usr/bin/tailscale up --timeout=30s --reset --hostname=homert02 --auth-key=${TS_AUTHKEY} --advertise-exit-node --advertise-routes=172.18.0.0/16,192.168.123.0/24 --accept-dns=false",
 		"Wants=network-online.target tailscaled.service",
 		"After=network-online.target tailscaled.service",
 		"Restart=no",
