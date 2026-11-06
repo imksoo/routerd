@@ -23,6 +23,8 @@ const ConfigDigestHeader = "X-Routerd-Config-Digest"
 const DefaultRequestTimeout = 30 * time.Second
 
 type RuntimeConfig struct {
+	// PendingSources retain query boundaries while controller dependencies are unresolved.
+	PendingSources   []string            `json:"pendingSources,omitempty"`
 	Resource         string              `json:"resource"`
 	LeaseJournalPath string              `json:"leaseJournalPath,omitempty"`
 	Spec             api.DNSResolverSpec `json:"spec"`

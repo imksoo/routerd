@@ -175,11 +175,12 @@ func (c Controller) Reconcile(ctx context.Context) (reconcileErr error) {
 				}
 			}
 		}
-		spec, waiting, blockReason, err := c.expandSpec(resolver.spec)
+		spec, waiting, pending, blockReason, err := c.expandSpec(resolver.spec)
 		if err != nil {
 			return err
 		}
 		config.Spec = spec
+		config.PendingSources = pending
 		if blockReason != "" {
 			if err := c.saveStatus(resolver.name, spec, "Pending", blockReason, waiting); err != nil {
 				return err
@@ -618,16 +619,17 @@ func canonicalRecordHostname(hostname, zone string) string {
 	return hostname + "." + zone
 }
 
-func (c Controller) expandSpec(spec api.DNSResolverSpec) (api.DNSResolverSpec, []map[string]string, string, error) {
+func (c Controller) expandSpec(spec api.DNSResolverSpec) (api.DNSResolverSpec, []map[string]string, []string, string, error) {
 	var waiting []map[string]string
+	var pending []string
 	var expandedListen []api.DNSResolverListenSpec
 	for i := range spec.Listen {
 		addresses, listenWaiting, blockReason, err := expandListenAddresses(c.Store, c.Router, spec.Listen[i])
 		if err != nil {
-			return spec, nil, "", err
+			return spec, nil, nil, "", err
 		}
 		if blockReason != "" {
-			return spec, waiting, blockReason, nil
+			return spec, waiting, pending, blockReason, nil
 		}
 		waiting = append(waiting, listenWaiting...)
 		if len(addresses) == 0 {
@@ -641,25 +643,29 @@ func (c Controller) expandSpec(spec api.DNSResolverSpec) (api.DNSResolverSpec, [
 	}
 	spec.Listen = expandedListen
 	if len(spec.Listen) == 0 {
-		return spec, waiting, "AddressUnresolved: no resolved listen addresses", nil
+		return spec, waiting, pending, "AddressUnresolved: no resolved listen addresses", nil
 	}
 	var expandedSources []api.DNSResolverSourceSpec
 	for i := range spec.Sources {
 		source := spec.Sources[i]
 		upstreams, upstreamWaiting, err := expandUpstreams(c.Store, source.Upstreams, source.UpstreamFrom)
 		if err != nil {
-			return spec, nil, "", err
+			return spec, nil, nil, "", err
 		}
 		if len(upstreamWaiting) > 0 {
 			waiting = append(waiting, waitingForSource(source, upstreamWaiting)...)
+			pending = append(pending, source.Name)
+			expandedSources = append(expandedSources, source)
 			continue
 		}
 		bootstrapResolvers, bootstrapWaiting, err := expandBootstrapResolvers(c.Store, source.BootstrapResolverFrom, source.BootstrapResolver)
 		if err != nil {
-			return spec, nil, "", err
+			return spec, nil, nil, "", err
 		}
 		if len(bootstrapWaiting) > 0 {
 			waiting = append(waiting, waitingForSource(source, bootstrapWaiting)...)
+			pending = append(pending, source.Name)
+			expandedSources = append(expandedSources, source)
 			continue
 		}
 		source.Upstreams = upstreams
@@ -667,18 +673,21 @@ func (c Controller) expandSpec(spec api.DNSResolverSpec) (api.DNSResolverSpec, [
 		source.BootstrapResolver = bootstrapResolvers
 		source.BootstrapResolverFrom = nil
 		if (source.Kind == "forward" || source.Kind == "upstream") && len(source.Upstreams) == 0 && sourceHasDynamicUpstreams(spec.Sources[i]) {
+			pending = append(pending, source.Name)
+			waiting = append(waiting, map[string]string{"kind": "source", "name": source.Name, "field": "upstream", "reason": "UpstreamUnresolved"})
+			expandedSources = append(expandedSources, spec.Sources[i])
 			continue
 		}
 		expandedSources = append(expandedSources, source)
 	}
 	spec.Sources = expandedSources
 	if len(spec.Sources) == 0 {
-		return spec, waiting, "UpstreamUnresolved: no usable DNS sources", nil
+		return spec, waiting, pending, "UpstreamUnresolved: no usable DNS sources", nil
 	}
 	if err := dnsresolver.Validate(spec); err != nil {
-		return spec, waiting, "", err
+		return spec, waiting, pending, "", err
 	}
-	return spec, waiting, "", nil
+	return spec, waiting, pending, "", nil
 }
 
 func (c Controller) expandZoneSpec(spec api.DNSZoneSpec) (api.DNSZoneSpec, []pendingZoneRecord, error) {

@@ -422,7 +422,7 @@ func TestReconcilePlansWhileOneListenAddressWaits(t *testing.T) {
 		t.Fatal(err)
 	}
 	spec = resolverruntime.NormalizeSpec(spec)
-	spec, waiting, blockReason, err := controller.expandSpec(spec)
+	spec, waiting, _, blockReason, err := controller.expandSpec(spec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -515,9 +515,9 @@ func dnsResolverRouterWithBootstrapFromValues(source api.RequiredFieldStatusValu
 }
 
 // A forward source whose only upstream is derived from another resource's status
-// (e.g. a DHCPv6Information server's dnsServers) must wait as Pending until that
-// status is populated, not fail validation during bootstrap.
-func TestReconcilePendingWhenUpstreamFromUnresolved(t *testing.T) {
+// (e.g. a DHCPv6Information server's dnsServers) must retain its query boundary
+// while waiting, not fail validation or leave a stale worker configuration.
+func TestReconcilePlansUnavailableSourceWhenUpstreamFromUnresolved(t *testing.T) {
 	store := mapStore{}
 	controller := Controller{
 		Router: dnsResolverRouterWithUpstreamFrom(api.StatusValueSourceSpec{Resource: "DHCPv6Information/wan-info", Field: "dnsServers"}),
@@ -528,10 +528,10 @@ func TestReconcilePendingWhenUpstreamFromUnresolved(t *testing.T) {
 		t.Fatal(err)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "DNSResolver", "lan-resolver")
-	if status["phase"] != "Pending" {
+	if status["phase"] != "Planned" {
 		t.Fatalf("status = %#v", status)
 	}
-	if !strings.Contains(strings.TrimSpace(status["message"].(string)), "UpstreamUnresolved") {
+	if !strings.Contains(strings.TrimSpace(status["message"].(string)), "WaitingForDependencies") {
 		t.Fatalf("message = %#v", status["message"])
 	}
 }
@@ -560,17 +560,17 @@ func TestReconcilePlansWhileOneSourceWaitsForUpstream(t *testing.T) {
 		t.Fatal(err)
 	}
 	spec = resolverruntime.NormalizeSpec(spec)
-	spec, waiting, blockReason, err := controller.expandSpec(spec)
+	spec, waiting, pending, blockReason, err := controller.expandSpec(spec)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if blockReason != "" || len(waiting) != 1 {
+	if blockReason != "" || len(waiting) != 1 || len(pending) != 1 || pending[0] != "ngn-aftr" {
 		t.Fatalf("waiting=%#v blockReason=%q", waiting, blockReason)
 	}
 	if len(spec.Listen) != 1 || spec.Listen[0].Addresses[0] != "127.0.0.1" {
 		t.Fatalf("listen = %#v", spec.Listen)
 	}
-	if len(spec.Sources) != 1 || spec.Sources[0].Name != "default" {
+	if len(spec.Sources) != 2 || spec.Sources[0].Name != "default" || spec.Sources[1].Name != "ngn-aftr" {
 		t.Fatalf("sources = %#v", spec.Sources)
 	}
 }
@@ -622,7 +622,7 @@ func TestReconcilePlanConvergesWhenUpstreamResolves(t *testing.T) {
 		t.Fatal(err)
 	}
 	spec = resolverruntime.NormalizeSpec(spec)
-	spec, waiting, blockReason, err := controller.expandSpec(spec)
+	spec, waiting, _, blockReason, err := controller.expandSpec(spec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -663,7 +663,7 @@ func TestReconcileResolvesBootstrapFromStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	spec = resolverruntime.NormalizeSpec(spec)
-	spec, waiting, blockReason, err := controller.expandSpec(spec)
+	spec, waiting, _, blockReason, err := controller.expandSpec(spec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -698,7 +698,7 @@ func TestReconcilePlannedWhenBootstrapFromUnresolvedButStaticBootstrapExists(t *
 	}
 }
 
-func TestReconcilePendingWhenBootstrapFromUnresolvedWithoutStaticBootstrap(t *testing.T) {
+func TestReconcilePlansUnavailableSourceWhenBootstrapFromUnresolvedWithoutStaticBootstrap(t *testing.T) {
 	store := mapStore{}
 	controller := Controller{
 		Router: dnsResolverRouterWithBootstrapFromValues(api.RequiredFieldStatusValueSourceSpec{Resource: "DHCPv6Information/wan-info", Field: "dnsServers"}, nil),
@@ -709,13 +709,26 @@ func TestReconcilePendingWhenBootstrapFromUnresolvedWithoutStaticBootstrap(t *te
 		t.Fatal(err)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "DNSResolver", "lan-resolver")
-	if status["phase"] != "Pending" {
+	if status["phase"] != "Planned" {
 		t.Fatalf("status = %#v", status)
 	}
 	waiting, _ := status["waiting"].([]map[string]string)
 	if len(waiting) != 1 || waiting[0]["reason"] != "BootstrapResolverUnresolved" {
 		t.Fatalf("waiting = %#v", status["waiting"])
 	}
+	spec, err := controller.Router.Spec.Resources[0].DNSResolverSpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err = controller.attachForwarders("lan-resolver", spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, _, pending, blocked, err := controller.expandSpec(resolverruntime.NormalizeSpec(spec))
+	if err != nil || blocked != "" || len(pending) != 1 || pending[0] != "default" || len(resolved.Sources) != 1 {
+		t.Fatalf("bootstrap wait lost query boundary: pending=%v blocked=%q sources=%v err=%v", pending, blocked, resolved.Sources, err)
+	}
+
 }
 
 func TestDNSResolverDependsOnExplicitAddressSource(t *testing.T) {

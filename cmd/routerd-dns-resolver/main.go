@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -73,8 +74,9 @@ type daemon struct {
 }
 
 type runtimeSource struct {
-	Spec api.DNSResolverSourceSpec
-	Pool *upstreamPool
+	Pending bool
+	Spec    api.DNSResolverSourceSpec
+	Pool    *upstreamPool
 }
 
 type boundListener struct {
@@ -296,7 +298,11 @@ func newDaemon(opts options, config dnsresolver.RuntimeConfig) (*daemon, error) 
 func buildRuntimeSources(config dnsresolver.RuntimeConfig) ([]runtimeSource, error) {
 	var sources []runtimeSource
 	for _, source := range config.Spec.Sources {
-		runtime := runtimeSource{Spec: source}
+		runtime := runtimeSource{Spec: source, Pending: slices.Contains(config.PendingSources, source.Name)}
+		if runtime.Pending {
+			sources = append(sources, runtime)
+			continue
+		}
 		if source.Kind == "forward" || source.Kind == "upstream" {
 			timeout, _ := time.ParseDuration(stringutil.FirstNonEmpty(source.Healthcheck.Timeout, "3s"))
 			queryTimeout, _ := time.ParseDuration(stringutil.FirstNonEmpty(source.QueryTimeout, source.Healthcheck.Timeout, "3s"))
@@ -675,6 +681,9 @@ func (d *daemon) resolveContext(ctx context.Context, localAddr string, req *dns.
 				resp.SetRcode(req, dns.RcodeRefused)
 				result.Response, result.ResponseCode = resp, dns.RcodeToString[resp.Rcode]
 				return result, nil
+			}
+			if source.Pending {
+				return result, fmt.Errorf("DNS source %q is waiting for upstream dependencies", result.Upstream)
 			}
 			if source.Pool == nil {
 				return result, fmt.Errorf("DNS source %q has no upstream pool", result.Upstream)
@@ -1207,7 +1216,9 @@ func (d *daemon) observedStatus() map[string]string {
 	}
 	var parts []string
 	for _, source := range sources {
-		if source.Pool != nil {
+		if source.Pending {
+			parts = append(parts, source.Spec.Name+"=Pending")
+		} else if source.Pool != nil {
 			parts = append(parts, source.Spec.Name+"="+source.Pool.Summary())
 		}
 	}

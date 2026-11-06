@@ -39,6 +39,12 @@ forwarder だけを使います。選択した forwarder が `when` や依存先
 すべて利用できなくなった場合も、この制限を維持します。`sources` を省略すると、
 そのリゾルバのすべての参照元を使います。
 
+動的な上流アドレスや必須の bootstrap resolver を待っている参照元も、match ルールを
+維持します。一致した問い合わせには依存先が解決するまで `SERVFAIL` を返し、別の
+forwarder へ送りません。無関係な問い合わせは利用可能な参照元で処理できます。
+リゾルバの status は `WaitingForDependencies`、worker の上流状態は対象の参照元を
+`Pending` と表示します。
+
 ## 条件付き転送の例
 
 ```yaml

@@ -29,6 +29,14 @@ func TestPendingConditionalUpstreamDoesNotExportPrivateQuestions(t *testing.T) {
 		failureTestAnswer(w, req)
 	})
 	private := startFailureTestUpstream(t, failureTestAnswer)
+	_, publicPortText, err := net.SplitHostPort(strings.TrimPrefix(public, "udp://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicPort, err := strconv.Atoi(publicPortText)
+	if err != nil {
+		t.Fatal(err)
+	}
 	root := t.TempDir()
 	store, err := state.OpenSQLite(filepath.Join(root, "state.db"))
 	if err != nil {
@@ -44,11 +52,7 @@ func TestPendingConditionalUpstreamDoesNotExportPrivateQuestions(t *testing.T) {
 		resource("DNSForwarder", "private", api.DNSForwarderSpec{Resolver: "lab", Match: []string{"private.example"}, Upstreams: []string{"dynamic"}}),
 		resource("DNSForwarder", "default", api.DNSForwarderSpec{Resolver: "lab", Match: []string{"."}, Upstreams: []string{"public"}}),
 		resource("DNSUpstream", "dynamic", api.DNSUpstreamSpec{AddressFrom: []api.StatusValueSourceSpec{{Resource: "DHCPv6Information/wan", Field: "dnsServers"}}}),
-		resource("DNSUpstream", "public", api.DNSUpstreamSpec{Protocol: "udp", Address: "127.0.0.1", Port: func() int {
-			_, p, _ := net.SplitHostPort(strings.TrimPrefix(public, "udp://"))
-			v, _ := strconv.Atoi(p)
-			return v
-		}()}),
+		resource("DNSUpstream", "public", api.DNSUpstreamSpec{Protocol: "udp", Address: "127.0.0.1", Port: publicPort}),
 	}}}
 	path := filepath.Join(root, "dns-resolver", "lab", "config.json")
 	prepare := func(addresses []string) resolvercfg.RuntimeConfig {
@@ -89,6 +93,9 @@ func TestPendingConditionalUpstreamDoesNotExportPrivateQuestions(t *testing.T) {
 		}
 	}
 	check("secret.private.example.", dns.RcodeServerFailure)
+	if !strings.Contains(d.observedStatus()["upstreams"], "private=Pending") {
+		t.Fatalf("pending source absent from worker status: %v", d.observedStatus())
+	}
 	check("www.public.example.", dns.RcodeSuccess)
 	prepare([]string{private})
 	if _, err := d.reloadConfig(t.Context(), ""); err != nil {
@@ -100,5 +107,17 @@ func TestPendingConditionalUpstreamDoesNotExportPrivateQuestions(t *testing.T) {
 		t.Fatal(err)
 	}
 	check("secret.private.example.", dns.RcodeServerFailure)
+	if !strings.Contains(d.observedStatus()["upstreams"], "private=Pending") {
+		t.Fatalf("pending source absent from worker status: %v", d.observedStatus())
+	}
 	check("www.public.example.", dns.RcodeSuccess)
+	// A sole pending source must replace the old worker configuration too.
+	// Otherwise withdrawal can retain previously learned upstream authority.
+	router.Spec.Resources = append(router.Spec.Resources[:2:2], router.Spec.Resources[3:]...)
+	prepare(nil)
+	if _, err := d.reloadConfig(t.Context(), ""); err != nil {
+		t.Fatal(err)
+	}
+	check("secret.private.example.", dns.RcodeServerFailure)
+
 }

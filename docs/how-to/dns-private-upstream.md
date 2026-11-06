@@ -37,6 +37,12 @@ the named forwarders. When a selected forwarder becomes ineligible through
 other forwarders. The declared selection remains in force when none of its
 sources are available. Omitting `sources` selects all of the resolver's sources.
 
+If a selected forwarder is waiting for a dynamic upstream address or required
+bootstrap resolver, its match rule stays in place. Matching queries receive
+`SERVFAIL` until the dependency resolves; they are not sent to another forwarder.
+Unrelated queries can still use ready sources. Resolver status reports
+`WaitingForDependencies`, and worker upstream status marks the source `Pending`.
+
 ## Conditional forwarding example
 
 ```yaml
