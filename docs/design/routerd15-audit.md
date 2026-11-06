@@ -4027,3 +4027,20 @@ stopped, namespaces/veths/files were removed, forwarding values were restored,
 and the VM was stopped. No product-state repair or additional product change
 was needed. DNS-populated refresh, policy-routing traffic, guest reboot and
 whole-project parity remain outside this result.
+
+
+### Flow-pinhole baseline contract correction
+
+Baseline `e3b49dbb` and the current `pkg/api/specs.go` both define NAT response
+pinhole correlation as `localPort`, while FirewallFlowPinhole provides
+`remoteAddress` and `localEndpoint`. The previous NAT remaining-check label
+incorrectly assigned the firewall mode to NAT. No NAT feature removal is implied
+by its absence. `nftFirewallFlowPinholeLearnKey` and
+`nftFirewallFlowPinholeAllowKey` implement the firewall alternatives: the remote
+mode includes the remote address, whereas the local endpoint mode keys only the
+client address/UDP port. Both retain configured inbound address/port selectors.
+Existing renderer tests check these expressions, but do not prove actual peer
+traffic. The ledger now keeps that independent firewall packet check separate
+from the completed NAT response-pinhole and static redirect campaigns. It also
+removes already-qualified basic IngressService drain/failover from the remaining
+work description without promoting the whole feature to qualified.
