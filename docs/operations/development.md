@@ -1348,3 +1348,26 @@ the guest. On failure collect the relevant nft set/counters and request/response
 identity before local reproduction. This checks the two IPv4 firewall correlation
 modes, configured response port, expiry, restart and withdrawal; it does not
 qualify NAT response maps, every selector combination, guest reboot or FreeBSD.
+
+
+### DNS-populated address-set variation
+
+Extend the packaged redirect lifecycle with `names: [selected.test]` and
+`refreshInterval: 1s` instead of static addresses. Give the independent WAN
+dnsmasq an additional hosts file containing the selected IPv4/IPv6 pair, with
+a one-second local TTL. Supply its address as the normal daemon's system DNS
+using a temporary runtime systemd drop-in with
+`BindReadOnlyPaths=FIXTURE_RESOLV_CONF:/etc/resolv.conf`; reload systemd before
+starting the service. This scopes test DNS to the service mount namespace and
+leaves the host resolver unchanged.
+
+After initial traffic succeeds, replace the peer hosts entries with the second
+address pair and send HUP to that peer. Do not reapply routerd configuration or
+edit its status. Require IPAddressSet status to contain exactly the new pair
+within 60 seconds, allowing the existing 30-second controller scheduling period.
+Repeat the eight old/new address, IPv4/IPv6, TCP/UDP response assertions and
+require unchanged main PID. Restart, verify the new selection, then withdraw
+as above. After stopping the daemon remove the runtime drop-in and reload
+systemd before removing fixture files. This qualifies successful DNS answer
+replacement, not resolver outage, NXDOMAIN/empty-answer policy or TTL-expiry
+withdrawal; those are distinct from a configured refresh interval.

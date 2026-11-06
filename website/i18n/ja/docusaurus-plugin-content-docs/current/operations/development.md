@@ -1083,3 +1083,20 @@ namespace/veth/一時ファイル撤去、forwarding復元、VM停止まで実�
 nft集合/counterと要求・応答identityを取得し、ローカル再現へ進みます。IPv4 firewallの
 2相関方式・応答port・期限切れ・再起動・撤去が対象で、NAT応答map、全selector、guest reboot、
 FreeBSDを確認したものではありません。
+
+
+### DNS解決による集合更新の追加試験
+
+通常daemonのredirect試験を、静的addressesから `names: [selected.test]` と
+`refreshInterval: 1s` に変更します。独立WAN dnsmasqの追加hostsファイルに選択する
+IPv4/IPv6を記載し、local TTLを1秒にします。daemonだけが参照するDNSは一時的な
+runtime systemd drop-inの `BindReadOnlyPaths=FIXTURE_RESOLV_CONF:/etc/resolv.conf`
+で指定し、daemon起動前にdaemon-reloadします。ホスト全体のresolverは変更しません。
+
+最初の通信成功後、peerのhostsを2番目のアドレス対へ変更してHUPを送ります。routerdの
+再applyやstatus編集はしません。既存controllerの30秒周期を考慮し、60秒以内に
+IPAddressSet statusが新アドレス対だけになることを要求。旧/新対象・IPv4/IPv6・UDP/TCP
+の8応答判定とmain PID不変を確認し、再起動後も維持、撤去後は外部応答に戻ることを確認。
+daemon停止後はruntime drop-inを削除してdaemon-reloadし、一時ファイルを撤去します。
+成功応答の変更を検証する試験であり、DNS障害、NXDOMAIN/空応答、TTL期限切れでの撤去
+方針は未確認です。refresh間隔とTTL期限切れを混同しません。

@@ -4068,3 +4068,20 @@ interruption. Empty withdrawal reached Healthy with no owned filter or helpers.
 Peers, namespaces and staging were removed, forwarding restored and the VM
 stopped. This establishes the two IPv4 firewall correlation modes and tested
 port/expiry/lifecycle paths, not every selector, NAT map, reboot or platform.
+
+
+### Packaged DNS-populated address-set replacement
+
+Formal product `5645fcf8` passed the DNS-populated variation of the packaged
+redirect lifecycle. The dedicated Ubuntu service used a temporary service-only
+resolver mount pointing at independent WAN dnsmasq. Changing that peer's A/AAAA
+answers and sending it HUP replaced the observed IPv4/IPv6 members without
+routerd apply, status editing or a main PID change. Independent UDP/TCP queries
+confirmed old destinations returned WAN answers and new destinations local
+answers. Main restart preserved the new selection; set/redirect withdrawal
+restored WAN answers for all destinations. Empty Healthy withdrawal, no owned
+helpers/tables, namespace/peer/file cleanup, runtime drop-in removal/systemd
+reload, forwarding restoration and guest stop completed. Focused address-set
+controller tests also passed. No product change was needed. DNS outage and
+NXDOMAIN/empty-answer behavior remain outside this successful-answer refresh
+check; it does not establish TTL-expiry withdrawal or full functional parity.
