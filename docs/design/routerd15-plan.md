@@ -176,6 +176,13 @@ remaining differences, carrying forward these executed scoped checks.
 
 ### 1. Resolve the post-reboot DNS observation
 
+Execution status, 2026-11-06: the packaged combined cold-return gate passed
+at `2da31049`; the later listener-boundary and pending-upstream defects have
+separate native checks at `5b25593d` and `d279d919`. The latter also verifies
+DHCP-owned address withdrawal. Keep the historical failures and the scope of
+each result in the feature ledger. Do not restart this phase as an untested
+post-reboot DNS investigation without a new failing observation.
+
 Read the current resolver, supervisor, dnsmasq and service-manager paths and
 their tests before changing code. Reproduce the reported case locally with an
 independent upstream and client; distinguish client timeout, resolver response,
@@ -191,6 +198,24 @@ procedure and pass/fail criteria; retain raw captures only while diagnosing the
 open failure.
 
 ### 2. Qualify the first real-use router path
+
+Execution status, 2026-11-06: the maintained ledger links the clean-install and
+dual-stack recovery checks (`999dfd4`, `6977c66e`), the deployed-combination
+cold-return check (`2da31049`), saved-generation crash/rollback, and the later
+DNS/DHCP fixes. Both private 105-resource deployment candidates validate with
+the formal `d279d919` binary. Since the combined check, product changes are
+limited to DNS source selection/pending handling and DHCP conditional status
+ownership; their native checks are recorded separately.
+
+These are accumulated, revision-scoped results, not a claim that the complete
+combined scenario ran at `d279d919`. The full Go retry passed, but the earlier
+listener UDP timeout and dnsmasq startup identity failure remain unexplained;
+both tests passed five isolated repetitions without changes. Preserve these
+open observations in the trial assessment. Prepare the target-specific clean
+installation and return-to-existing-router procedure before requesting a
+production cutover decision. Other baseline feature work continues independently
+of that decision. Do not repeat already qualified gates merely to clear a
+stale remaining-check label.
 
 Use a clean package installation and a 1.5 configuration on isolated Linux
 router and independent-client VMs. Combine the existing clean-install,
