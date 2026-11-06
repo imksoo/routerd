@@ -3011,7 +3011,15 @@ func nftNATExpression(translation api.IPv4NATTranslationSpec) (string, error) {
 		}
 		addresses := append([]string(nil), translation.Addresses...)
 		sort.Strings(addresses)
-		return "snat to " + strings.Join(addresses, "-"), nil
+		addresses = compactStrings(addresses)
+		if len(addresses) == 1 {
+			return "snat to " + addresses[0], nil
+		}
+		entries := make([]string, 0, len(addresses))
+		for index, address := range addresses {
+			entries = append(entries, strconv.Itoa(index)+" : "+address)
+		}
+		return "snat to numgen inc mod " + strconv.Itoa(len(addresses)) + " map { " + strings.Join(entries, ", ") + " }", nil
 	default:
 		return "", fmt.Errorf("unsupported translation.type %q", translation.Type)
 	}

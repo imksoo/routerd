@@ -34,7 +34,7 @@ func TestNATPoolNativeSyntax(t *testing.T) {
 		{"three-addresses", []string{"198.51.100.2", "198.51.100.10", "198.51.100.20"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			for _, mapping := range []api.IPv4NATPortMappingSpec{{Type: "auto"}, {Type: "range", Start: 40000, End: 40010}} {
+			for _, mapping := range []api.IPv4NATPortMappingSpec{{Type: "auto"}, {Type: "preserve"}, {Type: "range", Start: 40000, End: 40010}} {
 				data, err := NftablesNAT44Rules([]NAT44RenderRule{{Name: "pool", EgressInterface: "wan0", SourceRanges: []string{"192.0.2.0/24"}, Translation: api.IPv4NATTranslationSpec{Type: "pool", Addresses: tc.addresses, PortMapping: mapping}}})
 				if err != nil {
 					t.Fatal(err)

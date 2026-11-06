@@ -26,6 +26,7 @@ create_ns "$LAN1"
 create_veth_pair "$ROUTER" wan0 198.18.16.2/24 "$WAN" eth0 198.18.16.53/24
 ip -n "$ROUTER" addr add 198.18.16.10/32 dev wan0
 ip -n "$ROUTER" addr add 198.18.16.11/32 dev wan0
+ip -n "$ROUTER" addr add 198.18.16.20/32 dev wan0
 ip -n "$WAN" addr add 198.18.16.54/24 dev eth0
 
 create_veth_pair "$ROUTER" lan0 198.18.15.1/24 "$LAN0" eth0 198.18.15.101/24
@@ -153,6 +154,30 @@ port=${tuple##*:}
 [[ "$port" =~ ^[0-9]+$ ]] && ((port >= 40000 && port <= 40010)) || fail "translation source port: $tuple"
 expect_source "$LAN1" 198.18.16.53 198.18.17.101 "translation unmatched source"
 
+python3 - "$WORKDIR/translation.yaml" "$WORKDIR/pool.yaml" <<'PYPOOL'
+import sys
+from pathlib import Path
+source = Path(sys.argv[1]).read_text()
+old = "          type: address\n          address: 198.18.16.10\n"
+if source.count(old) != 1:
+    raise SystemExit("expected single translation address")
+Path(sys.argv[2]).write_text(source.replace(old, "          type: pool\n          addresses: [198.18.16.10, 198.18.16.11, 198.18.16.20]\n"))
+PYPOOL
+"$WORKDIR/routerd" validate --config "$WORKDIR/pool.yaml"
+apply_config "$WORKDIR/pool.yaml" pool
+: > "$WORKDIR/pool-seen"
+for attempt in {1..6}; do
+ tuple=$(ip netns exec "$LAN0" curl --noproxy '*' --fail --silent --show-error --max-time 3 http://198.18.16.53:8080/tuple)
+ case "${tuple%:*}" in
+  198.18.16.10|198.18.16.11|198.18.16.20) printf '%s\n' "${tuple%:*}" >> "$WORKDIR/pool-seen";;
+  *) fail "pool used an unlisted address: $tuple";;
+ esac
+ port=${tuple##*:}
+ [[ "$port" =~ ^[0-9]+$ ]] && ((port >= 40000 && port <= 40010)) || fail "pool source port: $tuple"
+done
+[[ "$(sort -u "$WORKDIR/pool-seen" | wc -l)" -eq 3 ]] || fail "not every declared pool address forwarded traffic"
+expect_source "$LAN1" 198.18.16.53 198.18.17.101 "pool unmatched source"
+
 cat >"$WORKDIR/empty.yaml" <<'YAML'
 apiVersion: routerd.net/v1alpha1
 kind: Router
@@ -167,4 +192,4 @@ if ip netns exec "$ROUTER" nft list table ip routerd_nat >/dev/null 2>&1; then
 fi
 expect_source "$LAN0" 198.18.16.53 198.18.15.101 "flow after NAT44Rule withdrawal"
 
-printf 'PASS: production NAT44 controller SNAT source/destination selectors, referenced address update, translation address/port range, excluded traffic and withdrawal\n'
+printf 'PASS: production NAT44 controller SNAT source/destination selectors, referenced address update, translation address/port range, noncontiguous pool, excluded traffic and withdrawal\n'

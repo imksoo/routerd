@@ -313,6 +313,11 @@ destination CIDRs may use the configured SNAT address; an excluded destination
 and a client outside the source range must preserve their original addresses.
 The translation-shaped `outboundInterface/sourceCIDRs/translation` rule must also
 translate the address and constrain the TCP source port to its declared range.
+The pool stage uses three noncontiguous addresses and verifies that all listed
+addresses forward traffic, no unlisted address appears, and the port range holds.
+Pool entries are individual addresses, not endpoints of an inclusive range.
+Linux selects new flows round-robin from the deduplicated address list; conntrack
+retains the translation of an established flow.
 Set `ROUTERD_TEST_BINARY` to a formal distribution binary when running on a guest.
 `ROUTERD_NAT44_TEST_DRIVER` may point to a prebuilt
 `tests/netns/nat44-portforward-runtime` test executable so the guest needs no Go toolchain.
