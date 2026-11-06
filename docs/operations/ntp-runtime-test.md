@@ -16,6 +16,13 @@ reports the effective provider and requested provider separately. A false server
 condition retains active client upstreams and removes downstream access. Removing
 both declarations retires their public results after confirmed withdrawal.
 
+Runtime dependencies follow the managed provider: standalone Linux timesyncd
+clients request `systemd-timesyncd`, chrony owners request `chrony`, and a managed
+shared chrony server suppresses the conflicting timesyncd package. Unmanaged
+NTP declarations do not install a provider; FreeBSD's base ntpd needs no package.
+A timesyncd-only qualification must verify that applying the configuration leaves
+the timesyncd package installed instead of silently replacing it with chrony.
+
 Standalone previews report `Rendered`: they do not write provider files, run
 service commands or acquire private ownership.
 

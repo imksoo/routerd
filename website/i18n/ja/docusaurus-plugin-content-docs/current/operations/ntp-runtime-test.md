@@ -76,3 +76,10 @@ NTPClient/NTPServer は Applied、NTP controller error はありません。全�
 相対的な時計差補正と上記経路の検証で、外部 UTC 精度、timesyncd 単独、provider package 交換、
 FreeBSD rc.d の合格には広げません。FreeBSD wrapper の成功時出力削除は構文・lint 確認のみで、
 この campaign では native 実行を再実施していません。
+
+
+依存パッケージは管理対象providerに従います。Linuxのtimesyncd単独clientは
+`systemd-timesyncd`、chrony所有者は`chrony`を要求し、共有chrony serverが所有する場合は
+競合するtimesyncdを要求しません。管理対象外のNTP宣言はproviderを導入せず、FreeBSDの
+標準ntpdにも追加packageは不要です。timesyncd単独試験ではapply後もtimesyncdが導入済みで、
+chronyへ勝手に置換されていないことを確認します。
