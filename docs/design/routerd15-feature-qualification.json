@@ -2536,6 +2536,26 @@
         "Full routerd/systemd lifecycle for the two-interface combination; earlier single-interface daemon gate remains separately scoped.",
         "FreeBSD, reboot and complete 1.0 parity"
       ]
+    },
+    "linux-ipv6-default-metric-11cd2e05": {
+      "level": "packaged-daemon-independent-peer",
+      "outcome": "pass",
+      "revision": "11cd2e05f4df86c6f8a5fce6c645cba8a89759c4",
+      "reference": "docs/design/routerd15-ipv6-route-readback.md#latest-run",
+      "environment": "Two isolated Ubuntu VMs, formal matching base/addon 1.5.0~20261106185121+g11cd2e05; client and HTTP server in separate namespaces on the independent peer VM, connected through isolated LAN/WAN.",
+      "checks": [
+        "Observed Linux kernel default metric 1024 in an isolated namespace. Local test 7a33d184 reproduced add/readback failure when configuration omitted metric; the fix records the effective metric in the native ownership tuple.",
+        "Packaged daemon applied a /64 route through a link-local gateway without configured metric. Status was Installed with non-pending ownership and kernel metric 1024.",
+        "Independent client passed three ICMPv6 probes and verified HTTP payload. Deleting the resource removed the route and client HTTP failed; reapplying restored the same checks.",
+        "After stopping main and deleting only the exact owned kernel route, daemon startup automatically restored the route and client traffic without database or configuration repair.",
+        "Empty configuration was Healthy and the route was absent before fixture addresses/networks were removed. Independent HTTP peer stopped and fixture cleanup completed.",
+        "Initial verifier used ip -j and incorrectly required its omitted default protocol field. The verifier was corrected to ip -j -d, as used by the product; remaining checks ran without repairing product state.",
+        "Full Go suite passed (122 packages, 15 without tests), schemas/examples and four website locales passed."
+      ],
+      "excludes": [
+        "Native ::/0 and /128 at this revision; local regression covers them and earlier explicit-metric host-route results remain separately scoped.",
+        "FreeBSD and complete routerd 1.0 parity"
+      ]
     }
   },
   "features": [
@@ -3271,25 +3291,29 @@
         "body_and_entrypoint_files": [
           "pkg/controller/chain/chain.go",
           "pkg/render/networkd.go",
-          "pkg/render/freebsd.go"
+          "pkg/render/freebsd.go",
+          "pkg/controller/chain/phase2.go",
+          "pkg/controller/chain/ipv6staticroute.go"
         ],
         "related_test_files": [
           "pkg/render/networkd_test.go",
-          "pkg/render/freebsd_test.go"
+          "pkg/render/freebsd_test.go",
+          "pkg/controller/chain/ipv4route_test.go"
         ]
       },
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "linux-ipv6-default-metric-11cd2e05"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",
         "scoped_evidence": []
       },
       "required_remaining_checks": [
-        "Baseline example/runtime IPv6StaticRoute behavior through actual caller",
-        "Native IPv6 route application, forwarding and withdrawal"
+        "FreeBSD native IPv6 route application, forwarding and withdrawal"
       ],
       "current_registration_additions": [
         "IPv6StaticRoute"

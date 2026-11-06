@@ -108,6 +108,20 @@ detached. Leave unrelated lab resources untouched.
 
 ## Latest run
 
+On 2026-11-06, formal Linux package `1.5.0~20261106185121+g11cd2e05`
+passed the two-VM check with a `/64`, a link-local gateway and no configured
+metric. The native tuple used 1024. The independent client passed three ICMPv6
+probes and an HTTP payload check; withdrawal blocked that payload, reapplication
+restored it, and deleting the route while main was stopped was recovered on
+startup. Empty configuration withdrew the route before fixture cleanup.
+
+The first verifier incorrectly required `protocol: boot` from `ip -j`, which
+omits that default. Reading `ip -j -d`, as the product does, corrected the
+verifier; no product-state repair was performed. This run does not qualify
+native default or host routes at the new revision, or FreeBSD.
+
+### Earlier explicit-metric host route
+
 Dataplane smoke on an isolated Linux router package built from
 `4f81296b4fd5ca17b5901aeb4499b4572bc4a271`: apply/readback, independent VLAN
 client forwarding, withdrawal, reapplication, and recovery after deleting the
