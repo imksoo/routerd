@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net"
 	"net/netip"
@@ -374,9 +375,13 @@ func (c *Client) Snapshot() Snapshot {
 	return s
 }
 
+// ErrLeaseIdentityMismatch means the snapshot cannot be reused by this client.
+// A new daemon may ignore that snapshot and begin a fresh DHCP exchange.
+var ErrLeaseIdentityMismatch = errors.New("DHCPv4 saved lease belongs to a different client or interface")
+
 func (c *Client) Restore(s Snapshot) error {
 	if s.Resource != c.cfg.Resource || s.Interface != c.cfg.Interface || s.HardwareAddress != c.cfg.HardwareAddr.String() || s.ClientID != hex.EncodeToString(c.clientID) {
-		return fmt.Errorf("DHCPv4 saved lease belongs to a different client or interface")
+		return ErrLeaseIdentityMismatch
 	}
 	c.lease, c.remembered, c.state, c.retryAt = Lease{}, Lease{}, StateIdle, time.Time{}
 	c.selected, c.offered = netip.Addr{}, netip.Addr{}

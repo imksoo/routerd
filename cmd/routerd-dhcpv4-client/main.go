@@ -363,7 +363,12 @@ func (d *dhcpv4Daemon) restoreLease() error {
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return d.client.Restore(snapshot)
+	if err := d.client.Restore(snapshot); errors.Is(err, dhcpv4client.ErrLeaseIdentityMismatch) {
+		slog.Info("ignoring DHCPv4 saved lease after client identity changed; starting fresh acquisition", "resource", d.opts.resource)
+		return nil
+	} else {
+		return err
+	}
 }
 
 func (d *dhcpv4Daemon) saveLeaseLocked() error {

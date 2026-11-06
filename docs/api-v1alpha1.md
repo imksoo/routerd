@@ -281,6 +281,12 @@ resolver addresses for DoH or DoT endpoint name resolution.
 | `LocalServiceRedirect` | Redirects LAN-origin IPv4/IPv6 traffic for `IPAddressSet` destinations to a local router port. This is intended for plaintext DNS/NTP interception without touching DoH or DoT ports. |
 | `EgressRoutePolicy` | Represents default-route selection, marked IPv4 policy routing, and hash-based multi-target egress routing. |
 
+`DHCPv4Client` reuses a saved lease only when its resource, interface, MAC address
+and client identifier match. After an identity change it starts a fresh DHCP
+exchange without requesting the old address. Matching saved leases still require
+INIT-REBOOT confirmation before they become current; malformed saved data remains
+an error.
+
 `IPv4Route.spec.gatewayFrom` waits with `Pending / GatewayMissing` when a required
 source has no value and no static `gateway` fallback is configured. If the value
 disappears, routerd withdraws its owned route; acquisition installs it again.

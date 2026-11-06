@@ -205,6 +205,11 @@ DNSSEC validation は `DNSForwarder.spec.dnssecValidate` に書きます。
 | `LocalServiceRedirect` | LAN 側 client から `IPAddressSet` 宛てに出る IPv4/IPv6 通信を、router の local port へ redirect します。平文 DNS/NTP の集約を想定し、DoH や DoT の port には触れません。 |
 | `EgressRoutePolicy` | 既定経路の選択、mark ベースの IPv4 policy routing、複数 target への hash 分散を表します。 |
 
+`DHCPv4Client` はリソース名・インターフェース・MAC アドレス・client ID が一致する場合だけ
+保存リースを再利用します。識別子変更後は旧アドレスを要求せず、新規 DHCP 取得を開始します。
+一致する保存リースも INIT-REBOOT で確認するまで現在のリースとして公開しません。
+不正な保存データは引き続きエラーとして扱います。
+
 `IPv4Route.spec.gatewayFrom` の必須参照が未取得で、固定 `gateway` の代替値もない場合は、
 `Pending / GatewayMissing` で待機します。参照値が消失すると所有する経路を撤去し、
 再取得後に追加します。`gatewayFrom` の省略時はデバイスへの直接接続ルートを指定できます。
