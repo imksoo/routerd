@@ -1454,3 +1454,21 @@ restart backend1 and repeat the sourceHash response checks with both active.
 Finally use the empty-intent/peer/link/forwarding cleanup above. Preserve no raw
 output beyond current failure investigation. Dynamic address sources, alternate
 outage policies, UDP and physical failure domains remain separate checks.
+
+
+### IPv6 preferred-source loss recovery
+
+Linux can retain a policy default route while clearing its preferred `src` when
+that address disappears. The policy owner must withdraw the selector and the
+acknowledged route, then restore both when a usable source returns. Recovery also
+covers disappearance/return between reconciliations. Only an acknowledged receipt
+in the same kernel scope and interface identity can authorize repair of the
+otherwise identical source-less route. Unowned or pending acquisitions remain
+fenced; new acquisition still requires exact source readback.
+
+`make check-routerd15-system-native-linux` includes
+`TestPolicyIPv6NativeKernelSourceLossRecovery`, using private network/UTS/mount
+namespaces, a real veth and SQLite with the production controller. It checks actual
+kernel clearing, route/rule withdrawal, source return and final removal. Ordinary
+unit tests skip this explicitly enabled kernel case. Package/service and independent
+payload qualification are separate from this local controller regression.

@@ -71,6 +71,9 @@ func (f *policyIPv6Commands) command(ctx context.Context, name string, args ...s
 	}
 	if args[1] == "route" && (args[2] == "add" || args[2] == "del") {
 		for _, token := range []string{"via", "dev", "table", "metric", "proto", "src"} {
+			if token == "src" && args[2] == "del" && !strings.Contains(f.route, " src ") {
+				continue
+			}
 			if policyCommandValue(args, token) == "" {
 				f.t.Fatalf("incomplete native deletion/acquisition identity: %s", call)
 			}
@@ -380,5 +383,43 @@ func TestPolicyIPv6SourceLossRemovesKernelClearedPreferredSource(t *testing.T) {
 	}
 	if native.route == "" || len(native.rules) != 1 {
 		t.Fatalf("source return did not restore route and selector: %q %v", native.route, native.rules)
+	}
+}
+
+func TestPolicyIPv6RestoresClearedSourceWithAcknowledgedReceipt(t *testing.T) {
+	c, _, native, _ := newPolicyIPv6Fixture(t)
+	if err := c.reconcileIPv6HostPolicies(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	// Source disappeared and returned between reconciliations.
+	native.route = "default via fe80::1 dev wan0 table 120 proto 4 metric 50 pref medium\n"
+	if err := c.reconcileIPv6HostPolicies(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(native.route, "src 2001:db8::2") || len(native.rules) != 1 {
+		t.Fatalf("not repaired: %q %v", native.route, native.rules)
+	}
+}
+
+func TestPolicyIPv6ClearedSourceWithoutAcknowledgementIsNotAdopted(t *testing.T) {
+	for _, pending := range []bool{false, true} {
+		t.Run(fmt.Sprint(pending), func(t *testing.T) {
+			c, _, native, _ := newPolicyIPv6Fixture(t)
+			if pending {
+				native.lostReply = true
+				if err := c.reconcileIPv6HostPolicies(t.Context()); err == nil {
+					t.Fatal("lost reply acknowledged")
+				}
+				native.lostReply = false
+			}
+			native.route = "default via fe80::1 dev wan0 table 120 proto 4 metric 50 pref medium\n"
+			native.calls = nil
+			if err := c.reconcileIPv6HostPolicies(t.Context()); err == nil {
+				t.Fatal("unacknowledged route adopted")
+			}
+			if len(native.mutations()) != 0 {
+				t.Fatal(native.mutations())
+			}
+		})
 	}
 }

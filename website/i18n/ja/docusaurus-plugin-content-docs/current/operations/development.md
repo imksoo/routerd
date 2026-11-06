@@ -1161,3 +1161,18 @@ connection refused になること。backend2 のみ復旧して実応答、back
 sourceHash を再確認する。空設定の Healthy、helper/NAT 撤去、peer 停止、namespace/link/
 staging 撤去、forwarding 復元、VM 停止まで行う。動的アドレス、別の全停止ポリシー、
 UDP、物理故障は別の試験とする。
+
+
+### IPv6 preferred source 消失からの回復
+
+Linux はアドレス消失時に policy default route を残して `src` だけを消すことがある。
+所有 controller は rule と確認済み経路を撤去し、有効な送信元の復帰後に両方を復元する。
+reconcile の間に消失・復帰した場合も対象。同一カーネル・interface identity の確認済み
+所有記録と、src 以外が一致する経路に限って修復する。未所有・作成確認前の経路は採用せず、
+新規作成は src を含む一致確認を維持する。
+
+`make check-routerd15-system-native-linux` の
+`TestPolicyIPv6NativeKernelSourceLossRecovery` は隔離 network/UTS/mount namespace、
+実 veth、SQLite と製品 controller を使い、kernel の src 消失、route/rule 撤去、復帰、
+最終撤去を確認する。通常 unit test では明示有効化がないため skip する。
+正式パッケージのサービス・独立 payload 試験とは区別する。

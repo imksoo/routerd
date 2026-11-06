@@ -274,7 +274,7 @@ func (c IPv4PolicyRouteController) reconcilePolicyRouteEffects(ctx context.Conte
 			i++
 			continue
 		}
-		matching, _, err := c.observePolicyRouteEffect(ctx, r.Effect)
+		_, matching, err := c.observeRecordedPolicyRouteEffect(ctx, r.Effect)
 		if err != nil {
 			return err
 		}
@@ -287,6 +287,7 @@ func (c IPv4PolicyRouteController) reconcilePolicyRouteEffects(ctx context.Conte
 		}
 	}
 	changingTables := map[int]bool{}
+	repairRoutes := map[policyRouteEffect]bool{}
 	for _, receipt := range journal.Receipts {
 		if receipt.Scope == scope && receipt.Effect.Kind == "route" && !wanted[receipt.Effect] {
 			changingTables[receipt.Effect.Table] = true
@@ -314,11 +315,14 @@ func (c IPv4PolicyRouteController) reconcilePolicyRouteEffects(ctx context.Conte
 			if !sameSlot {
 				continue
 			}
-			matching, _, err := c.observePolicyRouteEffect(ctx, r.Effect)
+			observed, matching, err := c.observeRecordedPolicyRouteEffect(ctx, r.Effect)
 			if err != nil {
 				return err
 			}
 			if matching {
+				if observed != r.Effect {
+					repairRoutes[r.Effect] = true
+				}
 				if err := c.verifyPolicyRouteEffect(ctx, r); err != nil {
 					return err
 				}
@@ -334,12 +338,12 @@ func (c IPv4PolicyRouteController) reconcilePolicyRouteEffects(ctx context.Conte
 	for _, kind := range []string{"rule", "route"} {
 		for i := 0; i < len(journal.Receipts); {
 			r := journal.Receipts[i]
-			keep := wanted[r.Effect] && !(r.Effect.Kind == "rule" && changingTables[r.Effect.Table])
+			keep := wanted[r.Effect] && !repairRoutes[r.Effect] && !(r.Effect.Kind == "rule" && changingTables[r.Effect.Table])
 			if r.Scope != scope || r.Effect.Kind != kind || keep {
 				i++
 				continue
 			}
-			matching, _, err := c.observePolicyRouteEffect(ctx, r.Effect)
+			_, matching, err := c.observeRecordedPolicyRouteEffect(ctx, r.Effect)
 			if err != nil {
 				return err
 			}
@@ -358,15 +362,15 @@ func (c IPv4PolicyRouteController) reconcilePolicyRouteEffects(ctx context.Conte
 				if err := c.verifyPolicyRouteEffect(ctx, r); err != nil {
 					return err
 				}
-				matching, _, err = c.observePolicyRouteEffect(ctx, r.Effect)
+				observed, matching, err := c.observeRecordedPolicyRouteEffect(ctx, r.Effect)
 				if err != nil {
 					return err
 				}
 				if matching {
-					if err := c.mutatePolicyRouteEffect(ctx, r.Effect, "del"); err != nil {
+					if err := c.mutatePolicyRouteEffect(ctx, observed, "del"); err != nil {
 						return err
 					}
-					matching, _, err = c.observePolicyRouteEffect(ctx, r.Effect)
+					_, matching, err = c.observeRecordedPolicyRouteEffect(ctx, r.Effect)
 					if err != nil {
 						return err
 					}
@@ -483,6 +487,21 @@ func (e policyRouteEffect) SourceWithPrefix() string {
 		return ""
 	}
 	return e.Source + "/128"
+}
+
+// An acknowledged IPv6 route can lose only its preferred source when Linux
+// removes that address. Inspect this variant only against a recorded effect:
+// it never authorizes acquiring a foreign tuple or accepting an incomplete add.
+// Callers still verify kernel scope and interface identity before mutation.
+func (c IPv4PolicyRouteController) observeRecordedPolicyRouteEffect(ctx context.Context, e policyRouteEffect) (policyRouteEffect, bool, error) {
+	matching, collision, err := c.observePolicyRouteEffect(ctx, e)
+	if err != nil || matching || !collision || e.Family != 6 || e.Kind != "route" || e.Source == "" {
+		return e, matching, err
+	}
+	cleared := e
+	cleared.Source = ""
+	matching, _, err = c.observePolicyRouteEffect(ctx, cleared)
+	return cleared, matching, err
 }
 
 func (c IPv4PolicyRouteController) observePolicyRouteEffect(ctx context.Context, e policyRouteEffect) (bool, bool, error) {

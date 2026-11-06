@@ -527,7 +527,7 @@ check-routerd15-system-native-linux:
 	system_forward=$$(sysctl -n net.ipv4.ip_forward) || exit 1; \
 	ROUTERD_HOST_UTSNS="$$system_utsns" ROUTERD_HOST_NETNS="$$system_netns" \
 	ROUTERD_RUN_SYSTEM_POLICY_NATIVE=1 unshare -Urnmu sh -ec \
-	'mount -t sysfs sysfs /sys; exec go test ./pkg/controller/chain -run "^(TestHostnameNativeLinuxPrivateUTSLifecycle|TestSysctlNativeLinuxPrivateNetworkValue)$$" -count=1 -v'; \
+	'mount -t sysfs sysfs /sys; exec go test ./pkg/controller/chain -run "^(TestHostnameNativeLinuxPrivateUTSLifecycle|TestSysctlNativeLinuxPrivateNetworkValue|TestPolicyIPv6NativeKernelSourceLossRecovery)$$" -count=1 -v'; \
 	system_result=$$?; \
 	test "$$(hostname)" = "$$system_hostname" && \
 	test "$$(sysctl -n net.ipv4.ip_forward)" = "$$system_forward" || exit 1; \
