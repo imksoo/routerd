@@ -56,6 +56,39 @@ spec:
 Ubuntu では、`Package` が `tailscale` を導入する前に Tailscale の apt リポジトリが必要です。
 リポジトリの追加は、通常の初期構築手順で済ませてください。
 
+## Linux パッケージの新規導入
+
+Linux パッケージは `/etc/routerd/router.yaml` を使います。以下のパスも
+この配置に合わせています。クリーン OS には Tailscale のノード認証状態が
+ありません。旧機と同じ hostname を指定しても認証状態は引き継がれません。
+旧 routerd DB をコピーしたり、認証項目なしの設定で参加できると仮定しないでください。
+
+routerd の初回起動前に、次を準備します。
+
+1. 導入した Ubuntu の版に対応する Tailscale APT リポジトリを登録し、
+   パッケージ索引を更新します。`apt-cache policy tailscale tailscale-archive-keyring`
+   で候補版を確認し、APT で導入します。`systemctl is-active tailscaled.service`
+   も確認します。
+2. 新ノード用の認証キーを下記の root 専用環境ファイルに配置し、
+   `TailscaleNode` に参照先を宣言します。キーを YAML、シェル履歴、Git、
+   コマンド出力に残さないでください。端末承認ポリシーにより、管理者による
+   別途の端末承認が必要な場合があります。
+3. 必要な転送 sysctl と firewall policy を候補設定に宣言します。
+   dual-stack の subnet/exit routing では適用後に `net.ipv4.ip_forward=1` と
+   `net.ipv6.conf.all.forwarding=1` を確認します。Tailscale の Running だけでは
+   パケット転送の成功を示しません。
+4. 1.5 の全設定を validate してから routerd を起動し、制御プレーンで
+   **新ノードの**広告経路・exit node 利用を承認します。旧ノードの承認を
+   新しいノードの承認と見なさないでください。
+5. 独立した tailnet クライアントで新 exit node または承認済み subnet route を
+   選び、必要な各アドレスファミリーで実サービスの応答内容を確認します。
+   routerd 再起動後にも繰り返します。`BackendState: Running`、利用可能な経路、
+   実通信の成功を合格条件とし、`NeedsLogin`、`NeedsMachineAuth`、status 表示だけで
+   導入成功と判断しないでください。
+
+置換中は旧ルーターを隔離します。既にログイン済みの試験環境による再設定試験は、
+この新ノードの初回認証を検証したことにはなりません。
+
 ## 秘密値を Git に残さない
 
 本番設定では `authKeyEnv` と `authKeyFile` を推奨します。
@@ -75,15 +108,15 @@ spec:
   acceptDNS: false
   acceptRoutes: false
   authKeyEnv: TS_AUTHKEY
-  authKeyFile: /usr/local/etc/routerd/secrets/tailscale.env
+  authKeyFile: /etc/routerd/secrets/tailscale.env
 ```
 
 環境ファイルは routerd の YAML の外に置きます。
 
 ```sh
-sudo install -d -m 0700 /usr/local/etc/routerd/secrets
-sudo sh -c 'printf "%s\n" "TS_AUTHKEY=REDACTED" > /usr/local/etc/routerd/secrets/tailscale.env'
-sudo chmod 0600 /usr/local/etc/routerd/secrets/tailscale.env
+sudo install -d -m 0700 /etc/routerd/secrets
+sudo sh -c 'printf "%s\n" "TS_AUTHKEY=REDACTED" > /etc/routerd/secrets/tailscale.env'
+sudo chmod 0600 /etc/routerd/secrets/tailscale.env
 ```
 
 既にログイン済みのノードでは、`authKey`、`authKeyEnv`、`authKeyFile` を省略できます。
@@ -171,7 +204,7 @@ tailnet 全体を管理ネットワークとして扱いたい場合だけ、`ta
 設定を確認してから routerd を再起動します。
 
 ```sh
-routerctl validate -f /usr/local/etc/routerd/router.yaml --replace
+routerctl validate -f /etc/routerd/router.yaml --replace
 systemctl restart routerd.service
 ```
 

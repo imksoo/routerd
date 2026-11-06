@@ -61,6 +61,39 @@ On Ubuntu, the Tailscale apt repository must already be available before
 `Package` can install `tailscale`. Use your normal bootstrap method for that
 repository.
 
+## Fresh Linux package installation
+
+The Linux package uses `/etc/routerd/router.yaml`; the paths below follow that
+layout. A fresh OS has no Tailscale node identity, even when the replacement
+router uses the old hostname. Do not copy the old routerd database or assume
+that a configuration with no authentication fields can join the tailnet.
+
+Before the first routerd start:
+
+1. Configure the Tailscale APT repository for the installed Ubuntu release and
+   update its package index. Confirm
+   `apt-cache policy tailscale tailscale-archive-keyring` offers installable candidates, then install those
+   packages through APT. Check `systemctl is-active tailscaled.service`.
+2. Provision a new-node auth key in the root-only environment file below and
+   declare its path in `TailscaleNode`. Keep the key out of YAML, shell history,
+   version control, and command output. A device-approval policy may require an
+   additional tailnet administrator action.
+3. Declare the required forwarding sysctls and firewall policy in the prepared
+   router configuration. For dual-stack subnet/exit routing, verify
+   `net.ipv4.ip_forward=1` and `net.ipv6.conf.all.forwarding=1` after apply.
+   A running Tailscale backend alone does not prove packet forwarding.
+4. Validate the complete 1.5 configuration before starting routerd. Approve the
+   **new node's** advertised routes and exit-node use in the control plane;
+   approval of the replaced node does not establish approval of this identity.
+5. From an independent tailnet client, select the new exit node or approved
+   subnet route and fetch an actual service payload over each required address
+   family. Restart routerd and repeat. Require `BackendState: Running`, usable
+   routes, and successful client traffic; `NeedsLogin`, `NeedsMachineAuth`, or
+   status alone is not a successful deployment.
+
+Keep the old router isolated during replacement. An existing logged-in test
+fixture only qualifies reconfiguration, not this fresh-node bootstrap path.
+
 ## Authenticate without committing secrets
 
 For production configs, prefer `authKeyEnv` plus `authKeyFile`.
@@ -80,15 +113,15 @@ spec:
   acceptDNS: false
   acceptRoutes: false
   authKeyEnv: TS_AUTHKEY
-  authKeyFile: /usr/local/etc/routerd/secrets/tailscale.env
+  authKeyFile: /etc/routerd/secrets/tailscale.env
 ```
 
 The environment file is outside the routerd YAML:
 
 ```sh
-sudo install -d -m 0700 /usr/local/etc/routerd/secrets
-sudo sh -c 'printf "%s\n" "TS_AUTHKEY=REDACTED" > /usr/local/etc/routerd/secrets/tailscale.env'
-sudo chmod 0600 /usr/local/etc/routerd/secrets/tailscale.env
+sudo install -d -m 0700 /etc/routerd/secrets
+sudo sh -c 'printf "%s\n" "TS_AUTHKEY=REDACTED" > /etc/routerd/secrets/tailscale.env'
+sudo chmod 0600 /etc/routerd/secrets/tailscale.env
 ```
 
 If the node is already logged in, omit `authKey`, `authKeyEnv`, and
@@ -183,7 +216,7 @@ network.
 Apply the config:
 
 ```sh
-routerctl validate -f /usr/local/etc/routerd/router.yaml --replace
+routerctl validate -f /etc/routerd/router.yaml --replace
 systemctl restart routerd.service
 ```
 
