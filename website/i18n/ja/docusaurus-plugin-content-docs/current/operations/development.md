@@ -955,3 +955,15 @@ RA-only peer を使います。router lifetime は15秒、prefix の preferred/v
 成功ログは削除し、リビジョン・手順・合否基準を残します。RDNSS/DNSSL、DHCPv6 IA_NA、
 LAN 転送、ホスト再起動・カーネル状態喪失・ストレージ障害、他 OS は未検証です。
 service 再起動と SIGKILL の試験ではカーネル状態が維持されるため、これらを区別します。
+
+## IPv6 静的ルートの既定 metric
+
+Linux では `IPv6StaticRoute.metric` の省略またはゼロ指定を実効値 1024 として扱います。
+所有情報の `routeOwner.route.metric` とカーネル出力を照合してください。設定値のゼロを
+そのままカーネル値と比較しません。正の明示指定値はそのまま使います。
+[ルート読戻し手順](../design/routerd15-ipv6-route-readback.md)は適用・クライアント転送・
+撤去を検査します。ローカル回帰試験は次のとおりです。
+
+```sh
+go test ./pkg/controller/chain -run '^TestIPv4RouteControllerAppliesAndWithdrawsIPv6StaticRoute$' -count=1
+```

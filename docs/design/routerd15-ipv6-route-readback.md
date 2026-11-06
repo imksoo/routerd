@@ -9,6 +9,12 @@ before comparing it with the declared route. Linux `default` must likewise be
 read as `::/0`. Configuration validation and exact route identity matching
 remain unchanged.
 
+Linux assigns IPv6 static routes a metric of 1024 when the configuration omits
+`metric` or sets it to zero. The controller records that effective value in
+its native ownership tuple and uses it for readback and deletion. A positive
+configured metric is retained as specified. The configured status field can
+still show zero; `routeOwner.route.metric` identifies the actual kernel value.
+
 `pkg/controller/chain/ipv4route_test.go` covers application, observation,
 status publication and withdrawal for IPv6 prefix, host and default routes.
 The isolated runtime check below covers the Linux kernel readback path and

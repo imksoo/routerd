@@ -1173,3 +1173,15 @@ This result covers the stated two-VM path, not LAN DHCPv6 IA_NA renewal/reboot,
 power-loss durability, other platforms or all routerd 1.0 functions.
 Successful teardown withdrew managed state, uninstalled the package and removed
 the two disposable VMs, their disks and temporary fixture media.
+
+## IPv6 static route default metric
+
+On Linux, an omitted or zero `IPv6StaticRoute.metric` uses kernel priority 1024.
+Verify the effective metric in the native ownership receipt and kernel output;
+do not compare the kernel value with the unexpanded configuration zero. The
+[route readback procedure](../design/routerd15-ipv6-route-readback.md) covers
+application, client forwarding and withdrawal. The local regression command is:
+
+```sh
+go test ./pkg/controller/chain -run '^TestIPv4RouteControllerAppliesAndWithdrawsIPv6StaticRoute$' -count=1
+```
