@@ -358,3 +358,27 @@ func TestPolicyIPv6NativeOwnedReceiptCannotHideForeignSelectorOverlap(t *testing
 		t.Fatal(native.mutations())
 	}
 }
+
+func TestPolicyIPv6SourceLossRemovesKernelClearedPreferredSource(t *testing.T) {
+	c, _, native, _ := newPolicyIPv6Fixture(t)
+	if err := c.reconcileIPv6HostPolicies(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	// Linux retains the default route but clears RTA_PREFSRC when the
+	// address disappears. Reproduced with ip in an isolated network namespace.
+	native.source = ""
+	native.route = "default via fe80::1 dev wan0 table 120 proto 4 metric 50 pref medium\n"
+	if err := c.reconcileIPv6HostPolicies(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if native.route != "" || len(native.rules) != 0 {
+		t.Fatalf("source loss leaked owned effects: route=%q rules=%v", native.route, native.rules)
+	}
+	native.source = "2001:db8::2"
+	if err := c.reconcileIPv6HostPolicies(t.Context()); err != nil {
+		t.Fatalf("source return failed to restore routing: %v", err)
+	}
+	if native.route == "" || len(native.rules) != 1 {
+		t.Fatalf("source return did not restore route and selector: %q %v", native.route, native.rules)
+	}
+}
