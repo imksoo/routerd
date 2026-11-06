@@ -236,3 +236,19 @@ Tailscale ping だけではサブネット転送の証明になりません。
 `state: absent` と認証キーなしの再有効化後にも通信を確認し、Tailscale アドレスが
 維持されることを検証します。最後にリソースを削除し、前述の停止状態を確認します。
 本番経路ではなく、使い捨て可能な隔離ホストで実施してください。
+
+## 実行状態
+
+ユニットの適用成功だけでは Tailscale の稼働を証明できません。Linux の service
+controller は backend が `Running` の場合にだけ `Running` を報告します。
+`NeedsLogin` は `Pending/AuthenticationRequired` です。利用する tailnet の
+手順で認証を更新してください。`NeedsMachineAuth` は
+`Pending/MachineApprovalRequired` です。制御サーバーでノードを承認してください。
+それ以外の未稼働状態は `Pending/BackendNotRunning`、CLI 観測失敗や不正な応答は
+`Error/RuntimeObservationFailed` と `runtimeError` で報告します。復旧後の観測で
+以前の reason・error は消えます。
+
+観測は既存の 5 分周期を含む service controller の reconcile 時に行います。
+backend が Running のまま `online: false` になっても、制御サーバー断の間に
+既存 peer 経路が使える場合があるため、転送障害とは断定しません。
+この観測処理は認証情報の交換や強制再認証を行いません。

@@ -259,3 +259,20 @@ a Tailscale ping alone does not prove subnet forwarding. Repeat after
 `state: absent` and reactivation without an auth key, checking the node keeps
 its Tailscale address. Finally remove the resource and check the stopped state
 above. Run these steps on disposable hosts, not a production routing path.
+
+## Runtime status
+
+A successfully installed unit does not prove that Tailscale is running. The
+Linux service controller reports `Running` only for backend state `Running`.
+`NeedsLogin` reports `Pending/AuthenticationRequired`; renew the node's
+authentication using the configured tailnet procedure. `NeedsMachineAuth`
+reports `Pending/MachineApprovalRequired`; approve the node in the control
+server. Other non-running states report `Pending/BackendNotRunning`. A failed
+or malformed CLI observation reports `Error/RuntimeObservationFailed` with
+`runtimeError`. Recovery clears the prior reason/error on the next observation.
+
+The service controller observes runtime state during reconciliation (including
+its existing five-minute periodic pass). `online: false` while the backend is
+Running does not by itself prove a forwarding outage; cached peer paths may
+continue to work during control-server unavailability. These observations do
+not rotate credentials or force reauthentication.

@@ -36,6 +36,7 @@ func TestSystemdTailscaleRuntimeLossAndRecovery(t *testing.T) {
 	}{
 		{name: "running", body: `{"BackendState":"Running","Self":{"Online":true}}`, phase: "Running"},
 		{name: "expired authentication", body: `{"BackendState":"NeedsLogin"}`, phase: "Pending", reason: "AuthenticationRequired"},
+		{name: "machine approval", body: `{"BackendState":"NeedsMachineAuth"}`, phase: "Pending", reason: "MachineApprovalRequired"},
 		{name: "starting", body: `{"BackendState":"Starting"}`, phase: "Pending", reason: "BackendNotRunning"},
 		{name: "observation unavailable", err: errors.New("local daemon socket unavailable"), phase: "Error", reason: "RuntimeObservationFailed"},
 		{name: "invalid observation", body: `{`, phase: "Error", reason: "RuntimeObservationFailed"},

@@ -553,6 +553,8 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 			if firstNonEmpty(spec.State, "present") != "absent" && !c.DryRun {
 				runtimeStatus, err := observeTailscaleRuntime(ctx, command, spec)
 				if err != nil {
+					status["phase"] = "Error"
+					status["reason"] = "RuntimeObservationFailed"
 					status["runtimeObserved"] = false
 					status["runtimeError"] = err.Error()
 				} else {
@@ -570,8 +572,18 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 					status["peerCount"] = runtimeStatus.PeerCount
 					status["onlinePeerCount"] = runtimeStatus.OnlinePeerCount
 					status["peers"] = tailscalePeerStatusMaps(runtimeStatus.Peers)
-					if runtimeStatus.BackendState == "Running" {
+					switch runtimeStatus.BackendState {
+					case "Running":
 						status["phase"] = "Running"
+					case "NeedsLogin":
+						status["phase"] = "Pending"
+						status["reason"] = "AuthenticationRequired"
+					case "NeedsMachineAuth":
+						status["phase"] = "Pending"
+						status["reason"] = "MachineApprovalRequired"
+					default:
+						status["phase"] = "Pending"
+						status["reason"] = "BackendNotRunning"
 					}
 					tailscale.RecordMetrics(ctx, resource.Metadata.Name, runtimeStatus.Status, time.Now().UTC())
 				}
