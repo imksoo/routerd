@@ -144,6 +144,34 @@ func TestControllerRecordsTrafficFlowLog(t *testing.T) {
 	if status["phase"] != "Observed" || status["activeFlows"] != 1 {
 		t.Fatalf("traffic status = %#v", status)
 	}
+	// Losing the snapshot must not retain a successful flow status or retire
+	// history as though the native table were empty.
+	for _, path := range []string{countPath, entriesPath} {
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	status = store.ObjectStatus(api.NetAPIVersion, "TrafficFlowLog", "default")
+	if status["phase"] != "Degraded" || status["reason"] != "ConntrackUnavailable" {
+		t.Errorf("snapshot loss left misleading flow status: %#v", status)
+	}
+	retained, err := flowLog.List(t.Context(), logstore.TrafficFlowFilter{Client: "172.18.0.10", Limit: 10})
+	if err != nil || len(retained) != 1 {
+		t.Fatalf("history lost after unavailable snapshot: %v, rows=%d", err, len(retained))
+	}
+	if err := os.WriteFile(countPath, []byte("1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	status = store.ObjectStatus(api.NetAPIVersion, "TrafficFlowLog", "default")
+	if status["phase"] != "Observed" || status["activeFlows"] != 1 {
+		t.Fatalf("flow observation did not recover: %#v", status)
+	}
 }
 
 func TestControllerReportsApplicationLayerUnavailableWithoutBlockingFlowLog(t *testing.T) {
