@@ -120,3 +120,37 @@ conntrack のスナップショットを取得できない場合、observer は 
 有効な `TrafficFlowLog` は `Degraded / ConntrackUnavailable` を報告します。
 空のテーブルと見なして履歴を終了・削除せず、保存済みフローとカウンターを保持します。
 観測が復旧し、履歴への書き込みが成功すると `Observed` に戻ります。
+
+### 実パッケージでの Collector 停止・復旧
+
+正式な本体・addon の版が一致する隔離 Linux ルーターと、別 VM の Collector contrib
+を使います。試験前にパッケージ整合性、空設定の Healthy、Collector 設定・gRPC 待受・
+ルーターからの到達性を確認します。受信時間と出力サイズを制限し、単独 exporter
+ではなく通常の routerd サービスを使います。
+
+Telemetry の 3 signal と試験識別属性を宣言し、DNSResolver/DNSZone/DNSForwarder
+で既知の A レコードを peer に提供します。Telemetry 環境変数反映に伴う通常の
+再起動が完了した後、Healthy と独立クライアントの UDP/TCP 応答を確認します。
+150 秒以内に、上記組合せ試験と同じ main daemon のログ・metric・span を受信側で照合します。
+
+Collector を停止し、待受消失とルーターからの新規接続失敗を確認します。
+`routerctl apply --timeout 90s -f candidate.yaml --replace` で DNS レコードを変更し、
+peer から UDP 20 回・TCP 20 回の新しい応答、Healthy、同一 MainPID を確認します。
+Collector 停止中に routerd を再起動し、30 秒以内のサービス再起動と、90 秒以内の
+DNS・Healthy 復旧を要求します。
+
+同じ Collector を復帰させ、受信件数を記録して再度 DNS レコードを変更します。
+新しい DNS 応答と、150 秒以内の全 3 signal の新規受信を確認します。
+追加の daemon 再起動で送信を復旧させてはいけません。最後に empty を適用し、
+Healthy と DNS 待受の実撤去を確認します。サービス停止、fixture アドレス・一時 Collector・
+出力の削除、パッケージ整合性確認まで行います。
+これは欠落なしの配送を保証しません。SDK の有限バッファや再起動で未配送データが
+失われる場合があります。長時間停止、バッファ満杯、TLS/mTLS、受信側の永続保存、
+実環境の全構成は別の検証範囲です。
+
+正式製品 `db41e03e`、パッケージ `1.5.0~20261106222627+gdb41e03e` は、
+Ubuntu 24.04 / Linux 6.8.0-147 と独立した Collector contrib 0.151.0 で通過しました。
+停止中の DNS 変更後 40 問合せは同一 MainPID で成功し、再起動と DNS・Healthy 復旧は
+14.41 秒でした。Collector 復帰後は追加再起動なしに main daemon の全 3 signal の
+受信件数が増加しました。empty 撤去、パッケージ整合性、一時受信側の後片付けも成功し、
+専用 VM を停止しました。以前の 2 ルーター組合せ試験を再走した結果ではありません。

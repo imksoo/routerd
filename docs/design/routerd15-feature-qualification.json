@@ -2975,6 +2975,22 @@
         "Full combined deployed configuration",
         "All-platform parity"
       ]
+    },
+    "linux-collector-outage-db41e03e": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "db41e03eae9648dc6d068892b3ec361d8a5696c1",
+      "reference": "docs/operations/observability.md#packaged-collector-outage-and-recovery",
+      "environment": "Ubuntu 24.04 / Linux 6.8.0-147 normal routerd service with matching formal base/addon 1.5.0~20261106222627+gdb41e03e; separate peer VM running Collector contrib 0.151.0 and dig.",
+      "checks": [
+        "Main-daemon controller logs, metrics and traces received with campaign identity before and after independently verified Collector outage.",
+        "DNS record change during Collector outage served 20 UDP and 20 TCP exact answers with unchanged main PID and Healthy status.",
+        "Normal routerd restart while Collector unreachable recovered DNS and Healthy in 14.41 seconds; restored Collector received all three signals without another daemon restart.",
+        "Empty Healthy withdrawal removed actual DNS listener; package verification passed, fixture address and temporary collector/output removed, dedicated guests stopped."
+      ],
+      "excludes": [
+        "Lossless or durable export, long outages/buffer exhaustion, TLS/mTLS, all traffic-attribution paths, combined 105-resource configuration and all-platform parity."
+      ]
     }
   },
   "features": [
@@ -3110,7 +3126,8 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-native-ndpi-addon-be382e44",
-          "linux-combined-telemetry-261e6675"
+          "linux-combined-telemetry-261e6675",
+          "linux-collector-outage-db41e03e"
         ]
       },
       "freebsd": {
@@ -3118,8 +3135,8 @@
         "scoped_evidence": []
       },
       "required_remaining_checks": [
-        "Independent exporter/collector interoperability",
-        "Native traffic attribution and complete unknown/zero observations"
+        "Native traffic attribution and complete unknown/zero observations",
+        "Long collector outages/buffer exhaustion, authenticated collector configurations and complete platform parity"
       ]
     },
     {

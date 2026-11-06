@@ -4317,3 +4317,34 @@ change or product-state repair was needed. See the
 
 This proves bounded control-server outage/recovery with established peer keys,
 not full platform parity or unlimited disconnected operation.
+
+
+## Packaged Collector outage and recovery — db41e03e
+
+The existing 261e6675 combined gate already used independent Collector contrib;
+its successful receiver interoperability is not an unexecuted check. This gate
+addresses its explicit outage/recovery exclusion with the current formal product,
+without claiming to rerun the combined 78/105-resource topology.
+
+On Ubuntu 24.04 / Linux 6.8.0-147, matching package
+`1.5.0~20261106222627+gdb41e03e` ran the normal main daemon and managed DNS
+resolver. A separate VM ran Collector contrib 0.151.0 and the dig client.
+Certification established package integrity, empty Healthy state, validated
+collector/listener and actual cross-VM reachability before candidate apply.
+
+The uninterrupted gate passed initial main-daemon logs/metrics/traces, actual
+collector stop and connection refusal, declarative DNS A-record replacement,
+20 UDP plus 20 TCP exact answers with unchanged MainPID, and Healthy status.
+A normal daemon restart with the collector still unavailable restored DNS and
+Healthy in 14.41 seconds. Restoring the same collector and changing DNS again
+produced all three signals without another daemon restart (received counts:
+logs 660, metric records 2, spans 660). Counts identify delivery, not a lossless
+transport guarantee. Empty Healthy withdrawal removed the actual DNS listener;
+package verification and temporary collector/output/address cleanup passed.
+The dedicated guests were stopped; no product-state repair was required.
+
+`go test ./pkg/otel -count=1` also passed. No product code changed in this gate.
+The maintained EN/JA observability procedure specifies input identity, peer
+setup, bounded waits/counts and teardown. Long outages, buffer exhaustion,
+TLS/mTLS, durable remote storage, complete attribution and the full deployed
+configuration remain unqualified by this scoped test.

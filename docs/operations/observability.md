@@ -256,3 +256,42 @@ handling; it does not remove the operation deadline or relax the final checks.
 This path passed with formal Linux packages at `76464310`. It checks expiry and
 observed UDP delivery for plugin history, not packet-loss recovery, remote durable
 storage, all log tables, or a complete event audit archive.
+
+### Packaged Collector outage and recovery
+
+Use one isolated Linux router with matching formal base/addon packages and a
+separate VM running Collector contrib. Before qualification, certify package
+integrity, empty Healthy state, the Collector configuration and gRPC listener,
+and router-to-Collector reachability. Bound the receiver lifetime and output
+size. Use the normal routerd service, not a standalone exporter probe.
+
+Declare all three Telemetry signals with a unique campaign resource attribute,
+and a DNSResolver/DNSZone/DNSForwarder serving a known A record to the peer.
+After the normal Telemetry environment handoff, require Healthy and independent
+UDP/TCP DNS answers. Within 150 seconds, require new main-daemon controller log,
+metric and span records, identified as in the combined gate above.
+
+Stop the Collector and verify its listener is absent and a new connection from
+the router fails. Change the DNS record through `routerctl apply --timeout 90s -f candidate.yaml --replace`. Require the new answer on 20 UDP and 20 TCP
+queries from the peer, Healthy status, and unchanged routerd MainPID. Restart
+routerd while the Collector is still unreachable; require service restart within
+30 seconds and successful DNS/Healthy recovery within 90 seconds.
+
+Restore the same Collector, record received counts, and change the DNS record
+again. Require the new DNS answers and new records for all three signals within
+150 seconds, without another daemon restart. Finally apply an empty candidate,
+require Healthy and actual DNS listener withdrawal, stop services, remove
+fixture addresses and temporary Collector/output files, and verify package
+integrity. Do not interpret this as lossless export: bounded SDK buffers and a
+restart can discard queued observations. Long outages, full-buffer behavior,
+TLS/mTLS, remote durable storage and the complete deployed configuration need
+their own evidence.
+
+Formal product `db41e03e`, package `1.5.0~20261106222627+gdb41e03e`, passed
+this gate on Ubuntu 24.04 / Linux 6.8.0-147 with independent Collector contrib
+0.151.0. The stopped-Collector DNS update passed all 40 queries with the same
+MainPID; restart plus DNS/Healthy recovery took 14.41 seconds. After Collector
+return, all three main-daemon signal counts advanced without another restart.
+Empty withdrawal, package verification and temporary receiver cleanup passed;
+the dedicated guests were stopped. This scoped result supplements, rather than
+reruns, the earlier combined two-router gate.
