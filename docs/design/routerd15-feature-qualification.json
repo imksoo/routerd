@@ -3364,8 +3364,8 @@
         "scoped_evidence": []
       },
       "required_remaining_checks": [
-        "Native parent proof, address/route/RA children at the pinned revision",
-        "Independent tunnel handshake/traffic, key rotation, restart and withdrawal"
+        "Delegated IPv6/RA child behavior and other peer-source integrations beyond the recorded IPv4 controller and packaged key-rotation gates",
+        "Clean-boot optional dependency installation and complete platform parity"
       ],
       "finding_references": [
         "docs/design/routerd15-open-findings.md#native-effects-and-lifetime"
@@ -3473,7 +3473,9 @@
           "pkg/vrf/vrf.go"
         ],
         "related_test_files": [
-          "pkg/vrf/vrf_test.go"
+          "pkg/vrf/vrf_test.go",
+          "pkg/controller/chain/vrf_child_parent_test.go",
+          "pkg/controller/chain/vrf_child_parent_native_linux_test.go"
         ]
       },
       "preservation_verdict": "unknown",
@@ -3490,8 +3492,9 @@
         "scoped_evidence": []
       },
       "required_remaining_checks": [
-        "Native parent and child ownership",
-        "Independent per-VRF forwarding/isolation, restart and withdrawal"
+        "Multiple-VRF forwarding/isolation with overlapping address space",
+        "Member-address dependency semantics and delegated IPv6/RA within VRF",
+        "Packaged-daemon restart/reboot and complete platform parity beyond the recorded single-VRF controller gate"
       ],
       "finding_references": [
         "docs/design/routerd15-open-findings.md#native-effects-and-lifetime"

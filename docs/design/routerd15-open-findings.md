@@ -119,8 +119,17 @@ Implemented in the native/runtime follow-up:
 
 Still open:
 
-- Child proof for WireGuardInterface, VRF and TunnelInterface remains
-  open. Linux Bridge child effects now consume the existing Bridge receipt,
+- Linux WireGuardInterface and VRF child proof is implemented through the
+  concrete owners and `nativeParentReader`. Native controller checks already
+  exercised IPv4 address/route acquisition, SQLite reopen, recovery and recorded
+  withdrawal; WireGuard also passed packaged-daemon key rotation, restart and
+  withdrawal. Do not repeat these as missing implementations. Multiple-VRF
+  isolation, member-address dependency semantics, delegated IPv6/RA children,
+  other peer-source integrations and complete platform parity remain unqualified.
+  TunnelInterface likewise has an integrated concrete child-proof reader; the
+  scoped FOU/GUE controller results do not establish all daemon/source-expiry
+  combinations. See the dated results in [the audit](routerd15-audit.md).
+  Linux Bridge child effects now consume the existing Bridge receipt,
   kernel scope and native cookie/index through the same concrete-owner reader.
   Active acquisition requires current acknowledged/healthy intent; recorded
   cleanup survives parent declaration removal, withdrawal and recovery while
