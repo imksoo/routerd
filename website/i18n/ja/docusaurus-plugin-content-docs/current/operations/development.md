@@ -1214,3 +1214,20 @@ controller と実カーネルの試験であり通常 daemon のパッケージ�
 VRRP gate は `ROUTERD_RUN_NETNS=1` と正式 package helper の
 `ROUTERD_VRRP_VMAC_BIN` を指定し、内部で mount/network namespace に隔離する。
 両 gate は timeout で上限を付け、終了 0 と後片付けを要求する。
+
+## Linux の重複アドレスを使う VRF 分離試験
+
+`make check-routerd15-native-parent-linux` は
+`TestVRFNativeLinuxOverlappingPeerIsolation` を含みます。Python 3 と
+カーネルの VRF 対応が必要です。専用ターゲットが network namespace と
+sysfs を隔離します。ホストの network namespace で
+`ROUTERD_RUN_NETNS=1` を設定して実行しないでください。
+
+製品の VRF・アドレス controller に、同じローカル・対向 IPv4 アドレスを持つ
+2 つの VRF を作らせます。独立した対向 namespace は異なる UDP 応答を返します。
+各 VRF から正しい応答を受信し、各対向専用アドレスへの通信が成功する一方、
+別 VRF の対向専用アドレスへの通信はタイムアウトすることを合格条件とします。
+SQLite 再オープン後も繰り返し、片側の VRF・アドレス削除後に他方の通信が
+継続することを確認します。最後に両 VRF・所有アドレス・所有権記録の撤去を
+確認します。実カーネルを使う controller 試験であり、パッケージ daemon の
+再起動、通過トラフィックの転送、委譲 IPv6・RA の合格を意味しません。

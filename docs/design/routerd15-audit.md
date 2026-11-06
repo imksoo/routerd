@@ -4211,3 +4211,21 @@ because the driver could not read the host namespace identity; a direct driver
 invocation reproduced the guard rejection. A root-owned private mount/network
 namespace with the same prebuilt test driver then completed. This is local
 real-kernel/controller evidence, not a new packaged whole-router campaign.
+
+## Linux overlapping VRF peer isolation
+
+The `TestVRFNativeLinuxOverlappingPeerIsolation` addition on the `12656124`
+product tree passed in 6.59 seconds using a compiled controller test harness
+under `sudo ... unshare -nm`, with a private mount tree and fresh sysfs mount.
+Both peers used independent network namespaces on the same Linux kernel; the
+actual VRF/address controllers and SQLite store owned the router-side effects.
+Two identical destination addresses returned distinct expected UDP payloads.
+Each peer's unique address was reachable only through its own VRF. The checks
+passed after SQLite reopen and the remaining VRF continued communicating after
+withdrawal of the other. Final withdrawal removed owned addresses, links and
+receipts. Peer processes were terminated and reaped on test cleanup.
+
+No product fix was needed. The reusable procedure is in
+[development](../operations/development.md#linux-overlapping-vrf-isolation).
+This adds host-originated overlapping-VRF isolation coverage; it does not prove
+transit forwarding, packaged-daemon restart/reboot, delegated IPv6/RA or FreeBSD.

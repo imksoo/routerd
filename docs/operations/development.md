@@ -1521,3 +1521,19 @@ VRRP gate with `ROUTERD_RUN_NETNS=1` and `ROUTERD_VRRP_VMAC_BIN` pointing to the
 formal package helper; it creates its own private mount/network namespaces.
 Bound each gate with `timeout`, require exit 0 and successful cleanup, and retain
 only unresolved failure diagnostics.
+
+## Linux overlapping VRF isolation
+
+`make check-routerd15-native-parent-linux` includes
+`TestVRFNativeLinuxOverlappingPeerIsolation`. Python 3 and kernel VRF support
+are required. The explicit opt-in target isolates network and sysfs views; never
+set `ROUTERD_RUN_NETNS=1` in the host network namespace.
+
+The production VRF/address controllers create two routing domains with the same
+local and peer IPv4 addresses. Independent peer namespaces return distinct UDP
+payloads. Require the correct payload from each VRF, successful access to each
+peer's unique address, and timeout when accessing the other VRF's unique address.
+Repeat after SQLite reopen. Withdraw one VRF and its address and require the
+other peer to remain reachable. Final withdrawal must remove both VRFs, owned
+addresses and receipts. This is a native controller test, not packaged-daemon
+restart, transit forwarding or delegated IPv6/RA qualification.

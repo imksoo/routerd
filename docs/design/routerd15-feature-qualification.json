@@ -2900,6 +2900,25 @@
         "Final veth teardown observation resumed after asynchronous namespace deletion; initial script exited nonzero at cleanup",
         "Transit/hash policies and all dynamic WAN modes"
       ]
+    },
+    "linux-vrf-overlap-12656124": {
+      "level": "native-kernel",
+      "outcome": "pass",
+      "revision": "126561249691cc5b97645e8466d301400867dc34",
+      "reference": "docs/design/routerd15-audit.md#linux-overlapping-vrf-peer-isolation",
+      "reproduction": "TestVRFNativeLinuxOverlappingPeerIsolation added to this product tree; make check-routerd15-native-parent-linux",
+      "checks": [
+        "Two VRFs with overlapping IPv4 local/peer addresses return distinct UDP payloads",
+        "Other-domain-only addresses time out while same-domain controls succeed",
+        "SQLite reopen and independent withdrawal preserve isolation and surviving peer communication",
+        "Final owned addresses, links and receipts removed; peer processes reaped"
+      ],
+      "excludes": [
+        "Transit forwarding",
+        "Packaged-daemon restart or reboot",
+        "Delegated IPv6/RA",
+        "FreeBSD"
+      ]
     }
   },
   "features": [
@@ -3475,7 +3494,8 @@
         "related_test_files": [
           "pkg/vrf/vrf_test.go",
           "pkg/controller/chain/vrf_child_parent_test.go",
-          "pkg/controller/chain/vrf_child_parent_native_linux_test.go"
+          "pkg/controller/chain/vrf_child_parent_native_linux_test.go",
+          "pkg/controller/chain/vrf_isolation_native_linux_test.go"
         ]
       },
       "preservation_verdict": "unknown",
@@ -3484,7 +3504,8 @@
         "scoped_evidence": [
           "linux-vrf-withdraw-review-9735f25e",
           "linux-vrf-peer-9735f25e",
-          "linux-combined-native-3e58c93a"
+          "linux-combined-native-3e58c93a",
+          "linux-vrf-overlap-12656124"
         ]
       },
       "freebsd": {
@@ -3492,7 +3513,7 @@
         "scoped_evidence": []
       },
       "required_remaining_checks": [
-        "Multiple-VRF forwarding/isolation with overlapping address space",
+        "Multiple-VRF transit forwarding/isolation beyond the recorded overlapping-address host-originated UDP gate",
         "Member-address dependency semantics and delegated IPv6/RA within VRF",
         "Packaged-daemon restart/reboot and complete platform parity beyond the recorded single-VRF controller gate"
       ],

@@ -510,13 +510,13 @@ check-routerd15-bfd-native-linux:
 	sh scripts/linux-bfd-frr-smoke.sh
 
 # Explicit opt-in: both the network and sysfs view belong to a new namespace.
-# Requires Linux user namespaces, iproute2, WireGuard tools, tcpdump and
+# Requires Linux user namespaces, iproute2, Python 3, WireGuard tools, tcpdump and
 # VRF/VXLAN/IPv6 tunnel support.
 check-routerd15-native-parent-linux:
 	ROUTERD_RUN_NETNS=1 go test ./pkg/vxlan -run '^TestLinuxSegmentNativeCreateInstallsOwnershipCookie$$' -count=1 -v
 	@parent_netns=$$(readlink /proc/self/ns/net); \
 	ROUTERD_HOST_NETNS="$$parent_netns" ROUTERD_RUN_NETNS=1 unshare -Urnm sh -c \
-	'mount -t sysfs sysfs /sys && exec go test ./pkg/controller/chain -run "^(TestBridgeParentNativeLinuxAddressLifecycle|TestWireGuardParentNativeLinuxPeerLifecycle|TestVRFParentNativeLinuxPeerLifecycle|TestDSLiteParentNativeLinuxAFTRLifecycle)$$" -count=1 -v'
+	'mount -t sysfs sysfs /sys && exec go test ./pkg/controller/chain -run "^(TestBridgeParentNativeLinuxAddressLifecycle|TestWireGuardParentNativeLinuxPeerLifecycle|TestVRFParentNativeLinuxPeerLifecycle|TestVRFNativeLinuxOverlappingPeerIsolation|TestDSLiteParentNativeLinuxAFTRLifecycle)$$" -count=1 -v'
 
 # Both UTS and network effects stay in a private user/mount namespace.
 .PHONY: check-routerd15-system-native-linux
