@@ -4267,3 +4267,26 @@ golden outputs, followed by schema/example checks and all website locales.
 requires both positive payloads and explicit withdrawal checks. This result does
 not qualify IPv6 exit forwarding, credential expiry, control-server outage
 recovery, production deployment or full baseline parity.
+
+## Tailscale expired credentials and truthful runtime status
+
+Product `db41e03eae9648dc6d068892b3ec361d8a5696c1`, matching formal base/addon
+`1.5.0~20261106222627+gdb41e03e`, passed a fresh uninterrupted isolated Linux
+run with Tailscale 1.104.5 and independent Headscale 0.28.0. Starting from an
+empty Healthy daemon and certified HTTP peer, the normal configuration API
+activated subnet traffic. Expiring the test node at the provider caused actual
+NeedsLogin and payload failure. Without apply or restart, the controller
+reported Pending/AuthenticationRequired, overall status was not Healthy and the
+main PID stayed unchanged. Declaring a fresh single-use credential restored
+Running/Healthy, removed the stale error/reason and restored the HTTP payload.
+Empty withdrawal, owned route/unit removal, fixture cleanup, forwarding
+restoration and credential-file removal passed.
+
+The earlier controller regression reproduced Applied for NeedsLogin, Starting
+and failed/malformed runtime observations. The fix publishes meaningful Pending
+or Error states; recovery clears them. Running with control connectivity absent
+remains Running because that observation alone does not prove forwarding loss.
+Local tests cover this distinction and machine-approval state; native expiry
+does not qualify every observation failure or control-server outage. The
+[reusable procedure](../operations/development.md#tailscale-authentication-expiry)
+keeps the existing reconciliation interval and uses no product-state repair.

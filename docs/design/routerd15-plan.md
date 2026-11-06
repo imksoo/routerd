@@ -203,7 +203,7 @@ Execution status, 2026-11-06: the maintained ledger links clean-install and
 dual-stack recovery checks (`999dfd4`, `6977c66e`), the deployed-combination
 cold-return check (`2da31049`), saved-generation crash/rollback and subsequent
 DNS/DHCP, logging, WireGuard, NAT and event-owner checks. Both private 105-resource
-deployment candidates were last validated with formal product `5feec40c`.
+deployment candidates were last validated with formal product `db41e03e`.
 These are accumulated, revision-scoped results, not a claim that the complete
 combined scenario ran on the latest revision.
 

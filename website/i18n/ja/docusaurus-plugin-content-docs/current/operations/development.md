@@ -1258,3 +1258,19 @@ tailnet には接続しません。
    ファイルを復旧・撤去してゲストを停止します。
 
 IPv6 exit 通信、認証期限切れ、制御サーバー断からの回復は別の検証項目です。
+
+### Tailscale の認証期限切れ
+
+上記の隔離環境で、通常 daemon の Running/Healthy と独立 HTTP 通信を確認します。
+Headscale の `nodes expire --identifier <test-node-id>` で試験対象ノードだけを
+失効させます。実 backend の NeedsLogin、既存 reconcile 周期内の
+Pending/AuthenticationRequired、全体状態が Healthy でないことを確認します。
+観測を強制する apply・再起動は行わず、main PID 不変と旧 HTTP 通信の不達も
+要求します。
+
+新しい試験専用の一回限りの認証キーをログに出さずに発行し、0600 の環境ファイルに
+保存して通常の設定 API から `authKeyEnv`・`authKeyFile` を宣言します。
+Running/Healthy、以前の reason/runtimeError の消去、独立 HTTP 通信の復旧を
+確認します。最後に空構成へ撤去し、試験用認証ファイルも削除します。
+これはノード認証の失効と明示的な認証更新の検証であり、自動キー発行や
+制御サーバー断の検証ではありません。

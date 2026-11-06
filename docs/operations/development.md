@@ -1572,3 +1572,20 @@ and the remote destination.
 
 IPv6 exit traffic, expired credentials and control-server outage recovery need
 separate checks; IPv4 forwarding does not qualify them.
+
+### Tailscale authentication expiry
+
+Using the certified isolated setup above, first require the normal daemon's
+Running/Healthy status and an independent subnet HTTP payload. Expire only the
+router's test node with Headscale `nodes expire --identifier <test-node-id>`.
+Require the actual backend to enter NeedsLogin, then observe
+Pending/AuthenticationRequired and non-Healthy overall status within the
+existing service reconciliation interval. Do not apply or restart to force this
+observation; check that the main PID is unchanged and the old payload fails.
+
+Generate a fresh single-use lab credential without logging it. Write a private
+0600 environment file and declare `authKeyEnv`/`authKeyFile` through the normal
+configuration API. Require Running/Healthy, cleared old reason/runtimeError and
+restored independent payload. Complete empty withdrawal and remove the one-use
+credential with the fixture. This verifies expired node credentials and explicit
+credential renewal, not automatic secret generation or control-server outage.

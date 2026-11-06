@@ -2939,6 +2939,24 @@
         "Production deployment",
         "An uninterrupted native script pass"
       ]
+    },
+    "linux-tailscale-expiry-db41e03e": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "db41e03eae9648dc6d068892b3ec361d8a5696c1",
+      "reference": "docs/design/routerd15-audit.md#tailscale-expired-credentials-and-truthful-runtime-status",
+      "checks": [
+        "Actual independent provider node expiry and loss of subnet HTTP payload",
+        "NeedsLogin becomes Pending/AuthenticationRequired without apply or restart; main PID unchanged and overall not Healthy",
+        "Declared fresh single-use credential restores Running/Healthy, clears stale reasons and restores HTTP payload",
+        "Empty Healthy withdrawal and fixture/credential cleanup"
+      ],
+      "excludes": [
+        "Automatic credential generation",
+        "Control-server outage recovery",
+        "IPv6 exit traffic",
+        "All native CLI-observation failure paths"
+      ]
     }
   },
   "features": [
@@ -3433,7 +3451,8 @@
           "pkg/tailscale/tailscale_test.go",
           "pkg/render/tailscale_systemd_test.go",
           "pkg/controller/chain/system_tailscale_withdraw_test.go",
-          "pkg/render/tailscale_cli_test.go"
+          "pkg/render/tailscale_cli_test.go",
+          "pkg/controller/chain/system_tailscale_status_test.go"
         ]
       },
       "preservation_verdict": "unknown",
@@ -3441,7 +3460,8 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-tailscale-withdrawal-6112f0bc",
-          "linux-tailscale-advertisements-5feec40c"
+          "linux-tailscale-advertisements-5feec40c",
+          "linux-tailscale-expiry-db41e03e"
         ]
       },
       "freebsd": {
@@ -3449,7 +3469,7 @@
         "scoped_evidence": []
       },
       "required_remaining_checks": [
-        "IPv6 exit-node payload forwarding, credential expiration and control-plane outage recovery",
+        "IPv6 exit-node payload forwarding and control-plane outage recovery",
         "Combined deployed configuration and all-platform parity"
       ]
     },
