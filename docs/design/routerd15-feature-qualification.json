@@ -3144,7 +3144,8 @@
           "linux-bridge-aa9f3cac",
           "linux-bridge-vxlan-native-f54ceecb",
           "linux-vrf-peer-9735f25e",
-          "linux-home-router-dualstack-57bf7e35"
+          "linux-home-router-dualstack-57bf7e35",
+          "linux-native-crash-rollback-2da31049"
         ]
       },
       "freebsd": {
@@ -4337,7 +4338,8 @@
           "linux-nonresource-code-c7f89dda",
           "linux-home-router-clean-install-999dfd4",
           "linux-dualstack-recovery-6977c66e",
-          "linux-ha-pair-followup-apt-b698cb1d"
+          "linux-ha-pair-followup-apt-b698cb1d",
+          "linux-native-crash-rollback-2da31049"
         ]
       },
       "freebsd": {
@@ -4348,7 +4350,7 @@
       },
       "required_remaining_checks": [
         "All baseline validate/plan/apply/delete/rollback outcomes",
-        "Canonical durability, interrupted activation, 1.5 rollback and rejected writes"
+        "Target-storage power-loss durability, interrupted activation across remaining resource owners, and rejected writes; packaged process crash before static IPv4 activation and saved-generation rollback are covered by linux-native-crash-rollback-2da31049"
       ]
     },
     {
@@ -4379,7 +4381,8 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "linux-nonresource-code-c7f89dda"
+          "linux-nonresource-code-c7f89dda",
+          "linux-native-crash-rollback-2da31049"
         ]
       },
       "freebsd": {
@@ -4422,7 +4425,8 @@
           "linux-wan-ra-lifecycle-1392082f",
           "linux-home-router-clean-install-999dfd4",
           "linux-dualstack-recovery-6977c66e",
-          "linux-multi-dslite-apt-fc5d7816"
+          "linux-multi-dslite-apt-fc5d7816",
+          "linux-native-crash-rollback-2da31049"
         ]
       },
       "freebsd": {
@@ -4524,7 +4528,7 @@
         ]
       },
       "freebsd": {
-        "qualification": "fail",
+        "qualification": "unknown",
         "scoped_evidence": [
           "freebsd-native-pkg-626774d7",
           "freebsd-native-ndpi-sdk6-fdd5692c"
@@ -4533,7 +4537,10 @@
       "required_remaining_checks": [
         "All baseline artifacts/architectures and retained notices",
         "Release provenance and target-package clean-install qualification using a validated routerd 1.5 configuration",
-        "Package-owned FreeBSD native libnDPI 5.0 clean install/update; baseline native backend must not be reduced to the static agent"
+        "FreeBSD native package qualification excluding nDPI, deferred until after Linux replacement readiness under the approved 2026-11-03 scope decision"
+      ],
+      "notes": [
+        "Historical FreeBSD nDPI SDK failure remains recorded in scoped evidence but is excluded from current acceptance by the approved scope decision. FreeBSD package qualification remains incomplete."
       ]
     },
     {
