@@ -2556,6 +2556,25 @@
         "Native ::/0 and /128 at this revision; local regression covers them and earlier explicit-metric host-route results remain separately scoped.",
         "FreeBSD and complete routerd 1.0 parity"
       ]
+    },
+    "linux-dynamic-gateway-identity-a6d4e3bb": {
+      "level": "packaged-daemon-independent-peer",
+      "outcome": "pass",
+      "revision": "a6d4e3bb45376ade0d5119c435bd47e97c965764",
+      "reference": "docs/design/routerd15-ipv4-dynamic-gateway.md#latest-run",
+      "environment": "Dedicated Ubuntu Linux guest, formal matching base/addon 1.5.0~20261106191737+ga6d4e3bb; independent dnsmasq and off-link HTTP endpoint in a network namespace.",
+      "checks": [
+        "Required gateway missing at cold start: Pending/GatewayMissing, no route receipt, kernel route or DHCP address.",
+        "Saved DHCP lease from a previous interface retained through package installation. Identity mismatch logged; fresh acquisition succeeded without editing or deleting the snapshot.",
+        "DHCP gateway installed an exact /32 next-hop route with non-pending ownership; router-originated HTTP payload matched the independent peer.",
+        "Conditional DHCP withdrawal removed address and owned route; reactivation restored acquisition, route and payload. Main restart retained working forwarding.",
+        "Empty configuration Healthy with no helpers or owned route/address before fixture removal; namespace, veth, services and temporary files cleaned.",
+        "Full Go suite passed (122 packages, 15 without tests); schemas/examples/four website locales passed at the product revision."
+      ],
+      "excludes": [
+        "Separate LAN-client transit, multi-WAN and other DHCP peer modes",
+        "FreeBSD and complete routerd 1.0 parity"
+      ]
     }
   },
   "features": [
@@ -3254,7 +3273,8 @@
         ],
         "related_test_files": [
           "pkg/controller/chain/ipv4route_owner_test.go",
-          "pkg/controller/chain/ipv4route_test.go"
+          "pkg/controller/chain/ipv4route_test.go",
+          "pkg/controller/chain/ipv4route_gateway_test.go"
         ]
       },
       "preservation_verdict": "unknown",
@@ -3264,7 +3284,8 @@
           "linux-independent-ipv4-6135bb03",
           "linux-portforward-f6502ea2",
           "linux-home-router-recovery-13b7a5b9",
-          "linux-home-router-dualstack-57bf7e35"
+          "linux-home-router-dualstack-57bf7e35",
+          "linux-dynamic-gateway-identity-a6d4e3bb"
         ]
       },
       "freebsd": {
@@ -3442,7 +3463,8 @@
           "pkg/controller/dhcpv4client/startup_pending_test.go",
           "pkg/controller/chain/dhcpv4_first_apply_test.go",
           "scripts/linux-wan-dhcpv4-lifecycle-smoke.sh",
-          "scripts/verify-dhcpv4-rebind_test.py"
+          "scripts/verify-dhcpv4-rebind_test.py",
+          "cmd/routerd-dhcpv4-client/main_test.go"
         ]
       },
       "preservation_verdict": "unknown",
@@ -3455,7 +3477,8 @@
           "linux-wan-dhcpv4-1f9fc319",
           "linux-home-router-clean-install-999dfd4",
           "linux-dualstack-recovery-6977c66e",
-          "linux-dhcp-derived-private-dns-d279d919"
+          "linux-dhcp-derived-private-dns-d279d919",
+          "linux-dynamic-gateway-identity-a6d4e3bb"
         ]
       },
       "freebsd": {
