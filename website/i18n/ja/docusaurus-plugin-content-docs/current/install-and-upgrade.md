@@ -128,3 +128,9 @@ release workflow は amd64/arm64 の両方を生成しますが、定義を追�
 設定と SQLite の値の保持、削除を確認します。全機能の認証ではありません。
 Linux の native libnDPI は本体と同じ版の[追加パッケージ](./operations/ndpi-agent-libndpi.md)を使います。パッケージ管理下の
 agent をアーカイブで上書きしないでください。
+
+## 設定適用中断と保存世代への復旧確認
+
+正式 `2da31049` Linux パッケージで、隔離 VM 上の設定確定後・適用前のプロセス停止を確認しました。同じ所有リソース名でアドレスだけを変えた候補を `--no-reconcile` で確定し、主 daemon を SIGKILL すると、systemd が自動再起動して正本の新アドレスを適用し、旧アドレスを撤去しました。DB の初期化や手動起動は行っていません。続く `routerctl rollback --timeout 90s --to <保存世代>` で正本と元のアドレスが復元され、`routerctl delete` によるアドレス撤去後も別の設定済みサービスは応答しました。
+
+復旧確認では返された世代と phase、正本の内容、実際の OS 効果を照合します。同じ設定への冪等な適用では mtime や checksum が変わらない場合があります。要求がタイムアウトした場合も、再試行を決める前に正本と実行状態を確認します。バイナリを戻す場合は APT を使い、nDPI addon 導入済みなら同じ版の base と addon を同じトランザクションで指定します。詳しい手順は [復旧手順](operations/release-rollback.md) を参照してください。
