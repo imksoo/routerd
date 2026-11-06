@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strconv"
 	"testing"
 
 	"github.com/imksoo/routerd/pkg/api"
@@ -614,20 +615,28 @@ func ordinaryMutationCommands(commands [][]string) [][]string {
 }
 
 func TestIPv4RouteControllerAppliesAndWithdrawsIPv6StaticRoute(t *testing.T) {
-	for _, tc := range []struct{ name, configured, observed string }{
-		{"prefix", "2001:db8:10::/64", "2001:db8:10::/64"},
-		{"host", "2001:db8:10::99/128", "2001:db8:10::99"},
-		{"default", "::/0", "default"},
+	for _, tc := range []struct {
+		name, configured, observed string
+		metric                     int
+	}{
+		{"prefix", "2001:db8:10::/64", "2001:db8:10::/64", 42},
+		{"host", "2001:db8:10::99/128", "2001:db8:10::99", 42},
+		{"default", "::/0", "default", 42},
+		{"default metric", "2001:db8:10::/64", "2001:db8:10::/64", 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			testIPv6StaticRouteLifecycle(t, tc.configured, tc.observed)
+			testIPv6StaticRouteLifecycle(t, tc.configured, tc.observed, tc.metric)
 		})
 	}
 }
 
-func testIPv6StaticRouteLifecycle(t *testing.T, configured, observed string) {
+func testIPv6StaticRouteLifecycle(t *testing.T, configured, observed string, metric int) {
 	t.Helper()
-	route := ipv6StaticRoute{Destination: configured, Gateway: "fe80::1", Device: "lan0", Metric: "42"}
+	kernelMetric := metric
+	if kernelMetric == 0 {
+		kernelMetric = 1024
+	}
+	route := ipv6StaticRoute{Destination: configured, Gateway: "fe80::1", Device: "lan0", Metric: strconv.Itoa(kernelMetric)}
 	installed := false
 	var commands [][]string
 	command := func(_ context.Context, name string, args ...string) ([]byte, error) {
@@ -639,9 +648,9 @@ func testIPv6StaticRouteLifecycle(t *testing.T, configured, observed string) {
 			if !installed {
 				return []byte("[]"), nil
 			}
-			return []byte(fmt.Sprintf(`[{"dst":%q,"gateway":"fe80::1","dev":"lan0","metric":42,"protocol":"boot"}]`, observed)), nil
+			return []byte(fmt.Sprintf(`[{"dst":%q,"gateway":"fe80::1","dev":"lan0","metric":%d,"protocol":"boot"}]`, observed, kernelMetric)), nil
 		}
-		if reflect.DeepEqual(args, []string{"-6", "route", "add", route.Destination, "via", route.Gateway, "dev", route.Device, "metric", route.Metric, "proto", "boot"}) {
+		if reflect.DeepEqual(args, []string{"-6", "route", "add", route.Destination, "via", route.Gateway, "dev", route.Device, "metric", route.Metric, "proto", "boot"}) || (metric == 0 && reflect.DeepEqual(args, []string{"-6", "route", "add", route.Destination, "via", route.Gateway, "dev", route.Device, "proto", "boot"})) {
 			installed = true
 			return nil, nil
 		}
@@ -652,7 +661,7 @@ func testIPv6StaticRouteLifecycle(t *testing.T, configured, observed string) {
 		t.Fatalf("unexpected command: %s %v", name, args)
 		return nil, nil
 	}
-	resource := api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6StaticRoute"}, Metadata: api.ObjectMeta{Name: "lan-v6"}, Spec: api.IPv6StaticRouteSpec{Interface: "lan", Destination: route.Destination, Via: route.Gateway, Metric: 42}}
+	resource := api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6StaticRoute"}, Metadata: api.ObjectMeta{Name: "lan-v6"}, Spec: api.IPv6StaticRouteSpec{Interface: "lan", Destination: route.Destination, Via: route.Gateway, Metric: metric}}
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: route.Device}}, resource,
 	}}}
