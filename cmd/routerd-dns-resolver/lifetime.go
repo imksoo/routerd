@@ -3,9 +3,8 @@
 package main
 
 import (
-	"fmt"
 	"net"
-	"sync"
+	"os"
 	"time"
 
 	"github.com/miekg/dns"
@@ -42,17 +41,27 @@ func (c dnsWriteConn) Write(data []byte) (int, error) {
 type dnsPacketWriter struct {
 	dns.Writer
 	packet net.PacketConn
-	mu     *sync.Mutex
+	slot   chan struct{}
 }
 
 func (w dnsPacketWriter) Write(data []byte) (int, error) {
-	// PacketConn deadlines apply to every concurrent write. Admit only one
-	// write, otherwise a later reply could extend an already blocked deadline.
-	if !w.mu.TryLock() {
-		return 0, fmt.Errorf("DNS UDP response writer is busy")
+	// PacketConn deadlines are shared. Serialize replies within one write
+	// budget, including time waiting for a preceding response. Queries are
+	// already bounded by querySlots; a brief overlap must not drop a reply.
+	deadline := time.Now().Add(dnsResponseWriteTimeout)
+	select {
+	case w.slot <- struct{}{}:
+	default:
+		timer := time.NewTimer(time.Until(deadline))
+		defer timer.Stop()
+		select {
+		case w.slot <- struct{}{}:
+		case <-timer.C:
+			return 0, os.ErrDeadlineExceeded
+		}
 	}
-	defer w.mu.Unlock()
-	if err := w.packet.SetWriteDeadline(time.Now().Add(dnsResponseWriteTimeout)); err != nil {
+	defer func() { <-w.slot }()
+	if err := w.packet.SetWriteDeadline(deadline); err != nil {
 		return 0, err
 	}
 	return w.Writer.Write(data)

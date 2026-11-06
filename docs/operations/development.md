@@ -275,6 +275,12 @@ boot-service installation, firewall policy, reboot recovery, or FreeBSD.
 
 ## Linux DNS resolver runtime check
 
+UDP response writes share one socket deadline. Concurrent replies wait within the
+existing two-second write budget, including lock wait and actual send; brief
+writer overlap does not immediately discard a reply. The existing 128-query
+admission bound remains. Run `go test ./cmd/routerd-dns-resolver -run TestUDPReply`
+to check real UDP delivery during overlap and expiry when the writer stays busy.
+
 Run `sudo ./tests/netns/dns-resolver-runtime.sh` on an isolated Linux host with
 iproute2, dnsmasq, `dig`, curl and Go. The test starts the actual
 `routerd-dns-resolver` binary with a prepared 1.5 runtime configuration, then

@@ -458,9 +458,9 @@ func (d *daemon) openBoundListeners(ctx context.Context, addrs map[string]struct
 		// Rejection is immediate, so staged sockets create no waiting handlers.
 		handler := dns.HandlerFunc(func(w dns.ResponseWriter, req *dns.Msg) { d.handleDNSOnListener(w, req, bound) })
 		bound.UDP.Handler, bound.TCP.Handler = handler, handler
-		udpWrites := new(sync.Mutex)
+		udpWrites := make(chan struct{}, 1)
 		bound.UDP.DecorateWriter = func(writer dns.Writer) dns.Writer {
-			return dnsPacketWriter{Writer: writer, packet: packetConn, mu: udpWrites}
+			return dnsPacketWriter{Writer: writer, packet: packetConn, slot: udpWrites}
 		}
 		udpReady, tcpReady := make(chan struct{}), make(chan struct{})
 		bound.UDP.NotifyStartedFunc = func() { close(udpReady) }

@@ -3,7 +3,9 @@
 package main
 
 import (
+	"errors"
 	"net"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -24,11 +26,11 @@ func TestUDPReplySurvivesPreviousWriterReturnOverlap(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer client.Close()
-	mu := new(sync.Mutex)
+	slot := make(chan struct{}, 1)
 	release := make(chan struct{})
 	unblock := sync.OnceFunc(func() { close(release) })
 	defer unblock()
-	first := dnsPacketWriter{packet: server, mu: mu, Writer: udpReplyFunc(func(data []byte) (int, error) {
+	first := dnsPacketWriter{packet: server, slot: slot, Writer: udpReplyFunc(func(data []byte) (int, error) {
 		n, err := server.WriteTo(data, client.LocalAddr())
 		// The kernel delivered the reply; the server goroutine has not yet
 		// returned to release its shared response-write lock.
@@ -45,7 +47,7 @@ func TestUDPReplySurvivesPreviousWriterReturnOverlap(t *testing.T) {
 	if err != nil || string(buf[:n]) != "first" {
 		t.Fatalf("first UDP reply: %q %v", buf[:n], err)
 	}
-	second := dnsPacketWriter{packet: server, mu: mu, Writer: udpReplyFunc(func(data []byte) (int, error) { return server.WriteTo(data, client.LocalAddr()) })}
+	second := dnsPacketWriter{packet: server, slot: slot, Writer: udpReplyFunc(func(data []byte) (int, error) { return server.WriteTo(data, client.LocalAddr()) })}
 	// Model a brief scheduling gap after the first real reply. A concurrent
 	// reply must use the existing write budget, not be discarded immediately.
 	timer := time.AfterFunc(100*time.Millisecond, unblock)
@@ -61,5 +63,23 @@ func TestUDPReplySurvivesPreviousWriterReturnOverlap(t *testing.T) {
 	n, _, err = client.ReadFrom(buf)
 	if err != nil || string(buf[:n]) != "second" {
 		t.Fatalf("second UDP reply: %q %v", buf[:n], err)
+	}
+}
+
+func TestUDPReplyBusyWriterHonorsSharedBudget(t *testing.T) {
+	slot := make(chan struct{}, 1)
+	slot <- struct{}{}
+	writer := dnsPacketWriter{slot: slot}
+	started := time.Now()
+	_, err := writer.Write([]byte("reply"))
+	if !errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("busy writer: %v", err)
+	}
+	elapsed := time.Since(started)
+	if elapsed < dnsResponseWriteTimeout || elapsed > dnsResponseWriteTimeout+time.Second {
+		t.Fatalf("write budget elapsed %v", elapsed)
+	}
+	if len(slot) != 1 {
+		t.Fatal("timeout released another writer's slot")
 	}
 }

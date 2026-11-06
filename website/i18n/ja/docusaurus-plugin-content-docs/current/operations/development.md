@@ -235,6 +235,12 @@ dnsmasq service lifecycle を対象にします。package install、routerd boot
 
 ## Linux DNS resolver runtime 試験
 
+UDP 応答はソケットの送信期限を共有します。同時応答は、待機と実送信を
+合わせた既存の2秒の送信期限内で処理し、短い競合だけでは即座に破棄しません。
+既存の同時問い合わせ上限128は維持します。
+`go test ./cmd/routerd-dns-resolver -run TestUDPReply` で競合時の実 UDP 応答と、
+送信処理が占有されたままの場合の期限終了を確認できます。
+
 iproute2、dnsmasq、`dig`、curl、Go と network namespace 機能を備えた隔離 Linux 環境で
 `sudo ./tests/netns/dns-resolver-runtime.sh` を実行します。現在の1.5 runtime 設定を用いて
 実際の `routerd-dns-resolver` を起動し、独立した `dig` client から local zone と条件付き upstream
