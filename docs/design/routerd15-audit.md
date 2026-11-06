@@ -3676,3 +3676,39 @@ This package gate covers startup-configured LogSink and receiver loss/recovery.
 The non-reading receiver deadline is proved by the local real-TCP test, not this
 native gate. Dynamic LogSink destination replacement, remote collector products,
 FreeBSD and complete 1.0 parity are not established by this result.
+
+## Live LogSink destination activation and removal
+
+2026-11-06, product `da9e17131359c12409ca85305e5f12f19aeab201`, formal base/addon
+`1.5.0~20261106194131+gda9e1713`, passed on a dedicated Ubuntu guest with the normal
+systemd daemon and an independent HTTP receiver with two destination paths.
+All stages retained the same main PID: first LogSink addition delivered to path
+one; dry-run and commit-only candidates for path two retained path one; normal
+apply switched to path two; empty apply stopped delivery; re-addition resumed
+path one. The receiver counted only the exact log-level operation event and
+acknowledged each request after recording its count. Empty withdrawal, service
+stop, receiver shutdown and temporary-file cleanup passed.
+
+The local process/API test at `fbbd7a94` reproduced the stale destination after a
+successful apply. The fix reconfigures the existing Logger only from a confirmed
+active runtime snapshot, joins current deliveries and closes the old sinks.
+Local destination replacement/removal and focused apply/commit tests passed.
+The full Go suite passed (122 packages, 15 without tests), schemas/examples and
+four website locales passed at the product revision.
+
+To repeat: start a normal packaged daemon with empty config and record its PID;
+start a bounded independent HTTP receiver that counts `log level override changed`
+events separately by path. Prepare two otherwise identical webhook LogSink
+configs. Apply the sequence above, calling `routerctl log-level info` after each
+step and comparing exact counters and the unchanged PID. Bound each apply to 90
+seconds and each log-level request to eight seconds. Dry-run uses `POST
+/api/control.routerd.net/v1alpha1/apply` on the Unix socket with an `ApplyRequest`
+containing `dryRun: true`; commit-only uses `routerctl apply --no-reconcile`.
+Require Healthy empty withdrawal before removing the receiver and stopping the VM.
+
+An initial fixture incorrectly supplied `--dry-run` to `routerctl apply`, which
+has no such flag. It stopped before that request reached the daemon. The fixture
+was corrected to use the actual control API and the remaining checks resumed
+against the existing PID/counters, without restarting or repairing the product.
+This result does not establish every sink type, concurrent delivery/activation
+failure, FreeBSD, or full routerd 1.0 parity.

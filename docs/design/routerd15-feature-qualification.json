@@ -2610,6 +2610,24 @@
         "Native non-reading-peer backpressure and target-storage retention failure campaign",
         "FreeBSD and full routerd 1.0 parity"
       ]
+    },
+    "linux-logsink-activation-da9e1713": {
+      "level": "packaged-daemon-independent-peer",
+      "outcome": "pass",
+      "revision": "da9e17131359c12409ca85305e5f12f19aeab201",
+      "reference": "docs/design/routerd15-audit.md#live-logsink-destination-activation-and-removal",
+      "environment": "Dedicated Ubuntu guest, formal matching base/addon 1.5.0~20261106194131+gda9e1713; normal systemd daemon and independent HTTP receiver with separate destination counters.",
+      "checks": [
+        "Same main PID across initial addition, dry-run, commit-only, committed replacement, removal and re-addition.",
+        "Dry-run/commit-only retained old delivery; committed replacement switched destination; removal stopped delivery and re-addition restored it.",
+        "Empty Healthy withdrawal, daemon stop and independent receiver/file cleanup passed.",
+        "Initial fixture used a nonexistent CLI dry-run flag; corrected to the control API and resumed from unchanged PID/counters without product repair.",
+        "Local process/API regression, focused logging/apply/commit tests, full Go122/15 and schemas/examples/four website locales passed at product revision."
+      ],
+      "excludes": [
+        "All sink types and concurrent delivery/activation failure combinations",
+        "FreeBSD and complete routerd 1.0 parity"
+      ]
     }
   },
   "features": [
@@ -2690,7 +2708,8 @@
           "pkg/controller/chain/logretention_test.go",
           "pkg/controller/chain/pipeline_generation_test.go",
           "pkg/eventlog/transport_lifecycle_test.go",
-          "pkg/eventlog/syslog_lifetime_test.go"
+          "pkg/eventlog/syslog_lifetime_test.go",
+          "cmd/routerd/logsink_reload_process_linux_test.go"
         ]
       },
       "preservation_verdict": "unknown",
@@ -2698,7 +2717,8 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-combined-telemetry-261e6675",
-          "linux-syslog-delivery-cfdc0a3f"
+          "linux-syslog-delivery-cfdc0a3f",
+          "linux-logsink-activation-da9e1713"
         ]
       },
       "freebsd": {
