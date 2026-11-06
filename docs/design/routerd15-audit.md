@@ -3835,3 +3835,49 @@ the controller-only result above to normal API activation and daemon restart.
 It does not qualify arbitrary pools, every mapping mode, guest reboot or FreeBSD.
 The earlier conntrack-observer status fix is present in the package, but native
 conntrack-source loss/recovery was not injected in this campaign.
+
+
+### Explicit NAT source address pools
+
+The pool renderer previously sorted addresses and joined them with hyphens.
+Two addresses could become a reversed lexical range; three addresses generated
+invalid nft syntax, and treating a sparse list as a range could select addresses
+not declared by the operator. The native syntax regression in `f421b2fa`
+reproduced the rejection. Revision `2ee9f2a2` renders an explicit indexed
+`numgen inc` map, retaining only the declared addresses. Single-address pools
+remain ordinary address translations. Conntrack retains existing flow mappings.
+
+Reproduce syntax validation with `TestNATPoolNativeSyntax` in an isolated user
+and network namespace from the repository root:
+
+```sh
+parent_netns=$(readlink /proc/self/ns/net)
+ROUTERD_HOST_NETNS="$parent_netns" ROUTERD_RUN_NETNS=1 \
+  unshare -Urn go test ./pkg/render -run '^TestNATPoolNativeSyntax$' -count=1 -v
+```
+
+Both two- and three-address
+cases pass real `nft -c` with auto, preserve and range port mappings. Run
+`sudo ./tests/netns/nat44-source-snat.sh` in a disposable Linux guest for the
+actual controller/kernel path: six independent HTTP connections must collectively
+use all three noncontiguous declared addresses, no other address, and ports
+40000–40010. Unmatched traffic and empty-config withdrawal must remain correct.
+This command passed with the formal distribution validator and matching
+production-controller test driver at `2ee9f2a2`.
+
+The formal matching base/addon `1.5.0~20261106202522+g2ee9f2a2` also passed
+through the normal systemd daemon after apt installation in a dedicated Ubuntu
+guest. Use two external Interface resources and an explicit forwarding Sysctl,
+an independent LAN HTTP client and a WAN server reporting its observed source
+tuple. Apply a single-address translation, then replace it with a three-address
+noncontiguous pool through the API. Assert all three source addresses and the
+port range on six new connections while the daemon PID remains unchanged.
+Restart the daemon and repeat the six-connection check. Remove NAT and assert
+the original client address and absent owned NAT table. All checks passed.
+Empty configuration returned Healthy, the daemon and peer were stopped,
+namespace/files were removed, the fixture forwarding value was restored, and
+the guest was stopped. No manual product-state repair was needed.
+
+The packet test qualifies TCP range mapping and normal daemon restart. Syntax
+validation alone does not qualify preserve/auto packet semantics, every
+protocol, guest reboot, FreeBSD or complete routerd 1.0 parity.

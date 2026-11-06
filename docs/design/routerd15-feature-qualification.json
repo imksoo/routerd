@@ -2679,6 +2679,24 @@
         "Guest reboot and FreeBSD",
         "Native conntrack-source loss/recovery"
       ]
+    },
+    "linux-nat-pool-2ee9f2a2": {
+      "level": "packaged-daemon-independent-peer",
+      "outcome": "pass",
+      "revision": "2ee9f2a272ce553c9284e687ea8283a35dc2c223",
+      "reference": "docs/design/routerd15-audit.md#explicit-nat-source-address-pools",
+      "environment": "Dedicated Ubuntu guest, formal matching base/addon 1.5.0~20261106202522+g2ee9f2a2, normal systemd daemon and independent HTTP client/server namespaces.",
+      "checks": [
+        "Real nft syntax accepts two/three declared pool addresses with auto, preserve and range mappings.",
+        "Controller/kernel forwarding uses all three noncontiguous addresses and only the declared addresses, with TCP source port range preserved.",
+        "Normal API single-address to pool update retains daemon PID; pool forwarding survives daemon restart.",
+        "NAT withdrawal restores original source; empty Healthy and fixture cleanup completed; guest stopped."
+      ],
+      "excludes": [
+        "Packet semantics of every mapping mode and protocol",
+        "Guest reboot and FreeBSD",
+        "Complete routerd 1.0 parity"
+      ]
     }
   },
   "features": [
@@ -4371,7 +4389,8 @@
           "linux-ha-pair-lifecycle-apt-1a96b8c0",
           "linux-named-redirect-9400f03c",
           "linux-nat-translation-b318d75b",
-          "linux-nat-daemon-176f42fb"
+          "linux-nat-daemon-176f42fb",
+          "linux-nat-pool-2ee9f2a2"
         ]
       },
       "freebsd": {
