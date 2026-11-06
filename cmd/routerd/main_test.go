@@ -1660,6 +1660,30 @@ func TestOverallStatusPhaseUsesResourceStatuses(t *testing.T) {
 	}
 }
 
+func TestConnectedWireGuardPeerKeepsOverallStatusHealthy(t *testing.T) {
+	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "WireGuardPeer", "peer", map[string]any{"phase": "Connected"}); err != nil {
+		t.Fatal(err)
+	}
+	statuses, err := store.ListObjectStatuses()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := overallStatusPhase("Healthy", statuses); got != "Healthy" {
+		t.Errorf("connected peer changed overall health to %q", got)
+	}
+	if issues := resourcePhaseIssues(statuses); len(issues) != 0 {
+		t.Errorf("connected peer reported as an issue: %+v", issues)
+	}
+	if got := canonicalOverallPhase("Connected", ""); got != "Healthy" {
+		t.Errorf("connected phase normalized to %q", got)
+	}
+}
+
 func TestResourcePhaseIssuesReportsNonHealthyStatuses(t *testing.T) {
 	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
