@@ -3985,3 +3985,28 @@ fixture changes were cleaned up, and the guest was stopped. Existing focused
 ingress, drain and NAT controller tests also passed. No product change or manual
 product-state repair was required. The runbook states the remaining unverified
 selection modes, all-backend outage, address sources and guest-reboot scope.
+
+
+### Static address-set replacement and UDP response authorization
+
+The independent UDP flow-pinhole test exposed retained authorization after a
+static IPAddressSet changed from one client to another. Generated rules contained
+only the new address, but the kernel named set retained both: flushing table
+rules did not replace existing set elements. Test-first revision `51929746`
+reproduced this with real nftables for runtime and full-render paths, in both
+IPv4 and IPv6. Product `5645fcf8` resets static address sets in the same ruleset
+transaction before declaring desired members. DNS-populated sets retain their
+controller-owned learned members; the native regression verifies this boundary.
+
+Formal base/addon `1.5.0~20261106205528+g5645fcf8` passed apt update, package
+integrity and version checks in a dedicated Ubuntu guest. Running
+`tests/netns/nat44-flow-dnat-pinhole.sh` with the formal validator and a test driver
+built from that revision passed independent UDP traffic checks: authorized
+responses, rejection by source/destination/interface/port, expiry, withdrawal,
+and policy re-add. After changing the authorized source, the new client received
+its response and the removed client did not. Negative checks also require the
+independent peer to observe the outbound request. Temporary namespaces and
+staging were removed. This establishes the production controller and real-kernel
+path, not normal-daemon configuration delivery, policy-routing traffic, guest
+reboot, FreeBSD or full routerd 1.0 parity. The maintained reproduction and
+acceptance procedure is in the development runbook.
