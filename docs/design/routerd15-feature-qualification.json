@@ -2520,6 +2520,22 @@
         "External-host DNS clients, all conditional policies, FreeBSD and full 1.0 parity",
         "Resolution of the two intermittent full-suite failures"
       ]
+    },
+    "linux-relay-two-subnets-7e9702fa": {
+      "level": "native-kernel",
+      "outcome": "pass",
+      "revision": "7e9702fa4b7508e07bac3829444e59dae766fde5",
+      "reference": "docs/operations/development.md#linux-dhcpv4-relay-packet-check",
+      "environment": "Dedicated isolated Linux VM; production renderer linked into static test helper, actual dnsmasq relay and independent server/client network namespaces. Main routerd remained stopped.",
+      "checks": [
+        "One DHCPv4Relay resource with two interfaces produced two giaddr directives. Independent clients on different LAN subnets acquired addresses from their respective pools and verified subnet-specific gateway/DNS plus upstream server identity.",
+        "Existing no-lease checks during upstream outage and relay withdrawal, and acquisitions after server recovery and relay restart passed.",
+        "Script cleanup removed its namespaces and temporary state; transferred test helper/scripts were removed. Full Go suite passed (122 packages, 15 without tests)."
+      ],
+      "excludes": [
+        "Full routerd/systemd lifecycle for the two-interface combination; earlier single-interface daemon gate remains separately scoped.",
+        "FreeBSD, reboot and complete 1.0 parity"
+      ]
     }
   },
   "features": [
@@ -3736,7 +3752,8 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-dhcpv4-relay-1195c7fc",
-          "linux-dhcpv4-relay-daemon-3443ec6f"
+          "linux-dhcpv4-relay-daemon-3443ec6f",
+          "linux-relay-two-subnets-7e9702fa"
         ]
       },
       "freebsd": {
@@ -3744,7 +3761,6 @@
         "scoped_evidence": []
       },
       "required_remaining_checks": [
-        "Independent client/server exchange with multiple relay interfaces in one DHCPv4Relay resource",
         "FreeBSD independent relay/client/server exchange"
       ]
     },

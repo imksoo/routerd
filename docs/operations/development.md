@@ -226,8 +226,9 @@ Run `sudo ./tests/netns/dhcpv4-relay.sh` on an isolated Linux host with
 iproute2, dnsmasq, BusyBox `udhcpc`, tcpdump, Go and network-namespace support.
 The test renders the current DHCPv4 relay configuration, starts real dnsmasq
 relay and upstream-server processes in separate namespaces, and uses independent
-BusyBox clients. PASS requires a client lease from the upstream pool with the
-configured gateway, DNS server and server identifier; no lease while the
+BusyBox clients on two separate LAN subnets served by one DHCPv4Relay resource.
+PASS requires each client to receive an address from its own upstream pool with
+its subnet-specific gateway and DNS server and the configured server identifier; no lease while the
 upstream server is stopped; a lease after server recovery; no lease while the
 relay is withdrawn; and a lease after the relay restarts. Successful runs print
 one result and delete their temporary state and packet captures. A failed run

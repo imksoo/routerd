@@ -195,8 +195,9 @@ lease expiry、address conflict、DNS 応答、NAT、FreeBSD の検査は含み�
 
 iproute2、dnsmasq、BusyBox `udhcpc`、tcpdump、Go と network namespace 機能を備えた隔離 Linux 環境で
 `sudo ./tests/netns/dhcpv4-relay.sh` を実行します。現在の DHCPv4 relay 設定を生成し、別々の namespace に
-実 dnsmasq relay と上流 DHCP server を起動し、独立した BusyBox client から通信します。上流 pool の address と
-設定済み gateway・DNS・server ID を受け取ること、上流 server 停止中に lease が出ないこと、server 復旧後に
+実 dnsmasq relay と上流 DHCP server を起動します。1個の DHCPv4Relay resource に異なる2つの LAN subnet を指定し、
+各 LAN の独立した BusyBox client から通信します。それぞれの pool の address と subnet ごとの gateway・DNS、
+設定済み server ID を受け取ること、上流 server 停止中に lease が出ないこと、server 復旧後に
 再取得できること、relay 撤去中に lease が出ず、relay 再起動後に再取得できることを合格条件にします。
 成功時は1行の結果を表示し、一時 state と packet capture を削除します。失敗時は再現に必要な範囲に絞った
 一時診断情報を残します。この試験は renderer と dnsmasq の packet path を確認します。routerd service の監督、
