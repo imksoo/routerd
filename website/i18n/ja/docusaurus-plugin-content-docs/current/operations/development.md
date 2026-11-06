@@ -1324,3 +1324,18 @@ DNS/NTP 転送、native TLS 分類、両台の Telemetry を確認します。�
 再起動まで維持します。応答内容、元の変換tuple、TCPの単一accept、復帰ノードの
 共有アドレス主張を照合します。TCP接続が維持されても無停止と表現せず、最大応答間隔を
 報告します。最後は両台の empty Healthy、実撤去、独立 peer の後片付けまで確認します。
+
+### 新規導入時の lease 同期の前提
+
+Ubuntu/Debian では `DHCPv4ServerLeaseSync`、`DHCPv6ServerLeaseSync`、
+`DHCPv6PrefixDelegationLeaseSync` の宣言から runtime package に `rsync` と
+`openssh-client` を生成します。過去の lab 準備や旧ルーターへの導入済みツールに
+依存せず、`Package/router-runtime` と実コマンドの存在を確認します。
+
+パッケージ導入だけでは相手の本人確認・認証は準備されません。新ノードごとに
+専用鍵を用意し、秘密鍵を保護して、相手には公開鍵だけを登録します。受信側にも
+SSH server と rsync が必要です。信頼できる管理経路で相手の host key を確認し、
+known_hosts 方針を設定してください。秘密鍵を YAML や Git に保存しません。
+必要な両方向の無人認証に続けて、実際の最新 lease/PD の受信まで確認します。
+SSH 成功だけで同期成功とは判定しません。1.5 の新規導入に旧秘密鍵や旧 DB の
+コピーは不要です。

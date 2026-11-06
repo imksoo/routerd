@@ -70,6 +70,7 @@ var ubuntuPackages = map[string][]string{
 	"dhcp-dns":      {"dnsmasq-base"},
 	"dpi":           {"libnetfilter-log1", "libndpi-bin"},
 	"ipsec":         {"charon-systemd", "strongswan-swanctl"},
+	"lease-sync":    {"rsync", "openssh-client"},
 	"kmod":          {"kmod"},
 	"nat":           {"nftables"},
 	"nft":           {"nftables"},
@@ -177,6 +178,8 @@ func packageFeatures(router *api.Router) map[string]bool {
 			features["bgp"] = true
 		case "DHCPv4Server", "DHCPv4Reservation", "DHCPv6Server", "IPv6RouterAdvertisement", "DNSResolver", "DNSForwarder", "DNSUpstream", "DNSZone", "DHCPv4Relay":
 			features["dhcp-dns"] = true
+		case "DHCPv4ServerLeaseSync", "DHCPv6ServerLeaseSync", "DHCPv6PrefixDelegationLeaseSync":
+			features["lease-sync"] = true
 		case "NAT44Rule", "NAT44FlowDNATPinhole":
 			features["nat"] = true
 			features["conntrack"] = true

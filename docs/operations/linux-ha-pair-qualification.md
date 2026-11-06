@@ -448,3 +448,21 @@ application payloads, original translated tuples and single TCP accepts; inspect
 returning-node packets for competing shared claims. Report the largest response
 gap rather than calling preserved TCP connections uninterrupted service. Finish
 with empty Healthy on both nodes, actual withdrawal and independent-peer cleanup.
+
+### Fresh-install lease synchronization prerequisites
+
+On Ubuntu/Debian, declaring any of `DHCPv4ServerLeaseSync`,
+`DHCPv6ServerLeaseSync` or `DHCPv6PrefixDelegationLeaseSync` derives `rsync` and
+`openssh-client` in the runtime package plan. They must not be supplied only by
+an earlier lab setup or an old router installation. Check the generated
+`Package/router-runtime` status and actual executables before assessing delivery.
+
+Package installation does not establish peer identity or authorization. Provision
+a separate SSH key for each new router, protect its private file, and install
+only its public key on the intended receiver. The receiver needs its own SSH
+server and rsync installation. Verify its host key through the trusted management
+path and configure the selected known-hosts policy before first synchronization.
+Keep private keys out of YAML and source control. Test unattended authentication
+in both intended directions, then require actual latest lease/PD values at the
+receiver; SSH success alone is not a synchronization verdict. A fresh 1.5 install
+does not require copying the old router's private keys or state database.
