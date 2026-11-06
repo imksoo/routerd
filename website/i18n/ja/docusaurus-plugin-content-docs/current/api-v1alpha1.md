@@ -205,6 +205,11 @@ DNSSEC validation は `DNSForwarder.spec.dnssecValidate` に書きます。
 | `LocalServiceRedirect` | LAN 側 client から `IPAddressSet` 宛てに出る IPv4/IPv6 通信を、router の local port へ redirect します。平文 DNS/NTP の集約を想定し、DoH や DoT の port には触れません。 |
 | `EgressRoutePolicy` | 既定経路の選択、mark ベースの IPv4 policy routing、複数 target への hash 分散を表します。 |
 
+`IPv4Route.spec.gatewayFrom` の必須参照が未取得で、固定 `gateway` の代替値もない場合は、
+`Pending / GatewayMissing` で待機します。参照値が消失すると所有する経路を撤去し、
+再取得後に追加します。`gatewayFrom` の省略時はデバイスへの直接接続ルートを指定できます。
+`optional: true` を明示した任意参照も、gateway なしを許容します。
+
 CloudEdge Mobility の operator-authored surface は `MobilityPool`、`SAMNodeSet`、
 `SAMEnrollmentPolicy`、`SAMEnrollmentClaim`、`SAMEnrollmentClient`、
 `SAMTransportProfile` です。`MobilityPool` は address ownership/capture intent、

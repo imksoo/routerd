@@ -281,6 +281,12 @@ resolver addresses for DoH or DoT endpoint name resolution.
 | `LocalServiceRedirect` | Redirects LAN-origin IPv4/IPv6 traffic for `IPAddressSet` destinations to a local router port. This is intended for plaintext DNS/NTP interception without touching DoH or DoT ports. |
 | `EgressRoutePolicy` | Represents default-route selection, marked IPv4 policy routing, and hash-based multi-target egress routing. |
 
+`IPv4Route.spec.gatewayFrom` waits with `Pending / GatewayMissing` when a required
+source has no value and no static `gateway` fallback is configured. If the value
+disappears, routerd withdraws its owned route; acquisition installs it again.
+Omitting `gatewayFrom` permits a direct device route. An explicitly optional
+source (`optional: true`) may also resolve to no gateway.
+
 `EgressRoutePolicy` supports `destinationSetRefs` and `excludeDestinationSetRefs`
 in addition to CIDR fields. Use them to steer or exclude FQDN-backed destination
 sets without expanding addresses directly into the policy resource. Use

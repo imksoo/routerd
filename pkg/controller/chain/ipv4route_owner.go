@@ -115,6 +115,11 @@ func (c IPv4RouteController) ordinaryRoutePremise(ctx context.Context, spec api.
 	if err != nil {
 		return result, err
 	}
+	gateway = firstNonEmpty(gateway, strings.TrimSpace(spec.Gateway))
+	if routeType != "blackhole" && gateway == "" && strings.TrimSpace(spec.GatewayFrom.Resource) != "" && !spec.GatewayFrom.Optional {
+		result.Reason = "GatewayMissing"
+		return result, nil
+	}
 	device := ""
 	if routeType != "blackhole" {
 		device, err = resourcequery.ReadValue(c.Store, spec.DeviceFrom)
@@ -148,7 +153,7 @@ func (c IPv4RouteController) ordinaryRoutePremise(ctx context.Context, spec api.
 			preferred = ""
 		}
 	}
-	result.Route, err = normalizeOrdinaryRoute(ipv4RouteRemoval{Type: routeType, Destination: firstNonEmpty(spec.Destination, "0.0.0.0/0"), Device: device, Gateway: firstNonEmpty(gateway, strings.TrimSpace(spec.Gateway)), PreferredSource: preferred, Metric: strconv.Itoa(spec.Metric)})
+	result.Route, err = normalizeOrdinaryRoute(ipv4RouteRemoval{Type: routeType, Destination: firstNonEmpty(spec.Destination, "0.0.0.0/0"), Device: device, Gateway: gateway, PreferredSource: preferred, Metric: strconv.Itoa(spec.Metric)})
 	if err != nil {
 		return result, err
 	}
