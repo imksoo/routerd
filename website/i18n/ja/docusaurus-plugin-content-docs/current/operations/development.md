@@ -256,7 +256,7 @@ routerd NAT table が消え、新しい WAN 接続が backend に届かないこ
 ## Linux NAT44 source SNAT selector 試験
 
 iproute2、nftables、curl、Python 3、Go と network namespace 機能を備えた隔離 Linux 環境で
-`sudo ./tests/netns/nat44-source-snat.sh` を実行します。 `outboundInterface/sourceCIDRs/translation` 形式でも変換先アドレスと TCP 送信元ポート範囲を独立 HTTP peer で確認します。VM では `ROUTERD_TEST_BINARY` に正式配布バイナリを指定できます。用意済みの routerd 1.5 設定を validate してから、
+`sudo ./tests/netns/nat44-source-snat.sh` を実行します。 `outboundInterface/sourceCIDRs/translation` 形式でも変換先アドレスと TCP 送信元ポート範囲を独立 HTTP peer で確認します。VM では `ROUTERD_TEST_BINARY` に正式配布バイナリを指定できます。`ROUTERD_NAT44_TEST_DRIVER` に事前ビルドした `tests/netns/nat44-portforward-runtime` の試験用実行ファイルを指定すると、VM に Go ツールチェーンは不要です。用意済みの routerd 1.5 設定を validate してから、
 private router namespace 内で実際の NAT44 controller と nftables を動かします。独立した WAN 側 HTTP peer が転送 packet の source address を観測します。
 指定した source / destination CIDR だけに SNAT が適用され、除外 destination と source range 外の client は元の source address を保つことを確認します。
 `snatAddressFrom` の参照先を変更すると新しい接続の source が切り替わり、rule 撤去後は NAT table が消えて元の source に戻ることも確認します。

@@ -2644,6 +2644,23 @@
         "Guest reboot and automatic optional-package/module provisioning",
         "All peer sources, remote identity/PSK rotation, FreeBSD and complete 1.0 parity"
       ]
+    },
+    "linux-nat-translation-b318d75b": {
+      "level": "production-controller-real-kernel-independent-peer",
+      "outcome": "pass",
+      "revision": "b318d75b83ee6bbfea3dd310767b465045930c2a",
+      "reference": "docs/design/routerd15-audit.md#nat44-source-translation-through-the-runtime-controller",
+      "environment": "Dedicated Ubuntu VM, independent client/server network namespaces, real nftables, formal validator and production-controller test driver; main daemon stopped.",
+      "checks": [
+        "Source/destination selectors, exclusion, unrelated LAN and referenced address update preserved.",
+        "Translation address and TCP source port range verified by independent HTTP server.",
+        "Empty withdrawal restored original source; namespaces and staged artifacts removed and VM stopped."
+      ],
+      "excludes": [
+        "Full daemon reload/reboot",
+        "Arbitrary address pools and other port mapping modes",
+        "FreeBSD and full 1.0 parity"
+      ]
     }
   },
   "features": [
@@ -4334,7 +4351,8 @@
           "linux-ha-pair-initial-apt-83414e60",
           "linux-ha-pair-followup-apt-b698cb1d",
           "linux-ha-pair-lifecycle-apt-1a96b8c0",
-          "linux-named-redirect-9400f03c"
+          "linux-named-redirect-9400f03c",
+          "linux-nat-translation-b318d75b"
         ]
       },
       "freebsd": {

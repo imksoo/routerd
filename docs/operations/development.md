@@ -314,6 +314,8 @@ and a client outside the source range must preserve their original addresses.
 The translation-shaped `outboundInterface/sourceCIDRs/translation` rule must also
 translate the address and constrain the TCP source port to its declared range.
 Set `ROUTERD_TEST_BINARY` to a formal distribution binary when running on a guest.
+`ROUTERD_NAT44_TEST_DRIVER` may point to a prebuilt
+`tests/netns/nat44-portforward-runtime` test executable so the guest needs no Go toolchain.
 Updating `snatAddressFrom` must affect new connections, and withdrawing the rule
 must remove the NAT table and restore the original source. Successful temporary
 output is deleted; failures retain only the current diagnostic directory.

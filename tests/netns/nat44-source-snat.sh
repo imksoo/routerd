@@ -8,7 +8,9 @@ source "$SCRIPT_DIR/lib.sh"
 require_common
 require_cmd nft
 require_cmd curl
-require_cmd go
+if [[ -z "${ROUTERD_TEST_BINARY:-}" || -z "${ROUTERD_NAT44_TEST_DRIVER:-}" ]]; then
+	require_cmd go
+fi
 
 ROUTER="$TEST_ID-router"
 WAN="$TEST_ID-wan"
@@ -41,7 +43,11 @@ ip netns exec "$ROUTER" sysctl -qw net.ipv4.ip_forward=1
 	else
 		go build -o "$WORKDIR/routerd" ./cmd/routerd
 	fi
-	go build -o "$WORKDIR/nat44-controller" ./tests/netns/nat44-portforward-runtime
+	if [[ -n "${ROUTERD_NAT44_TEST_DRIVER:-}" ]]; then
+		cp "$ROUTERD_NAT44_TEST_DRIVER" "$WORKDIR/nat44-controller"
+	else
+		go build -o "$WORKDIR/nat44-controller" ./tests/netns/nat44-portforward-runtime
+	fi
 )
 CONFIG="$SCRIPT_DIR/nat44-source-snat-runtime/config.yaml"
 "$WORKDIR/routerd" validate --config "$CONFIG"
@@ -161,4 +167,4 @@ if ip netns exec "$ROUTER" nft list table ip routerd_nat >/dev/null 2>&1; then
 fi
 expect_source "$LAN0" 198.18.16.53 198.18.15.101 "flow after NAT44Rule withdrawal"
 
-printf 'PASS: production NAT44 controller SNAT source/destination selectors, referenced address update, excluded traffic and withdrawal\n'
+printf 'PASS: production NAT44 controller SNAT source/destination selectors, referenced address update, translation address/port range, excluded traffic and withdrawal\n'

@@ -3759,3 +3759,36 @@ packages, 15 without tests), schema/example checks and four website locales pass
 at the product revision. This establishes local identity rotation and daemon
 restart on Linux, not all peer-source integrations, PSK rotation, guest reboot,
 FreeBSD or complete routerd 1.0 parity.
+
+
+## NAT44 source translation through the runtime controller
+
+Product `b318d75b83ee6bbfea3dd310767b465045930c2a` connects the existing
+`outboundInterface/sourceCIDRs/translation` configuration to the Linux NAT44
+controller. Previously the validator and static renderer accepted this form,
+but the runtime controller looked only for the other egress fields and retained
+`Pending / EgressPolicyMissing`, generating no translation rule. Regression
+`f14655ea` reproduces the missing rule/status through the actual controller.
+The fix passes the typed translation to the existing source-NAT renderer.
+
+`sudo ./tests/netns/nat44-source-snat.sh` passed in a dedicated Ubuntu VM using
+that controller, real nftables and independent HTTP clients/server in network
+namespaces. The validator was the formal distribution payload for the same
+revision; a separately compiled test driver invokes the production controller.
+The normal routerd daemon stayed stopped. The test verified:
+
+- Existing source/destination selection, destination exclusion and unaffected
+  traffic from a different LAN.
+- Referenced SNAT address replacement on new connections.
+- Translation-shaped address SNAT with the actual TCP source port inside
+  `40000-40010`, as observed by the independent HTTP server.
+- Empty-config withdrawal, NAT table absence and original source restoration.
+
+Both temporary network namespaces and staged binaries/configurations were
+removed, then the guest was stopped. Optional prebuilt test inputs are documented
+in the development runbook; test keys or private topology are not needed.
+This result qualifies the actual Linux controller/kernel path, not full-daemon
+reload/reboot, arbitrary address pools, all port mappings or FreeBSD. In
+particular, the existing pool renderer joins address strings with hyphens;
+multiple/noncontiguous addresses still require investigation rather than a
+blanket pool-support claim.
