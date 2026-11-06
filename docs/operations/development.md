@@ -1241,3 +1241,26 @@ On failure, capture the current resource status, owned nft table and client resu
 before ending the run; do not manually change product state. This procedure
 covers failover/drain with surviving connections, not all-backend outage policy,
 sourceHash/random distribution, every address source or guest reboot.
+
+
+## Linux dynamic NAT flow pinhole check
+
+Run `sudo ./tests/netns/nat44-flow-dnat-pinhole.sh` in an isolated Linux test VM
+with nftables, iproute2, Python and Go. It creates separate router/client/WAN
+namespaces, invokes the production NAT controller, and exchanges UDP with an
+independent peer that replies from a different source port. A matching formal
+validator binary and prebuilt controller test driver can replace guest Go:
+set `ROUTERD_TEST_BINARY` and `ROUTERD_NAT44_TEST_DRIVER` as for the source-SNAT
+check. Bound the run with `timeout 180`; never substitute a handwritten nft
+ruleset or run the namespace mutations on a production router.
+
+Pass requires a permitted response; denial for unmatched source, outbound
+address/port, inbound source port and incoming interface; denial after the
+five-second learned-map expiry and after policy removal; no restored stale
+mapping after replacement; and actual forwarding for the newly authorized
+source while the previous source is denied. The peer must observe each outbound
+request, so missing outbound connectivity cannot satisfy a negative assertion.
+The fixture removes namespaces and temporary files on completion. On failure,
+inspect the peer receipt, response identity and owned map before changing code.
+This covers the controller and real kernel, not normal-daemon restart or every
+collision/translation combination.

@@ -7,7 +7,9 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 source "$SCRIPT_DIR/lib.sh"
 require_common
 require_cmd nft
-require_cmd go
+if [[ -z "${ROUTERD_TEST_BINARY:-}" || -z "${ROUTERD_NAT44_TEST_DRIVER:-}" ]]; then
+	require_cmd go
+fi
 
 ROUTER="$TEST_ID-router"
 WAN="$TEST_ID-wan"
@@ -35,8 +37,16 @@ ip netns exec "$ROUTER" sysctl -qw net.ipv4.ip_forward=1
 
 (
 	cd "$ROOT_DIR"
-	go build -o "$WORKDIR/routerd" ./cmd/routerd
-	go build -o "$WORKDIR/nat44-controller" ./tests/netns/nat44-portforward-runtime
+	if [[ -n "${ROUTERD_TEST_BINARY:-}" ]]; then
+		cp "$ROUTERD_TEST_BINARY" "$WORKDIR/routerd"
+	else
+		go build -o "$WORKDIR/routerd" ./cmd/routerd
+	fi
+	if [[ -n "${ROUTERD_NAT44_TEST_DRIVER:-}" ]]; then
+		cp "$ROUTERD_NAT44_TEST_DRIVER" "$WORKDIR/nat44-controller"
+	else
+		go build -o "$WORKDIR/nat44-controller" ./tests/netns/nat44-portforward-runtime
+	fi
 )
 CONFIG="$SCRIPT_DIR/nat44-flow-dnat-pinhole-runtime/config.yaml"
 "$WORKDIR/routerd" validate --config "$CONFIG"
@@ -246,5 +256,8 @@ wait "$LAN_LISTENER_PID" || {
 }
 LAN_LISTENER_PID=""
 [[ ! -e "$WORKDIR/stale-listener-received" ]] || fail "stale dynamic pinhole tuple reached the previously authorized LAN client after policy change"
+
+expect_client_result "$LAN1" 198.18.16.53 32100 55009 32099 0 3 changed-source "reply:changed-source" "newly authorized source after policy replacement"
+expect_client_result "$LAN0" 198.18.16.53 32100 55010 32099 0 2 removed-source NO_RESPONSE "previous source denied after policy replacement"
 
 printf 'PASS: production NAT44 controller dynamic UDP flow pinhole, source/destination/interface/port matching, expiry, withdrawal and changed-policy re-add\n'

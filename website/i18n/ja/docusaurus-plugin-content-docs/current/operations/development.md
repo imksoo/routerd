@@ -1002,3 +1002,20 @@ failover、hairpin off、TCP 検査 timeout 500ms、正常・異常しきい値1
 失敗時は status、所有 nft table、クライアント結果を確認して終了し、製品状態を手修正して
 通しません。全 backend 障害時の方針、sourceHash/random、各種アドレスソース、guest reboot
 はこの試験の証明範囲外です。
+
+
+## Linux 動的 NAT ピンホール試験
+
+nftables、iproute2、Python、Go を備えた隔離 Linux VM で
+`sudo ./tests/netns/nat44-flow-dnat-pinhole.sh` を実行します。独立した router/client/WAN
+namespace、製品 NAT controller、送信元ポートを変えて応答する独立 UDP peer を使います。
+source-SNAT 試験と同じ `ROUTERD_TEST_BINARY` と `ROUTERD_NAT44_TEST_DRIVER` を指定すると、
+正式 validator と同じソースの試験 driver を使い、guest の Go は不要になります。
+実行上限は `timeout 180`。手書き nft ルールに置き換えず、本番では実行しません。
+
+許可通信の応答、送信元・宛先・送受信ポート・受信 interface の対象外拒否、5秒の期限切れ、
+撤去後の拒否、再追加時の古い学習状態の不復活を確認します。許可対象を変えた後は、
+新しい対象の実通信成功と以前の対象の拒否を両方確認します。拒否試験でも peer の送信要求
+受信を確認し、外向き通信の失敗を成功扱いしません。終了時は namespace と一時ファイルを
+撤去します。失敗時は peer の受信、応答の識別情報、所有 map を確認してから修正します。
+通常 daemon の再起動や全てのポート衝突・変換の組み合わせは、この試験の証明範囲外です。
