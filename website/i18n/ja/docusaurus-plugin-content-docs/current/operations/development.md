@@ -1330,7 +1330,10 @@ DNS/NTP 転送、native TLS 分類、両台の Telemetry を確認します。�
 Ubuntu/Debian では `DHCPv4ServerLeaseSync`、`DHCPv6ServerLeaseSync`、
 `DHCPv6PrefixDelegationLeaseSync` の宣言から runtime package に `rsync` と
 `openssh-client` を生成します。過去の lab 準備や旧ルーターへの導入済みツールに
-依存せず、`Package/router-runtime` と実コマンドの存在を確認します。
+依存せず、`dpkg-query -W rsync openssh-client`、`command -v rsync`、
+`command -v ssh` と APT の導入履歴を確認します。生成される
+`Package/router-runtime` は内部の依存関係計画であり、`routerctl get` で
+取得できる宣言済みリソースではありません。
 
 パッケージ導入だけでは相手の本人確認・認証は準備されません。新ノードごとに
 専用鍵を用意し、秘密鍵を保護して、相手には公開鍵だけを登録します。受信側にも

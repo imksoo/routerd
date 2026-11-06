@@ -454,8 +454,10 @@ with empty Healthy on both nodes, actual withdrawal and independent-peer cleanup
 On Ubuntu/Debian, declaring any of `DHCPv4ServerLeaseSync`,
 `DHCPv6ServerLeaseSync` or `DHCPv6PrefixDelegationLeaseSync` derives `rsync` and
 `openssh-client` in the runtime package plan. They must not be supplied only by
-an earlier lab setup or an old router installation. Check the generated
-`Package/router-runtime` status and actual executables before assessing delivery.
+an earlier lab setup or an old router installation. Check `dpkg-query -W
+rsync openssh-client`, `command -v rsync`, `command -v ssh` and the APT install
+history before assessing delivery. The derived `Package/router-runtime` is an
+internal dependency plan, not a declared resource available through `routerctl get`.
 
 Package installation does not establish peer identity or authorization. Provision
 a separate SSH key for each new router, protect its private file, and install
