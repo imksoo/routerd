@@ -3915,7 +3915,23 @@ SQLite or reset the checkpoint to make the test pass.
 The packaged test passed without product-state repair. Empty withdrawal returned
 Healthy, the service was stopped, temporary configurations were removed and the
 VM was stopped. This proves actual DerivedEvent publication, EventRule consumption,
-API generation changes and durable restart in a normal daemon. The source here
-is a supported literal configuration predicate, not a HealthCheck or routing
-observation. Timed operators, hysteresis, retention pressure and downstream
+API generation changes and durable restart in a normal daemon. The first source was a supported literal configuration predicate.
+
+A second packaged run replaced that predicate with
+`HealthCheck/event-probe.status.phase == Healthy`. The real TCP health helper
+probed an independent HTTP server on loopback (one-second interval, 500ms timeout,
+both thresholds one); no status or event was injected into the database. Wait
+for Healthy/Asserted and consumer catch-up, record the output count, then stop
+the server. Require Unhealthy/Retracted and exactly one more output. Restart the
+main daemon while the server is down and require the same count. Start the server
+and require Healthy/Asserted and one more output. At each stage compare the sum
+of the two exact asserted/retracted source-topic counts with output count and
+EventRule fireCount; the event query takes exact topics, not wildcard patterns.
+Allow a 45-second observation window. Bootstrap can publish an initial retraction
+before the first successful probe, so use the settled count rather than assuming
+one bootstrap event. Observed counts were 2, 3, 3 and 4. Empty Healthy withdrawal,
+helper/server shutdown, temporary-file removal and guest stop all passed.
+
+This additional run qualifies actual health observation loss/recovery through
+the event chain. Timed operators, hysteresis, retention pressure and downstream
 routing effects remain separate qualification requirements.

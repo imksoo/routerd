@@ -2708,10 +2708,11 @@
         "DerivedEvent literal configuration predicate emits to an any_of EventRule.",
         "API definition change retains daemon PID; committed event count and fireCount advance once.",
         "Restart retains counts; subsequent definition change produces the next output.",
+        "Real TCP HealthCheck loss/recovery drives DerivedEvent and EventRule without injected status; source/output/fire counts agree and main restart while unhealthy adds no duplicate.",
         "Empty Healthy withdrawal, temporary config cleanup and guest stop completed."
       ],
       "excludes": [
-        "HealthCheck or routing observations as input",
+        "Routing observations as input",
         "Timed operators, hysteresis and retention pressure",
         "Downstream routing effects, FreeBSD and full 1.0 parity"
       ]
