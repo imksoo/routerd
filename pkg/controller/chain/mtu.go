@@ -24,7 +24,6 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
-	"github.com/imksoo/routerd/pkg/nftstate"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/render"
 )
@@ -859,14 +858,20 @@ func (c PathMTUController) applyL2MSSTable(ctx context.Context, nft, path, owner
 
 func (c PathMTUController) applyTable(ctx context.Context, nft, path, family, table string, data []byte) (bool, error) {
 	if len(bytes.TrimSpace(data)) == 0 {
-		if !c.DryRun {
-			if nftstate.RecentlyVerified(path, time.Now().UTC()) {
-				return false, nil
-			}
-			_, _ = c.runNFT(ctx, nft, "delete", "table", family, table)
-			_ = nftstate.MarkVerified(path, time.Now().UTC())
+		if c.DryRun {
+			return false, nil
 		}
-		return false, nil
+		out, err := c.runNFT(ctx, nft, "list", "table", family, table)
+		if nftListMissing(out, err) {
+			return false, nil
+		}
+		if err != nil {
+			return false, fmt.Errorf("list nft table %s %s: %w: %s", family, table, err, strings.TrimSpace(string(out)))
+		}
+		if out, err := c.runNFT(ctx, nft, "delete", "table", family, table); err != nil {
+			return false, fmt.Errorf("delete nft table %s %s: %w: %s", family, table, err, strings.TrimSpace(string(out)))
+		}
+		return true, nil
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return false, err
@@ -878,22 +883,18 @@ func (c PathMTUController) applyTable(ctx context.Context, nft, path, family, ta
 	if c.DryRun {
 		return changed, nil
 	}
-	if !changed && nftstate.RecentlyVerified(path, time.Now().UTC()) {
-		return false, nil
+	out, listErr := c.runNFT(ctx, nft, "list", "table", family, table)
+	missing := nftListMissing(out, listErr)
+	if listErr != nil && !missing {
+		return changed, fmt.Errorf("list nft table %s %s: %w: %s", family, table, listErr, strings.TrimSpace(string(out)))
 	}
-	current, listErr := c.runNFT(ctx, nft, "list", "table", family, table)
-	missing := listErr != nil
-	_ = current
-	if !changed && !missing {
-		_ = nftstate.MarkVerified(path, time.Now().UTC())
-		return false, nil
-	}
+	// The file and table can both exist while the kernel rules have changed.
+	// Reapply the rendered table atomically on every reconciliation.
 	if out, err := c.runNFT(ctx, nft, "-c", "-f", path); err != nil {
 		return changed, fmt.Errorf("%s -c -f %s: %w: %s", nft, path, err, strings.TrimSpace(string(out)))
 	}
 	if out, err := c.runNFT(ctx, nft, "-f", path); err != nil {
 		return changed, fmt.Errorf("%s -f %s: %w: %s", nft, path, err, strings.TrimSpace(string(out)))
 	}
-	_ = nftstate.MarkVerified(path, time.Now().UTC())
 	return changed || missing, nil
 }
