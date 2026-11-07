@@ -127,6 +127,9 @@ func (c Controller) reconcile(ctx context.Context, name string) error {
 		if prefixLength, err := strconv.Atoi(observed["prefixLength"]); err == nil && prefixLength > 0 {
 			next["prefixLength"] = prefixLength
 		}
+		if mtu, err := strconv.Atoi(observed["mtu"]); err == nil && mtu > 0 {
+			next["mtu"] = mtu
+		}
 		if servers := parseJSONStringList(observed["dnsServers"]); len(servers) > 0 {
 			next["dnsServers"] = servers
 		}
@@ -179,7 +182,7 @@ func (c Controller) savePendingDaemonStatus(name, socket string, cause error) er
 }
 
 func leaseEventChanged(current, next map[string]any) bool {
-	for _, key := range []string{"phase", "currentAddress", "prefixLength", "defaultGateway"} {
+	for _, key := range []string{"phase", "currentAddress", "prefixLength", "defaultGateway", "mtu"} {
 		if leaseFieldString(current[key]) != leaseFieldString(next[key]) {
 			return true
 		}

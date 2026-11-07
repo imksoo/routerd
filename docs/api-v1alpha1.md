@@ -181,7 +181,7 @@ instead of silently ignoring the input.
 | --- | --- |
 | `IPv4StaticAddress` | Assigns a static IPv4 address. |
 | `VirtualAddress` | Declares an IPv4 `/32` or IPv6 `/128` VIP. `spec.family` is `ipv4` or `ipv6`; `mode: vrrp` uses keepalived on Linux and CARP on FreeBSD. |
-| `DHCPv4Client` | DHCPv4 lease, IPv4 address, and optional default route managed by `routerd-dhcpv4-client`. |
+| `DHCPv4Client` | DHCPv4 lease, IPv4 address, and optional default route managed by `routerd-dhcpv4-client`. Set `useMTU: true` to apply the unexpired lease MTU; otherwise the Interface MTU remains authoritative. |
 | `DHCPv6Address` | Represents DHCPv6 IA_NA intent for platform renderers. |
 | `DHCPv6PrefixDelegation` | DHCPv6-PD lease managed by `routerd-dhcpv6-client`. |
 | `DHCPv6PrefixDelegationLeaseSync` | Mirrors a `DHCPv6PrefixDelegation` client lease snapshot from an active node to standby nodes. |

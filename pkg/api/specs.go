@@ -1052,6 +1052,7 @@ type DHCPv4ClientSpec struct {
 	ClientIDHex string           `yaml:"clientIDHex,omitempty" json:"clientIDHex,omitempty"`
 	UseRoutes   *bool            `yaml:"useRoutes,omitempty" json:"useRoutes,omitempty"`
 	UseDNS      *bool            `yaml:"useDNS,omitempty" json:"useDNS,omitempty"`
+	UseMTU      bool             `yaml:"useMTU,omitempty" json:"useMTU,omitempty"`
 	RouteMetric int              `yaml:"routeMetric,omitempty" json:"routeMetric,omitempty" jsonschema:"minimum=0"`
 	When        ResourceWhenSpec `yaml:"when,omitempty" json:"when,omitempty"`
 }

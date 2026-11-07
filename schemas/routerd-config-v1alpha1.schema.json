@@ -4169,6 +4169,9 @@
                       "useDNS": {
                         "type": "boolean"
                       },
+                      "useMTU": {
+                        "type": "boolean"
+                      },
                       "useRoutes": {
                         "type": "boolean"
                       },

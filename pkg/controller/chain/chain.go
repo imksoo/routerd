@@ -3967,6 +3967,27 @@ func (c LinkController) Reconcile(ctx context.Context) error {
 			return err
 		}
 		ifname := spec.IfName
+		mtu := spec.MTU
+		for _, client := range c.Router.Spec.Resources {
+			if client.Kind != "DHCPv4Client" {
+				continue
+			}
+			clientSpec, err := client.DHCPv4ClientSpec()
+			if err != nil {
+				return err
+			}
+			if !clientSpec.UseMTU || (clientSpec.Interface != resource.Metadata.Name && clientSpec.Interface != ifname) {
+				continue
+			}
+			lease := c.Store.ObjectStatus(api.NetAPIVersion, "DHCPv4Client", client.Metadata.Name)
+			expires, err := time.Parse(time.RFC3339Nano, statusvalue.Field(lease, "expiresAt"))
+			if err != nil || !time.Now().Before(expires) || statusvalue.Field(lease, "phase") != daemonapi.ResourcePhaseBound {
+				continue
+			}
+			if offered, err := strconv.Atoi(statusvalue.Field(lease, "mtu")); err == nil && offered >= 68 {
+				mtu = offered
+			}
+		}
 		status := map[string]any{
 			"phase":   "Down",
 			"ifname":  ifname,
@@ -3976,9 +3997,9 @@ func (c LinkController) Reconcile(ctx context.Context) error {
 			status["reason"] = "IfNameMissing"
 		} else if ifi, err := net.InterfaceByName(ifname); err == nil {
 			needsUp := spec.AdminUp && ifi.Flags&net.FlagUp == 0
-			needsMTU := spec.MTU != 0 && ifi.MTU != spec.MTU
+			needsMTU := mtu != 0 && ifi.MTU != mtu
 			if (needsUp || needsMTU) && !c.DryRun {
-				if err := configureInterface(ctx, ifname, needsUp, spec.MTU, needsMTU); err != nil {
+				if err := configureInterface(ctx, ifname, needsUp, mtu, needsMTU); err != nil {
 					status["reason"] = "ConfigureFailed"
 					status["error"] = err.Error()
 					if saveErr := c.Store.SaveObjectStatus(api.NetAPIVersion, "Interface", resource.Metadata.Name, status); saveErr != nil {
@@ -3990,7 +4011,7 @@ func (c LinkController) Reconcile(ctx context.Context) error {
 				if err != nil {
 					return fmt.Errorf("Interface/%s observe %s after configuration: %w", resource.Metadata.Name, ifname, err)
 				}
-				if (needsUp && ifi.Flags&net.FlagUp == 0) || (needsMTU && ifi.MTU != spec.MTU) {
+				if (needsUp && ifi.Flags&net.FlagUp == 0) || (needsMTU && ifi.MTU != mtu) {
 					return fmt.Errorf("Interface/%s configuration did not converge on %s: flags=%s mtu=%d", resource.Metadata.Name, ifname, ifi.Flags, ifi.MTU)
 				}
 			}

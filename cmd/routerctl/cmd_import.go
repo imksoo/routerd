@@ -600,9 +600,6 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 			if optionErr != nil {
 				warnings = append(warnings, fmt.Sprintf("%s: DHCPv4 options could not be imported: %v", ifname, optionErr))
 			}
-			if useMTU {
-				warnings = append(warnings, fmt.Sprintf("%s: networkd DHCPv4 UseMTU is enabled; dynamic MTU updates are not imported", ifname))
-			}
 			clientID, idErr := networkdDHCPv4ClientID(link.IfIndex, dhcp4Address)
 			if idErr != nil {
 				warnings = append(warnings, fmt.Sprintf("%s: DHCPv4 client identifier could not be imported: %v", ifname, idErr))
@@ -621,6 +618,9 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 					warnings = append(warnings, fmt.Sprintf("%s: existing DHCPv4Client identifier differs from the networkd lease", ifname))
 				}
 				if optionErr == nil {
+					if spec.UseMTU != useMTU {
+						warnings = append(warnings, fmt.Sprintf("%s: existing DHCPv4Client useMTU differs from networkd", ifname))
+					}
 					if api.BoolDefault(spec.UseRoutes, true) != api.BoolDefault(useRoutes, true) {
 						warnings = append(warnings, fmt.Sprintf("%s: existing DHCPv4Client useRoutes differs from networkd", ifname))
 					}
@@ -636,7 +636,7 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 				for suffix := 2; usedDHCPNames[clientName]; suffix++ {
 					clientName = fmt.Sprintf("%s-dhcp4-%d", resource.Metadata.Name, suffix)
 				}
-				client = api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client"}, Metadata: api.ObjectMeta{Name: clientName}, Spec: api.DHCPv4ClientSpec{Interface: resource.Metadata.Name, ClientIDHex: clientID, UseRoutes: useRoutes, UseDNS: useDNS, RouteMetric: routeMetric}}
+				client = api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client"}, Metadata: api.ObjectMeta{Name: clientName}, Spec: api.DHCPv4ClientSpec{Interface: resource.Metadata.Name, ClientIDHex: clientID, UseRoutes: useRoutes, UseDNS: useDNS, UseMTU: useMTU, RouteMetric: routeMetric}}
 			}
 			usedDHCPNames[client.Metadata.Name] = true
 			router.Spec.Resources = append(router.Spec.Resources, client)

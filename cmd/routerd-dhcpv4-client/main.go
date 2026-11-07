@@ -475,6 +475,7 @@ func (d *dhcpv4Daemon) handleStatus(w http.ResponseWriter, _ *http.Request) {
 			"interface":      snapshot.Interface,
 			"currentAddress": snapshot.CurrentAddress,
 			"prefixLength":   strconv.Itoa(snapshot.PrefixLength),
+			"mtu":            strconv.Itoa(snapshot.MTU),
 			"defaultGateway": snapshot.DefaultGateway,
 			"dnsServers":     jsonStringList(snapshot.DNSServers),
 			"domain":         snapshot.Domain,
