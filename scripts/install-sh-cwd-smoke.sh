@@ -12,12 +12,8 @@
 # install.sh is intentionally cwd-relative for its payload (the test
 # harness in tests/install relies on that to point the script at a
 # scratch package directory) — what must NOT happen is the silent
-# no-op when cwd has no payload. So the contract is:
-#
-#   1. cwd contains no bin/routerd payload  →  exit non-zero with a
-#      clear diagnostic, no installation work attempted.
-#   2. cwd contains a valid bin/routerd     →  advance past the payload
-#      gate and print "installing: <version>".
+# no-op when cwd has no payload. The installer must fail with a clear
+# diagnostic before attempting installation.
 
 set -eu
 
