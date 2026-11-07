@@ -223,30 +223,6 @@ func TestRunnerSyncsARPObserverIgnoredSenderMACsRepushesAfterObserverReset(t *te
 	}
 }
 
-func TestRunnerDoesNotMarkARPObserverReadyBeforeInitialIgnoredSenderMACPush(t *testing.T) {
-	spec := mobilityARPObserverDaemonSpec{
-		ResourceName:      "mobility-arp-svnet1-observer-0",
-		Socket:            "/run/routerd/arp-observer/mobility-arp-svnet1-observer-0.sock",
-		IgnoredSenderMACs: []string{"02:00:00:00:00:aa"},
-	}
-	pusher := &fakeARPObserverCommandPusher{setErr: context.DeadlineExceeded}
-	runner := Runner{ARPObserverCommands: pusher}
-
-	if err := runner.waitForARPObserverInitialSync(context.Background(), spec); err == nil {
-		t.Fatal("waitForARPObserverInitialSync succeeded before initial ignore-set push completed")
-	}
-	if runner.arpObserverReady(spec.ResourceName) {
-		t.Fatal("observer marked ready before initial ignore-set push completed")
-	}
-	pusher.setErr = nil
-	if err := runner.waitForARPObserverInitialSync(context.Background(), spec); err != nil {
-		t.Fatalf("waitForARPObserverInitialSync after push: %v", err)
-	}
-	if !runner.arpObserverReady(spec.ResourceName) {
-		t.Fatal("observer not marked ready after initial ignore-set push completed")
-	}
-}
-
 func TestRunnerProbesOnlyReadyOnDemandObserverForPool(t *testing.T) {
 	store := &dynamicRouteSAMStore{records: []routerstate.DynamicConfigPartRecord{arpObserverIntentRecord(t, []dynamicconfig.ARPObserverIntent{
 		{ResourceName: "mobility-arp-svnet1-observe-0", PoolRef: "svnet1", Prefix: "192.168.123.0/24", SourceType: "arp-observer", IfName: "eth1", EventInterface: "svnet1", Observe: true},

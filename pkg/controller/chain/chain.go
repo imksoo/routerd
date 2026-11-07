@@ -1294,6 +1294,7 @@ type Runner struct {
 	clientDaemonStates     map[string]supervisedDaemonState
 	daemonSourcesStarted   map[string]*arpDaemonSource
 	arpObserverReadySet    map[string]bool
+	arpObserverSyncs       map[string]*arpObserverSync
 	reloadMu               sync.Mutex
 	reloadCh               chan generationReload
 	routerMu               sync.RWMutex
@@ -1316,6 +1317,11 @@ func (r *Runner) startedAt() time.Time {
 		r.processStartedAt = time.Now().UTC()
 	}
 	return r.processStartedAt
+}
+
+type arpObserverSync struct {
+	spec   mobilityARPObserverDaemonSpec
+	cancel context.CancelFunc
 }
 
 type arpDaemonSource struct {
@@ -3137,6 +3143,9 @@ func (r *Runner) reconcileSupervisedDaemonSpecs(ctx context.Context, logger *slo
 				delete(r.clientDaemonStates, key)
 				if state.Spec.Binary == "routerd-arp-observer" {
 					delete(r.arpObserverReadySet, state.Spec.ResourceName)
+					if sync := r.arpObserverSyncs[state.Spec.ResourceName]; sync != nil {
+						sync.cancel()
+					}
 				}
 			default:
 				continue
@@ -3146,6 +3155,9 @@ func (r *Runner) reconcileSupervisedDaemonSpecs(ctx context.Context, logger *slo
 			delete(r.clientDaemonStates, key)
 			if state.Spec.Binary == "routerd-arp-observer" {
 				delete(r.arpObserverReadySet, state.Spec.ResourceName)
+				if sync := r.arpObserverSyncs[state.Spec.ResourceName]; sync != nil {
+					sync.cancel()
+				}
 			}
 		}
 	}
@@ -3341,6 +3353,22 @@ func (r *Runner) reconcileARPObserverDaemons(ctx context.Context, logger *slog.L
 	if err != nil {
 		return err
 	}
+	desired := make(map[string]bool, len(specs))
+	for _, spec := range specs {
+		desired[spec.ResourceName] = true
+	}
+	r.supervisedMu.Lock()
+	for name, active := range r.arpObserverSyncs {
+		if !desired[name] {
+			active.cancel()
+		}
+	}
+	for name := range r.arpObserverReadySet {
+		if !desired[name] {
+			delete(r.arpObserverReadySet, name)
+		}
+	}
+	r.supervisedMu.Unlock()
 	var syncErrors []error
 	for _, spec := range specs {
 		if r.arpObserverReady(spec.ResourceName) {
@@ -3353,11 +3381,7 @@ func (r *Runner) reconcileARPObserverDaemons(ctx context.Context, logger *slog.L
 			}
 			continue
 		}
-		go func(spec mobilityARPObserverDaemonSpec) {
-			if err := r.waitForARPObserverInitialSync(ctx, spec); err != nil && ctx.Err() == nil && logger != nil {
-				logger.Warn("arp observer initial ignore set sync failed", "resource", spec.ResourceName, "error", err)
-			}
-		}(spec)
+		r.startARPObserverInitialSync(ctx, spec, logger)
 	}
 	r.startARPObserverDaemonSources(ctx, logger, specs)
 	return errors.Join(syncErrors...)
@@ -3541,14 +3565,44 @@ func (r *Runner) syncARPObserverIgnoredSenderMACs(ctx context.Context, spec mobi
 	return pusher.SetIgnoredSenderMACs(ctx, spec.Socket, desired)
 }
 
-func (r *Runner) waitForARPObserverInitialSync(ctx context.Context, spec mobilityARPObserverDaemonSpec) error {
-	err := r.syncARPObserverIgnoredSenderMACs(ctx, spec)
-	if err != nil {
-		r.setARPObserverReady(spec.ResourceName, false)
-		return err
+func (r *Runner) startARPObserverInitialSync(ctx context.Context, spec mobilityARPObserverDaemonSpec, logger *slog.Logger) {
+	r.supervisedMu.Lock()
+	if r.arpObserverSyncs == nil {
+		r.arpObserverSyncs = make(map[string]*arpObserverSync)
 	}
-	r.setARPObserverReady(spec.ResourceName, true)
-	return nil
+	if active := r.arpObserverSyncs[spec.ResourceName]; active != nil {
+		if !reflect.DeepEqual(active.spec, spec) {
+			active.cancel()
+		}
+		r.supervisedMu.Unlock()
+		return
+	}
+	syncCtx, cancel := context.WithCancel(ctx)
+	active := &arpObserverSync{spec: spec, cancel: cancel}
+	r.arpObserverSyncs[spec.ResourceName] = active
+	r.supervisedMu.Unlock()
+	go func() {
+		err := r.syncARPObserverIgnoredSenderMACs(syncCtx, spec)
+		r.supervisedMu.Lock()
+		if r.arpObserverSyncs[spec.ResourceName] == active {
+			delete(r.arpObserverSyncs, spec.ResourceName)
+			if syncCtx.Err() == nil {
+				if err == nil {
+					if r.arpObserverReadySet == nil {
+						r.arpObserverReadySet = make(map[string]bool)
+					}
+					r.arpObserverReadySet[spec.ResourceName] = true
+				} else {
+					delete(r.arpObserverReadySet, spec.ResourceName)
+				}
+			}
+		}
+		r.supervisedMu.Unlock()
+		if err != nil && syncCtx.Err() == nil && logger != nil {
+			logger.Warn("arp observer initial ignore set sync failed", "resource", spec.ResourceName, "error", err)
+		}
+		cancel()
+	}()
 }
 
 func (r *Runner) arpObserverReady(resourceName string) bool {
@@ -3568,6 +3622,9 @@ func (r *Runner) setARPObserverReady(resourceName string, ready bool) {
 		return
 	}
 	delete(r.arpObserverReadySet, resourceName)
+	if sync := r.arpObserverSyncs[resourceName]; sync != nil {
+		sync.cancel()
+	}
 }
 
 func (r *Runner) arpObserverCommandPusher() arpObserverCommandPusher {
