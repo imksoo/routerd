@@ -32,30 +32,19 @@ const (
 // pfctl). PF rejects a second transaction against the same anchor while the
 // first one owns its inactive ticket. Keep the whole routerd-owned anchor
 // reconciliation serial, matching the Linux iptables transaction boundary.
-var freeBSDSAMForwardPathMu sync.Locker = &sync.Mutex{}
+var freeBSDSAMForwardPathMu sync.Mutex
 
 var freeBSDSAMRouteSequence uint32
 
-var (
-	freeBSDSAMRunCommand = func(ctx context.Context, name string, args ...string) ([]byte, error) {
-		return exec.CommandContext(ctx, name, args...).CombinedOutput()
-	}
-	freeBSDSAMRunCommandInput = func(ctx context.Context, name, input string, args ...string) ([]byte, error) {
-		cmd := exec.CommandContext(ctx, name, args...)
-		cmd.Stdin = strings.NewReader(input)
-		return cmd.CombinedOutput()
-	}
-	freeBSDSAMInterfaceByName      = net.InterfaceByName
-	freeBSDSAMOpenBPFDevice        = openFreeBSDSAMBPF
-	freeBSDSAMAttachBPFDevice      = attachFreeBSDSAMBPF
-	freeBSDSAMSetBPFHeaderComplete = func(fd int) error {
-		return unix.IoctlSetPointerInt(fd, unix.BIOCSHDRCMPLT, 1)
-	}
-	freeBSDSAMWriteBPF        = unix.Write
-	freeBSDSAMCloseBPF        = unix.Close
-	freeBSDSAMInterfaceType   = freeBSDInterfaceType
-	freeBSDSAMAddPublishedARP = freeBSDAddPublishedARP
-)
+func freeBSDSAMRunCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
+	return exec.CommandContext(ctx, name, args...).CombinedOutput()
+}
+
+func freeBSDSAMRunCommandInput(ctx context.Context, name, input string, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Stdin = strings.NewReader(input)
+	return cmd.CombinedOutput()
+}
 
 // freeBSDSAMProxyNeighborApplier uses FreeBSD's route-aware global proxyall
 // facility. FreeBSD cannot allocate a per-host published neighbor when the
@@ -111,7 +100,7 @@ func (freeBSDSAMProxyNeighborApplier) EnsureProxyNeighbor(ctx context.Context, a
 	if err != nil {
 		return err
 	}
-	iface, err := freeBSDSAMInterfaceByName(ifname)
+	iface, err := net.InterfaceByName(ifname)
 	if err != nil {
 		return fmt.Errorf("lookup proxy-ARP interface %s: %w", ifname, err)
 	}
@@ -174,7 +163,7 @@ func freeBSDAddPublishedARP(ctx context.Context, address string, iface *net.Inte
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	linkType, err := freeBSDSAMInterfaceType(iface.Index)
+	linkType, err := freeBSDInterfaceType(iface.Index)
 	if err != nil {
 		return err
 	}
@@ -399,22 +388,22 @@ func (freeBSDSAMGratuitousARPAnnouncer) SendGratuitousARP(ctx context.Context, a
 	if err != nil {
 		return err
 	}
-	iface, err := freeBSDSAMInterfaceByName(ifname)
+	iface, err := net.InterfaceByName(ifname)
 	if err != nil {
 		return fmt.Errorf("lookup GARP interface %s: %w", ifname, err)
 	}
 	if len(iface.HardwareAddr) != 6 {
 		return fmt.Errorf("GARP interface %s has non-ethernet MAC %q", ifname, iface.HardwareAddr)
 	}
-	fd, err := freeBSDSAMOpenBPFDevice()
+	fd, err := openFreeBSDSAMBPF()
 	if err != nil {
 		return err
 	}
-	defer freeBSDSAMCloseBPF(fd)
-	if err := freeBSDSAMAttachBPFDevice(fd, ifname); err != nil {
+	defer unix.Close(fd)
+	if err := attachFreeBSDSAMBPF(fd, ifname); err != nil {
 		return err
 	}
-	if err := freeBSDSAMSetBPFHeaderComplete(fd); err != nil {
+	if err := unix.IoctlSetPointerInt(fd, unix.BIOCSHDRCMPLT, 1); err != nil {
 		return fmt.Errorf("BIOCSHDRCMPLT: %w", err)
 	}
 	frame := freeBSDGratuitousARPFrame(iface.HardwareAddr, net.ParseIP(ip).To4())
@@ -425,7 +414,7 @@ func (freeBSDSAMGratuitousARPAnnouncer) SendGratuitousARP(ctx context.Context, a
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if _, err := freeBSDSAMWriteBPF(fd, frame); err != nil {
+		if _, err := unix.Write(fd, frame); err != nil {
 			return fmt.Errorf("write FreeBSD BPF gratuitous ARP: %w", err)
 		}
 		if i == 2 {
