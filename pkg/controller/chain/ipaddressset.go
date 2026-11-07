@@ -4,10 +4,12 @@ package chain
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/netip"
 	"os"
+	"os/exec"
 	"slices"
 	"sort"
 	"strings"
@@ -43,6 +45,7 @@ func (c IPAddressSetController) Reconcile(ctx context.Context) error {
 	resolver := systemDNSResolver{}
 	command := runOutputCommandContext
 	referenced := referencedIPAddressSetTargets(c.Router)
+	var reconcileErrors []error
 resources:
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "IPAddressSet" {
@@ -81,11 +84,32 @@ resources:
 		existingOutputs := map[string]string{}
 		if len(activeTargets) > 0 {
 			nft := firstNonEmpty(c.NftCommand, "nft")
+			var observationErrors []error
 			for _, target := range activeTargets {
-				if exists, output := nftSetSnapshot(ctx, command, nft, target.TableFamily, target.Table, target.SetName); exists {
+				exists, output, err := nftSetSnapshot(ctx, command, nft, target.TableFamily, target.Table, target.SetName)
+				if err != nil {
+					observationErrors = append(observationErrors, err)
+					continue
+				}
+				if exists {
 					existingTargets[target.key()] = target
 					existingOutputs[target.key()] = output
 				}
+			}
+			if len(observationErrors) > 0 {
+				observeErr := errors.Join(observationErrors...)
+				status := copyStatusMap(current)
+				status["phase"] = "Error"
+				status["reason"] = "ObserveFailed"
+				status["error"] = observeErr.Error()
+				status["referenced"] = true
+				status["setName"] = setName
+				status["dryRun"] = false
+				if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPAddressSet", resource.Metadata.Name, status); err != nil {
+					reconcileErrors = append(reconcileErrors, err)
+				}
+				reconcileErrors = append(reconcileErrors, fmt.Errorf("%s: %w", resource.ID(), observeErr))
+				continue
 			}
 		}
 		if len(activeTargets) > 0 && len(existingTargets) > 0 && cached && current["phase"] == "Applied" {
@@ -106,7 +130,7 @@ resources:
 				"setName":    setName,
 				"dryRun":     len(activeTargets) == 0,
 			}); saveErr != nil {
-				return saveErr
+				return errors.Join(append(reconcileErrors, saveErr)...)
 			}
 			continue
 		}
@@ -140,12 +164,13 @@ resources:
 					"minTTLSeconds":       minTTLSeconds,
 					"dryRun":              false,
 				}); saveErr != nil {
-					return saveErr
+					return errors.Join(append(reconcileErrors, saveErr)...)
 				}
 				continue
 			}
 			for _, target := range sortedIPAddressSetTargets(existingTargets) {
 				if err := c.applyNftSet(ctx, command, target.TableFamily, target.Table, target.SetName, result.addressesForFamily(target.AddressFamily), existingOutputs[target.key()]); err != nil {
+					reconcileErrors = append(reconcileErrors, fmt.Errorf("%s target %s: %w", resource.ID(), target.String(), err))
 					if saveErr := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPAddressSet", resource.Metadata.Name, map[string]any{
 						"phase":               "Error",
 						"reason":              "ApplyFailed",
@@ -165,7 +190,7 @@ resources:
 						"minTTLSeconds":       minTTLSeconds,
 						"dryRun":              false,
 					}); saveErr != nil {
-						return saveErr
+						return errors.Join(append(reconcileErrors, saveErr)...)
 					}
 					continue resources
 				}
@@ -189,7 +214,7 @@ resources:
 					"minTTLSeconds":       minTTLSeconds,
 					"dryRun":              false,
 				}); saveErr != nil {
-					return saveErr
+					return errors.Join(append(reconcileErrors, saveErr)...)
 				}
 				continue
 			}
@@ -217,7 +242,7 @@ resources:
 			return err
 		}
 	}
-	return nil
+	return errors.Join(reconcileErrors...)
 }
 
 type ipAddressSetResolveResult struct {
@@ -425,9 +450,16 @@ func ipAddressSetElements(output string) map[string]bool {
 	return out
 }
 
-func nftSetSnapshot(ctx context.Context, command outputCommandFunc, nft, family, table, setName string) (bool, string) {
+func nftSetSnapshot(ctx context.Context, command outputCommandFunc, nft, family, table, setName string) (bool, string, error) {
 	out, err := command(ctx, nft, "list", "set", family, table, setName)
-	return err == nil, string(out)
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && nftListMissing(out, err) {
+			return false, "", nil
+		}
+		return false, "", fmt.Errorf("%s list set %s %s %s: %w: %s", nft, family, table, setName, err, strings.TrimSpace(string(out)))
+	}
+	return true, string(out), nil
 }
 
 type ipAddressSetTarget struct {
