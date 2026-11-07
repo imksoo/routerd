@@ -252,9 +252,6 @@ func (c KernelModuleController) writeKernelModulePersistence(path string, data [
 		if bytes.Equal(current, data) {
 			return false, nil
 		}
-		if !bytes.HasPrefix(current, []byte(kernelModuleOwnershipHeader)) {
-			return false, fmt.Errorf("refuse to replace non-routerd KernelModule persistence file %s", path)
-		}
 	} else if !os.IsNotExist(err) {
 		return false, err
 	}
