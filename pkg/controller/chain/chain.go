@@ -1392,7 +1392,6 @@ func (r *Runner) saveWhenFalseStatuses(store eventedStore) error {
 			changed := preserveStaticVirtualAddressCleanupStatus(res, current, next)
 			changed = preserveIPv4StaticAddressCleanupStatus(r.currentRouter(), res, current, next) || changed
 			changed = preserveIPv6DelegatedAddressCleanupStatus(res, current, next) || changed
-			changed = preserveVXLANTunnelCleanupStatus(res, current, next) || changed
 			if changed {
 				if err := store.SaveObjectStatus(apiVersion, res.Kind, res.Metadata.Name, next); err != nil {
 					return err
@@ -1408,32 +1407,11 @@ func (r *Runner) saveWhenFalseStatuses(store eventedStore) error {
 		preserveStaticVirtualAddressCleanupStatus(res, current, status)
 		preserveIPv4StaticAddressCleanupStatus(r.currentRouter(), res, current, status)
 		preserveIPv6DelegatedAddressCleanupStatus(res, current, status)
-		preserveVXLANTunnelCleanupStatus(res, current, status)
 		if err := store.SaveObjectStatus(apiVersion, res.Kind, res.Metadata.Name, status); err != nil {
 			return err
 		}
 	}
 	return nil
-}
-
-// preserveVXLANTunnelCleanupStatus retains the ownership proof needed by the
-// operational controller after spec.when filters the tunnel from the effective
-// graph. Without it a safe controller must treat the still-live link as foreign
-// and cannot close forwarding during HA demotion.
-func preserveVXLANTunnelCleanupStatus(res api.Resource, current, status map[string]any) bool {
-	if res.Kind != "VXLANTunnel" {
-		return false
-	}
-	changed := false
-	for _, key := range []string{"managedBy", "ifname", "bridgeIfname", "underlayIfname", "restartPersistent"} {
-		if value, ok := current[key]; ok {
-			if _, exists := status[key]; !exists {
-				status[key] = value
-				changed = true
-			}
-		}
-	}
-	return changed
 }
 
 // preserveStaticVirtualAddressCleanupStatus retains only the ownership data

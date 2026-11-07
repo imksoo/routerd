@@ -130,10 +130,18 @@ func (c VXLANTunnelController) Reconcile(ctx context.Context) error {
 
 func (c VXLANTunnelController) cleanupOrphanedOwnership(ctx context.Context, declared *api.Router) error {
 	retained := map[string]bool{}
-	for _, resource := range declared.Spec.Resources {
-		if resource.Kind == "VXLANTunnel" {
-			spec, _ := resource.VXLANTunnelSpec()
-			retained[firstNonEmpty(spec.IfName, resource.Metadata.Name)] = true
+	for _, router := range []*api.Router{declared, c.Router} {
+		if router == nil {
+			continue
+		}
+		for _, resource := range router.Spec.Resources {
+			if resource.Kind == "VXLANTunnel" {
+				spec, err := resource.VXLANTunnelSpec()
+				if err != nil {
+					return err
+				}
+				retained[firstNonEmpty(spec.IfName, resource.Metadata.Name)] = true
+			}
 		}
 	}
 	base := strings.TrimSpace(c.NetworkdDir)
@@ -818,7 +826,7 @@ func (c VXLANTunnelController) artifactPaths(ifname string) []string {
 
 func (c VXLANTunnelController) removeOwnedArtifacts(ifname string) (bool, error) {
 	removed := false
-	for _, path := range c.artifactPaths(ifname) {
+	for i, path := range c.artifactPaths(ifname) {
 		_, err := c.readFile(path)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
@@ -829,7 +837,7 @@ func (c VXLANTunnelController) removeOwnedArtifacts(ifname string) (bool, error)
 		if err := c.removeFile(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return removed, err
 		}
-		removed = true
+		removed = removed || i > 0
 	}
 	return removed, nil
 }
