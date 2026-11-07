@@ -573,11 +573,13 @@ func (c Controller) ensureRunning(ctx context.Context, name string, config dnsre
 		}
 		changed = true
 	}
-	if !changed {
+	status := c.Store.ObjectStatus(api.NetAPIVersion, "DNSResolver", name)
+	reason, _ := status["reason"].(string)
+	if !changed && !strings.HasPrefix(reason, "ReloadFailed:") {
 		return false, nil
 	}
 	if err := c.reloadResolver(ctx, filepath.Join(runtimeDir, "dns-resolver", name+".sock")); err != nil {
-		return true, err
+		return false, err
 	}
 	return true, nil
 }
@@ -604,7 +606,7 @@ func (c Controller) reloadResolver(ctx context.Context, socket string) error {
 	req.Close = true
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil
+		return resolverReloadError{status: err.Error()}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
