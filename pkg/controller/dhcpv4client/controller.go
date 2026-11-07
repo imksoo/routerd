@@ -407,7 +407,7 @@ func (c Controller) removeLeaseRoute(ctx context.Context, name string, current, 
 			if err != nil {
 				return err
 			}
-			if (route.Destination == "0.0.0.0/0" || route.Destination == "default") && route.Gateway == gateway && route.Metric == metric && route.Device == ifname {
+			if (route.Destination == "0.0.0.0/0" || route.Destination == "default") && route.Gateway == gateway && route.Metric == metric && resolveInterface(route.Device) == ifname {
 				delete(next, "appliedDefaultGateway")
 				delete(next, "appliedRouteMetric")
 				return nil
