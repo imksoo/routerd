@@ -4,6 +4,7 @@ package main
 
 import (
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -244,6 +245,10 @@ func importStaticIPv4Address(address importAddress, ifname string, ip netip.Addr
 	return true
 }
 
+func importStaticIPv6Address(address importAddress, ifname string, ip netip.Addr) bool {
+	return ip.Is6() && ip.IsGlobalUnicast() && address.Scope == "global" && !address.Dynamic && address.Peer == "" && address.Broadcast == "" && !address.NoPrefixRoute && address.Metric == 0 && len(address.Unsupported) == 0 && (address.Label == "" || address.Label == ifname) && address.PrefixLen >= 0 && address.PrefixLen <= 128 && address.ValidLifetime != nil && address.PreferredLifetime != nil && *address.ValidLifetime == 0xffffffff && *address.PreferredLifetime == 0xffffffff
+}
+
 func importCommand(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("import", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -273,6 +278,8 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 	usedDHCPNames := map[string]bool{}
 	staticAddresses := map[string]api.Resource{}
 	usedStaticNames := map[string]bool{}
+	staticIPv6 := map[string]api.Resource{}
+	usedVirtualNames := map[string]bool{}
 	existingRoutes := map[string]api.Resource{}
 	usedRouteNames := map[string]bool{}
 	if *configPath != "" {
@@ -282,6 +289,21 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 		}
 		name = router.Metadata.Name
 		for _, resource := range router.Spec.Resources {
+			if resource.Kind == "VirtualAddress" {
+				usedVirtualNames[resource.Metadata.Name] = true
+				spec, err := resource.VirtualAddressSpec()
+				if err != nil {
+					return err
+				}
+				if spec.Family == "ipv6" && (spec.Mode == "" || spec.Mode == "static") && spec.Address != "" {
+					prefix, err := netip.ParsePrefix(spec.Address)
+					if err != nil {
+						return fmt.Errorf("existing VirtualAddress/%s: %w", resource.Metadata.Name, err)
+					}
+					staticIPv6[spec.Interface+"|"+prefix.String()] = resource
+				}
+				continue
+			}
 			if resource.Kind == "IPv4Route" {
 				spec, err := resource.IPv4RouteSpec()
 				if err != nil {
@@ -432,6 +454,28 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 				usedStaticNames[static.Metadata.Name] = true
 				router.Spec.Resources = append(router.Spec.Resources, static)
 				warnings = append(warnings, fmt.Sprintf("%s: static address %s imported; review manager handoff and address attributes", ifname, prefix))
+				continue
+			}
+			if source == "static" && importStaticIPv6Address(address, ifname, ip) {
+				prefix := netip.PrefixFrom(ip, address.PrefixLen).String()
+				static, exists := staticIPv6[resource.Metadata.Name+"|"+prefix]
+				if !exists {
+					static, exists = staticIPv6[ifname+"|"+prefix]
+				}
+				if exists {
+					static.Status = nil
+				} else {
+					raw := ip.As16()
+					base := resource.Metadata.Name + "-ipv6-" + hex.EncodeToString(raw[:]) + fmt.Sprintf("-%d", address.PrefixLen)
+					name := base
+					for suffix := 2; usedVirtualNames[name]; suffix++ {
+						name = fmt.Sprintf("%s-%d", base, suffix)
+					}
+					static = api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"}, Metadata: api.ObjectMeta{Name: name}, Spec: api.VirtualAddressSpec{Family: "ipv6", Interface: resource.Metadata.Name, Address: prefix, Mode: "static"}}
+				}
+				usedVirtualNames[static.Metadata.Name] = true
+				router.Spec.Resources = append(router.Spec.Resources, static)
+				warnings = append(warnings, fmt.Sprintf("%s: static IPv6 address %s imported; review manager handoff and address attributes", ifname, prefix))
 				continue
 			}
 			warnings = append(warnings, fmt.Sprintf("%s: address %s/%d (%s, scope %s) requires source configuration review: %s", ifname, address.Local, address.PrefixLen, origin, address.Scope, address.Raw))

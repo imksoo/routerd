@@ -298,7 +298,7 @@ func validateVirtualAddressResource(res api.Resource, targetOS platform.OS) erro
 			wantBits = 128
 			familyLabel = "IPv6"
 		}
-		if prefix.Bits() != wantBits {
+		if prefix.Bits() != wantBits && !(spec.Family == "ipv6" && (spec.Mode == "" || spec.Mode == "static")) {
 			return fmt.Errorf("%s spec.address must be an %s /%d prefix", res.ID(), familyLabel, wantBits)
 		}
 	}

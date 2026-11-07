@@ -552,7 +552,7 @@ func vrrpSpec(spec api.VirtualAddressVRRPSpec) virtualVRRPSpec {
 }
 
 func renderVirtualAddress(router *api.Router, spec virtualAddressSpec) (string, error) {
-	return render.VirtualAddress(router, api.VirtualAddressSpec{Family: spec.Family, Address: spec.Address, AddressFrom: spec.AddressFrom})
+	return render.VirtualAddress(router, api.VirtualAddressSpec{Family: spec.Family, Address: spec.Address, AddressFrom: spec.AddressFrom, Mode: spec.Mode})
 }
 
 func isVirtualAddressKind(kind string) bool {

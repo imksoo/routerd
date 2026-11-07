@@ -218,6 +218,7 @@ func VirtualAddress(router *api.Router, spec api.VirtualAddressSpec) (string, er
 		Address:     spec.Address,
 		AddressFrom: spec.AddressFrom,
 		Family:      spec.Family,
+		Mode:        spec.Mode,
 	})
 }
 
@@ -243,6 +244,9 @@ func virtualAddress(router *api.Router, spec virtualAddressSpec) (string, error)
 			return netip.PrefixFrom(addr, 128).String(), nil
 		}
 		return "", fmt.Errorf("must resolve to an %s host prefix", virtualAddressFamilyLabel(spec.Family))
+	}
+	if spec.Family == "ipv6" && prefix.Addr().Is6() && (spec.Mode == "" || spec.Mode == "static") {
+		return prefix.String(), nil
 	}
 	wantBits := 32
 	if spec.Family == "ipv6" {
