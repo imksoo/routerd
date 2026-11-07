@@ -107,6 +107,7 @@ func (p *Pusher) deliverToPeer(ctx context.Context, peer PeerConfig, ev federati
 
 	var lastErr string
 	attempts := 0
+retry:
 	for attempt := 1; attempt <= p.retry.MaxAttempts; attempt++ {
 		if ctx.Err() != nil {
 			lastErr = ctx.Err().Error()
@@ -131,7 +132,14 @@ func (p *Pusher) deliverToPeer(ctx context.Context, peer PeerConfig, ev federati
 		}
 		lastErr = err.Error()
 		if attempt < p.retry.MaxAttempts {
-			time.Sleep(p.backoff(attempt))
+			timer := time.NewTimer(p.backoff(attempt))
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				lastErr = ctx.Err().Error()
+				break retry
+			case <-timer.C:
+			}
 		}
 	}
 	if storeErr := p.store.UpdateDeliveryStatus(ev.ID, peer.NodeName, "failed", attempts, lastErr, time.Time{}, ev.ExpiresAt); storeErr != nil {
