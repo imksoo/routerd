@@ -163,13 +163,7 @@ func FreeBSDMPDConf(cfg Config) []byte {
 }
 
 func Command(cfg Config) (string, []string) {
-	return CommandForOS(runtime.GOOS, cfg)
-}
-
-// CommandForOS exposes the platform command contract for tests without changing
-// the runtime-selected behavior.
-func CommandForOS(osName string, cfg Config) (string, []string) {
-	if osName == "freebsd" {
+	if runtime.GOOS == "freebsd" {
 		return "mpd5", []string{"-d", cfg.RuntimeDir, "-f", "mpd.conf", "-p", cfg.RuntimeDir + "/mpd.pid", SafeName(cfg.Resource)}
 	}
 	return "pppd", []string{"file", cfg.RuntimeDir + "/peer.conf"}

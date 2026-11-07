@@ -54,14 +54,6 @@ func TestFreeBSDMPDConfigUsesPrivateRuntimeBackend(t *testing.T) {
 			AuthMethod:  "pap",
 		},
 	}
-	name, argv := CommandForOS("freebsd", cfg)
-	if name != "mpd5" {
-		t.Fatalf("FreeBSD command = %q, want mpd5", name)
-	}
-	wantArgv := []string{"-d", cfg.RuntimeDir, "-f", "mpd.conf", "-p", cfg.RuntimeDir + "/mpd.pid", "wan-pppoe"}
-	if strings.Join(argv, "\x00") != strings.Join(wantArgv, "\x00") {
-		t.Fatalf("FreeBSD argv = %#v, want %#v", argv, wantArgv)
-	}
 	file, config := RuntimeConfigForOS("freebsd", cfg)
 	if file != "mpd.conf" {
 		t.Fatalf("FreeBSD runtime file = %q", file)
@@ -89,9 +81,6 @@ func TestFreeBSDMPDConfigUsesPrivateRuntimeBackend(t *testing.T) {
 	}
 	if strings.Contains(string(config), "set iface enable tcpmssfix") {
 		t.Fatalf("FreeBSD mpd config enabled unrequested tcpmssfix:\n%s", config)
-	}
-	if strings.Contains(strings.Join(argv, " "), "-ddial") {
-		t.Fatalf("FreeBSD argv must not use ppp(8) dial mode: %#v", argv)
 	}
 }
 

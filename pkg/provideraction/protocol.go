@@ -16,8 +16,7 @@
 //   - provider credentials NEVER traverse routerd core — the executor runs in
 //     its own process with no inherited parent environment and authenticates
 //     itself with cloud-native identity;
-//   - Phase 5.0 calls NO real provider CLI/SDK — this package imports no cloud
-//     SDK and the only executors are fakes.
+//   - provider-specific operations are performed by external executors.
 package provideraction
 
 import (
