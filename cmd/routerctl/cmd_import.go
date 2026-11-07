@@ -223,6 +223,46 @@ func importRouteKey(destination, gateway string, metric int, onLink bool) string
 	return fmt.Sprintf("%s|%s|%d|%t", destination, gateway, metric, onLink)
 }
 
+func importDerivedIPv4ConnectedRoute(raw json.RawMessage, ifname string, addresses []importAddress, sources map[string]string) bool {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil {
+		return false
+	}
+	for key := range fields {
+		switch key {
+		case "dst", "dev", "protocol", "scope", "prefsrc", "metric", "flags":
+		default:
+			return false
+		}
+	}
+	var route struct {
+		Destination     string   `json:"dst"`
+		Device          string   `json:"dev"`
+		Protocol        string   `json:"protocol"`
+		Scope           string   `json:"scope"`
+		PreferredSource string   `json:"prefsrc"`
+		Flags           []string `json:"flags"`
+	}
+	if json.Unmarshal(raw, &route) != nil || route.Protocol != "kernel" || route.Scope != "link" || (route.Device != "" && route.Device != ifname) || len(route.Flags) != 0 {
+		return false
+	}
+	destination, err := netip.ParsePrefix(route.Destination)
+	if err != nil || !destination.Addr().Is4() || destination != destination.Masked() {
+		return false
+	}
+	for _, address := range addresses {
+		ip, err := netip.ParseAddr(address.Local)
+		if err != nil || !ip.Is4() || address.NoPrefixRoute || address.PrefixLen < 0 || address.PrefixLen > 32 || route.PreferredSource != ip.String() {
+			continue
+		}
+		prefix := netip.PrefixFrom(ip, address.PrefixLen)
+		if prefix.Masked() == destination && (sources[prefix.String()] == "DHCPv4" || (sources[prefix.String()] == "static" && importStaticIPv4Address(address, ifname, ip))) {
+			return true
+		}
+	}
+	return false
+}
+
 func importKernelStaticIPv4Route(raw json.RawMessage, ifname string) (api.IPv4RouteSpec, bool) {
 	var fields map[string]json.RawMessage
 	if json.Unmarshal(raw, &fields) != nil {
@@ -701,6 +741,9 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 			}
 			for _, route := range routes {
 				if family == "-4" {
+					if importDerivedIPv4ConnectedRoute(route, ifname, link.AddrInfo, sources) {
+						continue
+					}
 					spec, ok := importKernelStaticIPv4Route(route, ifname)
 					key := importRouteKey(spec.Destination, spec.Gateway, spec.Metric, spec.GatewayOnLink)
 					if ok && staticRoutes[key] {
