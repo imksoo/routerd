@@ -160,6 +160,12 @@ func (c Controller) reconcile(ctx context.Context, name string) error {
 				next["reason"] = "DaemonUnavailable"
 				next["error"] = err.Error()
 				if cleanupErr := c.applyLease(ctx, name, current, next); cleanupErr != nil {
+					next["phase"] = "Error"
+					next["reason"] = "ExpiryCleanupFailed"
+					next["error"] = cleanupErr.Error()
+					if saveErr := c.Store.SaveObjectStatus(api.NetAPIVersion, "DHCPv4Client", name, next); saveErr != nil {
+						return errors.Join(err, cleanupErr, saveErr)
+					}
 					return errors.Join(err, cleanupErr)
 				}
 				if saveErr := c.Store.SaveObjectStatus(api.NetAPIVersion, "DHCPv4Client", name, next); saveErr != nil {
@@ -238,8 +244,8 @@ func (c Controller) reconcile(ctx context.Context, name string) error {
 		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, EventApplied, daemonapi.SeverityInfo)
 		event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client", Name: name}
 		event.Attributes = map[string]string{
-			"currentAddress": observed["currentAddress"],
-			"defaultGateway": observed["defaultGateway"],
+			"currentAddress": mapString(next, "currentAddress"),
+			"defaultGateway": mapString(next, "defaultGateway"),
 			"dryRun":         fmt.Sprintf("%t", c.DryRun),
 		}
 		return c.Bus.Publish(ctx, event)
@@ -304,6 +310,9 @@ func (c Controller) applyLease(ctx context.Context, name string, current, next m
 		}
 	}
 	if phase == daemonapi.ResourcePhaseExpired || phase == daemonapi.ResourcePhaseReleased || staleLease {
+		for _, key := range []string{"currentAddress", "prefixLength", "defaultGateway", "gateway", "dnsServers", "ntpServers", "domain", "mtu", "leaseTime"} {
+			delete(next, key)
+		}
 		if err := c.removeLeaseRoute(ctx, name, current, next); err != nil {
 			return err
 		}
@@ -312,9 +321,6 @@ func (c Controller) applyLease(ctx context.Context, name string, current, next m
 		}
 		if err := c.restoreStaticDNS(ctx, current, next); err != nil {
 			return err
-		}
-		for _, key := range []string{"currentAddress", "prefixLength", "defaultGateway", "gateway", "dnsServers", "ntpServers", "domain", "mtu", "leaseTime"} {
-			delete(next, key)
 		}
 		return nil
 	}
