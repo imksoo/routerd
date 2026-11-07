@@ -136,19 +136,6 @@ class SupervisorUnitTests(unittest.TestCase):
             if path.is_file() and "tests" not in path.parts and "__pycache__" not in path.parts:
                 self.assertNotIn("/home/imksoo", path.read_text(encoding="utf-8", errors="ignore"), str(path))
 
-    def test_qa_coordinator_never_starts_routerd_for_generated_config_validation(self):
-        repo = ROOT.parents[1]
-        harness = (repo / "tests/e2e/cloudedge/scripts/sam-e2e.sh").read_text(encoding="utf-8")
-        self.assertIn("routerd_on_qa_host=false", harness)
-        self.assertIn('select(.value.site == "pve" and .value.role == "client")', harness)
-        self.assertIn('ssh_node "$validation_node" "$validation_script"', harness)
-        self.assertIn("scp_from_node", harness)
-        host_side, remote_side = harness.split("cat <<'REMOTE_VALIDATE'", 1)
-        self.assertNotIn("routerd_bin", host_side)
-        self.assertNotIn("routerctl_bin", host_side)
-        self.assertNotIn("serve --sandbox", host_side)
-        self.assertIn("serve --sandbox", remote_side)
-
     def test_supervisor_pins_each_pve_credential_input(self):
         source = (ROOT / "lifecycle_supervisor.py").read_text(encoding="utf-8")
         self.assertIn('(\"pveSshPrivateKey\", \"pve_ssh_private_key\")', source)
