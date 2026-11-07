@@ -1831,20 +1831,33 @@ func dhcpClientAvailable(client string) bool {
 }
 
 func (e *Engine) observeHostname(res api.Resource, osNet osNetworking, includePlan bool, rr *ResourceResult) {
-	desired := stringSpec(res, "hostname")
-	rr.Observed["desired"] = desired
+	spec, err := res.HostnameSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	rr.Observed["desired"] = spec.Hostname
+	rr.Observed["managed"] = fmt.Sprintf("%t", spec.Managed)
 	if out, err := runCommand("hostname"); err == nil {
 		current := strings.TrimSpace(string(out))
 		rr.Observed["current"] = current
-		if current != desired {
+		if spec.Managed && current != spec.Hostname {
 			rr.Phase = "Drifted"
 		}
+	} else {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, fmt.Sprintf("observe hostname: %v", err))
 	}
 	if includePlan {
+		if !spec.Managed {
+			rr.Plan = append(rr.Plan, "observe hostname; it is not managed")
+			return
+		}
 		if osNet.CloudInit {
 			rr.Warnings = append(rr.Warnings, "cloud-init is present and may reset hostname unless configured not to manage it")
 		}
-		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure hostname is %s", desired))
+		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure hostname is %s", spec.Hostname))
 	}
 }
 

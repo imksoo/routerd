@@ -438,7 +438,7 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 		return []resource.Intent{artifact("net.ipv6.route", ifname+":"+spec.Destination, resource.ActionEnsure, "platform-network", map[string]string{"via": spec.Via})}
 	case "Hostname":
 		spec, err := res.HostnameSpec()
-		if err != nil {
+		if err != nil || !spec.Managed {
 			return nil
 		}
 		return []resource.Intent{artifact("host.hostname", "system", resource.ActionEnsure, "platform-hostname", map[string]string{"hostname": spec.Hostname})}
