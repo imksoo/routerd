@@ -183,7 +183,7 @@ protocol_overlay_iface() {
 }
 
 cmd_pmtu() {
-  local client=$1 server=$2 ip size overlay_iface route_line overlay_mtu route_mtu advmss nft_mss iptables_mss mss mss_source
+  local client=$1 server=$2 ip size overlay_iface route_line overlay_mtu route_mtu advmss
   ip=$(server_ip "$server")
   size=${CE_PROTOCOL_PMTU_SIZE:-1300}
   ce_client_ssh "$client" "ping -M do -s $(printf '%q' "$size") -c3 -W2 $(printf '%q' "$ip") >/dev/null"
@@ -192,17 +192,6 @@ cmd_pmtu() {
   overlay_mtu=$(ce_client_ssh "$client" "ip -o link show $(printf '%q' "$overlay_iface") 2>/dev/null | sed -n 's/.*mtu \\([0-9][0-9]*\\).*/\\1/p' | head -n1" || true)
   route_mtu=$(printf '%s\n' "$route_line" | sed -n 's/.* mtu \([0-9][0-9]*\).*/\1/p' | head -n1)
   advmss=$(printf '%s\n' "$route_line" | sed -n 's/.* advmss \([0-9][0-9]*\).*/\1/p' | head -n1)
-  nft_mss=$(ce_client_ssh "$client" "{ sudo nft -a list ruleset 2>/dev/null || nft -a list ruleset 2>/dev/null || true; } | sed -n 's/.*tcp option maxseg size set \\([0-9][0-9]*\\).*/\\1/p' | head -n1" || true)
-  iptables_mss=$(ce_client_ssh "$client" "{ sudo iptables-save 2>/dev/null || iptables-save 2>/dev/null || true; } | sed -n 's/.*--set-mss \\([0-9][0-9]*\\).*/\\1/p' | head -n1" || true)
-  if [[ "$nft_mss" =~ ^[0-9]+$ ]]; then
-    mss=$nft_mss
-    mss_source=nft
-  elif [[ "$iptables_mss" =~ ^[0-9]+$ ]]; then
-    mss=$iptables_mss
-    mss_source=iptables
-  else
-    mss=
-  fi
   printf 'overlay_iface=%s\n' "$overlay_iface"
   printf 'overlay_mtu=%s\n' "${overlay_mtu:-unknown}"
   if [[ -z "$overlay_mtu" ]]; then
@@ -216,15 +205,10 @@ cmd_pmtu() {
   if [[ -z "$advmss" ]]; then
     printf 'route_advmss_reason=ip_route_get_did_not_report_advmss\n'
   fi
-  printf 'mss_clamp=%s\n' "${mss:-unknown}"
-  printf 'effective_mss_clamp=%s\n' "${mss:-unknown}"
-  if [[ -n "$mss" ]]; then
-    printf 'mss_clamp_source=%s\n' "$mss_source"
-    printf 'effective_mss_clamp_source=%s\n' "$mss_source"
-  else
-    printf 'mss_clamp_reason=nft_iptables_rules_missing_numeric_clamp\n'
-    printf 'effective_mss_clamp_reason=nft_iptables_rules_missing_numeric_clamp\n'
-  fi
+  printf 'mss_clamp=unknown\n'
+  printf 'effective_mss_clamp=unknown\n'
+  printf 'mss_clamp_reason=flow_mss_not_observed\n'
+  printf 'effective_mss_clamp_reason=flow_mss_not_observed\n'
   printf 'df_payload_bytes=%s\n' "$size"
   printf 'detail=pmtu_df_ok\n'
 }
