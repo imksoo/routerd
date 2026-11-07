@@ -349,6 +349,22 @@ func (c Controller) removeLeaseRoute(ctx context.Context, name string, current, 
 			return fmt.Errorf("invalid applied DHCPv4 route metric: %w", err)
 		}
 	}
+	aliases := map[string]string{}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.Kind == "Interface" {
+			iface, err := resource.InterfaceSpec()
+			if err != nil {
+				return err
+			}
+			aliases[resource.Metadata.Name] = iface.IfName
+		}
+	}
+	resolveInterface := func(name string) string {
+		if aliases[name] != "" {
+			return aliases[name]
+		}
+		return name
+	}
 	for _, resource := range c.Router.Spec.Resources {
 		switch resource.Kind {
 		case "DHCPv4Client":
@@ -359,7 +375,7 @@ func (c Controller) removeLeaseRoute(ctx context.Context, name string, current, 
 			if err != nil {
 				return err
 			}
-			if !api.BoolDefault(other.UseRoutes, true) || other.RouteMetric != metric || (other.Interface != spec.Interface && other.Interface != ifname) {
+			if !api.BoolDefault(other.UseRoutes, true) || other.RouteMetric != metric || resolveInterface(other.Interface) != ifname {
 				continue
 			}
 			status := c.Store.ObjectStatus(api.NetAPIVersion, "DHCPv4Client", resource.Metadata.Name)
@@ -375,7 +391,7 @@ func (c Controller) removeLeaseRoute(ctx context.Context, name string, current, 
 			if err != nil {
 				return err
 			}
-			if (route.Destination == "0.0.0.0/0" || route.Destination == "default") && route.Gateway == gateway && route.Metric == metric && (route.Device == spec.Interface || route.Device == ifname) {
+			if (route.Destination == "0.0.0.0/0" || route.Destination == "default") && route.Gateway == gateway && route.Metric == metric && route.Device == ifname {
 				delete(next, "appliedDefaultGateway")
 				delete(next, "appliedRouteMetric")
 				return nil
@@ -385,7 +401,7 @@ func (c Controller) removeLeaseRoute(ctx context.Context, name string, current, 
 			if err != nil {
 				return err
 			}
-			if (route.Destination == "0.0.0.0/0" || route.Destination == "default") && route.Via == gateway && route.Metric == metric && (route.Interface == spec.Interface || route.Interface == ifname) {
+			if (route.Destination == "0.0.0.0/0" || route.Destination == "default") && route.Via == gateway && route.Metric == metric && resolveInterface(route.Interface) == ifname {
 				delete(next, "appliedDefaultGateway")
 				delete(next, "appliedRouteMetric")
 				return nil
