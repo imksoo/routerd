@@ -28,6 +28,7 @@ import (
 	"github.com/imksoo/routerd/internal/statusvalue"
 	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/apply"
 	"github.com/imksoo/routerd/pkg/bgpdaemon"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/conntrack"
@@ -2151,7 +2152,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	logRetention := LogRetentionController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunLogRetention}
 	ntpClient, ntpServer := ntpControllersForOptions(r.currentRouter(), r.Bus, store, opts)
 	info := DHCPv6InformationController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DaemonSockets: opts.DaemonSockets, Logger: logger}
-	link := LinkController{Router: r.currentRouter(), Store: store, Logger: logger, DryRun: opts.DryRunAddress}
+	link := LinkController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Store: store, Logger: logger, DryRun: opts.DryRunAddress}
 	tunnel := TunnelInterfaceController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, OS: platform.CurrentOS(), Logger: logger}
 	wireGuard := WireGuardController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, Logger: logger}
 	ipv4Static := IPv4StaticAddressController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), WhenRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunAddress, Logger: logger}
@@ -3954,13 +3955,19 @@ func (c LANAddressController) currentOS() platform.OS {
 }
 
 type LinkController struct {
-	Router *api.Router
-	Store  Store
-	Logger *slog.Logger
-	DryRun bool
+	Router         *api.Router
+	DeclaredRouter *api.Router
+	Store          Store
+	Logger         *slog.Logger
+	DryRun         bool
 }
 
 func (c LinkController) Reconcile(ctx context.Context) error {
+	declared := c.DeclaredRouter
+	if declared == nil {
+		declared = c.Router
+	}
+	inactiveTunnels := apply.InactiveDSLiteInterfaces(c.Router, declared)
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "Interface" {
 			continue
@@ -4044,6 +4051,9 @@ func (c LinkController) Reconcile(ctx context.Context) error {
 			if ifi.Flags&net.FlagUp != 0 {
 				status["phase"] = "Up"
 			}
+		} else if !spec.Managed && inactiveTunnels[ifname] {
+			status["phase"] = "Disabled"
+			status["reason"] = "WhenFalse"
 		} else {
 			status["reason"] = "InterfaceNotFound"
 			status["error"] = err.Error()

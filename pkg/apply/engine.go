@@ -66,7 +66,7 @@ func (e *Engine) PlanEffective(effective, declared *api.Router) (*Result, error)
 }
 
 func (e *Engine) evaluate(router, declared *api.Router, includePlan bool) (*Result, error) {
-	inactiveTunnels := inactiveDSLiteInterfaces(router, declared)
+	inactiveTunnels := InactiveDSLiteInterfaces(router, declared)
 	aliases := interfaceAliases(router)
 	kinds := resourceKinds(router)
 	osNet := e.detectOSNetworking()
@@ -1617,7 +1617,7 @@ func (e *Engine) observeNetworkAdoption(res api.Resource, aliases map[string]str
 	}
 }
 
-func inactiveDSLiteInterfaces(effective, declared *api.Router) map[string]bool {
+func InactiveDSLiteInterfaces(effective, declared *api.Router) map[string]bool {
 	active := map[string]bool{}
 	for _, res := range effective.Spec.Resources {
 		if res.Kind == "DSLiteTunnel" {

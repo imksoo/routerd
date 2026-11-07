@@ -2361,7 +2361,7 @@ func statusPhaseRank(phase, reason string) int {
 		return 2
 	case "unknown", "":
 		return 1
-	case "healthy", "applied", "active", "established", "bound", "running", "ready", "up", "installed", "configured", "synced", "observed", "removed", "skipped":
+	case "healthy", "applied", "active", "established", "bound", "running", "ready", "up", "installed", "configured", "synced", "observed", "removed", "skipped", "disabled", "watching":
 		return 0
 	default:
 		return 1
@@ -2381,7 +2381,7 @@ func canonicalOverallPhase(phase, reason string) string {
 		return "Degraded"
 	case "unknown", "":
 		return "Unknown"
-	case "healthy", "applied", "active", "established", "bound", "running", "ready", "up", "installed", "configured", "synced", "observed", "removed", "skipped":
+	case "healthy", "applied", "active", "established", "bound", "running", "ready", "up", "installed", "configured", "synced", "observed", "removed", "skipped", "disabled", "watching":
 		return "Healthy"
 	default:
 		return phase
