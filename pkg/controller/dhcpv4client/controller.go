@@ -211,6 +211,8 @@ func (c Controller) applyLease(ctx context.Context, name string, current, next m
 		newIfname := mapString(next, "interface")
 		if oldIfname != "" && newIfname != "" && oldIfname != newIfname {
 			staleLease = true
+		} else if expires, err := time.Parse(time.RFC3339Nano, mapString(next, "expiresAt")); err == nil && !time.Now().Before(expires) {
+			staleLease = true
 		} else if expires, err := time.Parse(time.RFC3339Nano, mapString(current, "expiresAt")); err == nil && !time.Now().Before(expires) {
 			staleLease = true
 		}

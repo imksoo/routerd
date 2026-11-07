@@ -381,6 +381,7 @@ func (d *dhcpv4Daemon) handlePacket(ctx context.Context, packet []byte) error {
 	case dhcpv4client.MessageNAK:
 		d.mu.Lock()
 		d.state = dhcpv4client.StateExpired
+		d.lease.LeaseTime = 0
 		d.nextRenew = time.Time{}
 		d.mu.Unlock()
 		d.publish("routerd.dhcpv4.client.lease.expired", daemonapi.SeverityWarning, "LeaseRejected", "DHCPv4 server rejected the lease", nil)
