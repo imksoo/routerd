@@ -58,7 +58,7 @@ WIZARD_FIXTURE_DIR := website/fixtures/wizard
 
 WEBSITE_NODE_MODULES_STAMP := website/node_modules/.package-lock.json
 
-.PHONY: test check-version-ldflags build build-daemons build-provider-executors build-ndpi-agent build-ndpi-agent-libndpi build-daemons-freebsd check-freebsd-cross-compile check-linux-static check-ndpi-agent-libndpi check-install-deps cloudedge-acceptance-lint webconsole-build webconsole-browser-install webconsole-screenshot generate-schema sync-website-schemas check-schema check-website-schemas generate-wizard-fixtures check-wizard-fixtures validate-wizard-fixtures check-examples-line-limits check-bespoke-lifecycle website-deps website-build third-party-licenses check-build-deps dist deb dist-ndpi-agent-libndpi live-iso validate-example dry-run-example plan-config release clean
+.PHONY: test check-version-ldflags build build-daemons build-provider-executors build-ndpi-agent build-ndpi-agent-libndpi build-daemons-freebsd check-freebsd-cross-compile check-linux-static check-ndpi-agent-libndpi check-install-deps cloudedge-acceptance-lint webconsole-build webconsole-browser-install webconsole-screenshot generate-schema sync-website-schemas check-schema check-website-schemas generate-wizard-fixtures check-wizard-fixtures validate-wizard-fixtures check-examples-line-limits check-bespoke-lifecycle website-deps website-build third-party-licenses check-build-deps dist deb dist-ndpi-agent-libndpi live-iso validate-example release clean
 
 test: check-version-ldflags
 	go test ./...
@@ -201,11 +201,6 @@ check-wizard-fixtures: website-deps
 
 validate-wizard-fixtures: website-deps
 	node scripts/validate-wizard-fixtures.cjs schemas/$(CONFIG_SCHEMA) $(WIZARD_FIXTURE_DIR)
-	@configs=$$(find $(WIZARD_FIXTURE_DIR) -type f -name '*.yaml' -print | sort); \
-	scripts/routerd-sandbox-run.sh sh -c 'for config do \
-		echo "validating $$config"; \
-		go run ./cmd/routerctl validate --socket "$$ROUTERD_SANDBOX_STATUS_SOCKET" -f "$$config" --replace >/dev/null || exit 1; \
-	done' sh $$configs
 
 check-examples-line-limits:
 	./scripts/check-examples-line-limits.sh
@@ -316,17 +311,10 @@ live-iso:
 	VERSION=$(VERSION) DISTBASE=$(DISTBASE) scripts/build-live-iso.sh
 
 validate-example:
-	@scripts/routerd-sandbox-run.sh sh -c 'for config do \
+	@for config in $(EXAMPLE_CONFIGS); do \
 		echo "validating $$config"; \
-		go run ./cmd/routerctl validate --socket "$$ROUTERD_SANDBOX_STATUS_SOCKET" -f "$$config" --replace >/dev/null || exit 1; \
-	done' sh $(EXAMPLE_CONFIGS)
-
-dry-run-example:
-	scripts/routerd-sandbox-run.sh sh -c 'go run ./cmd/routerctl apply --socket "$$ROUTERD_SANDBOX_SOCKET" -f examples/basic-static.yaml --replace > /tmp/routerd-status.json'
-
-plan-config:
-	test -n "$(CONFIG)" || (echo "CONFIG is required, for example: make plan-config CONFIG=path/to/router.yaml" >&2; exit 2)
-	scripts/routerd-sandbox-run.sh sh -c 'go run ./cmd/routerctl plan --socket "$$ROUTERD_SANDBOX_STATUS_SOCKET" -f "$$1" --replace > /tmp/routerd-plan-status.json' sh "$(CONFIG)"
+		go run ./cmd/routerd validate --config "$$config" >/dev/null || exit 1; \
+	done
 
 release:
 	scripts/release.sh
