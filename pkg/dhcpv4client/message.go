@@ -247,9 +247,6 @@ func optionMaskPrefixLength(b []byte) int {
 
 func RequestOptions(cfg Config, offered Message) map[byte][]byte {
 	opts := map[byte][]byte{}
-	if offered.YIAddr.IsValid() {
-		opts[OptionRequestedIP] = offered.YIAddr.AsSlice()
-	}
 	if server := offered.Options[OptionServerID]; len(server) == 4 {
 		opts[OptionServerID] = server
 	}
@@ -260,6 +257,9 @@ func RequestOptions(cfg Config, offered Message) map[byte][]byte {
 		if addr, err := netip.ParseAddr(cfg.RequestedAddress); err == nil && addr.Is4() {
 			opts[OptionRequestedIP] = addr.AsSlice()
 		}
+	}
+	if offered.YIAddr.IsValid() {
+		opts[OptionRequestedIP] = offered.YIAddr.AsSlice()
 	}
 	if cfg.ClassID != "" {
 		opts[OptionClassID] = []byte(cfg.ClassID)
