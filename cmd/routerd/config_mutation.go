@@ -301,25 +301,6 @@ func (m serveConfigMutator) reconcileWithOutcome(router *api.Router, configYAML 
 	if err := m.rejectIfStopping(); err != nil {
 		return outcome, err
 	}
-	if m.baseOpts.Sandbox {
-		committed, err := m.commitOnlyWithOutcome(router, configYAML)
-		if err != nil {
-			return committed, err
-		}
-		// The caller owns the exclusive mutation gate for the whole live-apply
-		// transaction. Avoid recursively taking it in the sandbox plan runner.
-		planner := m
-		planner.baseOpts.MutationGate = nil
-		result, err := planner.planRouter(router, configYAML)
-		if err != nil {
-			committed.Stage = "sandbox-plan"
-			return committed, err
-		}
-		result.Generation = committed.Generation
-		committed.Result = result
-		committed.Stage = "complete"
-		return committed, nil
-	}
 	opts := m.baseOpts
 	opts.DryRun = false
 	opts.SkipConfigCommit = false

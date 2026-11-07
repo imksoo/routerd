@@ -90,7 +90,6 @@ type applyOptions struct {
 	MgmtLockoutWriter    io.Writer
 	SkipConfigCommit     bool
 	ConfigYAMLOverride   string
-	Sandbox              bool
 	MutationGate         *sync.RWMutex
 }
 
@@ -616,7 +615,7 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 		return nil, err
 	}
 	optionWarnings = append(optionWarnings, managementWarnings...)
-	if opts.DryRun && !opts.Sandbox {
+	if opts.DryRun {
 		dryRunDir, err := os.MkdirTemp("", "routerd-apply-dryrun-artifacts-*")
 		if err != nil {
 			return nil, err
@@ -845,10 +844,8 @@ func applyChainControllerOptions(opts applyOptions) controllerchain.Options {
 		MutationGate:           opts.MutationGate,
 	}
 	if opts.DryRun {
-		applySandboxControllerOptions(&controllerOpts, controllerOpts.DnsmasqConfig, controllerOpts.NftablesPath)
-		if !opts.Sandbox {
-			controllerOpts.FirewallPath = filepath.Join(filepath.Dir(controllerOpts.NftablesPath), "firewall.nft")
-		}
+		applyDryRunControllerOptions(&controllerOpts, controllerOpts.DnsmasqConfig, controllerOpts.NftablesPath)
+		controllerOpts.FirewallPath = filepath.Join(filepath.Dir(controllerOpts.NftablesPath), "firewall.nft")
 	}
 	if opts.SkipServiceManager {
 		controllerOpts.DryRunServiceUnit = true

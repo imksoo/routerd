@@ -388,8 +388,6 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	bgpStatePath := fs.String("bgp-state-file", defaultBGPState, "routerd-bgp applied state JSON path")
 	gracefulStopTimeout := fs.Duration("graceful-stop-timeout", 20*time.Second, "wait up to this duration for mobility make-before-break handoff on SIGTERM/SIGINT; 0 disables")
 	once := fs.Bool("once", false, "converge once and exit without serving control sockets")
-	sandbox := fs.Bool("sandbox", false, "serve control API in a dry-run sandbox with no host mutation")
-	sandboxRoot := fs.String("root", "", "sandbox root directory used with --sandbox")
 	registerLegacyServeFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -399,27 +397,6 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		setFlags[f.Name] = true
 	})
 	warnIgnoredLegacyServeFlags(stderr, setFlags)
-	if *sandbox {
-		if err := configureServeSandbox(
-			*sandboxRoot,
-			setFlags,
-			configPath,
-			statusFile,
-			socketPath,
-			statusSocketPath,
-			statePath,
-			netplanPath,
-			dnsmasqConfigPath,
-			dnsmasqServicePath,
-			nftablesPath,
-			ledgerPath,
-			bgpSocketPath,
-			bgpControlSocketPath,
-			bgpStatePath,
-		); err != nil {
-			return err
-		}
-	}
 	if *statusSocketPath == *socketPath {
 		return errors.New("--status-socket must differ from --socket")
 	}
@@ -496,10 +473,8 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		"statusSocket":  *statusSocketPath,
 		"applyInterval": applyInterval.String(),
 	})
-	if !*sandbox {
-		if loopbackErr := ensureLoopbackUpForServe(); loopbackErr != nil {
-			logger.Emit(eventlog.LevelWarning, "serve", "failed to ensure loopback is up", map[string]string{"error": loopbackErr.Error()})
-		}
+	if loopbackErr := ensureLoopbackUpForServe(); loopbackErr != nil {
+		logger.Emit(eventlog.LevelWarning, "serve", "failed to ensure loopback is up", map[string]string{"error": loopbackErr.Error()})
 	}
 	applyOpts := applyOptions{
 		ConfigPath:           *configPath,
@@ -514,9 +489,6 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		BGPControlSocketPath: *bgpControlSocketPath,
 		BGPStatePath:         *bgpStatePath,
 		SkipConfigCommit:     bootFallback.Used,
-		DryRun:               *sandbox,
-		SkipServiceManager:   *sandbox,
-		Sandbox:              *sandbox,
 	}
 	if bootFallback.Used {
 		configYAML, ok, err := stateStore.GenerationConfig(bootFallback.Generation)
@@ -558,7 +530,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	if _, cleanupErr := cleanupUnsupportedLegacyObjectStatuses(router, stateStore, *statePath, time.Now().UTC(), logger); cleanupErr != nil {
 		logger.Emit(eventlog.LevelWarning, "serve", "stale state cleanup encountered an error", map[string]string{"error": cleanupErr.Error()})
 	}
-	if !*sandbox {
+	{
 		effectiveRouter := filterRouterByWhen(router, stateStore)
 		dynamicRouters, dynamicErr := controllerchain.BuildDynamicRouteSAMObjectStatusRouters(effectiveRouter, stateStore, time.Now().UTC(), platform.CurrentOS())
 		if dynamicErr != nil {
@@ -579,7 +551,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	go publishVRRPTransitionSignals(ctx, vrrpSignalCh, controllerBus)
 	publishControllerModeEvents(ctx, controllerBus, controllerStatuses)
 	peerGroupSyncClient := mobilitycontroller.NewPeerGroupSyncClient(stateStore)
-	if !*once && !*sandbox && mobilitycontroller.HasPublishedPeerGroups(router) {
+	if !*once && mobilitycontroller.HasPublishedPeerGroups(router) {
 		if err := startPeerGroupSyncServer(ctx, stateStore, logger); err != nil {
 			return err
 		}
@@ -603,9 +575,6 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		EnabledControllers:     enabledControllers,
 		PeerGroupSyncClient:    peerGroupSyncClient,
 		MutationGate:           mutationGate,
-	}
-	if *sandbox {
-		applySandboxControllerOptions(&controllerOpts, *dnsmasqConfigPath, *nftablesPath)
 	}
 	chainRunner = &controllerchain.Runner{
 		Router: router,
@@ -654,12 +623,12 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 			// Once it expires the process exits and the OS closes any remaining
 			// descriptors rather than extending a guest power-down indefinitely.
 			handoffDeadline := *gracefulStopTimeout
-			if handoffDeadline <= 0 || *sandbox {
+			if handoffDeadline <= 0 {
 				handoffDeadline = time.Second
 			}
 			handoffCtx, handoffCancel := context.WithTimeout(context.Background(), handoffDeadline)
 			ranHandoff, handoffFinished, _ := runGracefulStopWhenIdleBounded(applyMu, handoffDeadline, func() error {
-				if *sandbox || *gracefulStopTimeout <= 0 {
+				if *gracefulStopTimeout <= 0 {
 					return nil
 				}
 				return runGracefulStopHandoffExclusive(handoffCtx, mutationGate, func(handoffCtx context.Context) error {
@@ -1129,128 +1098,7 @@ func bgpServeDefaultPaths(defaults platform.Defaults) (socket, controlSocket, st
 	return defaults.BGPPaths()
 }
 
-const sandboxDefaultRouterYAML = `apiVersion: routerd.net/v1alpha1
-kind: Router
-metadata:
-  name: sandbox
-spec:
-  resources: []
-`
-
-func configureServeSandbox(root string, setFlags map[string]bool, configPath, statusFile, socketPath, statusSocketPath, statePath, netplanPath, dnsmasqConfigPath, dnsmasqServicePath, nftablesPath, ledgerPath, bgpSocketPath, bgpControlSocketPath, bgpStatePath *string) error {
-	root = strings.TrimSpace(root)
-	if root == "" {
-		return errors.New("--sandbox requires --root <dir>")
-	}
-	absRoot, err := filepath.Abs(root)
-	if err != nil {
-		return err
-	}
-	root = filepath.Clean(absRoot)
-	sandboxDefaults := platformDefaults
-	sandboxDefaults.SysconfDir = filepath.Join(root, "etc", "routerd")
-	sandboxDefaults.PluginDir = filepath.Join(root, "usr", "local", "libexec", "routerd", "plugins")
-	sandboxDefaults.RuntimeDir = filepath.Join(root, "run", "routerd")
-	sandboxDefaults.StateDir = filepath.Join(root, "var", "lib", "routerd")
-	sandboxDefaults.NetplanFile = filepath.Join(root, "etc", "netplan", "99-routerd.yaml")
-	sandboxDefaults.NetworkdDropinDir = filepath.Join(root, "etc", "systemd", "network")
-	sandboxDefaults.SystemdSystemDir = filepath.Join(root, "etc", "systemd", "system")
-	sandboxDefaults.DnsmasqConfigFile = filepath.Join(root, "etc", "routerd", "dnsmasq.conf")
-	sandboxDefaults.DnsmasqServiceFile = filepath.Join(root, "run", "routerd", "routerd-dnsmasq.service")
-	sandboxDefaults.NftablesFile = filepath.Join(root, "run", "routerd", "nftables.conf")
-	sandboxDefaults.DefaultRouteNftablesFile = filepath.Join(root, "run", "routerd", "default-route.nft")
-	sandboxDefaults.TimesyncdDropinFile = filepath.Join(root, "etc", "systemd", "timesyncd.conf.d", "routerd.conf")
-	sandboxDefaults.PPPoEChapSecretsFile = filepath.Join(root, "etc", "ppp", "chap-secrets")
-	sandboxDefaults.PPPoEPapSecretsFile = filepath.Join(root, "etc", "ppp", "pap-secrets")
-	platformDefaults = sandboxDefaults
-	defaultNetplanPath = sandboxDefaults.NetplanFile
-	defaultDnsmasqConfigPath = sandboxDefaults.DnsmasqConfigFile
-	defaultDnsmasqServicePath = sandboxDefaults.DnsmasqServiceFile
-	defaultNftablesPath = sandboxDefaults.NftablesFile
-	defaultRouteNftablesPath = sandboxDefaults.DefaultRouteNftablesFile
-	defaultTimesyncdPath = sandboxDefaults.TimesyncdDropinFile
-	defaultLedgerPath = sandboxDefaults.DBFile()
-	defaultStatePath = sandboxDefaults.DBFile()
-	runtimeKeepalivedConfigPath = filepath.Join(root, "etc", "keepalived", "keepalived.conf")
-	pppoeCHAPSecretsPath = sandboxDefaults.PPPoEChapSecretsFile
-	pppoePAPSecretsPath = sandboxDefaults.PPPoEPapSecretsFile
-	pdClientLeaseDir = filepath.Join(sandboxDefaults.StateDir, "dhcpv6-client")
-
-	if !setFlags["config"] {
-		*configPath = sandboxDefaults.ConfigFile()
-	}
-	if !setFlags["status-file"] {
-		*statusFile = sandboxDefaults.StatusFile()
-	}
-	if !setFlags["socket"] {
-		*socketPath = sandboxDefaults.SocketFile()
-	}
-	if !setFlags["status-socket"] {
-		*statusSocketPath = sandboxDefaults.StatusSocketFile()
-	}
-	if !setFlags["state-file"] {
-		*statePath = sandboxDefaults.DBFile()
-	}
-	if !setFlags["netplan-file"] {
-		*netplanPath = sandboxDefaults.NetplanFile
-	}
-	if !setFlags["dnsmasq-file"] {
-		*dnsmasqConfigPath = sandboxDefaults.DnsmasqConfigFile
-	}
-	if !setFlags["dnsmasq-service-file"] {
-		*dnsmasqServicePath = sandboxDefaults.DnsmasqServiceFile
-	}
-	if !setFlags["nftables-file"] {
-		*nftablesPath = sandboxDefaults.NftablesFile
-	}
-	if !setFlags["ledger-file"] {
-		*ledgerPath = filepath.Join(sandboxDefaults.StateDir, "artifacts.json")
-	}
-	if !setFlags["bgp-socket"] {
-		*bgpSocketPath = filepath.Join(sandboxDefaults.RuntimeDir, "bgp", "gobgp.sock")
-	}
-	if !setFlags["bgp-control-socket"] {
-		*bgpControlSocketPath = filepath.Join(sandboxDefaults.RuntimeDir, "bgp", "control.sock")
-	}
-	if !setFlags["bgp-state-file"] {
-		*bgpStatePath = filepath.Join(sandboxDefaults.StateDir, "bgp", "applied.json")
-	}
-	for _, dir := range []string{
-		sandboxDefaults.SysconfDir,
-		sandboxDefaults.RuntimeDir,
-		sandboxDefaults.StateDir,
-		filepathDir(*configPath),
-		filepathDir(*statusFile),
-		filepathDir(*socketPath),
-		filepathDir(*statusSocketPath),
-		filepathDir(*statePath),
-		filepathDir(*netplanPath),
-		filepathDir(*dnsmasqConfigPath),
-		filepathDir(*dnsmasqServicePath),
-		filepathDir(*nftablesPath),
-		filepathDir(*ledgerPath),
-		filepathDir(*bgpSocketPath),
-		filepathDir(*bgpControlSocketPath),
-		filepathDir(*bgpStatePath),
-	} {
-		if dir == "" || dir == "." {
-			continue
-		}
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return err
-		}
-	}
-	if _, err := os.Stat(*configPath); errors.Is(err, os.ErrNotExist) {
-		if err := os.WriteFile(*configPath, []byte(sandboxDefaultRouterYAML), 0o644); err != nil {
-			return err
-		}
-	} else if err != nil {
-		return err
-	}
-	return nil
-}
-
-func applySandboxControllerOptions(opts *controllerchain.Options, dnsmasqConfigPath, nftablesPath string) {
+func applyDryRunControllerOptions(opts *controllerchain.Options, dnsmasqConfigPath, nftablesPath string) {
 	opts.SuperviseClientDaemons = false
 	opts.DryRunAddress = true
 	opts.DryRunDSLite = true
@@ -1278,11 +1126,11 @@ func applySandboxControllerOptions(opts *controllerchain.Options, dnsmasqConfigP
 	opts.DryRunLogRetention = true
 	opts.DryRunNTP = true
 	opts.DnsmasqConfig = dnsmasqConfigPath
-	sandboxDir := platformDefaults.RuntimeDir
+	dryRunDir := platformDefaults.RuntimeDir
 	if strings.TrimSpace(dnsmasqConfigPath) != "" {
-		sandboxDir = filepath.Dir(dnsmasqConfigPath)
+		dryRunDir = filepath.Dir(dnsmasqConfigPath)
 	}
-	opts.DnsmasqPID = filepath.Join(sandboxDir, "dnsmasq.pid")
+	opts.DnsmasqPID = filepath.Join(dryRunDir, "dnsmasq.pid")
 	opts.NftablesPath = filepath.Join(platformDefaults.RuntimeDir, "nat44.nft")
 	if strings.TrimSpace(nftablesPath) != "" {
 		opts.NftablesPath = nftablesPath
@@ -1290,9 +1138,9 @@ func applySandboxControllerOptions(opts *controllerchain.Options, dnsmasqConfigP
 	// Every rendered artifact in a dry-run belongs next to the dnsmasq config.
 	// In one-shot apply this is a temporary directory, so dry-run never needs
 	// access to the normal runtime directory.
-	opts.FirewallPath = filepath.Join(sandboxDir, "firewall.nft")
-	opts.PathMTUPath = filepath.Join(sandboxDir, "mss.nft")
-	opts.ForceFragmentPath = filepath.Join(sandboxDir, "forcefrag.nft")
+	opts.FirewallPath = filepath.Join(dryRunDir, "firewall.nft")
+	opts.PathMTUPath = filepath.Join(dryRunDir, "mss.nft")
+	opts.ForceFragmentPath = filepath.Join(dryRunDir, "forcefrag.nft")
 }
 
 // groupOwnStatusSocket makes the read-only status socket reachable by members

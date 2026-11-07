@@ -152,7 +152,7 @@ The managed dnsmasq hook is a symlink to `routerd-dhcp-event-relay` with no
 additional arguments. It commits each callback to
 `<platform StateDir>/dhcp-events/pending.db` before exiting; it no longer needs
 a running control socket. Linux uses `/var/lib/routerd`, FreeBSD uses
-`/var/db/routerd`, and a serve sandbox uses its own platform state directory.
+`/var/db/routerd`.
 Configuration paths, runtime socket paths, and `--state-file` do not redefine
 this shared directory. `--state-file` still selects only the main state DB.
 No additional service or dnsmasq configuration change is required.
@@ -160,8 +160,7 @@ No additional service or dnsmasq configuration change is required.
 A manual relay invocation with explicit `--socket` keeps HTTP transport and
 uses the receiving daemon's queue. It does not write a second local queue or
 retry through a different transport. An unavailable socket therefore remains
-an explicit failure. Use this API mode to target a sandbox or a daemon with a
-custom socket, rather than inferring persistence paths from that socket.
+an explicit failure. Use this API mode to target a daemon with a custom socket, rather than inferring persistence paths from that socket.
 
 Bounds and ownership:
 
