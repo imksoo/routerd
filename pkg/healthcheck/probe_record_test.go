@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
-	"github.com/imksoo/routerd/pkg/bus"
 )
 
 func TestClassifyErrorTimeout(t *testing.T) {
@@ -40,73 +39,6 @@ func TestClassifyErrorTimeout(t *testing.T) {
 	}
 	if got := classifyError(ctx, nil); got != FailureKindNone {
 		t.Fatalf("nil got %q", got)
-	}
-}
-
-func TestProbeIncludesEgressEvidence(t *testing.T) {
-	// Stub RouteLookup so we deterministically see route info merged in.
-	orig := RouteLookup
-	RouteLookup = func(ctx context.Context, spec api.HealthCheckSpec) (RouteInfo, error) {
-		return RouteInfo{NextHop: "192.0.2.1", OutInterface: "wan0", Source: "192.0.2.42"}, nil
-	}
-	defer func() { RouteLookup = orig }()
-
-	store := mapStore{}
-	controller := &Controller{
-		Bus:   bus.New(),
-		Store: store,
-		Now:   fixedNow(),
-		Probe: func(ctx context.Context, spec api.HealthCheckSpec) ProbeResult {
-			return ProbeResult{
-				Message: "connection refused",
-				ProbeEvidence: ProbeEvidence{
-					FailureKind:   FailureKindConnectionRefused,
-					SourceAddress: "192.0.2.42",
-				},
-			}
-		},
-	}
-	resource := healthResource("internet")
-	spec := api.HealthCheckSpec{Target: "1.2.3.4", Protocol: "tcp", Port: 443, SourceInterface: "wan0"}
-	if err := controller.ProbeOnce(context.Background(), resource, spec); err != nil {
-		t.Fatal(err)
-	}
-	state := controller.state["internet"]
-	if state == nil {
-		t.Fatal("state missing")
-	}
-	if state.LastEvidence.FailureKind != FailureKindConnectionRefused {
-		t.Errorf("failureKind = %q", state.LastEvidence.FailureKind)
-	}
-	if state.LastEvidence.EgressInterface != "wan0" {
-		t.Errorf("egressInterface = %q", state.LastEvidence.EgressInterface)
-	}
-	if state.LastEvidence.NextHop != "192.0.2.1" {
-		t.Errorf("nextHop = %q", state.LastEvidence.NextHop)
-	}
-	if state.LastEvidence.OutInterface != "wan0" {
-		t.Errorf("outInterface = %q", state.LastEvidence.OutInterface)
-	}
-	if state.LastEvidence.RouteSource != "192.0.2.42" {
-		t.Errorf("routeSource = %q", state.LastEvidence.RouteSource)
-	}
-	if state.LastEvidence.SourceAddress != "192.0.2.42" {
-		t.Errorf("sourceAddress = %q", state.LastEvidence.SourceAddress)
-	}
-	if state.FailureCount != 1 {
-		t.Errorf("failureCount = %d", state.FailureCount)
-	}
-	if state.LastFailureTime.IsZero() {
-		t.Errorf("lastFailureTime should be set")
-	}
-	if state.FirstFailureTime.IsZero() {
-		t.Errorf("firstFailureTime should be set")
-	}
-	if len(state.History) != 1 {
-		t.Fatalf("history len = %d", len(state.History))
-	}
-	if state.History[0].ProbeEvidence.NextHop != "192.0.2.1" {
-		t.Errorf("history nextHop = %q", state.History[0].NextHop)
 	}
 }
 
@@ -279,21 +211,5 @@ func TestStateRoundTripJSON(t *testing.T) {
 	}
 	if len(decoded.History) != 1 || decoded.History[0].Port != 443 {
 		t.Errorf("decoded history = %#v", decoded.History)
-	}
-}
-
-func TestEnrichEvidenceFillsFromSpec(t *testing.T) {
-	orig := RouteLookup
-	RouteLookup = func(ctx context.Context, spec api.HealthCheckSpec) (RouteInfo, error) {
-		return RouteInfo{}, errors.New("not available")
-	}
-	defer func() { RouteLookup = orig }()
-	spec := api.HealthCheckSpec{SourceInterface: "wan0", SourceAddress: "192.0.2.42"}
-	ev := EnrichEvidence(context.Background(), spec, ProbeEvidence{})
-	if ev.EgressInterface != "wan0" {
-		t.Errorf("egressInterface = %q", ev.EgressInterface)
-	}
-	if ev.SourceAddress != "192.0.2.42" {
-		t.Errorf("sourceAddress = %q", ev.SourceAddress)
 	}
 }

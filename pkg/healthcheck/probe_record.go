@@ -148,12 +148,6 @@ type RouteInfo struct {
 	Source       string
 }
 
-// RouteLookup resolves "ip route get TARGET" style information for a probe.
-// Tests can override the default by replacing this var.
-var RouteLookup = func(ctx context.Context, spec api.HealthCheckSpec) (RouteInfo, error) {
-	return lookupRoute(ctx, spec)
-}
-
 // historyLimit returns the maximum number of probe history entries to keep.
 // Defaults to 20 but can be overridden via ROUTERD_HEALTHCHECK_HISTORY.
 func historyLimit() int {

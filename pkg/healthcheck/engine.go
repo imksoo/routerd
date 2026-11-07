@@ -205,7 +205,7 @@ func (c *Controller) ProbeOnce(ctx context.Context, resource api.Resource, spec 
 func EnrichEvidence(ctx context.Context, spec api.HealthCheckSpec, ev ProbeEvidence) ProbeEvidence {
 	ev = mergeEvidence(spec, ev)
 	if ev.NextHop == "" && ev.OutInterface == "" && ev.RouteSource == "" {
-		if info, err := RouteLookup(ctx, spec); err == nil {
+		if info, err := lookupRoute(ctx, spec); err == nil {
 			if ev.NextHop == "" {
 				ev.NextHop = info.NextHop
 			}
