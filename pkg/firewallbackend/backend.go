@@ -5,6 +5,7 @@ package firewallbackend
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -37,6 +38,7 @@ type Backend interface {
 
 type Nftables struct {
 	Command string
+	Force   bool
 }
 
 func (b Nftables) Name() string { return "nftables" }
@@ -75,15 +77,19 @@ func (b Nftables) Apply(ctx context.Context, ruleset Ruleset, dryRun bool) (bool
 	if dryRun {
 		return changed, nil
 	}
-	if !changed && nftstate.RecentlyVerified(ruleset.Path, time.Now().UTC()) {
+	if !b.Force && !changed && nftstate.RecentlyVerified(ruleset.Path, time.Now().UTC()) {
 		return false, nil
 	}
-	if !changed && b.rulesetTablesPresent(ctx, ruleset) {
+	if !b.Force && !changed && b.rulesetTablesPresent(ctx, ruleset) {
 		_ = nftstate.MarkVerified(ruleset.Path, time.Now().UTC())
 		return false, nil
 	}
 	applyRuleset := ruleset
-	if changed {
+	data, err := b.preserveDynamicSets(ctx, ruleset.Data)
+	if err != nil {
+		return false, err
+	}
+	if changed || !bytes.Equal(data, ruleset.Data) {
 		if err := os.MkdirAll(filepath.Dir(ruleset.Path), 0755); err != nil {
 			return false, err
 		}
@@ -97,7 +103,7 @@ func (b Nftables) Apply(ctx context.Context, ruleset Ruleset, dryRun bool) (bool
 			file.Close()
 			return false, err
 		}
-		if _, err := file.Write(ruleset.Data); err != nil {
+		if _, err := file.Write(data); err != nil {
 			file.Close()
 			return false, err
 		}
@@ -109,12 +115,102 @@ func (b Nftables) Apply(ctx context.Context, ruleset Ruleset, dryRun bool) (bool
 		return false, err
 	}
 	if changed {
+		if !bytes.Equal(data, ruleset.Data) {
+			if err := os.WriteFile(applyRuleset.Path, ruleset.Data, 0644); err != nil {
+				return false, err
+			}
+		}
 		if err := os.Rename(applyRuleset.Path, ruleset.Path); err != nil {
 			return false, err
 		}
 	}
 	_ = nftstate.MarkVerified(ruleset.Path, time.Now().UTC())
 	return true, nil
+}
+
+func (b Nftables) preserveDynamicSets(ctx context.Context, data []byte) ([]byte, error) {
+	if !bytes.Contains(data, []byte("destroy set inet routerd_filter flow_pinhole_")) &&
+		!bytes.Contains(data, []byte("destroy set inet routerd_filter ip_address_set_")) {
+		return data, nil
+	}
+	nft := stringutil.FirstNonEmpty(b.Command, "nft")
+	out, err := b.run(ctx, nft, "-j", "list", "ruleset")
+	if err != nil {
+		return nil, fmt.Errorf("%s -j list ruleset: %w: %s", nft, err, strings.TrimSpace(string(out)))
+	}
+	var snapshot struct {
+		Objects []struct {
+			Set *struct {
+				Family string          `json:"family"`
+				Table  string          `json:"table"`
+				Name   string          `json:"name"`
+				Type   json.RawMessage `json:"type"`
+				Flags  []string        `json:"flags"`
+			} `json:"set"`
+		} `json:"nftables"`
+	}
+	if err := json.Unmarshal(out, &snapshot); err != nil {
+		return nil, fmt.Errorf("decode nft ruleset: %w", err)
+	}
+	existing := make(map[string]string)
+	for _, object := range snapshot.Objects {
+		set := object.Set
+		if set == nil || set.Family != "inet" || set.Table != "routerd_filter" ||
+			(!strings.HasPrefix(set.Name, "flow_pinhole_") && !strings.HasPrefix(set.Name, "ip_address_set_")) {
+			continue
+		}
+		var types []string
+		if err := json.Unmarshal(set.Type, &types); err != nil {
+			var single string
+			if err := json.Unmarshal(set.Type, &single); err != nil {
+				return nil, fmt.Errorf("decode nft set %s type: %w", set.Name, err)
+			}
+			types = []string{single}
+		}
+		timeout := false
+		for _, flag := range set.Flags {
+			if flag == "timeout" {
+				timeout = true
+			}
+		}
+		if timeout == strings.HasPrefix(set.Name, "flow_pinhole_") {
+			existing[set.Name] = strings.Join(types, " . ")
+		}
+	}
+	lines := strings.Split(string(data), "\n")
+	preserve := make(map[string]bool)
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "set flow_pinhole_") && !strings.HasPrefix(trimmed, "set ip_address_set_") {
+			continue
+		}
+		name, rest, ok := strings.Cut(strings.TrimPrefix(trimmed, "set "), " { type ")
+		if !ok {
+			continue
+		}
+		typ, _, ok := strings.Cut(rest, ";")
+		if ok && existing[name] == typ {
+			preserve[name] = true
+		}
+	}
+	if len(preserve) == 0 {
+		return data, nil
+	}
+	var kept []string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "destroy set inet routerd_filter ") && preserve[strings.TrimPrefix(trimmed, "destroy set inet routerd_filter ")] {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "set ") {
+			name, _, _ := strings.Cut(strings.TrimPrefix(trimmed, "set "), " ")
+			if preserve[name] {
+				continue
+			}
+		}
+		kept = append(kept, line)
+	}
+	return []byte(strings.Join(kept, "\n")), nil
 }
 
 func (b Nftables) rulesetTablesPresent(ctx context.Context, ruleset Ruleset) bool {

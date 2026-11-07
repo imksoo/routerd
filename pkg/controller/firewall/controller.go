@@ -26,6 +26,7 @@ type Controller struct {
 	Bus          *bus.Bus
 	Store        Store
 	DryRun       bool
+	ForceApply   bool
 	NftablesPath string
 	NftCommand   string
 	// LocalCaptureIntents is the already-decided dynamic Mobility dataplane
@@ -40,6 +41,10 @@ func (c Controller) Reconcile(ctx context.Context) error {
 		return nil
 	}
 	backend := firewallbackend.ForPlatform(targetOS, c.NftCommand)
+	if nft, ok := backend.(firewallbackend.Nftables); ok {
+		nft.Force = c.ForceApply
+		backend = nft
+	}
 	ruleset, err := backend.Render(c.Router, c.NftablesPath, c.LocalCaptureIntents)
 	if err != nil {
 		_ = c.saveErrorStatuses(ctx, backend.Name(), c.NftablesPath, "RenderFailed", err)
