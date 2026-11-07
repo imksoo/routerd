@@ -21,10 +21,13 @@ import (
 	"github.com/imksoo/routerd/pkg/healthcheck"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/render"
+	"github.com/imksoo/routerd/pkg/resourcequery"
 	"github.com/imksoo/routerd/pkg/sysctlprofile"
 )
 
-type Engine struct{}
+type Engine struct {
+	Store resourcequery.Store
+}
 
 func New() *Engine {
 	return &Engine{}
@@ -1997,7 +2000,15 @@ func (e *Engine) observeIPv4Route(router *api.Router, res api.Resource, includeP
 	if includePlan {
 		rr.Plan = append(rr.Plan, "reconcile IPv4 route "+spec.Destination)
 	}
-	if platform.CurrentOS() != platform.OSLinux || spec.DeviceFrom.Resource != "" || spec.GatewayFrom.Resource != "" {
+	device := strings.TrimSpace(spec.Device)
+	if resolved := resourcequery.Value(e.Store, spec.DeviceFrom); resolved != "" {
+		device = resolved
+	}
+	gateway := strings.TrimSpace(spec.Gateway)
+	if resolved := resourcequery.Value(e.Store, spec.GatewayFrom); resolved != "" {
+		gateway = resolved
+	}
+	if platform.CurrentOS() != platform.OSLinux || (spec.DeviceFrom.Resource != "" && device == "") || (spec.GatewayFrom.Resource != "" && gateway == "") {
 		rr.Phase = "Unknown"
 		rr.Observed["reason"] = "RouteNotObserved"
 		return
@@ -2025,10 +2036,10 @@ func (e *Engine) observeIPv4Route(router *api.Router, res api.Resource, includeP
 		rr.Warnings = append(rr.Warnings, fmt.Sprintf("decode IPv4 route %s: %v", destination, err))
 		return
 	}
-	device := api.ResolveInterfaceIfName(router, strings.TrimSpace(spec.Device))
+	device = api.ResolveInterfaceIfName(router, device)
 	wantType := defaultString(spec.Type, "unicast")
 	for _, route := range routes {
-		if defaultString(route.Type, "unicast") != wantType || route.Device != device || route.Gateway != spec.Gateway || route.Metric != spec.Metric || (spec.PreferredSource != "" && route.Source != spec.PreferredSource) {
+		if defaultString(route.Type, "unicast") != wantType || route.Device != device || route.Gateway != gateway || route.Metric != spec.Metric || (spec.PreferredSource != "" && route.Source != spec.PreferredSource) {
 			continue
 		}
 		onLink := false

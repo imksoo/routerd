@@ -678,7 +678,9 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 		return nil, err
 	}
 	planRouter := dynamicRouters[0]
-	result, err := apply.New().PlanEffective(planRouter, router)
+	engine := apply.New()
+	engine.Store = stateStore
+	result, err := engine.PlanEffective(planRouter, router)
 	if err != nil {
 		return nil, err
 	}
@@ -761,7 +763,7 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 		return nil, err
 	}
 	planRouter = dynamicRouters[0]
-	result, err = apply.New().ObserveEffective(planRouter, router)
+	result, err = engine.ObserveEffective(planRouter, router)
 	if err != nil {
 		return nil, err
 	}
