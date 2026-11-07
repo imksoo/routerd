@@ -640,7 +640,10 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 					spec, ok := importKernelStaticIPv4Route(route, ifname)
 					key := importRouteKey(spec.Destination, spec.Gateway, spec.Metric, spec.GatewayOnLink)
 					if ok && staticRoutes[key] {
-						candidate, exists := existingRoutes[ifname+"|"+key]
+						candidate, exists := existingRoutes[resource.Metadata.Name+"|"+key]
+						if !exists {
+							candidate, exists = existingRoutes[ifname+"|"+key]
+						}
 						if exists {
 							candidate.Status = nil
 						} else {
