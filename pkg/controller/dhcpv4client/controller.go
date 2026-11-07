@@ -96,45 +96,49 @@ func (c Controller) cleanupRemoved(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	var failures []error
 	for _, status := range statuses {
 		if status.APIVersion != api.NetAPIVersion || status.Kind != "DHCPv4Client" || desired[status.Name] {
 			continue
 		}
-		next := make(map[string]any, len(status.Status))
-		for key, value := range status.Status {
-			next[key] = value
-		}
-		if err := c.removeLeaseRoute(ctx, status.Name, status.Status, next); err != nil {
-			return fmt.Errorf("remove DHCPv4Client/%s route: %w", status.Name, err)
-		}
-		sharedAddress, sharedDNS := false, false
-		for _, other := range statuses {
-			if other.APIVersion != api.NetAPIVersion || other.Kind != "DHCPv4Client" || !desired[other.Name] || mapString(other.Status, "ifname") != mapString(status.Status, "ifname") {
-				continue
+		err := func() error {
+			next := make(map[string]any, len(status.Status))
+			for key, value := range status.Status {
+				next[key] = value
 			}
-			expires, err := time.Parse(time.RFC3339Nano, mapString(other.Status, "expiresAt"))
-			phase := mapString(other.Status, "phase")
-			if err != nil || !time.Now().Before(expires) || (phase != daemonapi.ResourcePhaseBound && phase != daemonapi.ResourcePhaseRefreshing && phase != daemonapi.ResourcePhaseRebinding) {
-				continue
+			if err := c.removeLeaseRoute(ctx, status.Name, status.Status, next); err != nil {
+				return fmt.Errorf("remove DHCPv4Client/%s route: %w", status.Name, err)
 			}
-			sharedAddress = sharedAddress || (mapString(other.Status, "appliedAddress") != "" && mapString(other.Status, "appliedAddress") == mapString(status.Status, "appliedAddress"))
-			sharedDNS = sharedDNS || mapString(other.Status, "appliedDNSServers") != ""
-		}
-		if !sharedAddress {
-			if err := c.removeLeaseAddress(ctx, status.Status, next); err != nil {
-				return fmt.Errorf("remove DHCPv4Client/%s address: %w", status.Name, err)
+			sharedAddress, sharedDNS := false, false
+			for _, other := range statuses {
+				if other.APIVersion != api.NetAPIVersion || other.Kind != "DHCPv4Client" || !desired[other.Name] || mapString(other.Status, "ifname") != mapString(status.Status, "ifname") {
+					continue
+				}
+				expires, err := time.Parse(time.RFC3339Nano, mapString(other.Status, "expiresAt"))
+				phase := mapString(other.Status, "phase")
+				if err != nil || !time.Now().Before(expires) || (phase != daemonapi.ResourcePhaseBound && phase != daemonapi.ResourcePhaseRefreshing && phase != daemonapi.ResourcePhaseRebinding) {
+					continue
+				}
+				sharedAddress = sharedAddress || (mapString(other.Status, "appliedAddress") != "" && mapString(other.Status, "appliedAddress") == mapString(status.Status, "appliedAddress"))
+				sharedDNS = sharedDNS || mapString(other.Status, "appliedDNSServers") != ""
 			}
-		}
-		if !sharedDNS {
-			if err := c.restoreStaticDNS(ctx, status.Status, next); err != nil {
-				return fmt.Errorf("remove DHCPv4Client/%s DNS: %w", status.Name, err)
+			if !sharedAddress {
+				if err := c.removeLeaseAddress(ctx, status.Status, next); err != nil {
+					return fmt.Errorf("remove DHCPv4Client/%s address: %w", status.Name, err)
+				}
 			}
-		}
-		if err := deleter.DeleteObject(status.APIVersion, status.Kind, status.Name); err != nil {
-			return err
+			if !sharedDNS {
+				if err := c.restoreStaticDNS(ctx, status.Status, next); err != nil {
+					return fmt.Errorf("remove DHCPv4Client/%s DNS: %w", status.Name, err)
+				}
+			}
+			return deleter.DeleteObject(status.APIVersion, status.Kind, status.Name)
+		}()
+		if err != nil {
+			failures = append(failures, err)
 		}
 	}
-	return nil
+	return errors.Join(failures...)
 }
 
 func (c Controller) reconcile(ctx context.Context, name string) error {
