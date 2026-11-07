@@ -34,10 +34,6 @@ fi
   exit 1
 }
 
-# The same artifact contract is certified in the amd64 VM and the explicit
-# arm64/TCG job.  Keep the release target coupled to the guest provenance
-# asserted by freebsd-native-vm-smoke.sh, rather than assuming the runner's
-# architecture.
 case "${ROUTERD_FREEBSD_EXPECTED_ARCH:-x86_64}" in
 x86_64)
   release_arch=amd64
