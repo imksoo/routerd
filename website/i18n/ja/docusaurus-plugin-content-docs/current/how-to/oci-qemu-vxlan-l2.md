@@ -32,8 +32,6 @@ DHCPv6が透過します。
 
 本番`vmbr0`へ接続する前に、次の順序で確認します。
 
-1. disposable Linux hostで
-   `sudo tests/netns/vxlan-l2-control-plane-transparency.sh`を実行する。
 2. PVEとOCIのisolated bridge間で同じprotocolとMTUをpacket captureする。
 3. NW管理者から単一のguest IP/MACの予約を得る。
 4. routerd applianceが`br-l2`でDHCP、DNS、RA serviceを起動していないことを確認する。

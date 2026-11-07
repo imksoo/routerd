@@ -88,9 +88,3 @@ Rollback is fail closed: force either predicate away from its accepted value
 and verify link-down precedes FDB and link deletion. If status is `Blocked`,
 isolate the host and resolve ownership manually; routerd deliberately will not
 delete foreign kernel or networkd state.
-
-For a privileged Linux validation host, run
-`sudo -n bash tests/netns/vxlan-when-ha-active-standby.sh`. The harness invokes
-the production chain controller in four real iproute2 namespaces and checks
-dual-MASTER fencing, witness loss, failover, single-copy ARP/RA/ND/DHCPv6,
-stateful DHCPv4 DORA, and MAC-learning stability.

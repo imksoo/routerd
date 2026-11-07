@@ -120,8 +120,6 @@ ip -d link show vx-bridge1
 bridge fdb show dev vx-bridge1
 ping -M do -s 1342 <peer-overlay-host>        # 1370 - 20 IP - 8 ICMP
 
-# Disposable-host conformance test; it never joins a physical interface.
-sudo tests/netns/vxlan-l2-control-plane-transparency.sh
 ```
 
 `routerctl doctor --probe egress` is also useful when the underlay is itself a candidate egress (for example, when traffic to a remote office should ride the WireGuard underlay rather than the public default route).

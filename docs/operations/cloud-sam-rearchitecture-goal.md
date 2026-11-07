@@ -444,7 +444,7 @@ socket.
 
 The following remain prohibited during this audit, including against an
 otherwise pre-provisioned lab: `routerd serve`, `routerctl apply`, all
-`tests/netns` or `sudo` network commands, DHCP client/server tests, IPv6 RA
+network namespace tests or `sudo` network commands, DHCP client/server tests, IPv6 RA
 tests, `sam-e2e`, the full-topology profile, cloud/provider actions, and any
 test that probes host BGP/FIB/netlink state. An accidental read-only FIB probe
 is not verification evidence. A future host plan must be reviewed separately,

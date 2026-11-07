@@ -33,7 +33,7 @@ A plugin can take part in:
 - Host state observation
 - Host state application
 
-Operations that mutate network state should be split into testable units. As with the main code base, tests that touch real host networking should run inside isolated network namespaces (see `tests/netns`).
+Validate network behavior on the actual target and its peers as described in the [routerd 1.1 MVP](design/routerd11-mvp.md).
 
 ## MVP policy
 

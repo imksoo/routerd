@@ -87,10 +87,6 @@ marker.
 
 ## Safety gates
 
-- First run `sudo tests/netns/vxlan-l2-control-plane-transparency.sh` on a
-  disposable Linux host.
-- Next connect both appliances to isolated PVE/QEMU bridges and capture both
-  sides. Do not use `vmbr0` yet.
 - Reserve one guest IP and MAC with the network administrator before the final
   attachment to `vmbr0`.
 - The routerd appliances must not run DHCP, DNS, or RA services on `br-l2`.

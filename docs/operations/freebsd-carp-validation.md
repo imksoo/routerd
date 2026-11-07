@@ -1,7 +1,6 @@
 # FreeBSD CARP validation notes
 
-`tests/netns` is Linux-only, so CARP validation uses a FreeBSD VM or a VNET jail
-instead of Linux network namespaces.
+Validate CARP on the configured FreeBSD host and its real peer.
 
 Use a non-production interface and documentation-prefix addresses. Confirm the
 management interface is outside the test path before applying the config.

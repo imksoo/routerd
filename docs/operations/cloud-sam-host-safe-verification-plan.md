@@ -100,7 +100,7 @@ The following commands remain prohibited in this phase:
 
 - `routerd`, `routerctl apply`, `routerctl daemon`, or any apply/serve mode;
 - all DHCPv4/DHCPv6 client or server tests, all RA tests, and all
-  `tests/netns` targets;
+  network namespace tests;
 - `sudo`, `ip link/address/route` mutation, `sysctl -w`, nftables/pf changes,
   provider plugins, cloud actions, SSH to a lab, and real BGP/FIB probes;
 - `make test`, `go test ./...`, or any unreviewed selector.

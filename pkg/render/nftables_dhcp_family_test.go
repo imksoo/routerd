@@ -9,7 +9,7 @@ import (
 )
 
 // The generated firewall must isolate local DHCPv4 delivery without disabling
-// DHCPv6/RA in dnsmasq. Actual packet exchange is checked under tests/netns.
+// DHCPv6/RA in dnsmasq.
 func TestNftablesIPv6OnlyDHCPListener(t *testing.T) {
 	for _, tc := range []struct {
 		name                                            string
