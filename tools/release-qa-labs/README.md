@@ -62,12 +62,9 @@ and one client per site (14 guests total), not two clients per edge pair.
 Its exact saved-plan counts and VM dimensions are admission rules, not
 permissive upper bounds. Historical two-client evidence is retained separately.
 
-The QA coordinator never starts `routerd`, including sandbox mode.
 Generated-config validation copies the artifact and inputs over the
-QGA-pinned guest SSH path and runs the sandbox process only as an unprivileged
-process on a disposable PVE client. That sandbox has every network mutator,
-DHCP/DHCPv6/RA emitter, BGP component, and service-manager action in dry-run
-mode; it is not a system service and it is removed before deployment starts.
+QGA-pinned guest SSH path and runs `routerd validate` on the selected PVE
+client. Validation reads the configuration without applying it.
 
 Release artifact inspection on the coordinator must also avoid executing
 `routerd --version`. Use `readelf` and `go version -m` to inspect static linking,
