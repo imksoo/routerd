@@ -55,6 +55,7 @@ After this resource is applied, queries for `nas.lan.example.org` and `<dhcp-cli
 
 ## Notes
 
+- A zone-only refresh keeps admitted upstream queries alive until they finish within their existing request deadlines. If the reload is canceled while waiting, the current serving configuration remains active. Listener or forwarding configuration changes still retire the previous query owner.
 - Different static hostnames may share an IPv4 or IPv6 address. All declared names retain their A / AAAA answers; the first static name declared for each address supplies its PTR answer. DHCP-derived names do not replace these static answers.
 - Choose a domain you control or one that is reserved for internal use (`example.org`, `home.arpa`, etc.). Do not invent suffixes that collide with the public DNS namespace (such as `.lan`).
 - If you keep DNSSEC enabled (`dnssec.enabled: true`), upstream DNSSEC validation continues to work for external queries; the local zone is unsigned by design.

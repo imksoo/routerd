@@ -1016,11 +1016,26 @@ func (d *daemon) reloadConfig(ctx context.Context, expectedDigest string) (reloa
 
 	d.stateMu.RLock()
 	oldZones := d.zones
+	previousConfig := d.config
 	oldListeners := d.listeners
 	oldSourceCancel := d.sourceCancel
 	oldSources := append([]runtimeSource(nil), d.sources...)
 	d.stateMu.RUnlock()
 	zones.CopyDynamicFrom(oldZones)
+	// Lease and local-zone refreshes do not change forwarding authority.
+	// Drain admitted queries before retiring that otherwise unchanged owner.
+	previousConfig.Zones = nil
+	forwardConfig := config
+	forwardConfig.Zones = nil
+	previousDigest, err := previousConfig.Digest()
+	if err != nil {
+		return reloadSummary{}, err
+	}
+	forwardDigest, err := forwardConfig.Digest()
+	if err != nil {
+		return reloadSummary{}, err
+	}
+	zoneRefresh := previousDigest == forwardDigest
 
 	desired := listenAddressSet(config.Spec.Listen)
 	var additions = map[string]struct{}{}
@@ -1086,6 +1101,19 @@ func (d *daemon) reloadConfig(ctx context.Context, expectedDigest string) (reloa
 		shutdownBoundListeners(newListeners)
 		return reloadSummary{}, err
 	}
+	if zoneRefresh {
+		// Requests have their own finite deadlines. Respect reload cancellation
+		// while waiting, leaving the current owner intact if staging expires.
+		for !d.queryMu.TryLock() {
+			select {
+			case <-ctx.Done():
+				shutdownBoundListeners(newListeners)
+				return reloadSummary{}, ctx.Err()
+			case <-time.After(10 * time.Millisecond):
+			}
+		}
+		defer d.queryMu.Unlock()
+	}
 	if oldSourceCancel != nil {
 		oldSourceCancel()
 	}
@@ -1093,9 +1121,11 @@ func (d *daemon) reloadConfig(ctx context.Context, expectedDigest string) (reloa
 	// Stop removed listeners before taking the query writer lock: Shutdown
 	// joins their handlers, including ones waiting for query admission.
 	shutdownBoundListeners(removals)
-	d.queryMu.Lock()
+	if !zoneRefresh {
+		d.queryMu.Lock()
+		defer d.queryMu.Unlock()
+	}
 	if err := ctx.Err(); err != nil {
-		d.queryMu.Unlock()
 		shutdownBoundListeners(newListeners)
 		d.stateMu.Lock()
 		d.configDigest = ""
@@ -1106,7 +1136,6 @@ func (d *daemon) reloadConfig(ctx context.Context, expectedDigest string) (reloa
 		d.setState(daemonapi.PhaseBlocked, daemonapi.HealthFailed)
 		return reloadSummary{}, err
 	}
-	defer d.queryMu.Unlock()
 	sourceCtx, sourceCancel := context.WithCancel(ctx)
 	d.stateMu.Lock()
 	d.queryLogMu.Lock()

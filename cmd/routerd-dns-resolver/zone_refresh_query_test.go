@@ -3,6 +3,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"path/filepath"
@@ -10,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/imksoo/routerd/pkg/dnsresolver"
 	"github.com/miekg/dns"
 )
 
@@ -30,6 +33,7 @@ func TestZoneRefreshPreservesUnchangedForwardQuery(t *testing.T) {
 		failoverWriteDNS(t, w, failoverSuccessfulReply(query))
 	})
 	config := testForwardConfig("forward", upstream.URL+"/dns-query")
+	config.Spec = dnsresolver.NormalizeSpec(config.Spec)
 	config.Zones = testResolverConfig(nil).Zones
 	path := filepath.Join(t.TempDir(), "resolver.json")
 	d := newTestDaemon(t, path, config, true)
@@ -77,4 +81,25 @@ func TestZoneRefreshPreservesUnchangedForwardQuery(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("zone refresh did not finish")
 	}
+}
+
+func TestZoneRefreshCanceledDrainKeepsCurrentOwner(t *testing.T) {
+	config := testResolverConfig(nil)
+	config.Spec = dnsresolver.NormalizeSpec(config.Spec)
+	path := filepath.Join(t.TempDir(), "resolver.json")
+	d := newTestDaemon(t, path, config, true)
+	owner := d.sourceCtx
+	config.Zones[0].Spec.Records[0].IPv4 = "192.0.2.2"
+	writeRuntimeConfig(t, path, config)
+	d.queryMu.RLock()
+	defer d.queryMu.RUnlock()
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	if _, err := d.reload(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("reload ignored canceled drain: %v", err)
+	}
+	if owner.Err() != nil || d.sourceCtx != owner {
+		t.Fatal("canceled staging retired the serving owner")
+	}
+	assertZoneARecord(t, d.zones, "router.lab.example.", "192.0.2.1")
 }
