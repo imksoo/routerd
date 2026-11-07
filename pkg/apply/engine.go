@@ -51,7 +51,7 @@ func (e *Engine) ObserveEffective(effective, declared *api.Router) (*Result, err
 	if err := e.Validate(declared); err != nil {
 		return nil, err
 	}
-	return e.evaluate(effective, false)
+	return e.evaluate(effective, declared, false)
 }
 
 // PlanEffective validates the complete declared router graph and evaluates
@@ -62,10 +62,11 @@ func (e *Engine) PlanEffective(effective, declared *api.Router) (*Result, error)
 	if err := e.Validate(declared); err != nil {
 		return nil, err
 	}
-	return e.evaluate(effective, true)
+	return e.evaluate(effective, declared, true)
 }
 
-func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error) {
+func (e *Engine) evaluate(router, declared *api.Router, includePlan bool) (*Result, error) {
+	inactiveTunnels := inactiveDSLiteInterfaces(router, declared)
 	aliases := interfaceAliases(router)
 	kinds := resourceKinds(router)
 	osNet := e.detectOSNetworking()
@@ -102,7 +103,7 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 		case "WebConsole":
 			e.observeWebConsole(res, includePlan, &rr)
 		case "Interface":
-			e.observeInterface(res, policies[res.Metadata.Name], observedV4ByInterface[res.Metadata.Name], includePlan, &rr)
+			e.observeInterface(res, policies[res.Metadata.Name], observedV4ByInterface[res.Metadata.Name], inactiveTunnels, includePlan, &rr)
 		case "Bridge":
 			e.observeBridge(res, aliases, includePlan, &rr)
 		case "PPPoESession":
@@ -1616,7 +1617,26 @@ func (e *Engine) observeNetworkAdoption(res api.Resource, aliases map[string]str
 	}
 }
 
-func (e *Engine) observeInterface(res api.Resource, policy interfacePolicy, observedV4 []ipv4Assignment, includePlan bool, rr *ResourceResult) {
+func inactiveDSLiteInterfaces(effective, declared *api.Router) map[string]bool {
+	active := map[string]bool{}
+	for _, res := range effective.Spec.Resources {
+		if res.Kind == "DSLiteTunnel" {
+			active[defaultString(stringSpec(res, "tunnelName"), res.Metadata.Name)] = true
+		}
+	}
+	inactive := map[string]bool{}
+	for _, res := range declared.Spec.Resources {
+		if res.Kind == "DSLiteTunnel" {
+			name := defaultString(stringSpec(res, "tunnelName"), res.Metadata.Name)
+			if !active[name] {
+				inactive[name] = true
+			}
+		}
+	}
+	return inactive
+}
+
+func (e *Engine) observeInterface(res api.Resource, policy interfacePolicy, observedV4 []ipv4Assignment, inactiveTunnels map[string]bool, includePlan bool, rr *ResourceResult) {
 	rr.Observed["ifname"] = policy.IfName
 	rr.Observed["managed"] = fmt.Sprintf("%t", policy.Managed)
 	rr.Observed["owner"] = policy.Owner
@@ -1626,7 +1646,11 @@ func (e *Engine) observeInterface(res api.Resource, policy interfacePolicy, obse
 		rr.Observed["up"] = fmt.Sprintf("%t", up)
 	} else {
 		rr.Observed["exists"] = "false"
-		rr.Phase = "Drifted"
+		if !policy.Managed && inactiveTunnels[policy.IfName] {
+			rr.Phase = "Disabled"
+		} else {
+			rr.Phase = "Drifted"
+		}
 	}
 
 	if policy.OS.CloudInit {
