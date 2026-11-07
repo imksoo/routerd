@@ -32,18 +32,14 @@ type Outbox struct {
 	group      string
 	nodeName   string
 	interval   time.Duration
-	now        func() time.Time
 	metrics    *Metrics
 
 	maxConcurrentPeerDrains int
 }
 
-// NewOutbox builds an Outbox. now may be nil to use time.Now. interval <= 0
+// NewOutbox builds an Outbox. interval <= 0
 // falls back to DefaultPushInterval.
-func NewOutbox(events EventStore, deliveries DeliveryStore, pusher *Pusher, group, nodeName string, interval time.Duration, now func() time.Time) *Outbox {
-	if now == nil {
-		now = time.Now
-	}
+func NewOutbox(events EventStore, deliveries DeliveryStore, pusher *Pusher, group, nodeName string, interval time.Duration) *Outbox {
 	if interval <= 0 {
 		interval = DefaultPushInterval
 	}
@@ -54,7 +50,6 @@ func NewOutbox(events EventStore, deliveries DeliveryStore, pusher *Pusher, grou
 		group:                   group,
 		nodeName:                nodeName,
 		interval:                interval,
-		now:                     now,
 		maxConcurrentPeerDrains: DefaultMaxConcurrentPeerDrains,
 	}
 }
@@ -86,9 +81,9 @@ func (o *Outbox) Run(ctx context.Context, onError func(error)) {
 // drains are isolated from one another and bounded, but events for one peer
 // remain sequential in the store's observed-at order.
 func (o *Outbox) RunOnce(ctx context.Context) error {
-	start := o.now()
+	start := time.Now()
 	err := o.runOnceInner(ctx)
-	elapsed := o.now().Sub(start).Seconds()
+	elapsed := time.Now().Sub(start).Seconds()
 	o.metrics.RecordOutboxTick(ctx, o.group)
 	o.metrics.RecordOutboxTickDuration(ctx, o.group, elapsed)
 	if err != nil {
@@ -98,7 +93,7 @@ func (o *Outbox) RunOnce(ctx context.Context) error {
 }
 
 func (o *Outbox) runOnceInner(ctx context.Context) error {
-	records, err := o.events.ListFederationEvents(o.group, false, o.now().Unix())
+	records, err := o.events.ListFederationEvents(o.group, false, time.Now().Unix())
 	if err != nil {
 		return err
 	}

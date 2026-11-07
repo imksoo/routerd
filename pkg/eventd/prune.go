@@ -14,16 +14,12 @@ type Pruner struct {
 	group     string
 	retention Retention
 	interval  time.Duration
-	now       func() time.Time
 	metrics   *Metrics
 }
 
-// NewPruner builds a Pruner. now may be nil to use time.Now. interval <= 0 falls
+// NewPruner builds a Pruner. interval <= 0 falls
 // back to DefaultPruneInterval.
-func NewPruner(store EventStore, group string, retention Retention, interval time.Duration, now func() time.Time) *Pruner {
-	if now == nil {
-		now = time.Now
-	}
+func NewPruner(store EventStore, group string, retention Retention, interval time.Duration) *Pruner {
 	if interval <= 0 {
 		interval = DefaultPruneInterval
 	}
@@ -32,7 +28,6 @@ func NewPruner(store EventStore, group string, retention Retention, interval tim
 		group:     group,
 		retention: retention,
 		interval:  interval,
-		now:       now,
 	}
 }
 
@@ -40,7 +35,7 @@ func (p *Pruner) SetMetrics(m *Metrics) { p.metrics = m }
 
 // PruneOnce runs a single retention pass and returns rows deleted.
 func (p *Pruner) PruneOnce(ctx context.Context) (int64, error) {
-	pruned, err := p.store.PruneFederationEvents(p.group, p.retention.MaxAge, p.retention.MaxEvents, p.now())
+	pruned, err := p.store.PruneFederationEvents(p.group, p.retention.MaxAge, p.retention.MaxEvents, time.Now())
 	p.metrics.RecordPrunerTick(ctx, p.group)
 	if err != nil {
 		p.metrics.RecordPrunerTickError(ctx, p.group)

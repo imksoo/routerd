@@ -24,15 +24,13 @@ const (
 const maxBodyBytes = 1 << 20
 
 // Receiver is the HTTP handler that accepts signed federation events from peers
-// and persists them idempotently. It is mountable on any http.ServeMux and so
-// is exercisable via httptest without a real socket.
+// and persists them idempotently.
 type Receiver struct {
 	store        EventStore
 	secret       []byte
 	group        string
 	node         string
 	replayWindow time.Duration
-	now          func() time.Time
 	metrics      *Metrics
 
 	received  atomic.Uint64
@@ -40,18 +38,14 @@ type Receiver struct {
 	duplicate atomic.Uint64
 }
 
-// NewReceiver builds a Receiver. now may be nil to use time.Now.
-func NewReceiver(store EventStore, secret []byte, group, node string, replayWindow time.Duration, now func() time.Time) *Receiver {
-	if now == nil {
-		now = time.Now
-	}
+// NewReceiver builds a Receiver.
+func NewReceiver(store EventStore, secret []byte, group, node string, replayWindow time.Duration) *Receiver {
 	return &Receiver{
 		store:        store,
 		secret:       secret,
 		group:        group,
 		node:         node,
 		replayWindow: replayWindow,
-		now:          now,
 	}
 }
 
@@ -92,7 +86,7 @@ func (r *Receiver) handleEvents(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, "bad timestamp", http.StatusBadRequest)
 		return
 	}
-	if err := federation.Verify(r.secret, ts, body, sig, r.now(), r.replayWindow); err != nil {
+	if err := federation.Verify(r.secret, ts, body, sig, time.Now(), r.replayWindow); err != nil {
 		r.rejected.Add(1)
 		switch err {
 		case federation.ErrStaleTimestamp:
@@ -121,7 +115,7 @@ func (r *Receiver) handleEvents(w http.ResponseWriter, req *http.Request) {
 
 	// Idempotency: a duplicate ID is a no-op insert, so detect duplicates for
 	// the metric/log without breaking the at-least-once 200 contract.
-	existing, _ := r.store.ListFederationEvents(ev.Group, true, r.now().Unix())
+	existing, _ := r.store.ListFederationEvents(ev.Group, true, time.Now().Unix())
 	dup := false
 	for _, e := range existing {
 		if e.ID == ev.ID {
@@ -184,7 +178,7 @@ func (r *Receiver) handleStatus(w http.ResponseWriter, _ *http.Request) {
 
 // Status returns a snapshot of receiver counters and the stored event count.
 func (r *Receiver) Status() Status {
-	stored, _ := r.store.ListFederationEvents(r.group, true, r.now().Unix())
+	stored, _ := r.store.ListFederationEvents(r.group, true, time.Now().Unix())
 	return Status{
 		Node:            r.node,
 		Group:           r.group,
