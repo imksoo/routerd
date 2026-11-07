@@ -1700,6 +1700,9 @@ run_configure()
             return 0
         fi
     fi
+    if [ -x "${routerd_bin}" ] && ! "${routerd_bin}" validate --config "${candidate}"; then
+        return 1
+    fi
     if [ -f "${final_config}" ]; then
         backup_config_one_generation "${final_config}"
     fi
@@ -1711,9 +1714,6 @@ run_configure()
         echo "routerd binary not found at ${routerd_bin}; skipping preflight/apply" >&2
         completed=1
         return 0
-    fi
-    if ! "${routerd_bin}" validate --config "${final_config}"; then
-        return 1
     fi
     if [ "${configure_apply}" -eq 1 ]; then
         "${routerd_bin}" serve --config "${final_config}" --once
