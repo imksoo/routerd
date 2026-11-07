@@ -305,34 +305,6 @@ func addManagedDelegatedIPv6Target(targets delegatedIPv6Targets, ifname, prefix,
 	return nil
 }
 
-func cleanupStaleDelegatedIPv6Addresses(router *api.Router, store routerstate.Store) ([]string, error) {
-	targets, err := managedDelegatedIPv6Targets(router, store)
-	if err != nil {
-		return nil, err
-	}
-	var removed []string
-	for ifname, suffixes := range targets.SuffixesByInterface {
-		desired := targets.DesiredByInterface[ifname]
-		for _, entry := range ipv6AddressEntries(ifname) {
-			addr, err := netip.ParseAddr(entry.Address)
-			if err != nil || !addr.Is6() || addr.IsLinkLocalUnicast() {
-				continue
-			}
-			if desired[addr.String()] {
-				continue
-			}
-			if !suffixes[ipv6HostSuffix64(addr)] {
-				continue
-			}
-			if err := deleteIPv6LocalAddress(ifname, entry.Address, entry.PrefixLen); err != nil {
-				return removed, err
-			}
-			removed = append(removed, ifname+":"+entry.Address)
-		}
-	}
-	return removed, nil
-}
-
 func ipv6DelegatedAddressSpecs(router *api.Router) (map[string]api.IPv6DelegatedAddressSpec, error) {
 	delegated := map[string]api.IPv6DelegatedAddressSpec{}
 	for _, res := range router.Spec.Resources {
@@ -497,10 +469,6 @@ func deleteDSLiteTunnel(name string) error {
 		return exec.Command("ifconfig", name, "destroy").Run()
 	}
 	return exec.Command("ip", "-6", "tunnel", "del", name).Run()
-}
-
-func dsliteLocalAddress(spec api.DSLiteTunnelSpec, ifname string, aliases map[string]string, delegated map[string]api.IPv6DelegatedAddressSpec) (string, string, error) {
-	return dsliteLocalAddressWithPrefixes(spec, ifname, aliases, delegated, nil)
 }
 
 func dsliteLocalAddressWithPrefixes(spec api.DSLiteTunnelSpec, ifname string, aliases map[string]string, delegated map[string]api.IPv6DelegatedAddressSpec, pdPrefixes map[string]string) (string, string, error) {
