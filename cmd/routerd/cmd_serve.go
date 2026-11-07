@@ -137,7 +137,6 @@ func publishControllerModeEvents(ctx context.Context, b *bus.Bus, controllers []
 	}
 }
 
-var cleanupLedgerOwnedOrphansForServe = cleanupLedgerOwnedOrphans
 var ensureLoopbackUpForServe = ensureLoopbackUp
 
 func ensureLoopbackUp() error {
@@ -147,8 +146,8 @@ func ensureLoopbackUp() error {
 	return exec.Command("ip", "link", "set", "lo", "up").Run()
 }
 
-func cleanupServeLedgerOwnedOrphans(router *api.Router, ledgerPath string, logger *eventlog.Logger) ([]string, error) {
-	removed, err := cleanupLedgerOwnedOrphansForServe(router, ledgerPath)
+func cleanupServeLedgerOwnedOrphans(effective, declared *api.Router, ledgerPath string, logger *eventlog.Logger) ([]string, error) {
+	removed, err := cleanupLedgerOwnedOrphansEffective(effective, declared, ledgerPath)
 	if err != nil {
 		if logger != nil {
 			logger.Emit(eventlog.LevelWarning, "serve", "ledger orphan cleanup encountered an error", map[string]string{"error": err.Error()})
@@ -565,7 +564,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		if dynamicErr != nil {
 			logger.Emit(eventlog.LevelWarning, "serve", "could not derive dynamic configuration for orphan cleanup", map[string]string{"error": dynamicErr.Error()})
 		} else {
-			_, _ = cleanupServeLedgerOwnedOrphans(dynamicRouters[0], *ledgerPath, logger)
+			_, _ = cleanupServeLedgerOwnedOrphans(dynamicRouters[0], router, *ledgerPath, logger)
 		}
 	}
 	engine := apply.New()

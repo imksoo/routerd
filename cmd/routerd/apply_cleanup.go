@@ -125,10 +125,10 @@ func appendUniqueOrphans(existing, additions []apply.OrphanedArtifact) []apply.O
 }
 
 func cleanupLedgerOwnedOrphans(router *api.Router, ledgerPath string) ([]string, error) {
-	return cleanupLedgerOwnedOrphansMatching(router, ledgerPath, func(resource.Artifact) bool { return true })
+	return cleanupLedgerOwnedOrphansEffective(router, router, ledgerPath)
 }
 
-func cleanupLedgerOwnedOrphansMatching(router *api.Router, ledgerPath string, match func(resource.Artifact) bool) ([]string, error) {
+func cleanupLedgerOwnedOrphansEffective(effective, declared *api.Router, ledgerPath string) ([]string, error) {
 	if ledgerPath == "" {
 		return nil, nil
 	}
@@ -138,7 +138,7 @@ func cleanupLedgerOwnedOrphansMatching(router *api.Router, ledgerPath string, ma
 	}
 	defer func() { _ = ledger.Close() }()
 	engine := apply.New()
-	plan, err := engine.LedgerOwnedOrphanPlan(router, ledger)
+	plan, err := engine.LedgerOwnedOrphanPlanEffective(effective, declared, ledger)
 	if err != nil {
 		return nil, err
 	}
@@ -149,9 +149,6 @@ func cleanupLedgerOwnedOrphansMatching(router *api.Router, ledgerPath string, ma
 			continue
 		}
 		artifact := action.Artifact
-		if match != nil && !match(artifact) {
-			continue
-		}
 		label, err := cleanupLedgerOwnedArtifact(artifact)
 		if err != nil {
 			return removed, err
