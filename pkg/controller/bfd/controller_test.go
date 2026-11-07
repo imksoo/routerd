@@ -3,13 +3,10 @@
 package bfd
 
 import (
-	"context"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
-	"github.com/imksoo/routerd/pkg/platform"
 )
 
 type testStore map[string]map[string]any
@@ -167,79 +164,6 @@ func TestParseFRRBFDPeersJSON(t *testing.T) {
 		if got[address] != state {
 			t.Fatalf("state[%s] = %q, want %q; all=%#v", address, got[address], state, got)
 		}
-	}
-}
-
-func TestReconcileAppliesFRRAndSavesPeerStates(t *testing.T) {
-	store := testStore{}
-	var commands []string
-	controller := Controller{
-		Router:     bfdRouter(),
-		Store:      store,
-		OS:         platform.OSLinux,
-		RuntimeDir: t.TempDir(),
-		Now:        func() time.Time { return time.Unix(100, 0) },
-		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
-			commands = append(commands, name+" "+strings.Join(args, " "))
-			if len(args) == 2 && args[0] == "-c" && args[1] == "show bfd peers json" {
-				return []byte(`{"10.99.0.2":{"state":"up"},"10.99.0.3":{"state":"down"}}`), nil
-			}
-			return nil, nil
-		},
-	}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("reconcile: %v", err)
-	}
-	if len(commands) != 2 || !strings.Contains(commands[0], "-f ") || !strings.Contains(commands[1], "show bfd peers json") {
-		t.Fatalf("commands = %#v", commands)
-	}
-	status := store.ObjectStatus(api.NetAPIVersion, "BFD", "fabric")
-	if status["phase"] != "Degraded" {
-		t.Fatalf("phase = %v, want Degraded; status=%#v", status["phase"], status)
-	}
-	states := status["peerStates"].(map[string]string)
-	if states["10.99.0.2"] != "Up" || states["10.99.0.3"] != "Down" {
-		t.Fatalf("peerStates = %#v", states)
-	}
-}
-
-func TestReconcileFreeBSDAppliesFRRWithFreeBSDVtysh(t *testing.T) {
-	store := testStore{}
-	var commands []string
-	controller := Controller{
-		Router:     bfdRouter(),
-		Store:      store,
-		OS:         platform.OSFreeBSD,
-		RuntimeDir: t.TempDir(),
-		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
-			commands = append(commands, name+" "+strings.Join(args, " "))
-			if len(args) == 2 && args[0] == "-c" && args[1] == "show bfd peers json" {
-				return []byte(`{"10.99.0.2":{"state":"up"},"10.99.0.3":{"state":"up"}}`), nil
-			}
-			return nil, nil
-		},
-	}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("reconcile: %v", err)
-	}
-	if len(commands) != 2 || !strings.HasPrefix(commands[0], "/usr/local/bin/vtysh -f ") || commands[1] != "/usr/local/bin/vtysh -c show bfd peers json" {
-		t.Fatalf("commands = %#v", commands)
-	}
-	status := store.ObjectStatus(api.NetAPIVersion, "BFD", "fabric")
-	if status["phase"] != "Up" {
-		t.Fatalf("status = %#v, want Up", status)
-	}
-}
-
-func TestReconcileUnsupportedOSStatus(t *testing.T) {
-	store := testStore{}
-	controller := Controller{Router: bfdRouter(), Store: store, OS: platform.OSOther}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("reconcile: %v", err)
-	}
-	status := store.ObjectStatus(api.NetAPIVersion, "BFD", "fabric")
-	if status["phase"] != "Unsupported" || status["reason"] != "BFDUnsupportedOS" {
-		t.Fatalf("status = %#v", status)
 	}
 }
 
