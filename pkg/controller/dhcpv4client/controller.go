@@ -23,6 +23,7 @@ import (
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/platform"
+	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 const (
@@ -64,8 +65,74 @@ func (c Controller) ReconcileAll(ctx context.Context) error {
 			}
 		}
 	}
+	if err := c.cleanupRemoved(ctx); err != nil {
+		errs = append(errs, err.Error())
+	}
 	if len(errs) > 0 {
 		return errors.New(strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+func (c Controller) cleanupRemoved(ctx context.Context) error {
+	if c.DryRun || c.Store == nil {
+		return nil
+	}
+	lister, ok := c.Store.(routerstate.ObjectStatusLister)
+	if !ok {
+		return nil
+	}
+	deleter, ok := c.Store.(routerstate.ObjectDeleteStore)
+	if !ok {
+		return nil
+	}
+	desired := map[string]bool{}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.Kind == "DHCPv4Client" {
+			desired[resource.Metadata.Name] = true
+		}
+	}
+	statuses, err := lister.ListObjectStatuses()
+	if err != nil {
+		return err
+	}
+	for _, status := range statuses {
+		if status.APIVersion != api.NetAPIVersion || status.Kind != "DHCPv4Client" || desired[status.Name] {
+			continue
+		}
+		next := make(map[string]any, len(status.Status))
+		for key, value := range status.Status {
+			next[key] = value
+		}
+		if err := c.removeLeaseRoute(ctx, status.Name, status.Status, next); err != nil {
+			return fmt.Errorf("remove DHCPv4Client/%s route: %w", status.Name, err)
+		}
+		sharedAddress, sharedDNS := false, false
+		for _, other := range statuses {
+			if other.APIVersion != api.NetAPIVersion || other.Kind != "DHCPv4Client" || !desired[other.Name] || mapString(other.Status, "ifname") != mapString(status.Status, "ifname") {
+				continue
+			}
+			expires, err := time.Parse(time.RFC3339Nano, mapString(other.Status, "expiresAt"))
+			phase := mapString(other.Status, "phase")
+			if err != nil || !time.Now().Before(expires) || (phase != daemonapi.ResourcePhaseBound && phase != daemonapi.ResourcePhaseRefreshing && phase != daemonapi.ResourcePhaseRebinding) {
+				continue
+			}
+			sharedAddress = sharedAddress || (mapString(other.Status, "appliedAddress") != "" && mapString(other.Status, "appliedAddress") == mapString(status.Status, "appliedAddress"))
+			sharedDNS = sharedDNS || mapString(other.Status, "appliedDNSServers") != ""
+		}
+		if !sharedAddress {
+			if err := c.removeLeaseAddress(ctx, status.Status, next); err != nil {
+				return fmt.Errorf("remove DHCPv4Client/%s address: %w", status.Name, err)
+			}
+		}
+		if !sharedDNS {
+			if err := c.restoreStaticDNS(ctx, status.Status, next); err != nil {
+				return fmt.Errorf("remove DHCPv4Client/%s DNS: %w", status.Name, err)
+			}
+		}
+		if err := deleter.DeleteObject(status.APIVersion, status.Kind, status.Name); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -333,8 +400,8 @@ func (c Controller) removeLeaseRoute(ctx context.Context, name string, current, 
 	if gateway == "" || ifname == "" {
 		return nil
 	}
-	spec, _, ok, err := c.leaseSpecAndIfName(name)
-	if err != nil || !ok {
+	spec, _, _, err := c.leaseSpecAndIfName(name)
+	if err != nil {
 		return err
 	}
 	metric := spec.RouteMetric
