@@ -157,7 +157,7 @@ func packageFeatures(router *api.Router) map[string]bool {
 			features["wireguard"] = true
 			features["kmod"] = true
 			features["nft"] = true
-		case "TunnelInterface":
+		case "TunnelInterface", "SAMTransportProfile":
 			features["base"] = true
 			features["kmod"] = true
 		case "IPsecConnection":
