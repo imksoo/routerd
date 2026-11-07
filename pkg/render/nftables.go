@@ -2689,6 +2689,12 @@ func nftIPv4Matches(resourceID string, spec nftIPv4MatchSpec, addressSets map[st
 	if err != nil {
 		return nil, err
 	}
+	for _, cidr := range spec.ExcludeDestinationCIDRs {
+		prefix, _ := netip.ParsePrefix(cidr) // validated above
+		if prefix.Bits() == 0 {
+			return nil, nil
+		}
+	}
 	var matches []string
 	for _, source := range sources {
 		for _, destination := range destinations {
