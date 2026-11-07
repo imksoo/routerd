@@ -343,7 +343,6 @@ fake harness は、正確な引数契約、PVE RR の host fault domain と capt
 
 ```sh
 make cloudedge-representative-redundancy-offline-test
-make cloudedge-pve-bridge-audit-offline-test
 shellcheck -x tests/e2e/cloudedge/scripts/sam-e2e.sh \
   tests/e2e/cloudedge/scripts/sam-representative-redundancy.sh \
   tests/e2e/cloudedge/scripts/sam-representative-redundancy-offline-test.sh
