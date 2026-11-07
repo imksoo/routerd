@@ -1651,6 +1651,13 @@ func (r *Runner) Start(ctx context.Context) error {
 		if resource.Kind != "DHCPv6PrefixDelegation" {
 			continue
 		}
+		spec, err := resource.DHCPv6PrefixDelegationSpec()
+		if err != nil {
+			return err
+		}
+		if api.EffectiveIPv6PDClient(string(platform.CurrentOS()), spec.Profile, spec.Client) != api.IPv6PDClientRouterd {
+			continue
+		}
 		name := resource.Metadata.Name
 		socket := r.Opts.DaemonSockets[name]
 		if socket == "" {
@@ -3001,7 +3008,7 @@ func (r *Runner) clientDaemonSpecs(router *api.Router) []supervisedDaemonSpec {
 		switch resource.Kind {
 		case "DHCPv6PrefixDelegation":
 			spec, err := resource.DHCPv6PrefixDelegationSpec()
-			if err != nil {
+			if err != nil || api.EffectiveIPv6PDClient(string(platform.CurrentOS()), spec.Profile, spec.Client) != api.IPv6PDClientRouterd {
 				continue
 			}
 			ifname := interfaceIfName(router, spec.Interface)

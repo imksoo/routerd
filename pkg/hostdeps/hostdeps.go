@@ -693,7 +693,7 @@ func NetworkAdoptions(router *api.Router) []NetworkAdoptionResource {
 				}
 			}
 		case "DHCPv6PrefixDelegation":
-			if spec, err := res.DHCPv6PrefixDelegationSpec(); err == nil {
+			if spec, err := res.DHCPv6PrefixDelegationSpec(); err == nil && spec.Client != api.IPv6PDClientNetworkd {
 				if item := ensure(spec.Interface); item != nil {
 					item.disableDHCPv4 = true
 					item.disableDHCPv6 = true
