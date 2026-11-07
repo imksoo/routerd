@@ -9,6 +9,8 @@ import sys
 
 ROOT = Path(__file__).resolve().parent.parent
 FRAMEWORK = ROOT / 'tools/release-qa-labs'
+
+
 def require(ok, message):
     if not ok:
         raise ValueError(message)
@@ -110,22 +112,21 @@ def validate_preparation_inputs(contract):
     return counts
 
 
-def check(contract=None):
-    inputs = validate_preparation_inputs(contract) if contract is not None else None
+def check(contract):
+    inputs = validate_preparation_inputs(contract)
     return {'status': 'pass', 'offlineOnly': True, 'preparation': inputs}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--contract', type=Path)
+    parser.add_argument('--contract', type=Path, required=True)
     parser.add_argument('--out', type=Path)
     args = parser.parse_args()
     try:
-        raw = args.contract.read_bytes() if args.contract else None
-        report = check(json.loads(raw) if raw is not None else None)
-        if args.contract:
-            require(raw == args.contract.read_bytes(), 'contract changed during offline preflight')
-            report['contractSha256'] = hashlib.sha256(raw).hexdigest()
+        raw = args.contract.read_bytes()
+        report = check(json.loads(raw))
+        require(raw == args.contract.read_bytes(), 'contract changed during offline preflight')
+        report['contractSha256'] = hashlib.sha256(raw).hexdigest()
     except (OSError, ValueError) as exc:
         if args.out:
             args.out.parent.mkdir(parents=True, exist_ok=True)
