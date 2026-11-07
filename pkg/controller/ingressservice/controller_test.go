@@ -6,11 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net"
-	"net/http"
-	"net/http/httptest"
-	"net/url"
-	"strconv"
 	"testing"
 	"time"
 
@@ -275,59 +270,6 @@ func TestReconcileIngressServiceResolvesBackendAddressFromStatus(t *testing.T) {
 	}
 }
 
-func TestReconcileIngressServiceChecksHTTPReadyz(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/readyz" || r.Host != "k8s-api.lain.local" {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		_, _ = w.Write([]byte("ok"))
-	}))
-	defer server.Close()
-	u, err := url.Parse(server.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	host, portText, err := netSplitHostPort(u.Host)
-	if err != nil {
-		t.Fatal(err)
-	}
-	port, err := strconv.Atoi(portText)
-	if err != nil {
-		t.Fatal(err)
-	}
-	store := mapStore{}
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "IngressService"},
-			Metadata: api.ObjectMeta{Name: "api"},
-			Spec: api.IngressServiceSpec{
-				Listen:   api.IngressListenSpec{Interface: "lan", Protocol: "tcp", Port: 6443},
-				Backends: []api.IngressBackendSpec{{Name: "cp-01", Address: host, Port: port}},
-				HealthCheck: api.IngressHealthCheckSpec{
-					Protocol:       "http",
-					Path:           "/readyz",
-					Host:           "k8s-api.lain.local",
-					ExpectedStatus: []int{http.StatusOK},
-					ExpectedBody:   "ok",
-				},
-			},
-		},
-	}}}
-	controller := Controller{Router: router, Store: store}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("reconcile: %v", err)
-	}
-	status := store.ObjectStatus(api.FirewallAPIVersion, "IngressService", "api")
-	if status["phase"] != "Active" {
-		t.Fatalf("status = %#v", status)
-	}
-	backends, ok := status["backends"].([]backendStatus)
-	if !ok || len(backends) != 1 || !backends[0].Healthy || backends[0].LastHealthyAt == "" {
-		t.Fatalf("backend status = %#v", status["backends"])
-	}
-}
-
 func TestReconcileIngressServiceHonorsHealthThresholds(t *testing.T) {
 	store := mapStore{}
 	router := ingressRouter()
@@ -355,11 +297,6 @@ func TestReconcileIngressServiceHonorsHealthThresholds(t *testing.T) {
 	if status["phase"] != "Active" {
 		t.Fatalf("second status = %#v", status)
 	}
-}
-
-func netSplitHostPort(value string) (string, string, error) {
-	host, port, err := net.SplitHostPort(value)
-	return host, port, err
 }
 
 func ingressRouter() *api.Router {

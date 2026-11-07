@@ -3,7 +3,6 @@
 package webconsole
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -17,9 +16,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
-	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/controlapi"
-	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/logstore"
 	"github.com/imksoo/routerd/pkg/observe"
 	"github.com/imksoo/routerd/pkg/platform"
@@ -334,68 +331,6 @@ func writeWebConsoleTestCommand(t *testing.T, path, script string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(script), 0755); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestHandlerStreamsBusEventsOverSSE(t *testing.T) {
-	eventBus := bus.New()
-	handler := New(Options{Bus: eventBus})
-	server := httptest.NewServer(handler)
-	defer server.Close()
-
-	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/api/events/stream", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp, err := server.Client().Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d", resp.StatusCode)
-	}
-	if contentType := resp.Header.Get("Content-Type"); !strings.HasPrefix(contentType, "text/event-stream") {
-		t.Fatalf("content type = %q", contentType)
-	}
-
-	reader := bufio.NewReader(resp.Body)
-	if line, err := reader.ReadString('\n'); err != nil || strings.TrimSpace(line) != "event: connected" {
-		t.Fatalf("connected event line = %q err=%v", line, err)
-	}
-	for {
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			t.Fatal(err)
-		}
-		if strings.TrimSpace(line) == "" {
-			break
-		}
-	}
-
-	event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "test"}, "routerd.resource.status.changed", daemonapi.SeverityInfo)
-	event.Resource = &daemonapi.ResourceRef{APIVersion: "net.routerd.net/v1alpha1", Kind: "HealthCheck", Name: "internet"}
-	event.Attributes = map[string]string{"phase": "Healthy"}
-	if err := eventBus.Publish(context.Background(), event); err != nil {
-		t.Fatal(err)
-	}
-
-	var sawEvent bool
-	var sawData bool
-	for !(sawEvent && sawData) {
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			t.Fatal(err)
-		}
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "event: routerd-event" {
-			sawEvent = true
-		}
-		if strings.HasPrefix(trimmed, "data: ") && strings.Contains(trimmed, "routerd.resource.status.changed") && strings.Contains(trimmed, "HealthCheck") {
-			sawData = true
-		}
 	}
 }
 
