@@ -99,6 +99,14 @@ type networkdImportStatus struct {
 		PrefixLength int    `json:"PrefixLength"`
 		ConfigSource string `json:"ConfigSource"`
 	} `json:"Addresses"`
+	DNS []struct {
+		Address      []int  `json:"Address"`
+		ConfigSource string `json:"ConfigSource"`
+	} `json:"DNS"`
+	SearchDomains []struct {
+		Domain       string `json:"Domain"`
+		ConfigSource string `json:"ConfigSource"`
+	} `json:"SearchDomains"`
 	Routes []struct {
 		Family                  int    `json:"Family"`
 		Destination             []int  `json:"Destination"`
@@ -117,27 +125,27 @@ type networkdImportStatus struct {
 	} `json:"Routes"`
 }
 
-func networkdAddressSources(ifname string) (map[string]string, map[string]bool, []string, error) {
+func networkdAddressSources(ifname string) (map[string]string, map[string]bool, []string, []string, error) {
 	out, err := exec.Command("networkctl", "--json=short", "status", ifname).Output()
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	var status networkdImportStatus
 	if err := json.Unmarshal(out, &status); err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	sources := make(map[string]string, len(status.Addresses))
 	for _, address := range status.Addresses {
 		bytes := make([]byte, len(address.Address))
 		for i, value := range address.Address {
 			if value < 0 || value > 255 {
-				return nil, nil, nil, fmt.Errorf("invalid networkd address byte %d", value)
+				return nil, nil, nil, nil, fmt.Errorf("invalid networkd address byte %d", value)
 			}
 			bytes[i] = byte(value)
 		}
 		ip, ok := netip.AddrFromSlice(bytes)
 		if !ok || address.PrefixLength < 0 || address.PrefixLength > ip.BitLen() {
-			return nil, nil, nil, fmt.Errorf("invalid networkd address or prefix length")
+			return nil, nil, nil, nil, fmt.Errorf("invalid networkd address or prefix length")
 		}
 		sources[netip.PrefixFrom(ip, address.PrefixLength).String()] = address.ConfigSource
 	}
@@ -162,7 +170,30 @@ func networkdAddressSources(ifname string) (map[string]string, map[string]bool, 
 		files = append(files, status.NetworkFile)
 		files = append(files, status.NetworkFileDropins...)
 	}
-	return sources, staticRoutes, files, nil
+	var unimported []string
+	for _, server := range status.DNS {
+		if server.ConfigSource != "static" {
+			continue
+		}
+		bytes := make([]byte, len(server.Address))
+		for i, value := range server.Address {
+			if value < 0 || value > 255 {
+				return nil, nil, nil, nil, fmt.Errorf("invalid networkd DNS address byte %d", value)
+			}
+			bytes[i] = byte(value)
+		}
+		ip, ok := netip.AddrFromSlice(bytes)
+		if !ok {
+			return nil, nil, nil, nil, errors.New("invalid networkd DNS address")
+		}
+		unimported = append(unimported, "static DNS server "+ip.String()+" is not imported")
+	}
+	for _, domain := range status.SearchDomains {
+		if domain.ConfigSource == "static" && domain.Domain != "" {
+			unimported = append(unimported, "static DNS search domain "+domain.Domain+" is not imported")
+		}
+	}
+	return sources, staticRoutes, files, unimported, nil
 }
 
 func importIPv4Bytes(values []int) (netip.Addr, bool) {
@@ -482,11 +513,14 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 			return fmt.Errorf("interface %s not found in kernel output", ifname)
 		}
 		link := links[0]
-		sources, staticRoutes, networkFiles, sourceErr := networkdAddressSources(ifname)
+		sources, staticRoutes, networkFiles, unimported, sourceErr := networkdAddressSources(ifname)
 		if sourceErr != nil {
 			warnings = append(warnings, fmt.Sprintf("%s: networkd address sources unavailable: %v", ifname, sourceErr))
 		} else if len(networkFiles) != 0 {
 			warnings = append(warnings, fmt.Sprintf("%s: networkd manages this link via %s; transfer management before apply", ifname, networkFiles[0]))
+		}
+		for _, item := range unimported {
+			warnings = append(warnings, fmt.Sprintf("%s: %s", ifname, item))
 		}
 		up := false
 		for _, f := range link.Flags {
