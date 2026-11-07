@@ -21,8 +21,6 @@ const (
 	defaultFileSyncRsyncTimeoutSeconds = "60"
 )
 
-type fileSyncCommandFunc func(ctx context.Context, name string, args ...string) ([]byte, error)
-
 type fileSyncJob struct {
 	APIVersion string
 	Kind       string
@@ -49,12 +47,10 @@ type fileSyncTarget struct {
 }
 
 type FileSyncController struct {
-	Logger  *slog.Logger
-	Router  *api.Router
-	Store   Store
-	DryRun  bool
-	Command fileSyncCommandFunc
-	Now     func() time.Time
+	Logger *slog.Logger
+	Router *api.Router
+	Store  Store
+	DryRun bool
 }
 
 func (c FileSyncController) Reconcile(ctx context.Context) error {
@@ -87,7 +83,7 @@ func (c FileSyncController) fileSyncResources() []api.Resource {
 }
 
 func (c FileSyncController) reconcileJob(ctx context.Context, job fileSyncJob) error {
-	now := c.now()
+	now := time.Now().UTC()
 	if c.shouldSkip(job, now) {
 		return nil
 	}
@@ -115,10 +111,7 @@ func (c FileSyncController) reconcileJob(ctx context.Context, job fileSyncJob) e
 			"dryRun":      true,
 		})
 	}
-	run := c.Command
-	if run == nil {
-		run = runOutputCommandContext
-	}
+	run := runOutputCommandContext
 	command := firstNonEmpty(job.Command, "rsync")
 	for _, source := range job.Sources {
 		if !fileSyncSourcePresent(sources, source.Path) {
@@ -165,13 +158,6 @@ func (c FileSyncController) shouldSkip(job fileSyncJob, now time.Time) bool {
 	status := c.Store.ObjectStatus(job.APIVersion, job.Kind, job.Name)
 	last, _ := time.Parse(time.RFC3339Nano, fmt.Sprint(status["syncedAt"]))
 	return !last.IsZero() && now.Sub(last) < job.Interval
-}
-
-func (c FileSyncController) now() time.Time {
-	if c.Now != nil {
-		return c.Now()
-	}
-	return time.Now().UTC()
 }
 
 func (c FileSyncController) save(apiVersion, kind, name string, status map[string]any) error {
