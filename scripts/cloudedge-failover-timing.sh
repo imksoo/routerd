@@ -4,8 +4,7 @@
 #
 # The script itself does not call cloud provider APIs. Live labs provide
 # FAILOVER_TIMING_RUNNER, which performs the provider-specific VM/node stop and
-# observes routerd state. Offline tests provide a stub runner with the same
-# contract.
+# observes routerd state.
 #
 set -euo pipefail
 
@@ -68,7 +67,7 @@ wait_stage() {
   while true; do
     observe_exit=0
     observe_output=$("$FAILOVER_TIMING_RUNNER" observe "$provider" "$stage" 2>&1) || observe_exit=$?
-    printf 'stage=%s observed_ms=%s exit=%s\\n%s\\n' "$stage" "$(now_ms)" "$observe_exit" "$observe_output" >>"$out.observations.log"
+    printf 'stage=%s observed_ms=%s exit=%s\n%s\n' "$stage" "$(now_ms)" "$observe_exit" "$observe_output" >>"$out.observations.log"
     if [[ "$observe_exit" -eq 0 ]]; then
       now=$(now_ms)
       detail=$(run_detail "$provider" "$stage")
