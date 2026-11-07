@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -28,8 +29,6 @@ type IPAddressSetController struct {
 	NftCommand     string
 	RuntimeDir     string
 }
-
-const ipAddressSetNftVerifyInterval = 2 * time.Minute
 
 type ipAddressSetRecord struct {
 	Address string
@@ -66,11 +65,18 @@ resources:
 			continue
 		}
 		current := c.Store.ObjectStatus(api.NetAPIVersion, "IPAddressSet", resource.Metadata.Name)
-		if len(activeTargets) > 0 && !ipAddressSetRefreshDue(current, now) {
-			if _, ok := cachedIPAddressSetResult(current); ok && ipAddressSetStatusTargetsCover(current, activeTargets) && !ipAddressSetNftVerifyDue(current, now) {
-				continue
-			}
+		cachedResult, cached := cachedIPAddressSetResult(current)
+		configuredAddresses := append([]string(nil), spec.Addresses...)
+		configuredNames := append([]string(nil), spec.Names...)
+		for i := range configuredNames {
+			configuredNames[i] = strings.TrimSpace(configuredNames[i])
 		}
+		sort.Strings(configuredAddresses)
+		sort.Strings(configuredNames)
+		_, hasConfiguredAddresses := current["configuredAddresses"]
+		cached = cached && hasConfiguredAddresses && !ipAddressSetRefreshDue(current, now) &&
+			slices.Equal(configuredAddresses, statusStringSlice(current["configuredAddresses"])) &&
+			slices.Equal(configuredNames, cachedResult.Names) && current["refreshInterval"] == spec.RefreshInterval
 		existingTargets := map[string]ipAddressSetTarget{}
 		existingOutputs := map[string]string{}
 		if len(activeTargets) > 0 {
@@ -82,8 +88,8 @@ resources:
 				}
 			}
 		}
-		if len(activeTargets) > 0 && len(existingTargets) > 0 && !ipAddressSetRefreshDue(current, now) {
-			if cached, ok := cachedIPAddressSetResult(current); ok && ipAddressSetTargetsCurrent(cached, activeTargets, existingOutputs) {
+		if len(activeTargets) > 0 && len(existingTargets) > 0 && cached && current["phase"] == "Applied" {
+			if ipAddressSetTargetsCurrent(cachedResult, activeTargets, existingOutputs) {
 				next := copyStatusMap(current)
 				next["nftVerifiedAt"] = now.Format(time.RFC3339Nano)
 				if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPAddressSet", resource.Metadata.Name, next); err != nil {
@@ -92,7 +98,10 @@ resources:
 				continue
 			}
 		}
-		result, err := resolveIPAddressSet(ctx, resolver, spec)
+		result := cachedResult
+		if !cached {
+			result, err = resolveIPAddressSet(ctx, resolver, spec)
+		}
 		if err != nil {
 			if saveErr := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPAddressSet", resource.Metadata.Name, map[string]any{
 				"phase":      "Pending",
@@ -107,23 +116,28 @@ resources:
 			continue
 		}
 		nextRefresh := now.Add(nextIPAddressSetRefresh(result.MinTTL, spec.RefreshInterval))
+		if cached {
+			nextRefresh, _ = time.Parse(time.RFC3339Nano, current["nextRefreshAt"].(string))
+		}
 		if len(activeTargets) > 0 {
 			missingTargets := missingIPAddressSetTargets(result, activeTargets, existingTargets)
 			if len(missingTargets) > 0 {
 				if saveErr := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPAddressSet", resource.Metadata.Name, map[string]any{
-					"phase":          "Pending",
-					"reason":         "SetMissing",
-					"message":        "nftables set is not present yet; renderer must create it before runtime refresh",
-					"referenced":     true,
-					"setName":        setName,
-					"addresses":      result.Addresses,
-					"ipv4Addresses":  result.IPv4Addresses,
-					"ipv6Addresses":  result.IPv6Addresses,
-					"missingTargets": missingTargets,
-					"names":          result.Names,
-					"resolveErrors":  result.Errors,
-					"nextRefreshAt":  nextRefresh.Format(time.RFC3339Nano),
-					"dryRun":         false,
+					"phase":               "Pending",
+					"reason":              "SetMissing",
+					"message":             "nftables set is not present yet; renderer must create it before runtime refresh",
+					"referenced":          true,
+					"setName":             setName,
+					"addresses":           result.Addresses,
+					"configuredAddresses": configuredAddresses,
+					"refreshInterval":     spec.RefreshInterval,
+					"ipv4Addresses":       result.IPv4Addresses,
+					"ipv6Addresses":       result.IPv6Addresses,
+					"missingTargets":      missingTargets,
+					"names":               result.Names,
+					"resolveErrors":       result.Errors,
+					"nextRefreshAt":       nextRefresh.Format(time.RFC3339Nano),
+					"dryRun":              false,
 				}); saveErr != nil {
 					return saveErr
 				}
@@ -162,22 +176,27 @@ resources:
 			}
 		}
 		status := map[string]any{
-			"phase":             "Applied",
-			"referenced":        true,
-			"setName":           setName,
-			"addresses":         result.Addresses,
-			"ipv4Addresses":     result.IPv4Addresses,
-			"ipv6Addresses":     result.IPv6Addresses,
-			"targets":           appliedIPAddressSetTargets(existingTargets, targets, len(activeTargets) == 0),
-			"dryRunTargets":     dryRunIPAddressSetTargets(targets, c),
-			"names":             result.Names,
-			"minTTLSeconds":     int(result.MinTTL.Seconds()),
-			"nextRefreshAt":     nextRefresh.Format(time.RFC3339Nano),
-			"refreshInterval":   spec.RefreshInterval,
-			"resolveErrors":     result.Errors,
-			"resolvedAt":        now.Format(time.RFC3339Nano),
-			"dryRun":            len(activeTargets) == 0,
-			"runtimeController": len(activeTargets) > 0,
+			"phase":               "Applied",
+			"referenced":          true,
+			"setName":             setName,
+			"addresses":           result.Addresses,
+			"configuredAddresses": configuredAddresses,
+			"ipv4Addresses":       result.IPv4Addresses,
+			"ipv6Addresses":       result.IPv6Addresses,
+			"targets":             appliedIPAddressSetTargets(existingTargets, targets, len(activeTargets) == 0),
+			"dryRunTargets":       dryRunIPAddressSetTargets(targets, c),
+			"names":               result.Names,
+			"minTTLSeconds":       int(result.MinTTL.Seconds()),
+			"nextRefreshAt":       nextRefresh.Format(time.RFC3339Nano),
+			"refreshInterval":     spec.RefreshInterval,
+			"resolveErrors":       result.Errors,
+			"resolvedAt":          now.Format(time.RFC3339Nano),
+			"dryRun":              len(activeTargets) == 0,
+			"runtimeController":   len(activeTargets) > 0,
+		}
+		if cached {
+			status["resolvedAt"] = current["resolvedAt"]
+			status["minTTLSeconds"] = current["minTTLSeconds"]
 		}
 		if len(activeTargets) > 0 {
 			status["nftVerifiedAt"] = now.Format(time.RFC3339Nano)
@@ -313,40 +332,6 @@ func ipAddressSetRefreshDue(status map[string]any, now time.Time) bool {
 		return true
 	}
 	return !now.Before(t)
-}
-
-func ipAddressSetNftVerifyDue(status map[string]any, now time.Time) bool {
-	if len(status) == 0 {
-		return true
-	}
-	verified, ok := status["nftVerifiedAt"].(string)
-	if !ok || strings.TrimSpace(verified) == "" {
-		return true
-	}
-	t, err := time.Parse(time.RFC3339Nano, verified)
-	if err != nil {
-		return true
-	}
-	return !now.Before(t.Add(ipAddressSetNftVerifyInterval))
-}
-
-func ipAddressSetStatusTargetsCover(status map[string]any, targets []ipAddressSetTarget) bool {
-	if len(targets) == 0 {
-		return true
-	}
-	current := map[string]bool{}
-	for _, target := range statusStringSlice(status["targets"]) {
-		current[target] = true
-	}
-	if len(current) == 0 {
-		return false
-	}
-	for _, target := range targets {
-		if !current[target.String()] {
-			return false
-		}
-	}
-	return true
 }
 
 func (c IPAddressSetController) applyNftSet(ctx context.Context, command outputCommandFunc, family, table, setName string, addresses []string, currentOutput string) error {
