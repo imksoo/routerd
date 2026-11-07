@@ -52,6 +52,42 @@ type importLink struct {
 	AddrInfo []importAddress `json:"addr_info"`
 }
 
+type networkdImportStatus struct {
+	NetworkFile string `json:"NetworkFile"`
+	Addresses   []struct {
+		Address      []int  `json:"Address"`
+		PrefixLength int    `json:"PrefixLength"`
+		ConfigSource string `json:"ConfigSource"`
+	} `json:"Addresses"`
+}
+
+func networkdAddressSources(ifname string) (map[string]string, string, error) {
+	out, err := exec.Command("networkctl", "--json=short", "status", ifname).Output()
+	if err != nil {
+		return nil, "", err
+	}
+	var status networkdImportStatus
+	if err := json.Unmarshal(out, &status); err != nil {
+		return nil, "", err
+	}
+	sources := make(map[string]string, len(status.Addresses))
+	for _, address := range status.Addresses {
+		bytes := make([]byte, len(address.Address))
+		for i, value := range address.Address {
+			if value < 0 || value > 255 {
+				return nil, "", fmt.Errorf("invalid networkd address byte %d", value)
+			}
+			bytes[i] = byte(value)
+		}
+		ip, ok := netip.AddrFromSlice(bytes)
+		if !ok || address.PrefixLength < 0 || address.PrefixLength > ip.BitLen() {
+			return nil, "", fmt.Errorf("invalid networkd address or prefix length")
+		}
+		sources[netip.PrefixFrom(ip, address.PrefixLength).String()] = address.ConfigSource
+	}
+	return sources, status.NetworkFile, nil
+}
+
 func importCommand(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("import", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -77,6 +113,8 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 	name := "imported"
 	aliases := map[string]api.Resource{}
 	usedNames := map[string]bool{}
+	dhcpClients := map[string]api.Resource{}
+	usedDHCPNames := map[string]bool{}
 	if *configPath != "" {
 		router, err := config.Load(*configPath)
 		if err != nil {
@@ -84,6 +122,18 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 		}
 		name = router.Metadata.Name
 		for _, resource := range router.Spec.Resources {
+			if resource.Kind == "DHCPv4Client" {
+				spec, err := resource.DHCPv4ClientSpec()
+				if err != nil {
+					return err
+				}
+				if _, found := dhcpClients[spec.Interface]; found {
+					return fmt.Errorf("existing configuration defines multiple DHCPv4 clients for %q", spec.Interface)
+				}
+				dhcpClients[spec.Interface] = resource
+				usedDHCPNames[resource.Metadata.Name] = true
+				continue
+			}
 			if resource.Kind != "Interface" {
 				continue
 			}
@@ -116,6 +166,12 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 			return fmt.Errorf("interface %s not found in kernel output", ifname)
 		}
 		link := links[0]
+		sources, networkFile, sourceErr := networkdAddressSources(ifname)
+		if sourceErr != nil {
+			warnings = append(warnings, fmt.Sprintf("%s: networkd address sources unavailable: %v", ifname, sourceErr))
+		} else if networkFile != "" {
+			warnings = append(warnings, fmt.Sprintf("%s: networkd manages this link via %s; transfer management before apply", ifname, networkFile))
+		}
 		up := false
 		for _, f := range link.Flags {
 			if f == "UP" {
@@ -155,8 +211,9 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 		}
 		usedNames[resource.Metadata.Name] = true
 		router.Spec.Resources = append(router.Spec.Resources, resource)
+		dhcp4 := false
 		for _, address := range link.AddrInfo {
-			_, err := netip.ParseAddr(address.Local)
+			ip, err := netip.ParseAddr(address.Local)
 			if err != nil {
 				return fmt.Errorf("interface %s has invalid address %q: %w", ifname, address.Local, err)
 			}
@@ -164,7 +221,31 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 			if address.Dynamic {
 				origin = "dynamic"
 			}
-			warnings = append(warnings, fmt.Sprintf("%s: address %s/%d (%s, scope %s) requires source configuration", ifname, address.Local, address.PrefixLen, origin, address.Scope))
+			if source := sources[netip.PrefixFrom(ip, address.PrefixLen).String()]; source != "" && source != "foreign" {
+				origin = "networkd " + source
+				if source == "DHCPv4" && ip.Is4() {
+					dhcp4 = true
+				}
+			}
+			warnings = append(warnings, fmt.Sprintf("%s: address %s/%d (%s, scope %s) requires source configuration review", ifname, address.Local, address.PrefixLen, origin, address.Scope))
+		}
+		if dhcp4 {
+			client, exists := dhcpClients[resource.Metadata.Name]
+			if !exists {
+				client, exists = dhcpClients[ifname]
+			}
+			if exists {
+				client.Status = nil
+			} else {
+				clientName := resource.Metadata.Name + "-dhcp4"
+				for suffix := 2; usedDHCPNames[clientName]; suffix++ {
+					clientName = fmt.Sprintf("%s-dhcp4-%d", resource.Metadata.Name, suffix)
+				}
+				client = api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client"}, Metadata: api.ObjectMeta{Name: clientName}, Spec: api.DHCPv4ClientSpec{Interface: resource.Metadata.Name}}
+			}
+			usedDHCPNames[client.Metadata.Name] = true
+			router.Spec.Resources = append(router.Spec.Resources, client)
+			warnings = append(warnings, fmt.Sprintf("%s: DHCPv4 candidate requires review of client identity, route and DNS options and manager handoff", ifname))
 		}
 		for _, family := range []string{"-4", "-6"} {
 			out, err := exec.Command("ip", "-j", family, "route", "show", "table", "all", "dev", ifname).CombinedOutput()
@@ -185,7 +266,7 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	fmt.Fprintln(stderr, "WARNING: this is a partial candidate, not a complete machine configuration; merge and review all networking before apply.")
-	fmt.Fprintln(stderr, "WARNING: addresses, routes, policy rules, dynamic network sources, link attributes, and existing network managers are not imported.")
+	fmt.Fprintln(stderr, "WARNING: addresses, routes, policy rules, most dynamic network options, link attributes, and existing network managers are not fully imported.")
 	for _, warning := range warnings {
 		fmt.Fprintln(stderr, "WARNING:", warning)
 	}
