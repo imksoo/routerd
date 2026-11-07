@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -85,7 +86,11 @@ func (b Nftables) Apply(ctx context.Context, ruleset Ruleset, dryRun bool) (bool
 		return false, nil
 	}
 	applyRuleset := ruleset
-	data, err := b.preserveDynamicSets(ctx, ruleset.Data)
+	previous, err := os.ReadFile(ruleset.Path)
+	if err != nil && !os.IsNotExist(err) {
+		return false, err
+	}
+	data, err := b.preserveDynamicSets(ctx, ruleset.Data, previous)
 	if err != nil {
 		return false, err
 	}
@@ -128,7 +133,7 @@ func (b Nftables) Apply(ctx context.Context, ruleset Ruleset, dryRun bool) (bool
 	return true, nil
 }
 
-func (b Nftables) preserveDynamicSets(ctx context.Context, data []byte) ([]byte, error) {
+func (b Nftables) preserveDynamicSets(ctx context.Context, data, previous []byte) ([]byte, error) {
 	if !bytes.Contains(data, []byte("destroy set inet routerd_filter flow_pinhole_")) &&
 		!bytes.Contains(data, []byte("destroy set inet routerd_filter ip_address_set_")) {
 		return data, nil
@@ -189,7 +194,8 @@ func (b Nftables) preserveDynamicSets(ctx context.Context, data []byte) ([]byte,
 			continue
 		}
 		typ, _, ok := strings.Cut(rest, ";")
-		if ok && existing[name] == typ {
+		if ok && existing[name] == typ &&
+			(!strings.HasPrefix(name, "flow_pinhole_") || samePinholeRules(previous, data, name)) {
 			preserve[name] = true
 		}
 	}
@@ -211,6 +217,23 @@ func (b Nftables) preserveDynamicSets(ctx context.Context, data []byte) ([]byte,
 		kept = append(kept, line)
 	}
 	return []byte(strings.Join(kept, "\n")), nil
+}
+
+func samePinholeRules(previous, current []byte, name string) bool {
+	declaration := "set " + name + " {"
+	if !bytes.Contains(previous, []byte(declaration)) {
+		return true
+	}
+	rules := func(data []byte) []string {
+		var result []string
+		for _, line := range strings.Split(string(data), "\n") {
+			if strings.Contains(line, "@"+name+" ") {
+				result = append(result, strings.TrimSpace(line))
+			}
+		}
+		return result
+	}
+	return slices.Equal(rules(previous), rules(current))
 }
 
 func (b Nftables) rulesetTablesPresent(ctx context.Context, ruleset Ruleset) bool {
