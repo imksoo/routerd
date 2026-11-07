@@ -4464,3 +4464,48 @@ FreeBSD remain outside this result.
 Test/procedure publication `f28e58fd` was secrets-scanned, pushed and remote
 SHA verified. Full `go test ./...`, schema checks, example validation and
 four-locale website build passed; existing documentation-link warnings remain.
+
+## Linux VRF IPv6 transit, renumbering and RA source DAD
+
+The extended native gate `TestVRFNativeLinuxDelegatedRA` in `9002a212`
+added an independent upstream namespace, IPv6 forwarding and old/new return
+routes. It requires client traffic through the VRF, selection of the new SLAAC
+source after changing the finite stored PD lease, old-address deprecation,
+and complete owned-prefix/default-route/journal withdrawal. PD exchange and
+upstream address/routing setup remain fixture inputs.
+
+An initial RA send failed with `sendmsg: invalid argument`. Repeated isolated
+runs captured the failing interface: the delegated global address had finished
+DAD while the link-local transmit source remained `tentative`. `Listen` selected
+that address through `net.Interface.Addrs`, which omits DAD flags. The deterministic
+real-kernel test in `5b4fab1f` held link-local DAD pending and failed because
+`Listen` admitted that source (0.03 seconds). Successful intervening runs did
+not close this failure.
+
+Fix `c7f3eb83` uses Linux native address flags to reject tentative/failed DAD
+sources. Tentative readiness publishes `LinkLocalDADPending`; existing controller
+reconciliation resumes sending once usable. Required observation errors and
+withdrawal without a usable source remain errors. The kernel test now passes
+both pending refusal and usable-source admission. The service pending/resume
+regression passed. Three isolated transit/renumbering runs on the initial fix
+passed in 14.45, 14.71 and 14.29 seconds. No source-readiness retry loop or
+manual product repair was added.
+
+This is controller/kernel qualification, not packaged-daemon startup latency:
+the test invokes reconciliation directly, whereas the existing owner has
+status-event reconciliation and a 30-second periodic check. Formal package
+installation, restart/reboot and DHCPv6 exchange in this VRF topology remain
+unqualified. The earlier `0e186cc0` full combined-package result retains its
+original revision and is not relabeled as evidence for this new runtime fix.
+
+The final published `c7f3eb836d607c8802861ea2efb09580feeba96f` tree was
+recompiled and the isolated IPv6 transit/renumbering gate passed in 14.18
+seconds without skips. The source-readiness kernel test passed in 0.03 seconds;
+the pending/resume focused suite passed in 4.053 seconds.
+
+Full `go test ./...`, `make check-schema validate-example check-website-schemas
+website-build`, formatting and diff checks passed on the fix. The four-locale
+website retains existing documentation-link warnings. The routeradvertisement
+package also cross-compiled for FreeBSD with CGO disabled; no FreeBSD runtime
+qualification is claimed. Secrets scans passed and the product remote SHA was
+verified.

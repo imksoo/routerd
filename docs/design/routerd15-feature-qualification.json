@@ -3045,6 +3045,24 @@
         "Packaged-daemon restart/reboot",
         "FreeBSD"
       ]
+    },
+    "linux-vrf-ra-dad-c7f3eb83": {
+      "level": "native-kernel",
+      "outcome": "pass",
+      "revision": "c7f3eb836d607c8802861ea2efb09580feeba96f",
+      "reference": "docs/design/routerd15-audit.md#linux-vrf-ipv6-transit-renumbering-and-ra-source-dad",
+      "reproduction": "TestVRFNativeLinuxDelegatedRA and TestListenRejectsTentativeLinkLocal; make check-routerd15-native-parent-linux",
+      "checks": [
+        "Client IPv6 forwarding through VRF to independent upstream namespace",
+        "Stored finite PD prefix replacement changes preferred SLAAC source and deprecates old address",
+        "Owned old/new address, RA default and receipt withdrawal",
+        "Real-kernel RED/GREEN for tentative link-local source admission; pending/resume service regression"
+      ],
+      "excludes": [
+        "DHCPv6 protocol exchange in VRF",
+        "Formal package startup DAD recovery and restart/reboot",
+        "Other prefix transition/failure modes and FreeBSD"
+      ]
     }
   },
   "features": [
@@ -3643,7 +3661,8 @@
           "linux-combined-native-3e58c93a",
           "linux-vrf-overlap-12656124",
           "linux-vrf-transit-b4fc85f3",
-          "linux-vrf-ra-3743818e"
+          "linux-vrf-ra-3743818e",
+          "linux-vrf-ra-dad-c7f3eb83"
         ]
       },
       "freebsd": {
@@ -3652,7 +3671,7 @@
       },
       "required_remaining_checks": [
         "VRF forwarding modes beyond the recorded overlapping-address IPv4 UDP host/transit gate",
-        "Member-address dependency/failure semantics, delegated IPv6 transit and prefix replacement beyond the recorded RA/SLAAC peer gate",
+        "Member-address dependency/failure semantics and delegated prefix failure modes beyond the recorded IPv6 transit/renumbering gate",
         "Packaged-daemon restart/reboot and complete platform parity beyond the recorded single-VRF controller gate"
       ],
       "finding_references": [

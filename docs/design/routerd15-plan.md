@@ -36,9 +36,10 @@ overlapping-domain IPv4 UDP transit now passes in the native controller gate
 (`eb43e539`), including SQLite reopen and independent withdrawal. See the
 [VRF transit result](routerd15-audit.md#linux-overlapping-vrf-client-transit).
 The delegated-address/RA kernel SLAAC peer gate also passes (`f28e58fd`).
-The remaining VRF scope includes packaged-daemon restart/reboot and delegated
-IPv6 transit/renumbering; use the qualification ledger to retain these uncovered
-paths. Preserve
+IPv6 transit/renumbering exposed and fixed tentative RA source selection
+(`c7f3eb83`); controller/kernel checks now pass. The next VRF gate is the
+formal package lifecycle, including startup DAD recovery and restart/reboot.
+Use the qualification ledger to retain uncovered paths. Preserve
 the 53.867-second maximum HA response gap as a limitation to investigate, not a
 claim of fast failover. Do not start FreeBSD work or declare whole-task completion
 from this Linux combination result. Historical checkpoints below retain their
