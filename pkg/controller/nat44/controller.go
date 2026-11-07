@@ -152,6 +152,11 @@ func (c Controller) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if !c.DryRun && c.IngressLive {
+		if err := c.removeUnusedNATTables(ctx, data); err != nil {
+			return err
+		}
+	}
 	if len(data) == 0 {
 		return nil
 	}
@@ -193,6 +198,27 @@ func (c Controller) Reconcile(ctx context.Context) error {
 	}
 	_ = nftstate.MarkVerified(path, time.Now().UTC())
 	return c.saveRuleStatuses(ctx, rules, path, changed, missing)
+}
+
+func (c Controller) removeUnusedNATTables(ctx context.Context, data []byte) error {
+	nft := stringutil.FirstNonEmpty(c.NftCommand, "nft")
+	out, err := exec.CommandContext(ctx, nft, "list", "tables").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s list tables: %w: %s", nft, err, strings.TrimSpace(string(out)))
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 3 || fields[0] != "table" || fields[2] != "routerd_nat" || (fields[1] != "ip" && fields[1] != "ip6") {
+			continue
+		}
+		if strings.Contains(string(data), "table "+fields[1]+" routerd_nat {") {
+			continue
+		}
+		if result, err := exec.CommandContext(ctx, nft, "delete", "table", fields[1], "routerd_nat").CombinedOutput(); err != nil {
+			return fmt.Errorf("delete nft table %s routerd_nat: %w: %s", fields[1], err, strings.TrimSpace(string(result)))
+		}
+	}
+	return nil
 }
 
 func (c Controller) reconcilePF(ctx context.Context, rules []render.NAT44RenderRule) error {
