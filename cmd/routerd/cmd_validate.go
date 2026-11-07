@@ -55,11 +55,7 @@ func checkCommand(args []string, stdout io.Writer) (err error) {
 	if err := config.Validate(router); err != nil {
 		return err
 	}
-	logger, err := eventlog.New(router)
-	if err != nil {
-		return err
-	}
-	defer closeLogger(logger, "check", &err)
+	logger := &eventlog.Logger{}
 	opts := applyOptions{
 		ConfigPath:          *configPath,
 		StatusFile:          *statusFile,
