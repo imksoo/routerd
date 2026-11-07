@@ -42,8 +42,6 @@ type IPv4PolicyRouteController struct {
 	LedgerPath          string
 	HostPolicyStatePath string
 	Logger              *slog.Logger
-	OperatingSystem     platform.OS
-	Now                 func() time.Time
 }
 
 func (c IPv4PolicyRouteController) Reconcile(ctx context.Context) error {
@@ -74,9 +72,6 @@ func (c IPv4PolicyRouteController) Reconcile(ctx context.Context) error {
 }
 
 func (c IPv4PolicyRouteController) hasIPRoute2() bool {
-	if c.OperatingSystem != "" {
-		return c.OperatingSystem == platform.OSLinux
-	}
 	_, features := platform.Current()
 	return features.HasIproute2
 }
@@ -1043,7 +1038,7 @@ func (c IPv4PolicyRouteController) applyDefaultRoutePolicies(ctx context.Context
 		return errors.Join(append([]error{err}, statusErrors...)...)
 	}
 	for _, policy := range selected {
-		now := c.now()
+		now := time.Now().UTC()
 		policy.status["updatedAt"] = now.Format(time.RFC3339Nano)
 		previous := c.Store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", policy.name)
 		c.addHADatapathStatus(policy.name, policy.active, previous, policy.status, now)
@@ -1052,13 +1047,6 @@ func (c IPv4PolicyRouteController) applyDefaultRoutePolicies(ctx context.Context
 		}
 	}
 	return nil
-}
-
-func (c IPv4PolicyRouteController) now() time.Time {
-	if c.Now != nil {
-		return c.Now().UTC()
-	}
-	return time.Now().UTC()
 }
 
 type egressVRRPMasterGate struct {
