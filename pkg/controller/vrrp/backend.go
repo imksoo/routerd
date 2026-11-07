@@ -251,7 +251,7 @@ func reconcileGracefulActivations(ctx context.Context, c *Controller, aliases ma
 			continue
 		}
 		previous := c.Store.ObjectStatus(api.NetAPIVersion, resource.Kind, resource.Metadata.Name)
-		startedAt := gracefulActivationStartedAt(previous, controllerNow(c))
+		startedAt := gracefulActivationStartedAt(previous, time.Now().UTC())
 		status.StartedAt = startedAt
 		ready := resourcequery.ResourceWhenPresent(gate.ReadyWhen) && resourcequery.ResourceWhenMatches(gate.ReadyWhen, newVRRPWhenStore(c.Store))
 		// Readiness gates admission, not continued ownership. Withdrawing a
@@ -279,7 +279,7 @@ func reconcileGracefulActivations(ctx context.Context, c *Controller, aliases ma
 			}
 			status.State = "Preparing"
 			status.WaitingFor = gracefulActivationWaitingFor(gate.ReadyWhen, newVRRPWhenStore(c.Store))
-			if controllerNow(c).Sub(startedAt) >= timeout {
+			if time.Now().UTC().Sub(startedAt) >= timeout {
 				status.State = "Failed"
 				status.Reason = "ReadinessTimeout"
 			}
@@ -353,13 +353,6 @@ func gracefulActivationWaitingFor(when api.ResourceWhenSpec, store resourcequery
 	return out
 }
 
-func controllerNow(c *Controller) time.Time {
-	if c.Now != nil {
-		return c.Now().UTC()
-	}
-	return time.Now().UTC()
-}
-
 func gracefulElectionStatePath(c *Controller, resource string) string {
 	dir := strings.TrimSpace(c.VRRPRuntimeDir)
 	if dir == "" {
@@ -370,11 +363,7 @@ func gracefulElectionStatePath(c *Controller, resource string) string {
 }
 
 func gracefulElectionRole(c *Controller, resource string) string {
-	readFile := os.ReadFile
-	if c.ReadFile != nil {
-		readFile = c.ReadFile
-	}
-	data, err := readFile(gracefulElectionStatePath(c, resource))
+	data, err := os.ReadFile(gracefulElectionStatePath(c, resource))
 	if err != nil {
 		return ""
 	}
@@ -514,11 +503,7 @@ func observeKeepalivedRolesWithWait(ctx context.Context, c *Controller, aliases 
 }
 
 func (c *Controller) keepalivedServiceActive(ctx context.Context) bool {
-	ttl := c.KeepalivedActiveTTL
-	if ttl == 0 {
-		ttl = 30 * time.Second
-	}
-	if ttl > 0 && !c.keepalivedActiveCheckedAt.IsZero() && time.Since(c.keepalivedActiveCheckedAt) <= ttl {
+	if !c.keepalivedActiveCheckedAt.IsZero() && time.Since(c.keepalivedActiveCheckedAt) <= 30*time.Second {
 		return c.keepalivedActiveCached
 	}
 	return c.refreshKeepalivedServiceActive(ctx)

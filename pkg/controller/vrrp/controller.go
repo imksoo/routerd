@@ -28,8 +28,6 @@ type Store interface {
 	ObjectStatus(apiVersion, kind, name string) map[string]any
 }
 
-type CommandFunc func(context.Context, string, ...string) ([]byte, error)
-
 type Controller struct {
 	Router                    *api.Router
 	Bus                       *bus.Bus
@@ -43,13 +41,8 @@ type Controller struct {
 	Ifconfig                  string
 	Sysctl                    string
 	Kldload                   string
-	OperatingSystem           platform.OS
-	Command                   CommandFunc
 	Logger                    *slog.Logger
-	KeepalivedActiveTTL       time.Duration
 	VRRPRuntimeDir            string
-	ReadFile                  func(string) ([]byte, error)
-	Now                       func() time.Time
 	trackState                map[string]trackDecision
 	keepalivedActiveCheckedAt time.Time
 	keepalivedActiveCached    bool
@@ -811,9 +804,6 @@ func (c *Controller) virtualAddressBackend(spec virtualAddressSpec) string {
 }
 
 func (c *Controller) currentOS() platform.OS {
-	if c.OperatingSystem != "" {
-		return c.OperatingSystem
-	}
 	return platform.CurrentOS()
 }
 
@@ -827,9 +817,6 @@ func hasVirtualAddress(router *api.Router) bool {
 }
 
 func (c *Controller) run(ctx context.Context, name string, args ...string) ([]byte, error) {
-	if c.Command != nil {
-		return c.Command(ctx, name, args...)
-	}
 	return exec.CommandContext(ctx, name, args...).CombinedOutput()
 }
 
