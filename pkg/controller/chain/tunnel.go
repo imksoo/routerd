@@ -4,6 +4,7 @@ package chain
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/netip"
@@ -72,21 +73,22 @@ func (c TunnelInterfaceController) Reconcile(ctx context.Context) error {
 			return err
 		}
 	}
+	var errs []error
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.APIVersion != api.HybridAPIVersion || resource.Kind != "TunnelInterface" {
 			continue
 		}
 		if targetOS != platform.OSLinux && targetOS != platform.OSFreeBSD {
 			if err := c.saveUnsupportedStatus(resource, targetOS); err != nil {
-				return err
+				errs = append(errs, err)
 			}
 			continue
 		}
 		if err := c.reconcileInterface(ctx, resource); err != nil {
-			return err
+			errs = append(errs, err)
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (c TunnelInterfaceController) cleanupStaleResources(ctx context.Context) error {
@@ -176,7 +178,10 @@ func (c TunnelInterfaceController) reconcileInterface(ctx context.Context, resou
 		status["phase"] = "Error"
 		status["reason"] = "StatusFailed"
 		status["error"] = err.Error()
-		return c.Store.SaveObjectStatus(api.HybridAPIVersion, "TunnelInterface", resource.Metadata.Name, status)
+		if saveErr := c.Store.SaveObjectStatus(api.HybridAPIVersion, "TunnelInterface", resource.Metadata.Name, status); saveErr != nil {
+			return fmt.Errorf("TunnelInterface/%s observe failed: %w (saving status: %v)", resource.Metadata.Name, err, saveErr)
+		}
+		return fmt.Errorf("TunnelInterface/%s observe failed: %w", resource.Metadata.Name, err)
 	}
 	if err := c.ensureFOUListener(ctx, desired); err != nil {
 		return c.saveApplyError(resource, desired, err)
@@ -281,7 +286,10 @@ func (c TunnelInterfaceController) saveResolveError(resource api.Resource, desir
 		"reason": "EndpointResolveFailed",
 		"error":  err.Error(),
 	})
-	return c.Store.SaveObjectStatus(api.HybridAPIVersion, "TunnelInterface", resource.Metadata.Name, status)
+	if saveErr := c.Store.SaveObjectStatus(api.HybridAPIVersion, "TunnelInterface", resource.Metadata.Name, status); saveErr != nil {
+		return fmt.Errorf("TunnelInterface/%s resolve failed: %w (saving status: %v)", resource.Metadata.Name, err, saveErr)
+	}
+	return fmt.Errorf("TunnelInterface/%s resolve failed: %w", resource.Metadata.Name, err)
 }
 
 func (c TunnelInterfaceController) saveApplyError(resource api.Resource, desired tunnelDesired, applyErr error) error {
