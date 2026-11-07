@@ -1,1 +1,0 @@
-ERROR: firewall.routerd.net/v1alpha1/ClientPolicy/guest-devices spec.macs is not supported on FreeBSD because pf cannot enforce MAC/L2 identity; use explicit classification IP identities

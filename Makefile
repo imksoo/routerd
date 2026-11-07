@@ -58,7 +58,7 @@ WIZARD_FIXTURE_DIR := website/fixtures/wizard
 
 WEBSITE_NODE_MODULES_STAMP := website/node_modules/.package-lock.json
 
-.PHONY: test check-version-ldflags check-tmp-dir-mutations check-tar-safe-paths-test check-release-prepare-only-test release-certification-offline-test build build-daemons build-provider-executors build-ndpi-agent build-ndpi-agent-libndpi build-daemons-freebsd check-freebsd-cross-compile check-linux-static check-ndpi-agent-libndpi check-install-deps cloudedge-acceptance-lint cloudedge-acceptance-offline-test cloudedge-runners-offline-test cloudedge-poc-evidence-offline-test cloudedge-e2e-preflight-offline-test cloudedge-pve-qga-offline-test cloudedge-pve-bridge-audit-offline-test cloudedge-sam-config-generator-offline-test cloudedge-full-topology-minimal-offline-test cloudedge-representative-redundancy-offline-test webconsole-build webconsole-browser-install webconsole-screenshot generate-schema sync-website-schemas check-schema check-website-schemas generate-wizard-fixtures check-wizard-fixtures validate-wizard-fixtures check-examples-line-limits check-render-golden update-render-golden check-bespoke-lifecycle website-deps website-build third-party-licenses check-build-deps dist dist-ndpi-agent-libndpi live-iso validate-example dry-run-example plan-config release clean
+.PHONY: test check-version-ldflags check-tmp-dir-mutations check-tar-safe-paths-test check-release-prepare-only-test release-certification-offline-test build build-daemons build-provider-executors build-ndpi-agent build-ndpi-agent-libndpi build-daemons-freebsd check-freebsd-cross-compile check-linux-static check-ndpi-agent-libndpi check-install-deps cloudedge-acceptance-lint cloudedge-acceptance-offline-test cloudedge-runners-offline-test cloudedge-poc-evidence-offline-test cloudedge-e2e-preflight-offline-test cloudedge-pve-qga-offline-test cloudedge-pve-bridge-audit-offline-test cloudedge-sam-config-generator-offline-test cloudedge-full-topology-minimal-offline-test cloudedge-representative-redundancy-offline-test webconsole-build webconsole-browser-install webconsole-screenshot generate-schema sync-website-schemas check-schema check-website-schemas generate-wizard-fixtures check-wizard-fixtures validate-wizard-fixtures check-examples-line-limits check-bespoke-lifecycle website-deps website-build third-party-licenses check-build-deps dist dist-ndpi-agent-libndpi live-iso validate-example dry-run-example plan-config release clean
 
 test: check-version-ldflags check-tmp-dir-mutations check-tar-safe-paths-test check-release-prepare-only-test release-certification-offline-test
 	go test ./...
@@ -264,12 +264,6 @@ validate-wizard-fixtures: website-deps
 
 check-examples-line-limits:
 	./scripts/check-examples-line-limits.sh
-
-check-render-golden:
-	go test ./tests/golden
-
-update-render-golden:
-	ROUTERD_UPDATE_GOLDEN=1 go test ./tests/golden
 
 check-bespoke-lifecycle:
 	go test ./pkg/servicemgr ./pkg/controller/bgp ./pkg/controller/vrrp ./pkg/controller/chain ./pkg/controller/nat44 ./cmd/routerctl
