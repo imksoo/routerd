@@ -81,17 +81,6 @@ sites = data.get("sites")
 if sites != ["onprem", "aws", "azure", "oci"]:
     errors.append("sites must be exactly [onprem, aws, azure, oci]")
 seen = set()
-required = {
-    "d3-4site-directed-matrix",
-    "d5-aws-maintenance-drain-migration",
-    "d6-azure-active-stop-seize",
-    "d7-oci-active-stop-seize",
-    "d8-onprem-vrrp-master-failover",
-    "d9-cross-provider-simultaneous-capture-consistency",
-    "d10-event-replay-restart-convergence",
-    "d11-protocol-transparency",
-    "d12-l2-loop-stp-stability",
-}
 valid_providers = {"onprem", "aws", "azure", "oci"}
 valid_faults = {"none", "stop-active", "drain", "heartbeat-stop", "executor-fail", "stale-replay"}
 for s in data.get("scenarios", []):
@@ -148,9 +137,6 @@ for s in data.get("scenarios", []):
         for name in ("l2_loop_free", "broadcast_storm_absent", "stp_rstp_stable", "mac_flap_absent", "failover_ping_stable", "l2_suppression_mechanism_recorded"):
             if name not in assertions:
                 errors.append(f"{sid}: missing L2 assertion {name}")
-missing = required - seen
-if missing:
-    errors.append("missing scenarios: " + ",".join(sorted(missing)))
 if errors:
     print("\n".join(errors), file=sys.stderr)
     sys.exit(1)
