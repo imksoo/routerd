@@ -100,3 +100,5 @@ func TestKernelModuleControllerFreeBSDDryRunLeavesOwnedStaleDropIn(t *testing.T)
 		t.Fatalf("owned stale drop-in remained after reconcile: %v", err)
 	}
 }
+
+func boolPtr(v bool) *bool { return &v }
