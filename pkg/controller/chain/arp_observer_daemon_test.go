@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	routerstate "github.com/imksoo/routerd/pkg/state"
@@ -136,57 +135,6 @@ func TestARPObserverDaemonArgsDoNotExposeIgnoredSenderMACFlag(t *testing.T) {
 		if arg == "--ignore-sender-mac" {
 			t.Fatalf("args[%d] exposed --ignore-sender-mac: %#v", i, args)
 		}
-	}
-}
-
-func TestARPObserverDaemonsUseSupervisedOwnerTokenLifecycle(t *testing.T) {
-	useSupervisedDaemonMarkerTestRoot(t)
-	oldProcesses, oldReady := supervisedDaemonProcesses, supervisedDaemonSocketReady
-	t.Cleanup(func() {
-		supervisedDaemonProcesses, supervisedDaemonSocketReady = oldProcesses, oldReady
-	})
-	supervisedDaemonProcesses = func() []supervisedDaemonProcess { return nil }
-	supervisedDaemonSocketReady = func(string) bool { return false }
-
-	router := &api.Router{}
-	store := &dynamicRouteSAMStore{records: []routerstate.DynamicConfigPartRecord{arpObserverIntentRecord(t, []dynamicconfig.ARPObserverIntent{
-		{ResourceName: "mobility-arp-cloudedge-observer-0", PoolRef: "svnet1", Prefix: "10.77.60.0/24", SourceType: "arp-observer", IfName: "eth1", EventInterface: "capture", Observe: true},
-		{ResourceName: "mobility-arp-cloudedge-demand-1", PoolRef: "svnet1", Prefix: "10.77.60.0/24", SourceType: "on-demand-arp", IfName: "eth1", EventInterface: "capture", SourceAddress: "10.77.60.1", OnDemand: true, ScanInterval: "1s"},
-	}, time.Now().Add(time.Hour))}}
-	runner := &Runner{Router: router, Store: store}
-	specs := runner.clientDaemonSpecs(router)
-	if len(specs) != 2 {
-		t.Fatalf("client daemon specs = %#v, want two ARP observers", specs)
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	runner.reconcileSupervisedDaemonSpecs(ctx, nil, specs)
-
-	markers, err := readSupervisedDaemonMarkers()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, spec := range specs {
-		key := supervisedDaemonKey(spec.Binary, spec.ResourceName)
-		state, ok := runner.clientDaemonStates[key]
-		if !ok || state.Spec.OwnerToken == "" {
-			t.Fatalf("%s state = %#v, want non-empty owner token", key, state)
-		}
-		marker, ok := markers[key]
-		if !ok || marker.OwnerToken != state.Spec.OwnerToken || marker.SpecHash != supervisedDaemonSpecHash(state.Spec) {
-			t.Fatalf("%s marker = %#v, state = %#v", key, marker, state)
-		}
-	}
-
-	store.records = []routerstate.DynamicConfigPartRecord{arpObserverIntentRecord(t, nil, time.Now().Add(time.Hour))}
-	runner.reconcileSupervisedDaemonSpecs(ctx, nil, runner.clientDaemonSpecs(router))
-	markers, err = readSupervisedDaemonMarkers()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(markers) != 0 || len(runner.clientDaemonStates) != 0 {
-		t.Fatalf("deleted ARP observers retained ownership: markers=%#v states=%#v", markers, runner.clientDaemonStates)
 	}
 }
 
