@@ -2268,7 +2268,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	logRetention := LogRetentionController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunLogRetention}
 	ntpClient, ntpServer := ntpControllersForOptions(r.currentRouter(), r.Bus, store, opts)
 	info := DHCPv6InformationController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DaemonSockets: opts.DaemonSockets, Logger: logger}
-	link := LinkController{Router: r.currentRouter(), Store: store, Logger: logger}
+	link := LinkController{Router: r.currentRouter(), Store: store, Logger: logger, DryRun: opts.DryRunAddress}
 	tunnel := TunnelInterfaceController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, OS: platform.CurrentOS(), Logger: logger}
 	wireGuard := WireGuardController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, Logger: logger}
 	ipv4Static := IPv4StaticAddressController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), WhenRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunAddress, Logger: logger}
@@ -4126,11 +4126,10 @@ func (c LANAddressController) currentOS() platform.OS {
 }
 
 type LinkController struct {
-	Router  *api.Router
-	Store   Store
-	Logger  *slog.Logger
-	Command func(context.Context, string, ...string) error
-	Lookup  func(string) (*net.Interface, error)
+	Router *api.Router
+	Store  Store
+	Logger *slog.Logger
+	DryRun bool
 }
 
 func (c LinkController) Reconcile(ctx context.Context) error {
@@ -4150,21 +4149,31 @@ func (c LinkController) Reconcile(ctx context.Context) error {
 		}
 		if ifname == "" {
 			status["reason"] = "IfNameMissing"
-		} else if ifi, err := c.lookupInterface(ifname); err == nil {
-			if shouldEnsureInterfaceAdminUp(spec, ifi) {
-				if err := c.ensureAdminUp(ctx, ifname); err != nil {
-					status["reason"] = "AdminUpFailed"
+		} else if ifi, err := net.InterfaceByName(ifname); err == nil {
+			needsUp := spec.AdminUp && ifi.Flags&net.FlagUp == 0
+			needsMTU := spec.MTU != 0 && ifi.MTU != spec.MTU
+			if (needsUp || needsMTU) && !c.DryRun {
+				if err := configureInterface(ctx, ifname, needsUp, spec.MTU, needsMTU); err != nil {
+					status["reason"] = "ConfigureFailed"
 					status["error"] = err.Error()
 					if saveErr := c.Store.SaveObjectStatus(api.NetAPIVersion, "Interface", resource.Metadata.Name, status); saveErr != nil {
 						return saveErr
 					}
-					return fmt.Errorf("Interface/%s adminUp failed for %s: %w", resource.Metadata.Name, ifname, err)
+					return fmt.Errorf("Interface/%s configure %s: %w", resource.Metadata.Name, ifname, err)
 				}
-				if refreshed, refreshErr := c.lookupInterface(ifname); refreshErr == nil {
-					ifi = refreshed
+				ifi, err = net.InterfaceByName(ifname)
+				if err != nil {
+					return fmt.Errorf("Interface/%s observe %s after configuration: %w", resource.Metadata.Name, ifname, err)
+				}
+				if (needsUp && ifi.Flags&net.FlagUp == 0) || (needsMTU && ifi.MTU != spec.MTU) {
+					return fmt.Errorf("Interface/%s configuration did not converge on %s: flags=%s mtu=%d", resource.Metadata.Name, ifname, ifi.Flags, ifi.MTU)
 				}
 			}
+			if c.DryRun && (needsUp || needsMTU) {
+				status["reason"] = "ConfigurationPlanned"
+			}
 			status["index"] = ifi.Index
+			status["mtu"] = ifi.MTU
 			status["flags"] = ifi.Flags.String()
 			addresses, ipv4, ipv6 := interfaceStatusAddresses(ifi)
 			if len(addresses) > 0 {
@@ -4192,26 +4201,25 @@ func (c LinkController) Reconcile(ctx context.Context) error {
 	return nil
 }
 
-func (c LinkController) lookupInterface(ifname string) (*net.Interface, error) {
-	if c.Lookup != nil {
-		return c.Lookup(ifname)
+func configureInterface(ctx context.Context, ifname string, up bool, mtu int, setMTU bool) error {
+	if platform.CurrentOS() == platform.OSFreeBSD {
+		args := []string{ifname}
+		if setMTU {
+			args = append(args, "mtu", strconv.Itoa(mtu))
+		}
+		if up {
+			args = append(args, "up")
+		}
+		return runCommandContext(ctx, "ifconfig", args...)
 	}
-	return net.InterfaceByName(ifname)
-}
-
-func (c LinkController) ensureAdminUp(ctx context.Context, ifname string) error {
-	command := c.Command
-	if command == nil {
-		command = runCommandContext
+	args := []string{"link", "set", "dev", ifname}
+	if setMTU {
+		args = append(args, "mtu", strconv.Itoa(mtu))
 	}
-	return command(ctx, "ip", "link", "set", "dev", ifname, "up")
-}
-
-func shouldEnsureInterfaceAdminUp(spec api.InterfaceSpec, ifi *net.Interface) bool {
-	if ifi == nil || ifi.Flags&net.FlagUp != 0 {
-		return false
+	if up {
+		args = append(args, "up")
 	}
-	return spec.Managed && spec.Owner != "external" && spec.AdminUp
+	return runCommandContext(ctx, "ip", args...)
 }
 
 func interfaceStatusAddresses(ifi *net.Interface) ([]string, []string, []string) {
