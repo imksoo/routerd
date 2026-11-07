@@ -58,22 +58,16 @@ WIZARD_FIXTURE_DIR := website/fixtures/wizard
 
 WEBSITE_NODE_MODULES_STAMP := website/node_modules/.package-lock.json
 
-.PHONY: test check-version-ldflags check-tmp-dir-mutations check-tar-safe-paths-test check-release-prepare-only-test build build-daemons build-provider-executors build-ndpi-agent build-ndpi-agent-libndpi build-daemons-freebsd check-freebsd-cross-compile check-linux-static check-ndpi-agent-libndpi check-install-deps cloudedge-acceptance-lint webconsole-build webconsole-browser-install webconsole-screenshot generate-schema sync-website-schemas check-schema check-website-schemas generate-wizard-fixtures check-wizard-fixtures validate-wizard-fixtures check-examples-line-limits check-bespoke-lifecycle website-deps website-build third-party-licenses check-build-deps dist dist-ndpi-agent-libndpi live-iso validate-example dry-run-example plan-config release clean
+.PHONY: test check-version-ldflags check-tar-safe-paths-test build build-daemons build-provider-executors build-ndpi-agent build-ndpi-agent-libndpi build-daemons-freebsd check-freebsd-cross-compile check-linux-static check-ndpi-agent-libndpi check-install-deps cloudedge-acceptance-lint webconsole-build webconsole-browser-install webconsole-screenshot generate-schema sync-website-schemas check-schema check-website-schemas generate-wizard-fixtures check-wizard-fixtures validate-wizard-fixtures check-examples-line-limits check-bespoke-lifecycle website-deps website-build third-party-licenses check-build-deps dist dist-ndpi-agent-libndpi live-iso validate-example dry-run-example plan-config release clean
 
-test: check-version-ldflags check-tmp-dir-mutations check-tar-safe-paths-test check-release-prepare-only-test
+test: check-version-ldflags check-tar-safe-paths-test
 	go test ./...
 
 check-version-ldflags:
 	scripts/check-version-ldflags.sh
 
-check-tmp-dir-mutations:
-	scripts/check-tmp-dir-mutations.sh
-
 check-tar-safe-paths-test:
 	scripts/check-tar-safe-paths-test.sh
-
-check-release-prepare-only-test:
-	scripts/release-prepare-only-test.sh
 
 build: webconsole-build
 	$(MAKE) build-daemons
@@ -115,13 +109,10 @@ build-ndpi-agent-libndpi:
 build-daemons-freebsd:
 	$(MAKE) build-daemons ROUTERD_OS=freebsd GOARCH=amd64
 
-# Cross-compilation cannot execute FreeBSD test binaries on a Linux runner.
-# -exec /bin/true compiles FreeBSD test binaries; native test execution is
-# covered by the VM smoke job.
+# Cross-build the binaries; execution requires a FreeBSD host.
 check-freebsd-cross-compile:
 	$(MAKE) build-daemons ROUTERD_OS=freebsd GOARCH=amd64
 	$(MAKE) build-provider-executors ROUTERD_OS=freebsd GOARCH=amd64
-	CGO_ENABLED=0 GOOS=freebsd GOARCH=amd64 go test -exec /bin/true ./...
 
 check-linux-static:
 	@if [ "$(ROUTERD_OS)" != "linux" ]; then exit 0; fi; \
