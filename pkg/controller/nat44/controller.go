@@ -6,13 +6,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/imksoo/routerd/internal/statusvalue"
 	"github.com/imksoo/routerd/internal/stringutil"
@@ -39,47 +37,6 @@ type Controller struct {
 	IngressLive  bool
 	NftablesPath string
 	NftCommand   string
-	Interval     time.Duration
-	Logger       *slog.Logger
-}
-
-func (c Controller) Start(ctx context.Context) {
-	if c.Router == nil || c.Bus == nil || c.Store == nil {
-		return
-	}
-	interval := c.Interval
-	if interval == 0 {
-		interval = 5 * time.Second
-	}
-	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.lan.route.changed"}}, 16)
-	go func() {
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		_ = c.reconcileLogged(ctx)
-		for {
-			select {
-			case _, ok := <-ch:
-				if !ok {
-					return
-				}
-				_ = c.reconcileLogged(ctx)
-			case <-ticker.C:
-				_ = c.reconcileLogged(ctx)
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-}
-
-func (c Controller) reconcileLogged(ctx context.Context) error {
-	if err := c.Reconcile(ctx); err != nil {
-		if c.Logger != nil {
-			c.Logger.Warn("nat44 reconcile failed", "error", err)
-		}
-		return err
-	}
-	return nil
 }
 
 func (c Controller) Reconcile(ctx context.Context) error {
