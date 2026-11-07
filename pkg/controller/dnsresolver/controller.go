@@ -87,7 +87,7 @@ func (c Controller) Reconcile(ctx context.Context) error {
 			return err
 		}
 		if blockReason != "" {
-			if err := c.saveStatus(resource.Metadata.Name, spec, "Pending", blockReason, waiting); err != nil {
+			if err := c.saveStatus(resource.Metadata.Name, spec, "Pending", blockReason, waiting, c.reloadPending(resource.Metadata.Name)); err != nil {
 				return err
 			}
 			continue
@@ -103,23 +103,25 @@ func (c Controller) Reconcile(ctx context.Context) error {
 			message = "WaitingForDependencies"
 		}
 		changed := c.DryRun
+		pendingReload := false
 		if !c.DryRun {
 			changed, err = c.ensureRunning(ctx, resource.Metadata.Name, config)
 			if err != nil {
 				var reloadErr resolverReloadError
 				if errors.As(err, &reloadErr) {
+					pendingReload = true
 					phase = "Degraded"
 					message = err.Error()
 				} else {
 					phase = "Pending"
-					if err := c.saveStatus(resource.Metadata.Name, spec, phase, err.Error(), waiting); err != nil {
+					if err := c.saveStatus(resource.Metadata.Name, spec, phase, err.Error(), waiting, c.reloadPending(resource.Metadata.Name)); err != nil {
 						return err
 					}
 					return err
 				}
 			}
 		}
-		if err := c.saveStatus(resource.Metadata.Name, spec, phase, message, waiting); err != nil {
+		if err := c.saveStatus(resource.Metadata.Name, spec, phase, message, waiting, pendingReload); err != nil {
 			return err
 		}
 		if changed && c.Bus != nil {
@@ -573,9 +575,7 @@ func (c Controller) ensureRunning(ctx context.Context, name string, config dnsre
 		}
 		changed = true
 	}
-	status := c.Store.ObjectStatus(api.NetAPIVersion, "DNSResolver", name)
-	reason, _ := status["reason"].(string)
-	if !changed && !strings.HasPrefix(reason, "ReloadFailed:") {
+	if !changed && !c.reloadPending(name) {
 		return false, nil
 	}
 	if err := c.reloadResolver(ctx, filepath.Join(runtimeDir, "dns-resolver", name+".sock")); err != nil {
@@ -629,13 +629,20 @@ func (c Controller) dirs() (runtimeDir, stateDir string) {
 	return runtimeDir, stateDir
 }
 
-func (c Controller) saveStatus(name string, spec api.DNSResolverSpec, phase, message string, waiting []map[string]string) error {
+func (c Controller) reloadPending(name string) bool {
+	status := c.Store.ObjectStatus(api.NetAPIVersion, "DNSResolver", name)
+	pending, _ := status["reloadPending"].(bool)
+	return pending
+}
+
+func (c Controller) saveStatus(name string, spec api.DNSResolverSpec, phase, message string, waiting []map[string]string, pendingReload bool) error {
 	status := map[string]any{
 		"phase":           phase,
 		"listeners":       len(spec.Listen),
 		"listenAddresses": resolvedListenAddresses(spec),
 		"sources":         len(spec.Sources),
 		"updatedAt":       time.Now().UTC().Format(time.RFC3339Nano),
+		"reloadPending":   pendingReload,
 	}
 	if message != "" {
 		status["message"] = message
