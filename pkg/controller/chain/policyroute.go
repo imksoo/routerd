@@ -71,7 +71,7 @@ func (c IPv4PolicyRouteController) Reconcile(ctx context.Context) error {
 	}
 	// Host-only IPv6 policy is deliberately last and isolated: an RA address
 	// gap must not roll back the already-complete IPv4 DS-Lite policy path.
-	return c.reconcileIPv6HostPolicies(ctx)
+	return errors.Join(c.reconcileIPv6HostPolicies(ctx), c.cleanupPolicyRoutes(ctx, aliases))
 }
 
 func (c IPv4PolicyRouteController) hasIPRoute2() bool {
@@ -584,9 +584,6 @@ func (c IPv4PolicyRouteController) applyRouteTables(ctx context.Context, aliases
 	if len(failures) > 0 {
 		return fmt.Errorf("%s", strings.Join(failures, "; "))
 	}
-	if err := c.cleanupLedgerOwnedPolicyRoutes(ctx, aliases); err != nil {
-		return err
-	}
 	return nil
 }
 
@@ -597,15 +594,10 @@ func (c IPv4PolicyRouteController) shouldInstallPolicyRouteForHealthCheck(name s
 	return c.healthCheckUsesFwMark(name, mark)
 }
 
-func (c IPv4PolicyRouteController) cleanupLedgerOwnedPolicyRoutes(ctx context.Context, aliases map[string]string) error {
+func (c IPv4PolicyRouteController) cleanupPolicyRoutes(ctx context.Context, aliases map[string]string) error {
 	if c.DryRun || c.Router == nil {
 		return nil
 	}
-	ledger, err := resource.LoadLedger(c.LedgerPath)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = ledger.Close() }()
 	desired := map[string]resource.Artifact{}
 	desiredTables := map[int]bool{}
 	for _, artifact := range apply.DesiredOwnedArtifacts(c.Router, aliases) {
@@ -621,23 +613,33 @@ func (c IPv4PolicyRouteController) cleanupLedgerOwnedPolicyRoutes(ctx context.Co
 	if err != nil {
 		return err
 	}
-	var stale []resource.Artifact
-	ownedArtifacts, err := ledger.All()
-	if err != nil {
-		return err
-	}
+	var forgotten []resource.Artifact
 	for _, artifact := range actual {
 		if artifact.Kind != "linux.ipv4.fwmarkRule" {
 			continue
 		}
-		_, ok := ipv4FwmarkRuleFromPolicyArtifact(artifact)
+		rule, ok := ipv4FwmarkRuleFromPolicyArtifact(artifact)
 		if !ok {
 			continue
 		}
 		if _, ok := desired[artifact.Identity()]; !ok {
-			stale = append(stale, artifact)
+			if err := c.deleteIPv4FwmarkRule(ctx, rule); err != nil {
+				return err
+			}
+			forgotten = append(forgotten, artifact)
+			delete(actual, artifact.Identity())
 		}
 	}
+	ledger, err := resource.LoadLedger(c.LedgerPath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = ledger.Close() }()
+	ownedArtifacts, err := ledger.All()
+	if err != nil {
+		return err
+	}
+	var stale []resource.Artifact
 	for _, owned := range ownedArtifacts {
 		switch owned.Kind {
 		case "linux.ipv4.fwmarkRule", "linux.ipv4.routeTable":
@@ -662,7 +664,6 @@ func (c IPv4PolicyRouteController) cleanupLedgerOwnedPolicyRoutes(ctx context.Co
 	sort.SliceStable(stale, func(i, j int) bool {
 		return policyRouteArtifactCleanupOrder(stale[i]) < policyRouteArtifactCleanupOrder(stale[j])
 	})
-	var forgotten []resource.Artifact
 	for _, artifact := range stale {
 		switch artifact.Kind {
 		case "linux.ipv4.fwmarkRule":
