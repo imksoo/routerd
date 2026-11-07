@@ -3098,7 +3098,8 @@
         "scoped_evidence": [
           "linux-combined-telemetry-261e6675",
           "linux-syslog-delivery-cfdc0a3f",
-          "linux-logsink-activation-da9e1713"
+          "linux-logsink-activation-da9e1713",
+          "linux-combined-0e186cc0"
         ]
       },
       "freebsd": {
@@ -3144,7 +3145,8 @@
         "scoped_evidence": [
           "linux-native-ndpi-addon-be382e44",
           "linux-combined-telemetry-261e6675",
-          "linux-collector-outage-db41e03e"
+          "linux-collector-outage-db41e03e",
+          "linux-combined-0e186cc0"
         ]
       },
       "freebsd": {
@@ -3280,7 +3282,8 @@
         "scoped_evidence": [
           "linux-nonresource-code-c7f89dda",
           "linux-webconsole-browser-c7f89dda",
-          "linux-webconsole-packaged-5645fcf8"
+          "linux-webconsole-packaged-5645fcf8",
+          "linux-combined-0e186cc0"
         ]
       },
       "freebsd": {
@@ -3374,7 +3377,8 @@
           "linux-vrrp-pve-81bc1768",
           "linux-ha-pair-initial-apt-83414e60",
           "linux-ha-pair-followup-apt-b698cb1d",
-          "linux-ha-pair-lifecycle-apt-1a96b8c0"
+          "linux-ha-pair-lifecycle-apt-1a96b8c0",
+          "linux-combined-0e186cc0"
         ]
       },
       "freebsd": {
@@ -3514,7 +3518,8 @@
           "linux-tailscale-withdrawal-6112f0bc",
           "linux-tailscale-advertisements-5feec40c",
           "linux-tailscale-expiry-db41e03e",
-          "linux-tailscale-dualstack-db41e03e"
+          "linux-tailscale-dualstack-db41e03e",
+          "linux-combined-0e186cc0"
         ]
       },
       "freebsd": {
@@ -3522,7 +3527,7 @@
         "scoped_evidence": []
       },
       "required_remaining_checks": [
-        "Combined deployed configuration and all-platform parity"
+        "Remaining peer/configuration combinations and all-platform parity beyond the qualified deployed Linux combination"
       ]
     },
     {
@@ -3738,7 +3743,8 @@
           "linux-portforward-f6502ea2",
           "linux-home-router-recovery-13b7a5b9",
           "linux-home-router-dualstack-57bf7e35",
-          "linux-dynamic-gateway-identity-a6d4e3bb"
+          "linux-dynamic-gateway-identity-a6d4e3bb",
+          "linux-combined-0e186cc0"
         ]
       },
       "freebsd": {
@@ -3832,7 +3838,8 @@
           "linux-bfd-both-modes-6aab35b5",
           "linux-ha-pair-initial-apt-83414e60",
           "linux-ha-pair-followup-apt-b698cb1d",
-          "linux-ha-pair-lifecycle-apt-1a96b8c0"
+          "linux-ha-pair-lifecycle-apt-1a96b8c0",
+          "linux-combined-0e186cc0"
         ]
       },
       "freebsd": {
@@ -3986,7 +3993,8 @@
           "linux-ha-pair-initial-apt-83414e60",
           "linux-ha-pair-lifecycle-apt-1a96b8c0",
           "linux-reservation-dns-bootstrap-6696bff6",
-          "linux-dhcp-dns-release-59373f17"
+          "linux-dhcp-dns-release-59373f17",
+          "linux-combined-0e186cc0"
         ]
       },
       "freebsd": {
@@ -4166,7 +4174,8 @@
           "linux-dhcpv6-server-packaged-lifecycle-038381c2",
           "linux-dhcp-family-isolation-2f9534d7",
           "linux-home-router-clean-install-999dfd4",
-          "linux-dhcpv6-server-restart-a6d4e3bb"
+          "linux-dhcpv6-server-restart-a6d4e3bb",
+          "linux-combined-0e186cc0"
         ]
       },
       "freebsd": {
@@ -4209,7 +4218,8 @@
         "scoped_evidence": [
           "linux-ha-pair-initial-apt-83414e60",
           "linux-ha-pair-followup-apt-b698cb1d",
-          "linux-ha-pair-lifecycle-apt-1a96b8c0"
+          "linux-ha-pair-lifecycle-apt-1a96b8c0",
+          "linux-combined-0e186cc0"
         ]
       },
       "freebsd": {
@@ -4217,8 +4227,7 @@
         "scoped_evidence": []
       },
       "required_remaining_checks": [
-        "Independent HA peers and actual client lease continuity",
-        "DNS name/tombstone, journal recovery, failure and revocation"
+        "DNS name/tombstone, journal recovery, failure and revocation beyond the qualified actual HA lease/PD synchronization and client continuity"
       ]
     },
     {
@@ -4315,7 +4324,8 @@
           "linux-dns-listener-selection-5b25593d",
           "linux-dhcp-derived-private-dns-d279d919",
           "linux-dns-writer-7012214a",
-          "linux-dhcp-dns-release-59373f17"
+          "linux-dhcp-dns-release-59373f17",
+          "linux-combined-0e186cc0"
         ]
       },
       "freebsd": {
@@ -4362,7 +4372,8 @@
           "linux-dslite-pve-f8ef5e59",
           "linux-multi-dslite-apt-fc5d7816",
           "linux-dslite-existing-flows-ee50d674",
-          "linux-dslite-pd-apt-197bd70f"
+          "linux-dslite-pd-apt-197bd70f",
+          "linux-combined-0e186cc0"
         ]
       },
       "freebsd": {
@@ -4596,7 +4607,8 @@
           "linux-multi-dslite-apt-fc5d7816",
           "linux-dslite-existing-flows-ee50d674",
           "linux-dslite-pd-apt-197bd70f",
-          "linux-ipv6-host-policy-e6590007"
+          "linux-ipv6-host-policy-e6590007",
+          "linux-combined-0e186cc0"
         ]
       },
       "freebsd": {
@@ -4870,7 +4882,9 @@
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "linux-combined-0e186cc0"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",
@@ -5002,7 +5016,8 @@
           "linux-home-router-clean-install-999dfd4",
           "linux-dualstack-recovery-6977c66e",
           "linux-multi-dslite-apt-fc5d7816",
-          "linux-native-crash-rollback-2da31049"
+          "linux-native-crash-rollback-2da31049",
+          "linux-combined-0e186cc0"
         ]
       },
       "freebsd": {

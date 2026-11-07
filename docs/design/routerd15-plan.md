@@ -22,6 +22,23 @@ routerd 1.0 baseline: `e3b49dbb69c7de97bab9595884745eb7cbe93d92`.
 
 ## Linux replacement priority (2026-11-03 user decision)
 
+Current checkpoint (2026-11-07): product `0e186cc0` completed the isolated
+107-resource combination, final service checks, static-route/Tailscale payloads
+and both empty withdrawals. See the
+[executed result](routerd15-audit.md#completed-packaged-combined-lifecycle--0e186cc0).
+Keep this result instead of repeating that entire gate to satisfy older
+remaining-check labels below. The qualified packages and validated full target
+configurations are identified in the private replacement procedure. Production
+allocation, NIC mapping and cutover remain explicit operator decisions.
+
+Continue the full preservation goal with genuinely uncovered Linux paths;
+the next VRF check is transit forwarding between independent peers in overlapping
+routing domains, rather than another router-originated packet check. Preserve
+the 53.867-second maximum HA response gap as a limitation to investigate, not a
+claim of fast failover. Do not start FreeBSD work or declare whole-task completion
+from this Linux combination result. Historical checkpoints below retain their
+original scope and do not supersede this current milestone.
+
 The next deliverable is a Linux candidate ready for an explicitly authorized
 replacement trial of a deployed router. FreeBSD implementation, packaging,
 nDPI investigation and native qualification must not delay that deliverable.
