@@ -137,7 +137,7 @@ func (c Controller) reconcile(ctx context.Context, name string) error {
 			next["ntpServers"] = servers
 		}
 		current := c.Store.ObjectStatus(resource.Resource.APIVersion, resource.Resource.Kind, resource.Resource.Name)
-		for _, key := range []string{"appliedAddress", "ifname", "appliedDefaultGateway", "appliedDNSServers"} {
+		for _, key := range []string{"appliedAddress", "ifname", "appliedDefaultGateway", "appliedRouteMetric", "appliedDNSServers"} {
 			if value, ok := current[key]; ok {
 				next[key] = value
 			}
@@ -205,6 +205,9 @@ func leaseFieldString(v any) string {
 func (c Controller) applyLease(ctx context.Context, name string, current, next map[string]any) error {
 	phase := fmt.Sprint(next["phase"])
 	if phase == daemonapi.ResourcePhaseExpired || phase == daemonapi.ResourcePhaseReleased {
+		if err := c.removeExpiredRoute(ctx, name, current, next); err != nil {
+			return err
+		}
 		return c.removeExpiredAddress(ctx, name, current, next)
 	}
 	if phase != daemonapi.ResourcePhaseBound {
@@ -258,7 +261,10 @@ func (c Controller) applyLease(ctx context.Context, name string, current, next m
 	if api.BoolDefault(spec.UseRoutes, true) {
 		gateway := strings.TrimSpace(fmt.Sprint(next["defaultGateway"]))
 		if gateway != "" {
-			routePresent := dhcpv4DefaultRoutePresent(ctx, platform.CurrentOS(), command, ifname, gateway, spec.RouteMetric)
+			routePresent, err := dhcpv4DefaultRoutePresent(ctx, platform.CurrentOS(), command, ifname, gateway, spec.RouteMetric)
+			if err != nil {
+				return err
+			}
 			next["defaultRoutePresent"] = routePresent
 			if !routePresent {
 				if err := replaceDefaultRoute(ctx, platform.CurrentOS(), command, ifname, gateway, spec.RouteMetric); err != nil {
@@ -267,6 +273,7 @@ func (c Controller) applyLease(ctx context.Context, name string, current, next m
 				next["defaultRoutePresent"] = true
 			}
 			next["appliedDefaultGateway"] = gateway
+			next["appliedRouteMetric"] = spec.RouteMetric
 		}
 	}
 	if api.BoolDefault(spec.UseDNS, true) {
@@ -279,6 +286,92 @@ func (c Controller) applyLease(ctx context.Context, name string, current, next m
 		}
 	}
 	next["applyMode"] = "active"
+	return nil
+}
+
+// removeExpiredRoute removes the default route associated with an expired
+// lease unless the same route is explicitly configured.
+func (c Controller) removeExpiredRoute(ctx context.Context, name string, current, next map[string]any) error {
+	gateway, ifname := mapString(current, "appliedDefaultGateway"), mapString(current, "ifname")
+	if gateway == "" || ifname == "" {
+		return nil
+	}
+	spec, _, ok, err := c.leaseSpecAndIfName(name)
+	if err != nil || !ok {
+		return err
+	}
+	metric := spec.RouteMetric
+	if text := mapString(current, "appliedRouteMetric"); text != "" {
+		metric, err = strconv.Atoi(text)
+		if err != nil {
+			return fmt.Errorf("invalid applied DHCPv4 route metric: %w", err)
+		}
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		switch resource.Kind {
+		case "DHCPv4Client":
+			if resource.Metadata.Name == name {
+				continue
+			}
+			other, err := resource.DHCPv4ClientSpec()
+			if err != nil {
+				return err
+			}
+			if !api.BoolDefault(other.UseRoutes, true) || other.RouteMetric != metric || (other.Interface != spec.Interface && other.Interface != ifname) {
+				continue
+			}
+			status := c.Store.ObjectStatus(api.NetAPIVersion, "DHCPv4Client", resource.Metadata.Name)
+			expires, err := time.Parse(time.RFC3339Nano, mapString(status, "expiresAt"))
+			phase := mapString(status, "phase")
+			if err == nil && time.Now().Before(expires) && (phase == daemonapi.ResourcePhaseBound || phase == daemonapi.ResourcePhaseRefreshing || phase == daemonapi.ResourcePhaseRebinding) && mapString(status, "defaultGateway") == gateway {
+				delete(next, "appliedDefaultGateway")
+				delete(next, "appliedRouteMetric")
+				return nil
+			}
+		case "IPv4Route":
+			route, err := resource.IPv4RouteSpec()
+			if err != nil {
+				return err
+			}
+			if (route.Destination == "0.0.0.0/0" || route.Destination == "default") && route.Gateway == gateway && route.Metric == metric && (route.Device == spec.Interface || route.Device == ifname) {
+				delete(next, "appliedDefaultGateway")
+				delete(next, "appliedRouteMetric")
+				return nil
+			}
+		case "IPv4StaticRoute":
+			route, err := resource.IPv4StaticRouteSpec()
+			if err != nil {
+				return err
+			}
+			if (route.Destination == "0.0.0.0/0" || route.Destination == "default") && route.Via == gateway && route.Metric == metric && (route.Interface == spec.Interface || route.Interface == ifname) {
+				delete(next, "appliedDefaultGateway")
+				delete(next, "appliedRouteMetric")
+				return nil
+			}
+		}
+	}
+	if c.DryRun {
+		return nil
+	}
+	command := c.Command
+	if command == nil {
+		command = runOutputCommandContext
+	}
+	present, err := dhcpv4DefaultRoutePresent(ctx, platform.CurrentOS(), command, ifname, gateway, metric)
+	if err != nil {
+		return err
+	}
+	if present {
+		if platform.CurrentOS() == platform.OSFreeBSD {
+			if _, err := command(ctx, "route", "-n", "delete", "default", gateway); err != nil {
+				return fmt.Errorf("remove expired DHCPv4 route: %w", err)
+			}
+		} else if _, err := command(ctx, "ip", "-4", "route", "del", "default", "via", gateway, "dev", ifname, "metric", strconv.Itoa(metric)); err != nil {
+			return fmt.Errorf("remove expired DHCPv4 route: %w", err)
+		}
+	}
+	delete(next, "appliedDefaultGateway")
+	delete(next, "appliedRouteMetric")
 	return nil
 }
 
@@ -505,37 +598,48 @@ func removeIPv4Address(ctx context.Context, osName platform.OS, command outputCo
 	return err
 }
 
-func dhcpv4DefaultRoutePresent(ctx context.Context, osName platform.OS, command outputCommandFunc, ifname, gateway string, metric int) bool {
+func dhcpv4DefaultRoutePresent(ctx context.Context, osName platform.OS, command outputCommandFunc, ifname, gateway string, metric int) (bool, error) {
 	if osName == platform.OSFreeBSD {
-		return false
+		out, err := command(ctx, "route", "-n", "get", "default")
+		if err != nil {
+			message := strings.ToLower(string(out) + " " + err.Error())
+			if strings.Contains(message, "not in table") || strings.Contains(message, "not found") {
+				return false, nil
+			}
+			return false, fmt.Errorf("observe default route: %w", err)
+		}
+		values := map[string]string{}
+		for _, line := range strings.Split(string(out), "\n") {
+			key, value, ok := strings.Cut(strings.TrimSpace(line), ":")
+			if ok {
+				values[key] = strings.TrimSpace(value)
+			}
+		}
+		return values["interface"] == ifname && values["gateway"] == gateway, nil
 	}
 	out, err := command(ctx, "ip", "-4", "route", "show", "default")
 	if err != nil {
-		return false
+		return false, fmt.Errorf("observe default routes: %w", err)
 	}
 	for _, line := range strings.Split(string(out), "\n") {
 		if dhcpv4DefaultRouteLineMatches(line, ifname, gateway, metric) {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 func dhcpv4DefaultRouteLineMatches(line, ifname, gateway string, metric int) bool {
 	fields := strings.Fields(line)
-	if len(fields) == 0 || fields[0] != "default" {
+	if len(fields) == 0 || fields[0] != "default" || !dhcpv4RouteFieldsContainPair(fields, "dev", ifname) || !dhcpv4RouteFieldsContainPair(fields, "via", gateway) {
 		return false
 	}
-	if !dhcpv4RouteFieldsContainPair(fields, "dev", ifname) {
-		return false
+	for i := 0; i+1 < len(fields); i++ {
+		if fields[i] == "metric" {
+			return fields[i+1] == strconv.Itoa(metric)
+		}
 	}
-	if gateway != "" && !dhcpv4RouteFieldsContainPair(fields, "via", gateway) {
-		return false
-	}
-	if metric > 0 && !dhcpv4RouteFieldsContainPair(fields, "metric", strconv.Itoa(metric)) {
-		return false
-	}
-	return true
+	return metric == 0
 }
 
 func dhcpv4RouteFieldsContainPair(fields []string, key, value string) bool {
