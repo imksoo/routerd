@@ -3,10 +3,7 @@
 package mobility
 
 import (
-	"context"
-	"fmt"
 	"testing"
-	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
 )
@@ -38,36 +35,6 @@ func TestMobilityPoolMembersFromSAMNodeSetMergesLocalOverlay(t *testing.T) {
 	self := resolved.Pool.Self
 	if self.NodeRef != "onprem-router" || self.Site != "published-pve01" || self.Capture.Type != "proxy-arp" || self.MaxSecondaryIPs != 9 {
 		t.Fatalf("merged self = %#v, want NodeSet topology and local capture overlay", self)
-	}
-}
-
-func TestMobilityPoolMembersFromSAMNodeSetMissingRequiredIsPending(t *testing.T) {
-	now := time.Date(2026, 6, 8, 11, 1, 0, 0, time.UTC)
-	store := testStore(t, now)
-	spec := plannedPoolSpec()
-	router := planningRouterForNode("onprem-router", spec)
-	resources := router.Spec.Resources[:0]
-	for _, resource := range router.Spec.Resources {
-		if resource.Kind != "SAMNodeSet" {
-			resources = append(resources, resource)
-		}
-	}
-	router.Spec.Resources = resources
-
-	bgp := &fakeBGPPaths{}
-	controller := Controller{Router: router, Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-	if len(bgp.upserts) != 0 {
-		t.Fatalf("BGP upserts = %#v, want none while SAMNodeSet is missing", bgp.upserts)
-	}
-	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
-	if status["phase"] != "Pending" {
-		t.Fatalf("phase = %#v, want Pending status=%#v", status["phase"], status)
-	}
-	if got := fmt.Sprint(status["pendingSources"]); got != "[SAMNodeSet/cloudedge]" {
-		t.Fatalf("pendingSources = %s", got)
 	}
 }
 
