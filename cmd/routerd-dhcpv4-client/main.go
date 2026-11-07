@@ -249,7 +249,9 @@ func (d *dhcpv4Daemon) Run(ctx context.Context) error {
 			d.publish(daemonapi.EventDaemonCrashed, daemonapi.SeverityError, "ReadFailed", err.Error(), nil)
 			return err
 		}
-		_ = d.handlePacket(ctx, buf[:n])
+		if err := d.handlePacket(ctx, buf[:n]); err != nil {
+			d.publish("routerd.dhcpv4.client.packet.failed", daemonapi.SeverityWarning, "PacketFailed", err.Error(), nil)
+		}
 	}
 }
 
@@ -370,7 +372,9 @@ func (d *dhcpv4Daemon) handlePacket(ctx context.Context, packet []byte) error {
 	case dhcpv4client.MessageNAK:
 		d.mu.Lock()
 		d.state = dhcpv4client.StateExpired
+		d.nextRenew = time.Time{}
 		d.mu.Unlock()
+		d.publish("routerd.dhcpv4.client.lease.expired", daemonapi.SeverityWarning, "LeaseRejected", "DHCPv4 server rejected the lease", nil)
 		return d.saveLease()
 	default:
 		return nil
@@ -589,7 +593,9 @@ func (d *dhcpv4Daemon) handleCommand(w http.ResponseWriter, r *http.Request) {
 	case daemonapi.CommandRelease:
 		d.mu.Lock()
 		d.state = dhcpv4client.StateReleased
+		d.nextRenew = time.Time{}
 		d.mu.Unlock()
+		d.publish("routerd.dhcpv4.client.lease.released", daemonapi.SeverityInfo, "LeaseReleased", "DHCPv4 lease released", nil)
 		err = d.saveLease()
 	case daemonapi.CommandReload:
 	case daemonapi.CommandStop:
