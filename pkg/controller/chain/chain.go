@@ -2373,7 +2373,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "sysctl", Every: 5 * time.Minute, Subs: bootstrapSubscriptions(), PeriodicFunc: didWorkPeriodic(sysctl.Reconcile)},
-		framework.FuncController{ControllerName: "network-adoption", Every: 5 * time.Minute, Subs: bootstrapSubscriptions(), PeriodicFunc: didWorkPeriodic(adoption.Reconcile)},
+		framework.FuncController{ControllerName: "network-adoption", Every: 5 * time.Minute, Subs: statusSubscriptions("Interface"), PeriodicFunc: didWorkPeriodic(adoption.Reconcile)},
 		framework.FuncController{ControllerName: "bridge", Every: 30 * time.Second, Subs: statusSubscriptions("Interface", "VXLANTunnel", "VXLANSegment"), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveForReconcile()
 			if err != nil {

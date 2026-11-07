@@ -384,7 +384,6 @@ func TestPeriodicOnlyControllersUseBootstrapSubscriptions(t *testing.T) {
 		{name: "package", subs: bootstrapSubscriptions()},
 		{name: "kernel-module", subs: bootstrapSubscriptions()},
 		{name: "sysctl", subs: bootstrapSubscriptions()},
-		{name: "network-adoption", subs: bootstrapSubscriptions()},
 		{name: "log-retention", subs: bootstrapSubscriptions()},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
