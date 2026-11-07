@@ -96,12 +96,6 @@ export CE_PROTOCOL_OVERLAY_IFACE=wg-hybrid
 export CE_PROTOCOL_MSS_CLAMP=1340
 ```
 
-Each operation can be overridden without editing the runner:
-
-```sh
-export CE_PROTOCOL_FTP_ACTIVE_COMMAND='...'
-export CE_PROTOCOL_NFS_COMMAND='...'
-```
 
 The wrapper calls these operations per pair:
 

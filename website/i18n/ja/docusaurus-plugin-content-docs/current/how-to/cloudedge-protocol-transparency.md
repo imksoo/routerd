@@ -87,12 +87,6 @@ export CE_PROTOCOL_OVERLAY_IFACE=wg-hybrid
 export CE_PROTOCOL_MSS_CLAMP=1340
 ```
 
-各オペレーションはランナーを編集せずにオーバーライドできます:
-
-```sh
-export CE_PROTOCOL_FTP_ACTIVE_COMMAND='...'
-export CE_PROTOCOL_NFS_COMMAND='...'
-```
 
 ラッパーはペアごとに以下のオペレーションを呼び出します:
 

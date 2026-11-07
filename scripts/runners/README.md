@@ -69,9 +69,6 @@ PROTOCOL_PROBE_RUNNER=scripts/runners/cloudedge-protocol-runner.sh \
     --out evidence/protocol-probe.json
 ```
 
-Use `CE_PROTOCOL_<OP>_COMMAND` overrides for lab-specific FTP/NFS/RPC setup
-without editing the shared runner.
-
 Four-point packet capture runs use one `TEST_ID` for source endpoint,
 router-inside, router-outside-tunnel, and remote endpoint captures. The runner
 writes `TEST_ID-node-role-iface.pcap`, per-test JSON, and an aggregate manifest

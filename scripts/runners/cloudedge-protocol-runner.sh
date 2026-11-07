@@ -29,23 +29,7 @@ ENV:
   CE_PROTOCOL_<CLIENT>_<SERVER>_OVERLAY_IFACE
                                       Pair-specific overlay interface override.
   CE_PROTOCOL_MSS_CLAMP              Expected/known MSS clamp value if packet capture is unavailable.
-  CE_PROTOCOL_<OP>_COMMAND           Optional local override for one operation.
 EOF
-}
-
-override_configured() {
-  local key
-  key="CE_PROTOCOL_$(ce_upper "$1")_COMMAND"
-  [[ -n "${!key:-}" ]]
-}
-
-run_override() {
-  local op=$1 client=$2 server=$3 bytes=${4:-}
-  local key cmd
-  key="CE_PROTOCOL_$(ce_upper "$op")_COMMAND"
-  cmd=${!key:-}
-  [[ -n "$cmd" ]] || return 1
-  CE_PROTOCOL_OP=$op CE_PROTOCOL_CLIENT=$client CE_PROTOCOL_SERVER=$server CE_PROTOCOL_BYTES=$bytes bash -lc "$cmd"
 }
 
 server_ip() {
@@ -106,7 +90,6 @@ echo bytes=$bytes" || return "$?"
 
 cmd_setup() {
   local client=$1 server=$2 bytes=${3:-104857600}
-  if override_configured setup "$client" "$server" "$bytes"; then run_override setup "$client" "$server" "$bytes" || return $?; return 0; fi
   remote_install_packages "$client" || return "$?"
   remote_install_packages "$server" || return "$?"
   configure_server "$server" "$bytes" || return "$?"
@@ -115,7 +98,6 @@ cmd_setup() {
 
 cmd_ftp() {
   local mode=$1 client=$2 server=$3 bytes=${4:-104857600} ip user pass curl_opts=() size
-  if override_configured "ftp-$mode" "$client" "$server" "$bytes"; then run_override "ftp-$mode" "$client" "$server" "$bytes" || return $?; return 0; fi
   ip=$(server_ip "$server")
   user=${CE_PROTOCOL_FTP_USER:-anonymous}
   pass=${CE_PROTOCOL_FTP_PASSWORD:-anonymous}
@@ -133,7 +115,6 @@ cmd_ftp() {
 
 cmd_nfs() {
   local client=$1 server=$2 bytes=${3:-104857600} ip mount_dir
-  if override_configured nfs "$client" "$server" "$bytes"; then run_override nfs "$client" "$server" "$bytes" || return $?; return 0; fi
   ip=$(server_ip "$server")
   mount_dir="/tmp/cloudedge-nfs-$server"
   local mib=$(( (bytes + 1048575) / 1048576 ))
@@ -150,7 +131,6 @@ dd if=$(printf '%q' "$mount_dir")/client-write.bin of=/dev/null bs=1M status=non
 
 cmd_rpc() {
   local client=$1 server=$2 ip out port
-  if override_configured rpc "$client" "$server" ""; then run_override rpc "$client" "$server" "" || return $?; return 0; fi
   ip=$(server_ip "$server")
   out=$(ce_client_ssh "$client" "rpcinfo -p $(printf '%q' "$ip")")
   port=$(printf '%s\n' "$out" | awk '$5 ~ /mountd|nfs/ && $4 != "111" {print $4; exit}')
@@ -162,7 +142,6 @@ cmd_rpc() {
 
 cmd_bulk() {
   local client=$1 server=$2 bytes=${3:-${CE_PROTOCOL_BULK_BYTES:-104857600}} ip summary
-  if override_configured bulk "$client" "$server" "$bytes"; then run_override bulk "$client" "$server" "$bytes" || return $?; return 0; fi
   ip=$(server_ip "$server")
   if ce_client_ssh "$client" "command -v iperf3 >/dev/null 2>&1"; then
     ce_client_ssh "$client" "iperf3 -c $(printf '%q' "$ip") -n $(printf '%q' "$bytes") -J >/tmp/cloudedge-iperf3-client.json"
@@ -206,7 +185,6 @@ protocol_overlay_iface() {
 
 cmd_pmtu() {
   local client=$1 server=$2 ip size overlay_iface route_line overlay_mtu route_mtu advmss nft_mss iptables_mss mss mss_source
-  if override_configured pmtu "$client" "$server" ""; then run_override pmtu "$client" "$server" "" || return $?; return 0; fi
   ip=$(server_ip "$server")
   size=${CE_PROTOCOL_PMTU_SIZE:-1300}
   ce_client_ssh "$client" "ping -M do -s $(printf '%q' "$size") -c3 -W2 $(printf '%q' "$ip") >/dev/null"
@@ -272,7 +250,6 @@ cmd_nested_ssh_peer() {
 
 cmd_source_preserved() {
   local client=$1 server=$2 expected peer
-  if override_configured source-preserved "$client" "$server" ""; then run_override source-preserved "$client" "$server" "" || return $?; return 0; fi
   expected=$(ce_site_ip "$client")
   peer=$(cmd_nested_ssh_peer "$client" "$server" | sed -n 's/^peer_ip=//p' | head -n1)
   [[ "$peer" == "$expected" ]] || ce_die "peer_ip=$peer expected=$expected"
@@ -282,7 +259,6 @@ cmd_source_preserved() {
 
 cmd_no_nat() {
   local client=$1 server=$2
-  if override_configured no-nat "$client" "$server" ""; then run_override no-nat "$client" "$server" "" || return $?; return 0; fi
   cmd_source_preserved "$client" "$server" >/dev/null
   printf 'detail=no_nat_ok\n'
 }

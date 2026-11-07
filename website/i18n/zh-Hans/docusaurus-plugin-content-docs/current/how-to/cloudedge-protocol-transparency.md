@@ -87,12 +87,6 @@ export CE_PROTOCOL_OVERLAY_IFACE=wg-hybrid
 export CE_PROTOCOL_MSS_CLAMP=1340
 ```
 
-每个操作均可在不编辑运行器的情况下覆盖：
-
-```sh
-export CE_PROTOCOL_FTP_ACTIVE_COMMAND='...'
-export CE_PROTOCOL_NFS_COMMAND='...'
-```
 
 封装器对每个对调用以下操作：
 
