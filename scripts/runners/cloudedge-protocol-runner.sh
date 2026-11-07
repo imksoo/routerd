@@ -28,7 +28,6 @@ ENV:
   CE_PROTOCOL_OVERLAY_IFACE          Overlay interface for MTU evidence (default wg-hybrid).
   CE_PROTOCOL_<CLIENT>_<SERVER>_OVERLAY_IFACE
                                       Pair-specific overlay interface override.
-  CE_PROTOCOL_MSS_CLAMP              Expected/known MSS clamp value if packet capture is unavailable.
 EOF
 }
 
@@ -212,8 +211,7 @@ cmd_pmtu() {
     mss=$iptables_mss
     mss_source=iptables
   else
-    mss=${CE_PROTOCOL_MSS_CLAMP:-}
-    mss_source="env"
+    mss=
   fi
   printf 'overlay_iface=%s\n' "$overlay_iface"
   printf 'overlay_mtu=%s\n' "${overlay_mtu:-unknown}"
@@ -234,8 +232,8 @@ cmd_pmtu() {
     printf 'mss_clamp_source=%s\n' "$mss_source"
     printf 'effective_mss_clamp_source=%s\n' "$mss_source"
   else
-    printf 'mss_clamp_reason=nft_iptables_rules_missing_numeric_clamp_and_CE_PROTOCOL_MSS_CLAMP_unset\n'
-    printf 'effective_mss_clamp_reason=nft_iptables_rules_missing_numeric_clamp_and_CE_PROTOCOL_MSS_CLAMP_unset\n'
+    printf 'mss_clamp_reason=nft_iptables_rules_missing_numeric_clamp\n'
+    printf 'effective_mss_clamp_reason=nft_iptables_rules_missing_numeric_clamp\n'
   fi
   printf 'df_payload_bytes=%s\n' "$size"
   printf 'detail=pmtu_df_ok\n'

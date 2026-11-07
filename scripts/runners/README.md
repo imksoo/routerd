@@ -60,7 +60,6 @@ export AZURE_CLIENT_IP=10.77.60.12
 export CE_ONPREM_CLIENT_SSH_HOST=...
 export ONPREM_CLIENT_IP=10.77.60.10
 export CE_PROTOCOL_OVERLAY_IFACE=wg-hybrid
-export CE_PROTOCOL_MSS_CLAMP=1340
 
 PROTOCOL_PROBE_RUNNER=scripts/runners/cloudedge-protocol-runner.sh \
   scripts/cloudedge-protocol-probe.sh \
