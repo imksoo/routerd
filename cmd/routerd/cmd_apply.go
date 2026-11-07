@@ -961,19 +961,6 @@ func applyClusterResource(router *api.Router) (api.Resource, api.RouterdClusterS
 	return api.Resource{}, api.RouterdClusterSpec{}, false, nil
 }
 
-func loadTransientStateStore(path string) (routerstate.Store, error) {
-	store, err := routerstate.LoadReadOnly(path)
-	if err != nil {
-		return nil, err
-	}
-	if closer, ok := store.(interface{ Close() error }); ok {
-		defer func() { _ = closer.Close() }()
-	}
-	snapshot := routerstate.NewJSON()
-	snapshot.Values = store.Variables()
-	return snapshot, nil
-}
-
 func cleanupLegacyFreeBSDStateDir() ([]string, error) {
 	if platformDefaults.OS != platform.OSFreeBSD {
 		return nil, nil

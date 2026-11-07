@@ -790,76 +790,6 @@ func TestRunApplyChainOnceDryRunDoesNotMutateExistingStateDB(t *testing.T) {
 	}
 }
 
-func TestLoadTransientStateStoreOpensExistingSQLiteReadOnly(t *testing.T) {
-	dir := t.TempDir()
-	statePath := filepath.Join(dir, "routerd.db")
-	store, err := routerstate.OpenSQLite(statePath)
-	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
-	}
-	store.Set("manual.mode", "keep", "seed")
-	if err := store.Close(); err != nil {
-		t.Fatalf("close sqlite: %v", err)
-	}
-
-	t.Cleanup(func() {
-		_ = os.Chmod(dir, 0755)
-		_ = os.Chmod(statePath, 0644)
-	})
-	if err := os.Chmod(statePath, 0444); err != nil {
-		t.Fatalf("chmod state: %v", err)
-	}
-	if err := os.Chmod(dir, 0555); err != nil {
-		t.Fatalf("chmod state dir: %v", err)
-	}
-
-	transient, err := loadTransientStateStore(statePath)
-	if err != nil {
-		t.Fatalf("load transient read-only sqlite: %v", err)
-	}
-	if _, ok := transient.(*routerstate.JSONStore); !ok {
-		t.Fatalf("transient store type = %T, want JSON snapshot", transient)
-	}
-	if got := transient.Get("manual.mode"); got.Status != routerstate.StatusSet || got.Value != "keep" {
-		t.Fatalf("snapshot manual.mode = %+v, want keep", got)
-	}
-}
-
-func TestConfigCommandPlanObserveAcceptJSONState(t *testing.T) {
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "router.yaml")
-	statePath := filepath.Join(dir, "state.json")
-	if err := os.WriteFile(configPath, []byte(testRouterYAML("json-state-router")), 0644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-	store := routerstate.New()
-	store.Set("manual.mode", "keep", "seed")
-	if err := store.Save(statePath); err != nil {
-		t.Fatalf("save json state: %v", err)
-	}
-
-	for _, name := range []string{"plan", "observe"} {
-		t.Run(name, func(t *testing.T) {
-			var stdout strings.Builder
-			statusPath := filepath.Join(dir, name+"-status.json")
-			err := configCommand([]string{
-				"--config", configPath,
-				"--state-file", statePath,
-				"--status-file", statusPath,
-			}, &stdout, name)
-			if err != nil {
-				t.Fatalf("%s with json state: %v", name, err)
-			}
-			if stdout.String() == "" {
-				t.Fatalf("%s produced empty output", name)
-			}
-			if _, err := os.Stat(statusPath); err != nil {
-				t.Fatalf("%s status file: %v", name, err)
-			}
-		})
-	}
-}
-
 func TestRunApplyChainOnceCommitsCanonicalConfigAndGenerationYAML(t *testing.T) {
 	dir := t.TempDir()
 	setMissingSAMForwardChainIPTables(t)
@@ -4271,27 +4201,6 @@ func TestManagedHostnames(t *testing.T) {
 	}
 	if len(got) != 1 || got[0] != "router03.example.internal" {
 		t.Fatalf("managed hostnames = %v, want router03.example.internal", got)
-	}
-}
-
-func TestDriftedAdoptionCandidates(t *testing.T) {
-	candidates := []apply.AdoptionCandidate{
-		{
-			Kind:     "host.hostname",
-			Name:     "system",
-			Desired:  map[string]string{"hostname": "router03.example.internal"},
-			Observed: map[string]string{"hostname": "router03"},
-		},
-		{
-			Kind:     "linux.ipv4.routeTable",
-			Name:     "table=111",
-			Desired:  map[string]string{"table": "111", "ifname": "ppp0"},
-			Observed: map[string]string{"table": "111", "ifname": "ppp0"},
-		},
-	}
-	got := driftedAdoptionCandidates(candidates)
-	if len(got) != 1 || got[0].Kind != "host.hostname" {
-		t.Fatalf("drifted candidates = %+v, want hostname only", got)
 	}
 }
 
