@@ -249,7 +249,10 @@ func (d *dhcpv4Daemon) Run(ctx context.Context) error {
 			}
 			nextAcquireAttempt = time.Now().Add(30 * time.Second)
 		}
-		_ = d.conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+		if err := d.conn.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+			d.publish(daemonapi.EventDaemonCrashed, daemonapi.SeverityError, "ReadDeadlineFailed", err.Error(), nil)
+			return err
+		}
 		n, _, err := d.conn.ReadFromUDP(buf)
 		if err != nil {
 			if timeoutError(err) {
@@ -279,11 +282,15 @@ func (d *dhcpv4Daemon) acquire(ctx context.Context) error {
 	}
 	buf := make([]byte, 1500)
 	for time.Now().Before(deadline) {
-		_ = d.conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+		if err := d.conn.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+			return err
+		}
 		n, _, err := d.conn.ReadFromUDP(buf)
 		if err != nil {
 			if timeoutError(err) {
-				_ = d.send(ctx, dhcpv4client.MessageDiscover, dhcpv4client.Message{})
+				if err := d.send(ctx, dhcpv4client.MessageDiscover, dhcpv4client.Message{}); err != nil {
+					return err
+				}
 				continue
 			}
 			return err
