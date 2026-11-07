@@ -36,8 +36,12 @@ type Controller struct {
 }
 
 func (c Controller) Reconcile(ctx context.Context) error {
+	if c.Router == nil {
+		return nil
+	}
 	targetOS := platform.CurrentOS()
-	if !hasFirewall(c.Router) && (targetOS != platform.OSFreeBSD || len(c.LocalCaptureIntents) == 0) {
+	configured := hasFirewall(c.Router)
+	if !configured && targetOS != platform.OSLinux && (targetOS != platform.OSFreeBSD || len(c.LocalCaptureIntents) == 0) {
 		return nil
 	}
 	backend := firewallbackend.ForPlatform(targetOS, c.NftCommand)
@@ -49,6 +53,9 @@ func (c Controller) Reconcile(ctx context.Context) error {
 	if err != nil {
 		_ = c.saveErrorStatuses(ctx, backend.Name(), c.NftablesPath, "RenderFailed", err)
 		return err
+	}
+	if !configured && targetOS == platform.OSLinux {
+		ruleset.Data = []byte("destroy table inet routerd_filter\n")
 	}
 	changed, err := backend.Apply(ctx, ruleset, c.DryRun)
 	if err != nil {
