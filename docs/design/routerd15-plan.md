@@ -32,8 +32,11 @@ configurations are identified in the private replacement procedure. Production
 allocation, NIC mapping and cutover remain explicit operator decisions.
 
 Continue the full preservation goal with genuinely uncovered Linux paths;
-the next VRF check is transit forwarding between independent peers in overlapping
-routing domains, rather than another router-originated packet check. Preserve
+overlapping-domain IPv4 UDP transit now passes in the native controller gate
+(`eb43e539`), including SQLite reopen and independent withdrawal. See the
+[VRF transit result](routerd15-audit.md#linux-overlapping-vrf-client-transit).
+The remaining VRF scope includes packaged-daemon restart/reboot and delegated
+IPv6/RA; use the qualification ledger to retain these uncovered paths. Preserve
 the 53.867-second maximum HA response gap as a limitation to investigate, not a
 claim of fast failover. Do not start FreeBSD work or declare whole-task completion
 from this Linux combination result. Historical checkpoints below retain their
