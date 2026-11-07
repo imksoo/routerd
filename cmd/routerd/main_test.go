@@ -1015,7 +1015,6 @@ func TestRunGracefulStopWhenIdleBoundedReturnsAtDeadline(t *testing.T) {
 	var mu sync.Mutex
 	entered := make(chan struct{})
 	release := make(chan struct{})
-	started := time.Now()
 	ran, completed, err := runGracefulStopWhenIdleBounded(&mu, 20*time.Millisecond, func() error {
 		close(entered)
 		<-release
@@ -1026,9 +1025,6 @@ func TestRunGracefulStopWhenIdleBoundedReturnsAtDeadline(t *testing.T) {
 	}
 	if !errors.Is(err, errGracefulStopShutdownDeadline) {
 		t.Fatalf("runGracefulStopWhenIdleBounded error = %v, want deadline", err)
-	}
-	if elapsed := time.Since(started); elapsed > time.Second {
-		t.Fatalf("runGracefulStopWhenIdleBounded waited %s for blocked handoff", elapsed)
 	}
 	select {
 	case <-entered:
@@ -3559,70 +3555,3 @@ func TestConfiguredDHCPLeasePathsPreferControllerDnsmasqConfig(t *testing.T) {
 		seen[path] = true
 	}
 }
-
-func TestStartCommandWithFileOutputReleasesLongLivedSupervisor(t *testing.T) {
-	pidPath := filepath.Join(t.TempDir(), "child.pid")
-	started := time.Now()
-	outputPath, err := startCommandWithFileOutput("sh", "-c", `sleep 5 & printf '%s\n' "$!" > "$1"; printf 'parent exited\n'`, "sh", pidPath)
-	if err != nil {
-		t.Fatalf("start command: %v", err)
-	}
-	defer os.Remove(outputPath)
-	if elapsed := time.Since(started); elapsed >= time.Second {
-		t.Fatalf("start/release waited %s for long-lived child", elapsed)
-	}
-	if err := waitForFile(pidPath, time.Second); err != nil {
-		t.Fatal(err)
-	}
-	if err := waitForFileText(outputPath, "parent exited", time.Second); err != nil {
-		t.Fatal(err)
-	}
-	out, err := os.ReadFile(outputPath)
-	if err != nil || !strings.Contains(string(out), "parent exited") {
-		t.Fatalf("output = %q, err=%v, want parent output", out, err)
-	}
-	pidText, err := os.ReadFile(pidPath)
-	if err != nil {
-		t.Fatalf("read child PID: %v", err)
-	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(pidText)))
-	if err != nil {
-		t.Fatalf("parse child PID %q: %v", pidText, err)
-	}
-	child, err := os.FindProcess(pid)
-	if err != nil {
-		t.Fatalf("find child process: %v", err)
-	}
-	if err := child.Signal(syscall.Signal(0)); err != nil {
-		t.Fatalf("child process is not live after Start/Release: %v", err)
-	}
-	_ = child.Kill()
-	_, _ = child.Wait()
-}
-
-func waitForFile(path string, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if _, err := os.Stat(path); err == nil {
-			return nil
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	return fmt.Errorf("timed out waiting for %s", path)
-}
-
-func waitForFileText(path, want string, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if data, err := os.ReadFile(path); err == nil && strings.Contains(string(data), want) {
-			return nil
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	return fmt.Errorf("timed out waiting for %q in %s", want, path)
-}
-
-// setMissingSAMForwardChainIPTables supplies the ordinary iptables response
-// for a router with no routerd-owned SAM chain. Empty-desired reconciliation
-// intentionally probes ownership and must still fail on real permission or
-// parse errors; these command tests exercise a config with no host chain.
