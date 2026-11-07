@@ -9,11 +9,6 @@ on:
       - freebsd-parity
   workflow_dispatch:
     inputs:
-      ipv6_route_to_console_candidate:
-        description: Run the isolated historical IPv6 PF route-to candidate with serial markers
-        required: false
-        default: false
-        type: boolean
       arm64_runtime:
         description: Run the FreeBSD 14.3 arm64 QEMU/TCG current-binary runtime smoke
         required: false
@@ -91,7 +86,6 @@ jobs:
       ROUTERD_IPSEC_NETNS: rd-ipsec-ns
       ROUTERD_IPSEC_VETH_HOST: rd-ipsec-vh
       ROUTERD_IPSEC_VETH_PEER: rd-ipsec-vp
-      ROUTERD_IPV6_ROUTE_TO_CONSOLE_CANDIDATE: ${{ inputs.ipv6_route_to_console_candidate || 'false' }}
       ROUTERD_FREEBSD_TUNNELINTERFACE_RUNTIME: ${{ inputs.tunnelinterface_runtime || 'false' }}
       ROUTERD_FREEBSD_CLIENTPOLICY_IDENTITY_RUNTIME: ${{ inputs.clientpolicy_identity_runtime || 'false' }}
       ROUTERD_FREEBSD_KERNELMODULE_PERSISTENCE_RUNTIME: ${{ inputs.kernelmodule_persistence_runtime || 'false' }}
@@ -162,7 +156,6 @@ jobs:
       # The peer starts before an emulated guest's package install/full suite;
       # keep the initial phase bounded by this job's 90-minute wall clock.
       ROUTERD_IPSEC_INITIAL_LISTENER_SECONDS: 5400
-      ROUTERD_IPV6_ROUTE_TO_CONSOLE_CANDIDATE: false
       ROUTERD_FREEBSD_PACKAGE_LIFECYCLE_RUNTIME: ${{ inputs.package_lifecycle_runtime || 'false' }}
     steps:
       - name: Checkout

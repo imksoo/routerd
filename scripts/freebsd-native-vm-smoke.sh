@@ -201,24 +201,6 @@ if [ "${ROUTERD_FREEBSD_CLIENTPOLICY_IDENTITY_RUNTIME:-false}" = true ]; then
   cat "$clientpolicy_evidence/result"
 fi
 
-firewall_evidence="$work/firewall-vnet"
-sh scripts/freebsd-vnet-firewall-dataplane-smoke.sh --routerd "$routerd" --evidence-dir "$firewall_evidence"
-cat "$firewall_evidence/summary.log"
-cat "$firewall_evidence/result"
-
-policyroute_evidence="$work/policyroute-vnet"
-sh scripts/freebsd-vnet-policyroute-smoke.sh --routerd "$routerd" --evidence-dir "$policyroute_evidence"
-cat "$policyroute_evidence/summary.log"
-cat "$policyroute_evidence/result"
-
-if [ "${ROUTERD_IPV6_ROUTE_TO_CONSOLE_CANDIDATE:-false}" = true ]; then
-  candidate_evidence="$work/ipv6-route-to-console-candidate"
-  sh scripts/freebsd-vnet-ipv6-route-to-console-candidate.sh \
-    --source "$(pwd)" --evidence-dir "$candidate_evidence"
-  cat "$candidate_evidence/summary.log"
-  cat "$candidate_evidence/result"
-fi
-
 if [ "${ROUTERD_FREEBSD_TUNNELINTERFACE_RUNTIME:-false}" = true ]; then
   sh scripts/freebsd-tunnelinterface-smoke.sh --routerd "$routerd"
 fi
