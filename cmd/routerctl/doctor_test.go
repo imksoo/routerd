@@ -1833,26 +1833,6 @@ spec:
 	return configPath, filepath.Join(dir, "routerd.db")
 }
 
-func saveDoctorDSLiteState(t *testing.T, statePath string, tunnelStatus map[string]any, selectedCandidate string, policyStatus map[string]any, healthStatus map[string]any) {
-	t.Helper()
-	store := openDoctorState(t, statePath)
-	tunnelStatus["device"] = "ds-routerd"
-	tunnelStatus["aftrFQDN"] = "aftr.example.net"
-	if err := store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", "ds-lite", tunnelStatus); err != nil {
-		t.Fatalf("save dslite status: %v", err)
-	}
-	if selectedCandidate != "" {
-		policyStatus["selectedCandidate"] = selectedCandidate
-	}
-	if err := store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "ipv4-default", policyStatus); err != nil {
-		t.Fatalf("save egress status: %v", err)
-	}
-	if err := store.SaveObjectStatus(api.NetAPIVersion, "HealthCheck", "internet", healthStatus); err != nil {
-		t.Fatalf("save health status: %v", err)
-	}
-	closeDoctorState(t, store)
-}
-
 func findDoctorCheck(t *testing.T, report doctorReport, name string) doctorCheck {
 	t.Helper()
 	for _, check := range report.Checks {
@@ -2086,28 +2066,4 @@ func TestDoctorNATConntrackdTCPLiberalNonLinuxSkips(t *testing.T) {
 	if check.Status != doctorSkip || !strings.Contains(check.Detail, "Linux-only") {
 		t.Fatalf("tcp_be_liberal non-Linux check = %#v", check)
 	}
-}
-
-func writeDoctorNATFixture(t *testing.T) (string, string) {
-	t.Helper()
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "router.yaml")
-	data := []byte(`apiVersion: routerd.net/v1alpha1
-kind: Router
-metadata:
-  name: test
-spec:
-  resources:
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: NAT44Rule
-      metadata:
-        name: wan-masq
-      spec:
-        action: masquerade
-        outboundInterface: wan
-`)
-	if err := os.WriteFile(configPath, data, 0644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-	return configPath, filepath.Join(dir, "routerd.db")
 }
