@@ -192,15 +192,19 @@ func serve(ctx context.Context, cfg eventd.Config, receiver *eventd.Receiver) er
 		return fmt.Errorf("listen %s: %w", addr, err)
 	}
 	server := &http.Server{Handler: receiver.Handler()}
+	shutdownDone := make(chan error, 1)
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = server.Shutdown(shutdownCtx)
+		shutdownDone <- server.Shutdown(shutdownCtx)
 	}()
 	log.Printf("routerd-eventd: listening on %s group=%s node=%s", addr, cfg.Group, cfg.NodeName)
 	err = server.Serve(listener)
 	if err == http.ErrServerClosed {
+		if err := <-shutdownDone; err != nil {
+			return fmt.Errorf("shutdown event receiver: %w", err)
+		}
 		return nil
 	}
 	return err
