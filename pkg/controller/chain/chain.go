@@ -6160,34 +6160,6 @@ func interfaceIfName(router *api.Router, name string) string {
 	return api.ResolveInterfaceIfName(router, name)
 }
 
-func renderAndEnsureDnsmasq(ctx context.Context, router *api.Router, store Store, command, configPath, pidFile string, port int, listenAddresses []string) error {
-	configPath = stringutil.FirstNonEmpty(configPath, "/run/routerd/dnsmasq-phase1.conf")
-	pidFile = stringutil.FirstNonEmpty(pidFile, "/run/routerd/dnsmasq-phase1.pid")
-	if port == 0 {
-		port = 1053
-	}
-	hostsSnapshot, err := snapshotDnsmasqHostsFile(dnsmasqHostsFile(configPath))
-	if err != nil {
-		return err
-	}
-	changed, reloadOnly, err := writeDnsmasqConfig(router, store, configPath, pidFile, port, listenAddresses)
-	if err != nil {
-		return err
-	}
-	leaseChanged, err := pruneDHCPv4ProfileMismatchedLeases(router, configPath, pidFile)
-	if err != nil {
-		return err
-	}
-	changed = changed || leaseChanged
-	if err := ensureDnsmasq(ctx, command, configPath, pidFile, changed); err != nil {
-		return restoreDnsmasqHostsForRetry(configPath, reloadOnly, hostsSnapshot, err)
-	}
-	if reloadOnly && !changed {
-		return reloadDnsmasqHostsSidecar(ctx, pidFile, configPath, hostsSnapshot, reloadDnsmasq)
-	}
-	return nil
-}
-
 func routerNeedsDnsmasq(router *api.Router) bool {
 	if router == nil {
 		return false
