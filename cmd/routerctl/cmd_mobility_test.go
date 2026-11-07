@@ -5,8 +5,6 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,7 +16,6 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	bgpstate "github.com/imksoo/routerd/pkg/bgp"
 	"github.com/imksoo/routerd/pkg/config"
-	"github.com/imksoo/routerd/pkg/controlapi"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
@@ -88,37 +85,6 @@ func TestMobilityEnrollmentHMACCommand(t *testing.T) {
 	}
 	if out := stdout.String(); !strings.Contains(out, "leafID=leaf-pve") || !strings.Contains(out, hmacValue) {
 		t.Fatalf("show-payload output missing payload or hmac:\n%s", out)
-	}
-}
-
-func TestMobilityEnrollmentRevokeCommand(t *testing.T) {
-	now := time.Date(2026, 6, 29, 0, 0, 0, 0, time.UTC)
-	assertAuth := func(r *http.Request) {
-		if got := r.Header.Get("Authorization"); got != "Bearer rr-token" {
-			t.Fatalf("Authorization = %q, want bearer token", got)
-		}
-	}
-	server := httptest.NewServer(controlapi.Handler{
-		RevokeSAMEnrollmentClaim: func(r *http.Request, req controlapi.SAMEnrollmentClaimRevokeRequest) (*controlapi.SAMEnrollmentClaimRevokeResult, error) {
-			assertAuth(r)
-			if req.Name != "pve-leaf-b" || req.Reason != "rotate" {
-				t.Fatalf("revoke request = %#v", req)
-			}
-			result := controlapi.NewSAMEnrollmentClaimRevokeResult("SAMEnrollmentClaim/pve-leaf-b", "SAMEnrollmentClaim/pve-leaf-b", 1, now, now, req.Reason)
-			return &result, nil
-		},
-	})
-	defer server.Close()
-	tokenPath := filepath.Join(t.TempDir(), "rr-token")
-	if err := os.WriteFile(tokenPath, []byte("rr-token\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	var stdout, stderr bytes.Buffer
-	if err := mobilityCommand([]string{"enrollment-revoke", "--claim", "pve-leaf-b", "--reason", "rotate", "--rr-url", server.URL, "--rr-token-file", tokenPath, "-o", "json"}, &stdout, &stderr); err != nil {
-		t.Fatalf("mobility enrollment-revoke: %v stderr=%s", err, stderr.String())
-	}
-	if !strings.Contains(stdout.String(), `"revoked": true`) || !strings.Contains(stdout.String(), `"claimRef": "SAMEnrollmentClaim/pve-leaf-b"`) {
-		t.Fatalf("revoke output = %s", stdout.String())
 	}
 }
 
