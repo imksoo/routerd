@@ -343,29 +343,28 @@ if command -v cloud-init >/dev/null 2>&1; then
   fi
 fi
 wait_for_apt() {
-  # Minimal guest images may not include fuser; apt's own lock timeout remains.
+  # Minimal guest images may not include fuser; apt can wait for its own lock.
   if ! command -v fuser >/dev/null 2>&1; then
-    echo "fuser unavailable; using apt DPkg::Lock::Timeout=300" >&2
+    echo "fuser unavailable; apt will wait for its lock" >&2
     return 0
   fi
-  local deadline=$((SECONDS + 300))
-  while [ "$SECONDS" -lt "$deadline" ]; do
-    if ! sudo fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock /var/cache/apt/archives/lock >/dev/null 2>&1; then
-      return 0
+  local started=$SECONDS reported=0
+  while sudo fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock /var/cache/apt/archives/lock >/dev/null 2>&1; do
+    if [ "$reported" -eq 0 ] && [ "$((SECONDS - started))" -ge 300 ]; then
+      echo "still waiting for apt/dpkg locks" >&2
+      sudo fuser -v /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock /var/cache/apt/archives/lock >&2 || true
+      reported=1
     fi
     sleep 5
   done
-  echo "timed out waiting for apt/dpkg locks" >&2
-  sudo fuser -v /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock /var/cache/apt/archives/lock >&2 || true
-  return 1
 }
 apt_update() {
   wait_for_apt || return "$?"
-  sudo apt-get -o DPkg::Lock::Timeout=300 update
+  sudo apt-get -o DPkg::Lock::Timeout=-1 update
 }
 apt_install() {
   wait_for_apt || return "$?"
-  sudo apt-get -o DPkg::Lock::Timeout=300 install -y --no-install-recommends "$@"
+  sudo apt-get -o DPkg::Lock::Timeout=-1 install -y --no-install-recommends "$@"
 }
 apt_retry() {
   # Preserve the existing four-attempt policy, scoped to one package operation.
