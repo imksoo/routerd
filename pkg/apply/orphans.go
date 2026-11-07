@@ -519,6 +519,37 @@ func DesiredIPv4PolicyRouteTables(router *api.Router, aliases map[string]string)
 	return tables, nil
 }
 
+// IPv4TailscaleRouteTables identifies active routes from a configured Tailscale node.
+func IPv4TailscaleRouteTables(router *api.Router, output string) (map[int]bool, error) {
+	tables := map[int]bool{}
+	configured := false
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "TailscaleNode" {
+			continue
+		}
+		spec, err := res.TailscaleNodeSpec()
+		if err != nil {
+			return nil, err
+		}
+		if spec.State != "absent" {
+			configured = true
+		}
+	}
+	if !configured {
+		return tables, nil
+	}
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if routeLineDev(fields) != "tailscale0" {
+			continue
+		}
+		if table, ok := routeLineTable(fields); ok {
+			tables[table] = true
+		}
+	}
+	return tables, nil
+}
+
 func (e *Engine) observeIPv4RouteTableOrphans(router *api.Router, aliases map[string]string) []OrphanedArtifact {
 	desiredTables, err := DesiredIPv4PolicyRouteTables(router, aliases)
 	if err != nil {
@@ -548,10 +579,14 @@ func (e *Engine) observeIPv4RouteTableOrphans(router *api.Router, aliases map[st
 	if err != nil {
 		return nil
 	}
+	dynamicTables, err := IPv4TailscaleRouteTables(router, string(out))
+	if err != nil {
+		return nil
+	}
 	var orphans []OrphanedArtifact
 	for _, artifact := range parseIPv4RouteTableArtifacts(string(out)) {
 		table, err := strconv.Atoi(artifact.Attributes["table"])
-		if err != nil || table == 253 || table == 254 || table == 255 || desiredTables[table] || references[table] > 0 {
+		if err != nil || table == 253 || table == 254 || table == 255 || desiredTables[table] || dynamicTables[table] || references[table] > 0 {
 			continue
 		}
 		orphans = append(orphans, OrphanedArtifact{

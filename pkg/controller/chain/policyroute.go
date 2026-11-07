@@ -1621,6 +1621,13 @@ func (c IPv4PolicyRouteController) currentPolicyRouteArtifacts(ctx context.Conte
 	if err != nil {
 		return nil, nil, err
 	}
+	dynamicTables, err := apply.IPv4TailscaleRouteTables(c.Router, string(tables))
+	if err != nil {
+		return nil, nil, err
+	}
+	for table := range dynamicTables {
+		referencedTables[table]++
+	}
 	for _, artifact := range parseIPv4PolicyRouteTableArtifacts(string(tables)) {
 		out[artifact.Identity()] = artifact
 	}
