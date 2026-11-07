@@ -4,6 +4,7 @@ package chain
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -38,37 +39,44 @@ type SysctlController struct {
 
 func (c SysctlController) Reconcile(ctx context.Context) error {
 	desired := map[string]bool{}
+	var errs []error
 	for _, resource := range hostdeps.SysctlResources(c.Router) {
 		desired[resource.Kind+"/"+resource.Metadata.Name] = true
 		switch resource.Kind {
 		case "Sysctl":
 			spec, err := resource.SysctlSpec()
 			if err != nil {
-				return err
+				errs = append(errs, err)
+				continue
 			}
 			result, err := c.applyOne(ctx, resource.Metadata.Name, "Sysctl", sysctlSetting{Key: spec.Key, Value: spec.Value, ExpectedValue: spec.ExpectedValue, Compare: spec.Compare, Runtime: spec.Runtime, Persistent: spec.Persistent, Optional: spec.Optional})
 			if err != nil {
-				return err
+				errs = append(errs, err)
+				continue
 			}
 			if result.changed && !c.DryRun && c.Bus != nil {
 				if err := c.publishApplied(ctx, "Sysctl", resource.Metadata.Name, spec.Key, spec.Value); err != nil {
-					return err
+					errs = append(errs, err)
 				}
 			}
 		case "SysctlProfile":
 			spec, err := resource.SysctlProfileSpec()
 			if err != nil {
-				return err
+				errs = append(errs, err)
+				continue
 			}
 			settings, err := sysctlProfileSettings(spec)
 			if err != nil {
-				return err
+				errs = append(errs, err)
+				continue
 			}
-			var applied, skipped, changed []string
+			var applied, skipped, changed, failed []string
 			for _, setting := range settings {
 				result, err := c.applyOne(ctx, resource.Metadata.Name+"-"+safeSysctlName(setting.Key), "SysctlProfile", setting)
 				if err != nil {
-					return err
+					errs = append(errs, err)
+					failed = append(failed, setting.Key)
+					continue
 				}
 				if result.skipped {
 					skipped = append(skipped, setting.Key)
@@ -80,7 +88,7 @@ func (c SysctlController) Reconcile(ctx context.Context) error {
 				}
 			}
 			phase := "Applied"
-			if len(skipped) > 0 {
+			if len(skipped) > 0 || len(failed) > 0 {
 				phase = "Degraded"
 			}
 			if c.DryRun && len(changed) > 0 && phase == "Applied" {
@@ -92,29 +100,31 @@ func (c SysctlController) Reconcile(ctx context.Context) error {
 				"applied":    applied,
 				"changed":    changed,
 				"skipped":    skipped,
+				"failed":     failed,
 				"runtime":    api.BoolDefault(spec.Runtime, true),
 				"persistent": spec.Persistent,
 				"dryRun":     c.DryRun,
 				"updatedAt":  time.Now().UTC().Format(time.RFC3339Nano),
 			}); err != nil {
-				return err
+				errs = append(errs, err)
+				continue
 			}
 			if len(changed) > 0 && !c.DryRun && c.Bus != nil {
 				if err := c.publishApplied(ctx, "SysctlProfile", resource.Metadata.Name, "profile", spec.Profile); err != nil {
-					return err
+					errs = append(errs, err)
 				}
 			}
 		}
 	}
 	if c.Router != nil && c.Router.Spec.Apply.AutoTuneConntrack {
 		if err := c.applyConntrackTuning(ctx); err != nil {
-			return err
+			errs = append(errs, err)
 		}
 	}
 	if err := c.cleanupRemovedSAMProxyARP(ctx, desired); err != nil {
-		return err
+		errs = append(errs, err)
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 type sysctlSetting struct {
