@@ -2389,6 +2389,9 @@ func canonicalOverallPhase(phase, reason string) string {
 }
 
 func statusPhaseSuppressedByReason(phase, reason string) bool {
+	if strings.EqualFold(strings.TrimSpace(phase), "Down") && strings.EqualFold(strings.TrimSpace(reason), "VRRPBackup") {
+		return true
+	}
 	if !strings.EqualFold(strings.TrimSpace(phase), "Pending") {
 		return false
 	}

@@ -4050,6 +4050,11 @@ func (c LinkController) Reconcile(ctx context.Context) error {
 			}
 			if ifi.Flags&net.FlagUp != 0 {
 				status["phase"] = "Up"
+			} else if !spec.Managed {
+				_, owner, ok := (LANAddressController{Router: c.Router, DeclaredRouter: declared}).vrrpVMACOwner(resource.Metadata.Name)
+				if ok && strings.EqualFold(statusvalue.Field(c.Store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", owner), "role"), "backup") {
+					status["reason"] = "VRRPBackup"
+				}
 			}
 		} else if !spec.Managed && inactiveTunnels[ifname] {
 			status["phase"] = "Disabled"
