@@ -311,8 +311,7 @@ run_named_scenario() {
         --failover-node pve-rr-a \
         --rejoin-after-failover \
         --load-balance-report \
-        "${failover_suite_args[@]}" \
-        --failover-transfer-observe
+        "${failover_suite_args[@]}"
       ;;
     rr-failover-pve-rr-b)
       run_scenario rr-failover-pve-rr-b \
@@ -320,8 +319,7 @@ run_named_scenario() {
         --failover-node pve-rr-b \
         --rejoin-after-failover \
         --load-balance-report \
-        "${failover_suite_args[@]}" \
-        --failover-transfer-observe
+        "${failover_suite_args[@]}"
       ;;
     leaf-failover-aws-leaf-a)
       run_scenario leaf-failover-aws-leaf-a \
@@ -329,8 +327,7 @@ run_named_scenario() {
         --failover-node aws-leaf-a \
         --rejoin-after-failover \
         --load-balance-report \
-        "${failover_suite_args[@]}" \
-        --failover-transfer-observe
+        "${failover_suite_args[@]}"
       ;;
     leaf-failover-aws-leaf-b)
       run_scenario leaf-failover-aws-leaf-b \
@@ -338,8 +335,7 @@ run_named_scenario() {
         --failover-node aws-leaf-b \
         --rejoin-after-failover \
         --load-balance-report \
-        "${failover_suite_args[@]}" \
-        --failover-transfer-observe
+        "${failover_suite_args[@]}"
       ;;
     leaf-failover-azure-leaf-a)
       run_scenario leaf-failover-azure-leaf-a \
@@ -347,8 +343,7 @@ run_named_scenario() {
         --failover-node azure-leaf-a \
         --rejoin-after-failover \
         --load-balance-report \
-        "${failover_suite_args[@]}" \
-        --failover-transfer-observe
+        "${failover_suite_args[@]}"
       ;;
     leaf-failover-azure-leaf-b)
       run_scenario leaf-failover-azure-leaf-b \
@@ -356,8 +351,7 @@ run_named_scenario() {
         --failover-node azure-leaf-b \
         --rejoin-after-failover \
         --load-balance-report \
-        "${failover_suite_args[@]}" \
-        --failover-transfer-observe
+        "${failover_suite_args[@]}"
       ;;
     leaf-failover-oci-leaf-a)
       run_scenario leaf-failover-oci-leaf-a \
@@ -365,8 +359,7 @@ run_named_scenario() {
         --failover-node oci-leaf-a \
         --rejoin-after-failover \
         --load-balance-report \
-        "${failover_suite_args[@]}" \
-        --failover-transfer-observe
+        "${failover_suite_args[@]}"
       ;;
     leaf-failover-oci-leaf-b)
       run_scenario leaf-failover-oci-leaf-b \
@@ -374,8 +367,7 @@ run_named_scenario() {
         --failover-node oci-leaf-b \
         --rejoin-after-failover \
         --load-balance-report \
-        "${failover_suite_args[@]}" \
-        --failover-transfer-observe
+        "${failover_suite_args[@]}"
       ;;
     leaf-failover-pve-leaf-a)
       run_scenario leaf-failover-pve-leaf-a \
@@ -383,8 +375,7 @@ run_named_scenario() {
         --failover-node pve-leaf-a \
         --rejoin-after-failover \
         --load-balance-report \
-        "${failover_suite_args[@]}" \
-        --failover-transfer-observe
+        "${failover_suite_args[@]}"
       ;;
     leaf-failover-pve-leaf-b)
       run_scenario leaf-failover-pve-leaf-b \
@@ -392,8 +383,7 @@ run_named_scenario() {
         --failover-node pve-leaf-b \
         --rejoin-after-failover \
         --load-balance-report \
-        "${failover_suite_args[@]}" \
-        --failover-transfer-observe
+        "${failover_suite_args[@]}"
       ;;
     load-balance)
       run_scenario load-balance \
