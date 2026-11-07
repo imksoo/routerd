@@ -1116,7 +1116,7 @@ func bootstrapSubscriptions() []bus.Subscription {
 
 func dnsResolverStatusSubscriptions(router *api.Router) []bus.Subscription {
 	subs := statusSubscriptionsWithWhen(router, []string{"DNSResolver", "DNSForwarder", "DNSUpstream", "DNSZone"},
-		"DNSResolver", "DNSForwarder", "DNSUpstream", "DNSZone", "IPv6DelegatedAddress", "DHCPv6Information", "VirtualAddress", "Interface", "IngressService")
+		"DNSResolver", "DNSForwarder", "DNSUpstream", "DNSZone", "IPv4StaticAddress", "IPv6DelegatedAddress", "DHCPv6Information", "VirtualAddress", "Interface", "IngressService")
 	subs = append(subs, bus.Subscription{Topics: []string{daemonapi.EventDHCPLeaseAdded, daemonapi.EventDHCPLeaseRenewed, daemonapi.EventDHCPLeaseRemoved}})
 	return subs
 }
