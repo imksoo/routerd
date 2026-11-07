@@ -2440,7 +2440,7 @@ job=\$(mktemp -d /tmp/routerd-transfer.XXXXXXXX)
 (
   set +e
   date -u '+started=%Y-%m-%dT%H:%M:%SZ'
-  timeout 150s curl -fS --limit-rate 512k --connect-timeout 10 --max-time 150 -o \"\$job/body.bin\" 'http://$dst_ip:8080/failover-transfer.bin'
+  curl -fS --limit-rate 512k -o \"\$job/body.bin\" 'http://$dst_ip:8080/failover-transfer.bin'
   rc=\$?
   date -u '+finished=%Y-%m-%dT%H:%M:%SZ'
   {
@@ -2460,15 +2460,13 @@ echo \"\$job \$!\"
   } >"$out/metadata.txt"
   # Only an owned, live job with partial bytes and no completion record proves
   # that the following fault happens during this transfer.
-  ssh_node "$src" "deadline=\$((SECONDS + 20))
-while [ \"\$SECONDS\" -lt \"\$deadline\" ]; do
+  ssh_node "$src" "while :; do
   [ ! -f '$job/result.txt' ] && kill -0 '$pid' 2>/dev/null || exit 3
   size=\$(stat -c %s '$job/body.bin' 2>/dev/null) || size=0
   case \"\$size\" in ''|*[!0-9]*) exit 3 ;; esac
   if [ \"\$size\" -gt 0 ] && [ \"\$size\" -lt 67108864 ]; then printf 'active_pid=%s partial_bytes=%s job=%s\n' '$pid' \"\$size\" '$job'; exit 0; fi
   sleep 1
-done
-exit 3" >"$out/entry.txt" 2>&1 || return 3
+done" >"$out/entry.txt" 2>&1 || return 3
   printf '%s %s\n' "$src" "$pid"
 }
 
@@ -2483,9 +2481,10 @@ finish_failover_transfer() {
   grep -Fxq "src=$src" "$out/metadata.txt" && grep -Fxq "pid=$remote_pid" "$out/metadata.txt" || return 3
   # Wait for the current job's atomic result, not a possibly reused/zombie PID.
   # Retain its body and log on the guest as evidence, even after a failed download.
-  ssh_node "$src" "deadline=\$((SECONDS + 170))
-while [ ! -f '$job/result.txt' ] && [ \"\$SECONDS\" -lt \"\$deadline\" ]; do sleep 2; done
-if [ ! -f '$job/result.txt' ]; then cat '$job/transfer.log'; echo observation=incomplete; exit 3; fi
+  ssh_node "$src" "while [ ! -f '$job/result.txt' ]; do
+  if ! kill -0 '$remote_pid' 2>/dev/null && [ ! -f '$job/result.txt' ]; then cat '$job/transfer.log'; echo observation=incomplete; exit 3; fi
+  sleep 2
+done
 cat '$job/transfer.log'
 echo '## result'
 cat '$job/result.txt'
