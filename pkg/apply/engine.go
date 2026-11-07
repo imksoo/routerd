@@ -4,6 +4,7 @@ package apply
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/netip"
@@ -18,6 +19,7 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/healthcheck"
+	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/render"
 	"github.com/imksoo/routerd/pkg/sysctlprofile"
 )
@@ -162,6 +164,8 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 			e.observeManagementAccess(res, includePlan, &rr)
 		case "ClusterNetworkRoute":
 			e.observeClusterNetworkRoute(res, includePlan, &rr)
+		case "IPv4Route":
+			e.observeIPv4Route(router, res, includePlan, &rr)
 		case "FirewallZone":
 			e.observeFirewallZone(res, aliases, includePlan, &rr)
 		case "FirewallPolicy":
@@ -179,7 +183,7 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 
 		if rr.Phase == "RequiresAdoption" || rr.Phase == "Blocked" {
 			result.Phase = "Blocked"
-		} else if rr.Phase == "Drifted" && result.Phase == "Healthy" && (res.Kind == "Bridge" || res.Kind == "VXLANTunnel") {
+		} else if rr.Phase == "Drifted" && result.Phase == "Healthy" && (res.Kind == "Bridge" || res.Kind == "VXLANTunnel" || res.Kind == "IPv4Route") {
 			result.Phase = "Drifted"
 		}
 		result.Resources = append(result.Resources, rr)
@@ -1981,6 +1985,67 @@ func ifconfigHasAddress(output, ifname string, want netip.Prefix) bool {
 		}
 	}
 	return false
+}
+
+func (e *Engine) observeIPv4Route(router *api.Router, res api.Resource, includePlan bool, rr *ResourceResult) {
+	spec, err := res.IPv4RouteSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	if includePlan {
+		rr.Plan = append(rr.Plan, "reconcile IPv4 route "+spec.Destination)
+	}
+	if platform.CurrentOS() != platform.OSLinux || spec.DeviceFrom.Resource != "" || spec.GatewayFrom.Resource != "" {
+		rr.Phase = "Unknown"
+		rr.Observed["reason"] = "RouteNotObserved"
+		return
+	}
+	destination := spec.Destination
+	if destination == "" || destination == "0.0.0.0/0" {
+		destination = "default"
+	}
+	out, err := runCommand("ip", "-j", "-4", "route", "show", "exact", destination)
+	if err != nil {
+		rr.Phase = "Unknown"
+		rr.Warnings = append(rr.Warnings, fmt.Sprintf("observe IPv4 route %s: %v", destination, err))
+		return
+	}
+	var routes []struct {
+		Type    string   `json:"type"`
+		Device  string   `json:"dev"`
+		Gateway string   `json:"gateway"`
+		Source  string   `json:"prefsrc"`
+		Metric  int      `json:"metric"`
+		Flags   []string `json:"flags"`
+	}
+	if err := json.Unmarshal(out, &routes); err != nil {
+		rr.Phase = "Unknown"
+		rr.Warnings = append(rr.Warnings, fmt.Sprintf("decode IPv4 route %s: %v", destination, err))
+		return
+	}
+	device := api.ResolveInterfaceIfName(router, strings.TrimSpace(spec.Device))
+	wantType := defaultString(spec.Type, "unicast")
+	for _, route := range routes {
+		if defaultString(route.Type, "unicast") != wantType || route.Device != device || route.Gateway != spec.Gateway || route.Metric != spec.Metric || (spec.PreferredSource != "" && route.Source != spec.PreferredSource) {
+			continue
+		}
+		onLink := false
+		for _, flag := range route.Flags {
+			if flag == "onlink" {
+				onLink = true
+			}
+		}
+		if onLink != spec.GatewayOnLink {
+			continue
+		}
+		rr.Observed["device"] = route.Device
+		rr.Observed["destination"] = destination
+		return
+	}
+	rr.Phase = "Drifted"
+	rr.Observed["reason"] = "RouteMissingOrDifferent"
 }
 
 func (e *Engine) defaultIPv4Route() (gateway, dev, proto string) {
