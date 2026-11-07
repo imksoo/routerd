@@ -799,7 +799,6 @@ func applyChainControllerOptions(opts applyOptions) controllerchain.Options {
 	controllerOpts := controllerchain.Options{
 		SuperviseClientDaemons: false,
 		SkipLegacyClientUnits:  true,
-		SuperviseDNSResolvers:  false,
 		DnsmasqCommand:         "dnsmasq",
 		DnsmasqConfig:          defaultString(opts.DnsmasqConfigPath, defaultDnsmasqConfigPath),
 		DnsmasqPID:             filepath.Join(platformDefaults.RuntimeDir, "dnsmasq.pid"),

@@ -1250,7 +1250,6 @@ type Options struct {
 	// SkipLegacyClientUnits keeps a one-shot reconciliation from creating
 	// per-resource service units when client lifecycle belongs to routerd serve.
 	SkipLegacyClientUnits   bool
-	SuperviseDNSResolvers   bool
 	FirewallDisabled        bool
 	DnsmasqCommand          string
 	DnsmasqConfig           string
@@ -3003,22 +3002,6 @@ func (r *Runner) clientDaemonSpecs(router *api.Router) []supervisedDaemonSpec {
 	var out []supervisedDaemonSpec
 	for _, resource := range router.Spec.Resources {
 		switch resource.Kind {
-		case "DNSResolver":
-			if !r.Opts.SuperviseDNSResolvers {
-				continue
-			}
-			defaults, _ := platform.Current()
-			name := resource.Metadata.Name
-			args := []string{"daemon", "--resource", name,
-				"--config-file", filepath.Join(defaults.StateDir, "dns-resolver", name, "config.json"),
-			}
-			if defaults.RuntimeDir != "/run/routerd" || defaults.StateDir != "/var/lib/routerd" {
-				args = append(args,
-					"--socket", filepath.Join(defaults.RuntimeDir, "dns-resolver", name+".sock"),
-					"--state-file", filepath.Join(defaults.StateDir, "dns-resolver", name, "state.json"),
-					"--event-file", filepath.Join(defaults.StateDir, "dns-resolver", name, "events.jsonl"))
-			}
-			out = append(out, supervisedDaemonSpec{ResourceName: name, Binary: "routerd-dns-resolver", Args: args})
 		case "DHCPv6PrefixDelegation":
 			spec, err := resource.DHCPv6PrefixDelegationSpec()
 			if err != nil {
@@ -3468,8 +3451,6 @@ func defaultClientSocket(binary, resource string) string {
 		return filepath.Join(defaults.RuntimeDir, "pppoe-client", resource+".sock")
 	case "routerd-arp-observer":
 		return filepath.Join(defaults.RuntimeDir, "arp-observer", resource+".sock")
-	case "routerd-dns-resolver":
-		return filepath.Join(defaults.RuntimeDir, "dns-resolver", resource+".sock")
 	default:
 		return ""
 	}
@@ -3681,7 +3662,7 @@ func supervisedProcessIdentity(args []string) (string, string) {
 	}
 	binary := filepath.Base(args[0])
 	switch binary {
-	case "routerd-dhcpv4-client", "routerd-dhcpv6-client", "routerd-pppoe-client", "routerd-dns-resolver", "routerd-arp-observer":
+	case "routerd-dhcpv4-client", "routerd-dhcpv6-client", "routerd-pppoe-client", "routerd-arp-observer":
 	default:
 		return "", ""
 	}
