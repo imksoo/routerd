@@ -480,23 +480,86 @@ func (e *Engine) observeIPv4FwmarkRuleOrphans(router *api.Router) []OrphanedArti
 	return orphans
 }
 
+// IPv4RuleTableReferences counts numeric table references in ip rule output.
+func IPv4RuleTableReferences(output string) map[int]int {
+	references := map[int]int{}
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		for i, field := range fields {
+			if field == "lookup" && i+1 < len(fields) {
+				if table, err := strconv.Atoi(fields[i+1]); err == nil {
+					references[table]++
+				}
+			}
+		}
+	}
+	return references
+}
+
+// DesiredIPv4PolicyRouteTables identifies configured policy and VRF tables.
+func DesiredIPv4PolicyRouteTables(router *api.Router, aliases map[string]string) (map[int]bool, error) {
+	tables := map[int]bool{}
+	for _, artifact := range DesiredOwnedArtifacts(router, aliases) {
+		if artifact.Kind == "linux.ipv4.routeTable" {
+			if table, err := strconv.Atoi(artifact.Attributes["table"]); err == nil {
+				tables[table] = true
+			}
+		}
+	}
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "VRF" {
+			continue
+		}
+		spec, err := res.VRFSpec()
+		if err != nil {
+			return nil, err
+		}
+		tables[spec.RouteTable] = true
+	}
+	return tables, nil
+}
+
 func (e *Engine) observeIPv4RouteTableOrphans(router *api.Router, aliases map[string]string) []OrphanedArtifact {
-	desired := desiredArtifactsByKind(router, aliases, "linux.ipv4.routeTable")
+	desiredTables, err := DesiredIPv4PolicyRouteTables(router, aliases)
+	if err != nil {
+		return nil
+	}
+	rules, err := runCommand("ip", "-4", "rule", "show")
+	if err != nil {
+		return nil
+	}
+	references := IPv4RuleTableReferences(string(rules))
+	desiredRules := map[string]bool{}
+	for _, artifact := range desiredIPv4FwmarkRuleArtifacts(router) {
+		desiredRules[artifact.Identity()] = true
+	}
+	seenRules := map[string]bool{}
+	for _, artifact := range parseIPv4FwmarkRuleArtifacts(string(rules)) {
+		id := artifact.Identity()
+		if desiredRules[id] || seenRules[id] {
+			continue
+		}
+		seenRules[id] = true
+		if rule, ok := ipv4FwmarkRuleFromArtifact(artifact); ok {
+			references[rule.Table]--
+		}
+	}
 	out, err := runCommand("ip", "-4", "route", "show", "table", "all")
 	if err != nil {
 		return nil
 	}
 	var orphans []OrphanedArtifact
-	for _, artifact := range resource.Orphans(desired, parseIPv4RouteTableArtifacts(string(out)), managedIPv4RouteTableArtifact) {
-		table := artifact.Attributes["table"]
+	for _, artifact := range parseIPv4RouteTableArtifacts(string(out)) {
+		table, err := strconv.Atoi(artifact.Attributes["table"])
+		if err != nil || table == 253 || table == 254 || table == 255 || desiredTables[table] || references[table] > 0 {
+			continue
+		}
 		orphans = append(orphans, OrphanedArtifact{
 			Kind:        "IPv4RouteTable",
 			Name:        artifact.Name,
-			Reason:      "no current resource owns this routerd-managed IPv4 route table",
-			Remediation: "flush ip route table " + table,
-			Observed: map[string]string{
-				"table": table,
-			},
+			Reason:      "no configured policy or live rule references this IPv4 route table",
+			Remediation: "flush ip route table " + strconv.Itoa(table),
+			Observed:    map[string]string{"table": strconv.Itoa(table)},
 		})
 	}
 	return orphans
@@ -872,11 +935,6 @@ func ipv4FwmarkRuleFromArtifact(artifact resource.Artifact) (ipv4FwmarkRuleArtif
 func managedIPv4FwmarkRuleArtifact(artifact resource.Artifact) bool {
 	_, ok := ipv4FwmarkRuleFromArtifact(artifact)
 	return ok
-}
-
-func managedIPv4RouteTableArtifact(artifact resource.Artifact) bool {
-	table, err := strconv.Atoi(artifact.Attributes["table"])
-	return err == nil && table >= 100 && table <= 199
 }
 
 func managedNftTableArtifact(artifact resource.Artifact) bool {

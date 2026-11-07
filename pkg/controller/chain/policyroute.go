@@ -599,25 +599,14 @@ func (c IPv4PolicyRouteController) cleanupPolicyRoutes(ctx context.Context, alia
 		return nil
 	}
 	desired := map[string]resource.Artifact{}
-	desiredTables := map[int]bool{}
-	for _, artifact := range apply.DesiredOwnedArtifacts(c.Router, aliases) {
-		if artifact.Kind != "linux.ipv4.fwmarkRule" && artifact.Kind != "linux.ipv4.routeTable" {
-			continue
-		}
-		desired[artifact.Identity()] = artifact
-		if table, ok := artifactIPv4Table(artifact); ok {
-			desiredTables[table] = true
-		}
+	desiredTables, err := apply.DesiredIPv4PolicyRouteTables(c.Router, aliases)
+	if err != nil {
+		return err
 	}
-	for _, res := range c.Router.Spec.Resources {
-		if res.Kind != "VRF" {
-			continue
+	for _, artifact := range apply.DesiredOwnedArtifacts(c.Router, aliases) {
+		if artifact.Kind == "linux.ipv4.fwmarkRule" || artifact.Kind == "linux.ipv4.routeTable" {
+			desired[artifact.Identity()] = artifact
 		}
-		spec, err := res.VRFSpec()
-		if err != nil {
-			return err
-		}
-		desiredTables[spec.RouteTable] = true
 	}
 	actual, referencedTables, err := c.currentPolicyRouteArtifacts(ctx)
 	if err != nil {
@@ -1624,17 +1613,7 @@ func (c IPv4PolicyRouteController) currentPolicyRouteArtifacts(ctx context.Conte
 	if err != nil {
 		return nil, nil, err
 	}
-	referencedTables := map[int]int{}
-	for _, line := range strings.Split(string(rules), "\n") {
-		fields := strings.Fields(line)
-		for i, field := range fields {
-			if field == "lookup" && i+1 < len(fields) {
-				if table, err := strconv.Atoi(fields[i+1]); err == nil {
-					referencedTables[table]++
-				}
-			}
-		}
-	}
+	referencedTables := apply.IPv4RuleTableReferences(string(rules))
 	for _, artifact := range parseIPv4PolicyFwmarkRuleArtifacts(string(rules)) {
 		out[artifact.Identity()] = artifact
 	}
