@@ -93,6 +93,9 @@ func SystemdUnit(name string, spec api.SystemdUnitSpec) []byte {
 	if len(spec.ExecStop) > 0 {
 		b.WriteString("ExecStop=" + quoteCommand(spec.ExecStop) + "\n")
 	}
+	if len(spec.ExecStopPost) > 0 {
+		b.WriteString("ExecStopPost=" + quoteCommand(spec.ExecStopPost) + "\n")
+	}
 	b.WriteString("Restart=" + restart + "\n")
 	b.WriteString("RestartSec=" + restartSec + "\n")
 	writeSpaceList(&b, "RuntimeDirectory", spec.RuntimeDirectory)

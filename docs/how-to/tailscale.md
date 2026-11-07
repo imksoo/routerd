@@ -276,6 +276,8 @@ Replace the address with the actual Tailscale IP of the router.
 
 On Linux, removing a `TailscaleNode`, setting `state: absent`, or making its
 `when` condition false stops the managed unit and runs `tailscale down`.
+The disconnect uses `ExecStopPost`, so it also runs when `tailscale up` accepted
+connection intent but failed before the oneshot unit reached its active state.
 This disconnects the node without logging out or stopping `tailscaled`; its
 identity remains available for reactivation. A failed stop leaves the unit
 and cleanup error in place for reconciliation to retry.

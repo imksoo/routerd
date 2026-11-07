@@ -29,7 +29,7 @@ func TailscaleSystemdSpec(name string, spec api.TailscaleNodeSpec) api.SystemdUn
 		Description:              "routerd Tailscale node " + name,
 		Type:                     "oneshot",
 		ExecStart:                TailscaleUpArgs(spec),
-		ExecStop:                 []string{stringutil.FirstNonBlank(spec.BinaryPath, "/usr/bin/tailscale"), "down"},
+		ExecStopPost:             []string{stringutil.FirstNonBlank(spec.BinaryPath, "/usr/bin/tailscale"), "down"},
 		EnvironmentFiles:         environmentFiles,
 		Wants:                    []string{"network-online.target", "tailscaled.service"},
 		After:                    []string{"network-online.target", "tailscaled.service"},

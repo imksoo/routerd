@@ -254,6 +254,8 @@ curl -f http://100.64.0.1:8080/
 
 Linux では `TailscaleNode` の削除、`state: absent` の指定、または `when` 条件が
 偽になると、管理対象 unit を停止して `tailscale down` を実行します。
+停止処理は `ExecStopPost` に設定され、`tailscale up` が接続要求を保存した後、
+unit の起動完了前に失敗した場合も実行します。
 ログアウトや `tailscaled` 自体の停止は行わず、再有効化に使うノードの認証状態を
 保持します。停止に失敗した場合は unit と撤去エラーを保持し、reconcile で再試行します。
 
