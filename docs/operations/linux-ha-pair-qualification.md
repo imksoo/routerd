@@ -490,3 +490,22 @@ resumes after publication. New unmarked flows still use the available candidate.
 The regression test covers BACKUP, unpublished MASTER and published MASTER.
 Native qualification must still check original translated tuples and persistent
 TCP connections in both handover directions.
+
+Run the real-kernel mark regression in disposable network, UTS and mount
+namespaces (root is required only for this isolated test):
+
+```sh
+go test -c ./pkg/controller/chain -o /tmp/routerd-ha-mark.test
+sudo env ROUTERD_RUN_SYSTEM_POLICY_NATIVE=1 \
+  ROUTERD_HOST_NETNS="$(readlink /proc/self/ns/net)" \
+  ROUTERD_HOST_UTSNS="$(readlink /proc/self/ns/uts)" \
+  ROUTERD_HOST_MNTNS="$(readlink /proc/self/ns/mnt)" \
+  unshare --net --uts --mount --propagation private bash -c \
+  'mount -t tmpfs tmpfs /run && mkdir /run/netns && exec /tmp/routerd-ha-mark.test -test.run=^TestHAPromotionNativePreservesImportedConntrackMark$ -test.v'
+```
+
+The test requires `ip`, `nft`, `conntrack` and Python 3, has a 30-second command
+budget, sends actual UDP payloads, and checks actual conntrack marks in all three
+states. Its named peer namespace is removed on exit; the outer namespaces and
+private `/run` disappear with the process. This verifies mark preservation,
+not a complete HA handover or proof of the source of a historical TCP reset.

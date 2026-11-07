@@ -1360,3 +1360,12 @@ VMAC の起動直後から送信できます。待機時のルールから複製
 経路変更に戻り、新しい未マーク通信は利用可能な経路を選びます。回帰テストでは
 BACKUP、公開前 MASTER、公開済み MASTER を区別します。実機の合否は引き続き
 両方向の切替で元の変換 tuple と TCP 接続を維持できることで判定します。
+
+`TestHAPromotionNativePreservesImportedConntrackMark` は network・UTS・mount を
+隔離し、実UDP通信と conntrack の mark を照合します。通常の `go test` では skip し、
+実行には `ROUTERD_RUN_SYSTEM_POLICY_NATIVE=1` と外側の名前空間IDを明示します。
+実行コマンドと後片付けは英語版の
+[HA試験手順](https://routerd.net/docs/operations/linux-ha-pair-qualification)に記載しています。
+Linux 6.8.0-149 で修正前は backup の mark が 272 から 275 に変わり失敗し、
+修正後は backup・公開前の保持と公開後の通常変更が通過しました。
+これは mark 保持の検証であり、HA全体や過去のTCPリセット原因の確定を意味しません。
