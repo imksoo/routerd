@@ -151,7 +151,7 @@ func daemonCommand(args []string) error {
 
 	// Drive the outbox: push locally-originated events to peers. A node with no
 	// peers (or a push-only node) runs this as a harmless no-op / push-only.
-	pusher := eventd.NewPusher(store, secret, cfg.Peers, cfg.PushRetry, &http.Client{Timeout: 30 * time.Second}, time.Now, time.Sleep)
+	pusher := eventd.NewPusher(store, secret, cfg.Peers, cfg.PushRetry)
 	pusher.SetMetrics(metrics)
 	outbox := eventd.NewOutbox(store, store, pusher, cfg.Group, cfg.NodeName, cfg.PushInterval, time.Now)
 	outbox.SetMetrics(metrics)

@@ -16,15 +16,8 @@ import (
 	"github.com/imksoo/routerd/pkg/federation"
 )
 
-// httpDoer is the subset of *http.Client the push client uses, injectable so
-// tests can wire the sender directly at an httptest.Server.
-type httpDoer interface {
-	Do(req *http.Request) (*http.Response, error)
-}
-
 // Pusher delivers federation events to configured peers with HMAC signing,
-// per-peer filtering, idempotent enqueue, and bounded exponential backoff. The
-// clock, http doer, and sleep func are injectable for deterministic tests.
+// per-peer filtering, idempotent enqueue, and bounded exponential backoff.
 type Pusher struct {
 	store   DeliveryStore
 	secret  []byte
@@ -32,23 +25,11 @@ type Pusher struct {
 	retry   PushRetry
 	metrics *Metrics
 
-	client httpDoer
-	now    func() time.Time
-	sleep  func(time.Duration)
+	client *http.Client
 }
 
-// NewPusher builds a Pusher. client/now/sleep may be nil for production defaults
-// (http.DefaultClient with a timeout, time.Now, time.Sleep).
-func NewPusher(store DeliveryStore, secret []byte, peers []PeerConfig, retry PushRetry, client httpDoer, now func() time.Time, sleep func(time.Duration)) *Pusher {
-	if client == nil {
-		client = &http.Client{Timeout: 30 * time.Second}
-	}
-	if now == nil {
-		now = time.Now
-	}
-	if sleep == nil {
-		sleep = time.Sleep
-	}
+// NewPusher builds a Pusher.
+func NewPusher(store DeliveryStore, secret []byte, peers []PeerConfig, retry PushRetry) *Pusher {
 	if retry.MaxAttempts <= 0 {
 		retry.MaxAttempts = DefaultMaxAttempts
 	}
@@ -63,9 +44,7 @@ func NewPusher(store DeliveryStore, secret []byte, peers []PeerConfig, retry Pus
 		secret: secret,
 		peers:  peers,
 		retry:  retry,
-		client: client,
-		now:    now,
-		sleep:  sleep,
+		client: &http.Client{Timeout: 30 * time.Second},
 	}
 }
 
@@ -180,7 +159,7 @@ func (p *Pusher) deliverToPeer(ctx context.Context, peer PeerConfig, ev federati
 		attempts = attempt
 		err := p.postOnce(ctx, endpoint, body)
 		if err == nil {
-			deliveredAt := p.now()
+			deliveredAt := time.Now()
 			if storeErr := p.store.UpdateDeliveryStatus(ev.ID, peer.NodeName, "delivered", attempts, "", deliveredAt, ev.ExpiresAt); storeErr != nil {
 				return storeErr
 			}
@@ -196,7 +175,7 @@ func (p *Pusher) deliverToPeer(ctx context.Context, peer PeerConfig, ev federati
 		}
 		lastErr = err.Error()
 		if attempt < p.retry.MaxAttempts {
-			p.sleep(p.backoff(attempt))
+			time.Sleep(p.backoff(attempt))
 		}
 	}
 	if storeErr := p.store.UpdateDeliveryStatus(ev.ID, peer.NodeName, "failed", attempts, lastErr, time.Time{}, ev.ExpiresAt); storeErr != nil {
@@ -210,7 +189,7 @@ func (p *Pusher) deliverToPeer(ctx context.Context, peer PeerConfig, ev federati
 // postOnce signs and POSTs the body once, returning an error for transport
 // failures or non-2xx responses.
 func (p *Pusher) postOnce(ctx context.Context, endpoint string, body []byte) error {
-	ts := p.now().Unix()
+	ts := time.Now().Unix()
 	sig := federation.Sign(p.secret, ts, body)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {

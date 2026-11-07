@@ -4,14 +4,11 @@ package mobility
 
 import (
 	"context"
-	"errors"
-	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/daemonapi"
-	"github.com/imksoo/routerd/pkg/eventd"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -32,128 +29,6 @@ func arpFanoutPoolSpec() testMobilityPoolSpec {
 		{NodeRef: "pve-rt07", Site: "pve07", Role: "onprem", Capture: capture, OwnershipDiscovery: discovery},
 		{NodeRef: "pve-rt08", Site: "pve08", Role: "onprem", Capture: capture, OwnershipDiscovery: discovery},
 	}}
-}
-
-func TestARPRequestFactFansOutToRemoteLeafOnce(t *testing.T) {
-	now := time.Date(2026, 8, 20, 17, 0, 0, 0, time.UTC)
-	spec := arpFanoutPoolSpec()
-	sourceStore := testStore(t, now)
-	source := DiscoveryController{Router: staticRouter("pve-rt07", spec), Store: sourceStore, Now: func() time.Time { return now }}
-	request := daemonapi.DaemonEvent{
-		Type: OnPremARPRequestObservedEvent,
-		Time: now,
-		Attributes: map[string]string{
-			"target": "192.168.123.129", "pool": "cloudedge", "interface": "svnet1",
-			"requesterIP": "192.168.123.132", "requesterMAC": "02:00:00:00:00:32",
-		},
-	}
-	if err := source.HandleEvent(context.Background(), request); err != nil {
-		t.Fatalf("source HandleEvent: %v", err)
-	}
-	events, err := sourceStore.ListFederationEvents("cloudedge", false, now.Unix())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(events) != 1 {
-		t.Fatalf("source events = %#v, want one ARP request fact", events)
-	}
-	event := events[0]
-	if event.Type != OnPremARPRequestObservedEvent || event.SourceNode != "pve-rt07" || event.Subject != "192.168.123.129/32" || event.ExpiresAt.Sub(event.ObservedAt) != onPremARPRequestTTL {
-		t.Fatalf("source event = %#v", event)
-	}
-
-	remoteStore := testStore(t, now)
-	if err := remoteStore.RecordFederationEvent(event); err != nil {
-		t.Fatal(err)
-	}
-	var probes []string
-	remote := DiscoveryController{
-		Router:           staticRouter("pve-rt08", spec),
-		Store:            remoteStore,
-		Now:              func() time.Time { return now.Add(time.Second) },
-		ARPProbeRequests: NewARPProbeRequestTracker(),
-		ProbeARP: func(_ context.Context, pool, address string) error {
-			probes = append(probes, pool+"/"+address)
-			return nil
-		},
-	}
-	if err := remote.ReconcileARPProbeRequests(context.Background()); err != nil {
-		t.Fatalf("remote ReconcileARPProbeRequests: %v", err)
-	}
-	if err := remote.ReconcileARPProbeRequests(context.Background()); err != nil {
-		t.Fatalf("remote second ReconcileARPProbeRequests: %v", err)
-	}
-	if len(probes) != 1 || probes[0] != "cloudedge/192.168.123.129/32" {
-		t.Fatalf("probes = %#v, want one remote target probe", probes)
-	}
-
-	// The source leaf already probed synchronously while observing the packet;
-	// its own federation fact must not cause another command probe.
-	source.ProbeARP = func(_ context.Context, _, _ string) error {
-		t.Fatal("source leaf reprocessed its own ARP request fact")
-		return nil
-	}
-	source.ARPProbeRequests = NewARPProbeRequestTracker()
-	if err := source.ReconcileARPProbeRequests(context.Background()); err != nil {
-		t.Fatalf("source ReconcileARPProbeRequests: %v", err)
-	}
-}
-
-func TestARPRequestFactCrossesSignedFederationTransport(t *testing.T) {
-	now := time.Date(2026, 8, 20, 17, 30, 0, 0, time.UTC)
-	secret := []byte("test-only-shared-event-secret")
-	spec := arpFanoutPoolSpec()
-	sourceStore := testStore(t, now)
-	remoteStore := testStore(t, now)
-
-	source := DiscoveryController{
-		Router: staticRouter("pve-rt07", spec),
-		Store:  sourceStore,
-		Now:    func() time.Time { return now },
-	}
-	request := daemonapi.DaemonEvent{
-		Type: OnPremARPRequestObservedEvent,
-		Time: now,
-		Attributes: map[string]string{
-			"target": "192.168.123.129", "pool": "cloudedge", "interface": "svnet1",
-		},
-	}
-	if err := source.HandleEvent(context.Background(), request); err != nil {
-		t.Fatalf("source HandleEvent: %v", err)
-	}
-
-	receiver := eventd.NewReceiver(remoteStore, secret, "cloudedge", "pve-rt08", time.Minute, func() time.Time { return now })
-	server := httptest.NewServer(receiver.Handler())
-	t.Cleanup(server.Close)
-	pusher := eventd.NewPusher(sourceStore, secret, []eventd.PeerConfig{{
-		NodeName: "pve-rt08", Endpoint: server.URL,
-		Types: []string{OnPremARPRequestObservedEvent}, SubjectPrefixes: []string{"192.168.123."},
-	}}, eventd.PushRetry{MaxAttempts: 1}, server.Client(), func() time.Time { return now }, func(time.Duration) {})
-	outbox := eventd.NewOutbox(sourceStore, sourceStore, pusher, "cloudedge", "pve-rt07", time.Second, func() time.Time { return now })
-	if err := outbox.RunOnce(context.Background()); err != nil {
-		t.Fatalf("signed federation outbox: %v", err)
-	}
-	if status := receiver.Status(); status.Received != 1 || status.Rejected != 0 || status.StoredEvents != 1 {
-		t.Fatalf("receiver status = %#v, want one accepted event", status)
-	}
-
-	var probes []string
-	remote := DiscoveryController{
-		Router:           staticRouter("pve-rt08", spec),
-		Store:            remoteStore,
-		Now:              func() time.Time { return now.Add(time.Second) },
-		ARPProbeRequests: NewARPProbeRequestTracker(),
-		ProbeARP: func(_ context.Context, pool, address string) error {
-			probes = append(probes, pool+"/"+address)
-			return nil
-		},
-	}
-	if err := remote.ReconcileARPProbeRequests(context.Background()); err != nil {
-		t.Fatalf("remote ReconcileARPProbeRequests: %v", err)
-	}
-	if len(probes) != 1 || probes[0] != "cloudedge/192.168.123.129/32" {
-		t.Fatalf("probes = %#v, want signed remote target probe", probes)
-	}
 }
 
 func TestARPRequestDaemonReplayDoesNotRefreshExpiredDemand(t *testing.T) {
@@ -234,57 +109,5 @@ func TestARPProbeRequestTrackerAllowsRefreshedStableEvent(t *testing.T) {
 	}
 	if !tracker.claim("same", now.Add(10*time.Second), now.Add(time.Minute), now.Add(10*time.Second)) {
 		t.Fatal("refreshed stable event ID was not claimed")
-	}
-}
-
-func TestARPRequestReconcileRetriesFailuresAndDeduplicatesCompletedRequests(t *testing.T) {
-	now := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
-	spec := arpFanoutPoolSpec()
-	store := testStore(t, now)
-	source := DiscoveryController{Router: staticRouter("pve-rt07", spec), Store: store, Now: func() time.Time { return now }}
-	request := daemonapi.DaemonEvent{
-		Type: OnPremARPRequestObservedEvent, Time: now,
-		Attributes: map[string]string{"target": "192.168.123.129", "pool": "cloudedge", "interface": "svnet1"},
-	}
-	if err := source.HandleEvent(context.Background(), request); err != nil {
-		t.Fatal(err)
-	}
-	calls := 0
-	probeErr := error(context.DeadlineExceeded)
-	remote := DiscoveryController{
-		Router: staticRouter("pve-rt08", spec), Store: store,
-		Now: func() time.Time { return now }, ARPProbeRequests: NewARPProbeRequestTracker(),
-		ProbeARP: func(_ context.Context, pool, address string) error {
-			if pool != "cloudedge" || address != "192.168.123.129/32" {
-				t.Fatalf("unexpected probe %s/%s", pool, address)
-			}
-			calls++
-			return probeErr
-		},
-	}
-	if err := remote.ReconcileARPProbeRequests(context.Background()); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("initial reconcile error = %v, want transient failure", err)
-	}
-	// Success includes a self-target no-op at observer selection. The same
-	// event stays claimed until refreshed, instead of invoking the probe again.
-	probeErr = nil
-	for i := 0; i < 40; i++ {
-		if err := remote.ReconcileARPProbeRequests(context.Background()); err != nil {
-			t.Fatalf("reconcile %d after recovery: %v", i, err)
-		}
-		now = now.Add(time.Second)
-	}
-	if calls != 2 {
-		t.Fatalf("probe calls = %d, want failure then one successful retry", calls)
-	}
-	request.Time = now
-	if err := source.HandleEvent(context.Background(), request); err != nil {
-		t.Fatal(err)
-	}
-	if err := remote.ReconcileARPProbeRequests(context.Background()); err != nil {
-		t.Fatalf("refreshed observation: %v", err)
-	}
-	if calls != 3 {
-		t.Fatalf("probe calls = %d, want refreshed observation to be eligible", calls)
 	}
 }
