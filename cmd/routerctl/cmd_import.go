@@ -603,7 +603,7 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 			if err != nil {
 				return err
 			}
-			if spec.AdminUp != up || (spec.MTU != 0 && spec.MTU != mtu) {
+			if (spec.AdminUp && !up) || (spec.MTU != 0 && spec.MTU != mtu) {
 				warnings = append(warnings, fmt.Sprintf("%s: observed link settings differ from the existing Interface definition", ifname))
 			}
 			if observedDNS != nil {
