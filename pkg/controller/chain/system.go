@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -161,7 +162,17 @@ func (c NetworkAdoptionController) cleanupStaleNetworkdAdoptionDropins(ctx conte
 			stale[filepath.Base(filepath.Dir(path))] = true
 		}
 	}
+	const cleanupStatus = "networkd-adoption-cleanup"
+	pending, _ := c.Store.ObjectStatus(api.SystemAPIVersion, "NetworkAdoptionCleanup", cleanupStatus)["pending"].(string)
+	for _, dir := range strings.Split(pending, "\n") {
+		if dir != "" && !desired[filepath.Join(c.NetworkdDropinBase, dir, "90-routerd-adoption.conf")] {
+			stale[dir] = true
+		}
+	}
 	if len(stale) == 0 {
+		if pending != "" && !c.DryRun {
+			return c.Store.SaveObjectStatus(api.SystemAPIVersion, "NetworkAdoptionCleanup", cleanupStatus, map[string]any{"pending": ""})
+		}
 		return nil
 	}
 	out, err := command(ctx, "networkctl", "--json=short", "list")
@@ -176,6 +187,16 @@ func (c NetworkAdoptionController) cleanupStaleNetworkdAdoptionDropins(ctx conte
 	}
 	if err := json.Unmarshal(out, &status); err != nil {
 		return fmt.Errorf("decode networkd interfaces: %w", err)
+	}
+	if !c.DryRun {
+		dirs := make([]string, 0, len(stale))
+		for dir := range stale {
+			dirs = append(dirs, dir)
+		}
+		sort.Strings(dirs)
+		if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "NetworkAdoptionCleanup", cleanupStatus, map[string]any{"pending": strings.Join(dirs, "\n")}); err != nil {
+			return fmt.Errorf("save pending networkd adoption cleanup: %w", err)
+		}
 	}
 	for _, path := range paths {
 		if stale[filepath.Base(filepath.Dir(path))] {
@@ -196,6 +217,9 @@ func (c NetworkAdoptionController) cleanupStaleNetworkdAdoptionDropins(ctx conte
 				return fmt.Errorf("reconfigure %s after adoption cleanup: %w", iface.Name, err)
 			}
 		}
+	}
+	if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "NetworkAdoptionCleanup", cleanupStatus, map[string]any{"pending": ""}); err != nil {
+		return fmt.Errorf("clear pending networkd adoption cleanup: %w", err)
 	}
 	return nil
 }
