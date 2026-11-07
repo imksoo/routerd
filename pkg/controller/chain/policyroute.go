@@ -41,7 +41,6 @@ type IPv4PolicyRouteController struct {
 	DefaultRoutePath    string
 	LedgerPath          string
 	HostPolicyStatePath string
-	CommandOutput       func(context.Context, string, ...string) ([]byte, error)
 	Logger              *slog.Logger
 	OperatingSystem     platform.OS
 	Now                 func() time.Time
@@ -279,7 +278,7 @@ func (c IPv4PolicyRouteController) applyIPv6HostPolicyState(ctx context.Context,
 			continue
 		}
 		if !policy.isSourceRule() {
-			if out, err := c.commandOutput(ctx, "ip", "-6", "route", "replace", "default", "via", policy.Gateway, "dev", policy.Interface, "table", strconv.Itoa(policy.Table), "metric", strconv.Itoa(policy.Metric), "src", policy.Source); err != nil {
+			if out, err := exec.CommandContext(ctx, "ip", "-6", "route", "replace", "default", "via", policy.Gateway, "dev", policy.Interface, "table", strconv.Itoa(policy.Table), "metric", strconv.Itoa(policy.Metric), "src", policy.Source).CombinedOutput(); err != nil {
 				if transientIPv6HostPolicyError(out, err) {
 					c.logHostPolicyTransient(policy, "route replace", out, err)
 					transient[policy.Name] = true
@@ -302,7 +301,7 @@ func (c IPv4PolicyRouteController) applyIPv6HostPolicyState(ctx context.Context,
 }
 
 func (c IPv4PolicyRouteController) ipv6HostPolicyDeviceReady(ctx context.Context, ifname string) (bool, error) {
-	out, err := c.commandOutput(ctx, "ip", "-o", "link", "show", "dev", ifname)
+	out, err := exec.CommandContext(ctx, "ip", "-o", "link", "show", "dev", ifname).CombinedOutput()
 	if err != nil {
 		return false, fmt.Errorf("ip link show: %w: %s", err, strings.TrimSpace(string(out)))
 	}
@@ -318,7 +317,7 @@ func (c IPv4PolicyRouteController) ipv6HostPolicyDeviceReady(ctx context.Context
 }
 
 func (c IPv4PolicyRouteController) ipv6GlobalAddress(ctx context.Context, ifname string) (string, error) {
-	out, err := c.commandOutput(ctx, "ip", "-6", "-o", "addr", "show", "dev", ifname, "scope", "global")
+	out, err := exec.CommandContext(ctx, "ip", "-6", "-o", "addr", "show", "dev", ifname, "scope", "global").CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("ip -6 addr show: %w: %s", err, strings.TrimSpace(string(out)))
 	}
@@ -344,7 +343,7 @@ func (c IPv4PolicyRouteController) ipv6GlobalAddress(ctx context.Context, ifname
 }
 
 func (c IPv4PolicyRouteController) ensureIPv6HostRule(ctx context.Context, policy ipv6HostPolicy) (bool, error) {
-	out, err := c.commandOutput(ctx, "ip", "-6", "rule", "show")
+	out, err := exec.CommandContext(ctx, "ip", "-6", "rule", "show").CombinedOutput()
 	if err != nil {
 		return false, err
 	}
@@ -368,7 +367,7 @@ func (c IPv4PolicyRouteController) ensureIPv6HostRule(ctx context.Context, polic
 		args = append(args, "iif", "lo")
 	}
 	args = append(args, "lookup", table)
-	if out, err := c.commandOutput(ctx, "ip", args...); err != nil {
+	if out, err := exec.CommandContext(ctx, "ip", args...).CombinedOutput(); err != nil {
 		if transientIPv6HostPolicyError(out, err) {
 			c.logHostPolicyTransient(policy, "rule add", out, err)
 			return true, nil
@@ -408,7 +407,7 @@ func (c IPv4PolicyRouteController) deleteIPv6HostPolicy(ctx context.Context, pol
 		commands = append(commands, []string{"-6", "route", "del", "default", "via", policy.Gateway, "dev", policy.Interface, "table", strconv.Itoa(policy.Table), "metric", strconv.Itoa(policy.Metric), "src", policy.Source})
 	}
 	for _, args := range commands {
-		out, err := c.commandOutput(ctx, "ip", args...)
+		out, err := exec.CommandContext(ctx, "ip", args...).CombinedOutput()
 		if err != nil && !missingIPv6HostPolicy(out, err) {
 			return fmt.Errorf("ip %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 		}
@@ -869,7 +868,7 @@ func policyDefaultMatches(fields []string, desired policyDefaultRoute) bool {
 }
 
 func (c IPv4PolicyRouteController) removeExtraPolicyDefaults(ctx context.Context, desired map[int][]policyDefaultRoute) error {
-	out, err := c.commandOutput(ctx, "ip", "-4", "route", "show", "table", "all")
+	out, err := exec.CommandContext(ctx, "ip", "-4", "route", "show", "table", "all").CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("list IPv4 routes: %w: %s", err, strings.TrimSpace(string(out)))
 	}
@@ -890,7 +889,7 @@ func (c IPv4PolicyRouteController) removeExtraPolicyDefaults(ctx context.Context
 		if table == 253 || table == 254 || table == 255 || dynamicTables[table] {
 			continue
 		}
-		output, err := c.commandOutput(ctx, "ip", "-4", "route", "show", "default", "table", strconv.Itoa(table))
+		output, err := exec.CommandContext(ctx, "ip", "-4", "route", "show", "default", "table", strconv.Itoa(table)).CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("list IPv4 defaults in table %d: %w: %s", table, err, strings.TrimSpace(string(output)))
 		}
@@ -911,7 +910,7 @@ func (c IPv4PolicyRouteController) removeExtraPolicyDefaults(ctx context.Context
 			}
 			args := append([]string{"-4", "route", "del"}, fields...)
 			args = append(args, "table", strconv.Itoa(table))
-			if out, err := c.commandOutput(ctx, "ip", args...); err != nil {
+			if out, err := exec.CommandContext(ctx, "ip", args...).CombinedOutput(); err != nil {
 				return fmt.Errorf("remove extra IPv4 default from table %d: %w: %s", table, err, strings.TrimSpace(string(out)))
 			}
 		}
@@ -1663,7 +1662,7 @@ type ipv4PolicyFwmarkRule struct {
 
 func (c IPv4PolicyRouteController) currentPolicyRouteArtifacts(ctx context.Context) (map[string]resource.Artifact, map[int]int, error) {
 	out := map[string]resource.Artifact{}
-	rules, err := c.commandOutput(ctx, "ip", "-4", "rule", "show")
+	rules, err := exec.CommandContext(ctx, "ip", "-4", "rule", "show").CombinedOutput()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1671,7 +1670,7 @@ func (c IPv4PolicyRouteController) currentPolicyRouteArtifacts(ctx context.Conte
 	for _, artifact := range parseIPv4PolicyFwmarkRuleArtifacts(string(rules)) {
 		out[artifact.Identity()] = artifact
 	}
-	tables, err := c.commandOutput(ctx, "ip", "-4", "route", "show", "table", "all")
+	tables, err := exec.CommandContext(ctx, "ip", "-4", "route", "show", "table", "all").CombinedOutput()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1689,7 +1688,7 @@ func (c IPv4PolicyRouteController) currentPolicyRouteArtifacts(ctx context.Conte
 }
 
 func (c IPv4PolicyRouteController) deleteIPv4FwmarkRule(ctx context.Context, rule ipv4PolicyFwmarkRule) error {
-	out, err := c.commandOutput(ctx, "ip", "-4", "rule", "del", "priority", fmt.Sprintf("%d", rule.Priority), "fwmark", fmt.Sprintf("0x%x", rule.Mark), "table", fmt.Sprintf("%d", rule.Table))
+	out, err := exec.CommandContext(ctx, "ip", "-4", "rule", "del", "priority", fmt.Sprintf("%d", rule.Priority), "fwmark", fmt.Sprintf("0x%x", rule.Mark), "table", fmt.Sprintf("%d", rule.Table)).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("ip -4 rule del priority %d fwmark 0x%x table %d: %w: %s", rule.Priority, rule.Mark, rule.Table, err, strings.TrimSpace(string(out)))
 	}
@@ -1697,18 +1696,11 @@ func (c IPv4PolicyRouteController) deleteIPv4FwmarkRule(ctx context.Context, rul
 }
 
 func (c IPv4PolicyRouteController) flushIPv4RouteTable(ctx context.Context, table int) error {
-	out, err := c.commandOutput(ctx, "ip", "-4", "route", "flush", "table", fmt.Sprintf("%d", table))
+	out, err := exec.CommandContext(ctx, "ip", "-4", "route", "flush", "table", fmt.Sprintf("%d", table)).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("ip -4 route flush table %d: %w: %s", table, err, strings.TrimSpace(string(out)))
 	}
 	return nil
-}
-
-func (c IPv4PolicyRouteController) commandOutput(ctx context.Context, name string, args ...string) ([]byte, error) {
-	if c.CommandOutput != nil {
-		return c.CommandOutput(ctx, name, args...)
-	}
-	return exec.CommandContext(ctx, name, args...).CombinedOutput()
 }
 
 func parseIPv4PolicyFwmarkRuleArtifacts(output string) []resource.Artifact {
