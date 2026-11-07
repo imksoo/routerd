@@ -2008,7 +2008,7 @@ func (e *Engine) observeIPv4Route(router *api.Router, res api.Resource, includeP
 	if resolved := resourcequery.Value(e.Store, spec.GatewayFrom); resolved != "" {
 		gateway = resolved
 	}
-	if platform.CurrentOS() != platform.OSLinux || (spec.DeviceFrom.Resource != "" && device == "") || (spec.GatewayFrom.Resource != "" && gateway == "") {
+	if platform.CurrentOS() != platform.OSLinux || (defaultString(spec.Type, "unicast") != "blackhole" && device == "") || (spec.GatewayFrom.Resource != "" && gateway == "") {
 		rr.Phase = "Unknown"
 		rr.Observed["reason"] = "RouteNotObserved"
 		return
