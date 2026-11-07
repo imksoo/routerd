@@ -137,6 +137,11 @@ func (c Controller) reconcile(ctx context.Context, name string) error {
 			next["ntpServers"] = servers
 		}
 		current := c.Store.ObjectStatus(resource.Resource.APIVersion, resource.Resource.Kind, resource.Resource.Name)
+		for _, key := range []string{"appliedAddress", "ifname", "appliedDefaultGateway", "appliedDNSServers"} {
+			if value, ok := current[key]; ok {
+				next[key] = value
+			}
+		}
 		if err := c.applyLease(ctx, name, current, next); err != nil {
 			next["phase"] = "Error"
 			next["reason"] = "ApplyFailed"
@@ -198,7 +203,11 @@ func leaseFieldString(v any) string {
 }
 
 func (c Controller) applyLease(ctx context.Context, name string, current, next map[string]any) error {
-	if fmt.Sprint(next["phase"]) != daemonapi.ResourcePhaseBound {
+	phase := fmt.Sprint(next["phase"])
+	if phase == daemonapi.ResourcePhaseExpired || phase == daemonapi.ResourcePhaseReleased {
+		return c.removeExpiredAddress(ctx, name, current, next)
+	}
+	if phase != daemonapi.ResourcePhaseBound {
 		return nil
 	}
 	spec, ifname, ok, err := c.leaseSpecAndIfName(name)
@@ -211,9 +220,9 @@ func (c Controller) applyLease(ctx context.Context, name string, current, next m
 		return fmt.Errorf("DHCPv4 lease %s is bound without prefixLength", name)
 	}
 	wantedAddress := fmt.Sprintf("%s/%d", address, prefixLength)
-	next["appliedAddress"] = wantedAddress
-	next["ifname"] = ifname
 	if c.DryRun {
+		next["appliedAddress"] = wantedAddress
+		next["ifname"] = ifname
 		next["applyMode"] = "dry-run"
 		return nil
 	}
@@ -223,9 +232,20 @@ func (c Controller) applyLease(ctx context.Context, name string, current, next m
 	}
 	previousAddress := mapString(current, "appliedAddress")
 	if previousAddress != "" && previousAddress != wantedAddress {
-		_ = removeIPv4Address(ctx, platform.CurrentOS(), command, ifname, previousAddress)
+		present, err := dhcpv4LeaseAddressPresent(ctx, platform.CurrentOS(), command, ifname, previousAddress)
+		if err != nil {
+			return err
+		}
+		if present {
+			if err := removeIPv4Address(ctx, platform.CurrentOS(), command, ifname, previousAddress); err != nil {
+				return fmt.Errorf("remove previous DHCPv4 address %s: %w", previousAddress, err)
+			}
+		}
 	}
-	addressPresent := dhcpv4LeaseAddressPresent(ctx, platform.CurrentOS(), command, ifname, wantedAddress)
+	addressPresent, err := dhcpv4LeaseAddressPresent(ctx, platform.CurrentOS(), command, ifname, wantedAddress)
+	if err != nil {
+		return err
+	}
 	next["addressPresent"] = addressPresent
 	if previousAddress != wantedAddress || !addressPresent {
 		if err := replaceIPv4Address(ctx, platform.CurrentOS(), command, ifname, wantedAddress); err != nil {
@@ -233,6 +253,8 @@ func (c Controller) applyLease(ctx context.Context, name string, current, next m
 		}
 		next["addressPresent"] = true
 	}
+	next["appliedAddress"] = wantedAddress
+	next["ifname"] = ifname
 	if api.BoolDefault(spec.UseRoutes, true) {
 		gateway := strings.TrimSpace(fmt.Sprint(next["defaultGateway"]))
 		if gateway != "" {
@@ -257,6 +279,51 @@ func (c Controller) applyLease(ctx context.Context, name string, current, next m
 		}
 	}
 	next["applyMode"] = "active"
+	return nil
+}
+
+// removeExpiredAddress removes the expired dynamic address while retaining an
+// identical address that is explicitly configured as static.
+func (c Controller) removeExpiredAddress(ctx context.Context, name string, current, next map[string]any) error {
+	address := mapString(current, "appliedAddress")
+	ifname := mapString(current, "ifname")
+	if address == "" || ifname == "" {
+		return nil
+	}
+	spec, _, ok, err := c.leaseSpecAndIfName(name)
+	if err != nil || !ok {
+		return err
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.Kind != "IPv4StaticAddress" {
+			continue
+		}
+		static, err := resource.IPv4StaticAddressSpec()
+		if err != nil {
+			return err
+		}
+		if static.Address == address && (static.Interface == spec.Interface || static.Interface == ifname) {
+			delete(next, "appliedAddress")
+			return nil
+		}
+	}
+	if c.DryRun {
+		return nil
+	}
+	command := c.Command
+	if command == nil {
+		command = runOutputCommandContext
+	}
+	present, err := dhcpv4LeaseAddressPresent(ctx, platform.CurrentOS(), command, ifname, address)
+	if err != nil {
+		return err
+	}
+	if present {
+		if err := removeIPv4Address(ctx, platform.CurrentOS(), command, ifname, address); err != nil {
+			return fmt.Errorf("remove expired DHCPv4 address %s: %w", address, err)
+		}
+	}
+	delete(next, "appliedAddress")
 	return nil
 }
 
@@ -398,31 +465,31 @@ func replaceIPv4Address(ctx context.Context, osName platform.OS, command outputC
 	return err
 }
 
-func dhcpv4LeaseAddressPresent(ctx context.Context, osName platform.OS, command outputCommandFunc, ifname, address string) bool {
+func dhcpv4LeaseAddressPresent(ctx context.Context, osName platform.OS, command outputCommandFunc, ifname, address string) (bool, error) {
 	if strings.TrimSpace(address) == "" {
-		return false
+		return false, nil
 	}
 	if osName == platform.OSFreeBSD {
 		out, err := command(ctx, "ifconfig", ifname)
 		if err != nil {
-			return false
+			return false, fmt.Errorf("observe IPv4 addresses on %s: %w", ifname, err)
 		}
 		addr := strings.TrimSpace(strings.Split(address, "/")[0])
 		for _, line := range strings.Split(string(out), "\n") {
 			fields := strings.Fields(line)
 			for i, field := range fields {
 				if field == "inet" && i+1 < len(fields) && fields[i+1] == addr {
-					return true
+					return true, nil
 				}
 			}
 		}
-		return false
+		return false, nil
 	}
 	out, err := command(ctx, "ip", "-4", "addr", "show", "dev", ifname)
 	if err != nil {
-		return false
+		return false, fmt.Errorf("observe IPv4 addresses on %s: %w", ifname, err)
 	}
-	return strings.Contains(string(out), "inet "+address+" ")
+	return strings.Contains(string(out), "inet "+address+" "), nil
 }
 
 func removeIPv4Address(ctx context.Context, osName platform.OS, command outputCommandFunc, ifname, address string) error {
