@@ -28,18 +28,6 @@ func filterRouterByWhen(router *api.Router, store routerstate.Store) *api.Router
 	return resourcequery.FilterRouterByWhen(router, store)
 }
 
-func resourceWhen(res api.Resource) api.ResourceWhenSpec {
-	return resourcequery.ResourceWhen(res)
-}
-
-func resourceWhenMatches(when api.ResourceWhenSpec, store routerstate.Store) bool {
-	return resourcequery.ResourceWhenMatches(when, store)
-}
-
-func stateMatch(store routerstate.Store, name string, match api.StateMatchSpec) bool {
-	return resourcequery.StateMatch(store, name, match)
-}
-
 func appendPrefixDelegationStateWarnings(result *apply.Result, router *api.Router, store routerstate.Store) {
 	for _, res := range router.Spec.Resources {
 		if res.Kind != "DHCPv6PrefixDelegation" {
