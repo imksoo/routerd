@@ -3429,6 +3429,7 @@ func (r *Runner) startSupervisedDaemonSpec(ctx context.Context, logger *slog.Log
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
+		var observedPID int
 		for ctx.Err() == nil {
 		waitForExisting:
 			for ctx.Err() == nil {
@@ -3442,11 +3443,16 @@ func (r *Runner) startSupervisedDaemonSpec(ctx context.Context, logger *slog.Log
 					for _, process := range processes {
 						processBinary, processResource := supervisedProcessIdentity(process.Args)
 						if processBinary == binary && processResource == resourceName {
+							if binary == "routerd-arp-observer" && observedPID != 0 && observedPID != process.PID {
+								r.setARPObserverReady(resourceName, false)
+							}
+							observedPID = process.PID
 							running = true
 							break
 						}
 					}
 					if !running {
+						observedPID = 0
 						if binary == "routerd-arp-observer" {
 							r.setARPObserverReady(resourceName, false)
 						}
