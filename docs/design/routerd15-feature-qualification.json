@@ -1,6 +1,6 @@
 {
   "format": "routerd15-feature-qualification/v1",
-  "updated_date": "2026-11-06",
+  "updated_date": "2026-11-07",
   "purpose": "Track preservation and qualification of every pre-1.5 routerd 1.0 function, including non-resource surfaces. This static design ledger is not a product registry, a release result or proof of functional parity.",
   "baseline_revision": "e3b49dbb69c7de97bab9595884745eb7cbe93d92",
   "inventory_snapshot_revision": "3da8d066e19535d27610d632391807db7968d1fc",
@@ -2990,6 +2990,23 @@
       ],
       "excludes": [
         "Lossless or durable export, long outages/buffer exhaustion, TLS/mTLS, all traffic-attribution paths, combined 105-resource configuration and all-platform parity."
+      ]
+    },
+    "linux-combined-0e186cc0": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "0e186cc0190b95a05978c3922fb22c31bb251a2e",
+      "reference": "docs/design/routerd15-audit.md#completed-packaged-combined-lifecycle--0e186cc0",
+      "environment": "Two dedicated Linux routers with matching formal base/native nDPI 1.5.0~20261107004653+g0e186cc0 and an independent peer VM; 107 resources representing the deployed 105-resource kind combination plus two fixture resources.",
+      "checks": [
+        "Initial/final DHCP reservations, conditional DNS/DoH, redirected DNS/NTP, native TLS classification, management allow/403 and main-daemon telemetry.",
+        "Natural PD renewal preserved four tunnel indices; both power-loss directions, cold returns, lease/PD synchronization and main restarts preserved 74 original application flows without tuple changes or TCP reconnects.",
+        "Returning nodes had no observed competing shared MAC/IP/ARP claims; maximum response gap 53.867 seconds.",
+        "Final three static-route TCP payload paths, Tailscale subnet TCP to both routers and fresh logs/metrics/traces passed.",
+        "Both empty Healthy withdrawals removed owned effects and provider intent; independent peer fixtures cleaned."
+      ],
+      "excludes": [
+        "Hitless or fast failover, production cutover, physical uplinks, all failure modes, all baseline functions and deferred-platform parity."
       ]
     }
   },

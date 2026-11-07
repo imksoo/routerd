@@ -4382,3 +4382,42 @@ The revised receiver writes its three bounded output files to the existing
 rebuildable APT binary index caches were removed to restore that headroom.
 A new certification and uninterrupted final run are required before claiming
 this complete gate passed; none of these observations establish a product fix.
+
+## Completed packaged combined lifecycle — 0e186cc0
+
+On 2026-11-07, two dedicated Linux routers with matching formal base/native
+nDPI packages `1.5.0~20261107004653+g0e186cc0` passed the complete isolated
+107-resource campaign against a separate peer VM. The input preserved the
+deployed 105-resource kind combination and added two fixture resources.
+Package identity, empty Healthy, peer SSH and authenticated TLS were certified
+before applying the configuration. No repair was made during qualification.
+
+Initial and final DNS/NTP/TLS classification, both DHCP reservations,
+conditional DNS/DoH, management allow/403, and both main daemons' telemetry
+passed. Natural same-prefix PD renewal kept all four tunnel indices. Both
+directions of power loss, cold return, actual lease/PD synchronization and
+active main-daemon restart preserved the same 74 application flows, original
+translated tuples and single TCP accepts. Returning-node captures found no
+competing shared MAC/IP/ARP claims. The core lifecycle took 506.2 seconds.
+
+The subsequent three static-route TCP payload checks, Tailscale subnet TCP
+connections to both routers, fresh main-daemon logs/metrics/traces and final
+74-flow check also passed. Both empty withdrawals reached Healthy and removed
+owned helpers, VMACs, learned routes and provider intent. Independent peer
+fixtures were cleaned up. The largest response gap was **53.867 seconds**;
+this proves connection preservation, not hitless or fast failover.
+
+The revision includes locally reproduced fixes for a transient Pending address
+publication after renewal confirmation and zone-refresh cancellation of
+unchanged DNS forwarding queries. An earlier campaign failed its final DNS
+assertion without retaining the raw response; this successful run does not
+retroactively establish that incident's cause. Failure diagnostics now retain
+the full DNS response without changing its timeout, attempt count or answer
+criteria. Full Go, schema, example and four-locale website checks passed before
+packaging; existing website link warnings remain.
+
+This qualifies the stated Linux combination. Production cutover, physical
+uplinks, all failure modes, all 1.0 functions and deferred platforms remain
+separate requirements. Use the maintained
+[HA procedure](../operations/linux-ha-pair-qualification.md); raw temporary
+campaign logs are not a prerequisite for future regression tests.
