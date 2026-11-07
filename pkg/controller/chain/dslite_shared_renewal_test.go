@@ -104,6 +104,8 @@ func TestLANHeldRenewalKeepsAppliedDependencyAndConfirmedLifetime(t *testing.T) 
 	if err := store.SavePDLease("wan-pd", lease); err != nil {
 		t.Fatal(err)
 	}
+	observer := &lanRenewalSaveObserver{SQLiteStore: store}
+	c.Store = observer
 	apply := c.Command
 	observed := false
 	c.Command = func(ctx context.Context, name string, args ...string) error {
@@ -128,10 +130,33 @@ func TestLANHeldRenewalKeepsAppliedDependencyAndConfirmedLifetime(t *testing.T) 
 	if !observed {
 		t.Fatal("renewal did not update the native lifetime")
 	}
+	for _, phase := range observer.phases {
+		if phase != "Applied" {
+			t.Fatalf("renewal published a transient unavailable dependency: phases=%v", observer.phases)
+		}
+	}
 	after := store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-address")
 	if after["phase"] != "Applied" || after["validUntil"] != pdLifetimeDeadline(now, lease.ValidSeconds) {
 		t.Fatalf("completed renewal was not published: %v", after)
 	}
+}
+
+// Dependent actors can read any persisted intermediate state, including after
+// the native command succeeds but before the final Applied publication.
+type lanRenewalSaveObserver struct {
+	*routerstate.SQLiteStore
+	phases []string
+}
+
+func (s *lanRenewalSaveObserver) SaveObjectStatus(version, kind, name string, status map[string]any) error {
+	if err := s.SQLiteStore.SaveObjectStatus(version, kind, name, status); err != nil {
+		return err
+	}
+	if kind == "IPv6DelegatedAddress" && name == "lan-address" {
+		phase, _ := status["phase"].(string)
+		s.phases = append(s.phases, phase)
+	}
+	return nil
 }
 
 // Publish the renewal immediately after a reader obtains the old lease. This
