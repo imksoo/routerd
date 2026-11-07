@@ -3299,7 +3299,12 @@ func (r *Runner) startARPObserverDaemonSources(ctx context.Context, logger *slog
 			Replay: true,
 		}
 		go func(spec mobilityARPObserverDaemonSpec, source daemonsource.DaemonSource) {
-			if err := source.Run(ctx); err != nil && ctx.Err() == nil {
+			defer func() {
+				r.supervisedMu.Lock()
+				delete(r.daemonSourcesStarted, spec.ResourceName)
+				r.supervisedMu.Unlock()
+			}()
+			if err := source.Run(ctx); err != nil && ctx.Err() == nil && logger != nil {
 				logger.Warn("arp observer daemon source stopped", "resource", spec.ResourceName, "error", err)
 			}
 		}(spec, source)
