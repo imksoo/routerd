@@ -673,7 +673,12 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 	if err != nil {
 		return nil, err
 	}
-	result, err := apply.New().PlanEffective(effectiveRouter, router)
+	dynamicRouters, err := controllerchain.BuildDynamicRouteSAMObjectStatusRouters(effectiveRouter, stateStore, time.Now().UTC(), platform.CurrentOS())
+	if err != nil {
+		return nil, err
+	}
+	planRouter := dynamicRouters[0]
+	result, err := apply.New().PlanEffective(planRouter, router)
 	if err != nil {
 		return nil, err
 	}
@@ -683,7 +688,7 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 	}
 	result.Warnings = append(result.Warnings, optionWarnings...)
 	appendPrefixDelegationStateWarnings(result, router, stateStore)
-	if err := appendLedgerOwnedOrphans(result, effectiveRouter, router, opts.LedgerPath, opts.DryRun); err != nil {
+	if err := appendLedgerOwnedOrphans(result, planRouter, router, opts.LedgerPath, opts.DryRun); err != nil {
 		return nil, err
 	}
 	decision := ha.Decision{Leader: true}
@@ -751,7 +756,12 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 		plannedOrphans = result.Orphans
 	}
 	outcome.Stage = "observe"
-	result, err = apply.New().ObserveEffective(effectiveRouter, router)
+	dynamicRouters, err = controllerchain.BuildDynamicRouteSAMObjectStatusRouters(effectiveRouter, stateStore, time.Now().UTC(), platform.CurrentOS())
+	if err != nil {
+		return nil, err
+	}
+	planRouter = dynamicRouters[0]
+	result, err = apply.New().ObserveEffective(planRouter, router)
 	if err != nil {
 		return nil, err
 	}
@@ -764,7 +774,7 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 	if len(result.Orphans) > 0 && result.Phase == "Healthy" {
 		result.Phase = "Drifted"
 	}
-	if err := appendLedgerOwnedOrphans(result, effectiveRouter, router, opts.LedgerPath, opts.DryRun); err != nil {
+	if err := appendLedgerOwnedOrphans(result, planRouter, router, opts.LedgerPath, opts.DryRun); err != nil {
 		return nil, err
 	}
 	if !opts.DryRun && configCommitPhase(result.Phase) {
