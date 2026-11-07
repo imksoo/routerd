@@ -431,6 +431,7 @@ func (c IPv4RouteController) reconcile(ctx context.Context) error {
 		}
 		if routeType != "blackhole" {
 			device = firstNonEmpty(resourcequery.Value(c.Store, spec.DeviceFrom), strings.TrimSpace(spec.Device))
+			device = interfaceIfName(c.Router, device)
 			if device == "" {
 				_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4Route", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "DeviceMissing"})
 				continue
