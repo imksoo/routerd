@@ -295,6 +295,13 @@ func deleteDSLiteTunnel(ctx context.Context, ifname string) error {
 
 func (c DSLiteTunnelController) resolveRemote(ctx context.Context, spec api.DSLiteTunnelSpec) (string, string, error) {
 	var firstName string
+	servers := append([]string(nil), spec.AFTRDNSServers...)
+	if strings.TrimSpace(spec.AFTRFrom.Resource) != "" {
+		source := spec.AFTRFrom
+		source.Field = "dnsServers"
+		servers = append(servers, resourcequery.Values(c.Store, source)...)
+	}
+	servers = compactStringList(servers)
 	candidates := []string{
 		resourcequery.Value(c.Store, spec.AFTRFrom),
 		spec.AFTRFQDN,
@@ -310,7 +317,7 @@ func (c DSLiteTunnelController) resolveRemote(ctx context.Context, spec api.DSLi
 		if firstName == "" {
 			firstName = candidate
 		}
-		remote, err := resolveAFTRIPv6(ctx, candidate, c.ResolverPort)
+		remote, err := resolveAFTRIPv6(ctx, candidate, c.ResolverPort, servers, spec.AFTRAddressOrdinal, spec.AFTRAddressSelection)
 		if err == nil {
 			return candidate, remote, nil
 		}
@@ -1461,7 +1468,7 @@ func (c DSLiteTunnelController) localDelegatedAddress(spec api.DSLiteTunnelSpec)
 	return "", "", fmt.Errorf("missing IPv6DelegatedAddress %q", spec.LocalDelegatedAddress)
 }
 
-func resolveAFTRIPv6(ctx context.Context, value string, resolverPort int) (string, error) {
+func resolveAFTRIPv6(ctx context.Context, value string, resolverPort int, servers []string, ordinal int, selection string) (string, error) {
 	if addr, err := netip.ParseAddr(value); err == nil {
 		if addr.Is6() {
 			return addr.String(), nil
@@ -1471,24 +1478,58 @@ func resolveAFTRIPv6(ctx context.Context, value string, resolverPort int) (strin
 	if resolverPort == 0 {
 		resolverPort = 1053
 	}
-	resolver := net.Resolver{
-		PreferGo: true,
-		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-			var dialer net.Dialer
-			return dialer.DialContext(ctx, network, net.JoinHostPort("127.0.0.1", strconv.Itoa(resolverPort)))
-		},
-	}
-	addrs, err := resolver.LookupIPAddr(ctx, strings.TrimSuffix(value, "."))
-	if err != nil {
-		return "", err
-	}
-	for _, addr := range addrs {
-		parsed, ok := netip.AddrFromSlice(addr.IP)
-		if ok && parsed.Is6() {
-			return parsed.String(), nil
+	if len(servers) == 0 {
+		servers = []string{net.JoinHostPort("127.0.0.1", strconv.Itoa(resolverPort))}
+	} else {
+		for i, server := range servers {
+			if _, _, err := net.SplitHostPort(server); err != nil {
+				servers[i] = net.JoinHostPort(server, "53")
+			}
 		}
 	}
-	return "", fmt.Errorf("no IPv6 address for %s", value)
+	ordered := ordinal != 0 || selection != ""
+	if ordinal == 0 {
+		ordinal = 1
+	}
+	var lastErr error
+	for _, server := range servers {
+		resolver := net.Resolver{
+			PreferGo: true,
+			Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+				var dialer net.Dialer
+				return dialer.DialContext(ctx, network, server)
+			},
+		}
+		addrs, err := resolver.LookupIPAddr(ctx, strings.TrimSuffix(value, "."))
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		var values []string
+		for _, addr := range addrs {
+			parsed, ok := netip.AddrFromSlice(addr.IP)
+			if ok && parsed.Is6() && !parsed.Is4In6() {
+				values = append(values, parsed.String())
+			}
+		}
+		if ordered {
+			slices.Sort(values)
+		}
+		if len(values) == 0 {
+			lastErr = fmt.Errorf("no IPv6 address for %s", value)
+			continue
+		}
+		index := ordinal - 1
+		if selection == "ordinalModulo" {
+			index %= len(values)
+		}
+		if index < 0 || index >= len(values) {
+			lastErr = fmt.Errorf("AFTR ordinal %d is outside available record count %d", ordinal, len(values))
+			continue
+		}
+		return values[index], nil
+	}
+	return "", lastErr
 }
 
 func localIPv6Address(value string) string {
