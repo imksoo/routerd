@@ -520,6 +520,7 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 	staticAddresses := map[string]api.Resource{}
 	usedStaticNames := map[string]bool{}
 	staticIPv6 := map[string]api.Resource{}
+	vrrpIPv4 := map[string]api.Resource{}
 	usedVirtualNames := map[string]bool{}
 	existingRoutes := map[string]api.Resource{}
 	usedRouteNames := map[string]bool{}
@@ -544,6 +545,13 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 				spec, err := resource.VirtualAddressSpec()
 				if err != nil {
 					return err
+				}
+				if spec.Family == "ipv4" && spec.Mode == "vrrp" && spec.Address != "" {
+					prefix, err := netip.ParsePrefix(spec.Address)
+					if err != nil {
+						return fmt.Errorf("existing VirtualAddress/%s: %w", resource.Metadata.Name, err)
+					}
+					vrrpIPv4[spec.Interface+"|"+prefix.String()] = resource
 				}
 				if spec.Family == "ipv6" && (spec.Mode == "" || spec.Mode == "static") && spec.Address != "" {
 					prefix, err := netip.ParsePrefix(spec.Address)
@@ -705,6 +713,15 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 				}
 			}
 			prefix := netip.PrefixFrom(ip, address.PrefixLen).String()
+			vrrp, existingVRRP := vrrpIPv4[resource.Metadata.Name+"|"+prefix]
+			if !existingVRRP {
+				vrrp, existingVRRP = vrrpIPv4[ifname+"|"+prefix]
+			}
+			if existingVRRP && source != "DHCPv4" && importStaticIPv4Address(address, ifname, ip) {
+				vrrp.Status = nil
+				router.Spec.Resources = append(router.Spec.Resources, vrrp)
+				continue
+			}
 			_, existingIPv4 := staticAddresses[resource.Metadata.Name+"|"+prefix]
 			if !existingIPv4 {
 				_, existingIPv4 = staticAddresses[ifname+"|"+prefix]
