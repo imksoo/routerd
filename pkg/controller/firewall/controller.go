@@ -24,7 +24,6 @@ type Controller struct {
 	Bus          *bus.Bus
 	Store        Store
 	DryRun       bool
-	ForceApply   bool
 	NftablesPath string
 	NftCommand   string
 	// LocalCaptureIntents is the already-decided dynamic Mobility dataplane
@@ -44,7 +43,7 @@ func (c Controller) Reconcile(ctx context.Context) error {
 		_ = c.saveErrorStatuses(ctx, backend.Name(), c.NftablesPath, "RenderFailed", err)
 		return err
 	}
-	changed, err := backend.Apply(ctx, ruleset, c.DryRun, c.ForceApply)
+	changed, err := backend.Apply(ctx, ruleset, c.DryRun)
 	if err != nil {
 		_ = c.saveErrorStatuses(ctx, ruleset.Backend, ruleset.Path, "ApplyFailed", err)
 		return err

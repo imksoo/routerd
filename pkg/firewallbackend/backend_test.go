@@ -44,7 +44,7 @@ func TestFirewallBackendRenderMetadata(t *testing.T) {
 func TestFirewallBackendApplyWritesChangedRulesetInDryRun(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "firewall.nft")
 	data := []byte("table inet routerd_filter {}\n")
-	changed, err := Nftables{}.Apply(context.Background(), Ruleset{Backend: "nftables", Path: path, Data: data}, true, false)
+	changed, err := Nftables{}.Apply(context.Background(), Ruleset{Backend: "nftables", Path: path, Data: data}, true)
 	if err != nil {
 		t.Fatalf("apply dry-run: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestFirewallBackendApplyWritesChangedRulesetInDryRun(t *testing.T) {
 func TestFirewallBackendRejectsInvalidRulesetPath(t *testing.T) {
 	for _, backend := range []Backend{Nftables{}, PF{}} {
 		t.Run(backend.Name(), func(t *testing.T) {
-			if _, err := backend.Apply(context.Background(), Ruleset{Backend: backend.Name(), Data: []byte("pass\n")}, true, false); err == nil {
+			if _, err := backend.Apply(context.Background(), Ruleset{Backend: backend.Name(), Data: []byte("pass\n")}, true); err == nil {
 				t.Fatal("Apply with empty path succeeded, want error")
 			}
 			if err := backend.Reload(context.Background(), Ruleset{Backend: backend.Name(), Path: "bad\x00path", Data: []byte("pass\n")}); err == nil {
