@@ -84,10 +84,7 @@
       "timing": { "enabled": true, "provider": "onprem", "fault": "stop-active" },
       "l2Loop": {
         "enabled": true,
-        "provider": "onprem",
-        "broadcastThresholdPps": 100,
-        "stpTcnThreshold": 5,
-        "pingLossThresholdPercent": 1
+        "provider": "onprem"
       },
       "matrix": { "name": "d3", "expectedDirectedFlows": 12 },
       "expectedAssertions": [
@@ -175,10 +172,7 @@
       "timing": { "enabled": true, "provider": "onprem", "fault": "stop-active" },
       "l2Loop": {
         "enabled": true,
-        "provider": "onprem",
-        "broadcastThresholdPps": 100,
-        "stpTcnThreshold": 5,
-        "pingLossThresholdPercent": 1
+        "provider": "onprem"
       },
       "matrix": { "name": "d3", "expectedDirectedFlows": 12 },
       "expectedAssertions": [

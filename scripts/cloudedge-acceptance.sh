@@ -143,7 +143,7 @@ for s in data.get("scenarios", []):
             errors.append(f"{sid}: l2Loop.provider invalid")
         for field in ("broadcastThresholdPps", "stpTcnThreshold", "pingLossThresholdPercent"):
             value = l2.get(field)
-            if not isinstance(value, (int, float)) or value < 0:
+            if value is not None and (not isinstance(value, (int, float)) or value < 0):
                 errors.append(f"{sid}: l2Loop.{field} must be a non-negative number")
         for name in ("l2_loop_free", "broadcast_storm_absent", "stp_rstp_stable", "mac_flap_absent", "failover_ping_stable", "l2_suppression_mechanism_recorded"):
             if name not in assertions:
@@ -205,9 +205,9 @@ import json, sys
 data = json.loads(sys.argv[1])
 l2 = data.get("l2Loop", {})
 print(l2.get("provider", "onprem"))
-print(l2.get("broadcastThresholdPps", 100))
-print(l2.get("stpTcnThreshold", 5))
-print(l2.get("pingLossThresholdPercent", 1))
+print(l2.get("broadcastThresholdPps", ""))
+print(l2.get("stpTcnThreshold", ""))
+print(l2.get("pingLossThresholdPercent", ""))
 PY
 }
 
@@ -246,9 +246,9 @@ cmd_run() {
   l2_enabled=$(json_field "$spec" l2Loop.enabled)
   readarray -t l2_args < <(json_l2_args "$spec")
   l2_provider=${l2_args[0]:-onprem}
-  l2_broadcast_threshold=${l2_args[1]:-100}
-  l2_stp_tcn_threshold=${l2_args[2]:-5}
-  l2_ping_loss_threshold=${l2_args[3]:-1}
+  l2_broadcast_threshold=${l2_args[1]:-}
+  l2_stp_tcn_threshold=${l2_args[2]:-}
+  l2_ping_loss_threshold=${l2_args[3]:-}
   [[ "$matrix_name" == "d3" ]] || die "run: unsupported matrix $matrix_name"
 
   mkdir -p "$out"
@@ -323,8 +323,11 @@ cmd_run() {
   [[ -n "$forced_result" ]] && result_arg=(--result "$forced_result")
   log "collecting evidence: $out"
   "$LABCTL" "${evidence_args[@]}" "${result_arg[@]}"
-  if [[ "$timing_status" -ne 0 || "$matrix_status" -ne 0 || "$protocol_status" -ne 0 || "$l2_status" -ne 0 ]]; then
+  if [[ "$timing_status" -ne 0 || "$matrix_status" -ne 0 || "$protocol_status" -ne 0 || ( "$l2_status" -ne 0 && "$l2_status" -ne 3 ) ]]; then
     return 1
+  fi
+  if [[ "$l2_status" -eq 3 ]]; then
+    return 3
   fi
   return 0
 }

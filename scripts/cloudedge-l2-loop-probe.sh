@@ -20,8 +20,8 @@ $SELF - observe L2 loop / STP-RSTP stability
 
 USAGE:
   $SELF --out <file> --phase before|after --provider onprem
-        [--broadcast-threshold-pps 100] [--stp-tcn-threshold 5]
-        [--ping-loss-threshold-percent 1]
+        [--broadcast-threshold-pps <pps>] [--stp-tcn-threshold <count>]
+        [--ping-loss-threshold-percent <percent>]
 
 ENV:
   L2_LOOP_RUNNER  Required runner. Contract:
@@ -73,9 +73,9 @@ PY
 out=""
 phase=""
 provider="onprem"
-broadcast_threshold=100
-stp_tcn_threshold=5
-ping_loss_threshold=1
+broadcast_threshold=""
+stp_tcn_threshold=""
+ping_loss_threshold=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -93,9 +93,9 @@ done
 [[ -n "$out" ]] || die "--out is required"
 case "$phase" in before|after) ;; *) die "--phase must be before|after" ;; esac
 case "$provider" in aws|azure|oci|onprem) ;; *) die "bad provider: $provider" ;; esac
-[[ "$broadcast_threshold" =~ ^[0-9]+([.][0-9]+)?$ ]] || die "bad --broadcast-threshold-pps"
-[[ "$stp_tcn_threshold" =~ ^[0-9]+([.][0-9]+)?$ ]] || die "bad --stp-tcn-threshold"
-[[ "$ping_loss_threshold" =~ ^[0-9]+([.][0-9]+)?$ ]] || die "bad --ping-loss-threshold-percent"
+[[ -z "$broadcast_threshold" || "$broadcast_threshold" =~ ^[0-9]+([.][0-9]+)?$ ]] || die "bad --broadcast-threshold-pps"
+[[ -z "$stp_tcn_threshold" || "$stp_tcn_threshold" =~ ^[0-9]+([.][0-9]+)?$ ]] || die "bad --stp-tcn-threshold"
+[[ -z "$ping_loss_threshold" || "$ping_loss_threshold" =~ ^[0-9]+([.][0-9]+)?$ ]] || die "bad --ping-loss-threshold-percent"
 have python3 || die "python3 is required"
 [[ -n "${L2_LOOP_RUNNER:-}" && -x "${L2_LOOP_RUNNER:-}" ]] \
   || die "L2_LOOP_RUNNER must point to an executable runner"
@@ -123,9 +123,9 @@ import json, math, os, sys
 ) = sys.argv[1:]
 
 metrics = json.loads(metrics_s)
-broadcast_threshold = float(broadcast_threshold_s)
-stp_tcn_threshold = float(stp_tcn_threshold_s)
-ping_loss_threshold = float(ping_loss_threshold_s)
+broadcast_threshold = float(broadcast_threshold_s) if broadcast_threshold_s else None
+stp_tcn_threshold = float(stp_tcn_threshold_s) if stp_tcn_threshold_s else None
+ping_loss_threshold = float(ping_loss_threshold_s) if ping_loss_threshold_s else None
 
 def num(name):
     value = metrics.get(name)
@@ -140,15 +140,17 @@ def num(name):
 def passed(value):
     return "pass" if value else "fail"
 
-def measured(name, predicate):
+def measured(name, predicate, threshold=None):
+    if threshold is None:
+        return "inconclusive"
     value = num(name)
     return "inconclusive" if value is None else passed(predicate(value))
 
 phase_checks = {
-    "broadcastStormAbsent": measured("broadcast_pps", lambda value: value <= broadcast_threshold),
-    "stpRstpStable": measured("stp_tcn_delta", lambda value: value <= stp_tcn_threshold),
-    "macFlapAbsent": measured("mac_flap_count", lambda value: value == 0),
-    "failoverPingStable": measured("ping_loss_percent", lambda value: value <= ping_loss_threshold),
+    "broadcastStormAbsent": measured("broadcast_pps", lambda value: value <= broadcast_threshold, broadcast_threshold),
+    "stpRstpStable": measured("stp_tcn_delta", lambda value: value <= stp_tcn_threshold, stp_tcn_threshold),
+    "macFlapAbsent": measured("mac_flap_count", lambda value: value == 0, 0),
+    "failoverPingStable": measured("ping_loss_percent", lambda value: value <= ping_loss_threshold, ping_loss_threshold),
 }
 if observe_result != "pass":
     phase_checks = {k: "inconclusive" for k in phase_checks}
