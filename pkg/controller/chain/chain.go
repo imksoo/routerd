@@ -6089,11 +6089,33 @@ func (c LANAddressController) cleanupWhenFalseIPv6DelegatedAddresses(ctx context
 				command = runCommandContext
 			}
 			for _, trackedAddress := range addresses {
+				var deleteErr error
 				for _, stale := range ipv6StaticAddressDeleteCandidates(trackedAddress) {
 					name, args := ipv6StaticAddressDeleteCommand(platform.CurrentOS(), ifname, stale)
 					if err := command(ctx, name, args...); err != nil {
+						deleteErr = err
 						if c.Logger != nil {
 							c.Logger.Debug("delete when-false IPv6 delegated address skipped", "resource", resource.Metadata.Name, "address", stale, "interface", ifname, "error", err)
+						}
+					}
+				}
+				if deleteErr != nil {
+					interfaces, err := net.Interfaces()
+					if err != nil {
+						return fmt.Errorf("observe interfaces after IPv6 address removal: %w", err)
+					}
+					for _, iface := range interfaces {
+						if iface.Name != ifname {
+							continue
+						}
+						remaining, err := iface.Addrs()
+						if err != nil {
+							return fmt.Errorf("observe IPv6 addresses on %s: %w", ifname, err)
+						}
+						for _, addr := range remaining {
+							if localIPv6Address(addr.String()) == localIPv6Address(trackedAddress) {
+								return fmt.Errorf("remove IPv6 delegated address %s from %s: %w", trackedAddress, ifname, deleteErr)
+							}
 						}
 					}
 				}
