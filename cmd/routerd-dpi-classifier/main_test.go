@@ -19,7 +19,7 @@ import (
 
 func TestSelftestClassifiesTLS(t *testing.T) {
 	var out bytes.Buffer
-	if err := run([]string{"selftest", "--ndpi-reader", "definitely-not-installed-routerd-ndpi"}, &out); err != nil {
+	if err := run([]string{"selftest"}, &out); err != nil {
 		t.Fatal(err)
 	}
 	var resp classifyResponse
@@ -34,30 +34,6 @@ func TestSelftestClassifiesTLS(t *testing.T) {
 	}
 	if resp.ApplicationProtocol != "tls" || resp.Category != "web" || resp.Confidence != 90 || resp.Metadata["tls.sni"] != "routerd-dpi-selftest.example" {
 		t.Fatalf("typed fields = %+v metadata=%+v", resp.ClassifyResult, resp.Metadata)
-	}
-}
-
-func TestNDPIReaderAvailabilityDoesNotChangeClassification(t *testing.T) {
-	dir := t.TempDir()
-	reader := filepath.Join(dir, "ndpiReader")
-	if err := os.WriteFile(reader, []byte("#!/bin/sh\nexit 99\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	var out bytes.Buffer
-	if err := run([]string{"selftest", "--ndpi-reader", "ndpiReader"}, &out); err != nil {
-		t.Fatal(err)
-	}
-	var resp classifyResponse
-	if err := json.Unmarshal(out.Bytes(), &resp); err != nil {
-		t.Fatal(err)
-	}
-	if resp.TLSSNI != "routerd-dpi-selftest.example" {
-		t.Fatalf("response = %+v", resp)
-	}
-	if resp.Engine != "builtin" || resp.Source != "builtin-payload" {
-		t.Fatalf("engine/source = %+v", resp)
 	}
 }
 
@@ -78,7 +54,7 @@ func TestClassifyCommandReadsJSON(t *testing.T) {
 
 func TestDaemonServesUnixSocket(t *testing.T) {
 	socket := filepath.Join(t.TempDir(), "classifier.sock")
-	opts := options{socket: socket, name: "test", ndpiReader: "definitely-not-installed-routerd-ndpi", timeout: time.Second}
+	opts := options{socket: socket, name: "test", timeout: time.Second}
 	listener, err := net.Listen("unix", socket)
 	if err != nil {
 		t.Fatal(err)

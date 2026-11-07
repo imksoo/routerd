@@ -28,24 +28,18 @@ type options struct {
 	name            string
 	engine          string
 	ndpiAgentSocket string
-	ndpiReader      string
 	timeout         time.Duration
 }
 
 type statusResponse struct {
-	OK                bool            `json:"ok"`
-	Name              string          `json:"name"`
-	Version           string          `json:"version"`
-	Engine            string          `json:"engine"`
-	ActiveEngine      string          `json:"activeEngine"`
-	Mode              string          `json:"mode"`
-	NDPITool          string          `json:"ndpiTool,omitempty"`
-	NDPIToolNote      string          `json:"ndpiToolNote,omitempty"`
-	NDPIToolPath      string          `json:"ndpiToolPath,omitempty"`
-	NDPIToolAvailable bool            `json:"ndpiToolAvailable,omitempty"`
-	NDPIToolUsed      bool            `json:"ndpiToolUsed,omitempty"`
-	Agent             *agentStatus    `json:"agent,omitempty"`
-	Stats             classifierStats `json:"stats"`
+	OK           bool            `json:"ok"`
+	Name         string          `json:"name"`
+	Version      string          `json:"version"`
+	Engine       string          `json:"engine"`
+	ActiveEngine string          `json:"activeEngine"`
+	Mode         string          `json:"mode"`
+	Agent        *agentStatus    `json:"agent,omitempty"`
+	Stats        classifierStats `json:"stats"`
 }
 
 type classifyResponse struct {
@@ -179,7 +173,6 @@ func parseOptions(name string, args []string) (options, error) {
 	fs.StringVar(&opts.name, "name", "default", "classifier instance name")
 	fs.StringVar(&opts.engine, "engine", "builtin", "classifier engine: builtin, ndpi-agent, auto")
 	fs.StringVar(&opts.ndpiAgentSocket, "ndpi-agent-socket", "/run/routerd/ndpi-agent/default.sock", "optional routerd-ndpi-agent Unix socket")
-	fs.StringVar(&opts.ndpiReader, "ndpi-reader", "", "deprecated; ndpiReader is not used for classification")
 	fs.DurationVar(&opts.timeout, "timeout", 200*time.Millisecond, "per-request classifier timeout")
 	if err := fs.Parse(args); err != nil {
 		return options{}, err
@@ -309,10 +302,6 @@ func status(opts options) statusResponse {
 		Engine:       opts.engine,
 		ActiveEngine: "builtin",
 		Mode:         "unix-http-json",
-	}
-	if opts.ndpiReader != "" {
-		resp.NDPITool = opts.ndpiReader
-		resp.NDPIToolNote = "deprecated; ndpiReader is not used for classification"
 	}
 	if opts.engine == "auto" || opts.engine == "ndpi-agent" {
 		agent := probeAgent(context.Background(), opts)

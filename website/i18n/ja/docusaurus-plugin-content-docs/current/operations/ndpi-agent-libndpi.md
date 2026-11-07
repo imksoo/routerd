@@ -61,5 +61,3 @@ sudo curl --silent --unix-socket /run/routerd/ndpi-agent/default.sock \
 
 `routerd-dpi-classifier` は、`--engine auto` または `--engine ndpi-agent` と、エージェントのソケットを指す `--ndpi-agent-socket` を指定して構成する必要があります。
 `auto` を推奨します。ネイティブエージェントが利用できない場合に、組み込みの分類器へフォールバックするためです。
-
-非推奨の `--ndpi-reader` オプションは、ネイティブの nDPI 分類を有効にしません。

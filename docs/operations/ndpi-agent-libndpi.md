@@ -79,6 +79,3 @@ archive target marker, rejects unsafe tar paths, verifies the neighboring
 `--engine ndpi-agent` and an `--ndpi-agent-socket` pointing at the agent socket.
 `auto` is recommended because it falls back to the built-in classifier if the
 native agent is unavailable.
-
-The deprecated `--ndpi-reader` option does not enable native nDPI
-classification.
