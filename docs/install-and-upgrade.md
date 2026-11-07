@@ -452,18 +452,17 @@ sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once --dry-run 
 rm -rf "$workdir"
 ```
 
-Apply only from a console or an independent management path after reviewing the
-file. This command changes the host network:
-
-```sh
-sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once
-```
-
-Start the service when the one-shot apply is healthy:
+After reviewing the file, start the service from a console or an independent
+management path. The service applies the configuration and supervises DHCP and
+other client processes:
 
 ```sh
 sudo systemctl enable --now routerd.service
 ```
+
+A standalone `routerd apply --once` exits without supervising those clients.
+When transferring DHCP management, check the acquired lease and management
+connection after service startup; uninterrupted handoff is not guaranteed.
 
 After the service starts, use `sudo routerctl get status` to inspect it.
 `routerctl` is a client for the running local daemon; it is not the standalone

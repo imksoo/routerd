@@ -100,18 +100,12 @@ rm -rf "$LAB_DIR"
 These commands do not commit a network change. A validation failure is a reason
 to edit the YAML, not to try a live apply.
 
-## 3. Apply from the console
+## 3. Start the router service
 
-When the preview names the expected interfaces and artifacts, make the change
-from the console or a separate management path:
-
-```bash
-sudo routerd apply --config first-router.yaml --once
-```
-
-Start the service before the status and client checks, even for a temporary
-lab. A one-shot apply exits without leaving a daemon for `routerctl`. Copy the
-reviewed file into the installed location and start the service:
+When the preview names the expected interfaces and artifacts, use a console or
+separate management path to install the reviewed configuration and start the
+service. The service applies the configuration and supervises DHCP and other
+client processes:
 
 ```bash
 sudo install -d -m 0755 /usr/local/etc/routerd
@@ -120,8 +114,11 @@ sudo systemctl start routerd.service
 sudo systemctl is-active routerd.service
 ```
 
-Continue only after the service reports `active`. To start the lab router
-automatically after a reboot, optionally enable the service:
+A standalone `routerd apply --once` exits without supervising those clients.
+For a DHCP handoff, verify the lease and management connection after starting
+the service; the change is not guaranteed to be interruption-free.
+
+To start the lab router automatically after a reboot, optionally enable it:
 
 ```bash
 sudo systemctl enable routerd.service

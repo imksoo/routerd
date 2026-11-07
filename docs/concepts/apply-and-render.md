@@ -43,8 +43,11 @@ router. Read the result, then remove the temporary directory when finished.
 
 ## Live one-shot apply
 
-`routerd apply --once` changes the host and exits. Use it only from a console
-or an independent management path after reviewing the configuration:
+`routerd apply --once` changes the host and exits. It does not supervise DHCP,
+PPPoE or DHCPv6-PD client processes, even if it transfers their configuration
+from an existing network manager. Start `routerd serve` for ongoing client
+operation. Use a console or an independent management path after reviewing the
+configuration:
 
 ```bash
 sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once
