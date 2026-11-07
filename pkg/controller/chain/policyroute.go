@@ -609,7 +609,17 @@ func (c IPv4PolicyRouteController) cleanupPolicyRoutes(ctx context.Context, alia
 			desiredTables[table] = true
 		}
 	}
-	actual, err := c.currentPolicyRouteArtifacts(ctx)
+	for _, res := range c.Router.Spec.Resources {
+		if res.Kind != "VRF" {
+			continue
+		}
+		spec, err := res.VRFSpec()
+		if err != nil {
+			return err
+		}
+		desiredTables[spec.RouteTable] = true
+	}
+	actual, referencedTables, err := c.currentPolicyRouteArtifacts(ctx)
 	if err != nil {
 		return err
 	}
@@ -628,7 +638,22 @@ func (c IPv4PolicyRouteController) cleanupPolicyRoutes(ctx context.Context, alia
 			}
 			forgotten = append(forgotten, artifact)
 			delete(actual, artifact.Identity())
+			referencedTables[rule.Table]--
 		}
+	}
+	for _, artifact := range actual {
+		if artifact.Kind != "linux.ipv4.routeTable" {
+			continue
+		}
+		table, ok := artifactIPv4Table(artifact)
+		if !ok || table == 253 || table == 254 || table == 255 || desiredTables[table] || referencedTables[table] > 0 {
+			continue
+		}
+		if err := c.flushIPv4RouteTable(ctx, table); err != nil {
+			return err
+		}
+		forgotten = append(forgotten, artifact)
+		delete(actual, artifact.Identity())
 	}
 	ledger, err := resource.LoadLedger(c.LedgerPath)
 	if err != nil {
@@ -682,7 +707,7 @@ func (c IPv4PolicyRouteController) cleanupPolicyRoutes(ctx context.Context, alia
 			if !ok {
 				continue
 			}
-			if actual[artifact.Identity()].Kind != "" && !desiredTables[table] {
+			if actual[artifact.Identity()].Kind != "" && !desiredTables[table] && referencedTables[table] == 0 {
 				if err := c.flushIPv4RouteTable(ctx, table); err != nil {
 					return err
 				}
@@ -1593,23 +1618,34 @@ type ipv4PolicyFwmarkRule struct {
 	Table    int
 }
 
-func (c IPv4PolicyRouteController) currentPolicyRouteArtifacts(ctx context.Context) (map[string]resource.Artifact, error) {
+func (c IPv4PolicyRouteController) currentPolicyRouteArtifacts(ctx context.Context) (map[string]resource.Artifact, map[int]int, error) {
 	out := map[string]resource.Artifact{}
 	rules, err := c.commandOutput(ctx, "ip", "-4", "rule", "show")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	referencedTables := map[int]int{}
+	for _, line := range strings.Split(string(rules), "\n") {
+		fields := strings.Fields(line)
+		for i, field := range fields {
+			if field == "lookup" && i+1 < len(fields) {
+				if table, err := strconv.Atoi(fields[i+1]); err == nil {
+					referencedTables[table]++
+				}
+			}
+		}
 	}
 	for _, artifact := range parseIPv4PolicyFwmarkRuleArtifacts(string(rules)) {
 		out[artifact.Identity()] = artifact
 	}
 	tables, err := c.commandOutput(ctx, "ip", "-4", "route", "show", "table", "all")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for _, artifact := range parseIPv4PolicyRouteTableArtifacts(string(tables)) {
 		out[artifact.Identity()] = artifact
 	}
-	return out, nil
+	return out, referencedTables, nil
 }
 
 func (c IPv4PolicyRouteController) deleteIPv4FwmarkRule(ctx context.Context, rule ipv4PolicyFwmarkRule) error {
