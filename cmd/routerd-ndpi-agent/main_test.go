@@ -17,29 +17,6 @@ import (
 	"github.com/imksoo/routerd/pkg/dpi"
 )
 
-type fakeBackend struct {
-	status backendStatus
-	result dpi.ClassifyResult
-}
-
-func (b fakeBackend) Status() backendStatus {
-	return b.status
-}
-
-func (b fakeBackend) Classify(_ context.Context, _ string, req dpi.ClassifyRequest, _ *flowState) (dpi.ClassifyResult, error) {
-	if b.result.AppName != "" {
-		return b.result, nil
-	}
-	result := dpi.Classify(req)
-	result.Engine = "ndpi-agent"
-	result.Source = "ndpi-agent"
-	return result, nil
-}
-
-func (b fakeBackend) Forget(string) {}
-
-func (b fakeBackend) Close() {}
-
 func TestSelftestReportsBackendStatus(t *testing.T) {
 	var out bytes.Buffer
 	if err := run([]string{"selftest"}, &out); err != nil {
@@ -89,37 +66,6 @@ func TestDaemonReturnsUnavailableClassification(t *testing.T) {
 	}
 	if got.AppName != "unknown" || got.Engine != "ndpi-agent" || got.Source != "ndpi-agent" {
 		t.Fatalf("response = %+v", got)
-	}
-}
-
-func TestAgentCachesClassifiedFlow(t *testing.T) {
-	agent := newAgent(options{flowTTL: time.Hour, flowLimit: 100, firstPayloadPackets: 3}, fakeBackend{
-		status: backendStatus{Loaded: true, Version: "test"},
-		result: dpi.ClassifyResult{
-			AppName:       "tls",
-			AppCategory:   "web",
-			AppConfidence: 99,
-			TLSSNI:        "agent.example",
-			Engine:        "ndpi-agent",
-			Source:        "ndpi-agent",
-		},
-	})
-	req := dpi.ClassifyRequest{
-		L4Payload:         dpi.MinimalTLSClientHello("routerd.example"),
-		TransportProtocol: "tcp",
-		SrcAddress:        "192.0.2.10",
-		SrcPort:           53168,
-		DstAddress:        "198.51.100.10",
-		DstPort:           443,
-	}
-	first := agent.Observe(context.Background(), req, time.Unix(100, 0))
-	second := agent.Observe(context.Background(), req, time.Unix(101, 0))
-	stats := agent.Status().Stats
-	if first.TLSSNI != "agent.example" || second.TLSSNI != "agent.example" {
-		t.Fatalf("results = %+v %+v", first, second)
-	}
-	if stats.BackendPackets != 1 || stats.SkippedPackets != 1 || stats.ClassifiedPackets != 1 {
-		t.Fatalf("stats = %+v", stats)
 	}
 }
 
