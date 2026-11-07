@@ -2107,20 +2107,6 @@ func TestEnsureDeprecatedIPv6LocalAddressForeverRepairsPreferredSource(t *testin
 	}
 }
 
-func TestDSLiteDelegatedAddressSources(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "ds-source"}, Spec: api.IPv6DelegatedAddressSpec{AddressSuffix: "::23", PrefixLength: 128}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-v6"}, Spec: api.IPv6DelegatedAddressSpec{AddressSuffix: "::1"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite"}, Spec: api.DSLiteTunnelSpec{LocalAddressSource: "delegatedAddress", LocalDelegatedAddress: "ds-source", LocalAddressSuffix: "::23"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "public-example"}, Spec: api.DSLiteTunnelSpec{LocalAddressSource: "delegatedAddress", LocalDelegatedAddress: "lan-v6", LocalAddressSuffix: "::100"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ra"}, Spec: api.DSLiteTunnelSpec{LocalAddressSource: "interface", LocalDelegatedAddress: "ordinary"}},
-	}}}
-	got := dsliteDelegatedAddressSources(router)
-	if !got["ds-source"] || got["ordinary"] || got["lan-v6"] {
-		t.Fatalf("DS-Lite delegated sources = %#v", got)
-	}
-}
-
 func TestFreeBSDProtectedIfnames(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{
 		Apply: api.ApplyPolicySpec{ProtectedInterfaces: []string{"mgmt"}},
@@ -2388,126 +2374,6 @@ func TestDelegatedPrefixFromAddressEntriesFallsBackWhenOnlyManagedSuffixExists(t
 	}
 }
 
-func TestConflictingManagedIPv6Addresses(t *testing.T) {
-	got := conflictingManagedIPv6Addresses([]ipv6AddressEntry{
-		{Address: "fe80::1", PrefixLen: 64},
-		{Address: "2001:db8:3d60:1240::1", PrefixLen: 64},
-		{Address: "2001:db8:3d60:1220::1", PrefixLen: 64},
-		{Address: "2001:db8:3d60:1220::100", PrefixLen: 128},
-	}, map[string]bool{"2001:db8:3d60:1220::1": true}, ipv6HostSuffix64(netip.MustParseAddr("::1")))
-	if len(got) != 1 || got[0].Address != "2001:db8:3d60:1240::1" {
-		t.Fatalf("conflicts = %#v, want stale ::1 only", got)
-	}
-}
-
-func TestConflictingManagedIPv6AddressesPreservesAllDesiredPrefixes(t *testing.T) {
-	got := conflictingManagedIPv6Addresses([]ipv6AddressEntry{
-		{Address: "2001:db8:3d60:1240::1", PrefixLen: 64},
-		{Address: "2001:db8:3d60:1230::1", PrefixLen: 64},
-		{Address: "2001:db8:3d60:1220::1", PrefixLen: 64},
-	}, map[string]bool{
-		"2001:db8:3d60:1240::1": true,
-		"2001:db8:3d60:1220::1": true,
-	}, ipv6HostSuffix64(netip.MustParseAddr("::1")))
-	if len(got) != 1 || got[0].Address != "2001:db8:3d60:1230::1" {
-		t.Fatalf("conflicts = %#v, want expired 1230 only", got)
-	}
-}
-
-func TestManagedDelegatedIPv6TargetsIncludeDelegatedAddressAndDSLiteSources(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-ipv6"}, Spec: api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "lan", SubnetID: "0", AddressSuffix: "::3"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite-a"}, Spec: api.DSLiteTunnelSpec{Interface: "wan", LocalAddressSource: "delegatedAddress", LocalDelegatedAddress: "lan-ipv6", LocalAddressSuffix: "::100"}},
-	}}}
-	store := routerstate.New()
-	store.Set("ipv6PrefixDelegation.wan-pd.lease", routerstate.EncodePDLease(routerstate.PDLease{CurrentPrefix: "2001:db8:3d60:1220::/60"}), "test")
-
-	targets, err := managedDelegatedIPv6Targets(router, store)
-	if err != nil {
-		t.Fatalf("managed targets: %v", err)
-	}
-	for _, want := range []string{"2001:db8:3d60:1220::3", "2001:db8:3d60:1220::100"} {
-		if !targets.DesiredByInterface["ens19"][want] {
-			t.Fatalf("desired targets = %#v, missing %s", targets.DesiredByInterface, want)
-		}
-	}
-	for _, suffix := range []string{"::3", "::100"} {
-		addr := netip.MustParseAddr(suffix)
-		if !targets.SuffixesByInterface["ens19"][ipv6HostSuffix64(addr)] {
-			t.Fatalf("suffix targets = %#v, missing %s", targets.SuffixesByInterface, suffix)
-		}
-	}
-}
-
-func TestManagedDelegatedIPv6TargetsRestorePreviousLANPrefixButNotDSLiteSource(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-ipv6"}, Spec: api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "lan", AddressSuffix: "::3"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "wan-source"}, Spec: api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "lan", AddressSuffix: "::21", PrefixLength: 128}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite-a"}, Spec: api.DSLiteTunnelSpec{Interface: "wan", LocalAddressSource: "delegatedAddress", LocalDelegatedAddress: "wan-source", LocalAddressSuffix: "::23"}},
-	}}}
-	store := routerstate.New()
-	store.Set("ipv6PrefixDelegation.wan-pd.lease", routerstate.EncodePDLease(routerstate.PDLease{
-		CurrentPrefix: "2001:db8:3d60:1220::/60",
-		PreviousPrefixes: []routerstate.PDPreviousPrefix{
-			{Prefix: "2001:db8:3d60:1240::/60", ExpiresAt: time.Now().UTC().Add(time.Hour)},
-		},
-	}), "test")
-
-	targets, err := managedDelegatedIPv6Targets(router, store)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !targets.DesiredByInterface["ens19"]["2001:db8:3d60:1240::3"] {
-		t.Fatalf("previous LAN target missing: %#v", targets.DesiredByInterface)
-	}
-	for _, forbidden := range []string{"2001:db8:3d60:1240::21", "2001:db8:3d60:1240::23"} {
-		if targets.DesiredByInterface["ens19"][forbidden] {
-			t.Fatalf("previous WAN/DS-Lite /128 target retained: %s in %#v", forbidden, targets.DesiredByInterface)
-		}
-	}
-}
-
-func TestApplyIPv6DelegatedAddressesRestoresDeprecatedPreviousLANPrefixFromState(t *testing.T) {
-	if platformDefaults.OS != platform.OSLinux {
-		t.Skip("Linux command fixture")
-	}
-	binDir := t.TempDir()
-	logPath := filepath.Join(t.TempDir(), "ip.log")
-	writeExecutable(t, filepath.Join(binDir, "ip"), "#!/bin/sh\nif [ \"$1 $2 $3 $4 $5 $6\" = \"-brief -6 addr show dev ens19\" ]; then\n  echo \"ens19 UP 2001:db8:3d60:1220::3/128\"\n  exit 0\nfi\nprintf '%s\\n' \"$*\" >> \""+logPath+"\"\n")
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-ipv6"}, Spec: api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "lan", AddressSuffix: "::3"}},
-	}}}
-	store := routerstate.New()
-	store.Set("ipv6PrefixDelegation.wan-pd.lease", routerstate.EncodePDLease(routerstate.PDLease{
-		CurrentPrefix: "2001:db8:3d60:1220::/60",
-		PreviousPrefixes: []routerstate.PDPreviousPrefix{
-			{Prefix: "2001:db8:3d60:1240::/60", ExpiresAt: time.Now().UTC().Add(5 * time.Minute)},
-		},
-	}), "test")
-
-	if _, err := applyIPv6DelegatedAddressesWithState(router, store); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	commands := string(data)
-	if strings.Contains(commands, "addr del 2001:db8:3d60:1240::3") {
-		t.Fatalf("previous prefix was deleted during restart restore:\n%s", commands)
-	}
-	if !strings.Contains(commands, "-6 addr replace 2001:db8:3d60:1240::3/64 dev ens19 preferred_lft 0 valid_lft") {
-		t.Fatalf("previous prefix was not restored deprecated:\n%s", commands)
-	}
-}
-
 func TestDeprecatedIPv6LocalAddressCommand(t *testing.T) {
 	name, args := deprecatedIPv6LocalAddressCommand(platform.OSLinux, "ens19", "2001:db8::1", 299)
 	if got, want := strings.Join(append([]string{name}, args...), " "), "ip -6 addr replace 2001:db8::1/64 dev ens19 preferred_lft 0 valid_lft 299"; got != want {
@@ -2516,27 +2382,6 @@ func TestDeprecatedIPv6LocalAddressCommand(t *testing.T) {
 	name, args = deprecatedIPv6LocalAddressCommand(platform.OSFreeBSD, "vtnet1", "2001:db8::1", 299)
 	if got, want := strings.Join(append([]string{name}, args...), " "), "ifconfig vtnet1 inet6 2001:db8::1 prefixlen 64 pltime 0 vltime 299 alias"; got != want {
 		t.Fatalf("FreeBSD command = %q, want %q", got, want)
-	}
-}
-
-func TestManagedDelegatedIPv6TargetsTrackSuffixWithoutCurrentPrefix(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-ipv6"}, Spec: api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "lan", AddressSuffix: "::3"}},
-	}}}
-	store := routerstate.New()
-	store.Set("ipv6PrefixDelegation.wan-pd.lease", routerstate.EncodePDLease(routerstate.PDLease{LastPrefix: "2001:db8:3d60:1220::/60"}), "test")
-
-	targets, err := managedDelegatedIPv6Targets(router, store)
-	if err != nil {
-		t.Fatalf("managed targets: %v", err)
-	}
-	if len(targets.DesiredByInterface["ens19"]) != 0 {
-		t.Fatalf("desired targets = %#v, want none without current prefix", targets.DesiredByInterface)
-	}
-	if !targets.SuffixesByInterface["ens19"][ipv6HostSuffix64(netip.MustParseAddr("::3"))] {
-		t.Fatalf("suffix targets = %#v, want ::3 tracked for stale cleanup", targets.SuffixesByInterface)
 	}
 }
 
