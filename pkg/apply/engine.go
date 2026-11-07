@@ -158,7 +158,7 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 		case "HealthCheck":
 			e.observeHealthCheck(router, res, aliases, kinds, includePlan, &rr)
 		case "EgressRoutePolicy":
-			e.observeEgressRoutePolicy(res, aliases, policies, includePlan, &rr)
+			e.observeEgressRoutePolicy(res, aliases, includePlan, &rr)
 		case "NAT44Rule":
 			e.observeNAT44Rule(res, aliases, policies, includePlan, &rr)
 		case "NAT44FlowDNATPinhole":
@@ -184,7 +184,7 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 			rr.Artifacts = artifactIntentsForResult(resourceArtifactIntents(res, aliases))
 		}
 
-		if rr.Phase == "RequiresAdoption" || rr.Phase == "Blocked" {
+		if rr.Phase == "Blocked" {
 			result.Phase = "Blocked"
 		} else if rr.Phase == "Drifted" && result.Phase == "Healthy" && (res.Kind == "Bridge" || res.Kind == "VXLANTunnel" || res.Kind == "IPv4Route") {
 			result.Phase = "Drifted"
@@ -1066,10 +1066,6 @@ func (e *Engine) observeNAT44SourceNATFields(res api.Resource, spec api.NAT44Rul
 	}
 	if !policy.Managed || policy.Owner == "external" {
 		rr.Plan = append(rr.Plan, "plan NAT rule for externally managed outbound interface")
-	} else if policy.RequiresAdoption {
-		rr.Phase = "RequiresAdoption"
-		rr.Plan = append(rr.Plan, "blocked: outbound interface requires adoption before routerd manages NAT")
-		return
 	}
 	switch spec.Translation.Type {
 	case "interfaceAddress":
@@ -1153,7 +1149,7 @@ func (e *Engine) observeNAT44FlowDNATPinhole(res api.Resource, aliases map[strin
 	}
 }
 
-func (e *Engine) observeEgressRoutePolicy(res api.Resource, aliases map[string]string, policies map[string]interfacePolicy, includePlan bool, rr *ResourceResult) {
+func (e *Engine) observeEgressRoutePolicy(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
 	spec, err := res.EgressRoutePolicySpec()
 	if err != nil {
 		rr.Phase = "Blocked"
@@ -1210,25 +1206,8 @@ func (e *Engine) observeEgressRoutePolicy(res api.Resource, aliases map[string]s
 		rr.Plan = append(rr.Plan, "select egress route candidate and publish status for dependent resources")
 	}
 	for _, candidate := range sortedEgressRouteCandidates(spec.Candidates) {
-		if len(candidate.Targets) > 0 {
-			for _, target := range candidate.Targets {
-				policy := policies[target.EffectiveInterface()]
-				if policy.RequiresAdoption {
-					rr.Phase = "RequiresAdoption"
-					rr.Plan = append(rr.Plan, fmt.Sprintf("blocked: outbound interface %s requires adoption before routerd manages policy routing", target.EffectiveInterface()))
-					return
-				}
-			}
+		if len(candidate.Targets) > 0 || candidate.Mark == 0 {
 			continue
-		}
-		if candidate.Mark == 0 {
-			continue
-		}
-		policy := policies[candidate.EffectiveInterface()]
-		if policy.RequiresAdoption {
-			rr.Phase = "RequiresAdoption"
-			rr.Plan = append(rr.Plan, fmt.Sprintf("blocked: outbound interface %s requires adoption before routerd manages policy routing", candidate.EffectiveInterface()))
-			return
 		}
 		if mode == "priority" {
 			rr.Plan = append(rr.Plan, fmt.Sprintf("candidate %s priority %d via %s gatewaySource=%s", defaultString(candidate.Name, candidate.EffectiveInterface()), candidate.Priority, aliases[candidate.EffectiveInterface()], defaultString(candidate.GatewaySource, "none")))
@@ -1674,17 +1653,6 @@ func (e *Engine) observeInterface(res api.Resource, policy interfacePolicy, obse
 		rr.Plan = append(rr.Plan, "observe only; interface is externally managed")
 		return
 	}
-	if policy.RequiresAdoption {
-		rr.Phase = "RequiresAdoption"
-		rr.Plan = append(rr.Plan, "blocked: existing cloud-init/netplan networking detected; run an explicit adoption workflow before routerd manages this interface")
-		rr.Conditions = append(rr.Conditions, Condition{
-			Type:    "AdoptionRequired",
-			Status:  "True",
-			Reason:  "ExistingOSNetworking",
-			Message: "routerd will not override cloud-init/netplan-managed networking automatically",
-		})
-		return
-	}
 	if boolSpec(res, "adminUp") {
 		rr.Plan = append(rr.Plan, "ensure link is administratively up")
 	}
@@ -1731,11 +1699,6 @@ func (e *Engine) observeIPv4Static(res api.Resource, aliases map[string]string, 
 			rr.Plan = append(rr.Plan, "observe only; referenced interface is externally managed")
 			return
 		}
-		if policy.RequiresAdoption {
-			rr.Phase = "RequiresAdoption"
-			rr.Plan = append(rr.Plan, "blocked: referenced interface requires adoption before routerd manages addresses")
-			return
-		}
 		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure IPv4 address %s on %s", addr, ifname))
 		if boolSpec(res, "exclusive") {
 			rr.Plan = append(rr.Plan, fmt.Sprintf("remove other IPv4 addresses on %s", ifname))
@@ -1765,11 +1728,6 @@ func (e *Engine) observeDHCP(res api.Resource, aliases map[string]string, polici
 	if includePlan {
 		if !policy.Managed || policy.Owner == "external" {
 			rr.Plan = append(rr.Plan, "observe only; referenced interface is externally managed")
-			return
-		}
-		if policy.RequiresAdoption {
-			rr.Phase = "RequiresAdoption"
-			rr.Plan = append(rr.Plan, "blocked: referenced interface requires adoption before routerd manages DHCP")
 			return
 		}
 		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure %s DHCP client %s is running for %s", family, client, ifname))
@@ -1810,11 +1768,6 @@ func (e *Engine) observeDHCPv4Client(res api.Resource, aliases map[string]string
 			rr.Plan = append(rr.Plan, "observe daemon lease only; referenced interface is externally managed")
 			return
 		}
-		if policy.RequiresAdoption {
-			rr.Phase = "RequiresAdoption"
-			rr.Plan = append(rr.Plan, "blocked: referenced interface requires adoption before routerd applies DHCPv4 lease")
-			return
-		}
 		rr.Plan = append(rr.Plan, fmt.Sprintf("run routerd-dhcpv4-client for %s and apply DHCPv4 address/default route from daemon status", ifname))
 	}
 }
@@ -1838,11 +1791,6 @@ func (e *Engine) observeIPv6RAAddress(res api.Resource, aliases map[string]strin
 		}
 		if !policy.Managed || policy.Owner == "external" {
 			rr.Plan = append(rr.Plan, "configure IPv6 RA/SLAAC through host network renderer for externally managed interface")
-			return
-		}
-		if policy.RequiresAdoption {
-			rr.Phase = "RequiresAdoption"
-			rr.Plan = append(rr.Plan, "blocked: referenced interface requires adoption before routerd manages IPv6 RA/SLAAC")
 			return
 		}
 		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure IPv6 RA/SLAAC is accepted on %s", ifname))
@@ -2276,12 +2224,11 @@ func parseIPv4Prefixes(output string) []netip.Prefix {
 }
 
 type interfacePolicy struct {
-	Name             string
-	IfName           string
-	Managed          bool
-	Owner            string
-	RequiresAdoption bool
-	OS               osNetworking
+	Name    string
+	IfName  string
+	Managed bool
+	Owner   string
+	OS      osNetworking
 }
 
 func interfacePolicies(router *api.Router, osNet osNetworking) map[string]interfacePolicy {
@@ -2293,12 +2240,11 @@ func interfacePolicies(router *api.Router, osNet osNetworking) map[string]interf
 		managed := boolSpec(res, "managed")
 		owner := stringSpecDefault(res, "owner", ownerFromManaged(managed))
 		policies[res.Metadata.Name] = interfacePolicy{
-			Name:             res.Metadata.Name,
-			IfName:           stringSpec(res, "ifname"),
-			Managed:          managed,
-			Owner:            owner,
-			RequiresAdoption: managed && owner != "external" && osNet.CloudInit && !osNet.Netplan,
-			OS:               osNet,
+			Name:    res.Metadata.Name,
+			IfName:  stringSpec(res, "ifname"),
+			Managed: managed,
+			Owner:   owner,
+			OS:      osNet,
 		}
 	}
 	return policies
