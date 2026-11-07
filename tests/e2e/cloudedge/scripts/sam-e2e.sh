@@ -1435,11 +1435,11 @@ collect_convergence_snapshot() {
 
 # One cache belongs to one validation invocation and unchanged fault state.
 # Keep every failed/missing observation; retry only required components that
-# have not succeeded, under the original shared convergence deadline.
+# have not succeeded.
 observe_flow() {
   local label="$1" src="$2" dst="$3" kind="$4" required="${5:-ping hostname}"
   local src_ip dst_ip dst_host dst_user dir state component command marker raw rc transport_rc actual
-  local attempt remaining result attempt_result pending sent components attempt_started
+  local attempt result attempt_result pending sent components attempt_started
   src_ip="$(node_field "$src" private_ip)"; dst_ip="$(node_field "$dst" private_ip)"
   dst_host="$(node_field "$dst" name)"; dst_user="$(node_field "$dst" ssh_user)"
   dir="$flow_evidence_dir/$kind-$src-$dst"
@@ -1465,8 +1465,6 @@ observe_flow() {
       # Optional first observations may be shared with a later matrix; do not
       # retry them unless that consumer actually requires them.
       if [ "$attempt" -gt 0 ] && [[ " $required " != *" $component "* ]]; then continue; fi
-      remaining=$((validation_deadline - SECONDS))
-      [ "$remaining" -gt 0 ] || break
       attempt=$((attempt + 1)); sent=1
       printf '%s\n' "$attempt" >"$dir/$component.count"
       case "$component" in
@@ -1483,7 +1481,7 @@ observe_flow() {
       raw="$dir/$component.$attempt.txt"
       transport_rc=0
       attempt_started=$SECONDS
-      ssh_timeout_seconds="$remaining" ssh_node "$src" \
+      ssh_node "$src" \
         "set +e; $command; rc=\$?; printf '\\n$marker=%s\\n' \"\$rc\"; exit 0" >"$raw" 2>&1 || transport_rc=$?
       rc="$(sed -n "s/^$marker=\([0-9][0-9]*\)$/\1/p" "$raw")"
       attempt_result=OBSERVATION_INCONCLUSIVE
@@ -1523,18 +1521,14 @@ observe_flow() {
       fi
     done
     [ "$result" != PASS ] || break
-    [ "$pending" -eq 1 ] && [ "$sent" -eq 1 ] && [ "$((validation_deadline - SECONDS))" -gt 2 ] || break
+    [ "$pending" -eq 1 ] && [ "$sent" -eq 1 ] || break
     sleep 2
   done
   printf '%s\n' "$result" >"$dir/status"
   if [[ "$result" == FAIL_* ]] && [ ! -f "$dir/diagnostics.txt" ]; then
-    remaining=$((validation_deadline - SECONDS))
-    [ "$remaining" -le 20 ] || remaining=20
-    if [ "$remaining" -gt 0 ]; then
-      ssh_timeout_seconds="$remaining" ssh_node "$src" \
-        "ip route get '$dst_ip' from '$src_ip'; timeout '$remaining' sh -c \"traceroute -n -w 2 -q 1 '$dst_ip' || tracepath '$dst_ip'\"" \
-        >"$dir/diagnostics.txt" 2>&1 || true
-    fi
+    ssh_node "$src" \
+      "ip route get '$dst_ip' from '$src_ip'; traceroute -n -w 2 -q 1 '$dst_ip' || tracepath '$dst_ip'" \
+      >"$dir/diagnostics.txt" 2>&1 || true
   fi
   if [ "$result" != PASS ]; then
     printf 'flow=%s source=%s destination=%s target=%s result=%s attempts=%s raw=%s state=%s diagnostics=%s\n' "$label" "$src" "$dst" "$dst_ip" "$result" "$dir/attempts.tsv" "$dir" "$dir/state" "$dir/diagnostics.txt" >&2
