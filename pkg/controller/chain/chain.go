@@ -2748,8 +2748,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 		// after this generation has observed the kernel-owned VIP.  A persisted
 		// role from the previous process is not authoritative during startup.
 		framework.FuncController{ControllerName: "daemon-supervisor", Every: 5 * time.Second, Subs: whenStatusSubscriptions(r.currentRouter(), "DNSResolver", "DHCPv6PrefixDelegation", "DHCPv4Client", "PPPoESession"), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			r.reconcileSupervisedClientDaemons(ctx, r.daemonSupervisionRouter(store), logger)
-			return false, nil
+			return false, r.reconcileSupervisedClientDaemons(ctx, r.daemonSupervisionRouter(store), logger)
 		}},
 		framework.FuncController{ControllerName: "ip-address-set", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.currentRouter(), []string{"IPAddressSet", "LocalServiceRedirect", "FirewallFlowPinhole"}, "IPAddressSet", "LocalServiceRedirect", "FirewallFlowPinhole"), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveForReconcile()
@@ -2986,11 +2985,11 @@ func (r *Runner) warmDaemonStatuses(ctx context.Context, controller DaemonStatus
 	}
 }
 
-func (r *Runner) reconcileSupervisedClientDaemons(ctx context.Context, router *api.Router, logger *slog.Logger) {
+func (r *Runner) reconcileSupervisedClientDaemons(ctx context.Context, router *api.Router, logger *slog.Logger) error {
 	if !r.Opts.SuperviseClientDaemons {
-		return
+		return nil
 	}
-	r.reconcileSupervisedDaemonSpecs(ctx, logger, r.clientDaemonSpecs(router))
+	return r.reconcileSupervisedDaemonSpecs(ctx, logger, r.clientDaemonSpecs(router))
 }
 
 func (r *Runner) daemonSupervisionRouter(store eventedStore) *api.Router {
@@ -3119,7 +3118,7 @@ func (r *Runner) clientDaemonSpecs(router *api.Router) []supervisedDaemonSpec {
 	return out
 }
 
-func (r *Runner) reconcileSupervisedDaemonSpecs(ctx context.Context, logger *slog.Logger, specs []supervisedDaemonSpec) {
+func (r *Runner) reconcileSupervisedDaemonSpecs(ctx context.Context, logger *slog.Logger, specs []supervisedDaemonSpec) error {
 	desired := make(map[string]supervisedDaemonSpec, len(specs))
 	for _, spec := range specs {
 		if spec.ResourceName != "" && spec.Binary != "" {
@@ -3128,11 +3127,9 @@ func (r *Runner) reconcileSupervisedDaemonSpecs(ctx context.Context, logger *slo
 	}
 	processes, err := listSupervisedDaemonProcesses()
 	if err != nil {
-		if logger != nil {
-			logger.Error("list routerd client daemons", "error", err)
-		}
-		return
+		return fmt.Errorf("list routerd client daemons: %w", err)
 	}
+	var stopErrors []error
 	r.supervisedMu.Lock()
 	if r.clientDaemonStates == nil {
 		r.clientDaemonStates = map[string]supervisedDaemonState{}
@@ -3161,8 +3158,8 @@ func (r *Runner) reconcileSupervisedDaemonSpecs(ctx context.Context, logger *slo
 		if ok && supervisedProcessMatches(process.Args, spec) {
 			continue
 		}
-		if err := stopSupervisedProcess(process.PID); err != nil && logger != nil {
-			logger.Error("stop stale routerd client daemon", "binary", binary, "resource", resource, "error", err)
+		if err := stopSupervisedProcess(process.PID); err != nil {
+			stopErrors = append(stopErrors, fmt.Errorf("stop stale %s/%s: %w", binary, resource, err))
 		}
 	}
 	r.supervisedMu.Lock()
@@ -3180,6 +3177,7 @@ func (r *Runner) reconcileSupervisedDaemonSpecs(ctx context.Context, logger *slo
 	}
 	r.supervisedMu.Unlock()
 	r.reconcileARPObserverDaemons(ctx, logger)
+	return errors.Join(stopErrors...)
 }
 
 func supervisedDaemonKey(binary, resourceName string) string {
