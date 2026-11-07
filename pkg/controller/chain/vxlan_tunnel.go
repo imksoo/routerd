@@ -4,7 +4,6 @@ package chain
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -13,7 +12,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -44,9 +42,8 @@ type VXLANTunnelController struct {
 }
 
 type vxlanOwnership struct {
-	Version, Resource, Digest, Token string
-	IfIndex                          int
-	Config                           vxlan.Config
+	Resource string
+	Config   vxlan.Config
 }
 
 var errVXLANGateRevisionChanged = errors.New("VXLAN gate dependency revision changed")
@@ -169,7 +166,7 @@ func (c VXLANTunnelController) cleanupOrphanedOwnership(ctx context.Context, dec
 		}
 		owner := parseVXLANOwnershipManifest(data)
 		resource, ok := resourceFromVXLANOwnership(owner)
-		if !ok || owner.Config.IfName != ifname || validateVXLANOwnershipManifest(owner, resource, owner.Config, false) != nil {
+		if !ok || owner.Config.IfName != ifname {
 			continue
 		}
 		if err := c.teardownOne(ctx, resource, vxlanGateSuppressed); err != nil {
@@ -478,49 +475,6 @@ func (c VXLANTunnelController) reconcileOne(ctx context.Context, resource api.Re
 		status["phase"], status["reason"], status["forwarding"], status["error"] = "Error", "LinkObserveFailed", "unknown", showErr.Error()
 		return c.Store.SaveObjectStatus(api.NetAPIVersion, "VXLANTunnel", resource.Metadata.Name, status)
 	}
-	ownedArtifact, foreignArtifact, err := c.artifactOwnership(cfg.IfName)
-	if err != nil {
-		return err
-	}
-	owner, hasOwner, err := c.ownershipManifest(cfg.IfName)
-	if err != nil {
-		return err
-	}
-	manifestValid := hasOwner && validateVXLANOwnershipManifest(owner, resource, owner.Config, showErr == nil) == nil
-	provenOwned := false
-	if showErr == nil && manifestValid {
-		provenOwned = vxlanDetailsConfigMatch(string(observed), owner.Config) && vxlanIfIndex(string(observed)) == owner.IfIndex
-	}
-	if showErr == nil && !provenOwned {
-		status["phase"] = "RequiresAdoption"
-		status["reason"] = "ForeignInterface"
-		status["forwarding"] = "unknown"
-		status["managedBy"] = "external"
-		return c.Store.SaveObjectStatus(api.NetAPIVersion, "VXLANTunnel", resource.Metadata.Name, status)
-	}
-	if foreignArtifact {
-		status["phase"] = "RequiresAdoption"
-		status["reason"] = "ForeignPersistentArtifact"
-		status["forwarding"] = "unknown"
-		status["managedBy"] = "external"
-		return c.Store.SaveObjectStatus(api.NetAPIVersion, "VXLANTunnel", resource.Metadata.Name, status)
-	}
-	if showErr != nil && hasOwner && !manifestValid && ownedArtifact {
-		// A legacy or malformed routerd marker cannot authorize mutation of a
-		// live link. When the kernel object is already absent, however, retiring
-		// only that routerd-marked file is safe and permits a fresh v2 token.
-		if err := c.removeFile(c.artifactPaths(cfg.IfName)[0]); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-		hasOwner = false
-	}
-	if hasOwner && !manifestValid {
-		status["phase"] = "RequiresAdoption"
-		status["reason"] = "InvalidOwnershipManifest"
-		status["forwarding"] = "unknown"
-		status["managedBy"] = "external"
-		return c.Store.SaveObjectStatus(api.NetAPIVersion, "VXLANTunnel", resource.Metadata.Name, status)
-	}
 	legacyRemoved, err := c.removeOwnedLegacyArtifacts(cfg.IfName)
 	if err != nil {
 		return err
@@ -530,121 +484,41 @@ func (c VXLANTunnelController) reconcileOne(ctx context.Context, resource api.Re
 			return fmt.Errorf("reload after removing legacy VXLAN artifacts: %w", err)
 		}
 	}
-	ifindex := vxlanIfIndex(string(observed))
-	if showErr != nil && hasOwner {
-		// A valid marker whose link no longer exists describes a retired kernel
-		// object. Remove it before creating a new object/token; never rebind the
-		// old token to a future same-name link.
-		if err := c.removeFile(c.artifactPaths(cfg.IfName)[0]); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-		hasOwner = false
-	}
-	changed := false
-	if showErr != nil {
-		changed, err = c.persistOwnershipBound(resource, cfg, 0)
-		if err != nil {
-			return err
-		}
-	}
-	// Ownership is asserted only after foreign-state checks and a successful
-	// write/read of routerd-marked persistent artifacts. Never stamp it into a
-	// generic, planned, blocked, or adoption status: that status would become a
-	// false ownership proof on the next reconciliation.
 	status["managedBy"] = "routerd"
 	status["restartPersistent"] = false
-	_ = changed
-	if showErr == nil {
-		if err := c.verifyOwnership(ctx, resource, owner.Config); err != nil {
-			return err
-		}
-	}
-
-	if showErr != nil {
-		if err := c.createVXLANDown(ctx, cfg); err != nil {
-			status["phase"] = "Error"
-			status["reason"] = "CreateFailed"
-			status["error"] = err.Error()
-			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "VXLANTunnel", resource.Metadata.Name, status)
-			return fmt.Errorf("VXLANTunnel/%s create failed: %w", resource.Metadata.Name, err)
-		}
-		status["created"] = true
-		observed, err = c.command(ctx, "ip", "-details", "link", "show", "dev", cfg.IfName)
-		if err != nil {
-			return fmt.Errorf("VXLANTunnel/%s observe created link: %w (%s)", resource.Metadata.Name, err, strings.TrimSpace(string(observed)))
-		}
-		ifindex = vxlanIfIndex(string(observed))
-		if ifindex <= 0 {
-			return fmt.Errorf("VXLANTunnel/%s created without a readable ifindex: %q", resource.Metadata.Name, strings.TrimSpace(string(observed)))
-		}
-		if _, err := c.persistOwnershipBound(resource, cfg, ifindex); err != nil {
-			return err
-		}
-	} else if !vxlanDetailsMatch(string(observed), cfg) {
-		if err := c.verifyOwnership(ctx, resource, owner.Config); err != nil {
-			return err
-		}
+	if showErr == nil && !vxlanDetailsConfigMatch(string(observed), cfg) {
 		if _, err := c.command(ctx, "ip", "link", "set", "dev", cfg.IfName, "down"); err != nil {
 			return err
 		}
-		if err := c.verifyOwnership(ctx, resource, owner.Config); err != nil {
+		if _, err := c.command(ctx, "ip", "link", "delete", "dev", cfg.IfName); err != nil {
 			return err
 		}
-		deleteObserved, deleteObserveErr := c.command(ctx, "ip", "-details", "link", "show", "dev", cfg.IfName)
-		if deleteObserveErr != nil || vxlanIfIndex(string(deleteObserved)) != owner.IfIndex {
-			if deleteObserveErr == nil {
-				deleteObserveErr = fmt.Errorf("VXLAN %s ifindex changed immediately before config replacement delete: owner=%d current=%d", cfg.IfName, owner.IfIndex, vxlanIfIndex(string(deleteObserved)))
-			}
-			return deleteObserveErr
-		}
-		if err := c.deleteLinkByIndex(owner.IfIndex); err != nil {
-			return err
-		}
-		deletedObserved, deletedErr := c.command(ctx, "ip", "-details", "link", "show", "dev", cfg.IfName)
-		if deletedErr == nil || !linkObservationMissing(deletedObserved, deletedErr) {
-			return fmt.Errorf("VXLAN %s was not absent after owned config replacement delete", cfg.IfName)
-		}
-		if err := c.removeFile(c.artifactPaths(cfg.IfName)[0]); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-		if _, err := c.persistOwnershipBound(resource, cfg, 0); err != nil {
-			return err
-		}
-		if err := c.createVXLANDown(ctx, cfg); err != nil {
-			return err
-		}
+		showErr = errors.New("link removed for reconfiguration")
 		status["recreated"] = true
+	}
+	if err := c.recordVXLANResource(resource, cfg); err != nil {
+		return err
+	}
+	if showErr != nil {
+		if err := c.createVXLANDown(ctx, cfg); err != nil {
+			return fmt.Errorf("VXLANTunnel/%s create failed: %w", resource.Metadata.Name, err)
+		}
+		status["created"] = true
 	} else {
 		if cfg.MTU != 0 {
-			if err := c.verifyOwnership(ctx, resource, cfg); err != nil {
-				return err
-			}
 			if _, err := c.command(ctx, "ip", "link", "set", "dev", cfg.IfName, "mtu", fmt.Sprint(cfg.MTU)); err != nil {
 				return err
 			}
 		}
 		if cfg.Bridge != "" {
-			if err := c.verifyOwnership(ctx, resource, cfg); err != nil {
-				return err
-			}
 			if _, err := c.command(ctx, "ip", "link", "set", "dev", cfg.IfName, "master", cfg.Bridge); err != nil {
 				return err
 			}
+		} else if strings.Contains(string(observed), " master ") {
+			if _, err := c.command(ctx, "ip", "link", "set", "dev", cfg.IfName, "nomaster"); err != nil {
+				return err
+			}
 		}
-	}
-	observed, err = c.command(ctx, "ip", "-details", "link", "show", "dev", cfg.IfName)
-	if err != nil {
-		return err
-	}
-	ifindex = vxlanIfIndex(string(observed))
-	if ifindex <= 0 {
-		return fmt.Errorf("VXLANTunnel/%s has no readable ifindex", resource.Metadata.Name)
-	}
-	if _, err := c.persistOwnershipBound(resource, cfg, ifindex); err != nil {
-		return err
-	}
-	if err := c.verifyOwnership(ctx, resource, cfg); err != nil {
-		return err
 	}
 	if c.gateState(resource) != vxlanGateEnabled || (guarded && !c.revisionStillCurrent(resource, gateRevision)) {
 		return c.teardownOne(ctx, resource, vxlanGateUnknown)
@@ -657,9 +531,6 @@ func (c VXLANTunnelController) reconcileOne(ctx context.Context, resource api.Re
 	}
 	if c.gateState(resource) != vxlanGateEnabled || (guarded && !c.revisionStillCurrent(resource, gateRevision)) {
 		return c.teardownOne(ctx, resource, vxlanGateUnknown)
-	}
-	if err := c.verifyOwnership(ctx, resource, cfg); err != nil {
-		return err
 	}
 	if _, err := c.command(ctx, "ip", "link", "set", "dev", cfg.IfName, "up"); err != nil {
 		return err
@@ -677,10 +548,6 @@ func (c VXLANTunnelController) reconcileOne(ctx context.Context, resource api.Re
 	if c.gateState(resource) != vxlanGateEnabled || (guarded && !c.revisionStillCurrent(resource, gateRevision)) {
 		// Synchronous post-commit fence. Even if a producer changes in the
 		// final syscall window, forwarding is closed before returning.
-		if err := c.verifyOwnership(ctx, resource, cfg); err != nil {
-			return err
-		}
-		_, _ = c.command(ctx, "ip", "link", "set", "dev", cfg.IfName, "down")
 		return c.teardownOne(ctx, resource, vxlanGateUnknown)
 	}
 	status["phase"] = "Healthy"
@@ -730,9 +597,6 @@ func (c VXLANTunnelController) reconcileFloodFDB(ctx context.Context, resource a
 		if guarded && !c.revisionStillCurrent(resource, revision) {
 			return fmt.Errorf("%w before FDB delete", errVXLANGateRevisionChanged)
 		}
-		if err := c.verifyOwnership(ctx, resource, cfg); err != nil {
-			return err
-		}
 		if _, err := c.command(ctx, "bridge", "fdb", "del", "00:00:00:00:00:00", "dev", cfg.IfName, "dst", peer); err != nil {
 			return fmt.Errorf("delete stale flood FDB %s from %s: %w", peer, cfg.IfName, err)
 		}
@@ -747,9 +611,6 @@ func (c VXLANTunnelController) reconcileFloodFDB(ctx context.Context, resource a
 		}
 		if guarded && !c.revisionStillCurrent(resource, revision) {
 			return fmt.Errorf("%w before FDB append", errVXLANGateRevisionChanged)
-		}
-		if err := c.verifyOwnership(ctx, resource, cfg); err != nil {
-			return err
 		}
 		if _, err := c.command(ctx, "bridge", "fdb", "append", "00:00:00:00:00:00", "dev", cfg.IfName, "dst", peer); err != nil {
 			return err
@@ -823,87 +684,16 @@ func (c VXLANTunnelController) teardownOne(ctx context.Context, resource api.Res
 		return c.Store.SaveObjectStatus(api.NetAPIVersion, "VXLANTunnel", resource.Metadata.Name, status)
 	}
 
-	ownedArtifact, foreignArtifact, err := c.artifactOwnership(ifname)
-	if err != nil {
-		return err
-	}
-	aliases := bridgeInterfaceAliases(c.DeclaredRouter)
-	cfg := vxlan.Config{Name: resource.Metadata.Name, IfName: ifname, VNI: spec.VNI, LocalAddress: spec.LocalAddress, Peers: spec.Peers, UnderlayInterface: aliases[spec.UnderlayInterface], UDPPort: spec.UDPPort, MTU: spec.MTU, Bridge: aliases[spec.Bridge], OuterDF: spec.OuterDF}
-	if cfg.UnderlayInterface == "" {
-		cfg.UnderlayInterface = spec.UnderlayInterface
-	}
-	if spec.Bridge != "" && cfg.Bridge == "" {
-		cfg.Bridge = spec.Bridge
-	}
 	observed, showErr := c.command(ctx, "ip", "-details", "link", "show", "dev", ifname)
 	if showErr != nil && !linkObservationMissing(observed, showErr) {
 		return c.saveTeardownError(resource, status, "LinkObserveFailed", showErr)
 	}
-	linkExists := showErr == nil
-	owner, hasOwner, err := c.ownershipManifest(ifname)
-	if err != nil {
-		return err
-	}
-	manifestValid := hasOwner && validateVXLANOwnershipManifest(owner, resource, cfg, linkExists) == nil
-	ownedLink := false
-	if linkExists && manifestValid {
-		ownedLink = vxlanDetailsConfigMatch(string(observed), owner.Config) && vxlanIfIndex(string(observed)) == owner.IfIndex
-	}
-	foreignPreserved := foreignArtifact
-	if (foreignArtifact && !ownedLink) || (linkExists && !ownedLink) || (linkExists && hasOwner && !manifestValid) || (linkExists && !hasOwner && ownedArtifact) {
-		status["phase"] = "Blocked"
-		status["reason"] = "ForeignStateWhileGated"
-		status["forwarding"] = "unknown"
-		status["managedBy"] = "external"
-		status["error"] = "refusing to mutate an unowned VXLAN link or persistent artifact"
-		return c.Store.SaveObjectStatus(api.NetAPIVersion, "VXLANTunnel", resource.Metadata.Name, status)
-	}
-
-	if linkExists {
-		if owner.IfIndex <= 0 {
-			return c.saveTeardownError(resource, status, "OwnershipVerifyFailed", fmt.Errorf("missing ifindex for %s", ifname))
-		}
-		if err := c.verifyOwnership(ctx, resource, cfg); err != nil {
-			return c.saveTeardownError(resource, status, "OwnershipVerifyFailed", err)
-		}
-		// Link-down is the first mutation: it closes forwarding before any
-		// potentially slow FDB or persistent-artifact cleanup.
+	if showErr == nil {
+		// Stop forwarding before deleting the interface.
 		if _, err := c.command(ctx, "ip", "link", "set", "dev", ifname, "down"); err != nil {
 			return c.saveTeardownError(resource, status, "LinkDownFailed", err)
 		}
-	}
-	if linkExists {
-		fdb, _ := c.command(ctx, "bridge", "fdb", "show", "dev", ifname)
-		fdbPeers := make([]string, 0)
-		for _, entry := range allZeroFDBEntries(string(fdb)) {
-			fdbPeers = append(fdbPeers, entry.Destination)
-		}
-		sort.Strings(fdbPeers)
-		for _, peer := range fdbPeers {
-			if err := c.verifyOwnership(ctx, resource, cfg); err != nil {
-				return c.saveTeardownError(resource, status, "OwnershipVerifyFailed", err)
-			}
-			if _, err := c.command(ctx, "bridge", "fdb", "del", "00:00:00:00:00:00", "dev", ifname, "dst", peer); err != nil {
-				return c.saveTeardownError(resource, status, "FDBDeleteFailed", err)
-			}
-		}
-		if err := c.verifyOwnership(ctx, resource, cfg); err != nil {
-			return c.saveTeardownError(resource, status, "OwnershipVerifyFailed", err)
-		}
-		if _, err := c.command(ctx, "ip", "link", "set", "dev", ifname, "nomaster"); err != nil {
-			return c.saveTeardownError(resource, status, "DetachFailed", err)
-		}
-		if err := c.verifyOwnership(ctx, resource, cfg); err != nil {
-			return c.saveTeardownError(resource, status, "OwnershipVerifyFailed", err)
-		}
-		deleteObserved, deleteObserveErr := c.command(ctx, "ip", "-details", "link", "show", "dev", ifname)
-		if deleteObserveErr != nil || vxlanIfIndex(string(deleteObserved)) != owner.IfIndex {
-			if deleteObserveErr == nil {
-				deleteObserveErr = fmt.Errorf("VXLAN %s ifindex changed immediately before delete: owner=%d current=%d", ifname, owner.IfIndex, vxlanIfIndex(string(deleteObserved)))
-			}
-			return c.saveTeardownError(resource, status, "OwnershipVerifyFailed", deleteObserveErr)
-		}
-		if err := c.deleteLinkByIndex(owner.IfIndex); err != nil {
+		if _, err := c.command(ctx, "ip", "link", "delete", "dev", ifname); err != nil {
 			return c.saveTeardownError(resource, status, "LinkDeleteFailed", err)
 		}
 		status["deleted"] = true
@@ -919,19 +709,10 @@ func (c VXLANTunnelController) teardownOne(ctx context.Context, resource api.Res
 	}
 	finalObserved, finalErr := c.command(ctx, "ip", "-details", "link", "show", "dev", ifname)
 	if finalErr == nil {
-		reason := "LinkReappeared"
-		if current := vxlanIfIndex(string(finalObserved)); current != owner.IfIndex {
-			reason = "ForeignReplacementPreserved"
-		}
-		return c.saveTeardownError(resource, status, reason, fmt.Errorf("VXLAN link %s exists after teardown with ifindex %d", ifname, vxlanIfIndex(string(finalObserved))))
+		return c.saveTeardownError(resource, status, "LinkReappeared", fmt.Errorf("VXLAN link %s exists after teardown", ifname))
 	}
 	if !linkObservationMissing(finalObserved, finalErr) {
 		return c.saveTeardownError(resource, status, "LinkVerifyFailed", finalErr)
-	}
-	if foreignPreserved {
-		status["phase"], status["reason"], status["forwarding"], status["managedBy"] = "Error", "ForeignArtifactPreserved", false, "external"
-		status["error"] = "forwarding removed; foreign persistent artifact preserved"
-		return c.Store.SaveObjectStatus(api.NetAPIVersion, "VXLANTunnel", resource.Metadata.Name, status)
 	}
 	status["phase"] = "Disabled"
 	status["reason"] = string(gate)
@@ -974,102 +755,11 @@ func (c VXLANTunnelController) baseStatus(cfg vxlan.Config) map[string]any {
 	}
 }
 
-func (c VXLANTunnelController) persistOwnershipBound(resource api.Resource, cfg vxlan.Config, ifindex int) (bool, error) {
-	token := ""
+func (c VXLANTunnelController) recordVXLANResource(resource api.Resource, cfg vxlan.Config) error {
 	path := c.artifactPaths(cfg.IfName)[0]
-	if current, err := c.readFile(path); err == nil {
-		owner := parseVXLANOwnershipManifest(current)
-		if err := validateVXLANOwnershipManifest(owner, resource, cfg, false); err != nil {
-			return false, err
-		}
-		if owner.IfIndex > 0 {
-			if ifindex == 0 {
-				// Never downgrade a bound token. A caller observing a missing link
-				// must retire the old marker before creating a new object/token.
-				return false, nil
-			}
-			if owner.IfIndex != ifindex {
-				return false, fmt.Errorf("refusing to rebind VXLAN ownership token for %s: owner=%d current=%d", cfg.IfName, owner.IfIndex, ifindex)
-			}
-		}
-		token = owner.Token
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return false, err
-	}
-	if token == "" {
-		raw := make([]byte, 24)
-		if _, err := rand.Read(raw); err != nil {
-			return false, err
-		}
-		token = hex.EncodeToString(raw)
-	}
-	digest := vxlanOwnershipDigest(resource, cfg)
-	data := []byte(fmt.Sprintf("%s\nownerVersion=2\nresource=%s/%s/%s\ndigest=%s\ninstanceToken=%s\nifindex=%d\nifname=%s\nvni=%d\nlocal=%s\nunderlay=%s\nport=%d\nmtu=%d\nbridge=%s\nouterDF=%s\npeers=%s\n", routerdGeneratedNetworkdHeader, resource.APIVersion, resource.Kind, resource.Metadata.Name, digest, token, ifindex, cfg.IfName, cfg.VNI, cfg.LocalAddress, cfg.UnderlayInterface, cfg.UDPPort, cfg.MTU, cfg.Bridge, defaultVXLANOuterDF(cfg.OuterDF), strings.Join(cfg.Peers, ",")))
-	if current, err := c.readFile(path); err == nil && string(current) == string(data) {
-		return false, nil
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return false, err
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".routerd-vxlan-owner-*")
-	if err != nil {
-		return false, err
-	}
-	tmpPath := tmp.Name()
-	committed := false
-	defer func() {
-		if !committed {
-			_ = os.Remove(tmpPath)
-		}
-	}()
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		return false, err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return false, err
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return false, err
-	}
-	if err := tmp.Close(); err != nil {
-		return false, err
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		return false, err
-	}
-	committed = true
-	if dir, err := os.Open(filepath.Dir(path)); err == nil {
-		_ = dir.Sync()
-		_ = dir.Close()
-	}
-	return true, nil
-}
-
-func vxlanOwnershipDigest(resource api.Resource, cfg vxlan.Config) string {
-	// Name is controller-local bookkeeping and is not serialized in the
-	// ownership manifest. Excluding it keeps the digest reproducible from the
-	// persisted v2 record across restart and orphan cleanup.
-	cfg.Name = ""
-	cfg.OuterDF = defaultVXLANOuterDF(cfg.OuterDF)
-	data, _ := json.Marshal(struct {
-		APIVersion, Kind, Name string
-		Config                 vxlan.Config
-	}{resource.APIVersion, resource.Kind, resource.Metadata.Name, cfg})
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
-}
-
-func vxlanIfIndex(observed string) int {
-	for _, line := range strings.Split(observed, "\n") {
-		first := strings.TrimSpace(strings.SplitN(line, ":", 2)[0])
-		if value, err := strconv.Atoi(first); err == nil && value > 0 {
-			return value
-		}
-	}
-	return 0
+	data := []byte(fmt.Sprintf("%s\nresource=%s/%s/%s\nifname=%s\nvni=%d\nlocal=%s\nunderlay=%s\nport=%d\nmtu=%d\nbridge=%s\nouterDF=%s\npeers=%s\n", routerdGeneratedNetworkdHeader, resource.APIVersion, resource.Kind, resource.Metadata.Name, cfg.IfName, cfg.VNI, cfg.LocalAddress, cfg.UnderlayInterface, cfg.UDPPort, cfg.MTU, cfg.Bridge, defaultVXLANOuterDF(cfg.OuterDF), strings.Join(cfg.Peers, ",")))
+	_, err := writeFileIfChanged(path, data, 0600, false)
+	return err
 }
 
 func parseVXLANOwnershipManifest(data []byte) vxlanOwnership {
@@ -1081,8 +771,7 @@ func parseVXLANOwnershipManifest(data []byte) vxlanOwnership {
 			values[key] = value
 		}
 	}
-	owner.Version, owner.Resource, owner.Digest, owner.Token = values["ownerVersion"], values["resource"], values["digest"], values["instanceToken"]
-	owner.IfIndex, _ = strconv.Atoi(values["ifindex"])
+	owner.Resource = values["resource"]
 	return owner
 }
 
@@ -1102,56 +791,6 @@ func resourceFromVXLANOwnership(owner vxlanOwnership) (api.Resource, bool) {
 		},
 	}
 	return resource, resource.APIVersion != "" && resource.Metadata.Name != ""
-}
-
-func validateVXLANOwnershipManifest(owner vxlanOwnership, resource api.Resource, cfg vxlan.Config, requireIfIndex bool) error {
-	wantResource := resource.APIVersion + "/" + resource.Kind + "/" + resource.Metadata.Name
-	if owner.Version != "2" || owner.Resource != wantResource || owner.Digest != vxlanOwnershipDigest(resource, cfg) || owner.Token == "" {
-		return fmt.Errorf("VXLAN ownership manifest identity/token is not valid for %s", cfg.IfName)
-	}
-	ownerConfig, wantedConfig := owner.Config, cfg
-	ownerConfig.Name, wantedConfig.Name = "", ""
-	ownerConfig.OuterDF, wantedConfig.OuterDF = defaultVXLANOuterDF(ownerConfig.OuterDF), defaultVXLANOuterDF(wantedConfig.OuterDF)
-	if owner.Config.IfName != cfg.IfName || !reflect.DeepEqual(ownerConfig, wantedConfig) {
-		return fmt.Errorf("VXLAN ownership manifest config is not valid for %s", cfg.IfName)
-	}
-	if requireIfIndex && owner.IfIndex <= 0 {
-		return fmt.Errorf("VXLAN ownership manifest has no bound ifindex for %s", cfg.IfName)
-	}
-	if owner.IfIndex < 0 {
-		return fmt.Errorf("VXLAN ownership manifest has an invalid ifindex for %s", cfg.IfName)
-	}
-	return nil
-}
-
-func (c VXLANTunnelController) ownershipManifest(ifname string) (vxlanOwnership, bool, error) {
-	data, err := c.readFile(c.artifactPaths(ifname)[0])
-	if errors.Is(err, os.ErrNotExist) {
-		return vxlanOwnership{}, false, nil
-	}
-	if err != nil {
-		return vxlanOwnership{}, false, err
-	}
-	return parseVXLANOwnershipManifest(data), true, nil
-}
-
-func (c VXLANTunnelController) verifyOwnership(ctx context.Context, resource api.Resource, cfg vxlan.Config) error {
-	data, err := c.readFile(c.artifactPaths(cfg.IfName)[0])
-	if err != nil {
-		return fmt.Errorf("read VXLAN ownership manifest: %w", err)
-	}
-	owner := parseVXLANOwnershipManifest(data)
-	if err := validateVXLANOwnershipManifest(owner, resource, cfg, true); err != nil {
-		return err
-	}
-	observed, err := c.command(ctx, "ip", "-details", "link", "show", "dev", cfg.IfName)
-	if err != nil {
-		return err
-	}
-	if current := vxlanIfIndex(string(observed)); current != owner.IfIndex {
-		return fmt.Errorf("VXLAN %s ifindex changed: owner=%d current=%d", cfg.IfName, owner.IfIndex, current)
-	}
-	return nil
 }
 
 func (c VXLANTunnelController) networkdPath(path string) string {
@@ -1177,48 +816,15 @@ func (c VXLANTunnelController) artifactPaths(ifname string) []string {
 	}
 }
 
-func (c VXLANTunnelController) artifactOwnership(ifname string) (owned, foreign bool, err error) {
-	for _, path := range c.artifactPaths(ifname) {
-		data, readErr := c.readFile(path)
-		if errors.Is(readErr, os.ErrNotExist) {
-			continue
-		}
-		if readErr != nil {
-			return false, false, readErr
-		}
-		if strings.HasPrefix(string(data), routerdGeneratedNetworkdHeader) {
-			owned = true
-		} else {
-			foreign = true
-		}
-	}
-	return owned, foreign, nil
-}
-
-func (c VXLANTunnelController) ownershipConfig(ifname string) (vxlan.Config, bool, error) {
-	data, err := c.readFile(c.artifactPaths(ifname)[0])
-	if errors.Is(err, os.ErrNotExist) {
-		return vxlan.Config{}, false, nil
-	}
-	if err != nil {
-		return vxlan.Config{}, false, err
-	}
-	cfg, ok := parseVXLANOwnership(data)
-	return cfg, ok, nil
-}
-
 func (c VXLANTunnelController) removeOwnedArtifacts(ifname string) (bool, error) {
 	removed := false
 	for _, path := range c.artifactPaths(ifname) {
-		data, err := c.readFile(path)
+		_, err := c.readFile(path)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
 		if err != nil {
 			return removed, err
-		}
-		if !strings.HasPrefix(string(data), routerdGeneratedNetworkdHeader) {
-			continue
 		}
 		if err := c.removeFile(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return removed, err
@@ -1232,15 +838,12 @@ func (c VXLANTunnelController) removeOwnedLegacyArtifacts(ifname string) (bool, 
 	removed := false
 	paths := c.artifactPaths(ifname)
 	for _, path := range paths[1:] {
-		data, err := c.readFile(path)
+		_, err := c.readFile(path)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
 		if err != nil {
 			return removed, err
-		}
-		if !strings.HasPrefix(string(data), routerdGeneratedNetworkdHeader) {
-			continue
 		}
 		if err := c.removeFile(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return removed, err
@@ -1306,13 +909,6 @@ func vxlanDetailsConfigMatch(observed string, cfg vxlan.Config) bool {
 		return false
 	}
 	return true
-}
-
-func (c VXLANTunnelController) deleteLinkByIndex(ifindex int) error {
-	if ifindex <= 0 {
-		return fmt.Errorf("refusing to delete VXLAN with invalid ifindex %d", ifindex)
-	}
-	return deleteVXLANLinkByIndex(ifindex)
 }
 
 func defaultVXLANOuterDF(value string) string {
