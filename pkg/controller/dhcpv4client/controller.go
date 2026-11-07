@@ -205,6 +205,12 @@ func leaseFieldString(v any) string {
 
 func (c Controller) applyLease(ctx context.Context, name string, current, next map[string]any) error {
 	phase := fmt.Sprint(next["phase"])
+	staleLease := false
+	if phase == daemonapi.ResourcePhaseAcquiring && mapString(current, "appliedAddress") != "" {
+		if expires, err := time.Parse(time.RFC3339Nano, mapString(current, "expiresAt")); err == nil && !time.Now().Before(expires) {
+			staleLease = true
+		}
+	}
 	if phase == daemonapi.ResourcePhaseBound || phase == daemonapi.ResourcePhaseRefreshing || phase == daemonapi.ResourcePhaseRebinding {
 		expires, err := time.Parse(time.RFC3339Nano, mapString(next, "expiresAt"))
 		if err != nil {
@@ -215,7 +221,7 @@ func (c Controller) applyLease(ctx context.Context, name string, current, next m
 			next["phase"] = phase
 		}
 	}
-	if phase == daemonapi.ResourcePhaseExpired || phase == daemonapi.ResourcePhaseReleased {
+	if phase == daemonapi.ResourcePhaseExpired || phase == daemonapi.ResourcePhaseReleased || staleLease {
 		if err := c.removeLeaseRoute(ctx, name, current, next); err != nil {
 			return err
 		}
