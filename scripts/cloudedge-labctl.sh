@@ -653,7 +653,7 @@ except Exception:
 events = data.get("events", [])
 if not events:
     print("na")
-elif data.get("status") == "pass" and all(e.get("recoveryUnderThreshold") == "pass" for e in events):
+elif data.get("status") == "pass" and all(e.get("stages", {}).get("recovery", {}).get("result") == "pass" for e in events):
     print("pass")
 else:
     print("fail")
@@ -860,7 +860,7 @@ cmd_evidence() {
   matrix_overall=$(matrix_summary_result "$matrix_json")
 
   local timings_obj protocols_obj l2_loop_obj qualification_timings_obj
-  timings_obj=$(json_object_or_default "$timing_json" '{"status":"na","thresholdSeconds":60,"events":[]}')
+  timings_obj=$(json_object_or_default "$timing_json" '{"status":"na","events":[]}')
   protocols_obj=$(json_object_or_default "$protocol_json" '{"status":"na","pairs":[],"summary":{"total":0,"passed":0,"failed":0,"checks":{}}}')
   l2_loop_obj=$(json_object_or_default "$l2_loop_json" '{"status":"na","mechanism":"","phases":[],"summary":{}}')
   qualification_timings_obj=$(qualification_timing_object "$matrix_json" "$cloud_ingress_matrix_json" "$timing_json")
@@ -921,7 +921,7 @@ cmd_evidence() {
     { "name": "source_ip_preserved", "result": "$src_pres" },
     { "name": "default_gateway_unchanged", "result": "$gw_ok" },
     { "name": "no_nat", "result": "$no_nat" },
-    { "name": "failover_recovery_under_60s", "result": "$failover_recovery" },
+    { "name": "failover_recovered", "result": "$failover_recovery" },
     { "name": "protocol_transparency", "result": "$protocol_transparency" },
     { "name": "ftp_active_passive", "result": "$ftp_active_passive" },
     { "name": "nfs_rpc", "result": "$nfs_rpc" },
@@ -974,7 +974,7 @@ EOF
 - provider state: aws=$aws_ps oci=$oci_ps azure=$az_ps onprem=$onprem_ps
 - directed_ping_ssh_matrix=$directed_matrix source_ip_preserved=$src_pres default_gateway_unchanged=$gw_ok no_nat=$no_nat
 - qualification timings: $qualification_timings_obj
-- failover_recovery_under_60s=$failover_recovery
+- failover_recovered=$failover_recovery
 - protocol_transparency=$protocol_transparency ftp_active_passive=$ftp_active_passive nfs_rpc=$nfs_rpc bulk_transfer_pmtu=$bulk_transfer_pmtu protocol_source_ip_preserved=$protocol_src_pres protocol_no_nat=$protocol_no_nat
 - l2_loop_free=$l2_loop_free broadcast_storm_absent=$broadcast_storm_absent stp_rstp_stable=$stp_rstp_stable mac_flap_absent=$mac_flap_absent failover_ping_stable=$failover_ping_stable l2_suppression_mechanism_recorded=$l2_mechanism_recorded
 

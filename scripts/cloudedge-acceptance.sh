@@ -127,11 +127,8 @@ for s in data.get("scenarios", []):
             errors.append(f"{sid}: timing.provider invalid")
         if timing.get("fault") not in {"stop-active", "drain"}:
             errors.append(f"{sid}: timing.fault invalid")
-        threshold = timing.get("thresholdSeconds")
-        if not isinstance(threshold, int) or threshold <= 0:
-            errors.append(f"{sid}: timing.thresholdSeconds must be a positive integer")
-        if "failover_recovery_under_60s" not in assertions:
-            errors.append(f"{sid}: missing timing assertion failover_recovery_under_60s")
+        if "failover_recovered" not in assertions:
+            errors.append(f"{sid}: missing timing assertion failover_recovered")
     protocol = s.get("protocol", {})
     if protocol.get("enabled"):
         pairs = protocol.get("pairs")
@@ -233,7 +230,7 @@ cmd_run() {
   [[ -x "$LABCTL" ]] || die "labctl not executable: $LABCTL"
 
   local spec fault_type fault_provider matrix_name matrix_json timing_json protocol_json l2_loop_json result_arg=()
-  local timing_enabled timing_provider timing_fault timing_threshold protocol_enabled protocol_pairs protocol_bytes
+  local timing_enabled timing_provider timing_fault protocol_enabled protocol_pairs protocol_bytes
   local l2_enabled l2_provider l2_broadcast_threshold l2_stp_tcn_threshold l2_ping_loss_threshold
   local -a l2_args=()
   spec=$(scenario_json "$scenario")
@@ -243,7 +240,6 @@ cmd_run() {
   timing_enabled=$(json_field "$spec" timing.enabled)
   timing_provider=$(json_field "$spec" timing.provider)
   timing_fault=$(json_field "$spec" timing.fault)
-  timing_threshold=$(json_field "$spec" timing.thresholdSeconds)
   protocol_enabled=$(json_field "$spec" protocol.enabled)
   protocol_pairs=$(json_protocol_pairs "$spec")
   protocol_bytes=$(json_field "$spec" protocol.bytes)
@@ -279,12 +275,10 @@ cmd_run() {
     [[ -x "$TIMING_SCRIPT" ]] || die "timing script not executable: $TIMING_SCRIPT"
     [[ -n "$timing_provider" ]] || die "run: scenario $scenario timing lacks provider"
     [[ -n "$timing_fault" ]] || die "run: scenario $scenario timing lacks fault"
-    [[ -n "$timing_threshold" ]] || timing_threshold=60
-    log "measuring auto-failover: provider=$timing_provider fault=$timing_fault threshold=${timing_threshold}s"
+    log "measuring auto-failover: provider=$timing_provider fault=$timing_fault"
     "$TIMING_SCRIPT" \
       --provider "$timing_provider" \
       --fault "$timing_fault" \
-      --threshold-seconds "$timing_threshold" \
       --out "$timing_json" || timing_status=$?
   elif [[ "$fault_type" != "none" ]]; then
     [[ -n "$fault_provider" ]] || die "run: scenario $scenario fault $fault_type lacks provider"

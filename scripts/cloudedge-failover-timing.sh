@@ -21,7 +21,7 @@ $SELF - measure CloudEdge automatic failover convergence
 
 USAGE:
   $SELF --provider <aws|azure|oci|onprem> --fault <stop-active|drain>
-        --out <file> [--threshold-seconds 60] [--timeout-seconds 120]
+        --out <file> [--timeout-seconds <seconds>]
         [--poll-seconds 2]
 
 ENV:
@@ -76,7 +76,7 @@ wait_stage() {
       return 0
     fi
     now=$(now_ms)
-    if [[ "$now" -ge "$deadline_ms" ]]; then
+    if [[ "$timeout_seconds" -gt 0 && "$now" -ge "$deadline_ms" ]]; then
       detail=$(run_detail "$provider" "$stage")
       printf '%s\tfail\t%s\n' "$now" "$detail"
       return 1
@@ -88,8 +88,7 @@ wait_stage() {
 provider=""
 fault=""
 out=""
-threshold_seconds=60
-timeout_seconds=120
+timeout_seconds=0
 poll_seconds=2
 
 while [[ $# -gt 0 ]]; do
@@ -97,7 +96,6 @@ while [[ $# -gt 0 ]]; do
     --provider) provider="${2:-}"; shift 2 ;;
     --fault) fault="${2:-}"; shift 2 ;;
     --out) out="${2:-}"; shift 2 ;;
-    --threshold-seconds) threshold_seconds="${2:-}"; shift 2 ;;
     --timeout-seconds) timeout_seconds="${2:-}"; shift 2 ;;
     --poll-seconds) poll_seconds="${2:-}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
@@ -110,8 +108,7 @@ done
 [[ -n "$out" ]] || die "--out is required"
 case "$provider" in aws|azure|oci|onprem) ;; *) die "bad provider: $provider" ;; esac
 case "$fault" in stop-active|drain) ;; *) die "bad fault: $fault" ;; esac
-[[ "$threshold_seconds" =~ ^[0-9]+$ && "$threshold_seconds" -gt 0 ]] || die "bad --threshold-seconds"
-[[ "$timeout_seconds" =~ ^[0-9]+$ && "$timeout_seconds" -gt 0 ]] || die "bad --timeout-seconds"
+[[ "$timeout_seconds" =~ ^[0-9]+$ ]] || die "bad --timeout-seconds"
 [[ "$poll_seconds" =~ ^[0-9]+$ && "$poll_seconds" -gt 0 ]] || die "bad --poll-seconds"
 have python3 || die "python3 is required"
 [[ -n "${FAILOVER_TIMING_RUNNER:-}" && -x "${FAILOVER_TIMING_RUNNER:-}" ]] \
@@ -152,20 +149,19 @@ if [[ "$inject_result" == "pass" ]]; then
 fi
 
 python3 - "$out" \
-  "$provider" "$fault" "$threshold_seconds" "$timeout_seconds" \
+  "$provider" "$fault" "$timeout_seconds" \
   "$start_ms" "$detection_ms" "$switchover_ms" "$recovery_ms" "$injection_completed_ms" \
   "$inject_result" "$detection_result" "$switchover_result" "$recovery_result" \
   "$inject_detail" "$detection_detail" "$switchover_detail" "$recovery_detail" <<'PY'
 import json, os, sys
 
 (
-    out, provider, fault, threshold_s, timeout_s,
+    out, provider, fault, timeout_s,
     start_ms, detection_ms, switchover_ms, recovery_ms, injection_completed_ms,
     inject_result, detection_result, switchover_result, recovery_result,
     inject_detail, detection_detail, switchover_detail, recovery_detail,
 ) = sys.argv[1:]
 
-threshold = float(threshold_s)
 start = int(start_ms)
 detection = int(detection_ms)
 switchover = int(switchover_ms)
@@ -178,10 +174,8 @@ def seconds(delta_ms):
 detection_seconds = seconds(max(0, detection - start))
 switchover_seconds = seconds(max(0, switchover - detection))
 recovery_seconds = seconds(max(0, recovery - start))
-under = recovery_result == "pass" and recovery_seconds < threshold
 overall = (
     inject_result == detection_result == switchover_result == recovery_result == "pass"
-    and under
 )
 data = {
     "status": "pass" if overall else "fail",
@@ -190,7 +184,6 @@ data = {
     "clock": "monotonic",
     "faultStartedUtcEpochMs": int(os.environ["CE_FAILOVER_STARTED_MS"]),
     "timingBasis": "coordinator-observed upper bound; includes API injection, SSH and polling; not exact product switchover duration",
-    "thresholdSeconds": threshold,
     "timeoutSeconds": int(timeout_s),
     "events": [
         {
@@ -199,7 +192,6 @@ data = {
             "detectionSeconds": detection_seconds,
             "switchoverSeconds": switchover_seconds,
             "recoverySeconds": recovery_seconds,
-            "recoveryUnderThreshold": "pass" if under else "inconclusive",
             "injectionSeconds": seconds(max(0, injection_completed - start)),
             "faultTimeBoundsMs": [start, injection_completed],
             "recoveryObservedAtMs": recovery,

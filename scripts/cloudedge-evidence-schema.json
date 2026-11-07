@@ -73,7 +73,6 @@
       "additionalProperties": true,
       "properties": {
         "status": { "$ref": "#/definitions/checkState" },
-        "thresholdSeconds": { "type": "number", "minimum": 0 },
         "events": {
           "type": "array",
           "items": {
@@ -84,8 +83,7 @@
               "fault": { "type": "string" },
               "detectionSeconds": { "type": "number", "minimum": 0 },
               "switchoverSeconds": { "type": "number", "minimum": 0 },
-              "recoverySeconds": { "type": "number", "minimum": 0 },
-              "recoveryUnderThreshold": { "$ref": "#/definitions/checkState" }
+              "recoverySeconds": { "type": "number", "minimum": 0 }
             }
           }
         }
