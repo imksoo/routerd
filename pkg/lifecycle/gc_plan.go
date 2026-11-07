@@ -256,6 +256,9 @@ func ConfigResourceObjectStatus(status routerstate.ObjectStatus) bool {
 }
 
 func resourceLifecycleObjectStatus(status routerstate.ObjectStatus) bool {
+	if status.APIVersion == api.HybridAPIVersion && status.Kind == "TunnelInterface" {
+		return true
+	}
 	if !routerdManagedStatus(status) {
 		return false
 	}
@@ -266,9 +269,6 @@ func resourceLifecycleObjectStatus(status routerstate.ObjectStatus) bool {
 	switch {
 	case status.APIVersion == api.NetAPIVersion && (status.Kind == "IPv4Route" || status.Kind == "IPv4StaticAddress" || status.Kind == "WireGuardInterface" || status.Kind == "WireGuardPeer"):
 		return true
-	case status.APIVersion == api.HybridAPIVersion && status.Kind == "TunnelInterface":
-		owned, _ := statusvalue.ExtendedBool(status.Status["interfaceOwned"])
-		return owned
 	case status.APIVersion == api.SystemAPIVersion && status.Kind == "Sysctl" && strings.HasPrefix(status.Name, "sam-proxy-arp-"):
 		return true
 	default:

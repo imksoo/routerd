@@ -20,16 +20,13 @@ import (
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
-type TunnelCommandRunner func(ctx context.Context, name string, args ...string) ([]byte, error)
-
 type TunnelInterfaceController struct {
-	Router  *api.Router
-	Bus     *bus.Bus
-	Store   Store
-	DryRun  bool
-	Command TunnelCommandRunner
-	OS      platform.OS
-	Logger  *slog.Logger
+	Router *api.Router
+	Bus    *bus.Bus
+	Store  Store
+	DryRun bool
+	OS     platform.OS
+	Logger *slog.Logger
 }
 
 type tunnelDesired struct {
@@ -115,7 +112,7 @@ func (c TunnelInterfaceController) cleanupStaleResources(ctx context.Context) er
 		if item.APIVersion != api.HybridAPIVersion || item.Kind != "TunnelInterface" {
 			continue
 		}
-		if _, ok := desired[item.Name]; ok || !routerdManagedObjectStatus(item) || !tunnelInterfaceOwned(item.Status) {
+		if _, ok := desired[item.Name]; ok {
 			continue
 		}
 		ifname := firstNonEmpty(statusvalue.Field(item.Status, "ifname"), statusvalue.Field(item.Status, "interface"), item.Name)
@@ -151,7 +148,6 @@ func (c TunnelInterfaceController) saveUnsupportedStatus(resource api.Resource, 
 		"reason": "PlatformUnsupported",
 		"os":     string(targetOS),
 	})
-	preserveTunnelInterfaceOwnership(status, c.Store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", resource.Metadata.Name))
 	return c.Store.SaveObjectStatus(api.HybridAPIVersion, "TunnelInterface", resource.Metadata.Name, status)
 }
 
@@ -166,7 +162,6 @@ func (c TunnelInterfaceController) reconcileInterface(ctx context.Context, resou
 		return c.saveResolveError(resource, tunnelDesiredFromSpec(*c.Router, resource.Metadata.Name, spec), err)
 	}
 	status := tunnelStatus(desired, c.DryRun, map[string]any{"phase": "Pending"})
-	preserveTunnelInterfaceOwnership(status, previous)
 	if pending {
 		status["reason"] = "EndpointSourcePending"
 		status["pendingSource"] = pendingReason
@@ -183,9 +178,6 @@ func (c TunnelInterfaceController) reconcileInterface(ctx context.Context, resou
 		status["error"] = err.Error()
 		return c.Store.SaveObjectStatus(api.HybridAPIVersion, "TunnelInterface", resource.Metadata.Name, status)
 	}
-	if observed.Exists && !tunnelInterfaceOwned(previous) {
-		return c.saveForeignInterfaceStatus(resource, desired)
-	}
 	listenerCreated, err := c.ensureFOUListener(ctx, desired)
 	if err != nil {
 		return c.saveApplyError(resource, desired, err)
@@ -196,9 +188,6 @@ func (c TunnelInterfaceController) reconcileInterface(ctx context.Context, resou
 		if err := c.addTunnelInterface(ctx, desired); err != nil {
 			return c.saveApplyError(resource, desired, err)
 		}
-		if err := c.saveCreatedTunnelOwnership(ctx, resource, desired); err != nil {
-			return err
-		}
 		applied = true
 		created = true
 	} else if observed.Mode != "" && observed.Mode != desired.Mode {
@@ -207,9 +196,6 @@ func (c TunnelInterfaceController) reconcileInterface(ctx context.Context, resou
 		}
 		if err := c.addTunnelInterface(ctx, desired); err != nil {
 			return c.saveApplyError(resource, desired, err)
-		}
-		if err := c.saveCreatedTunnelOwnership(ctx, resource, desired); err != nil {
-			return err
 		}
 		applied = true
 		created = true
@@ -262,11 +248,6 @@ func (c TunnelInterfaceController) reconcileInterface(ctx context.Context, resou
 		status["observedAddress"] = desired.Address
 		status["observedPeerAddress"] = observedPeer
 	}
-	if created {
-		status["interfaceOwned"] = true
-	} else {
-		preserveTunnelInterfaceOwnership(status, previous)
-	}
 	if listener, ok := fouListenerForDesired(desired); ok {
 		if listenerCreated || fouListenerMatchesStatus(listener, previous) || c.routerdOwnsFOUListener(listener, resource.Metadata.Name) {
 			status["fouListenerOwned"] = true
@@ -300,37 +281,12 @@ func (c TunnelInterfaceController) reconcileInterface(ctx context.Context, resou
 	return nil
 }
 
-func (c TunnelInterfaceController) saveCreatedTunnelOwnership(ctx context.Context, resource api.Resource, desired tunnelDesired) error {
-	status := tunnelStatus(desired, false, map[string]any{
-		"phase":          "Pending",
-		"reason":         "Applying",
-		"interfaceOwned": true,
-	})
-	if err := c.Store.SaveObjectStatus(api.HybridAPIVersion, "TunnelInterface", resource.Metadata.Name, status); err != nil {
-		if rollbackErr := c.deleteTunnelInterface(ctx, desired.Name); rollbackErr != nil {
-			return fmt.Errorf("persist ownership of newly created tunnel interface %q: %w (rollback failed: %v)", desired.Name, err, rollbackErr)
-		}
-		return fmt.Errorf("persist ownership of newly created tunnel interface %q: %w", desired.Name, err)
-	}
-	return nil
-}
-
-func (c TunnelInterfaceController) saveForeignInterfaceStatus(resource api.Resource, desired tunnelDesired) error {
-	message := fmt.Sprintf("refuse to adopt existing tunnel interface %q without routerd ownership status", desired.Name)
-	status := tunnelStatus(desired, c.DryRun, map[string]any{
-		"phase":  "Error",
-		"reason": "ForeignInterface",
-		"error":  message,
-	})
-	return c.Store.SaveObjectStatus(api.HybridAPIVersion, "TunnelInterface", resource.Metadata.Name, status)
-}
 func (c TunnelInterfaceController) saveResolveError(resource api.Resource, desired tunnelDesired, err error) error {
 	status := tunnelStatus(desired, c.DryRun, map[string]any{
 		"phase":  "Error",
 		"reason": "EndpointResolveFailed",
 		"error":  err.Error(),
 	})
-	preserveTunnelInterfaceOwnership(status, c.Store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", resource.Metadata.Name))
 	return c.Store.SaveObjectStatus(api.HybridAPIVersion, "TunnelInterface", resource.Metadata.Name, status)
 }
 
@@ -340,20 +296,10 @@ func (c TunnelInterfaceController) saveApplyError(resource api.Resource, desired
 		"reason": "ApplyFailed",
 		"error":  applyErr.Error(),
 	})
-	previous := c.Store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", resource.Metadata.Name)
-	preserveTunnelInterfaceOwnership(status, previous)
-	return c.Store.SaveObjectStatus(api.HybridAPIVersion, "TunnelInterface", resource.Metadata.Name, status)
-}
-
-func tunnelInterfaceOwned(status map[string]any) bool {
-	owned, ok := statusvalue.ExtendedBool(status["interfaceOwned"])
-	return ok && owned
-}
-
-func preserveTunnelInterfaceOwnership(status, previous map[string]any) {
-	if tunnelInterfaceOwned(previous) {
-		status["interfaceOwned"] = true
+	if err := c.Store.SaveObjectStatus(api.HybridAPIVersion, "TunnelInterface", resource.Metadata.Name, status); err != nil {
+		return fmt.Errorf("TunnelInterface/%s apply failed: %w (saving status: %v)", resource.Metadata.Name, applyErr, err)
 	}
+	return fmt.Errorf("TunnelInterface/%s apply failed: %w", resource.Metadata.Name, applyErr)
 }
 
 func tunnelStatusKey(status map[string]any) int {
@@ -1069,11 +1015,8 @@ func tunnelChangeArgs(desired tunnelDesired) []string {
 }
 
 func (c TunnelInterfaceController) run(ctx context.Context, name string, args ...string) ([]byte, error) {
-	run := c.Command
-	if run == nil {
-		run = defaultTunnelCommandRunner
-	}
-	return run(ctx, name, args...)
+	cmd := exec.CommandContext(ctx, name, args...)
+	return cmd.CombinedOutput()
 }
 
 func (c TunnelInterfaceController) targetOS() platform.OS {
@@ -1081,11 +1024,6 @@ func (c TunnelInterfaceController) targetOS() platform.OS {
 		return c.OS
 	}
 	return platform.CurrentOS()
-}
-
-func defaultTunnelCommandRunner(ctx context.Context, name string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
-	return cmd.CombinedOutput()
 }
 
 func commandError(action string, err error) error {
