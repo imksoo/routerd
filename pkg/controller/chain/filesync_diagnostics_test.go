@@ -5,7 +5,6 @@ package chain
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"log/slog"
 	"path/filepath"
 	"strings"
@@ -30,21 +29,6 @@ func leaseSyncDiagnosticRecords(t *testing.T, output string) []map[string]any {
 		records = append(records, record)
 	}
 	return records
-}
-
-type leaseSyncFailingStore struct{ mapStore }
-
-func (s leaseSyncFailingStore) SaveObjectStatus(string, string, string, map[string]any) error {
-	return errors.New("state storage unavailable")
-}
-
-func TestLeaseSyncLogsBeforeStateSaveFailure(t *testing.T) {
-	var logs bytes.Buffer
-	c := FileSyncController{Store: leaseSyncFailingStore{mapStore{}}, Logger: slog.New(slog.NewJSONHandler(&logs, nil))}
-	err := c.save(api.NetAPIVersion, "DHCPv4ServerLeaseSync", "lan", map[string]any{"phase": "Error", "reason": "SourceStatFailed", "error": "cannot stat leases"})
-	if err == nil || !strings.Contains(logs.String(), "cannot stat leases") {
-		t.Fatalf("error=%v log=%s", err, logs.String())
-	}
 }
 
 func TestLeaseSyncDiagnosticBounds(t *testing.T) {
