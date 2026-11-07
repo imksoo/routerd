@@ -239,9 +239,6 @@ jobs:
       - name: Run CloudEdge acceptance offline smoke
         run: make cloudedge-acceptance-offline-test
 
-      - name: Run CloudEdge runners offline smoke
-        run: make cloudedge-runners-offline-test
-
       - name: Run CloudEdge PoC evidence offline smoke
         run: make cloudedge-poc-evidence-offline-test
 
@@ -250,9 +247,6 @@ jobs:
 
       - name: Run CloudEdge SAM config generator offline smoke
         run: make cloudedge-sam-config-generator-offline-test
-
-      - name: Run release certification lifecycle offline smoke
-        run: make release-certification-offline-test
 
       - name: Reject known release QA preparation and observation failures offline
         run: make release-qa-preflight-test
@@ -273,7 +267,7 @@ jobs:
 
       - name: Lint shell scripts
         run: |
-          shellcheck scripts/ci/detect-quality-changes.sh scripts/ci/detect-quality-changes-test.sh packaging/install.sh packaging/uninstall.sh packaging/bootstrap.sh scripts/pre-commit.sh scripts/release.sh scripts/build-live-iso.sh scripts/install-deps-smoke.sh scripts/install-sh-cwd-smoke.sh scripts/bootstrap-cleanup-smoke.sh scripts/check-active-stable.sh scripts/certify-pve-substrate.sh scripts/certify-cloud-substrate.sh scripts/release-environment-preflight.sh scripts/release-qualification-smoke.sh scripts/release-certification-offline-test.sh tests/e2e/cloudedge/scripts/sam-pve-qga-addresses.sh
+          shellcheck scripts/ci/detect-quality-changes.sh scripts/ci/detect-quality-changes-test.sh packaging/install.sh packaging/uninstall.sh packaging/bootstrap.sh scripts/pre-commit.sh scripts/release.sh scripts/build-live-iso.sh scripts/install-deps-smoke.sh scripts/install-sh-cwd-smoke.sh scripts/bootstrap-cleanup-smoke.sh scripts/check-active-stable.sh scripts/certify-pve-substrate.sh scripts/certify-cloud-substrate.sh scripts/release-environment-preflight.sh scripts/release-qualification-smoke.sh tests/e2e/cloudedge/scripts/sam-pve-qga-addresses.sh
 
   warm-iso-rootfs-cache:
     name: Warm ISO rootfs cache

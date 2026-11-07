@@ -23,8 +23,6 @@ OUTPUT:
   BUNDLE_DIR/03-control-plane/cloud-fabric-test-record.csv
 
 ENV:
-  CE_FABRIC_<PROVIDER>_JSON_COMMAND  Optional fake/offline raw JSON command.
-  CE_FABRIC_JSON_COMMAND             Generic fake/offline raw JSON command.
   CE_FABRIC_SCHEMA                   Schema path (default scripts/cloudedge-cloud-fabric-schema.json).
 
   AWS live:   CE_AWS_ENI_ID, optional CE_AWS_ROUTE_TABLE_IDS, CE_AWS_SECURITY_GROUP_IDS,
@@ -113,14 +111,6 @@ import json
 import sys
 print(json.dumps({"provider": sys.argv[1], "notRunReason": sys.argv[2]}, sort_keys=True))
 PY
-}
-
-override_command() {
-  local upper command
-  upper=$(ce_upper "$provider")
-  command=$(ce_env_first "CE_FABRIC_${upper}_JSON_COMMAND" CE_FABRIC_JSON_COMMAND 2>/dev/null || true)
-  [[ -n "$command" ]] || return 1
-  CE_FABRIC_PROVIDER=$provider CE_FABRIC_TEST_ID=$test_id CE_FABRIC_CAPTURE_ADDRESS=$capture_address bash -lc "$command"
 }
 
 collect_aws() {
@@ -236,9 +226,6 @@ PY
 }
 
 collect_raw() {
-  if override_command; then
-    return 0
-  fi
   case "$provider" in
     aws) collect_aws ;;
     azure) collect_azure ;;

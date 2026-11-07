@@ -129,8 +129,4 @@ scripts/runners/cloudedge-fabric-runner.sh collect \
 
 Live runs use read-only `aws`, `az`, or `oci` CLI calls. Missing CLI,
 authentication, or required target env is recorded as `NOT-RUN` with a reason.
-Use `CE_FABRIC_<PROVIDER>_JSON_COMMAND` to feed deterministic fake JSON through
-the same normalizer in offline tests.
-
-The scripts support `--help` without credentials. `cloudedge-runners-offline-test.sh`
-exercises the contracts with local fake commands and no cloud access.
+The scripts support `--help` without credentials.
