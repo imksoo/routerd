@@ -1530,13 +1530,17 @@ are required. The explicit opt-in target isolates network and sysfs views; never
 set `ROUTERD_RUN_NETNS=1` in the host network namespace.
 
 The production VRF/address controllers create two routing domains with the same
-local and peer IPv4 addresses. Independent peer namespaces return distinct UDP
-payloads. Require the correct payload from each VRF, successful access to each
+local and peer IPv4 addresses. Each domain also has an independent client
+namespace with an overlapping client subnet. Enable IPv4 forwarding only inside
+the isolated router namespace and give each server a return route to its client.
+Independent peer namespaces return distinct UDP payloads. Run each assertion both
+from a VRF-bound router socket and from its client through the router. Require
+the correct payload from each VRF, successful access to each
 peer's unique address, and timeout when accessing the other VRF's unique address.
 Repeat after SQLite reopen. Withdraw one VRF and its address and require the
 other peer to remain reachable. Final withdrawal must remove both VRFs, owned
 addresses and receipts. This is a native controller test, not packaged-daemon
-restart, transit forwarding or delegated IPv6/RA qualification.
+restart or delegated IPv6/RA qualification.
 
 ## Tailscale advertisement removal and recovery
 

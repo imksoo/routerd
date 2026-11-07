@@ -4421,3 +4421,22 @@ uplinks, all failure modes, all 1.0 functions and deferred platforms remain
 separate requirements. Use the maintained
 [HA procedure](../operations/linux-ha-pair-qualification.md); raw temporary
 campaign logs are not a prerequisite for future regression tests.
+
+## Linux overlapping VRF client transit
+
+On the `b4fc85f3` tree (product `0e186cc0`), the extended
+`TestVRFNativeLinuxOverlappingPeerIsolation` passed in 11.98 seconds without
+skips. A compiled controller test ran under `sudo ... unshare -nm` with private
+sysfs, using independent server and client namespaces for each VRF. Both
+domains had identical router/server addresses and identical client addresses.
+IPv4 forwarding and peer return routes were fixture setup confined to these
+namespaces. The actual VRF/address controllers owned both router interfaces.
+
+Correct distinct UDP payloads, unique peer reachability and cross-domain denial
+passed for router-originated and client-transit traffic. Both paths passed again
+after SQLite reopen; red remained reachable after blue withdrawal. Final
+withdrawal removed owned addresses, VRFs and receipts; peer processes were
+terminated and reaped. No product fix was needed. The maintained
+[procedure](../operations/development.md#linux-overlapping-vrf-isolation) now
+requires both paths. This qualifies IPv4 UDP transit for this topology, not
+packaged-daemon restart/reboot, delegated IPv6/RA, every routing mode or FreeBSD.

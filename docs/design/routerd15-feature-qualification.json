@@ -3008,6 +3008,24 @@
       "excludes": [
         "Hitless or fast failover, production cutover, physical uplinks, all failure modes, all baseline functions and deferred-platform parity."
       ]
+    },
+    "linux-vrf-transit-b4fc85f3": {
+      "level": "native-kernel",
+      "outcome": "pass",
+      "revision": "b4fc85f38c35af9d8ff33e030c7afda099ff4948",
+      "reference": "docs/design/routerd15-audit.md#linux-overlapping-vrf-client-transit",
+      "reproduction": "Extended TestVRFNativeLinuxOverlappingPeerIsolation on this tree; make check-routerd15-native-parent-linux",
+      "checks": [
+        "Distinct UDP payloads through two VRFs with overlapping server and client subnets",
+        "Host-originated and client-transit positive controls and cross-domain denial",
+        "SQLite reopen and independent withdrawal preserve remaining domain communication",
+        "Final owned addresses, VRFs and receipts removed; peer processes reaped"
+      ],
+      "excludes": [
+        "Packaged-daemon restart or reboot",
+        "Delegated IPv6/RA",
+        "Other routing modes and FreeBSD"
+      ]
     }
   },
   "features": [
@@ -3604,7 +3622,8 @@
           "linux-vrf-withdraw-review-9735f25e",
           "linux-vrf-peer-9735f25e",
           "linux-combined-native-3e58c93a",
-          "linux-vrf-overlap-12656124"
+          "linux-vrf-overlap-12656124",
+          "linux-vrf-transit-b4fc85f3"
         ]
       },
       "freebsd": {
@@ -3612,7 +3631,7 @@
         "scoped_evidence": []
       },
       "required_remaining_checks": [
-        "Multiple-VRF transit forwarding/isolation beyond the recorded overlapping-address host-originated UDP gate",
+        "VRF forwarding modes beyond the recorded overlapping-address IPv4 UDP host/transit gate",
         "Member-address dependency semantics and delegated IPv6/RA within VRF",
         "Packaged-daemon restart/reboot and complete platform parity beyond the recorded single-VRF controller gate"
       ],
