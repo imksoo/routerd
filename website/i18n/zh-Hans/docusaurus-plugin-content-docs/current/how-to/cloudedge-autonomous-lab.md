@@ -28,7 +28,6 @@ retained ARP检查中，监控HTTP的80ms timeout、100ms counter周期、400ms�
 
 cleanup inventory区分lifecycle变化和identity不一致。AWS/OCI的identity一致而状态观测不同时，只在同次inventory执行中额外查询对应provider最多2次，保留每次原始响应。identity、tag、account不一致、无效响应及通信失败不能证明资源不存在。其他provider的inventory继续执行；不完整scope的count为null，不能通过零资源判定。现有资源回收和删除保护保持不变。
 
-下一次付费测试之前，用 `tools/release-qa-labs/tests/` 下的 `test_sam_observation.py`、`test_inventory_resources.py` 和 `test_inventory_driver.py` 重放相关响应及负例，不创建资源。这些测试通过不代表已完成云端实机测试。
 
 ## 生命周期
 

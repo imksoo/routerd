@@ -30,7 +30,6 @@ For retained ARP checks, the 80 ms monitoring HTTP timeout, 100 ms counter caden
 
 Cleanup inventory distinguishes lifecycle changes from identity mismatches. Matching AWS/OCI identities with disagreeing lifecycle observations may requery only that provider twice within the enclosing inventory invocation. Every raw attempt is retained. Wrong identity/tag/account, malformed responses and transport failures never prove absence. Other provider inventories still run; incomplete scopes retain a null count and cannot pass the zero-resource gate. Existing resource recovery and deletion safeguards are unchanged.
 
-Before another paid test, replay the affected flow and inventory fixtures locally: `test_sam_observation.py`, `test_inventory_resources.py`, and `test_inventory_driver.py` under `tools/release-qa-labs/tests/`. These do not create resources. Passing fixtures does not claim a new cloud deployment was tested.
 
 ## Lifecycle
 

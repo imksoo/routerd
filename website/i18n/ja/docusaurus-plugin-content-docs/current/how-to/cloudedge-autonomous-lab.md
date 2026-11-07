@@ -28,7 +28,6 @@ retained ARPでは、監視HTTPの80ms timeout、100ms counter周期、400ms連�
 
 cleanup inventoryではlifecycle変化とidentity不整合を区別します。AWS/OCIのidentityが一致し状態観測だけが異なる場合、同じinventory実行内で該当providerだけを最大2回追加観測し、各回の原本を保持します。identity・tag・accountの不一致、不正な応答、通信失敗を不在と扱いません。他providerのinventoryは継続し、不成立scopeはcountをnullにして資源ゼロ判定を通しません。既存の資源回収・削除ガードは維持します。
 
-次の有料試験の前に、`tools/release-qa-labs/tests/` の `test_sam_observation.py`、`test_inventory_resources.py`、`test_inventory_driver.py` で該当する保存応答・負例を再現します。資源は作成しません。これらの成功はクラウド実機試験の実施を意味しません。
 
 ## ライフサイクル
 
