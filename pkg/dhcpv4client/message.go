@@ -137,8 +137,8 @@ func EncodeRequest(msgType byte, xid uint32, hw net.HardwareAddr, opts map[byte]
 	copy(packet[28:44], hw)
 	copy(packet[236:240], []byte{99, 130, 83, 99})
 	options := []byte{OptionMessageType, 1, msgType}
-	options = append(options, OptionParameterRequest, 11,
-		OptionLeaseTime, OptionRouter, OptionDNSServer, OptionHostname, OptionDomainName,
+	options = append(options, OptionParameterRequest, 12,
+		OptionSubnetMask, OptionLeaseTime, OptionRouter, OptionDNSServer, OptionHostname, OptionDomainName,
 		OptionMTU, OptionBroadcastAddress, OptionNTPServer, OptionTFTPServer, OptionBootfile, OptionServerID)
 	for code, value := range opts {
 		if len(value) == 0 || code == OptionEnd || code == OptionMessageType {
