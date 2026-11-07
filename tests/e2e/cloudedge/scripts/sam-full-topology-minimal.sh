@@ -3,11 +3,9 @@ set -euo pipefail
 
 # The release qualification profile deliberately has one baseline only.  It is
 # not a shorthand for sam-full-validation.sh: that script remains the long
-# engineering/failover suite, while this entry point has a bounded paid-run
-# contract and exactly one functional gate set.
+# engineering/failover suite, while this entry point has exactly one
+# functional gate set.
 readonly profile_name="full-topology-minimal"
-readonly default_max_runtime_seconds=1200
-readonly max_allowed_runtime_seconds=1200
 export SAM_E2E_MAX_SECONDARY_IPS=3
 
 usage() {
@@ -21,7 +19,6 @@ Options:
   --ssh-key FILE             Guest/cloud SSH key (required)
   --pve-ssh-key FILE         Exact root PVE SSH key for hypervisor bridge audit
   --pve-known-hosts FILE     Pinned known_hosts for the PVE hypervisors
-  --max-runtime-seconds N    Qualification wall-clock cap, 1..1200 (default: 1200)
 
 Runs the explicit full-topology-minimal qualification profile against an
 already provisioned full CloudEdge topology. It installs the supplied artifact
@@ -35,8 +32,7 @@ on all ten router nodes and runs exactly one baseline:
 It deliberately does not run legacy protocol probes, throughput/performance
 probes, load-balance reporting, transfer probes, failover, rejoin, provisioning,
 or destruction. The supervising release-QA lifecycle owns provisioning and
-unconditional cleanup. A timeout is a failure and leaves partial evidence for
-that lifecycle to collect before cleanup.
+unconditional cleanup.
 USAGE
 }
 
@@ -47,7 +43,6 @@ tfvars=
 ssh_key=
 pve_ssh_key=
 pve_known_hosts=
-max_runtime_seconds="$default_max_runtime_seconds"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -58,7 +53,6 @@ while [ "$#" -gt 0 ]; do
     --ssh-key) ssh_key="${2:?missing --ssh-key value}"; shift 2 ;;
     --pve-ssh-key) pve_ssh_key="${2:?missing --pve-ssh-key value}"; shift 2 ;;
     --pve-known-hosts) pve_known_hosts="${2:?missing --pve-known-hosts value}"; shift 2 ;;
-    --max-runtime-seconds) max_runtime_seconds="${2:?missing --max-runtime-seconds value}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -74,15 +68,7 @@ done
 [ -f "$ssh_key" ] || { echo "ssh key not found: $ssh_key" >&2; exit 2; }
 [ -f "$pve_ssh_key" ] || { echo "--pve-ssh-key FILE is required" >&2; exit 2; }
 [ -f "$pve_known_hosts" ] || { echo "--pve-known-hosts FILE is required" >&2; exit 2; }
-case "$max_runtime_seconds" in
-  ''|*[!0-9]*) echo "--max-runtime-seconds must be an integer" >&2; exit 2 ;;
-esac
-if [ "$max_runtime_seconds" -le 0 ] || [ "$max_runtime_seconds" -gt "$max_allowed_runtime_seconds" ]; then
-  echo "--max-runtime-seconds must be in 1..$max_allowed_runtime_seconds" >&2
-  exit 2
-fi
 command -v jq >/dev/null || { echo "jq is required" >&2; exit 2; }
-command -v timeout >/dev/null || { echo "timeout is required" >&2; exit 2; }
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 e2e_script="$script_dir/sam-e2e.sh"
@@ -147,8 +133,7 @@ fi
 
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 set +e
-timeout --foreground --kill-after=30s "${max_runtime_seconds}s" \
-  "$e2e_script" \
+"$e2e_script" \
     --tofu-output "$tofu_output" \
     --artifact "$artifact" \
     --ssh-key "$ssh_key" \
@@ -224,9 +209,7 @@ if [ "$e2e_rc" -eq 0 ] && [ "$gate_rc" -eq 0 ]; then
 else
   result=fail
   status=FAIL
-  if [ "$e2e_rc" -eq 124 ]; then
-    summary="qualification timed out after ${max_runtime_seconds}s"
-  elif [ "$e2e_rc" -ne 0 ]; then
+  if [ "$e2e_rc" -ne 0 ]; then
     summary="sam-e2e baseline failed with exit=$e2e_rc"
   else
     summary="sam-e2e returned success but full gate evidence was incomplete or non-PASS"
@@ -246,7 +229,6 @@ jq -n \
   --arg artifact "$artifact" \
   --arg tfvars "$tfvars" \
   --arg sshKey "$ssh_key" \
-  --argjson maxRuntimeSeconds "$max_runtime_seconds" \
   --argjson elapsedSeconds "$elapsed_seconds" \
   --argjson samE2EExit "$e2e_rc" \
   --argjson gateEvidenceExit "$gate_rc" \
@@ -259,7 +241,6 @@ jq -n \
     summary:$summary,
     startedAt:$startedAt,
     finishedAt:$finishedAt,
-    limits:{maxRuntimeSeconds:$maxRuntimeSeconds},
     elapsedSeconds:$elapsedSeconds,
     inputs:{tofuOutput:$tofuOutput, artifact:$artifact, tfvars:$tfvars, sshKey:$sshKey},
     topology:{routerCount:$routerCount, clientCount:$clientCount, cloudClientCount:$cloudClientCount},

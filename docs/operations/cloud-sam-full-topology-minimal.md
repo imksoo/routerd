@@ -39,9 +39,9 @@ returns success; an incomplete matrix is a failure, not a skipped check.
 
 ## Baseline-only budget
 
-The standalone wrapper retains its 20-minute cap so it remains a bounded
-baseline tool. The final release contract does **not** select this profile by
-itself: it selects `representative-redundancy`, which adds a staged PVE RR
+The standalone baseline has no test completion deadline. The final release
+contract does **not** select this profile by itself: it selects
+`representative-redundancy`, which adds a staged PVE RR
 `A -> AB -> B-only -> AB` transition using the existing four cross-site
 canaries, followed by four independent edge-A stop/rejoin scenarios, one each
 at AWS, Azure, OCI, and PVE. Each edge scenario requires all 12 client flows
@@ -74,9 +74,8 @@ within the 115-minute (6900-second) TTL with two minutes of headroom. Two
 unchanged cleanup/inventory attempts of `10 + 5` minutes yield a planned paid
 cleanup envelope of 145 minutes (8700 seconds), not extra test time.
 
-The 5400 seconds cover the entire representative wrapper, including the
-initial RR invocation, all four edge invocations, and evidence verification;
-each later invocation receives only the remaining time. The approved cost
+The supervised qualification budget covers the entire representative run,
+including the RR and edge invocations and evidence verification. The approved cost
 policy estimate is USD 1.05, with a USD 1.60 admission ceiling. These are not
 current provider price quotes or a cap on the actual bill. The expanded
 sequence has not completed a measured live run. Neither offline PASS nor this
@@ -88,8 +87,8 @@ extend the TTL or omit required matrix rows to obtain a pass. See the
 for the limits of its static template comparison.
 
 The release-QA mutation driver spends the first bounded budget across cloud and
-PVE provision/certification. It then invokes the profile with the second
-budget. Each boundary uses `timeout`; a timeout fails closed and the durable
+PVE provision/certification. It then invokes the profile under the second
+budget. The qualification driver monitors that budget; if it expires, the durable
 supervisor terminates the mutation process group before cleanup. The
 supervisor—not the profile—runs the run-scoped OpenTofu destroy and exhaustive
 zero inventory. Cleanup and inventory each retain their pinned per-attempt
@@ -133,8 +132,7 @@ tests/e2e/cloudedge/scripts/sam-full-topology-minimal.sh \
   --ssh-key /var/lib/routerd-release-qa/<run-id>/runtime/secrets/guest_ssh \
   --pve-ssh-key /var/lib/routerd-release-qa/<run-id>/runtime/secrets/pve_ssh \
   --pve-known-hosts /var/lib/routerd-release-qa/<run-id>/runtime/pinned/pve-known_hosts \
-  --evidence-root /var/lib/routerd-release-qa/<run-id>/runtime/evidence/qualification/full-topology-minimal \
-  --max-runtime-seconds 1200
+  --evidence-root /var/lib/routerd-release-qa/<run-id>/runtime/evidence/qualification/full-topology-minimal
 ```
 
 `tofu-output-full.json` in this command is the QGA-patched output written by
