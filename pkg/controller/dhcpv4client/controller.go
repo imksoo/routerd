@@ -310,7 +310,13 @@ func (c Controller) applyLease(ctx context.Context, name string, current, next m
 		if err := c.removeLeaseAddress(ctx, current, next); err != nil {
 			return err
 		}
-		return c.restoreStaticDNS(ctx, current, next)
+		if err := c.restoreStaticDNS(ctx, current, next); err != nil {
+			return err
+		}
+		for _, key := range []string{"currentAddress", "prefixLength", "defaultGateway", "gateway", "dnsServers", "ntpServers", "domain", "mtu", "leaseTime"} {
+			delete(next, key)
+		}
+		return nil
 	}
 	if phase != daemonapi.ResourcePhaseBound && phase != daemonapi.ResourcePhaseRefreshing && phase != daemonapi.ResourcePhaseRebinding {
 		return nil
