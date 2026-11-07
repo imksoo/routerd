@@ -466,6 +466,8 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 	usedNames := map[string]bool{}
 	dhcpClients := map[string]api.Resource{}
 	usedDHCPNames := map[string]bool{}
+	raAddresses := map[string]api.Resource{}
+	usedRANames := map[string]bool{}
 	staticAddresses := map[string]api.Resource{}
 	usedStaticNames := map[string]bool{}
 	staticIPv6 := map[string]api.Resource{}
@@ -479,6 +481,15 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 		}
 		name = router.Metadata.Name
 		for _, resource := range router.Spec.Resources {
+			if resource.Kind == "IPv6RAAddress" {
+				spec, err := resource.IPv6RAAddressSpec()
+				if err != nil {
+					return err
+				}
+				raAddresses[spec.Interface] = resource
+				usedRANames[resource.Metadata.Name] = true
+				continue
+			}
 			if resource.Kind == "VirtualAddress" {
 				usedVirtualNames[resource.Metadata.Name] = true
 				spec, err := resource.VirtualAddressSpec()
@@ -618,6 +629,7 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 		router.Spec.Resources = append(router.Spec.Resources, resource)
 		dhcp4 := false
 		dhcp4Address := ""
+		raAddress := false
 		importedStatic := map[string]bool{}
 		for _, address := range link.AddrInfo {
 			ip, err := netip.ParseAddr(address.Local)
@@ -631,6 +643,9 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 			}
 			if source != "" && source != "foreign" {
 				origin = "networkd " + source
+				if source == "NDisc" && ip.Is6() && ip.IsGlobalUnicast() && address.Dynamic {
+					raAddress = true
+				}
 				if source == "DHCPv4" && ip.Is4() {
 					if dhcp4 && dhcp4Address != ip.String() {
 						dhcp4Address = ""
@@ -692,6 +707,24 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 				continue
 			}
 			warnings = append(warnings, fmt.Sprintf("%s: address %s/%d (%s, scope %s) requires source configuration review: %s", ifname, address.Local, address.PrefixLen, origin, address.Scope, address.Raw))
+		}
+		if raAddress {
+			client, exists := raAddresses[resource.Metadata.Name]
+			if !exists {
+				client, exists = raAddresses[ifname]
+			}
+			if exists {
+				client.Status = nil
+			} else {
+				name := resource.Metadata.Name + "-ra"
+				for suffix := 2; usedRANames[name]; suffix++ {
+					name = fmt.Sprintf("%s-ra-%d", resource.Metadata.Name, suffix)
+				}
+				client = api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6RAAddress"}, Metadata: api.ObjectMeta{Name: name}, Spec: api.IPv6RAAddressSpec{Interface: resource.Metadata.Name}}
+			}
+			usedRANames[client.Metadata.Name] = true
+			router.Spec.Resources = append(router.Spec.Resources, client)
+			warnings = append(warnings, fmt.Sprintf("%s: RA/SLAAC candidate requires review of networkd settings and manager handoff", ifname))
 		}
 		if dhcp4 {
 			useRoutes, useDNS, routeMetric, useMTU, optionErr := networkdDHCPv4Options(networkFiles)
