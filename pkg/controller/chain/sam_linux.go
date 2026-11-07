@@ -26,12 +26,6 @@ type netlinkSAMProxyNeighborApplier struct{}
 
 var samForwardPathMu sync.Mutex
 
-type samForwardPathOps struct {
-	runIPTables   func(args ...string) ([]byte, error)
-	setSysctl     func(key, value string) error
-	sysctlPresent func(key string) (bool, error)
-}
-
 func defaultSAMProxyNeighborApplier() samProxyNeighborApplier {
 	return netlinkSAMProxyNeighborApplier{}
 }
@@ -210,22 +204,12 @@ func (netlinkSAMProxyNeighborApplier) ReconcileForwardPaths(ctx context.Context,
 	samForwardPathMu.Lock()
 	defer samForwardPathMu.Unlock()
 
-	ops := samForwardPathOps{
-		runIPTables: func(args ...string) ([]byte, error) {
-			return exec.CommandContext(ctx, "iptables", args...).CombinedOutput()
-		},
-		setSysctl: func(key, value string) error {
-			return samSetSysctl(ctx, key, value)
-		},
-		sysctlPresent: samSysctlPresent,
+	runIPTables := func(args ...string) ([]byte, error) {
+		return exec.CommandContext(ctx, "iptables", args...).CombinedOutput()
 	}
-	return reconcileSAMForwardPaths(paths, ops)
-}
-
-func reconcileSAMForwardPaths(paths []sam.CaptureAction, ops samForwardPathOps) error {
 	const chain = "routerd_sam_forward"
 	run := func(args ...string) error {
-		out, err := ops.runIPTables(args...)
+		out, err := runIPTables(args...)
 		if err != nil {
 			return fmt.Errorf("iptables %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 		}
@@ -236,9 +220,9 @@ func reconcileSAMForwardPaths(paths []sam.CaptureAction, ops samForwardPathOps) 
 	// that have no SAM forwarding intent. When the routerd-owned chain exists,
 	// continue through the normal stale-rule and accept_local cleanup below.
 	if len(paths) == 0 {
-		out, err := ops.runIPTables("-S", chain)
+		out, err := runIPTables("-S", chain)
 		if err != nil {
-			if samForwardChainAbsent(chain, err, out, ops.runIPTables) {
+			if samForwardChainAbsent(chain, err, out, runIPTables) {
 				return nil
 			}
 			return fmt.Errorf("iptables -S %s: %w: %s", chain, err, strings.TrimSpace(string(out)))
@@ -250,7 +234,7 @@ func reconcileSAMForwardPaths(paths []sam.CaptureAction, ops samForwardPathOps) 
 			return insertErr
 		}
 	}
-	currentIfaces, err := currentForwardPathInterfaces(chain, ops.runIPTables)
+	currentIfaces, err := currentForwardPathInterfaces(chain, runIPTables)
 	if err != nil {
 		return err
 	}
@@ -283,7 +267,7 @@ func reconcileSAMForwardPaths(paths []sam.CaptureAction, ops samForwardPathOps) 
 		}
 	}
 	for ifname := range acceptLocal {
-		if err := ops.setSysctl("net.ipv4.conf."+ifname+".accept_local", "1"); err != nil {
+		if err := samSetSysctl(ctx, "net.ipv4.conf."+ifname+".accept_local", "1"); err != nil {
 			return err
 		}
 	}
@@ -291,16 +275,23 @@ func reconcileSAMForwardPaths(paths []sam.CaptureAction, ops samForwardPathOps) 
 		if acceptLocal[ifname] {
 			continue
 		}
-		if err := samSetSysctlIfPresent("net.ipv4.conf."+ifname+".accept_local", "0", ops); err != nil {
+		key := "net.ipv4.conf." + ifname + ".accept_local"
+		present, err := samSysctlPresent(key)
+		if err != nil {
 			return err
+		}
+		if present {
+			if err := samSetSysctl(ctx, key, "0"); err != nil {
+				return err
+			}
 		}
 	}
 	for _, rule := range sortedIPTablesRules(desired) {
-		if err := ensureIPTablesRule(chain, ops.runIPTables, rule...); err != nil {
+		if err := ensureIPTablesRule(chain, runIPTables, rule...); err != nil {
 			return err
 		}
 	}
-	if err := deleteStaleIPTablesRules(chain, desired, ops.runIPTables); err != nil {
+	if err := deleteStaleIPTablesRules(chain, desired, runIPTables); err != nil {
 		return err
 	}
 	return nil
@@ -349,20 +340,6 @@ func samSysctlPresent(key string) (bool, error) {
 		return false, err
 	}
 	return true, nil
-}
-
-func samSetSysctlIfPresent(key, value string, ops samForwardPathOps) error {
-	if !strings.HasPrefix(key, "net.ipv4.conf.") {
-		return ops.setSysctl(key, value)
-	}
-	present, err := ops.sysctlPresent(key)
-	if err != nil {
-		return err
-	}
-	if !present {
-		return nil
-	}
-	return ops.setSysctl(key, value)
 }
 
 func addDesiredIPTablesRule(desired map[string][]string, rule ...string) {
