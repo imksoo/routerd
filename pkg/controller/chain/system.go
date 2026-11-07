@@ -285,7 +285,8 @@ func (c NetworkAdoptionController) applyNetworkAdoption(ctx context.Context, nam
 	if c.DryRun || !api.BoolDefault(spec.Reload, true) {
 		return paths, changed, nil
 	}
-	if networkdChanged {
+	retry := c.Store.ObjectStatus(api.SystemAPIVersion, "NetworkAdoption", name)["phase"] == "Error"
+	if networkdChanged || (retry && networkdAdoptionConfigured(spec.SystemdNetworkd)) {
 		if _, err := command(ctx, "networkctl", "reload"); err != nil {
 			if _, fallbackErr := command(ctx, "systemctl", "restart", "systemd-networkd.service"); fallbackErr != nil {
 				return paths, changed, fmt.Errorf("reload networkd: %w; restart fallback: %v", err, fallbackErr)
@@ -297,12 +298,11 @@ func (c NetworkAdoptionController) applyNetworkAdoption(ctx context.Context, nam
 			}
 		}
 	}
-	if resolvedChanged {
+	if resolvedChanged || (retry && resolvedAdoptionConfigured(spec.SystemdResolved)) {
 		if _, err := command(ctx, "systemctl", "restart", "systemd-resolved.service"); err != nil {
 			return paths, changed, fmt.Errorf("restart systemd-resolved: %w", err)
 		}
 	}
-	_ = name
 	return paths, changed, nil
 }
 
