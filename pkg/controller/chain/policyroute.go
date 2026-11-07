@@ -580,7 +580,7 @@ func (c IPv4PolicyRouteController) shouldInstallPolicyRouteForHealthCheck(name s
 }
 
 func (c IPv4PolicyRouteController) cleanupLedgerOwnedPolicyRoutes(ctx context.Context, aliases map[string]string) error {
-	if c.DryRun || c.LedgerPath == "" || c.Router == nil {
+	if c.DryRun || c.Router == nil {
 		return nil
 	}
 	ledger, err := resource.LoadLedger(c.LedgerPath)
@@ -677,7 +677,10 @@ func (c IPv4PolicyRouteController) cleanupLedgerOwnedPolicyRoutes(ctx context.Co
 	if err := ledger.Forget(forgotten); err != nil {
 		return err
 	}
-	return ledger.Save(c.LedgerPath)
+	if c.LedgerPath != "" {
+		return ledger.Save(c.LedgerPath)
+	}
+	return nil
 }
 
 func policyRouteArtifactCleanupOrder(artifact resource.Artifact) int {
