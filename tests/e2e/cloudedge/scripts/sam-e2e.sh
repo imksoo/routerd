@@ -367,25 +367,28 @@ apt_install() {
   sudo apt-get -o DPkg::Lock::Timeout=-1 install -y --no-install-recommends "$@"
 }
 apt_retry() {
-  # Preserve the existing four-attempt policy, scoped to one package operation.
-  local attempt rc started finished stdout stderr log_dir
+  local attempt=0 rc stdout stderr log_dir
   log_dir="$(mktemp -d /tmp/routerd-e2e-apt.XXXXXXXX)"
-  echo "apt_attempt_evidence=$log_dir"
-  for attempt in 1 2 3 4; do
-    stdout="$log_dir/attempt-$attempt.stdout"
-    stderr="$log_dir/attempt-$attempt.stderr"
-    started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  stdout="$log_dir/stdout"
+  stderr="$log_dir/stderr"
+  while :; do
+    attempt=$((attempt + 1))
     rc=0; "$@" >"$stdout" 2>"$stderr" || rc=$?
-    finished="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     cat "$stdout"; cat "$stderr" >&2
-    printf 'attempt=%s started_at=%s finished_at=%s exit=%s command=%s\n' "$attempt" "$started" "$finished" "$rc" "$*" | tee "$log_dir/attempt-$attempt.result.txt"
-    [ "$rc" -eq 0 ] && return 0
-    if [ "$attempt" -eq 4 ] || [ "$rc" -eq 126 ] || [ "$rc" -eq 127 ] ||
+    printf 'apt attempt=%s exit=%s command=%s\n' "$attempt" "$rc" "$*"
+    if [ "$rc" -eq 0 ]; then
+      rm -f "$stdout" "$stderr"
+      rmdir "$log_dir"
+      return 0
+    fi
+    if [ "$rc" -eq 126 ] || [ "$rc" -eq 127 ] ||
       grep -Eiq 'Permission denied|No space left|Unable to locate package|NO_PUBKEY|404 Not Found' "$stdout" "$stderr" ||
-      ! grep -Eiq 'Temporary failure resolving|Could not resolve host|Connection (timed out|refused|reset)|Could not get lock|Unable to acquire.*lock|Hash Sum mismatch|Failed to fetch|timed out waiting for apt/dpkg locks' "$stdout" "$stderr"; then
+      ! grep -Eiq 'Temporary failure resolving|Could not resolve host|Connection (timed out|refused|reset)|Could not get lock|Unable to acquire.*lock|Hash Sum mismatch|Failed to fetch' "$stdout" "$stderr"; then
+      rm -f "$stdout" "$stderr"
+      rmdir "$log_dir"
       return "$rc"
     fi
-    sleep "$((attempt * 5))"
+    sleep 10
   done
 }
 
