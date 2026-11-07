@@ -1387,21 +1387,24 @@ func readSupervisedDaemonMarkers() (map[string]supervisedDaemonMarker, error) {
 		return nil, err
 	}
 	out := map[string]supervisedDaemonMarker{}
+	var recordErrors []error
 	for _, entry := range entries {
 		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
 			continue
 		}
 		data, err := os.ReadFile(filepath.Join(supervisedDaemonMarkerRoot(), entry.Name()))
 		if err != nil {
-			return nil, err
+			recordErrors = append(recordErrors, fmt.Errorf("read supervised daemon marker %s: %w", entry.Name(), err))
+			continue
 		}
 		var marker supervisedDaemonMarker
 		if err := json.Unmarshal(data, &marker); err != nil || marker.Version != 1 || marker.Binary == "" || marker.Resource == "" || marker.SpecHash == "" || marker.OwnerToken == "" {
-			return nil, fmt.Errorf("read supervised daemon ownership marker %s: invalid record", entry.Name())
+			recordErrors = append(recordErrors, fmt.Errorf("read supervised daemon marker %s: invalid record", entry.Name()))
+			continue
 		}
 		out[supervisedDaemonKey(marker.Binary, marker.Resource)] = marker
 	}
-	return out, nil
+	return out, errors.Join(recordErrors...)
 }
 
 func writeSupervisedDaemonMarker(marker supervisedDaemonMarker) error {
@@ -3251,9 +3254,11 @@ func (r *Runner) reconcileSupervisedDaemonSpecs(ctx context.Context, logger *slo
 	markers, err := readSupervisedDaemonMarkers()
 	if err != nil {
 		if logger != nil {
-			logger.Error("supervised daemon ownership records unavailable; refusing adoption", "error", err)
+			logger.Error("read supervised daemon records", "error", err)
 		}
-		return
+		if markers == nil {
+			return
+		}
 	}
 	for key, marker := range markers {
 		if spec, ok := desiredAll[key]; ok && marker.SpecHash == supervisedDaemonSpecHash(spec) {
@@ -3889,10 +3894,7 @@ func stopOwnedSupervisedDaemon(marker supervisedDaemonMarker, logger *slog.Logge
 }
 
 func supervisedDaemonOwnedProcessRunning(spec supervisedDaemonSpec) bool {
-	markers, err := readSupervisedDaemonMarkers()
-	if err != nil {
-		return false
-	}
+	markers, _ := readSupervisedDaemonMarkers()
 	marker, ok := markers[supervisedDaemonKey(spec.Binary, spec.ResourceName)]
 	if !ok || marker.OwnerToken != spec.OwnerToken || marker.SpecHash != supervisedDaemonSpecHash(spec) {
 		return false
