@@ -902,8 +902,9 @@ func (c TunnelInterfaceController) ensureFOUListener(ctx context.Context, desire
 	if desired.Mode != "fou" && desired.Mode != "gue" {
 		return nil
 	}
-	args := []string{"fou", "add", "port", strconv.Itoa(desired.EncapSport)}
-	if desired.Mode == "gue" {
+	listener := fouListener{Mode: desired.Mode, Port: desired.EncapSport}
+	args := []string{"fou", "add", "port", strconv.Itoa(listener.Port)}
+	if listener.Mode == "gue" {
 		args = append(args, "gue")
 	} else {
 		args = append(args, "ipproto", "4")
@@ -912,34 +913,50 @@ func (c TunnelInterfaceController) ensureFOUListener(ctx context.Context, desire
 	if err == nil {
 		return nil
 	}
-	if tunnelFOUAlreadyExists(out, err) {
-		if err := c.verifyFOUListener(ctx, fouListener{Mode: desired.Mode, Port: desired.EncapSport}); err != nil {
-			return err
-		}
+	if !tunnelFOUAlreadyExists(out, err) {
+		return fmt.Errorf("ensure %s listener port %d: %w: %s", listener.Mode, listener.Port, err, strings.TrimSpace(string(out)))
+	}
+	matches, err := c.fouListenerMatches(ctx, listener)
+	if err != nil {
+		return err
+	}
+	if matches {
 		return nil
 	}
-	return fmt.Errorf("ensure %s listener port %d: %w: %s", desired.Mode, desired.EncapSport, err, strings.TrimSpace(string(out)))
+	if err := c.deleteFOUListener(ctx, listener); err != nil {
+		return err
+	}
+	out, err = c.run(ctx, "ip", args...)
+	if err != nil {
+		return fmt.Errorf("replace %s listener port %d: %w: %s", listener.Mode, listener.Port, err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
-func (c TunnelInterfaceController) verifyFOUListener(ctx context.Context, listener fouListener) error {
+func (c TunnelInterfaceController) fouListenerMatches(ctx context.Context, listener fouListener) (bool, error) {
 	out, err := c.run(ctx, "ip", "fou", "show")
 	if err != nil {
-		return fmt.Errorf("inspect existing %s listener port %d: %w: %s", listener.Mode, listener.Port, err, strings.TrimSpace(string(out)))
+		return false, fmt.Errorf("inspect existing %s listener port %d: %w: %s", listener.Mode, listener.Port, err, strings.TrimSpace(string(out)))
 	}
-	needle := "port " + strconv.Itoa(listener.Port)
 	for _, line := range strings.Split(string(out), "\n") {
-		line = strings.TrimSpace(line)
-		if !strings.Contains(line, needle) {
-			continue
+		fields := strings.Fields(line)
+		portMatches, gue, ipip := false, false, false
+		for i, field := range fields {
+			if field == "port" && i+1 < len(fields) && fields[i+1] == strconv.Itoa(listener.Port) {
+				portMatches = true
+			}
+			if field == "gue" {
+				gue = true
+			}
+			if field == "ipproto" && i+1 < len(fields) && fields[i+1] == "4" {
+				ipip = true
+			}
 		}
-		if listener.Mode == "gue" && strings.Contains(line, "gue") {
-			return nil
-		}
-		if listener.Mode == "fou" && strings.Contains(line, "ipproto 4") && !strings.Contains(line, "gue") {
-			return nil
+		if portMatches {
+			return (listener.Mode == "gue" && gue) || (listener.Mode == "fou" && ipip && !gue), nil
 		}
 	}
-	return fmt.Errorf("existing FOU listener port %d does not match routerd %s listener shape", listener.Port, listener.Mode)
+	return false, fmt.Errorf("existing FOU listener port %d not found in kernel output", listener.Port)
 }
 
 func (c TunnelInterfaceController) deleteFOUListener(ctx context.Context, listener fouListener) error {
