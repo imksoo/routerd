@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"net"
 	"net/http"
 	"path/filepath"
@@ -28,29 +27,10 @@ type Store interface {
 }
 
 type Controller struct {
-	Router        *api.Router
 	Bus           *bus.Bus
 	Store         Store
 	DaemonSockets map[string]string
 	DryRun        bool
-	Logger        *slog.Logger
-}
-
-func (c Controller) Start(ctx context.Context) {
-	if c.Router == nil || c.Bus == nil || c.Store == nil {
-		return
-	}
-	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.pppoe.client.*"}}, 32)
-	go func() {
-		for event := range ch {
-			if event.Resource == nil || event.Resource.Kind != "PPPoESession" {
-				continue
-			}
-			if err := c.Reconcile(ctx, event.Resource.Name); err != nil && c.Logger != nil {
-				c.Logger.Warn("pppoe session reconcile failed", "resource", event.Resource.Name, "error", err)
-			}
-		}
-	}()
 }
 
 func (c Controller) Reconcile(ctx context.Context, name string) error {
