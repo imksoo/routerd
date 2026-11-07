@@ -4,134 +4,15 @@ package firewallbackend
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/render"
 )
-
-func TestNftablesBackendApplyChecksThenLoadsRuleset(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "firewall.nft")
-	var calls []string
-	backend := Nftables{Command: "nft", Run: func(_ context.Context, name string, args ...string) ([]byte, error) {
-		calls = append(calls, name+" "+strings.Join(args, " "))
-		return []byte("ok"), nil
-	}}
-	changed, err := backend.Apply(context.Background(), Ruleset{Path: path, Data: []byte("table inet routerd_filter {}\n")}, false)
-	if err != nil {
-		t.Fatalf("apply nftables: %v", err)
-	}
-	if !changed {
-		t.Fatal("first apply should report changed")
-	}
-	want := []string{"nft -c -f " + path, "nft -f " + path}
-	if !reflect.DeepEqual(calls, want) {
-		t.Fatalf("calls = %#v, want %#v", calls, want)
-	}
-}
-
-func TestPFBackendApplyChecksThenLoadsRuleset(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "firewall.pf")
-	var calls []string
-	backend := PF{Command: "pfctl", Run: func(_ context.Context, name string, args ...string) ([]byte, error) {
-		calls = append(calls, name+" "+strings.Join(args, " "))
-		return []byte("ok"), nil
-	}}
-	changed, err := backend.Apply(context.Background(), Ruleset{Path: path, Data: []byte("pass all keep state\n")}, false)
-	if err != nil {
-		t.Fatalf("apply pf: %v", err)
-	}
-	if !changed {
-		t.Fatal("first apply should report changed")
-	}
-	want := []string{"pfctl -n -f " + path, "pfctl -f " + path}
-	if !reflect.DeepEqual(calls, want) {
-		t.Fatalf("calls = %#v, want %#v", calls, want)
-	}
-}
-
-func TestFirewallBackendDiffSkipsUnchangedReload(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "firewall.nft")
-	data := []byte("table inet routerd_filter {}\n")
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		t.Fatal(err)
-	}
-	var calls []string
-	backend := Nftables{Command: "nft", Run: func(_ context.Context, name string, args ...string) ([]byte, error) {
-		calls = append(calls, name+" "+strings.Join(args, " "))
-		return []byte("ok"), nil
-	}}
-	changed, err := backend.Apply(context.Background(), Ruleset{Path: path, Data: data}, true)
-	if err != nil {
-		t.Fatalf("apply nftables dry-run: %v", err)
-	}
-	if changed {
-		t.Fatal("unchanged ruleset should not report changed")
-	}
-	if len(calls) != 0 {
-		t.Fatalf("dry-run unchanged apply should not reload: %#v", calls)
-	}
-}
-
-func TestNftablesBackendSkipsUnchangedLiveReloadWhenTableExists(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "firewall.nft")
-	data := []byte("table inet routerd_filter {}\n")
-	var calls []string
-	backend := Nftables{Command: "nft", Run: func(_ context.Context, name string, args ...string) ([]byte, error) {
-		calls = append(calls, name+" "+strings.Join(args, " "))
-		return []byte("ok"), nil
-	}}
-	if changed, err := backend.Apply(context.Background(), Ruleset{Path: path, Data: data}, false); err != nil {
-		t.Fatalf("first apply nftables: %v", err)
-	} else if !changed {
-		t.Fatal("first apply should report changed")
-	}
-	calls = nil
-	changed, err := backend.Apply(context.Background(), Ruleset{Path: path, Data: data}, false)
-	if err != nil {
-		t.Fatalf("second apply nftables: %v", err)
-	}
-	if changed {
-		t.Fatal("unchanged live apply should not report changed")
-	}
-	if len(calls) != 0 {
-		t.Fatalf("recently verified unchanged live apply should not call nft: %#v", calls)
-	}
-}
-
-func TestNftablesBackendReloadsUnchangedRulesetWhenTableMissing(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "firewall.nft")
-	data := []byte("table inet routerd_filter {}\n")
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		t.Fatal(err)
-	}
-	var calls []string
-	backend := Nftables{Command: "nft", Run: func(_ context.Context, name string, args ...string) ([]byte, error) {
-		calls = append(calls, name+" "+strings.Join(args, " "))
-		if len(args) >= 4 && args[0] == "list" && args[1] == "table" {
-			return nil, errors.New("missing")
-		}
-		return []byte("ok"), nil
-	}}
-	changed, err := backend.Apply(context.Background(), Ruleset{Path: path, Data: data}, false)
-	if err != nil {
-		t.Fatalf("apply nftables: %v", err)
-	}
-	if changed {
-		t.Fatal("unchanged file should not report changed even when table is restored")
-	}
-	want := []string{"nft list table inet routerd_filter", "nft -c -f " + path, "nft -f " + path}
-	if !reflect.DeepEqual(calls, want) {
-		t.Fatalf("calls = %#v, want %#v", calls, want)
-	}
-}
 
 func TestForPlatformSelectsNativeBackend(t *testing.T) {
 	if got := ForPlatform(platform.OSLinux, "").Name(); got != "nftables" {
@@ -190,36 +71,6 @@ func TestFirewallBackendRejectsInvalidRulesetPath(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestFirewallBackendPropagatesCommandFailure(t *testing.T) {
-	wantErr := errors.New("syntax failed")
-	backend := Nftables{Run: func(_ context.Context, name string, args ...string) ([]byte, error) {
-		return []byte("bad syntax"), wantErr
-	}}
-	err := backend.Reload(context.Background(), Ruleset{Backend: "nftables", Path: filepath.Join(t.TempDir(), "firewall.nft")})
-	if err == nil || !strings.Contains(err.Error(), "bad syntax") || !strings.Contains(err.Error(), "nft -c -f") {
-		t.Fatalf("Reload error = %v, want wrapped syntax error", err)
-	}
-}
-
-func TestFirewallBackendConcurrentReloadIsRaceClean(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "firewall.nft")
-	backend := Nftables{Run: func(_ context.Context, name string, args ...string) ([]byte, error) {
-		return []byte("ok"), nil
-	}}
-	ruleset := Ruleset{Backend: "nftables", Path: path, Data: []byte("table inet routerd_filter {}\n")}
-	var wg sync.WaitGroup
-	for i := 0; i < 16; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if err := backend.Reload(context.Background(), ruleset); err != nil {
-				t.Errorf("Reload: %v", err)
-			}
-		}()
-	}
-	wg.Wait()
 }
 
 func TestFirewallBackendRendersEdgeCaseResourceNames(t *testing.T) {

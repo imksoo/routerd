@@ -20,8 +20,6 @@ import (
 	"github.com/imksoo/routerd/pkg/render"
 )
 
-type CommandFunc func(context.Context, string, ...string) ([]byte, error)
-
 type Ruleset struct {
 	Backend       string
 	Path          string
@@ -39,7 +37,6 @@ type Backend interface {
 
 type Nftables struct {
 	Command string
-	Run     CommandFunc
 }
 
 func (b Nftables) Name() string { return "nftables" }
@@ -121,15 +118,11 @@ func (b Nftables) Reload(ctx context.Context, ruleset Ruleset) error {
 }
 
 func (b Nftables) run(ctx context.Context, name string, args ...string) ([]byte, error) {
-	if b.Run != nil {
-		return b.Run(ctx, name, args...)
-	}
 	return exec.CommandContext(ctx, name, args...).CombinedOutput()
 }
 
 type PF struct {
 	Command string
-	Run     CommandFunc
 }
 
 func (b PF) Name() string { return "pf" }
@@ -197,9 +190,6 @@ func (b PF) Reload(ctx context.Context, ruleset Ruleset) error {
 }
 
 func (b PF) run(ctx context.Context, name string, args ...string) ([]byte, error) {
-	if b.Run != nil {
-		return b.Run(ctx, name, args...)
-	}
 	return exec.CommandContext(ctx, name, args...).CombinedOutput()
 }
 
