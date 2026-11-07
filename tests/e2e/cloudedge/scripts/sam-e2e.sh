@@ -1397,7 +1397,7 @@ wait_provider_gate() {
       node_is_stopped "$node" && continue
       if ! ssh_node "$node" "set -e
 status=\"\$(sudo routerctl describe MobilityPool/cloudedge -o json)\"
-printf '%s\n' \"\$status\" | jq -e '
+if ! printf '%s\n' \"\$status\" | jq -e '
   .resource.status as \$s
   | ((\$s.phase // \"\") == \"Ready\")
   and (
@@ -1405,7 +1405,15 @@ printf '%s\n' \"\$status\" | jq -e '
      | select((.state // \"\" | ascii_downcase) == \"conflict\")]
     | length == 0
   )
-' >/dev/null"; then
+' >/dev/null; then
+  printf '%s\n' \"\$status\" | jq -c '
+    .resource.status as \$s
+    | {phase: \$s.phase, reason: \$s.reason,
+       conflicts: ([(\$s.ownershipResolverControlPlaneOwnerTable // [])[]
+         | select((.state // \"\" | ascii_downcase) == \"conflict\")] | length)}
+  ' >&2
+  exit 1
+fi"; then
         ok=0
         echo "waiting for provider readiness on $node ($label)" >&2
       fi
