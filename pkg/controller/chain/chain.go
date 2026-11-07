@@ -2409,7 +2409,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current.Router = effective
 			return didWorkError(current.Reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "link", Every: 30 * time.Second, Subs: []bus.Subscription{{Topics: []string{dhcpv4client.EventApplied}}}, PeriodicFunc: func(ctx context.Context) (bool, error) {
+		framework.FuncController{ControllerName: "link", Every: 30 * time.Second, Subs: append(statusSubscriptions("VirtualAddress"), bus.Subscription{Topics: []string{dhcpv4client.EventApplied}}), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return false, err
