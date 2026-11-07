@@ -57,12 +57,9 @@ type ProbeResult struct {
 
 	// ProbeEvidence carries the egress / source / route information that was
 	// in effect for this probe attempt. It is populated by the Probe
-	// implementations and by the controller after the probe returns (route
-	// lookup runs in the controller path so it is hookable by tests).
+	// implementations and by the controller after the probe returns.
 	ProbeEvidence
 }
-
-type ProbeFunc func(ctx context.Context, spec api.HealthCheckSpec) ProbeResult
 
 type State struct {
 	Phase             string    `json:"phase"`
@@ -106,7 +103,6 @@ type Controller struct {
 	Router *api.Router
 	Bus    *bus.Bus
 	Store  Store
-	Probe  ProbeFunc
 	Now    func() time.Time
 	Logger *slog.Logger
 
@@ -181,11 +177,7 @@ func (c *Controller) ProbeOnce(ctx context.Context, resource api.Resource, spec 
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	probe := c.Probe
-	if probe == nil {
-		probe = Probe
-	}
-	result := probe(probeCtx, spec)
+	result := Probe(probeCtx, spec)
 	if probeCtx.Err() == context.DeadlineExceeded && !result.OK {
 		result.Timeout = true
 		if result.FailureKind == "" {
