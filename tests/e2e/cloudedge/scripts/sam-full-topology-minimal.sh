@@ -194,9 +194,11 @@ verify_full_gate_evidence() {
   }
 }
 
-gate_rc=0
+gate_rc=1
 if [ "$e2e_rc" -eq 0 ]; then
-  verify_full_gate_evidence || gate_rc=1
+  if verify_full_gate_evidence; then
+    gate_rc=0
+  fi
 fi
 
 elapsed_seconds="$SECONDS"
@@ -245,10 +247,10 @@ jq -n \
     inputs:{tofuOutput:$tofuOutput, artifact:$artifact, tfvars:$tfvars, sshKey:$sshKey},
     topology:{routerCount:$routerCount, clientCount:$clientCount, cloudClientCount:$cloudClientCount},
     gates:{
-      controlDataplane:true,
-      directedClientMatrix:true,
-      directedCloudIngressMatrix:true,
-      providerReadiness:true,
+      controlDataplane:(if $gateEvidenceExit == 0 then true else null end),
+      directedClientMatrix:(if $gateEvidenceExit == 0 then true else null end),
+      directedCloudIngressMatrix:(if $gateEvidenceExit == 0 then true else null end),
+      providerReadiness:(if $gateEvidenceExit == 0 then true else null end),
       legacyProtocols:false,
       performance:false,
       failover:false,
