@@ -205,6 +205,16 @@ func leaseFieldString(v any) string {
 
 func (c Controller) applyLease(ctx context.Context, name string, current, next map[string]any) error {
 	phase := fmt.Sprint(next["phase"])
+	if phase == daemonapi.ResourcePhaseBound || phase == daemonapi.ResourcePhaseRefreshing || phase == daemonapi.ResourcePhaseRebinding {
+		expires, err := time.Parse(time.RFC3339Nano, mapString(next, "expiresAt"))
+		if err != nil {
+			return fmt.Errorf("DHCPv4 lease %s has invalid expiration: %w", name, err)
+		}
+		if !time.Now().Before(expires) {
+			phase = daemonapi.ResourcePhaseExpired
+			next["phase"] = phase
+		}
+	}
 	if phase == daemonapi.ResourcePhaseExpired || phase == daemonapi.ResourcePhaseReleased {
 		if err := c.removeLeaseRoute(ctx, name, current, next); err != nil {
 			return err
