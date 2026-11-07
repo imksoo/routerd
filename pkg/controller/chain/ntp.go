@@ -23,18 +23,13 @@ type NTPClientController struct {
 	Bus            interface {
 		Publish(context.Context, daemonapi.DaemonEvent) error
 	}
-	Store      Store
-	Command    outputCommandFunc
-	ConfigPath string
-	DryRun     bool
+	Store  Store
+	DryRun bool
 }
 
 func (c NTPClientController) Reconcile(ctx context.Context) error {
 	defaults, features := platform.Current()
-	command := c.Command
-	if command == nil {
-		command = runOutputCommandContext
-	}
+	command := runOutputCommandContext
 	if err := c.cleanupWhenFalseNTPClients(ctx, command); err != nil {
 		return err
 	}
@@ -264,9 +259,6 @@ func hasManagedNTPServer(router *api.Router, provider string) bool {
 }
 
 func (c NTPClientController) ntpConfigPath(provider string, defaults platform.Defaults) string {
-	if c.ConfigPath != "" {
-		return c.ConfigPath
-	}
 	if provider == "ntpd" {
 		return "/usr/local/etc/routerd/ntp.conf"
 	}
@@ -475,17 +467,12 @@ type NTPServerController struct {
 	Bus            interface {
 		Publish(context.Context, daemonapi.DaemonEvent) error
 	}
-	Store      Store
-	Command    outputCommandFunc
-	ConfigPath string
-	DryRun     bool
+	Store  Store
+	DryRun bool
 }
 
 func (c NTPServerController) Reconcile(ctx context.Context) error {
-	command := c.Command
-	if command == nil {
-		command = runOutputCommandContext
-	}
+	command := runOutputCommandContext
 	if err := c.cleanupWhenFalseNTPServers(ctx, command); err != nil {
 		return err
 	}
@@ -703,9 +690,6 @@ func defaultNTPServerProvider() string {
 }
 
 func (c NTPServerController) serverConfigPath(provider string) string {
-	if c.ConfigPath != "" {
-		return c.ConfigPath
-	}
 	if provider == "ntpd" {
 		return "/usr/local/etc/routerd/ntp.conf"
 	}
