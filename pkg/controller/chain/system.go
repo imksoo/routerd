@@ -288,9 +288,7 @@ func (c NetworkAdoptionController) applyNetworkAdoption(ctx context.Context, nam
 	retry := c.Store.ObjectStatus(api.SystemAPIVersion, "NetworkAdoption", name)["phase"] == "Error"
 	if networkdChanged || (retry && networkdAdoptionConfigured(spec.SystemdNetworkd)) {
 		if _, err := command(ctx, "networkctl", "reload"); err != nil {
-			if _, fallbackErr := command(ctx, "systemctl", "restart", "systemd-networkd.service"); fallbackErr != nil {
-				return paths, changed, fmt.Errorf("reload networkd: %w; restart fallback: %v", err, fallbackErr)
-			}
+			return paths, changed, fmt.Errorf("reload networkd: %w", err)
 		}
 		if ifname != "" {
 			if _, err := command(ctx, "networkctl", "reconfigure", ifname); err != nil {
