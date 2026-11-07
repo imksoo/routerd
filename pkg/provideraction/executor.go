@@ -36,10 +36,6 @@ type RunOutcome struct {
 	Error       string `json:"error,omitempty" yaml:"error,omitempty"`
 }
 
-// ExecutorRunner is the injectable seam the engine uses to launch an executor.
-// The production implementation is RunExecutor; tests substitute a fake.
-type ExecutorRunner func(ctx context.Context, spec api.PluginSpec, req ExecuteActionRequest) (ExecuteActionResult, RunOutcome, error)
-
 // RunExecutor launches an executor plugin and exchanges the wire protocol with
 // it. This is the ONLY place in routerd an executor process is launched.
 //

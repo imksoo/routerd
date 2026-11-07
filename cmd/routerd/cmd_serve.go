@@ -660,7 +660,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 						Timeout:          *gracefulStopTimeout,
 						PollInterval:     time.Second,
 						BGPPaths:         bgpdaemon.NewControlClient(controllerOpts.BGPControlSocketPath),
-						ProviderAction:   provideractioncontroller.Controller{Bus: controllerBus, Runner: controllerOpts.ProviderActionRunner, DryRun: controllerOpts.DryRunProviderAction},
+						ProviderAction:   provideractioncontroller.Controller{Bus: controllerBus, DryRun: controllerOpts.DryRunProviderAction},
 						Logger:           logger,
 						ControllerLogger: controllerOpts.Logger,
 					})

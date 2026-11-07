@@ -37,11 +37,9 @@ type Logger interface {
 	Printf(format string, args ...any)
 }
 
-// Engine drives the gated provider-action execution path. It is pure-ish: the
-// executor runner, clock, store, and logger are all injected.
+// Engine drives the gated provider-action execution path.
 type Engine struct {
 	store               Store
-	run                 ExecutorRunner
 	now                 func() time.Time
 	log                 Logger
 	plugins             []api.Resource
@@ -52,8 +50,6 @@ type Engine struct {
 type Config struct {
 	// Store is the journal + dynamic-part surface (required).
 	Store Store
-	// Runner launches an executor (required). Production: RunExecutor.
-	Runner ExecutorRunner
 	// Now is the clock (defaults to time.Now).
 	Now func() time.Time
 	// Log optionally records skips/denials.
@@ -93,9 +89,6 @@ func NewEngine(cfg Config) (*Engine, error) {
 	if cfg.Store == nil {
 		return nil, fmt.Errorf("provideraction engine requires a Store")
 	}
-	if cfg.Runner == nil {
-		return nil, fmt.Errorf("provideraction engine requires a Runner")
-	}
 	now := cfg.Now
 	if now == nil {
 		now = time.Now
@@ -106,7 +99,6 @@ func NewEngine(cfg Config) (*Engine, error) {
 	}
 	return &Engine{
 		store:               cfg.Store,
-		run:                 cfg.Runner,
 		now:                 now,
 		log:                 cfg.Log,
 		plugins:             cfg.Plugins,
@@ -572,7 +564,7 @@ func (e *Engine) Execute(ctx context.Context, id int64, mode string, policy api.
 		IdempotencyKey: rec.IdempotencyKey,
 	})
 
-	result, _, runErr := e.run(ctx, spec, req)
+	result, _, runErr := RunExecutor(ctx, spec, req)
 	executedAt := e.now().UTC()
 	if runErr != nil {
 		// Executor process error: journal a failure (never succeeded).
@@ -696,7 +688,7 @@ func (e *Engine) DryRunPreview(ctx context.Context, id int64, policy api.Provide
 		IdempotencyKey: rec.IdempotencyKey,
 	})
 
-	result, _, runErr := e.run(ctx, spec, req)
+	result, _, runErr := RunExecutor(ctx, spec, req)
 	if runErr != nil {
 		return DryRunResult{}, fmt.Errorf("dry-run action %d: %w", id, runErr)
 	}
@@ -751,7 +743,7 @@ func (e *Engine) Rollback(ctx context.Context, id int64, policy api.ProviderActi
 		IdempotencyKey: rec.IdempotencyKey + ":undo",
 	})
 
-	result, _, runErr := e.run(ctx, spec, req)
+	result, _, runErr := RunExecutor(ctx, spec, req)
 	if runErr != nil {
 		return fmt.Errorf("rollback action %d: executor failed: %w", id, runErr)
 	}
@@ -811,7 +803,7 @@ func (e *Engine) RollbackPreview(ctx context.Context, id int64, policy api.Provi
 		IdempotencyKey: rec.IdempotencyKey + ":undo",
 	})
 
-	result, _, runErr := e.run(ctx, spec, req)
+	result, _, runErr := RunExecutor(ctx, spec, req)
 	if runErr != nil {
 		return DryRunResult{}, fmt.Errorf("rollback action %d: %w", id, runErr)
 	}

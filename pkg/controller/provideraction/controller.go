@@ -30,7 +30,6 @@ type Controller struct {
 	Router *api.Router
 	Bus    *bus.Bus
 	Store  Store
-	Runner enginepkg.ExecutorRunner
 	Now    func() time.Time
 	DryRun bool
 	Logger *slog.Logger
@@ -45,13 +44,8 @@ func (c Controller) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	runner := c.Runner
-	if runner == nil {
-		runner = enginepkg.RunExecutor
-	}
 	engine, err := enginepkg.NewEngine(enginepkg.Config{
 		Store:   c.Store,
-		Runner:  runner,
 		Now:     func() time.Time { return now },
 		Log:     controllerLogger{logger: c.Logger},
 		Plugins: plugins,

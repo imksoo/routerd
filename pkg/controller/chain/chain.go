@@ -1269,7 +1269,6 @@ type Options struct {
 	Logger                  *slog.Logger
 	ControllerObserver      framework.Observer
 	EnabledControllers      []string
-	ProviderActionRunner    provideraction.ExecutorRunner
 	ProviderInventoryRunner providerinventory.Runner
 	PeerGroupSyncClient     *mobilitycontroller.PeerGroupSyncClient
 	MutationGate            *sync.RWMutex
@@ -2251,7 +2250,6 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			Router: r.currentRouter(),
 			Bus:    r.Bus,
 			Store:  rawStore,
-			Runner: opts.ProviderActionRunner,
 			DryRun: opts.DryRunProviderAction,
 			Logger: logger,
 		}

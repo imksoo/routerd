@@ -89,9 +89,8 @@ func actionImportCommand(args []string, stdout io.Writer) error {
 	}
 	defer store.Close()
 	engine, err := provideraction.NewEngine(provideraction.Config{
-		Store:  store,
-		Runner: provideraction.RunExecutor,
-		Now:    func() time.Time { return time.Now().UTC() },
+		Store: store,
+		Now:   func() time.Time { return time.Now().UTC() },
 	})
 	if err != nil {
 		return err
@@ -263,9 +262,8 @@ func actionApproveCommand(args []string, stdout io.Writer) error {
 	}
 	defer store.Close()
 	engine, err := provideraction.NewEngine(provideraction.Config{
-		Store:  store,
-		Runner: provideraction.RunExecutor,
-		Now:    func() time.Time { return time.Now().UTC() },
+		Store: store,
+		Now:   func() time.Time { return time.Now().UTC() },
 	})
 	if err != nil {
 		return err
@@ -330,7 +328,6 @@ func actionExecuteCommand(args []string, stdout io.Writer) error {
 	defer store.Close()
 	engine, err := provideraction.NewEngine(provideraction.Config{
 		Store:   store,
-		Runner:  provideraction.RunExecutor,
 		Now:     func() time.Time { return time.Now().UTC() },
 		Plugins: plugins,
 	})
@@ -413,7 +410,6 @@ func actionRollbackCommand(args []string, stdout io.Writer) error {
 	defer store.Close()
 	engine, err := provideraction.NewEngine(provideraction.Config{
 		Store:   store,
-		Runner:  provideraction.RunExecutor,
 		Now:     func() time.Time { return time.Now().UTC() },
 		Plugins: plugins,
 	})
