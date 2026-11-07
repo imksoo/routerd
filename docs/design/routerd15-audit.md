@@ -4460,3 +4460,7 @@ RA default route and journal; the peer process was killed and reaped. No product
 fix was needed. The maintained procedure and native-parent Make target include
 the test. DHCPv6 exchange, IPv6 transit, renumbering, packaged-daemon restart and
 FreeBSD remain outside this result.
+
+Test/procedure publication `f28e58fd` was secrets-scanned, pushed and remote
+SHA verified. Full `go test ./...`, schema checks, example validation and
+four-locale website build passed; existing documentation-link warnings remain.

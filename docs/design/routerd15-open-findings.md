@@ -124,8 +124,11 @@ Still open:
   exercised IPv4 address/route acquisition, SQLite reopen, recovery and recorded
   withdrawal; WireGuard also passed packaged-daemon key rotation, restart and
   withdrawal. Do not repeat these as missing implementations. Multiple-VRF
-  transit isolation, member-address dependency semantics, delegated IPv6/RA children,
-  other peer-source integrations and complete platform parity remain unqualified.
+  overlapping IPv4 UDP transit/isolation and a VRF member delegated-address/RA
+  kernel SLAAC peer gate now pass; see the qualification ledger for exact scope.
+  Member-address failure/dependency semantics, delegated IPv6 transit/renumbering,
+  packaged VRF restart/reboot, other peer-source integrations and complete
+  platform parity remain unqualified.
   TunnelInterface likewise has an integrated concrete child-proof reader; the
   scoped FOU/GUE controller results do not establish all daemon/source-expiry
   combinations. See the dated results in [the audit](routerd15-audit.md).

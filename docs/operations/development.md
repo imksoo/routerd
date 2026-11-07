@@ -1545,7 +1545,7 @@ restart or delegated IPv6/RA qualification.
 ## Linux VRF delegated address and RA
 
 `make check-routerd15-native-parent-linux` also runs
-`TestVRFNativeLinuxDelegatedRA`. It requires Python-independent Linux tooling
+`TestVRFNativeLinuxDelegatedRA`. It requires Linux tools
 (`ip`, `sysctl`, `nsenter`, `ping`) and explicit namespace isolation as above.
 A finite PD lease is supplied through SQLite; the production VRF, delegated
 address and RA controllers perform the native effects. A separate client
