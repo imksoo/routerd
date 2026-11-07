@@ -41,8 +41,10 @@ IPv6 transit/renumbering exposed and fixed tentative RA source selection
 formal package lifecycle, including startup DAD recovery and restart/reboot.
 The first packaged attempt exposed missing Ubuntu VRF modules in certification
 and stale withdrawn VRF health; the latter is locally fixed in `b181a6c1`.
-Resume from re-certified empty state with the new package and verify automatic
-retirement of the retained terminal row before applying the VRF candidate.
+The b181a6c1 package recovered the terminal row and passed initial forwarding
+and daemon restart, but cold boot failed on old-kernel VRF ownership receipts.
+Next reproduce that receipt lifecycle locally, fix reboot recovery without
+adopting foreign links, then repeat the scoped package lifecycle gate.
 Use the qualification ledger to retain uncovered paths. Preserve
 the 53.867-second maximum HA response gap as a limitation to investigate, not a
 claim of fast failover. Do not start FreeBSD work or declare whole-task completion

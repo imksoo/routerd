@@ -1273,6 +1273,10 @@ sudo modprobe vrf
 環境を修復しません。今回の Ubuntu 24.04 最小ゲストは `CONFIG_NET_VRF=m` でも
 `vrf.ko` がありませんでした。パッケージ版・ハッシュ、独立 Kea の待受、両側の
 隔離 L2 経路も確認し、VM 起動時は routerd より先に試験用 NIC を復元します。
+Kea 起動前に対向 NIC のリンクローカルアドレスが tentative／dadfailed でないことを
+確認し、UDP 547 の実際の待受を必須にします。プロセスの稼働だけでは不十分です。
+電源断試験前に fixture 設定を永続化し、終了時は通常の撤去と fixture 削除の後に
+ゲストのファイルシステム書込みを完了させてから電源を切ります。
 
 空の Healthy 状態から VRF の LAN/WAN、IPv4 アドレス、実 DHCPv6 PD、委譲
 LAN/WAN アドレスと RA を適用します。対向の IPv4/IPv6 通過転送、daemon 再起動、

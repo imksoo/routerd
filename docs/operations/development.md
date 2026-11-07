@@ -1582,6 +1582,11 @@ preparation, then re-certify; do not repair the kernel during qualification.
 The observed Ubuntu 24.04 minimal guest had `CONFIG_NET_VRF=m` but no `vrf.ko`.
 Keep package version/hash, independent Kea readiness and both isolated L2 paths
 in preflight. Restore fixture interfaces before routerd on guest boot.
+Wait for the peer interface link-local address to leave tentative/DAD-failed
+state before starting Kea, and require an actual UDP 547 listener; an active
+process alone does not prove DHCP readiness. Persist fixture setup before a
+power-loss test. After normal withdrawal and fixture cleanup, flush guest
+filesystem writes before final poweroff so deleted fixture units cannot return.
 
 Require an empty Healthy starting state, then apply VRF with LAN/WAN members,
 IPv4 addresses, real DHCPv6 PD, delegated LAN/WAN addresses and RA. Verify peer

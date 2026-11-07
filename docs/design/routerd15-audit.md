@@ -4546,3 +4546,27 @@ For `b181a6c1`, the complete Go suite, schema checks, example validation, websit
 schema checks and all four website locales passed (existing link warnings).
 Formal matching base/addon `1.5.0~20261107015013+gb181a6c1` built successfully.
 Packaged VRF lifecycle verification remains pending.
+
+### Packaged VRF follow-up: cold-boot recovery remains broken
+
+The matching `b181a6c1` packages were apt-installed and verified on the isolated
+Ubuntu router. Starting with the retained withdrawn status automatically restored
+empty Healthy. After environment certification, all 11 resources were Healthy
+with no controller errors; independent client IPv4 and IPv6 transit passed at
+13.6 seconds. Normal daemon restart passed the same checks at 24.5 seconds.
+
+Router VM power loss and cold boot failed: the VRF controller repeatedly returned
+`VRF ownership belongs to another kernel scope`. `VRFController.Reconcile` checks
+old receipts before observing absence or considering reboot recovery; the saved
+scope includes the old boot ID. Top-level health still reported Healthy from
+saved resource rows, but the gate correctly rejected the controller error. This
+is not a successful cold-boot qualification. The daemon and independent Kea were
+stopped, and existing guests powered off with failure state retained for a local
+reproduction and corrected-package recovery check. No database editing or manual
+VRF recreation was used to claim recovery.
+
+Environment preparation also exposed two procedure problems: deleted fixture
+files returned after immediate hard poweroff, and Kea started during interface
+DAD with no listening socket. Preparation/cleanup now flush filesystem changes;
+Kea startup waits for a usable link-local address and certification requires its
+actual UDP listener. These changes precede product qualification.
