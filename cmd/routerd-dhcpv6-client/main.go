@@ -350,10 +350,10 @@ func (d *dhcpv6Daemon) Run(ctx context.Context) error {
 		return err
 	}
 	if err := d.restoreLease(ctx); err != nil {
-		return err
+		fmt.Fprintf(os.Stderr, "restore DHCPv6 lease for %s: %v\n", d.opts.resource, err)
 	}
 	if err := d.restoreEvents(); err != nil {
-		return err
+		fmt.Fprintf(os.Stderr, "restore DHCPv6 events for %s: %v\n", d.opts.resource, err)
 	}
 	server, listener, err := d.httpServer()
 	if err != nil {
