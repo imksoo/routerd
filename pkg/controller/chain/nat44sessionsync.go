@@ -26,17 +26,11 @@ const defaultNAT44SessionSyncEventBatchMax = 512
 
 var errUnsupportedConntrackProtocol = errors.New("unsupported conntrack protocol")
 
-type sessionSyncCommandFunc func(ctx context.Context, name string, args []string, stdin []byte) ([]byte, error)
-type sessionSyncStreamFunc func(ctx context.Context, name string, args []string) (io.ReadCloser, func() error, error)
-
 type NAT44SessionSyncController struct {
-	Router       *api.Router
-	Store        Store
-	DryRun       bool
-	Command      sessionSyncCommandFunc
-	EventCommand sessionSyncStreamFunc
-	Workers      *nat44SessionSyncWorkerManager
-	Now          func() time.Time
+	Router  *api.Router
+	Store   Store
+	DryRun  bool
+	Workers *nat44SessionSyncWorkerManager
 }
 
 type nat44SessionSyncJob struct {
@@ -265,15 +259,11 @@ func nat44SessionSyncPersistentStatusChanged(current, next map[string]any) bool 
 }
 
 func (c NAT44SessionSyncController) dumpEntries(ctx context.Context, job nat44SessionSyncJob) ([]conntrackRestoreEntry, error) {
-	run := c.Command
-	if run == nil {
-		run = runOutputCommandWithInput
-	}
 	seen := map[string]bool{}
 	var out []conntrackRestoreEntry
 	for _, address := range job.SNATAddresses {
 		runCtx, cancel := nat44SessionSyncCommandContext(ctx)
-		data, err := c.runConntrackDump(runCtx, run, job.ConntrackCommand, address)
+		data, err := c.runConntrackDump(runCtx, job.ConntrackCommand, address)
 		cancel()
 		if err != nil {
 			return nil, fmt.Errorf("%s --dump -n %s: %w: %s", job.ConntrackCommand, address, err, strings.TrimSpace(string(data)))
@@ -433,11 +423,8 @@ func (c NAT44SessionSyncController) restoreOperationsToTargets(ctx context.Conte
 	return targetStatuses, total, overallPhase, overallReason
 }
 
-func (c NAT44SessionSyncController) runConntrackDump(ctx context.Context, run sessionSyncCommandFunc, command, address string) ([]byte, error) {
+func (c NAT44SessionSyncController) runConntrackDump(ctx context.Context, command, address string) ([]byte, error) {
 	args := []string{"--dump", "-o", "extended", "-n", address}
-	if c.Command != nil {
-		return run(ctx, command, args, nil)
-	}
 	cmd := exec.CommandContext(ctx, command, args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -466,9 +453,6 @@ func (c NAT44SessionSyncController) dumpTargetEntries(ctx context.Context, targe
 
 func (c NAT44SessionSyncController) runConntrackEventStream(ctx context.Context, command string) (io.ReadCloser, func() error, error) {
 	args := []string{"-E", "-o", "extended"}
-	if c.EventCommand != nil {
-		return c.EventCommand(ctx, command, args)
-	}
 	cmd := exec.CommandContext(ctx, command, args...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -492,22 +476,11 @@ func (c NAT44SessionSyncController) runConntrackEventStream(ctx context.Context,
 }
 
 func (c NAT44SessionSyncController) runSSH(ctx context.Context, target nat44SessionSyncTarget, script []byte) ([]byte, error) {
-	run := c.Command
-	if run == nil {
-		run = runOutputCommandWithInput
-	}
 	args := append([]string{}, fileSyncEffectiveSSHOptions(target.SSHOptions)...)
 	args = append(args, nat44SessionSyncDestination(target), "sh", "-s")
 	runCtx, cancel := nat44SessionSyncCommandContext(ctx)
 	defer cancel()
-	return run(runCtx, "ssh", args, script)
-}
-
-func (c NAT44SessionSyncController) now() time.Time {
-	if c.Now != nil {
-		return c.Now()
-	}
-	return time.Now().UTC()
+	return runOutputCommandWithInput(runCtx, "ssh", args, script)
 }
 
 func (c NAT44SessionSyncController) save(apiVersion, kind, name string, status map[string]any) error {
