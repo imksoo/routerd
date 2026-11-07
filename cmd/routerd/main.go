@@ -27,7 +27,6 @@ var (
 	platformDefaults, platformFeatures = platform.Current()
 
 	defaultConfigPath           = platformDefaults.ConfigFile()
-	defaultPluginDir            = platformDefaults.PluginDir
 	defaultNetplanPath          = platformDefaults.NetplanFile
 	defaultDnsmasqConfigPath    = platformDefaults.ManagedDnsmasqConfigFile()
 	defaultDnsmasqServicePath   = platformDefaults.DnsmasqServiceFile
