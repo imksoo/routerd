@@ -11,6 +11,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -134,9 +136,21 @@ func (b Nftables) Apply(ctx context.Context, ruleset Ruleset, dryRun bool) (bool
 }
 
 func (b Nftables) preserveDynamicSets(ctx context.Context, data, previous []byte) ([]byte, error) {
-	if !bytes.Contains(data, []byte("destroy set inet routerd_filter flow_pinhole_")) &&
-		!bytes.Contains(data, []byte("destroy set inet routerd_filter ip_address_set_")) {
+	if !bytes.Contains(data, []byte("flush table inet routerd_filter\n")) {
 		return data, nil
+	}
+	lines := strings.Split(string(data), "\n")
+	wanted := make(map[string]bool)
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) >= 3 && fields[0] == "set" && fields[2] == "{" {
+			wanted[fields[1]] = true
+		}
+		for i, field := range fields {
+			if field == "meter" && i+1 < len(fields) {
+				wanted[fields[i+1]] = true
+			}
+		}
 	}
 	nft := stringutil.FirstNonEmpty(b.Command, "nft")
 	out, err := b.run(ctx, nft, "-j", "list", "ruleset")
@@ -149,6 +163,7 @@ func (b Nftables) preserveDynamicSets(ctx context.Context, data, previous []byte
 				Family string          `json:"family"`
 				Table  string          `json:"table"`
 				Name   string          `json:"name"`
+				Handle uint64          `json:"handle"`
 				Type   json.RawMessage `json:"type"`
 				Flags  []string        `json:"flags"`
 			} `json:"set"`
@@ -158,10 +173,20 @@ func (b Nftables) preserveDynamicSets(ctx context.Context, data, previous []byte
 		return nil, fmt.Errorf("decode nft ruleset: %w", err)
 	}
 	existing := make(map[string]string)
+	var obsolete []uint64
 	for _, object := range snapshot.Objects {
 		set := object.Set
-		if set == nil || set.Family != "inet" || set.Table != "routerd_filter" ||
-			(!strings.HasPrefix(set.Name, "flow_pinhole_") && !strings.HasPrefix(set.Name, "ip_address_set_")) {
+		if set == nil || set.Family != "inet" || set.Table != "routerd_filter" {
+			continue
+		}
+		if !wanted[set.Name] {
+			if set.Handle == 0 {
+				return nil, fmt.Errorf("nft set %s has no handle", set.Name)
+			}
+			obsolete = append(obsolete, set.Handle)
+			continue
+		}
+		if !strings.HasPrefix(set.Name, "flow_pinhole_") && !strings.HasPrefix(set.Name, "ip_address_set_") {
 			continue
 		}
 		var types []string
@@ -182,7 +207,6 @@ func (b Nftables) preserveDynamicSets(ctx context.Context, data, previous []byte
 			existing[set.Name] = strings.Join(types, " . ")
 		}
 	}
-	lines := strings.Split(string(data), "\n")
 	preserve := make(map[string]bool)
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
@@ -199,12 +223,20 @@ func (b Nftables) preserveDynamicSets(ctx context.Context, data, previous []byte
 			preserve[name] = true
 		}
 	}
-	if len(preserve) == 0 {
+	if len(preserve) == 0 && len(obsolete) == 0 {
 		return data, nil
 	}
+	sort.Slice(obsolete, func(i, j int) bool { return obsolete[i] < obsolete[j] })
 	var kept []string
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
+		if trimmed == "flush table inet routerd_filter" {
+			kept = append(kept, line)
+			for _, handle := range obsolete {
+				kept = append(kept, "destroy set inet routerd_filter handle "+strconv.FormatUint(handle, 10))
+			}
+			continue
+		}
 		if strings.HasPrefix(trimmed, "destroy set inet routerd_filter ") && preserve[strings.TrimPrefix(trimmed, "destroy set inet routerd_filter ")] {
 			continue
 		}
