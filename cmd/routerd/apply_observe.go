@@ -65,13 +65,6 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 		prefixLength := api.EffectiveIPv6PDPrefixLength(profile, spec.PrefixLength)
 		base := "ipv6PrefixDelegation." + res.Metadata.Name
 		lease, _ := routerstate.PDLeaseFromStore(store, base)
-		managedSnapshotFresh := false
-		if client == api.IPv6PDClientRouterd {
-			if snapshot, ok := managedPDClientSnapshot(res.Metadata.Name, aliases[spec.Interface], spec, store.Now()); ok {
-				lease = mergePDLeaseSnapshot(lease, snapshot)
-				managedSnapshotFresh = true
-			}
-		}
 		previousClient := store.Get(base + ".client").Value
 		if previousClient != "" && previousClient != client {
 			var cleared bool
@@ -80,6 +73,13 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 				if recorder, ok := store.(routerstate.EventRecorder); ok {
 					_ = recorder.RecordEvent(res.APIVersion, res.Kind, res.Metadata.Name, "Normal", "PDClientChanged", fmt.Sprintf("cleared observed DHCPv6 identity after client changed from %s to %s", previousClient, client))
 				}
+			}
+		}
+		managedSnapshotFresh := false
+		if client == api.IPv6PDClientRouterd {
+			if snapshot, ok := managedPDClientSnapshot(res.Metadata.Name, aliases[spec.Interface], spec, store.Now()); ok {
+				lease = mergePDLeaseSnapshot(lease, snapshot)
+				managedSnapshotFresh = true
 			}
 		}
 		if ifname := aliases[spec.Interface]; ifname != "" {
