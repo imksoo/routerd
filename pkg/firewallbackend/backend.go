@@ -114,7 +114,7 @@ func (b Nftables) Apply(ctx context.Context, ruleset Ruleset, dryRun bool) (bool
 		}
 	}
 	_ = nftstate.MarkVerified(ruleset.Path, time.Now().UTC())
-	return changed, nil
+	return true, nil
 }
 
 func (b Nftables) rulesetTablesPresent(ctx context.Context, ruleset Ruleset) bool {

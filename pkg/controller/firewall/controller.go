@@ -19,6 +19,8 @@ type Store interface {
 	ObjectStatus(apiVersion, kind, name string) map[string]any
 }
 
+const RulesAppliedEvent = "routerd.firewall.rules.applied"
+
 type Controller struct {
 	Router       *api.Router
 	Bus          *bus.Bus
@@ -99,7 +101,7 @@ func (c Controller) savePolicyStatuses(ctx context.Context, backend, path string
 		}
 	}
 	if changed && c.Bus != nil {
-		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.firewall.rules.applied", daemonapi.SeverityInfo)
+		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, RulesAppliedEvent, daemonapi.SeverityInfo)
 		event.Attributes = map[string]string{"backend": backend, "nftablesPath": path, "dryRun": fmt.Sprintf("%t", c.DryRun), "internalHoles": fmt.Sprintf("%d", internalHoles)}
 		_ = c.Bus.Publish(ctx, event)
 	}

@@ -2788,7 +2788,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			return didWorkError(current.Reconcile(ctx))
 		}})
 	}
-	controllers = append(controllers, framework.FuncController{ControllerName: "ip-address-set", Every: 30 * time.Second, Subs: append(statusSubscriptionsWithWhen(r.currentRouter(), []string{"IPAddressSet", "LocalServiceRedirect", "FirewallFlowPinhole"}, "IPAddressSet", "LocalServiceRedirect", "FirewallFlowPinhole"), bus.Subscription{Topics: []string{nat44.TableAppliedEvent}}), PeriodicFunc: func(ctx context.Context) (bool, error) {
+	controllers = append(controllers, framework.FuncController{ControllerName: "ip-address-set", Every: 30 * time.Second, Subs: append(statusSubscriptionsWithWhen(r.currentRouter(), []string{"IPAddressSet", "LocalServiceRedirect", "FirewallFlowPinhole"}, "IPAddressSet", "LocalServiceRedirect", "FirewallFlowPinhole"), bus.Subscription{Topics: []string{nat44.TableAppliedEvent, firewallcontroller.RulesAppliedEvent}}), PeriodicFunc: func(ctx context.Context) (bool, error) {
 		effective, err := effectiveForReconcile()
 		if err != nil {
 			return false, err
