@@ -281,6 +281,8 @@ func (d *dhcpv4Daemon) acquire(ctx context.Context) error {
 		deadline = time.Now().Add(30 * time.Second)
 	}
 	buf := make([]byte, 1500)
+	retryType := byte(dhcpv4client.MessageDiscover)
+	var offer dhcpv4client.Message
 	for time.Now().Before(deadline) {
 		if err := d.conn.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
 			return err
@@ -288,7 +290,7 @@ func (d *dhcpv4Daemon) acquire(ctx context.Context) error {
 		n, _, err := d.conn.ReadFromUDP(buf)
 		if err != nil {
 			if timeoutError(err) {
-				if err := d.send(ctx, dhcpv4client.MessageDiscover, dhcpv4client.Message{}); err != nil {
+				if err := d.send(ctx, retryType, offer); err != nil {
 					return err
 				}
 				continue
@@ -300,6 +302,8 @@ func (d *dhcpv4Daemon) acquire(ctx context.Context) error {
 			continue
 		}
 		if msg.MessageType() == dhcpv4client.MessageOffer {
+			offer = msg
+			retryType = dhcpv4client.MessageRequest
 			d.publish("routerd.dhcpv4.client.offer.received", daemonapi.SeverityInfo, "OfferReceived", "received DHCPv4 Offer", map[string]string{"address": msg.YIAddr.String()})
 			d.mu.Lock()
 			d.state = dhcpv4client.StateRequesting
