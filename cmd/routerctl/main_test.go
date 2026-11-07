@@ -1489,9 +1489,3 @@ spec:
   resources: []
 `, name)
 }
-func writeTestCommand(t *testing.T, path, script string) {
-	t.Helper()
-	if err := os.WriteFile(path, []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
-}
