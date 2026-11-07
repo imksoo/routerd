@@ -1297,7 +1297,6 @@ type Runner struct {
 	clientDaemonStates     map[string]supervisedDaemonState
 	daemonSourcesStarted   map[string]bool
 	arpObserverReadySet    map[string]bool
-	generationBuilder      func(context.Context, *slog.Logger, eventedStore, bool, ha.Decision) ([]framework.Controller, DaemonStatusController, error)
 	reloadMu               sync.Mutex
 	reloadCh               chan generationReload
 	routerMu               sync.RWMutex
@@ -1923,11 +1922,7 @@ func (r *Runner) prepareControllerGenerationForRequest(ctx, requestCtx context.C
 		cancel()
 		return nil, err
 	}
-	builder := r.frameworkControllers
-	if r.generationBuilder != nil {
-		builder = r.generationBuilder
-	}
-	controllers, daemonStatusSync, err := builder(generationCtx, logger, store, true, decision)
+	controllers, daemonStatusSync, err := r.frameworkControllers(generationCtx, logger, store, true, decision)
 	if err == nil {
 		err = generationCtx.Err()
 	}

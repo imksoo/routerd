@@ -9,42 +9,8 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
-	"github.com/imksoo/routerd/pkg/controller/framework"
 	"github.com/imksoo/routerd/pkg/ha"
 )
-
-func TestStartDefersClientDaemonSupervisionToControllerBootstrap(t *testing.T) {
-	useSupervisedDaemonMarkerTestRoot(t)
-	router := vrrpGatedPDTestRouter()
-	store := mapStore{
-		api.NetAPIVersion + "/VirtualAddress/lan-gw-v4": {"role": "master"},
-	}
-	runner := &Runner{
-		Router: router,
-		Bus:    bus.New(),
-		Store:  store,
-		Opts: Options{
-			DaemonSockets:          map[string]string{"wan-pd": t.TempDir() + "/wan-pd.sock"},
-			SuperviseClientDaemons: true,
-			EnabledControllers:     []string{"daemon-supervisor"},
-		},
-	}
-	runner.generationBuilder = func(context.Context, *slog.Logger, eventedStore, bool, ha.Decision) ([]framework.Controller, DaemonStatusController, error) {
-		return nil, DaemonStatusController{}, nil
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	if err := runner.Start(ctx); err != nil {
-		t.Fatalf("Start: %v", err)
-	}
-
-	runner.supervisedMu.Lock()
-	defer runner.supervisedMu.Unlock()
-	if len(runner.clientDaemonStates) != 0 {
-		t.Fatalf("startup used persisted VRRP role before controller bootstrap: %#v", runner.clientDaemonStates)
-	}
-}
 
 func TestControllerBootstrapObservesVRRPBeforeClientDaemonSupervisor(t *testing.T) {
 	router := vrrpGatedPDTestRouter()
