@@ -152,32 +152,6 @@ type DSLiteTunnelController struct {
 	Store          Store
 	DryRun         bool
 	ResolverPort   int
-	Logger         *slog.Logger
-}
-
-func (c DSLiteTunnelController) Start(ctx context.Context) {
-	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.dhcpv6.info.*", "routerd.dhcpv6.client.prefix.*", "routerd.dns.resolver.*", "routerd.resource.status.changed"}}, 32)
-	go func() {
-		if err := c.reconcile(ctx); err != nil && c.Logger != nil && ctx.Err() == nil {
-			c.Logger.Warn("dslite tunnel initial reconcile failed", "error", err)
-		}
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case _, ok := <-ch:
-				if !ok {
-					return
-				}
-			case <-ticker.C:
-			case <-ctx.Done():
-				return
-			}
-			if err := c.reconcile(ctx); err != nil && c.Logger != nil && ctx.Err() == nil {
-				c.Logger.Warn("dslite tunnel reconcile failed", "error", err)
-			}
-		}
-	}()
 }
 
 func (c DSLiteTunnelController) reconcile(ctx context.Context) error {

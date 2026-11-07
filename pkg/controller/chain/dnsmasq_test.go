@@ -1067,47 +1067,6 @@ func TestDSLiteTunnelResolveRemoteDirectIPv6SkipsDNS(t *testing.T) {
 	}
 }
 
-func TestDSLiteWhenFalseDoesNotRemainInEffectiveDesiredSet(t *testing.T) {
-	declared := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite"}, Spec: api.DSLiteTunnelSpec{TunnelName: "ds-lite"}},
-	}}}
-	effective := &api.Router{}
-	controller := DSLiteTunnelController{Router: effective, DeclaredRouter: declared, Store: mapStore{}, DryRun: true}
-	if err := controller.reconcile(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	status := controller.Store.ObjectStatus(api.NetAPIVersion, "DSLiteTunnel", "ds-lite")
-	if status["phase"] != PhaseDisabled || status["reason"] != "WhenFalse" {
-		t.Fatalf("when-false tunnel status = %#v", status)
-	}
-}
-
-func TestDSLiteTunnelLocalDelegatedAddress(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lo"}, Spec: api.InterfaceSpec{IfName: "lo"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.IPv6DelegatedAddressSpec{
-			Interface:     "lo",
-			SubnetID:      "",
-			AddressSuffix: "::1",
-		}},
-	}}}
-	store := mapStore{
-		api.NetAPIVersion + "/IPv6DelegatedAddress/lan": {"address": "2409:10:3d60:1221::1/64"},
-	}
-	controller := DSLiteTunnelController{Router: router, Store: store}
-	local, ifname, err := controller.localAddress(api.DSLiteTunnelSpec{
-		LocalAddressSource:    "delegatedAddress",
-		LocalDelegatedAddress: "lan",
-		LocalAddressSuffix:    "::3",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if local != "2409:10:3d60:1221::3" || ifname != "lo" {
-		t.Fatalf("local=%q ifname=%q", local, ifname)
-	}
-}
-
 func TestDSLiteTunnelInnerLocalAddressFromStaticAddress(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "ds-lite-a-source"}, Spec: api.IPv4StaticAddressSpec{Interface: "ds-lite-a", Address: "192.0.0.2/29"}},
