@@ -178,12 +178,6 @@ func (c SysctlController) applyOne(ctx context.Context, name, kind string, spec 
 				"error":        strings.TrimSpace(string(out)),
 				"updatedAt":    time.Now().UTC().Format(time.RFC3339Nano),
 			}
-			if spec.Optional {
-				status["phase"] = "Skipped"
-				status["reason"] = "ApplyFailedOptional"
-				_ = c.Store.SaveObjectStatus(api.SystemAPIVersion, kind, name, status)
-				return sysctlApplyResult{skipped: true}, nil
-			}
 			if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, kind, name, status); saveErr != nil {
 				return sysctlApplyResult{}, saveErr
 			}
@@ -213,12 +207,6 @@ func (c SysctlController) applyOne(ctx context.Context, name, kind string, spec 
 				"path":         persistentPath,
 				"error":        err.Error(),
 				"updatedAt":    time.Now().UTC().Format(time.RFC3339Nano),
-			}
-			if spec.Optional {
-				status["phase"] = "Skipped"
-				status["reason"] = "PersistFailedOptional"
-				_ = c.Store.SaveObjectStatus(api.SystemAPIVersion, kind, name, status)
-				return sysctlApplyResult{skipped: true}, nil
 			}
 			if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, kind, name, status); saveErr != nil {
 				return sysctlApplyResult{}, saveErr
