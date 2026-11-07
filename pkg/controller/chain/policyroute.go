@@ -515,6 +515,7 @@ func (c IPv4PolicyRouteController) activeTargetCandidates() map[string]bool {
 
 func (c IPv4PolicyRouteController) applyRouteTables(ctx context.Context, aliases map[string]string) error {
 	var failures []string
+	desiredDefaults := map[int][]policyDefaultRoute{}
 	applyTarget := func(owner string, target api.EgressRoutePolicyTarget, skipMissing bool) {
 		if !c.egressTargetAvailable(ctx, aliases, target) {
 			return
@@ -523,7 +524,7 @@ func (c IPv4PolicyRouteController) applyRouteTables(ctx context.Context, aliases
 			return
 		}
 		gateway := firstNonEmpty(resourcequery.Value(c.Store, target.GatewayFrom), strings.TrimSpace(target.Gateway))
-		c.applyRouteTarget(ctx, aliases, owner, target.Name, target.EffectiveInterface(), target.EffectiveTable(), target.Priority, target.Mark, target.EffectiveMetric(), firstNonEmpty(target.GatewaySource, "none"), gateway, skipMissing, &failures)
+		c.applyRouteTarget(ctx, aliases, owner, target.EffectiveInterface(), target.EffectiveTable(), target.Priority, target.Mark, target.EffectiveMetric(), firstNonEmpty(target.GatewaySource, "none"), gateway, skipMissing, desiredDefaults, &failures)
 	}
 	applyCandidate := func(owner string, candidate api.EgressRoutePolicyCandidate) {
 		if egressRoutePolicyCandidateDisabled(candidate) {
@@ -539,7 +540,7 @@ func (c IPv4PolicyRouteController) applyRouteTables(ctx context.Context, aliases
 		if !c.shouldInstallPolicyRouteForHealthCheck(candidate.HealthCheck, candidate.Mark) {
 			return
 		}
-		c.applyRouteTarget(ctx, aliases, owner, firstNonEmpty(candidate.Name, candidate.EffectiveInterface()), c.candidateDevice(candidate), candidate.EffectiveTable(), candidate.Priority, candidate.Mark, candidate.EffectiveMetric(), firstNonEmpty(candidate.GatewaySource, "none"), c.candidateGateway(candidate), c.candidateReferencesDSLite(candidate), &failures)
+		c.applyRouteTarget(ctx, aliases, owner, c.candidateDevice(candidate), candidate.EffectiveTable(), candidate.Priority, candidate.Mark, candidate.EffectiveMetric(), firstNonEmpty(candidate.GatewaySource, "none"), c.candidateGateway(candidate), c.candidateReferencesDSLite(candidate), desiredDefaults, &failures)
 	}
 	for _, res := range c.Router.Spec.Resources {
 		if res.Kind != "EgressRoutePolicy" {
@@ -567,10 +568,7 @@ func (c IPv4PolicyRouteController) applyRouteTables(ctx context.Context, aliases
 				continue
 			}
 			if len(candidate.Targets) > 0 {
-				for i, target := range candidate.Targets {
-					if target.Name == "" {
-						target.Name = fmt.Sprintf("%s-%d", firstNonEmpty(candidate.Name, res.Metadata.Name), i)
-					}
+				for _, target := range candidate.Targets {
 					applyTarget(res.ID(), target, true)
 				}
 				continue
@@ -583,6 +581,9 @@ func (c IPv4PolicyRouteController) applyRouteTables(ctx context.Context, aliases
 	}
 	if len(failures) > 0 {
 		return fmt.Errorf("%s", strings.Join(failures, "; "))
+	}
+	if !c.DryRun {
+		return c.removeExtraPolicyDefaults(ctx, desiredDefaults)
 	}
 	return nil
 }
@@ -744,7 +745,14 @@ func (c IPv4PolicyRouteController) healthCheckUsesFwMark(name string, mark int) 
 	return false
 }
 
-func (c IPv4PolicyRouteController) applyRouteTarget(ctx context.Context, aliases map[string]string, owner, name, outboundInterface string, table, priority, mark, routeMetric int, gatewaySource, gateway string, skipMissing bool, failures *[]string) {
+type policyDefaultRoute struct {
+	ifname        string
+	metric        int
+	gatewaySource string
+	gateway       string
+}
+
+func (c IPv4PolicyRouteController) applyRouteTarget(ctx context.Context, aliases map[string]string, owner, outboundInterface string, table, priority, mark, routeMetric int, gatewaySource, gateway string, skipMissing bool, desired map[int][]policyDefaultRoute, failures *[]string) {
 	ifname := aliases[outboundInterface]
 	if ifname == "" && outboundInterface != "" {
 		ifname = outboundInterface
@@ -792,6 +800,7 @@ func (c IPv4PolicyRouteController) applyRouteTarget(ctx context.Context, aliases
 			*failures = append(*failures, fmt.Sprintf("%s fwmark rule: %v", owner, err))
 			return
 		}
+		desired[table] = append(desired[table], policyDefaultRoute{ifname: ifname, metric: metric, gatewaySource: gatewaySource, gateway: gateway})
 	}
 }
 
@@ -838,31 +847,76 @@ func (c IPv4PolicyRouteController) defaultRouteMatches(ctx context.Context, ifna
 		return false
 	}
 	for _, candidate := range strings.Split(line, "\n") {
-		fields := strings.Fields(candidate)
-		if len(fields) == 0 || fields[0] != "default" {
-			continue
+		if policyDefaultMatches(strings.Fields(candidate), policyDefaultRoute{ifname: ifname, metric: metric, gatewaySource: gatewaySource, gateway: gateway}) {
+			return true
 		}
-		if !fieldValueMatches(fields, "dev", ifname) {
-			continue
-		}
-		if !fieldValueMatches(fields, "metric", fmt.Sprintf("%d", metric)) {
-			continue
-		}
-		switch gatewaySource {
-		case "", "none":
-			if hasField(fields, "via") {
-				continue
-			}
-		case "static", "dhcpv4":
-			if !fieldValueMatches(fields, "via", gateway) {
-				continue
-			}
-		default:
-			return false
-		}
-		return true
 	}
 	return false
+}
+
+func policyDefaultMatches(fields []string, desired policyDefaultRoute) bool {
+	if len(fields) == 0 || fields[0] != "default" || !fieldValueMatches(fields, "dev", desired.ifname) || !fieldValueMatches(fields, "metric", fmt.Sprintf("%d", desired.metric)) {
+		return false
+	}
+	switch desired.gatewaySource {
+	case "", "none":
+		return !hasField(fields, "via")
+	case "static", "dhcpv4":
+		return fieldValueMatches(fields, "via", desired.gateway)
+	default:
+		return false
+	}
+}
+
+func (c IPv4PolicyRouteController) removeExtraPolicyDefaults(ctx context.Context, desired map[int][]policyDefaultRoute) error {
+	out, err := c.commandOutput(ctx, "ip", "-4", "route", "show", "table", "all")
+	if err != nil {
+		return fmt.Errorf("list IPv4 routes: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	dynamicTables, err := apply.IPv4TailscaleRouteTables(c.Router, string(out))
+	if err != nil {
+		return err
+	}
+	for _, res := range c.Router.Spec.Resources {
+		if res.Kind == "VRF" {
+			spec, err := res.VRFSpec()
+			if err != nil {
+				return err
+			}
+			dynamicTables[spec.RouteTable] = true
+		}
+	}
+	for table, routes := range desired {
+		if table == 253 || table == 254 || table == 255 || dynamicTables[table] {
+			continue
+		}
+		output, err := c.commandOutput(ctx, "ip", "-4", "route", "show", "default", "table", strconv.Itoa(table))
+		if err != nil {
+			return fmt.Errorf("list IPv4 defaults in table %d: %w: %s", table, err, strings.TrimSpace(string(output)))
+		}
+		for _, line := range strings.Split(string(output), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) == 0 || (fields[0] != "default" && (len(fields) < 2 || fields[1] != "default")) {
+				continue
+			}
+			keep := false
+			for _, route := range routes {
+				if policyDefaultMatches(fields, route) {
+					keep = true
+					break
+				}
+			}
+			if keep {
+				continue
+			}
+			args := append([]string{"-4", "route", "del"}, fields...)
+			args = append(args, "table", strconv.Itoa(table))
+			if out, err := c.commandOutput(ctx, "ip", args...); err != nil {
+				return fmt.Errorf("remove extra IPv4 default from table %d: %w: %s", table, err, strings.TrimSpace(string(out)))
+			}
+		}
+	}
+	return nil
 }
 
 func fieldValueMatches(fields []string, key, value string) bool {
