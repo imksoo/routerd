@@ -369,6 +369,29 @@ func derivedInterfaceSysctls(router *api.Router) []sysctlResource {
 			},
 		})
 	}
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "IPv6RAAddress" {
+			continue
+		}
+		spec, err := res.IPv6RAAddressSpec()
+		if err != nil {
+			continue
+		}
+		iface := resolveInterfaceName(spec.Interface, aliases)
+		if iface == "" {
+			continue
+		}
+		out = append(out, sysctlResource{
+			Name: "autoconf-" + safeResourceName(iface),
+			Spec: api.SysctlSpec{
+				Key:        "net.ipv6.conf." + iface + ".autoconf",
+				Value:      "1",
+				Runtime:    boolPtr(true),
+				Persistent: true,
+				Optional:   true,
+			},
+		})
+	}
 	for _, iface := range routedInterfaceNames(router, aliases) {
 		out = append(out, sysctlResource{
 			Name: "disable-ra-default-route-" + safeResourceName(iface),
