@@ -64,7 +64,7 @@ func (c KernelModuleController) Reconcile(ctx context.Context) error {
 			}
 			continue
 		}
-		if osName == "freebsd" && spec.Persistent {
+		if spec.Persistent {
 			activePersistentFiles[c.kernelModulePersistencePath(resource.Metadata.Name, osName)] = true
 		}
 		changed, loaded, skipped, err := c.applyKernelModules(ctx, resource.Metadata.Name, spec, osName)
@@ -112,8 +112,8 @@ func (c KernelModuleController) Reconcile(ctx context.Context) error {
 			}
 		}
 	}
-	if osName == "freebsd" {
-		if _, err := c.removeStaleFreeBSDKernelModuleFiles(activePersistentFiles); err != nil {
+	if kernelModuleSupportedOS(osName) {
+		if _, err := c.removeStaleKernelModuleFiles(activePersistentFiles, osName); err != nil {
 			return err
 		}
 	}
@@ -288,11 +288,8 @@ func (c KernelModuleController) writeKernelModulePersistence(path string, data [
 	return true, nil
 }
 
-func (c KernelModuleController) removeStaleFreeBSDKernelModuleFiles(active map[string]bool) (bool, error) {
-	baseDir := c.BaseDir
-	if baseDir == "" {
-		baseDir = freeBSDKernelModuleBaseDir
-	}
+func (c KernelModuleController) removeStaleKernelModuleFiles(active map[string]bool, osName string) (bool, error) {
+	baseDir := filepath.Dir(c.kernelModulePersistencePath("", osName))
 	entries, err := os.ReadDir(baseDir)
 	if os.IsNotExist(err) {
 		return false, nil
@@ -314,13 +311,6 @@ func (c KernelModuleController) removeStaleFreeBSDKernelModuleFiles(active map[s
 			return changed, err
 		}
 		if !info.Mode().IsRegular() {
-			continue
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return changed, err
-		}
-		if !bytes.HasPrefix(data, []byte(kernelModuleOwnershipHeader)) {
 			continue
 		}
 		if c.DryRun {
