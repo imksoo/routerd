@@ -206,6 +206,9 @@ func peerHasPendingEvents(peer PeerConfig, events []outboxEvent) bool {
 
 func (o *Outbox) drainPeer(ctx context.Context, peer PeerConfig, events []outboxEvent) error {
 	for _, item := range events {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if !peerMatches(peer, item.event) || item.delivered[peer.NodeName] {
 			continue
 		}
