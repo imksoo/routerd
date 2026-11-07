@@ -3981,7 +3981,12 @@ func (c LinkController) Reconcile(ctx context.Context) error {
 			}
 			lease := c.Store.ObjectStatus(api.NetAPIVersion, "DHCPv4Client", client.Metadata.Name)
 			expires, err := time.Parse(time.RFC3339Nano, statusvalue.Field(lease, "expiresAt"))
-			if err != nil || !time.Now().Before(expires) || statusvalue.Field(lease, "phase") != daemonapi.ResourcePhaseBound {
+			if err != nil || !time.Now().Before(expires) {
+				continue
+			}
+			switch statusvalue.Field(lease, "phase") {
+			case daemonapi.ResourcePhaseBound, daemonapi.ResourcePhaseRefreshing, daemonapi.ResourcePhaseRebinding:
+			default:
 				continue
 			}
 			if offered, err := strconv.Atoi(statusvalue.Field(lease, "mtu")); err == nil && offered >= 68 {
