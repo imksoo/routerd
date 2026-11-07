@@ -649,12 +649,10 @@ func (d *dhcpv4Daemon) publish(eventType, severity, reason, message string, attr
 	if len(d.events) > 1000 {
 		d.events = append([]daemonapi.DaemonEvent(nil), d.events[len(d.events)-1000:]...)
 	}
-	d.appendEventFileLocked(event)
+	if err := eventfile.AppendJSONLine(d.opts.eventFile, event); err != nil {
+		fmt.Fprintf(os.Stderr, "write DHCPv4 event for %s: %v\n", d.opts.resource, err)
+	}
 	d.cond.Broadcast()
-}
-
-func (d *dhcpv4Daemon) appendEventFileLocked(event daemonapi.DaemonEvent) {
-	_ = eventfile.AppendJSONLine(d.opts.eventFile, event)
 }
 
 func (d *dhcpv4Daemon) restoreEvents() error {
