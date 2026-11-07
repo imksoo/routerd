@@ -27,16 +27,9 @@ type IPAddressSetController struct {
 	DryRunFirewall bool
 	NftCommand     string
 	RuntimeDir     string
-	Command        outputCommandFunc
-	Resolver       ipAddressSetResolver
-	Now            func() time.Time
 }
 
 const ipAddressSetNftVerifyInterval = 2 * time.Minute
-
-type ipAddressSetResolver interface {
-	ResolveIP(context.Context, string) ([]ipAddressSetRecord, error)
-}
 
 type ipAddressSetRecord struct {
 	Address string
@@ -48,17 +41,8 @@ func (c IPAddressSetController) Reconcile(ctx context.Context) error {
 		return nil
 	}
 	now := time.Now().UTC()
-	if c.Now != nil {
-		now = c.Now().UTC()
-	}
-	resolver := c.Resolver
-	if resolver == nil {
-		resolver = systemDNSResolver{}
-	}
-	command := c.Command
-	if command == nil {
-		command = runOutputCommandContext
-	}
+	resolver := systemDNSResolver{}
+	command := runOutputCommandContext
 	referenced := referencedIPAddressSetTargets(c.Router)
 resources:
 	for _, resource := range c.Router.Spec.Resources {
@@ -225,7 +209,7 @@ func (r ipAddressSetResolveResult) addressesForFamily(family string) []string {
 	}
 }
 
-func resolveIPAddressSet(ctx context.Context, resolver ipAddressSetResolver, spec api.IPAddressSetSpec) (ipAddressSetResolveResult, error) {
+func resolveIPAddressSet(ctx context.Context, resolver systemDNSResolver, spec api.IPAddressSetSpec) (ipAddressSetResolveResult, error) {
 	seen := map[string]bool{}
 	var addresses []string
 	var ipv4Addresses []string
