@@ -5142,30 +5142,6 @@ func mergeManagedPreviousDelegatedAddresses(now time.Time, current string, group
 	return out
 }
 
-func retainFailedPreviousDelegatedAddresses(current, failed []managedPreviousDelegatedAddress) []managedPreviousDelegatedAddress {
-	byAddress := map[string]time.Time{}
-	for _, group := range [][]managedPreviousDelegatedAddress{current, failed} {
-		for _, previous := range group {
-			if previous.Address == "" {
-				continue
-			}
-			if expiresAt, ok := byAddress[previous.Address]; !ok || expiresAt.Before(previous.ExpiresAt) {
-				byAddress[previous.Address] = previous.ExpiresAt
-			}
-		}
-	}
-	addresses := make([]string, 0, len(byAddress))
-	for address := range byAddress {
-		addresses = append(addresses, address)
-	}
-	sort.Strings(addresses)
-	out := make([]managedPreviousDelegatedAddress, 0, len(addresses))
-	for _, address := range addresses {
-		out = append(out, managedPreviousDelegatedAddress{Address: address, ExpiresAt: byAddress[address]})
-	}
-	return out
-}
-
 func delegatedAddressRAWithdrawalLifetime(router *api.Router, delegatedName string) (time.Duration, bool) {
 	if router == nil || strings.TrimSpace(delegatedName) == "" {
 		return 0, false
@@ -5621,7 +5597,6 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 		if !c.DryRun {
 			desiredPrevious := make(map[string]bool, len(previousAddresses))
 			managedPrevious := make(map[string]time.Time)
-			var failedPreviousDeletes []managedPreviousDelegatedAddress
 			for _, previous := range previousDelegatedAddressesFromStatus(previousStatus) {
 				managedPrevious[previous.Address] = previous.ExpiresAt
 			}
@@ -5632,22 +5607,20 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 				if stale.Address == "" || stale.Address == addr || desiredPrevious[stale.Address] {
 					continue
 				}
-				deleteFailed := false
+				var deleteErr error
 				for _, candidate := range ipv6StaticAddressDeleteCandidates(stale.Address) {
 					name, args := ipv6StaticAddressDeleteCommand(c.currentOS(), ifname, candidate)
 					if err := command(ctx, name, args...); err != nil {
-						deleteFailed = true
+						deleteErr = err
 						if c.Logger != nil {
 							c.Logger.Debug("delete expired previous IPv6 delegated address skipped", "resource", resource.Metadata.Name, "address", candidate, "interface", ifname, "error", err)
 						}
 					}
 				}
-				// A /64 cleanup also tries its legacy /128 shape; one of those
-				// deletes may legitimately return not-found.  Only retain the
-				// tombstone when a failed command is followed by a positive
-				// readback, proving that the managed address still exists.
-				if deleteFailed && addressPresentFn(ctx, ifname, stale.Address) {
-					failedPreviousDeletes = append(failedPreviousDeletes, stale)
+				if deleteErr != nil {
+					if err := checkIPv6Removal(ifname, stale.Address, deleteErr); err != nil {
+						return err
+					}
 				}
 			}
 			for _, previous := range previousAddresses {
@@ -5669,9 +5642,6 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 				if err := command(ctx, name, args...); err != nil {
 					return err
 				}
-			}
-			if len(failedPreviousDeletes) > 0 {
-				status["previousAddresses"] = retainFailedPreviousDelegatedAddresses(previousAddresses, failedPreviousDeletes)
 			}
 		}
 		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name, status); err != nil {
@@ -6100,23 +6070,8 @@ func (c LANAddressController) cleanupWhenFalseIPv6DelegatedAddresses(ctx context
 					}
 				}
 				if deleteErr != nil {
-					interfaces, err := net.Interfaces()
-					if err != nil {
-						return fmt.Errorf("observe interfaces after IPv6 address removal: %w", err)
-					}
-					for _, iface := range interfaces {
-						if iface.Name != ifname {
-							continue
-						}
-						remaining, err := iface.Addrs()
-						if err != nil {
-							return fmt.Errorf("observe IPv6 addresses on %s: %w", ifname, err)
-						}
-						for _, addr := range remaining {
-							if localIPv6Address(addr.String()) == localIPv6Address(trackedAddress) {
-								return fmt.Errorf("remove IPv6 delegated address %s from %s: %w", trackedAddress, ifname, deleteErr)
-							}
-						}
+					if err := checkIPv6Removal(ifname, trackedAddress, deleteErr); err != nil {
+						return err
 					}
 				}
 			}
@@ -6134,6 +6089,28 @@ func (c LANAddressController) cleanupWhenFalseIPv6DelegatedAddresses(ctx context
 		}
 		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name, status); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func checkIPv6Removal(ifname, address string, deleteErr error) error {
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return fmt.Errorf("observe interfaces after IPv6 address removal: %w", err)
+	}
+	for _, iface := range interfaces {
+		if iface.Name != ifname {
+			continue
+		}
+		remaining, err := iface.Addrs()
+		if err != nil {
+			return fmt.Errorf("observe IPv6 addresses on %s: %w", ifname, err)
+		}
+		for _, addr := range remaining {
+			if localIPv6Address(addr.String()) == localIPv6Address(address) {
+				return fmt.Errorf("remove IPv6 delegated address %s from %s: %w", address, ifname, deleteErr)
+			}
 		}
 	}
 	return nil
