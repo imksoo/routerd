@@ -371,7 +371,7 @@ func (c Controller) applyLease(ctx context.Context, name string, current, next m
 		return err
 	}
 	next["addressPresent"] = addressPresent
-	if previousAddress != wantedAddress || !addressPresent {
+	if !addressPresent {
 		if err := replaceIPv4Address(ctx, platform.CurrentOS(), command, ifname, wantedAddress, spec.RouteMetric); err != nil {
 			return err
 		}
