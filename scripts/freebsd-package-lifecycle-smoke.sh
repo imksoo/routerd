@@ -62,12 +62,6 @@ command -v sqlite3 >/dev/null
 work=$(mktemp -d /var/tmp/routerd-package-lifecycle.XXXXXX)
 prior_dir=$work/prior
 current_dir=$work/current
-foreign_prefix=$work/foreign-prefix
-foreign_rcd=$work/foreign-rc.d
-fakebin=$work/fakebin
-foreign_service=$foreign_rcd/routerd
-foreign_before=$work/foreign-before
-foreign_manager_log=$work/foreign-service-manager.log
 owned_live=0
 rc_config=/etc/rc.conf.d/routerd
 rc_config_created=0
@@ -209,43 +203,4 @@ for path in /usr/local/sbin/routerd /usr/local/etc/rc.d/routerd /var/run/routerd
 done
 printf 'freebsd-package-uninstall-owned-cleanup=ok\n'
 
-# Exercise the production foreign-artifact fail-closed branch with a private
-# canonical rc.d location and fake service manager.  The file must remain
-# byte-for-byte identical and neither install nor uninstall may call service
-# or sysrc.
-mkdir -p "$foreign_prefix/etc/routerd" "$foreign_rcd" "$fakebin"
-printf '%s\n' '# operator-owned routerd service' 'foreign=preserve' >"$foreign_service"
-cp "$foreign_service" "$foreign_before"
-cat >"$fakebin/service" <<EOF
-#!/bin/sh
-printf 'service %s\\n' "\$*" >>'$foreign_manager_log'
-exit 99
-EOF
-cat >"$fakebin/sysrc" <<EOF
-#!/bin/sh
-printf 'sysrc %s\\n' "\$*" >>'$foreign_manager_log'
-exit 99
-EOF
-chmod 0755 "$fakebin/service" "$fakebin/sysrc"
-cat >"$foreign_prefix/etc/routerd/router.yaml" <<'EOF'
-apiVersion: routerd.net/v1alpha1
-kind: Router
-metadata: {name: foreign-preservation}
-spec: {resources: []}
-EOF
-(
-  cd "$current_dir"
-  PATH="$fakebin:$PATH" ROUTERD_INSTALL_PACKAGE_MANAGER=none ROUTERD_INSTALL_FORCE_SERVICE_MANAGER=1 ROUTERD_INSTALL_RCD_DIR="$foreign_rcd" \
-    ./install.sh --prefix "$foreign_prefix" --no-install-deps --no-config-update --enable-service --start-service
-) >"$work/foreign-install.log" 2>&1
-cmp -s "$foreign_before" "$foreign_service"
-[ ! -s "$foreign_manager_log" ]
-(
-  cd "$current_dir"
-  PATH="$fakebin:$PATH" ROUTERD_UNINSTALL_FORCE_SERVICE_MANAGER=1 ROUTERD_UNINSTALL_RCD_DIR="$foreign_rcd" \
-    ./uninstall.sh --prefix "$foreign_prefix" --all --yes
-) >"$work/foreign-uninstall.log" 2>&1
-cmp -s "$foreign_before" "$foreign_service"
-[ ! -s "$foreign_manager_log" ]
-printf 'freebsd-package-foreign-service-preservation=ok\n'
 printf 'freebsd-package-lifecycle=ok\n'

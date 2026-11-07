@@ -133,10 +133,6 @@ if [ "${prefix}" != "/usr/local" ]; then
     manage_host_service=0
     echo "non-default prefix ${prefix}; skipping host service manager and global runtime removal"
 fi
-if [ "${ROUTERD_UNINSTALL_FORCE_SERVICE_MANAGER:-0}" = "1" ]; then
-    manage_host_service=1
-    echo "test override: forcing host service manager"
-fi
 case "${os}" in
     Linux)
         if [ "${manage_host_service}" -eq 1 ] && ! manage_owned_service_artifact "${systemd_system_dir}/routerd.service" "systemd service"; then
