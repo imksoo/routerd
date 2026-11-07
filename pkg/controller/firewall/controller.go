@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
@@ -49,13 +50,20 @@ func (c Controller) Reconcile(ctx context.Context) error {
 		nft.Force = c.ForceApply
 		backend = nft
 	}
-	ruleset, err := backend.Render(c.Router, c.NftablesPath, c.LocalCaptureIntents)
-	if err != nil {
-		_ = c.saveErrorStatuses(ctx, backend.Name(), c.NftablesPath, "RenderFailed", err)
-		return err
-	}
+	var ruleset firewallbackend.Ruleset
 	if !configured && targetOS == platform.OSLinux {
-		ruleset.Data = []byte("destroy table inet routerd_filter\n")
+		ruleset = firewallbackend.Ruleset{
+			Backend: backend.Name(),
+			Path:    stringutil.FirstNonEmpty(c.NftablesPath, "/run/routerd/firewall.nft"),
+			Data:    []byte("destroy table inet routerd_filter\n"),
+		}
+	} else {
+		var err error
+		ruleset, err = backend.Render(c.Router, c.NftablesPath, c.LocalCaptureIntents)
+		if err != nil {
+			_ = c.saveErrorStatuses(ctx, backend.Name(), c.NftablesPath, "RenderFailed", err)
+			return err
+		}
 	}
 	changed, err := backend.Apply(ctx, ruleset, c.DryRun)
 	if err != nil {
