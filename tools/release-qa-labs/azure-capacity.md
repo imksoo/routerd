@@ -50,17 +50,8 @@ Capacity can change after PRECHECK, and SKU availability/other quotas/provider
 errors can still reject an apply. The gate neither raises quotas, changes region
 or VM size, modifies unrelated allocations, nor increases lifecycle/cost limits.
 A rejection is not permission to destroy old VMs or retry a paid campaign.
-Reproduce failures locally, retain evidence, and resolve the exact authorized
-capacity prerequisite before another supervised run.
-
-Offline regressions use the real precheck/helper with fake provider I/O, plus
-pure malformed-input and source-pin tests. They prove admission ordering and
-rejection, not a live Azure allocation or full Cloud SAM PASS:
-
-```sh
-cd tools/release-qa-labs/tests
-python3 -m unittest -v test_azure_capacity test_qa_guard
-```
+Resolve the exact authorized capacity prerequisite before another supervised
+run.
 
 ## 日本語
 
