@@ -559,7 +559,15 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	if _, cleanupErr := cleanupUnsupportedLegacyObjectStatuses(router, stateStore, *statePath, time.Now().UTC(), logger); cleanupErr != nil {
 		logger.Emit(eventlog.LevelWarning, "serve", "stale state cleanup encountered an error", map[string]string{"error": cleanupErr.Error()})
 	}
-	_, _ = cleanupServeLedgerOwnedOrphans(router, *ledgerPath, logger)
+	if !*sandbox {
+		effectiveRouter := filterRouterByWhen(router, stateStore)
+		dynamicRouters, dynamicErr := controllerchain.BuildDynamicRouteSAMObjectStatusRouters(effectiveRouter, stateStore, time.Now().UTC(), platform.CurrentOS())
+		if dynamicErr != nil {
+			logger.Emit(eventlog.LevelWarning, "serve", "could not derive dynamic configuration for orphan cleanup", map[string]string{"error": dynamicErr.Error()})
+		} else {
+			_, _ = cleanupServeLedgerOwnedOrphans(dynamicRouters[0], *ledgerPath, logger)
+		}
+	}
 	engine := apply.New()
 	if result, observeErr := engine.Observe(router); observeErr == nil {
 		cache.Store(result)
