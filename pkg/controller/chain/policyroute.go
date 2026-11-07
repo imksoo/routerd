@@ -198,12 +198,18 @@ func (c IPv4PolicyRouteController) desiredIPv6HostPolicies(ctx context.Context) 
 			logical := candidate.EffectiveInterface()
 			ifname := firstNonEmpty(aliases[logical], logical)
 			ready, err := c.ipv6HostPolicyDeviceReady(ctx, ifname)
-			if err != nil || !ready {
+			if err != nil {
+				return nil, nil, fmt.Errorf("%s inspect interface %s: %w", res.ID(), ifname, err)
+			}
+			if !ready {
 				unavailable[res.Metadata.Name] = true
 				continue
 			}
 			source, err := c.ipv6GlobalAddress(ctx, ifname)
 			if err != nil {
+				return nil, nil, fmt.Errorf("%s inspect IPv6 addresses on %s: %w", res.ID(), ifname, err)
+			}
+			if source == "" {
 				unavailable[res.Metadata.Name] = true
 				continue
 			}
@@ -298,7 +304,7 @@ func (c IPv4PolicyRouteController) applyIPv6HostPolicyState(ctx context.Context,
 func (c IPv4PolicyRouteController) ipv6HostPolicyDeviceReady(ctx context.Context, ifname string) (bool, error) {
 	out, err := c.commandOutput(ctx, "ip", "-o", "link", "show", "dev", ifname)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("ip link show: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	for _, line := range strings.Split(string(out), "\n") {
 		fields := strings.Fields(line)
@@ -314,7 +320,7 @@ func (c IPv4PolicyRouteController) ipv6HostPolicyDeviceReady(ctx context.Context
 func (c IPv4PolicyRouteController) ipv6GlobalAddress(ctx context.Context, ifname string) (string, error) {
 	out, err := c.commandOutput(ctx, "ip", "-6", "-o", "addr", "show", "dev", ifname, "scope", "global")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("ip -6 addr show: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	for _, line := range strings.Split(string(out), "\n") {
 		fields := strings.Fields(line)
@@ -334,7 +340,7 @@ func (c IPv4PolicyRouteController) ipv6GlobalAddress(ctx context.Context, ifname
 			}
 		}
 	}
-	return "", fmt.Errorf("no global IPv6 address on %s", ifname)
+	return "", nil
 }
 
 func (c IPv4PolicyRouteController) ensureIPv6HostRule(ctx context.Context, policy ipv6HostPolicy) (bool, error) {
