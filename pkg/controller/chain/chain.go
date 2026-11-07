@@ -3183,6 +3183,9 @@ func (r *Runner) clientDaemonSpecs(router *api.Router) []supervisedDaemonSpec {
 			if spec.ClientID != "" {
 				args = append(args, "--client-id", spec.ClientID)
 			}
+			if spec.ClientIDHex != "" {
+				args = append(args, "--client-id-hex", spec.ClientIDHex)
+			}
 			out = append(out, supervisedDaemonSpec{ResourceName: resource.Metadata.Name, Binary: "routerd-dhcpv4-client", Args: args})
 		case "PPPoESession":
 			spec, err := resource.PPPoESessionSpec()

@@ -4149,6 +4149,10 @@
                       "clientID": {
                         "type": "string"
                       },
+                      "clientIDHex": {
+                        "description": "ClientIDHex is the exact DHCP option 61 byte sequence, encoded as hexadecimal.",
+                        "type": "string"
+                      },
                       "hostname": {
                         "type": "string"
                       },

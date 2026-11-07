@@ -5,6 +5,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -45,6 +46,8 @@ type options struct {
 	requestedAddress string
 	classID          string
 	clientID         string
+	clientIDHex      string
+	clientIDBytes    []byte
 	timeout          time.Duration
 	socketPath       string
 	leaseFile        string
@@ -80,6 +83,7 @@ func parseOptions(name string, args []string) (options, error) {
 	fs.StringVar(&opts.requestedAddress, "requested-address", "", "DHCP option 50 requested IPv4 address")
 	fs.StringVar(&opts.classID, "class-id", "", "DHCP option 60 vendor class identifier")
 	fs.StringVar(&opts.clientID, "client-id", "", "DHCP option 61 client identifier")
+	fs.StringVar(&opts.clientIDHex, "client-id-hex", "", "DHCP option 61 bytes in hexadecimal")
 	fs.DurationVar(&opts.timeout, "timeout", 30*time.Second, "overall acquisition timeout for selftest/once")
 	fs.StringVar(&opts.socketPath, "socket", "", "Unix socket path")
 	fs.StringVar(&opts.leaseFile, "lease-file", "", "lease snapshot path")
@@ -87,6 +91,16 @@ func parseOptions(name string, args []string) (options, error) {
 	_ = fs.Bool("once", false, "run once and exit")
 	if err := fs.Parse(args); err != nil {
 		return options{}, err
+	}
+	if opts.clientIDHex != "" {
+		if opts.clientID != "" {
+			return options{}, errors.New("--client-id and --client-id-hex are mutually exclusive")
+		}
+		id, err := hex.DecodeString(opts.clientIDHex)
+		if err != nil || len(id) == 0 || len(id) > 255 {
+			return options{}, errors.New("--client-id-hex must encode 1-255 bytes of hexadecimal")
+		}
+		opts.clientIDBytes = id
 	}
 	if opts.ifname == "" {
 		return options{}, errors.New("--interface is required")
@@ -343,7 +357,7 @@ func (d *dhcpv4Daemon) send(ctx context.Context, msgType byte, reply dhcpv4clien
 }
 
 func (d *dhcpv4Daemon) config() dhcpv4client.Config {
-	return dhcpv4client.Config{Resource: d.opts.resource, Interface: d.opts.ifname, HardwareAddr: d.ifi.HardwareAddr, Hostname: d.opts.hostname, RequestedAddress: d.opts.requestedAddress, ClassID: d.opts.classID, ClientID: d.opts.clientID}
+	return dhcpv4client.Config{Resource: d.opts.resource, Interface: d.opts.ifname, HardwareAddr: d.ifi.HardwareAddr, Hostname: d.opts.hostname, RequestedAddress: d.opts.requestedAddress, ClassID: d.opts.classID, ClientID: d.opts.clientID, ClientIDBytes: d.opts.clientIDBytes}
 }
 
 func (d *dhcpv4Daemon) shouldRenew() bool {

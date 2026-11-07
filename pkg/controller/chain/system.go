@@ -1338,6 +1338,9 @@ func dhcpv4ClientUnitSpec(resource, ifname string, spec api.DHCPv4ClientSpec, te
 	if spec.ClientID != "" {
 		exec = append(exec, "--client-id", spec.ClientID)
 	}
+	if spec.ClientIDHex != "" {
+		exec = append(exec, "--client-id-hex", spec.ClientIDHex)
+	}
 	return api.SystemdUnitSpec{
 		Description:              "routerd DHCPv4 client " + resource,
 		ExecStart:                exec,

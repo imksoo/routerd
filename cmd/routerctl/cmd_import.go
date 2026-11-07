@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/netip"
 	"os"
 	"os/exec"
@@ -80,6 +81,8 @@ func (address *importAddress) UnmarshalJSON(data []byte) error {
 }
 
 type importLink struct {
+	IfIndex  int             `json:"ifindex"`
+	Address  string          `json:"address"`
 	IfName   string          `json:"ifname"`
 	Flags    []string        `json:"flags"`
 	MTU      int             `json:"mtu"`
@@ -247,6 +250,51 @@ func importStaticIPv4Address(address importAddress, ifname string, ip netip.Addr
 
 func importStaticIPv6Address(address importAddress, ifname string, ip netip.Addr) bool {
 	return ip.Is6() && ip.IsGlobalUnicast() && address.Scope == "global" && !address.Dynamic && address.Peer == "" && address.Broadcast == "" && !address.NoPrefixRoute && address.Metric == 0 && len(address.Unsupported) == 0 && (address.Label == "" || address.Label == ifname) && address.PrefixLen >= 0 && address.PrefixLen <= 128 && address.ValidLifetime != nil && address.PreferredLifetime != nil && *address.ValidLifetime == 0xffffffff && *address.PreferredLifetime == 0xffffffff
+}
+
+func networkdDHCPv4ClientID(ifindex int, address string) (string, error) {
+	if ifindex <= 0 || address == "" {
+		return "", errors.New("DHCPv4 lease interface or address is unavailable")
+	}
+	data, err := os.ReadFile(filepath.Join("/run/systemd/netif/leases", fmt.Sprint(ifindex)))
+	if err != nil {
+		return "", err
+	}
+	var leaseAddress, clientID string
+	for _, line := range strings.Split(string(data), "\n") {
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		switch key {
+		case "ADDRESS":
+			leaseAddress = value
+		case "CLIENTID":
+			clientID = value
+		}
+	}
+	if leaseAddress != address {
+		return "", fmt.Errorf("networkd lease address does not match the observed DHCPv4 address")
+	}
+	decoded, err := hex.DecodeString(clientID)
+	if err != nil || len(decoded) == 0 || len(decoded) > 255 {
+		return "", errors.New("networkd lease has no valid DHCPv4 client identifier")
+	}
+	return hex.EncodeToString(decoded), nil
+}
+
+func configuredDHCPv4ClientID(spec api.DHCPv4ClientSpec, hardwareAddress string) string {
+	if spec.ClientIDHex != "" {
+		return strings.ToLower(spec.ClientIDHex)
+	}
+	if spec.ClientID != "" {
+		return hex.EncodeToString([]byte(spec.ClientID))
+	}
+	mac, err := net.ParseMAC(hardwareAddress)
+	if err != nil {
+		return ""
+	}
+	return hex.EncodeToString(append([]byte{1}, mac...))
 }
 
 func importCommand(args []string, stdout, stderr io.Writer) error {
@@ -419,6 +467,7 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 		usedNames[resource.Metadata.Name] = true
 		router.Spec.Resources = append(router.Spec.Resources, resource)
 		dhcp4 := false
+		dhcp4Address := ""
 		for _, address := range link.AddrInfo {
 			ip, err := netip.ParseAddr(address.Local)
 			if err != nil {
@@ -432,6 +481,11 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 			if source != "" && source != "foreign" {
 				origin = "networkd " + source
 				if source == "DHCPv4" && ip.Is4() {
+					if dhcp4 && dhcp4Address != ip.String() {
+						dhcp4Address = ""
+					} else if !dhcp4 {
+						dhcp4Address = ip.String()
+					}
 					dhcp4 = true
 				}
 			}
@@ -481,18 +535,29 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 			warnings = append(warnings, fmt.Sprintf("%s: address %s/%d (%s, scope %s) requires source configuration review: %s", ifname, address.Local, address.PrefixLen, origin, address.Scope, address.Raw))
 		}
 		if dhcp4 {
+			clientID, idErr := networkdDHCPv4ClientID(link.IfIndex, dhcp4Address)
+			if idErr != nil {
+				warnings = append(warnings, fmt.Sprintf("%s: DHCPv4 client identifier could not be imported: %v", ifname, idErr))
+			}
 			client, exists := dhcpClients[resource.Metadata.Name]
 			if !exists {
 				client, exists = dhcpClients[ifname]
 			}
 			if exists {
 				client.Status = nil
+				spec, err := client.DHCPv4ClientSpec()
+				if err != nil {
+					return err
+				}
+				if idErr == nil && configuredDHCPv4ClientID(spec, link.Address) != clientID {
+					warnings = append(warnings, fmt.Sprintf("%s: existing DHCPv4Client identifier differs from the networkd lease", ifname))
+				}
 			} else {
 				clientName := resource.Metadata.Name + "-dhcp4"
 				for suffix := 2; usedDHCPNames[clientName]; suffix++ {
 					clientName = fmt.Sprintf("%s-dhcp4-%d", resource.Metadata.Name, suffix)
 				}
-				client = api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client"}, Metadata: api.ObjectMeta{Name: clientName}, Spec: api.DHCPv4ClientSpec{Interface: resource.Metadata.Name}}
+				client = api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client"}, Metadata: api.ObjectMeta{Name: clientName}, Spec: api.DHCPv4ClientSpec{Interface: resource.Metadata.Name, ClientIDHex: clientID}}
 			}
 			usedDHCPNames[client.Metadata.Name] = true
 			router.Spec.Resources = append(router.Spec.Resources, client)

@@ -1793,6 +1793,9 @@ func (e *Engine) observeDHCPv4Client(res api.Resource, aliases map[string]string
 	if spec.ClientID != "" {
 		rr.Observed["clientID"] = spec.ClientID
 	}
+	if spec.ClientIDHex != "" {
+		rr.Observed["clientIDHex"] = spec.ClientIDHex
+	}
 
 	if includePlan {
 		if !policy.Managed || policy.Owner == "external" {
@@ -2320,6 +2323,8 @@ func stringSpec(res api.Resource, key string) string {
 			return spec.ClassID
 		case "clientID":
 			return spec.ClientID
+		case "clientIDHex":
+			return spec.ClientIDHex
 		case "routeMetric":
 			return fmt.Sprint(spec.RouteMetric)
 		}

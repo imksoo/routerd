@@ -1043,15 +1043,17 @@ type SecretValueSourceSpec struct {
 }
 
 type DHCPv4ClientSpec struct {
-	Interface        string           `yaml:"interface" json:"interface"`
-	Hostname         string           `yaml:"hostname,omitempty" json:"hostname,omitempty"`
-	RequestedAddress string           `yaml:"requestedAddress,omitempty" json:"requestedAddress,omitempty"`
-	ClassID          string           `yaml:"classID,omitempty" json:"classID,omitempty"`
-	ClientID         string           `yaml:"clientID,omitempty" json:"clientID,omitempty"`
-	UseRoutes        *bool            `yaml:"useRoutes,omitempty" json:"useRoutes,omitempty"`
-	UseDNS           *bool            `yaml:"useDNS,omitempty" json:"useDNS,omitempty"`
-	RouteMetric      int              `yaml:"routeMetric,omitempty" json:"routeMetric,omitempty" jsonschema:"minimum=0"`
-	When             ResourceWhenSpec `yaml:"when,omitempty" json:"when,omitempty"`
+	Interface        string `yaml:"interface" json:"interface"`
+	Hostname         string `yaml:"hostname,omitempty" json:"hostname,omitempty"`
+	RequestedAddress string `yaml:"requestedAddress,omitempty" json:"requestedAddress,omitempty"`
+	ClassID          string `yaml:"classID,omitempty" json:"classID,omitempty"`
+	ClientID         string `yaml:"clientID,omitempty" json:"clientID,omitempty"`
+	// ClientIDHex is the exact DHCP option 61 byte sequence, encoded as hexadecimal.
+	ClientIDHex string           `yaml:"clientIDHex,omitempty" json:"clientIDHex,omitempty"`
+	UseRoutes   *bool            `yaml:"useRoutes,omitempty" json:"useRoutes,omitempty"`
+	UseDNS      *bool            `yaml:"useDNS,omitempty" json:"useDNS,omitempty"`
+	RouteMetric int              `yaml:"routeMetric,omitempty" json:"routeMetric,omitempty" jsonschema:"minimum=0"`
+	When        ResourceWhenSpec `yaml:"when,omitempty" json:"when,omitempty"`
 }
 
 type IPv4StaticRouteSpec struct {
