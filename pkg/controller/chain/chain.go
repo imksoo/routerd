@@ -1635,17 +1635,8 @@ func (r *Runner) effectiveDynamicRouterForReconcile(store eventedStore, now time
 	return view.EffectiveRouter, nil
 }
 
-func (r *Runner) Start(ctx context.Context) error {
-	r.clientDaemonContext = ctx
-	if r.currentRouter() == nil || r.Bus == nil || r.Store == nil {
-		return fmt.Errorf("router, bus, and store are required")
-	}
-	logger := r.Opts.Logger
-	if logger == nil {
-		logger = slog.Default()
-	}
-	store := eventedStore{Store: r.Store, Bus: r.Bus, Router: r.currentRouter()}
-	for _, resource := range r.currentRouter().Spec.Resources {
+func (r *Runner) startClientDaemonSources(ctx context.Context, logger *slog.Logger, router *api.Router) error {
+	for _, resource := range router.Spec.Resources {
 		if resource.Kind != "DHCPv6PrefixDelegation" {
 			continue
 		}
@@ -1678,7 +1669,7 @@ func (r *Runner) Start(ctx context.Context) error {
 			}
 		}()
 	}
-	for _, resource := range r.currentRouter().Spec.Resources {
+	for _, resource := range router.Spec.Resources {
 		if resource.Kind != "DHCPv4Client" {
 			continue
 		}
@@ -1699,7 +1690,7 @@ func (r *Runner) Start(ctx context.Context) error {
 			}
 		}()
 	}
-	for _, resource := range r.currentRouter().Spec.Resources {
+	for _, resource := range router.Spec.Resources {
 		if resource.Kind != "HealthCheck" {
 			continue
 		}
@@ -1721,7 +1712,7 @@ func (r *Runner) Start(ctx context.Context) error {
 			}
 		}()
 	}
-	for _, resource := range r.currentRouter().Spec.Resources {
+	for _, resource := range router.Spec.Resources {
 		if resource.Kind != "PPPoESession" {
 			continue
 		}
@@ -1745,6 +1736,19 @@ func (r *Runner) Start(ctx context.Context) error {
 			}
 		}()
 	}
+	return nil
+}
+
+func (r *Runner) Start(ctx context.Context) error {
+	r.clientDaemonContext = ctx
+	if r.currentRouter() == nil || r.Bus == nil || r.Store == nil {
+		return fmt.Errorf("router, bus, and store are required")
+	}
+	logger := r.Opts.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	store := eventedStore{Store: r.Store, Bus: r.Bus, Router: r.currentRouter()}
 	if arpSpecs, err := r.mobilityARPObserverDaemonSpecsWithError(); err != nil {
 		logger.Warn("read ARP observer configuration", "error", err)
 	} else {
@@ -1897,6 +1901,9 @@ func (r *Runner) runControllerGenerations(ctx context.Context, logger *slog.Logg
 				return context.Canceled
 			}
 			continue
+		}
+		if err := r.startClientDaemonSources(generation.ctx, logger, generation.router); err != nil {
+			return err
 		}
 		if r.controllerEnabled("daemon-status") {
 			r.warmDaemonStatuses(generation.ctx, generation.daemonStatusSync, logger)
