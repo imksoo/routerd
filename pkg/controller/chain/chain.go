@@ -2511,7 +2511,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	link := LinkController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Store: store}
 	tunnel := TunnelInterfaceController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, OS: platform.CurrentOS(), Logger: logger}
 	wireGuard := WireGuardController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, Logger: logger}
-	vrfs := VRFController{Router: r.currentRouter(), Store: store, DryRun: opts.DryRunRoute}
+	vrfs := VRFController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Store: store, DryRun: opts.DryRunRoute}
 	nativeMobilityMu := &sync.Mutex{}
 	vxlanParent := &VXLANSegmentController{Store: store, StartedAt: r.startedAt()}
 	dsliteParent := &DSLiteTunnelController{ResolverPort: opts.DnsmasqPort}
@@ -2958,6 +2958,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 				return false, err
 			}
 			current := vrfs
+			current.DeclaredRouter = r.currentRouter()
 			current.Router = effective
 			current.Store = store.withRouter(effective)
 			return didWorkError(current.Reconcile(ctx))

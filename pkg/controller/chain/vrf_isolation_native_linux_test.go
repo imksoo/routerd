@@ -229,5 +229,11 @@ except socket.timeout:
 	if err != nil || len(receipts) != 0 {
 		t.Fatalf("withdrawal retained VRF receipts: %+v %v", receipts, err)
 	}
+	for _, name := range []string{"blue", "red"} {
+		status, err := store.ReadObjectStatus(api.NetAPIVersion, "VRF", name)
+		if err != nil || status != nil {
+			t.Fatalf("withdrawn VRF retains health status: %s %+v %v", name, status, err)
+		}
+	}
 	t.Log("host-originated and transit UDP across overlapping VRFs, cross-VRF denial, reopen and independent withdrawal passed")
 }

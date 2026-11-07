@@ -47,3 +47,19 @@ func TestVRFRemovedTerminalStatusRecovery(t *testing.T) {
 		t.Fatalf("terminal recovery failed or mutated kernel: %+v %v ops=%v", status, err, native.ops)
 	}
 }
+
+func TestVRFInactiveDeclarationRetainsTerminalStatus(t *testing.T) {
+	owner, _ := vrfTestOwner(t)
+	owner.DeclaredRouter = owner.Router
+	owner.Router = &api.Router{}
+	if err := owner.Store.SaveObjectStatus(api.NetAPIVersion, "VRF", "tenant", map[string]any{"phase": "Absent", "reason": "OwnedGenerationWithdrawn"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := owner.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	status, err := owner.Store.ReadObjectStatus(api.NetAPIVersion, "VRF", "tenant")
+	if err != nil || status == nil {
+		t.Fatalf("inactive declared resource lost status: %+v %v", status, err)
+	}
+}

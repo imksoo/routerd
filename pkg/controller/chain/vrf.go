@@ -16,6 +16,7 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/platform"
+	state "github.com/imksoo/routerd/pkg/state"
 	"github.com/imksoo/routerd/pkg/vrf"
 )
 
@@ -59,11 +60,12 @@ type vrfNative interface {
 }
 
 type VRFController struct {
-	Router *api.Router
-	Store  Store
-	DryRun bool
-	OS     platform.OS
-	Native vrfNative
+	DeclaredRouter *api.Router
+	Router         *api.Router
+	Store          Store
+	DryRun         bool
+	OS             platform.OS
+	Native         vrfNative
 }
 
 func (c VRFController) currentOS() platform.OS {
@@ -402,7 +404,7 @@ func (c VRFController) Reconcile(ctx context.Context) error {
 		}
 		vrf.RecordMetrics(ctx, vrf.Config{Name: name, IfName: plan.Name, RouteTable: plan.Table, Members: plan.Members})
 	}
-	return nil
+	return c.cleanupWithdrawnStatuses()
 }
 func (c VRFController) apply(ctx context.Context, record *vrfReceipt) error {
 	link, err := c.checkCurrent(ctx, *record)
@@ -628,4 +630,49 @@ func (c VRFController) withdraw(ctx context.Context, record vrfReceipt) error {
 		return err
 	}
 	return c.Store.SaveObjectStatus(api.NetAPIVersion, "VRF", record.Resource, map[string]any{"phase": "Absent", "reason": "OwnedGenerationWithdrawn"})
+}
+
+// Retire only display rows whose native ownership has already been released.
+// Run even without a receipt so interrupted status deletion is recoverable.
+func (c VRFController) cleanupWithdrawnStatuses() error {
+	if c.DryRun {
+		return nil
+	}
+	store, ok := c.Store.(interface {
+		state.ObjectStatusLister
+		state.ObjectDeleteStore
+	})
+	if !ok {
+		return errors.New("VRF status cleanup store unavailable")
+	}
+	declared := c.DeclaredRouter
+	if declared == nil {
+		declared = c.Router
+	}
+	retained := map[string]bool{}
+	for _, resource := range declared.Spec.Resources {
+		if resource.Kind == "VRF" {
+			retained[resource.Metadata.Name] = true
+		}
+	}
+	receipts, err := c.readReceipts()
+	if err != nil {
+		return err
+	}
+	for _, receipt := range receipts {
+		retained[receipt.Resource] = true
+	}
+	statuses, err := store.ListObjectStatuses()
+	if err != nil {
+		return err
+	}
+	for _, object := range statuses {
+		if object.APIVersion != api.NetAPIVersion || object.Kind != "VRF" || retained[object.Name] || object.Status["phase"] != "Absent" || object.Status["reason"] != "OwnedGenerationWithdrawn" {
+			continue
+		}
+		if err := store.DeleteObject(object.APIVersion, object.Kind, object.Name); err != nil {
+			return err
+		}
+	}
+	return nil
 }

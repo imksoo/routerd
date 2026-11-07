@@ -1565,6 +1565,33 @@ kernel state and verifies readiness before and after DAD. The existing controlle
 has status-event reconciliation and a 30-second periodic check; this test invokes
 reconciliation directly and does not qualify packaged startup latency.
 
+## Packaged VRF lifecycle prerequisites
+
+Use an isolated Linux router VM and an independent peer VM. On Ubuntu generic
+kernels, certify VRF availability before applying the candidate:
+
+```sh
+modinfo vrf
+# If the minimal OS image omitted the module package:
+sudo apt-get install kmod "linux-modules-extra-$(uname -r)"
+sudo modprobe vrf
+```
+
+The module package must match the running kernel. Install it during environment
+preparation, then re-certify; do not repair the kernel during qualification.
+The observed Ubuntu 24.04 minimal guest had `CONFIG_NET_VRF=m` but no `vrf.ko`.
+Keep package version/hash, independent Kea readiness and both isolated L2 paths
+in preflight. Restore fixture interfaces before routerd on guest boot.
+
+Require an empty Healthy starting state, then apply VRF with LAN/WAN members,
+IPv4 addresses, real DHCPv6 PD, delegated LAN/WAN addresses and RA. Verify peer
+IPv4/IPv6 transit, daemon restart and cold router boot while preserving the peer
+VM and DHCP server process. Finish with empty configuration and verify Healthy,
+no owned VRF/addresses/helpers, and no removed VRF health rows. A withdrawn
+`Absent/OwnedGenerationWithdrawn` display row must be retired once neither the
+configuration nor the ownership journal retains that VRF. This cleanup must also
+recover already-withdrawn rows after restart.
+
 ## Tailscale advertisement removal and recovery
 
 The upstream CLI regression uses a private Unix LocalAPI fixture, with no host

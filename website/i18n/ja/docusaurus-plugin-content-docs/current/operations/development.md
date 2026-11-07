@@ -1258,6 +1258,29 @@ Linux では送信元のカーネルフラグを確認し、DAD 中は `LinkLoca
 既存 controller は status イベントと 30 秒周期で再評価します。この試験は
 再評価を直接呼び出すため、パッケージ起動時の復帰時間の証明には使いません。
 
+## パッケージ版 VRF の検証前提
+
+隔離 Linux ルーター VM と独立した対向 VM を使用します。Ubuntu generic
+カーネルでは設定適用前に `modinfo vrf` で VRF モジュールを確認します。
+最小 OS イメージで不足していれば、環境準備中に次を実行します。
+
+```sh
+sudo apt-get install kmod "linux-modules-extra-$(uname -r)"
+sudo modprobe vrf
+```
+
+パッケージは稼働カーネルに一致させ、環境確認をやり直します。製品の判定試験中に
+環境を修復しません。今回の Ubuntu 24.04 最小ゲストは `CONFIG_NET_VRF=m` でも
+`vrf.ko` がありませんでした。パッケージ版・ハッシュ、独立 Kea の待受、両側の
+隔離 L2 経路も確認し、VM 起動時は routerd より先に試験用 NIC を復元します。
+
+空の Healthy 状態から VRF の LAN/WAN、IPv4 アドレス、実 DHCPv6 PD、委譲
+LAN/WAN アドレスと RA を適用します。対向の IPv4/IPv6 通過転送、daemon 再起動、
+対向 VM・DHCP サーバープロセスを維持したルーター VM の再起動を確認します。
+最後に空設定へ戻し、Healthy、所有 VRF・アドレス・helper の撤去、削除済み VRF の
+health 行が残らないことを確認します。`Absent/OwnedGenerationWithdrawn` は設定と
+所有権記録の両方から消えた時点で削除し、再起動後の残留状態も回収する必要があります。
+
 ## Tailscale の広告解除と復旧
 
 `ROUTERD_TEST_TAILSCALE=/absolute/path/to/tailscale make check-routerd15-tailscale-cli`
