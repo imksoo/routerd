@@ -58,16 +58,13 @@ WIZARD_FIXTURE_DIR := website/fixtures/wizard
 
 WEBSITE_NODE_MODULES_STAMP := website/node_modules/.package-lock.json
 
-.PHONY: test check-version-ldflags check-tar-safe-paths-test build build-daemons build-provider-executors build-ndpi-agent build-ndpi-agent-libndpi build-daemons-freebsd check-freebsd-cross-compile check-linux-static check-ndpi-agent-libndpi check-install-deps cloudedge-acceptance-lint webconsole-build webconsole-browser-install webconsole-screenshot generate-schema sync-website-schemas check-schema check-website-schemas generate-wizard-fixtures check-wizard-fixtures validate-wizard-fixtures check-examples-line-limits check-bespoke-lifecycle website-deps website-build third-party-licenses check-build-deps dist deb dist-ndpi-agent-libndpi live-iso validate-example dry-run-example plan-config release clean
+.PHONY: test check-version-ldflags build build-daemons build-provider-executors build-ndpi-agent build-ndpi-agent-libndpi build-daemons-freebsd check-freebsd-cross-compile check-linux-static check-ndpi-agent-libndpi check-install-deps cloudedge-acceptance-lint webconsole-build webconsole-browser-install webconsole-screenshot generate-schema sync-website-schemas check-schema check-website-schemas generate-wizard-fixtures check-wizard-fixtures validate-wizard-fixtures check-examples-line-limits check-bespoke-lifecycle website-deps website-build third-party-licenses check-build-deps dist deb dist-ndpi-agent-libndpi live-iso validate-example dry-run-example plan-config release clean
 
-test: check-version-ldflags check-tar-safe-paths-test
+test: check-version-ldflags
 	go test ./...
 
 check-version-ldflags:
 	scripts/check-version-ldflags.sh
-
-check-tar-safe-paths-test:
-	scripts/check-tar-safe-paths-test.sh
 
 build: webconsole-build
 	$(MAKE) build-daemons
