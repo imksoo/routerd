@@ -516,7 +516,7 @@ check-routerd15-native-parent-linux:
 	ROUTERD_RUN_NETNS=1 go test ./pkg/vxlan -run '^TestLinuxSegmentNativeCreateInstallsOwnershipCookie$$' -count=1 -v
 	@parent_netns=$$(readlink /proc/self/ns/net); \
 	ROUTERD_HOST_NETNS="$$parent_netns" ROUTERD_RUN_NETNS=1 unshare -Urnm sh -c \
-	'mount -t sysfs sysfs /sys && exec go test ./pkg/controller/chain -run "^(TestBridgeParentNativeLinuxAddressLifecycle|TestWireGuardParentNativeLinuxPeerLifecycle|TestVRFParentNativeLinuxPeerLifecycle|TestVRFNativeLinuxOverlappingPeerIsolation|TestDSLiteParentNativeLinuxAFTRLifecycle)$$" -count=1 -v'
+	'mount -t sysfs sysfs /sys && exec go test ./pkg/controller/chain -run "^(TestBridgeParentNativeLinuxAddressLifecycle|TestWireGuardParentNativeLinuxPeerLifecycle|TestVRFParentNativeLinuxPeerLifecycle|TestVRFNativeLinuxOverlappingPeerIsolation|TestVRFNativeLinuxDelegatedRA|TestDSLiteParentNativeLinuxAFTRLifecycle)$$" -count=1 -v'
 
 # Both UTS and network effects stay in a private user/mount namespace.
 .PHONY: check-routerd15-system-native-linux

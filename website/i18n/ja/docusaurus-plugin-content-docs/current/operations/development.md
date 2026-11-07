@@ -1236,6 +1236,19 @@ SQLite 再オープン後も繰り返し、片側の VRF・アドレス削除後
 確認します。実カーネルを使う controller 試験であり、パッケージ daemon の
 再起動、委譲 IPv6・RA の合格を意味しません。
 
+## Linux VRF 配下の委譲アドレスと RA
+
+`make check-routerd15-native-parent-linux` は
+`TestVRFNativeLinuxDelegatedRA` も実行します。`ip`、`sysctl`、`nsenter`、
+`ping` と、前節と同じ明示的な namespace 隔離が必要です。
+有限寿命の PD lease を SQLite に入力し、製品の VRF・委譲アドレス・RA
+controller に実際の処理を行わせます。独立したクライアントのカーネルが
+SLAAC アドレスと `proto ra` デフォルトルートを取得し、ルーターの委譲
+IPv6 アドレスへ疎通できることを確認します。設定撤去後はルーターの所有
+アドレス、クライアントの RA デフォルトルート、RA 所有権記録が消えることを
+合格条件とします。DHCPv6 交換、IPv6 通過転送、プレフィックス変更、
+パッケージ daemon の再起動は、この試験では確認しません。
+
 ## Tailscale の広告解除と復旧
 
 `ROUTERD_TEST_TAILSCALE=/absolute/path/to/tailscale make check-routerd15-tailscale-cli`

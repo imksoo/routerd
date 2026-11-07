@@ -4446,3 +4446,17 @@ updates the plan. Full `go test ./...`, `make check-schema validate-example
 check-website-schemas website-build`, formatting and `git diff --check` passed.
 The four-locale website build retained documentation-link warnings. Secrets
 scans passed and both checkpoint remote SHAs were verified.
+
+## Linux VRF delegated RA peer
+
+The added `TestVRFNativeLinuxDelegatedRA` passed without skips in 5.31 seconds
+on tree `3743818e` (product `0e186cc0`). The compiled controller harness ran
+under explicit `sudo ... unshare -nm` with private sysfs. A finite PD lease was
+fixture input in SQLite; actual VRF, LAN address and RA controllers configured
+the member and sent advertisements. An independent Linux namespace acquired
+a SLAAC address and RA default route, then successfully pinged the router's
+delegated address. Empty withdrawal removed the owned router address, client
+RA default route and journal; the peer process was killed and reaped. No product
+fix was needed. The maintained procedure and native-parent Make target include
+the test. DHCPv6 exchange, IPv6 transit, renumbering, packaged-daemon restart and
+FreeBSD remain outside this result.

@@ -1542,6 +1542,19 @@ other peer to remain reachable. Final withdrawal must remove both VRFs, owned
 addresses and receipts. This is a native controller test, not packaged-daemon
 restart or delegated IPv6/RA qualification.
 
+## Linux VRF delegated address and RA
+
+`make check-routerd15-native-parent-linux` also runs
+`TestVRFNativeLinuxDelegatedRA`. It requires Python-independent Linux tooling
+(`ip`, `sysctl`, `nsenter`, `ping`) and explicit namespace isolation as above.
+A finite PD lease is supplied through SQLite; the production VRF, delegated
+address and RA controllers perform the native effects. A separate client
+namespace must acquire the advertised prefix through kernel SLAAC and a
+`proto ra` default route, then reach the router's delegated IPv6 address.
+Withdrawal must remove the router's owned address, the client's RA default and
+the RA journal. This does not test the DHCPv6 exchange, IPv6 transit, delegated
+prefix replacement or packaged-daemon restart/reboot.
+
 ## Tailscale advertisement removal and recovery
 
 The upstream CLI regression uses a private Unix LocalAPI fixture, with no host
