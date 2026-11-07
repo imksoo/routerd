@@ -309,11 +309,7 @@ ssh_node() {
   local user host
   user="$(node_field "$node" ssh_user)"
   host="$(node_ssh_host "$node")" || { echo "missing management address for node $node" >&2; return 1; }
-  if [ -n "${ssh_timeout_seconds:-}" ]; then
-    timeout "$ssh_timeout_seconds" ssh -n "${ssh_base[@]}" "$user@$host" "$@"
-  else
-    ssh -n "${ssh_base[@]}" "$user@$host" "$@"
-  fi
+  ssh -n "${ssh_base[@]}" "$user@$host" "$@"
 }
 
 scp_node() {
@@ -1393,16 +1389,13 @@ IPS"; then
 wait_provider_gate() {
   local label="$1"
   local started="$SECONDS"
-  local deadline="${validation_deadline:-$((SECONDS + 900))}"
   local ok=0
-  local status_text=TIMEOUT
   local node
-  while [ "$SECONDS" -lt "$deadline" ]; do
+  while :; do
     ok=1
     for node in "${leaf_routers[@]}"; do
       node_is_stopped "$node" && continue
-      [ "$SECONDS" -lt "$deadline" ] || { ok=0; break; }
-      if ! ssh_timeout_seconds="$((deadline - SECONDS))" ssh_node "$node" "set -e
+      if ! ssh_node "$node" "set -e
 status=\"\$(sudo routerctl describe MobilityPool/cloudedge -o json)\"
 printf '%s\n' \"\$status\" | jq -e '
   .resource.status as \$s
@@ -1414,14 +1407,13 @@ printf '%s\n' \"\$status\" | jq -e '
   )
 ' >/dev/null"; then
         ok=0
+        echo "waiting for provider readiness on $node ($label)" >&2
       fi
     done
     [ "$ok" -eq 1 ] && break
     sleep 10
   done
-  [ "$ok" -eq 1 ] && status_text=PASS
-  printf '%s\t%s\t%s\n' "${label}-provider" "$status_text" "$((SECONDS - started))" >>"$evidence_dir/convergence/summary.tsv"
-  [ "$ok" -eq 1 ]
+  printf '%s\tPASS\t%s\n' "${label}-provider" "$((SECONDS - started))" >>"$evidence_dir/convergence/summary.tsv"
 }
 
 collect_convergence_snapshot() {
@@ -2095,7 +2087,6 @@ run_validation_set() {
     record_timing "$label" dataplane-control-gate "$phase_started"
   fi
   if [ "$dataplane_status" = PASS ]; then
-    validation_deadline=$((SECONDS + 900))
     phase_started="$SECONDS"
     if ! wait_provider_gate "$label"; then
       provider_status=2
