@@ -37,17 +37,6 @@ func deliveryPoolForTest(poolName string, spec testMobilityPoolSpec, self member
 	}
 }
 
-func nonLivenessUpserts(paths []bgpdaemon.AppliedPath) []bgpdaemon.AppliedPath {
-	var out []bgpdaemon.AppliedPath
-	for _, path := range paths {
-		if stringSliceContains(path.Attrs.Communities, bgpstate.MobilityCommunityNodeLiveness) {
-			continue
-		}
-		out = append(out, path)
-	}
-	return out
-}
-
 func TestProviderObservationRequiresFreshUnassignSnapshot(t *testing.T) {
 	now := time.Date(2026, 6, 26, 3, 10, 0, 0, time.UTC)
 	address := "10.88.60.11/32"
