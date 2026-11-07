@@ -28,8 +28,17 @@ func TestHAPromotionPreservesReplicatedMarksUntilVIPPublication(t *testing.T) {
 	}}}
 	store[api.NetAPIVersion+"/HealthCheck/primary"] = healthProbeStatusForTest(t, router, store, "primary", "Unhealthy", now, 3)
 	c := IPv4PolicyRouteController{Router: router, DeclaredRouter: router, Store: store, Now: func() time.Time { return now }, CommandOutput: func(context.Context, string, ...string) ([]byte, error) { return nil, nil }}
-	for _, published := range []bool{false, true} {
-		store[api.NetAPIVersion+"/VirtualAddress/gateway"]["vipPublicationConfirmed"] = published
+	for _, tc := range []struct {
+		role      string
+		published bool
+		preserve  bool
+	}{
+		{"backup", false, true},
+		{"master", false, true},
+		{"master", true, false},
+	} {
+		store[api.NetAPIVersion+"/VirtualAddress/gateway"]["role"] = tc.role
+		store[api.NetAPIVersion+"/VirtualAddress/gateway"]["vipPublicationConfirmed"] = tc.published
 		path := filepath.Join(t.TempDir(), "default.nft")
 		if err := c.applyDefaultRoutePolicies(t.Context(), "nft", path); err != nil {
 			t.Fatal(err)
@@ -39,8 +48,8 @@ func TestHAPromotionPreservesReplicatedMarksUntilVIPPublication(t *testing.T) {
 			t.Fatal(err)
 		}
 		preserved := strings.Contains(string(data), "ct mark { 0x110, 0x113 } meta mark set ct mark")
-		if preserved != !published {
-			t.Errorf("publication=%t replicated mark preserved=%t\n%s", published, preserved, data)
+		if preserved != tc.preserve {
+			t.Errorf("role=%s publication=%t replicated mark preserved=%t\n%s", tc.role, tc.published, preserved, data)
 		}
 		if !strings.Contains(string(data), "ct mark 0x0 meta mark set 0x113") {
 			t.Fatal("new flows lost the available fallback")
