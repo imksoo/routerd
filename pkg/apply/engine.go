@@ -1618,14 +1618,18 @@ func (e *Engine) observeNetworkAdoption(res api.Resource, aliases map[string]str
 	}
 	rr.Observed["ifname"] = ifname
 	rr.Observed["state"] = defaultString(spec.State, "present")
-	if spec.SystemdNetworkd.DisableDHCPv4 || spec.SystemdNetworkd.DisableDHCPv6 || spec.SystemdNetworkd.DisableIPv6RA {
+	if networkdAdoptionConfigured(spec.SystemdNetworkd) {
 		rr.Observed["systemdNetworkd"] = "managed"
 	}
-	if spec.SystemdResolved.DisableDNSStubListener {
+	if resolvedAdoptionConfigured(spec.SystemdResolved) {
 		rr.Observed["systemdResolved"] = "managed"
 	}
 	if includePlan {
-		rr.Plan = append(rr.Plan, "ensure systemd-networkd/resolved adoption drop-ins")
+		if spec.State == "absent" {
+			rr.Plan = append(rr.Plan, "remove systemd-networkd/resolved adoption drop-ins")
+		} else {
+			rr.Plan = append(rr.Plan, "ensure systemd-networkd/resolved adoption drop-ins")
+		}
 	}
 }
 

@@ -168,15 +168,19 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 			return nil
 		}
 		var intents []resource.Intent
-		if spec.SystemdNetworkd.DisableDHCPv4 || spec.SystemdNetworkd.DisableDHCPv6 || spec.SystemdNetworkd.DisableIPv6RA {
+		action := resource.ActionEnsure
+		if spec.State == "absent" {
+			action = resource.ActionDelete
+		}
+		if networkdAdoptionConfigured(spec.SystemdNetworkd) {
 			ifname := spec.IfName
 			if ifname == "" {
 				ifname = aliases[spec.Interface]
 			}
-			intents = append(intents, artifact("systemd.network.dropin", ifname+"/90-routerd-adoption.conf", resource.ActionEnsure, "systemd-networkd", nil))
+			intents = append(intents, artifact("systemd.network.dropin", ifname+"/"+defaultString(spec.SystemdNetworkd.DropinName, "90-routerd-adoption.conf"), action, "systemd-networkd", nil))
 		}
-		if spec.SystemdResolved.DisableDNSStubListener {
-			intents = append(intents, artifact("systemd.resolved.dropin", "90-routerd-adoption.conf", resource.ActionEnsure, "systemd-resolved", nil))
+		if resolvedAdoptionConfigured(spec.SystemdResolved) {
+			intents = append(intents, artifact("systemd.resolved.dropin", defaultString(spec.SystemdResolved.DropinName, "90-routerd-adoption.conf"), action, "systemd-resolved", nil))
 		}
 		return intents
 	case "Sysctl":
@@ -641,4 +645,12 @@ func artifactIntentsForResult(intents []resource.Intent) []ArtifactIntent {
 		})
 	}
 	return out
+}
+
+func networkdAdoptionConfigured(spec api.NetworkAdoptionNetworkdSpec) bool {
+	return spec.DNS != nil || spec.DisableDHCPv4 || spec.DisableDHCPv6 || spec.DisableIPv6RA || spec.DHCPv4UseRoutes != nil || spec.DHCPv4UseDNS != nil || spec.DHCPv4RouteMetric != 0
+}
+
+func resolvedAdoptionConfigured(spec api.NetworkAdoptionResolvedSpec) bool {
+	return spec.DisableDNSStubListener || len(spec.DNSServers) > 0 || len(spec.FallbackDNSServers) > 0
 }
