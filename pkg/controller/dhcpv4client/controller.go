@@ -214,7 +214,7 @@ func (c Controller) applyLease(ctx context.Context, name string, current, next m
 		}
 		return c.restoreStaticDNS(ctx, current, next)
 	}
-	if phase != daemonapi.ResourcePhaseBound {
+	if phase != daemonapi.ResourcePhaseBound && phase != daemonapi.ResourcePhaseRefreshing && phase != daemonapi.ResourcePhaseRebinding {
 		return nil
 	}
 	spec, ifname, ok, err := c.leaseSpecAndIfName(name)
