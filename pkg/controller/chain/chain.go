@@ -3387,7 +3387,8 @@ func (r *Runner) startSupervisedDaemonSpec(ctx context.Context, logger *slog.Log
 				} else {
 					running := false
 					for _, process := range processes {
-						if supervisedProcessMatches(process.Args, spec) {
+						processBinary, processResource := supervisedProcessIdentity(process.Args)
+						if processBinary == binary && processResource == resourceName {
 							running = true
 							break
 						}
