@@ -192,16 +192,6 @@ cmd_pmtu() {
   overlay_mtu=$(ce_client_ssh "$client" "ip -o link show $(printf '%q' "$overlay_iface") 2>/dev/null | sed -n 's/.*mtu \\([0-9][0-9]*\\).*/\\1/p' | head -n1" || true)
   route_mtu=$(printf '%s\n' "$route_line" | sed -n 's/.* mtu \([0-9][0-9]*\).*/\1/p' | head -n1)
   advmss=$(printf '%s\n' "$route_line" | sed -n 's/.* advmss \([0-9][0-9]*\).*/\1/p' | head -n1)
-  if [[ -z "$route_mtu" && "$overlay_mtu" =~ ^[0-9]+$ ]]; then
-    route_mtu=$overlay_mtu
-    printf 'route_mtu_source=overlay_mtu_fallback\n'
-    printf 'route_mtu_reason=ip_route_get_did_not_report_mtu\n'
-  fi
-  if [[ -z "$advmss" && "$route_mtu" =~ ^[0-9]+$ && "$route_mtu" -gt 40 ]]; then
-    advmss=$((route_mtu - 40))
-    printf 'route_advmss_source=derived_ipv4_tcp_overhead\n'
-    printf 'route_advmss_reason=ip_route_get_did_not_report_advmss\n'
-  fi
   nft_mss=$(ce_client_ssh "$client" "{ sudo nft -a list ruleset 2>/dev/null || nft -a list ruleset 2>/dev/null || true; } | sed -n 's/.*tcp option maxseg size set \\([0-9][0-9]*\\).*/\\1/p' | head -n1" || true)
   iptables_mss=$(ce_client_ssh "$client" "{ sudo iptables-save 2>/dev/null || iptables-save 2>/dev/null || true; } | sed -n 's/.*--set-mss \\([0-9][0-9]*\\).*/\\1/p' | head -n1" || true)
   if [[ "$nft_mss" =~ ^[0-9]+$ ]]; then
@@ -220,11 +210,11 @@ cmd_pmtu() {
   fi
   printf 'route_mtu=%s\n' "${route_mtu:-unknown}"
   if [[ -z "$route_mtu" ]]; then
-    printf 'route_mtu_reason=ip_route_get_missing_mtu_and_no_overlay_mtu_fallback\n'
+    printf 'route_mtu_reason=ip_route_get_did_not_report_mtu\n'
   fi
   printf 'route_advmss=%s\n' "${advmss:-unknown}"
   if [[ -z "$advmss" ]]; then
-    printf 'route_advmss_reason=ip_route_get_missing_advmss_and_no_numeric_mtu_fallback\n'
+    printf 'route_advmss_reason=ip_route_get_did_not_report_advmss\n'
   fi
   printf 'mss_clamp=%s\n' "${mss:-unknown}"
   printf 'effective_mss_clamp=%s\n' "${mss:-unknown}"

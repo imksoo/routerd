@@ -170,14 +170,6 @@ def normalize_pmtu(details):
             normalize_unknown_reason(details, field, f"runner_did_not_report_{field}")
         elif value == "unknown":
             normalize_unknown_reason(details, field, f"runner_reported_unknown_{field}_without_reason")
-    if details.get("route_mtu") == "unknown" and is_int(details.get("overlay_mtu")):
-        details["route_mtu"] = details["overlay_mtu"]
-        details.setdefault("route_mtu_source", "overlay_mtu_fallback")
-        details.setdefault("route_mtu_reason", "runner_did_not_report_route_mtu")
-    if details.get("route_advmss") == "unknown" and is_int(details.get("route_mtu")) and details["route_mtu"] > 40:
-        details["route_advmss"] = details["route_mtu"] - 40
-        details.setdefault("route_advmss_source", "derived_ipv4_tcp_overhead")
-        details.setdefault("route_advmss_reason", "runner_did_not_report_route_advmss")
     if details.get("effective_mss_clamp") == "unknown" and is_int(details.get("mss_clamp")):
         details["effective_mss_clamp"] = details["mss_clamp"]
         details.setdefault("effective_mss_clamp_source", details.get("mss_clamp_source", "mss_clamp"))
