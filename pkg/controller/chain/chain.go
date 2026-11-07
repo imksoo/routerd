@@ -4298,6 +4298,13 @@ func (c DaemonStatusController) daemonSockets() ([]string, error) {
 	for _, resource := range c.Router.Spec.Resources {
 		switch resource.Kind {
 		case "DHCPv6PrefixDelegation":
+			spec, err := resource.DHCPv6PrefixDelegationSpec()
+			if err != nil {
+				return nil, err
+			}
+			if api.EffectiveIPv6PDClient(string(platform.CurrentOS()), spec.Profile, spec.Client) != api.IPv6PDClientRouterd {
+				continue
+			}
 			socket := c.DaemonSockets[resource.Metadata.Name]
 			if socket == "" {
 				defaults, _ := platform.Current()

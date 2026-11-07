@@ -18,6 +18,7 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/pdclient"
+	"github.com/imksoo/routerd/pkg/platform"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -60,14 +61,16 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 			return nil, err
 		}
 		profile := defaultString(spec.Profile, api.IPv6PDProfileDefault)
-		client := defaultString(spec.Client, "networkd")
+		client := api.EffectiveIPv6PDClient(string(platform.CurrentOS()), profile, spec.Client)
 		prefixLength := api.EffectiveIPv6PDPrefixLength(profile, spec.PrefixLength)
 		base := "ipv6PrefixDelegation." + res.Metadata.Name
 		lease, _ := routerstate.PDLeaseFromStore(store, base)
 		managedSnapshotFresh := false
-		if snapshot, ok := managedPDClientSnapshot(res.Metadata.Name, aliases[spec.Interface], spec, store.Now()); ok {
-			lease = mergePDLeaseSnapshot(lease, snapshot)
-			managedSnapshotFresh = true
+		if client == api.IPv6PDClientRouterd {
+			if snapshot, ok := managedPDClientSnapshot(res.Metadata.Name, aliases[spec.Interface], spec, store.Now()); ok {
+				lease = mergePDLeaseSnapshot(lease, snapshot)
+				managedSnapshotFresh = true
+			}
 		}
 		previousClient := store.Get(base + ".client").Value
 		if previousClient != "" && previousClient != client {
