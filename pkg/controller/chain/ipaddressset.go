@@ -111,8 +111,12 @@ resources:
 			continue
 		}
 		nextRefresh := now.Add(nextIPAddressSetRefresh(result.MinTTL, spec.RefreshInterval))
+		resolvedAt := any(now.Format(time.RFC3339Nano))
+		minTTLSeconds := any(int(result.MinTTL.Seconds()))
 		if cached {
 			nextRefresh, _ = time.Parse(time.RFC3339Nano, current["nextRefreshAt"].(string))
+			resolvedAt = current["resolvedAt"]
+			minTTLSeconds = current["minTTLSeconds"]
 		}
 		if len(activeTargets) > 0 {
 			missingTargets := missingIPAddressSetTargets(result, activeTargets, existingTargets)
@@ -132,6 +136,8 @@ resources:
 					"names":               result.Names,
 					"resolveErrors":       result.Errors,
 					"nextRefreshAt":       nextRefresh.Format(time.RFC3339Nano),
+					"resolvedAt":          resolvedAt,
+					"minTTLSeconds":       minTTLSeconds,
 					"dryRun":              false,
 				}); saveErr != nil {
 					return saveErr
@@ -141,14 +147,23 @@ resources:
 			for _, target := range sortedIPAddressSetTargets(existingTargets) {
 				if err := c.applyNftSet(ctx, command, target.TableFamily, target.Table, target.SetName, result.addressesForFamily(target.AddressFamily), existingOutputs[target.key()]); err != nil {
 					if saveErr := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPAddressSet", resource.Metadata.Name, map[string]any{
-						"phase":      "Error",
-						"reason":     "ApplyFailed",
-						"error":      err.Error(),
-						"referenced": true,
-						"setName":    setName,
-						"target":     target.String(),
-						"addresses":  result.Addresses,
-						"dryRun":     false,
+						"phase":               "Error",
+						"reason":              "ApplyFailed",
+						"error":               err.Error(),
+						"referenced":          true,
+						"setName":             setName,
+						"target":              target.String(),
+						"addresses":           result.Addresses,
+						"configuredAddresses": configuredAddresses,
+						"ipv4Addresses":       result.IPv4Addresses,
+						"ipv6Addresses":       result.IPv6Addresses,
+						"names":               result.Names,
+						"resolveErrors":       result.Errors,
+						"refreshInterval":     spec.RefreshInterval,
+						"nextRefreshAt":       nextRefresh.Format(time.RFC3339Nano),
+						"resolvedAt":          resolvedAt,
+						"minTTLSeconds":       minTTLSeconds,
+						"dryRun":              false,
 					}); saveErr != nil {
 						return saveErr
 					}
@@ -157,13 +172,22 @@ resources:
 			}
 			if len(existingTargets) == 0 {
 				if saveErr := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPAddressSet", resource.Metadata.Name, map[string]any{
-					"phase":      "Error",
-					"reason":     "ApplyFailed",
-					"error":      "no nftables address set is present",
-					"referenced": true,
-					"setName":    setName,
-					"addresses":  result.Addresses,
-					"dryRun":     false,
+					"phase":               "Error",
+					"reason":              "ApplyFailed",
+					"error":               "no nftables address set is present",
+					"referenced":          true,
+					"setName":             setName,
+					"addresses":           result.Addresses,
+					"configuredAddresses": configuredAddresses,
+					"ipv4Addresses":       result.IPv4Addresses,
+					"ipv6Addresses":       result.IPv6Addresses,
+					"names":               result.Names,
+					"resolveErrors":       result.Errors,
+					"refreshInterval":     spec.RefreshInterval,
+					"nextRefreshAt":       nextRefresh.Format(time.RFC3339Nano),
+					"resolvedAt":          resolvedAt,
+					"minTTLSeconds":       minTTLSeconds,
+					"dryRun":              false,
 				}); saveErr != nil {
 					return saveErr
 				}
@@ -181,17 +205,13 @@ resources:
 			"targets":             appliedIPAddressSetTargets(existingTargets, targets, len(activeTargets) == 0),
 			"dryRunTargets":       dryRunIPAddressSetTargets(targets, c),
 			"names":               result.Names,
-			"minTTLSeconds":       int(result.MinTTL.Seconds()),
+			"minTTLSeconds":       minTTLSeconds,
 			"nextRefreshAt":       nextRefresh.Format(time.RFC3339Nano),
 			"refreshInterval":     spec.RefreshInterval,
 			"resolveErrors":       result.Errors,
-			"resolvedAt":          now.Format(time.RFC3339Nano),
+			"resolvedAt":          resolvedAt,
 			"dryRun":              len(activeTargets) == 0,
 			"runtimeController":   len(activeTargets) > 0,
-		}
-		if cached {
-			status["resolvedAt"] = current["resolvedAt"]
-			status["minTTLSeconds"] = current["minTTLSeconds"]
 		}
 		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPAddressSet", resource.Metadata.Name, status); err != nil {
 			return err
@@ -531,17 +551,16 @@ func statusStringSlice(value any) []string {
 func ipAddressSetTargetsCurrent(cached ipAddressSetResolveResult, targets []ipAddressSetTarget, outputs map[string]string) bool {
 	for _, target := range targets {
 		addresses := cached.addressesForFamily(target.AddressFamily)
-		if len(addresses) == 0 {
-			continue
-		}
 		output, ok := outputs[target.key()]
 		if !ok {
-			return false
-		}
-		for _, address := range addresses {
-			if !strings.Contains(output, address) {
+			if len(addresses) > 0 {
 				return false
 			}
+			continue
+		}
+		additions, removals := ipAddressSetElementDiff(output, addresses)
+		if len(additions) > 0 || len(removals) > 0 {
+			return false
 		}
 	}
 	return true
