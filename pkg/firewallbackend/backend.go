@@ -141,10 +141,14 @@ func (b Nftables) preserveDynamicSets(ctx context.Context, data, previous []byte
 	}
 	lines := strings.Split(string(data), "\n")
 	wanted := make(map[string]bool)
+	wantedChains := make(map[string]bool)
 	for _, line := range lines {
 		fields := strings.Fields(line)
 		if len(fields) >= 3 && fields[0] == "set" && fields[2] == "{" {
 			wanted[fields[1]] = true
+		}
+		if len(fields) >= 3 && fields[0] == "chain" && fields[2] == "{" {
+			wantedChains[fields[1]] = true
 		}
 		for i, field := range fields {
 			if field == "meter" && i+1 < len(fields) {
@@ -159,6 +163,12 @@ func (b Nftables) preserveDynamicSets(ctx context.Context, data, previous []byte
 	}
 	var snapshot struct {
 		Objects []struct {
+			Chain *struct {
+				Family string `json:"family"`
+				Table  string `json:"table"`
+				Name   string `json:"name"`
+				Handle uint64 `json:"handle"`
+			} `json:"chain"`
 			Set *struct {
 				Family string          `json:"family"`
 				Table  string          `json:"table"`
@@ -174,7 +184,15 @@ func (b Nftables) preserveDynamicSets(ctx context.Context, data, previous []byte
 	}
 	existing := make(map[string]string)
 	var obsolete []uint64
+	var obsoleteChains []uint64
 	for _, object := range snapshot.Objects {
+		chain := object.Chain
+		if chain != nil && chain.Family == "inet" && chain.Table == "routerd_filter" && !wantedChains[chain.Name] {
+			if chain.Handle == 0 {
+				return nil, fmt.Errorf("nft chain %s has no handle", chain.Name)
+			}
+			obsoleteChains = append(obsoleteChains, chain.Handle)
+		}
 		set := object.Set
 		if set == nil || set.Family != "inet" || set.Table != "routerd_filter" {
 			continue
@@ -218,15 +236,19 @@ func (b Nftables) preserveDynamicSets(ctx context.Context, data, previous []byte
 			preserve[name] = true
 		}
 	}
-	if len(preserve) == 0 && len(obsolete) == 0 {
+	if len(preserve) == 0 && len(obsolete) == 0 && len(obsoleteChains) == 0 {
 		return data, nil
 	}
 	sort.Slice(obsolete, func(i, j int) bool { return obsolete[i] < obsolete[j] })
+	sort.Slice(obsoleteChains, func(i, j int) bool { return obsoleteChains[i] < obsoleteChains[j] })
 	var kept []string
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "flush table inet routerd_filter" {
 			kept = append(kept, line)
+			for _, handle := range obsoleteChains {
+				kept = append(kept, "destroy chain inet routerd_filter handle "+strconv.FormatUint(handle, 10))
+			}
 			for _, handle := range obsolete {
 				kept = append(kept, "destroy set inet routerd_filter handle "+strconv.FormatUint(handle, 10))
 			}
