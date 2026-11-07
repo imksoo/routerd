@@ -3300,9 +3300,6 @@ func (r *Runner) startARPObserverDaemonSources(ctx context.Context, logger *slog
 		desired[spec.ResourceName] = spec.Socket
 	}
 	r.supervisedMu.Lock()
-	if r.daemonSourcesStarted == nil {
-		r.daemonSourcesStarted = make(map[string]*arpDaemonSource)
-	}
 	for name, active := range r.daemonSourcesStarted {
 		if socket, ok := desired[name]; !ok || socket != active.socket || !r.arpObserverReadySet[name] {
 			active.cancel()
@@ -3312,40 +3309,47 @@ func (r *Runner) startARPObserverDaemonSources(ctx context.Context, logger *slog
 	r.supervisedMu.Unlock()
 
 	for _, spec := range specs {
-		r.supervisedMu.Lock()
-		if !r.arpObserverReadySet[spec.ResourceName] || r.daemonSourcesStarted[spec.ResourceName] != nil {
-			r.supervisedMu.Unlock()
-			continue
-		}
-		sourceCtx, cancel := context.WithCancel(ctx)
-		active := &arpDaemonSource{socket: spec.Socket, cancel: cancel}
-		r.daemonSourcesStarted[spec.ResourceName] = active
-		r.supervisedMu.Unlock()
-
-		source := daemonsource.DaemonSource{
-			Daemon:    daemonapi.DaemonRef{Name: "routerd-arp-observer-" + spec.ResourceName, Kind: "routerd-arp-observer", Instance: spec.ResourceName},
-			Socket:    spec.Socket,
-			Publisher: r.Bus,
-			// ARP observations are persisted as TTL-bounded federation events.
-			// Replay that event history after a router restart so the discovery
-			// controller reconstructs ownership from the durable source rather
-			// than from a MobilityPool status projection.
-			Replay: true,
-		}
-		go func(spec mobilityARPObserverDaemonSpec, source daemonsource.DaemonSource) {
-			defer func() {
-				r.supervisedMu.Lock()
-				if r.daemonSourcesStarted[spec.ResourceName] == active {
-					delete(r.daemonSourcesStarted, spec.ResourceName)
-				}
-				r.supervisedMu.Unlock()
-				cancel()
-			}()
-			if err := source.Run(sourceCtx); err != nil && sourceCtx.Err() == nil && logger != nil {
-				logger.Warn("arp observer daemon source stopped", "resource", spec.ResourceName, "error", err)
-			}
-		}(spec, source)
+		r.startARPObserverDaemonSource(ctx, logger, spec)
 	}
+}
+
+func (r *Runner) startARPObserverDaemonSource(ctx context.Context, logger *slog.Logger, spec mobilityARPObserverDaemonSpec) {
+	r.supervisedMu.Lock()
+	if r.daemonSourcesStarted == nil {
+		r.daemonSourcesStarted = make(map[string]*arpDaemonSource)
+	}
+	if !r.arpObserverReadySet[spec.ResourceName] || r.daemonSourcesStarted[spec.ResourceName] != nil {
+		r.supervisedMu.Unlock()
+		return
+	}
+	sourceCtx, cancel := context.WithCancel(ctx)
+	active := &arpDaemonSource{socket: spec.Socket, cancel: cancel}
+	r.daemonSourcesStarted[spec.ResourceName] = active
+	r.supervisedMu.Unlock()
+
+	source := daemonsource.DaemonSource{
+		Daemon:    daemonapi.DaemonRef{Name: "routerd-arp-observer-" + spec.ResourceName, Kind: "routerd-arp-observer", Instance: spec.ResourceName},
+		Socket:    spec.Socket,
+		Publisher: r.Bus,
+		// ARP observations are persisted as TTL-bounded federation events.
+		// Replay that event history after a router restart so the discovery
+		// controller reconstructs ownership from the durable source rather
+		// than from a MobilityPool status projection.
+		Replay: true,
+	}
+	go func(spec mobilityARPObserverDaemonSpec, source daemonsource.DaemonSource) {
+		defer func() {
+			r.supervisedMu.Lock()
+			if r.daemonSourcesStarted[spec.ResourceName] == active {
+				delete(r.daemonSourcesStarted, spec.ResourceName)
+			}
+			r.supervisedMu.Unlock()
+			cancel()
+		}()
+		if err := source.Run(sourceCtx); err != nil && sourceCtx.Err() == nil && logger != nil {
+			logger.Warn("arp observer daemon source stopped", "resource", spec.ResourceName, "error", err)
+		}
+	}(spec, source)
 }
 
 func (r *Runner) reconcileARPObserverDaemons(ctx context.Context, logger *slog.Logger) error {
@@ -3583,6 +3587,7 @@ func (r *Runner) startARPObserverInitialSync(ctx context.Context, spec mobilityA
 	r.supervisedMu.Unlock()
 	go func() {
 		err := r.syncARPObserverIgnoredSenderMACs(syncCtx, spec)
+		ready := false
 		r.supervisedMu.Lock()
 		if r.arpObserverSyncs[spec.ResourceName] == active {
 			delete(r.arpObserverSyncs, spec.ResourceName)
@@ -3592,12 +3597,16 @@ func (r *Runner) startARPObserverInitialSync(ctx context.Context, spec mobilityA
 						r.arpObserverReadySet = make(map[string]bool)
 					}
 					r.arpObserverReadySet[spec.ResourceName] = true
+					ready = true
 				} else {
 					delete(r.arpObserverReadySet, spec.ResourceName)
 				}
 			}
 		}
 		r.supervisedMu.Unlock()
+		if ready {
+			r.startARPObserverDaemonSource(ctx, logger, spec)
+		}
 		if err != nil && syncCtx.Err() == nil && logger != nil {
 			logger.Warn("arp observer initial ignore set sync failed", "resource", spec.ResourceName, "error", err)
 		}
