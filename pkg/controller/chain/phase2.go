@@ -375,31 +375,6 @@ type IPv4RouteController struct {
 	DevicePresent     func(context.Context, string) bool
 }
 
-func (c IPv4RouteController) Start(ctx context.Context) {
-	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.tunnel.ds-lite.*", "routerd.lan.route.changed"}}, 32)
-	go func() {
-		ticker := time.NewTicker(5 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case _, ok := <-ch:
-				if !ok {
-					return
-				}
-				if err := c.reconcile(ctx); err != nil && c.Logger != nil {
-					c.Logger.Warn("ipv4 route reconcile failed", "error", err)
-				}
-			case <-ticker.C:
-				if err := c.reconcile(ctx); err != nil && c.Logger != nil {
-					c.Logger.Warn("ipv4 route periodic reconcile failed", "error", err)
-				}
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-}
-
 func (c IPv4RouteController) reconcile(ctx context.Context) error {
 	var failures []string
 	if err := c.cleanupRemovedRoutes(ctx); err != nil {
