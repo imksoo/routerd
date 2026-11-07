@@ -3011,9 +3011,12 @@ func (r *Runner) clientDaemonSpecs(router *api.Router) []supervisedDaemonSpec {
 			name := resource.Metadata.Name
 			args := []string{"daemon", "--resource", name,
 				"--config-file", filepath.Join(defaults.StateDir, "dns-resolver", name, "config.json"),
-				"--socket", filepath.Join(defaults.RuntimeDir, "dns-resolver", name+".sock"),
-				"--state-file", filepath.Join(defaults.StateDir, "dns-resolver", name, "state.json"),
-				"--event-file", filepath.Join(defaults.StateDir, "dns-resolver", name, "events.jsonl"),
+			}
+			if defaults.RuntimeDir != "/run/routerd" || defaults.StateDir != "/var/lib/routerd" {
+				args = append(args,
+					"--socket", filepath.Join(defaults.RuntimeDir, "dns-resolver", name+".sock"),
+					"--state-file", filepath.Join(defaults.StateDir, "dns-resolver", name, "state.json"),
+					"--event-file", filepath.Join(defaults.StateDir, "dns-resolver", name, "events.jsonl"))
 			}
 			out = append(out, supervisedDaemonSpec{ResourceName: name, Binary: "routerd-dns-resolver", Args: args})
 		case "DHCPv6PrefixDelegation":
