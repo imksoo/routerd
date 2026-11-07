@@ -1751,7 +1751,11 @@ func (r *Runner) Start(ctx context.Context) error {
 			}
 		}()
 	}
-	r.startARPObserverDaemonSources(ctx, logger)
+	if arpSpecs, err := r.mobilityARPObserverDaemonSpecsWithError(); err != nil {
+		logger.Warn("read ARP observer configuration", "error", err)
+	} else {
+		r.startARPObserverDaemonSources(ctx, logger, arpSpecs)
+	}
 
 	first, err := r.prepareControllerGeneration(ctx, logger, store)
 	if err != nil {
@@ -2777,8 +2781,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	}
 	if opts.SuperviseClientDaemons && r.controllerEnabled("daemon-supervisor") {
 		controllers = append(controllers, framework.FuncController{ControllerName: "daemon-supervisor-reconcile", Every: 30 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}, PeriodicFunc: func(ctx context.Context) (bool, error) {
-			r.reconcileARPObserverDaemons(ctx, logger)
-			return false, nil
+			return false, r.reconcileARPObserverDaemons(ctx, logger)
 		}})
 	}
 	controllers = r.filterControllers(controllers)
@@ -3164,7 +3167,9 @@ func (r *Runner) reconcileSupervisedDaemonSpecs(ctx context.Context, logger *slo
 	}
 	r.supervisedMu.Unlock()
 	if reconcileARP {
-		r.reconcileARPObserverDaemons(ctx, logger)
+		if err := r.reconcileARPObserverDaemons(ctx, logger); err != nil {
+			stopErrors = append(stopErrors, err)
+		}
 	}
 	return errors.Join(stopErrors...)
 }
@@ -3203,11 +3208,6 @@ type mobilityARPObserverDaemonSpec struct {
 	ProbeRetries      int
 	ScanInterval      string
 	IgnoredSenderMACs []string
-}
-
-func (r *Runner) mobilityARPObserverDaemonSpecs() []mobilityARPObserverDaemonSpec {
-	specs, _ := r.mobilityARPObserverDaemonSpecsWithError()
-	return specs
 }
 
 func (r *Runner) mobilityARPObserverDaemonSpecsWithError() ([]mobilityARPObserverDaemonSpec, error) {
@@ -3268,14 +3268,14 @@ func (r *Runner) mobilityARPObserverDaemonSpecsFromIntents(intents []dynamicconf
 	return out
 }
 
-func (r *Runner) startARPObserverDaemonSources(ctx context.Context, logger *slog.Logger) {
+func (r *Runner) startARPObserverDaemonSources(ctx context.Context, logger *slog.Logger, specs []mobilityARPObserverDaemonSpec) {
 	r.supervisedMu.Lock()
 	if r.daemonSourcesStarted == nil {
 		r.daemonSourcesStarted = make(map[string]bool)
 	}
 	r.supervisedMu.Unlock()
 
-	for _, spec := range r.mobilityARPObserverDaemonSpecs() {
+	for _, spec := range specs {
 		if !r.arpObserverReady(spec.ResourceName) {
 			continue
 		}
@@ -3306,10 +3306,14 @@ func (r *Runner) startARPObserverDaemonSources(ctx context.Context, logger *slog
 	}
 }
 
-func (r *Runner) reconcileARPObserverDaemons(ctx context.Context, logger *slog.Logger) {
-	r.startARPObserverDaemonSources(ctx, logger)
+func (r *Runner) reconcileARPObserverDaemons(ctx context.Context, logger *slog.Logger) error {
+	specs, err := r.mobilityARPObserverDaemonSpecsWithError()
+	if err != nil {
+		return err
+	}
+	r.startARPObserverDaemonSources(ctx, logger, specs)
 
-	for _, spec := range r.mobilityARPObserverDaemonSpecs() {
+	for _, spec := range specs {
 		if r.arpObserverReady(spec.ResourceName) {
 			if err := r.syncARPObserverIgnoredSenderMACs(ctx, spec); err != nil && logger != nil {
 				logger.Warn("arp observer ignore set sync failed", "resource", spec.ResourceName, "error", err)
@@ -3322,6 +3326,7 @@ func (r *Runner) reconcileARPObserverDaemons(ctx context.Context, logger *slog.L
 			}
 		}(spec)
 	}
+	return nil
 }
 
 func arpObserverDaemonArgs(spec mobilityARPObserverDaemonSpec) []string {

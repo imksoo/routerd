@@ -44,7 +44,7 @@ func TestRunnerMobilityARPObserverDaemonSpecsFromTypedIntents(t *testing.T) {
 	}
 	store := &dynamicRouteSAMStore{records: []routerstate.DynamicConfigPartRecord{arpObserverIntentRecord(t, intents, time.Now().Add(time.Hour))}}
 	runner := Runner{Store: store}
-	specs := runner.mobilityARPObserverDaemonSpecs()
+	specs, _ := runner.mobilityARPObserverDaemonSpecsWithError()
 	if len(specs) != 3 {
 		t.Fatalf("daemon specs = %d, want 3: %#v", len(specs), specs)
 	}
@@ -91,7 +91,7 @@ func TestRunnerMobilityARPObserverDaemonSpecsPreserveTypedIgnoredSenderMACs(t *t
 		},
 	}}, time.Now().Add(time.Hour))}}
 	runner := Runner{Store: store}
-	specs := runner.mobilityARPObserverDaemonSpecs()
+	specs, _ := runner.mobilityARPObserverDaemonSpecsWithError()
 	if len(specs) != 1 {
 		t.Fatalf("daemon specs = %#v, want one arp-observer spec", specs)
 	}
@@ -112,7 +112,7 @@ func TestRunnerMobilityARPObserverDaemonSpecsRejectsWrongSourceOrPool(t *testing
 	wrongPool := arpObserverIntentRecord(t, []dynamicconfig.ARPObserverIntent{intent}, now.Add(time.Hour))
 	wrongPool.Source = "MobilityPool/other/node/pve-rt08/arp-observer"
 	runner := Runner{Store: &dynamicRouteSAMStore{records: []routerstate.DynamicConfigPartRecord{mainSource, wrongPool}}}
-	if specs := runner.mobilityARPObserverDaemonSpecs(); len(specs) != 0 {
+	if specs, _ := runner.mobilityARPObserverDaemonSpecsWithError(); len(specs) != 0 {
 		t.Fatalf("untrusted ARP observer records produced daemon specs: %#v", specs)
 	}
 }
