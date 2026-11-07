@@ -1550,10 +1550,20 @@ restart or delegated IPv6/RA qualification.
 A finite PD lease is supplied through SQLite; the production VRF, delegated
 address and RA controllers perform the native effects. A separate client
 namespace must acquire the advertised prefix through kernel SLAAC and a
-`proto ra` default route, then reach the router's delegated IPv6 address.
-Withdrawal must remove the router's owned address, the client's RA default and
-the RA journal. This does not test the DHCPv6 exchange, IPv6 transit, delegated
-prefix replacement or packaged-daemon restart/reboot.
+`proto ra` default route, then reach the router's delegated IPv6 address and an
+independent upstream namespace through the VRF. Forwarding, upstream addresses
+and return routes are isolated fixture setup. Replace the stored PD prefix,
+require a new preferred SLAAC source for upstream traffic and deprecation of
+the old client address. Withdrawal must remove both owned router prefixes, the
+client's RA default and the RA journal. This does not test the DHCPv6 exchange
+or packaged-daemon restart/reboot. The extended gate exposed an initial RA `sendmsg: invalid argument`: the
+link-local source was still tentative although the delegated address had finished
+DAD. Linux now checks native source flags before opening the sender, publishes
+`LinkLocalDADPending` while DAD runs, and resumes on controller reconciliation.
+The gate also includes `TestListenRejectsTentativeLinkLocal`, which forces that
+kernel state and verifies readiness before and after DAD. The existing controller
+has status-event reconciliation and a 30-second periodic check; this test invokes
+reconciliation directly and does not qualify packaged startup latency.
 
 ## Tailscale advertisement removal and recovery
 

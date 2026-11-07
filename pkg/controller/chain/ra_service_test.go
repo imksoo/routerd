@@ -655,3 +655,36 @@ func TestRADelegatedFailedDADAndUnknownOwnershipRemainErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestRALinkLocalDADPendingThenReconcileResumes(t *testing.T) {
+	service, store, router, endpoint, socket, _ := raServiceFixture(t)
+	pending := true
+	service.open = func(string) (ra.Endpoint, error) {
+		if pending {
+			return ra.Endpoint{}, ra.ErrSourceTentative
+		}
+		return endpoint, nil
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := service.Stop(ctx); err != nil {
+			t.Error(err)
+		}
+	}()
+	if err := service.Reconcile(t.Context(), router, router, store); err != nil {
+		t.Fatal(err)
+	}
+	status, err := store.ReadObjectStatus(api.NetAPIVersion, "IPv6RouterAdvertisement", "lan-ra")
+	if err != nil || status["phase"] != "Pending" || status["reason"] != "LinkLocalDADPending" || len(socket.packets) != 0 || len(service.loops) != 0 {
+		t.Fatalf("tentative source admitted a sender or lost pending status: %+v %v", status, err)
+	}
+	pending = false
+	if err := service.Reconcile(t.Context(), router, router, store); err != nil {
+		t.Fatal(err)
+	}
+	status, err = store.ReadObjectStatus(api.NetAPIVersion, "IPv6RouterAdvertisement", "lan-ra")
+	if err != nil || status["phase"] != "Applied" {
+		t.Fatalf("usable source did not resume: %+v %v", status, err)
+	}
+}

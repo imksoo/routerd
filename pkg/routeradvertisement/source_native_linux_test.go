@@ -4,6 +4,7 @@
 package routeradvertisement
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"strings"
@@ -59,5 +60,18 @@ func TestListenRejectsTentativeLinkLocal(t *testing.T) {
 	if err == nil {
 		_ = endpoint.Conn.Close()
 		t.Fatal("Listen admitted a tentative link-local transmit source")
+	}
+	if !errors.Is(err, ErrSourceTentative) {
+		t.Fatalf("wrong readiness result: %v", err)
+	}
+	run("ip", "-6", "address", "del", "fe80::1/64", "dev", "ra-dad")
+	run("ip", "-6", "address", "add", "fe80::1/64", "dev", "ra-dad", "nodad")
+	endpoint, err = Listen("ra-dad")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer endpoint.Conn.Close()
+	if endpoint.Source.String() != "fe80::1%ra-dad" {
+		t.Fatalf("wrong ready source: %s", endpoint.Source)
 	}
 }

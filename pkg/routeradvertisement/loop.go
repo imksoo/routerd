@@ -21,6 +21,9 @@ import (
 	"golang.org/x/net/ipv6"
 )
 
+// ErrSourceTentative means the kernel has not completed link-local DAD.
+var ErrSourceTentative = errors.New("link-local address DAD is pending")
+
 var allRouters = netip.MustParseAddr("ff02::2")
 var allNodes = netip.MustParseAddr("ff02::1")
 
@@ -64,11 +67,7 @@ func Listen(ifname string) (Endpoint, error) {
 	if err != nil {
 		return Endpoint{}, err
 	}
-	addrs, err := ifi.Addrs()
-	if err != nil {
-		return Endpoint{}, err
-	}
-	source, err := linkLocalSource(addrs, ifname)
+	source, err := nativeLinkLocalSource(ifi)
 	if err != nil {
 		return Endpoint{}, err
 	}

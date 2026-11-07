@@ -154,6 +154,9 @@ func TestVRFNativeLinuxDelegatedRA(t *testing.T) {
 	checkClient := func(prefix string) {
 		deadline := time.Now().Add(10 * time.Second)
 		for {
+			if err := service.Reconcile(ctx, router, router, store); err != nil {
+				t.Fatal(err)
+			}
 			addresses := client("ip", "-6", "-o", "address", "show", "dev", "vrf-ra-client", "scope", "global")
 			routes := client("ip", "-6", "route", "show", "default")
 			if strings.Contains(addresses, prefix) && !strings.Contains(addresses, "tentative") && strings.Contains(routes, "proto ra") {

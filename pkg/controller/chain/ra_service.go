@@ -244,6 +244,16 @@ func (s *RouterAdvertisementService) Reconcile(ctx context.Context, declared, ef
 			continue
 		}
 		endpoint, err := s.open(ifname)
+		if errors.Is(err, ra.ErrSourceTentative) && len(plans[ifname].Resources) > 0 {
+			// Do not emit from a tentative link-local address. The existing
+			// controller reconciliation retries after kernel DAD completes.
+			var statuses []raResourceStatus
+			for _, intent := range plans[ifname].Resources {
+				statuses = append(statuses, raResourceStatus{IfName: ifname, Kind: intent.StatusKind, Name: intent.Name, Interface: intent.Spec.Interface, Pending: "LinkLocalDADPending"})
+			}
+			outcomes = append(outcomes, saveRAStatuses(store, statuses, false))
+			continue
+		}
 		if err != nil {
 			outcomes = append(outcomes, fmt.Errorf("open RA interface %s: %w", ifname, err))
 			continue
