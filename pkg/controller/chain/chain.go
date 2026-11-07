@@ -6910,6 +6910,56 @@ func compactNonEmptyStrings(values []string) []string {
 	return out
 }
 
+func removeDnsmasq(ctx context.Context, configPath, pidFile string) error {
+	dnsmasqMu.Lock()
+	defer dnsmasqMu.Unlock()
+
+	defaults, features := platform.Current()
+	if features.HasSystemd {
+		const service = "routerd-dnsmasq.service"
+		out, err := exec.CommandContext(ctx, "systemctl", "show", "--property=LoadState", "--value", service).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("systemctl show %s: %w: %s", service, err, strings.TrimSpace(string(out)))
+		}
+		loaded := strings.TrimSpace(string(out)) != "not-found"
+		if loaded {
+			if err := runSystemctl(ctx, "stop", service); err != nil {
+				return err
+			}
+		}
+		unitPath := filepath.Join(defaults.SystemdSystemDir, service)
+		if _, err := os.Stat(unitPath); err == nil {
+			if err := runSystemctl(ctx, "disable", service); err != nil {
+				return err
+			}
+			if err := os.Remove(unitPath); err != nil {
+				return err
+			}
+			loaded = true
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+		if loaded {
+			if err := runSystemctl(ctx, "daemon-reload"); err != nil {
+				return err
+			}
+		}
+		dnsmasqSystemdMu.Lock()
+		clear(dnsmasqSystemdCache)
+		dnsmasqSystemdMu.Unlock()
+	} else if proc, alive := dnsmasqProcess(pidFile); alive {
+		if err := proc.Signal(syscall.SIGTERM); err != nil {
+			return err
+		}
+	}
+	for _, path := range []string{configPath, dnsmasqHostsFile(configPath)} {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove dnsmasq file %s: %w", path, err)
+		}
+	}
+	return nil
+}
+
 func ensureDnsmasq(ctx context.Context, command, configPath, pidFile string, changed bool) error {
 	dnsmasqMu.Lock()
 	defer dnsmasqMu.Unlock()

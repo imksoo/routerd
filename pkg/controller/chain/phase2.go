@@ -933,11 +933,14 @@ func (c DHCPv6ServerController) Start(ctx context.Context) {
 
 func (c DHCPv6ServerController) reconcile(ctx context.Context) error {
 	effectiveRouter := c.effectiveRouter()
-	if !routerNeedsDnsmasq(c.Router) && !routerNeedsDnsmasq(effectiveRouter) {
-		return nil
-	}
 	configPath := firstNonEmpty(c.ConfigPath, "/run/routerd/dnsmasq-phase1.conf")
 	pidFile := firstNonEmpty(c.PIDFile, "/run/routerd/dnsmasq-phase1.pid")
+	if !routerNeedsDnsmasq(c.Router) && !routerNeedsDnsmasq(effectiveRouter) {
+		if c.DryRun {
+			return nil
+		}
+		return removeDnsmasq(ctx, configPath, pidFile)
+	}
 	port := c.Port
 	if port == 0 {
 		port = 1053
