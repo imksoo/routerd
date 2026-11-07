@@ -33,16 +33,7 @@ type Controller struct {
 	Bus                       *bus.Bus
 	Store                     Store
 	DryRun                    bool
-	ConfigPath                string
-	Systemctl                 string
-	KeepalivedCheck           string
-	IP                        string
-	Arping                    string
-	Ifconfig                  string
-	Sysctl                    string
-	Kldload                   string
 	Logger                    *slog.Logger
-	VRRPRuntimeDir            string
 	trackState                map[string]trackDecision
 	keepalivedActiveCheckedAt time.Time
 	keepalivedActiveCached    bool
@@ -96,11 +87,11 @@ func (c *Controller) stopVirtualAddressBackend(ctx context.Context) error {
 	if c.DryRun {
 		return nil
 	}
-	path := stringutil.FirstNonEmpty(c.ConfigPath, "/etc/keepalived/keepalived.conf")
+	path := "/etc/keepalived/keepalived.conf"
 	if _, err := os.Stat(path); err != nil {
 		return nil
 	}
-	systemctl := stringutil.FirstNonEmpty(c.Systemctl, "systemctl")
+	systemctl := "systemctl"
 	if _, err := c.run(ctx, systemctl, "is-active", "--quiet", "keepalived.service"); err != nil {
 		return nil
 	}
@@ -822,14 +813,14 @@ func (c *Controller) run(ctx context.Context, name string, args ...string) ([]by
 
 func (c *Controller) replaceStaticAddress(ctx context.Context, ifname, address string) error {
 	if c.currentOS() == platform.OSFreeBSD {
-		ifconfig := stringutil.FirstNonEmpty(c.Ifconfig, "ifconfig")
+		ifconfig := "ifconfig"
 		family := ifconfigAddressFamily(address)
 		if out, err := c.run(ctx, ifconfig, ifname, family, address, "alias"); err != nil {
 			return fmt.Errorf("%s %s %s %s alias: %w: %s", ifconfig, ifname, family, address, err, strings.TrimSpace(string(out)))
 		}
 		return nil
 	}
-	ip := stringutil.FirstNonEmpty(c.IP, "ip")
+	ip := "ip"
 	if out, err := c.run(ctx, ip, "addr", "replace", address, "dev", ifname); err != nil {
 		return fmt.Errorf("%s addr replace %s dev %s: %w: %s", ip, address, ifname, err, strings.TrimSpace(string(out)))
 	}
@@ -840,7 +831,7 @@ func (c *Controller) staticIPv4AddressPresent(ctx context.Context, ifname, addre
 	if _, ok := staticIPv4Host(address); !ok {
 		return false, nil
 	}
-	ip := stringutil.FirstNonEmpty(c.IP, "ip")
+	ip := "ip"
 	out, err := c.run(ctx, ip, "-4", "-o", "addr", "show", "dev", ifname)
 	if err != nil {
 		return false, fmt.Errorf("%s -4 -o addr show dev %s: %w: %s", ip, ifname, err, strings.TrimSpace(string(out)))
@@ -853,7 +844,7 @@ func (c *Controller) announceStaticIPv4Address(ctx context.Context, ifname, addr
 	if !ok {
 		return nil
 	}
-	arping := stringutil.FirstNonEmpty(c.Arping, "arping")
+	arping := "arping"
 	out, err := c.run(ctx, arping, "-U", "-c", "3", "-I", ifname, host)
 	if err != nil {
 		return fmt.Errorf("%s -U -c 3 -I %s %s: %w: %s", arping, ifname, host, err, strings.TrimSpace(string(out)))
@@ -874,14 +865,14 @@ func staticIPv4Host(address string) (string, bool) {
 
 func (c *Controller) removeStaticAddress(ctx context.Context, ifname, address string) error {
 	if c.currentOS() == platform.OSFreeBSD {
-		ifconfig := stringutil.FirstNonEmpty(c.Ifconfig, "ifconfig")
+		ifconfig := "ifconfig"
 		family := ifconfigAddressFamily(address)
 		if out, err := c.run(ctx, ifconfig, ifname, family, address, "-alias"); err != nil {
 			return fmt.Errorf("%s %s %s %s -alias: %w: %s", ifconfig, ifname, family, address, err, strings.TrimSpace(string(out)))
 		}
 		return nil
 	}
-	ip := stringutil.FirstNonEmpty(c.IP, "ip")
+	ip := "ip"
 	if out, err := c.run(ctx, ip, "addr", "del", address, "dev", ifname); err != nil {
 		return fmt.Errorf("%s addr del %s dev %s: %w: %s", ip, address, ifname, err, strings.TrimSpace(string(out)))
 	}

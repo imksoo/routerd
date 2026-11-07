@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/internal/statusvalue"
-	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/render"
@@ -68,7 +67,7 @@ func (keepalivedBackend) Apply(ctx context.Context, c *Controller, aliases map[s
 	if len(data) == 0 {
 		return backendResult{}, nil
 	}
-	path := stringutil.FirstNonEmpty(c.ConfigPath, "/etc/keepalived/keepalived.conf")
+	path := "/etc/keepalived/keepalived.conf"
 	changed, err := fileContentChanged(path, data)
 	if err != nil {
 		return backendResult{}, err
@@ -79,11 +78,6 @@ func (keepalivedBackend) Apply(ctx context.Context, c *Controller, aliases map[s
 		}
 		if err := writeFile(path, data, 0644); err != nil {
 			return backendResult{}, err
-		}
-		if checker := strings.TrimSpace(c.KeepalivedCheck); checker != "" {
-			if out, err := c.run(ctx, checker, "--config-test", "--use-file", path); err != nil {
-				return backendResult{}, c.saveError(path, changed, nil, "KeepalivedConfigInvalid", fmt.Errorf("%s: %w: %s", checker, err, strings.TrimSpace(string(out))))
-			}
 		}
 		now := time.Now().UTC().Format(time.RFC3339Nano)
 		reason := "keepalived.config changed"
@@ -312,7 +306,7 @@ func reconcileGracefulActivations(ctx context.Context, c *Controller, aliases ma
 }
 
 func (c *Controller) removeGracefulVIP(ctx context.Context, ifname, address string) error {
-	ip := stringutil.FirstNonEmpty(c.IP, "ip")
+	ip := "ip"
 	if out, err := c.run(ctx, ip, "addr", "del", address, "dev", ifname); err != nil {
 		return fmt.Errorf("%s addr del %s dev %s: %w: %s", ip, address, ifname, err, strings.TrimSpace(string(out)))
 	}
@@ -353,17 +347,14 @@ func gracefulActivationWaitingFor(when api.ResourceWhenSpec, store resourcequery
 	return out
 }
 
-func gracefulElectionStatePath(c *Controller, resource string) string {
-	dir := strings.TrimSpace(c.VRRPRuntimeDir)
-	if dir == "" {
-		dir = "/run/routerd"
-	}
+func gracefulElectionStatePath(resource string) string {
+	dir := "/run/routerd"
 	sum := sha256.Sum256([]byte(strings.TrimSpace(resource)))
 	return fmt.Sprintf("%s/vrrp-election-%x.role", dir, sum[:8])
 }
 
-func gracefulElectionRole(c *Controller, resource string) string {
-	data, err := os.ReadFile(gracefulElectionStatePath(c, resource))
+func gracefulElectionRole(resource string) string {
+	data, err := os.ReadFile(gracefulElectionStatePath(resource))
 	if err != nil {
 		return ""
 	}
@@ -383,7 +374,7 @@ func seedGracefulElectionStates(ctx context.Context, c *Controller, aliases map[
 			}
 			continue
 		}
-		if gracefulElectionRole(c, resource.Metadata.Name) != "" {
+		if gracefulElectionRole(resource.Metadata.Name) != "" {
 			continue
 		}
 		address, err := renderVirtualAddress(c.Router, spec)
@@ -399,7 +390,7 @@ func seedGracefulElectionStates(ctx context.Context, c *Controller, aliases map[
 		if present {
 			role = "master"
 		}
-		path := gracefulElectionStatePath(c, resource.Metadata.Name)
+		path := gracefulElectionStatePath(resource.Metadata.Name)
 		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 			return err
 		}
@@ -411,7 +402,7 @@ func seedGracefulElectionStates(ctx context.Context, c *Controller, aliases map[
 }
 
 func reloadOrRestartSystemdKeepalived(ctx context.Context, c *Controller, path string) (string, error) {
-	systemctl := stringutil.FirstNonEmpty(c.Systemctl, "systemctl")
+	systemctl := "systemctl"
 	if _, err := c.run(ctx, systemctl, "is-active", "--quiet", "keepalived.service"); err == nil {
 		if out, err := c.run(ctx, systemctl, "reload", "keepalived.service"); err == nil {
 			return "reload", nil
@@ -450,7 +441,7 @@ func observeKeepalivedRolesWithWait(ctx context.Context, c *Controller, aliases 
 			continue
 		}
 		if spec.VRRP.GracefulActivation != nil {
-			role := gracefulElectionRole(c, resource.Metadata.Name)
+			role := gracefulElectionRole(resource.Metadata.Name)
 			if role == "master" || role == "backup" {
 				if !c.refreshKeepalivedServiceActive(ctx) {
 					role = "inactive"
@@ -465,7 +456,7 @@ func observeKeepalivedRolesWithWait(ctx context.Context, c *Controller, aliases 
 			roles[resource.Metadata.Name] = "unknown"
 			continue
 		}
-		ip := stringutil.FirstNonEmpty(c.IP, "ip")
+		ip := "ip"
 		ipFamily := "-4"
 		if spec.Family == "ipv6" {
 			ipFamily = "-6"
@@ -510,7 +501,7 @@ func (c *Controller) keepalivedServiceActive(ctx context.Context) bool {
 }
 
 func (c *Controller) refreshKeepalivedServiceActive(ctx context.Context) bool {
-	systemctl := stringutil.FirstNonEmpty(c.Systemctl, "systemctl")
+	systemctl := "systemctl"
 	_, err := c.run(ctx, systemctl, "is-active", "--quiet", "keepalived.service")
 	active := err == nil
 	c.keepalivedActiveCached = active
@@ -532,9 +523,9 @@ func (carpBackend) Apply(ctx context.Context, c *Controller, aliases map[string]
 	}
 	changed := false
 	if !c.DryRun {
-		kldload := stringutil.FirstNonEmpty(c.Kldload, "kldload")
+		kldload := "kldload"
 		_, _ = c.run(ctx, kldload, "carp")
-		sysctl := stringutil.FirstNonEmpty(c.Sysctl, "sysctl")
+		sysctl := "sysctl"
 		wantedPreempt := config.PreemptSysctlValue()
 		currentPreempt, currentErr := c.run(ctx, sysctl, "-n", "net.inet.carp.preempt")
 		if currentErr != nil || strings.TrimSpace(string(currentPreempt)) != wantedPreempt {
@@ -543,7 +534,7 @@ func (carpBackend) Apply(ctx context.Context, c *Controller, aliases map[string]
 			}
 			changed = true
 		}
-		ifconfig := stringutil.FirstNonEmpty(c.Ifconfig, "ifconfig")
+		ifconfig := "ifconfig"
 		commands := config.IfconfigCommands()
 		for i, iface := range config.Interfaces {
 			out, err := c.run(ctx, ifconfig, iface.Interface)
@@ -565,7 +556,7 @@ func observeCARPRoles(ctx context.Context, c *Controller, config render.CARPConf
 	if roles != nil {
 		return roles
 	}
-	ifconfig := stringutil.FirstNonEmpty(c.Ifconfig, "ifconfig")
+	ifconfig := "ifconfig"
 	roles = map[string]string{}
 	for _, iface := range config.Interfaces {
 		out, err := c.run(ctx, ifconfig, iface.Interface)
