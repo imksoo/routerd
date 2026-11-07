@@ -67,7 +67,7 @@ func (b Nftables) Apply(ctx context.Context, ruleset Ruleset, dryRun bool) (bool
 	if err != nil {
 		return false, err
 	}
-	if changed {
+	if changed && dryRun {
 		if err := writeRuleset(ruleset.Path, ruleset.Data); err != nil {
 			return false, err
 		}
@@ -82,8 +82,36 @@ func (b Nftables) Apply(ctx context.Context, ruleset Ruleset, dryRun bool) (bool
 		_ = nftstate.MarkVerified(ruleset.Path, time.Now().UTC())
 		return false, nil
 	}
-	if err := b.Reload(ctx, ruleset); err != nil {
+	applyRuleset := ruleset
+	if changed {
+		if err := os.MkdirAll(filepath.Dir(ruleset.Path), 0755); err != nil {
+			return false, err
+		}
+		file, err := os.CreateTemp(filepath.Dir(ruleset.Path), ".firewall-*.nft")
+		if err != nil {
+			return false, err
+		}
+		applyRuleset.Path = file.Name()
+		defer os.Remove(applyRuleset.Path)
+		if err := file.Chmod(0644); err != nil {
+			file.Close()
+			return false, err
+		}
+		if _, err := file.Write(ruleset.Data); err != nil {
+			file.Close()
+			return false, err
+		}
+		if err := file.Close(); err != nil {
+			return false, err
+		}
+	}
+	if err := b.Reload(ctx, applyRuleset); err != nil {
 		return false, err
+	}
+	if changed {
+		if err := os.Rename(applyRuleset.Path, ruleset.Path); err != nil {
+			return false, err
+		}
 	}
 	_ = nftstate.MarkVerified(ruleset.Path, time.Now().UTC())
 	return changed, nil
