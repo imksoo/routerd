@@ -64,8 +64,6 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return firewallCommand(args[1:], stdout, stderr)
 	case "dynamic":
 		return dynamicCommand(args[1:], stdout, stderr)
-	case "render":
-		return renderCommand(args[1:], stdout)
 	case "mobility":
 		return mobilityCommand(args[1:], stdout, stderr)
 	case "plugin":
