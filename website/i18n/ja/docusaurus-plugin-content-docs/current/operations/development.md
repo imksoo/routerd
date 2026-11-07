@@ -1284,6 +1284,9 @@ LAN/WAN アドレスと RA を適用します。対向の IPv4/IPv6 通過転送
 最後に空設定へ戻し、Healthy、所有 VRF・アドレス・helper の撤去、削除済み VRF の
 health 行が残らないことを確認します。`Absent/OwnedGenerationWithdrawn` は設定と
 所有権記録の両方から消えた時点で削除し、再起動後の残留状態も回収する必要があります。
+OS 再起動後は旧 boot ID の所有記録を退役させ、新しい VRF を取得します。
+同じ起動中の名前空間変更は拒否し、同名の他者所有インターフェースを取得・削除しません。
+dry-run は旧記録を維持します。`TestVRFRebootRecovery` がこれらを検証します。
 
 ## Tailscale の広告解除と復旧
 

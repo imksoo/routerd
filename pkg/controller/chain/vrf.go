@@ -13,6 +13,7 @@ import (
 	"math"
 	"slices"
 	"sort"
+	"strings"
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/platform"
@@ -340,8 +341,12 @@ func (c VRFController) Reconcile(ctx context.Context) error {
 	}
 	current := map[string]vrfReceipt{}
 	for _, record := range records {
-		if err := c.checkScope(ctx, record); err != nil {
+		retired, err := c.retireOldKernel(ctx, record)
+		if err != nil {
 			return err
+		}
+		if retired {
+			continue
 		}
 		plan, retained := plans[record.Resource]
 		link, err := c.native().Observe(ctx, record.Plan.Name)
@@ -406,6 +411,55 @@ func (c VRFController) Reconcile(ctx context.Context) error {
 	}
 	return c.cleanupWithdrawnStatuses()
 }
+
+// A reboot destroys the old kernel's interfaces. Retiring that receipt never
+// authorizes adoption or deletion of a same-named interface in the new kernel.
+func (c VRFController) retireOldKernel(ctx context.Context, record vrfReceipt) (bool, error) {
+	scope, err := c.native().Scope(ctx)
+	if err != nil || scope == record.Scope {
+		return false, err
+	}
+	oldParts, newParts := strings.Split(record.Scope, ":"), strings.Split(scope, ":")
+	if len(oldParts) != 3 || len(newParts) != 3 || oldParts[0] != "linux" || newParts[0] != "linux" || oldParts[1] == "" || newParts[1] == "" || oldParts[2] == "" || newParts[2] == "" || oldParts[1] == newParts[1] {
+		return false, errors.New("VRF ownership belongs to another kernel scope")
+	}
+	if c.DryRun {
+		return true, nil
+	}
+	records, err := c.readReceipts()
+	if err != nil {
+		return false, err
+	}
+	remaining := make([]vrfReceipt, 0, len(records))
+	found := false
+	for _, current := range records {
+		if current.Resource == record.Resource {
+			if !sameVRFReceipt(current, record) {
+				return false, errors.New("VRF receipt changed during reboot recovery")
+			}
+			found = true
+		} else {
+			remaining = append(remaining, current)
+		}
+	}
+	if !found {
+		return false, errors.New("VRF receipt disappeared during reboot recovery")
+	}
+	currentScope, err := c.native().Scope(ctx)
+	if err != nil {
+		return false, err
+	}
+	if currentScope != scope {
+		return false, errors.New("VRF kernel scope changed during reboot recovery")
+	}
+	// Publish absence before dropping the receipt so interrupted retirement can
+	// be retried and removed-resource health can be cleaned on the next pass.
+	if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "VRF", record.Resource, map[string]any{"phase": "Absent", "reason": "OwnedGenerationWithdrawn"}); err != nil {
+		return false, err
+	}
+	return true, c.saveReceipts(remaining)
+}
+
 func (c VRFController) apply(ctx context.Context, record *vrfReceipt) error {
 	link, err := c.checkCurrent(ctx, *record)
 	if err != nil {

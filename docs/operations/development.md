@@ -1596,6 +1596,10 @@ no owned VRF/addresses/helpers, and no removed VRF health rows. A withdrawn
 `Absent/OwnedGenerationWithdrawn` display row must be retired once neither the
 configuration nor the ownership journal retains that VRF. This cleanup must also
 recover already-withdrawn rows after restart.
+After OS reboot, retire receipts from the previous Linux boot before acquiring
+a fresh VRF generation. A namespace change within the same boot remains an
+error; a same-named foreign interface must never be adopted or removed. Dry-run
+planning preserves the old receipt. `TestVRFRebootRecovery` covers these paths.
 
 ## Tailscale advertisement removal and recovery
 
