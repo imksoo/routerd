@@ -615,6 +615,17 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 				if idErr == nil && configuredDHCPv4ClientID(spec, link.Address) != clientID {
 					warnings = append(warnings, fmt.Sprintf("%s: existing DHCPv4Client identifier differs from the networkd lease", ifname))
 				}
+				if optionErr == nil {
+					if api.BoolDefault(spec.UseRoutes, true) != api.BoolDefault(useRoutes, true) {
+						warnings = append(warnings, fmt.Sprintf("%s: existing DHCPv4Client useRoutes differs from networkd", ifname))
+					}
+					if api.BoolDefault(spec.UseDNS, true) != api.BoolDefault(useDNS, true) {
+						warnings = append(warnings, fmt.Sprintf("%s: existing DHCPv4Client useDNS differs from networkd", ifname))
+					}
+					if routeMetric != 0 && spec.RouteMetric != routeMetric {
+						warnings = append(warnings, fmt.Sprintf("%s: existing DHCPv4Client routeMetric differs from networkd", ifname))
+					}
+				}
 			} else {
 				clientName := resource.Metadata.Name + "-dhcp4"
 				for suffix := 2; usedDHCPNames[clientName]; suffix++ {
