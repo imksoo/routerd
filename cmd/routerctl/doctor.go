@@ -193,12 +193,6 @@ const (
 // reconcileStatusFetcher allows tests to stub the controllers fetch.
 var reconcileStatusFetcher = fetchReconcileControllers
 
-// doctorStatusFetcher allows tests to stub the main status fetch.
-var doctorStatusFetcher = fetchStatus
-
-// runtimeStatsFetcher allows tests to stub the runtime-stats fetch.
-var runtimeStatsFetcher = fetchRuntimeStats
-
 var doctorRunDiagnosticCommand = runDiagnosticCommand
 var doctorCurrentOS = platform.CurrentOS
 
@@ -364,12 +358,12 @@ func (r doctorRunner) runArea(area string) []doctorCheck {
 
 func (r doctorRunner) doctorIncidentDump() doctorIncidentReport {
 	dump := doctorIncidentReport{GeneratedAt: doctorNow().UTC().Format(time.RFC3339)}
-	if status, err := doctorStatusFetcher(r.opts.Socket, r.opts.Timeout); err == nil {
+	if status, err := fetchStatus(r.opts.Socket, r.opts.Timeout); err == nil {
 		dump.Status = status
 	} else {
 		dump.Error = appendDoctorDetail(dump.Error, "status: "+err.Error())
 	}
-	if runtime, err := runtimeStatsFetcher(r.opts.Socket, r.opts.Timeout); err == nil {
+	if runtime, err := fetchRuntimeStats(r.opts.Socket, r.opts.Timeout); err == nil {
 		dump.Runtime = runtime
 	} else {
 		dump.Error = appendDoctorDetail(dump.Error, "runtime: "+err.Error())
@@ -1952,7 +1946,7 @@ func fetchReconcileControllers(socketPath string, timeout time.Duration) ([]cont
 // informational pass with the footprint summary, and unusual footprints are
 // downgraded to warn. It never fails the run.
 func (r doctorRunner) doctorRuntime() []doctorCheck {
-	stats, err := runtimeStatsFetcher(r.opts.Socket, r.opts.Timeout)
+	stats, err := fetchRuntimeStats(r.opts.Socket, r.opts.Timeout)
 	if err != nil {
 		return []doctorCheck{{Area: "runtime", Name: "process", Status: doctorSkip, Detail: "routerd status socket unavailable: " + err.Error()}}
 	}
