@@ -3883,59 +3883,6 @@ func listSupervisedDaemonProcesses() ([]supervisedDaemonProcess, error) {
 	return nil, fmt.Errorf("unsupported process listing on %s", runtime.GOOS)
 }
 
-type PrefixDelegationController struct {
-	Router        *api.Router
-	Bus           *bus.Bus
-	Store         Store
-	DaemonSockets map[string]string
-	Logger        *slog.Logger
-}
-
-func (c PrefixDelegationController) Start(ctx context.Context) {
-	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.dhcpv6.client.prefix.*"}}, 32)
-	go func() {
-		for event := range ch {
-			if event.Resource == nil || event.Resource.Kind != "DHCPv6PrefixDelegation" {
-				continue
-			}
-			if err := c.reconcile(ctx, event); err != nil && c.Logger != nil {
-				c.Logger.Warn("prefix delegation reconcile failed", "resource", event.Resource.Name, "error", err)
-			}
-		}
-	}()
-}
-
-func (c PrefixDelegationController) reconcile(ctx context.Context, event daemonapi.DaemonEvent) error {
-	status, err := daemonStatus(ctx, c.socketFor(event.Resource.Name))
-	if err != nil {
-		return err
-	}
-	for _, resource := range status.Resources {
-		if resource.Resource.Kind != "DHCPv6PrefixDelegation" || resource.Resource.Name != event.Resource.Name {
-			continue
-		}
-		next := map[string]any{
-			"phase":      resource.Phase,
-			"health":     resource.Health,
-			"conditions": resource.Conditions,
-			"observed":   resource.Observed,
-		}
-		if resource.Observed != nil {
-			next["currentPrefix"] = resource.Observed["currentPrefix"]
-			next["serverDUID"] = resource.Observed["serverDUID"]
-		}
-		return c.Store.SaveObjectStatus(resource.Resource.APIVersion, resource.Resource.Kind, resource.Resource.Name, next)
-	}
-	return fmt.Errorf("daemon status did not include DHCPv6PrefixDelegation/%s", event.Resource.Name)
-}
-
-func (c PrefixDelegationController) socketFor(resource string) string {
-	if socket := c.DaemonSockets[resource]; socket != "" {
-		return socket
-	}
-	return filepath.Join("/run/routerd/dhcpv6-client", resource+".sock")
-}
-
 type LANAddressController struct {
 	Router         *api.Router
 	DeclaredRouter *api.Router
