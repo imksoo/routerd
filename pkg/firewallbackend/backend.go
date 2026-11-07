@@ -197,13 +197,8 @@ func (b Nftables) preserveDynamicSets(ctx context.Context, data, previous []byte
 			}
 			types = []string{single}
 		}
-		timeout := false
-		for _, flag := range set.Flags {
-			if flag == "timeout" {
-				timeout = true
-			}
-		}
-		if timeout == strings.HasPrefix(set.Name, "flow_pinhole_") {
+		flow := strings.HasPrefix(set.Name, "flow_pinhole_")
+		if (!flow && len(set.Flags) == 0) || (flow && len(set.Flags) == 1 && set.Flags[0] == "timeout") {
 			existing[set.Name] = strings.Join(types, " . ")
 		}
 	}
