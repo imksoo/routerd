@@ -148,6 +148,32 @@ func (c Controller) reconcile(ctx context.Context, name string) error {
 		if c.DryRun {
 			return c.savePendingDaemonStatus(name, socket, err)
 		}
+		if c.Store != nil {
+			current := c.Store.ObjectStatus(api.NetAPIVersion, "DHCPv4Client", name)
+			expires, expiryErr := time.Parse(time.RFC3339Nano, mapString(current, "expiresAt"))
+			if expiryErr == nil && !time.Now().Before(expires) && (mapString(current, "phase") != daemonapi.ResourcePhaseExpired || mapString(current, "appliedAddress") != "" || mapString(current, "appliedDefaultGateway") != "" || mapString(current, "appliedDNSServers") != "") {
+				next := make(map[string]any, len(current))
+				for key, value := range current {
+					next[key] = value
+				}
+				next["phase"] = daemonapi.ResourcePhaseExpired
+				next["reason"] = "DaemonUnavailable"
+				next["error"] = err.Error()
+				if cleanupErr := c.applyLease(ctx, name, current, next); cleanupErr != nil {
+					return errors.Join(err, cleanupErr)
+				}
+				if saveErr := c.Store.SaveObjectStatus(api.NetAPIVersion, "DHCPv4Client", name, next); saveErr != nil {
+					return errors.Join(err, saveErr)
+				}
+				if c.Bus != nil {
+					event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, EventApplied, daemonapi.SeverityInfo)
+					event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client", Name: name}
+					if publishErr := c.Bus.Publish(ctx, event); publishErr != nil {
+						return errors.Join(err, publishErr)
+					}
+				}
+			}
+		}
 		return err
 	}
 	for _, resource := range status.Resources {
