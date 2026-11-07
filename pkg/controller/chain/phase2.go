@@ -679,8 +679,14 @@ func (c IPv4RouteController) teardownRemovedRoute(ctx context.Context, status ro
 			name := "ip"
 			if platform.CurrentOS() == platform.OSFreeBSD {
 				name, args = freeBSDIPv4RouteRemovalDeleteCommand(removal)
-			} else if removedIPv4RouteRemovalIsCurrentlyBGP(ctx, c.run, removal) {
-				args = nil
+			} else {
+				bgp, err := removedIPv4RouteRemovalIsCurrentlyBGP(ctx, c.run, removal)
+				if err != nil {
+					return fmt.Errorf("observe removed IPv4Route %s: %w", status.Name, err)
+				}
+				if bgp {
+					args = nil
+				}
 			}
 			if len(args) > 0 {
 				out, err := c.run(ctx, name, args...)
@@ -744,14 +750,14 @@ func routeStatusString(value any) string {
 	return text
 }
 
-func removedIPv4RouteRemovalIsCurrentlyBGP(ctx context.Context, run outputCommandFunc, removal ipv4RouteRemoval) bool {
+func removedIPv4RouteRemovalIsCurrentlyBGP(ctx context.Context, run outputCommandFunc, removal ipv4RouteRemoval) (bool, error) {
 	destination := removal.Destination
 	if destination == "" {
-		return false
+		return false, nil
 	}
 	out, err := run(ctx, "ip", "route", "show", destination)
 	if err != nil {
-		return false
+		return false, fmt.Errorf("ip route show %s: %w: %s", destination, err, strings.TrimSpace(string(out)))
 	}
 	for _, line := range strings.Split(string(out), "\n") {
 		fields := strings.Fields(line)
@@ -763,11 +769,11 @@ func removedIPv4RouteRemovalIsCurrentlyBGP(ctx context.Context, run outputComman
 		}
 		for i := 0; i+1 < len(fields); i++ {
 			if fields[i] == "proto" && fields[i+1] == "bgp" {
-				return true
+				return true, nil
 			}
 		}
 	}
-	return false
+	return false, nil
 }
 
 func (r ipv4RouteRemoval) metricForMatch() int {
