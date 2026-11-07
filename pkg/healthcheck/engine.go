@@ -103,7 +103,6 @@ type Controller struct {
 	Router *api.Router
 	Bus    *bus.Bus
 	Store  Store
-	Now    func() time.Time
 	Logger *slog.Logger
 
 	mu    sync.Mutex
@@ -214,7 +213,7 @@ func EnrichEvidence(ctx context.Context, spec api.HealthCheckSpec, ev ProbeEvide
 
 func (c *Controller) applyResult(ctx context.Context, resource api.Resource, spec api.HealthCheckSpec, result ProbeResult) error {
 	state := c.resourceState(resource.Metadata.Name)
-	now := c.now()
+	now := time.Now().UTC()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	previous := *state
@@ -952,13 +951,6 @@ func (c *Controller) init() {
 	if c.state == nil {
 		c.state = map[string]*State{}
 	}
-}
-
-func (c *Controller) now() time.Time {
-	if c.Now != nil {
-		return c.Now()
-	}
-	return time.Now().UTC()
 }
 
 func durationOr(value string, fallback time.Duration) time.Duration {

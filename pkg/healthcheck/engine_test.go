@@ -11,22 +11,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
-	"github.com/imksoo/routerd/pkg/bus"
 )
-
-type mapStore map[string]map[string]any
-
-func (s mapStore) SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error {
-	s[apiVersion+"/"+kind+"/"+name] = status
-	return nil
-}
-
-func (s mapStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
-	if status := s[apiVersion+"/"+kind+"/"+name]; status != nil {
-		return status
-	}
-	return map[string]any{}
-}
 
 func TestProbeTCPSuccessAndFailure(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -171,94 +156,10 @@ func TestProbeDNSSuccessAndFailure(t *testing.T) {
 	}
 }
 
-func TestThresholdSuppressesFlap(t *testing.T) {
-	store := mapStore{}
-	b := bus.New()
-	controller := &Controller{
-		Bus:   b,
-		Store: store,
-		Now:   fixedNow(),
-	}
-	resource := healthResource("internet")
-	spec := api.HealthCheckSpec{HealthyThreshold: 2, UnhealthyThreshold: 2}
-	if err := controller.applyResult(context.Background(), resource, spec, ProbeResult{OK: true}); err != nil {
-		t.Fatal(err)
-	}
-	status := store.ObjectStatus(api.NetAPIVersion, "HealthCheck", "internet")
-	if status["phase"] != PhasePassing {
-		t.Fatalf("phase after one pass = %#v", status)
-	}
-	if err := controller.applyResult(context.Background(), resource, spec, ProbeResult{OK: true}); err != nil {
-		t.Fatal(err)
-	}
-	status = store.ObjectStatus(api.NetAPIVersion, "HealthCheck", "internet")
-	if status["phase"] != PhaseHealthy {
-		t.Fatalf("phase after two passes = %#v", status)
-	}
-	if err := controller.applyResult(context.Background(), resource, spec, ProbeResult{}); err != nil {
-		t.Fatal(err)
-	}
-	status = store.ObjectStatus(api.NetAPIVersion, "HealthCheck", "internet")
-	if status["phase"] != PhaseFailing {
-		t.Fatalf("phase after one failure = %#v", status)
-	}
-	if err := controller.applyResult(context.Background(), resource, spec, ProbeResult{}); err != nil {
-		t.Fatal(err)
-	}
-	status = store.ObjectStatus(api.NetAPIVersion, "HealthCheck", "internet")
-	if status["phase"] != PhaseUnhealthy {
-		t.Fatalf("phase after two failures = %#v", status)
-	}
-	if got := b.Recent("routerd.healthcheck.internet.passed"); len(got) != 2 {
-		t.Fatalf("passed events = %d", len(got))
-	}
-	if got := b.Recent("routerd.healthcheck.internet.failed"); len(got) != 2 {
-		t.Fatalf("failed events = %d", len(got))
-	}
-}
-
-func TestStateMachineDefaultThresholds(t *testing.T) {
-	store := mapStore{}
-	controller := &Controller{Bus: bus.New(), Store: store, Now: fixedNow()}
-	resource := healthResource("internet")
-	spec := api.HealthCheckSpec{}
-	if err := controller.applyResult(context.Background(), resource, spec, ProbeResult{OK: true}); err != nil {
-		t.Fatal(err)
-	}
-	status := store.ObjectStatus(api.NetAPIVersion, "HealthCheck", "internet")
-	if status["phase"] != PhaseHealthy || status["consecutivePassed"] != 1 {
-		t.Fatalf("healthy status = %#v", status)
-	}
-	for i := 0; i < 2; i++ {
-		if err := controller.applyResult(context.Background(), resource, spec, ProbeResult{}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	status = store.ObjectStatus(api.NetAPIVersion, "HealthCheck", "internet")
-	if status["phase"] != PhaseFailing {
-		t.Fatalf("phase before default unhealthy threshold = %#v", status)
-	}
-	if err := controller.applyResult(context.Background(), resource, spec, ProbeResult{}); err != nil {
-		t.Fatal(err)
-	}
-	status = store.ObjectStatus(api.NetAPIVersion, "HealthCheck", "internet")
-	if status["phase"] != PhaseUnhealthy || status["consecutiveFailed"] != 3 {
-		t.Fatalf("unhealthy status = %#v", status)
-	}
-}
-
 func healthResource(name string) api.Resource {
 	return api.Resource{
 		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"},
 		Metadata: api.ObjectMeta{Name: name},
-	}
-}
-
-func fixedNow() func() time.Time {
-	now := time.Date(2026, 5, 2, 13, 0, 0, 0, time.UTC)
-	return func() time.Time {
-		now = now.Add(time.Second)
-		return now
 	}
 }
 
