@@ -5271,20 +5271,6 @@ func runCommandContext(ctx context.Context, name string, args ...string) error {
 	return exec.CommandContext(ctx, name, args...).Run()
 }
 
-func (c LANAddressController) Start(ctx context.Context) {
-	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.dhcpv6.client.prefix.*"}}, 32)
-	go func() {
-		for event := range ch {
-			if event.Resource == nil {
-				continue
-			}
-			if err := c.reconcile(ctx, event.Resource.Name); err != nil && c.Logger != nil {
-				c.Logger.Warn("lan address reconcile failed", "pd", event.Resource.Name, "error", err)
-			}
-		}
-	}()
-}
-
 func (c LANAddressController) reconcile(ctx context.Context, pdName string) error {
 	if err := c.cleanupWhenFalseIPv6DelegatedAddresses(ctx, pdName); err != nil {
 		return err
