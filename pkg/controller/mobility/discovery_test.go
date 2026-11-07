@@ -15,59 +15,10 @@ import (
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	"github.com/imksoo/routerd/pkg/providerinventory"
-	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 func boolPtr(value bool) *bool {
 	return &value
-}
-
-func providerDiscoveryAddressFacts(events []routerstate.EventRecord) []providerDiscoveryAddressFact {
-	var out []providerDiscoveryAddressFact
-	for _, event := range events {
-		if event.Payload["source"] != providerDiscoverySource || event.Payload["sourceType"] != providerDiscoveryRuntimeFactType {
-			continue
-		}
-		var runtime providerDiscoveryRuntimeFact
-		if json.Unmarshal([]byte(event.Payload["snapshot"]), &runtime) == nil {
-			out = append(out, runtime.Addresses...)
-		}
-	}
-	return out
-}
-
-func providerDiscoveryRuntimeFactFromEvents(t *testing.T, events []routerstate.EventRecord) providerDiscoveryRuntimeFact {
-	t.Helper()
-	var (
-		fact  providerDiscoveryRuntimeFact
-		found bool
-	)
-	for _, event := range events {
-		if event.Payload["source"] != providerDiscoverySource || event.Payload["sourceType"] != providerDiscoveryRuntimeFactType {
-			continue
-		}
-		if found {
-			t.Fatalf("events = %#v, want one provider runtime fact", events)
-		}
-		if err := json.Unmarshal([]byte(event.Payload["snapshot"]), &fact); err != nil {
-			t.Fatalf("decode provider runtime fact: %v", err)
-		}
-		found = true
-	}
-	if !found {
-		t.Fatalf("events = %#v, want provider runtime fact", events)
-	}
-	return fact
-}
-
-func onPremDiscoveryOwnershipEvents(events []routerstate.EventRecord) []routerstate.EventRecord {
-	var out []routerstate.EventRecord
-	for _, event := range events {
-		if event.Payload["source"] == onPremDiscoverySource && event.Payload["sourceType"] != onPremDiscoveryArmedFactType {
-			out = append(out, event)
-		}
-	}
-	return out
 }
 
 func TestOnPremObservationFromDaemonEventUsesCanonicalDHCPTopics(t *testing.T) {
