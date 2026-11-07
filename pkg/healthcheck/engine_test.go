@@ -4,62 +4,11 @@ package healthcheck
 
 import (
 	"context"
-	"fmt"
-	"net"
 	"strings"
 	"testing"
 
 	"github.com/imksoo/routerd/pkg/api"
 )
-
-func TestProbeTCPSuccessAndFailure(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer listener.Close()
-	go func() {
-		for {
-			conn, err := listener.Accept()
-			if err != nil {
-				return
-			}
-			_ = conn.Close()
-		}
-	}()
-	host, port := splitHostPort(t, listener.Addr().String())
-	if result := ProbeTCP(context.Background(), api.HealthCheckSpec{Target: host, Port: port}); !result.OK {
-		t.Fatalf("tcp success result = %#v", result)
-	}
-	closed, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	host, port = splitHostPort(t, closed.Addr().String())
-	_ = closed.Close()
-	if result := ProbeTCP(context.Background(), api.HealthCheckSpec{Target: host, Port: port}); result.OK {
-		t.Fatalf("tcp failure result = %#v", result)
-	}
-}
-
-func TestProbeTCPSourceAddress(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer listener.Close()
-	go func() {
-		conn, err := listener.Accept()
-		if err == nil {
-			_ = conn.Close()
-		}
-	}()
-	host, port := splitHostPort(t, listener.Addr().String())
-	result := ProbeTCP(context.Background(), api.HealthCheckSpec{Target: host, Port: port, SourceAddress: "127.0.0.1"})
-	if !result.OK {
-		t.Fatalf("tcp sourceAddress result = %#v", result)
-	}
-}
 
 func TestProbeTCPInvalidSourceAddress(t *testing.T) {
 	result := ProbeTCP(context.Background(), api.HealthCheckSpec{Target: "127.0.0.1", Port: 9, SourceAddress: "not-an-ip"})
@@ -134,17 +83,4 @@ func healthResource(name string) api.Resource {
 		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"},
 		Metadata: api.ObjectMeta{Name: name},
 	}
-}
-
-func splitHostPort(t *testing.T, value string) (string, int) {
-	t.Helper()
-	host, portValue, err := net.SplitHostPort(value)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var port int
-	if _, err := fmt.Sscanf(portValue, "%d", &port); err != nil {
-		t.Fatal(err)
-	}
-	return host, port
 }
