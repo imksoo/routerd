@@ -38,24 +38,10 @@ type Controller struct {
 	Bus    *bus.Bus
 	Store  Store
 	DryRun bool
-	Binary string
 
 	RuntimeDir    string
 	StateDir      string
 	DHCPHostsPath string
-}
-
-func (c Controller) Start(ctx context.Context) {
-	_ = c.Reconcile(ctx)
-	if c.Bus == nil {
-		return
-	}
-	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.**"}, Filter: c.eventRelevant}, 64)
-	go func() {
-		for event := range ch {
-			_ = c.HandleEvent(ctx, event)
-		}
-	}()
 }
 
 func (c Controller) HandleEvent(ctx context.Context, event daemonapi.DaemonEvent) error {
@@ -547,16 +533,6 @@ func (c Controller) expandZoneSpec(spec api.DNSZoneSpec) (api.DNSZoneSpec, []map
 	return spec, pending, nil
 }
 
-func (c Controller) eventRelevant(event daemonapi.DaemonEvent) bool {
-	if _, ok := daemonapi.DHCPLeaseActionFromEventType(event.Type); ok {
-		return true
-	}
-	if event.Resource == nil {
-		return false
-	}
-	return dnsResolverDependsOn(c.Router, *event.Resource)
-}
-
 func (c Controller) ensureRunning(ctx context.Context, name string, config dnsresolver.RuntimeConfig) (bool, error) {
 	runtimeDir, stateDir := c.dirs()
 	configPath := filepath.Join(stateDir, "dns-resolver", name, "config.json")
@@ -974,75 +950,6 @@ func compactStrings(values []string) []string {
 	return out
 }
 
-func dnsResolverDependsOn(router *api.Router, ref daemonapi.ResourceRef) bool {
-	if router == nil {
-		return false
-	}
-	if ref.APIVersion == api.NetAPIVersion && ref.Kind == "VirtualAddress" && hostnameResourceExists(router, ref.Kind, ref.Name) {
-		return true
-	}
-	if ref.APIVersion == api.FirewallAPIVersion && ref.Kind == "IngressService" && hostnameResourceExists(router, ref.Kind, ref.Name) {
-		return true
-	}
-	if ref.APIVersion != api.NetAPIVersion {
-		return false
-	}
-	for _, resource := range router.Spec.Resources {
-		if resource.Kind != "DNSResolver" {
-			switch resource.Kind {
-			case "DNSZone":
-				zoneSpec, err := resource.DNSZoneSpec()
-				if err != nil {
-					continue
-				}
-				for _, dep := range dnsZoneStatusRefs(zoneSpec) {
-					if dep == ref {
-						return true
-					}
-				}
-			case "DNSUpstream":
-				upstreamSpec, err := resource.DNSUpstreamSpec()
-				if err != nil {
-					continue
-				}
-				for _, dep := range dnsUpstreamStatusRefs(upstreamSpec) {
-					if dep == ref {
-						return true
-					}
-				}
-			}
-			continue
-		}
-		spec, err := resource.DNSResolverSpec()
-		if err != nil {
-			continue
-		}
-		for _, dep := range dnsResolverStatusRefs(spec) {
-			if dep == ref {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func hostnameResourceExists(router *api.Router, kind, name string) bool {
-	for _, resource := range router.Spec.Resources {
-		if resource.Kind != kind || resource.Metadata.Name != name {
-			continue
-		}
-		switch kind {
-		case "VirtualAddress":
-			spec, err := resource.VirtualAddressSpec()
-			return err == nil && strings.TrimSpace(spec.Hostname) != "" && !spec.ExternalDNS
-		case "IngressService":
-			spec, err := resource.IngressServiceSpec()
-			return err == nil && strings.TrimSpace(spec.Hostname) != "" && !spec.ExternalDNS
-		}
-	}
-	return false
-}
-
 func dnsResolverZoneRefs(spec api.DNSResolverSpec) map[string]bool {
 	out := map[string]bool{}
 	for _, source := range spec.Sources {
@@ -1057,73 +964,6 @@ func dnsResolverZoneRefs(spec api.DNSResolverSpec) map[string]bool {
 		}
 	}
 	return out
-}
-
-func dnsZoneStatusRefs(spec api.DNSZoneSpec) []daemonapi.ResourceRef {
-	var refs []daemonapi.ResourceRef
-	for _, record := range spec.Records {
-		if ref, ok := resourcequery.SourceRef(record.IPv4From); ok {
-			refs = append(refs, daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: ref.Kind, Name: ref.Name})
-		}
-		if ref, ok := resourcequery.SourceRef(record.IPv6From); ok {
-			refs = append(refs, daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: ref.Kind, Name: ref.Name})
-		}
-	}
-	return refs
-}
-
-func dnsResolverStatusRefs(spec api.DNSResolverSpec) []daemonapi.ResourceRef {
-	var refs []daemonapi.ResourceRef
-	add := func(expr string) {
-		kind, name, ok := statusRefResource(expr)
-		if ok {
-			refs = append(refs, daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: kind, Name: name})
-		}
-	}
-	for _, listen := range spec.Listen {
-		for _, source := range listen.AddressFrom {
-			if ref, ok := resourcequery.SourceRef(source); ok {
-				refs = append(refs, daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: ref.Kind, Name: ref.Name})
-			}
-		}
-		for _, address := range listen.Addresses {
-			add(address)
-		}
-	}
-	for _, source := range spec.Sources {
-		for _, upstream := range source.Upstreams {
-			add(upstream)
-		}
-		for _, upstream := range source.UpstreamFrom {
-			if ref, ok := resourcequery.SourceRef(upstream); ok {
-				refs = append(refs, daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: ref.Kind, Name: ref.Name})
-			}
-		}
-		for _, resolver := range source.BootstrapResolver {
-			add(resolver)
-		}
-		for _, resolver := range source.BootstrapResolverFrom {
-			if ref, ok := resourcequery.SourceRef(resolver); ok {
-				refs = append(refs, daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: ref.Kind, Name: ref.Name})
-			}
-		}
-	}
-	return refs
-}
-
-func dnsUpstreamStatusRefs(spec api.DNSUpstreamSpec) []daemonapi.ResourceRef {
-	var refs []daemonapi.ResourceRef
-	for _, source := range spec.AddressFrom {
-		if ref, ok := resourcequery.SourceRef(source); ok {
-			refs = append(refs, daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: ref.Kind, Name: ref.Name})
-		}
-	}
-	for _, source := range spec.BootstrapFrom {
-		if ref, ok := resourcequery.SourceRef(source.StatusValueSourceSpec()); ok {
-			refs = append(refs, daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: ref.Kind, Name: ref.Name})
-		}
-	}
-	return refs
 }
 
 func requiredFieldStatusValueSources(sources []api.RequiredFieldStatusValueSourceSpec) []api.StatusValueSourceSpec {
