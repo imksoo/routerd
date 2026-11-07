@@ -222,49 +222,65 @@ func (c NetworkAdoptionController) applyNetworkAdoption(ctx context.Context, nam
 	var paths []string
 	var changed bool
 	networkdChanged := false
+	networkdManaged := false
 	resolvedChanged := false
 	if networkdAdoptionConfigured(spec.SystemdNetworkd) {
 		if ifname == "" {
 			return paths, changed, fmt.Errorf("ifname is required for systemdNetworkd adoption")
 		}
-		path := filepath.Join(networkdDropinDir(c.NetworkdDropinBase, ifname), firstNonEmpty(spec.SystemdNetworkd.DropinName, "90-routerd-adoption.conf"))
-		paths = append(paths, path)
-		if state == "absent" {
-			removed, err := removeFileIfExists(path, c.DryRun)
+		// Interfaces created later in this reconciliation may not exist yet.
+		// An unmanaged interface has no networkd configuration to hand off.
+		networkFile := ""
+		if _, err := os.Stat(filepath.Join("/sys/class/net", ifname)); err == nil {
+			var err error
+			networkFile, err = networkdNetworkFile(ctx, command, ifname)
 			if err != nil {
 				return paths, changed, err
 			}
-			networkdChanged = removed
-		} else {
-			networkdSpec := spec.SystemdNetworkd
-			if networkdSpec.DisableDHCPv4 != networkdSpec.DisableDHCPv6 {
-				v4, v6, err := networkdOriginalDHCP(ctx, command, ifname, path)
-				if err != nil {
-					return paths, changed, err
-				}
-				if networkdSpec.DisableDHCPv4 && !v6 {
-					networkdSpec.DisableDHCPv6 = true
-				}
-				if networkdSpec.DisableDHCPv6 && !v4 {
-					networkdSpec.DisableDHCPv4 = true
-				}
-			}
-			data := networkdAdoptionDropin(networkdSpec, spec.SystemdNetworkd.DisableDHCPv6)
-			fileChanged, err := writeFileIfChanged(path, data, 0644, c.DryRun)
-			if err != nil {
-				return paths, changed, err
-			}
-			networkdChanged = fileChanged
-			for _, legacyPath := range legacyNetworkdAdoptionDropins(c.NetworkdDropinBase, ifname, path) {
-				paths = append(paths, legacyPath)
-				removed, err := removeFileIfExists(legacyPath, c.DryRun)
-				if err != nil {
-					return paths, changed, err
-				}
-				networkdChanged = networkdChanged || removed
-			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return paths, changed, fmt.Errorf("observe interface %s: %w", ifname, err)
 		}
-		changed = changed || networkdChanged
+		if networkFile != "" {
+			networkdManaged = true
+			path := filepath.Join(c.NetworkdDropinBase, filepath.Base(networkFile)+".d", firstNonEmpty(spec.SystemdNetworkd.DropinName, "90-routerd-adoption.conf"))
+			paths = append(paths, path)
+			if state == "absent" {
+				removed, err := removeFileIfExists(path, c.DryRun)
+				if err != nil {
+					return paths, changed, err
+				}
+				networkdChanged = removed
+			} else {
+				networkdSpec := spec.SystemdNetworkd
+				if networkdSpec.DisableDHCPv4 != networkdSpec.DisableDHCPv6 {
+					v4, v6, err := networkdOriginalDHCP(ctx, command, ifname, path)
+					if err != nil {
+						return paths, changed, err
+					}
+					if networkdSpec.DisableDHCPv4 && !v6 {
+						networkdSpec.DisableDHCPv6 = true
+					}
+					if networkdSpec.DisableDHCPv6 && !v4 {
+						networkdSpec.DisableDHCPv4 = true
+					}
+				}
+				data := networkdAdoptionDropin(networkdSpec, spec.SystemdNetworkd.DisableDHCPv6)
+				fileChanged, err := writeFileIfChanged(path, data, 0644, c.DryRun)
+				if err != nil {
+					return paths, changed, err
+				}
+				networkdChanged = fileChanged
+				for _, legacyPath := range legacyNetworkdAdoptionDropins(c.NetworkdDropinBase, ifname, path) {
+					paths = append(paths, legacyPath)
+					removed, err := removeFileIfExists(legacyPath, c.DryRun)
+					if err != nil {
+						return paths, changed, err
+					}
+					networkdChanged = networkdChanged || removed
+				}
+			}
+			changed = changed || networkdChanged
+		}
 	}
 	if resolvedAdoptionConfigured(spec.SystemdResolved) {
 		path := filepath.Join(c.ResolvedDropinDir, firstNonEmpty(spec.SystemdResolved.DropinName, "90-routerd-adoption.conf"))
@@ -289,7 +305,7 @@ func (c NetworkAdoptionController) applyNetworkAdoption(ctx context.Context, nam
 		return paths, changed, nil
 	}
 	retry := c.Store.ObjectStatus(api.SystemAPIVersion, "NetworkAdoption", name)["phase"] == "Error"
-	if networkdChanged || (retry && networkdAdoptionConfigured(spec.SystemdNetworkd)) {
+	if networkdChanged || (retry && networkdManaged) {
 		if _, err := command(ctx, "networkctl", "reload"); err != nil {
 			return paths, changed, fmt.Errorf("reload networkd: %w", err)
 		}
@@ -2051,6 +2067,20 @@ func scheduleRouterdServiceRestart(ctx context.Context, command outputCommandFun
 		return fmt.Errorf("schedule routerd.service restart through systemd-run: %w", err)
 	}
 	return nil
+}
+
+func networkdNetworkFile(ctx context.Context, command outputCommandFunc, ifname string) (string, error) {
+	out, err := command(ctx, "networkctl", "--json=short", "status", ifname)
+	if err != nil {
+		return "", fmt.Errorf("observe networkd configuration for %s: %w", ifname, err)
+	}
+	var status struct {
+		NetworkFile string `json:"NetworkFile"`
+	}
+	if err := json.Unmarshal(out, &status); err != nil {
+		return "", fmt.Errorf("decode networkd configuration for %s: %w", ifname, err)
+	}
+	return status.NetworkFile, nil
 }
 
 func networkdOriginalDHCP(ctx context.Context, command outputCommandFunc, ifname, managedPath string) (bool, bool, error) {
