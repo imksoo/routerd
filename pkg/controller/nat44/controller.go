@@ -18,7 +18,6 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
-	"github.com/imksoo/routerd/pkg/nftstate"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/render"
 	"github.com/imksoo/routerd/pkg/resourcequery"
@@ -185,17 +184,26 @@ func (c Controller) Reconcile(ctx context.Context) error {
 		return c.saveRuleStatuses(ctx, rules, path, changed, missing)
 	}
 	nft := stringutil.FirstNonEmpty(c.NftCommand, "nft")
-	if !changed && nftstate.RecentlyVerified(path, time.Now().UTC()) {
-		return finish(false, false)
-	}
-	missing := (strings.Contains(string(data), "table ip routerd_nat") && !nftTableExists(ctx, nft, "ip", "routerd_nat")) ||
-		(strings.Contains(string(data), "table ip6 routerd_nat") && !nftTableExists(ctx, nft, "ip6", "routerd_nat"))
+	ipMissing := strings.Contains(string(data), "table ip routerd_nat {") && !nftTableExists(ctx, nft, "ip", "routerd_nat")
+	ip6Missing := strings.Contains(string(data), "table ip6 routerd_nat {") && !nftTableExists(ctx, nft, "ip6", "routerd_nat")
+	missing := ipMissing || ip6Missing
 	if !changed && !missing {
-		_ = nftstate.MarkVerified(path, time.Now().UTC())
 		return finish(false, false)
 	}
 	applyPath := path
-	if changed {
+	applyData := data
+	partial := false
+	if !changed && ipMissing != ip6Missing {
+		if split := strings.Index(string(data), "add table ip6 routerd_nat\n"); split > 0 {
+			if ipMissing {
+				applyData = data[:split]
+			} else {
+				applyData = data[split:]
+			}
+			partial = true
+		}
+	}
+	if changed || partial {
 		tmp, err := os.CreateTemp(filepath.Dir(path), ".nat44-*.nft")
 		if err != nil {
 			return err
@@ -206,7 +214,7 @@ func (c Controller) Reconcile(ctx context.Context) error {
 			tmp.Close()
 			return err
 		}
-		if _, err := tmp.Write(data); err != nil {
+		if _, err := tmp.Write(applyData); err != nil {
 			tmp.Close()
 			return err
 		}
@@ -227,7 +235,6 @@ func (c Controller) Reconcile(ctx context.Context) error {
 			return err
 		}
 	}
-	_ = nftstate.MarkVerified(path, time.Now().UTC())
 	return finish(changed, missing)
 }
 
@@ -331,10 +338,6 @@ func (c Controller) saveRuleStatuses(ctx context.Context, rules []render.NAT44Re
 		}
 	}
 	return nil
-}
-
-func nat44TableExists(ctx context.Context, nft string) bool {
-	return nftTableExists(ctx, nft, "ip", "routerd_nat")
 }
 
 func nftTableExists(ctx context.Context, nft, family, name string) bool {
