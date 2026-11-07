@@ -1,0 +1,46 @@
+#!/bin/sh
+set -eu
+
+printf '\nAGENTS.mdを読み直せ。規約と今回の差分を照合してください。\n\n' >&2
+cat AGENTS.md >&2
+printf '\n' >&2
+
+routerd_message_file=$1
+# Review only text that survives Git's comment/scissors cleanup.
+routerd_body=$(awk '
+    / ------------------------ >8 ------------------------$/ { exit }
+    { print }
+' "$routerd_message_file" | git stripspace --strip-comments)
+routerd_missing=0
+for routerd_field in Rule-Check Scope-Check Validation Cleanup; do
+    if ! printf '%s\n' "$routerd_body" | awk -v field="$routerd_field" '
+        index($0, field ":") == 1 {
+            value = substr($0, length(field) + 2)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+            lower = tolower(value)
+            if (value != "" && lower !~ /^(ok|done|none|n\/a|yes|no)$/ &&
+                value !~ /^(確認済み|問題なし|なし|未実施|完了)$/) found = 1
+        }
+        END { exit !found }
+    '; then
+        printf 'Commit rejected: %s: に具体的な説明が必要です。\n' "$routerd_field" >&2
+        routerd_missing=1
+    fi
+done
+if [ "$routerd_missing" -ne 0 ]; then
+    printf '禁止事項を自己判断で例外化せず、差分を修正して説明を書いてください。\n' >&2
+    exit 1
+fi
+
+routerd_reminder='AGENTS.mdを読み直せ。'
+if ! printf '%s\n' "$routerd_body" | grep -Fqx "$routerd_reminder"; then
+    routerd_message=$(awk -v reminder="$routerd_reminder" '
+        !inserted && / ------------------------ >8 ------------------------$/ {
+            print "\n" reminder "\n"
+            inserted = 1
+        }
+        { print }
+        END { if (!inserted) print "\n" reminder }
+    ' "$routerd_message_file")
+    printf '%s\n' "$routerd_message" > "$routerd_message_file"
+fi

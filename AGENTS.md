@@ -1,177 +1,124 @@
-# AGENTS.md
+# routerd 1.1 development rules
 
-## Project
+## Authority and scope
 
-This repository implements `routerd`, a declarative router resource applier.
+The latest explicit instructions from the owner govern this work. This file and
+docs/design/routerd11-mvp.md replace conflicting legacy development, testing,
+compatibility, and release procedures. Do not weaken these rules yourself.
 
-Current primary target:
-- Ubuntu Server
-- install layout under `/usr/local`
-- Go 1.24+
-- YAML config
-- generated JSON Schema / OpenAPI for authoring and tool integration
-- trusted local plugins
-- systemd service
-- local HTTP+JSON control API over a Unix domain socket
-- `routerctl` client CLI
+There is one user. Build on routerd 1.0 for that user's homert, k8s-rt, pve-rt,
+and Cloud SAM. Preserve their actual configurations and required behavior.
+Remove unused features, configuration fields, APIs, helpers, dependencies,
+documentation, tests, and CI jobs. Hypothetical users, possible future use,
+existing tests, and the mere existence of code are not reasons to keep them.
+Trace runtime generation, references, startup, renewal, recovery, and removal
+before declaring a dependency unused. Examples are not live configurations.
 
-The implementation is pre-release. The MVP scope is a working boundary, not a
-permanent constraint. If a small design change prevents obvious future migration
-cost or improves router safety, propose it clearly and implement it after the
-tradeoff is understood.
+## Configuration owns the machine
 
-Current implemented scope includes:
-- Interface alias resources and ownership/adoption planning
-- IPv4 static address resources
-- DHCPv4 leases through `routerd-dhcpv4-client`
-- DHCPv4 server scopes and reservations through managed dnsmasq
-- DHCPv6 prefix delegation and information request through `routerd-dhcpv6-client`
-- DHCPv6 server scopes and RA through managed dnsmasq
-- delegated IPv6 LAN address derivation
-- self-address selection policies
-- DNS conditional forwarding
-- PPPoE sessions through `routerd-pppoe-client`
-- DS-Lite tunnels and AFTR address selection
-- IPv4 source NAT and NAT44 through nftables
-- IPv4 policy routing and route sets
-- IPv4 default route policy with health checks
-- IPv4 reverse path filter resources
-- Path MTU propagation and TCP MSS clamping
-- firewall resource groundwork; stateful filter rendering is still postponed
-- WireGuard, IPsec, VRF, and VXLAN resource groundwork
-- EgressRoutePolicy, EventRule, DerivedEvent, and HealthCheck controllers
-- OpenTelemetry SDK integration hooks
-- sysctl, hostname, NTP client, and log sink resources
-- plugin protocol
-- dry-run, plan, status JSON, and daemon apply
-- local NAPT/conntrack inspection through `routerctl`
+Configuration is the source of desired router state. Apply must repair missing
+or changed objects and remove unwanted additions, regardless of who created
+them. Manual host edits must not silently become desired configuration.
+Include valid DHCP/PD/BGP/SAM and other configured dynamic results in desired
+state. Do not delete legitimate runtime state merely because it is not written
+literally in YAML. Historical creation proofs must not block convergence.
 
-## API Groups
+## Real operation first
 
-Use:
-- `routerd.net/v1alpha1` for top-level Router config
-- `net.routerd.net/v1alpha1` for network resources
-- `firewall.routerd.net/v1alpha1` for firewall resources
-- `system.routerd.net/v1alpha1` for local system resources
-- `plugin.routerd.net/v1alpha1` for plugin manifests
+Make a small useful change, build it, and take it to the existing real target
+and its real peers promptly. Do not wait for a full rewrite, exhaustive audit,
+test suite, coverage target, or new verification framework.
+Do not expand the task or acceptance scope without the owner's instruction.
 
-Do not use placeholder groups such as `routerd.io`.
+Mocks, fakes, simulators, and substitute network environments are prohibited.
+Do not build a new test VM fleet or namespace harness instead of using the
+specified targets. Existing PVE or cloud routers are real deployment targets;
+use their actual kernel, product processes, peers, and traffic.
 
-## Safety
+## Tests are an exception
 
-Do not mutate the host network in normal unit tests.
+Do not create or expand test code without prior, explicit owner approval for
+that specific test. Before proposing one, explain the exact contract or fault,
+what a compiler or real-target check cannot establish, and its creation and
+maintenance cost. Interface and calling-contract tests follow the same rule.
+Approval for a test does not authorize a mock, fake, or simulated environment.
 
-Test and harness changes must follow the mandatory design rules in
-docs/operations/development.md, including reusable helpers and templates.
-Keep diagnostic evidence separate from product acceptance and retain failed
-attempts and cleanup outcomes. Do not repeat failed live trials without cause
-analysis or treat missing observations as product PASS/FAIL.
+Tautologies, implementation-mirroring assertions, canned-success checks, and
+checks that only confirm a configured mock answer are prohibited. Creating
+them is a development-policy violation and wasted work, not zero-value credit.
+These prohibitions apply retroactively. Remove existing prohibited tests and
+their test-only adapters, fixtures, abstractions, and CI work. Do not repair
+them merely to preserve a green suite. Preserve production dependencies.
 
-Any test that changes network state must be isolated under:
-- `tests/netns`
-- explicit `sudo`
-- clear documentation
+Do not impose an arbitrary test deadline or elapsed-time assertion. A timing
+failure needs an explicit product requirement, protocol rule, or demonstrated
+fault. Twelve-second success is not failure because a test author chose ten
+seconds. Remove unsupported deadlines in existing tests. Hang protection is
+separate: inspect actual progress and diagnostics before attributing a stall.
+Ten minutes is an example of a suspicious wait, not a universal timeout.
+Keep required production protocol and operational timers distinct.
 
-Be careful when applying config to a remote router. Prefer this sequence:
-- validate
-- plan
-- dry-run apply
-- confirm the management path is not being removed
-- apply
-- verify service state and connectivity
+## Implementation
 
-Do not implement remote plugin install or a remote plugin registry yet.
+Use concrete types and direct control flow. Decode and validate at real
+boundaries; do not repeatedly turn typed values into maps, JSON, or YAML.
+Keep unavoidable untyped external payloads at the boundary.
+Give mutable state one responsible implementation. Remove replaced paths and
+unused arguments. Do not introduce speculative compatibility, fallback chains,
+universal engines, test-only product hooks, or receipt frameworks.
+Retain the leases, identities, deadlines, and exclusion needed by real
+protocols and configured HA/SAM operation. Do not hide OS or process errors.
 
-## Commands
+## Working discipline
 
-Prefer Makefile targets when available:
+Read this file and the current MVP before editing, after a context handoff,
+and before committing. At task start, briefly state the specific change and
+real-target check. Routine work inside the authorized scope proceeds without
+repeated permission requests. Exceptions to prohibitions require owner approval
+before the prohibited work begins; general best-practice claims are insufficient.
 
-```sh
-make test
-make build
-make check-schema
-make validate-example
-make dry-run-example
-make website-build
-```
+Keep changes small. Inspect the staged diff against the authorized task.
+Commit and publish meaningful work promptly; report concrete progress,
+revision, real observations, and remaining work. Do not stop development merely
+to wait for unrelated CI. Do not claim live validation that did not occur.
+Do not merge, release, replace production routers, or delete the 1.5/2.0
+branches/repositories unless that action's authorization and conditions hold.
 
-Useful direct commands:
+A violation is a negative result. Remove the violating change and its
+unnecessary dependencies, report the wasted work and cause concisely, and
+resume the authorized task. Do not defend it by citing test counts or code
+already written. Do not create another framework to enforce this rule.
 
-```sh
-go test ./...
-go build ./cmd/routerd
-go build ./cmd/routerctl
-routerctl validate -f examples/router-lab.yaml --replace
-routerctl plan -f examples/router-lab.yaml --replace
-routerctl apply -f examples/router-lab.yaml --replace --no-reconcile
-routerctl get status
-routerctl get connections --limit 20
-```
+## Commit review and cleanup
 
-Default source-install paths:
+Enable the repository hook in each working clone:
 
-- Config: `/usr/local/etc/routerd/router.yaml`
-- Plugin dir: `/usr/local/libexec/routerd/plugins`
-- Binary: `/usr/local/sbin/routerd`
-- Client binary: `/usr/local/sbin/routerctl`
+~~~sh
+git config --local core.hooksPath .githooks
+~~~
 
-Linux runtime defaults are `/run/routerd` and `/var/lib/routerd`.
+Each commit message must contain specific explanations under these headings:
+- Rule-Check: which applicable rules the actual diff follows.
+- Scope-Check: why additions are necessary and what unnecessary work was removed.
+- Validation: actual commands/observations; state pending real checks honestly.
+- Cleanup: files/caches removed, or exact task-owned items to remove after publication.
 
-OS-specific defaults (paths, feature flags) live in `pkg/platform`. New
-OS-specific behavior should consult `platform.Current()` rather than reading
-`runtime.GOOS` directly, and renderers that depend on Linux-only host
-integrations (netplan, systemd-networkd, nftables) should branch on the
-matching `platform.Features` flag or a build tag rather than failing at
-runtime on FreeBSD/NixOS.
+A bare OK, done, none, or equivalent is not an explanation. The commit-msg hook
+rejects missing/empty explanations and prints the AGENTS.md reminder. Its
+presence does not prove semantic compliance. Do not bypass, disable, replace,
+or evade the hook or these rules. API-created commits need the same review.
 
-NixOS and FreeBSD are second-tier targets. The build, install layout, and
-service-manager integration scaffolds (`contrib/nix/` flake + module,
-`contrib/freebsd/routerd` rc.d script) are in place, but pf and NixOS-native
-interface renderers are still pending. Do not imply parity in user-facing
-text — keep the language scoped to "groundwork" until the matching renderer
-exists. The full matrix lives in `docs/platforms.md`.
+Enforce restricted actions with existing administrator-managed permissions
+outside the agent's write access. Do not build a new enforcement framework or
+make its completion a prerequisite for useful changes or real deployment.
+Blocking new tests must not block removing existing prohibited tests.
 
-## Coding Rules
-
-- Keep changes scoped and explicit.
-- Treat MVP boundaries as guidance, not as an excuse to bake in avoidable technical debt.
-- Prefer early typed API shapes and generated machine-readable schema when resource fields are introduced.
-- Prefer explicit code over clever abstractions.
-- Keep plugin protocol documented.
-- Subprocess execution must be wrapped so it can be tested.
-- Config loading, validation, plugin discovery, dependency ordering, rendering, and apply behavior must have tests.
-- The same apply code must work in daemon mode and one-shot CLI mode.
-- Do not hardcode shell snippets in the core for resource-specific operations.
-- Core orchestrates; renderers and resource-specific apply helpers perform concrete OS work.
-- For firewall/NAT/routing changes, keep the default behavior conservative and add focused renderer tests.
-- For dnsmasq, nftables, iproute2, pppd, or systemd syntax changes, validate against the real command when practical.
-
-## Documentation
-
-Keep these documents updated:
-- `README.md`
-- `README.ja.md`
-- `docs/design.md`
-- website docs under `website/i18n/ja/docusaurus-plugin-content-docs/current/`
-
-Whenever the plugin protocol changes, update plugin protocol docs.
-Whenever the config schema changes, update API docs and regenerate schema:
-
-```sh
-make generate-schema
-make check-schema
-```
-
-When control API types change, update control API docs and generated schemas.
-When a resource kind starts managing a new host artifact, update resource
-ownership docs and keep artifact intent tests covering the resource.
-
-## Current Non-goals
-
-Do not implement without a separate design discussion:
-- remote plugin registry or remote plugin installation
-- full rollback of all OS-level changes
-- interactive config console
-- built-in LLM assistant
-- Proxmox lab automation
-- general-purpose firewall rule language beyond the current minimal model
+Keep raw evidence, logs, captures, dumps, and temporary reports outside tracked
+source files. Commit a concise useful result, not bulky execution residue.
+After that result is committed and published, remove the task's raw artifacts
+and temporary outputs. If raw residue was mistakenly tracked, remove it from
+the current tree as well. At each completed work segment, clear task-owned
+build/test caches, download/extraction caches, and temporary environments.
+Do not delete source, active configuration, credentials, deliverables awaiting
+publication, or another active task's data. Do not retain waste as evidence.
+Report any cleanup that could not be completed; never silently leave it behind.
