@@ -5,8 +5,6 @@ package chain
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1325,7 +1323,6 @@ type supervisedDaemonSpec struct {
 	ResourceName string
 	Binary       string
 	Args         []string
-	OwnerToken   string
 }
 
 type supervisedDaemonState struct {
@@ -1336,122 +1333,9 @@ type supervisedDaemonState struct {
 	Done <-chan struct{}
 }
 
-// supervisedDaemonMarker is runtime-scoped supervisor provenance. It
-// deliberately carries only a digest of argv: PPPoE argv can include a
-// password and must never be copied into a marker. RuntimeDir makes this a
-// crash-recovery record, not a reboot-surviving adoption claim.
-type supervisedDaemonMarker struct {
-	Version    int    `json:"version"`
-	Binary     string `json:"binary"`
-	Resource   string `json:"resource"`
-	SpecHash   string `json:"specHash"`
-	OwnerToken string `json:"ownerToken"`
-	PID        int    `json:"pid"`
-}
-
-var supervisedDaemonMarkerRoot = func() string {
-	defaults, _ := platform.Current()
-	return filepath.Join(defaults.RuntimeDir, "supervised-daemons")
-}
-
 type supervisedDaemonProcess struct {
-	PID     int
-	Command string
-}
-
-var supervisedDaemonProcesses = listSupervisedDaemonProcesses
-var supervisedDaemonSocketReady = clientSocketReady
-var supervisedDaemonSignal = syscall.Kill
-
-func supervisedDaemonSpecHash(spec supervisedDaemonSpec) string {
-	h := sha256.New()
-	_, _ = h.Write([]byte(spec.Binary))
-	for _, arg := range spec.Args {
-		_, _ = h.Write([]byte{0})
-		_, _ = h.Write([]byte(arg))
-	}
-	return fmt.Sprintf("%x", h.Sum(nil))
-}
-
-func supervisedDaemonMarkerPath(binary, resource string) string {
-	sum := sha256.Sum256([]byte(binary + "\x00" + resource))
-	return filepath.Join(supervisedDaemonMarkerRoot(), fmt.Sprintf("%x.json", sum[:]))
-}
-
-func readSupervisedDaemonMarkers() (map[string]supervisedDaemonMarker, error) {
-	entries, err := os.ReadDir(supervisedDaemonMarkerRoot())
-	if errors.Is(err, os.ErrNotExist) {
-		return map[string]supervisedDaemonMarker{}, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	out := map[string]supervisedDaemonMarker{}
-	var recordErrors []error
-	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(supervisedDaemonMarkerRoot(), entry.Name()))
-		if err != nil {
-			recordErrors = append(recordErrors, fmt.Errorf("read supervised daemon marker %s: %w", entry.Name(), err))
-			continue
-		}
-		var marker supervisedDaemonMarker
-		if err := json.Unmarshal(data, &marker); err != nil || marker.Version != 1 || marker.Binary == "" || marker.Resource == "" || marker.SpecHash == "" || marker.OwnerToken == "" {
-			recordErrors = append(recordErrors, fmt.Errorf("read supervised daemon marker %s: invalid record", entry.Name()))
-			continue
-		}
-		out[supervisedDaemonKey(marker.Binary, marker.Resource)] = marker
-	}
-	return out, errors.Join(recordErrors...)
-}
-
-func writeSupervisedDaemonMarker(marker supervisedDaemonMarker) error {
-	if marker.Version != 1 || marker.Binary == "" || marker.Resource == "" || marker.SpecHash == "" || marker.OwnerToken == "" {
-		return errors.New("refusing incomplete supervised daemon ownership marker")
-	}
-	if err := os.MkdirAll(supervisedDaemonMarkerRoot(), 0o700); err != nil {
-		return err
-	}
-	data, err := json.Marshal(marker)
-	if err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(supervisedDaemonMarkerRoot(), ".supervised-daemon-*.tmp")
-	if err != nil {
-		return err
-	}
-	name := tmp.Name()
-	defer os.Remove(name)
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(name, supervisedDaemonMarkerPath(marker.Binary, marker.Resource))
-}
-
-func removeSupervisedDaemonMarker(marker supervisedDaemonMarker) error {
-	err := os.Remove(supervisedDaemonMarkerPath(marker.Binary, marker.Resource))
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	return err
-}
-
-func newSupervisedDaemonOwnerToken() (string, error) {
-	buf := make([]byte, 24)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("%x", buf), nil
+	PID  int
+	Args []string
 }
 
 type arpObserverCommandPusher interface {
@@ -3236,113 +3120,53 @@ func (r *Runner) clientDaemonSpecs(router *api.Router) []supervisedDaemonSpec {
 }
 
 func (r *Runner) reconcileSupervisedDaemonSpecs(ctx context.Context, logger *slog.Logger, specs []supervisedDaemonSpec) {
-	desiredAll := make(map[string]supervisedDaemonSpec, len(specs))
+	desired := make(map[string]supervisedDaemonSpec, len(specs))
 	for _, spec := range specs {
-		if spec.ResourceName == "" || spec.Binary == "" {
-			continue
+		if spec.ResourceName != "" && spec.Binary != "" {
+			desired[supervisedDaemonKey(spec.Binary, spec.ResourceName)] = spec
 		}
-		desiredAll[supervisedDaemonKey(spec.Binary, spec.ResourceName)] = spec
 	}
-	pendingStart := make(map[string]supervisedDaemonSpec, len(desiredAll))
-	for key, spec := range desiredAll {
-		pendingStart[key] = spec
-	}
-	markers, err := readSupervisedDaemonMarkers()
+	processes, err := listSupervisedDaemonProcesses()
 	if err != nil {
 		if logger != nil {
-			logger.Error("read supervised daemon records", "error", err)
+			logger.Error("list routerd client daemons", "error", err)
 		}
-		if markers == nil {
-			return
-		}
+		return
 	}
-	for key, marker := range markers {
-		if spec, ok := desiredAll[key]; ok && marker.SpecHash == supervisedDaemonSpecHash(spec) {
-			spec.OwnerToken = marker.OwnerToken
-			desiredAll[key] = spec
-			pendingStart[key] = spec
-		}
-	}
-
-	var stale []supervisedDaemonState
-	var staleMarkers []supervisedDaemonMarker
 	r.supervisedMu.Lock()
 	if r.clientDaemonStates == nil {
 		r.clientDaemonStates = map[string]supervisedDaemonState{}
 	}
 	for key, state := range r.clientDaemonStates {
-		next, ok := desiredAll[key]
+		next, ok := desired[key]
 		if ok && supervisedDaemonSpecEqual(state.Spec, next) {
 			select {
 			case <-state.Done:
-				// A finished supervisor cannot monitor or restart its child.
 				delete(r.clientDaemonStates, key)
-				continue
 			default:
+				continue
 			}
-			delete(pendingStart, key)
-			continue
+		} else {
+			state.Cancel()
+			delete(r.clientDaemonStates, key)
 		}
-		state.Cancel()
-		delete(r.clientDaemonStates, key)
-		stale = append(stale, state)
 	}
 	r.supervisedMu.Unlock()
-	for key, marker := range markers {
-		spec, wanted := desiredAll[key]
-		if !wanted || marker.SpecHash != supervisedDaemonSpecHash(spec) {
-			staleMarkers = append(staleMarkers, marker)
+	for _, process := range processes {
+		binary, resource := supervisedProcessIdentity(process.Args)
+		if binary == "" {
+			continue
+		}
+		spec, ok := desired[supervisedDaemonKey(binary, resource)]
+		if ok && supervisedProcessMatches(process.Args, spec) {
+			continue
+		}
+		if err := stopSupervisedProcess(process.PID); err != nil && logger != nil {
+			logger.Error("stop stale routerd client daemon", "binary", binary, "resource", resource, "error", err)
 		}
 	}
-
-	for _, state := range stale {
-		stopSupervisedDaemonProcess(state.Spec, logger)
-	}
-	for _, marker := range staleMarkers {
-		if err := stopOwnedSupervisedDaemon(marker, logger); err != nil {
-			if logger != nil {
-				logger.Error("retaining supervised daemon ownership record after failed cleanup", "binary", marker.Binary, "resource", marker.Resource, "error", err)
-			}
-			continue
-		}
-		if err := removeSupervisedDaemonMarker(marker); err != nil && logger != nil {
-			logger.Error("remove supervised daemon ownership record", "binary", marker.Binary, "resource", marker.Resource, "error", err)
-		}
-	}
-
-	for key, spec := range desiredAll {
-		if marker, ok := markers[key]; ok && marker.SpecHash == supervisedDaemonSpecHash(supervisedDaemonSpec{ResourceName: spec.ResourceName, Binary: spec.Binary, Args: spec.Args}) {
-			continue
-		}
-		if supervisedDaemonSocketReady(defaultClientSocket(spec.Binary, spec.ResourceName)) {
-			if logger != nil {
-				logger.Error("refusing to adopt markerless ready supervised daemon socket", "binary", spec.Binary, "resource", spec.ResourceName)
-			}
-			delete(pendingStart, key)
-			continue
-		}
-		token, err := newSupervisedDaemonOwnerToken()
-		if err != nil {
-			if logger != nil {
-				logger.Error("generate supervised daemon ownership token", "binary", spec.Binary, "resource", spec.ResourceName, "error", err)
-			}
-			delete(pendingStart, key)
-			continue
-		}
-		spec.OwnerToken = token
-		if err := writeSupervisedDaemonMarker(supervisedDaemonMarker{Version: 1, Binary: spec.Binary, Resource: spec.ResourceName, SpecHash: supervisedDaemonSpecHash(spec), OwnerToken: token}); err != nil {
-			if logger != nil {
-				logger.Error("write supervised daemon ownership record", "binary", spec.Binary, "resource", spec.ResourceName, "error", err)
-			}
-			delete(pendingStart, key)
-			continue
-		}
-		desiredAll[key] = spec
-		pendingStart[key] = spec
-	}
-
 	r.supervisedMu.Lock()
-	for key, spec := range pendingStart {
+	for key, spec := range desired {
 		if _, ok := r.clientDaemonStates[key]; ok {
 			continue
 		}
@@ -3355,7 +3179,6 @@ func (r *Runner) reconcileSupervisedDaemonSpecs(ctx context.Context, logger *slo
 		r.clientDaemonStates[key] = supervisedDaemonState{Spec: spec, Cancel: cancel, Done: done}
 	}
 	r.supervisedMu.Unlock()
-
 	r.reconcileARPObserverDaemons(ctx, logger)
 }
 
@@ -3364,7 +3187,7 @@ func supervisedDaemonKey(binary, resourceName string) string {
 }
 
 func supervisedDaemonSpecEqual(a, b supervisedDaemonSpec) bool {
-	if a.ResourceName != b.ResourceName || a.Binary != b.Binary || a.OwnerToken != b.OwnerToken || len(a.Args) != len(b.Args) {
+	if a.ResourceName != b.ResourceName || a.Binary != b.Binary || len(a.Args) != len(b.Args) {
 		return false
 	}
 	for i := range a.Args {
@@ -3554,16 +3377,23 @@ func (r *Runner) startSupervisedDaemonSpec(ctx context.Context, logger *slog.Log
 	go func() {
 		defer close(done)
 		for ctx.Err() == nil {
-			if supervisedDaemonSocketReady(defaultClientSocket(binary, resourceName)) {
-				if !supervisedDaemonOwnedProcessRunning(spec) {
+		waitForExisting:
+			for ctx.Err() == nil {
+				processes, err := listSupervisedDaemonProcesses()
+				if err != nil {
 					if logger != nil {
-						logger.Error("refusing to adopt ready foreign supervised daemon socket", "binary", binary, "resource", resourceName)
+						logger.Error("list routerd client daemons", "error", err)
 					}
-					select {
-					case <-time.After(10 * time.Second):
-						continue
-					case <-ctx.Done():
-						return
+				} else {
+					running := false
+					for _, process := range processes {
+						if supervisedProcessMatches(process.Args, spec) {
+							running = true
+							break
+						}
+					}
+					if !running && !clientSocketReady(defaultClientSocket(binary, resourceName)) {
+						break waitForExisting
 					}
 				}
 				select {
@@ -3573,11 +3403,11 @@ func (r *Runner) startSupervisedDaemonSpec(ctx context.Context, logger *slog.Log
 					return
 				}
 			}
+			if ctx.Err() != nil {
+				return
+			}
 			path := routerdClientBinary(binary)
 			cmdArgs := append([]string(nil), args...)
-			if spec.OwnerToken != "" {
-				cmdArgs = append(cmdArgs, "--supervisor-owner", spec.OwnerToken)
-			}
 			cmd := exec.CommandContext(ctx, path, cmdArgs...)
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
@@ -3594,14 +3424,6 @@ func (r *Runner) startSupervisedDaemonSpec(ctx context.Context, logger *slog.Log
 				case <-ctx.Done():
 					return
 				}
-			}
-			if err := writeSupervisedDaemonMarker(supervisedDaemonMarker{Version: 1, Binary: binary, Resource: resourceName, SpecHash: supervisedDaemonSpecHash(spec), OwnerToken: spec.OwnerToken, PID: cmd.Process.Pid}); err != nil {
-				_ = cmd.Process.Signal(syscall.SIGTERM)
-				_ = cmd.Wait()
-				if logger != nil {
-					logger.Error("supervised daemon ownership record write failed", "binary", path, "resource", resourceName, "error", err)
-				}
-				return
 			}
 			err := cmd.Wait()
 			if ctx.Err() != nil {
@@ -3851,162 +3673,91 @@ func equalStringSlices(a, b []string) bool {
 	return true
 }
 
-func stopSupervisedDaemonProcess(spec supervisedDaemonSpec, logger *slog.Logger) {
-	marker := supervisedDaemonMarker{Version: 1, Binary: spec.Binary, Resource: spec.ResourceName, SpecHash: supervisedDaemonSpecHash(spec), OwnerToken: spec.OwnerToken}
-	if err := stopOwnedSupervisedDaemon(marker, logger); err != nil && logger != nil {
-		logger.Error("stop supervised routerd client daemon", "binary", spec.Binary, "resource", spec.ResourceName, "error", err)
+func supervisedProcessIdentity(args []string) (string, string) {
+	if len(args) < 2 || args[1] != "daemon" {
+		return "", ""
 	}
+	binary := filepath.Base(args[0])
+	switch binary {
+	case "routerd-dhcpv4-client", "routerd-dhcpv6-client", "routerd-pppoe-client", "routerd-dns-resolver", "routerd-arp-observer":
+	default:
+		return "", ""
+	}
+	for i := 2; i < len(args); i++ {
+		if args[i] == "--resource" && i+1 < len(args) && args[i+1] != "" {
+			return binary, args[i+1]
+		}
+		if strings.HasPrefix(args[i], "--resource=") && args[i] != "--resource=" {
+			return binary, strings.TrimPrefix(args[i], "--resource=")
+		}
+	}
+	return "", ""
 }
 
-func stopOwnedSupervisedDaemon(marker supervisedDaemonMarker, logger *slog.Logger) error {
-	pids := matchingOwnedSupervisedDaemonPIDs(marker)
-	if len(pids) == 0 {
-		return nil
-	}
-	if logger != nil {
-		logger.Info("stopping stale supervised routerd client daemon", "binary", marker.Binary, "resource", marker.Resource, "pids", pids)
-	}
-	for _, pid := range pids {
-		_ = supervisedDaemonSignal(pid, syscall.SIGTERM)
-	}
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if len(matchingOwnedSupervisedDaemonPIDs(marker)) == 0 {
-			return nil
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	for _, pid := range matchingOwnedSupervisedDaemonPIDs(marker) {
-		_ = supervisedDaemonSignal(pid, syscall.SIGKILL)
-	}
-	deadline = time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if len(matchingOwnedSupervisedDaemonPIDs(marker)) == 0 {
-			return nil
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	return fmt.Errorf("owned supervised daemon remained after SIGKILL: binary=%s resource=%s", marker.Binary, marker.Resource)
-}
-
-func supervisedDaemonOwnedProcessRunning(spec supervisedDaemonSpec) bool {
-	markers, _ := readSupervisedDaemonMarkers()
-	marker, ok := markers[supervisedDaemonKey(spec.Binary, spec.ResourceName)]
-	if !ok || marker.OwnerToken != spec.OwnerToken || marker.SpecHash != supervisedDaemonSpecHash(spec) {
+func supervisedProcessMatches(args []string, spec supervisedDaemonSpec) bool {
+	if len(args) == 0 || filepath.Base(args[0]) != spec.Binary {
 		return false
 	}
-	pids := matchingOwnedSupervisedDaemonPIDs(marker)
-	if len(pids) != 1 {
-		return false
-	}
-	if marker.PID == 0 {
-		marker.PID = pids[0]
-		if err := writeSupervisedDaemonMarker(marker); err != nil {
-			return false
-		}
-	}
-	return true
-}
-
-func matchingOwnedSupervisedDaemonPIDs(marker supervisedDaemonMarker) []int {
-	var out []int
-	for _, process := range supervisedDaemonProcesses() {
-		if process.PID <= 0 || process.PID == os.Getpid() {
+	actual := make([]string, 0, len(args)-1)
+	for i := 1; i < len(args); i++ {
+		if args[i] == "--supervisor-owner" && i+1 < len(args) {
+			i++
 			continue
 		}
-		if marker.PID > 0 && process.PID != marker.PID {
+		if strings.HasPrefix(args[i], "--supervisor-owner=") {
 			continue
 		}
-		if routerdDaemonCommandMatches(process.Command, marker.Binary, marker.Resource, marker.OwnerToken) {
-			out = append(out, process.PID)
-		}
+		actual = append(actual, args[i])
 	}
-	sort.Ints(out)
-	return out
+	return equalStringSlices(actual, spec.Args)
 }
 
-func listSupervisedDaemonProcesses() []supervisedDaemonProcess {
-	if runtime.GOOS == "linux" {
-		return listLinuxSupervisedDaemonProcesses()
-	}
-	if runtime.GOOS == "freebsd" {
-		return listFreeBSDSupervisedDaemonProcesses()
+func stopSupervisedProcess(pid int) error {
+	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
+		return err
 	}
 	return nil
 }
 
-func listLinuxSupervisedDaemonProcesses() []supervisedDaemonProcess {
-	entries, err := os.ReadDir("/proc")
-	if err != nil {
-		return nil
-	}
-	var out []supervisedDaemonProcess
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		pid, err := strconv.Atoi(entry.Name())
+func listSupervisedDaemonProcesses() ([]supervisedDaemonProcess, error) {
+	if runtime.GOOS == "linux" {
+		entries, err := os.ReadDir("/proc")
 		if err != nil {
-			continue
+			return nil, err
 		}
-		data, err := os.ReadFile(filepath.Join("/proc", entry.Name(), "cmdline"))
-		if err == nil && len(data) > 0 {
-			out = append(out, supervisedDaemonProcess{PID: pid, Command: strings.ReplaceAll(strings.TrimRight(string(data), "\x00"), "\x00", " ")})
+		var processes []supervisedDaemonProcess
+		for _, entry := range entries {
+			pid, err := strconv.Atoi(entry.Name())
+			if err != nil || pid == os.Getpid() {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join("/proc", entry.Name(), "cmdline"))
+			if err != nil || len(data) == 0 {
+				continue
+			}
+			processes = append(processes, supervisedDaemonProcess{PID: pid, Args: strings.Split(strings.TrimRight(string(data), "\x00"), "\x00")})
 		}
+		return processes, nil
 	}
-	return out
-}
-
-func listFreeBSDSupervisedDaemonProcesses() []supervisedDaemonProcess {
-	data, err := freeBSDSupervisedDaemonPSCommand().Output()
-	if err != nil {
-		return nil
-	}
-	var out []supervisedDaemonProcess
-	for _, line := range strings.Split(string(data), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
-			continue
+	if runtime.GOOS == "freebsd" {
+		data, err := exec.Command("ps", "-axww", "-o", "pid=", "-o", "command=").Output()
+		if err != nil {
+			return nil, err
 		}
-		pid, err := strconv.Atoi(fields[0])
-		if err == nil {
-			out = append(out, supervisedDaemonProcess{PID: pid, Command: strings.TrimSpace(strings.TrimPrefix(line, fields[0]))})
+		var processes []supervisedDaemonProcess
+		for _, line := range strings.Split(string(data), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) < 2 {
+				continue
+			}
+			pid, err := strconv.Atoi(fields[0])
+			if err == nil {
+				processes = append(processes, supervisedDaemonProcess{PID: pid, Args: fields[1:]})
+			}
 		}
+		return processes, nil
 	}
-	return out
-}
-
-func freeBSDSupervisedDaemonPSCommand() *exec.Cmd {
-	return exec.Command("ps", "-axww", "-o", "pid=", "-o", "command=")
-}
-
-// routerdDaemonCommandMatches intentionally requires the opaque owner token
-// in addition to binary/resource. A matching resource name alone is not
-// ownership proof after a controller crash.
-func routerdDaemonCommandMatches(command, binary, resourceName, ownerToken string) bool {
-	if binary == "" || resourceName == "" || ownerToken == "" {
-		return false
-	}
-	fields := strings.Fields(command)
-	if len(fields) == 0 || filepath.Base(fields[0]) != binary {
-		return false
-	}
-	daemonOK, resourceOK, ownerOK := false, false, false
-	for i := 0; i < len(fields); i++ {
-		switch {
-		case fields[i] == "daemon":
-			daemonOK = true
-		case fields[i] == "--resource" && i+1 < len(fields) && fields[i+1] == resourceName:
-			resourceOK = true
-		case fields[i] == "--supervisor-owner" && i+1 < len(fields) && fields[i+1] == ownerToken:
-			ownerOK = true
-		case fields[i] == "--resource="+resourceName:
-			resourceOK = true
-		case fields[i] == "--supervisor-owner="+ownerToken:
-			ownerOK = true
-		}
-	}
-	return daemonOK && resourceOK && ownerOK
+	return nil, fmt.Errorf("unsupported process listing on %s", runtime.GOOS)
 }
 
 type PrefixDelegationController struct {
