@@ -4440,3 +4440,9 @@ terminated and reaped. No product fix was needed. The maintained
 [procedure](../operations/development.md#linux-overlapping-vrf-isolation) now
 requires both paths. This qualifies IPv4 UDP transit for this topology, not
 packaged-daemon restart/reboot, delegated IPv6/RA, every routing mode or FreeBSD.
+
+Publication `eb43e539` contains the extended test and procedure; `c54d71a9`
+updates the plan. Full `go test ./...`, `make check-schema validate-example
+check-website-schemas website-build`, formatting and `git diff --check` passed.
+The four-locale website build retained documentation-link warnings. Secrets
+scans passed and both checkpoint remote SHAs were verified.
