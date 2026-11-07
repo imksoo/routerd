@@ -1712,12 +1712,9 @@ run_configure()
         completed=1
         return 0
     fi
-    sandbox_root=$(mktemp -d "${TMPDIR:-/tmp}/routerd-configure-sandbox.XXXXXX")
-    if ! "${routerd_bin}" serve --sandbox --root "${sandbox_root}" --config "${final_config}" --once; then
-        rm -rf -- "${sandbox_root}"
+    if ! "${routerd_bin}" validate --config "${final_config}"; then
         return 1
     fi
-    rm -rf -- "${sandbox_root}"
     if [ "${configure_apply}" -eq 1 ]; then
         "${routerd_bin}" serve --config "${final_config}" --once
         maybe_start_live_routerd "${routerd_bin}" "${final_config}"

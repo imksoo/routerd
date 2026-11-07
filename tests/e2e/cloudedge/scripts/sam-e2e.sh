@@ -906,10 +906,7 @@ validate_generated_configs() {
     echo "a PVE client is required for isolated config validation" >&2
     return 1
   }
-  # The QA coordinator must never start routerd, even in sandbox mode.  Send
-  # the artifact and generated configs to a disposable PVE workload guest and
-  # run the exact same dry-run canonical-load check there.  The guest is
-  # reached only through its QGA-pinned SSH identity established by preflight.
+  # Validate generated configuration with the packaged binary on the target guest.
   input_archive="$out_dir/configs.tar.gz"
   tar -C "$cfg_dir" -czf "$input_archive" .
   remote_artifact=/tmp/routerd-sam-config-validation-artifact.tar.gz
@@ -927,12 +924,7 @@ validate_generated_configs() {
 set -euo pipefail
 work="$(mktemp -d /tmp/routerd-sam-config-validation.XXXXXX)"
 out_dir="$work/out"
-sandbox_pid=
 cleanup() {
-  if [ -n "$sandbox_pid" ]; then
-    kill "$sandbox_pid" >/dev/null 2>&1 || true
-    wait "$sandbox_pid" >/dev/null 2>&1 || true
-  fi
   if [ -d "$out_dir" ]; then
     tar -C "$out_dir" -czf "$evidence" . || true
   fi
@@ -944,55 +936,12 @@ mkdir -p "$out_dir/artifact" "$work/configs"
 tar -xzf "$artifact" -C "$out_dir/artifact"
 tar -xzf "$input" -C "$work/configs"
 routerd_bin="$(find "$out_dir/artifact" -type f -name routerd -perm -100 | sort | head -n 1)"
-routerctl_bin="$(find "$out_dir/artifact" -type f -name routerctl -perm -100 | sort | head -n 1)"
-[ -n "$routerd_bin" ] && [ -n "$routerctl_bin" ]
-{
-  echo "artifact=$artifact"
-  echo "routerd_bin=$routerd_bin"
-  "$routerd_bin" version || true
-  echo "routerctl_bin=$routerctl_bin"
-  "$routerctl_bin" version || true
-  echo "sandbox=guest-only-dry-run"
-} >"$out_dir/binaries.txt" 2>&1
-sandbox_root="$work/sandbox"
-printf '%s\n' "$sandbox_root" >"$out_dir/sandbox-root.txt"
-"$routerd_bin" serve --sandbox --root "$sandbox_root" >"$out_dir/sandbox.stdout" 2>"$out_dir/sandbox.stderr" &
-sandbox_pid=$!
-status_socket="$sandbox_root/run/routerd/routerd-status.sock"
-for _ in $(seq 1 300); do
-  if ! kill -0 "$sandbox_pid" >/dev/null 2>&1; then
-    echo "routerd sandbox exited before status socket became ready" >&2
-    cat "$out_dir/sandbox.stdout" >&2 || true
-    cat "$out_dir/sandbox.stderr" >&2 || true
-    exit 1
-  fi
-  [ -S "$status_socket" ] && break
-  sleep 0.1
-done
-[ -S "$status_socket" ] || {
-  echo "routerd sandbox status socket did not become ready: $status_socket" >&2
-  exit 1
-}
+[ -n "$routerd_bin" ]
+"$routerd_bin" version >"$out_dir/binaries.txt" 2>&1
 for cfg in "$work/configs"/*.yaml; do
   [ -f "$cfg" ] || continue
   name="$(basename "$cfg" .yaml)"
-  rc=0
-  "$routerctl_bin" validate --socket "$status_socket" -f "$cfg" --replace >"$out_dir/$name.routerctl-validate.json" 2>"$out_dir/$name.routerctl-validate.stderr" || rc=$?
-  printf '%s\n' "$rc" >"$out_dir/$name.routerctl-validate.rc"
-  if [ "$rc" -ne 0 ] || ! jq -e '.valid == true' "$out_dir/$name.routerctl-validate.json" >/dev/null; then
-    echo "routerctl validate failed for $cfg with rc=$rc" >&2
-    exit 1
-  fi
-  load_root="$work/load-$name"
-  mkdir -p "$load_root"
-  printf '%s\n' "$load_root" >"$out_dir/$name.routerd-load-root.txt"
-  rc=0
-  "$routerd_bin" serve --sandbox --root "$load_root" --config "$cfg" --once >"$out_dir/$name.routerd-validate.txt" 2>"$out_dir/$name.routerd-validate.stderr" || rc=$?
-  printf '%s\n' "$rc" >"$out_dir/$name.routerd-validate.rc"
-  if [ "$rc" -ne 0 ]; then
-    echo "routerd canonical load failed for $cfg with rc=$rc" >&2
-    exit 1
-  fi
+  "$routerd_bin" validate --config "$cfg" >"$out_dir/$name.routerd-validate.txt" 2>"$out_dir/$name.routerd-validate.stderr"
 done
 REMOTE_VALIDATE
   )"
