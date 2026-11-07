@@ -36,10 +36,19 @@ CONTROL
 cat > "$stage/DEBIAN/postinst" <<'POSTINST'
 #!/bin/sh
 set -e
-if [ "$1" = configure ] && [ -d /run/systemd/system ] && systemctl is-active --quiet routerd-ndpi-agent.service; then
-    systemctl restart routerd-ndpi-agent.service
+if [ "$1" = configure ] && [ -d /run/systemd/system ]; then
+    if systemctl is-active --quiet routerd-ndpi-agent.service || systemctl is-enabled --quiet routerd-ndpi-agent.service; then
+        systemctl restart routerd-ndpi-agent.service
+    fi
 fi
 POSTINST
-chmod 0755 "$stage/DEBIAN/postinst"
+cat > "$stage/DEBIAN/prerm" <<'PRERM'
+#!/bin/sh
+set -e
+if [ "$1" = remove ] && [ -d /run/systemd/system ] && systemctl is-active --quiet routerd-ndpi-agent.service; then
+    systemctl stop routerd-ndpi-agent.service
+fi
+PRERM
+chmod 0755 "$stage/DEBIAN/postinst" "$stage/DEBIAN/prerm"
 rm -rf "$stage/debian"
 dpkg-deb -Zgzip --root-owner-group --build "$stage" "$output"
