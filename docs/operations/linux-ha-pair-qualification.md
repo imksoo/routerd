@@ -480,6 +480,13 @@ The local regression test forces that read ordering and checks that no tunnel
 delete is issued. The native gate still requires unchanged tunnel indices and
 original application flows through an actual peer-driven renewal.
 
+Check every persisted address status during renewal, including the confirmation
+after the native command. A held, still-usable address must remain Applied there;
+even a brief Pending publication can withdraw a dependent tunnel and remap its
+connections. `TestLANHeldRenewalKeepsAppliedDependencyAndConfirmedLifetime`
+observes all those saves. Newly acquired or unusable addresses still require
+their normal readiness checks before Applied publication.
+
 ### Marks before promotion notification
 
 A client with the shared gateway MAC cached can transmit as soon as the VMAC

@@ -1352,6 +1352,12 @@ DS-Lite が旧 PD を読んだ直後に共有アドレスの有効期限更新�
 削除が発生しないことを確認し、実機では独立 peer による更新を挟んだ ifindex と
 元の通信フローの維持を確認します。
 
+更新コマンド実行中だけでなく、実機の読み戻し後を含む全保存段階を検査します。
+既に保持し、更新後も利用可能なアドレスは Applied を維持します。一瞬でも Pending を
+公開すると、依存トンネルの撤去と既存通信の経路変更につながります。
+`TestLANHeldRenewalKeepsAppliedDependencyAndConfirmedLifetime` で全保存を検査します。
+新規取得や利用不能なアドレスの準備完了確認は引き続き必要です。
+
 ### 昇格通知前の conntrack mark
 
 共有MACを記憶しているクライアントは、daemon が MASTER を認識する前でも

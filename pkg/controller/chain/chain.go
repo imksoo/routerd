@@ -5717,6 +5717,12 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 				receipt.confirm(addr)
 				pendingNative := copyStatusMap(status)
 				pendingNative["phase"], pendingNative["reason"] = "Pending", "AddressNotReady"
+				if after.usable && pending["phase"] == "Applied" {
+					// Preserve the held address's readiness through confirmation,
+					// not only through the native write. A transient Pending here
+					// lets dependent actors withdraw a still-usable tunnel.
+					pendingNative = copyStatusMap(pending)
+				}
 				if err := c.saveDelegatedReceipt(resource.Metadata.Name, pendingNative, receipt); err != nil {
 					return err
 				}
