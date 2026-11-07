@@ -651,10 +651,26 @@ func NetworkAdoptions(router *api.Router) []NetworkAdoptionResource {
 		disableDHCPv4 bool
 		disableDHCPv6 bool
 		disableIPv6RA bool
+		dns           *api.InterfaceDNSSpec
 	}
 	byInterface := map[string]*desired{}
+	aliases := map[string]string{}
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind != "Interface" {
+			continue
+		}
+		if spec, err := resource.InterfaceSpec(); err == nil && spec.IfName != "" {
+			aliases[spec.IfName] = resource.Metadata.Name
+			if protected[spec.IfName] {
+				protected[resource.Metadata.Name] = true
+			}
+		}
+	}
 	ensure := func(name string) *desired {
 		name = strings.TrimSpace(name)
+		if alias := aliases[name]; alias != "" {
+			name = alias
+		}
 		if name == "" || protected[name] {
 			return nil
 		}
@@ -668,6 +684,12 @@ func NetworkAdoptions(router *api.Router) []NetworkAdoptionResource {
 	resolved := providesDefaultLoopbackDNS(router)
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
+		case "Interface":
+			if spec, err := res.InterfaceSpec(); err == nil && spec.DNS != nil {
+				if item := ensure(res.Metadata.Name); item != nil {
+					item.dns = spec.DNS
+				}
+			}
 		case "DHCPv4Client":
 			if spec, err := res.DHCPv4ClientSpec(); err == nil {
 				if item := ensure(spec.Interface); item != nil {
@@ -733,6 +755,7 @@ func NetworkAdoptions(router *api.Router) []NetworkAdoptionResource {
 				DisableDHCPv4: item.disableDHCPv4,
 				DisableDHCPv6: item.disableDHCPv6,
 				DisableIPv6RA: item.disableIPv6RA,
+				DNS:           item.dns,
 			},
 		}
 		if resolved && !resolvedAttached {

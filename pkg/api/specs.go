@@ -246,13 +246,14 @@ type NetworkAdoptionSpec struct {
 }
 
 type NetworkAdoptionNetworkdSpec struct {
-	DisableDHCPv4     bool   `yaml:"disableDHCPv4,omitempty" json:"disableDHCPv4,omitempty"`
-	DisableDHCPv6     bool   `yaml:"disableDHCPv6,omitempty" json:"disableDHCPv6,omitempty"`
-	DisableIPv6RA     bool   `yaml:"disableIPv6RA,omitempty" json:"disableIPv6RA,omitempty"`
-	DHCPv4UseRoutes   *bool  `yaml:"dhcpv4UseRoutes,omitempty" json:"dhcpv4UseRoutes,omitempty"`
-	DHCPv4UseDNS      *bool  `yaml:"dhcpv4UseDNS,omitempty" json:"dhcpv4UseDNS,omitempty"`
-	DHCPv4RouteMetric int    `yaml:"dhcpv4RouteMetric,omitempty" json:"dhcpv4RouteMetric,omitempty" jsonschema:"minimum=0"`
-	DropinName        string `yaml:"dropinName,omitempty" json:"dropinName,omitempty"`
+	DisableDHCPv4     bool              `yaml:"disableDHCPv4,omitempty" json:"disableDHCPv4,omitempty"`
+	DisableDHCPv6     bool              `yaml:"disableDHCPv6,omitempty" json:"disableDHCPv6,omitempty"`
+	DisableIPv6RA     bool              `yaml:"disableIPv6RA,omitempty" json:"disableIPv6RA,omitempty"`
+	DHCPv4UseRoutes   *bool             `yaml:"dhcpv4UseRoutes,omitempty" json:"dhcpv4UseRoutes,omitempty"`
+	DHCPv4UseDNS      *bool             `yaml:"dhcpv4UseDNS,omitempty" json:"dhcpv4UseDNS,omitempty"`
+	DHCPv4RouteMetric int               `yaml:"dhcpv4RouteMetric,omitempty" json:"dhcpv4RouteMetric,omitempty" jsonschema:"minimum=0"`
+	DropinName        string            `yaml:"dropinName,omitempty" json:"dropinName,omitempty"`
+	DNS               *InterfaceDNSSpec `yaml:"dns,omitempty" json:"dns,omitempty"`
 }
 
 type NetworkAdoptionResolvedSpec struct {
@@ -370,12 +371,18 @@ type ManagementAccessSpec struct {
 type InventorySpec struct{}
 
 type InterfaceSpec struct {
-	IfName  string           `yaml:"ifname" json:"ifname"`
-	When    ResourceWhenSpec `yaml:"when,omitempty" json:"when,omitempty"`
-	AdminUp bool             `yaml:"adminUp,omitempty" json:"adminUp,omitempty"`
-	MTU     int              `yaml:"mtu,omitempty" json:"mtu,omitempty" jsonschema:"minimum=576,maximum=9216"`
-	Managed bool             `yaml:"managed" json:"managed"`
-	Owner   string           `yaml:"owner,omitempty" json:"owner,omitempty" jsonschema:"enum=routerd,enum=external"`
+	IfName  string            `yaml:"ifname" json:"ifname"`
+	When    ResourceWhenSpec  `yaml:"when,omitempty" json:"when,omitempty"`
+	AdminUp bool              `yaml:"adminUp,omitempty" json:"adminUp,omitempty"`
+	MTU     int               `yaml:"mtu,omitempty" json:"mtu,omitempty" jsonschema:"minimum=576,maximum=9216"`
+	Managed bool              `yaml:"managed" json:"managed"`
+	Owner   string            `yaml:"owner,omitempty" json:"owner,omitempty" jsonschema:"enum=routerd,enum=external"`
+	DNS     *InterfaceDNSSpec `yaml:"dns,omitempty" json:"dns,omitempty"`
+}
+
+type InterfaceDNSSpec struct {
+	Servers []string `yaml:"servers,omitempty" json:"servers,omitempty"`
+	Domains []string `yaml:"domains,omitempty" json:"domains,omitempty"`
 }
 
 type LinkSpec struct {

@@ -130,7 +130,7 @@ resource instead of duplicating collector endpoints.
 
 | Kind | Role |
 | --- | --- |
-| `Interface` | Binds a stable routerd name to an OS interface name and publishes link/address status for downstream resources. |
+| `Interface` | Binds a stable routerd name to an OS interface name and publishes link/address status. Optional `dns.servers` and `dns.domains` declare static per-link DNS for systemd-networkd. |
 | `ManagementAccess` | Declares management interfaces and apply-time lockout checks. When present, apply fails if declared interfaces are missing, blocked by firewall zoning, or an enabled WebConsole is bound to all addresses unless `--allow-mgmt-lockout` is set. |
 | `PPPoESession` | Defines PPPoE lower-interface settings. |
 | `PPPoESession` | Represents a `routerd-pppoe-client` session. |

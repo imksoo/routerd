@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -208,7 +209,10 @@ func (c Controller) applyLease(ctx context.Context, name string, current, next m
 		if err := c.removeExpiredRoute(ctx, name, current, next); err != nil {
 			return err
 		}
-		return c.removeExpiredAddress(ctx, name, current, next)
+		if err := c.removeExpiredAddress(ctx, name, current, next); err != nil {
+			return err
+		}
+		return c.restoreStaticDNS(ctx, current, next)
 	}
 	if phase != daemonapi.ResourcePhaseBound {
 		return nil
@@ -279,11 +283,33 @@ func (c Controller) applyLease(ctx context.Context, name string, current, next m
 	if api.BoolDefault(spec.UseDNS, true) {
 		servers := stringSlice(next["dnsServers"])
 		if len(servers) > 0 {
-			next["appliedDNSServers"] = strings.Join(servers, ",")
-			if err := applyDNS(ctx, platform.CurrentOS(), command, ifname, defaultString(c.ResolvConfPath, "/etc/resolv.conf"), name, servers, c.DryRun); err != nil {
+			static, err := c.interfaceDNS(ifname)
+			if err != nil {
 				return err
 			}
+			var domains []string
+			if static != nil {
+				combined := append([]string(nil), static.Servers...)
+				for _, server := range servers {
+					if !slices.Contains(combined, server) {
+						combined = append(combined, server)
+					}
+				}
+				servers = combined
+				domains = append(domains, static.Domains...)
+			}
+			if !slices.Contains(domains, "~.") {
+				domains = append(domains, "~.")
+			}
+			next["appliedDNSServers"] = strings.Join(servers, ",")
+			if err := applyDNS(ctx, platform.CurrentOS(), command, ifname, defaultString(c.ResolvConfPath, "/etc/resolv.conf"), name, servers, domains, c.DryRun); err != nil {
+				return err
+			}
+		} else if err := c.restoreStaticDNS(ctx, current, next); err != nil {
+			return err
 		}
+	} else if err := c.restoreStaticDNS(ctx, current, next); err != nil {
+		return err
 	}
 	next["applyMode"] = "active"
 	return nil
@@ -457,21 +483,75 @@ func defaultString(value, fallback string) string {
 	return fallback
 }
 
-func applyDNS(ctx context.Context, osName platform.OS, command outputCommandFunc, ifname, resolvConfPath, resource string, servers []string, dryRun bool) error {
+func (c Controller) interfaceDNS(ifname string) (*api.InterfaceDNSSpec, error) {
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.Kind != "Interface" {
+			continue
+		}
+		spec, err := resource.InterfaceSpec()
+		if err != nil {
+			return nil, err
+		}
+		if spec.IfName == ifname {
+			return spec.DNS, nil
+		}
+	}
+	return nil, nil
+}
+
+func (c Controller) restoreStaticDNS(ctx context.Context, current, next map[string]any) error {
+	ifname := mapString(current, "ifname")
+	if ifname == "" || mapString(current, "appliedDNSServers") == "" || c.DryRun {
+		return nil
+	}
+	static, err := c.interfaceDNS(ifname)
+	if err != nil {
+		return err
+	}
+	command := c.Command
+	if command == nil {
+		command = runOutputCommandContext
+	}
+	path := defaultString(c.ResolvConfPath, "/etc/resolv.conf")
+	if static == nil && platform.CurrentOS() == platform.OSLinux && systemdResolvedResolvConf(path) {
+		if _, err := command(ctx, "resolvectl", "revert", ifname); err != nil {
+			return fmt.Errorf("restore DNS for %s: %w", ifname, err)
+		}
+	} else {
+		var servers, domains []string
+		if static != nil {
+			servers, domains = static.Servers, static.Domains
+		}
+		if err := applyDNS(ctx, platform.CurrentOS(), command, ifname, path, "static", servers, domains, false); err != nil {
+			return err
+		}
+	}
+	delete(next, "appliedDNSServers")
+	return nil
+}
+
+func applyDNS(ctx context.Context, osName platform.OS, command outputCommandFunc, ifname, resolvConfPath, resource string, servers, domains []string, dryRun bool) error {
 	if osName == platform.OSLinux && systemdResolvedResolvConf(resolvConfPath) {
 		if dryRun {
 			return nil
 		}
 		args := append([]string{"dns", ifname}, servers...)
+		if len(servers) == 0 {
+			args = append(args, "")
+		}
 		if _, err := command(ctx, "resolvectl", args...); err != nil {
 			return fmt.Errorf("set systemd-resolved DNS for %s: %w", ifname, err)
 		}
-		if _, err := command(ctx, "resolvectl", "domain", ifname, "~."); err != nil {
+		domainArgs := append([]string{"domain", ifname}, domains...)
+		if len(domains) == 0 {
+			domainArgs = append(domainArgs, "")
+		}
+		if _, err := command(ctx, "resolvectl", domainArgs...); err != nil {
 			return fmt.Errorf("set systemd-resolved default DNS domain for %s: %w", ifname, err)
 		}
 		return nil
 	}
-	return writeResolvConf(resolvConfPath, resource, servers, dryRun)
+	return writeResolvConf(resolvConfPath, resource, servers, domains, dryRun)
 }
 
 func systemdResolvedResolvConf(path string) bool {
@@ -486,7 +566,7 @@ func systemdResolvedResolvConf(path string) bool {
 	return strings.Contains(target, "systemd/resolve") || strings.Contains(target, "stub-resolv.conf")
 }
 
-func writeResolvConf(path, resource string, servers []string, dryRun bool) error {
+func writeResolvConf(path, resource string, servers, domains []string, dryRun bool) error {
 	var b strings.Builder
 	b.WriteString("# Managed by routerd. Do not edit by hand.\n")
 	b.WriteString("# Source: DHCPv4Client/")
@@ -500,6 +580,15 @@ func writeResolvConf(path, resource string, servers []string, dryRun bool) error
 		b.WriteString("nameserver ")
 		b.WriteString(server)
 		b.WriteByte('\n')
+	}
+	var search []string
+	for _, domain := range domains {
+		if !strings.HasPrefix(domain, "~") {
+			search = append(search, domain)
+		}
+	}
+	if len(search) > 0 {
+		b.WriteString("search " + strings.Join(search, " ") + "\n")
 	}
 	data := []byte(b.String())
 	if dryRun {

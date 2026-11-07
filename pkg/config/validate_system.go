@@ -234,6 +234,9 @@ func validateSystemResource(res api.Resource, targetOS platform.OS) (bool, error
 		if err != nil {
 			return true, err
 		}
+		if err := validateInterfaceDNS(spec.SystemdNetworkd.DNS); err != nil {
+			return true, fmt.Errorf("%s spec.systemdNetworkd.dns: %w", res.ID(), err)
+		}
 		switch defaultString(spec.State, "present") {
 		case "present", "absent":
 		default:

@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -106,6 +107,7 @@ type networkdImportStatus struct {
 	SearchDomains []struct {
 		Domain       string `json:"Domain"`
 		ConfigSource string `json:"ConfigSource"`
+		RouteOnly    bool   `json:"RouteOnly"`
 	} `json:"SearchDomains"`
 	Routes []struct {
 		Family                  int    `json:"Family"`
@@ -125,7 +127,7 @@ type networkdImportStatus struct {
 	} `json:"Routes"`
 }
 
-func networkdAddressSources(ifname string) (map[string]string, map[string]bool, []string, []string, error) {
+func networkdAddressSources(ifname string) (map[string]string, map[string]bool, []string, *api.InterfaceDNSSpec, error) {
 	out, err := exec.Command("networkctl", "--json=short", "status", ifname).Output()
 	if err != nil {
 		return nil, nil, nil, nil, err
@@ -170,7 +172,7 @@ func networkdAddressSources(ifname string) (map[string]string, map[string]bool, 
 		files = append(files, status.NetworkFile)
 		files = append(files, status.NetworkFileDropins...)
 	}
-	var unimported []string
+	var dns api.InterfaceDNSSpec
 	for _, server := range status.DNS {
 		if server.ConfigSource != "static" {
 			continue
@@ -186,14 +188,21 @@ func networkdAddressSources(ifname string) (map[string]string, map[string]bool, 
 		if !ok {
 			return nil, nil, nil, nil, errors.New("invalid networkd DNS address")
 		}
-		unimported = append(unimported, "static DNS server "+ip.String()+" is not imported")
+		dns.Servers = append(dns.Servers, ip.String())
 	}
 	for _, domain := range status.SearchDomains {
 		if domain.ConfigSource == "static" && domain.Domain != "" {
-			unimported = append(unimported, "static DNS search domain "+domain.Domain+" is not imported")
+			value := domain.Domain
+			if domain.RouteOnly {
+				value = "~" + value
+			}
+			dns.Domains = append(dns.Domains, value)
 		}
 	}
-	return sources, staticRoutes, files, unimported, nil
+	if len(dns.Servers) == 0 && len(dns.Domains) == 0 {
+		return sources, staticRoutes, files, nil, nil
+	}
+	return sources, staticRoutes, files, &dns, nil
 }
 
 func importIPv4Bytes(values []int) (netip.Addr, bool) {
@@ -513,14 +522,11 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 			return fmt.Errorf("interface %s not found in kernel output", ifname)
 		}
 		link := links[0]
-		sources, staticRoutes, networkFiles, unimported, sourceErr := networkdAddressSources(ifname)
+		sources, staticRoutes, networkFiles, observedDNS, sourceErr := networkdAddressSources(ifname)
 		if sourceErr != nil {
 			warnings = append(warnings, fmt.Sprintf("%s: networkd address sources unavailable: %v", ifname, sourceErr))
 		} else if len(networkFiles) != 0 {
 			warnings = append(warnings, fmt.Sprintf("%s: networkd manages this link via %s; transfer management before apply", ifname, networkFiles[0]))
-		}
-		for _, item := range unimported {
-			warnings = append(warnings, fmt.Sprintf("%s: %s", ifname, item))
 		}
 		up := false
 		for _, f := range link.Flags {
@@ -548,6 +554,14 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 			if spec.AdminUp != up || (spec.MTU != 0 && spec.MTU != mtu) {
 				warnings = append(warnings, fmt.Sprintf("%s: observed link settings differ from the existing Interface definition", ifname))
 			}
+			if observedDNS != nil {
+				if spec.DNS == nil {
+					spec.DNS = observedDNS
+				} else if !slices.Equal(spec.DNS.Servers, observedDNS.Servers) || !slices.Equal(spec.DNS.Domains, observedDNS.Domains) {
+					warnings = append(warnings, fmt.Sprintf("%s: existing Interface DNS differs from networkd", ifname))
+				}
+			}
+			resource.Spec = spec
 			resource.Status = nil
 		} else {
 			resourceName := ifname
@@ -557,7 +571,7 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 					resourceName = fmt.Sprintf("import-%s-%d", ifname, suffix)
 				}
 			}
-			resource = api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: resourceName}, Spec: api.InterfaceSpec{IfName: ifname, Managed: true, AdminUp: up, MTU: mtu}}
+			resource = api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: resourceName}, Spec: api.InterfaceSpec{IfName: ifname, Managed: true, AdminUp: up, MTU: mtu, DNS: observedDNS}}
 		}
 		usedNames[resource.Metadata.Name] = true
 		router.Spec.Resources = append(router.Spec.Resources, resource)

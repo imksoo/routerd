@@ -1974,6 +1974,24 @@
                       "adminUp": {
                         "type": "boolean"
                       },
+                      "dns": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "domains": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "servers": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          }
+                        },
+                        "type": "object"
+                      },
                       "ifname": {
                         "type": "string"
                       },
