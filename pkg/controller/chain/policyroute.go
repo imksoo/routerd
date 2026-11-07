@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -860,6 +861,12 @@ func (c IPv4PolicyRouteController) applyPolicyNft(ctx context.Context, nft, path
 
 func (c IPv4PolicyRouteController) applyDefaultRoutePolicies(ctx context.Context, nft, path string) error {
 	var chunks [][]byte
+	type selectedPolicy struct {
+		name   string
+		active api.EgressRoutePolicyCandidate
+		status map[string]any
+	}
+	var selected []selectedPolicy
 	for _, res := range c.Router.Spec.Resources {
 		if res.Kind != "EgressRoutePolicy" {
 			continue
@@ -872,18 +879,22 @@ func (c IPv4PolicyRouteController) applyDefaultRoutePolicies(ctx context.Context
 			continue
 		}
 		if unsupportedPrioritySelection(spec) {
-			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", res.Metadata.Name, map[string]any{
+			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", res.Metadata.Name, map[string]any{
 				"phase":   "Pending",
 				"reason":  egressroute.ReasonUnsupported,
 				"message": fmt.Sprintf("selection %q is reserved but not implemented", firstNonEmpty(spec.Selection, egressroute.SelectionHighestWeightReady)),
 				"dryRun":  c.DryRun,
-			})
+			}); err != nil {
+				return err
+			}
 			continue
 		}
 		healthy := c.availableDefaultRouteCandidates(spec)
 		active, ok := selectDefaultRouteCandidate(healthy)
 		if !ok {
-			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", res.Metadata.Name, map[string]any{"phase": "Pending", "reason": "NoReadyCandidates", "dryRun": c.DryRun})
+			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", res.Metadata.Name, map[string]any{"phase": "Pending", "reason": "NoReadyCandidates", "dryRun": c.DryRun}); err != nil {
+				return err
+			}
 			continue
 		}
 		data, err := render.NftablesEgressRoutePolicyDefaultMarks(res.ID(), spec, active, healthy)
@@ -891,8 +902,6 @@ func (c IPv4PolicyRouteController) applyDefaultRoutePolicies(ctx context.Context
 			return err
 		}
 		chunks = append(chunks, data)
-		now := c.now()
-		previous := c.Store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", res.Metadata.Name)
 		status := map[string]any{
 			"phase":             "Applied",
 			"family":            firstNonEmpty(spec.Family, "ipv4"),
@@ -902,7 +911,6 @@ func (c IPv4PolicyRouteController) applyDefaultRoutePolicies(ctx context.Context
 			"selectedSource":    active.Source,
 			"selectedWeight":    active.Weight,
 			"dryRun":            c.DryRun,
-			"updatedAt":         now.Format(time.RFC3339Nano),
 			"candidates":        priorityStatusCandidates(spec.Candidates, healthy),
 		}
 		if len(active.Targets) == 0 {
@@ -912,10 +920,29 @@ func (c IPv4PolicyRouteController) applyDefaultRoutePolicies(ctx context.Context
 			status["selectedRouteTable"] = active.EffectiveTable()
 			status["selectedMetric"] = active.EffectiveMetric()
 		}
-		c.addHADatapathStatus(res.Metadata.Name, active, previous, status, now)
-		_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", res.Metadata.Name, status)
+		selected = append(selected, selectedPolicy{name: res.Metadata.Name, active: active, status: status})
 	}
-	return c.applyNftTable(ctx, nft, path, "ip", "routerd_default_route", bytes.Join(chunks, []byte("\n")))
+	if err := c.applyNftTable(ctx, nft, path, "ip", "routerd_default_route", bytes.Join(chunks, []byte("\n"))); err != nil {
+		var statusErrors []error
+		for _, policy := range selected {
+			if saveErr := c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", policy.name, map[string]any{
+				"phase": "Error", "reason": "DefaultRouteApplyFailed", "error": err.Error(), "dryRun": c.DryRun,
+			}); saveErr != nil {
+				statusErrors = append(statusErrors, saveErr)
+			}
+		}
+		return errors.Join(append([]error{err}, statusErrors...)...)
+	}
+	for _, policy := range selected {
+		now := c.now()
+		policy.status["updatedAt"] = now.Format(time.RFC3339Nano)
+		previous := c.Store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", policy.name)
+		c.addHADatapathStatus(policy.name, policy.active, previous, policy.status, now)
+		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", policy.name, policy.status); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (c IPv4PolicyRouteController) now() time.Time {
