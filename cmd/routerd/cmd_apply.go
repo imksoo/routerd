@@ -746,6 +746,10 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 		}
 	}
 	applyWarnings := append([]string{}, result.Warnings...)
+	var plannedOrphans []apply.OrphanedArtifact
+	if opts.DryRun {
+		plannedOrphans = result.Orphans
+	}
 	outcome.Stage = "observe"
 	result, err = apply.New().ObserveEffective(effectiveRouter, router)
 	if err != nil {
@@ -756,6 +760,10 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 		result.Generation = generation
 	}
 	result.Warnings = append(result.Warnings, applyWarnings...)
+	result.Orphans = appendUniqueOrphans(result.Orphans, plannedOrphans)
+	if len(result.Orphans) > 0 && result.Phase == "Healthy" {
+		result.Phase = "Drifted"
+	}
 	if err := appendLedgerOwnedOrphans(result, effectiveRouter, router, opts.LedgerPath, opts.DryRun); err != nil {
 		return nil, err
 	}
