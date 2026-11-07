@@ -3591,9 +3591,13 @@ func (r *Runner) probeARPObservers(ctx context.Context, poolName, address string
 		return fmt.Errorf("ARP probe target must be an IPv4 /32: %q", address)
 	}
 	target := prefix.Addr().String()
+	specs, err := r.mobilityARPObserverDaemonSpecsWithError()
+	if err != nil {
+		return err
+	}
 	matched := 0
 	var errs []error
-	for _, spec := range r.mobilityARPObserverDaemonSpecs() {
+	for _, spec := range specs {
 		if strings.TrimSpace(spec.PoolName) != strings.TrimSpace(poolName) || spec.SourceType != mobilitycontroller.OnPremSourceOnDemandARP || !spec.OnDemand || !r.arpObserverReady(spec.ResourceName) {
 			continue
 		}
