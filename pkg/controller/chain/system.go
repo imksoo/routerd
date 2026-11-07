@@ -415,6 +415,7 @@ func (c NetworkAdoptionController) applyNetworkAdoption(ctx context.Context, nam
 				return paths, changed, fmt.Errorf("reconfigure %s: %w", ifname, err)
 			}
 		}
+		changed = true
 	}
 	if resolvedChanged || (retry && resolvedAdoptionConfigured(spec.SystemdResolved)) {
 		if _, err := command(ctx, "systemctl", "restart", "systemd-resolved.service"); err != nil {
