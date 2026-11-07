@@ -447,6 +447,7 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 	fs.Usage = func() {
 		fmt.Fprintln(stderr, "usage: routerctl import --interface <name> [--interface <name> ...] [--config <router.yaml>]")
 		fmt.Fprintln(stderr, "Outputs an incomplete YAML candidate; merge it into a complete configuration before applying.")
+		fmt.Fprintln(stderr, "Run with sufficient privileges to read the active network manager configuration and leases; review all warnings.")
 	}
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {

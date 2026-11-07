@@ -84,6 +84,19 @@ access. Add an operator with `sudo usermod -aG routerd <user>` to allow
 
 ## First configuration
 
+On an existing Linux router, inspect the physical interfaces before transferring
+their management to routerd. Run import with sufficient privileges to read the
+active network manager configuration and DHCP leases, for example:
+
+```sh
+sudo routerctl import --interface enp1s0 --config /usr/local/etc/routerd/router.yaml > imported.yaml
+```
+
+Omit `--config` when no routerd configuration exists. The output is a partial
+candidate: merge it into the complete configuration, review the warnings and
+the existing network manager handoff, and then run `routerctl plan` before
+applying. Import itself does not change the network.
+
 For a first lab, follow [Getting started safely](./tutorials/getting-started.md)
 for an offline preview, then [Bring up the first lab router](./tutorials/first-router.md)
 for a complete DHCP/NAT configuration, service startup, and connectivity checks.
