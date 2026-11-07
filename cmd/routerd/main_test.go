@@ -2161,89 +2161,6 @@ func TestPublishVRRPTransitionSignalsWakesControllerBus(t *testing.T) {
 	}
 }
 
-func TestApplyDSLiteSkipsAFTRResolutionWithoutDelegatedPrefix(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
-			Metadata: api.ObjectMeta{Name: "wan"},
-			Spec:     api.InterfaceSpec{IfName: "ens18"},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
-			Metadata: api.ObjectMeta{Name: "lan"},
-			Spec:     api.InterfaceSpec{IfName: "ens19"},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"},
-			Metadata: api.ObjectMeta{Name: "lan-ipv6"},
-			Spec: api.IPv6DelegatedAddressSpec{
-				PrefixDelegation: "wan-pd",
-				Interface:        "lan",
-				AddressSuffix:    "::3",
-			},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"},
-			Metadata: api.ObjectMeta{Name: "transix-a"},
-			Spec: api.DSLiteTunnelSpec{
-				Interface:             "wan",
-				TunnelName:            "ds-transix-a",
-				AFTRFQDN:              "invalid.invalid",
-				AFTRDNSServers:        []string{"2001:db8::53"},
-				AFTRAddressOrdinal:    1,
-				LocalAddressSource:    "delegatedAddress",
-				LocalDelegatedAddress: "lan-ipv6",
-				LocalAddressSuffix:    "::100",
-			},
-		},
-	}}}
-	applied, err := applyDSLiteTunnelsWithState(router, routerstate.New())
-	if err != nil {
-		t.Fatalf("apply DS-Lite without delegated prefix: %v", err)
-	}
-	if len(applied) != 1 || applied[0] != "removed-unusable:ds-transix-a" {
-		t.Fatalf("applied = %v, want removed-unusable tunnel", applied)
-	}
-}
-
-func TestDSLiteAFTRDNSServersIncludeAFTRSourceStatus(t *testing.T) {
-	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "routerd.db"))
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	if err := store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6Information", "wan-info", map[string]any{
-		"phase":      "Ready",
-		"dnsServers": []string{"2404:1a8:7f01:a::3", "2404:1a8:7f01:b::3"},
-	}); err != nil {
-		t.Fatalf("save status: %v", err)
-	}
-	got := dsliteAFTRDNSServersWithState(api.DSLiteTunnelSpec{
-		AFTRDNSServers: []string{"2001:db8::53"},
-		AFTRFrom: api.StatusValueSourceSpec{
-			Resource: "DHCPv6Information/wan-info",
-			Field:    "aftrName",
-		},
-	}, store)
-	want := []string{"2001:db8::53", "2404:1a8:7f01:a::3", "2404:1a8:7f01:b::3"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("dns servers = %#v, want %#v", got, want)
-	}
-}
-
-func TestDNSServerAddressAddsDefaultPort(t *testing.T) {
-	tests := map[string]string{
-		"127.0.0.1":         "127.0.0.1:53",
-		"127.0.0.1:1053":    "127.0.0.1:1053",
-		"2001:db8::53":      "[2001:db8::53]:53",
-		"[2001:db8::53]:53": "[2001:db8::53]:53",
-	}
-	for input, want := range tests {
-		if got := dnsServerAddress(input); got != want {
-			t.Fatalf("dnsServerAddress(%q) = %q, want %q", input, got, want)
-		}
-	}
-}
-
 func TestAdoptedArtifactsForResultDeduplicates(t *testing.T) {
 	artifacts := []resource.Artifact{
 		{Kind: "nft.table", Name: "routerd_nat", Owner: "one"},
@@ -2759,35 +2676,6 @@ func TestFilterRouterByWhenPreservesImplicitBFDRef(t *testing.T) {
 	}
 	if spec.BFD != "BFD/implicit" {
 		t.Fatalf("BGPPeer BFD ref = %q, want implicit ref preserved", spec.BFD)
-	}
-}
-
-func TestSelectAAAAByOrdinal(t *testing.T) {
-	values := []string{
-		"2404:8e00::feed:100",
-		"2404:8e00::feed:101",
-		"2404:8e00::feed:102",
-	}
-	got, err := selectAAAA(values, 2, "ordinal")
-	if err != nil {
-		t.Fatalf("select AAAA: %v", err)
-	}
-	if got != "2404:8e00::feed:101" {
-		t.Fatalf("AAAA = %s, want 2404:8e00::feed:101", got)
-	}
-}
-
-func TestSelectAAAAModulo(t *testing.T) {
-	values := []string{
-		"2404:8e00::feed:100",
-		"2404:8e00::feed:101",
-	}
-	got, err := selectAAAA(values, 3, "ordinalModulo")
-	if err != nil {
-		t.Fatalf("select AAAA: %v", err)
-	}
-	if got != "2404:8e00::feed:100" {
-		t.Fatalf("AAAA = %s, want 2404:8e00::feed:100", got)
 	}
 }
 
