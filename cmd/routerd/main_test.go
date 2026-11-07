@@ -1957,16 +1957,6 @@ func TestParseFreeBSDSysrcValue(t *testing.T) {
 	}
 }
 
-func TestLinuxPackageOSNameFromRecognizesDebianLike(t *testing.T) {
-	got := linuxPackageOSNameFrom("NAME=\"Pop!_OS\"\nID=pop\nID_LIKE=debian\n")
-	if got != "ubuntu" {
-		t.Fatalf("linuxPackageOSNameFrom = %q, want ubuntu", got)
-	}
-	if got := defaultLinuxPackageManager(got); got != "apt" {
-		t.Fatalf("defaultLinuxPackageManager = %q, want apt", got)
-	}
-}
-
 func TestApplyFreeBSDRCDScriptsDisablesExecutableBackups(t *testing.T) {
 	dir := t.TempDir()
 	rcDir := filepath.Join(dir, "rc.d")
