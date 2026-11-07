@@ -2771,15 +2771,6 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 		framework.FuncController{ControllerName: "daemon-supervisor", Every: 5 * time.Second, Subs: whenStatusSubscriptions(r.currentRouter(), "DNSResolver", "DHCPv6PrefixDelegation", "DHCPv4Client", "PPPoESession"), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			return false, r.reconcileSupervisedClientDaemons(ctx, r.daemonSupervisionRouter(store), logger)
 		}},
-		framework.FuncController{ControllerName: "ip-address-set", Every: 30 * time.Second, Subs: append(statusSubscriptionsWithWhen(r.currentRouter(), []string{"IPAddressSet", "LocalServiceRedirect", "FirewallFlowPinhole"}, "IPAddressSet", "LocalServiceRedirect", "FirewallFlowPinhole"), bus.Subscription{Topics: []string{nat44.TableAppliedEvent}}), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			effective, err := effectiveForReconcile()
-			if err != nil {
-				return false, err
-			}
-			current := ipAddressSet
-			current.Router = effective
-			return didWorkError(current.Reconcile(ctx))
-		}},
 	}
 	if !opts.FirewallDisabled {
 		controllers = append(controllers, framework.FuncController{ControllerName: "firewall", Subs: firewallStatusSubscriptions(r.currentRouter()), PeriodicFunc: func(ctx context.Context) (bool, error) {
@@ -2797,6 +2788,15 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			return didWorkError(current.Reconcile(ctx))
 		}})
 	}
+	controllers = append(controllers, framework.FuncController{ControllerName: "ip-address-set", Every: 30 * time.Second, Subs: append(statusSubscriptionsWithWhen(r.currentRouter(), []string{"IPAddressSet", "LocalServiceRedirect", "FirewallFlowPinhole"}, "IPAddressSet", "LocalServiceRedirect", "FirewallFlowPinhole"), bus.Subscription{Topics: []string{nat44.TableAppliedEvent}}), PeriodicFunc: func(ctx context.Context) (bool, error) {
+		effective, err := effectiveForReconcile()
+		if err != nil {
+			return false, err
+		}
+		current := ipAddressSet
+		current.Router = effective
+		return didWorkError(current.Reconcile(ctx))
+	}})
 	if opts.SuperviseClientDaemons && r.controllerEnabled("daemon-supervisor") {
 		controllers = append(controllers, framework.FuncController{ControllerName: "daemon-supervisor-reconcile", Every: 30 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}, PeriodicFunc: func(ctx context.Context) (bool, error) {
 			return false, r.reconcileARPObserverDaemons(ctx, logger)
