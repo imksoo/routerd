@@ -5590,7 +5590,15 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 				// an active VMAC must not publish Applied until DAD has completed.
 				// DS-Lite and its health checks consume this phase as a readiness
 				// boundary and would otherwise transmit with an unusable outer source.
-				_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": reason})
+				pending := map[string]any{"phase": "Pending", "reason": reason, "interface": spec.Interface, "prefixSource": pdName}
+				for _, key := range []string{"address", "previousAddresses"} {
+					if value, ok := previousStatus[key]; ok {
+						pending[key] = value
+					}
+				}
+				if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name, pending); err != nil {
+					return err
+				}
 				continue
 			}
 		}
