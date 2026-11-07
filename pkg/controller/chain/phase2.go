@@ -859,35 +859,9 @@ type DHCPv6ServerController struct {
 	PIDFile         string
 	Port            int
 	ListenAddresses []string
-	Logger          *slog.Logger
 	Now             func() time.Time
 	RALinkLocal     routerAdvertisementLinkLocalFunc
 	RASender        routerAdvertisementSenderFunc
-}
-
-func (c DHCPv6ServerController) Start(ctx context.Context) {
-	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.lan.address.*", "routerd.dhcpv6.info.*", "routerd.resource.status.changed"}}, 32)
-	go func() {
-		if err := c.reconcile(ctx); err != nil && c.Logger != nil && ctx.Err() == nil {
-			c.Logger.Warn("ipv6 dhcpv6 server initial reconcile failed", "error", err)
-		}
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case _, ok := <-ch:
-				if !ok {
-					return
-				}
-			case <-ticker.C:
-			case <-ctx.Done():
-				return
-			}
-			if err := c.reconcile(ctx); err != nil && c.Logger != nil && ctx.Err() == nil {
-				c.Logger.Warn("ipv6 dhcpv6 server reconcile failed", "error", err)
-			}
-		}
-	}()
 }
 
 func (c DHCPv6ServerController) reconcile(ctx context.Context) error {
