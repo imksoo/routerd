@@ -70,7 +70,6 @@ PVE_MANAGEMENT_INTERFACE=eth0 PVE_CAPTURE_INTERFACE=ens19 PVE_CLIENT_CAPTURE_INT
   --pve-ssh-key "$pve_ssh_private_key" \
   --pve-known-hosts "$pve_ssh_known_hosts" \
   --evidence-root "$qualification_dir" \
-  --max-runtime-seconds "$qualification_budget_seconds" \
   >"$log" 2>&1 &
 pid=$!
 printf '%s\n' "$pid" >"$active_pid_file"
@@ -91,8 +90,8 @@ while kill -0 "$pid" 2>/dev/null; do
   fi
 done
 if [ "$SECONDS" -ge "$qualification_deadline" ]; then
-  # --foreground timeout in the wrapper can leave an SSH descendant holding
-  # its log pipe open. Do not wait indefinitely, kill a nested process group,
+  # A live child may still hold its log pipe open. Do not wait indefinitely,
+  # kill a nested process group,
   # or start cleanup here. Return failure to mutation-driver (errexit), then
   # the durable supervisor quiesces the entire mutation PGID before cleanup.
   # Retain the active PID as evidence until that supervisor-owned recovery.
@@ -122,7 +121,6 @@ PROOF
 verify_profile_result() {
   jq -e \
   --arg profile "$qualification_profile" \
-  --argjson budget "$qualification_budget_seconds" \
   '.profile == $profile and .result == "pass" and .gates == {
     rrAStaged:true,
     rrAJoined:true,
@@ -146,8 +144,7 @@ verify_profile_result() {
     symmetricBFailover:false,
     provisioning:false,
     destruction:false
-  } and .limits.maxRuntimeSeconds == $budget
-    and .topology == {routerCount:10,clientCount:4,cloudClientCount:3,rrFaultDomain:"host-redundant"}
+  } and .topology == {routerCount:10,clientCount:4,cloudClientCount:3,rrFaultDomain:"host-redundant"}
     and (.edgeScenarios | type == "object"
       and (keys == ["aws-leaf-a","azure-leaf-a","oci-leaf-a","pve-leaf-a"])
       and all(.[]; .result == "pass" and .failoverEvidenceExit == 0

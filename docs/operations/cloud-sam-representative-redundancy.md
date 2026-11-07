@@ -255,8 +255,7 @@ tests/e2e/cloudedge/scripts/sam-representative-redundancy.sh \
   --ssh-key /var/lib/routerd-release-qa/<run-id>/runtime/secrets/guest_ssh \
   --pve-ssh-key /var/lib/routerd-release-qa/<run-id>/runtime/secrets/pve_ssh \
   --pve-known-hosts /var/lib/routerd-release-qa/<run-id>/runtime/pinned/pve-known_hosts \
-  --evidence-root /var/lib/routerd-release-qa/<run-id>/runtime/evidence/qualification/representative-redundancy \
-  --max-runtime-seconds 5400
+  --evidence-root /var/lib/routerd-release-qa/<run-id>/runtime/evidence/qualification/representative-redundancy
 ```
 
 ### Approved budget {#approved-budget}
@@ -268,7 +267,7 @@ failure scenarios, evidence gates, or cleanup requirements:
 | Boundary | Approved value |
 | --- | --- |
 | Provision/certification | At most 18 minutes (1080 seconds) |
-| Entire qualification wrapper | At most 90 minutes (5400 seconds) |
+| Supervised qualification budget | At most 90 minutes (5400 seconds) |
 | Minimum supervisor reserve | At least 5 minutes (300 seconds) |
 | Mutation TTL | At most 115 minutes (6900 seconds) |
 | Cleanup/inventory allowance | Two attempts of 10 + 5 minutes, unchanged |

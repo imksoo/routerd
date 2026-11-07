@@ -6,8 +6,6 @@ set -euo pipefail
 # A -> AB -> B-only -> AB, followed by one complete stop/rejoin of leaf A
 # at each site. No B node is stopped; B-side equivalence remains unproven.
 readonly profile_name="representative-redundancy"
-readonly default_max_runtime_seconds=5400
-readonly max_allowed_runtime_seconds=5400
 # One surviving leaf owns at most three remote clients. The reviewed AWS
 # t3.small ENI has four IPv4 slots: primary + these three secondary addresses.
 # Scope this limit to the profile; other generator users keep their own policy.
@@ -24,7 +22,6 @@ Options:
   --ssh-key FILE             Guest/cloud SSH key (required)
   --pve-ssh-key FILE         Exact root PVE SSH key for hypervisor bridge audit
   --pve-known-hosts FILE     Pinned known_hosts for the three PVE hypervisors
-  --max-runtime-seconds N    Qualification wall-clock cap, 1..5400 (default: 5400)
 
 Runs the representative, host-redundant PVE-RR qualification profile against
 an already provisioned full CloudEdge topology. It installs the supplied
@@ -43,9 +40,8 @@ artifact in this order:
      and surviving RR membership gates.
 
 No RR-B or leaf-B departure is tested, and configuration equivalence between
-A and B is not established by this profile. The entire sequence shares one
-5400-second deadline; it does not grant a fresh budget to each leaf. This
-is a representative redundancy qualification, not the exhaustive engineering
+A and B is not established by this profile. This is a representative
+redundancy qualification, not the exhaustive engineering
 suite. It never provisions or destroys infrastructure; the supervising
 lifecycle owns unconditional cleanup.
 USAGE
@@ -58,7 +54,6 @@ tfvars=
 ssh_key=
 pve_ssh_key=
 pve_known_hosts=
-max_runtime_seconds="$default_max_runtime_seconds"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -69,7 +64,6 @@ while [ "$#" -gt 0 ]; do
     --ssh-key) ssh_key="${2:?missing --ssh-key value}"; shift 2 ;;
     --pve-ssh-key) pve_ssh_key="${2:?missing --pve-ssh-key value}"; shift 2 ;;
     --pve-known-hosts) pve_known_hosts="${2:?missing --pve-known-hosts value}"; shift 2 ;;
-    --max-runtime-seconds) max_runtime_seconds="${2:?missing --max-runtime-seconds value}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -92,15 +86,7 @@ fi
 [ -f "$ssh_key" ] || { echo "ssh key not found: $ssh_key" >&2; exit 2; }
 [ -f "$pve_ssh_key" ] || { echo "--pve-ssh-key FILE is required" >&2; exit 2; }
 [ -f "$pve_known_hosts" ] || { echo "--pve-known-hosts FILE is required" >&2; exit 2; }
-case "$max_runtime_seconds" in
-  ''|*[!0-9]*) echo "--max-runtime-seconds must be an integer" >&2; exit 2 ;;
-esac
-if [ "$max_runtime_seconds" -le 0 ] || [ "$max_runtime_seconds" -gt "$max_allowed_runtime_seconds" ]; then
-  echo "--max-runtime-seconds must be in 1..$max_allowed_runtime_seconds" >&2
-  exit 2
-fi
 command -v jq >/dev/null || { echo "jq is required" >&2; exit 2; }
-command -v timeout >/dev/null || { echo "timeout is required" >&2; exit 2; }
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 e2e_script="$script_dir/sam-e2e.sh"
@@ -181,17 +167,11 @@ fi
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 run_e2e() {
-  local dir="$1" node="$2" remaining command_rc
+  local dir="$1" node="$2" command_rc
   shift 2
-  # SECONDS starts at script entry, so input checks and evidence validation
-  # also spend this one budget. Never reset it between scenarios. The kill
-  # grace only quiesces an expired child; it cannot authorize another fault.
-  remaining=$((max_runtime_seconds - SECONDS))
-  [ "$remaining" -gt 0 ] || return 124
   mkdir -p "$dir"
   set +e
-  timeout --foreground --kill-after=30s "${remaining}s" \
-    "$e2e_script" \
+  "$e2e_script" \
       --tofu-output "$tofu_output" \
       --artifact "$artifact" \
       --ssh-key "$ssh_key" \
@@ -208,7 +188,6 @@ run_e2e() {
       "$@" 2>&1 | tee "$dir/sam-e2e.log"
   command_rc=${PIPESTATUS[0]}
   set -e
-  [ "$SECONDS" -lt "$max_runtime_seconds" ] || return 124
   return "$command_rc"
 }
 
@@ -368,7 +347,6 @@ if [ "$e2e_rc" -eq 0 ] && [ "$staging_rc" -eq 0 ] && [ "$baseline_rc" -eq 0 ] &&
       verify_full_validation "$edge_dir" "after-failover-$node" && node_failover_rc=0
       verify_full_validation "$edge_dir" "after-rejoin-$node" && node_rejoin_rc=0
     fi
-    [ "$SECONDS" -lt "$max_runtime_seconds" ] || node_e2e_rc=124
     node_result=fail
     if [ "$node_e2e_rc" -eq 0 ] && [ "$node_failover_rc" -eq 0 ] && [ "$node_rejoin_rc" -eq 0 ]; then
       node_result=pass
@@ -383,7 +361,6 @@ if [ "$e2e_rc" -eq 0 ] && [ "$staging_rc" -eq 0 ] && [ "$baseline_rc" -eq 0 ] &&
     fi
   done
 fi
-[ "$SECONDS" -lt "$max_runtime_seconds" ] || e2e_rc=124
 
 elapsed_seconds="$SECONDS"
 finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -395,9 +372,7 @@ if [ "$e2e_rc" -eq 0 ] && [ "$staging_rc" -eq 0 ] && [ "$baseline_rc" -eq 0 ] &&
 else
   result=fail
   status=FAIL
-  if [ "$e2e_rc" -eq 124 ]; then
-    summary="qualification timed out after ${max_runtime_seconds}s"
-  elif [ "$e2e_rc" -ne 0 ]; then
+  if [ "$e2e_rc" -ne 0 ]; then
     summary="sam-e2e representative transition failed with exit=$e2e_rc"
   else
     summary="sam-e2e returned success but staged, baseline, RR or leaf-A transition evidence was incomplete"
@@ -417,7 +392,6 @@ jq -n \
   --arg artifact "$artifact" \
   --arg tfvars "$tfvars" \
   --arg sshKey "$ssh_key" \
-  --argjson maxRuntimeSeconds "$max_runtime_seconds" \
   --argjson elapsedSeconds "$elapsed_seconds" \
   --argjson samE2EExit "$e2e_rc" \
   --argjson stagingEvidenceExit "$staging_rc" \
@@ -435,7 +409,6 @@ jq -n \
     summary:$summary,
     startedAt:$startedAt,
     finishedAt:$finishedAt,
-    limits:{maxRuntimeSeconds:$maxRuntimeSeconds},
     elapsedSeconds:$elapsedSeconds,
     inputs:{tofuOutput:$tofuOutput, artifact:$artifact, tfvars:$tfvars, sshKey:$sshKey},
     topology:{routerCount:$routerCount,clientCount:$clientCount,cloudClientCount:$cloudClientCount,rrFaultDomain:"host-redundant"},
