@@ -1,0 +1,79 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
+package chain
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"strings"
+
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/platform"
+)
+
+type HostnameController struct {
+	Router *api.Router
+	Store  Store
+	DryRun bool
+}
+
+func (c HostnameController) Reconcile(ctx context.Context) error {
+	if c.Router == nil {
+		return nil
+	}
+	var selected *api.Resource
+	var desired string
+	for i := range c.Router.Spec.Resources {
+		resource := &c.Router.Spec.Resources[i]
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "Hostname" {
+			continue
+		}
+		spec, err := resource.HostnameSpec()
+		if err != nil {
+			return err
+		}
+		if !spec.Managed {
+			continue
+		}
+		if selected != nil {
+			return fmt.Errorf("multiple managed Hostname resources are not supported")
+		}
+		selected, desired = resource, spec.Hostname
+	}
+	if selected == nil {
+		return nil
+	}
+	current, err := os.Hostname()
+	if err != nil {
+		return fmt.Errorf("observe hostname: %w", err)
+	}
+	changed := current != desired
+	if changed && !c.DryRun {
+		commands := [][]string{{"hostnamectl", "set-hostname", "--", desired}}
+		if platform.CurrentOS() == platform.OSFreeBSD {
+			commands = [][]string{{"sysrc", "hostname=" + desired}, {"hostname", desired}}
+		}
+		for _, command := range commands {
+			out, err := exec.CommandContext(ctx, command[0], command[1:]...).CombinedOutput()
+			if err != nil {
+				return fmt.Errorf("%s: %w: %s", command[0], err, strings.TrimSpace(string(out)))
+			}
+		}
+		current, err = os.Hostname()
+		if err != nil {
+			return fmt.Errorf("observe hostname after apply: %w", err)
+		}
+	}
+	if c.Store != nil {
+		phase := "Applied"
+		if current != desired {
+			phase = "Drifted"
+		}
+		return c.Store.SaveObjectStatus(selected.APIVersion, selected.Kind, selected.Metadata.Name, map[string]any{
+			"phase": phase, "desired": desired, "current": current, "changed": changed, "dryRun": c.DryRun,
+		})
+	}
+	return nil
+}
