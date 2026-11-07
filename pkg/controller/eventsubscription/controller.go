@@ -69,10 +69,6 @@ type Store interface {
 	DataStore
 }
 
-// PluginRunner runs a Plugin. It abstracts plugin.Run so tests can inject a
-// fake without an executable; the production wiring uses plugin.Run.
-type PluginRunner func(ctx context.Context, spec api.PluginSpec, name string, opts routerplugin.RunOptions) (routerplugin.PluginResult, routerplugin.RunOutcome, error)
-
 type triggerTimer interface {
 	Reset(time.Duration) bool
 	Stop() bool
@@ -82,17 +78,16 @@ type triggerTimerFactory func(time.Duration, func()) triggerTimer
 
 // Controller reconciles EventSubscription resources. See package doc.
 type Controller struct {
-	Router       *api.Router
-	Bus          *bus.Bus
-	Store        Store
-	DryRun       bool
-	RuntimeDir   string
-	StateDir     string
-	PluginRunner PluginRunner
-	Now          func() time.Time
-	MaxAttempts  int
-	NewTimer     triggerTimerFactory
-	AfterFunc    func(context.Context, func()) func() bool
+	Router      *api.Router
+	Bus         *bus.Bus
+	Store       Store
+	DryRun      bool
+	RuntimeDir  string
+	StateDir    string
+	Now         func() time.Time
+	MaxAttempts int
+	NewTimer    triggerTimerFactory
+	AfterFunc   func(context.Context, func()) func() bool
 
 	mu         sync.Mutex
 	schedules  map[string]*subscriptionSchedule
@@ -127,13 +122,6 @@ func (c *Controller) maxAttempts() int {
 		return c.MaxAttempts
 	}
 	return defaultMaxAttempts
-}
-
-func (c *Controller) runner() PluginRunner {
-	if c.PluginRunner != nil {
-		return c.PluginRunner
-	}
-	return routerplugin.Run
 }
 
 func (c *Controller) newTimer(d time.Duration, fn func()) triggerTimer {
@@ -283,7 +271,7 @@ func (c *Controller) processBatch(ctx context.Context, resource api.Resource, sp
 		Context: pluginContext,
 	}
 
-	result, outcome, runErr := c.runner()(ctx, pluginSpec, pluginName, runOpts)
+	result, outcome, runErr := routerplugin.Run(ctx, pluginSpec, pluginName, runOpts)
 	if runErr != nil {
 		c.failBatch(batch, subKey, runErr.Error())
 		c.completeRun(runID, outcome, "failed", runErr.Error())
