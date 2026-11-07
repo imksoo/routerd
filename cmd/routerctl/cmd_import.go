@@ -520,7 +520,7 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 	staticAddresses := map[string]api.Resource{}
 	usedStaticNames := map[string]bool{}
 	staticIPv6 := map[string]api.Resource{}
-	vrrpIPv4 := map[string]api.Resource{}
+	virtualIPv4 := map[string]api.Resource{}
 	usedVirtualNames := map[string]bool{}
 	existingRoutes := map[string]api.Resource{}
 	usedRouteNames := map[string]bool{}
@@ -546,12 +546,12 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 				if err != nil {
 					return err
 				}
-				if spec.Family == "ipv4" && spec.Mode == "vrrp" && spec.Address != "" {
+				if spec.Family == "ipv4" && (spec.Mode == "" || spec.Mode == "static" || spec.Mode == "vrrp") && spec.Address != "" {
 					prefix, err := netip.ParsePrefix(spec.Address)
 					if err != nil {
 						return fmt.Errorf("existing VirtualAddress/%s: %w", resource.Metadata.Name, err)
 					}
-					vrrpIPv4[spec.Interface+"|"+prefix.String()] = resource
+					virtualIPv4[spec.Interface+"|"+prefix.String()] = resource
 				}
 				if spec.Family == "ipv6" && (spec.Mode == "" || spec.Mode == "static") && spec.Address != "" {
 					prefix, err := netip.ParsePrefix(spec.Address)
@@ -713,13 +713,13 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 				}
 			}
 			prefix := netip.PrefixFrom(ip, address.PrefixLen).String()
-			vrrp, existingVRRP := vrrpIPv4[resource.Metadata.Name+"|"+prefix]
-			if !existingVRRP {
-				vrrp, existingVRRP = vrrpIPv4[ifname+"|"+prefix]
+			virtual, existingVirtual := virtualIPv4[resource.Metadata.Name+"|"+prefix]
+			if !existingVirtual {
+				virtual, existingVirtual = virtualIPv4[ifname+"|"+prefix]
 			}
-			if existingVRRP && source != "DHCPv4" && importStaticIPv4Address(address, ifname, ip) {
-				vrrp.Status = nil
-				router.Spec.Resources = append(router.Spec.Resources, vrrp)
+			if existingVirtual && source != "DHCPv4" && importStaticIPv4Address(address, ifname, ip) {
+				virtual.Status = nil
+				router.Spec.Resources = append(router.Spec.Resources, virtual)
 				continue
 			}
 			_, existingIPv4 := staticAddresses[resource.Metadata.Name+"|"+prefix]
