@@ -2676,7 +2676,7 @@ func runServeChainOnceWith(ctx context.Context, runner *controllerchain.Runner, 
 			return nil, err
 		}
 		outcome.Generation, outcome.GenerationCreated = generation, generationCreated
-		defer outcome.finishEarlyFailure(store, opts, &err)
+		defer outcome.finishEarlyFailure(store, &err)
 		outcome.Stage = "inventory"
 		if err := recordHostInventoryState(store); err != nil {
 			return nil, err
@@ -2701,7 +2701,7 @@ func runServeChainOnceWith(ctx context.Context, runner *controllerchain.Runner, 
 		result.Generation = generation
 	}
 	outcome.Stage = "finish-generation"
-	if err := outcome.finish(store, opts, result.Phase, result.Warnings); err != nil {
+	if err := outcome.finish(store, result.Phase, result.Warnings); err != nil {
 		return result, err
 	}
 	outcome.Stage = "output"

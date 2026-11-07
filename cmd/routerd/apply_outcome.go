@@ -37,14 +37,6 @@ type applyAttemptOutcome struct {
 	Runtime             controllerchain.RuntimeReloadOutcome
 }
 
-// Hooks are per attempt and deliberately narrow: tests still exercise the
-// actual generation store and orchestration without touching host controllers.
-type applyAttemptHooks struct {
-	finishGeneration     func(*routerstate.SQLiteStore, int64, string, []string) error
-	writeCanonical       func(string, []byte) (config.AtomicWriteOutcome, error)
-	configureControllers func(*controllerchain.Options)
-}
-
 type applyAttemptError struct {
 	Outcome applyAttemptOutcome
 	Cause   error
@@ -56,23 +48,19 @@ func (e *applyAttemptError) Error() string {
 
 func (e *applyAttemptError) Unwrap() error { return e.Cause }
 
-func (o *applyAttemptOutcome) finish(store *routerstate.SQLiteStore, opts applyOptions, phase string, warnings []string) error {
+func (o *applyAttemptOutcome) finish(store *routerstate.SQLiteStore, phase string, warnings []string) error {
 	if !o.GenerationCreated || o.TerminalAttempted {
 		return nil
 	}
 	o.TerminalAttempted = true
-	finish := (*routerstate.SQLiteStore).FinishGeneration
-	if opts.attemptHooks != nil && opts.attemptHooks.finishGeneration != nil {
-		finish = opts.attemptHooks.finishGeneration
-	}
-	err := finish(store, o.Generation, phase, warnings)
+	err := store.FinishGeneration(o.Generation, phase, warnings)
 	o.TerminalSucceeded = err == nil
 	return err
 }
 
-func (o *applyAttemptOutcome) finishEarlyFailure(store *routerstate.SQLiteStore, opts applyOptions, err *error) {
+func (o *applyAttemptOutcome) finishEarlyFailure(store *routerstate.SQLiteStore, err *error) {
 	if *err != nil && o.GenerationCreated && !o.TerminalAttempted {
-		if finishErr := o.finish(store, opts, "Errored", nil); finishErr != nil {
+		if finishErr := o.finish(store, "Errored", nil); finishErr != nil {
 			*err = errors.Join(*err, fmt.Errorf("record failed generation: %w", finishErr))
 		}
 	}
@@ -94,11 +82,7 @@ func (o *applyAttemptOutcome) commit(opts applyOptions, configYAML string) error
 	}
 	o.Stage = "canonical-write"
 	o.Canonical = canonicalNotReplaced
-	write := config.AtomicWriteFileWithOutcome
-	if opts.attemptHooks != nil && opts.attemptHooks.writeCanonical != nil {
-		write = opts.attemptHooks.writeCanonical
-	}
-	written, err := write(opts.ConfigPath, []byte(configYAML))
+	written, err := config.AtomicWriteFileWithOutcome(opts.ConfigPath, []byte(configYAML))
 	if written.Replaced {
 		o.Canonical = canonicalReplaced
 	}

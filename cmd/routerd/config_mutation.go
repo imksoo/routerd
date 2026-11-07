@@ -407,7 +407,7 @@ func (m serveConfigMutator) commitOnlyWithOutcome(router *api.Router, configYAML
 		return outcome, err
 	}
 	outcome.Generation, outcome.GenerationCreated = generation, generationCreated
-	defer outcome.finishEarlyFailure(store, m.baseOpts, &err)
+	defer outcome.finishEarlyFailure(store, &err)
 	opts := m.baseOpts
 	opts.ConfigPath, opts.DryRun, opts.SkipConfigCommit = m.configPath, false, false
 	if err := outcome.commit(opts, configYAML); err != nil {
@@ -419,7 +419,7 @@ func (m serveConfigMutator) commitOnlyWithOutcome(router *api.Router, configYAML
 	}
 	outcome.Result = &apply.Result{Generation: generation, Timestamp: time.Now().UTC(), Phase: "Committed"}
 	outcome.Stage = "finish-generation"
-	if err := outcome.finish(store, opts, "Committed", nil); err != nil {
+	if err := outcome.finish(store, "Committed", nil); err != nil {
 		return outcome, err
 	}
 	if m.logger != nil {
