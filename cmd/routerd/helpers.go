@@ -60,13 +60,6 @@ func defaultString(value, fallback string) string {
 	return value
 }
 
-func defaultInt(value, fallback int) int {
-	if value == 0 {
-		return fallback
-	}
-	return value
-}
-
 func routerInterfaceAliases(resources []api.Resource) map[string]string {
 	aliases := map[string]string{}
 	for _, res := range resources {
