@@ -2324,7 +2324,12 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			observabilityPipeline.Router = effective
 			return didWorkError(observabilityPipeline.Reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "daemon-status", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.dhcpv6.client.**", "routerd.dhcpv4.client.**", "routerd.healthcheck.**", "routerd.pppoe.client.**", "routerd.mobility.arp.**", "routerd.mobility.pve-svnet.**"}}}, PeriodicFunc: didWorkPeriodic(daemonStatusSync.Reconcile)},
+		framework.FuncController{ControllerName: "daemon-status", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.dhcpv6.client.**", "routerd.dhcpv4.client.**", "routerd.healthcheck.**", "routerd.pppoe.client.**", "routerd.mobility.arp.**", "routerd.mobility.pve-svnet.**"}}}, PeriodicFunc: func(ctx context.Context) (bool, error) {
+			current := daemonStatusSync
+			current.Router = r.currentRouter()
+			current.Store = store.withRouter(current.Router)
+			return didWorkError(current.Reconcile(ctx))
+		}},
 		framework.FuncController{ControllerName: "dhcp-lease-sync", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.currentRouter(), []string{"DHCPv4ServerLeaseSync", "DHCPv6ServerLeaseSync", "DHCPv6PrefixDelegationLeaseSync"}, "DHCPv4ServerLeaseSync", "DHCPv6ServerLeaseSync", "DHCPv6PrefixDelegationLeaseSync", "VirtualAddress", "RouterdCluster"), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveForReconcile()
 			if err != nil {
@@ -4146,26 +4151,6 @@ type DaemonStatusController struct {
 	Store         Store
 	DaemonSockets map[string]string
 	Logger        *slog.Logger
-}
-
-func (c DaemonStatusController) Start(ctx context.Context) {
-	if c.Router == nil || c.Store == nil {
-		return
-	}
-	go func() {
-		ticker := time.NewTicker(10 * time.Second)
-		defer ticker.Stop()
-		for {
-			if err := c.Reconcile(ctx); err != nil && c.Logger != nil && ctx.Err() == nil {
-				c.Logger.Warn("daemon status reconcile failed", "error", err)
-			}
-			select {
-			case <-ticker.C:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
 }
 
 func (c DaemonStatusController) Reconcile(ctx context.Context) error {
