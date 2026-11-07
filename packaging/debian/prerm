@@ -2,5 +2,13 @@
 set -e
 if [ "$1" = remove ] && [ -d /run/systemd/system ]; then
     systemctl stop routerd.service
-    systemctl disable routerd.service
+    units=$(systemctl list-unit-files --no-legend 'routerd*.service' | awk '{print $1}')
+    for unit in $units; do
+        if systemctl is-active --quiet "$unit"; then
+            systemctl stop "$unit"
+        fi
+        if systemctl is-enabled --quiet "$unit"; then
+            systemctl disable "$unit"
+        fi
+    done
 fi

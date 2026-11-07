@@ -92,7 +92,7 @@ under `/lib/systemd/system`.
 The package does not include `router.yaml`, credentials, or state databases.
 If `/usr/local/etc/routerd/router.yaml` exists, installation enables and starts
 routerd; an already running routerd is restarted. Without a configuration it
-is left stopped. Removing the package stops the service but preserves the
+is left stopped. Removing the package stops and disables routerd services but preserves the
 configuration and state. Configured optional features may require additional
 host packages, as with the archive installer.
 
