@@ -4016,7 +4016,8 @@ func (c DaemonStatusController) Start(ctx context.Context) {
 }
 
 func (c DaemonStatusController) Reconcile(ctx context.Context) error {
-	for _, socket := range c.daemonSockets() {
+	sockets, arpErr := c.daemonSockets()
+	for _, socket := range sockets {
 		statusCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		status, err := daemonStatus(statusCtx, socket)
 		cancel()
@@ -4042,11 +4043,11 @@ func (c DaemonStatusController) Reconcile(ctx context.Context) error {
 				}
 			}
 			if err := c.Store.SaveObjectStatus(observed.Resource.APIVersion, observed.Resource.Kind, observed.Resource.Name, next); err != nil {
-				return err
+				return errors.Join(arpErr, err)
 			}
 		}
 	}
-	return nil
+	return arpErr
 }
 
 func daemonStatusObservedOnlyKind(kind string) bool {
@@ -4178,7 +4179,7 @@ func normalizedDaemonObservedValue(kind, key, value string) any {
 	return value
 }
 
-func (c DaemonStatusController) daemonSockets() []string {
+func (c DaemonStatusController) daemonSockets() ([]string, error) {
 	seen := map[string]bool{}
 	var out []string
 	add := func(socket string) {
@@ -4246,10 +4247,11 @@ func (c DaemonStatusController) daemonSockets() []string {
 		}
 	}
 	runner := Runner{Router: c.Router, Store: c.Store, Opts: Options{DaemonSockets: c.DaemonSockets}}
-	for _, spec := range runner.mobilityARPObserverDaemonSpecs() {
+	arpSpecs, err := runner.mobilityARPObserverDaemonSpecsWithError()
+	for _, spec := range arpSpecs {
 		add(spec.Socket)
 	}
-	return out
+	return out, err
 }
 
 func (c IPv4StaticAddressController) Reconcile(ctx context.Context) error {
