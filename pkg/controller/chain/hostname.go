@@ -49,7 +49,14 @@ func (c HostnameController) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("observe hostname: %w", err)
 	}
-	changed := current != desired
+	static := current
+	if platform.CurrentOS() == platform.OSLinux {
+		static, err = staticHostname(ctx)
+		if err != nil {
+			return err
+		}
+	}
+	changed := current != desired || static != desired
 	if changed && !c.DryRun {
 		commands := [][]string{{"hostnamectl", "set-hostname", "--", desired}}
 		if platform.CurrentOS() == platform.OSFreeBSD {
@@ -65,15 +72,31 @@ func (c HostnameController) Reconcile(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("observe hostname after apply: %w", err)
 		}
+		if platform.CurrentOS() == platform.OSLinux {
+			static, err = staticHostname(ctx)
+			if err != nil {
+				return err
+			}
+		} else {
+			static = current
+		}
 	}
 	if c.Store != nil {
 		phase := "Applied"
-		if current != desired {
+		if current != desired || static != desired {
 			phase = "Drifted"
 		}
 		return c.Store.SaveObjectStatus(selected.APIVersion, selected.Kind, selected.Metadata.Name, map[string]any{
-			"phase": phase, "desired": desired, "current": current, "changed": changed, "dryRun": c.DryRun,
+			"phase": phase, "desired": desired, "current": current, "static": static, "changed": changed, "dryRun": c.DryRun,
 		})
 	}
 	return nil
+}
+
+func staticHostname(ctx context.Context) (string, error) {
+	out, err := exec.CommandContext(ctx, "hostnamectl", "status", "--static").CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("observe static hostname: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return strings.TrimSpace(string(out)), nil
 }

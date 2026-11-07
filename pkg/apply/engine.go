@@ -1849,6 +1849,18 @@ func (e *Engine) observeHostname(res api.Resource, osNet osNetworking, includePl
 		rr.Phase = "Blocked"
 		rr.Warnings = append(rr.Warnings, fmt.Sprintf("observe hostname: %v", err))
 	}
+	if spec.Managed && platform.CurrentOS() == platform.OSLinux {
+		if out, err := runCommand("hostnamectl", "status", "--static"); err == nil {
+			static := strings.TrimSpace(string(out))
+			rr.Observed["static"] = static
+			if static != spec.Hostname && rr.Phase != "Blocked" {
+				rr.Phase = "Drifted"
+			}
+		} else {
+			rr.Phase = "Blocked"
+			rr.Warnings = append(rr.Warnings, fmt.Sprintf("observe static hostname: %v", err))
+		}
+	}
 	if includePlan {
 		if !spec.Managed {
 			rr.Plan = append(rr.Plan, "observe hostname; it is not managed")
