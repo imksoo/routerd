@@ -59,7 +59,7 @@ func (c IPv4PolicyRouteController) Reconcile(ctx context.Context) error {
 	aliases := c.aliases()
 	activeTargetCandidates := c.activeTargetCandidates()
 
-	if err := c.applyRouteTables(ctx, aliases); err != nil {
+	if _, err := c.applyRouteTables(ctx, aliases, false); err != nil {
 		return err
 	}
 	if err := c.applyPolicyNft(ctx, nft, policyPath, activeTargetCandidates); err != nil {
@@ -512,7 +512,16 @@ func (c IPv4PolicyRouteController) activeTargetCandidates() map[string]bool {
 	return active
 }
 
-func (c IPv4PolicyRouteController) applyRouteTables(ctx context.Context, aliases map[string]string) error {
+// PlanExtraPolicyDefaults uses the same target selection as reconciliation without changing routes.
+func (c IPv4PolicyRouteController) PlanExtraPolicyDefaults(ctx context.Context) ([]apply.OrphanedArtifact, error) {
+	if c.Router == nil || c.Store == nil || !c.hasIPRoute2() {
+		return nil, nil
+	}
+	c.DryRun = true
+	return c.applyRouteTables(ctx, c.aliases(), true)
+}
+
+func (c IPv4PolicyRouteController) applyRouteTables(ctx context.Context, aliases map[string]string, inspect bool) ([]apply.OrphanedArtifact, error) {
 	var failures []string
 	desiredDefaults := map[int][]policyDefaultRoute{}
 	applyTarget := func(owner string, target api.EgressRoutePolicyTarget, skipMissing bool) {
@@ -523,7 +532,7 @@ func (c IPv4PolicyRouteController) applyRouteTables(ctx context.Context, aliases
 			return
 		}
 		gateway := firstNonEmpty(resourcequery.Value(c.Store, target.GatewayFrom), strings.TrimSpace(target.Gateway))
-		c.applyRouteTarget(ctx, aliases, owner, target.EffectiveInterface(), target.EffectiveTable(), target.Priority, target.Mark, target.EffectiveMetric(), firstNonEmpty(target.GatewaySource, "none"), gateway, skipMissing, desiredDefaults, &failures)
+		c.applyRouteTarget(ctx, aliases, owner, target.EffectiveInterface(), target.EffectiveTable(), target.Priority, target.Mark, target.EffectiveMetric(), firstNonEmpty(target.GatewaySource, "none"), gateway, skipMissing, inspect, desiredDefaults, &failures)
 	}
 	applyCandidate := func(owner string, candidate api.EgressRoutePolicyCandidate) {
 		if egressRoutePolicyCandidateDisabled(candidate) {
@@ -539,7 +548,7 @@ func (c IPv4PolicyRouteController) applyRouteTables(ctx context.Context, aliases
 		if !c.shouldInstallPolicyRouteForHealthCheck(candidate.HealthCheck, candidate.Mark) {
 			return
 		}
-		c.applyRouteTarget(ctx, aliases, owner, c.candidateDevice(candidate), candidate.EffectiveTable(), candidate.Priority, candidate.Mark, candidate.EffectiveMetric(), firstNonEmpty(candidate.GatewaySource, "none"), c.candidateGateway(candidate), c.candidateReferencesDSLite(candidate), desiredDefaults, &failures)
+		c.applyRouteTarget(ctx, aliases, owner, c.candidateDevice(candidate), candidate.EffectiveTable(), candidate.Priority, candidate.Mark, candidate.EffectiveMetric(), firstNonEmpty(candidate.GatewaySource, "none"), c.candidateGateway(candidate), c.candidateReferencesDSLite(candidate), inspect, desiredDefaults, &failures)
 	}
 	for _, res := range c.Router.Spec.Resources {
 		if res.Kind != "EgressRoutePolicy" {
@@ -579,12 +588,12 @@ func (c IPv4PolicyRouteController) applyRouteTables(ctx context.Context, aliases
 		}
 	}
 	if len(failures) > 0 {
-		return fmt.Errorf("%s", strings.Join(failures, "; "))
+		return nil, fmt.Errorf("%s", strings.Join(failures, "; "))
 	}
-	if !c.DryRun {
+	if !c.DryRun || inspect {
 		return c.removeExtraPolicyDefaults(ctx, desiredDefaults)
 	}
-	return nil
+	return nil, nil
 }
 
 func (c IPv4PolicyRouteController) shouldInstallPolicyRouteForHealthCheck(name string, mark int) bool {
@@ -751,7 +760,7 @@ type policyDefaultRoute struct {
 	gateway       string
 }
 
-func (c IPv4PolicyRouteController) applyRouteTarget(ctx context.Context, aliases map[string]string, owner, outboundInterface string, table, priority, mark, routeMetric int, gatewaySource, gateway string, skipMissing bool, desired map[int][]policyDefaultRoute, failures *[]string) {
+func (c IPv4PolicyRouteController) applyRouteTarget(ctx context.Context, aliases map[string]string, owner, outboundInterface string, table, priority, mark, routeMetric int, gatewaySource, gateway string, skipMissing, inspect bool, desired map[int][]policyDefaultRoute, failures *[]string) {
 	ifname := aliases[outboundInterface]
 	if ifname == "" && outboundInterface != "" {
 		ifname = outboundInterface
@@ -771,13 +780,17 @@ func (c IPv4PolicyRouteController) applyRouteTarget(ctx context.Context, aliases
 	if metric == 0 {
 		metric = 50
 	}
-	if !c.DryRun {
+	if !c.DryRun || inspect {
 		resolvedGateway, err := c.routeGateway(ctx, ifname, gatewaySource, gateway)
 		if err != nil {
 			*failures = append(*failures, fmt.Sprintf("%s route gateway: %v", owner, err))
 			return
 		}
 		gateway = resolvedGateway
+		if inspect {
+			desired[table] = append(desired[table], policyDefaultRoute{ifname: ifname, metric: metric, gatewaySource: gatewaySource, gateway: gateway})
+			return
+		}
 		if !c.defaultRouteMatches(ctx, ifname, table, metric, gatewaySource, gateway) {
 			args := []string{"-4", "route", "replace", "default"}
 			switch gatewaySource {
@@ -867,31 +880,32 @@ func policyDefaultMatches(fields []string, desired policyDefaultRoute) bool {
 	}
 }
 
-func (c IPv4PolicyRouteController) removeExtraPolicyDefaults(ctx context.Context, desired map[int][]policyDefaultRoute) error {
+func (c IPv4PolicyRouteController) removeExtraPolicyDefaults(ctx context.Context, desired map[int][]policyDefaultRoute) ([]apply.OrphanedArtifact, error) {
 	out, err := exec.CommandContext(ctx, "ip", "-4", "route", "show", "table", "all").CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("list IPv4 routes: %w: %s", err, strings.TrimSpace(string(out)))
+		return nil, fmt.Errorf("list IPv4 routes: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	dynamicTables, err := apply.IPv4TailscaleRouteTables(c.Router, string(out))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for _, res := range c.Router.Spec.Resources {
 		if res.Kind == "VRF" {
 			spec, err := res.VRFSpec()
 			if err != nil {
-				return err
+				return nil, err
 			}
 			dynamicTables[spec.RouteTable] = true
 		}
 	}
+	var orphans []apply.OrphanedArtifact
 	for table, routes := range desired {
 		if table == 253 || table == 254 || table == 255 || dynamicTables[table] {
 			continue
 		}
 		output, err := exec.CommandContext(ctx, "ip", "-4", "route", "show", "default", "table", strconv.Itoa(table)).CombinedOutput()
 		if err != nil {
-			return fmt.Errorf("list IPv4 defaults in table %d: %w: %s", table, err, strings.TrimSpace(string(output)))
+			return nil, fmt.Errorf("list IPv4 defaults in table %d: %w: %s", table, err, strings.TrimSpace(string(output)))
 		}
 		for _, line := range strings.Split(string(output), "\n") {
 			fields := strings.Fields(line)
@@ -908,14 +922,24 @@ func (c IPv4PolicyRouteController) removeExtraPolicyDefaults(ctx context.Context
 			if keep {
 				continue
 			}
+			if c.DryRun {
+				orphans = append(orphans, apply.OrphanedArtifact{
+					Kind:        "IPv4PolicyDefaultRoute",
+					Name:        fmt.Sprintf("table=%d,%s", table, strings.Join(fields, " ")),
+					Reason:      "default route does not match an active configured policy target",
+					Remediation: fmt.Sprintf("remove default route from table %d", table),
+					Observed:    map[string]string{"table": strconv.Itoa(table), "route": strings.Join(fields, " ")},
+				})
+				continue
+			}
 			args := append([]string{"-4", "route", "del"}, fields...)
 			args = append(args, "table", strconv.Itoa(table))
 			if out, err := exec.CommandContext(ctx, "ip", args...).CombinedOutput(); err != nil {
-				return fmt.Errorf("remove extra IPv4 default from table %d: %w: %s", table, err, strings.TrimSpace(string(out)))
+				return nil, fmt.Errorf("remove extra IPv4 default from table %d: %w: %s", table, err, strings.TrimSpace(string(out)))
 			}
 		}
 	}
-	return nil
+	return orphans, nil
 }
 
 func fieldValueMatches(fields []string, key, value string) bool {
