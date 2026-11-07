@@ -269,13 +269,6 @@ func (c DiscoveryController) resolveInventoryPlugin(provider string, discovery a
 	return api.PluginSpec{}, "", fmt.Errorf("ambiguous provider inventory plugin for provider %q: %d candidates found, none named %q", provider, len(candidates), wantName)
 }
 
-func (c DiscoveryController) runner() providerinventory.Runner {
-	if c.Runner != nil {
-		return c.Runner
-	}
-	return providerinventory.RunInventory
-}
-
 func (c DiscoveryController) saveDiscoveryStatus(poolName string, updates map[string]any) {
 	if c.Store == nil {
 		return

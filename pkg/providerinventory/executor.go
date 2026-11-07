@@ -34,8 +34,6 @@ type RunOutcome struct {
 	Error       string `json:"error,omitempty" yaml:"error,omitempty"`
 }
 
-type Runner func(ctx context.Context, spec api.PluginSpec, req ObservePrivateIPsRequest) (ObservePrivateIPsResult, RunOutcome, error)
-
 func RunInventory(ctx context.Context, spec api.PluginSpec, req ObservePrivateIPsRequest) (ObservePrivateIPsResult, RunOutcome, error) {
 	var result ObservePrivateIPsResult
 	if !hasCapability(spec.Capabilities, CapabilityObserveProviderPrivateIPs) {

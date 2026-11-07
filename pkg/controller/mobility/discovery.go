@@ -50,7 +50,6 @@ type DiscoveryController struct {
 	Router           *api.Router
 	Bus              *bus.Bus
 	Store            DiscoveryStore
-	Runner           providerinventory.Runner
 	ProbeARP         ARPProbeFunc
 	ARPProbeRequests *ARPProbeRequestTracker
 	Now              func() time.Time
@@ -177,7 +176,7 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, res api
 		Selector:      providerinventory.InventorySelector{Tags: copyStringMap(discovery.Selector.Tags)},
 		Context:       pluginContext,
 	})
-	result, _, err := c.runner()(ctx, pluginSpec, req)
+	result, _, err := providerinventory.RunInventory(ctx, pluginSpec, req)
 	if err != nil {
 		return fmt.Errorf("run provider inventory plugin %q: %w", pluginName, err)
 	}

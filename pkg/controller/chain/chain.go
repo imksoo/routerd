@@ -61,7 +61,6 @@ import (
 	"github.com/imksoo/routerd/pkg/pdclient"
 	"github.com/imksoo/routerd/pkg/platform"
 	provideraction "github.com/imksoo/routerd/pkg/provideraction"
-	"github.com/imksoo/routerd/pkg/providerinventory"
 	"github.com/imksoo/routerd/pkg/render"
 	"github.com/imksoo/routerd/pkg/resourcequery"
 	"github.com/imksoo/routerd/pkg/servicemgr"
@@ -1249,29 +1248,28 @@ type Options struct {
 	SuperviseClientDaemons  bool
 	// SkipLegacyClientUnits keeps a one-shot reconciliation from creating
 	// per-resource service units when client lifecycle belongs to routerd serve.
-	SkipLegacyClientUnits   bool
-	FirewallDisabled        bool
-	DnsmasqCommand          string
-	DnsmasqConfig           string
-	DnsmasqPID              string
-	DnsmasqPort             int
-	DnsmasqListen           []string
-	NftablesPath            string
-	FirewallPath            string
-	PathMTUPath             string
-	ForceFragmentPath       string
-	LedgerPath              string
-	NftCommand              string
-	BGPSocketPath           string
-	BGPControlSocketPath    string
-	BGPStatePath            string
-	ConntrackInterval       time.Duration
-	Logger                  *slog.Logger
-	ControllerObserver      framework.Observer
-	EnabledControllers      []string
-	ProviderInventoryRunner providerinventory.Runner
-	PeerGroupSyncClient     *mobilitycontroller.PeerGroupSyncClient
-	MutationGate            *sync.RWMutex
+	SkipLegacyClientUnits bool
+	FirewallDisabled      bool
+	DnsmasqCommand        string
+	DnsmasqConfig         string
+	DnsmasqPID            string
+	DnsmasqPort           int
+	DnsmasqListen         []string
+	NftablesPath          string
+	FirewallPath          string
+	PathMTUPath           string
+	ForceFragmentPath     string
+	LedgerPath            string
+	NftCommand            string
+	BGPSocketPath         string
+	BGPControlSocketPath  string
+	BGPStatePath          string
+	ConntrackInterval     time.Duration
+	Logger                *slog.Logger
+	ControllerObserver    framework.Observer
+	EnabledControllers    []string
+	PeerGroupSyncClient   *mobilitycontroller.PeerGroupSyncClient
+	MutationGate          *sync.RWMutex
 }
 
 func ntpControllersForOptions(router *api.Router, eventBus *bus.Bus, store Store, opts Options) (NTPClientController, NTPServerController) {
@@ -2215,7 +2213,6 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			Router:           r.currentRouter(),
 			Bus:              r.Bus,
 			Store:            mobilityData,
-			Runner:           opts.ProviderInventoryRunner,
 			ProbeARP:         r.probeARPObservers,
 			ARPProbeRequests: mobilitycontroller.NewARPProbeRequestTracker(),
 			StartedAt:        r.startedAt(),
