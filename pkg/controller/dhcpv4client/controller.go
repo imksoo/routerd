@@ -206,7 +206,7 @@ func leaseFieldString(v any) string {
 func (c Controller) applyLease(ctx context.Context, name string, current, next map[string]any) error {
 	phase := fmt.Sprint(next["phase"])
 	if phase == daemonapi.ResourcePhaseExpired || phase == daemonapi.ResourcePhaseReleased {
-		if err := c.removeExpiredRoute(ctx, name, current, next); err != nil {
+		if err := c.removeLeaseRoute(ctx, name, current, next); err != nil {
 			return err
 		}
 		if err := c.removeExpiredAddress(ctx, name, current, next); err != nil {
@@ -262,6 +262,13 @@ func (c Controller) applyLease(ctx context.Context, name string, current, next m
 	}
 	next["appliedAddress"] = wantedAddress
 	next["ifname"] = ifname
+	previousGateway := mapString(current, "appliedDefaultGateway")
+	previousMetric := mapString(current, "appliedRouteMetric")
+	if previousGateway != "" && (!api.BoolDefault(spec.UseRoutes, true) || previousGateway != mapString(next, "defaultGateway") || mapString(current, "ifname") != ifname || previousMetric != strconv.Itoa(spec.RouteMetric)) {
+		if err := c.removeLeaseRoute(ctx, name, current, next); err != nil {
+			return err
+		}
+	}
 	if api.BoolDefault(spec.UseRoutes, true) {
 		gateway := strings.TrimSpace(fmt.Sprint(next["defaultGateway"]))
 		if gateway != "" {
@@ -315,9 +322,8 @@ func (c Controller) applyLease(ctx context.Context, name string, current, next m
 	return nil
 }
 
-// removeExpiredRoute removes the default route associated with an expired
-// lease unless the same route is explicitly configured.
-func (c Controller) removeExpiredRoute(ctx context.Context, name string, current, next map[string]any) error {
+// removeLeaseRoute removes an obsolete lease route unless it is still configured.
+func (c Controller) removeLeaseRoute(ctx context.Context, name string, current, next map[string]any) error {
 	gateway, ifname := mapString(current, "appliedDefaultGateway"), mapString(current, "ifname")
 	if gateway == "" || ifname == "" {
 		return nil
