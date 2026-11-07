@@ -2419,26 +2419,6 @@ func TestFreeBSDProtectedIfnames(t *testing.T) {
 	}
 }
 
-func TestReplaceManagedPPPoEBlocks(t *testing.T) {
-	current := "# existing\nold * value *\n# BEGIN routerd pppoe old\n\"u\" * \"old\" *\n# END routerd pppoe old\n"
-	got := replaceManagedPPPoEBlocks(current, []render.PPPoESecretEntry{
-		{Name: "wan", Username: "user@example.jp", Password: "secret"},
-	})
-	for _, want := range []string{
-		"# existing\nold * value *\n",
-		"# BEGIN routerd pppoe wan\n",
-		"\"user@example.jp\" * \"secret\" *\n",
-		"# END routerd pppoe wan\n",
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("managed secrets missing %q:\n%s", want, got)
-		}
-	}
-	if strings.Contains(got, "\"u\" * \"old\"") {
-		t.Fatalf("old managed block was not removed:\n%s", got)
-	}
-}
-
 func TestPublishVRRPTransitionSignalsWakesControllerBus(t *testing.T) {
 	eventBus := bus.New()
 	ctx, cancel := context.WithCancel(t.Context())

@@ -37,8 +37,6 @@ var (
 	defaultTimesyncdPath       = platformDefaults.TimesyncdDropinFile
 	defaultLedgerPath          = platformDefaults.DBFile()
 	defaultStatePath           = platformDefaults.DBFile()
-	pppoeCHAPSecretsPath       = platformDefaults.PPPoEChapSecretsFile
-	pppoePAPSecretsPath        = platformDefaults.PPPoEPapSecretsFile
 	pdClientLeaseDir           = filepath.Join(platformDefaults.StateDir, "dhcpv6-client")
 	legacyFreeBSDStateDir      = "/var/lib/routerd"
 )
