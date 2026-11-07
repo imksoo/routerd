@@ -152,12 +152,10 @@ func (c Controller) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if !c.DryRun && c.IngressLive {
-		if err := c.removeUnusedNATTables(ctx, data); err != nil {
-			return err
-		}
-	}
 	if len(data) == 0 {
+		if !c.DryRun && c.IngressLive {
+			return c.removeUnusedNATTables(ctx, data)
+		}
 		return nil
 	}
 	path := stringutil.FirstNonEmpty(c.NftablesPath, "/run/routerd/nat44.nft")
@@ -170,34 +168,67 @@ func (c Controller) Reconcile(ctx context.Context) error {
 	} else if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	if changed {
-		if err := os.WriteFile(path, data, 0644); err != nil {
-			return err
-		}
-	}
 	if !applyLive {
+		if changed {
+			if err := os.WriteFile(path, data, 0644); err != nil {
+				return err
+			}
+		}
 		return c.saveRuleStatuses(ctx, rules, path, changed, false)
+	}
+	finish := func(changed, missing bool) error {
+		if !c.DryRun && c.IngressLive {
+			if err := c.removeUnusedNATTables(ctx, data); err != nil {
+				return err
+			}
+		}
+		return c.saveRuleStatuses(ctx, rules, path, changed, missing)
 	}
 	nft := stringutil.FirstNonEmpty(c.NftCommand, "nft")
 	if !changed && nftstate.RecentlyVerified(path, time.Now().UTC()) {
-		return c.saveRuleStatuses(ctx, rules, path, false, false)
+		return finish(false, false)
 	}
 	missing := (strings.Contains(string(data), "table ip routerd_nat") && !nftTableExists(ctx, nft, "ip", "routerd_nat")) ||
 		(strings.Contains(string(data), "table ip6 routerd_nat") && !nftTableExists(ctx, nft, "ip6", "routerd_nat"))
 	if !changed && !missing {
 		_ = nftstate.MarkVerified(path, time.Now().UTC())
-		return c.saveRuleStatuses(ctx, rules, path, false, false)
+		return finish(false, false)
 	}
-	if err := checkNftablesRuleset(ctx, nft, path); err != nil {
+	applyPath := path
+	if changed {
+		tmp, err := os.CreateTemp(filepath.Dir(path), ".nat44-*.nft")
+		if err != nil {
+			return err
+		}
+		applyPath = tmp.Name()
+		defer os.Remove(applyPath)
+		if err := tmp.Chmod(0644); err != nil {
+			tmp.Close()
+			return err
+		}
+		if _, err := tmp.Write(data); err != nil {
+			tmp.Close()
+			return err
+		}
+		if err := tmp.Close(); err != nil {
+			return err
+		}
+	}
+	if err := checkNftablesRuleset(ctx, nft, applyPath); err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, nft, "-f", path)
+	cmd := exec.CommandContext(ctx, nft, "-f", applyPath)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("nft -f %s: %w: %s", path, err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("nft -f %s: %w: %s", applyPath, err, strings.TrimSpace(string(out)))
+	}
+	if changed {
+		if err := os.Rename(applyPath, path); err != nil {
+			return err
+		}
 	}
 	_ = nftstate.MarkVerified(path, time.Now().UTC())
-	return c.saveRuleStatuses(ctx, rules, path, changed, missing)
+	return finish(changed, missing)
 }
 
 func (c Controller) removeUnusedNATTables(ctx context.Context, data []byte) error {
