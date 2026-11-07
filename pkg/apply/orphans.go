@@ -582,40 +582,16 @@ func parseIPv4FwmarkRuleArtifacts(output string) []resource.Artifact {
 	var rules []resource.Artifact
 	for _, line := range strings.Split(output, "\n") {
 		fields := strings.Fields(line)
-		if len(fields) == 0 {
+		if len(fields) != 7 || fields[1] != "from" || fields[2] != "all" || fields[3] != "fwmark" || fields[5] != "lookup" {
 			continue
 		}
-		rule := ipv4FwmarkRuleArtifact{}
-		priority, err := strconv.Atoi(strings.TrimSuffix(fields[0], ":"))
-		if err != nil {
+		priority, priorityErr := strconv.Atoi(strings.TrimSuffix(fields[0], ":"))
+		mark, markErr := strconv.ParseInt(fields[4], 0, 64)
+		table, tableErr := strconv.Atoi(fields[6])
+		if priorityErr != nil || markErr != nil || tableErr != nil || mark == 0 || table == 0 {
 			continue
 		}
-		rule.Priority = priority
-		for i, field := range fields {
-			switch field {
-			case "fwmark":
-				if i+1 >= len(fields) {
-					continue
-				}
-				mark, err := strconv.ParseInt(strings.SplitN(fields[i+1], "/", 2)[0], 0, 64)
-				if err != nil {
-					continue
-				}
-				rule.Mark = int(mark)
-			case "lookup":
-				if i+1 >= len(fields) {
-					continue
-				}
-				table, err := strconv.Atoi(fields[i+1])
-				if err != nil {
-					continue
-				}
-				rule.Table = table
-			}
-		}
-		if rule.Mark != 0 && rule.Table != 0 {
-			rules = append(rules, newIPv4FwmarkRuleArtifact("", rule.Priority, rule.Mark, rule.Table))
-		}
+		rules = append(rules, newIPv4FwmarkRuleArtifact("", priority, int(mark), table))
 	}
 	return rules
 }
@@ -894,12 +870,8 @@ func ipv4FwmarkRuleFromArtifact(artifact resource.Artifact) (ipv4FwmarkRuleArtif
 }
 
 func managedIPv4FwmarkRuleArtifact(artifact resource.Artifact) bool {
-	rule, ok := ipv4FwmarkRuleFromArtifact(artifact)
-	return ok && routerdManagedFwmark(rule.Mark)
-}
-
-func routerdManagedFwmark(mark int) bool {
-	return mark >= 0x100 && mark <= 0x1ff
+	_, ok := ipv4FwmarkRuleFromArtifact(artifact)
+	return ok
 }
 
 func managedIPv4RouteTableArtifact(artifact resource.Artifact) bool {

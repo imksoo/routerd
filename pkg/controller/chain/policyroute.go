@@ -630,8 +630,8 @@ func (c IPv4PolicyRouteController) cleanupLedgerOwnedPolicyRoutes(ctx context.Co
 		if artifact.Kind != "linux.ipv4.fwmarkRule" {
 			continue
 		}
-		rule, ok := ipv4FwmarkRuleFromPolicyArtifact(artifact)
-		if !ok || rule.Mark < 0x100 || rule.Mark > 0x1ff {
+		_, ok := ipv4FwmarkRuleFromPolicyArtifact(artifact)
+		if !ok {
 			continue
 		}
 		if _, ok := desired[artifact.Identity()]; !ok {
@@ -648,8 +648,8 @@ func (c IPv4PolicyRouteController) cleanupLedgerOwnedPolicyRoutes(ctx context.Co
 			continue
 		}
 		if observed, ok := actual[owned.Identity()]; ok && owned.Kind == "linux.ipv4.fwmarkRule" {
-			rule, valid := ipv4FwmarkRuleFromPolicyArtifact(observed)
-			if valid && rule.Mark >= 0x100 && rule.Mark <= 0x1ff {
+			_, valid := ipv4FwmarkRuleFromPolicyArtifact(observed)
+			if valid {
 				continue
 			}
 		}
@@ -1638,40 +1638,16 @@ func parseIPv4PolicyFwmarkRuleArtifacts(output string) []resource.Artifact {
 	var artifacts []resource.Artifact
 	for _, line := range strings.Split(output, "\n") {
 		fields := strings.Fields(line)
-		if len(fields) == 0 {
+		if len(fields) != 7 || fields[1] != "from" || fields[2] != "all" || fields[3] != "fwmark" || fields[5] != "lookup" {
 			continue
 		}
-		rule := ipv4PolicyFwmarkRule{}
-		priority, err := strconv.Atoi(strings.TrimSuffix(fields[0], ":"))
-		if err != nil {
+		priority, priorityErr := strconv.Atoi(strings.TrimSuffix(fields[0], ":"))
+		mark, markErr := strconv.ParseInt(fields[4], 0, 64)
+		table, tableErr := strconv.Atoi(fields[6])
+		if priorityErr != nil || markErr != nil || tableErr != nil || mark == 0 || table == 0 {
 			continue
 		}
-		rule.Priority = priority
-		for i, field := range fields {
-			switch field {
-			case "fwmark":
-				if i+1 >= len(fields) {
-					continue
-				}
-				mark, err := strconv.ParseInt(strings.SplitN(fields[i+1], "/", 2)[0], 0, 64)
-				if err != nil {
-					continue
-				}
-				rule.Mark = int(mark)
-			case "lookup":
-				if i+1 >= len(fields) {
-					continue
-				}
-				table, err := strconv.Atoi(fields[i+1])
-				if err != nil {
-					continue
-				}
-				rule.Table = table
-			}
-		}
-		if rule.Mark != 0 && rule.Table != 0 {
-			artifacts = append(artifacts, ipv4PolicyFwmarkRuleArtifact(rule))
-		}
+		artifacts = append(artifacts, ipv4PolicyFwmarkRuleArtifact(ipv4PolicyFwmarkRule{Priority: priority, Mark: int(mark), Table: table}))
 	}
 	return artifacts
 }
