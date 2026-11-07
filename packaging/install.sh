@@ -516,92 +516,6 @@ routerd_script_calls_removed_check()
     return 1
 }
 
-routerd_config_contains_systemd_unit()
-{
-    config=$1
-    [ -f "${config}" ] || return 1
-    awk '
-        /^[[:space:]]*-[[:space:]]*apiVersion:[[:space:]]*/ {
-            if (in_item && item ~ /(^|\n)[[:space:]]*kind:[[:space:]]*SystemdUnit([[:space:]\n]|$)/) {
-                found = 1
-            }
-            in_item = 1
-            item = $0 "\n"
-            next
-        }
-        {
-            if (in_item) {
-                item = item $0 "\n"
-            }
-        }
-        END {
-            if (in_item && item ~ /(^|\n)[[:space:]]*kind:[[:space:]]*SystemdUnit([[:space:]\n]|$)/) {
-                found = 1
-            }
-            exit(found ? 0 : 1)
-        }
-    ' "${config}"
-}
-
-migrate_legacy_router_config()
-{
-    config=$1
-    [ -f "${config}" ] || return 0
-    if ! routerd_config_contains_systemd_unit "${config}"; then
-        return 0
-    fi
-    echo "warning: removing legacy SystemdUnit resources from ${config}; routerd now generates service units from declared router intent" >&2
-    if [ "${dry_run}" -eq 1 ]; then
-        echo "dry-run: remove SystemdUnit resources from ${config}"
-        return 0
-    fi
-    backup_target "${config}"
-    tmp="${config}.tmp.$$"
-    awk '
-        function flush_item() {
-            if (!in_item) {
-                return
-            }
-            if (item ~ /(^|\n)[[:space:]]*kind:[[:space:]]*SystemdUnit([[:space:]\n]|$)/) {
-                changed = 1
-            } else {
-                printf "%s", item
-            }
-            in_item = 0
-            item = ""
-        }
-        /^[[:space:]]*-[[:space:]]*apiVersion:[[:space:]]*/ {
-            flush_item()
-            in_item = 1
-            item = $0 "\n"
-            next
-        }
-        {
-            if (in_item) {
-                item = item $0 "\n"
-            } else {
-                print
-            }
-        }
-        END {
-            flush_item()
-            if (!changed) {
-                exit 3
-            }
-        }
-    ' "${config}" > "${tmp}" || {
-        status=$?
-        rm -f "${tmp}"
-        if [ "${status}" -eq 3 ]; then
-            echo "warning: legacy SystemdUnit marker disappeared before migration: ${config}" >&2
-            return 0
-        fi
-        echo "failed to migrate legacy SystemdUnit resources from ${config}" >&2
-        return "${status}"
-    }
-    mv -f "${tmp}" "${config}"
-}
-
 wait_for_routerd_status_socket()
 {
     socket=$1
@@ -2064,7 +1978,6 @@ else
     echo "config sample update skipped by --no-config-update"
 fi
 
-migrate_legacy_router_config "${sysconfdir}/router.yaml"
 
 if [ "${config_update}" -eq 1 ] && [ -f "${sysconfdir}/router.yaml" ] && [ -f "${sysconfdir}/router.yaml.sample" ]; then
     echo "existing config preserved: ${sysconfdir}/router.yaml"
