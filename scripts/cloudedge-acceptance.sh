@@ -317,7 +317,7 @@ cmd_run() {
   local evidence_args=(evidence collect --out "$out" --scenario "$scenario" --matrix-json "$matrix_json")
   [[ -f "$timing_json" ]] && evidence_args+=(--timing-json "$timing_json")
   [[ -f "$protocol_json" ]] && evidence_args+=(--protocol-json "$protocol_json")
-  [[ -f "$l2_loop_json" ]] && evidence_args+=(--l2-loop-json "$l2_loop_json")
+  [[ "$l2_enabled" == "true" ]] && evidence_args+=(--l2-loop-json "$l2_loop_json")
   [[ -n "$run_id" ]] && evidence_args+=(--run-id "$run_id")
   [[ -n "$commit" ]] && evidence_args+=(--commit "$commit")
   [[ -n "$forced_result" ]] && result_arg=(--result "$forced_result")

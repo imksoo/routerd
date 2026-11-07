@@ -890,7 +890,7 @@ cmd_evidence() {
   if [[ -z "$result" ]]; then
     if [[ "$matrix_overall" == "fail" || "$directed_matrix" == "fail" || "$src_pres" == "fail" || "$gw_ok" == "fail" || "$no_nat" == "fail" || "$failover_recovery" == "fail" || "$protocol_transparency" == "fail" || "$ftp_active_passive" == "fail" || "$nfs_rpc" == "fail" || "$bulk_transfer_pmtu" == "fail" || "$protocol_src_pres" == "fail" || "$protocol_no_nat" == "fail" || "$l2_loop_free" == "fail" || "$broadcast_storm_absent" == "fail" || "$stp_rstp_stable" == "fail" || "$mac_flap_absent" == "fail" || "$failover_ping_stable" == "fail" || "$l2_mechanism_recorded" == "fail" ]]; then
       result="fail"
-    elif [[ -n "$l2_loop_json" && -f "$l2_loop_json" && "$l2_loop_free" == "na" ]]; then
+    elif [[ -n "$l2_loop_json" && "$l2_loop_free" == "na" ]]; then
       result="inconclusive"
     elif [[ "$matrix_overall" == "pass" && "$directed_matrix" == "pass" ]]; then
       result="pass"
