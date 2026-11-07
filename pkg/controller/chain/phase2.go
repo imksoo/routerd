@@ -755,20 +755,36 @@ func removedIPv4RouteRemovalIsCurrentlyBGP(ctx context.Context, run outputComman
 	if destination == "" {
 		return false, nil
 	}
-	out, err := run(ctx, "ip", "route", "show", destination)
+	out, err := run(ctx, "ip", "-j", "-4", "route", "show", "exact", destination)
 	if err != nil {
-		return false, fmt.Errorf("ip route show %s: %w: %s", destination, err, strings.TrimSpace(string(out)))
+		return false, fmt.Errorf("observe BGP route %s: %w: %s", destination, err, strings.TrimSpace(string(out)))
 	}
-	for _, line := range strings.Split(string(out), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) == 0 || !routeLineMatchesDestination(fields[0], destination) {
+	var routes []struct {
+		Protocol string `json:"protocol"`
+		Type     string `json:"type"`
+		Metric   int    `json:"metric"`
+		Device   string `json:"dev"`
+		Gateway  string `json:"gateway"`
+		Nexthops []struct {
+			Device  string `json:"dev"`
+			Gateway string `json:"gateway"`
+		} `json:"nexthops"`
+	}
+	if err := json.Unmarshal(out, &routes); err != nil {
+		return false, fmt.Errorf("decode BGP route %s: %w", destination, err)
+	}
+	for _, route := range routes {
+		if route.Protocol != "bgp" || (removal.Type == "blackhole") != (route.Type == "blackhole") || (removal.metricForMatch() != 0 && route.Metric != removal.metricForMatch()) {
 			continue
 		}
-		if !ipv4RouteLineMatches(line, removal.Type, destination, removal.Device, removal.Gateway, removal.PreferredSource, removal.metricForMatch()) {
-			continue
+		matches := func(device, gateway string) bool {
+			return (removal.Device == "" || removal.Device == device) && (removal.Gateway == "" || removal.Gateway == gateway)
 		}
-		for i := 0; i+1 < len(fields); i++ {
-			if fields[i] == "proto" && fields[i+1] == "bgp" {
+		if matches(route.Device, route.Gateway) {
+			return true, nil
+		}
+		for _, hop := range route.Nexthops {
+			if matches(hop.Device, hop.Gateway) {
 				return true, nil
 			}
 		}
