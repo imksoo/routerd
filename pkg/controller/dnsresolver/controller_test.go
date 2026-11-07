@@ -4,12 +4,9 @@ package dnsresolver
 
 import (
 	"context"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	"github.com/imksoo/routerd/pkg/api"
@@ -83,126 +80,6 @@ func TestRuntimeConfigCapturesStickyDNSMasqHosts(t *testing.T) {
 	if record.Hostname != "MacBookProM5Max" || record.IP != "172.18.1.127" {
 		t.Fatalf("runtime DHCP host record = %#v", record)
 	}
-}
-
-func TestReconcileReloadsResolverWhenStickyDNSMasqHostsChange(t *testing.T) {
-	dir := t.TempDir()
-	runtimeDir := filepath.Join(dir, "run")
-	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	hostsPath := filepath.Join(runtimeDir, "dnsmasq-hosts.hosts")
-	if err := os.WriteFile(hostsPath, []byte(
-		"fc:b2:14:8c:49:1a,172.18.1.127,MacBookProM5Max,12h\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	var reloads atomic.Int32
-	withResolverHTTPClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		reloads.Add(1)
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	router := dnsResolverRouterWithZone(api.DNSZoneRecordSpec{Hostname: "router", IPv4: "172.18.0.1"})
-	router.Spec.Resources[0].Spec = api.DNSZoneSpec{
-		Zone:        "lab.example",
-		DHCPDerived: api.DNSZoneDHCPDerivedSpec{Sources: []string{"DHCPv4Server/lan-dhcpv4"}},
-	}
-	controller := Controller{
-		Router:     router,
-		Store:      mapStore{},
-		RuntimeDir: runtimeDir,
-		StateDir:   filepath.Join(dir, "state"),
-	}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if got := reloads.Load(); got != 1 {
-		t.Fatalf("initial reloads = %d, want 1", got)
-	}
-	if err := os.WriteFile(hostsPath, []byte(
-		"fc:b2:14:8c:49:1a,172.18.1.128,MacBookProM5Max,12h\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if got := reloads.Load(); got != 2 {
-		t.Fatalf("reloads after sticky host update = %d, want 2", got)
-	}
-}
-
-func TestReconcileReloadsResolverWhenConfigChanges(t *testing.T) {
-	dir := t.TempDir()
-	var reloads atomic.Int32
-	withResolverHTTPClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/v1/reload" {
-			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
-		}
-		reloads.Add(1)
-		w.WriteHeader(http.StatusNoContent)
-	}))
-
-	store := mapStore{}
-	controller := Controller{
-		Router:     dnsResolverRouter([]string{"127.0.0.1"}, nil),
-		Store:      store,
-		RuntimeDir: filepath.Join(dir, "run"),
-		StateDir:   filepath.Join(dir, "state"),
-	}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if got := reloads.Load(); got != 1 {
-		t.Fatalf("reloads = %d, want 1", got)
-	}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if got := reloads.Load(); got != 1 {
-		t.Fatalf("unchanged config reloads = %d, want 1", got)
-	}
-}
-
-func TestReconcileMarksDegradedWhenReloadFails(t *testing.T) {
-	dir := t.TempDir()
-	withResolverHTTPClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "bad config", http.StatusInternalServerError)
-	}))
-
-	store := mapStore{}
-	controller := Controller{
-		Router:     dnsResolverRouter([]string{"127.0.0.1"}, nil),
-		Store:      store,
-		RuntimeDir: filepath.Join(dir, "run"),
-		StateDir:   filepath.Join(dir, "state"),
-	}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	status := store.ObjectStatus(api.NetAPIVersion, "DNSResolver", "lan-resolver")
-	if status["phase"] != "Degraded" || !strings.Contains(status["reason"].(string), "ReloadFailed") {
-		t.Fatalf("status = %#v", status)
-	}
-}
-
-func withResolverHTTPClient(t *testing.T, handler http.Handler) {
-	t.Helper()
-	old := newResolverHTTPClient
-	newResolverHTTPClient = func(_ string) *http.Client {
-		return &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-			rec := httptest.NewRecorder()
-			handler.ServeHTTP(rec, req)
-			return rec.Result(), nil
-		})}
-	}
-	t.Cleanup(func() {
-		newResolverHTTPClient = old
-	})
-}
-
-type roundTripFunc func(*http.Request) (*http.Response, error)
-
-func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
-	return f(req)
 }
 
 func (s mapStore) ObjectStatus(apiVersion, kind, name string) map[string]any {

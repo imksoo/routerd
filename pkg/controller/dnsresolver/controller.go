@@ -595,7 +595,7 @@ func (e resolverReloadError) Error() string {
 }
 
 func (c Controller) reloadResolver(ctx context.Context, socket string) error {
-	client := newResolverHTTPClient(socket)
+	client := resolverUnixHTTPClient(socket)
 	defer client.CloseIdleConnections()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://unix/v1/reload", nil)
 	if err != nil {
@@ -613,8 +613,6 @@ func (c Controller) reloadResolver(ctx context.Context, socket string) error {
 	}
 	return nil
 }
-
-var newResolverHTTPClient = resolverUnixHTTPClient
 
 func (c Controller) dirs() (runtimeDir, stateDir string) {
 	defaults, _ := platform.Current()

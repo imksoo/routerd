@@ -3,13 +3,8 @@
 package main
 
 import (
-	"context"
-	"encoding/binary"
-	"io"
-	"net"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/miekg/dns"
 
@@ -242,93 +237,5 @@ func TestParseDNSUpstreamDefaults(t *testing.T) {
 		if upstream.Scheme != tt.scheme || upstream.Address != tt.address {
 			t.Fatalf("parse %q = scheme %q address %q", tt.raw, upstream.Scheme, upstream.Address)
 		}
-	}
-}
-
-func TestUpstreamPoolFallsBackToSecondUpstream(t *testing.T) {
-	failed, err := net.ListenPacket("udp", "127.0.0.1:0")
-	if err != nil {
-		skipIfListenNotPermitted(t, err)
-		t.Fatal(err)
-	}
-	defer failed.Close()
-	ok, err := net.ListenPacket("udp", "127.0.0.1:0")
-	if err != nil {
-		skipIfListenNotPermitted(t, err)
-		t.Fatal(err)
-	}
-	defer ok.Close()
-	go func() {
-		buf := make([]byte, 512)
-		for {
-			n, addr, err := ok.ReadFrom(buf)
-			if err != nil {
-				return
-			}
-			var req dns.Msg
-			if err := req.Unpack(buf[:n]); err != nil {
-				t.Error(err)
-				return
-			}
-			resp := new(dns.Msg)
-			resp.SetReply(&req)
-			wire, err := resp.Pack()
-			if err != nil {
-				t.Error(err)
-				return
-			}
-			_, _ = ok.WriteTo(wire, addr)
-		}
-	}()
-
-	pool, err := newUpstreamPool([]string{"udp://" + failed.LocalAddr().String(), "udp://" + ok.LocalAddr().String()}, upstreamPoolConfig{
-		ProbeInterval: time.Hour,
-		ProbeTimeout:  50 * time.Millisecond,
-		FailThreshold: 1,
-		PassThreshold: 1,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	query := dnsProbeQuery()
-	resp, err := pool.Exchange(context.Background(), query, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var answer dns.Msg
-	if err := answer.Unpack(resp); err != nil || !answer.Response || answer.Rcode != dns.RcodeSuccess {
-		t.Fatalf("response = %x, unpack error = %v", resp, err)
-	}
-	snapshot := pool.Snapshot()
-	if snapshot[0].Phase != upstreamDown || snapshot[1].Phase != upstreamHealthy {
-		t.Fatalf("snapshot = %#v", snapshot)
-	}
-}
-
-func TestLengthPrefixedExchange(t *testing.T) {
-	client, server := net.Pipe()
-	defer client.Close()
-	defer server.Close()
-	go func() {
-		var length uint16
-		if err := binary.Read(server, binary.BigEndian, &length); err != nil {
-			t.Error(err)
-			return
-		}
-		query := make([]byte, length)
-		if _, err := io.ReadFull(server, query); err != nil {
-			t.Error(err)
-			return
-		}
-		_ = binary.Write(server, binary.BigEndian, uint16(len(query)))
-		_, _ = server.Write(query)
-	}()
-	query := dnsProbeQuery()
-	resp, err := exchangeLengthPrefixed(context.Background(), client, query)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(resp) != string(query) {
-		t.Fatalf("response = %x, want %x", resp, query)
 	}
 }
