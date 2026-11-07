@@ -339,6 +339,37 @@ func importStaticIPv6Address(address importAddress, ifname string, ip netip.Addr
 	return ip.Is6() && ip.IsGlobalUnicast() && address.Scope == "global" && !address.Dynamic && address.Peer == "" && address.Broadcast == "" && !address.NoPrefixRoute && address.Metric == 0 && len(address.Unsupported) == 0 && (address.Label == "" || address.Label == ifname) && address.PrefixLen >= 0 && address.PrefixLen <= 128 && address.ValidLifetime != nil && address.PreferredLifetime != nil && *address.ValidLifetime == 0xffffffff && *address.PreferredLifetime == 0xffffffff
 }
 
+func networkdDHCPv4Enabled(files []string) (bool, error) {
+	enabled := false
+	for _, path := range files {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return false, err
+		}
+		section := ""
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+				section = strings.TrimSpace(line[1 : len(line)-1])
+				continue
+			}
+			key, value, ok := strings.Cut(line, "=")
+			if !ok || section != "Network" || strings.TrimSpace(key) != "DHCP" {
+				continue
+			}
+			switch strings.ToLower(strings.TrimSpace(value)) {
+			case "yes", "true", "1", "on", "ipv4":
+				enabled = true
+			case "", "no", "false", "0", "off", "ipv6":
+				enabled = false
+			default:
+				return false, fmt.Errorf("%s: unsupported DHCP=%q", path, value)
+			}
+		}
+	}
+	return enabled, nil
+}
+
 func networkdDHCPv4Options(files []string) (useRoutes, useDNS *bool, metric int, useMTU bool, err error) {
 	if len(files) == 0 {
 		return nil, nil, 0, false, errors.New("networkd configuration file is unavailable")
@@ -725,6 +756,15 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 			usedRANames[client.Metadata.Name] = true
 			router.Spec.Resources = append(router.Spec.Resources, client)
 			warnings = append(warnings, fmt.Sprintf("%s: RA/SLAAC candidate requires review of networkd settings and manager handoff", ifname))
+		}
+		if !dhcp4 && len(networkFiles) > 0 {
+			enabled, err := networkdDHCPv4Enabled(networkFiles)
+			if err != nil {
+				warnings = append(warnings, fmt.Sprintf("%s: networkd DHCPv4 configuration could not be inspected: %v", ifname, err))
+			} else if enabled {
+				dhcp4 = true
+				warnings = append(warnings, fmt.Sprintf("%s: networkd DHCPv4 is enabled but no lease address is currently observed", ifname))
+			}
 		}
 		if dhcp4 {
 			useRoutes, useDNS, routeMetric, useMTU, optionErr := networkdDHCPv4Options(networkFiles)
