@@ -85,8 +85,7 @@ access. Add an operator with `sudo usermod -aG routerd <user>` to allow
 ## Debian package
 
 On a Linux build host with `dpkg-deb`, run `make deb` to build the Debian
-package under `dist/linux-<architecture>/`. Install it with `sudo apt install ./routerd_<version>_<architecture>.deb`. It installs the same binaries and
-provider plugins as the archive into `/usr/local`, and the service templates
+package under `dist/linux-<architecture>/`. Install it with `sudo apt install ./routerd_<version>_<architecture>.deb`. It installs the routerd binaries and provider plugins into `/usr/local`, and the service templates
 under `/lib/systemd/system`.
 
 The package does not include `router.yaml`, credentials, or state databases.
@@ -95,6 +94,13 @@ routerd; an already running routerd is restarted. Without a configuration it
 is left stopped. Removing the package stops and disables routerd services but preserves the
 configuration and state. Configured optional features may require additional
 host packages, as with the archive installer.
+
+The nDPI agent is distributed separately so routers that do not use DPI do not
+need libnDPI. On the target distribution, install the libnDPI development
+package and run `make deb-ndpi`; install the resulting
+`routerd-ndpi_<version>_<architecture>.deb` alongside the main package. The
+main package does not overwrite an existing nDPI agent. The nDPI package
+contains the libnDPI-enabled agent and declares its runtime library dependencies.
 
 ## First configuration
 

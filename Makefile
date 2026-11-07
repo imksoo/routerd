@@ -58,7 +58,7 @@ WIZARD_FIXTURE_DIR := website/fixtures/wizard
 
 WEBSITE_NODE_MODULES_STAMP := website/node_modules/.package-lock.json
 
-.PHONY: test check-version-ldflags build build-daemons build-provider-executors build-ndpi-agent build-ndpi-agent-libndpi build-daemons-freebsd check-freebsd-cross-compile check-linux-static check-ndpi-agent-libndpi check-install-deps cloudedge-acceptance-lint webconsole-build webconsole-browser-install webconsole-screenshot generate-schema sync-website-schemas check-schema check-website-schemas generate-wizard-fixtures check-wizard-fixtures validate-wizard-fixtures check-examples-line-limits check-bespoke-lifecycle website-deps website-build third-party-licenses check-build-deps dist deb dist-ndpi-agent-libndpi live-iso validate-example release clean
+.PHONY: test check-version-ldflags build build-daemons build-provider-executors build-ndpi-agent build-ndpi-agent-libndpi build-daemons-freebsd check-freebsd-cross-compile check-linux-static check-ndpi-agent-libndpi check-install-deps cloudedge-acceptance-lint webconsole-build webconsole-browser-install webconsole-screenshot generate-schema sync-website-schemas check-schema check-website-schemas generate-wizard-fixtures check-wizard-fixtures validate-wizard-fixtures check-examples-line-limits check-bespoke-lifecycle website-deps website-build third-party-licenses check-build-deps dist deb deb-ndpi dist-ndpi-agent-libndpi live-iso validate-example release clean
 
 test: check-version-ldflags
 	go test ./...
@@ -288,6 +288,12 @@ dist:
 deb: dist
 	@if [ "$(ROUTERD_OS)" != "linux" ]; then echo "deb requires ROUTERD_OS=linux" >&2; exit 1; fi
 	packaging/debian/build.sh $(DISTROOT) $(DISTDIR)/routerd_$(patsubst v%,%,$(VERSION))_$(DISTARCH).deb $(VERSION) $(DISTARCH)
+
+deb-ndpi:
+	@if [ "$(ROUTERD_OS)" != "linux" ] || [ "$(DISTARCH)" != "$$(dpkg --print-architecture)" ]; then echo "deb-ndpi requires a native Linux build" >&2; exit 1; fi
+	$(MAKE) build-ndpi-agent-libndpi
+	install -d $(DISTDIR)
+	packaging/debian/build-ndpi.sh $(ROUTERD_NDPI_AGENT_BIN) $(DISTDIR)/routerd-ndpi_$(patsubst v%,%,$(VERSION))_$(DISTARCH).deb $(VERSION) $(DISTARCH)
 
 dist-ndpi-agent-libndpi:
 	@if [ "$(ROUTERD_OS)" != "linux" ]; then echo "libndpi agent archive is Linux-only" >&2; exit 2; fi

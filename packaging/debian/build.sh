@@ -13,7 +13,10 @@ stage=$(mktemp -d "${TMPDIR:-/tmp}/routerd-deb.XXXXXX")
 trap 'rm -rf "$stage"' EXIT HUP INT TERM
 install -d "$stage/DEBIAN" "$stage/usr/local/sbin" "$stage/usr/local/libexec/routerd" \
     "$stage/usr/local/etc/routerd" "$stage/usr/share/doc/routerd" "$stage/lib/systemd/system"
-install -m 0755 "$distroot"/bin/* "$stage/usr/local/sbin/"
+for binary in "$distroot"/bin/*; do
+    [ "$(basename "$binary")" = routerd-ndpi-agent ] && continue
+    install -m 0755 "$binary" "$stage/usr/local/sbin/"
+done
 cp -a "$distroot/libexec/routerd/plugins" "$stage/usr/local/libexec/routerd/"
 install -m 0644 "$distroot/etc/routerd/router.yaml.sample" "$stage/usr/local/etc/routerd/"
 install -m 0644 "$distroot"/systemd/*.service "$stage/lib/systemd/system/"
