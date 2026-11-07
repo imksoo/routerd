@@ -331,7 +331,7 @@ def command_validate_contract(argv: list[str]) -> int:
 
 
 def offline_preflight(contract, *, contract_path=None, report_path=None):
-    """Always recheck source regressions and the actual saved preparation."""
+    """Recheck the actual saved preparation."""
     try:
         spec = importlib.util.spec_from_file_location(
             "release_qa_preflight", SCRIPT_DIR / "release_qa_preflight.py")

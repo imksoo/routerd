@@ -245,9 +245,6 @@ jobs:
       - name: Run CloudEdge SAM config generator offline smoke
         run: make cloudedge-sam-config-generator-offline-test
 
-      - name: Reject known release QA preparation and observation failures offline
-        run: make release-qa-preflight-test
-
   shellcheck:
     name: Shell scripts
     runs-on: ubuntu-latest

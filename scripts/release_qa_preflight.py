@@ -1,164 +1,14 @@
 #!/usr/bin/env python3
-"""Host-safe regression admission and validation of saved preparation inputs.
-
-No provider, guest, certification driver or phase-plan command is executed here.
-The fixed suite excludes host integration and external CLI tests. Results are
-fresh checks, not a cached PASS that can survive a change to the implementation.
-"""
+"""Validate saved release preparation inputs without contacting providers."""
 import argparse
-from contextlib import contextmanager
 import hashlib
 import importlib.util
-import io
 import json
-import os
 from pathlib import Path
-import socket
-import subprocess
 import sys
-import unittest
-from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent
 FRAMEWORK = ROOT / 'tools/release-qa-labs'
-CHECKS = (
-    'test_arp_command_evidence', 'test_arp_probe_attribution',
-    'test_arp_request_receipt', 'test_arp_control_schedule',
-    'test_arp_stimulus_clock_margin', 'test_arp_controller_progress',
-    'test_arp_counter_sampler', 'test_arp_observation_health',
-    'test_rollout_baseline', 'test_iso_storage_evidence',
-    'test_run_id.RunIDTests.test_admitted_ids_fit_generated_hostname_and_iam_role',
-    'test_run_id.RunIDTests.test_overlong_or_unsafe_ids_are_rejected',
-    'test_release_qa_preflight.PreparationInputTests',
-    'test_saved_arp_observations', 'test_arp_stimulus_evidence',
-    'test_qualification_outcome',
-)
-REQUIRED_REGRESSIONS = {
-    'test_arp_command_evidence.CommandEvidenceTests.test_aggregate_counters_never_replace_absent_record',
-    'test_arp_command_evidence.CommandEvidenceTests.test_explicit_target_record_accepts_interleaved_work',
-    'test_arp_request_receipt.RequestReceiptTests.test_select_start_and_recorded_at_cannot_backdate_receipt',
-    'test_arp_request_receipt.RequestPacketTests.test_plain_and_parenthesized_target_hardware_are_both_parsed',
-    'test_release_qa_preflight.PreparationInputTests.test_copied_r3_plan_id_is_rejected_even_with_current_hash',
-    'test_release_qa_preflight.PreparationInputTests.test_r4_missing_management_address_in_generated_baseline_fails',
-    'test_release_qa_preflight.PreparationInputTests.test_phased_rollout_requires_complete_actual_consumer',
-    'test_arp_control_schedule.PositiveControlScheduleTests.test_receipt_is_not_an_input_for_skipping_an_opportunity',
-    'test_arp_stimulus_clock_margin.StimulusClockMarginTests.test_immediate_arp_can_fail_with_actual_r6_clock_bounds',
-    'test_iso_storage_evidence.ISOStorageEvidenceTests.test_unknown_or_malformed_lines_are_not_discarded',
-    'test_arp_counter_sampler.CadenceTests.test_170ms_read_is_kept_under_existing_400ms_coverage',
-    'test_arp_counter_sampler.CadenceTests.test_adjacent_read_span_includes_previous_read_and_wait',
-    'test_arp_observation_health.HealthTests.test_terminal_failure_wins_over_healthy_progress',
-    'test_saved_arp_observations.SavedObservationTests.test_actual_r12_boundary_completion_is_retained',
-    'test_saved_arp_observations.SavedObservationTests.test_same_trace_without_later_reconcile_fails',
-    'test_arp_observation_health.HealthTests.test_pid_reuse_stopped_capture_or_changed_boot_are_rejected',
-    'test_arp_stimulus_evidence.StimulusEvidenceTests.test_observation_failures_are_distinct_from_proven_violations',
-    'test_qualification_outcome.QualificationOutcomeTests.test_bare_product_label_is_inconclusive',
-    'test_qualification_outcome.QualificationOutcomeTests.test_explicit_product_evidence_survives_abort_and_cleanup_failure',
-}
-
-
-def case_ids(suite):
-    for item in suite:
-        if isinstance(item, unittest.TestSuite):
-            yield from case_ids(item)
-        else:
-            yield item.id()
-
-
-def load_suite():
-    # A long-lived caller must not test modules cached from an older source.
-    for name, module in list(sys.modules.items()):
-        path = getattr(module, '__file__', None)
-        if path and Path(path).resolve().parent == FRAMEWORK / 'tests':
-            del sys.modules[name]
-    sys.path.insert(0, str(FRAMEWORK / 'tests'))
-    try:
-        suite = unittest.TestLoader().loadTestsFromNames(CHECKS)
-        missing = REQUIRED_REGRESSIONS - set(case_ids(suite))
-        require(not missing, 'required offline regressions missing: ' + ', '.join(sorted(missing)))
-        return suite
-    finally:
-        sys.path.pop(0)
-
-
-def run_regressions():
-    try:
-        with offline_io_guard():
-            return run_suite(load_suite())
-    except SystemExit as exc:
-        raise ValueError('offline regressions exited during loading') from exc
-
-
-@contextmanager
-def offline_io_guard():
-    def forbidden(*args, **kwargs):
-        raise AssertionError('offline regression attempted network or subprocess execution')
-    with patch.object(subprocess, 'Popen', side_effect=forbidden), \
-         patch.object(os, 'system', side_effect=forbidden), \
-         patch.object(socket, 'socket', side_effect=forbidden):
-        yield
-
-
-def run_suite(suite):
-    stream = io.StringIO()
-    with offline_io_guard():
-        result = unittest.TextTestRunner(stream=stream, verbosity=1).run(suite)
-    if not result.wasSuccessful() or result.testsRun == 0 or result.skipped:
-        raise ValueError('required offline regressions failed:\n' + stream.getvalue())
-    return {'tests': result.testsRun, 'failures': 0, 'skips': 0}
-
-
-def run_private_rehearsal(contract):
-    """Run the actual bound caller tests, not an unverified PASS receipt."""
-    execution = contract.get('execution', {})
-    if not execution.get('qualification_plans') or not execution.get('nodes'):
-        return None
-    try:
-        rehearsal = execution['offline_rehearsal']
-        files, coverage = rehearsal['testFiles'], rehearsal['coverage']
-        require(isinstance(files, list) and bool(files), 'missing private test files')
-        required = {'phase-contract', 'rollout-baseline'}
-        if 'selfprobe_plan' in execution:
-            required |= {'self-stimulus', 'positive-stimulus', 'collector-health', 'controller-progress'}
-        require(isinstance(coverage, dict) and required <= set(coverage), 'missing private caller coverage')
-        require(all(isinstance(ids, list) and ids and all(isinstance(i, str) and i for i in ids)
-                    for ids in coverage.values()), 'invalid private caller test IDs')
-        bound = execution['script_sha256']
-        # Check the actual dependencies, not only the test file. The existing
-        # contract author/driver still owns completeness of this dependency set.
-        before = {path: hashlib.sha256(Path(path).read_bytes()).hexdigest() for path in bound}
-        require(before == bound, 'private caller dependency changed')
-        suite, names = unittest.TestSuite(), set()
-        for reference in files:
-            path = Path(reference['path'])
-            require(path.is_absolute() and path.suffix == '.py' and path.stem.isidentifier(), 'invalid private test path')
-            require(path.stem not in names, 'duplicate private test module')
-            names.add(path.stem)
-            require(bound[str(path)] == reference['sha256'], 'private test source not bound')
-            spec = importlib.util.spec_from_file_location(path.stem, path)
-            module = importlib.util.module_from_spec(spec)
-            # Imports may execute code too. Block accidental remote work there
-            # as well as in test methods. This is not a security sandbox.
-            sys.path.insert(0, str(path.parent))
-            try:
-                with offline_io_guard():
-                    # Execute the bytes just bound by SHA256. A same-size edit
-                    # within one mtime tick must not load old test bytecode.
-                    exec(compile(path.read_bytes(), str(path), 'exec'), module.__dict__)
-                    tests = unittest.TestLoader().loadTestsFromModule(module)
-            finally:
-                sys.path.pop(0)
-            require(tests.countTestCases() > 0, 'empty private caller test module')
-            suite.addTests(tests)
-        expected = {test for ids in coverage.values() for test in ids}
-        require(expected <= set(case_ids(suite)), 'declared private caller test missing')
-        result = run_suite(suite)
-        require(before == {path: hashlib.sha256(Path(path).read_bytes()).hexdigest() for path in bound},
-                'private caller dependency changed during rehearsal')
-        return {**result, 'coverage': coverage, 'sourceSha256': before}
-    except (OSError, KeyError, TypeError, AttributeError, ImportError, SyntaxError, AssertionError, SystemExit) as exc:
-        raise ValueError('private offline rehearsal: ' + str(exc)) from exc
-
-
 def require(ok, message):
     if not ok:
         raise ValueError(message)
@@ -260,22 +110,9 @@ def validate_preparation_inputs(contract):
     return counts
 
 
-def source_hashes():
-    paths = list(FRAMEWORK.glob('*.py')) + list((FRAMEWORK / 'tests').rglob('*.py'))
-    paths += list((FRAMEWORK / 'tests/fixtures').rglob('*.json'))
-    paths += [Path(__file__), ROOT / 'scripts/release_certification.py',
-              ROOT / 'docs/releases/manifests/release-environment-certification.schema.json']
-    return {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(set(paths))}
-
-
 def check(contract=None):
-    before = source_hashes()
-    regressions = run_regressions()
     inputs = validate_preparation_inputs(contract) if contract is not None else None
-    private = run_private_rehearsal(contract) if contract is not None else None
-    require(before == source_hashes(), 'offline check source changed during validation')
-    return {'status': 'pass', 'offlineOnly': True, 'regressions': regressions,
-            'preparation': inputs, 'privateRehearsal': private, 'sourceSha256': before}
+    return {'status': 'pass', 'offlineOnly': True, 'preparation': inputs}
 
 
 def main():

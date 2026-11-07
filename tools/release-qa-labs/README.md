@@ -791,59 +791,8 @@ defects separately. They include prerequisites, failure examples, saved-data
 regressions and criteria for starting a new run. Product improvements do not
 justify preventable QA reruns.
 
-Run `make release-qa-preflight-test` before allocating a paid lifecycle, then
-run the standard `validate-contract` command above on the final prospective
-bytes. Certification, qualification preflight and the paid precheck now repeat
-the offline gate automatically. Ship the complete reviewed checkout including
-tests/fixtures; missing or skipped mandatory checks fail closed. Source-only
-success does not validate a private adapter or certify a live environment.
-
-For host-safe source checks, use the selected fake-harness tests documented
-in the linked Cloud SAM profile pages. Those tests use no live endpoint or
-daemon; their success does not authorize host or cloud operations.
-
-Plain discovery skips `test_systemd_confinement` and `test_launcher_restart`
-before any `sudo`, systemd, or namespace call unless
-`ROUTERD_RELEASE_QA_ISOLATED_TESTS` is exactly `1`. Unset, empty, and other values
-remain disabled. Harmless fake/source checks and local socket tests are not
-gated. These intentional skips do not establish host-integration coverage.
-
-```sh
-python3 -m unittest discover -s tools/release-qa-labs/tests -v
-shellcheck -x tools/release-qa-labs/drivers/*.sh
-```
-
-Enable the host-affecting cases only for an explicitly authorized, isolated
-release-QA environment; the opt-in does not provide isolation or bypass the
-existing prerequisite checks. Do not export it globally or enable it on a
-shared development host under source-only testing authorization:
-
-```sh
-ROUTERD_RELEASE_QA_ISOLATED_TESTS=1 python3 -m unittest discover -s tools/release-qa-labs/tests -v
-```
-
-There is currently no dedicated CI invocation of these host suites to opt in;
-ordinary discovery deliberately leaves them skipped. The host-safe
-`test_isolated_host_gate.py` regression uses forbidden/mocked subprocesses to
-verify both the default skip and the opt-in prerequisite boundary.
-
-The tests cover success, mutation failure, cleanup/inventory failure, timeout,
-stale heartbeat, SIGINT, SIGTERM, supervisor restart, quiesce ordering,
-provenance/artifact/blob tamper, plan ceilings, incomplete inventory, remote
-egress failure, executable modes and the boot-enabled supervisor configuration.
-
-Offline tests do **not** prove a real execution-host reboot recovery, provider
-billing totals, or live provider/PVE API behavior. Before any paid run, staging
-must prove that the installed supervisor restarts after a service-manager
-restart, survives an SSH/client disconnect, resumes from durable state, and
-reaches exhaustive zero inventory. Do not reboot a shared or production host
-for this test; use an authorized disposable execution host or an equivalent
-service-restart exercise. The USD ceiling is a conservative planned-admission
-estimate, not a hard stop on recovery and not evidence of the final bill. Once
-mutation starts, cleanup and authoritative zero-inventory verification continue
-with bounded individual attempts and service-manager backoff for as long as
-necessary; stopping recovery at the admission estimate could leave a much
-larger leak. Review the final bill only after exhaustive zero cleanup.
+Run the standard `validate-contract` command above on the final prospective
+contract before proceeding. This validates preparation inputs, not live connectivity.
 
 ## Exact pre-paid staging procedure on the selected coordinator
 

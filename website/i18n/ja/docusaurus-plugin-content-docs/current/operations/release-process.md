@@ -27,8 +27,7 @@ routerd は日付ベースのリリース版番号を使います。
 
 ## 実機試験を開始する前に
 
-レビュー済みの完全なcheckoutで `make release-qa-preflight-test` を実行し、
-続いて凍結予定の最終contract原本を検証します。
+凍結予定の最終 contract 原本を検証します。
 
 ```sh
 python3 scripts/release_certification.py validate-contract \
@@ -36,12 +35,7 @@ python3 scripts/release_certification.py validate-contract \
   --topology "$topology" --providers "$providers" > contract-validation.json
 ```
 
-必須のオフライン試験の失敗・欠落・skip、コピーしたphaseの旧run ID、
-証跡の変更、管理IPなどが欠けた媒体保持型baselineを、認証driverの起動前に拒否します。
-ソース・fixtureのハッシュとcontractのSHA256を保存し、準備変更後には再実行して
-凍結原本と照合します。認証、qualification preflight、有料試験のprecheckも
-自動で同じゲートを実行します。ソース試験のPASSだけでは実環境やprivate callerの
-正しさを認証できません。
+この確認は準備情報と contract の SHA256 を検証します。実機の疎通は別途確認します。
 
 失敗したrunは保存し、採取・判定・準備の欠陥を保存データと負例で再現してから
 修正・検証し、新しいrunを凍結します。既知の試験コードの不備を調べるために

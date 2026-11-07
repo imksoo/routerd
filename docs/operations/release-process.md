@@ -29,8 +29,7 @@ to debug a test. See [the qualification policy](./release-qualification-policy.m
 
 ## Before starting live qualification
 
-Run `make release-qa-preflight-test` from the complete reviewed checkout, then
-validate the actual final prospective contract:
+Validate the actual final prospective contract:
 
 ```sh
 python3 scripts/release_certification.py validate-contract \
@@ -38,12 +37,8 @@ python3 scripts/release_certification.py validate-contract \
   --topology "$topology" --providers "$providers" > contract-validation.json
 ```
 
-The check rejects failed/missing/skipped offline regressions, copied phase IDs,
-changed evidence and incomplete retained-media baselines before a certification
-driver runs. It records source/fixture hashes and the contract SHA256; repeat it
-after any preparation change and match the frozen bytes. Certification,
-qualification preflight and the paid precheck repeat the gate automatically.
-A source-only PASS does not certify the live environment or a private caller.
+The check validates preparation inputs and records the contract SHA256. It does
+not establish live connectivity.
 
 Preserve a failed run, reproduce its collector/predicate/preparation defect with
 saved data and negative controls, then fix and validate it before a new frozen

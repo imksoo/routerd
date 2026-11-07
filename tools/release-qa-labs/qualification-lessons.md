@@ -51,7 +51,7 @@ documentation or claim that a later runbook already existed for an earlier run.
 ## Required preparation and commands
 
 Use Python 3 with the standard library and a complete checkout of the reviewed
-QA revision, including `scripts`, helpers, tests and fixtures. Copying only the
+QA revision, including `scripts` and helpers. Copying only the
 certifier script is insufficient. Keep provider credentials and private raw
 observations out of the public repository. Retain the exact artifact checksum,
 actual observer retry settings, boot/process identities, saved guest/media reads,
@@ -60,28 +60,15 @@ phase plans and all source hashes. These are prerequisites, not optional default
 Before acquiring a paid lifecycle or freezing a new retained-router run:
 
 ```sh
-make release-qa-preflight-test
 python3 scripts/release_certification.py validate-contract \
   --contract prospective-contract.json --environment "$environment" \
   --topology "$topology" --providers "$providers" > contract-validation.json
 ```
 
-The second command runs the authoritative schema/artifact validation and the
-mandatory offline gate against the **actual prospective bytes**. Repeat it after
+The command runs the schema/artifact validation and the
+preparation check against the **actual prospective bytes**. Repeat it after
 any input or hash-binding edit. `contractSha256` must match the frozen file.
 Preparation notes belong outside the strict contract, not in unknown properties.
-The source-only Make target alone does not validate a run's real preparation.
-
-The gate in [`scripts/release_qa_preflight.py`](../../scripts/release_qa_preflight.py)
-executes the fixed local positive/negative suite; network socket creation and
-subprocess execution are forbidden within that suite. Missing modules, failed
-checks, skipped required checks and an empty suite fail. The JSON report records
-the source and fixture hashes. Certification repeats the gate before invoking
-its driver and writes `*.offline-preflight.json`; qualification preflight repeats
-it before starting its driver. The paid precheck repeats it before provider
-capacity/substrate calls, retaining `preflight/offline-regressions.json`.
-CI runs the same Make target. No prior PASS file bypasses execution.
-
 For phased retained-media contracts, `execution.qualification_plans` binds both
 `canary` and `final` paths/SHA256s and their JSON `runId`/`stage`. When nodes are
 specified, `baseline_builder_binding` is mandatory. Its bound `evidence` contains
@@ -97,49 +84,12 @@ and builder report, successful bound guest/media transports, and all successful
 nonempty guest/media checks. Its evaluator,
 caller and common source hashes must match `execution.script_sha256` and current
 files. This checks the actual consumer's saved evidence, not just a producer's
-“success” flag. The private adapter must run its evaluator/command-construction
-positive and negative tests before producing that evidence; public helper tests
-cannot prove that a private caller invokes the helper correctly. Bind the private
-adapter tests and their report in the run contract as well. Current live freshness,
+“success” flag. Current live freshness,
 management reachability and environment certification remain independent gates.
-
-## Saved data and negative controls
-
-[`tests/fixtures/arp-r12-boundary.json`](tests/fixtures/arp-r12-boundary.json)
-contains three actual controller reads and 50 actual counter reads, with source
-SHA256 and an explicit redaction/selection record. Timestamps, counts, sequence
-571 and three writes are retained; identities use documentation values. It is a
-**diagnostic extract**, not replacement formal evidence. The R11 fixture retains
-the original collector/sampler error and short-capture duration; the missing
-failed read timing is not invented.
-
-[`test_saved_arp_observations.py`](tests/test_saved_arp_observations.py) requires
-the R12 positive boundary to pass and variants without the record, later
-reconcile or coverage, and with partial writes/wrong sequence, to fail. It checks
-that the saved R11 primary error wins over an older healthy-looking snapshot.
-Other mandatory tests cover full-identity receipt/TTL, parenthesized ARP syntax,
-wrong targets, background traffic, fixed independent opportunities, real clock
-lead/deadline, true stalls, 170ms reads within 400ms coverage, over-limit gaps,
-terminal failure over stale progress, PID reuse, dead capture, baseline omissions and ISO metadata.
-Progress age and counter sampler errors are diagnostic while the owned capture
-remains alive; they do not create a new stimulus admission deadline.
-
-[`test_release_qa_preflight.py`](tests/test_release_qa_preflight.py) also exercises
-the admission boundary: a failed gate must leave the certification driver
-uncalled. Preparation negatives use current hashes for bad logical inputs, so
-hash agreement alone cannot make a copied run ID or incomplete baseline pass.
-A saved-data PASS proves this tooling correction on those inputs; it never
-changes an old run's FAIL into PASS or proves new live qualification.
 
 ## When to run again
 
-After a formal failure, retain its inputs, raw errors, verdict and cleanup/zero
-inventory evidence. Diagnose first. Add the failing saved case and a nearby
-negative/positive counterexample, fix the producer/collector/predicate, and run
-both the public gate and actual private caller tests. Do not replay an expensive
-run unchanged to see whether it happens to pass. An unexplained failure remains
-unresolved; if necessary, design the smallest bounded observation that can
-identify it before committing another full lifecycle.
+After a failure, diagnose the observed issue before repeating a live run.
 
 Only a newly frozen, fully validated contract and current certification may
 start the next formal run. Preserve observation/TTL/coverage/traffic thresholds;
