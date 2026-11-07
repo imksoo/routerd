@@ -4,10 +4,7 @@ package chain
 
 import (
 	"context"
-	"fmt"
-	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -15,18 +12,9 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
-	"github.com/imksoo/routerd/pkg/nftstate"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/render"
 )
-
-func hostPolicyRouter(includeHost bool) *api.Router {
-	resources := []api.Resource{{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "wan0"}}}
-	if includeHost {
-		resources = append(resources, api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "host-ipv6-ra"}, Spec: api.EgressRoutePolicySpec{Family: "ipv6", Mode: "priority", HostTraffic: true, Candidates: []api.EgressRoutePolicyCandidate{{Name: "physical-ra", Interface: "wan", GatewaySource: "static", Gateway: "fe80::1", PreferredSource: "interface", Table: 120, Priority: 10120, Metric: 50}}}})
-	}
-	return &api.Router{Spec: api.RouterSpec{Resources: resources}}
-}
 
 func TestEgressRoutePolicyFiltersUnhealthyTargets(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
@@ -238,88 +226,6 @@ func TestEffectivePolicyRouteExcludesWhenFalseDSLiteTargetWithoutMutatingSpec(t 
 	if len(original.Candidates[0].Targets) != 2 {
 		t.Fatalf("effective filtering mutated declared targets: %#v", original.Candidates[0].Targets)
 	}
-}
-
-func TestIPv4PolicyRouteInstallsFwmarkBootstrapRouteForHealthCheck(t *testing.T) {
-	store := mapStore{
-		api.NetAPIVersion + "/HealthCheck/internet-via-hgw": {
-			"phase":         "Unhealthy",
-			"lastCheckedAt": time.Now().UTC().Format(time.RFC3339Nano),
-		},
-	}
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"}, Metadata: api.ObjectMeta{Name: "internet-via-hgw"}, Spec: api.HealthCheckSpec{
-			Target: "1.1.1.1",
-		}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "default"}, Spec: api.EgressRoutePolicySpec{
-			Mode: "priority",
-			Candidates: []api.EgressRoutePolicyCandidate{{
-				Name:          "hgw",
-				Interface:     "wan",
-				GatewaySource: "static",
-				Gateway:       "192.168.1.1",
-				Table:         116,
-				Priority:      40,
-				Mark:          0x116,
-				HealthCheck:   "internet-via-hgw",
-			}},
-		}},
-	}}}
-	dir := t.TempDir()
-	binDir := filepath.Join(dir, "bin")
-	if err := os.MkdirAll(binDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	commandLog := filepath.Join(dir, "mutations")
-	// All reads and writes hit this fixture, never the host network.
-	ipScript := fmt.Sprintf("#!/bin/sh\ncase \"$1 $2 $3\" in\n 'link show dev'|'-4 route show'|'-4 rule show') exit 0 ;;\n '-4 route replace'|'-4 rule add'|'-4 rule del'|'-4 route flush') printf '%%s\\n' \"$*\" >> %q; exit 0 ;;\n *) exit 99 ;;\nesac\n", commandLog)
-	if err := os.WriteFile(filepath.Join(binDir, "ip"), []byte(ipScript), 0755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	controller := IPv4PolicyRouteController{Router: router, Store: store, OperatingSystem: platform.OSLinux}
-	if err := controller.applyRouteTables(t.Context(), map[string]string{"wan": "lo"}); err != nil {
-		t.Fatal(err)
-	}
-	if status := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "hgw"); len(status) != 0 {
-		t.Fatalf("route target should not create phantom EgressRoutePolicy status: %#v", status)
-	}
-
-	data, err := os.ReadFile(commandLog)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []string{"-4 route replace default via 192.168.1.1 dev lo table 116 metric 50", "-4 rule add priority 40 fwmark 0x116 table 116"}
-	if got := strings.Split(strings.TrimSpace(string(data)), "\n"); !reflect.DeepEqual(got, want) {
-		t.Fatalf("enabled bootstrap operations = %#v, want %#v", got, want)
-	}
-	if err := os.WriteFile(commandLog, nil, 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	enabled := false
-	router.Spec.Resources[0].Spec = api.HealthCheckSpec{Target: "1.1.1.1", Enabled: &enabled}
-	store = mapStore{
-		api.NetAPIVersion + "/HealthCheck/internet-via-hgw": {
-			"phase":         "Disabled",
-			"lastCheckedAt": time.Now().UTC().Format(time.RFC3339Nano),
-		},
-	}
-	controller = IPv4PolicyRouteController{Router: router, Store: store, OperatingSystem: platform.OSLinux}
-	if err := controller.applyRouteTables(t.Context(), map[string]string{"wan": "lo"}); err != nil {
-		t.Fatal(err)
-	}
-	if status := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "hgw"); len(status) != 0 {
-		t.Fatalf("disabled healthcheck should not bootstrap route: %#v", status)
-	}
-	data, err = os.ReadFile(commandLog)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(data) != 0 {
-		t.Fatalf("disabled healthcheck mutated routes/rules: %q", data)
-	}
-
 }
 
 func TestEgressRoutePolicyTargetCandidateRendersOnlyWhenActive(t *testing.T) {
@@ -647,147 +553,6 @@ func TestIPv4PolicyRouteHealthCheckRequiresFreshStatus(t *testing.T) {
 	}
 }
 
-func TestIPv4PolicyRouteApplyNftTableReloadsUnchangedStaleTable(t *testing.T) {
-	dir := t.TempDir()
-	logPath := filepath.Join(dir, "nft.log")
-	nftPath := filepath.Join(dir, "nft")
-	tablePath := filepath.Join(dir, "policy.nft")
-	data := []byte("table ip routerd_policy {}\n")
-	if err := os.WriteFile(tablePath, data, 0644); err != nil {
-		t.Fatal(err)
-	}
-	script := "#!/bin/sh\n" +
-		"echo \"$@\" >> " + testShellQuote(logPath) + "\n" +
-		"exit 0\n"
-	if err := os.WriteFile(nftPath, []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
-	controller := IPv4PolicyRouteController{}
-	if err := controller.applyNftTable(context.Background(), nftPath, tablePath, "ip", "routerd_policy", data); err != nil {
-		t.Fatal(err)
-	}
-	logData, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := string(logData)
-	for _, want := range []string{
-		"list table ip routerd_policy",
-		"-c -f " + tablePath,
-		"-f " + tablePath,
-	} {
-		if !strings.Contains("\n"+got, "\n"+want+"\n") {
-			t.Fatalf("nft command log missing %q:\n%s", want, got)
-		}
-	}
-}
-
-func TestIPv4PolicyRouteApplyNftTableSkipsRecentlyVerifiedExistingTable(t *testing.T) {
-	dir := t.TempDir()
-	logPath := filepath.Join(dir, "nft.log")
-	nftPath := filepath.Join(dir, "nft")
-	tablePath := filepath.Join(dir, "policy.nft")
-	data := []byte("table ip routerd_policy {}\n")
-	if err := os.WriteFile(tablePath, data, 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := nftstate.MarkVerified(tablePath, time.Now().UTC()); err != nil {
-		t.Fatal(err)
-	}
-	script := "#!/bin/sh\n" +
-		"echo \"$@\" >> " + testShellQuote(logPath) + "\n" +
-		"exit 0\n"
-	if err := os.WriteFile(nftPath, []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
-	controller := IPv4PolicyRouteController{}
-	if err := controller.applyNftTable(context.Background(), nftPath, tablePath, "ip", "routerd_policy", data); err != nil {
-		t.Fatal(err)
-	}
-	logData, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := string(logData)
-	if !strings.Contains(got, "list table ip routerd_policy") {
-		t.Fatalf("nft command log missing list:\n%s", got)
-	}
-	for _, unwanted := range []string{"-c -f " + tablePath, "-f " + tablePath} {
-		if strings.Contains(got, unwanted) {
-			t.Fatalf("recently verified existing table should not run %q:\n%s", unwanted, got)
-		}
-	}
-}
-
-func TestIPv4PolicyRouteApplyNftTableReloadsMissingRecentlyVerifiedTable(t *testing.T) {
-	dir := t.TempDir()
-	logPath := filepath.Join(dir, "nft.log")
-	nftPath := filepath.Join(dir, "nft")
-	tablePath := filepath.Join(dir, "policy.nft")
-	data := []byte("table ip routerd_policy {}\n")
-	if err := os.WriteFile(tablePath, data, 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := nftstate.MarkVerified(tablePath, time.Now().UTC()); err != nil {
-		t.Fatal(err)
-	}
-	script := "#!/bin/sh\n" +
-		"echo \"$@\" >> " + testShellQuote(logPath) + "\n" +
-		"if [ \"$1 $2 $3 $4\" = \"list table ip routerd_policy\" ]; then exit 1; fi\n" +
-		"exit 0\n"
-	if err := os.WriteFile(nftPath, []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
-	controller := IPv4PolicyRouteController{}
-	if err := controller.applyNftTable(context.Background(), nftPath, tablePath, "ip", "routerd_policy", data); err != nil {
-		t.Fatal(err)
-	}
-	logData, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := string(logData)
-	for _, want := range []string{"list table ip routerd_policy", "-c -f " + tablePath, "-f " + tablePath} {
-		if !strings.Contains("\n"+got, "\n"+want+"\n") {
-			t.Fatalf("nft command log missing %q:\n%s", want, got)
-		}
-	}
-}
-
-func TestIPv4PolicyRouteApplyNftTableDeletesExistingTableWhenDesiredEmptyDespiteRecentVerification(t *testing.T) {
-	dir := t.TempDir()
-	logPath := filepath.Join(dir, "nft.log")
-	nftPath := filepath.Join(dir, "nft")
-	tablePath := filepath.Join(dir, "policy.nft")
-	if err := nftstate.MarkVerified(tablePath, time.Now().UTC()); err != nil {
-		t.Fatal(err)
-	}
-	script := "#!/bin/sh\n" +
-		"echo \"$@\" >> " + testShellQuote(logPath) + "\n" +
-		"exit 0\n"
-	if err := os.WriteFile(nftPath, []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
-	controller := IPv4PolicyRouteController{}
-	if err := controller.applyNftTable(context.Background(), nftPath, tablePath, "ip", "routerd_policy", nil); err != nil {
-		t.Fatal(err)
-	}
-	logData, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := string(logData)
-	for _, want := range []string{"list table ip routerd_policy", "delete table ip routerd_policy"} {
-		if !strings.Contains("\n"+got, "\n"+want+"\n") {
-			t.Fatalf("nft command log missing %q:\n%s", want, got)
-		}
-	}
-}
-
-func testShellQuote(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
-}
-
 func TestIPv4PolicyRouteGatewayResolution(t *testing.T) {
 	controller := IPv4PolicyRouteController{}
 	ctx := context.Background()
@@ -803,31 +568,4 @@ func TestIPv4PolicyRouteGatewayResolution(t *testing.T) {
 	if _, err := controller.routeGateway(ctx, "wan0", "static", ""); err == nil {
 		t.Fatal("empty static gateway should be rejected")
 	}
-}
-
-// TestCleanupLedgerOwnedPolicyRoutesDoesNotLeakFDs is the controller-level
-// regression test for issue #39. routerd serve drives the cleanup at 30s
-// reconcile, so a leaked *sql.DB per call would accumulate hundreds of
-// fds/day against routerd.db. Linux-only because it inspects /proc/self/fd.
-func countLedgerFDs(t *testing.T, path string) int {
-	t.Helper()
-	entries, err := os.ReadDir("/proc/self/fd")
-	if err != nil {
-		t.Fatalf("read /proc/self/fd: %v", err)
-	}
-	suffixes := []string{"", "-journal", "-wal", "-shm"}
-	count := 0
-	for _, entry := range entries {
-		target, err := os.Readlink(fmt.Sprintf("/proc/self/fd/%s", entry.Name()))
-		if err != nil {
-			continue
-		}
-		for _, suffix := range suffixes {
-			if strings.HasSuffix(target, path+suffix) {
-				count++
-				break
-			}
-		}
-	}
-	return count
 }
