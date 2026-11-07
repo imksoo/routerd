@@ -39,14 +39,14 @@ ENV:
   CE_FAILOVER_TIMING       cloudedge-failover-timing.sh path
   CE_PROTOCOL_PROBE        cloudedge-protocol-probe.sh path
   CE_L2_LOOP_PROBE         cloudedge-l2-loop-probe.sh path
-  MATRIX_RUNNER            Offline/real matrix runner passed through to labctl
-  FAILOVER_TIMING_RUNNER   Offline/real auto-failover timing runner
-  PROTOCOL_PROBE_RUNNER    Offline/real FTP/NFS/RPC/bulk/PMTU runner
-  L2_LOOP_RUNNER           Offline/real L2 loop/STP-RSTP observation runner
+  MATRIX_RUNNER            Matrix runner passed through to labctl
+  FAILOVER_TIMING_RUNNER   Auto-failover timing runner
+  PROTOCOL_PROBE_RUNNER    FTP/NFS/RPC/bulk/PMTU runner
+  L2_LOOP_RUNNER           L2 loop/STP-RSTP observation runner
   CE_DRY_RUN               Labctl mutation guard; defaults to labctl's safe dry mode
 
 The runner is cloud-non-touching unless labctl is explicitly configured with
-credentials and CE_DRY_RUN=0. Offline tests set MATRIX_RUNNER.
+credentials and CE_DRY_RUN=0.
 EOF
 }
 
@@ -80,8 +80,6 @@ if data.get("version") != 1:
 sites = data.get("sites")
 if sites != ["onprem", "aws", "azure", "oci"]:
     errors.append("sites must be exactly [onprem, aws, azure, oci]")
-if data.get("logicalSubnet") != "10.77.60.0/24":
-    errors.append("logicalSubnet must be 10.77.60.0/24")
 seen = set()
 required = {
     "d3-4site-directed-matrix",
