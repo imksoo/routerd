@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://github.com/imksoo/routerd/scripts/cloudedge-evidence-schema.json",
   "title": "routerd CloudEdge lab run evidence",
-  "description": "Machine-readable PASS/FAIL evidence emitted by scripts/cloudedge-labctl.sh 'evidence collect'. A run is only PASS when result==pass and every required assertion passes.",
+  "description": "Machine-readable evidence emitted by scripts/cloudedge-labctl.sh 'evidence collect'. A run is only PASS when result==pass and every required assertion passes.",
   "type": "object",
   "additionalProperties": false,
   "required": ["runId", "commit", "scenario", "result", "providers", "assertions", "costGuard"],
@@ -24,7 +24,7 @@
     },
     "result": {
       "type": "string",
-      "enum": ["pass", "fail"]
+      "enum": ["pass", "fail", "inconclusive"]
     },
     "providers": {
       "type": "object",
