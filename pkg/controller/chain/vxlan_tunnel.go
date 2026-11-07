@@ -39,15 +39,8 @@ type VXLANTunnelController struct {
 	DryRun          bool
 	OperatingSystem platform.OS
 	NetworkdDir     string
-	Command         vxlan.CommandRunner
-	// DeleteLinkByIndex removes the exact kernel object represented by an
-	// ownership manifest. Production uses RTM_DELLINK with IFLA_IFINDEX; tests
-	// inject a deterministic kernel model.
-	DeleteLinkByIndex func(int) error
-	ReadFile          func(string) ([]byte, error)
-	RemoveFile        func(string) error
-	StartedAt         time.Time
-	Mu                *sync.Mutex
+	StartedAt       time.Time
+	Mu              *sync.Mutex
 }
 
 type vxlanOwnership struct {
@@ -981,18 +974,6 @@ func (c VXLANTunnelController) baseStatus(cfg vxlan.Config) map[string]any {
 	}
 }
 
-// persistOwnership remains as the legacy pre-link helper used by migration
-// and focused tests. Runtime mutation paths immediately bind the marker to the
-// observed ifindex through persistOwnershipBound before changing the link.
-func (c VXLANTunnelController) persistOwnership(cfg vxlan.Config) (bool, error) {
-	name := cfg.Name
-	if name == "" {
-		name = cfg.IfName
-	}
-	resource := api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VXLANTunnel"}, Metadata: api.ObjectMeta{Name: name}}
-	return c.persistOwnershipBound(resource, cfg, 0)
-}
-
 func (c VXLANTunnelController) persistOwnershipBound(resource api.Resource, cfg vxlan.Config, ifindex int) (bool, error) {
 	token := ""
 	path := c.artifactPaths(cfg.IfName)[0]
@@ -1270,23 +1251,14 @@ func (c VXLANTunnelController) removeOwnedLegacyArtifacts(ifname string) (bool, 
 }
 
 func (c VXLANTunnelController) readFile(path string) ([]byte, error) {
-	if c.ReadFile != nil {
-		return c.ReadFile(path)
-	}
 	return os.ReadFile(path)
 }
 
 func (c VXLANTunnelController) removeFile(path string) error {
-	if c.RemoveFile != nil {
-		return c.RemoveFile(path)
-	}
 	return os.Remove(path)
 }
 
 func (c VXLANTunnelController) command(ctx context.Context, name string, args ...string) ([]byte, error) {
-	if c.Command != nil {
-		return c.Command(ctx, name, args...)
-	}
 	return exec.CommandContext(ctx, name, args...).CombinedOutput()
 }
 
@@ -1339,9 +1311,6 @@ func vxlanDetailsConfigMatch(observed string, cfg vxlan.Config) bool {
 func (c VXLANTunnelController) deleteLinkByIndex(ifindex int) error {
 	if ifindex <= 0 {
 		return fmt.Errorf("refusing to delete VXLAN with invalid ifindex %d", ifindex)
-	}
-	if c.DeleteLinkByIndex != nil {
-		return c.DeleteLinkByIndex(ifindex)
 	}
 	return deleteVXLANLinkByIndex(ifindex)
 }

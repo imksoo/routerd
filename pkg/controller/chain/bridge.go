@@ -26,10 +26,6 @@ type BridgeController struct {
 	DryRun          bool
 	NetworkdDir     string
 	OperatingSystem platform.OS
-	Command         func(context.Context, string, ...string) error
-	Lookup          func(string) (*net.Interface, error)
-	ReadFile        func(string) ([]byte, error)
-	Readlink        func(string) (string, error)
 }
 
 func (c BridgeController) Reconcile(ctx context.Context) error {
@@ -216,30 +212,18 @@ func bridgeInterfaceAliases(router *api.Router) map[string]string {
 }
 
 func (c BridgeController) command(ctx context.Context, name string, args ...string) error {
-	if c.Command != nil {
-		return c.Command(ctx, name, args...)
-	}
 	return runCommandContext(ctx, name, args...)
 }
 
 func (c BridgeController) lookup(ifname string) (*net.Interface, error) {
-	if c.Lookup != nil {
-		return c.Lookup(ifname)
-	}
 	return net.InterfaceByName(ifname)
 }
 
 func (c BridgeController) readFile(path string) ([]byte, error) {
-	if c.ReadFile != nil {
-		return c.ReadFile(path)
-	}
 	return os.ReadFile(path)
 }
 
 func (c BridgeController) readlink(path string) (string, error) {
-	if c.Readlink != nil {
-		return c.Readlink(path)
-	}
 	return os.Readlink(path)
 }
 
