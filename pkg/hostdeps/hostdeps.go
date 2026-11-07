@@ -69,7 +69,7 @@ var ubuntuPackages = map[string][]string{
 	"conntrack":     {"conntrack"},
 	"conntrackd":    {"conntrackd"},
 	"dhcp-dns":      {"dnsmasq-base"},
-	"dpi":           {"libnetfilter-log1", "libndpi-bin"},
+	"dpi":           {"libndpi-bin"},
 	"ipsec":         {"strongswan-swanctl"},
 	"kmod":          {"kmod"},
 	"nat":           {"nftables"},
