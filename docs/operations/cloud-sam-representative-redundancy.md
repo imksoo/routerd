@@ -357,19 +357,3 @@ The four edge scenarios use sibling directories `edge-aws-leaf-a`,
 `edge-azure-leaf-a`, `edge-oci-leaf-a`, and `edge-pve-leaf-a`. The profile result
 records each edge scenario separately and keeps B-side equivalence unproven;
 an aggregate result must not hide a failed or missing scenario.
-
-## Offline source check
-
-The fake-harness check verifies the exact argument contract, PVE RR
-host-fault-domain and capture-bridge separation, ordered A/B BGP membership
-evidence, the initial full baseline and RR canaries, and all four independent
-edge-A stop/rejoin matrix contracts. Negative cases must reject incomplete
-evidence, unexpected B-side scenarios, and exhausted shared budgets. It uses
-no real endpoint or daemon and does not establish live failover success:
-
-```sh
-make cloudedge-representative-redundancy-offline-test
-shellcheck -x tests/e2e/cloudedge/scripts/sam-e2e.sh \
-  tests/e2e/cloudedge/scripts/sam-representative-redundancy.sh \
-  tests/e2e/cloudedge/scripts/sam-representative-redundancy-offline-test.sh
-```

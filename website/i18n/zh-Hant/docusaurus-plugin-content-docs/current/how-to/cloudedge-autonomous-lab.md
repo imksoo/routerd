@@ -28,7 +28,7 @@ retained ARP檢查中，監控HTTP的80ms timeout、100ms counter週期、400ms�
 
 cleanup inventory區分lifecycle變化和identity不一致。AWS/OCI的identity一致而狀態觀測不同時，只在同次inventory執行中額外查詢對應provider最多2次，保留每次原始回應。identity、tag、account不一致、無效回應及通訊失敗不能證明資源不存在。其他provider的inventory繼續執行；不完整scope的count為null，不能通過零資源判定。既有資源回收和刪除保護保持不變。
 
-下一次付費測試之前，用 `tools/release-qa-labs/tests/` 下的 `test_sam_observation.py`、`test_inventory_resources.py` 和 `test_inventory_driver.py` 重播相關回應及負例，不建立資源。透過 `make cloudedge-representative-redundancy-offline-test` 檢查實際matrix/profile呼叫路徑。這些測試通過不代表已完成雲端實機測試。
+下一次付費測試之前，用 `tools/release-qa-labs/tests/` 下的 `test_sam_observation.py`、`test_inventory_resources.py` 和 `test_inventory_driver.py` 重播相關回應及負例，不建立資源。這些測試通過不代表已完成雲端實機測試。
 
 ## 生命週期
 

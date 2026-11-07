@@ -33,8 +33,7 @@ public handshake/transfer/endpoint/allowed-IP fields, never private-key dump dat
 Missing GoBGP is exit 127, not non-JSON input to jq. Diagnostic failure does not
 change traffic verdicts.
 
-Run `make cloudedge-e2e-preflight-offline-test` and
-`make cloudedge-representative-redundancy-offline-test` for affected fixtures.
+Run `make cloudedge-e2e-preflight-offline-test` for affected fixtures.
 These prove failure propagation/evidence behavior, not cloud installation or
 connectivity. The lab CLI preparation keeps each download/install/version attempt, retries known transient package/network failures locally, and propagates permanent errors or exhaustion. Client APT preparation uses its existing four-attempt policy with raw failure evidence and transient classification. Upstream installer/package/network/auth results and externally
 supplied plans require their own saved execution evidence.

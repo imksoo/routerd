@@ -332,18 +332,3 @@ edge の証拠は同じ階層の `edge-aws-leaf-a`、`edge-azure-leaf-a`、
 `edge-oci-leaf-a`、`edge-pve-leaf-a` に分離します。profile result は各 scenario を
 個別に記録し、B 側の同等性は未証明のままにします。集約結果で個別の失敗や
 欠落を隠してはいけません。
-
-## Offline ソース検証
-
-fake harness は、正確な引数契約、PVE RR の host fault domain と capture bridge の
-分離、A/B 順の BGP membership 証拠、最初の完全 baseline と RR canary、
-独立した edge-A 4 試験の停止後・復帰後 matrix 契約を確認します。
-不完全な証拠、予定外の B 側 scenario、共有予算の枯渇は negative case で拒否します。
-実 endpoint や daemon は使わず、実環境の failover 成功を証明するものではありません。
-
-```sh
-make cloudedge-representative-redundancy-offline-test
-shellcheck -x tests/e2e/cloudedge/scripts/sam-e2e.sh \
-  tests/e2e/cloudedge/scripts/sam-representative-redundancy.sh \
-  tests/e2e/cloudedge/scripts/sam-representative-redundancy-offline-test.sh
-```
