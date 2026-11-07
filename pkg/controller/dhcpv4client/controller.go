@@ -366,13 +366,13 @@ func (c Controller) applyLease(ctx context.Context, name string, current, next m
 			return err
 		}
 	}
-	addressPresent, err := dhcpv4LeaseAddressPresent(ctx, platform.CurrentOS(), command, ifname, wantedAddress)
+	addressPresent, err := dhcpv4LeaseAddressMatches(ctx, platform.CurrentOS(), command, ifname, wantedAddress, spec.RouteMetric)
 	if err != nil {
 		return err
 	}
 	next["addressPresent"] = addressPresent
 	if previousAddress != wantedAddress || !addressPresent {
-		if err := replaceIPv4Address(ctx, platform.CurrentOS(), command, ifname, wantedAddress); err != nil {
+		if err := replaceIPv4Address(ctx, platform.CurrentOS(), command, ifname, wantedAddress, spec.RouteMetric); err != nil {
 			return err
 		}
 		next["addressPresent"] = true
@@ -783,13 +783,45 @@ func (c Controller) leaseSpecAndIfName(name string) (api.DHCPv4ClientSpec, strin
 	return api.DHCPv4ClientSpec{}, "", false, nil
 }
 
-func replaceIPv4Address(ctx context.Context, osName platform.OS, command outputCommandFunc, ifname, address string) error {
+func replaceIPv4Address(ctx context.Context, osName platform.OS, command outputCommandFunc, ifname, address string, metric int) error {
 	if osName == platform.OSFreeBSD {
 		_, err := command(ctx, "ifconfig", ifname, "inet", address, "alias")
 		return err
 	}
-	_, err := command(ctx, "ip", "-4", "addr", "replace", address, "dev", ifname)
+	args := []string{"-4", "addr", "replace", address, "dev", ifname}
+	if metric > 0 {
+		args = append(args, "metric", strconv.Itoa(metric))
+	}
+	_, err := command(ctx, "ip", args...)
 	return err
+}
+
+func dhcpv4LeaseAddressMatches(ctx context.Context, osName platform.OS, command outputCommandFunc, ifname, address string, metric int) (bool, error) {
+	if osName == platform.OSFreeBSD {
+		return dhcpv4LeaseAddressPresent(ctx, osName, command, ifname, address)
+	}
+	out, err := command(ctx, "ip", "-j", "-4", "addr", "show", "dev", ifname)
+	if err != nil {
+		return false, fmt.Errorf("observe IPv4 addresses on %s: %w", ifname, err)
+	}
+	var links []struct {
+		Addresses []struct {
+			Local     string `json:"local"`
+			PrefixLen int    `json:"prefixlen"`
+			Metric    int    `json:"metric"`
+		} `json:"addr_info"`
+	}
+	if err := json.Unmarshal(out, &links); err != nil {
+		return false, fmt.Errorf("decode IPv4 addresses on %s: %w", ifname, err)
+	}
+	for _, link := range links {
+		for _, item := range link.Addresses {
+			if fmt.Sprintf("%s/%d", item.Local, item.PrefixLen) == address && item.Metric == metric {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 func dhcpv4LeaseAddressPresent(ctx context.Context, osName platform.OS, command outputCommandFunc, ifname, address string) (bool, error) {
