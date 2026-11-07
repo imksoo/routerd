@@ -639,8 +639,12 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 					dhcp4 = true
 				}
 			}
-			if source == "static" && importStaticIPv4Address(address, ifname, ip) {
-				prefix := netip.PrefixFrom(ip, address.PrefixLen).String()
+			prefix := netip.PrefixFrom(ip, address.PrefixLen).String()
+			_, existingIPv4 := staticAddresses[resource.Metadata.Name+"|"+prefix]
+			if !existingIPv4 {
+				_, existingIPv4 = staticAddresses[ifname+"|"+prefix]
+			}
+			if (source == "static" || (source != "DHCPv4" && existingIPv4)) && importStaticIPv4Address(address, ifname, ip) {
 				static, exists := staticAddresses[resource.Metadata.Name+"|"+prefix]
 				if !exists {
 					static, exists = staticAddresses[ifname+"|"+prefix]
@@ -660,8 +664,11 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 				warnings = append(warnings, fmt.Sprintf("%s: static address %s imported; review manager handoff and address attributes", ifname, prefix))
 				continue
 			}
-			if source == "static" && importStaticIPv6Address(address, ifname, ip) {
-				prefix := netip.PrefixFrom(ip, address.PrefixLen).String()
+			_, existingIPv6 := staticIPv6[resource.Metadata.Name+"|"+prefix]
+			if !existingIPv6 {
+				_, existingIPv6 = staticIPv6[ifname+"|"+prefix]
+			}
+			if (source == "static" || (source == "" && existingIPv6)) && importStaticIPv6Address(address, ifname, ip) {
 				static, exists := staticIPv6[resource.Metadata.Name+"|"+prefix]
 				if !exists {
 					static, exists = staticIPv6[ifname+"|"+prefix]
