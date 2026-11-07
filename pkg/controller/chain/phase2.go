@@ -898,8 +898,8 @@ func (c DHCPv6ServerController) reconcile(ctx context.Context) error {
 			return restoreDnsmasqHostsForRetry(configPath, reloadOnly, hostsSnapshot, err)
 		}
 		if reloadOnly && !changed {
-			if err := reloadDnsmasqHostsSidecar(ctx, pidFile, configPath, hostsSnapshot, reloadDnsmasq); err != nil {
-				return err
+			if err := reloadDnsmasq(ctx, pidFile); err != nil {
+				return restoreDnsmasqHostsForRetry(configPath, true, hostsSnapshot, err)
 			}
 		}
 	}

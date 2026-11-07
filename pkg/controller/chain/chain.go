@@ -6955,13 +6955,6 @@ func restoreDnsmasqHostsForRetry(configPath string, sidecarChanged bool, snapsho
 	return reloadErr
 }
 
-func reloadDnsmasqHostsSidecar(ctx context.Context, pidFile, configPath string, snapshot dnsmasqHostsSnapshot, reload func(context.Context, string) error) error {
-	if err := reload(ctx, pidFile); err != nil {
-		return restoreDnsmasqHostsForRetry(configPath, true, snapshot, err)
-	}
-	return nil
-}
-
 func ensureSystemdDnsmasqService(ctx context.Context, systemdDir, command, configPath, pidFile string, changed bool) error {
 	const service = "routerd-dnsmasq.service"
 	if systemdDir == "" {
