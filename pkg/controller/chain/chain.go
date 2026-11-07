@@ -2475,9 +2475,12 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 		}},
 		framework.FuncController{ControllerName: "dhcpv6-information", Every: 30 * time.Second, Subs: append(statusSubscriptions("DHCPv6PrefixDelegation"), bus.Subscription{Topics: []string{daemonapi.EventDHCPv6InfoReplyReceived}}), ReconcileFunc: func(ctx context.Context, event daemonapi.DaemonEvent) error {
 			request := event.Type == "routerd.controller.bootstrap" || becamePhase(event, daemonapi.ResourcePhaseBound)
-			for _, resource := range r.currentRouter().Spec.Resources {
+			current := info
+			current.Router = r.currentRouter()
+			current.Store = store.withRouter(current.Router)
+			for _, resource := range current.Router.Spec.Resources {
 				if resource.Kind == "DHCPv6PrefixDelegation" {
-					if err := info.reconcile(ctx, resource.Metadata.Name, request); err != nil {
+					if err := current.reconcile(ctx, resource.Metadata.Name, request); err != nil {
 						return err
 					}
 				}
