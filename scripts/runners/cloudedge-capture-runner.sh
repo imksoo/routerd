@@ -28,11 +28,6 @@ ENV:
   CE_CAPTURE_REMOTE_IFACE                 Remote endpoint iface (default any).
   CE_CAPTURE_ROUTER_ROLE                  Router role for ce_router_ssh (default active).
   CE_CAPTURE_REMOTE_DIR                   Remote pcap dir prefix (default /tmp/routerd-cloudedge-capture).
-  CE_CAPTURE_START_COMMAND                Optional local fake/override for one point start.
-  CE_CAPTURE_STOP_COMMAND                 Optional local fake/override for one point stop.
-  CE_CAPTURE_COPY_COMMAND                 Optional local fake/override to write CE_CAPTURE_PATH.
-  CE_CAPTURE_<ROLE>_<START|STOP|COPY>_COMMAND
-                                           Role-specific override, role uppercased with '-' as '_'.
 
 The live implementation targets routerd Linux nodes through ce_client_ssh and
 ce_router_ssh. Cisco EPC is intentionally out of scope for this runner.
@@ -146,35 +141,6 @@ point_host() {
       ;;
   esac
   printf '%s' "${host:-unresolved:$node}"
-}
-
-has_override() {
-  local role=$1 phase=$2 role_upper phase_upper
-  role_upper=$(ce_upper "$role")
-  phase_upper=$(ce_upper "$phase")
-  ce_env_first "CE_CAPTURE_${role_upper}_${phase_upper}_COMMAND" "CE_CAPTURE_${phase_upper}_COMMAND" >/dev/null 2>&1
-}
-
-run_override() {
-  local role=$1 phase=$2 node=$3 host=$4 iface=$5 filename=$6 path=$7 remote_path=$8 pid_path=$9 filter=${10} command=${11}
-  local role_upper phase_upper override
-  role_upper=$(ce_upper "$role")
-  phase_upper=$(ce_upper "$phase")
-  override=$(ce_env_first "CE_CAPTURE_${role_upper}_${phase_upper}_COMMAND" "CE_CAPTURE_${phase_upper}_COMMAND" 2>/dev/null || true)
-  [[ -n "$override" ]] || return 1
-  CE_CAPTURE_PHASE=$phase \
-  CE_CAPTURE_TEST_ID=$test_id \
-  CE_CAPTURE_ROLE=$role \
-  CE_CAPTURE_NODE=$node \
-  CE_CAPTURE_HOST=$host \
-  CE_CAPTURE_IFACE=$iface \
-  CE_CAPTURE_FILENAME=$filename \
-  CE_CAPTURE_PATH=$path \
-  CE_CAPTURE_REMOTE_PATH=$remote_path \
-  CE_CAPTURE_PID_PATH=$pid_path \
-  CE_CAPTURE_FILTER=$filter \
-  CE_CAPTURE_COMMAND=$command \
-    bash -lc "$override"
 }
 
 ssh_for_point() {
@@ -331,11 +297,7 @@ run_start() {
     at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     reason=""
     exit_status=0
-    if has_override "$role" start; then
-      run_override "$role" start "$node" "$host" "$iface" "$filename" "$local_path" "$remote_path" "$pid_path" "$filter" "$command" || exit_status=$?
-    else
-      ssh_for_point "$role" "$node" "$command" || exit_status=$?
-    fi
+    ssh_for_point "$role" "$node" "$command" || exit_status=$?
     if [[ "$exit_status" -ne 0 ]]; then
       reason="start_failed"
       reasons+=("$role:$reason")
@@ -417,8 +379,6 @@ PY
     then
       exit_status=99
       reason="start_failed_skip_stop"
-    elif has_override "$role" stop; then
-      run_override "$role" stop "$node" "$host" "$iface" "$filename" "$local_path" "$remote_path" "$pid_path" "$filter" "$command" || exit_status=$?
     else
       ssh_for_point "$role" "$node" "$command" || exit_status=$?
     fi
@@ -435,8 +395,6 @@ PY
     if [[ "$exit_status" -ne 0 ]]; then
       copy_exit=99
       reason="stop_failed_skip_copy"
-    elif has_override "$role" copy; then
-      run_override "$role" copy "$node" "$host" "$iface" "$filename" "$local_path" "$remote_path" "$pid_path" "$filter" "$copy_cmd" || copy_exit=$?
     else
       ssh_for_point "$role" "$node" "$copy_cmd" >"$local_path" || copy_exit=$?
     fi

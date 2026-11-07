@@ -97,11 +97,6 @@ scripts/runners/cloudedge-capture-runner.sh stop \
   --ports 22,2049
 ```
 
-Use `CE_CAPTURE_<ROLE>_<START|STOP|COPY>_COMMAND` or the generic
-`CE_CAPTURE_START_COMMAND`, `CE_CAPTURE_STOP_COMMAND`, and
-`CE_CAPTURE_COPY_COMMAND` overrides to fake captures in offline tests or adapt a
-lab without editing the shared runner.
-
 Cloud fabric evidence runs collect provider control-plane state and normalize it
 with `scripts/cloudedge-cloud-fabric-schema.json`. The runner writes provider
 JSON, an aggregate manifest, a Markdown summary, and CF test-record rows under
