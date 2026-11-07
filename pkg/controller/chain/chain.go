@@ -2358,7 +2358,12 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "sysctl", Every: 5 * time.Minute, Subs: bootstrapSubscriptions(), PeriodicFunc: didWorkPeriodic(sysctl.Reconcile)},
-		framework.FuncController{ControllerName: "network-adoption", Every: 5 * time.Minute, Subs: statusSubscriptions("Interface"), PeriodicFunc: didWorkPeriodic(adoption.Reconcile)},
+		framework.FuncController{ControllerName: "network-adoption", Every: 5 * time.Minute, Subs: statusSubscriptions("Interface"), PeriodicFunc: func(ctx context.Context) (bool, error) {
+			current := adoption
+			current.Router = r.currentRouter()
+			current.Store = store.withRouter(current.Router)
+			return didWorkError(current.Reconcile(ctx))
+		}},
 		framework.FuncController{ControllerName: "bridge", Every: 30 * time.Second, Subs: statusSubscriptions("Interface", "VXLANTunnel", "VXLANSegment"), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveForReconcile()
 			if err != nil {
@@ -2590,9 +2595,12 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			}
 			return didWorkError(dhcpv6.reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "dhcpv4-lease", Every: 10 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.dhcpv4.client.**"}}}, ReconcileFunc: func(ctx context.Context, _ daemonapi.DaemonEvent) error {
-			return dhcp4Client.ReconcileAll(ctx)
-		}, PeriodicFunc: didWorkPeriodic(dhcp4Client.ReconcileAll)},
+		framework.FuncController{ControllerName: "dhcpv4-lease", Every: 10 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.dhcpv4.client.**"}}}, PeriodicFunc: func(ctx context.Context) (bool, error) {
+			current := dhcp4Client
+			current.Router = r.currentRouter()
+			current.Store = store.withRouter(current.Router)
+			return didWorkError(current.ReconcileAll(ctx))
+		}},
 		framework.FuncController{ControllerName: "pppoe-session", Subs: []bus.Subscription{{Topics: []string{"routerd.pppoe.client.**"}}}, ReconcileFunc: func(ctx context.Context, _ daemonapi.DaemonEvent) error {
 			for _, resource := range r.currentRouter().Spec.Resources {
 				if resource.Kind == "PPPoESession" {
