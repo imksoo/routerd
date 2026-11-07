@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-var runIfconfig = func(args ...string) ([]byte, error) {
+func runIfconfig(args ...string) ([]byte, error) {
 	return exec.Command("ifconfig", args...).CombinedOutput()
 }
 
