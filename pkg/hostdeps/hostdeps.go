@@ -73,6 +73,7 @@ var ubuntuPackages = map[string][]string{
 	"kmod":          {"kmod"},
 	"nat":           {"nftables"},
 	"nft":           {"nftables"},
+	"iptables":      {"iptables"},
 	"ntp":           {"chrony"},
 	"pppoe":         {"ppp"},
 	"network-utils": {"iputils-ping", "dnsutils", "traceroute"},
@@ -140,7 +141,14 @@ func packageFeatures(router *api.Router) map[string]bool {
 		case "PPPoESession":
 			features["pppoe"] = true
 			features["nft"] = true
+		case "MobilityPool":
+			features["iptables"] = true
 		case "WireGuardInterface", "WireGuardPeer":
+			if res.Kind == "WireGuardInterface" {
+				if spec, err := res.WireGuardInterfaceSpec(); err == nil && spec.ListenPort > 0 {
+					features["iptables"] = true
+				}
+			}
 			features["wireguard"] = true
 			features["kmod"] = true
 			features["nft"] = true
