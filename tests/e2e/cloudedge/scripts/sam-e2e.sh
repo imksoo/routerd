@@ -1297,7 +1297,7 @@ warm_onprem_discovery() {
   [ -n \"\$ip\" ] || continue
   probe_started=\"\$(date -u +%Y-%m-%dT%H:%M:%SZ)\"
   probe_rc=0
-  timeout 3 ping -I '$pve_capture_interface' -c 2 -W 1 \"\$ip\" || probe_rc=\$?
+  ping -I '$pve_capture_interface' -c 2 -W 1 \"\$ip\" || probe_rc=\$?
   printf 'PROBE node=%s interface=%s destination=%s started_at=%s finished_at=%s exit=%s\n' \
     '$node' '$pve_capture_interface' \"\$ip\" \"\$probe_started\" \"\$(date -u +%Y-%m-%dT%H:%M:%SZ)\" \"\$probe_rc\"
 done <<'IPS'
@@ -1903,18 +1903,8 @@ legacy_protocol_matrix() {
 }
 
 performance_iperf_attempt() {
-  local src="$1" dst="$2" command="$3" output="$4" attempt="$5" rc=0
-  local prefix="$output.attempt-$attempt"
-  local restart='set -e; sudo pkill -9 iperf3 >/dev/null 2>&1 || true; sleep 2; if sudo iperf3 -s -D </dev/null >/tmp/routerd-e2e-iperf3-start.log 2>&1; then :; else rc=$?; cat /tmp/routerd-e2e-iperf3-start.log >&2 || true; exit "$rc"; fi; sleep 2'
-  capture_ssh_evidence "$dst" "$prefix.server.stdout" "$prefix.server.stderr" "$prefix.server.result.tsv" "$restart" || rc=$?
-  if [ "$rc" -ne 0 ]; then
-    cat "$prefix.server.stderr" >&2
-    return "$rc"
-  fi
-  capture_ssh_evidence "$src" "$prefix.json" "$prefix.stderr" "$prefix.result.tsv" "$command" || rc=$?
-  # Keep the existing canonical filename for metric readers; never erase attempts.
-  cp "$prefix.json" "$output" || return "$?"
-  return "$rc"
+  local src="$1" command="$2" output="$3"
+  capture_ssh_evidence "$src" "$output" "$output.stderr" "$output.result.tsv" "$command"
 }
 
 performance_matrix() {
@@ -1944,21 +1934,21 @@ performance_matrix() {
         echo "## tcp iperf3"
         ok=0
         for attempt in 1 2 3; do
-          performance_iperf_attempt "$src" "$dst" "timeout 20s iperf3 -J -c '$dst_ip' -B '$src_ip' -t 5" "$out/${src}_to_${dst}.iperf3-tcp.json" "$attempt" && { ok=1; break; }
+          performance_iperf_attempt "$src" "iperf3 -J -c '$dst_ip' -B '$src_ip' -t 5" "$out/${src}_to_${dst}.iperf3-tcp.json" && { ok=1; break; }
           sleep 5
         done
         [ "$ok" -eq 1 ] || result=FAIL_TCP
         echo "## udp iperf3"
         ok=0
         for attempt in 1 2 3; do
-          performance_iperf_attempt "$src" "$dst" "timeout 20s iperf3 -J -u -b 10M -c '$dst_ip' -B '$src_ip' -t 5" "$out/${src}_to_${dst}.iperf3-udp.json" "$attempt" && { ok=1; break; }
+          performance_iperf_attempt "$src" "iperf3 -J -u -b 10M -c '$dst_ip' -B '$src_ip' -t 5" "$out/${src}_to_${dst}.iperf3-udp.json" && { ok=1; break; }
           sleep 5
         done
         [ "$ok" -eq 1 ] || result=FAIL_UDP
         echo "## small packet ping sample"
         ok=0
         for attempt in 1 2 3; do
-          ssh_node "$src" "timeout 20s ping -I '$src_ip' -s 56 -c 100 -i 0.01 '$dst_ip'" >"$out/${src}_to_${dst}.ping-pps.txt" && { ok=1; break; }
+          ssh_node "$src" "ping -I '$src_ip' -s 56 -c 100 -i 0.01 '$dst_ip'" >"$out/${src}_to_${dst}.ping-pps.txt" && { ok=1; break; }
           sleep 2
         done
         [ "$ok" -eq 1 ] || result=FAIL_PING_PPS
@@ -1983,21 +1973,21 @@ performance_matrix() {
           echo "## tcp iperf3"
           ok=0
           for attempt in 1 2 3; do
-              performance_iperf_attempt "$src" "$dst" "timeout 20s iperf3 -J -c '$dst_public' -t 5" "$out/${src}_to_${dst}.public-iperf3-tcp.json" "$attempt" && { ok=1; break; }
+              performance_iperf_attempt "$src" "iperf3 -J -c '$dst_public' -t 5" "$out/${src}_to_${dst}.public-iperf3-tcp.json" "$attempt" && { ok=1; break; }
             sleep 5
           done
           [ "$ok" -eq 1 ] || public_result=FAIL_PUBLIC_TCP
           echo "## udp iperf3"
           ok=0
           for attempt in 1 2 3; do
-              performance_iperf_attempt "$src" "$dst" "timeout 20s iperf3 -J -u -b 10M -c '$dst_public' -t 5" "$out/${src}_to_${dst}.public-iperf3-udp.json" "$attempt" && { ok=1; break; }
+              performance_iperf_attempt "$src" "iperf3 -J -u -b 10M -c '$dst_public' -t 5" "$out/${src}_to_${dst}.public-iperf3-udp.json" "$attempt" && { ok=1; break; }
             sleep 5
           done
           [ "$ok" -eq 1 ] || public_result=FAIL_PUBLIC_UDP
           echo "## public ping sample"
           ok=0
           for attempt in 1 2 3; do
-            ssh_node "$src" "timeout 20s ping -c 20 -W 2 '$dst_public'" >"$out/${src}_to_${dst}.public-ping.txt" && { ok=1; break; }
+            ssh_node "$src" "ping -c 20 -W 2 '$dst_public'" >"$out/${src}_to_${dst}.public-ping.txt" && { ok=1; break; }
             sleep 2
           done
           [ "$ok" -eq 1 ] || public_result=FAIL_PUBLIC_PING
