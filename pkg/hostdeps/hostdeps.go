@@ -67,6 +67,7 @@ var ubuntuPackages = map[string][]string{
 	"base":          {"iproute2"},
 	"bgp":           {},
 	"conntrack":     {"conntrack"},
+	"conntrackd":    {"conntrackd"},
 	"dhcp-dns":      {"dnsmasq-base"},
 	"dpi":           {"libnetfilter-log1", "libndpi-bin"},
 	"ipsec":         {"strongswan-swanctl"},
@@ -129,6 +130,10 @@ func packageFeatures(router *api.Router) map[string]bool {
 		case "NAT44Rule", "NAT44FlowDNATPinhole":
 			features["nat"] = true
 			features["conntrack"] = true
+		case "NAT44SessionSync":
+			if spec, err := res.NAT44SessionSyncSpec(); err == nil && strings.TrimSpace(spec.Mode) == "conntrackd" {
+				features["conntrackd"] = true
+			}
 		case "FirewallZone", "FirewallPolicy", "FirewallRule", "FirewallFlowPinhole", "FirewallEventLog", "ClientPolicy", "IPAddressSet", "PortForward", "IngressService", "LocalServiceRedirect":
 			features["nft"] = true
 		case "TrafficFlowLog", "ConntrackObserver":
