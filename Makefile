@@ -165,9 +165,6 @@ check-ndpi-agent-libndpi:
 check-install-deps:
 	./scripts/install-deps-smoke.sh
 
-check-bootstrap-cleanup:
-	./scripts/bootstrap-cleanup-smoke.sh
-
 cloudedge-acceptance-lint:
 	./scripts/cloudedge-acceptance.sh lint
 

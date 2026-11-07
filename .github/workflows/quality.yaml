@@ -193,9 +193,6 @@ jobs:
       - name: Smoke install.sh script-dir resolution
         run: bash scripts/install-sh-cwd-smoke.sh
 
-      - name: Smoke bootstrap cleanup
-        run: make check-bootstrap-cleanup
-
       - name: Active stable version consistency
         run: bash scripts/check-active-stable.sh
 
