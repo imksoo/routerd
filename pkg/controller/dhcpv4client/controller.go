@@ -237,6 +237,13 @@ func (c Controller) applyLease(ctx context.Context, name string, current, next m
 	if command == nil {
 		command = runOutputCommandContext
 	}
+	previousGateway := mapString(current, "appliedDefaultGateway")
+	previousMetric := mapString(current, "appliedRouteMetric")
+	if previousGateway != "" && (!api.BoolDefault(spec.UseRoutes, true) || previousGateway != mapString(next, "defaultGateway") || mapString(current, "ifname") != ifname || previousMetric != strconv.Itoa(spec.RouteMetric)) {
+		if err := c.removeLeaseRoute(ctx, name, current, next); err != nil {
+			return err
+		}
+	}
 	previousAddress := mapString(current, "appliedAddress")
 	if previousAddress != "" && previousAddress != wantedAddress {
 		present, err := dhcpv4LeaseAddressPresent(ctx, platform.CurrentOS(), command, ifname, previousAddress)
@@ -262,13 +269,6 @@ func (c Controller) applyLease(ctx context.Context, name string, current, next m
 	}
 	next["appliedAddress"] = wantedAddress
 	next["ifname"] = ifname
-	previousGateway := mapString(current, "appliedDefaultGateway")
-	previousMetric := mapString(current, "appliedRouteMetric")
-	if previousGateway != "" && (!api.BoolDefault(spec.UseRoutes, true) || previousGateway != mapString(next, "defaultGateway") || mapString(current, "ifname") != ifname || previousMetric != strconv.Itoa(spec.RouteMetric)) {
-		if err := c.removeLeaseRoute(ctx, name, current, next); err != nil {
-			return err
-		}
-	}
 	if api.BoolDefault(spec.UseRoutes, true) {
 		gateway := strings.TrimSpace(fmt.Sprint(next["defaultGateway"]))
 		if gateway != "" {
