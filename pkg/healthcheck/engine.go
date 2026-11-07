@@ -109,11 +109,6 @@ type Controller struct {
 	state map[string]*State
 }
 
-type ProbeDaemon interface {
-	Run(ctx context.Context, resource api.Resource) error
-	Status(ctx context.Context) (daemonapi.DaemonStatus, error)
-}
-
 func (c *Controller) Start(ctx context.Context) {
 	if c.Router == nil || c.Bus == nil || c.Store == nil {
 		return
