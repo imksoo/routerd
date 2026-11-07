@@ -61,15 +61,6 @@ func NewOutbox(events EventStore, deliveries DeliveryStore, pusher *Pusher, grou
 
 func (o *Outbox) SetMetrics(m *Metrics) { o.metrics = m }
 
-// SetMaxConcurrentPeerDrains changes the bounded per-pass peer parallelism.
-// Call it before Run or RunOnce. Values less than one restore the safe default.
-func (o *Outbox) SetMaxConcurrentPeerDrains(max int) {
-	if max < 1 {
-		max = DefaultMaxConcurrentPeerDrains
-	}
-	o.maxConcurrentPeerDrains = max
-}
-
 // Run drains once immediately, then on every interval tick until ctx is done.
 // onError, when non-nil, is invoked with any drain error. Mirrors Pruner.Run.
 func (o *Outbox) Run(ctx context.Context, onError func(error)) {

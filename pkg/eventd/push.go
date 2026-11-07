@@ -80,53 +80,9 @@ func peerMatches(peer PeerConfig, ev federation.Event) bool {
 	return true
 }
 
-// PushEvent delivers ev to every matching peer, recording delivery state. It
-// returns the first error encountered enqueuing/persisting (delivery failures
-// are recorded as state.DeliveryFailed and do not return an error). ctx cancels
-// in-flight retries.
-func (p *Pusher) PushEvent(ctx context.Context, ev federation.Event) error {
-	body, err := json.Marshal(ev)
-	if err != nil {
-		return fmt.Errorf("marshal event: %w", err)
-	}
-	for _, peer := range p.peers {
-		if err := p.pushEventToPeer(ctx, peer, ev, body); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// PushEventPending delivers ev to every matching peer EXCEPT those for which
-// isDelivered(peer.NodeName) reports true (the event was already confirmed
-// delivered to that peer). It is the outbox-loop entry point: the Outbox passes
-// a closure backed by the delivery store so already-delivered (event,peer) pairs
-// are not re-pushed and their attempt counters are not bumped. Delivery logic
-// (filtering, enqueue, signed POST, backoff, status recording) is reused from
-// the per-peer path. isDelivered may be nil (treat all peers as pending).
-func (p *Pusher) PushEventPending(ctx context.Context, ev federation.Event, isDelivered func(peerNode string) bool) error {
-	body, err := json.Marshal(ev)
-	if err != nil {
-		return fmt.Errorf("marshal event: %w", err)
-	}
-	for _, peer := range p.peers {
-		if !peerMatches(peer, ev) {
-			continue
-		}
-		if isDelivered != nil && isDelivered(peer.NodeName) {
-			continue
-		}
-		if err := p.pushEventToPeer(ctx, peer, ev, body); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // PushEventToPeer delivers ev to one peer. It is used by Outbox's per-peer
 // drain workers so another peer's retry/backoff cannot delay this peer. The
-// method keeps the same filtering, durable enqueue, retry, and metrics path as
-// PushEvent and PushEventPending.
+// method filters, enqueues, retries, and records delivery metrics.
 func (p *Pusher) PushEventToPeer(ctx context.Context, ev federation.Event, peer PeerConfig) error {
 	body, err := json.Marshal(ev)
 	if err != nil {
