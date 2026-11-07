@@ -4,6 +4,7 @@ package nat44
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -27,6 +28,8 @@ type Store interface {
 	SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error
 	ObjectStatus(apiVersion, kind, name string) map[string]any
 }
+
+const TableAppliedEvent = "routerd.nat44.table.applied"
 
 type Controller struct {
 	Router       *api.Router
@@ -235,7 +238,13 @@ func (c Controller) Reconcile(ctx context.Context) error {
 			return err
 		}
 	}
-	return finish(changed, missing)
+	var notifyErr error
+	if c.Bus != nil {
+		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, TableAppliedEvent, daemonapi.SeverityInfo)
+		event.Attributes = map[string]string{"nftablesPath": path}
+		notifyErr = c.Bus.Publish(ctx, event)
+	}
+	return errors.Join(finish(changed, missing), notifyErr)
 }
 
 func (c Controller) removeUnusedNATTables(ctx context.Context, data []byte) error {

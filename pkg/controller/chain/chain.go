@@ -2752,7 +2752,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 		framework.FuncController{ControllerName: "daemon-supervisor", Every: 5 * time.Second, Subs: whenStatusSubscriptions(r.currentRouter(), "DNSResolver", "DHCPv6PrefixDelegation", "DHCPv4Client", "PPPoESession"), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			return false, r.reconcileSupervisedClientDaemons(ctx, r.daemonSupervisionRouter(store), logger)
 		}},
-		framework.FuncController{ControllerName: "ip-address-set", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.currentRouter(), []string{"IPAddressSet", "LocalServiceRedirect", "FirewallFlowPinhole"}, "IPAddressSet", "LocalServiceRedirect", "FirewallFlowPinhole"), PeriodicFunc: func(ctx context.Context) (bool, error) {
+		framework.FuncController{ControllerName: "ip-address-set", Every: 30 * time.Second, Subs: append(statusSubscriptionsWithWhen(r.currentRouter(), []string{"IPAddressSet", "LocalServiceRedirect", "FirewallFlowPinhole"}, "IPAddressSet", "LocalServiceRedirect", "FirewallFlowPinhole"), bus.Subscription{Topics: []string{nat44.TableAppliedEvent}}), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return false, err
