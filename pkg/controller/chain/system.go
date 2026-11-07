@@ -188,6 +188,24 @@ func (c NetworkAdoptionController) cleanupStaleNetworkdAdoptionDropins(ctx conte
 	if err := json.Unmarshal(out, &status); err != nil {
 		return fmt.Errorf("decode networkd interfaces: %w", err)
 	}
+	protected := map[string]bool{}
+	if c.Router != nil {
+		for _, name := range c.Router.Spec.Apply.ProtectedInterfaces {
+			protected[name] = true
+			protected[interfaceIfName(c.Router, name)] = true
+		}
+	}
+	for _, iface := range status.Interfaces {
+		if protected[iface.Name] && iface.NetworkFile != "" {
+			delete(stale, filepath.Base(iface.NetworkFile)+".d")
+		}
+	}
+	if len(stale) == 0 {
+		if pending != "" && !c.DryRun {
+			return c.Store.SaveObjectStatus(api.SystemAPIVersion, "NetworkAdoptionCleanup", cleanupStatus, map[string]any{"pending": ""})
+		}
+		return nil
+	}
 	if !c.DryRun {
 		dirs := make([]string, 0, len(stale))
 		for dir := range stale {
