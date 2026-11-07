@@ -859,9 +859,6 @@ type DHCPv6ServerController struct {
 	PIDFile         string
 	Port            int
 	ListenAddresses []string
-	Now             func() time.Time
-	RALinkLocal     routerAdvertisementLinkLocalFunc
-	RASender        routerAdvertisementSenderFunc
 }
 
 func (c DHCPv6ServerController) reconcile(ctx context.Context) error {

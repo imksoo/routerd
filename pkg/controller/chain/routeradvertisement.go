@@ -26,14 +26,8 @@ type deprecatedPrefixInformation struct {
 	ValidLifetime uint32
 }
 
-type routerAdvertisementLinkLocalFunc func(context.Context, string) (netip.Addr, error)
-type routerAdvertisementSenderFunc func(context.Context, string, netip.Addr, []byte) error
-
 func (c DHCPv6ServerController) advertisePreviousDelegatedPrefixes(ctx context.Context, spec api.IPv6RouterAdvertisementSpec) error {
 	now := time.Now().UTC()
-	if c.Now != nil {
-		now = c.Now().UTC()
-	}
 	prefixes := previousDelegatedPrefixInformation(spec, c.Store, now)
 	if len(prefixes) == 0 {
 		return nil
@@ -42,22 +36,14 @@ func (c DHCPv6ServerController) advertisePreviousDelegatedPrefixes(ctx context.C
 	if ifname == "" {
 		ifname = spec.Interface
 	}
-	linkLocal := c.RALinkLocal
-	if linkLocal == nil {
-		linkLocal = interfaceIPv6LinkLocalAddress
-	}
-	source, err := linkLocal(ctx, ifname)
+	source, err := interfaceIPv6LinkLocalAddress(ctx, ifname)
 	if err != nil {
 		return err
 	}
 	if !source.Is6() || !source.IsLinkLocalUnicast() {
 		return fmt.Errorf("IPv6 RA source on %s is not link-local: %s", ifname, source)
 	}
-	sender := c.RASender
-	if sender == nil {
-		sender = sendRouterAdvertisement
-	}
-	return sender(ctx, ifname, source, buildDeprecatedPrefixRouterAdvertisement(spec, prefixes))
+	return sendRouterAdvertisement(ctx, ifname, source, buildDeprecatedPrefixRouterAdvertisement(spec, prefixes))
 }
 
 func previousDelegatedPrefixInformation(spec api.IPv6RouterAdvertisementSpec, store Store, now time.Time) []deprecatedPrefixInformation {
