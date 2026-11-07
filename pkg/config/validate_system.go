@@ -245,7 +245,7 @@ func validateSystemResource(res api.Resource, targetOS platform.OS) (bool, error
 		if spec.Interface == "" && spec.IfName == "" && !spec.SystemdResolved.DisableDNSStubListener {
 			return true, fmt.Errorf("%s must set spec.interface, spec.ifname, or spec.systemdResolved.disableDNSStubListener", res.ID())
 		}
-		for field, value := range map[string]string{"interface": spec.Interface, "ifname": spec.IfName, "systemdNetworkd.dropinName": spec.SystemdNetworkd.DropinName, "systemdResolved.dropinName": spec.SystemdResolved.DropinName} {
+		for field, value := range map[string]string{"interface": spec.Interface, "ifname": spec.IfName} {
 			if strings.ContainsAny(value, "\x00\n\r") {
 				return true, fmt.Errorf("%s spec.%s contains invalid characters", res.ID(), field)
 			}

@@ -69,7 +69,7 @@ func (c NetworkAdoptionController) Reconcile(ctx context.Context) error {
 			return err
 		}
 		if firstNonEmpty(spec.State, "present") != "absent" && resolvedAdoptionConfigured(spec.SystemdResolved) {
-			path := filepath.Join(c.ResolvedDropinDir, firstNonEmpty(spec.SystemdResolved.DropinName, "90-routerd-adoption.conf"))
+			path := filepath.Join(c.ResolvedDropinDir, "90-routerd-adoption.conf")
 			desiredResolvedDropins[filepath.Clean(path)] = true
 		}
 		osName := c.OSName
@@ -325,7 +325,7 @@ func (c NetworkAdoptionController) applyNetworkAdoption(ctx context.Context, nam
 		}
 		if networkFile != "" {
 			networkdManaged = true
-			path := filepath.Join(c.NetworkdDropinBase, filepath.Base(networkFile)+".d", firstNonEmpty(spec.SystemdNetworkd.DropinName, "90-routerd-adoption.conf"))
+			path := filepath.Join(c.NetworkdDropinBase, filepath.Base(networkFile)+".d", "90-routerd-adoption.conf")
 			paths = append(paths, path)
 			if state == "absent" {
 				removed, err := removeFileIfExists(path, c.DryRun)
@@ -366,7 +366,7 @@ func (c NetworkAdoptionController) applyNetworkAdoption(ctx context.Context, nam
 		}
 	}
 	if resolvedAdoptionConfigured(spec.SystemdResolved) {
-		path := filepath.Join(c.ResolvedDropinDir, firstNonEmpty(spec.SystemdResolved.DropinName, "90-routerd-adoption.conf"))
+		path := filepath.Join(c.ResolvedDropinDir, "90-routerd-adoption.conf")
 		paths = append(paths, path)
 		if state == "absent" {
 			removed, err := removeFileIfExists(path, c.DryRun)

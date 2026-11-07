@@ -252,7 +252,6 @@ type NetworkAdoptionNetworkdSpec struct {
 	DHCPv4UseRoutes   *bool             `yaml:"dhcpv4UseRoutes,omitempty" json:"dhcpv4UseRoutes,omitempty"`
 	DHCPv4UseDNS      *bool             `yaml:"dhcpv4UseDNS,omitempty" json:"dhcpv4UseDNS,omitempty"`
 	DHCPv4RouteMetric int               `yaml:"dhcpv4RouteMetric,omitempty" json:"dhcpv4RouteMetric,omitempty" jsonschema:"minimum=0"`
-	DropinName        string            `yaml:"dropinName,omitempty" json:"dropinName,omitempty"`
 	DNS               *InterfaceDNSSpec `yaml:"dns,omitempty" json:"dns,omitempty"`
 }
 
@@ -260,7 +259,6 @@ type NetworkAdoptionResolvedSpec struct {
 	DisableDNSStubListener bool     `yaml:"disableDNSStubListener,omitempty" json:"disableDNSStubListener,omitempty"`
 	DNSServers             []string `yaml:"dnsServers,omitempty" json:"dnsServers,omitempty"`
 	FallbackDNSServers     []string `yaml:"fallbackDNSServers,omitempty" json:"fallbackDNSServers,omitempty"`
-	DropinName             string   `yaml:"dropinName,omitempty" json:"dropinName,omitempty"`
 }
 
 type SystemdUnitSpec struct {

@@ -177,10 +177,10 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 			if ifname == "" {
 				ifname = aliases[spec.Interface]
 			}
-			intents = append(intents, artifact("systemd.network.dropin", ifname+"/"+defaultString(spec.SystemdNetworkd.DropinName, "90-routerd-adoption.conf"), action, "systemd-networkd", nil))
+			intents = append(intents, artifact("systemd.network.dropin", ifname+"/"+"90-routerd-adoption.conf", action, "systemd-networkd", nil))
 		}
 		if resolvedAdoptionConfigured(spec.SystemdResolved) {
-			intents = append(intents, artifact("systemd.resolved.dropin", defaultString(spec.SystemdResolved.DropinName, "90-routerd-adoption.conf"), action, "systemd-resolved", nil))
+			intents = append(intents, artifact("systemd.resolved.dropin", "90-routerd-adoption.conf", action, "systemd-resolved", nil))
 		}
 		return intents
 	case "Sysctl":
