@@ -90,11 +90,6 @@ resources:
 		}
 		if len(activeTargets) > 0 && len(existingTargets) > 0 && cached && current["phase"] == "Applied" {
 			if ipAddressSetTargetsCurrent(cachedResult, activeTargets, existingOutputs) {
-				next := copyStatusMap(current)
-				next["nftVerifiedAt"] = now.Format(time.RFC3339Nano)
-				if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPAddressSet", resource.Metadata.Name, next); err != nil {
-					return err
-				}
 				continue
 			}
 		}
@@ -197,9 +192,6 @@ resources:
 		if cached {
 			status["resolvedAt"] = current["resolvedAt"]
 			status["minTTLSeconds"] = current["minTTLSeconds"]
-		}
-		if len(activeTargets) > 0 {
-			status["nftVerifiedAt"] = now.Format(time.RFC3339Nano)
 		}
 		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPAddressSet", resource.Metadata.Name, status); err != nil {
 			return err
