@@ -93,33 +93,131 @@ type networkdImportStatus struct {
 		PrefixLength int    `json:"PrefixLength"`
 		ConfigSource string `json:"ConfigSource"`
 	} `json:"Addresses"`
+	Routes []struct {
+		Family                  int    `json:"Family"`
+		Destination             []int  `json:"Destination"`
+		DestinationPrefixLength int    `json:"DestinationPrefixLength"`
+		Gateway                 []int  `json:"Gateway"`
+		PreferredSource         []int  `json:"PreferredSource"`
+		Priority                int    `json:"Priority"`
+		Table                   int    `json:"Table"`
+		Flags                   int    `json:"Flags"`
+		Type                    int    `json:"Type"`
+		Scope                   int    `json:"Scope"`
+		TOS                     int    `json:"TOS"`
+		ProtocolString          string `json:"ProtocolString"`
+		ConfigSource            string `json:"ConfigSource"`
+		ConfigState             string `json:"ConfigState"`
+	} `json:"Routes"`
 }
 
-func networkdAddressSources(ifname string) (map[string]string, string, error) {
+func networkdAddressSources(ifname string) (map[string]string, map[string]bool, string, error) {
 	out, err := exec.Command("networkctl", "--json=short", "status", ifname).Output()
 	if err != nil {
-		return nil, "", err
+		return nil, nil, "", err
 	}
 	var status networkdImportStatus
 	if err := json.Unmarshal(out, &status); err != nil {
-		return nil, "", err
+		return nil, nil, "", err
 	}
 	sources := make(map[string]string, len(status.Addresses))
 	for _, address := range status.Addresses {
 		bytes := make([]byte, len(address.Address))
 		for i, value := range address.Address {
 			if value < 0 || value > 255 {
-				return nil, "", fmt.Errorf("invalid networkd address byte %d", value)
+				return nil, nil, "", fmt.Errorf("invalid networkd address byte %d", value)
 			}
 			bytes[i] = byte(value)
 		}
 		ip, ok := netip.AddrFromSlice(bytes)
 		if !ok || address.PrefixLength < 0 || address.PrefixLength > ip.BitLen() {
-			return nil, "", fmt.Errorf("invalid networkd address or prefix length")
+			return nil, nil, "", fmt.Errorf("invalid networkd address or prefix length")
 		}
 		sources[netip.PrefixFrom(ip, address.PrefixLength).String()] = address.ConfigSource
 	}
-	return sources, status.NetworkFile, nil
+	staticRoutes := map[string]bool{}
+	for _, route := range status.Routes {
+		if route.Family != 2 || route.ConfigSource != "static" || route.ConfigState != "configured" || route.ProtocolString != "static" || route.Table != 254 || route.Type != 1 || route.Scope != 0 || route.TOS != 0 || (route.Flags != 0 && route.Flags != 4) || len(route.PreferredSource) != 0 {
+			continue
+		}
+		destination, ok := importIPv4Bytes(route.Destination)
+		if !ok || route.DestinationPrefixLength < 0 || route.DestinationPrefixLength > 32 {
+			continue
+		}
+		gateway, ok := importIPv4Bytes(route.Gateway)
+		if !ok {
+			continue
+		}
+		prefix := netip.PrefixFrom(destination, route.DestinationPrefixLength).Masked().String()
+		staticRoutes[importRouteKey(prefix, gateway.String(), route.Priority, route.Flags == 4)] = true
+	}
+	return sources, staticRoutes, status.NetworkFile, nil
+}
+
+func importIPv4Bytes(values []int) (netip.Addr, bool) {
+	if len(values) != 4 {
+		return netip.Addr{}, false
+	}
+	var bytes [4]byte
+	for i, value := range values {
+		if value < 0 || value > 255 {
+			return netip.Addr{}, false
+		}
+		bytes[i] = byte(value)
+	}
+	return netip.AddrFrom4(bytes), true
+}
+
+func importRouteKey(destination, gateway string, metric int, onLink bool) string {
+	return fmt.Sprintf("%s|%s|%d|%t", destination, gateway, metric, onLink)
+}
+
+func importKernelStaticIPv4Route(raw json.RawMessage, ifname string) (api.IPv4RouteSpec, bool) {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil {
+		return api.IPv4RouteSpec{}, false
+	}
+	for key := range fields {
+		switch key {
+		case "dst", "gateway", "dev", "protocol", "metric", "flags", "table", "type", "scope":
+		default:
+			return api.IPv4RouteSpec{}, false
+		}
+	}
+	var route struct {
+		Destination string          `json:"dst"`
+		Gateway     string          `json:"gateway"`
+		Device      string          `json:"dev"`
+		Protocol    string          `json:"protocol"`
+		Metric      int             `json:"metric"`
+		Flags       []string        `json:"flags"`
+		Table       json.RawMessage `json:"table"`
+		Type        string          `json:"type"`
+		Scope       string          `json:"scope"`
+	}
+	if json.Unmarshal(raw, &route) != nil || route.Protocol != "static" || (route.Device != "" && route.Device != ifname) || (route.Type != "" && route.Type != "unicast") || (route.Scope != "" && route.Scope != "global") || (len(route.Table) != 0 && string(route.Table) != `"main"` && string(route.Table) != "254") {
+		return api.IPv4RouteSpec{}, false
+	}
+	destination := route.Destination
+	if destination == "default" {
+		destination = "0.0.0.0/0"
+	}
+	prefix, err := netip.ParsePrefix(destination)
+	if err != nil || !prefix.Addr().Is4() {
+		return api.IPv4RouteSpec{}, false
+	}
+	gateway, err := netip.ParseAddr(route.Gateway)
+	if err != nil || !gateway.Is4() {
+		return api.IPv4RouteSpec{}, false
+	}
+	onLink := false
+	for _, flag := range route.Flags {
+		if flag != "onlink" || onLink {
+			return api.IPv4RouteSpec{}, false
+		}
+		onLink = true
+	}
+	return api.IPv4RouteSpec{Destination: prefix.Masked().String(), Device: ifname, Gateway: gateway.String(), Metric: route.Metric, GatewayOnLink: onLink}, true
 }
 
 func importStaticIPv4Address(address importAddress, ifname string, ip netip.Addr) bool {
@@ -175,6 +273,8 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 	usedDHCPNames := map[string]bool{}
 	staticAddresses := map[string]api.Resource{}
 	usedStaticNames := map[string]bool{}
+	existingRoutes := map[string]api.Resource{}
+	usedRouteNames := map[string]bool{}
 	if *configPath != "" {
 		router, err := config.Load(*configPath)
 		if err != nil {
@@ -182,6 +282,18 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 		}
 		name = router.Metadata.Name
 		for _, resource := range router.Spec.Resources {
+			if resource.Kind == "IPv4Route" {
+				spec, err := resource.IPv4RouteSpec()
+				if err != nil {
+					return err
+				}
+				usedRouteNames[resource.Metadata.Name] = true
+				if spec.Device != "" && spec.Gateway != "" && spec.DeviceFrom.Resource == "" && spec.GatewayFrom.Resource == "" && spec.PreferredSource == "" && (spec.Type == "" || spec.Type == "unicast") {
+					key := spec.Device + "|" + importRouteKey(spec.Destination, spec.Gateway, spec.Metric, spec.GatewayOnLink)
+					existingRoutes[key] = resource
+				}
+				continue
+			}
 			if resource.Kind == "IPv4StaticAddress" {
 				spec, err := resource.IPv4StaticAddressSpec()
 				if err != nil {
@@ -239,7 +351,7 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 			return fmt.Errorf("interface %s not found in kernel output", ifname)
 		}
 		link := links[0]
-		sources, networkFile, sourceErr := networkdAddressSources(ifname)
+		sources, staticRoutes, networkFile, sourceErr := networkdAddressSources(ifname)
 		if sourceErr != nil {
 			warnings = append(warnings, fmt.Sprintf("%s: networkd address sources unavailable: %v", ifname, sourceErr))
 		} else if networkFile != "" {
@@ -352,6 +464,28 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 				return fmt.Errorf("decode %s routes for %s: %w", family, ifname, err)
 			}
 			for _, route := range routes {
+				if family == "-4" {
+					spec, ok := importKernelStaticIPv4Route(route, ifname)
+					key := importRouteKey(spec.Destination, spec.Gateway, spec.Metric, spec.GatewayOnLink)
+					if ok && staticRoutes[key] {
+						candidate, exists := existingRoutes[ifname+"|"+key]
+						if exists {
+							candidate.Status = nil
+						} else {
+							clean := strings.NewReplacer(".", "-", "/", "-")
+							base := fmt.Sprintf("%s-route-%s-via-%s-%d", resource.Metadata.Name, clean.Replace(spec.Destination), clean.Replace(spec.Gateway), spec.Metric)
+							name := base
+							for suffix := 2; usedRouteNames[name]; suffix++ {
+								name = fmt.Sprintf("%s-%d", base, suffix)
+							}
+							candidate = api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4Route"}, Metadata: api.ObjectMeta{Name: name}, Spec: spec}
+						}
+						usedRouteNames[candidate.Metadata.Name] = true
+						router.Spec.Resources = append(router.Spec.Resources, candidate)
+						warnings = append(warnings, fmt.Sprintf("%s: static route %s via %s imported; review manager handoff", ifname, spec.Destination, spec.Gateway))
+						continue
+					}
+				}
 				warnings = append(warnings, fmt.Sprintf("%s: %s route requires source configuration: %s", ifname, family, string(route)))
 			}
 		}

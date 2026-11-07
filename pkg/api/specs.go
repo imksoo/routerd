@@ -1695,10 +1695,12 @@ type IPv4RouteSpec struct {
 	// PreferredSource programs the Linux route preferred source (RTA_PREFSRC).
 	// It is useful for host-originated traffic that must use a stable logical
 	// source address while still following an explicit delivery route.
-	PreferredSource string                   `yaml:"preferredSource,omitempty" json:"preferredSource,omitempty"`
-	Metric          int                      `yaml:"metric,omitempty" json:"metric,omitempty" jsonschema:"minimum=0"`
-	DependsOn       []ResourceDependencySpec `yaml:"dependsOn,omitempty" json:"dependsOn,omitempty"`
-	ReadyWhen       []ReadyWhenSpec          `yaml:"ready_when,omitempty" json:"-"`
+	PreferredSource string `yaml:"preferredSource,omitempty" json:"preferredSource,omitempty"`
+	// GatewayOnLink marks the IPv4 gateway as reachable through the output link.
+	GatewayOnLink bool                     `yaml:"gatewayOnLink,omitempty" json:"gatewayOnLink,omitempty"`
+	Metric        int                      `yaml:"metric,omitempty" json:"metric,omitempty" jsonschema:"minimum=0"`
+	DependsOn     []ResourceDependencySpec `yaml:"dependsOn,omitempty" json:"dependsOn,omitempty"`
+	ReadyWhen     []ReadyWhenSpec          `yaml:"ready_when,omitempty" json:"-"`
 }
 
 type OverlayPeerSpec struct {

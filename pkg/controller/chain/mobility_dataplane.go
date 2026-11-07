@@ -178,7 +178,7 @@ func (c IPv4RouteController) applyMobilityRoute(ctx context.Context, route dynam
 		preferredSource = ""
 	}
 	applied.PreferredSource = preferredSource
-	if platform.CurrentOS() != platform.OSFreeBSD && ipv4RouteInstalled(ctx, c.run, "unicast", route.Destination, route.Device, "", preferredSource, route.Metric) {
+	if platform.CurrentOS() != platform.OSFreeBSD && ipv4RouteInstalled(ctx, c.run, "unicast", route.Destination, route.Device, "", preferredSource, route.Metric, false) {
 		return applied, nil
 	}
 	args := []string{"route", "replace", route.Destination, "dev", route.Device}

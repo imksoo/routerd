@@ -10259,6 +10259,10 @@
                         ],
                         "type": "object"
                       },
+                      "gatewayOnLink": {
+                        "description": "GatewayOnLink marks the IPv4 gateway as reachable through the output link.",
+                        "type": "boolean"
+                      },
                       "metric": {
                         "minimum": 0,
                         "type": "integer"
