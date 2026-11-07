@@ -85,18 +85,6 @@ var serviceDeclarations = []serviceDeclaration{
 		},
 	},
 	{
-		kind: "DHCPv4Server",
-		declare: func(ctx serviceDeclarationContext) []resource.Intent {
-			return []resource.Intent{dnsmasqServiceIntent(ctx)}
-		},
-	},
-	{
-		kind: "DHCPv6Server",
-		declare: func(ctx serviceDeclarationContext) []resource.Intent {
-			return []resource.Intent{dnsmasqServiceIntent(ctx)}
-		},
-	},
-	{
 		kind: "DNSResolver",
 		declare: func(ctx serviceDeclarationContext) []resource.Intent {
 			return []resource.Intent{serviceIntent(ctx, servicemgr.Service{SystemdName: "routerd-dns-resolver@" + ctx.res.Metadata.Name + ".service"}, resource.ActionEnsure, nil)}
@@ -105,6 +93,10 @@ var serviceDeclarations = []serviceDeclaration{
 }
 
 func declaredServiceIntents(ctx serviceDeclarationContext) []resource.Intent {
+	switch ctx.res.Kind {
+	case "DHCPv4Server", "DHCPv6Server", "IPv6RouterAdvertisement", "DHCPv4Relay":
+		return []resource.Intent{dnsmasqServiceIntent(ctx)}
+	}
 	for _, declaration := range serviceDeclarations {
 		if declaration.kind == ctx.res.Kind {
 			return declaration.declare(ctx)
@@ -324,7 +316,7 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 			return nil
 		}
 		return []resource.Intent{artifact("net.vxlan.tunnel", defaultString(spec.IfName, res.Metadata.Name), resource.ActionEnsure, "ip-link", map[string]string{"vni": fmt.Sprintf("%d", spec.VNI)})}
-	case "DHCPv4Server", "DHCPv6Server":
+	case "DHCPv4Server", "DHCPv6Server", "IPv6RouterAdvertisement":
 		intents := []resource.Intent{artifact("dnsmasq.config", "routerd", resource.ActionEnsure, "dnsmasq", nil)}
 		intents = append(intents, declaredServiceIntents(serviceContext)...)
 		return intents
@@ -355,7 +347,8 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 		}
 		return []resource.Intent{artifact("net.ipv6.address", aliases[spec.Interface]+":"+spec.AddressSuffix, resource.ActionEnsure, "platform-network", nil)}
 	case "DHCPv4Relay":
-		return []resource.Intent{artifact("dnsmasq.dhcp.relay", res.Metadata.Name, resource.ActionEnsure, "dnsmasq", nil)}
+		intents := []resource.Intent{artifact("dnsmasq.dhcp.relay", res.Metadata.Name, resource.ActionEnsure, "dnsmasq", nil)}
+		return append(intents, declaredServiceIntents(serviceContext)...)
 	case "SelfAddressPolicy":
 		return []resource.Intent{artifact("routerd.selfAddressPolicy", res.Metadata.Name, resource.ActionEnsure, "routerd", nil)}
 	case "DNSZone":
