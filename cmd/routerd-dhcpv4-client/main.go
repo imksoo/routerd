@@ -460,6 +460,9 @@ func (d *dhcpv4Daemon) restoreLease() error {
 	if err := json.Unmarshal(data, &snapshot); err != nil {
 		return err
 	}
+	if snapshot.Interface != d.opts.ifname {
+		return fmt.Errorf("saved lease is for interface %q, current interface is %q", snapshot.Interface, d.opts.ifname)
+	}
 	d.mu.Lock()
 	d.state = snapshot.State
 	d.lease = dhcpv4client.LeaseFromSnapshot(snapshot)
