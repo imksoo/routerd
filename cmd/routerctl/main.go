@@ -88,6 +88,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return deleteCommand(args[1:], stdout)
 	case "rollback":
 		return rollbackCommand(args[1:], stdout)
+	case "import":
+		return importCommand(args[1:], stdout, stderr)
 	case "adopt":
 		return adoptCommand(args[1:], stdout)
 	case "log-level":
@@ -150,6 +152,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  apply -f <file|-> [--socket <path>] [--replace] [--no-reconcile]")
 	fmt.Fprintln(w, "  delete <kind>/<name> [--socket <path>] [--dry-run] [--force] [--api-version <version>] [--no-reconcile]")
 	fmt.Fprintln(w, "  rollback [--list] [--to <generation>] [--socket <path>] [--state-file <path>] [--no-reconcile]")
+	fmt.Fprintln(w, "  import --interface <name> [--interface <name> ...] [--config <router.yaml>]")
 	fmt.Fprintln(w, "  adopt --candidates|--apply [--config <path>] [--ledger-file <path>]")
 	fmt.Fprintln(w, "  log-level <debug|info|warning|error|default> [--socket <path>]")
 	fmt.Fprintln(w, "  restart dns-resolver [name] [--config <path>]")
