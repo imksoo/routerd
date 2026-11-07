@@ -211,8 +211,12 @@ func (d *dhcpv4Daemon) Run(ctx context.Context) error {
 	if err := d.prepareFilesystem(); err != nil {
 		return err
 	}
-	_ = d.restoreLease()
-	_ = d.restoreEvents()
+	if err := d.restoreLease(); err != nil {
+		fmt.Fprintf(os.Stderr, "restore DHCPv4 lease for %s: %v\n", d.opts.resource, err)
+	}
+	if err := d.restoreEvents(); err != nil {
+		fmt.Fprintf(os.Stderr, "restore DHCPv4 events for %s: %v\n", d.opts.resource, err)
+	}
 	server, listener, err := d.httpServer()
 	if err != nil {
 		return err
