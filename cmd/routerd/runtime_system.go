@@ -11,7 +11,6 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/platform"
-	"github.com/imksoo/routerd/pkg/render"
 	"github.com/imksoo/routerd/pkg/sysctlprofile"
 )
 
@@ -133,52 +132,6 @@ func managedHostnames(router *api.Router) ([]string, error) {
 		hostnames = append(hostnames, spec.Hostname)
 	}
 	return hostnames, nil
-}
-
-func applyNetworkConfig(netplanPath string, netplanData []byte, networkdFiles []render.File) ([]string, error) {
-	changedNetworkdFiles, createdNetworkdFiles, err := applyFiles(networkdFiles)
-	if err != nil {
-		return nil, err
-	}
-	if len(netplanData) == 0 {
-		return changedNetworkdFiles, nil
-	}
-	netplanChanged, err := writeFileIfChanged(netplanPath, netplanData, 0600)
-	if err != nil {
-		return nil, fmt.Errorf("write netplan %s: %w", netplanPath, err)
-	}
-	var changedFiles []string
-	changedFiles = append(changedFiles, changedNetworkdFiles...)
-	if netplanChanged {
-		changedFiles = append(changedFiles, netplanPath)
-	}
-	if len(changedFiles) == 0 {
-		return nil, nil
-	}
-	if netplanChanged {
-		if err := runLogged("netplan", "generate"); err != nil {
-			return nil, err
-		}
-		if err := runLogged("netplan", "apply"); err != nil {
-			return nil, err
-		}
-	} else if hasNewNetdevFiles(createdNetworkdFiles) {
-		if err := runLogged("systemctl", "restart", "systemd-networkd"); err != nil {
-			return nil, err
-		}
-	} else {
-		if hasNetworkdUnitFiles(changedNetworkdFiles) {
-			if err := runLogged("networkctl", "reload"); err != nil {
-				return nil, err
-			}
-		}
-		for _, ifname := range changedNetworkdInterfaces(changedNetworkdFiles) {
-			if err := runLogged("networkctl", "reconfigure", ifname); err != nil {
-				return nil, err
-			}
-		}
-	}
-	return changedFiles, nil
 }
 
 func applyRuntimeLinuxNetworkResources(router *api.Router) ([]string, error) {

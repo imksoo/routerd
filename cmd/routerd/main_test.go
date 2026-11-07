@@ -76,51 +76,6 @@ func TestServeConfigMutatorPlanSanitizesUninitializedStateSchema(t *testing.T) {
 	}
 }
 
-func TestApplyFilesReportsCreatedAndChanged(t *testing.T) {
-	dir := t.TempDir()
-	netdevPath := filepath.Join(dir, "10-routerd-vxlan100.netdev")
-	dropinPath := filepath.Join(dir, "ens18.network.d", "90-routerd.conf")
-	netdevData := []byte("[NetDev]\nName=vxlan100\nKind=vxlan\n")
-	dropinData := []byte("[Network]\nDHCP=yes\n")
-
-	if err := os.MkdirAll(filepath.Dir(dropinPath), 0755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	if err := os.WriteFile(dropinPath, dropinData, 0644); err != nil {
-		t.Fatalf("seed dropin: %v", err)
-	}
-	if err := os.Chmod(dropinPath, 0644); err != nil {
-		t.Fatalf("chmod dropin: %v", err)
-	}
-
-	changed, created, err := applyFiles([]render.File{
-		{Path: netdevPath, Data: netdevData},
-		{Path: dropinPath, Data: dropinData},
-	})
-	if err != nil {
-		t.Fatalf("applyFiles: %v", err)
-	}
-	if len(changed) != 1 || changed[0] != netdevPath {
-		t.Fatalf("changed = %v, want [%s]", changed, netdevPath)
-	}
-	if len(created) != 1 || created[0] != netdevPath {
-		t.Fatalf("created = %v, want [%s]", created, netdevPath)
-	}
-
-	changed, created, err = applyFiles([]render.File{
-		{Path: netdevPath, Data: append(netdevData, '\n')},
-	})
-	if err != nil {
-		t.Fatalf("applyFiles second call: %v", err)
-	}
-	if len(changed) != 1 || changed[0] != netdevPath {
-		t.Fatalf("second call changed = %v", changed)
-	}
-	if len(created) != 0 {
-		t.Fatalf("second call created = %v, want none", created)
-	}
-}
-
 func TestApplyIPsecConnectionsSynchronizesWholeOwnedDirectory(t *testing.T) {
 	dir := t.TempDir()
 	stale := filepath.Join(dir, "routerd-stale.conf")
@@ -2164,52 +2119,6 @@ func TestControllerResourceKindsUseCanonicalNames(t *testing.T) {
 	}
 	if !reflect.DeepEqual(kinds, []string{"DHCPv6Server", "IPv6RouterAdvertisement"}) {
 		t.Fatalf("dhcpv6 resource kinds = %v", kinds)
-	}
-}
-
-func TestHasNewNetdevFiles(t *testing.T) {
-	if !hasNewNetdevFiles([]string{"/etc/systemd/network/10-vxlan.netdev"}) {
-		t.Fatal("expected new .netdev to be detected")
-	}
-	if hasNewNetdevFiles([]string{"/etc/systemd/network/10-vxlan.network"}) {
-		t.Fatal("plain .network should not trigger new-netdev path")
-	}
-	if hasNewNetdevFiles(nil) {
-		t.Fatal("nil should not trigger")
-	}
-}
-
-func TestApplyNetworkConfigSkipsUnchangedFiles(t *testing.T) {
-	dir := t.TempDir()
-	netplanPath := filepath.Join(dir, "netplan", "90-routerd.yaml")
-	dropinPath := filepath.Join(dir, "systemd", "10-netplan-ens18.network.d", "90-routerd-dhcpv6-pd.conf")
-	netplanData := []byte("network:\n  version: 2\n")
-	dropinData := []byte("[Network]\nDHCP=yes\n")
-
-	if err := os.MkdirAll(filepath.Dir(netplanPath), 0755); err != nil {
-		t.Fatalf("create netplan dir: %v", err)
-	}
-	if err := os.MkdirAll(filepath.Dir(dropinPath), 0755); err != nil {
-		t.Fatalf("create dropin dir: %v", err)
-	}
-	if err := os.WriteFile(netplanPath, netplanData, 0600); err != nil {
-		t.Fatalf("write netplan fixture: %v", err)
-	}
-	if err := os.WriteFile(dropinPath, dropinData, 0644); err != nil {
-		t.Fatalf("write dropin fixture: %v", err)
-	}
-	if err := os.Chmod(dropinPath, 0644); err != nil {
-		t.Fatalf("chmod dropin fixture: %v", err)
-	}
-
-	changed, err := applyNetworkConfig(netplanPath, netplanData, []render.File{
-		{Path: dropinPath, Data: dropinData},
-	})
-	if err != nil {
-		t.Fatalf("apply network config: %v", err)
-	}
-	if len(changed) != 0 {
-		t.Fatalf("changed files = %v, want none", changed)
 	}
 }
 
@@ -4338,23 +4247,6 @@ func TestHealthCheckPingSourceUsesDSLiteLocalAddress(t *testing.T) {
 	}, map[string]string{"wan": "ens18", "transix": "ds-transix"})
 	if source != "2001:db8::3" {
 		t.Fatalf("ping source = %q, want 2001:db8::3", source)
-	}
-}
-
-func TestChangedNetworkdInterfaces(t *testing.T) {
-	got := changedNetworkdInterfaces([]string{
-		"/etc/systemd/network/10-netplan-ens19.network.d/90-routerd-dhcpv6-pd.conf",
-		"/etc/systemd/network/10-netplan-ens19.network.d/90-routerd-extra.conf",
-		"/etc/systemd/network/10-netplan-ens18.network.d/90-routerd-dhcpv6-pd.conf",
-	})
-	want := []string{"ens19", "ens18"}
-	if len(got) != len(want) {
-		t.Fatalf("interfaces = %v, want %v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("interfaces = %v, want %v", got, want)
-		}
 	}
 }
 
