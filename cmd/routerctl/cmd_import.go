@@ -370,14 +370,15 @@ func networkdDHCPv4Enabled(files []string) (bool, error) {
 	return enabled, nil
 }
 
-func networkdDHCPv4Options(files []string) (useRoutes, useDNS *bool, metric int, useMTU bool, err error) {
+func networkdDHCPv4Options(files []string) (useRoutes, useDNS *bool, metric int, useMTU bool, hostname string, err error) {
 	if len(files) == 0 {
-		return nil, nil, 0, false, errors.New("networkd configuration file is unavailable")
+		return nil, nil, 0, false, "", errors.New("networkd configuration file is unavailable")
 	}
+	sendHostname := true
 	for _, path := range files {
 		data, readErr := os.ReadFile(path)
 		if readErr != nil {
-			return nil, nil, 0, false, readErr
+			return nil, nil, 0, false, "", readErr
 		}
 		section := ""
 		for _, line := range strings.Split(string(data), "\n") {
@@ -395,7 +396,7 @@ func networkdDHCPv4Options(files []string) (useRoutes, useDNS *bool, metric int,
 			}
 			key, value = strings.TrimSpace(key), strings.TrimSpace(value)
 			switch key {
-			case "UseRoutes", "UseDNS", "UseMTU":
+			case "UseRoutes", "UseDNS", "UseMTU", "SendHostname":
 				var v bool
 				switch strings.ToLower(value) {
 				case "yes", "true", "1", "on":
@@ -403,25 +404,42 @@ func networkdDHCPv4Options(files []string) (useRoutes, useDNS *bool, metric int,
 				case "no", "false", "0", "off":
 					v = false
 				default:
-					return nil, nil, 0, false, fmt.Errorf("%s: invalid %s=%q", path, key, value)
+					return nil, nil, 0, false, "", fmt.Errorf("%s: invalid %s=%q", path, key, value)
 				}
 				if key == "UseRoutes" {
 					useRoutes = &v
 				} else if key == "UseDNS" {
 					useDNS = &v
-				} else {
+				} else if key == "UseMTU" {
 					useMTU = v
+				} else {
+					sendHostname = v
 				}
+			case "Hostname":
+				hostname = value
 			case "RouteMetric":
 				n, parseErr := strconv.Atoi(value)
 				if parseErr != nil || n < 0 {
-					return nil, nil, 0, false, fmt.Errorf("%s: invalid RouteMetric=%q", path, value)
+					return nil, nil, 0, false, "", fmt.Errorf("%s: invalid RouteMetric=%q", path, value)
 				}
 				metric = n
 			}
 		}
 	}
-	return useRoutes, useDNS, metric, useMTU, nil
+	if sendHostname {
+		if hostname == "" {
+			hostname, err = os.Hostname()
+			if err != nil {
+				return nil, nil, 0, false, "", err
+			}
+		}
+		if len(hostname) > 63 || strings.HasPrefix(hostname, "-") || strings.HasSuffix(hostname, "-") || strings.Trim(hostname, "abcdefghijklmnopqrstuvwxyz0123456789-") != "" {
+			hostname = ""
+		}
+	} else {
+		hostname = ""
+	}
+	return useRoutes, useDNS, metric, useMTU, hostname, nil
 }
 
 func networkdDHCPv4ClientID(ifindex int, address string) (string, error) {
@@ -767,7 +785,7 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 			}
 		}
 		if dhcp4 {
-			useRoutes, useDNS, routeMetric, useMTU, optionErr := networkdDHCPv4Options(networkFiles)
+			useRoutes, useDNS, routeMetric, useMTU, hostname, optionErr := networkdDHCPv4Options(networkFiles)
 			if optionErr != nil {
 				warnings = append(warnings, fmt.Sprintf("%s: DHCPv4 options could not be imported: %v", ifname, optionErr))
 			}
@@ -789,6 +807,9 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 					warnings = append(warnings, fmt.Sprintf("%s: existing DHCPv4Client identifier differs from the networkd lease", ifname))
 				}
 				if optionErr == nil {
+					if spec.Hostname != hostname {
+						warnings = append(warnings, fmt.Sprintf("%s: existing DHCPv4Client hostname differs from networkd", ifname))
+					}
 					if spec.UseMTU != useMTU {
 						warnings = append(warnings, fmt.Sprintf("%s: existing DHCPv4Client useMTU differs from networkd", ifname))
 					}
@@ -807,7 +828,7 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 				for suffix := 2; usedDHCPNames[clientName]; suffix++ {
 					clientName = fmt.Sprintf("%s-dhcp4-%d", resource.Metadata.Name, suffix)
 				}
-				client = api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client"}, Metadata: api.ObjectMeta{Name: clientName}, Spec: api.DHCPv4ClientSpec{Interface: resource.Metadata.Name, ClientIDHex: clientID, UseRoutes: useRoutes, UseDNS: useDNS, UseMTU: useMTU, RouteMetric: routeMetric}}
+				client = api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client"}, Metadata: api.ObjectMeta{Name: clientName}, Spec: api.DHCPv4ClientSpec{Interface: resource.Metadata.Name, Hostname: hostname, ClientIDHex: clientID, UseRoutes: useRoutes, UseDNS: useDNS, UseMTU: useMTU, RouteMetric: routeMetric}}
 			}
 			usedDHCPNames[client.Metadata.Name] = true
 			router.Spec.Resources = append(router.Spec.Resources, client)
