@@ -4132,9 +4132,6 @@ type IPv4StaticAddressController struct {
 	MobilityDataplane dynamicconfig.MobilityDataplanePlan
 	DryRun            bool
 	Logger            *slog.Logger
-	Command           commandFunc
-	AddressPresent    func(context.Context, string, string) bool
-	DevicePresent     func(context.Context, string) bool
 }
 
 type DaemonStatusController struct {
@@ -4455,10 +4452,7 @@ func (c IPv4StaticAddressController) Reconcile(ctx context.Context) error {
 			"address":   spec.Address,
 			"dryRun":    c.DryRun,
 		}
-		devicePresentFn := c.DevicePresent
-		if devicePresentFn == nil {
-			devicePresentFn = interfaceDevicePresent
-		}
+		devicePresentFn := interfaceDevicePresent
 		if !c.DryRun && !devicePresentFn(ctx, ifname) {
 			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", resource.Metadata.Name, map[string]any{
 				"phase":     "Pending",
@@ -4476,17 +4470,11 @@ func (c IPv4StaticAddressController) Reconcile(ctx context.Context) error {
 		previous := c.Store.ObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", resource.Metadata.Name)
 		addressPresent := true
 		if !c.DryRun {
-			addressPresentFn := c.AddressPresent
-			if addressPresentFn == nil {
-				addressPresentFn = ipv4AddressPresent
-			}
+			addressPresentFn := ipv4AddressPresent
 			addressPresent = addressPresentFn(ctx, ifname, spec.Address)
 		}
 		if !c.DryRun && (changed || !addressPresent) {
-			command := c.Command
-			if command == nil {
-				command = runCommandContext
-			}
+			command := runCommandContext
 			if err := c.cleanupPreviousIPv4StaticAddress(ctx, command, resource.Metadata.Name, previous, ifname, spec.Address); err != nil {
 				if saveErr := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", resource.Metadata.Name, map[string]any{
 					"phase":     "Error",
@@ -4641,15 +4629,9 @@ func (c IPv4StaticAddressController) teardownWhenFalseIPv4StaticAddress(ctx cont
 	}
 	removedAddress := false
 	if !c.DryRun && ifname != "" && address != "" {
-		addressPresentFn := c.AddressPresent
-		if addressPresentFn == nil {
-			addressPresentFn = ipv4AddressPresent
-		}
+		addressPresentFn := ipv4AddressPresent
 		if addressPresentFn(ctx, ifname, address) {
-			command := c.Command
-			if command == nil {
-				command = runCommandContext
-			}
+			command := runCommandContext
 			name, args := ipv4StaticAddressDeleteCommand(platform.CurrentOS(), ifname, address)
 			if err := command(ctx, name, args...); err != nil {
 				status["phase"] = "Error"
@@ -4688,15 +4670,9 @@ func (c IPv4StaticAddressController) teardownRemovedIPv4StaticAddress(ctx contex
 		ifname := cleanStatusString(status.Status["ifname"])
 		address := cleanStatusString(status.Status["address"])
 		if ifname != "" && address != "" {
-			addressPresentFn := c.AddressPresent
-			if addressPresentFn == nil {
-				addressPresentFn = ipv4AddressPresent
-			}
+			addressPresentFn := ipv4AddressPresent
 			if addressPresentFn(ctx, ifname, address) {
-				command := c.Command
-				if command == nil {
-					command = runCommandContext
-				}
+				command := runCommandContext
 				name, args := ipv4StaticAddressDeleteCommand(platform.CurrentOS(), ifname, address)
 				if err := command(ctx, name, args...); err != nil {
 					return fmt.Errorf("delete removed IPv4StaticAddress %s %s dev %s: %w", status.Name, address, ifname, err)
@@ -4742,10 +4718,7 @@ func (c IPv4StaticAddressController) cleanupPreviousIPv4StaticAddress(ctx contex
 	if ipv4StaticAddressDesiredByAnother(c.Router, resourceName, previousIfName, previousAddress) {
 		return nil
 	}
-	addressPresentFn := c.AddressPresent
-	if addressPresentFn == nil {
-		addressPresentFn = ipv4AddressPresent
-	}
+	addressPresentFn := ipv4AddressPresent
 	if !addressPresentFn(ctx, previousIfName, previousAddress) {
 		return nil
 	}
