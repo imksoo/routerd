@@ -371,8 +371,6 @@ type IPv4RouteController struct {
 	MobilityDataplane dynamicconfig.MobilityDataplanePlan
 	DryRun            bool
 	Logger            *slog.Logger
-	Command           func(ctx context.Context, name string, args ...string) ([]byte, error)
-	DevicePresent     func(context.Context, string) bool
 }
 
 func (c IPv4RouteController) reconcile(ctx context.Context) error {
@@ -412,11 +410,7 @@ func (c IPv4RouteController) reconcile(ctx context.Context) error {
 				_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4Route", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "DeviceMissing"})
 				continue
 			}
-			devicePresent := c.DevicePresent
-			if devicePresent == nil {
-				devicePresent = interfaceDevicePresent
-			}
-			if !c.DryRun && !devicePresent(ctx, device) {
+			if !c.DryRun && !interfaceDevicePresent(ctx, device) {
 				_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4Route", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "DeviceNotReady", "destination": destination, "device": device, "gateway": gateway, "preferredSource": preferredSource, "gatewayOnLink": spec.GatewayOnLink, "metric": spec.Metric, "dryRun": c.DryRun})
 				continue
 			}
@@ -788,9 +782,6 @@ func routeLineMatchesDestination(got, want string) bool {
 }
 
 func (c IPv4RouteController) run(ctx context.Context, name string, args ...string) ([]byte, error) {
-	if c.Command != nil {
-		return c.Command(ctx, name, args...)
-	}
 	return exec.CommandContext(ctx, name, args...).CombinedOutput()
 }
 

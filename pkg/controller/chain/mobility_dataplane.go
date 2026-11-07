@@ -166,11 +166,7 @@ func (c IPv4RouteController) applyMobilityRoute(ctx context.Context, route dynam
 	if c.DryRun {
 		return applied, nil
 	}
-	devicePresent := c.DevicePresent
-	if devicePresent == nil {
-		devicePresent = interfaceDevicePresent
-	}
-	if !devicePresent(ctx, route.Device) {
+	if !interfaceDevicePresent(ctx, route.Device) {
 		return mobilityAppliedIPv4Route{}, fmt.Errorf("device %q is not ready", route.Device)
 	}
 	preferredSource := route.PreferredSource
