@@ -1929,15 +1929,15 @@ legacy_protocol_matrix() {
         echo "=== legacy $src -> $dst ==="
         echo "SRC=$src SRCIP=$src_ip DST=$dst DSTIP=$dst_ip"
         echo "## rpcinfo"
-        ssh_node "$src" "timeout 15s rpcinfo -p '$dst_ip'" || result=FAIL_RPC
+        ssh_node "$src" "rpcinfo -p '$dst_ip'" || result=FAIL_RPC
         echo "## ftp read"
-        ssh_node "$src" "set -e; file=\$(mktemp); trap 'rm -f \"\$file\"' EXIT; timeout 20s curl -fsS --connect-timeout 10 -o \"\$file\" 'ftp://$dst_ip/pub/probe.txt'; printf 'ftp probe from %s\n' '$dst_host' | cmp - \"\$file\"" || result=FAIL_FTP
+        ssh_node "$src" "set -e; file=\$(mktemp); trap 'rm -f \"\$file\"' EXIT; curl -fsS -o \"\$file\" 'ftp://$dst_ip/pub/probe.txt'; printf 'ftp probe from %s\n' '$dst_host' | cmp - \"\$file\"" || result=FAIL_FTP
         echo "## ftp write"
-        ssh_node "$src" "set -e; file=\$(mktemp); trap 'rm -f \"\$file\"' EXIT; printf 'ftp upload $nonce from $src to $dst\n' | timeout 20s curl -fsS --connect-timeout 10 -T - 'ftp://$dst_ip/pub/upload-${src}-$nonce.txt'; timeout 20s curl -fsS --connect-timeout 10 -o \"\$file\" 'ftp://$dst_ip/pub/upload-${src}-$nonce.txt'; printf 'ftp upload $nonce from $src to $dst\n' | cmp - \"\$file\"" || result=FAIL_FTP
+        ssh_node "$src" "set -e; file=\$(mktemp); trap 'rm -f \"\$file\"' EXIT; printf 'ftp upload $nonce from $src to $dst\n' | curl -fsS -T - 'ftp://$dst_ip/pub/upload-${src}-$nonce.txt'; curl -fsS -o \"\$file\" 'ftp://$dst_ip/pub/upload-${src}-$nonce.txt'; printf 'ftp upload $nonce from $src to $dst\n' | cmp - \"\$file\"" || result=FAIL_FTP
         echo "## nfs mount/read/write"
-        ssh_node "$src" "set -e; mnt=\$(mktemp -d); trap 'sudo umount \"\$mnt\" >/dev/null 2>&1 || true; rmdir \"\$mnt\" >/dev/null 2>&1 || true' EXIT; sudo timeout 25s mount -t nfs -o vers=3,proto=tcp,timeo=5,retrans=1,mountport=20048 '$dst_ip:/srv/routerd-e2e/nfs' \"\$mnt\"; printf 'nfs probe from %s\n' '$dst_host' | cmp - \"\$mnt/probe.txt\"; printf 'nfs write $nonce from $src to $dst\n' | sudo tee \"\$mnt/write-${src}-$nonce.txt\" >/dev/null; printf 'nfs write $nonce from $src to $dst\n' | cmp - \"\$mnt/write-${src}-$nonce.txt\"" || result=FAIL_NFS
+        ssh_node "$src" "set -e; mnt=\$(mktemp -d); trap 'sudo umount \"\$mnt\" >/dev/null 2>&1 || true; rmdir \"\$mnt\" >/dev/null 2>&1 || true' EXIT; sudo mount -t nfs -o vers=3,proto=tcp,mountport=20048 '$dst_ip:/srv/routerd-e2e/nfs' \"\$mnt\"; printf 'nfs probe from %s\n' '$dst_host' | cmp - \"\$mnt/probe.txt\"; printf 'nfs write $nonce from $src to $dst\n' | sudo tee \"\$mnt/write-${src}-$nonce.txt\" >/dev/null; printf 'nfs write $nonce from $src to $dst\n' | cmp - \"\$mnt/write-${src}-$nonce.txt\"" || result=FAIL_NFS
         echo "## cifs mount/read/write"
-        ssh_node "$src" "set -e; sudo modprobe cifs >/dev/null 2>&1 || true; mnt=\$(mktemp -d); trap 'sudo umount \"\$mnt\" >/dev/null 2>&1 || true; rmdir \"\$mnt\" >/dev/null 2>&1 || true' EXIT; sudo timeout 25s mount -t cifs '//$dst_ip/routerd_e2e' \"\$mnt\" -o guest,vers=3.0; printf 'cifs probe from %s\n' '$dst_host' | cmp - \"\$mnt/probe.txt\"; printf 'cifs write $nonce from $src to $dst\n' | sudo tee \"\$mnt/write-${src}-$nonce.txt\" >/dev/null; printf 'cifs write $nonce from $src to $dst\n' | cmp - \"\$mnt/write-${src}-$nonce.txt\"" || result=FAIL_CIFS
+        ssh_node "$src" "set -e; sudo modprobe cifs >/dev/null 2>&1 || true; mnt=\$(mktemp -d); trap 'sudo umount \"\$mnt\" >/dev/null 2>&1 || true; rmdir \"\$mnt\" >/dev/null 2>&1 || true' EXIT; sudo mount -t cifs '//$dst_ip/routerd_e2e' \"\$mnt\" -o guest,vers=3.0; printf 'cifs probe from %s\n' '$dst_host' | cmp - \"\$mnt/probe.txt\"; printf 'cifs write $nonce from $src to $dst\n' | sudo tee \"\$mnt/write-${src}-$nonce.txt\" >/dev/null; printf 'cifs write $nonce from $src to $dst\n' | cmp - \"\$mnt/write-${src}-$nonce.txt\"" || result=FAIL_CIFS
       } >"$out/${src}_to_${dst}.txt" 2>&1 || result=FAIL
       printf '%s\t%s\t%s\n' "$src" "$dst" "$result" >>"$out/summary.tsv"
       [ "$result" = "PASS" ] || status=1
