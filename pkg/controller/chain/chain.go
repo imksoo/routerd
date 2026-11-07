@@ -2988,7 +2988,12 @@ func (r *Runner) reconcileSupervisedClientDaemons(ctx context.Context, router *a
 	if !r.Opts.SuperviseClientDaemons {
 		return nil
 	}
-	return r.reconcileSupervisedDaemonSpecs(ctx, logger, r.clientDaemonSpecs(router))
+	specs := r.clientDaemonSpecs(router)
+	arpSpecs, arpErr := r.mobilityARPObserverDaemonSpecsWithError()
+	for _, spec := range arpSpecs {
+		specs = append(specs, supervisedDaemonSpec{ResourceName: spec.ResourceName, Binary: "routerd-arp-observer", Args: arpObserverDaemonArgs(spec)})
+	}
+	return errors.Join(arpErr, r.reconcileSupervisedDaemonSpecs(ctx, logger, specs, arpErr == nil))
 }
 
 func (r *Runner) daemonSupervisionRouter(store eventedStore) *api.Router {
@@ -3094,17 +3099,10 @@ func (r *Runner) clientDaemonSpecs(router *api.Router) []supervisedDaemonSpec {
 			out = append(out, supervisedDaemonSpec{ResourceName: resource.Metadata.Name, Binary: "routerd-pppoe-client", Args: args})
 		}
 	}
-	for _, spec := range r.mobilityARPObserverDaemonSpecs() {
-		out = append(out, supervisedDaemonSpec{
-			ResourceName: spec.ResourceName,
-			Binary:       "routerd-arp-observer",
-			Args:         arpObserverDaemonArgs(spec),
-		})
-	}
 	return out
 }
 
-func (r *Runner) reconcileSupervisedDaemonSpecs(ctx context.Context, logger *slog.Logger, specs []supervisedDaemonSpec) error {
+func (r *Runner) reconcileSupervisedDaemonSpecs(ctx context.Context, logger *slog.Logger, specs []supervisedDaemonSpec, reconcileARP bool) error {
 	desired := make(map[string]supervisedDaemonSpec, len(specs))
 	for _, spec := range specs {
 		if spec.ResourceName != "" && spec.Binary != "" {
@@ -3121,6 +3119,9 @@ func (r *Runner) reconcileSupervisedDaemonSpecs(ctx context.Context, logger *slo
 		r.clientDaemonStates = map[string]supervisedDaemonState{}
 	}
 	for key, state := range r.clientDaemonStates {
+		if !reconcileARP && state.Spec.Binary == "routerd-arp-observer" {
+			continue
+		}
 		next, ok := desired[key]
 		if ok && supervisedDaemonSpecEqual(state.Spec, next) {
 			select {
@@ -3137,7 +3138,7 @@ func (r *Runner) reconcileSupervisedDaemonSpecs(ctx context.Context, logger *slo
 	r.supervisedMu.Unlock()
 	for _, process := range processes {
 		binary, resource := supervisedProcessIdentity(process.Args)
-		if binary == "" {
+		if binary == "" || (!reconcileARP && binary == "routerd-arp-observer") {
 			continue
 		}
 		spec, ok := desired[supervisedDaemonKey(binary, resource)]
@@ -3162,7 +3163,9 @@ func (r *Runner) reconcileSupervisedDaemonSpecs(ctx context.Context, logger *slo
 		r.clientDaemonStates[key] = supervisedDaemonState{Spec: spec, Cancel: cancel, Done: done}
 	}
 	r.supervisedMu.Unlock()
-	r.reconcileARPObserverDaemons(ctx, logger)
+	if reconcileARP {
+		r.reconcileARPObserverDaemons(ctx, logger)
+	}
 	return errors.Join(stopErrors...)
 }
 
@@ -3203,18 +3206,23 @@ type mobilityARPObserverDaemonSpec struct {
 }
 
 func (r *Runner) mobilityARPObserverDaemonSpecs() []mobilityARPObserverDaemonSpec {
+	specs, _ := r.mobilityARPObserverDaemonSpecsWithError()
+	return specs
+}
+
+func (r *Runner) mobilityARPObserverDaemonSpecsWithError() ([]mobilityARPObserverDaemonSpec, error) {
 	if r == nil {
-		return nil
+		return nil, nil
 	}
 	lister, ok := r.Store.(dynamicConfigPartLister)
 	if !ok {
-		return nil
+		return nil, errors.New("ARP observer configuration store is unavailable")
 	}
 	records, err := lister.ListDynamicConfigParts()
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("read ARP observer configuration: %w", err)
 	}
-	return r.mobilityARPObserverDaemonSpecsFromIntents(mobilityARPObserverIntentsFromRecords(records, time.Now().UTC()))
+	return r.mobilityARPObserverDaemonSpecsFromIntents(mobilityARPObserverIntentsFromRecords(records, time.Now().UTC())), nil
 }
 
 func (r *Runner) mobilityARPObserverDaemonSpecsFromIntents(intents []dynamicconfig.ARPObserverIntent) []mobilityARPObserverDaemonSpec {
