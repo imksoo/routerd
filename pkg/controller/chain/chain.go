@@ -3130,12 +3130,18 @@ func (r *Runner) reconcileSupervisedDaemonSpecs(ctx context.Context, logger *slo
 			select {
 			case <-state.Done:
 				delete(r.clientDaemonStates, key)
+				if state.Spec.Binary == "routerd-arp-observer" {
+					delete(r.arpObserverReadySet, state.Spec.ResourceName)
+				}
 			default:
 				continue
 			}
 		} else {
 			state.Cancel()
 			delete(r.clientDaemonStates, key)
+			if state.Spec.Binary == "routerd-arp-observer" {
+				delete(r.arpObserverReadySet, state.Spec.ResourceName)
+			}
 		}
 	}
 	r.supervisedMu.Unlock()
@@ -3147,6 +3153,9 @@ func (r *Runner) reconcileSupervisedDaemonSpecs(ctx context.Context, logger *slo
 		spec, ok := desired[supervisedDaemonKey(binary, resource)]
 		if ok && supervisedProcessMatches(process.Args, spec) {
 			continue
+		}
+		if binary == "routerd-arp-observer" {
+			r.setARPObserverReady(resource, false)
 		}
 		if err := stopSupervisedProcess(process.PID); err != nil {
 			stopErrors = append(stopErrors, fmt.Errorf("stop stale %s/%s: %w", binary, resource, err))
