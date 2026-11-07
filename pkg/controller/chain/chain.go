@@ -1292,7 +1292,7 @@ type Runner struct {
 	supervisedMu           sync.Mutex
 	clientDaemonContext    context.Context // serve lifetime, not a controller generation
 	clientDaemonStates     map[string]supervisedDaemonState
-	daemonSourcesStarted   map[string]bool
+	daemonSourcesStarted   map[string]*arpDaemonSource
 	arpObserverReadySet    map[string]bool
 	reloadMu               sync.Mutex
 	reloadCh               chan generationReload
@@ -1316,6 +1316,11 @@ func (r *Runner) startedAt() time.Time {
 		r.processStartedAt = time.Now().UTC()
 	}
 	return r.processStartedAt
+}
+
+type arpDaemonSource struct {
+	socket string
+	cancel context.CancelFunc
 }
 
 type supervisedDaemonSpec struct {
@@ -3278,25 +3283,33 @@ func (r *Runner) mobilityARPObserverDaemonSpecsFromIntents(intents []dynamicconf
 }
 
 func (r *Runner) startARPObserverDaemonSources(ctx context.Context, logger *slog.Logger, specs []mobilityARPObserverDaemonSpec) {
+	desired := make(map[string]string, len(specs))
+	for _, spec := range specs {
+		desired[spec.ResourceName] = spec.Socket
+	}
 	r.supervisedMu.Lock()
 	if r.daemonSourcesStarted == nil {
-		r.daemonSourcesStarted = make(map[string]bool)
+		r.daemonSourcesStarted = make(map[string]*arpDaemonSource)
+	}
+	for name, active := range r.daemonSourcesStarted {
+		if socket, ok := desired[name]; !ok || socket != active.socket || !r.arpObserverReadySet[name] {
+			active.cancel()
+			delete(r.daemonSourcesStarted, name)
+		}
 	}
 	r.supervisedMu.Unlock()
 
 	for _, spec := range specs {
-		if !r.arpObserverReady(spec.ResourceName) {
-			continue
-		}
 		r.supervisedMu.Lock()
-		already := r.daemonSourcesStarted[spec.ResourceName]
-		if !already {
-			r.daemonSourcesStarted[spec.ResourceName] = true
-		}
-		r.supervisedMu.Unlock()
-		if already {
+		if !r.arpObserverReadySet[spec.ResourceName] || r.daemonSourcesStarted[spec.ResourceName] != nil {
+			r.supervisedMu.Unlock()
 			continue
 		}
+		sourceCtx, cancel := context.WithCancel(ctx)
+		active := &arpDaemonSource{socket: spec.Socket, cancel: cancel}
+		r.daemonSourcesStarted[spec.ResourceName] = active
+		r.supervisedMu.Unlock()
+
 		source := daemonsource.DaemonSource{
 			Daemon:    daemonapi.DaemonRef{Name: "routerd-arp-observer-" + spec.ResourceName, Kind: "routerd-arp-observer", Instance: spec.ResourceName},
 			Socket:    spec.Socket,
@@ -3310,10 +3323,13 @@ func (r *Runner) startARPObserverDaemonSources(ctx context.Context, logger *slog
 		go func(spec mobilityARPObserverDaemonSpec, source daemonsource.DaemonSource) {
 			defer func() {
 				r.supervisedMu.Lock()
-				delete(r.daemonSourcesStarted, spec.ResourceName)
+				if r.daemonSourcesStarted[spec.ResourceName] == active {
+					delete(r.daemonSourcesStarted, spec.ResourceName)
+				}
 				r.supervisedMu.Unlock()
+				cancel()
 			}()
-			if err := source.Run(ctx); err != nil && ctx.Err() == nil && logger != nil {
+			if err := source.Run(sourceCtx); err != nil && sourceCtx.Err() == nil && logger != nil {
 				logger.Warn("arp observer daemon source stopped", "resource", spec.ResourceName, "error", err)
 			}
 		}(spec, source)
