@@ -495,6 +495,9 @@ func (c VXLANTunnelController) reconcileOne(ctx context.Context, resource api.Re
 	status["managedBy"] = "routerd"
 	status["restartPersistent"] = false
 	if showErr == nil && !vxlanDetailsConfigMatch(string(observed), cfg) {
+		if err := requireVirtualLink(cfg.IfName); err != nil {
+			return err
+		}
 		if _, err := c.command(ctx, "ip", "link", "set", "dev", cfg.IfName, "down"); err != nil {
 			return err
 		}
@@ -697,6 +700,9 @@ func (c VXLANTunnelController) teardownOne(ctx context.Context, resource api.Res
 		return c.saveTeardownError(resource, status, "LinkObserveFailed", showErr)
 	}
 	if showErr == nil {
+		if err := requireVirtualLink(ifname); err != nil {
+			return c.saveTeardownError(resource, status, "LinkTypeMismatch", err)
+		}
 		// Stop forwarding before deleting the interface.
 		if _, err := c.command(ctx, "ip", "link", "set", "dev", ifname, "down"); err != nil {
 			return c.saveTeardownError(resource, status, "LinkDownFailed", err)
@@ -726,6 +732,18 @@ func (c VXLANTunnelController) teardownOne(ctx context.Context, resource api.Res
 	status["reason"] = string(gate)
 	status["lastDisabledAt"] = time.Now().UTC().Format(time.RFC3339Nano)
 	return c.Store.SaveObjectStatus(api.NetAPIVersion, "VXLANTunnel", resource.Metadata.Name, status)
+}
+
+// Physical interfaces and loopback cannot be replaced by a VXLAN link.
+func requireVirtualLink(ifname string) error {
+	path, err := filepath.EvalSymlinks(filepath.Join("/sys/class/net", ifname))
+	if err != nil {
+		return fmt.Errorf("observe interface %s: %w", ifname, err)
+	}
+	if ifname == "lo" || !strings.HasPrefix(path, "/sys/devices/virtual/net/") {
+		return fmt.Errorf("interface %s is physical or loopback; cannot replace it with VXLAN", ifname)
+	}
+	return nil
 }
 
 func linkObservationMissing(output []byte, err error) bool {
@@ -874,7 +892,16 @@ func (c VXLANTunnelController) command(ctx context.Context, name string, args ..
 }
 
 func vxlanDetailsMatch(observed string, cfg vxlan.Config) bool {
-	return vxlanLinkFlag(observed, "UP") && vxlanDetailsConfigMatch(observed, cfg)
+	if !vxlanLinkFlag(observed, "UP") || !vxlanDetailsConfigMatch(observed, cfg) {
+		return false
+	}
+	if cfg.MTU != 0 && !strings.Contains(observed, " mtu "+fmt.Sprint(cfg.MTU)+" ") {
+		return false
+	}
+	if cfg.Bridge != "" {
+		return strings.Contains(observed, "master "+cfg.Bridge)
+	}
+	return !strings.Contains(observed, " master ")
 }
 
 func vxlanLinkFlag(observed, wanted string) bool {
@@ -906,12 +933,6 @@ func vxlanDetailsConfigMatch(observed string, cfg vxlan.Config) bool {
 		if !strings.Contains(observed, want) {
 			return false
 		}
-	}
-	if cfg.MTU != 0 && !strings.Contains(observed, " mtu "+fmt.Sprint(cfg.MTU)+" ") {
-		return false
-	}
-	if cfg.Bridge != "" && !strings.Contains(observed, "master "+cfg.Bridge) {
-		return false
 	}
 	if !strings.Contains(observed, " df "+defaultVXLANOuterDF(cfg.OuterDF)) {
 		return false
