@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -59,6 +60,7 @@ func (c NetworkAdoptionController) Reconcile(ctx context.Context) error {
 		lanInterfaces[ifname] = true
 	}
 	desiredResolvedDropins := map[string]bool{}
+	var adoptionErrors []error
 	for _, resource := range networkAdoptionControllerResources(c.Router) {
 		spec, err := resource.NetworkAdoptionSpec()
 		if err != nil {
@@ -98,9 +100,10 @@ func (c NetworkAdoptionController) Reconcile(ctx context.Context) error {
 				"dryRun":    c.DryRun,
 				"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
 			}); saveErr != nil {
-				return saveErr
+				adoptionErrors = append(adoptionErrors, saveErr)
 			}
-			return err
+			adoptionErrors = append(adoptionErrors, fmt.Errorf("NetworkAdoption/%s: %w", resource.Metadata.Name, err))
+			continue
 		}
 		if changed && !c.DryRun && firstNonEmpty(spec.State, "present") != "absent" && lanInterfaces[ifname] && spec.SystemdNetworkd.DisableIPv6RA {
 			if err := flushLANIPv6RADefaultRoute(ctx, command, ifname); err != nil {
@@ -132,10 +135,10 @@ func (c NetworkAdoptionController) Reconcile(ctx context.Context) error {
 	}
 	if features.HasSystemd {
 		if _, _, err := c.cleanupStaleResolvedAdoptionDropins(ctx, desiredResolvedDropins, command); err != nil {
-			return err
+			adoptionErrors = append(adoptionErrors, err)
 		}
 	}
-	return nil
+	return errors.Join(adoptionErrors...)
 }
 
 func (c NetworkAdoptionController) cleanupStaleResolvedAdoptionDropins(ctx context.Context, desired map[string]bool, command outputCommandFunc) ([]string, bool, error) {
