@@ -1449,14 +1449,16 @@ func (c IPv4PolicyRouteController) applyNftTable(ctx context.Context, nft, path,
 		if c.DryRun {
 			return nil
 		}
-		exists := exec.CommandContext(ctx, nft, "list", "table", family, table).Run() == nil
-		if !exists && nftstate.RecentlyVerified(path, time.Now().UTC()) {
+		out, err := exec.CommandContext(ctx, nft, "list", "table", family, table).CombinedOutput()
+		if nftListMissing(out, err) {
 			return nil
 		}
-		if exists {
-			_ = exec.CommandContext(ctx, nft, "delete", "table", family, table).Run()
+		if err != nil {
+			return fmt.Errorf("list nft table %s %s: %w: %s", family, table, err, strings.TrimSpace(string(out)))
 		}
-		_ = nftstate.MarkVerified(path, time.Now().UTC())
+		if out, err := exec.CommandContext(ctx, nft, "delete", "table", family, table).CombinedOutput(); err != nil {
+			return fmt.Errorf("delete nft table %s %s: %w: %s", family, table, err, strings.TrimSpace(string(out)))
+		}
 		return nil
 	}
 	if c.DryRun {
@@ -1465,7 +1467,7 @@ func (c IPv4PolicyRouteController) applyNftTable(ctx context.Context, nft, path,
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
-	changed, err := writeFileIfChanged(path, data, 0644, false)
+	changed, err := writeFileIfChanged(path, data, 0644, true)
 	if err != nil {
 		return err
 	}
@@ -1474,11 +1476,36 @@ func (c IPv4PolicyRouteController) applyNftTable(ctx context.Context, nft, path,
 		_ = nftstate.MarkVerified(path, time.Now().UTC())
 		return nil
 	}
-	if out, err := exec.CommandContext(ctx, nft, "-c", "-f", path).CombinedOutput(); err != nil {
-		return fmt.Errorf("%s -c -f %s: %w: %s", nft, path, err, strings.TrimSpace(string(out)))
+	applyPath := path
+	if changed {
+		tmp, err := os.CreateTemp(filepath.Dir(path), ".policy-route-*.nft")
+		if err != nil {
+			return err
+		}
+		applyPath = tmp.Name()
+		defer os.Remove(applyPath)
+		if err := tmp.Chmod(0644); err != nil {
+			tmp.Close()
+			return err
+		}
+		if _, err := tmp.Write(data); err != nil {
+			tmp.Close()
+			return err
+		}
+		if err := tmp.Close(); err != nil {
+			return err
+		}
 	}
-	if out, err := exec.CommandContext(ctx, nft, "-f", path).CombinedOutput(); err != nil {
-		return fmt.Errorf("%s -f %s: %w: %s", nft, path, err, strings.TrimSpace(string(out)))
+	if out, err := exec.CommandContext(ctx, nft, "-c", "-f", applyPath).CombinedOutput(); err != nil {
+		return fmt.Errorf("%s -c -f %s: %w: %s", nft, applyPath, err, strings.TrimSpace(string(out)))
+	}
+	if out, err := exec.CommandContext(ctx, nft, "-f", applyPath).CombinedOutput(); err != nil {
+		return fmt.Errorf("%s -f %s: %w: %s", nft, applyPath, err, strings.TrimSpace(string(out)))
+	}
+	if changed {
+		if err := os.Rename(applyPath, path); err != nil {
+			return err
+		}
 	}
 	_ = nftstate.MarkVerified(path, time.Now().UTC())
 	if (changed || missing) && c.Bus != nil {
