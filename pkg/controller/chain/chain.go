@@ -2272,7 +2272,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	bgp := bgpcontroller.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunBGP, Logger: logger, Daemon: bgpDaemon, MutationGate: opts.MutationGate}
 	vrrp := vrrpcontroller.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunVRRP, Logger: logger}
 	ipAddressSet := IPAddressSetController{Router: r.currentRouter(), Store: store, DryRunNAT: opts.DryRunNAT, DryRunRoute: opts.DryRunRoute, DryRunFirewall: opts.DryRunFirewall, NftCommand: opts.NftCommand, RuntimeDir: defaults.RuntimeDir}
-	firewall := firewallcontroller.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunFirewall, NftablesPath: stringutil.FirstNonEmpty(opts.FirewallPath, "/run/routerd/firewall.nft"), NftCommand: opts.NftCommand, Logger: logger}
+	firewall := firewallcontroller.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunFirewall, NftablesPath: stringutil.FirstNonEmpty(opts.FirewallPath, "/run/routerd/firewall.nft"), NftCommand: opts.NftCommand}
 	conntrackObs := conntrackobserver.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, Paths: conntrack.DefaultPaths(), Interval: opts.ConntrackInterval, Logger: logger}
 	if features.HasPF && !features.HasIproute2 {
 		conntrackObs.SnapshotSource = "pf"

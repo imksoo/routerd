@@ -5,9 +5,6 @@ package firewall
 import (
 	"context"
 	"fmt"
-	"log/slog"
-	"strings"
-	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
@@ -29,54 +26,10 @@ type Controller struct {
 	DryRun       bool
 	NftablesPath string
 	NftCommand   string
-	Interval     time.Duration
-	Logger       *slog.Logger
 	// LocalCaptureIntents is the already-decided dynamic Mobility dataplane
 	// plan. It matters to the PF backend, where path-MTU rules live in the
 	// native firewall ruleset rather than a separate nftables table.
 	LocalCaptureIntents []dynamicconfig.LocalCaptureIntent
-}
-
-func (c Controller) Start(ctx context.Context) {
-	if c.Router == nil || c.Bus == nil || c.Store == nil {
-		return
-	}
-	interval := c.Interval
-	if interval == 0 {
-		interval = 5 * time.Second
-	}
-	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.*"}}, 32)
-	go func() {
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		_ = c.reconcileLogged(ctx)
-		for {
-			select {
-			case event, ok := <-ch:
-				if !ok {
-					return
-				}
-				if strings.HasPrefix(event.Type, "routerd.firewall.") {
-					continue
-				}
-				_ = c.reconcileLogged(ctx)
-			case <-ticker.C:
-				_ = c.reconcileLogged(ctx)
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-}
-
-func (c Controller) reconcileLogged(ctx context.Context) error {
-	if err := c.Reconcile(ctx); err != nil {
-		if c.Logger != nil {
-			c.Logger.Warn("firewall reconcile failed", "error", err)
-		}
-		return err
-	}
-	return nil
 }
 
 func (c Controller) Reconcile(ctx context.Context) error {
