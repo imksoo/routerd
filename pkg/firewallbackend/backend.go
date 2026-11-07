@@ -31,7 +31,7 @@ type Backend interface {
 	Name() string
 	Render(router *api.Router, path string, intents []dynamicconfig.LocalCaptureIntent) (Ruleset, error)
 	Diff(ruleset Ruleset) (bool, error)
-	Apply(ctx context.Context, ruleset Ruleset, dryRun bool) (bool, error)
+	Apply(ctx context.Context, ruleset Ruleset, dryRun, force bool) (bool, error)
 	Reload(ctx context.Context, ruleset Ruleset) error
 }
 
@@ -59,7 +59,7 @@ func (b Nftables) Diff(ruleset Ruleset) (bool, error) {
 	return fileChanged(ruleset.Path, ruleset.Data)
 }
 
-func (b Nftables) Apply(ctx context.Context, ruleset Ruleset, dryRun bool) (bool, error) {
+func (b Nftables) Apply(ctx context.Context, ruleset Ruleset, dryRun, force bool) (bool, error) {
 	if err := validateRuleset(ruleset); err != nil {
 		return false, err
 	}
@@ -75,10 +75,10 @@ func (b Nftables) Apply(ctx context.Context, ruleset Ruleset, dryRun bool) (bool
 	if dryRun {
 		return changed, nil
 	}
-	if !changed && nftstate.RecentlyVerified(ruleset.Path, time.Now().UTC()) {
+	if !force && !changed && nftstate.RecentlyVerified(ruleset.Path, time.Now().UTC()) {
 		return false, nil
 	}
-	if !changed && b.rulesetTablesPresent(ctx, ruleset) {
+	if !force && !changed && b.rulesetTablesPresent(ctx, ruleset) {
 		_ = nftstate.MarkVerified(ruleset.Path, time.Now().UTC())
 		return false, nil
 	}
@@ -150,7 +150,7 @@ func (b PF) Diff(ruleset Ruleset) (bool, error) {
 	return fileChanged(ruleset.Path, ruleset.Data)
 }
 
-func (b PF) Apply(ctx context.Context, ruleset Ruleset, dryRun bool) (bool, error) {
+func (b PF) Apply(ctx context.Context, ruleset Ruleset, dryRun, force bool) (bool, error) {
 	if err := validateRuleset(ruleset); err != nil {
 		return false, err
 	}
