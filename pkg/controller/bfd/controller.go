@@ -23,17 +23,12 @@ type Store interface {
 	ObjectStatus(apiVersion, kind, name string) map[string]any
 }
 
-type CommandRunner func(ctx context.Context, name string, args ...string) ([]byte, error)
-
 type Controller struct {
-	Router       *api.Router
-	Store        Store
-	DryRun       bool
-	OS           platform.OS
-	RuntimeDir   string
-	VtyshCommand string
-	Command      CommandRunner
-	Now          func() time.Time
+	Router     *api.Router
+	Store      Store
+	DryRun     bool
+	OS         platform.OS
+	RuntimeDir string
 }
 
 type session struct {
@@ -92,8 +87,7 @@ func (c Controller) Reconcile(ctx context.Context) error {
 	if err := os.WriteFile(configPath, []byte(config), 0644); err != nil {
 		return err
 	}
-	run := c.runner()
-	if _, err := run(ctx, c.vtysh(), "-f", configPath); err != nil {
+	if _, err := exec.CommandContext(ctx, c.vtysh(), "-f", configPath).CombinedOutput(); err != nil {
 		for name, sessions := range byBFD {
 			_ = c.saveStatus(name, "Degraded", sessions, nil, map[string]any{
 				"backend":    "frr-bfdd",
@@ -104,7 +98,7 @@ func (c Controller) Reconcile(ctx context.Context) error {
 		}
 		return fmt.Errorf("apply FRR bfdd config: %w", err)
 	}
-	observed, observeErr := observeFRRBFD(ctx, run, c.vtysh())
+	observed, observeErr := observeFRRBFD(ctx, c.vtysh())
 	for name, sessions := range byBFD {
 		phase := phaseForSessions(sessions, observed, observeErr)
 		extra := map[string]any{
@@ -389,7 +383,7 @@ func interfaceName(ref string) string {
 }
 
 func (c Controller) saveStatus(name, phase string, sessions []session, observed map[string]string, extra map[string]any) error {
-	now := c.now().UTC().Format(time.RFC3339Nano)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
 	peers := make([]map[string]any, 0, len(sessions))
 	peerStates := map[string]string{}
 	for _, s := range sessions {
@@ -450,8 +444,8 @@ func phaseForSessions(sessions []session, observed map[string]string, err error)
 	}
 }
 
-func observeFRRBFD(ctx context.Context, run CommandRunner, vtysh string) (map[string]string, error) {
-	out, err := run(ctx, vtysh, "-c", "show bfd peers json")
+func observeFRRBFD(ctx context.Context, vtysh string) (map[string]string, error) {
+	out, err := exec.CommandContext(ctx, vtysh, "-c", "show bfd peers json").CombinedOutput()
 	if err != nil {
 		return nil, err
 	}
@@ -526,9 +520,6 @@ func (c Controller) configPath() string {
 }
 
 func (c Controller) vtysh() string {
-	if strings.TrimSpace(c.VtyshCommand) != "" {
-		return strings.TrimSpace(c.VtyshCommand)
-	}
 	if c.OS == platform.OSFreeBSD {
 		return "/usr/local/bin/vtysh"
 	}
@@ -537,22 +528,4 @@ func (c Controller) vtysh() string {
 
 func supportsFRRBFD(osName platform.OS) bool {
 	return osName == platform.OSLinux || osName == platform.OSFreeBSD
-}
-
-func (c Controller) runner() CommandRunner {
-	if c.Command != nil {
-		return c.Command
-	}
-	return defaultCommandRunner
-}
-
-func (c Controller) now() time.Time {
-	if c.Now != nil {
-		return c.Now()
-	}
-	return time.Now()
-}
-
-func defaultCommandRunner(ctx context.Context, name string, args ...string) ([]byte, error) {
-	return exec.CommandContext(ctx, name, args...).CombinedOutput()
 }
