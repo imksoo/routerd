@@ -58,8 +58,9 @@ Installs or upgrades routerd binaries, service templates, and a sample configura
 Existing /usr/local/etc/routerd/router.yaml is never overwritten.
 State databases, logs, and runtime files are never modified.
 
-By default, the installer also installs known host package dependencies on
-supported package managers. Pass --no-install-deps to skip that step.
+By default, the installer installs base host packages on supported package
+managers. Routerd installs feature dependencies from the configuration.
+Pass --no-install-deps to skip installer package operations.
 
 The configure subcommand starts a text setup wizard and writes
 /usr/local/etc/routerd/router.yaml from the answers. In non-interactive mode,
@@ -773,7 +774,7 @@ dependency_packages()
     manager=$1
     case "${manager}" in
         apt)
-            packages="ca-certificates curl dnsmasq-base nftables wireguard-tools chrony bind9-dnsutils tcpdump cron jq ppp pppoe conntrack iproute2 iputils-ping iputils-tracepath net-tools kmod radvd strongswan-swanctl iptables keepalived openssh-server"
+            packages="ca-certificates iproute2 nftables dnsmasq-base"
             ;;
         dnf)
             packages="ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-utils tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute iputils traceroute kmod radvd strongswan iptables keepalived openssh-server"
@@ -808,7 +809,10 @@ dependency_commands()
 {
     manager=$(detect_package_manager)
     case "${manager}" in
-        apt|dnf|pacman)
+        apt)
+            commands="ip nft dnsmasq"
+            ;;
+        dnf|pacman)
             commands="curl dnsmasq nft wg wg-quick chronyc dig tcpdump cron jq pppd conntrack ip ping tracepath modprobe radvd swanctl iptables keepalived"
             ;;
         pkg)

@@ -250,8 +250,9 @@ Versioned ISO files are also published, for example
 
 ## Runtime dependencies
 
-By default, `install.sh` installs known OS packages before copying routerd.
-Use `--list-deps` to inspect the package list:
+On Debian and Ubuntu, `install.sh` installs base packages before copying routerd.
+After startup, routerd derives feature packages from the active configuration.
+Use `--list-deps` to inspect the installer package list:
 
 ```sh
 ./install.sh --list-deps
