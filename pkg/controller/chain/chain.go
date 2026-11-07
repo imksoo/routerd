@@ -3316,12 +3316,15 @@ func (r *Runner) reconcileARPObserverDaemons(ctx context.Context, logger *slog.L
 	if err != nil {
 		return err
 	}
-	r.startARPObserverDaemonSources(ctx, logger, specs)
-
+	var syncErrors []error
 	for _, spec := range specs {
 		if r.arpObserverReady(spec.ResourceName) {
-			if err := r.syncARPObserverIgnoredSenderMACs(ctx, spec); err != nil && logger != nil {
-				logger.Warn("arp observer ignore set sync failed", "resource", spec.ResourceName, "error", err)
+			if err := r.syncARPObserverIgnoredSenderMACs(ctx, spec); err != nil {
+				r.setARPObserverReady(spec.ResourceName, false)
+				syncErrors = append(syncErrors, fmt.Errorf("sync ARP observer %s: %w", spec.ResourceName, err))
+				if logger != nil {
+					logger.Warn("arp observer ignore set sync failed", "resource", spec.ResourceName, "error", err)
+				}
 			}
 			continue
 		}
@@ -3331,7 +3334,8 @@ func (r *Runner) reconcileARPObserverDaemons(ctx context.Context, logger *slog.L
 			}
 		}(spec)
 	}
-	return nil
+	r.startARPObserverDaemonSources(ctx, logger, specs)
+	return errors.Join(syncErrors...)
 }
 
 func arpObserverDaemonArgs(spec mobilityARPObserverDaemonSpec) []string {
