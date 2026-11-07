@@ -259,14 +259,14 @@ func importStaticIPv6Address(address importAddress, ifname string, ip netip.Addr
 	return ip.Is6() && ip.IsGlobalUnicast() && address.Scope == "global" && !address.Dynamic && address.Peer == "" && address.Broadcast == "" && !address.NoPrefixRoute && address.Metric == 0 && len(address.Unsupported) == 0 && (address.Label == "" || address.Label == ifname) && address.PrefixLen >= 0 && address.PrefixLen <= 128 && address.ValidLifetime != nil && address.PreferredLifetime != nil && *address.ValidLifetime == 0xffffffff && *address.PreferredLifetime == 0xffffffff
 }
 
-func networkdDHCPv4Options(files []string) (useRoutes, useDNS *bool, metric int, err error) {
+func networkdDHCPv4Options(files []string) (useRoutes, useDNS *bool, metric int, useMTU bool, err error) {
 	if len(files) == 0 {
-		return nil, nil, 0, errors.New("networkd configuration file is unavailable")
+		return nil, nil, 0, false, errors.New("networkd configuration file is unavailable")
 	}
 	for _, path := range files {
 		data, readErr := os.ReadFile(path)
 		if readErr != nil {
-			return nil, nil, 0, readErr
+			return nil, nil, 0, false, readErr
 		}
 		section := ""
 		for _, line := range strings.Split(string(data), "\n") {
@@ -284,7 +284,7 @@ func networkdDHCPv4Options(files []string) (useRoutes, useDNS *bool, metric int,
 			}
 			key, value = strings.TrimSpace(key), strings.TrimSpace(value)
 			switch key {
-			case "UseRoutes", "UseDNS":
+			case "UseRoutes", "UseDNS", "UseMTU":
 				var v bool
 				switch strings.ToLower(value) {
 				case "yes", "true", "1", "on":
@@ -292,23 +292,25 @@ func networkdDHCPv4Options(files []string) (useRoutes, useDNS *bool, metric int,
 				case "no", "false", "0", "off":
 					v = false
 				default:
-					return nil, nil, 0, fmt.Errorf("%s: invalid %s=%q", path, key, value)
+					return nil, nil, 0, false, fmt.Errorf("%s: invalid %s=%q", path, key, value)
 				}
 				if key == "UseRoutes" {
 					useRoutes = &v
-				} else {
+				} else if key == "UseDNS" {
 					useDNS = &v
+				} else {
+					useMTU = v
 				}
 			case "RouteMetric":
 				n, parseErr := strconv.Atoi(value)
 				if parseErr != nil || n < 0 {
-					return nil, nil, 0, fmt.Errorf("%s: invalid RouteMetric=%q", path, value)
+					return nil, nil, 0, false, fmt.Errorf("%s: invalid RouteMetric=%q", path, value)
 				}
 				metric = n
 			}
 		}
 	}
-	return useRoutes, useDNS, metric, nil
+	return useRoutes, useDNS, metric, useMTU, nil
 }
 
 func networkdDHCPv4ClientID(ifindex int, address string) (string, error) {
@@ -594,9 +596,12 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 			warnings = append(warnings, fmt.Sprintf("%s: address %s/%d (%s, scope %s) requires source configuration review: %s", ifname, address.Local, address.PrefixLen, origin, address.Scope, address.Raw))
 		}
 		if dhcp4 {
-			useRoutes, useDNS, routeMetric, optionErr := networkdDHCPv4Options(networkFiles)
+			useRoutes, useDNS, routeMetric, useMTU, optionErr := networkdDHCPv4Options(networkFiles)
 			if optionErr != nil {
 				warnings = append(warnings, fmt.Sprintf("%s: DHCPv4 options could not be imported: %v", ifname, optionErr))
+			}
+			if useMTU {
+				warnings = append(warnings, fmt.Sprintf("%s: networkd DHCPv4 UseMTU is enabled; dynamic MTU updates are not imported", ifname))
 			}
 			clientID, idErr := networkdDHCPv4ClientID(link.IfIndex, dhcp4Address)
 			if idErr != nil {
