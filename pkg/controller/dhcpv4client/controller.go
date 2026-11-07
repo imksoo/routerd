@@ -330,10 +330,10 @@ func (c Controller) applyLease(ctx context.Context, name string, current, next m
 			if !slices.Contains(domains, "~.") {
 				domains = append(domains, "~.")
 			}
-			next["appliedDNSServers"] = strings.Join(servers, ",")
 			if err := applyDNS(ctx, platform.CurrentOS(), command, ifname, defaultString(c.ResolvConfPath, "/etc/resolv.conf"), name, servers, domains, c.DryRun); err != nil {
 				return err
 			}
+			next["appliedDNSServers"] = strings.Join(servers, ",")
 		} else if oldIfname == ifname {
 			if err := c.restoreStaticDNS(ctx, current, next); err != nil {
 				return err
