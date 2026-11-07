@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -13,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 
 	"github.com/imksoo/routerd/pkg/api"
@@ -37,11 +39,43 @@ func (v *importInterfaces) Set(value string) error {
 }
 
 type importAddress struct {
-	Family    string `json:"family"`
-	Local     string `json:"local"`
-	PrefixLen int    `json:"prefixlen"`
-	Scope     string `json:"scope"`
-	Dynamic   bool   `json:"dynamic"`
+	Family            string          `json:"family"`
+	Local             string          `json:"local"`
+	PrefixLen         int             `json:"prefixlen"`
+	Scope             string          `json:"scope"`
+	Dynamic           bool            `json:"dynamic"`
+	Peer              string          `json:"peer"`
+	Label             string          `json:"label"`
+	Broadcast         string          `json:"broadcast"`
+	Metric            int             `json:"metric"`
+	NoPrefixRoute     bool            `json:"noprefixroute"`
+	ValidLifetime     *uint64         `json:"valid_life_time"`
+	PreferredLifetime *uint64         `json:"preferred_life_time"`
+	Unsupported       []string        `json:"-"`
+	Raw               json.RawMessage `json:"-"`
+}
+
+func (address *importAddress) UnmarshalJSON(data []byte) error {
+	type wireAddress importAddress
+	var decoded wireAddress
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	for key := range fields {
+		switch key {
+		case "family", "local", "prefixlen", "scope", "dynamic", "peer", "label", "broadcast", "metric", "noprefixroute", "valid_life_time", "preferred_life_time":
+		default:
+			decoded.Unsupported = append(decoded.Unsupported, key)
+		}
+	}
+	sort.Strings(decoded.Unsupported)
+	decoded.Raw = append(json.RawMessage(nil), data...)
+	*address = importAddress(decoded)
+	return nil
 }
 
 type importLink struct {
@@ -88,6 +122,30 @@ func networkdAddressSources(ifname string) (map[string]string, string, error) {
 	return sources, status.NetworkFile, nil
 }
 
+func importStaticIPv4Address(address importAddress, ifname string, ip netip.Addr) bool {
+	if !ip.Is4() || address.Scope != "global" || address.Dynamic || address.Peer != "" || address.NoPrefixRoute || address.Metric != 0 || len(address.Unsupported) != 0 || (address.Label != "" && address.Label != ifname) {
+		return false
+	}
+	if address.PrefixLen < 0 || address.PrefixLen > 32 || address.ValidLifetime == nil || address.PreferredLifetime == nil || *address.ValidLifetime != 0xffffffff || *address.PreferredLifetime != 0xffffffff {
+		return false
+	}
+	if address.Broadcast != "" {
+		broadcast, err := netip.ParseAddr(address.Broadcast)
+		if err != nil || !broadcast.Is4() {
+			return false
+		}
+		prefix := netip.PrefixFrom(ip, address.PrefixLen).Masked()
+		network := prefix.Addr().As4()
+		mask := uint32(0xffffffff) >> uint(address.PrefixLen)
+		expected := binary.BigEndian.Uint32(network[:]) | mask
+		actual := broadcast.As4()
+		if binary.BigEndian.Uint32(actual[:]) != expected {
+			return false
+		}
+	}
+	return true
+}
+
 func importCommand(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("import", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -115,6 +173,8 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 	usedNames := map[string]bool{}
 	dhcpClients := map[string]api.Resource{}
 	usedDHCPNames := map[string]bool{}
+	staticAddresses := map[string]api.Resource{}
+	usedStaticNames := map[string]bool{}
 	if *configPath != "" {
 		router, err := config.Load(*configPath)
 		if err != nil {
@@ -122,6 +182,19 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 		}
 		name = router.Metadata.Name
 		for _, resource := range router.Spec.Resources {
+			if resource.Kind == "IPv4StaticAddress" {
+				spec, err := resource.IPv4StaticAddressSpec()
+				if err != nil {
+					return err
+				}
+				prefix, err := netip.ParsePrefix(spec.Address)
+				if err != nil {
+					return fmt.Errorf("existing IPv4StaticAddress/%s: %w", resource.Metadata.Name, err)
+				}
+				staticAddresses[spec.Interface+"|"+prefix.String()] = resource
+				usedStaticNames[resource.Metadata.Name] = true
+				continue
+			}
 			if resource.Kind == "DHCPv4Client" {
 				spec, err := resource.DHCPv4ClientSpec()
 				if err != nil {
@@ -218,16 +291,38 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 				return fmt.Errorf("interface %s has invalid address %q: %w", ifname, address.Local, err)
 			}
 			origin := "origin unknown"
+			source := sources[netip.PrefixFrom(ip, address.PrefixLen).String()]
 			if address.Dynamic {
 				origin = "dynamic"
 			}
-			if source := sources[netip.PrefixFrom(ip, address.PrefixLen).String()]; source != "" && source != "foreign" {
+			if source != "" && source != "foreign" {
 				origin = "networkd " + source
 				if source == "DHCPv4" && ip.Is4() {
 					dhcp4 = true
 				}
 			}
-			warnings = append(warnings, fmt.Sprintf("%s: address %s/%d (%s, scope %s) requires source configuration review", ifname, address.Local, address.PrefixLen, origin, address.Scope))
+			if source == "static" && importStaticIPv4Address(address, ifname, ip) {
+				prefix := netip.PrefixFrom(ip, address.PrefixLen).String()
+				static, exists := staticAddresses[resource.Metadata.Name+"|"+prefix]
+				if !exists {
+					static, exists = staticAddresses[ifname+"|"+prefix]
+				}
+				if exists {
+					static.Status = nil
+				} else {
+					base := resource.Metadata.Name + "-ipv4-" + strings.ReplaceAll(ip.String(), ".", "-") + fmt.Sprintf("-%d", address.PrefixLen)
+					name := base
+					for suffix := 2; usedStaticNames[name]; suffix++ {
+						name = fmt.Sprintf("%s-%d", base, suffix)
+					}
+					static = api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: name}, Spec: api.IPv4StaticAddressSpec{Interface: resource.Metadata.Name, Address: prefix}}
+				}
+				usedStaticNames[static.Metadata.Name] = true
+				router.Spec.Resources = append(router.Spec.Resources, static)
+				warnings = append(warnings, fmt.Sprintf("%s: static address %s imported; review manager handoff and address attributes", ifname, prefix))
+				continue
+			}
+			warnings = append(warnings, fmt.Sprintf("%s: address %s/%d (%s, scope %s) requires source configuration review: %s", ifname, address.Local, address.PrefixLen, origin, address.Scope, address.Raw))
 		}
 		if dhcp4 {
 			client, exists := dhcpClients[resource.Metadata.Name]
