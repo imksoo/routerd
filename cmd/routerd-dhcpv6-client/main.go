@@ -589,6 +589,14 @@ func (d *dhcpv6Daemon) handleEvents(w http.ResponseWriter, r *http.Request) {
 	for {
 		d.mu.Lock()
 		events, cursor := d.eventsSinceLocked(since, topic)
+		if r.URL.Query().Get("tail") == "true" {
+			if len(events) > 1 {
+				events = events[len(events)-1:]
+			}
+			d.mu.Unlock()
+			writeHTTPJSON(w, eventsResponse{Cursor: cursor, Events: events})
+			return
+		}
 		if len(events) > 0 || wait == 0 || time.Now().After(deadline) {
 			d.mu.Unlock()
 			writeHTTPJSON(w, eventsResponse{Cursor: cursor, Events: events})
