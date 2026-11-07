@@ -180,6 +180,7 @@ type dhcpv4Daemon struct {
 	lease      dhcpv4client.Lease
 	events     []daemonapi.DaemonEvent
 	nextCursor uint64
+	nextRenew  time.Time
 
 	telemetry    *routerotel.Runtime
 	leaseGauge   metric.Int64Gauge
@@ -230,16 +231,14 @@ func (d *dhcpv4Daemon) Run(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		if err := d.maintainLease(ctx); err != nil {
+			d.publish("routerd.dhcpv4.client.renew.failed", daemonapi.SeverityWarning, "RenewFailed", err.Error(), nil)
+		}
 		if d.shouldAcquire() && time.Now().After(nextAcquireAttempt) {
 			if err := d.acquire(ctx); err != nil {
 				d.publish("routerd.dhcpv4.client.acquire.failed", daemonapi.SeverityWarning, "AcquireFailed", err.Error(), nil)
 			}
 			nextAcquireAttempt = time.Now().Add(30 * time.Second)
-		}
-		if d.shouldRenew() {
-			if err := d.renew(ctx); err != nil {
-				d.publish("routerd.dhcpv4.client.renew.failed", daemonapi.SeverityWarning, "RenewFailed", err.Error(), nil)
-			}
 		}
 		_ = d.conn.SetReadDeadline(time.Now().Add(3 * time.Second))
 		n, _, err := d.conn.ReadFromUDP(buf)
@@ -305,8 +304,24 @@ func (d *dhcpv4Daemon) acquire(ctx context.Context) error {
 
 func (d *dhcpv4Daemon) renew(ctx context.Context) error {
 	d.mu.Lock()
-	d.state = dhcpv4client.StateRenewing
-	d.xid = dhcpv4client.NewXID()
+	now := time.Now()
+	if d.state != dhcpv4client.StateRenewing && d.state != dhcpv4client.StateRebinding {
+		d.xid = dhcpv4client.NewXID()
+	}
+	if !now.Before(d.lease.RebindAt()) {
+		d.state = dhcpv4client.StateRebinding
+	} else {
+		d.state = dhcpv4client.StateRenewing
+	}
+	deadline := d.lease.RebindAt()
+	if d.state == dhcpv4client.StateRebinding {
+		deadline = d.lease.ExpiresAt()
+	}
+	retry := deadline.Sub(now) / 2
+	if retry < time.Minute {
+		retry = time.Minute
+	}
+	d.nextRenew = now.Add(retry)
 	d.mu.Unlock()
 	if d.renewCounter != nil {
 		d.renewCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("routerd.resource.name", d.opts.resource)))
@@ -315,6 +330,32 @@ func (d *dhcpv4Daemon) renew(ctx context.Context) error {
 		return err
 	}
 	d.publish("routerd.dhcpv4.client.renew.sent", daemonapi.SeverityInfo, "RenewSent", "sent DHCPv4 Renew", nil)
+	return nil
+}
+
+// maintainLease advances renewal to rebinding and expiry even without replies.
+func (d *dhcpv4Daemon) maintainLease(ctx context.Context) error {
+	d.mu.Lock()
+	now := time.Now()
+	active := d.state == dhcpv4client.StateBound || d.state == dhcpv4client.StateRenewing || d.state == dhcpv4client.StateRebinding
+	if !active {
+		d.mu.Unlock()
+		return nil
+	}
+	if !now.Before(d.lease.ExpiresAt()) {
+		d.state = dhcpv4client.StateExpired
+		d.nextRenew = time.Time{}
+		d.mu.Unlock()
+		d.publish("routerd.dhcpv4.client.lease.expired", daemonapi.SeverityWarning, "LeaseExpired", "DHCPv4 lease expired", nil)
+		return d.saveLease()
+	}
+	due := (d.state == dhcpv4client.StateBound && !now.Before(d.lease.RenewAt())) ||
+		(d.state == dhcpv4client.StateRenewing && !now.Before(d.lease.RebindAt())) ||
+		((d.state == dhcpv4client.StateRenewing || d.state == dhcpv4client.StateRebinding) && !now.Before(d.nextRenew))
+	d.mu.Unlock()
+	if due {
+		return d.renew(ctx)
+	}
 	return nil
 }
 
@@ -351,19 +392,27 @@ func (d *dhcpv4Daemon) bind(_ context.Context, msg dhcpv4client.Message) error {
 
 func (d *dhcpv4Daemon) send(ctx context.Context, msgType byte, reply dhcpv4client.Message) error {
 	opts := dhcpv4client.RequestOptions(d.config(), reply)
-	packet := dhcpv4client.EncodeRequest(msgType, d.xid, d.ifi.HardwareAddr, opts)
-	_, err := d.conn.WriteToUDP(packet, &net.UDPAddr{IP: net.IPv4bcast, Port: 67})
+	d.mu.Lock()
+	state, address, server, xid := d.state, d.lease.Address, d.lease.ServerID, d.xid
+	d.mu.Unlock()
+	if msgType == dhcpv4client.MessageRequest && (state == dhcpv4client.StateRenewing || state == dhcpv4client.StateRebinding) {
+		delete(opts, dhcpv4client.OptionRequestedIP)
+		delete(opts, dhcpv4client.OptionServerID)
+	}
+	packet := dhcpv4client.EncodeRequest(msgType, xid, d.ifi.HardwareAddr, opts)
+	if msgType == dhcpv4client.MessageRequest && (state == dhcpv4client.StateRenewing || state == dhcpv4client.StateRebinding) && address.Is4() {
+		copy(packet[12:16], address.AsSlice())
+	}
+	destination := net.IPv4bcast
+	if state == dhcpv4client.StateRenewing && server.Is4() && !server.IsUnspecified() {
+		destination = net.IP(server.AsSlice())
+	}
+	_, err := d.conn.WriteToUDP(packet, &net.UDPAddr{IP: destination, Port: 67})
 	return err
 }
 
 func (d *dhcpv4Daemon) config() dhcpv4client.Config {
 	return dhcpv4client.Config{Resource: d.opts.resource, Interface: d.opts.ifname, HardwareAddr: d.ifi.HardwareAddr, Hostname: d.opts.hostname, RequestedAddress: d.opts.requestedAddress, ClassID: d.opts.classID, ClientID: d.opts.clientID, ClientIDBytes: d.opts.clientIDBytes}
-}
-
-func (d *dhcpv4Daemon) shouldRenew() bool {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return d.state == dhcpv4client.StateBound && !d.lease.RenewAt().IsZero() && time.Now().After(d.lease.RenewAt())
 }
 
 func (d *dhcpv4Daemon) shouldAcquire() bool {
