@@ -466,6 +466,15 @@ func routerArtifactIntentsForOS(router *api.Router, aliases map[string]string, t
 	}
 	var intents []resource.Intent
 	if targetOS == platform.OSLinux {
+		if ipv4, ipv6, err := render.LocalServiceRedirectFamilies(router, aliases); err == nil {
+			owner := api.RouterAPIVersion + "/Router/" + router.Metadata.Name
+			if ipv4 {
+				intents = append(intents, resource.Intent{Artifact: newNftTableArtifact(owner, "ip", "routerd_nat"), Action: resource.ActionEnsure, ApplyWith: "nft"})
+			}
+			if ipv6 {
+				intents = append(intents, resource.Intent{Artifact: newNftTableArtifact(owner, "ip6", "routerd_nat"), Action: resource.ActionEnsure, ApplyWith: "nft"})
+			}
+		}
 		if wants, err := render.RouterWantsTCPMSSClamp(router); err == nil && wants {
 			owner := api.RouterAPIVersion + "/Router/" + router.Metadata.Name
 			intents = append(intents, resource.Intent{
