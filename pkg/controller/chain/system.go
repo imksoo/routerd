@@ -60,6 +60,7 @@ func (c NetworkAdoptionController) Reconcile(ctx context.Context) error {
 		lanInterfaces[ifname] = true
 	}
 	desiredResolvedDropins := map[string]bool{}
+	desiredNetworkdDropins := map[string]bool{}
 	var adoptionErrors []error
 	for _, resource := range networkAdoptionControllerResources(c.Router) {
 		spec, err := resource.NetworkAdoptionSpec()
@@ -90,6 +91,9 @@ func (c NetworkAdoptionController) Reconcile(ctx context.Context) error {
 			ifname = interfaceIfName(c.Router, spec.Interface)
 		}
 		paths, changed, err := c.applyNetworkAdoption(ctx, resource.Metadata.Name, ifname, spec, command)
+		if firstNonEmpty(spec.State, "present") != "absent" && networkdAdoptionConfigured(spec.SystemdNetworkd) && len(paths) > 0 {
+			desiredNetworkdDropins[filepath.Clean(paths[0])] = true
+		}
 		if err != nil {
 			if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "NetworkAdoption", resource.Metadata.Name, map[string]any{
 				"phase":     "Error",
@@ -134,11 +138,66 @@ func (c NetworkAdoptionController) Reconcile(ctx context.Context) error {
 		}
 	}
 	if features.HasSystemd {
+		if len(adoptionErrors) == 0 {
+			if err := c.cleanupStaleNetworkdAdoptionDropins(ctx, desiredNetworkdDropins, command); err != nil {
+				adoptionErrors = append(adoptionErrors, err)
+			}
+		}
 		if _, _, err := c.cleanupStaleResolvedAdoptionDropins(ctx, desiredResolvedDropins, command); err != nil {
 			adoptionErrors = append(adoptionErrors, err)
 		}
 	}
 	return errors.Join(adoptionErrors...)
+}
+
+func (c NetworkAdoptionController) cleanupStaleNetworkdAdoptionDropins(ctx context.Context, desired map[string]bool, command outputCommandFunc) error {
+	paths, err := filepath.Glob(filepath.Join(c.NetworkdDropinBase, "*.network.d", "90-routerd-adoption.conf"))
+	if err != nil {
+		return err
+	}
+	stale := map[string]bool{}
+	for _, path := range paths {
+		if !desired[filepath.Clean(path)] {
+			stale[filepath.Base(filepath.Dir(path))] = true
+		}
+	}
+	if len(stale) == 0 {
+		return nil
+	}
+	out, err := command(ctx, "networkctl", "--json=short", "list")
+	if err != nil {
+		return fmt.Errorf("observe networkd interfaces: %w", err)
+	}
+	var status struct {
+		Interfaces []struct {
+			Name        string `json:"Name"`
+			NetworkFile string `json:"NetworkFile"`
+		} `json:"Interfaces"`
+	}
+	if err := json.Unmarshal(out, &status); err != nil {
+		return fmt.Errorf("decode networkd interfaces: %w", err)
+	}
+	for _, path := range paths {
+		if stale[filepath.Base(filepath.Dir(path))] {
+			if _, err := removeFileIfExists(path, c.DryRun); err != nil {
+				return err
+			}
+		}
+	}
+	if c.DryRun {
+		return nil
+	}
+	if _, err := command(ctx, "networkctl", "reload"); err != nil {
+		return fmt.Errorf("reload networkd after adoption cleanup: %w", err)
+	}
+	for _, iface := range status.Interfaces {
+		if iface.NetworkFile != "" && stale[filepath.Base(iface.NetworkFile)+".d"] {
+			if _, err := command(ctx, "networkctl", "reconfigure", iface.Name); err != nil {
+				return fmt.Errorf("reconfigure %s after adoption cleanup: %w", iface.Name, err)
+			}
+		}
+	}
+	return nil
 }
 
 func (c NetworkAdoptionController) cleanupStaleResolvedAdoptionDropins(ctx context.Context, desired map[string]bool, command outputCommandFunc) ([]string, bool, error) {
