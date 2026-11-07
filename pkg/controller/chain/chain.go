@@ -3424,8 +3424,13 @@ func (r *Runner) startSupervisedDaemonSpec(ctx context.Context, logger *slog.Log
 							break
 						}
 					}
-					if !running && !clientSocketReady(defaultClientSocket(binary, resourceName)) {
-						break waitForExisting
+					if !running {
+						if binary == "routerd-arp-observer" {
+							r.setARPObserverReady(resourceName, false)
+						}
+						if !clientSocketReady(defaultClientSocket(binary, resourceName)) {
+							break waitForExisting
+						}
 					}
 				}
 				select {
@@ -3458,6 +3463,9 @@ func (r *Runner) startSupervisedDaemonSpec(ctx context.Context, logger *slog.Log
 				}
 			}
 			err := cmd.Wait()
+			if binary == "routerd-arp-observer" {
+				r.setARPObserverReady(resourceName, false)
+			}
 			if ctx.Err() != nil {
 				return
 			}
