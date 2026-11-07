@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -400,10 +401,10 @@ func (c IPv4RouteController) Start(ctx context.Context) {
 }
 
 func (c IPv4RouteController) reconcile(ctx context.Context) error {
-	if err := c.cleanupRemovedRoutes(ctx); err != nil {
-		return err
-	}
 	var failures []string
+	if err := c.cleanupRemovedRoutes(ctx); err != nil {
+		failures = append(failures, err.Error())
+	}
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "IPv4Route" {
 			continue
@@ -522,10 +523,13 @@ func (c IPv4RouteController) reconcile(ctx context.Context) error {
 			}
 		}
 	}
+	if err := c.reconcileMobilityRoutes(ctx); err != nil {
+		failures = append(failures, err.Error())
+	}
 	if len(failures) > 0 {
 		return fmt.Errorf("%s", strings.Join(failures, "; "))
 	}
-	return c.reconcileMobilityRoutes(ctx)
+	return nil
 }
 
 func ipv4RouteInstalled(ctx context.Context, command outputCommandFunc, routeType, destination, device, gateway, preferredSource string, metric int, onLink bool) bool {
@@ -651,6 +655,7 @@ func (c IPv4RouteController) cleanupRemovedRoutes(ctx context.Context) error {
 		}
 	}
 	plan := lifecycle.PlanResourceTeardownGC(desired, statuses)
+	var failures []error
 	for _, action := range plan.Actions {
 		if action.Type != lifecycle.GCActionTeardownResource {
 			continue
@@ -660,10 +665,10 @@ func (c IPv4RouteController) cleanupRemovedRoutes(ctx context.Context) error {
 			continue
 		}
 		if err := c.teardownRemovedRoute(ctx, status, deleter); err != nil {
-			return err
+			failures = append(failures, err)
 		}
 	}
-	return nil
+	return errors.Join(failures...)
 }
 
 func (c IPv4RouteController) teardownRemovedRoute(ctx context.Context, status routerstate.ObjectStatus, deleter routerstate.ObjectDeleteStore) error {
