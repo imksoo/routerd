@@ -123,7 +123,7 @@ func (c TunnelInterfaceController) cleanupStaleResources(ctx context.Context) er
 		}
 		if listener, ok := fouListenerFromStatus(item.Status); ok && !c.DryRun {
 			if c.desiredUsesFOUListener(listener, "") {
-				if err := c.transferFOUOwnership(listener, item.Name); err != nil {
+				if err := c.rememberSharedFOUListener(listener, item.Name); err != nil {
 					return err
 				}
 			} else if err := c.deleteFOUListener(ctx, listener); err != nil {
@@ -178,8 +178,7 @@ func (c TunnelInterfaceController) reconcileInterface(ctx context.Context, resou
 		status["error"] = err.Error()
 		return c.Store.SaveObjectStatus(api.HybridAPIVersion, "TunnelInterface", resource.Metadata.Name, status)
 	}
-	listenerCreated, err := c.ensureFOUListener(ctx, desired)
-	if err != nil {
+	if err := c.ensureFOUListener(ctx, desired); err != nil {
 		return c.saveApplyError(resource, desired, err)
 	}
 	applied := false
@@ -248,14 +247,9 @@ func (c TunnelInterfaceController) reconcileInterface(ctx context.Context, resou
 		status["observedAddress"] = desired.Address
 		status["observedPeerAddress"] = observedPeer
 	}
-	if listener, ok := fouListenerForDesired(desired); ok {
-		if listenerCreated || fouListenerMatchesStatus(listener, previous) || c.routerdOwnsFOUListener(listener, resource.Metadata.Name) {
-			status["fouListenerOwned"] = true
-		}
-	}
 	if previousListener, ok := fouListenerFromStatus(previous); ok && !c.DryRun && !fouListenerMatchesStatus(previousListener, status) {
 		if c.desiredUsesFOUListener(previousListener, resource.Metadata.Name) {
-			if err := c.transferFOUOwnership(previousListener, resource.Metadata.Name); err != nil {
+			if err := c.rememberSharedFOUListener(previousListener, resource.Metadata.Name); err != nil {
 				return c.saveApplyError(resource, desired, err)
 			}
 		} else if err := c.deleteFOUListener(ctx, previousListener); err != nil {
@@ -842,10 +836,6 @@ func fouListenerForDesired(desired tunnelDesired) (fouListener, bool) {
 }
 
 func fouListenerFromStatus(status map[string]any) (fouListener, bool) {
-	owned, ok := statusvalue.ExtendedBool(status["fouListenerOwned"])
-	if !ok || !owned {
-		return fouListener{}, false
-	}
 	mode := statusvalue.Field(status, "mode")
 	port, ok := statusInt(status["encapSport"])
 	if (mode != "fou" && mode != "gue") || !ok || port < 1 || port > 65535 {
@@ -878,26 +868,7 @@ func (c TunnelInterfaceController) desiredUsesFOUListener(listener fouListener, 
 	return false
 }
 
-func (c TunnelInterfaceController) routerdOwnsFOUListener(listener fouListener, exceptName string) bool {
-	lister, ok := c.Store.(routerstate.ObjectStatusLister)
-	if !ok {
-		return false
-	}
-	statuses, err := lister.ListObjectStatuses()
-	if err != nil {
-		return false
-	}
-	for _, item := range statuses {
-		if item.APIVersion == api.HybridAPIVersion && item.Kind == "TunnelInterface" && item.Name != exceptName && routerdManagedObjectStatus(item) {
-			if owned, ok := fouListenerFromStatus(item.Status); ok && owned == listener {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func (c TunnelInterfaceController) transferFOUOwnership(listener fouListener, exceptName string) error {
+func (c TunnelInterfaceController) rememberSharedFOUListener(listener fouListener, exceptName string) error {
 	if c.Router == nil || c.Store == nil {
 		return nil
 	}
@@ -917,20 +888,19 @@ func (c TunnelInterfaceController) transferFOUOwnership(listener fouListener, ex
 		if status == nil {
 			status = map[string]any{}
 		}
-		status["fouListenerOwned"] = true
 		status["encapSport"] = listener.Port
 		status["mode"] = listener.Mode
 		return c.Store.SaveObjectStatus(api.HybridAPIVersion, "TunnelInterface", resource.Metadata.Name, status)
 	}
-	return fmt.Errorf("no desired TunnelInterface can assume routerd-owned %s listener port %d", listener.Mode, listener.Port)
+	return fmt.Errorf("no desired TunnelInterface references %s listener port %d", listener.Mode, listener.Port)
 }
 
-func (c TunnelInterfaceController) ensureFOUListener(ctx context.Context, desired tunnelDesired) (bool, error) {
+func (c TunnelInterfaceController) ensureFOUListener(ctx context.Context, desired tunnelDesired) error {
 	if c.targetOS() == platform.OSFreeBSD && (desired.Mode == "fou" || desired.Mode == "gue") {
-		return false, fmt.Errorf("FreeBSD TunnelInterface mode %s has no equivalent FOU/GUE listener", desired.Mode)
+		return fmt.Errorf("FreeBSD TunnelInterface mode %s has no equivalent FOU/GUE listener", desired.Mode)
 	}
 	if desired.Mode != "fou" && desired.Mode != "gue" {
-		return false, nil
+		return nil
 	}
 	args := []string{"fou", "add", "port", strconv.Itoa(desired.EncapSport)}
 	if desired.Mode == "gue" {
@@ -940,15 +910,15 @@ func (c TunnelInterfaceController) ensureFOUListener(ctx context.Context, desire
 	}
 	out, err := c.run(ctx, "ip", args...)
 	if err == nil {
-		return true, nil
+		return nil
 	}
 	if tunnelFOUAlreadyExists(out, err) {
 		if err := c.verifyFOUListener(ctx, fouListener{Mode: desired.Mode, Port: desired.EncapSport}); err != nil {
-			return false, err
+			return err
 		}
-		return false, nil
+		return nil
 	}
-	return false, fmt.Errorf("ensure %s listener port %d: %w: %s", desired.Mode, desired.EncapSport, err, strings.TrimSpace(string(out)))
+	return fmt.Errorf("ensure %s listener port %d: %w: %s", desired.Mode, desired.EncapSport, err, strings.TrimSpace(string(out)))
 }
 
 func (c TunnelInterfaceController) verifyFOUListener(ctx context.Context, listener fouListener) error {
