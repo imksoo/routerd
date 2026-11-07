@@ -71,8 +71,7 @@ func (c IPv4PolicyRouteController) Reconcile(ctx context.Context) error {
 	}
 	// Host-only IPv6 policy is deliberately last and isolated: an RA address
 	// gap must not roll back the already-complete IPv4 DS-Lite policy path.
-	c.reconcileIPv6HostPolicies(ctx)
-	return nil
+	return c.reconcileIPv6HostPolicies(ctx)
 }
 
 func (c IPv4PolicyRouteController) hasIPRoute2() bool {
@@ -107,62 +106,74 @@ func (p ipv6HostPolicy) isSourceRule() bool {
 	return p.RuleFrom || (p.Lookup != "" && p.Table == 0 && p.Gateway == "" && p.Interface == "" && p.Source != "")
 }
 
-func (c IPv4PolicyRouteController) reconcileIPv6HostPolicies(ctx context.Context) {
+func (c IPv4PolicyRouteController) reconcileIPv6HostPolicies(ctx context.Context) error {
 	path := firstNonEmpty(c.HostPolicyStatePath, "/run/routerd/ipv6-host-policy.json")
 	previous, err := loadIPv6HostPolicyState(path)
 	if err != nil {
-		c.logHostPolicyError("load IPv6 host policy state", err)
-		return
+		return fmt.Errorf("load IPv6 host policy state: %w", err)
 	}
 	desired, unavailable, err := c.desiredIPv6HostPolicies(ctx)
 	if err != nil {
-		c.logHostPolicyError("derive IPv6 host policy", err)
-		return
+		return fmt.Errorf("derive IPv6 host policy: %w", err)
 	}
 	previousByName := make(map[string]ipv6HostPolicy, len(previous.Policies))
 	for _, policy := range previous.Policies {
 		previousByName[policy.Name] = policy
 	}
+	var statusErrors []error
 	for name := range unavailable {
-		_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", name, map[string]any{
+		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", name, map[string]any{
 			"phase": "Pending", "reason": "PreferredSourceUnavailable", "dryRun": c.DryRun,
-		})
+		}); err != nil {
+			statusErrors = append(statusErrors, err)
+		}
 		if old, ok := previousByName[name]; ok {
 			desired = append(desired, old) // retain a known-good rule until RA returns.
 		}
 	}
 	if len(unavailable) > 0 && len(desired) == 0 && len(previous.Policies) == 0 {
-		return // first acquisition is intentionally unapplied.
+		return errors.Join(statusErrors...) // first acquisition is intentionally unapplied.
 	}
 	applied, transient, err := c.applyIPv6HostPolicyState(ctx, previous, ipv6HostPolicyState{Policies: desired}, unavailable)
 	if err != nil {
-		c.logHostPolicyError("reconcile IPv6 host policy", err)
+		statusErrors = append(statusErrors, fmt.Errorf("reconcile IPv6 host policy: %w", err))
 		for _, policy := range desired {
-			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", policy.Name, map[string]any{"phase": "Pending", "reason": "HostPolicyApplyFailed", "dryRun": c.DryRun})
+			if policy.isSourceRule() {
+				continue
+			}
+			if saveErr := c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", policy.Name, map[string]any{"phase": "Pending", "reason": "HostPolicyApplyFailed", "error": err.Error(), "dryRun": c.DryRun}); saveErr != nil {
+				statusErrors = append(statusErrors, saveErr)
+			}
 		}
-		return
+		return errors.Join(statusErrors...)
 	}
 	if !c.DryRun {
 		if err := writeIPv6HostPolicyState(path, applied); err != nil {
-			c.logHostPolicyError("write IPv6 host policy state", err)
-			return
+			return errors.Join(append(statusErrors, fmt.Errorf("write IPv6 host policy state: %w", err))...)
+		}
+	}
+	sourcePending := map[string]bool{}
+	for _, policy := range desired {
+		if policy.isSourceRule() && transient[policy.Name] {
+			sourcePending[policy.Owner] = true
 		}
 	}
 	for _, policy := range desired {
 		if policy.isSourceRule() {
 			continue
 		}
-		if unavailable[policy.Name] || transient[policy.Name] {
+		if unavailable[policy.Name] {
 			continue
 		}
-		_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", policy.Name, map[string]any{"phase": "Applied", "dryRun": c.DryRun})
+		status := map[string]any{"phase": "Applied", "dryRun": c.DryRun}
+		if transient[policy.Name] || sourcePending[policy.Name] {
+			status = map[string]any{"phase": "Pending", "reason": "HostPolicyApplyPending", "dryRun": c.DryRun}
+		}
+		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", policy.Name, status); err != nil {
+			statusErrors = append(statusErrors, err)
+		}
 	}
-}
-
-func (c IPv4PolicyRouteController) logHostPolicyError(message string, err error) {
-	if c.Logger != nil {
-		c.Logger.Error(message, "error", err)
-	}
+	return errors.Join(statusErrors...)
 }
 
 func (c IPv4PolicyRouteController) desiredIPv6HostPolicies(ctx context.Context) ([]ipv6HostPolicy, map[string]bool, error) {
