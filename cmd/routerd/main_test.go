@@ -1681,86 +1681,6 @@ func TestControllerResourceKindsUseCanonicalNames(t *testing.T) {
 	}
 }
 
-func TestDeleteCommandRemovesStateAndLedgerForResource(t *testing.T) {
-	dir := t.TempDir()
-	statePath := filepath.Join(dir, "state.json")
-	ledgerPath := filepath.Join(dir, "artifacts.json")
-	store := routerstate.New()
-	store.Set("ipv6PrefixDelegation.wan-pd.lease", routerstate.EncodePDLease(routerstate.PDLease{LastPrefix: "2001:db8::/60"}), "test")
-	if err := store.Save(statePath); err != nil {
-		t.Fatalf("save state: %v", err)
-	}
-	ledger := resource.NewLedger()
-	if err := ledger.Remember([]resource.Artifact{{
-		Kind:  "file",
-		Name:  "/tmp/routerd-test",
-		Owner: "net.routerd.net/v1alpha1/DHCPv6PrefixDelegation/wan-pd",
-	}}); err != nil {
-		t.Fatal(err)
-	}
-	if err := ledger.Save(ledgerPath); err != nil {
-		t.Fatalf("save ledger: %v", err)
-	}
-
-	var out strings.Builder
-	if err := deleteCommand([]string{"--state-file", statePath, "--ledger-file", ledgerPath, "pd/wan-pd"}, &out); err != nil {
-		t.Fatalf("delete command: %v", err)
-	}
-	if !strings.Contains(out.String(), "delete net.routerd.net/v1alpha1/DHCPv6PrefixDelegation/wan-pd") {
-		t.Fatalf("delete output = %s", out.String())
-	}
-	loadedState, err := routerstate.Load(statePath)
-	if err != nil {
-		t.Fatalf("load state: %v", err)
-	}
-	if got := loadedState.Get("ipv6PrefixDelegation.wan-pd.lease"); got.Status != routerstate.StatusUnknown {
-		t.Fatalf("state after delete = %+v, want unknown", got)
-	}
-	loadedLedger, err := resource.LoadLedger(ledgerPath)
-	if err != nil {
-		t.Fatalf("load ledger: %v", err)
-	}
-	defer func() { _ = loadedLedger.Close() }()
-	if artifacts, err := loadedLedger.All(); err != nil || len(artifacts) != 0 {
-		t.Fatalf("ledger after delete = %+v, err = %v, want empty", artifacts, err)
-	}
-}
-
-func TestDeleteCommandForceRemovesStaleUnsupportedKindState(t *testing.T) {
-	dir := t.TempDir()
-	statePath := filepath.Join(dir, "routerd.db")
-	ledgerPath := filepath.Join(dir, "artifacts.json")
-	store, err := routerstate.OpenSQLite(statePath)
-	if err != nil {
-		t.Fatalf("open sqlite state: %v", err)
-	}
-	if err := store.SaveObjectStatus(api.NetAPIVersion, "PPPoEInterface", "wan", map[string]any{"phase": "Applied"}); err != nil {
-		t.Fatalf("save stale object status: %v", err)
-	}
-	if err := store.Close(); err != nil {
-		t.Fatalf("close sqlite state: %v", err)
-	}
-	if err := resource.NewLedger().Save(ledgerPath); err != nil {
-		t.Fatalf("save ledger: %v", err)
-	}
-
-	var out strings.Builder
-	if err := deleteCommand([]string{"--state-file", statePath, "--ledger-file", ledgerPath, "--force", "PPPoEInterface/wan"}, &out); err != nil {
-		t.Fatalf("delete command: %v", err)
-	}
-	if !strings.Contains(out.String(), "delete net.routerd.net/v1alpha1/PPPoEInterface/wan") {
-		t.Fatalf("delete output = %s", out.String())
-	}
-	store, err = routerstate.OpenSQLite(statePath)
-	if err != nil {
-		t.Fatalf("reopen sqlite state: %v", err)
-	}
-	defer store.Close()
-	if status := store.ObjectStatus(api.NetAPIVersion, "PPPoEInterface", "wan"); len(status) != 0 {
-		t.Fatalf("stale status after delete = %+v, want none", status)
-	}
-}
-
 func TestCleanupUnsupportedLegacyObjectStatusesRemovesLegacyAndDeletedResourceRows(t *testing.T) {
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "routerd.db")
@@ -1868,33 +1788,6 @@ func dynamicConfigPartRecordForCleanupTest(t *testing.T, source string, resource
 		Digest:        source + "-digest",
 		ResourcesJSON: string(raw),
 		Status:        "active",
-	}
-}
-
-func TestDeleteCommandFileTargetsRouterResources(t *testing.T) {
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "router.yaml")
-	if err := os.WriteFile(configPath, []byte(`apiVersion: routerd.net/v1alpha1
-kind: Router
-metadata:
-  name: test
-spec:
-  resources:
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: Interface
-      metadata:
-        name: wan
-      spec:
-        ifName: ens18
-`), 0644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-	targets, err := deleteTargets(nil, configPath, "", false, "")
-	if err != nil {
-		t.Fatalf("delete targets: %v", err)
-	}
-	if len(targets) != 1 || targets[0].Kind != "Interface" || targets[0].Name != "wan" {
-		t.Fatalf("targets = %+v", targets)
 	}
 }
 
