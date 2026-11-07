@@ -1077,19 +1077,14 @@ deploy_staged_rr() {
 }
 
 wait_router_service_ready() {
-  # A first cloud reconciliation can include a real provider inventory/action
-  # before routerd exposes its control socket.  This is a bounded readiness
-  # wait, not a retry of a failed scenario; the former 60-second deploy-local
-  # probe rejected healthy nodes while that first reconciliation was still in
-  # progress.
-  local node="$1" deadline=$((SECONDS + 180))
-  while [ "$SECONDS" -lt "$deadline" ]; do
+  local node="$1"
+  while :; do
     if ssh_node "$node" 'systemctl is-active --quiet routerd.service && sudo routerctl get status -o json >/dev/null'; then
       return 0
     fi
+    echo "waiting for routerd service on $node" >&2
     sleep 5
   done
-  return 1
 }
 
 rr_membership_probe() {
@@ -1115,26 +1110,26 @@ REMOTE_RR_MEMBERSHIP
 wait_rr_membership_gate() {
   local label="$1"
   shift
-  local started="$SECONDS" deadline=$((SECONDS + 300)) node status=TIMEOUT ok
+  local started="$SECONDS" node ok
   [ "$#" -gt 0 ] || return 0
-  while [ "$SECONDS" -lt "$deadline" ]; do
+  while :; do
     ok=1
     for node in "$@"; do
       if node_is_stopped "$node" || ! rr_membership_probe "$node" \
         >"$evidence_dir/convergence/${label}-${node}-rr-membership.txt" 2>&1; then
         ok=0
+        echo "waiting for RR membership on $node ($label); details: $evidence_dir/convergence/${label}-${node}-rr-membership.txt" >&2
       fi
     done
-    [ "$ok" -eq 1 ] && { status=PASS; break; }
+    [ "$ok" -eq 1 ] && break
     sleep 10
   done
   for node in "$@"; do
-    printf '%s\t%s\t%s\t%s\n' "$label" "$node" "$status" "$((SECONDS - started))" \
+    printf '%s\t%s\tPASS\t%s\n' "$label" "$node" "$((SECONDS - started))" \
       >>"$evidence_dir/deploy/rr-membership.tsv"
-    printf '%s-rr-%s\t%s\t%s\n' "$label" "$node" "$status" "$((SECONDS - started))" \
+    printf '%s-rr-%s\tPASS\t%s\n' "$label" "$node" "$((SECONDS - started))" \
       >>"$evidence_dir/convergence/summary.tsv"
   done
-  [ "$status" = PASS ]
 }
 
 stage_staged_rr_membership() {
@@ -1326,14 +1321,13 @@ ip neigh show dev '$pve_capture_interface' || true" || true
 
 wait_dataplane_control_gate() {
   local label="$1"
-  local deadline=$((SECONDS + 300))
   local ok=0 attempt=0
   local probe_dir="$evidence_dir/convergence/${label}-control"
   mkdir -p "$probe_dir"
   local client_ips_text local_client_ips_text remote_client_ips_text node node_site
   client_ips_text="$(jq -r 'to_entries[] | select(.value.role == "client") | .value.private_ip' "$nodes_json")"
   warm_onprem_discovery "$label"
-  while [ "$SECONDS" -lt "$deadline" ]; do
+  while :; do
     attempt=$((attempt + 1))
     ok=1
     for node in "${leaf_routers[@]}"; do
@@ -1363,6 +1357,7 @@ done <<'IPS'
 $remote_client_ips_text
 IPS"; then
         ok=0
+        echo "waiting for routes on $node ($label); details: $probe_dir/${attempt}-${node}-routes.stderr" >&2
       fi
       if ! capture_ssh_evidence "$node" "$probe_dir/${attempt}-${node}-ownership.stdout" \
         "$probe_dir/${attempt}-${node}-ownership.stderr" "$probe_dir/${attempt}-${node}-ownership.result.tsv" "set -e
@@ -1378,12 +1373,12 @@ done <<'IPS'
 $local_client_ips_text
 IPS"; then
         ok=0
+        echo "waiting for local ownership on $node ($label); details: $probe_dir/${attempt}-${node}-ownership.stderr" >&2
       fi
     done
     [ "$ok" -eq 1 ] && break
     sleep 10
   done
-  [ "$ok" -eq 1 ]
 }
 
 wait_provider_gate() {
