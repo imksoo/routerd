@@ -55,7 +55,7 @@ spec:
 | `Hostname` | ホスト名を設定します。 |
 | `NTPClient` | OS の NTP クライアントを有効にします。DHCPv4 / DHCPv6 の状態から時刻サーバーを導出し、空なら public NTP サーバーへ戻せます。 |
 | `NTPServer` | LAN 向けのローカル NTP サーバーを動かします。クライアント許可範囲は、静的な `allowCIDRs` に加えて、`allowCIDRFrom` で `IPv6DelegatedAddress/<name>.address` や `DHCPv6PrefixDelegation/<name>.currentPrefix` などの status field から導出できます。 |
-| `LogSink` | log event を syslog、OTLP、webhook、file、journald へ転送します。 |
+| `LogSink` | log event を syslog、webhook、file、journald へ転送します。 |
 | `ObservabilityPipeline` | OTLP の environment と、stdout / syslog / Loki への routerd event の転送を設定します。 |
 | `RouterdCluster` | file lease により、leader だけが host configuration を変更し、standby は status 観測に回ります。 |
 | `LogRetention` | イベント、DNS、通信フロー、firewall event log の保管期間を管理します。 |
@@ -67,7 +67,7 @@ spec:
 | --- | --- |
 | `Telemetry` | 外部の OTLP エンドポイントを宣言し、生成されたサービスユニットに OpenTelemetry の環境変数を注入します。 |
 
-`Telemetry` は、管理対象デーモンが出力する metrics、traces、logs の送信先エンドポイントを記述します。`LogSink` は、運用イベントや観測ログの転送経路を記述します。ログシンクが OTLP を使う場合は、collector のエンドポイントを重複して書かず、`LogSink.spec.otlp.telemetryRef` で `Telemetry` リソースを参照してください。
+`Telemetry` は、管理対象デーモンが出力する metrics、traces、logs の送信先エンドポイントを記述します。`LogSink` は、運用イベントや観測ログの転送経路を記述します。`LogSink` の直接 OTLP 送信は未対応です。OTLP 送信には `Telemetry` または `ObservabilityPipeline` を使ってください。
 
 ## インターフェース
 
@@ -204,6 +204,16 @@ DNSSEC validation は `DNSForwarder.spec.dnssecValidate` に書きます。
 | `IngressService` | WAN 側の IPv4 TCP/UDP サービスを公開します。複数 backend、TCP/HTTP health check、`failover` / `sourceHash` / `random` selection を受け付けます。 |
 | `LocalServiceRedirect` | LAN 側 client から `IPAddressSet` 宛てに出る IPv4/IPv6 通信を、router の local port へ redirect します。平文 DNS/NTP の集約を想定し、DoH や DoT の port には触れません。 |
 | `EgressRoutePolicy` | 既定経路の選択、mark ベースの IPv4 policy routing、複数 target への hash 分散を表します。 |
+
+`DHCPv4Client` はリソース名・インターフェース・MAC アドレス・client ID が一致する場合だけ
+保存リースを再利用します。識別子変更後は旧アドレスを要求せず、新規 DHCP 取得を開始します。
+一致する保存リースも INIT-REBOOT で確認するまで現在のリースとして公開しません。
+不正な保存データは引き続きエラーとして扱います。
+
+`IPv4Route.spec.gatewayFrom` の必須参照が未取得で、固定 `gateway` の代替値もない場合は、
+`Pending / GatewayMissing` で待機します。参照値が消失すると所有する経路を撤去し、
+再取得後に追加します。`gatewayFrom` の省略時はデバイスへの直接接続ルートを指定できます。
+`optional: true` を明示した任意参照も、gateway なしを許容します。
 
 CloudEdge Mobility の operator-authored surface は `MobilityPool`、`SAMNodeSet`、
 `SAMEnrollmentPolicy`、`SAMEnrollmentClaim`、`SAMEnrollmentClient`、
@@ -549,8 +559,14 @@ FreeBSD には、Linux と同じ socket option がないためです。
 
 `Telemetry` は、routerd 自身と管理対象デーモンの metrics / traces / logs を
 OpenTelemetry のエンドポイントへ出すための resource です。`LogSink` は、運用イベント
-や観測ログの転送経路を表します。OTLP へログ転送する場合は、collector のエンドポイントを
-重複して書かず、`LogSink.spec.otlp.telemetryRef` で `Telemetry` を参照してください。
+や観測ログの転送経路を表します。`LogSink` の直接 OTLP 送信は未対応です。
+OTLP 送信には `Telemetry` または `ObservabilityPipeline` を使ってください。
+
+設定が稼働状態になると、通常の `LogSink` 送信先も routerd の再起動なしで切り替わります。
+送信中の処理が完了してから旧 sink を閉じ、削除後のイベント配送を停止します。
+
+syslog の接続・送信には、直列処理するイベントごとに再接続を含む 5 秒の期限があります。
+期限超過は送信エラーです。`LogRetention` はアーカイブ送信に失敗した行を削除しません。
 
 `WebConsole.spec.listenAddressFrom` は、ほかのリソースの状態から HTTP の待ち受けアドレスを導出します。
 たとえば、`Interface/mgmt.status.ipv4Addresses` を参照できます。

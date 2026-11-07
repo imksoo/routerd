@@ -254,7 +254,7 @@ func Normalize(state State) State {
 		peer.Established = peer.Established || strings.EqualFold(peer.State, "Established")
 		peerSeen[peer.Address] = peer
 	}
-	state.Peers = state.Peers[:0]
+	state.Peers = make([]Peer, 0, len(peerSeen))
 	for _, peer := range peerSeen {
 		state.Peers = append(state.Peers, peer)
 	}
@@ -287,7 +287,7 @@ func uniquePrefixes(values []Prefix) []Prefix {
 			value.Stale = value.Stale || existing.Stale
 			value.SelectDeferred = value.SelectDeferred || existing.SelectDeferred
 			value.SelectionReason = strings.Join(sortedUnique([]string{value.SelectionReason, existing.SelectionReason}), "; ")
-			value.Communities = sortedUnique(append(value.Communities, existing.Communities...))
+			value.Communities = sortedUnique(append(append([]string(nil), value.Communities...), existing.Communities...))
 		}
 		value.Communities = sortedUnique(value.Communities)
 		seen[value.Prefix] = annotatePrefixSelection(value)

@@ -19,6 +19,16 @@ routerd は `tailscale up` を実行する systemd ユニットを生成し、�
 Tailscale のアカウント、制御プレーン、経路承認は Tailscale 側に残します。
 routerd はホスト上の宣言設定を管理します。
 
+## 設定の変更
+
+routerd は宣言設定全体を `tailscale up --reset` で適用します。
+`advertiseRoutes` を削除するか `advertiseExitNode: false` にすると、
+過去の非既定フラグの省略エラーを起こさず、以前の広告を解除します。
+省略した設定は Tailscale の既定値に戻るため、無効化を維持する設定は
+`acceptDNS: false` などで明示してください。YAML にない手動の
+`tailscale up` 設定には依存しないでください。ノードのログアウトや
+強制再認証は行いません。経路の承認は引き続き tailnet 管理者が行います。
+
 ## tailscale を導入する
 
 依存パッケージを `Package` で宣言します。
@@ -46,6 +56,39 @@ spec:
 Ubuntu では、`Package` が `tailscale` を導入する前に Tailscale の apt リポジトリが必要です。
 リポジトリの追加は、通常の初期構築手順で済ませてください。
 
+## Linux パッケージの新規導入
+
+Linux パッケージは `/etc/routerd/router.yaml` を使います。以下のパスも
+この配置に合わせています。クリーン OS には Tailscale のノード認証状態が
+ありません。旧機と同じ hostname を指定しても認証状態は引き継がれません。
+旧 routerd DB をコピーしたり、認証項目なしの設定で参加できると仮定しないでください。
+
+routerd の初回起動前に、次を準備します。
+
+1. 導入した Ubuntu の版に対応する Tailscale APT リポジトリを登録し、
+   パッケージ索引を更新します。`apt-cache policy tailscale tailscale-archive-keyring`
+   で候補版を確認し、APT で導入します。`systemctl is-active tailscaled.service`
+   も確認します。
+2. 新ノード用の認証キーを下記の root 専用環境ファイルに配置し、
+   `TailscaleNode` に参照先を宣言します。キーを YAML、シェル履歴、Git、
+   コマンド出力に残さないでください。端末承認ポリシーにより、管理者による
+   別途の端末承認が必要な場合があります。
+3. 必要な転送 sysctl と firewall policy を候補設定に宣言します。
+   dual-stack の subnet/exit routing では適用後に `net.ipv4.ip_forward=1` と
+   `net.ipv6.conf.all.forwarding=1` を確認します。Tailscale の Running だけでは
+   パケット転送の成功を示しません。
+4. 1.5 の全設定を validate してから routerd を起動し、制御プレーンで
+   **新ノードの**広告経路・exit node 利用を承認します。旧ノードの承認を
+   新しいノードの承認と見なさないでください。
+5. 独立した tailnet クライアントで新 exit node または承認済み subnet route を
+   選び、必要な各アドレスファミリーで実サービスの応答内容を確認します。
+   routerd 再起動後にも繰り返します。`BackendState: Running`、利用可能な経路、
+   実通信の成功を合格条件とし、`NeedsLogin`、`NeedsMachineAuth`、status 表示だけで
+   導入成功と判断しないでください。
+
+置換中は旧ルーターを隔離します。既にログイン済みの試験環境による再設定試験は、
+この新ノードの初回認証を検証したことにはなりません。
+
 ## 秘密値を Git に残さない
 
 本番設定では `authKeyEnv` と `authKeyFile` を推奨します。
@@ -65,15 +108,15 @@ spec:
   acceptDNS: false
   acceptRoutes: false
   authKeyEnv: TS_AUTHKEY
-  authKeyFile: /usr/local/etc/routerd/secrets/tailscale.env
+  authKeyFile: /etc/routerd/secrets/tailscale.env
 ```
 
 環境ファイルは routerd の YAML の外に置きます。
 
 ```sh
-sudo install -d -m 0700 /usr/local/etc/routerd/secrets
-sudo sh -c 'printf "%s\n" "TS_AUTHKEY=REDACTED" > /usr/local/etc/routerd/secrets/tailscale.env'
-sudo chmod 0600 /usr/local/etc/routerd/secrets/tailscale.env
+sudo install -d -m 0700 /etc/routerd/secrets
+sudo sh -c 'printf "%s\n" "TS_AUTHKEY=REDACTED" > /etc/routerd/secrets/tailscale.env'
+sudo chmod 0600 /etc/routerd/secrets/tailscale.env
 ```
 
 既にログイン済みのノードでは、`authKey`、`authKeyEnv`、`authKeyFile` を省略できます。
@@ -161,7 +204,7 @@ tailnet 全体を管理ネットワークとして扱いたい場合だけ、`ta
 設定を確認してから routerd を再起動します。
 
 ```sh
-routerctl validate -f /usr/local/etc/routerd/router.yaml --replace
+routerctl validate -f /etc/routerd/router.yaml --replace
 systemctl restart routerd.service
 ```
 
@@ -206,3 +249,41 @@ curl -f http://100.64.0.1:8080/
 - exit node と subnet route の承認は Tailscale 側で行います。
 - auth key は examples や Git 履歴に残さないでください。
   実機では `authKeyFile` を使います。
+
+## 接続の停止と撤去
+
+Linux では `TailscaleNode` の削除、`state: absent` の指定、または `when` 条件が
+偽になると、管理対象 unit を停止して `tailscale down` を実行します。
+停止処理は `ExecStopPost` に設定され、`tailscale up` が接続要求を保存した後、
+unit の起動完了前に失敗した場合も実行します。
+ログアウトや `tailscaled` 自体の停止は行わず、再有効化に使うノードの認証状態を
+保持します。停止に失敗した場合は unit と撤去エラーを保持し、reconcile で再試行します。
+
+撤去時は管理対象 unit の消失に加え、`tailscale debug prefs` の
+`WantRunning: false` と `tailscale status --json` の `BackendState: Stopped`
+を確認してください。routerd のリソース状態が空になっただけでは撤去の証明になりません。
+
+隔離環境での相互運用確認には、独立した tailnet peer とルーター配下の SSH サーバーを
+使います。制御プレーンで広告サブネットを承認し、peer で経路の受入れを有効化した後、
+`ip route get <サーバーIP>` が `tailscale0` を選ぶことを確認します。
+`nc -w 5 <サーバーIP> 22` で SSH バナーを受信できることが合格条件です。
+Tailscale ping だけではサブネット転送の証明になりません。
+`state: absent` と認証キーなしの再有効化後にも通信を確認し、Tailscale アドレスが
+維持されることを検証します。最後にリソースを削除し、前述の停止状態を確認します。
+本番経路ではなく、使い捨て可能な隔離ホストで実施してください。
+
+## 実行状態
+
+ユニットの適用成功だけでは Tailscale の稼働を証明できません。Linux の service
+controller は backend が `Running` の場合にだけ `Running` を報告します。
+`NeedsLogin` は `Pending/AuthenticationRequired` です。利用する tailnet の
+手順で認証を更新してください。`NeedsMachineAuth` は
+`Pending/MachineApprovalRequired` です。制御サーバーでノードを承認してください。
+それ以外の未稼働状態は `Pending/BackendNotRunning`、CLI 観測失敗や不正な応答は
+`Error/RuntimeObservationFailed` と `runtimeError` で報告します。復旧後の観測で
+以前の reason・error は消えます。
+
+観測は既存の 5 分周期を含む service controller の reconcile 時に行います。
+backend が Running のまま `online: false` になっても、制御サーバー断の間に
+既存 peer 経路が使える場合があるため、転送障害とは断定しません。
+この観測処理は認証情報の交換や強制再認証を行いません。

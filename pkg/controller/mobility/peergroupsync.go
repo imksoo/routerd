@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/netip"
@@ -83,6 +84,9 @@ func (s *PeerGroupSyncServer) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 }
 
 func resourceDigest(resource api.Resource) string {
+	resource.Metadata.Annotations = maps.Clone(resource.Metadata.Annotations)
+	delete(resource.Metadata.Annotations, "routerd.net/source-generation")
+	delete(resource.Metadata.Annotations, "routerd.net/source-valid-until")
 	data, _ := json.Marshal(resource)
 	sum := sha256.Sum256(data)
 	return fmt.Sprintf("sha256:%x", sum[:])
@@ -114,7 +118,7 @@ func stampSourceGeneration(resource *api.Resource, record routerstate.DynamicCon
 
 func (s *PeerGroupSyncServer) syncResources() ([]api.Resource, error) {
 	if s == nil || s.Store == nil {
-		return nil, nil
+		return nil, fmt.Errorf("peer-group sync store is unavailable")
 	}
 	now := controllerNow(s.Now)
 	records, err := s.Store.ListDynamicConfigParts()
@@ -166,23 +170,27 @@ type syncCandidate struct {
 	meta     syncMetadata
 }
 
-func syncMetadataForResource(resource api.Resource, publisherID string) syncMetadata {
+func syncMetadataForResource(resource api.Resource, publisherID string) (syncMetadata, error) {
 	meta := syncMetadata{
 		PublisherID: strings.TrimSpace(publisherID),
 		Digest:      resourceDigest(resource),
 	}
-	if resource.Metadata.Annotations == nil {
-		return meta
+	var err error
+	meta.Revision, err = strconv.ParseInt(resource.Metadata.Annotations["routerd.net/source-generation"], 10, 64)
+	if err != nil || meta.Revision <= 0 {
+		return meta, fmt.Errorf("peer-group sync response has no valid source generation")
 	}
-	meta.Revision, _ = strconv.ParseInt(resource.Metadata.Annotations["routerd.net/source-generation"], 10, 64)
-	meta.ValidUntil, _ = time.Parse(time.RFC3339Nano, resource.Metadata.Annotations["routerd.net/source-valid-until"])
-	return meta
+	meta.ValidUntil, err = time.Parse(time.RFC3339Nano, resource.Metadata.Annotations["routerd.net/source-valid-until"])
+	if err != nil || meta.ValidUntil.IsZero() {
+		return meta, fmt.Errorf("peer-group sync response has no valid source lease")
+	}
+	return meta, nil
 }
 
 func selectSyncCandidate(candidates []syncCandidate, now time.Time) (syncCandidate, error) {
 	active := candidates[:0]
 	for _, candidate := range candidates {
-		if !candidate.meta.ValidUntil.IsZero() && !candidate.meta.ValidUntil.After(now) {
+		if candidate.meta.Revision <= 0 || candidate.meta.ValidUntil.IsZero() || !candidate.meta.ValidUntil.After(now) {
 			continue
 		}
 		if candidate.meta.Digest == "" {
@@ -229,7 +237,7 @@ func (c *PeerGroupSyncClient) SyncPeerGroup(ctx context.Context, router *api.Rou
 	if err != nil {
 		return api.SAMPeerGroupSpec{}, false, err
 	}
-	if err := c.saveSyncResource(groupName, resource, metadata); err != nil {
+	if err := c.saveSyncResource(ctx, groupName, resource, metadata); err != nil {
 		return api.SAMPeerGroupSpec{}, false, err
 	}
 	return spec, true, nil
@@ -298,6 +306,9 @@ func (c *PeerGroupSyncClient) syncResource(ctx context.Context, router *api.Rout
 	if len(candidates) == 0 {
 		return api.Resource{}, syncMetadata{}, false, firstErr
 	}
+	if err := ctx.Err(); err != nil {
+		return api.Resource{}, syncMetadata{}, false, err
+	}
 	selected, err := selectSyncCandidate(candidates, controllerNow(c.Now))
 	if err != nil {
 		return api.Resource{}, syncMetadata{}, false, err
@@ -322,25 +333,36 @@ func fetchSyncResourceFromEndpoint(ctx context.Context, client *http.Client, end
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<12))
 		return api.Resource{}, syncMetadata{}, false, fmt.Errorf("GET %s: %s", url, resp.Status)
 	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, (1<<20)+1))
+	if err != nil {
+		return api.Resource{}, syncMetadata{}, false, err
+	}
+	if len(body) > 1<<20 {
+		return api.Resource{}, syncMetadata{}, false, fmt.Errorf("peer-group sync response exceeds size limit")
+	}
 	var payload PeerGroupSyncResponse
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload); err != nil {
+	if err := json.Unmarshal(body, &payload); err != nil {
 		return api.Resource{}, syncMetadata{}, false, err
 	}
 	for _, resource := range payload.PeerGroups {
 		if resource.APIVersion == api.MobilityAPIVersion && resource.Kind == peerGroupSyncResourceKind && resource.Metadata.Name == name {
-			return resource, syncMetadataForResource(resource, endpoint.String()), true, nil
+			metadata, err := syncMetadataForResource(resource, endpoint.String())
+			if err != nil {
+				return api.Resource{}, syncMetadata{}, false, err
+			}
+			return resource, metadata, true, nil
 		}
 	}
 	return api.Resource{}, syncMetadata{PublisherID: endpoint.String()}, false, nil
 }
 
-func (c *PeerGroupSyncClient) saveSyncResource(name string, resource api.Resource, meta syncMetadata) error {
+func (c *PeerGroupSyncClient) saveSyncResource(ctx context.Context, name string, resource api.Resource, meta syncMetadata) error {
 	now := controllerNow(c.Now)
 	resource.TypeMeta = api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: peerGroupSyncResourceKind}
 	resource.Metadata.Name = strings.TrimSpace(name)
 	expiresAt := meta.ValidUntil
-	if expiresAt.IsZero() || !expiresAt.After(now) {
-		expiresAt = now.Add(DefaultLeaseTTL)
+	if meta.Revision <= 0 || expiresAt.IsZero() || !expiresAt.After(now) {
+		return fmt.Errorf("peer-group sync source lease expired or is invalid before publication")
 	}
 	part := dynamicconfig.NewPart(safeName(peerGroupSyncCacheKind+"-"+strings.TrimSpace(name)), PeerGroupSyncDynamicSource(name), nil, dynamicGeneration, now, expiresAt)
 	part.Spec.Resources = []api.Resource{resource}
@@ -348,6 +370,9 @@ func (c *PeerGroupSyncClient) saveSyncResource(name string, resource api.Resourc
 	part.Spec.Digest = digestDynamicPart(part)
 	record, err := codec.Encode(part)
 	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	return c.Store.UpsertDynamicConfigPart(record)

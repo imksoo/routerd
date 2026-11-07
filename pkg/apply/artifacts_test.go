@@ -38,7 +38,6 @@ func TestKnownResourceKindsDeclareArtifactIntents(t *testing.T) {
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardPeer"}, Metadata: api.ObjectMeta{Name: "peer-a"}, Spec: api.WireGuardPeerSpec{Interface: "wg-lab", PublicKey: "pub", AllowedIPs: []string{"10.44.0.2/32"}}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPsecConnection"}, Metadata: api.ObjectMeta{Name: "aws-a"}, Spec: api.IPsecConnectionSpec{LocalAddress: "198.51.100.10", RemoteAddress: "203.0.113.10", PreSharedKey: "secret", LeftSubnet: "10.0.0.0/24", RightSubnet: "10.10.0.0/16"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VRF"}, Metadata: api.ObjectMeta{Name: "vrf-guest"}, Spec: api.VRFSpec{RouteTable: 1001}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VXLANTunnel"}, Metadata: api.ObjectMeta{Name: "vx240"}, Spec: api.VXLANTunnelSpec{VNI: 240, LocalAddress: "10.44.0.1", UnderlayInterface: "wg-lab", Peers: []string{"10.44.0.2"}}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "lan-v4"}, Spec: api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.10.3/24"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"}, Metadata: api.ObjectMeta{Name: "k8s-api"}, Spec: api.VirtualAddressSpec{Family: "ipv4", Interface: "lan", Address: "192.168.10.10/32", Mode: "vrrp", VRRP: api.VirtualAddressVRRPSpec{VirtualRouterID: 50, Peers: []string{"192.168.10.4"}}}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan-bgp"}, Spec: api.BGPRouterSpec{ASN: 64512, RouterID: "192.168.10.3"}},
@@ -92,25 +91,13 @@ func TestKnownResourceKindsDeclareArtifactIntents(t *testing.T) {
 	}
 }
 
-func TestIPsecArtifactUsesRouterdRuntimeDirectoryPerPlatform(t *testing.T) {
-	resource := api.Resource{
-		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPsecConnection"},
-		Metadata: api.ObjectMeta{Name: "site-a"},
-	}
-	for _, test := range []struct {
-		name string
-		os   platform.OS
-		path string
-	}{
-		{name: "linux", os: platform.OSLinux, path: "/etc/routerd/swanctl/routerd-site-a.conf"},
-		{name: "freebsd", os: platform.OSFreeBSD, path: "/usr/local/etc/routerd/swanctl/routerd-site-a.conf"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			intents := resourceArtifactIntentsForPlatform(resource, nil, test.os, platform.Features{})
-			if len(intents) != 2 || intents[1].Artifact.Name != test.path {
-				t.Fatalf("IPsec artifact intents = %+v, want runtime path %q", intents, test.path)
-			}
-		})
+func TestIPsecArtifactUsesScopedNativeConnectionPerPlatform(t *testing.T) {
+	res := api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPsecConnection"}, Metadata: api.ObjectMeta{Name: "site-a"}}
+	for _, target := range []platform.OS{platform.OSLinux, platform.OSFreeBSD} {
+		intents := resourceArtifactIntentsForPlatform(res, nil, target, platform.Features{})
+		if len(intents) != 1 || intents[0].Artifact.Kind != "ipsec.vici.connection" || intents[0].Artifact.Name != "routerd-site-a" || intents[0].ApplyWith != "vici" {
+			t.Fatalf("IPsec intents on %s invent effects absent from the VICI owner: %+v", target, intents)
+		}
 	}
 }
 
@@ -129,11 +116,11 @@ func TestVirtualAddressIPv4ArtifactIntentsUseFreeBSDCARP(t *testing.T) {
 	kinds := map[string]bool{}
 	for _, intent := range intents {
 		kinds[intent.Artifact.Kind] = true
-		if intent.ApplyWith == "keepalived" || intent.ApplyWith == "systemctl" {
+		if intent.ApplyWith == "keepalived" || intent.ApplyWith == "systemctl" || intent.Artifact.Kind == "rc.d.service" {
 			t.Fatalf("FreeBSD CARP intent used Linux backend: %+v", intent)
 		}
 	}
-	for _, want := range []string{"freebsd.carp", "rc.d.service", "sysctl"} {
+	for _, want := range []string{"freebsd.carp", "sysctl"} {
 		if !kinds[want] {
 			t.Fatalf("missing FreeBSD intent kind %q in %+v", want, intents)
 		}
@@ -462,6 +449,18 @@ func TestServiceDeclarationsUsePlatformManagerMatrix(t *testing.T) {
 		for _, platformCase := range platforms {
 			t.Run(res.Kind+"/"+platformCase.name, func(t *testing.T) {
 				intents := resourceArtifactIntentsForPlatform(res, map[string]string{"lan": "eth0", "wan": "eth1"}, platformCase.targetOS, platformCase.features)
+				if platformCase.targetOS == platform.OSFreeBSD && (res.Kind == "DHCPv4Server" || res.Kind == "DHCPv6Server") {
+					if hasArtifactKind(intents, "rc.d.service") || hasArtifactKind(intents, "systemd.service") {
+						t.Fatalf("native dnsmasq process owner duplicated by boot helper: %+v", intents)
+					}
+					return
+				}
+				if res.Kind == "VirtualAddress" && platformCase.targetOS == platform.OSFreeBSD {
+					if hasArtifactKind(intents, "rc.d.service") {
+						t.Fatalf("native CARP actor duplicated by boot helper: %+v", intents)
+					}
+					return
+				}
 				wantKind := platformCase.kind
 				if res.Kind == "TailscaleNode" && platformCase.name == "systemd" {
 					wantKind = "systemd.unit"
@@ -484,6 +483,16 @@ func hasArtifactIntent(intents []resource.Intent, kind, name, applyWith string) 
 		}
 	}
 	return false
+}
+
+func TestRAOnlyDHCPv6DoesNotDeclareDnsmasq(t *testing.T) {
+	res := api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Server"}, Metadata: api.ObjectMeta{Name: "ra"}, Spec: api.DHCPv6ServerSpec{Interface: "lan", Mode: "ra-only"}}
+	for _, features := range []platform.Features{{HasSystemd: true}, {HasRCD: true}} {
+		intents := resourceArtifactIntentsForPlatform(res, map[string]string{"lan": "eth0"}, platform.OSLinux, features)
+		if len(intents) != 0 {
+			t.Fatalf("RA-only scope declared an independent dnsmasq owner: %+v", intents)
+		}
+	}
 }
 
 func hasArtifact(artifacts []resource.Artifact, kind, name, owner string) bool {
@@ -539,24 +548,6 @@ func TestVXLANSegmentClaimsL2FilterTable(t *testing.T) {
 	}
 }
 
-func TestParseIPv4RouteTableArtifactsIncludesDefaultDev(t *testing.T) {
-	got := parseIPv4RouteTableArtifacts(`
-default dev ppp0 table 111 metric 10
-192.0.2.0/24 dev ppp0 table 111 proto kernel scope link
-192.168.1.0/24 dev ens18 table 112 proto kernel scope link
-default via 192.168.1.1 dev ens18 table 112 metric 600
-`)
-	if len(got) != 2 {
-		t.Fatalf("route table artifacts = %+v, want two", got)
-	}
-	if got[0].Name != "table=111" || got[0].Attributes["ifname"] != "ppp0" {
-		t.Fatalf("first artifact = %+v, want table=111 ifname=ppp0", got[0])
-	}
-	if got[1].Name != "table=112" || got[1].Attributes["ifname"] != "ens18" {
-		t.Fatalf("second artifact = %+v, want table=112 ifname=ens18", got[1])
-	}
-}
-
 func TestParseIfconfigAddressArtifacts(t *testing.T) {
 	got := parseIfconfigAddressArtifacts(`vtnet1: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
 	inet 192.168.10.1 netmask 0xffffff00 broadcast 192.168.10.255
@@ -593,5 +584,14 @@ func TestAppliedOwnedArtifactsRequireObservedInventory(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].Kind != "host.hostname" {
 		t.Fatalf("applied artifacts = %+v, want only observed hostname", got)
+	}
+}
+
+func TestVXLANTunnelNativeOwnerHasNoGenericLinkArtifact(t *testing.T) {
+	res := api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VXLANTunnel"}, Metadata: api.ObjectMeta{Name: "overlay"}, Spec: api.VXLANTunnelSpec{IfName: "vx10", VNI: 10}}
+	for _, intent := range resourceArtifactIntents(res, nil) {
+		if intent.Artifact.Kind == "net.vxlan.tunnel" {
+			t.Fatal("generic raw-link artifact competes with exact native receipt owner")
+		}
 	}
 }

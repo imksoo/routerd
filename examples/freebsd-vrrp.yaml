@@ -70,5 +70,4 @@ spec:
       metadata:
         name: default
       spec:
-        defaultAction: deny
         sameRoleAccept: true

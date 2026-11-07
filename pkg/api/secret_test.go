@@ -8,6 +8,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"gopkg.in/yaml.v3"
 	"reflect"
 	"sort"
 	"strconv"
@@ -194,4 +195,70 @@ func diffSpecsSecretFields(expected, got map[string]specsSecretField) string {
 	}
 	sort.Strings(lines)
 	return strings.Join(lines, "\n")
+}
+
+func TestRedactYAMLSecretsPreservesAndRedactsSharedAnchors(t *testing.T) {
+	for _, source := range []string{
+		"password: &credential sensitive-value\npublicAlias: *credential\n",
+		"publicAnchor: &credential sensitive-value\npassword: *credential\npublicAlias: *credential\n",
+	} {
+		redacted, err := RedactYAMLSecrets(source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(redacted, "sensitive-value") {
+			t.Fatalf("anchored secret leaked: %s", redacted)
+		}
+		var values map[string]string
+		if err := yaml.Unmarshal([]byte(redacted), &values); err != nil {
+			t.Fatalf("redaction broke YAML anchor references: %v\n%s", err, redacted)
+		}
+		for key, value := range values {
+			if value != RedactedSecret {
+				t.Fatalf("alias %s retained secret: %q", key, value)
+			}
+		}
+	}
+}
+
+func TestRedactTransportCredentialHeaders(t *testing.T) {
+	resource := Resource{TypeMeta: TypeMeta{APIVersion: SystemAPIVersion, Kind: "ObservabilityPipeline"}, Spec: ObservabilityPipelineSpec{OTLP: ObservabilityPipelineOTLPSpec{Headers: map[string]string{"Authorization": "Bearer credential-value", "Proxy-Authorization": "Basic credential-value", "Cookie": "session=credential-value", "Content-Type": "application/json"}}}}
+	redacted, err := RedactSecrets(resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(redacted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "credential-value") || !strings.Contains(string(encoded), "application/json") {
+		t.Fatalf("transport credential header exposed or ordinary header lost: %s", encoded)
+	}
+	source := "headers:\n  Authorization: Bearer credential-value\n  Proxy-Authorization: Basic credential-value\n  Cookie: session=credential-value\n  Set-Cookie: session=credential-value\n  Content-Type: application/json\n"
+	output, err := RedactYAMLSecrets(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(output, "credential-value") || !strings.Contains(output, "application/json") {
+		t.Fatalf("YAML transport credentials exposed: %s", output)
+	}
+}
+
+func TestRedactYAMLRecursiveAliasesStayBounded(t *testing.T) {
+	for _, source := range []string{
+		"root: &loop\n  child: *loop\n  password: private-value\n",
+		"root: &loop\n  child:\n    password: *loop\n  value: private-value\n",
+	} {
+		redacted, err := RedactYAMLSecrets(source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(redacted, "private-value") {
+			t.Fatalf("recursive alias leaked a secret: %s", redacted)
+		}
+		var doc yaml.Node
+		if err := yaml.Unmarshal([]byte(redacted), &doc); err != nil {
+			t.Fatalf("redactor emitted invalid alias graph: %v", err)
+		}
+	}
 }

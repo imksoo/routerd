@@ -102,6 +102,33 @@ The `PluginRequest.spec.trigger` field records the actual trigger for one
 invocation. `trigger.type` is `interval` or `event`; `trigger.topic` is set for
 event-triggered invocations.
 
+The daemon prepares startup Plugin declarations once per configuration. For each
+Plugin it unions its triggers with triggers on all startup
+DynamicConfigSources referring to it. Equal intervals and topics are
+deduplicated. Each distinct interval has its own deadline and is initially due;
+simultaneous due work invokes the Plugin once during periodic processing. After
+an interval attempt succeeds or fails, intervals due by completion advance to
+completion time plus their duration. Future deadlines are retained. Named
+events invoke only matching Plugins and never consume interval deadlines.
+
+Event triggers use named topics and existing bus matching rules. A wildcard
+such as `**` must be explicit; a blank topic is not expanded to all events.
+Internal framework startup and periodic callbacks process interval deadlines;
+ordinary bus events with those same topic names still match event declarations.
+Event-only Plugins do not run merely because their worker starts.
+Daemon preview, sandbox, and standby modes do not execute automatic Plugins or
+consume their interval deadlines. Controller cancellation stops and reaps the
+child and prevents publication of its result.
+
+Automatic publication uses a compare-and-swap against the last accepted source
+generation. A failed execution, expired result, or competing publication leaves
+the accepted part and its original expiry unchanged. Same-content lifetime
+refreshes do not emit dynamic-config change notifications while the old part is
+still effective; changed content and recovery after expiry do.
+
+See [Plugin process checks](./operations/plugin-dynamic-process-test.md) for the
+reproducible execution and qualification boundary.
+
 ## I/O contract
 
 routerd starts the plugin executable, writes one `PluginRequest` JSON object to
@@ -205,7 +232,10 @@ environment.
 routerd decodes plugin stdout with YAML decoding, even when the plugin emits
 JSON, so resource specs are restored to typed routerd structs. It validates the
 plugin result shape, stores accepted output as a `DynamicConfigPart`, and derives
-`expiresAt` from `observedAt + ttl`. Full effective-config validation, including
+`expiresAt` from `observedAt + ttl`, capped by the shortest startup
+DynamicConfigSource TTL referring to the Plugin when one exists. The cap uses
+the original observation time and also applies to manual publication. Full
+effective-config validation, including
 dynamic override policy evaluation, happens when dynamic parts are merged with
 startup config.
 

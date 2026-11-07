@@ -142,6 +142,10 @@ node が master ではない場合、`routerd serve` は `spec.when` により�
 除外します。master で lease file が存在する場合、status は `Synced` へ進みます。
 lease file がまだ無い場合は、dnsmasq が作成するまで `Pending` のままです。
 
+routerd の installer は dnsmasq 用 hook `/usr/local/libexec/routerd/dhcp-event-relay` を
+`/usr/local/sbin/routerd-dhcp-event-relay` への symlink として作成します。同じパスに
+別のファイルや symlink がある場合は置き換えず、install を失敗させます。
+
 ## 復旧した同期失敗の調査
 
 3種類のリース同期では、既存のサービスログへ `DHCP lease synchronization failed` を記録します。
@@ -167,7 +171,8 @@ journalctl -u routerd.service --since '1 hour ago' --no-pager | grep 'DHCP lease
 復旧後の現在の状態は、従来どおり `Synced` です。同期間隔、再試行、時間制限、転送動作も維持します。
 リース同期の失敗は相手機への状態コピーの問題であり、それだけでDHCP応答の失敗とは判断できません。
 
-DHCPv4の固定割り当て保持情報は、SQLiteのデータベース本体と更新履歴（WAL）を同期します。
-一時的な共有メモリー索引 `-shm` は同期対象から除外し、受信側でSQLiteが再作成します。
-データベース本体や更新履歴の転送失敗は、引き続きエラーとして記録します。
-このファイル転送は、同時更新中のデータベース全体を一時点の状態として複製する方式ではありません。
+DHCPv4の固定割り当て保持情報は、確定済みの更新履歴を含む整合したSQLiteスナップショットを作り、従来の受信先パスへ転送します。
+更新履歴（WAL）と共有メモリー索引 `-shm` は別々に転送しません。
+スナップショットの作成失敗や転送失敗はエラーとして記録し、一時ファイルは試行後に削除します。
+送信側で同時に更新やチェックポイントが発生しても、転送するDBの整合性を保ちます。
+受信側の同時書き込みを排除する機能ではなく、HAの役割切替全体の検証とは区別します。

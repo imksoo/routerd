@@ -4,6 +4,7 @@ package state
 
 import (
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -63,20 +64,81 @@ func IsStorageFullError(err error) bool {
 		strings.Contains(text, "sqlite_full")
 }
 
-func (s *SQLiteStore) loadEventJournalUsage() error {
-	return s.db.QueryRow(`SELECT count(*), coalesce(sum(`+eventJournalPayloadSQL+`),0) FROM events`).
-		Scan(&s.eventJournalRows, &s.eventJournalPayloadBytes)
+// eventJournalExecutor is the existing SQLite boundary, shared by ordinary
+// appends and transactions which commit status, required history and pruning.
+type eventJournalExecutor interface {
+	Exec(string, ...any) (sql.Result, error)
+	QueryRow(string, ...any) *sql.Row
 }
 
-func (s *SQLiteStore) ensureEventJournalCapacityLocked(incomingBytes int64) error {
-	if err := s.pruneExpiredJournalBatchLocked(); err != nil {
+type eventJournalUsage struct {
+	rows, payloadBytes, dataVersion int64
+	lastAgePrune                    time.Time
+}
+
+func readEventJournalUsage(executor eventJournalExecutor, usage *eventJournalUsage) error {
+	// Capture before the aggregate so a later external commit forces a refresh.
+	if err := executor.QueryRow(`PRAGMA data_version`).Scan(&usage.dataVersion); err != nil {
 		return err
 	}
+	return executor.QueryRow(`SELECT count(*), coalesce(sum(`+eventJournalPayloadSQL+`),0) FROM events`).Scan(&usage.rows, &usage.payloadBytes)
+}
+
+func (s *SQLiteStore) applyEventJournalUsageLocked(usage eventJournalUsage) {
+	s.eventJournalRows = usage.rows
+	s.eventJournalPayloadBytes = usage.payloadBytes
+	s.eventJournalDataVersion = usage.dataVersion
+	s.eventJournalLastAgePrune = usage.lastAgePrune
+}
+
+func (s *SQLiteStore) loadEventJournalUsage() error {
+	usage := eventJournalUsage{lastAgePrune: s.eventJournalLastAgePrune}
+	if err := readEventJournalUsage(s.db, &usage); err != nil {
+		return err
+	}
+	s.applyEventJournalUsageLocked(usage)
+	return nil
+}
+
+// prepareEventJournalBatchLocked reserves the actual prepared event payload.
+// Transaction callers publish the returned usage only after commit; rollback
+// then retains both earlier history and its original accounting.
+func (s *SQLiteStore) prepareEventJournalBatchLocked(executor eventJournalExecutor, incomingRows, incomingBytes int64) (eventJournalUsage, error) {
+	usage := eventJournalUsage{s.eventJournalRows, s.eventJournalPayloadBytes, s.eventJournalDataVersion, s.eventJournalLastAgePrune}
+	if incomingRows < 0 || incomingBytes < 0 || incomingRows > s.eventJournalMaxRows || incomingBytes > s.eventJournalMaxBytes {
+		return usage, fmt.Errorf("event journal transaction exceeds its configured capacity")
+	}
+	var version int64
+	if err := executor.QueryRow(`PRAGMA data_version`).Scan(&version); err != nil {
+		return usage, err
+	}
+	if version != usage.dataVersion {
+		if err := readEventJournalUsage(executor, &usage); err != nil {
+			return usage, err
+		}
+	}
+	now := s.now().UTC()
+	if usage.lastAgePrune.IsZero() || now.Sub(usage.lastAgePrune) >= eventJournalAgePruneInterval {
+		cutoff := now.Add(-defaultEventJournalMaxAge).Format(time.RFC3339Nano)
+		result, err := executor.Exec(`DELETE FROM events WHERE id IN (SELECT id FROM events WHERE created_at < ? ORDER BY id LIMIT ?)`, cutoff, eventJournalPruneBatchRows)
+		if err != nil {
+			return usage, err
+		}
+		deleted, err := result.RowsAffected()
+		if err != nil {
+			return usage, err
+		}
+		if deleted > 0 {
+			if err := readEventJournalUsage(executor, &usage); err != nil {
+				return usage, err
+			}
+		} else {
+			usage.lastAgePrune = now
+		}
+	}
 	targetRows := s.eventJournalMaxRows * 9 / 10
-	targetBytes := s.eventJournalMaxBytes * 7 / 8
-	pruned := false
-	for s.eventJournalRows >= s.eventJournalMaxRows || s.eventJournalPayloadBytes+incomingBytes > s.eventJournalMaxBytes {
-		remove := s.eventJournalRows - targetRows
+	for usage.rows+incomingRows > s.eventJournalMaxRows || usage.payloadBytes+incomingBytes > s.eventJournalMaxBytes {
+		remove := usage.rows - targetRows
 		if remove < 1 {
 			remove = 1
 		}
@@ -84,73 +146,25 @@ func (s *SQLiteStore) ensureEventJournalCapacityLocked(incomingBytes int64) erro
 			remove = eventJournalPruneBatchRows
 		}
 		var rows, payload int64
-		err := s.db.QueryRow(`SELECT count(*), coalesce(sum(`+eventJournalPayloadSQL+`),0)
-FROM events WHERE id IN (SELECT id FROM events ORDER BY id LIMIT ?)`, remove).Scan(&rows, &payload)
+		err := executor.QueryRow(`SELECT count(*), coalesce(sum(`+eventJournalPayloadSQL+`),0) FROM events WHERE id IN (SELECT id FROM events ORDER BY id LIMIT ?)`, remove).Scan(&rows, &payload)
 		if err != nil {
-			return err
+			return usage, err
 		}
 		if rows == 0 {
-			if err := s.loadEventJournalUsage(); err != nil {
-				return err
-			}
-			if s.eventJournalRows < s.eventJournalMaxRows && s.eventJournalPayloadBytes+incomingBytes <= s.eventJournalMaxBytes {
-				return nil
-			}
-			return fmt.Errorf("event journal payload exceeds the safe limit without prunable rows")
+			return usage, fmt.Errorf("event journal payload exceeds the safe limit without prunable rows")
 		}
-		result, err := s.db.Exec(`DELETE FROM events WHERE id IN (SELECT id FROM events ORDER BY id LIMIT ?)`, rows)
+		result, err := executor.Exec(`DELETE FROM events WHERE id IN (SELECT id FROM events ORDER BY id LIMIT ?)`, rows)
 		if err != nil {
-			return err
+			return usage, err
 		}
 		deleted, err := result.RowsAffected()
 		if err != nil {
-			return err
+			return usage, err
 		}
-		s.eventJournalRows -= deleted
-		s.eventJournalPayloadBytes -= payload
-		pruned = true
-		if s.eventJournalRows < 0 {
-			s.eventJournalRows = 0
-		}
-		if s.eventJournalPayloadBytes < 0 {
-			s.eventJournalPayloadBytes = 0
-		}
-		if s.eventJournalRows <= targetRows && s.eventJournalPayloadBytes+incomingBytes <= targetBytes {
-			break
-		}
+		usage.rows -= deleted
+		usage.payloadBytes -= payload
 	}
-	if pruned {
-		_, _ = s.db.Exec(`PRAGMA incremental_vacuum(4096)`)
-		_, _ = s.db.Exec(`PRAGMA wal_checkpoint(PASSIVE)`)
-	}
-	return nil
-}
-
-func (s *SQLiteStore) pruneExpiredJournalBatchLocked() error {
-	now := s.now().UTC()
-	if !s.eventJournalLastAgePrune.IsZero() && now.Sub(s.eventJournalLastAgePrune) < eventJournalAgePruneInterval {
-		return nil
-	}
-	cutoff := now.Add(-defaultEventJournalMaxAge).Format(time.RFC3339Nano)
-	result, err := s.db.Exec(`DELETE FROM events WHERE id IN (
-SELECT id FROM events WHERE created_at < ? ORDER BY id LIMIT ?)`, cutoff, eventJournalPruneBatchRows)
-	if err != nil {
-		return err
-	}
-	deleted, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if deleted > 0 {
-		if err := s.loadEventJournalUsage(); err != nil {
-			return err
-		}
-		_, _ = s.db.Exec(`PRAGMA incremental_vacuum(4096)`)
-		_, _ = s.db.Exec(`PRAGMA wal_checkpoint(PASSIVE)`)
-		return nil
-	}
-	s.eventJournalLastAgePrune = now
-	return nil
+	return usage, nil
 }
 
 func journalPayloadBytes(values ...string) int64 {
@@ -175,11 +189,12 @@ func boundedJournalEvent(event daemonapi.DaemonEvent) (daemonapi.DaemonEvent, st
 	attrs, _ := json.Marshal(event.Attributes)
 	if len(attrs) > maxJournalAttributesBytes {
 		digest := sha256.Sum256(attrs)
-		attrs, _ = json.Marshal(map[string]string{
+		event.Attributes = map[string]string{
 			"_routerdTruncated":     "true",
 			"_routerdOriginalBytes": fmt.Sprint(len(attrs)),
 			"_routerdSHA256":        hex.EncodeToString(digest[:]),
-		})
+		}
+		attrs, _ = json.Marshal(event.Attributes)
 	}
 	return event, string(attrs)
 }

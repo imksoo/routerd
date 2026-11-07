@@ -37,6 +37,9 @@ func updatePendingProviderUnassignObservations(pendingAddresses map[string]bool,
 }
 
 func actionRecordCompletedAt(rec providerActionJournalRecord) time.Time {
+	if providerActionRollbackState(rec.status) {
+		return rec.updatedAt.UTC()
+	}
 	if !rec.executedAt.IsZero() {
 		return rec.executedAt.UTC()
 	}

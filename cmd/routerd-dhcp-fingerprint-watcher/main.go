@@ -59,7 +59,9 @@ func run(ctx context.Context, args []string) error {
 	if !*once {
 		journalArgs = append(journalArgs, "-f")
 	}
-	cmd := commandContext(ctx, "journalctl", journalArgs...)
+	processCtx, stopProcess := context.WithCancel(ctx)
+	defer stopProcess()
+	cmd := commandContext(processCtx, "journalctl", journalArgs...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return err
@@ -69,6 +71,10 @@ func run(ctx context.Context, args []string) error {
 		return err
 	}
 	ingestErr := ingest(ctx, stdout, store)
+	// Ingest failure must release a still-following journal process before Wait.
+	if ingestErr != nil {
+		stopProcess()
+	}
 	waitErr := cmd.Wait()
 	if ingestErr != nil {
 		return ingestErr
@@ -95,20 +101,21 @@ func ingest(ctx context.Context, r io.Reader, store *logstore.DHCPFingerprintLog
 	return scanner.Err()
 }
 
+const fingerprintTransactionLimit = 2048
+const fingerprintTransactionTTL = 5 * time.Minute
+
+type fingerprintTransaction struct {
+	event     dhcpfingerprint.Event
+	ambiguous bool
+}
+
 type fingerprintIngester struct {
 	store        *logstore.DHCPFingerprintLog
-	pending      dhcpfingerprint.Event
-	currentMAC   string
-	macByIface   map[string]string
-	fingerprints map[string]dhcpfingerprint.Fingerprint
+	transactions map[string]fingerprintTransaction
 }
 
 func newFingerprintIngester(store *logstore.DHCPFingerprintLog) *fingerprintIngester {
-	return &fingerprintIngester{
-		store:        store,
-		macByIface:   map[string]string{},
-		fingerprints: map[string]dhcpfingerprint.Fingerprint{},
-	}
+	return &fingerprintIngester{store: store, transactions: make(map[string]fingerprintTransaction)}
 }
 
 func (i *fingerprintIngester) line(ctx context.Context, line string, now time.Time) error {
@@ -116,29 +123,49 @@ func (i *fingerprintIngester) line(ctx context.Context, line string, now time.Ti
 	if !ok {
 		return nil
 	}
-	mac := event.MAC
-	if mac == "" && event.Interface != "" {
-		mac = i.macByIface[event.Interface]
+	for key, txn := range i.transactions {
+		if now.Sub(txn.event.ObservedAt) >= fingerprintTransactionTTL {
+			delete(i.transactions, key)
+		}
 	}
-	if mac == "" {
-		mac = i.currentMAC
+	if event.TransactionID != "" {
+		txn := i.transactions[event.TransactionID]
+		if txn.ambiguous {
+			return nil
+		}
+		if event.MAC != "" && txn.event.MAC != "" && event.MAC != txn.event.MAC {
+			// Colliding client xids do not provide a trustworthy metadata identity.
+			txn.ambiguous = true
+			txn.event.ObservedAt = now
+			i.transactions[event.TransactionID] = txn
+			return nil
+		}
+		event = mergeEvents(txn.event, event)
+		if len(i.transactions) >= fingerprintTransactionLimit {
+			var oldestKey string
+			var oldest time.Time
+			for key, candidate := range i.transactions {
+				if oldestKey == "" || candidate.event.ObservedAt.Before(oldest) {
+					oldestKey, oldest = key, candidate.event.ObservedAt
+				}
+			}
+			delete(i.transactions, oldestKey)
+		}
+		i.transactions[event.TransactionID] = fingerprintTransaction{event: event}
 	}
-	if mac == "" {
-		i.pending = mergeEvents(i.pending, event)
+	// A metadata-only line without transaction identity cannot identify a client.
+	if event.MAC == "" {
 		return nil
 	}
-	if event.MAC != "" {
-		i.currentMAC = event.MAC
-		if event.Interface != "" {
-			i.macByIface[event.Interface] = event.MAC
-		}
-		event = mergeEvents(i.pending, event)
-		i.pending = dhcpfingerprint.Event{}
+	rows, err := i.store.List(ctx, logstore.DHCPFingerprintFilter{MAC: event.MAC, Limit: 1})
+	if err != nil {
+		return err
 	}
-	fp := i.fingerprints[mac]
-	fp.MAC = mac
-	fp.ObservedAt = now.UTC()
-	fp.Source = "dnsmasq-log-dhcp"
+	fp := dhcpfingerprint.Fingerprint{MAC: event.MAC, ObservedAt: now.UTC(), Source: "dnsmasq-log-dhcp"}
+	if len(rows) > 0 {
+		fp.Hostname, fp.VendorClass = rows[0].Hostname, rows[0].VendorClass
+		fp.RequestedOptions = rows[0].RequestedOptions
+	}
 	if event.Hostname != "" {
 		fp.Hostname = event.Hostname
 	}
@@ -148,7 +175,6 @@ func (i *fingerprintIngester) line(ctx context.Context, line string, now time.Ti
 	if len(event.RequestedOptions) > 0 {
 		fp.RequestedOptions = event.RequestedOptions
 	}
-	i.fingerprints[mac] = fp
 	return i.persist(ctx, fp)
 }
 
@@ -170,6 +196,9 @@ func (i *fingerprintIngester) persist(ctx context.Context, fp dhcpfingerprint.Fi
 }
 
 func mergeEvents(base, next dhcpfingerprint.Event) dhcpfingerprint.Event {
+	if next.TransactionID != "" {
+		base.TransactionID = next.TransactionID
+	}
 	if next.MAC != "" {
 		base.MAC = next.MAC
 	}
@@ -183,7 +212,18 @@ func mergeEvents(base, next dhcpfingerprint.Event) dhcpfingerprint.Event {
 		base.VendorClass = next.VendorClass
 	}
 	if len(next.RequestedOptions) > 0 {
-		base.RequestedOptions = next.RequestedOptions
+		for _, option := range next.RequestedOptions {
+			found := false
+			for _, existing := range base.RequestedOptions {
+				if existing == option {
+					found = true
+					break
+				}
+			}
+			if !found {
+				base.RequestedOptions = append(base.RequestedOptions, option)
+			}
+		}
 	}
 	if !next.ObservedAt.IsZero() {
 		base.ObservedAt = next.ObservedAt

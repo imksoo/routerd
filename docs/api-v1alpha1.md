@@ -56,7 +56,7 @@ spec:
 | `Hostname` | Sets the host name. |
 | `NTPClient` | Enables the OS NTP client. It can use static servers or derive servers from DHCPv4 / DHCPv6 status with public fallback servers. |
 | `NTPServer` | Runs a local LAN NTP server. Client allow ranges can be static `allowCIDRs` or derived with `allowCIDRFrom` from status fields such as `IPv6DelegatedAddress/<name>.address` or `DHCPv6PrefixDelegation/<name>.currentPrefix`. |
-| `LogSink` | Routes log events to syslog, OTLP, webhook, file, or journald sinks. |
+| `LogSink` | Routes log events to syslog, webhook, file, or journald sinks. |
 | `ObservabilityPipeline` | Configures OTLP environment and built-in routerd event forwarding to stdout, syslog, or Loki. |
 | `RouterdCluster` | Uses a file lease so only the leader mutates host configuration while standby nodes observe status. |
 | `LogRetention` | Manages retention for events, DNS queries, traffic flows, and firewall event logs. |
@@ -122,9 +122,17 @@ listener requires and verifies client certificates signed by that CA.
 
 `Telemetry` describes routerd's own signal export endpoint for metrics, traces,
 and logs emitted by managed daemons. `LogSink` describes log forwarding routes
-for operational events and observed network logs. When a log sink uses OTLP,
-prefer `LogSink.spec.otlp.telemetryRef` so the sink reuses a `Telemetry`
-resource instead of duplicating collector endpoints.
+for operational events and observed network logs. Direct `LogSink` OTLP delivery
+is unsupported; use the configured `Telemetry` or `ObservabilityPipeline` export.
+
+After a configuration becomes active, ordinary `LogSink` destinations follow
+that configuration without restarting routerd. Replacement closes the previous
+sinks after their in-flight deliveries complete; removal stops subsequent delivery.
+
+Syslog delivery has a five-second connection/write deadline per serialized event,
+including its reconnect attempt. A timeout returns a delivery error. In particular,
+`LogRetention` does not delete rows whose archive delivery failed; this deadline
+does not turn a failed archive into an acknowledgement.
 
 ## Interfaces
 
@@ -280,6 +288,18 @@ resolver addresses for DoH or DoT endpoint name resolution.
 | `IngressService` | Publishes one WAN-side IPv4 TCP/UDP service. Multiple backends, TCP/HTTP health checks, and `failover`, `sourceHash`, or `random` backend selection are accepted. |
 | `LocalServiceRedirect` | Redirects LAN-origin IPv4/IPv6 traffic for `IPAddressSet` destinations to a local router port. This is intended for plaintext DNS/NTP interception without touching DoH or DoT ports. |
 | `EgressRoutePolicy` | Represents default-route selection, marked IPv4 policy routing, and hash-based multi-target egress routing. |
+
+`DHCPv4Client` reuses a saved lease only when its resource, interface, MAC address
+and client identifier match. After an identity change it starts a fresh DHCP
+exchange without requesting the old address. Matching saved leases still require
+INIT-REBOOT confirmation before they become current; malformed saved data remains
+an error.
+
+`IPv4Route.spec.gatewayFrom` waits with `Pending / GatewayMissing` when a required
+source has no value and no static `gateway` fallback is configured. If the value
+disappears, routerd withdraws its owned route; acquisition installs it again.
+Omitting `gatewayFrom` permits a direct device route. An explicitly optional
+source (`optional: true`) may also resolve to no gateway.
 
 `EgressRoutePolicy` supports `destinationSetRefs` and `excludeDestinationSetRefs`
 in addition to CIDR fields. Use them to steer or exclude FQDN-backed destination
@@ -906,8 +926,12 @@ Preflight checks:
 The same checks are surfaced by `routerctl doctor mgmt`, which never
 applies anything.
 
-`spec.allowSourceCIDRs` is informational today (recorded in status and
-shown by doctor) and is not yet enforced by the firewall guard.
+When `spec.allowSourceCIDRs` contains one or more CIDRs, routerd enforces the
+union of those CIDRs at the WebConsole request boundary. Requests whose
+transport peer is outside the declared prefixes receive HTTP 403. routerd does
+not trust `X-Forwarded-For` for this decision. An empty list leaves WebConsole
+source access unrestricted, retaining the explicit opt-in behavior for this
+additional service guard.
 
 `--allow-mgmt-lockout` is an **emergency override**, intended for the case
 where you must apply a config that would otherwise be blocked and have a

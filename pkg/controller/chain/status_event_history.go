@@ -50,7 +50,25 @@ func (s eventedStore) saveStatusWithHistory(apiVersion, kind, name string, updat
 	if !ok || s.Bus == nil || !s.Bus.PersistsTo(store) {
 		return fmt.Errorf("EventRule status history requires status and bus to share a transactional event store")
 	}
-	build := func(current, next map[string]any) (bool, *daemonapi.DaemonEvent) {
+	build := statusTransitionEventBuilder(apiVersion, kind, name)
+	var event *daemonapi.DaemonEvent
+	var err error
+	if merge {
+		event, err = store.MergeObjectStatusAndEvent(apiVersion, kind, name, updates, build)
+	} else {
+		event, err = store.SaveObjectStatusAndEvent(apiVersion, kind, name, updates, build)
+	}
+	if err != nil {
+		return fmt.Errorf("commit status and required EventRule history: %w", err)
+	}
+	if event == nil {
+		return nil
+	}
+	return s.Bus.PublishRecorded(context.Background(), *event)
+}
+
+func statusTransitionEventBuilder(apiVersion, kind, name string) routerstate.StatusEventBuilder {
+	return func(current, next map[string]any) (bool, *daemonapi.DaemonEvent) {
 		if newerStatus(current, next) {
 			return false, nil
 		}
@@ -68,18 +86,4 @@ func (s eventedStore) saveStatusWithHistory(apiVersion, kind, name string, updat
 		event.Attributes = map[string]string{"phase": fmt.Sprint(next["phase"]), "previousPhase": fmt.Sprint(current["phase"]), "changedFields": strings.Join(changedFields, ",")}
 		return true, &event
 	}
-	var event *daemonapi.DaemonEvent
-	var err error
-	if merge {
-		event, err = store.MergeObjectStatusAndEvent(apiVersion, kind, name, updates, build)
-	} else {
-		event, err = store.SaveObjectStatusAndEvent(apiVersion, kind, name, updates, build)
-	}
-	if err != nil {
-		return fmt.Errorf("commit status and required EventRule history: %w", err)
-	}
-	if event == nil {
-		return nil
-	}
-	return s.Bus.PublishRecorded(context.Background(), *event)
 }

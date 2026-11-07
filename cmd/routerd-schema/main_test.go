@@ -7,6 +7,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/imksoo/routerd/pkg/api"
 )
 
 func TestConfigSchemaDescribesTunnelInterfacePeerAddress(t *testing.T) {
@@ -57,7 +59,7 @@ func TestControlSchemasCoverSAMEnrollmentTopology(t *testing.T) {
 		"\"required\":[\"apiVersion\",\"kind\",\"accepted\",\"claimRef\",\"dynamicSource\",\"generation\",\"observedAt\",\"expiresAt\"]",
 		"\"required\":[\"apiVersion\",\"kind\",\"name\"]",
 		"\"required\":[\"apiVersion\",\"kind\",\"revoked\",\"claimRef\",\"dynamicSource\",\"generation\",\"observedAt\",\"expiresAt\"]",
-		"\"required\":[\"name\",\"claimRef\"]",
+		"\"required\":[\"name\",\"claimRef\",\"claimDigest\",\"claimIdentityDigest\"]",
 		"\"required\":[\"apiVersion\",\"kind\",\"metadata\",\"claimDigest\",\"rrSet\"]",
 		"\"peerGroup\"",
 	} {
@@ -81,6 +83,9 @@ func TestControlSchemasCoverSAMEnrollmentTopology(t *testing.T) {
 		"\"name\":\"claim\"",
 		"\"name\":\"claimDigest\"",
 		"\"name\":\"claimIdentityDigest\"",
+		`"in":"query","name":"claim","required":true`,
+		`"in":"query","name":"claimDigest","required":true`,
+		`"in":"query","name":"claimIdentityDigest","required":true`,
 		"\"SAMEnrollmentClaimSubmitRequest\"",
 		"\"SAMEnrollmentClaimSubmitResult\"",
 		"\"SAMEnrollmentClaimRevokeRequest\"",
@@ -111,4 +116,58 @@ func changeToRepositoryRoot(t *testing.T) {
 			t.Error(err)
 		}
 	})
+}
+
+func TestSchemaIncludesSupportedStaticNetworkKindsAndRejectsUnsupportedIntent(t *testing.T) {
+	changeToRepositoryRoot(t)
+	encoded, err := json.Marshal(configSchema())
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema := string(encoded)
+	for _, kind := range []string{"Bridge", "VXLANSegment", "IPv6StaticRoute"} {
+		if !strings.Contains(schema, `"kind":{"const":"`+kind+`"`) {
+			t.Fatalf("schema omitted working static resource %s", kind)
+		}
+	}
+	if !strings.Contains(schema, `"maxLength":0`) {
+		t.Fatal("schema still permits unimplemented provider execution window")
+	}
+	if strings.Contains(schema, `"enum":["stdout","syslog","loki","kafka"]`) {
+		t.Fatal("schema still advertises unavailable Kafka exporter")
+	}
+}
+
+func TestMetadataSchemaMatchesTypedConfigurationBoundary(t *testing.T) {
+	changeToRepositoryRoot(t)
+	schema := metadataSchema()
+	properties := schema["properties"].(map[string]any)
+	for _, field := range []string{"name", "ownerRefs", "annotations"} {
+		if properties[field] == nil {
+			t.Fatalf("schema rejects admitted ObjectMeta.%s", field)
+		}
+	}
+	if schema["additionalProperties"] != false {
+		t.Fatal("metadata unknown fields must remain closed")
+	}
+}
+
+func TestDNSZoneSchemaRejectsUnsupportedLocalSigning(t *testing.T) {
+	changeToRepositoryRoot(t)
+	schema := resourceSchema(api.NetAPIVersion, "DNSZone", api.DNSZoneSpec{})
+	properties := schema["properties"].(map[string]any)["spec"].(map[string]any)["properties"].(map[string]any)
+	enabled := properties["dnssec"].(map[string]any)["properties"].(map[string]any)["enabled"].(map[string]any)
+	if enabled["const"] != false {
+		t.Fatalf("unsupported signing remains admissible: %#v", enabled)
+	}
+}
+
+func TestEventRuleSchemaRejectsUnimplementedRate(t *testing.T) {
+	changeToRepositoryRoot(t)
+	schema := resourceSchema(api.NetAPIVersion, "EventRule", api.EventRuleSpec{})
+	properties := schema["properties"].(map[string]any)["spec"].(map[string]any)["properties"].(map[string]any)
+	rate := properties["pattern"].(map[string]any)["properties"].(map[string]any)["rate"].(map[string]any)
+	if rate["maximum"] != float64(0) || rate["minimum"] != float64(0) {
+		t.Fatalf("unimplemented rate remains admissible: %#v", rate)
+	}
 }

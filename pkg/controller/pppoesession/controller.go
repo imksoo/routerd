@@ -13,11 +13,13 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/pppoeclient"
 )
 
 const EventApplied = "routerd.pppoe.session.applied"
@@ -27,6 +29,18 @@ type Store interface {
 	ObjectStatus(apiVersion, kind, name string) map[string]any
 }
 
+// Source binds a status response to the currently eligible native worker.
+// ConfigHash stays internal; only the opaque supervisor token crosses IPC.
+type Source struct {
+	Interface       string
+	Device          string
+	ConfigHash      string
+	SupervisorOwner string
+	Identity        pppoeclient.SessionIdentity
+}
+
+type SourceReader func(name string) (Source, bool, error)
+
 type Controller struct {
 	Router        *api.Router
 	Bus           *bus.Bus
@@ -34,6 +48,7 @@ type Controller struct {
 	DaemonSockets map[string]string
 	DryRun        bool
 	Logger        *slog.Logger
+	Source        SourceReader
 }
 
 func (c Controller) Start(ctx context.Context) {
@@ -54,16 +69,38 @@ func (c Controller) Start(ctx context.Context) {
 }
 
 func (c Controller) Reconcile(ctx context.Context, name string) error {
+	if c.Source == nil {
+		return fmt.Errorf("PPPoE source observation is required")
+	}
+	source, ready, err := c.Source(name)
+	if err != nil {
+		return err
+	}
+	if !ready {
+		return c.saveSourceUnavailable(name)
+	}
 	status, err := daemonStatus(ctx, c.socketFor(name))
 	if err != nil {
 		return err
 	}
+	return c.applyDaemonStatus(ctx, name, source, status)
+}
+
+func (c Controller) applyDaemonStatus(ctx context.Context, name string, source Source, status daemonapi.DaemonStatus) error {
 	for _, resource := range status.Resources {
-		if resource.Resource.Kind != "PPPoESession" || resource.Resource.Name != name {
+		if resource.Resource.APIVersion != api.NetAPIVersion || resource.Resource.Kind != "PPPoESession" || resource.Resource.Name != name {
 			continue
 		}
 		observed := resource.Observed
+		currentSource, ready, err := c.Source(name)
+		if err != nil {
+			return err
+		}
+		if !ready || currentSource != source || resource.PPPoEIdentity == nil || *resource.PPPoEIdentity != source.Identity || observed["interface"] != source.Interface || observed["ifname"] != source.Device || source.SupervisorOwner != "" && observed["supervisorOwner"] != source.SupervisorOwner {
+			return c.saveSourceUnavailable(name)
+		}
 		next := map[string]any{
+			"sourceIdentity": source.Identity,
 			"phase":          resource.Phase,
 			"health":         resource.Health,
 			"conditions":     resource.Conditions,
@@ -106,6 +143,13 @@ func (c Controller) Reconcile(ctx context.Context, name string) error {
 	return fmt.Errorf("daemon status did not include PPPoESession/%s", name)
 }
 
+func (c Controller) saveSourceUnavailable(name string) error {
+	return c.Store.SaveObjectStatus(api.NetAPIVersion, "PPPoESession", name, map[string]any{
+		"phase": "Pending", "reason": "DaemonSourceUnavailable", "health": daemonapi.HealthUnknown,
+		"currentAddress": "", "peerAddress": "", "gateway": "", "dnsServers": []string{}, "device": "", "observed": map[string]string{}, "dryRun": c.DryRun,
+	})
+}
+
 func sessionEventChanged(current, next map[string]any) bool {
 	for _, key := range []string{"phase", "device", "currentAddress", "peerAddress", "gateway", "connectedAt"} {
 		if fmt.Sprint(current[key]) != fmt.Sprint(next[key]) {
@@ -127,7 +171,7 @@ func (c Controller) socketFor(resource string) string {
 }
 
 func daemonStatus(ctx context.Context, socketPath string) (daemonapi.DaemonStatus, error) {
-	client := &http.Client{Transport: &http.Transport{DisableKeepAlives: true, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+	client := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{DisableKeepAlives: true, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		var dialer net.Dialer
 		return dialer.DialContext(ctx, "unix", socketPath)
 	}}}
@@ -142,8 +186,16 @@ func daemonStatus(ctx context.Context, socketPath string) (daemonapi.DaemonStatu
 		return daemonapi.DaemonStatus{}, err
 	}
 	defer resp.Body.Close()
+	return decodeDaemonStatus(resp)
+}
+
+func decodeDaemonStatus(resp *http.Response) (daemonapi.DaemonStatus, error) {
+	if resp.StatusCode != http.StatusOK {
+		return daemonapi.DaemonStatus{}, fmt.Errorf("PPPoE status endpoint HTTP %d", resp.StatusCode)
+	}
 	var status daemonapi.DaemonStatus
-	return status, json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&status)
+	err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&status)
+	return status, err
 }
 
 func parseJSONStringList(raw string) []string {

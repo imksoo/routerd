@@ -147,7 +147,7 @@ func TestPPPoEDiagnosticRedactsPassword(t *testing.T) {
 			stateFile := filepath.Join(dir, "state.json")
 			eventFile := filepath.Join(dir, "events.jsonl")
 			d := &daemon{opts: options{resource: "wan", password: "secret value", stateFile: stateFile, eventFile: eventFile}}
-			d.scanLog(strings.NewReader(line))
+			d.scanLog(d.cmd, strings.NewReader(line))
 			d.mu.Lock()
 			gotDiagnostic := d.exitDiagnosticLocked(os.ErrInvalid)
 			d.mu.Unlock()
@@ -203,7 +203,7 @@ func TestDiscoveryTimeoutPersistsActionableFailureForBothBackends(t *testing.T) 
 				t.Fatalf("events = %s", events)
 			}
 
-			d.scanLog(strings.NewReader("local  IP address 198.51.100.2"))
+			d.scanLog(cmd, strings.NewReader("local  IP address 198.51.100.2"))
 			d.mu.Lock()
 			phase := d.snapshot.Phase
 			d.mu.Unlock()

@@ -2,7 +2,11 @@
 
 package daemonapi
 
-import "time"
+import (
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/pppoeclient"
+	"time"
+)
 
 const (
 	APIVersion = "daemon.routerd.net/v1alpha1"
@@ -88,6 +92,7 @@ const (
 	EventDHCPv6PrefixRebound     = "routerd.dhcpv6.client.prefix.rebound"
 	EventDHCPv6PrefixExpired     = "routerd.dhcpv6.client.prefix.expired"
 	EventDHCPv6ServerLost        = "routerd.dhcpv6.client.server.lost"
+	EventDHCPv6AddressesChanged  = "routerd.dhcpv6.client.addresses.changed"
 )
 
 const (
@@ -172,13 +177,15 @@ type Condition struct {
 }
 
 type ResourceStatus struct {
-	Resource   ResourceRef       `json:"resource"`
-	Phase      string            `json:"phase"`
-	Health     string            `json:"health"`
-	Since      time.Time         `json:"since,omitempty"`
-	Conditions []Condition       `json:"conditions"`
-	Observed   map[string]string `json:"observed,omitempty"`
-	Warnings   []string          `json:"warnings,omitempty"`
+	PPPoEIdentity *pppoeclient.SessionIdentity `json:"pppoeIdentity,omitempty"`
+	Routing       *api.HealthObservation       `json:"routing,omitempty"`
+	Resource      ResourceRef                  `json:"resource"`
+	Phase         string                       `json:"phase"`
+	Health        string                       `json:"health"`
+	Since         time.Time                    `json:"since,omitempty"`
+	Conditions    []Condition                  `json:"conditions"`
+	Observed      map[string]string            `json:"observed,omitempty"`
+	Warnings      []string                     `json:"warnings,omitempty"`
 }
 
 type DaemonEvent struct {

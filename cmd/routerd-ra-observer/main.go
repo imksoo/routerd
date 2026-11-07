@@ -11,17 +11,18 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/daemonapi"
-	"github.com/imksoo/routerd/pkg/eventfile"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/raobserver"
 )
@@ -41,16 +42,29 @@ type daemon struct {
 	startedAt time.Time
 	cancel    context.CancelFunc
 
-	mu         sync.Mutex
-	cond       *sync.Cond
-	events     []daemonapi.DaemonEvent
-	nextCursor uint64
+	mu          sync.Mutex
+	events      []daemonapi.DaemonEvent
+	nextCursor  uint64
+	cursorEpoch string
+	changed     chan struct{}
+	stopping    chan struct{}
 
-	observerError string
-	selfMAC       string
-	packetsSeen   uint64
-	lastObserved  time.Time
-	routers       map[string]raobserver.RouterObservation
+	observerError           string
+	selfMAC                 string
+	packetsSeen             uint64
+	lastObserved            time.Time
+	routers                 map[string]raobserver.RouterObservation
+	clock                   func() time.Time
+	historyExpired          uint64
+	historyEvicted          uint64
+	observationsTruncated   uint64
+	observationItemsOmitted uint64
+	eventRingEvicted        uint64
+	fileQueue               chan daemonapi.DaemonEvent
+	fileCondition           daemonapi.Condition
+	fileErrors              uint64
+	fileDropped             uint64
+	fileWritten             uint64
 }
 
 type eventsResponse struct {
@@ -115,23 +129,31 @@ func daemonCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	d := &daemon{
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	d := newDaemon(opts)
+	d.selfMAC = stringutil.FirstNonEmpty(opts.selfMAC, interfaceMAC(opts.ifname))
+	return d.run(ctx)
+}
+
+func newDaemon(opts options) *daemon {
+	now := time.Now().UTC()
+	return &daemon{
 		opts:          opts,
-		startedAt:     time.Now().UTC(),
-		cancel:        cancel,
+		startedAt:     now,
+		cursorEpoch:   strconv.FormatInt(now.UnixNano(), 36) + "-" + strconv.Itoa(os.Getpid()),
+		changed:       make(chan struct{}),
+		stopping:      make(chan struct{}),
+		fileQueue:     make(chan daemonapi.DaemonEvent, eventFileQueueSize),
+		fileCondition: daemonapi.Condition{Type: "EventPersistence", Status: "True", Reason: "EventPersistenceReady", LastTransitionTime: now},
 		observerError: "packet observer is starting",
 		routers:       map[string]raobserver.RouterObservation{},
 	}
-	d.cond = sync.NewCond(&d.mu)
-	d.selfMAC = stringutil.FirstNonEmpty(opts.selfMAC, interfaceMAC(opts.ifname))
-	go d.observe(ctx)
-	return d.serve(ctx)
 }
 
 func (d *daemon) observe(ctx context.Context) {
 	for ctx.Err() == nil {
-		socket, err := openPacketSocket(d.opts.ifname)
+		socket, err := openPacketSocket(ctx, d.opts.ifname)
 		if err != nil {
 			d.setObserverError(err)
 			select {
@@ -152,10 +174,8 @@ func (d *daemon) observe(ctx context.Context) {
 }
 
 func (d *daemon) observeSocket(ctx context.Context, socket *packetSocket) error {
-	go func() {
-		<-ctx.Done()
-		_ = socket.close()
-	}()
+	stop := context.AfterFunc(ctx, func() { _ = socket.close() })
+	defer stop()
 	frame := make([]byte, 65535)
 	for {
 		n, err := socket.read(frame)
@@ -171,16 +191,26 @@ func (d *daemon) observeSocket(ctx context.Context, socket *packetSocket) error 
 }
 
 func (d *daemon) recordAdvertisement(adv raobserver.Advertisement) {
-	now := time.Now().UTC()
+	now := d.now()
 	d.mu.Lock()
+	defer d.mu.Unlock()
 	d.packetsSeen++
 	d.lastObserved = now
+	d.expireRoutersLocked(now)
 	self := raobserver.IsSelfAdvertisement(adv, d.selfMAC)
 	if !self {
 		key := raobserver.ObservationKey(adv)
 		current := d.routers[key]
 		first := current.Count == 0
-		d.routers[key] = raobserver.UpdateObservation(current, adv, now)
+		if first && len(d.routers) >= maxObservedRouters {
+			d.evictOldestRouterLocked()
+		}
+		bounded, omitted := boundedAdvertisement(adv)
+		if omitted > 0 {
+			d.observationsTruncated++
+			d.observationItemsOmitted += uint64(omitted)
+		}
+		d.routers[key] = raobserver.UpdateObservation(current, bounded, now)
 		if first {
 			d.publishLocked("routerd.ipv6.ra.rogue_detected", daemonapi.SeverityWarning, "RogueRADetected", "observed non-self IPv6 router advertisement", map[string]string{
 				"interface":      d.opts.ifname,
@@ -190,52 +220,52 @@ func (d *daemon) recordAdvertisement(adv raobserver.Advertisement) {
 			})
 		}
 	}
-	d.mu.Unlock()
 }
 
-func (d *daemon) serve(ctx context.Context) error {
+func (d *daemon) handleCommand(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var req daemonapi.CommandRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+		http.Error(w, "invalid command request", http.StatusBadRequest)
+		return
+	}
+	result := daemonapi.CommandResult{TypeMeta: daemonapi.TypeMeta{APIVersion: daemonapi.APIVersion, Kind: daemonapi.KindCommandResult}, Command: req.Command}
+	if req.Command != daemonapi.CommandStop || d.cancel == nil {
+		result.Message = "unsupported command or observer is not running"
+		w.WriteHeader(http.StatusBadRequest)
+	} else {
+		result.Accepted = true
+		result.Message = "accepted"
+		defer d.cancel()
+	}
+	writeHTTPJSON(w, result)
+}
+
+func (d *daemon) httpServer() (*http.Server, net.Listener, error) {
 	if err := os.MkdirAll(filepath.Dir(d.opts.socketPath), 0755); err != nil {
-		return err
+		return nil, nil, err
 	}
 	_ = os.Remove(d.opts.socketPath)
 	listener, err := net.Listen("unix", d.opts.socketPath)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
-	defer listener.Close()
-	defer os.Remove(d.opts.socketPath)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/status", func(w http.ResponseWriter, _ *http.Request) {
 		writeHTTPJSON(w, d.status())
 	})
 	mux.HandleFunc("/v1/events", d.handleEvents)
-	mux.HandleFunc("/v1/commands", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		var req daemonapi.CommandRequest
-		_ = json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req)
-		if req.Command == daemonapi.CommandStop {
-			go d.cancel()
-		}
-		writeHTTPJSON(w, daemonapi.CommandResult{TypeMeta: daemonapi.TypeMeta{APIVersion: daemonapi.APIVersion, Kind: daemonapi.KindCommandResult}, Command: req.Command, Accepted: true, Message: "accepted"})
-	})
-	server := &http.Server{Handler: mux}
-	go func() {
-		<-ctx.Done()
-		_ = server.Close()
-	}()
-	err = server.Serve(listener)
-	if err == http.ErrServerClosed {
-		return nil
-	}
-	return err
+	mux.HandleFunc("/v1/commands", d.handleCommand)
+	return &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 35 * time.Second}, listener, nil
 }
 
 func (d *daemon) status() daemonapi.DaemonStatus {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	d.expireRoutersLocked(d.now())
 	phase := daemonapi.PhaseRunning
 	health := daemonapi.HealthOK
 	resourcePhase := "Watching"
@@ -247,13 +277,28 @@ func (d *daemon) status() daemonapi.DaemonStatus {
 		reason = "RAObserverUnavailable"
 		message = d.observerError
 	}
+	if d.fileCondition.Status == "False" {
+		health = daemonapi.HealthDegraded
+	}
 	observedRouters, _ := json.Marshal(d.observedRoutersLocked())
 	observed := map[string]string{
-		"interface":       d.opts.ifname,
-		"selfMAC":         d.selfMAC,
-		"packetsSeen":     strconv.FormatUint(d.packetsSeen, 10),
-		"rogueCount":      strconv.Itoa(len(d.routers)),
-		"observedRouters": string(observedRouters),
+		"interface":               d.opts.ifname,
+		"selfMAC":                 d.selfMAC,
+		"packetsSeen":             strconv.FormatUint(d.packetsSeen, 10),
+		"rogueCount":              strconv.Itoa(len(d.routers)),
+		"observedRouters":         string(observedRouters),
+		"historyExpired":          strconv.FormatUint(d.historyExpired, 10),
+		"historyEvicted":          strconv.FormatUint(d.historyEvicted, 10),
+		"observationsTruncated":   strconv.FormatUint(d.observationsTruncated, 10),
+		"observationItemsOmitted": strconv.FormatUint(d.observationItemsOmitted, 10),
+		"historyTTL":              routerObservationTTL.String(),
+		"historyLimit":            strconv.Itoa(maxObservedRouters),
+		"eventRingEvicted":        strconv.FormatUint(d.eventRingEvicted, 10),
+		"eventFileErrors":         strconv.FormatUint(d.fileErrors, 10),
+		"eventFileDropped":        strconv.FormatUint(d.fileDropped, 10),
+		"eventFileWritten":        strconv.FormatUint(d.fileWritten, 10),
+		"eventFileQueueDepth":     strconv.Itoa(len(d.fileQueue)),
+		"eventFileError":          d.fileCondition.Message,
 	}
 	if !d.lastObserved.IsZero() {
 		observed["lastObservedAt"] = d.lastObserved.Format(time.RFC3339Nano)
@@ -278,7 +323,7 @@ func (d *daemon) status() daemonapi.DaemonStatus {
 				Reason:             reason,
 				Message:            message,
 				LastTransitionTime: d.startedAt,
-			}},
+			}, d.fileCondition},
 			Observed: observed,
 		}},
 		Observed: observed,
@@ -296,47 +341,31 @@ func (d *daemon) observedRoutersLocked() []raobserver.RouterObservation {
 	return out
 }
 
-func (d *daemon) handleEvents(w http.ResponseWriter, r *http.Request) {
-	since := r.URL.Query().Get("since")
-	topic := r.URL.Query().Get("topic")
-	d.mu.Lock()
-	events, cursor := d.eventsSinceLocked(since, topic)
-	d.mu.Unlock()
-	writeHTTPJSON(w, eventsResponse{Cursor: cursor, Events: events})
-}
-
-func (d *daemon) eventsSinceLocked(since, topic string) ([]daemonapi.DaemonEvent, string) {
-	var out []daemonapi.DaemonEvent
-	cursor := since
-	sinceID, _ := strconv.ParseUint(since, 10, 64)
-	for _, event := range d.events {
-		id, _ := strconv.ParseUint(event.Cursor, 10, 64)
-		if id <= sinceID {
-			continue
-		}
-		if topic != "" && event.Type != topic {
-			continue
-		}
-		out = append(out, event)
-		cursor = event.Cursor
-	}
-	return out, cursor
-}
-
 func (d *daemon) publishLocked(topic, severity, reason, message string, attrs map[string]string) {
 	d.nextCursor++
 	event := daemonapi.NewEvent(d.daemonRef(), topic, severity)
-	event.Cursor = strconv.FormatUint(d.nextCursor, 10)
+	event.Cursor = d.cursorEpoch + ":" + strconv.FormatUint(d.nextCursor, 10)
 	event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "RogueRADetector", Name: d.opts.resource}
 	event.Reason = reason
 	event.Message = message
 	event.Attributes = attrs
 	d.events = append(d.events, event)
 	if len(d.events) > 1000 {
+		d.eventRingEvicted++
 		d.events = append([]daemonapi.DaemonEvent(nil), d.events[len(d.events)-1000:]...)
 	}
-	_ = eventfile.AppendJSONLine(d.opts.eventFile, event)
-	d.cond.Broadcast()
+	if d.opts.eventFile != "" {
+		select {
+		case d.fileQueue <- event:
+		default:
+			d.fileDropped++
+			d.setFileResultLocked(fmt.Errorf("event file queue is full"))
+		}
+	}
+	if d.changed != nil {
+		close(d.changed)
+	}
+	d.changed = make(chan struct{})
 }
 
 func (d *daemon) setObserverError(err error) {

@@ -173,3 +173,24 @@ func TestFormatEvent(t *testing.T) {
 		}
 	}
 }
+
+func TestNewSinkRejectsUnimplementedOTLPExport(t *testing.T) {
+	if sink, err := NewSink(api.LogSinkSpec{Type: "otlp", OTLP: api.LogSinkOTLPSpec{Endpoint: "https://collector.example:4317"}}); err == nil || sink != nil {
+		t.Fatalf("unsupported sink promised successful delivery: %T err=%v", sink, err)
+	}
+}
+
+func TestOrdinaryLoggerKeepsLevelFilteringWhileArchiveSelectionRejectsIt(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "LogSink"}, Metadata: api.ObjectMeta{Name: "warnings"}, Spec: api.LogSinkSpec{Type: "journald", MinLevel: "warning"}}}}}
+	logger, err := New(router)
+	if err != nil {
+		t.Fatalf("ordinary warning-only logger refused: %v", err)
+	}
+	defer logger.Close()
+	if _, err := NewSelected(router, []string{"LogSink/warnings"}); err == nil {
+		t.Fatal("archive selection silently drops info records")
+	}
+	if _, err := NewSelected(router, []string{""}); err == nil {
+		t.Fatal("empty explicit archive reference selected all sinks")
+	}
+}

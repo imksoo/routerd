@@ -13,9 +13,16 @@ this procedure.
 ## Default rollback scope
 
 The default rollback changes **binaries only**. It may restore the selected
-release archive, restart the routerd service, and verify readiness and
+native package, restart the routerd service, and verify readiness and
 connectivity. It must not run `routerctl apply --replace`, `routerctl rollback`,
 or copy a configuration file into the canonical config path.
+
+For Linux 1.5, select the known-good `.deb` artifacts and use APT. When the
+native nDPI addon is installed, supply the matching base and addon versions in
+the same transaction because the addon has an exact-version base dependency.
+Use `apt-get install --allow-downgrades` with the selected local package paths.
+Verify the selected version can read the retained configuration and state in an
+isolated check before selecting it for operational recovery.
 
 This separation matters because a release artifact and a router configuration
 have independent lifecycles. A binary rollback must not implicitly replace
@@ -45,14 +52,40 @@ standard error, and exit code. Also record all of the following before treating
 the apply as successful:
 
 - the `ApplyResult` phase;
-- the `committed canonical router config` journal event;
+- the canonical commit journal event when emitted;
 - the canonical config mtime and SHA-256 after the apply.
 
-An exit status of zero alone is insufficient. Until the control API reports a
-non-success result for an uncommitted apply, an `ApplyResult` phase that does
-not commit canonical config, a missing commit event, or an unchanged canonical
-mtime is a failed configuration rollback. Stop and preserve evidence rather
-than restarting routerd with an ambiguous runtime-only configuration.
+An exit status of zero alone is insufficient. Confirm the returned generation
+and phase, read back the canonical configuration and compare its contents with
+the intended candidate, then check the intended native effects and service
+readiness. Keep the commit journal event when it is emitted. A matching
+idempotent configuration can retain its checksum and modification time, so
+unchanged mtime alone cannot establish rollback failure. If the request times
+out, inspect canonical and runtime state before selecting a retry.
+
+## Interrupted activation and saved-generation check
+
+On a disposable packaged Linux VM, prepare two configurations with the same
+external loopback Interface and owned IPv4StaticAddress. Change only the owned
+address between the candidates. Apply the first candidate and retain its
+returned generation. Plan the second candidate and verify that planning has no
+native effect. Apply it with `--no-reconcile`, require `Committed`, and confirm
+that the canonical file contains the second candidate while the first address
+still exists in the kernel.
+
+Kill only the main daemon with SIGKILL. Require systemd to replace its PID
+without manual startup, canonical or database reset. The restarted daemon must
+apply the second address, remove the first owned address and serve its APIs.
+Run `routerctl rollback --timeout 90s --to <first-generation>` on that VM. Require
+the first canonical configuration and address to return and the second address
+to disappear. Exercise `routerctl delete --timeout 90s IPv4StaticAddress/<name>`
+and verify that unrelated configured services remain available. Finish with an
+empty configuration and verify resource withdrawal.
+
+This path passed with the formal `2da31049` Linux packages. It verifies a process
+crash after durable configuration commit and before activation, plus local
+saved-generation rollback. Power-loss storage behavior and lease-owner recovery
+need their own applicable checks.
 
 ## Certification and qualification evidence
 

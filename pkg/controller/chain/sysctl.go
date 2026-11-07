@@ -4,6 +4,7 @@ package chain
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -133,7 +134,8 @@ type sysctlApplyResult struct {
 }
 
 func (c SysctlController) applyOne(ctx context.Context, name, kind string, spec sysctlSetting) (sysctlApplyResult, error) {
-	if !api.BoolDefault(spec.Runtime, true) {
+	runtime := api.BoolDefault(spec.Runtime, true)
+	if !runtime && !spec.Persistent {
 		if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, kind, name, map[string]any{
 			"phase":      "Skipped",
 			"reason":     "RuntimeDisabled",
@@ -151,45 +153,64 @@ func (c SysctlController) applyOne(ctx context.Context, name, kind string, spec 
 	if command == nil {
 		command = runOutputCommandContext
 	}
-	currentOut, currentErr := command(ctx, "sysctl", "-n", spec.Key)
-	current := normalizeSysctlRuntimeValue(string(currentOut))
+	var currentOut []byte
+	var currentErr error
+	current := ""
 	expected := normalizeSysctlRuntimeValue(firstNonEmpty(spec.ExpectedValue, spec.Value))
-	if currentErr != nil && spec.Optional {
-		_ = c.Store.SaveObjectStatus(api.SystemAPIVersion, kind, name, map[string]any{
-			"phase":     "Skipped",
-			"reason":    "ReadFailedOptional",
-			"key":       spec.Key,
-			"value":     spec.Value,
-			"error":     currentErr.Error(),
-			"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
-		})
-		return sysctlApplyResult{skipped: true}, nil
-	}
-	matches, compareErr := sysctlValueMatches(current, expected, spec.Compare)
-	runtimeChanged := currentErr != nil || compareErr != nil || !matches
-	if runtimeChanged && !c.DryRun {
-		if out, err := command(ctx, "sysctl", "-w", spec.Key+"="+spec.Value); err != nil {
-			status := map[string]any{
-				"phase":        "Error",
-				"reason":       "ApplyFailed",
-				"key":          spec.Key,
-				"value":        spec.Value,
-				"currentValue": current,
-				"error":        strings.TrimSpace(string(out)),
-				"updatedAt":    time.Now().UTC().Format(time.RFC3339Nano),
-			}
-			if spec.Optional {
-				status["phase"] = "Skipped"
-				status["reason"] = "ApplyFailedOptional"
-				_ = c.Store.SaveObjectStatus(api.SystemAPIVersion, kind, name, status)
-				return sysctlApplyResult{skipped: true}, nil
-			}
-			if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, kind, name, status); saveErr != nil {
+	runtimeChanged := false
+	if runtime {
+		currentOut, currentErr = command(ctx, "sysctl", "-n", spec.Key)
+		current = normalizeSysctlRuntimeValue(string(currentOut))
+		if currentErr != nil && spec.Optional {
+			if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, kind, name, map[string]any{
+				"phase":     "Skipped",
+				"reason":    "ReadFailedOptional",
+				"key":       spec.Key,
+				"value":     spec.Value,
+				"error":     currentErr.Error(),
+				"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+			}); saveErr != nil {
 				return sysctlApplyResult{}, saveErr
 			}
-			return sysctlApplyResult{}, fmt.Errorf("apply sysctl %s: %w", spec.Key, err)
+			return sysctlApplyResult{skipped: true}, nil
 		}
-		current = expected
+		if currentErr != nil {
+			if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, kind, name, map[string]any{
+				"phase": "Error", "reason": "ObserveFailed", "key": spec.Key, "error": currentErr.Error(),
+				"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+			}); saveErr != nil {
+				return sysctlApplyResult{}, errors.Join(currentErr, saveErr)
+			}
+			return sysctlApplyResult{}, fmt.Errorf("read sysctl %s: %w", spec.Key, currentErr)
+		}
+		matches, compareErr := sysctlValueMatches(current, expected, spec.Compare)
+		runtimeChanged = currentErr != nil || compareErr != nil || !matches
+		if runtimeChanged && !c.DryRun {
+			if out, err := command(ctx, "sysctl", "-w", spec.Key+"="+spec.Value); err != nil {
+				status := map[string]any{
+					"phase":        "Error",
+					"reason":       "ApplyFailed",
+					"key":          spec.Key,
+					"value":        spec.Value,
+					"currentValue": current,
+					"error":        strings.TrimSpace(string(out)),
+					"updatedAt":    time.Now().UTC().Format(time.RFC3339Nano),
+				}
+				if spec.Optional {
+					status["phase"] = "Skipped"
+					status["reason"] = "ApplyFailedOptional"
+					if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, kind, name, status); saveErr != nil {
+						return sysctlApplyResult{}, saveErr
+					}
+					return sysctlApplyResult{skipped: true}, nil
+				}
+				if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, kind, name, status); saveErr != nil {
+					return sysctlApplyResult{}, saveErr
+				}
+				return sysctlApplyResult{}, fmt.Errorf("apply sysctl %s: %w", spec.Key, err)
+			}
+			current = expected
+		}
 	}
 	persistentPath := ""
 	persistentChanged := false
@@ -217,7 +238,9 @@ func (c SysctlController) applyOne(ctx context.Context, name, kind string, spec 
 			if spec.Optional {
 				status["phase"] = "Skipped"
 				status["reason"] = "PersistFailedOptional"
-				_ = c.Store.SaveObjectStatus(api.SystemAPIVersion, kind, name, status)
+				if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, kind, name, status); saveErr != nil {
+					return sysctlApplyResult{}, saveErr
+				}
 				return sysctlApplyResult{skipped: true}, nil
 			}
 			if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, kind, name, status); saveErr != nil {
@@ -239,7 +262,7 @@ func (c SysctlController) applyOne(ctx context.Context, name, kind string, spec 
 		"compare":       firstNonEmpty(spec.Compare, "exact"),
 		"currentValue":  current,
 		"changed":       changed,
-		"runtime":       true,
+		"runtime":       runtime,
 		"persistent":    spec.Persistent,
 		"optional":      spec.Optional,
 		"path":          persistentPath,

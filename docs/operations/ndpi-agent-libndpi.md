@@ -4,81 +4,109 @@ title: nDPI agent native package
 
 # nDPI agent native package
 
-![Diagram showing the nDPI native agent package overlaying the static routerd release archive with a libndpi-linked routerd-ndpi-agent, installer self-test, and runtime agent socket status](/img/diagrams/operations-ndpi-agent-libndpi.png)
+The routerd 1.5 proposal distributes the optional native nDPI agent as the Debian
+package `routerd-ndpi-agent-libndpi`. The base Linux package remains statically
+linked with `CGO_ENABLED=0`. This optional agent uses `CGO_ENABLED=1 -tags libndpi`
+and the target OS's shared libnDPI runtime. The release build currently targets
+Ubuntu 24.04 amd64. No public 1.5 package release or apt repository is announced.
 
-routerd's normal Linux release archives are built with `CGO_ENABLED=0` and keep
-all included routerd binaries statically linked. The optional
-`routerd-ndpi-agent-libndpi` archive is the exception package for hosts that
-need native nDPI classification.
+## Install and update
 
-This archive contains only:
-
-- `bin/routerd-ndpi-agent`
-- `share/doc/README.md`
-- `share/doc/VERSION`
-- `share/doc/TARGET`
-
-The binary is built with `CGO_ENABLED=1 -tags libndpi` and links to the target
-system's `libndpi` runtime. It is intended as an override for a host that
-already installed the normal routerd archive.
-
-## Install
-
-Download both the normal routerd release archive and the matching native agent
-archive, then let the installer apply them in one transaction:
+On a clean OS, obtain and checksum-verify matching base and addon packages:
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz.sha256
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz.sha256
-sha256sum -c routerd-linux-amd64.tar.gz.sha256
-sha256sum -c routerd-ndpi-agent-libndpi-linux-amd64.tar.gz.sha256
-tar -xzf routerd-linux-amd64.tar.gz
-sudo ./install.sh --with-ndpi \
-  --with-ndpi-archive ./routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
+sudo apt install ./routerd_<version>_amd64.deb \
+  ./routerd-ndpi-agent-libndpi_<version>_amd64.deb
 ```
 
-The host must provide a `libndpi` runtime package with the same shared-library
-ABI as the archive was built against. On Debian/Ubuntu, install the optional
-runtime dependencies with:
+Use the actual filenames. The addon depends on the exact matching base version;
+update them together with the same command. Native shared-library dependencies
+are calculated by `dpkg-shlibdeps` from the actual ELF file and installed library
+metadata. Apt resolves them through the OS repositories. Do not overlay an
+archive or manually copy a binary onto a package-managed installation.
+
+The agent still runs at `/usr/sbin/routerd-ndpi-agent`. The addon registers a
+package-owned `dpkg-divert`: base-package updates write their static agent to
+`/usr/sbin/routerd-ndpi-agent.routerd-static`, while the addon owns the active
+path. A diversion belonging to another package or the administrator is refused,
+not adopted or removed. This is normal package ownership, not migration from
+source/manual installations.
+
+The addon uses the base package's owned-service stop and restore cycle around
+replacement, including the main daemon and helpers. Main otherwise reconciles a
+stopped helper back into service while files are being replaced. Expect a traffic
+interruption and protocol reconvergence even for addon-only changes.
+First installation without a configured running router does not start services.
+
+Verify the actual backend:
 
 ```sh
-sudo apt-get install libndpi-bin
-```
-
-Verify that the native backend is active:
-
-```sh
-sudo curl --silent --unix-socket /run/routerd/ndpi-agent/default.sock \
+/usr/sbin/routerd-ndpi-agent selftest
+sudo curl --fail --silent --unix-socket /run/routerd/ndpi-agent/default.sock \
   http://unix/v1/status
 ```
 
-The response should include `"libndpiLoaded": true`.
+The native package's self-test requires `libndpiLoaded: true`. Its TLS self-test
+uses the real library and reports `reason: libndpi_protocol_detection` with the
+expected SNI. A running socket exists only when router configuration requests the
+agent; an installed file alone does not prove runtime classification. For forwarded
+client traffic, inspect `routerctl get traffic-flows -o json`: native TLS detection
+has `engine: ndpi-agent`, `metadata.reason: libndpi_protocol_detection` and the
+expected `tlsSNI`. Firewall event logs depend on the configured event sampling and
+are not a substitute for the flow query. DNS names are reported as `dnsQuery`,
+HTTP hostnames as `httpHost`, and TLS/QUIC names as `tlsSNI`; an arbitrary native
+protocol hostname must not be labeled as TLS SNI.
 
-## Upgrade note
+## Remove the addon
 
-The normal routerd archive includes the default static `routerd-ndpi-agent`.
-During upgrades, `install.sh` preserves an existing native agent when its
-`selftest` reports `"libndpiLoaded": true` and the archive agent does not.
+Removing or disabling the last `FirewallEventLog` stops its managed collector.
+When no enabled `TrafficFlowLog` requests application classification or TLS SNI
+and no enabled `FirewallEventLog` remains, reconciliation also stops and removes
+the generated classifier and agent units. Stop acknowledgement precedes unit
+removal; a failed stop retains the unit for retry. Re-enabling the resources
+recreates the required units using the installed package.
 
-Run the normal installer with `--with-ndpi` on hosts that require native
-application-layer classification. The installer fails if the final installed
-agent does not report `"libndpiLoaded": true`, so the static fallback cannot
-silently satisfy a native nDPI intent.
+```sh
+sudo apt remove routerd-ndpi-agent-libndpi
+```
 
-For fresh installs, or when you want the native agent archive to be the explicit
-source of truth, pass `--with-ndpi-archive PATH`. The installer validates the
-archive target marker, rejects unsafe tar paths, verifies the neighboring
-`.sha256` file when present, checks that the archive agent reports
-`"libndpiLoaded": true`, and rolls back the whole install if the overlay fails.
+Dpkg removes the addon-owned binary, removes that package's diversion, and restores
+the current base package's static agent. Active owned agent/classifier services
+are restarted against that file. The router configuration and database remain.
+The static agent does not load libnDPI; removing this addon therefore removes
+native application classification. Do not use addon removal when native
+classification is still required.
 
-## Configure
+## Build and test
 
-`routerd-dpi-classifier` must be configured with `--engine auto` or
-`--engine ndpi-agent` and an `--ndpi-agent-socket` pointing at the agent socket.
-`auto` is recommended because it falls back to the built-in classifier if the
-native agent is unavailable.
+Build on the target Linux ABI with Go, a C compiler, `libndpi-dev`, `pkg-config`,
+`dpkg-dev`, `dpkg-deb`, `file` and `readelf` available:
 
-The deprecated `--ndpi-reader` option does not enable native nDPI
-classification.
+```sh
+make dist-ndpi-agent-libndpi-deb ROUTERD_OS=linux GOARCH=amd64 \
+  PACKAGE_VERSION=<native-version>
+go test ./tests/nativepackage
+```
+
+The builder shares the existing nDPI payload and verifies a loaded native backend.
+The release workflow checks the resulting `.deb`, real self-test and baseline
+x86-64 ISA. Its definition is not proof of an executed release.
+
+The opt-in OS gate is destructive and requires a fresh disposable systemd guest,
+root and working apt repositories. Supply two base/addon pairs with increasing
+versions and different daemon executables:
+
+```sh
+sudo sh scripts/linux-ndpi-deb-lifecycle-smoke.sh --isolated-vm \
+  /tmp/base-prior.deb /tmp/base-current.deb \
+  /tmp/addon-prior.deb /tmp/addon-current.deb
+```
+
+It checks the generated services requested by `TrafficFlowLog`, independent
+UDP/TCP DNS, actual loaded native backend and TLS detection, addon-only main/DNS
+process exit and recovery, matched base/addon update, package file verification,
+configuration/SQLite value retention, restoration of the updated static agent
+and final removal. A separate unrelated prefixed service must keep running.
+Discard the guest/disks and successful run logs after recording a scoped result.
+This package gate does not by itself prove packet capture/classification of
+forwarded client traffic or all routerd 1.0 functionality.

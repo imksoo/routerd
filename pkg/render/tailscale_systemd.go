@@ -29,6 +29,7 @@ func TailscaleSystemdSpec(name string, spec api.TailscaleNodeSpec) api.SystemdUn
 		Description:              "routerd Tailscale node " + name,
 		Type:                     "oneshot",
 		ExecStart:                TailscaleUpArgs(spec),
+		ExecStopPost:             []string{stringutil.FirstNonBlank(spec.BinaryPath, "/usr/bin/tailscale"), "down"},
 		EnvironmentFiles:         environmentFiles,
 		Wants:                    []string{"network-online.target", "tailscaled.service"},
 		After:                    []string{"network-online.target", "tailscaled.service"},
@@ -48,7 +49,9 @@ func TailscaleUpArgs(spec api.TailscaleNodeSpec) []string {
 	// tailscale up defaults to an unbounded initialization wait. Keep the
 	// lifecycle bound in the shared CLI arguments so Linux and FreeBSD have
 	// identical semantics without changing ownership of tailscaled itself.
-	args := []string{binary, "up", "--timeout=30s"}
+	// YAML is the complete desired configuration. Without --reset, the CLI
+	// rejects removal of previously non-default settings (including routes).
+	args := []string{binary, "up", "--timeout=30s", "--reset"}
 	appendValue := func(flag, value string) {
 		value = strings.TrimSpace(value)
 		if value != "" {

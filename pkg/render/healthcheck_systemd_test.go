@@ -60,14 +60,20 @@ func TestHealthCheckSystemdUnit(t *testing.T) {
 }
 
 func TestHealthCheckDaemonSystemdSpecRendersThresholdsOnlyWhenConfigured(t *testing.T) {
-	with := HealthCheckDaemonSystemdSpec(HealthCheckDaemonUnitOptions{Resource: "internet", Spec: api.HealthCheckSpec{Target: "1.1.1.1", HealthyThreshold: 2, UnhealthyThreshold: 3}})
+	with, err := HealthCheckDaemonSystemdSpec(HealthCheckDaemonUnitOptions{Resource: "internet", Spec: api.HealthCheckSpec{Target: "1.1.1.1", HealthyThreshold: 2, UnhealthyThreshold: 3}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	got := strings.Join(with.ExecStart, " ")
 	for _, want := range []string{"--healthy-threshold 2", "--unhealthy-threshold 3"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("daemon ExecStart missing %q: %#v", want, with.ExecStart)
 		}
 	}
-	without := HealthCheckDaemonSystemdSpec(HealthCheckDaemonUnitOptions{Resource: "internet", Spec: api.HealthCheckSpec{Target: "1.1.1.1"}})
+	without, err := HealthCheckDaemonSystemdSpec(HealthCheckDaemonUnitOptions{Resource: "internet", Spec: api.HealthCheckSpec{Target: "1.1.1.1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if strings.Contains(strings.Join(without.ExecStart, " "), "--healthy-threshold") || strings.Contains(strings.Join(without.ExecStart, " "), "--unhealthy-threshold") {
 		t.Fatalf("zero thresholds rendered: %#v", without.ExecStart)
 	}
@@ -82,7 +88,10 @@ func TestHealthCheckSystemdDSLiteBindingFlag(t *testing.T) {
 	if !strings.Contains(unit, "--require-dslite-binding") {
 		t.Fatalf("synthetic unit missing DS-Lite binding flag:\n%s", unit)
 	}
-	portable := HealthCheckDaemonSystemdSpec(HealthCheckDaemonUnitOptions{Resource: "dslite-health", Router: router, Spec: api.HealthCheckSpec{Target: "2001:db8::1"}})
+	portable, err := HealthCheckDaemonSystemdSpec(HealthCheckDaemonUnitOptions{Resource: "dslite-health", Router: router, Spec: api.HealthCheckSpec{Target: "2001:db8::1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if strings.Contains(strings.Join(portable.ExecStart, " "), "--require-dslite-binding") {
 		t.Fatalf("portable daemon ExecStart must not contain Linux-only binding flag: %#v", portable.ExecStart)
 	}
@@ -95,5 +104,52 @@ func TestSystemdUnitRendersConflicts(t *testing.T) {
 	}))
 	if !strings.Contains(unit, "Conflicts=conntrackd.service") {
 		t.Fatalf("unit missing conntrackd conflict:\n%s", unit)
+	}
+}
+
+func TestHealthCheckStaticRenderDoesNotDropRequiredSource(t *testing.T) {
+	_, err := FreeBSD(&api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		netResource("HealthCheck", "internet", api.HealthCheckSpec{Target: "192.0.2.1", SourceAddressFrom: api.StatusValueSourceSpec{Resource: "IPv4StaticAddress/missing"}}),
+	}}})
+	if err == nil || !strings.Contains(err.Error(), "sourceAddressFrom") {
+		t.Fatalf("required missing source generated an unbound native probe: %v", err)
+	}
+}
+
+func TestFreeBSDHealthBindingResolvesDeclarationNameOnce(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		netResource("Interface", "wan", api.InterfaceSpec{IfName: "em0"}),
+		netResource("Interface", "em0", api.InterfaceSpec{IfName: "em1"}),
+		netResource("HealthCheck", "check", api.HealthCheckSpec{Interface: "wan", Target: "192.0.2.1"}),
+	}}}
+	scripts, err := freeBSDRCDScripts(router)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var script string
+	for name, data := range scripts {
+		if strings.Contains(name, "healthcheck") {
+			script = string(data)
+		}
+	}
+	if !strings.Contains(script, "--source-interface") || !strings.Contains(script, "em0") || strings.Contains(script, "em1") {
+		t.Fatalf("public Interface was ignored or native name was reinterpreted as an alias:\n%s", script)
+	}
+}
+
+func TestHealthCheckRuntimeUnitPropagatesAddressFamily(t *testing.T) {
+	unit := string(HealthCheckSystemdUnit(HealthCheckSystemdOptions{Target: "2001:db8::1", AddressFamily: "ipv6"}))
+	if !strings.Contains(unit, `--address-family "ipv6"`) {
+		t.Fatalf("worker would probe another family:\n%s", unit)
+	}
+}
+
+func TestHealthCheckDaemonUnitPassesConfiguredDefaultProtocol(t *testing.T) {
+	unit, err := HealthCheckDaemonSystemdSpec(HealthCheckDaemonUnitOptions{Resource: "internet", Spec: api.HealthCheckSpec{Target: "192.0.2.1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(unit.ExecStart, " "), "--protocol icmp") {
+		t.Fatalf("worker would use standalone TCP default: %v", unit.ExecStart)
 	}
 }

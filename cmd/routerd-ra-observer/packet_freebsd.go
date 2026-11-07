@@ -5,6 +5,7 @@
 package main
 
 import (
+	"context"
 	"sync"
 
 	"github.com/imksoo/routerd/internal/freebsdpcap"
@@ -16,8 +17,8 @@ type packetSocket struct {
 	closeErr  error
 }
 
-func openPacketSocket(ifname string) (*packetSocket, error) {
-	capture, err := freebsdpcap.Open(ifname)
+func openPacketSocket(ctx context.Context, ifname string) (*packetSocket, error) {
+	capture, err := freebsdpcap.Open(ctx, ifname)
 	if err != nil {
 		return nil, err
 	}

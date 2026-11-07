@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,9 +21,18 @@ func (h Handler) controllers(w http.ResponseWriter) {
 }
 
 func (h Handler) events(w http.ResponseWriter, r *http.Request) {
+	var sinceID int64
+	if raw := strings.TrimSpace(r.URL.Query().Get("sinceID")); raw != "" {
+		var err error
+		sinceID, err = strconv.ParseInt(raw, 10, 64)
+		if err != nil || sinceID < 0 {
+			writeError(w, http.StatusBadRequest, "sinceID must be a non-negative 64-bit event ID")
+			return
+		}
+	}
 	events, err := h.eventListQuery(routerstate.EventQuery{
 		Limit:    intQuery(r, "limit", 100),
-		SinceID:  int64(intQuery(r, "sinceID", 0)),
+		SinceID:  sinceID,
 		Topic:    strings.TrimSpace(r.URL.Query().Get("topic")),
 		Kind:     strings.TrimSpace(r.URL.Query().Get("kind")),
 		Name:     strings.TrimSpace(r.URL.Query().Get("name")),
@@ -63,27 +73,19 @@ func (h Handler) eventStream(w http.ResponseWriter, r *http.Request) {
 		defer cancel()
 	}
 
-	_ = writeSSE(w, "connected", map[string]string{"status": "connected", "generatedAt": time.Now().UTC().Format(time.RFC3339Nano)})
-	flusher.Flush()
-
-	if h.opts.Bus == nil {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-heartbeat.C:
-				_, _ = fmt.Fprint(w, ": heartbeat\n\n")
-				flusher.Flush()
-			}
-		}
+	if err := writeSSE(w, "connected", map[string]string{"status": "connected", "generatedAt": time.Now().UTC().Format(time.RFC3339Nano)}); err != nil {
+		return
 	}
+	flusher.Flush()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-heartbeat.C:
-			_, _ = fmt.Fprint(w, ": heartbeat\n\n")
+			if _, err := fmt.Fprint(w, ": heartbeat\n\n"); err != nil {
+				return
+			}
 			flusher.Flush()
 		case event, ok := <-events:
 			if !ok {

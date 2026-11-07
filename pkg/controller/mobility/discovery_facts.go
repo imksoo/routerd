@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/netip"
 	"sort"
 	"strings"
@@ -80,7 +81,7 @@ func providerDiscoveryAddressFactActive(fact providerDiscoveryAddressFact, now t
 }
 
 func sortedProviderDiscoveryAddressFacts(facts []providerDiscoveryAddressFact) []providerDiscoveryAddressFact {
-	out := append([]providerDiscoveryAddressFact(nil), facts...)
+	out := append([]providerDiscoveryAddressFact{}, facts...)
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].Address == out[j].Address {
 			return out[i].ObservedAt.After(out[j].ObservedAt)
@@ -132,7 +133,7 @@ func providerDiscoveryRuntimeEvent(pool NormalizedMobilityPool, self discoverySe
 	if err != nil {
 		return routerstate.EventRecord{}, err
 	}
-	return routerstate.EventRecord{
+	event := routerstate.EventRecord{
 		ID:         providerDiscoveryRuntimeEventID(pool.Name, pool.SelfNode, observedAt),
 		Group:      strings.TrimSpace(pool.Spec.GroupRef),
 		SourceNode: strings.TrimSpace(pool.SelfNode),
@@ -148,7 +149,9 @@ func providerDiscoveryRuntimeEvent(pool NormalizedMobilityPool, self discoverySe
 		ObservedAt: observedAt,
 		ExpiresAt:  observedAt.Add(ttl),
 		RecordedAt: observedAt,
-	}, nil
+	}
+	event.ID += ":" + mobilityFederationFactID(event)
+	return event, nil
 }
 
 func discoveryPlacementFromDecision(placement PlacementDecision) discoveryPlacementObservation {
@@ -204,30 +207,56 @@ func providerDiscoveryRuntimeObservation(pool NormalizedMobilityPool, records []
 // then decodes the current discovery/ownership input from durable federation
 // facts. This is the one explicit boundary between persisted status
 // presentation and the typed planning snapshot.
-func poolPreviousStateAndOwnershipFacts(status map[string]any, pool NormalizedMobilityPool, events []routerstate.EventRecord, prefix netip.Prefix, onPremIntentReady bool, now time.Time) (PreviousPoolState, OwnershipFacts) {
-	previous := decodePoolPreviousState(status)
-	ownership := providerDiscoveryRuntimeObservation(pool, providerDiscoveryRuntimeRecords(pool, events, now), prefix)
+func poolPreviousStateAndOwnershipFacts(status map[string]any, pool NormalizedMobilityPool, events []routerstate.EventRecord, prefix netip.Prefix, onPremIntentReady bool, now time.Time) (PreviousPoolState, OwnershipFacts, error) {
+	previous, err := decodePoolPreviousState(status)
+	if err != nil {
+		return PreviousPoolState{}, OwnershipFacts{}, err
+	}
+	runtime, err := providerDiscoveryRuntimeRecords(pool, events, now)
+	if err != nil {
+		return PreviousPoolState{}, OwnershipFacts{}, err
+	}
+	ownership := providerDiscoveryRuntimeObservation(pool, runtime, prefix)
 	if strings.TrimSpace(pool.Self.OwnershipDiscovery.Mode) == "onprem-l2" {
 		previous.OnPremDiscovery = onPremDiscoveryStateFromFacts(pool, prefix, events, onPremIntentReady, now)
 	}
-	return previous, ownership
+	return previous, ownership, nil
 }
 
-func decodeProviderDiscoveryRuntimeEvent(pool NormalizedMobilityPool, event routerstate.EventRecord, now time.Time) (providerDiscoveryRuntimeFact, bool) {
+func decodeProviderDiscoveryRuntimeEvent(pool NormalizedMobilityPool, event routerstate.EventRecord, now time.Time) (providerDiscoveryRuntimeFact, bool, error) {
 	if event.Group != pool.Spec.GroupRef || event.Type != ObservedEventType {
-		return providerDiscoveryRuntimeFact{}, false
+		return providerDiscoveryRuntimeFact{}, false, nil
 	}
 	if strings.TrimSpace(event.Payload["source"]) != providerDiscoverySource || strings.TrimSpace(event.Payload["sourceType"]) != providerDiscoveryRuntimeFactType || strings.TrimSpace(event.Payload["pool"]) != strings.TrimSpace(pool.Name) {
-		return providerDiscoveryRuntimeFact{}, false
+		return providerDiscoveryRuntimeFact{}, false, nil
 	}
 	if !event.ExpiresAt.IsZero() && !now.Before(event.ExpiresAt) {
-		return providerDiscoveryRuntimeFact{}, false
+		return providerDiscoveryRuntimeFact{}, false, nil
 	}
-	var fact providerDiscoveryRuntimeFact
-	if json.Unmarshal([]byte(event.Payload["snapshot"]), &fact) != nil {
-		return providerDiscoveryRuntimeFact{}, false
+	if _, member := pool.Members[strings.TrimSpace(event.SourceNode)]; !member {
+		return providerDiscoveryRuntimeFact{}, false, nil
 	}
-	return fact, true
+	if event.ObservedAt.IsZero() || !event.ExpiresAt.After(event.ObservedAt) {
+		return providerDiscoveryRuntimeFact{}, false, fmt.Errorf("provider runtime event %s has an invalid observation lease", event.ID)
+	}
+	var payload struct {
+		Self      *discoverySelfInventory         `json:"self"`
+		Addresses *[]providerDiscoveryAddressFact `json:"addresses"`
+		Placement *discoveryPlacementObservation  `json:"placement"`
+	}
+	if err := json.Unmarshal([]byte(event.Payload["snapshot"]), &payload); err != nil {
+		return providerDiscoveryRuntimeFact{}, false, fmt.Errorf("decode provider runtime event %s: %w", event.ID, err)
+	}
+	if payload.Self == nil || payload.Addresses == nil || payload.Placement == nil {
+		return providerDiscoveryRuntimeFact{}, false, fmt.Errorf("provider runtime event %s requires complete self, addresses and placement observations", event.ID)
+	}
+	fact := providerDiscoveryRuntimeFact{Self: *payload.Self, Addresses: *payload.Addresses, Placement: *payload.Placement}
+	for _, address := range fact.Addresses {
+		if _, ok := normalizeLeaseAddress(address.Address, pool.Prefix); !ok || address.ObservedAt.IsZero() || !address.ExpiresAt.After(address.ObservedAt) {
+			return providerDiscoveryRuntimeFact{}, false, fmt.Errorf("provider runtime event %s has an invalid address observation %q", event.ID, address.Address)
+		}
+	}
+	return fact, true, nil
 }
 
 type providerDiscoveryRuntimeRecord struct {
@@ -245,10 +274,13 @@ func (observation poolDiscoveryObservation) providerRuntimeForNode(nodeRef strin
 	return providerDiscoveryRuntimeRecord{}, false
 }
 
-func providerDiscoveryRuntimeRecords(pool NormalizedMobilityPool, events []routerstate.EventRecord, now time.Time) []providerDiscoveryRuntimeRecord {
+func providerDiscoveryRuntimeRecords(pool NormalizedMobilityPool, events []routerstate.EventRecord, now time.Time) ([]providerDiscoveryRuntimeRecord, error) {
 	latest := map[string]providerDiscoveryRuntimeRecord{}
 	for _, event := range events {
-		fact, ok := decodeProviderDiscoveryRuntimeEvent(pool, event, now)
+		fact, ok, err := decodeProviderDiscoveryRuntimeEvent(pool, event, now)
+		if err != nil {
+			return nil, err
+		}
 		if !ok {
 			continue
 		}
@@ -268,7 +300,7 @@ func providerDiscoveryRuntimeRecords(pool NormalizedMobilityPool, events []route
 	for _, nodeRef := range nodes {
 		out = append(out, latest[nodeRef])
 	}
-	return out
+	return out, nil
 }
 
 func providerDiscoveryActiveAddressFacts(facts []providerDiscoveryAddressFact, prefix netip.Prefix, now time.Time) map[string]providerDiscoveryAddressFact {
@@ -361,6 +393,7 @@ func (c DiscoveryController) ensureOnPremDiscoveryArmedFact(pool NormalizedMobil
 		ExpiresAt:  now.UTC().Add(ttl),
 		RecordedAt: now.UTC(),
 	}
+	event.ID += ":" + mobilityFederationFactID(event)
 	if err := c.Store.RecordFederationEvent(event); err != nil {
 		return routerstate.EventRecord{}, err
 	}

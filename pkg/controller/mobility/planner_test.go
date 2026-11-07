@@ -945,9 +945,19 @@ func saveBGPStatus(t *testing.T, store interface {
 	SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error
 }, nextHops map[string][]string, prefixes []map[string]any, livenessMarkers map[string]string) {
 	t.Helper()
+	if nextHops == nil {
+		nextHops = map[string][]string{}
+	}
+	if livenessMarkers == nil {
+		livenessMarkers = map[string]string{}
+	}
 	rawPrefixes := any(prefixes)
 	if len(prefixes) == 0 {
-		rawPrefixes = bgpOwnerPrefixesForInstalledNextHops(nextHops)
+		observed := bgpOwnerPrefixesForInstalledNextHops(nextHops)
+		if observed == nil {
+			observed = []bgpstate.Prefix{}
+		}
+		rawPrefixes = observed
 	}
 	if err := store.SaveObjectStatus(api.NetAPIVersion, "BGPRouter", "mobility-bgp", map[string]any{"installedNextHops": nextHops, "prefixes": rawPrefixes, "livenessMarkers": livenessMarkers}); err != nil {
 		t.Fatalf("SaveObjectStatus(BGPRouter/mobility-bgp): %v", err)
@@ -1038,22 +1048,16 @@ func decodeActionPlans(t *testing.T, raw string) []dynamicconfig.ActionPlan {
 
 func importApprovedAction(t *testing.T, plan *dynamicconfig.ActionPlan, source string, store *routerstate.SQLiteStore, now time.Time) (int64, error) {
 	t.Helper()
-	targetJSON, err := json.Marshal(plan.Target)
-	if err != nil {
-		return 0, err
-	}
-	paramsJSON, err := json.Marshal(plan.Parameters)
-	if err != nil {
-		return 0, err
-	}
-	_, err = store.ImportAction(routerstate.ActionExecutionRecord{
+	targetJSON := plan.Target
+	paramsJSON := plan.Parameters
+	_, err := store.ImportAction(routerstate.ActionExecutionRecord{
 		IdempotencyKey: plan.IdempotencyKey,
 		Source:         source,
 		Provider:       plan.Provider,
 		ProviderRef:    plan.ProviderRef,
 		Action:         plan.Action,
-		TargetJSON:     string(targetJSON),
-		ParametersJSON: string(paramsJSON),
+		Target:         targetJSON,
+		Parameters:     paramsJSON,
 		RiskLevel:      plan.RiskLevel,
 		CreatedAt:      now,
 		UpdatedAt:      now,
@@ -1081,17 +1085,11 @@ func seedSucceededBGPCaptureAction(t *testing.T, store *routerstate.SQLiteStore,
 	t.Helper()
 	_ = epoch
 	pathSig := "prefix=" + normalizeAddressString(address) + ";seeded=true"
-	targetJSON, err := json.Marshal(map[string]string{"address": address, "nicRef": nicRef, "providerRef": providerRef})
-	if err != nil {
-		t.Fatalf("marshal target: %v", err)
-	}
-	paramsJSON, err := json.Marshal(map[string]string{
+	targetJSON := map[string]string{"address": address, "nicRef": nicRef, "providerRef": providerRef}
+	paramsJSON := map[string]string{
 		bgpPathSigParam:     pathSig,
 		captureParamHolder:  holder,
 		"mobilityPathSigID": bgpPathSigHash(pathSig),
-	})
-	if err != nil {
-		t.Fatalf("marshal params: %v", err)
 	}
 	key := strings.Join([]string{"test", providerRef, nicRef, action, address, "pathsig", bgpPathSigHash(pathSig), fmt.Sprint(at.UnixNano())}, ":")
 	if _, err := store.ImportAction(routerstate.ActionExecutionRecord{
@@ -1100,8 +1098,8 @@ func seedSucceededBGPCaptureAction(t *testing.T, store *routerstate.SQLiteStore,
 		Provider:       strings.TrimSuffix(providerRef, "-provider"),
 		ProviderRef:    providerRef,
 		Action:         action,
-		TargetJSON:     string(targetJSON),
-		ParametersJSON: string(paramsJSON),
+		Target:         targetJSON,
+		Parameters:     paramsJSON,
 		Status:         routerstate.ActionPending,
 	}); err != nil {
 		t.Fatalf("ImportAction: %v", err)

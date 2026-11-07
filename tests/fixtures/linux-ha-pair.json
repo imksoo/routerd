@@ -1,0 +1,418 @@
+{
+  "apiVersion": "routerd.net/v1alpha1",
+  "kind": "Router",
+  "metadata": {
+    "name": "linux-ha-pair"
+  },
+  "spec": {
+    "resources": [
+      {
+        "apiVersion": "system.routerd.net/v1alpha1",
+        "kind": "Package",
+        "metadata": {
+          "name": "conntrackd"
+        },
+        "spec": {
+          "state": "present",
+          "packages": [
+            {
+              "os": "ubuntu",
+              "manager": "apt",
+              "names": [
+                "conntrackd"
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "Interface",
+        "metadata": {
+          "name": "management"
+        },
+        "spec": {
+          "ifname": "ens18",
+          "managed": false,
+          "owner": "external"
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "Interface",
+        "metadata": {
+          "name": "lan"
+        },
+        "spec": {
+          "ifname": "rd15-lan",
+          "managed": false,
+          "owner": "external"
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "Interface",
+        "metadata": {
+          "name": "wan"
+        },
+        "spec": {
+          "ifname": "rd15-wan",
+          "managed": false,
+          "owner": "external"
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "IPv4StaticAddress",
+        "metadata": {
+          "name": "lan-host"
+        },
+        "spec": {
+          "interface": "lan",
+          "address": "198.18.30.2/24"
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "IPv4StaticAddress",
+        "metadata": {
+          "name": "wan-host"
+        },
+        "spec": {
+          "interface": "wan",
+          "address": "198.18.31.2/24"
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "VirtualAddress",
+        "metadata": {
+          "name": "lan-gw"
+        },
+        "spec": {
+          "family": "ipv4",
+          "interface": "lan",
+          "address": "198.18.30.1/32",
+          "mode": "vrrp",
+          "vrrp": {
+            "virtualRouterID": 130,
+            "priority": 150,
+            "preempt": false,
+            "peers": [
+              "198.18.30.3"
+            ],
+            "failoverVMAC": {
+              "parentInterface": "wan",
+              "interface": "rd15-wvmac",
+              "macAddress": "02:00:5e:00:01:31",
+              "linkLocalAddress": "fe80::5eff:fe00:131"
+            },
+            "additionalFailoverVMACs": [
+              {
+                "parentInterface": "lan",
+                "interface": "rd15-lvmac",
+                "macAddress": "02:00:5e:00:01:30",
+                "linkLocalAddress": "fe80::5eff:fe00:130",
+                "withdrawRouterAdvertisement": true
+              }
+            ],
+            "gracefulActivation": {
+              "timeout": "45s",
+              "readyWhen": {
+                "state": {
+                  "IPv4StaticAddress/lan-host.phase": {
+                    "equals": "Applied"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "VirtualAddress",
+        "metadata": {
+          "name": "wan-nat"
+        },
+        "spec": {
+          "family": "ipv4",
+          "interface": "wan",
+          "address": "198.18.31.1/32",
+          "mode": "static",
+          "gratuitousARP": true,
+          "when": {
+            "state": {
+              "VirtualAddress/lan-gw.role": {
+                "equals": "master"
+              }
+            }
+          }
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "DHCPv4Server",
+        "metadata": {
+          "name": "lan"
+        },
+        "spec": {
+          "interface": "lan",
+          "server": "dnsmasq",
+          "managed": true,
+          "stickyHoldDays": 3,
+          "addressPool": {
+            "start": "198.18.30.100",
+            "end": "198.18.30.110",
+            "leaseTime": "2m"
+          },
+          "gateway": "198.18.30.1",
+          "dnsSource": "static",
+          "dnsServers": [
+            "198.18.30.1"
+          ],
+          "when": {
+            "state": {
+              "VirtualAddress/lan-gw.role": {
+                "equals": "master"
+              }
+            }
+          }
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "DHCPv4ServerLeaseSync",
+        "metadata": {
+          "name": "leases"
+        },
+        "spec": {
+          "source": {
+            "resource": "DHCPv4Server/lan"
+          },
+          "interval": "5s",
+          "targets": [
+            {
+              "host": "198.18.30.3",
+              "user": "root",
+              "sshOptions": [
+                "-i",
+                "/var/lib/routerd/ha_test_ed25519",
+                "-o",
+                "StrictHostKeyChecking=accept-new"
+              ]
+            }
+          ],
+          "when": {
+            "state": {
+              "VirtualAddress/lan-gw.role": {
+                "equals": "master"
+              }
+            }
+          }
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "NAT44Rule",
+        "metadata": {
+          "name": "always-peer-snat"
+        },
+        "spec": {
+          "type": "snat",
+          "egressInterface": "wan",
+          "sourceRanges": [
+            "198.18.30.0/24"
+          ],
+          "destinationCIDRs": [
+            "198.18.31.10/32"
+          ],
+          "snatAddressFrom": {
+            "resource": "IPv4StaticAddress/wan-host",
+            "field": "address"
+          }
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "NAT44Rule",
+        "metadata": {
+          "name": "lan-snat"
+        },
+        "spec": {
+          "type": "snat",
+          "egressInterface": "wan",
+          "sourceRanges": [
+            "198.18.30.0/24"
+          ],
+          "when": {
+            "state": {
+              "VirtualAddress/lan-gw.role": {
+                "equals": "master"
+              }
+            }
+          },
+          "snatAddress": "198.18.31.1"
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "NAT44SessionSync",
+        "metadata": {
+          "name": "dslite-sessions"
+        },
+        "spec": {
+          "mode": "conntrackd",
+          "natRules": [
+            "lan-snat"
+          ],
+          "conntrackd": {
+            "interface": "lan",
+            "localAddress": "198.18.30.2",
+            "peerAddress": "198.18.30.3",
+            "port": 3780,
+            "ignoreIPv4": [
+              "198.18.30.2",
+              "198.18.30.3",
+              "198.18.31.2",
+              "198.18.31.3"
+            ]
+          }
+        }
+      },
+      {
+        "apiVersion": "system.routerd.net/v1alpha1",
+        "kind": "Sysctl",
+        "metadata": {
+          "name": "forward"
+        },
+        "spec": {
+          "key": "net.ipv4.ip_forward",
+          "value": "1"
+        }
+      },
+      {
+        "apiVersion": "system.routerd.net/v1alpha1",
+        "kind": "Sysctl",
+        "metadata": {
+          "name": "liberal-tcp"
+        },
+        "spec": {
+          "key": "net.netfilter.nf_conntrack_tcp_be_liberal",
+          "value": "1"
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "BGPRouter",
+        "metadata": {
+          "name": "edge"
+        },
+        "spec": {
+          "asn": 64500,
+          "routerID": "198.18.31.2",
+          "importPolicy": {
+            "allowedPrefixes": [
+              "10.250.0.0/24"
+            ],
+            "nextHopRewrite": "peer-address"
+          },
+          "exportPolicy": {
+            "allowedPrefixes": [
+              "198.18.30.0/24"
+            ]
+          },
+          "redistribute": {
+            "connected": {
+              "allowedPrefixes": [
+                "198.18.30.0/24"
+              ]
+            }
+          },
+          "gracefulRestart": {
+            "enabled": true,
+            "restartTime": "120s",
+            "stalePathTime": "360s"
+          }
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "BGPPeer",
+        "metadata": {
+          "name": "independent"
+        },
+        "spec": {
+          "routerRef": "BGPRouter/edge",
+          "peerASN": 64512,
+          "peers": [
+            "198.18.31.10"
+          ]
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "DNSResolver",
+        "metadata": {
+          "name": "lan"
+        },
+        "spec": {
+          "listen": [
+            {
+              "name": "lan",
+              "port": 53,
+              "sources": [
+                "local"
+              ],
+              "addresses": [
+                "198.18.30.1"
+              ]
+            }
+          ],
+          "cache": {
+            "enabled": true
+          },
+          "when": {
+            "state": {
+              "VirtualAddress/lan-gw.role": {
+                "equals": "master"
+              }
+            }
+          }
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "DNSZone",
+        "metadata": {
+          "name": "ha"
+        },
+        "spec": {
+          "zone": "ha.test",
+          "records": [
+            {
+              "hostname": "router",
+              "ipv4": "198.18.30.1"
+            }
+          ]
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "DNSForwarder",
+        "metadata": {
+          "name": "local"
+        },
+        "spec": {
+          "resolver": "DNSResolver/lan",
+          "match": [
+            "ha.test"
+          ],
+          "zoneRefs": [
+            "DNSZone/ha"
+          ]
+        }
+      }
+    ]
+  }
+}

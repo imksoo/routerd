@@ -6,8 +6,10 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/pdclient"
 )
 
 func statusEventTestBuilder(event daemonapi.DaemonEvent) StatusEventBuilder {
@@ -134,5 +136,60 @@ func TestTransactionalStatusEventsHonorJournalRowBound(t *testing.T) {
 	}
 	if got := store.ObjectStatus(ref.APIVersion, ref.Kind, ref.Name)["sequence"]; got != float64(49) {
 		t.Fatalf("journal pruning changed operational state: sequence=%v", got)
+	}
+}
+
+func TestPDObservationAtomicRollbackAndRestartHistory(t *testing.T) {
+	now := time.Now().UTC()
+	path := filepath.Join(t.TempDir(), "state.db")
+	store, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { store.Close() }()
+	config := PDLeaseConfig{Client: "routerd-dhcpv6-client", UplinkIfname: "wan0", ClientDUID: "01", IAID: 7}
+	lease, _ := (PDLease{}).Configured(config)
+	snapshot := pdclient.Snapshot{Resource: "wan-pd", Interface: "wan0", ClientDUID: "01", IAID: 7, State: pdclient.StateBound, UpdatedAt: now, CurrentPrefix: "2001:db8:1::/56", Prefixes: []pdclient.PrefixSnapshot{{Prefix: "2001:db8:1::/56", AcquiredAt: now, Preferred: 60, Valid: 120}}}
+	event := daemonapi.NewEvent(daemonapi.DaemonRef{Kind: "routerd"}, "routerd.resource.status.changed", daemonapi.SeverityInfo)
+	event.Resource = &daemonapi.ResourceRef{APIVersion: "net.routerd.net/v1alpha1", Kind: "DHCPv6PrefixDelegation", Name: "wan-pd"}
+	if _, err := store.db.Exec(`CREATE TRIGGER fail_pd_history BEFORE INSERT ON events BEGIN SELECT RAISE(FAIL, 'injected PD journal failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SavePDLeaseObservationAndEvent("wan-pd", PDLeaseConfig{}, lease, &snapshot, daemonapi.ResourceStatus{}, statusEventTestBuilder(event)); err == nil {
+		t.Fatal("observation committed without required history")
+	}
+	if _, found, err := store.ReadPDLease("wan-pd"); err != nil || found {
+		t.Fatalf("rollback retained lease: %v %v", found, err)
+	}
+	if _, err := store.db.Exec("DROP TRIGGER fail_pd_history"); err != nil {
+		t.Fatal(err)
+	}
+	committed, err := store.SavePDLeaseObservationAndEvent("wan-pd", PDLeaseConfig{}, lease, &snapshot, daemonapi.ResourceStatus{}, statusEventTestBuilder(event))
+	if err != nil || committed == nil || committed.Cursor == "" {
+		t.Fatalf("atomic PD commit: %+v %v", committed, err)
+	}
+	// Simulate exit after storage commit and before local event delivery.
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, found, err := store.ReadPDLease("wan-pd")
+	if err != nil || !found || current.CurrentPrefix != snapshot.CurrentPrefix {
+		t.Fatalf("lost restart observation: %+v %v", current, err)
+	}
+	history, err := store.ListEvents(EventQuery{Topic: "routerd.resource.status.changed"})
+	if err != nil || len(history) != 1 || strconv.FormatInt(history[0].ID, 10) != committed.Cursor {
+		t.Fatalf("lost restart history: %+v %v", history, err)
+	}
+	duplicate, err := store.SavePDLeaseObservationAndEvent("wan-pd", current.Config(), current, &snapshot, daemonapi.ResourceStatus{}, statusEventTestBuilder(event))
+	if err != nil || duplicate != nil {
+		t.Fatalf("identical observation created history: %+v %v", duplicate, err)
+	}
+	history, err = store.ListEvents(EventQuery{Topic: "routerd.resource.status.changed"})
+	if err != nil || len(history) != 1 {
+		t.Fatalf("duplicate persisted event: %+v %v", history, err)
 	}
 }

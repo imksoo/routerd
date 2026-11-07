@@ -724,6 +724,11 @@ func validateFirewallResource(res api.Resource, targetOS platform.OS) (bool, err
 		if err != nil {
 			return true, err
 		}
+		if targetOS == platform.OSFreeBSD {
+			if err := ValidatePFFirewallRule(res.ID(), spec); err != nil {
+				return true, err
+			}
+		}
 		if spec.FromZone == "" {
 			return true, fmt.Errorf("%s spec.fromZone is required", res.ID())
 		}

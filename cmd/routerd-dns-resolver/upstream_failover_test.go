@@ -66,9 +66,11 @@ func failoverDoHPool(t *testing.T, cfg upstreamPoolConfig, servers ...*httptest.
 	if err != nil {
 		t.Fatal(err)
 	}
-	transport := pool.client.Transport.(*http.Transport)
-	transport.TLSClientConfig.RootCAs = roots
-	t.Cleanup(transport.CloseIdleConnections)
+	for _, upstream := range pool.upstreams {
+		transport := upstream.client.Transport.(*http.Transport)
+		transport.TLSClientConfig.RootCAs = roots
+		t.Cleanup(transport.CloseIdleConnections)
+	}
 	return pool
 }
 
@@ -343,7 +345,7 @@ func TestUpstreamCancellationStopsUDPAndDoesNotTryFallback(t *testing.T) {
 	}
 	roots := x509.NewCertPool()
 	roots.AddCert(backup.Certificate())
-	transport := pool.client.Transport.(*http.Transport)
+	transport := pool.upstreams[1].client.Transport.(*http.Transport)
 	transport.TLSClientConfig.RootCAs = roots
 	t.Cleanup(transport.CloseIdleConnections)
 	ctx, cancel := context.WithCancel(context.Background())

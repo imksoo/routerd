@@ -75,6 +75,20 @@ jq -n '{
 out_dir="$work/generated"
 PATH="$fake_bin:$PATH" "$generator" --tofu-output "$tofu_output" --out-dir "$out_dir" >/dev/null
 
+# Reusing every key must not inherit a permissive caller umask or preserve
+# an earlier public mode on YAML that contains a WireGuard private key.
+chmod 0644 "$out_dir"/configs/*.yaml
+(
+  umask 022
+  PATH="$fake_bin:$PATH" "$generator" --tofu-output "$tofu_output" --out-dir "$out_dir" >/dev/null
+)
+for generated_config in "$out_dir"/configs/*.yaml; do
+  if [ "$(stat -c %a "$generated_config")" != 600 ]; then
+    echo "reused generated configuration is not private: $generated_config" >&2
+    exit 1
+  fi
+done
+
 # The release supervisor deliberately uses a root-owned checkout. Exercise
 # Git's different-owner safeguard so the generator proves it trusts only the
 # structural worktree root and still records reviewed provenance.

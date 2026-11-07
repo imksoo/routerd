@@ -5,6 +5,9 @@ package logstore
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -16,6 +19,7 @@ import (
 
 type RetentionTarget struct {
 	File         string
+	Identity     fs.FileInfo
 	Retention    time.Duration
 	Signals      []string
 	BeforeDelete func(RetentionRecord) error
@@ -51,8 +55,8 @@ var retentionTablesBySignal = map[string][]RetentionTable{
 	RetentionSignalDHCPFingerprints: {{Name: "dhcp_fingerprint", Column: "observed_at", Kind: "unix_ns"}},
 }
 
-// RetentionTables returns the registered tables for signals. Empty keeps the
-// legacy all-operational-logs behaviour for callers outside the controller.
+// RetentionTables returns the registered tables for signals. Empty selects all
+// registered operational-log signals.
 func RetentionTables(signals []string) []RetentionTable {
 	if len(signals) == 0 {
 		signals = []string{RetentionSignalEvents, RetentionSignalAccessLogs, RetentionSignalPluginRuns, RetentionSignalDNSQueries, RetentionSignalTrafficFlows, RetentionSignalFirewallEvents, RetentionSignalDHCPFingerprints}
@@ -92,16 +96,23 @@ func ApplyRetention(ctx context.Context, target RetentionTarget, incrementalVacu
 		return result, nil
 	}
 	if _, err := os.Stat(target.File); err != nil {
-		if os.IsNotExist(err) {
+		if os.IsNotExist(err) && target.Identity == nil {
 			result.Skipped = true
 			return result, nil
 		}
 		return result, err
 	}
+	if err := requireRetentionIdentity(target); err != nil {
+		return result, err
+	}
 	if err := os.MkdirAll(filepath.Dir(target.File), 0o755); err != nil {
 		return result, err
 	}
-	db, err := sql.Open("sqlite", target.File)
+	dsn, err := sqliteFileURI(target.File)
+	if err != nil {
+		return result, err
+	}
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return result, err
 	}
@@ -110,13 +121,19 @@ func ApplyRetention(ctx context.Context, target RetentionTarget, incrementalVacu
 	if _, err := db.ExecContext(ctx, `PRAGMA busy_timeout = 5000;`); err != nil {
 		return result, err
 	}
+	if err := requireRetentionIdentity(target); err != nil {
+		return result, err
+	}
 	cutoff := time.Now().Add(-target.Retention).UTC()
-	deleted, err := deleteExpired(ctx, db, cutoff, RetentionTables(target.Signals), target.BeforeDelete)
+	deleted, err := deleteExpired(ctx, db, cutoff, RetentionTables(target.Signals), target)
+	result.Deleted = deleted
 	if err != nil {
 		return result, err
 	}
-	result.Deleted = deleted
 	if incrementalVacuum {
+		if err := requireRetentionIdentity(target); err != nil {
+			return result, err
+		}
 		vacuumed, freelistPages, err := vacuumAfterRetention(ctx, db)
 		if err != nil {
 			return result, err
@@ -125,6 +142,20 @@ func ApplyRetention(ctx context.Context, target RetentionTarget, incrementalVacu
 		result.FreelistPages = freelistPages
 	}
 	return result, nil
+}
+
+func requireRetentionIdentity(target RetentionTarget) error {
+	if target.Identity == nil {
+		return nil
+	}
+	current, err := os.Stat(target.File)
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(target.Identity, current) {
+		return fmt.Errorf("retention database file identity changed")
+	}
+	return nil
 }
 
 func vacuumAfterRetention(ctx context.Context, db *sql.DB) (bool, int64, error) {
@@ -155,41 +186,71 @@ func vacuumAfterRetention(ctx context.Context, db *sql.DB) (bool, int64, error) 
 	return true, freelistPages, nil
 }
 
-func deleteExpired(ctx context.Context, db *sql.DB, cutoff time.Time, tables []RetentionTable, beforeDelete func(RetentionRecord) error) (int64, error) {
+func deleteExpired(ctx context.Context, db *sql.DB, cutoff time.Time, tables []RetentionTable, target RetentionTarget) (int64, error) {
+	// Archive and delete exactly one database snapshot. A concurrent WAL writer
+	// can invalidate the read-to-write upgrade; rollback then retains the local
+	// rows for retry rather than deleting records the archive never observed.
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return 0, err
+	}
+	// A canceled transaction can report ErrTxDone while database/sql's
+	// cancellation goroutine is still rolling back the driver transaction.
+	// Closing the reserved connection joins that work before returning.
+	defer conn.Close()
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
 	total := int64(0)
 	for _, table := range tables {
-		if !tableExists(ctx, db, table.Name) {
+		exists, err := tableExists(ctx, tx, table.Name)
+		if err != nil {
+			return 0, err
+		}
+		if !exists {
 			continue
 		}
 		var result sql.Result
-		var err error
-		if beforeDelete != nil {
-			if err := exportExpired(ctx, db, table, cutoff, beforeDelete); err != nil {
-				return total, err
+		if target.BeforeDelete != nil {
+			if err := exportExpired(ctx, tx, table, cutoff, target.BeforeDelete); err != nil {
+				return 0, err
 			}
+		}
+		if err := requireRetentionIdentity(target); err != nil {
+			return 0, err
 		}
 		switch table.Kind {
 		case "unix_ns":
-			result, err = db.ExecContext(ctx, `DELETE FROM `+table.Name+` WHERE `+table.Column+` < ?`, cutoff.UnixNano())
+			result, err = tx.ExecContext(ctx, `DELETE FROM `+table.Name+` WHERE `+table.Column+` < ?`, cutoff.UnixNano())
 		case "rfc3339":
-			result, err = db.ExecContext(ctx, `DELETE FROM `+table.Name+` WHERE `+table.Column+` < ?`, cutoff.Format(time.RFC3339Nano))
+			result, err = tx.ExecContext(ctx, `DELETE FROM `+table.Name+` WHERE `+table.Column+` < ?`, cutoff.Format(time.RFC3339Nano))
+		default:
+			return 0, fmt.Errorf("unknown retention timestamp representation %q", table.Kind)
 		}
 		if err != nil {
-			return total, err
+			return 0, err
 		}
 		if affected, err := result.RowsAffected(); err == nil {
 			total += affected
 		}
 	}
+	if err := requireRetentionIdentity(target); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
 	return total, nil
 }
 
-func exportExpired(ctx context.Context, db *sql.DB, table RetentionTable, cutoff time.Time, emit func(RetentionRecord) error) error {
+func exportExpired(ctx context.Context, tx *sql.Tx, table RetentionTable, cutoff time.Time, emit func(RetentionRecord) error) error {
 	cutoffValue := any(cutoff.UnixNano())
 	if table.Kind == "rfc3339" {
 		cutoffValue = cutoff.Format(time.RFC3339Nano)
 	}
-	rows, err := db.QueryContext(ctx, `SELECT * FROM `+table.Name+` WHERE `+table.Column+` < ?`, cutoffValue)
+	rows, err := tx.QueryContext(ctx, `SELECT * FROM `+table.Name+` WHERE `+table.Column+` < ?`, cutoffValue)
 	if err != nil {
 		return err
 	}
@@ -222,20 +283,34 @@ func exportExpired(ctx context.Context, db *sql.DB, table RetentionTable, cutoff
 	return rows.Err()
 }
 
-func tableExists(ctx context.Context, db *sql.DB, name string) bool {
+func tableExists(ctx context.Context, tx *sql.Tx, name string) (bool, error) {
 	var got string
-	err := db.QueryRowContext(ctx, `SELECT name FROM sqlite_master WHERE type='table' AND name=?`, name).Scan(&got)
-	return err == nil && got == name
+	err := tx.QueryRowContext(ctx, `SELECT name FROM sqlite_master WHERE type='table' AND name=?`, name).Scan(&got)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil && got == name, err
 }
 
 func ParseRetention(value string) (time.Duration, error) {
 	value = strings.TrimSpace(value)
 	if strings.HasSuffix(value, "d") {
-		days, err := strconv.Atoi(strings.TrimSuffix(value, "d"))
+		days, err := strconv.ParseInt(strings.TrimSuffix(value, "d"), 10, 64)
 		if err != nil {
 			return 0, err
 		}
+		const maxDays = int64((1<<63 - 1) / (24 * time.Hour))
+		if days < 0 || days > maxDays {
+			return 0, fmt.Errorf("retention days must be between 0 and %d", maxDays)
+		}
 		return time.Duration(days) * 24 * time.Hour, nil
 	}
-	return time.ParseDuration(value)
+	duration, err := time.ParseDuration(value)
+	if err != nil {
+		return 0, err
+	}
+	if duration < 0 {
+		return 0, fmt.Errorf("retention duration must not be negative")
+	}
+	return duration, nil
 }

@@ -190,3 +190,13 @@ func objectStatusIDs(statuses []routerstate.ObjectStatus) []string {
 	}
 	return out
 }
+
+func TestDHCPv6AddressStatusGCDefersNativeWithdrawal(t *testing.T) {
+	statuses := []routerstate.ObjectStatus{{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Address", Name: "wan", Status: map[string]any{"phase": "Pending"}}}
+	if got := PlanStatusGC(nil, statuses); len(got.StatusDeletes) != 0 {
+		t.Fatal("generic GC discards DHCPv6 ownership before withdrawal")
+	}
+	if got := PlanResourceTeardownGC(nil, statuses); len(got.ResourceTeardowns) != 1 {
+		t.Fatal("DHCPv6 ownership bypasses resource teardown")
+	}
+}

@@ -363,9 +363,6 @@
                 "original": {
                   "additionalProperties": false,
                   "properties": {
-                    "accounting": {
-                      "type": "boolean"
-                    },
                     "bytes": {
                       "type": "integer"
                     },
@@ -411,9 +408,6 @@
                 "reply": {
                   "additionalProperties": false,
                   "properties": {
-                    "accounting": {
-                      "type": "boolean"
-                    },
                     "bytes": {
                       "type": "integer"
                     },
@@ -513,8 +507,15 @@
           "apiVersion": {
             "type": "string"
           },
+          "expiresAt": {
+            "format": "date-time",
+            "type": "string"
+          },
           "hostname": {
             "type": "string"
+          },
+          "infinite": {
+            "type": "boolean"
           },
           "interface": {
             "description": "Optional dnsmasq interface observed by the lease hook.",
@@ -528,6 +529,15 @@
           },
           "mac": {
             "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           }
         },
         "required": [
@@ -989,11 +999,15 @@
               "resources"
             ],
             "type": "object"
+          },
+          "target": {
+            "type": "string"
           }
         },
         "required": [
           "apiVersion",
-          "kind"
+          "kind",
+          "target"
         ],
         "type": "object"
       },
@@ -1077,6 +1091,143 @@
               },
               "name": {
                 "type": "string"
+              },
+              "pdLease": {
+                "additionalProperties": false,
+                "properties": {
+                  "client": {
+                    "type": "string"
+                  },
+                  "conditions": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "lastTransitionTime": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "observedGeneration": {
+                          "type": "integer"
+                        },
+                        "reason": {
+                          "type": "string"
+                        },
+                        "severity": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "status"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "configuredClientDUID": {
+                    "type": "string"
+                  },
+                  "configuredIAID": {
+                    "type": "integer"
+                  },
+                  "currentPrefix": {
+                    "type": "string"
+                  },
+                  "downstreamIfname": {
+                    "type": "string"
+                  },
+                  "duid": {
+                    "type": "string"
+                  },
+                  "duidText": {
+                    "type": "string"
+                  },
+                  "expectedDUID": {
+                    "type": "string"
+                  },
+                  "health": {
+                    "type": "string"
+                  },
+                  "iaid": {
+                    "type": "string"
+                  },
+                  "lastObservedAt": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "lastPrefix": {
+                    "type": "string"
+                  },
+                  "lastReplyAt": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "leaseUpdatedAt": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "phase": {
+                    "type": "string"
+                  },
+                  "preferredSeconds": {
+                    "type": "integer"
+                  },
+                  "prefixLength": {
+                    "type": "integer"
+                  },
+                  "previousPrefixes": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "expiresAt": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "prefix": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "prefix",
+                        "expiresAt"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "profile": {
+                    "type": "string"
+                  },
+                  "serverDUID": {
+                    "type": "string"
+                  },
+                  "snapshotUpdatedAt": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "t1Seconds": {
+                    "type": "integer"
+                  },
+                  "t2Seconds": {
+                    "type": "integer"
+                  },
+                  "uplinkIfname": {
+                    "type": "string"
+                  },
+                  "validSeconds": {
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
               },
               "spec": true,
               "status": {
@@ -1423,6 +1574,143 @@
                 "name": {
                   "type": "string"
                 },
+                "pdLease": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "client": {
+                      "type": "string"
+                    },
+                    "conditions": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "lastTransitionTime": {
+                            "format": "date-time",
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "observedGeneration": {
+                            "type": "integer"
+                          },
+                          "reason": {
+                            "type": "string"
+                          },
+                          "severity": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string"
+                          },
+                          "type": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "status"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "configuredClientDUID": {
+                      "type": "string"
+                    },
+                    "configuredIAID": {
+                      "type": "integer"
+                    },
+                    "currentPrefix": {
+                      "type": "string"
+                    },
+                    "downstreamIfname": {
+                      "type": "string"
+                    },
+                    "duid": {
+                      "type": "string"
+                    },
+                    "duidText": {
+                      "type": "string"
+                    },
+                    "expectedDUID": {
+                      "type": "string"
+                    },
+                    "health": {
+                      "type": "string"
+                    },
+                    "iaid": {
+                      "type": "string"
+                    },
+                    "lastObservedAt": {
+                      "format": "date-time",
+                      "type": "string"
+                    },
+                    "lastPrefix": {
+                      "type": "string"
+                    },
+                    "lastReplyAt": {
+                      "format": "date-time",
+                      "type": "string"
+                    },
+                    "leaseUpdatedAt": {
+                      "format": "date-time",
+                      "type": "string"
+                    },
+                    "phase": {
+                      "type": "string"
+                    },
+                    "preferredSeconds": {
+                      "type": "integer"
+                    },
+                    "prefixLength": {
+                      "type": "integer"
+                    },
+                    "previousPrefixes": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "expiresAt": {
+                            "format": "date-time",
+                            "type": "string"
+                          },
+                          "prefix": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "prefix",
+                          "expiresAt"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "profile": {
+                      "type": "string"
+                    },
+                    "serverDUID": {
+                      "type": "string"
+                    },
+                    "snapshotUpdatedAt": {
+                      "format": "date-time",
+                      "type": "string"
+                    },
+                    "t1Seconds": {
+                      "type": "integer"
+                    },
+                    "t2Seconds": {
+                      "type": "integer"
+                    },
+                    "uplinkIfname": {
+                      "type": "string"
+                    },
+                    "validSeconds": {
+                      "type": "integer"
+                    }
+                  },
+                  "type": "object"
+                },
                 "spec": true,
                 "status": {
                   "type": "object"
@@ -1717,13 +2005,38 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "bindingInterface": {
+                  "type": "string"
+                },
+                "bindingMark": {
+                  "type": "integer"
+                },
                 "detail": {
+                  "type": "string"
+                },
+                "durationMilliseconds": {
+                  "type": "integer"
+                },
+                "failureKind": {
+                  "type": "string"
+                },
+                "kind": {
                   "type": "string"
                 },
                 "name": {
                   "type": "string"
                 },
+                "observedAt": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "protocol": {
+                  "type": "string"
+                },
                 "status": {
+                  "type": "string"
+                },
+                "target": {
                   "type": "string"
                 }
               },
@@ -1973,7 +2286,9 @@
         },
         "required": [
           "name",
-          "claimRef"
+          "claimRef",
+          "claimDigest",
+          "claimIdentityDigest"
         ],
         "type": "object"
       },
@@ -2380,9 +2695,6 @@
             "items": {
               "additionalProperties": false,
               "properties": {
-                "accounting": {
-                  "type": "boolean"
-                },
                 "appCategory": {
                   "type": "string"
                 },
@@ -3149,25 +3461,25 @@
             "description": "Accepted SAMEnrollmentClaim resource reference used to authorize the topology snapshot.",
             "in": "query",
             "name": "claim",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string"
             }
           },
           {
-            "description": "Digest of the caller's current submitted claim. A mismatched or omitted digest returns only the RR fallback topology.",
+            "description": "Digest of the caller's exact accepted claim. Missing or mismatched digests are rejected.",
             "in": "query",
             "name": "claimDigest",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string"
             }
           },
           {
-            "description": "Digest of client-authored claim material. A join-token policy authenticates it with JoinHMAC; it distinguishes an exact revoked identity, an empty admission store, and a different active identity before admission.",
+            "description": "Digest of client-authored claim material authenticated by JoinHMAC. It distinguishes this identity's revocation from a rotated same-name claim.",
             "in": "query",
             "name": "claimIdentityDigest",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string"
             }

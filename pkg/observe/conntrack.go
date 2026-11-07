@@ -3,15 +3,18 @@
 package observe
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/imksoo/routerd/internal/hostcmd"
 	"github.com/imksoo/routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/subprocessio"
 )
 
 type ConnectionTable struct {
@@ -92,9 +95,8 @@ type ConntrackTuple struct {
 	DestinationHostname string `json:"destinationHostname,omitempty" yaml:"destinationHostname,omitempty"`
 	SourceService       string `json:"sourceService,omitempty" yaml:"sourceService,omitempty"`
 	DestinationService  string `json:"destinationService,omitempty" yaml:"destinationService,omitempty"`
-	Packets             int64  `json:"packets,omitempty" yaml:"packets,omitempty"`
-	Bytes               int64  `json:"bytes,omitempty" yaml:"bytes,omitempty"`
-	Accounting          bool   `json:"accounting,omitempty" yaml:"accounting,omitempty"`
+	Packets             *int64 `json:"packets,omitempty" yaml:"packets,omitempty"`
+	Bytes               *int64 `json:"bytes,omitempty" yaml:"bytes,omitempty"`
 }
 
 type ConntrackCPUStats struct {
@@ -102,17 +104,22 @@ type ConntrackCPUStats struct {
 	Fields map[string]int `json:"fields" yaml:"fields"`
 }
 
-func Connections(limit int) (*ConnectionTable, error) {
+func Connections(ctx context.Context, limit int) (*ConnectionTable, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	_, features := platform.Current()
 	if features.HasPF && !features.HasIproute2 {
-		return PFStates(limit)
+		return PFStates(ctx, limit)
 	}
 	command := hostcmd.ResolveConntrack("conntrack")
-	out, err := exec.Command(command, "-L", "-o", "extended").CombinedOutput()
+	out, err := connectionCommandOutput(ctx, command, "-L", "-o", "extended")
 	if err != nil {
-		return nil, fmt.Errorf("%s -L -o extended: %w: %s", command, err, strings.TrimSpace(string(out)))
+		return nil, err
 	}
-	allEntries := parseConntrackEntries(string(out), 0)
+	allEntries, err := parseConntrackEntries(string(out), 0)
+	if err != nil {
+		return nil, err
+	}
 	bySNAT := conntrackEntriesBySNAT(allEntries)
 	table := &ConnectionTable{
 		Count:    readProcInt("/proc/sys/net/netfilter/nf_conntrack_count", len(allEntries)),
@@ -122,18 +129,26 @@ func Connections(limit int) (*ConnectionTable, error) {
 		ByFamily: conntrackEntriesByFamily(allEntries),
 		Entries:  selectConnectionEntries(allEntries, limit),
 	}
-	if stats, err := conntrackStats(); err == nil {
+	if stats, err := conntrackStats(ctx); err == nil {
 		table.Stats = stats
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	return table, nil
 }
 
-func PFStates(limit int) (*ConnectionTable, error) {
-	out, err := exec.Command("pfctl", "-ss", "-v").CombinedOutput()
+func PFStates(ctx context.Context, limit int) (*ConnectionTable, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	out, err := connectionCommandOutput(ctx, hostcmd.Resolve("pfctl"), "-ss", "-v")
 	if err != nil {
-		return nil, fmt.Errorf("pfctl -ss -v: %w: %s", err, strings.TrimSpace(string(out)))
+		return nil, err
 	}
-	allEntries := parsePFStateEntries(string(out), 0)
+	allEntries, err := parsePFStateEntries(string(out), 0)
+	if err != nil {
+		return nil, err
+	}
 	return &ConnectionTable{
 		Count:    len(allEntries),
 		ByMark:   map[string]int{"0": len(allEntries)},
@@ -145,14 +160,16 @@ func PFStates(limit int) (*ConnectionTable, error) {
 // PFStateSnapshot returns the PF state count and its configured hard limit.
 // PF exposes the count through the state table and the capacity through the
 // memory limits, unlike Linux conntrack's procfs counters.
-func PFStateSnapshot() (*ConnectionTable, error) {
-	table, err := PFStates(0)
+func PFStateSnapshot(ctx context.Context) (*ConnectionTable, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	table, err := PFStates(ctx, 0)
 	if err != nil {
 		return nil, err
 	}
-	limitOut, err := exec.Command("pfctl", "-sm").CombinedOutput()
+	limitOut, err := connectionCommandOutput(ctx, hostcmd.Resolve("pfctl"), "-sm")
 	if err != nil {
-		return nil, fmt.Errorf("pfctl -sm: %w: %s", err, strings.TrimSpace(string(limitOut)))
+		return nil, err
 	}
 	limit, err := parsePFStateLimit(string(limitOut))
 	if err != nil {
@@ -237,7 +254,14 @@ func selectConnectionEntries(entries []ConnectionEntry, limit int) []ConnectionE
 }
 
 func connectionTrafficBytes(entry ConnectionEntry) int64 {
-	return entry.Original.Bytes + entry.Reply.Bytes
+	var observed int64
+	if entry.Original.Bytes != nil {
+		observed += *entry.Original.Bytes
+	}
+	if entry.Reply.Bytes != nil {
+		observed += *entry.Reply.Bytes
+	}
+	return observed
 }
 
 func connectionSelectionGroupKey(entry ConnectionEntry) string {
@@ -298,7 +322,7 @@ func normalizedConnectionProtocol(protocol string) string {
 	}
 }
 
-func parseConntrackEntries(output string, limit int) []ConnectionEntry {
+func parseConntrackEntries(output string, limit int) ([]ConnectionEntry, error) {
 	var entries []ConnectionEntry
 	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
@@ -307,44 +331,49 @@ func parseConntrackEntries(output string, limit int) []ConnectionEntry {
 		}
 		entry, ok := parseConntrackEntry(line)
 		if !ok {
-			continue
+			return nil, fmt.Errorf("conntrack dump contains an unrecognized state row")
 		}
 		entries = append(entries, entry)
 		if limit > 0 && len(entries) >= limit {
 			break
 		}
 	}
-	return entries
+	return entries, nil
 }
 
-func parsePFStateEntries(output string, limit int) []ConnectionEntry {
+func parsePFStateEntries(output string, limit int) ([]ConnectionEntry, error) {
 	var entries []ConnectionEntry
-	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "[") {
+	for _, raw := range strings.Split(output, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
 			continue
 		}
 		entry, ok := parsePFStateEntry(line)
 		if !ok {
-			continue
+			// pfctl -v prints indented sequence/age/counter metadata below
+			// each state. An unrecognized state row cannot be counted empty.
+			if len(raw) > 0 && (raw[0] == ' ' || raw[0] == '\t') {
+				continue
+			}
+			return nil, fmt.Errorf("pfctl dump contains an unrecognized state row")
 		}
 		entries = append(entries, entry)
 		if limit > 0 && len(entries) >= limit {
 			break
 		}
 	}
-	return entries
+	return entries, nil
 }
 
 func parsePFStateEntry(line string) (ConnectionEntry, bool) {
 	fields := strings.Fields(line)
-	if len(fields) < 5 || fields[0] != "all" {
+	if len(fields) < 5 {
 		return ConnectionEntry{}, false
 	}
 	protocol := strings.ToLower(fields[1])
 	arrow := -1
 	for i, field := range fields {
-		if field == "->" {
+		if field == "->" || field == "<-" {
 			arrow = i
 			break
 		}
@@ -352,48 +381,51 @@ func parsePFStateEntry(line string) (ConnectionEntry, bool) {
 	if arrow < 2 || arrow+1 >= len(fields) {
 		return ConnectionEntry{}, false
 	}
-	leftFields := fields[2:arrow]
-	rightField := fields[arrow+1]
-	state := ""
-	if arrow+2 < len(fields) {
-		state = fields[arrow+2]
+	rightEnd := arrow + 2
+	if rightEnd < len(fields) && strings.HasPrefix(fields[rightEnd], "(") {
+		for rightEnd < len(fields) {
+			closed := strings.HasSuffix(fields[rightEnd], ")")
+			rightEnd++
+			if closed {
+				break
+			}
+		}
 	}
-	visibleLeft, innerLeft := splitPFLeftEndpoint(leftFields)
-	leftHost, leftPort := parsePFEndpoint(visibleLeft)
-	innerHost, innerPort := parsePFEndpoint(innerLeft)
-	rightHost, rightPort := parsePFEndpoint(rightField)
+	left, leftAlternate := splitPFLeftEndpoint(fields[2:arrow])
+	right, rightAlternate := splitPFLeftEndpoint(fields[arrow+1 : rightEnd])
+	leftHost, leftPort := parsePFEndpoint(left)
+	rightHost, rightPort := parsePFEndpoint(right)
 	if leftHost == "" || rightHost == "" {
 		return ConnectionEntry{}, false
 	}
-	originalSource := leftHost
-	originalSourcePort := leftPort
-	replyDestination := leftHost
-	replyDestinationPort := leftPort
-	if innerHost != "" {
-		originalSource = innerHost
-		originalSourcePort = innerPort
-		replyDestination = leftHost
-		replyDestinationPort = leftPort
+	if leftAlternate == "" {
+		leftAlternate = left
 	}
-	entry := ConnectionEntry{
-		Family:   pfEndpointFamily(originalSource, rightHost),
-		Protocol: protocol,
-		State:    state,
-		Original: ConntrackTuple{
-			Source:          originalSource,
-			SourcePort:      originalSourcePort,
-			Destination:     rightHost,
-			DestinationPort: rightPort,
-		},
-		Reply: ConntrackTuple{
-			Source:          rightHost,
-			SourcePort:      rightPort,
-			Destination:     replyDestination,
-			DestinationPort: replyDestinationPort,
-		},
-		RawAttributes: map[string]string{"source": "pf"},
+	if rightAlternate == "" {
+		rightAlternate = right
 	}
-	return entry, true
+	originalSource, originalSourcePort := parsePFEndpoint(leftAlternate)
+	originalDestination, originalDestinationPort := parsePFEndpoint(rightAlternate)
+	replySource, replySourcePort := rightHost, rightPort
+	replyDestination, replyDestinationPort := leftHost, leftPort
+	if fields[arrow] == "<-" {
+		originalSource, originalSourcePort = parsePFEndpoint(rightAlternate)
+		originalDestination, originalDestinationPort = parsePFEndpoint(leftAlternate)
+		replySource, replySourcePort = leftHost, leftPort
+		replyDestination, replyDestinationPort = rightHost, rightPort
+	}
+	state := ""
+	if rightEnd < len(fields) {
+		state = fields[rightEnd]
+	}
+	return ConnectionEntry{
+		Family:        pfEndpointFamily(originalSource, originalDestination),
+		Protocol:      protocol,
+		State:         state,
+		Original:      ConntrackTuple{Source: originalSource, SourcePort: originalSourcePort, Destination: originalDestination, DestinationPort: originalDestinationPort},
+		Reply:         ConntrackTuple{Source: replySource, SourcePort: replySourcePort, Destination: replyDestination, DestinationPort: replyDestinationPort},
+		RawAttributes: map[string]string{"source": "pf", "interface": fields[0]},
+	}, true
 }
 
 func parseConntrackEntry(line string) (ConnectionEntry, bool) {
@@ -417,7 +449,7 @@ func parseConntrackEntry(line string) (ConnectionEntry, bool) {
 		entry.State = fields[start]
 		start++
 	}
-	tupleIndex := 0
+	tuple := &entry.Original
 	for _, field := range fields[start:] {
 		if field == "[ASSURED]" {
 			entry.Assured = true
@@ -431,26 +463,22 @@ func parseConntrackEntry(line string) (ConnectionEntry, bool) {
 			entry.Mark = value
 			continue
 		}
-		if isTupleKey(key) && tupleIndex < 8 {
-			if tupleIndex < 4 {
-				setTupleField(&entry.Original, key, value)
-			} else {
-				setTupleField(&entry.Reply, key, value)
+		if isTupleKey(key) {
+			// Each tuple starts with src. ICMP, GRE and other protocols do
+			// not have TCP/UDP's four address/port fields per direction.
+			if key == "src" && entry.Original.Source != "" {
+				tuple = &entry.Reply
 			}
-			tupleIndex++
+			setTupleField(tuple, key, value)
 			continue
 		}
 		if key == "packets" || key == "bytes" {
-			if tupleIndex <= 4 {
-				setTupleCounter(&entry.Original, key, value)
-				continue
-			}
-			setTupleCounter(&entry.Reply, key, value)
+			setTupleCounter(tuple, key, value)
 			continue
 		}
 		entry.RawAttributes[key] = value
 	}
-	if entry.Original.Source == "" && entry.Reply.Source == "" {
+	if entry.Original.Source == "" || entry.Original.Destination == "" || entry.Reply.Source == "" || entry.Reply.Destination == "" {
 		return ConnectionEntry{}, false
 	}
 	if len(entry.RawAttributes) == 0 {
@@ -483,16 +511,14 @@ func setTupleField(tuple *ConntrackTuple, key, value string) {
 
 func setTupleCounter(tuple *ConntrackTuple, key, value string) {
 	parsed, err := strconv.ParseInt(value, 10, 64)
-	if err != nil {
+	if err != nil || parsed < 0 {
 		return
 	}
 	switch key {
 	case "packets":
-		tuple.Packets = parsed
-		tuple.Accounting = true
+		tuple.Packets = &parsed
 	case "bytes":
-		tuple.Bytes = parsed
-		tuple.Accounting = true
+		tuple.Bytes = &parsed
 	}
 }
 
@@ -560,9 +586,9 @@ func conntrackEntriesByFamily(entries []ConnectionEntry) map[string]int {
 	return out
 }
 
-func conntrackStats() ([]ConntrackCPUStats, error) {
+func conntrackStats(ctx context.Context) ([]ConntrackCPUStats, error) {
 	command := hostcmd.ResolveConntrack("conntrack")
-	out, err := exec.Command(command, "-S").CombinedOutput()
+	out, err := connectionCommandOutput(ctx, command, "-S")
 	if err != nil {
 		return nil, err
 	}
@@ -587,6 +613,33 @@ func conntrackStats() ([]ConntrackCPUStats, error) {
 		stats = append(stats, stat)
 	}
 	return stats, nil
+}
+
+// A complete dump is required for identity and NAT counts even when the UI
+// selects fewer rows. Exceeding this bound is an unavailable snapshot, never
+// a successful partial table that could end unobserved flows.
+const connectionOutputLimit = 64 << 20
+
+func connectionCommandOutput(ctx context.Context, command string, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, command, args...)
+	stdout := subprocessio.NewCapture(connectionOutputLimit)
+	stderr := subprocessio.NewCapture(subprocessio.StderrLimit)
+	cmd.Stdout, cmd.Stderr = stdout, stderr
+	cmd.WaitDelay = 100 * time.Millisecond
+	err := cmd.Run()
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("%s: %w", command, ctx.Err())
+	}
+	if stdout.Exceeded() {
+		return nil, &subprocessio.OutputLimitError{Stream: "stdout", Limit: connectionOutputLimit}
+	}
+	if stderr.Exceeded() {
+		return nil, &subprocessio.OutputLimitError{Stream: "stderr", Limit: subprocessio.StderrLimit}
+	}
+	if err != nil {
+		return nil, fmt.Errorf("%s %s: %w: %s", command, strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
+	}
+	return stdout.Bytes(), nil
 }
 
 func readProcInt(path string, fallback int) int {

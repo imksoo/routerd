@@ -119,6 +119,11 @@ func federationEventEmitCommand(args []string, stdout io.Writer) error {
 	if strings.TrimSpace(*eventType) == "" {
 		return errors.New("--type is required")
 	}
+	switch output {
+	case "", "table", "json", "yaml":
+	default:
+		return fmt.Errorf("unsupported output %q", output)
+	}
 
 	now := time.Now().UTC()
 	observed := now
@@ -163,7 +168,11 @@ func federationEventEmitCommand(args []string, stdout io.Writer) error {
 	if !ok {
 		return fmt.Errorf("state file %s does not support federation events", *statePath)
 	}
-	if captureStore, ok := store.(federationguard.DynamicConfigPartStore); ok {
+	if ev.Type == federation.ObservedIPv4EventType {
+		captureStore, ok := store.(federationguard.DynamicConfigPartStore)
+		if !ok {
+			return fmt.Errorf("state file %s cannot read local native capture ownership", *statePath)
+		}
 		if err := federationguard.RejectSelfCapturedObservedEvent(captureStore, ev, now); err != nil {
 			return err
 		}
@@ -232,7 +241,7 @@ func federationEventListCommand(args []string, stdout io.Writer) error {
 		return fmt.Errorf("unexpected federation event list argument %q", fs.Arg(0))
 	}
 
-	store, err := routerstate.Open(*statePath)
+	store, err := routerstate.LoadReadOnlyLive(*statePath)
 	if err != nil {
 		return err
 	}
@@ -294,7 +303,7 @@ func federationEventDeliveriesCommand(args []string, stdout io.Writer) error {
 			statusFilter, routerstate.DeliveryPending, routerstate.DeliveryDelivered, routerstate.DeliveryFailed)
 	}
 
-	store, err := routerstate.Open(*statePath)
+	store, err := routerstate.LoadReadOnlyLive(*statePath)
 	if err != nil {
 		return err
 	}
@@ -409,7 +418,7 @@ func federationDeliveriesSummaryCommand(args []string, stdout io.Writer) error {
 		return fmt.Errorf("unexpected federation deliveries summary argument %q", fs.Arg(0))
 	}
 
-	store, err := routerstate.Open(*statePath)
+	store, err := routerstate.LoadReadOnlyLive(*statePath)
 	if err != nil {
 		return err
 	}
@@ -507,7 +516,7 @@ func federationSubscriptionRunsCommand(args []string, stdout io.Writer) error {
 		return errors.New("--subscription is required")
 	}
 
-	store, err := routerstate.Open(*statePath)
+	store, err := routerstate.LoadReadOnlyLive(*statePath)
 	if err != nil {
 		return err
 	}

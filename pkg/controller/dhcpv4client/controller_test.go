@@ -17,6 +17,7 @@ import (
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/platform"
+	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 func requireLinuxRuntimeFixture(t *testing.T) {
@@ -147,7 +148,7 @@ func TestControllerAppliesLeaseDNSWithSystemdResolved(t *testing.T) {
 	}
 	want := []string{
 		"ip -4 addr show dev ens18",
-		"ip -4 addr replace 192.0.2.10/24 dev ens18",
+		"ip -4 addr add 192.0.2.10/24 dev ens18",
 		"resolvectl dns ens18 192.0.2.53 192.0.2.54",
 		"resolvectl domain ens18 ~.",
 	}
@@ -198,7 +199,7 @@ func TestControllerReconcilesDaemonStatus(t *testing.T) {
 
 	store := mapStore{}
 	controller := Controller{
-		Router:        &api.Router{},
+		Router:        &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.DHCPv4ClientSpec{Interface: "ens18"}}}}},
 		Bus:           bus.New(),
 		Store:         store,
 		DaemonSockets: map[string]string{"wan": socket},
@@ -224,7 +225,7 @@ func TestControllerDryRunMissingDaemonSocketIsPending(t *testing.T) {
 	socket := filepath.Join(t.TempDir(), "missing.sock")
 	store := mapStore{}
 	controller := Controller{
-		Router:        &api.Router{},
+		Router:        &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.DHCPv4ClientSpec{Interface: "ens18"}}}}},
 		Store:         store,
 		DaemonSockets: map[string]string{"wan": socket},
 		DryRun:        true,
@@ -287,9 +288,9 @@ func TestControllerAppliesLeaseAddressAndRoute(t *testing.T) {
 	}
 	want := []string{
 		"ip -4 addr show dev ens18",
-		"ip -4 addr replace 192.0.2.10/24 dev ens18",
+		"ip -4 addr add 192.0.2.10/24 dev ens18",
 		"ip -4 route show default",
-		"ip -4 route replace default via 192.0.2.1 dev ens18 metric 100",
+		"ip -4 route add default via 192.0.2.1 dev ens18 metric 100",
 	}
 	if strings.Join(commands, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("commands:\n%s", strings.Join(commands, "\n"))
@@ -489,7 +490,7 @@ func TestControllerRepairsMissingLeaseAddressWithStaleStatus(t *testing.T) {
 	}
 	want := []string{
 		"ip -4 addr show dev ens18",
-		"ip -4 addr replace 192.0.2.10/24 dev ens18",
+		"ip -4 addr add 192.0.2.10/24 dev ens18",
 	}
 	if strings.Join(commands, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("commands:\n%s", strings.Join(commands, "\n"))
@@ -498,4 +499,21 @@ func TestControllerRepairsMissingLeaseAddressWithStaleStatus(t *testing.T) {
 	if status["addressPresent"] != true {
 		t.Fatalf("status = %#v", status)
 	}
+}
+
+func (s mapStore) ListObjectStatuses() ([]routerstate.ObjectStatus, error) {
+	var out []routerstate.ObjectStatus
+	for key, status := range s {
+		parts := strings.SplitN(key, "/", 4)
+		if len(parts) != 4 {
+			continue
+		}
+		out = append(out, routerstate.ObjectStatus{APIVersion: parts[0] + "/" + parts[1], Kind: parts[2], Name: parts[3], Status: status})
+	}
+	return out, nil
+}
+func (s mapStore) DeleteObject(v, k, n string) error { delete(s, v+"/"+k+"/"+n); return nil }
+
+func (s mapStore) ReadObjectStatus(v, k, n string) (map[string]any, error) {
+	return s.ObjectStatus(v, k, n), nil
 }

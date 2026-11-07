@@ -11,8 +11,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/imksoo/routerd/pkg/dpi"
 	"golang.org/x/sys/unix"
 )
+
+var errAckNotFound = errors.New("netlink ack not found")
 
 const (
 	nfNetlinkV0 = 0
@@ -103,6 +106,9 @@ func (r *Reader) Close() error {
 }
 
 func (r *Reader) Read(ctx context.Context) (Packet, error) {
+	if err := ctx.Err(); err != nil {
+		return Packet{}, err
+	}
 	if len(r.pending) > 0 {
 		packet := r.pending[0]
 		r.pending[0] = Packet{}
@@ -126,12 +132,18 @@ func (r *Reader) Read(ctx context.Context) (Packet, error) {
 		if n == 0 {
 			continue
 		}
-		size, _, err := unix.Recvfrom(r.fd, r.buf, 0)
+		size, _, flags, from, err := unix.Recvmsg(r.fd, r.buf, nil, 0)
 		if err != nil {
-			if errors.Is(err, unix.EINTR) || errors.Is(err, unix.ENOBUFS) {
+			if errors.Is(err, unix.EINTR) {
 				continue
 			}
 			return Packet{}, err
+		}
+		if flags&unix.MSG_TRUNC != 0 {
+			return Packet{}, fmt.Errorf("truncated NFLOG datagram")
+		}
+		if sender, ok := from.(*unix.SockaddrNetlink); !ok || sender.Pid != 0 {
+			continue
 		}
 		packets, err := ParseMessages(r.buf[:size])
 		if err != nil {
@@ -164,7 +176,7 @@ func (r *Reader) query(family uint8, group uint16, msgType uint8, attrs []byte) 
 		return err
 	}
 	deadline := time.Now().Add(2 * time.Second)
-	buf := make([]byte, 8192)
+	buf := r.buf
 	for time.Now().Before(deadline) {
 		pfd := []unix.PollFd{{Fd: int32(r.fd), Events: unix.POLLIN}}
 		n, err := unix.Poll(pfd, 200)
@@ -177,17 +189,32 @@ func (r *Reader) query(family uint8, group uint16, msgType uint8, attrs []byte) 
 		if n == 0 {
 			continue
 		}
-		size, _, err := unix.Recvfrom(r.fd, buf, 0)
+		size, _, flags, from, err := unix.Recvmsg(r.fd, buf, nil, 0)
 		if err != nil {
 			if errors.Is(err, unix.EINTR) {
 				continue
 			}
 			return err
 		}
-		if err := parseAck(buf[:size], r.seq); err != nil {
+		if flags&unix.MSG_TRUNC != 0 {
+			return fmt.Errorf("truncated nfnetlink configuration response")
+		}
+		if sender, ok := from.(*unix.SockaddrNetlink); !ok || sender.Pid != 0 {
+			continue
+		}
+		packets, err := ParseMessages(buf[:size])
+		if err != nil {
 			return err
 		}
-		return nil
+		if len(r.pending)+len(packets) > 1024 {
+			return fmt.Errorf("NFLOG notifications exceeded bounded configuration backlog")
+		}
+		r.pending = append(r.pending, packets...)
+		if err := parseAck(buf[:size], r.seq); errors.Is(err, errAckNotFound) {
+			continue
+		} else {
+			return err
+		}
 	}
 	return fmt.Errorf("timeout waiting for nfnetlink ack")
 }
@@ -233,9 +260,9 @@ func parseAck(data []byte, seq uint32) error {
 			}
 			return unix.Errno(-code)
 		}
-		data = data[align4(length):]
+		data = data[min(align4(length), len(data)):]
 	}
-	return fmt.Errorf("netlink ack not found")
+	return errAckNotFound
 }
 
 func ParseMessages(data []byte) ([]Packet, error) {
@@ -255,7 +282,7 @@ func ParseMessages(data []byte) ([]Packet, error) {
 				packets = append(packets, packet)
 			}
 		}
-		data = data[align4(length):]
+		data = data[min(align4(length), len(data)):]
 	}
 	return packets, nil
 }
@@ -299,7 +326,7 @@ func parsePacketMessage(data []byte) (Packet, bool, error) {
 				}
 			}
 		}
-		attrs = attrs[align4(length):]
+		attrs = attrs[min(align4(length), len(attrs)):]
 	}
 	if packet.SrcAddress == "" || packet.DstAddress == "" || packet.Protocol == "" {
 		return packet, false, nil
@@ -311,90 +338,20 @@ func parsePacketMessage(data []byte) (Packet, bool, error) {
 }
 
 func fillPacketPayload(packet *Packet, payload []byte) {
-	if len(payload) == 0 {
+	info, ok := dpi.InspectPacket(payload)
+	if !ok {
 		return
 	}
-	version := payload[0] >> 4
-	switch version {
-	case 4:
-		fillIPv4(packet, payload)
-	case 6:
-		fillIPv6(packet, payload)
+	packet.PacketBytes, packet.L3Proto = info.Length, info.L3Proto
+	packet.Protocol = info.TransportProtocol
+	if packet.Protocol == "1" {
+		packet.Protocol = "icmp"
 	}
-}
-
-func fillIPv4(packet *Packet, payload []byte) {
-	if len(payload) < 20 {
-		return
+	if packet.Protocol == "58" {
+		packet.Protocol = "icmpv6"
 	}
-	ihl := int(payload[0]&0x0f) * 4
-	if ihl < 20 || len(payload) < ihl {
-		return
-	}
-	total := int(binary.BigEndian.Uint16(payload[2:4]))
-	packet.PacketBytes = total
-	packet.L3Proto = "ipv4"
-	packet.Protocol = ipProtocol(payload[9])
-	packet.SrcAddress = net.IP(payload[12:16]).String()
-	packet.DstAddress = net.IP(payload[16:20]).String()
-	fillPorts(packet, payload[9], payload[ihl:])
-}
-
-func fillIPv6(packet *Packet, payload []byte) {
-	if len(payload) < 40 {
-		return
-	}
-	packet.PacketBytes = int(binary.BigEndian.Uint16(payload[4:6])) + 40
-	packet.L3Proto = "ipv6"
-	next := payload[6]
-	offset := 40
-	for isIPv6ExtensionHeader(next) && len(payload) >= offset+2 {
-		headerLen := (int(payload[offset+1]) + 1) * 8
-		next = payload[offset]
-		offset += headerLen
-		if offset > len(payload) {
-			return
-		}
-	}
-	packet.Protocol = ipProtocol(next)
-	packet.SrcAddress = net.IP(payload[8:24]).String()
-	packet.DstAddress = net.IP(payload[24:40]).String()
-	fillPorts(packet, next, payload[offset:])
-}
-
-func fillPorts(packet *Packet, proto uint8, payload []byte) {
-	if len(payload) < 4 {
-		return
-	}
-	switch proto {
-	case 6, 17:
-		packet.SrcPort = int(binary.BigEndian.Uint16(payload[0:2]))
-		packet.DstPort = int(binary.BigEndian.Uint16(payload[2:4]))
-	}
-}
-
-func ipProtocol(proto uint8) string {
-	switch proto {
-	case 1:
-		return "icmp"
-	case 6:
-		return "tcp"
-	case 17:
-		return "udp"
-	case 58:
-		return "icmpv6"
-	default:
-		return fmt.Sprintf("%d", proto)
-	}
-}
-
-func isIPv6ExtensionHeader(proto uint8) bool {
-	switch proto {
-	case 0, 43, 44, 50, 51, 60, 135, 139, 140, 253, 254:
-		return true
-	default:
-		return false
-	}
+	packet.SrcAddress, packet.DstAddress = info.SrcAddress, info.DstAddress
+	packet.SrcPort, packet.DstPort = info.SrcPort, info.DstPort
 }
 
 func ifName(payload []byte) string {

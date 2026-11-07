@@ -866,7 +866,7 @@ generate_configs() {
     return
   fi
   local gen_dir="$evidence_dir/config-gen"
-  PVE_CAPTURE_INTERFACE="$pve_capture_interface" "$config_generator" --tofu-output "$tofu_output" --out-dir "$gen_dir" >"$evidence_dir/deploy/config-generate.log" 2>&1
+  PVE_CAPTURE_INTERFACE="$pve_capture_interface" "$config_generator" --tofu-output "$tofu_output" --out-dir "$gen_dir" >"$evidence_dir/deploy/config-generate.log" 2>&1 || return "$?"
   echo "$gen_dir/configs"
 }
 
@@ -1212,12 +1212,21 @@ stop_existing_routerd_units() {
   # A live-ISO guest can still be running its sample router.yaml.  Do not let
   # the installer restart that configuration while replacing binaries: apart
   # from being the wrong test input, it can start services such as DHCP/RA.
-  systemctl list-units --all --type=service --no-legend 'routerd*.service' 2>/dev/null \
-    | awk '{print $1}' \
-    | while IFS= read -r unit; do
-        [ -n "$unit" ] || continue
-        sudo systemctl stop "$unit" || true
-      done
+  local units unit state main_pid control_pid
+  units="$(systemctl list-units --plain --all --type=service --no-legend 'routerd*.service')" || return 1
+  while read -r unit _; do
+    [ -n "$unit" ] || continue
+    case "$unit" in routerd*.service) ;; *) echo "unexpected routerd unit observation: $unit" >&2; return 1 ;; esac
+    sudo systemctl stop "$unit" || return 1
+    state="$(systemctl show "$unit" --property=ActiveState --value)" || return 1
+    main_pid="$(systemctl show "$unit" --property=MainPID --value)" || return 1
+    control_pid="$(systemctl show "$unit" --property=ControlPID --value)" || return 1
+    case "$state" in inactive|failed) ;; *) echo "routerd unit did not stop: $unit ($state)" >&2; return 1 ;; esac
+    if [ "$main_pid" != 0 ] || [ "$control_pid" != 0 ]; then
+      echo "routerd unit still owns a process: $unit" >&2
+      return 1
+    fi
+  done <<<"$units"
 }
 stop_existing_routerd_units
 sudo mkdir -p /usr/local/etc/routerd/secrets
@@ -1523,7 +1532,7 @@ observe_flow() {
       fi
     done
     [ "$result" != PASS ] || break
-    [ "$pending" -eq 1 ] && [ "$sent" -eq 1 ] && [ "$((validation_deadline - SECONDS))" -gt 2 ] || break
+    if [ "$pending" -ne 1 ] || [ "$sent" -ne 1 ] || [ "$((validation_deadline - SECONDS))" -le 2 ]; then break; fi
     sleep 2
   done
   printf '%s\n' "$result" >"$dir/status"
@@ -1960,6 +1969,8 @@ legacy_protocol_matrix() {
 performance_iperf_attempt() {
   local src="$1" dst="$2" command="$3" output="$4" attempt="$5" rc=0
   local prefix="$output.attempt-$attempt"
+  # The quoted command is expanded by the remote shell.
+  # shellcheck disable=SC2016
   local restart='set -e; sudo pkill -9 iperf3 >/dev/null 2>&1 || true; sleep 2; if sudo iperf3 -s -D </dev/null >/tmp/routerd-e2e-iperf3-start.log 2>&1; then :; else rc=$?; cat /tmp/routerd-e2e-iperf3-start.log >&2 || true; exit "$rc"; fi; sleep 2'
   capture_ssh_evidence "$dst" "$prefix.server.stdout" "$prefix.server.stderr" "$prefix.server.result.tsv" "$restart" || rc=$?
   if [ "$rc" -ne 0 ]; then

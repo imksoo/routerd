@@ -29,6 +29,12 @@ LAN 側 (ルーターから内側に提供するサービス) は [LAN 側サー
 
 ISP の提供形態に応じて、必要なリソースの組み合わせを選びます。
 
+`IPv6RAAddress.spec.managed: false` は RA/SLAAC の観測専用の指定です。
+Linux では、この宣言から RA 受信の sysctl や networkd の引き取り設定を生成しません。
+`managed` の省略または `true` は管理を有効にします。同じインターフェースの
+`DHCPv6PrefixDelegation` など、別リソースが必要とするホスト設定は引き続き適用します。
+このフィールドの変更は、以前の管理設定が適用したホスト設定を元に戻す操作ではありません。
+
 ## パターン A: ネイティブデュアルスタック (IPv4 + IPv6)
 
 ISP が同一 WAN インターフェースで IPv4 (DHCPv4) と IPv6 prefix (DHCPv6-PD) を配布する構成です。
@@ -72,6 +78,12 @@ ISP が同一 WAN インターフェースで IPv4 (DHCPv4) と IPv6 prefix (DHC
 ```
 
 `DHCPv4Client` は `routerd-dhcpv4-client` を起動し、リース内容を `lease.json` に書き込みます。アドレス自体は kernel が保持し、routerd は下流リソース向けにイベントを発行します。
+
+初回 apply では、supervisor が起動するクライアントのソケットがまだ存在しない場合があります。
+既存 lease・適用済み効果・未完了効果がなければ、起動待ちを `Pending/DaemonUnavailable`
+として表示し、この初回のソケット不在だけで apply を失敗にしません。Pending は lease の
+利用可能を意味しません。既存クライアントの権限喪失や別のソケットエラーは引き続きエラーとし、
+既知の lease 期限切れではアドレス・経路・DNS の撤去を行います。
 
 `DHCPv6PrefixDelegation` は `routerd-dhcpv6-client` を使って IA_PD を取得します。`IPv6DelegatedAddress` は、取得したプレフィックスから LAN 側に配る `/64` (またはその他の長さ) を切り出します。
 

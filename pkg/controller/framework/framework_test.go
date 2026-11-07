@@ -396,3 +396,37 @@ func TestEventResourceKindName(t *testing.T) {
 		t.Fatalf("expected empty resource info, got %q/%q", kind, name)
 	}
 }
+
+func TestRunOnceCancellationDoesNotWaitForExclusiveMutationGate(t *testing.T) {
+	gate := &sync.RWMutex{}
+	gate.Lock()
+	defer gate.Unlock()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	entered := make(chan struct{})
+	done := make(chan error, 1)
+	called := make(chan struct{}, 1)
+	controller := FuncController{ControllerName: "owned-effect", PeriodicFunc: func(context.Context) (bool, error) {
+		called <- struct{}{}
+		return true, nil
+	}}
+	go func() {
+		close(entered)
+		done <- (Runner{MutationGate: gate, Exclusive: true}).RunOnce(ctx, controller)
+	}()
+	<-entered
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("RunOnce returned %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("canceled one-shot still waits for another mutation to finish")
+	}
+	select {
+	case <-called:
+		t.Fatal("canceled one-shot entered an effect")
+	default:
+	}
+}

@@ -128,6 +128,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 touch "$heartbeat"
+printf 'started\n' >>"${out}.launches"
 cat >"$out" <<JSON
 {
   "status": "${QUALIFICATION_FIXTURE_STATUS:-pass}",
@@ -540,6 +541,25 @@ mkdir -p "$work/pass-evidence"
   --heartbeat-stale 5s
 test -f "$work/pass-evidence/cleanup-called"
 test -f "$work/pass-evidence/inventory-zero"
+# A completed request may be observed again, but changing its intent must not
+# re-use its prior result or launch another worker.
+if "$repo_root/scripts/release-qualification-smoke.sh" \
+  --certification "$work/certification.json" --release v20990101.0000 \
+  --out "$work/changed-request-result.json" \
+  --qualification-command "$work/qualification-pass" \
+  --cleanup-command "$work/cleanup" --inventory-command "$work/inventory" \
+  --evidence-dir "$work/pass-evidence" --ttl 16s --heartbeat-stale 5s; then
+  echo "different qualification intent reused a completed owner" >&2
+  exit 1
+fi
+test "$(wc -l <"$work/pass-evidence/qualification-driver-result.json.launches")" -eq 1
+python3 - "$work/changed-request-result.json" "$work/pass-evidence/supervisor-state.json" <<'PY'
+import json, sys
+result, state = (json.load(open(path, encoding="utf-8")) for path in sys.argv[1:])
+assert result["classification"] == "preflight_failure", result
+assert state["phase"] == "DONE", state
+assert sum(item["to"] == "STARTING" for item in state["history"]) == 1, state
+PY
 
 # Exercise the actual wrapper, schema and cleanup path. An unqualified
 # observation is not a product defect and is never converted into a PASS.
@@ -575,7 +595,7 @@ if "$repo_root/scripts/release-qualification-smoke.sh" \
   echo "stale qualification unexpectedly passed" >&2
   exit 1
 fi
-test -f "$work/stale-evidence/watchdog-abort.json"
+test -f "$work/stale-evidence/supervisor-state.json"
 test -f "$work/stale-evidence/cleanup-called"
 test -f "$work/stale-evidence/inventory-zero"
 python3 - "$work/stale-result.json" <<'PY'
@@ -601,7 +621,27 @@ mkdir -p "$work/orphan-evidence"
   --ttl 10s \
   --heartbeat-stale 2s >"$work/orphan-parent.log" 2>&1 &
 orphan_parent=$!
-sleep 1
+python3 - "$work/orphan-evidence/supervisor-state.json" <<'PY'
+import json, pathlib, sys, time
+state = pathlib.Path(sys.argv[1])
+for attempt in range(200):
+    if state.is_file() and json.loads(state.read_text())["phase"] == "MUTATING":
+        break
+    time.sleep(0.05)
+else:
+    raise AssertionError("actual qualification owner did not admit its child")
+PY
+if "$repo_root/scripts/release-qualification-smoke.sh" \
+  --certification "$work/certification.json" --release v20990101.0000 \
+  --out "$work/competing-result.json" \
+  --qualification-command "$work/qualification-stale" \
+  --cleanup-command "$work/cleanup" --inventory-command "$work/inventory" \
+  --evidence-dir "$work/orphan-evidence" --ttl 10s --heartbeat-stale 2s \
+  >"$work/competing-parent.log" 2>&1; then
+  echo "competing qualification frontend acquired an active owner" >&2
+  exit 1
+fi
+test ! -e "$work/competing-result.json"
 kill -KILL "$orphan_parent"
 wait "$orphan_parent" 2>/dev/null || true
 orphan_inventory_ready=0
@@ -613,7 +653,23 @@ for _ in $(seq 1 15); do
   sleep 1
 done
 test "$orphan_inventory_ready" -eq 1
-test -f "$work/orphan-evidence/watchdog-abort.json"
-test -f "$work/orphan-evidence/cleanup-result.json"
+python3 - "$work/orphan-evidence/supervisor-state.json" <<'PY'
+import json, pathlib, sys, time
+path = pathlib.Path(sys.argv[1])
+for attempt in range(100):
+    value = json.loads(path.read_text())
+    if value["phase"] == "FAILED":
+        break
+    time.sleep(0.05)
+else:
+    raise AssertionError(value)
+PY
+python3 - "$work/orphan-evidence/supervisor-state.json" <<'PY'
+import json, sys
+value = json.load(open(sys.argv[1], encoding="utf-8"))
+assert value["phase"] == "FAILED" and value["stopReason"] == "heartbeat-stale", value
+assert value["cleanupExit"] == value["inventoryExit"] == 0, value
+assert value["mutationPgid"] is None, value
+PY
 
 echo "release certification offline OK"

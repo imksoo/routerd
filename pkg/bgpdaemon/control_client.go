@@ -7,12 +7,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
+	"reflect"
 	"strings"
 	"time"
+
+	bgpstate "github.com/imksoo/routerd/pkg/bgp"
 )
 
 type ControlClient struct {
@@ -57,11 +62,35 @@ func (c *ControlClient) ListPaths(ctx context.Context, source string) ([]Applied
 	if resp.StatusCode != http.StatusOK {
 		return nil, responseError(resp)
 	}
+	return decodePathListResponse(resp, source)
+}
+
+func decodePathListResponse(resp *http.Response, source string) ([]AppliedPath, error) {
 	var paths []AppliedPath
-	if err := json.NewDecoder(resp.Body).Decode(&paths); err != nil {
+	if err := decodeControlResponse(resp, &paths); err != nil {
 		return nil, err
 	}
-	return Normalize(AppliedConfig{Paths: paths}).Paths, nil
+	if paths == nil {
+		return nil, fmt.Errorf("BGP path observation is null")
+	}
+	seen := map[string]bool{}
+	for _, path := range paths {
+		if err := ValidateAppliedPath(path); err != nil {
+			return nil, err
+		}
+		if path.UUID == "" {
+			return nil, fmt.Errorf("BGP path %s has no acknowledged native UUID", path.Prefix)
+		}
+		if strings.TrimSpace(source) != "" && path.Source != strings.TrimSpace(source) {
+			return nil, fmt.Errorf("BGP path observation returned another source")
+		}
+		key := AppliedPathKey(path)
+		if seen[key] {
+			return nil, fmt.Errorf("BGP path observation duplicated %s", key)
+		}
+		seen[key] = true
+	}
+	return paths, nil
 }
 
 // ListObservedPaths reads the live GoBGP RIB.  It deliberately has a
@@ -85,9 +114,29 @@ func (c *ControlClient) ListObservedPaths(ctx context.Context) ([]ObservedPath, 
 	if resp.StatusCode != http.StatusOK {
 		return nil, responseError(resp)
 	}
+	return decodeObservedPathListResponse(resp)
+}
+
+func decodeObservedPathListResponse(resp *http.Response) ([]ObservedPath, error) {
 	var paths []ObservedPath
-	if err := json.NewDecoder(resp.Body).Decode(&paths); err != nil {
+	if err := decodeControlResponse(resp, &paths); err != nil {
 		return nil, err
+	}
+	if paths == nil {
+		return nil, fmt.Errorf("live BGP observation is null")
+	}
+	for _, path := range paths {
+		if _, err := netip.ParsePrefix(path.Prefix); err != nil {
+			return nil, fmt.Errorf("live BGP prefix observation: %w", err)
+		}
+		if path.PeerAddress != "" {
+			if _, err := netip.ParseAddr(path.PeerAddress); err != nil {
+				return nil, fmt.Errorf("live BGP peer observation: %w", err)
+			}
+		}
+		if _, err := bgpstate.StandardCommunities(path.Communities); err != nil {
+			return nil, fmt.Errorf("live BGP community observation: %w", err)
+		}
 	}
 	return paths, nil
 }
@@ -114,9 +163,19 @@ func (c *ControlClient) UpsertPath(ctx context.Context, path AppliedPath) (Appli
 	if resp.StatusCode != http.StatusOK {
 		return AppliedPath{}, responseError(resp)
 	}
+	return decodePathUpsertResponse(resp, path)
+}
+
+func decodePathUpsertResponse(resp *http.Response, path AppliedPath) (AppliedPath, error) {
 	var out AppliedPath
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	if err := decodeControlResponse(resp, &out); err != nil {
 		return AppliedPath{}, err
+	}
+	if err := ValidateAppliedPath(out); err != nil {
+		return AppliedPath{}, err
+	}
+	if out.UUID == "" || AppliedPathKey(out) != AppliedPathKey(path) || !reflect.DeepEqual(NormalizeAppliedPath(out).Attrs, NormalizeAppliedPath(path).Attrs) {
+		return AppliedPath{}, fmt.Errorf("BGP path acknowledgment does not match its requested native effect")
 	}
 	return NormalizeAppliedPath(out), nil
 }
@@ -140,11 +199,36 @@ func (c *ControlClient) DeletePath(ctx context.Context, path AppliedPath) error 
 	if resp.StatusCode != http.StatusOK {
 		return responseError(resp)
 	}
+	return decodePathWithdrawalResponse(resp, path)
+}
+
+func decodePathWithdrawalResponse(resp *http.Response, path AppliedPath) error {
+	var applied AppliedConfig
+	if err := decodeControlResponse(resp, &applied); err != nil {
+		return err
+	}
+	if err := Validate(applied); err != nil {
+		return err
+	}
+	if applied.Version != AppliedVersion {
+		return fmt.Errorf("BGP path withdrawal acknowledgment has unsupported version %d", applied.Version)
+	}
+	if applied.PendingPolicy != nil {
+		return fmt.Errorf("BGP path withdrawal awaits policy recovery")
+	}
+	key := AppliedPathKey(path)
+	for _, group := range [][]AppliedPath{applied.Paths, applied.PendingPathAdds, applied.PendingPathRemovals} {
+		for _, owned := range group {
+			if AppliedPathKey(owned) == key {
+				return fmt.Errorf("BGP path withdrawal is not durably complete")
+			}
+		}
+	}
 	return nil
 }
 
 func (c *ControlClient) do(req *http.Request) (*http.Response, error) {
-	client := &http.Client{Transport: &http.Transport{
+	client := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{
 		DisableKeepAlives: true,
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			dialer := net.Dialer{Timeout: 3 * time.Second}
@@ -156,6 +240,34 @@ func (c *ControlClient) do(req *http.Request) (*http.Response, error) {
 }
 
 func responseError(resp *http.Response) error {
-	data, _ := io.ReadAll(resp.Body)
-	return errors.New(string(bytes.TrimSpace(data)))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, (4<<10)+1))
+	if err != nil {
+		return err
+	}
+	if len(data) > 4<<10 {
+		data = append(data[:4<<10], []byte(" [truncated]")...)
+	}
+	return fmt.Errorf("BGP control HTTP %d: %s", resp.StatusCode, bytes.TrimSpace(data))
+}
+
+func decodeControlResponse(resp *http.Response, value any) error {
+	data, err := io.ReadAll(io.LimitReader(resp.Body, (4<<20)+1))
+	if err != nil {
+		return err
+	}
+	if len(data) > 4<<20 {
+		return fmt.Errorf("BGP control response exceeds 4 MiB")
+	}
+	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
+		return fmt.Errorf("BGP control response is null")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(value); err != nil {
+		return err
+	}
+	if err := decoder.Decode(new(json.RawMessage)); err != io.EOF {
+		return fmt.Errorf("BGP control response contains trailing data")
+	}
+	return nil
 }

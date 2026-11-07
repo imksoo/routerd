@@ -31,7 +31,7 @@ type inventoryResult struct {
 			CapturedAddresses []string `json:"capturedAddresses"`
 			ForwardingEnabled *bool    `json:"forwardingEnabled"`
 		} `json:"self"`
-		IPs []struct {
+		ObservedCandidates []struct {
 			Address       string            `json:"address"`
 			NICRef        string            `json:"nicRef"`
 			SubnetRef     string            `json:"subnetRef"`
@@ -39,7 +39,7 @@ type inventoryResult struct {
 			ResourceType  string            `json:"resourceType"`
 			Tags          map[string]string `json:"tags"`
 			InstanceState string            `json:"instanceState"`
-		} `json:"ips"`
+		} `json:"observedCandidates"`
 		LocalIPs []struct {
 			Address       string            `json:"address"`
 			NICRef        string            `json:"nicRef"`
@@ -212,6 +212,7 @@ func TestProviderPrivateIPInventoryPluginAWSResolvesSelfFromIMDS(t *testing.T) {
 	}))
 	defer imds.Close()
 	bin := fakeBinDir(t)
+	writeExecutable(t, filepath.Join(bin, "ip"), "#!/bin/sh\nexit 1\n")
 	writeExecutable(t, filepath.Join(bin, "aws"), `#!/bin/sh
 case "$*" in
   *"--network-interface-ids eni-router-b"*)
@@ -498,7 +499,8 @@ case "$*" in
     printf '%s\n' '{"data":{"id":"vnic-router","subnet-id":"subnet-oci","compartment-id":"compartment-demo","skip-source-dest-check":true}}'
     ;;
   *"network vnic get --vnic-id vnic-client"*)
-    exec python3 -c 'import os,pathlib,time; pathlib.Path(os.environ["ROUTERD_FIXTURE_PID"]).write_text(str(os.getpid())); time.sleep(3600)'
+    printf '%s' "$$" > "$ROUTERD_FIXTURE_PID"
+    exec sleep 3600
     ;;
   *"compute vnic-attachment list --compartment-id compartment-demo"*)
     printf '%s\n' '{"data":[{"vnic-id":"vnic-router","instance-id":"i-router"},{"vnic-id":"vnic-client","instance-id":"i-client"}]}'
@@ -871,7 +873,8 @@ case "$*" in
     printf '%s\n' '[{"id":"/nic/router","tags":{"role":"router"},"ipConfigurations":[{"privateIPAddress":"10.77.60.22","primary":true,"subnet":{"id":"/subnets/demo"}}]},{"id":"/nic/client","tags":{"role":"client"},"ipConfigurations":[{"privateIPAddress":"10.77.60.12","primary":true,"subnet":{"id":"/subnets/demo"}}]}]'
     ;;
   *"vm list --resource-group rg-demo"*)
-    exec python3 -c 'import os,pathlib,time; pathlib.Path(os.environ["ROUTERD_FIXTURE_PID"]).write_text(str(os.getpid())); time.sleep(3600)'
+    printf '%s' "$$" > "$ROUTERD_FIXTURE_PID"
+    exec sleep 3600
     ;;
   *)
     echo "unexpected az args: $*" >&2
@@ -879,7 +882,7 @@ case "$*" in
     ;;
 esac
 `)
-	res := runInventoryPluginWithEnv(t, bin, `{"spec":{"provider":"azure","selfNicRef":"/nic/router","target":{"resourceGroup":"rg-demo"}}}`, []string{"ROUTERD_PROVIDER_INVENTORY_AZURE_VM_METADATA_TIMEOUT=0.1", "ROUTERD_FIXTURE_PID=" + pidFile})
+	res := runInventoryPluginWithEnv(t, bin, `{"spec":{"provider":"azure","selfNicRef":"/nic/router","target":{"resourceGroup":"rg-demo"}}}`, []string{"ROUTERD_PROVIDER_INVENTORY_AZURE_VM_METADATA_TIMEOUT=1", "ROUTERD_FIXTURE_PID=" + pidFile})
 	if res.Status.Status != "succeeded" {
 		t.Fatalf("status=%q error=%q, want succeeded despite Azure VM metadata timeout", res.Status.Status, res.Status.Error)
 	}
@@ -910,6 +913,18 @@ func runInventoryPluginWithEnv(t *testing.T, fakeBin, stdin string, extraEnv []s
 	cmd := exec.CommandContext(ctx, "./provider-private-ip-inventory")
 	cmd.Stdin = strings.NewReader(stdin)
 	cmd.Env = append(os.Environ(), "PATH="+fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	// Every metadata/ARM request in this fixture stays on an owned loopback server.
+	// Specific metadata tests override these defaults with their own mock server.
+	metadata := httptest.NewServer(http.NotFoundHandler())
+	defer metadata.Close()
+	cmd.Env = append(cmd.Env,
+		"ROUTERD_PROVIDER_INVENTORY_AWS_IMDS_BASE="+metadata.URL,
+		"ROUTERD_PROVIDER_INVENTORY_AZURE_IMDS_BASE="+metadata.URL,
+		"ROUTERD_PROVIDER_INVENTORY_OCI_IMDS_BASE="+metadata.URL,
+		"ROUTERD_PROVIDER_INVENTORY_AZURE_ARM_BASE="+metadata.URL,
+		"AWS_CLI_PATH="+filepath.Join(fakeBin, "aws"),
+		"AZ_CLI_PATH="+filepath.Join(fakeBin, "az"),
+		"OCI_CLI_PATH="+filepath.Join(fakeBin, "oci"))
 	cmd.Env = append(cmd.Env, extraEnv...)
 	var out, errOut bytes.Buffer
 	cmd.Stdout = &out
@@ -926,7 +941,7 @@ func runInventoryPluginWithEnv(t *testing.T, fakeBin, stdin string, extraEnv []s
 
 func assertIP(t *testing.T, res inventoryResult, address, nicRef, subnetRef string) {
 	t.Helper()
-	for _, ip := range res.Status.IPs {
+	for _, ip := range res.Status.ObservedCandidates {
 		if ip.Address == address {
 			if ip.NICRef != nicRef || ip.SubnetRef != subnetRef {
 				t.Fatalf("record for %s = nic %q subnet %q, want nic %q subnet %q", address, ip.NICRef, ip.SubnetRef, nicRef, subnetRef)
@@ -934,7 +949,7 @@ func assertIP(t *testing.T, res inventoryResult, address, nicRef, subnetRef stri
 			return
 		}
 	}
-	t.Fatalf("missing address %s in %+v", address, res.Status.IPs)
+	t.Fatalf("missing address %s in %+v", address, res.Status.ObservedCandidates)
 }
 
 func assertLocalIP(t *testing.T, res inventoryResult, address string) {
@@ -968,7 +983,7 @@ func assertNotSelfCaptured(t *testing.T, res inventoryResult, address string) {
 
 func assertResource(t *testing.T, res inventoryResult, address, wantRef, wantType string) {
 	t.Helper()
-	for _, ip := range res.Status.IPs {
+	for _, ip := range res.Status.ObservedCandidates {
 		if ip.Address == address {
 			if ip.ResourceRef != wantRef || ip.ResourceType != wantType {
 				t.Fatalf("resource for %s = %q/%q, want %q/%q", address, ip.ResourceRef, ip.ResourceType, wantRef, wantType)
@@ -976,12 +991,12 @@ func assertResource(t *testing.T, res inventoryResult, address, wantRef, wantTyp
 			return
 		}
 	}
-	t.Fatalf("missing address %s in %+v", address, res.Status.IPs)
+	t.Fatalf("missing address %s in %+v", address, res.Status.ObservedCandidates)
 }
 
 func assertInstanceState(t *testing.T, res inventoryResult, address, wantState string) {
 	t.Helper()
-	for _, ip := range res.Status.IPs {
+	for _, ip := range res.Status.ObservedCandidates {
 		if ip.Address == address {
 			if ip.InstanceState != wantState {
 				t.Fatalf("instanceState for %s = %q, want %q", address, ip.InstanceState, wantState)
@@ -989,7 +1004,7 @@ func assertInstanceState(t *testing.T, res inventoryResult, address, wantState s
 			return
 		}
 	}
-	t.Fatalf("missing address %s in %+v", address, res.Status.IPs)
+	t.Fatalf("missing address %s in %+v", address, res.Status.ObservedCandidates)
 }
 
 func fakeBinDir(t *testing.T) string {

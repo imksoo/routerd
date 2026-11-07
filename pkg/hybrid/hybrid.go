@@ -60,6 +60,9 @@ func ExpandHybridRoutes(router api.Router) (api.Router, []HybridLowering, error)
 			return router, nil, err
 		}
 		if destination := strings.TrimSpace(spec.Destination); destination != "" {
+			if prefix, err := netip.ParsePrefix(destination); err == nil {
+				destination = prefix.Masked().String()
+			}
 			userRouteDestinations[destination] = resource.Metadata.Name
 		}
 	}
@@ -85,6 +88,7 @@ func ExpandHybridRoutes(router api.Router) (api.Router, []HybridLowering, error)
 		if err != nil {
 			return router, nil, fmt.Errorf("%s: %w", resource.ID(), err)
 		}
+		device = api.ResolveInterfaceIfName(&router, device)
 		for _, destination := range spec.DestinationCIDRs {
 			cidr, err := normalizeHybridDestination(destination)
 			if err != nil {
@@ -210,6 +214,20 @@ func EstimateMTU(router api.Router, peerName string) (MTUEstimate, bool) {
 	if !ok {
 		return MTUEstimate{}, false
 	}
+	if strings.TrimSpace(peer.Underlay.Type) == "wireguard" {
+		for _, resource := range router.Spec.Resources {
+			if resource.Kind != "WireGuardInterface" || resource.Metadata.Name != strings.TrimSpace(peer.Underlay.Interface) {
+				continue
+			}
+			spec, err := resource.WireGuardInterfaceSpec()
+			if err != nil {
+				return MTUEstimate{}, false
+			}
+			// This is the native WireGuard payload MTU, not its physical
+			// underlay MTU. Its encapsulation overhead is already accounted for.
+			return MTUEstimate{Overhead: WireGuardOverheadBytes, EstimatedMTU: firstNonZero(spec.MTU, 1420)}, true
+		}
+	}
 	if estimate, ok := tunnelPeerMTUEstimate(router, peer); ok {
 		return estimate, true
 	}
@@ -226,11 +244,18 @@ func EstimateMTU(router api.Router, peerName string) (MTUEstimate, bool) {
 }
 
 func TunnelInterfaceMTUEstimate(router api.Router, spec api.TunnelInterfaceSpec) (MTUEstimate, bool) {
+	return tunnelInterfaceMTUEstimate(router, spec, map[string]bool{})
+}
+
+func tunnelInterfaceMTUEstimate(router api.Router, spec api.TunnelInterfaceSpec, visiting map[string]bool) (MTUEstimate, bool) {
+	underlayMTU, acyclic := tunnelUnderlayMTU(router, spec, visiting)
+	if !acyclic {
+		return MTUEstimate{}, false
+	}
 	overhead := TunnelInterfaceOverhead(spec)
 	if spec.MTU > 0 {
-		return MTUEstimate{UnderlayMTU: tunnelUnderlayMTU(router, spec), Overhead: overhead, EstimatedMTU: spec.MTU}, true
+		return MTUEstimate{UnderlayMTU: underlayMTU, Overhead: overhead, EstimatedMTU: spec.MTU}, true
 	}
-	underlayMTU := tunnelUnderlayMTU(router, spec)
 	if underlayMTU == 0 {
 		underlayMTU = 1500
 	}
@@ -397,10 +422,10 @@ func tunnelPeerMTUEstimate(router api.Router, peer api.OverlayPeerSpec) (MTUEsti
 	return MTUEstimate{}, false
 }
 
-func tunnelUnderlayMTU(router api.Router, spec api.TunnelInterfaceSpec) int {
+func tunnelUnderlayMTU(router api.Router, spec api.TunnelInterfaceSpec, visiting map[string]bool) (int, bool) {
 	iface := strings.TrimSpace(spec.UnderlayInterface)
 	if iface == "" {
-		return 0
+		return 0, true
 	}
 	for _, resource := range router.Spec.Resources {
 		if resource.Metadata.Name != iface {
@@ -410,21 +435,27 @@ func tunnelUnderlayMTU(router api.Router, spec api.TunnelInterfaceSpec) int {
 		case "WireGuardInterface":
 			spec, err := resource.WireGuardInterfaceSpec()
 			if err == nil {
-				return firstNonZero(spec.MTU, 1420)
+				return firstNonZero(spec.MTU, 1420), true
 			}
 		case "Interface":
 			spec, err := resource.InterfaceSpec()
 			if err == nil {
-				return firstNonZero(spec.MTU, 1500)
+				return firstNonZero(spec.MTU, 1500), true
 			}
 		case "TunnelInterface":
 			spec, err := resource.TunnelInterfaceSpec()
 			if err == nil {
-				return TunnelInterfaceEffectiveMTU(router, spec)
+				if visiting[iface] {
+					return 0, false
+				}
+				visiting[iface] = true
+				estimate, ok := tunnelInterfaceMTUEstimate(router, spec, visiting)
+				delete(visiting, iface)
+				return estimate.EstimatedMTU, ok
 			}
 		}
 	}
-	return 0
+	return 0, true
 }
 
 func overheadForPeer(router api.Router, peer api.OverlayPeerSpec) int {

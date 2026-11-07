@@ -36,8 +36,9 @@ func TestProcessBatchPublishesDurableDynamicPartChangeOnlyForChangedOutput(t *te
 		TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventSubscription"},
 		Metadata: api.ObjectMeta{Name: "cloud-routes"},
 	}
-	spec := api.EventSubscriptionSpec{Trigger: api.EventSubscriptionTrigger{PluginRef: "cloud-plugin"}}
+	spec := api.EventSubscriptionSpec{GroupRef: "edge", Match: api.EventSubscriptionMatch{Types: []string{"route.changed"}}, Trigger: api.EventSubscriptionTrigger{PluginRef: "cloud-plugin"}}
 	batch := []routerstate.EventRecord{{ID: "event-1", Group: "edge", Type: "route.changed"}}
+	store.events = batch
 	if err := controller.processBatch(ctx, resource, spec, api.PluginSpec{}, batch, now); err != nil {
 		t.Fatalf("first processBatch: %v", err)
 	}
@@ -105,6 +106,7 @@ type eventSubscriptionTestStore struct {
 	runs     map[string]eventSubscriptionTestRun
 	parts    map[string][]routerstate.DynamicConfigPartRecord
 	nextRun  int64
+	events   []routerstate.EventRecord
 }
 
 func (s *eventSubscriptionTestStore) SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error {
@@ -120,7 +122,7 @@ func (s *eventSubscriptionTestStore) ObjectStatus(apiVersion, kind, name string)
 }
 
 func (s *eventSubscriptionTestStore) ListFederationEvents(string, bool, int64) ([]routerstate.EventRecord, error) {
-	return nil, nil
+	return s.events, nil
 }
 
 func (s *eventSubscriptionTestStore) SubscriptionRunStatus(subscription, eventID string) (string, int, bool, error) {
@@ -161,6 +163,18 @@ func (s *eventSubscriptionTestStore) UpsertDynamicConfigPart(next routerstate.Dy
 		}
 	}
 	s.parts[next.Source] = append(parts, next)
+	return nil
+}
+
+func (s *eventSubscriptionTestStore) CommitSubscriptionResult(_ context.Context, subscription string, eventIDs []string, part routerstate.DynamicConfigPartRecord) error {
+	if err := s.UpsertDynamicConfigPart(part); err != nil {
+		return err
+	}
+	for _, eventID := range eventIDs {
+		if err := s.MarkSubscriptionRunResult(subscription, eventID, "succeeded", part.Source, part.Generation, ""); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

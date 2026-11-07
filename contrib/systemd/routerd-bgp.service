@@ -1,3 +1,4 @@
+# Managed by routerd. Do not edit by hand.
 [Unit]
 Description=routerd BGP daemon
 After=network-online.target
@@ -5,7 +6,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/sbin/routerd-bgp daemon --socket /run/routerd/bgp/gobgp.sock --control-socket /run/routerd/bgp/control.sock --state-file /var/lib/routerd/bgp/applied.json
+ExecStart=/usr/sbin/routerd-bgp daemon --socket /run/routerd/bgp/gobgp.sock --control-socket /run/routerd/bgp/control.sock --state-file /var/lib/routerd/bgp/applied.json
 Restart=always
 RestartSec=5s
 RuntimeDirectory=routerd/bgp

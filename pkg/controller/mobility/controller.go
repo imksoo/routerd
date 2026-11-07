@@ -5,6 +5,8 @@ package mobility
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
@@ -57,6 +59,7 @@ type Store interface {
 	ListActions(routerstate.ActionExecutionFilter) ([]routerstate.ActionExecutionRecord, error)
 	SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error
 	ObjectStatus(apiVersion, kind, name string) map[string]any
+	ReadObjectStatus(apiVersion, kind, name string) (map[string]any, error)
 }
 
 type objectStatusMerger interface {
@@ -74,11 +77,12 @@ type BGPPathClient interface {
 }
 
 type Controller struct {
-	Router   *api.Router
-	Bus      *bus.Bus
-	Store    Store
-	BGPPaths BGPPathClient
-	Now      func() time.Time
+	Router         *api.Router
+	DeclaredRouter *api.Router
+	Bus            *bus.Bus
+	Store          Store
+	BGPPaths       BGPPathClient
+	Now            func() time.Time
 	// StartedAt is supplied by the Runner so the shared placement core receives
 	// one explicit process startup epoch rather than consulting package state.
 	StartedAt time.Time
@@ -122,6 +126,7 @@ func (c Controller) Reconcile(ctx context.Context) error {
 	now := controllerNow(c.Now)
 	desiredSources := map[string]bool{}
 	retainPoolSources := map[string]bool{}
+	var reconcileErr error
 	for _, res := range c.Router.Spec.Resources {
 		if res.APIVersion != api.MobilityAPIVersion || res.Kind != "MobilityPool" {
 			continue
@@ -134,10 +139,12 @@ func (c Controller) Reconcile(ctx context.Context) error {
 		}
 		spec, err := res.MobilityPoolSpec()
 		if err != nil {
-			_ = c.savePlannerStatus(res.Metadata.Name, map[string]any{
+			retainPoolSources[res.Metadata.Name] = true
+			statusErr := c.savePlannerStatus(res.Metadata.Name, map[string]any{
 				"phase":  "Degraded",
 				"reason": err.Error(),
 			})
+			reconcileErr = errors.Join(reconcileErr, fmt.Errorf("MobilityPool/%s: %w", res.Metadata.Name, err), statusErr)
 			continue
 		}
 		result, err := c.reconcileBGPDelivery(ctx, res, spec, now)
@@ -150,11 +157,15 @@ func (c Controller) Reconcile(ctx context.Context) error {
 			desiredSources[result.Source] = true
 		}
 		if err != nil {
-			_ = c.savePlannerStatus(res.Metadata.Name, map[string]any{
+			// An unreadable or rejected declared pool is not a removed pool.
+			// Keep its pending effects for the same owner to retry.
+			retainPoolSources[res.Metadata.Name] = true
+			statusErr := c.savePlannerStatus(res.Metadata.Name, map[string]any{
 				"phase":  "Degraded",
 				"reason": err.Error(),
 			})
+			reconcileErr = errors.Join(reconcileErr, fmt.Errorf("MobilityPool/%s: %w", res.Metadata.Name, err), statusErr)
 		}
 	}
-	return c.deprovisionStaleMobilitySources(ctx, desiredSources, retainPoolSources, now)
+	return errors.Join(reconcileErr, c.deprovisionStaleMobilitySources(ctx, desiredSources, retainPoolSources, now))
 }

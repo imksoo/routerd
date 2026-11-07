@@ -7,12 +7,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"log/syslog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -38,6 +42,10 @@ type Event struct {
 	Command    string            `json:"command,omitempty"`
 	ResourceID string            `json:"resourceID,omitempty"`
 	Fields     map[string]string `json:"fields,omitempty"`
+
+	// Archive delivery is required before local deletion. Operational verbosity
+	// overrides must not silently acknowledge an archive that was not sent.
+	archive bool
 }
 
 type Sink interface {
@@ -46,8 +54,11 @@ type Sink interface {
 }
 
 type Logger struct {
-	router string
-	sinks  []Sink
+	mu            sync.RWMutex
+	configuration *api.Router
+	closed        bool
+	router        string
+	sinks         []Sink
 }
 
 func New(router *api.Router) (*Logger, error) {
@@ -55,22 +66,29 @@ func New(router *api.Router) (*Logger, error) {
 }
 
 // NewSelected builds a logger from named LogSink resources. An empty selection
-// preserves the existing behaviour of selecting every enabled sink.
+// selects every enabled sink for ordinary logging. Explicit selections are
+// archive destinations: each requested sink must exist, be enabled, and accept
+// the info records emitted before retention deletes the original rows.
 func NewSelected(router *api.Router, refs []string) (*Logger, error) {
+	if router == nil {
+		return nil, fmt.Errorf("logger router is required")
+	}
+	explicitSelection := len(refs) > 0
 	selected := map[string]bool{}
 	for _, ref := range refs {
 		const prefix = "LogSink/"
 		name := strings.TrimPrefix(strings.TrimSpace(ref), prefix)
-		if name != "" {
-			selected[name] = true
+		if name == "" {
+			return nil, fmt.Errorf("selected LogSink reference is empty")
 		}
+		selected[name] = true
 	}
 	var sinks []Sink
 	for _, res := range router.Spec.Resources {
 		if res.APIVersion != api.SystemAPIVersion || res.Kind != "LogSink" {
 			continue
 		}
-		if len(selected) > 0 && !selected[res.Metadata.Name] {
+		if explicitSelection && !selected[res.Metadata.Name] {
 			continue
 		}
 		spec, err := res.LogSinkSpec()
@@ -78,15 +96,30 @@ func NewSelected(router *api.Router, refs []string) (*Logger, error) {
 			return nil, err
 		}
 		if !api.BoolDefault(spec.Enabled, true) {
+			if explicitSelection {
+				return nil, fmt.Errorf("selected %s is disabled; archive cannot be delivered", res.ID())
+			}
 			continue
+		}
+		if explicitSelection && parseLevel(defaultString(spec.MinLevel, "info")) > parseLevel("info") {
+			return nil, fmt.Errorf("selected %s minLevel %q suppresses archived info records", res.ID(), spec.MinLevel)
 		}
 		sink, err := NewSink(spec)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", res.ID(), err)
 		}
 		sinks = append(sinks, sink)
+		delete(selected, res.Metadata.Name)
 	}
-	return &Logger{router: router.Metadata.Name, sinks: sinks}, nil
+	if explicitSelection && len(selected) > 0 {
+		missing := make([]string, 0, len(selected))
+		for name := range selected {
+			missing = append(missing, name)
+		}
+		sort.Strings(missing)
+		return nil, fmt.Errorf("selected LogSink not found: %s", strings.Join(missing, ", "))
+	}
+	return &Logger{configuration: router, router: router.Metadata.Name, sinks: sinks}, nil
 }
 
 func NewSink(spec api.LogSinkSpec) (Sink, error) {
@@ -106,10 +139,7 @@ func NewSink(spec api.LogSinkSpec) (Sink, error) {
 			minLevel: minLevel,
 		}, nil
 	case "otlp":
-		if strings.TrimSpace(spec.OTLP.TelemetryRef) == "" && strings.TrimSpace(spec.OTLP.Endpoint) == "" {
-			return nil, fmt.Errorf("otlp.telemetryRef or otlp.endpoint is required")
-		}
-		return &OTLPSink{minLevel: minLevel}, nil
+		return nil, fmt.Errorf("LogSink type otlp is unsupported; use Telemetry or ObservabilityPipeline OTLP export")
 	case "webhook":
 		timeout := 5 * time.Second
 		if spec.Webhook.Timeout != "" {
@@ -134,7 +164,12 @@ func NewSink(spec api.LogSinkSpec) (Sink, error) {
 }
 
 func (l *Logger) Emit(level Level, command, message string, fields map[string]string) {
-	if l == nil || len(l.sinks) == 0 {
+	if l == nil {
+		return
+	}
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	if l.closed || len(l.sinks) == 0 {
 		return
 	}
 	event := Event{
@@ -154,7 +189,15 @@ func (l *Logger) Emit(level Level, command, message string, fields map[string]st
 // schema on sinks that only understand Event. The encoded record is preserved
 // as JSON so downstream log systems can parse it independently.
 func (l *Logger) EmitRecord(signal string, record map[string]any) error {
-	if l == nil || len(l.sinks) == 0 {
+	if l == nil {
+		return nil
+	}
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	if l.closed {
+		return errors.New("logger is closed")
+	}
+	if len(l.sinks) == 0 {
 		return nil
 	}
 	data, err := json.Marshal(record)
@@ -167,6 +210,7 @@ func (l *Logger) EmitRecord(signal string, record map[string]any) error {
 		Message:   "routerd operational log archived",
 		Router:    l.router,
 		Command:   "log-retention",
+		archive:   true,
 		Fields: map[string]string{
 			"signal": signal,
 			"record": string(data),
@@ -180,10 +224,45 @@ func (l *Logger) EmitRecord(signal string, record map[string]any) error {
 	return nil
 }
 
+// Reconfigure publishes sinks for a confirmed active configuration. Holding the
+// writer lock joins existing deliveries before old destinations are closed.
+func (l *Logger) Reconfigure(router *api.Router) error {
+	if l == nil {
+		return nil
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.closed {
+		return errors.New("logger is closed")
+	}
+	if l.configuration == router {
+		return nil
+	}
+	next, err := New(router)
+	if err != nil {
+		return err
+	}
+	previous := l.sinks
+	l.configuration, l.router, l.sinks = router, next.router, next.sinks
+	var failures []error
+	for _, sink := range previous {
+		if err := sink.Close(); err != nil {
+			failures = append(failures, err)
+		}
+	}
+	return errors.Join(failures...)
+}
+
 func (l *Logger) Close() error {
 	if l == nil {
 		return nil
 	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.closed {
+		return nil
+	}
+	l.closed = true
 	var errs []string
 	for _, sink := range l.sinks {
 		if err := sink.Close(); err != nil {
@@ -197,43 +276,111 @@ func (l *Logger) Close() error {
 }
 
 type SyslogSink struct {
+	mu       sync.Mutex
+	closed   bool
 	network  string
 	address  string
 	facility syslog.Priority
 	tag      string
-	writer   *syslog.Writer
+	conn     net.Conn
 	minLevel int
 }
 
 func (s *SyslogSink) Emit(event Event) error {
-	if !shouldEmit(event.Level, s.minLevel) {
+	if !shouldEmit(event, s.minLevel) {
 		return nil
 	}
-	if s.writer == nil {
-		writer, err := syslog.Dial(s.network, s.address, s.facility|syslog.LOG_INFO, s.tag)
-		if err != nil {
-			return err
-		}
-		s.writer = writer
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return fmt.Errorf("syslog sink is closed")
 	}
-	line := formatEvent(event)
+	deadline := time.Now().Add(5 * time.Second)
+	priority := syslog.LOG_INFO
 	switch event.Level {
 	case LevelDebug:
-		return s.writer.Debug(line)
+		priority = syslog.LOG_DEBUG
 	case LevelWarning:
-		return s.writer.Warning(line)
+		priority = syslog.LOG_WARNING
 	case LevelError:
-		return s.writer.Err(line)
-	default:
-		return s.writer.Info(line)
+		priority = syslog.LOG_ERR
 	}
+	message := formatEvent(event)
+	if !strings.HasSuffix(message, "\n") {
+		message += "\n"
+	}
+	var err error
+	// Reconnect once after a failed write, sharing the original deadline.
+	for attempt := 0; attempt < 2; attempt++ {
+		if s.conn == nil {
+			s.conn, err = s.dial(deadline)
+			if err != nil {
+				return err
+			}
+		}
+		local := s.network == "" || s.network == "unix" || s.network == "unixgram"
+		header := time.Now().Format(time.Stamp)
+		if !local {
+			host, _ := os.Hostname()
+			if host == "" {
+				host = s.conn.LocalAddr().String()
+			}
+			header = time.Now().Format(time.RFC3339) + " " + host
+		}
+		frame := fmt.Sprintf("<%d>%s %s[%d]: %s", s.facility|priority, header, s.tag, os.Getpid(), message)
+		err = s.conn.SetDeadline(deadline)
+		if err == nil {
+			var n int
+			n, err = s.conn.Write([]byte(frame))
+			if err == nil && n != len(frame) {
+				err = io.ErrShortWrite
+			}
+		}
+		if err == nil {
+			return nil
+		}
+		_ = s.conn.Close()
+		s.conn = nil
+		if !time.Now().Before(deadline) {
+			return err
+		}
+	}
+	return err
+}
+
+// dial preserves local socket discovery and bounds all attempts by one deadline.
+func (s *SyslogSink) dial(deadline time.Time) (net.Conn, error) {
+	dialer := net.Dialer{Deadline: deadline}
+	if s.network != "" {
+		return dialer.Dial(s.network, s.address)
+	}
+	var lastErr error
+	for _, network := range []string{"unixgram", "unix"} {
+		for _, path := range []string{"/dev/log", "/var/run/syslog", "/var/run/log"} {
+			conn, err := dialer.Dial(network, path)
+			if err == nil {
+				return conn, nil
+			}
+			lastErr = err
+			if !time.Now().Before(deadline) {
+				return nil, err
+			}
+		}
+	}
+	return nil, fmt.Errorf("local syslog delivery: %w", lastErr)
 }
 
 func (s *SyslogSink) Close() error {
-	if s.writer == nil {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
 		return nil
 	}
-	return s.writer.Close()
+	s.closed = true
+	if s.conn == nil {
+		return nil
+	}
+	return s.conn.Close()
 }
 
 type WebhookSink struct {
@@ -245,7 +392,7 @@ type WebhookSink struct {
 }
 
 func (s *WebhookSink) Emit(event Event) error {
-	if !shouldEmit(event.Level, s.minLevel) {
+	if !shouldEmit(event, s.minLevel) {
 		return nil
 	}
 	data, err := json.Marshal(event)
@@ -285,7 +432,7 @@ type FileSink struct {
 }
 
 func (s *FileSink) Emit(event Event) error {
-	if !shouldEmit(event.Level, s.minLevel) {
+	if !shouldEmit(event, s.minLevel) {
 		return nil
 	}
 	if err := os.MkdirAll(filepath.Dir(s.path), 0755); err != nil {
@@ -314,7 +461,7 @@ type JournaldSink struct {
 }
 
 func (s *JournaldSink) Emit(event Event) error {
-	if !shouldEmit(event.Level, s.minLevel) {
+	if !shouldEmit(event, s.minLevel) {
 		return nil
 	}
 	log.Printf("%s %s", s.identifier, formatEvent(event))
@@ -322,21 +469,6 @@ func (s *JournaldSink) Emit(event Event) error {
 }
 
 func (s *JournaldSink) Close() error {
-	return nil
-}
-
-type OTLPSink struct {
-	minLevel int
-}
-
-func (s *OTLPSink) Emit(event Event) error {
-	if !shouldEmit(event.Level, s.minLevel) {
-		return nil
-	}
-	return nil
-}
-
-func (s *OTLPSink) Close() error {
 	return nil
 }
 
@@ -446,11 +578,11 @@ func LevelOverride() *Level {
 	}
 }
 
-func shouldEmit(level Level, minLevel int) bool {
-	if override := levelOverride.Load(); override > 0 {
+func shouldEmit(event Event, minLevel int) bool {
+	if override := levelOverride.Load(); override > 0 && !event.archive {
 		minLevel = int(override - 1)
 	}
-	return parseLevel(string(level)) >= minLevel
+	return parseLevel(string(event.Level)) >= minLevel
 }
 
 func defaultString(value, fallback string) string {

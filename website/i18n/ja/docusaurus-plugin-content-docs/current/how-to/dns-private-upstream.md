@@ -33,6 +33,18 @@ slug: /how-to/dns-private-upstream
 `DNSUpstream.spec.addressFrom` を使うと、上流アドレスの一覧を別リソースの status から取れます。
 DHCPv6 information-request で得た DNS サーバーを使うときの仕組みです。
 
+`DNSResolver.spec.listen[].sources` に名前を指定すると、その待受は指定した
+forwarder だけを使います。選択した forwarder が `when` や依存先の条件によって
+無効になっても、他の forwarder を使えるようにはなりません。選択した参照元が
+すべて利用できなくなった場合も、この制限を維持します。`sources` を省略すると、
+そのリゾルバのすべての参照元を使います。
+
+動的な上流アドレスや必須の bootstrap resolver を待っている参照元も、match ルールを
+維持します。一致した問い合わせには依存先が解決するまで `SERVFAIL` を返し、別の
+forwarder へ送りません。無関係な問い合わせは利用可能な参照元で処理できます。
+リゾルバの status は `WaitingForDependencies`、worker の上流状態は対象の参照元を
+`Pending` と表示します。
+
 ## 条件付き転送の例
 
 ```yaml
@@ -213,3 +225,60 @@ FreeBSD には同等の `SO_BINDTODEVICE` の強制がないため、プラッ�
 
 - [ローカル DNS ゾーン](./dns-local-zone.md)
 - [DNS リゾルバのコンセプト](../concepts/dns-resolver.md)
+
+## 参照元の停止時に待受の分離を確認する
+
+次の回帰テストは when の選別、controller の設定生成、worker の reload と
+実際の UDP/TCP 問い合わせを通します。
+
+```sh
+go test ./cmd/routerd-dns-resolver -run '^TestWhenFilteredListenerCannotSelectAnotherDNSView$' -count=1
+```
+
+実パッケージでは、隔離 Linux ゲストに 2 つの DNS 待受を作ります。一方は
+`public`、もう一方は `private` だけを参照させ、それぞれ別のゾーンとレコードを
+設定します。公開用 forwarder は試験用 TCP サービスへの HealthCheck で有効化し、
+非公開用 forwarder は常時有効にします。
+
+1. 対向サービスが動いている状態で、各待受のレコードを `dig` の UDP/TCP で確認します。
+   公開用待受から非公開レコードが返ってはいけません。
+2. 対向サービスだけを停止します。HealthCheck の `Unhealthy` と、生成された
+   resolver 設定から公開用参照元が消えたことを確認します。非公開レコードが
+   返るのは非公開用待受だけであることを、UDP/TCP で確認します。
+3. 対向を再開し、`Healthy` と公開用参照元の復帰を待ちます。routerd を再起動せずに、
+   元の応答と待受の分離が戻ることを確認します。
+4. 試験設定を撤去し、空のリソース集合が Healthy になり、resolver helper と DNS
+   待受が残っていないことを確認します。対向サービスも停止します。
+
+待機は設定した probe 回数と reconcile に応じた有限時間にします。タイムアウト、
+非公開レコードの漏出、製品状態を手で直さないと復旧しない場合は失敗です。
+実行パッケージの版と結果を記録し、生ログは障害調査中だけ保持します。
+この試験の対象は明示的な待受の参照元制限であり、条件付きドメイン転送や動的上流の
+全ポリシーを検証したことにはなりません。
+
+## DHCP 由来の非公開 DNS の撤去確認
+
+隔離 Linux VM と独立した DHCP/DNS ピアを使います。ピアを DHCP の DNS
+サーバーとして通知し、`DNSUpstream.addressFrom` で参照します。非公開ドメイン用
+forwarder を別の既定 forwarder より前に置き、DHCP クライアントを試験用
+HealthCheck ピアで条件付けします。既定 DNS ピアでは問い合わせを記録し、
+回答が返らない場合も非公開名の送信を検出できるようにします。
+
+1. ヘルスピア停止・WAN リースなしで `Unhealthy` と runtime `pendingSources`
+   内の非公開 source を確認します。非公開名は UDP/TCP とも SERVFAIL、公開名は
+   正常に解決できることを要求します。
+2. ヘルスピアを起動し、90 秒以内に実 DHCP リースと通知された DNS サーバーを
+   status で確認します。非公開名・公開名の UDP/TCP 応答を検査します。
+3. ヘルスピアを停止し、60 秒以内に `Unhealthy`、DHCP が設定した IPv4 アドレスの
+   撤去、非公開 source の pending 復帰を確認します。手順 1 の問い合わせを繰り返します。
+4. 設定を撤去します。試験ネットワークを削除する**前に**、正常な空の status、
+   管理 helper・試験 DNS listener・DHCP 所有アドレスの不在を要求します。
+   その後、独立ピアを停止して隔離ネットワークを削除します。
+
+既定ピアへの非公開名の送信、DHCP アドレスの残留、期限超過、製品状態の手動修復は
+不合格です。パッケージ revision と失敗段階を記録します。次のローカル回帰試験は、
+アドレス削除の失敗後も所有情報とエラーを保持し、次の試行で撤去できることも検査します。
+
+```sh
+go test ./pkg/controller/chain -run '^TestWhenStatusPublicationCannotEraseDHCPv4WithdrawalOwnership$' -count=1
+```

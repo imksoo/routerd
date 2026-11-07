@@ -8,11 +8,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"text/tabwriter"
 	"time"
 
+	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/eventlog"
 	routerstate "github.com/imksoo/routerd/pkg/state"
@@ -21,7 +21,7 @@ import (
 func rollbackCommand(args []string, stdout, _ io.Writer) (err error) {
 	fs := flag.NewFlagSet("rollback", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	applyFlags := registerApplyFlags(fs, false, false)
+	applyFlags := registerApplyFlags(fs, true, false)
 	list := fs.Bool("list", false, "list stored config generations")
 	to := fs.Int64("to", 0, "generation to re-apply")
 	limit := fs.Int("limit", 20, "maximum generations to list")
@@ -65,13 +65,13 @@ func listRollbackGenerations(statePath string, limit int, stdout io.Writer) erro
 	if err != nil {
 		return err
 	}
-	current := store.LatestGeneration()
+	latest := store.LatestGeneration()
 	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "generation\tstarted_at\tfinished_at\tphase\tconfig\tcurrent")
+	fmt.Fprintln(tw, "generation\tstarted_at\tfinished_at\tphase\tconfig\tattempt")
 	for _, rec := range records {
-		currentMark := ""
-		if rec.Generation == current {
-			currentMark = "(current)"
+		attemptMark := ""
+		if rec.Generation == latest {
+			attemptMark = "(latest)"
 		}
 		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\n",
 			rec.Generation,
@@ -79,23 +79,14 @@ func listRollbackGenerations(statePath string, limit int, stdout io.Writer) erro
 			formatGenerationTime(rec.FinishedAt),
 			defaultString(rec.Phase, "-"),
 			yesNo(rec.HasYAML),
-			currentMark,
+			attemptMark,
 		)
 	}
 	return tw.Flush()
 }
 
 func rollbackToGeneration(statePath string, generation int64, applyFlags applyFlagValues, stdout io.Writer) (err error) {
-	configYAML, err := rollbackGenerationConfig(statePath, generation)
-	if err != nil {
-		return err
-	}
-	configFile, cleanup, err := writeRollbackConfigTemp(configYAML)
-	if err != nil {
-		return err
-	}
-	defer cleanup()
-	router, err := config.Load(configFile)
+	router, opts, err := loadRollbackApply(statePath, generation, applyFlags)
 	if err != nil {
 		return err
 	}
@@ -108,10 +99,22 @@ func rollbackToGeneration(statePath string, generation int64, applyFlags applyFl
 		"generation": fmt.Sprintf("%d", generation),
 		"dryRun":     fmt.Sprintf("%t", *applyFlags.DryRun),
 	})
-	opts := applyFlags.applyOptions(configFile)
-	opts.ConfigYAMLOverride = configYAML
 	_, err = runApplyChainOnce(context.Background(), router, opts, stdout, logger)
 	return err
+}
+
+func loadRollbackApply(statePath string, generation int64, flags applyFlagValues) (*api.Router, applyOptions, error) {
+	configYAML, err := rollbackGenerationConfig(statePath, generation)
+	if err != nil {
+		return nil, applyOptions{}, err
+	}
+	router, err := config.LoadBytes([]byte(configYAML), fmt.Sprintf("generation %d", generation))
+	if err != nil {
+		return nil, applyOptions{}, err
+	}
+	opts := flags.applyOptions(*flags.ConfigPath)
+	opts.ConfigYAMLOverride = configYAML
+	return router, opts, nil
 }
 
 func rollbackGenerationConfig(statePath string, generation int64) (string, error) {
@@ -132,24 +135,6 @@ func rollbackGenerationConfig(statePath string, generation int64) (string, error
 		return "", fmt.Errorf("generation %d has no saved config", generation)
 	}
 	return configYAML, nil
-}
-
-func writeRollbackConfigTemp(configYAML string) (string, func(), error) {
-	file, err := os.CreateTemp("", "routerd-rollback-*.yaml")
-	if err != nil {
-		return "", nil, err
-	}
-	cleanup := func() { _ = os.Remove(file.Name()) }
-	if _, err := io.WriteString(file, configYAML); err != nil {
-		_ = file.Close()
-		cleanup()
-		return "", nil, err
-	}
-	if err := file.Close(); err != nil {
-		cleanup()
-		return "", nil, err
-	}
-	return file.Name(), cleanup, nil
 }
 
 func formatGenerationTime(t time.Time) string {

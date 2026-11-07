@@ -19,7 +19,7 @@ func FirewallLoggerSystemdSpec(spec api.FirewallLogSpec, dpiSocket string) api.S
 	if group == 0 {
 		group = 1
 	}
-	exec := []string{"/usr/local/sbin/routerd-firewall-logger", "daemon", "--path", path, "--nflog-group", strconv.Itoa(group)}
+	exec := []string{platform.LinuxBinaryPath("routerd-firewall-logger"), "daemon", "--path", path, "--nflog-group", strconv.Itoa(group)}
 	wants := []string{"network-online.target"}
 	after := []string{"network-online.target"}
 	if dpiSocket != "" {

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/logstore"
 )
 
 // Keep generated transfer options; replace only the remote transport and destination.
@@ -70,76 +71,76 @@ func TestLeaseSyncTransfersEqualSizeAndMtimeContent(t *testing.T) {
 	}
 }
 
-// Model a checkpoint between copying the DB and its WAL. The next reconciliation
-// must transfer the checkpointed DB rather than skip it using size/mtime alone.
-// This proves that retry case, not atomic replication under concurrent writes.
-func TestLeaseSyncRetryAfterWALCloseCopiesCheckpointedDatabase(t *testing.T) {
-	srcDir, dstDir := t.TempDir(), t.TempDir()
-	src := filepath.Join(srcDir, "dhcp-sticky.db")
-	writer, err := sql.Open("sqlite", src)
+// A checkpoint can truncate (rather than remove) WAL after the DB transfer.
+// Synced must still include leases committed before synchronization began.
+func TestLeaseSyncCheckpointCannotAcknowledgeMissingCommittedLease(t *testing.T) {
+	sourceDir, receiverDir := t.TempDir(), t.TempDir()
+	leasePath := filepath.Join(sourceDir, "dnsmasq.leases")
+	if err := os.WriteFile(leasePath, []byte("1 aa:bb:cc:dd:ee:ff 192.0.2.20 client *\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	sourceDB := filepath.Join(sourceDir, "dhcp-sticky.db")
+	writer, err := logstore.OpenDHCPStickyLog(sourceDB)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer writer.Close()
-	writer.SetMaxOpenConns(1)
-	for _, q := range []string{"PRAGMA journal_mode=WAL", "CREATE TABLE leases (id INTEGER PRIMARY KEY, name TEXT)", "PRAGMA wal_checkpoint(TRUNCATE)", "INSERT INTO leases VALUES (1,'committed-lease')"} {
-		if _, err := writer.Exec(q); err != nil {
-			t.Fatal(err)
-		}
-	}
-	stamp := time.Unix(1700000000, 123456789)
-	if err := os.Chtimes(src, stamp, stamp); err != nil {
-		t.Fatal(err)
-	}
-	before, err := os.Stat(src)
+	checkpoint, err := sql.Open("sqlite", sourceDB)
 	if err != nil {
 		t.Fatal(err)
 	}
-	job := fileSyncJob{APIVersion: api.NetAPIVersion, Kind: "DHCPv4ServerLeaseSync", Name: "replica", Sources: []fileSyncSource{{Name: "stickyLog", Path: src}, {Name: "stickyLogWAL", Path: src + "-wal"}}, Targets: []fileSyncTarget{{Host: "unused.invalid"}}}
-	transfer := localLeaseSyncCommand(t, dstDir)
-	closed := false
-	c := FileSyncController{Store: mapStore{}, Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+	defer checkpoint.Close()
+	if _, err := checkpoint.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
+		t.Fatal(err)
+	}
+	observed := time.Now().UTC()
+	if err := writer.RecordLeaseEvent(t.Context(), "added", "aa:bb:cc:dd:ee:ff", "192.0.2.20", "acknowledged-client", 3, observed); err != nil {
+		t.Fatal(err)
+	}
+	controller := FileSyncController{Store: mapStore{}, Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.DHCPv4ServerSpec{LeaseFile: leasePath, StickyHoldDays: 3}},
+	}}}}
+	job, err := controller.fileSyncJobFromDHCPv4ServerLeaseSync(api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4ServerLeaseSync"}, Metadata: api.ObjectMeta{Name: "replica"}, Spec: api.DHCPv4ServerLeaseSyncSpec{Source: api.DHCPv4ServerLeaseSyncSourceSpec{Resource: "DHCPv4Server/lan"}, Targets: []api.LeaseSyncTargetSpec{{Host: "unused.invalid"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range job.Sources {
+		job.Sources[i].Path = filepath.Join(sourceDir, filepath.Base(job.Sources[i].Path))
+	}
+	transfer := localLeaseSyncCommand(t, receiverDir)
+	checkpointed := false
+	controller.Command = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		out, err := transfer(ctx, name, args...)
-		if err == nil && args[len(args)-2] == src && !closed {
-			if err := writer.Close(); err != nil {
-				t.Fatal(err)
+		if err == nil && filepath.Base(args[len(args)-2]) == "dhcp-sticky.db" && !checkpointed {
+			var busy, logFrames, checkpointedFrames int
+			if err := checkpoint.QueryRow("PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &logFrames, &checkpointedFrames); err != nil || busy != 0 {
+				t.Fatalf("fixture checkpoint failed: busy=%d %v", busy, err)
 			}
-			closed = true
-			if err := os.Chtimes(src, stamp, stamp); err != nil {
-				t.Fatal(err)
+			info, err := os.Stat(sourceDB + "-wal")
+			if err != nil || info.Size() != 0 {
+				t.Fatalf("fixture must retain a truncated WAL: %v", err)
 			}
-			after, err := os.Stat(src)
-			if err != nil || after.Size() != before.Size() {
-				t.Fatalf("fixture must retain DB size: %v", err)
-			}
-			if _, err := os.Stat(src + "-wal"); !os.IsNotExist(err) {
-				t.Fatalf("fixture WAL still exists: %v", err)
-			}
+			checkpointed = true
 		}
 		return out, err
-	}}
-	if err := c.reconcileJob(context.Background(), job); err != nil {
+	}
+	if err := controller.reconcileJob(t.Context(), job); err != nil {
 		t.Fatal(err)
 	}
-	if s := c.Store.ObjectStatus(job.APIVersion, job.Kind, job.Name); s["phase"] != "Error" || s["exitCode"] != 23 || s["source"] != src+"-wal" {
-		t.Fatalf("vanished WAL must fail: %#v", s)
+	if !checkpointed {
+		t.Fatal("fixture never exercised DB/WAL checkpoint boundary")
 	}
-	if err := c.reconcileJob(context.Background(), job); err != nil {
-		t.Fatal(err)
+	status := controller.Store.ObjectStatus(job.APIVersion, job.Kind, job.Name)
+	if status["phase"] != "Synced" {
+		t.Fatalf("sync failed: %#v", status)
 	}
-	if s := c.Store.ObjectStatus(job.APIVersion, job.Kind, job.Name); s["phase"] != "Synced" {
-		t.Fatalf("retry failed: %#v", s)
-	}
-	receiver, err := sql.Open("sqlite", "file:"+filepath.Join(dstDir, "dhcp-sticky.db")+"?mode=ro")
+	receiver, err := sql.Open("sqlite", "file:"+filepath.Join(receiverDir, "dhcp-sticky.db")+"?mode=ro")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer receiver.Close()
-	var name, integrity string
-	if err := receiver.QueryRow("SELECT name FROM leases WHERE id=1").Scan(&name); err != nil || name != "committed-lease" {
-		t.Fatalf("retry lost committed lease: %q %v", name, err)
-	}
-	if err := receiver.QueryRow("PRAGMA quick_check").Scan(&integrity); err != nil || integrity != "ok" {
-		t.Fatalf("replica invalid: %q %v", integrity, err)
+	var hostname string
+	if err := receiver.QueryRow("SELECT hostname FROM dhcp_sticky_leases WHERE mac=? AND ip=?", "aa:bb:cc:dd:ee:ff", "192.0.2.20").Scan(&hostname); err != nil || hostname != "acknowledged-client" {
+		t.Fatalf("Synced lost an already committed lease: hostname=%q error=%v", hostname, err)
 	}
 }

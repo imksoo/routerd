@@ -102,3 +102,17 @@ func TestCleanupAddressWarnsInsteadOfFailing(t *testing.T) {
 		t.Fatalf("warnings = %#v, want two warning-only failures", result.Warnings)
 	}
 }
+
+func TestNegativeCountUsesActualEntriesAndNegativeCapacityIsUnknown(t *testing.T) {
+	dir := t.TempDir()
+	count, max, entries := filepath.Join(dir, "count"), filepath.Join(dir, "max"), filepath.Join(dir, "entries")
+	for path, value := range map[string]string{count: "-1", max: "-2", entries: "one\ntwo\n"} {
+		if err := os.WriteFile(path, []byte(value), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	snapshot, err := ReadSnapshot(Paths{Count: count, Max: max, Entries: entries})
+	if err != nil || snapshot.Count != 2 || snapshot.Max != 0 {
+		t.Fatalf("invalid observation became fact: %+v %v", snapshot, err)
+	}
+}

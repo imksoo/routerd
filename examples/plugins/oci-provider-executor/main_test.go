@@ -68,11 +68,11 @@ func (f *fakeOCI) run(ctx context.Context, argv ...string) ([]byte, error) {
 // so a fresh assign appends the mobility rule. Tests that need a pre-existing
 // mobility rule set routeTableGetOut explicitly.
 func cannedRouteTableGet() []byte {
-	return []byte(`{"data":{"route-rules":[{"destination":"0.0.0.0/0","destination-type":"CIDR_BLOCK","network-entity-id":"ocid1.internetgateway.oc1..igw","description":null}]}}`)
+	return []byte(`{"etag":"fixture-etag","data":{"id":"ocid1.routetable.oc1..rt1","route-rules":[{"destination":"0.0.0.0/0","destination-type":"CIDR_BLOCK","network-entity-id":"ocid1.internetgateway.oc1..igw","description":null}]}}`)
 }
 
 func cannedVNICGet(skip bool) []byte {
-	return []byte(fmt.Sprintf(`{"data":{"skip-source-dest-check":%t}}`, skip))
+	return []byte(fmt.Sprintf(`{"data":{"id":"ocid1.vnic.oc1..vnic1","skip-source-dest-check":%t}}`, skip))
 }
 
 func cannedPrivateIPList(ip, ocid string) []byte {
@@ -163,8 +163,8 @@ func TestAssignExecuteIssuesCreate(t *testing.T) {
 func TestAuthorizationFailureIsClassified(t *testing.T) {
 	f := &fakeOCI{err: fmt.Errorf("ServiceError: NotAuthorizedOrNotFound. Authorization failed or requested resource not found")}
 	res := dispatchWith(reqSpec(actionAssignSecondaryIP, modeExecute), f.run)
-	if res.Status.Status != statusFailed {
-		t.Fatalf("want failed, got %q", res.Status.Status)
+	if res.Status.Status != statusOutcomeUnknown {
+		t.Fatalf("want unknown, got %q", res.Status.Status)
 	}
 	if res.Status.Observed["failureClass"] != "authorization" {
 		t.Fatalf("want authorization failure class, got %+v", res.Status.Observed)
@@ -175,7 +175,7 @@ func TestAuthorizationFailureIsClassified(t *testing.T) {
 }
 
 func TestToolchainPermissionFailureIsNotAuthorization(t *testing.T) {
-	f := &fakeOCI{err: fmt.Errorf("fork/exec /usr/local/bin/oci: permission denied")}
+	f := &fakeOCI{err: &commandNotStartedError{fmt.Errorf("fork/exec /usr/local/bin/oci: permission denied")}}
 	res := dispatchWith(reqSpec(actionAssignSecondaryIP, modeExecute), f.run)
 	if res.Status.Status != statusFailed {
 		t.Fatalf("want failed, got %q", res.Status.Status)
@@ -379,7 +379,7 @@ func TestUnassignExecuteAddressNotFoundSkips(t *testing.T) {
 	}
 }
 
-func TestUnassignExecuteDeleteNotFoundSkips(t *testing.T) {
+func TestUnassignDeleteErrorDoesNotProveAbsence(t *testing.T) {
 	calls := 0
 	runner := func(ctx context.Context, argv ...string) ([]byte, error) {
 		calls++
@@ -392,7 +392,7 @@ func TestUnassignExecuteDeleteNotFoundSkips(t *testing.T) {
 		return []byte(`{}`), nil
 	}
 	res := dispatchWith(reqSpec(actionUnassignSecondaryIP, modeExecute), runner)
-	if res.Status.Status != statusSkipped {
+	if res.Status.Status != statusOutcomeUnknown {
 		t.Fatalf("delete NotFound must skip idempotently, got %q err=%q", res.Status.Status, res.Status.Error)
 	}
 	if calls != 2 {

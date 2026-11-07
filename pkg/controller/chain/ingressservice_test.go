@@ -19,7 +19,10 @@ func TestIngressServiceDNSResolverEndpointPrefersLoopback(t *testing.T) {
 			}}},
 		},
 	}}}
-	endpoint, ok := dnsResolverEndpoint(router, nil)
+	endpoint, ok, err := dnsResolverEndpoint(router, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !ok || endpoint != "127.0.0.1:1053" {
 		t.Fatalf("endpoint = %q, %v; want 127.0.0.1:1053, true", endpoint, ok)
 	}
@@ -38,7 +41,10 @@ func TestIngressServiceDNSResolverEndpointUsesAddressFrom(t *testing.T) {
 	store := mapStore{
 		api.NetAPIVersion + "/IPv4StaticAddress/lan-base": {"address": "192.0.2.53/32"},
 	}
-	endpoint, ok := dnsResolverEndpoint(router, store)
+	endpoint, ok, err := dnsResolverEndpoint(router, store)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !ok || endpoint != "192.0.2.53:53" {
 		t.Fatalf("endpoint = %q, %v; want 192.0.2.53:53, true", endpoint, ok)
 	}

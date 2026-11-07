@@ -20,8 +20,8 @@ func TestSAMControllerHoldRetainsPreviouslyAppliedDataplane(t *testing.T) {
 	)
 	store := &mergeTrackingMapStore{mapStore: mapStore{
 		api.RouterAPIVersion + "/Router/" + samDataplaneStatusName: {
-			"appliedProxyNeighbors": []samAppliedProxyNeighbor{{ID: intentID, PoolRef: "cloudedge", PoolPrefix: "10.77.60.0/24", Address: address, Interface: "ens3"}},
-			"appliedForwardPaths":   []samAppliedForwardPath{{ID: intentID, PoolRef: "cloudedge", PoolPrefix: "10.77.60.0/24", Kind: "forward-path", Address: address, Interface: "ens3", PeerInterface: "wg-cloud"}},
+			"appliedProxyNeighbors": []sam.AppliedProxyNeighbor{{ID: intentID, PoolRef: "cloudedge", PoolPrefix: "10.77.60.0/24", Address: address, Interface: "ens3"}},
+			"appliedForwardPaths":   []sam.AppliedForwardPath{{ID: intentID, PoolRef: "cloudedge", PoolPrefix: "10.77.60.0/24", Kind: "forward-path", Address: address, Interface: "ens3", PeerInterface: "wg-cloud"}},
 		},
 	}}
 	applier := &fakeSAMApplier{}
@@ -52,10 +52,10 @@ func TestSAMControllerHoldRetainsPreviouslyAppliedDataplane(t *testing.T) {
 		t.Fatalf("held forward path = %#v", path)
 	}
 	status := store.ObjectStatus(api.RouterAPIVersion, "Router", samDataplaneStatusName)
-	if got, err := samAppliedProxyNeighbors(status["appliedProxyNeighbors"], true); err != nil || len(got) != 1 || got[0].ID != intentID {
+	if got, err := sam.DecodeAppliedProxyNeighbors(status["appliedProxyNeighbors"], true); err != nil || len(got) != 1 || got[0].ID != intentID {
 		t.Fatalf("retained proxy-neighbor status = %#v, err=%v", got, err)
 	}
-	if got, err := samAppliedForwardPaths(status["appliedForwardPaths"], true); err != nil || len(got) != 1 || got[0].ID != intentID {
+	if got, err := sam.DecodeAppliedForwardPaths(status["appliedForwardPaths"], true); err != nil || len(got) != 1 || got[0].ID != intentID {
 		t.Fatalf("retained forward-path status = %#v, err=%v", got, err)
 	}
 }
@@ -91,7 +91,7 @@ func TestSAMControllerAppliesProxyARPTunnelForwardPaths(t *testing.T) {
 		}
 	}
 	status := store.ObjectStatus(api.RouterAPIVersion, "Router", samDataplaneStatusName)
-	paths, err := samAppliedForwardPaths(status["appliedForwardPaths"], true)
+	paths, err := sam.DecodeAppliedForwardPaths(status["appliedForwardPaths"], true)
 	if err != nil || len(paths) != 2 || paths[0].Kind != "forward-local-path" || paths[1].Kind != "forward-local-path" {
 		t.Fatalf("persisted proxy forward paths = %#v, err=%v", paths, err)
 	}
@@ -105,7 +105,7 @@ func TestSAMControllerRejectsMalformedAppliedLedgerBeforeEffects(t *testing.T) {
 		api.RouterAPIVersion + "/Router/" + samDataplaneStatusName: {
 			// PoolRef/PoolPrefix are deliberately missing: this old or corrupt
 			// row must not authorize a host deletion or a new capture.
-			"appliedProxyNeighbors": []samAppliedProxyNeighbor{{ID: "capture-a", Address: "10.77.60.9/32", Interface: "ens3"}},
+			"appliedProxyNeighbors": []sam.AppliedProxyNeighbor{{ID: "capture-a", Address: "10.77.60.9/32", Interface: "ens3"}},
 		},
 	}}
 	applier := &fakeSAMApplier{}
@@ -127,7 +127,7 @@ func TestSAMControllerRejectsMalformedAppliedLedgerBeforeEffects(t *testing.T) {
 func TestSAMControllerHoldRetainsOnlyExactPreviouslyAppliedEffects(t *testing.T) {
 	store := &mergeTrackingMapStore{mapStore: mapStore{
 		api.RouterAPIVersion + "/Router/" + samDataplaneStatusName: {
-			"appliedProxyNeighbors": []samAppliedProxyNeighbor{{
+			"appliedProxyNeighbors": []sam.AppliedProxyNeighbor{{
 				ID: "capture-a", PoolRef: "cloudedge", PoolPrefix: "10.77.60.0/24", Address: "10.77.60.10/32", Interface: "ens3",
 			}},
 		},
@@ -252,6 +252,10 @@ func (s *countingSAMStatusStore) ObjectStatus(apiVersion, kind, name string) map
 	return s.mapStore.ObjectStatus(apiVersion, kind, name)
 }
 
+func (s *countingSAMStatusStore) ReadObjectStatus(apiVersion, kind, name string) (map[string]any, error) {
+	return s.ObjectStatus(apiVersion, kind, name), nil
+}
+
 func TestSAMControllerReadsAppliedDataplaneOncePerReconcile(t *testing.T) {
 	const (
 		intentID = "cloudedge/10.77.60.9"
@@ -259,8 +263,8 @@ func TestSAMControllerReadsAppliedDataplaneOncePerReconcile(t *testing.T) {
 	)
 	store := &countingSAMStatusStore{mapStore: mapStore{
 		api.RouterAPIVersion + "/Router/" + samDataplaneStatusName: {
-			"appliedProxyNeighbors": []samAppliedProxyNeighbor{{ID: intentID, PoolRef: "cloudedge", PoolPrefix: "10.77.60.0/24", Address: address, Interface: "ens3"}},
-			"appliedForwardPaths":   []samAppliedForwardPath{{ID: intentID, PoolRef: "cloudedge", PoolPrefix: "10.77.60.0/24", Kind: "forward-path", Address: address, Interface: "ens3", PeerInterface: "wg-cloud"}},
+			"appliedProxyNeighbors": []sam.AppliedProxyNeighbor{{ID: intentID, PoolRef: "cloudedge", PoolPrefix: "10.77.60.0/24", Address: address, Interface: "ens3"}},
+			"appliedForwardPaths":   []sam.AppliedForwardPath{{ID: intentID, PoolRef: "cloudedge", PoolPrefix: "10.77.60.0/24", Kind: "forward-path", Address: address, Interface: "ens3", PeerInterface: "wg-cloud"}},
 		},
 	}}
 	controller := SAMController{

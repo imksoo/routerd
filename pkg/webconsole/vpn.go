@@ -6,18 +6,16 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/imksoo/routerd/internal/hostcmd"
 	"github.com/imksoo/routerd/pkg/tailscale"
 )
 
-func (h Handler) vpn(w http.ResponseWriter) {
-	status, err := h.vpnStatus()
+func (h Handler) vpn(w http.ResponseWriter, r *http.Request) {
+	status, err := h.vpnStatus(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -25,16 +23,22 @@ func (h Handler) vpn(w http.ResponseWriter) {
 	writeJSON(w, status)
 }
 
-func (h Handler) vpnStatus() (VPNStatus, error) {
-	if h.opts.VPNStatus != nil {
-		return h.opts.VPNStatus()
+func (h Handler) vpnStatus(ctx context.Context) (VPNStatus, error) {
+	if err := ctx.Err(); err != nil {
+		return VPNStatus{}, err
 	}
-	return hostVPNStatus()
+	if h.opts.VPNStatus != nil {
+		return h.opts.VPNStatus(ctx)
+	}
+	return hostVPNStatus(ctx)
 }
 
-func hostVPNStatus() (VPNStatus, error) {
+func hostVPNStatus(ctx context.Context) (VPNStatus, error) {
 	var status VPNStatus
-	if out, err := commandOutputTimeout(2*time.Second, "wg", "show", "all", "dump"); err != nil {
+	if out, err := commandOutputTimeout(ctx, 2*time.Second, "wg", "show", "all", "dump"); err != nil {
+		if ctx.Err() != nil {
+			return status, ctx.Err()
+		}
 		status.Errors = append(status.Errors, err.Error())
 	} else {
 		interfaces, err := parseWireGuardAllDump(out)
@@ -44,7 +48,10 @@ func hostVPNStatus() (VPNStatus, error) {
 			status.WireGuard = interfaces
 		}
 	}
-	if out, err := commandOutputTimeout(2*time.Second, "tailscale", "status", "--json"); err != nil {
+	if out, err := commandOutputTimeout(ctx, 2*time.Second, "tailscale", "status", "--json"); err != nil {
+		if ctx.Err() != nil {
+			return status, ctx.Err()
+		}
 		status.Errors = append(status.Errors, err.Error())
 	} else {
 		tailscale, err := parseTailscaleStatusJSON(out)
@@ -55,28 +62,6 @@ func hostVPNStatus() (VPNStatus, error) {
 		}
 	}
 	return status, nil
-}
-
-func commandOutputTimeout(timeout time.Duration, name string, args ...string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	commandName := hostCommandPath(name)
-	out, err := exec.CommandContext(ctx, commandName, args...).CombinedOutput()
-	if ctx.Err() == context.DeadlineExceeded {
-		return out, fmt.Errorf("%s %s timed out", name, strings.Join(args, " "))
-	}
-	if err != nil {
-		message := strings.TrimSpace(string(out))
-		if message != "" {
-			return out, fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, message)
-		}
-		return out, fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
-	}
-	return out, nil
-}
-
-func hostCommandPath(name string) string {
-	return hostcmd.Resolve(name)
 }
 
 func parseWireGuardAllDump(data []byte) ([]WireGuardInterfaceStatus, error) {

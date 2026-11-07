@@ -119,11 +119,11 @@ func (c PathMTUController) Reconcile(ctx context.Context) error {
 		return c.savePathMTUError("ForceFragmentRenderFailed", err)
 	}
 	path := firstNonEmpty(c.Path, "/run/routerd/mss.nft")
-	// Keep an implicit L2 artifact beside the regular MSS artifact. This keeps
-	// both outputs in the caller-selected dry-run directory while preserving the
+	// Keep implicit artifacts beside the regular MSS artifact. This keeps
+	// all outputs in the caller-selected dry-run directory while preserving the
 	// usual /run/routerd paths for a live controller.
 	l2Path := firstNonEmpty(c.L2Path, filepath.Join(filepath.Dir(path), "l2-mss.nft"))
-	forceFragmentPath := firstNonEmpty(c.ForceFragmentPath, "/run/routerd/forcefrag.nft")
+	forceFragmentPath := firstNonEmpty(c.ForceFragmentPath, filepath.Join(filepath.Dir(path), "forcefrag.nft"))
 	nft := firstNonEmpty(c.NftCommand, "nft")
 	mssChanged, err := c.applyTable(ctx, nft, path, "inet", "routerd_mss", mssData)
 	if err != nil {
@@ -682,18 +682,32 @@ func (c PathMTUController) cleanupRetiredL2(ctx context.Context, nft, ownerPath 
 
 func (c PathMTUController) applyL2MSSTable(ctx context.Context, nft, path, ownerPath string, enabled bool) (l2MSSApplyResult, error) {
 	var result l2MSSApplyResult
+	// Preview artifacts have no native authority. Do not consult live ownership
+	// or require the current kernel to match the requested rendering target.
+	if c.DryRun {
+		if !enabled {
+			return result, nil
+		}
+		base, err := render.NftablesL2TCPMSSClamp(c.Router)
+		if err != nil {
+			return result, err
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			return result, err
+		}
+		changed, err := writeFileIfChanged(path, base, 0600, false)
+		return l2MSSApplyResult{Changed: changed, Table: "routerd_l2_mss"}, err
+	}
 	if !enabled {
 		if _, err := os.Stat(ownerPath); os.IsNotExist(err) {
 			return result, nil
 		}
 	}
-	if !c.DryRun {
-		lock, err := acquireL2OwnerLock(ownerPath)
-		if err != nil {
-			return result, err
-		}
-		defer func() { _ = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN); _ = lock.Close() }()
+	lock, err := acquireL2OwnerLock(ownerPath)
+	if err != nil {
+		return result, err
 	}
+	defer func() { _ = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN); _ = lock.Close() }()
 	bootID, netns, err := currentL2OwnerIdentity()
 	if err != nil {
 		return result, err
@@ -714,8 +728,7 @@ func (c PathMTUController) applyL2MSSTable(ctx context.Context, nft, path, owner
 	if m == nil {
 		m = &l2MSSOwnerManifest{Version: 3, BootID: bootID, NetNS: netns}
 	}
-	base, err := render.NftablesL2TCPMSSClamp(c.Router)
-	if err != nil {
+	if _, err := render.NftablesL2TCPMSSClamp(c.Router); err != nil {
 		return result, err
 	}
 	digest := ""
@@ -724,16 +737,6 @@ func (c PathMTUController) applyL2MSSTable(ctx context.Context, nft, path, owner
 		if err != nil {
 			return result, err
 		}
-	}
-	if c.DryRun {
-		if !enabled {
-			return result, nil
-		}
-		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-			return result, err
-		}
-		changed, err := writeFileIfChanged(path, base, 0600, false)
-		return l2MSSApplyResult{Changed: changed, Table: "routerd_l2_mss"}, err
 	}
 	drifted, err := c.recoverL2Journal(ctx, nft, ownerPath, digest, m)
 	if err != nil {
@@ -878,18 +881,17 @@ func (c PathMTUController) applyL2MSSTable(ctx context.Context, nft, path, owner
 }
 
 func (c PathMTUController) applyTable(ctx context.Context, nft, path, family, table string, data []byte) (bool, error) {
-	if len(bytes.TrimSpace(data)) == 0 {
-		if !c.DryRun {
-			if nftstate.RecentlyVerified(path, time.Now().UTC()) {
-				return false, nil
-			}
-			_, _ = c.runNFT(ctx, nft, "delete", "table", family, table)
-			_ = nftstate.MarkVerified(path, time.Now().UTC())
-		}
-		return false, nil
-	}
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return false, err
+	}
+	current, readErr := os.ReadFile(path)
+	if readErr != nil && !os.IsNotExist(readErr) {
+		return false, readErr
+	}
+	if !c.DryRun && (readErr != nil || !bytes.Equal(current, data)) {
+		if err := nftstate.Invalidate(path); err != nil {
+			return false, err
+		}
 	}
 	changed, err := writeFileIfChanged(path, data, 0644, false)
 	if err != nil {
@@ -901,12 +903,15 @@ func (c PathMTUController) applyTable(ctx context.Context, nft, path, family, ta
 	if !changed && nftstate.RecentlyVerified(path, time.Now().UTC()) {
 		return false, nil
 	}
-	current, listErr := c.runNFT(ctx, nft, "list", "table", family, table)
-	missing := listErr != nil
-	_ = current
-	if !changed && !missing {
-		_ = nftstate.MarkVerified(path, time.Now().UTC())
-		return false, nil
+	if err := nftstate.Invalidate(path); err != nil {
+		return changed, err
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		out, err := c.runNFT(ctx, nft, "delete", "table", family, table)
+		if err != nil && !strings.Contains(string(out), "No such file or directory") {
+			return changed, fmt.Errorf("%s delete table %s %s: %w: %s", nft, family, table, err, strings.TrimSpace(string(out)))
+		}
+		return changed || err == nil, nftstate.MarkVerified(path, time.Now().UTC())
 	}
 	if out, err := c.runNFT(ctx, nft, "-c", "-f", path); err != nil {
 		return changed, fmt.Errorf("%s -c -f %s: %w: %s", nft, path, err, strings.TrimSpace(string(out)))
@@ -914,6 +919,5 @@ func (c PathMTUController) applyTable(ctx context.Context, nft, path, family, ta
 	if out, err := c.runNFT(ctx, nft, "-f", path); err != nil {
 		return changed, fmt.Errorf("%s -f %s: %w: %s", nft, path, err, strings.TrimSpace(string(out)))
 	}
-	_ = nftstate.MarkVerified(path, time.Now().UTC())
-	return changed || missing, nil
+	return true, nftstate.MarkVerified(path, time.Now().UTC())
 }

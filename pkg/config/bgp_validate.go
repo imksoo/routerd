@@ -106,6 +106,9 @@ func validateBGPImportPrefixLengths(resourceID, path string, spec api.BGPImportP
 	if minLen > 0 && maxLen > 0 && minLen > maxLen {
 		return fmt.Errorf("%s %s.allowedPrefixLengthMin must be <= allowedPrefixLengthMax", resourceID, path)
 	}
+	if len(spec.AllowedPrefixes) == 0 && (minLen != 0 || maxLen != 0) {
+		return fmt.Errorf("%s %s.allowedPrefixes is required when prefix length bounds are configured", resourceID, path)
+	}
 	for i, value := range spec.AllowedPrefixes {
 		prefix, err := netip.ParsePrefix(strings.TrimSpace(value))
 		if err != nil {
@@ -197,6 +200,12 @@ func validateBGPCommunities(resourceID, path string, spec api.BGPCommunitiesSpec
 	case "", "standard", "extended", "both":
 	default:
 		return fmt.Errorf("%s %s.send must be standard, extended, or both", resourceID, path)
+	}
+	if len(spec.Accept) > 0 {
+		return fmt.Errorf("%s %s.accept is not supported; use importPolicy community filters", resourceID, path)
+	}
+	if len(spec.Set.In) > 0 {
+		return fmt.Errorf("%s %s.set.in is not supported", resourceID, path)
 	}
 	for _, item := range []struct {
 		field  string
@@ -293,7 +302,7 @@ func validBGPCommunity(value string) bool {
 	if !ok || left == "" || right == "" {
 		return false
 	}
-	asn, err := strconv.ParseUint(left, 10, 32)
+	asn, err := strconv.ParseUint(left, 10, 16)
 	if err != nil || asn == 0 {
 		return false
 	}

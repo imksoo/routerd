@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/platform"
 )
 
 type vrrpInstance struct {
@@ -24,6 +25,7 @@ type vrrpInstance struct {
 	Preempt            *bool
 	PreemptDelay       time.Duration
 	Peers              []string
+	UnicastSource      string
 	AdvertInterval     time.Duration
 	Authentication     string
 	FailoverVMACs      []api.VirtualAddressVRRPFailoverVMACSpec
@@ -122,6 +124,13 @@ func vrrpInstances(router *api.Router, aliases map[string]string, opts Keepalive
 		}
 		peers := compactStrings(spec.VRRP.Peers)
 		sort.Strings(peers)
+		unicastSource := ""
+		if len(peers) > 0 && spec.Family == "ipv4" {
+			unicastSource, err = keepalivedStaticNodeAddress(router, spec.Interface, address, peers)
+			if err != nil {
+				return nil, err
+			}
+		}
 		authentication, err := secretValue(spec.VRRP.Authentication, spec.VRRP.AuthenticationFrom)
 		if err != nil {
 			return nil, fmt.Errorf("%s spec.vrrp.authenticationFrom: %w", res.ID(), err)
@@ -137,6 +146,7 @@ func vrrpInstances(router *api.Router, aliases map[string]string, opts Keepalive
 			Preempt:            spec.VRRP.Preempt,
 			PreemptDelay:       preemptDelay,
 			Peers:              peers,
+			UnicastSource:      unicastSource,
 			AdvertInterval:     advert,
 			Authentication:     authentication,
 			FailoverVMACs:      failoverVMACs,
@@ -145,6 +155,61 @@ func vrrpInstances(router *api.Router, aliases map[string]string, opts Keepalive
 	}
 	sort.Slice(instances, func(i, j int) bool { return instances[i].Name < instances[j].Name })
 	return instances, nil
+}
+
+// Keepalived's implicit unicast receive bind can select a pre-existing shared
+// VIP and remain bound to it after a BACKUP hook withdraws that VIP. Pin the
+// unconditional node address already declared on this interface, using the peer
+// subnet to distinguish a legacy LAN subnet when necessary. Without a unique
+// candidate, retain the existing native selection behavior.
+func keepalivedStaticNodeAddress(router *api.Router, iface, vip string, peers []string) (string, error) {
+	sources := map[netip.Addr]bool{}
+	peerSources := map[netip.Addr]bool{}
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "IPv4StaticAddress" {
+			continue
+		}
+		spec, err := resource.IPv4StaticAddressSpec()
+		if err != nil {
+			return "", err
+		}
+		if spec.Interface != iface || len(spec.When.State)+len(spec.When.All)+len(spec.When.Any) != 0 {
+			continue
+		}
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Address))
+		if err != nil {
+			return "", fmt.Errorf("%s: %w", resource.ID(), err)
+		}
+		address := prefix.Addr().String()
+		if !prefix.Addr().Is4() || address == renderAddressValue(vip) {
+			continue
+		}
+		sources[prefix.Addr()] = true
+		coversPeers := true
+		for _, peer := range peers {
+			peerAddress, err := netip.ParseAddr(peer)
+			if err != nil || !prefix.Contains(peerAddress) {
+				coversPeers = false
+				break
+			}
+		}
+		if coversPeers {
+			peerSources[prefix.Addr()] = true
+		}
+	}
+	if len(sources) == 1 {
+		for address := range sources {
+			return address.String(), nil
+		}
+	}
+	// A legacy LAN subnet on the same link is not an alternative election
+	// source when only one declared subnet contains the configured peers.
+	if len(peerSources) == 1 {
+		for address := range peerSources {
+			return address.String(), nil
+		}
+	}
+	return "", nil
 }
 
 type virtualAddressSpec struct {
@@ -277,6 +342,10 @@ func writeKeepalivedInstance(buf *bytes.Buffer, instance vrrpInstance) {
 		buf.WriteString(fmt.Sprintf("  preempt_delay %d\n", keepalivedAdvertSeconds(instance.PreemptDelay)))
 	}
 	if len(instance.Peers) > 0 {
+		if instance.UnicastSource != "" {
+			buf.WriteString("  unicast_src_ip " + instance.UnicastSource + "\n")
+			buf.WriteString("  track_src_ip\n")
+		}
 		buf.WriteString("  unicast_peer {\n")
 		for _, peer := range instance.Peers {
 			buf.WriteString("    " + peer + "\n")
@@ -290,7 +359,7 @@ func writeKeepalivedInstance(buf *bytes.Buffer, instance vrrpInstance) {
 		buf.WriteString("  }\n")
 	}
 	if len(instance.FailoverVMACs) > 0 || instance.GracefulActivation != nil {
-		hook := "/usr/local/sbin/routerd-vrrp-vmac"
+		hook := platform.LinuxBinaryPath("routerd-vrrp-vmac")
 		args := ""
 		if instance.GracefulActivation != nil {
 			args += " --resource " + strings.TrimSpace(instance.Name)

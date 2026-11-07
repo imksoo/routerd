@@ -117,6 +117,14 @@ func (q *Queue) Enqueue(ctx context.Context, lease controlapi.DHCPLeaseEventRequ
 	if len(lease.MAC) > 64 || len(lease.IP) > 64 || len(lease.Hostname) > 253 || len(lease.Interface) > 64 {
 		return errors.New("DHCP event field exceeds size limit")
 	}
+	if len(lease.Tags) > 64 || len(lease.Source) > 300 || lease.Infinite && !lease.ExpiresAt.IsZero() {
+		return errors.New("invalid DHCP lease provenance")
+	}
+	for _, tag := range lease.Tags {
+		if len(tag) > 253 {
+			return errors.New("DHCP event tag exceeds size limit")
+		}
+	}
 	payload, err := json.Marshal(lease)
 	if err != nil {
 		return err

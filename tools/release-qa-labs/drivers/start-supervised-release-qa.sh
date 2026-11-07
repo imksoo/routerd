@@ -19,6 +19,15 @@ framework_root="$run_root/repo/tools/release-qa-labs"
 state="$runtime_root/evidence/lifecycle/supervisor-state.json"
 heartbeat="$runtime_root/evidence/lifecycle/heartbeat"
 
+# This exact descriptor remains held across exec into Python. A competing
+# launcher cannot replace working authentication or pin inputs before admission.
+install -d -m 0700 "$(dirname "$state")"
+exec 9>"$state.lock"
+if ! flock -n 9; then
+  echo "release QA launcher: another durable supervisor owns this run" >&2
+  exit 2
+fi
+
 launcher_run_env="$runtime_root/run.env.json"
 if [ -f "$state" ] && [ -f "$runtime_root/pinned/run.env.json" ]; then
   launcher_run_env="$runtime_root/pinned/run.env.json"
@@ -111,7 +120,7 @@ export AZURE_CONFIG_DIR="$azure_state"
 # On restart the immutable authentication source must still match its pinned
 # digest. Supervisor separately authenticates durable state and runtime inputs.
 exec python3 "$framework_root/lifecycle_supervisor.py" \
-  --run-id "$run_id" --run-root "$run_root" --state "$state" --heartbeat "$heartbeat" \
+  --run-id "$run_id" --run-root "$run_root" --state "$state" --lock-fd 9 --heartbeat "$heartbeat" \
   --contract "$contract_path" --run-env "$runtime_root/run.env.json" \
   --tfvars "$runtime_root/terraform.tfvars" \
   --pve-ssh-private-key "$runtime_root/secrets/pve_ssh" \

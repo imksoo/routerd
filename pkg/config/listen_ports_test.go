@@ -99,7 +99,7 @@ func TestValidateAllowsMultipleLocalRedirectRulesToSamePort(t *testing.T) {
 	}
 }
 
-func TestValidateAllowsSharedDHCPv6ClientListenPort(t *testing.T) {
+func TestValidateAllowsInformationOnSameManagedPDClient(t *testing.T) {
 	router := routerWithResources(
 		api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ens18"}},
 		api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "pd"}, Spec: api.DHCPv6PrefixDelegationSpec{
@@ -108,12 +108,42 @@ func TestValidateAllowsSharedDHCPv6ClientListenPort(t *testing.T) {
 		api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Information"}, Metadata: api.ObjectMeta{Name: "info"}, Spec: api.DHCPv6InformationSpec{
 			Interface: "wan",
 		}},
-		api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Address"}, Metadata: api.ObjectMeta{Name: "addr"}, Spec: api.DHCPv6AddressSpec{
-			Interface: "wan",
-		}},
 	)
 	if err := Validate(router); err != nil {
-		t.Fatalf("DHCPv6 client resources should share udp/546 on one interface: %v", err)
+		t.Fatalf("PD and information resources use the same managed client: %v", err)
+	}
+}
+
+func TestValidateSharedDHCPv6ClientSocketOwnership(t *testing.T) {
+	for _, aliasIfName := range []string{"ens18", "ens19"} {
+		router := routerWithResources(
+			testResource(api.NetAPIVersion, "Interface", "wan", api.InterfaceSpec{IfName: "ens18"}),
+			testResource(api.NetAPIVersion, "Interface", "alias", api.InterfaceSpec{IfName: aliasIfName}),
+			testResource(api.NetAPIVersion, "DHCPv6PrefixDelegation", "pd", api.DHCPv6PrefixDelegationSpec{Interface: "wan"}),
+			testResource(api.NetAPIVersion, "DHCPv6Address", "address", api.DHCPv6AddressSpec{Interface: "alias"}),
+		)
+		err := Validate(router)
+		if err != nil {
+			t.Fatalf("managed address and prefix associations should share one worker per interface: %v", err)
+		}
+	}
+	router := routerWithResources(
+		testResource(api.NetAPIVersion, "Interface", "wan", api.InterfaceSpec{IfName: "ens18"}),
+		testResource(api.NetAPIVersion, "DHCPv6PrefixDelegation", "pd-a", api.DHCPv6PrefixDelegationSpec{Interface: "wan"}),
+		testResource(api.NetAPIVersion, "DHCPv6PrefixDelegation", "pd-b", api.DHCPv6PrefixDelegationSpec{Interface: "wan"}),
+	)
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "UDP port 546") {
+		t.Fatalf("two separately supervised managed clients admitted: %v", err)
+	}
+}
+
+func TestValidateInformationRequiresActualManagedClient(t *testing.T) {
+	router := routerWithResources(
+		testResource(api.NetAPIVersion, "Interface", "wan", api.InterfaceSpec{IfName: "ens18"}),
+		testResource(api.NetAPIVersion, "DHCPv6Information", "info", api.DHCPv6InformationSpec{Interface: "wan"}),
+	)
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "requires a DHCPv6PrefixDelegation") {
+		t.Fatalf("information resource without an actual worker admitted: %v", err)
 	}
 }
 
@@ -150,5 +180,31 @@ func routerWithResources(resources ...api.Resource) *api.Router {
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
 		Spec:     api.RouterSpec{Resources: resources},
+	}
+}
+
+func TestValidateRejectsDuplicateDHCPv6AddressOwners(t *testing.T) {
+	router := routerWithResources(
+		testResource(api.NetAPIVersion, "Interface", "wan", api.InterfaceSpec{IfName: "wan0"}),
+		testResource(api.NetAPIVersion, "Interface", "alias", api.InterfaceSpec{IfName: "wan0"}),
+		testResource(api.NetAPIVersion, "DHCPv6Address", "a", api.DHCPv6AddressSpec{Interface: "wan"}),
+		testResource(api.NetAPIVersion, "DHCPv6Address", "b", api.DHCPv6AddressSpec{Interface: "alias"}),
+	)
+	if err := Validate(router); err == nil {
+		t.Fatal("duplicate IA_NA ownership admitted through interface alias")
+	}
+}
+
+func TestValidateDHCPv6AddressUsesManagedClient(t *testing.T) {
+	for _, client := range []string{"", "routerd-dhcpv6-client", "networkd", "dhcp6c"} {
+		router := routerWithResources(
+			testResource(api.NetAPIVersion, "Interface", "wan", api.InterfaceSpec{IfName: "wan0"}),
+			testResource(api.NetAPIVersion, "DHCPv6Address", "address", api.DHCPv6AddressSpec{Interface: "wan", Client: client}),
+		)
+		err := Validate(router)
+		managed := client == "" || client == "routerd-dhcpv6-client"
+		if managed && err != nil || !managed && err == nil {
+			t.Errorf("client %q validation=%v", client, err)
+		}
 	}
 }

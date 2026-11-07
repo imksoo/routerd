@@ -103,7 +103,7 @@ func TestHybridRouteStatusAndMTUEstimate(t *testing.T) {
 	if status["phase"] != "Ready" {
 		t.Fatalf("status = %#v", status)
 	}
-	if status["defaultRouteUntouched"] != true || status["estimatedMTU"] != 1340 || status["tunnelOverhead"] != WireGuardOverheadBytes {
+	if status["defaultRouteUntouched"] != true || status["estimatedMTU"] != 1420 || status["tunnelOverhead"] != WireGuardOverheadBytes {
 		t.Fatalf("status = %#v", status)
 	}
 }

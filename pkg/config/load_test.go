@@ -347,7 +347,7 @@ spec:
 		t.Fatal("expected DNSResolver spec.sources to be rejected")
 	}
 	if !strings.Contains(err.Error(), "spec.sources") || !strings.Contains(err.Error(), "DNSForwarder") || !strings.Contains(err.Error(), "DNSUpstream") {
-		t.Fatalf("error = %v, want DNSForwarder/DNSUpstream migration guide", err)
+		t.Fatalf("error = %v, want DNSForwarder/DNSUpstream replacement guidance", err)
 	}
 }
 
@@ -375,7 +375,7 @@ spec:
 		t.Fatal("expected BGPPeer inline BFD to be rejected")
 	}
 	if !strings.Contains(err.Error(), "spec.bfd inline BFD settings") || !strings.Contains(err.Error(), "BFD/<name>") {
-		t.Fatalf("error = %v, want BFD migration guide", err)
+		t.Fatalf("error = %v, want BFD replacement guidance", err)
 	}
 }
 

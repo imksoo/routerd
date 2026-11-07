@@ -11,8 +11,8 @@ import (
 
 type arpObserverStatusReader map[string]map[string]any
 
-func (r arpObserverStatusReader) ObjectStatus(_ string, kind, name string) map[string]any {
-	return r[kind+"/"+name]
+func (r arpObserverStatusReader) ReadObjectStatus(_ string, kind, name string) (map[string]any, error) {
+	return r[kind+"/"+name], nil
 }
 
 func TestResolveARPObserverSourceAddress(t *testing.T) {
@@ -29,10 +29,13 @@ func TestResolveARPObserverSourceAddress(t *testing.T) {
 			reader := arpObserverStatusReader{
 				"DHCPv4Client/capture-source": {"currentAddress": tt.value},
 			}
-			got := resolveARPObserverSourceAddress(reader, api.StatusValueSourceSpec{
+			got, err := resolveARPObserverSourceAddress(reader, api.StatusValueSourceSpec{
 				Resource: "DHCPv4Client/capture-source",
 				Field:    "currentAddress",
 			})
+			if err != nil {
+				t.Fatal(err)
+			}
 			if got != tt.want {
 				t.Fatalf("resolveARPObserverSourceAddress(%q) = %q, want %q", tt.value, got, tt.want)
 			}
@@ -66,7 +69,10 @@ func TestARPObserverIntentsUsePoolScopedDaemonIdentity(t *testing.T) {
 	}
 
 	discovery := DiscoveryController{}
-	first := discovery.arpObserverIntents(pool("cloudedge-a"))
+	first, err := discovery.arpObserverIntents(pool("cloudedge-a"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(first) != 3 {
 		t.Fatalf("same explicit source resource produced %d intents, want three: %#v", len(first), first)
 	}
@@ -91,7 +97,10 @@ func TestARPObserverIntentsUsePoolScopedDaemonIdentity(t *testing.T) {
 		}
 	}
 
-	repeated := discovery.arpObserverIntents(pool("cloudedge-a"))
+	repeated, err := discovery.arpObserverIntents(pool("cloudedge-a"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(repeated) != len(first) {
 		t.Fatalf("repeated intents = %#v, want %#v", repeated, first)
 	}
@@ -101,7 +110,10 @@ func TestARPObserverIntentsUsePoolScopedDaemonIdentity(t *testing.T) {
 		}
 	}
 
-	otherPool := discovery.arpObserverIntents(pool("cloudedge-b"))
+	otherPool, err := discovery.arpObserverIntents(pool("cloudedge-b"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	seen = map[string]bool{}
 	for _, intent := range first {
 		seen[intent.ResourceName] = true

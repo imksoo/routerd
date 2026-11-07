@@ -24,6 +24,15 @@ type ingressNATRule struct {
 	Targets           []ingressNATTarget
 	Selection         string
 	HairpinInterfaces []string
+	UnavailableAction string
+}
+
+// IngressServiceState is the current backend selection made by the ingress controller.
+// An empty backend set means that the service must use its unavailable policy.
+type IngressServiceState struct {
+	Name      string
+	Backends  []api.IngressBackendSpec
+	Selection string
 }
 
 type ingressNATTarget struct {
@@ -32,7 +41,11 @@ type ingressNATTarget struct {
 	Port    int
 }
 
-func ingressNATRules(router *api.Router, aliases map[string]string) ([]ingressNATRule, error) {
+func ingressNATRules(router *api.Router, aliases map[string]string, states ...IngressServiceState) ([]ingressNATRule, error) {
+	serviceStates := make(map[string]IngressServiceState, len(states))
+	for _, state := range states {
+		serviceStates[state.Name] = state
+	}
 	var rules []ingressNATRule
 	for _, res := range router.Spec.Resources {
 		if res.APIVersion != api.FirewallAPIVersion {
@@ -56,7 +69,11 @@ func ingressNATRules(router *api.Router, aliases map[string]string) ([]ingressNA
 			if err != nil {
 				return nil, err
 			}
-			rule, ok, err := ingressRuleFromService(router, aliases, res, spec)
+			var state *IngressServiceState
+			if selected, ok := serviceStates[res.Metadata.Name]; ok {
+				state = &selected
+			}
+			rule, ok, err := ingressRuleFromService(router, aliases, res, spec, state)
 			if err != nil {
 				return nil, err
 			}
@@ -79,18 +96,25 @@ func ingressRuleFromPortForward(router *api.Router, aliases map[string]string, r
 	return ingressRuleFromEndpoint(router, aliases, res, spec.Listen, target, spec.Hairpin)
 }
 
-func ingressRuleFromService(router *api.Router, aliases map[string]string, res api.Resource, spec api.IngressServiceSpec) (ingressNATRule, bool, error) {
-	if len(spec.Backends) == 0 {
+func ingressRuleFromService(router *api.Router, aliases map[string]string, res api.Resource, spec api.IngressServiceSpec, state *IngressServiceState) (ingressNATRule, bool, error) {
+	unavailableAction := ""
+	if state != nil {
+		spec.Backends = state.Backends
+		spec.Policy.Selection = state.Selection
+		if len(spec.Backends) == 0 {
+			unavailableAction = defaultString(spec.Policy.OnNoHealthyBackends, "drop")
+		}
+	} else if len(spec.Backends) == 0 {
 		return ingressNATRule{}, false, fmt.Errorf("%s needs at least one backend", res.ID())
 	}
-	return ingressRuleFromEndpoints(router, aliases, res, spec.Listen, spec.Backends, spec.Hairpin, defaultString(spec.Policy.Selection, "failover"), true)
+	return ingressRuleFromEndpoints(router, aliases, res, spec.Listen, spec.Backends, spec.Hairpin, defaultString(spec.Policy.Selection, "failover"), true, unavailableAction)
 }
 
 func ingressRuleFromEndpoint(router *api.Router, aliases map[string]string, res api.Resource, listen api.IngressListenSpec, target api.IngressBackendSpec, hairpin api.IngressHairpinSpec) (ingressNATRule, bool, error) {
-	return ingressRuleFromEndpoints(router, aliases, res, listen, []api.IngressBackendSpec{target}, hairpin, "failover", false)
+	return ingressRuleFromEndpoints(router, aliases, res, listen, []api.IngressBackendSpec{target}, hairpin, "failover", false, "")
 }
 
-func ingressRuleFromEndpoints(router *api.Router, aliases map[string]string, res api.Resource, listen api.IngressListenSpec, backends []api.IngressBackendSpec, hairpin api.IngressHairpinSpec, selection string, autoHairpinDefault bool) (ingressNATRule, bool, error) {
+func ingressRuleFromEndpoints(router *api.Router, aliases map[string]string, res api.Resource, listen api.IngressListenSpec, backends []api.IngressBackendSpec, hairpin api.IngressHairpinSpec, selection string, autoHairpinDefault bool, unavailableAction string) (ingressNATRule, bool, error) {
 	ifname := aliases[listen.Interface]
 	if ifname == "" {
 		return ingressNATRule{}, false, fmt.Errorf("%s references listen interface with empty ifname %q", res.ID(), listen.Interface)
@@ -116,14 +140,14 @@ func ingressRuleFromEndpoints(router *api.Router, aliases map[string]string, res
 			break
 		}
 	}
-	if len(targets) == 0 {
+	if len(targets) == 0 && unavailableAction == "" {
 		return ingressNATRule{}, false, nil
 	}
 	hairpinIfnames, err := ingressHairpinInterfaces(router, aliases, res, listen, hairpin, listenAddress, targets, autoHairpinDefault)
 	if err != nil {
 		return ingressNATRule{}, false, err
 	}
-	return ingressNATRule{
+	rule := ingressNATRule{
 		ResourceID:        res.ID(),
 		ResourceKind:      res.Kind,
 		Name:              res.Metadata.Name,
@@ -131,12 +155,16 @@ func ingressRuleFromEndpoints(router *api.Router, aliases map[string]string, res
 		ListenAddress:     listenAddress,
 		Protocol:          listen.Protocol,
 		ListenPort:        listen.Port,
-		TargetAddress:     targets[0].Address,
-		TargetPort:        targets[0].Port,
 		Targets:           targets,
 		Selection:         selection,
 		HairpinInterfaces: hairpinIfnames,
-	}, true, nil
+		UnavailableAction: unavailableAction,
+	}
+	if len(targets) > 0 {
+		rule.TargetAddress = targets[0].Address
+		rule.TargetPort = targets[0].Port
+	}
+	return rule, true, nil
 }
 
 func ingressHairpinInterfaces(router *api.Router, aliases map[string]string, res api.Resource, listen api.IngressListenSpec, hairpin api.IngressHairpinSpec, listenAddress string, targets []ingressNATTarget, autoDefault bool) ([]string, error) {

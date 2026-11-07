@@ -7,7 +7,7 @@ Wants=network-online.target
 
 [Service]
 Type=notify
-ExecStart=/usr/local/sbin/routerd serve
+ExecStart=/usr/sbin/routerd serve
 Restart=always
 RestartSec=5s
 RuntimeDirectory=routerd routerd/bgp routerd/dhcpv6-client routerd/dhcpv4-client routerd/pppoe-client routerd/dns-resolver
@@ -15,8 +15,8 @@ RuntimeDirectoryPreserve=yes
 StateDirectory=routerd
 LogsDirectory=routerd
 NoNewPrivileges=no
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID CAP_CHOWN
-AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID CAP_CHOWN
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID CAP_CHOWN CAP_SYS_PTRACE CAP_KILL CAP_DAC_OVERRIDE CAP_FOWNER
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID CAP_CHOWN CAP_SYS_PTRACE CAP_KILL CAP_DAC_OVERRIDE CAP_FOWNER
 
 [Install]
 WantedBy=multi-user.target

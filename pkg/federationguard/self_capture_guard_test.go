@@ -21,6 +21,10 @@ func (s fakeDynamicConfigPartStore) ListDynamicConfigParts() ([]routerstate.Dyna
 	return s.parts, nil
 }
 
+func (s fakeDynamicConfigPartStore) ReadObjectStatus(string, string, string) (map[string]any, error) {
+	return nil, nil
+}
+
 func TestRejectSelfCapturedObservedEventRejectsActiveCapturedAddress(t *testing.T) {
 	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 	store := fakeDynamicConfigPartStore{parts: []routerstate.DynamicConfigPartRecord{

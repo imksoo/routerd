@@ -20,7 +20,7 @@ func TestParseOptions(t *testing.T) {
 	if opts.action != "activate" || opts.parent != "eth0" || opts.ifname != "wan-vmac" {
 		t.Fatalf("unexpected options: %#v", opts)
 	}
-	if got := commandsFor(opts); len(got) != 7 || got[0][0] != "ip" || got[0][1] != "link" || got[0][2] != "add" || got[4][0] != "sysctl" || got[4][2] != "net.ipv6.conf.wan-vmac.accept_ra=2" || got[6][0] != "ip" || got[6][4] != "wan-vmac" {
+	if got := commandsFor(opts); len(got) != 8 || got[0][0] != "ip" || got[0][1] != "link" || got[0][2] != "add" || got[4][2] != "net.ipv6.conf.wan-vmac.ra_defrtr_metric=50" || got[5][2] != "net.ipv6.conf.wan-vmac.accept_ra=2" || got[7][0] != "ip" || got[7][4] != "wan-vmac" {
 		t.Fatalf("activate commands: %#v", got)
 	}
 }
@@ -219,7 +219,7 @@ func TestGracefulActivatePublishesElectionOnlyAfterVMACAndRA(t *testing.T) {
 		electionTransitionNeeded: func(string, string) (bool, error) {
 			return true, nil
 		},
-		writeElectionRole:   func(string, string) error { events = append(events, "election-master"); return nil },
+		writeElectionRole:   func(_ string, role string) error { events = append(events, "election-"+role); return nil },
 		withdrawDeferredVIP: func(options) error { return nil },
 		notifyRouterd:       func() error { events = append(events, "notify-routerd"); return nil },
 	})
@@ -351,7 +351,7 @@ func TestGracefulReconcileDiscardsRoleObservedBeforeTransitionLock(t *testing.T)
 		command: func(name string, args ...string) ([]byte, error) {
 			line := name + " " + strings.Join(args, " ")
 			switch line {
-			case "ip -6 route show default dev wan-vmac":
+			case "ip -6 route show default":
 				return []byte("default via fe80::1 dev wan-vmac metric 50 src 2001:db8::13\n"), nil
 			case "ip -6 -o addr show dev wan-vmac scope global":
 				return []byte("7: wan-vmac inet6 2001:db8::13/64 scope global dynamic\n"), nil
@@ -378,8 +378,8 @@ func TestGracefulReconcileDiscardsRoleObservedBeforeTransitionLock(t *testing.T)
 		electionTransitionNeeded: func(_ string, action string) (bool, error) {
 			return role != conntrackdRoleForAction(action), nil
 		},
-		writeElectionRole: func(_ string, action string) error {
-			role = conntrackdRoleForAction(action)
+		writeElectionRole: func(_ string, next string) error {
+			role = next
 			return nil
 		},
 		withdrawDeferredVIP: func(options) error { return nil },
@@ -433,6 +433,7 @@ func TestWANFailoverVMACKeepsDelegatedAddressesAcrossDown(t *testing.T) {
 		{"ip", "link", "set", "dev", "wan-vmac", "address", "02:00:5e:00:01:13"},
 		{"sysctl", "-w", "net.ipv4.conf.wan.arp_ignore=1"},
 		{"sysctl", "-w", "net.ipv4.conf.wan-vmac.arp_ignore=1"},
+		{"sysctl", "-w", "net.ipv6.conf.wan-vmac.ra_defrtr_metric=50"},
 		{"sysctl", "-w", "net.ipv6.conf.wan-vmac.accept_ra=2"},
 		{"sysctl", "-w", "net.ipv6.conf.wan-vmac.keep_addr_on_down=1"},
 		{"ip", "link", "set", "dev", "wan-vmac", "up"},
@@ -441,7 +442,7 @@ func TestWANFailoverVMACKeepsDelegatedAddressesAcrossDown(t *testing.T) {
 		t.Fatalf("WAN commands = %#v, want %#v", got, want)
 	}
 	wan.action = "deactivate"
-	if got, want := commandsFor(wan), [][]string{{"ip", "link", "add", "link", "wan", "name", "wan-vmac", "type", "macvlan", "mode", "private"}, {"ip", "link", "set", "dev", "wan-vmac", "address", "02:00:5e:00:01:13"}, {"sysctl", "-w", "net.ipv4.conf.wan.arp_ignore=1"}, {"sysctl", "-w", "net.ipv4.conf.wan-vmac.arp_ignore=1"}, {"sysctl", "-w", "net.ipv6.conf.wan-vmac.accept_ra=2"}, {"sysctl", "-w", "net.ipv6.conf.wan-vmac.keep_addr_on_down=1"}, {"ip", "link", "set", "dev", "wan-vmac", "down"}}; !reflect.DeepEqual(got, want) {
+	if got, want := commandsFor(wan), [][]string{{"ip", "link", "add", "link", "wan", "name", "wan-vmac", "type", "macvlan", "mode", "private"}, {"ip", "link", "set", "dev", "wan-vmac", "address", "02:00:5e:00:01:13"}, {"sysctl", "-w", "net.ipv4.conf.wan.arp_ignore=1"}, {"sysctl", "-w", "net.ipv4.conf.wan-vmac.arp_ignore=1"}, {"sysctl", "-w", "net.ipv6.conf.wan-vmac.ra_defrtr_metric=50"}, {"sysctl", "-w", "net.ipv6.conf.wan-vmac.accept_ra=2"}, {"sysctl", "-w", "net.ipv6.conf.wan-vmac.keep_addr_on_down=1"}, {"ip", "link", "set", "dev", "wan-vmac", "down"}}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("WAN deactivate commands = %#v, want %#v", got, want)
 	}
 }
@@ -453,14 +454,14 @@ func TestRunVMACCommandsReappliesHygieneWhenLinkAlreadyExists(t *testing.T) {
 		{"sysctl", "-w", "net.ipv4.conf.wan-vmac.arp_ignore=1"},
 	}
 	var executed []string
-	err := runVMACCommands("activate", commands, func(name string, args ...string) ([]byte, error) {
+	err := runVMACCommands("activate", vmac{parent: "wan", ifname: "wan-vmac"}, commands, runHooks{inspectVMAC: func(vmac) (vmacRuntimeState, error) { return vmacRuntimeState{exists: true}, nil }, command: func(name string, args ...string) ([]byte, error) {
 		line := name + " " + strings.Join(args, " ")
 		executed = append(executed, line)
 		if strings.HasPrefix(line, "ip link add ") {
 			return []byte("RTNETLINK answers: File exists\n"), errors.New("exit status 2")
 		}
 		return nil, nil
-	})
+	}})
 	if err != nil {
 		t.Fatalf("repeat VMAC activation: %v", err)
 	}
@@ -484,7 +485,7 @@ func TestRepeatedActivateKeepsReadyVMACLinkAndRAStable(t *testing.T) {
 			line := name + " " + strings.Join(args, " ")
 			commands = append(commands, line)
 			switch line {
-			case "ip -6 route show default dev wan-vmac":
+			case "ip -6 route show default":
 				return []byte("default via fe80::1 dev wan-vmac metric 50 src 2001:db8:1200::13\n"), nil
 			case "ip -6 -o addr show dev wan-vmac scope global":
 				return []byte("7: wan-vmac inet6 2001:db8:1200::13/64 scope global dynamic valid_lft 100sec preferred_lft 50sec\n"), nil
@@ -559,7 +560,7 @@ func TestRepeatedActivateRequestsRAOnlyWhenWANStateIsIncomplete(t *testing.T) {
 	}
 }
 
-func TestRepeatedActivateRepairsWANDefaultRouteWithoutSolicitingRA(t *testing.T) {
+func TestRepeatedActivateSolicitsRAAfterSettingKernelDefaultMetric(t *testing.T) {
 	var commands []string
 	requests := 0
 	err := runWithHooks([]string{
@@ -569,8 +570,8 @@ func TestRepeatedActivateRepairsWANDefaultRouteWithoutSolicitingRA(t *testing.T)
 			line := name + " " + strings.Join(args, " ")
 			commands = append(commands, line)
 			switch line {
-			case "ip -6 route show default dev wan-vmac":
-				return []byte("default via fe80::1 dev wan-vmac proto ra metric 1024\n"), nil
+			case "ip -6 route show default":
+				return []byte("default via fe80::1 dev wan-vmac proto ra metric 1024 expires 100sec pref medium\n"), nil
 			case "ip -6 -o addr show dev wan-vmac scope global":
 				return []byte("7: wan-vmac inet6 2001:db8:1200::13/64 scope global dynamic valid_lft 100sec preferred_lft 50sec\n"), nil
 			default:
@@ -589,12 +590,12 @@ func TestRepeatedActivateRepairsWANDefaultRouteWithoutSolicitingRA(t *testing.T)
 	if err != nil {
 		t.Fatalf("repair WAN default: %v", err)
 	}
-	want := "ip -6 route replace default via fe80::1 dev wan-vmac metric 50 src 2001:db8:1200::13"
-	if !slicesContain(commands, want) {
-		t.Fatalf("default route repair omitted %q: %#v", want, commands)
+	want := "sysctl -w net.ipv6.conf.wan-vmac.ra_defrtr_metric=50"
+	if !slicesContain(commands, want) || slicesContainPrefix(commands, "ip -6 route replace ") {
+		t.Fatalf("RA route authority was not left with the kernel: %#v", commands)
 	}
-	if requests != 0 {
-		t.Fatalf("router solicitations = %d, want 0", requests)
+	if requests != 1 {
+		t.Fatalf("router solicitations = %d, want 1 for unpreferred RA state", requests)
 	}
 }
 
@@ -766,7 +767,7 @@ func TestMixedVMACHygieneDoesNotLeakLANPolicyToWAN(t *testing.T) {
 	assertDoesNotContainCommand(t, groups[0], []string{"ip", "-6", "addr", "flush", "dev", "wan-vmac", "scope", "global", "dynamic"})
 	assertContainsCommand(t, groups[1], []string{"sysctl", "-w", "net.ipv6.conf.lan.accept_ra=0"})
 	assertContainsCommand(t, groups[1], []string{"sysctl", "-w", "net.ipv6.conf.lan-vmac.accept_ra=0"})
-	assertContainsCommand(t, groups[1], []string{"ip", "-6", "addr", "flush", "dev", "lan", "scope", "global", "dynamic"})
+	assertDoesNotContainCommand(t, groups[1], []string{"ip", "-6", "addr", "flush", "dev", "lan", "scope", "global", "dynamic"})
 }
 
 func TestActivateStopsBeforeLinkUpWhenParentHygieneFails(t *testing.T) {
@@ -813,31 +814,6 @@ func TestParseOptionsRejectsWithdrawRAAction(t *testing.T) {
 	}
 }
 
-func TestPreferVMACDefaultCommand(t *testing.T) {
-	command, ok := preferVMACDefaultCommand("default via fe80::1 dev wan-vmac proto ra metric 1024\n", "wan-vmac", "2001:db8:1200::13")
-	if !ok {
-		t.Fatal("expected VMAC default route")
-	}
-	want := []string{"ip", "-6", "route", "replace", "default", "via", "fe80::1", "dev", "wan-vmac", "metric", "50", "src", "2001:db8:1200::13"}
-	if len(command) != len(want) {
-		t.Fatalf("command = %#v", command)
-	}
-	for i := range want {
-		if command[i] != want[i] {
-			t.Fatalf("command = %#v, want %#v", command, want)
-		}
-	}
-	if _, ok := preferVMACDefaultCommand("default via fe80::1 dev eth0 proto ra\n", "wan-vmac", "2001:db8:1200::13"); ok {
-		t.Fatal("physical route must not be selected")
-	}
-	if _, ok := preferVMACDefaultCommand("default via fe80::1 dev wan-vmac proto ra\n", "wan-vmac", ""); ok {
-		t.Fatal("VMAC default must wait for an eligible RA source")
-	}
-	if command, ok := preferVMACDefaultCommand("default via fe80::1 dev wan-vmac metric 50 src 2001:db8:1200::13\n", "wan-vmac", "2001:db8:1200::13"); ok || command != nil {
-		t.Fatalf("already preferred VMAC default command = %#v, ok = %t", command, ok)
-	}
-}
-
 func TestPreferredVMACGlobalAddressExcludesTunnelAndUnreadyAddresses(t *testing.T) {
 	output := "" +
 		"7: wan-vmac inet6 2001:db8:1221::23/128 scope global deprecated valid_lft forever preferred_lft 0sec\n" +
@@ -877,7 +853,7 @@ func TestRoleTransitionNotifiesRouterdOnlyAfterDurableRoleWrite(t *testing.T) {
 	}, runHooks{
 		command: func(name string, args ...string) ([]byte, error) {
 			line := name + " " + strings.Join(args, " ")
-			if line == "ip -6 route show default dev wan-vmac" {
+			if line == "ip -6 route show default" {
 				return []byte("default via fe80::1 dev wan-vmac metric 50 src 2001:db8::13\n"), nil
 			}
 			if line == "ip -6 -o addr show dev wan-vmac scope global" {
@@ -1063,8 +1039,8 @@ func TestLANFailoverVMACCommandsHaveOneSharedLinkLocalAndCleanBackup(t *testing.
 		[]string{"sysctl", "-w", "net.ipv6.conf.lan-vrrp.accept_ra=0"},
 		[]string{"ip", "link", "set", "dev", "lan-vrrp", "up"},
 	)
-	assertContainsCommand(t, commands, []string{"ip", "-6", "addr", "flush", "dev", "lan-vrrp", "scope", "global", "dynamic"})
-	assertContainsCommand(t, commands, []string{"ip", "-6", "addr", "flush", "dev", "ens19", "scope", "global", "dynamic"})
+	assertDoesNotContainCommand(t, commands, []string{"ip", "-6", "addr", "flush", "dev", "lan-vrrp", "scope", "global", "dynamic"})
+	assertDoesNotContainCommand(t, commands, []string{"ip", "-6", "addr", "flush", "dev", "ens19", "scope", "global", "dynamic"})
 	assertDoesNotContainCommand(t, commands, []string{"ip", "-6", "addr", "flush", "dev", "lan-vrrp", "scope", "global"})
 	assertDoesNotContainCommand(t, commands, []string{"ip", "-6", "addr", "flush", "dev", "ens19", "scope", "global"})
 	assertCommandBefore(t, commands,

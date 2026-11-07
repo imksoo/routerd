@@ -35,6 +35,13 @@ first, then use a matching complete example before making a live WAN change.
 
 You typically pick a subset of these depending on what the ISP gives you.
 
+`IPv6RAAddress.spec.managed: false` declares observation-only RA/SLAAC intent.
+On Linux, this declaration does not generate RA-acceptance sysctls or networkd
+adoption settings. Omitting `managed` or setting it to `true` retains management.
+Other resources on the same interface, such as `DHCPv6PrefixDelegation`, still
+apply their own host requirements. Changing this field is not a rollback of
+host settings previously applied by a managed configuration.
+
 ## Pattern A: Native dual-stack (IPv4 + IPv6)
 
 The ISP gives you a public IPv4 address via DHCPv4 and an IPv6 prefix via DHCPv6-PD on the same WAN interface.
@@ -80,6 +87,13 @@ The ISP gives you a public IPv4 address via DHCPv4 and an IPv6 prefix via DHCPv6
 
 `DHCPv4Client` runs `routerd-dhcpv4-client` and writes the lease to `lease.json`. The kernel takes the address; routerd publishes events for downstream resources to react.
 
+On first apply, the supervised client's socket may not exist yet. With no prior
+lease or pending/applied effects, this is reported as `Pending/DaemonUnavailable`
+while the supervisor starts the client; apply does not fail solely on that initial
+missing socket. Pending is not lease readiness. Loss of an existing client's
+authority or other socket errors remains an error, and a known expired lease
+still requires address, route and DNS withdrawal.
+
 `DHCPv6PrefixDelegation` runs `routerd-dhcpv6-client` and obtains an IA_PD. `IPv6DelegatedAddress` carves a `/64` (or other length) for a LAN side.
 
 ## Upstream NTP / SNTP
@@ -105,6 +119,22 @@ The ISP gives you a public IPv4 address via DHCPv4 and an IPv6 prefix via DHCPv6
 ```
 
 Use this with the LAN-side `ntpServerFrom` and `sntpServerFrom` fields when the router itself should be the time source advertised to clients.
+
+A managed `NTPServer` is the single configuration and service owner for clients
+using the same provider. On Linux, a chrony server also consumes the upstreams of
+a managed `systemd-timesyncd` client: chrony already takes precedence over
+timesyncd, so the client does not start a competing time service. Its status
+reports the actual `provider: chrony`, the `requestedProvider` and
+`managedBy: NTPServer`. Delegated clients become `Applied` only after the server's
+owned configuration contains their upstreams and its service operation succeeds.
+
+When the server's `when` condition is false, this shared owner keeps active client
+upstreams but removes the server's client-access rules. Removing both declarations
+withdraws only acquired fragments and retires their published upstreams. Existing
+unacquired or replaced configuration files are preserved; shared OS services are
+reloaded rather than treated as exclusively owned processes. `managed: false`
+observes without changing files or services.
+
 
 ## Pattern B: PPPoE for IPv4, DHCPv6-PD for IPv6
 
@@ -190,6 +220,7 @@ The Web Console summarises the same information under the **Overview** and **Res
 
 ## See also
 
+- [Native NTP runtime checks](../operations/ntp-runtime-test.md)
 - [LAN-side services](./lan-side-services.md)
 - [Multi-WAN egress](../how-to/multi-wan.md)
 - [DS-Lite via NTT NGN](../how-to/flets-ipv6-setup.md)

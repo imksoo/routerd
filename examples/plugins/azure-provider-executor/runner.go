@@ -3,7 +3,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/imksoo/routerd/pkg/subprocessio"
 )
 
 // azRunner runs one `az` CLI invocation with the given argv (without the leading
@@ -35,14 +36,14 @@ func azureLoginEnsuringRunner(inner azRunner) azRunner {
 		if !loggedIn {
 			if err := ensureManagedIdentityLogin(ctx, inner); err != nil {
 				mu.Unlock()
-				return nil, err
+				return nil, &commandNotStartedError{err}
 			}
 			loggedIn = true
 		}
 		mu.Unlock()
 
 		out, err := inner(ctx, argv...)
-		if err == nil || !isAzureLoginRequiredError(err) {
+		if err == nil || !isReadOnlyVerb(argv) || !isAzureLoginRequiredError(err) {
 			return out, err
 		}
 		// The token cache can expire between the bootstrap check and the real
@@ -86,10 +87,17 @@ func execRunner(ctx context.Context, argv ...string) ([]byte, error) {
 	defer cancel()
 	full := azCommandArgs(argv...)
 	cmd := exec.CommandContext(runCtx, "az", full...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
+	stdout, stderr := subprocessio.NewCapture(subprocessio.StdoutLimit), subprocessio.NewCapture(subprocessio.StderrLimit)
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	runErr := subprocessio.Run(cmd)
+	if cmd.Process == nil && runErr != nil {
+		return nil, &commandNotStartedError{runErr}
+	}
+	if limitErr := subprocessio.LimitError(stdout, stderr); limitErr != nil {
+		runErr = limitErr
+	}
+	if err := runErr; err != nil {
 		exitCode := 1
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
@@ -354,7 +362,7 @@ type nicShowOutput struct {
 	ID                 string           `json:"id"`
 	Name               string           `json:"name"`
 	ResourceGroup      string           `json:"resourceGroup"`
-	EnableIPForwarding bool             `json:"enableIPForwarding"`
+	EnableIPForwarding *bool            `json:"enableIPForwarding"`
 	IPConfigurations   []ipConfigOutput `json:"ipConfigurations"`
 }
 
@@ -382,8 +390,11 @@ func showNIC(ctx context.Context, runner azRunner, nicID string) (nicShow, error
 	if err := json.Unmarshal(out, &parsed); err != nil {
 		return nicShow{}, fmt.Errorf("parse network nic show output: %w", err)
 	}
+	if !strings.EqualFold(parsed.ID, nicID) || parsed.EnableIPForwarding == nil || parsed.IPConfigurations == nil {
+		return nicShow{}, fmt.Errorf("incomplete NIC observation for %q", nicID)
+	}
 	return nicShow{
-		EnableIPForwarding: parsed.EnableIPForwarding,
+		EnableIPForwarding: *parsed.EnableIPForwarding,
 		ID:                 parsed.ID,
 		Name:               parsed.Name,
 		ResourceGroup:      parsed.ResourceGroup,
@@ -391,10 +402,11 @@ func showNIC(ctx context.Context, runner azRunner, nicID string) (nicShow, error
 	}, nil
 }
 
-func listIPConfigs(ctx context.Context, runner azRunner, resourceGroup, nicName string) ([]ipConfig, error) {
+func listIPConfigs(ctx context.Context, runner azRunner, resourceGroup, nicName, subscriptionID string) ([]ipConfig, error) {
 	out, err := callAzReadWithRetry(ctx, runner, "network", "nic", "ip-config", "list",
 		"--resource-group", resourceGroup,
 		"--nic-name", nicName,
+		"--subscription", subscriptionID,
 		"--query", "[].{name:name, privateIPAddress: privateIPAddress, privateIpAddress: privateIpAddress, privateIpAddressFromProperties: properties.privateIpAddress, privateIPAddressFromProperties: properties.privateIPAddress}")
 	if err != nil {
 		return nil, err
@@ -403,11 +415,14 @@ func listIPConfigs(ctx context.Context, runner azRunner, resourceGroup, nicName 
 	if err := json.Unmarshal(out, &parsed); err != nil {
 		return nil, fmt.Errorf("parse network nic ip-config list output: %w", err)
 	}
+	if parsed == nil {
+		return nil, fmt.Errorf("IP configuration observation must be a non-null array")
+	}
 	return normalizeIPConfigs(parsed), nil
 }
 
-func listNICs(ctx context.Context, runner azRunner, resourceGroup string) ([]nicShow, error) {
-	out, err := callAzReadWithRetry(ctx, runner, "network", "nic", "list", "--resource-group", resourceGroup)
+func listNICs(ctx context.Context, runner azRunner, resourceGroup, subscriptionID string) ([]nicShow, error) {
+	out, err := callAzReadWithRetry(ctx, runner, "network", "nic", "list", "--resource-group", resourceGroup, "--subscription", subscriptionID)
 	if err != nil {
 		return nil, err
 	}
@@ -415,10 +430,16 @@ func listNICs(ctx context.Context, runner azRunner, resourceGroup string) ([]nic
 	if err := json.Unmarshal(out, &parsed); err != nil {
 		return nil, fmt.Errorf("parse network nic list output: %w", err)
 	}
+	if parsed == nil {
+		return nil, fmt.Errorf("NIC inventory must be a non-null array")
+	}
 	nics := make([]nicShow, 0, len(parsed))
 	for _, nic := range parsed {
+		if nic.IPConfigurations == nil {
+			return nil, fmt.Errorf("NIC inventory entry %q has no IP configuration array", nic.Name)
+		}
 		nics = append(nics, nicShow{
-			EnableIPForwarding: nic.EnableIPForwarding,
+			EnableIPForwarding: nic.EnableIPForwarding != nil && *nic.EnableIPForwarding,
 			ID:                 nic.ID,
 			Name:               nic.Name,
 			ResourceGroup:      nic.ResourceGroup,
@@ -517,38 +538,6 @@ func sleepWithContext(ctx context.Context, d time.Duration) bool {
 	case <-timer.C:
 		return true
 	}
-}
-
-func callAzWithRetry(ctx context.Context, runner azRunner, argv ...string) ([]byte, error) {
-	delay := azCommandRetryDelay
-	var lastErr error
-	for attempt := 0; attempt < azCommandRetryAttempts; attempt++ {
-		attemptTimeout := callTimeoutForAttempt(ctx, azCommandRetryAttempts-attempt)
-		if attemptTimeout <= 0 {
-			if ctx.Err() != nil {
-				return nil, ctx.Err()
-			}
-			return nil, fmt.Errorf("az %s: no remaining timeout budget", strings.Join(argv, " "))
-		}
-		attemptCtx, cancel := context.WithTimeout(ctx, attemptTimeout)
-		out, err := runner(attemptCtx, argv...)
-		cancel()
-		if err == nil {
-			return out, nil
-		}
-		lastErr = err
-		if !isRetryableCommandError(err) || attempt+1 >= azCommandRetryAttempts {
-			return nil, err
-		}
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		if !sleepWithContext(ctx, delay) {
-			return nil, ctx.Err()
-		}
-		delay *= 2
-	}
-	return nil, lastErr
 }
 
 func callAzReadWithRetry(ctx context.Context, runner azRunner, argv ...string) ([]byte, error) {

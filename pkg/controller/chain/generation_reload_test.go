@@ -33,7 +33,7 @@ func TestRuntimeGenerationReloadActivatesLifecycleChangeWithoutOverlap(t *testin
 		},
 	}
 	activated := make(chan string, 4)
-	runner.generationBuilder = func(_ context.Context, _ *slog.Logger, _ eventedStore, _ bool, _ ha.Decision) ([]framework.Controller, DaemonStatusController, error) {
+	runner.generationBuilder = func(_ context.Context, _ *slog.Logger, _ eventedStore, _ bool, _ ha.Decision) ([]framework.Controller, DaemonStatusController, controllerLifetimes, error) {
 		routerName := runner.Router.Metadata.Name
 		dnsName := ""
 		for _, resource := range runner.Router.Spec.Resources {
@@ -51,7 +51,7 @@ func TestRuntimeGenerationReloadActivatesLifecycleChangeWithoutOverlap(t *testin
 				return nil
 			},
 		}
-		return []framework.Controller{controller}, DaemonStatusController{}, nil
+		return []framework.Controller{controller}, DaemonStatusController{}, controllerLifetimes{}, nil
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -111,11 +111,11 @@ func TestRuntimeReloadQueuedBetweenGenerationsPreemptsGatedPrepare(t *testing.T)
 		},
 		reloadCh: make(chan generationReload, 1),
 	}
-	runner.generationBuilder = func(context.Context, *slog.Logger, eventedStore, bool, ha.Decision) ([]framework.Controller, DaemonStatusController, error) {
+	runner.generationBuilder = func(context.Context, *slog.Logger, eventedStore, bool, ha.Decision) ([]framework.Controller, DaemonStatusController, controllerLifetimes, error) {
 		return []framework.Controller{framework.FuncController{
 			ControllerName: "reload-preemption",
 			ReconcileFunc:  func(context.Context, daemonapi.DaemonEvent) error { return nil },
-		}}, DaemonStatusController{}, nil
+		}}, DaemonStatusController{}, controllerLifetimes{}, nil
 	}
 	request := generationReload{router: newRouter, done: make(chan generationReloadResult, 1)}
 	runner.reloadCh <- request
@@ -164,12 +164,12 @@ func TestStandbyPrepareRaceReloadTimesOutAndSupervisorRecovers(t *testing.T) {
 	runner := newClusterAcceptanceRunner("router-b", leasePath, time.Minute, &mutatorExecutionLog{})
 	runner.Opts.MutationGate = gate
 	prepareStarted := make(chan ha.Decision, 1)
-	runner.generationBuilder = func(_ context.Context, _ *slog.Logger, _ eventedStore, _ bool, decision ha.Decision) ([]framework.Controller, DaemonStatusController, error) {
+	runner.generationBuilder = func(_ context.Context, _ *slog.Logger, _ eventedStore, _ bool, decision ha.Decision) ([]framework.Controller, DaemonStatusController, controllerLifetimes, error) {
 		prepareStarted <- decision
 		return []framework.Controller{framework.FuncController{
 			ControllerName: "standby-prepare",
 			ReconcileFunc:  func(context.Context, daemonapi.DaemonEvent) error { return nil },
-		}}, DaemonStatusController{}, nil
+		}}, DaemonStatusController{}, controllerLifetimes{}, nil
 	}
 	store := eventedStore{Store: runner.Store, Bus: runner.Bus, Router: runner.Router}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -211,7 +211,7 @@ func lifecycleTestRouter(name, dnsName string) *api.Router {
 		Spec: api.RouterSpec{Resources: []api.Resource{{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"},
 			Metadata: api.ObjectMeta{Name: dnsName},
-			Spec:     map[string]any{"listen": []any{"127.0.0.1:53"}},
+			Spec:     api.DNSResolverSpec{Listen: []api.DNSResolverListenSpec{{Addresses: []string{"127.0.0.1:53"}}}},
 		}}},
 	}
 }

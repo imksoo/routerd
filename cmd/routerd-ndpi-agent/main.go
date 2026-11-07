@@ -3,6 +3,7 @@
 package main
 
 import (
+	"container/list"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -13,14 +14,14 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
-	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/dpi"
 	"github.com/imksoo/routerd/pkg/version"
 )
@@ -66,6 +67,7 @@ type flowState struct {
 	lastSeen  time.Time
 	packets   int
 	result    dpi.ClassifyResult
+	position  *list.Element
 	done      bool
 }
 
@@ -86,9 +88,11 @@ type agent struct {
 	opts    options
 	backend ndpiBackend
 
-	mu    sync.Mutex
-	flows map[string]*flowState
-	stats agentStats
+	operationMu sync.Mutex
+	mu          sync.Mutex
+	flows       map[string]*flowState
+	stats       agentStats
+	order       list.List
 }
 
 func newAgent(opts options, backend ndpiBackend) *agent {
@@ -111,8 +115,11 @@ func (a *agent) Close() {
 	if a == nil || a.backend == nil {
 		return
 	}
+	a.operationMu.Lock()
+	defer a.operationMu.Unlock()
 	a.mu.Lock()
 	a.flows = map[string]*flowState{}
+	a.order.Init()
 	a.mu.Unlock()
 	a.backend.Close()
 }
@@ -250,6 +257,8 @@ func newHandler(agent *agent) http.Handler {
 }
 
 func (a *agent) Status() statusResponse {
+	a.operationMu.Lock()
+	defer a.operationMu.Unlock()
 	backend := a.backend.Status()
 	stats := a.snapshotStats(time.Now().UTC())
 	return statusResponse{
@@ -271,6 +280,15 @@ func (a *agent) Status() statusResponse {
 }
 
 func (a *agent) Observe(ctx context.Context, req dpi.ClassifyRequest, now time.Time) dpi.ClassifyResult {
+	// One owner spans flow selection, native mutation and result publication.
+	// This also prevents an expired generation from recreating a newer flow.
+	a.operationMu.Lock()
+	defer a.operationMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		result := metadataOnlyResult(req)
+		result.Reason = err.Error()
+		return result
+	}
 	key := flowKey(req)
 	if key == "" {
 		result := metadataOnlyResult(req)
@@ -283,11 +301,16 @@ func (a *agent) Observe(ctx context.Context, req dpi.ClassifyRequest, now time.T
 		})
 		return result
 	}
-	state, shouldClassify := a.prepareFlow(key, now)
+	payloadBearing := len(req.L4Payload) > 0 || len(req.Payload) > 0
+	if len(req.Packet) > 0 {
+		info, _ := dpi.InspectPacket(req.Packet)
+		payloadBearing = len(info.Payload) > 0
+	}
+	state, shouldClassify := a.prepareFlow(key, now, payloadBearing)
 	if !shouldClassify {
 		a.backend.Forget(key)
 		if state.result.AppName != "" && state.result.AppName != "unknown" {
-			return state.result
+			return resultForPacket(state.result, req)
 		}
 		result := metadataOnlyResult(req)
 		result.Engine = "ndpi-agent"
@@ -305,21 +328,27 @@ func (a *agent) Observe(ctx context.Context, req dpi.ClassifyRequest, now time.T
 		return result
 	}
 	classified := result.AppName != "" && result.AppName != "unknown"
+	result = resultForPacket(result, req)
 	a.finishFlow(key, now, result, classified, false)
 	return result
 }
 
-func (a *agent) prepareFlow(key string, now time.Time) (*flowState, bool) {
+func (a *agent) prepareFlow(key string, now time.Time, payloadBearing bool) (*flowState, bool) {
 	a.mu.Lock()
 	a.stats.ObservedPackets++
 	forget := a.pruneLocked(now)
 	state := a.flows[key]
 	if state == nil {
-		state = &flowState{firstSeen: now}
+		state = &flowState{firstSeen: now, position: a.order.PushBack(key)}
 		a.flows[key] = state
+		state.lastSeen = now
+		forget = append(forget, a.pruneLocked(now)...)
 	}
 	state.lastSeen = now
-	state.packets++
+	a.order.MoveToBack(state.position)
+	if payloadBearing {
+		state.packets++
+	}
 	if state.done {
 		a.stats.SkippedPackets++
 		clone := cloneFlowState(state)
@@ -346,8 +375,8 @@ func (a *agent) finishFlow(key string, now time.Time, result dpi.ClassifyResult,
 	a.mu.Lock()
 	state := a.flows[key]
 	if state == nil {
-		state = &flowState{firstSeen: now}
-		a.flows[key] = state
+		a.mu.Unlock()
+		return
 	}
 	state.lastSeen = now
 	state.result = result
@@ -383,30 +412,16 @@ func (a *agent) addStats(update func(*agentStats)) {
 
 func (a *agent) pruneLocked(now time.Time) []string {
 	var forget []string
-	if a.opts.flowTTL > 0 {
-		cutoff := now.Add(-a.opts.flowTTL)
-		for key, state := range a.flows {
-			if state.lastSeen.Before(cutoff) {
-				delete(a.flows, key)
-				forget = append(forget, key)
-				a.stats.PrunedFlows++
-			}
+	for front := a.order.Front(); front != nil; front = a.order.Front() {
+		key := front.Value.(string)
+		state := a.flows[key]
+		expired := a.opts.flowTTL > 0 && !now.Before(state.lastSeen.Add(a.opts.flowTTL))
+		if !expired && (a.opts.flowLimit <= 0 || len(a.flows) <= a.opts.flowLimit) {
+			break
 		}
-	}
-	if a.opts.flowLimit <= 0 || len(a.flows) <= a.opts.flowLimit {
-		return forget
-	}
-	for len(a.flows) > a.opts.flowLimit {
-		var oldestKey string
-		var oldest time.Time
-		for key, state := range a.flows {
-			if oldestKey == "" || state.lastSeen.Before(oldest) {
-				oldestKey = key
-				oldest = state.lastSeen
-			}
-		}
-		delete(a.flows, oldestKey)
-		forget = append(forget, oldestKey)
+		a.order.Remove(front)
+		delete(a.flows, key)
+		forget = append(forget, key)
 		a.stats.PrunedFlows++
 	}
 	return forget
@@ -423,41 +438,51 @@ func cloneFlowState(state *flowState) *flowState {
 		return nil
 	}
 	clone := *state
+	clone.position = nil
 	return &clone
 }
 
 func metadataOnlyResult(req dpi.ClassifyRequest) dpi.ClassifyResult {
-	result := dpi.Classify(req)
-	result.AppName = "unknown"
-	result.AppCategory = ""
-	result.AppConfidence = 0
-	result.TLSSNI = ""
-	result.HTTPHost = ""
-	result.DNSQuery = ""
-	return dpi.FinalizeResult(result)
+	meta := dpi.ClassifyResult{L3Proto: req.L3Proto, TransportProtocol: strings.ToLower(req.TransportProtocol), SrcAddress: req.SrcAddress, SrcPort: req.SrcPort, DstAddress: req.DstAddress, DstPort: req.DstPort}
+	if len(req.Packet) > 0 {
+		info, ok := dpi.InspectPacket(req.Packet)
+		if !ok {
+			return dpi.ClassifyResult{AppName: "unknown", Engine: "ndpi-agent", Source: "ndpi-agent"}
+		}
+		meta = dpi.ClassifyResult{L3Proto: info.L3Proto, TransportProtocol: info.TransportProtocol, SrcAddress: info.SrcAddress, SrcPort: info.SrcPort, DstAddress: info.DstAddress, DstPort: info.DstPort}
+	}
+	meta.AppName, meta.Engine, meta.Source = "unknown", "ndpi-agent", "ndpi-agent"
+	return dpi.FinalizeResult(meta)
+}
+
+func resultForPacket(result dpi.ClassifyResult, req dpi.ClassifyRequest) dpi.ClassifyResult {
+	meta := metadataOnlyResult(req)
+	result.L3Proto, result.TransportProtocol = meta.L3Proto, meta.TransportProtocol
+	result.SrcAddress, result.SrcPort = meta.SrcAddress, meta.SrcPort
+	result.DstAddress, result.DstPort = meta.DstAddress, meta.DstPort
+	return result
 }
 
 func flowKey(req dpi.ClassifyRequest) string {
-	meta := dpi.Classify(req)
-	proto := strings.ToLower(strings.TrimSpace(stringutil.FirstNonEmpty(req.TransportProtocol, meta.TransportProtocol)))
-	src := stringutil.FirstNonEmpty(req.SrcAddress, meta.SrcAddress)
-	dst := stringutil.FirstNonEmpty(req.DstAddress, meta.DstAddress)
-	srcPort := firstNonZero(req.SrcPort, meta.SrcPort)
-	dstPort := firstNonZero(req.DstPort, meta.DstPort)
-	if proto == "" || src == "" || dst == "" {
+	meta := metadataOnlyResult(req)
+	proto := strings.ToLower(strings.TrimSpace(meta.TransportProtocol))
+	src, srcErr := netip.ParseAddr(meta.SrcAddress)
+	dst, dstErr := netip.ParseAddr(meta.DstAddress)
+	if proto == "" || srcErr != nil || dstErr != nil || src.Is4() != dst.Is4() || meta.SrcPort < 0 || meta.SrcPort > 65535 || meta.DstPort < 0 || meta.DstPort > 65535 {
 		return ""
 	}
-	sum := sha256.Sum256([]byte(strings.Join([]string{proto, src, strconv.Itoa(srcPort), dst, strconv.Itoa(dstPort)}, "|")))
-	return hex.EncodeToString(sum[:16])
-}
-
-func firstNonZero(values ...int) int {
-	for _, value := range values {
-		if value != 0 {
-			return value
+	if len(req.Packet) > 0 {
+		info, ok := dpi.InspectPacket(req.Packet)
+		if !ok || ((proto == "tcp" || proto == "udp") && info.SrcPort == 0 && info.DstPort == 0 && len(info.Payload) == 0) {
+			return ""
 		}
 	}
-	return 0
+	left, right := netip.AddrPortFrom(src.Unmap(), uint16(meta.SrcPort)).String(), netip.AddrPortFrom(dst.Unmap(), uint16(meta.DstPort)).String()
+	if right < left {
+		left, right = right, left
+	}
+	sum := sha256.Sum256([]byte(strings.Join([]string{proto, left, right}, "|")))
+	return hex.EncodeToString(sum[:16])
 }
 
 func writeJSON(w http.ResponseWriter, value any) {
@@ -466,6 +491,9 @@ func writeJSON(w http.ResponseWriter, value any) {
 }
 
 func unixHTTPClient(socket string, timeout time.Duration) *http.Client {
+	if timeout <= 0 {
+		timeout = 200 * time.Millisecond
+	}
 	return &http.Client{
 		Timeout: timeout,
 		Transport: &http.Transport{DisableKeepAlives: true, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
@@ -480,6 +508,14 @@ func removeStaleSocket(path string) error {
 	if err == nil {
 		if info.Mode()&os.ModeSocket == 0 {
 			return fmt.Errorf("refusing to remove non-socket path %s", path)
+		}
+		conn, dialErr := net.DialTimeout("unix", path, 200*time.Millisecond)
+		if dialErr == nil {
+			conn.Close()
+			return fmt.Errorf("socket %s is already active", path)
+		}
+		if !errors.Is(dialErr, syscall.ECONNREFUSED) && !errors.Is(dialErr, os.ErrNotExist) {
+			return fmt.Errorf("inspect socket %s before removal: %w", path, dialErr)
 		}
 		return os.Remove(path)
 	}

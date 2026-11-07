@@ -3,10 +3,16 @@
 package inventory
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"runtime"
 	"strings"
+	"time"
+
+	"github.com/imksoo/routerd/pkg/subprocessio"
 )
 
 type Status struct {
@@ -40,13 +46,13 @@ type DMIInfo struct {
 type Collector struct {
 	GOOS          string
 	LookPath      func(string) (string, error)
-	CommandOutput func(string, ...string) ([]byte, error)
+	CommandOutput func(context.Context, string, ...string) ([]byte, error)
 	ReadFile      func(string) ([]byte, error)
 	Stat          func(string) (os.FileInfo, error)
 }
 
-func Collect() Status {
-	return DefaultCollector().Collect()
+func Collect(ctx context.Context) (Status, error) {
+	return DefaultCollector().Collect(ctx)
 }
 
 func DefaultCollector() Collector {
@@ -59,21 +65,33 @@ func DefaultCollector() Collector {
 	}
 }
 
-func commandOutput(name string, args ...string) ([]byte, error) {
-	return exec.Command(name, args...).CombinedOutput()
+func commandOutput(ctx context.Context, name string, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	stdout, stderr := subprocessio.NewCapture(subprocessio.StdoutLimit), subprocessio.NewCapture(subprocessio.StderrLimit)
+	cmd.Stdout, cmd.Stderr = stdout, stderr
+	err := subprocessio.Run(cmd)
+	if limitErr := subprocessio.LimitError(stdout, stderr); limitErr != nil {
+		return nil, limitErr
+	}
+	return stdout.Bytes(), err
 }
 
-func (c Collector) Collect() Status {
+func (c Collector) Collect(ctx context.Context) (Status, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return Status{}, err
+	}
 	c = c.withDefaults()
 	status := Status{
 		OS:       OSInfo{GOOS: c.GOOS},
 		Commands: map[string]bool{},
 	}
-	status.OS.KernelName = c.trimmedCommand("uname", "-s")
-	status.OS.KernelRelease = c.trimmedCommand("uname", "-r")
-	status.OS.KernelVersion = c.trimmedCommand("uname", "-v")
-	status.OS.Uname = c.trimmedCommand("uname", "-a")
-	status.Virtualization.Type = c.virtualizationType()
+	status.OS.KernelName = c.trimmedCommand(ctx, "uname", "-s")
+	status.OS.KernelRelease = c.trimmedCommand(ctx, "uname", "-r")
+	status.OS.KernelVersion = c.trimmedCommand(ctx, "uname", "-v")
+	status.OS.Uname = c.trimmedCommand(ctx, "uname", "-a")
+	status.Virtualization.Type = c.virtualizationType(ctx)
 	status.DMI = c.dmi()
 	status.ServiceManager = c.serviceManager()
 	for _, name := range []string{
@@ -112,7 +130,10 @@ func (c Collector) Collect() Status {
 	} {
 		status.Commands[name] = c.commandExists(name)
 	}
-	return status
+	if err := ctx.Err(); err != nil {
+		return Status{}, fmt.Errorf("collect host inventory: %w", err)
+	}
+	return status, nil
 }
 
 func (c Collector) withDefaults() Collector {
@@ -134,28 +155,32 @@ func (c Collector) withDefaults() Collector {
 	return c
 }
 
-func (c Collector) virtualizationType() string {
+func (c Collector) virtualizationType(ctx context.Context) string {
 	switch c.GOOS {
 	case "linux":
 		if !c.commandExists("systemd-detect-virt") {
 			return "unknown"
 		}
-		out, err := c.CommandOutput("systemd-detect-virt", "--vm")
-		value := strings.TrimSpace(string(out))
-		if err == nil && value != "" {
-			return value
+		observedNone := true
+		for _, mode := range []string{"--vm", "--container"} {
+			out, err := c.CommandOutput(ctx, "systemd-detect-virt", mode)
+			value := strings.TrimSpace(string(out))
+			if err == nil && value != "" && value != "none" {
+				return value
+			}
+			var exitErr *exec.ExitError
+			knownNone := value == "none" && (err == nil || (errors.As(err, &exitErr) && exitErr.ExitCode() == 1))
+			observedNone = observedNone && knownNone
 		}
-		out, err = c.CommandOutput("systemd-detect-virt", "--container")
-		value = strings.TrimSpace(string(out))
-		if err == nil && value != "" {
-			return value
+		if observedNone {
+			return "none"
 		}
-		return "none"
+		return "unknown"
 	case "freebsd":
 		if !c.commandExists("sysctl") {
 			return "unknown"
 		}
-		value := c.trimmedCommand("sysctl", "-n", "kern.vm_guest")
+		value := c.trimmedCommand(ctx, "sysctl", "-n", "kern.vm_guest")
 		if value == "" {
 			return "unknown"
 		}
@@ -195,11 +220,11 @@ func (c Collector) pathExists(path string) bool {
 	return err == nil
 }
 
-func (c Collector) trimmedCommand(name string, args ...string) string {
+func (c Collector) trimmedCommand(ctx context.Context, name string, args ...string) string {
 	if !c.commandExists(name) {
 		return ""
 	}
-	out, err := c.CommandOutput(name, args...)
+	out, err := c.CommandOutput(ctx, name, args...)
 	if err != nil {
 		return ""
 	}

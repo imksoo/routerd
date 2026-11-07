@@ -378,12 +378,15 @@ func discoveryCurrentTrapAddresses(history ProviderActionHistory, pool Normalize
 		}
 	}
 	for _, plan := range history.previousCaptureAssigns {
+		if history.capturePlanWasUndone(plan) {
+			continue
+		}
 		add(plan.ProviderRef, plan.Target, plan.Parameters, false)
 	}
 	// The journal is already decoded into the history's typed records. Do not
 	// recreate an ActionPlan merely for Discovery to immediately reinterpret it.
 	for _, action := range history.latestByKey {
-		if isProviderCaptureAssignAction(action.action) && providerActionStatusPending(action.status) {
+		if (isProviderCaptureAssignAction(action.action) || isProviderCaptureUnassignAction(action.action)) && providerActionStatusPending(action.status) {
 			add(action.providerRef, action.target, action.parameters, true)
 		}
 	}
@@ -446,7 +449,7 @@ func onPremDiscoveryExpiredEvent(poolName, group, nodeRef, address string, obser
 // the safety identities of the two discovery protocols.
 func discoveryEvent(id, group, nodeRef, address, dedupeKey, eventType string, payload map[string]string, observedAt time.Time, ttl time.Duration) routerstate.EventRecord {
 	observedAt = observedAt.UTC()
-	return routerstate.EventRecord{
+	event := routerstate.EventRecord{
 		ID:         id,
 		Group:      strings.TrimSpace(group),
 		SourceNode: strings.TrimSpace(nodeRef),
@@ -458,6 +461,8 @@ func discoveryEvent(id, group, nodeRef, address, dedupeKey, eventType string, pa
 		ExpiresAt:  observedAt.Add(ttl),
 		RecordedAt: observedAt,
 	}
+	event.ID += ":" + mobilityFederationFactID(event)
+	return event
 }
 
 func onPremDiscoveryPayload(poolName, address string, observation onPremObservation) map[string]string {

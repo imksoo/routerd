@@ -5,6 +5,7 @@ package mobility
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"net"
 	"sort"
 	"strconv"
@@ -27,17 +28,20 @@ func ARPObserverDynamicSource(poolName, selfNode string) string {
 // into the small daemon-bootstrap contract consumed by chain. It resolves
 // status-backed source addresses and interface aliases once here, so the
 // daemon supervisor never needs to reopen MobilityPool configuration.
-func (c DiscoveryController) arpObserverIntents(pool NormalizedMobilityPool) []dynamicconfig.ARPObserverIntent {
+func (c DiscoveryController) arpObserverIntents(pool NormalizedMobilityPool) ([]dynamicconfig.ARPObserverIntent, error) {
 	self := pool.Self
 	if strings.TrimSpace(self.Role) != "onprem" || strings.TrimSpace(self.Capture.Type) != "proxy-arp" || strings.TrimSpace(self.OwnershipDiscovery.Mode) != "onprem-l2" {
-		return nil
+		return nil, nil
 	}
 	prefix := pool.Prefix
 	if !prefix.IsValid() || !prefix.Addr().Is4() || prefix.Bits() == 32 {
-		return nil
+		return nil, nil
 	}
 	prefix = prefix.Masked()
-	captureSourceAddress := resolveCaptureSourceAddress(c.Store, pool.Self.CaptureSourceAddress, pool.Self.CaptureSourceAddressFrom, prefix)
+	captureSourceAddress, err := resolveCaptureSourceAddress(c.Store, pool.Self.CaptureSourceAddress, pool.Self.CaptureSourceAddressFrom, prefix)
+	if err != nil {
+		return nil, err
+	}
 	ignoredSenderMACs := normalizedSAMNodeSetMACAddresses(c.Router)
 	var out []dynamicconfig.ARPObserverIntent
 	sourceIndex := 0
@@ -58,7 +62,10 @@ func (c DiscoveryController) arpObserverIntents(pool NormalizedMobilityPool) []d
 		}
 		sourceAddress := ""
 		if sourceType == OnPremSourceOnDemandARP {
-			sourceAddress = resolveARPObserverSourceAddress(c.Store, source.SourceAddressFrom)
+			sourceAddress, err = resolveARPObserverSourceAddress(c.Store, source.SourceAddressFrom)
+			if err != nil {
+				return nil, fmt.Errorf("resolve %s probe source: %w", sourceType, err)
+			}
 			if sourceAddress == "" {
 				// The capture sender is already the normalized local source for
 				// proxy-ARP delivery. Reuse it when the probe source does not
@@ -96,7 +103,7 @@ func (c DiscoveryController) arpObserverIntents(pool NormalizedMobilityPool) []d
 		}
 		return out[i].ResourceName < out[j].ResourceName
 	})
-	return out
+	return out, nil
 }
 
 // arpObserverIntentResourceName is the internal daemon, socket, and ownership
@@ -128,13 +135,17 @@ func arpObserverIntentResourceName(pool NormalizedMobilityPool, source api.Mobil
 // interface. Keep its validation here, at the typed producer boundary, rather
 // than borrowing the Pool capture resolver and accidentally applying that
 // resolver's in-pool constraint.
-func resolveARPObserverSourceAddress(reader resourcequery.Store, source api.StatusValueSourceSpec) string {
-	for _, raw := range resourcequery.Values(reader, source) {
+func resolveARPObserverSourceAddress(reader resourcequery.StatusReader, source api.StatusValueSourceSpec) (string, error) {
+	values, err := resourcequery.ReadValues(reader, source)
+	if err != nil {
+		return "", err
+	}
+	for _, raw := range values {
 		if prefix, ok := parseIPv4AddressOrPrefix(raw); ok {
-			return prefix.Addr().String()
+			return prefix.Addr().String(), nil
 		}
 	}
-	return ""
+	return "", nil
 }
 
 func normalizedSAMNodeSetMACAddresses(router *api.Router) []string {

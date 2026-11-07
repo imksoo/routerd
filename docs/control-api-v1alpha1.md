@@ -191,4 +191,6 @@ Events have a topic and attributes:
 }
 ```
 
-routerd persists events into SQLite. Managed daemons additionally keep them in their own `events.jsonl` files. `EventRule` and `DerivedEvent` consume this stream to emit virtual events.
+routerd persists events into SQLite. Managed daemons additionally keep them in
+their own `events.jsonl` files. `EventRule` consumes that history; `DerivedEvent`
+evaluates current referenced status and records asserted/retracted transitions.

@@ -7,9 +7,8 @@ import (
 	"strings"
 )
 
-// Canonical provider action verbs an ActionPlan may declare. routerd does NOT
-// execute these; the set exists so action plans are validated and reviewable
-// before they are persisted on a DynamicConfigPart.
+// Canonical provider action verbs an ActionPlan may propose. Proposal validation
+// does not authorize execution by the separately gated provider-action engine.
 const (
 	ActionAssignSecondaryIP        = "assign-secondary-ip"
 	ActionUnassignSecondaryIP      = "unassign-secondary-ip"
@@ -19,13 +18,13 @@ const (
 	ActionEnsureForwardingDisabled = "ensure-forwarding-disabled"
 )
 
-// ActionModeDryRun is the only non-empty ActionPlan mode accepted in Phase 4.1.
-// "execute" is explicitly rejected: provider actions are dry-run/display-only.
+// ActionModeDryRun is the only non-empty proposal mode. A proposal cannot select
+// live execution; the operator/policy chooses it through the action engine.
 const ActionModeDryRun = "dry-run"
 
 // actionPlanExecuteRejection is the exact error text returned when an ActionPlan
 // declares mode=execute. It is a const so callers/tests can match it precisely.
-const actionPlanExecuteRejection = "actionPlan mode=execute is not supported; provider actions are dry-run/display-only in Phase 4.1"
+const actionPlanExecuteRejection = "actionPlan mode=execute is not supported; a proposal cannot authorize live execution"
 
 var canonicalProviders = map[string]bool{
 	"aws":   true,
@@ -49,9 +48,8 @@ var canonicalRiskLevels = map[string]bool{
 	"high":   true,
 }
 
-// ValidateActionPlan checks one plugin-proposed ActionPlan against the Phase 4.1
-// schema rules. It validates structure only; routerd never executes an
-// ActionPlan and never makes a provider CLI/SDK call.
+// ValidateActionPlan checks the proposal shape. It does not execute or approve
+// the operation; the action engine owns the live policy and durable claim.
 func ValidateActionPlan(p ActionPlan) error {
 	if strings.TrimSpace(p.Name) == "" {
 		return fmt.Errorf("actionPlan name is required")

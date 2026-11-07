@@ -80,36 +80,22 @@ DHCPv6またはIPv6の経路広告に使う宣言がある場合は、準備待�
 
 ## クイックスタート
 
-ルーターホスト上でリリースアーカイブを展開し、同梱のインストーラーを実行します。
+1.5 提案版はクリーンな OS に native パッケージで導入します。
+対象ビルドのファイルを取得し、チェックサムを確認してから実行します。
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260914.0729/routerd-linux-amd64.tar.gz
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260914.0729/routerd-linux-amd64.tar.gz.sha256
-sha256sum -c routerd-linux-amd64.tar.gz.sha256
-tar -xzf routerd-linux-amd64.tar.gz
-sudo ./install.sh
+# Debian/Ubuntu
+sudo apt install ./routerd_<version>_amd64.deb
+# FreeBSD 14
+sudo pkg -o HANDLE_RC_SCRIPTS=true install ./routerd-<version>.pkg
 ```
 
-FreeBSD では stable release tag の `routerd-freebsd-amd64.tar.gz` を取得し、
-同じ `./install.sh` を実行します。
-arm64 ホストでは `routerd-linux-arm64.tar.gz` または
-`routerd-freebsd-arm64.tar.gz` を使います。
-同じ release page には `routerd-v20260914.0729-linux-amd64.tar.gz` のような
-版番号付きアーカイブもあります。
-
-Linux 用の release archive には、静的リンクした routerd バイナリを含めます
-(`CGO_ENABLED=0`)。
-配置先ホストの glibc 版には依存しません。
-
-`install.sh` は必要な OS パッケージを導入し、実行ファイルを
-`/usr/local/sbin` に配置します。
-また、サービスのテンプレートと `router.yaml.sample` を配置します。
-既存の `/usr/local/etc/routerd/router.yaml` は上書きしません。
-パッケージ一覧は次のコマンドで確認できます。
-
-```sh
-./install.sh --list-deps
-```
+実際のファイル名と CPU に合わせて置き換えてください。提案版のパッケージや
+公開リポジトリはまだリリースしていません。パッケージ間の更新で設定と永続状態を
+保持します。ソース・手動コピー・アーカイブ導入からの移行は対象外です。
+初回は daemon を起動せず、設定例も適用しません。
+配置先、起動、更新・削除と検証範囲は[導入と更新](https://routerd.net/ja/docs/install-and-upgrade)
+を参照してください。Linux の実行ファイルは `CGO_ENABLED=0` で静的リンクします。
 
 ### 設定を作り、変更前に確認する
 
@@ -138,8 +124,8 @@ rm -rf "$workdir"
 既存ルーター向けの説明を使ってください。
 
 ```sh
-sudo install -d -m 0755 /usr/local/etc/routerd
-sudo install -m 0600 first-router.yaml /usr/local/etc/routerd/router.yaml
+sudo install -d -m 0755 /etc/routerd
+sudo install -m 0600 first-router.yaml /etc/routerd/router.yaml
 sudo systemctl enable --now routerd.service
 sudo systemctl is-active routerd.service
 sudo routerctl get status
@@ -366,7 +352,7 @@ make website-build
 ```
 
 Makefile は開発用です。
-利用者向けの配置はリリースアーカイブと `install.sh` で行います。
+利用者向けの導入と更新は apt/pkg の native パッケージで行います。
 
 [ネットワーク名前空間テスト](tests/netns/README.md)は、使い捨ての Linux ゲストで
 明示的に `sudo` を指定して実行します。iptables-nft 1.8.7 以降での、SAM の転送が
@@ -400,10 +386,10 @@ sudo routerctl plugin run <name> --dry-run
 
 リリースインストーラーの既定:
 
-- 設定: `/usr/local/etc/routerd/router.yaml`
-- バイナリ: `/usr/local/sbin/routerd`, `/usr/local/sbin/routerctl`,
-  `/usr/local/sbin/routerd-*`
-- プラグイン: `/usr/local/libexec/routerd/plugins`
+- 設定: `/etc/routerd/router.yaml`
+- バイナリ: `/usr/sbin/routerd`, `/usr/bin/routerctl`,
+  `/usr/sbin/routerd-*`
+- プラグイン: `/usr/libexec/routerd/plugins`
 - Linux 実行時: `/run/routerd`
 - Linux 状態: `/var/lib/routerd`
 - FreeBSD 実行時と状態: `/var/run/routerd`, `/var/db/routerd`
@@ -479,7 +465,7 @@ ISO 全体が 1 つの GPL work として再ライセンスされるものでは
 
 release archive には `share/doc/LICENSE` と
 `share/doc/THIRD_PARTY_LICENSES.md` を同梱します。
-ライブ ISO では `/usr/local/share/doc/routerd/` にある `LICENSE` と
+ライブ ISO では `/usr/share/doc/routerd/` にある `LICENSE` と
 `THIRD_PARTY_LICENSES.txt` から同じ通知を確認できます。
 一覧は次のコマンドで再生成します。
 

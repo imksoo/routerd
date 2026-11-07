@@ -145,21 +145,15 @@ func TestDHCPv4ServerLeaseSyncAddsStickyLogSourcesWhenEnabled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(job.Sources) != 3 {
-		t.Fatalf("sources = %#v, want lease file plus sticky database and WAL", job.Sources)
+	if len(job.Sources) != 2 {
+		t.Fatalf("sources = %#v, want lease file plus sticky database snapshot", job.Sources)
 	}
 	if job.Sources[0].Name != "leaseFile" || !job.Sources[0].Required {
 		t.Fatalf("lease source = %#v, want required leaseFile first", job.Sources[0])
 	}
-	wantSuffixes := []string{"dhcp-sticky.db", "dhcp-sticky.db-wal"}
-	for i, suffix := range wantSuffixes {
-		source := job.Sources[i+1]
-		if source.Required {
-			t.Fatalf("sticky source %s is required; source=%#v", suffix, source)
-		}
-		if !strings.HasSuffix(source.Path, suffix) {
-			t.Fatalf("sticky source path = %q, want suffix %q", source.Path, suffix)
-		}
+	source := job.Sources[1]
+	if source.Required || !source.SQLiteSnapshot || !strings.HasSuffix(source.Path, "dhcp-sticky.db") {
+		t.Fatalf("sticky source must use an optional consistent snapshot: %#v", source)
 	}
 }
 

@@ -13,6 +13,22 @@ import (
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
+func TestDecodeActiveDoesNotDecodeExpiredPayload(t *testing.T) {
+	now := time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)
+	records := []routerstate.DynamicConfigPartRecord{
+		{Source: "expired", Generation: 1, ExpiresAt: now.Add(-time.Second), ResourcesJSON: "{", DirectivesJSON: "{", Status: "active"},
+		{Source: "live", Generation: 1, ExpiresAt: now.Add(time.Minute), ResourcesJSON: "[]", Status: "active"},
+	}
+	parts, err := DecodeActive(records, now)
+	if err != nil || len(parts) != 1 || parts[0].Spec.Source != "live" {
+		t.Fatalf("expired payload affected an independent live part: %+v %v", parts, err)
+	}
+	records[0].ExpiresAt = now.Add(time.Minute)
+	if _, err := DecodeActive(records, now); err == nil {
+		t.Fatal("live malformed payload was not rejected")
+	}
+}
+
 func TestEncodeDecodeRoundTripCorePart(t *testing.T) {
 	now := time.Date(2026, time.August, 18, 12, 0, 0, 0, time.UTC)
 	record, err := Encode(dynamicconfig.DynamicConfigPart{
@@ -108,6 +124,29 @@ func TestDecodeMobilityDataplanePlanEmpty(t *testing.T) {
 	}
 }
 
+func TestMobilityDataplaneCodecRetainsEmptyWithdrawalRequest(t *testing.T) {
+	now := time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)
+	plan := dynamicconfig.MobilityDataplanePlan{PoolPrefix: "10.88.60.0/24"}
+	request := dynamicconfig.MobilityWithdrawalRequest{ID: "move-1", GroupRef: "g", PoolRef: "pool", PoolPrefix: plan.PoolPrefix, Address: "10.88.60.10/32", FromNodeRef: "a", ToNodeRef: "b", PlanDigest: dynamicconfig.MobilityNativePlanDigest(plan)}
+	plan.Withdrawals = []dynamicconfig.MobilityWithdrawalRequest{request}
+	part := dynamicconfig.NewPart("empty-withdrawal", "MobilityPool/pool/node/a", nil, 1, now, now.Add(time.Minute))
+	part.Spec.MobilityDataplane = plan
+	record, err := Encode(part)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.MobilityDataplaneJSON == "" {
+		t.Fatal("codec discarded empty withdrawal")
+	}
+	decoded, err := DecodeMobilityDataplanePlan(record.MobilityDataplaneJSON)
+	if err != nil || len(decoded.Withdrawals) != 1 || decoded.Withdrawals[0] != request {
+		t.Fatalf("withdrawal codec: %+v %v", decoded, err)
+	}
+	if _, err := DecodeMobilityDataplanePlan(`{"poolPrefix":"10.88.60.0/24","withdrawals":null}`); err == nil {
+		t.Fatal("null withdrawal request accepted")
+	}
+}
+
 func TestDecodeMobilityDataplanePlanRejectsNonCanonicalNonemptyPayload(t *testing.T) {
 	for _, raw := range []string{"null", "{}", `{"unknown":true}`, `{"captures":[]}`} {
 		t.Run(raw, func(t *testing.T) {
@@ -173,5 +212,19 @@ func TestDecodeIgnoresLegacyGenericMobilityPoolPayload(t *testing.T) {
 	}
 	if directives, err := DecodeGenericDirectives(record); err != nil || len(directives) != 0 {
 		t.Fatalf("DecodeGenericDirectives() = %#v, %v", directives, err)
+	}
+}
+
+func TestFutureMobilityObservationCannotAuthorizeCurrentEffects(t *testing.T) {
+	now := time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)
+	observed := now.Add(time.Minute)
+	record := routerstate.DynamicConfigPartRecord{Source: "MobilityPool/pool/node/node-a", Generation: 1, ObservedAt: observed, ExpiresAt: observed.Add(maxMobilityPoolPlanLease), Digest: "current-plan", Status: "active"}
+	active, invalid := ActiveMobilityPoolPlanRecords([]routerstate.DynamicConfigPartRecord{record}, now)
+	if len(active) != 0 || !invalid["pool"] {
+		t.Fatalf("future observation supplied current authority: active=%+v invalid=%v", active, invalid)
+	}
+	active, invalid = ActiveMobilityPoolPlanRecords([]routerstate.DynamicConfigPartRecord{record}, observed)
+	if len(active) != 1 || len(invalid) != 0 {
+		t.Fatalf("current observation not admitted: active=%+v invalid=%v", active, invalid)
 	}
 }

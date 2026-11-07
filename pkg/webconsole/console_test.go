@@ -47,7 +47,7 @@ func TestAnnotateResourceOwnershipFromControllerModes(t *testing.T) {
 	if len(resources) != 1 {
 		t.Fatalf("resources = %d", len(resources))
 	}
-	if resources[0].Owner != "route" || resources[0].Status["owner"] != "route" {
+	if resources[0].Owner != "route" || resources[0].Status["owner"] != nil {
 		t.Fatalf("owner metadata not annotated: %+v status=%+v", resources[0], resources[0].Status)
 	}
 	if resources[0].ManagedBy != "routerd" || resources[0].Management != "managed" {
@@ -55,14 +55,16 @@ func TestAnnotateResourceOwnershipFromControllerModes(t *testing.T) {
 	}
 }
 
-func (s fakeStore) Get(string) routerstate.Value                            { return routerstate.Value{} }
-func (s fakeStore) Set(string, string, string) routerstate.Value            { return routerstate.Value{} }
-func (s fakeStore) Unset(string, string) routerstate.Value                  { return routerstate.Value{} }
-func (s fakeStore) Forget(string, string) routerstate.Value                 { return routerstate.Value{} }
-func (s fakeStore) Delete(string)                                           {}
-func (s fakeStore) Age(string) time.Duration                                { return 0 }
-func (s fakeStore) Now() time.Time                                          { return time.Now() }
-func (s fakeStore) Save(string) error                                       { return nil }
+func (s fakeStore) Get(string) routerstate.Value { return routerstate.Value{} }
+func (s fakeStore) Set(string, string, string) (routerstate.Value, error) {
+	return routerstate.Value{}, nil
+}
+func (s fakeStore) Unset(string, string) (routerstate.Value, error)  { return routerstate.Value{}, nil }
+func (s fakeStore) Forget(string, string) (routerstate.Value, error) { return routerstate.Value{}, nil }
+func (s fakeStore) Delete(string) error                              { return nil }
+func (s fakeStore) Age(string) time.Duration                         { return 0 }
+func (s fakeStore) Now() time.Time                                   { return time.Now() }
+
 func (s fakeStore) Variables() map[string]routerstate.Value                 { return nil }
 func (s fakeStore) LatestGeneration() int64                                 { return s.latest }
 func (s fakeStore) ListObjectStatuses() ([]routerstate.ObjectStatus, error) { return s.resources, nil }
@@ -82,7 +84,7 @@ func TestHandlerServesReadOnlySummary(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = dnsLog.Close()
-	flows, err := logstore.OpenTrafficFlowLog(trafficLog)
+	flows, err := logstore.OpenTrafficFlowLog(t.Context(), trafficLog)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,10 +112,10 @@ func TestHandlerServesReadOnlySummary(t *testing.T) {
 		Result: func() *apply.Result {
 			return &apply.Result{Phase: "Healthy", Generation: 7, Resources: []apply.ResourceResult{{ID: "x", Phase: "Healthy"}}}
 		},
-		Connections: func(limit int) (*observe.ConnectionTable, error) {
+		Connections: func(_ context.Context, limit int) (*observe.ConnectionTable, error) {
 			return &observe.ConnectionTable{Count: 3, Max: 262144}, nil
 		},
-		VPNStatus: func() (VPNStatus, error) {
+		VPNStatus: func(context.Context) (VPNStatus, error) {
 			return VPNStatus{Tailscale: &TailscaleStatus{HostName: "homert02", BackendState: "Running"}}, nil
 		},
 		DNSQueryLogPath:    queryLog,
@@ -470,31 +472,6 @@ func TestHandlerServesMinimalSummary(t *testing.T) {
 	}
 }
 
-func TestHandlerHidesStaleWireGuardPeerStatus(t *testing.T) {
-	handler := New(Options{
-		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
-			Metadata: api.ObjectMeta{Name: "wg-mesh-ipv4"},
-		}}}},
-		Store: fakeStore{resources: []routerstate.ObjectStatus{
-			{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress", Name: "wg-mesh-ipv4", Status: map[string]any{"phase": "Applied"}},
-			{APIVersion: api.NetAPIVersion, Kind: "WireGuardPeer", Name: "wg-mesh-ipv4", Status: map[string]any{"phase": "Pending", "reason": "InterfaceError"}},
-		}},
-	})
-	resources, err := handler.resourceStatuses()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, resource := range resources {
-		if resource.Kind == "WireGuardPeer" && resource.Name == "wg-mesh-ipv4" {
-			t.Fatalf("stale WireGuardPeer status was not filtered: %+v", resource)
-		}
-	}
-	if len(resources) != 1 || resources[0].Kind != "IPv4StaticAddress" {
-		t.Fatalf("resources = %+v, want only IPv4StaticAddress/wg-mesh-ipv4", resources)
-	}
-}
-
 func TestHandlerIncludesConfiguredResourcesWithoutObservedStatus(t *testing.T) {
 	handler := New(Options{
 		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
@@ -527,13 +504,13 @@ func TestHandlerIncludesConfiguredResourcesWithoutObservedStatus(t *testing.T) {
 		t.Fatalf("configured TailscaleNode missing from resources: %+v", resources)
 	}
 	status := tailscale.Status
-	if status["phase"] != "NotObserved" || status["reason"] != "NoObservedStatus" || status["configured"] != true || status["observed"] != false {
+	if status["phase"] != "NotObserved" || status["reason"] != "NoObservedStatus" {
 		t.Fatalf("tailscale synthetic status = %+v", status)
 	}
 }
 
 func TestHandlerServesVPNStatus(t *testing.T) {
-	handler := New(Options{VPNStatus: func() (VPNStatus, error) {
+	handler := New(Options{VPNStatus: func(context.Context) (VPNStatus, error) {
 		return VPNStatus{
 			WireGuard: []WireGuardInterfaceStatus{{
 				Name:       "wg0",
@@ -978,7 +955,7 @@ func TestHandlerServesTrafficFlows(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = dnsLog.Close()
-	flowLog, err := logstore.OpenTrafficFlowLog(path)
+	flowLog, err := logstore.OpenTrafficFlowLog(t.Context(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1245,7 +1222,7 @@ func TestHandlerEnrichesConnectionsWithDPI(t *testing.T) {
 	_ = firewallLog.Close()
 	handler := New(Options{
 		FirewallLogPath: path,
-		Connections: func(limit int) (*observe.ConnectionTable, error) {
+		Connections: func(_ context.Context, limit int) (*observe.ConnectionTable, error) {
 			return &observe.ConnectionTable{Entries: []observe.ConnectionEntry{{
 				Family:   "ipv4",
 				Protocol: "tcp",
@@ -1279,7 +1256,7 @@ func TestHandlerFallsBackConnectionAppFromPort(t *testing.T) {
 			}
 			return nil, nil
 		},
-		Connections: func(limit int) (*observe.ConnectionTable, error) {
+		Connections: func(_ context.Context, limit int) (*observe.ConnectionTable, error) {
 			return &observe.ConnectionTable{Entries: []observe.ConnectionEntry{{
 				Family:   "ipv4",
 				Protocol: "tcp",
@@ -1307,7 +1284,7 @@ func TestHandlerFallsBackConnectionAppFromPort(t *testing.T) {
 
 func TestHandlerLabelsOTLPConnectionsFromPort(t *testing.T) {
 	handler := New(Options{
-		Connections: func(limit int) (*observe.ConnectionTable, error) {
+		Connections: func(_ context.Context, limit int) (*observe.ConnectionTable, error) {
 			return &observe.ConnectionTable{Entries: []observe.ConnectionEntry{{
 				Family:   "ipv4",
 				Protocol: "tcp",
@@ -1354,7 +1331,7 @@ func TestHandlerAnnotatesLocalServiceRedirectConnections(t *testing.T) {
 	}}}
 	handler := New(Options{
 		Router: router,
-		Connections: func(limit int) (*observe.ConnectionTable, error) {
+		Connections: func(_ context.Context, limit int) (*observe.ConnectionTable, error) {
 			return &observe.ConnectionTable{Entries: []observe.ConnectionEntry{{
 				Family:   "ipv4",
 				Protocol: "udp",
@@ -1507,7 +1484,7 @@ func TestHandlerDHCPLeaseOrderIsOnlyTieBreakerAfterExpiry(t *testing.T) {
 
 func TestReadDnsmasqLeases(t *testing.T) {
 	leasePath := filepath.Join(t.TempDir(), "dnsmasq.leases")
-	if err := os.WriteFile(leasePath, []byte("1778014867 18:ec:e7:33:12:6c 172.18.0.150 aiseg2 01:18:ec:e7:33:12:6c\n1778014867 bc:24:11:e0:8e:3a 2409:10:3d60:1271::20 host6 00:03:00:01:bc:24:11:e0:8e:3a\n"), 0o644); err != nil {
+	if err := os.WriteFile(leasePath, []byte("1778014867 18:ec:e7:33:12:6c 172.18.0.150 aiseg2 01:18:ec:e7:33:12:6c\n1778014867 12 2409:10:3d60:1271::20 host6 00:03:00:01:bc:24:11:e0:8e:3a\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	leases, err := readDnsmasqLeases(leasePath)
@@ -1521,7 +1498,7 @@ func TestReadDnsmasqLeases(t *testing.T) {
 	if lease.IP != "172.18.0.150" || lease.Hostname != "aiseg2" || lease.Vendor != "Panasonic" || lease.Family != "ipv4" {
 		t.Fatalf("lease = %+v", lease)
 	}
-	if leases[1].IP != "2409:10:3d60:1271::20" || leases[1].Family != "ipv6" {
+	if leases[1].IP != "2409:10:3d60:1271::20" || leases[1].Family != "ipv6" || leases[1].MAC != "" || leases[1].IAID != "12" {
 		t.Fatalf("ipv6 lease = %+v", leases[1])
 	}
 }
@@ -1600,7 +1577,7 @@ func TestParseIPNeighborJSON(t *testing.T) {
 	if len(rows) != 2 {
 		t.Fatalf("rows = %d", len(rows))
 	}
-	if rows[0].MAC != "4e:20:15:aa:e0:67" || rows[0].Vendor != "Apple private address" {
+	if rows[0].MAC != "4e:20:15:aa:e0:67" || rows[0].Vendor != "" {
 		t.Fatalf("row = %+v", rows[0])
 	}
 }
@@ -1634,7 +1611,7 @@ func TestCorrelateClientsMergesDHCPLeaseAndIPv6NeighborByMAC(t *testing.T) {
 			{MAC: "4e:20:15:aa:e0:67", IP: "2409:10:3d60:1271::abcd", IfName: "ens19", State: "STALE", Source: "ip-neigh"},
 			{MAC: "4e:20:15:aa:e0:67", IP: "fe80::14c5:6fd7:b848:a739", IfName: "ens19", State: "STALE", Source: "ip-neigh"},
 		},
-		[]logstore.TrafficFlow{{ClientAddress: "2409:10:3d60:1271::abcd", PeerAddress: "2001:4860:4860::8888", Accounting: true, BytesOut: 120, BytesIn: 240}},
+		[]logstore.TrafficFlow{{ClientAddress: "2409:10:3d60:1271::abcd", PeerAddress: "2001:4860:4860::8888", BytesOut: counterFixture(120), BytesIn: counterFixture(240)}},
 		[]logstore.DNSQuery{{ClientAddress: "2409:10:3d60:1271::abcd", QuestionName: "www.icloud.com", QuestionType: "AAAA"}},
 		nil,
 	)
@@ -1650,7 +1627,7 @@ func TestCorrelateClientsMergesDHCPLeaseAndIPv6NeighborByMAC(t *testing.T) {
 			t.Fatalf("addresses missing %s: %+v", want, row.Addresses)
 		}
 	}
-	if row.BytesOut != 120 || row.BytesIn != 240 {
+	if (row.BytesOut == nil || *row.BytesOut != 120) || (row.BytesIn == nil || *row.BytesIn != 240) {
 		t.Fatalf("traffic was not joined to client: %+v", row)
 	}
 	if row.InferredOSFamily != "Apple" || row.FingerprintConfidence == 0 {
@@ -1669,9 +1646,8 @@ func TestCorrelateClientsAddsDPIActivitySummary(t *testing.T) {
 				PeerAddress:   "93.184.216.34",
 				AppName:       "tls",
 				TLSSNI:        "example.com",
-				Accounting:    true,
-				BytesOut:      1600,
-				BytesIn:       6400,
+				BytesOut:      counterFixture(1600),
+				BytesIn:       counterFixture(6400),
 				EndedAt:       now.Add(-2 * time.Minute),
 			},
 			{
@@ -1679,9 +1655,8 @@ func TestCorrelateClientsAddsDPIActivitySummary(t *testing.T) {
 				PeerAddress:      "1.1.1.1",
 				AppName:          "dns",
 				ResolvedHostname: "one.one.one.one",
-				Accounting:       true,
-				BytesOut:         120,
-				BytesIn:          240,
+				BytesOut:         counterFixture(120),
+				BytesIn:          counterFixture(240),
 				EndedAt:          now,
 			},
 		},
@@ -1721,27 +1696,24 @@ func TestCorrelateClientsSkipsFailedNeighbors(t *testing.T) {
 	}
 }
 
-func TestCorrelateClientsGroupsPrivacyAddressByFingerprintWhenUnique(t *testing.T) {
-	rows := correlateClients(
-		[]DHCPLease{{
-			MAC:      "4e:20:15:aa:e0:67",
-			IP:       "172.18.1.110",
-			Hostname: "mcberry-iPhone",
-			Vendor:   "Apple private address",
-		}},
-		nil,
-		[]logstore.TrafficFlow{{ClientAddress: "2409:10:3d60:1271:abcd::1234", PeerAddress: "17.253.144.10", ResolvedHostname: "gateway.icloud.com"}},
-		[]logstore.DNSQuery{{ClientAddress: "2409:10:3d60:1271:abcd::1234", QuestionName: "gateway.icloud.com", QuestionType: "AAAA"}},
-		nil,
-	)
-	if len(rows) != 1 {
-		t.Fatalf("rows = %d: %+v", len(rows), rows)
+func TestCorrelateClientsRequiresObservedMACForPrivacyAddressIdentity(t *testing.T) {
+	leases := []DHCPLease{{MAC: "4e:20:15:aa:e0:67", IP: "172.18.1.110", Hostname: "mcberry-iPhone"}}
+	privacyIP := "2409:10:3d60:1271:abcd::1234"
+	flows := []logstore.TrafficFlow{{ClientAddress: privacyIP, PeerAddress: "17.253.144.10", ResolvedHostname: "gateway.icloud.com"}}
+	queries := []logstore.DNSQuery{{ClientAddress: privacyIP, QuestionName: "gateway.icloud.com", QuestionType: "AAAA"}}
+	rows := correlateClients(leases, nil, flows, queries, nil)
+	if len(rows) != 2 {
+		t.Fatalf("similar OS fingerprint fabricated a MAC association: %+v", rows)
 	}
-	if !containsString(rows[0].Addresses, "2409:10:3d60:1271:abcd::1234") {
-		t.Fatalf("privacy address not grouped: %+v", rows[0])
+	for _, row := range rows {
+		if row.MAC != "" && containsString(row.Addresses, privacyIP) {
+			t.Fatalf("unobserved privacy address was assigned to a known MAC: %+v", row)
+		}
 	}
-	if rows[0].InferredOSFamily != "Apple" || rows[0].InferredDeviceClass != "phone" {
-		t.Fatalf("fingerprint = %+v", rows[0])
+	neighbors := []NeighborEntry{{IP: privacyIP, MAC: leases[0].MAC, State: "REACHABLE", Source: "ip-neigh"}}
+	rows = correlateClients(leases, neighbors, flows, queries, nil)
+	if len(rows) != 1 || !containsString(rows[0].Addresses, privacyIP) || rows[0].MAC != leases[0].MAC || rows[0].InferredOSFamily != "Apple" || rows[0].InferredDeviceClass != "phone" {
+		t.Fatalf("observed IPv6/MAC association must retain useful grouping and fingerprint: %+v", rows)
 	}
 }
 
@@ -1841,7 +1813,7 @@ func TestHandlerClientSnapshotIgnoresStaleIPBasedFingerprints(t *testing.T) {
 	_ = dnsLog.Close()
 
 	trafficLog := filepath.Join(dir, "traffic-flows.db")
-	traffic, err := logstore.OpenTrafficFlowLog(trafficLog)
+	traffic, err := logstore.OpenTrafficFlowLog(t.Context(), trafficLog)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1877,7 +1849,7 @@ func TestHandlerClientSnapshotIgnoresStaleIPBasedFingerprints(t *testing.T) {
 		DHCPFingerprintLogPath: fingerprintLogPath,
 		DHCPLeasePaths:         []string{leasePath},
 	})
-	snapshot := handler.Snapshot(SnapshotOptions{
+	snapshot := handler.Snapshot(context.Background(), SnapshotOptions{
 		EventLimit:            -1,
 		ConnectionsLimit:      -1,
 		FirewallLimit:         -1,
@@ -2432,4 +2404,8 @@ func TestHandlerServesEmbeddedAssets(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
+}
+
+func (s fakeStore) ReadVariable(name string) (routerstate.Value, error) {
+	return s.Get(name), nil
 }

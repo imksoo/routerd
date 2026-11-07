@@ -5,6 +5,8 @@ package chain
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,10 +19,9 @@ import (
 )
 
 // This fixture exercises the generated source list and a real local rsync.
-// Closing the SQLite writer after the WAL copy reproduces a disappearing SHM
-// without changing host networking. It verifies this lifecycle, not atomic
-// replication of a database under arbitrary concurrent writes.
-func TestLeaseSyncSQLiteClosesAfterWALTransfer(t *testing.T) {
+// Closing the writer during snapshot transfer must leave a readable replica,
+// independent of the live database WAL/SHM lifetime.
+func TestLeaseSyncSQLiteWriterClosesDuringSnapshotTransfer(t *testing.T) {
 	if _, err := exec.LookPath("rsync"); err != nil {
 		t.Skip("rsync unavailable: local transfer observation not acquired")
 	}
@@ -62,7 +63,7 @@ func TestLeaseSyncSQLiteClosesAfterWALTransfer(t *testing.T) {
 		source := args[len(args)-2]
 		transferred = append(transferred, filepath.Base(source))
 		out, err := exec.CommandContext(ctx, name, "-a", "--delay-updates", source, filepath.Join(receiverDir, filepath.Base(source))).CombinedOutput()
-		if err == nil && strings.HasSuffix(source, "-wal") {
+		if err == nil && filepath.Base(source) == "dhcp-sticky.db" {
 			if err := writer.Close(); err != nil {
 				t.Fatal(err)
 			}
@@ -79,7 +80,7 @@ func TestLeaseSyncSQLiteClosesAfterWALTransfer(t *testing.T) {
 	if status["phase"] != "Synced" {
 		t.Fatalf("transfer must succeed after transient SHM disappears: %#v", status)
 	}
-	if len(transferred) != 3 || strings.Contains(strings.Join(transferred, ","), "-shm") {
+	if len(transferred) != 2 || strings.Contains(strings.Join(transferred, ","), "-shm") {
 		t.Fatalf("unexpected transferred files: %v", transferred)
 	}
 	receiverPath := filepath.Join(receiverDir, "dhcp-sticky.db")
@@ -103,33 +104,103 @@ func TestLeaseSyncSQLiteClosesAfterWALTransfer(t *testing.T) {
 	if err := receiver.QueryRow("PRAGMA quick_check").Scan(&integrity); err != nil || integrity != "ok" {
 		t.Fatalf("receiver database invalid: %q %v", integrity, err)
 	}
-	if _, err := os.Stat(receiverPath + "-shm"); err != nil {
-		t.Fatalf("SQLite did not regenerate its receiver-local index: %v", err)
+	if _, err := os.Stat(receiverPath + "-wal"); !os.IsNotExist(err) {
+		t.Fatalf("standalone snapshot unexpectedly requires receiver WAL: %v", err)
 	}
 }
 
-// Missing WAL is a real data-transfer failure, not an ignorable index race.
-func TestLeaseSyncDoesNotIgnoreVanishedWAL(t *testing.T) {
-	if _, err := exec.LookPath("rsync"); err != nil {
-		t.Skip("rsync unavailable: local transfer observation not acquired")
+// Snapshot files are private and temporary, including on transfer failure.
+func TestLeaseSyncSnapshotLifetimeAndDestination(t *testing.T) {
+	for _, failTransfer := range []bool{false, true} {
+		t.Run(fmt.Sprint(failTransfer), func(t *testing.T) {
+			source := filepath.Join(t.TempDir(), "dhcp-sticky.db")
+			writer, err := logstore.OpenDHCPStickyLog(source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer writer.Close()
+			if err := writer.RecordLeaseEvent(t.Context(), "added", "aa:bb:cc:dd:ee:ff", "192.0.2.20", "client", 3, time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			job := fileSyncJob{APIVersion: api.NetAPIVersion, Kind: "DHCPv4ServerLeaseSync", Name: "replica", Sources: []fileSyncSource{{Name: "stickyLog", Path: source, SQLiteSnapshot: true}}, Targets: []fileSyncTarget{{Host: "unused.invalid"}, {Host: "second.invalid"}}}
+			var snapshots []string
+			controller := FileSyncController{Store: mapStore{}, Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+				snapshot := args[len(args)-2]
+				snapshots = append(snapshots, snapshot)
+				if snapshot == source || !strings.HasSuffix(args[len(args)-1], ":"+source) {
+					t.Fatalf("wrong source/destination: %v", args)
+				}
+				info, err := os.Stat(snapshot)
+				if err != nil || info.Mode().Perm() != 0600 {
+					t.Fatalf("private snapshot: %v %v", info, err)
+				}
+				dir, err := os.Stat(filepath.Dir(snapshot))
+				if err != nil || dir.Mode().Perm() != 0700 {
+					t.Fatalf("private directory: %v %v", dir, err)
+				}
+				if failTransfer {
+					return nil, errors.New("fixture transfer failed")
+				}
+				return nil, nil
+			}}
+			if err := controller.reconcileJob(t.Context(), job); err != nil {
+				t.Fatal(err)
+			}
+			wantPhase := "Synced"
+			wantCalls := 2
+			if failTransfer {
+				wantPhase = "Error"
+				wantCalls = 1
+			}
+			if len(snapshots) != wantCalls || controller.Store.ObjectStatus(job.APIVersion, job.Kind, job.Name)["phase"] != wantPhase {
+				t.Fatalf("calls=%v status=%v", snapshots, controller.Store.ObjectStatus(job.APIVersion, job.Kind, job.Name))
+			}
+			for _, snapshot := range snapshots {
+				if _, err := os.Stat(filepath.Dir(snapshot)); !os.IsNotExist(err) {
+					t.Fatalf("snapshot directory retained: %s %v", snapshot, err)
+				}
+			}
+			if !failTransfer && snapshots[0] != snapshots[1] {
+				t.Fatal("targets received different snapshots")
+			}
+		})
 	}
-	dir := t.TempDir()
-	wal := filepath.Join(dir, "dhcp-sticky.db-wal")
-	if err := os.WriteFile(wal, []byte("transfer fixture"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	job := fileSyncJob{APIVersion: api.NetAPIVersion, Kind: "DHCPv4ServerLeaseSync", Name: "replica", Sources: []fileSyncSource{{Name: "stickyLogWAL", Path: wal}}, Targets: []fileSyncTarget{{Host: "unused.invalid"}}}
-	controller := FileSyncController{Store: mapStore{}, Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
-		if err := os.Remove(wal); err != nil {
-			t.Fatal(err)
-		}
-		return exec.CommandContext(ctx, name, "-a", args[len(args)-2], filepath.Join(dir, "received-wal")).CombinedOutput()
-	}}
-	if err := controller.reconcileJob(context.Background(), job); err != nil {
-		t.Fatal(err)
-	}
-	status := controller.Store.ObjectStatus(job.APIVersion, job.Kind, job.Name)
-	if status["phase"] != "Error" || status["reason"] != "SyncFailed" || status["exitCode"] != 23 || status["source"] != wal {
-		t.Fatalf("WAL failure must remain observable: %#v", status)
+}
+
+func TestLeaseSyncSnapshotFailureDoesNotTransferOrAcknowledge(t *testing.T) {
+	for _, canceled := range []bool{false, true} {
+		t.Run(fmt.Sprint(canceled), func(t *testing.T) {
+			source := filepath.Join(t.TempDir(), "dhcp-sticky.db")
+			if err := os.WriteFile(source, []byte("not a database"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if canceled {
+				cancel()
+			}
+			job := fileSyncJob{APIVersion: api.NetAPIVersion, Kind: "DHCPv4ServerLeaseSync", Name: "replica", Sources: []fileSyncSource{{Name: "stickyLog", Path: source, SQLiteSnapshot: true}}, Targets: []fileSyncTarget{{Host: "unused.invalid"}}}
+			controller := FileSyncController{Store: mapStore{}, Command: func(context.Context, string, ...string) ([]byte, error) {
+				t.Fatal("transferred an incomplete snapshot")
+				return nil, nil
+			}}
+			err := controller.reconcileJob(ctx, job)
+			if canceled {
+				if !errors.Is(err, context.Canceled) {
+					t.Fatalf("cancellation not returned: %v", err)
+				}
+				if status := controller.Store.ObjectStatus(job.APIVersion, job.Kind, job.Name); len(status) != 0 {
+					t.Fatalf("canceled generation published snapshot failure: %v", status)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			status := controller.Store.ObjectStatus(job.APIVersion, job.Kind, job.Name)
+			if status["phase"] != "Error" || status["reason"] != "SnapshotFailed" || status["source"] != source || status["syncedAt"] != nil {
+				t.Fatalf("snapshot error hidden: %v", status)
+			}
+		})
 	}
 }

@@ -7,7 +7,6 @@ package main
 import (
 	"bufio"
 	"context"
-	"encoding/binary"
 	"fmt"
 	"os"
 	"os/exec"
@@ -144,8 +143,14 @@ func runPflogDaemon(ctx context.Context, opts options, log *logstore.FirewallLog
 		return fmt.Errorf("BIOCIMMEDIATE: %w", err)
 	}
 	bufLen, err := unix.IoctlGetInt(fd, unix.BIOCGBLEN)
-	if err != nil || bufLen <= 0 {
-		bufLen = 4096
+	if err != nil {
+		return fmt.Errorf("BIOCGBLEN: %w", err)
+	}
+	if bufLen <= 0 {
+		return fmt.Errorf("invalid BPF buffer length %d", bufLen)
+	}
+	if err := unix.SetNonblock(fd, true); err != nil {
+		return err
 	}
 	buf := make([]byte, bufLen)
 	for {
@@ -156,7 +161,11 @@ func runPflogDaemon(ctx context.Context, opts options, log *logstore.FirewallLog
 		}
 		n, err := unix.Read(fd, buf)
 		if err != nil {
-			if err == unix.EINTR {
+			if err == unix.EINTR || err == unix.EAGAIN {
+				_, pollErr := unix.Poll([]unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}, 500)
+				if pollErr != nil && pollErr != unix.EINTR {
+					return pollErr
+				}
 				continue
 			}
 			return err
@@ -210,7 +219,7 @@ func bpfPackets(buf []byte) [][]byte {
 		hdr := (*unix.BpfHdr)(unsafe.Pointer(&buf[0]))
 		hdrLen := int(hdr.Hdrlen)
 		capLen := int(hdr.Caplen)
-		if hdrLen <= 0 || capLen < 0 || len(buf) < hdrLen+capLen {
+		if hdrLen < unix.SizeofBpfHdr || hdrLen > len(buf) || capLen < 0 || capLen > len(buf)-hdrLen {
 			break
 		}
 		out = append(out, buf[hdrLen:hdrLen+capLen])
@@ -226,42 +235,4 @@ func bpfPackets(buf []byte) [][]byte {
 func bpfWordAlign(n int) int {
 	alignment := int(unsafe.Sizeof(uintptr(0)))
 	return (n + alignment - 1) &^ (alignment - 1)
-}
-
-func firewallLogEntryFromPflogPacket(packet []byte) (logstore.FirewallLogEntry, bool) {
-	entry, _, ok := firewallLogEntryAndPayloadFromPflogPacket(packet)
-	return entry, ok
-}
-
-func firewallLogEntryAndPayloadFromPflogPacket(packet []byte) (logstore.FirewallLogEntry, []byte, bool) {
-	if len(packet) < 1 {
-		return logstore.FirewallLogEntry{}, nil, false
-	}
-	headerLen := int(packet[0])
-	if headerLen <= 0 || headerLen > len(packet) {
-		return logstore.FirewallLogEntry{}, nil, false
-	}
-	payload := packet[headerLen:]
-	entry, ok := firewallLogEntryFromIPPacket(time.Now().UTC(), payload, "pflog-bpf")
-	if !ok {
-		return logstore.FirewallLogEntry{}, nil, false
-	}
-	if headerLen >= 6 {
-		entry.Action = pflogAction(packet[2])
-		entry.RuleName = fmt.Sprintf("pf-rule-%d", binary.BigEndian.Uint16(packet[4:6]))
-	}
-	return entry, payload, true
-}
-
-func pflogAction(action byte) string {
-	switch action {
-	case 0:
-		return "pass"
-	case 1:
-		return "drop"
-	case 2:
-		return "scrub"
-	default:
-		return "drop"
-	}
 }

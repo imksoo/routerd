@@ -71,7 +71,7 @@ func RunInventory(ctx context.Context, spec api.PluginSpec, req ObservePrivateIP
 	stderr := subprocessio.NewCapture(subprocessio.StderrLimit)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
-	runErr := cmd.Run()
+	runErr := subprocessio.Run(cmd)
 	duration := time.Since(started)
 
 	outcome := RunOutcome{
@@ -99,6 +99,16 @@ func RunInventory(ctx context.Context, spec api.PluginSpec, req ObservePrivateIP
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		err = fmt.Errorf("decode provider inventory %s stdout: %w", spec.Executable, err)
+		outcome.Error = err.Error()
+		return result, outcome, err
+	}
+	if result.APIVersion != ProtocolAPIVersion || result.Kind != KindObservePrivateIPsResult {
+		err := fmt.Errorf("provider inventory %s returned unsupported result envelope %s/%s", spec.Executable, result.APIVersion, result.Kind)
+		outcome.Error = err.Error()
+		return result, outcome, err
+	}
+	if result.Status.Status == ResultSucceeded && (result.Status.LocalIPs == nil || result.Status.ObservedCandidates == nil) {
+		err := fmt.Errorf("successful provider inventory must include localIPs and observedCandidates arrays; missing observations are unknown")
 		outcome.Error = err.Error()
 		return result, outcome, err
 	}

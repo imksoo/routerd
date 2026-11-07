@@ -17,7 +17,7 @@ func TestFirewallLoggerSystemdSpecPassesNFLogGroup(t *testing.T) {
 	}, "/run/routerd/dpi-classifier/default.sock")
 
 	want := []string{
-		"/usr/local/sbin/routerd-firewall-logger",
+		"/usr/sbin/routerd-firewall-logger",
 		"daemon",
 		"--path",
 		"/var/lib/routerd/firewall-logs.db",
@@ -38,7 +38,7 @@ func TestFirewallLoggerSystemdSpecDefaultsNFLogGroup(t *testing.T) {
 	}, "")
 
 	want := []string{
-		"/usr/local/sbin/routerd-firewall-logger",
+		"/usr/sbin/routerd-firewall-logger",
 		"daemon",
 		"--path",
 		"/var/lib/routerd/firewall-logs.db",

@@ -52,14 +52,11 @@ spec:
           static:
             allowedPrefixes:
               - 198.51.100.0/24
+        # Incoming prefixes are controlled by importPolicy above.
+        # This example adds communities to outbound advertisements.
         communities:
           send: both
-          accept:
-            - 64513:100
-            - no-export
           set:
-            in:
-              - 64512:10
             out:
               - 64512:20
 

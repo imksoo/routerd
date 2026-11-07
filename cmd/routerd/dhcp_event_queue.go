@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
@@ -50,10 +51,12 @@ func runDHCPEventQueue(ctx context.Context, path, stickyPath, defaultLeaseFile s
 				var processed bool
 				processed, err = q.ProcessOne(processCtx, func(ctx context.Context, event dhcpeventqueue.Event) error {
 					router := currentRouter()
-					disposition := ""
+					disposition := prepareDHCPLeaseSource(router, &event.Lease)
 					if event.ObservedAt.Before(started) {
 						var err error
-						disposition, err = dhcpReplayDisposition(router, defaultLeaseFile, event.Lease, time.Now().UTC())
+						if disposition == "" {
+							disposition, err = dhcpReplayDisposition(router, defaultLeaseFile, event.Lease, time.Now().UTC())
+						}
 						if err != nil {
 							return err
 						}
@@ -76,10 +79,6 @@ func runDHCPEventQueue(ctx context.Context, path, stickyPath, defaultLeaseFile s
 		case <-ticker.C:
 		}
 	}
-}
-
-func processDHCPLeaseEvent(ctx context.Context, pending dhcpeventqueue.Event, stickyPath string, holdDays int, eventBus *bus.Bus) error {
-	return processDHCPLeaseEventDisposition(ctx, pending, stickyPath, holdDays, eventBus, "", false)
 }
 
 func processDHCPLeaseEventDisposition(ctx context.Context, pending dhcpeventqueue.Event, stickyPath string, holdDays int, eventBus *bus.Bus, disposition string, replayed bool) error {
@@ -106,6 +105,15 @@ func processDHCPLeaseEventDisposition(ctx context.Context, pending dhcpeventqueu
 	event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd-dhcp-event-relay", Kind: "routerd-dhcp-event-relay"}, topic, daemonapi.SeverityInfo)
 	event.Time = pending.ObservedAt
 	event.Attributes = map[string]string{"mac": req.MAC, "ip": req.IP, "hostname": req.Hostname, "interface": req.Interface, "observedAt": pending.ObservedAt.UTC().Format(time.RFC3339Nano)}
+	if kind, name, ok := strings.Cut(req.Source, "/"); ok {
+		event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: kind, Name: name}
+	}
+	if !req.ExpiresAt.IsZero() {
+		event.Attributes["expiresAt"] = req.ExpiresAt.UTC().Format(time.RFC3339Nano)
+	}
+	if req.Infinite {
+		event.Attributes["infinite"] = "true"
+	}
 	if replayed {
 		event.Attributes["replayed"] = "true"
 	}

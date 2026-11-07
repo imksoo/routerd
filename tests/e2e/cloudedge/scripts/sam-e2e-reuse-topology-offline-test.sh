@@ -63,6 +63,8 @@ done
 
 # Exercise real client setup with one client per site and both local leaves.
 # All remote I/O is intercepted; remote route commands are recorded, never run.
+# These globals and functions are consumed by the evaluated production body.
+# shellcheck disable=SC2034,SC2317
 (
   reuse_deployed_topology=0
   evidence_dir="$work/one-client-routing"
@@ -120,5 +122,76 @@ assert_argument_error missing-config '--reuse-deployed-topology requires an exis
 # input checks, without enough inputs to perform any network operation.
 assert_argument_error accepted-reuse '--tofu-output is required' \
   --reuse-deployed-topology --skip-deploy --configs-dir "$work/configs"
+
+# A failed generator must not return a usable config directory from the
+# command-substitution caller that drives deployment.
+eval "$(extract_function generate_configs reject_pve_control_plane_resources)"
+mkdir -p "$work/generator-failure/deploy"
+cat >"$work/generator-failure/tool" <<'FAILED_GENERATOR'
+#!/bin/sh
+printf '%s\n' 'partial generator output'
+exit 73
+FAILED_GENERATOR
+chmod +x "$work/generator-failure/tool"
+rc=0
+# shellcheck disable=SC2034
+(
+  configs_dir=
+  evidence_dir="$work/generator-failure"
+  pve_capture_interface=fixture0
+  config_generator="$work/generator-failure/tool"
+  tofu_output="$work/unused-tofu.json"
+  generate_configs
+) >"$work/generator-failure/result" || rc=$?
+if [ "$rc" -ne 73 ] || [ -s "$work/generator-failure/result" ]; then
+  echo "failed config generation produced an admitted deployment path: $rc" >&2
+  exit 1
+fi
+
+# Execute the actual remote admission body with intercepted systemctl/sudo.
+# No service or host network operation is performed by this regression.
+eval "$(awk '
+  $0 == "stop_existing_routerd_units() {" {printing = 1}
+  printing {print}
+  printing && $0 == "}" {exit}
+' "$harness")"
+for mode in list-error stop-error still-running ready; do
+  io_log="$work/stop-$mode.log"
+  rc=0
+  # shellcheck disable=SC2317
+  (
+    set +o pipefail # The transmitted remote body declares set -e, without pipefail.
+    systemctl() {
+      printf '%s\n' "$*" >>"$io_log"
+      case "$1" in
+        list-units)
+          [ "$mode" != list-error ] || return 71
+          printf '%s\n' 'routerd-a.service loaded active running fixture' 'routerd-b.service loaded active running fixture'
+          ;;
+        stop) [ "$mode" != stop-error ] || return 72 ;;
+        show)
+          case "$*" in
+            *ActiveState*) printf '%s\n' inactive ;;
+            *MainPID*) [ "$mode" != still-running ] || { printf '%s\n' 123; return; }; printf '%s\n' 0 ;;
+            *ControlPID*) printf '%s\n' 0 ;;
+            *) return 73 ;;
+          esac
+          ;;
+        *) return 74 ;;
+      esac
+    }
+    sudo() { "$@"; }
+    stop_existing_routerd_units
+  ) >"$work/stop-$mode.stdout" 2>"$work/stop-$mode.stderr" || rc=$?
+  if [ "$mode" = ready ]; then
+    [ "$rc" -eq 0 ] || { echo "acknowledged unit stop failed: $rc" >&2; exit 1; }
+    grep -F 'show routerd-b.service' "$io_log" >/dev/null
+  else
+    [ "$rc" -ne 0 ] || { echo "remote deployment admitted after unconfirmed stop: $mode" >&2; exit 1; }
+    if grep -F 'stop routerd-b.service' "$io_log" >/dev/null; then
+      echo "remote deployment continued after failed first unit: $mode" >&2; exit 1
+    fi
+  fi
+done
 
 echo 'sam-e2e reuse deployed topology offline OK'

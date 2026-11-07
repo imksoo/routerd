@@ -3,10 +3,12 @@
 package bgpdaemon
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -15,9 +17,14 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/internal/stringutil"
+	bgpstate "github.com/imksoo/routerd/pkg/bgp"
+	"github.com/imksoo/routerd/pkg/dynamicconfig"
 )
 
-const AppliedVersion = 1
+// Version 3 gives the daemon exclusive policy and local-path ownership, with
+// complete static/dynamic policy intent and pending path effects. Earlier
+// journals do not prove this ownership contract and are rejected at cutover.
+const AppliedVersion = 3
 
 const (
 	AppliedPathSourceStatic = "routerd-static"
@@ -27,13 +34,10 @@ const (
 )
 
 type AppliedConfig struct {
-	Version   int    `json:"version"`
-	UpdatedAt string `json:"updatedAt,omitempty"`
-	// PendingImportPolicyReset is a durable fence written before an import
-	// policy replacement that can invalidate already accepted routes. It makes
-	// a controller crash between SetPolicies and the soft inbound reset
-	// recoverable without trusting a stale RIB entry.
-	PendingImportPolicyReset bool `json:"pendingImportPolicyReset,omitempty"`
+	Version       int           `json:"version"`
+	UpdatedAt     string        `json:"updatedAt,omitempty"`
+	Policy        PolicyIntent  `json:"policy"`
+	PendingPolicy *PolicyIntent `json:"pendingPolicy,omitempty"`
 	// PendingDirectPeerAdditions records direct SAM peers which were journaled
 	// before AddPeer but have not yet reached a complete desired-state save.
 	// routerd-bgp skips them on restore, while routerd can identify and finish
@@ -45,18 +49,18 @@ type AppliedConfig struct {
 	// routerd writes this marker before DeletePeer, so a crash between the live
 	// deletion and the final desired-state save cannot resurrect the peer.
 	PendingDirectPeerRemovals []string `json:"pendingDirectPeerRemovals,omitempty"`
-	// PendingStaticPathRemovals contains locally originated paths which have
+	// PendingPathAdds records native path ownership before AddPath.
+	// A missing returned UUID must never make a possibly-live path disappear
+	// from reconciliation after a failed applied-state write.
+	PendingPathAdds []AppliedPath `json:"pendingPathAdds,omitempty"`
+	// PendingPathRemovals contains locally originated paths which have
 	// been removed from the restart set but still need a live GoBGP withdrawal.
-	// Keeping their UUIDs makes a crash between DeletePath and the next complete
-	// desired-state save recoverable without re-advertising the stale prefix.
-	PendingStaticPathRemovals []AppliedPath          `json:"pendingStaticPathRemovals,omitempty"`
-	Global                    AppliedGlobal          `json:"global,omitempty"`
-	Peers                     map[string]AppliedPeer `json:"peers,omitempty"`
-	Paths                     []AppliedPath          `json:"paths,omitempty"`
-	// Advertisements is the legacy static-prefix view. New code should use Paths
-	// with source=routerd-static, but keeping this field preserves existing state
-	// files and control API clients.
-	Advertisements []string `json:"advertisements,omitempty"`
+	// Their exact source/prefix native identity survives a lost UUID, so retry
+	// never re-advertises the path or withdraws another local source or peer.
+	PendingPathRemovals []AppliedPath          `json:"pendingPathRemovals,omitempty"`
+	Global              AppliedGlobal          `json:"global,omitempty"`
+	Peers               map[string]AppliedPeer `json:"peers,omitempty"`
+	Paths               []AppliedPath          `json:"paths,omitempty"`
 }
 
 type AppliedGlobal struct {
@@ -66,22 +70,7 @@ type AppliedGlobal struct {
 	ListenAddresses  []string                `json:"listenAddresses,omitempty"`
 	Families         []string                `json:"families,omitempty"`
 	UseMultiplePaths bool                    `json:"useMultiplePaths"`
-	ImportPolicy     AppliedImportPolicy     `json:"importPolicy,omitempty"`
 	GracefulRestart  *AppliedGracefulRestart `json:"gracefulRestart,omitempty"`
-}
-
-type AppliedImportPolicy struct {
-	AllowedPrefixes        []string `json:"allowedPrefixes,omitempty"`
-	AllowedPrefixLengthMin int      `json:"allowedPrefixLengthMin,omitempty"`
-	AllowedPrefixLengthMax int      `json:"allowedPrefixLengthMax,omitempty"`
-	RequiredCommunities    []string `json:"requiredCommunities,omitempty"`
-	ForbiddenCommunities   []string `json:"forbiddenCommunities,omitempty"`
-	NextHopRewrite         string   `json:"nextHopRewrite,omitempty"`
-	LocalPreference        uint32   `json:"localPreference,omitempty"`
-}
-
-type AppliedExportPolicy struct {
-	AllowedPrefixes []string `json:"allowedPrefixes,omitempty"`
 }
 
 type AppliedGracefulRestart struct {
@@ -91,17 +80,17 @@ type AppliedGracefulRestart struct {
 }
 
 type AppliedPeer struct {
-	Address                 string              `json:"address"`
-	ASN                     uint32              `json:"asn"`
-	PassiveMode             bool                `json:"passiveMode,omitempty"`
-	Password                string              `json:"password,omitempty"`
-	BFD                     string              `json:"bfd,omitempty"`
-	EbgpMultihop            int                 `json:"ebgpMultihop,omitempty"`
-	RouteReflectorClient    bool                `json:"routeReflectorClient,omitempty"`
-	RouteReflectorClusterID string              `json:"routeReflectorClusterID,omitempty"`
-	TimersProfile           string              `json:"timersProfile,omitempty"`
-	ConvergenceProfile      string              `json:"convergenceProfile,omitempty"`
-	ImportPolicy            AppliedImportPolicy `json:"importPolicy,omitempty"`
+	SendCommunity           uint32 `json:"sendCommunity"`
+	Address                 string `json:"address"`
+	ASN                     uint32 `json:"asn"`
+	PassiveMode             bool   `json:"passiveMode,omitempty"`
+	Password                string `json:"password,omitempty"`
+	BFD                     string `json:"bfd,omitempty"`
+	EbgpMultihop            int    `json:"ebgpMultihop,omitempty"`
+	RouteReflectorClient    bool   `json:"routeReflectorClient,omitempty"`
+	RouteReflectorClusterID string `json:"routeReflectorClusterID,omitempty"`
+	TimersProfile           string `json:"timersProfile,omitempty"`
+	ConvergenceProfile      string `json:"convergenceProfile,omitempty"`
 	// PreserveImportPrefixes keeps an explicit peer import allowlist from being
 	// widened with router-wide dynamic prefixes during daemon restore. It is
 	// used by direct SAM leaf peers, whose admitted /32 boundary must survive a
@@ -111,10 +100,8 @@ type AppliedPeer struct {
 	// admitted claim currently owns no mobility /32. The session is restored, but
 	// every inbound route remains rejected until fresh desired state says
 	// otherwise.
-	RejectImportAll  bool                    `json:"rejectImportAll,omitempty"`
-	ExportPolicyName string                  `json:"exportPolicyName,omitempty"`
-	ExportPolicy     AppliedExportPolicy     `json:"exportPolicy,omitempty"`
-	GracefulRestart  *AppliedGracefulRestart `json:"gracefulRestart,omitempty"`
+	RejectImportAll bool                    `json:"rejectImportAll,omitempty"`
+	GracefulRestart *AppliedGracefulRestart `json:"gracefulRestart,omitempty"`
 }
 
 type AppliedPath struct {
@@ -139,20 +126,18 @@ func Normalize(config AppliedConfig) AppliedConfig {
 	config.Global.RouterID = strings.TrimSpace(config.Global.RouterID)
 	config.Global.ListenAddresses = stringutil.UniqueTrimmedSorted(config.Global.ListenAddresses)
 	config.Global.Families = stringutil.UniqueTrimmedSorted(config.Global.Families)
-	config.Global.ImportPolicy.AllowedPrefixes = stringutil.UniqueTrimmedSorted(config.Global.ImportPolicy.AllowedPrefixes)
-	config.Global.ImportPolicy.RequiredCommunities = stringutil.UniqueTrimmedSorted(config.Global.ImportPolicy.RequiredCommunities)
-	config.Global.ImportPolicy.ForbiddenCommunities = stringutil.UniqueTrimmedSorted(config.Global.ImportPolicy.ForbiddenCommunities)
-	config.Global.ImportPolicy.NextHopRewrite = strings.TrimSpace(config.Global.ImportPolicy.NextHopRewrite)
 	config.PendingDirectPeerAdditions = stringutil.UniqueTrimmedSorted(config.PendingDirectPeerAdditions)
 	config.PendingDirectPeerRemovals = stringutil.UniqueTrimmedSorted(config.PendingDirectPeerRemovals)
-	config.PendingStaticPathRemovals = normalizeAppliedPaths(config.PendingStaticPathRemovals, nil)
-	config.Advertisements = stringutil.UniqueTrimmedSorted(config.Advertisements)
-	config.Paths = normalizeAppliedPaths(config.Paths, config.Advertisements)
-	config.Advertisements = StaticAdvertisements(config.Paths)
+	config.PendingPathRemovals = normalizeAppliedPaths(config.PendingPathRemovals)
+	config.PendingPathAdds = normalizeAppliedPaths(config.PendingPathAdds)
+	config.Paths = normalizeAppliedPaths(config.Paths)
 	if config.Peers != nil {
 		peers := make(map[string]AppliedPeer, len(config.Peers))
 		for key, peer := range config.Peers {
 			peer.Address = stringutil.FirstNonBlank(peer.Address, key)
+			if peer.SendCommunity == 0 {
+				peer.SendCommunity = 3
+			}
 			peer.BFD = strings.TrimSpace(peer.BFD)
 			if peer.EbgpMultihop < 0 || peer.EbgpMultihop > 255 {
 				peer.EbgpMultihop = 0
@@ -160,12 +145,6 @@ func Normalize(config AppliedConfig) AppliedConfig {
 			peer.RouteReflectorClusterID = strings.TrimSpace(peer.RouteReflectorClusterID)
 			peer.TimersProfile = strings.TrimSpace(peer.TimersProfile)
 			peer.ConvergenceProfile = strings.TrimSpace(peer.ConvergenceProfile)
-			peer.ImportPolicy.AllowedPrefixes = stringutil.UniqueTrimmedSorted(peer.ImportPolicy.AllowedPrefixes)
-			peer.ImportPolicy.RequiredCommunities = stringutil.UniqueTrimmedSorted(peer.ImportPolicy.RequiredCommunities)
-			peer.ImportPolicy.ForbiddenCommunities = stringutil.UniqueTrimmedSorted(peer.ImportPolicy.ForbiddenCommunities)
-			peer.ImportPolicy.NextHopRewrite = strings.TrimSpace(peer.ImportPolicy.NextHopRewrite)
-			peer.ExportPolicyName = strings.TrimSpace(peer.ExportPolicyName)
-			peer.ExportPolicy.AllowedPrefixes = stringutil.UniqueTrimmedSorted(peer.ExportPolicy.AllowedPrefixes)
 			if peer.Address != "" {
 				peers[peer.Address] = peer
 			}
@@ -202,7 +181,7 @@ func StaticAppliedPath(prefix string, uuid []byte) AppliedPath {
 
 func StaticAdvertisements(paths []AppliedPath) []string {
 	var out []string
-	for _, path := range normalizeAppliedPaths(paths, nil) {
+	for _, path := range normalizeAppliedPaths(paths) {
 		if path.Source == AppliedPathSourceStatic {
 			out = append(out, path.Prefix)
 		}
@@ -212,7 +191,7 @@ func StaticAdvertisements(paths []AppliedPath) []string {
 
 func NonStaticPaths(paths []AppliedPath) []AppliedPath {
 	var out []AppliedPath
-	for _, path := range normalizeAppliedPaths(paths, nil) {
+	for _, path := range normalizeAppliedPaths(paths) {
 		if path.Source != AppliedPathSourceStatic {
 			out = append(out, path)
 		}
@@ -226,8 +205,8 @@ func AppliedPathKey(path AppliedPath) string {
 }
 
 func IsMobilityPathSource(source string) bool {
-	source = strings.TrimSpace(source)
-	return strings.HasPrefix(source, "MobilityPool/") || strings.HasPrefix(source, "mobility/")
+	owner, ok := dynamicconfig.ParseMobilityPoolPlanSource(source)
+	return ok && !owner.ARPObserver
 }
 
 func EncodeUUID(uuid []byte) string {
@@ -246,26 +225,54 @@ func DecodeUUID(value string) ([]byte, error) {
 }
 
 func ReadApplied(path string) (AppliedConfig, bool, error) {
-	data, err := os.ReadFile(path)
+	file, err := os.Open(path)
 	if os.IsNotExist(err) {
 		return AppliedConfig{}, false, nil
 	}
 	if err != nil {
 		return AppliedConfig{}, false, err
 	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, (4<<20)+1))
+	if err != nil {
+		return AppliedConfig{}, false, err
+	}
+	if len(data) > 4<<20 {
+		return AppliedConfig{}, false, fmt.Errorf("applied BGP state exceeds 4 MiB")
+	}
 	if strings.TrimSpace(string(data)) == "" {
-		return AppliedConfig{}, false, nil
+		return AppliedConfig{}, false, fmt.Errorf("applied BGP state is empty")
 	}
 	var config AppliedConfig
-	if err := json.Unmarshal(data, &config); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&config); err != nil {
+		return AppliedConfig{}, false, err
+	}
+	if err := decoder.Decode(new(json.RawMessage)); err != io.EOF {
+		return AppliedConfig{}, false, fmt.Errorf("applied BGP state contains trailing data")
+	}
+	if config.Version != AppliedVersion {
+		return AppliedConfig{}, false, fmt.Errorf("unsupported applied BGP config version %d; expected %d", config.Version, AppliedVersion)
+	}
+	if err := Validate(config); err != nil {
 		return AppliedConfig{}, false, err
 	}
 	return Normalize(config), true, nil
 }
 
 func WriteApplied(path string, config AppliedConfig) error {
+	if config.Version != 0 && config.Version != AppliedVersion {
+		return fmt.Errorf("unsupported applied BGP config version %d; expected %d", config.Version, AppliedVersion)
+	}
+	if err := validateJournalPathIdentities(config); err != nil {
+		return err
+	}
 	config = Normalize(config)
 	config.Version = AppliedVersion
+	if err := Validate(config); err != nil {
+		return err
+	}
 	if strings.TrimSpace(config.UpdatedAt) == "" {
 		config.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
@@ -274,6 +281,9 @@ func WriteApplied(path string, config AppliedConfig) error {
 		return err
 	}
 	data = append(data, '\n')
+	if len(data) > 4<<20 {
+		return fmt.Errorf("applied BGP state exceeds 4 MiB")
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
@@ -332,7 +342,23 @@ func Hash(config AppliedConfig) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// Pending and applied identities must be validated before normalization can
+// discard an incomplete entry. Unknown ownership is not an empty journal.
+func validateJournalPathIdentities(config AppliedConfig) error {
+	for _, paths := range [][]AppliedPath{config.Paths, config.PendingPathAdds, config.PendingPathRemovals} {
+		for _, path := range paths {
+			if strings.TrimSpace(path.Source) == "" || strings.TrimSpace(path.Prefix) == "" {
+				return fmt.Errorf("BGP journal path source and prefix are required")
+			}
+		}
+	}
+	return nil
+}
+
 func Validate(config AppliedConfig) error {
+	if err := validateJournalPathIdentities(config); err != nil {
+		return err
+	}
 	config = Normalize(config)
 	if config.Version != AppliedVersion {
 		return fmt.Errorf("unsupported applied BGP config version %d", config.Version)
@@ -340,7 +366,20 @@ func Validate(config AppliedConfig) error {
 	if config.Global.ASN == 0 || config.Global.RouterID == "" {
 		return fmt.Errorf("applied BGP global config is incomplete")
 	}
+	if config.Policy.RouterName != "" || len(config.Policy.Scopes) > 0 {
+		if err := ValidatePolicyIntent(config.Policy); err != nil {
+			return err
+		}
+	}
+	if config.PendingPolicy != nil {
+		if err := ValidatePolicyIntent(*config.PendingPolicy); err != nil {
+			return err
+		}
+	}
 	for address, peer := range config.Peers {
+		if peer.SendCommunity < 1 || peer.SendCommunity > 3 {
+			return fmt.Errorf("applied BGP peer %q has invalid community send mask", address)
+		}
 		if peer.Address == "" || peer.ASN == 0 {
 			return fmt.Errorf("applied BGP peer %q is incomplete", address)
 		}
@@ -370,10 +409,19 @@ func Validate(config AppliedConfig) error {
 			return err
 		}
 	}
-	for _, path := range config.PendingStaticPathRemovals {
-		if path.Source != AppliedPathSourceStatic {
-			return fmt.Errorf("pending static BGP path %q has unexpected source %q", path.Prefix, path.Source)
+	for _, path := range config.PendingPathAdds {
+		if err := ValidateAppliedPath(path); err != nil {
+			return err
 		}
+		prefix, err := netip.ParsePrefix(path.Prefix)
+		if IsMobilityPathSource(path.Source) && (err != nil || !prefix.Addr().Is4() || prefix.Bits() != 32) {
+			return fmt.Errorf("pending dynamic BGP path %q must be an IPv4 /32", path.Prefix)
+		}
+		if path.UUID != "" {
+			return fmt.Errorf("pending dynamic BGP path %q already has an applied UUID", path.Prefix)
+		}
+	}
+	for _, path := range config.PendingPathRemovals {
 		if err := ValidateAppliedPath(path); err != nil {
 			return err
 		}
@@ -385,6 +433,9 @@ func ValidateAppliedPath(path AppliedPath) error {
 	path = NormalizeAppliedPath(path)
 	if path.Source == "" {
 		return fmt.Errorf("applied BGP path source is required")
+	}
+	if path.Source != AppliedPathSourceStatic && !IsMobilityPathSource(path.Source) {
+		return fmt.Errorf("applied BGP path source %q is not a supported owner", path.Source)
 	}
 	prefix, err := netip.ParsePrefix(path.Prefix)
 	if err != nil {
@@ -402,6 +453,9 @@ func ValidateAppliedPath(path AppliedPath) error {
 			return fmt.Errorf("applied BGP path %s nextHop %q is invalid: %w", path.Prefix, path.Attrs.NextHop, err)
 		}
 	}
+	if _, err := bgpstate.StandardCommunities(path.Attrs.Communities); err != nil {
+		return fmt.Errorf("applied BGP path %s communities: %w", path.Prefix, err)
+	}
 	if path.UUID != "" {
 		if _, err := DecodeUUID(path.UUID); err != nil {
 			return fmt.Errorf("applied BGP path %s uuid is invalid hex: %w", path.Prefix, err)
@@ -410,12 +464,8 @@ func ValidateAppliedPath(path AppliedPath) error {
 	return nil
 }
 
-func normalizeAppliedPaths(paths []AppliedPath, legacyAdvertisements []string) []AppliedPath {
+func normalizeAppliedPaths(paths []AppliedPath) []AppliedPath {
 	byKey := map[string]AppliedPath{}
-	for _, prefix := range stringutil.UniqueTrimmedSorted(legacyAdvertisements) {
-		path := StaticAppliedPath(prefix, nil)
-		byKey[AppliedPathKey(path)] = path
-	}
 	for _, path := range paths {
 		path = NormalizeAppliedPath(path)
 		if path.Source == "" || path.Prefix == "" {

@@ -15,7 +15,9 @@ ExecStart=/var/lib/routerd-release-qa/%i/repo/tools/release-qa-labs/drivers/star
 Restart=on-failure
 RestartPreventExitStatus=1
 RestartSec=5s
-TimeoutStopSec=30s
+# Bounded precheck (300s), stop acknowledgement (15s), cleanup (600s),
+# inventory (300s), and post-zero revocation (300s), plus persistence margin.
+TimeoutStopSec=1600s
 KillMode=mixed
 NoNewPrivileges=true
 UMask=0077

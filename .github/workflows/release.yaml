@@ -71,89 +71,92 @@ jobs:
       checkout-ref: ${{ needs.resolve-release.outputs.checkout-ref }}
       force-website-build: false
 
-  build-archives:
-    name: Build ${{ matrix.routerd_os }}-${{ matrix.goarch }}
-    needs:
-      - resolve-release
-    runs-on: ubuntu-latest
+  build-deb:
+    name: Build Debian package ${{ matrix.goarch }}
+    needs: resolve-release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.resolve-release.outputs.checkout-ref }}
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build native package
+        env:
+          RELEASE_TAG: ${{ needs.resolve-release.outputs.tag }}
+          PACKAGE_ARCH: ${{ matrix.goarch }}
+        run: |
+          set -eu
+          make dist-deb ROUTERD_OS=linux GOARCH="$PACKAGE_ARCH" \
+            VERSION="$RELEASE_TAG" PACKAGE_VERSION="1.5.0~${RELEASE_TAG#v}"
+          mkdir release
+          cp dist/linux-"$PACKAGE_ARCH"/*.deb release/
+          dpkg-deb --info release/*.deb
+          (cd release && sha256sum ./*.deb > SHA256-linux-"$PACKAGE_ARCH")
+      - name: Check native package contract
+        if: matrix.goarch == 'amd64'
+        run: go test ./tests/nativepackage
+      - name: Upload to draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.resolve-release.outputs.tag }}
+        run: gh release upload "$RELEASE_TAG" release/* --clobber
+
+  build-pkg:
+    name: Build FreeBSD package ${{ matrix.goarch }}
+    needs: resolve-release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
     permissions:
       contents: write
     strategy:
       fail-fast: false
       matrix:
         include:
-          - routerd_os: linux
-            goarch: amd64
-          - routerd_os: linux
-            goarch: arm64
-          - routerd_os: freebsd
-            goarch: amd64
-          - routerd_os: freebsd
-            goarch: arm64
+          - goarch: amd64
+            vmarch: x86_64
+          - goarch: arm64
+            vmarch: aarch64
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
         with:
           ref: ${{ needs.resolve-release.outputs.checkout-ref }}
-
-      - name: Set up Go
-        uses: actions/setup-go@v6
+      - name: Build with native FreeBSD tools
+        uses: vmactions/freebsd-vm@c46abacb49f09938ca4e1702d15d836285d694cc # v1
+        env:
+          RELEASE_TAG: ${{ needs.resolve-release.outputs.tag }}
+          PACKAGE_ARCH: ${{ matrix.goarch }}
         with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Build release archive
-        run: |
-          make dist \
-            ROUTERD_OS=${{ matrix.routerd_os }} \
-            GOARCH=${{ matrix.goarch }} \
-            VERSION=${{ needs.resolve-release.outputs.tag }}
-
-      - name: Collect release archive
-        shell: bash
-        run: |
-          set -euo pipefail
-          tag="${{ needs.resolve-release.outputs.tag }}"
-          platform="${{ matrix.routerd_os }}-${{ matrix.goarch }}"
-          package="routerd-${tag}-${platform}.tar.gz"
-          alias="routerd-${platform}.tar.gz"
-          test -f "dist/${platform}/${package}"
-          test -f "dist/${platform}/${package}.sha256"
-          test -f "dist/${platform}/${alias}"
-          test -f "dist/${platform}/${alias}.sha256"
-          mkdir -p release
-          cp "dist/${platform}/${package}" "dist/${platform}/${package}.sha256" \
-            "dist/${platform}/${alias}" "dist/${platform}/${alias}.sha256" release/
-
-      - name: Smoke test installer archive
-        shell: bash
-        run: |
-          set -euo pipefail
-          tag="${{ needs.resolve-release.outputs.tag }}"
-          platform="${{ matrix.routerd_os }}-${{ matrix.goarch }}"
-          package="routerd-${tag}-${platform}.tar.gz"
-          smoke="${RUNNER_TEMP}/routerd-install-smoke-${platform}"
-          work="${RUNNER_TEMP}/routerd-archive-${platform}"
-          rm -rf "${smoke}" "${work}"
-          mkdir -p "${work}"
-          tar -C "${work}" -xzf "dist/${platform}/${package}"
-          (
-            cd "${work}"
-            ./install.sh --prefix "${smoke}" --no-restart --no-config-update --no-install-deps
-            if [ "${{ matrix.routerd_os }}" = "linux" ] && [ "${{ matrix.goarch }}" = "amd64" ]; then
-              "${smoke}/sbin/routerd" --version
-            else
-              test -x "${smoke}/sbin/routerd"
-            fi
-            ./uninstall.sh --prefix "${smoke}" --yes --all
-            test ! -e "${smoke}/sbin/routerd"
-          )
-
+          release: '14.3'
+          arch: ${{ matrix.vmarch }}
+          mem: 6144
+          envs: 'RELEASE_TAG PACKAGE_ARCH'
+          prepare: pkg install -y go gmake python3 dnsmasq ca_root_nss ndpi pkgconf
+          run: |
+            set -eu
+            export GOTOOLCHAIN=$(awk '$1 == "toolchain" { print $2 }' go.mod)
+            gmake dist-pkg ROUTERD_OS=freebsd GOARCH="$PACKAGE_ARCH" \
+              VERSION="$RELEASE_TAG" PACKAGE_VERSION="1.5.0.a${RELEASE_TAG#v}"
+            go test ./tests/nativepackage
+            mkdir release
+            cp dist/freebsd-"$PACKAGE_ARCH"/*.pkg release/
+            pkg info -F release/*.pkg
+            (cd release && sha256 -r ./*.pkg > SHA256-freebsd-"$PACKAGE_ARCH")
       - name: Upload to draft release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: gh release upload "${{ needs.resolve-release.outputs.tag }}" release/* --clobber
+          RELEASE_TAG: ${{ needs.resolve-release.outputs.tag }}
+        run: gh release upload "$RELEASE_TAG" release/* --clobber
 
   build-ndpi-agent-libndpi:
     name: Build native nDPI agent linux-amd64
@@ -178,48 +181,32 @@ jobs:
       - name: Install native nDPI build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y binutils file libndpi-dev pkg-config
+          sudo apt-get install -y binutils file dpkg-dev libndpi-dev pkg-config
 
-      - name: Build native nDPI agent archive
+      - name: Build native nDPI agent package
+        env:
+          RELEASE_TAG: ${{ needs.resolve-release.outputs.tag }}
         run: |
-          make dist-ndpi-agent-libndpi \
-            ROUTERD_OS=linux \
-            GOARCH=amd64 \
-            VERSION=${{ needs.resolve-release.outputs.tag }}
-
-      - name: Collect native nDPI agent archive
-        shell: bash
-        run: |
-          set -euo pipefail
-          tag="${{ needs.resolve-release.outputs.tag }}"
-          platform="linux-amd64"
-          package="routerd-ndpi-agent-libndpi-${tag}-${platform}.tar.gz"
-          alias="routerd-ndpi-agent-libndpi-${platform}.tar.gz"
-          test -f "dist/${platform}/${package}"
-          test -f "dist/${platform}/${package}.sha256"
-          test -f "dist/${platform}/${alias}"
-          test -f "dist/${platform}/${alias}.sha256"
+          make dist-ndpi-agent-libndpi-deb ROUTERD_OS=linux GOARCH=amd64 \
+            VERSION="$RELEASE_TAG" PACKAGE_VERSION="1.5.0~${RELEASE_TAG#v}"
           mkdir -p release
-          cp "dist/${platform}/${package}" "dist/${platform}/${package}.sha256" \
-            "dist/${platform}/${alias}" "dist/${platform}/${alias}.sha256" release/
+          cp dist/linux-amd64/routerd-ndpi-agent-libndpi_*.deb release/
+          (cd release && sha256sum ./*.deb > SHA256-ndpi-linux-amd64)
 
-      - name: Smoke test native nDPI agent archive
+      - name: Smoke test native nDPI agent package
         shell: bash
         run: |
           set -euo pipefail
-          tag="${{ needs.resolve-release.outputs.tag }}"
-          package="routerd-ndpi-agent-libndpi-${tag}-linux-amd64.tar.gz"
           work="${RUNNER_TEMP}/routerd-ndpi-agent-libndpi"
-          rm -rf "${work}"
           mkdir -p "${work}"
-          tar -C "${work}" -xzf "dist/linux-amd64/${package}"
-          readelf --notes "${work}/bin/routerd-ndpi-agent" > "${work}/elf-notes.txt"
-          cat "${work}/elf-notes.txt"
+          dpkg-deb --info release/*.deb
+          dpkg-deb -x release/*.deb "${work}"
+          readelf --notes "${work}/usr/sbin/routerd-ndpi-agent" > "${work}/elf-notes.txt"
           if grep -Eq 'x86 ISA needed:.*x86-64-v[234]' "${work}/elf-notes.txt"; then
             echo "native nDPI agent requires a CPU ISA newer than baseline x86-64" >&2
             exit 1
           fi
-          "${work}/bin/routerd-ndpi-agent" selftest | grep -q '"libndpiLoaded":true'
+          "${work}/usr/sbin/routerd-ndpi-agent" selftest | grep -q '"libndpiLoaded":true'
 
       - name: Upload to draft release
         env:
@@ -262,9 +249,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: dist/live/rootfs-cache.tar
-          key: live-iso-rootfs-${{ steps.rootfs-key.outputs.hash }}
-          restore-keys: |
-            live-iso-rootfs-
+          key: live-iso-rootfs-v3-${{ steps.rootfs-key.outputs.hash }}
 
       - name: Build live ISO
         run: make live-iso VERSION=${{ needs.resolve-release.outputs.tag }}
@@ -291,31 +276,14 @@ jobs:
     needs:
       - resolve-release
       - quality
-      - build-archives
+      - build-deb
+      - build-pkg
       - build-ndpi-agent-libndpi
       - build-iso
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.resolve-release.outputs.checkout-ref }}
-          sparse-checkout: packaging/bootstrap.sh
-          sparse-checkout-cone-mode: false
-
-      - name: Upload bootstrap installer
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          tag="${{ needs.resolve-release.outputs.tag }}"
-          cp packaging/bootstrap.sh install.sh
-          gh release upload "${tag}" install.sh --clobber
-
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}

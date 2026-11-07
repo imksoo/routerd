@@ -29,7 +29,6 @@ spec:
         name: lan
       spec:
         ifname: ens19
-        role: trust
         managed: true
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4StaticAddress

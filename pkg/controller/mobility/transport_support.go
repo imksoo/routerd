@@ -92,18 +92,29 @@ func transportPairStableSlots(selfNodeRef string, peers []api.SAMTransportPeerSp
 	return out, nil
 }
 
-func (c TransportController) remoteEndpoint(peer api.SAMTransportPeerSpec) (string, string) {
+// transportStatusReadError preserves unknown status as an error even when
+// the peer source is an optional direct accelerator. Concrete invalid direct
+// topology can still be discarded while its independently valid RR survives.
+type transportStatusReadError struct{ cause error }
+
+func (e *transportStatusReadError) Error() string { return e.cause.Error() }
+func (e *transportStatusReadError) Unwrap() error { return e.cause }
+
+func (c TransportController) remoteEndpoint(peer api.SAMTransportPeerSpec) (string, string, error) {
 	if endpoint := strings.TrimSpace(peer.RemoteEndpoint); endpoint != "" {
-		return endpoint, ""
+		return endpoint, "", nil
 	}
 	if strings.TrimSpace(peer.RemoteEndpointFrom.Resource) == "" {
-		return "", ""
+		return "", "", nil
 	}
-	value := resourcequery.Value(c.Store, peer.RemoteEndpointFrom)
+	value, err := resourcequery.ReadValue(c.Store, peer.RemoteEndpointFrom)
+	if err != nil {
+		return "", "", &transportStatusReadError{err}
+	}
 	if strings.TrimSpace(value) == "" {
-		return "", peer.RemoteEndpointFrom.Resource + "." + firstNonEmpty(strings.TrimSpace(peer.RemoteEndpointFrom.Field), "phase")
+		return "", peer.RemoteEndpointFrom.Resource + "." + firstNonEmpty(strings.TrimSpace(peer.RemoteEndpointFrom.Field), "phase"), nil
 	}
-	return value, ""
+	return value, "", nil
 }
 
 func (c TransportController) upsertTransportDynamicPart(ctx context.Context, owner api.Resource, source, namePrefix string, resources []api.Resource, now time.Time) (string, error) {
@@ -124,6 +135,9 @@ func (c TransportController) upsertTransportDynamicPart(ctx context.Context, own
 		return "", err
 	}
 	changed := dynamicPartContentChanged(previous, record, now)
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	if err := c.Store.UpsertDynamicConfigPart(record); err != nil {
 		return "", err
 	}
@@ -177,7 +191,10 @@ func (c TransportController) transportPeerGroupEndpoint(spec api.SAMTransportPro
 	if strings.TrimSpace(spec.LocalEndpointFrom.Resource) == "" {
 		return "", "localEndpoint", nil
 	}
-	value := resourcequery.Value(c.Store, spec.LocalEndpointFrom)
+	value, err := resourcequery.ReadValue(c.Store, spec.LocalEndpointFrom)
+	if err != nil {
+		return "", "", &transportStatusReadError{err}
+	}
 	if strings.TrimSpace(value) == "" {
 		return "", spec.LocalEndpointFrom.Resource + "." + firstNonEmpty(strings.TrimSpace(spec.LocalEndpointFrom.Field), "phase"), nil
 	}

@@ -30,9 +30,11 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"os"
 	"strconv"
 	"strings"
@@ -88,9 +90,10 @@ const (
 	modeDryRun  = "dry-run"
 	modeExecute = "execute"
 
-	statusSucceeded = "succeeded"
-	statusFailed    = "failed"
-	statusSkipped   = "skipped"
+	statusOutcomeUnknown = "outcomeUnknown"
+	statusSucceeded      = "succeeded"
+	statusFailed         = "failed"
+	statusSkipped        = "skipped"
 
 	actionAssignSecondaryIP       = "assign-secondary-ip"
 	actionUnassignSecondaryIP     = "unassign-secondary-ip"
@@ -215,12 +218,13 @@ func azurePermissionHint(msg string) string {
 
 // nicTarget bundles the Azure NIC identification read from the request Target.
 type nicTarget struct {
-	nicID         string // NIC resource id (for --ids on show/update)
-	resourceGroup string
-	nicName       string // for ip-config create/delete (--nic-name)
-	ipConfigName  string
-	address       string
-	displaced     displacedTarget
+	subscriptionID string
+	nicID          string // NIC resource id (for --ids on show/update)
+	resourceGroup  string
+	nicName        string // for ip-config create/delete (--nic-name)
+	ipConfigName   string
+	address        string
+	displaced      displacedTarget
 }
 
 type displacedTarget struct {
@@ -231,6 +235,7 @@ type displacedTarget struct {
 }
 
 type routeTarget struct {
+	subscriptionID   string
 	resourceGroup    string
 	routeTableName   string
 	routeName        string
@@ -305,11 +310,29 @@ func requireIPConfigTarget(spec executeActionRequestSpec, needAddress bool) (nic
 	if needAddress && t.address == "" {
 		return nicTarget{}, fmt.Errorf("target.address is required")
 	}
+	sub, group, name, err := nicResourceIdentity(t.nicID)
+	if err != nil {
+		return nicTarget{}, err
+	}
+	if !strings.EqualFold(group, t.resourceGroup) || !strings.EqualFold(name, t.nicName) || spec.Target["subscriptionId"] != "" && !strings.EqualFold(sub, spec.Target["subscriptionId"]) {
+		return nicTarget{}, fmt.Errorf("NIC resource ID disagrees with IP configuration write target")
+	}
+	t.subscriptionID = sub
+	if t.displaced.nicID != "" {
+		oldSub, oldGroup, oldName, err := nicResourceIdentity(t.displaced.nicID)
+		if err != nil {
+			return nicTarget{}, err
+		}
+		if !strings.EqualFold(oldSub, sub) || !strings.EqualFold(oldGroup, t.displaced.resourceGroup) || !strings.EqualFold(oldName, t.displaced.nicName) {
+			return nicTarget{}, fmt.Errorf("displaced NIC resource ID disagrees with its write target")
+		}
+	}
 	return t, nil
 }
 
 func requireRouteTarget(spec executeActionRequestSpec) (routeTarget, error) {
 	t := routeTarget{
+		subscriptionID:   spec.Target["subscriptionId"],
 		resourceGroup:    spec.Target["resourceGroup"],
 		routeTableName:   firstNonEmpty(spec.Target["routeTableName"], spec.Target["routeTableRef"]),
 		routeName:        spec.Target["routeName"],
@@ -330,6 +353,24 @@ func requireRouteTarget(spec executeActionRequestSpec) (routeTarget, error) {
 	}
 	if t.nextHopIPAddress == "" {
 		return routeTarget{}, fmt.Errorf("target.nextHopIPAddress is required")
+	}
+	host, err := capturedIPv4Address(t.address)
+	if err != nil {
+		return routeTarget{}, err
+	}
+	t.address = host + "/32"
+	if spec.Target["nicRef"] != "" {
+		sub, _, _, err := nicResourceIdentity(spec.Target["nicRef"])
+		if err != nil {
+			return routeTarget{}, err
+		}
+		if t.subscriptionID != "" && !strings.EqualFold(sub, t.subscriptionID) {
+			return routeTarget{}, fmt.Errorf("route target subscription disagrees with NIC resource ID")
+		}
+		t.subscriptionID = sub
+	}
+	if t.subscriptionID == "" {
+		return routeTarget{}, fmt.Errorf("target.subscriptionId is required for route-table operations")
 	}
 	return t, nil
 }
@@ -393,7 +434,7 @@ func assignRouteTableRoute(ctx context.Context, spec executeActionRequestSpec, m
 	res.Status.UndoAvailable = true
 
 	if mode == modeDryRun {
-		if _, derr := runner(ctx, "network", "route-table", "show", "--resource-group", t.resourceGroup, "--name", t.routeTableName); derr != nil {
+		if _, derr := runner(ctx, "network", "route-table", "show", "--resource-group", t.resourceGroup, "--name", t.routeTableName, "--subscription", t.subscriptionID); derr != nil {
 			return failed("assign-route-table-route dry-run: route table show failed", derr)
 		}
 		res.Status.Status = statusSucceeded
@@ -401,57 +442,58 @@ func assignRouteTableRoute(ctx context.Context, spec executeActionRequestSpec, m
 		return res
 	}
 
-	allowReassignment := stringBool(spec.Parameters["allowReassignment"])
-	if allowReassignment {
+	existing, found, err := showRouteTableRoute(ctx, runner, t)
+	if err != nil {
+		return failed("assign-route-table-route execute: route show failed", err)
+	}
+	res.Status.Observed = map[string]string{"requestedRoute": t.address, "routeTableRef": t.routeTableName, "nextHopIPAddress": t.nextHopIPAddress}
+	if found {
+		if !sameRoutePrefix(existing.addressPrefix, t.address) {
+			return failed("assign-route-table-route execute: same-name foreign route prefix preserved", nil)
+		}
+		if existing.nextHopType == "VirtualAppliance" && sameIP(existing.nextHopIPAddress, t.nextHopIPAddress) {
+			res.Status.Observed["assignedRoute"] = t.address
+			res.Status.Status = statusSucceeded
+			res.Status.Message = "route already targets the requested next hop"
+			return res
+		}
+		if !stringBool(spec.Parameters["allowReassignment"]) {
+			return failed("assign-route-table-route execute: route belongs to another next hop", nil)
+		}
+		res.Status.Observed["priorNextHopIPAddress"] = existing.nextHopIPAddress
 		if err := updateRouteTableRoute(ctx, runner, t); err != nil {
-			if !isNotFoundError(err) {
-				return failed("assign-route-table-route execute: route update failed", err)
-			}
-			if err := createRouteTableRoute(ctx, runner, t); err != nil {
-				return failed("assign-route-table-route execute: route create after missing update failed", err)
-			}
+			return mutationFailure(res, "assign-route-table-route execute: route update unconfirmed", err)
 		}
 	} else if err := createRouteTableRoute(ctx, runner, t); err != nil {
-		if !isAlreadyExistsError(err) {
-			return failed("assign-route-table-route execute: route create failed", err)
-		}
-		existing, found, err := showRouteTableRoute(ctx, runner, t)
-		if err != nil {
-			return failed("assign-route-table-route execute: route show after existing create failed", err)
-		}
-		if !found {
-			return failed("assign-route-table-route execute: route already exists but show returned missing", nil)
-		}
-		if !sameIP(existing.nextHopIPAddress, t.nextHopIPAddress) {
-			return failed(fmt.Sprintf("assign-route-table-route execute: route already exists with next hop %s, not %s", existing.nextHopIPAddress, t.nextHopIPAddress), nil)
-		}
+		return mutationFailure(res, "assign-route-table-route execute: route create unconfirmed", err)
 	}
+
 	res.Status.Status = statusSucceeded
 	res.Status.Message = fmt.Sprintf("routed %s to %s in %s", t.address, t.nextHopIPAddress, t.routeTableName)
-	res.Status.Observed = map[string]string{"assignedRoute": t.address, "routeTableRef": t.routeTableName, "nextHopIPAddress": t.nextHopIPAddress}
+	res.Status.Observed["assignedRoute"] = t.address
 	return res
 }
 
 func createRouteTableRoute(ctx context.Context, runner azRunner, t routeTarget) error {
-	_, err := callAzWithRetry(ctx, runner, "network", "route-table", "route", "create",
+	_, err := runner(ctx, "network", "route-table", "route", "create",
 		"--resource-group", t.resourceGroup,
 		"--route-table-name", t.routeTableName,
 		"--name", t.routeName,
 		"--address-prefix", t.address,
 		"--next-hop-type", "VirtualAppliance",
-		"--next-hop-ip-address", t.nextHopIPAddress)
+		"--next-hop-ip-address", t.nextHopIPAddress, "--subscription", t.subscriptionID)
 	return err
 }
 
 func updateRouteTableRoute(ctx context.Context, runner azRunner, t routeTarget) error {
-	_, err := callAzWithRetry(ctx, runner, "network", "route-table", "route", "update",
+	_, err := runner(ctx, "network", "route-table", "route", "update",
 		"--resource-group", t.resourceGroup,
 		"--route-table-name", t.routeTableName,
 		"--name", t.routeName,
 		"--set",
 		"addressPrefix="+t.address,
 		"nextHopType=VirtualAppliance",
-		"nextHopIpAddress="+t.nextHopIPAddress)
+		"nextHopIpAddress="+t.nextHopIPAddress, "--subscription", t.subscriptionID)
 	return err
 }
 
@@ -463,7 +505,7 @@ func unassignRouteTableRoute(ctx context.Context, spec executeActionRequestSpec,
 	res := newResult()
 
 	if mode == modeDryRun {
-		if _, derr := runner(ctx, "network", "route-table", "show", "--resource-group", t.resourceGroup, "--name", t.routeTableName); derr != nil {
+		if _, derr := runner(ctx, "network", "route-table", "show", "--resource-group", t.resourceGroup, "--name", t.routeTableName, "--subscription", t.subscriptionID); derr != nil {
 			return failed("unassign-route-table-route dry-run: route table show failed", derr)
 		}
 		res.Status.Status = statusSucceeded
@@ -480,23 +522,18 @@ func unassignRouteTableRoute(ctx context.Context, spec executeActionRequestSpec,
 		res.Status.Message = fmt.Sprintf("route %s already absent from %s", t.routeName, t.routeTableName)
 		return res
 	}
-	if !sameIP(existing.nextHopIPAddress, t.nextHopIPAddress) {
+	if !sameRoutePrefix(existing.addressPrefix, t.address) || existing.nextHopType != "VirtualAppliance" || !sameIP(existing.nextHopIPAddress, t.nextHopIPAddress) {
 		res.Status.Status = statusSkipped
 		res.Status.Message = fmt.Sprintf("route %s in %s is held by %s, not %s; leaving it intact", t.routeName, t.routeTableName, existing.nextHopIPAddress, t.nextHopIPAddress)
 		return res
 	}
 
-	if _, err := callAzWithRetry(ctx, runner, "network", "route-table", "route", "delete",
+	if _, err := runner(ctx, "network", "route-table", "route", "delete",
 		"--resource-group", t.resourceGroup,
 		"--route-table-name", t.routeTableName,
-		"--name", t.routeName,
-		"--yes"); err != nil {
-		if isNotFoundError(err) {
-			res.Status.Status = statusSkipped
-			res.Status.Message = fmt.Sprintf("route %s already absent from %s", t.routeName, t.routeTableName)
-			return res
-		}
-		return failed("unassign-route-table-route execute: route delete failed", err)
+		"--name", t.routeName, "--subscription", t.subscriptionID); err != nil {
+
+		return mutationFailure(res, "unassign-route-table-route execute: route delete unconfirmed", err)
 	}
 	res.Status.Status = statusSucceeded
 	res.Status.Message = fmt.Sprintf("deleted route %s from %s", t.address, t.routeTableName)
@@ -504,6 +541,7 @@ func unassignRouteTableRoute(ctx context.Context, spec executeActionRequestSpec,
 }
 
 type routeTableRoute struct {
+	nextHopType      string
 	addressPrefix    string
 	nextHopIPAddress string
 }
@@ -512,7 +550,7 @@ func showRouteTableRoute(ctx context.Context, runner azRunner, t routeTarget) (r
 	out, err := callAzReadWithRetry(ctx, runner, "network", "route-table", "route", "show",
 		"--resource-group", t.resourceGroup,
 		"--route-table-name", t.routeTableName,
-		"--name", t.routeName)
+		"--name", t.routeName, "--subscription", t.subscriptionID)
 	if err != nil {
 		if isNotFoundError(err) {
 			return routeTableRoute{}, false, nil
@@ -521,9 +559,11 @@ func showRouteTableRoute(ctx context.Context, runner azRunner, t routeTarget) (r
 	}
 	var parsed struct {
 		AddressPrefix    string `json:"addressPrefix"`
+		NextHopType      string `json:"nextHopType"`
 		NextHopIPAddress string `json:"nextHopIpAddress"`
 		Properties       struct {
 			AddressPrefix    string `json:"addressPrefix"`
+			NextHopType      string `json:"nextHopType"`
 			NextHopIPAddress string `json:"nextHopIpAddress"`
 		} `json:"properties"`
 	}
@@ -531,11 +571,12 @@ func showRouteTableRoute(ctx context.Context, runner azRunner, t routeTarget) (r
 		return routeTableRoute{}, false, fmt.Errorf("parse network route-table route show output: %w", err)
 	}
 	route := routeTableRoute{
+		nextHopType:      firstNonEmpty(parsed.NextHopType, parsed.Properties.NextHopType),
 		addressPrefix:    firstNonEmpty(parsed.AddressPrefix, parsed.Properties.AddressPrefix),
 		nextHopIPAddress: firstNonEmpty(parsed.NextHopIPAddress, parsed.Properties.NextHopIPAddress),
 	}
-	if strings.TrimSpace(route.addressPrefix) == "" && strings.TrimSpace(route.nextHopIPAddress) == "" {
-		return routeTableRoute{}, false, nil
+	if route.addressPrefix == "" || route.nextHopType == "" {
+		return routeTableRoute{}, false, fmt.Errorf("incomplete route observation")
 	}
 	return route, true, nil
 }
@@ -574,7 +615,7 @@ func assignSecondaryIP(ctx context.Context, spec executeActionRequestSpec, mode 
 		if isAlreadyExistsError(err) {
 			cfg, serr := waitForSelfAddress(ctx, runner, t)
 			if serr != nil {
-				return failed("assign-secondary-ip execute: verify existing self ip-config failed", serr)
+				return uncertainResult(res, "assign-secondary-ip execute: verify existing self ip-config failed", serr)
 			}
 			res.Status.Status = statusSucceeded
 			res.Status.Message = fmt.Sprintf("assigned %s to %s (already present as ip-config %s)", t.address, t.nicName, cfg.Name)
@@ -584,7 +625,7 @@ func assignSecondaryIP(ctx context.Context, spec executeActionRequestSpec, mode 
 		if isAddressConflictError(err) {
 			return failSecondaryIPConflict(ctx, t, runner, err)
 		}
-		return failed("assign-secondary-ip execute: ip-config create failed", err)
+		return mutationFailure(res, "assign-secondary-ip execute: ip-config create failed", err)
 	}
 	res.Status.Status = statusSucceeded
 	res.Status.Message = fmt.Sprintf("assigned %s to %s (ip-config %s)", t.address, t.nicName, t.ipConfigName)
@@ -598,15 +639,15 @@ func failSecondaryIPConflict(ctx context.Context, t nicTarget, runner azRunner, 
 
 	holder, found, err := discoverCurrentHolder(ctx, runner, t)
 	if err != nil {
-		return failed("assign-secondary-ip execute: holder rediscovery after conflict failed", err)
+		return uncertainResult(res, "assign-secondary-ip execute: holder rediscovery after conflict failed", err)
 	}
 	if !found {
-		return failed("assign-secondary-ip execute: ip-config create conflict but no displaced holder found", originalErr)
+		return uncertainResult(res, "assign-secondary-ip execute: ip-config create conflict but no displaced holder found", originalErr)
 	}
 	if holder.sameNIC(t.resourceGroup, t.nicName) {
 		cfg, serr := waitForSelfAddress(ctx, runner, t)
 		if serr != nil {
-			return failed("assign-secondary-ip execute: verify conflict self ip-config failed", serr)
+			return uncertainResult(res, "assign-secondary-ip execute: verify conflict self ip-config failed", serr)
 		}
 		res.Status.Status = statusSucceeded
 		res.Status.Message = fmt.Sprintf("assigned %s to %s (already present as ip-config %s)", t.address, t.nicName, cfg.Name)
@@ -629,74 +670,50 @@ func failSecondaryIPConflict(ctx context.Context, t nicTarget, runner azRunner, 
 func seizeSecondaryIP(ctx context.Context, t nicTarget, runner azRunner) executeActionResult {
 	res := newResult()
 	res.Status.UndoAvailable = true
-
 	self, err := showNIC(ctx, runner, t.nicID)
 	if err != nil {
 		return failed("assign-secondary-ip execute: self nic show failed", err)
 	}
 	if cfg, ok := ipConfigForAddress(self.IPConfigurations, t.address); ok {
 		res.Status.Status = statusSucceeded
-		res.Status.Message = fmt.Sprintf("seized/reassigned %s to %s (already present as ip-config %s)", t.address, t.nicName, cfg.Name)
+		res.Status.Message = "requested address is already on this NIC"
 		res.Status.Observed = map[string]string{"assignedAddress": t.address, "ipConfigName": cfg.Name, "seizeAlreadyPresent": "true"}
 		return res
 	}
-
 	holder, found, err := discoverCurrentHolder(ctx, runner, t)
 	if err != nil {
 		return failed("assign-secondary-ip execute: holder discovery failed", err)
 	}
-	if found && !holder.sameNIC(t.resourceGroup, t.nicName) {
-		if err := deleteIPConfig(ctx, runner, holder); err != nil {
-			return failed("assign-secondary-ip execute: displaced ip-config delete failed", err)
+	res.Status.Observed = map[string]string{"requestedAddress": t.address, "ipConfigName": t.ipConfigName}
+	displaced := found && !holder.sameNIC(t.resourceGroup, t.nicName)
+	if displaced {
+		res.Status.Observed["displacedResourceGroup"] = holder.resourceGroup
+		res.Status.Observed["displacedNIC"] = holder.nicName
+		res.Status.Observed["displacedIPConfig"] = holder.ipConfigName
+		if err := deleteIPConfigRaw(ctx, runner, holder); err != nil {
+			return mutationFailure(res, "assign-secondary-ip execute: displaced delete unconfirmed", err)
 		}
+		res.Status.Observed["displacedIPConfigDeleted"] = "true"
 	}
-
 	if err := createIPConfig(ctx, runner, t); err != nil {
-		if isAlreadyExistsError(err) {
-			cfg, serr := waitForSelfAddress(ctx, runner, t)
-			if serr != nil {
-				return failed("assign-secondary-ip execute: verify existing self ip-config failed", serr)
-			}
-			res.Status.Status = statusSucceeded
-			res.Status.Message = fmt.Sprintf("seized/reassigned %s to %s (already present as ip-config %s)", t.address, t.nicName, cfg.Name)
-			res.Status.Observed = map[string]string{"assignedAddress": t.address, "ipConfigName": cfg.Name, "seizeAlreadyPresent": "true"}
-			return res
+		if displaced {
+			return uncertainResult(res, "assign-secondary-ip execute: create failed after displaced delete", err)
 		}
-		if isAddressConflictError(err) {
-			rediscovered, rediscoveredFound, derr := discoverCurrentHolder(ctx, runner, t)
-			if derr != nil {
-				return failed("assign-secondary-ip execute: holder rediscovery after conflict failed", derr)
-			}
-			if rediscoveredFound && !rediscovered.sameNIC(t.resourceGroup, t.nicName) {
-				if derr := deleteIPConfig(ctx, runner, rediscovered); derr != nil {
-					return failed("assign-secondary-ip execute: displaced ip-config delete after conflict failed", derr)
-				}
-				if cerr := createIPConfig(ctx, runner, t); cerr != nil {
-					return failed("assign-secondary-ip execute: ip-config create after conflict failed", cerr)
-				}
-				holder = rediscovered
-				found = true
-			} else {
-				return failed("assign-secondary-ip execute: ip-config create conflict but no displaced holder found", err)
-			}
-		} else {
-			return failed("assign-secondary-ip execute: ip-config create failed", err)
-		}
+		return mutationFailure(res, "assign-secondary-ip execute: create unconfirmed", err)
 	}
-
 	cfg, err := waitForSelfAddress(ctx, runner, t)
 	if err != nil {
-		return failed("assign-secondary-ip execute: verify self nic failed", err)
+		return uncertainResult(res, "assign-secondary-ip execute: verify self failed", err)
 	}
-	if found && !holder.sameNIC(t.resourceGroup, t.nicName) {
+	if displaced {
 		if err := waitForDisplacedRelease(ctx, runner, holder, t.address); err != nil {
-			return failed("assign-secondary-ip execute: verify displaced nic failed", err)
+			return uncertainResult(res, "assign-secondary-ip execute: verify displaced release failed", err)
 		}
 	}
-
+	res.Status.Observed["assignedAddress"] = t.address
 	res.Status.Status = statusSucceeded
-	res.Status.Message = fmt.Sprintf("seized/reassigned %s to %s (ip-config %s)", t.address, t.nicName, cfg.Name)
-	res.Status.Observed = map[string]string{"assignedAddress": t.address, "ipConfigName": cfg.Name}
+	res.Status.Message = fmt.Sprintf("seized/reassigned %s to %s", t.address, t.nicName)
+	res.Status.Observed["ipConfigName"] = cfg.Name
 	return res
 }
 
@@ -722,7 +739,7 @@ func waitForSelfAddress(ctx context.Context, runner azRunner, t nicTarget) (ipCo
 func waitForDisplacedRelease(ctx context.Context, runner azRunner, h ipConfigHolder, address string) error {
 	var lastErr error
 	for attempt := 0; attempt < seizeVerifyAttempts; attempt++ {
-		configs, err := listIPConfigs(ctx, runner, h.resourceGroup, h.nicName)
+		configs, err := listIPConfigs(ctx, runner, h.resourceGroup, h.nicName, h.subscriptionID)
 		if err == nil {
 			if _, stillPresent := ipConfigForAddress(configs, address); !stillPresent {
 				return nil
@@ -750,34 +767,27 @@ func sleepBeforeRetry(ctx context.Context, attempt int) error {
 }
 
 func createIPConfig(ctx context.Context, runner azRunner, t nicTarget) error {
-	_, err := callAzWithRetry(ctx, runner, "network", "nic", "ip-config", "create",
+	_, err := runner(ctx, "network", "nic", "ip-config", "create",
 		"--resource-group", t.resourceGroup,
 		"--nic-name", t.nicName,
 		"--name", t.ipConfigName,
-		"--private-ip-address", t.address)
-	return err
-}
-
-func deleteIPConfig(ctx context.Context, runner azRunner, h ipConfigHolder) error {
-	err := deleteIPConfigRaw(ctx, runner, h)
-	if err != nil && isNotFoundError(err) {
-		return nil
-	}
+		"--private-ip-address", t.address, "--subscription", t.subscriptionID)
 	return err
 }
 
 func deleteIPConfigRaw(ctx context.Context, runner azRunner, h ipConfigHolder) error {
-	_, err := callAzWithRetry(ctx, runner, "network", "nic", "ip-config", "delete",
+	_, err := runner(ctx, "network", "nic", "ip-config", "delete",
 		"--resource-group", h.resourceGroup,
 		"--nic-name", h.nicName,
-		"--name", h.ipConfigName)
+		"--name", h.ipConfigName, "--subscription", h.subscriptionID)
 	return err
 }
 
 type ipConfigHolder struct {
-	resourceGroup string
-	nicName       string
-	ipConfigName  string
+	subscriptionID string
+	resourceGroup  string
+	nicName        string
+	ipConfigName   string
 }
 
 func (h ipConfigHolder) sameNIC(resourceGroup, nicName string) bool {
@@ -787,7 +797,7 @@ func (h ipConfigHolder) sameNIC(resourceGroup, nicName string) bool {
 
 func discoverCurrentHolder(ctx context.Context, runner azRunner, t nicTarget) (ipConfigHolder, bool, error) {
 	if t.displaced.complete() {
-		configs, err := listIPConfigs(ctx, runner, t.displaced.resourceGroup, t.displaced.nicName)
+		configs, err := listIPConfigs(ctx, runner, t.displaced.resourceGroup, t.displaced.nicName, t.subscriptionID)
 		if err != nil {
 			if isNotFoundError(err) {
 				return ipConfigHolder{}, false, nil
@@ -796,13 +806,14 @@ func discoverCurrentHolder(ctx context.Context, runner azRunner, t nicTarget) (i
 		}
 		if cfg, ok := namedOrAddressConfig(configs, t.displaced.ipConfigName, t.address); ok {
 			return ipConfigHolder{
-				resourceGroup: t.displaced.resourceGroup,
-				nicName:       t.displaced.nicName,
-				ipConfigName:  cfg.Name,
+				subscriptionID: t.subscriptionID,
+				resourceGroup:  t.displaced.resourceGroup,
+				nicName:        t.displaced.nicName,
+				ipConfigName:   cfg.Name,
 			}, true, nil
 		}
 	}
-	nics, err := listNICs(ctx, runner, t.resourceGroup)
+	nics, err := listNICs(ctx, runner, t.resourceGroup, t.subscriptionID)
 	if err != nil {
 		return ipConfigHolder{}, false, err
 	}
@@ -815,7 +826,7 @@ func discoverCurrentHolder(ctx context.Context, runner azRunner, t nicTarget) (i
 		if rg == "" {
 			rg = t.resourceGroup
 		}
-		return ipConfigHolder{resourceGroup: rg, nicName: nic.Name, ipConfigName: cfg.Name}, true, nil
+		return ipConfigHolder{subscriptionID: t.subscriptionID, resourceGroup: rg, nicName: nic.Name, ipConfigName: cfg.Name}, true, nil
 	}
 	return ipConfigHolder{}, false, nil
 }
@@ -847,11 +858,20 @@ func isNotFoundError(err error) bool {
 	if err == nil {
 		return false
 	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "not found") ||
-		strings.Contains(msg, "notfound") ||
-		strings.Contains(msg, "could not be found") ||
-		strings.Contains(msg, "resourcenotfound")
+	var local *commandNotStartedError
+	if errors.As(err, &local) {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "resourcenotfound")
+}
+
+func sameRoutePrefix(left, right string) bool {
+	a, err := netip.ParsePrefix(strings.TrimSpace(left))
+	if err != nil {
+		return false
+	}
+	b, err := netip.ParsePrefix(strings.TrimSpace(right))
+	return err == nil && a.Masked() == b.Masked()
 }
 
 func isAlreadyExistsError(err error) bool {
@@ -902,7 +922,7 @@ func ensureForwardingEnabled(ctx context.Context, spec executeActionRequestSpec,
 	if _, err := runner(ctx, "network", "nic", "update",
 		"--ids", t.nicID,
 		"--ip-forwarding", "true"); err != nil {
-		return failed("ensure-forwarding-enabled execute: nic update failed", err)
+		return mutationFailure(res, "ensure-forwarding-enabled execute: nic update failed", err)
 	}
 	res.Status.Status = statusSucceeded
 	res.Status.Message = fmt.Sprintf("set ipForwarding=true on %s (prior=%s)", t.nicID, prior)
@@ -927,35 +947,41 @@ func unassignSecondaryIP(ctx context.Context, spec executeActionRequestSpec, mod
 		return res
 	}
 
-	if err := deleteIPConfigRaw(ctx, runner, ipConfigHolder{
-		resourceGroup: t.resourceGroup,
-		nicName:       t.nicName,
-		ipConfigName:  t.ipConfigName,
-	}); err != nil {
-		if isNotFoundError(err) {
-			deleted, derr := unassignIPConfigByAddress(ctx, runner, t)
-			if derr != nil {
-				return failed("unassign-secondary-ip execute: nic show for fallback failed", derr)
-			}
-			if deleted {
-				if err := waitForAddressAbsentFromNIC(ctx, runner, t); err != nil {
-					return failed("unassign-secondary-ip execute: verify fallback delete failed", err)
-				}
-				res.Status.Status = statusSucceeded
-				res.Status.Message = fmt.Sprintf("unassigned ip-config %s from %s", t.ipConfigName, t.nicName)
-				return res
-			}
-			res.Status.Status = statusSucceeded
-			res.Status.Message = fmt.Sprintf("ip-config %s already absent from %s", t.ipConfigName, t.nicName)
+	self, err := showNIC(ctx, runner, t.nicID)
+	if err != nil {
+		return failed("unassign-secondary-ip execute: observe NIC failed", err)
+	}
+	if !strings.EqualFold(self.Name, t.nicName) || !strings.EqualFold(self.ResourceGroup, t.resourceGroup) {
+		return failed("unassign-secondary-ip execute: NIC identity mismatch", nil)
+	}
+	found := false
+	for _, cfg := range self.IPConfigurations {
+		if cfg.Name != t.ipConfigName {
+			continue
+		}
+		if !sameIP(cfg.PrivateIPAddress, t.address) {
+			res.Status.Status = statusSkipped
+			res.Status.Message = "same-name foreign IP configuration preserved"
 			return res
 		}
-		return failed("unassign-secondary-ip execute: ip-config delete failed", err)
+		found = true
+	}
+	if !found {
+		if _, other := ipConfigForAddress(self.IPConfigurations, t.address); other {
+			return failed("unassign-secondary-ip: address remains in a differently named foreign IP configuration", nil)
+		}
+		res.Status.Status = statusSucceeded
+		res.Status.Message = "requested IP configuration is already absent"
+		return res
+	}
+	if err := deleteIPConfigRaw(ctx, runner, ipConfigHolder{subscriptionID: t.subscriptionID, resourceGroup: t.resourceGroup, nicName: t.nicName, ipConfigName: t.ipConfigName}); err != nil {
+		return mutationFailure(res, "unassign-secondary-ip execute: delete unconfirmed", err)
 	}
 	if err := waitForAddressAbsentFromNIC(ctx, runner, t); err != nil {
-		return failed("unassign-secondary-ip execute: verify delete failed", err)
+		return uncertainResult(res, "unassign-secondary-ip execute: verify delete failed", err)
 	}
 	res.Status.Status = statusSucceeded
-	res.Status.Message = fmt.Sprintf("unassigned ip-config %s from %s", t.ipConfigName, t.nicName)
+	res.Status.Message = "requested IP configuration removed"
 	return res
 }
 
@@ -976,37 +1002,6 @@ func waitForAddressAbsentFromNIC(ctx context.Context, runner azRunner, t nicTarg
 		}
 	}
 	return lastErr
-}
-
-func unassignIPConfigByAddress(ctx context.Context, runner azRunner, t nicTarget) (bool, error) {
-	self, err := showNIC(ctx, runner, t.nicID)
-	if err != nil {
-		return false, err
-	}
-	if !strings.EqualFold(strings.TrimSpace(self.Name), strings.TrimSpace(t.nicName)) {
-		// If the NIC identity shifted in-place (unexpected), use the show response
-		// as truth for the follow-up delete target.
-		t.nicName = self.Name
-	}
-	cfg, ok := ipConfigForAddress(self.IPConfigurations, t.address)
-	if !ok {
-		return false, nil
-	}
-	rg := strings.TrimSpace(t.resourceGroup)
-	if rg == "" && strings.TrimSpace(self.ResourceGroup) != "" {
-		rg = strings.TrimSpace(self.ResourceGroup)
-	}
-	if err := deleteIPConfig(ctx, runner, ipConfigHolder{
-		resourceGroup: rg,
-		nicName:       t.nicName,
-		ipConfigName:  cfg.Name,
-	}); err != nil {
-		if isNotFoundError(err) {
-			return false, nil
-		}
-		return false, err
-	}
-	return true, nil
 }
 
 // ensureForwardingDisabled is the undo of ensure-forwarding-enabled. It applies
@@ -1048,7 +1043,7 @@ func ensureForwardingDisabled(ctx context.Context, spec executeActionRequestSpec
 	if _, err := runner(ctx, "network", "nic", "update",
 		"--ids", t.nicID,
 		"--ip-forwarding", "false"); err != nil {
-		return failed("ensure-forwarding-disabled execute: nic update failed", err)
+		return mutationFailure(res, "ensure-forwarding-disabled execute: nic update failed", err)
 	}
 	res.Status.Status = statusSucceeded
 	res.Status.Message = fmt.Sprintf("set ipForwarding=false on %s (restored prior=false)", t.nicID)

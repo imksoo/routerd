@@ -61,17 +61,17 @@ func DefaultIfName(resource string) string {
 
 func LinuxPeer(cfg Config) []byte {
 	spec := cfg.Spec
-	mtu := intDefault(spec.MTU, 1454)
-	mru := intDefault(spec.MRU, 1454)
-	lcpInterval := intDefault(spec.LCPEchoInterval, 30)
-	lcpFailure := intDefault(spec.LCPEchoFailure, 4)
+	mtu := intDefault(spec.MTU, 1492)
+	mru := intDefault(spec.MRU, 1492)
+	lcpInterval := effectiveLCPEchoInterval(spec)
+	lcpFailure := effectiveLCPEchoFailure(spec)
 	ifname := cfg.IfName
 	if ifname == "" {
 		ifname = DefaultIfName(cfg.Resource)
 	}
 	auth := spec.AuthMethod
 	if auth == "" {
-		auth = "chap"
+		auth = "both"
 	}
 
 	var b bytes.Buffer
@@ -87,8 +87,17 @@ func LinuxPeer(cfg Config) []byte {
 	if password != "" {
 		b.WriteString("password " + strconv.Quote(password) + "\n")
 	}
-	b.WriteString("noauth\nhide-password\nnoipdefault\nusepeerdns\n")
+	b.WriteString("noauth\nhide-password\nnoipdefault\n")
+	if spec.DefaultRoute {
+		b.WriteString("defaultroute\nreplacedefaultroute\n")
+	}
+	if spec.UsePeerDNS {
+		b.WriteString("usepeerdns\n")
+	}
 	b.WriteString("nodetach\n")
+	if api.BoolDefault(spec.Persist, true) {
+		b.WriteString("persist\nmaxfail 0\nholdoff 5\n")
+	}
 	switch auth {
 	case "pap":
 		b.WriteString("-chap\n")
@@ -103,6 +112,11 @@ func LinuxPeer(cfg Config) []byte {
 	}
 	b.WriteString(fmt.Sprintf("mtu %d\nmru %d\n", mtu, mru))
 	b.WriteString(fmt.Sprintf("lcp-echo-interval %d\nlcp-echo-failure %d\n", lcpInterval, lcpFailure))
+	if spec.IPv6 {
+		b.WriteString("+ipv6\n")
+	} else {
+		b.WriteString("-ipv6\n")
+	}
 	return b.Bytes()
 }
 
@@ -111,10 +125,10 @@ func LinuxPeer(cfg Config) []byte {
 // a routerd private runtime directory.
 func FreeBSDMPDConf(cfg Config) []byte {
 	spec := cfg.Spec
-	mtu := intDefault(spec.MTU, 1454)
-	mru := intDefault(spec.MRU, 1454)
-	lcpInterval := intDefault(spec.LCPEchoInterval, 20)
-	lcpFailure := intDefault(spec.LCPEchoFailure, 3)
+	mtu := intDefault(spec.MTU, 1492)
+	mru := intDefault(spec.MRU, 1492)
+	lcpInterval := effectiveLCPEchoInterval(spec)
+	lcpFailure := effectiveLCPEchoFailure(spec)
 	label := SafeName(cfg.Resource)
 	bundle := "B" + resourceHash(cfg.Resource)
 	link := "L" + resourceHash(cfg.Resource)
@@ -125,6 +139,10 @@ func FreeBSDMPDConf(cfg Config) []byte {
 	b.WriteString(label + ":\n")
 	b.WriteString(" create bundle static " + bundle + "\n")
 	b.WriteString(" set iface name " + cfg.IfName + "\n")
+	if spec.DefaultRoute {
+		b.WriteString(" set iface route default\n")
+	}
+	b.WriteString(" set iface enable tcpmssfix\n")
 	b.WriteString(" set ipcp ranges 0.0.0.0/0 0.0.0.0/0\n")
 	b.WriteString(" create link static " + link + " pppoe\n")
 	b.WriteString(" set link action bundle " + bundle + "\n")
@@ -146,7 +164,11 @@ func FreeBSDMPDConf(cfg Config) []byte {
 		b.WriteString(" set link accept pap chap\n")
 	}
 	b.WriteString(" set auth authname " + strconv.Quote(spec.Username) + "\n")
-	b.WriteString(" set auth password " + strconv.Quote(cfg.Password) + "\n")
+	password := cfg.Password
+	if password == "" {
+		password = spec.Password
+	}
+	b.WriteString(" set auth password " + strconv.Quote(password) + "\n")
 	b.WriteString(" set link max-redial 0\n")
 	b.WriteString(" set link mtu " + strconv.Itoa(mtu) + "\n")
 	b.WriteString(" set link mru " + strconv.Itoa(mru) + "\n")
@@ -185,19 +207,25 @@ func RuntimeConfigForOS(osName string, cfg Config) (string, []byte) {
 // RedactedRuntimeConfigForOS preserves the useful configuration shape in
 // selftest output without returning a PPPoE password.
 func RedactedRuntimeConfigForOS(osName string, cfg Config) []byte {
-	_, config := RuntimeConfigForOS(osName, cfg)
-	if cfg.Password == "" {
-		return config
+	if cfg.Password != "" || cfg.Spec.Password != "" {
+		// Redact before quoting: escaped credentials must never reach diagnostics.
+		cfg.Password = "[REDACTED]"
+		cfg.Spec.Password = "[REDACTED]"
 	}
-	return []byte(strings.ReplaceAll(string(config), cfg.Password, "[REDACTED]"))
+	_, config := RuntimeConfigForOS(osName, cfg)
+	return config
 }
 
 func ParseLogLine(snapshot Snapshot, line string, now time.Time) Snapshot {
 	lower := strings.ToLower(line)
 	snapshot.UpdatedAt = now.UTC()
 	switch {
+	case strings.HasPrefix(strings.TrimSpace(lower), "connect:"):
+		snapshot.Phase = PhaseConnecting
+		snapshot.LastError = ""
 	case strings.Contains(lower, "chap authentication succeeded"), strings.Contains(lower, "pap authentication succeeded"):
 		snapshot.Phase = PhaseIPCP
+		snapshot.LastError = ""
 	case strings.Contains(lower, "local  ip address"):
 		snapshot.CurrentAddress = lastIPv4(line)
 		if snapshot.CurrentAddress != "" {
@@ -214,6 +242,9 @@ func ParseLogLine(snapshot Snapshot, line string, now time.Time) Snapshot {
 		}
 	case strings.Contains(lower, "authentication failed"), strings.Contains(lower, "connection terminated"):
 		snapshot.Phase = PhaseFailed
+		snapshot.CurrentAddress, snapshot.PeerAddress, snapshot.SessionID = "", "", ""
+		snapshot.DNSServers = nil
+		snapshot.ConnectedAt = time.Time{}
 		snapshot.LastError = strings.TrimSpace(line)
 	}
 	return snapshot
@@ -239,6 +270,14 @@ func intDefault(value, fallback int) int {
 		return fallback
 	}
 	return value
+}
+
+func effectiveLCPEchoInterval(spec api.PPPoESessionSpec) int {
+	return intDefault(spec.LCPEchoInterval, intDefault(spec.LCPInterval, 20))
+}
+
+func effectiveLCPEchoFailure(spec api.PPPoESessionSpec) int {
+	return intDefault(spec.LCPEchoFailure, intDefault(spec.LCPFailure, 3))
 }
 
 func lastIPv4(line string) string {

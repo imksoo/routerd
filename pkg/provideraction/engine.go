@@ -4,7 +4,7 @@ package provideraction
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -23,11 +23,13 @@ type Store interface {
 	GetActionByID(id int64) (state.ActionExecutionRecord, bool, error)
 	ApproveAction(id int64, approvedBy string, now time.Time) error
 	BeginActionExecution(id int64, now time.Time) (bool, error)
-	RequeueStaleRunningActions(cutoff, now time.Time) (int, error)
+	TryLockActionOperations(context.Context) (*state.ActionOperationLock, error)
+	RecoverInterruptedActionOperations(context.Context, time.Time) (int, error)
 	ListActions(state.ActionExecutionFilter) ([]state.ActionExecutionRecord, error)
 	MarkActionSkippedByIdempotencyKey(key, message string, now time.Time) error
 	MarkActionResult(id int64, status, message, errMsg string, observed map[string]string, executedAt time.Time) error
-	MarkActionRolledBack(id int64, message string, now time.Time) error
+	BeginActionRollback(id int64, now time.Time) (bool, error)
+	MarkActionRollbackResult(id int64, status, message, errMsg string, now time.Time) error
 	ListDynamicConfigParts() ([]state.DynamicConfigPartRecord, error)
 }
 
@@ -40,12 +42,11 @@ type Logger interface {
 // Engine drives the gated provider-action execution path. It is pure-ish: the
 // executor runner, clock, store, and logger are all injected.
 type Engine struct {
-	store               Store
-	run                 ExecutorRunner
-	now                 func() time.Time
-	log                 Logger
-	plugins             []api.Resource
-	staleRunningTimeout time.Duration
+	store   Store
+	run     ExecutorRunner
+	now     func() time.Time
+	log     Logger
+	plugins []api.Resource
 }
 
 // Config configures an Engine.
@@ -62,10 +63,6 @@ type Config struct {
 	// provider (see resolveExecutor). Optional for import/approve; required for
 	// Execute/Rollback.
 	Plugins []api.Resource
-	// StaleRunningTimeout is the minimum age of a running action before it may
-	// be requeued for execution after a daemon crash/restart. Defaults to
-	// DefaultStaleRunningTimeout.
-	StaleRunningTimeout time.Duration
 }
 
 const (
@@ -77,8 +74,6 @@ const (
 	captureAssignmentLeaseUntilParam     = "mobilityAssignmentLeaseUntil"
 
 	ProviderCaptureChangedEvent = "routerd.provider.capture.changed"
-
-	DefaultStaleRunningTimeout = 2 * time.Minute
 
 	// DynamicConfigPart TTL is intentionally longer than the reconcile cadence,
 	// but mobility path-fenced provider actions are destructive. Treat only a
@@ -100,17 +95,12 @@ func NewEngine(cfg Config) (*Engine, error) {
 	if now == nil {
 		now = time.Now
 	}
-	staleRunningTimeout := cfg.StaleRunningTimeout
-	if staleRunningTimeout <= 0 {
-		staleRunningTimeout = DefaultStaleRunningTimeout
-	}
 	return &Engine{
-		store:               cfg.Store,
-		run:                 cfg.Runner,
-		now:                 now,
-		log:                 cfg.Log,
-		plugins:             cfg.Plugins,
-		staleRunningTimeout: staleRunningTimeout,
+		store:   cfg.Store,
+		run:     cfg.Runner,
+		now:     now,
+		log:     cfg.Log,
+		plugins: cfg.Plugins,
 	}, nil
 }
 
@@ -170,10 +160,7 @@ func (e *Engine) ImportFromDynamicParts() (ImportResult, error) {
 				e.logf("provideraction: skipping stale capture action %q from source %q: %s", plan.IdempotencyKey, part.Source, reason)
 				continue
 			}
-			rec, err := recordFromPlan(part.Source, plan)
-			if err != nil {
-				return res, err
-			}
+			rec := recordFromPlan(part.Source, plan)
 			inserted, err := e.store.ImportAction(rec)
 			if err != nil {
 				return res, fmt.Errorf("import action %q: %w", plan.IdempotencyKey, err)
@@ -188,17 +175,16 @@ func (e *Engine) ImportFromDynamicParts() (ImportResult, error) {
 	return res, nil
 }
 
-// RecoverStaleRunningActions requeues orphaned running actions so they can flow
-// through the existing policy, fencing, approval, and executor path again.
-func (e *Engine) RecoverStaleRunningActions() (int, error) {
-	now := e.now().UTC()
-	cutoff := now.Add(-e.staleRunningTimeout)
-	count, err := e.store.RequeueStaleRunningActions(cutoff, now)
+// RecoverInterruptedActionOperations preserves uncertain provider outcomes.
+// The guard proves only that the prior invocation owner released it or exited;
+// its provider request may still have an unknown outcome.
+func (e *Engine) RecoverInterruptedActionOperations(ctx context.Context) (int, error) {
+	count, err := e.store.RecoverInterruptedActionOperations(ctx, e.now().UTC())
 	if err != nil {
-		return 0, fmt.Errorf("requeue stale running provider actions: %w", err)
+		return 0, fmt.Errorf("recover interrupted provider actions: %w", err)
 	}
 	if count > 0 {
-		e.logf("provideraction: requeued %d stale running action(s)", count)
+		e.logf("provideraction: fenced %d interrupted action outcome(s) as unknown", count)
 	}
 	return count, nil
 }
@@ -215,10 +201,7 @@ func (e *Engine) fenceStalePendingActions() (int, error) {
 		default:
 			continue
 		}
-		plan, err := planFromRecord(row)
-		if err != nil {
-			return count, err
-		}
+		plan := planFromRecord(row)
 		stale, reason, err := e.planStaleByCurrentDesired(plan)
 		if err != nil {
 			return count, err
@@ -434,41 +417,15 @@ func pathFencedPartStale(part state.DynamicConfigPartRecord, freshAfter time.Tim
 	return part.ObservedAt.UTC().Before(freshAfter)
 }
 
-// recordFromPlan converts a planned action into a journal record (pending). It
-// JSON-encodes the target/parameters/undo so the journal mirrors the plan
-// without secrets (plans never carry secrets).
-func recordFromPlan(source string, plan dynamicconfig.ActionPlan) (state.ActionExecutionRecord, error) {
-	rec := state.ActionExecutionRecord{
-		IdempotencyKey: plan.IdempotencyKey,
-		Source:         source,
-		Provider:       plan.Provider,
-		ProviderRef:    plan.ProviderRef,
-		Action:         plan.Action,
-		RiskLevel:      plan.RiskLevel,
-		Status:         state.ActionPending,
+// recordFromPlan projects the typed plan into the journal input. Encoding is
+// confined to the store boundary; callers share these read-only plan values.
+func recordFromPlan(source string, plan dynamicconfig.ActionPlan) state.ActionExecutionRecord {
+	return state.ActionExecutionRecord{
+		IdempotencyKey: plan.IdempotencyKey, Source: source, Provider: plan.Provider,
+		ProviderRef: plan.ProviderRef, Action: plan.Action, Target: plan.Target,
+		Parameters: plan.Parameters, Undo: plan.Undo, RiskLevel: plan.RiskLevel,
+		Status: state.ActionPending,
 	}
-	if len(plan.Target) > 0 {
-		b, err := json.Marshal(plan.Target)
-		if err != nil {
-			return rec, err
-		}
-		rec.TargetJSON = string(b)
-	}
-	if len(plan.Parameters) > 0 {
-		b, err := json.Marshal(plan.Parameters)
-		if err != nil {
-			return rec, err
-		}
-		rec.ParametersJSON = string(b)
-	}
-	if plan.Undo != nil {
-		b, err := json.Marshal(plan.Undo)
-		if err != nil {
-			return rec, err
-		}
-		rec.UndoJSON = string(b)
-	}
-	return rec, nil
 }
 
 // Approve transitions a pending action to approved (operator approval).
@@ -476,14 +433,18 @@ func (e *Engine) Approve(id int64, by string) error {
 	return e.store.ApproveAction(id, by, e.now().UTC())
 }
 
-// Execute is the gated execution path. policy is the ProviderActionPolicy that
-// governs this action; mode is "dry-run" or "execute". It evaluates the policy
+// Execute is the gated live execution path. It evaluates the policy
 // gate, enforces approval + idempotency, resolves the executor, runs it, and
 // journals the outcome. On any gate failure it returns a clear error WITHOUT
 // launching the executor.
-func (e *Engine) Execute(ctx context.Context, id int64, mode string, policy api.ProviderActionPolicySpec) error {
-	if !validMode(mode) {
-		return fmt.Errorf("execute action %d: mode %q must be %q or %q", id, mode, ModeDryRun, ModeExecute)
+func (e *Engine) Execute(ctx context.Context, id int64, policy api.ProviderActionPolicySpec) (err error) {
+	guard, err := e.store.TryLockActionOperations(ctx)
+	if err != nil {
+		return fmt.Errorf("claim provider operation for action %d: %w", id, err)
+	}
+	defer func() { err = errors.Join(err, guard.Close()) }()
+	if err := e.refuseUnresolvedOperations(); err != nil {
+		return err
 	}
 	rec, found, err := e.store.GetActionByID(id)
 	if err != nil {
@@ -499,21 +460,17 @@ func (e *Engine) Execute(ctx context.Context, id int64, mode string, policy api.
 		return nil
 	}
 	if rec.Status == state.ActionRunning {
-		e.logf("provideraction: action %d is already running; skipping", id)
-		return nil
+		return fmt.Errorf("execute action %d: prior provider outcome is unconfirmed", id)
 	}
 	if rec.Status == state.ActionRolledBack {
 		return fmt.Errorf("execute action %d: action was rolled back", id)
 	}
 
 	// Policy gate (do not launch the executor on failure).
-	if err := evaluatePolicy(rec, mode, policy); err != nil {
+	if err := evaluatePolicy(rec, ModeExecute, policy); err != nil {
 		return fmt.Errorf("policy gate denied action %d: %w", id, err)
 	}
-	plan, err := planFromRecord(rec)
-	if err != nil {
-		return err
-	}
+	plan := planFromRecord(rec)
 	stale, reason, err := e.planStaleByCurrentDesired(plan)
 	if err != nil {
 		return err
@@ -552,32 +509,35 @@ func (e *Engine) Execute(ctx context.Context, id int64, mode string, policy api.
 	if err != nil {
 		return fmt.Errorf("resolve executor for provider %q: %w", rec.Provider, err)
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	claimed, err := e.store.BeginActionExecution(id, e.now().UTC())
 	if err != nil {
 		return fmt.Errorf("claim action %d for execution: %w", id, err)
 	}
 	if !claimed {
-		e.logf("provideraction: action %d was already claimed or completed; skipping", id)
-		return nil
+		return fmt.Errorf("execute action %d: approved operation was not claimed", id)
 	}
-	e.logf("provideraction: executing action %d via plugin %q (mode=%s)", id, pluginName, mode)
+	e.logf("provideraction: executing action %d via plugin %q", id, pluginName)
 
 	req := NewExecuteActionRequest(ExecuteActionRequestSpec{
 		Action:         rec.Action,
 		Provider:       rec.Provider,
 		ProviderRef:    rec.ProviderRef,
-		Target:         decodeStringMap(rec.TargetJSON),
-		Parameters:     decodeStringMap(rec.ParametersJSON),
-		Mode:           mode,
+		Target:         rec.Target,
+		Parameters:     rec.Parameters,
+		Mode:           ModeExecute,
 		IdempotencyKey: rec.IdempotencyKey,
 	})
 
 	result, _, runErr := e.run(ctx, spec, req)
 	executedAt := e.now().UTC()
 	if runErr != nil {
-		// Executor process error: journal a failure (never succeeded).
-		msg := fmt.Sprintf("executor invocation failed (mode=%s)", mode)
-		if markErr := e.store.MarkActionResult(id, state.ActionFailed, msg, runErr.Error(), nil, executedAt); markErr != nil {
+		// The executor may have changed the provider before losing its reply.
+		// A process failure is not proof that the mutation failed.
+		msg := "executor invocation ended without a confirmed provider result"
+		if markErr := e.store.MarkActionResult(id, state.ActionOutcomeUnknown, msg, runErr.Error(), nil, executedAt); markErr != nil {
 			return fmt.Errorf("execute action %d: run failed (%v) and journaling failed: %w", id, runErr, markErr)
 		}
 		return fmt.Errorf("execute action %d: %w", id, runErr)
@@ -593,35 +553,29 @@ func (e *Engine) Execute(ctx context.Context, id int64, mode string, policy api.
 	case ResultSkipped:
 		return e.store.MarkActionResult(id, state.ActionSkipped, result.Status.Message, "", result.Status.Observed, executedAt)
 	case ResultFailed:
-		return e.store.MarkActionResult(id, state.ActionFailed, result.Status.Message, result.Status.Error, result.Status.Observed, executedAt)
+		failure := fmt.Errorf("execute action %d: executor reported failure: %s", id, result.Status.Error)
+		if err := e.store.MarkActionResult(id, state.ActionFailed, result.Status.Message, result.Status.Error, result.Status.Observed, executedAt); err != nil {
+			return fmt.Errorf("%w; journaling failed: %w", failure, err)
+		}
+		return failure
+	case ResultOutcomeUnknown:
+		failure := fmt.Errorf("execute action %d: provider outcome unknown: %s", id, result.Status.Error)
+		return errors.Join(failure, e.store.MarkActionResult(id, state.ActionOutcomeUnknown, result.Status.Message, result.Status.Error, result.Status.Observed, executedAt))
 	default:
 		errMsg := fmt.Sprintf("executor returned invalid status %q", result.Status.Status)
-		if markErr := e.store.MarkActionResult(id, state.ActionFailed, "invalid executor status", errMsg, nil, executedAt); markErr != nil {
+		if markErr := e.store.MarkActionResult(id, state.ActionOutcomeUnknown, "invalid executor status", errMsg, nil, executedAt); markErr != nil {
 			return fmt.Errorf("execute action %d: %s; journaling failed: %w", id, errMsg, markErr)
 		}
 		return fmt.Errorf("execute action %d: %s", id, errMsg)
 	}
 }
 
-func planFromRecord(row state.ActionExecutionRecord) (dynamicconfig.ActionPlan, error) {
-	plan := dynamicconfig.ActionPlan{
-		IdempotencyKey: row.IdempotencyKey,
-		Provider:       row.Provider,
-		ProviderRef:    row.ProviderRef,
-		Action:         row.Action,
-		RiskLevel:      row.RiskLevel,
+func planFromRecord(row state.ActionExecutionRecord) dynamicconfig.ActionPlan {
+	return dynamicconfig.ActionPlan{
+		IdempotencyKey: row.IdempotencyKey, Provider: row.Provider,
+		ProviderRef: row.ProviderRef, Action: row.Action, Target: row.Target,
+		Parameters: row.Parameters, Undo: row.Undo, RiskLevel: row.RiskLevel,
 	}
-	if strings.TrimSpace(row.TargetJSON) != "" {
-		if err := json.Unmarshal([]byte(row.TargetJSON), &plan.Target); err != nil {
-			return plan, fmt.Errorf("decode action target for %q: %w", row.IdempotencyKey, err)
-		}
-	}
-	if strings.TrimSpace(row.ParametersJSON) != "" {
-		if err := json.Unmarshal([]byte(row.ParametersJSON), &plan.Parameters); err != nil {
-			return plan, fmt.Errorf("decode action parameters for %q: %w", row.IdempotencyKey, err)
-		}
-	}
-	return plan, nil
 }
 
 // DryRunResult is the outcome of a non-destructive DryRunPreview.
@@ -690,8 +644,8 @@ func (e *Engine) DryRunPreview(ctx context.Context, id int64, policy api.Provide
 		Action:         rec.Action,
 		Provider:       rec.Provider,
 		ProviderRef:    rec.ProviderRef,
-		Target:         decodeStringMap(rec.TargetJSON),
-		Parameters:     decodeStringMap(rec.ParametersJSON),
+		Target:         rec.Target,
+		Parameters:     rec.Parameters,
 		Mode:           ModeDryRun,
 		IdempotencyKey: rec.IdempotencyKey,
 	})
@@ -707,10 +661,35 @@ func (e *Engine) DryRunPreview(ctx context.Context, id int64, policy api.Provide
 	}, nil
 }
 
+// refuseUnresolvedOperations runs only while the DB operation guard is held.
+// A stopped local invocation does not prove that its provider request or
+// descendants stopped. A new key or generation cannot bypass that uncertainty.
+func (e *Engine) refuseUnresolvedOperations() error {
+	rows, err := e.store.ListActions(state.ActionExecutionFilter{})
+	if err != nil {
+		return fmt.Errorf("read unresolved provider operations: %w", err)
+	}
+	for _, row := range rows {
+		switch row.Status {
+		case state.ActionRunning, state.ActionRollingBack, state.ActionOutcomeUnknown, state.ActionRollbackUnknown:
+			return fmt.Errorf("provider action %d has unresolved status %q; inspect the provider, then use routerctl action resolve %d with the verified outcome before further live operations", row.ID, row.Status, row.ID)
+		}
+	}
+	return nil
+}
+
 // Rollback is best-effort undo. It runs only if policy.AllowUndo, the action
 // succeeded, and the journal carries an undo. It builds an ExecuteActionRequest
 // for the undo action and, on executor success, marks the action rolledBack.
-func (e *Engine) Rollback(ctx context.Context, id int64, policy api.ProviderActionPolicySpec) error {
+func (e *Engine) Rollback(ctx context.Context, id int64, policy api.ProviderActionPolicySpec) (err error) {
+	guard, err := e.store.TryLockActionOperations(ctx)
+	if err != nil {
+		return fmt.Errorf("claim rollback operation for action %d: %w", id, err)
+	}
+	defer func() { err = errors.Join(err, guard.Close()) }()
+	if err := e.refuseUnresolvedOperations(); err != nil {
+		return err
+	}
 	if !policy.AllowUndo {
 		return fmt.Errorf("rollback action %d refused: policy.allowUndo is false", id)
 	}
@@ -721,16 +700,13 @@ func (e *Engine) Rollback(ctx context.Context, id int64, policy api.ProviderActi
 	if !found {
 		return fmt.Errorf("action %d not found", id)
 	}
-	if rec.Status != state.ActionSucceeded {
+	if rec.Status != state.ActionSucceeded && rec.Status != state.ActionRollbackFailed {
 		return fmt.Errorf("rollback action %d refused: action is %s, not succeeded", id, rec.Status)
 	}
-	if strings.TrimSpace(rec.UndoJSON) == "" {
+	if rec.Undo == nil {
 		return fmt.Errorf("rollback action %d refused: action has no undo", id)
 	}
-	var undo dynamicconfig.ActionUndo
-	if err := json.Unmarshal([]byte(rec.UndoJSON), &undo); err != nil {
-		return fmt.Errorf("rollback action %d: decode undo: %w", id, err)
-	}
+	undo := rec.Undo
 	if strings.TrimSpace(undo.Action) == "" {
 		return fmt.Errorf("rollback action %d refused: undo has no action", id)
 	}
@@ -739,13 +715,23 @@ func (e *Engine) Rollback(ctx context.Context, id int64, policy api.ProviderActi
 	if err != nil {
 		return fmt.Errorf("rollback action %d: resolve executor: %w", id, err)
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	claimed, err := e.store.BeginActionRollback(id, e.now().UTC())
+	if err != nil {
+		return fmt.Errorf("claim rollback action %d: %w", id, err)
+	}
+	if !claimed {
+		return fmt.Errorf("rollback action %d was not claimed", id)
+	}
 	e.logf("provideraction: rolling back action %d via plugin %q (undo=%s)", id, pluginName, undo.Action)
 
 	req := NewExecuteActionRequest(ExecuteActionRequestSpec{
 		Action:         undo.Action,
 		Provider:       rec.Provider,
 		ProviderRef:    rec.ProviderRef,
-		Target:         decodeStringMap(rec.TargetJSON),
+		Target:         rec.Target,
 		Parameters:     undoParameters(undo.Parameters, rec.Observed),
 		Mode:           ModeExecute,
 		IdempotencyKey: rec.IdempotencyKey + ":undo",
@@ -753,16 +739,21 @@ func (e *Engine) Rollback(ctx context.Context, id int64, policy api.ProviderActi
 
 	result, _, runErr := e.run(ctx, spec, req)
 	if runErr != nil {
-		return fmt.Errorf("rollback action %d: executor failed: %w", id, runErr)
+		return errors.Join(fmt.Errorf("rollback action %d: executor outcome unknown: %w", id, runErr), e.store.MarkActionRollbackResult(id, state.ActionRollbackUnknown, "undo outcome is unconfirmed", runErr.Error(), e.now().UTC()))
 	}
 	if result.Status.Status != ResultSucceeded {
-		return fmt.Errorf("rollback action %d: executor reported %q: %s", id, result.Status.Status, result.Status.Error)
+		status := state.ActionRollbackUnknown
+		if result.Status.Status == ResultFailed || result.Status.Status == ResultSkipped {
+			status = state.ActionRollbackFailed
+		}
+		failure := fmt.Errorf("rollback action %d: executor reported %q: %s", id, result.Status.Status, result.Status.Error)
+		return errors.Join(failure, e.store.MarkActionRollbackResult(id, status, result.Status.Message, failure.Error(), e.now().UTC()))
 	}
 	msg := result.Status.Message
 	if msg == "" {
 		msg = "rolled back via undo " + undo.Action
 	}
-	return e.store.MarkActionRolledBack(id, msg, e.now().UTC())
+	return e.store.MarkActionRollbackResult(id, state.ActionRolledBack, msg, "", e.now().UTC())
 }
 
 // RollbackPreview runs the undo action in dry-run mode WITHOUT mutating the
@@ -781,16 +772,13 @@ func (e *Engine) RollbackPreview(ctx context.Context, id int64, policy api.Provi
 	if !found {
 		return DryRunResult{}, fmt.Errorf("action %d not found", id)
 	}
-	if rec.Status != state.ActionSucceeded {
+	if rec.Status != state.ActionSucceeded && rec.Status != state.ActionRollbackFailed {
 		return DryRunResult{}, fmt.Errorf("rollback action %d refused: action is %s, not succeeded", id, rec.Status)
 	}
-	if strings.TrimSpace(rec.UndoJSON) == "" {
+	if rec.Undo == nil {
 		return DryRunResult{}, fmt.Errorf("rollback action %d refused: action has no undo", id)
 	}
-	var undo dynamicconfig.ActionUndo
-	if err := json.Unmarshal([]byte(rec.UndoJSON), &undo); err != nil {
-		return DryRunResult{}, fmt.Errorf("rollback action %d: decode undo: %w", id, err)
-	}
+	undo := rec.Undo
 	if strings.TrimSpace(undo.Action) == "" {
 		return DryRunResult{}, fmt.Errorf("rollback action %d refused: undo has no action", id)
 	}
@@ -805,7 +793,7 @@ func (e *Engine) RollbackPreview(ctx context.Context, id int64, policy api.Provi
 		Action:         undo.Action,
 		Provider:       rec.Provider,
 		ProviderRef:    rec.ProviderRef,
-		Target:         decodeStringMap(rec.TargetJSON),
+		Target:         rec.Target,
 		Parameters:     undoParameters(undo.Parameters, rec.Observed),
 		Mode:           ModeDryRun,
 		IdempotencyKey: rec.IdempotencyKey + ":undo",
@@ -897,8 +885,8 @@ func evaluatePolicy(rec state.ActionExecutionRecord, mode string, policy api.Pro
 			return err
 		}
 	}
-	if err := checkExecutionWindow(policy.ExecutionWindow); err != nil {
-		return err
+	if strings.TrimSpace(policy.ExecutionWindow) != "" {
+		return fmt.Errorf("executionWindow is not supported")
 	}
 	return nil
 }
@@ -906,7 +894,7 @@ func evaluatePolicy(rec state.ActionExecutionRecord, mode string, policy api.Pro
 // targetAddressInCIDRs verifies the action target.address falls within one of
 // the allowed CIDRs. A missing target address is a denial when CIDRs are set.
 func targetAddressInCIDRs(rec state.ActionExecutionRecord, cidrs []string) error {
-	target := decodeStringMap(rec.TargetJSON)
+	target := rec.Target
 	addr := strings.TrimSpace(target["address"])
 	if addr == "" {
 		return fmt.Errorf("target has no address but allowedCIDRs is set")
@@ -936,16 +924,6 @@ func parseAddr(addr string) net.IP {
 	if ip, _, err := net.ParseCIDR(addr); err == nil {
 		return ip
 	}
-	return nil
-}
-
-// checkExecutionWindow is intentionally lenient (ADR 0007): it only rejects a
-// window that is set and clearly violated. The Phase 5.0 implementation accepts
-// any non-empty window (richer scheduling arrives in Phase 5.x), so it never
-// rejects here. The hook exists so the engine signature is window-aware.
-func checkExecutionWindow(window string) error {
-	// Lenient: any free-form window is allowed in Phase 5.0.
-	_ = strings.TrimSpace(window)
 	return nil
 }
 
@@ -983,15 +961,4 @@ func undoParameters(planned, observed map[string]string) map[string]string {
 		out[k] = v
 	}
 	return out
-}
-
-func decodeStringMap(s string) map[string]string {
-	if strings.TrimSpace(s) == "" {
-		return nil
-	}
-	var m map[string]string
-	if err := json.Unmarshal([]byte(s), &m); err != nil {
-		return nil
-	}
-	return m
 }

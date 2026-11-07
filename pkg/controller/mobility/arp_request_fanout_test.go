@@ -128,13 +128,14 @@ func TestARPRequestFactCrossesSignedFederationTransport(t *testing.T) {
 	pusher := eventd.NewPusher(sourceStore, secret, []eventd.PeerConfig{{
 		NodeName: "pve-rt08", Endpoint: server.URL,
 		Types: []string{OnPremARPRequestObservedEvent}, SubjectPrefixes: []string{"192.168.123."},
-	}}, eventd.PushRetry{MaxAttempts: 1}, server.Client(), func() time.Time { return now }, func(time.Duration) {})
+	}}, eventd.PushRetry{MaxAttempts: 1}, server.Client(), func() time.Time { return now }, func(context.Context, time.Duration) error { return nil })
 	outbox := eventd.NewOutbox(sourceStore, sourceStore, pusher, "cloudedge", "pve-rt07", time.Second, func() time.Time { return now })
 	if err := outbox.RunOnce(context.Background()); err != nil {
 		t.Fatalf("signed federation outbox: %v", err)
 	}
-	if status := receiver.Status(); status.Received != 1 || status.Rejected != 0 || status.StoredEvents != 1 {
-		t.Fatalf("receiver status = %#v, want one accepted event", status)
+	status, err := receiver.Status()
+	if err != nil || status.Received != 1 || status.Rejected != 0 || status.StoredEvents != 1 {
+		t.Fatalf("receiver status = %#v err=%v, want one accepted event", status, err)
 	}
 
 	var probes []string

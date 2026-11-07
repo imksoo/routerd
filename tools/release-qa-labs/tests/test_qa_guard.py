@@ -3,6 +3,7 @@ import contextlib
 import io
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import tempfile
@@ -305,8 +306,21 @@ class ContractGuardTests(unittest.TestCase):
 
         return invoke
 
-    def verify(self, git_impl, actual_host="chatty"):
+    def verify(self, git_impl, actual_host="chatty", *, repin=True):
         write_json(self.contract_path, self.contract)
+        if repin:
+            # Fixture admission starts after the supervisor has captured these
+            # candidate inputs. Preserve modes so invalid input tests remain
+            # invalid at the actual consuming boundary.
+            for source, target in (
+                (self.runtime / "terraform.tfvars", self.runtime / "pinned/terraform.tfvars"),
+                *((self.runtime / "secrets" / name, self.runtime / "pinned" / name)
+                  for name in ("pve_ssh", "guest_ssh", "pve-known_hosts", "pve-token.tfvars", "pve-ca.pem")),
+            ):
+                if source.is_file():
+                    shutil.copy2(source, target)
+                else:
+                    target.unlink(missing_ok=True)
         real_run = subprocess.run
 
         def show(command, stdout=None, stderr=None, check=False, **kwargs):
@@ -323,6 +337,20 @@ class ContractGuardTests(unittest.TestCase):
 
     def test_exact_artifact_and_clean_provenance_pass(self):
         self.verify(self.fake_git())
+
+    def test_admission_validates_pinned_effect_inputs_not_replaced_originals(self):
+        self.verify(self.fake_git())
+        effective = self.runtime / "pinned/terraform.tfvars"
+        text = effective.read_text()
+        effective.write_text(text.replace("pve_router_vm_id = 131", "pve_router_vm_id = 999"))
+        with self.assertRaises(qa_guard.GuardError):
+            self.verify(self.fake_git(), repin=False)
+        # Replacing the original with valid bytes cannot re-admit that different
+        # pinned VM allocation, nor a different actual guest SSH identity.
+        shutil.copy2(self.tfvars, effective)
+        shutil.copy2(self.ssh_key, self.runtime / "pinned/guest_ssh")
+        with self.assertRaises(qa_guard.GuardError):
+            self.verify(self.fake_git(), repin=False)
 
     def test_single_client_closed_profile_and_pve_identity_are_exact(self):
         self.assertEqual(qa_guard.APPROVED_COUNTS, {"aws": 3, "azure": 3, "oci": 3, "pve": 6})

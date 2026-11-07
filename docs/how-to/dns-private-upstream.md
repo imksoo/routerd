@@ -31,6 +31,18 @@ The order in `DNSForwarder.spec.upstreams` is the priority order. routerd tries 
 
 `DNSUpstream.spec.addressFrom` lets the upstream address list come from another resource's status. This is the mechanism for using DNS servers learned through DHCPv6 information request.
 
+A non-empty `DNSResolver.spec.listen[].sources` list restricts that listener to
+the named forwarders. When a selected forwarder becomes ineligible through
+`when` or loses an eligible dependency, the listener must not gain access to
+other forwarders. The declared selection remains in force when none of its
+sources are available. Omitting `sources` selects all of the resolver's sources.
+
+If a selected forwarder is waiting for a dynamic upstream address or required
+bootstrap resolver, its match rule stays in place. Matching queries receive
+`SERVFAIL` until the dependency resolves; they are not sent to another forwarder.
+Unrelated queries can still use ready sources. Resolver status reports
+`WaitingForDependencies`, and worker upstream status marks the source `Pending`.
+
 ## Conditional forwarding example
 
 ```yaml
@@ -137,6 +149,13 @@ The order in `DNSForwarder.spec.upstreams` is the priority order. routerd tries 
     address: 8.8.8.8
 ```
 
+On the routerd 1.5 proposal branch, `minTTL` is a cache admission threshold:
+answers with a shorter authoritative lifetime are served without caching.
+It never extends an upstream TTL. `maxTTL` and `negativeTTL` cap retention;
+negative answers also require an SOA and respect the lesser of its TTL and
+MINIMUM field. Cache hits count down the remaining lifetime, including authority
+and additional records, while preserving EDNS flags.
+
 ## NextDNS with a one-second query deadline
 
 Use the following resources with an existing `DNSResolver/lan-resolver`.
@@ -207,3 +226,62 @@ FreeBSD does not currently provide the same `SO_BINDTODEVICE` enforcement, so pl
 
 - [Local DNS zones](./dns-local-zone.md)
 - [DNS resolver concept](../concepts/dns-resolver.md)
+
+## Verify listener isolation during source withdrawal
+
+The local regression exercises when filtering, controller-generated runtime
+configuration, worker reload and actual UDP/TCP questions:
+
+```sh
+go test ./cmd/routerd-dns-resolver -run '^TestWhenFilteredListenerCannotSelectAnotherDNSView$' -count=1
+```
+
+For a native package check, use an isolated Linux guest with two DNS listeners.
+Select only `public` on the first and only `private` on the second. Give each
+forwarder a separate zone and record. Gate the public forwarder on a HealthCheck
+against a disposable TCP service; keep the private forwarder unconditional.
+
+1. With the health peer available, verify each listener's own record using
+   `dig` over UDP and TCP. The public listener must not return the private record.
+2. Stop only the health peer. Wait for `HealthCheck` to report `Unhealthy` and
+   for the generated resolver configuration to omit the public source. Repeat
+   the private-record queries against both listeners. Only the private listener
+   may answer it.
+3. Restart the health peer. Wait for `Healthy` and the public source to return;
+   verify the original answers and isolation without restarting routerd.
+4. Withdraw the test configuration. Require a healthy empty resource set and
+   no remaining resolver helper or test DNS listener. Stop the health peer.
+
+Use a bounded wait for the configured probe thresholds and reconciliation.
+A timeout, a leaked private answer, or recovery requiring product-state repair
+fails the check. Record the executed package revision and outcome; retain raw
+output only while investigating a failure. This check covers explicit listener
+source selection, not every conditional-domain or dynamic-upstream policy.
+
+## Verify DHCP-derived private DNS withdrawal
+
+Use an isolated Linux guest and an independent DHCP/DNS peer. Advertise that
+peer as the DHCP DNS server, select it through `DNSUpstream.addressFrom`, and
+place its private-domain forwarder before a separate default forwarder. Gate the
+DHCP client on a disposable HealthCheck peer. Log queries at the default DNS
+peer so a private question sent there is detectable, even if no answer returns.
+
+1. With the health peer stopped and no WAN lease, require `Unhealthy` and the
+   private source in runtime `pendingSources`. Private UDP/TCP questions must
+   return SERVFAIL; public questions must still resolve.
+2. Start the health peer. Within 90 seconds, require an actual DHCP lease and
+   its DNS server in status, then verify private and public UDP/TCP answers.
+3. Stop the health peer. Within 60 seconds, require `Unhealthy`, removal of the
+   DHCP-owned IPv4 address, and the private source pending again. Repeat step 1.
+4. Withdraw the configuration. Require healthy empty status, no managed helpers,
+   no test DNS listener, and no DHCP-owned address **before** deleting the test
+   network. Stop independent peers and remove their isolated network afterward.
+
+Any private question in the default peer's log, retained DHCP address, timeout,
+or manual repair of product state fails the check. Record the package revision
+and stage that failed. The local ownership regression also verifies that a failed
+address deletion retains its receipt and error until a later retry succeeds:
+
+```sh
+go test ./pkg/controller/chain -run '^TestWhenStatusPublicationCannotEraseDHCPv4WithdrawalOwnership$' -count=1
+```

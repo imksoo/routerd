@@ -97,7 +97,7 @@ func TestDoctorFederationWarnOnStaleTTL(t *testing.T) {
 		eventExpiresAt time.Time
 	}{
 		{"evt-1", now.Add(5 * time.Minute)},  // stale: older than event's 10m
-		{"evt-2", now.Add(10 * time.Minute)},  // fresh: matches event
+		{"evt-2", now.Add(10 * time.Minute)}, // fresh: matches event
 	} {
 		if err := store.RecordDelivery(d.eventID, "peer-a"); err != nil {
 			t.Fatalf("record delivery %s: %v", d.eventID, err)

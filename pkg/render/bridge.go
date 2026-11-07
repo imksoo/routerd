@@ -33,7 +33,10 @@ func linkAliases(router *api.Router) map[string]string {
 				aliases[res.Metadata.Name] = defaultString(spec.IfName, res.Metadata.Name)
 			}
 		case "WireGuardInterface":
-			aliases[res.Metadata.Name] = res.Metadata.Name
+			spec, err := res.WireGuardInterfaceSpec()
+			if err == nil {
+				aliases[res.Metadata.Name] = defaultString(spec.IfName, res.Metadata.Name)
+			}
 		}
 	}
 	return aliases
@@ -53,6 +56,7 @@ type bridgeConfig struct {
 }
 
 type vxlanConfig struct {
+	Kind           string
 	Name           string
 	IfName         string
 	VNI            int
@@ -110,6 +114,7 @@ func vxlanConfigs(router *api.Router, aliases map[string]string) ([]vxlanConfig,
 				return nil, err
 			}
 			vxlans = append(vxlans, vxlanConfig{
+				Kind:           res.Kind,
 				Name:           res.Metadata.Name,
 				IfName:         defaultString(spec.IfName, res.Metadata.Name),
 				VNI:            spec.VNI,
@@ -128,6 +133,7 @@ func vxlanConfigs(router *api.Router, aliases map[string]string) ([]vxlanConfig,
 				return nil, err
 			}
 			vxlans = append(vxlans, vxlanConfig{
+				Kind:           res.Kind,
 				Name:           res.Metadata.Name,
 				IfName:         defaultString(spec.IfName, res.Metadata.Name),
 				VNI:            spec.VNI,
@@ -143,4 +149,23 @@ func vxlanConfigs(router *api.Router, aliases map[string]string) ([]vxlanConfig,
 	}
 	sort.Slice(vxlans, func(i, j int) bool { return vxlans[i].IfName < vxlans[j].IfName })
 	return vxlans, nil
+}
+
+func nativeVXLANSegmentIfnames(router *api.Router) map[string]bool {
+	names := map[string]bool{}
+	for _, resource := range router.Spec.Resources {
+		switch resource.Kind {
+		case "VXLANSegment":
+			spec, err := resource.VXLANSegmentSpec()
+			if err == nil {
+				names[defaultString(spec.IfName, resource.Metadata.Name)] = true
+			}
+		case "VXLANTunnel":
+			spec, err := resource.VXLANTunnelSpec()
+			if err == nil {
+				names[defaultString(spec.IfName, resource.Metadata.Name)] = true
+			}
+		}
+	}
+	return names
 }

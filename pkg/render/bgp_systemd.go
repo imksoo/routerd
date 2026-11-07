@@ -19,7 +19,7 @@ func BGPSystemdSpecWithPaths(socketPath, controlSocketPath, statePath string) ap
 	noNewPrivileges := true
 	return api.SystemdUnitSpec{
 		Description:              "routerd BGP daemon",
-		ExecStart:                []string{"/usr/local/sbin/routerd-bgp", "daemon", "--socket", socketPath, "--control-socket", controlSocketPath, "--state-file", statePath},
+		ExecStart:                []string{platform.LinuxBinaryPath("routerd-bgp"), "daemon", "--socket", socketPath, "--control-socket", controlSocketPath, "--state-file", statePath},
 		Wants:                    []string{"network-online.target"},
 		After:                    []string{"network-online.target"},
 		WantedBy:                 []string{"multi-user.target"},

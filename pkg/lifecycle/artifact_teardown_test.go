@@ -76,6 +76,34 @@ func TestArtifactTeardownRegistryCleansIPv6AddressLinux(t *testing.T) {
 	}
 }
 
+func TestArtifactTeardownDefersStaticAddressToItsReceiptOwner(t *testing.T) {
+	for _, features := range []platform.Features{{HasIproute2: true}, {HasPF: true}} {
+		executor := &fakeArtifactTeardownExecutor{features: features}
+		for _, artifact := range []resource.Artifact{
+			{Kind: "net.ipv4.address", Name: "gif1:192.168.160.249/32", Owner: api.NetAPIVersion + "/IPv4StaticAddress/ds-lite-source"},
+			{Kind: "net.ipv4.address", Name: "gif1:192.168.160.249/32", Owner: api.NetAPIVersion + "/DSLiteTunnel/source"},
+			{Kind: "linux.ipip6.tunnel", Name: "gif1", Owner: api.NetAPIVersion + "/DSLiteTunnel/source"},
+		} {
+			label, err := CleanupArtifact(executor, artifact)
+			if err != nil || label != "" || len(executor.commands) != 0 {
+				t.Fatalf("generic artifact cleaner bypassed native receipt: label=%q err=%v commands=%v", label, err, executor.commands)
+			}
+		}
+	}
+}
+
+func TestArtifactTeardownDefersDnsmasqToItsActivationOwner(t *testing.T) {
+	executor := &fakeArtifactTeardownExecutor{features: platform.Features{HasSystemd: true}}
+	artifact := resource.Artifact{Kind: "systemd.service", Name: "routerd-dnsmasq.service", Owner: api.NetAPIVersion + "/DHCPv4Server/old"}
+	if ArtifactCleanupEligible(artifact) {
+		t.Fatal("generic cleanup bypasses dnsmasq stop acknowledgement")
+	}
+	label, err := CleanupArtifact(executor, artifact)
+	if err != nil || label != "" || len(executor.commands) != 0 || len(executor.removes) != 0 {
+		t.Fatalf("generic cleanup changed dnsmasq: %q %v %+v", label, err, executor)
+	}
+}
+
 func TestArtifactTeardownRegistrySkipsUnsupportedHostIntegrations(t *testing.T) {
 	artifacts := []resource.Artifact{
 		{
@@ -170,6 +198,14 @@ func TestArtifactTeardownRegistryEligibility(t *testing.T) {
 		want     bool
 	}{
 		{
+			name:     "static address requires its native receipt owner",
+			artifact: resource.Artifact{Kind: "net.ipv4.address", Name: "gif1:192.168.160.249/32", Owner: api.NetAPIVersion + "/IPv4StaticAddress/ds-lite-source"},
+		},
+		{
+			name:     "example IP is not artifact authority",
+			artifact: resource.Artifact{Kind: "net.ipv4.address", Name: "eth0:192.168.160.250/32", Owner: api.NetAPIVersion + "/IPv4StaticAddress/foreign"},
+		},
+		{
 			name: "routerd nft table",
 			artifact: resource.Artifact{
 				Kind:       "nft.table",
@@ -222,8 +258,6 @@ func TestArtifactTeardownRegistryEligibility(t *testing.T) {
 
 func TestArtifactTeardownRegistryCleanupPriority(t *testing.T) {
 	artifacts := []resource.Artifact{
-		{Kind: "linux.ipv4.routeTable"},
-		{Kind: "linux.ipv4.fwmarkRule"},
 		{Kind: "directory"},
 		{Kind: "systemd.service"},
 		{Kind: "unix.socket"},
@@ -233,8 +267,16 @@ func TestArtifactTeardownRegistryCleanupPriority(t *testing.T) {
 	for _, artifact := range artifacts {
 		got = append(got, ArtifactCleanupPriority(artifact))
 	}
-	want := []int{5, 0, 40, 10, 30, 20}
+	want := []int{40, 10, 30, 20}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("priorities = %#v, want %#v", got, want)
+	}
+}
+
+func TestPolicyNativeEffectsAreNotGenericTeardownArtifacts(t *testing.T) {
+	for _, kind := range []string{"linux.ipv4.fwmarkRule", "linux.ipv4.routeTable"} {
+		if ArtifactCleanupEligible(resource.Artifact{Kind: kind}) {
+			t.Fatalf("%s bypasses its native receipt owner", kind)
+		}
 	}
 }

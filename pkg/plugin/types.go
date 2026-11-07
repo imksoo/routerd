@@ -88,9 +88,8 @@ type PluginResultStatus struct {
 	Events      []PluginEvent                          `yaml:"events" json:"events"`
 }
 
-// ActionPlan is a plugin-proposed provider operation for dry-run and display
-// only. routerd never executes ActionPlans and never invokes a provider
-// CLI/SDK from them.
+// ActionPlan is a proposed provider operation. Import does not execute it;
+// the provider-action engine requires a separate policy and execution claim.
 //
 // The type is defined in pkg/dynamicconfig (the lower-level package) so that
 // DynamicConfigPartSpec can persist action plans without an import cycle;
@@ -101,8 +100,7 @@ type ActionPlan = dynamicconfig.ActionPlan
 // pkg/dynamicconfig.
 type ActionCheck = dynamicconfig.ActionCheck
 
-// ActionUndo describes the inverse provider action for display only. Aliased
-// from pkg/dynamicconfig.
+// ActionUndo is the proposed inverse used by the gated provider-action engine.
 type ActionUndo = dynamicconfig.ActionUndo
 
 // PluginEvent is an informational event emitted by a plugin.

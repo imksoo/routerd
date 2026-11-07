@@ -1,0 +1,65 @@
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: nat44-source-snat-runtime
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: wan
+      spec:
+        ifname: wan0
+        managed: false
+        owner: external
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: lan-a
+      spec:
+        ifname: lan0
+        managed: false
+        owner: external
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: lan-b
+      spec:
+        ifname: lan1
+        managed: false
+        owner: external
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata:
+        name: snat-primary
+      spec:
+        interface: wan
+        address: 198.18.16.10/32
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata:
+        name: snat-secondary
+      spec:
+        interface: wan
+        address: 198.18.16.11/32
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: NAT44Rule
+      metadata:
+        name: lan-a-to-selected-wan
+      spec:
+        type: snat
+        egressInterface: wan
+        sourceRanges:
+          - 198.18.15.0/24
+        destinationCIDRs:
+          - 198.18.16.0/24
+        excludeDestinationCIDRs:
+          - 198.18.16.54/32
+        snatAddressFrom:
+          resource: IPv4StaticAddress/snat-primary
+          field: address

@@ -98,7 +98,7 @@ func TestOutboxLoopPrevention(t *testing.T) {
 	defer srv.Close()
 
 	peers := []eventd.PeerConfig{{NodeName: peerName, Endpoint: srv.URL}}
-	noSleep := func(time.Duration) {}
+	noSleep := func(context.Context, time.Duration) error { return nil }
 	pusher := eventd.NewPusher(store, testSecret, peers,
 		eventd.PushRetry{MaxAttempts: 3, BaseBackoff: time.Millisecond, MaxBackoff: time.Millisecond},
 		srv.Client(), clock, noSleep)
@@ -153,7 +153,7 @@ func TestOutboxIdempotent(t *testing.T) {
 	defer srv.Close()
 
 	peers := []eventd.PeerConfig{{NodeName: peerName, Endpoint: srv.URL}}
-	noSleep := func(time.Duration) {}
+	noSleep := func(context.Context, time.Duration) error { return nil }
 	pusher := eventd.NewPusher(store, testSecret, peers,
 		eventd.PushRetry{MaxAttempts: 3, BaseBackoff: time.Millisecond, MaxBackoff: time.Millisecond},
 		srv.Client(), clock, noSleep)
@@ -253,7 +253,7 @@ func TestOutboxIsolatesUnreachablePeer(t *testing.T) {
 	pusher := eventd.NewPusher(store, testSecret, []eventd.PeerConfig{
 		{NodeName: "cloud-a", Endpoint: failing.URL},
 		{NodeName: "cloud-b", Endpoint: healthy.URL},
-	}, eventd.PushRetry{MaxAttempts: 2, BaseBackoff: time.Millisecond, MaxBackoff: time.Millisecond}, failing.Client(), clock, func(time.Duration) {})
+	}, eventd.PushRetry{MaxAttempts: 2, BaseBackoff: time.Millisecond, MaxBackoff: time.Millisecond}, failing.Client(), clock, func(context.Context, time.Duration) error { return nil })
 	pusher.SetMetrics(metrics)
 	outbox := eventd.NewOutbox(store, store, pusher, group, nodeName, time.Second, clock)
 	outbox.SetMetrics(metrics)
@@ -325,7 +325,7 @@ func TestOutboxBoundsConcurrentPeerDrains(t *testing.T) {
 		peers = append(peers, eventd.PeerConfig{NodeName: "peer-" + string(rune('a'+i)), Endpoint: "http://peer.invalid"})
 	}
 	pusher := eventd.NewPusher(store, testSecret, peers,
-		eventd.PushRetry{MaxAttempts: 1}, doer, clock, func(time.Duration) {})
+		eventd.PushRetry{MaxAttempts: 1}, doer, clock, func(context.Context, time.Duration) error { return nil })
 	outbox := eventd.NewOutbox(store, store, pusher, group, nodeName, time.Second, clock)
 	outbox.SetMaxConcurrentPeerDrains(2)
 
@@ -417,7 +417,7 @@ func TestOutboxSkipsExpiredEvent(t *testing.T) {
 	defer srv.Close()
 
 	peers := []eventd.PeerConfig{{NodeName: peerName, Endpoint: srv.URL}}
-	noSleep := func(time.Duration) {}
+	noSleep := func(context.Context, time.Duration) error { return nil }
 	pusher := eventd.NewPusher(store, testSecret, peers,
 		eventd.PushRetry{MaxAttempts: 3, BaseBackoff: time.Millisecond, MaxBackoff: time.Millisecond},
 		srv.Client(), clock, noSleep)
@@ -460,7 +460,7 @@ func TestOutboxRestartResend(t *testing.T) {
 	const peerName = "cloud-a"
 
 	store := openStore(t, "outbox-restart.db")
-	noSleep := func(time.Duration) {}
+	noSleep := func(context.Context, time.Duration) error { return nil }
 	seedEventFrom(t, store, "local-1", group, nodeName, "10.88.60.9/32", now)
 
 	// First outbox: peer always 500s → delivery fails.
@@ -532,7 +532,7 @@ func TestOutboxRepushOnTTLRefresh(t *testing.T) {
 	defer srv.Close()
 
 	peers := []eventd.PeerConfig{{NodeName: peerName, Endpoint: srv.URL}}
-	noSleep := func(time.Duration) {}
+	noSleep := func(context.Context, time.Duration) error { return nil }
 	pusher := eventd.NewPusher(store, testSecret, peers,
 		eventd.PushRetry{MaxAttempts: 3, BaseBackoff: time.Millisecond, MaxBackoff: time.Millisecond},
 		srv.Client(), clock, noSleep)
@@ -568,7 +568,7 @@ func TestOutboxRepushOnTTLRefresh(t *testing.T) {
 	if err := store.RecordFederationEvent(routerstate.EventRecord{
 		ID: "shard-1", Group: group, SourceNode: nodeName,
 		Type: "routerd.client.ipv4.observed", Subject: "10.77.60.0/25",
-		DedupeKey: "10.77.60.0/25", Payload: map[string]string{"mac": "aa:bb:cc:dd:ee:ff"},
+		DedupeKey: "shard-1", Payload: map[string]string{"mac": "aa:bb:cc:dd:ee:ff"},
 		ObservedAt: now, ExpiresAt: expires2,
 	}); err != nil {
 		t.Fatalf("re-record with extended TTL: %v", err)

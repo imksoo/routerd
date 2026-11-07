@@ -57,13 +57,13 @@ func TestStandbyGenerationDoesNotPoisonLeaderOptions(t *testing.T) {
 		},
 	}
 	store := eventedStore{Store: runner.Store, Bus: runner.Bus, Router: runner.Router}
-	if _, _, err := runner.frameworkControllers(context.Background(), slog.Default(), store, false, ha.Decision{Enabled: true, Leader: false}); err != nil {
+	if _, _, _, err := runner.frameworkControllers(context.Background(), slog.Default(), store, false, ha.Decision{Enabled: true, Leader: false}); err != nil {
 		t.Fatal(err)
 	}
 	if runner.Opts.DryRunRoute || runner.Opts.DryRunFirewall {
 		t.Fatalf("standby generation mutated base options: %+v", runner.Opts)
 	}
-	if _, _, err := runner.frameworkControllers(context.Background(), slog.Default(), store, false, ha.Decision{Enabled: true, Leader: true}); err != nil {
+	if _, _, _, err := runner.frameworkControllers(context.Background(), slog.Default(), store, false, ha.Decision{Enabled: true, Leader: true}); err != nil {
 		t.Fatal(err)
 	}
 	if runner.Opts.DryRunRoute || runner.Opts.DryRunFirewall {
@@ -77,13 +77,13 @@ func TestPrepareControllerGenerationIgnoresBootstrapReconcileError(t *testing.T)
 		Bus:    bus.New(),
 		Store:  mapStore{},
 	}
-	runner.generationBuilder = func(context.Context, *slog.Logger, eventedStore, bool, ha.Decision) ([]framework.Controller, DaemonStatusController, error) {
+	runner.generationBuilder = func(context.Context, *slog.Logger, eventedStore, bool, ha.Decision) ([]framework.Controller, DaemonStatusController, controllerLifetimes, error) {
 		return []framework.Controller{framework.FuncController{
 			ControllerName: "always-errors",
 			ReconcileFunc: func(context.Context, daemonapi.DaemonEvent) error {
 				return errors.New("bootstrap failed")
 			},
-		}}, DaemonStatusController{}, nil
+		}}, DaemonStatusController{}, controllerLifetimes{}, nil
 	}
 	store := eventedStore{Store: runner.Store, Bus: runner.Bus, Router: runner.Router}
 	generation, err := runner.prepareControllerGeneration(context.Background(), slog.Default(), store)

@@ -20,7 +20,7 @@ func (h Handler) connections(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotImplemented, "connections observer is unavailable")
 		return
 	}
-	table, err := h.opts.Connections(intQuery(r, "limit", h.opts.ConnectionsLimit))
+	table, err := h.opts.Connections(r.Context(), intQuery(r, "limit", h.opts.ConnectionsLimit))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -29,7 +29,10 @@ func (h Handler) connections(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	h.enrichConnectionsWithLocalRedirect(table)
+	if err := h.enrichConnectionsWithLocalRedirect(table); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	if err := h.enrichConnectionsWithRemoteIdentity(r.Context(), table); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -120,33 +123,9 @@ func (h Handler) trafficFlowsAggregate(w http.ResponseWriter, r *http.Request) {
 
 func buildConsoleDNSFilter(r *http.Request) (logstore.DNSQueryFilter, error) {
 	q := r.URL.Query()
-	since := time.Now().Add(-time.Hour)
-	if raw := strings.TrimSpace(q.Get("since")); raw != "" {
-		if duration, err := parseConsoleDuration(raw); err == nil {
-			since = time.Now().Add(-duration)
-		}
-	}
-	var until time.Time
-	if raw := strings.TrimSpace(q.Get("from")); raw != "" {
-		t, err := parseConsoleAbsTime(raw)
-		if err != nil {
-			return logstore.DNSQueryFilter{}, fmt.Errorf("from: %w", err)
-		}
-		since = t
-	}
-	if raw := strings.TrimSpace(q.Get("until")); raw != "" {
-		t, err := parseConsoleAbsTime(raw)
-		if err != nil {
-			return logstore.DNSQueryFilter{}, fmt.Errorf("until: %w", err)
-		}
-		until = t
-	}
-	if raw := strings.TrimSpace(q.Get("to")); raw != "" {
-		t, err := parseConsoleAbsTime(raw)
-		if err != nil {
-			return logstore.DNSQueryFilter{}, fmt.Errorf("to: %w", err)
-		}
-		until = t
+	since, until, err := consoleTimeRange(r, time.Hour)
+	if err != nil {
+		return logstore.DNSQueryFilter{}, err
 	}
 	var durMinUS int64
 	if raw := strings.TrimSpace(q.Get("duration-min")); raw != "" {
@@ -154,11 +133,17 @@ func buildConsoleDNSFilter(r *http.Request) (logstore.DNSQueryFilter, error) {
 		if err != nil {
 			return logstore.DNSQueryFilter{}, fmt.Errorf("duration-min: %w", err)
 		}
+		if d < 0 {
+			return logstore.DNSQueryFilter{}, fmt.Errorf("duration-min must not be negative")
+		}
 		durMinUS = d.Microseconds()
 	} else if raw := strings.TrimSpace(q.Get("duration-min-us")); raw != "" {
 		v, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil {
 			return logstore.DNSQueryFilter{}, fmt.Errorf("duration-min-us: %w", err)
+		}
+		if v < 0 {
+			return logstore.DNSQueryFilter{}, fmt.Errorf("duration-min-us must not be negative")
 		}
 		durMinUS = v
 	}
@@ -177,33 +162,9 @@ func buildConsoleDNSFilter(r *http.Request) (logstore.DNSQueryFilter, error) {
 
 func buildConsoleTrafficFilter(r *http.Request) (logstore.TrafficFlowFilter, error) {
 	q := r.URL.Query()
-	since := time.Now().Add(-time.Hour)
-	if raw := strings.TrimSpace(q.Get("since")); raw != "" {
-		if duration, err := parseConsoleDuration(raw); err == nil {
-			since = time.Now().Add(-duration)
-		}
-	}
-	var until time.Time
-	if raw := strings.TrimSpace(q.Get("from")); raw != "" {
-		t, err := parseConsoleAbsTime(raw)
-		if err != nil {
-			return logstore.TrafficFlowFilter{}, fmt.Errorf("from: %w", err)
-		}
-		since = t
-	}
-	if raw := strings.TrimSpace(q.Get("until")); raw != "" {
-		t, err := parseConsoleAbsTime(raw)
-		if err != nil {
-			return logstore.TrafficFlowFilter{}, fmt.Errorf("until: %w", err)
-		}
-		until = t
-	}
-	if raw := strings.TrimSpace(q.Get("to")); raw != "" {
-		t, err := parseConsoleAbsTime(raw)
-		if err != nil {
-			return logstore.TrafficFlowFilter{}, fmt.Errorf("to: %w", err)
-		}
-		until = t
+	since, until, err := consoleTimeRange(r, time.Hour)
+	if err != nil {
+		return logstore.TrafficFlowFilter{}, err
 	}
 	asym := q.Get("asymmetric") == "1" || strings.EqualFold(q.Get("asymmetric"), "true")
 	return logstore.TrafficFlowFilter{
@@ -218,6 +179,34 @@ func buildConsoleTrafficFilter(r *http.Request) (logstore.TrafficFlowFilter, err
 	}, nil
 }
 
+func consoleTimeRange(r *http.Request, fallback time.Duration) (time.Time, time.Time, error) {
+	window, err := consoleDurationQuery(r, "since", fallback)
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	since := time.Now().Add(-window)
+	var until time.Time
+	for _, key := range []string{"from", "until", "to"} {
+		raw := strings.TrimSpace(r.URL.Query().Get(key))
+		if raw == "" {
+			continue
+		}
+		parsed, err := parseConsoleAbsTime(raw)
+		if err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("%s: %w", key, err)
+		}
+		if key == "from" {
+			since = parsed
+		} else {
+			until = parsed
+		}
+	}
+	if !until.IsZero() && until.Before(since) {
+		return time.Time{}, time.Time{}, fmt.Errorf("until must not be before from")
+	}
+	return since, until, nil
+}
+
 func parseConsoleAbsTime(value string) (time.Time, error) {
 	for _, layout := range []string{time.RFC3339, "2006-01-02T15:04:05Z07:00", "2006-01-02T15:04:05", "2006-01-02 15:04:05", "2006-01-02"} {
 		if t, err := time.Parse(layout, value); err == nil {
@@ -228,12 +217,12 @@ func parseConsoleAbsTime(value string) (time.Time, error) {
 }
 
 func (h Handler) firewallLogs(w http.ResponseWriter, r *http.Request) {
-	since := time.Now().Add(-24 * time.Hour)
-	if raw := strings.TrimSpace(r.URL.Query().Get("since")); raw != "" {
-		if duration, err := parseConsoleDuration(raw); err == nil {
-			since = time.Now().Add(-duration)
-		}
+	window, err := consoleDurationQuery(r, "since", 24*time.Hour)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
+	since := time.Now().Add(-window)
 	rows, err := h.firewallLogList(r.Context(), logstore.FirewallLogFilter{
 		Since:  since,
 		Action: r.URL.Query().Get("action"),
@@ -248,16 +237,18 @@ func (h Handler) firewallLogs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	h.enrichFirewallLogsWithAddressSets(rows)
+	if err := h.enrichFirewallLogsWithAddressSets(rows); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	writeJSON(w, rows)
 }
 
 func (h Handler) firewallDenyTimeline(w http.ResponseWriter, r *http.Request) {
-	window := 24 * time.Hour
-	if raw := strings.TrimSpace(r.URL.Query().Get("range")); raw != "" {
-		if duration, err := parseConsoleDuration(raw); err == nil {
-			window = duration
-		}
+	window, err := consoleDurationQuery(r, "range", 24*time.Hour)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 	if window < time.Minute {
 		window = time.Minute
@@ -265,11 +256,10 @@ func (h Handler) firewallDenyTimeline(w http.ResponseWriter, r *http.Request) {
 	if window > 7*24*time.Hour {
 		window = 7 * 24 * time.Hour
 	}
-	bucket := 5 * time.Minute
-	if raw := strings.TrimSpace(r.URL.Query().Get("bucket")); raw != "" {
-		if duration, err := parseConsoleDuration(raw); err == nil {
-			bucket = duration
-		}
+	bucket, err := consoleDurationQuery(r, "bucket", 5*time.Minute)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 	if bucket < time.Minute {
 		bucket = time.Minute
@@ -336,7 +326,7 @@ func (h Handler) trafficFlowList(ctx context.Context, filter logstore.TrafficFlo
 	if strings.TrimSpace(h.opts.TrafficFlowLogPath) == "" {
 		return nil, nil
 	}
-	store, err := logstore.OpenTrafficFlowLogReadOnly(h.opts.TrafficFlowLogPath)
+	store, err := logstore.OpenTrafficFlowLogReadOnly(ctx, h.opts.TrafficFlowLogPath)
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
@@ -356,7 +346,7 @@ func (h Handler) trafficFlowAggregate(ctx context.Context, filter logstore.Traff
 	if strings.TrimSpace(h.opts.TrafficFlowLogPath) == "" {
 		return logstore.TrafficFlowAggregate{Since: filter.Since, Until: filter.Until}, nil
 	}
-	store, err := logstore.OpenTrafficFlowLogReadOnly(h.opts.TrafficFlowLogPath)
+	store, err := logstore.OpenTrafficFlowLogReadOnly(ctx, h.opts.TrafficFlowLogPath)
 	if os.IsNotExist(err) {
 		return logstore.TrafficFlowAggregate{Since: filter.Since, Until: filter.Until}, nil
 	}

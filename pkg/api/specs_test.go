@@ -3,28 +3,42 @@
 package api
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
 )
 
-func TestIPsecConnectionUsesCanonicalPhaseProposalFieldsAndAcceptsLegacyAlias(t *testing.T) {
-	for name, field := range map[string]string{
-		"canonical": "phase1Proposals",
-		"legacy":    "psPhase1Proposals",
+func TestIPsecConnectionUsesCanonicalProposalFields(t *testing.T) {
+	var resource Resource
+	if err := yaml.Unmarshal([]byte("apiVersion: net.routerd.net/v1alpha1\nkind: IPsecConnection\nmetadata: {name: ipsec}\nspec: {phase1Proposals: [aes256-sha256-modp2048]}\n"), &resource); err != nil {
+		t.Fatal(err)
+	}
+	spec, err := resource.IPsecConnectionSpec()
+	if err != nil || len(spec.Phase1Proposals) != 1 {
+		t.Fatalf("canonical proposals lost: %+v %v", spec, err)
+	}
+	for _, field := range []string{"psPhase1Proposals", "psPhase2Proposals"} {
+		if err := yaml.Unmarshal([]byte("kind: IPsecConnection\nmetadata: {name: ipsec}\nspec: {"+field+": [aes256-sha256-modp2048]}\n"), &resource); err == nil {
+			t.Fatalf("old proposal field %s was silently accepted", field)
+		}
+		if err := json.Unmarshal([]byte(`{"kind":"IPsecConnection","metadata":{"name":"ipsec"},"spec":{"`+field+`":["aes256-sha256-modp2048"]}}`), &resource); err == nil {
+			t.Fatalf("JSON ignored old proposal field %s", field)
+		}
+	}
+}
+
+func TestJSONResourceRejectsUnknownAndRemovedIntentFields(t *testing.T) {
+	for _, payload := range []string{
+		`{"kind":"Interface","metadata":{"name":"wan"},"spec":{"ifnmae":"eth0"}}`,
+		`{"kind":"WireGuardInterface","metadata":{"name":"wan"},"spec":{"fwmark":42}}`,
+		`{"kind":"Interface","metadata":{"name":"wan"},"surprise":true,"spec":{"ifname":"eth0"}}`,
 	} {
-		t.Run(name, func(t *testing.T) {
-			var resource Resource
-			err := yaml.Unmarshal([]byte("apiVersion: net.routerd.net/v1alpha1\nkind: IPsecConnection\nmetadata: {name: ipsec}\nspec:\n  localAddress: 198.18.10.1\n  remoteAddress: 198.18.10.2\n  preSharedKey: disposable\n  "+field+": [invalid-proposal]\n  leftSubnet: 10.0.0.0/24\n  rightSubnet: 10.1.0.0/24\n"), &resource)
-			if err != nil {
-				t.Fatalf("unmarshal: %v", err)
-			}
-			spec, err := resource.IPsecConnectionSpec()
-			if err != nil || len(spec.Phase1Proposals) != 1 || spec.Phase1Proposals[0] != "invalid-proposal" {
-				t.Fatalf("proposal decode = %#v, err=%v", spec.Phase1Proposals, err)
-			}
-		})
+		var resource Resource
+		if err := json.Unmarshal([]byte(payload), &resource); err == nil {
+			t.Fatalf("unknown intent silently accepted: %s", payload)
+		}
 	}
 }
 

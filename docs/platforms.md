@@ -17,9 +17,11 @@ behavior on every OS.
 
 ## Linux (Ubuntu / Debian)
 
-Linux with systemd is the primary platform. Release installs land under `/usr/local` by default.
-Install from the Linux release archive and run `sudo ./install.sh`.
-The installer can install runtime packages with `apt-get`, `dnf`, or `pacman`.
+Linux with systemd is the primary platform. The 1.5 proposal uses clean-OS apt
+installation under `/usr`, with systemd 249 or later declared in package metadata.
+Use the [native package installation and update procedure](./install-and-upgrade.md).
+Manual/source-install adoption and routerd 1.0 configuration migration are not
+installation paths for this proposal.
 
 routerd uses the following OS surfaces on Linux:
 
@@ -177,6 +179,19 @@ DHCP/RA service, and ports packages for WireGuard, Tailscale, and strongSwan.
 | Diagnostics | `bind-tools` |
 | Base system | `ifconfig`, `sysctl`, `service`, `sysrc`, `netstat`, `sockstat`, `tcpdump`, `ping`, `traceroute` |
 
+The `routerctl mobility leaf-config` command defaults to GRE on FreeBSD,
+where FOU/GUE are unsupported. Linux retains its FOU default; an explicit
+`--mode` continues to be validated for the current platform.
+
+Native dnsmasq activation also requires `fdescfs` mounted on `/dev/fd`.
+Bare devfs exposes only descriptors 0, 1 and 2. In the native FreeBSD 14.3
+test with dnsmasq 2.91, its DHCP script helper consequently retained sockets
+and its own pipe writer after the main process exited. Mount the descriptor
+filesystem with `mount -t fdescfs fdesc /dev/fd` and arrange the corresponding
+mount at boot before enabling DHCP service. The controller checks descriptor
+visibility before creating its process ownership receipt; it reports the
+missing prerequisite instead of starting a process that cannot be withdrawn.
+
 `routerd render freebsd --out-dir <dir>` produces:
 
 - `rc.conf.d-routerd`
@@ -186,7 +201,13 @@ DHCP/RA service, and ports packages for WireGuard, Tailscale, and strongSwan.
 - `dnsmasq.conf`
 - `rc.d-*`
 
-`routerctl apply` installs the generated `pf.conf`, validates it with `pfctl -nf`, applies it with `pfctl -f`, validates dnsmasq with `dnsmasq --test`, starts generated rc.d scripts with `service <name> onestart`, and applies dynamic DS-Lite tunnels with `ifconfig gif` when static `rc.conf` rendering is not enough. Use `routerd render freebsd` for review and offline validation before pointing real traffic at a FreeBSD host.
+`routerctl apply` asks the running controller to install the generated `pf.conf`,
+validate it with `pfctl -nf`, apply it with `pfctl -f`, and validate dnsmasq with
+`dnsmasq --test`. The running `routerd serve` process owns dnsmasq startup,
+configuration changes and withdrawal directly; a generated dnsmasq rc.d service
+is not a second process owner. Dynamic DS-Lite tunnels use `ifconfig gif` when
+static `rc.conf` rendering is not enough. Use `routerd render freebsd` for review
+and offline validation before pointing real traffic at a FreeBSD host.
 
 Current release qualification is deliberately narrower than the rendered feature
 list. FreeBSD explicitly rejects an `EgressRoutePolicy` resource whose

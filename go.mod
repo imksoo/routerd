@@ -5,6 +5,7 @@ go 1.25.0
 toolchain go1.25.9
 
 require (
+	github.com/mdlayher/ndp v1.1.0
 	github.com/invopop/jsonschema v0.14.0
 	github.com/miekg/dns v1.1.72
 	github.com/quic-go/quic-go v0.59.0
@@ -65,6 +66,7 @@ require (
 	github.com/spf13/cast v1.7.1 // indirect
 	github.com/spf13/pflag v1.0.6 // indirect
 	github.com/spf13/viper v1.20.1 // indirect
+	github.com/strongswan/govici v0.8.2
 	github.com/subosito/gotenv v1.6.0 // indirect
 	github.com/vishvananda/netns v0.0.5 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
@@ -81,3 +83,6 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
+
+// GoBGP v4.7.0 with the community-send correction documented in third_party/gobgp.
+replace github.com/osrg/gobgp/v4 => ./third_party/gobgp

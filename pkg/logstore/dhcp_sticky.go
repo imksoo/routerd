@@ -46,7 +46,11 @@ func OpenDHCPStickyLogContext(ctx context.Context, path string) (*DHCPStickyLog,
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", path)
+	dsn, err := sqliteFileURI(path)
+	if err != nil {
+		return nil, err
+	}
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
 	}
@@ -233,4 +237,12 @@ func unixNanoTime(value int64) time.Time {
 		return time.Time{}
 	}
 	return time.Unix(0, value).UTC()
+}
+
+// WriteSnapshot writes a consistent standalone database, including committed WAL
+// contents, without modifying the live database. Destination must be absent or
+// empty. Callers must discard incomplete output after any error.
+func (l *DHCPStickyLog) WriteSnapshot(ctx context.Context, destination string) error {
+	_, err := l.db.ExecContext(ctx, "VACUUM INTO ?", destination)
+	return err
 }

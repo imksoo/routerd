@@ -23,7 +23,9 @@ func NewControllerRuntimeStore(base []ControllerStatus) *ControllerRuntimeStore 
 		controllers:       map[string]ControllerStatus{},
 		errorHistoryLimit: DefaultReconcileErrorHistoryLimit,
 	}
-	store.SetBase(base)
+	for _, controller := range base {
+		store.controllers[controller.Name] = controller
+	}
 	return store
 }
 
@@ -39,44 +41,6 @@ func (s *ControllerRuntimeStore) SetErrorHistoryLimit(limit int) {
 		limit = DefaultReconcileErrorHistoryLimit
 	}
 	s.errorHistoryLimit = limit
-}
-
-func (s *ControllerRuntimeStore) SetBase(base []ControllerStatus) {
-	if s == nil {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.controllers == nil {
-		s.controllers = map[string]ControllerStatus{}
-	}
-	for _, controller := range base {
-		current := s.controllers[controller.Name]
-		controller.Interval = current.Interval
-		controller.LastTrigger = current.LastTrigger
-		controller.LastReconcileTime = current.LastReconcileTime
-		controller.LastSuccessTime = current.LastSuccessTime
-		controller.LastReloadAt = current.LastReloadAt
-		controller.LastRestartAt = current.LastRestartAt
-		controller.LastChangeReason = current.LastChangeReason
-		controller.NextReconcileTime = current.NextReconcileTime
-		controller.ReconcileCount = current.ReconcileCount
-		controller.ReconcileErrorCount = current.ReconcileErrorCount
-		controller.ConsecutiveErrorCount = current.ConsecutiveErrorCount
-		controller.CurrentError = current.CurrentError
-		controller.LastDuration = current.LastDuration
-		controller.MaxDuration = current.MaxDuration
-		controller.AverageDuration = current.AverageDuration
-		controller.LastDurationMillis = current.LastDurationMillis
-		controller.MaxDurationMillis = current.MaxDurationMillis
-		controller.AverageDurationMillis = current.AverageDurationMillis
-		controller.LastError = current.LastError
-		controller.LastErrorTime = current.LastErrorTime
-		controller.LastErrorClearedAt = current.LastErrorClearedAt
-		controller.MaxDurationAt = current.MaxDurationAt
-		controller.ReconcileErrorHistory = append([]ReconcileErrorEntry(nil), current.ReconcileErrorHistory...)
-		s.controllers[controller.Name] = controller
-	}
 }
 
 func (s *ControllerRuntimeStore) Snapshot() []ControllerStatus {

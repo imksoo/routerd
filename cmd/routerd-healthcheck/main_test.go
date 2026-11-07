@@ -154,6 +154,11 @@ func TestProbeOnceUpdatesStateHistory(t *testing.T) {
 	if len(d.state.History) != 1 {
 		t.Fatalf("history len = %d", len(d.state.History))
 	}
+	status := d.statusLocked()
+	if len(status.Resources) != 1 || status.Resources[0].Routing == nil || !status.Resources[0].Routing.Usable(time.Now(), d.spec) {
+		t.Fatalf("actual TCP probe did not publish a current typed sample: %+v", status.Resources)
+	}
+
 	if d.state.History[0].ProbeEvidence.NextHop != "192.0.2.1" {
 		t.Errorf("nextHop = %q", d.state.History[0].NextHop)
 	}
@@ -181,8 +186,8 @@ func TestProbeOnceUpdatesStateHistory(t *testing.T) {
 	if len(d2.state.History) != 2 {
 		t.Fatalf("restored history len = %d", len(d2.state.History))
 	}
-	if d2.state.LastEvidence.NextHop != "192.0.2.1" {
-		t.Errorf("restored nextHop = %q", d2.state.LastEvidence.NextHop)
+	if d2.state.Phase != healthcheck.PhaseUnknown || !d2.state.LastCheckedAt.IsZero() {
+		t.Fatalf("restored diagnostic history became current reachability: %#v", d2.state)
 	}
 }
 

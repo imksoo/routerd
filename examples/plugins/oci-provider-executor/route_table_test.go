@@ -114,7 +114,7 @@ func TestRouteTableAssignDryRunReadOnly(t *testing.T) {
 }
 
 func TestRouteTableAssignSeizeReplacesForeignRule(t *testing.T) {
-	f := &fakeOCI{routeTableGetOut: []byte(`{"data":{"route-rules":[{"destination":"10.88.60.9/32","destination-type":"CIDR_BLOCK","network-entity-id":"ocid1.privateip.oc1..OTHER"}]}}`)}
+	f := &fakeOCI{routeTableGetOut: []byte(`{"etag":"fixture-etag","data":{"id":"ocid1.routetable.oc1..rt1","route-rules":[{"destination":"10.88.60.9/32","destination-type":"CIDR_BLOCK","network-entity-id":"ocid1.privateip.oc1..OTHER"}]}}`)}
 	spec := reqRouteSpec(actionAssignRouteTableRoute, modeExecute)
 	spec.Parameters = map[string]string{"allowReassignment": "true"}
 	res := dispatchWith(spec, f.run)
@@ -131,7 +131,7 @@ func TestRouteTableAssignSeizeReplacesForeignRule(t *testing.T) {
 }
 
 func TestRouteTableAssignNoSeizeFailsOnForeignRule(t *testing.T) {
-	f := &fakeOCI{routeTableGetOut: []byte(`{"data":{"route-rules":[{"destination":"10.88.60.9/32","destination-type":"CIDR_BLOCK","network-entity-id":"ocid1.privateip.oc1..OTHER"}]}}`)}
+	f := &fakeOCI{routeTableGetOut: []byte(`{"etag":"fixture-etag","data":{"id":"ocid1.routetable.oc1..rt1","route-rules":[{"destination":"10.88.60.9/32","destination-type":"CIDR_BLOCK","network-entity-id":"ocid1.privateip.oc1..OTHER"}]}}`)}
 	res := dispatchWith(reqRouteSpec(actionAssignRouteTableRoute, modeExecute), f.run)
 	if res.Status.Status != statusFailed {
 		t.Fatalf("assign without allowReassignment must fail on a foreign rule, got %q", res.Status.Status)
@@ -142,7 +142,7 @@ func TestRouteTableAssignNoSeizeFailsOnForeignRule(t *testing.T) {
 }
 
 func TestRouteTableAssignIdempotentWhenAlreadyOurs(t *testing.T) {
-	f := &fakeOCI{routeTableGetOut: []byte(`{"data":{"route-rules":[{"destination":"10.88.60.9/32","destination-type":"CIDR_BLOCK","network-entity-id":"ocid1.privateip.oc1..primary"}]}}`)}
+	f := &fakeOCI{routeTableGetOut: []byte(`{"etag":"fixture-etag","data":{"id":"ocid1.routetable.oc1..rt1","route-rules":[{"destination":"10.88.60.9/32","destination-type":"CIDR_BLOCK","network-entity-id":"ocid1.privateip.oc1..primary"}]}}`)}
 	res := dispatchWith(reqRouteSpec(actionAssignRouteTableRoute, modeExecute), f.run)
 	if res.Status.Status != statusSucceeded {
 		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
@@ -153,7 +153,7 @@ func TestRouteTableAssignIdempotentWhenAlreadyOurs(t *testing.T) {
 }
 
 func TestRouteTableUnassignDeletesOurRule(t *testing.T) {
-	f := &fakeOCI{routeTableGetOut: []byte(`{"data":{"route-rules":[{"destination":"0.0.0.0/0","destination-type":"CIDR_BLOCK","network-entity-id":"ocid1.internetgateway.oc1..igw"},{"destination":"10.88.60.9/32","destination-type":"CIDR_BLOCK","network-entity-id":"ocid1.privateip.oc1..primary"}]}}`)}
+	f := &fakeOCI{routeTableGetOut: []byte(`{"etag":"fixture-etag","data":{"id":"ocid1.routetable.oc1..rt1","route-rules":[{"destination":"0.0.0.0/0","destination-type":"CIDR_BLOCK","network-entity-id":"ocid1.internetgateway.oc1..igw"},{"destination":"10.88.60.9/32","destination-type":"CIDR_BLOCK","network-entity-id":"ocid1.privateip.oc1..primary"}]}}`)}
 	res := dispatchWith(reqRouteSpec(actionUnassignRouteTableRoute, modeExecute), f.run)
 	if res.Status.Status != statusSucceeded {
 		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
@@ -171,7 +171,7 @@ func TestRouteTableUnassignDeletesOurRule(t *testing.T) {
 }
 
 func TestRouteTableUnassignSkipsForeignHolder(t *testing.T) {
-	f := &fakeOCI{routeTableGetOut: []byte(`{"data":{"route-rules":[{"destination":"10.88.60.9/32","destination-type":"CIDR_BLOCK","network-entity-id":"ocid1.privateip.oc1..OTHER"}]}}`)}
+	f := &fakeOCI{routeTableGetOut: []byte(`{"etag":"fixture-etag","data":{"id":"ocid1.routetable.oc1..rt1","route-rules":[{"destination":"10.88.60.9/32","destination-type":"CIDR_BLOCK","network-entity-id":"ocid1.privateip.oc1..OTHER"}]}}`)}
 	res := dispatchWith(reqRouteSpec(actionUnassignRouteTableRoute, modeExecute), f.run)
 	if res.Status.Status != statusSkipped {
 		t.Fatalf("unassign of a foreign-held route must be skipped, got %q", res.Status.Status)

@@ -72,7 +72,7 @@ resource 对应的 artifact map 与 teardown contract 请参阅
 
 routerd 及专属守护进程会将状态变化记录为事件。
 事件保存在 SQLite 的 `events` 表格，以及各守护进程的 `events.jsonl` 中。
-EventRule 和 DerivedEvent 会利用这些事件和状态，生成虚拟的状态变化。
+`EventRule` 以这些历史记录为输入生成事件。`DerivedEvent` 评估所引用对象的当前 status，并记录 asserted/retracted 状态转换。
 
 ## 应用世代
 

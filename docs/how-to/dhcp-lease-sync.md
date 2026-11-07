@@ -148,8 +148,8 @@ creates it.
 
 ## Callback recovery across routerd restarts
 
-The managed dnsmasq hook is a symlink to `routerd-dhcp-event-relay` with no
-additional arguments. It commits each callback to
+The installer creates the managed dnsmasq hook as a symlink to
+`routerd-dhcp-event-relay` with no additional arguments. It commits each callback to
 `<platform StateDir>/dhcp-events/pending.db` before exiting; it no longer needs
 a running control socket. Linux uses `/var/lib/routerd`, FreeBSD uses
 `/var/db/routerd`, and a serve sandbox uses its own platform state directory.
@@ -246,4 +246,4 @@ resource status still changes to `Synced` on recovery. Sync cadence, retries,
 timeouts and transfer behavior are unchanged. A sync failure concerns copying
 state to the peer and does not by itself prove a DHCP response failure.
 
-DHCPv4 sticky lease synchronization copies the SQLite database and WAL, but excludes the transient, machine-local `-shm` index. SQLite reconstructs that index on the receiver. Database and WAL transfer failures remain errors; this does not provide an atomic snapshot of concurrent database writes.
+DHCPv4 sticky lease synchronization creates a consistent SQLite snapshot containing committed WAL updates, then transfers that standalone database to the original receiver path. WAL and machine-local `-shm` files are not transferred separately. Snapshot or transfer failures remain visible errors; temporary snapshots are removed after the attempt. This protects the source snapshot from concurrent writes and checkpoints. It does not fence concurrent receiver writers or prove a complete HA role transition.

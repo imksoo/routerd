@@ -8,10 +8,13 @@ import (
 	"context"
 	"encoding/binary"
 	"net"
+	"net/netip"
 	"os"
 	"syscall"
 	"time"
 
+	"github.com/imksoo/routerd/pkg/dhcpv4client"
+	"golang.org/x/net/ipv4"
 	"golang.org/x/sys/unix"
 )
 
@@ -31,6 +34,10 @@ func listenDHCPv4(ifname string) (dhcpv4PacketConn, error) {
 	}
 	rawFD, err := unix.Socket(unix.AF_PACKET, unix.SOCK_RAW|unix.SOCK_CLOEXEC, int(htons(etherTypeIPv4)))
 	if err != nil {
+		return nil, err
+	}
+	if err := unix.SetsockoptInt(rawFD, unix.SOL_PACKET, unix.PACKET_AUXDATA, 1); err != nil {
+		_ = unix.Close(rawFD)
 		return nil, err
 	}
 	if err := attachDHCPv4Filter(rawFD); err != nil {
@@ -61,7 +68,7 @@ func listenDHCPv4(ifname string) (dhcpv4PacketConn, error) {
 		_ = unix.Close(rawFD)
 		return nil, err
 	}
-	return &linuxDHCPv4PacketConn{rawFD: rawFD, write: pc.(*net.UDPConn), hwaddr: append(net.HardwareAddr(nil), ifi.HardwareAddr...)}, nil
+	return &linuxDHCPv4PacketConn{rawFD: rawFD, write: pc.(*net.UDPConn), hwaddr: append(net.HardwareAddr(nil), ifi.HardwareAddr...), ifindex: ifi.Index}, nil
 }
 
 func attachDHCPv4Filter(fd int) error {
@@ -96,15 +103,22 @@ func bpfJump(code uint16, k uint32, jt, jf uint8) unix.SockFilter {
 }
 
 type linuxDHCPv4PacketConn struct {
-	rawFD  int
-	write  *net.UDPConn
-	hwaddr net.HardwareAddr
+	rawFD    int
+	write    *net.UDPConn
+	hwaddr   net.HardwareAddr
+	ifindex  int
+	deadline time.Time
 }
 
 func (c *linuxDHCPv4PacketConn) ReadFromUDP(buf []byte) (int, *net.UDPAddr, error) {
 	frame := make([]byte, 2048)
+	// Linux packet_auxdata is 20 bytes, including checksum and VLAN status.
+	aux := make([]byte, unix.CmsgSpace(20))
 	for {
-		n, _, err := unix.Recvfrom(c.rawFD, frame, 0)
+		if !c.deadline.IsZero() && !time.Now().Before(c.deadline) {
+			return 0, nil, os.ErrDeadlineExceeded
+		}
+		n, auxn, flags, _, err := unix.Recvmsg(c.rawFD, frame, aux, 0)
 		if err != nil {
 			if err == unix.EINTR {
 				continue
@@ -112,9 +126,12 @@ func (c *linuxDHCPv4PacketConn) ReadFromUDP(buf []byte) (int, *net.UDPAddr, erro
 			if err == unix.EAGAIN || err == unix.EWOULDBLOCK {
 				return 0, nil, linuxTimeoutError{err: err}
 			}
-			return 0, nil, os.NewSyscallError("recvfrom", err)
+			return 0, nil, os.NewSyscallError("recvmsg", err)
 		}
-		payload, src := c.dhcpPayload(frame[:n])
+		if flags&(unix.MSG_TRUNC|unix.MSG_CTRUNC) != 0 {
+			continue
+		}
+		payload, src := c.dhcpPayload(frame[:n], packetUDPChecksumPending(aux[:auxn]))
 		if len(payload) == 0 {
 			continue
 		}
@@ -143,47 +160,64 @@ func (e linuxTimeoutError) Unwrap() error {
 	return e.err
 }
 
-func (c *linuxDHCPv4PacketConn) dhcpPayload(frame []byte) ([]byte, net.IP) {
+// Only kernel ancillary data can authorize skipping an unfinished UDP checksum.
+func packetUDPChecksumPending(aux []byte) bool {
+	messages, err := unix.ParseSocketControlMessage(aux)
+	if err != nil {
+		return false
+	}
+	for _, message := range messages {
+		if message.Header.Level == unix.SOL_PACKET && message.Header.Type == unix.PACKET_AUXDATA && len(message.Data) >= 20 {
+			return binary.NativeEndian.Uint32(message.Data)&unix.TP_STATUS_CSUMNOTREADY != 0
+		}
+	}
+	return false
+}
+
+func (c *linuxDHCPv4PacketConn) dhcpPayload(frame []byte, udpChecksumPending bool) ([]byte, net.IP) {
 	if len(frame) < ethHeaderLen+20 {
 		return nil, nil
 	}
 	if len(c.hwaddr) > 0 && len(frame) >= 12 && net.HardwareAddr(frame[6:12]).String() == c.hwaddr.String() {
 		return nil, nil
 	}
-	if binary.BigEndian.Uint16(frame[12:14]) != etherTypeIPv4 {
+	var payload []byte
+	var source netip.Addr
+	if udpChecksumPending {
+		payload, source = dhcpv4client.EthernetReplyOffloaded(frame)
+	} else {
+		payload, source = dhcpv4client.EthernetReply(frame)
+	}
+	if len(payload) == 0 {
 		return nil, nil
 	}
-	ip := frame[ethHeaderLen:]
-	ihl := int(ip[0]&0x0f) * 4
-	if ihl < 20 || len(ip) < ihl+8 || ip[9] != unix.IPPROTO_UDP {
-		return nil, nil
-	}
-	total := int(binary.BigEndian.Uint16(ip[2:4]))
-	if total <= 0 || total > len(ip) {
-		total = len(ip)
-	}
-	ip = ip[:total]
-	udp := ip[ihl:]
-	if len(udp) < 8 {
-		return nil, nil
-	}
-	srcPort := binary.BigEndian.Uint16(udp[0:2])
-	dstPort := binary.BigEndian.Uint16(udp[2:4])
-	if srcPort != 67 || dstPort != 68 {
-		return nil, nil
-	}
-	udpLen := int(binary.BigEndian.Uint16(udp[4:6]))
-	if udpLen < 8 || udpLen > len(udp) {
-		return nil, nil
-	}
-	return udp[8:udpLen], net.IPv4(ip[12], ip[13], ip[14], ip[15])
+	return payload, net.IP(source.AsSlice())
 }
 
-func (c *linuxDHCPv4PacketConn) WriteToUDP(buf []byte, addr *net.UDPAddr) (int, error) {
-	return c.write.WriteToUDP(buf, addr)
+func (c *linuxDHCPv4PacketConn) Send(ctx context.Context, packet dhcpv4client.Packet) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if packet.Destination == netip.MustParseAddr("255.255.255.255") {
+		if err := unix.SetsockoptTimeval(c.rawFD, unix.SOL_SOCKET, unix.SO_SNDTIMEO, &unix.Timeval{Sec: 2}); err != nil {
+			return err
+		}
+		frame := ethernetBroadcast(c.hwaddr, packet)
+		return unix.Sendto(c.rawFD, frame, 0, &unix.SockaddrLinklayer{Ifindex: c.ifindex, Protocol: htons(etherTypeIPv4)})
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	if end, ok := ctx.Deadline(); ok && end.Before(deadline) {
+		deadline = end
+	}
+	if err := c.write.SetWriteDeadline(deadline); err != nil {
+		return err
+	}
+	_, err := ipv4.NewPacketConn(c.write).WriteTo(packet.Payload, &ipv4.ControlMessage{Src: net.IP(packet.Source.AsSlice()), IfIndex: c.ifindex}, &net.UDPAddr{IP: net.IP(packet.Destination.AsSlice()), Port: 67})
+	return err
 }
 
 func (c *linuxDHCPv4PacketConn) SetReadDeadline(deadline time.Time) error {
+	c.deadline = deadline
 	var timeout time.Duration
 	if deadline.IsZero() {
 		timeout = 0

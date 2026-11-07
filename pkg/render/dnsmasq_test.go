@@ -336,6 +336,7 @@ func TestDnsmasqConfigRendersDirectLANServiceKinds(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19", Managed: true, Owner: "routerd"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "lan-address"}, Spec: api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.10.1/24"}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSZone"}, Metadata: api.ObjectMeta{Name: "lan-zone"}, Spec: api.DNSZoneSpec{Zone: "lan"}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan-v4"}, Spec: api.DHCPv4ServerSpec{
 				Managed:     true,
@@ -364,7 +365,7 @@ func TestDnsmasqConfigRendersDirectLANServiceKinds(t *testing.T) {
 			}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6RouterAdvertisement"}, Metadata: api.ObjectMeta{Name: "lan-ra"}, Spec: api.IPv6RouterAdvertisementSpec{
 				Interface:         "lan",
-				PrefixSource:      "${IPv6DelegatedAddress/lan.status.address}",
+				Prefix:            "2001:db8:10::/64",
 				RDNSS:             []string{"2001:db8::53"},
 				DNSSLFrom:         []api.StatusValueSourceSpec{{Resource: "DNSZone/lan-zone", Field: "zone"}},
 				MTU:               1500,
@@ -385,15 +386,42 @@ func TestDnsmasqConfigRendersDirectLANServiceKinds(t *testing.T) {
 		"dhcp-range=set:lan-v4,192.168.10.100,192.168.10.199,8h",
 		"dhcp-option=tag:lan-v4,option:router,192.168.10.1",
 		"dhcp-host=02:00:00:00:01:50,set:printer,printer,192.168.10.150",
-		"dhcp-range=set:lan-v6,::100,::1ff,constructor:ens19,slaac,64,6h",
+		"dhcp-range=tag:ens19,set:lan-v6,::100,::1ff,constructor:ens19,64,6h",
 		"dhcp-option=tag:lan-v6,option6:dns-server,[2001:db8::53]",
-		"ra-param=ens19,mtu:1500,high,0,7200",
-		"dhcp-option=option6:domain-search,lan",
-		"dhcp-relay=0.0.0.0,192.0.2.53,ens19",
+		"dhcp-option=tag:lan-v6,option6:domain-search,lan",
+		"dhcp-relay=192.168.10.1,192.0.2.53",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("dnsmasq output missing %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestDnsmasqConfigDHCPv4RelayPrefersObservedInterfaceAddress(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "lan0"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "lan-address"}, Spec: api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.0.2.1/24"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Relay"}, Metadata: api.ObjectMeta{Name: "relay"}, Spec: api.DHCPv4RelaySpec{Interfaces: []string{"lan"}, Upstream: "198.51.100.2"}},
+	}}}
+
+	data, _, err := DnsmasqConfig(router, DnsmasqRuntime{IPv4AddressesByInterface: map[string][]string{"lan0": {"192.0.2.2/24"}}})
+	if err != nil {
+		t.Fatalf("render dnsmasq: %v", err)
+	}
+	got := string(data)
+	if !strings.Contains(got, "dhcp-relay=192.0.2.2,198.51.100.2\n") || strings.Contains(got, "dhcp-relay=192.0.2.1,") {
+		t.Fatalf("relay must use the currently observed interface address:\n%s", got)
+	}
+}
+
+func TestDnsmasqConfigDHCPv4RelayRequiresIPv4InterfaceAddress(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "lan0"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Relay"}, Metadata: api.ObjectMeta{Name: "relay"}, Spec: api.DHCPv4RelaySpec{Interfaces: []string{"lan"}, Upstream: "198.51.100.2"}},
+	}}}
+
+	if _, _, err := DnsmasqConfig(router, DnsmasqRuntime{}); err == nil || !strings.Contains(err.Error(), "DHCPv4Relay/relay") || !strings.Contains(err.Error(), "IPv4 address") {
+		t.Fatalf("missing relay interface address should fail clearly: %v", err)
 	}
 }
 
@@ -428,9 +456,8 @@ func TestDnsmasqConfigResolvesDirectIPv6SourcesFromDelegatedAddress(t *testing.T
 	}
 	got := string(data)
 	for _, want := range []string{
-		"dhcp-range=set:lan-dhcpv6,::100,::1ff,constructor:vtnet1,slaac,64,12h",
+		"dhcp-range=tag:vtnet1,set:lan-dhcpv6,::100,::1ff,constructor:vtnet1,64,12h",
 		"dhcp-option=tag:lan-dhcpv6,option6:dns-server,[2001:db8:10::4]",
-		"dhcp-option=option6:dns-server,[2001:db8:10::4]",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("dnsmasq output missing %q:\n%s", want, got)
@@ -438,7 +465,7 @@ func TestDnsmasqConfigResolvesDirectIPv6SourcesFromDelegatedAddress(t *testing.T
 	}
 }
 
-func TestDnsmasqConfigResolvesDirectIPv6SourcesFromObservedAddressFallback(t *testing.T) {
+func TestDnsmasqConfigDoesNotDuplicateRAOnlyObservedDNS(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "vtnet1", Managed: true, Owner: "routerd"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-ipv6"}, Spec: api.IPv6DelegatedAddressSpec{
@@ -459,8 +486,8 @@ func TestDnsmasqConfigResolvesDirectIPv6SourcesFromObservedAddressFallback(t *te
 	if err != nil {
 		t.Fatalf("render dnsmasq: %v", err)
 	}
-	if got, want := string(data), "dhcp-option=option6:dns-server,[2001:db8:10::4]"; !strings.Contains(got, want) {
-		t.Fatalf("dnsmasq output missing %q:\n%s", want, got)
+	if len(data) != 0 {
+		t.Fatalf("RA-only options acquired a second dnsmasq owner: %s", data)
 	}
 }
 
@@ -626,81 +653,11 @@ func TestDnsmasqConfigRendersIPv6StatelessScope(t *testing.T) {
 	}
 	got := string(data)
 	for _, want := range []string{
-		"enable-ra",
-		"dhcp-range=set:lan-dhcpv6,::,constructor:ens19,ra-stateless,64,12h",
-		"ra-param=ens19,mtu:1454,0",
+		"dhcp-range=tag:ens19,set:lan-dhcpv6,::,static,64,12h",
 		"dhcp-option=tag:lan-dhcpv6,option6:dns-server,[2001:db8:3d60:1220::3]",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("dnsmasq output missing %q:\n%s", want, got)
-		}
-	}
-}
-
-func TestDnsmasqConfigRendersPathMTUOnRouterAdvertisement(t *testing.T) {
-	router := &api.Router{
-		Spec: api.RouterSpec{Resources: []api.Resource{
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
-				Metadata: api.ObjectMeta{Name: "lan"},
-				Spec:     api.InterfaceSpec{IfName: "ens19"},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"},
-				Metadata: api.ObjectMeta{Name: "ds-lite"},
-				Spec:     api.DSLiteTunnelSpec{TunnelName: "dslite0", MTU: 1454},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6RouterAdvertisement"},
-				Metadata: api.ObjectMeta{Name: "lan-ra"},
-				Spec: api.IPv6RouterAdvertisementSpec{
-					Interface:     "lan",
-					MTU:           1500,
-					PRFPreference: "high",
-					ValidLifetime: "7200",
-				},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
-				Metadata: api.ObjectMeta{Name: "lan"},
-				Spec:     api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
-				Metadata: api.ObjectMeta{Name: "wan"},
-				Spec:     api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"ds-lite"}},
-			},
-		}},
-	}
-	data, _, err := DnsmasqConfig(router, DnsmasqRuntime{})
-	if err != nil {
-		t.Fatalf("render dnsmasq: %v", err)
-	}
-	if got, want := string(data), "ra-param=ens19,mtu:1454,high,0,7200"; !strings.Contains(got, want) {
-		t.Fatalf("dnsmasq output missing %q:\n%s", want, got)
-	}
-}
-
-func TestDnsmasqConfigAddsDefaultIntervalForPartialRAParams(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "transix"}, Spec: api.DSLiteTunnelSpec{TunnelName: "ds-transix"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6RouterAdvertisement"}, Metadata: api.ObjectMeta{Name: "lan-mtu"}, Spec: api.IPv6RouterAdvertisementSpec{Interface: "lan"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6RouterAdvertisement"}, Metadata: api.ObjectMeta{Name: "lan-priority"}, Spec: api.IPv6RouterAdvertisementSpec{Interface: "lan", PRFPreference: "high"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"transix"}}},
-	}}}
-
-	data, _, err := DnsmasqConfig(router, DnsmasqRuntime{})
-	if err != nil {
-		t.Fatalf("render dnsmasq: %v", err)
-	}
-	for _, want := range []string{
-		"ra-param=ens19,mtu:1454,0",
-		"ra-param=ens19,high,0",
-	} {
-		if !strings.Contains(string(data), want) {
-			t.Fatalf("dnsmasq output missing %q:\n%s", want, data)
 		}
 	}
 }
@@ -806,7 +763,6 @@ func TestDnsmasqConfigSkipsIPv6ScopeUntilDelegatedPrefixExists(t *testing.T) {
 	}
 	got := string(data)
 	for _, unwanted := range []string{
-		"enable-ra",
 		"constructor:ens19",
 		"option6:dns-server",
 		"fe80::2",
@@ -828,6 +784,9 @@ func TestDnsmasqServiceUnitDoesNotOwnRouterdRuntimeDirectory(t *testing.T) {
 	if !strings.Contains(unit, "ConditionPathExists=/run/routerd/routerd-dnsmasq.conf") {
 		t.Fatalf("dnsmasq unit should skip cleanly before routerd materializes runtime config:\n%s", unit)
 	}
+	if !strings.Contains(unit, "PartOf=routerd.service") {
+		t.Fatalf("dnsmasq unit must stop with routerd:\n%s", unit)
+	}
 	if !strings.Contains(unit, "--pid-file=/run/routerd/dnsmasq.pid") {
 		t.Fatalf("dnsmasq unit should keep the managed pid path:\n%s", unit)
 	}
@@ -845,27 +804,6 @@ func TestDnsmasqServiceUnitWithCustomPIDFile(t *testing.T) {
 	unit := string(DnsmasqServiceUnitWithPID("/run/routerd/dnsmasq.conf", "/run/routerd/dnsmasq-custom.pid", "/usr/sbin/dnsmasq"))
 	if !strings.Contains(unit, "ExecStart=/usr/sbin/dnsmasq --keep-in-foreground --conf-file=/run/routerd/dnsmasq.conf --pid-file=/run/routerd/dnsmasq-custom.pid") {
 		t.Fatalf("unit did not include custom pid file:\n%s", unit)
-	}
-}
-
-func TestDnsmasqRCScriptUsesFreeBSDRuntimeAndLeaseDirectories(t *testing.T) {
-	script := string(DnsmasqRCScript("/usr/local/etc/routerd/dnsmasq.conf", "/var/run/routerd", "/var/db/routerd/dnsmasq", "/usr/local/sbin/dnsmasq"))
-	for _, want := range []string{
-		`name="routerd_dnsmasq"`,
-		`rcvar="routerd_dnsmasq_enable"`,
-		`# REQUIRE: NETWORKING mpd5`,
-		`command="/usr/local/sbin/dnsmasq"`,
-		`pidfile="/var/run/routerd/dnsmasq.pid"`,
-		`extra_commands="reload"`,
-		`sig_reload="HUP"`,
-		`start_precmd="${name}_prestart"`,
-		`mkdir -p "/var/run/routerd"`,
-		`mkdir -p "/var/db/routerd/dnsmasq"`,
-		`--conf-file=/usr/local/etc/routerd/dnsmasq.conf`,
-	} {
-		if !strings.Contains(script, want) {
-			t.Fatalf("rc.d script missing %q:\n%s", want, script)
-		}
 	}
 }
 

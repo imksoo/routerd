@@ -177,3 +177,13 @@ service state, then explicitly run `systemctl unmask conntrackd.service` and
 restore only the previously intended enable/start state. Never unmask it while
 routerd still owns synchronization. No packet-forwarding or conntrack kernel
 table setting is changed by this protection.
+
+### Removing a managed conntrackd instance
+
+Removing a conntrackd-mode `NAT44SessionSync`, or changing its mode, stops and
+disables its managed service and removes its generated configuration/unit.
+The controller keeps a durable removal receipt until supervisor acknowledgement,
+file removal, reload and status publication succeed. A later reconciliation
+retries an interrupted removal, including a unit file already unlinked.
+Foreign configuration/unit files are not removed. An inactive `when` declaration
+keeps its declaration status; a removed declaration retires its runtime status.

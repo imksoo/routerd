@@ -8,6 +8,9 @@ import (
 )
 
 type Snapshot struct {
+	HardwareAddress  string    `json:"hardwareAddress"`
+	ClientID         string    `json:"clientID"`
+	Infinite         bool      `json:"infinite,omitempty"`
 	Resource         string    `json:"resource"`
 	Interface        string    `json:"interface"`
 	State            State     `json:"state"`
@@ -33,8 +36,12 @@ type Snapshot struct {
 
 func SnapshotFromLease(resource, ifname string, state State, lease Lease, now time.Time) Snapshot {
 	s := Snapshot{Resource: resource, Interface: ifname, State: state, UpdatedAt: now}
-	if lease.Address.IsValid() {
+	if (state == StateBound || state == StateRenewing || state == StateRebinding) && !lease.ValidAt(now) {
+		s.State = StateExpired
+	}
+	if (state == StateBound || state == StateRenewing || state == StateRebinding) && lease.ValidAt(now) {
 		s.CurrentAddress = lease.Address.String()
+		s.Infinite = lease.Infinite
 		s.PrefixLength = lease.PrefixLength
 		if lease.ServerID.IsValid() {
 			s.ServerID = lease.ServerID.String()
@@ -63,6 +70,7 @@ func SnapshotFromLease(resource, ifname string, state State, lease Lease, now ti
 func LeaseFromSnapshot(s Snapshot) Lease {
 	lease := Lease{
 		Address:          parseAddr(s.CurrentAddress),
+		Infinite:         s.Infinite,
 		PrefixLength:     s.PrefixLength,
 		ServerID:         parseAddr(s.ServerID),
 		DefaultGateway:   parseAddr(s.DefaultGateway),

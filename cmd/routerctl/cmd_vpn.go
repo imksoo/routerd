@@ -8,12 +8,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os/exec"
 	"strings"
 	"text/tabwriter"
 	"time"
 
-	"github.com/imksoo/routerd/internal/hostcmd"
 	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/tailscale"
 	"github.com/imksoo/routerd/pkg/wireguard"
@@ -82,9 +80,9 @@ func tailscalePeersCommand(args []string, stdout io.Writer) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, hostcmd.Resolve(*binary), "status", "--json").CombinedOutput()
+	out, stderr, err := runHostCommand(ctx, *binary, "status", "--json")
 	if err != nil {
-		return fmt.Errorf("%s status --json: %w: %s", *binary, err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("%s status --json: %w: %s", *binary, err, strings.TrimSpace(string(stderr)))
 	}
 	status, err := tailscale.ParseStatusJSON(out)
 	if err != nil {
@@ -168,9 +166,9 @@ func wireGuardListCommand(args []string, stdout io.Writer) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, hostcmd.Resolve("wg"), "show", "all", "dump").CombinedOutput()
+	out, stderr, err := runHostCommand(ctx, "wg", "show", "all", "dump")
 	if err != nil {
-		return fmt.Errorf("wg show all dump: %w: %s", err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("wg show all dump: %w: %s", err, strings.TrimSpace(string(stderr)))
 	}
 	status, err := wireguard.ParseAllDump(out)
 	if err != nil {
@@ -235,9 +233,9 @@ func wireGuardShowCommand(args []string, stdout io.Writer) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, hostcmd.Resolve("wg"), "show", iface, "dump").CombinedOutput()
+	out, stderr, err := runHostCommand(ctx, "wg", "show", iface, "dump")
 	if err != nil {
-		return fmt.Errorf("wg show %s dump: %w: %s", iface, err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("wg show %s dump: %w: %s", iface, err, strings.TrimSpace(string(stderr)))
 	}
 	status, err := wireguard.ParseInterfaceDump(iface, out)
 	if err != nil {

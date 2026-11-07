@@ -107,6 +107,31 @@ func TestBuildDynamicRouteSAMViewReadsTypedMobilityPlanFromOneSnapshot(t *testin
 	}
 }
 
+func TestBuildDynamicRouteSAMViewRetainsEmptyWithdrawalIdentity(t *testing.T) {
+	now := time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)
+	plan := dynamicconfig.MobilityDataplanePlan{PoolPrefix: "10.77.60.0/24"}
+	request := dynamicconfig.MobilityWithdrawalRequest{ID: "move-1", GroupRef: "g", PoolRef: "cloudedge", PoolPrefix: plan.PoolPrefix, Address: "10.77.60.9/32", FromNodeRef: "router-a", ToNodeRef: "router-b", PlanDigest: dynamicconfig.MobilityNativePlanDigest(plan)}
+	plan.Withdrawals = []dynamicconfig.MobilityWithdrawalRequest{request}
+	raw, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &dynamicRouteSAMStore{records: []routerstate.DynamicConfigPartRecord{{Source: "MobilityPool/cloudedge/node/router-a", Generation: 1, ObservedAt: now, ExpiresAt: now.Add(time.Minute), Digest: "typed", MobilityDataplaneJSON: string(raw), Status: "active"}}}
+	view, err := buildDynamicRouteSAMView(&api.Router{}, store, now, platform.OSLinux)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.listCalls != 1 || len(view.MobilityDataplane.Withdrawals) != 1 || view.MobilityDataplane.Withdrawals[0] != request {
+		t.Fatalf("empty request lost at snapshot boundary: %+v", view.MobilityDataplane)
+	}
+	plan.Withdrawals[0].FromNodeRef = "other-node"
+	raw, _ = json.Marshal(plan)
+	store.records[0].MobilityDataplaneJSON = string(raw)
+	if _, err := buildDynamicRouteSAMView(&api.Router{}, store, now, platform.OSLinux); err == nil {
+		t.Fatal("source identity mismatch accepted")
+	}
+}
+
 func TestBuildDynamicRouteSAMViewIgnoresStaleGenericMobilityPayload(t *testing.T) {
 	now := time.Date(2026, 8, 18, 13, 0, 0, 0, time.UTC)
 	legacy := dynamicPartRecord(t, "MobilityPool/cloudedge/node/router-a", []api.Resource{{

@@ -128,22 +128,40 @@ func TestLeaseSyncFailureSurvivesRecovery(t *testing.T) {
 func TestLeaseSyncFailureContextCause(t *testing.T) {
 	for _, deadline := range []bool{false, true} {
 		t.Run(fmt.Sprint(deadline), func(t *testing.T) {
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(t.Context())
 			cancel()
 			if deadline {
-				ctx, cancel = context.WithDeadline(context.Background(), time.Unix(0, 0))
+				ctx, cancel = context.WithDeadline(t.Context(), time.Unix(0, 0))
 				defer cancel()
 			}
 			var logs bytes.Buffer
-			c := FileSyncController{Store: mapStore{}, Logger: slog.New(slog.NewJSONHandler(&logs, nil)), Command: func(context.Context, string, ...string) ([]byte, error) { return nil, errors.New("signal: killed") }}
-			if err := c.reconcileJob(ctx, leaseSyncDiagnosticJob(t, "DHCPv4ServerLeaseSync")); err != nil {
+			c := FileSyncController{Store: mapStore{}, Logger: slog.New(slog.NewJSONHandler(&logs, nil)), Command: func(context.Context, string, ...string) ([]byte, error) {
+				t.Fatal("canceled generation ran a transfer")
+				return nil, nil
+			}}
+			if err := c.reconcileJob(ctx, leaseSyncDiagnosticJob(t, "DHCPv4ServerLeaseSync")); !errors.Is(err, ctx.Err()) {
 				t.Fatal(err)
 			}
-			r := leaseSyncDiagnosticRecords(t, logs.String())[0]
-			if r["timedOut"] != deadline || r["canceled"] == deadline || r["exitCode"] != nil {
-				t.Fatal(r)
+			if logs.Len() != 0 {
+				t.Fatalf("normal generation shutdown reported current failure: %s", logs.String())
 			}
 		})
+	}
+}
+
+func TestLeaseSyncCommandTimeoutStillReportsCurrentFailure(t *testing.T) {
+	var logs bytes.Buffer
+	c := FileSyncController{Store: mapStore{}, Logger: slog.New(slog.NewJSONHandler(&logs, nil)), Command: func(context.Context, string, ...string) ([]byte, error) { return nil, context.DeadlineExceeded }}
+	job := leaseSyncDiagnosticJob(t, "DHCPv4ServerLeaseSync")
+	if err := c.reconcileJob(t.Context(), job); err != nil {
+		t.Fatal(err)
+	}
+	r := leaseSyncDiagnosticRecords(t, logs.String())
+	if len(r) != 1 || r[0]["timedOut"] != true || r[0]["canceled"] != false {
+		t.Fatal(r)
+	}
+	if s := c.Store.ObjectStatus(job.APIVersion, job.Kind, job.Name); s["phase"] != "Error" || s["reason"] != "SyncFailed" {
+		t.Fatal(s)
 	}
 }
 

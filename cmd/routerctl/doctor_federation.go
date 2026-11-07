@@ -649,7 +649,7 @@ func remediationActionFromCheck(c doctorCheck) doctorRemediationAction {
 		return doctorRemediationAction{
 			Action: remediationInspectFailedSubscriptionRuns, Reason: c.Detail,
 			TargetResource: targetResource,
-			Safe: true, RequiresOperatorApproval: false,
+			Safe:           true, RequiresOperatorApproval: false,
 		}
 	}
 	return doctorRemediationAction{}

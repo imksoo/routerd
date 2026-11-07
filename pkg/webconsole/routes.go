@@ -3,6 +3,7 @@
 package webconsole
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/netip"
@@ -16,7 +17,7 @@ import (
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
-func (h Handler) routesStatus() RoutesStatus {
+func (h Handler) routesStatus(ctx context.Context) RoutesStatus {
 	status := RoutesStatus{GeneratedAt: time.Now().UTC()}
 	resources, err := h.resourceStatuses()
 	if err != nil {
@@ -25,7 +26,7 @@ func (h Handler) routesStatus() RoutesStatus {
 	status.Routes = append(status.Routes, h.configuredRouteEntries(resources)...)
 	status.Routes = append(status.Routes, bgpRouteEntries(resources)...)
 	status.BGPPeers = bgpRoutePeers(resources)
-	live, errors := liveKernelRouteEntries(time.Now().UTC())
+	live, errors := liveKernelRouteEntries(ctx, time.Now().UTC())
 	status.Routes = append(status.Routes, live...)
 	status.Errors = append(status.Errors, errors...)
 	sortRouteEntries(status.Routes)
@@ -215,7 +216,7 @@ type linuxRouteJSON struct {
 	Prefsrc  string `json:"prefsrc"`
 }
 
-func liveKernelRouteEntries(now time.Time) ([]RouteEntry, []string) {
+func liveKernelRouteEntries(ctx context.Context, now time.Time) ([]RouteEntry, []string) {
 	var entries []RouteEntry
 	var errors []string
 	for _, family := range []struct {
@@ -225,9 +226,16 @@ func liveKernelRouteEntries(now time.Time) ([]RouteEntry, []string) {
 		{Name: "ipv4", Flag: "-4"},
 		{Name: "ipv6", Flag: "-6"},
 	} {
-		out, err := commandOutputTimeout(2*time.Second, "ip", "-j", family.Flag, "route", "show", "table", "all")
+		if err := ctx.Err(); err != nil {
+			errors = append(errors, err.Error())
+			break
+		}
+		out, err := commandOutputTimeout(ctx, 2*time.Second, "ip", "-j", family.Flag, "route", "show", "table", "all")
 		if err != nil {
 			errors = append(errors, err.Error())
+			if ctx.Err() != nil {
+				break
+			}
 			continue
 		}
 		routes, err := parseLinuxRoutesJSON(out, family.Name, now)

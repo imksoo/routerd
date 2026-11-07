@@ -51,6 +51,8 @@ func actionCommand(args []string, stdout, stderr io.Writer) error {
 		return actionJournalCommand(args[1:], stdout)
 	case "rollback":
 		return actionRollbackCommand(args[1:], stdout)
+	case "resolve":
+		return actionResolveCommand(args[1:], stdout)
 	case "help", "-h", "--help":
 		actionUsage(stdout)
 		return nil
@@ -116,7 +118,7 @@ func actionListCommand(args []string, stdout io.Writer) error {
 				"routerctl action list --status pending -o json")
 	}
 	statePath := fs.String("state-file", defaultStatePath(), "routerd state database file")
-	status := fs.String("status", "", "filter by status (pending|approved|running|succeeded|failed|skipped|rolledBack)")
+	status := fs.String("status", "", "filter by journal status, including outcomeUnknown and rollbackUnknown")
 	provider := fs.String("provider", "", "filter by provider")
 	output := "table"
 	fs.StringVar(&output, "o", "table", "output format: table, json, yaml")
@@ -196,7 +198,10 @@ func actionShowCommand(args []string, stdout io.Writer) error {
 	output := "table"
 	fs.StringVar(&output, "o", "table", "output format: table, json, yaml")
 	fs.StringVar(&output, "output", "table", "output format: table, json, yaml")
-	id, rest, err := splitActionID(args)
+	id, rest, err := splitActionID(fs, args)
+	if errors.Is(err, flag.ErrHelp) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -244,7 +249,10 @@ func actionApproveCommand(args []string, stdout io.Writer) error {
 	}
 	statePath := fs.String("state-file", defaultStatePath(), "routerd state database file")
 	by := fs.String("by", "operator", "operator name recorded as the approver")
-	id, rest, err := splitActionID(args)
+	id, rest, err := splitActionID(fs, args)
+	if errors.Is(err, flag.ErrHelp) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -298,7 +306,10 @@ func actionExecuteCommand(args []string, stdout io.Writer) error {
 	statePath := fs.String("state-file", defaultStatePath(), "routerd state database file")
 	dryRun := fs.Bool("dry-run", false, "non-destructive preview: run the executor in dry-run mode, do not mutate the journal")
 	approved := fs.Bool("approved", false, "operator intent to execute live (still gated by approval + policy)")
-	id, rest, err := splitActionID(args)
+	id, rest, err := splitActionID(fs, args)
+	if errors.Is(err, flag.ErrHelp) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -352,7 +363,7 @@ func actionExecuteCommand(args []string, stdout io.Writer) error {
 		return nil
 	}
 
-	if err := engine.Execute(context.Background(), id, provideraction.ModeExecute, policy); err != nil {
+	if err := engine.Execute(context.Background(), id, policy); err != nil {
 		return err
 	}
 	rec, _, err := store.GetActionByID(id)
@@ -382,7 +393,10 @@ func actionRollbackCommand(args []string, stdout io.Writer) error {
 	statePath := fs.String("state-file", defaultStatePath(), "routerd state database file")
 	dryRun := fs.Bool("dry-run", false, "non-destructive preview of the undo plan (run the executor in dry-run mode)")
 	approved := fs.Bool("approved", false, "operator intent to perform the live rollback (still gated by allowUndo + policy)")
-	id, rest, err := splitActionID(args)
+	id, rest, err := splitActionID(fs, args)
+	if errors.Is(err, flag.ErrHelp) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -458,29 +472,59 @@ func loadActionPolicyAndPlugins(configPath string) (api.ProviderActionPolicySpec
 	return provideraction.PolicyAndPlugins(router)
 }
 
-// splitActionID extracts the first positional <id> token from args (regardless
-// of its position relative to flags) and returns the id plus the remaining args
-// (the flags) for fs.Parse. This lets the operator write the id before OR after
-// flags (e.g. `action execute 1 --approved`), which the stdlib flag package does
-// not allow when the id precedes the flags.
-func splitActionID(args []string) (int64, []string, error) {
+// splitActionID separates the positional ID while respecting the actual flag
+// definitions, including flag values before the ID.
+func splitActionID(fs *flag.FlagSet, args []string) (int64, []string, error) {
 	rest := make([]string, 0, len(args))
-	var idStr string
-	var found bool
-	for _, a := range args {
-		if !found && !strings.HasPrefix(a, "-") {
-			idStr = a
-			found = true
+	var idText string
+	positionalOnly := false
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if !positionalOnly && arg == "--" {
+			rest = append(rest, arg)
+			positionalOnly = true
 			continue
 		}
-		rest = append(rest, a)
+		if !positionalOnly && strings.HasPrefix(arg, "-") {
+			if arg == "-h" || arg == "--help" {
+				fs.Usage()
+				return 0, nil, flag.ErrHelp
+			}
+			name := strings.TrimLeft(arg, "-")
+			if key, _, hasValue := strings.Cut(name, "="); hasValue {
+				name = key
+			}
+			field := fs.Lookup(name)
+			if field == nil {
+				return 0, nil, fmt.Errorf("unknown action option %q", arg)
+			}
+			rest = append(rest, arg)
+			if strings.Contains(arg, "=") {
+				continue
+			}
+			boolean, ok := field.Value.(interface{ IsBoolFlag() bool })
+			if ok && boolean.IsBoolFlag() {
+				continue
+			}
+			i++
+			if i >= len(args) {
+				return 0, nil, fmt.Errorf("%s requires a value", arg)
+			}
+			rest = append(rest, args[i])
+			continue
+		}
+		if idText == "" {
+			idText = arg
+		} else {
+			rest = append(rest, arg)
+		}
 	}
-	if !found {
+	if idText == "" {
 		return 0, nil, errors.New("requires <id>")
 	}
-	id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
-	if err != nil {
-		return 0, nil, fmt.Errorf("invalid action id %q: %w", idStr, err)
+	id, err := strconv.ParseInt(idText, 10, 64)
+	if err != nil || id <= 0 {
+		return 0, nil, fmt.Errorf("invalid action id %q", idText)
 	}
 	return id, rest, nil
 }
@@ -496,7 +540,7 @@ func writeActionListTable(stdout io.Writer, rows []routerstate.ActionExecutionRe
 			displayCell(rec.Action),
 			displayCell(rec.Status),
 			actionLifecycle(rec.Status),
-			displayCell(actionTargetAddress(rec.TargetJSON)),
+			displayCell(rec.Target["address"]),
 			displayCell(rec.ApprovedBy),
 		)
 	}
@@ -513,6 +557,18 @@ func actionLifecycle(status string) string {
 }
 
 func writeActionShowTable(stdout io.Writer, rec routerstate.ActionExecutionRecord) error {
+	target, err := json.Marshal(rec.Target)
+	if err != nil {
+		return err
+	}
+	parameters, err := json.Marshal(rec.Parameters)
+	if err != nil {
+		return err
+	}
+	undo, err := json.Marshal(rec.Undo)
+	if err != nil {
+		return err
+	}
 	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintf(w, "ID:\t%d\n", rec.ID)
 	fmt.Fprintf(w, "Idempotency Key:\t%s\n", displayCell(rec.IdempotencyKey))
@@ -522,9 +578,9 @@ func writeActionShowTable(stdout io.Writer, rec routerstate.ActionExecutionRecor
 	fmt.Fprintf(w, "Action:\t%s\n", displayCell(rec.Action))
 	fmt.Fprintf(w, "Risk Level:\t%s\n", displayCell(rec.RiskLevel))
 	fmt.Fprintf(w, "Status:\t%s\n", displayCell(rec.Status))
-	fmt.Fprintf(w, "Target:\t%s\n", displayCell(rec.TargetJSON))
-	fmt.Fprintf(w, "Parameters:\t%s\n", displayCell(rec.ParametersJSON))
-	fmt.Fprintf(w, "Undo:\t%s\n", displayCell(rec.UndoJSON))
+	fmt.Fprintf(w, "Target:\t%s\n", displayCell(string(target)))
+	fmt.Fprintf(w, "Parameters:\t%s\n", displayCell(string(parameters)))
+	fmt.Fprintf(w, "Undo:\t%s\n", displayCell(string(undo)))
 	fmt.Fprintf(w, "Approved By:\t%s\n", displayCell(rec.ApprovedBy))
 	fmt.Fprintf(w, "Approved At:\t%s\n", formatDynamicTime(rec.ApprovedAt))
 	fmt.Fprintf(w, "Executed At:\t%s\n", formatDynamicTime(rec.ExecutedAt))
@@ -533,24 +589,6 @@ func writeActionShowTable(stdout io.Writer, rec routerstate.ActionExecutionRecor
 	fmt.Fprintf(w, "Created At:\t%s\n", formatDynamicTime(rec.CreatedAt))
 	fmt.Fprintf(w, "Updated At:\t%s\n", formatDynamicTime(rec.UpdatedAt))
 	return w.Flush()
-}
-
-// actionTargetAddress extracts target.address from the JSON target for the list
-// table without failing the whole render on a malformed value.
-func actionTargetAddress(targetJSON string) string {
-	m := decodeActionStringMap(targetJSON)
-	return m["address"]
-}
-
-func decodeActionStringMap(s string) map[string]string {
-	if strings.TrimSpace(s) == "" {
-		return nil
-	}
-	var m map[string]string
-	if err := json.Unmarshal([]byte(s), &m); err != nil {
-		return nil
-	}
-	return m
 }
 
 func actionUsage(w io.Writer) {
@@ -564,4 +602,5 @@ func actionUsage(w io.Writer) {
 	fmt.Fprintln(w, "  execute <id> --dry-run|--approved [--config <path>] [--state-file <path>]")
 	fmt.Fprintln(w, "  journal [--state-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  rollback <id> --dry-run|--approved [--config <path>] [--state-file <path>]")
+	fmt.Fprintln(w, "  resolve <id> --outcome <status> --by <operator> --evidence <inspection> [--state-file <path>]")
 }

@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -44,7 +45,7 @@ func TestStoreSurvivesTransientSQLiteLocks(t *testing.T) {
 			}
 			q := openQueue(t, path)
 			ok, err := q.ProcessOne(context.Background(), func(_ context.Context, e Event) error {
-				if !e.ObservedAt.Equal(at) || e.Lease != lease("renewed") {
+				if !e.ObservedAt.Equal(at) || !reflect.DeepEqual(e.Lease, lease("renewed")) {
 					t.Fatalf("callback changed: %+v", e)
 				}
 				return nil

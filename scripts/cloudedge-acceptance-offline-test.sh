@@ -332,16 +332,20 @@ PY
 
 timing_out="$tmp/evidence-timing"
 timing_run_id="20260601T000001Z-cloudedge-d6-azure-active-stop-seize"
-MATRIX_RUNNER="$runner" FAILOVER_TIMING_RUNNER="$timing_runner" CE_STATE_DIR="$tmp/state-timing" \
+if MATRIX_RUNNER="$runner" FAILOVER_TIMING_RUNNER="$timing_runner" CE_STATE_DIR="$tmp/state-timing" \
   "$SCRIPT_DIR/cloudedge-acceptance.sh" run \
     --scenario d6-azure-active-stop-seize \
     --out "$timing_out" \
     --run-id "$timing_run_id" \
-    --commit offline >/dev/null
+    --commit offline >/dev/null; then
+  die "timing-only evidence passed missing ownership/fencing assertions"
+fi
 
 python3 - "$timing_out/result.json" <<'PY'
 import json, sys
 result = json.load(open(sys.argv[1]))
+if result.get("result") != "fail":
+    raise SystemExit("missing ownership evidence did not lower the scenario result")
 assertions = {a.get("name"): a.get("result") for a in result.get("assertions", [])}
 if assertions.get("failover_recovery_under_60s") != "pass":
     raise SystemExit("timing assertion did not pass")
@@ -386,12 +390,14 @@ PY
 
 l2_out="$tmp/evidence-l2"
 l2_run_id="20260601T000003Z-cloudedge-d12-l2-loop-stp-stability"
-MATRIX_RUNNER="$runner" FAILOVER_TIMING_RUNNER="$timing_runner" L2_LOOP_RUNNER="$l2_runner" CE_STATE_DIR="$tmp/state-l2" \
+if MATRIX_RUNNER="$runner" FAILOVER_TIMING_RUNNER="$timing_runner" L2_LOOP_RUNNER="$l2_runner" CE_STATE_DIR="$tmp/state-l2" \
   "$SCRIPT_DIR/cloudedge-acceptance.sh" run \
     --scenario d12-l2-loop-stp-stability \
     --out "$l2_out" \
     --run-id "$l2_run_id" \
-    --commit offline >/dev/null
+    --commit offline >/dev/null; then
+  die "L2-only evidence passed missing residue/fencing assertions"
+fi
 
 python3 - "$l2_out/result.json" <<'PY'
 import json, sys

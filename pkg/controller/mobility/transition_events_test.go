@@ -4,7 +4,6 @@ package mobility
 
 import (
 	"context"
-	"encoding/json"
 	"sort"
 	"testing"
 	"time"
@@ -317,22 +316,16 @@ func assignSecondaryIPPlanForTransitionTest(address, providerRef, targetRef, hol
 
 func providerCaptureActionRecordForTransitionTest(t *testing.T, id int64, action, address, providerRef, targetRef, holder, assignmentGeneration string, at time.Time) routerstate.ActionExecutionRecord {
 	t.Helper()
-	target, err := json.Marshal(map[string]string{"address": address, "providerRef": providerRef, "nicRef": targetRef})
-	if err != nil {
-		t.Fatalf("marshal target: %v", err)
-	}
-	params, err := json.Marshal(map[string]string{captureParamHolder: holder, bgpPathSigParam: "prefix=" + address + ";nextHops=10.99.0.3", captureAssignmentGenerationParam: assignmentGeneration})
-	if err != nil {
-		t.Fatalf("marshal params: %v", err)
-	}
+	target := map[string]string{"address": address, "providerRef": providerRef, "nicRef": targetRef}
+	params := map[string]string{captureParamHolder: holder, bgpPathSigParam: "prefix=" + address + ";nextHops=10.99.0.3", captureAssignmentGenerationParam: assignmentGeneration}
 	return routerstate.ActionExecutionRecord{
 		ID:             id,
 		IdempotencyKey: action + "-" + safeName(address),
 		Provider:       "aws",
 		ProviderRef:    providerRef,
 		Action:         action,
-		TargetJSON:     string(target),
-		ParametersJSON: string(params),
+		Target:         target,
+		Parameters:     params,
 		Status:         routerstate.ActionSucceeded,
 		ExecutedAt:     at.UTC(),
 		UpdatedAt:      at.UTC(),

@@ -3,10 +3,13 @@
 package inventory
 
 import (
+	"context"
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestCollectLinuxInventory(t *testing.T) {
@@ -37,7 +40,7 @@ func TestCollectLinuxInventory(t *testing.T) {
 			}
 			return "", exec.ErrNotFound
 		},
-		CommandOutput: func(name string, args ...string) ([]byte, error) {
+		CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			switch {
 			case name == "uname" && len(args) == 1 && args[0] == "-s":
 				return []byte("Linux\n"), nil
@@ -67,7 +70,10 @@ func TestCollectLinuxInventory(t *testing.T) {
 		},
 	}
 
-	got := collector.Collect()
+	got, err := collector.Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
 	if got.OS.GOOS != "linux" || got.OS.KernelName != "Linux" || got.OS.KernelRelease != "6.8.0-test" {
 		t.Fatalf("OS inventory = %#v", got.OS)
 	}
@@ -94,7 +100,7 @@ func TestCollectFreeBSDInventory(t *testing.T) {
 			}
 			return "", exec.ErrNotFound
 		},
-		CommandOutput: func(name string, args ...string) ([]byte, error) {
+		CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			if name == "sysctl" {
 				return []byte("kvm\n"), nil
 			}
@@ -107,7 +113,10 @@ func TestCollectFreeBSDInventory(t *testing.T) {
 		Stat:     func(path string) (os.FileInfo, error) { return nil, os.ErrNotExist },
 	}
 
-	got := collector.Collect()
+	got, err := collector.Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
 	if got.Virtualization.Type != "kvm" {
 		t.Fatalf("virtualization = %#v", got.Virtualization)
 	}
@@ -116,5 +125,49 @@ func TestCollectFreeBSDInventory(t *testing.T) {
 	}
 	if !got.Commands["dhcp6c"] || !got.Commands["dig"] || !got.Commands["traceroute"] || !got.Commands["netstat"] || got.Commands["nft"] {
 		t.Fatalf("commands = %#v", got.Commands)
+	}
+}
+
+func TestVirtualizationDoesNotConvertProbeFailureIntoPhysicalHost(t *testing.T) {
+	exitOne := exec.Command("/bin/sh", "-c", "exit 1").Run()
+	exitTwo := exec.Command("/bin/sh", "-c", "exit 2").Run()
+	for _, tt := range []struct {
+		name, vm, container, want string
+		vmErr, containerErr       error
+	}{
+		{name: "explicit-empty", vm: "none", container: "none", want: "none"},
+		{name: "normal-nonvirtual-exit", vm: "none", container: "none", want: "none", vmErr: exitOne, containerErr: exitOne},
+		{name: "unavailable", want: "unknown", vmErr: errors.New("permission denied"), containerErr: errors.New("permission denied")},
+		{name: "failed-output-is-not-proof", vm: "none", container: "none", want: "unknown", vmErr: exitOne, containerErr: exitTwo},
+		{name: "known-container", container: "docker", want: "docker", vmErr: errors.New("vm query unavailable")},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			collector := Collector{GOOS: "linux", LookPath: func(string) (string, error) { return "/fixture/systemd-detect-virt", nil }, CommandOutput: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+				if args[0] == "--vm" {
+					return []byte(tt.vm), tt.vmErr
+				}
+				return []byte(tt.container), tt.containerErr
+			}}
+			if got := collector.virtualizationType(context.Background()); got != tt.want {
+				t.Fatalf("virtualization=%q want=%q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestInventoryActualSubprocessHonorsCollectionCancellation(t *testing.T) {
+	directory := t.TempDir()
+	if err := os.WriteFile(filepath.Join(directory, "uname"), []byte("#!/bin/sh\nexec /bin/sleep 10\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", directory)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	if _, err := Collect(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("canceled host inventory returned %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("actual inventory command ignored cancellation: %s", elapsed)
 	}
 }

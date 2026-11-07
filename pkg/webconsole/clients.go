@@ -21,13 +21,13 @@ func (h Handler) clients(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	stickyLeases, err := h.dhcpStickyLeaseList(logstore.DHCPStickyFilter{HeldOnly: true, Now: now, Limit: 10000})
+	stickyLeases, err := h.dhcpStickyLeaseList(r.Context(), logstore.DHCPStickyFilter{HeldOnly: true, Now: now, Limit: 10000})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	leases = annotateDHCPLeasesWithSticky(leases, stickyLeases, now)
-	neighbors, err := neighborList()
+	neighbors, err := neighborList(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -43,15 +43,17 @@ func (h Handler) clients(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	flows = enrichTrafficFlowsWithDNS(flows, queries)
-	if enriched, err := h.enrichTrafficFlowsWithDPI(r.Context(), flows, now, clientObservationWindow); err == nil {
-		flows = enriched
+	flows, err = h.enrichTrafficFlowsWithDPI(r.Context(), flows, now, clientObservationWindow)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
 	firewallLogs, err := h.firewallLogList(r.Context(), logstore.FirewallLogFilter{Since: clientSince, Action: "drop", Limit: 1000})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	dhcpFingerprints, err := h.dhcpFingerprintList(logstore.DHCPFingerprintFilter{Since: clientSince, Limit: 1000})
+	dhcpFingerprints, err := h.dhcpFingerprintList(r.Context(), logstore.DHCPFingerprintFilter{Since: clientSince, Limit: 1000})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -62,8 +64,21 @@ func (h Handler) clients(w http.ResponseWriter, r *http.Request) {
 func correlateClients(leases []DHCPLease, neighbors []NeighborEntry, flows []logstore.TrafficFlow, queries []logstore.DNSQuery, firewallLogs []logstore.FirewallLogEntry, dhcpFingerprints ...[]logstore.DHCPFingerprint) []ClientEntry {
 	rows := map[string]*clientMutableEntry{}
 	ipToKey := map[string]string{}
-	passive := buildPassiveFingerprints(leases, flows, queries, firewallLogs)
+	passive := buildPassiveFingerprints(flows, queries, firewallLogs)
 	dhcpFingerprintByMAC := latestDHCPFingerprintByMAC(dhcpFingerprints...)
+	neighborMAC := map[string]string{}
+	for _, neighbor := range neighbors {
+		if neighborStateFailed(neighbor.State) || neighbor.IP == "" || neighbor.MAC == "" {
+			continue
+		}
+		mac := normalizeClientMAC(neighbor.MAC)
+		if previous, exists := neighborMAC[neighbor.IP]; !exists || previous == mac {
+			neighborMAC[neighbor.IP] = mac
+		} else {
+			// Conflicting interfaces do not establish one device identity.
+			neighborMAC[neighbor.IP] = ""
+		}
+	}
 	upsert := func(key, address string) *clientMutableEntry {
 		key = strings.TrimSpace(key)
 		if key == "" {
@@ -93,13 +108,17 @@ func correlateClients(leases []DHCPLease, neighbors []NeighborEntry, flows []log
 		if strings.TrimSpace(lease.IP) == "" {
 			continue
 		}
-		key := clientCorrelationKey(lease.MAC, lease.IP)
+		mac := lease.MAC
+		if mac == "" {
+			mac = neighborMAC[lease.IP]
+		}
+		key := clientCorrelationKey(mac, lease.IP)
 		row := upsert(key, lease.IP)
 		if row.Hostname == "" {
 			row.Hostname = lease.Hostname
 		}
 		if row.MAC == "" {
-			row.MAC = normalizeClientMAC(lease.MAC)
+			row.MAC = normalizeClientMAC(mac)
 		}
 		if row.Vendor == "" {
 			row.Vendor = lease.Vendor
@@ -108,7 +127,14 @@ func correlateClients(leases []DHCPLease, neighbors []NeighborEntry, flows []log
 			row.StickyUntil = lease.StickyUntil.Format(time.RFC3339Nano)
 			row.StickyState = firstNonEmptyString(lease.StickyState, "held")
 		}
-		row.sources["dhcpv4"] = true
+		switch {
+		case lease.Source == "sticky-history":
+			row.sources["sticky-history"] = true
+		case lease.Family == "ipv6":
+			row.sources["dhcpv6"] = true
+		default:
+			row.sources["dhcpv4"] = true
+		}
 	}
 	for _, neighbor := range neighbors {
 		if strings.TrimSpace(neighbor.IP) == "" {
@@ -125,23 +151,18 @@ func correlateClients(leases []DHCPLease, neighbors []NeighborEntry, flows []log
 		if row.Vendor == "" {
 			row.Vendor = neighbor.Vendor
 		}
-		if row.State == "" {
-			row.State = neighbor.State
+		if neighbor.State != "" {
+			states := strings.Split(row.State, ",")
+			for _, state := range strings.Split(neighbor.State, ",") {
+				states = appendUnique(states, strings.TrimSpace(state))
+			}
+			row.State = strings.Trim(strings.Join(states, ","), ",")
 		}
 		source := strings.TrimSpace(neighbor.Source)
 		if source == "" {
 			source = "neighbor"
 		}
 		row.sources[source] = true
-	}
-	for ip, fingerprint := range passive {
-		if ip == "" || ipToKey[ip] != "" {
-			continue
-		}
-		if key := matchFingerprintToClient(rows, ip, fingerprint); key != "" {
-			ipToKey[ip] = key
-			rows[key].addresses[ip] = true
-		}
 	}
 	for _, query := range queries {
 		ip := strings.TrimSpace(query.ClientAddress)
@@ -150,7 +171,7 @@ func correlateClients(leases []DHCPLease, neighbors []NeighborEntry, flows []log
 		}
 		key := ipToKey[ip]
 		if key == "" {
-			key = passiveCorrelationKey(passive[ip], ip)
+			key = ip
 		}
 		row := upsert(key, ip)
 		if query.QuestionName != "" {
@@ -165,18 +186,30 @@ func correlateClients(leases []DHCPLease, neighbors []NeighborEntry, flows []log
 		}
 		key := ipToKey[ip]
 		if key == "" {
-			key = passiveCorrelationKey(passive[ip], ip)
+			key = ip
 		}
 		row := upsert(key, ip)
-		if flow.Accounting {
-			row.BytesOut += flow.BytesOut
-			row.BytesIn += flow.BytesIn
+		if flow.BytesOut == nil {
+			row.BytesOutIncomplete = true
+		} else {
+			if row.BytesOut == nil {
+				row.BytesOut = new(int64)
+			}
+			*row.BytesOut += *flow.BytesOut
+		}
+		if flow.BytesIn == nil {
+			row.BytesInIncomplete = true
+		} else {
+			if row.BytesIn == nil {
+				row.BytesIn = new(int64)
+			}
+			*row.BytesIn += *flow.BytesIn
 		}
 		peer := firstNonEmptyString(flow.TLSSNI, flow.HTTPHost, flow.DNSQuery, flow.ResolvedHostname, flow.PeerAddress)
 		if peer != "" {
 			row.peers[peer] = true
 		}
-		row.recordActivity(flowActivityName(flow), flowActivityDetail(flow), flow.BytesOut+flow.BytesIn, flow.EndedAt)
+		row.recordActivity(flowActivityName(flow), flowActivityDetail(flow), knownTrafficBytes(flow.BytesOut, flow.BytesIn), flow.EndedAt)
 		row.sources["traffic"] = true
 	}
 	out := make([]ClientEntry, 0, len(rows))
@@ -193,8 +226,8 @@ func correlateClients(leases []DHCPLease, neighbors []NeighborEntry, flows []log
 		out = append(out, row.ClientEntry)
 	}
 	sort.Slice(out, func(i, j int) bool {
-		trafficI := out[i].BytesOut + out[i].BytesIn
-		trafficJ := out[j].BytesOut + out[j].BytesIn
+		trafficI := knownTrafficBytes(out[i].BytesOut, out[i].BytesIn)
+		trafficJ := knownTrafficBytes(out[j].BytesOut, out[j].BytesIn)
 		if trafficI != trafficJ {
 			return trafficI > trafficJ
 		}
@@ -496,4 +529,17 @@ func isLikelyClientAddress(address string) bool {
 		return addr.IsPrivate()
 	}
 	return addr.IsPrivate() || addr.IsLinkLocalUnicast()
+}
+
+// Ranking uses the observed portion only; presentation retains each missing
+// direction and its incomplete marker instead of calling this a complete total.
+func knownTrafficBytes(out, in *int64) int64 {
+	var total int64
+	if out != nil {
+		total += *out
+	}
+	if in != nil {
+		total += *in
+	}
+	return total
 }

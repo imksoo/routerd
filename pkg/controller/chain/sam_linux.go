@@ -42,37 +42,29 @@ func defaultSAMGratuitousARPAnnouncer() samGratuitousARPAnnouncer {
 
 type packetSAMGratuitousARPAnnouncer struct{}
 
-func (netlinkSAMProxyNeighborApplier) SetProxyARP(ctx context.Context, ifname string, enabled, owned bool) (samProxyARPApplyResult, error) {
-	key := "net.ipv4.conf." + ifname + ".proxy_arp"
-	current, err := samReadBinarySysctl(ctx, key)
-	if err != nil {
+func (netlinkSAMProxyNeighborApplier) SetProxyARP(ctx context.Context, ifname string, enabled, owned bool, beforeAcquire func() error) (samProxyARPApplyResult, error) {
+	return samSetOwnedInterfaceSysctl(ctx, ifname, "proxy_arp", enabled, owned, beforeAcquire)
+}
+
+func (netlinkSAMProxyNeighborApplier) SetAcceptLocal(ctx context.Context, ifname string, enabled, owned bool, beforeAcquire func() error) (samProxyARPApplyResult, error) {
+	return samSetOwnedInterfaceSysctl(ctx, ifname, "accept_local", enabled, owned, beforeAcquire)
+}
+
+func samSetOwnedInterfaceSysctl(ctx context.Context, ifname, setting string, enabled, owned bool, beforeAcquire func() error) (samProxyARPApplyResult, error) {
+	if err := sam.ValidateCaptureInterface(ifname); err != nil {
 		return samProxyARPApplyResult{}, err
 	}
-	if enabled {
-		if current == "1" {
-			if !owned {
-				return samProxyARPApplyResult{}, fmt.Errorf("foreign %s=1: refusing adoption", key)
-			}
-			return samProxyARPApplyResult{}, nil
-		}
-		if err := samSetSysctl(ctx, key, "1"); err != nil {
+	key := "net.ipv4.conf." + ifname + "." + setting
+	if !enabled {
+		present, err := samSysctlPresent(key)
+		if err != nil {
 			return samProxyARPApplyResult{}, err
 		}
-		return samProxyARPApplyResult{changedByRouterd: true}, nil
-	}
-	if !owned {
-		if current == "1" {
-			return samProxyARPApplyResult{}, fmt.Errorf("foreign %s=1: refusing disable", key)
+		if !present {
+			return samProxyARPApplyResult{}, nil
 		}
-		return samProxyARPApplyResult{}, nil
 	}
-	if current == "0" {
-		return samProxyARPApplyResult{}, nil
-	}
-	if err := samSetSysctl(ctx, key, "0"); err != nil {
-		return samProxyARPApplyResult{}, err
-	}
-	return samProxyARPApplyResult{}, nil
+	return applySAMOwnedBinarySetting(key, enabled, owned, func() (string, error) { return samReadBinarySysctl(ctx, key) }, func(value string) error { return samSetSysctl(ctx, key, value) }, beforeAcquire)
 }
 
 func (netlinkSAMProxyNeighborApplier) SetIPForwarding(ctx context.Context, enabled bool) error {
@@ -84,17 +76,33 @@ func (netlinkSAMProxyNeighborApplier) SetIPForwarding(ctx context.Context, enabl
 }
 
 func samSetSysctl(ctx context.Context, key, value string) error {
-	out, err := exec.CommandContext(ctx, "sysctl", "-w", key+"="+value).CombinedOutput()
+	path, err := samSysctlPath(key)
 	if err != nil {
-		return fmt.Errorf("sysctl -w %s=%s: %w: %s", key, value, err, strings.TrimSpace(string(out)))
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if value != "0" && value != "1" {
+		return fmt.Errorf("SAM sysctl %s requires a binary value", key)
+	}
+	if err := os.WriteFile(path, []byte(value), 0); err != nil {
+		return fmt.Errorf("write %s: %w", key, err)
 	}
 	return nil
 }
 
 func samReadBinarySysctl(ctx context.Context, key string) (string, error) {
-	out, err := exec.CommandContext(ctx, "sysctl", "-n", key).CombinedOutput()
+	path, err := samSysctlPath(key)
 	if err != nil {
-		return "", fmt.Errorf("sysctl -n %s: %w: %s", key, err, strings.TrimSpace(string(out)))
+		return "", err
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	out, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", key, err)
 	}
 	value := strings.TrimSpace(string(out))
 	if value != "0" && value != "1" {
@@ -171,59 +179,96 @@ func htons(value uint16) uint16 {
 	return (value<<8)&0xff00 | value>>8
 }
 
-func (netlinkSAMProxyNeighborApplier) EnsureProxyNeighbor(_ context.Context, address, ifname string) error {
-	link, neigh, err := samProxyNeighbor(address, ifname)
+func (netlinkSAMProxyNeighborApplier) EnsureProxyNeighbor(_ context.Context, address, ifname string, owned bool, beforeAcquire func() error) error {
+	_, expected, err := samProxyNeighbor(address, ifname)
 	if err != nil {
 		return err
 	}
-	_ = link
-	return netlink.NeighSet(neigh)
+	present, err := samExactProxyNeighbor(expected)
+	if err != nil {
+		return err
+	}
+	if present {
+		if !owned {
+			return fmt.Errorf("foreign proxy neighbor %s dev %s: refusing adoption", address, ifname)
+		}
+		return nil
+	}
+	if err := recordSAMAcquisition(beforeAcquire); err != nil {
+		return err
+	}
+	return netlink.NeighAdd(expected)
 }
 
 func (netlinkSAMProxyNeighborApplier) DeleteProxyNeighbor(_ context.Context, address, ifname string) error {
-	_, neigh, err := samProxyNeighbor(address, ifname)
+	_, expected, err := samProxyNeighbor(address, ifname)
 	if err != nil {
+		var missing netlink.LinkNotFoundError
+		if errors.As(err, &missing) {
+			return nil
+		}
 		return err
 	}
-	if err := netlink.NeighDel(neigh); err != nil && !isNetlinkNotFound(err) {
+	present, err := samExactProxyNeighbor(expected)
+	if err != nil || !present {
+		return err
+	}
+	if err := netlink.NeighDel(expected); err != nil && !isNetlinkNotFound(err) {
 		return err
 	}
 	return nil
 }
 
-func (netlinkSAMProxyNeighborApplier) EnsureOSAddressAbsent(_ context.Context, address string) (samOSAddressDeassignResult, error) {
+func samExactProxyNeighbor(expected *netlink.Neigh) (bool, error) {
+	neighbors, err := netlink.NeighProxyList(expected.LinkIndex, netlink.FAMILY_V4)
+	if err != nil {
+		return false, err
+	}
+	return samMatchProxyNeighbors(expected, neighbors)
+}
+
+func samMatchProxyNeighbors(expected *netlink.Neigh, neighbors []netlink.Neigh) (bool, error) {
+	present := false
+	for _, neighbor := range neighbors {
+		if !neighbor.IP.Equal(expected.IP) {
+			continue
+		}
+		if present || neighbor.LinkIndex != expected.LinkIndex || neighbor.Flags != expected.Flags || neighbor.State != expected.State || len(neighbor.HardwareAddr) != 0 {
+			return false, fmt.Errorf("foreign proxy-neighbor attributes for %s on index %d", expected.IP, expected.LinkIndex)
+		}
+		present = true
+	}
+	return present, nil
+}
+
+func (netlinkSAMProxyNeighborApplier) EnsureOSAddressAbsent(_ context.Context, address string) error {
 	ip, _, err := net.ParseCIDR(address)
 	if err != nil {
 		ip = net.ParseIP(address)
 	}
 	if ip == nil || ip.To4() == nil {
-		return samOSAddressDeassignResult{}, fmt.Errorf("invalid IPv4 address %q", address)
+		return fmt.Errorf("invalid IPv4 address %q", address)
 	}
-	result := samOSAddressDeassignResult{address: address}
 	links, err := netlink.LinkList()
 	if err != nil {
-		return result, err
+		return err
 	}
 	for _, link := range links {
 		addrs, err := netlink.AddrList(link, netlink.FAMILY_V4)
 		if err != nil {
-			return result, err
+			return err
 		}
 		for _, addr := range addrs {
 			if addr.IP == nil || !addr.IP.Equal(ip.To4()) {
 				continue
 			}
-			if err := netlink.AddrDel(link, &addr); err != nil && !isNetlinkNotFound(err) {
-				return result, err
-			}
-			result.ifname = link.Attrs().Name
-			result.removedThisReconcile = true
+			return fmt.Errorf("foreign OS address %s remains configured on %s", ip, link.Attrs().Name)
 		}
 	}
-	return result, nil
+	return nil
 }
 
-func (netlinkSAMProxyNeighborApplier) ReconcileForwardPaths(ctx context.Context, paths []sam.CaptureAction) error {
+func (netlinkSAMProxyNeighborApplier) ReconcileForwardPaths(ctx context.Context, paths []sam.CaptureAction, setAcceptLocal func(context.Context, string, bool) error) error {
 	samForwardPathMu.Lock()
 	defer samForwardPathMu.Unlock()
 
@@ -232,7 +277,11 @@ func (netlinkSAMProxyNeighborApplier) ReconcileForwardPaths(ctx context.Context,
 			return exec.CommandContext(ctx, "iptables", args...).CombinedOutput()
 		},
 		setSysctl: func(key, value string) error {
-			return samSetSysctl(ctx, key, value)
+			if !strings.HasPrefix(key, "net.ipv4.conf.") || !strings.HasSuffix(key, ".accept_local") || setAcceptLocal == nil {
+				return fmt.Errorf("SAM forwarding requires owned accept_local effects")
+			}
+			iface := strings.TrimSuffix(strings.TrimPrefix(key, "net.ipv4.conf."), ".accept_local")
+			return setAcceptLocal(ctx, iface, value == "1")
 		},
 		sysctlPresent: samSysctlPresent,
 	}
@@ -358,7 +407,10 @@ func samForwardChainAbsent(chain string, err error, output []byte, runIPTables f
 }
 
 func samSysctlPresent(key string) (bool, error) {
-	path := "/proc/sys/" + strings.ReplaceAll(key, ".", "/")
+	path, err := samSysctlPath(key)
+	if err != nil {
+		return false, err
+	}
 	if _, err := os.Stat(path); err != nil {
 		if os.IsNotExist(err) {
 			return false, nil
@@ -366,6 +418,23 @@ func samSysctlPresent(key string) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+func samSysctlPath(key string) (string, error) {
+	if key == "net.ipv4.ip_forward" {
+		return "/proc/sys/net/ipv4/ip_forward", nil
+	}
+	if rest, ok := strings.CutPrefix(key, "net.ipv4.conf."); ok {
+		for _, setting := range []string{"proxy_arp", "accept_local"} {
+			if ifname, ok := strings.CutSuffix(rest, "."+setting); ok {
+				if err := sam.ValidateCaptureInterface(ifname); err != nil {
+					return "", err
+				}
+				return "/proc/sys/net/ipv4/conf/" + ifname + "/" + setting, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("unsupported SAM sysctl key %q", key)
 }
 
 func samSetSysctlIfPresent(key, value string, ops samForwardPathOps) error {
@@ -564,9 +633,11 @@ func samProxyNeighbor(address, ifname string) (netlink.Link, *netlink.Neigh, err
 	return link, &netlink.Neigh{
 		LinkIndex: link.Attrs().Index,
 		Family:    netlink.FAMILY_V4,
-		State:     netlink.NUD_PERMANENT,
-		Flags:     netlink.NTF_PROXY,
-		IP:        ip.To4(),
+		// Linux pneigh_fill_info reports NUD_NONE for proxy entries; they do
+		// not carry the normal neighbor-cache reachability state.
+		State: netlink.NUD_NONE,
+		Flags: netlink.NTF_PROXY,
+		IP:    ip.To4(),
 	}, nil
 }
 

@@ -784,6 +784,7 @@ def verify_contract(contract_path: Path, release_repo: Path, framework: Path, ac
             "stateMode must be fresh-fabric-fresh-state; legacy state migrations are not permitted"
         )
     run_root = RUNS_ROOT / run_id
+    pinned_root = run_root / "runtime/pinned"
     contract_resolved = confined_path(contract_path, run_root, "contract")
     if contract_resolved not in {run_root / "runtime/contract.json", run_root / "runtime/pinned/contract.json"}:
         raise GuardError("contract path is not canonical or pinned")
@@ -796,9 +797,10 @@ def verify_contract(contract_path: Path, release_repo: Path, framework: Path, ac
     confined_path(require(tofu, "workingDirectory", str), run_root, "tofu workingDirectory", exact=tofu_work)
     confined_path(require(tofu, "statePath", str), run_root, "tofu statePath", exact=run_root / "runtime/terraform.tfstate")
     confined_path(require(tofu, "variablesPath", str), run_root, "tofu variablesPath", exact=run_root / "runtime/terraform.tfvars")
-    token_owner = verify_pve_identities(contract, run_root / "runtime/terraform.tfvars")
+    effective_tfvars = confined_path(pinned_root / "terraform.tfvars", run_root, "pinned tfvars", exact=pinned_root / "terraform.tfvars")
+    token_owner = verify_pve_identities(contract, effective_tfvars)
     verify_pve_management_safety(contract)
-    verify_pve_tls_policy(contract, run_root / "runtime/terraform.tfvars")
+    verify_pve_tls_policy(contract, effective_tfvars)
     confined_path(require(tofu, "outputPath", str), run_root, "tofu outputPath", exact=run_root / "runtime/tofu-output-full.json")
     if "lockPath" in tofu:
         confined_path(require(tofu, "lockPath", str), run_root, "tofu lockPath", exact=tofu_work / ".terraform.lock.hcl")
@@ -816,10 +818,13 @@ def verify_contract(contract_path: Path, release_repo: Path, framework: Path, ac
     secrets_dir = run_root / "runtime/secrets"
     if not secrets_dir.is_dir() or (secrets_dir.stat().st_mode & 0o777) != 0o700:
         raise GuardError("runtime secrets directory must have mode 0700")
-    pve_token = confined_path(
-        require(run_env, "pveTokenTfvars", str), run_root, "PVE token source",
-        exact=secrets_dir / "pve-token.tfvars",
-    )
+    def pinned_secret(variable: str, filename: str, label: str) -> Path:
+        # The declaration identifies the input to pin. Admission validates the
+        # immutable bytes the actual provider/SSH callers will consume.
+        confined_path(require(run_env, variable, str), run_root, label, exact=secrets_dir / filename)
+        return confined_path(pinned_root / filename, run_root, "pinned " + label, exact=pinned_root / filename)
+
+    pve_token = pinned_secret("pveTokenTfvars", "pve-token.tfvars", "PVE token source")
     try:
         token_stat = pve_token.stat()
     except OSError as exc:
@@ -829,19 +834,13 @@ def verify_contract(contract_path: Path, release_repo: Path, framework: Path, ac
     if token_stat.st_uid != os.geteuid() or not os.access(pve_token, os.R_OK):
         raise GuardError("PVE token source must be owned and readable by the executing UID")
     verify_run_scoped_pve_token(pve_token, run_id, token_owner)
-    ssh_key = confined_path(
-        require(run_env, "pveSshPrivateKey", str), run_root, "PVE SSH private key",
-        exact=secrets_dir / "pve_ssh",
-    )
+    ssh_key = pinned_secret("pveSshPrivateKey", "pve_ssh", "PVE SSH private key")
     key_stat = ssh_key.stat()
     if not ssh_key.is_file() or (key_stat.st_mode & 0o777) != 0o600:
         raise GuardError("PVE SSH private key must be a regular mode 0600 file")
     if key_stat.st_uid != os.geteuid() or not os.access(ssh_key, os.R_OK):
         raise GuardError("PVE SSH private key must be owned and readable by the executing UID")
-    guest_ssh_key = confined_path(
-        require(run_env, "guestSshPrivateKey", str), run_root, "guest SSH private key",
-        exact=secrets_dir / "guest_ssh",
-    )
+    guest_ssh_key = pinned_secret("guestSshPrivateKey", "guest_ssh", "guest SSH private key")
     try:
         guest_key_stat = guest_ssh_key.stat()
     except OSError as exc:
@@ -850,11 +849,8 @@ def verify_contract(contract_path: Path, release_repo: Path, framework: Path, ac
         raise GuardError("guest SSH private key must be a regular mode 0600 file")
     if guest_key_stat.st_uid != os.geteuid() or not os.access(guest_ssh_key, os.R_OK):
         raise GuardError("guest SSH private key must be owned and readable by the executing UID")
-    verify_guest_ssh_binding(contract, run_root / "runtime/terraform.tfvars", guest_ssh_key, ssh_key)
-    pve_ssh_known_hosts = confined_path(
-        require(run_env, "pveSshKnownHosts", str), run_root, "PVE SSH known_hosts",
-        exact=secrets_dir / "pve-known_hosts",
-    )
+    verify_guest_ssh_binding(contract, effective_tfvars, guest_ssh_key, ssh_key)
+    pve_ssh_known_hosts = pinned_secret("pveSshKnownHosts", "pve-known_hosts", "PVE SSH known_hosts")
     try:
         known_hosts_stat = pve_ssh_known_hosts.stat()
     except OSError as exc:
@@ -864,10 +860,7 @@ def verify_contract(contract_path: Path, release_repo: Path, framework: Path, ac
     if known_hosts_stat.st_uid != os.geteuid() or not os.access(pve_ssh_known_hosts, os.R_OK):
         raise GuardError("PVE SSH known_hosts must be owned and readable by the executing UID")
     verify_pve_ssh_known_hosts(pve_ssh_known_hosts, contract)
-    pve_ca = confined_path(
-        require(run_env, "pveCaPem", str), run_root, "PVE CA source",
-        exact=secrets_dir / "pve-ca.pem",
-    )
+    pve_ca = pinned_secret("pveCaPem", "pve-ca.pem", "PVE CA source")
     try:
         ca_stat = pve_ca.stat()
         ca_text = pve_ca.read_text(encoding="utf-8")

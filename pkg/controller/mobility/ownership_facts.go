@@ -38,13 +38,12 @@ type providerInventoryOwnerFact struct {
 	ObservedAt  time.Time
 }
 
-func resolverEventOwnedAddresses(pool NormalizedMobilityPool, events []routerstate.EventRecord, providerOwnedAddresses map[string]providerDiscoveryAddressFact, poolPrefix netip.Prefix, now time.Time) map[string]resolverEventOwnedAddress {
+func resolverEventOwnedAddresses(pool NormalizedMobilityPool, events []routerstate.EventRecord, providerOwnedAddresses map[string]providerDiscoveryAddressFact, handoverReleased map[string]bool, poolPrefix netip.Prefix, now time.Time) map[string]resolverEventOwnedAddress {
 	spec := pool.Spec
 	self := pool.Self
 	selfNode := strings.TrimSpace(self.NodeRef)
 	members := pool.Members
 	owned := map[string]resolverEventOwnedAddress{}
-	latest := map[string]routerstate.EventRecord{}
 	latestByAddressSource := map[string]map[string]routerstate.EventRecord{}
 	for address, ownerNode := range localStaticOwnerNodesByAddress(pool, poolPrefix) {
 		owned[address] = resolverEventOwnedAddress{AdvertiseOwnerNode: ownerNode, SourceType: staticOwnedType}
@@ -61,18 +60,17 @@ func resolverEventOwnedAddresses(pool NormalizedMobilityPool, events []routersta
 		if ev.Group != spec.GroupRef || ev.Type != ObservedEventType && ev.Type != ExpiredEventType {
 			continue
 		}
-		if bgpOwnershipEventSourceType(ev) == providerDiscoverySource {
+		sourceType := bgpOwnershipEventSourceType(ev)
+		if sourceType == providerDiscoverySource || sourceType == staticHandoverType {
+			// Transfer releases have one strict current-intent boundary below.
+			// Generic observed/expired events cannot manufacture that proof.
 			continue
 		}
 		address, ok := normalizeLeaseAddress(firstNonEmpty(ev.Payload["address"], ev.Subject), poolPrefix)
 		if !ok {
 			continue
 		}
-		current, found := latest[address]
 		candidate := eventWithFallbackObservedAt(ev, now)
-		if !found || eventRecordGreater(candidate, current) {
-			latest[address] = candidate
-		}
 		sourceKey := bgpOwnershipEventSourceKey(candidate)
 		if latestByAddressSource[address] == nil {
 			latestByAddressSource[address] = map[string]routerstate.EventRecord{}
@@ -80,14 +78,6 @@ func resolverEventOwnedAddresses(pool NormalizedMobilityPool, events []routersta
 		currentBySource, foundBySource := latestByAddressSource[address][sourceKey]
 		if !foundBySource || eventRecordGreater(candidate, currentBySource) {
 			latestByAddressSource[address][sourceKey] = candidate
-		}
-	}
-	for address, bySource := range latestByAddressSource {
-		for _, ev := range bySource {
-			sourceType := bgpOwnershipEventSourceType(ev)
-			if sourceType == staticHandoverType && (ev.Type == ExpiredEventType || (!ev.ExpiresAt.IsZero() && !now.Before(ev.ExpiresAt))) {
-				delete(owned, address)
-			}
 		}
 	}
 	for address, bySource := range latestByAddressSource {
@@ -112,12 +102,31 @@ func resolverEventOwnedAddresses(pool NormalizedMobilityPool, events []routersta
 		if !ok {
 			continue
 		}
-		release := latest[address]
-		if release.Type == ExpiredEventType && strings.TrimSpace(release.SourceNode) == strings.TrimSpace(handover.FromNodeRef) {
+		if handoverReleased[address] {
 			owned[address] = resolverEventOwnedAddress{AdvertiseOwnerNode: selfNode, SourceType: staticHandoverType}
 		}
 	}
 	return owned
+}
+
+// staticHandoverReleaseFacts is the single receiver projection of release
+// authority for the current transfer intents. Its finite lease is independent
+// of ordinary client expiry, provider inventory and static-owned assertions.
+func staticHandoverReleaseFacts(pool NormalizedMobilityPool, events []routerstate.EventRecord, now time.Time) map[string]bool {
+	out := make(map[string]bool)
+	for _, handover := range pool.Spec.StaticHandovers {
+		address, ok := normalizeLeaseAddress(handover.Address, pool.Prefix)
+		if !ok {
+			continue
+		}
+		for _, event := range events {
+			if staticHandoverReleaseMatches(pool, handover, event, now) {
+				out[address] = true
+				break
+			}
+		}
+	}
+	return out
 }
 
 func bgpOwnershipEventSourceType(ev routerstate.EventRecord) string {
@@ -144,6 +153,9 @@ func providerInventoryHomeOwnerFactSets(pool NormalizedMobilityPool, poolPrefix 
 	routerNICs := discoveryRouterNICRefs(pool)
 	out := map[string][]providerInventoryOwnerFact{}
 	for _, record := range runtime {
+		if _, member := pool.Members[strings.TrimSpace(record.NodeRef)]; !member {
+			continue
+		}
 		for _, addressFact := range record.RuntimeFact.Addresses {
 			if !providerDiscoveryAddressFactActive(addressFact, now) {
 				continue

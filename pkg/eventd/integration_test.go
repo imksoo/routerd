@@ -78,7 +78,7 @@ func TestPushDeliveryRoundTrip(t *testing.T) {
 	defer srv.Close()
 
 	peers := []eventd.PeerConfig{{NodeName: peerName, Endpoint: srv.URL}}
-	noSleep := func(time.Duration) {}
+	noSleep := func(context.Context, time.Duration) error { return nil }
 	pusher := eventd.NewPusher(senderStore, testSecret, peers,
 		eventd.PushRetry{MaxAttempts: 3, BaseBackoff: time.Millisecond, MaxBackoff: time.Millisecond},
 		srv.Client(), clock, noSleep)

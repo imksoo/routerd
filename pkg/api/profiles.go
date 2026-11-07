@@ -47,7 +47,7 @@ var KnownIPv6PDNGCombinations = []IPv6PDKnownNGCombination{
 
 func ValidIPv6PDClient(client string) bool {
 	switch client {
-	case "", IPv6PDClientRouterd, IPv6PDClientNetworkd, IPv6PDClientDHCPv6C, IPv6PDClientDHCPCD:
+	case "", IPv6PDClientRouterd:
 		return true
 	default:
 		return false

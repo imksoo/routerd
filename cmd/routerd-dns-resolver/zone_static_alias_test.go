@@ -119,7 +119,7 @@ func TestZoneStaticAliasesSurviveDHCPLeaseEvents(t *testing.T) {
 	}}
 	zones := newZoneTable(config)
 	for _, action := range []string{daemonapi.DHCPLeaseActionAdded, daemonapi.DHCPLeaseActionRemoved} {
-		zones.ApplyLease(dhcpLeaseEvent{Action: action, IP: "192.0.2.1", Hostname: "dynamic"})
+		zones.ApplyLease(observedLeaseForTest(dhcpLeaseEvent{Source: "DHCPv4Server/lan", Action: action, IP: "192.0.2.1", Hostname: "dynamic"}))
 		assertZoneARecord(t, zones, "router.example.test.", "192.0.2.1")
 		assertZoneARecord(t, zones, "node.example.test.", "192.0.2.1")
 		assertZonePTRRecord(t, zones, "1.2.0.192.in-addr.arpa.", "router.example.test.")

@@ -16,6 +16,7 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/healthcheck"
 	"github.com/imksoo/routerd/pkg/resourcequery"
 )
 
@@ -33,8 +34,9 @@ const (
 )
 
 type Store interface {
+	resourcequery.StatusReader
+	HealthObservation(string) (api.HealthObservation, error)
 	SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error
-	ObjectStatus(apiVersion, kind, name string) map[string]any
 }
 
 type Controller struct {
@@ -136,14 +138,20 @@ func (c Controller) reconcilePolicy(ctx context.Context, resource api.Resource, 
 		}
 		return c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", resource.Metadata.Name, status)
 	}
-	candidates := c.candidateStates(spec)
+	candidates, err := c.candidateStates(spec)
+	if err != nil {
+		return err
+	}
 	selected, ok := SelectHighestWeightReady(candidates)
 	if !ok {
 		status := map[string]any{"phase": PhasePending, "reason": ReasonNoReadyCandidates, "candidates": statusCandidates(candidates)}
 		return c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", resource.Metadata.Name, status)
 	}
 
-	previous := c.Store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", resource.Metadata.Name)
+	previous, err := c.Store.ReadObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", resource.Metadata.Name)
+	if err != nil {
+		return fmt.Errorf("read previous egress selection: %w", err)
+	}
 	previousName, _ := previous["selectedCandidate"].(string)
 	lastTransitionAt := parseTime(fmt.Sprint(previous["lastTransitionAt"]))
 	hysteresis := parseDurationOrDefault(spec.Hysteresis, 30*time.Second)
@@ -245,7 +253,7 @@ func statusInt(value any) int {
 	}
 }
 
-func (c Controller) candidateStates(spec api.EgressRoutePolicySpec) []CandidateState {
+func (c Controller) candidateStates(spec api.EgressRoutePolicySpec) ([]CandidateState, error) {
 	out := make([]CandidateState, 0, len(spec.Candidates))
 	for i, candidate := range spec.Candidates {
 		name := candidate.Name
@@ -255,112 +263,91 @@ func (c Controller) candidateStates(spec api.EgressRoutePolicySpec) []CandidateS
 		if name == "" {
 			name = "candidate-" + strconv.Itoa(i)
 		}
-		disabled := candidateDisabled(candidate) || c.sourceDisabled(candidate.Source) || c.healthCheckDisabled(candidate.HealthCheck)
+		healthDisabled, err := c.healthCheckDisabled(candidate.HealthCheck)
+		if err != nil {
+			return nil, err
+		}
+		disabled := candidateDisabled(candidate) || c.sourceDisabled(candidate.Source) || healthDisabled
+		device, err := resourcequery.ReadValue(c.Store, candidate.DeviceFrom)
+		if err != nil {
+			return nil, fmt.Errorf("candidate %s device: %w", name, err)
+		}
+		gateway, err := resourcequery.ReadValue(c.Store, candidate.GatewayFrom)
+		if err != nil {
+			return nil, fmt.Errorf("candidate %s gateway: %w", name, err)
+		}
+		resolved := stringutil.FirstNonEmpty(device, strings.TrimSpace(candidate.Device)) != "" && (candidate.GatewayFrom.Resource == "" || gateway != "")
+		ready := false
+		if !disabled {
+			ready, err = c.ready(candidate, resolved)
+			if err != nil {
+				return nil, fmt.Errorf("candidate %s readiness: %w", name, err)
+			}
+		}
 		out = append(out, CandidateState{
 			Name:          name,
 			Source:        candidate.Source,
-			Device:        stringutil.FirstNonEmpty(resourcequery.Value(c.Store, candidate.DeviceFrom), strings.TrimSpace(candidate.Device)),
-			Gateway:       stringutil.FirstNonEmpty(resourcequery.Value(c.Store, candidate.GatewayFrom), strings.TrimSpace(candidate.Gateway)),
+			Device:        stringutil.FirstNonEmpty(device, strings.TrimSpace(candidate.Device)),
+			Gateway:       stringutil.FirstNonEmpty(gateway, strings.TrimSpace(candidate.Gateway)),
 			GatewaySource: defaultString(candidate.GatewaySource, "none"),
 			RouteTable:    candidate.EffectiveTable(),
 			Metric:        candidate.EffectiveMetric(),
-			Ready:         !disabled && c.ready(candidate),
+			Ready:         ready,
 			Disabled:      disabled,
 			Weight:        candidate.Weight,
 			Priority:      candidate.Priority,
 			Index:         i,
 		})
 	}
-	return out
+	return out, nil
 }
 
-func (c Controller) ready(candidate api.EgressRoutePolicyCandidate) bool {
+func (c Controller) ready(candidate api.EgressRoutePolicyCandidate, resolved bool) (bool, error) {
 	healthChecked := false
 	if candidate.HealthCheck != "" {
-		if !c.healthCheckReady(candidate.HealthCheck) {
-			return false
+		ready, err := c.healthCheckReady(candidate.HealthCheck)
+		if err != nil || !ready {
+			return false, err
 		}
 		healthChecked = true
 	}
-	if !resourcequery.DependenciesReady(c.Store, candidate.DependsOn) {
-		return false
+	dependenciesReady, err := resourcequery.ReadDependenciesReady(c.Store, candidate.DependsOn)
+	if err != nil || !dependenciesReady {
+		return false, err
 	}
-	if len(candidate.DependsOn) == 0 {
-		if candidate.Source == "" {
-			return c.hasResolvedOutput(candidate)
-		}
-		if resourcequery.SourceReady(c.Store, candidate.Source) {
-			return c.hasResolvedOutput(candidate)
-		}
-		return healthChecked && c.hasResolvedOutput(candidate)
+	if candidate.Source == "" {
+		return resolved, nil
 	}
-	if candidate.Source != "" && !resourcequery.SourceReady(c.Store, candidate.Source) {
-		return healthChecked && c.hasResolvedOutput(candidate)
+	sourceReady, err := resourcequery.ReadSourceReady(c.Store, candidate.Source)
+	if err != nil {
+		return false, err
 	}
-	return c.hasResolvedOutput(candidate)
+	return (sourceReady || healthChecked) && resolved, nil
 }
 
-func (c Controller) healthCheckReady(name string) bool {
-	status := c.Store.ObjectStatus(api.NetAPIVersion, "HealthCheck", name)
-	switch fmt.Sprint(status["phase"]) {
-	case "Healthy":
-	case "Failing":
-		failed := statusInt(status["consecutiveFailed"])
-		if failed <= 0 || failed >= c.healthCheckUnhealthyThreshold(name) {
-			return false
-		}
-	default:
-		return false
-	}
-	checkedAt := parseTime(fmt.Sprint(status["lastCheckedAt"]))
-	if checkedAt.IsZero() {
-		return false
-	}
-	return !c.now().After(checkedAt.Add(c.healthCheckFreshness(name)))
-}
-
-func (c Controller) healthCheckUnhealthyThreshold(name string) int {
+func (c Controller) healthCheckReady(name string) (bool, error) {
 	if c.Router == nil {
-		return 3
+		return false, nil
 	}
 	for _, resource := range c.Router.Spec.Resources {
-		if resource.Kind != "HealthCheck" || resource.Metadata.Name != name {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "HealthCheck" || resource.Metadata.Name != name {
 			continue
 		}
 		spec, err := resource.HealthCheckSpec()
 		if err != nil {
-			return 3
+			return false, err
 		}
-		if spec.UnhealthyThreshold > 0 {
-			return spec.UnhealthyThreshold
-		}
-		return 3
-	}
-	return 3
-}
-
-func (c Controller) healthCheckFreshness(name string) time.Duration {
-	freshness := 2 * time.Minute
-	if c.Router == nil {
-		return freshness
-	}
-	for _, resource := range c.Router.Spec.Resources {
-		if resource.Kind != "HealthCheck" || resource.Metadata.Name != name {
-			continue
-		}
-		spec, err := resource.HealthCheckSpec()
+		resolved, err := healthcheck.ResolveSpecWithStoreForResource(c.Router, c.Store, name, spec)
 		if err != nil {
-			return freshness
+			return false, err
 		}
-		interval := parseDurationOrDefault(spec.Interval, 30*time.Second)
-		timeout := parseDurationOrDefault(spec.Timeout, 3*time.Second)
-		candidate := interval*3 + timeout
-		if candidate > freshness {
-			return candidate
+		observation, err := c.Store.HealthObservation(name)
+		if err != nil {
+			return false, fmt.Errorf("read Health observation %s: %w", name, err)
 		}
-		return freshness
+		return observation.Usable(c.now(), resolved), nil
 	}
-	return freshness
+	return false, nil
 }
 
 func (c Controller) sourceDisabled(source string) bool {
@@ -381,38 +368,30 @@ func (c Controller) sourceDisabled(source string) bool {
 	return false
 }
 
-func (c Controller) healthCheckDisabled(name string) bool {
+func (c Controller) healthCheckDisabled(name string) (bool, error) {
 	if c.Router == nil || strings.TrimSpace(name) == "" {
-		return false
+		return false, nil
 	}
-	status := c.Store.ObjectStatus(api.NetAPIVersion, "HealthCheck", name)
+	status, err := c.Store.ReadObjectStatus(api.NetAPIVersion, "HealthCheck", name)
+	if err != nil {
+		return false, fmt.Errorf("read healthcheck %s status: %w", name, err)
+	}
 	switch fmt.Sprint(status["phase"]) {
 	case "Disabled", "Standby", "NotApplicable":
-		return true
+		return true, nil
 	}
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "HealthCheck" || resource.Metadata.Name != name {
 			continue
 		}
 		spec, err := resource.HealthCheckSpec()
-		return err == nil && !api.BoolDefault(spec.Enabled, true)
+		return !api.BoolDefault(spec.Enabled, true), err
 	}
-	return false
+	return false, nil
 }
 
 func candidateDisabled(candidate api.EgressRoutePolicyCandidate) bool {
 	return !api.BoolDefault(candidate.Enabled, true)
-}
-
-func (c Controller) hasResolvedOutput(candidate api.EgressRoutePolicyCandidate) bool {
-	device := stringutil.FirstNonEmpty(resourcequery.Value(c.Store, candidate.DeviceFrom), strings.TrimSpace(candidate.Device))
-	if device == "" {
-		return false
-	}
-	if candidate.GatewayFrom.Resource != "" && resourcequery.Value(c.Store, candidate.GatewayFrom) == "" {
-		return false
-	}
-	return true
 }
 
 func SelectHighestWeightReady(candidates []CandidateState) (CandidateState, bool) {

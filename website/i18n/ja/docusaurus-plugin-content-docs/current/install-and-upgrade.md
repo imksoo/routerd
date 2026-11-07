@@ -1,170 +1,136 @@
 ---
-title: インストールとアップグレード
+title: 導入と更新
 ---
 
-# インストールとアップグレード
+# 導入と更新
 
-![リリースアーカイブの取得、検証、導入、設定の確認、サービス起動、更新の流れ](/img/diagrams/install-and-upgrade.png)
+routerd 1.5 提案版は、クリーンインストールした OS に Debian/Ubuntu の `.deb`、
+FreeBSD の `.pkg` で導入します。現在開発中であり、従来の stable release の
+アーカイブは 1.5 のパッケージではありません。公開 apt/pkg リポジトリもまだ
+案内していません。対象ビルド・OS・CPU に合うパッケージを取得し、同梱の
+チェックサムを確認してください。
 
-routerd はリリースアーカイブから導入します。ルーターホストに Go や Makefile は
-必要ありません。最初の対象は Ubuntu Server です。
+パッケージから次のパッケージへの更新を対象とします。1.0 の設定、`make install`、
+手動コピー、アーカイブ導入済み環境の検出・移行は対象外です。
+1.5 用に設定を用意し、クリーンな OS に新規導入してください。
 
-:::caution 初回は隔離した VM で
+## 導入
 
-初めての導入は、普段の回線を運ぶルーターでは行わないでください。
-隔離した Ubuntu Server VM、VM コンソール、変更する NIC とは別の管理経路を
-用意します。`routerd.service` を起動するとネットワークが変わることがあります。
-
-:::
-
-Linuxでは、設定適用処理と常駐処理が`/run/routerd/dnsmasq.conf`を共有します。
-`--dnsmasq-file`で指定したパスも両処理で使用します。
-これにより、無関係な設定変更でDHCP・IPv6経路広告のサービスの参照先が往復することを防ぎます。
-FreeBSDでは従来の設定パスを維持します。
-
-## Ubuntu Server への新規導入
-
-[GitHub Releases](https://github.com/imksoo/routerd/releases) で、使う版と CPU に
-合うアーカイブを選びます。次は Linux amd64 の例です。
+Debian/Ubuntu では、ローカルのパッケージを apt に渡します。
+依存パッケージは OS に設定されたリポジトリから解決します。
 
 ```sh
-RELEASE=v20260914.0729
-curl -fLO https://github.com/imksoo/routerd/releases/download/${RELEASE}/routerd-linux-amd64.tar.gz
-curl -fLO https://github.com/imksoo/routerd/releases/download/${RELEASE}/routerd-linux-amd64.tar.gz.sha256
-sha256sum -c routerd-linux-amd64.tar.gz.sha256
-tar -xzf routerd-linux-amd64.tar.gz
-sudo ./install.sh
+sudo apt install ./routerd_<version>_amd64.deb
 ```
 
-arm64 では `linux-amd64` を `linux-arm64` に読み替えます。
-インストーラーは実行時パッケージを確認し、実行ファイルと systemd の
-サービス定義、設定例を置きます。新規導入では設定がないため、サービスを
-勝手に開始しません。
+FreeBSD 14 では pkg を使います。
 
 ```sh
-routerd --version
+sudo pkg -o HANDLE_RC_SCRIPTS=true install ./routerd-<version>.pkg
 ```
 
-## 最初の設定は、起動前に確認する
+プレースホルダーは取得した実際のファイル名に置き換えてください。
+arm64 ホストには arm64 用を使います。FreeBSD の ABI 名では `aarch64` です。
+Linux の routerd バイナリは `CGO_ENABLED=0` で静的リンクしますが、OS の実行ツール
+は別途必要です。FreeBSD の標準パッケージには native libnDPI agent と実ライブラリの依存を含めます。
+基本依存はパッケージ情報で宣言します。追加機能が要求する
+OS パッケージも、選択した設定に合わせて適用前に確認してください。
 
-[安全なはじめ方](./tutorials/getting-started.md)でオフラインの確認を行い、
-[最初のルーター](./tutorials/first-router.md)で DHCP/NAT の完成した設定、起動、
-状態、LAN 端末の通信を順に確認します。`router.yaml.sample` は ISP 固有の設定も
-含む大きな例です。インターフェース名だけ直せば使える既定値ではありません。
-通常の新規 `./install.sh` はファイルを配置しますが、サービスは起動しません。
+初回導入ではファイルとサービス定義を配置するだけで、daemon の起動、ルーティングの
+有効化、設定例の適用はしません。実際の運用設定や DB はパッケージに含めません。
 
-## 更新する
+| 用途 | Debian/Ubuntu | FreeBSD |
+| --- | --- | --- |
+| daemon | `/usr/sbin/routerd` | `/usr/local/sbin/routerd` |
+| 設定 | `/etc/routerd/router.yaml` | `/usr/local/etc/routerd/router.yaml` |
+| 設定例 | `/usr/share/doc/routerd/examples` | `/usr/local/share/doc/routerd/examples` |
+| 永続状態 | `/var/lib/routerd` | `/var/db/routerd` |
+| 実行時ソケット | `/run/routerd` | `/var/run/routerd` |
+| サービス | vendor systemd unit | `/usr/local/etc/rc.d/routerd` |
 
-Linuxでは、設定適用処理と常駐処理が`/run/routerd/nat44.nft`を共有します。`--nftables-file`の明示指定も両処理で使用します。このファイルは、永続化したルーター設定から起動後に再生成します。
+## 設定と起動
 
-模擬適用と隔離環境での起動では、ログ保持処理を実行しません。外部のログデータベースの削除・転送・最適化と、既定のイベント履歴の削除も対象です。実際の削除が完了したという状態は記録しません。時刻同期についても、模擬適用では設定ファイルの変更とサービス操作を実行しません。
-
-BGPの保存済み設定は永続領域に置き、ソケットは実行時の領域に置きます。常駐処理で明示指定したパスは、即時の設定適用とLinuxのサービス定義にも反映します。
-
-更新時には、現行routerdが生成した`routerd.service`を保持します。
-`Managed by routerd`というコメントだけでは旧形式と判断しません。
-削除済みの`--controller-chain`を含むunitは移行対象です。
-設定の世代切替では、設定が変わらない管理下DHCPクライアントを維持します。
-VRRPの`gracefulActivation`はVIPの初回公開を待機し、公開済みのMASTERでは
-一時的な条件低下によるVIP撤去を行いません。BACKUP等への降格時は撤去します。
-継続保有には同一アドレス・インターフェースの正常公開済みMASTER記録が必要です。
-正常公開履歴は現在の観測状態と分離し、観測エラーでは保持します。
-降格・VIP不在の確認・公開失敗では失効し、異なるアドレスやインターフェースへ流用しません。
-アドレスだけが残り公開記録がない場合は、初回のreadiness判定を適用します。
-
-更新も、まず VM コンソールと管理経路を確認してから行います。新しいアーカイブを
-展開し、同じ `install.sh` を実行します。
+インターフェース名、アドレス、DHCP/DNS、NAT、ファイアウォールを確認してから
+起動します。コンソールか独立した管理経路を確保してください。同梱の大きな設定例は
+参照資料であり、どの環境でも安全に使える既定値ではありません。
 
 ```sh
-tar -xzf routerd-linux-amd64.tar.gz
-sudo ./install.sh
+# Debian/Ubuntu
+sudo routerd validate --config /etc/routerd/router.yaml
+sudo systemctl enable --now routerd.service
+sudo systemctl status routerd.service
+
+# FreeBSD
+sudo routerd validate --config /usr/local/etc/routerd/router.yaml
+sudo sysrc routerd_enable=YES
+sudo service routerd start
+sudo service routerd status
 ```
 
-既存の `/usr/local/etc/routerd/router.yaml` と状態ディレクトリは保持されます。
-すでに `routerd.service` が動いている場合、インストーラーはサービスを
-再起動することがあります。更新後は、サービスが動いていることを確かめてから
-状態を見ます。
+設定済み daemon の起動はネットワーク状態を変更します。構文確認後に起動し、
+実クライアントの通信、失敗時の挙動、復旧を確認してください。
+`routerctl get status` で実行状態を確認できますが、導入成功だけでは通信の成功を
+証明できません。
+
+## パッケージ更新
+
+運用設定と永続状態は上記の場所で保持します。初回導入と同じ apt/pkg コマンドで
+新しいローカルパッケージを導入します。配布ファイルはパッケージ管理下に置き、
+`make install` や手動コピーで上書きしないでください。
+
+Debian の更新処理は起動していた自分のサービスを記録し、旧 daemon と補助サービスを
+停止して置換後に復帰させます。以前停止していた Debian サービスは停止したままです。
+FreeBSD は pkg 標準の `HANDLE_RC_SCRIPTS=true` を使います。稼働ルーターは
+`routerd_enable=YES` とし、更新時も上記コマンドのオプションを付けてください。
+pkg の hook 後処理が終わってから有効な rc.d サービスを起動し、main の rc.d 起動処理が
+以前稼働していた自分の補助サービスを復帰させます。FreeBSD では、有効化済みなら
+更新直前に停止していても起動する場合があります。オプションはその pkg 実行だけに適用し、
+グローバル設定は変更しません。指定しない場合は更新後に停止したままになる可能性があります。
+hook からの直接起動は pkg が子孫プロセスを終了させるため使いません。
+新規導入で未有効のサービスは起動しません。設定と DB は保持します。
+更新時には通信断やプロトコルの再収束が起こり得るため、更新後は独立した
+クライアントから通信を確認してください。DB 形式の移行契約や BGP の無停止更新を
+保証するものではありません。
+
+旧サービスを停止できなければ更新前処理で置換を拒否します。パッケージ管理の
+診断と実サービスの状態を確認し、終了コードだけで復旧を判断しないでください。
+Debian/Ubuntu のサービス起動ポリシーで再起動が禁止されている場合は、その方針を
+解決する必要があります。再収束中の daemon を、確認を通すために繰り返し再起動
+しないでください。
+
+## 削除
 
 ```sh
-sudo systemctl is-active routerd.service
-sudo routerctl get status
+# Debian/Ubuntu
+sudo apt remove routerd
+
+# FreeBSD
+sudo pkg delete routerd
 ```
 
-BGP など、短い再起動でも影響が出る機能を本番で使っている場合は、保守時間を
-取り、[変更履歴](./releases/changelog.md) と運用手順を確認してください。
+自分のサービスを停止し、配布ファイルと所有マーカーのある生成サービスを削除します。
+運用設定と永続 DB は Debian の purge を含めて保持します。削除は、適用済みの
+ネットワーク状態すべてを元に戻す保証ではありません。撤去前に設定上のリソースを
+取り下げ、通信とカーネル状態を確認してください。保持した設定・状態の削除は、
+運用者が明示的に破棄する場合だけ行います。
 
-## よく使う導入オプション
+## ビルドと検証
 
-```sh
-./install.sh --list-deps
-sudo ./install.sh --no-install-deps
-sudo ./install.sh --deps-only
-sudo ./install.sh --dry-run
-```
+Linux は `make dist-deb ROUTERD_OS=linux`、FreeBSD 実機では
+`gmake dist-pkg ROUTERD_OS=freebsd` を使います。リリース成果物では `GOARCH` と
+`PACKAGE_VERSION` を指定します。FreeBSD の生成には native `pkg`、Python、
+`dnsmasq`、`ca_root_nss`、`ndpi`、C compiler、`pkgconf`、`readelf`、Linux には `dpkg-deb` と Python が必要です。
+release workflow は amd64/arm64 の両方を生成しますが、定義を追加しただけでは
+リリース実行や両 CPU の実行時検証が済んだことにはなりません。
 
-`--dry-run` は、インストーラーが置くファイルや実行するサービス操作を表示する
-ためのものです。routerd の設定を確認する dry-run とは別です。
+再実行できる導入・更新・削除試験と合否基準は[開発手順](./operations/development.md)
+にあります。使い捨て OS ゲストで実際の置換、独立した DNS 疎通、旧プロセス終了、
+設定と SQLite の値の保持、削除を確認します。全機能の認証ではありません。
+Linux の native libnDPI は本体と同じ版の[追加パッケージ](./operations/ndpi-agent-libndpi.md)を使います。パッケージ管理下の
+agent をアーカイブで上書きしないでください。
 
-## 配置先
+## 設定適用中断と保存世代への復旧確認
 
-| 項目 | Ubuntu Server |
-| --- | --- |
-| 設定 | `/usr/local/etc/routerd/router.yaml` |
-| 設定例 | `/usr/local/etc/routerd/router.yaml.sample` |
-| 実行ファイル | `/usr/local/sbin/routerd`、`/usr/local/sbin/routerctl` |
-| systemd サービス | `/etc/systemd/system/routerd.service` |
-| 実行時ソケット | `/run/routerd` |
-| 永続状態 | `/var/lib/routerd` |
+正式 `2da31049` Linux パッケージで、隔離 VM 上の設定確定後・適用前のプロセス停止を確認しました。同じ所有リソース名でアドレスだけを変えた候補を `--no-reconcile` で確定し、主 daemon を SIGKILL すると、systemd が自動再起動して正本の新アドレスを適用し、旧アドレスを撤去しました。DB の初期化や手動起動は行っていません。続く `routerctl rollback --timeout 90s --to <保存世代>` で正本と元のアドレスが復元され、`routerctl delete` によるアドレス撤去後も別の設定済みサービスは応答しました。
 
-## ライブ ISO
-
-短いデモには Ubuntu ベースのライブ ISO も使えます。VM コンソールで試せますが、
-初めて YAML とネットワークの関係を学ぶなら、上の Ubuntu Server VM の手順の方が
-確認しやすく安全です。USB に設定を保存するディスクレス mini PC の手順は
-[ディスクレス mini PC](./tutorials/diskless-minipc-walkthrough.md) を参照してください。
-
-
-### DHCPで使用するIPバージョンの分離
-
-Linuxでファイアウォールを管理する場合は、DHCPv6またはIPv6の経路広告だけに
-使うインターフェイスへのIPv4のUDP宛先ポート67を入力時に遮断します。
-DHCPv4の配布範囲や中継設定がある場合は、実行時のアドレスを待っていても遮断しません。
-異なる別名で同じOSのインターフェイスを参照する構成でも、この判定を維持します。
-転送通信、DHCPv4のクライアント用ポート68、DHCPv6、IPv6の経路広告には適用しません。
-
-この対処には `no-dhcpv4-interface` を使用しません。
-dnsmasq 2.90では、除外設定より先にIPv4アドレスの有無を調べます。
-さらに、この除外設定がIPv6の配布範囲の生成にも影響します。
-入力時に対象パケットだけを遮断することで、IPv6の設定を維持したまま警告を防ぎます。
-Linuxの管理対象ファイアウォールを使用しない構成には、この対処を適用しません。
-
-IPv4専用の配布・中継インターフェイスには、設定項目 `no-dhcpv6-interface` を生成します。
-事前の設定生成と稼働中の設定更新で、同じ判定を使います。
-IPv4の配布・中継を維持しながら、IPv6の配布範囲がない親インターフェイスへの
-重複したDHCPv6要求を受け付けないようにします。
-DHCPv6またはIPv6の経路広告に使う宣言がある場合は、準備待ちでも除外しません。
-同じOSのインターフェイスを指す別名も照合します。
-委譲アドレスの参照先を特定できない場合は、安全のため除外設定を生成しません。
-この設定は対象インターフェイスの経路広告も停止するため、IPv6の利用予定がない場所だけに適用します。
-設定変更に伴い、管理対象のdnsmasqプロセスが再起動する場合があります。
-更新後はDHCPv4、DHCPv6、IPv6の経路広告を確認してください。
-
-
-## アンインストール
-
-リリースアーカイブの `uninstall.sh` は、既定では実行ファイルとサービス定義を
-削除し、設定と状態は残します。
-
-```sh
-sudo ./uninstall.sh --yes
-```
-
-設定や状態まで削除する操作は、内容をバックアップしてから明示的なオプションで
-行ってください。先に `--dry-run` で削除予定を確認できます。
-
-## Ubuntu 以外の対応範囲
-
-FreeBSD と NixOS には、導入場所やサービス管理の土台があります。しかし、
-Ubuntu と同じネットワーク設定の生成が使えることを意味しません。
-[対応プラットフォーム](./platforms.md) を確認し、最初の学習には Ubuntu Server を
-使ってください。
+復旧確認では返された世代と phase、正本の内容、実際の OS 効果を照合します。同じ設定への冪等な適用では mtime や checksum が変わらない場合があります。要求がタイムアウトした場合も、再試行を決める前に正本と実行状態を確認します。バイナリを戻す場合は APT を使い、nDPI addon 導入済みなら同じ版の base と addon を同じトランザクションで指定します。詳しい手順は [復旧手順](operations/release-rollback.md) を参照してください。

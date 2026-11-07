@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/logstore"
 	"github.com/imksoo/routerd/pkg/platform"
 )
 
@@ -40,6 +41,10 @@ func validateSystemResource(res api.Resource, targetOS platform.OS) (bool, error
 		if strings.TrimSpace(spec.OTLP.Endpoint) == "" {
 			return true, fmt.Errorf("%s spec.otlp.endpoint is required", res.ID())
 		}
+		if err := validateOTELAttributeKeys(res.ID(), spec.Attributes); err != nil {
+			return true, err
+		}
+
 		for _, signal := range spec.Signals {
 			switch signal {
 			case "logs", "metrics", "traces":
@@ -60,6 +65,22 @@ func validateSystemResource(res api.Resource, targetOS platform.OS) (bool, error
 				return true, fmt.Errorf("%s spec.otlp.endpoint is invalid: %w", res.ID(), err)
 			}
 		}
+		if spec.OTLP.Insecure && (spec.OTLP.TLS.InsecureSkipVerify || spec.OTLP.TLS.CAFile != "" || spec.OTLP.TLS.CertFile != "" || spec.OTLP.TLS.KeyFile != "") {
+			return true, fmt.Errorf("%s spec.otlp.insecure cannot be combined with TLS settings", res.ID())
+		}
+		if (spec.OTLP.TLS.CertFile == "") != (spec.OTLP.TLS.KeyFile == "") {
+			return true, fmt.Errorf("%s spec.otlp.tls.certFile and keyFile must be set together", res.ID())
+		}
+
+		if err := validateOTELAttributeKeys(res.ID(), spec.Attributes); err != nil {
+			return true, err
+		}
+		for key := range spec.OTLP.Headers {
+			if !validHTTPHeaderName(key) {
+				return true, fmt.Errorf("%s spec.otlp.headers contains invalid HTTP header name %q", res.ID(), key)
+			}
+		}
+
 		for _, signal := range spec.Signals {
 			switch signal {
 			case "logs", "metrics", "traces":
@@ -263,8 +284,10 @@ func validateSystemResource(res api.Resource, targetOS platform.OS) (bool, error
 		if strings.TrimSpace(spec.Retention) == "" {
 			return true, fmt.Errorf("%s spec.retention is required", res.ID())
 		}
-		if _, err := parseRetentionDuration(spec.Retention); err != nil {
+		if duration, err := logstore.ParseRetention(spec.Retention); err != nil {
 			return true, fmt.Errorf("%s spec.retention must be a duration: %w", res.ID(), err)
+		} else if duration <= 0 {
+			return true, fmt.Errorf("%s spec.retention must be a positive duration", res.ID())
 		}
 		for i, signal := range spec.Signals {
 			switch signal {
@@ -471,7 +494,7 @@ func validateControlAPIAllowCIDRs(resourceID string, cidrs []string) error {
 			return fmt.Errorf("%s spec.allowCIDRs[%d] must be a valid CIDR prefix: %w", resourceID, i, err)
 		}
 		if prefix.Bits() == 0 {
-			addr := prefix.Addr().Unmap()
+			addr := prefix.Masked().Addr().Unmap()
 			if addr.Is4() && addr == netip.IPv4Unspecified() {
 				return fmt.Errorf("%s spec.allowCIDRs[%d] must not be 0.0.0.0/0", resourceID, i)
 			}
@@ -481,4 +504,26 @@ func validateControlAPIAllowCIDRs(resourceID string, cidrs []string) error {
 		}
 	}
 	return nil
+}
+
+func validateOTELAttributeKeys(resourceID string, attributes map[string]string) error {
+	for key := range attributes {
+		if strings.TrimSpace(key) == "" || strings.TrimSpace(key) != key || strings.ContainsAny(key, ",=\x00\r\n") {
+			return fmt.Errorf("%s spec.attributes key %q cannot be represented as an OTEL attribute name", resourceID, key)
+		}
+	}
+	return nil
+}
+
+func validHTTPHeaderName(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("!#$%&'*+-.^_`|~", r) {
+			continue
+		}
+		return false
+	}
+	return true
 }

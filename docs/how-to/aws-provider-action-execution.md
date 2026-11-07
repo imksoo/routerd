@@ -222,15 +222,19 @@ The `action_executions` journal records, per action:
 - `provider` — `aws`.
 - `action` — e.g. `assign-secondary-ip`, `ensure-forwarding-enabled`.
 - `target` — `eni`, `address`, `region`.
-- `status` — `pending` / `approved` / `succeeded` / `failed` / `skipped` /
-  `rolledBack`.
+- `status` — `pending`, `approved`, `running`, `succeeded`, `failed`, `skipped`,
+  `rollingBack`, `rolledBack`, `rollbackFailed`, `outcomeUnknown` or
+  `rollbackUnknown`.
 - `Observed.priorSourceDestCheck` — `true` | `false`, captured before mutating;
   the undo of `ensure-forwarding-enabled` reads this.
 - `executedAt` — timestamp.
 - `result` / `error` — the `ExecuteActionResult` message / `Error`.
 
-The journal is the single source of truth for what ran and for the idempotency
-guard. Credentials are **never** journaled.
+The journal records the confirmed result or the explicit uncertainty of an
+invocation. Credentials are **never** journaled. Unknown outcomes block further
+live operations across keys; inspect the provider before using the explicit
+[`action resolve` recovery procedure](../operations/state-database.md#provider-operation-recovery-in-the-15-proposal).
+A preview does not consume approval or record a live success.
 
 ## 6. Undo / teardown plan
 

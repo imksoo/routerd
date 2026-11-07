@@ -21,7 +21,7 @@ func pppoeInterfaceExists(ctx context.Context, osName platform.OS, ifname string
 	case platform.OSLinux:
 		return linuxPPPoEInterfaceExists(ctx, ifname)
 	default:
-		return false, nil
+		return false, fmt.Errorf("PPPoE interface ownership is unsupported on %s", osName)
 	}
 }
 

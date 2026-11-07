@@ -38,7 +38,7 @@ func TestBackendsRenderThroughExistingNativeRenderers(t *testing.T) {
 	}{
 		{name: "netplan", backend: Netplan{Path: "/etc/netplan/90-routerd.yaml"}, want: "addresses:\n        - 192.0.2.1/24"},
 		{name: "networkd", backend: Networkd{}, want: "Destination=198.51.100.0/24"},
-		{name: "rcconf", backend: RCConf{}, want: `ifconfig_ens19="inet 192.0.2.1/24"`},
+		{name: "rcconf", backend: RCConf{}, want: `static_routes="wan_route"`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

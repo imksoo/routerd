@@ -203,6 +203,16 @@ print(",".join(f"{p.get('client','')}:{p.get('server','')}" for p in pairs))
 PY
 }
 
+json_required_assertions() {
+  python3 - "$1" <<'PY'
+import json, sys
+required = json.loads(sys.argv[1]).get("expectedAssertions")
+if not isinstance(required, list) or not required or any(not isinstance(name, str) or not name for name in required):
+    raise SystemExit("scenario expectedAssertions must be a nonempty array of names")
+print(json.dumps(required))
+PY
+}
+
 json_l2_args() {
   local json=$1
   python3 - "$json" <<'PY'
@@ -234,11 +244,12 @@ cmd_run() {
   [[ -n "$out" ]] || die "run: --out is required"
   [[ -x "$LABCTL" ]] || die "labctl not executable: $LABCTL"
 
-  local spec fault_type fault_provider matrix_name matrix_json timing_json protocol_json l2_loop_json result_arg=()
+  local spec required_assertions fault_type fault_provider matrix_name matrix_json timing_json protocol_json l2_loop_json result_arg=()
   local timing_enabled timing_provider timing_fault timing_threshold protocol_enabled protocol_pairs protocol_bytes
   local l2_enabled l2_provider l2_broadcast_threshold l2_stp_tcn_threshold l2_ping_loss_threshold
   local -a l2_args=()
   spec=$(scenario_json "$scenario")
+  required_assertions=$(json_required_assertions "$spec")
   fault_type=$(json_field "$spec" fault.type)
   fault_provider=$(json_field "$spec" fault.provider)
   matrix_name=$(json_field "$spec" matrix.name)
@@ -322,19 +333,24 @@ cmd_run() {
     "$PROTOCOL_SCRIPT" --pairs "$protocol_pairs" --bytes "$protocol_bytes" --out "$protocol_json" || protocol_status=$?
   fi
 
-  local evidence_args=(evidence collect --out "$out" --scenario "$scenario" --matrix-json "$matrix_json")
+  local evidence_args=(evidence collect --out "$out" --scenario "$scenario" --matrix-json "$matrix_json" --required-assertions "$required_assertions")
   [[ -f "$timing_json" ]] && evidence_args+=(--timing-json "$timing_json")
   [[ -f "$protocol_json" ]] && evidence_args+=(--protocol-json "$protocol_json")
   [[ -f "$l2_loop_json" ]] && evidence_args+=(--l2-loop-json "$l2_loop_json")
   [[ -n "$run_id" ]] && evidence_args+=(--run-id "$run_id")
   [[ -n "$commit" ]] && evidence_args+=(--commit "$commit")
+  if [[ "$timing_status" -ne 0 || "$matrix_status" -ne 0 || "$protocol_status" -ne 0 || "$l2_status" -ne 0 ]]; then
+    forced_result=fail
+  fi
   [[ -n "$forced_result" ]] && result_arg=(--result "$forced_result")
   log "collecting evidence: $out"
   "$LABCTL" "${evidence_args[@]}" "${result_arg[@]}"
-  if [[ "$timing_status" -ne 0 || "$matrix_status" -ne 0 || "$protocol_status" -ne 0 || "$l2_status" -ne 0 ]]; then
-    return 1
-  fi
-  return 0
+  python3 - "$out/result.json" <<'PY'
+import json, sys
+result = json.load(open(sys.argv[1]))
+if result.get("result") != "pass":
+    raise SystemExit("scenario did not establish all required passing evidence")
+PY
 }
 
 main() {

@@ -72,8 +72,8 @@ func TestSyncFailoverVMACFollowsObservedVRRPRole(t *testing.T) {
 		t.Fatalf("sync backup: %v", err)
 	}
 	want := []string{
-		"/usr/local/sbin/routerd-vrrp-vmac activate --parent ens18 --interface wan-vmac --mac 02:00:5e:00:01:13",
-		"/usr/local/sbin/routerd-vrrp-vmac deactivate --parent ens18 --interface wan-vmac --mac 02:00:5e:00:01:13",
+		platform.BinaryPath("routerd-vrrp-vmac") + " activate --parent ens18 --interface wan-vmac --mac 02:00:5e:00:01:13",
+		platform.BinaryPath("routerd-vrrp-vmac") + " deactivate --parent ens18 --interface wan-vmac --mac 02:00:5e:00:01:13",
 	}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("VMAC sync calls = %#v, want %#v", calls, want)
@@ -105,8 +105,8 @@ func TestSyncFailoverVMACKeepsWANAndLANInOneRoleTransition(t *testing.T) {
 		t.Fatalf("sync backup: %v", err)
 	}
 	want := []string{
-		"/usr/local/sbin/routerd-vrrp-vmac activate --vmac ens18,wan-vmac,02:00:5e:00:01:13,,false --vmac ens19,lan-vrrp,02:00:5e:00:01:12,fe80::5eff:fe00:112,true",
-		"/usr/local/sbin/routerd-vrrp-vmac deactivate --vmac ens18,wan-vmac,02:00:5e:00:01:13,,false --vmac ens19,lan-vrrp,02:00:5e:00:01:12,fe80::5eff:fe00:112,true",
+		platform.BinaryPath("routerd-vrrp-vmac") + " activate --vmac ens18,wan-vmac,02:00:5e:00:01:13,,false --vmac ens19,lan-vrrp,02:00:5e:00:01:12,fe80::5eff:fe00:112,true",
+		platform.BinaryPath("routerd-vrrp-vmac") + " deactivate --vmac ens18,wan-vmac,02:00:5e:00:01:13,,false --vmac ens19,lan-vrrp,02:00:5e:00:01:12,fe80::5eff:fe00:112,true",
 	}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("VMAC sync calls = %#v, want %#v", calls, want)
@@ -173,11 +173,12 @@ func TestReconcileLowersVRRPPriorityAfterTrackHysteresis(t *testing.T) {
 	}
 	var calls []string
 	controller := Controller{
-		Router:     vrrpRouter("vrrp"),
-		Store:      store,
-		DryRun:     false,
-		ConfigPath: t.TempDir() + "/keepalived.conf",
-		Systemctl:  "systemctl",
+		OperatingSystem: platform.OSLinux,
+		Router:          vrrpRouter("vrrp"),
+		Store:           store,
+		DryRun:          false,
+		ConfigPath:      t.TempDir() + "/keepalived.conf",
+		Systemctl:       "systemctl",
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			calls = append(calls, name+" "+strings.Join(args, " "))
 			return []byte("ok"), nil
@@ -299,7 +300,7 @@ func TestVRRPWhenStoreDelegatesRouterState(t *testing.T) {
 		"cluster.role": {Status: routerstate.StatusSet, Value: "master", Since: now.Add(-time.Minute), UpdatedAt: now},
 	}}
 	when := api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"cluster.role": {Equals: "master"}}}
-	if !resourcequery.ResourceWhenMatches(when, newVRRPWhenStore(store)) {
+	if matches, err := resourcequery.ResourceWhenMatches(when, newVRRPWhenStore(store)); err != nil || !matches {
 		t.Fatal("VRRP when store must delegate router state")
 	}
 }
@@ -381,6 +382,7 @@ func TestReconcileAppliesStaticVirtualAddressIPv4(t *testing.T) {
 			return []byte("ok"), nil
 		},
 	}
+	withNativeVIPFixture(t, &controller, "10.240.70.10/32", false, 0)
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
@@ -416,11 +418,11 @@ func TestReconcileAnnouncesRestoredStaticVirtualAddressIPv4(t *testing.T) {
 			return []byte("ok"), nil
 		},
 	}
+	withNativeVIPFixture(t, &controller, "10.240.70.10/32", false, 0)
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 	want := []string{
-		"ip -4 -o addr show dev ens18",
 		"ip addr replace 10.240.70.10/32 dev ens18",
 		"arping -U -c 3 -I ens18 10.240.70.10",
 	}
@@ -455,13 +457,12 @@ func TestReconcileDoesNotRepeatStaticVirtualAddressAnnouncement(t *testing.T) {
 			return []byte("ok"), nil
 		},
 	}
+	withNativeVIPFixture(t, &controller, "10.240.70.10/32", true, 0)
+	seedOwnedVIP(t, &controller, "vip", "10.240.70.10/32", 0)
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
-	want := []string{
-		"ip -4 -o addr show dev ens18",
-		"ip addr replace 10.240.70.10/32 dev ens18",
-	}
+	var want []string
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("calls = %#v, want no arping: %#v", calls, want)
 	}
@@ -495,6 +496,7 @@ func TestReconcileReportsStaticVirtualAddressAnnouncementFailure(t *testing.T) {
 			return []byte("ok"), nil
 		},
 	}
+	withNativeVIPFixture(t, &controller, "10.240.70.10/32", false, 0)
 	err := controller.Reconcile(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "arping -U -c 3 -I ens18 10.240.70.10") {
 		t.Fatalf("error = %v, want arping failure", err)
@@ -514,6 +516,7 @@ func TestReconcileReportsStaticVirtualAddressAnnouncementFailure(t *testing.T) {
 		}
 		return []byte("ok"), nil
 	}
+	withNativeVIPFixture(t, &controller, "10.240.70.10/32", true, 0)
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("retry reconcile: %v", err)
 	}
@@ -566,6 +569,7 @@ func TestReconcileKeepsFreeBSDStaticVirtualAddressCommandUnchangedWithGARPOptIn(
 			return []byte("ok"), nil
 		},
 	}
+	withNativeVIPFixture(t, &controller, "10.240.70.10/32", false, 0)
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
@@ -631,6 +635,7 @@ func TestReconcileIsolatesUnresolvedStaticVirtualAddress(t *testing.T) {
 			return []byte("ok"), nil
 		},
 	}
+	withNativeVIPFixture(t, &controller, "10.240.70.20/32", false, 0)
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
@@ -1008,6 +1013,7 @@ func TestReconcileAppliesFreeBSDCARPVirtualAddressIPv4(t *testing.T) {
 			return []byte("ok"), nil
 		},
 	}
+	withNativeVIPFixture(t, &controller, "10.240.70.10/32", false, 50)
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
@@ -1015,7 +1021,6 @@ func TestReconcileAppliesFreeBSDCARPVirtualAddressIPv4(t *testing.T) {
 		"kldload carp",
 		"sysctl net.inet.carp.preempt=0",
 		"ifconfig ens18 inet vhid 50 advbase 1 advskew 104 alias 10.240.70.10/32",
-		"ifconfig ens18",
 	} {
 		if !containsString(calls, want) {
 			t.Fatalf("calls missing %q: %#v", want, calls)
@@ -1087,6 +1092,8 @@ func TestReconcileCleansRemovedStaticVirtualAddressIPv4(t *testing.T) {
 			return []byte("ok"), nil
 		},
 	}
+	withNativeVIPFixture(t, &controller, "10.240.70.99/32", true, 0)
+	seedOwnedVIP(t, &controller, "old", "10.240.70.99/32", 0)
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
@@ -1132,6 +1139,8 @@ func TestReconcileCleansStaticVirtualAddressWhenConditionBecomesFalse(t *testing
 			return []byte("ok"), nil
 		},
 	}
+	withNativeVIPFixture(t, &controller, "192.168.1.249/32", true, 0)
+	seedOwnedVIP(t, &controller, "wan-nat-v4", "192.168.1.249/32", 0)
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
@@ -1177,10 +1186,12 @@ func TestReconcileTreatsMissingWhenFalseStaticVirtualAddressAsRemoved(t *testing
 			return []byte("RTNETLINK answers: Address not found\n"), errors.New("exit status 2")
 		},
 	}
+	withNativeVIPFixture(t, &controller, "192.168.1.249/32", false, 0)
+	seedOwnedVIP(t, &controller, "wan-nat-v4", "192.168.1.249/32", 0)
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile missing address: %v", err)
 	}
-	want := []string{"ip addr del 192.168.1.249/32 dev ens18"}
+	var want []string
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("calls = %#v, want %#v", calls, want)
 	}
@@ -1220,6 +1231,8 @@ func TestReconcileKeepsUnexpectedWhenFalseStaticAddressDeleteErrorHard(t *testin
 			return []byte("RTNETLINK answers: Operation not permitted\n"), errors.New("exit status 2")
 		},
 	}
+	withNativeVIPFixture(t, &controller, "192.168.1.249/32", true, 0)
+	seedOwnedVIP(t, &controller, "wan-nat-v4", "192.168.1.249/32", 0)
 	err := controller.Reconcile(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "Operation not permitted") {
 		t.Fatalf("unexpected delete error = %v, want hard error", err)
@@ -1234,11 +1247,12 @@ func TestReconcileStopsKeepalivedWhenVRRPRemoved(t *testing.T) {
 	store := mapStore{}
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "keepalived.conf")
-	if err := os.WriteFile(configPath, []byte("vrrp_instance old {}\n"), 0644); err != nil {
+	if err := os.WriteFile(configPath, []byte(keepalivedConfigHeader+"vrrp_instance old {}\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	var calls []string
 	controller := Controller{
+		OperatingSystem: platform.OSLinux,
 		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
@@ -1256,7 +1270,7 @@ func TestReconcileStopsKeepalivedWhenVRRPRemoved(t *testing.T) {
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
-	want := []string{"systemctl is-active --quiet keepalived.service", "systemctl stop keepalived.service"}
+	want := []string{"systemctl stop keepalived.service"}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("calls = %#v, want %#v", calls, want)
 	}
@@ -1291,7 +1305,7 @@ func TestReconcilePublishesRoleBeforeVMACRepairFailure(t *testing.T) {
 	router.Spec.Resources[1].Spec = spec
 	failRepair := true
 	controller := &Controller{Router: router, Store: store, OperatingSystem: platform.OSLinux, ConfigPath: filepath.Join(t.TempDir(), "keepalived.conf"), Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
-		if name == "/usr/local/sbin/routerd-vrrp-vmac" && failRepair {
+		if name == platform.BinaryPath("routerd-vrrp-vmac") && failRepair {
 			return []byte("repair failed"), errors.New("exit status 1")
 		}
 		if name == "ip" {
@@ -1362,4 +1376,17 @@ func containsString(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func (s statefulMapStore) ReadVariable(name string) (routerstate.Value, error) {
+	return s.Get(name), nil
+}
+
+func (s mapStore) ReadObjectStatus(apiVersion, kind, name string) (map[string]any, error) {
+	return s[apiVersion+"/"+kind+"/"+name], nil
+}
+
+func (s mapStore) ReadVariable(name string) (routerstate.Value, error) {
+	now := time.Now().UTC()
+	return routerstate.Value{Status: routerstate.StatusUnknown, Since: now, UpdatedAt: now}, nil
 }

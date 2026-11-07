@@ -115,7 +115,7 @@ func installReconcileSDK(t *testing.T) (*sdkmetric.ManualReader, *tracetest.Span
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	spans := tracetest.NewSpanRecorder()
-	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spans))
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spans), sdktrace.WithSampler(sdktrace.AlwaysSample()))
 	otel.SetMeterProvider(mp)
 	otel.SetTracerProvider(tp)
 	t.Cleanup(func() {

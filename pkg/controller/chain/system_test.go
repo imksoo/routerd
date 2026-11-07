@@ -13,7 +13,6 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/render"
-	"github.com/imksoo/routerd/pkg/resourcequery"
 )
 
 func TestNetworkAdoptionControllerWritesNetworkdAndResolvedDropins(t *testing.T) {
@@ -23,7 +22,7 @@ func TestNetworkAdoptionControllerWritesNetworkdAndResolvedDropins(t *testing.T)
 	if err := os.MkdirAll(filepath.Dir(legacyPath), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(legacyPath, []byte("[IPv6AcceptRA]\nDHCPv6Client=no\n"), 0644); err != nil {
+	if err := os.WriteFile(legacyPath, []byte("# Managed by routerd. Do not edit by hand.\n[IPv6AcceptRA]\nDHCPv6Client=no\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
@@ -265,6 +264,7 @@ func TestSystemdUnitControllerRendersAndEnablesUnit(t *testing.T) {
 		Router:           router,
 		Store:            store,
 		SystemdSystemDir: dir,
+		BGPStatePath:     filepath.Join(dir, "bgp", "applied.json"),
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
@@ -283,12 +283,12 @@ func TestSystemdUnitControllerRendersAndEnablesUnit(t *testing.T) {
 		t.Fatalf("read unit: %v", err)
 	}
 	gotUnit := string(data)
-	for _, want := range []string{"ExecStart=/usr/local/sbin/routerd serve", "RuntimeDirectory=routerd routerd/bgp routerd/dhcpv6-client routerd/dhcpv4-client routerd/pppoe-client routerd/dns-resolver", "StateDirectory=routerd", "AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID CAP_CHOWN", "NoNewPrivileges=no"} {
+	for _, want := range []string{"ExecStart=/usr/sbin/routerd serve", "RuntimeDirectory=routerd routerd/bgp routerd/dhcpv6-client routerd/dhcpv4-client routerd/pppoe-client routerd/dns-resolver", "StateDirectory=routerd", "AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID CAP_CHOWN", "NoNewPrivileges=no"} {
 		if !strings.Contains(gotUnit, want) {
 			t.Fatalf("unit missing %q:\n%s", want, gotUnit)
 		}
 	}
-	for _, notWant := range []string{"ExecStartPre=/usr/local/sbin/routerd check", "ReadWritePaths=", "ProtectSystem=", "ProtectHome=", "PrivateTmp=", "RestrictAddressFamilies="} {
+	for _, notWant := range []string{"ExecStartPre=/usr/sbin/routerd check", "ReadWritePaths=", "ProtectSystem=", "ProtectHome=", "PrivateTmp=", "RestrictAddressFamilies="} {
 		if strings.Contains(gotUnit, notWant) {
 			t.Fatalf("routerd.service must not contain %q:\n%s", notWant, gotUnit)
 		}
@@ -338,6 +338,7 @@ func TestSystemdUnitControllerAugmentsRouterdServiceForBGPVRRPIngress(t *testing
 		Router:           router,
 		Store:            mapStore{},
 		SystemdSystemDir: dir,
+		BGPStatePath:     filepath.Join(dir, "bgp", "applied.json"),
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			if name == "systemctl" && len(args) >= 2 && (args[0] == "is-active" || args[0] == "is-enabled") {
@@ -362,8 +363,8 @@ func TestSystemdUnitControllerAugmentsRouterdServiceForBGPVRRPIngress(t *testing
 		t.Fatalf("startup renderer differs from controller-owned routerd.service:\n--- startup ---\n%s\n--- controller ---\n%s", preparedUnit, gotUnit)
 	}
 	for _, want := range []string{
-		"AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID CAP_CHOWN CAP_DAC_OVERRIDE",
-		"CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID CAP_CHOWN CAP_DAC_OVERRIDE",
+		"AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID CAP_CHOWN CAP_SYS_PTRACE CAP_KILL CAP_DAC_OVERRIDE",
+		"CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID CAP_CHOWN CAP_SYS_PTRACE CAP_KILL CAP_DAC_OVERRIDE",
 	} {
 		if !strings.Contains(gotUnit, want) {
 			t.Fatalf("unit missing %q:\n%s", want, gotUnit)
@@ -380,7 +381,7 @@ func TestSystemdUnitControllerAugmentsRouterdServiceForBGPVRRPIngress(t *testing
 	}
 	gotBGPUnit := string(bgpUnit)
 	for _, want := range []string{
-		"ExecStart=/usr/local/sbin/routerd-bgp daemon --socket /run/routerd/bgp/gobgp.sock --control-socket /run/routerd/bgp/control.sock --state-file /var/lib/routerd/bgp/applied.json",
+		"ExecStart=/usr/sbin/routerd-bgp daemon --socket /run/routerd/bgp/gobgp.sock --control-socket /run/routerd/bgp/control.sock --state-file " + controller.BGPStatePath,
 		"RuntimeDirectory=routerd/bgp",
 		"StateDirectory=routerd/bgp",
 		"Restart=always",
@@ -412,6 +413,7 @@ func TestSystemdUnitControllerDoesNotRestartActiveBGPDaemonOnUnitChange(t *testi
 		Router:           router,
 		Store:            mapStore{},
 		SystemdSystemDir: dir,
+		BGPStatePath:     filepath.Join(dir, "bgp", "applied.json"),
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			line := strings.Join(append([]string{name}, args...), " ")
@@ -492,6 +494,7 @@ func TestSystemdUnitControllerDoesNotRestartUnchangedActiveUnit(t *testing.T) {
 		Router:           router,
 		Store:            store,
 		SystemdSystemDir: dir,
+		BGPStatePath:     filepath.Join(dir, "bgp", "applied.json"),
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
@@ -526,6 +529,7 @@ func TestSystemdUnitControllerSynthesizesNDPIAgentForAutoClassifier(t *testing.T
 		Router:           router,
 		Store:            store,
 		SystemdSystemDir: dir,
+		BGPStatePath:     filepath.Join(dir, "bgp", "applied.json"),
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
@@ -542,7 +546,7 @@ func TestSystemdUnitControllerSynthesizesNDPIAgentForAutoClassifier(t *testing.T
 	if err != nil {
 		t.Fatalf("read ndpi agent unit: %v", err)
 	}
-	if !strings.Contains(string(agentData), "ExecStart=/usr/local/sbin/routerd-ndpi-agent daemon --socket /run/routerd/ndpi-agent/default.sock") {
+	if !strings.Contains(string(agentData), "ExecStart=/usr/sbin/routerd-ndpi-agent daemon --socket /run/routerd/ndpi-agent/default.sock") {
 		t.Fatalf("ndpi agent unit =\n%s", string(agentData))
 	}
 	classifierData, err := os.ReadFile(filepath.Join(dir, "routerd-dpi-classifier.service"))
@@ -574,6 +578,7 @@ func TestSystemdUnitControllerDoesNotReloadForAlreadyAbsentUnit(t *testing.T) {
 		Router:           router,
 		Store:            store,
 		SystemdSystemDir: dir,
+		BGPStatePath:     filepath.Join(dir, "bgp", "applied.json"),
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
@@ -604,6 +609,7 @@ func TestSystemdUnitControllerDoesNotStartSupervisedDHCPv6LegacyUnit(t *testing.
 		Router:                      router,
 		Store:                       mapStore{},
 		SystemdSystemDir:            dir,
+		BGPStatePath:                filepath.Join(dir, "bgp", "applied.json"),
 		SynthesizeClientDaemonUnits: false,
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
@@ -632,7 +638,7 @@ func TestSystemdUnitControllerDefersActiveStaleClientDaemonCleanup(t *testing.T)
 	dir := t.TempDir()
 	unitName := "routerd-dhcpv4-client@wan.service"
 	unitPath := filepath.Join(dir, unitName)
-	if err := os.WriteFile(unitPath, []byte("[Service]\nExecStart=/usr/local/sbin/routerd-dhcpv4-client daemon\n"), 0644); err != nil {
+	if err := os.WriteFile(unitPath, []byte("# Managed by routerd. Do not edit by hand.\n[Service]\nExecStart=/usr/sbin/routerd-dhcpv4-client daemon\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	router := &api.Router{Spec: api.RouterSpec{}}
@@ -644,6 +650,7 @@ func TestSystemdUnitControllerDefersActiveStaleClientDaemonCleanup(t *testing.T)
 		Bus:              eventBus,
 		Store:            store,
 		SystemdSystemDir: dir,
+		BGPStatePath:     filepath.Join(dir, "bgp", "applied.json"),
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			line := strings.Join(append([]string{name}, args...), " ")
@@ -666,7 +673,6 @@ func TestSystemdUnitControllerDefersActiveStaleClientDaemonCleanup(t *testing.T)
 	}
 	for _, unwanted := range []string{
 		"systemctl disable --now " + unitName,
-		"systemctl reset-failed " + unitName,
 	} {
 		if strings.Contains(gotCommands, unwanted) {
 			t.Fatalf("commands included service-disrupting cleanup %q:\n%s", unwanted, gotCommands)
@@ -690,7 +696,7 @@ func TestSystemdUnitControllerReportsInactiveStaleClientDaemonCleanup(t *testing
 	dir := t.TempDir()
 	unitName := "routerd-dhcpv4-client@wan.service"
 	unitPath := filepath.Join(dir, unitName)
-	if err := os.WriteFile(unitPath, []byte("[Service]\nExecStart=/usr/local/sbin/routerd-dhcpv4-client daemon\n"), 0644); err != nil {
+	if err := os.WriteFile(unitPath, []byte("# Managed by routerd. Do not edit by hand.\n[Service]\nExecStart=/usr/sbin/routerd-dhcpv4-client daemon\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	router := &api.Router{Spec: api.RouterSpec{}}
@@ -702,6 +708,7 @@ func TestSystemdUnitControllerReportsInactiveStaleClientDaemonCleanup(t *testing
 		Bus:              eventBus,
 		Store:            store,
 		SystemdSystemDir: dir,
+		BGPStatePath:     filepath.Join(dir, "bgp", "applied.json"),
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			line := strings.Join(append([]string{name}, args...), " ")
@@ -722,7 +729,6 @@ func TestSystemdUnitControllerReportsInactiveStaleClientDaemonCleanup(t *testing
 	for _, want := range []string{
 		"systemctl is-active --quiet " + unitName,
 		"systemctl disable --now " + unitName,
-		"systemctl reset-failed " + unitName,
 		"systemctl daemon-reload",
 	} {
 		if !strings.Contains(gotCommands, want) {
@@ -751,6 +757,7 @@ func TestSystemdUnitControllerSchedulesOwnUnitRestart(t *testing.T) {
 		Router:           router,
 		Store:            mapStore{},
 		SystemdSystemDir: dir,
+		BGPStatePath:     filepath.Join(dir, "bgp", "applied.json"),
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
@@ -793,6 +800,7 @@ func TestSystemdUnitControllerKeepsPreparedLiveUnitRunningThenRestartsForLaterCh
 		Router:           router,
 		Store:            mapStore{},
 		SystemdSystemDir: dir,
+		BGPStatePath:     filepath.Join(dir, "bgp", "applied.json"),
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
@@ -835,7 +843,7 @@ func TestSystemdUnitControllerRemovesWhenFalseTailscaleUnitAndRecreatesWhenTrue(
 	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()
 	unitPath := filepath.Join(dir, "routerd-tailscale-home.service")
-	if err := os.WriteFile(unitPath, []byte("[Unit]\nDescription=old tailscale\n"), 0644); err != nil {
+	if err := os.WriteFile(unitPath, []byte("# Managed by routerd. Do not edit by hand.\n[Unit]\nDescription=old tailscale\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
@@ -853,10 +861,11 @@ func TestSystemdUnitControllerRemovesWhenFalseTailscaleUnitAndRecreatesWhenTrue(
 	}}
 	var commands []string
 	controller := SystemdUnitController{
-		Router:           resourcequery.FilterRouterByWhen(router, store),
+		Router:           mustWhenFilteredRouter(t, false, router, store),
 		DeclaredRouter:   router,
 		Store:            store,
 		SystemdSystemDir: dir,
+		BGPStatePath:     filepath.Join(dir, "bgp", "applied.json"),
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
@@ -892,7 +901,7 @@ func TestSystemdUnitControllerRemovesWhenFalseTailscaleUnitAndRecreatesWhenTrue(
 
 	store.mapStore[api.NetAPIVersion+"/VirtualAddress/lan-vip"]["role"] = "master"
 	commands = nil
-	controller.Router = resourcequery.FilterRouterByWhen(router, store)
+	controller.Router = mustWhenFilteredRouter(t, false, router, store)
 	controller.Command = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		_ = ctx
 		commands = append(commands, strings.Join(append([]string{name}, args...), " "))
@@ -943,6 +952,7 @@ func TestSystemdUnitControllerSynthesizesTailscaleUnits(t *testing.T) {
 		Router:           router,
 		Store:            store,
 		SystemdSystemDir: dir,
+		BGPStatePath:     filepath.Join(dir, "bgp", "applied.json"),
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
@@ -1024,6 +1034,7 @@ func TestSystemdUnitControllerSynthesizesHealthCheckDaemonUnits(t *testing.T) {
 		Router:           router,
 		Store:            store,
 		SystemdSystemDir: dir,
+		BGPStatePath:     filepath.Join(dir, "bgp", "applied.json"),
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			line := strings.Join(append([]string{name}, args...), " ")
@@ -1049,7 +1060,7 @@ func TestSystemdUnitControllerSynthesizesHealthCheckDaemonUnits(t *testing.T) {
 	for _, want := range []string{
 		"BindsTo=routerd.service",
 		"After=routerd.service network-online.target",
-		`ExecStart=/usr/local/sbin/routerd-healthcheck --resource "internet-via-dslite-a" --target "1.1.1.1" --protocol "tcp" --fwmark 0x110 --require-dslite-binding --source-interface "ds-lite-a" --source-address "172.18.0.1" --port 443 --interval "30s" --timeout "3s" --healthy-threshold 1 --unhealthy-threshold 3`,
+		`ExecStart=/usr/sbin/routerd-healthcheck --resource "internet-via-dslite-a" --target "1.1.1.1" --protocol "tcp" --fwmark 0x110 --require-dslite-binding --source-interface "ds-lite-a" --source-address "172.18.0.1" --port 443 --interval "30s" --timeout "3s" --healthy-threshold 1 --unhealthy-threshold 3`,
 		`--socket "/run/routerd/healthcheck/internet-via-dslite-a.sock"`,
 		"RuntimeDirectory=routerd/healthcheck",
 		"RuntimeDirectoryPreserve=yes",
@@ -1085,13 +1096,22 @@ func TestSystemdUnitControllerSynthesizesHealthCheckDaemonUnits(t *testing.T) {
 		t.Fatal(err)
 	}
 	status = store.ObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName)
-	if status["phase"] != "Applied" || status["changed"] != false {
-		t.Fatalf("status after READY = %#v", status)
+	if status["phase"] != "Applied" || status["changed"] != true {
+		t.Fatalf("status after confirmed READY handoff = %#v", status)
 	}
-	for _, command := range commands[restartsBeforeReady:] {
-		if strings.Contains(command, "restart "+unitName) {
-			t.Fatalf("active HealthCheck was restarted after READY: %v", commands[restartsBeforeReady:])
-		}
+	if !commandLineContains(commands[restartsBeforeReady:], "systemctl restart "+unitName) {
+		t.Fatalf("queued activation was never acknowledged by blocking job: %v", commands[restartsBeforeReady:])
+	}
+	commands = nil
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if commandLineContains(commands, "systemctl restart "+unitName) || commandLineContains(commands, "systemctl --no-block restart "+unitName) {
+		t.Fatalf("acknowledged active HealthCheck restarted again: %v", commands)
+	}
+	status = store.ObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName)
+	if status["phase"] != "Applied" || status["changed"] != false {
+		t.Fatalf("stable status = %#v", status)
 	}
 }
 
@@ -1115,6 +1135,7 @@ func TestSystemdUnitControllerReportsHealthCheckRestartFailureAfterReady(t *test
 		Router:           router,
 		Store:            store,
 		SystemdSystemDir: dir,
+		BGPStatePath:     filepath.Join(dir, "bgp", "applied.json"),
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			line := strings.Join(append([]string{name}, args...), " ")
@@ -1145,7 +1166,7 @@ func TestSystemdUnitControllerRemovesStaleHealthCheckDaemonUnits(t *testing.T) {
 	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()
 	stale := filepath.Join(dir, "routerd-healthcheck@stale.service")
-	if err := os.WriteFile(stale, []byte("[Service]\nExecStart=/usr/local/sbin/routerd-healthcheck\n"), 0644); err != nil {
+	if err := os.WriteFile(stale, []byte("# Managed by routerd. Do not edit by hand.\n[Service]\nExecStart=/usr/sbin/routerd-healthcheck\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
@@ -1160,6 +1181,7 @@ func TestSystemdUnitControllerRemovesStaleHealthCheckDaemonUnits(t *testing.T) {
 		Router:           router,
 		Store:            mapStore{},
 		SystemdSystemDir: dir,
+		BGPStatePath:     filepath.Join(dir, "bgp", "applied.json"),
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
@@ -1178,7 +1200,6 @@ func TestSystemdUnitControllerRemovesStaleHealthCheckDaemonUnits(t *testing.T) {
 	gotCommands := strings.Join(commands, "\n")
 	for _, want := range []string{
 		"systemctl disable --now routerd-healthcheck@stale.service",
-		"systemctl reset-failed routerd-healthcheck@stale.service",
 		"systemctl daemon-reload",
 	} {
 		if !strings.Contains(gotCommands, want) {
@@ -1205,6 +1226,7 @@ func TestSystemdUnitControllerReconcilesDNSResolverLongLivedUnit(t *testing.T) {
 		Router:           router,
 		Store:            store,
 		SystemdSystemDir: dir,
+		BGPStatePath:     filepath.Join(dir, "bgp", "applied.json"),
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			line := strings.Join(append([]string{name}, args...), " ")
@@ -1226,7 +1248,7 @@ func TestSystemdUnitControllerReconcilesDNSResolverLongLivedUnit(t *testing.T) {
 	}
 	unit := string(data)
 	for _, want := range []string{
-		"ExecStart=/usr/local/sbin/routerd-dns-resolver daemon",
+		"ExecStart=/usr/sbin/routerd-dns-resolver daemon",
 		"--resource lan-resolver",
 		"--config-file /var/lib/routerd/dns-resolver/lan-resolver/config.json",
 		"Restart=always",
@@ -1258,7 +1280,7 @@ func TestSystemdUnitControllerRemovesStaleDNSResolverUnits(t *testing.T) {
 	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()
 	stale := filepath.Join(dir, "routerd-dns-resolver@old.service")
-	if err := os.WriteFile(stale, []byte("[Service]\nExecStart=/usr/local/sbin/routerd-dns-resolver\n"), 0644); err != nil {
+	if err := os.WriteFile(stale, []byte("# Managed by routerd. Do not edit by hand.\n[Service]\nExecStart=/usr/sbin/routerd-dns-resolver\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	router := &api.Router{Metadata: api.ObjectMeta{Name: "home"}, Spec: api.RouterSpec{Resources: []api.Resource{
@@ -1272,6 +1294,7 @@ func TestSystemdUnitControllerRemovesStaleDNSResolverUnits(t *testing.T) {
 		Router:           router,
 		Store:            mapStore{},
 		SystemdSystemDir: dir,
+		BGPStatePath:     filepath.Join(dir, "bgp", "applied.json"),
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
@@ -1290,7 +1313,6 @@ func TestSystemdUnitControllerRemovesStaleDNSResolverUnits(t *testing.T) {
 	gotCommands := strings.Join(commands, "\n")
 	for _, want := range []string{
 		"systemctl disable --now routerd-dns-resolver@old.service",
-		"systemctl reset-failed routerd-dns-resolver@old.service",
 		"systemctl daemon-reload",
 	} {
 		if !strings.Contains(gotCommands, want) {
@@ -1306,11 +1328,11 @@ func TestSystemdUnitControllerRemovesStaleEventFederationUnits(t *testing.T) {
 	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()
 	stale := filepath.Join(dir, "routerd-eventd@old.service")
-	if err := os.WriteFile(stale, []byte("[Service]\nExecStart=/usr/local/sbin/routerd-eventd\n"), 0644); err != nil {
+	if err := os.WriteFile(stale, []byte("# Managed by routerd. Do not edit by hand.\n[Service]\nExecStart=/usr/sbin/routerd-eventd\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	legacy := filepath.Join(dir, "routerd-eventd.service")
-	if err := os.WriteFile(legacy, []byte("[Service]\nExecStart=/usr/local/sbin/routerd-eventd daemon --config-file /var/lib/routerd/eventd/cloudedge/config.json\n"), 0644); err != nil {
+	if err := os.WriteFile(legacy, []byte("# Managed by routerd. Do not edit by hand.\n[Service]\nExecStart=/usr/sbin/routerd-eventd daemon --config-file /var/lib/routerd/eventd/cloudedge/config.json\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	kept := filepath.Join(dir, "routerd-eventd@current.service")
@@ -1325,6 +1347,7 @@ func TestSystemdUnitControllerRemovesStaleEventFederationUnits(t *testing.T) {
 		Router:           router,
 		Store:            mapStore{},
 		SystemdSystemDir: dir,
+		BGPStatePath:     filepath.Join(dir, "bgp", "applied.json"),
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
@@ -1346,9 +1369,7 @@ func TestSystemdUnitControllerRemovesStaleEventFederationUnits(t *testing.T) {
 	gotCommands := strings.Join(commands, "\n")
 	for _, want := range []string{
 		"systemctl disable --now routerd-eventd@old.service",
-		"systemctl reset-failed routerd-eventd@old.service",
 		"systemctl disable --now routerd-eventd.service",
-		"systemctl reset-failed routerd-eventd.service",
 		"systemctl daemon-reload",
 	} {
 		if !strings.Contains(gotCommands, want) {
@@ -1396,6 +1417,7 @@ func TestSystemdUnitControllerRestartsEventdOnlyForChangedRuntimeConfig(t *testi
 		Router:           router,
 		Store:            mapStore{},
 		SystemdSystemDir: filepath.Join(dir, "systemd"),
+		BGPStatePath:     filepath.Join(dir, "bgp", "applied.json"),
 		StateDir:         stateDir,
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			if name != "systemctl" {
@@ -1529,7 +1551,7 @@ func TestSystemdUnitControllerRemovesIdentityOnlyEventFederationUnit(t *testing.
 	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()
 	stale := filepath.Join(dir, "routerd-eventd@identity.service")
-	if err := os.WriteFile(stale, []byte("[Service]\nExecStart=/usr/local/sbin/routerd-eventd\n"), 0644); err != nil {
+	if err := os.WriteFile(stale, []byte("# Managed by routerd. Do not edit by hand.\n[Service]\nExecStart=/usr/sbin/routerd-eventd\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	router := &api.Router{Metadata: api.ObjectMeta{Name: "home"}, Spec: api.RouterSpec{Resources: []api.Resource{
@@ -1542,6 +1564,7 @@ func TestSystemdUnitControllerRemovesIdentityOnlyEventFederationUnit(t *testing.
 		Router:           router,
 		Store:            mapStore{},
 		SystemdSystemDir: dir,
+		BGPStatePath:     filepath.Join(dir, "bgp", "applied.json"),
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
@@ -1560,7 +1583,6 @@ func TestSystemdUnitControllerRemovesIdentityOnlyEventFederationUnit(t *testing.
 	gotCommands := strings.Join(commands, "\n")
 	for _, want := range []string{
 		"systemctl disable --now routerd-eventd@identity.service",
-		"systemctl reset-failed routerd-eventd@identity.service",
 		"systemctl daemon-reload",
 	} {
 		if !strings.Contains(gotCommands, want) {
@@ -1585,6 +1607,7 @@ func TestSystemdUnitControllerNoEventFederationNoAction(t *testing.T) {
 		Router:           router,
 		Store:            mapStore{},
 		SystemdSystemDir: dir,
+		BGPStatePath:     filepath.Join(dir, "bgp", "applied.json"),
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
@@ -1619,6 +1642,7 @@ func TestSystemdUnitControllerSynthesizesDHCPClientUnits(t *testing.T) {
 		Router:                      router,
 		Store:                       store,
 		SystemdSystemDir:            dir,
+		BGPStatePath:                filepath.Join(dir, "bgp", "applied.json"),
 		SynthesizeClientDaemonUnits: true,
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
@@ -1636,7 +1660,7 @@ func TestSystemdUnitControllerSynthesizesDHCPClientUnits(t *testing.T) {
 		{
 			unit: "routerd-dhcpv4-client@wan-v4.service",
 			want: []string{
-				`ExecStart=/usr/local/sbin/routerd-dhcpv4-client daemon --resource wan-v4 --interface ens18 --hostname routerd-test`,
+				`ExecStart=/usr/sbin/routerd-dhcpv4-client daemon --resource wan-v4 --interface ens18 --hostname routerd-test`,
 				`RuntimeDirectory=routerd/dhcpv4-client`,
 				`AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN CAP_NET_BIND_SERVICE`,
 			},
@@ -1644,7 +1668,7 @@ func TestSystemdUnitControllerSynthesizesDHCPClientUnits(t *testing.T) {
 		{
 			unit: "routerd-dhcpv6-client@wan-pd.service",
 			want: []string{
-				`ExecStart=/usr/local/sbin/routerd-dhcpv6-client daemon --resource wan-pd --interface ens18 --iaid 1 --client-duid 00030001020000000103`,
+				`ExecStart=/usr/sbin/routerd-dhcpv6-client daemon --resource wan-pd --interface ens18 --iaid 1 --client-duid 00030001020000000103`,
 				`RuntimeDirectory=routerd/dhcpv6-client`,
 				`AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN CAP_NET_BIND_SERVICE`,
 			},
@@ -1652,7 +1676,7 @@ func TestSystemdUnitControllerSynthesizesDHCPClientUnits(t *testing.T) {
 		{
 			unit: "routerd-ra-observer@lan-ra.service",
 			want: []string{
-				`ExecStart=/usr/local/sbin/routerd-ra-observer daemon --resource lan-ra --interface ens19 --socket /run/routerd/ra-observer/lan-ra.sock --event-file /var/log/routerd/ra-observer-lan-ra.events.jsonl`,
+				`ExecStart=/usr/sbin/routerd-ra-observer daemon --resource lan-ra --interface ens19 --socket /run/routerd/ra-observer/lan-ra.sock --event-file /var/log/routerd/ra-observer-lan-ra.events.jsonl`,
 				`RuntimeDirectory=routerd/ra-observer`,
 				`AmbientCapabilities=CAP_NET_RAW`,
 			},
@@ -1753,6 +1777,7 @@ func TestSystemdUnitControllerDisablesHealthCheckDaemonUnit(t *testing.T) {
 		Router:           router,
 		Store:            store,
 		SystemdSystemDir: dir,
+		BGPStatePath:     filepath.Join(dir, "bgp", "applied.json"),
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			commands = append(commands, strings.Join(append([]string{name}, args...), " "))

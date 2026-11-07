@@ -4,486 +4,149 @@ title: Install and upgrade
 
 # Install and upgrade
 
-![Diagram showing routerd install and upgrade from release archive download and install.sh through first router.yaml validation, plan, serve mode, preserved config and state, and uninstall](/img/diagrams/install-and-upgrade.png)
+The routerd 1.5 proposal uses native Debian/Ubuntu `.deb` and FreeBSD `.pkg`
+packages on a clean OS. These changes are under development; the older stable
+release's archives are not 1.5 packages. No public apt/pkg repository is announced
+here. Obtain the package for the intended build, OS and CPU architecture, and
+verify its accompanying checksum before installation.
 
-Use the release archive when you install routerd on a router host.
-The archive contains the binaries, service template, sample configuration, and
-the installer scripts.
-You do not need a Go toolchain or the Makefile on the router host.
+Package-to-package updates are supported by this installation contract. Existing
+1.0 configurations, `make install`, manually copied binaries and archive-based
+installations are outside it. Prepare a reviewed 1.5 configuration on a clean OS
+rather than attempting to adopt those installations.
 
-:::caution First installation
-For a first live test, choose an isolated Ubuntu Server VM or spare computer
-with a console or a separate management path. Installing software is not the
-same as safely applying a router configuration: a later live apply can change
-addresses, routes, DHCP, and DNS.
-:::
+## Install
 
-## Quick install
-
-Download the archive for your OS and architecture from the recommended stable
-milestone, [v20260914.0729](https://github.com/imksoo/routerd/releases/tag/v20260914.0729).
-The [stable milestone](./releases/stable.md) page is the single source for this
-recommendation.
-
-Linux amd64:
+For Debian/Ubuntu, pass the downloaded local package to apt so dependencies are
+resolved from the configured OS repositories:
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260914.0729/routerd-linux-amd64.tar.gz
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260914.0729/routerd-linux-amd64.tar.gz.sha256
-sha256sum -c routerd-linux-amd64.tar.gz.sha256
-tar -xzf routerd-linux-amd64.tar.gz
-sudo ./install.sh
+sudo apt install ./routerd_<version>_amd64.deb
 ```
 
-For Linux arm64, use the `linux-arm64` archive.
-
-FreeBSD amd64:
+For FreeBSD 14, use the native package manager:
 
 ```sh
-fetch https://github.com/imksoo/routerd/releases/download/v20260914.0729/routerd-freebsd-amd64.tar.gz
-fetch https://github.com/imksoo/routerd/releases/download/v20260914.0729/routerd-freebsd-amd64.tar.gz.sha256
-cat routerd-freebsd-amd64.tar.gz.sha256
-sha256 routerd-freebsd-amd64.tar.gz
-tar -xzf routerd-freebsd-amd64.tar.gz
-sudo ./install.sh
+sudo pkg -o HANDLE_RC_SCRIPTS=true install ./routerd-<version>.pkg
 ```
 
-For FreeBSD arm64, use the `freebsd-arm64` archive.
-The same release also includes versioned archives such as
-`routerd-v20260914.0729-linux-amd64.tar.gz`.
-Use those when you need an explicitly named artifact.
+Replace the placeholders with the actual downloaded filename; use arm64 packages
+on arm64 hosts. FreeBSD's native ABI names that architecture `aarch64`. Linux
+routerd binaries are statically linked with `CGO_ENABLED=0`; OS tools still have
+runtime dependencies. The standard FreeBSD package includes the native libnDPI
+agent and its actual shared-library/runtime-package dependencies. Package metadata
+declares baseline dependencies. Additional
+features can require additional OS packages; review the selected configuration's
+requirements before applying it.
 
-Linux archives are built with `CGO_ENABLED=0` and contain statically linked
-routerd binaries. They do not require the router host to have the same glibc
-version as the build machine. Runtime tools such as `dnsmasq`, `nft`, `ip`,
-`conntrack`, and `tcpdump` are still installed or checked by `install.sh`.
+Fresh installation installs files and service integration without starting the
+daemon, enabling routing or applying a sample configuration. The package does not
+contain the operator's actual configuration or database.
 
-Hosts that require native nDPI application classification should also download
-the matching `routerd-ndpi-agent-libndpi-linux-amd64.tar.gz` archive and install
-it explicitly with the normal archive:
+| Purpose | Debian/Ubuntu | FreeBSD |
+| --- | --- | --- |
+| Main daemon | `/usr/sbin/routerd` | `/usr/local/sbin/routerd` |
+| Configuration | `/etc/routerd/router.yaml` | `/usr/local/etc/routerd/router.yaml` |
+| Examples | `/usr/share/doc/routerd/examples` | `/usr/local/share/doc/routerd/examples` |
+| Durable state | `/var/lib/routerd` | `/var/db/routerd` |
+| Runtime sockets | `/run/routerd` | `/var/run/routerd` |
+| Main service | vendor systemd unit | `/usr/local/etc/rc.d/routerd` |
+
+## Prepare configuration and start
+
+Review interface names, addressing, DHCP/DNS, NAT and firewall policy before
+starting a router. Keep console access or a separate management path. The large
+bundled sample is reference material, not a safe configuration for every network.
+Validate your prepared configuration first:
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260914.0729/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260914.0729/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz.sha256
-sha256sum -c routerd-ndpi-agent-libndpi-linux-amd64.tar.gz.sha256
-sudo ./install.sh --with-ndpi \
-  --with-ndpi-archive ./routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
+# Debian/Ubuntu
+sudo routerd validate --config /etc/routerd/router.yaml
+sudo systemctl enable --now routerd.service
+sudo systemctl status routerd.service
+
+# FreeBSD
+sudo routerd validate --config /usr/local/etc/routerd/router.yaml
+sudo sysrc routerd_enable=YES
+sudo service routerd start
+sudo service routerd status
 ```
 
-`--with-ndpi` fails if the final installed `routerd-ndpi-agent` does not report
-`libndpiLoaded: true`, so the static fallback agent cannot silently satisfy a
-native nDPI requirement.
-
-`install.sh` detects whether this is a fresh install or an upgrade.
-It installs the binaries under `/usr/local/sbin`, installs the service template,
-and writes `/usr/local/etc/routerd/router.yaml.sample`.
-It never overwrites an existing `/usr/local/etc/routerd/router.yaml`.
-On systemd hosts, the installer creates the `routerd` group for local socket
-access. Add an operator with `sudo usermod -aG routerd <user>` to allow
-`routerctl get status` and other local control socket operations without sudo.
-
-## First configuration
-
-For a first lab, follow [Getting started safely](./tutorials/getting-started.md)
-for an offline preview, then [Bring up the first lab router](./tutorials/first-router.md)
-for a complete DHCP/NAT configuration, service startup, and connectivity checks.
-The bundled `router.yaml.sample` contains a larger ISP-specific configuration;
-editing only interface names is not enough to make it suitable for every network.
-A normal fresh `./install.sh` installs files but does not start routerd.
-
-## Upgrading a router that runs BGP
-
-`routerd-bgp` is a long-lived daemon that holds the BGP sessions. Restarting it
-drops those sessions; peers keep the old paths until their hold timers expire,
-so ECMP shrinks during that window. On systemd hosts, `install.sh` now refreshes
-active routerd helper services that still run a deleted pre-upgrade binary,
-including `routerd-bgp` and `routerd-dns-resolver` instances. This keeps the
-post-upgrade host from carrying stale executables under `/proc/*/exe`.
-
-Expect BGP to reconverge after the installer restarts the helper. Do not restart
-`routerd-bgp` again while it is reconverging — a rapid second restart makes
-peers hold stale paths and collapses ECMP. Graceful restart protects a single
-restart only. Wait for reconvergence before judging (allow up to ~3–6 minutes;
-the BGP hold timer and graceful-restart stale-path timer drive this). Pass
-conditions: every peer back to `Established`, full-width ECMP for the affected
-prefixes, and end-to-end reachability (for example an HTTP 200 through the ECMP
-path).
-
-During this window it is normal for one peer to stay `IDLE` and repeatedly log
-`Closed an accepted connection`: that peer is still holding the previous session
-and rejecting the new one until its hold timer expires. Do not restart again —
-wait it out; the peer establishes and ECMP returns on its own.
+Starting a configured daemon can change network state. Validate syntax before
+startup, then verify actual client traffic and the intended failure/recovery
+behavior. `routerctl get status` provides runtime status; successful installation
+alone does not prove that a routing configuration works.
 
 ## Local control socket access for non-root operators
 
-The read-only status socket (`/run/routerd/routerd-status.sock`) lets non-root
-operators run `routerctl get status` without sudo. When a `routerd` group exists,
-routerd hands that socket to it (`root:routerd`, mode `0o660`); connecting to a
-unix socket needs write access, so members get read+write. routerd sets this
-group ownership itself when it creates the socket, so it does **not** depend on
-the service unit's `Group=` setting. If no `routerd` group exists, the status
-socket falls back to world-accessible (`0o666`) so nobody is locked out.
+Run `routerctl` with sudo when using the privileged control socket. If a `routerd`
+group exists, the daemon grants that group access to its local sockets; membership
+therefore grants control access, not just read-only status. The native package
+does not create that group. Review this boundary before creating a group or adding
+operators, then start a new login session for changed membership to take effect.
+The default status endpoint is `/run/routerd/routerd-status.sock` on Linux and
+`/var/run/routerd/routerd-status.sock` on FreeBSD.
 
-The read-write control socket (`/run/routerd/routerd.sock`, used by
-`routerctl apply`/`delete`) stays `root`-owned `0o660`: mutating the router
-still requires root/sudo.
+## Update a package installation
 
-To give an operator sudo-less `routerctl get status`:
+Keep the operator configuration and durable state in the paths above. Install the
+newer local package with the same apt/pkg command used for initial installation.
+The package manager tracks distributed binaries and service files; do not replace
+those files with `make install` or manual copies.
 
-1. `sudo usermod -aG routerd <user>` (the installer already created the group).
-2. Group membership only applies to **new** login sessions. Re-login (or open a
-   new SSH session / run `newgrp routerd`) before it takes effect. To use the
-   group in the current shell without a full re-login, wrap the command:
-   `sg routerd -c 'routerctl get status'`.
+Debian update hooks remember previously active owned services, stop the old daemon
+and helpers before replacement, and restore active services after installation.
+Previously inactive Debian services stay inactive. FreeBSD uses pkg's native
+`HANDLE_RC_SCRIPTS=true` service policy: enable `routerd_enable=YES` for an
+operating router, and use the option in the command above when updating. Native
+pkg starts enabled rc.d services after hook cleanup; main rc.d startup then
+restores previously active owned helpers. An enabled but previously stopped
+FreeBSD service can therefore start during the update. The option applies to that
+pkg invocation and does not alter global pkg configuration. Without native service
+handling, an update can leave routerd stopped. Starting daemons directly from a
+pkg hook is insufficient because pkg reaps hook descendants.
+A fresh installation without an enabled service remains inactive. Configuration and database contents are retained. A package update can
+interrupt traffic and cause protocol reconvergence; verify independent client
+traffic after the update. The package hooks do not implement a database-format
+migration contract or guarantee uninterrupted BGP sessions.
 
-Verify with `ls -l /run/routerd/routerd-status.sock` (expect
-`srw-rw---- root routerd`) and `id <user>` (expect `routerd` in the group list).
-A user who is not in the group is denied by design; that is the intended
-hardening, not a regression. No service-unit change is required.
+If stopping an old service fails, the update's pre-install step must reject
+replacement. Inspect the package manager's diagnostics and actual service status;
+do not treat a package-manager exit code alone as proof that traffic recovered.
+On Debian/Ubuntu, service policy can prevent restarts; resolve that policy before
+expecting an active daemon to recover. Do not repeatedly restart a reconverging
+protocol daemon to make a status check pass.
 
-## Try the live ISO
-
-The stable release page also publishes a bootable Ubuntu-based live ISO:
-
-```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260914.0729/routerd-live.iso
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260914.0729/routerd-live.iso.sha256
-sha256sum -c routerd-live.iso.sha256
-```
-
-Attach the ISO to a Proxmox VE test VM and boot it.
-The console prints routerd setup instructions and starts the same
-`install.sh configure` wizard after root login.
-Use the ISO for demos and short trials.
-For a persistent router, install routerd onto disk with the release archive.
-
-The live ISO enables both the video console and a serial console.
-On virtual machines (for example KVM/Proxmox), the live boot flow also attempts to
-start `qemu-guest-agent` automatically when the service is available.
-`sshd` is packaged for operator access in virtualized environments, but Live ISO keeps it stopped by default.
-On Proxmox VE, add a serial socket and connect with `qm terminal`: 
+## Remove
 
 ```sh
-qm create 200 \
-  --name routerd-live-demo \
-  --memory 1536 \
-  --cores 2 \
-  --ostype l26 \
-  --serial0 socket \
-  --vga serial0 \
-  --boot order=ide2 \
-  --ide2 local:iso/routerd-live.iso,media=cdrom \
-  --net0 virtio,bridge=vmbr0 \
-  --net1 virtio,bridge=vmbr490
-qm start 200
-qm terminal 200
+# Debian/Ubuntu
+sudo apt remove routerd
+
+# FreeBSD
+sudo pkg delete routerd
 ```
 
-Use an isolated LAN bridge for `net1` when you test DHCP or RA.
-The serial console runs at 115200 8N1 and uses plain text prompts, so the same
-wizard works from `qm terminal`, a framebuffer console, or a minimal terminal.
-
-The live ISO can run in two modes:
-
-- **Ephemeral demo mode:** no USB storage is selected. Configuration and logs
-  live in RAM and disappear at reboot.
-- **Persistent router mode:** select a USB partition in the wizard. The wizard
-  saves `router.yaml` to the USB device. On the next boot, the ISO mounts the
-  USB device, restores the config, and applies it automatically.
-
-For persistent mode, label the USB partition `ROUTERD` or pass
-`routerd.usb=/dev/sdX1` on the kernel command line when multiple removable
-devices are present. The helper detects `ext4`, `vfat`, and `exfat` with
-`blkid` and mounts them with `async,noatime` by default. Pass
-`routerd.usb_mount=sync` only when you explicitly want synchronous writes.
-
-Logs are buffered under `/run/routerd/logs` on tmpfs. The wizard can enable a
-daily flush job that copies the config, state snapshot, and compressed log
-archive to the USB device. The default tmpfs log limit is 100 MiB. Older log
-files are removed when the buffer exceeds that limit.
-
-For safe USB removal, run:
-
-```sh
-/usr/share/routerd/live-persistence.sh flush
-/usr/share/routerd/live-persistence.sh umount
-```
-
-See [Operations → USB persistence](./operations/usb-persistence) for the full
-layout and mount options.
-
-Versioned ISO files are also published, for example
-`routerd-live-vYYYYMMDD.HHmm.iso`.
-
-## Runtime dependencies
-
-By default, `install.sh` installs known OS packages before copying routerd.
-Use `--list-deps` to inspect the package list:
-
-```sh
-./install.sh --list-deps
-```
-
-Use `--no-install-deps` when dependencies are already managed by another tool:
-
-```sh
-sudo ./install.sh --no-install-deps
-```
-
-Use `--deps-only` when you only want to install dependencies:
-
-```sh
-sudo ./install.sh --deps-only
-```
-
-Tailscale is optional.
-Add it to the package list with `--with-tailscale`:
-
-```sh
-sudo ./install.sh --with-tailscale
-```
-
-### Debian and Ubuntu
-
-The installer uses `apt-get` and installs:
-
-```text
-ca-certificates curl dnsmasq-base nftables wireguard-tools chrony bind9-dnsutils tcpdump cron jq ppp pppoe conntrack iproute2 iputils-ping iputils-tracepath net-tools kmod radvd strongswan-swanctl iptables keepalived openssh-server
-```
-
-### Fedora-like systems
-
-The installer uses `dnf` and installs:
-
-```text
-ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-utils tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute iputils traceroute kmod radvd strongswan iptables keepalived openssh-server
-```
-
-### Arch-like systems
-
-The installer uses `pacman` and installs:
-
-```text
-ca-certificates curl dnsmasq nftables wireguard-tools chrony bind tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute2 iputils traceroute kmod radvd strongswan iptables keepalived openssh
-```
-
-### FreeBSD
-
-The installer uses `pkg` and installs:
-
-```text
-ca_root_nss curl dnsmasq wireguard-tools mpd5 bind-tools tcpdump jq chrony strongswan
-```
-
-FreeBSD `pf`, `ifconfig`, `route`, `sysctl`, `service`, `sysrc`, `cron`,
-`netstat`, `sockstat`, `ping`, and `traceroute` are base-system tools.
-The installer checks for the commands but does not install them as packages.
-
-## Upgrade
-
-Extract the new archive and run the same installer:
-
-```sh
-tar -xzf routerd-linux-amd64.tar.gz
-sudo ./install.sh
-```
-
-When `/usr/local/sbin/routerd` already exists, the installer switches to upgrade
-mode.
-It prints the old and new `routerd --version` output.
-It replaces binaries and service templates, keeps configuration and state, and
-restarts the routerd service if it was already active.
-On systemd hosts, it waits for the restarted `routerd.service` to expose its
-status socket, lets routerd-managed unit files settle, and then restarts only
-active routerd helper services that still need refresh. A helper needs refresh
-when it is still running a deleted pre-upgrade binary or when its unit file was
-updated after the helper process started.
-When `/etc/systemd/system/routerd.service` is already managed by routerd
-configuration, the installer preserves that unit instead of overwriting it with
-the archive template.
-Only units containing the removed `--controller-chain` option are treated as
-legacy here; the current `Managed by routerd` comment is not a legacy signal.
-
-Runtime reload preserves unchanged supervised DHCP clients. A graceful VRRP
-MASTER retains its VIP during readiness degradation only when saved status
-records successful publication on the same address and interface. A leftover
-address without that history must pass initial readiness; BACKUP/FAULT still
-withdraws the VIP.
-Successful publication history is separate from current observation status:
-transient observation errors preserve it, while demotion, observed VIP absence,
-or publication failure invalidates it. Address/interface changes cannot reuse it.
-
-Every replaced file is copied to `*.backup.YYYYMMDDHHMMSS` before replacement.
-If the install fails partway through, the script restores files from the
-temporary rollback backup.
-
-routerd derives its own `routerd.service` unit from the router configuration.
-When that unit changes, the controller schedules a delayed self-restart through
-`systemd-run` instead of directly restarting itself in the middle of the
-controller pass.
-When the same router config contains VRRP or ingress service resources, routerd
-augments its own unit with the keepalived paths and capabilities needed by the
-generated integrations. BGP no longer requires FRR groups or writable FRR
-runtime directories because the GoBGP backend runs as the managed
-`routerd-bgp` daemon and is controlled through a local gRPC Unix socket.
-
-Useful options:
-
-```sh
-sudo ./install.sh --no-restart
-sudo ./install.sh --dry-run
-sudo ./install.sh --verbose
-sudo ./install.sh --no-config-update
-```
-
-## Layout
-
-On Linux, one-shot apply and the continuous controller share
-`/run/routerd/dnsmasq.conf`. Both honor an explicit `--dnsmasq-file` path,
-so applying an unrelated change does not switch the DHCP/RA service between
-canonical and runtime config files. FreeBSD keeps its canonical config default.
-
-The release installer uses these paths:
-
-| Item | Linux | FreeBSD |
-| --- | --- | --- |
-| Configuration | `/usr/local/etc/routerd/router.yaml` | `/usr/local/etc/routerd/router.yaml` |
-| Sample configuration | `/usr/local/etc/routerd/router.yaml.sample` | `/usr/local/etc/routerd/router.yaml.sample` |
-| Binaries | `/usr/local/sbin` | `/usr/local/sbin` |
-| Service template | `/etc/systemd/system/routerd.service` | `/usr/local/etc/rc.d/routerd` |
-| Runtime sockets | `/run/routerd` | `/var/run/routerd` |
-| Persistent state | `/var/lib/routerd` | `/var/db/routerd` |
-
-The installer never removes these state locations:
-
-- `/usr/local/etc/routerd/router.yaml`
-- `/var/lib/routerd`
-- `/var/db/routerd`
-- `/run/routerd`
-- `/var/run/routerd`
-- `/var/log/otelcol`
-
-## Alternative: interactive configuration
-
-As an alternative to the tutorial’s small lab file, use the built-in setup
-wizard and ask it to stop
-before a live apply:
-
-```sh
-sudo ./install.sh configure --no-apply
-```
-
-The wizard asks for the WAN interface, LAN interface, LAN address, LAN services,
-management placement, and optional USB persistence. It writes a candidate file to
-`/usr/local/etc/routerd/router.yaml.configure`, shows a diff when an existing
-configuration is present, and installs it as
-`/usr/local/etc/routerd/router.yaml` only after confirmation. Review the file
-and use the direct validation and dry-run below before deciding on a live
-apply.
-
-Automation can use environment variables and skip prompts. For a first lab,
-render the candidate only; `--dry-run` does not install the file, write USB
-persistence, start the service, or apply a network change:
-
-```sh
-sudo ROUTERD_WAN_INTERFACE=ens18 \
-  ROUTERD_LAN_INTERFACE=ens19 \
-  ROUTERD_LAN_ADDRESS=192.168.10.1/24 \
-  ROUTERD_LAN_CIDR=192.168.10.0/24 \
-  ROUTERD_MGMT_MODE=lan \
-  ROUTERD_ENABLE_USB_PERSISTENCE=no \
-  ./install.sh configure --non-interactive --yes --dry-run
-```
-
-Do not copy a USB-persistence command from this first-run page. Selecting a
-USB device writes the configuration to that device even when live network apply
-is skipped. Follow the [diskless mini PC walkthrough](./tutorials/diskless-minipc-walkthrough.md)
-only after identifying the exact disposable USB partition from its console.
-
-Use `--no-apply` when you want to install the YAML file but delay the live
-network apply. This is the recommended first-lab option after you have reviewed
-the candidate:
-
-```sh
-sudo ./install.sh configure --no-apply
-```
-
-The following checks use the reviewed file created by the wizard. Do not
-replace it with the larger packaged sample merely to follow this section.
-
-Before a service is running, validate the file directly and perform a dry-run
-with isolated temporary state:
-
-```sh
-sudo routerd validate --config /usr/local/etc/routerd/router.yaml
-
-workdir=$(mktemp -d)
-sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once --dry-run \
-  --state-file "$workdir/state.db" \
-  --ledger-file "$workdir/ledger.db" \
-  --status-file "$workdir/status.json"
-rm -rf "$workdir"
-```
-
-Apply only from a console or an independent management path after reviewing the
-file. This command changes the host network:
-
-```sh
-sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once
-```
-
-Start the service when the one-shot apply is healthy:
-
-```sh
-sudo systemctl enable --now routerd.service
-```
-
-After the service starts, use `sudo routerctl get status` to inspect it.
-`routerctl` is a client for the running local daemon; it is not the standalone
-first-run validator. The installer creates a `routerd` group, so an operator
-can later join that group and begin a new login session to use read-only status
-commands without `sudo`.
-
-On FreeBSD:
-
-```sh
-sudo sysrc routerd_enable=YES
-sudo service routerd start
-```
-
-## Uninstall
-
-The release archive also contains `uninstall.sh`.
-The default uninstall removes binaries, service templates, and runtime files.
-It keeps configuration and state.
-
-```sh
-sudo ./uninstall.sh --yes
-```
-
-Purge options are explicit:
-
-```sh
-sudo ./uninstall.sh --yes --purge-config
-sudo ./uninstall.sh --yes --purge-state
-sudo ./uninstall.sh --yes --all
-```
-
-Use `--dry-run` to preview removal.
-
-## Developer workflow
-
-The Makefile is for development only.
-Use it to test, build, generate schemas, validate examples, build the website,
-and create release archives:
-
-```sh
-make test
-make check-schema
-make validate-example
-make website-build
-make dist ROUTERD_OS=linux GOARCH=amd64 VERSION="$(git describe --tags --abbrev=0)"
-```
-
-Do not use the Makefile as the user-facing install path.
-The release archive and `install.sh` are the supported deployment path.
+Removal stops owned services and removes package files and marked generated
+service helpers. Operator configuration and the durable database remain, including
+after Debian purge. Removal is not a promise to undo every network effect of a
+running configuration: withdraw the desired resources and verify client/kernel
+state before removing a router from service. Delete retained configuration/state
+only when the operator explicitly intends to discard them.
+
+## Build and verify
+
+Use `make dist-deb ROUTERD_OS=linux` or native FreeBSD
+`gmake dist-pkg ROUTERD_OS=freebsd`. Set `GOARCH` and `PACKAGE_VERSION` explicitly
+when building release artifacts. FreeBSD packaging requires native `pkg`, Python, a C compiler, `pkgconf`,
+`readelf`, `dnsmasq`, `ca_root_nss` and `ndpi`; Linux packaging requires `dpkg-deb` and Python. The
+release workflow builds both amd64 and arm64 packages; a workflow definition does
+not itself constitute an executed release or runtime qualification for both CPUs.
+
+The reproducible installation/update/removal gates and their pass criteria are in
+[Development](./operations/development.md). They run only in disposable OS guests.
+They check real package replacement, independent DNS traffic, old process exit,
+configuration and SQLite value retention, and removal. They do not certify every
+routerd function. Linux native libnDPI uses a matching
+[addon package](./operations/ndpi-agent-libndpi.md); do not overwrite
+package-owned agent files with an archive.

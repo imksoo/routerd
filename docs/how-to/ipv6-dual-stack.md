@@ -7,6 +7,32 @@ Keep `spec.importPolicy.allowedPrefixes`, `spec.exportPolicy.allowedPrefixes`,
 and `redistribute.*.allowedPrefixes` as mixed IPv4/IPv6 lists; routerd maps
 prefixes to typed GoBGP address families directly.
 
+On Linux, imported IPv4 and IPv6 routes use a next hop from the same address
+family and the main kernel routing table. IPv6 requires a usable global next hop.
+The existing FIB owner persists the
+exact native route tuple and acknowledges kernel readback before reporting it
+installed. Withdrawal and restart reuse that receipt. IPv6 link-local next hops
+currently lack an output-interface identity in this boundary and report
+`GoBGPIPv6LinkLocalNextHopUnsupported`. IPv6 addresses that are tentative or have
+failed duplicate address detection (DAD) remain observed as present, but cannot
+become preferred route sources.
+
+The independent FRR acceptance uses the production `routerd-bgp` binary and two
+separate network namespaces. It checks both address families, exact kernel
+readback, actual peer traffic, advertisement withdrawal, peer and daemon restart,
+SQLite reopen, and declared-resource removal:
+
+```sh
+sh scripts/linux-bgp-frr-smoke.sh
+```
+
+This requires Linux user/network/mount namespaces, iproute2, ping, Go, and FRR
+`bgpd` plus `vtysh`. Set `GO` to select a Go executable and `ROUTERD_FRR_BGPD` to
+override `/usr/lib/frr/bgpd`. The script creates a private `/run` filesystem and
+retains binaries, source hashes and logs in a temporary evidence directory.
+Independent-peer ECMP, throughput, multi-router HA and FreeBSD interoperability
+require separate qualification.
+
 Use IPv6 peer addresses directly in `BGPPeer.spec.peers`:
 
 ```yaml

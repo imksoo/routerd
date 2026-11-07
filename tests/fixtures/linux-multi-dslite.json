@@ -1,0 +1,421 @@
+{
+  "apiVersion": "routerd.net/v1alpha1",
+  "kind": "Router",
+  "metadata": {
+    "name": "linux-multi-dslite"
+  },
+  "spec": {
+    "resources": [
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "Interface",
+        "metadata": {
+          "name": "wan"
+        },
+        "spec": {
+          "ifname": "rd15-mwan",
+          "managed": false,
+          "owner": "external"
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "Interface",
+        "metadata": {
+          "name": "lan"
+        },
+        "spec": {
+          "ifname": "rd15-mlan",
+          "managed": false,
+          "owner": "external"
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "Interface",
+        "metadata": {
+          "name": "management"
+        },
+        "spec": {
+          "ifname": "eth0",
+          "managed": false,
+          "owner": "external"
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "ManagementAccess",
+        "metadata": {
+          "name": "management"
+        },
+        "spec": {
+          "interfaces": [
+            "management"
+          ],
+          "requireWebConsoleBound": false
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "IPv4StaticAddress",
+        "metadata": {
+          "name": "lan"
+        },
+        "spec": {
+          "interface": "lan",
+          "address": "198.18.25.1/24"
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "Interface",
+        "metadata": {
+          "name": "ds-a"
+        },
+        "spec": {
+          "ifname": "ds-a",
+          "managed": false,
+          "owner": "external"
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "DSLiteTunnel",
+        "metadata": {
+          "name": "ds-a"
+        },
+        "spec": {
+          "interface": "wan",
+          "tunnelName": "ds-a",
+          "localAddressSource": "static",
+          "localAddress": "2001:db8:25::1",
+          "aftrIPv6": "2001:db8:25::11",
+          "mtu": 1460
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "HealthCheck",
+        "metadata": {
+          "name": "hc-a"
+        },
+        "spec": {
+          "target": "203.0.113.80",
+          "protocol": "tcp",
+          "port": 8080,
+          "interval": "1s",
+          "timeout": "1s",
+          "healthyThreshold": 1,
+          "unhealthyThreshold": 1
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "NAT44Rule",
+        "metadata": {
+          "name": "nat-a"
+        },
+        "spec": {
+          "type": "masquerade",
+          "egressInterface": "ds-a",
+          "sourceRanges": [
+            "198.18.25.0/24"
+          ]
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "Interface",
+        "metadata": {
+          "name": "ds-b"
+        },
+        "spec": {
+          "ifname": "ds-b",
+          "managed": false,
+          "owner": "external"
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "DSLiteTunnel",
+        "metadata": {
+          "name": "ds-b"
+        },
+        "spec": {
+          "interface": "wan",
+          "tunnelName": "ds-b",
+          "localAddressSource": "static",
+          "localAddress": "2001:db8:25::1",
+          "aftrIPv6": "2001:db8:25::12",
+          "mtu": 1460
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "HealthCheck",
+        "metadata": {
+          "name": "hc-b"
+        },
+        "spec": {
+          "target": "203.0.113.80",
+          "protocol": "tcp",
+          "port": 8080,
+          "interval": "1s",
+          "timeout": "1s",
+          "healthyThreshold": 1,
+          "unhealthyThreshold": 1
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "NAT44Rule",
+        "metadata": {
+          "name": "nat-b"
+        },
+        "spec": {
+          "type": "masquerade",
+          "egressInterface": "ds-b",
+          "sourceRanges": [
+            "198.18.25.0/24"
+          ]
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "Interface",
+        "metadata": {
+          "name": "ds-c"
+        },
+        "spec": {
+          "ifname": "ds-c",
+          "managed": false,
+          "owner": "external"
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "DSLiteTunnel",
+        "metadata": {
+          "name": "ds-c"
+        },
+        "spec": {
+          "interface": "wan",
+          "tunnelName": "ds-c",
+          "localAddressSource": "static",
+          "localAddress": "2001:db8:25::1",
+          "aftrIPv6": "2001:db8:25::13",
+          "mtu": 1460
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "HealthCheck",
+        "metadata": {
+          "name": "hc-c"
+        },
+        "spec": {
+          "target": "203.0.113.80",
+          "protocol": "tcp",
+          "port": 8080,
+          "interval": "1s",
+          "timeout": "1s",
+          "healthyThreshold": 1,
+          "unhealthyThreshold": 1
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "NAT44Rule",
+        "metadata": {
+          "name": "nat-c"
+        },
+        "spec": {
+          "type": "masquerade",
+          "egressInterface": "ds-c",
+          "sourceRanges": [
+            "198.18.25.0/24"
+          ]
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "Interface",
+        "metadata": {
+          "name": "ds-d"
+        },
+        "spec": {
+          "ifname": "ds-d",
+          "managed": false,
+          "owner": "external"
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "DSLiteTunnel",
+        "metadata": {
+          "name": "ds-d"
+        },
+        "spec": {
+          "interface": "wan",
+          "tunnelName": "ds-d",
+          "localAddressSource": "static",
+          "localAddress": "2001:db8:25::1",
+          "aftrIPv6": "2001:db8:25::14",
+          "mtu": 1460
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "HealthCheck",
+        "metadata": {
+          "name": "hc-d"
+        },
+        "spec": {
+          "target": "203.0.113.80",
+          "protocol": "tcp",
+          "port": 8080,
+          "interval": "1s",
+          "timeout": "1s",
+          "healthyThreshold": 1,
+          "unhealthyThreshold": 1
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "NAT44Rule",
+        "metadata": {
+          "name": "nat-d"
+        },
+        "spec": {
+          "type": "masquerade",
+          "egressInterface": "ds-d",
+          "sourceRanges": [
+            "198.18.25.0/24"
+          ]
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "EgressRoutePolicy",
+        "metadata": {
+          "name": "internet"
+        },
+        "spec": {
+          "family": "ipv4",
+          "mode": "priority",
+          "selection": "highest-weight-ready",
+          "hysteresis": "0s",
+          "sourceCIDRs": [
+            "198.18.25.0/24"
+          ],
+          "destinationCIDRs": [
+            "0.0.0.0/0"
+          ],
+          "excludeDestinationCIDRs": [
+            "10.0.0.0/8",
+            "172.16.0.0/12",
+            "192.168.0.0/16"
+          ],
+          "hashFields": [
+            "sourceAddress"
+          ],
+          "candidates": [
+            {
+              "name": "balanced",
+              "source": "DSLiteTunnel/ds-a",
+              "weight": 120,
+              "targets": [
+                {
+                  "name": "a",
+                  "interface": "ds-a",
+                  "table": 110,
+                  "priority": 10110,
+                  "mark": 272,
+                  "healthCheck": "hc-a"
+                },
+                {
+                  "name": "b",
+                  "interface": "ds-b",
+                  "table": 111,
+                  "priority": 10111,
+                  "mark": 273,
+                  "healthCheck": "hc-b"
+                },
+                {
+                  "name": "c",
+                  "interface": "ds-c",
+                  "table": 112,
+                  "priority": 10112,
+                  "mark": 274,
+                  "healthCheck": "hc-c"
+                }
+              ]
+            },
+            {
+              "name": "fallback",
+              "source": "DSLiteTunnel/ds-d",
+              "interface": "ds-d",
+              "gatewaySource": "none",
+              "weight": 80,
+              "table": 113,
+              "priority": 10113,
+              "mark": 275,
+              "healthCheck": "hc-d"
+            }
+          ]
+        }
+      },
+      {
+        "apiVersion": "firewall.routerd.net/v1alpha1",
+        "kind": "FirewallZone",
+        "metadata": {
+          "name": "wan"
+        },
+        "spec": {
+          "role": "untrust",
+          "interfaces": [
+            "wan",
+            "ds-a",
+            "ds-b",
+            "ds-c",
+            "ds-d"
+          ]
+        }
+      },
+      {
+        "apiVersion": "firewall.routerd.net/v1alpha1",
+        "kind": "FirewallZone",
+        "metadata": {
+          "name": "lan"
+        },
+        "spec": {
+          "role": "trust",
+          "interfaces": [
+            "lan"
+          ]
+        }
+      },
+      {
+        "apiVersion": "firewall.routerd.net/v1alpha1",
+        "kind": "FirewallZone",
+        "metadata": {
+          "name": "management"
+        },
+        "spec": {
+          "role": "mgmt",
+          "interfaces": [
+            "management"
+          ]
+        }
+      },
+      {
+        "apiVersion": "firewall.routerd.net/v1alpha1",
+        "kind": "FirewallPolicy",
+        "metadata": {
+          "name": "default"
+        },
+        "spec": {}
+      }
+    ]
+  }
+}

@@ -4,7 +4,6 @@ package resource
 
 import (
 	"database/sql"
-	"os"
 	"path/filepath"
 	"testing"
 )
@@ -53,9 +52,6 @@ func TestSQLiteLedgerClosedDatabaseErrors(t *testing.T) {
 	}
 	if all, err := l.All(); err == nil || all != nil {
 		t.Fatalf("All: %v, %v", all, err)
-	}
-	if err := l.Save(l.path); err == nil {
-		t.Fatal("Save hid closed database")
 	}
 }
 
@@ -118,110 +114,19 @@ func TestSQLiteLedgerAllRejectsInvalidRows(t *testing.T) {
 	}
 }
 
-func TestSQLiteLedgerMigrationFailurePreservesLegacyAndRetries(t *testing.T) {
-	l := errorTestLedger(t)
-	legacy := filepath.Join(filepath.Dir(l.path), "artifacts.json")
-	source := &JSONLedger{Version: 1, Artifacts: ledgerErrorArtifacts()}
-	if err := source.Save(legacy); err != nil {
-		t.Fatal(err)
-	}
-	execLedgerSQL(t, l, `CREATE TRIGGER fail_insert BEFORE INSERT ON artifacts WHEN NEW.name = 'b' BEGIN SELECT RAISE(FAIL, 'injected migration failure'); END`)
-	path := l.path
-	if err := l.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if reopened, err := OpenSQLiteLedger(path); err == nil {
-		_ = reopened.Close()
-		t.Fatal("open hid migration failure")
-	}
-	if _, err := os.Stat(legacy); err != nil {
-		t.Fatalf("legacy source lost: %v", err)
-	}
-	if _, err := os.Stat(legacy + ".migrated"); !os.IsNotExist(err) {
-		t.Fatalf("false migration marker: %v", err)
-	}
-	// Open the database directly to repair the injected fault, without rerunning migration.
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	var count int
-	if err := db.QueryRow(`SELECT count(*) FROM artifacts`).Scan(&count); err != nil || count != 0 {
-		t.Fatalf("partial migration: count=%d err=%v", count, err)
-	}
-	if _, err := db.Exec(`DROP TRIGGER fail_insert`); err != nil {
-		t.Fatal(err)
-	}
-	recovered, err := OpenSQLiteLedger(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer recovered.Close()
-	if all, err := recovered.All(); err != nil || len(all) != 2 {
-		t.Fatalf("retry did not restore ownership: %v, %v", all, err)
-	}
-	if _, err := os.Stat(legacy + ".migrated"); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestSQLiteLedgerMigrationRenameFailureRetriesWithoutRestoringOwnership(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "routerd.db")
-	legacy := filepath.Join(dir, "artifacts.json")
-	artifacts := ledgerErrorArtifacts()
-	source := &JSONLedger{Version: 1, Artifacts: artifacts}
-	if err := source.Save(legacy); err != nil {
-		t.Fatal(err)
-	}
-	// A directory at the destination deterministically fails rename, even as root.
-	if err := os.Mkdir(legacy+".migrated", 0700); err != nil {
-		t.Fatal(err)
-	}
-	if ledger, err := OpenSQLiteLedger(path); err == nil {
-		_ = ledger.Close()
-		t.Fatal("open hid migration rename failure")
-	}
-	if err := os.Remove(legacy + ".migrated"); err != nil {
-		t.Fatal(err)
-	}
-	ledger, err := OpenSQLiteLedger(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ledger.Close()
-	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
-		t.Fatalf("retry left legacy source behind: %v", err)
-	}
-	if err := ledger.Forget(artifacts); err != nil {
-		t.Fatal(err)
-	}
-	if err := ledger.Close(); err != nil {
-		t.Fatal(err)
-	}
-	// Even a restored old JSON backup must not resurrect forgotten ownership.
-	if err := source.Save(legacy); err != nil {
-		t.Fatal(err)
-	}
-	reopened, err := OpenSQLiteLedger(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer reopened.Close()
-	if all, err := reopened.All(); err != nil || len(all) != 0 {
-		t.Fatalf("legacy ownership resurrected: %v, %v", all, err)
-	}
-}
-
 func TestSQLiteLedgerLockedWritesFail(t *testing.T) {
-	l := errorTestLedger(t)
+	path := filepath.Join(t.TempDir(), "routerd.db")
+	l, err := OpenSQLiteLedger(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
 	artifacts := ledgerErrorArtifacts()
 	if err := l.Remember(artifacts); err != nil {
 		t.Fatal(err)
 	}
 	execLedgerSQL(t, l, `PRAGMA busy_timeout = 1`)
-	other, err := sql.Open("sqlite", l.path)
+	other, err := sql.Open("sqlite", path)
 	if err != nil {
 		t.Fatal(err)
 	}

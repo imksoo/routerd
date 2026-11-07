@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -27,6 +28,7 @@ class CloudCertificationPhaseGateTests(unittest.TestCase):
         for name in ("common.sh", "cloud-certification-driver.sh", "inventory-driver.sh"):
             shutil.copy2(ROOT / "drivers" / name, self.drivers / name)
         shutil.copy2(ROOT / "qa_guard.py", self.framework / "qa_guard.py")
+        shutil.copy2(ROOT / "lifecycle_supervisor.py", self.framework / "lifecycle_supervisor.py")
         shutil.copy2(ROOT / "inventory_resources.py", self.framework / "inventory_resources.py")
         self.state = self.runtime / "terraform.tfstate"
         self.calls = self.runtime / "calls"
@@ -159,14 +161,31 @@ esac''')
         return subprocess.run([str(self.drivers / name), *args], env=environment or self.environment,
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=20, check=False)
 
-    def run_cloud(self, environment=None):
+    def run_cloud(self, environment=None, *, supervised=False):
         result_path = self.runtime / "cloud-driver-result.json"
-        result = self.run_driver("cloud-certification-driver.sh", "--contract", str(self.contract),
-                                 "--out", str(result_path), environment=environment)
+        if supervised:
+            self.supervisor_state.unlink()
+            heartbeat = self.runtime / "heartbeat"
+            heartbeat.touch()
+            command = [sys.executable, str(self.framework / "lifecycle_supervisor.py"),
+                       "--run-id", "run-1", "--state", str(self.supervisor_state),
+                       "--heartbeat", str(heartbeat), "--ttl-seconds", "60", "--stale-seconds", "10",
+                       "--cleanup-timeout-seconds", "5", "--inventory-timeout-seconds", "5",
+                       "--max-paid-lifecycle-seconds", "80", "--precheck-command", "/bin/true",
+                       "--mutation-command", str(self.drivers / "cloud-certification-driver.sh"),
+                       "--mutation-arg=--contract", f"--mutation-arg={self.contract}",
+                       "--mutation-arg=--out", f"--mutation-arg={result_path}",
+                       "--cleanup-command", "/bin/true", "--inventory-command", "/bin/true",
+                       "--post-zero-command", "/bin/true"]
+            result = subprocess.run(command, env=environment or self.environment, text=True,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
+        else:
+            result = self.run_driver("cloud-certification-driver.sh", "--contract", str(self.contract),
+                                     "--out", str(result_path), environment=environment)
         return result, json.loads(result_path.read_text()) if result_path.exists() else {}
 
     def test_cloud_plan_accepts_the_already_certified_pve_phase(self):
-        result, report = self.run_cloud()
+        result, report = self.run_cloud(supervised=True)
         self.assertTrue(self.plan_marker.exists(),
                         f"cloud plan was blocked before its fake I/O boundary: {report.get('notes')}; {result.stderr}")
         # The fake plan deliberately fails before any apply. Reaching it, not

@@ -100,9 +100,38 @@
     "metadata": {
       "additionalProperties": false,
       "properties": {
+        "annotations": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+          "type": "object"
+        },
         "name": {
           "minLength": 1,
           "type": "string"
+        },
+        "ownerRefs": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "apiVersion": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ],
+            "type": "object"
+          },
+          "type": "array"
         }
       },
       "required": [
@@ -161,9 +190,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -287,9 +345,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -377,9 +464,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -470,9 +586,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -512,18 +657,6 @@
                           "error"
                         ],
                         "type": "string"
-                      },
-                      "otlp": {
-                        "additionalProperties": false,
-                        "properties": {
-                          "endpoint": {
-                            "type": "string"
-                          },
-                          "telemetryRef": {
-                            "type": "string"
-                          }
-                        },
-                        "type": "object"
                       },
                       "syslog": {
                         "additionalProperties": false,
@@ -575,7 +708,6 @@
                       "type": {
                         "enum": [
                           "syslog",
-                          "otlp",
                           "webhook",
                           "file",
                           "journald"
@@ -633,9 +765,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -714,9 +875,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -745,21 +935,6 @@
                               "properties": {
                                 "enabled": {
                                   "type": "boolean"
-                                },
-                                "kafka": {
-                                  "additionalProperties": false,
-                                  "properties": {
-                                    "brokers": {
-                                      "items": {
-                                        "type": "string"
-                                      },
-                                      "type": "array"
-                                    },
-                                    "topic": {
-                                      "type": "string"
-                                    }
-                                  },
-                                  "type": "object"
                                 },
                                 "labels": {
                                   "additionalProperties": {
@@ -848,8 +1023,7 @@
                                   "enum": [
                                     "stdout",
                                     "syslog",
-                                    "loki",
-                                    "kafka"
+                                    "loki"
                                   ],
                                   "type": "string"
                                 }
@@ -998,9 +1172,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -1078,9 +1281,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -1153,9 +1385,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -1218,9 +1479,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -1314,9 +1604,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -1460,9 +1779,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -1660,9 +2008,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -1762,9 +2139,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -1852,9 +2258,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -1952,15 +2387,359 @@
                     "type": "string"
                   },
                   "kind": {
+                    "const": "Bridge",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "forwardDelay": {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "helloTime": {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "ifname": {
+                        "type": "string"
+                      },
+                      "macAddress": {
+                        "type": "string"
+                      },
+                      "members": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "mtu": {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "multicastSnooping": {
+                        "type": "boolean"
+                      },
+                      "rstp": {
+                        "type": "boolean"
+                      },
+                      "stp": {
+                        "type": "boolean"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "net.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "VXLANSegment",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "bridge": {
+                        "type": "string"
+                      },
+                      "ifname": {
+                        "type": "string"
+                      },
+                      "l2Filter": {
+                        "enum": [
+                          "",
+                          "default",
+                          "none"
+                        ],
+                        "type": "string"
+                      },
+                      "localAddress": {
+                        "type": "string"
+                      },
+                      "mtu": {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "multicastGroup": {
+                        "type": "string"
+                      },
+                      "remotes": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "udpPort": {
+                        "maximum": 65535,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "underlayInterface": {
+                        "type": "string"
+                      },
+                      "vni": {
+                        "maximum": 16777215,
+                        "minimum": 1,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "vni",
+                      "localAddress",
+                      "underlayInterface"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "net.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "IPv6StaticRoute",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "destination": {
+                        "type": "string"
+                      },
+                      "interface": {
+                        "type": "string"
+                      },
+                      "metric": {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "via": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "destination",
+                      "via",
+                      "interface"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "net.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
                     "const": "Interface",
                     "type": "string"
                   },
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -2071,9 +2850,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -2198,9 +3006,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -2283,9 +3120,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -2357,9 +3223,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -2495,9 +3390,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -2583,9 +3507,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -2643,9 +3596,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -2782,9 +3764,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -2806,7 +3817,7 @@
                         "type": "string"
                       },
                       "exclusive": {
-                        "description": "Exclusive removes other IPv4 addresses from the target interface before adding this address.",
+                        "description": "Exclusive is reserved; exclusive takeover is not implemented.",
                         "type": "boolean"
                       },
                       "interface": {
@@ -2891,9 +3902,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -3227,9 +4267,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -3533,9 +4602,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -3795,9 +4893,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -4013,9 +5140,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -4130,9 +5286,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -4246,9 +5431,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -4385,9 +5599,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -4879,9 +6122,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -5009,9 +6281,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -5064,9 +6365,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -5119,9 +6449,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -5133,6 +6492,9 @@
                     "additionalProperties": false,
                     "properties": {
                       "client": {
+                        "enum": [
+                          "routerd-dhcpv6-client"
+                        ],
                         "type": "string"
                       },
                       "clientDUID": {
@@ -5236,9 +6598,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -5388,9 +6779,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -5520,9 +6940,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -5534,6 +6983,7 @@
                     "additionalProperties": false,
                     "properties": {
                       "configPath": {
+                        "description": "ConfigPath and PIDFile are unsupported by the serve-owned RA loop.",
                         "type": "string"
                       },
                       "dependsOn": {
@@ -5615,6 +7065,7 @@
                         "type": "string"
                       },
                       "preferredLifetime": {
+                        "description": "PreferredLifetime and ValidLifetime are PIO seconds or infinite; delegated prefixes remain capped by their absolute upstream deadlines.",
                         "type": "string"
                       },
                       "prefix": {
@@ -5677,6 +7128,10 @@
                           "type": "object"
                         },
                         "type": "array"
+                      },
+                      "routerLifetime": {
+                        "description": "RouterLifetime is default-route seconds, independent of PIO lifetimes. Default is 1800; 0 withdraws, otherwise 4-9000.",
+                        "type": "string"
                       },
                       "validLifetime": {
                         "type": "string"
@@ -5759,9 +7214,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -6058,9 +7542,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -6197,9 +7710,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -6336,9 +7878,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -6475,9 +8046,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -6531,9 +8131,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -6627,9 +8256,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -6669,6 +8327,7 @@
                         "additionalProperties": false,
                         "properties": {
                           "enabled": {
+                            "const": false,
                             "type": "boolean"
                           },
                           "mode": {
@@ -6824,9 +8483,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -6932,6 +8620,10 @@
                         },
                         "type": "object"
                       },
+                      "requestTimeout": {
+                        "description": "RequestTimeout bounds the complete lookup, independently of each upstream attempt.",
+                        "type": "string"
+                      },
                       "when": {
                         "additionalProperties": false,
                         "properties": {
@@ -7010,9 +8702,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -7149,9 +8870,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -7318,9 +9068,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -7551,9 +9330,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -7700,9 +9508,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -7807,9 +9644,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -7883,9 +9749,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -7970,9 +9865,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -8025,7 +9949,8 @@
                         "type": "boolean"
                       },
                       "executionWindow": {
-                        "description": "ExecutionWindow optionally restricts execution to a time window. It is\nvalidated leniently (free-form, cron-ish); empty = no window restriction.",
+                        "description": "ExecutionWindow must be empty: provider action scheduling is unsupported.",
+                        "maxLength": 0,
                         "type": "string"
                       },
                       "maxActionsPerRun": {
@@ -8066,9 +9991,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -8239,9 +10193,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -8320,9 +10303,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -8433,9 +10445,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -8523,9 +10564,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -9150,11 +11220,17 @@
                             "fromNodeRef": {
                               "type": "string"
                             },
+                            "id": {
+                              "description": "ID identifies one transfer attempt. Use a new ID after rollback so a\nprevious release cannot authorize a later transfer of the same address.",
+                              "minLength": 1,
+                              "type": "string"
+                            },
                             "toNodeRef": {
                               "type": "string"
                             }
                           },
                           "required": [
+                            "id",
                             "address",
                             "fromNodeRef",
                             "toNodeRef"
@@ -9205,9 +11281,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -9370,9 +11475,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -9522,9 +11656,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -9659,9 +11822,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -9769,9 +11961,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -10078,9 +12299,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -10165,9 +12415,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -10214,6 +12493,7 @@
                         "type": "string"
                       },
                       "device": {
+                        "description": "Device is a kernel interface name. Use deviceFrom with Interface.ifname\nto resolve a declared logical interface from current observations.",
                         "type": "string"
                       },
                       "deviceFrom": {
@@ -10307,9 +12587,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -10466,9 +12775,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -10905,9 +13243,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -10971,6 +13338,7 @@
                             "type": "string"
                           },
                           "rate": {
+                            "maximum": 0,
                             "minimum": 0,
                             "type": "integer"
                           },
@@ -11036,9 +13404,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -11145,9 +13542,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -11360,9 +13786,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -11532,9 +13987,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -11717,9 +14201,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -11779,9 +14292,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -11981,9 +14523,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -12269,9 +14840,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -12372,9 +14972,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -12504,9 +15133,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -12679,9 +15337,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -12741,9 +15428,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -12802,9 +15518,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -12851,9 +15596,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -13036,9 +15810,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -13212,9 +16015,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
@@ -13330,9 +16162,38 @@
                   "metadata": {
                     "additionalProperties": false,
                     "properties": {
+                      "annotations": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                        "type": "object"
+                      },
                       "name": {
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "ownerRefs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [

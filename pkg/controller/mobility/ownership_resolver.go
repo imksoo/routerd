@@ -96,6 +96,7 @@ type ownershipRuleContext struct {
 	confirmedCaptures    map[string]resolverCaptureState
 	staleCaptures        map[string]resolverCaptureState
 	handoverTargets      map[string]string
+	handoverReleased     map[string]bool
 }
 
 type ownershipRuleOutcome uint8
@@ -149,7 +150,8 @@ func resolveAddressOwnership(in PoolRuntimeSnapshot) ([]ownershipDecision, error
 	}
 	selfIPs, capturedIPs, selfIPsObserved := in.Ownership.SelfPrivateIPs, in.Ownership.SelfCapturedIPs, in.Ownership.SelfInventoryKnown
 	selfIPsObservedAt := in.Ownership.DiscoveryLastScanAt
-	eventOwned := resolverEventOwnedAddresses(pool, in.Events, providerOwned, prefix, now)
+	handoverReleased := staticHandoverReleaseFacts(pool, in.Events, now)
+	eventOwned := resolverEventOwnedAddresses(pool, in.Events, providerOwned, handoverReleased, prefix, now)
 	confirmedCaptures, staleCaptures := captureStatesForSelf(self, in.Provider.ActionHistory, capturedIPs, selfIPsObserved, selfIPsObservedAt)
 	handoverTargets := staticHandoverTargets(pool.Spec.StaticHandovers, prefix)
 	universe := map[string]bool{}
@@ -186,6 +188,7 @@ func resolveAddressOwnership(in PoolRuntimeSnapshot) ([]ownershipDecision, error
 		confirmedCaptures:    confirmedCaptures,
 		staleCaptures:        staleCaptures,
 		handoverTargets:      handoverTargets,
+		handoverReleased:     handoverReleased,
 	}
 	var out []ownershipDecision
 	for _, address := range mapsort.Keys(universe) {
@@ -255,8 +258,18 @@ func staticHandoverRule(ctx ownershipRuleContext, address string, decision *owne
 	if toNode == "" {
 		return ownershipRuleContinue
 	}
-	decision.HomeOwnerNode = toNode
 	decision.Source = staticHandoverType
+	if !ctx.handoverReleased[address] {
+		// The declaration is transfer intent, not evidence that the previous
+		// owner has withdrawn. Resolve rather than fall through: stale local
+		// ownership events or a previous self path must not bypass this fence.
+		decision.Class = ownershipClassUnknown
+		decision.HomeOwnerNode = ""
+		decision.AdvertiseOwnerNode = ""
+		decision.SuppressionReason = "static-handover-awaiting-release"
+		return ownershipRuleResolved
+	}
+	decision.HomeOwnerNode = toNode
 	if toNode == ctx.self.NodeRef {
 		decision.Class = ownershipClassStaticHandover
 		decision.AdvertiseOwnerNode = ctx.self.NodeRef
@@ -674,11 +687,14 @@ func captureStatesForSelf(self memberPlanInfo, history ProviderActionHistory, se
 			confirmed[address] = state
 			continue
 		}
-		if tr.assign {
+		if tr.assign || tr.uncertain {
 			stale[address] = state
 		}
 	}
 	for _, plan := range history.previousCaptureAssigns {
+		if history.capturePlanWasUndone(plan) {
+			continue
+		}
 		address := normalizeAddressString(plan.Target["address"])
 		providerRef := firstNonEmpty(plan.ProviderRef, plan.Target["providerRef"])
 		targetRef := providerCaptureRefFromTarget(plan.Target)

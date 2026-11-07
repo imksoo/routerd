@@ -19,6 +19,17 @@ that runs `tailscale up` with the declared node options. This keeps the
 Tailscale account, control plane, and route approval workflow in Tailscale,
 while routerd owns the host-local intent.
 
+## Configuration changes
+
+routerd applies the complete declared options with `tailscale up --reset`.
+Removing `advertiseRoutes` or setting `advertiseExitNode: false` therefore clears
+previous advertisements instead of failing Tailscale's missing-flags check.
+Omitted settings return to Tailscale's defaults; declare settings such as
+`acceptDNS: false` whenever they must remain disabled. Do not depend on manual
+`tailscale up` preferences that are absent from the YAML. This does not log out
+the node or force reauthentication. Route approval remains with the tailnet
+administrator.
+
 ## Install tailscale
 
 Declare the OS package so the dependency is visible in the router config.
@@ -50,6 +61,39 @@ On Ubuntu, the Tailscale apt repository must already be available before
 `Package` can install `tailscale`. Use your normal bootstrap method for that
 repository.
 
+## Fresh Linux package installation
+
+The Linux package uses `/etc/routerd/router.yaml`; the paths below follow that
+layout. A fresh OS has no Tailscale node identity, even when the replacement
+router uses the old hostname. Do not copy the old routerd database or assume
+that a configuration with no authentication fields can join the tailnet.
+
+Before the first routerd start:
+
+1. Configure the Tailscale APT repository for the installed Ubuntu release and
+   update its package index. Confirm
+   `apt-cache policy tailscale tailscale-archive-keyring` offers installable candidates, then install those
+   packages through APT. Check `systemctl is-active tailscaled.service`.
+2. Provision a new-node auth key in the root-only environment file below and
+   declare its path in `TailscaleNode`. Keep the key out of YAML, shell history,
+   version control, and command output. A device-approval policy may require an
+   additional tailnet administrator action.
+3. Declare the required forwarding sysctls and firewall policy in the prepared
+   router configuration. For dual-stack subnet/exit routing, verify
+   `net.ipv4.ip_forward=1` and `net.ipv6.conf.all.forwarding=1` after apply.
+   A running Tailscale backend alone does not prove packet forwarding.
+4. Validate the complete 1.5 configuration before starting routerd. Approve the
+   **new node's** advertised routes and exit-node use in the control plane;
+   approval of the replaced node does not establish approval of this identity.
+5. From an independent tailnet client, select the new exit node or approved
+   subnet route and fetch an actual service payload over each required address
+   family. Restart routerd and repeat. Require `BackendState: Running`, usable
+   routes, and successful client traffic; `NeedsLogin`, `NeedsMachineAuth`, or
+   status alone is not a successful deployment.
+
+Keep the old router isolated during replacement. An existing logged-in test
+fixture only qualifies reconfiguration, not this fresh-node bootstrap path.
+
 ## Authenticate without committing secrets
 
 For production configs, prefer `authKeyEnv` plus `authKeyFile`.
@@ -69,15 +113,15 @@ spec:
   acceptDNS: false
   acceptRoutes: false
   authKeyEnv: TS_AUTHKEY
-  authKeyFile: /usr/local/etc/routerd/secrets/tailscale.env
+  authKeyFile: /etc/routerd/secrets/tailscale.env
 ```
 
 The environment file is outside the routerd YAML:
 
 ```sh
-sudo install -d -m 0700 /usr/local/etc/routerd/secrets
-sudo sh -c 'printf "%s\n" "TS_AUTHKEY=REDACTED" > /usr/local/etc/routerd/secrets/tailscale.env'
-sudo chmod 0600 /usr/local/etc/routerd/secrets/tailscale.env
+sudo install -d -m 0700 /etc/routerd/secrets
+sudo sh -c 'printf "%s\n" "TS_AUTHKEY=REDACTED" > /etc/routerd/secrets/tailscale.env'
+sudo chmod 0600 /etc/routerd/secrets/tailscale.env
 ```
 
 If the node is already logged in, omit `authKey`, `authKeyEnv`, and
@@ -172,7 +216,7 @@ network.
 Apply the config:
 
 ```sh
-routerctl validate -f /usr/local/etc/routerd/router.yaml --replace
+routerctl validate -f /etc/routerd/router.yaml --replace
 systemctl restart routerd.service
 ```
 
@@ -227,3 +271,43 @@ Replace the address with the actual Tailscale IP of the router.
 - Exit-node and subnet-route approval happens in Tailscale, not in routerd.
 - Keep auth keys out of examples and Git history. Use `authKeyFile` for local
   deployments.
+
+## Disconnect and withdraw
+
+On Linux, removing a `TailscaleNode`, setting `state: absent`, or making its
+`when` condition false stops the managed unit and runs `tailscale down`.
+The disconnect uses `ExecStopPost`, so it also runs when `tailscale up` accepted
+connection intent but failed before the oneshot unit reached its active state.
+This disconnects the node without logging out or stopping `tailscaled`; its
+identity remains available for reactivation. A failed stop leaves the unit
+and cleanup error in place for reconciliation to retry.
+
+Verify withdrawal with `tailscale debug prefs` (`WantRunning: false`) and
+`tailscale status --json` (`BackendState: Stopped`), as well as the absence
+of the managed unit. Empty routerd resource status alone is insufficient.
+
+For an isolated interoperability check, use an independent tailnet peer and an
+SSH server behind the router. Approve the advertised subnet at the control
+plane, enable route acceptance on the peer, and check `ip route get <server-IP>`
+selects `tailscale0`. A bounded `nc -w 5 <server-IP> 22` must return an SSH banner;
+a Tailscale ping alone does not prove subnet forwarding. Repeat after
+`state: absent` and reactivation without an auth key, checking the node keeps
+its Tailscale address. Finally remove the resource and check the stopped state
+above. Run these steps on disposable hosts, not a production routing path.
+
+## Runtime status
+
+A successfully installed unit does not prove that Tailscale is running. The
+Linux service controller reports `Running` only for backend state `Running`.
+`NeedsLogin` reports `Pending/AuthenticationRequired`; renew the node's
+authentication using the configured tailnet procedure. `NeedsMachineAuth`
+reports `Pending/MachineApprovalRequired`; approve the node in the control
+server. Other non-running states report `Pending/BackendNotRunning`. A failed
+or malformed CLI observation reports `Error/RuntimeObservationFailed` with
+`runtimeError`. Recovery clears the prior reason/error on the next observation.
+
+The service controller observes runtime state during reconciliation (including
+its existing five-minute periodic pass). `online: false` while the backend is
+Running does not by itself prove a forwarding outage; cached peer paths may
+continue to work during control-server unavailability. These observations do
+not rotate credentials or force reauthentication.

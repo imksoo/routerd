@@ -4,8 +4,9 @@
 
 `Telemetry` remains the small OTLP-only resource for routerd's own metrics,
 traces, and logs. `LogSink` describes log forwarding routes for operational
-events and observed network logs; an OTLP `LogSink` should reference a
-`Telemetry` resource rather than duplicating collector endpoints. Use
+events and observed network logs. OTLP export uses `Telemetry` or the OTLP
+fields of `ObservabilityPipeline`; an `otlp` LogSink is rejected because it
+has no delivery implementation. Use
 `ObservabilityPipeline` when the router should also forward routerd event logs
 to pipeline-style remote sinks such as Loki.
 
@@ -20,8 +21,8 @@ Supported log sinks today:
 - `syslog`: local or remote syslog using the existing `LogSink` syslog shape.
 - `loki`: HTTP push to `/loki/api/v1/push`.
 
-`kafka` is accepted as documented metadata only so configs can record the
-intended external pipeline, but routerd does not publish to Kafka directly yet.
+`kafka` is rejected because routerd has no direct Kafka publisher. The 1.0
+implementation skipped these sink entries rather than delivering their events.
 
 Example:
 
@@ -70,12 +71,15 @@ does not remove events already committed to SQLite. The exporter and EventRule
 engine use the bus only to wake their journal drains, with a default one-second
 poll when no wakeup arrives. Failed drains back off from one second to one minute.
 Polling periods exclude execution time, database outages, and a stalled process.
+A pipeline initializes its durable cursor before acknowledging startup. A journal
+initialization error prevents `Running`; successful startup does not by itself
+mean that a remote destination has accepted a log.
 
 | Consumer | Authoritative input | Recovery and limit |
 | --- | --- | --- |
 | Route and other notification controllers | Current configuration, dynamic parts, and object status | Reread current inputs on an event or periodic reconcile. The IPv4 route controller's maximum normal period is 30 seconds. Duplicate or stale event payloads do not replace its desired state. Other controllers have their own periods. |
 | DerivedEvent | Current referenced status | Reevaluate periodically (five seconds by default); intermediate historical transitions cannot be reconstructed. |
-| EventRule | Committed event journal | Count, sequence, and window patterns require recorded history. A new consumer starts at the current journal cursor; it does not replay all older history. Rule correlation state is process-local. |
+| EventRule | Committed event journal and durable per-rule checkpoint | A new or changed rule starts at the journal position captured during configuration preparation. An unchanged rule resumes its count, sequence, window, throttle and pending timers after restart. Missing retained input history stops that rule with an error; it cannot establish an absence. |
 | ObservabilityPipeline | Committed event journal | Retry stored events; sampling and sink severity filters still apply. This is not a complete audit log of every attempted status change. |
 | Provider action executor | ActionExecution journal and stable idempotency key | A durably succeeded action is skipped after retry/restart. A remote success before local outcome recording still requires executor idempotency or observation of provider state. |
 
@@ -102,10 +106,192 @@ recover by rescanning; a log exporter cannot recover an event that never reached
 the journal. The transaction guarantee above applies specifically to status
 transition events, not every daemon or derived-event producer.
 
-Journal consumption is at least once. If processing succeeds but cursor saving
-fails, the callback runs again for the same event ID. EventRule emissions and
-log sinks may therefore repeat. Successful delivery to multiple sinks is not
-atomic, and a cursor is not an exactly-once guarantee for an external API.
+Each EventRule commits its correlation state, input cursor, public status and
+resulting local events in one SQLite transaction. A failed transaction advances
+none of them. After a lost acknowledgement, rereading the checkpoint prevents
+repeating an already committed result. Bus notification follows the commit;
+journal consumers can recover a missed notification. This guarantee applies to
+the local journal, not an external API or log sink. A log sink can repeat an
+event when delivery succeeds before its cursor is saved, and delivery to
+multiple sinks is not atomic.
+
+EventRule supports `all_of`, `any_of`, `sequence`, `window`, `absence`,
+`throttle`, `debounce` and `count`. Use `interval` for the throttle duration;
+nonzero `rate` is rejected because it has no implemented semantics. Correlations
+are bounded to 4096 keys and an 8 MiB serialized checkpoint per rule. When either
+bound is exceeded, the oldest keys by last-seen time are evicted until the
+checkpoint fits, and `status.warningCount` increases in that same transaction.
+Patterns spanning an evicted key cannot be completed. Configuration
+selection initializes the active rules and retires removed checkpoints; preparing
+an unselected candidate does not change consumption state.
 The separate [event federation protocol](../reference/event-federation.md) has
 its own delivery records and does not use the local status notification queue
 as its durable source of truth.
+
+## Log retention archives
+
+Removing a `LogRetention` declaration retires its status, including previous
+retention warnings, so it cannot keep the router degraded after withdrawal.
+A declared but inactive policy retains its last-run state; dry-run does not
+remove it. The independent event-journal safety limits still apply.
+
+`LogRetention.sinks` selects the `LogSink` destinations that must accept each
+expired record before its local transaction can delete it. Missing, disabled or
+severity-filtered selected sinks fail the run and preserve the local rows.
+Runtime log-level overrides affect operational messages, not required archive
+records.
+For `events`, `accessLogs` and `pluginRuns`, retention uses the opened state
+database selected by `--state-file`, including a nondefault path. Its raw data
+source is separate from the generation's evented status adapter. An unavailable
+state source stops the run rather than selecting the platform's default file.
+Only registered operational-log tables are pruned; configuration and lease state
+are outside this policy.
+
+The opened state file's identity is checked at the separate retention connection
+and before deletion, commit and vacuum. A same-named replacement is an ownership
+error, not a new retention target. Relative SQLite filenames resolve when opened;
+`:memory:` retains its database semantics and cannot authorize file retention.
+The DHCP lease journal uses this same opened-file check for its cross-process
+source. In-memory state cannot be advertised as a filesystem source for a
+DHCP-derived DNS worker.
+
+
+An explicit `events` retention policy owns idle expiry, including its archive
+selection and schedule. Without one, idle cleanup uses the 24-hour default.
+The state writer independently enforces its existing safety bounds: 24 hours,
+100,000 rows and 64 MiB of logical payload. These limits take precedence over
+forensic retention and can evict history before an exporter or archive consumes
+it. An event policy requesting more than 24 hours is `Degraded` with reason
+`EventJournalSafetyBound`. Event policy status declares `archiveScope: retainedRows`
+and discloses these limits. It does not claim a complete or lossless audit archive.
+ A sink error rolls back deletion; retry can deliver a record again if
+an earlier destination already accepted it. Delivery to multiple sinks is not
+atomic, and syslog transport success is not an application-level storage receipt.
+
+Relevant local checks are:
+
+```sh
+go test ./pkg/eventlog ./pkg/logstore ./pkg/observabilitypipeline
+go test ./pkg/controller/chain -run '^(TestLogRetention|TestRetention|TestReviewArchive)'
+```
+
+## Traffic flow observation failures
+
+A failed flow observation or `TrafficFlowLog` database write marks that resource
+`Degraded`, with a failure message instead of old active-flow counts. Connection
+counts and threshold events continue. Successful writes restore `Observed`;
+disabling the log changes its status to `Skipped` without reading its destination.
+Failure to save the required resource status remains an error. When the native
+conntrack snapshot itself is unavailable, the observer reports `Unavailable` and
+an enabled flow log reports `Degraded / ConntrackUnavailable`. No empty table is
+invented: stored flows and counters remain unchanged until observation recovers.
+
+
+
+### Controller log delivery
+
+With OTLP logs enabled, `routerd serve` sends controller reconciliation records
+to the configured OTLP exporter and retains the normal supervised local output.
+Disabling log export keeps local output. `LogSink` operational events and
+`ObservabilityPipeline` journal delivery remain separate streams.
+
+The Linux subprocess regression `TestServeTelemetryDeliversReconcileLogs` runs
+the actual `run`/`serve` path in sandbox mode, receives reconciliation records
+through a real gRPC receiver, checks local output, and stops the daemon with
+SIGTERM. Run it with `go test ./cmd/routerd -run
+'^TestServeTelemetryDeliversReconcileLogs$' -count=1`. It does not qualify native
+package deployment or external collector outage/recovery.
+
+
+### Packaged combined Linux gate
+
+Use two isolated routers installed from matching base/native-addon packages and
+an independent peer running OpenTelemetry Collector and a UDP syslog receiver.
+Certify collector configuration, listeners, free storage and network reachability
+before applying the candidate. Preserve the candidate's three Telemetry signals,
+service namespace and a distinct per-router resource attribute. Keep this peer
+outside either router's process/failure domain.
+
+After normal daemon startup/reconciliation, allow up to 90 seconds for delivery
+(the metric reader uses a 30-second interval). Decode the collector's OTLP output
+and require **both** router identities with `service.name=routerd`: the log body
+`controller reconcile completed`, metric `routerd.controller.reconcile`, and span
+`controller.reconcile`. A helper's records do not satisfy this check. Require
+both configured tags in the independent syslog receiver. Check package integrity,
+client forwarding, DNS/NTP redirects and native flow classification in the same
+configuration, then apply empty configurations and require Healthy status and
+actual helper/address/route/NAT withdrawal on both routers. Stop the guests and
+remove temporary collector executables. Retain procedure/results rather than
+permanent raw collector streams.
+
+Matching package `1.5.0~20261104040833+g261e6675` passed this gate on Ubuntu 24.04
+with Collector contrib 0.151.0 in a 78-resource combined configuration. The 74
+client flows, ten single TCP accepts, DNS redirects, native TLS SNI, corrected DNS
+hostname classification, NTP replies and both empty withdrawals passed. This does
+not qualify all 105 deployed resources, collector outage/recovery, or a new HA
+power-loss campaign.
+
+### Packaged archive/expiry check
+
+Use a disposable packaged Linux VM with an empty canonical configuration and
+an independent syslog receiver; never seed an operating router's database.
+Stop the daemon before preparing two completed `plugin_runs` fixture rows:
+`rd15-native-retention-old` started eight days ago and
+`rd15-native-retention-fresh` started now. Record the two-row baseline.
+Prepare a `LogRetention` with `retention: 7d`, `schedule: daily`,
+`signals: [pluginRuns]` and an explicit syslog `LogSink` reference. The selected
+sink must allow `info` archive records. Certify receiver reachability before
+starting the daemon, and bound the receiver to two minutes and 8 MiB.
+
+Start the packaged daemon with that configuration and run
+`routerctl get LogRetention/archive -o json`. Require `phase: Applied` and
+`deleted: 1`; independently inspect the receiver for the old marker and query
+the database read-only to require only the fresh row. A status counter alone
+is insufficient. Finally apply an empty candidate with
+`routerctl apply --timeout 90s -f empty.yaml --replace`, wait for pending managed
+restarts to complete, and require `Healthy` without the retention status.
+The request wait covers the daemon's one-minute apply budget plus response
+handling; it does not remove the operation deadline or relax the final checks.
+
+This path passed with formal Linux packages at `76464310`. It checks expiry and
+observed UDP delivery for plugin history, not packet-loss recovery, remote durable
+storage, all log tables, or a complete event audit archive.
+
+### Packaged Collector outage and recovery
+
+Use one isolated Linux router with matching formal base/addon packages and a
+separate VM running Collector contrib. Before qualification, certify package
+integrity, empty Healthy state, the Collector configuration and gRPC listener,
+and router-to-Collector reachability. Bound the receiver lifetime and output
+size. Use the normal routerd service, not a standalone exporter probe.
+
+Declare all three Telemetry signals with a unique campaign resource attribute,
+and a DNSResolver/DNSZone/DNSForwarder serving a known A record to the peer.
+After the normal Telemetry environment handoff, require Healthy and independent
+UDP/TCP DNS answers. Within 150 seconds, require new main-daemon controller log,
+metric and span records, identified as in the combined gate above.
+
+Stop the Collector and verify its listener is absent and a new connection from
+the router fails. Change the DNS record through `routerctl apply --timeout 90s -f candidate.yaml --replace`. Require the new answer on 20 UDP and 20 TCP
+queries from the peer, Healthy status, and unchanged routerd MainPID. Restart
+routerd while the Collector is still unreachable; require service restart within
+30 seconds and successful DNS/Healthy recovery within 90 seconds.
+
+Restore the same Collector, record received counts, and change the DNS record
+again. Require the new DNS answers and new records for all three signals within
+150 seconds, without another daemon restart. Finally apply an empty candidate,
+require Healthy and actual DNS listener withdrawal, stop services, remove
+fixture addresses and temporary Collector/output files, and verify package
+integrity. Do not interpret this as lossless export: bounded SDK buffers and a
+restart can discard queued observations. Long outages, full-buffer behavior,
+TLS/mTLS, remote durable storage and the complete deployed configuration need
+their own evidence.
+
+Formal product `db41e03e`, package `1.5.0~20261106222627+gdb41e03e`, passed
+this gate on Ubuntu 24.04 / Linux 6.8.0-147 with independent Collector contrib
+0.151.0. The stopped-Collector DNS update passed all 40 queries with the same
+MainPID; restart plus DNS/Healthy recovery took 14.41 seconds. After Collector
+return, all three main-daemon signal counts advanced without another restart.
+Empty withdrawal, package verification and temporary receiver cleanup passed;
+the dedicated guests were stopped. This scoped result supplements, rather than
+reruns, the earlier combined two-router gate.

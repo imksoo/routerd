@@ -4,6 +4,7 @@ package provideractioncontroller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -40,7 +41,6 @@ func (c Controller) Reconcile(ctx context.Context) error {
 	if c.Store == nil {
 		return nil
 	}
-	now := c.now()
 	policy, plugins, err := enginepkg.PolicyAndPlugins(c.Router)
 	if err != nil {
 		return err
@@ -52,7 +52,7 @@ func (c Controller) Reconcile(ctx context.Context) error {
 	engine, err := enginepkg.NewEngine(enginepkg.Config{
 		Store:   c.Store,
 		Runner:  runner,
-		Now:     func() time.Time { return now },
+		Now:     c.now,
 		Log:     controllerLogger{logger: c.Logger},
 		Plugins: plugins,
 	})
@@ -71,7 +71,7 @@ func (c Controller) Reconcile(ctx context.Context) error {
 		c.log("provideraction: auto execution disabled: " + reason)
 		return nil
 	}
-	if _, err := engine.RecoverStaleRunningActions(); err != nil {
+	if _, err := engine.RecoverInterruptedActionOperations(ctx); err != nil {
 		return err
 	}
 	rows, err := c.Store.ListActions(routerstate.ActionExecutionFilter{})
@@ -79,9 +79,10 @@ func (c Controller) Reconcile(ctx context.Context) error {
 		return fmt.Errorf("list action journal: %w", err)
 	}
 	candidates := autoExecutionCandidates(rows, policy.MaxActionsPerRun)
+	var executionErrors []error
 	for _, row := range candidates {
-		if err := engine.Execute(ctx, row.ID, enginepkg.ModeExecute, policy); err != nil {
-			c.log("provideraction: auto execute action failed", "id", row.ID, "key", row.IdempotencyKey, "error", err)
+		if err := engine.Execute(ctx, row.ID, policy); err != nil {
+			executionErrors = append(executionErrors, fmt.Errorf("execute provider action %d: %w", row.ID, err))
 			continue
 		}
 		updated, found, err := c.Store.GetActionByID(row.ID)
@@ -89,10 +90,12 @@ func (c Controller) Reconcile(ctx context.Context) error {
 			return fmt.Errorf("load executed action %d: %w", row.ID, err)
 		}
 		if found {
-			_ = c.publishProviderCaptureChanged(ctx, updated, now)
+			if err := c.publishProviderCaptureChanged(ctx, updated, c.now()); err != nil {
+				executionErrors = append(executionErrors, fmt.Errorf("publish provider action %d result: %w", row.ID, err))
+			}
 		}
 	}
-	return nil
+	return errors.Join(executionErrors...)
 }
 
 func (c Controller) publishProviderCaptureChanged(ctx context.Context, row routerstate.ActionExecutionRecord, now time.Time) error {

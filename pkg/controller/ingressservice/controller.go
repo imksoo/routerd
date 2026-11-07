@@ -21,12 +21,12 @@ import (
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/ingressdrain"
 	"github.com/imksoo/routerd/pkg/resourcequery"
-	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 type Store interface {
+	ingressdrain.Reader
 	SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error
-	ObjectStatus(apiVersion, kind, name string) map[string]any
+	ReadObjectStatus(apiVersion, kind, name string) (map[string]any, error)
 }
 
 type CheckFunc func(context.Context, string, int, time.Duration) error
@@ -42,21 +42,25 @@ type Controller struct {
 }
 
 type backendStatus struct {
-	Name            string `json:"name"`
-	Address         string `json:"address"`
-	ResolvedAddress string `json:"resolvedAddress,omitempty"`
-	Port            int    `json:"port"`
-	Healthy         bool   `json:"healthy"`
-	Reason          string `json:"reason,omitempty"`
-	HealthyCount    int    `json:"healthyCount,omitempty"`
-	UnhealthyCount  int    `json:"unhealthyCount,omitempty"`
-	LastHealthyAt   string `json:"lastHealthyAt,omitempty"`
-	LastUnhealthyAt string `json:"lastUnhealthyAt,omitempty"`
-	Drained         bool   `json:"drained,omitempty"`
-	DrainedUntil    string `json:"drainedUntil,omitempty"`
+	Name            string                    `json:"name"`
+	Address         string                    `json:"address"`
+	AddressFrom     api.StatusValueSourceSpec `json:"addressFrom,omitempty"`
+	ResolvedAddress string                    `json:"resolvedAddress,omitempty"`
+	Port            int                       `json:"port"`
+	Healthy         bool                      `json:"healthy"`
+	Reason          string                    `json:"reason,omitempty"`
+	HealthyCount    int                       `json:"healthyCount,omitempty"`
+	UnhealthyCount  int                       `json:"unhealthyCount,omitempty"`
+	LastHealthyAt   string                    `json:"lastHealthyAt,omitempty"`
+	LastUnhealthyAt string                    `json:"lastUnhealthyAt,omitempty"`
+	Drained         bool                      `json:"drained,omitempty"`
+	DrainedUntil    string                    `json:"drainedUntil,omitempty"`
 }
 
 type previousBackendStatus struct {
+	Address         string
+	AddressFrom     api.StatusValueSourceSpec
+	Port            int
 	ResolvedAddress string
 	Healthy         bool
 	HealthyCount    int
@@ -92,21 +96,47 @@ func (c *Controller) reconcileResource(ctx context.Context, name string, spec ap
 		}
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	previousStatus := c.Store.ObjectStatus(api.FirewallAPIVersion, "IngressService", name)
+	previousStatus, err := c.Store.ReadObjectStatus(api.FirewallAPIVersion, "IngressService", name)
+	if err != nil {
+		return err
+	}
+	listenAddress := statusvalue.Address(spec.Listen.Address)
+	if listenAddress == "" && strings.TrimSpace(spec.Listen.AddressFrom.Resource) != "" {
+		value, err := resourcequery.ReadValue(c.Store, spec.Listen.AddressFrom)
+		if err != nil {
+			return err
+		}
+		listenAddress = statusvalue.Address(value)
+	}
 	previous := previousBackends(previousStatus)
 	var backends []backendStatus
 	for i, backend := range spec.Backends {
 		status := backendStatus{
-			Name:    defaultString(backend.Name, fmt.Sprintf("backend-%d", i)),
-			Address: strings.TrimSpace(backend.Address),
-			Port:    backend.Port,
+			Name:        defaultString(backend.Name, fmt.Sprintf("backend-%d", i)),
+			Address:     strings.TrimSpace(backend.Address),
+			AddressFrom: backend.AddressFrom,
+			Port:        backend.Port,
 		}
-		resolved, reason := c.resolveAddress(ctx, backend, previous[status.Name])
+		prior := previous[status.Name]
+		if prior.Address != status.Address || prior.AddressFrom != status.AddressFrom || prior.Port != status.Port {
+			prior = previousBackendStatus{}
+		}
+		resolved, reason, err := c.resolveAddress(ctx, backend, prior)
+		if err != nil {
+			return err
+		}
+		if prior.ResolvedAddress != resolved {
+			prior = previousBackendStatus{}
+		}
 		status.ResolvedAddress = resolved
 		checkOK := resolved != ""
 		status.Reason = reason
-		if drain, ok := c.currentDrain(name, status.Name); ok {
-			status.applyDrained(previous[status.Name], drain, now)
+		drain, drained, err := ingressdrain.Current(c.Store, name, status.Name)
+		if err != nil {
+			return err
+		}
+		if drained {
+			status.applyDrained(prior, drain, now)
 		} else if checkOK && !c.DryRun {
 			switch defaultString(spec.HealthCheck.Protocol, "tcp") {
 			case "tcp":
@@ -120,9 +150,9 @@ func (c *Controller) reconcileResource(ctx context.Context, name string, spec ap
 					status.Reason = strings.ToUpper(spec.HealthCheck.Protocol) + "CheckFailed: " + err.Error()
 				}
 			}
-			status.applyCheckResult(checkOK, previous[status.Name], spec.HealthCheck, now)
+			status.applyCheckResult(checkOK, prior, spec.HealthCheck, now)
 		} else {
-			status.applyCheckResult(checkOK, previous[status.Name], spec.HealthCheck, now)
+			status.applyCheckResult(checkOK, prior, spec.HealthCheck, now)
 		}
 		backends = append(backends, status)
 	}
@@ -133,10 +163,6 @@ func (c *Controller) reconcileResource(ctx context.Context, name string, spec ap
 		if healthy < len(backends) {
 			phase = "Degraded"
 		}
-	}
-	listenAddress := statusvalue.Address(spec.Listen.Address)
-	if listenAddress == "" && strings.TrimSpace(spec.Listen.AddressFrom.Resource) != "" {
-		listenAddress = statusvalue.Address(resourcequery.Value(c.Store, spec.Listen.AddressFrom))
 	}
 	status := map[string]any{
 		"phase":              phase,
@@ -169,14 +195,6 @@ func (c *Controller) reconcileResource(ctx context.Context, name string, spec ap
 	return c.Store.SaveObjectStatus(api.FirewallAPIVersion, "IngressService", name, status)
 }
 
-func (c *Controller) currentDrain(service, backend string) (ingressdrain.State, bool) {
-	store, ok := c.Store.(routerstate.Store)
-	if !ok {
-		return ingressdrain.State{}, false
-	}
-	return ingressdrain.Current(store, service, backend)
-}
-
 func (s *backendStatus) applyDrained(previous previousBackendStatus, drain ingressdrain.State, now string) {
 	s.Healthy = false
 	s.Reason = "Drained"
@@ -206,16 +224,20 @@ func sameActiveBackend(previous any, active backendStatus) bool {
 	return statusvalue.Text(item["name"]) == active.Name && statusvalue.Text(item["address"]) == active.ResolvedAddress && statusInt(item["port"]) == active.Port
 }
 
-func (c *Controller) resolveAddress(ctx context.Context, backend api.IngressBackendSpec, previous previousBackendStatus) (string, string) {
+func (c *Controller) resolveAddress(ctx context.Context, backend api.IngressBackendSpec, previous previousBackendStatus) (string, string, error) {
 	address := strings.TrimSpace(backend.Address)
 	if address == "" && strings.TrimSpace(backend.AddressFrom.Resource) != "" {
-		address = statusvalue.Address(resourcequery.Value(c.Store, backend.AddressFrom))
+		value, err := resourcequery.ReadValue(c.Store, backend.AddressFrom)
+		if err != nil {
+			return "", "", err
+		}
+		address = statusvalue.Address(value)
 	}
 	if address == "" {
-		return "", "AddressFromPending"
+		return "", "AddressFromPending", nil
 	}
 	if addr, err := netip.ParseAddr(address); err == nil && addr.Is4() {
-		return addr.String(), ""
+		return addr.String(), "", nil
 	}
 	resolver := c.Resolver
 	if resolver == nil {
@@ -224,9 +246,9 @@ func (c *Controller) resolveAddress(ctx context.Context, backend api.IngressBack
 	ips, err := resolver.LookupIPAddr(ctx, address)
 	if err != nil {
 		if previous.ResolvedAddress != "" {
-			return previous.ResolvedAddress, "DNSFailedUsingPrevious: " + err.Error()
+			return previous.ResolvedAddress, "DNSFailedUsingPrevious: " + err.Error(), nil
 		}
-		return "", "DNSFailed: " + err.Error()
+		return "", "DNSFailed: " + err.Error(), nil
 	}
 	var values []string
 	for _, ip := range ips {
@@ -240,11 +262,11 @@ func (c *Controller) resolveAddress(ctx context.Context, backend api.IngressBack
 	sort.Strings(values)
 	if len(values) == 0 {
 		if previous.ResolvedAddress != "" {
-			return previous.ResolvedAddress, "DNSNoIPv4UsingPrevious"
+			return previous.ResolvedAddress, "DNSNoIPv4UsingPrevious", nil
 		}
-		return "", "DNSNoIPv4"
+		return "", "DNSNoIPv4", nil
 	}
-	return values[0], ""
+	return values[0], "", nil
 }
 
 func (s *backendStatus) applyCheckResult(ok bool, previous previousBackendStatus, spec api.IngressHealthCheckSpec, now string) {
@@ -381,6 +403,9 @@ func previousBackends(status map[string]any) map[string]previousBackendStatus {
 			name := strings.TrimSpace(fmt.Sprint(item["name"]))
 			if name != "" {
 				out[name] = previousBackendStatus{
+					Address:         statusvalue.Text(item["address"]),
+					AddressFrom:     previousBackendAddressFrom(item["addressFrom"]),
+					Port:            statusInt(item["port"]),
 					ResolvedAddress: statusvalue.Text(item["resolvedAddress"]),
 					Healthy:         statusvalue.BoolOrFalse(item["healthy"]),
 					HealthyCount:    statusInt(item["healthyCount"]),
@@ -394,6 +419,9 @@ func previousBackends(status map[string]any) map[string]previousBackendStatus {
 		for _, item := range values {
 			if item.Name != "" {
 				out[item.Name] = previousBackendStatus{
+					Address:         item.Address,
+					AddressFrom:     item.AddressFrom,
+					Port:            item.Port,
 					ResolvedAddress: item.ResolvedAddress,
 					Healthy:         item.Healthy,
 					HealthyCount:    item.HealthyCount,
@@ -405,6 +433,17 @@ func previousBackends(status map[string]any) map[string]previousBackendStatus {
 		}
 	}
 	return out
+}
+
+func previousBackendAddressFrom(value any) api.StatusValueSourceSpec {
+	switch source := value.(type) {
+	case api.StatusValueSourceSpec:
+		return source
+	case map[string]any:
+		return api.StatusValueSourceSpec{Resource: statusvalue.Text(source["resource"]), Field: statusvalue.Text(source["field"]), Optional: statusvalue.BoolOrFalse(source["optional"])}
+	default:
+		return api.StatusValueSourceSpec{}
+	}
 }
 
 func statusInt(value any) int {

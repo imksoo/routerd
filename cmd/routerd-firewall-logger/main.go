@@ -8,17 +8,19 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
-	"net/netip"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -139,7 +141,8 @@ func daemon(args []string, stdin io.Reader) (err error) {
 		return err
 	}
 	defer log.Close()
-	ctx := context.Background()
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
 	telemetry, err := routerotel.Setup(ctx, "routerd-firewall-logger")
 	if err != nil {
 		return err
@@ -151,7 +154,8 @@ func daemon(args []string, stdin io.Reader) (err error) {
 			err = closeErr
 		}
 	}()
-	startExpiredFlowWatchers(ctx, opts, log)
+	stopWatchers := startExpiredFlowWatchers(ctx, opts, log)
+	defer stopWatchers()
 	if opts.group > 0 && opts.inputFile == "" && opts.pflogInterface == "" {
 		return runNFLogDaemon(ctx, opts, log, writer, telemetry)
 	}
@@ -166,6 +170,10 @@ func daemon(args []string, stdin io.Reader) (err error) {
 		}
 		defer file.Close()
 		reader = file
+	}
+	if closer, ok := reader.(io.Closer); ok {
+		stopClose := context.AfterFunc(ctx, func() { _ = closer.Close() })
+		defer stopClose()
 	}
 	scanner := bufio.NewScanner(reader)
 	for scanner.Scan() {
@@ -233,13 +241,16 @@ func recordFirewallEntryWithRecorder(ctx context.Context, recorder firewallEntry
 }
 
 type firewallLogWriter struct {
-	log     *logstore.FirewallLog
-	max     int
-	mu      sync.Mutex
-	entries []logstore.FirewallLogEntry
-	err     error
-	stop    chan struct{}
-	done    chan struct{}
+	log       *logstore.FirewallLog
+	max       int
+	mu        sync.Mutex
+	flushMu   sync.Mutex
+	closed    bool
+	closeOnce sync.Once
+	entries   []logstore.FirewallLogEntry
+	err       error
+	stop      chan struct{}
+	done      chan struct{}
 }
 
 func newFirewallLogWriter(log *logstore.FirewallLog, max int, interval time.Duration) *firewallLogWriter {
@@ -276,9 +287,13 @@ func (w *firewallLogWriter) run(interval time.Duration) {
 
 func (w *firewallLogWriter) Record(ctx context.Context, entry logstore.FirewallLogEntry) error {
 	if w == nil || w.log == nil {
-		return nil
+		return errors.New("firewall log writer is unavailable")
 	}
 	w.mu.Lock()
+	if w.closed {
+		w.mu.Unlock()
+		return os.ErrClosed
+	}
 	if w.err != nil {
 		err := w.err
 		w.mu.Unlock()
@@ -297,7 +312,7 @@ func (w *firewallLogWriter) Close() error {
 	if w == nil {
 		return nil
 	}
-	close(w.stop)
+	w.closeOnce.Do(func() { w.mu.Lock(); w.closed = true; w.mu.Unlock(); close(w.stop) })
 	<-w.done
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -305,6 +320,8 @@ func (w *firewallLogWriter) Close() error {
 }
 
 func (w *firewallLogWriter) flush(ctx context.Context) error {
+	w.flushMu.Lock()
+	defer w.flushMu.Unlock()
 	w.mu.Lock()
 	if len(w.entries) == 0 {
 		err := w.err
@@ -369,13 +386,18 @@ func parseOptions(name string, args []string) (options, error) {
 	return opts, nil
 }
 
-func startExpiredFlowWatchers(ctx context.Context, opts options, log *logstore.FirewallLog) {
+func startExpiredFlowWatchers(ctx context.Context, opts options, log *logstore.FirewallLog) func() {
+	ctx, cancel := context.WithCancel(ctx)
+	var workers sync.WaitGroup
 	if opts.conntrackEvents && opts.group > 0 && opts.inputFile == "" && opts.pflogInterface == "" {
-		go watchConntrackDestroyLoop(ctx, opts, log)
+		workers.Add(1)
+		go func() { defer workers.Done(); watchConntrackDestroyLoop(ctx, opts, log) }()
 	}
 	if opts.pflogInterface != "" && opts.inputFile == "" {
-		go watchPFStateExpireLoop(ctx, opts, log)
+		workers.Add(1)
+		go func() { defer workers.Done(); watchPFStateExpireLoop(ctx, opts, log) }()
 	}
+	return func() { cancel(); workers.Wait() }
 }
 
 func watchConntrackDestroyLoop(ctx context.Context, opts options, log *logstore.FirewallLog) {
@@ -781,7 +803,12 @@ func correlateExpiredReturn(ctx context.Context, log *logstore.FirewallLog, entr
 		return entry
 	}
 	flow, ok, err := log.FindExpiredReturn(ctx, entry, now, time.Hour)
-	if err != nil || !ok {
+	if err != nil {
+		entry.Correlation = "unknown"
+		entry.CorrelationDetail = "expired flow observation unavailable: " + err.Error()
+		return entry
+	}
+	if !ok {
 		entry.Correlation = "true_suspicious"
 		if entry.CorrelationDetail == "" {
 			entry.CorrelationDetail = "no expired reverse flow match"
@@ -990,114 +1017,26 @@ func classifyPacket(ctx context.Context, socket string, timeout time.Duration, p
 }
 
 func firewallLogEntryFromIPPacket(timestamp time.Time, payload []byte, hint string) (logstore.FirewallLogEntry, bool) {
-	if len(payload) < 1 {
-		return logstore.FirewallLogEntry{}, false
-	}
-	version := payload[0] >> 4
-	switch version {
-	case 4:
-		return firewallLogEntryFromIPv4Packet(timestamp, payload, hint)
-	case 6:
-		return firewallLogEntryFromIPv6Packet(timestamp, payload, hint)
-	default:
-		return logstore.FirewallLogEntry{}, false
-	}
-}
-
-func firewallLogEntryFromIPv4Packet(timestamp time.Time, payload []byte, hint string) (logstore.FirewallLogEntry, bool) {
-	if len(payload) < 20 {
-		return logstore.FirewallLogEntry{}, false
-	}
-	ihl := int(payload[0]&0x0f) * 4
-	if ihl < 20 || len(payload) < ihl {
-		return logstore.FirewallLogEntry{}, false
-	}
-	proto := ipProtocolName(payload[9])
-	src := netip.AddrFrom4([4]byte(payload[12:16])).String()
-	dst := netip.AddrFrom4([4]byte(payload[16:20])).String()
-	srcPort, dstPort := transportPorts(proto, payload[ihl:])
-	flags := tcpFlagsFromTransport(proto, payload[ihl:])
-	return logstore.FirewallLogEntry{
-		Timestamp:  timestamp,
-		Action:     "drop",
-		SrcAddress: src,
-		SrcPort:    srcPort,
-		DstAddress: dst,
-		DstPort:    dstPort,
-		Protocol:   proto,
-		TCPFlags:   flags,
-		L3Proto:    "ipv4",
-		Hint:       hint,
-	}, true
-}
-
-func firewallLogEntryFromIPv6Packet(timestamp time.Time, payload []byte, hint string) (logstore.FirewallLogEntry, bool) {
-	if len(payload) < 40 {
-		return logstore.FirewallLogEntry{}, false
-	}
-	proto := ipProtocolName(payload[6])
-	src, ok := netip.AddrFromSlice(payload[8:24])
+	info, ok := dpi.InspectPacket(payload)
 	if !ok {
 		return logstore.FirewallLogEntry{}, false
 	}
-	dst, ok := netip.AddrFromSlice(payload[24:40])
-	if !ok {
-		return logstore.FirewallLogEntry{}, false
+	protocol := info.TransportProtocol
+	if protocol == "1" {
+		protocol = "icmp"
 	}
-	offset := 40
-	if next, transportOffset, ok := ipv6TransportOffset(payload); ok {
-		proto = ipProtocolName(next)
-		offset = transportOffset
+	if protocol == "58" {
+		protocol = "icmpv6"
 	}
-	srcPort, dstPort := transportPorts(proto, payload[offset:])
-	flags := tcpFlagsFromTransport(proto, payload[offset:])
-	return logstore.FirewallLogEntry{
-		Timestamp:  timestamp,
-		Action:     "drop",
-		SrcAddress: src.String(),
-		SrcPort:    srcPort,
-		DstAddress: dst.String(),
-		DstPort:    dstPort,
-		Protocol:   proto,
-		TCPFlags:   flags,
-		L3Proto:    "ipv6",
-		Hint:       hint,
-	}, true
-}
-
-func transportPorts(proto string, payload []byte) (int, int) {
-	if proto != "tcp" && proto != "udp" {
-		return 0, 0
-	}
-	if len(payload) < 4 {
-		return 0, 0
-	}
-	return int(binary.BigEndian.Uint16(payload[0:2])), int(binary.BigEndian.Uint16(payload[2:4]))
+	return logstore.FirewallLogEntry{Timestamp: timestamp, Action: "unknown", SrcAddress: info.SrcAddress, SrcPort: info.SrcPort, DstAddress: info.DstAddress, DstPort: info.DstPort, Protocol: protocol, TCPFlags: tcpFlagsFromTransport(protocol, info.Transport), L3Proto: info.L3Proto, Hint: hint, PacketBytes: info.Length}, true
 }
 
 func tcpFlagsFromIPPacket(payload []byte) string {
-	if len(payload) < 1 {
+	info, ok := dpi.InspectPacket(payload)
+	if !ok {
 		return ""
 	}
-	switch payload[0] >> 4 {
-	case 4:
-		if len(payload) < 20 {
-			return ""
-		}
-		ihl := int(payload[0]&0x0f) * 4
-		if ihl < 20 || len(payload) < ihl || payload[9] != 6 {
-			return ""
-		}
-		return tcpFlagsFromTransport("tcp", payload[ihl:])
-	case 6:
-		next, offset, ok := ipv6TransportOffset(payload)
-		if !ok || next != 6 || len(payload) < offset {
-			return ""
-		}
-		return tcpFlagsFromTransport("tcp", payload[offset:])
-	default:
-		return ""
-	}
+	return tcpFlagsFromTransport(info.TransportProtocol, info.Transport)
 }
 
 func tcpFlagsFromTransport(proto string, payload []byte) string {
@@ -1125,58 +1064,6 @@ func tcpFlagsFromByte(flags byte) string {
 		}
 	}
 	return strings.Join(out, ",")
-}
-
-func ipv6TransportOffset(payload []byte) (byte, int, bool) {
-	if len(payload) < 40 {
-		return 0, 0, false
-	}
-	next := payload[6]
-	offset := 40
-	for {
-		switch next {
-		case 0, 43, 60:
-			if len(payload) < offset+2 {
-				return 0, 0, false
-			}
-			headerLen := (int(payload[offset+1]) + 1) * 8
-			next = payload[offset]
-			offset += headerLen
-		case 44:
-			if len(payload) < offset+8 {
-				return 0, 0, false
-			}
-			next = payload[offset]
-			offset += 8
-		case 51:
-			if len(payload) < offset+2 {
-				return 0, 0, false
-			}
-			headerLen := (int(payload[offset+1]) + 2) * 4
-			next = payload[offset]
-			offset += headerLen
-		default:
-			return next, offset, offset <= len(payload)
-		}
-		if offset > len(payload) {
-			return 0, 0, false
-		}
-	}
-}
-
-func ipProtocolName(proto byte) string {
-	switch proto {
-	case 1:
-		return "icmp"
-	case 6:
-		return "tcp"
-	case 17:
-		return "udp"
-	case 58:
-		return "icmpv6"
-	default:
-		return strconv.Itoa(int(proto))
-	}
 }
 
 func parseFirewallLogLine(line, format string) (logstore.FirewallLogEntry, bool) {
@@ -1228,7 +1115,7 @@ func firewallLogEntryFromNFLogPacket(packet nflog.Packet) logstore.FirewallLogEn
 	prefix := strings.TrimSpace(packet.Prefix)
 	action := actionFromFirewallPrefix(prefix)
 	if action == "" {
-		action = "drop"
+		action = "unknown"
 	}
 	packetBytes := packet.PacketBytes
 	if packetBytes == 0 {
@@ -1265,7 +1152,7 @@ func parseKeyValueFirewallLogLine(line string) (logstore.FirewallLogEntry, bool)
 		ZoneFrom:    fields["zone_from"],
 		ZoneTo:      fields["zone_to"],
 		RuleName:    fields["rule_name"],
-		Action:      stringutil.FirstNonEmpty(fields["action"], "drop"),
+		Action:      stringutil.FirstNonEmpty(fields["action"], "unknown"),
 		SrcAddress:  stringutil.FirstNonEmpty(fields["src_address"], fields["src"]),
 		DstAddress:  stringutil.FirstNonEmpty(fields["dst_address"], fields["dst"]),
 		SrcPort:     atoi(fields["src_port"]),
@@ -1375,7 +1262,7 @@ func parseNFLogTCPDumpLine(line string) (logstore.FirewallLogEntry, bool) {
 	prefix := firewallPrefixFromNFLog(line)
 	action := actionFromFirewallPrefix(prefix)
 	if action == "" {
-		action = "drop"
+		action = "unknown"
 	}
 	entry := logstore.FirewallLogEntry{
 		Timestamp:   time.Now().UTC(),
@@ -1428,13 +1315,16 @@ func firewallPrefixFromNFLog(line string) string {
 }
 
 func actionFromFirewallPrefix(prefix string) string {
-	text := strings.ToLower(prefix)
-	switch {
-	case strings.Contains(text, "deny"), strings.Contains(text, "drop"):
+	fields := strings.Fields(strings.TrimSpace(prefix))
+	if len(fields) == 0 {
+		return ""
+	}
+	switch strings.ToLower(fields[len(fields)-1]) {
+	case "deny", "drop", "block":
 		return "drop"
-	case strings.Contains(text, "reject"):
+	case "reject":
 		return "reject"
-	case strings.Contains(text, "accept"), strings.Contains(text, "pass"):
+	case "accept", "pass", "allow":
 		return "accept"
 	default:
 		return ""

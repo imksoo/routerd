@@ -96,11 +96,10 @@ func findResource(ref api.PluginContextResourceRef, resources []api.Resource) (a
 	return api.Resource{}, false
 }
 
-// redactResource deep-copies a resource's spec via a JSON round-trip (which also
-// makes it generic + serializable) and walks it removing every secret. The JSON
-// round-trip both prevents mutating the caller's typed resource and normalizes
-// typed specs (including SecretValueSourceSpec sub-objects) into a plain map the
-// walker can inspect uniformly.
+// redactResource prepares the external plugin IPC view. The generic map belongs
+// only to this redacted wire contract; configuration and controller decisions
+// continue using concrete specs. Redaction walks the encoded view without
+// changing the caller's configuration.
 func redactResource(res api.Resource) (PluginContextResource, error) {
 	out := PluginContextResource{
 		APIVersion: res.APIVersion,
@@ -181,6 +180,9 @@ func redactValue(val any) any {
 }
 
 func isSecretKey(key string) bool {
+	if api.IsSecretKey(key) {
+		return true
+	}
 	lower := strings.ToLower(key)
 	for _, frag := range secretKeyFragments {
 		if strings.Contains(lower, frag) {

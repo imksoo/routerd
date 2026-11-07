@@ -85,5 +85,5 @@ func (e Event) IsExpired(now time.Time) bool {
 	if e.ExpiresAt.IsZero() {
 		return false
 	}
-	return now.After(e.ExpiresAt)
+	return !now.Before(e.ExpiresAt)
 }

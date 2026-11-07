@@ -5,7 +5,6 @@ package raobserver
 import (
 	"encoding/binary"
 	"encoding/hex"
-	"fmt"
 	"net"
 	"net/netip"
 	"strings"
@@ -75,14 +74,18 @@ func ParseEthernetIPv6RA(frame []byte) (Advertisement, bool, error) {
 	if ip[0]>>4 != 6 || ip[6] != nextHeaderICMPv6 {
 		return Advertisement{}, false, nil
 	}
-	icmp := ip[ipv6HeaderLen:]
-	if icmp[0] != icmpv6RouterAdv {
+	length := int(binary.BigEndian.Uint16(ip[4:6]))
+	if length < 16 || ipv6HeaderLen+length > len(ip) || ip[7] != 255 {
+		return Advertisement{}, false, nil
+	}
+	icmp := ip[ipv6HeaderLen : ipv6HeaderLen+length]
+	if icmp[0] != icmpv6RouterAdv || icmp[1] != 0 {
 		return Advertisement{}, false, nil
 	}
 	flags := icmp[5]
 	src, ok := netip.AddrFromSlice(ip[8:24])
-	if !ok {
-		return Advertisement{}, false, fmt.Errorf("invalid IPv6 source address")
+	if !ok || !src.IsLinkLocalUnicast() || !validICMPv6Checksum(ip, icmp) {
+		return Advertisement{}, false, nil
 	}
 	adv := Advertisement{
 		SourceMAC:      formatMAC(frame[6:12]),
@@ -92,8 +95,29 @@ func ParseEthernetIPv6RA(frame []byte) (Advertisement, bool, error) {
 		Managed:        flags&0x80 != 0,
 		OtherConfig:    flags&0x40 != 0,
 	}
-	parseOptions(icmp[16:], &adv)
+	if !parseOptions(icmp[16:], &adv) {
+		return Advertisement{}, false, nil
+	}
 	return adv, true, nil
+}
+
+// Validate the ICMPv6 pseudo-header and the declared payload, excluding any
+// Ethernet padding. Captured frames have not passed an IP socket's checks.
+func validICMPv6Checksum(ip, payload []byte) bool {
+	sum := uint32(len(payload)) + nextHeaderICMPv6
+	for _, data := range [][]byte{ip[8:40], payload} {
+		for len(data) >= 2 {
+			sum += uint32(binary.BigEndian.Uint16(data[:2]))
+			data = data[2:]
+		}
+		if len(data) > 0 {
+			sum += uint32(data[0]) << 8
+		}
+	}
+	for sum>>16 != 0 {
+		sum = (sum & 0xffff) + (sum >> 16)
+	}
+	return sum == 0xffff
 }
 
 func IsSelfAdvertisement(adv Advertisement, selfMAC string) bool {
@@ -126,12 +150,16 @@ func UpdateObservation(current RouterObservation, adv Advertisement, now time.Ti
 	return current
 }
 
-func parseOptions(options []byte, adv *Advertisement) {
-	for len(options) >= 2 {
+// RFC 4861 6.1.2 validates framing; unsupported independent options are ignored.
+func parseOptions(options []byte, adv *Advertisement) bool {
+	for len(options) > 0 {
+		if len(options) < 2 {
+			return false
+		}
 		optionType := options[0]
 		optionLen := int(options[1]) * 8
 		if optionLen == 0 || optionLen > len(options) {
-			return
+			return false
 		}
 		option := options[:optionLen]
 		switch optionType {
@@ -150,10 +178,11 @@ func parseOptions(options []byte, adv *Advertisement) {
 		}
 		options = options[optionLen:]
 	}
+	return true
 }
 
 func parsePrefixInformation(option []byte) (PrefixOption, bool) {
-	if len(option) < 32 {
+	if len(option) != 32 || option[2] > 128 {
 		return PrefixOption{}, false
 	}
 	prefixLen := int(option[2])
@@ -191,7 +220,7 @@ func parseRouteInformation(option []byte) (RouteOption, bool) {
 }
 
 func parseRDNSS(option []byte) (RDNSSOption, bool) {
-	if len(option) < 24 {
+	if len(option) < 24 || (len(option)-8)%16 != 0 {
 		return RDNSSOption{}, false
 	}
 	var servers []string

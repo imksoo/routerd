@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -20,7 +21,6 @@ const (
 	canonicalNotRequested canonicalWriteState = "not-requested"
 	canonicalNotReplaced  canonicalWriteState = "not-replaced"
 	canonicalReplaced     canonicalWriteState = "replaced"
-	canonicalUnknown      canonicalWriteState = "unknown"
 )
 
 // applyAttemptOutcome records independent facts, including partial progress.
@@ -51,7 +51,12 @@ type applyAttemptError struct {
 }
 
 func (e *applyAttemptError) Error() string {
-	return fmt.Sprintf("apply failed: stage=%s generation=%d canonical=%s durabilityConfirmed=%t terminalAttempted=%t terminalSucceeded=%t runtimeKnown=%t runtimeAvailable=%t activeEpoch=%d operation=%d", e.Outcome.Stage, e.Outcome.Generation, e.Outcome.Canonical, e.Outcome.DurabilityConfirmed, e.Outcome.TerminalAttempted, e.Outcome.TerminalSucceeded, e.Outcome.Runtime.Active.Known, e.Outcome.Runtime.Active.Available, e.Outcome.Runtime.Active.Epoch, e.Outcome.Runtime.OperationID)
+	phase := "Unknown"
+	if e.Outcome.Result != nil {
+		phase = e.Outcome.Result.Phase
+	}
+	message := fmt.Sprintf("apply failed: stage=%s phase=%s generation=%d canonical=%s durabilityConfirmed=%t terminalAttempted=%t terminalSucceeded=%t runtimeKnown=%t runtimeAvailable=%t activeEpoch=%d operation=%d", e.Outcome.Stage, phase, e.Outcome.Generation, e.Outcome.Canonical, e.Outcome.DurabilityConfirmed, e.Outcome.TerminalAttempted, e.Outcome.TerminalSucceeded, e.Outcome.Runtime.Active.Known, e.Outcome.Runtime.Active.Available, e.Outcome.Runtime.Active.Epoch, e.Outcome.Runtime.OperationID)
+	return message
 }
 
 func (e *applyAttemptError) Unwrap() error { return e.Cause }
@@ -82,17 +87,21 @@ func (o *applyAttemptOutcome) wrapError(err *error, logger *eventlog.Logger) {
 	if *err == nil {
 		return
 	}
-	*err = &applyAttemptError{Outcome: *o, Cause: *err}
+	cause := *err
+	*err = &applyAttemptError{Outcome: *o, Cause: cause}
 	if logger != nil {
-		logger.Emit(eventlog.LevelError, "apply", (*err).Error(), nil)
+		logger.Emit(eventlog.LevelError, "apply", (*err).Error(), map[string]string{"cause": cause.Error()})
 	}
 }
 
 func (o *applyAttemptOutcome) commit(opts applyOptions, configYAML string) error {
-	if opts.DryRun || opts.SkipConfigCommit || strings.TrimSpace(opts.ConfigPath) == "" {
+	if opts.DryRun || opts.SkipConfigCommit {
 		return nil
 	}
 	o.Stage = "canonical-write"
+	if strings.TrimSpace(opts.ConfigPath) == "" {
+		return errors.New("canonical configuration path is required before applying effects")
+	}
 	o.Canonical = canonicalNotReplaced
 	write := config.AtomicWriteFileWithOutcome
 	if opts.attemptHooks != nil && opts.attemptHooks.writeCanonical != nil {
@@ -103,5 +112,55 @@ func (o *applyAttemptOutcome) commit(opts applyOptions, configYAML string) error
 		o.Canonical = canonicalReplaced
 	}
 	o.DurabilityConfirmed = written.DurabilityConfirmed
+	if err == nil && (!written.Replaced || !written.DurabilityConfirmed) {
+		return errors.New("canonical configuration replacement was not durably acknowledged")
+	}
 	return err
+}
+
+// The selected live Runner owns HA admission, the one canonical commit callback,
+// and native reconciliation. Standalone apply already owns its admitted lease.
+func (o *applyAttemptOutcome) commitAndApplyRuntime(ctx context.Context, opts applyOptions, configYAML string, afterCommit func() error) error {
+	calls := 0
+	commit := func() error {
+		if calls != 0 {
+			return errors.New("canonical commit callback was already consumed")
+		}
+		calls++
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := o.commit(opts, configYAML); err != nil {
+			return err
+		}
+		if afterCommit != nil {
+			if err := afterCommit(); err != nil {
+				return err
+			}
+		}
+		o.Stage = "runtime-apply"
+		return nil
+	}
+	if opts.applyRuntime == nil {
+		return commit()
+	}
+	o.Stage = "runtime-admission"
+	outcome, err := opts.applyRuntime(ctx, commit)
+	o.Runtime = outcome
+	if err != nil {
+		return err
+	}
+	if outcome.Standby {
+		if calls != 0 {
+			return errors.New("standby runtime consumed the canonical commit callback")
+		}
+		return nil
+	}
+	if calls != 1 || o.Canonical != canonicalReplaced || !o.DurabilityConfirmed {
+		return errors.New("live runtime did not consume an acknowledged durable canonical commit")
+	}
+	if !outcome.Active.Known || !outcome.Active.Available {
+		return errors.New("runtime apply did not acknowledge an available selected generation")
+	}
+	return nil
 }

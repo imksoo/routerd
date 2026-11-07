@@ -76,7 +76,8 @@ func TestZoneAnswerWildcard(t *testing.T) {
 
 func TestZoneRestoresStickyHostRecordAfterRestart(t *testing.T) {
 	table := newZoneTable([]resolvercfg.RuntimeZone{{
-		Name: "home",
+		Name:       "home",
+		DHCPScopes: []resolvercfg.DHCPAddressScope{{Source: "DHCPv4Server/lan-dhcpv4", Start: "172.18.0.0", End: "172.18.255.255"}},
 		Spec: api.DNSZoneSpec{
 			Zone:        "home.internal",
 			DHCPDerived: api.DNSZoneDHCPDerivedSpec{Sources: []string{"DHCPv4Server/lan-dhcpv4"}, TTL: 60},
@@ -84,6 +85,7 @@ func TestZoneRestoresStickyHostRecordAfterRestart(t *testing.T) {
 		DHCPHostRecords: []resolvercfg.RuntimeDHCPHostRecord{{
 			Hostname: "MacBookProM5Max",
 			IP:       "172.18.1.127",
+			Source:   "DHCPv4Server/lan-dhcpv4", MAC: "02:00:00:00:00:55", Origin: resolvercfg.DHCPAssignmentHeld, ExpiresAt: time.Now().Add(time.Hour),
 		}},
 	}})
 	req := new(dns.Msg)
@@ -106,14 +108,15 @@ func TestZoneRestoresStickyHostRecordAfterRestart(t *testing.T) {
 
 func TestZoneStickySnapshotKeepsFirstDuplicateHostname(t *testing.T) {
 	table := newZoneTable([]resolvercfg.RuntimeZone{{
-		Name: "home",
+		Name:       "home",
+		DHCPScopes: []resolvercfg.DHCPAddressScope{{Source: "DHCPv4Server/lan-dhcpv4", Start: "172.18.0.0", End: "172.18.255.255"}},
 		Spec: api.DNSZoneSpec{
 			Zone:        "home.internal",
 			DHCPDerived: api.DNSZoneDHCPDerivedSpec{Sources: []string{"DHCPv4Server/lan-dhcpv4"}, TTL: 60},
 		},
 		DHCPHostRecords: []resolvercfg.RuntimeDHCPHostRecord{
-			{Hostname: "MacBookProM5Max", IP: "172.18.1.127"},
-			{Hostname: "MacBookProM5Max", IP: "172.18.1.181"},
+			{Hostname: "MacBookProM5Max", IP: "172.18.1.127", Source: "DHCPv4Server/lan-dhcpv4", MAC: "02:00:00:00:00:55", Origin: resolvercfg.DHCPAssignmentHeld, ExpiresAt: time.Now().Add(time.Hour)},
+			{Hostname: "MacBookProM5Max", IP: "172.18.1.181", Source: "DHCPv4Server/lan-dhcpv4", MAC: "02:00:00:00:00:55", Origin: resolvercfg.DHCPAssignmentHeld, ExpiresAt: time.Now().Add(time.Hour)},
 		},
 	}})
 
@@ -131,11 +134,12 @@ func TestZoneStickySnapshotKeepsFirstDuplicateHostname(t *testing.T) {
 func TestZoneActiveLeaseTakesPrecedenceOverStickyHostRecord(t *testing.T) {
 	dir := t.TempDir()
 	leaseFile := dir + "/dnsmasq.leases"
-	if err := os.WriteFile(leaseFile, []byte("1789306800 fc:b2:14:8c:49:1a 172.18.1.127 MacBookProM5Max *\n"), 0o644); err != nil {
+	if err := os.WriteFile(leaseFile, []byte("0 fc:b2:14:8c:49:1a 172.18.1.127 MacBookProM5Max *\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	table := newZoneTable([]resolvercfg.RuntimeZone{{
-		Name: "home",
+		Name:       "home",
+		DHCPScopes: []resolvercfg.DHCPAddressScope{{Source: "DHCPv4Server/lan-dhcpv4", Start: "172.18.0.0", End: "172.18.255.255"}},
 		Spec: api.DNSZoneSpec{
 			Zone: "home.internal",
 			DHCPDerived: api.DNSZoneDHCPDerivedSpec{
@@ -146,6 +150,7 @@ func TestZoneActiveLeaseTakesPrecedenceOverStickyHostRecord(t *testing.T) {
 		DHCPHostRecords: []resolvercfg.RuntimeDHCPHostRecord{{
 			Hostname: "MacBookProM5Max",
 			IP:       "172.18.1.181",
+			Source:   "DHCPv4Server/lan-dhcpv4", MAC: "02:00:00:00:00:55", Origin: resolvercfg.DHCPAssignmentHeld, ExpiresAt: time.Now().Add(time.Hour),
 		}},
 	}})
 	req := new(dns.Msg)
@@ -161,7 +166,8 @@ func TestZoneActiveLeaseTakesPrecedenceOverStickyHostRecord(t *testing.T) {
 
 func TestZoneStaticPTRTakesPrecedenceOverStickyHostRecord(t *testing.T) {
 	table := newZoneTable([]resolvercfg.RuntimeZone{{
-		Name: "home",
+		Name:       "home",
+		DHCPScopes: []resolvercfg.DHCPAddressScope{{Source: "DHCPv4Server/lan-dhcpv4", Start: "172.18.0.0", End: "172.18.255.255"}},
 		Spec: api.DNSZoneSpec{
 			Zone:        "home.internal",
 			DHCPDerived: api.DNSZoneDHCPDerivedSpec{Sources: []string{"DHCPv4Server/lan-dhcpv4"}},
@@ -173,6 +179,7 @@ func TestZoneStaticPTRTakesPrecedenceOverStickyHostRecord(t *testing.T) {
 		DHCPHostRecords: []resolvercfg.RuntimeDHCPHostRecord{{
 			Hostname: "sticky-name",
 			IP:       "172.18.1.127",
+			Source:   "DHCPv4Server/lan-dhcpv4", MAC: "02:00:00:00:00:55", Origin: resolvercfg.DHCPAssignmentHeld, ExpiresAt: time.Now().Add(time.Hour),
 		}},
 	}})
 
@@ -191,11 +198,12 @@ func TestZoneStaticPTRTakesPrecedenceOverStickyHostRecord(t *testing.T) {
 func TestZoneActiveLeasePTRTakesPrecedenceOverStickyHostRecord(t *testing.T) {
 	dir := t.TempDir()
 	leaseFile := dir + "/dnsmasq.leases"
-	if err := os.WriteFile(leaseFile, []byte("1789306800 fc:b2:14:8c:49:1a 172.18.1.127 active-name *\n"), 0o644); err != nil {
+	if err := os.WriteFile(leaseFile, []byte("0 fc:b2:14:8c:49:1a 172.18.1.127 active-name *\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	table := newZoneTable([]resolvercfg.RuntimeZone{{
-		Name: "home",
+		Name:       "home",
+		DHCPScopes: []resolvercfg.DHCPAddressScope{{Source: "DHCPv4Server/lan-dhcpv4", Start: "172.18.0.0", End: "172.18.255.255"}},
 		Spec: api.DNSZoneSpec{
 			Zone: "home.internal",
 			DHCPDerived: api.DNSZoneDHCPDerivedSpec{
@@ -206,6 +214,7 @@ func TestZoneActiveLeasePTRTakesPrecedenceOverStickyHostRecord(t *testing.T) {
 		DHCPHostRecords: []resolvercfg.RuntimeDHCPHostRecord{{
 			Hostname: "sticky-name",
 			IP:       "172.18.1.127",
+			Source:   "DHCPv4Server/lan-dhcpv4", MAC: "02:00:00:00:00:55", Origin: resolvercfg.DHCPAssignmentHeld, ExpiresAt: time.Now().Add(time.Hour),
 		}},
 	}})
 
@@ -330,5 +339,84 @@ func TestLengthPrefixedExchange(t *testing.T) {
 	}
 	if string(resp) != string(query) {
 		t.Fatalf("response = %x, want %x", resp, query)
+	}
+}
+
+func TestProbeRefusalKeepsConditionalUpstreamUsable(t *testing.T) {
+	conn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &dns.Server{PacketConn: conn, Handler: dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+		reply := new(dns.Msg)
+		reply.SetReply(r)
+		if r.Question[0].Name == "dns.example." {
+			reply.Rcode = dns.RcodeRefused
+		} else {
+			reply.Answer = []dns.RR{&dns.A{Hdr: dns.RR_Header{Name: r.Question[0].Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 60}, A: net.ParseIP("203.0.113.80")}}
+		}
+		_ = w.WriteMsg(reply)
+	})}
+	go func() { _ = server.ActivateAndServe() }()
+	defer server.Shutdown()
+	pool, err := newUpstreamPool([]string{"udp://" + conn.LocalAddr().String()}, upstreamPoolConfig{PassThreshold: 1, FailThreshold: 1, ProbeTimeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool.probe(t.Context(), pool.upstreams[0], nil)
+	if got := pool.Snapshot()[0]; got.Phase != upstreamHealthy {
+		t.Fatalf("responsive conditional resolver disabled by unrelated probe: %+v", got)
+	}
+	q := new(dns.Msg)
+	q.SetQuestion("service.upstream.test.", dns.TypeA)
+	wire, _ := q.Pack()
+	answer, err := pool.Exchange(t.Context(), wire, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response dns.Msg
+	if err := response.Unpack(answer); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Answer) != 1 || response.Answer[0].(*dns.A).A.String() != "203.0.113.80" {
+		t.Fatalf("response: %v", &response)
+	}
+	// A rejected ordinary query remains a query failure, not a fabricated answer.
+	if _, err := pool.exchangeOne(t.Context(), pool.upstreams[0], dnsProbeQuery()); err == nil {
+		t.Fatal("ordinary REFUSED query silently accepted")
+	}
+}
+
+func TestProbeResponseStillRequiresMatchingCompleteDNSMessage(t *testing.T) {
+	var query dns.Msg
+	if err := query.Unpack(dnsProbeQuery()); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name   string
+		mutate func(*dns.Msg)
+		valid  bool
+	}{
+		{"refused", func(r *dns.Msg) { r.Rcode = dns.RcodeRefused }, true},
+		{"servfail", func(r *dns.Msg) { r.Rcode = dns.RcodeServerFailure }, true},
+		{"not-implemented", func(r *dns.Msg) { r.Rcode = dns.RcodeNotImplemented }, true},
+		{"wrong-id", func(r *dns.Msg) { r.Id++ }, false},
+		{"wrong-question", func(r *dns.Msg) { r.Question[0].Name = "unrelated.example." }, false},
+		{"truncated", func(r *dns.Msg) { r.Truncated = true }, false},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			response := new(dns.Msg)
+			response.SetReply(query.Copy())
+			tt.mutate(response)
+			wire, err := response.Pack()
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = validateUpstreamProbeResponse(dnsProbeQuery(), wire)
+			if (err == nil) != tt.valid {
+				t.Fatalf("valid=%v error=%v", tt.valid, err)
+			}
+		})
 	}
 }

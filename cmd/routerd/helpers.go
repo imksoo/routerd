@@ -12,35 +12,10 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/apply"
 	"github.com/imksoo/routerd/pkg/eventlog"
-	"github.com/imksoo/routerd/pkg/render"
 	statuswriter "github.com/imksoo/routerd/pkg/status"
 )
-
-func applyFiles(files []render.File) (changed, created []string, err error) {
-	for _, file := range files {
-		if mkErr := os.MkdirAll(filepathDir(file.Path), 0755); mkErr != nil {
-			return nil, nil, fmt.Errorf("create directory for %s: %w", file.Path, mkErr)
-		}
-		existed := false
-		if _, statErr := os.Stat(file.Path); statErr == nil {
-			existed = true
-		}
-		didChange, writeErr := writeFileIfChanged(file.Path, file.Data, 0644)
-		if writeErr != nil {
-			return nil, nil, fmt.Errorf("write %s: %w", file.Path, writeErr)
-		}
-		if didChange {
-			changed = append(changed, file.Path)
-			if !existed {
-				created = append(created, file.Path)
-			}
-		}
-	}
-	return changed, created, nil
-}
 
 func filepathDir(path string) string {
 	idx := strings.LastIndex(path, "/")
@@ -68,6 +43,11 @@ func writeFileIfChanged(path string, data []byte, perm os.FileMode) (bool, error
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return false, err
 	}
+	if err == nil && perm.Perm() == 0600 {
+		if err := os.Chmod(path, perm); err != nil {
+			return false, err
+		}
+	}
 	if err := os.WriteFile(path, data, perm); err != nil {
 		return false, err
 	}
@@ -77,92 +57,11 @@ func writeFileIfChanged(path string, data []byte, perm os.FileMode) (bool, error
 	return true, nil
 }
 
-func hasNetworkdUnitFiles(paths []string) bool {
-	for _, path := range paths {
-		if strings.HasSuffix(path, ".netdev") || (strings.HasSuffix(path, ".network") && !strings.Contains(path, ".network.d/")) {
-			return true
-		}
-	}
-	return false
-}
-
-func hasNewNetdevFiles(paths []string) bool {
-	for _, path := range paths {
-		if strings.HasSuffix(path, ".netdev") {
-			return true
-		}
-	}
-	return false
-}
-
-func changedNetworkdInterfaces(paths []string) []string {
-	var ifnames []string
-	for _, path := range paths {
-		if !strings.Contains(path, ".network.d/") {
-			continue
-		}
-		base := filepathBase(filepathDir(path))
-		if strings.HasSuffix(base, ".network.d") {
-			base = strings.TrimSuffix(base, ".network.d")
-		}
-		if strings.HasPrefix(base, "10-netplan-") {
-			base = strings.TrimPrefix(base, "10-netplan-")
-		}
-		if base != "" {
-			ifnames = append(ifnames, base)
-		}
-	}
-	return uniqueStrings(ifnames)
-}
-
-func filepathBase(path string) string {
-	idx := strings.LastIndex(path, "/")
-	if idx < 0 {
-		return path
-	}
-	return path[idx+1:]
-}
-
-func uniqueStrings(values []string) []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, value := range values {
-		if value == "" || seen[value] {
-			continue
-		}
-		seen[value] = true
-		out = append(out, value)
-	}
-	return out
-}
-
 func defaultString(value, fallback string) string {
 	if value == "" {
 		return fallback
 	}
 	return value
-}
-
-func defaultInt(value, fallback int) int {
-	if value == 0 {
-		return fallback
-	}
-	return value
-}
-
-func routerInterfaceAliases(resources []api.Resource) map[string]string {
-	aliases := map[string]string{}
-	for _, res := range resources {
-		if res.Kind != "Interface" {
-			continue
-		}
-		spec, err := res.InterfaceSpec()
-		if err != nil {
-			continue
-		}
-		aliases[res.Metadata.Name] = spec.IfName
-	}
-	return aliases
 }
 
 func firstNonEmptyString(values ...string) string {

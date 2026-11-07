@@ -3,9 +3,12 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"crypto/rand"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -13,11 +16,13 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
@@ -38,8 +43,10 @@ const (
 	eventARPRequestSeen   = "routerd.mobility.arp.request.observed"
 	eventPVESVNetObserved = "routerd.mobility.pve-svnet.observed"
 
-	arpRequest = 1
-	arpReply   = 2
+	arpRequest            = 1
+	arpReply              = 2
+	maxRetainedARPClients = 4096
+	maxActiveARPProbes    = 64
 )
 
 type options struct {
@@ -73,8 +80,10 @@ type daemon struct {
 	mu                               sync.Mutex
 	cond                             *sync.Cond
 	events                           []daemonapi.DaemonEvent
-	nextCursor                       uint64
+	activeProbes                     int
+	lastBookkeepingPrune             time.Time
 	observerError                    string
+	eventError                       string
 	packetsSeen                      uint64
 	observedCount                    uint64
 	probeCount                       uint64
@@ -270,7 +279,8 @@ func daemonCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
 	d := &daemon{
 		opts:           opts,
 		startedAt:      time.Now().UTC(),
@@ -282,16 +292,25 @@ func daemonCommand(args []string) error {
 		clients:        map[string]arpClient{},
 	}
 	d.cond = sync.NewCond(&d.mu)
-	go d.observe(ctx)
-	if opts.sourceType == sourcePVESVNet {
-		go d.pollARPTable(ctx)
+	if err := d.restoreEvents(); err != nil {
+		d.eventError = err.Error()
 	}
-	return d.serve(ctx)
+	var workers sync.WaitGroup
+	workers.Add(1)
+	go func() { defer workers.Done(); d.observe(ctx) }()
+	if opts.sourceType == sourcePVESVNet {
+		workers.Add(1)
+		go func() { defer workers.Done(); d.pollARPTable(ctx) }()
+	}
+	err = d.serve(ctx)
+	cancel()
+	workers.Wait()
+	return err
 }
 
 func (d *daemon) observe(ctx context.Context) {
 	for ctx.Err() == nil {
-		socket, err := openPacketSocket(d.opts.ifname)
+		socket, err := openPacketSocket(ctx, d.opts.ifname)
 		if err != nil {
 			d.setObserverError(err)
 			select {
@@ -324,12 +343,17 @@ func (d *daemon) observeSocket(ctx context.Context, socket *packetSocket) error 
 		}
 		d.socketMu.Unlock()
 	}()
+	var workers sync.WaitGroup
+	defer func() { cancel(); workers.Wait() }()
+	workers.Add(1)
 	go func() {
-		<-ctx.Done()
+		defer workers.Done()
+		<-socketCtx.Done()
 		_ = socket.close()
 	}()
 	if d.opts.sourceType == sourceOnDemandARP && d.opts.onDemand {
-		go d.proactiveProbeLoop(socketCtx, socket)
+		workers.Add(1)
+		go func() { defer workers.Done(); d.proactiveProbeLoop(socketCtx, socket) }()
 	}
 	frame := make([]byte, 65535)
 	for {
@@ -341,7 +365,7 @@ func (d *daemon) observeSocket(ctx context.Context, socket *packetSocket) error 
 		if err != nil || !ok {
 			continue
 		}
-		d.recordPacket(ctx, socket, packet)
+		d.recordPacket(socketCtx, socket, packet)
 	}
 }
 
@@ -500,6 +524,7 @@ func (d *daemon) publishObservation(address netip.Addr, mac net.HardwareAddr, to
 		d.mu.Unlock()
 		return
 	}
+	d.pruneBookkeepingLocked(now)
 	key := topic + "|" + address.String() + "|" + macString
 	if last := d.lastEventByKey[key]; !last.IsZero() && now.Sub(last) < 30*time.Second {
 		d.mu.Unlock()
@@ -509,7 +534,20 @@ func (d *daemon) publishObservation(address netip.Addr, mac net.HardwareAddr, to
 	if existing, ok := d.clients[address.String()]; ok && strings.EqualFold(existing.MAC, macString) {
 		severity = daemonapi.SeverityDebug
 	}
+	if _, exists := d.lastEventByKey[key]; !exists && len(d.lastEventByKey) >= maxRetainedARPClients {
+		evictOldestARPTime(d.lastEventByKey)
+	}
 	d.lastEventByKey[key] = now
+	if _, exists := d.clients[address.String()]; !exists && len(d.clients) >= maxRetainedARPClients {
+		var oldest string
+		var seen time.Time
+		for key, client := range d.clients {
+			if oldest == "" || client.SeenAt.Before(seen) {
+				oldest, seen = key, client.SeenAt
+			}
+		}
+		delete(d.clients, oldest)
+	}
 	d.clients[address.String()] = arpClient{IP: address.String(), MAC: macString, SourceType: sourceType, SeenAt: now}
 	if topic == eventARPProbeHit {
 		d.probeHitCount++
@@ -546,13 +584,53 @@ func (d *daemon) eventAttrs(address netip.Addr, mac net.HardwareAddr, sourceType
 func (d *daemon) shouldProbe(target netip.Addr, now time.Time) bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	d.pruneBookkeepingLocked(now)
+	if len(d.pendingProbe) >= maxActiveARPProbes {
+		return false
+	}
 	key := target.String()
 	if last := d.lastProbeAt[key]; !last.IsZero() && now.Sub(last) < d.opts.probeCooldown {
 		return false
 	}
+	if _, exists := d.lastProbeAt[key]; !exists && len(d.lastProbeAt) >= maxRetainedARPClients {
+		evictOldestARPTime(d.lastProbeAt)
+	}
 	d.lastProbeAt[key] = now
 	d.pendingProbe[key] = now.Add(time.Duration(d.opts.probeRetries+1)*d.opts.probeTimeout + time.Second)
 	return true
+}
+
+func (d *daemon) pruneBookkeepingLocked(now time.Time) {
+	if now.Sub(d.lastBookkeepingPrune) < time.Second {
+		return
+	}
+	d.lastBookkeepingPrune = now
+	for key, until := range d.pendingProbe {
+		if !now.Before(until) {
+			delete(d.pendingProbe, key)
+		}
+	}
+	for key, last := range d.lastProbeAt {
+		if now.Sub(last) >= d.opts.probeCooldown {
+			delete(d.lastProbeAt, key)
+		}
+	}
+	for key, last := range d.lastEventByKey {
+		if now.Sub(last) >= 30*time.Second {
+			delete(d.lastEventByKey, key)
+		}
+	}
+}
+
+func evictOldestARPTime(values map[string]time.Time) {
+	var oldest string
+	var seen time.Time
+	for key, last := range values {
+		if oldest == "" || last.Before(seen) {
+			oldest, seen = key, last
+		}
+	}
+	delete(values, oldest)
 }
 
 func (d *daemon) activeProbingArmed() bool {
@@ -582,6 +660,15 @@ func (d *daemon) markProbeHit(address netip.Addr) bool {
 }
 
 func (d *daemon) probeTarget(ctx context.Context, socket *packetSocket, target netip.Addr) (int, error) {
+	d.mu.Lock()
+	if d.activeProbes >= maxActiveARPProbes {
+		d.mu.Unlock()
+		d.clearPendingProbe(target)
+		return 0, fmt.Errorf("ARP probe concurrency limit reached")
+	}
+	d.activeProbes++
+	d.mu.Unlock()
+	defer func() { d.mu.Lock(); d.activeProbes--; d.mu.Unlock() }()
 	attempts := d.opts.probeRetries + 1
 	sent := 0
 	for i := 0; i < attempts; i++ {
@@ -636,7 +723,9 @@ func (d *daemon) serve(ctx context.Context) error {
 	if err := os.MkdirAll(filepath.Dir(d.opts.socketPath), 0755); err != nil {
 		return err
 	}
-	_ = os.Remove(d.opts.socketPath)
+	if err := removeStaleARPSocket(d.opts.socketPath); err != nil {
+		return err
+	}
 	listener, err := net.Listen("unix", d.opts.socketPath)
 	if err != nil {
 		return err
@@ -654,7 +743,10 @@ func (d *daemon) serve(ctx context.Context) error {
 			return
 		}
 		var req daemonapi.CommandRequest
-		_ = json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req)
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		result := daemonapi.CommandResult{TypeMeta: daemonapi.TypeMeta{APIVersion: daemonapi.APIVersion, Kind: daemonapi.KindCommandResult}, Command: req.Command, Accepted: true, Message: "accepted"}
 		switch req.Command {
 		case daemonapi.CommandStop:
@@ -713,9 +805,12 @@ func (d *daemon) serve(ctx context.Context) error {
 		}
 		writeHTTPJSON(w, result)
 	})
-	server := &http.Server{Handler: mux}
+	server := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	serveCtx, stopServer := context.WithCancel(ctx)
+	defer stopServer()
+	defer server.Close()
 	go func() {
-		<-ctx.Done()
+		<-serveCtx.Done()
 		_ = server.Close()
 	}()
 	err = server.Serve(listener)
@@ -723,6 +818,28 @@ func (d *daemon) serve(ctx context.Context) error {
 		return nil
 	}
 	return err
+}
+
+func removeStaleARPSocket(path string) error {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSocket == 0 {
+		return fmt.Errorf("refusing to remove non-socket path %s", path)
+	}
+	conn, dialErr := net.DialTimeout("unix", path, 200*time.Millisecond)
+	if dialErr == nil {
+		conn.Close()
+		return fmt.Errorf("socket %s is already active", path)
+	}
+	if !errors.Is(dialErr, syscall.ECONNREFUSED) && !errors.Is(dialErr, os.ErrNotExist) {
+		return fmt.Errorf("inspect socket %s before removal: %w", path, dialErr)
+	}
+	return os.Remove(path)
 }
 
 func (d *daemon) status() daemonapi.DaemonStatus {
@@ -738,6 +855,11 @@ func (d *daemon) status() daemonapi.DaemonStatus {
 		resourcePhase = "Pending"
 		reason = "ARPObserverUnavailable"
 		message = d.observerError
+	}
+	if d.eventError != "" {
+		health = daemonapi.HealthDegraded
+		message = d.eventError
+		reason = "EventHistoryUnavailable"
 	}
 	clients, _ := json.Marshal(d.observedClientsLocked())
 	observed := map[string]string{
@@ -758,6 +880,8 @@ func (d *daemon) status() daemonapi.DaemonStatus {
 		"scanCount":            strconv.FormatUint(d.scanCount, 10),
 		"scanInterval":         d.opts.scanInterval.String(),
 		"observedClients":      string(clients),
+		"retainedClientLimit":  strconv.Itoa(maxRetainedARPClients),
+		"activeProbes":         strconv.Itoa(d.activeProbes),
 	}
 	ignoredSenderMACs := boolMapKeysSorted(d.opts.ignoredSenderMACs)
 	observed["ignoredSenderMACs"] = strings.Join(ignoredSenderMACs, ",")
@@ -868,8 +992,14 @@ func (d *daemon) handleEvents(w http.ResponseWriter, r *http.Request) {
 	wait := parseWait(r.URL.Query().Get("wait"))
 	tail := r.URL.Query().Get("tail") == "true"
 	deadline := time.Now().Add(wait)
+	stopWake := context.AfterFunc(r.Context(), func() { d.mu.Lock(); d.cond.Broadcast(); d.mu.Unlock() })
+	defer stopWake()
 	d.mu.Lock()
 	for {
+		if r.Context().Err() != nil {
+			d.mu.Unlock()
+			return
+		}
 		events, cursor := d.eventsSinceLocked(since, topic, tail)
 		if len(events) > 0 || wait <= 0 || time.Now().After(deadline) {
 			d.mu.Unlock()
@@ -887,31 +1017,65 @@ func (d *daemon) handleEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *daemon) eventsSinceLocked(since, topic string, tail bool) ([]daemonapi.DaemonEvent, string) {
-	var out []daemonapi.DaemonEvent
 	cursor := since
-	sinceID, _ := strconv.ParseUint(since, 10, 64)
-	for _, event := range d.events {
-		id, _ := strconv.ParseUint(event.Cursor, 10, 64)
-		if tail {
-			cursor = event.Cursor
-			continue
+	if len(d.events) > 0 {
+		cursor = d.events[len(d.events)-1].Cursor
+	}
+	if tail {
+		return nil, cursor
+	}
+	start := 0
+	for index, event := range d.events {
+		if since != "" && event.Cursor == since {
+			start = index + 1
+			break
 		}
-		if id <= sinceID {
-			continue
+	}
+	var out []daemonapi.DaemonEvent
+	for _, event := range d.events[start:] {
+		if topic == "" || event.Type == topic {
+			out = append(out, event)
 		}
-		if topic != "" && event.Type != topic {
-			continue
-		}
-		out = append(out, event)
-		cursor = event.Cursor
 	}
 	return out, cursor
 }
 
+func (d *daemon) restoreEvents() error {
+	file, err := os.Open(d.opts.eventFile)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	if info, err := file.Stat(); err != nil {
+		return err
+	} else if info.Size() > eventfile.DefaultMaxBytes+(64<<10) {
+		return fmt.Errorf("ARP event history exceeds bounded rotation size")
+	}
+	scanner := bufio.NewScanner(file)
+	var decodeErr error
+	for scanner.Scan() {
+		var event daemonapi.DaemonEvent
+		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			decodeErr = err
+			continue
+		}
+		if event.Cursor == "" || event.Daemon != d.daemonRef() || event.Resource == nil || *event.Resource != d.resourceRef() {
+			continue
+		}
+		d.events = append(d.events, event)
+		if len(d.events) > 1000 {
+			d.events = d.events[len(d.events)-1000:]
+		}
+	}
+	return errors.Join(decodeErr, scanner.Err())
+}
+
 func (d *daemon) publishLocked(topic, severity, reason, message string, attrs map[string]string) {
-	d.nextCursor++
 	event := daemonapi.NewEvent(d.daemonRef(), topic, severity)
-	event.Cursor = strconv.FormatUint(d.nextCursor, 10)
+	event.Cursor = rand.Text()
 	resource := d.resourceRef()
 	event.Resource = &resource
 	event.Reason = reason
@@ -921,7 +1085,10 @@ func (d *daemon) publishLocked(topic, severity, reason, message string, attrs ma
 	if len(d.events) > 1000 {
 		d.events = append([]daemonapi.DaemonEvent(nil), d.events[len(d.events)-1000:]...)
 	}
-	_ = eventfile.AppendJSONLine(d.opts.eventFile, event)
+	d.eventError = ""
+	if err := eventfile.AppendJSONLine(d.opts.eventFile, event); err != nil {
+		d.eventError = err.Error()
+	}
 	d.cond.Broadcast()
 }
 
@@ -1047,7 +1214,14 @@ func readARPTable(path string) ([]arpTableEntry, error) {
 		return nil, err
 	}
 	defer file.Close()
-	return parseARPTable(file), nil
+	data, err := io.ReadAll(io.LimitReader(file, (4<<20)+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > 4<<20 {
+		return nil, fmt.Errorf("ARP table exceeds 4 MiB observation limit")
+	}
+	return parseARPTable(strings.NewReader(string(data))), nil
 }
 
 func parseARPTable(r io.Reader) []arpTableEntry {
@@ -1160,7 +1334,7 @@ func parseWait(value string) time.Duration {
 	if err != nil || wait < 0 {
 		return 0
 	}
-	return wait
+	return min(wait, 30*time.Second)
 }
 
 func writeHTTPJSON(w http.ResponseWriter, value any) {

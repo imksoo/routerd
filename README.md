@@ -81,30 +81,23 @@ the managed dnsmasq process; verify DHCPv4, DHCPv6 and RA after upgrading.
 
 ## Quick Start
 
-Install from a release archive on an Ubuntu Server lab host:
+The 1.5 proposal installs onto a clean OS with native packages. After obtaining
+and verifying the matching build's package:
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260914.0729/routerd-linux-amd64.tar.gz
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260914.0729/routerd-linux-amd64.tar.gz.sha256
-sha256sum -c routerd-linux-amd64.tar.gz.sha256
-tar -xzf routerd-linux-amd64.tar.gz
-sudo ./install.sh
+# Debian/Ubuntu
+sudo apt install ./routerd_<version>_amd64.deb
+# FreeBSD 14
+sudo pkg -o HANDLE_RC_SCRIPTS=true install ./routerd-<version>.pkg
 ```
 
-For FreeBSD, download `routerd-freebsd-amd64.tar.gz` from the stable release tag
-and run the same `./install.sh`.
-Use `routerd-linux-arm64.tar.gz` or `routerd-freebsd-arm64.tar.gz` on arm64 hosts.
-Versioned archives such as `routerd-v20260914.0729-linux-amd64.tar.gz` are also
-available on the same release page when you need an explicitly named artifact.
-
-Linux release archives contain statically linked routerd binaries
-(`CGO_ENABLED=0`). They do not depend on the target host's glibc version.
-
-`install.sh` installs known OS packages, copies binaries to `/usr/local/sbin`,
-installs the service template, writes `router.yaml.sample`, and preserves an
-existing `/usr/local/etc/routerd/router.yaml`.
-Use `./install.sh --list-deps` to inspect the package list.
-Use `sudo ./install.sh --no-install-deps` when packages are managed elsewhere.
+Use the actual filename and CPU architecture. Packages and a public repository
+are not yet released for this proposal. Package-to-package updates preserve
+configuration and durable state. Source/manual/archive installation migration is
+outside this contract. Fresh installation leaves the daemon inactive and does
+not apply an example. See [Install and upgrade](docs/install-and-upgrade.md) for
+paths, service startup, update/removal behavior and current qualification scope.
+Linux binaries are statically linked with `CGO_ENABLED=0`.
 
 ### Configure and preview
 
@@ -133,8 +126,8 @@ If a routerd service is already running, use the existing-router guidance in
 [the tutorial](https://routerd.net/docs/tutorials/first-router) instead.
 
 ```sh
-sudo install -d -m 0755 /usr/local/etc/routerd
-sudo install -m 0600 first-router.yaml /usr/local/etc/routerd/router.yaml
+sudo install -d -m 0755 /etc/routerd
+sudo install -m 0600 first-router.yaml /etc/routerd/router.yaml
 sudo systemctl enable --now routerd.service
 sudo systemctl is-active routerd.service
 sudo routerctl get status
@@ -361,7 +354,7 @@ make website-build
 ```
 
 The Makefile is for development tasks.
-End-user installation goes through the release archive and `install.sh`.
+End-user installation and updates use native apt/pkg packages.
 
 The [network namespace tests](tests/netns/README.md) require explicit `sudo` on
 a disposable Linux guest. They include SAM empty-forwarding cleanup with
@@ -394,12 +387,15 @@ sudo routerctl plugin run <name> --dry-run
 
 ## Runtime Layout
 
+Linux paths are listed below; FreeBSD uses `/usr/local`, `/var/run/routerd` and
+`/var/db/routerd` as detailed in the installation guide.
+
 Default release-install paths:
 
-- Config: `/usr/local/etc/routerd/router.yaml`
-- Binaries: `/usr/local/sbin/routerd`, `/usr/local/sbin/routerctl`,
-  `/usr/local/sbin/routerd-*`
-- Plugin directory: `/usr/local/libexec/routerd/plugins`
+- Config: `/etc/routerd/router.yaml`
+- Binaries: `/usr/sbin/routerd`, `/usr/bin/routerctl`,
+  `/usr/sbin/routerd-*`
+- Plugin directory: `/usr/libexec/routerd/plugins`
 - Linux runtime: `/run/routerd`
 - Linux state: `/var/lib/routerd`
 - FreeBSD runtime/state equivalents: `/var/run/routerd`, `/var/db/routerd`
@@ -472,7 +468,7 @@ work.
 
 The release archive includes `share/doc/LICENSE` and
 `share/doc/THIRD_PARTY_LICENSES.md`. The live ISO exposes the same notices
-under `/usr/local/share/doc/routerd/` (`LICENSE` and
+under `/usr/share/doc/routerd/` (`LICENSE` and
 `THIRD_PARTY_LICENSES.txt`). Regenerate the inventory with:
 
 ```sh

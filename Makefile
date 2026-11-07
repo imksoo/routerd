@@ -6,6 +6,9 @@ DISTDIR ?= $(DISTBASE)/$(DISTPLATFORM)
 DISTROOT ?= $(DISTDIR)/package
 DISTTAR ?= $(DISTDIR)/routerd-$(VERSION)-$(DISTPLATFORM).tar.gz
 DISTTAR_ALIAS ?= $(DISTDIR)/routerd-$(DISTPLATFORM).tar.gz
+PACKAGE_STAMP := $(shell git show -s --format=%cd --date=format:%Y%m%d%H%M%S)
+PACKAGE_REVISION := $(shell git rev-parse --short=12 HEAD)
+PACKAGE_VERSION ?= $(if $(filter freebsd,$(ROUTERD_OS)),1.5.0.a$(PACKAGE_STAMP).g$(PACKAGE_REVISION),1.5.0~$(PACKAGE_STAMP)+g$(PACKAGE_REVISION))
 CONFIG ?=
 UNAME_S := $(shell uname -s)
 
@@ -148,7 +151,7 @@ check-linux-static:
 	done
 
 check-ndpi-agent-libndpi:
-	@if [ "$(ROUTERD_OS)" != "linux" ]; then echo "libndpi agent archive is Linux-only" >&2; exit 2; fi
+	@case "$(ROUTERD_OS)" in linux|freebsd) ;; *) echo 'native libndpi agent requires Linux or FreeBSD' >&2; exit 2 ;; esac
 	@if [ ! -x "$(ROUTERD_NDPI_AGENT_BIN)" ]; then echo "missing binary: $(ROUTERD_NDPI_AGENT_BIN)" >&2; exit 1; fi
 	@if ! command -v file >/dev/null 2>&1; then echo "missing file(1), cannot verify libndpi agent binary" >&2; exit 1; fi
 	@info=$$(file "$(ROUTERD_NDPI_AGENT_BIN)"); \
@@ -157,7 +160,8 @@ check-ndpi-agent-libndpi:
 		*) echo "libndpi agent binary is expected to be dynamically linked: $(ROUTERD_NDPI_AGENT_BIN)" >&2; echo "$$info" >&2; exit 1 ;; \
 	esac
 	@if [ "$(DISTARCH)" = "$$(go env GOARCH)" ]; then \
-		if ! "$(ROUTERD_NDPI_AGENT_BIN)" selftest | grep -q '"libndpiLoaded":true'; then \
+		selftest=$$("$(ROUTERD_NDPI_AGENT_BIN)" selftest) || exit $$?; \
+		if ! printf '%s\n' "$$selftest" | grep -q '"libndpiLoaded":true'; then \
 			echo "libndpi agent selftest did not load libndpi" >&2; \
 			exit 1; \
 		fi; \
@@ -292,7 +296,13 @@ check-build-deps:
 	done; \
 	exit $$missing
 
-dist:
+.PHONY: dist-payload dist-deb dist-pkg package-version
+
+package-version:
+	@printf '%s\n' '$(PACKAGE_VERSION)'
+
+# One inventory feeds native packages and the internal image/archive staging.
+dist-payload:
 	rm -rf $(DISTROOT) $(DISTTAR) $(DISTTAR).sha256 $(DISTTAR_ALIAS) $(DISTTAR_ALIAS).sha256
 	$(MAKE) build-daemons
 	$(MAKE) build-provider-executors
@@ -343,6 +353,8 @@ dist:
 		install -d $(DISTROOT)/systemd; \
 		install -m 0644 contrib/systemd/routerd.service contrib/systemd/routerd-bgp.service $(DISTROOT)/systemd/; \
 	fi
+
+dist: dist-payload
 	install -d $(DISTDIR)
 	tar -C $(DISTROOT) -czf $(DISTTAR) .
 	scripts/check-tar-safe-paths.sh $(DISTTAR)
@@ -350,7 +362,18 @@ dist:
 	if command -v sha256sum >/dev/null 2>&1; then (cd $(DISTDIR) && sha256sum $(notdir $(DISTTAR)) > $(notdir $(DISTTAR)).sha256); elif command -v shasum >/dev/null 2>&1; then (cd $(DISTDIR) && shasum -a 256 $(notdir $(DISTTAR)) > $(notdir $(DISTTAR)).sha256); elif command -v sha256 >/dev/null 2>&1; then (cd $(DISTDIR) && sha256 -r $(notdir $(DISTTAR)) > $(notdir $(DISTTAR)).sha256); else echo "missing sha256 tool" >&2; exit 1; fi
 	if command -v sha256sum >/dev/null 2>&1; then (cd $(DISTDIR) && sha256sum $(notdir $(DISTTAR_ALIAS)) > $(notdir $(DISTTAR_ALIAS)).sha256); elif command -v shasum >/dev/null 2>&1; then (cd $(DISTDIR) && shasum -a 256 $(notdir $(DISTTAR_ALIAS)) > $(notdir $(DISTTAR_ALIAS)).sha256); elif command -v sha256 >/dev/null 2>&1; then (cd $(DISTDIR) && sha256 -r $(notdir $(DISTTAR_ALIAS)) > $(notdir $(DISTTAR_ALIAS)).sha256); else echo "missing sha256 tool" >&2; exit 1; fi
 
-dist-ndpi-agent-libndpi:
+dist-deb: dist-payload
+	@test "$(ROUTERD_OS)" = linux || { echo 'dist-deb requires ROUTERD_OS=linux' >&2; exit 1; }
+	python3 scripts/build-native-package.py --format deb --payload $(DISTROOT) --output $(DISTDIR) --version '$(PACKAGE_VERSION)' --arch $(DISTARCH)
+
+dist-pkg: dist-payload
+	@test "$(ROUTERD_OS)" = freebsd || { echo 'dist-pkg requires ROUTERD_OS=freebsd' >&2; exit 1; }
+	$(MAKE) build-ndpi-agent-libndpi
+	$(MAKE) check-ndpi-agent-libndpi
+	install -m 0755 $(ROUTERD_NDPI_AGENT_BIN) $(DISTROOT)/bin/routerd-ndpi-agent
+	python3 scripts/build-native-package.py --format pkg --payload $(DISTROOT) --output $(DISTDIR) --version '$(PACKAGE_VERSION)' --arch $(DISTARCH)
+
+dist-ndpi-agent-libndpi-payload:
 	@if [ "$(ROUTERD_OS)" != "linux" ]; then echo "libndpi agent archive is Linux-only" >&2; exit 2; fi
 	rm -rf $(ROUTERD_NDPI_AGENT_LIBNDPI_DISTROOT) $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR) $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR).sha256 $(ROUTERD_NDPI_AGENT_LIBNDPI_ALIAS) $(ROUTERD_NDPI_AGENT_LIBNDPI_ALIAS).sha256
 	$(MAKE) build-ndpi-agent-libndpi
@@ -359,9 +382,16 @@ dist-ndpi-agent-libndpi:
 	install -m 0755 $(ROUTERD_NDPI_AGENT_BIN) $(ROUTERD_NDPI_AGENT_LIBNDPI_DISTROOT)/bin/routerd-ndpi-agent
 	install -d $(ROUTERD_NDPI_AGENT_LIBNDPI_DISTROOT)/share/doc
 	install -m 0644 docs/operations/ndpi-agent-libndpi.md $(ROUTERD_NDPI_AGENT_LIBNDPI_DISTROOT)/share/doc/README.md
+	install -m 0644 LICENSE $(ROUTERD_NDPI_AGENT_LIBNDPI_DISTROOT)/share/doc/LICENSE
 	printf '%s\n' '$(VERSION)' > $(ROUTERD_NDPI_AGENT_LIBNDPI_DISTROOT)/share/doc/VERSION
 	printf '%s\n' '$(DISTPLATFORM)' > $(ROUTERD_NDPI_AGENT_LIBNDPI_DISTROOT)/share/doc/TARGET
 	install -d $(DISTDIR)
+.PHONY: dist-ndpi-agent-libndpi-payload dist-ndpi-agent-libndpi-deb
+
+dist-ndpi-agent-libndpi-deb: dist-ndpi-agent-libndpi-payload
+	python3 scripts/build-native-package.py --format deb --component routerd-ndpi-agent-libndpi --payload $(ROUTERD_NDPI_AGENT_LIBNDPI_DISTROOT) --output $(DISTDIR) --version '$(PACKAGE_VERSION)' --arch $(DISTARCH)
+
+dist-ndpi-agent-libndpi: dist-ndpi-agent-libndpi-payload
 	tar -C $(ROUTERD_NDPI_AGENT_LIBNDPI_DISTROOT) -czf $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR) .
 	scripts/check-tar-safe-paths.sh $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR)
 	cp $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR) $(ROUTERD_NDPI_AGENT_LIBNDPI_ALIAS)
@@ -389,3 +419,146 @@ release:
 
 clean:
 	rm -rf bin dist
+
+.PHONY: check-routerd15
+check-routerd15: check-spec
+	go test ./...
+	go vet ./...
+
+.PHONY: check-routerd15-focused
+check-routerd15-focused: check-spec
+	go test ./internal/storage ./pkg/api ./pkg/config ./pkg/dynamicconfig/... ./pkg/plugin ./pkg/render ./pkg/resource ./pkg/state ./pkg/healthcheck ./pkg/egressroute ./pkg/dhcpv4client ./pkg/pdclient ./pkg/raobserver ./pkg/pppoeclient ./pkg/resourcequery ./pkg/controller/framework ./pkg/ingressdrain ./pkg/controller/ingressservice ./pkg/nftstate ./pkg/firewallbackend ./pkg/controller/firewall ./pkg/controller/nat44 ./pkg/dnsresolver ./pkg/controller/dnsresolver ./pkg/webconsole ./pkg/eventrule ./pkg/derived ./cmd/routerd-healthcheck ./cmd/routerd-dhcpv4-client ./cmd/routerd-dhcpv6-client ./cmd/routerd-ra-observer ./cmd/routerd-dns-resolver ./examples/cloudedge-mobility-demo/plugins
+	go test ./cmd/routerd ./pkg/controller/chain -run '^(TestRunApplyChainOnce(DryRun|PlansBackup|Commits)|TestApplyCommandDryRun|TestRunDispatchesApplyDryRun|TestFaultDryRun|TestServeConfigMutator(SandboxApply|ApplyReplace)|TestConfigMutation|TestPriorityPolicy|TestPolicyIPv4Native|TestPolicyIPv6Native|TestIPv4PolicyRoute|TestIPv6HostPolicy|TestTypedRouteExpiry|TestPDObservationPropagatesPersistenceFailure|TestRollbackToGenerationDryRun|TestServeConfigMutatorPlanExplainsUnsupportedStateSchema|TestEffectivePolicyRouteExcludesWhenFalseDSLiteTargetWithoutMutatingSpec|TestPathMTUApply|TestPolicyNft|TestPF|TestConditionalAddress|TestBGPHelper)' -count=1
+	go test ./pkg/lifecycle ./pkg/bgpdaemon ./pkg/controller/bgp
+	go test ./cmd/routerd-bgp -run '^(TestRestoreAppliedDoesNotRestorePendingRemoval|TestGoBGPDynamic|TestDynamicPath|TestDynamicPending|TestPendingNative|TestControllerCheckpoint|TestDaemonRestart|TestInitialController|TestRestoreRejectsPrevious)' -count=1
+	go test ./pkg/controller/dhcpv4client -run '^(TestApply|TestDefaultRouteMetric|TestRemovedLease|TestWhen|TestNextExpiry|TestReconcileAllForRouter|TestDryRunUnavailableWorker)' -count=1
+	$(MAKE) check-routerd15-recovery
+	$(MAKE) check-routerd15-robustness
+	go vet ./...
+
+.PHONY: check-routerd15-recovery
+check-routerd15-recovery: check-routerd15-activation check-routerd15-bridge-parent check-routerd15-wireguard-parent check-routerd15-vrf-parent check-routerd15-dslite-parent
+	go test ./pkg/platform -run '^TestKernelNetworkScope' -count=1
+	go test ./cmd/routerd -run '^TestNativeOwner' -count=1
+	go test ./pkg/controller/mobility
+	go test ./pkg/controller/chain -run '^(TestPrepared|TestGenerationPreparationFailureWaits|TestMobilityNative|TestMobilityStore|TestBGPGeneration|TestVXLANSegment|TestRouterAdvertisement|TestRA|TestDnsmasq|TestDSLiteNative|TestLinkObservation|TestLinkAdminUp|TestLinkController(Ensures|DoesNot)|TestStaticAddress|TestIPv4StaticAddress|TestSaveWhenFalseStatusesRetainsIPv4|TestOrdinaryRoute|TestFreeBSDOrdinaryRoute|TestTypedPD|TestPDAtomicReview|TestPDStage|TestRunnerKeepsDependsOnFalse|TestRunnerClearsWhenFalse|TestTunnelUnderlayRemovalOrder|TestLAN|TestDelegatedAddressObservation|TestDSLite(Custom|Source|Shared|RechecksPD|FiniteEndpoint)|TestSAMController|TestSAMJournal)' -count=1
+	go test ./cmd/routerd -run '^(TestMutation|TestNoReconcilePlan|TestDriftedPlan|TestServeOnceRejectsNonconvergence|TestDeletePublishes|TestInspectionCarriesTypedPD|TestActualPDObservation|TestEventConsumerChanges)' -count=1
+	go test ./cmd/routerctl -run '^(TestRollbackListDoesNotLabel|TestApplyTransportFailure|TestMutationResultPolicy|TestPDLeaseOutput|TestFirewallCLI)' -count=1
+
+.PHONY: check-routerd15-robustness
+check-routerd15-robustness:
+	go test ./tests/liveiso ./tools/freebsd-lifecycle-runtime -count=1
+	go test ./pkg/sam ./pkg/vxlan ./pkg/routeradvertisement ./examples/plugins/aws-provider-executor ./examples/plugins/azure-provider-executor ./examples/plugins/oci-provider-executor ./pkg/subprocessio ./pkg/provideraction ./pkg/providerinventory ./pkg/eventd ./pkg/eventfile ./pkg/eventlog ./pkg/federation ./pkg/federationguard ./pkg/controller/eventsubscription ./pkg/controller/eventfederation ./pkg/controller/provideraction ./pkg/controller/bfd ./pkg/controller/vrrp ./pkg/ha ./pkg/observabilitypipeline ./pkg/observe ./pkg/conntrack ./pkg/conntracktuning ./pkg/dpi ./pkg/nflog ./pkg/dhcpfingerprint ./pkg/wireguard ./pkg/otel ./pkg/status ./pkg/logstore ./pkg/bgp
+	go test ./pkg/controller/pppoesession -run '^(TestStatusEndpoint|TestDaemonProjection)' -count=1
+	go test ./pkg/controlapi -run '^(TestControllerRuntime|TestApplyRejectsUnknown|TestClientRejectsTrailing|TestClientChecksEncoded)' -count=1
+	go test ./pkg/source/daemon -run '^TestDaemonSource(Incomplete|Worker|Rejects)' -count=1
+	go test ./cmd/routerctl -run '^(TestAction(EndToEnd|RollbackDryRun|Resolve|Help)|TestPluginRun)' -count=1
+	go test ./tests/install -run '^(TestInstall(FreeBSDStartFailure|CopyFailure|InterruptedServiceRecovery|ServiceObservationFailure)|TestLabctl|TestAcceptanceStopsWhenLiveFault)' -count=1
+	go test ./pkg/controller/chain -run '^(TestSAMSysctl|TestBridge|TestSupervisorRetainsOwnershipUntilCompletion|TestSupervisorReadFailureRetainsMarkerAndSuppressesReplacement|TestSupervisorWaitsForOwnedInitializingDaemonWithoutReadySocket|TestSupervisorCancellationAllowsActualNativeGracefulExit|TestPPPoESource|TestFailedNativeCaptureWithdrawalStillBlocksFederationFeedback|TestRetentionRequiresEverySelectedArchiveDestinationBeforeDeleting|TestPipeline)' -count=1
+
+.PHONY: generate-spec check-spec
+generate-spec:
+	go run ./internal/cmd/specgen
+check-spec:
+	go run ./internal/cmd/specgen -check
+
+test: check-spec
+generate-schema: generate-spec
+
+.PHONY: check-routerd15-policy-native
+.PHONY: check-routerd15-bridge-parent
+check-routerd15-bridge-parent:
+	go test ./pkg/controller/chain -run '^TestBridge' -count=1
+
+.PHONY: check-routerd15-wireguard-parent check-routerd15-vrf-parent check-routerd15-dslite-parent check-routerd15-native-parent-linux check-routerd15-bgp-native-linux
+check-routerd15-wireguard-parent:
+	go test ./pkg/controller/chain -run '^TestWireGuard' -count=1
+
+check-routerd15-vrf-parent:
+	go test ./pkg/controller/chain -run '^TestVRF' -count=1
+
+check-routerd15-dslite-parent:
+	go test ./pkg/controller/chain -run '^TestDSLite' -count=1
+
+check-routerd15-bgp-native-linux:
+	sh scripts/linux-bgp-frr-smoke.sh
+
+.PHONY: check-routerd15-ntp-native-linux check-routerd15-ntp-native-freebsd
+check-routerd15-ntp-native-linux:
+	sh scripts/check-routerd15-ntp-linux.sh
+
+# Explicit FreeBSD 14.3 disposable guest; pass an exact-source test binary.
+check-routerd15-ntp-native-freebsd:
+	sh scripts/freebsd-ntp-runtime-smoke.sh "$(NTP_TEST_BINARY)"
+
+.PHONY: check-routerd15-dhcpv6-native-freebsd
+# Explicit FreeBSD 14.3 disposable guest; package identity and private work parent are required.
+check-routerd15-dhcpv6-native-freebsd:
+	timeout -k 30 600 sh scripts/freebsd-dhcpv6-native-smoke.sh --disposable-vm "$(DHCPV6_ARCHIVE)" "$(DHCPV6_ARCHIVE_SHA256)" "$(DHCPV6_KEA_BINARY)" "$(DHCPV6_WORK_PARENT)"
+
+.PHONY: check-routerd15-plugin-process
+check-routerd15-plugin-process:
+	sh scripts/plugin-dynamic-process-smoke.sh
+
+.PHONY: check-routerd15-health-pbr-native-linux
+# Explicit sudo opt-in: private network/mount namespaces, no installed service changes.
+check-routerd15-health-pbr-native-linux:
+	timeout -k 15 400 bash scripts/linux-health-pbr-native-smoke.sh --isolated-netns "$(HEALTH_PBR_ARCHIVE)" "$(HEALTH_PBR_ARCHIVE_SHA256)" "$(HEALTH_PBR_WORK_PARENT)"
+
+.PHONY: check-routerd15-bfd-native-linux
+check-routerd15-bfd-native-linux:
+	sh scripts/linux-bfd-frr-smoke.sh
+
+# Explicit opt-in: both the network and sysfs view belong to a new namespace.
+# Requires Linux user namespaces, iproute2, Python 3, WireGuard tools, tcpdump and
+# VRF/VXLAN/IPv6 tunnel support.
+check-routerd15-native-parent-linux:
+	ROUTERD_RUN_NETNS=1 go test ./pkg/vxlan -run '^TestLinuxSegmentNativeCreateInstallsOwnershipCookie$$' -count=1 -v
+	@parent_netns=$$(readlink /proc/self/ns/net); \
+	ROUTERD_HOST_NETNS="$$parent_netns" ROUTERD_RUN_NETNS=1 unshare -Urnm sh -c \
+	'mount -t sysfs sysfs /sys && exec go test ./pkg/routeradvertisement ./pkg/controller/chain -run "^(TestListenRejectsTentativeLinkLocal|TestBridgeParentNativeLinuxAddressLifecycle|TestWireGuardParentNativeLinuxPeerLifecycle|TestVRFParentNativeLinuxPeerLifecycle|TestVRFNativeLinuxOverlappingPeerIsolation|TestVRFNativeLinuxDelegatedRA|TestDSLiteParentNativeLinuxAFTRLifecycle)$$" -count=1 -v'
+
+# Both UTS and network effects stay in a private user/mount namespace.
+.PHONY: check-routerd15-system-native-linux
+check-routerd15-system-native-linux:
+	@system_utsns=$$(readlink /proc/self/ns/uts) && \
+	system_netns=$$(readlink /proc/self/ns/net) && \
+	system_hostname=$$(hostname) && \
+	system_forward=$$(sysctl -n net.ipv4.ip_forward) || exit 1; \
+	ROUTERD_HOST_UTSNS="$$system_utsns" ROUTERD_HOST_NETNS="$$system_netns" \
+	ROUTERD_RUN_SYSTEM_POLICY_NATIVE=1 unshare -Urnmu sh -ec \
+	'mount -t sysfs sysfs /sys; exec go test ./pkg/controller/chain -run "^(TestHostnameNativeLinuxPrivateUTSLifecycle|TestSysctlNativeLinuxPrivateNetworkValue|TestPolicyIPv6NativeKernelSourceLossRecovery)$$" -count=1 -v'; \
+	system_result=$$?; \
+	test "$$(hostname)" = "$$system_hostname" && \
+	test "$$(sysctl -n net.ipv4.ip_forward)" = "$$system_forward" || exit 1; \
+	exit "$$system_result"
+
+check-routerd15-policy-native:
+	go test ./pkg/controller/chain -run '^(TestPolicyIPv4Native|TestPolicyIPv6Native|TestIPv4PolicyRoute|TestPriorityPolicy|TestEffectivePolicyRoute)' -count=1
+	go test ./pkg/apply ./pkg/lifecycle -count=1
+	go vet ./pkg/controller/chain ./pkg/apply ./pkg/lifecycle
+
+.PHONY: check-routerd15-proxy-lifetime
+check-routerd15-proxy-lifetime:
+	python3 -B -m unittest discover -s tools/release-qa-labs/tests -p test_egress_proxy.py -v
+
+.PHONY: check-routerd15-activation
+check-routerd15-activation:
+	go test ./cmd/routerd -run '^(TestCanonicalBarrier|TestHTTPMutation|TestMutation|TestFault|TestServeConfigMutator|TestLifecycleLiveApply|TestConfigMutation|TestRunApplyChainOnce|TestRollback)' -count=1
+
+.PHONY: check-routerd15-system-policy
+check-routerd15-system-policy:
+	go test ./pkg/controller/chain ./cmd/routerd -run '^(TestSysctlController|TestSAMSysctl|TestPackageController|TestPackageObservation|TestHostnameController|TestHostnameIsReachable|TestSysctlPersistentOnly|TestSysctlObservation|TestReviewDPKG|TestReviewOptionalSystem|TestParseOSReleaseID|TestContractFrameworkRegistrationAndScheduledSelection|TestSandboxControllerOptions|TestServeConfigMutatorSandboxApply|TestControllerDefaultStatusesAreLive|TestControllerResourceKindsUseCanonicalNames)' -count=1
+
+# Run only from a root-owned checkout in an explicit disposable Linux VM.
+IPSEC_NATIVE_MODE ?= esp
+export IPSEC_ROUTERD_BINARY IPSEC_DEPENDENCY_ROOT IPSEC_EVIDENCE_DIR IPSEC_NATIVE_MODE
+.PHONY: check-routerd15-ipsec-native-linux
+check-routerd15-ipsec-native-linux:
+	ROUTERD_RUN_IPSEC_DEDICATED_VM=1 bash scripts/linux-ipsec-netns-smoke.sh --routerd "$$IPSEC_ROUTERD_BINARY" --dependency-root "$$IPSEC_DEPENDENCY_ROOT" --evidence-dir "$$IPSEC_EVIDENCE_DIR" --mode "$$IPSEC_NATIVE_MODE"
+
+# An upstream CLI talks only to the test's private Unix LocalAPI fixture.
+.PHONY: check-routerd15-tailscale-cli
+check-routerd15-tailscale-cli:
+	@test -n "$(ROUTERD_TEST_TAILSCALE)" || { echo 'Set ROUTERD_TEST_TAILSCALE to an upstream tailscale executable' >&2; exit 1; }
+	ROUTERD_TEST_TAILSCALE="$(ROUTERD_TEST_TAILSCALE)" go test ./pkg/render -run '^TestTailscaleCLIWithdrawsAdvertisedRoutes$$' -count=1 -v

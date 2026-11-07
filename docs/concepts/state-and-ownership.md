@@ -78,7 +78,8 @@ When that confirmation is missing, routerd suppresses the matching AAAA records,
 
 routerd and its daemons record state changes as events.
 Events are persisted in the SQLite `events` table and in per-daemon `events.jsonl` files.
-`EventRule` and `DerivedEvent` consume that stream to synthesize virtual state changes.
+`EventRule` consumes that history to synthesize events. `DerivedEvent` evaluates
+current referenced status and records asserted/retracted transitions.
 
 ## Apply generations
 

@@ -102,6 +102,21 @@ Use `CE_CAPTURE_<ROLE>_<START|STOP|COPY>_COMMAND` or the generic
 `CE_CAPTURE_COPY_COMMAND` overrides to fake captures in offline tests or adapt a
 lab without editing the shared runner.
 
+The default Linux capture path requires Python with `pidfd_open` and
+`pidfd_send_signal`, plus tcpdump. Each run directory is private to the remote
+UID. The tracked `cloudedge_capture.py` owner records native admission before
+allowing tcpdump to execute; its `.pid` path now contains a private JSON receipt,
+not an unqualified PID. The receipt binds boot/PID namespace, process birth,
+command, executable and output inode. Start requires an actual pcap header;
+stop signals the verified pidfd and waits for exit. Copy requires an acknowledged
+stop and the same regular file. A lost running acknowledgement can still stop
+the exact admitted native child. An interrupted stop can recover an observed
+exit without signaling a replacement PID. An unproven launch or unexpected exit
+remains an error; receipts/captures are retained. Repeated start never
+overwrites an existing capture: select a fresh test identity after inspection.
+Offline process-boundary tests use a real admitted child, not a raw network
+capture; native packet/remote-SSH qualification is separate.
+
 Cloud fabric evidence runs collect provider control-plane state and normalize it
 with `scripts/cloudedge-cloud-fabric-schema.json`. The runner writes provider
 JSON, an aggregate manifest, a Markdown summary, and CF test-record rows under

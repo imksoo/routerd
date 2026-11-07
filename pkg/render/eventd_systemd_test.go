@@ -30,7 +30,7 @@ func TestEventdSystemdSpec(t *testing.T) {
 
 func TestEventdSystemdSpecDefaults(t *testing.T) {
 	spec := EventdSystemdSpec("edge", "", "")
-	if got := spec.ExecStart[0]; got != "/usr/local/sbin/routerd-eventd" {
+	if got := spec.ExecStart[0]; got != "/usr/sbin/routerd-eventd" {
 		t.Fatalf("default binary path = %q", got)
 	}
 	if spec.ExecStart[3] != "/var/lib/routerd/eventd/edge/config.json" {

@@ -13,7 +13,7 @@ import (
 // Filtering is used by both controllers and read-only queries. It must omit
 // inactive references from the result without erasing the reusable intent.
 func TestFilterRouterByWhenPreservesDNSZoneSourcesAcrossRoleChange(t *testing.T) {
-	for _, representation := range []string{"typed", "pointer", "map"} {
+	for _, representation := range []string{"typed", "pointer", "json"} {
 		t.Run(representation, func(t *testing.T) {
 			when := api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"VirtualAddress/lan-vip.role": {Equals: "master"}}}
 			declaredRecord := api.DNSZoneRecordSpec{
@@ -26,16 +26,14 @@ func TestFilterRouterByWhenPreservesDNSZoneSourcesAcrossRoleChange(t *testing.T)
 			switch representation {
 			case "pointer":
 				zone.Spec = &zoneSpec
-			case "map":
-				data, err := json.Marshal(zoneSpec)
+			case "json":
+				data, err := json.Marshal(zone)
 				if err != nil {
 					t.Fatal(err)
 				}
-				var generic map[string]any
-				if err := json.Unmarshal(data, &generic); err != nil {
+				if err := json.Unmarshal(data, &zone); err != nil {
 					t.Fatal(err)
 				}
-				zone.Spec = generic
 			}
 			router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 				{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"}, Metadata: api.ObjectMeta{Name: "lan-vip"}, Spec: api.VirtualAddressSpec{Address: "192.0.2.1/32"}},
@@ -47,7 +45,7 @@ func TestFilterRouterByWhenPreservesDNSZoneSourcesAcrossRoleChange(t *testing.T)
 			for _, role := range []string{"backup", "master"} {
 				t.Run(role, func(t *testing.T) {
 					store.mapStore[api.NetAPIVersion+"/VirtualAddress/lan-vip"] = map[string]any{"role": role}
-					filtered := FilterRouterByWhen(router, store)
+					filtered := mustWhenFilteredRouter(t, false, router, store)
 					result, ok := findResource(filtered, "DNSZone", "home")
 					if !ok {
 						t.Fatal("DNSZone/home missing")

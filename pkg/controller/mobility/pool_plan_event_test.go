@@ -69,6 +69,10 @@ func (s *poolPlanEventStore) ObjectStatus(string, string, string) map[string]any
 	return map[string]any{}
 }
 
+func (s *poolPlanEventStore) ReadObjectStatus(string, string, string) (map[string]any, error) {
+	return map[string]any{}, nil
+}
+
 func TestControllerUpsertBGPPlanPublishesChangedTypedPlanAfterPersist(t *testing.T) {
 	now := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
 	store := &poolPlanEventStore{}

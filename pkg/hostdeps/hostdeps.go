@@ -53,9 +53,9 @@ func PackageSets(router *api.Router) []api.OSPackageSetSpec {
 		return nil
 	}
 	return []api.OSPackageSetSpec{
-		{OS: "ubuntu", Manager: "apt", Names: packageNamesForOS(features, ubuntuPackages)},
-		{OS: "debian", Manager: "apt", Names: packageNamesForOS(features, debianPackages)},
-		{OS: "freebsd", Manager: "pkg", Optional: true, Names: packageNamesForOS(features, freebsdPackages)},
+		{OS: "ubuntu", Manager: "apt", Names: append(packageNamesForOS(features, ubuntuPackages), ntpPackageNames(router, "ubuntu")...)},
+		{OS: "debian", Manager: "apt", Names: append(packageNamesForOS(features, debianPackages), ntpPackageNames(router, "debian")...)},
+		{OS: "freebsd", Manager: "pkg", Optional: true, Names: append(packageNamesForOS(features, freebsdPackages), ntpPackageNames(router, "freebsd")...)},
 	}
 }
 
@@ -69,11 +69,11 @@ var ubuntuPackages = map[string][]string{
 	"conntrack":     {"conntrack"},
 	"dhcp-dns":      {"dnsmasq-base"},
 	"dpi":           {"libnetfilter-log1", "libndpi-bin"},
-	"ipsec":         {"strongswan-swanctl"},
+	"ipsec":         {"charon-systemd", "strongswan-swanctl"},
+	"lease-sync":    {"rsync", "openssh-client"},
 	"kmod":          {"kmod"},
 	"nat":           {"nftables"},
 	"nft":           {"nftables"},
-	"ntp":           {"chrony"},
 	"pppoe":         {"ppp"},
 	"network-utils": {"iputils-ping", "dnsutils", "traceroute"},
 	"tailscale":     {"tailscale", "tailscale-archive-keyring"},
@@ -88,11 +88,64 @@ var freebsdPackages = map[string][]string{
 	"dhcp-dns":      {"dnsmasq"},
 	"dpi":           {"ndpi"},
 	"ipsec":         {"strongswan"},
-	"ntp":           {"chrony"},
 	"pppoe":         {"mpd5"},
 	"network-utils": {"bind-tools"},
 	"tailscale":     {"tailscale"},
 	"wireguard":     {"wireguard-tools"},
+}
+
+// Package choice must follow the same declared shared-provider ownership as the
+// NTP controllers. Installing chrony for a standalone timesyncd client removes
+// timesyncd on Debian/Ubuntu before that client can apply its configuration.
+func ntpPackageNames(router *api.Router, osName string) []string {
+	defaultClient, defaultServer := "systemd-timesyncd", "chrony"
+	if osName == "freebsd" {
+		defaultClient, defaultServer = "ntpd", "ntpd"
+	}
+	providers := map[string]bool{}
+	sharedChrony := false
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind != "NTPServer" {
+			continue
+		}
+		spec, err := resource.NTPServerSpec()
+		if err != nil || !spec.Managed {
+			continue
+		}
+		provider := spec.Provider
+		if provider == "" {
+			provider = defaultServer
+		}
+		providers[provider] = true
+		if provider == "chrony" {
+			sharedChrony = true
+		}
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind != "NTPClient" {
+			continue
+		}
+		spec, err := resource.NTPClientSpec()
+		if err != nil || !spec.Managed {
+			continue
+		}
+		provider := spec.Provider
+		if provider == "" {
+			provider = defaultClient
+		}
+		if provider == "systemd-timesyncd" && sharedChrony {
+			provider = "chrony"
+		}
+		providers[provider] = true
+	}
+	var names []string
+	if providers["chrony"] {
+		names = append(names, "chrony")
+	}
+	if osName != "freebsd" && providers["systemd-timesyncd"] {
+		names = append(names, "systemd-timesyncd")
+	}
+	return names
 }
 
 func packageFeatures(router *api.Router) map[string]bool {
@@ -125,6 +178,8 @@ func packageFeatures(router *api.Router) map[string]bool {
 			features["bgp"] = true
 		case "DHCPv4Server", "DHCPv4Reservation", "DHCPv6Server", "IPv6RouterAdvertisement", "DNSResolver", "DNSForwarder", "DNSUpstream", "DNSZone", "DHCPv4Relay":
 			features["dhcp-dns"] = true
+		case "DHCPv4ServerLeaseSync", "DHCPv6ServerLeaseSync", "DHCPv6PrefixDelegationLeaseSync":
+			features["lease-sync"] = true
 		case "NAT44Rule", "NAT44FlowDNATPinhole":
 			features["nat"] = true
 			features["conntrack"] = true
@@ -476,7 +531,7 @@ func raAcceptInterfaceNames(router *api.Router, aliases map[string]string) []str
 				add(spec.Interface)
 			}
 		case "IPv6RAAddress":
-			if spec, err := res.IPv6RAAddressSpec(); err == nil {
+			if spec, err := res.IPv6RAAddressSpec(); err == nil && api.BoolDefault(spec.Managed, true) {
 				add(spec.Interface)
 			}
 		case "IPv6DelegatedAddress":
@@ -842,6 +897,9 @@ func containsString(values []string, want string) bool {
 func interfaceSpecForRouterAdvertisement(res api.Resource) (string, error) {
 	if res.Kind == "IPv6RAAddress" {
 		spec, err := res.IPv6RAAddressSpec()
+		if err == nil && !api.BoolDefault(spec.Managed, true) {
+			return "", nil
+		}
 		return spec.Interface, err
 	}
 	spec, err := res.IPv6RouterAdvertisementSpec()

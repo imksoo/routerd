@@ -99,6 +99,7 @@ func TestUnixClientRetriesTransientStartupErrors(t *testing.T) {
 		listener, err := net.Listen("unix", socketPath)
 		if err != nil {
 			errCh <- err
+			close(serverReady)
 			return
 		}
 		server := &http.Server{Handler: Handler{
@@ -119,6 +120,11 @@ func TestUnixClientRetriesTransientStartupErrors(t *testing.T) {
 	defer cancel()
 	status, err := client.Status(ctx)
 	if err != nil {
+		select {
+		case serverErr := <-errCh:
+			t.Fatalf("delayed Unix server failed: %v (client: %v)", serverErr, err)
+		default:
+		}
 		t.Fatalf("Status returned error before delayed socket was ready: %v", err)
 	}
 	if attempts.Load() < 2 {

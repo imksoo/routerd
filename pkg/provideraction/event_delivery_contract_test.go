@@ -50,7 +50,7 @@ func TestFaultCursorFailureReplaysCallbackWithoutRepeatingSucceededAction(t *tes
 	process := func(ctx context.Context, event daemonapi.DaemonEvent) error {
 		callbacks++
 		cursors = append(cursors, event.Cursor)
-		return engine.Execute(ctx, id, ModeExecute, allowPolicy())
+		return engine.Execute(ctx, id, allowPolicy())
 	}
 	if err := eventconsumer.Drain(t.Context(), store, "fault-action", process); err == nil {
 		t.Fatal("cursor failure was swallowed")

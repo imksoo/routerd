@@ -3,7 +3,6 @@
 package mobility
 
 import (
-	"encoding/json"
 	"net/netip"
 	"strings"
 	"testing"
@@ -82,7 +81,10 @@ func providerRuntimeAddressEvent(t *testing.T, nodeRef, address, provider, provi
 }
 
 func ownershipFactsWithProviderRuntime(facts OwnershipFacts, pool NormalizedMobilityPool, events []routerstate.EventRecord, now time.Time) OwnershipFacts {
-	runtime := providerDiscoveryRuntimeRecords(pool, events, now)
+	runtime, err := providerDiscoveryRuntimeRecords(pool, events, now)
+	if err != nil {
+		panic(err)
+	}
 	facts.providerRuntime = append(make([]providerDiscoveryRuntimeRecord, 0, len(runtime)), runtime...)
 	return facts
 }
@@ -767,7 +769,11 @@ func TestProviderInventoryHomeOwnerFactsExcludeRouterNICPrimary(t *testing.T) {
 		Primary:      true,
 	}, now.Add(-time.Second), time.Hour)
 	pool := ownershipPoolFixture("cloudedge", "aws-router-b", spec)
-	facts := providerInventoryHomeOwnerFactSets(pool, netip.MustParsePrefix(spec.Prefix), providerDiscoveryRuntimeRecords(pool, []routerstate.EventRecord{event}, now), now)
+	runtime, err := providerDiscoveryRuntimeRecords(pool, []routerstate.EventRecord{event}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	facts := providerInventoryHomeOwnerFactSets(pool, netip.MustParsePrefix(spec.Prefix), runtime, now)
 	if _, ok := facts["10.88.60.5/32"]; ok {
 		t.Fatalf("facts = %#v, want router/member primary excluded from home-owner facts", facts)
 	}
@@ -1075,23 +1081,17 @@ func ownershipDecisionByAddress(t *testing.T, decisions []ownershipDecision, add
 
 func resolverSucceededAction(t *testing.T, providerRef, targetRef, holder, address, action string, at time.Time) routerstate.ActionExecutionRecord {
 	t.Helper()
-	target, err := json.Marshal(map[string]string{"address": address, "providerRef": providerRef, "nicRef": targetRef})
-	if err != nil {
-		t.Fatalf("marshal target: %v", err)
-	}
-	params, err := json.Marshal(map[string]string{captureParamHolder: holder})
-	if err != nil {
-		t.Fatalf("marshal params: %v", err)
-	}
+	target := map[string]string{"address": address, "providerRef": providerRef, "nicRef": targetRef}
+	params := map[string]string{captureParamHolder: holder}
 	return routerstate.ActionExecutionRecord{
-		ID:             at.UnixNano(),
-		Provider:       strings.TrimSuffix(providerRef, "-provider"),
-		ProviderRef:    providerRef,
-		Action:         action,
-		TargetJSON:     string(target),
-		ParametersJSON: string(params),
-		Status:         routerstate.ActionSucceeded,
-		ExecutedAt:     at,
-		UpdatedAt:      at,
+		ID:          at.UnixNano(),
+		Provider:    strings.TrimSuffix(providerRef, "-provider"),
+		ProviderRef: providerRef,
+		Action:      action,
+		Target:      target,
+		Parameters:  params,
+		Status:      routerstate.ActionSucceeded,
+		ExecutedAt:  at,
+		UpdatedAt:   at,
 	}
 }

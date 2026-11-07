@@ -4,7 +4,7 @@ package main
 
 import (
 	"context"
-	"errors"
+	"encoding/json"
 	"fmt"
 	"os/exec"
 )
@@ -16,13 +16,26 @@ var runLinuxPPPoEInterfaceProbe = func(ctx context.Context, name string, args ..
 }
 
 var linuxPPPoEInterfaceExists = func(ctx context.Context, ifname string) (bool, error) {
-	_, err := runLinuxPPPoEInterfaceProbe(ctx, "ip", "link", "show", "dev", ifname)
-	if err == nil {
-		return true, nil
+	out, err := runLinuxPPPoEInterfaceProbe(ctx, "ip", "-j", "link", "show")
+	if err != nil {
+		return false, fmt.Errorf("inspect Linux PPPoE interface %q ownership: %w", ifname, err)
 	}
-	var exitError *exec.ExitError
-	if errors.As(err, &exitError) && exitError.ExitCode() == 1 {
-		return false, nil
+	var links []struct {
+		IfName string `json:"ifname"`
 	}
-	return false, fmt.Errorf("inspect Linux PPPoE interface %q ownership: %w", ifname, err)
+	if err := json.Unmarshal(out, &links); err != nil {
+		return false, fmt.Errorf("decode Linux PPPoE interfaces: %w", err)
+	}
+	if links == nil {
+		return false, fmt.Errorf("Linux PPPoE interface observation is not an array")
+	}
+	for _, link := range links {
+		if link.IfName == "" {
+			return false, fmt.Errorf("Linux PPPoE interface observation lacks name")
+		}
+		if link.IfName == ifname {
+			return true, nil
+		}
+	}
+	return false, nil
 }

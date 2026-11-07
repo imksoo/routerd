@@ -315,8 +315,9 @@ func validateProviderActionPolicy(res api.Resource, spec api.ProviderActionPolic
 	if spec.MaxActionsPerRun < 0 {
 		return fmt.Errorf("%s spec.maxActionsPerRun must be >= 0", res.ID())
 	}
-	// ExecutionWindow is free-form and validated leniently: any non-empty string
-	// is accepted in Phase 5.0 (the executor framework interprets it later).
+	if strings.TrimSpace(spec.ExecutionWindow) != "" {
+		return fmt.Errorf("%s spec.executionWindow is unsupported; no provider action scheduler is implemented", res.ID())
+	}
 	return nil
 }
 
@@ -335,6 +336,52 @@ func validateHybridDestinationCIDR(value string) error {
 	}
 	if !masked.Addr().Is4() {
 		return fmt.Errorf("must be an IPv4 CIDR; HybridRoute MVP lowers to IPv4Route")
+	}
+	return nil
+}
+
+// Tunnel MTU calculation and native underlay binding both require an acyclic
+// chain of declared interfaces. Reject loops before any renderer walks it.
+func validateTunnelUnderlayGraph(router *api.Router, interfaces map[string]bool) error {
+	tunnels := map[string]string{}
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind != "TunnelInterface" {
+			continue
+		}
+		spec, err := resource.TunnelInterfaceSpec()
+		if err != nil {
+			return err
+		}
+		underlay := strings.TrimSpace(spec.UnderlayInterface)
+		if underlay != "" && !interfaces[underlay] {
+			return fmt.Errorf("%s spec.underlayInterface references missing Interface %q", resource.ID(), underlay)
+		}
+		tunnels[resource.Metadata.Name] = underlay
+	}
+	visited := map[string]uint8{}
+	var visit func(string) error
+	visit = func(name string) error {
+		if visited[name] == 1 {
+			return fmt.Errorf("TunnelInterface/%s spec.underlayInterface forms a tunnel dependency cycle", name)
+		}
+		if visited[name] == 2 {
+			return nil
+		}
+		visited[name] = 1
+		if next := tunnels[name]; next != "" {
+			if _, isTunnel := tunnels[next]; isTunnel {
+				if err := visit(next); err != nil {
+					return err
+				}
+			}
+		}
+		visited[name] = 2
+		return nil
+	}
+	for name := range tunnels {
+		if err := visit(name); err != nil {
+			return err
+		}
 	}
 	return nil
 }

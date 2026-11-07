@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/platform"
 )
 
 func TestVRRPVMACReadbackMatches(t *testing.T) {
@@ -87,7 +88,11 @@ func TestIPAddrShowHasStagedIPv6AddressWithPrefix(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := ipAddrShowHasStagedIPv6AddressWithPrefix([]byte(tc.out), tc.address); got != tc.want {
+			observation, err := parseDelegatedAddressObservation([]byte(tc.out), tc.address, platform.OSLinux, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := observation.usable; got != tc.want {
 				t.Fatalf("got %t want %t", got, tc.want)
 			}
 		})
@@ -132,7 +137,7 @@ func TestLANAddressControllerEnsureStagingVMACResolvesParentInterfaceAlias(t *te
 	if err := controller.ensureStagingVMAC(t.Context(), "lan-vmac"); err != nil {
 		t.Fatalf("ensure staging VMAC: %v", err)
 	}
-	want := []string{"/usr/local/sbin/routerd-vrrp-vmac", "deactivate", "--vmac", "ens19,lan-vrrp,02:00:5e:00:01:12,fe80::5eff:fe00:112,true", "--guard-resource", "lan-gw-v4", "--reconcile"}
+	want := []string{platform.BinaryPath("routerd-vrrp-vmac"), "deactivate", "--vmac", "ens19,lan-vrrp,02:00:5e:00:01:12,fe80::5eff:fe00:112,true", "--guard-resource", "lan-gw-v4", "--reconcile"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("helper invocation = %#v, want %#v", got, want)
 	}

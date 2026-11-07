@@ -586,7 +586,7 @@ func invalidMixedResourceWhen() api.ResourceWhenSpec {
 	}
 }
 
-func testResource(apiVersion, kind, name string, spec any) api.Resource {
+func testResource(apiVersion, kind, name string, spec api.ResourceSpec) api.Resource {
 	return api.Resource{
 		TypeMeta: api.TypeMeta{APIVersion: apiVersion, Kind: kind},
 		Metadata: api.ObjectMeta{Name: name},
@@ -747,7 +747,7 @@ func TestValidateLogSinkWebhookRequiresURL(t *testing.T) {
 	}
 }
 
-func TestValidateLogSinkOTLPReferencesTelemetry(t *testing.T) {
+func TestValidateRejectsUnimplementedOTLPLogSink(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
@@ -768,8 +768,8 @@ func TestValidateLogSinkOTLPReferencesTelemetry(t *testing.T) {
 		}},
 	}
 
-	if err := Validate(router); err != nil {
-		t.Fatalf("validate otlp log sink: %v", err)
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "LogSink type otlp is unsupported") {
+		t.Fatalf("unimplemented log sink admitted: %v", err)
 	}
 }
 
@@ -1486,7 +1486,7 @@ func TestValidateFreeBSDIPv4PolicyRouteSetIsRejected(t *testing.T) {
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
 		Spec: api.RouterSpec{Resources: []api.Resource{
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4PolicyRouteSet"}, Metadata: api.ObjectMeta{Name: "legacy-policy"}, Spec: map[string]any{}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4PolicyRouteSet"}, Metadata: api.ObjectMeta{Name: "legacy-policy"}, Spec: nil},
 		}},
 	}
 	err := ValidateForOS(router, platform.OSFreeBSD)
@@ -1707,9 +1707,9 @@ func TestValidateStaticRoutes(t *testing.T) {
 				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: true},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticRoute"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4Route"},
 				Metadata: api.ObjectMeta{Name: "lab-v4"},
-				Spec:     api.IPv4StaticRouteSpec{Interface: "wan", Destination: "192.0.2.0/24", Via: "198.51.100.1"},
+				Spec:     api.IPv4RouteSpec{Device: "ens18", Destination: "192.0.2.0/24", Gateway: "198.51.100.1"},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6StaticRoute"},
@@ -1848,6 +1848,23 @@ func TestValidateDHCPv6PrefixDelegationIdentity(t *testing.T) {
 	router.Spec.Resources[1].Spec = api.DHCPv6PrefixDelegationSpec{Interface: "wan", DUIDType: "unknown"}
 	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "not supported") {
 		t.Fatalf("expected duidType to be rejected, got %v", err)
+	}
+}
+
+func TestValidatePDClientHasRealManagedOwner(t *testing.T) {
+	for _, client := range []string{"", api.IPv6PDClientRouterd, api.IPv6PDClientNetworkd, api.IPv6PDClientDHCPv6C, api.IPv6PDClientDHCPCD} {
+		router := &api.Router{TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"}, Metadata: api.ObjectMeta{Name: "test"}, Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "wan0", Managed: true}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan", Client: client}},
+		}}}
+		err := Validate(router)
+		if client == "" || client == api.IPv6PDClientRouterd {
+			if err != nil {
+				t.Fatalf("managed/default rejected: %v", err)
+			}
+		} else if err == nil || !strings.Contains(err.Error(), "unsupported; use routerd-dhcpv6-client or omit client") {
+			t.Fatalf("external selector %q lacks explicit ownership error: %v", client, err)
+		}
 	}
 }
 
@@ -2248,7 +2265,7 @@ func TestValidateFirewallRuleAddressSetRef(t *testing.T) {
 			}},
 		}},
 	}
-	if err := Validate(router); err != nil {
+	if err := ValidateForOS(router, platform.OSLinux); err != nil {
 		t.Fatalf("validate FirewallRule IPAddressSet ref: %v", err)
 	}
 	router.Spec.Resources[5].Spec = api.FirewallRuleSpec{
@@ -2257,7 +2274,7 @@ func TestValidateFirewallRuleAddressSetRef(t *testing.T) {
 		DestinationSetRefs: []string{"IPAddressSet/missing"},
 		Action:             "accept",
 	}
-	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "references missing IPAddressSet") {
+	if err := ValidateForOS(router, platform.OSLinux); err == nil || !strings.Contains(err.Error(), "references missing IPAddressSet") {
 		t.Fatalf("expected missing IPAddressSet error, got %v", err)
 	}
 }
@@ -2521,7 +2538,7 @@ func TestValidateFirewallRuleStatefulExpressions(t *testing.T) {
 		RateLimit:        api.FirewallRateLimitSpec{Rate: 10, Burst: 20, Unit: "packet", Per: "second"},
 		ConnLimit:        api.FirewallConnLimitSpec{MaxPerSource: 4},
 	}
-	if err := Validate(base(valid)); err != nil {
+	if err := ValidateForOS(base(valid), platform.OSLinux); err != nil {
 		t.Fatalf("valid stateful firewall rule rejected: %v", err)
 	}
 	for _, tt := range []struct {
@@ -2536,7 +2553,7 @@ func TestValidateFirewallRuleStatefulExpressions(t *testing.T) {
 		{name: "bad rate unit", spec: api.FirewallRuleSpec{FromZone: "wan", ToZone: "self", Protocol: "tcp", DestinationPorts: []api.FirewallPort{"22"}, Action: "drop", RateLimit: api.FirewallRateLimitSpec{Rate: 1, Unit: "bit", Per: "second"}}, want: "unit"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			err := Validate(base(tt.spec))
+			err := ValidateForOS(base(tt.spec), platform.OSLinux)
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("Validate error = %v, want containing %q", err, tt.want)
 			}
@@ -2794,7 +2811,7 @@ func TestValidateBridge(t *testing.T) {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Bridge"},
 				Metadata: api.ObjectMeta{Name: "br-home"},
-				Spec:     api.BridgeSpec{IfName: "br0", Members: []string{"lan"}, RSTP: boolPtr(true), MulticastSnooping: boolPtr(false)},
+				Spec:     api.BridgeSpec{IfName: "br0", Members: []string{"lan"}, MulticastSnooping: boolPtr(false)},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
@@ -2841,7 +2858,7 @@ func TestValidateVXLANSegment(t *testing.T) {
 		}},
 	}
 
-	if err := Validate(router); err != nil {
+	if err := ValidateForOS(router, platform.OSLinux); err != nil {
 		t.Fatalf("validate vxlan config: %v", err)
 	}
 }

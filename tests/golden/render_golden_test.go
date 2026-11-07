@@ -133,7 +133,7 @@ func renderLinuxSnapshot(router *api.Router) ([]byte, error) {
 		return nil, err
 	}
 	addRenderedFiles(files, "networkd/", networkdFiles)
-	addFirewallHoles(files, router)
+	addFirewallHoles(files, router, platform.OSLinux)
 	addFile(files, "dnsmasq.conf", dnsmasqConfig)
 	aliases := interfaceAliases(router)
 	keepalived, err := render.KeepalivedConfig(router, aliases)
@@ -146,7 +146,7 @@ func renderLinuxSnapshot(router *api.Router) ([]byte, error) {
 		return nil, err
 	}
 	addFile(files, "nftables-nat.nft", nat)
-	firewall, err := render.NftablesFirewall(router, render.InternalFirewallHoles(router))
+	firewall, err := render.NftablesFirewall(router, render.InternalFirewallHoles(router, platform.OSLinux))
 	if err != nil {
 		return nil, err
 	}
@@ -155,6 +155,12 @@ func renderLinuxSnapshot(router *api.Router) ([]byte, error) {
 }
 
 func renderFreeBSDSnapshot(router *api.Router) ([]byte, error) {
+	// Match `routerd render freebsd`: unsupported intent must be recorded as
+	// its operator-facing diagnostic before a renderer can export a partial
+	// configuration that silently omits the unsupported resource.
+	if err := config.ValidateForOS(router, platform.OSFreeBSD); err != nil {
+		return nil, err
+	}
 	files := map[string][]byte{}
 	data, err := render.FreeBSDWithPPPoEPasswords(router, func(api.Resource, api.PPPoESessionSpec) (string, error) { return "", nil })
 	if err != nil {
@@ -170,7 +176,7 @@ func renderFreeBSDSnapshot(router *api.Router) ([]byte, error) {
 	for name, content := range fileMap(rcConf) {
 		addFile(files, name, content)
 	}
-	addFirewallHoles(files, router)
+	addFirewallHoles(files, router, platform.OSFreeBSD)
 	dnsmasqConfig, warnings, err := render.DnsmasqConfig(router, render.DnsmasqRuntime{
 		RuntimeDir: "/var/run/routerd",
 		LeaseFile:  (platform.Defaults{StateDir: "/var/db/routerd"}).DnsmasqLeaseFile(),
@@ -181,7 +187,6 @@ func renderFreeBSDSnapshot(router *api.Router) ([]byte, error) {
 	addWarnings(files, warnings)
 	if len(dnsmasqConfig) > 0 {
 		addFile(files, "dnsmasq.conf", dnsmasqConfig)
-		addFile(files, "rc.d-routerd_dnsmasq", render.DnsmasqRCScript("/usr/local/etc/routerd/dnsmasq.conf", "/var/run/routerd", "/var/db/routerd/dnsmasq", "/usr/local/sbin/dnsmasq"))
 	}
 	addFile(files, "dhclient.conf", data.DHCPClient)
 	addFile(files, "mpd5.conf", data.MPD5)
@@ -216,8 +221,8 @@ func addWarnings(files map[string][]byte, warnings []string) {
 	files["warnings.txt"] = []byte(strings.Join(warnings, "\n") + "\n")
 }
 
-func addFirewallHoles(files map[string][]byte, router *api.Router) {
-	holes := render.InternalFirewallHoles(router)
+func addFirewallHoles(files map[string][]byte, router *api.Router, targetOS platform.OS) {
+	holes := render.InternalFirewallHoles(router, targetOS)
 	if len(holes) == 0 {
 		return
 	}

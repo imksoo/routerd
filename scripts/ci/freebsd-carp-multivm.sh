@@ -34,7 +34,7 @@ cleanup() {
 trap cleanup EXIT
 install -d -m 0700 "$work" "$evidence"
 sudo apt-get update -qq
-sudo apt-get install -y -qq qemu-utils qemu-system-x86 ovmf python3 rsync
+sudo apt-get install -y -qq qemu-utils qemu-system-x86 ovmf python3 rsync jq
 [[ -c /dev/kvm ]] || exit 1
 old_kvm_mode=$(stat -c '%a' /dev/kvm)
 if [[ ! -w /dev/kvm ]]; then sudo chmod 666 /dev/kvm; kvm_changed=1; fi
@@ -48,7 +48,7 @@ for tap in "${taps[@]}"; do
   sudo ip link set "$tap" master "$bridge"
   sudo ip link set "$tap" up
 done
-GOOS=freebsd GOARCH=amd64 go build -o "$work/routerd" ./cmd/routerd
+GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -o "$work/routerd" ./cmd/routerd
 printf 'step=topology bridge=%s taps=%s\n' "$bridge" "${taps[*]}" >"$evidence/steps.log"
 curl -fsSL https://raw.githubusercontent.com/anyvm-org/anyvm/v0.5.1/anyvm.py >"$work/anyvm.py"
 printf '%s  %s\n' '0b2e5b20879d83ff7d07fc09649e9b3576825b35c8106e2354e5cf3d0d78be06' "$work/anyvm.py" | sha256sum -c -
@@ -140,11 +140,42 @@ spec:
     spec: {family: ipv4, interface: lan, address: 198.18.232.100/32, mode: vrrp, vrrp: {virtualRouterID: 232, priority: 150}}
 EOF
 sed -e 's/carp-a/carp-b/; s/priority: 150/priority: 100/' -e "s/ifname: $iface_a,/ifname: $iface_b,/" "$work/a.yaml" >"$work/b.yaml"
-rcenv='env ROUTERD_RUNTIME_DIR=/var/tmp/routerd-carp-runtime routerd_carp_enable=YES'
-for spec in a b; do role=router-$spec; port=$([ "$spec" = a ] && echo 2222 || echo 2223); scpvm "$role" "$port" "$work/routerd" /var/tmp/routerd; scpvm "$role" "$port" "$work/$spec.yaml" /var/tmp/router.yaml; sshvm "$role" "$port" "kldload carp || true; kldstat -m carp && chmod 755 /var/tmp/routerd && /var/tmp/routerd render freebsd --config /var/tmp/router.yaml --out-dir /var/tmp/carp && $rcenv sh /var/tmp/carp/rc.d-routerd_carp onestart" >"$evidence/$role-start.log"; done
+cat >"$work/empty.yaml" <<'EOF'
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {name: carp-withdraw}
+spec: {resources: []}
+EOF
 role_interface() {
   case "$1" in router-a) printf '%s\n' "$iface_a";; router-b) printf '%s\n' "$iface_b";; *) return 3;; esac
 }
+run_actor() {
+  local role=$1 port=$2 label=$3 config=${4:-/var/tmp/router.yaml}
+  sshvm "$role" "$port" "/var/tmp/routerd serve --once --controllers vrrp --config $config --state-file /var/tmp/carp-state.db --ledger-file /var/tmp/carp-ledger.db --status-file /var/tmp/carp-status-$label.json --socket /var/tmp/carp-api-$label.sock --status-socket /var/tmp/carp-status-$label.sock"
+}
+observe_actor() {
+  local role=$1 port=$2 label=$3 iface
+  iface=$(role_interface "$role")
+  sshvm "$role" "$port" "sqlite3 /var/tmp/carp-state.db \"SELECT status FROM objects WHERE api_version='net.routerd.net/v1alpha1' AND kind='VirtualAddress' AND name='vip';\"" >"$evidence/$role-$label-status.json"
+  jq -e --arg ifname "$iface" '.phase == "Applied" and .backend == "carp" and .ifname == $ifname and .address == "198.18.232.100/32"' "$evidence/$role-$label-status.json" >/dev/null
+  sshvm "$role" "$port" "sqlite3 /var/tmp/carp-state.db \"SELECT status FROM objects WHERE api_version='routerd.net/v1alpha1' AND kind='Router' AND name='vrrp-native';\"" >"$evidence/$role-$label-native.json"
+  jq -e --arg ifname "$iface" '(.pending | length) == 0 and (.applied | length) == 1 and .applied[0].kind == "VirtualAddress" and .applied[0].name == "vip" and .applied[0].ifname == $ifname and .applied[0].address == "198.18.232.100/32" and .applied[0].backend == "carp" and .applied[0].vhid == 232' "$evidence/$role-$label-native.json" >/dev/null
+}
+observe_withdrawal() {
+  local role=$1 port=$2 label=$3
+  sshvm "$role" "$port" "sqlite3 /var/tmp/carp-state.db \"SELECT status FROM objects WHERE api_version='routerd.net/v1alpha1' AND kind='Router' AND name='vrrp-native';\"" >"$evidence/$role-$label-native.json"
+  jq -e '(.pending | length) == 0 and (.applied | length) == 0' "$evidence/$role-$label-native.json" >/dev/null
+}
+for spec in a b; do
+  role=router-$spec
+  port=$([ "$spec" = a ] && echo 2222 || echo 2223)
+  scpvm "$role" "$port" "$work/routerd" /var/tmp/routerd
+  scpvm "$role" "$port" "$work/$spec.yaml" /var/tmp/router.yaml
+  scpvm "$role" "$port" "$work/empty.yaml" /var/tmp/empty.yaml
+  sshvm "$role" "$port" 'env ASSUME_ALWAYS_YES=yes pkg bootstrap && pkg install -y sqlite3 && chmod 755 /var/tmp/routerd && (kldload carp || kldstat -m carp) && /var/tmp/routerd render freebsd --config /var/tmp/router.yaml --out-dir /var/tmp/carp && test ! -e /var/tmp/carp/rc.d-routerd_carp && ! grep -q routerd_carp_enable /var/tmp/carp/rc.conf.d-routerd' >"$evidence/$role-prepare.log"
+  run_actor "$role" "$port" boot >"$evidence/$role-start.log"
+  observe_actor "$role" "$port" boot
+done
 read_role() {
   local role=$1 port=$2 iface rc=0 raw
   iface=$(role_interface "$role") || return 3
@@ -184,19 +215,50 @@ wait_role router-a 2222 MASTER; sshvm router-a 2222 "ifconfig $iface_a" >"$evide
 wait_role router-b 2223 BACKUP; sshvm router-b 2223 "ifconfig $iface_b" >"$evidence/router-b-initial-role.log"
 ping_vip >"$evidence/vip-initial.log"
 sudo ip link set rd-carp-ta down; sshvm router-a 2222 true >"$evidence/router-a-management-after-tap-down.log"; wait_role router-b 2223 MASTER; sshvm router-b 2223 "ifconfig $iface_b" >"$evidence/router-b-takeover-role.log"; ping_vip >"$evidence/vip-after-takeover.log"
-sudo ip link set rd-carp-ta up; wait_convergence; sshvm router-a 2222 "ifconfig $iface_a" >"$evidence/router-a-restored-role.log"; sshvm router-b 2223 "ifconfig $iface_b" >"$evidence/router-b-restored-role.log"; sshvm router-a 2222 "$rcenv sh /var/tmp/carp/rc.d-routerd_carp onestop && $rcenv sh /var/tmp/carp/rc.d-routerd_carp onestart" >"$evidence/router-a-restart.log"; wait_convergence; sshvm router-a 2222 "ifconfig $iface_a" >"$evidence/router-a-restarted-role.log"; sshvm router-b 2223 "ifconfig $iface_b" >"$evidence/router-b-restarted-role.log"; ping_vip >"$evidence/vip-after-restart.log"
-for pair in 'router-a 2222' 'router-b 2223'; do read -r role port <<<"$pair"; iface=$(role_interface "$role"); sshvm "$role" "$port" "$rcenv sh /var/tmp/carp/rc.d-routerd_carp onestop && observed=\$(ifconfig $iface) && ! printf '%s\\n' \"\$observed\" | grep -q 'vhid 232'" >"$evidence/$role-cleanup.log"; done
+sudo ip link set rd-carp-ta up
+wait_convergence
+sshvm router-a 2222 "ifconfig $iface_a" >"$evidence/router-a-restored-role.log"
+sshvm router-b 2223 "ifconfig $iface_b" >"$evidence/router-b-restored-role.log"
+# A fresh routerd process must recover the same native receipt without
+# withdrawing/recreating a healthy CARP address.
+run_actor router-a 2222 restart >"$evidence/router-a-restart.log"
+observe_actor router-a 2222 restart
+jq -e '.changed == false' "$evidence/router-a-restart-status.json" >/dev/null
+cmp "$evidence/router-a-boot-native.json" "$evidence/router-a-restart-native.json"
+wait_convergence
+sshvm router-a 2222 "ifconfig $iface_a" >"$evidence/router-a-restarted-role.log"
+sshvm router-b 2223 "ifconfig $iface_b" >"$evidence/router-b-restarted-role.log"
+ping_vip >"$evidence/vip-after-restart.log"
+
+sed 's/priority: 150/priority: 160/' "$work/a.yaml" >"$work/a-changed.yaml"
+scpvm router-a 2222 "$work/a-changed.yaml" /var/tmp/router.yaml
+run_actor router-a 2222 priority-change >"$evidence/router-a-priority-change.log"
+observe_actor router-a 2222 priority-change
+jq -e '.priority == 160 and .changed == true' "$evidence/router-a-priority-change-status.json" >/dev/null
+cmp "$evidence/router-a-boot-native.json" "$evidence/router-a-priority-change-native.json"
+sshvm router-a 2222 "ifconfig $iface_a" >"$evidence/router-a-priority-change-interface.log"
+grep -E 'carp:.*vhid 232([[:space:]]|$).*advskew 94([[:space:]]|$)' "$evidence/router-a-priority-change-interface.log" >/dev/null
+wait_convergence
+ping_vip >"$evidence/vip-after-priority-change.log"
+
+for pair in 'router-a 2222' 'router-b 2223'; do
+  read -r role port <<<"$pair"
+  iface=$(role_interface "$role")
+  run_actor "$role" "$port" withdraw /var/tmp/empty.yaml >"$evidence/$role-withdraw.log"
+  observe_withdrawal "$role" "$port" withdraw
+  sshvm "$role" "$port" "observed=\$(ifconfig $iface) && ! printf '%s\\n' \"\$observed\" | grep -q 'vhid 232'" >"$evidence/$role-cleanup.log"
+done
 sshvm router-a 2222 "ifconfig $iface_a inet vhid 233 advbase 1 pass foreign alias 198.18.232.100/32 && ifconfig $iface_a" >"$evidence/foreign-address-before.log"
-rc=0; sshvm router-a 2222 "$rcenv sh /var/tmp/carp/rc.d-routerd_carp onestart" >"$evidence/foreign-address-refusal.log" 2>&1 || rc=$?
+rc=0; run_actor router-a 2222 foreign-address >"$evidence/foreign-address-refusal.log" 2>&1 || rc=$?
 if (( rc == 0 )); then exit 1; fi
 if (( rc != 1 )); then exit 3; fi
 sshvm router-a 2222 "ifconfig $iface_a" >"$evidence/foreign-address-after.log"; cmp "$evidence/foreign-address-before.log" "$evidence/foreign-address-after.log"
 sshvm router-a 2222 "ifconfig $iface_a inet 198.18.232.100/32 -alias"
 sshvm router-a 2222 "ifconfig $iface_a inet vhid 232 advbase 1 pass foreign alias 198.18.232.101/32 && ifconfig $iface_a" >"$evidence/foreign-vhid-before.log"
-rc=0; sshvm router-a 2222 "$rcenv sh /var/tmp/carp/rc.d-routerd_carp onestart" >"$evidence/foreign-vhid-refusal.log" 2>&1 || rc=$?
+rc=0; run_actor router-a 2222 foreign-vhid >"$evidence/foreign-vhid-refusal.log" 2>&1 || rc=$?
 if (( rc == 0 )); then exit 1; fi
 if (( rc != 1 )); then exit 3; fi
 sshvm router-a 2222 "ifconfig $iface_a" >"$evidence/foreign-vhid-after.log"; cmp "$evidence/foreign-vhid-before.log" "$evidence/foreign-vhid-after.log"
 sshvm router-a 2222 "ifconfig $iface_a inet 198.18.232.101/32 -alias"
-printf '%s\n' 'carp-three-vm-master-backup=ok' 'carp-three-vm-vip-failover-recovery=ok' 'carp-three-vm-owned-cleanup=ok' 'carp-three-vm-foreign-preservation=ok' >"$evidence/summary.log"
+printf '%s\n' 'carp-three-vm-master-backup=ok' 'carp-three-vm-vip-failover-recovery=ok' 'carp-three-vm-actor-journal-restart-priority-change=ok' 'carp-three-vm-owned-cleanup=ok' 'carp-three-vm-foreign-preservation=ok' >"$evidence/summary.log"
 printf 'freebsd-carp-multivm=ok\n' >"$evidence/result"

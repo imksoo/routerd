@@ -1,0 +1,79 @@
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: nat44-flow-dnat-pinhole-runtime
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: wan
+      spec:
+        ifname: wan0
+        managed: false
+        owner: external
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: wan-alt
+      spec:
+        ifname: wan1
+        managed: false
+        owner: external
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: lan-a
+      spec:
+        ifname: lan0
+        managed: false
+        owner: external
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: lan-b
+      spec:
+        ifname: lan1
+        managed: false
+        owner: external
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPAddressSet
+      metadata:
+        name: authorized-client
+      spec:
+        addresses:
+          - 198.18.15.101
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: NAT44Rule
+      metadata:
+        name: lan-to-wan
+      spec:
+        type: masquerade
+        egressInterface: wan
+        sourceRanges:
+          - 198.18.15.0/24
+          - 198.18.17.0/24
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: NAT44FlowDNATPinhole
+      metadata:
+        name: authorized-udp-response
+      spec:
+        fromInterfaceRefs:
+          - Interface/wan
+        outbound:
+          sourceSetRef: IPAddressSet/authorized-client
+          protocol: udp
+          destinationPorts:
+            - "32100"
+          destinationCIDRs:
+            - 198.18.16.53/32
+        inbound:
+          sourcePorts:
+            - "32099"
+        timeout: 5s

@@ -18,7 +18,29 @@ routerctl apply -f router.yaml --replace
 
 For a remote router, confirm that the management connection (SSH, console, hypervisor console) will survive the change before running `apply`.
 
-On a live router, `plan` and `observe` read the state database as a transient snapshot; when the daemon is writing SQLite WAL pages concurrently, that snapshot can be slightly stale, so treat it as advisory preflight input rather than a rollback record.
+On this proposal branch, `plan` and apply's `--dry-run` read live SQLite WAL
+state through read-only handles and compute the effective configuration without
+running controllers. They do not copy a writable DB, create simulated events,
+start daemons, or apply artifacts. Missing databases are empty observations;
+unrecognized schemas are errors. Host and DB observations may change while a
+plan is computed, so the result is advisory rather than an atomic snapshot or
+a rollback record. Apply observes again before making changes.
+
+For this proposal, `Blocked` or `Drifted` is a failed mutation, with a nonzero
+CLI exit status and a terminal history entry. The requested configuration is not
+published as committed merely because reconciliation returned without a Go
+error. A failed operation can still have partial external effects; inspect its
+recorded resource results before retrying. An intentional `Standby` response
+retains its existing deferred behavior. `--no-reconcile` confirms only the
+canonical configuration write and leaves runtime convergence to the controller.
+
+Delete responses expose the requested `target` separately. `deleted` contains
+only confirmed removals from canonical configuration; a dry run or standby does
+not claim that deletion happened. If a mutation request times out or loses its
+transport acknowledgement, its outcome is unconfirmed: check the canonical
+configuration and generation history before assuming it failed. Rollback lists
+mark the latest attempt, which can itself be a failed generation, rather than
+claiming that the largest generation number is the active configuration.
 
 ## Long-running mode
 

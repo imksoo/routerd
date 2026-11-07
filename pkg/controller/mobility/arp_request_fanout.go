@@ -187,7 +187,9 @@ func onPremARPRequestEvent(pool NormalizedMobilityPool, address string, request 
 	if request.RequesterMAC != "" {
 		payload["requesterMAC"] = request.RequesterMAC
 	}
-	return discoveryEvent(dedupeKey, pool.Spec.GroupRef, pool.SelfNode, address, dedupeKey, OnPremARPRequestObservedEvent, payload, now, onPremARPRequestTTL)
+	event := discoveryEvent(dedupeKey, pool.Spec.GroupRef, pool.SelfNode, address, dedupeKey, OnPremARPRequestObservedEvent, payload, now, onPremARPRequestTTL)
+	event.ID = dedupeKey + ":" + mobilityFederationFactID(event)
+	return event
 }
 
 func onPremPoolCanFanoutARP(pool NormalizedMobilityPool) bool {

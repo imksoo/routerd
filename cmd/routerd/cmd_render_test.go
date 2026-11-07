@@ -60,7 +60,7 @@ spec:
 	got := stdout.String()
 	for _, want := range []string{
 		"# routerd-managed-service: v1",
-		"AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID CAP_CHOWN CAP_DAC_OVERRIDE",
+		"AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID CAP_CHOWN CAP_SYS_PTRACE CAP_KILL CAP_DAC_OVERRIDE",
 		"Environment=\"OTEL_EXPORTER_OTLP_ENDPOINT=https://telemetry.example.test:4318\"",
 		"Environment=\"OTEL_SERVICE_NAMESPACE=lab\"",
 	} {
@@ -107,5 +107,46 @@ spec:
 	}
 	if err := renderFreeBSDCommand([]string{"--config", configPath}, &strings.Builder{}); err != nil {
 		t.Fatalf("renderFreeBSDCommand rejected FreeBSD-valid CARP: %v", err)
+	}
+}
+
+func TestRenderFreeBSDReplacesPublicMPDFileWithPrivateSecretFile(t *testing.T) {
+	directory := t.TempDir()
+	configPath := filepath.Join(directory, "router.yaml")
+	outputPath := filepath.Join(directory, "rendered")
+	if err := os.MkdirAll(outputPath, 0755); err != nil {
+		t.Fatal(err)
+	}
+	mpdPath := filepath.Join(outputPath, "mpd5.conf")
+	if err := os.WriteFile(mpdPath, []byte("old"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	config := `apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {name: private-mpd}
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata: {name: wan}
+      spec: {ifname: em0, managed: false, owner: external}
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: PPPoESession
+      metadata: {name: internet}
+      spec: {interface: wan, username: test-user, password: test-private-password}
+`
+	if err := os.WriteFile(configPath, []byte(config), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := renderFreeBSDCommand([]string{"--config", configPath, "--out-dir", outputPath}, &strings.Builder{}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(mpdPath)
+	if err != nil || info.Mode().Perm() != 0600 {
+		t.Fatalf("secret output mode=%v err=%v", info, err)
+	}
+	data, err := os.ReadFile(mpdPath)
+	if err != nil || !strings.Contains(string(data), "test-private-password") {
+		t.Fatalf("expected rendered secret file missing: %v", err)
 	}
 }

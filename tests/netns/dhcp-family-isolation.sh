@@ -2,8 +2,10 @@
 set -euo pipefail
 # Requirement: completed DHCPv4 and stateless DHCPv6/RA exchange must survive
 # the generated input guard, while unwanted IPv4 copies hit its counter.
-# Missing replies are observation failures; all evidence and cleanup are kept.
+# Missing replies are observation failures; failed-run diagnostics are temporary.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+KEEP_TEST_WORKDIR="${WORKDIR:+1}"
+# shellcheck source=tests/netns/lib.sh
 source "$SCRIPT_DIR/lib.sh"
 require_common
 require_cmd nft
@@ -20,7 +22,16 @@ cleanup_preserve() {
     [[ "$e" = 0 ]] || c=2
   done
   printf 'test_exit=%s cleanup_exit=%s\n' "$result" "$c" >>"$WORKDIR/cleanup.log"
-  log "evidence=$WORKDIR test_exit=$result cleanup_exit=$c"
+  if [[ "$result" -eq 0 && "$c" -eq 0 && -z "$KEEP_TEST_WORKDIR" ]]; then
+    rm -rf -- "$WORKDIR"
+    log "PASS: DHCP family isolation and RA checks passed; temporary output removed"
+    exit 0
+  fi
+  if [[ "$result" -eq 0 && "$c" -eq 0 ]]; then
+    log "PASS: DHCP family isolation and RA checks passed; explicit output directory=$WORKDIR"
+    exit 0
+  fi
+  log "test_exit=$result cleanup_exit=$c diagnostics=$WORKDIR"
   [[ "$result" = 0 ]] || exit "$result"
   exit "$c"
 }

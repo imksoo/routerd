@@ -29,7 +29,7 @@ func TestMetricsDeliveredIncrements(t *testing.T) {
 	peers := []eventd.PeerConfig{{NodeName: "cloud-a", Endpoint: srv.URL}}
 	pusher := eventd.NewPusher(senderStore, testSecret, peers,
 		eventd.PushRetry{MaxAttempts: 3, BaseBackoff: time.Millisecond, MaxBackoff: time.Millisecond},
-		srv.Client(), clock, func(time.Duration) {})
+		srv.Client(), clock, func(context.Context, time.Duration) error { return nil })
 	pusher.SetMetrics(metrics)
 
 	seedEventFrom(t, senderStore, "evt-1", "cloudedge", "onprem", "10.88.60.9/32", now)
@@ -79,7 +79,7 @@ func TestMetricsFailedIncrements(t *testing.T) {
 	peers := []eventd.PeerConfig{{NodeName: "bad-peer", Endpoint: failSrv.URL}}
 	pusher := eventd.NewPusher(store, testSecret, peers,
 		eventd.PushRetry{MaxAttempts: 3, BaseBackoff: time.Millisecond, MaxBackoff: time.Millisecond},
-		failSrv.Client(), clock, func(time.Duration) {})
+		failSrv.Client(), clock, func(context.Context, time.Duration) error { return nil })
 	pusher.SetMetrics(metrics)
 
 	seedEventFrom(t, store, "evt-fail", "cloudedge", "onprem", "10.88.60.10/32", now)
@@ -126,7 +126,7 @@ func TestMetricsRetryAttemptsCounted(t *testing.T) {
 	peers := []eventd.PeerConfig{{NodeName: "retrying-peer", Endpoint: srv.URL}}
 	pusher := eventd.NewPusher(store, testSecret, peers,
 		eventd.PushRetry{MaxAttempts: 3, BaseBackoff: time.Millisecond, MaxBackoff: time.Millisecond},
-		srv.Client(), clock, func(time.Duration) {})
+		srv.Client(), clock, func(context.Context, time.Duration) error { return nil })
 	pusher.SetMetrics(metrics)
 
 	seedEventFrom(t, store, "evt-retry", "cloudedge", "onprem", "10.88.60.11/32", now)
@@ -160,7 +160,7 @@ func TestMetricsStaleTTLAndRepush(t *testing.T) {
 	peers := []eventd.PeerConfig{{NodeName: "leaf-a", Endpoint: srv.URL}}
 	pusher := eventd.NewPusher(store, testSecret, peers,
 		eventd.PushRetry{MaxAttempts: 3, BaseBackoff: time.Millisecond, MaxBackoff: time.Millisecond},
-		srv.Client(), clock, func(time.Duration) {})
+		srv.Client(), clock, func(context.Context, time.Duration) error { return nil })
 	pusher.SetMetrics(metrics)
 
 	expires1 := now.Add(10 * time.Minute)
@@ -182,7 +182,7 @@ func TestMetricsStaleTTLAndRepush(t *testing.T) {
 	if err := store.RecordFederationEvent(routerstate.EventRecord{
 		ID: "shard-1", Group: "cloudedge", SourceNode: "rr-node",
 		Type: "routerd.client.ipv4.observed", Subject: "10.77.60.0/25",
-		DedupeKey: "10.77.60.0/25", Payload: map[string]string{"mac": "aa:bb:cc:dd:ee:ff"},
+		DedupeKey: "shard-1", Payload: map[string]string{"mac": "aa:bb:cc:dd:ee:ff"},
 		ObservedAt: now, ExpiresAt: expires2,
 	}); err != nil {
 		t.Fatalf("re-record: %v", err)
@@ -277,7 +277,7 @@ func TestMetricsNoForbiddenLabels(t *testing.T) {
 	peers := []eventd.PeerConfig{{NodeName: "cloud-a", Endpoint: srv.URL}}
 	pusher := eventd.NewPusher(senderStore, testSecret, peers,
 		eventd.PushRetry{MaxAttempts: 3, BaseBackoff: time.Millisecond, MaxBackoff: time.Millisecond},
-		srv.Client(), clock, func(time.Duration) {})
+		srv.Client(), clock, func(context.Context, time.Duration) error { return nil })
 	pusher.SetMetrics(metrics)
 
 	seedEventFrom(t, senderStore, "evt-labels", "cloudedge", "onprem", "10.88.60.100/32", now)
@@ -316,7 +316,7 @@ func TestMetricsOutboxTickRecorded(t *testing.T) {
 	peers := []eventd.PeerConfig{}
 	pusher := eventd.NewPusher(store, testSecret, peers,
 		eventd.PushRetry{MaxAttempts: 1, BaseBackoff: time.Millisecond, MaxBackoff: time.Millisecond},
-		nil, clock, func(time.Duration) {})
+		nil, clock, func(context.Context, time.Duration) error { return nil })
 	pusher.SetMetrics(metrics)
 
 	outbox := eventd.NewOutbox(store, store, pusher, "cloudedge", "onprem", time.Second, clock)

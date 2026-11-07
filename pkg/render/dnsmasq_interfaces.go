@@ -14,7 +14,7 @@ func dnsmasqIPv6OnlyFirewallInterfaces(router *api.Router, aliases map[string]st
 	return dnsmasqFamilyOnlyInterfaces(v6, v4)
 }
 
-// DnsmasqIPv4OnlyInterfaces excludes DHCPv6 and RA only where IPv4 service is
+// DnsmasqIPv4OnlyInterfaces excludes DHCPv6 only where IPv4 service is
 // declared without IPv6 service intent. Pending IPv6 scopes still protect their
 // interfaces: dnsmasq 2.90 also applies exclusions when constructing IPv6 ranges.
 // An unresolved delegated scope prevents exclusions until its interface is known.
@@ -23,7 +23,7 @@ func DnsmasqIPv4OnlyInterfaces(router *api.Router, aliases map[string]string) []
 	if router != nil {
 		for _, resource := range router.Spec.Resources {
 			if resource.Kind == "DHCPv6Server" {
-				if spec, err := resource.DHCPv6ServerSpec(); err == nil {
+				if spec, err := resource.DHCPv6ServerSpec(); err == nil && spec.Mode != "ra-only" {
 					for _, iface := range spec.ListenInterfaces {
 						v6[defaultString(aliases[iface], iface)] = true
 					}
@@ -67,17 +67,12 @@ func dnsmasqInterfaceFamilies(router *api.Router, aliases map[string]string) (ma
 			}
 		case "DHCPv6Server":
 			spec, err := resource.DHCPv6ServerSpec()
-			if err == nil {
+			if err == nil && spec.Mode != "ra-only" {
 				if spec.DelegatedAddress != "" {
 					v6[delegated[spec.DelegatedAddress]] = true
 				} else if spec.Interface != "" {
 					v6[defaultString(aliases[spec.Interface], spec.Interface)] = true
 				}
-			}
-		case "IPv6RouterAdvertisement":
-			spec, err := resource.IPv6RouterAdvertisementSpec()
-			if err == nil {
-				v6[defaultString(aliases[spec.Interface], spec.Interface)] = true
 			}
 		}
 	}

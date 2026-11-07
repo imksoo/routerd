@@ -24,6 +24,7 @@ import (
 	"github.com/imksoo/routerd/pkg/controlapi"
 	"github.com/imksoo/routerd/pkg/dynamicconfig/codec"
 	"github.com/imksoo/routerd/pkg/mobilityconfig"
+	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/samenrollment"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
@@ -210,6 +211,11 @@ func mobilityEnrollmentSubmitCommand(args []string, stdout io.Writer) error {
 	if strings.TrimSpace(*claimName) == "" {
 		return errors.New("mobility enrollment-submit requires --claim")
 	}
+	switch output {
+	case "", "table", "text", "json", "yaml":
+	default:
+		return fmt.Errorf("unsupported output %q", output)
+	}
 	router, err := config.Load(*configPath)
 	if err != nil {
 		return err
@@ -273,6 +279,11 @@ func mobilityEnrollmentRevokeCommand(args []string, stdout io.Writer) error {
 	}
 	if strings.TrimSpace(*claimName) == "" {
 		return errors.New("mobility enrollment-revoke requires --claim")
+	}
+	switch output {
+	case "", "table", "text", "json", "yaml":
+	default:
+		return fmt.Errorf("unsupported output %q", output)
 	}
 	if strings.TrimSpace(*rrSocketPath) != "" && strings.TrimSpace(*rrURL) != "" {
 		return errors.New("mobility enrollment-revoke accepts only one of --rr-socket or --rr-url")
@@ -366,7 +377,11 @@ func mobilityLeafConfigCommand(args []string, stdout io.Writer) error {
 	bgpRouterID := fs.String("bgp-router-id", "", "leaf BGP router ID; defaults to tunnel address host")
 	rrLocalPreference := fs.Uint("rr-local-preference", uint(mobilityconfig.DefaultBGPImportLocalPreference), "BGP local preference for RR-imported paths when --direct-peer-group is used")
 	directLocalPreference := fs.Uint("direct-local-preference", uint(mobilityconfig.DefaultSAMTransportDirectLocalPreference), "BGP local preference for direct leaf paths; must exceed --rr-local-preference")
-	mode := fs.String("mode", "fou", "SAM transport mode: fou, ipip, gre, or gue")
+	defaultMode := "fou"
+	if platform.CurrentOS() == platform.OSFreeBSD {
+		defaultMode = "gre"
+	}
+	mode := fs.String("mode", defaultMode, "SAM transport mode: fou, ipip, gre, or gue")
 	encryption := fs.String("encryption", "none", "SAM transport encryption")
 	encapSport := fs.Int("encap-sport", 5555, "FOU/GUE source port")
 	encapDport := fs.Int("encap-dport", 5555, "FOU/GUE destination port")
@@ -695,7 +710,7 @@ func mobilityGeneratedLeafConfig(opts mobilityLeafConfigOptions) (*api.Router, e
 	return router, nil
 }
 
-func leafResource(apiVersion, kind, name string, spec any) api.Resource {
+func leafResource(apiVersion, kind, name string, spec api.ResourceSpec) api.Resource {
 	return api.Resource{TypeMeta: api.TypeMeta{APIVersion: apiVersion, Kind: kind}, Metadata: api.ObjectMeta{Name: name}, Spec: spec}
 }
 

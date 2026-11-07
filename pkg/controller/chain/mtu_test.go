@@ -61,9 +61,19 @@ func TestPathMTUControllerRendersBridgeFamilyMSSClamp(t *testing.T) {
 	dir := t.TempDir()
 	store := mapStore{}
 	path := filepath.Join(dir, "l2-mss.nft")
-	controller := PathMTUController{Router: router, OS: platform.OSLinux, Store: store, DryRun: true, Path: filepath.Join(dir, "mss.nft"), L2Path: path, ForceFragmentPath: filepath.Join(dir, "forcefrag.nft")}
+	// A preview renders the requested OS rules without consuming or altering
+	// the live ownership journal, including a journal it cannot decode.
+	ownerPath := path + ".owner"
+	ownerData := []byte("unreadable live ownership journal")
+	if err := os.WriteFile(ownerPath, ownerData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	controller := PathMTUController{Router: router, OS: platform.OSLinux, Store: store, DryRun: true, Path: filepath.Join(dir, "mss.nft"), L2Path: path, L2OwnerPath: ownerPath, ForceFragmentPath: filepath.Join(dir, "forcefrag.nft"), NftCommand: filepath.Join(dir, "must-not-run")}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(ownerPath); err != nil || !bytes.Equal(got, ownerData) {
+		t.Fatalf("preview changed live ownership: data=%q err=%v", got, err)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -78,7 +88,7 @@ func TestPathMTUControllerRendersBridgeFamilyMSSClamp(t *testing.T) {
 	}
 }
 
-func TestPathMTUControllerKeepsImplicitL2ArtifactBesideConfiguredPath(t *testing.T) {
+func TestPathMTUControllerKeepsImplicitArtifactsBesideConfiguredPath(t *testing.T) {
 	dir := t.TempDir()
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "lan0", MTU: 1500, Managed: true}},
@@ -87,12 +97,15 @@ func TestPathMTUControllerKeepsImplicitL2ArtifactBesideConfiguredPath(t *testing
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VXLANTunnel"}, Metadata: api.ObjectMeta{Name: "vx"}, Spec: api.VXLANTunnelSpec{IfName: "vx0", VNI: 42, LocalAddress: "198.18.0.1", UnderlayInterface: "underlay", MTU: 1280, Bridge: "br", TCPMSSClamp: true}},
 	}}}
 	path := filepath.Join(dir, "artifacts", "mss.nft")
-	controller := PathMTUController{Router: router, OS: platform.OSLinux, Store: mapStore{}, DryRun: true, Path: path, ForceFragmentPath: filepath.Join(dir, "artifacts", "forcefrag.nft")}
+	controller := PathMTUController{Router: router, OS: platform.OSLinux, Store: mapStore{}, DryRun: true, Path: path}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "artifacts", "l2-mss.nft")); err != nil {
 		t.Fatalf("implicit L2 artifact beside configured path: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "artifacts", "forcefrag.nft")); err != nil {
+		t.Fatalf("implicit force-fragment artifact beside configured path: %v", err)
 	}
 }
 
@@ -149,7 +162,9 @@ func TestPathMTUControllerRendersForceFragment(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := string(data)
-	for _, want := range []string{`table ip routerd_forcefrag`, `type filter hook prerouting priority mangle; policy accept;`, `iifname "ens3" fib daddr oifname "wg-hybrid" ip length > 1340 ip frag-off 0x4000 ip frag-off set 0`} {
+	// WireGuard installs its configured payload MTU verbatim; its outer
+	// encapsulation must not be deducted again from this forwarding ceiling.
+	for _, want := range []string{`table ip routerd_forcefrag`, `type filter hook prerouting priority mangle; policy accept;`, `iifname "ens3" fib daddr oifname "wg-hybrid" ip length > 1420 ip frag-off 0x4000 ip frag-off set 0`} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("forcefrag rules missing %q:\n%s", want, got)
 		}
@@ -201,10 +216,7 @@ func TestPathMTUControllerSkipsUnchangedLiveReload(t *testing.T) {
 
 func TestPathMTUControllerL2OwnerManifestIsPrivate(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "owner.json")
-	bootID, netns, identityErr := currentL2OwnerIdentity()
-	if identityErr != nil {
-		t.Fatal(identityErr)
-	}
+	bootID, netns := "fixture-boot", uint64(42)
 	g := l2MSSGeneration{Table: "t", Chain: "c", Token: "secret", Digest: "digest", Handle: 7, State: "active"}
 	m := l2MSSOwnerManifest{Version: 3, BootID: bootID, NetNS: netns, ActiveToken: g.Token, Generations: []l2MSSGeneration{g}}
 	if err := writeL2MSSOwner(path, m); err != nil {
@@ -263,6 +275,7 @@ func TestPathMTUControllerDeleteRaceNeverDeletesTable(t *testing.T) {
 }
 
 func TestPathMTUControllerCreateRaceFailsWithoutMutatingReplacement(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "lan0", MTU: 1500}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Bridge"}, Metadata: api.ObjectMeta{Name: "br"}, Spec: api.BridgeSpec{IfName: "br0", Members: []string{"lan"}, MTU: 1500}},
@@ -304,6 +317,7 @@ func TestPathMTUControllerCreateRaceFailsWithoutMutatingReplacement(t *testing.T
 }
 
 func TestPathMTUControllerNeverUsesHandleFromStaleBoot(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()
 	owner := filepath.Join(dir, "owner.json")
 	_, netns, err := currentL2OwnerIdentity()
@@ -348,10 +362,7 @@ func l2OwnerJSON(g l2MSSGeneration, handle uint64) []byte {
 
 func TestPathMTUControllerRecoveryRetiresPriorActiveBeforePromotion(t *testing.T) {
 	owner := filepath.Join(t.TempDir(), "owner.json")
-	bootID, netns, err := currentL2OwnerIdentity()
-	if err != nil {
-		t.Fatal(err)
-	}
+	bootID, netns := "fixture-boot", uint64(42)
 	digest := emptyL2RulesDigest()
 	a := l2MSSGeneration{Table: "routerd_l2_a", Chain: "forward_a", Token: "a-secret", Digest: digest, Handle: 11, State: "active"}
 	b := l2MSSGeneration{Table: "routerd_l2_b", Chain: "forward_b", Token: "b-secret", Digest: digest, Handle: 22, State: "activating"}
@@ -383,10 +394,7 @@ func TestPathMTUControllerRecoveryRetiresPriorActiveBeforePromotion(t *testing.T
 
 func TestPathMTUControllerLiveRuleDriftRetiresGeneration(t *testing.T) {
 	owner := filepath.Join(t.TempDir(), "owner.json")
-	bootID, netns, err := currentL2OwnerIdentity()
-	if err != nil {
-		t.Fatal(err)
-	}
+	bootID, netns := "fixture-boot", uint64(42)
 	g := l2MSSGeneration{Table: "routerd_l2_drift", Chain: "forward_drift", Token: "secret", Digest: "not-empty-rules", Handle: 31, State: "active"}
 	m := l2MSSOwnerManifest{Version: 3, BootID: bootID, NetNS: netns, ActiveToken: g.Token, Generations: []l2MSSGeneration{g}}
 	c := PathMTUController{RunNFT: func(context.Context, ...string) ([]byte, error) { return l2OwnerJSON(g, g.Handle), nil }}
@@ -401,10 +409,7 @@ func TestPathMTUControllerLiveRuleDriftRetiresGeneration(t *testing.T) {
 
 func TestPathMTUControllerOwnedUnknownDropIsDeletedByExactHandle(t *testing.T) {
 	owner := filepath.Join(t.TempDir(), "owner.json")
-	bootID, netns, err := currentL2OwnerIdentity()
-	if err != nil {
-		t.Fatal(err)
-	}
+	bootID, netns := "fixture-boot", uint64(42)
 	g := l2MSSGeneration{Table: "routerd_l2_owned_drop", Chain: "rules_owned_drop", Token: "secret", Digest: emptyL2RulesDigest(), Handle: 37, State: "active"}
 	m := l2MSSOwnerManifest{Version: 3, BootID: bootID, NetNS: netns, ActiveToken: g.Token, Generations: []l2MSSGeneration{g}}
 	var doc map[string]any
@@ -446,10 +451,7 @@ func TestPathMTUControllerOwnedUnknownDropIsDeletedByExactHandle(t *testing.T) {
 
 func TestPathMTUControllerSameHandleProofLossRemainsOwned(t *testing.T) {
 	owner := filepath.Join(t.TempDir(), "owner.json")
-	bootID, netns, err := currentL2OwnerIdentity()
-	if err != nil {
-		t.Fatal(err)
-	}
+	bootID, netns := "fixture-boot", uint64(42)
 	g := l2MSSGeneration{Table: "routerd_l2_proof_loss", Chain: "rules_proof_loss", Token: "secret", Digest: emptyL2RulesDigest(), Handle: 39, State: "active"}
 	m := l2MSSOwnerManifest{Version: 3, BootID: bootID, NetNS: netns, ActiveToken: g.Token, Generations: []l2MSSGeneration{g}}
 	var doc map[string]any
@@ -493,10 +495,7 @@ func TestPathMTUControllerSameHandleProofLossRemainsOwned(t *testing.T) {
 
 func TestPathMTUControllerDeleteFailurePreservesRetiredJournal(t *testing.T) {
 	owner := filepath.Join(t.TempDir(), "owner.json")
-	bootID, netns, err := currentL2OwnerIdentity()
-	if err != nil {
-		t.Fatal(err)
-	}
+	bootID, netns := "fixture-boot", uint64(42)
 	g := l2MSSGeneration{Table: "routerd_l2_delete_fail", Chain: "rules_delete_fail", Token: "secret", Digest: emptyL2RulesDigest(), Handle: 47, State: "retired"}
 	m := l2MSSOwnerManifest{Version: 3, BootID: bootID, NetNS: netns, Generations: []l2MSSGeneration{g}}
 	c := PathMTUController{RunNFT: func(_ context.Context, args ...string) ([]byte, error) {
@@ -536,10 +535,7 @@ func TestPathMTUControllerCleanupFailureSavesErrorDriftStatus(t *testing.T) {
 
 func TestPathMTUControllerNeverRebindsNonzeroHandle(t *testing.T) {
 	owner := filepath.Join(t.TempDir(), "owner.json")
-	bootID, netns, err := currentL2OwnerIdentity()
-	if err != nil {
-		t.Fatal(err)
-	}
+	bootID, netns := "fixture-boot", uint64(42)
 	g := l2MSSGeneration{Table: "routerd_l2_replay", Chain: "forward_replay", Token: "secret", Digest: emptyL2RulesDigest(), Handle: 41, State: "active"}
 	m := l2MSSOwnerManifest{Version: 3, BootID: bootID, NetNS: netns, ActiveToken: g.Token, Generations: []l2MSSGeneration{g}}
 	c := PathMTUController{RunNFT: func(context.Context, ...string) ([]byte, error) { return l2OwnerJSON(g, 42), nil }}
@@ -553,6 +549,7 @@ func TestPathMTUControllerNeverRebindsNonzeroHandle(t *testing.T) {
 }
 
 func TestPathMTUControllerTransientListErrorPreservesJournal(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()
 	owner := filepath.Join(dir, "owner.json")
 	bootID, netns, err := currentL2OwnerIdentity()
@@ -617,7 +614,8 @@ func TestPathMTUControllerRendersLocalCaptureMSSClamp(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := string(data)
-	want := `iifname "ens3" oifname "wg-hybrid" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1300 tcp option maxseg size set 1300`
+	// Native WG payload 1420 minus the IPv4/TCP headers (40).
+	want := `iifname "ens3" oifname "wg-hybrid" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1380 tcp option maxseg size set 1380`
 	if !strings.Contains(got, want) {
 		t.Fatalf("BGP mobility MSS clamp missing %q:\n%s", want, got)
 	}
@@ -666,7 +664,8 @@ func TestPathMTUControllerRendersSAMTransportMSSClamp(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := string(data)
-	want := `iifname "ens5" oifname "samt-aws-onprem" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1280 tcp option maxseg size set 1280`
+	// Native IPIP payload is 1420 - 20 = 1400; IPv4/TCP MSS is 1360.
+	want := `iifname "ens5" oifname "samt-aws-onprem" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1360 tcp option maxseg size set 1360`
 	if !strings.Contains(got, want) {
 		t.Fatalf("SAM transport MSS clamp missing %q:\n%s", want, got)
 	}
@@ -726,15 +725,44 @@ func TestPathMTUControllerRendersSAMTransportHubRelayMSSClamp(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := string(data)
+	for _, tunnel := range []string{"samt-aws", "samt-oci"} {
+		want := `iifname "ens20" oifname "` + tunnel + `" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1360 tcp option maxseg size set 1360`
+		if !strings.Contains(got, want) {
+			t.Fatalf("native IPIP payload clamp missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, `iifname "samt-`) {
+		t.Fatalf("equal native payload MTUs need no additional relay clamp:\n%s", got)
+	}
+	// Keep a real relay bottleneck in this fixture: the OCI leg explicitly
+	// installs 1380 while the AWS leg derives 1400 from WG1420 minus IPIP20.
+	for i := range router.Spec.Resources {
+		res := &router.Spec.Resources[i]
+		if res.Metadata.Name == "samt-oci" {
+			spec := res.Spec.(api.TunnelInterfaceSpec)
+			spec.MTU = 1380
+			res.Spec = spec
+		}
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	data, err = os.ReadFile(controller.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = string(data)
 	for _, want := range []string{
-		`iifname "ens20" oifname "samt-aws" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1280 tcp option maxseg size set 1280`,
-		`iifname "ens20" oifname "samt-oci" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1280 tcp option maxseg size set 1280`,
-		`iifname "samt-aws" oifname "samt-oci" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1280 tcp option maxseg size set 1280`,
-		`iifname "samt-oci" oifname "samt-aws" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1280 tcp option maxseg size set 1280`,
+		`iifname "ens20" oifname "samt-aws" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1360 tcp option maxseg size set 1360`,
+		`iifname "ens20" oifname "samt-oci" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1340 tcp option maxseg size set 1340`,
+		`iifname "samt-aws" oifname "samt-oci" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1340 tcp option maxseg size set 1340`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("SAM transport hub relay MSS clamp missing %q:\n%s", want, got)
 		}
+	}
+	if strings.Contains(got, `iifname "samt-oci" oifname "samt-aws"`) {
+		t.Fatalf("relay toward the larger MTU must not narrow MSS:\n%s", got)
 	}
 }
 

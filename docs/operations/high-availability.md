@@ -44,3 +44,33 @@ Status fields:
 | `leasePath` | Lease file path |
 
 See `examples/ha-2-node.yaml` for a minimal two-node shape.
+
+### Linux daemon startup and persisted VRRP roles
+
+Before startup controllers evaluate `when`, routerd refreshes Linux VRRP roles
+from its owned keepalived configuration and current native observations. A saved
+`master` value cannot authorize a shared address or dependent service after a
+rebooted node returns as standby. An ordinary daemon restart still recognizes a
+live owned gateway as master, preserving its dependent services. Role observation
+happens before the first controller generation; configuration reloads retain
+their existing generation ordering. This is not a claim that complete HA
+qualification has passed; see the Linux pair qualification record.
+
+On complete BGP withdrawal, public BGPRouter/BGPPeer observations retire only
+after acknowledged daemon stop, owned FIB removal and managed systemd helper
+removal. Failed cleanup retains its observation and retry acknowledgement.
+Lease-sync declarations removed from the configuration retire their public
+observations after the previous controller generation stops; source and receiver
+lease files are preserved. A declaration disabled by `when` remains visible.
+Normal generation cancellation does not publish a new sync failure; a transfer
+timeout while the generation is running still does.
+
+For IPv4 unicast VRRP, a unique unconditional `IPv4StaticAddress` on the election
+interface supplies keepalived's explicit `unicast_src_ip` and `track_src_ip`.
+If that interface also has legacy subnet addresses, routerd selects the unique
+declared source whose subnet contains all configured VRRP peers.
+This keeps the receive socket on the node address even if a shared VIP existed
+first and is subsequently withdrawn by a BACKUP notification. A missing tracked
+source is a fault, not permission to use a shared address. Multicast and an
+interface without a unique declared source or peer-subnet match retain native source selection;
+the static-source qualification does not cover those other cases.

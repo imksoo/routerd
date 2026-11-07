@@ -103,8 +103,8 @@ func TestInstallWaitsForJSONApplyStateAfterServiceRestart(t *testing.T) {
 	if strings.Contains(text, `routerctl" get status --socket "${socket}"`) {
 		t.Fatalf("install.sh still checks human status output for lastApplyTime")
 	}
-	if !strings.Contains(text, `wait_for_routerd_status_socket "${status_socket}" || true`) {
-		t.Fatalf("install.sh should wait for the status socket before final post-upgrade status output")
+	if !strings.Contains(text, `if ! wait_for_routerd_status_socket "${status_socket}"; then`) {
+		t.Fatalf("install.sh should check status socket recovery before final post-upgrade status output")
 	}
 }
 
@@ -199,7 +199,7 @@ func TestInstallConfigureUsesCurrentRouterdServeCLI(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		`"${routerd_bin}" serve --sandbox --root "${sandbox_root}" --config "${final_config}" --once`,
+		`"${routerd_bin}" serve --sandbox --root "${sandbox_root}" --config "${candidate}" --once`,
 		`"${routerd_bin}" serve --config "${final_config}" --once`,
 	} {
 		if !strings.Contains(text, want) {
@@ -333,6 +333,105 @@ echo inventory-plugin
 	}
 }
 
+func TestInstallCreatesDHCPEventRelayHookAndUninstallRemovesIt(t *testing.T) {
+	dir := t.TempDir()
+	pkg := filepath.Join(dir, "package")
+	prefix := filepath.Join(dir, "prefix")
+	writeExecutable(t, filepath.Join(pkg, "bin", "routerd"), `#!/bin/sh
+if [ "$1" = "--version" ]; then echo routerd-test; exit 0; fi
+exit 0
+`)
+	writeExecutable(t, filepath.Join(pkg, "bin", "routerd-dhcp-event-relay"), `#!/bin/sh
+printf '%s\n' "$*"
+`)
+
+	out, err := runInstall(t, pkg, prefix, "--no-install-deps", "--no-config-update", "--no-restart")
+	if err != nil {
+		t.Fatalf("install failed: %v\n%s", err, out)
+	}
+	relay := filepath.Join(prefix, "sbin", "routerd-dhcp-event-relay")
+	hook := filepath.Join(prefix, "libexec", "routerd", "dhcp-event-relay")
+	info, err := os.Lstat(hook)
+	if err != nil {
+		t.Fatalf("DHCP event hook missing: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("DHCP event hook mode = %v, want symlink", info.Mode())
+	}
+	target, err := os.Readlink(hook)
+	if err != nil || target != relay {
+		t.Fatalf("DHCP event hook target = %q, err=%v; want %q", target, err, relay)
+	}
+	callback := exec.Command(hook, "add", "02:00:00:00:00:42", "192.0.2.42", "fixture")
+	if got, err := callback.CombinedOutput(); err != nil || strings.TrimSpace(string(got)) != "add 02:00:00:00:00:42 192.0.2.42 fixture" {
+		t.Fatalf("DHCP event hook invocation = %q, err=%v", got, err)
+	}
+
+	cmd := exec.Command(filepath.Join(repoRoot(t), "packaging", "uninstall.sh"), "--prefix", prefix, "--yes")
+	if got, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("uninstall failed: %v\n%s", err, got)
+	}
+	for _, path := range []string{hook, relay} {
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Errorf("managed DHCP event artifact remains: %s (err=%v)", path, err)
+		}
+	}
+}
+
+func TestUninstallRemovesOwnedRelativeDHCPEventRelayHook(t *testing.T) {
+	prefix := filepath.Join(t.TempDir(), "prefix")
+	relay := filepath.Join(prefix, "sbin", "routerd-dhcp-event-relay")
+	hook := filepath.Join(prefix, "libexec", "routerd", "dhcp-event-relay")
+	writeExecutable(t, relay, "#!/bin/sh\nexit 0\n")
+	if err := os.MkdirAll(filepath.Dir(hook), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../../sbin/routerd-dhcp-event-relay", hook); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command(filepath.Join(repoRoot(t), "packaging", "uninstall.sh"), "--prefix", prefix, "--yes")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("uninstall failed: %v\n%s", err, out)
+	}
+	for _, path := range []string{hook, relay} {
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Errorf("owned DHCP event artifact remains: %s (err=%v)", path, err)
+		}
+	}
+}
+
+func TestInstallRefusesToReplaceForeignDHCPEventHook(t *testing.T) {
+	dir := t.TempDir()
+	pkg := filepath.Join(dir, "package")
+	prefix := filepath.Join(dir, "prefix")
+	writeExecutable(t, filepath.Join(pkg, "bin", "routerd"), `#!/bin/sh
+if [ "$1" = "--version" ]; then echo routerd-test; exit 0; fi
+exit 0
+`)
+	writeExecutable(t, filepath.Join(pkg, "bin", "routerd-dhcp-event-relay"), "#!/bin/sh\nexit 0\n")
+	hook := filepath.Join(prefix, "libexec", "routerd", "dhcp-event-relay")
+	foreign := "operator-owned hook\n"
+	if err := os.MkdirAll(filepath.Dir(hook), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(hook, []byte(foreign), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runInstall(t, pkg, prefix, "--no-install-deps", "--no-config-update", "--no-restart")
+	if err == nil {
+		t.Fatalf("install succeeded over a foreign DHCP hook:\n%s", out)
+	}
+	got, readErr := os.ReadFile(hook)
+	if readErr != nil || string(got) != foreign {
+		t.Fatalf("foreign DHCP hook changed: %q, err=%v", got, readErr)
+	}
+	if _, statErr := os.Lstat(filepath.Join(prefix, "sbin", "routerd-dhcp-event-relay")); !os.IsNotExist(statErr) {
+		t.Fatalf("failed install left relay binary installed (err=%v)", statErr)
+	}
+}
+
 func TestInstallWithNDPIArchiveRejectsStaticArchive(t *testing.T) {
 	dir := t.TempDir()
 	pkg := filepath.Join(dir, "package")
@@ -368,68 +467,78 @@ echo static-archive-agent
 	}
 }
 
-func TestInstallMigratesLegacySystemdUnitConfig(t *testing.T) {
-	dir := t.TempDir()
-	pkg := filepath.Join(dir, "package")
-	prefix := filepath.Join(dir, "prefix")
-	writeExecutable(t, filepath.Join(pkg, "bin", "routerd"), `#!/bin/sh
-if [ "$1" = "--version" ]; then echo routerd-test; exit 0; fi
-exit 0
+func TestInstallFailsWhenServiceRecoveryFails(t *testing.T) {
+	requireLinuxSystemdFixture(t)
+	for _, scenario := range []string{"missing-status-socket", "scheduled-restart-timeout", "helper-restart-failure", "primary-restart-failure", "post-restart-reload-failure"} {
+		t.Run(scenario, func(t *testing.T) {
+			dir := t.TempDir()
+			pkg := filepath.Join(dir, "package")
+			prefix := filepath.Join(dir, "prefix")
+			binDir := filepath.Join(dir, "bin")
+			writeExecutable(t, filepath.Join(prefix, "sbin", "routerd"), "#!/bin/sh\necho old-routerd\n")
+			writeExecutable(t, filepath.Join(pkg, "bin", "routerd"), "#!/bin/sh\necho new-routerd\n")
+			writeExecutable(t, filepath.Join(pkg, "bin", "routerctl"), "#!/bin/sh\nexit 1\n")
+			if err := os.MkdirAll(filepath.Join(pkg, "systemd"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(pkg, "systemd", "routerd.service"), []byte("# routerd-managed-service: v1\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			// Exercise the real installer without touching host services or waiting
+			// for sockets that the fixture intentionally never creates.
+			writeExecutable(t, filepath.Join(binDir, "sleep"), "#!/bin/sh\nexit 0\n")
+			writeExecutable(t, filepath.Join(binDir, "readlink"), fmt.Sprintf("#!/bin/sh\necho '%s/sbin/routerd-bgp (deleted)'\n", prefix))
+			writeExecutable(t, filepath.Join(binDir, "systemctl"), `#!/bin/sh
+case "$*" in
+  "restart routerd.service")
+    [ "$INSTALL_SCENARIO" != "primary-restart-failure" ]; exit $? ;;
+  "daemon-reload")
+    if [ "$INSTALL_SCENARIO" = "post-restart-reload-failure" ]; then
+      if [ -f "$INSTALL_RELOAD_MARKER" ]; then exit 1; fi
+      touch "$INSTALL_RELOAD_MARKER"
+    fi
+    exit 0 ;;
+  "is-active --quiet routerd.service")
+    [ "$INSTALL_SCENARIO" != "helper-restart-failure" ]; exit $? ;;
+  *routerd-self-restart-*)
+    if [ "$INSTALL_SCENARIO" = "scheduled-restart-timeout" ]; then
+      echo 'routerd-self-restart-test.timer loaded active waiting Restart routerd'
+    fi
+    exit 0 ;;
+  "list-units --type=service --state=running --plain --no-legend routerd*.service")
+    if [ "$INSTALL_SCENARIO" = "helper-restart-failure" ]; then
+      echo 'routerd-bgp.service loaded active running BGP'
+    fi
+    exit 0 ;;
+  "show -p MainPID --value routerd-bgp.service") echo 1; exit 0 ;;
+  "restart routerd-bgp.service") exit 1 ;;
+  *) exit 0 ;;
+esac
 `)
-	if err := os.MkdirAll(filepath.Join(pkg, "etc", "routerd"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(pkg, "etc", "routerd", "router.yaml.sample"), []byte("apiVersion: routerd.net/v1alpha1\nkind: Router\nmetadata:\n  name: sample\nspec: {}\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	configPath := filepath.Join(prefix, "etc", "routerd", "router.yaml")
-	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	legacyConfig := `apiVersion: routerd.net/v1alpha1
-kind: Router
-metadata:
-  name: legacy
-spec:
-  resources:
-    - apiVersion: system.routerd.net/v1alpha1
-      kind: SystemdUnit
-      metadata:
-        name: routerd.service
-      spec:
-        execStart: /usr/local/sbin/routerd serve --controller-chain
-    - apiVersion: system.routerd.net/v1alpha1
-      kind: Hostname
-      metadata:
-        name: router
-      spec:
-        hostname: router01
-`
-	if err := os.WriteFile(configPath, []byte(legacyConfig), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	out, err := runInstall(t, pkg, prefix, "--no-install-deps", "--no-config-update", "--no-restart")
-	if err != nil {
-		t.Fatalf("install failed: %v\n%s", err, out)
-	}
-	if !strings.Contains(out, "removing legacy SystemdUnit resources") {
-		t.Fatalf("missing migration warning:\n%s", out)
-	}
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := string(data)
-	if strings.Contains(got, "SystemdUnit") || strings.Contains(got, "--controller-chain") {
-		t.Fatalf("legacy SystemdUnit was not removed:\n%s", got)
-	}
-	if !strings.Contains(got, "kind: Hostname") {
-		t.Fatalf("non-legacy resource was not preserved:\n%s", got)
+			out, err := runInstallWithEnv(t, pkg, prefix, []string{
+				"PATH=" + binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+				"INSTALL_SCENARIO=" + scenario,
+				"INSTALL_RELOAD_MARKER=" + filepath.Join(dir, "reload.marker"),
+				"ROUTERD_INSTALL_FORCE_SERVICE_MANAGER=1",
+				"ROUTERD_INSTALL_SYSTEMD_SYSTEM_DIR=" + filepath.Join(dir, "systemd"),
+				"ROUTERD_INSTALL_STATUS_SOCKET=" + filepath.Join(dir, "missing.sock"),
+				"ROUTERD_INSTALL_SELF_RESTART_TIMEOUT_SECONDS=0",
+			}, "--no-install-deps", "--no-config-update")
+			if err == nil {
+				t.Fatalf("installer reported success after %s:\n%s", scenario, out)
+			}
+			if !strings.Contains(out, "service recovery failed") || strings.Contains(out, "upgrade completed") {
+				t.Fatalf("installer did not report failed recovery:\n%s", out)
+			}
+			installed, readErr := os.ReadFile(filepath.Join(prefix, "sbin", "routerd"))
+			if readErr != nil || !strings.Contains(string(installed), "new-routerd") {
+				t.Fatalf("installer rolled files back underneath restarted processes: %v\n%s", readErr, out)
+			}
+		})
 	}
 }
 
-func TestInstallReplacesLegacyRouterdServiceBeforeRestart(t *testing.T) {
+func TestInstallDoesNotTreatObsoleteArgumentsAsServiceOwnership(t *testing.T) {
 	requireLinuxSystemdFixture(t)
 	dir := t.TempDir()
 	pkg := filepath.Join(dir, "package")
@@ -474,19 +583,16 @@ ExecStart=/usr/local/sbin/routerd serve --controller-chain --controller-chain-dr
 	if err != nil {
 		t.Fatalf("install failed: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "replacing legacy routerd.service") {
-		t.Fatalf("missing legacy replacement warning:\n%s", out)
+	if !strings.Contains(out, "refusing to mutate foreign") {
+		t.Fatalf("missing foreign ownership diagnostic:\n%s", out)
 	}
 	data, err := os.ReadFile(filepath.Join(systemdDir, "routerd.service"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := string(data)
-	if strings.Contains(got, "--controller-chain") || strings.Contains(got, "# Managed by routerd.") {
-		t.Fatalf("legacy unit was preserved:\n%s", got)
-	}
-	if !strings.Contains(got, "routerd serve --config") {
-		t.Fatalf("new unit was not installed:\n%s", got)
+	if got != legacyUnit {
+		t.Fatalf("unowned unit was replaced:\n%s", got)
 	}
 }
 
@@ -723,6 +829,8 @@ func TestUninstallRemovesShippedPayloadAndPreservesUserPlugin(t *testing.T) {
 			}
 			userPlugin := filepath.Join(prefix, "libexec/routerd/plugins/user-plugin/plugin.yaml")
 			writeExecutable(t, userPlugin, "operator-owned\n")
+			foreignHook := filepath.Join(prefix, "libexec/routerd/dhcp-event-relay")
+			writeExecutable(t, foreignHook, "operator-owned hook\n")
 
 			cmd := exec.Command(filepath.Join(repoRoot(t), "packaging", "uninstall.sh"), "--prefix", prefix, "--yes")
 			cmd.Env = append(os.Environ(), "PATH="+fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -736,6 +844,9 @@ func TestUninstallRemovesShippedPayloadAndPreservesUserPlugin(t *testing.T) {
 			}
 			if got, err := os.ReadFile(userPlugin); err != nil || string(got) != "operator-owned\n" {
 				t.Errorf("user plugin was not preserved: content=%q err=%v", got, err)
+			}
+			if got, err := os.ReadFile(foreignHook); err != nil || string(got) != "operator-owned hook\n" {
+				t.Errorf("foreign DHCP event hook was not preserved: content=%q err=%v", got, err)
 			}
 		})
 	}
@@ -794,6 +905,88 @@ exec /bin/rm "$@"
 				t.Fatalf("owned service did not use service manager: %q, err=%v", data, err)
 			}
 		})
+	}
+}
+
+func TestUninstallStopsOwnedGeneratedSystemdUnits(t *testing.T) {
+	requireLinuxSystemdFixture(t)
+	dir := t.TempDir()
+	prefix := filepath.Join(dir, "prefix")
+	systemdDir := filepath.Join(dir, "systemd")
+	binDir := filepath.Join(dir, "bin")
+	commandLog := filepath.Join(dir, "systemctl.log")
+	for _, name := range []string{
+		"routerd.service",
+		"routerd-dns-resolver@lan.service",
+		"routerd-dhcpv6-client@wan-pd.service",
+		"routerd-dnsmasq.service",
+	} {
+		path := filepath.Join(systemdDir, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		marker := "# Managed by routerd. Do not edit by hand.\n"
+		if name == "routerd.service" {
+			marker = "# routerd-managed-service: v1\n"
+		} else if name == "routerd-dnsmasq.service" {
+			marker = "# Generated by routerd. Do not edit by hand.\n"
+		}
+		if err := os.WriteFile(path, []byte(marker+"[Service]\nRestart=always\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	foreign := filepath.Join(systemdDir, "routerd-foreign@operator.service")
+	if err := os.WriteFile(foreign, []byte("[Service]\nExecStart=/operator/owned\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeExecutable(t, filepath.Join(binDir, "uname"), "#!/bin/sh\necho Linux\n")
+	writeExecutable(t, filepath.Join(binDir, "systemctl"), fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$*\" >> %q\nexit 0\n", commandLog))
+	writeExecutable(t, filepath.Join(binDir, "rm"), `#!/bin/sh
+for arg in "$@"; do
+  case "$arg" in /run/routerd|/var/run/routerd) exit 0 ;; esac
+done
+exec /bin/rm "$@"
+`)
+
+	cmd := exec.Command(filepath.Join(repoRoot(t), "packaging", "uninstall.sh"), "--prefix", prefix, "--yes")
+	cmd.Env = append(os.Environ(),
+		"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"ROUTERD_UNINSTALL_FORCE_SERVICE_MANAGER=1",
+		"ROUTERD_UNINSTALL_SYSTEMD_SYSTEM_DIR="+systemdDir,
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("uninstall failed: %v\n%s", err, out)
+	}
+	for _, name := range []string{
+		"routerd.service",
+		"routerd-dns-resolver@lan.service",
+		"routerd-dhcpv6-client@wan-pd.service",
+		"routerd-dnsmasq.service",
+	} {
+		if _, err := os.Lstat(filepath.Join(systemdDir, name)); !os.IsNotExist(err) {
+			t.Errorf("owned systemd unit remains: %s (err=%v)", name, err)
+		}
+	}
+	if _, err := os.Stat(foreign); err != nil {
+		t.Errorf("foreign systemd unit was removed: %v", err)
+	}
+	commands, err := os.ReadFile(commandLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"disable --now routerd.service",
+		"disable --now routerd-dns-resolver@lan.service",
+		"disable --now routerd-dhcpv6-client@wan-pd.service",
+		"disable --now routerd-dnsmasq.service",
+		"daemon-reload",
+	} {
+		if !strings.Contains(string(commands), want) {
+			t.Errorf("systemd cleanup command missing %q:\n%s", want, commands)
+		}
+	}
+	if strings.Contains(string(commands), "routerd-foreign@operator.service") {
+		t.Errorf("foreign unit was passed to systemctl:\n%s", commands)
 	}
 }
 
@@ -969,7 +1162,7 @@ func TestBootstrapInstallerPassesShellcheck(t *testing.T) {
 	}
 }
 
-func TestBootstrapInstallerIsPublishedByReleaseWorkflow(t *testing.T) {
+func TestNativePackagesArePublishedByReleaseWorkflow(t *testing.T) {
 	root := repoRoot(t)
 	workflow, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "release.yaml"))
 	if err != nil {
@@ -977,12 +1170,18 @@ func TestBootstrapInstallerIsPublishedByReleaseWorkflow(t *testing.T) {
 	}
 	content := string(workflow)
 	for _, needle := range []string{
-		"packaging/bootstrap.sh",
-		"install.sh",
+		"make dist-deb",
+		"gmake dist-pkg",
+		"PACKAGE_VERSION=",
+		"- build-deb",
+		"- build-pkg",
 	} {
 		if !strings.Contains(content, needle) {
-			t.Fatalf("release workflow missing bootstrap installer reference %q", needle)
+			t.Fatalf("release workflow missing native package contract %q", needle)
 		}
+	}
+	if strings.Contains(content, "packaging/bootstrap.sh") || strings.Contains(content, "./install.sh") {
+		t.Fatal("release workflow must not publish or exercise manual base installation")
 	}
 }
 

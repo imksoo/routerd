@@ -1,65 +1,47 @@
 ---
-title: nDPI agent native package
+title: nDPI agent 原生套件
 ---
 
-# nDPI 代理程式原生套件
+# nDPI agent 原生套件
 
-![Diagram showing the nDPI native agent package overlaying the static routerd release archive with a libndpi-linked routerd-ndpi-agent, installer self-test, and runtime agent socket status](/img/diagrams/operations-ndpi-agent-libndpi.png)
+routerd 1.5 提案版使用選用 Debian 套件 `routerd-ndpi-agent-libndpi`。
+Linux 本體維持靜態連結；此 agent 使用 `CGO_ENABLED=1 -tags libndpi` 與 OS 的共享程式庫。
+目前發布建構目標為 Ubuntu 24.04 amd64，尚未公布公共 1.5 套件或 apt 儲存庫。
 
-routerd 的一般 Linux 發布封存檔以 `CGO_ENABLED=0` 建置，確保封存檔內所有 routerd 二進位檔均為靜態連結。選用的 `routerd-ndpi-agent-libndpi` 封存檔是針對需要原生 nDPI 分類功能的主機所提供的例外套件。
-
-此封存檔僅包含下列項目：
-
-- `bin/routerd-ndpi-agent`
-- `share/doc/README.md`
-- `share/doc/VERSION`
-- `share/doc/TARGET`
-
-此二進位檔以 `CGO_ENABLED=1 -tags libndpi` 建置，並連結至目標系統的 `libndpi` 執行期函式庫。它的用途是覆蓋已安裝一般 routerd 封存檔之主機上的對應二進位檔。
-
-## Install
-
-同時下載一般 routerd 發布封存檔與對應的原生代理程式封存檔，並讓安裝程式以單一交易方式套用。
+取得並驗證同版本的本體與附加套件，使用實際檔名安裝或一起更新：
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz.sha256
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz.sha256
-sha256sum -c routerd-linux-amd64.tar.gz.sha256
-sha256sum -c routerd-ndpi-agent-libndpi-linux-amd64.tar.gz.sha256
-tar -xzf routerd-linux-amd64.tar.gz
-sudo ./install.sh --with-ndpi \
-  --with-ndpi-archive ./routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
+sudo apt install ./routerd_<version>_amd64.deb \
+  ./routerd-ndpi-agent-libndpi_<version>_amd64.deb
 ```
 
-主機需要安裝與封存檔建置時具有相同共用函式庫 ABI 的 `libndpi` 執行期套件。在 Debian/Ubuntu 上，可透過以下指令安裝選用的執行期相依套件：
+附加套件依賴完全相符的本體版本。`dpkg-shlibdeps` 從實際 ELF 計算程式庫依賴，由 apt
+解決。不要用封存檔或手動複製覆寫套件檔案。
+
+原生 agent 仍位於 `/usr/sbin/routerd-ndpi-agent`。附加套件以自己擁有的 `dpkg-divert`
+將本體的靜態 agent 分流至 `/usr/sbin/routerd-ndpi-agent.routerd-static`，因此本體更新
+不會覆寫原生版本。拒絕接管其他套件或管理員的 diversion。
+
+更新會先停止自有 main 與 helper，再置換並恢復服務；否則 main 可能在置換期間
+自動重啟 helper。附加套件的變更也可能中斷通訊與觸發協定重新收斂。
+首次安裝而未啟用設定時不啟動服務。
 
 ```sh
-sudo apt-get install libndpi-bin
-```
-
-確認原生後端是否已啟用：
-
-```sh
-sudo curl --silent --unix-socket /run/routerd/ndpi-agent/default.sock \
+/usr/sbin/routerd-ndpi-agent selftest
+sudo curl --fail --silent --unix-socket /run/routerd/ndpi-agent/default.sock \
   http://unix/v1/status
 ```
 
-回應中應包含 `"libndpiLoaded": true`。
+確認 `libndpiLoaded: true`。實際程式庫的 TLS 自測應給出預期 SNI 與
+`reason: libndpi_protocol_detection`。僅安裝檔案不代表已驗證實際轉送流量分類。
 
-## Upgrade note
+```sh
+sudo apt remove routerd-ndpi-agent-libndpi
+```
 
-一般 routerd 封存檔內含預設的靜態版 `routerd-ndpi-agent`。
-升級時，若現有原生代理程式的 `selftest` 回傳 `"libndpiLoaded": true`，而封存檔中的代理程式不回傳，則 `install.sh` 會保留現有的原生代理程式。
+移除附加套件後，dpkg 恢復目前本體的靜態 agent 並恢復先前運作的自有服務，保留設定與 DB。
+靜態 agent 不載入 libnDPI，因此仍需要原生分類時不要移除此套件。
 
-若主機需要原生應用層分類功能，請在執行一般安裝程式時加上 `--with-ndpi`。若最終安裝的代理程式未回傳 `"libndpiLoaded": true`，安裝程式將會失敗。此機制可防止靜態版退路在無聲無息的情況下取代原生 nDPI 的預期行為。
-
-若為新安裝，或希望明確以原生代理程式封存檔為正本，請傳入 `--with-ndpi-archive PATH`。安裝程式會驗證封存檔的目標標記、拒絕不安全的 tar 路徑、驗證相鄰的 `.sha256` 檔案（如存在），並確認封存檔中的代理程式是否回傳 `"libndpiLoaded": true`。若覆蓋作業失敗，將回滾整個安裝。
-
-## Configure
-
-`routerd-dpi-classifier` 需以 `--engine auto` 或 `--engine ndpi-agent` 搭配指向代理程式 socket 的 `--ndpi-agent-socket` 進行設定。
-建議使用 `auto`，以便在原生代理程式無法使用時退回至內建分類器。
-
-已棄用的 `--ndpi-reader` 選項無法啟用原生 nDPI 分類。
+建構使用 `make dist-ndpi-agent-libndpi-deb ROUTERD_OS=linux GOARCH=amd64`，需要 Go、
+C compiler、`libndpi-dev`、`pkg-config`、`dpkg-dev`、`file` 與 `readelf`。
+隔離 OS 的安裝、更新、移除與合格標準見[英文測試流程](https://routerd.net/docs/operations/ndpi-agent-libndpi#build-and-test)。

@@ -1,1 +1,1 @@
-ERROR: derive IPv6DelegatedAddress/lan-v6: no IPv6 prefix available
+ERROR: net.routerd.net/v1alpha1/EgressRoutePolicy/ipv4-default FreeBSD supports only the static sourceAddress hash PF route-to shape; mode "" is not supported

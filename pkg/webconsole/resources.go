@@ -46,8 +46,27 @@ func (h Handler) resourceStatuses() ([]routerstate.ObjectStatus, error) {
 		resources = listed
 	}
 	resources = h.mergeConfiguredResourceStatuses(resources)
-	resources = h.filterStaleObjectStatuses(resources)
 	return annotateResourceOwnership(resources, h.controllerStatuses()), nil
+}
+
+func (h Handler) resourceRows(resources []routerstate.ObjectStatus) []ResourceStatus {
+	var declared map[string]bool
+	if h.opts.Router != nil {
+		declared = make(map[string]bool, len(h.opts.Router.Spec.Resources))
+		for _, resource := range h.opts.Router.Spec.Resources {
+			declared[objectStatusKey(resource.APIVersion, resource.Kind, resource.Metadata.Name)] = true
+		}
+	}
+	rows := make([]ResourceStatus, 0, len(resources))
+	for _, resource := range resources {
+		row := ResourceStatus{ObjectStatus: resource}
+		if declared != nil {
+			present := declared[objectStatusKey(resource.APIVersion, resource.Kind, resource.Name)]
+			row.Declared = &present
+		}
+		rows = append(rows, row)
+	}
+	return rows
 }
 
 func (h Handler) mergeConfiguredResourceStatuses(resources []routerstate.ObjectStatus) []routerstate.ObjectStatus {
@@ -55,23 +74,16 @@ func (h Handler) mergeConfiguredResourceStatuses(resources []routerstate.ObjectS
 		return resources
 	}
 	out := append([]routerstate.ObjectStatus(nil), resources...)
-	seen := make(map[string]int, len(out))
-	for i := range out {
-		seen[objectStatusKey(out[i].APIVersion, out[i].Kind, out[i].Name)] = i
+	seen := make(map[string]bool, len(out))
+	for _, row := range out {
+		seen[objectStatusKey(row.APIVersion, row.Kind, row.Name)] = true
 	}
 	for _, resource := range h.opts.Router.Spec.Resources {
 		if resource.Kind == "" || resource.Metadata.Name == "" {
 			continue
 		}
 		key := objectStatusKey(resource.APIVersion, resource.Kind, resource.Metadata.Name)
-		if idx, ok := seen[key]; ok {
-			if out[idx].Status == nil {
-				out[idx].Status = map[string]any{}
-			}
-			out[idx].Status["configured"] = true
-			if _, exists := out[idx].Status["observed"]; !exists {
-				out[idx].Status["observed"] = true
-			}
+		if seen[key] {
 			continue
 		}
 		out = append(out, routerstate.ObjectStatus{
@@ -79,11 +91,9 @@ func (h Handler) mergeConfiguredResourceStatuses(resources []routerstate.ObjectS
 			Kind:       resource.Kind,
 			Name:       resource.Metadata.Name,
 			Status: map[string]any{
-				"phase":      "NotObserved",
-				"reason":     "NoObservedStatus",
-				"message":    "resource is declared in config but no controller status has been written yet",
-				"configured": true,
-				"observed":   false,
+				"phase":   "NotObserved",
+				"reason":  "NoObservedStatus",
+				"message": "resource is declared in config but no controller status has been written yet",
 			},
 		})
 	}
@@ -101,27 +111,6 @@ func (h Handler) controllerStatuses() []controlapi.ControllerStatus {
 	return h.opts.ControllerModes
 }
 
-func (h Handler) filterStaleObjectStatuses(resources []routerstate.ObjectStatus) []routerstate.ObjectStatus {
-	if h.opts.Router == nil {
-		return resources
-	}
-	declared := map[string]struct{}{}
-	for _, resource := range h.opts.Router.Spec.Resources {
-		declared[resource.APIVersion+"/"+resource.Kind+"/"+resource.Metadata.Name] = struct{}{}
-	}
-	out := resources[:0]
-	for _, resource := range resources {
-		if resource.Kind == "WireGuardPeer" {
-			key := resource.APIVersion + "/" + resource.Kind + "/" + resource.Name
-			if _, ok := declared[key]; !ok {
-				continue
-			}
-		}
-		out = append(out, resource)
-	}
-	return out
-}
-
 func annotateResourceOwnership(resources []routerstate.ObjectStatus, controllers []controlapi.ControllerStatus) []routerstate.ObjectStatus {
 	ownerByKind := map[string]string{}
 	for _, controller := range controllers {
@@ -133,10 +122,6 @@ func annotateResourceOwnership(resources []routerstate.ObjectStatus, controllers
 	}
 	for i := range resources {
 		status := resources[i].Status
-		if status == nil {
-			status = map[string]any{}
-			resources[i].Status = status
-		}
 		if resources[i].Owner == "" {
 			resources[i].Owner = statusText(status, "owner")
 		}
@@ -145,9 +130,6 @@ func annotateResourceOwnership(resources []routerstate.ObjectStatus, controllers
 		}
 		if resources[i].Owner == "" {
 			resources[i].Owner = defaultResourceOwnerController(resources[i].Kind)
-		}
-		if resources[i].Owner != "" {
-			status["owner"] = resources[i].Owner
 		}
 		if resources[i].ManagedBy == "" {
 			resources[i].ManagedBy = statusText(status, "managedBy")
@@ -159,7 +141,6 @@ func annotateResourceOwnership(resources []routerstate.ObjectStatus, controllers
 				resources[i].ManagedBy = "routerd"
 			}
 		}
-		status["managedBy"] = resources[i].ManagedBy
 		if resources[i].Management == "" {
 			resources[i].Management = statusText(status, "management")
 		}
@@ -172,7 +153,6 @@ func annotateResourceOwnership(resources []routerstate.ObjectStatus, controllers
 				resources[i].Management = "managed"
 			}
 		}
-		status["management"] = resources[i].Management
 	}
 	return resources
 }

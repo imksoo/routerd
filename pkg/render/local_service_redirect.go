@@ -260,6 +260,20 @@ func referencedFirewallIPAddressSets(rules []api.Resource, flowPinholes []firewa
 	return referencedIPAddressSetsByRefs(refs, sets)
 }
 
+// A table flush removes rules, not named-set elements. Replace desired
+// static address membership atomically before recreating referencing rules.
+// DNS-populated sets retain the elements owned by IPAddressSetController.
+func writeIPAddressSetResets(buf *bytes.Buffer, family, table string, sets []nftIPAddressSet) {
+	for _, set := range sets {
+		if len(set.Names) > 0 {
+			continue
+		}
+		if family == "ip" && set.IPv4Enabled || family == "ip6" && set.IPv6Enabled {
+			writeNftSetReset(buf, family, table, set.SetName)
+		}
+	}
+}
+
 func writeIPv4AddressSets(buf *bytes.Buffer, sets []nftIPAddressSet) {
 	for _, set := range sets {
 		if !set.IPv4Enabled {

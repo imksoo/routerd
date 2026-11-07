@@ -115,6 +115,16 @@ jobs:
       - name: Run Go tests
         run: make test
 
+      - name: Run native ICMPv6 reception in an isolated network namespace
+        run: |
+          go test -tags routerd_native -c -o "$RUNNER_TEMP/routeradvertisement-native.test" ./pkg/routeradvertisement
+          sudo unshare --net sh -ec 'ip link set lo up; exec "$1" -test.run="^TestSolicitationWildcardReceiverOnActualSocket$" -test.v' sh "$RUNNER_TEMP/routeradvertisement-native.test"
+
+      - name: Check helper ownership with the installed service capabilities
+        run: |
+          go test -tags routerd_native -c -o "$RUNNER_TEMP/chain-native.test" ./pkg/controller/chain
+          sudo unshare --mount --pid --fork --mount-proc "$RUNNER_TEMP/chain-native.test" -test.run="^TestDnsmasqOwnerWithServiceCapabilities$" -test.v
+
   linux-static:
     name: Linux static binaries
     runs-on: ubuntu-latest
@@ -276,7 +286,7 @@ jobs:
 
       - name: Lint shell scripts
         run: |
-          shellcheck scripts/ci/detect-quality-changes.sh scripts/ci/detect-quality-changes-test.sh packaging/install.sh packaging/uninstall.sh packaging/bootstrap.sh scripts/pre-commit.sh scripts/release.sh scripts/build-live-iso.sh scripts/install-deps-smoke.sh scripts/install-sh-cwd-smoke.sh scripts/bootstrap-cleanup-smoke.sh scripts/check-active-stable.sh scripts/certify-pve-substrate.sh scripts/certify-cloud-substrate.sh scripts/release-environment-preflight.sh scripts/release-qualification-smoke.sh scripts/release-certification-offline-test.sh tests/e2e/cloudedge/scripts/sam-pve-qga-addresses.sh tests/e2e/cloudedge/scripts/sam-pve-qga-addresses-offline-test.sh
+          shellcheck scripts/ci/detect-quality-changes.sh scripts/ci/detect-quality-changes-test.sh packaging/install.sh packaging/uninstall.sh packaging/bootstrap.sh scripts/pre-commit.sh scripts/release.sh scripts/build-live-iso.sh scripts/install-deps-smoke.sh scripts/install-sh-cwd-smoke.sh scripts/linux-dhcp-firewall-lifecycle-smoke.sh scripts/bootstrap-cleanup-smoke.sh scripts/check-active-stable.sh scripts/certify-pve-substrate.sh scripts/certify-cloud-substrate.sh scripts/release-environment-preflight.sh scripts/release-qualification-smoke.sh scripts/release-certification-offline-test.sh tests/e2e/cloudedge/scripts/sam-pve-qga-addresses.sh tests/e2e/cloudedge/scripts/sam-pve-qga-addresses-offline-test.sh
 
   warm-iso-rootfs-cache:
     name: Warm ISO rootfs cache
@@ -299,7 +309,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: dist/live/rootfs-cache.tar
-          key: live-iso-rootfs-${{ steps.rootfs-key.outputs.hash }}
+          key: live-iso-rootfs-v3-${{ steps.rootfs-key.outputs.hash }}
 
       - name: Install debootstrap
         if: steps.cache.outputs.cache-hit != 'true'

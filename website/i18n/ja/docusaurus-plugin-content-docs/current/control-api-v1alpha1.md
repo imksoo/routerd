@@ -141,4 +141,4 @@ sequenceは同じ読取の `commandProbeCount` と一致します。保持する
 
 routerd は event を SQLite に永続化します。
 管理対象デーモンは、加えて自身の `events.jsonl` にも記録します。
-`EventRule` と `DerivedEvent` は、このストリームを入力にして仮想 event を発行します。
+`EventRule` はその履歴を入力にします。`DerivedEvent` は参照先の現在の status を評価し、asserted/retracted への遷移を記録します。

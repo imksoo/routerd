@@ -160,15 +160,10 @@ func TestActionEndToEnd(t *testing.T) {
 
 	// ---- fake executor forced to fail -> journaled failed (separate action) ----
 	mustRunAction(t, "approve", strID(id3), "--state-file", statePath)
-	// The CLI execute returns an error when the executor reports failed via the
-	// engine? No — the engine journals failed and Execute returns nil for an
-	// executor-reported failure. The CLI prints status=failed.
+	// A durable failed result remains inspectable and makes the command fail.
 	out, err := runAction(t, "execute", strID(id3), "--approved", "--config", configPath, "--state-file", statePath)
-	if err != nil {
-		t.Fatalf("execute of failing action should journal failed without a CLI error, got: %v\n%s", err, out)
-	}
-	if !strings.Contains(out, "failed") {
-		t.Fatalf("want status failed reported, got: %s", out)
+	if err == nil || !strings.Contains(err.Error(), "instructed to fail") {
+		t.Fatalf("failing provider mutation returned command success: %v\n%s", err, out)
 	}
 	assertStatus(t, statePath, id3, routerstate.ActionFailed)
 

@@ -1,0 +1,66 @@
+{
+  "apiVersion": "routerd.net/v1alpha1",
+  "kind": "Router",
+  "metadata": {
+    "name": "ntp-packaged"
+  },
+  "spec": {
+    "resources": [
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "Interface",
+        "metadata": {
+          "name": "time-gate"
+        },
+        "spec": {
+          "ifname": "ntp-gate",
+          "managed": false,
+          "owner": "external"
+        }
+      },
+      {
+        "apiVersion": "system.routerd.net/v1alpha1",
+        "kind": "NTPClient",
+        "metadata": {
+          "name": "system-time"
+        },
+        "spec": {
+          "provider": "systemd-timesyncd",
+          "managed": true,
+          "source": "static",
+          "servers": [
+            "198.18.97.2"
+          ]
+        }
+      },
+      {
+        "apiVersion": "system.routerd.net/v1alpha1",
+        "kind": "NTPServer",
+        "metadata": {
+          "name": "lan-time"
+        },
+        "spec": {
+          "provider": "chrony",
+          "managed": true,
+          "source": "static",
+          "servers": [
+            "198.18.97.2"
+          ],
+          "listenAddresses": [
+            "198.18.97.1"
+          ],
+          "allowCIDRs": [
+            "198.18.97.10/32"
+          ],
+          "when": {
+            "state": {
+              "Interface/time-gate.phase": {
+                "equals": "Up"
+              }
+            }
+          }
+        }
+      }
+    ]
+  }
+}

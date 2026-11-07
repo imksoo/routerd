@@ -13,7 +13,6 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
-	"github.com/imksoo/routerd/pkg/resourcequery"
 )
 
 func TestNTPClientControllerUsesDHCPv6SNTPServers(t *testing.T) {
@@ -152,7 +151,7 @@ func TestNTPClientControllerCleansWhenFalseChronyConfigAndRecreatesWhenTrue(t *t
 	configPath := filepath.Join(t.TempDir(), "routerd-client.conf")
 	var commands []string
 	controller := NTPClientController{
-		Router:         resourcequery.FilterRouterByWhen(router, store),
+		Router:         mustWhenFilteredRouter(t, false, router, store),
 		DeclaredRouter: router,
 		Store:          store,
 		ConfigPath:     configPath,
@@ -170,7 +169,7 @@ func TestNTPClientControllerCleansWhenFalseChronyConfigAndRecreatesWhenTrue(t *t
 	}
 
 	store.mapStore[api.NetAPIVersion+"/VirtualAddress/lan-vip"]["role"] = "backup"
-	controller.Router = resourcequery.FilterRouterByWhen(router, store)
+	controller.Router = mustWhenFilteredRouter(t, false, router, store)
 	commands = nil
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile backup: %v", err)
@@ -187,7 +186,7 @@ func TestNTPClientControllerCleansWhenFalseChronyConfigAndRecreatesWhenTrue(t *t
 	}
 
 	store.mapStore[api.NetAPIVersion+"/VirtualAddress/lan-vip"]["role"] = "master"
-	controller.Router = resourcequery.FilterRouterByWhen(router, store)
+	controller.Router = mustWhenFilteredRouter(t, false, router, store)
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile remaster: %v", err)
 	}
@@ -201,7 +200,7 @@ func TestNTPClientControllerCleansWhenFalseChronyConfigAndRecreatesWhenTrue(t *t
 }
 
 func TestRenderNTPDConfig(t *testing.T) {
-	data := renderNTPDConfig([]string{"ntp.jst.mfeed.ad.jp", "ntp.nict.jp"})
+	data := renderNTPDConfig([]string{"ntp.jst.mfeed.ad.jp", "ntp.nict.jp"}, nil, nil)
 	if got, want := string(data), "server ntp.jst.mfeed.ad.jp iburst\n"; !strings.Contains(got, want) {
 		t.Fatalf("config missing %q:\n%s", want, got)
 	}
@@ -211,7 +210,7 @@ func TestRenderNTPDConfig(t *testing.T) {
 }
 
 func TestRenderNTPDConfigWithListenAddresses(t *testing.T) {
-	data := renderNTPDConfig([]string{"ntp.jst.mfeed.ad.jp"}, []string{"192.168.160.4", "2409:10:3d60:1250::4/64"})
+	data := renderNTPDConfig([]string{"ntp.jst.mfeed.ad.jp"}, []string{"192.168.160.4", "2409:10:3d60:1250::4/64"}, nil)
 	for _, want := range []string{
 		"interface ignore all\n",
 		"interface listen 127.0.0.1\n",
@@ -372,7 +371,7 @@ func TestNTPServerControllerCleansWhenFalseAndRecreatesWhenTrue(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "chrony-server.conf")
 	var commands []string
 	controller := NTPServerController{
-		Router:         resourcequery.FilterRouterByWhen(router, store),
+		Router:         mustWhenFilteredRouter(t, false, router, store),
 		DeclaredRouter: router,
 		Store:          store,
 		ConfigPath:     configPath,
@@ -398,7 +397,7 @@ func TestNTPServerControllerCleansWhenFalseAndRecreatesWhenTrue(t *testing.T) {
 	}
 
 	store.mapStore[api.NetAPIVersion+"/VirtualAddress/lan-vip"]["role"] = "backup"
-	controller.Router = resourcequery.FilterRouterByWhen(router, store)
+	controller.Router = mustWhenFilteredRouter(t, false, router, store)
 	commands = nil
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile backup: %v", err)
@@ -419,7 +418,7 @@ func TestNTPServerControllerCleansWhenFalseAndRecreatesWhenTrue(t *testing.T) {
 	}
 
 	store.mapStore[api.NetAPIVersion+"/VirtualAddress/lan-vip"]["role"] = "master"
-	controller.Router = resourcequery.FilterRouterByWhen(router, store)
+	controller.Router = mustWhenFilteredRouter(t, false, router, store)
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile remaster: %v", err)
 	}
@@ -454,4 +453,67 @@ func ntpServerRouter(spec api.NTPServerSpec) *api.Router {
 			Spec:     spec,
 		},
 	}}}
+}
+
+func TestNTPClientDynamicSourceLossAndReturnUpdatesOwnedFragment(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
+	store := mapStore{}
+	path := filepath.Join(t.TempDir(), "routerd.conf")
+	var restarts int
+	controller := NTPClientController{
+		Router: ntpRouter(api.NTPClientSpec{
+			Provider: "systemd-timesyncd", Managed: true, Source: "auto",
+			ServerFrom:      []api.StatusValueSourceSpec{{Resource: "DHCPv6Information/wan-info", Field: "sntpServers"}},
+			FallbackServers: []string{"192.0.2.123"},
+		}),
+		Store: store, ConfigPath: path,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			if name == "systemctl" && strings.Join(args, " ") == "restart systemd-timesyncd.service" {
+				restarts++
+			}
+			return nil, nil
+		},
+	}
+	for _, step := range []struct {
+		name, dynamic, want, source string
+		restarts                    int
+	}{
+		{"acquired", "2001:db8::123", "2001:db8::123", "auto", 1},
+		{"lost", "", "192.0.2.123", "fallback", 2},
+		{"still missing", "", "192.0.2.123", "fallback", 2},
+		{"returned with new server", "2001:db8::124", "2001:db8::124", "auto", 3},
+		{"unchanged", "2001:db8::124", "2001:db8::124", "auto", 3},
+	} {
+		t.Run(step.name, func(t *testing.T) {
+			key := api.NetAPIVersion + "/DHCPv6Information/wan-info"
+			if step.dynamic == "" {
+				delete(store, key)
+			} else {
+				store[key] = map[string]any{"sntpServers": []string{step.dynamic}}
+			}
+			if err := controller.Reconcile(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var primary string
+			for _, line := range strings.Split(string(data), "\n") {
+				if strings.HasPrefix(line, "NTP=") {
+					primary = strings.TrimPrefix(line, "NTP=")
+				}
+			}
+			if primary != step.want {
+				t.Fatalf("primary servers = %q, want %q", primary, step.want)
+			}
+			status := store.ObjectStatus(api.SystemAPIVersion, "NTPClient", "system-time")
+			if status["phase"] != "Applied" || status["source"] != step.source || !reflect.DeepEqual(status["servers"], []string{step.want}) {
+				t.Fatalf("status did not follow source transition: %#v", status)
+			}
+			if restarts != step.restarts {
+				t.Fatalf("provider restart count = %d, want %d", restarts, step.restarts)
+			}
+		})
+	}
 }

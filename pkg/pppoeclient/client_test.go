@@ -49,9 +49,10 @@ func TestFreeBSDMPDConfigUsesPrivateRuntimeBackend(t *testing.T) {
 		Password:   "secret value",
 		RuntimeDir: "/var/run/routerd/pppoe-client/wan-pppoe",
 		Spec: api.PPPoESessionSpec{
-			Username:    "user@example.test",
-			ServiceName: "isp",
-			AuthMethod:  "pap",
+			Username:     "user@example.test",
+			ServiceName:  "isp",
+			AuthMethod:   "pap",
+			DefaultRoute: true,
 		},
 	}
 	name, argv := CommandForOS("freebsd", cfg)
@@ -75,6 +76,8 @@ func TestFreeBSDMPDConfigUsesPrivateRuntimeBackend(t *testing.T) {
 		"create bundle static " + bundle,
 		"create link static " + link + " pppoe",
 		"set link action bundle " + bundle,
+		"set iface route default",
+		"set iface enable tcpmssfix",
 		"set link disable pap chap eap",
 		"set link accept pap",
 		`set auth authname "user@example.test"`,
@@ -86,9 +89,6 @@ func TestFreeBSDMPDConfigUsesPrivateRuntimeBackend(t *testing.T) {
 		if !strings.Contains(string(config), want) {
 			t.Fatalf("FreeBSD mpd config missing %q:\n%s", want, config)
 		}
-	}
-	if strings.Contains(string(config), "set iface enable tcpmssfix") {
-		t.Fatalf("FreeBSD mpd config enabled unrequested tcpmssfix:\n%s", config)
 	}
 	if strings.Contains(strings.Join(argv, " "), "-ddial") {
 		t.Fatalf("FreeBSD argv must not use ppp(8) dial mode: %#v", argv)
@@ -139,6 +139,63 @@ func TestParseLogLineExtractsIPCPState(t *testing.T) {
 	}
 }
 
+func TestLinuxPeerPreservesPPPoESessionOptions(t *testing.T) {
+	persist := true
+	got := string(LinuxPeer(Config{
+		Resource:  "wan",
+		Interface: "eth1",
+		IfName:    "ppp-uplink",
+		Spec: api.PPPoESessionSpec{
+			DefaultRoute: true,
+			UsePeerDNS:   true,
+			IPv6:         true,
+			Persist:      &persist,
+			LCPInterval:  17,
+			LCPFailure:   5,
+			Username:     "subscriber",
+			MTU:          1492,
+			MRU:          1492,
+		},
+	}))
+	for _, want := range []string{
+		"ifname ppp-uplink\n",
+		"defaultroute\n",
+		"replacedefaultroute\n",
+		"usepeerdns\n",
+		"persist\n",
+		"maxfail 0\n",
+		"holdoff 5\n",
+		"+ipv6\n",
+		"mtu 1492\n",
+		"mru 1492\n",
+		"lcp-echo-interval 17\n",
+		"lcp-echo-failure 5\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("Linux PPPoE peer config missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestLinuxPeerHonorsDisabledSessionOptions(t *testing.T) {
+	persist := false
+	got := string(LinuxPeer(Config{
+		Resource:  "wan",
+		Interface: "eth1",
+		Spec: api.PPPoESessionSpec{
+			Persist: &persist,
+		},
+	}))
+	for _, unwanted := range []string{"defaultroute", "usepeerdns", "+ipv6", "persist\n", "maxfail", "holdoff"} {
+		if strings.Contains(got, unwanted) {
+			t.Fatalf("Linux PPPoE peer unexpectedly contains %q:\n%s", unwanted, got)
+		}
+	}
+	if !strings.Contains(got, "-ipv6\n") {
+		t.Fatalf("Linux PPPoE peer does not disable IPv6:\n%s", got)
+	}
+}
+
 func TestParseLogLineDoesNotTreatGenericIPCPAsNegotiated(t *testing.T) {
 	now := time.Unix(100, 0)
 	for name, line := range map[string]string{
@@ -158,5 +215,46 @@ func TestParseLogLineAuthenticationStartsIPCP(t *testing.T) {
 	got := ParseLogLine(Snapshot{Phase: PhaseConnecting}, "PAP authentication succeeded", time.Unix(100, 0))
 	if got.Phase != PhaseIPCP {
 		t.Fatalf("phase = %q, want %q", got.Phase, PhaseIPCP)
+	}
+}
+
+func TestRedactedRuntimeConfigRedactsBeforeEscapingAndSpecFallback(t *testing.T) {
+	for _, password := range []string{"quote\"slash\\line\nsecret", "fallback-secret"} {
+		for _, osName := range []string{"linux", "freebsd"} {
+			cfg := Config{Resource: "wan", Interface: "eth0", Spec: api.PPPoESessionSpec{Password: password}}
+			got := string(RedactedRuntimeConfigForOS(osName, cfg))
+			if strings.Contains(got, "secret") || !strings.Contains(got, "[REDACTED]") {
+				t.Fatalf("%s leaked escaped/fallback credential: %q", osName, got)
+			}
+		}
+	}
+}
+
+func TestTerminatedConnectionDoesNotRetainNegotiatedAuthority(t *testing.T) {
+	s := Snapshot{Phase: PhaseConnected, CurrentAddress: "192.0.2.8", PeerAddress: "192.0.2.1", DNSServers: []string{"192.0.2.53"}, ConnectedAt: time.Now()}
+	s = ParseLogLine(s, "Connection terminated.", time.Now())
+	if s.CurrentAddress != "" || s.PeerAddress != "" || len(s.DNSServers) != 0 || !s.ConnectedAt.IsZero() {
+		t.Fatalf("terminated negotiation retained authority: %+v", s)
+	}
+}
+
+func TestNativeRedialRemainsOwnedByForegroundBackend(t *testing.T) {
+	cfg := Config{Resource: "wan", Interface: "eth0"}
+	linux := string(LinuxPeer(cfg))
+	for _, option := range []string{"nodetach\n", "persist\n", "maxfail 0\n"} {
+		if !strings.Contains(linux, option) {
+			t.Fatalf("native managed redial missing %q: %s", option, linux)
+		}
+	}
+	if freebsd := string(FreeBSDMPDConf(cfg)); !strings.Contains(freebsd, "set link max-redial 0") {
+		t.Fatalf("FreeBSD managed redial missing: %s", freebsd)
+	}
+}
+
+func TestExplicitNonPersistentPublicPeerRemainsNonPersistent(t *testing.T) {
+	disabled := false
+	got := string(LinuxPeer(Config{Resource: "wan", Interface: "eth0", Spec: api.PPPoESessionSpec{Persist: &disabled}}))
+	if strings.Contains(got, "\npersist\n") || strings.Contains(got, "\nmaxfail 0\n") {
+		t.Fatalf("explicit nonpersistent peer was overridden: %s", got)
 	}
 }
