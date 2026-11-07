@@ -1,0 +1,28 @@
+#!/bin/sh
+set -e
+if [ "$1" = configure ]; then
+    if ! getent group routerd >/dev/null; then
+        addgroup --system routerd
+    fi
+    if [ -d /run/systemd/system ]; then
+        systemctl daemon-reload
+        if [ -f /usr/local/etc/routerd/router.yaml ]; then
+            systemctl enable routerd.service
+            if systemctl is-active --quiet routerd.service; then
+                systemctl restart routerd.service
+            else
+                systemctl start routerd.service
+            fi
+            units=$(systemctl list-units --type=service --state=running --plain --no-legend 'routerd*.service' | awk '{print $1}')
+            for unit in $units; do
+                [ "$unit" = routerd.service ] && continue
+                pid=$(systemctl show -p MainPID --value "$unit")
+                case "$pid" in ''|0|*[!0-9]*) continue ;; esac
+                executable=$(readlink "/proc/$pid/exe" || true)
+                case "$executable" in
+                    '/usr/local/sbin/routerd'*' (deleted)') systemctl restart "$unit" ;;
+                esac
+            done
+        fi
+    fi
+fi

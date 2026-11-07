@@ -82,6 +82,20 @@ On systemd hosts, the installer creates the `routerd` group for local socket
 access. Add an operator with `sudo usermod -aG routerd <user>` to allow
 `routerctl get status` and other local control socket operations without sudo.
 
+## Debian package
+
+On a Linux build host with `dpkg-deb`, run `make deb` to build the Debian
+package under `dist/linux-<architecture>/`. Install it with `sudo apt install ./routerd_<version>_<architecture>.deb`. It installs the same binaries and
+provider plugins as the archive into `/usr/local`, and the service templates
+under `/lib/systemd/system`.
+
+The package does not include `router.yaml`, credentials, or state databases.
+If `/usr/local/etc/routerd/router.yaml` exists, installation enables and starts
+routerd; an already running routerd is restarted. Without a configuration it
+is left stopped. Removing the package stops the service but preserves the
+configuration and state. Configured optional features may require additional
+host packages, as with the archive installer.
+
 ## First configuration
 
 On an existing Linux router, inspect the physical interfaces before transferring
