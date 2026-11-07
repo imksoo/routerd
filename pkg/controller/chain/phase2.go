@@ -186,7 +186,19 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 			return err
 		}
 		if !api.BoolDefault(spec.Enabled, true) {
-			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": PhaseDisabled, "reason": "Disabled"})
+			ifname := firstNonEmpty(spec.TunnelName, spec.Interface, resource.Metadata.Name)
+			if !c.DryRun {
+				if err := deleteDSLiteTunnel(ctx, ifname); err != nil {
+					failures = append(failures, fmt.Sprintf("remove %s: %v", resource.Metadata.Name, err))
+					if saveErr := c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Error", "reason": "TunnelRemoveFailed", "interface": ifname, "error": err.Error()}); saveErr != nil {
+						return saveErr
+					}
+					continue
+				}
+			}
+			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": PhaseDisabled, "reason": "Disabled", "interface": ifname, "dryRun": c.DryRun}); err != nil {
+				return err
+			}
 			continue
 		}
 		if !resourcequery.DependenciesReady(c.Store, spec.DependsOn) {
@@ -285,7 +297,12 @@ func deleteDSLiteTunnel(ctx context.Context, ifname string) error {
 	if strings.TrimSpace(ifname) == "" {
 		return nil
 	}
-	out, err := exec.CommandContext(ctx, "ip", "-6", "tunnel", "del", ifname).CombinedOutput()
+	name, args := "ip", []string{"-6", "tunnel", "del", ifname}
+	if platform.CurrentOS() == platform.OSFreeBSD {
+		ifname = freeBSDDSLiteRuntimeIfName(ifname)
+		name, args = "ifconfig", []string{ifname, "destroy"}
+	}
+	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
 	message := strings.ToLower(string(out))
 	if err == nil || strings.Contains(message, "cannot find device") || strings.Contains(message, "does not exist") || strings.Contains(message, "no such device") {
 		return nil
