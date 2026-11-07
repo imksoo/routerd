@@ -568,34 +568,32 @@ append_pve_guest_keys_for_client() {
 
 scan_host_key() {
   local node="$1" host="$2"
-  local attempt keys
-  : >"$evidence_dir/ssh/${node}.keyscan.err"
-  for attempt in $(seq 1 30); do
-    keys="$(ssh-keyscan -H -T 10 "$host" 2>>"$evidence_dir/ssh/${node}.keyscan.err" || true)"
+  local keys
+  while :; do
+    keys="$(ssh-keyscan -H -T 10 "$host" 2>"$evidence_dir/ssh/${node}.keyscan.err" || true)"
     if [ -n "$keys" ]; then
       printf '%s\n' "$keys" >>"$known_hosts"
       printf '%s\n' "$keys" >"$evidence_dir/ssh/${node}.keyscan"
       return 0
     fi
+    echo "waiting for SSH host key on $node ($host); details: $evidence_dir/ssh/${node}.keyscan.err" >&2
     sleep 2
   done
-  echo "ssh-keyscan did not return a host key for $node host=$host" >>"$evidence_dir/ssh/${node}.keyscan.err"
-  return 1
 }
 
 run_preflight_probe() {
   local node="$1"
-  local attempt
-  for attempt in $(seq 1 12); do
+  local attempt=0
+  while :; do
+    attempt=$((attempt + 1))
     {
       echo "## $node"
       echo "attempt=$attempt"
       ssh_node "$node" 'hostname; id; ip -br addr; ip route; pgrep -a routerd || true; command -v routerd || true'
-    } >"$evidence_dir/preflight/${node}.txt" 2>"$evidence_dir/preflight/${node}.attempt-${attempt}.stderr" && return 0
-    cp "$evidence_dir/preflight/${node}.txt" "$evidence_dir/preflight/${node}.attempt-${attempt}.txt"
+    } >"$evidence_dir/preflight/${node}.txt" 2>"$evidence_dir/preflight/${node}.stderr" && return 0
+    echo "waiting for SSH preflight on $node; details: $evidence_dir/preflight/${node}.stderr" >&2
     sleep 5
   done
-  return 1
 }
 
 quiesce_existing_routerd_units() {
@@ -1308,22 +1306,21 @@ ip neigh show dev '$pve_capture_interface' || true" || true
 
 wait_dataplane_control_gate() {
   local label="$1"
-  local ok=0 attempt=0
+  local ok=0
   local probe_dir="$evidence_dir/convergence/${label}-control"
   mkdir -p "$probe_dir"
   local client_ips_text local_client_ips_text remote_client_ips_text node node_site
   client_ips_text="$(jq -r 'to_entries[] | select(.value.role == "client") | .value.private_ip' "$nodes_json")"
   warm_onprem_discovery "$label"
   while :; do
-    attempt=$((attempt + 1))
     ok=1
     for node in "${leaf_routers[@]}"; do
       node_is_stopped "$node" && continue
       node_site="$(node_field "$node" site)"
       local_client_ips_text="$(jq -r --arg site "$node_site" 'to_entries[] | select(.value.role == "client" and .value.site == $site) | .value.private_ip' "$nodes_json")"
       remote_client_ips_text="$(jq -r --arg site "$node_site" 'to_entries[] | select(.value.role == "client" and .value.site != $site) | .value.private_ip' "$nodes_json")"
-      if ! capture_ssh_evidence "$node" "$probe_dir/${attempt}-${node}-routes.stdout" \
-        "$probe_dir/${attempt}-${node}-routes.stderr" "$probe_dir/${attempt}-${node}-routes.result.tsv" "set -e
+      if ! capture_ssh_evidence "$node" "$probe_dir/${node}-routes.stdout" \
+        "$probe_dir/${node}-routes.stderr" "$probe_dir/${node}-routes.result.tsv" "set -e
 echo check=status
 command -v routerctl >/dev/null
 sudo routerctl get status -o json
@@ -1344,10 +1341,10 @@ done <<'IPS'
 $remote_client_ips_text
 IPS"; then
         ok=0
-        echo "waiting for routes on $node ($label); details: $probe_dir/${attempt}-${node}-routes.stderr" >&2
+        echo "waiting for routes on $node ($label); details: $probe_dir/${node}-routes.stderr" >&2
       fi
-      if ! capture_ssh_evidence "$node" "$probe_dir/${attempt}-${node}-ownership.stdout" \
-        "$probe_dir/${attempt}-${node}-ownership.stderr" "$probe_dir/${attempt}-${node}-ownership.result.tsv" "set -e
+      if ! capture_ssh_evidence "$node" "$probe_dir/${node}-ownership.stdout" \
+        "$probe_dir/${node}-ownership.stderr" "$probe_dir/${node}-ownership.result.tsv" "set -e
 status=\"\$(sudo routerctl describe MobilityPool/cloudedge -o json)\"
 printf '%s\n' \"\$status\"
 while read -r ip; do
@@ -1360,7 +1357,7 @@ done <<'IPS'
 $local_client_ips_text
 IPS"; then
         ok=0
-        echo "waiting for local ownership on $node ($label); details: $probe_dir/${attempt}-${node}-ownership.stderr" >&2
+        echo "waiting for local ownership on $node ($label); details: $probe_dir/${node}-ownership.stderr" >&2
       fi
     done
     [ "$ok" -eq 1 ] && break
