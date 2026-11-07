@@ -608,6 +608,18 @@ func (c IPv4PolicyRouteController) cleanupLedgerOwnedPolicyRoutes(ctx context.Co
 	if err != nil {
 		return err
 	}
+	for _, artifact := range actual {
+		if artifact.Kind != "linux.ipv4.fwmarkRule" {
+			continue
+		}
+		rule, ok := ipv4FwmarkRuleFromPolicyArtifact(artifact)
+		if !ok || rule.Mark < 0x100 || rule.Mark > 0x1ff {
+			continue
+		}
+		if _, ok := desired[artifact.Identity()]; !ok {
+			stale = append(stale, artifact)
+		}
+	}
 	for _, owned := range ownedArtifacts {
 		switch owned.Kind {
 		case "linux.ipv4.fwmarkRule", "linux.ipv4.routeTable":
@@ -616,6 +628,12 @@ func (c IPv4PolicyRouteController) cleanupLedgerOwnedPolicyRoutes(ctx context.Co
 		}
 		if _, ok := desired[owned.Identity()]; ok {
 			continue
+		}
+		if observed, ok := actual[owned.Identity()]; ok && owned.Kind == "linux.ipv4.fwmarkRule" {
+			rule, valid := ipv4FwmarkRuleFromPolicyArtifact(observed)
+			if valid && rule.Mark >= 0x100 && rule.Mark <= 0x1ff {
+				continue
+			}
 		}
 		if observed, ok := actual[owned.Identity()]; ok {
 			stale = append(stale, observed)
