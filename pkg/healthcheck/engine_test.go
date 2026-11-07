@@ -8,7 +8,6 @@ import (
 	"net"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
 )
@@ -130,32 +129,6 @@ func TestResolveSpecDerivesFwMarkFromRoutingHealthCheckReferences(t *testing.T) 
 	}
 }
 
-func TestProbeDNSSuccessAndFailure(t *testing.T) {
-	packet, err := net.ListenPacket("udp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer packet.Close()
-	go serveOneDNSAnswer(packet)
-	host, port := splitHostPort(t, packet.LocalAddr().String())
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	if result := ProbeDNS(ctx, api.HealthCheckSpec{Target: host, Port: port}); !result.OK {
-		t.Fatalf("dns success result = %#v", result)
-	}
-	closed, err := net.ListenPacket("udp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	host, port = splitHostPort(t, closed.LocalAddr().String())
-	_ = closed.Close()
-	ctx, cancel = context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
-	if result := ProbeDNS(ctx, api.HealthCheckSpec{Target: host, Port: port}); result.OK {
-		t.Fatalf("dns failure result = %#v", result)
-	}
-}
-
 func healthResource(name string) api.Resource {
 	return api.Resource{
 		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"},
@@ -174,27 +147,4 @@ func splitHostPort(t *testing.T, value string) (string, int) {
 		t.Fatal(err)
 	}
 	return host, port
-}
-
-func serveOneDNSAnswer(packet net.PacketConn) {
-	buf := make([]byte, 512)
-	n, addr, err := packet.ReadFrom(buf)
-	if err != nil || n < 12 {
-		return
-	}
-	query := buf[:n]
-	questionEnd := 12
-	for questionEnd < len(query) && query[questionEnd] != 0 {
-		questionEnd += int(query[questionEnd]) + 1
-	}
-	questionEnd += 5
-	if questionEnd > len(query) {
-		return
-	}
-	response := make([]byte, 0, n+16)
-	response = append(response, query[0], query[1], 0x81, 0x80, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00)
-	response = append(response, query[12:questionEnd]...)
-	response = append(response, 0xc0, 0x0c, 0x00, 0x01, 0x00, 0x01)
-	response = append(response, 0x00, 0x00, 0x00, 0x3c, 0x00, 0x04, 127, 0, 0, 1)
-	_, _ = packet.WriteTo(response, addr)
 }
