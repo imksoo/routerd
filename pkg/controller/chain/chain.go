@@ -2352,13 +2352,13 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current.Router = effective
 			return didWorkError(current.Reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "sysctl", Every: 5 * time.Minute, Subs: bootstrapSubscriptions(), PeriodicFunc: didWorkPeriodic(sysctl.Reconcile)},
 		framework.FuncController{ControllerName: "network-adoption", Every: 5 * time.Minute, Subs: statusSubscriptions("Interface"), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			current := adoption
 			current.Router = r.currentRouter()
 			current.Store = store.withRouter(current.Router)
 			return didWorkError(current.Reconcile(ctx))
 		}},
+		framework.FuncController{ControllerName: "sysctl", Every: 5 * time.Minute, Subs: bootstrapSubscriptions(), PeriodicFunc: didWorkPeriodic(sysctl.Reconcile)},
 		framework.FuncController{ControllerName: "bridge", Every: 30 * time.Second, Subs: statusSubscriptions("Interface", "VXLANTunnel", "VXLANSegment"), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveForReconcile()
 			if err != nil {
