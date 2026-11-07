@@ -165,14 +165,16 @@ func (c SysctlController) applyOne(ctx context.Context, name, kind string, spec 
 	current := normalizeSysctlRuntimeValue(string(currentOut))
 	expected := normalizeSysctlRuntimeValue(firstNonEmpty(spec.ExpectedValue, spec.Value))
 	if currentErr != nil && spec.Optional {
-		_ = c.Store.SaveObjectStatus(api.SystemAPIVersion, kind, name, map[string]any{
+		if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, kind, name, map[string]any{
 			"phase":     "Skipped",
 			"reason":    "ReadFailedOptional",
 			"key":       spec.Key,
 			"value":     spec.Value,
 			"error":     currentErr.Error(),
 			"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
-		})
+		}); err != nil {
+			return sysctlApplyResult{}, err
+		}
 		return sysctlApplyResult{skipped: true}, nil
 	}
 	matches, compareErr := sysctlValueMatches(current, expected, spec.Compare)
