@@ -41,11 +41,7 @@ type PathMTUController struct {
 	NftCommand        string
 	Path              string
 	L2Path            string
-	L2OwnerPath       string
 	ForceFragmentPath string
-	RunNFT            func(context.Context, ...string) ([]byte, error)
-	RandomToken       func() (string, error)
-	L2Failpoint       func(string) error
 }
 
 type l2MSSGeneration struct {
@@ -129,7 +125,7 @@ func (c PathMTUController) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return c.savePathMTUError("MSSApplyFailed", err)
 	}
-	l2Result, err := c.applyL2MSSTable(ctx, nft, l2Path, firstNonEmpty(c.L2OwnerPath, l2Path+".owner"), len(bytes.TrimSpace(l2MSSData)) > 0)
+	l2Result, err := c.applyL2MSSTable(ctx, nft, l2Path, l2Path+".owner", len(bytes.TrimSpace(l2MSSData)) > 0)
 	if err != nil {
 		return c.savePathMTUError("L2MSSApplyFailed", err)
 	}
@@ -191,16 +187,10 @@ func (c PathMTUController) savePathMTUError(reason string, cause error) error {
 }
 
 func (c PathMTUController) runNFT(ctx context.Context, nft string, args ...string) ([]byte, error) {
-	if c.RunNFT != nil {
-		return c.RunNFT(ctx, args...)
-	}
 	return exec.CommandContext(ctx, nft, args...).CombinedOutput()
 }
 
 func (c PathMTUController) randomToken() (string, error) {
-	if c.RandomToken != nil {
-		return c.RandomToken()
-	}
 	b := make([]byte, 24)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
@@ -798,11 +788,6 @@ func (c PathMTUController) applyL2MSSTable(ctx context.Context, nft, path, owner
 	if err != nil {
 		return result, fmt.Errorf("%s stage create -f %s: %w: %s", nft, path, err, strings.TrimSpace(string(echo)))
 	}
-	if c.L2Failpoint != nil {
-		if err := c.L2Failpoint("stage-created-before-handle-journal"); err != nil {
-			return result, err
-		}
-	}
 	stageHandle, err := nftEchoTableHandle(echo, stage.Table)
 	if err != nil {
 		return result, err
@@ -843,11 +828,6 @@ func (c PathMTUController) applyL2MSSTable(ctx context.Context, nft, path, owner
 	out, err := c.runNFT(ctx, nft, "-f", path)
 	if err != nil {
 		return result, fmt.Errorf("%s activate -f %s: %w: %s", nft, path, err, strings.TrimSpace(string(out)))
-	}
-	if c.L2Failpoint != nil {
-		if err := c.L2Failpoint("active-hook-created-before-promotion"); err != nil {
-			return result, err
-		}
 	}
 	owned, rulesMatch, activated, missing, handle, err = c.observeL2Owner(ctx, nft, &stage)
 	if err != nil || missing || !owned || !rulesMatch || !activated || handle != stageHandle {
