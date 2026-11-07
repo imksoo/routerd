@@ -38,14 +38,12 @@ type Store interface {
 type outputCommandFunc func(context.Context, string, ...string) ([]byte, error)
 
 type Controller struct {
-	Router         *api.Router
-	Bus            *bus.Bus
-	Store          Store
-	DaemonSockets  map[string]string
-	DryRun         bool
-	Command        outputCommandFunc
-	Logger         *slog.Logger
-	ResolvConfPath string
+	Router        *api.Router
+	Bus           *bus.Bus
+	Store         Store
+	DaemonSockets map[string]string
+	DryRun        bool
+	Logger        *slog.Logger
 }
 
 func (c Controller) ReconcileAll(ctx context.Context) error {
@@ -343,10 +341,7 @@ func (c Controller) applyLease(ctx context.Context, name string, current, next m
 		next["applyMode"] = "dry-run"
 		return nil
 	}
-	command := c.Command
-	if command == nil {
-		command = runOutputCommandContext
-	}
+	command := runOutputCommandContext
 	previousGateway := mapString(current, "appliedDefaultGateway")
 	previousMetric := mapString(current, "appliedRouteMetric")
 	if previousGateway != "" && (!api.BoolDefault(spec.UseRoutes, true) || previousGateway != mapString(next, "defaultGateway") || mapString(current, "ifname") != ifname || previousMetric != strconv.Itoa(spec.RouteMetric)) {
@@ -418,7 +413,7 @@ func (c Controller) applyLease(ctx context.Context, name string, current, next m
 			if !slices.Contains(domains, "~.") {
 				domains = append(domains, "~.")
 			}
-			if err := applyDNS(ctx, platform.CurrentOS(), command, ifname, defaultString(c.ResolvConfPath, "/etc/resolv.conf"), name, servers, domains, c.DryRun); err != nil {
+			if err := applyDNS(ctx, platform.CurrentOS(), command, ifname, "/etc/resolv.conf", name, servers, domains, c.DryRun); err != nil {
 				return err
 			}
 			next["appliedDNSServers"] = strings.Join(servers, ",")
@@ -515,10 +510,7 @@ func (c Controller) removeLeaseRoute(ctx context.Context, name string, current, 
 	if c.DryRun {
 		return nil
 	}
-	command := c.Command
-	if command == nil {
-		command = runOutputCommandContext
-	}
+	command := runOutputCommandContext
 	present, err := dhcpv4DefaultRoutePresent(ctx, platform.CurrentOS(), command, ifname, gateway, metric)
 	if err != nil {
 		return err
@@ -574,10 +566,7 @@ func (c Controller) removeLeaseAddress(ctx context.Context, current, next map[st
 	if c.DryRun {
 		return nil
 	}
-	command := c.Command
-	if command == nil {
-		command = runOutputCommandContext
-	}
+	command := runOutputCommandContext
 	present, err := dhcpv4LeaseAddressPresent(ctx, platform.CurrentOS(), command, ifname, address)
 	if err != nil {
 		return err
@@ -621,13 +610,6 @@ func stringSlice(value any) []string {
 	}
 }
 
-func defaultString(value, fallback string) string {
-	if strings.TrimSpace(value) != "" {
-		return value
-	}
-	return fallback
-}
-
 func (c Controller) interfaceDNS(ifname string) (*api.InterfaceDNSSpec, error) {
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "Interface" {
@@ -653,11 +635,8 @@ func (c Controller) restoreStaticDNS(ctx context.Context, current, next map[stri
 	if err != nil {
 		return err
 	}
-	command := c.Command
-	if command == nil {
-		command = runOutputCommandContext
-	}
-	path := defaultString(c.ResolvConfPath, "/etc/resolv.conf")
+	command := runOutputCommandContext
+	path := "/etc/resolv.conf"
 	if static == nil && platform.CurrentOS() == platform.OSLinux && systemdResolvedResolvConf(path) {
 		if _, err := command(ctx, "resolvectl", "revert", ifname); err != nil {
 			return fmt.Errorf("restore DNS for %s: %w", ifname, err)
