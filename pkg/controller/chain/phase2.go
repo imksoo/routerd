@@ -39,22 +39,6 @@ type DHCPv6InformationController struct {
 	Bus           *bus.Bus
 	Store         Store
 	DaemonSockets map[string]string
-	Logger        *slog.Logger
-}
-
-func (c DHCPv6InformationController) Start(ctx context.Context) {
-	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.dhcpv6.client.prefix.*", "routerd.dhcpv6.client.info.*"}}, 32)
-	go func() {
-		for event := range ch {
-			if event.Resource == nil {
-				continue
-			}
-			request := !strings.HasPrefix(event.Type, "routerd.dhcpv6.client.info.")
-			if err := c.reconcile(ctx, event.Resource.Name, request); err != nil && c.Logger != nil {
-				c.Logger.Warn("dhcpv6 information reconcile failed", "pd", event.Resource.Name, "error", err)
-			}
-		}
-	}()
 }
 
 func (c DHCPv6InformationController) reconcile(ctx context.Context, pdName string, request bool) error {

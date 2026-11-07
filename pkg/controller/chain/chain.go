@@ -2151,7 +2151,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	serviceUnits := SystemdUnitController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunServiceUnit, SynthesizeClientDaemonUnits: !opts.SuperviseClientDaemons && !opts.SkipLegacyClientUnits, BGPSocketPath: opts.BGPSocketPath, BGPControlSocketPath: opts.BGPControlSocketPath, BGPStatePath: opts.BGPStatePath}
 	logRetention := LogRetentionController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunLogRetention}
 	ntpClient, ntpServer := ntpControllersForOptions(r.currentRouter(), r.Bus, store, opts)
-	info := DHCPv6InformationController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DaemonSockets: opts.DaemonSockets, Logger: logger}
+	info := DHCPv6InformationController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DaemonSockets: opts.DaemonSockets}
 	link := LinkController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Store: store, Logger: logger, DryRun: opts.DryRunAddress}
 	tunnel := TunnelInterfaceController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, OS: platform.CurrentOS(), Logger: logger}
 	wireGuard := WireGuardController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, Logger: logger}
@@ -2473,7 +2473,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current.MobilityDataplane = view.MobilityDataplane
 			return didWorkError(current.Reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "dhcpv6-information", Every: 30 * time.Second, Subs: statusSubscriptions("DHCPv6PrefixDelegation"), ReconcileFunc: func(ctx context.Context, event daemonapi.DaemonEvent) error {
+		framework.FuncController{ControllerName: "dhcpv6-information", Every: 30 * time.Second, Subs: append(statusSubscriptions("DHCPv6PrefixDelegation"), bus.Subscription{Topics: []string{daemonapi.EventDHCPv6InfoReplyReceived}}), ReconcileFunc: func(ctx context.Context, event daemonapi.DaemonEvent) error {
 			request := event.Type == "routerd.controller.bootstrap" || becamePhase(event, daemonapi.ResourcePhaseBound)
 			for _, resource := range r.currentRouter().Spec.Resources {
 				if resource.Kind == "DHCPv6PrefixDelegation" {
