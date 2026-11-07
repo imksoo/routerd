@@ -55,6 +55,7 @@ type tunnelObserved struct {
 	MTU        int
 	TTL        int
 	Key        int
+	KeyKnown   bool
 	EncapSport int
 	EncapDport int
 	Up         bool
@@ -204,19 +205,19 @@ func (c TunnelInterfaceController) reconcileInterface(ctx context.Context, resou
 		applied = true
 		created = true
 	} else {
-		if c.targetOS() == platform.OSFreeBSD && desired.Mode == "gre" {
-			// FreeBSD ifconfig does not reliably render a configured GRE key.
-			// For an owned interface, retained provenance is the only safe
-			// observation fallback: it preserves a supported same-key no-op and
-			// lets key changes, including explicit key zero, reconcile normally.
-			previousKey := tunnelStatusKey(previous)
-			if observed.Key == 0 && previousKey != 0 {
-				observed.Key = previousKey
-			}
+		keyUnobserved := c.targetOS() == platform.OSFreeBSD && desired.Mode == "gre" && !observed.KeyKnown
+		if keyUnobserved {
+			// Compare the remaining attributes, then explicitly enforce the key.
+			observed.Key = desired.Key
 		}
 		if !tunnelLinkMatches(observed, desired) {
 			if err := c.changeTunnelInterface(ctx, desired); err != nil {
 				return c.saveApplyError(resource, desired, err)
+			}
+			applied = true
+		} else if keyUnobserved {
+			if _, err := c.run(ctx, "ifconfig", desired.Name, "grekey", strconv.Itoa(desired.Key)); err != nil {
+				return c.saveApplyError(resource, desired, commandError("configure FreeBSD GRE key "+desired.Name, err))
 			}
 			applied = true
 		}
@@ -302,14 +303,6 @@ func (c TunnelInterfaceController) saveApplyError(resource api.Resource, desired
 		return fmt.Errorf("TunnelInterface/%s apply failed: %w (saving status: %v)", resource.Metadata.Name, applyErr, err)
 	}
 	return fmt.Errorf("TunnelInterface/%s apply failed: %w", resource.Metadata.Name, applyErr)
-}
-
-func tunnelStatusKey(status map[string]any) int {
-	key, ok := statusInt(status["key"])
-	if !ok {
-		return 0
-	}
-	return key
 }
 
 func tunnelDesiredFromSpec(router api.Router, name string, spec api.TunnelInterfaceSpec) tunnelDesired {
@@ -580,6 +573,7 @@ func parseFreeBSDTunnelStatus(ifname string, out []byte) tunnelObserved {
 			// reconciliation does not mistake a configured native key for zero.
 			if key, err := strconv.ParseUint(fields[i+1], 0, 32); err == nil {
 				observed.Key = int(key)
+				observed.KeyKnown = true
 			}
 		case field == "tunnel" && i+3 < len(fields) && fields[i+1] == "inet" && fields[i+3] == "-->":
 			observed.Local = fields[i+2]
