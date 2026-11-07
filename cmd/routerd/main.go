@@ -18,31 +18,29 @@ import (
 var version = routerversion.String()
 
 const (
-	routerdDnsmasqService       = "routerd-dnsmasq.service"
-	defaultKeepalivedConfigPath = "/etc/keepalived/keepalived.conf"
-	freebsdSysrcStateKey        = "freebsd.applyFreeBSDConfig.lastSysrcKeys"
+	routerdDnsmasqService = "routerd-dnsmasq.service"
+	freebsdSysrcStateKey  = "freebsd.applyFreeBSDConfig.lastSysrcKeys"
 )
 
 var (
 	platformDefaults, platformFeatures = platform.Current()
 
-	defaultConfigPath           = platformDefaults.ConfigFile()
-	defaultNetplanPath          = platformDefaults.NetplanFile
-	defaultDnsmasqConfigPath    = platformDefaults.ManagedDnsmasqConfigFile()
-	defaultDnsmasqServicePath   = platformDefaults.DnsmasqServiceFile
-	defaultFreeBSDDHClientPath  = platformDefaults.FreeBSDDHClientConfigFile
-	defaultFreeBSDMPD5Path      = platformDefaults.FreeBSDMPD5ConfigFile
-	defaultFreeBSDPFPath        = platformDefaults.FreeBSDPFConfigFile
-	defaultNftablesPath         = platformDefaults.ManagedNftablesFile()
-	defaultRouteNftablesPath    = platformDefaults.DefaultRouteNftablesFile
-	defaultTimesyncdPath        = platformDefaults.TimesyncdDropinFile
-	defaultLedgerPath           = platformDefaults.DBFile()
-	defaultStatePath            = platformDefaults.DBFile()
-	runtimeKeepalivedConfigPath = defaultKeepalivedConfigPath
-	pppoeCHAPSecretsPath        = platformDefaults.PPPoEChapSecretsFile
-	pppoePAPSecretsPath         = platformDefaults.PPPoEPapSecretsFile
-	pdClientLeaseDir            = filepath.Join(platformDefaults.StateDir, "dhcpv6-client")
-	legacyFreeBSDStateDir       = "/var/lib/routerd"
+	defaultConfigPath          = platformDefaults.ConfigFile()
+	defaultNetplanPath         = platformDefaults.NetplanFile
+	defaultDnsmasqConfigPath   = platformDefaults.ManagedDnsmasqConfigFile()
+	defaultDnsmasqServicePath  = platformDefaults.DnsmasqServiceFile
+	defaultFreeBSDDHClientPath = platformDefaults.FreeBSDDHClientConfigFile
+	defaultFreeBSDMPD5Path     = platformDefaults.FreeBSDMPD5ConfigFile
+	defaultFreeBSDPFPath       = platformDefaults.FreeBSDPFConfigFile
+	defaultNftablesPath        = platformDefaults.ManagedNftablesFile()
+	defaultRouteNftablesPath   = platformDefaults.DefaultRouteNftablesFile
+	defaultTimesyncdPath       = platformDefaults.TimesyncdDropinFile
+	defaultLedgerPath          = platformDefaults.DBFile()
+	defaultStatePath           = platformDefaults.DBFile()
+	pppoeCHAPSecretsPath       = platformDefaults.PPPoEChapSecretsFile
+	pppoePAPSecretsPath        = platformDefaults.PPPoEPapSecretsFile
+	pdClientLeaseDir           = filepath.Join(platformDefaults.StateDir, "dhcpv6-client")
+	legacyFreeBSDStateDir      = "/var/lib/routerd"
 )
 
 var errNoIPv6PrefixAvailable = errors.New("no IPv6 prefix available")

@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -19,7 +18,6 @@ import (
 	"github.com/imksoo/routerd/pkg/logstore"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/render"
-	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 func applyDnsmasqConfig(configPath, servicePath string, configData []byte) ([]string, error) {
@@ -152,130 +150,6 @@ func removeManagedDnsmasqConfig(configPath, servicePath string) ([]string, error
 	}
 	changed = append(changed, configPath)
 	return changed, nil
-}
-
-func applyVRRPArtifactsOnce(router *api.Router, store routerstate.Store) ([]string, bool, error) {
-	if router == nil || platformDefaults.OS == platform.OSFreeBSD || !routerHasVirtualAddress(router) {
-		return nil, false, nil
-	}
-	data, err := render.KeepalivedConfig(router, routerInterfaceAliases(router.Spec.Resources))
-	if err != nil || len(data) == 0 {
-		return nil, false, err
-	}
-	if err := os.MkdirAll(filepath.Dir(runtimeKeepalivedConfigPath), 0755); err != nil {
-		return nil, false, err
-	}
-	changed, err := writeFileIfChanged(runtimeKeepalivedConfigPath, data, 0644)
-	if err != nil {
-		return nil, false, err
-	}
-	if statusStore, ok := store.(routerstate.ObjectStatusStore); ok {
-		if err := saveVRRPRenderedStatuses(router, statusStore, changed); err != nil {
-			return nil, false, err
-		}
-	}
-	if !changed {
-		return nil, false, nil
-	}
-	return []string{runtimeKeepalivedConfigPath}, true, nil
-}
-
-func saveVRRPRenderedStatuses(router *api.Router, store routerstate.ObjectStatusStore, changed bool) error {
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	aliases := routerInterfaceAliases(router.Spec.Resources)
-	for _, resource := range router.Spec.Resources {
-		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "VirtualAddress" {
-			continue
-		}
-		address, ifname, mode := "", "", ""
-		spec, err := resource.VirtualAddressSpec()
-		if err != nil {
-			return err
-		}
-		address = spec.Address
-		if resolved, err := render.VirtualAddress(router, spec); err == nil {
-			address = resolved
-		}
-		ifname = aliases[spec.Interface]
-		mode = spec.Mode
-		status := map[string]any{
-			"phase":      "Rendered",
-			"backend":    "keepalived",
-			"address":    address,
-			"ifname":     ifname,
-			"configPath": runtimeKeepalivedConfigPath,
-			"applyWith":  "routerd serve",
-			"changed":    changed,
-			"dryRun":     false,
-			"observedAt": now,
-		}
-		if mode == "vrrp" {
-			status["role"] = "unknown"
-		}
-		if err := store.SaveObjectStatus(api.NetAPIVersion, resource.Kind, resource.Metadata.Name, status); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func routerHasVirtualAddress(router *api.Router) bool {
-	if router == nil {
-		return false
-	}
-	for _, res := range router.Spec.Resources {
-		if res.APIVersion == api.NetAPIVersion && res.Kind == "VirtualAddress" {
-			return true
-		}
-	}
-	return false
-}
-
-func routerHasBGP(router *api.Router) bool {
-	if router == nil {
-		return false
-	}
-	for _, res := range router.Spec.Resources {
-		if res.APIVersion == api.NetAPIVersion && (res.Kind == "BGPRouter" || res.Kind == "BGPPeer") {
-			return true
-		}
-	}
-	return false
-}
-
-func applyBGPArtifactsOnce(router *api.Router, store routerstate.Store) ([]string, bool, error) {
-	if router == nil || platformDefaults.OS == platform.OSFreeBSD || !routerHasBGP(router) {
-		return nil, false, nil
-	}
-	if statusStore, ok := store.(routerstate.ObjectStatusStore); ok {
-		if err := saveBGPServeManagedStatuses(router, statusStore); err != nil {
-			return nil, false, err
-		}
-	}
-	return nil, false, nil
-}
-
-func saveBGPServeManagedStatuses(router *api.Router, store routerstate.ObjectStatusStore) error {
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	for _, resource := range router.Spec.Resources {
-		if resource.APIVersion != api.NetAPIVersion || (resource.Kind != "BGPRouter" && resource.Kind != "BGPPeer") {
-			continue
-		}
-		status := map[string]any{
-			"phase":      "Pending",
-			"backend":    "gobgp",
-			"applyWith":  "routerd serve",
-			"changed":    false,
-			"dryRun":     false,
-			"reason":     "GoBGPServeManaged",
-			"observedAt": now,
-			"conditions": []map[string]any{{"type": "Configured", "status": "False", "reason": "GoBGPServeManaged", "message": "BGP is managed by routerd serve through the routerd-bgp daemon"}},
-		}
-		if err := store.SaveObjectStatus(api.NetAPIVersion, resource.Kind, resource.Metadata.Name, status); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func applyDirectDnsmasqConfig(configPath string, configData []byte, dnsmasqPath string) ([]string, error) {

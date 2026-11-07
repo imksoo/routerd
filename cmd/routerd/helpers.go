@@ -12,7 +12,6 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/apply"
 	"github.com/imksoo/routerd/pkg/eventlog"
 	statuswriter "github.com/imksoo/routerd/pkg/status"
@@ -58,21 +57,6 @@ func defaultString(value, fallback string) string {
 		return fallback
 	}
 	return value
-}
-
-func routerInterfaceAliases(resources []api.Resource) map[string]string {
-	aliases := map[string]string{}
-	for _, res := range resources {
-		if res.Kind != "Interface" {
-			continue
-		}
-		spec, err := res.InterfaceSpec()
-		if err != nil {
-			continue
-		}
-		aliases[res.Metadata.Name] = spec.IfName
-	}
-	return aliases
 }
 
 func firstNonEmptyString(values ...string) string {

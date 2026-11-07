@@ -2551,30 +2551,6 @@ func TestDNSServerAddressAddsDefaultPort(t *testing.T) {
 	}
 }
 
-func TestManagedHostnames(t *testing.T) {
-	router := &api.Router{
-		Spec: api.RouterSpec{Resources: []api.Resource{
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Hostname"},
-				Metadata: api.ObjectMeta{Name: "system-hostname"},
-				Spec:     api.HostnameSpec{Hostname: "router03.example.internal", Managed: true},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Hostname"},
-				Metadata: api.ObjectMeta{Name: "observed-hostname"},
-				Spec:     api.HostnameSpec{Hostname: "ignored.example", Managed: false},
-			},
-		}},
-	}
-	got, err := managedHostnames(router)
-	if err != nil {
-		t.Fatalf("managed hostnames: %v", err)
-	}
-	if len(got) != 1 || got[0] != "router03.example.internal" {
-		t.Fatalf("managed hostnames = %v, want router03.example.internal", got)
-	}
-}
-
 func TestAdoptedArtifactsForResultDeduplicates(t *testing.T) {
 	artifacts := []resource.Artifact{
 		{Kind: "nft.table", Name: "routerd_nat", Owner: "one"},
