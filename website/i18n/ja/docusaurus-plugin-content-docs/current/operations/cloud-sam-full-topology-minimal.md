@@ -138,20 +138,3 @@ known-hosts artifact を作り、鍵とゲスト管理アドレスを結び付�
 コマンド自体は provision/destruction を行いません。teardown 引数を追加しないでください。
 qualification が失敗しても有料リソースを残さないよう、supervisor が無条件の cleanup
 を所有します。
-
-## Offline ソース検証
-
-次は fake local file で wrapper だけを検証します。instance の provision、`routerd`
-の起動、routerd socket の bind、DHCP/RA/network state の変更はしません。
-
-```sh
-make cloudedge-full-topology-minimal-offline-test
-shellcheck -x tests/e2e/cloudedge/scripts/sam-full-topology-minimal.sh \
-  tests/e2e/cloudedge/scripts/sam-full-topology-minimal-offline-test.sh \
-  tools/release-qa-labs/drivers/qualification-driver.sh \
-  tools/release-qa-labs/drivers/mutation-driver.sh
-```
-
-release-QA Python suite を host-safe preflight として実行しないでください。
-一部には `sudo`、service manager、socket、namespace の契約を意図的に検証する case が
-あり、それらは別途承認された release-QA フェーズだけで実行します。

@@ -149,21 +149,3 @@ shared management network.
 The command performs no provisioning or destruction. Do not add a teardown
 argument: the durable supervisor owns unconditional cleanup so a failed
 qualification cannot strand paid resources.
-
-## Offline source checks
-
-The following checks exercise only the profile wrapper with fake local files;
-they do not provision instances, start `routerd`, bind a routerd socket, or
-touch DHCP/RA/network state:
-
-```sh
-make cloudedge-full-topology-minimal-offline-test
-shellcheck -x tests/e2e/cloudedge/scripts/sam-full-topology-minimal.sh \
-  tests/e2e/cloudedge/scripts/sam-full-topology-minimal-offline-test.sh \
-  tools/release-qa-labs/drivers/qualification-driver.sh \
-  tools/release-qa-labs/drivers/mutation-driver.sh
-```
-
-Do not run the release-QA Python suite as a host-safe preflight. Some of its
-cases deliberately exercise `sudo`, service-manager, socket, or namespace
-contracts; those belong only to the separately authorized release-QA phase.
