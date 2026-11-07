@@ -18,19 +18,12 @@ import (
 )
 
 type samProxyNeighborApplier interface {
-	SetProxyARP(ctx context.Context, ifname string, enabled, owned bool) (samProxyARPApplyResult, error)
+	SetProxyARP(ctx context.Context, ifname string, enabled bool) error
 	SetIPForwarding(ctx context.Context, enabled bool) error
 	EnsureProxyNeighbor(ctx context.Context, address, ifname string) error
 	DeleteProxyNeighbor(ctx context.Context, address, ifname string) error
 	EnsureOSAddressAbsent(ctx context.Context, address string) (samOSAddressDeassignResult, error)
 	ReconcileForwardPaths(ctx context.Context, paths []sam.CaptureAction) error
-}
-
-// samProxyARPApplyResult records whether this reconcile changed a sysctl from
-// its safe disabled value.  The applied-effect ledger persists only that
-// ownership proof; an already-enabled operator setting is never adopted.
-type samProxyARPApplyResult struct {
-	changedByRouterd bool
 }
 
 type samGratuitousARPAnnouncer interface {
@@ -162,12 +155,10 @@ type samAppliedForwardPath struct {
 	PeerInterface string `json:"peerInterface"`
 }
 
-// samAppliedProxyARP is a narrow ownership ledger for a sysctl that routerd
-// itself moved from disabled to enabled.  It intentionally has no desired
-// semantics: absence means "do not change this host setting".
+// samAppliedProxyARP records interfaces that may require cleanup after removal.
 type samAppliedProxyARP struct {
 	Interface string `json:"interface"`
-	Owned     bool   `json:"owned"`
+	Owned     bool   `json:"owned,omitempty"`
 }
 
 const samDataplaneStatusName = "sam-dataplane"
@@ -442,9 +433,6 @@ func samAppliedProxyARPSettings(value any, present bool, targetOS platform.OS) (
 	}
 	settings := make(map[string]samAppliedProxyARP, len(decoded))
 	for _, setting := range decoded {
-		if !setting.Owned {
-			return nil, fmt.Errorf("proxy_arp ledger may retain only routerd-owned settings")
-		}
 		if targetOS == platform.OSFreeBSD {
 			if setting.Interface != "" {
 				return nil, fmt.Errorf("FreeBSD proxyall ledger interface must be empty")
@@ -452,10 +440,7 @@ func samAppliedProxyARPSettings(value any, present bool, targetOS platform.OS) (
 		} else if err := sam.ValidateCaptureInterface(setting.Interface); err != nil {
 			return nil, fmt.Errorf("proxy_arp ledger interface: %w", err)
 		}
-		if previous, exists := settings[setting.Interface]; exists && previous != setting {
-			return nil, fmt.Errorf("conflicting proxy_arp ledger entries for interface %q", setting.Interface)
-		}
-		settings[setting.Interface] = setting
+		settings[setting.Interface] = samAppliedProxyARP{Interface: setting.Interface}
 	}
 	return settings, nil
 }
@@ -649,16 +634,11 @@ func (c SAMController) reconcileProxyARPSysctls(ctx context.Context, actions []s
 	sort.Strings(ordered)
 	state.nextProxyARP = map[string]samAppliedProxyARP{}
 	for _, iface := range ordered {
-		_, previouslyOwned := state.previousProxyARP[iface]
-		result, err := applier.SetProxyARP(ctx, iface, desired[iface], previouslyOwned)
-		if err != nil {
+		if err := applier.SetProxyARP(ctx, iface, desired[iface]); err != nil {
 			return fmt.Errorf("set SAM proxy_arp %q=%t: %w", iface, desired[iface], err)
 		}
 		if desired[iface] {
-			if !previouslyOwned && !result.changedByRouterd {
-				return fmt.Errorf("set SAM proxy_arp %q enabled without ownership proof", iface)
-			}
-			state.nextProxyARP[iface] = samAppliedProxyARP{Interface: iface, Owned: true}
+			state.nextProxyARP[iface] = samAppliedProxyARP{Interface: iface}
 		}
 	}
 	return nil

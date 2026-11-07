@@ -42,37 +42,20 @@ func defaultSAMGratuitousARPAnnouncer() samGratuitousARPAnnouncer {
 
 type packetSAMGratuitousARPAnnouncer struct{}
 
-func (netlinkSAMProxyNeighborApplier) SetProxyARP(ctx context.Context, ifname string, enabled, owned bool) (samProxyARPApplyResult, error) {
+func (netlinkSAMProxyNeighborApplier) SetProxyARP(ctx context.Context, ifname string, enabled bool) error {
 	key := "net.ipv4.conf." + ifname + ".proxy_arp"
 	current, err := samReadBinarySysctl(ctx, key)
 	if err != nil {
-		return samProxyARPApplyResult{}, err
+		return err
 	}
+	value := "0"
 	if enabled {
-		if current == "1" {
-			if !owned {
-				return samProxyARPApplyResult{}, fmt.Errorf("foreign %s=1: refusing adoption", key)
-			}
-			return samProxyARPApplyResult{}, nil
-		}
-		if err := samSetSysctl(ctx, key, "1"); err != nil {
-			return samProxyARPApplyResult{}, err
-		}
-		return samProxyARPApplyResult{changedByRouterd: true}, nil
+		value = "1"
 	}
-	if !owned {
-		if current == "1" {
-			return samProxyARPApplyResult{}, fmt.Errorf("foreign %s=1: refusing disable", key)
-		}
-		return samProxyARPApplyResult{}, nil
+	if current == value {
+		return nil
 	}
-	if current == "0" {
-		return samProxyARPApplyResult{}, nil
-	}
-	if err := samSetSysctl(ctx, key, "0"); err != nil {
-		return samProxyARPApplyResult{}, err
-	}
-	return samProxyARPApplyResult{}, nil
+	return samSetSysctl(ctx, key, value)
 }
 
 func (netlinkSAMProxyNeighborApplier) SetIPForwarding(ctx context.Context, enabled bool) error {
