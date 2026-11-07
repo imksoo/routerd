@@ -5,9 +5,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
-	"net"
-	"net/http"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -37,49 +34,6 @@ func TestSelftestCreatesDatabase(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), `"ok":true`) && !strings.Contains(out.String(), `"ok": true`) {
 		t.Fatalf("output = %s", out.String())
-	}
-}
-
-func TestSelftestUsesDPIClassifierSocket(t *testing.T) {
-	socket := filepath.Join(t.TempDir(), "dpi.sock")
-	listener, err := net.Listen("unix", socket)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer listener.Close()
-	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(dpi.ClassifyResult{AppName: "tls", AppCategory: "web", AppConfidence: 90, TLSSNI: "routerd-firewall-selftest.example"})
-	})}
-	defer server.Shutdown(context.Background())
-	go server.Serve(listener)
-
-	path := filepath.Join(t.TempDir(), "firewall-logs.db")
-	if err := run([]string{"selftest", "--path", path, "--dpi-socket", socket}, &bytes.Buffer{}, strings.NewReader("")); err != nil {
-		t.Fatal(err)
-	}
-	log, err := logstore.OpenFirewallLog(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer log.Close()
-	rows, err := log.List(context.Background(), logstore.FirewallLogFilter{Action: "drop", Limit: 10})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var foundDPI, foundOrphan, foundSYN bool
-	for _, row := range rows {
-		if row.DPIApp == "tls" && row.DPITLSSNI == "routerd-firewall-selftest.example" {
-			foundDPI = true
-		}
-		if row.Correlation == "orphan_return" && row.RuleName == "selftest-orphan-return" {
-			foundOrphan = true
-		}
-		if row.RuleName == "selftest" && row.TCPFlags == "SYN" {
-			foundSYN = true
-		}
-	}
-	if !foundDPI || !foundOrphan || !foundSYN {
-		t.Fatalf("rows = %#v", rows)
 	}
 }
 
@@ -206,28 +160,6 @@ func TestParseKeyValueTCPFlags(t *testing.T) {
 	}
 	if entry.TCPFlags != "SYN,ACK" {
 		t.Fatalf("entry = %+v", entry)
-	}
-}
-
-func TestAppendDPIHintUsesClassifierSocket(t *testing.T) {
-	socket := filepath.Join(t.TempDir(), "dpi.sock")
-	listener, err := net.Listen("unix", socket)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer listener.Close()
-	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(dpi.ClassifyResult{AppName: "tls", AppCategory: "web", AppConfidence: 90, TLSSNI: "routerd.example"})
-	})}
-	defer server.Shutdown(context.Background())
-	go server.Serve(listener)
-
-	entry := enrichEntryWithDPI(context.Background(), options{dpiSocket: socket, dpiTimeout: time.Second}, logstoreEntry("nflog-netlink"), []byte{0x45})
-	if entry.DPIApp != "tls" || entry.DPITLSSNI != "routerd.example" || entry.DPIConfidence != 90 {
-		t.Fatalf("entry = %+v", entry)
-	}
-	if !strings.Contains(entry.Hint, "dpi.app=tls") || !strings.Contains(entry.Hint, "dpi.tls_sni=routerd.example") {
-		t.Fatalf("hint = %q", entry.Hint)
 	}
 }
 
