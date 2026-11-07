@@ -152,17 +152,11 @@ def obj(s):
         return json.loads(s)
     except Exception:
         return {}
-def is_int(value):
-    return isinstance(value, int) and not isinstance(value, bool)
 def normalize_unknown_reason(details, field, reason):
     if not details.get(f"{field}_reason"):
         details[f"{field}_reason"] = reason
 def normalize_pmtu(details):
     details = dict(details or {})
-    if "effective_mss_clamp" not in details and "mss_clamp" in details:
-        details["effective_mss_clamp"] = details["mss_clamp"]
-        if details.get("mss_clamp_source") and not details.get("effective_mss_clamp_source"):
-            details["effective_mss_clamp_source"] = details["mss_clamp_source"]
     for field in ("overlay_mtu", "route_mtu", "route_advmss", "mss_clamp", "effective_mss_clamp"):
         value = details.get(field)
         if value in (None, ""):
@@ -170,9 +164,6 @@ def normalize_pmtu(details):
             normalize_unknown_reason(details, field, f"runner_did_not_report_{field}")
         elif value == "unknown":
             normalize_unknown_reason(details, field, f"runner_reported_unknown_{field}_without_reason")
-    if details.get("effective_mss_clamp") == "unknown" and is_int(details.get("mss_clamp")):
-        details["effective_mss_clamp"] = details["mss_clamp"]
-        details.setdefault("effective_mss_clamp_source", details.get("mss_clamp_source", "mss_clamp"))
     for field in ("overlay_mtu", "route_mtu", "route_advmss", "mss_clamp", "effective_mss_clamp"):
         if details.get(field) == "unknown":
             normalize_unknown_reason(details, field, f"{field}_unavailable")
