@@ -541,7 +541,14 @@ func ipv4RouteInstalled(ctx context.Context, command outputCommandFunc, routeTyp
 		return false
 	}
 	for _, line := range strings.Split(string(out), "\n") {
-		if ipv4RouteLineMatches(line, routeType, queryDestination, device, gateway, preferredSource, metric) && slices.Contains(strings.Fields(line), "onlink") == onLink {
+		fields := strings.Fields(line)
+		if metric == 0 && slices.Contains(fields, "metric") && !routeFieldsContainPair(fields, "metric", "0") {
+			continue
+		}
+		if gateway == "" && slices.Contains(fields, "via") {
+			continue
+		}
+		if ipv4RouteLineMatches(line, routeType, queryDestination, device, gateway, preferredSource, metric) && slices.Contains(fields, "onlink") == onLink {
 			return true
 		}
 	}
