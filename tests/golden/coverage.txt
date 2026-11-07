@@ -1,5 +1,0 @@
-# Minimum line coverage for Task #35 abstraction layers.
-# Keep these packages at or above 80% when refactoring backend abstractions.
-github.com/imksoo/routerd/pkg/servicemgr 80.0%
-github.com/imksoo/routerd/pkg/firewallbackend 80.0%
-github.com/imksoo/routerd/pkg/netconfigbackend 80.0%

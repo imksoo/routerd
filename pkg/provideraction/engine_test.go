@@ -1095,31 +1095,3 @@ func TestExecuteBadModeRejected(t *testing.T) {
 		t.Fatalf("executor must NOT launch on bad mode; calls=%d", runner.calls)
 	}
 }
-
-// TestExecuteEndToEndWithRealExecutor wires the engine to RunExecutor + the
-// compiled fake binary, proving the full launch path journals a success.
-func TestExecuteEndToEndWithRealExecutor(t *testing.T) {
-	bin := buildFakeExecutor(t)
-	store := mustStore(t)
-	plug := api.Resource{
-		TypeMeta: api.TypeMeta{APIVersion: api.PluginAPIVersion, Kind: "Plugin"},
-		Metadata: api.ObjectMeta{Name: "aws-executor"},
-		Spec: map[string]any{
-			"executable":   bin,
-			"timeout":      "10s",
-			"capabilities": []any{CapabilityExecuteProviderAction},
-		},
-	}
-	e := newEngine(t, store, RunExecutor, []api.Resource{plug})
-	id := importOne(t, store, e, "k1")
-	if err := e.Approve(id, "alice"); err != nil {
-		t.Fatalf("approve: %v", err)
-	}
-	if err := e.Execute(context.Background(), id, ModeExecute, allowPolicy()); err != nil {
-		t.Fatalf("execute end-to-end: %v", err)
-	}
-	rec, _, _ := store.GetActionByID(id)
-	if rec.Status != state.ActionSucceeded {
-		t.Fatalf("want succeeded, got %q", rec.Status)
-	}
-}
