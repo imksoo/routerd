@@ -4509,3 +4509,40 @@ website retains existing documentation-link warnings. The routeradvertisement
 package also cross-compiled for FreeBSD with CGO disabled; no FreeBSD runtime
 qualification is claimed. Secrets scans passed and the product remote SHA was
 verified.
+
+## Packaged VRF attempt and removed-status recovery
+
+Formal matching base/addon `1.5.0~20261107013516+g143eee96c7dc` were built
+and apt-updated on an existing isolated Ubuntu 24.04 router VM. A separate peer
+VM hosted Kea 2.4.1 and independent client/server namespaces. The candidate had
+11 resources: VRF members, IPv4 addresses, forwarding sysctls, DHCPv6 PD,
+delegated LAN/WAN addresses and RA. Fixture setup corrected Kea's validation
+namespace and runtime PID/data directories before qualification.
+
+The first apply failed creating VRF with `operation not supported`. The guest
+had `CONFIG_NET_VRF=m` but no module file; `modinfo vrf` failed. This was a
+missed environment prerequisite, not evidence of a broken netlink command. The
+run ended and routerd stopped. During fresh environment preparation, apt
+installed the exact running kernel's `linux-modules-extra-6.8.0-147-generic`;
+`modprobe vrf` then succeeded. Certification now checks module availability.
+No successful restart/reboot qualification is claimed for that attempt.
+
+Normal API withdrawal exposed a product defect: the native VRF was absent, but
+`VRF/tenant` retained `Absent/OwnedGenerationWithdrawn`, making the empty router's
+health Absent. The two SQLite/controller regressions in `4ec4a69d` reproduced
+immediate removal and recovery of a previously withdrawn row. Fix `b181a6c1`
+retires only terminal rows absent from both declared configuration and native
+ownership. Dry run, retained inactive declarations and ownership receipts are
+preserved. The focused VRF suite passed; the actual-kernel overlapping-domain
+forwarding/reopen/withdrawal test additionally required both deleted VRF status
+rows to disappear and passed in 12.10 seconds.
+
+Fixture networks, units and staging were removed; both used VMs stopped. The
+empty canonical configuration and stale terminal row were retained in the
+router's database for normal-runtime recovery verification by the new package.
+The packaged lifecycle verdict remains incomplete until that follow-up.
+
+For `b181a6c1`, the complete Go suite, schema checks, example validation, website
+schema checks and all four website locales passed (existing link warnings).
+Formal matching base/addon `1.5.0~20261107015013+gb181a6c1` built successfully.
+Packaged VRF lifecycle verification remains pending.
