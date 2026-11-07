@@ -209,7 +209,7 @@ func (c Controller) applyLease(ctx context.Context, name string, current, next m
 		if err := c.removeLeaseRoute(ctx, name, current, next); err != nil {
 			return err
 		}
-		if err := c.removeExpiredAddress(ctx, name, current, next); err != nil {
+		if err := c.removeLeaseAddress(ctx, current, next); err != nil {
 			return err
 		}
 		return c.restoreStaticDNS(ctx, current, next)
@@ -245,15 +245,9 @@ func (c Controller) applyLease(ctx context.Context, name string, current, next m
 		}
 	}
 	previousAddress := mapString(current, "appliedAddress")
-	if previousAddress != "" && previousAddress != wantedAddress {
-		present, err := dhcpv4LeaseAddressPresent(ctx, platform.CurrentOS(), command, ifname, previousAddress)
-		if err != nil {
+	if previousAddress != "" && (previousAddress != wantedAddress || mapString(current, "ifname") != ifname) {
+		if err := c.removeLeaseAddress(ctx, current, next); err != nil {
 			return err
-		}
-		if present {
-			if err := removeIPv4Address(ctx, platform.CurrentOS(), command, ifname, previousAddress); err != nil {
-				return fmt.Errorf("remove previous DHCPv4 address %s: %w", previousAddress, err)
-			}
 		}
 	}
 	addressPresent, err := dhcpv4LeaseAddressPresent(ctx, platform.CurrentOS(), command, ifname, wantedAddress)
@@ -407,17 +401,22 @@ func (c Controller) removeLeaseRoute(ctx context.Context, name string, current, 
 	return nil
 }
 
-// removeExpiredAddress removes the expired dynamic address while retaining an
-// identical address that is explicitly configured as static.
-func (c Controller) removeExpiredAddress(ctx context.Context, name string, current, next map[string]any) error {
+// removeLeaseAddress retains an identical address configured as static.
+func (c Controller) removeLeaseAddress(ctx context.Context, current, next map[string]any) error {
 	address := mapString(current, "appliedAddress")
 	ifname := mapString(current, "ifname")
 	if address == "" || ifname == "" {
 		return nil
 	}
-	spec, _, ok, err := c.leaseSpecAndIfName(name)
-	if err != nil || !ok {
-		return err
+	aliases := map[string]string{}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.Kind == "Interface" {
+			spec, err := resource.InterfaceSpec()
+			if err != nil {
+				return err
+			}
+			aliases[resource.Metadata.Name] = spec.IfName
+		}
 	}
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "IPv4StaticAddress" {
@@ -427,7 +426,11 @@ func (c Controller) removeExpiredAddress(ctx context.Context, name string, curre
 		if err != nil {
 			return err
 		}
-		if static.Address == address && (static.Interface == spec.Interface || static.Interface == ifname) {
+		staticIfname := static.Interface
+		if aliases[staticIfname] != "" {
+			staticIfname = aliases[staticIfname]
+		}
+		if static.Address == address && staticIfname == ifname {
 			delete(next, "appliedAddress")
 			return nil
 		}
@@ -445,7 +448,7 @@ func (c Controller) removeExpiredAddress(ctx context.Context, name string, curre
 	}
 	if present {
 		if err := removeIPv4Address(ctx, platform.CurrentOS(), command, ifname, address); err != nil {
-			return fmt.Errorf("remove expired DHCPv4 address %s: %w", address, err)
+			return fmt.Errorf("remove DHCPv4 address %s: %w", address, err)
 		}
 	}
 	delete(next, "appliedAddress")
