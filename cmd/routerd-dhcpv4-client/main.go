@@ -221,8 +221,13 @@ func (d *dhcpv4Daemon) Run(ctx context.Context) error {
 	defer server.Close()
 	go func() { _ = server.Serve(listener) }()
 	d.publish(daemonapi.EventDaemonStarted, daemonapi.SeverityInfo, "Started", "DHCPv4 client daemon started", nil)
-	if err := d.acquire(ctx); err != nil {
-		d.publish("routerd.dhcpv4.client.acquire.failed", daemonapi.SeverityWarning, "AcquireFailed", err.Error(), nil)
+	if err := d.maintainLease(ctx); err != nil {
+		d.publish("routerd.dhcpv4.client.renew.failed", daemonapi.SeverityWarning, "RenewFailed", err.Error(), nil)
+	}
+	if d.shouldAcquire() {
+		if err := d.acquire(ctx); err != nil {
+			d.publish("routerd.dhcpv4.client.acquire.failed", daemonapi.SeverityWarning, "AcquireFailed", err.Error(), nil)
+		}
 	}
 	d.publish(daemonapi.EventDaemonReady, daemonapi.SeverityInfo, "Ready", "DHCPv4 client daemon is ready", nil)
 	buf := make([]byte, 1500)
