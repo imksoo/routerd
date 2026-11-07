@@ -518,38 +518,6 @@ routerctl validate -f /etc/routerd/routerd.yaml
 routerctl plan -f /etc/routerd/routerd.yaml
 ```
 
-On each reviewed leaf, run a local controller materialization check before
-starting live forwarding:
-
-```sh
-routerd serve --sandbox --root /tmp/routerd-sam-preflight \
-  --config /etc/routerd/routerd.yaml \
-  --controllers sam-transport,wireguard \
-  --apply-interval 0
-
-routerctl dynamic list \
-  --state-file /tmp/routerd-sam-preflight/var/lib/routerd/routerd.db -o yaml
-
-routerctl dynamic render \
-  --config /etc/routerd/routerd.yaml \
-  --state-file /tmp/routerd-sam-preflight/var/lib/routerd/routerd.db -o yaml
-```
-
-Expected preflight state:
-
-- rr-a and rr-b configs contain `BGPDynamicPeer/cloudedge-leaves` and no static
-  `BGPPeer/leaf-*`;
-- rr-a and rr-b render RR-side tunnels for `leaf-a` and `leaf-b` through their
-  respective admission profiles, while RR-side generated `BGPPeer` count
-  remains zero because BGP admission is handled by `BGPDynamicPeer`;
-- rr-a and rr-b derive a WG peer only for `leaf-a`; `leaf-b` has no WG peer;
-- leaf-b renders two RR-facing `TunnelInterface` resources with `mode: fou`,
-  `encapSport: 5555`, `encapDport: 5555`, and no WireGuard resources;
-- leaf-a renders two RR-facing `TunnelInterface` resources with `mode: ipip`
-  and the WG controller derives two RR `WireGuardPeer` resources;
-- both leaf configs render two generated `BGPPeer` resources, one for rr-a and
-  one for rr-b.
-
 Full topology pass criteria:
 
 - branch binaries installed on rr-a, rr-b, and leaf;
