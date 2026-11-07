@@ -3142,10 +3142,7 @@ func (r *Runner) reconcileSupervisedDaemonSpecs(ctx context.Context, logger *slo
 			case <-state.Done:
 				delete(r.clientDaemonStates, key)
 				if state.Spec.Binary == "routerd-arp-observer" {
-					delete(r.arpObserverReadySet, state.Spec.ResourceName)
-					if sync := r.arpObserverSyncs[state.Spec.ResourceName]; sync != nil {
-						sync.cancel()
-					}
+					r.clearARPObserverReadyLocked(state.Spec.ResourceName)
 				}
 			default:
 				continue
@@ -3154,10 +3151,7 @@ func (r *Runner) reconcileSupervisedDaemonSpecs(ctx context.Context, logger *slo
 			state.Cancel()
 			delete(r.clientDaemonStates, key)
 			if state.Spec.Binary == "routerd-arp-observer" {
-				delete(r.arpObserverReadySet, state.Spec.ResourceName)
-				if sync := r.arpObserverSyncs[state.Spec.ResourceName]; sync != nil {
-					sync.cancel()
-				}
+				r.clearARPObserverReadyLocked(state.Spec.ResourceName)
 			}
 		}
 	}
@@ -3630,9 +3624,17 @@ func (r *Runner) setARPObserverReady(resourceName string, ready bool) {
 		r.arpObserverReadySet[resourceName] = true
 		return
 	}
+	r.clearARPObserverReadyLocked(resourceName)
+}
+
+func (r *Runner) clearARPObserverReadyLocked(resourceName string) {
 	delete(r.arpObserverReadySet, resourceName)
 	if sync := r.arpObserverSyncs[resourceName]; sync != nil {
 		sync.cancel()
+	}
+	if source := r.daemonSourcesStarted[resourceName]; source != nil {
+		source.cancel()
+		delete(r.daemonSourcesStarted, resourceName)
 	}
 }
 
