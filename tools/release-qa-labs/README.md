@@ -777,7 +777,7 @@ The exact artifact contract pins both the profile wrapper and its
 `sam-e2e.sh` harness dependency.
 
 Use the durable supervisor as the only paid entry point. For the exact profile
-command, evidence contract, and local offline test, see
+command and evidence contract, see
 [`docs/operations/cloud-sam-representative-redundancy.md`](../../docs/operations/cloud-sam-representative-redundancy.md).
 
 ## Offline validation
