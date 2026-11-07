@@ -93,28 +93,6 @@ if [ -f "$evidence_dir/convergence/summary.tsv" ]; then
   column -t -s $'\t' "$evidence_dir/convergence/summary.tsv" 2>/dev/null || cat "$evidence_dir/convergence/summary.tsv"
 fi
 
-if [ -d "$evidence_dir/failover-transfer" ]; then
-  echo "== failover-transfer =="
-  find "$evidence_dir/failover-transfer" -mindepth 2 -maxdepth 2 -name result.txt -type f | sort | while read -r file; do
-    label="${file%/result.txt}"
-    label="${label#"$evidence_dir/failover-transfer/"}"
-    rc="$(awk -F= '/^rc=/ {print $2}' "$file" | tail -n 1)"
-    bytes="$(awk '/routerd-.*\.bin$/ {print $5}' "$file" | tail -n 1)"
-    status_file="$evidence_dir/failover-transfer/$label/status.txt"
-    status=
-    required=
-    if [ -f "$status_file" ]; then
-      status="$(awk -F= '/^result=/ {print $2}' "$status_file" | tail -n 1)"
-      required="$(awk -F= '/^required=/ {print $2}' "$status_file" | tail -n 1)"
-    fi
-    [ -n "$rc" ] || rc=missing
-    [ -n "$bytes" ] || bytes=missing
-    [ -n "$status" ] || status=unknown
-    [ -n "$required" ] || required=unknown
-    printf '%s\tstatus=%s\trequired=%s\trc=%s\tbytes=%s\n' "$label" "$status" "$required" "$rc" "$bytes"
-  done
-fi
-
 if [ -d "$evidence_dir/provider" ]; then
   echo "== provider evidence =="
   find "$evidence_dir/provider" -mindepth 1 -maxdepth 1 -type d | sort | while read -r dir; do

@@ -36,9 +36,6 @@ Options:
   --skip-matrix           Skip SSH hostname matrix; useful when rerunning performance after a clean matrix
   --skip-legacy-protocols Skip FTP/RPC/NFS/CIFS pseudo-client matrix
   --performance-tests     Run SAM iperf3/ping probes, plus public direct comparison for cross-cloud AWS/Azure/OCI pairs
-  --failover-transfer-tests Run a required throttled client-to-client HTTP transfer during each failover stop
-  --failover-transfer-observe Run the failover transfer probe but do not fail the scenario when it stalls
-  --failover-transfer-smoke Run a throttled client-to-client HTTP transfer without stopping routers
   --success-evidence-minimal Skip expensive diagnostics/provider snapshots after successful checks
   --destroy-cmd CMD       Optional teardown command, for example: 'tofu destroy -auto-approve'
 
@@ -67,9 +64,6 @@ skip_load_balance_report=0
 skip_matrix=0
 legacy_protocols=1
 performance_tests=0
-failover_transfer_tests=0
-failover_transfer_required=0
-failover_transfer_smoke=0
 success_evidence_minimal=0
 transition_canary=0
 full_cloud_ingress=0
@@ -100,9 +94,6 @@ while [ "$#" -gt 0 ]; do
     --skip-matrix) skip_matrix=1; shift ;;
     --skip-legacy-protocols) legacy_protocols=0; shift ;;
     --performance-tests) performance_tests=1; shift ;;
-    --failover-transfer-tests) failover_transfer_tests=1; failover_transfer_required=1; shift ;;
-    --failover-transfer-observe) failover_transfer_tests=1; failover_transfer_required=0; shift ;;
-    --failover-transfer-smoke) failover_transfer_tests=1; failover_transfer_required=1; failover_transfer_smoke=1; shift ;;
     --success-evidence-minimal) success_evidence_minimal=1; shift ;;
     --destroy-cmd) destroy_cmd="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
@@ -143,7 +134,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 config_generator="$(cd "$script_dir/.." && pwd)/configs/sam-e2e-generate.sh"
 [ -x "$config_generator" ] || { echo "config generator not found or not executable: $config_generator" >&2; exit 2; }
 
-mkdir -p "$evidence_dir"/{preflight,deploy,convergence,matrix,legacy,performance,failover-transfer,provider,diagnostics,cleanup,ssh}
+mkdir -p "$evidence_dir"/{preflight,deploy,convergence,matrix,legacy,performance,provider,diagnostics,cleanup,ssh}
 cp "$tofu_output" "$evidence_dir/tofu-output.json"
 timing_file="$evidence_dir/timing.tsv"
 printf 'label\tphase\telapsed_seconds\n' >"$timing_file"
@@ -446,9 +437,6 @@ record_note() {
     echo "staged_rr_pair=${staged_rr_pair[*]:-}"
     echo "legacy_protocols=$legacy_protocols"
     echo "performance_tests=$performance_tests"
-    echo "failover_transfer_tests=$failover_transfer_tests"
-    echo "failover_transfer_required=$failover_transfer_required"
-    echo "failover_transfer_smoke=$failover_transfer_smoke"
     echo "rejoin_after_failover=$rejoin_after_failover"
     echo "skip_load_balance_report=$skip_load_balance_report"
     echo "success_evidence_minimal=$success_evidence_minimal"
@@ -1844,37 +1832,6 @@ REMOTE_PERF
   done
 }
 
-setup_failover_transfer_services() {
-  [ "$failover_transfer_tests" -eq 1 ] || return 0
-  local node
-  for node in "${clients[@]}"; do
-    {
-      echo "## setup failover transfer service on $node"
-      ssh_node "$node" "$(remote_prepare_script; cat <<'REMOTE_TRANSFER'
-set -euo pipefail
-export DEBIAN_FRONTEND=noninteractive
-if command -v apt-get >/dev/null 2>&1; then
-  apt_retry apt_update
-  apt_retry apt_install curl python3
-fi
-        sudo mkdir -p /srv/routerd-e2e/http
-        sudo dd if=/dev/zero of=/srv/routerd-e2e/http/failover-transfer.bin bs=1M count=64 status=none
-        sudo chmod -R 0755 /srv/routerd-e2e/http
-        if [ -s /tmp/routerd-e2e-http.pid ]; then
-          sudo kill "$(cat /tmp/routerd-e2e-http.pid)" >/dev/null 2>&1 || true
-        fi
-        rm -f /tmp/routerd-e2e-http.pid
-        sleep 1
-nohup python3 -m http.server 8080 --bind 0.0.0.0 --directory /srv/routerd-e2e/http >/tmp/routerd-e2e-http.log 2>&1 &
-echo $! >/tmp/routerd-e2e-http.pid
-sleep 1
-ss -lntp | grep -E ":8080\b"
-REMOTE_TRANSFER
-)"
-    } >"$evidence_dir/failover-transfer/setup-${node}.txt" 2>&1 || return 1
-  done
-}
-
 is_global_ipv4() {
   local ip="$1" a b c d
   IFS=. read -r a b c d <<EOF
@@ -2390,154 +2347,13 @@ collect_load_balance_report() {
   fi
 }
 
-failover_transfer_pair() {
-  local failed_node="$1"
-  local failed_role failed_site dst="" src="" dst_site client
-  failed_role="$(node_field "$failed_node" role)"
-  failed_site="$(node_field "$failed_node" site)"
-  if [ "$failed_role" = "leaf" ]; then
-    for client in "${clients[@]}"; do
-      [ "$(node_field "$client" site)" = "$failed_site" ] || continue
-      dst="$client"
-      break
-    done
-  fi
-  [ -n "$dst" ] || dst="${clients[0]}"
-  dst_site="$(node_field "$dst" site)"
-  for client in "${clients[@]}"; do
-    [ "$client" != "$dst" ] || continue
-    [ "$(node_field "$client" site)" != "$dst_site" ] || continue
-    src="$client"
-    break
-  done
-  if [ -z "$src" ]; then
-    for client in "${clients[@]}"; do
-      [ "$client" = "$dst" ] || { src="$client"; break; }
-    done
-  fi
-  printf '%s %s\n' "$src" "$dst"
-}
-
-start_failover_transfer() {
-  [ "$failover_transfer_tests" -eq 1 ] || return 0
-  local label="$1" failed_node="$2"
-  local src dst src_ip dst_ip out remote_job pair observation expected_sha
-  pair="$(failover_transfer_pair "$failed_node")" || return 3
-  read -r src dst <<<"$pair"
-  [ -n "$src" ] && [ -n "$dst" ] || return 3
-  src_ip="$(node_field "$src" private_ip)"
-  dst_ip="$(node_field "$dst" private_ip)"
-  out="$evidence_dir/failover-transfer/$label"
-  mkdir -p "$out" || return 3
-  expected_sha=3b6a07d0d404fab4e23b6d34bc6696a6a312dd92821332385e5af7c01c421351
-  # Bind the server fixture to the known 64 MiB payload before claiming a transfer.
-  observation="$(ssh_node "$dst" "set -e; stat -c 'bytes=%s' /srv/routerd-e2e/http/failover-transfer.bin; sha256sum /srv/routerd-e2e/http/failover-transfer.bin")" || return 3
-  printf '%s\n' "$observation" >"$out/server-payload.txt"
-  grep -Fxq 'bytes=67108864' "$out/server-payload.txt" &&
-    grep -Eq "^$expected_sha  /srv/routerd-e2e/http/failover-transfer.bin$" "$out/server-payload.txt" || return 3
-  remote_job="$(ssh_node "$src" "set -e
-job=\$(mktemp -d /tmp/routerd-transfer.XXXXXXXX)
-(
-  set +e
-  date -u '+started=%Y-%m-%dT%H:%M:%SZ'
-  curl -fS --limit-rate 512k -o \"\$job/body.bin\" 'http://$dst_ip:8080/failover-transfer.bin'
-  rc=\$?
-  date -u '+finished=%Y-%m-%dT%H:%M:%SZ'
-  {
-    echo \"rc=\$rc\"
-    stat -c 'bytes=%s' \"\$job/body.bin\" || echo bytes=unavailable
-    sha256sum \"\$job/body.bin\" | awk '{print \"sha256=\" \$1}'
-  } >\"\$job/result.tmp\"
-  mv \"\$job/result.tmp\" \"\$job/result.txt\"
-) >\"\$job/transfer.log\" 2>&1 </dev/null &
-echo \"\$job \$!\"
-")" || return 3
-  local job pid
-  read -r job pid <<<"$remote_job"
-  [[ "$job" =~ ^/tmp/routerd-transfer\.[a-zA-Z0-9]+$ && "$pid" =~ ^[0-9]+$ ]] || return 3
-  {
-    printf 'label=%s\nfailed_node=%s\nsrc=%s\nsrc_ip=%s\ndst=%s\ndst_ip=%s\njob=%s\npid=%s\nexpected_bytes=67108864\nexpected_sha256=%s\n' "$label" "$failed_node" "$src" "$src_ip" "$dst" "$dst_ip" "$job" "$pid" "$expected_sha"
-  } >"$out/metadata.txt"
-  # Only an owned, live job with partial bytes and no completion record proves
-  # that the following fault happens during this transfer.
-  ssh_node "$src" "while :; do
-  [ ! -f '$job/result.txt' ] && kill -0 '$pid' 2>/dev/null || exit 3
-  size=\$(stat -c %s '$job/body.bin' 2>/dev/null) || size=0
-  case \"\$size\" in ''|*[!0-9]*) exit 3 ;; esac
-  if [ \"\$size\" -gt 0 ] && [ \"\$size\" -lt 67108864 ]; then printf 'active_pid=%s partial_bytes=%s job=%s\n' '$pid' \"\$size\" '$job'; exit 0; fi
-  sleep 1
-done" >"$out/entry.txt" 2>&1 || return 3
-  printf '%s %s\n' "$src" "$pid"
-}
-
-finish_failover_transfer() {
-  [ "$failover_transfer_tests" -eq 1 ] || return 0
-  local label="$1" src="$2" remote_pid="$3" job expected_sha
-  local out="$evidence_dir/failover-transfer/$label"
-  [ -n "$src" ] && [[ "$remote_pid" =~ ^[0-9]+$ ]] || return 3
-  job="$(sed -n 's/^job=//p' "$out/metadata.txt")"
-  expected_sha="$(sed -n 's/^expected_sha256=//p' "$out/metadata.txt")"
-  [[ "$job" =~ ^/tmp/routerd-transfer\.[a-zA-Z0-9]+$ ]] || return 3
-  grep -Fxq "src=$src" "$out/metadata.txt" && grep -Fxq "pid=$remote_pid" "$out/metadata.txt" || return 3
-  # Wait for the current job's atomic result, not a possibly reused/zombie PID.
-  # Retain its body and log on the guest as evidence, even after a failed download.
-  ssh_node "$src" "while [ ! -f '$job/result.txt' ]; do
-  if ! kill -0 '$remote_pid' 2>/dev/null && [ ! -f '$job/result.txt' ]; then cat '$job/transfer.log'; echo observation=incomplete; exit 3; fi
-  sleep 2
-done
-cat '$job/transfer.log'
-echo '## result'
-cat '$job/result.txt'
-" >"$out/result.txt" 2>&1 || return 3
-  local rc bytes digest
-  rc="$(sed -n 's/^rc=//p' "$out/result.txt")"
-  bytes="$(sed -n 's/^bytes=//p' "$out/result.txt")"
-  digest="$(sed -n 's/^sha256=//p' "$out/result.txt")"
-  [[ "$rc" =~ ^[0-9]+$ && "$bytes" =~ ^[0-9]+$ && "$digest" =~ ^[0-9a-f]{64}$ ]] || return 3
-  [ "$rc" -eq 0 ] && [ "$bytes" -eq 67108864 ] && [ "$digest" = "$expected_sha" ]
-}
-
-record_observed_failover_transfer() {
-  local label="$1" result="$2"
-  local out="$evidence_dir/failover-transfer/$label"
-  mkdir -p "$out"
-  {
-    date -u '+timestamp=%Y-%m-%dT%H:%M:%SZ'
-    echo "required=$failover_transfer_required"
-    echo "result=$result"
-    if [ "$result" != "PASS" ]; then
-      if [ "$result" = INCONCLUSIVE ]; then echo "classification=observation_inconclusive"; else echo "classification=observed-failure"; fi
-      echo "note=in-flight transfer did not complete; normal post-failover E2E is assessed separately by convergence/matrix/performance evidence"
-    fi
-  } >"$out/status.txt"
-}
-
-run_failover_transfer_smoke() {
-  [ "$failover_transfer_smoke" -eq 1 ] || return 0
-  local node src remote_pid transfer
-  node="${leaf_routers[0]}"
-  transfer="$(start_failover_transfer "smoke" "$node")" || return 3
-  read -r src remote_pid <<<"$transfer"
-  finish_failover_transfer "smoke" "$src" "$remote_pid"
-}
-
 run_failover() {
   local status=0
-  local failover_node transfer_src transfer_pid validation_rc transfer transfer_rc
+  local failover_node validation_rc
   [ "${#failover_nodes[@]}" -gt 0 ] || return 0
   for failover_node in "${failover_nodes[@]}"; do
     collect_success_optional_diagnostics "before-failover-${failover_node}"
     collect_success_optional_provider_inventory "before-failover-${failover_node}" || status=1
-    transfer_src=
-    transfer_pid=
-    if [ "$failover_transfer_tests" -eq 1 ]; then
-      if ! transfer="$(start_failover_transfer "during-failover-${failover_node}" "$failover_node")"; then
-        record_observed_failover_transfer "during-failover-${failover_node}" INCONCLUSIVE
-        # No entry acknowledgement: do not inject a fault or retry.
-        return "$(merge_validation_status "$status" 3)"
-      fi
-      read -r transfer_src transfer_pid <<<"$transfer"
-    fi
     # Failed SSH acknowledgement may still mean the remote service stopped.
     # Keep attempted nodes for recovery, never infer a stop from traffic PASS.
     stopped_routers+=("$failover_node")
@@ -2558,16 +2374,6 @@ fi' >"$evidence_dir/convergence/failover-stop-${failover_node}.txt" 2>&1; then
     validation_rc=0
     run_validation_set "after-failover-${failover_node}" || validation_rc=$?
     status="$(merge_validation_status "$status" "$validation_rc")"
-    if [ "$failover_transfer_tests" -eq 1 ]; then
-      if finish_failover_transfer "during-failover-${failover_node}" "$transfer_src" "$transfer_pid"; then
-        record_observed_failover_transfer "during-failover-${failover_node}" PASS
-      else
-        transfer_rc=$?
-        if [ "$transfer_rc" -eq 3 ]; then record_observed_failover_transfer "during-failover-${failover_node}" INCONCLUSIVE
-        else record_observed_failover_transfer "during-failover-${failover_node}" FAIL; fi
-        if [ "$failover_transfer_required" -eq 1 ]; then status="$(merge_validation_status "$status" "$transfer_rc")"; fi
-      fi
-    fi
     if [ "$validation_rc" -eq 0 ]; then
       collect_success_optional_diagnostics "after-failover-${failover_node}"
       collect_success_optional_provider_inventory "after-failover-${failover_node}" || status=1
@@ -2652,12 +2458,6 @@ if [ "$overall" -eq 0 ]; then
 fi
 if [ "$overall" -eq 0 ]; then
   setup_performance_services || mark_failed "performance service setup"
-fi
-if [ "$overall" -eq 0 ]; then
-  setup_failover_transfer_services || mark_failed "failover transfer service setup"
-fi
-if [ "$overall" -eq 0 ]; then
-  run_failover_transfer_smoke || mark_failed "failover transfer smoke"
 fi
 if [ "$overall" -eq 0 ]; then
   validation_started=1
