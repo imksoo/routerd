@@ -233,13 +233,13 @@ func mergeArtifactAttributes(desired, actual resource.Artifact) resource.Artifac
 
 func (e *Engine) actualInventoryBackedArtifacts() []resource.Artifact {
 	var actual []resource.Artifact
-	if out, err := e.Command("ip", "-4", "rule", "show"); err == nil {
+	if out, err := runCommand("ip", "-4", "rule", "show"); err == nil {
 		actual = append(actual, parseIPv4FwmarkRuleArtifacts(string(out))...)
 	}
-	if out, err := e.Command("ip", "-4", "route", "show", "table", "all"); err == nil {
+	if out, err := runCommand("ip", "-4", "route", "show", "table", "all"); err == nil {
 		actual = append(actual, parseIPv4RouteTableArtifacts(string(out))...)
 	}
-	if out, err := e.Command("nft", "list", "tables"); err == nil {
+	if out, err := runCommand("nft", "list", "tables"); err == nil {
 		actual = append(actual, parseNftTableArtifacts(string(out))...)
 	}
 	actual = append(actual, e.actualSystemdServiceArtifacts()...)
@@ -258,7 +258,7 @@ func (e *Engine) actualSystemdServiceArtifacts() []resource.Artifact {
 	names := []string{
 		"routerd-dnsmasq.service",
 	}
-	if out, err := e.Command("systemctl", "list-unit-files", "routerd-*.service", "--no-legend", "--no-pager"); err == nil {
+	if out, err := runCommand("systemctl", "list-unit-files", "routerd-*.service", "--no-legend", "--no-pager"); err == nil {
 		for _, line := range strings.Split(string(out), "\n") {
 			fields := strings.Fields(line)
 			if len(fields) > 0 && strings.HasPrefix(fields[0], "routerd-") && strings.HasSuffix(fields[0], ".service") {
@@ -273,7 +273,7 @@ func (e *Engine) actualSystemdServiceArtifacts() []resource.Artifact {
 			continue
 		}
 		seen[name] = true
-		if _, err := e.Command("systemctl", "cat", name); err == nil {
+		if _, err := runCommand("systemctl", "cat", name); err == nil {
 			artifacts = append(artifacts, newSimpleArtifact("systemd.service", name, "systemd"))
 		}
 	}
@@ -288,7 +288,7 @@ func (e *Engine) actualFileArtifacts() []resource.Artifact {
 		"/usr/local/etc/routerd/nftables.nft",
 		"/usr/local/etc/routerd/default-route.nft",
 	}
-	if out, err := e.Command("find", "/etc/ppp/peers", "-maxdepth", "1", "-type", "f", "-name", "routerd-*", "-print"); err == nil {
+	if out, err := runCommand("find", "/etc/ppp/peers", "-maxdepth", "1", "-type", "f", "-name", "routerd-*", "-print"); err == nil {
 		for _, line := range strings.Split(string(out), "\n") {
 			path := strings.TrimSpace(line)
 			if path != "" {
@@ -303,7 +303,7 @@ func (e *Engine) actualFileArtifacts() []resource.Artifact {
 			continue
 		}
 		seen[path] = true
-		if _, err := e.Command("test", "-f", path); err == nil {
+		if _, err := runCommand("test", "-f", path); err == nil {
 			artifacts = append(artifacts, newSimpleArtifact("file", path, "file"))
 		}
 	}
@@ -311,7 +311,7 @@ func (e *Engine) actualFileArtifacts() []resource.Artifact {
 }
 
 func (e *Engine) actualUnixSocketArtifacts() []resource.Artifact {
-	out, err := e.Command("find", "/run/routerd/pppoe-client", "-maxdepth", "1", "-type", "s", "-name", "*.sock", "-print")
+	out, err := runCommand("find", "/run/routerd/pppoe-client", "-maxdepth", "1", "-type", "s", "-name", "*.sock", "-print")
 	if err != nil {
 		return nil
 	}
@@ -329,7 +329,7 @@ func (e *Engine) actualUnixSocketArtifacts() []resource.Artifact {
 func (e *Engine) actualDirectoryArtifacts() []resource.Artifact {
 	var artifacts []resource.Artifact
 	for _, root := range []string{"/run/routerd/pppoe-client", "/var/lib/routerd/pppoe-client"} {
-		out, err := e.Command("find", root, "-mindepth", "1", "-maxdepth", "1", "-type", "d", "-print")
+		out, err := runCommand("find", root, "-mindepth", "1", "-maxdepth", "1", "-type", "d", "-print")
 		if err != nil {
 			continue
 		}
@@ -351,14 +351,14 @@ func (e *Engine) actualSysctlArtifacts() []resource.Artifact {
 		"net.ipv4.conf.all.rp_filter",
 		"net.ipv4.conf.default.rp_filter",
 	}
-	if out, err := e.Command("ls", "/proc/sys/net/ipv4/conf"); err == nil {
+	if out, err := runCommand("ls", "/proc/sys/net/ipv4/conf"); err == nil {
 		for _, ifname := range strings.Fields(string(out)) {
 			keys = append(keys, "net.ipv4.conf."+ifname+".rp_filter")
 		}
 	}
 	var artifacts []resource.Artifact
 	for _, key := range keys {
-		if out, err := e.Command("sysctl", "-n", key); err == nil {
+		if out, err := runCommand("sysctl", "-n", key); err == nil {
 			artifacts = append(artifacts, resource.Artifact{
 				Kind: "host.sysctl",
 				Name: key,
@@ -372,7 +372,7 @@ func (e *Engine) actualSysctlArtifacts() []resource.Artifact {
 }
 
 func (e *Engine) actualHostnameArtifacts() []resource.Artifact {
-	if out, err := e.Command("hostname"); err == nil && strings.TrimSpace(string(out)) != "" {
+	if out, err := runCommand("hostname"); err == nil && strings.TrimSpace(string(out)) != "" {
 		return []resource.Artifact{{
 			Kind: "host.hostname",
 			Name: "system",
@@ -385,10 +385,10 @@ func (e *Engine) actualHostnameArtifacts() []resource.Artifact {
 }
 
 func (e *Engine) actualLinkArtifacts() []resource.Artifact {
-	out, err := e.Command("ip", "-brief", "link", "show")
+	out, err := runCommand("ip", "-brief", "link", "show")
 	source := "ip-link"
 	if err != nil {
-		out, err = e.Command("ifconfig", "-l")
+		out, err = runCommand("ifconfig", "-l")
 		source = "ifconfig"
 		if err != nil {
 			return nil
@@ -417,16 +417,16 @@ func (e *Engine) actualLinkArtifacts() []resource.Artifact {
 func (e *Engine) actualAddressArtifacts() []resource.Artifact {
 	var artifacts []resource.Artifact
 	observedWithIP := false
-	if out, err := e.Command("ip", "-brief", "-4", "addr", "show"); err == nil {
+	if out, err := runCommand("ip", "-brief", "-4", "addr", "show"); err == nil {
 		artifacts = append(artifacts, parseBriefAddressArtifacts("net.ipv4.address", string(out))...)
 		observedWithIP = true
 	}
-	if out, err := e.Command("ip", "-brief", "-6", "addr", "show"); err == nil {
+	if out, err := runCommand("ip", "-brief", "-6", "addr", "show"); err == nil {
 		artifacts = append(artifacts, parseBriefAddressArtifacts("net.ipv6.address", string(out))...)
 		observedWithIP = true
 	}
 	if !observedWithIP {
-		if out, err := e.Command("ifconfig"); err == nil {
+		if out, err := runCommand("ifconfig"); err == nil {
 			artifacts = append(artifacts, parseIfconfigAddressArtifacts(string(out))...)
 		}
 	}
@@ -434,7 +434,7 @@ func (e *Engine) actualAddressArtifacts() []resource.Artifact {
 }
 
 func (e *Engine) actualIPIP6TunnelArtifacts() []resource.Artifact {
-	out, err := e.Command("ip", "-d", "link", "show", "type", "ip6tnl")
+	out, err := runCommand("ip", "-d", "link", "show", "type", "ip6tnl")
 	if err != nil {
 		return nil
 	}
@@ -454,7 +454,7 @@ func (e *Engine) actualIPIP6TunnelArtifacts() []resource.Artifact {
 
 func (e *Engine) observeIPv4FwmarkRuleOrphans(router *api.Router) []OrphanedArtifact {
 	desired := desiredIPv4FwmarkRuleArtifacts(router)
-	out, err := e.Command("ip", "-4", "rule", "show")
+	out, err := runCommand("ip", "-4", "rule", "show")
 	if err != nil {
 		return nil
 	}
@@ -482,7 +482,7 @@ func (e *Engine) observeIPv4FwmarkRuleOrphans(router *api.Router) []OrphanedArti
 
 func (e *Engine) observeIPv4RouteTableOrphans(router *api.Router, aliases map[string]string) []OrphanedArtifact {
 	desired := desiredArtifactsByKind(router, aliases, "linux.ipv4.routeTable")
-	out, err := e.Command("ip", "-4", "route", "show", "table", "all")
+	out, err := runCommand("ip", "-4", "route", "show", "table", "all")
 	if err != nil {
 		return nil
 	}
@@ -504,7 +504,7 @@ func (e *Engine) observeIPv4RouteTableOrphans(router *api.Router, aliases map[st
 
 func (e *Engine) observeNftTableOrphans(router *api.Router, aliases map[string]string) []OrphanedArtifact {
 	desired := desiredArtifactsByKind(router, aliases, "nft.table")
-	out, err := e.Command("nft", "list", "tables")
+	out, err := runCommand("nft", "list", "tables")
 	if err != nil {
 		return nil
 	}

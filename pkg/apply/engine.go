@@ -22,13 +22,10 @@ import (
 	"github.com/imksoo/routerd/pkg/sysctlprofile"
 )
 
-type Engine struct {
-	Command      func(name string, args ...string) ([]byte, error)
-	OSNetworking *osNetworking
-}
+type Engine struct{}
 
 func New() *Engine {
-	return &Engine{Command: runCommand}
+	return &Engine{}
 }
 
 func (e *Engine) Validate(router *api.Router) error {
@@ -221,7 +218,7 @@ func (e *Engine) observeBridge(res api.Resource, aliases map[string]string, incl
 		ifname = res.Metadata.Name
 	}
 	rr.Observed["ifname"] = ifname
-	out, err := e.Command("ip", "-details", "link", "show", "dev", ifname)
+	out, err := runCommand("ip", "-details", "link", "show", "dev", ifname)
 	if err != nil {
 		rr.Phase = "Drifted"
 		rr.Observed["present"] = "false"
@@ -247,7 +244,7 @@ func (e *Engine) observeBridge(res api.Resource, aliases map[string]string, incl
 		"stp_state":          api.BoolDefault(spec.STP, true),
 		"multicast_snooping": api.BoolDefault(spec.MulticastSnooping, false),
 	} {
-		value, readErr := e.Command("cat", filepath.Join("/sys/class/net", ifname, "bridge", setting))
+		value, readErr := runCommand("cat", filepath.Join("/sys/class/net", ifname, "bridge", setting))
 		if readErr != nil || strings.TrimSpace(string(value)) != strconv.Itoa(boolIntApply(want)) {
 			rr.Phase = "Drifted"
 			rr.Warnings = append(rr.Warnings, fmt.Sprintf("%s %s does not match %t", ifname, setting, want))
@@ -258,7 +255,7 @@ func (e *Engine) observeBridge(res api.Resource, aliases map[string]string, incl
 		if memberIfName == "" {
 			memberIfName = member
 		}
-		memberOut, memberErr := e.Command("bridge", "link", "show", "dev", memberIfName)
+		memberOut, memberErr := runCommand("bridge", "link", "show", "dev", memberIfName)
 		if memberErr != nil || !strings.Contains(string(memberOut), "master "+ifname) {
 			rr.Phase = "Drifted"
 			rr.Warnings = append(rr.Warnings, fmt.Sprintf("%s is not attached to %s", memberIfName, ifname))
@@ -316,7 +313,7 @@ func (e *Engine) observeNTPClient(res api.Resource, aliases map[string]string, i
 		rr.Observed["interface"] = spec.Interface
 		rr.Observed["ifname"] = aliases[spec.Interface]
 	}
-	if out, err := e.Command("timedatectl", "show", "-p", "NTPSynchronized", "--value"); err == nil {
+	if out, err := runCommand("timedatectl", "show", "-p", "NTPSynchronized", "--value"); err == nil {
 		rr.Observed["synchronized"] = strings.TrimSpace(string(out))
 	}
 	if !includePlan {
@@ -811,7 +808,7 @@ func (e *Engine) observeWireGuardInterface(res api.Resource, includePlan bool, r
 	if spec.Table != 0 {
 		rr.Observed["table"] = fmt.Sprintf("%d", spec.Table)
 	}
-	if out, err := e.Command("wg", "show", res.Metadata.Name, "dump"); err == nil && len(bytes.TrimSpace(out)) > 0 {
+	if out, err := runCommand("wg", "show", res.Metadata.Name, "dump"); err == nil && len(bytes.TrimSpace(out)) > 0 {
 		rr.Observed["wgAvailable"] = "true"
 	} else if includePlan {
 		rr.Warnings = append(rr.Warnings, "wg is required to observe WireGuard runtime status")
@@ -933,7 +930,7 @@ func (e *Engine) observeTailscaleNode(res api.Resource, includePlan bool, rr *Re
 		}
 		return
 	}
-	if out, err := e.Command("tailscale", "status", "--json"); err == nil && len(bytes.TrimSpace(out)) > 0 {
+	if out, err := runCommand("tailscale", "status", "--json"); err == nil && len(bytes.TrimSpace(out)) > 0 {
 		rr.Observed["tailscaleStatus"] = "available"
 	} else if includePlan {
 		rr.Warnings = append(rr.Warnings, "tailscale is required to observe Tailscale runtime status")
@@ -987,7 +984,7 @@ func (e *Engine) observeVXLANTunnel(res api.Resource, aliases map[string]string,
 		rr.Observed["bridge"] = spec.Bridge
 		rr.Observed["bridgeIfname"] = bridgeIfName
 	}
-	out, observeErr := e.Command("ip", "-details", "link", "show", "dev", ifname)
+	out, observeErr := runCommand("ip", "-details", "link", "show", "dev", ifname)
 	if observeErr != nil {
 		rr.Phase = "Drifted"
 		rr.Observed["present"] = "false"
@@ -1022,7 +1019,7 @@ func (e *Engine) observeVXLANTunnel(res api.Resource, aliases map[string]string,
 		rr.Warnings = append(rr.Warnings, fmt.Sprintf("%s is not attached to %s", ifname, bridgeIfName))
 	}
 	for _, peer := range spec.Peers {
-		fdb, err := e.Command("bridge", "fdb", "show", "dev", ifname)
+		fdb, err := runCommand("bridge", "fdb", "show", "dev", ifname)
 		if err != nil || !strings.Contains(string(fdb), "00:00:00:00:00:00 dst "+peer) {
 			rr.Phase = "Drifted"
 			rr.Warnings = append(rr.Warnings, fmt.Sprintf("%s flood FDB entry for %s is absent", ifname, peer))
@@ -1532,7 +1529,7 @@ func (e *Engine) observeSysctl(res api.Resource, includePlan bool, rr *ResourceR
 	rr.Observed["runtime"] = fmt.Sprintf("%t", runtime)
 	rr.Observed["persistent"] = fmt.Sprintf("%t", persistent)
 
-	if out, err := e.Command("sysctl", "-n", key); err == nil {
+	if out, err := runCommand("sysctl", "-n", key); err == nil {
 		current := normalizeSysctlValue(string(out))
 		rr.Observed["current"] = current
 		if current != normalizeSysctlValue(desired) {
@@ -1573,7 +1570,7 @@ func (e *Engine) observeSysctlProfile(res api.Resource, includePlan bool, rr *Re
 	rr.Observed["runtime"] = fmt.Sprintf("%t", api.BoolDefault(spec.Runtime, true))
 	rr.Observed["persistent"] = fmt.Sprintf("%t", spec.Persistent)
 	for _, entry := range entries {
-		if out, err := e.Command("sysctl", "-n", entry.Key); err == nil {
+		if out, err := runCommand("sysctl", "-n", entry.Key); err == nil {
 			current := normalizeSysctlValue(string(out))
 			rr.Observed[entry.Key] = current
 			if current != normalizeSysctlValue(entry.Value) && !entry.Optional {
@@ -1857,7 +1854,7 @@ func dhcpClientAvailable(client string) bool {
 func (e *Engine) observeHostname(res api.Resource, osNet osNetworking, includePlan bool, rr *ResourceResult) {
 	desired := stringSpec(res, "hostname")
 	rr.Observed["desired"] = desired
-	if out, err := e.Command("hostname"); err == nil {
+	if out, err := runCommand("hostname"); err == nil {
 		current := strings.TrimSpace(string(out))
 		rr.Observed["current"] = current
 		if current != desired {
@@ -1879,9 +1876,6 @@ type osNetworking struct {
 }
 
 func (e *Engine) detectOSNetworking() osNetworking {
-	if e.OSNetworking != nil {
-		return *e.OSNetworking
-	}
 	var osNet osNetworking
 	if _, err := os.Stat("/etc/cloud/cloud.cfg"); err == nil {
 		osNet.CloudInit = true
@@ -1894,16 +1888,16 @@ func (e *Engine) detectOSNetworking() osNetworking {
 			}
 		}
 	}
-	if _, err := e.Command("networkctl", "list", "--no-pager"); err == nil {
+	if _, err := runCommand("networkctl", "list", "--no-pager"); err == nil {
 		osNet.Networkd = true
 	}
 	return osNet
 }
 
 func (e *Engine) interfaceState(ifname string) (bool, bool) {
-	out, err := e.Command("ip", "-brief", "link", "show", "dev", ifname)
+	out, err := runCommand("ip", "-brief", "link", "show", "dev", ifname)
 	if err != nil {
-		out, err = e.Command("ifconfig", ifname)
+		out, err = runCommand("ifconfig", ifname)
 		if err != nil {
 			return false, false
 		}
@@ -1921,9 +1915,9 @@ func (e *Engine) hasAddress(ifname, address, family string) bool {
 	if err != nil || (family == "-4" && !want.Addr().Is4()) || (family == "-6" && !want.Addr().Is6()) {
 		return false
 	}
-	out, err := e.Command("ip", "-brief", family, "addr", "show", "dev", ifname)
+	out, err := runCommand("ip", "-brief", family, "addr", "show", "dev", ifname)
 	if err != nil {
-		out, err = e.Command("ifconfig", ifname)
+		out, err = runCommand("ifconfig", ifname)
 		return err == nil && ifconfigHasAddress(string(out), ifname, want)
 	}
 	for _, line := range strings.Split(string(out), "\n") {
@@ -1990,7 +1984,7 @@ func ifconfigHasAddress(output, ifname string, want netip.Prefix) bool {
 }
 
 func (e *Engine) defaultIPv4Route() (gateway, dev, proto string) {
-	out, err := e.Command("ip", "-4", "route", "show", "default")
+	out, err := runCommand("ip", "-4", "route", "show", "default")
 	if err != nil {
 		return "", "", ""
 	}
@@ -2017,9 +2011,9 @@ func (e *Engine) defaultIPv4Route() (gateway, dev, proto string) {
 func (e *Engine) observedIPv4Prefixes(policies map[string]interfacePolicy) []ipv4Assignment {
 	var assignments []ipv4Assignment
 	for name, policy := range policies {
-		out, err := e.Command("ip", "-brief", "-4", "addr", "show", "dev", policy.IfName)
+		out, err := runCommand("ip", "-brief", "-4", "addr", "show", "dev", policy.IfName)
 		if err != nil {
-			out, err = e.Command("ifconfig", policy.IfName)
+			out, err = runCommand("ifconfig", policy.IfName)
 			if err != nil {
 				continue
 			}
