@@ -602,9 +602,10 @@ func (c IPv4PolicyRouteController) applyDefaultRoutePolicies(ctx context.Context
 			return err
 		}
 		connectionCandidates := healthy
-		if role.publicationPending {
-			// Existing clients can still send to the shared MAC while the
-			// promoted node is preparing its deferred gateway. Preserve imported
+		if role.preserveReplicaMarks {
+			// Existing clients can send to the shared MAC as soon as VMAC
+			// activation starts, before the master notification is observed.
+			// Prepare standby rules for that interval too. Preserve imported
 			// marks until admission so temporary local unavailability cannot
 			// move those NAT bindings to a different AFTR.
 			connectionCandidates = spec.Candidates
@@ -683,9 +684,9 @@ func (g egressVRRPMasterGate) reference() string {
 }
 
 type egressRoleObservation struct {
-	role               string
-	transitionAt       string
-	publicationPending bool
+	role                 string
+	transitionAt         string
+	preserveReplicaMarks bool
 }
 
 func (c IPv4PolicyRouteController) readHADatapathRole(policyName string) (egressRoleObservation, error) {
@@ -704,9 +705,9 @@ func (c IPv4PolicyRouteController) readHADatapathRole(policyName string) (egress
 	role := cleanStatusString(status["role"])
 	published, confirmed := status["vipPublicationConfirmed"].(bool)
 	return egressRoleObservation{
-		role:               role,
-		transitionAt:       cleanStatusString(status["lastRoleTransitionAt"]),
-		publicationPending: role == "master" && confirmed && !published,
+		role:                 role,
+		transitionAt:         cleanStatusString(status["lastRoleTransitionAt"]),
+		preserveReplicaMarks: role != "master" || !confirmed || !published,
 	}, nil
 }
 

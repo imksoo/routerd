@@ -479,3 +479,14 @@ an address lifetime exceeding current authority remain withdrawal conditions.
 The local regression test forces that read ordering and checks that no tunnel
 delete is issued. The native gate still requires unchanged tunnel indices and
 original application flows through an actual peer-driven renewal.
+
+### Marks before promotion notification
+
+A client with the shared gateway MAC cached can transmit as soon as the VMAC
+comes up, before the daemon observes MASTER. Standby default-mark rules must
+already preserve declared replica marks. Retain that protection through pending
+promotion until VIP publication is confirmed; normal health-based remapping
+resumes after publication. New unmarked flows still use the available candidate.
+The regression test covers BACKUP, unpublished MASTER and published MASTER.
+Native qualification must still check original translated tuples and persistent
+TCP connections in both handover directions.
