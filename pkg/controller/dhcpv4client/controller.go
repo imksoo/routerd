@@ -260,6 +260,12 @@ func (c Controller) applyLease(ctx context.Context, name string, current, next m
 			return err
 		}
 	}
+	oldIfname := mapString(current, "ifname")
+	if oldIfname != "" && oldIfname != ifname {
+		if err := c.restoreStaticDNS(ctx, current, next); err != nil {
+			return err
+		}
+	}
 	previousAddress := mapString(current, "appliedAddress")
 	if previousAddress != "" && (previousAddress != wantedAddress || mapString(current, "ifname") != ifname) {
 		if err := c.removeLeaseAddress(ctx, current, next); err != nil {
@@ -322,11 +328,15 @@ func (c Controller) applyLease(ctx context.Context, name string, current, next m
 			if err := applyDNS(ctx, platform.CurrentOS(), command, ifname, defaultString(c.ResolvConfPath, "/etc/resolv.conf"), name, servers, domains, c.DryRun); err != nil {
 				return err
 			}
-		} else if err := c.restoreStaticDNS(ctx, current, next); err != nil {
+		} else if oldIfname == ifname {
+			if err := c.restoreStaticDNS(ctx, current, next); err != nil {
+				return err
+			}
+		}
+	} else if oldIfname == ifname {
+		if err := c.restoreStaticDNS(ctx, current, next); err != nil {
 			return err
 		}
-	} else if err := c.restoreStaticDNS(ctx, current, next); err != nil {
-		return err
 	}
 	next["applyMode"] = "active"
 	return nil
