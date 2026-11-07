@@ -190,12 +190,6 @@ const (
 	doctorReconcileWarnThreshold = 1
 )
 
-// reconcileStatusFetcher allows tests to stub the controllers fetch.
-var reconcileStatusFetcher = fetchReconcileControllers
-
-var doctorRunDiagnosticCommand = runDiagnosticCommand
-var doctorCurrentOS = platform.CurrentOS
-
 // doctorRuntimeGoroutineWarn and doctorRuntimeFDWarnPercent are conservative,
 // observational thresholds. They never fail the run; they only flag footprints
 // worth a closer look during a resource-leak investigation.
@@ -405,7 +399,7 @@ func (r doctorRunner) doctorIncidentDump() doctorIncidentReport {
 }
 
 func collectDoctorIncidentCommands(r doctorRunner) []diagnoseCommandCheck {
-	if doctorCurrentOS() == platform.OSFreeBSD {
+	if platform.CurrentOS() == platform.OSFreeBSD {
 		ctx, cancel := context.WithTimeout(context.Background(), r.opts.Timeout)
 		defer cancel()
 		commands := []struct {
@@ -424,11 +418,11 @@ func collectDoctorIncidentCommands(r doctorRunner) []diagnoseCommandCheck {
 		}
 		out := make([]diagnoseCommandCheck, 0, len(commands))
 		for _, command := range commands {
-			out = append(out, doctorRunDiagnosticCommand(ctx, command.label, command.cmd, command.args...))
+			out = append(out, runDiagnosticCommand(ctx, command.label, command.cmd, command.args...))
 		}
 		return out
 	}
-	if doctorCurrentOS() != platform.OSLinux {
+	if platform.CurrentOS() != platform.OSLinux {
 		return []diagnoseCommandCheck{{
 			Name:  "host command snapshots",
 			OK:    false,
@@ -455,7 +449,7 @@ func collectDoctorIncidentCommands(r doctorRunner) []diagnoseCommandCheck {
 	}
 	out := make([]diagnoseCommandCheck, 0, len(commands))
 	for _, command := range commands {
-		out = append(out, doctorRunDiagnosticCommand(ctx, command.label, command.cmd, command.args...))
+		out = append(out, runDiagnosticCommand(ctx, command.label, command.cmd, command.args...))
 	}
 	return out
 }
@@ -1026,7 +1020,7 @@ func (r doctorRunner) doctorSAMOwnerTableRouteChecks(pool string, poolSpec api.M
 	}
 	var checks []doctorCheck
 	ctx := context.Background()
-	snapshotCommand := doctorRunDiagnosticCommand(ctx, "ip -4 route show table main", "ip", "-4", "route", "show", "table", "main")
+	snapshotCommand := runDiagnosticCommand(ctx, "ip -4 route show table main", "ip", "-4", "route", "show", "table", "main")
 	actualRoutes := parseDoctorIPv4MainRoutes(snapshotCommand.Stdout)
 	if !snapshotCommand.OK {
 		checks = append(checks, doctorCheck{Area: "sam", Name: label + " actual FIB snapshot", Status: doctorWarn, Detail: stringutil.FirstNonEmpty(snapshotCommand.Error, oneLine(snapshotCommand.Output), "main table route snapshot unavailable"), Remedy: "inspect ip -4 route show table main"})
@@ -1046,7 +1040,7 @@ func (r doctorRunner) doctorSAMOwnerTableRouteChecks(pool string, poolSpec api.M
 		}
 		name := label + " " + address
 		actual := actualRoutes[normalizeDoctorIPv4RoutePrefix(address)]
-		command := doctorRunDiagnosticCommand(ctx, "ip route get "+ip, "ip", "-4", "route", "get", ip)
+		command := runDiagnosticCommand(ctx, "ip route get "+ip, "ip", "-4", "route", "get", ip)
 		if !command.OK {
 			if badLine := doctorSAMForbiddenLocalOwnerRoute(actual); badLine != "" {
 				checks = append(checks, doctorCheck{Area: "sam", Name: name, Status: doctorFail, Detail: appendDoctorDetail("expected endpoint-owned local route, actual "+badLine, "actual FIB snapshot has stale BGP/SAM route and route get failed"), Remedy: "reconcile routerd and remove stale remote /32 FIB state; expected endpoint-owned local/cloud route to win"})
@@ -1577,7 +1571,7 @@ func (r doctorRunner) doctorIPv4RouteStatusDriftCheck(name string, status map[st
 	if !r.opts.Host {
 		return doctorHostSkipped("routes", label)
 	}
-	if doctorCurrentOS() != platform.OSLinux {
+	if platform.CurrentOS() != platform.OSLinux {
 		return doctorCheck{Area: "routes", Name: label, Status: doctorSkip, Detail: "host route drift checks require Linux iproute2"}
 	}
 	destination := stringutil.FirstNonEmpty(stringStatus(status, "destination"), "0.0.0.0/0")
@@ -1586,7 +1580,7 @@ func (r doctorRunner) doctorIPv4RouteStatusDriftCheck(name string, status map[st
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), r.opts.Timeout)
 	defer cancel()
-	command := doctorRunDiagnosticCommand(ctx, "ip -4 route show "+destination, "ip", "-4", "route", "show", destination)
+	command := runDiagnosticCommand(ctx, "ip -4 route show "+destination, "ip", "-4", "route", "show", destination)
 	if !command.OK {
 		return doctorCheck{Area: "routes", Name: label, Status: doctorFail, Detail: stringutil.FirstNonEmpty(command.Error, oneLine(command.Output), "route snapshot unavailable"), Remedy: "inspect ip -4 route show " + destination}
 	}
@@ -1857,7 +1851,7 @@ func doctorPluginLastResultCheck(lister routerstate.DynamicConfigPartLister, nam
 }
 
 func (r doctorRunner) doctorReconcile() []doctorCheck {
-	controllers, err := reconcileStatusFetcher(r.opts.Socket, r.opts.Timeout)
+	controllers, err := fetchReconcileControllers(r.opts.Socket, r.opts.Timeout)
 	if err != nil {
 		return []doctorCheck{{Area: "reconcile", Name: "controllers", Status: doctorSkip, Detail: "routerd status socket unavailable: " + err.Error()}}
 	}
@@ -2085,7 +2079,7 @@ func (r doctorRunner) doctorWAN() []doctorCheck {
 // doctorDefaultRouteCommand selects a read-only route-table query for the
 // current host. FreeBSD route(8) is used instead of the Linux-only ip tool.
 func doctorDefaultRouteCommand(family string) (label, command string, args []string) {
-	if doctorCurrentOS() == platform.OSFreeBSD {
+	if platform.CurrentOS() == platform.OSFreeBSD {
 		if family == "ipv6" {
 			return "default route ipv6", "route", []string{"-n", "get", "-inet6", "default"}
 		}
@@ -2297,7 +2291,7 @@ func (r doctorRunner) doctorNAT() []doctorCheck {
 	if r.opts.Host {
 		ctx, cancel := context.WithTimeout(context.Background(), r.opts.Timeout)
 		defer cancel()
-		hostOS := doctorCurrentOS()
+		hostOS := platform.CurrentOS()
 		if hostOS == platform.OSFreeBSD {
 			if len(rules) > 0 {
 				checks = append(checks, doctorFreeBSDPFStatus(ctx, "nat"))
@@ -2352,7 +2346,7 @@ func doctorConntrackdTCPLiberalCheck(ctx context.Context, resourceCount int) doc
 		name = "NAT44SessionSync conntrackd tcp_be_liberal"
 		key  = "net.netfilter.nf_conntrack_tcp_be_liberal"
 	)
-	command := doctorRunDiagnosticCommand(ctx, "sysctl "+key, "sysctl", "-n", key)
+	command := runDiagnosticCommand(ctx, "sysctl "+key, "sysctl", "-n", key)
 	detail := fmt.Sprintf("resources=%d", resourceCount)
 	if command.OK && strings.TrimSpace(command.Stdout) == "1" {
 		return doctorCheck{Area: "nat", Name: name, Status: doctorPass, Detail: appendDoctorDetail(detail, "value=1")}
@@ -2389,7 +2383,7 @@ func (r doctorRunner) doctorFirewall() []doctorCheck {
 	if r.opts.Host {
 		ctx, cancel := context.WithTimeout(context.Background(), r.opts.Timeout)
 		defer cancel()
-		if doctorCurrentOS() == platform.OSFreeBSD {
+		if platform.CurrentOS() == platform.OSFreeBSD {
 			checks = append(checks,
 				doctorFreeBSDPFStatus(ctx, "firewall"),
 				doctorCommandStatus("firewall", runDiagnosticCommand(ctx, "pfctl rules", "pfctl", "-sr"), doctorWarn, "inspect read-only PF rules"),
@@ -2420,8 +2414,8 @@ func (r doctorRunner) doctorFirewall() []doctorCheck {
 
 func (r doctorRunner) doctorFirewallLoggerRuntimeCheck(ctx context.Context) doctorCheck {
 	name := "routerd-firewall-logger runtime"
-	if doctorCurrentOS() == platform.OSFreeBSD {
-		process := doctorRunDiagnosticCommand(ctx, "pgrep routerd-firewall-logger", "pgrep", "-f", "routerd-firewall-logger")
+	if platform.CurrentOS() == platform.OSFreeBSD {
+		process := runDiagnosticCommand(ctx, "pgrep routerd-firewall-logger", "pgrep", "-f", "routerd-firewall-logger")
 		if !process.OK {
 			return doctorCheck{Area: "firewall", Name: name, Status: doctorWarn, Detail: stringutil.FirstNonEmpty(process.Error, oneLine(process.Output), "routerd-firewall-logger process is not running"), Remedy: "inspect routerd_firewall_logger rc.d service and pflog configuration"}
 		}
@@ -2433,13 +2427,13 @@ func (r doctorRunner) doctorFirewallLoggerRuntimeCheck(ctx context.Context) doct
 		if pid == "" {
 			return doctorCheck{Area: "firewall", Name: name, Status: doctorWarn, Detail: "pgrep returned no logger pid", Remedy: "inspect routerd_firewall_logger rc.d service"}
 		}
-		files := doctorRunDiagnosticCommand(ctx, "procstat logger files", "procstat", "-f", pid)
+		files := runDiagnosticCommand(ctx, "procstat logger files", "procstat", "-f", pid)
 		if !files.OK {
 			return doctorCheck{Area: "firewall", Name: name, Status: doctorWarn, Detail: stringutil.FirstNonEmpty(files.Error, oneLine(files.Output), "procstat could not inspect logger"), Remedy: "inspect logger process permissions and open files"}
 		}
 		return doctorCheck{Area: "firewall", Name: name, Status: doctorPass, Detail: "pid=" + pid + "; " + oneLine(files.Output)}
 	}
-	if doctorCurrentOS() != platform.OSLinux {
+	if platform.CurrentOS() != platform.OSLinux {
 		return doctorCheck{Area: "firewall", Name: name, Status: doctorSkip, Detail: "firewall logger process I/O check is Linux-only"}
 	}
 	command := runDiagnosticCommand(ctx, "systemctl show routerd-firewall-logger", "systemctl", "show", "routerd-firewall-logger.service", "--property=ActiveState", "--property=MainPID")
@@ -2546,7 +2540,7 @@ func doctorProcWriteBytes(pid int) (uint64, bool) {
 
 func (r doctorRunner) doctorStaleNftTablesCheck(ctx context.Context) doctorCheck {
 	name := "stale routerd nft tables"
-	if doctorCurrentOS() != platform.OSLinux {
+	if platform.CurrentOS() != platform.OSLinux {
 		return doctorCheck{Area: "firewall", Name: name, Status: doctorSkip, Detail: "nftables host table check is Linux-only"}
 	}
 	expected, err := expectedRouterdNftTables(r.router)
@@ -2714,10 +2708,10 @@ func doctorEventJournalStatsCheck(stats routerstate.EventJournalStats) doctorChe
 }
 
 func doctorTempDirPermissionsCheck(ctx context.Context) doctorCheck {
-	if doctorCurrentOS() != platform.OSLinux {
+	if platform.CurrentOS() != platform.OSLinux {
 		return doctorCheck{Area: "disk", Name: "temporary directory permissions", Status: doctorSkip, Detail: "Linux host check not available on this OS"}
 	}
-	command := doctorRunDiagnosticCommand(ctx, "stat temporary directories", "env", "LC_ALL=C", "stat", "-c", "%a|%u|%g|%A|%F|%n", "/tmp", "/var/tmp")
+	command := runDiagnosticCommand(ctx, "stat temporary directories", "env", "LC_ALL=C", "stat", "-c", "%a|%u|%g|%A|%F|%n", "/tmp", "/var/tmp")
 	if !command.OK {
 		return doctorCheck{Area: "disk", Name: command.Name, Status: doctorWarn, Detail: stringutil.FirstNonEmpty(command.Error, command.Output), Remedy: "inspect /tmp and /var/tmp permissions manually"}
 	}
