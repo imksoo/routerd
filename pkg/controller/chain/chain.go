@@ -3102,10 +3102,6 @@ func (r *Runner) warmDaemonStatuses(ctx context.Context, controller DaemonStatus
 	}
 }
 
-func (r *Runner) superviseClientDaemons(ctx context.Context, logger *slog.Logger) {
-	r.reconcileSupervisedDaemonSpecs(ctx, logger, r.clientDaemonSpecs(r.currentRouter()))
-}
-
 func (r *Runner) reconcileSupervisedClientDaemons(ctx context.Context, router *api.Router, logger *slog.Logger) {
 	if !r.Opts.SuperviseClientDaemons {
 		return
@@ -3982,34 +3978,6 @@ func listFreeBSDSupervisedDaemonProcesses() []supervisedDaemonProcess {
 
 func freeBSDSupervisedDaemonPSCommand() *exec.Cmd {
 	return exec.Command("ps", "-axww", "-o", "pid=", "-o", "command=")
-}
-
-func routerdDaemonCmdlineMatches(args []string, binary, resourceName string) bool {
-	if len(args) == 0 || filepath.Base(args[0]) != binary {
-		return false
-	}
-	hasDaemon := false
-	for _, arg := range args[1:] {
-		if arg == "daemon" {
-			hasDaemon = true
-			break
-		}
-	}
-	if !hasDaemon {
-		return false
-	}
-	for i := 1; i < len(args)-1; i++ {
-		if args[i] == "--resource" && args[i+1] == resourceName {
-			return true
-		}
-	}
-	prefix := "--resource="
-	for _, arg := range args[1:] {
-		if strings.TrimPrefix(arg, prefix) != arg && strings.TrimPrefix(arg, prefix) == resourceName {
-			return true
-		}
-	}
-	return false
 }
 
 // routerdDaemonCommandMatches intentionally requires the opaque owner token
