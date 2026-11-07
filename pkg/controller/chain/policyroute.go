@@ -1493,19 +1493,20 @@ func (c IPv4PolicyRouteController) ensureFwmarkRule(ctx context.Context, priorit
 	priorityText := fmt.Sprintf("%d", priority)
 	markText := fmt.Sprintf("0x%x", mark)
 	tableText := fmt.Sprintf("%d", table)
-	if out, err := exec.CommandContext(ctx, "ip", "-4", "rule", "show", "priority", priorityText).CombinedOutput(); err == nil {
-		line := string(out)
-		if strings.Contains(line, "fwmark "+markText) && strings.Contains(line, "lookup "+tableText) {
-			return nil
-		}
-	}
 	for {
 		out, err := exec.CommandContext(ctx, "ip", "-4", "rule", "show", "priority", priorityText).CombinedOutput()
-		if err != nil || strings.TrimSpace(string(out)) == "" {
+		if err != nil {
+			return fmt.Errorf("ip -4 rule show priority %s: %w: %s", priorityText, err, strings.TrimSpace(string(out)))
+		}
+		fields := strings.Fields(string(out))
+		if len(fields) == 0 {
 			break
 		}
-		if err := exec.CommandContext(ctx, "ip", "-4", "rule", "del", "priority", priorityText).Run(); err != nil {
-			break
+		if len(fields) == 7 && fields[0] == priorityText+":" && fields[1] == "from" && fields[2] == "all" && fields[3] == "fwmark" && fields[4] == markText && fields[5] == "lookup" && fields[6] == tableText {
+			return nil
+		}
+		if out, err := exec.CommandContext(ctx, "ip", "-4", "rule", "del", "priority", priorityText).CombinedOutput(); err != nil {
+			return fmt.Errorf("ip -4 rule del priority %s: %w: %s", priorityText, err, strings.TrimSpace(string(out)))
 		}
 	}
 	if out, err := exec.CommandContext(ctx, "ip", "-4", "rule", "add", "priority", priorityText, "fwmark", markText, "table", tableText).CombinedOutput(); err != nil {
