@@ -31,6 +31,7 @@ import (
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/render"
 	"github.com/imksoo/routerd/pkg/resourcequery"
+	routerstate "github.com/imksoo/routerd/pkg/state"
 	"github.com/imksoo/routerd/pkg/sysctlprofile"
 )
 
@@ -818,6 +819,13 @@ func (e *Engine) observeIPv6DelegatedAddress(res api.Resource, aliases map[strin
 	for _, address := range addresses {
 		if actual, err := netip.ParsePrefix(address.String()); err == nil && actual == want {
 			rr.Observed["addressPresent"] = "true"
+			if store, ok := e.Store.(routerstate.Store); ok && !spec.SendRA && !spec.Announce {
+				lease, found := routerstate.PDLeaseFromStore(store, "ipv6PrefixDelegation."+spec.PrefixDelegation)
+				if found && lease.CurrentPrefix == prefix && lease.HasFreshTransactionEvidence(time.Now()) {
+					rr.Phase = "Healthy"
+					delete(rr.Observed, "reason")
+				}
+			}
 			return
 		}
 	}
