@@ -63,7 +63,7 @@ func TestOriginalObservationTimePersistsInActualJournalAndZeroHoldDoesNotReserve
 	}
 	at := time.Date(2026, 10, 1, 1, 2, 3, 456789, time.UTC)
 	e := dhcpeventqueue.Event{ObservedAt: at, Lease: controlapi.DHCPLeaseEventRequest{Action: "removed", MAC: "02:00:00:00:00:42", IP: "192.0.2.42"}}
-	if err := processDHCPLeaseEvent(context.Background(), e, stickyPath, 0, bus.NewWithStore(store)); err != nil {
+	if err := processDHCPLeaseEventDisposition(context.Background(), e, stickyPath, 0, bus.NewWithStore(store), "", false); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {
