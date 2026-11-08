@@ -3,10 +3,8 @@
 package main
 
 import (
-	"encoding/json"
 	"path/filepath"
 	"reflect"
-	"strings"
 	"testing"
 	"time"
 
@@ -17,35 +15,6 @@ import (
 	"github.com/imksoo/routerd/pkg/platform"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
-
-func TestFaultApplySnapshotManifestDoesNotExposePayload(t *testing.T) {
-	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "snapshot.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	now := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
-	if err := store.UpsertDynamicConfigPart(routerstate.DynamicConfigPartRecord{Source: "fixture", Generation: 7, Digest: "sha256:fixture", ObservedAt: now.Add(-time.Minute), ExpiresAt: now, Status: "active", ResourcesJSON: `[{"password":"payload-secret"}]`}); err != nil {
-		t.Fatal(err)
-	}
-	manifest, err := describeApplySnapshot(&api.Router{Metadata: api.ObjectMeta{Name: "candidate"}}, store, now, platform.OSLinux)
-	if err != nil {
-		t.Fatal(err)
-	}
-	encoded, err := json.Marshal(manifest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(encoded), "payload-secret") || strings.Contains(string(encoded), "resourcesJson") {
-		t.Fatal("manifest disclosed payload")
-	}
-	if manifest.CanonicalHash == "" || !manifest.EvaluatedAt.Equal(now) || manifest.TargetOS != platform.OSLinux || len(manifest.DynamicParts) != 1 || len(manifest.Inputs) != 3 {
-		t.Fatalf("incomplete provenance: %+v", manifest)
-	}
-	if manifest.DynamicParts[0].Generation != 7 || !manifest.DynamicParts[0].ExpiresAt.Equal(now) {
-		t.Fatalf("manifest refreshed expired part: %+v", manifest.DynamicParts)
-	}
-}
 
 // Exercise the real SQLite WAL and real dynamic planner, at the same evaluation
 // instant. A missing input must not quietly turn a rejected plan into success.

@@ -594,7 +594,6 @@ func runApplyChainOnceWithOutcome(ctx context.Context, router *api.Router, opts 
 }
 
 func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts applyOptions, stdout io.Writer, logger *eventlog.Logger, outcome *applyAttemptOutcome) (_ *apply.Result, err error) {
-	candidate := router
 	var optionWarnings []string
 	var configYAML string
 	if !opts.DryRun {
@@ -636,21 +635,6 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 		return nil, err
 	}
 	defer cleanup()
-	if opts.DryRun {
-		outcome.Stage = "snapshot"
-		manifest, err := describeApplySnapshot(candidate, stateStore, time.Now().UTC(), platformDefaults.OS)
-		if err != nil {
-			return nil, err
-		}
-		if logger != nil {
-			data, err := json.Marshal(manifest)
-			if err != nil {
-				return nil, err
-			}
-			logger.Emit(eventlog.LevelDebug, "apply", "dry-run evaluation inputs acquired", map[string]string{"manifest": string(data)})
-		}
-	}
-
 	effectiveRouter := filterRouterByWhen(router, stateStore)
 	var generation int64
 	generationCreated := false
