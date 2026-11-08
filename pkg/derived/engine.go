@@ -42,7 +42,6 @@ type Controller struct {
 	Bus      *bus.Bus
 	Store    Store
 	Interval time.Duration
-	Now      func() time.Time
 	Logger   *slog.Logger
 
 	mu    sync.Mutex
@@ -57,14 +56,6 @@ type derivedState struct {
 	timer             *time.Timer
 	lastAssertedAt    time.Time
 	lastRetractedAt   time.Time
-}
-
-type Reader interface {
-	Value(path string) (string, bool)
-}
-
-type Engine interface {
-	Reconcile(ctx context.Context, resource api.Resource, reader Reader) ([]daemonapi.DaemonEvent, error)
 }
 
 func (c *Controller) Start(ctx context.Context) {
@@ -396,18 +387,7 @@ func (c *Controller) cancelPending(state *derivedState) {
 	state.pendingTransition = PendingNone
 }
 
-func (c *Controller) StopTimers() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	for _, state := range c.state {
-		c.cancelPending(state)
-	}
-}
-
 func (c *Controller) now() time.Time {
-	if c.Now != nil {
-		return c.Now()
-	}
 	return time.Now().UTC()
 }
 
