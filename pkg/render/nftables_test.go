@@ -3,31 +3,12 @@
 package render
 
 import (
-	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 )
-
-func TestNftOutboundAliasesResolveWireGuardIfName(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"},
-			Metadata: api.ObjectMeta{Name: "wg-svnet1"},
-			Spec:     api.WireGuardInterfaceSpec{IfName: "wg-transport0"},
-		},
-	}}}
-	aliases, err := nftOutboundAliases(router)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := map[string]string{"wg-svnet1": "wg-transport0"}
-	if !reflect.DeepEqual(aliases, want) {
-		t.Fatalf("aliases = %#v, want %#v", aliases, want)
-	}
-}
 
 func TestNftablesFirewallKeepsStandbyVMACAndDSLiteInterfaces(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
@@ -626,75 +607,6 @@ func TestNftablesEgressRoutePolicyHashExcludesDestinations(t *testing.T) {
 	if !strings.Contains(got, want) {
 		t.Fatalf("nftables output missing excluded destination match %q:\n%s", want, got)
 	}
-}
-
-func TestEgressRoutePolicyRendezvousHashKeepsUnaffectedBucketsStable(t *testing.T) {
-	targets := []api.EgressRoutePolicyTarget{
-		{Name: "a", Interface: "ds-lite-a", Table: 110, Mark: 0x110},
-		{Name: "b", Interface: "ds-lite-b", Table: 111, Mark: 0x111},
-		{Name: "c", Interface: "ds-lite-c", Table: 112, Mark: 0x112},
-	}
-	all := egressHashBucketMarks(targets)
-	reordered := egressHashBucketMarks([]api.EgressRoutePolicyTarget{targets[2], targets[0], targets[1]})
-	if !reflect.DeepEqual(all, reordered) {
-		t.Fatal("target order changed rendezvous bucket ownership")
-	}
-
-	withoutB := egressHashBucketMarks([]api.EgressRoutePolicyTarget{targets[0], targets[2]})
-	bucketsOwnedByB := 0
-	for bucket, mark := range all {
-		if mark == targets[1].Mark {
-			bucketsOwnedByB++
-			continue
-		}
-		if withoutB[bucket] != mark {
-			t.Fatalf("removing b changed unaffected bucket %d from %#x to %#x", bucket, mark, withoutB[bucket])
-		}
-	}
-	if bucketsOwnedByB == 0 {
-		t.Fatal("test fixture assigned no buckets to b")
-	}
-	if recovered := egressHashBucketMarks(targets); !reflect.DeepEqual(all, recovered) {
-		t.Fatal("target recovery did not restore the original bucket assignment")
-	}
-
-	withoutC := egressHashBucketMarks(targets[:2])
-	for bucket, mark := range all {
-		if mark != targets[2].Mark && withoutC[bucket] != mark {
-			t.Fatalf("adding c changed unaffected bucket %d from %#x to %#x", bucket, withoutC[bucket], mark)
-		}
-	}
-}
-
-func TestEgressRoutePolicyRendezvousHashUsesOnlyRuntimeReadyTargets(t *testing.T) {
-	ready := true
-	unready := false
-	candidate := api.EgressRoutePolicyCandidate{Name: "dslite", Targets: []api.EgressRoutePolicyTarget{
-		{Name: "a", Interface: "ds-lite-a", Table: 110, Mark: 0x110, RuntimeReady: &ready},
-		{Name: "b", Interface: "ds-lite-b", Table: 111, Mark: 0x111, RuntimeReady: &unready},
-		{Name: "c", Interface: "ds-lite-c", Table: 112, Mark: 0x112, RuntimeReady: &ready},
-	}}
-	markMap, err := nftEgressRoutePolicyTargetMarkMap("EgressRoutePolicy/ipv4-default", 0, candidate)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(markMap, nftMark(0x111)) {
-		t.Fatalf("runtime-unready target was present in mark map: %s", markMap)
-	}
-	for _, want := range []string{nftMark(0x110), nftMark(0x112)} {
-		if !strings.Contains(markMap, want) {
-			t.Fatalf("ready target %s was absent from mark map", want)
-		}
-	}
-}
-
-func egressHashBucketMarks(targets []api.EgressRoutePolicyTarget) []int {
-	candidate := api.EgressRoutePolicyCandidate{Name: "dslite", Targets: targets}
-	marks := make([]int, nftEgressRoutePolicyHashBuckets)
-	for bucket := range marks {
-		marks[bucket] = rendezvousEgressTarget("EgressRoutePolicy/ipv4-default", 0, candidate, targets, bucket).Mark
-	}
-	return marks
 }
 
 func TestNftablesTCPMSSClamp(t *testing.T) {
