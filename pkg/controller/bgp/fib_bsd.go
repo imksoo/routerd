@@ -86,13 +86,8 @@ func (s *freeBSDFIBSyncer) SyncBGP(ctx context.Context, routes []FIBRoute) (FIBS
 		if localHostPrefixes[route.Prefix] {
 			continue
 		}
-		if route.PreferredSource == "" {
-			route.PreferredSource = inferFreeBSDPreferredSource(route.Prefix, localAddresses)
-		}
 		if route.PreferredSource != "" && !freeBSDPreferredSourceIsLocal(route.PreferredSource, localAddresses) {
-			result.PreferredSourceSkipped[route.Prefix] = true
-			result.PreferredSourceSkippedReason[route.Prefix] = "LocalAddressMissing"
-			route.PreferredSource = ""
+			result.Unsupported[route.Prefix] = "PreferredSourceNotLocal"
 		}
 		if route.RetainOnMissing {
 			s.retainOnMissing[route.Prefix] = true
@@ -109,6 +104,9 @@ func (s *freeBSDFIBSyncer) SyncBGP(ctx context.Context, routes []FIBRoute) (FIBS
 	sort.Strings(keys)
 	for _, prefix := range keys {
 		route := desired[prefix]
+		if result.Unsupported[prefix] != "" {
+			continue
+		}
 		current, found := s.installed[prefix]
 		if found && s.sourceKnown[prefix] && equalFreeBSDFIBRoute(current, route) {
 			// RetainOnMissing is controller metadata, not visible in netstat.
@@ -158,13 +156,11 @@ func (s *freeBSDFIBSyncer) SyncBGP(ctx context.Context, routes []FIBRoute) (FIBS
 
 func newFreeBSDFIBSyncResult() FIBSyncResult {
 	return FIBSyncResult{
-		Installed:                    map[string]bool{},
-		Unsupported:                  map[string]string{},
-		Retained:                     map[string]bool{},
-		RetainedNextHops:             map[string][]string{},
-		PreferredSource:              map[string]string{},
-		PreferredSourceSkipped:       map[string]bool{},
-		PreferredSourceSkippedReason: map[string]string{},
+		Installed:        map[string]bool{},
+		Unsupported:      map[string]string{},
+		Retained:         map[string]bool{},
+		RetainedNextHops: map[string][]string{},
+		PreferredSource:  map[string]string{},
 	}
 }
 
@@ -186,28 +182,6 @@ func freeBSDLocalHostPrefixes(addresses []freeBSDLocalAddress) map[string]bool {
 		out[netip.PrefixFrom(local.Address, bits).String()] = true
 	}
 	return out
-}
-
-func inferFreeBSDPreferredSource(routePrefix string, addresses []freeBSDLocalAddress) string {
-	prefix, err := netip.ParsePrefix(routePrefix)
-	if err != nil || (!prefix.Addr().Is4() && !prefix.Addr().Is6()) {
-		return ""
-	}
-	var best freeBSDLocalAddress
-	bestBits := -1
-	for _, local := range addresses {
-		if local.Address.Is4() != prefix.Addr().Is4() || local.Address == prefix.Addr() || !local.Prefix.Contains(prefix.Addr()) {
-			continue
-		}
-		if bits := local.Prefix.Bits(); bits > bestBits {
-			best = local
-			bestBits = bits
-		}
-	}
-	if bestBits < 0 {
-		return ""
-	}
-	return best.Address.String()
 }
 
 func freeBSDPreferredSourceIsLocal(value string, addresses []freeBSDLocalAddress) bool {

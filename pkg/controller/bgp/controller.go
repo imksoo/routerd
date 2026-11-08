@@ -91,13 +91,11 @@ type FIBRoute struct {
 }
 
 type FIBSyncResult struct {
-	Installed                    map[string]bool
-	Unsupported                  map[string]string
-	Retained                     map[string]bool
-	RetainedNextHops             map[string][]string
-	PreferredSource              map[string]string
-	PreferredSourceSkipped       map[string]bool
-	PreferredSourceSkippedReason map[string]string
+	Installed        map[string]bool
+	Unsupported      map[string]string
+	Retained         map[string]bool
+	RetainedNextHops map[string][]string
+	PreferredSource  map[string]string
 }
 
 const MinPollInterval = 3 * time.Second
@@ -3041,10 +3039,7 @@ func (c *Controller) saveObservedStatuses(routerName string, spec routerapi.BGPR
 				"conditions":           []map[string]any{{"type": "Observed", "status": "True", "reason": "GoBGPStatus"}},
 			}
 			mergeAnyMap(status, c.bfdResetRuntimeStatus())
-			if len(fibResult.PreferredSourceSkipped) > 0 {
-				status["preferredSourceSkipped"] = fibResult.PreferredSourceSkipped
-				status["preferredSourceSkippedReason"] = fibResult.PreferredSourceSkippedReason
-			}
+
 			if fibUnsupported > 0 {
 				status["reason"] = "GoBGPFIBPartial"
 				status["pendingReason"] = "GoBGPFIBPartial"
@@ -4990,13 +4985,11 @@ func normalizeFIBRouteForSignature(route FIBRoute) FIBRoute {
 
 func normalizeFIBSyncResult(result FIBSyncResult) FIBSyncResult {
 	out := FIBSyncResult{
-		Installed:                    map[string]bool{},
-		Unsupported:                  map[string]string{},
-		Retained:                     map[string]bool{},
-		RetainedNextHops:             map[string][]string{},
-		PreferredSource:              map[string]string{},
-		PreferredSourceSkipped:       map[string]bool{},
-		PreferredSourceSkippedReason: map[string]string{},
+		Installed:        map[string]bool{},
+		Unsupported:      map[string]string{},
+		Retained:         map[string]bool{},
+		RetainedNextHops: map[string][]string{},
+		PreferredSource:  map[string]string{},
 	}
 	for prefix, installed := range result.Installed {
 		if normalized := normalizeRoutePrefix(prefix); normalized != "" {
@@ -5023,16 +5016,7 @@ func normalizeFIBSyncResult(result FIBSyncResult) FIBSyncResult {
 			out.PreferredSource[normalized] = strings.TrimSpace(source)
 		}
 	}
-	for prefix, skipped := range result.PreferredSourceSkipped {
-		if normalized := normalizeRoutePrefix(prefix); normalized != "" {
-			out.PreferredSourceSkipped[normalized] = skipped
-		}
-	}
-	for prefix, reason := range result.PreferredSourceSkippedReason {
-		if normalized := normalizeRoutePrefix(prefix); normalized != "" && strings.TrimSpace(reason) != "" {
-			out.PreferredSourceSkippedReason[normalized] = strings.TrimSpace(reason)
-		}
-	}
+
 	return out
 }
 

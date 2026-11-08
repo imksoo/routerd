@@ -47,13 +47,11 @@ func (s *netlinkFIBSyncer) SyncBGP(_ context.Context, routes []FIBRoute) (FIBSyn
 	localAddresses := localIPv4Addresses()
 	localHostPrefixes := localIPv4HostPrefixes(localAddresses)
 	result := FIBSyncResult{
-		Installed:                    map[string]bool{},
-		Unsupported:                  map[string]string{},
-		Retained:                     map[string]bool{},
-		RetainedNextHops:             map[string][]string{},
-		PreferredSource:              map[string]string{},
-		PreferredSourceSkipped:       map[string]bool{},
-		PreferredSourceSkippedReason: map[string]string{},
+		Installed:        map[string]bool{},
+		Unsupported:      map[string]string{},
+		Retained:         map[string]bool{},
+		RetainedNextHops: map[string][]string{},
+		PreferredSource:  map[string]string{},
 	}
 	desired := map[string]FIBRoute{}
 	for _, route := range routes {
@@ -61,13 +59,8 @@ func (s *netlinkFIBSyncer) SyncBGP(_ context.Context, routes []FIBRoute) (FIBSyn
 		if route.Prefix == "" {
 			continue
 		}
-		if route.PreferredSource == "" {
-			route.PreferredSource = inferPreferredSource(route.Prefix, localAddresses)
-		}
 		if route.PreferredSource != "" && !preferredSourceIsLocal(route.PreferredSource) {
-			result.PreferredSourceSkipped[route.Prefix] = true
-			result.PreferredSourceSkippedReason[route.Prefix] = "LocalAddressMissing"
-			route.PreferredSource = ""
+			result.Unsupported[route.Prefix] = "PreferredSourceNotLocal"
 		}
 		if route.RetainOnMissing {
 			s.retainOnMissing[route.Prefix] = true
@@ -84,6 +77,9 @@ func (s *netlinkFIBSyncer) SyncBGP(_ context.Context, routes []FIBRoute) (FIBSyn
 	sort.Strings(keys)
 	for _, key := range keys {
 		route := normalizeFIBRoute(desired[key])
+		if result.Unsupported[key] != "" {
+			continue
+		}
 		if installed, ok := s.installed[key]; ok && equalFIBRoute(installed.FIB, route) {
 			installed.FIB = route
 			s.installed[key] = installed
@@ -185,30 +181,6 @@ func localIPv4HostPrefixes(addresses []localIPv4Address) map[string]bool {
 		}
 	}
 	return out
-}
-
-func inferPreferredSource(routePrefix string, addresses []localIPv4Address) string {
-	prefix, err := netip.ParsePrefix(routePrefix)
-	if err != nil || !prefix.Addr().Is4() {
-		return ""
-	}
-	dst := prefix.Addr()
-	var best localIPv4Address
-	bestBits := -1
-	for _, local := range addresses {
-		if !local.Address.Is4() || local.Address == dst || !local.Prefix.Contains(dst) {
-			continue
-		}
-		bits := local.Prefix.Bits()
-		if bits > bestBits {
-			best = local
-			bestBits = bits
-		}
-	}
-	if bestBits < 0 {
-		return ""
-	}
-	return best.Address.String()
 }
 
 func preferredSourceIsLocal(value string) bool {

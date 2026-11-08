@@ -71,25 +71,6 @@ func TestFilterLocalHostFIBRoutes(t *testing.T) {
 	}
 }
 
-func TestInferPreferredSourceUsesConnectedAddressForRemoteMobilityPrefix(t *testing.T) {
-	got := inferPreferredSource("10.77.60.12/32", []localIPv4Address{
-		{Address: netip.MustParseAddr("10.255.70.4"), Prefix: netip.MustParsePrefix("10.255.70.4/31")},
-		{Address: netip.MustParseAddr("10.77.60.4"), Prefix: netip.MustParsePrefix("10.77.60.0/24")},
-	})
-	if got != "10.77.60.4" {
-		t.Fatalf("preferred source = %q, want 10.77.60.4", got)
-	}
-}
-
-func TestInferPreferredSourceDoesNotUseDestinationAddress(t *testing.T) {
-	got := inferPreferredSource("10.77.60.4/32", []localIPv4Address{
-		{Address: netip.MustParseAddr("10.77.60.4"), Prefix: netip.MustParsePrefix("10.77.60.0/24")},
-	})
-	if got != "" {
-		t.Fatalf("preferred source = %q, want empty for local destination", got)
-	}
-}
-
 func TestNetlinkRouteSetsPreferredSource(t *testing.T) {
 	route, ok := netlinkRoute(FIBRoute{
 		Prefix:          "10.77.60.11/32",

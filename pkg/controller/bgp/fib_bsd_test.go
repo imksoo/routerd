@@ -181,42 +181,6 @@ func TestFreeBSDFIBSyncerFailsWithoutDeletingForeignOnRouteError(t *testing.T) {
 	}
 }
 
-func TestFreeBSDFIBSyncerFiltersLocalHostsAndValidatesPreferredSource(t *testing.T) {
-	var commands [][]string
-	run := func(_ context.Context, path string, args ...string) ([]byte, error) {
-		commands = append(commands, append([]string{path}, args...))
-		switch path {
-		case freeBSDNetstatPath:
-			return []byte("Destination Gateway Flags Netif\n"), nil
-		case freeBSDIfconfigPath:
-			return []byte("vtnet0:\n inet 192.0.2.10 netmask 0xffffff00\n"), nil
-		default:
-			return nil, nil
-		}
-	}
-	s := newFreeBSDFIBSyncer(run)
-	result, err := s.SyncBGP(context.Background(), []FIBRoute{
-		{Prefix: "192.0.2.10/32", NextHops: []string{"192.0.2.1"}},
-		{Prefix: "192.0.2.20/32", NextHops: []string{"192.0.2.1"}, PreferredSource: "198.51.100.10"},
-		{Prefix: "192.0.2.30/32", NextHops: []string{"192.0.2.1"}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Installed["192.0.2.10/32"] {
-		t.Fatalf("local host route was installed: %#v", result)
-	}
-	if !result.PreferredSourceSkipped["192.0.2.20/32"] || result.PreferredSourceSkippedReason["192.0.2.20/32"] != "LocalAddressMissing" {
-		t.Fatalf("preferred source result = %#v", result)
-	}
-	if result.PreferredSource["192.0.2.30/32"] != "192.0.2.10" {
-		t.Fatalf("inferred source = %#v", result.PreferredSource)
-	}
-	if len(commands) != 5 {
-		t.Fatalf("commands = %#v, want inet/inet6 netstat, one ifconfig, and two adds", commands)
-	}
-}
-
 func TestFreeBSDFIBSyncerReconcilesFirstSeenRouteSourceThenPreservesKnownMetadata(t *testing.T) {
 	var commands [][]string
 	netstat := "Destination Gateway Flags Netif\n10.77.60.0/24 192.0.2.1 UG1 vtnet0\n"
