@@ -17,19 +17,12 @@ import (
 )
 
 func (h Handler) vpn(w http.ResponseWriter) {
-	status, err := h.vpnStatus()
+	status, err := hostVPNStatus()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, status)
-}
-
-func (h Handler) vpnStatus() (VPNStatus, error) {
-	if h.opts.VPNStatus != nil {
-		return h.opts.VPNStatus()
-	}
-	return hostVPNStatus()
 }
 
 func hostVPNStatus() (VPNStatus, error) {

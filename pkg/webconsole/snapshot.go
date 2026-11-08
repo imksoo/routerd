@@ -57,8 +57,8 @@ func (h Handler) snapshot(ctx context.Context, opts SnapshotOptions) Snapshot {
 		}
 	}
 	var connections *observe.ConnectionTable
-	if h.opts.Connections != nil && opts.ConnectionsLimit >= 0 {
-		connections, err = h.opts.Connections(opts.ConnectionsLimit)
+	if opts.ConnectionsLimit >= 0 {
+		connections, err = observe.Connections(opts.ConnectionsLimit)
 		if err != nil {
 			errors = append(errors, err.Error())
 		} else if opts.IncludeDPIEnrichment {
@@ -167,7 +167,7 @@ func (h Handler) snapshot(ctx context.Context, opts SnapshotOptions) Snapshot {
 	}
 	var vpn VPNStatus
 	if opts.IncludeVPN {
-		vpn, err = h.vpnStatus()
+		vpn, err = hostVPNStatus()
 		if err != nil {
 			errors = append(errors, err.Error())
 		}

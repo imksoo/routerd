@@ -39,7 +39,7 @@ func (h Handler) enrichConnectionsWithRemoteIdentity(ctx context.Context, table 
 	}
 	ctx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
 	defer cancel()
-	labels := h.reverseDNS.lookupMany(ctx, addresses, h.opts.ReverseLookup)
+	labels := h.reverseDNS.lookupMany(ctx, addresses, net.DefaultResolver.LookupAddr)
 	for i := range table.Entries {
 		entry := &table.Entries[i]
 		annotateTupleHostnames(&entry.Original, labels)
@@ -76,7 +76,7 @@ func (h Handler) enrichFirewallLogsWithRemoteIdentity(ctx context.Context, logs 
 	}
 	ctx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
 	defer cancel()
-	labels := h.reverseDNS.lookupMany(ctx, addresses, h.opts.ReverseLookup)
+	labels := h.reverseDNS.lookupMany(ctx, addresses, net.DefaultResolver.LookupAddr)
 	for i := range logs {
 		if logs[i].SrcHostname == "" {
 			logs[i].SrcHostname = labels[logs[i].SrcAddress]

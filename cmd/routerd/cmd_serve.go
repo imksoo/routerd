@@ -1988,7 +1988,6 @@ func startWebConsole(ctx context.Context, spec api.WebConsoleSpec, router *api.R
 		CurrentRouter:          currentRouter,
 		Store:                  store,
 		Result:                 cache.Load,
-		Connections:            observe.Connections,
 		Title:                  spec.Title,
 		BasePath:               spec.BasePath,
 		ConsoleLinks:           webConsoleLinks(spec.Links),

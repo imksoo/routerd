@@ -13,14 +13,11 @@ import (
 
 	"github.com/imksoo/routerd/pkg/conntracktuning"
 	"github.com/imksoo/routerd/pkg/logstore"
+	"github.com/imksoo/routerd/pkg/observe"
 )
 
 func (h Handler) connections(w http.ResponseWriter, r *http.Request) {
-	if h.opts.Connections == nil {
-		writeError(w, http.StatusNotImplemented, "connections observer is unavailable")
-		return
-	}
-	table, err := h.opts.Connections(intQuery(r, "limit", h.opts.ConnectionsLimit))
+	table, err := observe.Connections(intQuery(r, "limit", h.opts.ConnectionsLimit))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

@@ -3,12 +3,10 @@
 package webconsole
 
 import (
-	"context"
 	"embed"
 	"html"
 	"html/template"
 	"io/fs"
-	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -17,7 +15,6 @@ import (
 	"github.com/imksoo/routerd/pkg/apply"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/controlapi"
-	"github.com/imksoo/routerd/pkg/observe"
 	"github.com/imksoo/routerd/pkg/platform"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
@@ -28,8 +25,6 @@ type Options struct {
 	CurrentRouter          func() *api.Router
 	Store                  routerstate.Store
 	Result                 func() *apply.Result
-	Connections            func(limit int) (*observe.ConnectionTable, error)
-	VPNStatus              func() (VPNStatus, error)
 	Title                  string
 	BasePath               string
 	ConsoleLinks           []ConsoleLink
@@ -44,11 +39,6 @@ type Options struct {
 	ControllerModes        []controlapi.ControllerStatus
 	ControllerStatuses     func() []controlapi.ControllerStatus
 	Bus                    *bus.Bus
-	// ReverseLookup resolves an address to names. Implementations MUST honor
-	// ctx cancellation / deadline: lookupMany runs these in a bounded worker
-	// pool and waits for every dispatched lookup to return, so a lookup that
-	// ignores ctx can stall the pool's drain.
-	ReverseLookup func(ctx context.Context, address string) ([]string, error)
 }
 
 type Handler struct {
@@ -70,9 +60,6 @@ func New(opts Options) Handler {
 	if opts.ConnectionsLimit == 0 {
 		opts.ConnectionsLimit = 200
 	}
-	if opts.Connections == nil {
-		opts.Connections = observe.Connections
-	}
 	if len(opts.DHCPLeasePaths) == 0 {
 		defaults, features := platform.Current()
 		opts.DHCPLeasePaths = platform.DnsmasqLeaseCandidates(defaults, features)
@@ -84,9 +71,6 @@ func New(opts Options) Handler {
 	if opts.DHCPStickyLogPath == "" {
 		defaults, _ := platform.Current()
 		opts.DHCPStickyLogPath = strings.TrimRight(defaults.StateDir, "/") + "/dhcp-sticky.db"
-	}
-	if opts.ReverseLookup == nil {
-		opts.ReverseLookup = net.DefaultResolver.LookupAddr
 	}
 	return Handler{opts: opts, reverseDNS: newReverseDNSCache(time.Hour), systemUsage: &systemUsageSampler{}}
 }
