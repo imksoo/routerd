@@ -411,7 +411,10 @@ func (c IPv4RouteController) reconcile(ctx context.Context) error {
 		preferredSource := strings.TrimSpace(spec.PreferredSource)
 		if routeType != "blackhole" {
 			if spec.GatewayFrom.Resource != "" && gateway == "" {
-				if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4Route", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "GatewayMissing", "destination": destination}); err != nil {
+				status := copyStatusMap(c.Store.ObjectStatus(api.NetAPIVersion, "IPv4Route", resource.Metadata.Name))
+				status["phase"] = "Pending"
+				status["reason"] = "GatewayMissing"
+				if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4Route", resource.Metadata.Name, status); err != nil {
 					return err
 				}
 				continue
@@ -452,9 +455,10 @@ func (c IPv4RouteController) reconcile(ctx context.Context) error {
 				}
 			}
 			if !localSource {
-				status["phase"] = "Pending"
-				status["reason"] = "PreferredSourceNotLocal"
-				if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4Route", resource.Metadata.Name, status); err != nil {
+				pending := copyStatusMap(previous)
+				pending["phase"] = "Pending"
+				pending["reason"] = "PreferredSourceNotLocal"
+				if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4Route", resource.Metadata.Name, pending); err != nil {
 					return err
 				}
 				continue
