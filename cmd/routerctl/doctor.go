@@ -26,7 +26,6 @@ import (
 	"github.com/imksoo/routerd/pkg/mobilityconfig"
 	"github.com/imksoo/routerd/pkg/platform"
 	routerplugin "github.com/imksoo/routerd/pkg/plugin"
-	"github.com/imksoo/routerd/pkg/render"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -2403,7 +2402,6 @@ func (r doctorRunner) doctorFirewall() []doctorCheck {
 			}
 			checks = append(checks, check)
 		}
-		checks = append(checks, r.doctorStaleNftTablesCheck(ctx))
 		checks = append(checks, r.doctorFirewallLoggerRuntimeCheck(ctx))
 	} else {
 		checks = append(checks, doctorHostSkipped("firewall", "nft routerd_filter"))
@@ -2536,116 +2534,6 @@ func doctorProcWriteBytes(pid int) (uint64, bool) {
 		return parsed, true
 	}
 	return 0, false
-}
-
-func (r doctorRunner) doctorStaleNftTablesCheck(ctx context.Context) doctorCheck {
-	name := "stale routerd nft tables"
-	if platform.CurrentOS() != platform.OSLinux {
-		return doctorCheck{Area: "firewall", Name: name, Status: doctorSkip, Detail: "nftables host table check is Linux-only"}
-	}
-	expected, err := expectedRouterdNftTables(r.router)
-	if err != nil {
-		return doctorCheck{Area: "firewall", Name: name, Status: doctorWarn, Detail: "could not render expected nft tables: " + err.Error(), Remedy: "fix config render errors, then rerun doctor firewall"}
-	}
-	command := runDiagnosticCommand(ctx, "nft list tables", "nft", "list", "tables")
-	if !command.OK {
-		return doctorCheck{Area: "firewall", Name: name, Status: doctorSkip, Detail: stringutil.FirstNonEmpty(command.Error, oneLine(command.Output), "nft list tables unavailable")}
-	}
-	present := parseNftTables(command.Stdout)
-	var stale []string
-	marked := 0
-	unmarked := 0
-	unverified := 0
-	for _, table := range present {
-		if !strings.HasPrefix(table.name, "routerd_") {
-			continue
-		}
-		tableCommand := runDiagnosticCommand(ctx, "nft list table "+table.family+" "+table.name, "nft", "list", "table", table.family, table.name)
-		if !tableCommand.OK {
-			unverified++
-			continue
-		}
-		if !strings.Contains(tableCommand.Stdout, render.NftablesRouterdOwnerMarker) {
-			unmarked++
-			continue
-		}
-		marked++
-		if !expected[table.key()] {
-			stale = append(stale, table.key())
-		}
-	}
-	sort.Strings(stale)
-	if len(stale) == 0 {
-		detail := fmt.Sprintf("%d marked routerd-owned nft tables match current config", marked)
-		if unmarked > 0 {
-			detail = appendDoctorDetail(detail, fmt.Sprintf("%d unmarked routerd-prefixed tables ignored", unmarked))
-		}
-		if unverified > 0 {
-			detail = appendDoctorDetail(detail, fmt.Sprintf("%d routerd-prefixed tables could not be inspected for ownership marker", unverified))
-		}
-		return doctorCheck{Area: "firewall", Name: name, Status: doctorPass, Detail: detail}
-	}
-	return doctorCheck{
-		Area:   "firewall",
-		Name:   name,
-		Status: doctorWarn,
-		Detail: "marked routerd-owned tables not expected by current config: " + strings.Join(stale, ","),
-		Remedy: "inspect the listed nft tables and remove stale marked routerd-owned tables only after confirming they are not intentionally managed by this generation",
-	}
-}
-
-type doctorNftTable struct {
-	family string
-	name   string
-}
-
-func (t doctorNftTable) key() string {
-	return t.family + "/" + t.name
-}
-
-func parseNftTables(output string) []doctorNftTable {
-	var tables []doctorNftTable
-	for _, line := range strings.Split(output, "\n") {
-		fields := strings.Fields(strings.TrimSpace(line))
-		if len(fields) < 3 || fields[0] != "table" {
-			continue
-		}
-		name := strings.TrimSuffix(fields[2], "{")
-		tables = append(tables, doctorNftTable{family: fields[1], name: name})
-	}
-	return tables
-}
-
-func expectedRouterdNftTables(router *api.Router) (map[string]bool, error) {
-	expected := map[string]bool{}
-	if router == nil {
-		return expected, nil
-	}
-	data, err := render.NftablesNAT44(router)
-	if err != nil {
-		return nil, err
-	}
-	for _, table := range parseNftTables(string(data)) {
-		expected[table.key()] = true
-	}
-	for _, res := range selectResources(router.Spec.Resources, "EgressRoutePolicy", "") {
-		spec, err := res.EgressRoutePolicySpec()
-		if err != nil {
-			return nil, err
-		}
-		switch strings.TrimSpace(spec.Mode) {
-		case "priority":
-			expected["ip/routerd_default_route"] = true
-		case "mark", "hash":
-			expected["ip/routerd_policy"] = true
-		}
-		for _, candidate := range spec.Candidates {
-			if len(candidate.Targets) > 0 || candidate.Mark != 0 && strings.TrimSpace(spec.Mode) != "priority" {
-				expected["ip/routerd_policy"] = true
-			}
-		}
-	}
-	return expected, nil
 }
 
 func (r doctorRunner) doctorRollback() []doctorCheck {
