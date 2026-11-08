@@ -11,13 +11,6 @@ The archive contains the binaries, service template, sample configuration, and
 the installer scripts.
 You do not need a Go toolchain or the Makefile on the router host.
 
-:::caution First installation
-For a first live test, choose an isolated Ubuntu Server VM or spare computer
-with a console or a separate management path. Installing software is not the
-same as safely applying a router configuration: a later live apply can change
-addresses, routes, DHCP, and DNS.
-:::
-
 ## Quick install
 
 Download the archive for your OS and architecture from the recommended stable
