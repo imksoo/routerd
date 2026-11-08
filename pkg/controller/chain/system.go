@@ -2120,6 +2120,13 @@ func (c SystemdUnitController) applyLongLivedSystemdUnit(ctx context.Context, pa
 	if c.DryRun {
 		return fileChanged, nil
 	}
+	if !fileChanged {
+		out, err := command(ctx, "systemctl", "show", "--property=NeedDaemonReload", "--value", unitName)
+		if err != nil {
+			return false, fmt.Errorf("check unit %s reload state: %w", unitName, err)
+		}
+		fileChanged = strings.TrimSpace(string(out)) == "yes"
+	}
 	if fileChanged {
 		if _, err := command(ctx, "systemctl", "daemon-reload"); err != nil {
 			return fileChanged, err
