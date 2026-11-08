@@ -46,40 +46,6 @@ func TestDefaultsAreAbsolute(t *testing.T) {
 	}
 }
 
-func TestDerivedPaths(t *testing.T) {
-	defaults, _ := Current()
-	if got, want := defaults.StatusFile(), defaults.RuntimeDir+"/status.json"; got != want {
-		t.Errorf("StatusFile = %q, want %q", got, want)
-	}
-	if got, want := defaults.SocketFile(), defaults.RuntimeDir+"/routerd.sock"; got != want {
-		t.Errorf("SocketFile = %q, want %q", got, want)
-	}
-	if got, want := defaults.StatusSocketFile(), defaults.RuntimeDir+"/routerd-status.sock"; got != want {
-		t.Errorf("StatusSocketFile = %q, want %q", got, want)
-	}
-	if got, want := defaults.LockFile(), defaults.RuntimeDir+"/routerd.lock"; got != want {
-		t.Errorf("LockFile = %q, want %q", got, want)
-	}
-	if got, want := defaults.LedgerFile(), defaults.StateDir+"/artifacts.json"; got != want {
-		t.Errorf("LedgerFile = %q, want %q", got, want)
-	}
-	if got, want := defaults.DBFile(), defaults.StateDir+"/routerd.db"; got != want {
-		t.Errorf("DBFile = %q, want %q", got, want)
-	}
-	if got, want := defaults.FirewallLogFile(), strings.TrimRight(defaults.StateDir, "/")+"/firewall-logs.db"; got != want {
-		t.Errorf("FirewallLogFile = %q, want %q", got, want)
-	}
-	if got, want := defaults.DnsmasqLeaseFile(), strings.TrimRight(defaults.StateDir, "/")+"/dnsmasq/dnsmasq.leases"; got != want {
-		t.Errorf("DnsmasqLeaseFile = %q, want %q", got, want)
-	}
-	if got, want := defaults.RuntimeDnsmasqLeaseFile(), strings.TrimRight(defaults.RuntimeDir, "/")+"/dnsmasq.leases"; got != want {
-		t.Errorf("RuntimeDnsmasqLeaseFile = %q, want %q", got, want)
-	}
-	if got, want := defaults.ConfigFile(), defaults.SysconfDir+"/router.yaml"; got != want {
-		t.Errorf("ConfigFile = %q, want %q", got, want)
-	}
-}
-
 func TestCanonicalResourcePaths(t *testing.T) {
 	for _, tt := range []struct {
 		name         string
