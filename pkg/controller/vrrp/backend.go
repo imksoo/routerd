@@ -73,6 +73,10 @@ func (keepalivedBackend) Apply(ctx context.Context, c *Controller, aliases map[s
 	if err != nil {
 		return backendResult{}, err
 	}
+	serviceActive, err := c.refreshKeepalivedServiceActive(ctx)
+	if err != nil {
+		return backendResult{}, err
+	}
 	if changed && !c.DryRun {
 		if err := seedGracefulElectionStates(ctx, c, aliases); err != nil {
 			return backendResult{}, err
@@ -82,11 +86,11 @@ func (keepalivedBackend) Apply(ctx context.Context, c *Controller, aliases map[s
 		}
 		now := time.Now().UTC().Format(time.RFC3339Nano)
 		reason := "keepalived.config changed"
-		action, err := reloadOrRestartSystemdKeepalived(ctx, c, path)
+		action, err := reloadOrRestartSystemdKeepalived(ctx, c, path, serviceActive)
 		if err != nil {
 			return backendResult{}, err
 		}
-		serviceActive, err := c.refreshKeepalivedServiceActive(ctx)
+		serviceActive, err = c.refreshKeepalivedServiceActive(ctx)
 		if err != nil {
 			return backendResult{}, err
 		}
@@ -99,15 +103,11 @@ func (keepalivedBackend) Apply(ctx context.Context, c *Controller, aliases map[s
 		}
 		return result, nil
 	}
-	serviceActive, err := c.refreshKeepalivedServiceActive(ctx)
-	if err != nil {
-		return backendResult{}, err
-	}
 	roles := observeKeepalivedRoles(ctx, c, aliases, serviceActive)
 	if !serviceActive && !c.DryRun {
 		now := time.Now().UTC().Format(time.RFC3339Nano)
 		reason := "keepalived.service inactive"
-		action, err := reloadOrRestartSystemdKeepalived(ctx, c, path)
+		action, err := reloadOrRestartSystemdKeepalived(ctx, c, path, serviceActive)
 		if err != nil {
 			return backendResult{}, err
 		}
@@ -411,9 +411,9 @@ func seedGracefulElectionStates(ctx context.Context, c *Controller, aliases map[
 	return nil
 }
 
-func reloadOrRestartSystemdKeepalived(ctx context.Context, c *Controller, path string) (string, error) {
+func reloadOrRestartSystemdKeepalived(ctx context.Context, c *Controller, path string, serviceActive bool) (string, error) {
 	systemctl := "systemctl"
-	if _, err := c.run(ctx, systemctl, "is-active", "--quiet", "keepalived.service"); err == nil {
+	if serviceActive {
 		if out, err := c.run(ctx, systemctl, "reload", "keepalived.service"); err == nil {
 			return "reload", nil
 		} else if c.Logger != nil {
