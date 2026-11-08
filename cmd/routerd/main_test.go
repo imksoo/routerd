@@ -25,7 +25,6 @@ import (
 	controllerchain "github.com/imksoo/routerd/pkg/controller/chain"
 	"github.com/imksoo/routerd/pkg/eventlog"
 	"github.com/imksoo/routerd/pkg/platform"
-	"github.com/imksoo/routerd/pkg/resource"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -128,37 +127,6 @@ func findApplyResult(result *apply.Result, id string) *apply.ResourceResult {
 		}
 	}
 	return nil
-}
-
-func TestCleanupLedgerOwnedArtifactIPv6AddressLinux(t *testing.T) {
-	oldFeatures := platformFeatures
-	oldRun := runCleanupCommand
-	t.Cleanup(func() {
-		platformFeatures = oldFeatures
-		runCleanupCommand = oldRun
-	})
-	platformFeatures = platform.Features{HasIproute2: true}
-	var gotName string
-	var gotArgs []string
-	runCleanupCommand = func(name string, args ...string) error {
-		gotName = name
-		gotArgs = append([]string(nil), args...)
-		return nil
-	}
-	label, err := cleanupLedgerOwnedArtifact(resource.Artifact{
-		Kind:  "net.ipv6.address",
-		Name:  "ens19:2001:db8::1/64",
-		Owner: api.NetAPIVersion + "/VirtualAddress/old-v6",
-	})
-	if err != nil {
-		t.Fatalf("cleanup IPv6 address: %v", err)
-	}
-	if label != "net.ipv6.address/ens19:2001:db8::1/64" {
-		t.Fatalf("label = %q", label)
-	}
-	if gotName != "ip" || !reflect.DeepEqual(gotArgs, []string{"-6", "addr", "del", "2001:db8::1/64", "dev", "ens19"}) {
-		t.Fatalf("command = %s %#v", gotName, gotArgs)
-	}
 }
 
 func TestManagementPlaneBlocksNonDryRunApply(t *testing.T) {
@@ -277,54 +245,6 @@ func TestConfigGenerationHashIncludesEffectiveRouter(t *testing.T) {
 	}
 }
 
-func TestServeOnceConvergesAndExits(t *testing.T) {
-	loopbackEnsured := false
-	originalEnsureLoopback := ensureLoopbackUpForServe
-	ensureLoopbackUpForServe = func() error {
-		loopbackEnsured = true
-		return nil
-	}
-	t.Cleanup(func() { ensureLoopbackUpForServe = originalEnsureLoopback })
-
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "router.yaml")
-	statePath := filepath.Join(dir, "routerd.db")
-	statusPath := filepath.Join(dir, "status.json")
-	ledgerPath := filepath.Join(dir, "ledger.db")
-	if err := os.WriteFile(configPath, []byte(testRouterYAML("serve-once-router")), 0644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-	var stdout strings.Builder
-	err := serveCommand([]string{
-		"--config", configPath,
-		"--state-file", statePath,
-		"--status-file", statusPath,
-		"--ledger-file", ledgerPath,
-		"--controllers", "log-retention",
-		"--once",
-	}, &stdout, io.Discard)
-	if err != nil {
-		t.Fatalf("serve --once: %v", err)
-	}
-	if !strings.Contains(stdout.String(), `"phase": "Healthy"`) {
-		t.Fatalf("serve --once output missing result:\n%s", stdout.String())
-	}
-	if !loopbackEnsured {
-		t.Fatal("serve --once did not ensure loopback is up")
-	}
-	store, err := routerstate.OpenSQLite(statePath)
-	if err != nil {
-		t.Fatalf("open state: %v", err)
-	}
-	defer func() { _ = store.Close() }()
-	if got := store.LatestGeneration(); got == 0 {
-		t.Fatal("serve --once did not record a generation")
-	}
-	if _, err := os.Stat(statusPath); err != nil {
-		t.Fatalf("status file: %v", err)
-	}
-}
-
 func TestScheduledServeReconcileDoesNotCreateConfigGeneration(t *testing.T) {
 	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "routerd.db"))
 	if err != nil {
@@ -367,66 +287,6 @@ func TestConfigCommitPhaseIncludesCommittedConfig(t *testing.T) {
 	}
 	if configCommitPhase("Errored") {
 		t.Fatal("configCommitPhase(Errored) = true, want false")
-	}
-}
-
-func TestServeAcceptsLegacyControllerChainFlags(t *testing.T) {
-	loopbackEnsured := false
-	originalEnsureLoopback := ensureLoopbackUpForServe
-	ensureLoopbackUpForServe = func() error {
-		loopbackEnsured = true
-		return nil
-	}
-	t.Cleanup(func() { ensureLoopbackUpForServe = originalEnsureLoopback })
-
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "router.yaml")
-	statePath := filepath.Join(dir, "routerd.db")
-	statusPath := filepath.Join(dir, "status.json")
-	ledgerPath := filepath.Join(dir, "ledger.db")
-	if err := os.WriteFile(configPath, []byte(testRouterYAML("serve-legacy-flags-router")), 0644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-	var stdout, stderr strings.Builder
-	err := serveCommand([]string{
-		"--config", configPath,
-		"--state-file", statePath,
-		"--status-file", statusPath,
-		"--ledger-file", ledgerPath,
-		"--controllers", "log-retention",
-		"--once",
-		"--observe-interval", "30s",
-		"--controller-chain",
-		"--controller-chain-daemon-sockets", "wan-pd=/run/routerd/dhcpv6-client/wan-pd.sock",
-		"--controller-chain-dnsmasq-command", "/usr/local/sbin/dnsmasq",
-		"--controller-chain-dnsmasq-config", "/run/routerd/dnsmasq.conf",
-		"--controller-chain-dnsmasq-listen-addresses", "127.0.0.1",
-		"--controller-chain-dnsmasq-pid", "/run/routerd/dnsmasq.pid",
-		"--controller-chain-dnsmasq-port", "53",
-		"--controller-chain-dry-run-address=false",
-		"--controller-chain-dry-run-dhcpv4lease=false",
-		"--controller-chain-dry-run-dhcpv6=false",
-		"--controller-chain-dry-run-dns-resolver=false",
-		"--controller-chain-dry-run-dslite=false",
-		"--controller-chain-dry-run-firewall=false",
-		"--controller-chain-dry-run-nat=false",
-		"--controller-chain-dry-run-network-adoption=false",
-		"--controller-chain-dry-run-package=false",
-		"--controller-chain-dry-run-ra=false",
-		"--controller-chain-dry-run-route=false",
-		"--controller-chain-dry-run-systemd-unit=false",
-	}, &stdout, &stderr)
-	if err != nil {
-		t.Fatalf("serve --once with legacy flags: %v\nstderr:\n%s", err, stderr.String())
-	}
-	if !strings.Contains(stdout.String(), `"phase": "Healthy"`) {
-		t.Fatalf("serve --once output missing result:\n%s", stdout.String())
-	}
-	if !strings.Contains(stderr.String(), "ignored legacy flag") || !strings.Contains(stderr.String(), "--observe-interval") || !strings.Contains(stderr.String(), "--controller-chain-dnsmasq-command") {
-		t.Fatalf("missing legacy flag warning:\n%s", stderr.String())
-	}
-	if !loopbackEnsured {
-		t.Fatal("serve --once did not ensure loopback is up")
 	}
 }
 

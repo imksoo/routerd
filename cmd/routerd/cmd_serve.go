@@ -137,8 +137,6 @@ func publishControllerModeEvents(ctx context.Context, b *bus.Bus, controllers []
 	}
 }
 
-var ensureLoopbackUpForServe = ensureLoopbackUp
-
 func ensureLoopbackUp() error {
 	if runtime.GOOS != "linux" {
 		return nil
@@ -396,7 +394,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		"statusSocket":  *statusSocketPath,
 		"applyInterval": applyInterval.String(),
 	})
-	if loopbackErr := ensureLoopbackUpForServe(); loopbackErr != nil {
+	if loopbackErr := ensureLoopbackUp(); loopbackErr != nil {
 		logger.Emit(eventlog.LevelWarning, "serve", "failed to ensure loopback is up", map[string]string{"error": loopbackErr.Error()})
 	}
 	applyOpts := applyOptions{

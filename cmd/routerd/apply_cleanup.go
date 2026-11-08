@@ -18,8 +18,6 @@ import (
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
-var runCleanupCommand = runLogged
-
 func filterRouterByWhen(router *api.Router, store routerstate.Store) *api.Router {
 	return resourcequery.FilterRouterByWhen(router, store)
 }
@@ -163,7 +161,7 @@ func (routerdArtifactTeardownExecutor) Features() platform.Features {
 }
 
 func (routerdArtifactTeardownExecutor) Run(name string, args ...string) error {
-	return runCleanupCommand(name, args...)
+	return runLogged(name, args...)
 }
 
 func (routerdArtifactTeardownExecutor) Remove(path string) error {
