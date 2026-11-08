@@ -540,9 +540,6 @@ func (c IPv4PolicyRouteController) applyRouteTables(ctx context.Context, aliases
 		if _, ok := desiredDefaults[candidate.EffectiveTable()]; !ok {
 			desiredDefaults[candidate.EffectiveTable()] = nil
 		}
-		if egressRoutePolicyCandidateDisabled(candidate) {
-			return
-		}
 		// A candidate can become eligible as soon as its when condition flips,
 		// before the referenced DS-Lite tunnel has been recreated.  Do not turn
 		// that normal HA transition into a controller-wide hard error, and do not
