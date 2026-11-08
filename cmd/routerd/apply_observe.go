@@ -106,7 +106,7 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 				}
 			}
 		}
-		if observedPrefix == "" && lease.CurrentPrefix != "" && lease.HasFreshTransactionEvidence(store.Now()) {
+		if client != api.IPv6PDClientRouterd && observedPrefix == "" && lease.CurrentPrefix != "" && lease.HasFreshTransactionEvidence(store.Now()) {
 			observedPrefix = lease.CurrentPrefix
 		}
 		if observedPrefix == "" {
