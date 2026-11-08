@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -138,10 +139,11 @@ func (c PathMTUController) runNFT(ctx context.Context, nft string, args ...strin
 }
 
 func nftListMissing(out []byte, err error) bool {
-	if err == nil {
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
 		return false
 	}
-	s := strings.ToLower(string(out) + " " + err.Error())
+	s := strings.ToLower(string(out))
 	return strings.Contains(s, "no such file or directory") || strings.Contains(s, "does not exist")
 }
 
