@@ -39,7 +39,7 @@ website=false
 webconsole=false
 while IFS= read -r -d '' path; do
   case "$path" in
-    .github/workflows/quality.yaml|scripts/ci/detect-quality-changes.sh|scripts/ci/detect-quality-changes-test.sh)
+    .github/workflows/quality.yaml|scripts/ci/detect-quality-changes.sh)
       docs=true
       website=true
       webconsole=true
