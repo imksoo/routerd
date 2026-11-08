@@ -2,6 +2,38 @@
 
 package api
 
+// BridgeVXLANMembers returns VXLAN interfaces attached through their own
+// Bridge setting. Their controllers manage the attachment and lifecycle.
+func BridgeVXLANMembers(router *Router, bridge string) []string {
+	if router == nil {
+		return nil
+	}
+	var members []string
+	for _, resource := range router.Spec.Resources {
+		switch resource.Kind {
+		case "VXLANTunnel":
+			spec, err := resource.VXLANTunnelSpec()
+			if err == nil && spec.Bridge == bridge {
+				name := spec.IfName
+				if name == "" {
+					name = resource.Metadata.Name
+				}
+				members = append(members, name)
+			}
+		case "VXLANSegment":
+			spec, err := resource.VXLANSegmentSpec()
+			if err == nil && spec.Bridge == bridge {
+				name := spec.IfName
+				if name == "" {
+					name = resource.Metadata.Name
+				}
+				members = append(members, name)
+			}
+		}
+	}
+	return members
+}
+
 // ResolveInterfaceIfName returns the kernel interface name for a managed
 // interface resource, or name unchanged when it is already a kernel name or
 // does not name a managed interface. Keeping this API-level mapping shared

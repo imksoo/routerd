@@ -112,7 +112,7 @@ func (e *Engine) evaluate(router, declared *api.Router, includePlan bool) (*Resu
 		case "Interface":
 			e.observeInterface(res, policies[res.Metadata.Name], observedV4ByInterface[res.Metadata.Name], inactiveTunnels, includePlan, &rr)
 		case "Bridge":
-			e.observeBridge(res, aliases, includePlan, &rr)
+			e.observeBridge(router, res, aliases, includePlan, &rr)
 		case "PPPoESession":
 			e.observePPPoESession(res, aliases, includePlan, &rr)
 		case "WireGuardInterface":
@@ -289,7 +289,7 @@ func (e *Engine) observeVirtualAddress(res api.Resource, aliases map[string]stri
 	rr.Observed["reason"] = "VirtualAddressMissing"
 }
 
-func (e *Engine) observeBridge(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
+func (e *Engine) observeBridge(router *api.Router, res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
 	spec, err := res.BridgeSpec()
 	if err != nil {
 		rr.Phase = "Blocked"
@@ -376,6 +376,9 @@ func (e *Engine) observeBridge(res api.Resource, aliases map[string]string, incl
 		}
 	}
 	desiredMembers := map[string]bool{}
+	for _, member := range api.BridgeVXLANMembers(router, res.Metadata.Name) {
+		desiredMembers[member] = true
+	}
 	for _, member := range spec.Members {
 		memberIfName := aliases[member]
 		if memberIfName == "" {

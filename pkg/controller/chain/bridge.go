@@ -190,6 +190,9 @@ func (c BridgeController) reconcileBridge(ctx context.Context, resource api.Reso
 	}
 	aliases := bridgeInterfaceAliases(c.Router)
 	desired := map[string]bool{}
+	for _, member := range api.BridgeVXLANMembers(c.Router, resource.Metadata.Name) {
+		desired[member] = true
+	}
 	for _, member := range spec.Members {
 		memberIfName := firstNonEmpty(aliases[member], member)
 		desired[memberIfName] = true
@@ -291,6 +294,9 @@ func (c BridgeController) saveStatus(resource api.Resource, changed bool) error 
 	}
 	aliases := bridgeInterfaceAliases(c.Router)
 	desired := map[string]bool{}
+	for _, member := range api.BridgeVXLANMembers(c.Router, resource.Metadata.Name) {
+		desired[member] = true
+	}
 	for _, member := range spec.Members {
 		memberIfName := aliases[member]
 		if memberIfName == "" {
