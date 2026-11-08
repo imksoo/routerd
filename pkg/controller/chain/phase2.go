@@ -410,6 +410,12 @@ func (c IPv4RouteController) reconcile(ctx context.Context) error {
 		gateway := firstNonEmpty(resourcequery.Value(c.Store, spec.GatewayFrom), strings.TrimSpace(spec.Gateway))
 		preferredSource := strings.TrimSpace(spec.PreferredSource)
 		if routeType != "blackhole" {
+			if spec.GatewayFrom.Resource != "" && gateway == "" {
+				if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4Route", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "GatewayMissing", "destination": destination}); err != nil {
+					return err
+				}
+				continue
+			}
 			device = firstNonEmpty(resourcequery.Value(c.Store, spec.DeviceFrom), strings.TrimSpace(spec.Device))
 			device = interfaceIfName(c.Router, device)
 			if device == "" {
