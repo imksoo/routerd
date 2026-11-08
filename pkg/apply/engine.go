@@ -199,7 +199,7 @@ func (e *Engine) evaluate(router, declared *api.Router, includePlan bool) (*Resu
 
 		if rr.Phase == "Blocked" {
 			result.Phase = "Blocked"
-		} else if rr.Phase == "Drifted" && result.Phase == "Healthy" && ((res.Kind == "Interface" && (rr.Observed["reason"] == "MTUMismatch" || rr.Observed["reason"] == "AdminDown")) || res.Kind == "Bridge" || res.Kind == "VXLANTunnel" || res.Kind == "IPv4Route" || res.Kind == "Package" || res.Kind == "Sysctl" || res.Kind == "DHCPv6PrefixDelegation" || res.Kind == "TunnelInterface" || res.Kind == "DSLiteTunnel" || res.Kind == "VirtualAddress" || res.Kind == "IPv6DelegatedAddress") {
+		} else if rr.Phase == "Drifted" && result.Phase == "Healthy" && ((res.Kind == "Interface" && (rr.Observed["reason"] == "MTUMismatch" || rr.Observed["reason"] == "AdminDown")) || res.Kind == "Bridge" || res.Kind == "VXLANTunnel" || res.Kind == "IPv4Route" || res.Kind == "Package" || res.Kind == "Sysctl" || res.Kind == "DHCPv6PrefixDelegation" || res.Kind == "TunnelInterface" || res.Kind == "DSLiteTunnel" || res.Kind == "VirtualAddress" || res.Kind == "IPv6DelegatedAddress" || res.Kind == "IPv4StaticAddress") {
 			result.Phase = "Drifted"
 		}
 		result.Resources = append(result.Resources, rr)
