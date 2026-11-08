@@ -58,6 +58,7 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 		if previousClient != "" && previousClient != client {
 			var cleared bool
 			lease, cleared = routerstate.ClearPDLeaseObservedIdentity(lease)
+			lease.LastReplyAt = ""
 			if cleared {
 				if recorder, ok := store.(routerstate.EventRecorder); ok {
 					_ = recorder.RecordEvent(res.APIVersion, res.Kind, res.Metadata.Name, "Normal", "PDClientChanged", fmt.Sprintf("cleared observed DHCPv6 identity after client changed from %s to %s", previousClient, client))
