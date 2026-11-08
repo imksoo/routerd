@@ -1313,7 +1313,7 @@ func (c SystemdUnitController) cleanupWhenFalseSystemdUnits(ctx context.Context,
 	}
 	for _, resource := range c.DeclaredRouter.Spec.Resources {
 		when := resourcequery.ResourceWhen(resource)
-		if !resourcequery.ResourceWhenPresent(when) || resourcequery.ResourceWhenMatches(when, stateStore) {
+		if !resourcequery.ResourceWhenPresent(when) || resourcequery.ResourceWhenMatches(when, stateStore) || resourcequery.ResourceWhenIndeterminate(when, stateStore) {
 			continue
 		}
 		ref, ok := synthesizedUnitForResource(resource)
@@ -1343,6 +1343,8 @@ func synthesizedUnitForResource(resource api.Resource) (synthesizedUnitRef, bool
 		Source:     resource.Kind + "/" + name,
 	}
 	switch resource.Kind {
+	case "HealthCheck":
+		ref.UnitName = healthCheckUnitName(name)
 	case "TailscaleNode":
 		ref.UnitName = render.TailscaleUnitName(name)
 	case "DHCPv4Client":

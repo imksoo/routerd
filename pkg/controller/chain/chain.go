@@ -1368,11 +1368,6 @@ func (r *Runner) saveWhenFalseStatuses(store eventedStore) error {
 		if resourcequery.ResourceWhenIndeterminate(when, store) {
 			continue
 		}
-		if preserved, err := r.preserveFreshDaemonStatusWhenFalse(res, apiVersion, store, now); err != nil {
-			return err
-		} else if preserved {
-			continue
-		}
 		current := store.ObjectStatus(apiVersion, res.Kind, res.Metadata.Name)
 		if statusIsWhenFalse(current) {
 			next := copyStatusMap(current)
@@ -1515,89 +1510,8 @@ func (r *Runner) clearWhenFalseStatus(apiVersion, kind, name string, store event
 	return store.SaveObjectStatus(apiVersion, kind, name, next)
 }
 
-func (r *Runner) preserveFreshDaemonStatusWhenFalse(res api.Resource, apiVersion string, store eventedStore, now time.Time) (bool, error) {
-	if res.Kind != "HealthCheck" {
-		return false, nil
-	}
-	status := store.ObjectStatus(apiVersion, res.Kind, res.Metadata.Name)
-	observed := statusValueMap(status["observed"])
-	evidence := status
-	evidenceFromObserved := false
-	if healthCheckStatusHasDaemonEvidence(observed) {
-		evidence = observed
-		evidenceFromObserved = true
-	} else if !healthCheckStatusHasDaemonEvidence(status) {
-		return false, nil
-	}
-	lastCheckedAt, ok := parseStatusTimestamp(evidence["lastCheckedAt"])
-	if !ok {
-		return false, nil
-	}
-	if now.After(lastCheckedAt.Add(healthCheckStatusFreshness(res))) {
-		return false, nil
-	}
-	if evidenceFromObserved && strings.TrimSpace(fmt.Sprint(evidence["phase"])) != "" {
-		next := copyStatusMap(status)
-		for key, value := range evidence {
-			next[key] = value
-		}
-		delete(next, "reason")
-		next["observed"] = observed
-		if err := store.SaveObjectStatus(apiVersion, res.Kind, res.Metadata.Name, next); err != nil {
-			return false, err
-		}
-	}
-	return true, nil
-}
-
-func healthCheckStatusHasDaemonEvidence(status map[string]any) bool {
-	if len(status) == 0 {
-		return false
-	}
-	switch fmt.Sprint(status["phase"]) {
-	case healthcheck.PhaseHealthy, healthcheck.PhaseFailing, healthcheck.PhaseUnhealthy:
-		return true
-	}
-	if strings.TrimSpace(fmt.Sprint(status["lastResult"])) != "" {
-		return true
-	}
-	if _, ok := status["consecutiveFailed"]; ok {
-		return true
-	}
-	if _, ok := status["consecutivePassed"]; ok {
-		return true
-	}
-	return false
-}
-
 func statusIsWhenFalse(status map[string]any) bool {
 	return strings.TrimSpace(fmt.Sprint(status["reason"])) == "WhenFalse"
-}
-
-func healthCheckStatusFreshness(res api.Resource) time.Duration {
-	freshness := 2 * time.Minute
-	spec, err := res.HealthCheckSpec()
-	if err != nil {
-		return freshness
-	}
-	interval := parseDurationOrDefault(spec.Interval, 30*time.Second)
-	timeout := parseDurationOrDefault(spec.Timeout, 3*time.Second)
-	candidate := interval*3 + timeout
-	if candidate > freshness {
-		return candidate
-	}
-	return freshness
-}
-
-func parseDurationOrDefault(value string, fallback time.Duration) time.Duration {
-	if strings.TrimSpace(value) == "" {
-		return fallback
-	}
-	duration, err := time.ParseDuration(value)
-	if err != nil || duration <= 0 {
-		return fallback
-	}
-	return duration
 }
 
 func (r *Runner) effectiveRouterForReconcile(store eventedStore) (*api.Router, error) {

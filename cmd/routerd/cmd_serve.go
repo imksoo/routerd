@@ -450,7 +450,8 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		}
 	}
 	engine := apply.New()
-	if result, observeErr := engine.Observe(router); observeErr == nil {
+	engine.Store = stateStore
+	if result, observeErr := engine.ObserveEffective(filterRouterByWhen(router, stateStore), router); observeErr == nil {
 		cache.Store(result)
 		_ = statuswriter.Write(*statusFile, result)
 	} else {
@@ -634,7 +635,22 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	defer listener.Close()
 
 	statusHandler := func(r *http.Request) (*controlapi.Status, error) {
-		status := controlapi.NewStatus(resultWithLatestGeneration(cache.Load(), stateStore), currentRouter())
+		router := currentRouter()
+		engine := apply.New()
+		engine.Store = stateStore
+		result, err := engine.ObserveEffective(filterRouterByWhen(router, stateStore), router)
+		if err != nil {
+			return nil, err
+		}
+		cached := cache.Load()
+		attempt, attemptErr, attempted := cache.LastAttempt()
+		if currentRouter() != router || attemptErr != "" || (attempted && attempt.Result != nil && attempt.Result.Phase == "Committed") || (cached != nil && cached.Phase == "Error") {
+			result = cached
+		} else if cached != nil {
+			result.Generation = cached.Generation
+			result.Timestamp = cached.Timestamp
+		}
+		status := controlapi.NewStatus(resultWithLatestGeneration(result, stateStore), currentRouter())
 		status.Status.Phase = overallStatusPhase(status.Status.Phase, stateStore)
 		status.Status.Phase = statusPhaseForRuntime(status.Status.Phase, chainRunner.ActiveRuntimeSnapshot(), chainRunner.RuntimeMutationError())
 		status.Status.ResourcePhaseIssues = resourcePhaseIssues(stateStore)
@@ -2459,7 +2475,9 @@ func runServeChainOnceWith(ctx context.Context, runner *controllerchain.Runner, 
 		return nil, reconcileErr
 	}
 	outcome.Stage = "observe"
-	result, err = apply.New().Observe(router)
+	engine := apply.New()
+	engine.Store = store
+	result, err = engine.ObserveEffective(filterRouterByWhen(router, store), router)
 	if err != nil {
 		return nil, err
 	}
