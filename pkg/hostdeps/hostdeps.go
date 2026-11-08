@@ -686,7 +686,6 @@ func NetworkAdoptionResources(router *api.Router) []api.Resource {
 	}
 	var out []api.Resource
 	explicitNetworkd := map[string]bool{}
-	explicitResolved := false
 	for _, resource := range router.Spec.Resources {
 		if resource.Kind == "NetworkAdoption" {
 			out = append(out, resource)
@@ -702,10 +701,6 @@ func NetworkAdoptionResources(router *api.Router) []api.Resource {
 			if ifname != "" && (n.DisableDHCPv4 || n.DisableDHCPv6 || n.DisableIPv6RA || n.DHCPv4UseRoutes != nil || n.DHCPv4UseDNS != nil || n.DHCPv4RouteMetric != 0) {
 				explicitNetworkd[ifname] = true
 			}
-			r := spec.SystemdResolved
-			if r.DisableDNSStubListener || len(r.DNSServers) > 0 || len(r.FallbackDNSServers) > 0 {
-				explicitResolved = true
-			}
 		}
 	}
 	adoptions := NetworkAdoptions(router)
@@ -713,10 +708,7 @@ func NetworkAdoptionResources(router *api.Router) []api.Resource {
 		if explicitNetworkd[api.ResolveInterfaceIfName(router, adoption.Spec.Interface)] {
 			adoption.Spec.SystemdNetworkd = api.NetworkAdoptionNetworkdSpec{}
 		}
-		if explicitResolved {
-			adoption.Spec.SystemdResolved = api.NetworkAdoptionResolvedSpec{}
-		}
-		if adoption.Spec.SystemdNetworkd == (api.NetworkAdoptionNetworkdSpec{}) && !adoption.Spec.SystemdResolved.DisableDNSStubListener && len(adoption.Spec.SystemdResolved.DNSServers) == 0 && len(adoption.Spec.SystemdResolved.FallbackDNSServers) == 0 {
+		if adoption.Spec.SystemdNetworkd == (api.NetworkAdoptionNetworkdSpec{}) {
 			continue
 		}
 		out = append(out, api.Resource{
@@ -769,7 +761,6 @@ func NetworkAdoptions(router *api.Router) []NetworkAdoptionResource {
 		}
 		return item
 	}
-	resolved := providesDefaultLoopbackDNS(router)
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
 		case "IPv4StaticAddress":
@@ -845,8 +836,7 @@ func NetworkAdoptions(router *api.Router) []NetworkAdoptionResource {
 	}
 
 	names := sortedKeysPtr(byInterface)
-	out := make([]NetworkAdoptionResource, 0, len(names)+1)
-	resolvedAttached := false
+	out := make([]NetworkAdoptionResource, 0, len(names))
 	for _, name := range names {
 		item := byInterface[name]
 		spec := api.NetworkAdoptionSpec{
@@ -857,108 +847,9 @@ func NetworkAdoptions(router *api.Router) []NetworkAdoptionResource {
 				DisableIPv6RA: item.disableIPv6RA,
 			},
 		}
-		if resolved && !resolvedAttached {
-			spec.SystemdResolved = api.NetworkAdoptionResolvedSpec{
-				DisableDNSStubListener: true,
-				DNSServers:             []string{"127.0.0.1"},
-			}
-			resolvedAttached = true
-		}
 		out = append(out, NetworkAdoptionResource{Name: name + "-networkd-owned-by-routerd", Spec: spec})
 	}
-	if resolved && !resolvedAttached {
-		out = append(out, NetworkAdoptionResource{
-			Name: "resolved-owned-by-routerd",
-			Spec: api.NetworkAdoptionSpec{
-				SystemdResolved: api.NetworkAdoptionResolvedSpec{
-					DisableDNSStubListener: true,
-					DNSServers:             []string{"127.0.0.1"},
-				},
-			},
-		})
-	}
 	return out
-}
-
-func providesDefaultLoopbackDNS(router *api.Router) bool {
-	if router == nil {
-		return false
-	}
-	defaultSources := map[string]map[string]bool{}
-	ensureDefaultSources := func(resolver string) map[string]bool {
-		resolver = strings.TrimPrefix(strings.TrimSpace(resolver), "DNSResolver/")
-		if resolver == "" {
-			return nil
-		}
-		sources := defaultSources[resolver]
-		if sources == nil {
-			sources = map[string]bool{}
-			defaultSources[resolver] = sources
-		}
-		return sources
-	}
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "DNSForwarder" {
-			continue
-		}
-		spec, err := res.DNSForwarderSpec()
-		if err != nil || len(spec.Upstreams) == 0 || !dnsMatchIncludesDefault(spec.Match) {
-			continue
-		}
-		if sources := ensureDefaultSources(spec.Resolver); sources != nil {
-			sources[res.Metadata.Name] = true
-		}
-	}
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "DNSResolver" {
-			continue
-		}
-		spec, err := res.DNSResolverSpec()
-		if err != nil {
-			continue
-		}
-		sources := ensureDefaultSources(res.Metadata.Name)
-		for _, source := range spec.Sources {
-			if len(source.Upstreams) > 0 && dnsMatchIncludesDefault(source.Match) {
-				sources[source.Name] = true
-			}
-		}
-		if len(sources) == 0 {
-			continue
-		}
-		for _, listen := range spec.Listen {
-			if (listen.Port != 0 && listen.Port != 53) || !containsString(listen.Addresses, "127.0.0.1") {
-				continue
-			}
-			if len(listen.Sources) == 0 {
-				return true
-			}
-			for _, source := range listen.Sources {
-				if sources[source] {
-					return true
-				}
-			}
-		}
-	}
-	return false
-}
-
-func dnsMatchIncludesDefault(matches []string) bool {
-	for _, match := range matches {
-		if strings.TrimSpace(match) == "." {
-			return true
-		}
-	}
-	return false
-}
-
-func containsString(values []string, want string) bool {
-	for _, value := range values {
-		if strings.TrimSpace(value) == want {
-			return true
-		}
-	}
-	return false
 }
 
 func sortedKeys(values map[string]bool) []string {
