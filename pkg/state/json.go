@@ -37,16 +37,6 @@ type Store interface {
 	Variables() map[string]Value
 }
 
-type GenerationStore interface {
-	BeginGeneration(configHash string) (int64, error)
-	FinishGeneration(generation int64, phase string, warnings []string) error
-	CurrentGeneration() int64
-}
-
-type GenerationConfigRecorder interface {
-	RecordGenerationConfig(generation int64, configYAML string) error
-}
-
 type LatestGenerationReader interface {
 	LatestGeneration() int64
 }

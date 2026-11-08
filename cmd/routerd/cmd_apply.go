@@ -245,19 +245,6 @@ func beginConfigGeneration(store *routerstate.SQLiteStore, configYAML string, ef
 	return generation, changed, nil
 }
 
-func commitConfigAfterSuccessfulApply(opts applyOptions, configYAML string, logger *eventlog.Logger) error {
-	if opts.DryRun || opts.SkipConfigCommit || strings.TrimSpace(opts.ConfigPath) == "" {
-		return nil
-	}
-	if err := config.AtomicWriteFile(opts.ConfigPath, []byte(configYAML)); err != nil {
-		return fmt.Errorf("commit canonical config %s: %w", opts.ConfigPath, err)
-	}
-	if logger != nil {
-		logger.Emit(eventlog.LevelInfo, "apply", "committed canonical router config", map[string]string{"config": opts.ConfigPath})
-	}
-	return nil
-}
-
 func configCommitPhase(phase string) bool {
 	switch strings.TrimSpace(phase) {
 	case "Healthy", "Applied", "Committed":
