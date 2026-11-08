@@ -139,11 +139,9 @@ ICMP 規則可依 type 名稱進行篩選。
 
 ```sh
 routerctl firewall test from=wan to=self proto=tcp dport=22
-routerctl describe firewall
 ```
 
 第一個指令針對指定的 5-tuple 回傳 `accept` / `drop`。
-第二個指令顯示包含角色矩陣預設值與受管通行孔在內的完整有效規則。
 
 ## 相關項目
 

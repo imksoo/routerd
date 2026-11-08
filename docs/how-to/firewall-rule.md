@@ -138,10 +138,9 @@ Use the local simulator to check what the rule would do before you apply it:
 
 ```sh
 routerctl firewall test from=wan to=self proto=tcp dport=22
-routerctl describe firewall
 ```
 
-The first command reports `accept` or `drop` for the specific 5-tuple. The second prints the full effective ruleset including role-matrix defaults and managed openings.
+The first command reports `accept` or `drop` for the specific 5-tuple.
 
 ## See also
 

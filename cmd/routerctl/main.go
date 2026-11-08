@@ -117,7 +117,6 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  get <subject|kind[/name]> [--socket <path>] [--limit <n>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  get events|ledger|connections|dns-queries|traffic-flows|firewall-logs [--socket <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  describe <kind>/<name> [--socket <path>] [--events-limit <n>] [-o table|json|yaml]")
-	fmt.Fprintln(w, "  describe firewall [--config <path>]")
 	fmt.Fprintln(w, "  firewall test from=<zone> to=<zone|self> proto=<tcp|udp> dport=<port> [--config <path>]")
 	fmt.Fprintln(w, "  dynamic list [--state-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  dynamic describe <source> [--state-file <path>] [-o table|json|yaml]")

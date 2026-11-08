@@ -141,11 +141,9 @@ ICMP ルールは type 名で絞り込めます。
 
 ```sh
 routerctl firewall test from=wan to=self proto=tcp dport=22
-routerctl describe firewall
 ```
 
 最初のコマンドは、指定した 5-tuple に対して `accept` / `drop` を返します。
-2 つ目は、ロールマトリクスの既定と管理対象の穴を含めた、実効ルール全体を表示します。
 
 ## 関連項目
 
