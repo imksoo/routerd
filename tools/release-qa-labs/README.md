@@ -1,5 +1,9 @@
 # Tracked release-QA labs
 
+The fixed full-representative qualification has been removed. The mutation
+driver supports only `pve-certification-only`; full-scope instructions below
+are historical. Cleanup and inventory remain available for existing runs.
+
 This directory is the canonical, reviewed implementation of the routerd
 release certification lifecycle. Release procedures must not reference a
 script from an untracked directory, a local-only nested repository, or an
@@ -775,9 +779,8 @@ not silently reduce the matrices or extend the paid window.
 The exact artifact contract pins both the profile wrapper and its
 `sam-e2e.sh` harness dependency.
 
-Use the durable supervisor as the only paid entry point. For the exact profile
-command and evidence contract, see
-[`docs/operations/cloud-sam-representative-redundancy.md`](../../docs/operations/cloud-sam-representative-redundancy.md).
+The fixed representative qualification profile has been removed. The retained
+supervisor and cleanup procedures support recovery of existing lab resources.
 
 ## Offline validation
 

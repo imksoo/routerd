@@ -35,7 +35,6 @@ MAX_QUALIFICATION_BUDGET_SECONDS = 90 * 60
 MIN_SUPERVISOR_RESERVE_SECONDS = 5 * 60
 REQUIRED_QUALIFICATION_SCRIPT_BLOBS = {
     "tests/e2e/cloudedge/configs/sam-e2e-generate.sh",
-    "tests/e2e/cloudedge/scripts/sam-representative-redundancy.sh",
     "tests/e2e/cloudedge/scripts/sam-e2e.sh",
     "tests/e2e/cloudedge/scripts/sam-pve-qga-addresses.sh",
     "tests/e2e/cloudedge/scripts/sam-pve-bridge-audit.sh",

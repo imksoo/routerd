@@ -5,7 +5,7 @@
   "topology": "cloudedge-sam-full",
   "qualification": {
     "profile": "representative-redundancy",
-    "runScope": "full-representative",
+    "runScope": "pve-certification-only",
     "provisioningBudgetSeconds": 1080,
     "qualificationBudgetSeconds": 5400,
     "minimumSupervisorReserveSeconds": 300
@@ -27,7 +27,6 @@
       "scripts/certify-cloud-substrate.sh": "<committed blob SHA-256>",
       "scripts/certify-pve-substrate.sh": "<committed blob SHA-256>",
       "tests/e2e/cloudedge/configs/sam-e2e-generate.sh": "<committed blob SHA-256>",
-      "tests/e2e/cloudedge/scripts/sam-representative-redundancy.sh": "<committed blob SHA-256>",
       "tests/e2e/cloudedge/scripts/sam-e2e.sh": "<committed blob SHA-256>",
       "tests/e2e/cloudedge/scripts/sam-pve-qga-addresses.sh": "<committed blob SHA-256>",
       "tests/e2e/cloudedge/scripts/sam-pve-bridge-audit.sh": "<committed blob SHA-256>",

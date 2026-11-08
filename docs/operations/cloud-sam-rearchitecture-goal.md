@@ -11,7 +11,7 @@ integration gate, never a substitute for completing the migration.
 The execution snapshots below retain the earlier RR-only profile and its
 32-minute qualification / 55-minute mutation budget as historical source
 decisions. They are superseded for current qualification scope and budget by
-the [representative redundancy contract](/docs/operations/cloud-sam-representative-redundancy#approved-budget),
+the former representative redundancy contract,
 including the four edge-A scenarios and the approved 90/115/145-minute
 qualification/mutation/planned-cleanup policy. This reference does not change
 past evidence or authorize live admission.
