@@ -65,27 +65,6 @@ func TestPlanArtifactOrphansUsesDesiredLedgerAndHostInventory(t *testing.T) {
 	}
 }
 
-func TestPlanDeleteTargetGCKeepsLedgerForgetDryRunnable(t *testing.T) {
-	owner := api.NetAPIVersion + "/DHCPv6PrefixDelegation/wan-pd"
-	other := api.NetAPIVersion + "/DHCPv6PrefixDelegation/other"
-	plan := PlanDeleteTargetGC(GCPlanInput{
-		LedgerArtifacts: []resource.Artifact{
-			{Kind: "file", Name: "/tmp/routerd-wan", Owner: owner},
-			{Kind: "file", Name: "/tmp/routerd-other", Owner: other},
-		},
-		TargetOwnerIDs: map[string]bool{owner: true},
-	})
-	if len(plan.ArtifactRemovals) != 1 || plan.ArtifactRemovals[0].Artifact.Name != "/tmp/routerd-wan" {
-		t.Fatalf("artifact removals = %+v, want only target owner", plan.ArtifactRemovals)
-	}
-	if len(plan.LedgerForgets) != 1 || plan.LedgerForgets[0].Name != "/tmp/routerd-wan" {
-		t.Fatalf("ledger forgets = %+v, want only target owner", plan.LedgerForgets)
-	}
-	if got := actionTypes(plan.Actions); !reflect.DeepEqual(got, []GCActionType{GCActionRemoveArtifact, GCActionForgetLedger}) {
-		t.Fatalf("actions = %#v", got)
-	}
-}
-
 func TestPlanArtifactOrphansTreatsLegacyNftTableIdentityAsDesired(t *testing.T) {
 	owner := api.NetAPIVersion + "/NAT44Rule/lan"
 	desired := []resource.Artifact{{

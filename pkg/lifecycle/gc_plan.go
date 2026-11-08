@@ -25,12 +25,9 @@ const (
 )
 
 type GCPlanInput struct {
-	DesiredArtifacts       []resource.Artifact
-	LedgerArtifacts        []resource.Artifact
-	HostArtifacts          []resource.Artifact
-	ObjectStatuses         []routerstate.ObjectStatus
-	DesiredObjectStatusIDs map[string]bool
-	TargetOwnerIDs         map[string]bool
+	DesiredArtifacts []resource.Artifact
+	LedgerArtifacts  []resource.Artifact
+	HostArtifacts    []resource.Artifact
 }
 
 type GCPlan struct {
@@ -55,27 +52,6 @@ type GCAction struct {
 	Reason      string
 	Remediation string
 	Label       string
-}
-
-func PlanGC(input GCPlanInput) GCPlan {
-	plan := PlanArtifactOrphans(input)
-	resourcePlan := PlanResourceTeardownGC(input.DesiredObjectStatusIDs, input.ObjectStatuses)
-	plan.ResourceTeardowns = append(plan.ResourceTeardowns, resourcePlan.ResourceTeardowns...)
-	plan.Actions = append(plan.Actions, resourcePlan.Actions...)
-	if resourcePlan.BackupRequired {
-		plan.BackupRequired = true
-	}
-	statusPlan := PlanStatusGC(input.DesiredObjectStatusIDs, input.ObjectStatuses)
-	plan.StatusDeletes = append(plan.StatusDeletes, statusPlan.StatusDeletes...)
-	if len(statusPlan.StatusDeletes) > 0 {
-		plan.BackupRequired = true
-		plan.Actions = append(plan.Actions, GCAction{Type: GCActionBackupState, Reason: "stale object status cleanup requires a state backup before deletion"})
-		for _, status := range statusPlan.StatusDeletes {
-			plan.Actions = append(plan.Actions, GCAction{Type: GCActionDeleteStatus, Status: status, Label: ObjectStatusID(status)})
-		}
-		plan.Actions = append(plan.Actions, GCAction{Type: GCActionRecordEvent, Reason: "StaleStateCleanup"})
-	}
-	return plan
 }
 
 func PlanResourceTeardownGC(desired map[string]bool, statuses []routerstate.ObjectStatus) GCPlan {
@@ -164,30 +140,6 @@ func gcArtifactIdentityAliases(artifact resource.Artifact) []string {
 		}
 	}
 	return ids
-}
-
-func PlanDeleteTargetGC(input GCPlanInput) GCPlan {
-	if len(input.TargetOwnerIDs) == 0 {
-		return GCPlan{}
-	}
-	var removals []GCArtifactRemoval
-	var forgets []resource.Artifact
-	for _, artifact := range input.LedgerArtifacts {
-		if !input.TargetOwnerIDs[artifact.Owner] {
-			continue
-		}
-		removals = append(removals, GCArtifactRemoval{
-			Artifact:    artifact,
-			Reason:      "resource delete requested removal of owned artifact",
-			Remediation: ArtifactCleanupRemediation(artifact),
-		})
-		forgets = append(forgets, artifact)
-	}
-	sortArtifactRemovals(removals)
-	sort.SliceStable(forgets, func(i, j int) bool {
-		return artifactCleanupSortKey(forgets[i]) < artifactCleanupSortKey(forgets[j])
-	})
-	return planFromArtifactRemovals(removals, forgets)
 }
 
 func PlanStatusGC(desired map[string]bool, statuses []routerstate.ObjectStatus) GCPlan {
