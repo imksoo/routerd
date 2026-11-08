@@ -3897,11 +3897,6 @@ type LANAddressController struct {
 	// DeprecatedAddressPresent verifies that a DS-Lite-only address is not a
 	// preferred source for unrelated host traffic.
 	DeprecatedAddressPresent func(context.Context, string, string) bool
-	// AddressList returns the global IPv6 addresses currently present on an
-	// interface.  The controller uses this readback to recover routerd-owned
-	// delegated /64 history after a lease-sync file replaces a local snapshot
-	// which contained PreviousPrefixes.
-	AddressList func(context.Context, string) ([]string, error)
 	// EnsureVMAC is used only for standby staging.  The authoritative VRRP
 	// helper creates the configured macvlan cold and leaves it DOWN.
 	EnsureVMAC          func(context.Context, string) error
@@ -5027,8 +5022,6 @@ func derivePreviousDelegatedAddresses(snapshot pdclient.Snapshot, currentPrefix 
 	return out, nil
 }
 
-const defaultIPv6DelegatedAddressWithdrawalLifetime = 2 * time.Hour
-
 func mergeManagedPreviousDelegatedAddresses(now time.Time, current string, groups ...[]managedPreviousDelegatedAddress) []managedPreviousDelegatedAddress {
 	byAddress := map[string]time.Time{}
 	for _, group := range groups {
@@ -5052,187 +5045,6 @@ func mergeManagedPreviousDelegatedAddresses(now time.Time, current string, group
 		out = append(out, managedPreviousDelegatedAddress{Address: address, ExpiresAt: byAddress[address]})
 	}
 	return out
-}
-
-func delegatedAddressRAWithdrawalLifetime(router *api.Router, delegatedName string) (time.Duration, bool) {
-	if router == nil || strings.TrimSpace(delegatedName) == "" {
-		return 0, false
-	}
-	want := "IPv6DelegatedAddress/" + strings.TrimSpace(delegatedName)
-	var longest time.Duration
-	found := false
-	for _, resource := range router.Spec.Resources {
-		if resource.Kind != "IPv6RouterAdvertisement" {
-			continue
-		}
-		spec, err := resource.IPv6RouterAdvertisementSpec()
-		if err != nil || strings.TrimSpace(spec.PrefixFrom.Resource) != want {
-			continue
-		}
-		found = true
-		lifetime := defaultIPv6DelegatedAddressWithdrawalLifetime
-		if value := strings.TrimSpace(spec.ValidLifetime); value != "" {
-			seconds, err := strconv.ParseInt(value, 10, 64)
-			if err != nil || seconds < 0 {
-				continue
-			}
-			lifetime = time.Duration(seconds) * time.Second
-		}
-		// RFC 4862 section 5.5.3(e) may keep an unauthenticated prefix valid
-		// for two hours even when a shorter lifetime is advertised.  Keep the
-		// deprecated constructor address for at least that long so dnsmasq can
-		// continue sending preferred=0 PIOs throughout the protection window.
-		if lifetime < defaultIPv6DelegatedAddressWithdrawalLifetime {
-			lifetime = defaultIPv6DelegatedAddressWithdrawalLifetime
-		}
-		if lifetime > longest {
-			longest = lifetime
-		}
-	}
-	return longest, found
-}
-
-func declaredCurrentIPv6AddressExclusions(router *api.Router, store Store, ifname, exceptDelegatedName string) map[string]bool {
-	excluded := map[string]bool{}
-	if router == nil {
-		return excluded
-	}
-	add := func(value string) {
-		value = strings.TrimSpace(value)
-		prefix, err := netip.ParsePrefix(value)
-		if err != nil || !prefix.Addr().Is6() {
-			return
-		}
-		excluded[netip.PrefixFrom(prefix.Addr(), prefix.Bits()).String()] = true
-	}
-	for _, resource := range router.Spec.Resources {
-		switch resource.Kind {
-		case "IPv6DelegatedAddress":
-			if resource.Metadata.Name == exceptDelegatedName {
-				continue
-			}
-			spec, err := resource.IPv6DelegatedAddressSpec()
-			if err != nil || interfaceIfName(router, spec.Interface) != ifname {
-				continue
-			}
-			if store != nil {
-				status := store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name)
-				add(cleanStatusString(status["address"]))
-				pdStatus := store.ObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", spec.PrefixDelegation)
-				if currentPrefix := statusStringPreferObserved(pdStatus, "currentPrefix"); currentPrefix != "" {
-					if address, deriveErr := pdclient.DeriveIPv6Address(currentPrefix, spec.SubnetID, spec.AddressSuffix); deriveErr == nil {
-						if address, lengthErr := delegatedAddressWithPrefixLength(address, spec.PrefixLength); lengthErr == nil {
-							add(address)
-						}
-					}
-				}
-			}
-		case "VirtualAddress":
-			spec, err := resource.VirtualAddressSpec()
-			if err == nil && spec.Family == "ipv6" && interfaceIfName(router, spec.Interface) == ifname {
-				add(spec.Address)
-			}
-		}
-	}
-	return excluded
-}
-
-func managedDelegatedAddressCandidate(value, current string, spec api.IPv6DelegatedAddressSpec) (string, bool) {
-	prefix, err := netip.ParsePrefix(strings.TrimSpace(value))
-	if err != nil || !prefix.Addr().Is6() || prefix.Addr().IsLinkLocalUnicast() {
-		return "", false
-	}
-	prefixLength := spec.PrefixLength
-	if prefixLength == 0 {
-		prefixLength = 64
-	}
-	if prefixLength == 128 || prefix.Bits() != prefixLength {
-		return "", false
-	}
-	suffix, err := netip.ParseAddr(stringutil.FirstNonEmpty(strings.TrimSpace(spec.AddressSuffix), "::1"))
-	if err != nil || !suffix.Is6() || !sameIPv6HostSuffix64(prefix.Addr(), suffix) {
-		return "", false
-	}
-	address := netip.PrefixFrom(prefix.Addr(), prefixLength).String()
-	if address == strings.TrimSpace(current) {
-		return "", false
-	}
-	return address, true
-}
-
-func sameIPv6HostSuffix64(a, b netip.Addr) bool {
-	if !a.Is6() || !b.Is6() {
-		return false
-	}
-	aBytes := a.As16()
-	bBytes := b.As16()
-	for i := 8; i < len(aBytes); i++ {
-		if aBytes[i] != bBytes[i] {
-			return false
-		}
-	}
-	return true
-}
-
-func inferredPreviousDelegatedAddresses(now time.Time, current string, spec api.IPv6DelegatedAddressSpec, withdrawalLifetime time.Duration, values ...string) []managedPreviousDelegatedAddress {
-	if withdrawalLifetime <= 0 {
-		return nil
-	}
-	expiresAt := now.Add(withdrawalLifetime)
-	var out []managedPreviousDelegatedAddress
-	seen := map[string]bool{}
-	for _, value := range values {
-		address, ok := managedDelegatedAddressCandidate(value, current, spec)
-		if !ok || seen[address] {
-			continue
-		}
-		seen[address] = true
-		out = append(out, managedPreviousDelegatedAddress{Address: address, ExpiresAt: expiresAt})
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Address < out[j].Address })
-	return out
-}
-
-func linuxIPv6GlobalInterfaceAddresses(ctx context.Context, ifname string) ([]string, error) {
-	out, err := exec.CommandContext(ctx, "ip", "-6", "-o", "addr", "show", "dev", ifname, "scope", "global").Output()
-	if err != nil {
-		return nil, fmt.Errorf("ip -6 -o addr show dev %s scope global: %w", ifname, err)
-	}
-	return parseIPv6InterfaceAddressPrefixes(string(out)), nil
-}
-
-func parseIPv6InterfaceAddressPrefixes(out string) []string {
-	var addresses []string
-	seen := map[string]bool{}
-	for _, line := range strings.Split(out, "\n") {
-		fields := strings.Fields(line)
-		// SLAAC/temporary addresses are not owned by IPv6DelegatedAddress even
-		// if their host bits happen to match a managed suffix. Linux also labels
-		// a manually installed address with a finite valid_lft as "dynamic", so
-		// that flag alone is not an origin signal. Accept a dynamic address only
-		// after it is deprecated; the caller additionally requires the exact
-		// managed suffix and excludes other declared address owners.
-		dynamic := fieldsContain(fields, "dynamic")
-		deprecated := fieldsContain(fields, "deprecated")
-		if fieldsContain(fields, "temporary") || fieldsContain(fields, "mngtmpaddr") || fieldsContain(fields, "autoconf") || fieldsContain(fields, "tentative") || fieldsContain(fields, "dadfailed") || (dynamic && !deprecated) {
-			continue
-		}
-		for i := 0; i+1 < len(fields); i++ {
-			if fields[i] != "inet6" {
-				continue
-			}
-			prefix, err := netip.ParsePrefix(strings.TrimSpace(fields[i+1]))
-			if err != nil || !prefix.Addr().Is6() || prefix.Addr().IsLinkLocalUnicast() {
-				continue
-			}
-			address := netip.PrefixFrom(prefix.Addr(), prefix.Bits()).String()
-			if !seen[address] {
-				seen[address] = true
-				addresses = append(addresses, address)
-			}
-		}
-	}
-	return addresses
 }
 
 func previousDelegatedAddressesFromStatus(status map[string]any) []managedPreviousDelegatedAddress {
@@ -5368,46 +5180,8 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 				return fmt.Errorf("%s derive previous addresses: %w", resource.ID(), err)
 			}
 		}
-		// Lease sync deliberately replaces the standby snapshot with the active
-		// peer's file.  A peer which never owned this node's former prefix cannot
-		// carry that PreviousPrefixes history.  Preserve existing status history,
-		// then recover a lost transition from the resource's previous current
-		// address and exact managed-suffix /64 addresses still present in kernel.
-		// This is restricted to resources which actually feed RA; DS-Lite /128
-		// endpoints and unrelated IPv6 addresses are never adopted here.
 		if spec.PrefixLength != 128 {
-			historicalPrevious := previousDelegatedAddressesFromStatus(previousStatus)
-			previousAddresses = mergeManagedPreviousDelegatedAddresses(now, addr, previousAddresses, historicalPrevious)
-			if withdrawalLifetime, hasRA := delegatedAddressRAWithdrawalLifetime(sourceRouter, resource.Metadata.Name); hasRA && withdrawalLifetime > 0 {
-				observed := []string{cleanStatusString(previousStatus["address"])}
-				if !c.DryRun {
-					list := c.AddressList
-					if list == nil && c.currentOS() == platform.OSLinux {
-						list = linuxIPv6GlobalInterfaceAddresses
-					}
-					if list != nil {
-						addresses, listErr := list(ctx, ifname)
-						if listErr != nil {
-							return fmt.Errorf("%s list delegated interface addresses: %w", resource.ID(), listErr)
-						}
-						observed = append(observed, addresses...)
-					}
-				}
-				known := make(map[string]bool, len(historicalPrevious)+len(previousAddresses))
-				for _, previous := range append(append([]managedPreviousDelegatedAddress(nil), historicalPrevious...), previousAddresses...) {
-					known[previous.Address] = true
-				}
-				excluded := declaredCurrentIPv6AddressExclusions(sourceRouter, c.Store, ifname, resource.Metadata.Name)
-				untracked := observed[:0]
-				for _, value := range observed {
-					candidate, ok := managedDelegatedAddressCandidate(value, addr, spec)
-					if ok && !known[candidate] && !excluded[candidate] {
-						untracked = append(untracked, candidate)
-					}
-				}
-				inferred := inferredPreviousDelegatedAddresses(now, addr, spec, withdrawalLifetime, untracked...)
-				previousAddresses = mergeManagedPreviousDelegatedAddresses(now, addr, previousAddresses, inferred)
-			}
+			previousAddresses = mergeManagedPreviousDelegatedAddresses(now, addr, previousAddresses, previousDelegatedAddressesFromStatus(previousStatus))
 		}
 		status := map[string]any{
 			"phase":        "Applied",
