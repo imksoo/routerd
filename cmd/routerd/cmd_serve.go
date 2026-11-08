@@ -562,7 +562,6 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		DnsmasqListen:          []string{"127.0.0.1"},
 		NftablesPath:           *nftablesPath,
 		FirewallPath:           "/run/routerd/firewall.nft",
-		LedgerPath:             *ledgerPath,
 		NftCommand:             "nft",
 		BGPSocketPath:          *bgpSocketPath,
 		BGPControlSocketPath:   *bgpControlSocketPath,

@@ -1260,7 +1260,6 @@ type Options struct {
 	FirewallPath          string
 	PathMTUPath           string
 	ForceFragmentPath     string
-	LedgerPath            string
 	NftCommand            string
 	BGPSocketPath         string
 	BGPControlSocketPath  string

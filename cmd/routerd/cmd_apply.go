@@ -827,7 +827,6 @@ func applyChainControllerOptions(opts applyOptions) controllerchain.Options {
 		DnsmasqListen:          []string{"127.0.0.1"},
 		NftablesPath:           defaultString(opts.NftablesPath, defaultNftablesPath),
 		FirewallPath:           "/run/routerd/firewall.nft",
-		LedgerPath:             defaultString(opts.LedgerPath, defaultLedgerPath),
 		NftCommand:             "nft",
 		ConntrackInterval:      30 * time.Second,
 		BGPSocketPath:          opts.BGPSocketPath,
