@@ -58,7 +58,7 @@ WIZARD_FIXTURE_DIR := website/fixtures/wizard
 
 WEBSITE_NODE_MODULES_STAMP := website/node_modules/.package-lock.json
 
-.PHONY: test check-version-ldflags build build-daemons build-provider-executors build-ndpi-agent build-ndpi-agent-libndpi build-daemons-freebsd check-freebsd-cross-compile check-linux-static check-ndpi-agent-libndpi check-install-deps cloudedge-acceptance-lint webconsole-build webconsole-browser-install webconsole-screenshot generate-schema sync-website-schemas check-schema check-website-schemas generate-wizard-fixtures check-wizard-fixtures validate-wizard-fixtures check-examples-line-limits check-bespoke-lifecycle website-deps website-build third-party-licenses check-build-deps dist deb deb-ndpi dist-ndpi-agent-libndpi live-iso validate-example release clean
+.PHONY: test check-version-ldflags build build-daemons build-provider-executors build-ndpi-agent build-ndpi-agent-libndpi build-daemons-freebsd check-freebsd-cross-compile check-linux-static check-ndpi-agent-libndpi check-install-deps cloudedge-acceptance-lint webconsole-build webconsole-browser-install webconsole-screenshot generate-schema sync-website-schemas check-schema check-website-schemas generate-wizard-fixtures check-wizard-fixtures validate-wizard-fixtures check-bespoke-lifecycle website-deps website-build third-party-licenses check-build-deps dist deb deb-ndpi dist-ndpi-agent-libndpi live-iso validate-example release clean
 
 test: check-version-ldflags
 	go test ./...
@@ -201,9 +201,6 @@ check-wizard-fixtures: website-deps
 
 validate-wizard-fixtures: website-deps
 	node scripts/validate-wizard-fixtures.cjs schemas/$(CONFIG_SCHEMA) $(WIZARD_FIXTURE_DIR)
-
-check-examples-line-limits:
-	./scripts/check-examples-line-limits.sh
 
 check-bespoke-lifecycle:
 	go test ./pkg/servicemgr ./pkg/controller/bgp ./pkg/controller/vrrp ./pkg/controller/chain ./pkg/controller/nat44 ./cmd/routerctl
