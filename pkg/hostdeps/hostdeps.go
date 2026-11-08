@@ -685,13 +685,40 @@ func NetworkAdoptionResources(router *api.Router) []api.Resource {
 		return nil
 	}
 	var out []api.Resource
+	explicitNetworkd := map[string]bool{}
+	explicitResolved := false
 	for _, resource := range router.Spec.Resources {
 		if resource.Kind == "NetworkAdoption" {
 			out = append(out, resource)
+			spec, err := resource.NetworkAdoptionSpec()
+			if err != nil {
+				continue
+			}
+			ifname := strings.TrimSpace(spec.IfName)
+			if ifname == "" {
+				ifname = api.ResolveInterfaceIfName(router, spec.Interface)
+			}
+			n := spec.SystemdNetworkd
+			if ifname != "" && (n.DisableDHCPv4 || n.DisableDHCPv6 || n.DisableIPv6RA || n.DHCPv4UseRoutes != nil || n.DHCPv4UseDNS != nil || n.DHCPv4RouteMetric != 0) {
+				explicitNetworkd[ifname] = true
+			}
+			r := spec.SystemdResolved
+			if r.DisableDNSStubListener || len(r.DNSServers) > 0 || len(r.FallbackDNSServers) > 0 {
+				explicitResolved = true
+			}
 		}
 	}
 	adoptions := NetworkAdoptions(router)
 	for _, adoption := range adoptions {
+		if explicitNetworkd[api.ResolveInterfaceIfName(router, adoption.Spec.Interface)] {
+			adoption.Spec.SystemdNetworkd = api.NetworkAdoptionNetworkdSpec{}
+		}
+		if explicitResolved {
+			adoption.Spec.SystemdResolved = api.NetworkAdoptionResolvedSpec{}
+		}
+		if adoption.Spec.SystemdNetworkd == (api.NetworkAdoptionNetworkdSpec{}) && !adoption.Spec.SystemdResolved.DisableDNSStubListener && len(adoption.Spec.SystemdResolved.DNSServers) == 0 && len(adoption.Spec.SystemdResolved.FallbackDNSServers) == 0 {
+			continue
+		}
 		out = append(out, api.Resource{
 			TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "NetworkAdoption"},
 			Metadata: api.ObjectMeta{Name: adoption.Name},

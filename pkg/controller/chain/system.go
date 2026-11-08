@@ -2253,12 +2253,12 @@ func networkdAdoptionDropin(spec api.NetworkAdoptionNetworkdSpec, disableRADHCPv
 	} else if spec.DisableDHCPv6 {
 		b.WriteString("DHCP=ipv4\n")
 	}
-	if acceptRA {
-		b.WriteString("IPv6AcceptRA=yes\n")
-	} else if spec.DisableIPv6RA {
+	if spec.DisableIPv6RA {
 		b.WriteString("IPv6AcceptRA=no\n")
+	} else if acceptRA {
+		b.WriteString("IPv6AcceptRA=yes\n")
 	}
-	if disableRADHCPv6 && (acceptRA || !spec.DisableIPv6RA) {
+	if disableRADHCPv6 && !spec.DisableIPv6RA {
 		b.WriteString("\n[IPv6AcceptRA]\nDHCPv6Client=no\n")
 	}
 	if spec.DHCPv4UseRoutes != nil || spec.DHCPv4UseDNS != nil || spec.DHCPv4RouteMetric != 0 {
