@@ -774,7 +774,7 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 			if !existingIPv6 {
 				_, existingIPv6 = staticIPv6[ifname+"|"+prefix]
 			}
-			if (source == "static" || (source == "" && existingIPv6)) && importStaticIPv6Address(address, ifname, ip) {
+			if (source == "static" || ((source == "" || source == "foreign") && existingIPv6)) && importStaticIPv6Address(address, ifname, ip) {
 				static, exists := staticIPv6[resource.Metadata.Name+"|"+prefix]
 				if !exists {
 					static, exists = staticIPv6[ifname+"|"+prefix]
