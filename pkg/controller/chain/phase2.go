@@ -155,7 +155,7 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		ifname := firstNonEmpty(spec.TunnelName, spec.Interface, resource.Metadata.Name)
+		ifname := firstNonEmpty(spec.TunnelName, resource.Metadata.Name)
 		activeResources[resource.ID()] = struct{}{}
 		desired[ifname] = struct{}{}
 		if api.BoolDefault(spec.Enabled, true) {
@@ -176,7 +176,7 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 		if _, active := activeResources[resource.ID()]; active {
 			continue
 		}
-		ifname := firstNonEmpty(spec.TunnelName, spec.Interface, resource.Metadata.Name)
+		ifname := firstNonEmpty(spec.TunnelName, resource.Metadata.Name)
 		_, referenced := desired[ifname]
 		_, inUse := enabled[ifname]
 		if !c.DryRun && !referenced && !inUse {
@@ -201,7 +201,7 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 			return err
 		}
 		if !api.BoolDefault(spec.Enabled, true) {
-			ifname := firstNonEmpty(spec.TunnelName, spec.Interface, resource.Metadata.Name)
+			ifname := firstNonEmpty(spec.TunnelName, resource.Metadata.Name)
 			_, inUse := enabled[ifname]
 			if !c.DryRun && !inUse {
 				if err := deleteDSLiteTunnel(ctx, ifname); err != nil {
@@ -239,7 +239,7 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": reason, "aftrName": aftrName, "aftrIPv6": remote})
 			continue
 		}
-		ifname := firstNonEmpty(spec.TunnelName, spec.Interface, resource.Metadata.Name)
+		ifname := firstNonEmpty(spec.TunnelName, resource.Metadata.Name)
 		actualIfName := ifname
 		mtu := spec.MTU
 		if mtu == 0 {
