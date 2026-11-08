@@ -18,7 +18,6 @@ import (
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 )
 
-const NftablesRouterdOwnerMarker = "routerd.owner=routerd routerd.generation=1"
 const nftEgressRoutePolicyHashBuckets = 256
 
 const (
@@ -264,7 +263,6 @@ func NftablesEgressRoutePolicyDefaultMarks(resourceID string, spec api.EgressRou
 	var buf bytes.Buffer
 	writeNftTablePreamble(&buf, "ip", "routerd_default_route")
 	buf.WriteString("table ip routerd_default_route {\n")
-	writeNftTableOwnerMarker(&buf)
 	buf.WriteString("  chain prerouting {\n")
 	buf.WriteString("    type filter hook prerouting priority -151; policy accept;\n")
 	activeTargetCandidate := len(active.Targets) > 0
@@ -307,10 +305,6 @@ type NAT44RenderRule struct {
 func writeNftTablePreamble(buf *bytes.Buffer, family, name string) {
 	buf.WriteString("add table " + family + " " + name + "\n")
 	buf.WriteString("flush table " + family + " " + name + "\n")
-}
-
-func writeNftTableOwnerMarker(buf *bytes.Buffer) {
-	buf.WriteString("  comment " + nftQuote(NftablesRouterdOwnerMarker) + "\n")
 }
 
 func writeNftSetReset(buf *bytes.Buffer, family, table, name string) {
@@ -368,7 +362,6 @@ func NftablesNAT44RulesForRouter(router *api.Router, rules []NAT44RenderRule) ([
 	if len(rules) > 0 || len(flowDNATPinholes) > 0 || len(ingressRules) > 0 || hasIPv4LocalServiceRedirectRules(redirectRules) {
 		writeNftTablePreamble(&buf, "ip", "routerd_nat")
 		buf.WriteString("table ip routerd_nat {\n")
-		writeNftTableOwnerMarker(&buf)
 		writeIPv4AddressSets(&buf, addressSets)
 		writeNAT44FlowDNATPinholeMaps(&buf, flowDNATPinholes)
 		if len(flowDNATPinholes) > 0 || len(ingressRules) > 0 || hasIPv4LocalServiceRedirectRules(redirectRules) {
@@ -413,7 +406,6 @@ func NftablesNAT44RulesForRouter(router *api.Router, rules []NAT44RenderRule) ([
 func writeIPv6LocalServiceRedirectTable(buf *bytes.Buffer, redirectRules []localServiceRedirectRule, addressSets []nftIPAddressSet) {
 	writeNftTablePreamble(buf, "ip6", "routerd_nat")
 	buf.WriteString("table ip6 routerd_nat {\n")
-	writeNftTableOwnerMarker(buf)
 	writeIPv6AddressSets(buf, addressSets)
 	buf.WriteString("  chain prerouting {\n")
 	buf.WriteString("    type nat hook prerouting priority dstnat; policy accept;\n")
@@ -611,7 +603,6 @@ func writeFirewallFilterTable(buf *bytes.Buffer, aliases map[string]string, zone
 	}
 	writeFirewallFlowPinholeSetResets(buf, flowPinholes)
 	buf.WriteString("table inet routerd_filter {\n")
-	writeNftTableOwnerMarker(buf)
 	for _, zone := range sortedZones {
 		if len(zone.IfNames) > 0 {
 			buf.WriteString("  set " + nftSetName("if_"+zone.Name) + " { type ifname; elements = { " + nftQuotedList(zone.IfNames) + " } }\n")
@@ -2086,7 +2077,6 @@ func writeNAT44RenderRule(buf *bytes.Buffer, rule NAT44RenderRule, addressSets m
 func writeTCPMSSClampTable(buf *bytes.Buffer, aliases map[string]string, policies []pathMTUPolicy) error {
 	writeNftTablePreamble(buf, "inet", "routerd_mss")
 	buf.WriteString("table inet routerd_mss {\n")
-	writeNftTableOwnerMarker(buf)
 	buf.WriteString("  chain forward {\n")
 	buf.WriteString("    type filter hook forward priority mangle; policy accept;\n")
 	for _, policy := range policies {
@@ -2130,7 +2120,6 @@ func writeTCPMSSClampTable(buf *bytes.Buffer, aliases map[string]string, policie
 func writeIPv4ForceFragmentTable(buf *bytes.Buffer, aliases map[string]string, policies []pathMTUPolicy) error {
 	writeNftTablePreamble(buf, "ip", "routerd_forcefrag")
 	buf.WriteString("table ip routerd_forcefrag {\n")
-	writeNftTableOwnerMarker(buf)
 	buf.WriteString("  chain prerouting {\n")
 	buf.WriteString("    type filter hook prerouting priority mangle; policy accept;\n")
 	for _, policy := range policies {
@@ -2162,7 +2151,6 @@ func writeIPv4ForceFragmentTable(buf *bytes.Buffer, aliases map[string]string, p
 func writeIPv4PolicyRouteTable(buf *bytes.Buffer, policies []api.Resource, addressSets map[string]nftIPAddressSet) error {
 	writeNftTablePreamble(buf, "ip", "routerd_policy")
 	buf.WriteString("table ip routerd_policy {\n")
-	writeNftTableOwnerMarker(buf)
 	writeIPv4AddressSets(buf, referencedIPv4PolicyIPAddressSets(policies, addressSets))
 	buf.WriteString("  chain prerouting {\n")
 	buf.WriteString("    type filter hook prerouting priority mangle; policy accept;\n")

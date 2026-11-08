@@ -62,11 +62,6 @@ the same distinction as the apply path.
 | Derived host runtime | Kernel module load state and systemd-networkd / systemd-resolved drop-ins derived from router resources |
 | `NTPClient` | NTP client configuration |
 
-Linux nftables tables rendered by routerd carry a table comment marker
-(`routerd.owner=routerd routerd.generation=1`). Doctor uses this marker, not a
-name-prefix heuristic alone, when deciding whether a present `routerd_*` table
-is stale relative to the current rendered config.
-
 ## Lifecycle contracts
 
 Every config resource kind is declared in the lifecycle registry. The
