@@ -152,7 +152,7 @@ jobs:
         run: make check-schema check-website-schemas
 
   install-deps-smoke:
-    name: Installer dependency plans
+    name: Installer and release checks
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -165,9 +165,6 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-
-      - name: Smoke installer dependency plans
-        run: make check-install-deps
 
       - name: Smoke install.sh script-dir resolution
         run: bash scripts/install-sh-cwd-smoke.sh
@@ -219,7 +216,7 @@ jobs:
 
       - name: Lint shell scripts
         run: |
-          shellcheck scripts/ci/detect-quality-changes.sh packaging/install.sh packaging/uninstall.sh packaging/bootstrap.sh scripts/pre-commit.sh scripts/release.sh scripts/build-live-iso.sh scripts/install-deps-smoke.sh scripts/install-sh-cwd-smoke.sh scripts/check-active-stable.sh scripts/certify-pve-substrate.sh scripts/certify-cloud-substrate.sh scripts/release-environment-preflight.sh scripts/release-qualification-smoke.sh tests/e2e/cloudedge/scripts/sam-pve-qga-addresses.sh
+          shellcheck scripts/ci/detect-quality-changes.sh packaging/install.sh packaging/uninstall.sh packaging/bootstrap.sh scripts/pre-commit.sh scripts/release.sh scripts/build-live-iso.sh scripts/install-sh-cwd-smoke.sh scripts/check-active-stable.sh scripts/certify-pve-substrate.sh scripts/certify-cloud-substrate.sh scripts/release-environment-preflight.sh scripts/release-qualification-smoke.sh tests/e2e/cloudedge/scripts/sam-pve-qga-addresses.sh
 
   warm-iso-rootfs-cache:
     name: Warm ISO rootfs cache

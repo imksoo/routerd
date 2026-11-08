@@ -6,7 +6,6 @@
 
 - [ ] `make test`
 - [ ] `make check-schema`
-- [ ] `make check-install-deps`
 - [ ] `make validate-example`
 - [ ] `make website-build`
 

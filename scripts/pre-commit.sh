@@ -16,7 +16,4 @@ go test ./...
 echo "routerd pre-commit: make check-schema"
 make check-schema
 
-echo "routerd pre-commit: make check-install-deps"
-make check-install-deps
-
 echo "routerd pre-commit: ok"

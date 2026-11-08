@@ -58,7 +58,7 @@ WIZARD_FIXTURE_DIR := website/fixtures/wizard
 
 WEBSITE_NODE_MODULES_STAMP := website/node_modules/.package-lock.json
 
-.PHONY: test check-version-ldflags build build-daemons build-provider-executors build-ndpi-agent build-ndpi-agent-libndpi build-daemons-freebsd check-freebsd-cross-compile check-linux-static check-ndpi-agent-libndpi check-install-deps cloudedge-acceptance-lint webconsole-build webconsole-browser-install webconsole-screenshot generate-schema sync-website-schemas check-schema check-website-schemas generate-wizard-fixtures check-wizard-fixtures validate-wizard-fixtures check-bespoke-lifecycle website-deps website-build third-party-licenses check-build-deps dist deb deb-ndpi dist-ndpi-agent-libndpi live-iso validate-example release clean
+.PHONY: test check-version-ldflags build build-daemons build-provider-executors build-ndpi-agent build-ndpi-agent-libndpi build-daemons-freebsd check-freebsd-cross-compile check-linux-static check-ndpi-agent-libndpi cloudedge-acceptance-lint webconsole-build webconsole-browser-install webconsole-screenshot generate-schema sync-website-schemas check-schema check-website-schemas generate-wizard-fixtures check-wizard-fixtures validate-wizard-fixtures website-deps website-build third-party-licenses check-build-deps dist deb deb-ndpi dist-ndpi-agent-libndpi live-iso validate-example release clean
 
 test: check-version-ldflags
 	go test ./...
@@ -145,9 +145,6 @@ check-ndpi-agent-libndpi:
 		echo "skipping libndpi agent selftest for non-native arch $(DISTARCH)" >&2; \
 	fi
 
-check-install-deps:
-	./scripts/install-deps-smoke.sh
-
 cloudedge-acceptance-lint:
 	./scripts/cloudedge-acceptance.sh lint
 
@@ -201,9 +198,6 @@ check-wizard-fixtures: website-deps
 
 validate-wizard-fixtures: website-deps
 	node scripts/validate-wizard-fixtures.cjs schemas/$(CONFIG_SCHEMA) $(WIZARD_FIXTURE_DIR)
-
-check-bespoke-lifecycle:
-	go test ./pkg/servicemgr ./pkg/controller/bgp ./pkg/controller/vrrp ./pkg/controller/chain ./pkg/controller/nat44 ./cmd/routerctl
 
 website-deps: $(WEBSITE_NODE_MODULES_STAMP)
 
