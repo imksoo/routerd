@@ -110,7 +110,7 @@ func (e *Engine) evaluate(router, declared *api.Router, includePlan bool) (*Resu
 		case "WebConsole":
 			e.observeWebConsole(res, includePlan, &rr)
 		case "Interface":
-			e.observeInterface(res, policies[res.Metadata.Name], observedV4ByInterface[res.Metadata.Name], inactiveTunnels, includePlan, &rr)
+			e.observeInterface(router, res, policies[res.Metadata.Name], observedV4ByInterface[res.Metadata.Name], inactiveTunnels, includePlan, &rr)
 		case "Bridge":
 			e.observeBridge(res, aliases, includePlan, &rr)
 		case "PPPoESession":
@@ -2149,14 +2149,39 @@ func InactiveDSLiteInterfaces(effective, declared *api.Router, store resourceque
 	return inactive
 }
 
-func (e *Engine) observeInterface(res api.Resource, policy interfacePolicy, observedV4 []ipv4Assignment, inactiveTunnels map[string]string, includePlan bool, rr *ResourceResult) {
+func (e *Engine) observeInterface(router *api.Router, res api.Resource, policy interfacePolicy, observedV4 []ipv4Assignment, inactiveTunnels map[string]string, includePlan bool, rr *ResourceResult) {
 	rr.Observed["ifname"] = policy.IfName
 	rr.Observed["managed"] = fmt.Sprintf("%t", policy.Managed)
 	rr.Observed["owner"] = policy.Owner
 
-	if exists, up := e.interfaceState(policy.IfName); exists {
+	spec, err := res.InterfaceSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	if ifi, err := net.InterfaceByName(policy.IfName); err == nil {
 		rr.Observed["exists"] = "true"
-		rr.Observed["up"] = fmt.Sprintf("%t", up)
+		rr.Observed["up"] = fmt.Sprintf("%t", ifi.Flags&net.FlagUp != 0)
+		rr.Observed["mtu"] = strconv.Itoa(ifi.MTU)
+		mtu, known, mtuErr := resourcequery.InterfaceMTU(router, e.Store, res, spec, time.Now())
+		if mtuErr != nil {
+			rr.Phase = "Blocked"
+			rr.Warnings = append(rr.Warnings, mtuErr.Error())
+			return
+		}
+		if known && mtu != 0 {
+			rr.Observed["desiredMTU"] = strconv.Itoa(mtu)
+			if ifi.MTU != mtu {
+				rr.Phase = "Drifted"
+			}
+		} else if !known {
+			rr.Phase = "Unknown"
+			rr.Warnings = append(rr.Warnings, "DHCP-provided MTU is not observed")
+		}
+		if spec.AdminUp && ifi.Flags&net.FlagUp == 0 {
+			rr.Phase = "Drifted"
+		}
 		if !policy.Managed && inactiveTunnels[policy.IfName] != "" {
 			rr.Phase = "Drifted"
 			rr.Warnings = append(rr.Warnings, fmt.Sprintf("inactive DS-Lite interface %s still exists", policy.IfName))
@@ -2190,12 +2215,11 @@ func (e *Engine) observeInterface(res api.Resource, policy interfacePolicy, obse
 	if !includePlan {
 		return
 	}
-	if !policy.Managed || policy.Owner == "external" {
-		rr.Plan = append(rr.Plan, "observe only; interface is externally managed")
-		return
-	}
-	if boolSpec(res, "adminUp") {
+	if spec.AdminUp {
 		rr.Plan = append(rr.Plan, "ensure link is administratively up")
+	}
+	if spec.MTU != 0 {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure configured or DHCP-provided MTU on %s", policy.IfName))
 	}
 }
 
@@ -2391,22 +2415,6 @@ func (e *Engine) detectOSNetworking() osNetworking {
 	return osNet
 }
 
-func (e *Engine) interfaceState(ifname string) (bool, bool) {
-	out, err := runCommand("ip", "-brief", "link", "show", "dev", ifname)
-	if err != nil {
-		out, err = runCommand("ifconfig", ifname)
-		if err != nil {
-			return false, false
-		}
-		return true, ifconfigStatusActive(string(out))
-	}
-	fields := strings.Fields(string(out))
-	if len(fields) < 2 {
-		return true, false
-	}
-	return true, fields[1] == "UP" || strings.Contains(fields[1], "UP")
-}
-
 func (e *Engine) hasAddress(ifname, address, family string) bool {
 	want, err := netip.ParsePrefix(address)
 	if err != nil || (family == "-4" && !want.Addr().Is4()) || (family == "-6" && !want.Addr().Is6()) {
@@ -2600,17 +2608,6 @@ func (e *Engine) observedIPv4Prefixes(policies map[string]interfacePolicy) []ipv
 		}
 	}
 	return assignments
-}
-
-func ifconfigStatusActive(output string) bool {
-	for _, line := range strings.Split(output, "\n") {
-		fields := strings.Fields(line)
-		if len(fields) >= 2 && fields[0] == "status:" {
-			return fields[1] == "active"
-		}
-	}
-	firstLine, _, _ := strings.Cut(output, "\n")
-	return strings.Contains(firstLine, "<") && strings.Contains(firstLine, "UP")
 }
 
 func interfaceAliases(router *api.Router) map[string]string {

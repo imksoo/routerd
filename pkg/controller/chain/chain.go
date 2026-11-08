@@ -3944,31 +3944,9 @@ func (c LinkController) Reconcile(ctx context.Context) error {
 			return err
 		}
 		ifname := spec.IfName
-		mtu := spec.MTU
-		for _, client := range c.Router.Spec.Resources {
-			if client.Kind != "DHCPv4Client" {
-				continue
-			}
-			clientSpec, err := client.DHCPv4ClientSpec()
-			if err != nil {
-				return err
-			}
-			if !clientSpec.UseMTU || (clientSpec.Interface != resource.Metadata.Name && clientSpec.Interface != ifname) {
-				continue
-			}
-			lease := c.Store.ObjectStatus(api.NetAPIVersion, "DHCPv4Client", client.Metadata.Name)
-			expires, err := time.Parse(time.RFC3339Nano, statusvalue.Field(lease, "expiresAt"))
-			if err != nil || !time.Now().Before(expires) {
-				continue
-			}
-			switch statusvalue.Field(lease, "phase") {
-			case daemonapi.ResourcePhaseBound, daemonapi.ResourcePhaseRefreshing, daemonapi.ResourcePhaseRebinding:
-			default:
-				continue
-			}
-			if offered, err := strconv.Atoi(statusvalue.Field(lease, "mtu")); err == nil && offered >= 68 {
-				mtu = offered
-			}
+		mtu, _, err := resourcequery.InterfaceMTU(c.Router, c.Store, resource, spec, time.Now())
+		if err != nil {
+			return err
 		}
 		status := map[string]any{
 			"phase":   "Down",
