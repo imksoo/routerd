@@ -12,6 +12,16 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20261108.1322
+
+### Changed
+
+- Improve configuration reconciliation and add explicit import of selected physical interfaces and static IP addresses. Remove unused code and tests.
+
+### Fixed
+
+- Correct router status for unconfigured conntrack and retry federated ARP requests while observers start.
+
 ## v20261027.1620
 
 ### Fixed
