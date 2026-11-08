@@ -29,15 +29,12 @@ type Store interface {
 	ObjectStatus(apiVersion, kind, name string) map[string]any
 }
 
-type CheckFunc func(context.Context, string, int, time.Duration) error
-
 type Controller struct {
 	Router   *api.Router
 	Bus      *bus.Bus
 	Store    Store
 	DryRun   bool
 	Resolver *net.Resolver
-	Check    CheckFunc
 	Logger   *slog.Logger
 }
 
@@ -266,9 +263,6 @@ func (s *backendStatus) applyCheckResult(ok bool, previous previousBackendStatus
 }
 
 func (c *Controller) check(ctx context.Context, address string, port int, timeout time.Duration) error {
-	if c.Check != nil {
-		return c.Check(ctx, address, port, timeout)
-	}
 	dialer := net.Dialer{Timeout: timeout}
 	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(address, fmt.Sprint(port)))
 	if err != nil {
