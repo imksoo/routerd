@@ -92,9 +92,8 @@ VXLAN adds 50 bytes of header (14 outer Ethernet + 20 outer IPv4 + 8 UDP + 8 VXL
 routerd installs the all-zero FDB entries required to replicate broadcast and
 unknown-unicast traffic to every peer. When the VXLAN interface and a LAN/tap
 interface are members of the same bridge, ARP, DHCPv4, IPv6 Router and Neighbor
-Discovery, and DHCPv6 cross the overlay. This differs from `VXLANSegment`, whose
-default `l2Filter` intentionally suppresses these control-plane protocols;
-choose `VXLANTunnel` for a deliberately stretched broadcast domain.
+Discovery, and DHCPv6 cross the overlay. Choose `VXLANTunnel` for a deliberately
+stretched broadcast domain.
 
 `VXLANTunnel.spec.bridge` references the Bridge resource name
 (`legacy-bridge`), while `Bridge.spec.ifname` selects the kernel link name

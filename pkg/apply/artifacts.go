@@ -404,11 +404,7 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 			return nil
 		}
 		ifname := defaultString(spec.IfName, res.Metadata.Name)
-		intents := []resource.Intent{artifact("net.link", ifname, resource.ActionEnsure, "platform-network", nil)}
-		if defaultString(spec.L2Filter, "default") != "none" {
-			intents = append(intents, resource.Intent{Artifact: newNftTableArtifact(owner, "bridge", "routerd_l2_filter"), Action: resource.ActionEnsure, ApplyWith: "nft"})
-		}
-		return intents
+		return []resource.Intent{artifact("net.link", ifname, resource.ActionEnsure, "platform-network", nil)}
 	case "Bridge":
 		spec, err := res.BridgeSpec()
 		if err != nil {

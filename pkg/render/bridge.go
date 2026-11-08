@@ -63,7 +63,6 @@ type vxlanConfig struct {
 	UDPPort        int
 	MTU            int
 	BridgeIfName   string
-	L2Filter       string
 	OuterDF        string
 }
 
@@ -120,7 +119,6 @@ func vxlanConfigs(router *api.Router, aliases map[string]string) ([]vxlanConfig,
 				UDPPort:        defaultInt(spec.UDPPort, 4789),
 				MTU:            spec.MTU,
 				BridgeIfName:   aliases[spec.Bridge],
-				L2Filter:       defaultString(spec.L2Filter, "default"),
 			})
 		case "VXLANTunnel":
 			spec, err := res.VXLANTunnelSpec()
