@@ -869,6 +869,11 @@ func (e *Engine) observeDSLiteTunnel(router *api.Router, res api.Resource, alias
 		rr.Observed["actualLocal"] = link.Info.Data.Local
 		rr.Observed["actualRemote"] = link.Info.Data.Remote
 		rr.Observed["actualMTU"] = strconv.Itoa(link.MTU)
+		expectedMTU := spec.MTU
+		if expectedMTU == 0 {
+			expectedMTU = 1460
+		}
+		rr.Observed["expectedMTU"] = strconv.Itoa(expectedMTU)
 		underlay := aliases[spec.Interface]
 		remote := ""
 		if spec.AFTRFrom.Resource == "" && spec.AFTRFQDN == "" {
@@ -909,7 +914,7 @@ func (e *Engine) observeDSLiteTunnel(router *api.Router, res api.Resource, alias
 		if actualEncap != "" {
 			rr.Observed["actualEncapsulationLimit"] = actualEncap
 		}
-		if link.Info.Kind != "ip6tnl" || link.Info.Data.Proto != "ipip6" || !slices.Contains(link.Flags, "UP") || (spec.MTU != 0 && link.MTU != spec.MTU) || (underlay != "" && underlay != tunnelName && link.Info.Data.Link != underlay) || remoteMismatch || localMismatch || (actualEncap != "" && actualEncap != expectedEncap) {
+		if link.Info.Kind != "ip6tnl" || link.Info.Data.Proto != "ipip6" || !slices.Contains(link.Flags, "UP") || link.MTU != expectedMTU || (underlay != "" && underlay != tunnelName && link.Info.Data.Link != underlay) || remoteMismatch || localMismatch || (actualEncap != "" && actualEncap != expectedEncap) {
 			rr.Phase = "Drifted"
 			rr.Observed["reason"] = "TunnelMismatch"
 			return
