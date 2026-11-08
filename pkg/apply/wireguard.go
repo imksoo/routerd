@@ -17,8 +17,18 @@ func ConfiguredWireGuardInterfaces(router *api.Router) (map[string]bool, error) 
 	retained := map[string]bool{}
 	for _, resource := range router.Spec.Resources {
 		switch resource.Kind {
-		case "Interface", "WireGuardInterface":
-			retained[api.ResolveInterfaceIfName(router, resource.Metadata.Name)] = true
+		case "Interface":
+			spec, err := resource.InterfaceSpec()
+			if err != nil {
+				return nil, err
+			}
+			retained[defaultString(spec.IfName, resource.Metadata.Name)] = true
+		case "WireGuardInterface":
+			spec, err := resource.WireGuardInterfaceSpec()
+			if err != nil {
+				return nil, err
+			}
+			retained[defaultString(spec.IfName, resource.Metadata.Name)] = true
 		case "MobilityPool":
 			spec, err := resource.MobilityPoolSpec()
 			if err != nil {

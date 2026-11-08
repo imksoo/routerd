@@ -21,8 +21,18 @@ func ExtraDSLiteInterfaces(ctx context.Context, routers ...*api.Router) ([]strin
 		}
 		for _, resource := range router.Spec.Resources {
 			switch resource.Kind {
-			case "Interface", "DSLiteTunnel":
-				retained[api.ResolveInterfaceIfName(router, resource.Metadata.Name)] = true
+			case "Interface":
+				spec, err := resource.InterfaceSpec()
+				if err != nil {
+					return nil, err
+				}
+				retained[defaultString(spec.IfName, resource.Metadata.Name)] = true
+			case "DSLiteTunnel":
+				spec, err := resource.DSLiteTunnelSpec()
+				if err != nil {
+					return nil, err
+				}
+				retained[defaultString(spec.TunnelName, resource.Metadata.Name)] = true
 			case "MobilityPool":
 				spec, err := resource.MobilityPoolSpec()
 				if err != nil {

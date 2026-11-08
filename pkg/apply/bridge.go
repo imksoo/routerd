@@ -21,8 +21,18 @@ func ExtraBridgeInterfaces(router *api.Router) ([]string, error) {
 	}
 	for _, resource := range router.Spec.Resources {
 		switch resource.Kind {
-		case "Bridge", "Interface":
-			keep(resource.Metadata.Name)
+		case "Bridge":
+			spec, err := resource.BridgeSpec()
+			if err != nil {
+				return nil, err
+			}
+			retained[defaultString(spec.IfName, resource.Metadata.Name)] = true
+		case "Interface":
+			spec, err := resource.InterfaceSpec()
+			if err != nil {
+				return nil, err
+			}
+			retained[defaultString(spec.IfName, resource.Metadata.Name)] = true
 		case "MobilityPool":
 			spec, err := resource.MobilityPoolSpec()
 			if err != nil {
