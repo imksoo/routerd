@@ -217,7 +217,11 @@ func planFIB(pool NormalizedMobilityPool, decisions []ownershipDecision) ([]dyna
 			preferredSource = decision.Address
 		}
 	}
-	if !multiplePreferredSources {
+	if pool.Self.CaptureSourceAddress != "" || pool.Self.CaptureSourceAddressFrom.Resource != "" {
+		if source, ok := captureSourcePrefix(pool.Self.CaptureSourceAddress, pool.Prefix); ok {
+			scope.PreferredSource = source.String()
+		}
+	} else if !multiplePreferredSources {
 		scope.PreferredSource = preferredSource
 	}
 	return verdicts, routes
