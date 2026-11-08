@@ -2003,21 +2003,28 @@ func (c SystemdUnitController) applySystemdUnit(ctx context.Context, name, path,
 	state := firstNonEmpty(spec.State, "present")
 	var changed bool
 	if state == "absent" {
-		removed, err := removeFileIfExists(path, c.DryRun)
+		if c.DryRun {
+			return removeFileIfExists(path, true)
+		}
+		if systemdUnitEnabledOrActive(ctx, command, unitName) {
+			if _, err := command(ctx, "systemctl", "disable", "--now", unitName); err != nil {
+				return false, fmt.Errorf("disable unit %s: %w", unitName, err)
+			}
+			changed = true
+		}
+		removed, err := removeFileIfExists(path, false)
 		if err != nil {
 			return changed, err
 		}
-		changed = removed
-		if c.DryRun {
-			return changed, nil
+		changed = changed || removed
+		out, err := command(ctx, "systemctl", "show", "--property=NeedDaemonReload", "--value", unitName)
+		if err != nil {
+			return changed, fmt.Errorf("check unit %s reload state: %w", unitName, err)
 		}
-		if removed {
+		if removed || strings.TrimSpace(string(out)) == "yes" {
 			if _, err := command(ctx, "systemctl", "daemon-reload"); err != nil {
 				return changed, err
 			}
-		}
-		if removed || systemdUnitEnabledOrActive(ctx, command, unitName) {
-			_, _ = command(ctx, "systemctl", "disable", "--now", unitName)
 		}
 		return changed, nil
 	}
