@@ -2623,29 +2623,6 @@ func TestValidateVXLANSegment(t *testing.T) {
 	}
 }
 
-func TestValidateRejectsInvalidVXLANFilterMode(t *testing.T) {
-	router := &api.Router{
-		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
-		Metadata: api.ObjectMeta{Name: "test"},
-		Spec: api.RouterSpec{Resources: []api.Resource{
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
-				Metadata: api.ObjectMeta{Name: "underlay"},
-				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: true},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VXLANSegment"},
-				Metadata: api.ObjectMeta{Name: "home-vxlan"},
-				Spec:     api.VXLANSegmentSpec{VNI: 100, LocalAddress: "192.0.2.10", Remotes: []string{"192.0.2.20"}, UnderlayInterface: "underlay", L2Filter: "permit"},
-			},
-		}},
-	}
-
-	if err := Validate(router); err == nil {
-		t.Fatal("expected invalid VXLAN l2Filter to be rejected")
-	}
-}
-
 func TestValidateRejectsInvalidVXLANTunnelOuterDF(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},

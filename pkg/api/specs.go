@@ -402,7 +402,6 @@ type VXLANSegmentSpec struct {
 	UDPPort           int      `yaml:"udpPort,omitempty" json:"udpPort,omitempty" jsonschema:"minimum=1,maximum=65535"`
 	MTU               int      `yaml:"mtu,omitempty" json:"mtu,omitempty" jsonschema:"minimum=0"`
 	Bridge            string   `yaml:"bridge,omitempty" json:"bridge,omitempty"`
-	L2Filter          string   `yaml:"l2Filter,omitempty" json:"l2Filter,omitempty" jsonschema:"enum=,enum=default,enum=none"`
 }
 
 type WireGuardInterfaceSpec struct {
