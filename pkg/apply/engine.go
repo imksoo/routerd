@@ -867,15 +867,24 @@ func (e *Engine) observeDSLiteTunnel(res api.Resource, aliases map[string]string
 		rr.Observed["actualRemote"] = link.Info.Data.Remote
 		rr.Observed["actualMTU"] = strconv.Itoa(link.MTU)
 		underlay := aliases[spec.Interface]
-		remote := defaultString(spec.RemoteAddress, spec.AFTRIPv6)
-		if link.Info.Kind != "ip6tnl" || link.Info.Data.Proto != "ipip6" || !slices.Contains(link.Flags, "UP") || (spec.MTU != 0 && link.MTU != spec.MTU) || (underlay != "" && underlay != tunnelName && link.Info.Data.Link != underlay) || (remote != "" && link.Info.Data.Remote != remote) || (localSource == "static" && spec.LocalAddress != "" && link.Info.Data.Local != spec.LocalAddress) {
+		remote := ""
+		if spec.AFTRFrom.Resource == "" && spec.AFTRFQDN == "" {
+			remote = defaultString(spec.AFTRIPv6, spec.RemoteAddress)
+		}
+		expectedRemote, remoteErr := netip.ParseAddr(remote)
+		actualRemote, actualRemoteErr := netip.ParseAddr(link.Info.Data.Remote)
+		expectedLocal, localErr := netip.ParseAddr(spec.LocalAddress)
+		actualLocal, actualLocalErr := netip.ParseAddr(link.Info.Data.Local)
+		remoteMismatch := remoteErr == nil && (actualRemoteErr != nil || expectedRemote != actualRemote)
+		localMismatch := localSource == "static" && localErr == nil && (actualLocalErr != nil || expectedLocal != actualLocal)
+		if link.Info.Kind != "ip6tnl" || link.Info.Data.Proto != "ipip6" || !slices.Contains(link.Flags, "UP") || (spec.MTU != 0 && link.MTU != spec.MTU) || (underlay != "" && underlay != tunnelName && link.Info.Data.Link != underlay) || remoteMismatch || localMismatch {
 			rr.Phase = "Drifted"
 			rr.Observed["reason"] = "TunnelMismatch"
 			return
 		}
 		rr.Phase = "Unknown"
 		rr.Observed["reason"] = "TunnelAttributesPartiallyChecked"
-		if remote == "" || localSource != "static" || spec.LocalAddress == "" {
+		if remoteErr != nil || localSource != "static" || localErr != nil {
 			rr.Observed["reason"] = "DynamicEndpointsNotChecked"
 		}
 		return
