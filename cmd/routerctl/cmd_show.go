@@ -19,7 +19,6 @@ import (
 	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/apply"
-	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/controller/chain"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/render"
@@ -43,77 +42,6 @@ type showOptions struct {
 	Verbose          bool
 	IncludeStale     bool
 	ConnectionsLimit int
-}
-
-func showCommand(args []string, stdout, stderr io.Writer) error {
-	opts, err := parseShowOptions(args)
-	if err != nil {
-		usage(stderr)
-		return err
-	}
-	router, err := config.Load(opts.ConfigPath)
-	if err != nil {
-		return err
-	}
-	store, err := routerstate.LoadReadOnly(opts.StatePath)
-	if err != nil {
-		return err
-	}
-	if closer, ok := store.(interface{ Close() error }); ok {
-		defer func() { _ = closer.Close() }()
-	}
-	if kind := dedicatedShowKind(opts.Target); kind != "" {
-		return writeDedicatedShow(stdout, router, store, opts, kind)
-	}
-	kind, name, err := parseShowTarget(opts.Target)
-	if err != nil {
-		return err
-	}
-	if kind == "Inventory" {
-		rows, err := inventoryShowResources(store, name, opts.Events)
-		if err != nil {
-			return err
-		}
-		switch opts.Output {
-		case "", "table":
-			return writeShowTable(stdout, rows, opts)
-		case "json":
-			return writeJSON(stdout, rows)
-		case "yaml":
-			return writeYAML(stdout, rows)
-		default:
-			return fmt.Errorf("unsupported output %q", opts.Output)
-		}
-	}
-	ledger, err := resource.LoadLedger(opts.LedgerPath)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = ledger.Close() }()
-	resources := selectResources(router.Spec.Resources, kind, name)
-	if len(resources) == 0 {
-		return resourceSelectionError(router.Spec.Resources, kind, name)
-	}
-	rows, err := buildShowResources(router, resources, store, ledger, opts)
-	if err != nil {
-		return err
-	}
-	if opts.AdoptOnly {
-		rows, err = adoptOnlyShowResources(router, rows, ledger)
-		if err != nil {
-			return err
-		}
-	}
-	switch opts.Output {
-	case "", "table":
-		return writeShowTable(stdout, rows, opts)
-	case "json":
-		return writeJSON(stdout, rows)
-	case "yaml":
-		return writeYAML(stdout, rows)
-	default:
-		return fmt.Errorf("unsupported output %q", opts.Output)
-	}
 }
 
 func parseShowOptions(args []string) (showOptions, error) {
@@ -228,52 +156,6 @@ func dedicatedShowKind(target string) string {
 	default:
 		return ""
 	}
-}
-
-func writeDedicatedShow(stdout io.Writer, router *api.Router, store routerstate.Store, opts showOptions, kind string) error {
-	if kind == "derived-resources" {
-		rows, err := buildDerivedShowResources(router, store, opts.IncludeStale)
-		if err != nil {
-			return err
-		}
-		switch opts.Output {
-		case "", "table":
-			return writeDerivedResourcesTable(stdout, rows)
-		case "json":
-			return writeJSON(stdout, rows)
-		case "yaml":
-			return writeYAML(stdout, rows)
-		default:
-			return fmt.Errorf("unsupported output %q", opts.Output)
-		}
-	}
-	resources, err := listObjectStatuses(store)
-	if err != nil {
-		return err
-	}
-	if kind == "vrrp" {
-		resources = withLiveVRRPRoles(router, resources)
-	} else if kind == "bgp" {
-		resources = withLiveBGPState(router, resources)
-	}
-	switch opts.Output {
-	case "", "table":
-		switch kind {
-		case "bgp":
-			return writeBGPShowTable(stdout, router, resources)
-		case "vrrp":
-			return writeVRRPShowTable(stdout, router, resources)
-		case "ingress":
-			return writeIngressShowTable(stdout, router, resources, opts.Verbose)
-		}
-	case "json":
-		return writeJSON(stdout, filterShowStatuses(resources, kind))
-	case "yaml":
-		return writeYAML(stdout, filterShowStatuses(resources, kind))
-	default:
-		return fmt.Errorf("unsupported output %q", opts.Output)
-	}
-	return nil
 }
 
 func buildDerivedShowResources(router *api.Router, store routerstate.Store, includeStale bool) ([]showResource, error) {
