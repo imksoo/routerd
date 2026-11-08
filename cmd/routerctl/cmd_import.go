@@ -688,6 +688,13 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 		dhcp4Address := ""
 		raAddress := false
 		importedStatic := map[string]bool{}
+		dhcp4AddressCount := 0
+		for _, address := range link.AddrInfo {
+			ip, err := netip.ParseAddr(address.Local)
+			if err == nil && ip.Is4() && sources[netip.PrefixFrom(ip, address.PrefixLen).String()] == "DHCPv4" {
+				dhcp4AddressCount++
+			}
+		}
 		for _, address := range link.AddrInfo {
 			ip, err := netip.ParseAddr(address.Local)
 			if err != nil {
@@ -711,6 +718,9 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 					}
 					dhcp4 = true
 				}
+			}
+			if source == "DHCPv4" && ip.Is4() && dhcp4AddressCount == 1 && address.Peer == "" && !address.NoPrefixRoute && len(address.Unsupported) == 0 && (address.Label == "" || address.Label == ifname) {
+				continue
 			}
 			prefix := netip.PrefixFrom(ip, address.PrefixLen).String()
 			virtual, existingVirtual := virtualIPv4[resource.Metadata.Name+"|"+prefix]
