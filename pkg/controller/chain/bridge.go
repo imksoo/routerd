@@ -54,19 +54,25 @@ func (c BridgeController) Reconcile(ctx context.Context) error {
 		}
 		changed = changed || fileChanged
 	}
-	staleDropins, err := filepath.Glob(c.networkdPath("/etc/systemd/network/*.network.d/88-routerd-bridge.conf"))
-	if err != nil {
-		return fmt.Errorf("list Bridge member drop-ins: %w", err)
-	}
-	for _, path := range staleDropins {
-		if desiredFiles[filepath.Clean(path)] {
-			continue
-		}
-		removed, err := removeFileIfExists(path, c.DryRun)
+	for _, pattern := range []string{
+		"/etc/systemd/network/*.network.d/88-routerd-bridge.conf",
+		"/etc/systemd/network/30-routerd-*.netdev",
+		"/etc/systemd/network/30-routerd-*.network",
+	} {
+		paths, err := filepath.Glob(c.networkdPath(pattern))
 		if err != nil {
-			return fmt.Errorf("remove stale Bridge member drop-in %s: %w", path, err)
+			return fmt.Errorf("list Bridge artifacts %s: %w", pattern, err)
 		}
-		changed = changed || removed
+		for _, path := range paths {
+			if desiredFiles[filepath.Clean(path)] {
+				continue
+			}
+			removed, err := removeFileIfExists(path, c.DryRun)
+			if err != nil {
+				return fmt.Errorf("remove stale Bridge artifact %s: %w", path, err)
+			}
+			changed = changed || removed
+		}
 	}
 	filesChanged := changed
 	if filesChanged && !c.DryRun {
