@@ -300,7 +300,7 @@ func (c *Controller) cleanupStaleStaticAddresses(ctx context.Context, aliases ma
 		}
 		changed = true
 		if !c.DryRun {
-			if err := c.removeStaticAddress(ctx, previous.IfName, previous.Address); err != nil && !(whenFalse && staticAddressAlreadyAbsent(err)) {
+			if err := c.removeStaticAddress(ctx, previous.IfName, previous.Address); err != nil && !staticAddressAlreadyAbsent(err) {
 				return changed, err
 			}
 		}
