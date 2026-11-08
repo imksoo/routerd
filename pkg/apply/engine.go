@@ -247,6 +247,13 @@ func (e *Engine) evaluate(router, declared *api.Router, includePlan bool) (*Resu
 			for _, name := range wireguards {
 				result.Orphans = append(result.Orphans, OrphanedArtifact{Kind: "WireGuardInterface", Name: name, Reason: "Not configured", Remediation: "Remove WireGuard interface"})
 			}
+			dslite, err := ExtraDSLiteInterfaces(context.Background(), declared, router)
+			if err != nil {
+				return nil, err
+			}
+			for _, name := range dslite {
+				result.Orphans = append(result.Orphans, OrphanedArtifact{Kind: "DSLiteTunnel", Name: name, Reason: "Not configured", Remediation: "Remove DS-Lite tunnel"})
+			}
 		}
 		if len(result.Orphans) > 0 {
 			result.Warnings = append(result.Warnings, fmt.Sprintf("%d orphaned managed artifacts found", len(result.Orphans)))
@@ -1063,7 +1070,7 @@ func (e *Engine) observeDSLiteTunnel(router *api.Router, res api.Resource, alias
 	if disabled || platform.CurrentOS() != platform.OSLinux {
 		return
 	}
-	if e.Store != nil {
+	if platform.CurrentOS() == platform.OSFreeBSD && e.Store != nil {
 		if alias, ok := e.Store.ObjectStatus(api.NetAPIVersion, "DSLiteTunnel", res.Metadata.Name)["aliasOf"].(string); ok && alias != "" {
 			tunnelName = alias
 		}
@@ -2233,7 +2240,7 @@ func InactiveDSLiteInterfaces(effective, declared *api.Router, store resourceque
 			name := defaultString(spec.TunnelName, res.Metadata.Name)
 			if api.BoolDefault(spec.Enabled, true) {
 				active[name] = true
-				if store != nil {
+				if platform.CurrentOS() == platform.OSFreeBSD && store != nil {
 					if alias, ok := store.ObjectStatus(api.NetAPIVersion, "DSLiteTunnel", res.Metadata.Name)["aliasOf"].(string); ok && alias != "" {
 						active[alias] = true
 					}

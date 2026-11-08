@@ -25,6 +25,7 @@ import (
 
 	"github.com/imksoo/routerd/internal/statusvalue"
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/apply"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
@@ -144,6 +145,17 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 	if declared == nil {
 		declared = c.Router
 	}
+	if platform.CurrentOS() == platform.OSLinux && !c.DryRun {
+		names, err := apply.ExtraDSLiteInterfaces(ctx, declared, c.Router)
+		if err != nil {
+			return err
+		}
+		for _, name := range names {
+			if err := deleteDSLiteTunnel(ctx, name); err != nil {
+				return err
+			}
+		}
+	}
 	desired := map[string]struct{}{}
 	enabled := map[string]struct{}{}
 	activeResources := map[string]struct{}{}
@@ -160,8 +172,10 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 		desired[ifname] = struct{}{}
 		if api.BoolDefault(spec.Enabled, true) {
 			enabled[ifname] = struct{}{}
-			if alias, ok := c.Store.ObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name)["aliasOf"].(string); ok && alias != "" {
-				enabled[alias] = struct{}{}
+			if platform.CurrentOS() == platform.OSFreeBSD {
+				if alias, ok := c.Store.ObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name)["aliasOf"].(string); ok && alias != "" {
+					enabled[alias] = struct{}{}
+				}
 			}
 		}
 	}
@@ -1802,14 +1816,6 @@ func ensureDSLiteTunnel(ctx context.Context, router *api.Router, spec api.DSLite
 	args := linuxDSLiteTunnelApplyArgs(operation, ifname, remote, local, underlay, encapLimit)
 	out, err := exec.CommandContext(ctx, "ip", args...).CombinedOutput()
 	if err != nil {
-		if operation == "add" {
-			if existing := existingDSLiteTunnel(ctx, remote, local, underlay, encapLimit); existing != "" {
-				if err := ensureLinuxDSLiteInnerIPv4(ctx, existing, innerLocal); err != nil {
-					return "", err
-				}
-				return existing, nil
-			}
-		}
 		return "", fmt.Errorf("ip %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
 	if err := ensureLinuxDSLiteInnerIPv4(ctx, ifname, innerLocal); err != nil {
@@ -1873,24 +1879,6 @@ func linuxDSLiteTunnelMissing(output []byte) bool {
 	return strings.Contains(message, "cannot find device") ||
 		strings.Contains(message, "does not exist") ||
 		strings.Contains(message, "no such device")
-}
-
-func existingDSLiteTunnel(ctx context.Context, remote, local, underlay, encapLimit string) string {
-	out, err := exec.CommandContext(ctx, "ip", "-6", "tunnel", "show").CombinedOutput()
-	if err != nil {
-		return ""
-	}
-	for _, line := range strings.Split(string(out), "\n") {
-		line = strings.TrimSpace(line)
-		if !linuxDSLiteTunnelMatches([]byte(line), remote, local, underlay, encapLimit) {
-			continue
-		}
-		name, _, ok := strings.Cut(line, ":")
-		if ok && strings.TrimSpace(name) != "" && strings.TrimSpace(name) != "ip6tnl0" {
-			return strings.TrimSpace(name)
-		}
-	}
-	return ""
 }
 
 func setDSLiteTunnelLinkUp(ctx context.Context, ifname string, mtu int) error {
