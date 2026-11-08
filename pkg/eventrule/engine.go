@@ -41,9 +41,7 @@ type Controller struct {
 	Bus    *bus.Bus
 	Store  Store
 	Events eventconsumer.Store
-	Now    func() time.Time
 	Logger *slog.Logger
-	Poll   time.Duration
 
 	mu    sync.Mutex
 	state map[string]*ruleState
@@ -63,10 +61,6 @@ type ruleState struct {
 	warningCount int
 }
 
-type Engine interface {
-	Reconcile(ctx context.Context, rule api.Resource, event daemonapi.DaemonEvent) ([]daemonapi.DaemonEvent, error)
-}
-
 type pendingEvent struct {
 	resource api.Resource
 	event    daemonapi.DaemonEvent
@@ -78,12 +72,8 @@ func (c *Controller) Start(ctx context.Context) {
 	}
 	c.init()
 	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.**"}}, 128)
-	poll := c.Poll
-	if poll <= 0 {
-		poll = time.Second
-	}
 	go func() {
-		ticker := time.NewTicker(poll)
+		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
 		wake := make(chan struct{}, 1)
 		var retry eventconsumer.Backoff
@@ -449,9 +439,6 @@ func (c *Controller) eventTime(event daemonapi.DaemonEvent) time.Time {
 	if !event.Time.IsZero() {
 		return event.Time
 	}
-	if c.Now != nil {
-		return c.Now()
-	}
 	return time.Now().UTC()
 }
 
@@ -568,14 +555,6 @@ func durationOr(value string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return parsed
-}
-
-func (c *Controller) StopTimers() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	for _, state := range c.state {
-		stopRuleTimers(state)
-	}
 }
 
 func stopRuleTimers(state *ruleState) {
