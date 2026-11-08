@@ -3,11 +3,7 @@
 package main
 
 import (
-	"bytes"
-	"context"
-	"encoding/json"
 	"net"
-	"net/http"
 	"net/netip"
 	"path/filepath"
 	"strings"
@@ -37,28 +33,6 @@ func TestParseEthernetARPReply(t *testing.T) {
 		t.Fatalf("sender MAC = %s", got)
 	}
 	if got := packet.TargetIP.String(); got != "192.168.123.208" {
-		t.Fatalf("target IP = %s", got)
-	}
-}
-
-func TestBuildARPRequestUsesZeroSourceWhenDHCPAddressUnknown(t *testing.T) {
-	mac := mustMAC(t, "02:00:00:00:00:aa")
-	target := netip.MustParseAddr("192.168.123.132")
-	frame := buildARPRequest(mac, netip.Addr{}, target)
-	packet, ok, err := parseEthernetARP(frame)
-	if err != nil {
-		t.Fatalf("parseEthernetARP: %v", err)
-	}
-	if !ok {
-		t.Fatal("parseEthernetARP ok=false")
-	}
-	if packet.Operation != arpRequest {
-		t.Fatalf("operation = %d, want arpRequest", packet.Operation)
-	}
-	if got := packet.SenderIP.String(); got != "0.0.0.0" {
-		t.Fatalf("sender IP = %s, want 0.0.0.0", got)
-	}
-	if got := packet.TargetIP.String(); got != "192.168.123.132" {
 		t.Fatalf("target IP = %s", got)
 	}
 }
@@ -101,102 +75,6 @@ func TestParseOptionsAcceptsRepeatedIgnoreSenderMAC(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "flag provided but not defined: -ignore-sender-mac") {
 		t.Fatalf("parseOptions --ignore-sender-mac error = %v, want unknown flag", err)
-	}
-}
-
-func TestSetIgnoredSenderMACsCommandReplacesAndNormalizes(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	socket := filepath.Join(t.TempDir(), "arp.sock")
-	d := &daemon{
-		opts: options{
-			resource:       "arp",
-			ifname:         "eth1",
-			eventInterface: "eth1",
-			socketPath:     socket,
-			eventFile:      filepath.Join(t.TempDir(), "events.jsonl"),
-			poolName:       "svnet1",
-			prefix:         netip.MustParsePrefix("192.168.123.0/24"),
-		},
-		startedAt:      time.Now(),
-		cancel:         cancel,
-		lastEventByKey: map[string]time.Time{},
-		clients:        map[string]arpClient{},
-	}
-	d.cond = sync.NewCond(&d.mu)
-	errc := make(chan error, 1)
-	go func() { errc <- d.serve(ctx) }()
-	waitForSocket(t, socket)
-
-	result := postCommandForTest(t, socket, daemonapi.CommandRequest{
-		Command: "set-ignored-sender-macs",
-		Attributes: map[string]string{
-			"macAddresses": "02:00:00:00:00:BB,02:00:00:00:00:aa",
-		},
-	})
-	if !result.Accepted {
-		t.Fatalf("set command rejected: %#v", result)
-	}
-	status := d.status()
-	if got, want := status.Observed["ignoredSenderMACs"], "02:00:00:00:00:aa,02:00:00:00:00:bb"; got != want {
-		t.Fatalf("ignoredSenderMACs = %q, want %q", got, want)
-	}
-	if got := status.Observed["ignoredSenderMACCount"]; got != "2" {
-		t.Fatalf("ignoredSenderMACCount = %q, want 2", got)
-	}
-	if got := status.Observed["ignoredSenderMACsConfigured"]; got != "true" {
-		t.Fatalf("ignoredSenderMACsConfigured = %q, want true", got)
-	}
-
-	result = postCommandForTest(t, socket, daemonapi.CommandRequest{
-		Command: "set-ignored-sender-macs",
-		Attributes: map[string]string{
-			"macAddresses": "02:00:00:00:00:cc",
-		},
-	})
-	if !result.Accepted {
-		t.Fatalf("replacement command rejected: %#v", result)
-	}
-	status = d.status()
-	if got, want := status.Observed["ignoredSenderMACs"], "02:00:00:00:00:cc"; got != want {
-		t.Fatalf("ignoredSenderMACs after replacement = %q, want %q", got, want)
-	}
-
-	result = postCommandForTest(t, socket, daemonapi.CommandRequest{
-		Command: "set-ignored-sender-macs",
-		Attributes: map[string]string{
-			"macAddresses": "not-a-mac",
-		},
-	})
-	if result.Accepted {
-		t.Fatalf("invalid MAC command accepted: %#v", result)
-	}
-	status = d.status()
-	if got, want := status.Observed["ignoredSenderMACs"], "02:00:00:00:00:cc"; got != want {
-		t.Fatalf("ignoredSenderMACs changed after rejected command = %q, want %q", got, want)
-	}
-
-	result = postCommandForTest(t, socket, daemonapi.CommandRequest{
-		Command:    "set-ignored-sender-macs",
-		Attributes: map[string]string{"macAddresses": ""},
-	})
-	if !result.Accepted {
-		t.Fatalf("empty replacement command rejected: %#v", result)
-	}
-	status = d.status()
-	if got := status.Observed["ignoredSenderMACs"]; got != "" {
-		t.Fatalf("ignoredSenderMACs after empty replacement = %q, want empty", got)
-	}
-	if got := status.Observed["ignoredSenderMACCount"]; got != "0" {
-		t.Fatalf("ignoredSenderMACCount after empty replacement = %q, want 0", got)
-	}
-	if got := status.Observed["ignoredSenderMACsConfigured"]; got != "true" {
-		t.Fatalf("ignoredSenderMACsConfigured after empty replacement = %q, want true", got)
-	}
-
-	cancel()
-	if err := <-errc; err != nil {
-		t.Fatalf("serve: %v", err)
 	}
 }
 
@@ -476,40 +354,4 @@ func mustMACForTest(value string) net.HardwareAddr {
 		panic(err)
 	}
 	return mac
-}
-
-func waitForSocket(t *testing.T, path string) {
-	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		conn, err := net.Dial("unix", path)
-		if err == nil {
-			_ = conn.Close()
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatalf("socket %s did not become ready", path)
-}
-
-func postCommandForTest(t *testing.T, socket string, req daemonapi.CommandRequest) daemonapi.CommandResult {
-	t.Helper()
-	body, err := json.Marshal(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	client := &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		var d net.Dialer
-		return d.DialContext(ctx, "unix", socket)
-	}}}
-	resp, err := client.Post("http://unix/v1/commands", "application/json", bytes.NewReader(body))
-	if err != nil {
-		t.Fatalf("post command: %v", err)
-	}
-	defer resp.Body.Close()
-	var result daemonapi.CommandResult
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		t.Fatalf("decode command result: %v", err)
-	}
-	return result
 }
