@@ -286,7 +286,7 @@ func importKernelStaticIPv4Route(raw json.RawMessage, ifname string) (api.IPv4Ro
 		Type        string          `json:"type"`
 		Scope       string          `json:"scope"`
 	}
-	if json.Unmarshal(raw, &route) != nil || (route.Protocol != "" && route.Protocol != "static") || (route.Device != "" && route.Device != ifname) || (route.Type != "" && route.Type != "unicast") || (route.Scope != "" && route.Scope != "global") || (len(route.Table) != 0 && string(route.Table) != `"main"` && string(route.Table) != "254") {
+	if json.Unmarshal(raw, &route) != nil || (route.Protocol != "" && route.Protocol != "static") || (route.Device != "" && route.Device != ifname) || (route.Type != "" && route.Type != "unicast") || (route.Scope != "" && route.Scope != "global" && !(route.Scope == "link" && route.Gateway == "")) || (len(route.Table) != 0 && string(route.Table) != `"main"` && string(route.Table) != "254") {
 		return api.IPv4RouteSpec{}, false
 	}
 	destination := route.Destination
@@ -300,9 +300,13 @@ func importKernelStaticIPv4Route(raw json.RawMessage, ifname string) (api.IPv4Ro
 	if err != nil || !prefix.Addr().Is4() {
 		return api.IPv4RouteSpec{}, false
 	}
-	gateway, err := netip.ParseAddr(route.Gateway)
-	if err != nil || !gateway.Is4() {
-		return api.IPv4RouteSpec{}, false
+	gateway := ""
+	if route.Gateway != "" {
+		address, err := netip.ParseAddr(route.Gateway)
+		if err != nil || !address.Is4() {
+			return api.IPv4RouteSpec{}, false
+		}
+		gateway = address.String()
 	}
 	onLink := false
 	for _, flag := range route.Flags {
@@ -311,7 +315,7 @@ func importKernelStaticIPv4Route(raw json.RawMessage, ifname string) (api.IPv4Ro
 		}
 		onLink = true
 	}
-	return api.IPv4RouteSpec{Destination: prefix.Masked().String(), Device: ifname, Gateway: gateway.String(), Metric: route.Metric, GatewayOnLink: onLink}, true
+	return api.IPv4RouteSpec{Destination: prefix.Masked().String(), Device: ifname, Gateway: gateway, Metric: route.Metric, GatewayOnLink: onLink}, true
 }
 
 func importStaticIPv4Address(address importAddress, ifname string, ip netip.Addr) bool {
@@ -577,7 +581,7 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 				} else if strings.HasPrefix(spec.DeviceFrom.Resource, "Interface/") && spec.DeviceFrom.Field == "ifname" {
 					device = strings.TrimPrefix(spec.DeviceFrom.Resource, "Interface/")
 				}
-				if device != "" && spec.Gateway != "" && spec.GatewayFrom.Resource == "" && spec.PreferredSource == "" && (spec.Type == "" || spec.Type == "unicast") {
+				if device != "" && spec.GatewayFrom.Resource == "" && spec.PreferredSource == "" && (spec.Type == "" || spec.Type == "unicast") {
 					key := device + "|" + importRouteKey(spec.Destination, spec.Gateway, spec.Metric, spec.GatewayOnLink)
 					existingRoutes[key] = resource
 				}
@@ -904,7 +908,7 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 						}
 						usedRouteNames[candidate.Metadata.Name] = true
 						router.Spec.Resources = append(router.Spec.Resources, candidate)
-						warnings = append(warnings, fmt.Sprintf("%s: static route %s via %s imported; review manager handoff", ifname, spec.Destination, spec.Gateway))
+						warnings = append(warnings, fmt.Sprintf("%s: static route %s imported; review manager handoff", ifname, spec.Destination))
 						continue
 					}
 				}
