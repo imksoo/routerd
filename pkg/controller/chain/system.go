@@ -1715,7 +1715,9 @@ func (c SystemdUnitController) cleanupStaleHealthCheckUnits(ctx context.Context,
 		if desired[unitName] {
 			continue
 		}
-		_, _ = command(ctx, "systemctl", "disable", "--now", unitName)
+		if _, err := command(ctx, "systemctl", "disable", "--now", unitName); err != nil {
+			return fmt.Errorf("disable stale health check unit %s: %w", unitName, err)
+		}
 		_, _ = command(ctx, "systemctl", "reset-failed", unitName)
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return err
