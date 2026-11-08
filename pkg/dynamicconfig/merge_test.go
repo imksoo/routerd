@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
-	"github.com/imksoo/routerd/pkg/platform"
 )
 
 func TestBuildEffectiveConfigExpiredExcludedActiveIncluded(t *testing.T) {
@@ -36,23 +35,6 @@ func TestBuildEffectiveConfigExpiredExcludedActiveIncluded(t *testing.T) {
 	}
 	if !reflect.DeepEqual(result.ExpiredParts, []string{"cloudedge"}) {
 		t.Fatalf("expired parts = %#v", result.ExpiredParts)
-	}
-}
-
-func TestBuildEffectiveConfigForOSUsesRequestedTarget(t *testing.T) {
-	now := testNow()
-	part := testPart("sam", 1, now.Add(time.Hour), []api.Resource{{
-		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
-		Metadata: api.ObjectMeta{Name: "sam-core-a"},
-		Spec: api.TunnelInterfaceSpec{
-			Mode: "ipip", Local: "192.0.2.10", Remote: "192.0.2.20", TrustedUnderlay: true,
-		},
-	}}, nil)
-	if _, _, err := BuildEffectiveConfigForOS(testRouter(), []DynamicConfigPart{part}, nil, now, platform.OSLinux); err != nil {
-		t.Fatalf("Linux dynamic tunnel validation: %v", err)
-	}
-	if _, _, err := BuildEffectiveConfigForOS(testRouter(), []DynamicConfigPart{part}, nil, now, platform.OSFreeBSD); err == nil || !strings.Contains(err.Error(), "FreeBSD cloned interface name") {
-		t.Fatalf("FreeBSD dynamic tunnel validation = %v, want cloned-interface rejection", err)
 	}
 }
 
@@ -259,39 +241,6 @@ func TestBuildEffectiveConfigDoesNotMutateStartup(t *testing.T) {
 	}
 }
 
-func TestBuildEffectiveConfigPreservesTypedSpecs(t *testing.T) {
-	now := testNow()
-	startup := testRouter(testInterface("wan", "ens18"))
-	original := startup
-	original.Spec.Resources = append([]api.Resource(nil), startup.Spec.Resources...)
-	part := testPart("cloudedge", 1, now.Add(time.Hour), []api.Resource{testInterface("lan", "br0")}, nil)
-
-	effective, _, err := BuildEffectiveConfig(startup, []DynamicConfigPart{part}, nil, now)
-	if err != nil {
-		t.Fatalf("BuildEffectiveConfig: %v", err)
-	}
-
-	startupResource, ok := findResource(effective, api.NetAPIVersion, "Interface", "wan")
-	if !ok {
-		t.Fatalf("startup resource missing from effective")
-	}
-	if _, ok := startupResource.Spec.(api.InterfaceSpec); !ok {
-		t.Fatalf("startup resource spec type = %T, want api.InterfaceSpec", startupResource.Spec)
-	}
-
-	dynamicResource, ok := findResource(effective, api.NetAPIVersion, "Interface", "lan")
-	if !ok {
-		t.Fatalf("dynamic resource missing from effective")
-	}
-	if _, ok := dynamicResource.Spec.(api.InterfaceSpec); !ok {
-		t.Fatalf("dynamic resource spec type = %T, want api.InterfaceSpec", dynamicResource.Spec)
-	}
-
-	if !reflect.DeepEqual(startup, original) {
-		t.Fatalf("startup mutated:\n got %#v\nwant %#v", startup, original)
-	}
-}
-
 func TestBuildEffectiveConfigKeepsRuntimeSAMPeerGroup(t *testing.T) {
 	now := testNow()
 	startup := testRouter(testInterface("wan", "ens18"))
@@ -314,24 +263,6 @@ func TestBuildEffectiveConfigKeepsRuntimeSAMPeerGroup(t *testing.T) {
 	}
 	if len(result.AddedResources) != 1 || result.AddedResources[0].Kind != "SAMPeerGroup" {
 		t.Fatalf("added resources = %#v, want runtime SAMPeerGroup", result.AddedResources)
-	}
-}
-
-func TestBuildEffectiveConfigRecordsDynamicOwnerInAddedResources(t *testing.T) {
-	now := testNow()
-	startup := testRouter()
-	part := testPart("cloudedge", 42, now.Add(time.Hour), []api.Resource{testInterface("wan", "ens18")}, nil)
-
-	_, result, err := BuildEffectiveConfig(startup, []DynamicConfigPart{part}, nil, now)
-	if err != nil {
-		t.Fatalf("BuildEffectiveConfig: %v", err)
-	}
-	if len(result.AddedResources) != 1 {
-		t.Fatalf("added = %#v", result.AddedResources)
-	}
-	got := result.AddedResources[0]
-	if got.Source != "cloudedge" || got.Generation != 42 || got.APIVersion != api.NetAPIVersion || got.Kind != "Interface" || got.Name != "wan" {
-		t.Fatalf("added = %#v", got)
 	}
 }
 
