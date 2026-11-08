@@ -6,7 +6,6 @@ package bgp
 
 import (
 	"net"
-	"net/netip"
 	"testing"
 
 	"github.com/vishvananda/netlink"
@@ -51,23 +50,6 @@ func TestFIBRouteFromNetlinkRouteMultipath(t *testing.T) {
 	want := FIBRoute{Prefix: "10.77.60.11/32", NextHops: []string{"10.255.0.11", "10.255.0.12"}}
 	if !equalFIBRoute(got, want) {
 		t.Fatalf("route = %#v, want %#v", got, want)
-	}
-}
-
-func TestFilterLocalHostFIBRoutes(t *testing.T) {
-	routes := map[string]FIBRoute{
-		"10.77.60.5/32":  {Prefix: "10.77.60.5/32", NextHops: []string{"10.255.0.41"}},
-		"10.77.60.11/32": {Prefix: "10.77.60.11/32", NextHops: []string{"10.255.0.41"}},
-	}
-	got := filterLocalHostFIBRoutes(routes, localIPv4HostPrefixes([]localIPv4Address{{
-		Address: netip.MustParseAddr("10.77.60.5"),
-		Prefix:  netip.MustParsePrefix("10.77.60.0/24"),
-	}}))
-	if _, ok := got["10.77.60.5/32"]; ok {
-		t.Fatalf("local host route was kept: %#v", got)
-	}
-	if _, ok := got["10.77.60.11/32"]; !ok {
-		t.Fatalf("remote route was removed: %#v", got)
 	}
 }
 

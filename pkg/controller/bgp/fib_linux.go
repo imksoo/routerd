@@ -140,7 +140,6 @@ func filterLocalHostFIBRoutes(routes map[string]FIBRoute, localHostPrefixes map[
 
 type localIPv4Address struct {
 	Address netip.Addr
-	Prefix  netip.Prefix
 }
 
 func localIPv4Addresses() []localIPv4Address {
@@ -159,15 +158,10 @@ func localIPv4Addresses() []localIPv4Address {
 				continue
 			}
 			addr, ok := netip.AddrFromSlice(local.IP.To4())
-			if !ok || !addr.Is4() || local.IPNet == nil {
+			if !ok || !addr.Is4() {
 				continue
 			}
-			bits, size := local.IPNet.Mask.Size()
-			if size != 32 || bits < 0 || bits > 32 {
-				continue
-			}
-			prefix := netip.PrefixFrom(addr, bits).Masked()
-			out = append(out, localIPv4Address{Address: addr, Prefix: prefix})
+			out = append(out, localIPv4Address{Address: addr})
 		}
 	}
 	return out
