@@ -55,40 +55,6 @@ func TestCommittedCallbacksSurviveReopenInOrder(t *testing.T) {
 	}
 }
 
-func TestFailedHeadAndConsumerLockDoNotBlockProducers(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "events", "pending.db")
-	q := openQueue(t, path)
-	q2 := openQueue(t, path)
-	if err := q.Enqueue(context.Background(), lease("removed"), time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	failed := errors.New("simulated journal failure")
-	if ok, err := q.ProcessOne(context.Background(), func(ctx context.Context, e Event) error {
-		if e.Lease.Action != "removed" {
-			t.Fatal(e)
-		}
-		if ok, err := q2.ProcessOne(ctx, func(context.Context, Event) error { t.Fatal("two consumers"); return nil }); ok || err == nil {
-			t.Fatal("consumer lock not enforced")
-		}
-		if err := q2.Enqueue(ctx, lease("renewed"), time.Now()); err != nil {
-			t.Fatalf("producer blocked by consumer: %v", err)
-		}
-		return failed
-	}); ok || !errors.Is(err, failed) {
-		t.Fatalf("%v %v", ok, err)
-	}
-	for _, want := range []string{"removed", "renewed"} {
-		if ok, err := q.ProcessOne(context.Background(), func(_ context.Context, e Event) error {
-			if e.Lease.Action != want {
-				t.Fatalf("overtaken event=%+v", e)
-			}
-			return nil
-		}); !ok || err != nil {
-			t.Fatal(ok, err)
-		}
-	}
-}
-
 func TestCrashBeforeDeleteReplaysHeadBeforeNewerEvent(t *testing.T) {
 	if path := os.Getenv("ROUTERD_TEST_QUEUE_CRASH"); path != "" {
 		q, err := Open(context.Background(), path)

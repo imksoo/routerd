@@ -15,96 +15,9 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/imksoo/routerd/internal/stringutil"
-	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/observe"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
-
-func writeShowTable(stdout io.Writer, rows []showResource, opts showOptions) error {
-	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-	switch {
-	case opts.AdoptOnly:
-		fmt.Fprintln(w, "KIND\tNAME\tADOPT")
-		for _, row := range rows {
-			fmt.Fprintf(w, "%s\t%s\t%d candidates\n", row.Kind, row.Name, len(row.Adopt))
-		}
-	case opts.Diff:
-		fmt.Fprintln(w, "KIND\tNAME\tDIFF")
-		for _, row := range rows {
-			fmt.Fprintf(w, "%s\t%s\t%d fields\n", row.Kind, row.Name, len(row.Diff))
-		}
-	case opts.LedgerOnly:
-		fmt.Fprintln(w, "KIND\tNAME\tLEDGER")
-		for _, row := range rows {
-			fmt.Fprintf(w, "%s\t%s\t%d artifacts\n", row.Kind, row.Name, len(row.Ledger))
-		}
-	default:
-		header := "KIND\tNAME\tSPEC\tOBSERVED\tLEDGER\tSTATE"
-		if opts.Events {
-			header += "\tEVENTS"
-		}
-		fmt.Fprintln(w, header)
-		for _, row := range rows {
-			line := fmt.Sprintf("%s\t%s\t%s\t%s\t%d artifacts\t%s",
-				row.Kind,
-				row.Name,
-				specSummary(row.Spec),
-				observedSummary(row.Observed),
-				len(row.Ledger),
-				stateSummary(row.State),
-			)
-			if opts.Events {
-				line += fmt.Sprintf("\t%d events", len(row.Events))
-			}
-			fmt.Fprintln(w, line)
-		}
-	}
-	return w.Flush()
-}
-
-func writeGetTable(stdout io.Writer, resources []api.Resource) error {
-	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "KIND\tNAME\tSPEC")
-	for _, res := range resources {
-		fmt.Fprintf(w, "%s\t%s\t%s\n", res.Kind, res.Metadata.Name, specSummary(res.Spec))
-	}
-	return w.Flush()
-}
-
-func writeGetKinds(stdout io.Writer, resources []api.Resource, output string) error {
-	counts := map[string]int{}
-	for _, res := range resources {
-		counts[res.Kind]++
-	}
-	var kinds []string
-	for kind := range counts {
-		kinds = append(kinds, kind)
-	}
-	sort.Strings(kinds)
-	type kindRow struct {
-		Kind  string `json:"kind" yaml:"kind"`
-		Count int    `json:"count" yaml:"count"`
-	}
-	var rows []kindRow
-	for _, kind := range kinds {
-		rows = append(rows, kindRow{Kind: kind, Count: counts[kind]})
-	}
-	switch output {
-	case "", "table":
-		w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "KIND\tCOUNT")
-		for _, row := range rows {
-			fmt.Fprintf(w, "%s\t%d\n", row.Kind, row.Count)
-		}
-		return w.Flush()
-	case "json":
-		return writeJSON(stdout, rows)
-	case "yaml":
-		return writeYAML(stdout, rows)
-	default:
-		return fmt.Errorf("unsupported output %q", output)
-	}
-}
 
 func writeDescribe(stdout io.Writer, row showResource, store routerstate.Store) error {
 	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
@@ -139,19 +52,6 @@ func writeDescribe(stdout io.Writer, row showResource, store routerstate.Store) 
 		}
 	}
 	return w.Flush()
-}
-
-func writeDescribeOutput(stdout io.Writer, row showResource, store routerstate.Store, output string) error {
-	switch output {
-	case "", "table":
-		return writeDescribe(stdout, row, store)
-	case "json":
-		return writeJSON(stdout, row)
-	case "yaml":
-		return writeYAML(stdout, row)
-	default:
-		return fmt.Errorf("unsupported output %q", output)
-	}
 }
 
 func writeDescribeStatus(w io.Writer, row showResource) {
