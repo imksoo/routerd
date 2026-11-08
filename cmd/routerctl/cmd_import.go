@@ -127,7 +127,7 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 	fs.Usage = func() {
 		fmt.Fprintln(stderr, "usage: routerctl import --interface <name> [--interface <name> ...] [--address <address/prefix> ...] [--config <router.yaml>]")
 		fmt.Fprintln(stderr, "Outputs an incomplete YAML candidate; merge it into a complete configuration before applying.")
-		fmt.Fprintln(stderr, "Run with sufficient privileges to read the active network manager configuration and leases; review all warnings.")
+		fmt.Fprintln(stderr, "Run with sufficient privileges to read network manager status; review all warnings.")
 	}
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -249,7 +249,7 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 			warnings = append(warnings, fmt.Sprintf("%s: administratively down; current schema does not express explicit down", ifname))
 		}
 		if link.Master != "" {
-			warnings = append(warnings, fmt.Sprintf("%s: master %s must be imported separately", ifname, link.Master))
+			warnings = append(warnings, fmt.Sprintf("%s: master %s membership must be configured separately", ifname, link.Master))
 		}
 		resource, found := aliases[ifname]
 		if found {
@@ -364,7 +364,7 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	fmt.Fprintln(stderr, "WARNING: this is a partial candidate, not a complete machine configuration; merge and review all networking before apply.")
-	fmt.Fprintln(stderr, "WARNING: addresses, routes, policy rules, most dynamic network options, link attributes, and existing network managers are not fully imported.")
+	fmt.Fprintln(stderr, "WARNING: only selected static addresses are candidates; configure routes, DNS, MTU, and other resources separately.")
 	for _, warning := range warnings {
 		fmt.Fprintln(stderr, "WARNING:", warning)
 	}
