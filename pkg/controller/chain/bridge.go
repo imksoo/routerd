@@ -81,6 +81,13 @@ func (c BridgeController) Reconcile(ctx context.Context) error {
 		}
 	}
 	if !c.DryRun {
+		removed, err := c.removeExtraBridges(ctx)
+		if err != nil {
+			return err
+		}
+		changed = changed || removed
+	}
+	if !c.DryRun {
 		for _, resource := range c.Router.Spec.Resources {
 			if resource.Kind != "Bridge" {
 				continue
@@ -108,6 +115,57 @@ func (c BridgeController) Reconcile(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (c BridgeController) removeExtraBridges(ctx context.Context) (bool, error) {
+	retained := map[string]bool{}
+	aliases := bridgeInterfaceAliases(c.Router)
+	for _, resource := range c.Router.Spec.Resources {
+		switch resource.Kind {
+		case "Bridge", "Interface":
+			retained[firstNonEmpty(aliases[resource.Metadata.Name], resource.Metadata.Name)] = true
+		case "MobilityPool":
+			spec, err := resource.MobilityPoolSpec()
+			if err != nil {
+				return false, err
+			}
+			for _, member := range spec.Members {
+				if member.Capture.Interface != "" {
+					retained[firstNonEmpty(aliases[member.Capture.Interface], member.Capture.Interface)] = true
+				}
+				for _, source := range member.OwnershipDiscovery.Sources {
+					if source.Interface != "" {
+						retained[firstNonEmpty(aliases[source.Interface], source.Interface)] = true
+					}
+					if source.Bridge != "" {
+						retained[firstNonEmpty(aliases[source.Bridge], source.Bridge)] = true
+					}
+				}
+			}
+		}
+	}
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return false, fmt.Errorf("list Bridge interfaces: %w", err)
+	}
+	changed := false
+	for _, iface := range interfaces {
+		if retained[iface.Name] {
+			continue
+		}
+		_, err := os.Stat(filepath.Join("/sys/class/net", iface.Name, "bridge"))
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return changed, fmt.Errorf("observe Bridge %s: %w", iface.Name, err)
+		}
+		if err := c.command(ctx, "ip", "link", "delete", "dev", iface.Name, "type", "bridge"); err != nil {
+			return changed, fmt.Errorf("remove extra Bridge %s: %w", iface.Name, err)
+		}
+		changed = true
+	}
+	return changed, nil
 }
 
 func (c BridgeController) reconcileBridge(ctx context.Context, resource api.Resource) (bool, error) {
