@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -190,7 +191,7 @@ func (e *Engine) evaluate(router, declared *api.Router, includePlan bool) (*Resu
 
 		if rr.Phase == "Blocked" {
 			result.Phase = "Blocked"
-		} else if rr.Phase == "Drifted" && result.Phase == "Healthy" && (res.Kind == "Bridge" || res.Kind == "VXLANTunnel" || res.Kind == "IPv4Route" || res.Kind == "Package") {
+		} else if rr.Phase == "Drifted" && result.Phase == "Healthy" && (res.Kind == "Bridge" || res.Kind == "VXLANTunnel" || res.Kind == "IPv4Route" || res.Kind == "Package" || res.Kind == "TunnelInterface") {
 			result.Phase = "Drifted"
 		}
 		result.Resources = append(result.Resources, rr)
@@ -933,6 +934,70 @@ func (e *Engine) observeTunnelInterface(res api.Resource, includePlan bool, rr *
 	if includePlan {
 		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure %s tunnel interface %s exists", spec.Mode, res.Metadata.Name))
 	}
+	if platform.CurrentOS() != platform.OSLinux || spec.Mode != "ipip" {
+		return
+	}
+	local, remote := strings.TrimSpace(spec.Local), strings.TrimSpace(spec.Remote)
+	if spec.LocalFrom.Resource != "" {
+		local = resourcequery.Value(e.Store, spec.LocalFrom)
+	}
+	if spec.RemoteFrom.Resource != "" {
+		remote = resourcequery.Value(e.Store, spec.RemoteFrom)
+	}
+	if prefix, err := netip.ParsePrefix(local); err == nil {
+		local = prefix.Addr().String()
+	}
+	if prefix, err := netip.ParsePrefix(remote); err == nil {
+		remote = prefix.Addr().String()
+	}
+	if local == "" || remote == "" {
+		rr.Phase = "Unknown"
+		rr.Observed["reason"] = "EndpointSourcePending"
+		return
+	}
+	out, err := runCommand("ip", "-j", "-d", "link", "show", "type", "ipip")
+	if err != nil {
+		rr.Phase = "Unknown"
+		rr.Warnings = append(rr.Warnings, fmt.Sprintf("observe IPIP tunnels: %v", err))
+		return
+	}
+	var links []struct {
+		Name  string   `json:"ifname"`
+		Flags []string `json:"flags"`
+		MTU   int      `json:"mtu"`
+		Info  struct {
+			Kind string `json:"info_kind"`
+			Data struct {
+				Local  string `json:"local"`
+				Remote string `json:"remote"`
+				TTL    int    `json:"ttl"`
+			} `json:"info_data"`
+		} `json:"linkinfo"`
+	}
+	if err := json.Unmarshal(out, &links); err != nil {
+		rr.Phase = "Unknown"
+		rr.Warnings = append(rr.Warnings, fmt.Sprintf("decode IPIP tunnels: %v", err))
+		return
+	}
+	ttl := spec.TTL
+	if ttl == 0 {
+		ttl = 64
+	}
+	for _, link := range links {
+		if link.Name != res.Metadata.Name {
+			continue
+		}
+		rr.Observed["actualLocal"] = link.Info.Data.Local
+		rr.Observed["actualRemote"] = link.Info.Data.Remote
+		if link.Info.Kind == "ipip" && link.Info.Data.Local == local && link.Info.Data.Remote == remote && link.Info.Data.TTL == ttl && (spec.MTU == 0 || link.MTU == spec.MTU) && slices.Contains(link.Flags, "UP") {
+			return
+		}
+		rr.Phase = "Drifted"
+		rr.Observed["reason"] = "TunnelDifferent"
+		return
+	}
+	rr.Phase = "Drifted"
+	rr.Observed["reason"] = "TunnelMissing"
 }
 
 func statusValueSourceLabel(source api.StatusValueSourceSpec) string {
