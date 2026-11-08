@@ -134,7 +134,7 @@ func (e *Engine) evaluate(router, declared *api.Router, includePlan bool) (*Resu
 		case "BFD":
 			e.observeBFD(res, includePlan, &rr)
 		case "DHCPv4Client":
-			e.observeDHCPv4Client(res, aliases, policies, includePlan, &rr)
+			e.observeDHCPv4Client(res, aliases, includePlan, &rr)
 		case "DHCPv4Server":
 			e.observeDHCPv4Server(res, includePlan, &rr)
 		case "DHCPv4Reservation":
@@ -2254,7 +2254,7 @@ func (e *Engine) observeDHCP(res api.Resource, aliases map[string]string, polici
 	}
 }
 
-func (e *Engine) observeDHCPv4Client(res api.Resource, aliases map[string]string, policies map[string]interfacePolicy, includePlan bool, rr *ResourceResult) {
+func (e *Engine) observeDHCPv4Client(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
 	spec, err := res.DHCPv4ClientSpec()
 	if err != nil {
 		rr.Phase = "Blocked"
@@ -2262,11 +2262,12 @@ func (e *Engine) observeDHCPv4Client(res api.Resource, aliases map[string]string
 		return
 	}
 	ifname := aliases[spec.Interface]
-	policy := policies[spec.Interface]
 
 	rr.Observed["interface"] = spec.Interface
 	rr.Observed["ifname"] = ifname
 	rr.Observed["client"] = "routerd-dhcpv4-client"
+	rr.Phase = "Unknown"
+	rr.Observed["reason"] = "DHCPv4ClientRuntimeNotObserved"
 	if spec.Hostname != "" {
 		rr.Observed["hostname"] = spec.Hostname
 	}
@@ -2284,10 +2285,6 @@ func (e *Engine) observeDHCPv4Client(res api.Resource, aliases map[string]string
 	}
 
 	if includePlan {
-		if !policy.Managed || policy.Owner == "external" {
-			rr.Plan = append(rr.Plan, "observe daemon lease only; referenced interface is externally managed")
-			return
-		}
 		rr.Plan = append(rr.Plan, fmt.Sprintf("run routerd-dhcpv4-client for %s and apply DHCPv4 address/default route from daemon status", ifname))
 	}
 }
