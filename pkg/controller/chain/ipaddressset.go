@@ -741,8 +741,11 @@ type systemDNSResolver struct{}
 
 func (systemDNSResolver) ResolveIP(ctx context.Context, name string) ([]ipAddressSetRecord, error) {
 	cfg, err := dns.ClientConfigFromFile("/etc/resolv.conf")
-	if err != nil || len(cfg.Servers) == 0 {
-		cfg = &dns.ClientConfig{Servers: []string{"1.1.1.1"}, Port: "53", Timeout: 2, Attempts: 1}
+	if err != nil {
+		return nil, fmt.Errorf("read system DNS configuration: %w", err)
+	}
+	if len(cfg.Servers) == 0 {
+		return nil, errors.New("system DNS configuration has no nameservers")
 	}
 	var records []ipAddressSetRecord
 	var errs []string
