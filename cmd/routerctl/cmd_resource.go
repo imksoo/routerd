@@ -410,10 +410,6 @@ func writeStatusSummaryTable(stdout io.Writer, status controlapi.StatusStatus) e
 	return w.Flush()
 }
 
-func parseShowTarget(target string) (string, string, error) {
-	return parseResourceTarget("show", target)
-}
-
 func parseResourceTarget(verb, target string) (string, string, error) {
 	kind, name, hasName := strings.Cut(target, "/")
 	kind = canonicalShowKind(kind)

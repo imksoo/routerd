@@ -5,86 +5,17 @@ package main
 import (
 	"context"
 	"fmt"
-	"io"
 	"net"
 	"net/netip"
 	"os/exec"
 	"strconv"
 	"strings"
-	"text/tabwriter"
 	"time"
 
 	"github.com/imksoo/routerd/internal/hostcmd"
 	"github.com/imksoo/routerd/internal/statusvalue"
 	"github.com/imksoo/routerd/pkg/api"
-	routerstate "github.com/imksoo/routerd/pkg/state"
 )
-
-func writeIngressShowTable(stdout io.Writer, router *api.Router, resources []routerstate.ObjectStatus, verbose bool) error {
-	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-	specs := ingressServiceSpecs(router)
-	var dataplane []ingressDataplaneRow
-	fmt.Fprintln(w, "SERVICE\tHOSTNAME\tLISTEN\tACTIVE_BACKEND\tSELECTION\tHEALTHY/TOTAL")
-	for _, resource := range resources {
-		if resource.Kind != "IngressService" {
-			continue
-		}
-		spec := specs[resource.Name]
-		active := statusMap(resource.Status["activeBackend"])
-		if verbose {
-			dataplane = append(dataplane, observeIngressDataplane(resource.Name, spec, resource.Status))
-		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%d/%d\n",
-			resource.Name,
-			defaultShowString(statusvalue.Text(resource.Status["hostname"]), "-"),
-			ingressListenString(spec, resource.Status),
-			activeBackendString(active),
-			defaultShowString(statusvalue.Text(resource.Status["selection"]), "failover"),
-			statusInt(resource.Status["healthyBackends"]),
-			statusInt(resource.Status["totalBackends"]),
-		)
-		backends := statusMaps(resource.Status["backends"])
-		if len(backends) > 0 {
-			fmt.Fprintln(w)
-			fmt.Fprintln(w, "BACKEND\tADDRESS\tSTATE\tDRAINED_UNTIL\tLAST_HEALTHY\tLAST_UNHEALTHY")
-			for _, backend := range backends {
-				state := "Unhealthy"
-				if statusvalue.BoolOrFalse(backend["healthy"]) {
-					state = "Healthy"
-				}
-				if statusvalue.BoolOrFalse(backend["drained"]) {
-					state = "Drained"
-				}
-				fmt.Fprintf(w, "%s\t%s\t%s(%d/%d)\t%s\t%s\t%s\n",
-					statusvalue.Text(backend["name"]),
-					backendAddressString(backend),
-					state,
-					statusInt(backend["healthyCount"]),
-					statusInt(backend["unhealthyCount"]),
-					defaultShowString(statusvalue.Text(backend["drainedUntil"]), "-"),
-					ageString(statusvalue.Text(backend["lastHealthyAt"])),
-					ageString(statusvalue.Text(backend["lastUnhealthyAt"])),
-				)
-			}
-		}
-	}
-	if verbose && len(dataplane) > 0 {
-		fmt.Fprintln(w)
-		fmt.Fprintln(w, "DATAPLANE\tIPV4_FORWARD\tIPV6_FORWARD\tNFT_DNAT\tNFT_SNAT\tCONNTRACK\tDETAIL")
-		for _, row := range dataplane {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%d\t%s\t%s\n",
-				row.Service,
-				row.IPv4Forward,
-				row.IPv6Forward,
-				row.NFTDNAT,
-				row.NFTSNAT,
-				row.Conntrack,
-				defaultShowString(row.Detail, "-"),
-			)
-		}
-	}
-	return w.Flush()
-}
 
 type ingressDataplaneRow struct {
 	Service     string
@@ -329,36 +260,6 @@ func ingressServiceSpecs(router *api.Router) map[string]api.IngressServiceSpec {
 		}
 	}
 	return out
-}
-
-func establishedSummary(status map[string]any, total int) string {
-	if total == 0 {
-		return "0/0"
-	}
-	return fmt.Sprintf("%d/%d", statusInt(status["establishedPeers"]), total)
-}
-
-func enabledString(enabled bool) string {
-	if enabled {
-		return "enabled"
-	}
-	return "disabled"
-}
-
-func boolShow(value any) string {
-	if value == nil {
-		return "-"
-	}
-	if value == true {
-		return "yes"
-	}
-	if value == false {
-		return "no"
-	}
-	if text := statusvalue.Text(value); text != "" {
-		return text
-	}
-	return "-"
 }
 
 func ingressListenString(spec api.IngressServiceSpec, status map[string]any) string {

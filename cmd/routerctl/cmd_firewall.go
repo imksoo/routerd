@@ -9,7 +9,6 @@ import (
 	"io"
 	"sort"
 	"strings"
-	"text/tabwriter"
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/config"
@@ -27,32 +26,6 @@ func firewallCommand(args []string, stdout, stderr io.Writer) error {
 	default:
 		return fmt.Errorf("unknown firewall subcommand %q", args[0])
 	}
-}
-
-func describeFirewall(stdout io.Writer, router *api.Router) error {
-	holes := render.InternalFirewallHoles(router)
-	fmt.Fprintln(stdout, "SOURCE\tFROM\tTO\tMATCH\tACTION")
-	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-	for _, res := range router.Spec.Resources {
-		if res.APIVersion != api.FirewallAPIVersion || res.Kind != "FirewallRule" {
-			continue
-		}
-		spec, err := res.FirewallRuleSpec()
-		if err != nil {
-			return err
-		}
-		fmt.Fprintf(w, "user/%s\t%s\t%s\t%s/%d\t%s\n", res.Metadata.Name, spec.FromZone, spec.ToZone, defaultString(spec.Protocol, "any"), spec.Port, spec.Action)
-	}
-	for _, hole := range holes {
-		fmt.Fprintf(w, "internal/%s\t%s\t%s\t%s/%d\taccept\n", hole.Name, hole.FromZone, hole.ToZone, defaultString(hole.Protocol, "any"), hole.Port)
-	}
-	for _, from := range firewallZonesForCLI(router) {
-		fmt.Fprintf(w, "implicit/matrix\t%s\tself\trole=%s\t%s\n", from.Name, from.Role, firewallImplicitActionForCLI(from.Role, "self"))
-		for _, to := range firewallZonesForCLI(router) {
-			fmt.Fprintf(w, "implicit/matrix\t%s\t%s\t%s->%s\t%s\n", from.Name, to.Name, from.Role, to.Role, firewallImplicitActionForCLI(from.Role, to.Role))
-		}
-	}
-	return w.Flush()
 }
 
 func firewallTestCommand(args []string, stdout io.Writer) error {

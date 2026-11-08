@@ -64,24 +64,6 @@ type diagnoseCommandCheck struct {
 	ExitCode int    `json:"exitCode" yaml:"exitCode"`
 }
 
-func diagnoseCommand(args []string, stdout, stderr io.Writer) error {
-	if len(args) == 0 {
-		usage(stderr)
-		return errors.New("diagnose requires subcommand")
-	}
-	switch args[0] {
-	case "egress":
-		return diagnoseEgressCommand(args[1:], stdout, stderr)
-	case "dns":
-		return diagnoseDNSCommand(args[1:], stdout, stderr)
-	case "lan-client":
-		return diagnoseLANClientCommand(args[1:], stdout, stderr)
-	default:
-		usage(stderr)
-		return fmt.Errorf("unknown diagnose subcommand %q", args[0])
-	}
-}
-
 func diagnoseEgressCommand(args []string, stdout, stderr io.Writer) error {
 	opts, err := parseDiagnoseOptions("diagnose egress", args, stdout)
 	if err != nil {

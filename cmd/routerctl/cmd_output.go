@@ -15,7 +15,6 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/imksoo/routerd/internal/stringutil"
-	"github.com/imksoo/routerd/pkg/observe"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -262,30 +261,6 @@ func specSummary(spec any) string {
 		}
 	}
 	return strings.Join(parts, ",")
-}
-
-func observedSummary(observed map[string]any) string {
-	if len(observed) == 0 {
-		return "-"
-	}
-	if exists, ok := observed["exists"]; ok {
-		return "exists=" + fmt.Sprint(exists)
-	}
-	if hostname, ok := observed["hostname"]; ok {
-		return "hostname=" + fmt.Sprint(hostname)
-	}
-	if addrs, ok := observed["addresses"]; ok {
-		return "addresses=" + fmt.Sprint(addrs)
-	}
-	if connections, ok := observed["connections"]; ok {
-		if table, ok := connections.(*observe.ConnectionTable); ok {
-			return fmt.Sprintf("conntrack=%d", table.Count)
-		}
-	}
-	if err, ok := observed["connectionsError"]; ok {
-		return "error=" + fmt.Sprint(err)
-	}
-	return "observed"
 }
 
 func stateSummary(state map[string]any) string {

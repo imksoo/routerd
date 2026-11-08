@@ -4,25 +4,17 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
-	"fmt"
-	"io"
 	"net"
-	"os"
-	"reflect"
 	"sort"
 	"strings"
-	"text/tabwriter"
 	"time"
 
 	"github.com/imksoo/routerd/internal/statusvalue"
 	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
-	"github.com/imksoo/routerd/pkg/apply"
 	"github.com/imksoo/routerd/pkg/controller/chain"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/render"
-	"github.com/imksoo/routerd/pkg/resource"
 	"github.com/imksoo/routerd/pkg/resourcequery"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
@@ -42,78 +34,6 @@ type showOptions struct {
 	Verbose          bool
 	IncludeStale     bool
 	ConnectionsLimit int
-}
-
-func buildDerivedShowResources(router *api.Router, store routerstate.Store, includeStale bool) ([]showResource, error) {
-	currentRouter, err := derivedResourcesCurrentRouter(router, store)
-	if err != nil {
-		return nil, err
-	}
-	explicit := resourceIDSet(router)
-	byID := map[string]showResource{}
-	add := func(row showResource) {
-		id := row.APIVersion + "/" + row.Kind + "/" + row.Name
-		if existing, ok := byID[id]; ok {
-			if len(row.Observed) > 0 {
-				existing.Observed = row.Observed
-				existing.State = row.State
-			}
-			if row.Source != "" {
-				existing.Source = row.Source
-			}
-			byID[id] = existing
-			return
-		}
-		byID[id] = row
-	}
-	for _, row := range plannedDerivedShowResources(currentRouter) {
-		add(row)
-	}
-	for _, row := range plannedEffectiveDerivedResources(router, currentRouter) {
-		add(row)
-	}
-	statuses, err := listObjectStatuses(store)
-	if err != nil {
-		return nil, err
-	}
-	for _, status := range statuses {
-		id := status.APIVersion + "/" + status.Kind + "/" + status.Name
-		if explicit[id] {
-			continue
-		}
-		_, planned := byID[id]
-		if !planned && !includeStale {
-			continue
-		}
-		source := stringutil.FirstNonEmpty(statusvalue.Text(status.Status["source"]), status.Owner)
-		observed := status.Status
-		stale := false
-		if !planned {
-			stale = true
-			observed = staleObjectStatus(status)
-			source = stringutil.FirstNonEmpty(source, "stale-state")
-		}
-		add(showResource{
-			APIVersion: status.APIVersion,
-			Kind:       status.Kind,
-			Name:       status.Name,
-			Source:     source,
-			Stale:      stale,
-			Observed:   observed,
-			State:      observed,
-		})
-	}
-	rows := make([]showResource, 0, len(byID))
-	for _, row := range byID {
-		rows = append(rows, row)
-	}
-	sort.Slice(rows, func(i, j int) bool {
-		if rows[i].Kind != rows[j].Kind {
-			return rows[i].Kind < rows[j].Kind
-		}
-		return rows[i].Name < rows[j].Name
-	})
-	return rows, nil
 }
 
 func derivedResourcesCurrentRouter(router *api.Router, store routerstate.Store) (*api.Router, error) {
@@ -222,26 +142,6 @@ func plannedDerivedShowResources(router *api.Router) []showResource {
 	return rows
 }
 
-func writeDerivedResourcesTable(stdout io.Writer, rows []showResource) error {
-	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "KIND\tNAME\tSOURCE\tPHASE\tDETAIL")
-	for _, row := range rows {
-		status := row.Observed
-		if len(status) == 0 {
-			status = row.State
-		}
-		detail := stringutil.FirstNonEmpty(statusvalue.Text(status["path"]), statusvalue.Text(status["unitName"]), statusvalue.Text(status["reason"]), "-")
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
-			row.Kind,
-			row.Name,
-			defaultShowString(row.Source, "-"),
-			defaultShowString(statusvalue.Text(status["phase"]), "Planned"),
-			detail,
-		)
-	}
-	return w.Flush()
-}
-
 func listObjectStatuses(store routerstate.Store) ([]routerstate.ObjectStatus, error) {
 	lister, ok := store.(routerstate.ObjectStatusLister)
 	if !ok {
@@ -250,172 +150,12 @@ func listObjectStatuses(store routerstate.Store) ([]routerstate.ObjectStatus, er
 	return lister.ListObjectStatuses()
 }
 
-func filterShowStatuses(resources []routerstate.ObjectStatus, kind string) []routerstate.ObjectStatus {
-	var out []routerstate.ObjectStatus
-	for _, resource := range resources {
-		switch kind {
-		case "bgp":
-			if resource.Kind == "BGPRouter" || resource.Kind == "BGPPeer" {
-				out = append(out, resource)
-			}
-		case "vrrp":
-			if resource.Kind == "VirtualAddress" {
-				out = append(out, resource)
-			}
-		case "ingress":
-			if resource.Kind == "IngressService" {
-				out = append(out, resource)
-			}
-		}
-	}
-	return out
-}
-
-func objectStatusForResource(res api.Resource, store routerstate.Store) map[string]any {
-	objectStore, ok := store.(routerstate.ObjectStatusStore)
-	if !ok {
-		return nil
-	}
-	return objectStore.ObjectStatus(res.APIVersion, res.Kind, res.Metadata.Name)
-}
-
-func inventoryShowResource(store routerstate.Store, name string, eventsLimit int) (showResource, error) {
-	objectStore, ok := store.(routerstate.ObjectStatusStore)
-	if !ok {
-		return showResource{}, errors.New("inventory requires SQLite state storage")
-	}
-	status := objectStore.ObjectStatus(api.RouterAPIVersion, "Inventory", name)
-	if len(status) == 0 {
-		return showResource{}, fmt.Errorf("Inventory/%s not found", name)
-	}
-	res := api.Resource{
-		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Inventory"},
-		Metadata: api.ObjectMeta{Name: name},
-		Spec:     api.InventorySpec{},
-	}
-	return showResource{
-		APIVersion: res.APIVersion,
-		Kind:       res.Kind,
-		Name:       res.Metadata.Name,
-		Spec:       res.Spec,
-		Observed:   status,
-		State:      status,
-		Events:     eventsForResourceLimit(store, res, eventsLimit),
-	}, nil
-}
-
-func adoptOnlyShowResources(router *api.Router, rows []showResource, ledger resource.Ledger) ([]showResource, error) {
-	candidates, _, err := apply.New().AdoptionCandidateArtifacts(router, ledger)
-	if err != nil {
-		return nil, err
-	}
-	byOwner := map[string][]any{}
-	for _, candidate := range candidates {
-		byOwner[candidate.Owner] = append(byOwner[candidate.Owner], candidate)
-	}
-	var out []showResource
-	for _, row := range rows {
-		owner := row.APIVersion + "/" + row.Kind + "/" + row.Name
-		row.Spec = nil
-		row.Observed = nil
-		row.Ledger = nil
-		row.State = nil
-		row.Diff = nil
-		row.Adopt = byOwner[owner]
-		if len(row.Adopt) > 0 {
-			out = append(out, row)
-		}
-	}
-	return out, nil
-}
-
-func interfaceAliases(resources []api.Resource) map[string]string {
-	aliases := map[string]string{}
-	for _, res := range resources {
-		if res.Kind != "Interface" {
-			continue
-		}
-		spec, err := res.InterfaceSpec()
-		if err == nil {
-			aliases[res.Metadata.Name] = spec.IfName
-		}
-	}
-	return aliases
-}
-
-func ledgerArtifactsForOwner(ledger resource.Ledger, owner string) ([]resource.Artifact, error) {
-	var out []resource.Artifact
-	artifacts, err := ledger.All()
-	if err != nil {
-		return nil, err
-	}
-	for _, artifact := range artifacts {
-		if artifact.Owner == owner {
-			out = append(out, artifact)
-		}
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Identity() < out[j].Identity() })
-	return out, nil
-}
-
-func writeOrphans(stdout io.Writer, router *api.Router, ledger resource.Ledger) error {
-	engine := apply.New()
-	if err := engine.Validate(router); err != nil {
-		return err
-	}
-	orphans, _, err := engine.LedgerOwnedOrphans(router, ledger)
-	if err != nil {
-		return err
-	}
-	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "KIND\tNAME\tOWNER\tREMEDIATION")
-	for _, orphan := range orphans {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", orphan.Kind, orphan.Name, orphan.Owner, orphan.Remediation)
-	}
-	return w.Flush()
-}
-
-func eventsForResource(store routerstate.Store, res api.Resource) []routerstate.Event {
-	return eventsForResourceLimit(store, res, 20)
-}
-
 func eventsForResourceLimit(store routerstate.Store, res api.Resource, limit int) []routerstate.Event {
 	recorder, ok := store.(routerstate.EventRecorder)
 	if !ok {
 		return nil
 	}
 	return recorder.Events(res.APIVersion, res.Kind, res.Metadata.Name, limit)
-}
-
-func observeResource(res api.Resource, aliases map[string]string, opts showOptions) map[string]any {
-	switch res.Kind {
-	case "Interface":
-		spec, _ := res.InterfaceSpec()
-		return observeInterface(spec.IfName)
-	case "IPv4StaticAddress":
-		spec, _ := res.IPv4StaticAddressSpec()
-		return map[string]any{"interface": aliases[spec.Interface], "addresses": interfaceIPv4Addresses(aliases[spec.Interface])}
-	case "DHCPv4Client":
-		spec, _ := res.DHCPv4ClientSpec()
-		return map[string]any{"interface": aliases[spec.Interface], "addresses": interfaceIPv4Addresses(aliases[spec.Interface])}
-	case "DHCPv6PrefixDelegation":
-		spec, _ := res.DHCPv6PrefixDelegationSpec()
-		return map[string]any{"interface": aliases[spec.Interface]}
-	case "DSLiteTunnel":
-		spec, _ := res.DSLiteTunnelSpec()
-		return observeInterface(stringutil.FirstNonEmpty(spec.TunnelName, res.Metadata.Name))
-	case "PPPoESession":
-		spec, _ := res.PPPoESessionSpec()
-		return observeInterface(stringutil.FirstNonEmpty(spec.IfName, "ppp-"+res.Metadata.Name))
-	case "Hostname":
-		hostname, err := os.Hostname()
-		if err != nil {
-			return map[string]any{"error": err.Error()}
-		}
-		return map[string]any{"hostname": hostname}
-	default:
-		return map[string]any{}
-	}
 }
 
 func observeInterface(ifname string) map[string]any {
@@ -463,26 +203,6 @@ func interfaceIPv4Addresses(ifname string) []string {
 	return out
 }
 
-func stateForResource(res api.Resource, store routerstate.Store) map[string]any {
-	switch res.Kind {
-	case "DHCPv6PrefixDelegation":
-		base := "ipv6PrefixDelegation." + res.Metadata.Name
-		lease, _ := routerstate.PDLeaseFromStore(store, base)
-		return map[string]any{
-			"lease":            lease,
-			"client":           stateString(store, base+".client"),
-			"profile":          stateString(store, base+".profile"),
-			"prefixLength":     stateString(store, base+".prefixLength"),
-			"uplinkIfname":     stateString(store, base+".uplinkIfname"),
-			"downstreamIfname": stateString(store, base+".downstreamIfname"),
-		}
-	case "Hostname":
-		return prefixedState(store, "hostname.")
-	default:
-		return prefixedState(store, statePrefixForKind(res.Kind, res.Metadata.Name))
-	}
-}
-
 func statePrefixForKind(kind, name string) string {
 	prefixes := map[string]string{
 		"Interface":            "interface.",
@@ -521,32 +241,6 @@ func stateString(store routerstate.Store, key string) string {
 		return ""
 	}
 	return value.Value
-}
-
-func diffSpecObserved(spec any, observed map[string]any) []showDiff {
-	specMap := flattenAny(spec)
-	observedMap := flattenAny(observed)
-	keys := map[string]bool{}
-	for key := range specMap {
-		keys[key] = true
-	}
-	for key := range observedMap {
-		keys[key] = true
-	}
-	var sorted []string
-	for key := range keys {
-		sorted = append(sorted, key)
-	}
-	sort.Strings(sorted)
-	var diffs []showDiff
-	for _, key := range sorted {
-		specValue, specOK := specMap[key]
-		observedValue, observedOK := observedMap[key]
-		if !specOK || !observedOK || !reflect.DeepEqual(fmt.Sprint(specValue), fmt.Sprint(observedValue)) {
-			diffs = append(diffs, showDiff{Field: key, Spec: specValue, Observed: observedValue})
-		}
-	}
-	return diffs
 }
 
 func flattenAny(value any) map[string]any {
