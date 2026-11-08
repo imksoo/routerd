@@ -3626,13 +3626,18 @@ func (r *Runner) probeARPObservers(ctx context.Context, poolName, address string
 		return err
 	}
 	matched := 0
+	eligible := 0
 	var errs []error
 	for _, spec := range specs {
-		if strings.TrimSpace(spec.PoolName) != strings.TrimSpace(poolName) || spec.SourceType != mobilitycontroller.OnPremSourceOnDemandARP || !spec.OnDemand || !r.arpObserverReady(spec.ResourceName) {
+		if strings.TrimSpace(spec.PoolName) != strings.TrimSpace(poolName) || spec.SourceType != mobilitycontroller.OnPremSourceOnDemandARP || !spec.OnDemand {
 			continue
 		}
 		observerPrefix, parseErr := netip.ParsePrefix(spec.Prefix)
 		if parseErr != nil || !observerPrefix.Contains(prefix.Addr()) {
+			continue
+		}
+		eligible++
+		if !r.arpObserverReady(spec.ResourceName) {
 			continue
 		}
 		matched++
@@ -3646,10 +3651,16 @@ func (r *Runner) probeARPObservers(ctx context.Context, poolName, address string
 			errs = append(errs, fmt.Errorf("%s: %w", spec.ResourceName, err))
 		}
 	}
-	if matched == 0 {
-		return fmt.Errorf("no ready on-demand-arp observer for MobilityPool/%s target %s", poolName, target)
+	if err := errors.Join(errs...); err != nil {
+		return err
 	}
-	return errors.Join(errs...)
+	if eligible == 0 {
+		return fmt.Errorf("no on-demand-arp observer for MobilityPool/%s target %s", poolName, target)
+	}
+	if matched < eligible {
+		return fmt.Errorf("%w for MobilityPool/%s target %s", mobilitycontroller.ErrARPObserverNotReady, poolName, target)
+	}
+	return nil
 }
 
 func parseARPObserverIgnoredSenderMACs(value string) ([]string, error) {

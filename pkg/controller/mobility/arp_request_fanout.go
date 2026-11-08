@@ -31,6 +31,8 @@ const (
 // errors release the request claim so transient failures can be retried.
 type ARPProbeFunc func(context.Context, string, string) error
 
+var ErrARPObserverNotReady = errors.New("on-demand ARP observer not ready")
+
 type arpProbeRequestClaim struct {
 	ObservedAt time.Time
 	ExpiresAt  time.Time
@@ -246,6 +248,9 @@ func (c DiscoveryController) ReconcileARPProbeRequests(ctx context.Context) erro
 			}
 			if err := c.ProbeARP(ctx, pool.Name, address); err != nil {
 				c.ARPProbeRequests.release(claimKey, event.ObservedAt)
+				if errors.Is(err, ErrARPObserverNotReady) {
+					continue
+				}
 				errs = append(errs, fmt.Errorf("probe %s for MobilityPool/%s after event %s: %w", address, pool.Name, event.ID, err))
 			}
 		}
