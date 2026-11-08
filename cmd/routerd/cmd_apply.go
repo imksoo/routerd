@@ -707,8 +707,12 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 			if err := outcome.commit(opts, configYAML); err != nil {
 				return result, fmt.Errorf("commit canonical config %s: %w", opts.ConfigPath, err)
 			}
+			generationPhase := result.Phase
+			if outcome.Canonical == canonicalReplaced {
+				generationPhase = "Committed"
+			}
 			outcome.Stage = "finish-generation"
-			if err := outcome.finish(stateStore, result.Phase, result.Warnings); err != nil {
+			if err := outcome.finish(stateStore, generationPhase, result.Warnings); err != nil {
 				return result, err
 			}
 			outcome.Stage = "output"
