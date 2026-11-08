@@ -974,16 +974,3 @@ func commandsFor(opts options) [][]string {
 	}
 	return commands
 }
-
-// commandsForVMACs keeps each VMAC's commands as one failure boundary. A
-// missing parent on a BACKUP must not skip the remaining VMACs or the
-// conntrackd role transition.
-func commandsForVMACs(opts options) [][][]string {
-	commands := make([][][]string, 0, len(opts.vmacs))
-	for _, entry := range opts.vmacs {
-		single := opts
-		single.vmacs = []vmac{entry}
-		commands = append(commands, commandsFor(single))
-	}
-	return commands
-}

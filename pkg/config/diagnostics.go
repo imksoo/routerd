@@ -976,11 +976,6 @@ func validateDNSUpstream(resourceID string, spec api.DNSUpstreamSpec) error {
 	return nil
 }
 
-func isStatusExpression(value string) bool {
-	value = strings.TrimSpace(value)
-	return strings.HasPrefix(value, "${") && strings.HasSuffix(value, "}") && strings.Contains(value, ".status.")
-}
-
 func parseRetentionDuration(value string) (time.Duration, error) {
 	value = strings.TrimSpace(value)
 	if strings.HasSuffix(value, "d") {

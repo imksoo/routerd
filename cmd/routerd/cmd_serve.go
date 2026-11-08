@@ -2254,15 +2254,6 @@ func statusStringMap(status map[string]any, key string) string {
 	}
 }
 
-func containsString(values []string, needle string) bool {
-	for _, value := range values {
-		if value == needle {
-			return true
-		}
-	}
-	return false
-}
-
 // startControllerRuntime keeps a stop request ahead of synchronous bootstrap.
 // A controller start is normally quick, but systemd may request another
 // routerd restart while that bootstrap is applying a generated service unit.
@@ -2318,15 +2309,6 @@ type serveMutationAdmission struct {
 	mu                   *sync.Mutex
 	stopping             *atomic.Bool
 	runtimeMutationError func() error
-}
-
-// runGracefulStopWhenIdle runs the optional mobility handoff only when no
-// admitted configuration transaction is active.  The process must always be
-// able to leave on SIGTERM; a blocked transaction is less harmful than
-// extending host shutdown indefinitely.
-func runGracefulStopWhenIdle(mu *sync.Mutex, handoff func() error) (bool, error) {
-	ran, _, err := runGracefulStopWhenIdleBounded(mu, 0, handoff)
-	return ran, err
 }
 
 // runGracefulStopWhenIdleBounded runs an optional handoff only while no

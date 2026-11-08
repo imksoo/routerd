@@ -2,18 +2,7 @@
 
 package vxlan
 
-import (
-	"context"
-	"fmt"
-	"os/exec"
-	"strconv"
-
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric"
-)
-
-type CommandRunner func(ctx context.Context, name string, args ...string) ([]byte, error)
+import "strconv"
 
 type Config struct {
 	Name              string
@@ -26,11 +15,6 @@ type Config struct {
 	MTU               int
 	Bridge            string
 	OuterDF           string
-}
-
-type Controller struct {
-	Command CommandRunner
-	DryRun  bool
 }
 
 func Commands(cfg Config) [][]string {
@@ -66,40 +50,9 @@ func Commands(cfg Config) [][]string {
 	return args
 }
 
-func (c Controller) Apply(ctx context.Context, cfg Config) error {
-	if cfg.VNI == 0 {
-		return fmt.Errorf("vni is required")
-	}
-	if c.DryRun {
-		RecordMetrics(ctx, cfg)
-		return nil
-	}
-	run := c.Command
-	if run == nil {
-		run = runCommand
-	}
-	for _, cmd := range Commands(cfg) {
-		if _, err := run(ctx, cmd[0], cmd[1:]...); err != nil {
-			return err
-		}
-	}
-	RecordMetrics(ctx, cfg)
-	return nil
-}
-
-func RecordMetrics(ctx context.Context, cfg Config) {
-	ifname := defaultString(cfg.IfName, cfg.Name)
-	gauge, _ := otel.Meter("routerd.vxlan").Int64Gauge("routerd.vxlan.peers.count")
-	gauge.Record(ctx, int64(len(cfg.Peers)), metric.WithAttributes(attribute.String("routerd.vxlan.interface", ifname), attribute.Int("routerd.vxlan.vni", cfg.VNI)))
-}
-
 func defaultString(value, fallback string) string {
 	if value == "" {
 		return fallback
 	}
 	return value
-}
-
-func runCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
-	return exec.CommandContext(ctx, name, args...).CombinedOutput()
 }

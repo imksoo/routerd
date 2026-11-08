@@ -761,24 +761,6 @@ func TestCleanupUnsupportedLegacyObjectStatusesRemovesLegacyAndDeletedResourceRo
 	}
 }
 
-func TestStaleObjectStatusesKeepsConfiguredAndSyntheticKinds(t *testing.T) {
-	statuses := []routerstate.ObjectStatus{
-		{APIVersion: api.NetAPIVersion, Kind: "PPPoEInterface", Name: "wan"},
-		{APIVersion: api.NetAPIVersion, Kind: "Interface", Name: "wan"},
-		{APIVersion: api.NetAPIVersion, Kind: "BGPRouter", Name: "lan"},
-		{APIVersion: api.RouterAPIVersion, Kind: "Inventory", Name: "host"},
-		{APIVersion: api.NetAPIVersion, Kind: "ConntrackObserver", Name: "default"},
-	}
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan"}},
-	}}}
-	got := staleObjectStatuses(router, statuses)
-	if len(got) != 1 || got[0].Kind != "PPPoEInterface" {
-		t.Fatalf("stale statuses = %+v, want only PPPoEInterface", got)
-	}
-}
-
 func dynamicConfigPartRecordForCleanupTest(t *testing.T, source string, resources []api.Resource, expiresAt time.Time) routerstate.DynamicConfigPartRecord {
 	t.Helper()
 	raw, err := json.Marshal(resources)
@@ -980,17 +962,6 @@ func TestFreeBSDProtectedIfnames(t *testing.T) {
 	}
 	if got["vtnet0"] {
 		t.Fatalf("protected ifnames = %v, did not want vtnet0", got)
-	}
-}
-
-func TestDeprecatedIPv6LocalAddressCommand(t *testing.T) {
-	name, args := deprecatedIPv6LocalAddressCommand(platform.OSLinux, "ens19", "2001:db8::1", 299)
-	if got, want := strings.Join(append([]string{name}, args...), " "), "ip -6 addr replace 2001:db8::1/64 dev ens19 preferred_lft 0 valid_lft 299"; got != want {
-		t.Fatalf("Linux command = %q, want %q", got, want)
-	}
-	name, args = deprecatedIPv6LocalAddressCommand(platform.OSFreeBSD, "vtnet1", "2001:db8::1", 299)
-	if got, want := strings.Join(append([]string{name}, args...), " "), "ifconfig vtnet1 inet6 2001:db8::1 prefixlen 64 pltime 0 vltime 299 alias"; got != want {
-		t.Fatalf("FreeBSD command = %q, want %q", got, want)
 	}
 }
 

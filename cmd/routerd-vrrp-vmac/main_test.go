@@ -748,27 +748,6 @@ func TestDeactivateWithdrawsRAOnlyOnRoleTransition(t *testing.T) {
 	}
 }
 
-func TestMixedVMACHygieneDoesNotLeakLANPolicyToWAN(t *testing.T) {
-	opts, err := parseOptions([]string{
-		"activate",
-		"--vmac", "wan,wan-vmac,02:00:5e:00:01:13,,false",
-		"--vmac", "lan,lan-vmac,02:00:5e:00:01:12,fe80::5eff:fe00:112,true",
-	})
-	if err != nil {
-		t.Fatalf("parse mixed VMACs: %v", err)
-	}
-	groups := commandsForVMACs(opts)
-	if len(groups) != 2 {
-		t.Fatalf("VMAC command groups = %d, want 2", len(groups))
-	}
-	assertContainsCommand(t, groups[0], []string{"sysctl", "-w", "net.ipv6.conf.wan-vmac.accept_ra=2"})
-	assertDoesNotContainCommand(t, groups[0], []string{"sysctl", "-w", "net.ipv6.conf.wan.accept_ra=0"})
-	assertDoesNotContainCommand(t, groups[0], []string{"ip", "-6", "addr", "flush", "dev", "wan-vmac", "scope", "global", "dynamic"})
-	assertContainsCommand(t, groups[1], []string{"sysctl", "-w", "net.ipv6.conf.lan.accept_ra=0"})
-	assertContainsCommand(t, groups[1], []string{"sysctl", "-w", "net.ipv6.conf.lan-vmac.accept_ra=0"})
-	assertContainsCommand(t, groups[1], []string{"ip", "-6", "addr", "flush", "dev", "lan", "scope", "global", "dynamic"})
-}
-
 func TestActivateStopsBeforeLinkUpWhenParentHygieneFails(t *testing.T) {
 	var commands []string
 	var wroteRole bool

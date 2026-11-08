@@ -9,10 +9,6 @@ import (
 	"os/exec"
 	"strings"
 
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric"
-
 	"github.com/imksoo/routerd/pkg/api"
 )
 
@@ -102,26 +98,6 @@ func (c Controller) LoadAll(ctx context.Context) error {
 		return fmt.Errorf("swanctl %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
 	return nil
-}
-
-// Load is retained for callers compiled against the previous API. The path is
-// intentionally not used: safe reconciliation always loads the complete
-// swanctl configuration and credentials set.
-func (c Controller) Load(ctx context.Context, _ string) error {
-	return c.LoadAll(ctx)
-}
-
-func RecordMetrics(ctx context.Context, connection string, established int64, bytes int64) {
-	meter := otel.Meter("routerd.ipsec")
-	count, _ := meter.Int64Counter("routerd.ipsec.sa.established.count")
-	traffic, _ := meter.Int64Counter("routerd.ipsec.tunnel.bytes")
-	attrs := metric.WithAttributes(attribute.String("routerd.ipsec.connection", connection))
-	if established > 0 {
-		count.Add(ctx, established, attrs)
-	}
-	if bytes > 0 {
-		traffic.Add(ctx, bytes, attrs)
-	}
 }
 
 func defaultList(values []string, fallback string) []string {

@@ -340,14 +340,6 @@ func cleanupUnsupportedLegacyObjectStatusesForOS(router *api.Router, store stale
 	return staleObjectStatusCleanupResult{Removed: removed, SnapshotPath: snapshotPath}, nil
 }
 
-func staleObjectStatuses(router *api.Router, statuses []routerstate.ObjectStatus) []routerstate.ObjectStatus {
-	return staleObjectStatusesForDesired(configuredResourceStatusKeys(router), statuses)
-}
-
-func staleObjectStatusesForDesired(desired map[string]bool, statuses []routerstate.ObjectStatus) []routerstate.ObjectStatus {
-	return lifecycle.PlanStatusGC(desired, statuses).StatusDeletes
-}
-
 func desiredObjectStatusKeysForOS(router *api.Router, store resourcequery.StateStore, now time.Time, targetOS platform.OS) (map[string]bool, error) {
 	out := map[string]bool{}
 	if router == nil {

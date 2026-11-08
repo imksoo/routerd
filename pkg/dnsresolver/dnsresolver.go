@@ -236,18 +236,6 @@ func Validate(spec api.DNSResolverSpec) error {
 	return nil
 }
 
-func parseRetentionDuration(value string) (time.Duration, error) {
-	value = strings.TrimSpace(value)
-	if strings.HasSuffix(value, "d") {
-		days, err := time.ParseDuration(strings.TrimSuffix(value, "d") + "h")
-		if err != nil {
-			return 0, err
-		}
-		return days * 24, nil
-	}
-	return time.ParseDuration(value)
-}
-
 func isStatusExpression(value string) bool {
 	value = strings.TrimSpace(value)
 	return strings.HasPrefix(value, "${") && strings.HasSuffix(value, "}") && strings.Contains(value, ".status.")
