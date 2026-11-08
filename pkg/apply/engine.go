@@ -23,6 +23,7 @@ import (
 	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/healthcheck"
 	"github.com/imksoo/routerd/pkg/hostdeps"
+	"github.com/imksoo/routerd/pkg/hybrid"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/render"
 	"github.com/imksoo/routerd/pkg/resourcequery"
@@ -115,7 +116,7 @@ func (e *Engine) evaluate(router, declared *api.Router, includePlan bool) (*Resu
 		case "WireGuardInterface":
 			e.observeWireGuardInterface(res, includePlan, &rr)
 		case "TunnelInterface":
-			e.observeTunnelInterface(res, includePlan, &rr)
+			e.observeTunnelInterface(router, res, includePlan, &rr)
 		case "WireGuardPeer":
 			e.observeWireGuardPeer(res, aliases, includePlan, &rr)
 		case "TailscaleNode":
@@ -894,7 +895,7 @@ func (e *Engine) observeWireGuardInterface(res api.Resource, includePlan bool, r
 	}
 }
 
-func (e *Engine) observeTunnelInterface(res api.Resource, includePlan bool, rr *ResourceResult) {
+func (e *Engine) observeTunnelInterface(router *api.Router, res api.Resource, includePlan bool, rr *ResourceResult) {
 	spec, err := res.TunnelInterfaceSpec()
 	if err != nil {
 		rr.Phase = "Blocked"
@@ -983,13 +984,18 @@ func (e *Engine) observeTunnelInterface(res api.Resource, includePlan bool, rr *
 	if ttl == 0 {
 		ttl = 64
 	}
+	mtu := hybrid.TunnelInterfaceEffectiveMTU(*router, spec)
 	for _, link := range links {
 		if link.Name != res.Metadata.Name {
 			continue
 		}
 		rr.Observed["actualLocal"] = link.Info.Data.Local
 		rr.Observed["actualRemote"] = link.Info.Data.Remote
-		if link.Info.Kind == "ipip" && link.Info.Data.Local == local && link.Info.Data.Remote == remote && link.Info.Data.TTL == ttl && (spec.MTU == 0 || link.MTU == spec.MTU) && slices.Contains(link.Flags, "UP") {
+		rr.Observed["actualMTU"] = strconv.Itoa(link.MTU)
+		if mtu > 0 {
+			rr.Observed["expectedMTU"] = strconv.Itoa(mtu)
+		}
+		if link.Info.Kind == "ipip" && link.Info.Data.Local == local && link.Info.Data.Remote == remote && link.Info.Data.TTL == ttl && (mtu == 0 || link.MTU == mtu) && slices.Contains(link.Flags, "UP") {
 			if spec.Address != "" {
 				out, err := runCommand("ip", "-j", "-4", "address", "show", "dev", link.Name)
 				if err != nil {
