@@ -62,24 +62,3 @@ routerctl status: phase=Healthy generation=1133 resourceCount=74
 default route: default link#10 US gif41
 curl -4 https://www.google.com/generate_204: 204 local=192.0.0.2
 ```
-
-## Firewall smoke
-
-Added `scripts/firewall-parity-smoke.sh`. The script checks the semantic anchors common to Linux nftables and FreeBSD pf:
-
-- default drop
-- established/related accept
-- loopback/self safety
-- IPv6 ICMP allowance
-- routerd role/client-policy labels
-
-It was run against live router04 pf output and a minimal nftables fixture:
-
-```text
-ok linux
-ok freebsd
-```
-
-## Caveat
-
-The script is a semantic smoke test, not a full formal equivalence checker. It is intentionally small so it can run in CI without mutating host firewall state.
