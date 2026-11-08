@@ -3,6 +3,7 @@
 package apply
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
@@ -434,19 +435,21 @@ func (e *Engine) actualAddressArtifacts() []resource.Artifact {
 }
 
 func (e *Engine) actualIPIP6TunnelArtifacts() []resource.Artifact {
-	out, err := runCommand("ip", "-d", "link", "show", "type", "ip6tnl")
+	out, err := runCommand("ip", "-j", "-6", "tunnel", "show")
 	if err != nil {
 		return nil
 	}
+	var tunnels []struct {
+		Name string `json:"ifname"`
+		Mode string `json:"mode"`
+	}
+	if err := json.Unmarshal(out, &tunnels); err != nil {
+		return nil
+	}
 	var artifacts []resource.Artifact
-	for _, line := range strings.Split(string(out), "\n") {
-		fields := strings.Fields(strings.TrimSpace(line))
-		if len(fields) >= 2 && strings.HasSuffix(fields[0], ":") {
-			name := strings.TrimSuffix(fields[1], ":")
-			if i := strings.Index(name, "@"); i >= 0 {
-				name = name[:i]
-			}
-			artifacts = append(artifacts, newSimpleArtifact("linux.ipip6.tunnel", name, "ip-link"))
+	for _, tunnel := range tunnels {
+		if tunnel.Mode == "ip/ipv6" && tunnel.Name != "" {
+			artifacts = append(artifacts, newSimpleArtifact("linux.ipip6.tunnel", tunnel.Name, "ip-link"))
 		}
 	}
 	return artifacts
