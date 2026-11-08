@@ -429,7 +429,6 @@ func (c IPv4RouteController) reconcile(ctx context.Context) error {
 		} else if installedAt, ok := previous["installedAt"]; ok {
 			status["installedAt"] = installedAt
 		}
-		effectivePreferredSource := preferredSource
 		if !c.DryRun {
 			localSource := true
 			if preferredSource != "" && routeType != "blackhole" {
@@ -447,17 +446,16 @@ func (c IPv4RouteController) reconcile(ctx context.Context) error {
 				}
 			}
 			if !localSource {
-				effectivePreferredSource = ""
-				status["preferredSourceSkipped"] = true
-				status["preferredSourceSkipReason"] = "LocalAddressMissing"
-				status["effectivePreferredSource"] = ""
-				if c.Logger != nil {
-					c.Logger.Warn("ipv4 route preferred source is not a local OS address; installing route without src", "resource", resource.Metadata.Name, "destination", destination, "preferredSource", preferredSource)
+				status["phase"] = "Pending"
+				status["reason"] = "PreferredSourceNotLocal"
+				if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4Route", resource.Metadata.Name, status); err != nil {
+					return err
 				}
+				continue
 			} else if preferredSource != "" {
 				status["effectivePreferredSource"] = preferredSource
 			}
-			if platform.CurrentOS() != platform.OSFreeBSD && ipv4RouteInstalled(ctx, c.run, routeType, destination, device, gateway, effectivePreferredSource, spec.Metric) {
+			if platform.CurrentOS() != platform.OSFreeBSD && ipv4RouteInstalled(ctx, c.run, routeType, destination, device, gateway, preferredSource, spec.Metric) {
 				status["kernelRouteAlreadyCurrent"] = true
 				status["changed"] = changed
 				if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4Route", resource.Metadata.Name, status); err != nil {
@@ -471,15 +469,15 @@ func (c IPv4RouteController) reconcile(ctx context.Context) error {
 			} else if gateway != "" {
 				args = []string{"route", "replace", destination, "via", gateway, "dev", device}
 			}
-			if effectivePreferredSource != "" && routeType != "blackhole" {
-				args = append(args, "src", effectivePreferredSource)
+			if preferredSource != "" && routeType != "blackhole" {
+				args = append(args, "src", preferredSource)
 			}
 			if spec.Metric > 0 {
 				args = append(args, "metric", fmt.Sprintf("%d", spec.Metric))
 			}
 			name := "ip"
 			if platform.CurrentOS() == platform.OSFreeBSD {
-				name, args = freeBSDIPv4RouteApplyCommand(routeType, destination, device, gateway, effectivePreferredSource)
+				name, args = freeBSDIPv4RouteApplyCommand(routeType, destination, device, gateway, preferredSource)
 			}
 			out, err := c.run(ctx, name, args...)
 			if err != nil && platform.CurrentOS() == platform.OSFreeBSD && freeBSDRouteNeedsAdd(out) {
