@@ -5646,7 +5646,7 @@ func (c LANAddressController) freshStagedPDSnapshot(pdName string) (pdclient.Sna
 	if err := json.Unmarshal(data, &snapshot); err != nil {
 		return pdclient.Snapshot{}, false
 	}
-	if snapshot.State != pdclient.StateBound || snapshot.Resource != pdName || snapshot.Interface != ifname || strings.TrimSpace(snapshot.CurrentPrefix) == "" {
+	if (snapshot.State != pdclient.StateBound && snapshot.State != pdclient.StateRenewing && snapshot.State != pdclient.StateRebinding) || snapshot.Resource != pdName || snapshot.Interface != ifname || strings.TrimSpace(snapshot.CurrentPrefix) == "" {
 		return pdclient.Snapshot{}, false
 	}
 	prefix, err := netip.ParsePrefix(snapshot.CurrentPrefix)
@@ -5657,7 +5657,14 @@ func (c LANAddressController) freshStagedPDSnapshot(pdName string) (pdclient.Sna
 		return pdclient.Snapshot{}, false
 	}
 	expectedDUID := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(spec.ClientDUID), ":", ""))
-	if expectedDUID == "" || !strings.EqualFold(strings.ReplaceAll(strings.TrimSpace(snapshot.ClientDUID), ":", ""), expectedDUID) {
+	if expectedDUID == "" {
+		iface, err := net.InterfaceByName(ifname)
+		if err != nil || len(iface.HardwareAddr) == 0 {
+			return pdclient.Snapshot{}, false
+		}
+		expectedDUID = fmt.Sprintf("00030001%x", iface.HardwareAddr)
+	}
+	if !strings.EqualFold(strings.ReplaceAll(strings.TrimSpace(snapshot.ClientDUID), ":", ""), expectedDUID) {
 		return pdclient.Snapshot{}, false
 	}
 	expectedIAID := uint32(1)
