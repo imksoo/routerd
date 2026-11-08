@@ -5,12 +5,14 @@ package apply
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,6 +21,7 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/healthcheck"
+	"github.com/imksoo/routerd/pkg/hostdeps"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/render"
 	"github.com/imksoo/routerd/pkg/resourcequery"
@@ -187,7 +190,7 @@ func (e *Engine) evaluate(router, declared *api.Router, includePlan bool) (*Resu
 
 		if rr.Phase == "Blocked" {
 			result.Phase = "Blocked"
-		} else if rr.Phase == "Drifted" && result.Phase == "Healthy" && (res.Kind == "Bridge" || res.Kind == "VXLANTunnel" || res.Kind == "IPv4Route") {
+		} else if rr.Phase == "Drifted" && result.Phase == "Healthy" && (res.Kind == "Bridge" || res.Kind == "VXLANTunnel" || res.Kind == "IPv4Route" || res.Kind == "Package") {
 			result.Phase = "Drifted"
 		}
 		result.Resources = append(result.Resources, rr)
@@ -449,6 +452,61 @@ func (e *Engine) observePackage(res api.Resource, includePlan bool, rr *Resource
 	}
 	rr.Observed["sets"] = strings.Join(sets, ";")
 	rr.Observed["packages"] = fmt.Sprintf("%d", total)
+	osName := runtime.GOOS
+	if osName == "linux" {
+		data, err := os.ReadFile("/etc/os-release")
+		if err != nil {
+			rr.Phase = "Blocked"
+			rr.Warnings = append(rr.Warnings, fmt.Sprintf("read OS release: %v", err))
+			return
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			if value, ok := strings.CutPrefix(line, "ID="); ok {
+				osName = strings.Trim(strings.TrimSpace(value), `"'`)
+				break
+			}
+		}
+	}
+	for _, set := range spec.Packages {
+		if set.OS != osName {
+			continue
+		}
+		manager := set.Manager
+		if manager == "" {
+			switch osName {
+			case "ubuntu", "debian":
+				manager = "apt"
+			case "fedora", "rhel", "rocky", "almalinux":
+				manager = "dnf"
+			case "freebsd":
+				manager = "pkg"
+			}
+		}
+		for _, name := range set.Names {
+			switch manager {
+			case "apt", "dnf", "pkg":
+			default:
+				rr.Phase = "Blocked"
+				rr.Warnings = append(rr.Warnings, "unsupported package manager: "+manager)
+				return
+			}
+			command, args := hostdeps.PackageCheckCommand(manager, name)
+			out, err := runCommand(command, args...)
+			if err != nil {
+				var exitErr *exec.ExitError
+				if !errors.As(err, &exitErr) {
+					rr.Phase = "Blocked"
+					rr.Warnings = append(rr.Warnings, fmt.Sprintf("observe package %s: %v", name, err))
+					return
+				}
+			}
+			if err != nil || (manager == "apt" && strings.TrimSpace(string(out)) != "installed") {
+				rr.Phase = "Drifted"
+				rr.Warnings = append(rr.Warnings, "package not installed: "+name)
+			}
+		}
+		break
+	}
 	if includePlan {
 		rr.Plan = append(rr.Plan, "ensure OS packages declared for the current host OS are installed")
 		for _, set := range spec.Packages {
