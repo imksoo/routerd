@@ -77,15 +77,31 @@ func (keepalivedBackend) Apply(ctx context.Context, c *Controller, aliases map[s
 	if err != nil {
 		return backendResult{}, err
 	}
-	if changed && !c.DryRun {
-		if err := seedGracefulElectionStates(ctx, c, aliases); err != nil {
+	retry := false
+	for _, resource := range c.Router.Spec.Resources {
+		spec, ok, err := vrrpResourceSpec(resource)
+		if err != nil {
 			return backendResult{}, err
 		}
-		if err := writeFile(path, data, 0644); err != nil {
-			return backendResult{}, err
+		if ok && spec.Mode == "vrrp" && statusvalue.Field(c.Store.ObjectStatus(api.NetAPIVersion, resource.Kind, resource.Metadata.Name), "reason") == "KeepalivedRestartFailed" {
+			retry = true
+			break
+		}
+	}
+	if (changed || retry) && !c.DryRun {
+		if changed {
+			if err := seedGracefulElectionStates(ctx, c, aliases); err != nil {
+				return backendResult{}, err
+			}
+			if err := writeFile(path, data, 0644); err != nil {
+				return backendResult{}, err
+			}
 		}
 		now := time.Now().UTC().Format(time.RFC3339Nano)
 		reason := "keepalived.config changed"
+		if !changed {
+			reason = "retry after keepalived restart failure"
+		}
 		action, err := reloadOrRestartSystemdKeepalived(ctx, c, path, serviceActive)
 		if err != nil {
 			return backendResult{}, err
