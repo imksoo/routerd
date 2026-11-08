@@ -69,17 +69,12 @@ type InterfaceStatus struct {
 }
 
 type Controller struct {
-	Command      CommandRunner
-	CommandStdin CommandStdinRunner
-	DryRun       bool
+	Command CommandRunner
+	DryRun  bool
 }
 
 func DefaultCommandRunner(ctx context.Context, name string, args ...string) ([]byte, error) {
 	return runCommand(ctx, name, args...)
-}
-
-func DefaultCommandStdinRunner(ctx context.Context, stdin []byte, name string, args ...string) ([]byte, error) {
-	return runCommandStdin(ctx, stdin, name, args...)
 }
 
 func BuildInterface(resource api.Resource, peers []api.Resource) (InterfaceConfig, error) {
@@ -203,17 +198,7 @@ func (c Controller) Apply(ctx context.Context, cfg InterfaceConfig) ([]byte, err
 	if run == nil {
 		run = runCommand
 	}
-	runStdin := c.CommandStdin
-	if runStdin == nil {
-		if c.Command == nil {
-			runStdin = runCommandStdin
-		} else {
-			runStdin = func(ctx context.Context, _ []byte, name string, args ...string) ([]byte, error) {
-				return run(ctx, name, args...)
-			}
-		}
-	}
-	return applyWithCommands(ctx, run, runStdin, cfg, conf)
+	return applyWithCommands(ctx, run, runCommandStdin, cfg, conf)
 }
 
 func ResolveKeyFiles(cfg InterfaceConfig) (InterfaceConfig, error) {
