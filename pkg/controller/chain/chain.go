@@ -4551,7 +4551,7 @@ func (c IPv4StaticAddressController) teardownWhenFalseIPv4StaticAddress(ctx cont
 		address = candidate.spec.Address
 	}
 	removedAddress := false
-	if !c.DryRun && ifname != "" && address != "" {
+	if !c.DryRun && ifname != "" && address != "" && !ipv4StaticAddressDesiredByAnother(c.Router, object.Name, ifname, address) {
 		addressPresentFn := ipv4AddressPresent
 		if addressPresentFn(ctx, ifname, address) {
 			command := runCommandContext
@@ -4592,7 +4592,7 @@ func (c IPv4StaticAddressController) teardownRemovedIPv4StaticAddress(ctx contex
 	if !c.DryRun {
 		ifname := cleanStatusString(status.Status["ifname"])
 		address := cleanStatusString(status.Status["address"])
-		if ifname != "" && address != "" {
+		if ifname != "" && address != "" && !ipv4StaticAddressDesiredByAnother(c.Router, status.Name, ifname, address) {
 			addressPresentFn := ipv4AddressPresent
 			if addressPresentFn(ctx, ifname, address) {
 				command := runCommandContext
@@ -4654,18 +4654,27 @@ func ipv4StaticAddressDesiredByAnother(router *api.Router, resourceName, ifname,
 		return false
 	}
 	for _, resource := range router.Spec.Resources {
-		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "IPv4StaticAddress" || resource.Metadata.Name == resourceName {
+		if resource.APIVersion != api.NetAPIVersion {
 			continue
 		}
-		spec, err := resource.IPv4StaticAddressSpec()
-		if err != nil {
-			continue
-		}
-		if strings.TrimSpace(spec.Address) != strings.TrimSpace(address) {
-			continue
-		}
-		if interfaceIfName(router, spec.Interface) == ifname {
-			return true
+		switch resource.Kind {
+		case "IPv4StaticAddress":
+			if resource.Metadata.Name == resourceName {
+				continue
+			}
+			spec, err := resource.IPv4StaticAddressSpec()
+			if err == nil && strings.TrimSpace(spec.Address) == strings.TrimSpace(address) && interfaceIfName(router, spec.Interface) == ifname {
+				return true
+			}
+		case "VirtualAddress":
+			spec, err := resource.VirtualAddressSpec()
+			if err != nil || spec.Family != "ipv4" || (spec.Mode != "" && spec.Mode != "static") || interfaceIfName(router, spec.Interface) != ifname {
+				continue
+			}
+			value, err := render.VirtualAddress(router, spec)
+			if err == nil && value == strings.TrimSpace(address) {
+				return true
+			}
 		}
 	}
 	return false
