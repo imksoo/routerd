@@ -124,11 +124,6 @@ func deriveIPv6AddressFromGlobalAddress(addresses []string, suffix string) (stri
 	return "", errNoIPv6PrefixAvailable
 }
 
-func ipv6HostSuffix64(addr netip.Addr) uint64 {
-	bytes := addr.As16()
-	return binary.BigEndian.Uint64(bytes[8:])
-}
-
 func ensureIPv6LocalAddress(ifname, address string) (bool, error) {
 	for _, entry := range ipv6AddressEntries(ifname) {
 		if entry.Address != address {

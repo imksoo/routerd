@@ -39,17 +39,6 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 		}
 		aliases[res.Metadata.Name] = spec.IfName
 	}
-	delegatedByPD := map[string][]api.Resource{}
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "IPv6DelegatedAddress" {
-			continue
-		}
-		spec, err := res.IPv6DelegatedAddressSpec()
-		if err != nil {
-			return nil, err
-		}
-		delegatedByPD[spec.PrefixDelegation] = append(delegatedByPD[spec.PrefixDelegation], res)
-	}
 
 	var changes []stateChange
 	for _, res := range router.Spec.Resources {
@@ -75,11 +64,11 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 				}
 			}
 		}
-		managedSnapshotFresh := false
+		observedPrefix := ""
 		if client == api.IPv6PDClientRouterd {
 			if snapshot, ok := managedPDClientSnapshot(res.Metadata.Name, aliases[spec.Interface], spec, store.Now()); ok {
 				lease = mergePDLeaseSnapshot(lease, snapshot)
-				managedSnapshotFresh = true
+				observedPrefix = lease.CurrentPrefix
 			}
 		}
 		if ifname := aliases[spec.Interface]; ifname != "" {
@@ -104,29 +93,6 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 			changes = append(changes, stateChange{Name: base + ".prefixLength", Value: store.Set(base+".prefixLength", strconv.Itoa(prefixLength), res.ID()+": configured prefix length")})
 		}
 
-		var observedPrefix, observedIfname string
-		if managedSnapshotFresh {
-			observedPrefix = lease.CurrentPrefix
-		}
-		for _, delegated := range delegatedByPD[res.Metadata.Name] {
-			delegatedSpec, err := delegated.IPv6DelegatedAddressSpec()
-			if err != nil {
-				return nil, err
-			}
-			ifname := aliases[delegatedSpec.Interface]
-			if ifname == "" {
-				continue
-			}
-			prefix, ok := delegatedPrefixFromObservedInterface(ifname, prefixLength, delegatedAddressSuffixes(delegatedByPD[res.Metadata.Name]))
-			if ok {
-				if managedSnapshotFresh && prefix != observedPrefix {
-					continue
-				}
-				observedPrefix = prefix
-				observedIfname = ifname
-				break
-			}
-		}
 		if observedPrefix == "" {
 			if client == "dhcpcd" {
 				if ifname := aliases[spec.Interface]; ifname != "" {
@@ -173,10 +139,7 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 		if recorder, ok := store.(routerstate.EventRecorder); ok && previousPrefix != observedPrefix {
 			_ = recorder.RecordEvent(res.APIVersion, res.Kind, res.Metadata.Name, "Normal", "PrefixObserved", "observed delegated IPv6 prefix "+observedPrefix)
 		}
-		changes = append(changes,
-			stateChange{Name: base + ".lease", Value: store.Set(base+".lease", routerstate.EncodePDLease(lease), res.ID()+": observed delegated prefix lease")},
-			stateChange{Name: base + ".downstreamIfname", Value: store.Set(base+".downstreamIfname", observedIfname, res.ID()+": observed delegated prefix")},
-		)
+		changes = append(changes, stateChange{Name: base + ".lease", Value: store.Set(base+".lease", routerstate.EncodePDLease(lease), res.ID()+": observed delegated prefix lease")})
 	}
 	return changes, nil
 }
@@ -223,35 +186,18 @@ func managedPDClientSnapshotMatches(snapshot pdclient.Snapshot, resource, ifname
 }
 
 func mergePDLeaseSnapshot(lease routerstate.PDLease, snapshot pdclient.Snapshot) routerstate.PDLease {
-	legacyPrefix := lease.LastPrefix
-	legacyExpiresAt := time.Time{}
-	if lastReplyAt, err := time.Parse(time.RFC3339Nano, lease.LastReplyAt); err == nil {
-		if validSeconds, err := strconv.ParseInt(lease.VLTime, 10, 64); err == nil && validSeconds > 0 {
-			legacyExpiresAt = lastReplyAt.Add(time.Duration(validSeconds) * time.Second)
-		}
-	}
 	lease.CurrentPrefix = snapshot.CurrentPrefix
 	lease.LastPrefix = snapshot.CurrentPrefix
 	now := snapshot.UpdatedAt
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
-	previousByPrefix := make(map[string]time.Time, len(lease.PreviousPrefixes)+len(snapshot.PreviousPrefixes)+1)
-	for _, previous := range lease.PreviousPrefixes {
-		if previous.Prefix != "" && previous.Prefix != snapshot.CurrentPrefix && now.Before(previous.ExpiresAt) {
-			previousByPrefix[previous.Prefix] = previous.ExpiresAt
-		}
-	}
+	previousByPrefix := make(map[string]time.Time, len(snapshot.PreviousPrefixes))
 	for _, previous := range snapshot.PreviousPrefixes {
 		if previous.Prefix == "" || previous.Prefix == snapshot.CurrentPrefix || !now.Before(previous.ExpiresAt) {
 			continue
 		}
 		previousByPrefix[previous.Prefix] = previous.ExpiresAt
-	}
-	if legacyPrefix != "" && legacyPrefix != snapshot.CurrentPrefix && now.Before(legacyExpiresAt) {
-		if expiresAt, exists := previousByPrefix[legacyPrefix]; !exists || expiresAt.Before(legacyExpiresAt) {
-			previousByPrefix[legacyPrefix] = legacyExpiresAt
-		}
 	}
 	previousPrefixes := make([]string, 0, len(previousByPrefix))
 	for prefix := range previousByPrefix {
@@ -483,33 +429,6 @@ func parseKeyValueFile(path string) map[string]string {
 	return values
 }
 
-func delegatedAddressSuffixes(resources []api.Resource) map[uint64]bool {
-	out := map[uint64]bool{}
-	for _, res := range resources {
-		if res.Kind != "IPv6DelegatedAddress" {
-			continue
-		}
-		spec, err := res.IPv6DelegatedAddressSpec()
-		if err != nil {
-			continue
-		}
-		addr, err := netip.ParseAddr(defaultString(spec.AddressSuffix, "::"))
-		if err != nil || !addr.Is6() {
-			continue
-		}
-		out[ipv6HostSuffix64(addr)] = true
-	}
-	return out
-}
-
-func delegatedPrefixFromObservedInterface(ifname string, prefixLength int, managedSuffixes map[uint64]bool) (string, bool) {
-	entries := ipv6AddressEntries(ifname)
-	if prefix, ok := delegatedPrefixFromAddressEntries(entries, prefixLength, managedSuffixes); ok {
-		return prefix, true
-	}
-	return delegatedPrefixFromObserved(ipv6Prefixes(ifname), ipv6Addresses(ifname), prefixLength)
-}
-
 func observedDHCPCDDelegatedPrefix(ifname string, prefixLength int) (string, routerstate.PDLease, bool) {
 	out, err := exec.Command("dhcpcd", "-U", "-6", ifname).CombinedOutput()
 	if err != nil {
@@ -548,36 +467,4 @@ func parseDHCPCDDumpLeasePD(out []byte, prefixLength int) (string, routerstate.P
 		return "", lease, false
 	}
 	return prefix.Masked().String(), lease, true
-}
-
-func delegatedPrefixFromAddressEntries(entries []ipv6AddressEntry, prefixLength int, ignoredSuffixes map[uint64]bool) (string, bool) {
-	for _, entry := range entries {
-		addr, err := netip.ParseAddr(entry.Address)
-		if err != nil || !addr.Is6() || addr.IsLinkLocalUnicast() || entry.PrefixLen >= 128 {
-			continue
-		}
-		if ignoredSuffixes[ipv6HostSuffix64(addr)] {
-			continue
-		}
-		bits := entry.PrefixLen
-		if prefixLength > 0 && prefixLength <= bits {
-			bits = prefixLength
-		}
-		return netip.PrefixFrom(addr, bits).Masked().String(), true
-	}
-	return "", false
-}
-
-func delegatedPrefixFromObserved(prefixes, addresses []string, prefixLength int) (string, bool) {
-	for _, value := range prefixes {
-		prefix, err := netip.ParsePrefix(value)
-		if err != nil || !prefix.Addr().Is6() || prefix.Addr().IsLinkLocalUnicast() || prefix.Bits() >= 128 {
-			continue
-		}
-		if prefixLength > 0 && prefixLength <= prefix.Bits() {
-			prefix = netip.PrefixFrom(prefix.Addr(), prefixLength)
-		}
-		return prefix.Masked().String(), true
-	}
-	return "", false
 }

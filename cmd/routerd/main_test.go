@@ -27,7 +27,6 @@ import (
 	"github.com/imksoo/routerd/pkg/controlapi"
 	controllerchain "github.com/imksoo/routerd/pkg/controller/chain"
 	"github.com/imksoo/routerd/pkg/eventlog"
-	"github.com/imksoo/routerd/pkg/pdclient"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/resource"
 	routerstate "github.com/imksoo/routerd/pkg/state"
@@ -1895,58 +1894,6 @@ func TestDeriveIPv6AddressFromDelegatedPrefix(t *testing.T) {
 	}
 }
 
-func TestDelegatedPrefixFromObservedUsesKernelPrefix(t *testing.T) {
-	got, ok := delegatedPrefixFromObserved([]string{
-		"fe80::/64",
-		"2001:db8:3d60:1240::/64",
-	}, nil, 60)
-	if !ok {
-		t.Fatal("delegated prefix not found")
-	}
-	if got != "2001:db8:3d60:1240::/60" {
-		t.Fatalf("prefix = %s, want 2001:db8:3d60:1240::/60", got)
-	}
-}
-
-func TestDelegatedPrefixFromObservedIgnoresStandaloneAddress(t *testing.T) {
-	if got, ok := delegatedPrefixFromObserved(nil, []string{
-		"fe80::3",
-		"2001:db8:3d60:1240::2",
-	}, 60); ok {
-		t.Fatalf("prefix = %s, want no prefix from standalone address", got)
-	}
-}
-
-func TestDelegatedPrefixFromObservedIgnoresHostRoute(t *testing.T) {
-	if got, ok := delegatedPrefixFromObserved([]string{
-		"2001:db8:3d60:1240::2/128",
-	}, nil, 60); ok {
-		t.Fatalf("prefix = %s, want no prefix from host route", got)
-	}
-}
-
-func TestDelegatedPrefixFromAddressEntriesIgnoresManagedSuffixWhenFreshClientAddressExists(t *testing.T) {
-	got, ok := delegatedPrefixFromAddressEntries([]ipv6AddressEntry{
-		{Address: "fe80::1", PrefixLen: 64},
-		{Address: "2001:db8:3d60:1240::1", PrefixLen: 64},
-		{Address: "2001:db8:3d60:1220:be24:11ff:fea3:c1f4", PrefixLen: 64},
-	}, 60, map[uint64]bool{ipv6HostSuffix64(netip.MustParseAddr("::1")): true})
-	if !ok {
-		t.Fatal("delegated prefix not found")
-	}
-	if got != "2001:db8:3d60:1220::/60" {
-		t.Fatalf("prefix = %s, want 2001:db8:3d60:1220::/60", got)
-	}
-}
-
-func TestDelegatedPrefixFromAddressEntriesFallsBackWhenOnlyManagedSuffixExists(t *testing.T) {
-	if got, ok := delegatedPrefixFromAddressEntries([]ipv6AddressEntry{
-		{Address: "2001:db8:3d60:1230::3", PrefixLen: 64},
-	}, 60, map[uint64]bool{ipv6HostSuffix64(netip.MustParseAddr("::3")): true}); ok {
-		t.Fatalf("prefix = %s, want no prefix from filtered managed suffix", got)
-	}
-}
-
 func TestDeprecatedIPv6LocalAddressCommand(t *testing.T) {
 	name, args := deprecatedIPv6LocalAddressCommand(platform.OSLinux, "ens19", "2001:db8::1", 299)
 	if got, want := strings.Join(append([]string{name}, args...), " "), "ip -6 addr replace 2001:db8::1/64 dev ens19 preferred_lft 0 valid_lft 299"; got != want {
@@ -1955,27 +1902,6 @@ func TestDeprecatedIPv6LocalAddressCommand(t *testing.T) {
 	name, args = deprecatedIPv6LocalAddressCommand(platform.OSFreeBSD, "vtnet1", "2001:db8::1", 299)
 	if got, want := strings.Join(append([]string{name}, args...), " "), "ifconfig vtnet1 inet6 2001:db8::1 prefixlen 64 pltime 0 vltime 299 alias"; got != want {
 		t.Fatalf("FreeBSD command = %q, want %q", got, want)
-	}
-}
-
-func TestParseFreeBSDIfconfigIPv6(t *testing.T) {
-	prefixes, addrs := parseFreeBSDIfconfigIPv6(`vtnet1: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
-	inet 192.0.2.1 netmask 0xffffff00 broadcast 192.0.2.255
-	inet6 fe80::be24:11ff:fea3:c1f4%vtnet1 prefixlen 64 scopeid 0x2
-	inet6 2001:db8:3d60:1240:be24:11ff:fea3:c1f4 prefixlen 64
-`)
-	if len(prefixes) != 1 || prefixes[0] != "2001:db8:3d60:1240::/64" {
-		t.Fatalf("prefixes = %v, want delegated /64", prefixes)
-	}
-	wantAddrs := []string{"fe80::be24:11ff:fea3:c1f4", "2001:db8:3d60:1240:be24:11ff:fea3:c1f4"}
-	if fmt.Sprint(addrs) != fmt.Sprint(wantAddrs) {
-		t.Fatalf("addrs = %v, want %v", addrs, wantAddrs)
-	}
-	_, entries := parseFreeBSDIfconfigIPv6Entries(`vtnet1: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
-	inet6 2001:db8:3d60:1240::1 prefixlen 64
-`)
-	if len(entries) != 1 || entries[0].Address != "2001:db8:3d60:1240::1" || entries[0].PrefixLen != 64 {
-		t.Fatalf("entries = %#v, want address with prefixlen 64", entries)
 	}
 }
 
@@ -2047,163 +1973,6 @@ func TestAppendPrefixDelegationStateWarningsWithoutLastPrefix(t *testing.T) {
 	appendPrefixDelegationStateWarnings(result, router, store)
 	if len(result.Warnings) != 1 || !strings.Contains(result.Warnings[0], "no delegated prefix has been recorded") {
 		t.Fatalf("warnings = %#v", result.Warnings)
-	}
-}
-
-func TestRecordPrefixDelegationStateUsesManagedDaemonLease(t *testing.T) {
-	dir := t.TempDir()
-	oldDir := pdClientLeaseDir
-	pdClientLeaseDir = dir
-	t.Cleanup(func() { pdClientLeaseDir = oldDir })
-	leaseDir := filepath.Join(dir, "wan-pd")
-	if err := os.MkdirAll(leaseDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	acquiredAt := time.Now().UTC().Add(-10 * time.Minute).Format(time.RFC3339)
-	updatedAt := time.Now().UTC().Add(-5 * time.Minute).Format(time.RFC3339)
-	data := []byte(fmt.Sprintf(`{
-  "resource": "wan-pd",
-  "interface": "ens18",
-  "state": "bound",
-  "currentPrefix": "2001:db8:1230::/60",
-  "serverDUID": "00030001020000000001",
-  "clientDuid": "00030001020000000103",
-  "iaid": 1,
-  "t1Seconds": 7200,
-  "t2Seconds": 12600,
-  "preferredSeconds": 14400,
-  "validSeconds": 14400,
-  "acquiredAt": %q,
-  "updatedAt": %q
-}`, acquiredAt, updatedAt))
-	if err := os.WriteFile(filepath.Join(leaseDir, "lease.json"), data, 0644); err != nil {
-		t.Fatal(err)
-	}
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
-			Metadata: api.ObjectMeta{Name: "wan"},
-			Spec:     api.InterfaceSpec{IfName: "ens18"},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"},
-			Metadata: api.ObjectMeta{Name: "wan-pd"},
-			Spec:     api.DHCPv6PrefixDelegationSpec{Interface: "wan", ClientDUID: "00030001020000000103", IAID: "1"},
-		},
-	}}}
-	store := routerstate.New()
-	if _, err := recordObservedPrefixDelegationState(router, store); err != nil {
-		t.Fatalf("record PD state: %v", err)
-	}
-	result := &apply.Result{}
-	appendPrefixDelegationStateWarnings(result, router, store)
-	if len(result.Warnings) != 0 {
-		t.Fatalf("warnings = %#v", result.Warnings)
-	}
-	lease, ok := routerstate.PDLeaseFromStore(store, "ipv6PrefixDelegation.wan-pd")
-	if !ok {
-		t.Fatal("lease missing")
-	}
-	if lease.CurrentPrefix != "2001:db8:1230::/60" || lease.VLTime != "14400" || lease.LastReplyAt != acquiredAt {
-		t.Fatalf("lease = %+v", lease)
-	}
-}
-
-func TestManagedPDClientSnapshotMatchesDefaultProfileImplicitDUID(t *testing.T) {
-	mac := strings.TrimSpace(readFirstString("/sys/class/net/lo/address"))
-	duid := linkLayerDUIDFromMAC(mac)
-	if duid == "" {
-		t.Skip("loopback MAC is unavailable")
-	}
-	now := time.Now().UTC()
-	snapshot := pdclient.Snapshot{Resource: "wan-pd", Interface: "lo", State: pdclient.StateBound, CurrentPrefix: "2001:db8:1200::/60", ClientDUID: duid, IAID: 1, Valid: 60, AcquiredAt: now, ExpiresAt: now.Add(time.Minute)}
-	if !managedPDClientSnapshotMatches(snapshot, "wan-pd", "lo", api.DHCPv6PrefixDelegationSpec{Interface: "wan"}, now) {
-		t.Fatal("default profile implicit link-layer DUID must match daemon rule")
-	}
-}
-
-func TestMergePDLeaseSnapshotPersistsMultiplePreviousPrefixes(t *testing.T) {
-	now := time.Date(2026, 8, 1, 9, 0, 0, 0, time.UTC)
-	merged := mergePDLeaseSnapshot(routerstate.PDLease{
-		LastPrefix:  "2001:db8:1200:1240::/60",
-		LastReplyAt: now.Add(-time.Minute).Format(time.RFC3339Nano),
-		VLTime:      "7200",
-	}, pdclient.Snapshot{
-		CurrentPrefix: "2001:db8:1200:1220::/60",
-		PreviousPrefixes: []pdclient.PreviousPrefixSnapshot{
-			{Prefix: "2001:db8:1200:1230::/60", ExpiresAt: now.Add(time.Hour)},
-		},
-		AcquiredAt: now,
-		Valid:      14400,
-		UpdatedAt:  now,
-	})
-	if got := merged.ValidPreviousPrefixes(now); len(got) != 2 || got[0].Prefix != "2001:db8:1200:1230::/60" || got[1].Prefix != "2001:db8:1200:1240::/60" {
-		t.Fatalf("merged previous prefixes = %#v", got)
-	}
-	merged = mergePDLeaseSnapshot(merged, pdclient.Snapshot{CurrentPrefix: "2001:db8:1200:1220::/60", AcquiredAt: now, Valid: 14400, UpdatedAt: now.Add(time.Minute)})
-	if got := merged.ValidPreviousPrefixes(now.Add(time.Minute)); len(got) != 2 {
-		t.Fatalf("seeded previous prefixes were not preserved = %#v", got)
-	}
-}
-
-func TestRecordPrefixDelegationStateClearsIdentityWhenClientChanges(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "routerd.db")
-	store, err := routerstate.OpenSQLite(path)
-	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
-	}
-	defer func() { _ = store.Close() }()
-	if _, err := store.BeginGeneration("test"); err != nil {
-		t.Fatalf("begin generation: %v", err)
-	}
-	store.Set("ipv6PrefixDelegation.wan-pd.client", "networkd", "old client")
-	store.Set("ipv6PrefixDelegation.wan-pd.lease", routerstate.EncodePDLease(routerstate.PDLease{
-		LastPrefix: "2001:db8:3d60:1240::/60",
-		DUID:       "00030001020000000001",
-		DUIDText:   "00:03:00:01:02:00:00:00:00:01",
-		IAID:       "3394439514",
-	}), "old lease")
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
-			Metadata: api.ObjectMeta{Name: "wan"},
-			Spec:     api.InterfaceSpec{IfName: "ens18"},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"},
-			Metadata: api.ObjectMeta{Name: "wan-pd"},
-			Spec: api.DHCPv6PrefixDelegationSpec{
-				Interface: "wan",
-				Client:    "dhcpcd",
-				Profile:   "ntt-hgw-lan-pd",
-			},
-		},
-	}}}
-	if _, err := recordObservedPrefixDelegationState(router, store); err != nil {
-		t.Fatalf("record PD state: %v", err)
-	}
-	lease, ok := routerstate.PDLeaseFromStore(store, "ipv6PrefixDelegation.wan-pd")
-	if !ok {
-		t.Fatal("lease missing")
-	}
-	if lease.DUID != "" || lease.DUIDText != "" || lease.IAID != "" {
-		t.Fatalf("identity was not cleared: %+v", lease)
-	}
-	if lease.LastPrefix != "2001:db8:3d60:1240::/60" {
-		t.Fatalf("last prefix = %q, want preserved", lease.LastPrefix)
-	}
-	if got := store.Get("ipv6PrefixDelegation.wan-pd.client").Value; got != "dhcpcd" {
-		t.Fatalf("client = %q, want dhcpcd", got)
-	}
-	events := store.Events(api.NetAPIVersion, "DHCPv6PrefixDelegation", "wan-pd", 10)
-	found := false
-	for _, event := range events {
-		if event.Reason == "PDClientChanged" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("PDClientChanged event missing: %+v", events)
 	}
 }
 

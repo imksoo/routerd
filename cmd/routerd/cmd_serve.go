@@ -2486,63 +2486,6 @@ func runServeChainOnceWith(ctx context.Context, runner *controllerchain.Runner, 
 	return result, nil
 }
 
-func observedIPv6PrefixesByInterface(router *api.Router) map[string][]string {
-	out := map[string][]string{}
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "Interface" {
-			continue
-		}
-		spec, err := res.InterfaceSpec()
-		if err != nil || spec.IfName == "" {
-			continue
-		}
-		out[spec.IfName] = ipv6Prefixes(spec.IfName)
-	}
-	return out
-}
-
-func ipv6Prefixes(ifname string) []string {
-	if platformDefaults.OS == platform.OSFreeBSD {
-		return freeBSDIPv6Prefixes(ifname)
-	}
-	out, err := exec.Command("ip", "-6", "route", "show", "dev", ifname, "proto", "kernel").CombinedOutput()
-	if err != nil {
-		return nil
-	}
-	var prefixes []string
-	for _, field := range strings.Fields(string(out)) {
-		prefix, err := netip.ParsePrefix(field)
-		if err == nil && prefix.Addr().Is6() {
-			prefixes = append(prefixes, prefix.Masked().String())
-		}
-	}
-	return prefixes
-}
-
-func observedIPv6AddressesByInterface(router *api.Router) map[string][]string {
-	out := map[string][]string{}
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "Interface" {
-			continue
-		}
-		spec, err := res.InterfaceSpec()
-		if err != nil || spec.IfName == "" {
-			continue
-		}
-		out[spec.IfName] = ipv6Addresses(spec.IfName)
-	}
-	return out
-}
-
-func ipv6Addresses(ifname string) []string {
-	entries := ipv6AddressEntries(ifname)
-	addrs := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		addrs = append(addrs, entry.Address)
-	}
-	return addrs
-}
-
 type ipv6AddressEntry struct {
 	Address   string
 	PrefixLen int
@@ -2574,15 +2517,6 @@ func ipv6AddressEntries(ifname string) []ipv6AddressEntry {
 	return entries
 }
 
-func freeBSDIPv6Prefixes(ifname string) []string {
-	out, err := exec.Command("ifconfig", ifname).CombinedOutput()
-	if err != nil {
-		return nil
-	}
-	prefixes, _ := parseFreeBSDIfconfigIPv6(string(out))
-	return prefixes
-}
-
 func freeBSDIPv6AddressEntries(ifname string) []ipv6AddressEntry {
 	out, err := exec.Command("ifconfig", ifname).CombinedOutput()
 	if err != nil {
@@ -2590,15 +2524,6 @@ func freeBSDIPv6AddressEntries(ifname string) []ipv6AddressEntry {
 	}
 	_, entries := parseFreeBSDIfconfigIPv6Entries(string(out))
 	return entries
-}
-
-func parseFreeBSDIfconfigIPv6(out string) ([]string, []string) {
-	prefixes, entries := parseFreeBSDIfconfigIPv6Entries(out)
-	addrs := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		addrs = append(addrs, entry.Address)
-	}
-	return prefixes, addrs
 }
 
 func parseFreeBSDIfconfigIPv6Entries(out string) ([]string, []ipv6AddressEntry) {
@@ -2634,35 +2559,4 @@ func parseFreeBSDIfconfigIPv6Entries(out string) ([]string, []ipv6AddressEntry) 
 		}
 	}
 	return prefixes, entries
-}
-
-func observedDNSServersByInterface(router *api.Router) map[string][]string {
-	out := map[string][]string{}
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "Interface" {
-			continue
-		}
-		spec, err := res.InterfaceSpec()
-		if err != nil || spec.IfName == "" {
-			continue
-		}
-		out[spec.IfName] = resolvectlDNS(spec.IfName)
-	}
-	return out
-}
-
-func resolvectlDNS(ifname string) []string {
-	out, err := exec.Command("resolvectl", "dns", ifname).CombinedOutput()
-	if err != nil {
-		return nil
-	}
-	fields := strings.Fields(strings.ReplaceAll(string(out), ":", " "))
-	var servers []string
-	for _, field := range fields {
-		addr, err := netip.ParseAddr(field)
-		if err == nil {
-			servers = append(servers, addr.String())
-		}
-	}
-	return servers
 }
