@@ -990,6 +990,36 @@ func (e *Engine) observeTunnelInterface(res api.Resource, includePlan bool, rr *
 		rr.Observed["actualLocal"] = link.Info.Data.Local
 		rr.Observed["actualRemote"] = link.Info.Data.Remote
 		if link.Info.Kind == "ipip" && link.Info.Data.Local == local && link.Info.Data.Remote == remote && link.Info.Data.TTL == ttl && (spec.MTU == 0 || link.MTU == spec.MTU) && slices.Contains(link.Flags, "UP") {
+			if spec.Address != "" {
+				out, err := runCommand("ip", "-j", "-4", "address", "show", "dev", link.Name)
+				if err != nil {
+					rr.Phase = "Unknown"
+					rr.Warnings = append(rr.Warnings, fmt.Sprintf("observe tunnel address %s: %v", link.Name, err))
+					return
+				}
+				var addresses []struct {
+					Info []struct {
+						Local  string `json:"local"`
+						Prefix int    `json:"prefixlen"`
+					} `json:"addr_info"`
+				}
+				if err := json.Unmarshal(out, &addresses); err != nil {
+					rr.Phase = "Unknown"
+					rr.Warnings = append(rr.Warnings, fmt.Sprintf("decode tunnel address %s: %v", link.Name, err))
+					return
+				}
+				for _, item := range addresses {
+					for _, address := range item.Info {
+						if fmt.Sprintf("%s/%d", address.Local, address.Prefix) == spec.Address {
+							rr.Observed["actualAddress"] = spec.Address
+							return
+						}
+					}
+				}
+				rr.Phase = "Drifted"
+				rr.Observed["reason"] = "TunnelAddressMissing"
+				return
+			}
 			return
 		}
 		rr.Phase = "Drifted"
