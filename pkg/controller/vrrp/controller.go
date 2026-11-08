@@ -248,20 +248,20 @@ func (c *Controller) cleanupStaleStaticAddresses(ctx context.Context, aliases ma
 	if !ok {
 		return false, nil
 	}
-	desired := map[string]staticVIP{}
+	desired := map[staticVIP]bool{}
 	for _, resource := range c.Router.Spec.Resources {
 		spec, ok, err := vrrpResourceSpec(resource)
 		if err != nil || !ok {
 			continue
 		}
-		if err != nil || (strings.TrimSpace(spec.Mode) != "" && spec.Mode != "static") {
+		if strings.TrimSpace(spec.Mode) != "" && spec.Mode != "static" {
 			continue
 		}
 		address, err := renderVirtualAddress(c.Router, spec)
 		if err != nil {
 			continue
 		}
-		desired[resource.Kind+"\x00"+resource.Metadata.Name] = staticVIP{IfName: aliases[spec.Interface], Address: address}
+		desired[staticVIP{IfName: aliases[spec.Interface], Address: address}] = true
 	}
 	statuses, err := lister.ListObjectStatuses()
 	if err != nil {
@@ -287,7 +287,7 @@ func (c *Controller) cleanupStaleStaticAddresses(ctx context.Context, aliases ma
 		if previous.IfName == "" || previous.Address == "" {
 			continue
 		}
-		if current, ok := desired[item.Kind+"\x00"+item.Name]; ok && current.IfName == previous.IfName && current.Address == previous.Address {
+		if desired[previous] {
 			continue
 		}
 		changed = true
