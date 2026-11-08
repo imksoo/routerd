@@ -27,9 +27,6 @@ import (
 	"github.com/imksoo/routerd/pkg/platform"
 )
 
-type CommandRunner func(ctx context.Context, name string, args ...string) ([]byte, error)
-type CommandStdinRunner func(ctx context.Context, stdin []byte, name string, args ...string) ([]byte, error)
-
 type InterfaceConfig struct {
 	Name           string
 	PrivateKey     string
@@ -69,8 +66,7 @@ type InterfaceStatus struct {
 }
 
 type Controller struct {
-	Command CommandRunner
-	DryRun  bool
+	DryRun bool
 }
 
 func DefaultCommandRunner(ctx context.Context, name string, args ...string) ([]byte, error) {
@@ -194,11 +190,7 @@ func (c Controller) Apply(ctx context.Context, cfg InterfaceConfig) ([]byte, err
 	if c.DryRun {
 		return conf, nil
 	}
-	run := c.Command
-	if run == nil {
-		run = runCommand
-	}
-	return applyWithCommands(ctx, run, runCommandStdin, cfg, conf)
+	return applyWithCommands(ctx, cfg, conf)
 }
 
 func ResolveKeyFiles(cfg InterfaceConfig) (InterfaceConfig, error) {
@@ -297,51 +289,51 @@ func readSecretFile(path string) (string, error) {
 	return value, nil
 }
 
-func applyWithCommands(ctx context.Context, run CommandRunner, runStdin CommandStdinRunner, cfg InterfaceConfig, conf []byte) ([]byte, error) {
+func applyWithCommands(ctx context.Context, cfg InterfaceConfig, conf []byte) ([]byte, error) {
 	if platform.CurrentOS() == platform.OSFreeBSD {
-		return applyFreeBSD(ctx, run, runStdin, cfg, conf)
+		return applyFreeBSD(ctx, cfg, conf)
 	}
-	return applyLinux(ctx, run, runStdin, cfg, conf)
+	return applyLinux(ctx, cfg, conf)
 }
 
-func applyLinux(ctx context.Context, run CommandRunner, runStdin CommandStdinRunner, cfg InterfaceConfig, conf []byte) ([]byte, error) {
-	if _, err := run(ctx, "ip", "link", "show", cfg.Name); err != nil {
-		if _, err := run(ctx, "ip", "link", "add", "dev", cfg.Name, "type", "wireguard"); err != nil {
+func applyLinux(ctx context.Context, cfg InterfaceConfig, conf []byte) ([]byte, error) {
+	if _, err := runCommand(ctx, "ip", "link", "show", cfg.Name); err != nil {
+		if _, err := runCommand(ctx, "ip", "link", "add", "dev", cfg.Name, "type", "wireguard"); err != nil {
 			return nil, err
 		}
 	}
 	if cfg.MTU != 0 {
-		if _, err := run(ctx, "ip", "link", "set", "dev", cfg.Name, "mtu", strconv.Itoa(cfg.MTU)); err != nil {
+		if _, err := runCommand(ctx, "ip", "link", "set", "dev", cfg.Name, "mtu", strconv.Itoa(cfg.MTU)); err != nil {
 			return nil, err
 		}
 	}
-	if _, err := runStdin(ctx, conf, "wg", "setconf", cfg.Name, "/dev/stdin"); err != nil {
+	if _, err := runCommandStdin(ctx, conf, "wg", "setconf", cfg.Name, "/dev/stdin"); err != nil {
 		return nil, err
 	}
-	if _, err := run(ctx, "ip", "link", "set", "up", "dev", cfg.Name); err != nil {
+	if _, err := runCommand(ctx, "ip", "link", "set", "up", "dev", cfg.Name); err != nil {
 		return nil, err
 	}
 	return conf, nil
 }
 
-func applyFreeBSD(ctx context.Context, run CommandRunner, runStdin CommandStdinRunner, cfg InterfaceConfig, conf []byte) ([]byte, error) {
-	_, _ = run(ctx, "kldload", "if_wg")
-	if _, err := run(ctx, "ifconfig", cfg.Name); err != nil {
-		if _, err := run(ctx, "ifconfig", cfg.Name, "create"); err != nil {
-			if _, err := run(ctx, "ifconfig", "wg", "create", "name", cfg.Name); err != nil {
+func applyFreeBSD(ctx context.Context, cfg InterfaceConfig, conf []byte) ([]byte, error) {
+	_, _ = runCommand(ctx, "kldload", "if_wg")
+	if _, err := runCommand(ctx, "ifconfig", cfg.Name); err != nil {
+		if _, err := runCommand(ctx, "ifconfig", cfg.Name, "create"); err != nil {
+			if _, err := runCommand(ctx, "ifconfig", "wg", "create", "name", cfg.Name); err != nil {
 				return nil, err
 			}
 		}
 	}
-	if _, err := runStdin(ctx, conf, "wg", "setconf", cfg.Name, "/dev/stdin"); err != nil {
+	if _, err := runCommandStdin(ctx, conf, "wg", "setconf", cfg.Name, "/dev/stdin"); err != nil {
 		return nil, err
 	}
 	if cfg.MTU != 0 {
-		if _, err := run(ctx, "ifconfig", cfg.Name, "mtu", strconv.Itoa(cfg.MTU)); err != nil {
+		if _, err := runCommand(ctx, "ifconfig", cfg.Name, "mtu", strconv.Itoa(cfg.MTU)); err != nil {
 			return nil, err
 		}
 	}
-	if _, err := run(ctx, "ifconfig", cfg.Name, "up"); err != nil {
+	if _, err := runCommand(ctx, "ifconfig", cfg.Name, "up"); err != nil {
 		return nil, err
 	}
 	return conf, nil

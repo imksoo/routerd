@@ -28,12 +28,11 @@ import (
 )
 
 type WireGuardController struct {
-	Router  *api.Router
-	Bus     *bus.Bus
-	Store   Store
-	DryRun  bool
-	Command wireguard.CommandRunner
-	Logger  *slog.Logger
+	Router *api.Router
+	Bus    *bus.Bus
+	Store  Store
+	DryRun bool
+	Logger *slog.Logger
 }
 
 type wireGuardPeersFromStatus struct {
@@ -1101,10 +1100,7 @@ func (c WireGuardController) publishWireGuardRemoved(ctx context.Context, item r
 }
 
 func (c WireGuardController) deleteWireGuardInterface(ctx context.Context, ifname string) error {
-	run := c.Command
-	if run == nil {
-		run = wireguard.DefaultCommandRunner
-	}
+	run := wireguard.DefaultCommandRunner
 	out, err := run(ctx, "ip", "link", "delete", "dev", ifname)
 	if err == nil || wireGuardDeleteMissingLink(out, err) {
 		return nil
@@ -1193,7 +1189,7 @@ func (c WireGuardController) reconcileInterface(ctx context.Context, resource ap
 		c.savePeerPendingStatuses(resource.Metadata.Name, cfg.Peers, "InterfacePending")
 		return nil
 	}
-	controller := wireguard.Controller{Command: c.Command, DryRun: c.DryRun}
+	controller := wireguard.Controller{DryRun: c.DryRun}
 	observed, statusErr := c.interfaceStatus(ctx, cfg.Name)
 	applied := false
 	current := c.Store.ObjectStatus(api.NetAPIVersion, "WireGuardInterface", resource.Metadata.Name)
@@ -1341,10 +1337,7 @@ func (c WireGuardController) deleteWireGuardInputAccept(ctx context.Context, por
 }
 
 func (c WireGuardController) runWireGuardHostCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
-	run := c.Command
-	if run == nil {
-		run = wireguard.DefaultCommandRunner
-	}
+	run := wireguard.DefaultCommandRunner
 	return run(ctx, name, args...)
 }
 
@@ -1480,10 +1473,7 @@ func (c WireGuardController) interfaceMatchesDesired(ctx context.Context, cfg wi
 }
 
 func (c WireGuardController) linkMTUMatches(ctx context.Context, ifname string, mtu int) bool {
-	run := c.Command
-	if run == nil {
-		run = wireguard.DefaultCommandRunner
-	}
+	run := wireguard.DefaultCommandRunner
 	out, err := run(ctx, "ip", "-o", "link", "show", "dev", ifname)
 	if err != nil {
 		return false
@@ -1523,10 +1513,7 @@ func stringSetEqual(a, b []string) bool {
 }
 
 func (c WireGuardController) interfaceStatus(ctx context.Context, ifname string) (wireguard.InterfaceStatus, error) {
-	run := c.Command
-	if run == nil {
-		run = wireguard.DefaultCommandRunner
-	}
+	run := wireguard.DefaultCommandRunner
 	out, err := run(ctx, "wg", "show", ifname, "dump")
 	if err != nil {
 		return wireguard.InterfaceStatus{Name: ifname}, err
