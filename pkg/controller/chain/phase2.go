@@ -145,6 +145,7 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 		declared = c.Router
 	}
 	desired := map[string]struct{}{}
+	enabled := map[string]struct{}{}
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "DSLiteTunnel" {
 			continue
@@ -153,7 +154,14 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		desired[firstNonEmpty(spec.TunnelName, spec.Interface, resource.Metadata.Name)] = struct{}{}
+		ifname := firstNonEmpty(spec.TunnelName, spec.Interface, resource.Metadata.Name)
+		desired[ifname] = struct{}{}
+		if api.BoolDefault(spec.Enabled, true) {
+			enabled[ifname] = struct{}{}
+			if alias, ok := c.Store.ObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name)["aliasOf"].(string); ok && alias != "" {
+				enabled[alias] = struct{}{}
+			}
+		}
 	}
 	for _, resource := range declared.Spec.Resources {
 		if resource.Kind != "DSLiteTunnel" {
@@ -167,7 +175,8 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 		if _, active := desired[ifname]; active {
 			continue
 		}
-		if !c.DryRun {
+		_, inUse := enabled[ifname]
+		if !c.DryRun && !inUse {
 			if err := deleteDSLiteTunnel(ctx, ifname); err != nil {
 				failures = append(failures, fmt.Sprintf("remove %s: %v", resource.Metadata.Name, err))
 				continue
@@ -187,7 +196,8 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 		}
 		if !api.BoolDefault(spec.Enabled, true) {
 			ifname := firstNonEmpty(spec.TunnelName, spec.Interface, resource.Metadata.Name)
-			if !c.DryRun {
+			_, inUse := enabled[ifname]
+			if !c.DryRun && !inUse {
 				if err := deleteDSLiteTunnel(ctx, ifname); err != nil {
 					failures = append(failures, fmt.Sprintf("remove %s: %v", resource.Metadata.Name, err))
 					if saveErr := c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Error", "reason": "TunnelRemoveFailed", "interface": ifname, "error": err.Error()}); saveErr != nil {
