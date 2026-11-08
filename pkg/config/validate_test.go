@@ -2530,29 +2530,6 @@ func TestValidateRejectsInvalidStaticAddress(t *testing.T) {
 	}
 }
 
-func TestValidateRequiresOverlapReason(t *testing.T) {
-	router := &api.Router{
-		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
-		Metadata: api.ObjectMeta{Name: "test"},
-		Spec: api.RouterSpec{Resources: []api.Resource{
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
-				Metadata: api.ObjectMeta{Name: "lan"},
-				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
-				Metadata: api.ObjectMeta{Name: "addr"},
-				Spec:     api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.10.3/24", AllowOverlap: true},
-			},
-		}},
-	}
-
-	if err := Validate(router); err == nil {
-		t.Fatal("expected allowOverlap without reason to be rejected")
-	}
-}
-
 func TestValidateRejectsDuplicateStaticOnSameInterface(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},

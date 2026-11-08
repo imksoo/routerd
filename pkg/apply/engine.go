@@ -82,8 +82,6 @@ func (e *Engine) evaluate(router, declared *api.Router, includePlan bool) (*Resu
 	policies := interfacePolicies(router, osNet)
 	observedV4 := e.observedIPv4Prefixes(policies)
 	observedV4ByInterface := ipv4AssignmentsByInterface(observedV4)
-	desiredV4 := desiredIPv4Prefixes(router, aliases)
-	overlaps := ipv4Overlaps(desiredV4, observedV4)
 	result := &Result{
 		Timestamp: time.Now().UTC(),
 		Phase:     "Healthy",
@@ -132,7 +130,7 @@ func (e *Engine) evaluate(router, declared *api.Router, includePlan bool) (*Resu
 		case "VXLANTunnel":
 			e.observeVXLANTunnel(res, aliases, includePlan, &rr)
 		case "IPv4StaticAddress":
-			e.observeIPv4Static(res, aliases, policies, overlaps[res.ID()], includePlan, &rr)
+			e.observeIPv4Static(res, aliases, policies, includePlan, &rr)
 		case "BFD":
 			e.observeBFD(res, includePlan, &rr)
 		case "DHCPv4Client":
@@ -2201,7 +2199,7 @@ func (e *Engine) observeInterface(res api.Resource, policy interfacePolicy, obse
 	}
 }
 
-func (e *Engine) observeIPv4Static(res api.Resource, aliases map[string]string, policies map[string]interfacePolicy, overlaps []addressOverlap, includePlan bool, rr *ResourceResult) {
+func (e *Engine) observeIPv4Static(res api.Resource, aliases map[string]string, policies map[string]interfacePolicy, includePlan bool, rr *ResourceResult) {
 	iface := stringSpec(res, "interface")
 	ifname := aliases[iface]
 	policy := policies[iface]
@@ -2219,25 +2217,6 @@ func (e *Engine) observeIPv4Static(res api.Resource, aliases map[string]string, 
 	}
 
 	if includePlan {
-		if len(overlaps) > 0 {
-			if boolSpec(res, "allowOverlap") {
-				for _, overlap := range overlaps {
-					rr.Warnings = append(rr.Warnings, overlap.Message)
-				}
-			} else {
-				rr.Phase = "Blocked"
-				for _, overlap := range overlaps {
-					rr.Plan = append(rr.Plan, "blocked: "+overlap.Message)
-				}
-				rr.Conditions = append(rr.Conditions, Condition{
-					Type:    "AddressOverlap",
-					Status:  "True",
-					Reason:  "OverlappingIPv4Prefix",
-					Message: "IPv4 overlap is blocked by default; set allowOverlap with a reason only for intentional NAT/HA cases",
-				})
-				return
-			}
-		}
 		if !policy.Managed || policy.Owner == "external" {
 			rr.Plan = append(rr.Plan, "observe only; referenced interface is externally managed")
 			return
@@ -2620,11 +2599,8 @@ func (e *Engine) observedIPv4Prefixes(policies map[string]interfacePolicy) []ipv
 		}
 		for _, prefix := range parseIPv4Prefixes(string(out)) {
 			assignments = append(assignments, ipv4Assignment{
-				ResourceID: "observed/" + name + "/" + prefix.String(),
-				Interface:  name,
-				IfName:     policy.IfName,
-				Prefix:     prefix,
-				Source:     "observed",
+				Interface: name,
+				Prefix:    prefix,
 			})
 		}
 	}
@@ -2678,74 +2654,8 @@ func resourceKinds(router *api.Router) map[string]string {
 }
 
 type ipv4Assignment struct {
-	ResourceID         string
-	Interface          string
-	IfName             string
-	Prefix             netip.Prefix
-	Source             string
-	AllowOverlap       bool
-	AllowOverlapReason string
-}
-
-type addressOverlap struct {
-	Other   ipv4Assignment
-	Message string
-}
-
-func desiredIPv4Prefixes(router *api.Router, aliases map[string]string) []ipv4Assignment {
-	var assignments []ipv4Assignment
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "IPv4StaticAddress" {
-			continue
-		}
-		prefix, err := netip.ParsePrefix(stringSpec(res, "address"))
-		if err != nil {
-			continue
-		}
-		iface := stringSpec(res, "interface")
-		assignments = append(assignments, ipv4Assignment{
-			ResourceID:         res.ID(),
-			Interface:          iface,
-			IfName:             aliases[iface],
-			Prefix:             prefix.Masked(),
-			Source:             "desired",
-			AllowOverlap:       boolSpec(res, "allowOverlap"),
-			AllowOverlapReason: stringSpec(res, "allowOverlapReason"),
-		})
-	}
-	return assignments
-}
-
-func ipv4Overlaps(desired, observed []ipv4Assignment) map[string][]addressOverlap {
-	result := map[string][]addressOverlap{}
-	all := append([]ipv4Assignment{}, observed...)
-	all = append(all, desired...)
-
-	for _, current := range desired {
-		for _, other := range all {
-			if current.ResourceID == other.ResourceID {
-				continue
-			}
-			if current.Interface == other.Interface {
-				continue
-			}
-			if !prefixesOverlap(current.Prefix, other.Prefix) {
-				continue
-			}
-			result[current.ResourceID] = append(result[current.ResourceID], addressOverlap{
-				Other: other,
-				Message: fmt.Sprintf(
-					"IPv4 prefix %s on %s overlaps with %s prefix %s on %s",
-					current.Prefix,
-					current.IfName,
-					other.Source,
-					other.Prefix,
-					other.IfName,
-				),
-			})
-		}
-	}
-	return result
+	Interface string
+	Prefix    netip.Prefix
 }
 
 func ipv4AssignmentsByInterface(assignments []ipv4Assignment) map[string][]ipv4Assignment {
@@ -2754,12 +2664,6 @@ func ipv4AssignmentsByInterface(assignments []ipv4Assignment) map[string][]ipv4A
 		result[assignment.Interface] = append(result[assignment.Interface], assignment)
 	}
 	return result
-}
-
-func prefixesOverlap(a, b netip.Prefix) bool {
-	a = a.Masked()
-	b = b.Masked()
-	return a.Contains(b.Addr()) || b.Contains(a.Addr())
 }
 
 func parseIPv4Prefixes(output string) []netip.Prefix {

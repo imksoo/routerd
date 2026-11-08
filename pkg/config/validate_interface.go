@@ -348,9 +348,6 @@ func validateInterfaceResource(res api.Resource, targetOS platform.OS) (bool, er
 		if _, err := netip.ParsePrefix(addr); err != nil {
 			return true, fmt.Errorf("%s spec.address is invalid: %w", res.ID(), err)
 		}
-		if spec.AllowOverlap && spec.AllowOverlapReason == "" {
-			return true, fmt.Errorf("%s spec.allowOverlapReason is required when allowOverlap is true", res.ID())
-		}
 	case "VirtualAddress":
 		if err := validateVirtualAddressResource(res, targetOS); err != nil {
 			return true, err
