@@ -345,13 +345,17 @@ func (c IPv4PolicyRouteController) ensureIPv6HostRule(ctx context.Context, polic
 	priority := strconv.Itoa(policy.Priority)
 	table := firstNonEmpty(policy.Lookup, strconv.Itoa(policy.Table))
 	for _, line := range strings.Split(string(out), "\n") {
-		selector := "iif lo"
+		fields := strings.Fields(line)
+		if len(fields) == 0 || fields[0] != priority+":" {
+			continue
+		}
+		selector, value := "iif", "lo"
 		if policy.isSourceRule() {
 			// ip rule show renders a host prefix as the bare address, while
 			// ip rule add requires the explicit /128 we persist in state.
-			selector = "from " + policy.Source
+			selector, value = "from", policy.Source
 		}
-		if strings.Contains(line, priority+":") && strings.Contains(line, selector) && strings.Contains(line, "lookup "+table) {
+		if fieldValueMatches(fields, selector, value) && fieldValueMatches(fields, "lookup", table) {
 			return false, nil
 		}
 	}
