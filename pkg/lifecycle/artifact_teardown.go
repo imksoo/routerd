@@ -69,11 +69,6 @@ func ArtifactTeardownFor(artifact resource.Artifact) (ArtifactTeardown, bool) {
 	return ArtifactTeardown{}, false
 }
 
-func ArtifactTeardownRegistry() []ArtifactTeardown {
-	out := append([]ArtifactTeardown(nil), artifactTeardowns...)
-	return out
-}
-
 var artifactTeardowns = []ArtifactTeardown{
 	{
 		Kind:     "linux.ipip6.tunnel",

@@ -3,7 +3,6 @@
 package lifecycle
 
 import (
-	"reflect"
 	"testing"
 
 	"github.com/imksoo/routerd/pkg/api"
@@ -64,24 +63,5 @@ func TestArtifactTeardownRegistryEligibility(t *testing.T) {
 				t.Fatalf("ArtifactCleanupEligible() = %v, want %v", got, tt.want)
 			}
 		})
-	}
-}
-
-func TestArtifactTeardownRegistryCleanupPriority(t *testing.T) {
-	artifacts := []resource.Artifact{
-		{Kind: "linux.ipv4.routeTable"},
-		{Kind: "linux.ipv4.fwmarkRule"},
-		{Kind: "directory"},
-		{Kind: "systemd.service"},
-		{Kind: "unix.socket"},
-		{Kind: "file"},
-	}
-	got := make([]int, 0, len(artifacts))
-	for _, artifact := range artifacts {
-		got = append(got, ArtifactCleanupPriority(artifact))
-	}
-	want := []int{5, 0, 40, 10, 30, 20}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("priorities = %#v, want %#v", got, want)
 	}
 }

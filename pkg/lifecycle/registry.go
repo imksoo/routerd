@@ -4,7 +4,6 @@ package lifecycle
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/imksoo/routerd/pkg/api"
@@ -102,17 +101,6 @@ func MustOwnerKey(apiVersion, kind, name string) (string, error) {
 		return "", fmt.Errorf("owner key requires apiVersion, kind, and name")
 	}
 	return OwnerKey(apiVersion, kind, name), nil
-}
-
-func AllDeclarations() []Declaration {
-	out := append([]Declaration(nil), declarations...)
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].APIVersion != out[j].APIVersion {
-			return out[i].APIVersion < out[j].APIVersion
-		}
-		return out[i].Kind < out[j].Kind
-	})
-	return out
 }
 
 func Lookup(apiVersion, kind string) (Declaration, bool) {
