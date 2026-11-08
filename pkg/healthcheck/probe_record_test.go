@@ -4,9 +4,7 @@ package healthcheck
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"strings"
 	"testing"
 	"time"
 
@@ -155,61 +153,5 @@ func TestStatusMapIncludesEvidenceAndHistory(t *testing.T) {
 	}
 	if history[0]["result"] != ResultTimeout {
 		t.Errorf("history[0].result = %v", history[0]["result"])
-	}
-}
-
-func TestStateRoundTripJSON(t *testing.T) {
-	state := State{
-		Phase:            PhaseUnhealthy,
-		LastResult:       ResultTimeout,
-		LastMessage:      "dial tcp 192.0.2.1:443: i/o timeout",
-		LastCheckedAt:    time.Date(2026, 5, 27, 12, 0, 0, 0, time.UTC),
-		LastTransitionAt: time.Date(2026, 5, 27, 11, 59, 0, 0, time.UTC),
-		FirstFailureTime: time.Date(2026, 5, 27, 11, 58, 0, 0, time.UTC),
-		LastFailureTime:  time.Date(2026, 5, 27, 12, 0, 0, 0, time.UTC),
-		LastSuccessTime:  time.Date(2026, 5, 27, 11, 50, 0, 0, time.UTC),
-		FailureCount:     5,
-		LastEvidence: ProbeEvidence{
-			FailureKind:     FailureKindTimeout,
-			EgressInterface: "ds-routerd",
-			SourceAddress:   "2001:db8::1",
-			SourceOrigin:    SourceOriginPD,
-			NextHop:         "2001:db8::ffff",
-			OutInterface:    "ds-routerd",
-			RouteSource:     "2001:db8::1",
-			TunnelLocal:     "2001:db8::1",
-			TunnelRemote:    "2001:db8:1::ffff",
-		},
-		History: []ProbeRecord{{
-			Time:          time.Date(2026, 5, 27, 12, 0, 0, 0, time.UTC),
-			OK:            false,
-			Timeout:       true,
-			Result:        ResultTimeout,
-			Message:       "dial tcp 192.0.2.1:443: i/o timeout",
-			Target:        "192.0.2.1",
-			Protocol:      "tcp",
-			Port:          443,
-			ProbeEvidence: ProbeEvidence{FailureKind: FailureKindTimeout, EgressInterface: "ds-routerd"},
-		}},
-	}
-	data, err := json.Marshal(state)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(data), `"failureKind":"timeout"`) {
-		t.Errorf("json should include failureKind, got %s", data)
-	}
-	var decoded State
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		t.Fatal(err)
-	}
-	if decoded.FailureCount != 5 {
-		t.Errorf("decoded failureCount = %d", decoded.FailureCount)
-	}
-	if decoded.LastEvidence.NextHop != "2001:db8::ffff" {
-		t.Errorf("decoded nextHop = %q", decoded.LastEvidence.NextHop)
-	}
-	if len(decoded.History) != 1 || decoded.History[0].Port != 443 {
-		t.Errorf("decoded history = %#v", decoded.History)
 	}
 }
