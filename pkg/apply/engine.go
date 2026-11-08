@@ -316,11 +316,32 @@ func (e *Engine) observeBridge(res api.Resource, aliases map[string]string, incl
 		rr.Phase = "Drifted"
 		rr.Warnings = append(rr.Warnings, fmt.Sprintf("%s exists but is not a Linux bridge", ifname))
 	}
-	if spec.MTU != 0 {
-		rr.Observed["mtu"] = strconv.Itoa(spec.MTU)
-		if !strings.Contains(text, fmt.Sprintf(" mtu %d ", spec.MTU)) {
+	ifi, interfaceErr := net.InterfaceByName(ifname)
+	if interfaceErr != nil {
+		if rr.Phase == "Healthy" {
+			rr.Phase = "Unknown"
+		}
+		rr.Warnings = append(rr.Warnings, fmt.Sprintf("observe %s: %v", ifname, interfaceErr))
+	} else {
+		rr.Observed["mtu"] = strconv.Itoa(ifi.MTU)
+		if spec.MTU != 0 && ifi.MTU != spec.MTU {
 			rr.Phase = "Drifted"
 			rr.Warnings = append(rr.Warnings, fmt.Sprintf("%s MTU does not match %d", ifname, spec.MTU))
+		}
+		if spec.MACAddress != "" {
+			want, err := net.ParseMAC(spec.MACAddress)
+			if err != nil {
+				rr.Phase = "Blocked"
+				rr.Warnings = append(rr.Warnings, err.Error())
+				return
+			}
+			if !strings.EqualFold(ifi.HardwareAddr.String(), want.String()) {
+				rr.Phase = "Drifted"
+				rr.Warnings = append(rr.Warnings, fmt.Sprintf("%s MAC address differs", ifname))
+			}
+		}
+		if ifi.Flags&net.FlagUp == 0 {
+			rr.Phase = "Drifted"
 		}
 	}
 	for setting, want := range map[string]bool{
@@ -333,16 +354,50 @@ func (e *Engine) observeBridge(res api.Resource, aliases map[string]string, incl
 			rr.Warnings = append(rr.Warnings, fmt.Sprintf("%s %s does not match %t", ifname, setting, want))
 		}
 	}
+	forwardDelay := spec.ForwardDelay
+	if forwardDelay == 0 {
+		forwardDelay = 4
+	}
+	helloTime := spec.HelloTime
+	if helloTime == 0 {
+		helloTime = 2
+	}
+	for setting, want := range map[string]int{"forward_delay": forwardDelay * 100, "hello_time": helloTime * 100} {
+		value, err := os.ReadFile(filepath.Join("/sys/class/net", ifname, "bridge", setting))
+		if err != nil {
+			if rr.Phase == "Healthy" {
+				rr.Phase = "Unknown"
+			}
+			rr.Warnings = append(rr.Warnings, fmt.Sprintf("observe %s %s: %v", ifname, setting, err))
+			continue
+		}
+		if strings.TrimSpace(string(value)) != strconv.Itoa(want) {
+			rr.Phase = "Drifted"
+		}
+	}
+	desiredMembers := map[string]bool{}
 	for _, member := range spec.Members {
 		memberIfName := aliases[member]
 		if memberIfName == "" {
 			memberIfName = member
 		}
+		desiredMembers[memberIfName] = true
 		memberOut, memberErr := runCommand("bridge", "link", "show", "dev", memberIfName)
 		if memberErr != nil || !strings.Contains(string(memberOut), "master "+ifname) {
 			rr.Phase = "Drifted"
 			rr.Warnings = append(rr.Warnings, fmt.Sprintf("%s is not attached to %s", memberIfName, ifname))
 		}
+	}
+	if members, err := os.ReadDir(filepath.Join("/sys/class/net", ifname, "brif")); err == nil {
+		for _, member := range members {
+			if !desiredMembers[member.Name()] {
+				rr.Phase = "Drifted"
+				rr.Warnings = append(rr.Warnings, fmt.Sprintf("%s is an unexpected member of %s", member.Name(), ifname))
+			}
+		}
+	} else if rr.Phase == "Healthy" {
+		rr.Phase = "Unknown"
+		rr.Warnings = append(rr.Warnings, fmt.Sprintf("observe %s members: %v", ifname, err))
 	}
 	if includePlan {
 		if rr.Phase == "Healthy" {
