@@ -1663,6 +1663,8 @@ func (c SystemdUnitController) applyHealthCheckSystemdUnit(ctx context.Context, 
 		if _, err := command(ctx, "systemctl", "daemon-reload"); err != nil {
 			return changed, false, err
 		}
+	}
+	if changed || !systemdUnitEnabled(ctx, command, unitName) {
 		if _, err := command(ctx, "systemctl", "enable", unitName); err != nil {
 			return changed, false, err
 		}
