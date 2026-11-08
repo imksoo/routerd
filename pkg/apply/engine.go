@@ -475,14 +475,7 @@ func (e *Engine) observePackage(res api.Resource, includePlan bool, rr *Resource
 		matchedOS = true
 		manager := set.Manager
 		if manager == "" {
-			switch osName {
-			case "ubuntu", "debian":
-				manager = "apt"
-			case "fedora", "rhel", "rocky", "almalinux":
-				manager = "dnf"
-			case "freebsd":
-				manager = "pkg"
-			}
+			manager = hostdeps.PackageManagerForOS(osName)
 		}
 		for _, name := range set.Names {
 			switch manager {

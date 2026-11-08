@@ -16,6 +16,19 @@ type NetworkAdoptionResource struct {
 	Spec api.NetworkAdoptionSpec
 }
 
+func PackageManagerForOS(osName string) string {
+	switch osName {
+	case "ubuntu", "debian":
+		return "apt"
+	case "fedora", "rhel", "rocky", "almalinux":
+		return "dnf"
+	case "freebsd":
+		return "pkg"
+	default:
+		return ""
+	}
+}
+
 func PackageCheckCommand(manager, name string) (string, []string) {
 	switch manager {
 	case "apt":

@@ -46,7 +46,7 @@ func (c PackageController) Reconcile(ctx context.Context) error {
 			})
 			continue
 		}
-		manager := firstNonEmpty(set.Manager, packageManagerForOS(set.OS))
+		manager := firstNonEmpty(set.Manager, hostdeps.PackageManagerForOS(set.OS))
 		if manager != "apt" && manager != "dnf" && manager != "pkg" {
 			_ = c.Store.SaveObjectStatus(api.SystemAPIVersion, "Package", resource.Metadata.Name, map[string]any{
 				"phase":     "Pending",
@@ -175,19 +175,6 @@ func parseOSReleaseID(data string) string {
 		return strings.Trim(strings.TrimSpace(value), `"'`)
 	}
 	return ""
-}
-
-func packageManagerForOS(osName string) string {
-	switch osName {
-	case "ubuntu", "debian":
-		return "apt"
-	case "fedora", "rhel", "rocky", "almalinux":
-		return "dnf"
-	case "freebsd":
-		return "pkg"
-	default:
-		return ""
-	}
 }
 
 func packageInstallCommand(manager string, missing []string) (string, []string) {
