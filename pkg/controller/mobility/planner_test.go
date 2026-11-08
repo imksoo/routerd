@@ -3,10 +3,7 @@
 package mobility
 
 import (
-	"strings"
-
 	"github.com/imksoo/routerd/pkg/api"
-	bgpstate "github.com/imksoo/routerd/pkg/bgp"
 )
 
 // testMobilityPoolSpec keeps the resolved topology separate from the declared
@@ -41,38 +38,6 @@ func plannedPoolSpec() testMobilityPoolSpec {
 		},
 	},
 	}
-}
-
-func placementPoolSpec() testMobilityPoolSpec {
-	spec := plannedPoolSpec()
-	spec.Members = []api.ResolvedMobilityPoolMember{
-		spec.Members[0],
-		{
-			NodeRef: "azure-router-a",
-			Site:    "azure",
-			Role:    "cloud",
-			Capture: api.MobilityMemberCapture{
-				Type:        "provider-secondary-ip",
-				ProviderRef: "azure-provider",
-				NICRef:      "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic-a",
-				Target:      map[string]string{"region": "japaneast", "ipConfigName": "capture-a"},
-			},
-			Placement: api.MobilityMemberPlacement{Group: "azure-edge", Priority: 10},
-		},
-		{
-			NodeRef: "azure-router-b",
-			Site:    "azure",
-			Role:    "cloud",
-			Capture: api.MobilityMemberCapture{
-				Type:        "provider-secondary-ip",
-				ProviderRef: "azure-provider",
-				NICRef:      "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic-b",
-				Target:      map[string]string{"region": "japaneast", "ipConfigName": "capture-b"},
-			},
-			Placement: api.MobilityMemberPlacement{Group: "azure-edge", Priority: 20},
-		},
-	}
-	return spec
 }
 
 // localizeMobilityPoolSpecForNode models one node's authoring surface. Shared
@@ -159,36 +124,4 @@ func planningRouterForNode(nodeName string, spec testMobilityPoolSpec) *api.Rout
 		Metadata: api.ObjectMeta{Name: "test"},
 		Spec:     api.RouterSpec{Resources: resources},
 	}
-}
-
-func bgpOwnerPrefixesForInstalledNextHops(nextHops map[string][]string) []bgpstate.Prefix {
-	ownerByNextHop := map[string]string{
-		"10.99.0.1": "onprem-router",
-		"10.99.0.2": "aws-router-a",
-		"10.99.0.3": "azure-router",
-		"10.99.0.4": "oci-router",
-		"10.99.0.5": "aws-router-b",
-		"10.99.0.6": "azure-router-b",
-	}
-	var out []bgpstate.Prefix
-	for prefix, hops := range nextHops {
-		for _, hop := range hops {
-			owner := strings.TrimSpace(ownerByNextHop[strings.TrimSpace(hop)])
-			if owner == "" {
-				continue
-			}
-			out = append(out, bgpstate.Prefix{
-				Prefix:  prefix,
-				NextHop: hop,
-				Best:    true,
-				Valid:   true,
-				Communities: []string{
-					bgpstate.MobilityCommunityOwner,
-					bgpstate.MobilityNodeIdentityCommunity(owner),
-				},
-			})
-			break
-		}
-	}
-	return out
 }

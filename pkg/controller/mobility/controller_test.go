@@ -85,31 +85,6 @@ func stringSliceContains(values []string, want string) bool {
 	return false
 }
 
-func staticRouter(nodeName string, spec testMobilityPoolSpec) *api.Router {
-	poolSpec, nodeSet := localizeMobilityPoolSpecForNode(spec, nodeName)
-	return &api.Router{
-		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
-		Metadata: api.ObjectMeta{Name: "test"},
-		Spec: api.RouterSpec{Resources: []api.Resource{
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"},
-				Metadata: api.ObjectMeta{Name: "cloudedge"},
-				Spec:     api.EventGroupSpec{NodeName: nodeName},
-			},
-			{
-				TypeMeta: nodeSet.TypeMeta,
-				Metadata: nodeSet.Metadata,
-				Spec:     nodeSet.Spec,
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
-				Metadata: api.ObjectMeta{Name: "cloudedge"},
-				Spec:     poolSpec,
-			},
-		}},
-	}
-}
-
 type mergeTrackingStore struct {
 	*routerstate.SQLiteStore
 	objectStatusCalls int
