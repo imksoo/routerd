@@ -3,7 +3,6 @@
 package main
 
 import (
-	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -15,7 +14,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strings"
 
 	"github.com/imksoo/routerd/pkg/api"
@@ -40,43 +38,11 @@ func (v *importInterfaces) Set(value string) error {
 }
 
 type importAddress struct {
-	Family            string          `json:"family"`
-	Local             string          `json:"local"`
-	PrefixLen         int             `json:"prefixlen"`
-	Scope             string          `json:"scope"`
-	Dynamic           bool            `json:"dynamic"`
-	Peer              string          `json:"peer"`
-	Label             string          `json:"label"`
-	Broadcast         string          `json:"broadcast"`
-	Metric            int             `json:"metric"`
-	NoPrefixRoute     bool            `json:"noprefixroute"`
-	ValidLifetime     *uint64         `json:"valid_life_time"`
-	PreferredLifetime *uint64         `json:"preferred_life_time"`
-	Unsupported       []string        `json:"-"`
-	Raw               json.RawMessage `json:"-"`
-}
-
-func (address *importAddress) UnmarshalJSON(data []byte) error {
-	type wireAddress importAddress
-	var decoded wireAddress
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		return err
-	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(data, &fields); err != nil {
-		return err
-	}
-	for key := range fields {
-		switch key {
-		case "family", "local", "prefixlen", "scope", "dynamic", "peer", "label", "broadcast", "metric", "noprefixroute", "valid_life_time", "preferred_life_time":
-		default:
-			decoded.Unsupported = append(decoded.Unsupported, key)
-		}
-	}
-	sort.Strings(decoded.Unsupported)
-	decoded.Raw = append(json.RawMessage(nil), data...)
-	*address = importAddress(decoded)
-	return nil
+	Local         string  `json:"local"`
+	PrefixLen     int     `json:"prefixlen"`
+	Scope         string  `json:"scope"`
+	Dynamic       bool    `json:"dynamic"`
+	ValidLifetime *uint64 `json:"valid_life_time"`
 }
 
 type importLink struct {
@@ -128,32 +94,9 @@ func networkdAddressSources(ifname string) (map[string]string, []string, error) 
 	return sources, files, nil
 }
 
-func importStaticIPv4Address(address importAddress, ifname string, ip netip.Addr) bool {
-	if !ip.Is4() || address.Scope != "global" || address.Dynamic || address.Peer != "" || address.NoPrefixRoute || address.Metric != 0 || len(address.Unsupported) != 0 || (address.Label != "" && address.Label != ifname) {
-		return false
-	}
-	if address.PrefixLen < 0 || address.PrefixLen > 32 || address.ValidLifetime == nil || address.PreferredLifetime == nil || *address.ValidLifetime != 0xffffffff || *address.PreferredLifetime != 0xffffffff {
-		return false
-	}
-	if address.Broadcast != "" {
-		broadcast, err := netip.ParseAddr(address.Broadcast)
-		if err != nil || !broadcast.Is4() {
-			return false
-		}
-		prefix := netip.PrefixFrom(ip, address.PrefixLen).Masked()
-		network := prefix.Addr().As4()
-		mask := uint32(0xffffffff) >> uint(address.PrefixLen)
-		expected := binary.BigEndian.Uint32(network[:]) | mask
-		actual := broadcast.As4()
-		if binary.BigEndian.Uint32(actual[:]) != expected {
-			return false
-		}
-	}
-	return true
-}
-
-func importStaticIPv6Address(address importAddress, ifname string, ip netip.Addr) bool {
-	return ip.Is6() && ip.IsGlobalUnicast() && address.Scope == "global" && !address.Dynamic && address.Peer == "" && address.Broadcast == "" && !address.NoPrefixRoute && address.Metric == 0 && len(address.Unsupported) == 0 && (address.Label == "" || address.Label == ifname) && address.PrefixLen >= 0 && address.PrefixLen <= 128 && address.ValidLifetime != nil && address.PreferredLifetime != nil && *address.ValidLifetime == 0xffffffff && *address.PreferredLifetime == 0xffffffff
+func importStaticAddress(address importAddress, ip netip.Addr) bool {
+	return address.Scope == "global" && !address.Dynamic && address.PrefixLen >= 0 &&
+		address.PrefixLen <= ip.BitLen() && (address.ValidLifetime == nil || *address.ValidLifetime == 0xffffffff)
 }
 
 func importCommand(args []string, stdout, stderr io.Writer) error {
@@ -323,12 +266,12 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 			if !existingVirtual {
 				virtual, existingVirtual = virtualIPv4[ifname+"|"+prefix]
 			}
-			if existingVirtual && source != "DHCPv4" && importStaticIPv4Address(address, ifname, ip) {
+			if existingVirtual && source != "DHCPv4" && ip.Is4() && importStaticAddress(address, ip) {
 				virtual.Status = nil
 				router.Spec.Resources = append(router.Spec.Resources, virtual)
 				continue
 			}
-			if source != "DHCPv4" && importStaticIPv4Address(address, ifname, ip) {
+			if source != "DHCPv4" && ip.Is4() && importStaticAddress(address, ip) {
 				static, exists := staticAddresses[resource.Metadata.Name+"|"+prefix]
 				if !exists {
 					static, exists = staticAddresses[ifname+"|"+prefix]
@@ -348,7 +291,7 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 				warnings = append(warnings, fmt.Sprintf("%s: static address %s imported; review manager handoff and address attributes", ifname, prefix))
 				continue
 			}
-			if (source == "static" || source == "" || source == "foreign") && importStaticIPv6Address(address, ifname, ip) {
+			if (source == "static" || source == "" || source == "foreign") && ip.Is6() && ip.IsGlobalUnicast() && importStaticAddress(address, ip) {
 				static, exists := staticIPv6[resource.Metadata.Name+"|"+prefix]
 				if !exists {
 					static, exists = staticIPv6[ifname+"|"+prefix]
@@ -369,7 +312,7 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 				warnings = append(warnings, fmt.Sprintf("%s: static IPv6 address %s imported; review manager handoff and address attributes", ifname, prefix))
 				continue
 			}
-			warnings = append(warnings, fmt.Sprintf("%s: address %s/%d (%s, scope %s) requires source configuration review: %s", ifname, address.Local, address.PrefixLen, origin, address.Scope, address.Raw))
+			warnings = append(warnings, fmt.Sprintf("%s: address %s/%d (%s, scope %s) was not imported", ifname, address.Local, address.PrefixLen, origin, address.Scope))
 		}
 
 	}
