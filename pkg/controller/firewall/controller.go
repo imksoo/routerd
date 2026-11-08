@@ -85,7 +85,7 @@ func (c Controller) saveErrorStatuses(ctx context.Context, backend, path, reason
 		"conditions":   []map[string]any{{"type": "Applied", "status": "False", "reason": reason, "message": applyErr.Error()}},
 	}
 	for _, resource := range c.Router.Spec.Resources {
-		if resource.APIVersion != api.FirewallAPIVersion {
+		if resource.APIVersion != api.FirewallAPIVersion || resource.Kind == "IngressService" {
 			continue
 		}
 		if err := c.Store.SaveObjectStatus(api.FirewallAPIVersion, resource.Kind, resource.Metadata.Name, status); err != nil {
@@ -113,7 +113,7 @@ func (c Controller) savePolicyStatuses(ctx context.Context, backend, path string
 		"conditions":    []map[string]any{{"type": "Applied", "status": "True", "reason": "Rendered"}},
 	}
 	for _, resource := range c.Router.Spec.Resources {
-		if resource.APIVersion != api.FirewallAPIVersion {
+		if resource.APIVersion != api.FirewallAPIVersion || resource.Kind == "IngressService" {
 			continue
 		}
 		if err := c.Store.SaveObjectStatus(api.FirewallAPIVersion, resource.Kind, resource.Metadata.Name, status); err != nil {
