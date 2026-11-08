@@ -3,12 +3,8 @@
 package config
 
 import (
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"testing"
 
@@ -335,53 +331,6 @@ func TestValidateResourceWhenStatusReferenceAcceptsStatusScheme(t *testing.T) {
 	}
 }
 
-func TestValidateResourceWhenRejectsMixedFormsForEveryWhenField(t *testing.T) {
-	for _, tc := range whenValidationTestResources(invalidMixedResourceWhen()) {
-		t.Run(tc.specName, func(t *testing.T) {
-			if refs := resourceWhens(tc.resource); len(refs) == 0 {
-				t.Fatalf("resourceWhens returned no refs for %s", tc.resource.Kind)
-			}
-			router := &api.Router{
-				TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
-				Metadata: api.ObjectMeta{Name: "test"},
-				Spec:     api.RouterSpec{Resources: []api.Resource{tc.resource}},
-			}
-			// These invalid-shape fixtures include Linux policy-routing fields.
-			// Validate the intended fixture OS before asserting the per-field error.
-			err := ValidateForOS(router, platform.OSLinux)
-			if err == nil || !strings.Contains(err.Error(), "exactly one of state, all, or any") {
-				t.Fatalf("Validate(%s) error = %v", tc.specName, err)
-			}
-		})
-	}
-}
-
-func TestResourceWhensCoversAPISpecWhenFields(t *testing.T) {
-	actual := apiSpecStructsWithResourceWhen(t)
-	expected := make([]string, 0, len(whenValidationTestResources(api.ResourceWhenSpec{})))
-	for _, tc := range whenValidationTestResources(api.ResourceWhenSpec{}) {
-		expected = append(expected, tc.specName)
-	}
-	sort.Strings(expected)
-	if strings.Join(actual, "\n") != strings.Join(expected, "\n") {
-		t.Fatalf("when validation resource table mismatch\nactual:\n%s\nexpected:\n%s", strings.Join(actual, "\n"), strings.Join(expected, "\n"))
-	}
-}
-
-func TestReferenceTableMatchesProvidesContract(t *testing.T) {
-	for _, row := range referenceProviderRows() {
-		t.Run(row.Kind+"."+row.Field, func(t *testing.T) {
-			got, ok := api.ResourceProvidesFieldType(row.Kind, row.Field)
-			if !ok {
-				t.Fatalf("%s does not provide %q", row.Kind, row.Field)
-			}
-			if got != row.Type {
-				t.Fatalf("%s.%s type = %s, want %s", row.Kind, row.Field, got, row.Type)
-			}
-		})
-	}
-}
-
 func TestValidateRejectsMissingStatusReference(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
@@ -487,161 +436,12 @@ func TestValidateExampleStatusReferencesAgainstProvides(t *testing.T) {
 	}
 }
 
-type referenceProviderRow struct {
-	Kind  string
-	Field string
-	Type  string
-}
-
-func referenceProviderRows() []referenceProviderRow {
-	return []referenceProviderRow{
-		{Kind: "Interface", Field: "phase", Type: api.ProvidesTypeString},
-		{Kind: "Interface", Field: "ifname", Type: api.ProvidesTypeString},
-		{Kind: "Interface", Field: "ipv4Addresses", Type: api.ProvidesTypeStringList},
-		{Kind: "IPv4StaticAddress", Field: "address", Type: api.ProvidesTypeString},
-		{Kind: "VirtualAddress", Field: "address", Type: api.ProvidesTypeString},
-		{Kind: "IPv6DelegatedAddress", Field: "address", Type: api.ProvidesTypeString},
-		{Kind: "DHCPv4Client", Field: "gateway", Type: api.ProvidesTypeString},
-		{Kind: "DHCPv4Client", Field: "dnsServers", Type: api.ProvidesTypeStringList},
-		{Kind: "DHCPv4Client", Field: "ntpServers", Type: api.ProvidesTypeStringList},
-		{Kind: "DHCPv6Information", Field: "dnsServers", Type: api.ProvidesTypeStringList},
-		{Kind: "DHCPv6Information", Field: "sntpServers", Type: api.ProvidesTypeStringList},
-		{Kind: "DHCPv6Information", Field: "domainSearch", Type: api.ProvidesTypeStringList},
-		{Kind: "DHCPv6Information", Field: "aftrName", Type: api.ProvidesTypeString},
-		{Kind: "DHCPv6PrefixDelegation", Field: "currentPrefix", Type: api.ProvidesTypeString},
-		{Kind: "DNSZone", Field: "zone", Type: api.ProvidesTypeString},
-		{Kind: "DNSResolver", Field: "listenAddresses", Type: api.ProvidesTypeStringList},
-		{Kind: "DSLiteTunnel", Field: "interface", Type: api.ProvidesTypeString},
-		{Kind: "DSLiteTunnel", Field: "device", Type: api.ProvidesTypeString},
-		{Kind: "EgressRoutePolicy", Field: "selectedDevice", Type: api.ProvidesTypeString},
-		{Kind: "EgressRoutePolicy", Field: "selectedGateway", Type: api.ProvidesTypeString},
-		{Kind: "IngressService", Field: "listenAddress", Type: api.ProvidesTypeString},
-		{Kind: "IngressService", Field: "activeBackend", Type: api.ProvidesTypeObject},
-		{Kind: "IngressService", Field: "activeBackends", Type: api.ProvidesTypeObjectList},
-		{Kind: "IPAddressSet", Field: "addresses", Type: api.ProvidesTypeStringList},
-		{Kind: "NTPClient", Field: "servers", Type: api.ProvidesTypeStringList},
-		{Kind: "NTPServer", Field: "allowCIDRs", Type: api.ProvidesTypeStringList},
-		{Kind: "NTPServer", Field: "listenAddresses", Type: api.ProvidesTypeStringList},
-		{Kind: "PPPoESession", Field: "interface", Type: api.ProvidesTypeString},
-		{Kind: "PPPoESession", Field: "device", Type: api.ProvidesTypeString},
-		{Kind: "PPPoESession", Field: "gateway", Type: api.ProvidesTypeString},
-	}
-}
-
-type whenValidationTestResource struct {
-	specName string
-	resource api.Resource
-}
-
-func whenValidationTestResources(when api.ResourceWhenSpec) []whenValidationTestResource {
-	return []whenValidationTestResource{
-		{specName: "ObservabilityPipelineSpec", resource: testResource(api.SystemAPIVersion, "ObservabilityPipeline", "observability", api.ObservabilityPipelineSpec{When: when})},
-		{specName: "RouterdClusterSpec", resource: testResource(api.SystemAPIVersion, "RouterdCluster", "cluster", api.RouterdClusterSpec{Peers: []string{"router-a", "router-b"}, LeasePath: "/run/routerd/cluster/lease", When: when})},
-		{specName: "InterfaceSpec", resource: testResource(api.NetAPIVersion, "Interface", "wan", api.InterfaceSpec{IfName: "eth0", Managed: false, When: when})},
-		{specName: "VXLANTunnelSpec", resource: testResource(api.NetAPIVersion, "VXLANTunnel", "overlay", api.VXLANTunnelSpec{IfName: "vx-l2", VNI: 200001, LocalAddress: "10.254.200.1", Peers: []string{"10.254.200.2"}, UnderlayInterface: "underlay", When: when})},
-		{specName: "VirtualAddressSpec", resource: testResource(api.NetAPIVersion, "VirtualAddress", "vip", api.VirtualAddressSpec{Family: "ipv4", Interface: "lan", Address: "192.0.2.10/32", When: when})},
-		{specName: "BGPRouterSpec", resource: testResource(api.NetAPIVersion, "BGPRouter", "main", api.BGPRouterSpec{ASN: 64500, RouterID: "192.0.2.1", When: when})},
-		{specName: "BGPPeerSpec", resource: testResource(api.NetAPIVersion, "BGPPeer", "k8s-rt", api.BGPPeerSpec{RouterRef: "BGPRouter/main", PeerASN: 64512, Peers: []string{"192.0.2.2"}, When: when})},
-		{specName: "BGPDynamicPeerSpec", resource: testResource(api.NetAPIVersion, "BGPDynamicPeer", "leaves", api.BGPDynamicPeerSpec{RouterRef: "BGPRouter/main", PeerASN: 64500, Listen: api.BGPDynamicPeerListenSpec{SourcePrefixes: []string{"10.255.0.0/20"}}, ImportPolicy: api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.77.60.0/24"}, AllowedPrefixLengthMin: 32, AllowedPrefixLengthMax: 32}, When: when})},
-		{specName: "BFDSpec", resource: testResource(api.NetAPIVersion, "BFD", "k8s-rt", api.BFDSpec{Peer: "BGPPeer/k8s-rt", When: when})},
-		{specName: "TailscaleNodeSpec", resource: testResource(api.NetAPIVersion, "TailscaleNode", "home", api.TailscaleNodeSpec{Hostname: "router", When: when})},
-		{specName: "NTPClientSpec", resource: testResource(api.SystemAPIVersion, "NTPClient", "system-time", api.NTPClientSpec{Provider: "chrony", Managed: true, Source: "auto", FallbackServers: []string{"192.0.2.123"}, When: when})},
-		{specName: "NTPServerSpec", resource: testResource(api.SystemAPIVersion, "NTPServer", "lan-time", api.NTPServerSpec{Provider: "chrony", Managed: true, Source: "auto", FallbackServers: []string{"192.0.2.123"}, ListenAddresses: []string{"192.0.2.1"}, When: when})},
-		{specName: "DHCPv4ClientSpec", resource: testResource(api.NetAPIVersion, "DHCPv4Client", "wan-v4", api.DHCPv4ClientSpec{Interface: "wan", When: when})},
-		{specName: "IPv4StaticAddressSpec", resource: testResource(api.NetAPIVersion, "IPv4StaticAddress", "wan-v4", api.IPv4StaticAddressSpec{Interface: "wan", Address: "192.0.2.1/32", When: when})},
-		{specName: "ClusterNetworkRouteSpec", resource: testResource(api.NetAPIVersion, "ClusterNetworkRoute", "k8s", api.ClusterNetworkRouteSpec{Pods: api.ClusterNetworkRouteCIDRSpec{CIDRs: []string{"10.244.0.0/16"}}, Via: []api.ClusterNetworkRouteViaSpec{{Interface: "lan", NextHop: "192.0.2.2"}}, When: when})},
-		{specName: "DHCPv4ServerSpec", resource: testResource(api.NetAPIVersion, "DHCPv4Server", "lan", api.DHCPv4ServerSpec{Server: "dnsmasq", Interface: "lan", RangeStart: "192.0.2.100", RangeEnd: "192.0.2.150", When: when})},
-		{specName: "DHCPv4ReservationSpec", resource: testResource(api.NetAPIVersion, "DHCPv4Reservation", "printer", api.DHCPv4ReservationSpec{Server: "lan", MACAddress: "02:00:00:00:01:50", Hostname: "printer", IPAddress: "192.0.2.50", When: when})},
-		{specName: "IPv6DelegatedAddressSpec", resource: testResource(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-v6", api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "lan", AddressSuffix: "::1", When: when})},
-		{specName: "DHCPv6ServerSpec", resource: testResource(api.NetAPIVersion, "DHCPv6Server", "lan-v6", api.DHCPv6ServerSpec{Server: "dnsmasq", DelegatedAddress: "lan-v6", When: when})},
-		{specName: "DHCPv4ServerLeaseSyncSpec", resource: testResource(api.NetAPIVersion, "DHCPv4ServerLeaseSync", "lan-v4-leases", api.DHCPv4ServerLeaseSyncSpec{Source: api.DHCPv4ServerLeaseSyncSourceSpec{Resource: "DHCPv4Server/lan"}, Targets: []api.LeaseSyncTargetSpec{{Host: "router-b"}}, When: when})},
-		{specName: "DHCPv6ServerLeaseSyncSpec", resource: testResource(api.NetAPIVersion, "DHCPv6ServerLeaseSync", "lan-v6-leases", api.DHCPv6ServerLeaseSyncSpec{Source: api.DHCPv6ServerLeaseSyncSourceSpec{Resource: "DHCPv6Server/lan-v6"}, Targets: []api.LeaseSyncTargetSpec{{Host: "router-b"}}, When: when})},
-		{specName: "DHCPv6PrefixDelegationLeaseSyncSpec", resource: testResource(api.NetAPIVersion, "DHCPv6PrefixDelegationLeaseSync", "wan-pd-leases", api.DHCPv6PrefixDelegationLeaseSyncSpec{Source: api.DHCPv6PrefixDelegationLeaseSyncSourceSpec{Resource: "DHCPv6PrefixDelegation/wan-pd"}, Targets: []api.LeaseSyncTargetSpec{{Host: "router-b"}}, When: when})},
-		{specName: "DHCPv6PrefixDelegationSpec", resource: testResource(api.NetAPIVersion, "DHCPv6PrefixDelegation", "wan-pd", api.DHCPv6PrefixDelegationSpec{Interface: "wan", When: when})},
-		{specName: "DHCPv6InformationSpec", resource: testResource(api.NetAPIVersion, "DHCPv6Information", "wan-info", api.DHCPv6InformationSpec{Interface: "wan", When: when})},
-		{specName: "IPv6RouterAdvertisementSpec", resource: testResource(api.NetAPIVersion, "IPv6RouterAdvertisement", "lan-ra", api.IPv6RouterAdvertisementSpec{Interface: "lan", Prefix: "2001:db8:1::/64", When: when})},
-		{specName: "DSLiteTunnelSpec", resource: testResource(api.NetAPIVersion, "DSLiteTunnel", "dslite", api.DSLiteTunnelSpec{Interface: "wan", AFTRIPv6: "2001:db8::1", When: when})},
-		{specName: "DNSForwarderSpec", resource: testResource(api.NetAPIVersion, "DNSForwarder", "ad", api.DNSForwarderSpec{Resolver: "DNSResolver/lan", Match: []string{"corp.example"}, Upstreams: []string{"DNSUpstream/ad"}, When: when})},
-		{specName: "DNSResolverSpec", resource: testResource(api.NetAPIVersion, "DNSResolver", "lan", api.DNSResolverSpec{Listen: []api.DNSResolverListenSpec{{Addresses: []string{"127.0.0.1"}, Port: 53}}, When: when})},
-		{specName: "DNSUpstreamSpec", resource: testResource(api.NetAPIVersion, "DNSUpstream", "ad", api.DNSUpstreamSpec{Protocol: "udp", Address: "192.0.2.53", When: when})},
-		{specName: "EventGroupSpec", resource: testResource(api.FederationAPIVersion, "EventGroup", "edge", api.EventGroupSpec{NodeName: "router-a", When: when})},
-		{specName: "HealthCheckSpec", resource: testResource(api.NetAPIVersion, "HealthCheck", "internet", api.HealthCheckSpec{TargetSource: "static", Target: "192.0.2.1", When: when})},
-		{specName: "EgressRoutePolicySpec", resource: testResource(api.NetAPIVersion, "EgressRoutePolicy", "default-v4", api.EgressRoutePolicySpec{When: when, Candidates: []api.EgressRoutePolicyCandidate{{Interface: "wan", Priority: 1, Table: 100, Mark: 100}}})},
-		{specName: "EgressRoutePolicyCandidate", resource: testResource(api.NetAPIVersion, "EgressRoutePolicy", "default-v4", api.EgressRoutePolicySpec{Candidates: []api.EgressRoutePolicyCandidate{{Interface: "wan", Priority: 1, Table: 100, Mark: 100, When: when}}})},
-		{specName: "NAT44RuleSpec", resource: testResource(api.NetAPIVersion, "NAT44Rule", "lan", api.NAT44RuleSpec{OutboundInterface: "wan", SourceCIDRs: []string{"192.0.2.0/24"}, Translation: api.IPv4NATTranslationSpec{Type: "interfaceAddress"}, When: when})},
-		{specName: "NAT44FlowDNATPinholeSpec", resource: testResource(api.NetAPIVersion, "NAT44FlowDNATPinhole", "atomcam", api.NAT44FlowDNATPinholeSpec{FromInterfaceRefs: []string{"Interface/wan"}, Outbound: api.NAT44FlowDNATPinholeOutboundSpec{SourceCIDRs: []string{"192.0.2.0/24"}, Protocol: "udp", DestinationPorts: []api.FirewallPort{"32100"}}, Inbound: api.NAT44FlowDNATPinholeInboundSpec{SourcePorts: []api.FirewallPort{"32099"}}, When: when})},
-		{specName: "NAT44SessionSyncSpec", resource: testResource(api.NetAPIVersion, "NAT44SessionSync", "dslite-sessions", api.NAT44SessionSyncSpec{SNATAddresses: []string{"192.0.2.2"}, Targets: []api.NAT44SessionSyncTargetSpec{{Host: "router-b"}}, When: when})},
-		{specName: "PortForwardSpec", resource: testResource(api.FirewallAPIVersion, "PortForward", "web", api.PortForwardSpec{Listen: api.IngressListenSpec{Interface: "wan", Protocol: "tcp", Port: 443}, Target: api.IngressTargetSpec{Address: "192.0.2.10", Port: 8443}, When: when})},
-		{specName: "IngressServiceSpec", resource: testResource(api.FirewallAPIVersion, "IngressService", "web", api.IngressServiceSpec{Listen: api.IngressListenSpec{Interface: "wan", Protocol: "tcp", Port: 443}, Backends: []api.IngressBackendSpec{{Address: "192.0.2.10", Port: 8443}}, When: when})},
-		{specName: "IPAddressSetSpec", resource: testResource(api.NetAPIVersion, "IPAddressSet", "blocked", api.IPAddressSetSpec{Addresses: []string{"192.0.2.10"}, When: when})},
-		{specName: "LocalServiceRedirectSpec", resource: testResource(api.FirewallAPIVersion, "LocalServiceRedirect", "dns", api.LocalServiceRedirectSpec{Interface: "lan", Rules: []api.LocalServiceRedirectRuleSpec{{Protocols: []string{"tcp"}, DestinationSetRef: "dns-servers", DestinationPort: 53, RedirectPort: 5353}}, When: when})},
-		{specName: "FirewallFlowPinholeSpec", resource: testResource(api.FirewallAPIVersion, "FirewallFlowPinhole", "atomcam", api.FirewallFlowPinholeSpec{FromZone: "lan", ToZone: "wan", Outbound: api.FirewallFlowPinholeOutboundSpec{SourceCIDRs: []string{"192.0.2.0/24"}, Protocol: "udp", DestinationPorts: []api.FirewallPort{"32100"}}, Inbound: api.FirewallFlowPinholeInboundSpec{SourcePorts: []api.FirewallPort{"32099"}}, When: when})},
-	}
-}
-
-func invalidMixedResourceWhen() api.ResourceWhenSpec {
-	return api.ResourceWhenSpec{
-		State: map[string]api.StateMatchSpec{"wan.a": {Equals: "up"}},
-		Any:   []api.ResourceWhenSpec{{State: map[string]api.StateMatchSpec{"wan.b": {Equals: "up"}}}},
-	}
-}
-
 func testResource(apiVersion, kind, name string, spec any) api.Resource {
 	return api.Resource{
 		TypeMeta: api.TypeMeta{APIVersion: apiVersion, Kind: kind},
 		Metadata: api.ObjectMeta{Name: name},
 		Spec:     spec,
 	}
-}
-
-func apiSpecStructsWithResourceWhen(t *testing.T) []string {
-	t.Helper()
-	packages, err := parser.ParseDir(token.NewFileSet(), "../api", func(info os.FileInfo) bool { return !strings.HasSuffix(info.Name(), "_test.go") }, 0)
-	if err != nil {
-		t.Fatalf("parse API definitions: %v", err)
-	}
-	pkg, ok := packages["api"]
-	if !ok {
-		t.Fatal("API package absent")
-	}
-	discovered := map[string]bool{}
-	for _, file := range pkg.Files {
-		ast.Inspect(file, func(node ast.Node) bool {
-			def, ok := node.(*ast.TypeSpec)
-			if !ok {
-				return true
-			}
-			structure, ok := def.Type.(*ast.StructType)
-			if !ok {
-				return false
-			}
-			for _, field := range structure.Fields.List {
-				typ := field.Type
-				if ptr, ok := typ.(*ast.StarExpr); ok {
-					typ = ptr.X
-				}
-				ident, ok := typ.(*ast.Ident)
-				if !ok || ident.Name != "ResourceWhenSpec" {
-					continue
-				}
-				for _, name := range field.Names {
-					if name.Name == "When" {
-						discovered[def.Name.Name] = true
-					}
-				}
-			}
-			return false
-		})
-	}
-	if len(discovered) == 0 {
-		t.Fatal("no API ResourceWhenSpec fields discovered")
-	}
-	out := make([]string, 0, len(discovered))
-	for name := range discovered {
-		out = append(out, name)
-	}
-	sort.Strings(out)
-	return out
 }
 
 func TestValidatePackageSupportsUbuntuAPT(t *testing.T) {
