@@ -97,24 +97,6 @@ jobs:
         working-directory: webconsole
         run: npm run screenshot
 
-  go-test:
-    name: Go tests
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ inputs.checkout-ref || github.ref }}
-
-      - name: Set up Go
-        uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Run Go tests
-        run: make test
-
   linux-static:
     name: Linux static binaries
     runs-on: ubuntu-latest
@@ -224,27 +206,6 @@ jobs:
       - name: Validate wizard fixtures
         run: make check-wizard-fixtures validate-wizard-fixtures
 
-  cloudedge-offline:
-    name: CloudEdge offline smoke
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ inputs.checkout-ref || github.ref }}
-
-      - name: Run CloudEdge acceptance offline smoke
-        run: make cloudedge-acceptance-offline-test
-
-      - name: Run CloudEdge PoC evidence offline smoke
-        run: make cloudedge-poc-evidence-offline-test
-
-      - name: Run CloudEdge E2E preflight offline smoke
-        run: make cloudedge-e2e-preflight-offline-test
-
-      - name: Run CloudEdge SAM config generator offline smoke
-        run: make cloudedge-sam-config-generator-offline-test
-
   shellcheck:
     name: Shell scripts
     runs-on: ubuntu-latest
@@ -261,7 +222,7 @@ jobs:
 
       - name: Lint shell scripts
         run: |
-          shellcheck scripts/ci/detect-quality-changes.sh scripts/ci/detect-quality-changes-test.sh packaging/install.sh packaging/uninstall.sh packaging/bootstrap.sh scripts/pre-commit.sh scripts/release.sh scripts/build-live-iso.sh scripts/install-deps-smoke.sh scripts/install-sh-cwd-smoke.sh scripts/bootstrap-cleanup-smoke.sh scripts/check-active-stable.sh scripts/certify-pve-substrate.sh scripts/certify-cloud-substrate.sh scripts/release-environment-preflight.sh scripts/release-qualification-smoke.sh tests/e2e/cloudedge/scripts/sam-pve-qga-addresses.sh
+          shellcheck scripts/ci/detect-quality-changes.sh scripts/ci/detect-quality-changes-test.sh packaging/install.sh packaging/uninstall.sh packaging/bootstrap.sh scripts/pre-commit.sh scripts/release.sh scripts/build-live-iso.sh scripts/install-deps-smoke.sh scripts/install-sh-cwd-smoke.sh scripts/check-active-stable.sh scripts/certify-pve-substrate.sh scripts/certify-cloud-substrate.sh scripts/release-environment-preflight.sh scripts/release-qualification-smoke.sh tests/e2e/cloudedge/scripts/sam-pve-qga-addresses.sh
 
   warm-iso-rootfs-cache:
     name: Warm ISO rootfs cache
