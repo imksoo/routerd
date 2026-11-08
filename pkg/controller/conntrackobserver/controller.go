@@ -5,12 +5,14 @@ package conntrackobserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +22,7 @@ import (
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/conntrack"
 	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/hostdeps"
 	"github.com/imksoo/routerd/pkg/logstore"
 	"github.com/imksoo/routerd/pkg/observe"
 	"github.com/imksoo/routerd/pkg/platform"
@@ -84,6 +87,14 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	snapshot, err := c.readSnapshot()
 	if err != nil {
 		if conntrack.IsUnavailable(err) {
+			var unavailable conntrack.UnavailableError
+			if c.Router != nil && platform.CurrentOS() == platform.OSLinux && errors.As(err, &unavailable) &&
+				errors.Is(unavailable.CountErr, os.ErrNotExist) && errors.Is(unavailable.EntriesErr, os.ErrNotExist) &&
+				!conntrackConfigured(c.Router) {
+				return c.Store.SaveObjectStatus(api.NetAPIVersion, "ConntrackObserver", "default", map[string]any{
+					"phase": "Disabled", "reason": "ConntrackNotConfigured",
+				})
+			}
 			return c.recordUnavailable(err)
 		}
 		return err
@@ -130,6 +141,29 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		c.aboveThreshold = false
 	}
 	return nil
+}
+
+func conntrackConfigured(router *api.Router) bool {
+	if router.Spec.Apply.AutoTuneConntrack || slices.Contains(hostdeps.KernelModulesForOS(router, platform.OSLinux), "nf_conntrack") {
+		return true
+	}
+	for _, resource := range router.Spec.Resources {
+		switch resource.Kind {
+		case "NAT44SessionSync", "PortForward", "IngressService", "LocalServiceRedirect", "ConntrackTuning":
+			return true
+		case "KernelModule":
+			spec, err := resource.KernelModuleSpec()
+			if err == nil && slices.Contains(spec.Modules, "nf_conntrack") {
+				return true
+			}
+		case "Sysctl":
+			spec, err := resource.SysctlSpec()
+			if err == nil && strings.HasPrefix(spec.Key, "net.netfilter.nf_conntrack") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (c *Controller) readSnapshot() (conntrack.Snapshot, error) {

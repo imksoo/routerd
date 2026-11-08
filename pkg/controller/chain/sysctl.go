@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -70,6 +71,7 @@ func (c SysctlController) Reconcile(ctx context.Context) error {
 				continue
 			}
 			var applied, skipped, changed, failed []string
+			requiredSkipped := false
 			for _, setting := range settings {
 				result, err := c.applyOne(ctx, resource.Metadata.Name+"-"+sysctlprofile.SafeName(setting.Key), "SysctlProfile", setting)
 				if err != nil {
@@ -79,6 +81,7 @@ func (c SysctlController) Reconcile(ctx context.Context) error {
 				}
 				if result.skipped {
 					skipped = append(skipped, setting.Key)
+					requiredSkipped = requiredSkipped || !result.optionalAbsent
 					continue
 				}
 				applied = append(applied, setting.Key)
@@ -87,7 +90,7 @@ func (c SysctlController) Reconcile(ctx context.Context) error {
 				}
 			}
 			phase := "Applied"
-			if len(skipped) > 0 || len(failed) > 0 {
+			if requiredSkipped || len(failed) > 0 {
 				phase = "Degraded"
 			}
 			if c.DryRun && len(changed) > 0 && phase == "Applied" {
@@ -137,8 +140,9 @@ type sysctlSetting struct {
 }
 
 type sysctlApplyResult struct {
-	changed bool
-	skipped bool
+	changed        bool
+	skipped        bool
+	optionalAbsent bool
 }
 
 func (c SysctlController) applyOne(ctx context.Context, name, kind string, spec sysctlSetting) (sysctlApplyResult, error) {
@@ -180,7 +184,10 @@ func (c SysctlController) applyOne(ctx context.Context, name, kind string, spec 
 			}); err != nil {
 				return sysctlApplyResult{}, err
 			}
-			return sysctlApplyResult{skipped: true}, nil
+			var exitErr *exec.ExitError
+			_, statErr := os.Stat("/proc/sys/" + strings.ReplaceAll(spec.Key, ".", "/"))
+			_, procErr := os.Stat("/proc/sys")
+			return sysctlApplyResult{skipped: true, optionalAbsent: errors.As(currentErr, &exitErr) && errors.Is(statErr, os.ErrNotExist) && procErr == nil}, nil
 		}
 		matches, compareErr := sysctlprofile.ValueMatches(current, expected, spec.Compare)
 		runtimeChanged = currentErr != nil || compareErr != nil || !matches

@@ -2799,7 +2799,7 @@
                         "type": "string"
                       },
                       "allowOverlap": {
-                        "description": "AllowOverlap permits an address prefix that overlaps another configured IPv4 prefix.",
+                        "description": "AllowOverlap and AllowOverlapReason remain readable in existing configurations.",
                         "type": "boolean"
                       },
                       "allowOverlapReason": {
