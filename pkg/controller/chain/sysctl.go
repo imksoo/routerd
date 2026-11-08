@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -72,7 +71,7 @@ func (c SysctlController) Reconcile(ctx context.Context) error {
 			}
 			var applied, skipped, changed, failed []string
 			for _, setting := range settings {
-				result, err := c.applyOne(ctx, resource.Metadata.Name+"-"+safeSysctlName(setting.Key), "SysctlProfile", setting)
+				result, err := c.applyOne(ctx, resource.Metadata.Name+"-"+sysctlprofile.SafeName(setting.Key), "SysctlProfile", setting)
 				if err != nil {
 					errs = append(errs, err)
 					failed = append(failed, setting.Key)
@@ -204,8 +203,8 @@ func (c SysctlController) applyOne(ctx context.Context, name, kind string, spec 
 		if baseDir == "" {
 			baseDir = "/etc/sysctl.d"
 		}
-		persistentPath = filepath.Join(baseDir, "90-routerd-"+safeSysctlName(name)+".conf")
-		data := []byte(fmt.Sprintf("# Managed by routerd. Do not edit by hand.\n%s = %s\n", spec.Key, spec.Value))
+		persistentPath = sysctlprofile.PersistentPath(baseDir, name)
+		data := sysctlprofile.PersistentContents(spec.Key, spec.Value)
 		var err error
 		persistentChanged, err = writeFileIfChanged(persistentPath, data, 0644, c.DryRun)
 		if err != nil {
@@ -444,13 +443,7 @@ func runOutputCommandContext(ctx context.Context, name string, args ...string) (
 
 var unsafeSysctlName = regexp.MustCompile(`[^A-Za-z0-9_.-]+`)
 
-func safeSysctlName(name string) string {
-	name = strings.Trim(unsafeSysctlName.ReplaceAllString(name, "-"), "-.")
-	if name == "" {
-		return "sysctl"
-	}
-	return name
-}
+func safeSysctlName(name string) string { return sysctlprofile.SafeName(name) }
 
 func normalizeSysctlRuntimeValue(value string) string {
 	return strings.Join(strings.Fields(value), " ")

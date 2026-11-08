@@ -2003,15 +2003,25 @@ func (e *Engine) observeSysctl(res api.Resource, includePlan bool, rr *ResourceR
 		rr.Warnings = append(rr.Warnings, fmt.Sprintf("could not observe sysctl %s: %v", key, err))
 	}
 
+	if persistent && runtime {
+		path := sysctlprofile.PersistentPath("/etc/sysctl.d", res.Metadata.Name)
+		rr.Observed["persistentPath"] = path
+		contents, err := os.ReadFile(path)
+		if err != nil && !os.IsNotExist(err) {
+			rr.Phase = "Unknown"
+			rr.Warnings = append(rr.Warnings, fmt.Sprintf("could not observe persistent sysctl %s: %v", key, err))
+		} else if err != nil || !bytes.Equal(contents, sysctlprofile.PersistentContents(key, desired)) {
+			rr.Phase = "Drifted"
+		}
+	}
 	if !includePlan {
 		return
 	}
 	if runtime {
 		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure runtime sysctl %s=%s", key, desired))
 	}
-	if persistent {
-		rr.Plan = append(rr.Plan, fmt.Sprintf("persistent sysctl %s=%s is not implemented yet", key, desired))
-		rr.Warnings = append(rr.Warnings, "persistent sysctl rendering is pending OS-specific implementation")
+	if persistent && runtime {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure persistent sysctl %s=%s", key, desired))
 	}
 }
 
