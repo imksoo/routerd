@@ -112,7 +112,7 @@ func networkdAddressSources(ifname string) (map[string]string, []string, error) 
 }
 
 func importStaticAddress(address importAddress, ip netip.Addr) bool {
-	return address.Scope == "global" && !address.Dynamic && address.PrefixLen >= 0 &&
+	return !address.Dynamic && address.PrefixLen >= 0 &&
 		address.PrefixLen <= ip.BitLen() && (address.ValidLifetime == nil || *address.ValidLifetime == 0xffffffff)
 }
 
@@ -301,13 +301,13 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 			if !existingVirtual {
 				virtual, existingVirtual = virtualIPv4[ifname+"|"+prefix]
 			}
-			if existingVirtual && source != "DHCPv4" && ip.Is4() && importStaticAddress(address, ip) {
+			if existingVirtual && source != "DHCPv4" && ip.Is4() && address.Scope == "global" && importStaticAddress(address, ip) {
 				virtual.Status = nil
 				router.Spec.Resources = append(router.Spec.Resources, virtual)
 				requested[prefix] = true
 				continue
 			}
-			if source != "DHCPv4" && ip.Is4() && importStaticAddress(address, ip) {
+			if source != "DHCPv4" && ip.Is4() && address.Scope == "global" && importStaticAddress(address, ip) {
 				static, exists := staticAddresses[resource.Metadata.Name+"|"+prefix]
 				if !exists {
 					static, exists = staticAddresses[ifname+"|"+prefix]
@@ -328,7 +328,9 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 				warnings = append(warnings, fmt.Sprintf("%s: static address %s imported; review manager handoff and address attributes", ifname, prefix))
 				continue
 			}
-			if (source == "static" || source == "" || source == "foreign") && ip.Is6() && ip.IsGlobalUnicast() && importStaticAddress(address, ip) {
+			staticIPv6Address := (address.Scope == "global" && ip.IsGlobalUnicast() && (source == "static" || source == "" || source == "foreign")) ||
+				(address.Scope == "link" && ip.IsLinkLocalUnicast() && source == "static")
+			if ip.Is6() && staticIPv6Address && importStaticAddress(address, ip) {
 				static, exists := staticIPv6[resource.Metadata.Name+"|"+prefix]
 				if !exists {
 					static, exists = staticIPv6[ifname+"|"+prefix]
