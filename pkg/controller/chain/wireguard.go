@@ -16,6 +16,7 @@ import (
 
 	"github.com/imksoo/routerd/internal/statusvalue"
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/apply"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/lifecycle"
@@ -63,6 +64,17 @@ func (c WireGuardController) Reconcile(ctx context.Context) error {
 	}
 	current := c
 	current.Router = resolved.Router
+	if platform.CurrentOS() == platform.OSLinux && !c.DryRun {
+		names, err := apply.ExtraWireGuardInterfaces(ctx, current.Router)
+		if err != nil {
+			return err
+		}
+		for _, name := range names {
+			if err := current.deleteWireGuardInterface(ctx, name); err != nil {
+				return err
+			}
+		}
+	}
 	if err := current.cleanupStaleResources(ctx); err != nil {
 		return err
 	}
@@ -980,20 +992,21 @@ func (c WireGuardController) cleanupStaleResources(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	desiredInterfaces := map[string]struct{}{}
+	desiredInterfaces, err := apply.ConfiguredWireGuardInterfaces(c.Router)
+	if err != nil {
+		return err
+	}
 	desiredPeers := map[string]struct{}{}
 	desiredListenPorts := map[int]struct{}{}
 	desired := map[string]bool{}
 	for _, resource := range c.Router.Spec.Resources {
 		switch resource.Kind {
 		case "WireGuardInterface":
-			desiredInterfaces[resource.Metadata.Name] = struct{}{}
 			desired[lifecycle.OwnerKey(api.NetAPIVersion, "WireGuardInterface", resource.Metadata.Name)] = true
 			if spec, err := resource.WireGuardInterfaceSpec(); err == nil && spec.ListenPort > 0 {
 				desiredListenPorts[spec.ListenPort] = struct{}{}
 			}
 			if ifname := interfaceIfName(c.Router, resource.Metadata.Name); ifname != "" {
-				desiredInterfaces[ifname] = struct{}{}
 				desired[lifecycle.OwnerKey(api.NetAPIVersion, "WireGuardInterface", ifname)] = true
 			}
 		case "WireGuardPeer":
@@ -1012,11 +1025,16 @@ func (c WireGuardController) cleanupStaleResources(ctx context.Context) error {
 			continue
 		}
 		ifname := firstNonEmpty(statusvalue.Field(item.Status, "ifname"), statusvalue.Field(item.Status, "interface"), item.Name)
+		if desiredInterfaces[ifname] || desiredInterfaces[api.ResolveInterfaceIfName(c.Router, ifname)] {
+			ifname = ""
+		}
 		if err := c.teardownWireGuardInterface(ctx, item, ifname, desiredListenPorts, deleter); err != nil {
 			return err
 		}
 		staleInterfaces[item.Name] = struct{}{}
-		staleInterfaces[ifname] = struct{}{}
+		if ifname != "" {
+			staleInterfaces[ifname] = struct{}{}
+		}
 	}
 	for _, action := range plan.Actions {
 		if action.Type != lifecycle.GCActionTeardownResource {

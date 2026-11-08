@@ -240,6 +240,13 @@ func (e *Engine) evaluate(router, declared *api.Router, includePlan bool) (*Resu
 			for _, name := range vxlans {
 				result.Orphans = append(result.Orphans, OrphanedArtifact{Kind: "VXLANTunnel", Name: name, Reason: "Not configured", Remediation: "Remove VXLAN"})
 			}
+			wireguards, err := ExtraWireGuardInterfaces(context.Background(), router)
+			if err != nil {
+				return nil, err
+			}
+			for _, name := range wireguards {
+				result.Orphans = append(result.Orphans, OrphanedArtifact{Kind: "WireGuardInterface", Name: name, Reason: "Not configured", Remediation: "Remove WireGuard interface"})
+			}
 		}
 		if len(result.Orphans) > 0 {
 			result.Warnings = append(result.Warnings, fmt.Sprintf("%d orphaned managed artifacts found", len(result.Orphans)))
