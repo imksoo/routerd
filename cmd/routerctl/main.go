@@ -147,7 +147,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  apply -f <file|-> [--socket <path>] [--replace] [--no-reconcile]")
 	fmt.Fprintln(w, "  delete <kind>/<name> [--socket <path>] [--dry-run] [--force] [--api-version <version>] [--no-reconcile]")
 	fmt.Fprintln(w, "  rollback [--list] [--to <generation>] [--socket <path>] [--state-file <path>] [--no-reconcile]")
-	fmt.Fprintln(w, "  import --interface <name> [--interface <name> ...] [--config <router.yaml>]")
+	fmt.Fprintln(w, "  import --interface <name> [--interface <name> ...] [--address <address/prefix> ...] [--config <router.yaml>]")
 	fmt.Fprintln(w, "  log-level <debug|info|warning|error|default> [--socket <path>]")
 	fmt.Fprintln(w, "  restart dns-resolver [name] [--config <path>]")
 }

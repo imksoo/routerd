@@ -106,13 +106,15 @@ contains the libnDPI-enabled agent and declares its runtime library dependencies
 
 On an existing Linux router, inspect the physical interfaces before transferring
 their management to routerd. Run import with sufficient privileges to read the
-active network manager configuration and DHCP leases, for example:
+active network manager configuration. Select each static address to import, for example:
 
 ```sh
-sudo routerctl import --interface enp1s0 --config /usr/local/etc/routerd/router.yaml > imported.yaml
+sudo routerctl import --interface enp1s0 --address 192.0.2.1/24 --config /usr/local/etc/routerd/router.yaml > imported.yaml
 ```
 
-Omit `--config` when no routerd configuration exists. The output is a partial
+Repeat `--address` for additional static IPv4 or IPv6 addresses; without it,
+only the selected interfaces are included. Omit `--config` when no routerd
+configuration exists. The output is a partial
 candidate: merge it into the complete configuration, review the warnings and
 the existing network manager handoff, and then run `routerctl plan` before
 applying. Import itself does not change the network.
