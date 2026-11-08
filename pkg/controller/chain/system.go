@@ -2054,6 +2054,14 @@ func (c SystemdUnitController) applySystemdUnit(ctx context.Context, name, path,
 	if c.DryRun {
 		return changed, nil
 	}
+	if !fileChanged {
+		out, err := command(ctx, "systemctl", "show", "--property=NeedDaemonReload", "--value", unitName)
+		if err != nil {
+			return changed, fmt.Errorf("check unit %s reload state: %w", unitName, err)
+		}
+		fileChanged = strings.TrimSpace(string(out)) == "yes"
+		changed = changed || fileChanged
+	}
 	if fileChanged {
 		if _, err := command(ctx, "systemctl", "daemon-reload"); err != nil {
 			return changed, err
