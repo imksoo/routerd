@@ -173,21 +173,14 @@ func (c PathMTUController) applyL2MSSTable(ctx context.Context, nft, path string
 		return false, fmt.Errorf("decode nft tables: %w", err)
 	}
 	var batch bytes.Buffer
-	hadCurrent, hadOld := false, false
+	hadCurrent := false
 	for _, object := range listing.Objects {
 		table := object.Table
-		if table == nil || table.Family != "bridge" || !strings.HasPrefix(table.Name, "routerd_l2_") {
-			continue
-		}
-		if strings.Trim(table.Name, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_") != "" {
+		if table == nil || table.Family != "bridge" || table.Name != "routerd_l2_mss" {
 			continue
 		}
 		fmt.Fprintf(&batch, "delete table bridge %s\n", table.Name)
-		if table.Name == "routerd_l2_mss" {
-			hadCurrent = true
-		} else {
-			hadOld = true
-		}
+		hadCurrent = true
 	}
 	batch.Write(data)
 	if batch.Len() == 0 {
@@ -220,7 +213,7 @@ func (c PathMTUController) applyL2MSSTable(ctx context.Context, nft, path string
 			return false, err
 		}
 	}
-	return changed || removedOwner || hadOld || (hadCurrent != (len(bytes.TrimSpace(data)) > 0)), nil
+	return changed || removedOwner || (hadCurrent != (len(bytes.TrimSpace(data)) > 0)), nil
 }
 
 func (c PathMTUController) applyTable(ctx context.Context, nft, path, family, table string, data []byte) (bool, error) {
