@@ -187,6 +187,9 @@ func (e *Engine) evaluate(router, declared *api.Router, includePlan bool) (*Resu
 		case "IngressService":
 			rr.Phase = "Unknown"
 			rr.Observed["reason"] = "IngressRuntimeNotObserved"
+		case "VirtualAddress":
+			rr.Phase = "Unknown"
+			rr.Observed["reason"] = "VirtualAddressRuntimeNotObserved"
 		case "Hostname":
 			e.observeHostname(res, osNet, includePlan, &rr)
 		}
