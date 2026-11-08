@@ -86,7 +86,7 @@ func loadPlanLedger(path string, transient bool) (resource.Ledger, error) {
 	} else if err != nil {
 		return nil, err
 	}
-	return resource.LoadLedger(path)
+	return resource.LoadLedgerReadOnly(path)
 }
 
 func appendUniqueOrphans(existing, additions []apply.OrphanedArtifact) []apply.OrphanedArtifact {

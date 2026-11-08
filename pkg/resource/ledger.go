@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -60,6 +61,24 @@ func LoadLedger(path string) (Ledger, error) {
 		ledger.Version = 1
 	}
 	return &ledger, nil
+}
+
+// LoadLedgerReadOnly reads an existing ledger without initializing its schema.
+func LoadLedgerReadOnly(path string) (Ledger, error) {
+	if filepath.Ext(path) == ".json" {
+		return LoadLedger(path)
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	u := url.URL{Scheme: "file", Path: abs, RawQuery: "mode=ro"}
+	db, err := sql.Open("sqlite", u.String())
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	return &SQLiteLedger{path: path, db: db}, nil
 }
 
 func (l *JSONLedger) Remember(artifacts []Artifact) error {
