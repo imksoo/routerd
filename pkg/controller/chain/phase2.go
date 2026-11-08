@@ -146,6 +146,7 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 	}
 	desired := map[string]struct{}{}
 	enabled := map[string]struct{}{}
+	activeResources := map[string]struct{}{}
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "DSLiteTunnel" {
 			continue
@@ -155,6 +156,7 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 			return err
 		}
 		ifname := firstNonEmpty(spec.TunnelName, spec.Interface, resource.Metadata.Name)
+		activeResources[resource.ID()] = struct{}{}
 		desired[ifname] = struct{}{}
 		if api.BoolDefault(spec.Enabled, true) {
 			enabled[ifname] = struct{}{}
@@ -171,14 +173,18 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		ifname := firstNonEmpty(spec.TunnelName, spec.Interface, resource.Metadata.Name)
-		if _, active := desired[ifname]; active {
+		if _, active := activeResources[resource.ID()]; active {
 			continue
 		}
+		ifname := firstNonEmpty(spec.TunnelName, spec.Interface, resource.Metadata.Name)
+		_, referenced := desired[ifname]
 		_, inUse := enabled[ifname]
-		if !c.DryRun && !inUse {
+		if !c.DryRun && !referenced && !inUse {
 			if err := deleteDSLiteTunnel(ctx, ifname); err != nil {
 				failures = append(failures, fmt.Sprintf("remove %s: %v", resource.Metadata.Name, err))
+				if saveErr := c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Error", "reason": "TunnelRemoveFailed", "interface": ifname, "error": err.Error()}); saveErr != nil {
+					return saveErr
+				}
 				continue
 			}
 		}
