@@ -1066,7 +1066,7 @@ func (c WireGuardController) cleanupStaleResources(ctx context.Context) error {
 }
 
 func (c WireGuardController) teardownWireGuardInterface(ctx context.Context, item routerstate.ObjectStatus, ifname string, desiredListenPorts map[int]struct{}, deleter routerstate.ObjectDeleteStore) error {
-	if ifname != "" && !c.DryRun {
+	if ifname != "" && !c.DryRun && platform.CurrentOS() != platform.OSLinux {
 		if err := c.deleteWireGuardInterface(ctx, ifname); err != nil {
 			return err
 		}
