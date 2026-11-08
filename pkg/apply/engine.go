@@ -467,10 +467,12 @@ func (e *Engine) observePackage(res api.Resource, includePlan bool, rr *Resource
 			}
 		}
 	}
+	matchedOS := false
 	for _, set := range spec.Packages {
 		if set.OS != osName {
 			continue
 		}
+		matchedOS = true
 		manager := set.Manager
 		if manager == "" {
 			switch osName {
@@ -506,6 +508,10 @@ func (e *Engine) observePackage(res api.Resource, includePlan bool, rr *Resource
 			}
 		}
 		break
+	}
+	if !matchedOS {
+		rr.Phase = "Drifted"
+		rr.Warnings = append(rr.Warnings, "no package set for host OS: "+osName)
 	}
 	if includePlan {
 		rr.Plan = append(rr.Plan, "ensure OS packages declared for the current host OS are installed")
