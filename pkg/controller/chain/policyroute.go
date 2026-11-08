@@ -36,6 +36,7 @@ type IPv4PolicyRouteController struct {
 	Bus                 *bus.Bus
 	Store               Store
 	DryRun              bool
+	ForceApply          bool
 	NftCommand          string
 	PolicyPath          string
 	DefaultRoutePath    string
@@ -1596,8 +1597,7 @@ func (c IPv4PolicyRouteController) applyNftTable(ctx context.Context, nft, path,
 		return err
 	}
 	missing := exec.CommandContext(ctx, nft, "list", "table", family, table).Run() != nil
-	if !changed && !missing && nftstate.RecentlyVerified(path, time.Now().UTC()) {
-		_ = nftstate.MarkVerified(path, time.Now().UTC())
+	if !c.ForceApply && !changed && !missing && nftstate.RecentlyVerified(path, time.Now().UTC()) {
 		return nil
 	}
 	applyPath := path

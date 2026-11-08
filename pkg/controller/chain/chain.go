@@ -2169,7 +2169,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	route := IPv4RouteController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, Logger: logger}
 	hybridRoute := HybridRouteController{Router: r.currentRouter(), EffectiveRouter: r.currentRouter(), Store: store}
 	samController := SAMController{Router: r.currentRouter(), Store: store, DryRun: opts.DryRunRoute}
-	policyRoute := IPv4PolicyRouteController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, NftCommand: opts.NftCommand, LedgerPath: opts.LedgerPath, Logger: logger}
+	policyRoute := IPv4PolicyRouteController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, ForceApply: !startAuxiliary, NftCommand: opts.NftCommand, LedgerPath: opts.LedgerPath, Logger: logger}
 	pathMTU := PathMTUController{Router: r.currentRouter(), OS: platform.CurrentOS(), Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, NftCommand: opts.NftCommand, Path: opts.PathMTUPath, ForceFragmentPath: opts.ForceFragmentPath}
 	dhcpv6 := DHCPv6ServerController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunDHCPv6, Command: opts.DnsmasqCommand, ConfigPath: opts.DnsmasqConfig, PIDFile: opts.DnsmasqPID, Port: opts.DnsmasqPort, ListenAddresses: opts.DnsmasqListen}
 	dhcp4Client := dhcpv4client.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DaemonSockets: opts.DaemonSockets, DryRun: opts.DryRunDHCPv4Client, Logger: logger}
