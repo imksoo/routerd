@@ -79,7 +79,7 @@ DS-Lite、PPPoE、BGP、管理保護の例は、ISP 固有の情報や追加の 
 ```sh
 LAB_DIR="$(mktemp -d)"
 sudo routerd validate --config router.yaml
-sudo routerd apply --config router.yaml --once --dry-run --skip-service-manager \
+sudo routerd apply --config router.yaml --once --dry-run \
   --state-file "$LAB_DIR/state.db" \
   --ledger-file "$LAB_DIR/ledger.db" \
   --status-file "$LAB_DIR/status.json"

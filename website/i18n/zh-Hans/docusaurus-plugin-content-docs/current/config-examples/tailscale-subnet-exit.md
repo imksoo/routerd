@@ -65,7 +65,7 @@ flowchart LR
 ```bash
 LAB_DIR="$(mktemp -d)"
 sudo routerd validate --config examples/tailscale-exit-subnet.yaml
-sudo routerd apply --config examples/tailscale-exit-subnet.yaml --once --dry-run --skip-service-manager \
+sudo routerd apply --config examples/tailscale-exit-subnet.yaml --once --dry-run \
   --state-file "$LAB_DIR/state.db" \
   --ledger-file "$LAB_DIR/ledger.db" \
   --status-file "$LAB_DIR/status.json"

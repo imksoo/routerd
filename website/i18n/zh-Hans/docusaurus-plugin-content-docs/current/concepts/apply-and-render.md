@@ -34,7 +34,7 @@ dry-run 会计算资源顺序、派生项和渲染意图，同时不提交网络
 
 ```bash
 workdir=$(mktemp -d)
-routerd apply --once --dry-run --skip-service-manager --config first-router.yaml --status-file "$workdir/status.json" --state-file "$workdir/state.db" --ledger-file "$workdir/ledger.db" --netplan-file "$workdir/50-routerd.yaml" --dnsmasq-file "$workdir/dnsmasq.conf" --dnsmasq-service-file "$workdir/routerd-dnsmasq.service" --nftables-file "$workdir/routerd-nat.nft"
+routerd apply --once --dry-run --config first-router.yaml --status-file "$workdir/status.json" --state-file "$workdir/state.db" --ledger-file "$workdir/ledger.db" --netplan-file "$workdir/50-routerd.yaml" --dnsmasq-file "$workdir/dnsmasq.conf" --dnsmasq-service-file "$workdir/routerd-dnsmasq.service" --nftables-file "$workdir/routerd-nat.nft"
 ```
 
 `--state-file`、`--ledger-file`、`--status-file` 和渲染文件参数都指向临时目录。dry-run 仍可能读取主机状态来形成计划，因此不要把它理解为完全脱离主机的模拟器。

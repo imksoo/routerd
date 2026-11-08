@@ -79,7 +79,6 @@ type applyOptions struct {
 	BGPControlSocketPath string
 	BGPStatePath         string
 	DryRun               bool
-	SkipServiceManager   bool
 	AllowMgmtLockout     bool
 	AnnounceDryRunToCLI  bool
 	MgmtLockoutWriter    io.Writer
@@ -813,9 +812,6 @@ func applyChainControllerOptions(opts applyOptions) controllerchain.Options {
 	if opts.DryRun {
 		applyDryRunControllerOptions(&controllerOpts, controllerOpts.DnsmasqConfig, controllerOpts.NftablesPath)
 		controllerOpts.FirewallPath = filepath.Join(filepath.Dir(controllerOpts.NftablesPath), "firewall.nft")
-	}
-	if opts.SkipServiceManager {
-		controllerOpts.DryRunServiceUnit = true
 	}
 	return controllerOpts
 }

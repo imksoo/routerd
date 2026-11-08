@@ -79,7 +79,7 @@ routerd 的 firewall 资源只是功能基础，不是安全认证。不要只�
 sudo routerd validate --config first-router.yaml
 
 LAB_DIR="$(mktemp -d)"
-sudo routerd apply --config first-router.yaml --once --dry-run --skip-service-manager \
+sudo routerd apply --config first-router.yaml --once --dry-run \
   --state-file "$LAB_DIR/state.db" \
   --ledger-file "$LAB_DIR/ledger.db" \
   --status-file "$LAB_DIR/status.json"

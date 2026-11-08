@@ -34,7 +34,7 @@ dry-run 會計算資源順序、衍生項目和產生意圖，但不提交網路
 
 ```bash
 workdir=$(mktemp -d)
-routerd apply --once --dry-run --skip-service-manager --config first-router.yaml --status-file "$workdir/status.json" --state-file "$workdir/state.db" --ledger-file "$workdir/ledger.db" --netplan-file "$workdir/50-routerd.yaml" --dnsmasq-file "$workdir/dnsmasq.conf" --dnsmasq-service-file "$workdir/routerd-dnsmasq.service" --nftables-file "$workdir/routerd-nat.nft"
+routerd apply --once --dry-run --config first-router.yaml --status-file "$workdir/status.json" --state-file "$workdir/state.db" --ledger-file "$workdir/ledger.db" --netplan-file "$workdir/50-routerd.yaml" --dnsmasq-file "$workdir/dnsmasq.conf" --dnsmasq-service-file "$workdir/routerd-dnsmasq.service" --nftables-file "$workdir/routerd-nat.nft"
 ```
 
 `--state-file`、`--ledger-file`、`--status-file` 和各個產生檔參數都指向暫存路徑。dry-run 仍可能讀取主機狀態來形成計畫，因此它不是完全脫離主機的模擬器。

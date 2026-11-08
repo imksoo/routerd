@@ -161,7 +161,7 @@ const copy: Record<SupportedHomepageLocale, SiteCopy> = {
       {
         title: '2. Run an isolated dry-run',
         body: 'This uses temporary state, ledger, and status paths while it exercises the one-shot apply path. It does not apply network changes or write routerd’s normal state files; no daemon or routerctl command is involved.',
-        command: 'LAB_DIR="$(mktemp -d)"\nsudo routerd apply --config first-router.yaml --once --dry-run --skip-service-manager --state-file "$LAB_DIR/state.db" --ledger-file "$LAB_DIR/ledger.db" --status-file "$LAB_DIR/status.json"\nrm -rf "$LAB_DIR"',
+        command: 'LAB_DIR="$(mktemp -d)"\nsudo routerd apply --config first-router.yaml --once --dry-run --state-file "$LAB_DIR/state.db" --ledger-file "$LAB_DIR/ledger.db" --status-file "$LAB_DIR/status.json"\nrm -rf "$LAB_DIR"',
       },
       {
         title: '3. Apply live from the console',
@@ -275,7 +275,7 @@ const copy: Record<SupportedHomepageLocale, SiteCopy> = {
       {
         title: '2. 隔離した dry-run を実行する',
         body: '一時ディレクトリへ state、ledger、status を出して、1回分の apply 経路を確認します。ネットワーク変更や通常の routerd 状態ファイルは書かれず、routerd デーモンも routerctl も使いません。',
-        command: 'LAB_DIR="$(mktemp -d)"\nsudo routerd apply --config first-router.yaml --once --dry-run --skip-service-manager --state-file "$LAB_DIR/state.db" --ledger-file "$LAB_DIR/ledger.db" --status-file "$LAB_DIR/status.json"\nrm -rf "$LAB_DIR"',
+        command: 'LAB_DIR="$(mktemp -d)"\nsudo routerd apply --config first-router.yaml --once --dry-run --state-file "$LAB_DIR/state.db" --ledger-file "$LAB_DIR/ledger.db" --status-file "$LAB_DIR/status.json"\nrm -rf "$LAB_DIR"',
       },
       {
         title: '3. コンソールから live apply する',
@@ -385,7 +385,7 @@ const copy: Record<SupportedHomepageLocale, SiteCopy> = {
       {
         title: '2. 執行隔離的 dry-run',
         body: '此步驟會使用暫存的 state、ledger 與 status 路徑執行一次套用流程，不會套用網路變更或寫入 routerd 的正常狀態檔。它仍是獨立操作，不需要守護程式或 routerctl。',
-        command: 'LAB_DIR="$(mktemp -d)"\nsudo routerd apply --config first-router.yaml --once --dry-run --skip-service-manager --state-file "$LAB_DIR/state.db" --ledger-file "$LAB_DIR/ledger.db" --status-file "$LAB_DIR/status.json"\nrm -rf "$LAB_DIR"',
+        command: 'LAB_DIR="$(mktemp -d)"\nsudo routerd apply --config first-router.yaml --once --dry-run --state-file "$LAB_DIR/state.db" --ledger-file "$LAB_DIR/ledger.db" --status-file "$LAB_DIR/status.json"\nrm -rf "$LAB_DIR"',
       },
       {
         title: '3. 從主控台進行 live 套用',
@@ -495,7 +495,7 @@ const copy: Record<SupportedHomepageLocale, SiteCopy> = {
       {
         title: '2. 运行隔离的 dry-run',
         body: '这会使用临时的 state、ledger 和 status 路径执行一次应用流程，不应用网络变更，也不写入 routerd 的正常状态文件。它仍是独立操作，不需要守护进程或 routerctl。',
-        command: 'LAB_DIR="$(mktemp -d)"\nsudo routerd apply --config first-router.yaml --once --dry-run --skip-service-manager --state-file "$LAB_DIR/state.db" --ledger-file "$LAB_DIR/ledger.db" --status-file "$LAB_DIR/status.json"\nrm -rf "$LAB_DIR"',
+        command: 'LAB_DIR="$(mktemp -d)"\nsudo routerd apply --config first-router.yaml --once --dry-run --state-file "$LAB_DIR/state.db" --ledger-file "$LAB_DIR/ledger.db" --status-file "$LAB_DIR/status.json"\nrm -rf "$LAB_DIR"',
       },
       {
         title: '3. 从控制台进行 live 应用',

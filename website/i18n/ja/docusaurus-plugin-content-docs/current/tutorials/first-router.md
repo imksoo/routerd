@@ -90,7 +90,7 @@ routerd の firewall リソースは機能の基礎であり、安全性の認�
 sudo routerd validate --config first-router.yaml
 
 LAB_DIR="$(mktemp -d)"
-sudo routerd apply --config first-router.yaml --once --dry-run --skip-service-manager \
+sudo routerd apply --config first-router.yaml --once --dry-run \
   --state-file "$LAB_DIR/state.db" \
   --ledger-file "$LAB_DIR/ledger.db" \
   --status-file "$LAB_DIR/status.json"

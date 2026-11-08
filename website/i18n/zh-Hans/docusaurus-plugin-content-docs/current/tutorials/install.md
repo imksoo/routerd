@@ -40,7 +40,7 @@ sudo routerd validate --config /usr/local/etc/routerd/router.yaml
 
 ```bash
 LAB_DIR="$(mktemp -d)"
-sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once --dry-run --skip-service-manager \
+sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once --dry-run \
   --state-file "$LAB_DIR/state.db" \
   --ledger-file "$LAB_DIR/ledger.db" \
   --status-file "$LAB_DIR/status.json" \
@@ -50,7 +50,6 @@ sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once --dry-run 
   --nftables-file "$LAB_DIR/routerd-nat.nft"
 ```
 
-`--skip-service-manager` 会跳过服务管理器操作；所有状态和渲染文件都留在临时目录中。
 
 只有在你有控制台或独立管理路径，并已检查输出后，才启动服务：
 

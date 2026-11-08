@@ -16,7 +16,7 @@ title: 带有 BGP 的 Kubernetes API VIP
 ```bash
 LAB_DIR="$(mktemp -d)"
 sudo routerd validate --config examples/kubernetes-api-vip.yaml
-sudo routerd apply --config examples/kubernetes-api-vip.yaml --once --dry-run --skip-service-manager \
+sudo routerd apply --config examples/kubernetes-api-vip.yaml --once --dry-run \
   --state-file "$LAB_DIR/state.db" \
   --ledger-file "$LAB_DIR/ledger.db" \
   --status-file "$LAB_DIR/status.json"

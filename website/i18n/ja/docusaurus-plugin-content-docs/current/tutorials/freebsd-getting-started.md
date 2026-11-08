@@ -105,7 +105,7 @@ routerd は、リソースを次の FreeBSD の機構へ対応付けます。
 
 ```sh
 workdir=$(mktemp -d)
-sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once --dry-run --skip-service-manager \
+sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once --dry-run \
   --state-file "$workdir/state.db" \
   --ledger-file "$workdir/ledger.db" \
   --status-file "$workdir/status.json"

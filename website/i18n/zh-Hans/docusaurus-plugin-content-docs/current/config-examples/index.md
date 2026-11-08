@@ -79,7 +79,7 @@ AFTR/DNS 和 PPPoE 认证信息。理解这个小实验后，再根据自己的�
 ```bash
 LAB_DIR="$(mktemp -d)"
 sudo routerd validate --config router.yaml
-sudo routerd apply --config router.yaml --once --dry-run --skip-service-manager \
+sudo routerd apply --config router.yaml --once --dry-run \
   --state-file "$LAB_DIR/state.db" \
   --ledger-file "$LAB_DIR/ledger.db" \
   --status-file "$LAB_DIR/status.json"

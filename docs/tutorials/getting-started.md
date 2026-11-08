@@ -93,7 +93,7 @@ writing routerd's normal state files.
 
 ```bash
 workdir=$(mktemp -d)
-routerd apply --config first-router.yaml --once --dry-run --skip-service-manager \
+routerd apply --config first-router.yaml --once --dry-run \
   --state-file "$workdir/state.db" \
   --ledger-file "$workdir/ledger.db" \
   --status-file "$workdir/status.json"

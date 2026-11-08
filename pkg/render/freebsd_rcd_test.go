@@ -210,9 +210,7 @@ func TestFreeBSDRenderSkipsDHCPClientRCDWhenRouterdSupervisesClients(t *testing.
 	if strings.Contains(routerdScript, "controller"+"-chain") {
 		t.Fatalf("routerd rc.d script must not expose legacy controller flags:\n%s", routerdScript)
 	}
-	if !strings.Contains(routerdScript, "'serve'") || strings.Contains(routerdScript, "--skip-service-manager") {
-		t.Fatalf("routerd rc.d script must run serve without skip-service-manager:\n%s", routerdScript)
-	}
+
 	if strings.Contains(routerdScript, `'/usr/local/sbin/routerd' 'check'`) {
 		t.Fatalf("routerd rc.d script must not call removed routerd check verb:\n%s", routerdScript)
 	}

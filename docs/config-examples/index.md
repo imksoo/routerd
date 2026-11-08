@@ -82,7 +82,7 @@ Before applying an example on a router you are actively using:
 sudo routerd validate --config router.yaml
 
 workdir=$(mktemp -d)
-sudo routerd apply --config router.yaml --once --dry-run --skip-service-manager \
+sudo routerd apply --config router.yaml --once --dry-run \
   --state-file "$workdir/state.db" \
   --ledger-file "$workdir/ledger.db" \
   --status-file "$workdir/status.json"

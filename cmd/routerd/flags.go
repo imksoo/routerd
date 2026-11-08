@@ -15,7 +15,6 @@ type applyFlagValues struct {
 	StatePath          *string
 	Once               *bool
 	DryRun             *bool
-	SkipServiceManager *bool
 	AllowMgmtLockout   *bool
 }
 
@@ -35,7 +34,6 @@ func registerApplyFlags(fs *flag.FlagSet, includeConfig, includeOnce bool) apply
 		flags.Once = fs.Bool("once", false, "run one apply loop")
 	}
 	flags.DryRun = fs.Bool("dry-run", false, "plan without applying changes")
-	flags.SkipServiceManager = fs.Bool("skip-service-manager", false, "skip applying service-manager units during this apply")
 	flags.AllowMgmtLockout = fs.Bool("allow-mgmt-lockout", false, "allow apply to continue despite ManagementAccess lockout findings")
 	return flags
 }
@@ -51,7 +49,6 @@ func (flags applyFlagValues) applyOptions(configPath string) applyOptions {
 		LedgerPath:          *flags.LedgerPath,
 		StatePath:           *flags.StatePath,
 		DryRun:              *flags.DryRun,
-		SkipServiceManager:  *flags.SkipServiceManager,
 		AllowMgmtLockout:    *flags.AllowMgmtLockout,
 		AnnounceDryRunToCLI: true,
 	}

@@ -83,7 +83,7 @@ routerd がルーターを通る IP 通信を制限しても、共有された L
 cp examples/guest-mode.yaml ./guest-mode.yaml
 LAB_DIR="$(mktemp -d)"
 sudo routerd validate --config ./guest-mode.yaml
-sudo routerd apply --config ./guest-mode.yaml --once --dry-run --skip-service-manager \
+sudo routerd apply --config ./guest-mode.yaml --once --dry-run \
   --state-file "$LAB_DIR/state.db" \
   --ledger-file "$LAB_DIR/ledger.db" \
   --status-file "$LAB_DIR/status.json"

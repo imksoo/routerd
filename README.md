@@ -118,7 +118,7 @@ Save your reviewed file as `first-router.yaml`, then check it without a daemon:
 sudo routerd validate --config first-router.yaml
 
 workdir=$(mktemp -d)
-sudo routerd apply --config first-router.yaml --once --dry-run --skip-service-manager \
+sudo routerd apply --config first-router.yaml --once --dry-run \
   --state-file "$workdir/state.db" \
   --ledger-file "$workdir/ledger.db" \
   --status-file "$workdir/status.json"

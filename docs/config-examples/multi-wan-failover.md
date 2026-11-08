@@ -98,7 +98,7 @@ flowchart LR
 sudo routerd validate --config examples/multi-wan-home.yaml
 
 workdir=$(mktemp -d)
-sudo routerd apply --config examples/multi-wan-home.yaml --once --dry-run --skip-service-manager \
+sudo routerd apply --config examples/multi-wan-home.yaml --once --dry-run \
   --state-file "$workdir/state.db" \
   --ledger-file "$workdir/ledger.db" \
   --status-file "$workdir/status.json"

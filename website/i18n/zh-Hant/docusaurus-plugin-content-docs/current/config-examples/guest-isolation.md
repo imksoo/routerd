@@ -60,7 +60,7 @@ routerd 的防火牆與 ClientPolicy 仍在預發布的基礎實作階段。這�
 ```bash
 LAB_DIR="$(mktemp -d)"
 sudo routerd validate --config examples/guest-mode.yaml
-sudo routerd apply --config examples/guest-mode.yaml --once --dry-run --skip-service-manager \
+sudo routerd apply --config examples/guest-mode.yaml --once --dry-run \
   --state-file "$LAB_DIR/state.db" \
   --ledger-file "$LAB_DIR/ledger.db" \
   --status-file "$LAB_DIR/status.json"

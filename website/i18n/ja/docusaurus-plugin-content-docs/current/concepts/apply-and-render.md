@@ -44,7 +44,7 @@ dry-run は、読み込んだリソースの順番と生成する内容を確認
 
 ```sh
 LAB_DIR="$(mktemp -d)"
-sudo routerd apply --config ./router.yaml --once --dry-run --skip-service-manager \
+sudo routerd apply --config ./router.yaml --once --dry-run \
   --state-file "$LAB_DIR/state.db" \
   --ledger-file "$LAB_DIR/ledger.db" \
   --status-file "$LAB_DIR/status.json"

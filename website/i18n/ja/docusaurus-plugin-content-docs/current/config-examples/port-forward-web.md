@@ -89,7 +89,7 @@ hairpin を使うには、LAN 側から見える公開宛先のアドレスが�
 ```sh
 LAB_DIR="$(mktemp -d)"
 sudo routerd validate --config examples/example-port-forward-web.yaml
-sudo routerd apply --config examples/example-port-forward-web.yaml --once --dry-run --skip-service-manager \
+sudo routerd apply --config examples/example-port-forward-web.yaml --once --dry-run \
   --state-file "$LAB_DIR/state.db" \
   --ledger-file "$LAB_DIR/ledger.db" \
   --status-file "$LAB_DIR/status.json"

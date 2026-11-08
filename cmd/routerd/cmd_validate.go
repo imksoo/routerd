@@ -62,7 +62,6 @@ func checkCommand(args []string, stdout io.Writer) (err error) {
 		StatePath:           defaultStatePath,
 		LedgerPath:          defaultLedgerPath,
 		DryRun:              true,
-		SkipServiceManager:  true,
 		AnnounceDryRunToCLI: false,
 	}
 	result, err := runApplyChainOnce(context.Background(), router, opts, io.Discard, logger)
