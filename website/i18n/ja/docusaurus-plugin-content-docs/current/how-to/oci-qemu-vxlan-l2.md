@@ -27,8 +27,7 @@ LAN側tapを、OCI host内部だけの`br-legacy`へ接続します。VCN VNIC�
 routerdでは両端に同じVNIを持つ`VXLANTunnel`を作成し、LAN側NICとVXLAN deviceを
 同じ`Bridge`へ参加させます。`VXLANTunnel`はpeerごとにall-zero MACのFDB entryを
 作るため、broadcastとunknown unicastをunicast underlayへ複製します。
-`VXLANSegment`の既定L2 filterは使用しないため、ARP、DHCPv4、IPv6 RS/RA/NS/NA、
-DHCPv6が透過します。
+ARP、DHCPv4、IPv6 RS/RA/NS/NA、DHCPv6が透過します。
 
 本番`vmbr0`へ接続する前に、次の順序で確認します。
 

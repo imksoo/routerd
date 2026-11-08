@@ -74,8 +74,7 @@ spec:
 not its kernel `ifname` (`br-l2`). Swap `.1` and `.2` on the OCI endpoint.
 `VXLANTunnel` installs an all-zero MAC
 FDB entry per peer, so broadcast and unknown-unicast frames are replicated over
-the unicast underlay. It does not apply the default `VXLANSegment` control-plane
-filter. ARP, DHCPv4, IPv6 RS/RA/NS/NA, and DHCPv6 therefore cross the bridge.
+the unicast underlay. ARP, DHCPv4, IPv6 RS/RA/NS/NA, and DHCPv6 cross the bridge.
 
 Set `spec.tcpMSSClamp: true` when the stretched L2 path has a smaller effective
 MTU than its attached LAN. routerd then owns `table bridge routerd_l2_mss` and
