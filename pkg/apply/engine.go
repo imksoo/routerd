@@ -184,6 +184,9 @@ func (e *Engine) evaluate(router, declared *api.Router, includePlan bool) (*Resu
 			e.observeFirewallRule(res, includePlan, &rr)
 		case "FirewallFlowPinhole":
 			e.observeFirewallFlowPinhole(res, includePlan, &rr)
+		case "IngressService":
+			rr.Phase = "Unknown"
+			rr.Observed["reason"] = "IngressRuntimeNotObserved"
 		case "Hostname":
 			e.observeHostname(res, osNet, includePlan, &rr)
 		}
