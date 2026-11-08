@@ -132,6 +132,7 @@ func cleanupLedgerOwnedOrphansEffective(effective, declared *api.Router, ledgerP
 	}
 	var removed []string
 	var removedArtifacts []resource.Artifact
+	var cleanupErr error
 	for _, action := range plan.Actions {
 		if action.Type != lifecycle.GCActionRemoveArtifact {
 			continue
@@ -139,7 +140,8 @@ func cleanupLedgerOwnedOrphansEffective(effective, declared *api.Router, ledgerP
 		artifact := action.Artifact
 		label, err := cleanupLedgerOwnedArtifact(artifact)
 		if err != nil {
-			return removed, err
+			cleanupErr = err
+			break
 		}
 		if label == "" {
 			continue
@@ -149,13 +151,13 @@ func cleanupLedgerOwnedOrphansEffective(effective, declared *api.Router, ledgerP
 	}
 	if len(removedArtifacts) > 0 {
 		if err := ledger.Forget(removedArtifacts); err != nil {
-			return removed, err
+			return removed, errors.Join(cleanupErr, err)
 		}
 		if err := ledger.Save(ledgerPath); err != nil {
-			return removed, err
+			return removed, errors.Join(cleanupErr, err)
 		}
 	}
-	return removed, nil
+	return removed, cleanupErr
 }
 
 func cleanupLedgerOwnedArtifact(artifact resource.Artifact) (string, error) {

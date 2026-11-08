@@ -148,19 +148,16 @@ func ensureLoopbackUp() error {
 
 func cleanupServeLedgerOwnedOrphans(effective, declared *api.Router, ledgerPath string, logger *eventlog.Logger) ([]string, error) {
 	removed, err := cleanupLedgerOwnedOrphansEffective(effective, declared, ledgerPath)
-	if err != nil {
-		if logger != nil {
-			logger.Emit(eventlog.LevelWarning, "serve", "ledger orphan cleanup encountered an error", map[string]string{"error": err.Error()})
-		}
-		return nil, err
-	}
 	if len(removed) > 0 && logger != nil {
 		logger.Emit(eventlog.LevelInfo, "serve", "removed ledger-owned orphaned artifacts", map[string]string{
 			"count":     strconv.Itoa(len(removed)),
 			"artifacts": strings.Join(removed, ","),
 		})
 	}
-	return removed, nil
+	if err != nil && logger != nil {
+		logger.Emit(eventlog.LevelWarning, "serve", "ledger orphan cleanup encountered an error", map[string]string{"error": err.Error()})
+	}
+	return removed, err
 }
 
 type serveBootFallback struct {
