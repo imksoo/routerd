@@ -556,7 +556,7 @@ type IPv4StaticAddressSpec struct {
 	When      ResourceWhenSpec `yaml:"when,omitempty" json:"when,omitempty"`
 	// Exclusive removes other IPv4 addresses from the target interface before adding this address.
 	Exclusive bool `yaml:"exclusive,omitempty" json:"exclusive,omitempty"`
-	// AllowOverlap permits an address prefix that overlaps another configured IPv4 prefix.
+	// AllowOverlap and AllowOverlapReason remain readable in existing configurations.
 	AllowOverlap       bool   `yaml:"allowOverlap,omitempty" json:"allowOverlap,omitempty"`
 	AllowOverlapReason string `yaml:"allowOverlapReason,omitempty" json:"allowOverlapReason,omitempty"`
 }

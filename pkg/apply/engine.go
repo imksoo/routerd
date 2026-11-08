@@ -2806,8 +2806,6 @@ func stringSpec(res api.Resource, key string) string {
 			return spec.Interface
 		case "address":
 			return spec.Address
-		case "allowOverlapReason":
-			return spec.AllowOverlapReason
 		}
 	case api.DHCPv4ClientSpec:
 		switch key {
@@ -2895,8 +2893,6 @@ func boolSpec(res api.Resource, key string) bool {
 		switch key {
 		case "exclusive":
 			return spec.Exclusive
-		case "allowOverlap":
-			return spec.AllowOverlap
 		}
 	case api.DHCPv6AddressSpec:
 		if key == "required" {
