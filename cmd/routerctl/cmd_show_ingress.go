@@ -27,29 +27,6 @@ type ingressDataplaneRow struct {
 	Detail      string
 }
 
-func observeIngressDataplane(name string, spec api.IngressServiceSpec, status map[string]any) ingressDataplaneRow {
-	row := ingressDataplaneRow{
-		Service:     name,
-		IPv4Forward: dataplaneSysctlValue("net.ipv4.ip_forward"),
-		IPv6Forward: dataplaneSysctlValue("net.ipv6.conf.all.forwarding"),
-	}
-	nftDNAT, nftSNAT, nftDetail := ingressNFTRuleCounts(name)
-	row.NFTDNAT = nftDNAT
-	row.NFTSNAT = nftSNAT
-	if nftDetail != "" {
-		row.appendDetail(nftDetail)
-	}
-	if hairpinDetail := ingressHairpinDataplaneDetail(spec, status, nftSNAT); hairpinDetail != "" {
-		row.appendDetail(hairpinDetail)
-	}
-	count, detail := ingressConntrackCount(spec, status)
-	row.Conntrack = count
-	if detail != "" {
-		row.appendDetail(detail)
-	}
-	return row
-}
-
 func (r *ingressDataplaneRow) appendDetail(detail string) {
 	detail = strings.TrimSpace(detail)
 	if detail == "" {
@@ -243,74 +220,6 @@ func runDataplaneCommand(name string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	return exec.CommandContext(ctx, hostcmd.Resolve(name), args...).CombinedOutput()
-}
-
-func ingressServiceSpecs(router *api.Router) map[string]api.IngressServiceSpec {
-	out := map[string]api.IngressServiceSpec{}
-	if router == nil {
-		return out
-	}
-	for _, resource := range router.Spec.Resources {
-		if resource.Kind != "IngressService" {
-			continue
-		}
-		spec, err := resource.IngressServiceSpec()
-		if err == nil {
-			out[resource.Metadata.Name] = spec
-		}
-	}
-	return out
-}
-
-func ingressListenString(spec api.IngressServiceSpec, status map[string]any) string {
-	address := statusvalue.Text(status["listenAddress"])
-	if address == "" {
-		address = spec.Listen.Address
-	}
-	if address == "" && spec.Listen.AddressFrom.Resource != "" {
-		address = spec.Listen.AddressFrom.Resource
-	}
-	return fmt.Sprintf("%s:%s:%d", spec.Listen.Interface, defaultShowString(address, "*"), spec.Listen.Port)
-}
-
-func activeBackendString(active map[string]any) string {
-	name := statusvalue.Text(active["name"])
-	address := statusvalue.Text(active["address"])
-	port := statusInt(active["port"])
-	if name == "" && address == "" {
-		return "-"
-	}
-	if port > 0 {
-		return fmt.Sprintf("%s/%s:%d", defaultShowString(name, "-"), address, port)
-	}
-	return fmt.Sprintf("%s/%s", defaultShowString(name, "-"), address)
-}
-
-func backendAddressString(backend map[string]any) string {
-	address := statusvalue.Text(backend["address"])
-	resolved := statusvalue.Text(backend["resolvedAddress"])
-	port := statusInt(backend["port"])
-	if resolved != "" && resolved != address {
-		return fmt.Sprintf("%s -> %s:%d", address, resolved, port)
-	}
-	if port > 0 {
-		return fmt.Sprintf("%s:%d", defaultShowString(resolved, address), port)
-	}
-	return defaultShowString(resolved, address)
-}
-
-func ageString(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return "-"
-	}
-	if ts, err := time.Parse(time.RFC3339Nano, value); err == nil {
-		return humanDuration(time.Since(ts))
-	}
-	if ts, err := strconv.ParseInt(value, 10, 64); err == nil && ts > 0 {
-		return humanDuration(time.Since(time.Unix(ts, 0)))
-	}
-	return value
 }
 
 func humanDuration(d time.Duration) string {
