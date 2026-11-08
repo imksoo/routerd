@@ -301,13 +301,13 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 			if !existingVirtual {
 				virtual, existingVirtual = virtualIPv4[ifname+"|"+prefix]
 			}
-			if existingVirtual && source != "DHCPv4" && ip.Is4() && address.Scope == "global" && importStaticAddress(address, ip) {
+			if existingVirtual && ip.Is4() && importStaticAddress(address, ip) {
 				virtual.Status = nil
 				router.Spec.Resources = append(router.Spec.Resources, virtual)
 				requested[prefix] = true
 				continue
 			}
-			if source != "DHCPv4" && ip.Is4() && address.Scope == "global" && importStaticAddress(address, ip) {
+			if ip.Is4() && importStaticAddress(address, ip) {
 				static, exists := staticAddresses[resource.Metadata.Name+"|"+prefix]
 				if !exists {
 					static, exists = staticAddresses[ifname+"|"+prefix]
