@@ -26,6 +26,7 @@ import (
 	"github.com/imksoo/routerd/internal/statusvalue"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/apply"
+	bgpstate "github.com/imksoo/routerd/pkg/bgp"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
@@ -684,7 +685,7 @@ func (c IPv4RouteController) teardownRemovedRoute(ctx context.Context, status ro
 			if platform.CurrentOS() == platform.OSFreeBSD {
 				name, args = freeBSDIPv4RouteRemovalDeleteCommand(removal)
 			} else if routerHasBGP(c.Router) {
-				bgp, err := removedIPv4RouteRemovalIsCurrentlyBGP(ctx, c.run, removal)
+				bgp, err := removedIPv4RouteRemovalIsCurrentlyBGP(ctx, c.run, c.Router, c.Store, removal)
 				if err != nil {
 					return fmt.Errorf("observe removed IPv4Route %s: %w", status.Name, err)
 				}
@@ -754,9 +755,28 @@ func routeStatusString(value any) string {
 	return text
 }
 
-func removedIPv4RouteRemovalIsCurrentlyBGP(ctx context.Context, run outputCommandFunc, removal ipv4RouteRemoval) (bool, error) {
+func removedIPv4RouteRemovalIsCurrentlyBGP(ctx context.Context, run outputCommandFunc, router *api.Router, store Store, removal ipv4RouteRemoval) (bool, error) {
 	destination := removal.Destination
 	if destination == "" {
+		return false, nil
+	}
+	prefix, err := netip.ParsePrefix(destination)
+	if err != nil {
+		return false, fmt.Errorf("invalid route destination %q: %w", destination, err)
+	}
+	var selected []string
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "BGPRouter" {
+			continue
+		}
+		status := store.ObjectStatus(api.NetAPIVersion, "BGPRouter", resource.Metadata.Name)
+		raw, ok := status["installedNextHops"]
+		if !ok {
+			return false, fmt.Errorf("BGP routes for %s have not been observed", resource.Metadata.Name)
+		}
+		selected = append(selected, bgpstate.InstalledNextHopsFromStatus(raw)[prefix.Masked().String()]...)
+	}
+	if len(selected) == 0 {
 		return false, nil
 	}
 	out, err := run(ctx, "ip", "-j", "-4", "route", "show", "exact", destination)
@@ -779,6 +799,18 @@ func removedIPv4RouteRemovalIsCurrentlyBGP(ctx context.Context, run outputComman
 	}
 	for _, route := range routes {
 		if route.Protocol != "bgp" || (removal.Type == "blackhole") != (route.Type == "blackhole") || (removal.metricForMatch() != 0 && route.Metric != removal.metricForMatch()) {
+			continue
+		}
+		var actual []string
+		if route.Gateway != "" {
+			actual = append(actual, route.Gateway)
+		}
+		for _, hop := range route.Nexthops {
+			actual = append(actual, hop.Gateway)
+		}
+		slices.Sort(actual)
+		slices.Sort(selected)
+		if !slices.Equal(actual, selected) {
 			continue
 		}
 		matches := func(device, gateway string) bool {
