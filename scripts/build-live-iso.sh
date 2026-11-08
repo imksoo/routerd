@@ -885,8 +885,9 @@ enable_qemu_guest_agent
 apply_ssh_bootstrap
 
 if ! restore_config_disk_config && ! restore_cloudinit_configs && ! restore_provider_config; then
-    if [ ! -f "${config_file}" ] && [ -f /usr/local/etc/routerd/router.yaml.sample ]; then
-        cp /usr/local/etc/routerd/router.yaml.sample "${config_file}"
+    if [ ! -f "${config_file}" ]; then
+        log "router configuration is missing: ${config_file}"
+        exit 1
     fi
 fi
 
