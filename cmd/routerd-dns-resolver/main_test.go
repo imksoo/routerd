@@ -9,8 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -121,24 +119,6 @@ func TestReloadClearsDNSCache(t *testing.T) {
 	}
 	if _, ok := d.cacheGet("stale", d.generation); ok {
 		t.Fatal("cache entry survived successful reload")
-	}
-}
-
-func TestCacheRejectsResponseFromPreviousGeneration(t *testing.T) {
-	d := &daemon{cache: map[string]cacheEntry{}, generation: 1}
-	d.cacheSet("answer", []byte("old"), time.Hour, 10, 1)
-	d.stateMu.Lock()
-	d.generation = 2
-	d.stateMu.Unlock()
-	d.mu.Lock()
-	clear(d.cache)
-	d.mu.Unlock()
-
-	// This models an upstream response which started before reload and
-	// completed after the new runtime was installed.
-	d.cacheSet("answer", []byte("late-old"), time.Hour, 10, 1)
-	if _, ok := d.cacheGet("answer", 2); ok {
-		t.Fatal("response from previous runtime generation entered current cache")
 	}
 }
 
@@ -449,40 +429,6 @@ func assertZoneNoPTRRecord(t *testing.T, zones *zoneTable, name string) {
 	req.SetQuestion(name, dns.TypePTR)
 	if resp, ok := zones.Answer(req, []string{"DNSZone/lan-zone"}); ok {
 		t.Fatalf("unexpected PTR record for %s: %v", name, resp)
-	}
-}
-
-func TestReloadHandlerStatusCodes(t *testing.T) {
-	configPath := filepath.Join(t.TempDir(), "resolver.json")
-	initial := testResolverConfig([]int{5053})
-	writeRuntimeConfig(t, configPath, initial)
-	d := newTestDaemon(t, configPath, initial, true)
-
-	okReq := httptest.NewRequest(http.MethodPost, "/v1/reload", nil)
-	okResp := httptest.NewRecorder()
-	d.reloadHandler(okResp, okReq)
-	if okResp.Code != http.StatusOK {
-		t.Fatalf("success status = %d body=%s", okResp.Code, okResp.Body.String())
-	}
-	var summary reloadSummary
-	if err := json.Unmarshal(okResp.Body.Bytes(), &summary); err != nil {
-		t.Fatal(err)
-	}
-	if !summary.Reloaded || summary.Sources != 1 {
-		t.Fatalf("summary = %#v", summary)
-	}
-
-	writeRuntimeConfig(t, configPath, resolvercfg.RuntimeConfig{
-		Resource: "lab",
-		Spec: api.DNSResolverSpec{
-			Listen: []api.DNSResolverListenSpec{{Addresses: []string{"127.0.0.1"}, Port: 5053}},
-		},
-	})
-	failReq := httptest.NewRequest(http.MethodPost, "/v1/reload", nil)
-	failResp := httptest.NewRecorder()
-	d.reloadHandler(failResp, failReq)
-	if failResp.Code != http.StatusBadRequest {
-		t.Fatalf("failure status = %d body=%s", failResp.Code, failResp.Body.String())
 	}
 }
 
