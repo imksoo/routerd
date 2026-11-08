@@ -846,10 +846,12 @@ func (e *Engine) observeDSLiteTunnel(res api.Resource, aliases map[string]string
 		Info  struct {
 			Kind string `json:"info_kind"`
 			Data struct {
-				Proto  string `json:"proto"`
-				Local  string `json:"local"`
-				Remote string `json:"remote"`
-				Link   string `json:"link"`
+				Proto            string `json:"proto"`
+				Local            string `json:"local"`
+				Remote           string `json:"remote"`
+				Link             string `json:"link"`
+				IgnoreEncapLimit bool   `json:"ip6_tnl_f_ign_encap_limit"`
+				EncapLimit       *int   `json:"encap_limit"`
 			} `json:"info_data"`
 		} `json:"linkinfo"`
 	}
@@ -896,7 +898,17 @@ func (e *Engine) observeDSLiteTunnel(res api.Resource, aliases map[string]string
 		actualLocal, actualLocalErr := netip.ParseAddr(link.Info.Data.Local)
 		remoteMismatch := remoteErr == nil && (actualRemoteErr != nil || expectedRemote != actualRemote)
 		localMismatch := localKnown && (actualLocalErr != nil || expectedLocal != actualLocal)
-		if link.Info.Kind != "ip6tnl" || link.Info.Data.Proto != "ipip6" || !slices.Contains(link.Flags, "UP") || (spec.MTU != 0 && link.MTU != spec.MTU) || (underlay != "" && underlay != tunnelName && link.Info.Data.Link != underlay) || remoteMismatch || localMismatch {
+		expectedEncap := defaultString(strings.TrimSpace(spec.EncapsulationLimit), "none")
+		actualEncap := ""
+		if link.Info.Data.IgnoreEncapLimit {
+			actualEncap = "none"
+		} else if link.Info.Data.EncapLimit != nil {
+			actualEncap = strconv.Itoa(*link.Info.Data.EncapLimit)
+		}
+		if actualEncap != "" {
+			rr.Observed["actualEncapsulationLimit"] = actualEncap
+		}
+		if link.Info.Kind != "ip6tnl" || link.Info.Data.Proto != "ipip6" || !slices.Contains(link.Flags, "UP") || (spec.MTU != 0 && link.MTU != spec.MTU) || (underlay != "" && underlay != tunnelName && link.Info.Data.Link != underlay) || remoteMismatch || localMismatch || (actualEncap != "" && actualEncap != expectedEncap) {
 			rr.Phase = "Drifted"
 			rr.Observed["reason"] = "TunnelMismatch"
 			return
