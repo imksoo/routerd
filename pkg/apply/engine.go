@@ -276,7 +276,7 @@ func (e *Engine) observeVirtualAddress(res api.Resource, aliases map[string]stri
 		rr.Warnings = append(rr.Warnings, err.Error())
 		return
 	}
-	if spec.Mode != "" && spec.Mode != "static" || spec.AddressFrom.Resource != "" {
+	if spec.Mode != "" && spec.Mode != "static" && spec.Mode != "vrrp" || spec.AddressFrom.Resource != "" {
 		return
 	}
 	want, err := netip.ParsePrefix(spec.Address)
@@ -307,6 +307,9 @@ func (e *Engine) observeVirtualAddress(res api.Resource, aliases map[string]stri
 		}
 	}
 	rr.Observed["addressPresent"] = strconv.FormatBool(present)
+	if spec.Mode == "vrrp" {
+		return
+	}
 	if resourcequery.ResourceWhenPresent(spec.When) {
 		store, ok := e.Store.(resourcequery.StateStore)
 		if !ok || !resourcequery.ResourceWhenMatches(spec.When, store) {
