@@ -189,7 +189,12 @@ func (c PathMTUController) applyL2MSSTable(ctx context.Context, nft, path string
 	}
 	batch.Write(data)
 	if batch.Len() == 0 {
-		return removeFileIfExists(path+".owner", false)
+		removed, err := removeFileIfExists(path, false)
+		if err != nil {
+			return false, err
+		}
+		removedOwner, err := removeFileIfExists(path+".owner", false)
+		return removed || removedOwner, err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return false, err
@@ -208,6 +213,11 @@ func (c PathMTUController) applyL2MSSTable(ctx context.Context, nft, path string
 	if err != nil {
 		return false, err
 	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		if _, err := removeFileIfExists(path, false); err != nil {
+			return false, err
+		}
+	}
 	return changed || removedOwner || hadOld || (hadCurrent != (len(bytes.TrimSpace(data)) > 0)), nil
 }
 
@@ -217,16 +227,17 @@ func (c PathMTUController) applyTable(ctx context.Context, nft, path, family, ta
 			return false, nil
 		}
 		out, err := c.runNFT(ctx, nft, "list", "table", family, table)
-		if nftListMissing(out, err) {
-			return false, nil
+		missing := nftListMissing(out, err)
+		if !missing {
+			if err != nil {
+				return false, fmt.Errorf("list nft table %s %s: %w: %s", family, table, err, strings.TrimSpace(string(out)))
+			}
+			if out, err := c.runNFT(ctx, nft, "delete", "table", family, table); err != nil {
+				return false, fmt.Errorf("delete nft table %s %s: %w: %s", family, table, err, strings.TrimSpace(string(out)))
+			}
 		}
-		if err != nil {
-			return false, fmt.Errorf("list nft table %s %s: %w: %s", family, table, err, strings.TrimSpace(string(out)))
-		}
-		if out, err := c.runNFT(ctx, nft, "delete", "table", family, table); err != nil {
-			return false, fmt.Errorf("delete nft table %s %s: %w: %s", family, table, err, strings.TrimSpace(string(out)))
-		}
-		return true, nil
+		removed, err := removeFileIfExists(path, false)
+		return !missing || removed, err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return false, err
