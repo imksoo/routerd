@@ -170,8 +170,14 @@ func (c IPv4RouteController) applyMobilityRoute(ctx context.Context, route dynam
 		return mobilityAppliedIPv4Route{}, fmt.Errorf("device %q is not ready", route.Device)
 	}
 	preferredSource := route.PreferredSource
-	if preferredSource != "" && !ipv4PreferredSourceIsLocal(ctx, c.run, preferredSource) {
-		preferredSource = ""
+	if preferredSource != "" {
+		local, err := ipv4PreferredSourceIsLocal(ctx, c.run, preferredSource)
+		if err != nil {
+			return mobilityAppliedIPv4Route{}, fmt.Errorf("observe preferred source: %w", err)
+		}
+		if !local {
+			preferredSource = ""
+		}
 	}
 	applied.PreferredSource = preferredSource
 	if platform.CurrentOS() != platform.OSFreeBSD && ipv4RouteInstalled(ctx, c.run, "unicast", route.Destination, route.Device, "", preferredSource, route.Metric, false) {

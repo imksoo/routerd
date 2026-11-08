@@ -423,7 +423,22 @@ func (c IPv4RouteController) reconcile(ctx context.Context) error {
 		}
 		effectivePreferredSource := preferredSource
 		if !c.DryRun {
-			if preferredSource != "" && routeType != "blackhole" && !ipv4PreferredSourceIsLocal(ctx, c.run, preferredSource) {
+			localSource := true
+			if preferredSource != "" && routeType != "blackhole" {
+				var err error
+				localSource, err = ipv4PreferredSourceIsLocal(ctx, c.run, preferredSource)
+				if err != nil {
+					failures = append(failures, fmt.Sprintf("%s: observe preferred source: %v", resource.Metadata.Name, err))
+					status["phase"] = "Error"
+					status["reason"] = "PreferredSourceObserveFailed"
+					status["error"] = err.Error()
+					if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4Route", resource.Metadata.Name, status); err != nil {
+						return err
+					}
+					continue
+				}
+			}
+			if !localSource {
 				effectivePreferredSource = ""
 				status["preferredSourceSkipped"] = true
 				status["preferredSourceSkipReason"] = "LocalAddressMissing"
@@ -565,10 +580,10 @@ func routeFieldsContainPair(fields []string, key, value string) bool {
 	return false
 }
 
-func ipv4PreferredSourceIsLocal(ctx context.Context, command outputCommandFunc, preferredSource string) bool {
+func ipv4PreferredSourceIsLocal(ctx context.Context, command outputCommandFunc, preferredSource string) (bool, error) {
 	addr, err := netip.ParseAddr(strings.TrimSpace(preferredSource))
 	if err != nil || !addr.Is4() {
-		return false
+		return false, fmt.Errorf("invalid IPv4 preferred source %q", preferredSource)
 	}
 	if command == nil {
 		command = runOutputCommandContext
@@ -576,26 +591,32 @@ func ipv4PreferredSourceIsLocal(ctx context.Context, command outputCommandFunc, 
 	switch platform.CurrentOS() {
 	case platform.OSFreeBSD:
 		out, err := command(ctx, "ifconfig", "-a", "inet")
-		return err == nil && ifconfigHasIPv4Address(out, addr.String())
+		if err != nil {
+			return false, fmt.Errorf("ifconfig -a inet: %w: %s", err, strings.TrimSpace(string(out)))
+		}
+		return ifconfigHasIPv4Address(out, addr.String()), nil
 	default:
 		out, err := command(ctx, "ip", "-j", "-4", "addr", "show")
-		return err == nil && ipJSONHasIPv4Address(out, addr.String())
+		if err != nil {
+			return false, fmt.Errorf("ip -j -4 addr show: %w: %s", err, strings.TrimSpace(string(out)))
+		}
+		return ipJSONHasIPv4Address(out, addr.String())
 	}
 }
 
-func ipJSONHasIPv4Address(data []byte, address string) bool {
+func ipJSONHasIPv4Address(data []byte, address string) (bool, error) {
 	var links []ipJSONLink
 	if err := json.Unmarshal(data, &links); err != nil {
-		return false
+		return false, fmt.Errorf("decode IPv4 addresses: %w", err)
 	}
 	for _, link := range links {
 		for _, info := range link.AddrInfo {
 			if info.Family == "inet" && info.Local == address {
-				return true
+				return true, nil
 			}
 		}
 	}
-	return false
+	return false, nil
 }
 
 func (c IPv4RouteController) cleanupRemovedRoutes(ctx context.Context) error {
