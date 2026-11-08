@@ -44,8 +44,6 @@ func main() {
 func run(args []string, stdout io.Writer, stdin io.Reader) error {
 	if len(args) > 0 {
 		switch args[0] {
-		case "selftest":
-			return selftest(args[1:], stdout)
 		case "daemon":
 			return daemon(args[1:], stdin)
 		case "help", "-h", "--help":
@@ -54,79 +52,6 @@ func run(args []string, stdout io.Writer, stdin io.Reader) error {
 		}
 	}
 	return daemon(args, stdin)
-}
-
-func selftest(args []string, stdout io.Writer) error {
-	opts, err := parseOptions("selftest", args)
-	if err != nil {
-		return err
-	}
-	log, err := logstore.OpenFirewallLog(opts.path)
-	if err != nil {
-		return err
-	}
-	defer log.Close()
-	ctx := context.Background()
-	now := time.Now().UTC()
-	if err := log.RecordExpiredFlow(ctx, logstore.ExpiredFlowEntry{
-		Timestamp:    now.Add(-30 * time.Second),
-		L3Proto:      "ipv4",
-		Protocol:     "tcp",
-		OrigSrc:      "172.18.0.10",
-		OrigSrcPort:  53168,
-		OrigDst:      "198.51.100.10",
-		OrigDstPort:  443,
-		ReplySrc:     "198.51.100.10",
-		ReplySrcPort: 443,
-		ReplyDst:     "192.0.0.2",
-		ReplyDstPort: 53168,
-		Bytes:        4096,
-		Raw:          "selftest expired conntrack flow",
-	}, opts.expiredFlowTTL, opts.expiredFlowLimit); err != nil {
-		return err
-	}
-	entry := logstore.FirewallLogEntry{Action: "drop", SrcAddress: "192.0.2.10", DstAddress: "198.51.100.10", Protocol: "tcp", TCPFlags: "SYN", L3Proto: "ipv4", RuleName: "selftest"}
-	if opts.dpiSocket != "" {
-		entry = enrichEntryWithDPI(ctx, opts, entry, selftestTLSPacket("routerd-firewall-selftest.example"))
-	}
-	if err := recordFirewallEntry(ctx, log, entry, nil, opts); err != nil {
-		return err
-	}
-	accept := logstore.FirewallLogEntry{Action: "accept", SrcAddress: "172.18.0.10", SrcPort: 53168, DstAddress: "198.51.100.10", DstPort: 443, Protocol: "tcp", L3Proto: "ipv4", RuleName: "selftest-forward-accept"}
-	accept = enrichEntryWithDPI(ctx, opts, accept, selftestTLSPacket("routerd-flow-cache.example"))
-	if err := recordFirewallEntry(ctx, log, accept, nil, opts); err != nil {
-		return err
-	}
-	orphan := logstore.FirewallLogEntry{
-		Action:     "drop",
-		SrcAddress: "198.51.100.10",
-		SrcPort:    443,
-		DstAddress: "192.0.0.2",
-		DstPort:    53168,
-		Protocol:   "tcp",
-		L3Proto:    "ipv4",
-		RuleName:   "selftest-orphan-return",
-	}
-	if err := recordFirewallEntry(ctx, log, orphan, nil, opts); err != nil {
-		return err
-	}
-	return json.NewEncoder(stdout).Encode(map[string]any{"ok": true, "path": opts.path})
-}
-
-func selftestTLSPacket(host string) []byte {
-	payload := dpi.MinimalTLSClientHello(host)
-	packet := append([]byte{
-		0x45, 0x00, 0x00, 0x00, 0, 0, 0, 0, 64, 6, 0, 0,
-		192, 0, 2, 10,
-		198, 51, 100, 10,
-		0xcf, 0xb0, 0x01, 0xbb,
-		0, 0, 0, 0,
-		0, 0, 0, 0,
-		0x50, 0x18, 0, 0, 0, 0, 0, 0,
-	}, payload...)
-	totalLen := len(packet)
-	binary.BigEndian.PutUint16(packet[2:4], uint16(totalLen))
-	return packet
 }
 
 func daemon(args []string, stdin io.Reader) (err error) {
