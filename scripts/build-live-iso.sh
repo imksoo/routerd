@@ -198,24 +198,6 @@ WantedBy=multi-user.target
 EOF
 fi
 
-cat > "${rootfs}/etc/systemd/system/routerd-dns-resolver@.service" <<'EOF'
-[Unit]
-Description=routerd DNS resolver daemon (%i)
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-ExecStart=/usr/local/sbin/routerd-dns-resolver daemon --resource %i --config-file /run/routerd/dns-resolver/%i.json
-Restart=always
-RestartSec=5
-RuntimeDirectory=routerd/dns-resolver
-StateDirectory=routerd/dns-resolver
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
 cat > "${payload_root}/README.txt" <<EOF
 routerd live payload ${version}
 
@@ -894,9 +876,6 @@ fi
 disable_bootstrap_dhcp
 prepare_routerd_service
 
-if [ -x /usr/local/sbin/routerd-dns-resolver ]; then
-    systemctl enable routerd-dns-resolver@lan-resolver.service >/dev/null 2>&1 || true
-fi
 EOF
 chmod 0755 "${rootfs}/opt/routerd-live/firstboot.sh"
 
