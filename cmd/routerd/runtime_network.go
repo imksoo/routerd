@@ -3,9 +3,7 @@
 package main
 
 import (
-	"encoding/binary"
 	"fmt"
-	"net/netip"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -31,97 +29,6 @@ func deleteIPv4FwmarkRule(rule ipv4FwmarkRule) error {
 
 func flushIPv4RouteTable(table int) error {
 	return runLogged("ip", "-4", "route", "flush", "table", fmt.Sprintf("%d", table))
-}
-
-func deriveIPv6AddressFromDelegatedPrefix(value, subnetID, suffix string) (string, error) {
-	prefix, err := netip.ParsePrefix(value)
-	if err != nil || !prefix.Addr().Is6() {
-		return "", fmt.Errorf("invalid delegated IPv6 prefix %q", value)
-	}
-	if prefix.Bits() > 64 {
-		return "", fmt.Errorf("delegated IPv6 prefix %q is longer than /64", value)
-	}
-	subnet, err := parseIPv6SubnetID(defaultString(subnetID, "0"))
-	if err != nil {
-		return "", err
-	}
-	subnetBits := 64 - prefix.Bits()
-	if subnetBits < 64 && subnet >= (uint64(1)<<subnetBits) {
-		return "", fmt.Errorf("subnetID %q does not fit in delegated prefix %s", subnetID, value)
-	}
-	suffixAddr, err := netip.ParseAddr(suffix)
-	if err != nil || !suffixAddr.Is6() {
-		return "", fmt.Errorf("invalid IPv6 suffix %q", suffix)
-	}
-	addrBytes := prefix.Masked().Addr().As16()
-	first64 := binary.BigEndian.Uint64(addrBytes[:8])
-	first64 |= subnet
-	binary.BigEndian.PutUint64(addrBytes[:8], first64)
-	suffixBytes := suffixAddr.As16()
-	for i := range addrBytes {
-		addrBytes[i] |= suffixBytes[i]
-	}
-	return netip.AddrFrom16(addrBytes).String(), nil
-}
-
-func parseIPv6SubnetID(value string) (uint64, error) {
-	if value == "" {
-		return 0, nil
-	}
-	if parsed, err := strconv.ParseUint(value, 0, 64); err == nil {
-		return parsed, nil
-	}
-	parsed, err := strconv.ParseUint(value, 16, 64)
-	if err != nil {
-		return 0, fmt.Errorf("invalid IPv6 subnetID %q", value)
-	}
-	return parsed, nil
-}
-
-func deriveIPv6Address(prefixes []string, suffix string) (string, error) {
-	suffixAddr, err := netip.ParseAddr(suffix)
-	if err != nil || !suffixAddr.Is6() {
-		return "", fmt.Errorf("invalid IPv6 suffix %q", suffix)
-	}
-	suffixBytes := suffixAddr.As16()
-	for _, value := range prefixes {
-		prefix, err := netip.ParsePrefix(value)
-		if err != nil || !prefix.Addr().Is6() {
-			continue
-		}
-		if prefix.Addr().IsLinkLocalUnicast() {
-			continue
-		}
-		addrBytes := prefix.Masked().Addr().As16()
-		for i := range addrBytes {
-			addrBytes[i] |= suffixBytes[i]
-		}
-		return netip.AddrFrom16(addrBytes).String(), nil
-	}
-	return "", errNoIPv6PrefixAvailable
-}
-
-func deriveIPv6AddressFromGlobalAddress(addresses []string, suffix string) (string, error) {
-	suffixAddr, err := netip.ParseAddr(suffix)
-	if err != nil || !suffixAddr.Is6() {
-		return "", fmt.Errorf("invalid IPv6 suffix %q", suffix)
-	}
-	suffixBytes := suffixAddr.As16()
-	for _, value := range addresses {
-		addr, err := netip.ParseAddr(value)
-		if err != nil || !addr.Is6() || addr.IsLinkLocalUnicast() {
-			continue
-		}
-		addrBytes := addr.As16()
-		for i := 8; i < len(addrBytes); i++ {
-			addrBytes[i] = 0
-		}
-		for i := range addrBytes {
-			addrBytes[i] |= suffixBytes[i]
-		}
-		return netip.AddrFrom16(addrBytes).String(), nil
-	}
-	return "", errNoIPv6PrefixAvailable
 }
 
 func ensureIPv6LocalAddress(ifname, address string) (bool, error) {
