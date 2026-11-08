@@ -425,11 +425,7 @@ func observeKeepalivedRolesAfterChange(ctx context.Context, c *Controller, alias
 }
 
 func observeKeepalivedRolesWithWait(ctx context.Context, c *Controller, aliases map[string]string, wait bool) map[string]string {
-	roles := dryRunRoles(c)
-	if roles != nil {
-		return roles
-	}
-	roles = map[string]string{}
+	roles := map[string]string{}
 	// Kernel VIP ownership is the authoritative role evidence.  Do not let a
 	// cached systemd result hide an already-owned VIP.
 	for _, resource := range c.Router.Spec.Resources {
@@ -552,12 +548,8 @@ func (carpBackend) Apply(ctx context.Context, c *Controller, aliases map[string]
 }
 
 func observeCARPRoles(ctx context.Context, c *Controller, config render.CARPConfigData) map[string]string {
-	roles := dryRunRoles(c)
-	if roles != nil {
-		return roles
-	}
 	ifconfig := "ifconfig"
-	roles = map[string]string{}
+	roles := map[string]string{}
 	for _, iface := range config.Interfaces {
 		out, err := c.run(ctx, ifconfig, iface.Interface)
 		if err != nil {
@@ -565,19 +557,6 @@ func observeCARPRoles(ctx context.Context, c *Controller, config render.CARPConf
 			continue
 		}
 		roles[iface.Name] = carpRoleForVHID(string(out), iface.VirtualHostID)
-	}
-	return roles
-}
-
-func dryRunRoles(c *Controller) map[string]string {
-	if !c.DryRun {
-		return nil
-	}
-	roles := map[string]string{}
-	for _, resource := range c.Router.Spec.Resources {
-		if resource.APIVersion == api.NetAPIVersion && isVirtualAddressKind(resource.Kind) {
-			roles[resource.Metadata.Name] = "dryrun"
-		}
 	}
 	return roles
 }
