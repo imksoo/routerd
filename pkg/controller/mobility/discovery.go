@@ -476,7 +476,7 @@ func (c DiscoveryController) recordOnPremObservation(pool NormalizedMobilityPool
 			return false, err
 		}
 		if owned {
-			if !onPremObservationRefreshDue(previous, now, ttl) {
+			if observation.SourceType != OnPremSourceOnDemandARP && !onPremObservationRefreshDue(previous, now, ttl) {
 				return false, nil
 			}
 			ev = onPremDiscoveryObservedEvent(pool.Name, pool.Spec.GroupRef, self.NodeRef, address, observation, eventTime, ttl)
