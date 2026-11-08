@@ -3,7 +3,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"strconv"
@@ -26,88 +25,6 @@ func emitDNSRows(stdout io.Writer, output string, rows []logstore.DNSQuery) erro
 		return writeYAML(stdout, rows)
 	default:
 		return fmt.Errorf("unsupported output %q", output)
-	}
-}
-
-// fetchDNSRowsChunked fetches at most filter.Limit rows in successive chunks of
-// chunkSize each, narrowing Until on each iteration so each chunk has its own
-// ctx-bounded portion of work. If the caller does not impose a Limit, it stops
-// once a chunk returns fewer than chunkSize rows.
-func fetchDNSRowsChunked(ctx context.Context, store *logstore.DNSQueryLog, filter logstore.DNSQueryFilter, chunkSize int) ([]logstore.DNSQuery, error) {
-	if chunkSize <= 0 {
-		chunkSize = 1000
-	}
-	target := filter.Limit
-	if target <= 0 {
-		target = chunkSize
-	}
-	var out []logstore.DNSQuery
-	chunkFilter := filter
-	chunkFilter.Limit = chunkSize
-	for len(out) < target {
-		if ctx.Err() != nil {
-			return out, fmt.Errorf("context deadline reached after %d rows (hint: narrow --from / --to or increase --timeout): %w", len(out), ctx.Err())
-		}
-		rows, err := store.List(ctx, chunkFilter)
-		if err != nil {
-			return out, err
-		}
-		if len(rows) == 0 {
-			break
-		}
-		out = append(out, rows...)
-		if len(rows) < chunkSize {
-			break
-		}
-		// Advance Until to one-nanosecond-before the oldest row in this batch.
-		oldest := rows[len(rows)-1].Timestamp
-		if oldest.IsZero() {
-			break
-		}
-		next := oldest.Add(-time.Nanosecond)
-		if !chunkFilter.Since.IsZero() && !next.After(chunkFilter.Since) {
-			break
-		}
-		chunkFilter.Until = next
-	}
-	if len(out) > target {
-		out = out[:target]
-	}
-	return out, nil
-}
-
-// writeAggregateGroup renders a key->count map sorted by count desc.
-func writeAggregateGroup(w io.Writer, title string, counts map[string]int, topN int) {
-	if len(counts) == 0 {
-		return
-	}
-	type kv struct {
-		k string
-		v int
-	}
-	pairs := make([]kv, 0, len(counts))
-	for k, v := range counts {
-		pairs = append(pairs, kv{k, v})
-	}
-	sortPairs := func(p []kv) {
-		for i := 1; i < len(p); i++ {
-			for j := i; j > 0 && (p[j].v > p[j-1].v || (p[j].v == p[j-1].v && p[j].k < p[j-1].k)); j-- {
-				p[j], p[j-1] = p[j-1], p[j]
-			}
-		}
-	}
-	sortPairs(pairs)
-	fmt.Fprintln(w, title)
-	max := topN
-	if max <= 0 || max > len(pairs) {
-		max = len(pairs)
-	}
-	for _, p := range pairs[:max] {
-		key := p.k
-		if key == "" {
-			key = "(empty)"
-		}
-		fmt.Fprintf(w, "  %s\t%d\n", key, p.v)
 	}
 }
 

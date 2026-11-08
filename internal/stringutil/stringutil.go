@@ -57,29 +57,6 @@ func UniqueTrimmedSorted(values []string) []string {
 	return out
 }
 
-// ResourceName returns the stable, conservative name fragment used by
-// generated resources. It intentionally preserves a dash for every
-// non-alphanumeric rune so existing generated names stay stable.
-func ResourceName(value string) string {
-	value = strings.TrimSpace(strings.ToLower(value))
-	var b strings.Builder
-	for _, r := range value {
-		switch {
-		case r >= 'a' && r <= 'z':
-			b.WriteRune(r)
-		case r >= '0' && r <= '9':
-			b.WriteRune(r)
-		default:
-			b.WriteByte('-')
-		}
-	}
-	out := strings.Trim(b.String(), "-")
-	if out == "" {
-		return "resource"
-	}
-	return out
-}
-
 // ConservativeName returns a stable resource-name fragment. It retains only
 // lowercase ASCII letters and digits, collapses every other run into one dash,
 // and falls back when no usable characters remain.

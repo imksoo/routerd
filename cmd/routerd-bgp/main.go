@@ -1210,10 +1210,6 @@ func httpStatusForPathError(err error) int {
 	return http.StatusBadRequest
 }
 
-func localPath(prefix string) (*gobgpapi.Path, error) {
-	return pathFromAppliedPath(bgpdaemon.StaticAppliedPath(prefix, nil))
-}
-
 func pathFromAppliedPath(appliedPath bgpdaemon.AppliedPath) (*gobgpapi.Path, error) {
 	appliedPath = bgpdaemon.NormalizeAppliedPath(appliedPath)
 	parsed, err := netip.ParsePrefix(appliedPath.Prefix)

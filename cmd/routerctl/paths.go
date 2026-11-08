@@ -6,10 +6,6 @@ func defaultConfigPath() string {
 	return platformDefaults.ConfigFile()
 }
 
-func defaultLedgerPath() string {
-	return platformDefaults.DBFile()
-}
-
 func defaultStatePath() string {
 	return platformDefaults.DBFile()
 }

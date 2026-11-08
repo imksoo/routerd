@@ -4817,23 +4817,6 @@ func advertisedPrefixes(spec routerapi.BGPRouterSpec) map[string]bool {
 	return out
 }
 
-func localPath(prefix string) (*gobgpapi.Path, error) {
-	parsed, err := netip.ParsePrefix(strings.TrimSpace(prefix))
-	if err != nil {
-		return nil, err
-	}
-	parsed = parsed.Masked()
-	nextHop := "0.0.0.0"
-	if parsed.Addr().Is6() {
-		nextHop = "::"
-	}
-	return &gobgpapi.Path{
-		Family: familyForPrefix(parsed),
-		Nlri:   ipAddressNLRI(parsed),
-		Pattrs: []*gobgpapi.Attribute{originAttribute(), nextHopAttribute(nextHop)},
-	}, nil
-}
-
 func familyForPrefix(prefix netip.Prefix) *gobgpapi.Family {
 	if prefix.Addr().Is6() {
 		return ipv6Family()
