@@ -3079,9 +3079,6 @@ func (r *Runner) clientDaemonSpecs(router *api.Router) []supervisedDaemonSpec {
 			if spec.ClientID != "" {
 				args = append(args, "--client-id", spec.ClientID)
 			}
-			if spec.ClientIDHex != "" {
-				args = append(args, "--client-id-hex", spec.ClientIDHex)
-			}
 			out = append(out, supervisedDaemonSpec{ResourceName: resource.Metadata.Name, Binary: "routerd-dhcpv4-client", Args: args})
 		case "PPPoESession":
 			spec, err := resource.PPPoESessionSpec()
@@ -3944,10 +3941,7 @@ func (c LinkController) Reconcile(ctx context.Context) error {
 			return err
 		}
 		ifname := spec.IfName
-		mtu, _, err := resourcequery.InterfaceMTU(c.Router, c.Store, resource, spec, time.Now())
-		if err != nil {
-			return err
-		}
+		mtu := spec.MTU
 		status := map[string]any{
 			"phase":   "Down",
 			"ifname":  ifname,

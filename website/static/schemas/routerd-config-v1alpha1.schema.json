@@ -1974,24 +1974,6 @@
                       "adminUp": {
                         "type": "boolean"
                       },
-                      "dns": {
-                        "additionalProperties": false,
-                        "properties": {
-                          "domains": {
-                            "items": {
-                              "type": "string"
-                            },
-                            "type": "array"
-                          },
-                          "servers": {
-                            "items": {
-                              "type": "string"
-                            },
-                            "type": "array"
-                          }
-                        },
-                        "type": "object"
-                      },
                       "ifname": {
                         "type": "string"
                       },
@@ -4167,10 +4149,6 @@
                       "clientID": {
                         "type": "string"
                       },
-                      "clientIDHex": {
-                        "description": "ClientIDHex is the exact DHCP option 61 byte sequence, encoded as hexadecimal.",
-                        "type": "string"
-                      },
                       "hostname": {
                         "type": "string"
                       },
@@ -4185,9 +4163,6 @@
                         "type": "integer"
                       },
                       "useDNS": {
-                        "type": "boolean"
-                      },
-                      "useMTU": {
                         "type": "boolean"
                       },
                       "useRoutes": {
@@ -10283,10 +10258,6 @@
                           "resource"
                         ],
                         "type": "object"
-                      },
-                      "gatewayOnLink": {
-                        "description": "GatewayOnLink marks the IPv4 gateway as reachable through the output link.",
-                        "type": "boolean"
                       },
                       "metric": {
                         "minimum": 0,

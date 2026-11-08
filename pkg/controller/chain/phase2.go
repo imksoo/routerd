@@ -395,12 +395,6 @@ func (c IPv4RouteController) reconcile(ctx context.Context) error {
 		device := ""
 		gateway := firstNonEmpty(resourcequery.Value(c.Store, spec.GatewayFrom), strings.TrimSpace(spec.Gateway))
 		preferredSource := strings.TrimSpace(spec.PreferredSource)
-		if spec.GatewayOnLink && gateway == "" {
-			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4Route", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "GatewayMissing", "destination": destination, "dryRun": c.DryRun}); err != nil {
-				return err
-			}
-			continue
-		}
 		if routeType != "blackhole" {
 			device = firstNonEmpty(resourcequery.Value(c.Store, spec.DeviceFrom), strings.TrimSpace(spec.Device))
 			device = interfaceIfName(c.Router, device)
@@ -409,11 +403,11 @@ func (c IPv4RouteController) reconcile(ctx context.Context) error {
 				continue
 			}
 			if !c.DryRun && !interfaceDevicePresent(ctx, device) {
-				_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4Route", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "DeviceNotReady", "destination": destination, "device": device, "gateway": gateway, "preferredSource": preferredSource, "gatewayOnLink": spec.GatewayOnLink, "metric": spec.Metric, "dryRun": c.DryRun})
+				_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4Route", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "DeviceNotReady", "destination": destination, "device": device, "gateway": gateway, "preferredSource": preferredSource, "metric": spec.Metric, "dryRun": c.DryRun})
 				continue
 			}
 		}
-		status := map[string]any{"phase": "Installed", "type": routeType, "destination": destination, "device": device, "gateway": gateway, "preferredSource": preferredSource, "gatewayOnLink": spec.GatewayOnLink, "metric": spec.Metric, "dryRun": c.DryRun}
+		status := map[string]any{"phase": "Installed", "type": routeType, "destination": destination, "device": device, "gateway": gateway, "preferredSource": preferredSource, "metric": spec.Metric, "dryRun": c.DryRun}
 		previous := c.Store.ObjectStatus(api.NetAPIVersion, "IPv4Route", resource.Metadata.Name)
 		changed := routeInstallStatusChanged(previous, status)
 		if changed {
@@ -449,7 +443,7 @@ func (c IPv4RouteController) reconcile(ctx context.Context) error {
 			} else if preferredSource != "" {
 				status["effectivePreferredSource"] = preferredSource
 			}
-			if platform.CurrentOS() != platform.OSFreeBSD && ipv4RouteInstalled(ctx, c.run, routeType, destination, device, gateway, effectivePreferredSource, spec.Metric, spec.GatewayOnLink) {
+			if platform.CurrentOS() != platform.OSFreeBSD && ipv4RouteInstalled(ctx, c.run, routeType, destination, device, gateway, effectivePreferredSource, spec.Metric) {
 				status["kernelRouteAlreadyCurrent"] = true
 				status["changed"] = changed
 				if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4Route", resource.Metadata.Name, status); err != nil {
@@ -462,9 +456,6 @@ func (c IPv4RouteController) reconcile(ctx context.Context) error {
 				args = []string{"route", "replace", "blackhole", destination}
 			} else if gateway != "" {
 				args = []string{"route", "replace", destination, "via", gateway, "dev", device}
-			}
-			if spec.GatewayOnLink && routeType != "blackhole" {
-				args = append(args, "onlink")
 			}
 			if effectivePreferredSource != "" && routeType != "blackhole" {
 				args = append(args, "src", effectivePreferredSource)
@@ -483,7 +474,7 @@ func (c IPv4RouteController) reconcile(ctx context.Context) error {
 			}
 			if err != nil {
 				message := strings.TrimSpace(string(out))
-				status := map[string]any{"phase": "Error", "reason": "ApplyFailed", "destination": destination, "device": device, "gateway": gateway, "preferredSource": preferredSource, "gatewayOnLink": spec.GatewayOnLink, "metric": spec.Metric, "dryRun": c.DryRun, "error": err.Error(), "command": name + " " + strings.Join(args, " ")}
+				status := map[string]any{"phase": "Error", "reason": "ApplyFailed", "destination": destination, "device": device, "gateway": gateway, "preferredSource": preferredSource, "metric": spec.Metric, "dryRun": c.DryRun, "error": err.Error(), "command": name + " " + strings.Join(args, " ")}
 				if message != "" {
 					status["message"] = message
 				}
@@ -514,7 +505,7 @@ func (c IPv4RouteController) reconcile(ctx context.Context) error {
 	return nil
 }
 
-func ipv4RouteInstalled(ctx context.Context, command outputCommandFunc, routeType, destination, device, gateway, preferredSource string, metric int, onLink bool) bool {
+func ipv4RouteInstalled(ctx context.Context, command outputCommandFunc, routeType, destination, device, gateway, preferredSource string, metric int) bool {
 	if command == nil {
 		command = runOutputCommandContext
 	}
@@ -537,7 +528,7 @@ func ipv4RouteInstalled(ctx context.Context, command outputCommandFunc, routeTyp
 		if preferredSource == "" && slices.Contains(fields, "src") {
 			continue
 		}
-		if ipv4RouteLineMatches(line, routeType, queryDestination, device, gateway, preferredSource, metric) && slices.Contains(fields, "onlink") == onLink {
+		if ipv4RouteLineMatches(line, routeType, queryDestination, device, gateway, preferredSource, metric) && !slices.Contains(fields, "onlink") {
 			return true
 		}
 	}
@@ -905,7 +896,7 @@ func routeInstallStatusChanged(previous, next map[string]any) bool {
 	if previous["phase"] != next["phase"] {
 		return true
 	}
-	for _, key := range []string{"type", "destination", "device", "gateway", "preferredSource", "gatewayOnLink", "metric", "dryRun"} {
+	for _, key := range []string{"type", "destination", "device", "gateway", "preferredSource", "metric", "dryRun"} {
 		if fmt.Sprint(previous[key]) != fmt.Sprint(next[key]) {
 			return true
 		}

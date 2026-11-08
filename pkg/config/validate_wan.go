@@ -87,15 +87,6 @@ func validateWANResource(res api.Resource, targetOS platform.OS) (bool, error) {
 		if spec.Interface == "" {
 			return true, fmt.Errorf("%s spec.interface is required", res.ID())
 		}
-		if spec.ClientIDHex != "" {
-			if spec.ClientID != "" {
-				return true, fmt.Errorf("%s spec.clientID and spec.clientIDHex are mutually exclusive", res.ID())
-			}
-			id, err := hex.DecodeString(spec.ClientIDHex)
-			if err != nil || len(id) == 0 || len(id) > 255 {
-				return true, fmt.Errorf("%s spec.clientIDHex must encode 1-255 bytes of hexadecimal", res.ID())
-			}
-		}
 		if spec.RequestedAddress != "" {
 			addr, err := netip.ParseAddr(spec.RequestedAddress)
 			if err != nil || !addr.Is4() {

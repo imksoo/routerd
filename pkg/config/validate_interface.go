@@ -28,9 +28,6 @@ func validateInterfaceResource(res api.Resource, targetOS platform.OS) (bool, er
 		if spec.MTU != 0 && (spec.MTU < 576 || spec.MTU > 9216) {
 			return true, fmt.Errorf("%s spec.mtu must be within 576-9216", res.ID())
 		}
-		if err := validateInterfaceDNS(spec.DNS); err != nil {
-			return true, fmt.Errorf("%s spec.dns: %w", res.ID(), err)
-		}
 	case "Link":
 		if res.APIVersion != api.NetAPIVersion {
 			return true, fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
@@ -367,23 +364,6 @@ func validateWireGuardPeersFrom(resourceID string, index int, source api.WireGua
 	case "SAMNodeSet", "SAMPeerGroup", "SAMEnrollmentPolicy", "SAMRRSet":
 	default:
 		return fmt.Errorf("%s spec.peersFrom[%d].resource must reference SAMNodeSet/<name>, SAMPeerGroup/<name>, SAMEnrollmentPolicy/<name>, or SAMRRSet/<name>", resourceID, index)
-	}
-	return nil
-}
-
-func validateInterfaceDNS(spec *api.InterfaceDNSSpec) error {
-	if spec == nil {
-		return nil
-	}
-	for _, server := range spec.Servers {
-		if _, err := netip.ParseAddr(server); err != nil {
-			return fmt.Errorf("invalid DNS server %q", server)
-		}
-	}
-	for _, domain := range spec.Domains {
-		if domain == "" || strings.ContainsAny(domain, " \t\r\n") {
-			return fmt.Errorf("invalid DNS domain %q", domain)
-		}
 	}
 	return nil
 }

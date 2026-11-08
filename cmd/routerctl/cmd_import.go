@@ -10,13 +10,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net"
 	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -83,11 +81,8 @@ func (address *importAddress) UnmarshalJSON(data []byte) error {
 }
 
 type importLink struct {
-	IfIndex  int             `json:"ifindex"`
-	Address  string          `json:"address"`
 	IfName   string          `json:"ifname"`
 	Flags    []string        `json:"flags"`
-	MTU      int             `json:"mtu"`
 	Master   string          `json:"master"`
 	AddrInfo []importAddress `json:"addr_info"`
 }
@@ -100,15 +95,6 @@ type networkdImportStatus struct {
 		PrefixLength int    `json:"PrefixLength"`
 		ConfigSource string `json:"ConfigSource"`
 	} `json:"Addresses"`
-	DNS []struct {
-		Address      []int  `json:"Address"`
-		ConfigSource string `json:"ConfigSource"`
-	} `json:"DNS"`
-	SearchDomains []struct {
-		Domain       string `json:"Domain"`
-		ConfigSource string `json:"ConfigSource"`
-		RouteOnly    bool   `json:"RouteOnly"`
-	} `json:"SearchDomains"`
 	Routes []struct {
 		Family                  int    `json:"Family"`
 		Destination             []int  `json:"Destination"`
@@ -127,33 +113,33 @@ type networkdImportStatus struct {
 	} `json:"Routes"`
 }
 
-func networkdAddressSources(ifname string) (map[string]string, map[string]bool, []string, *api.InterfaceDNSSpec, error) {
+func networkdAddressSources(ifname string) (map[string]string, map[string]bool, []string, error) {
 	out, err := exec.Command("networkctl", "--json=short", "status", ifname).Output()
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, err
 	}
 	var status networkdImportStatus
 	if err := json.Unmarshal(out, &status); err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, err
 	}
 	sources := make(map[string]string, len(status.Addresses))
 	for _, address := range status.Addresses {
 		bytes := make([]byte, len(address.Address))
 		for i, value := range address.Address {
 			if value < 0 || value > 255 {
-				return nil, nil, nil, nil, fmt.Errorf("invalid networkd address byte %d", value)
+				return nil, nil, nil, fmt.Errorf("invalid networkd address byte %d", value)
 			}
 			bytes[i] = byte(value)
 		}
 		ip, ok := netip.AddrFromSlice(bytes)
 		if !ok || address.PrefixLength < 0 || address.PrefixLength > ip.BitLen() {
-			return nil, nil, nil, nil, fmt.Errorf("invalid networkd address or prefix length")
+			return nil, nil, nil, fmt.Errorf("invalid networkd address or prefix length")
 		}
 		sources[netip.PrefixFrom(ip, address.PrefixLength).String()] = address.ConfigSource
 	}
 	staticRoutes := map[string]bool{}
 	for _, route := range status.Routes {
-		if route.Family != 2 || route.ConfigSource != "static" || route.ConfigState != "configured" || route.ProtocolString != "static" || route.Table != 254 || route.Type != 1 || route.Scope != 0 || route.TOS != 0 || (route.Flags != 0 && route.Flags != 4) || len(route.PreferredSource) != 0 {
+		if route.Family != 2 || route.ConfigSource != "static" || route.ConfigState != "configured" || route.ProtocolString != "static" || route.Table != 254 || route.Type != 1 || route.Scope != 0 || route.TOS != 0 || route.Flags != 0 || len(route.PreferredSource) != 0 {
 			continue
 		}
 		destination, ok := importIPv4Bytes(route.Destination)
@@ -165,44 +151,14 @@ func networkdAddressSources(ifname string) (map[string]string, map[string]bool, 
 			continue
 		}
 		prefix := netip.PrefixFrom(destination, route.DestinationPrefixLength).Masked().String()
-		staticRoutes[importRouteKey(prefix, gateway.String(), route.Priority, route.Flags == 4)] = true
+		staticRoutes[importRouteKey(prefix, gateway.String(), route.Priority)] = true
 	}
 	var files []string
 	if status.NetworkFile != "" {
 		files = append(files, status.NetworkFile)
 		files = append(files, status.NetworkFileDropins...)
 	}
-	var dns api.InterfaceDNSSpec
-	for _, server := range status.DNS {
-		if server.ConfigSource != "static" {
-			continue
-		}
-		bytes := make([]byte, len(server.Address))
-		for i, value := range server.Address {
-			if value < 0 || value > 255 {
-				return nil, nil, nil, nil, fmt.Errorf("invalid networkd DNS address byte %d", value)
-			}
-			bytes[i] = byte(value)
-		}
-		ip, ok := netip.AddrFromSlice(bytes)
-		if !ok {
-			return nil, nil, nil, nil, errors.New("invalid networkd DNS address")
-		}
-		dns.Servers = append(dns.Servers, ip.String())
-	}
-	for _, domain := range status.SearchDomains {
-		if domain.ConfigSource == "static" && domain.Domain != "" {
-			value := domain.Domain
-			if domain.RouteOnly {
-				value = "~" + value
-			}
-			dns.Domains = append(dns.Domains, value)
-		}
-	}
-	if len(dns.Servers) == 0 && len(dns.Domains) == 0 {
-		return sources, staticRoutes, files, nil, nil
-	}
-	return sources, staticRoutes, files, &dns, nil
+	return sources, staticRoutes, files, nil
 }
 
 func importIPv4Bytes(values []int) (netip.Addr, bool) {
@@ -219,8 +175,8 @@ func importIPv4Bytes(values []int) (netip.Addr, bool) {
 	return netip.AddrFrom4(bytes), true
 }
 
-func importRouteKey(destination, gateway string, metric int, onLink bool) string {
-	return fmt.Sprintf("%s|%s|%d|%t", destination, gateway, metric, onLink)
+func importRouteKey(destination, gateway string, metric int) string {
+	return fmt.Sprintf("%s|%s|%d", destination, gateway, metric)
 }
 
 func importDerivedIPv4ConnectedRoute(raw json.RawMessage, ifname string, addresses []importAddress, sources map[string]string, importedStatic map[string]bool) bool {
@@ -308,14 +264,10 @@ func importKernelStaticIPv4Route(raw json.RawMessage, ifname string) (api.IPv4Ro
 		}
 		gateway = address.String()
 	}
-	onLink := false
-	for _, flag := range route.Flags {
-		if flag != "onlink" || onLink {
-			return api.IPv4RouteSpec{}, false
-		}
-		onLink = true
+	if len(route.Flags) != 0 {
+		return api.IPv4RouteSpec{}, false
 	}
-	return api.IPv4RouteSpec{Destination: prefix.Masked().String(), Device: ifname, Gateway: gateway, Metric: route.Metric, GatewayOnLink: onLink}, true
+	return api.IPv4RouteSpec{Destination: prefix.Masked().String(), Device: ifname, Gateway: gateway, Metric: route.Metric}, true
 }
 
 func importStaticIPv4Address(address importAddress, ifname string, ip netip.Addr) bool {
@@ -377,15 +329,15 @@ func networkdDHCPv4Enabled(files []string) (bool, error) {
 	return enabled, nil
 }
 
-func networkdDHCPv4Options(files []string) (useRoutes, useDNS *bool, metric int, useMTU bool, hostname string, err error) {
+func networkdDHCPv4Options(files []string) (useRoutes, useDNS *bool, metric int, hostname string, err error) {
 	if len(files) == 0 {
-		return nil, nil, 0, false, "", errors.New("networkd configuration file is unavailable")
+		return nil, nil, 0, "", errors.New("networkd configuration file is unavailable")
 	}
 	sendHostname := true
 	for _, path := range files {
 		data, readErr := os.ReadFile(path)
 		if readErr != nil {
-			return nil, nil, 0, false, "", readErr
+			return nil, nil, 0, "", readErr
 		}
 		section := ""
 		for _, line := range strings.Split(string(data), "\n") {
@@ -403,7 +355,7 @@ func networkdDHCPv4Options(files []string) (useRoutes, useDNS *bool, metric int,
 			}
 			key, value = strings.TrimSpace(key), strings.TrimSpace(value)
 			switch key {
-			case "UseRoutes", "UseDNS", "UseMTU", "SendHostname":
+			case "UseRoutes", "UseDNS", "SendHostname":
 				var v bool
 				switch strings.ToLower(value) {
 				case "yes", "true", "1", "on":
@@ -411,14 +363,12 @@ func networkdDHCPv4Options(files []string) (useRoutes, useDNS *bool, metric int,
 				case "no", "false", "0", "off":
 					v = false
 				default:
-					return nil, nil, 0, false, "", fmt.Errorf("%s: invalid %s=%q", path, key, value)
+					return nil, nil, 0, "", fmt.Errorf("%s: invalid %s=%q", path, key, value)
 				}
 				if key == "UseRoutes" {
 					useRoutes = &v
 				} else if key == "UseDNS" {
 					useDNS = &v
-				} else if key == "UseMTU" {
-					useMTU = v
 				} else {
 					sendHostname = v
 				}
@@ -427,7 +377,7 @@ func networkdDHCPv4Options(files []string) (useRoutes, useDNS *bool, metric int,
 			case "RouteMetric":
 				n, parseErr := strconv.Atoi(value)
 				if parseErr != nil || n < 0 {
-					return nil, nil, 0, false, "", fmt.Errorf("%s: invalid RouteMetric=%q", path, value)
+					return nil, nil, 0, "", fmt.Errorf("%s: invalid RouteMetric=%q", path, value)
 				}
 				metric = n
 			}
@@ -437,7 +387,7 @@ func networkdDHCPv4Options(files []string) (useRoutes, useDNS *bool, metric int,
 		if hostname == "" {
 			hostname, err = os.Hostname()
 			if err != nil {
-				return nil, nil, 0, false, "", err
+				return nil, nil, 0, "", err
 			}
 		}
 		if len(hostname) > 63 || strings.HasPrefix(hostname, "-") || strings.HasSuffix(hostname, "-") || strings.Trim(hostname, "abcdefghijklmnopqrstuvwxyz0123456789-") != "" {
@@ -446,52 +396,7 @@ func networkdDHCPv4Options(files []string) (useRoutes, useDNS *bool, metric int,
 	} else {
 		hostname = ""
 	}
-	return useRoutes, useDNS, metric, useMTU, hostname, nil
-}
-
-func networkdDHCPv4ClientID(ifindex int, address string) (string, error) {
-	if ifindex <= 0 || address == "" {
-		return "", errors.New("DHCPv4 lease interface or address is unavailable")
-	}
-	data, err := os.ReadFile(filepath.Join("/run/systemd/netif/leases", fmt.Sprint(ifindex)))
-	if err != nil {
-		return "", err
-	}
-	var leaseAddress, clientID string
-	for _, line := range strings.Split(string(data), "\n") {
-		key, value, ok := strings.Cut(line, "=")
-		if !ok {
-			continue
-		}
-		switch key {
-		case "ADDRESS":
-			leaseAddress = value
-		case "CLIENTID":
-			clientID = value
-		}
-	}
-	if leaseAddress != address {
-		return "", fmt.Errorf("networkd lease address does not match the observed DHCPv4 address")
-	}
-	decoded, err := hex.DecodeString(clientID)
-	if err != nil || len(decoded) == 0 || len(decoded) > 255 {
-		return "", errors.New("networkd lease has no valid DHCPv4 client identifier")
-	}
-	return hex.EncodeToString(decoded), nil
-}
-
-func configuredDHCPv4ClientID(spec api.DHCPv4ClientSpec, hardwareAddress string) string {
-	if spec.ClientIDHex != "" {
-		return strings.ToLower(spec.ClientIDHex)
-	}
-	if spec.ClientID != "" {
-		return hex.EncodeToString([]byte(spec.ClientID))
-	}
-	mac, err := net.ParseMAC(hardwareAddress)
-	if err != nil {
-		return ""
-	}
-	return hex.EncodeToString(append([]byte{1}, mac...))
+	return useRoutes, useDNS, metric, hostname, nil
 }
 
 func importCommand(args []string, stdout, stderr io.Writer) error {
@@ -582,7 +487,7 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 					device = strings.TrimPrefix(spec.DeviceFrom.Resource, "Interface/")
 				}
 				if device != "" && spec.GatewayFrom.Resource == "" && spec.PreferredSource == "" && (spec.Type == "" || spec.Type == "unicast") {
-					key := device + "|" + importRouteKey(spec.Destination, spec.Gateway, spec.Metric, spec.GatewayOnLink)
+					key := device + "|" + importRouteKey(spec.Destination, spec.Gateway, spec.Metric)
 					existingRoutes[key] = resource
 				}
 				continue
@@ -644,7 +549,7 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 			return fmt.Errorf("interface %s not found in kernel output", ifname)
 		}
 		link := links[0]
-		sources, staticRoutes, networkFiles, observedDNS, sourceErr := networkdAddressSources(ifname)
+		sources, staticRoutes, networkFiles, sourceErr := networkdAddressSources(ifname)
 		if sourceErr != nil {
 			warnings = append(warnings, fmt.Sprintf("%s: networkd address sources unavailable: %v", ifname, sourceErr))
 		} else if len(networkFiles) != 0 {
@@ -662,26 +567,14 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 		if link.Master != "" {
 			warnings = append(warnings, fmt.Sprintf("%s: master %s must be imported separately", ifname, link.Master))
 		}
-		mtu := link.MTU
-		if mtu < 576 || mtu > 9216 {
-			warnings = append(warnings, fmt.Sprintf("%s: MTU %d cannot be represented by Interface", ifname, mtu))
-			mtu = 0
-		}
 		resource, found := aliases[ifname]
 		if found {
 			spec, err := resource.InterfaceSpec()
 			if err != nil {
 				return err
 			}
-			if (spec.AdminUp && !up) || (spec.MTU != 0 && spec.MTU != mtu) {
+			if spec.AdminUp && !up {
 				warnings = append(warnings, fmt.Sprintf("%s: observed link settings differ from the existing Interface definition", ifname))
-			}
-			if observedDNS != nil {
-				if spec.DNS == nil {
-					spec.DNS = observedDNS
-				} else if !slices.Equal(spec.DNS.Servers, observedDNS.Servers) || !slices.Equal(spec.DNS.Domains, observedDNS.Domains) {
-					warnings = append(warnings, fmt.Sprintf("%s: existing Interface DNS differs from networkd", ifname))
-				}
 			}
 			resource.Spec = spec
 			resource.Status = nil
@@ -693,12 +586,11 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 					resourceName = fmt.Sprintf("import-%s-%d", ifname, suffix)
 				}
 			}
-			resource = api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: resourceName}, Spec: api.InterfaceSpec{IfName: ifname, Managed: true, AdminUp: up, MTU: mtu, DNS: observedDNS}}
+			resource = api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: resourceName}, Spec: api.InterfaceSpec{IfName: ifname, Managed: true, AdminUp: up}}
 		}
 		usedNames[resource.Metadata.Name] = true
 		router.Spec.Resources = append(router.Spec.Resources, resource)
 		dhcp4 := false
-		dhcp4Address := ""
 		raAddress := false
 		importedStatic := map[string]bool{}
 		dhcp4AddressCount := 0
@@ -724,11 +616,6 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 					raAddress = true
 				}
 				if source == "DHCPv4" && ip.Is4() {
-					if dhcp4 && dhcp4Address != ip.String() {
-						dhcp4Address = ""
-					} else if !dhcp4 {
-						dhcp4Address = ip.String()
-					}
 					dhcp4 = true
 				}
 			}
@@ -745,11 +632,7 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 				router.Spec.Resources = append(router.Spec.Resources, virtual)
 				continue
 			}
-			_, existingIPv4 := staticAddresses[resource.Metadata.Name+"|"+prefix]
-			if !existingIPv4 {
-				_, existingIPv4 = staticAddresses[ifname+"|"+prefix]
-			}
-			if (source == "static" || (source != "DHCPv4" && existingIPv4)) && importStaticIPv4Address(address, ifname, ip) {
+			if source != "DHCPv4" && importStaticIPv4Address(address, ifname, ip) {
 				static, exists := staticAddresses[resource.Metadata.Name+"|"+prefix]
 				if !exists {
 					static, exists = staticAddresses[ifname+"|"+prefix]
@@ -770,11 +653,7 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 				warnings = append(warnings, fmt.Sprintf("%s: static address %s imported; review manager handoff and address attributes", ifname, prefix))
 				continue
 			}
-			_, existingIPv6 := staticIPv6[resource.Metadata.Name+"|"+prefix]
-			if !existingIPv6 {
-				_, existingIPv6 = staticIPv6[ifname+"|"+prefix]
-			}
-			if (source == "static" || ((source == "" || source == "foreign") && existingIPv6)) && importStaticIPv6Address(address, ifname, ip) {
+			if (source == "static" || source == "" || source == "foreign") && importStaticIPv6Address(address, ifname, ip) {
 				static, exists := staticIPv6[resource.Metadata.Name+"|"+prefix]
 				if !exists {
 					static, exists = staticIPv6[ifname+"|"+prefix]
@@ -825,13 +704,9 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 			}
 		}
 		if dhcp4 {
-			useRoutes, useDNS, routeMetric, useMTU, hostname, optionErr := networkdDHCPv4Options(networkFiles)
+			useRoutes, useDNS, routeMetric, hostname, optionErr := networkdDHCPv4Options(networkFiles)
 			if optionErr != nil {
 				warnings = append(warnings, fmt.Sprintf("%s: DHCPv4 options could not be imported: %v", ifname, optionErr))
-			}
-			clientID, idErr := networkdDHCPv4ClientID(link.IfIndex, dhcp4Address)
-			if idErr != nil {
-				warnings = append(warnings, fmt.Sprintf("%s: DHCPv4 client identifier could not be imported: %v", ifname, idErr))
 			}
 			client, exists := dhcpClients[resource.Metadata.Name]
 			if !exists {
@@ -843,15 +718,9 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 				if err != nil {
 					return err
 				}
-				if idErr == nil && configuredDHCPv4ClientID(spec, link.Address) != clientID {
-					warnings = append(warnings, fmt.Sprintf("%s: existing DHCPv4Client identifier differs from the networkd lease", ifname))
-				}
 				if optionErr == nil {
 					if spec.Hostname != hostname {
 						warnings = append(warnings, fmt.Sprintf("%s: existing DHCPv4Client hostname differs from networkd", ifname))
-					}
-					if spec.UseMTU != useMTU {
-						warnings = append(warnings, fmt.Sprintf("%s: existing DHCPv4Client useMTU differs from networkd", ifname))
 					}
 					if api.BoolDefault(spec.UseRoutes, true) != api.BoolDefault(useRoutes, true) {
 						warnings = append(warnings, fmt.Sprintf("%s: existing DHCPv4Client useRoutes differs from networkd", ifname))
@@ -868,7 +737,7 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 				for suffix := 2; usedDHCPNames[clientName]; suffix++ {
 					clientName = fmt.Sprintf("%s-dhcp4-%d", resource.Metadata.Name, suffix)
 				}
-				client = api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client"}, Metadata: api.ObjectMeta{Name: clientName}, Spec: api.DHCPv4ClientSpec{Interface: resource.Metadata.Name, Hostname: hostname, ClientIDHex: clientID, UseRoutes: useRoutes, UseDNS: useDNS, UseMTU: useMTU, RouteMetric: routeMetric}}
+				client = api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client"}, Metadata: api.ObjectMeta{Name: clientName}, Spec: api.DHCPv4ClientSpec{Interface: resource.Metadata.Name, Hostname: hostname, UseRoutes: useRoutes, UseDNS: useDNS, RouteMetric: routeMetric}}
 			}
 			usedDHCPNames[client.Metadata.Name] = true
 			router.Spec.Resources = append(router.Spec.Resources, client)
@@ -889,7 +758,7 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 						continue
 					}
 					spec, ok := importKernelStaticIPv4Route(route, ifname)
-					key := importRouteKey(spec.Destination, spec.Gateway, spec.Metric, spec.GatewayOnLink)
+					key := importRouteKey(spec.Destination, spec.Gateway, spec.Metric)
 					candidate, exists := existingRoutes[resource.Metadata.Name+"|"+key]
 					if !exists {
 						candidate, exists = existingRoutes[ifname+"|"+key]

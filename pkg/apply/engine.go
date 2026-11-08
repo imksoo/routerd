@@ -110,7 +110,7 @@ func (e *Engine) evaluate(router, declared *api.Router, includePlan bool) (*Resu
 		case "WebConsole":
 			e.observeWebConsole(res, includePlan, &rr)
 		case "Interface":
-			e.observeInterface(router, res, policies[res.Metadata.Name], observedV4ByInterface[res.Metadata.Name], inactiveTunnels, includePlan, &rr)
+			e.observeInterface(res, policies[res.Metadata.Name], observedV4ByInterface[res.Metadata.Name], inactiveTunnels, includePlan, &rr)
 		case "Bridge":
 			e.observeBridge(res, aliases, includePlan, &rr)
 		case "PPPoESession":
@@ -2173,7 +2173,7 @@ func InactiveDSLiteInterfaces(effective, declared *api.Router, store resourceque
 	return inactive
 }
 
-func (e *Engine) observeInterface(router *api.Router, res api.Resource, policy interfacePolicy, observedV4 []ipv4Assignment, inactiveTunnels map[string]string, includePlan bool, rr *ResourceResult) {
+func (e *Engine) observeInterface(res api.Resource, policy interfacePolicy, observedV4 []ipv4Assignment, inactiveTunnels map[string]string, includePlan bool, rr *ResourceResult) {
 	rr.Observed["ifname"] = policy.IfName
 	rr.Observed["managed"] = fmt.Sprintf("%t", policy.Managed)
 	rr.Observed["owner"] = policy.Owner
@@ -2188,21 +2188,12 @@ func (e *Engine) observeInterface(router *api.Router, res api.Resource, policy i
 		rr.Observed["exists"] = "true"
 		rr.Observed["up"] = fmt.Sprintf("%t", ifi.Flags&net.FlagUp != 0)
 		rr.Observed["mtu"] = strconv.Itoa(ifi.MTU)
-		mtu, known, mtuErr := resourcequery.InterfaceMTU(router, e.Store, res, spec, time.Now())
-		if mtuErr != nil {
-			rr.Phase = "Blocked"
-			rr.Warnings = append(rr.Warnings, mtuErr.Error())
-			return
-		}
-		if known && mtu != 0 {
-			rr.Observed["desiredMTU"] = strconv.Itoa(mtu)
-			if ifi.MTU != mtu {
+		if spec.MTU != 0 {
+			rr.Observed["desiredMTU"] = strconv.Itoa(spec.MTU)
+			if ifi.MTU != spec.MTU {
 				rr.Phase = "Drifted"
 				rr.Observed["reason"] = "MTUMismatch"
 			}
-		} else if !known {
-			rr.Phase = "Unknown"
-			rr.Warnings = append(rr.Warnings, "DHCP-provided MTU is not observed")
 		}
 		if spec.AdminUp && ifi.Flags&net.FlagUp == 0 {
 			rr.Phase = "Drifted"
@@ -2245,7 +2236,7 @@ func (e *Engine) observeInterface(router *api.Router, res api.Resource, policy i
 		rr.Plan = append(rr.Plan, "ensure link is administratively up")
 	}
 	if spec.MTU != 0 {
-		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure configured or DHCP-provided MTU on %s", policy.IfName))
+		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure configured MTU on %s", policy.IfName))
 	}
 }
 
@@ -2329,9 +2320,6 @@ func (e *Engine) observeDHCPv4Client(res api.Resource, aliases map[string]string
 	}
 	if spec.ClientID != "" {
 		rr.Observed["clientID"] = spec.ClientID
-	}
-	if spec.ClientIDHex != "" {
-		rr.Observed["clientIDHex"] = spec.ClientIDHex
 	}
 
 	if includePlan {
@@ -2574,13 +2562,7 @@ func (e *Engine) observeIPv4Route(router *api.Router, res api.Resource, includeP
 		if defaultString(route.Type, "unicast") != wantType || route.Device != device || route.Gateway != gateway || route.Metric != spec.Metric || (spec.PreferredSource != "" && route.Source != spec.PreferredSource) {
 			continue
 		}
-		onLink := false
-		for _, flag := range route.Flags {
-			if flag == "onlink" {
-				onLink = true
-			}
-		}
-		if onLink != spec.GatewayOnLink {
+		if slices.Contains(route.Flags, "onlink") {
 			continue
 		}
 		rr.Observed["device"] = route.Device
@@ -2839,8 +2821,6 @@ func stringSpec(res api.Resource, key string) string {
 			return spec.ClassID
 		case "clientID":
 			return spec.ClientID
-		case "clientIDHex":
-			return spec.ClientIDHex
 		case "routeMetric":
 			return fmt.Sprint(spec.RouteMetric)
 		}

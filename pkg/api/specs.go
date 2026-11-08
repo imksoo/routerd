@@ -246,13 +246,12 @@ type NetworkAdoptionSpec struct {
 }
 
 type NetworkAdoptionNetworkdSpec struct {
-	DisableDHCPv4     bool              `yaml:"disableDHCPv4,omitempty" json:"disableDHCPv4,omitempty"`
-	DisableDHCPv6     bool              `yaml:"disableDHCPv6,omitempty" json:"disableDHCPv6,omitempty"`
-	DisableIPv6RA     bool              `yaml:"disableIPv6RA,omitempty" json:"disableIPv6RA,omitempty"`
-	DHCPv4UseRoutes   *bool             `yaml:"dhcpv4UseRoutes,omitempty" json:"dhcpv4UseRoutes,omitempty"`
-	DHCPv4UseDNS      *bool             `yaml:"dhcpv4UseDNS,omitempty" json:"dhcpv4UseDNS,omitempty"`
-	DHCPv4RouteMetric int               `yaml:"dhcpv4RouteMetric,omitempty" json:"dhcpv4RouteMetric,omitempty" jsonschema:"minimum=0"`
-	DNS               *InterfaceDNSSpec `yaml:"dns,omitempty" json:"dns,omitempty"`
+	DisableDHCPv4     bool  `yaml:"disableDHCPv4,omitempty" json:"disableDHCPv4,omitempty"`
+	DisableDHCPv6     bool  `yaml:"disableDHCPv6,omitempty" json:"disableDHCPv6,omitempty"`
+	DisableIPv6RA     bool  `yaml:"disableIPv6RA,omitempty" json:"disableIPv6RA,omitempty"`
+	DHCPv4UseRoutes   *bool `yaml:"dhcpv4UseRoutes,omitempty" json:"dhcpv4UseRoutes,omitempty"`
+	DHCPv4UseDNS      *bool `yaml:"dhcpv4UseDNS,omitempty" json:"dhcpv4UseDNS,omitempty"`
+	DHCPv4RouteMetric int   `yaml:"dhcpv4RouteMetric,omitempty" json:"dhcpv4RouteMetric,omitempty" jsonschema:"minimum=0"`
 }
 
 type NetworkAdoptionResolvedSpec struct {
@@ -369,18 +368,12 @@ type ManagementAccessSpec struct {
 type InventorySpec struct{}
 
 type InterfaceSpec struct {
-	IfName  string            `yaml:"ifname" json:"ifname"`
-	When    ResourceWhenSpec  `yaml:"when,omitempty" json:"when,omitempty"`
-	AdminUp bool              `yaml:"adminUp,omitempty" json:"adminUp,omitempty"`
-	MTU     int               `yaml:"mtu,omitempty" json:"mtu,omitempty" jsonschema:"minimum=576,maximum=9216"`
-	Managed bool              `yaml:"managed" json:"managed"`
-	Owner   string            `yaml:"owner,omitempty" json:"owner,omitempty" jsonschema:"enum=routerd,enum=external"`
-	DNS     *InterfaceDNSSpec `yaml:"dns,omitempty" json:"dns,omitempty"`
-}
-
-type InterfaceDNSSpec struct {
-	Servers []string `yaml:"servers,omitempty" json:"servers,omitempty"`
-	Domains []string `yaml:"domains,omitempty" json:"domains,omitempty"`
+	IfName  string           `yaml:"ifname" json:"ifname"`
+	When    ResourceWhenSpec `yaml:"when,omitempty" json:"when,omitempty"`
+	AdminUp bool             `yaml:"adminUp,omitempty" json:"adminUp,omitempty"`
+	MTU     int              `yaml:"mtu,omitempty" json:"mtu,omitempty" jsonschema:"minimum=576,maximum=9216"`
+	Managed bool             `yaml:"managed" json:"managed"`
+	Owner   string           `yaml:"owner,omitempty" json:"owner,omitempty" jsonschema:"enum=routerd,enum=external"`
 }
 
 type LinkSpec struct {
@@ -1048,18 +1041,15 @@ type SecretValueSourceSpec struct {
 }
 
 type DHCPv4ClientSpec struct {
-	Interface        string `yaml:"interface" json:"interface"`
-	Hostname         string `yaml:"hostname,omitempty" json:"hostname,omitempty"`
-	RequestedAddress string `yaml:"requestedAddress,omitempty" json:"requestedAddress,omitempty"`
-	ClassID          string `yaml:"classID,omitempty" json:"classID,omitempty"`
-	ClientID         string `yaml:"clientID,omitempty" json:"clientID,omitempty"`
-	// ClientIDHex is the exact DHCP option 61 byte sequence, encoded as hexadecimal.
-	ClientIDHex string           `yaml:"clientIDHex,omitempty" json:"clientIDHex,omitempty"`
-	UseRoutes   *bool            `yaml:"useRoutes,omitempty" json:"useRoutes,omitempty"`
-	UseDNS      *bool            `yaml:"useDNS,omitempty" json:"useDNS,omitempty"`
-	UseMTU      bool             `yaml:"useMTU,omitempty" json:"useMTU,omitempty"`
-	RouteMetric int              `yaml:"routeMetric,omitempty" json:"routeMetric,omitempty" jsonschema:"minimum=0"`
-	When        ResourceWhenSpec `yaml:"when,omitempty" json:"when,omitempty"`
+	Interface        string           `yaml:"interface" json:"interface"`
+	Hostname         string           `yaml:"hostname,omitempty" json:"hostname,omitempty"`
+	RequestedAddress string           `yaml:"requestedAddress,omitempty" json:"requestedAddress,omitempty"`
+	ClassID          string           `yaml:"classID,omitempty" json:"classID,omitempty"`
+	ClientID         string           `yaml:"clientID,omitempty" json:"clientID,omitempty"`
+	UseRoutes        *bool            `yaml:"useRoutes,omitempty" json:"useRoutes,omitempty"`
+	UseDNS           *bool            `yaml:"useDNS,omitempty" json:"useDNS,omitempty"`
+	RouteMetric      int              `yaml:"routeMetric,omitempty" json:"routeMetric,omitempty" jsonschema:"minimum=0"`
+	When             ResourceWhenSpec `yaml:"when,omitempty" json:"when,omitempty"`
 }
 
 type IPv4StaticRouteSpec struct {
@@ -1703,12 +1693,10 @@ type IPv4RouteSpec struct {
 	// PreferredSource programs the Linux route preferred source (RTA_PREFSRC).
 	// It is useful for host-originated traffic that must use a stable logical
 	// source address while still following an explicit delivery route.
-	PreferredSource string `yaml:"preferredSource,omitempty" json:"preferredSource,omitempty"`
-	// GatewayOnLink marks the IPv4 gateway as reachable through the output link.
-	GatewayOnLink bool                     `yaml:"gatewayOnLink,omitempty" json:"gatewayOnLink,omitempty"`
-	Metric        int                      `yaml:"metric,omitempty" json:"metric,omitempty" jsonschema:"minimum=0"`
-	DependsOn     []ResourceDependencySpec `yaml:"dependsOn,omitempty" json:"dependsOn,omitempty"`
-	ReadyWhen     []ReadyWhenSpec          `yaml:"ready_when,omitempty" json:"-"`
+	PreferredSource string                   `yaml:"preferredSource,omitempty" json:"preferredSource,omitempty"`
+	Metric          int                      `yaml:"metric,omitempty" json:"metric,omitempty" jsonschema:"minimum=0"`
+	DependsOn       []ResourceDependencySpec `yaml:"dependsOn,omitempty" json:"dependsOn,omitempty"`
+	ReadyWhen       []ReadyWhenSpec          `yaml:"ready_when,omitempty" json:"-"`
 }
 
 type OverlayPeerSpec struct {

@@ -64,7 +64,6 @@ type Config struct {
 	RequestedAddress string
 	ClassID          string
 	ClientID         string
-	ClientIDBytes    []byte
 	Now              func() time.Time
 }
 
@@ -264,9 +263,7 @@ func RequestOptions(cfg Config, offered Message) map[byte][]byte {
 	if cfg.ClassID != "" {
 		opts[OptionClassID] = []byte(cfg.ClassID)
 	}
-	if len(cfg.ClientIDBytes) > 0 {
-		opts[OptionClientID] = append([]byte(nil), cfg.ClientIDBytes...)
-	} else if cfg.ClientID != "" {
+	if cfg.ClientID != "" {
 		opts[OptionClientID] = []byte(cfg.ClientID)
 	} else {
 		opts[OptionClientID] = append([]byte{1}, cfg.HardwareAddr...)

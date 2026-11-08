@@ -655,7 +655,7 @@ func artifactIntentsForResult(intents []resource.Intent) []ArtifactIntent {
 }
 
 func networkdAdoptionConfigured(spec api.NetworkAdoptionNetworkdSpec) bool {
-	return spec.DNS != nil || spec.DisableDHCPv4 || spec.DisableDHCPv6 || spec.DisableIPv6RA || spec.DHCPv4UseRoutes != nil || spec.DHCPv4UseDNS != nil || spec.DHCPv4RouteMetric != 0
+	return spec.DisableDHCPv4 || spec.DisableDHCPv6 || spec.DisableIPv6RA || spec.DHCPv4UseRoutes != nil || spec.DHCPv4UseDNS != nil || spec.DHCPv4RouteMetric != 0
 }
 
 func resolvedAdoptionConfigured(spec api.NetworkAdoptionResolvedSpec) bool {

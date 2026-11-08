@@ -1471,9 +1471,6 @@ func dhcpv4ClientUnitSpec(resource, ifname string, spec api.DHCPv4ClientSpec, te
 	if spec.ClientID != "" {
 		exec = append(exec, "--client-id", spec.ClientID)
 	}
-	if spec.ClientIDHex != "" {
-		exec = append(exec, "--client-id-hex", spec.ClientIDHex)
-	}
 	return api.SystemdUnitSpec{
 		Description:              "routerd DHCPv4 client " + resource,
 		ExecStart:                exec,
@@ -2251,16 +2248,6 @@ func networkdAdoptionDropin(spec api.NetworkAdoptionNetworkdSpec, disableRADHCPv
 	if spec.DisableIPv6RA {
 		b.WriteString("IPv6AcceptRA=no\n")
 	}
-	if spec.DNS != nil {
-		b.WriteString("DNS=\n")
-		for _, server := range spec.DNS.Servers {
-			b.WriteString("DNS=" + server + "\n")
-		}
-		b.WriteString("Domains=\n")
-		for _, domain := range spec.DNS.Domains {
-			b.WriteString("Domains=" + domain + "\n")
-		}
-	}
 	if disableRADHCPv6 && !spec.DisableIPv6RA {
 		b.WriteString("\n[IPv6AcceptRA]\nDHCPv6Client=no\n")
 	}
@@ -2280,8 +2267,7 @@ func networkdAdoptionDropin(spec api.NetworkAdoptionNetworkdSpec, disableRADHCPv
 }
 
 func networkdAdoptionConfigured(spec api.NetworkAdoptionNetworkdSpec) bool {
-	return spec.DNS != nil ||
-		spec.DisableDHCPv4 ||
+	return spec.DisableDHCPv4 ||
 		spec.DisableDHCPv6 ||
 		spec.DisableIPv6RA ||
 		spec.DHCPv4UseRoutes != nil ||

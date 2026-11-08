@@ -556,14 +556,6 @@ func validateRouteResource(res api.Resource, targetOS platform.OS) (bool, error)
 		if len(spec.ReadyWhen) > 0 {
 			return true, fmt.Errorf("%s spec.ready_when was removed; use spec.dependsOn", res.ID())
 		}
-		if spec.GatewayOnLink {
-			if targetOS == platform.OSFreeBSD {
-				return true, fmt.Errorf("%s spec.gatewayOnLink is not supported on FreeBSD", res.ID())
-			}
-			if routeType == "blackhole" || (spec.Gateway == "" && spec.GatewayFrom.Resource == "") {
-				return true, fmt.Errorf("%s spec.gatewayOnLink requires a unicast gateway", res.ID())
-			}
-		}
 		if routeType == "blackhole" {
 			if spec.Device != "" || spec.DeviceFrom.Resource != "" || spec.Gateway != "" || spec.GatewayFrom.Resource != "" || spec.PreferredSource != "" {
 				return true, fmt.Errorf("%s spec.device, spec.deviceFrom, spec.gateway, spec.gatewayFrom, and spec.preferredSource are not valid when spec.type is blackhole", res.ID())
