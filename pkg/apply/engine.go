@@ -188,8 +188,7 @@ func (e *Engine) evaluate(router, declared *api.Router, includePlan bool) (*Resu
 			rr.Phase = "Unknown"
 			rr.Observed["reason"] = "IngressRuntimeNotObserved"
 		case "VirtualAddress":
-			rr.Phase = "Unknown"
-			rr.Observed["reason"] = "VirtualAddressRuntimeNotObserved"
+			e.observeVirtualAddress(res, aliases, &rr)
 		case "Hostname":
 			e.observeHostname(res, osNet, includePlan, &rr)
 		}
@@ -199,7 +198,7 @@ func (e *Engine) evaluate(router, declared *api.Router, includePlan bool) (*Resu
 
 		if rr.Phase == "Blocked" {
 			result.Phase = "Blocked"
-		} else if rr.Phase == "Drifted" && result.Phase == "Healthy" && (res.Kind == "Bridge" || res.Kind == "VXLANTunnel" || res.Kind == "IPv4Route" || res.Kind == "Package" || res.Kind == "TunnelInterface" || res.Kind == "DSLiteTunnel") {
+		} else if rr.Phase == "Drifted" && result.Phase == "Healthy" && (res.Kind == "Bridge" || res.Kind == "VXLANTunnel" || res.Kind == "IPv4Route" || res.Kind == "Package" || res.Kind == "TunnelInterface" || res.Kind == "DSLiteTunnel" || res.Kind == "VirtualAddress") {
 			result.Phase = "Drifted"
 		}
 		result.Resources = append(result.Resources, rr)
@@ -234,6 +233,59 @@ func (e *Engine) evaluate(router, declared *api.Router, includePlan bool) (*Resu
 	}
 
 	return result, nil
+}
+
+func (e *Engine) observeVirtualAddress(res api.Resource, aliases map[string]string, rr *ResourceResult) {
+	rr.Phase = "Unknown"
+	rr.Observed["reason"] = "VirtualAddressRuntimeNotObserved"
+	spec, err := res.VirtualAddressSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	if spec.Mode != "" && spec.Mode != "static" || spec.AddressFrom.Resource != "" {
+		return
+	}
+	want, err := netip.ParsePrefix(spec.Address)
+	if err != nil {
+		return
+	}
+	ifname := aliases[spec.Interface]
+	if ifname == "" {
+		ifname = spec.Interface
+	}
+	iface, err := net.InterfaceByName(ifname)
+	if err != nil {
+		rr.Warnings = append(rr.Warnings, fmt.Sprintf("observe VirtualAddress interface %s: %v", ifname, err))
+		return
+	}
+	addresses, err := iface.Addrs()
+	if err != nil {
+		rr.Warnings = append(rr.Warnings, fmt.Sprintf("observe VirtualAddress addresses on %s: %v", ifname, err))
+		return
+	}
+	rr.Observed["expectedAddress"] = want.String()
+	rr.Observed["ifname"] = ifname
+	present := false
+	for _, address := range addresses {
+		if prefix, err := netip.ParsePrefix(address.String()); err == nil && prefix == want {
+			present = true
+			break
+		}
+	}
+	rr.Observed["addressPresent"] = strconv.FormatBool(present)
+	if present {
+		return
+	}
+	if resourcequery.ResourceWhenPresent(spec.When) {
+		store, ok := e.Store.(resourcequery.StateStore)
+		if !ok || !resourcequery.ResourceWhenMatches(spec.When, store) {
+			return
+		}
+	}
+	rr.Phase = "Drifted"
+	rr.Observed["reason"] = "VirtualAddressMissing"
 }
 
 func (e *Engine) observeBridge(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
