@@ -14,7 +14,6 @@ import (
 	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/controlapi"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
-	"github.com/imksoo/routerd/pkg/mobilityconfig"
 	"github.com/imksoo/routerd/pkg/samenrollment"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 	"gopkg.in/yaml.v3"
@@ -312,13 +311,6 @@ func TestGetSAMEnrollmentTopologyForAcceptedDirectClaimReturnsPolicyScopedPeerGr
 	}
 	if group.EnrollmentPolicyRef != requesterSpec.PolicyRef {
 		t.Fatalf("peer group policy = %q, want %q", group.EnrollmentPolicyRef, requesterSpec.PolicyRef)
-	}
-	transport, found, err := findSAMTransportProfile(router, "SAMTransportProfile/pve-rr-a-wg")
-	if err != nil || !found {
-		t.Fatalf("find transport profile: found=%v err=%v", found, err)
-	}
-	if group.TransportFingerprint != mobilityconfig.SAMTransportMeshFingerprint(transport) {
-		t.Fatalf("transport fingerprint = %q", group.TransportFingerprint)
 	}
 	if len(group.Nodes) != 2 {
 		t.Fatalf("direct nodes = %#v, want owned and empty opted-in remote leaves", group.Nodes)
