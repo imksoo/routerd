@@ -1788,7 +1788,7 @@ func ensureDSLiteTunnel(ctx context.Context, router *api.Router, spec api.DSLite
 	out, err := exec.CommandContext(ctx, "ip", args...).CombinedOutput()
 	if err != nil {
 		if operation == "add" {
-			if existing := existingDSLiteTunnel(ctx, remote, local); existing != "" {
+			if existing := existingDSLiteTunnel(ctx, remote, local, underlay, encapLimit); existing != "" {
 				if err := ensureLinuxDSLiteInnerIPv4(ctx, existing, innerLocal); err != nil {
 					return "", err
 				}
@@ -1860,14 +1860,14 @@ func linuxDSLiteTunnelMissing(output []byte) bool {
 		strings.Contains(message, "no such device")
 }
 
-func existingDSLiteTunnel(ctx context.Context, remote, local string) string {
+func existingDSLiteTunnel(ctx context.Context, remote, local, underlay, encapLimit string) string {
 	out, err := exec.CommandContext(ctx, "ip", "-6", "tunnel", "show").CombinedOutput()
 	if err != nil {
 		return ""
 	}
 	for _, line := range strings.Split(string(out), "\n") {
 		line = strings.TrimSpace(line)
-		if line == "" || !strings.Contains(line, "remote "+remote) || !strings.Contains(line, "local "+local) {
+		if !linuxDSLiteTunnelMatches([]byte(line), remote, local, underlay, encapLimit) {
 			continue
 		}
 		name, _, ok := strings.Cut(line, ":")
