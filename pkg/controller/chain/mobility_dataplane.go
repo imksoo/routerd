@@ -410,7 +410,7 @@ func (c IPv4StaticAddressController) reconcileMobilityStaticAddresses(ctx contex
 		if current, ok := next[applied.ID]; ok && mobilityStaticAddressesEqual(applied, current) {
 			continue
 		}
-		if failed[applied.ID] || mobilityStaticAddressDesiredByUser(c.Router, applied.Interface, applied.Address) {
+		if failed[applied.ID] || mobilityStaticAddressDesiredByUser(c.Router, c.Store, applied.Interface, applied.Address) {
 			next[applied.ID] = applied
 			continue
 		}
@@ -556,8 +556,8 @@ func mobilityStaticAddressesEqual(left, right mobilityAppliedIPv4Address) bool {
 	return left == right
 }
 
-func mobilityStaticAddressDesiredByUser(router *api.Router, ifname, address string) bool {
-	return ipv4StaticAddressDesiredByAnother(router, "", ifname, address)
+func mobilityStaticAddressDesiredByUser(router *api.Router, store Store, ifname, address string) bool {
+	return ipv4StaticAddressDesiredByAnother(router, store, "", ifname, address)
 }
 
 func sortedMobilityAppliedStaticAddresses(addresses map[string]mobilityAppliedIPv4Address) []mobilityAppliedIPv4Address {

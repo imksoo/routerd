@@ -4551,7 +4551,7 @@ func (c IPv4StaticAddressController) teardownWhenFalseIPv4StaticAddress(ctx cont
 		address = candidate.spec.Address
 	}
 	removedAddress := false
-	if !c.DryRun && ifname != "" && address != "" && !ipv4StaticAddressDesiredByAnother(c.Router, object.Name, ifname, address) {
+	if !c.DryRun && ifname != "" && address != "" && !ipv4StaticAddressDesiredByAnother(c.Router, c.Store, object.Name, ifname, address) {
 		addressPresentFn := ipv4AddressPresent
 		if addressPresentFn(ctx, ifname, address) {
 			command := runCommandContext
@@ -4592,7 +4592,7 @@ func (c IPv4StaticAddressController) teardownRemovedIPv4StaticAddress(ctx contex
 	if !c.DryRun {
 		ifname := cleanStatusString(status.Status["ifname"])
 		address := cleanStatusString(status.Status["address"])
-		if ifname != "" && address != "" && !ipv4StaticAddressDesiredByAnother(c.Router, status.Name, ifname, address) {
+		if ifname != "" && address != "" && !ipv4StaticAddressDesiredByAnother(c.Router, c.Store, status.Name, ifname, address) {
 			addressPresentFn := ipv4AddressPresent
 			if addressPresentFn(ctx, ifname, address) {
 				command := runCommandContext
@@ -4638,7 +4638,7 @@ func (c IPv4StaticAddressController) cleanupPreviousIPv4StaticAddress(ctx contex
 	if previousAddress == strings.TrimSpace(desiredAddress) && previousIfName == strings.TrimSpace(desiredIfName) {
 		return nil
 	}
-	if ipv4StaticAddressDesiredByAnother(c.Router, resourceName, previousIfName, previousAddress) {
+	if ipv4StaticAddressDesiredByAnother(c.Router, c.Store, resourceName, previousIfName, previousAddress) {
 		return nil
 	}
 	addressPresentFn := ipv4AddressPresent
@@ -4649,7 +4649,7 @@ func (c IPv4StaticAddressController) cleanupPreviousIPv4StaticAddress(ctx contex
 	return command(ctx, name, args...)
 }
 
-func ipv4StaticAddressDesiredByAnother(router *api.Router, resourceName, ifname, address string) bool {
+func ipv4StaticAddressDesiredByAnother(router *api.Router, store Store, resourceName, ifname, address string) bool {
 	if router == nil {
 		return false
 	}
@@ -4668,11 +4668,35 @@ func ipv4StaticAddressDesiredByAnother(router *api.Router, resourceName, ifname,
 			}
 		case "VirtualAddress":
 			spec, err := resource.VirtualAddressSpec()
-			if err != nil || spec.Family != "ipv4" || (spec.Mode != "" && spec.Mode != "static") || interfaceIfName(router, spec.Interface) != ifname {
+			if err != nil || spec.Family != "ipv4" || interfaceIfName(router, spec.Interface) != ifname {
+				continue
+			}
+			if spec.Mode == "vrrp" {
+				if store == nil || !strings.EqualFold(cleanStatusString(store.ObjectStatus(api.NetAPIVersion, resource.Kind, resource.Metadata.Name)["role"]), "master") {
+					continue
+				}
+			} else if spec.Mode != "" && spec.Mode != "static" {
 				continue
 			}
 			value, err := render.VirtualAddress(router, spec)
 			if err == nil && value == strings.TrimSpace(address) {
+				return true
+			}
+		case "DHCPv4Client":
+			if store == nil {
+				continue
+			}
+			spec, err := resource.DHCPv4ClientSpec()
+			if err != nil || interfaceIfName(router, spec.Interface) != ifname {
+				continue
+			}
+			status := store.ObjectStatus(api.NetAPIVersion, resource.Kind, resource.Metadata.Name)
+			phase := cleanStatusString(status["phase"])
+			if phase != daemonapi.ResourcePhaseBound && phase != daemonapi.ResourcePhaseRefreshing && phase != daemonapi.ResourcePhaseRebinding {
+				continue
+			}
+			expires, err := time.Parse(time.RFC3339Nano, cleanStatusString(status["expiresAt"]))
+			if err == nil && time.Now().Before(expires) && cleanStatusString(status["ifname"]) == ifname && cleanStatusString(status["appliedAddress"]) == strings.TrimSpace(address) {
 				return true
 			}
 		}
