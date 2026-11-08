@@ -192,7 +192,7 @@ func (e *Engine) evaluate(router, declared *api.Router, includePlan bool) (*Resu
 
 		if rr.Phase == "Blocked" {
 			result.Phase = "Blocked"
-		} else if rr.Phase == "Drifted" && result.Phase == "Healthy" && (res.Kind == "Bridge" || res.Kind == "VXLANTunnel" || res.Kind == "IPv4Route" || res.Kind == "Package" || res.Kind == "TunnelInterface") {
+		} else if rr.Phase == "Drifted" && result.Phase == "Healthy" && (res.Kind == "Bridge" || res.Kind == "VXLANTunnel" || res.Kind == "IPv4Route" || res.Kind == "Package" || res.Kind == "TunnelInterface" || res.Kind == "DSLiteTunnel") {
 			result.Phase = "Drifted"
 		}
 		result.Resources = append(result.Resources, rr)
@@ -825,6 +825,63 @@ func (e *Engine) observeDSLiteTunnel(res api.Resource, aliases map[string]string
 			rr.Plan = append(rr.Plan, "route IPv4 default traffic through DS-Lite tunnel")
 		}
 	}
+	if disabled || platform.CurrentOS() != platform.OSLinux {
+		return
+	}
+	if e.Store != nil {
+		if alias, ok := e.Store.ObjectStatus(api.NetAPIVersion, "DSLiteTunnel", res.Metadata.Name)["aliasOf"].(string); ok && alias != "" {
+			tunnelName = alias
+		}
+	}
+	out, err := runCommand("ip", "-j", "-d", "link", "show", "type", "ip6tnl")
+	if err != nil {
+		rr.Phase = "Unknown"
+		rr.Warnings = append(rr.Warnings, fmt.Sprintf("observe DS-Lite tunnels: %v", err))
+		return
+	}
+	var links []struct {
+		Name  string   `json:"ifname"`
+		Flags []string `json:"flags"`
+		MTU   int      `json:"mtu"`
+		Info  struct {
+			Kind string `json:"info_kind"`
+			Data struct {
+				Proto  string `json:"proto"`
+				Local  string `json:"local"`
+				Remote string `json:"remote"`
+				Link   string `json:"link"`
+			} `json:"info_data"`
+		} `json:"linkinfo"`
+	}
+	if err := json.Unmarshal(out, &links); err != nil {
+		rr.Phase = "Unknown"
+		rr.Warnings = append(rr.Warnings, fmt.Sprintf("decode DS-Lite tunnels: %v", err))
+		return
+	}
+	for _, link := range links {
+		if link.Name != tunnelName {
+			continue
+		}
+		rr.Observed["actualTunnelName"] = link.Name
+		rr.Observed["actualLocal"] = link.Info.Data.Local
+		rr.Observed["actualRemote"] = link.Info.Data.Remote
+		rr.Observed["actualMTU"] = strconv.Itoa(link.MTU)
+		underlay := aliases[spec.Interface]
+		remote := defaultString(spec.RemoteAddress, spec.AFTRIPv6)
+		if link.Info.Kind != "ip6tnl" || link.Info.Data.Proto != "ipip6" || !slices.Contains(link.Flags, "UP") || (spec.MTU != 0 && link.MTU != spec.MTU) || (underlay != "" && underlay != tunnelName && link.Info.Data.Link != underlay) || (remote != "" && link.Info.Data.Remote != remote) || (localSource == "static" && spec.LocalAddress != "" && link.Info.Data.Local != spec.LocalAddress) {
+			rr.Phase = "Drifted"
+			rr.Observed["reason"] = "TunnelMismatch"
+			return
+		}
+		rr.Phase = "Unknown"
+		rr.Observed["reason"] = "TunnelAttributesPartiallyChecked"
+		if remote == "" || localSource != "static" || spec.LocalAddress == "" {
+			rr.Observed["reason"] = "DynamicEndpointsNotChecked"
+		}
+		return
+	}
+	rr.Phase = "Drifted"
+	rr.Observed["reason"] = "TunnelMissing"
 }
 
 func (e *Engine) observePPPoESession(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
