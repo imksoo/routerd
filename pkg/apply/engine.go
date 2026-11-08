@@ -608,6 +608,8 @@ func (e *Engine) observeDHCPv6PrefixDelegation(res api.Resource, aliases map[str
 	if prefixLength != 0 {
 		rr.Observed["prefixLength"] = fmt.Sprintf("%d", prefixLength)
 	}
+	rr.Phase = "Unknown"
+	rr.Observed["reason"] = "PrefixDelegationRuntimeNotObserved"
 	if includePlan {
 		rr.Plan = append(rr.Plan, fmt.Sprintf("request DHCPv6 prefix delegation on %s with %s", ifname, client))
 		switch profile {
