@@ -792,6 +792,14 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 	if err := appendLedgerOwnedOrphans(result, planRouter, router, opts.LedgerPath, opts.DryRun); err != nil {
 		return nil, err
 	}
+	if opts.DryRun && result.Phase == "Healthy" {
+		for _, resource := range result.Resources {
+			if resource.Phase == "Unknown" {
+				result.Phase = "Unknown"
+				break
+			}
+		}
+	}
 	if !opts.DryRun && configCommitPhase(result.Phase) {
 		if err := outcome.commit(opts, configYAML); err != nil {
 			return result, err
