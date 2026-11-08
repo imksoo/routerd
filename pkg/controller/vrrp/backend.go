@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -85,8 +86,11 @@ func (keepalivedBackend) Apply(ctx context.Context, c *Controller, aliases map[s
 		if err != nil {
 			return backendResult{}, err
 		}
-		serviceActive := c.refreshKeepalivedServiceActive(ctx)
-		result := backendResult{Path: path, Changed: changed, Roles: observeKeepalivedRolesAfterChange(ctx, c, aliases), ServiceActive: &serviceActive, LastChangeReason: reason}
+		serviceActive, err := c.refreshKeepalivedServiceActive(ctx)
+		if err != nil {
+			return backendResult{}, err
+		}
+		result := backendResult{Path: path, Changed: changed, Roles: observeKeepalivedRolesAfterChange(ctx, c, aliases, serviceActive), ServiceActive: &serviceActive, LastChangeReason: reason}
 		completeKeepalivedResult(ctx, c, aliases, &result)
 		if action == "reload" {
 			result.LastReloadAt = now
@@ -95,8 +99,11 @@ func (keepalivedBackend) Apply(ctx context.Context, c *Controller, aliases map[s
 		}
 		return result, nil
 	}
-	roles := observeKeepalivedRoles(ctx, c, aliases)
-	serviceActive := c.refreshKeepalivedServiceActive(ctx)
+	serviceActive, err := c.refreshKeepalivedServiceActive(ctx)
+	if err != nil {
+		return backendResult{}, err
+	}
+	roles := observeKeepalivedRoles(ctx, c, aliases, serviceActive)
 	if !serviceActive && !c.DryRun {
 		now := time.Now().UTC().Format(time.RFC3339Nano)
 		reason := "keepalived.service inactive"
@@ -104,8 +111,11 @@ func (keepalivedBackend) Apply(ctx context.Context, c *Controller, aliases map[s
 		if err != nil {
 			return backendResult{}, err
 		}
-		serviceActive = c.refreshKeepalivedServiceActive(ctx)
-		result := backendResult{Path: path, Changed: changed, Roles: observeKeepalivedRolesAfterChange(ctx, c, aliases), ServiceActive: &serviceActive, LastChangeReason: reason}
+		serviceActive, err = c.refreshKeepalivedServiceActive(ctx)
+		if err != nil {
+			return backendResult{}, err
+		}
+		result := backendResult{Path: path, Changed: changed, Roles: observeKeepalivedRolesAfterChange(ctx, c, aliases, serviceActive), ServiceActive: &serviceActive, LastChangeReason: reason}
 		completeKeepalivedResult(ctx, c, aliases, &result)
 		if action == "reload" {
 			result.LastReloadAt = now
@@ -416,15 +426,15 @@ func reloadOrRestartSystemdKeepalived(ctx context.Context, c *Controller, path s
 	return "restart", nil
 }
 
-func observeKeepalivedRoles(ctx context.Context, c *Controller, aliases map[string]string) map[string]string {
-	return observeKeepalivedRolesWithWait(ctx, c, aliases, false)
+func observeKeepalivedRoles(ctx context.Context, c *Controller, aliases map[string]string, serviceActive bool) map[string]string {
+	return observeKeepalivedRolesWithWait(ctx, c, aliases, false, serviceActive)
 }
 
-func observeKeepalivedRolesAfterChange(ctx context.Context, c *Controller, aliases map[string]string) map[string]string {
-	return observeKeepalivedRolesWithWait(ctx, c, aliases, true)
+func observeKeepalivedRolesAfterChange(ctx context.Context, c *Controller, aliases map[string]string, serviceActive bool) map[string]string {
+	return observeKeepalivedRolesWithWait(ctx, c, aliases, true, serviceActive)
 }
 
-func observeKeepalivedRolesWithWait(ctx context.Context, c *Controller, aliases map[string]string, wait bool) map[string]string {
+func observeKeepalivedRolesWithWait(ctx context.Context, c *Controller, aliases map[string]string, wait, serviceActive bool) map[string]string {
 	roles := map[string]string{}
 	// Kernel VIP ownership is the authoritative role evidence.  Do not let a
 	// cached systemd result hide an already-owned VIP.
@@ -439,7 +449,7 @@ func observeKeepalivedRolesWithWait(ctx context.Context, c *Controller, aliases 
 		if spec.VRRP.GracefulActivation != nil {
 			role := gracefulElectionRole(resource.Metadata.Name)
 			if role == "master" || role == "backup" {
-				if !c.refreshKeepalivedServiceActive(ctx) {
+				if !serviceActive {
 					role = "inactive"
 				}
 				roles[resource.Metadata.Name] = role
@@ -481,7 +491,7 @@ func observeKeepalivedRolesWithWait(ctx context.Context, c *Controller, aliases 
 				}
 			}
 		}
-		if role != "master" && !c.refreshKeepalivedServiceActive(ctx) {
+		if role != "master" && !serviceActive {
 			role = "inactive"
 		}
 		roles[resource.Metadata.Name] = role
@@ -489,20 +499,16 @@ func observeKeepalivedRolesWithWait(ctx context.Context, c *Controller, aliases 
 	return roles
 }
 
-func (c *Controller) keepalivedServiceActive(ctx context.Context) bool {
-	if !c.keepalivedActiveCheckedAt.IsZero() && time.Since(c.keepalivedActiveCheckedAt) <= 30*time.Second {
-		return c.keepalivedActiveCached
+func (c *Controller) refreshKeepalivedServiceActive(ctx context.Context) (bool, error) {
+	out, err := c.run(ctx, "systemctl", "is-active", "--quiet", "keepalived.service")
+	if err == nil {
+		return true, nil
 	}
-	return c.refreshKeepalivedServiceActive(ctx)
-}
-
-func (c *Controller) refreshKeepalivedServiceActive(ctx context.Context) bool {
-	systemctl := "systemctl"
-	_, err := c.run(ctx, systemctl, "is-active", "--quiet", "keepalived.service")
-	active := err == nil
-	c.keepalivedActiveCached = active
-	c.keepalivedActiveCheckedAt = time.Now()
-	return active
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && (exitErr.ExitCode() == 3 || exitErr.ExitCode() == 4) {
+		return false, nil
+	}
+	return false, fmt.Errorf("observe keepalived.service: %w: %s", err, strings.TrimSpace(string(out)))
 }
 
 type carpBackend struct{}

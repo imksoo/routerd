@@ -29,14 +29,12 @@ type Store interface {
 }
 
 type Controller struct {
-	Router                    *api.Router
-	Bus                       *bus.Bus
-	Store                     Store
-	DryRun                    bool
-	Logger                    *slog.Logger
-	trackState                map[string]trackDecision
-	keepalivedActiveCheckedAt time.Time
-	keepalivedActiveCached    bool
+	Router     *api.Router
+	Bus        *bus.Bus
+	Store      Store
+	DryRun     bool
+	Logger     *slog.Logger
+	trackState map[string]trackDecision
 }
 
 func (c *Controller) Reconcile(ctx context.Context) error {
