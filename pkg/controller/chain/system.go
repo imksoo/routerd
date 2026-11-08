@@ -1632,6 +1632,13 @@ func (c SystemdUnitController) applyHealthCheckSystemdUnit(ctx context.Context, 
 	if err != nil {
 		return changed, false, err
 	}
+	if !c.DryRun && !changed {
+		out, err := command(ctx, "systemctl", "show", "--property=NeedDaemonReload", "--value", unitName)
+		if err != nil {
+			return false, false, fmt.Errorf("check unit %s reload state: %w", unitName, err)
+		}
+		changed = strings.TrimSpace(string(out)) == "yes"
+	}
 	if healthCheckDisabled(spec) {
 		if c.DryRun {
 			return changed, false, nil
