@@ -5627,7 +5627,7 @@ func (c LANAddressController) freshStagedPDSnapshot(pdName string) (pdclient.Sna
 		found = true
 		break
 	}
-	if !found {
+	if !found || api.EffectiveIPv6PDClient(string(platform.CurrentOS()), spec.Profile, spec.Client) != api.IPv6PDClientRouterd {
 		return pdclient.Snapshot{}, false
 	}
 	ifname := interfaceIfName(declared, spec.Interface)
