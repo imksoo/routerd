@@ -745,6 +745,12 @@ func NetworkAdoptions(router *api.Router) []NetworkAdoptionResource {
 	resolved := providesDefaultLoopbackDNS(router)
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
+		case "IPv4StaticAddress":
+			if spec, err := res.IPv4StaticAddressSpec(); err == nil {
+				if item := ensure(spec.Interface); item != nil {
+					item.disableDHCPv4 = true
+				}
+			}
 		case "DHCPv4Client":
 			if spec, err := res.DHCPv4ClientSpec(); err == nil {
 				if item := ensure(spec.Interface); item != nil {
