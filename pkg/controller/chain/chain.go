@@ -5662,7 +5662,7 @@ func (c LANAddressController) freshStagedPDSnapshot(pdName string) (pdclient.Sna
 		if err != nil || len(iface.HardwareAddr) == 0 {
 			return pdclient.Snapshot{}, false
 		}
-		expectedDUID = fmt.Sprintf("00030001%x", iface.HardwareAddr)
+		expectedDUID = fmt.Sprintf("00030001%x", []byte(iface.HardwareAddr))
 	}
 	if !strings.EqualFold(strings.ReplaceAll(strings.TrimSpace(snapshot.ClientDUID), ":", ""), expectedDUID) {
 		return pdclient.Snapshot{}, false
