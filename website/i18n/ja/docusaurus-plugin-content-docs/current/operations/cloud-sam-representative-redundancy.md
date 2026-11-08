@@ -5,8 +5,7 @@ title: Cloud SAM 代表冗長化検証
 # Cloud SAM 代表冗長化検証
 
 `representative-redundancy` は、費用枠を定めた全トポロジーの Cloud SAM
-切り替え検証プロファイルです。baseline のみを検証する
-[`full-topology-minimal`](cloud-sam-full-topology-minimal.md) とは別のプロファイルです。
+切り替え検証プロファイルです。
 
 代表となる RR-A の切り替えに加え、AWS・Azure・OCI・PVE それぞれの edge-A を
 1 台ずつ停止・復帰させます。従来の「RR のみ」という範囲ではありません。

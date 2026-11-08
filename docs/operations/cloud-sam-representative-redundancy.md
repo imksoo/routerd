@@ -1,8 +1,7 @@
 # Cloud SAM representative redundancy qualification
 
 `representative-redundancy` is the cost-conscious full-topology Cloud SAM
-transition profile. It is separate from the baseline-only
-[`full-topology-minimal`](cloud-sam-full-topology-minimal.md) profile.
+transition profile.
 
 It includes the representative RR-A transition and one edge-A stop/rejoin
 scenario at each of AWS, Azure, OCI, and PVE. The former RR-only scope no
