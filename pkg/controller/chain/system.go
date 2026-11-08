@@ -243,38 +243,17 @@ func (c NetworkAdoptionController) cleanupStaleNetworkdAdoptionDropins(ctx conte
 }
 
 func (c NetworkAdoptionController) cleanupStaleResolvedAdoptionDropins(ctx context.Context, desired map[string]bool, command outputCommandFunc) ([]string, bool, error) {
-	entries, err := os.ReadDir(c.ResolvedDropinDir)
+	path := filepath.Join(c.ResolvedDropinDir, "90-routerd-adoption.conf")
+	if desired[filepath.Clean(path)] {
+		return nil, false, nil
+	}
+	changed, err := removeFileIfExists(path, c.DryRun)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, false, nil
-		}
 		return nil, false, err
 	}
 	var paths []string
-	changed := false
-	for _, entry := range entries {
-		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 || !strings.HasSuffix(entry.Name(), ".conf") {
-			continue
-		}
-		path := filepath.Join(c.ResolvedDropinDir, entry.Name())
-		if desired[filepath.Clean(path)] {
-			continue
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return paths, changed, err
-		}
-		if !bytes.HasPrefix(data, []byte(networkAdoptionResolvedOwnershipHeader)) {
-			continue
-		}
-		removed, err := removeFileIfExists(path, c.DryRun)
-		if err != nil {
-			return paths, changed, err
-		}
-		if removed {
-			paths = append(paths, path)
-			changed = true
-		}
+	if changed {
+		paths = append(paths, path)
 	}
 	if changed && !c.DryRun {
 		if _, err := command(ctx, "systemctl", "restart", "systemd-resolved.service"); err != nil {
