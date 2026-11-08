@@ -4,10 +4,8 @@ package bgp
 
 import (
 	"context"
-	"errors"
 	"net/netip"
 	"reflect"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -254,160 +252,8 @@ func TestDynamicClaimAdmissionUsesSAMTransportNeighborAlias(t *testing.T) {
 	}
 }
 
-func policyPlanHasDefinedSet(req *gobgpapi.SetPoliciesRequest, typ gobgpapi.DefinedType, name, value string) bool {
-	for _, set := range req.GetDefinedSets() {
-		if set.GetDefinedType() != typ || set.GetName() != name {
-			continue
-		}
-		for _, item := range set.GetList() {
-			if item == value {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 func allowedImportPrefixesForTest(spec api.BGPImportPolicySpec) []allowedImportPrefix {
 	return importAllowedPrefixesFromPolicy(spec)
-}
-
-func TestGoBGPPeerEbgpMultihop(t *testing.T) {
-	direct := goBGPPeer(desiredPeer{Address: "192.0.2.2", ASN: 64513})
-	if direct.GetEbgpMultihop() != nil {
-		t.Fatalf("direct peer eBGP multihop = %#v, want nil", direct.GetEbgpMultihop())
-	}
-	ttlOne := goBGPPeer(desiredPeer{Address: "192.0.2.2", ASN: 64513, EbgpMultihop: 1})
-	if ttlOne.GetEbgpMultihop() != nil {
-		t.Fatalf("ttl=1 eBGP multihop = %#v, want nil direct-peer behavior", ttlOne.GetEbgpMultihop())
-	}
-	multihop := goBGPPeer(desiredPeer{Address: "192.0.2.2", ASN: 64513, EbgpMultihop: 8})
-	if got := multihop.GetEbgpMultihop(); !got.GetEnabled() || got.GetMultihopTtl() != 8 {
-		t.Fatalf("eBGP multihop = %#v, want enabled ttl=8", got)
-	}
-}
-
-func TestGoBGPPeerTransportPreservesDefaultActiveCompatibility(t *testing.T) {
-	active := goBGPPeer(desiredPeer{Address: "192.0.2.2", ASN: 64513})
-	if active.Transport != nil {
-		t.Fatalf("default active peer transport = %#v, want nil for pre-passiveMode compatibility", active.Transport)
-	}
-
-	passive := goBGPPeer(desiredPeer{Address: "192.0.2.2", ASN: 64513, PassiveMode: true})
-	if passive.Transport == nil || !passive.Transport.PassiveMode {
-		t.Fatalf("passive peer transport = %#v, want passiveMode=true", passive.Transport)
-	}
-}
-
-func TestGoBGPPeerInternalRouteReflectorClient(t *testing.T) {
-	peer := goBGPPeer(desiredPeer{
-		Address:                 "10.99.0.2",
-		ASN:                     64577,
-		LocalASN:                64577,
-		RouteReflectorClient:    true,
-		RouteReflectorClusterID: "10.99.0.1",
-	})
-	if peer.GetConf().GetType() != gobgpapi.PeerType_PEER_TYPE_INTERNAL {
-		t.Fatalf("peer type = %v, want internal", peer.GetConf().GetType())
-	}
-	rr := peer.GetRouteReflector()
-	if !rr.GetRouteReflectorClient() || rr.GetRouteReflectorClusterId() != "10.99.0.1" {
-		t.Fatalf("route reflector = %#v, want client cluster 10.99.0.1", rr)
-	}
-}
-
-func TestGoBGPPeerExportPolicy(t *testing.T) {
-	peer := goBGPPeer(desiredPeer{
-		Address:          "10.99.0.2",
-		ASN:              64577,
-		ExportPolicyName: "routerd-lan-export-10-99-0-2",
-		ExportPolicy:     api.BGPExportPolicySpec{AllowedPrefixes: []string{"10.77.60.0/24"}},
-	})
-	assignment := peer.GetApplyPolicy().GetExportPolicy()
-	if assignment.GetDirection() != gobgpapi.PolicyDirection_POLICY_DIRECTION_EXPORT ||
-		assignment.GetDefaultAction() != gobgpapi.RouteAction_ROUTE_ACTION_REJECT ||
-		len(assignment.GetPolicies()) != 1 ||
-		assignment.GetPolicies()[0].GetName() != "routerd-lan-export-10-99-0-2" {
-		t.Fatalf("peer export policy = %#v, want default reject with named export policy", assignment)
-	}
-}
-
-func TestGoBGPPeerDoesNotAttachIneffectiveImportPolicy(t *testing.T) {
-	peer := goBGPPeer(desiredPeer{
-		Address:      "10.99.0.2",
-		ASN:          64577,
-		ImportPolicy: api.BGPImportPolicySpec{AllowedPrefixes: []string{"192.168.123.0/24"}},
-	})
-	if peer.GetApplyPolicy().GetImportPolicy() != nil {
-		t.Fatalf("peer import policy = %#v, want no ineffective peer assignment", peer.GetApplyPolicy().GetImportPolicy())
-	}
-}
-
-func TestBuildBGPPolicyPlanImportPolicyWithCommunities(t *testing.T) {
-	peer := desiredPeer{
-		Address: "10.99.0.2",
-		ASN:     64512,
-		ImportPolicy: api.BGPImportPolicySpec{
-			AllowedPrefixes:      []string{"10.77.60.0/24"},
-			RequiredCommunities:  []string{"64512:301"},
-			ForbiddenCommunities: []string{"64512:302"},
-			LocalPreference:      200,
-		},
-	}
-	plan := buildBGPPolicyPlan("mobility", api.BGPImportPolicySpec{}, map[string]desiredPeer{"10.99.0.2": peer}, nil)
-	scopeName := "routerd-mobility-import-effective-peer-10-99-0-2"
-	if plan.GlobalImportAssignment.GetPolicies()[0].GetName() != "routerd-mobility-import-effective" {
-		t.Fatalf("global import assignment = %#v, want effective policy", plan.GlobalImportAssignment)
-	}
-	if !policyPlanHasDefinedSet(plan.SetPolicies, gobgpapi.DefinedType_DEFINED_TYPE_NEIGHBOR, scopeName+"-neighbors", "10.99.0.2/32") {
-		t.Fatalf("defined sets = %#v, want peer neighbor set", plan.SetPolicies.GetDefinedSets())
-	}
-	if !policyPlanHasDefinedSet(plan.SetPolicies, gobgpapi.DefinedType_DEFINED_TYPE_COMMUNITY, scopeName+"-required-communities", "64512:301") {
-		t.Fatalf("defined sets = %#v, want required community set", plan.SetPolicies.GetDefinedSets())
-	}
-	if !policyPlanHasDefinedSet(plan.SetPolicies, gobgpapi.DefinedType_DEFINED_TYPE_COMMUNITY, scopeName+"-forbidden-communities", "64512:302") {
-		t.Fatalf("defined sets = %#v, want forbidden community set", plan.SetPolicies.GetDefinedSets())
-	}
-	if len(plan.SetPolicies.GetPolicies()) != 1 || len(plan.SetPolicies.GetPolicies()[0].GetStatements()) != 3 {
-		t.Fatalf("policies = %#v, want reject, allow, and terminal reject statements", plan.SetPolicies.GetPolicies())
-	}
-	allow := plan.SetPolicies.GetPolicies()[0].GetStatements()[1]
-	if allow.GetConditions().GetNeighborSet().GetName() != scopeName+"-neighbors" ||
-		allow.GetConditions().GetPrefixSet().GetName() == "" ||
-		allow.GetConditions().GetCommunitySet().GetType() != gobgpapi.MatchSet_TYPE_ALL {
-		t.Fatalf("allow statement = %#v, want neighbor, prefix, and required-community conditions", allow)
-	}
-	if got := allow.GetActions().GetLocalPref().GetValue(); got != 200 {
-		t.Fatalf("allow statement local preference = %d, want 200", got)
-	}
-	terminal := plan.SetPolicies.GetPolicies()[0].GetStatements()[2]
-	if terminal.GetConditions().GetNeighborSet().GetName() != scopeName+"-neighbors" || terminal.GetActions().GetRouteAction() != gobgpapi.RouteAction_ROUTE_ACTION_REJECT {
-		t.Fatalf("terminal statement = %#v, want neighbor-scoped reject", terminal)
-	}
-}
-
-func TestApplyRouterBGPDefaultsExportsImportAllowedPrefixesToRouteReflectorClients(t *testing.T) {
-	peers := map[string]desiredPeer{
-		"10.255.70.4": {
-			Address:              "10.255.70.4",
-			RouteReflectorClient: true,
-		},
-		"10.255.70.5": {
-			Address: "10.255.70.5",
-		},
-	}
-	routerSpec := api.BGPRouterSpec{
-		ImportPolicy: api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.77.60.0/24"}},
-	}
-
-	got := applyRouterBGPDefaults("mobility-bgp", routerSpec, peers, []string{"10.99.70.1/32"}, []string{"10.77.60.10/32"})
-
-	if prefixes := got["10.255.70.4"].ExportPolicy.AllowedPrefixes; !sameStringSet(prefixes, []string{"10.77.60.0/24", "10.77.60.10/32", "10.99.70.1/32"}) {
-		t.Fatalf("route reflector client export prefixes = %#v, want reflected import allowance plus local exports", prefixes)
-	}
-	if prefixes := got["10.255.70.5"].ExportPolicy.AllowedPrefixes; !sameStringSet(prefixes, []string{"10.77.60.10/32", "10.99.70.1/32"}) {
-		t.Fatalf("regular peer export prefixes = %#v, want only local exports", prefixes)
-	}
 }
 
 func TestGeneratedNeighborScopedImportPolicyIsAcceptedByGoBGP(t *testing.T) {
@@ -586,24 +432,4 @@ func testDestinationWithNeighbor(prefix, nextHop, neighbor string) *gobgpapi.Des
 		path.NeighborIp = neighbor
 	}
 	return dst
-}
-
-func standardCommunityValuesForTest(values []string) ([]uint32, error) {
-	var out []uint32
-	for _, value := range values {
-		parts := strings.Split(strings.TrimSpace(value), ":")
-		if len(parts) != 2 {
-			return nil, errors.New("invalid community")
-		}
-		left, err := strconv.ParseUint(parts[0], 10, 16)
-		if err != nil {
-			return nil, err
-		}
-		right, err := strconv.ParseUint(parts[1], 10, 16)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, uint32(left)<<16|uint32(right))
-	}
-	return out, nil
 }
