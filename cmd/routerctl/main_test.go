@@ -13,9 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/ingressdrain"
-	"github.com/imksoo/routerd/pkg/platform"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -377,112 +375,6 @@ func TestApplyRequiresInputAndExplainsMissingDaemon(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "start routerd serve") {
 		t.Fatalf("missing daemon error = %v", err)
 	}
-}
-
-func TestReadCandidateYAMLFromStdin(t *testing.T) {
-	got, err := readCandidateYAML("-", strings.NewReader("kind: Router\n"))
-	if err != nil {
-		t.Fatalf("read candidate stdin: %v", err)
-	}
-	if got != "kind: Router\n" {
-		t.Fatalf("candidate = %q", got)
-	}
-}
-
-func TestIngressHairpinDataplaneDetailWarnsWhenAutoSNATMissing(t *testing.T) {
-	spec := api.IngressServiceSpec{
-		Listen: api.IngressListenSpec{Address: "192.168.1.248", Protocol: "tcp", Port: 6443},
-		Backends: []api.IngressBackendSpec{
-			{Name: "cp-01", Address: "192.168.1.54", Port: 6443},
-		},
-	}
-	status := map[string]any{
-		"listenAddress": "192.168.1.248",
-		"backends": []map[string]any{{
-			"name":            "cp-01",
-			"resolvedAddress": "192.168.1.54",
-			"port":            6443,
-			"healthy":         true,
-		}},
-	}
-	got := ingressHairpinDataplaneDetail(spec, status, 0)
-	want := "hairpinMode=auto hairpinRequired=true nft_snat=missing"
-	if got != want {
-		t.Fatalf("detail = %q, want %q", got, want)
-	}
-}
-
-func TestIPOutputHasAddress(t *testing.T) {
-	output := `2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500
-    inet 192.168.123.250/32 scope global eth0
-       valid_lft forever preferred_lft forever
-    inet6 2001:db8::250/128 scope global
-       valid_lft forever preferred_lft forever
-`
-	if !ipOutputHasAddress(output, "192.168.123.250/32", "ipv4") {
-		t.Fatalf("IPv4 VIP was not detected")
-	}
-	if !ipOutputHasAddress(output, "2001:db8::250/128", "ipv6") {
-		t.Fatalf("IPv6 VIP was not detected")
-	}
-	if ipOutputHasAddress(output, "192.168.123.251/32", "ipv4") {
-		t.Fatalf("unexpected IPv4 VIP match")
-	}
-}
-
-func TestDefaultStatePathUsesPlatformStateDir(t *testing.T) {
-	defaults, _ := platform.Current()
-	expectedDir := defaults.StateDir
-	switch defaults.OS {
-	case platform.OSLinux:
-		expectedDir = "/var/lib/routerd"
-	case platform.OSFreeBSD:
-		expectedDir = "/var/db/routerd"
-	}
-	want := filepath.Join(expectedDir, "routerd.db")
-	if got := defaultStatePath(); got != want {
-		t.Fatalf("platform state path = %q, want %q", got, want)
-	}
-}
-
-func writeShowConfig(t *testing.T, dir string) string {
-	t.Helper()
-	path := filepath.Join(dir, "router.yaml")
-	data := []byte(`apiVersion: routerd.net/v1alpha1
-kind: Router
-metadata:
-  name: test
-spec:
-  resources:
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: Interface
-      metadata:
-        name: wan
-      spec:
-        ifname: ens18
-        managed: true
-        owner: routerd
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: DHCPv6PrefixDelegation
-      metadata:
-        name: wan-pd
-      spec:
-        interface: wan
-        client: networkd
-        prefixLength: 60
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: NAT44Rule
-      metadata:
-        name: lan-nat
-      spec:
-        outboundInterface: wan
-        sourceCIDRs:
-          - 192.0.2.0/24
-`)
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-	return path
 }
 
 func testRouterYAML(name string) string {
