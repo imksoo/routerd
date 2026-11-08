@@ -44,7 +44,10 @@ func (s *netlinkFIBSyncer) SyncBGP(_ context.Context, routes []FIBRoute) (FIBSyn
 		return FIBSyncResult{}, fmt.Errorf("list current BGP routes: %w", err)
 	}
 	s.installed = kernel
-	localAddresses := localIPv4Addresses()
+	localAddresses, err := localIPv4Addresses()
+	if err != nil {
+		return FIBSyncResult{}, err
+	}
 	localHostPrefixes := localIPv4HostPrefixes(localAddresses)
 	result := FIBSyncResult{
 		Installed:        map[string]bool{},
@@ -59,7 +62,7 @@ func (s *netlinkFIBSyncer) SyncBGP(_ context.Context, routes []FIBRoute) (FIBSyn
 		if route.Prefix == "" {
 			continue
 		}
-		if route.PreferredSource != "" && !preferredSourceIsLocal(route.PreferredSource) {
+		if route.PreferredSource != "" && !preferredSourceIsLocal(route.PreferredSource, localAddresses) {
 			result.Unsupported[route.Prefix] = "PreferredSourceNotLocal"
 		}
 		if route.RetainOnMissing {
@@ -142,16 +145,16 @@ type localIPv4Address struct {
 	Address netip.Addr
 }
 
-func localIPv4Addresses() []localIPv4Address {
+func localIPv4Addresses() ([]localIPv4Address, error) {
 	var out []localIPv4Address
 	links, err := netlink.LinkList()
 	if err != nil {
-		return out
+		return nil, fmt.Errorf("list links for local IPv4 addresses: %w", err)
 	}
 	for _, link := range links {
 		addrs, err := netlink.AddrList(link, netlink.FAMILY_V4)
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("list local IPv4 addresses on %s: %w", link.Attrs().Name, err)
 		}
 		for _, local := range addrs {
 			if local.IP == nil {
@@ -164,7 +167,7 @@ func localIPv4Addresses() []localIPv4Address {
 			out = append(out, localIPv4Address{Address: addr})
 		}
 	}
-	return out
+	return out, nil
 }
 
 func localIPv4HostPrefixes(addresses []localIPv4Address) map[string]bool {
@@ -177,12 +180,12 @@ func localIPv4HostPrefixes(addresses []localIPv4Address) map[string]bool {
 	return out
 }
 
-func preferredSourceIsLocal(value string) bool {
+func preferredSourceIsLocal(value string, addresses []localIPv4Address) bool {
 	addr, err := netip.ParseAddr(strings.TrimSpace(value))
 	if err != nil || !addr.Is4() {
 		return false
 	}
-	for _, local := range localIPv4Addresses() {
+	for _, local := range addresses {
 		if local.Address == addr {
 			return true
 		}
