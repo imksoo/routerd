@@ -306,14 +306,16 @@ func (e *Engine) observeVirtualAddress(res api.Resource, aliases map[string]stri
 		}
 	}
 	rr.Observed["addressPresent"] = strconv.FormatBool(present)
-	if present {
-		return
-	}
 	if resourcequery.ResourceWhenPresent(spec.When) {
 		store, ok := e.Store.(resourcequery.StateStore)
 		if !ok || !resourcequery.ResourceWhenMatches(spec.When, store) {
 			return
 		}
+	}
+	if present {
+		rr.Phase = "Healthy"
+		delete(rr.Observed, "reason")
+		return
 	}
 	rr.Phase = "Drifted"
 	rr.Observed["reason"] = "VirtualAddressMissing"
