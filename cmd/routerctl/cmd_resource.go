@@ -30,7 +30,6 @@ type showResource struct {
 	Ledger     []resource.Artifact `json:"ledger,omitempty" yaml:"ledger,omitempty"`
 	State      map[string]any      `json:"state,omitempty" yaml:"state,omitempty"`
 	Diff       []showDiff          `json:"diff,omitempty" yaml:"diff,omitempty"`
-	Adopt      []any               `json:"adopt,omitempty" yaml:"adopt,omitempty"`
 	Events     []routerstate.Event `json:"events,omitempty" yaml:"events,omitempty"`
 }
 

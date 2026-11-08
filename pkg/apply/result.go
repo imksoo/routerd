@@ -5,14 +5,12 @@ package apply
 import "time"
 
 type Result struct {
-	Generation         int64               `json:"generation"`
-	Timestamp          time.Time           `json:"timestamp"`
-	Phase              string              `json:"phase"`
-	Resources          []ResourceResult    `json:"resources"`
-	Orphans            []OrphanedArtifact  `json:"orphans,omitempty"`
-	AdoptionCandidates []AdoptionCandidate `json:"adoptionCandidates,omitempty"`
-	AdoptedArtifacts   []AdoptedArtifact   `json:"adoptedArtifacts,omitempty"`
-	Warnings           []string            `json:"warnings,omitempty"`
+	Generation int64              `json:"generation"`
+	Timestamp  time.Time          `json:"timestamp"`
+	Phase      string             `json:"phase"`
+	Resources  []ResourceResult   `json:"resources"`
+	Orphans    []OrphanedArtifact `json:"orphans,omitempty"`
+	Warnings   []string           `json:"warnings,omitempty"`
 }
 
 type ResourceResult struct {
@@ -46,19 +44,4 @@ type ArtifactIntent struct {
 	Name      string `json:"name"`
 	Action    string `json:"action"`
 	ApplyWith string `json:"applyWith,omitempty"`
-}
-
-type AdoptionCandidate struct {
-	Kind     string            `json:"kind"`
-	Name     string            `json:"name"`
-	Owner    string            `json:"owner"`
-	Reason   string            `json:"reason"`
-	Desired  map[string]string `json:"desired,omitempty"`
-	Observed map[string]string `json:"observed,omitempty"`
-}
-
-type AdoptedArtifact struct {
-	Kind  string `json:"kind"`
-	Name  string `json:"name"`
-	Owner string `json:"owner"`
 }

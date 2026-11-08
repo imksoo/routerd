@@ -1885,18 +1885,6 @@ func TestFreeBSDProtectedIfnames(t *testing.T) {
 	}
 }
 
-func TestAdoptedArtifactsForResultDeduplicates(t *testing.T) {
-	artifacts := []resource.Artifact{
-		{Kind: "nft.table", Name: "routerd_nat", Owner: "one"},
-		{Kind: "nft.table", Name: "routerd_nat", Owner: "one"},
-		{Kind: "host.hostname", Name: "system", Owner: "host"},
-	}
-	got := adoptedArtifactsForResult(artifacts)
-	if len(got) != 2 {
-		t.Fatalf("adopted artifacts = %+v, want two", got)
-	}
-}
-
 func TestDeriveIPv6Address(t *testing.T) {
 	got, err := deriveIPv6Address([]string{"2001:db8:3d60:1220::/64"}, "::100")
 	if err != nil {

@@ -28,62 +28,6 @@ func (e *Engine) observeManagedOrphans(router *api.Router, aliases map[string]st
 	return orphans
 }
 
-func (e *Engine) AdoptionCandidates(router *api.Router, ledger resource.Ledger) ([]AdoptionCandidate, error) {
-	candidates, _, err := e.AdoptionCandidateArtifacts(router, ledger)
-	return candidates, err
-}
-
-func (e *Engine) AdoptionCandidateArtifacts(router *api.Router, ledger resource.Ledger) ([]AdoptionCandidate, []resource.Artifact, error) {
-	if err := e.Validate(router); err != nil {
-		return nil, nil, err
-	}
-	if ledger == nil {
-		ledger = resource.NewLedger()
-	}
-	aliases := interfaceAliases(router)
-	desired := DesiredOwnedArtifacts(router, aliases)
-	actual := e.actualInventoryBackedArtifacts()
-	actualByID := map[string]resource.Artifact{}
-	for _, artifact := range actual {
-		actualByID[artifact.Identity()] = artifact
-	}
-	var candidates []AdoptionCandidate
-	var artifacts []resource.Artifact
-	seen := map[string]bool{}
-	for _, artifact := range desired {
-		id := artifact.Identity()
-		if seen[id] {
-			continue
-		}
-		owns, err := ledger.Owns(artifact)
-		if err != nil {
-			return nil, nil, err
-		}
-		if owns {
-			continue
-		}
-		actualArtifact, ok := actualByID[id]
-		if !ok {
-			continue
-		}
-		seen[id] = true
-		reason := "desired artifact exists on host but is not recorded in the local ownership ledger"
-		if desiredAttributesDrift(artifact.Attributes, actualArtifact.Attributes) {
-			reason = "desired artifact identity exists on host but observed attributes differ from desired state"
-		}
-		candidates = append(candidates, AdoptionCandidate{
-			Kind:     artifact.Kind,
-			Name:     artifact.Name,
-			Owner:    artifact.Owner,
-			Reason:   reason,
-			Desired:  artifact.Attributes,
-			Observed: actualArtifact.Attributes,
-		})
-		artifacts = append(artifacts, mergeArtifactAttributes(artifact, actualArtifact))
-	}
-	return candidates, artifacts, nil
-}
-
 func (e *Engine) DesiredOwnedArtifacts(router *api.Router) ([]resource.Artifact, error) {
 	if err := e.Validate(router); err != nil {
 		return nil, err
@@ -173,15 +117,6 @@ func orphanedArtifactFromLifecycle(removal lifecycle.GCArtifactRemoval) Orphaned
 		Remediation: removal.Remediation,
 		Observed:    removal.Artifact.Attributes,
 	}
-}
-
-func desiredAttributesDrift(desired, actual map[string]string) bool {
-	for key, desiredValue := range desired {
-		if actual[key] != desiredValue {
-			return true
-		}
-	}
-	return false
 }
 
 func DesiredOwnedArtifacts(router *api.Router, aliases map[string]string) []resource.Artifact {

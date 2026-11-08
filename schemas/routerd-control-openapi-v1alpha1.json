@@ -42,68 +42,6 @@
           "result": {
             "additionalProperties": false,
             "properties": {
-              "adoptedArtifacts": {
-                "items": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "kind": {
-                      "type": "string"
-                    },
-                    "name": {
-                      "type": "string"
-                    },
-                    "owner": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "kind",
-                    "name",
-                    "owner"
-                  ],
-                  "type": "object"
-                },
-                "type": "array"
-              },
-              "adoptionCandidates": {
-                "items": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "desired": {
-                      "additionalProperties": {
-                        "type": "string"
-                      },
-                      "type": "object"
-                    },
-                    "kind": {
-                      "type": "string"
-                    },
-                    "name": {
-                      "type": "string"
-                    },
-                    "observed": {
-                      "additionalProperties": {
-                        "type": "string"
-                      },
-                      "type": "object"
-                    },
-                    "owner": {
-                      "type": "string"
-                    },
-                    "reason": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "kind",
-                    "name",
-                    "owner",
-                    "reason"
-                  ],
-                  "type": "object"
-                },
-                "type": "array"
-              },
               "generation": {
                 "type": "integer"
               },
@@ -780,68 +718,6 @@
           "result": {
             "additionalProperties": false,
             "properties": {
-              "adoptedArtifacts": {
-                "items": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "kind": {
-                      "type": "string"
-                    },
-                    "name": {
-                      "type": "string"
-                    },
-                    "owner": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "kind",
-                    "name",
-                    "owner"
-                  ],
-                  "type": "object"
-                },
-                "type": "array"
-              },
-              "adoptionCandidates": {
-                "items": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "desired": {
-                      "additionalProperties": {
-                        "type": "string"
-                      },
-                      "type": "object"
-                    },
-                    "kind": {
-                      "type": "string"
-                    },
-                    "name": {
-                      "type": "string"
-                    },
-                    "observed": {
-                      "additionalProperties": {
-                        "type": "string"
-                      },
-                      "type": "object"
-                    },
-                    "owner": {
-                      "type": "string"
-                    },
-                    "reason": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "kind",
-                    "name",
-                    "owner",
-                    "reason"
-                  ],
-                  "type": "object"
-                },
-                "type": "array"
-              },
               "generation": {
                 "type": "integer"
               },
