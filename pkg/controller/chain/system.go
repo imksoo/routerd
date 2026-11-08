@@ -2006,7 +2006,24 @@ func (c SystemdUnitController) applySystemdUnit(ctx context.Context, name, path,
 		if c.DryRun {
 			return removeFileIfExists(path, true)
 		}
-		if systemdUnitEnabledOrActive(ctx, command, unitName) {
+		unitState, err := command(ctx, "systemctl", "show", "--property=ActiveState", "--property=UnitFileState", unitName)
+		if err != nil {
+			return false, fmt.Errorf("check unit %s state: %w", unitName, err)
+		}
+		active, enabled := false, false
+		for _, line := range strings.Split(string(unitState), "\n") {
+			key, value, ok := strings.Cut(line, "=")
+			if !ok {
+				continue
+			}
+			switch key {
+			case "ActiveState":
+				active = value != "inactive" && value != "failed" && value != ""
+			case "UnitFileState":
+				enabled = value == "enabled" || value == "enabled-runtime" || value == "linked" || value == "linked-runtime"
+			}
+		}
+		if active || enabled {
 			if _, err := command(ctx, "systemctl", "disable", "--now", unitName); err != nil {
 				return false, fmt.Errorf("disable unit %s: %w", unitName, err)
 			}
