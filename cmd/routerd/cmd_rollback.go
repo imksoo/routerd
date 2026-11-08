@@ -8,7 +8,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -21,7 +20,7 @@ import (
 func rollbackCommand(args []string, stdout, _ io.Writer) (err error) {
 	fs := flag.NewFlagSet("rollback", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	applyFlags := registerApplyFlags(fs, false, false)
+	applyFlags := registerApplyFlags(fs, true, false)
 	list := fs.Bool("list", false, "list stored config generations")
 	to := fs.Int64("to", 0, "generation to re-apply")
 	limit := fs.Int("limit", 20, "maximum generations to list")
@@ -90,12 +89,7 @@ func rollbackToGeneration(statePath string, generation int64, applyFlags applyFl
 	if err != nil {
 		return err
 	}
-	configFile, cleanup, err := writeRollbackConfigTemp(configYAML)
-	if err != nil {
-		return err
-	}
-	defer cleanup()
-	router, err := config.Load(configFile)
+	router, err := config.LoadBytes([]byte(configYAML), fmt.Sprintf("generation %d", generation))
 	if err != nil {
 		return err
 	}
@@ -108,7 +102,7 @@ func rollbackToGeneration(statePath string, generation int64, applyFlags applyFl
 		"generation": fmt.Sprintf("%d", generation),
 		"dryRun":     fmt.Sprintf("%t", *applyFlags.DryRun),
 	})
-	opts := applyFlags.applyOptions(configFile)
+	opts := applyFlags.applyOptions(*applyFlags.ConfigPath)
 	opts.ConfigYAMLOverride = configYAML
 	_, err = runApplyChainOnce(context.Background(), router, opts, stdout, logger)
 	return err
@@ -132,24 +126,6 @@ func rollbackGenerationConfig(statePath string, generation int64) (string, error
 		return "", fmt.Errorf("generation %d has no saved config", generation)
 	}
 	return configYAML, nil
-}
-
-func writeRollbackConfigTemp(configYAML string) (string, func(), error) {
-	file, err := os.CreateTemp("", "routerd-rollback-*.yaml")
-	if err != nil {
-		return "", nil, err
-	}
-	cleanup := func() { _ = os.Remove(file.Name()) }
-	if _, err := io.WriteString(file, configYAML); err != nil {
-		_ = file.Close()
-		cleanup()
-		return "", nil, err
-	}
-	if err := file.Close(); err != nil {
-		cleanup()
-		return "", nil, err
-	}
-	return file.Name(), cleanup, nil
 }
 
 func formatGenerationTime(t time.Time) string {
