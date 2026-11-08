@@ -51,9 +51,6 @@ func applyCommand(args []string, stdout, stderr io.Writer) (err error) {
 	if err != nil {
 		return err
 	}
-	if err := applyFlags.validateOverrides(); err != nil {
-		return err
-	}
 	logger, err := eventlog.New(router)
 	if err != nil {
 		return err
@@ -81,8 +78,6 @@ type applyOptions struct {
 	BGPSocketPath        string
 	BGPControlSocketPath string
 	BGPStatePath         string
-	OverrideClient       string
-	OverrideProfile      string
 	DryRun               bool
 	SkipServiceManager   bool
 	AllowMgmtLockout     bool
@@ -103,15 +98,9 @@ func effectiveApplyPolicy(router *api.Router) api.ApplyPolicySpec {
 	return policy
 }
 
-func routerWithIPv6PDClientOptions(router *api.Router, opts applyOptions, osName string) (*api.Router, []string, error) {
+func routerWithIPv6PDClientOptions(router *api.Router, osName string) (*api.Router, []string, error) {
 	if router == nil {
 		return nil, nil, errors.New("router is nil")
-	}
-	if !api.ValidIPv6PDClient(opts.OverrideClient) {
-		return nil, nil, fmt.Errorf("invalid DHCPv6PrefixDelegation client override %q", opts.OverrideClient)
-	}
-	if !api.ValidIPv6PDProfile(opts.OverrideProfile) {
-		return nil, nil, fmt.Errorf("invalid DHCPv6PrefixDelegation profile override %q", opts.OverrideProfile)
 	}
 
 	out := *router
@@ -126,15 +115,8 @@ func routerWithIPv6PDClientOptions(router *api.Router, opts applyOptions, osName
 		if err != nil {
 			return nil, nil, err
 		}
-		if opts.OverrideProfile != "" {
-			spec.Profile = opts.OverrideProfile
-		}
 		profile := defaultString(spec.Profile, api.IPv6PDProfileDefault)
-		if opts.OverrideClient != "" {
-			spec.Client = opts.OverrideClient
-		} else {
-			spec.Client = api.EffectiveIPv6PDClient(osName, profile, spec.Client)
-		}
+		spec.Client = api.EffectiveIPv6PDClient(osName, profile, spec.Client)
 		if !api.ValidIPv6PDClient(spec.Client) {
 			return nil, nil, fmt.Errorf("%s spec.client is invalid: %q", res.ID(), spec.Client)
 		}
@@ -589,7 +571,7 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 			return nil, err
 		}
 	}
-	effectiveConfig, warnings, err := routerWithIPv6PDClientOptions(router, opts, string(platformDefaults.OS))
+	effectiveConfig, warnings, err := routerWithIPv6PDClientOptions(router, string(platformDefaults.OS))
 	if err != nil {
 		return nil, err
 	}

@@ -2,12 +2,7 @@
 
 package main
 
-import (
-	"flag"
-	"fmt"
-
-	"github.com/imksoo/routerd/pkg/api"
-)
+import "flag"
 
 type applyFlagValues struct {
 	ConfigPath         *string
@@ -18,8 +13,6 @@ type applyFlagValues struct {
 	NftablesPath       *string
 	LedgerPath         *string
 	StatePath          *string
-	OverrideClient     *string
-	OverrideProfile    *string
 	Once               *bool
 	DryRun             *bool
 	SkipServiceManager *bool
@@ -38,8 +31,6 @@ func registerApplyFlags(fs *flag.FlagSet, includeConfig, includeOnce bool) apply
 	flags.NftablesPath = fs.String("nftables-file", defaultNftablesPath, "routerd-managed nftables ruleset file")
 	flags.LedgerPath = fs.String("ledger-file", defaultLedgerPath, "routerd ownership ledger file")
 	flags.StatePath = fs.String("state-file", defaultStatePath, "routerd state database file")
-	flags.OverrideClient = fs.String("override-client", "", "override DHCPv6PrefixDelegation client for this apply: routerd-dhcpv6-client, networkd, dhcp6c, or dhcpcd")
-	flags.OverrideProfile = fs.String("override-profile", "", "override DHCPv6PrefixDelegation profile for this apply")
 	if includeOnce {
 		flags.Once = fs.Bool("once", false, "run one apply loop")
 	}
@@ -47,16 +38,6 @@ func registerApplyFlags(fs *flag.FlagSet, includeConfig, includeOnce bool) apply
 	flags.SkipServiceManager = fs.Bool("skip-service-manager", false, "skip applying service-manager units during this apply")
 	flags.AllowMgmtLockout = fs.Bool("allow-mgmt-lockout", false, "allow apply to continue despite ManagementAccess lockout findings")
 	return flags
-}
-
-func (flags applyFlagValues) validateOverrides() error {
-	if !api.ValidIPv6PDClient(*flags.OverrideClient) {
-		return fmt.Errorf("invalid --override-client %q", *flags.OverrideClient)
-	}
-	if !api.ValidIPv6PDProfile(*flags.OverrideProfile) {
-		return fmt.Errorf("invalid --override-profile %q", *flags.OverrideProfile)
-	}
-	return nil
 }
 
 func (flags applyFlagValues) applyOptions(configPath string) applyOptions {
@@ -69,8 +50,6 @@ func (flags applyFlagValues) applyOptions(configPath string) applyOptions {
 		NftablesPath:        *flags.NftablesPath,
 		LedgerPath:          *flags.LedgerPath,
 		StatePath:           *flags.StatePath,
-		OverrideClient:      *flags.OverrideClient,
-		OverrideProfile:     *flags.OverrideProfile,
 		DryRun:              *flags.DryRun,
 		SkipServiceManager:  *flags.SkipServiceManager,
 		AllowMgmtLockout:    *flags.AllowMgmtLockout,

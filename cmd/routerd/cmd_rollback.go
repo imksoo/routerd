@@ -36,9 +36,6 @@ func rollbackCommand(args []string, stdout, _ io.Writer) (err error) {
 	if *to < 0 {
 		return fmt.Errorf("invalid --to %d", *to)
 	}
-	if err := applyFlags.validateOverrides(); err != nil {
-		return err
-	}
 	return rollbackToGeneration(*applyFlags.StatePath, *to, applyFlags, stdout)
 }
 
