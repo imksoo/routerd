@@ -190,7 +190,7 @@ func (e *Engine) evaluate(router, declared *api.Router, includePlan bool) (*Resu
 			rr.Phase = "Unknown"
 			rr.Observed["reason"] = "IngressRuntimeNotObserved"
 		case "VirtualAddress":
-			e.observeVirtualAddress(res, aliases, &rr)
+			e.observeVirtualAddress(router, res, aliases, &rr)
 		case "Hostname":
 			e.observeHostname(res, osNet, includePlan, &rr)
 		}
@@ -267,7 +267,7 @@ func (e *Engine) evaluate(router, declared *api.Router, includePlan bool) (*Resu
 	return result, nil
 }
 
-func (e *Engine) observeVirtualAddress(res api.Resource, aliases map[string]string, rr *ResourceResult) {
+func (e *Engine) observeVirtualAddress(router *api.Router, res api.Resource, aliases map[string]string, rr *ResourceResult) {
 	rr.Phase = "Unknown"
 	rr.Observed["reason"] = "VirtualAddressRuntimeNotObserved"
 	spec, err := res.VirtualAddressSpec()
@@ -279,7 +279,11 @@ func (e *Engine) observeVirtualAddress(res api.Resource, aliases map[string]stri
 	if spec.Mode != "" && spec.Mode != "static" && spec.Mode != "vrrp" || spec.AddressFrom.Resource != "" {
 		return
 	}
-	want, err := netip.ParsePrefix(spec.Address)
+	address, err := render.VirtualAddress(router, spec)
+	if err != nil {
+		return
+	}
+	want, err := netip.ParsePrefix(address)
 	if err != nil {
 		return
 	}
