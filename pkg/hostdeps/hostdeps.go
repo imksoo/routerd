@@ -526,7 +526,7 @@ func raAcceptInterfaceNames(router *api.Router, aliases map[string]string) []str
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
 		case "DHCPv6Address":
-			if spec, err := res.DHCPv6AddressSpec(); err == nil && spec.Client != "" && spec.Client != "networkd" {
+			if spec, err := res.DHCPv6AddressSpec(); err == nil {
 				add(spec.Interface)
 			}
 		case "DHCPv6Information":
@@ -764,7 +764,7 @@ func NetworkAdoptions(router *api.Router) []NetworkAdoptionResource {
 				}
 			}
 		case "DHCPv6Address":
-			if spec, err := res.DHCPv6AddressSpec(); err == nil {
+			if spec, err := res.DHCPv6AddressSpec(); err == nil && spec.Client != "" && spec.Client != "networkd" {
 				if item := ensure(spec.Interface); item != nil {
 					item.disableDHCPv6 = true
 				}
