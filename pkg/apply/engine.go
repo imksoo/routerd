@@ -195,6 +195,16 @@ func (e *Engine) evaluate(router, declared *api.Router, includePlan bool) (*Resu
 		}
 		result.Resources = append(result.Resources, rr)
 	}
+	for _, res := range hostdeps.DerivedPackageResources(router) {
+		rr := ResourceResult{ID: res.ID(), Phase: "Healthy", Observed: map[string]string{}}
+		e.observePackage(res, includePlan, &rr)
+		if rr.Phase == "Blocked" {
+			result.Phase = "Blocked"
+		} else if rr.Phase == "Drifted" && result.Phase == "Healthy" {
+			result.Phase = "Drifted"
+		}
+		result.Resources = append(result.Resources, rr)
+	}
 	if includePlan {
 		if intents := routerArtifactIntents(router, aliases); len(intents) > 0 {
 			result.Resources = append(result.Resources, ResourceResult{
