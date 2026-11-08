@@ -3081,7 +3081,7 @@ func (r *Runner) clientDaemonSpecs(router *api.Router) []supervisedDaemonSpec {
 			out = append(out, supervisedDaemonSpec{ResourceName: resource.Metadata.Name, Binary: "routerd-dhcpv4-client", Args: args})
 		case "PPPoESession":
 			spec, err := resource.PPPoESessionSpec()
-			if err != nil {
+			if err != nil || pppoeSessionDisabled(spec) {
 				continue
 			}
 			ifname := interfaceIfName(router, spec.Interface)
