@@ -365,7 +365,11 @@ func (c NetworkAdoptionController) applyNetworkAdoption(ctx context.Context, nam
 						networkdSpec.DisableDHCPv4 = true
 					}
 				}
-				data := networkdAdoptionDropin(networkdSpec, networkdSpec.DisableDHCPv6)
+				acceptRA, err := networkdRAConfigured(c.Router, ifname)
+				if err != nil {
+					return paths, changed, err
+				}
+				data := networkdAdoptionDropin(networkdSpec, networkdSpec.DisableDHCPv6, acceptRA)
 				fileChanged, err := writeFileIfChanged(path, data, 0644, c.DryRun)
 				if err != nil {
 					return paths, changed, err
@@ -2223,7 +2227,23 @@ func networkdIPv6Configured(router *api.Router, ifname string) (bool, error) {
 	return false, nil
 }
 
-func networkdAdoptionDropin(spec api.NetworkAdoptionNetworkdSpec, disableRADHCPv6 bool) []byte {
+func networkdRAConfigured(router *api.Router, ifname string) (bool, error) {
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind != "IPv6RAAddress" {
+			continue
+		}
+		spec, err := resource.IPv6RAAddressSpec()
+		if err != nil {
+			return false, err
+		}
+		if api.BoolDefault(spec.Managed, true) && interfaceIfName(router, spec.Interface) == ifname {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func networkdAdoptionDropin(spec api.NetworkAdoptionNetworkdSpec, disableRADHCPv6, acceptRA bool) []byte {
 	var b strings.Builder
 	b.WriteString("# Managed by routerd. Do not edit by hand.\n[Network]\n")
 	if spec.DisableDHCPv4 && spec.DisableDHCPv6 {
@@ -2233,10 +2253,12 @@ func networkdAdoptionDropin(spec api.NetworkAdoptionNetworkdSpec, disableRADHCPv
 	} else if spec.DisableDHCPv6 {
 		b.WriteString("DHCP=ipv4\n")
 	}
-	if spec.DisableIPv6RA {
+	if acceptRA {
+		b.WriteString("IPv6AcceptRA=yes\n")
+	} else if spec.DisableIPv6RA {
 		b.WriteString("IPv6AcceptRA=no\n")
 	}
-	if disableRADHCPv6 && !spec.DisableIPv6RA {
+	if disableRADHCPv6 && (acceptRA || !spec.DisableIPv6RA) {
 		b.WriteString("\n[IPv6AcceptRA]\nDHCPv6Client=no\n")
 	}
 	if spec.DHCPv4UseRoutes != nil || spec.DHCPv4UseDNS != nil || spec.DHCPv4RouteMetric != 0 {

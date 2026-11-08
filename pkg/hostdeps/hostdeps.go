@@ -802,10 +802,16 @@ func NetworkAdoptions(router *api.Router) []NetworkAdoptionResource {
 					item.disableIPv6RA = true
 				}
 			}
-		case "IPv6RouterAdvertisement", "IPv6RAAddress":
-			if spec, err := interfaceSpecForRouterAdvertisement(res); err == nil {
-				if item := ensure(spec); item != nil {
+		case "IPv6RouterAdvertisement":
+			if spec, err := res.IPv6RouterAdvertisementSpec(); err == nil {
+				if item := ensure(spec.Interface); item != nil {
 					item.disableIPv6RA = true
+				}
+			}
+		case "IPv6RAAddress":
+			if spec, err := res.IPv6RAAddressSpec(); err == nil && api.BoolDefault(spec.Managed, true) {
+				if item := ensure(spec.Interface); item != nil {
+					item.disableDHCPv4 = true
 				}
 			}
 		}
@@ -926,15 +932,6 @@ func containsString(values []string, want string) bool {
 		}
 	}
 	return false
-}
-
-func interfaceSpecForRouterAdvertisement(res api.Resource) (string, error) {
-	if res.Kind == "IPv6RAAddress" {
-		spec, err := res.IPv6RAAddressSpec()
-		return spec.Interface, err
-	}
-	spec, err := res.IPv6RouterAdvertisementSpec()
-	return spec.Interface, err
 }
 
 func sortedKeys(values map[string]bool) []string {
