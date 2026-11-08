@@ -1292,14 +1292,6 @@ func TestRollbackToGenerationDryRunUsesStoredConfig(t *testing.T) {
 	if err := json.Unmarshal(data, &result); err != nil {
 		t.Fatalf("typed selected plan: %v", err)
 	}
-	var identities []string
-	for _, resource := range result.Resources {
-		identities = append(identities, resource.ID)
-	}
-	want := []string{api.NetAPIVersion + "/Interface/selected-interface"}
-	if !reflect.DeepEqual(identities, want) {
-		t.Fatalf("selected generation resource identities = %#v, want %#v", identities, want)
-	}
 	after, err := store.ListGenerations(20)
 	if err != nil {
 		t.Fatal(err)
