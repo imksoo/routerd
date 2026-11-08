@@ -2012,7 +2012,7 @@ func (e *Engine) observeSysctl(res api.Resource, includePlan bool, rr *ResourceR
 		}
 	}
 
-	if persistent && runtime {
+	if persistent {
 		path := sysctlprofile.PersistentPath("/etc/sysctl.d", res.Metadata.Name)
 		rr.Observed["persistentPath"] = path
 		contents, err := os.ReadFile(path)
@@ -2029,7 +2029,7 @@ func (e *Engine) observeSysctl(res api.Resource, includePlan bool, rr *ResourceR
 	if runtime {
 		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure runtime sysctl %s=%s", key, desired))
 	}
-	if persistent && runtime {
+	if persistent {
 		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure persistent sysctl %s=%s", key, desired))
 	}
 }
