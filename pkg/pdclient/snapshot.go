@@ -4,19 +4,10 @@ package pdclient
 
 import (
 	"bytes"
-	"context"
 	"encoding/hex"
 	"net/netip"
 	"time"
 )
-
-// Store is the process boundary between a standalone PD client service and
-// routerd. A SQLite-backed implementation can share routerd's state database;
-// tests and one-shot tools can use an in-memory implementation.
-type Store interface {
-	Load(ctx context.Context, resource string) (Snapshot, bool, error)
-	Save(ctx context.Context, snapshot Snapshot) error
-}
 
 type PreviousPrefixSnapshot struct {
 	Prefix    string    `json:"prefix"`
