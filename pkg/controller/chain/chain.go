@@ -4692,7 +4692,7 @@ func ipv4StaticAddressDesiredByAnother(router *api.Router, store Store, resource
 			}
 			status := store.ObjectStatus(api.NetAPIVersion, resource.Kind, resource.Metadata.Name)
 			phase := cleanStatusString(status["phase"])
-			if phase != daemonapi.ResourcePhaseBound && phase != daemonapi.ResourcePhaseRefreshing && phase != daemonapi.ResourcePhaseRebinding {
+			if phase != daemonapi.ResourcePhaseBound && phase != daemonapi.ResourcePhaseRefreshing && phase != daemonapi.ResourcePhaseRebinding && phase != daemonapi.ResourcePhaseAcquiring {
 				continue
 			}
 			expires, err := time.Parse(time.RFC3339Nano, cleanStatusString(status["expiresAt"]))

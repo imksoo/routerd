@@ -292,6 +292,11 @@ func (c Controller) applyLease(ctx context.Context, name string, current, next m
 		} else if expires, err := time.Parse(time.RFC3339Nano, mapString(current, "expiresAt")); err == nil && !time.Now().Before(expires) {
 			staleLease = true
 		}
+		if !staleLease && oldIfname != "" && oldIfname == newIfname && mapString(next, "expiresAt") == "" {
+			if expires, err := time.Parse(time.RFC3339Nano, mapString(current, "expiresAt")); err == nil && time.Now().Before(expires) {
+				next["expiresAt"] = mapString(current, "expiresAt")
+			}
+		}
 	}
 	if phase == daemonapi.ResourcePhaseBound || phase == daemonapi.ResourcePhaseRefreshing || phase == daemonapi.ResourcePhaseRebinding {
 		expires, err := time.Parse(time.RFC3339Nano, mapString(next, "expiresAt"))
