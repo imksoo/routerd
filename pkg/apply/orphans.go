@@ -28,44 +28,6 @@ func (e *Engine) observeManagedOrphans(router *api.Router, aliases map[string]st
 	return orphans
 }
 
-func (e *Engine) DesiredOwnedArtifacts(router *api.Router) ([]resource.Artifact, error) {
-	if err := e.Validate(router); err != nil {
-		return nil, err
-	}
-	return DesiredOwnedArtifacts(router, interfaceAliases(router)), nil
-}
-
-func (e *Engine) AppliedOwnedArtifacts(router *api.Router) ([]resource.Artifact, error) {
-	if err := e.Validate(router); err != nil {
-		return nil, err
-	}
-	aliases := interfaceAliases(router)
-	desired := DesiredOwnedArtifacts(router, aliases)
-	actualByID := map[string]resource.Artifact{}
-	for _, artifact := range e.actualInventoryBackedArtifacts() {
-		actualByID[artifact.Identity()] = artifact
-	}
-	var artifacts []resource.Artifact
-	seen := map[string]bool{}
-	for _, artifact := range desired {
-		id := artifact.Identity()
-		if seen[id] {
-			continue
-		}
-		actual, ok := actualByID[id]
-		if !ok {
-			continue
-		}
-		seen[id] = true
-		artifacts = append(artifacts, mergeArtifactAttributes(artifact, actual))
-	}
-	return artifacts, nil
-}
-
-func (e *Engine) LedgerOwnedOrphans(router *api.Router, ledger resource.Ledger) ([]OrphanedArtifact, []resource.Artifact, error) {
-	return e.LedgerOwnedOrphansEffective(router, router, ledger)
-}
-
 // LedgerOwnedOrphansEffective validates the declared graph while computing
 // orphan candidates only from the effective graph.
 func (e *Engine) LedgerOwnedOrphansEffective(effective, declared *api.Router, ledger resource.Ledger) ([]OrphanedArtifact, []resource.Artifact, error) {
@@ -80,10 +42,6 @@ func (e *Engine) LedgerOwnedOrphansEffective(effective, declared *api.Router, le
 		artifacts = append(artifacts, removal.Artifact)
 	}
 	return result, artifacts, nil
-}
-
-func (e *Engine) LedgerOwnedOrphanPlan(router *api.Router, ledger resource.Ledger) (lifecycle.GCPlan, error) {
-	return e.LedgerOwnedOrphanPlanEffective(router, router, ledger)
 }
 
 // LedgerOwnedOrphanPlanEffective validates the declared graph while deriving
@@ -152,19 +110,6 @@ func DesiredOwnedArtifacts(router *api.Router, aliases map[string]string) []reso
 		}
 	}
 	return desired
-}
-
-func mergeArtifactAttributes(desired, actual resource.Artifact) resource.Artifact {
-	merged := desired
-	attrs := map[string]string{}
-	for key, value := range actual.Attributes {
-		attrs[key] = value
-	}
-	for key, value := range desired.Attributes {
-		attrs[key] = value
-	}
-	merged.Attributes = attrs
-	return merged
 }
 
 func (e *Engine) actualInventoryBackedArtifacts() []resource.Artifact {
