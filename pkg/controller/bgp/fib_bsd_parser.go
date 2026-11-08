@@ -8,13 +8,6 @@ import (
 	"strings"
 )
 
-// parseFreeBSDOwnedBGPRoutes reads the stable, numeric netstat route-table
-// columns. RTF_PROTO1 is displayed as flag "1" and is routerd's ownership
-// marker, so unmarked foreign routes are deliberately excluded.
-func parseFreeBSDOwnedBGPRoutes(output string) map[string]FIBRoute {
-	return parseFreeBSDOwnedBGPRoutesForFamily(output, true)
-}
-
 // parseFreeBSDOwnedBGPRoutesForFamily parses a single numeric netstat family
 // table. RTF_PROTO1 is family-independent; the family filter prevents a
 // malformed or mixed fixture from making an inet route look like inet6 state.
@@ -36,10 +29,6 @@ func parseFreeBSDOwnedBGPRoutesForFamily(output string, wantIPv4 bool) map[strin
 		routes[prefix] = route
 	}
 	return routes
-}
-
-func normalizeFreeBSDNetstatDestination(value string) string {
-	return normalizeFreeBSDNetstatDestinationForFamily(value, true)
 }
 
 func normalizeFreeBSDNetstatDestinationForFamily(value string, wantIPv4 bool) string {

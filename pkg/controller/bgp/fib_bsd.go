@@ -275,10 +275,6 @@ func normalizeFreeBSDFIBRoute(route FIBRoute) FIBRoute {
 	return route
 }
 
-func normalizeFreeBSDNextHops(values []string) []string {
-	return normalizeFreeBSDNextHopsForFamily(values, true)
-}
-
 func normalizeFreeBSDNextHopsForFamily(values []string, wantIPv4 bool) []string {
 	seen := map[string]bool{}
 	var out []string
