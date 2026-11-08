@@ -354,18 +354,18 @@ func (c NetworkAdoptionController) applyNetworkAdoption(ctx context.Context, nam
 			} else {
 				networkdSpec := spec.SystemdNetworkd
 				if networkdSpec.DisableDHCPv4 != networkdSpec.DisableDHCPv6 {
-					v4, v6, err := networkdOriginalDHCP(ctx, command, ifname, path)
+					v6, err := networkdIPv6Configured(c.Router, ifname)
 					if err != nil {
 						return paths, changed, err
 					}
 					if networkdSpec.DisableDHCPv4 && !v6 {
 						networkdSpec.DisableDHCPv6 = true
 					}
-					if networkdSpec.DisableDHCPv6 && !v4 {
+					if networkdSpec.DisableDHCPv6 {
 						networkdSpec.DisableDHCPv4 = true
 					}
 				}
-				data := networkdAdoptionDropin(networkdSpec, spec.SystemdNetworkd.DisableDHCPv6)
+				data := networkdAdoptionDropin(networkdSpec, networkdSpec.DisableDHCPv6)
 				fileChanged, err := writeFileIfChanged(path, data, 0644, c.DryRun)
 				if err != nil {
 					return paths, changed, err
@@ -2199,57 +2199,28 @@ func networkdNetworkFile(ctx context.Context, command outputCommandFunc, ifname 
 	return status.NetworkFile, nil
 }
 
-func networkdOriginalDHCP(ctx context.Context, command outputCommandFunc, ifname, managedPath string) (bool, bool, error) {
-	out, err := command(ctx, "networkctl", "--json=short", "status", ifname)
-	if err != nil {
-		return false, false, fmt.Errorf("observe networkd configuration for %s: %w", ifname, err)
-	}
-	var status struct {
-		NetworkFile        string   `json:"NetworkFile"`
-		NetworkFileDropins []string `json:"NetworkFileDropins"`
-	}
-	if err := json.Unmarshal(out, &status); err != nil {
-		return false, false, fmt.Errorf("decode networkd configuration for %s: %w", ifname, err)
-	}
-	if status.NetworkFile == "" {
-		return false, false, fmt.Errorf("networkd has no configuration file for %s", ifname)
-	}
-	files := append([]string{status.NetworkFile}, status.NetworkFileDropins...)
-	v4, v6 := false, false
-	for _, path := range files {
-		if filepath.Clean(path) == filepath.Clean(managedPath) {
-			continue
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return false, false, fmt.Errorf("read networkd configuration %s: %w", path, err)
-		}
-		section := ""
-		for _, line := range strings.Split(string(data), "\n") {
-			line = strings.TrimSpace(line)
-			if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
-				section = strings.TrimSpace(line[1 : len(line)-1])
-				continue
+func networkdIPv6Configured(router *api.Router, ifname string) (bool, error) {
+	for _, resource := range router.Spec.Resources {
+		switch resource.Kind {
+		case "DHCPv6Address":
+			spec, err := resource.DHCPv6AddressSpec()
+			if err != nil {
+				return false, err
 			}
-			key, value, ok := strings.Cut(line, "=")
-			if !ok || section != "Network" || strings.TrimSpace(key) != "DHCP" {
-				continue
+			if interfaceIfName(router, spec.Interface) == ifname && firstNonEmpty(spec.Client, "networkd") == "networkd" {
+				return true, nil
 			}
-			switch strings.ToLower(strings.TrimSpace(value)) {
-			case "yes", "true", "on", "1":
-				v4, v6 = true, true
-			case "no", "false", "off", "0", "":
-				v4, v6 = false, false
-			case "ipv4":
-				v4, v6 = true, false
-			case "ipv6":
-				v4, v6 = false, true
-			default:
-				return false, false, fmt.Errorf("unsupported DHCP value in %s: %s", path, value)
+		case "DHCPv6PrefixDelegation":
+			spec, err := resource.DHCPv6PrefixDelegationSpec()
+			if err != nil {
+				return false, err
+			}
+			if interfaceIfName(router, spec.Interface) == ifname && api.EffectiveIPv6PDClient(string(platform.CurrentOS()), spec.Profile, spec.Client) == api.IPv6PDClientNetworkd {
+				return true, nil
 			}
 		}
 	}
-	return v4, v6, nil
+	return false, nil
 }
 
 func networkdAdoptionDropin(spec api.NetworkAdoptionNetworkdSpec, disableRADHCPv6 bool) []byte {
