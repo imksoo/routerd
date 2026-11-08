@@ -161,7 +161,7 @@ func managedPDClientSnapshot(resource, ifname string, spec api.DHCPv6PrefixDeleg
 }
 
 func managedPDClientSnapshotMatches(snapshot pdclient.Snapshot, resource, ifname string, spec api.DHCPv6PrefixDelegationSpec, now time.Time) bool {
-	if snapshot.State != pdclient.StateBound || snapshot.Resource != resource || snapshot.Interface != ifname || snapshot.CurrentPrefix == "" {
+	if (snapshot.State != pdclient.StateBound && snapshot.State != pdclient.StateRenewing && snapshot.State != pdclient.StateRebinding) || snapshot.Resource != resource || snapshot.Interface != ifname || snapshot.CurrentPrefix == "" {
 		return false
 	}
 	if _, err := netip.ParsePrefix(snapshot.CurrentPrefix); err != nil {
