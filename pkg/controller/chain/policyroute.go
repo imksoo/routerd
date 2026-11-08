@@ -775,7 +775,7 @@ func (c IPv4PolicyRouteController) defaultRouteMatches(ctx context.Context, ifna
 }
 
 func policyDefaultMatches(fields []string, desired policyDefaultRoute) bool {
-	if len(fields) == 0 || fields[0] != "default" || !fieldValueMatches(fields, "dev", desired.ifname) || !fieldValueMatches(fields, "metric", fmt.Sprintf("%d", desired.metric)) {
+	if len(fields) == 0 || fields[0] != "default" || hasField(fields, "src") || !fieldValueMatches(fields, "dev", desired.ifname) || !fieldValueMatches(fields, "metric", fmt.Sprintf("%d", desired.metric)) {
 		return false
 	}
 	switch desired.gatewaySource {
