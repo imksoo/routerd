@@ -247,20 +247,41 @@ func (c NetworkAdoptionController) cleanupStaleResolvedAdoptionDropins(ctx conte
 	if desired[filepath.Clean(path)] {
 		return nil, false, nil
 	}
-	changed, err := removeFileIfExists(path, c.DryRun)
-	if err != nil {
+	_, err := os.Lstat(path)
+	present := err == nil
+	if err != nil && !os.IsNotExist(err) {
 		return nil, false, err
 	}
 	var paths []string
-	if changed {
+	if present {
 		paths = append(paths, path)
 	}
-	if changed && !c.DryRun {
-		if _, err := command(ctx, "systemctl", "restart", "systemd-resolved.service"); err != nil {
-			return paths, changed, fmt.Errorf("restart systemd-resolved after stale network adoption cleanup: %w", err)
+	if c.DryRun {
+		return paths, present, nil
+	}
+	const cleanupStatus = "resolved-adoption-cleanup"
+	pending, _ := c.Store.ObjectStatus(api.SystemAPIVersion, "NetworkAdoptionCleanup", cleanupStatus)["pending"].(bool)
+	if present && !pending {
+		if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "NetworkAdoptionCleanup", cleanupStatus, map[string]any{"pending": true}); err != nil {
+			return paths, false, fmt.Errorf("save pending resolved adoption cleanup: %w", err)
+		}
+		pending = true
+	}
+	if present {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return paths, false, err
 		}
 	}
-	return paths, changed, nil
+	if !pending {
+		return nil, false, nil
+	}
+	if _, err := command(ctx, "systemctl", "restart", "systemd-resolved.service"); err != nil {
+		return paths, present, fmt.Errorf("restart systemd-resolved after stale network adoption cleanup: %w", err)
+	}
+	if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "NetworkAdoptionCleanup", cleanupStatus, map[string]any{"pending": false}); err != nil {
+		return paths, present, fmt.Errorf("clear pending resolved adoption cleanup: %w", err)
+	}
+	return paths, true, nil
 }
 
 func flushLANIPv6RADefaultRoute(ctx context.Context, command outputCommandFunc, ifname string) error {
