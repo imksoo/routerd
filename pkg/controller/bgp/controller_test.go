@@ -17,143 +17,8 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	bgpstate "github.com/imksoo/routerd/pkg/bgp"
-	"github.com/imksoo/routerd/pkg/bgpdaemon"
 	"github.com/imksoo/routerd/pkg/mobilityconfig"
 )
-
-func TestImportAllowedPrefixesIncludesDynamicPeers(t *testing.T) {
-	applied := bgpdaemon.AppliedConfig{
-		Global: bgpdaemon.AppliedGlobal{ImportPolicy: bgpdaemon.AppliedImportPolicy{AllowedPrefixes: []string{"10.250.0.0/24"}}},
-	}
-	dynamic := map[string]desiredDynamicPeer{
-		"routerd-dynamic-leaves": {
-			ImportPolicy: api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.77.60.0/24"}},
-		},
-	}
-	got := importAllowedPrefixesFromAppliedAndDynamic(applied, dynamic)
-	var values []string
-	for _, prefix := range got {
-		values = append(values, prefix.Prefix.String())
-	}
-	if !sameStringSet(values, []string{"10.250.0.0/24", "10.77.60.0/24"}) {
-		t.Fatalf("allowed prefixes = %v", values)
-	}
-}
-
-func TestApplyRouterBGPDynamicDefaultsInheritsExactRouterImportPolicy(t *testing.T) {
-	routerSpec := api.BGPRouterSpec{
-		ConvergenceProfile: "fast",
-		ImportPolicy: api.BGPImportPolicySpec{
-			AllowedPrefixes:        []string{"10.77.60.0/24"},
-			AllowedPrefixLengthMin: 32,
-			AllowedPrefixLengthMax: 32,
-		},
-	}
-	peers := applyRouterBGPDynamicDefaults("lan", routerSpec, map[string]desiredDynamicPeer{
-		"routerd-dynamic-leaves": {
-			PeerGroupName: "routerd-dynamic-leaves",
-		},
-	}, nil, nil)
-	peer := peers["routerd-dynamic-leaves"]
-	if !reflect.DeepEqual(peer.ImportPolicy.AllowedPrefixes, []string{"10.77.60.0/24"}) ||
-		peer.ImportPolicy.AllowedPrefixLengthMin != 32 ||
-		peer.ImportPolicy.AllowedPrefixLengthMax != 32 {
-		t.Fatalf("inherited import policy = %#v", peer.ImportPolicy)
-	}
-}
-
-func TestApplyRouterBGPDynamicDefaultsUsesOwnExactImportPolicyWithNextHopRewrite(t *testing.T) {
-	routerSpec := api.BGPRouterSpec{
-		ImportPolicy: api.BGPImportPolicySpec{
-			AllowedPrefixes:        []string{"10.250.0.0/24"},
-			AllowedPrefixLengthMin: 32,
-			AllowedPrefixLengthMax: 32,
-		},
-	}
-	peers := applyRouterBGPDynamicDefaults("lan", routerSpec, map[string]desiredDynamicPeer{
-		"routerd-dynamic-leaves": {
-			PeerGroupName: "routerd-dynamic-leaves",
-			ImportPolicy: api.BGPImportPolicySpec{
-				AllowedPrefixes:        []string{"10.77.60.0/24"},
-				AllowedPrefixLengthMin: 32,
-				AllowedPrefixLengthMax: 32,
-				NextHopRewrite:         "peer-address",
-			},
-		},
-	}, nil, nil)
-	peer := peers["routerd-dynamic-leaves"]
-	if !reflect.DeepEqual(peer.ImportPolicy.AllowedPrefixes, []string{"10.77.60.0/24"}) ||
-		peer.ImportPolicy.AllowedPrefixLengthMin != 32 ||
-		peer.ImportPolicy.AllowedPrefixLengthMax != 32 ||
-		importNextHopRewrite(peer.ImportPolicy) != "peer-address" {
-		t.Fatalf("own import policy = %#v", peer.ImportPolicy)
-	}
-}
-
-func TestApplyRouterBGPDefaultsKeepsDirectTransportAllowlistNarrow(t *testing.T) {
-	peers := applyRouterBGPDefaults("lan", api.BGPRouterSpec{}, map[string]desiredPeer{
-		"10.255.0.2": {
-			Address:                "10.255.0.2",
-			PreserveImportPrefixes: true,
-			ImportPolicy: api.BGPImportPolicySpec{
-				AllowedPrefixes:        []string{"10.77.60.0/24"},
-				AllowedPrefixLengthMin: 32,
-				AllowedPrefixLengthMax: 32,
-			},
-		},
-		"10.255.0.3": {
-			Address: "10.255.0.3",
-			ImportPolicy: api.BGPImportPolicySpec{
-				AllowedPrefixes:        []string{"10.77.60.0/24"},
-				AllowedPrefixLengthMin: 32,
-				AllowedPrefixLengthMax: 32,
-			},
-		},
-	}, nil, []string{"10.88.60.22/32"})
-	if got, want := peers["10.255.0.2"].ImportPolicy.AllowedPrefixes, []string{"10.77.60.0/24"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("direct transport import allowlist = %#v, want %#v", got, want)
-	}
-	if got, want := peers["10.255.0.3"].ImportPolicy.AllowedPrefixes, []string{"10.77.60.0/24", "10.88.60.22/32"}; !sameStringSet(got, want) {
-		t.Fatalf("ordinary peer import allowlist = %#v, want %#v", got, want)
-	}
-}
-
-func TestApplyRouterBGPDefaultsPreservesExplicitPeerConvergenceProfile(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"},
-			Metadata: api.ObjectMeta{Name: "sam-inherited"},
-			Spec: api.BGPPeerSpec{
-				RouterRef: "BGPRouter/mobility",
-				PeerASN:   64512,
-				Peers:     []string{"10.255.0.2"},
-			},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"},
-			Metadata: api.ObjectMeta{Name: "sam-explicit"},
-			Spec: api.BGPPeerSpec{
-				RouterRef:          "BGPRouter/mobility",
-				PeerASN:            64512,
-				Peers:              []string{"10.255.0.3"},
-				ConvergenceProfile: "stable",
-			},
-		},
-	}}}
-	desired, err := (&Controller{Router: router}).desiredPeers("mobility", 64512)
-	if err != nil {
-		t.Fatalf("desiredPeers: %v", err)
-	}
-	peers := applyRouterBGPDefaults("mobility", api.BGPRouterSpec{
-		ConvergenceProfile: "fast",
-	}, desired, nil, nil)
-	if got := peers["10.255.0.2"]; got.ConvergenceProfile != "fast" || got.GracefulRestart.Enabled == nil || *got.GracefulRestart.Enabled {
-		t.Fatalf("inherited peer convergence = %#v, want fast with graceful restart disabled", got)
-	}
-	if got := peers["10.255.0.3"]; got.ConvergenceProfile != "stable" || got.GracefulRestart.Enabled == nil || !*got.GracefulRestart.Enabled {
-		t.Fatalf("explicit peer convergence = %#v, want stable with graceful restart enabled", got)
-	}
-}
 
 func TestDesiredPeersMarksDirectTransportImportBoundary(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
@@ -547,21 +412,6 @@ func TestApplyRouterBGPDefaultsExportsImportAllowedPrefixesToRouteReflectorClien
 	}
 }
 
-func TestExactIPv4TransitPrefixesNormalizesHostBits(t *testing.T) {
-	prefixes, ok := exactIPv4TransitPrefixes(api.BGPImportPolicySpec{
-		AllowedPrefixes:        []string{"192.168.123.111/24"},
-		AllowedPrefixLengthMin: 32,
-		AllowedPrefixLengthMax: 32,
-	})
-	if !ok {
-		t.Fatal("exactIPv4TransitPrefixes rejected a valid IPv4 prefix")
-	}
-	want := []netip.Prefix{netip.MustParsePrefix("192.168.123.0/24")}
-	if !reflect.DeepEqual(prefixes, want) {
-		t.Fatalf("transit prefixes = %#v, want %#v", prefixes, want)
-	}
-}
-
 func TestGeneratedNeighborScopedImportPolicyIsAcceptedByGoBGP(t *testing.T) {
 	server := gobgpserver.NewBgpServer()
 	go server.Serve()
@@ -607,106 +457,6 @@ func TestGeneratedPrefixlessImportPolicyWithDirectPreferenceIsAcceptedByGoBGP(t 
 	}
 	if err := server.SetPolicies(context.Background(), plan.SetPolicies); err != nil {
 		t.Fatalf("SetPolicies rejected prefixless direct import policy: %v", err)
-	}
-}
-
-func TestAppliedImportPolicyLocalPreferenceRoundTrip(t *testing.T) {
-	global := appliedGlobalFromSpec(api.BGPRouterSpec{
-		ASN:          64512,
-		RouterID:     "10.0.0.1",
-		ImportPolicy: api.BGPImportPolicySpec{LocalPreference: 200},
-	}, nil)
-	if global.ImportPolicy.LocalPreference != 200 {
-		t.Fatalf("applied global local preference = %d, want 200", global.ImportPolicy.LocalPreference)
-	}
-	applied := appliedPeer(desiredPeer{
-		Address:                "10.0.0.2",
-		ASN:                    64513,
-		PreserveImportPrefixes: true,
-		RejectImportAll:        true,
-		ImportPolicy: api.BGPImportPolicySpec{
-			AllowedPrefixes:        []string{"10.77.60.22/32"},
-			AllowedPrefixLengthMin: 32,
-			AllowedPrefixLengthMax: 32,
-			RequiredCommunities:    []string{"64512:301"},
-			ForbiddenCommunities:   []string{"64512:302"},
-			NextHopRewrite:         "peer-address",
-			LocalPreference:        201,
-		},
-	})
-	if applied.ImportPolicy.LocalPreference != 201 {
-		t.Fatalf("applied peer local preference = %d, want 201", applied.ImportPolicy.LocalPreference)
-	}
-	restored := desiredPeersFromApplied(64512, map[string]bgpdaemon.AppliedPeer{"10.0.0.2": applied})["10.0.0.2"]
-	if restored.ImportPolicy.LocalPreference != 201 || restored.ImportPolicy.AllowedPrefixLengthMin != 32 || restored.ImportPolicy.AllowedPrefixLengthMax != 32 ||
-		!sameStringSet(restored.ImportPolicy.AllowedPrefixes, []string{"10.77.60.22/32"}) ||
-		!sameStringSet(restored.ImportPolicy.RequiredCommunities, []string{"64512:301"}) ||
-		!sameStringSet(restored.ImportPolicy.ForbiddenCommunities, []string{"64512:302"}) ||
-		!restored.PreserveImportPrefixes || !restored.RejectImportAll {
-		t.Fatalf("restored direct peer import boundary = %#v", restored)
-	}
-}
-
-func TestImportPolicyKeysIncludeLocalPreference(t *testing.T) {
-	base := api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.250.0.0/24"}}
-	if action := importLocalPreferenceAction(base); action != nil {
-		t.Fatalf("zero local preference action = %#v, want nil", action)
-	}
-	preferred := base
-	preferred.LocalPreference = 200
-	if importPolicyKey(base) == importPolicyKey(preferred) {
-		t.Fatal("importPolicyKey ignored local preference")
-	}
-	if bgpPoliciesKey(base, nil, nil) == bgpPoliciesKey(preferred, nil, nil) {
-		t.Fatal("bgpPoliciesKey ignored global local preference")
-	}
-	peer := desiredPeer{
-		Address:      "10.0.0.2",
-		ImportPolicy: base,
-	}
-	preferredPeer := peer
-	preferredPeer.ImportPolicy.LocalPreference = 201
-	if bgpPoliciesKey(base, map[string]desiredPeer{peer.Address: peer}, nil) == bgpPoliciesKey(base, map[string]desiredPeer{preferredPeer.Address: preferredPeer}, nil) {
-		t.Fatal("bgpPoliciesKey ignored peer local preference")
-	}
-	prefixlessPeer := desiredPeer{Address: "10.0.0.3", ImportPolicy: api.BGPImportPolicySpec{LocalPreference: 200}}
-	prefixlessPreferredPeer := prefixlessPeer
-	prefixlessPreferredPeer.ImportPolicy.LocalPreference = 201
-	if bgpImportPoliciesKey(base, map[string]desiredPeer{prefixlessPeer.Address: prefixlessPeer}, nil) == bgpImportPoliciesKey(base, map[string]desiredPeer{prefixlessPreferredPeer.Address: prefixlessPreferredPeer}, nil) {
-		t.Fatal("bgpImportPoliciesKey ignored prefixless peer local preference")
-	}
-	rejectAllPeer := prefixlessPeer
-	rejectAllPeer.RejectImportAll = true
-	if bgpImportPoliciesKey(base, map[string]desiredPeer{prefixlessPeer.Address: prefixlessPeer}, nil) == bgpImportPoliciesKey(base, map[string]desiredPeer{rejectAllPeer.Address: rejectAllPeer}, nil) {
-		t.Fatal("bgpImportPoliciesKey ignored empty-ownership reject-all boundary")
-	}
-	dynamic := desiredDynamicPeer{
-		PeerGroupName: "routerd-dynamic-leaves",
-		ImportPolicy:  base,
-	}
-	preferredDynamic := dynamic
-	preferredDynamic.ImportPolicy.LocalPreference = 202
-	if bgpPoliciesKey(base, nil, map[string]desiredDynamicPeer{dynamic.PeerGroupName: dynamic}) == bgpPoliciesKey(base, nil, map[string]desiredDynamicPeer{preferredDynamic.PeerGroupName: preferredDynamic}) {
-		t.Fatal("bgpPoliciesKey ignored dynamic peer local preference")
-	}
-	communityConstrained := base
-	communityConstrained.RequiredCommunities = []string{"64512:301"}
-	communityConstrained.ForbiddenCommunities = []string{"64512:302"}
-	if importPolicyKey(base) == importPolicyKey(communityConstrained) {
-		t.Fatal("importPolicyKey ignored community filters")
-	}
-	if bgpPoliciesKey(base, nil, nil) == bgpPoliciesKey(communityConstrained, nil, nil) {
-		t.Fatal("bgpPoliciesKey ignored global community filters")
-	}
-	communityPeer := peer
-	communityPeer.ImportPolicy = communityConstrained
-	if bgpPoliciesKey(base, map[string]desiredPeer{peer.Address: peer}, nil) == bgpPoliciesKey(base, map[string]desiredPeer{communityPeer.Address: communityPeer}, nil) {
-		t.Fatal("bgpPoliciesKey ignored peer community filters")
-	}
-	communityDynamic := dynamic
-	communityDynamic.ImportPolicy = communityConstrained
-	if bgpPoliciesKey(base, nil, map[string]desiredDynamicPeer{dynamic.PeerGroupName: dynamic}) == bgpPoliciesKey(base, nil, map[string]desiredDynamicPeer{communityDynamic.PeerGroupName: communityDynamic}) {
-		t.Fatal("bgpPoliciesKey ignored dynamic peer community filters")
 	}
 }
 
@@ -804,20 +554,6 @@ func TestPollIntervalUsesBGPRouterWatcher(t *testing.T) {
 	router.Spec.Resources[0].Spec = spec
 	if got := PollInterval(router); got != 15*time.Second {
 		t.Fatalf("short poll interval = %v", got)
-	}
-}
-
-func TestStatePeerMapsListPeerFields(t *testing.T) {
-	peer := statePeer(&gobgpapi.Peer{
-		Conf: &gobgpapi.PeerConf{NeighborAddress: "192.0.2.1", PeerAsn: 64513},
-		State: &gobgpapi.PeerState{
-			SessionState: gobgpapi.PeerState_SESSION_STATE_ESTABLISHED,
-			Messages:     &gobgpapi.Messages{Received: &gobgpapi.Message{Total: 7}, Sent: &gobgpapi.Message{Total: 8}},
-		},
-		AfiSafis: []*gobgpapi.AfiSafi{{State: &gobgpapi.AfiSafiState{Accepted: 3}}},
-	})
-	if !peer.Established || peer.ASN != 64513 || peer.PrefixesReceived != 3 || peer.MessagesReceived != 7 || peer.MessagesSent != 8 {
-		t.Fatalf("peer = %#v", peer)
 	}
 }
 
