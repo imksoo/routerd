@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/apply"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/resourcequery"
 	routerstate "github.com/imksoo/routerd/pkg/state"
@@ -121,43 +122,9 @@ func (c VXLANTunnelController) Reconcile(ctx context.Context) error {
 }
 
 func (c VXLANTunnelController) cleanupExtraVXLANs(ctx context.Context, declared *api.Router) error {
-	retained := map[string]bool{}
-	for _, router := range []*api.Router{declared, c.Router} {
-		if router == nil {
-			continue
-		}
-		for _, resource := range router.Spec.Resources {
-			switch resource.Kind {
-			case "Interface":
-				spec, err := resource.InterfaceSpec()
-				if err != nil {
-					return err
-				}
-				retained[firstNonEmpty(spec.IfName, resource.Metadata.Name)] = true
-			case "VXLANTunnel":
-				spec, err := resource.VXLANTunnelSpec()
-				if err != nil {
-					return err
-				}
-				retained[firstNonEmpty(spec.IfName, resource.Metadata.Name)] = true
-			case "VXLANSegment":
-				spec, err := resource.VXLANSegmentSpec()
-				if err != nil {
-					return err
-				}
-				retained[firstNonEmpty(spec.IfName, resource.Metadata.Name)] = true
-			}
-		}
-	}
-	out, err := c.command(ctx, "ip", "-j", "link", "show", "type", "vxlan")
+	retained, links, err := apply.ExtraVXLANInterfaces(ctx, declared, c.Router)
 	if err != nil {
-		return fmt.Errorf("list VXLAN links: %w: %s", err, strings.TrimSpace(string(out)))
-	}
-	var links []struct {
-		IfName string `json:"ifname"`
-	}
-	if err := json.Unmarshal(out, &links); err != nil {
-		return fmt.Errorf("decode VXLAN links: %w", err)
+		return err
 	}
 	filesChanged := false
 	for _, suffix := range []string{".owner", ".netdev", ".network"} {
@@ -187,12 +154,9 @@ func (c VXLANTunnelController) cleanupExtraVXLANs(ctx context.Context, declared 
 		}
 	}
 	if !c.DryRun {
-		for _, link := range links {
-			if retained[link.IfName] {
-				continue
-			}
-			if output, err := c.command(ctx, "ip", "link", "delete", "dev", link.IfName); err != nil {
-				return fmt.Errorf("remove extra VXLAN %s: %w: %s", link.IfName, err, strings.TrimSpace(string(output)))
+		for _, name := range links {
+			if output, err := c.command(ctx, "ip", "link", "delete", "dev", name); err != nil {
+				return fmt.Errorf("remove extra VXLAN %s: %w: %s", name, err, strings.TrimSpace(string(output)))
 			}
 		}
 	}
