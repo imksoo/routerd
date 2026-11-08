@@ -133,10 +133,6 @@ func packageControllerResources(router *api.Router) []api.Resource {
 	return hostdeps.PackageResources(router)
 }
 
-func packageSetForCurrentOS(spec api.PackageSpec) (api.OSPackageSetSpec, bool) {
-	return packageSetForOS(spec, packageOSName(runtime.GOOS))
-}
-
 func packageSetForOS(spec api.PackageSpec, current string) (api.OSPackageSetSpec, bool) {
 	for _, set := range spec.Packages {
 		if set.OS == current {
