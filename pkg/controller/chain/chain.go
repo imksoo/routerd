@@ -2774,7 +2774,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 		}},
 	}
 	if !opts.FirewallDisabled {
-		controllers = append(controllers, framework.FuncController{ControllerName: "firewall", Subs: firewallStatusSubscriptions(r.currentRouter()), PeriodicFunc: func(ctx context.Context) (bool, error) {
+		controllers = append(controllers, framework.FuncController{ControllerName: "firewall", Every: 30 * time.Second, Subs: firewallStatusSubscriptions(r.currentRouter()), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return false, err

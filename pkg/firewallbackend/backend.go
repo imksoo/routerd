@@ -80,7 +80,36 @@ func (b Nftables) Apply(ctx context.Context, ruleset Ruleset, dryRun bool) (bool
 	if dryRun {
 		return changed, nil
 	}
-	if !b.Force && !changed && nftstate.RecentlyVerified(ruleset.Path, time.Now().UTC()) {
+	removingFilter := bytes.Equal(ruleset.Data, []byte("destroy table inet routerd_filter\n"))
+	if removingFilter && !changed {
+		nft := stringutil.FirstNonEmpty(b.Command, "nft")
+		out, err := b.run(ctx, nft, "-j", "list", "tables")
+		if err != nil {
+			return false, fmt.Errorf("%s -j list tables: %w: %s", nft, err, strings.TrimSpace(string(out)))
+		}
+		var listing struct {
+			Objects []struct {
+				Table *struct {
+					Family string `json:"family"`
+					Name   string `json:"name"`
+				} `json:"table"`
+			} `json:"nftables"`
+		}
+		if err := json.Unmarshal(out, &listing); err != nil {
+			return false, fmt.Errorf("decode nft tables: %w", err)
+		}
+		present := false
+		for _, object := range listing.Objects {
+			if object.Table != nil && object.Table.Family == "inet" && object.Table.Name == "routerd_filter" {
+				present = true
+				break
+			}
+		}
+		if !present {
+			return false, nil
+		}
+	}
+	if !removingFilter && !b.Force && !changed && nftstate.RecentlyVerified(ruleset.Path, time.Now().UTC()) {
 		return false, nil
 	}
 	if !b.Force && !changed && b.rulesetTablesPresent(ctx, ruleset) {
