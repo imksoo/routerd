@@ -5,5 +5,5 @@
 package bgp
 
 func defaultFIBSyncer() FIBSyncer {
-	return newFreeBSDFIBSyncer(nil)
+	return newFreeBSDFIBSyncer()
 }

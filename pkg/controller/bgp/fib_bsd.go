@@ -17,21 +17,14 @@ const (
 	freeBSDIfconfigPath = "/sbin/ifconfig"
 )
 
-type freeBSDCommandRunner func(context.Context, string, ...string) ([]byte, error)
-
 type freeBSDFIBSyncer struct {
-	run             freeBSDCommandRunner
 	installed       map[string]FIBRoute
 	sourceKnown     map[string]bool
 	retainOnMissing map[string]bool
 }
 
-func newFreeBSDFIBSyncer(run freeBSDCommandRunner) *freeBSDFIBSyncer {
-	if run == nil {
-		run = freeBSDRunCommand
-	}
+func newFreeBSDFIBSyncer() *freeBSDFIBSyncer {
 	return &freeBSDFIBSyncer{
-		run:             run,
 		installed:       map[string]FIBRoute{},
 		sourceKnown:     map[string]bool{},
 		retainOnMissing: map[string]bool{},
@@ -165,7 +158,7 @@ func newFreeBSDFIBSyncResult() FIBSyncResult {
 }
 
 func (s *freeBSDFIBSyncer) localAddresses(ctx context.Context) ([]freeBSDLocalAddress, error) {
-	out, err := s.run(ctx, freeBSDIfconfigPath, "-a")
+	out, err := freeBSDRunCommand(ctx, freeBSDIfconfigPath, "-a")
 	if err != nil {
 		return nil, fmt.Errorf("list FreeBSD local addresses: %w: %s", err, strings.TrimSpace(string(out)))
 	}
@@ -203,7 +196,7 @@ func (s *freeBSDFIBSyncer) kernelBGPRoutes(ctx context.Context) (map[string]FIBR
 		name string
 		ipv4 bool
 	}{{name: "inet", ipv4: true}, {name: "inet6", ipv4: false}} {
-		out, err := s.run(ctx, freeBSDNetstatPath, "-rn", "-f", family.name)
+		out, err := freeBSDRunCommand(ctx, freeBSDNetstatPath, "-rn", "-f", family.name)
 		if err != nil {
 			return nil, fmt.Errorf("list FreeBSD RTF_PROTO1 %s routes: %w: %s", family.name, err, strings.TrimSpace(string(out)))
 		}
@@ -256,7 +249,7 @@ func (s *freeBSDFIBSyncer) runRoute(ctx context.Context, action string, route FI
 		args = append(args, "-ifa", route.PreferredSource)
 	}
 	args = append(args, nextHop)
-	out, err := s.run(ctx, freeBSDRoutePath, args...)
+	out, err := freeBSDRunCommand(ctx, freeBSDRoutePath, args...)
 	if err != nil {
 		return fmt.Errorf("route %s: %w: %s", action, err, strings.TrimSpace(string(out)))
 	}
