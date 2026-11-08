@@ -751,6 +751,12 @@ func NetworkAdoptions(router *api.Router) []NetworkAdoptionResource {
 					item.disableDHCPv4 = true
 				}
 			}
+		case "VirtualAddress":
+			if spec, err := res.VirtualAddressSpec(); err == nil && (spec.Mode == "" || spec.Mode == "static") && spec.Address != "" {
+				if item := ensure(spec.Interface); item != nil {
+					item.disableDHCPv4 = true
+				}
+			}
 		case "DHCPv4Client":
 			if spec, err := res.DHCPv4ClientSpec(); err == nil {
 				if item := ensure(spec.Interface); item != nil {
