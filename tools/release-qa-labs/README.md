@@ -726,8 +726,7 @@ needed; it does not turn the failed qualification into a pass.
 ## Bounded Cloud SAM qualification
 
 The release contract has one permitted final Cloud SAM profile:
-`representative-redundancy`. It is not an alias for the exhaustive
-`sam-full-validation.sh` engineering suite. It stages the two PVE RRs as
+`representative-redundancy`. It stages the two PVE RRs as
 `A -> AB`, runs one full non-legacy/non-performance baseline (control,
 provider, 12 directed client flows, and 9 cloud-ingress flows), then proves
 `A -> B-only -> AB` with ordered RR BGP-membership evidence, all-leaf

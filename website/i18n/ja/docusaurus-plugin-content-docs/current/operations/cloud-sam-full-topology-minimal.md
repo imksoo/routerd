@@ -7,9 +7,6 @@ title: Cloud SAM 全トポロジー baseline
 `full-topology-minimal` は、有料の最終
 [`representative-redundancy`](cloud-sam-representative-redundancy.md) プロファイルと
 共通の、全トポロジー baseline を 1 回実行するためのプロファイルです。
-網羅的な開発・failover 試験である
-[`sam-full-validation.sh`](https://github.com/imksoo/routerd/blob/main/tests/e2e/cloudedge/scripts/sam-full-validation.sh)
-とは分離します。その開発用 suite を release-QA の mutation window に入れてはいけません。
 
 現在のツリーに対する実環境実行は未実施です。offline wrapper check は移植可能な
 ソース検証にすぎず、ホスト検証、provisioning、有料 qualification の許可ではありません。

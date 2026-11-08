@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# The release qualification profile deliberately has one baseline only.  It is
-# not a shorthand for sam-full-validation.sh: that script remains the long
-# engineering/failover suite, while this entry point has exactly one
-# functional gate set.
+# The release qualification profile has one baseline and one functional gate set.
 readonly profile_name="full-topology-minimal"
 export SAM_E2E_MAX_SECONDARY_IPS=3
 

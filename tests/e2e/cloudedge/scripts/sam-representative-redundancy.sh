@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# This profile is deliberately narrower than sam-full-validation.sh. It makes
-# one full baseline measurement, then proves the representative RR lifecycle
+# This profile makes one full baseline measurement, then checks the RR lifecycle
 # A -> AB -> B-only -> AB, followed by one complete stop/rejoin of leaf A
 # at each site. No B node is stopped; B-side equivalence remains unproven.
 readonly profile_name="representative-redundancy"

@@ -3,10 +3,6 @@
 `full-topology-minimal` is the one-pass full-topology baseline component used
 by the paid final
 [`representative-redundancy`](cloud-sam-representative-redundancy.md) profile.
-It remains deliberately separate from
-[`sam-full-validation.sh`](../../tests/e2e/cloudedge/scripts/sam-full-validation.sh),
-which remains an exhaustive engineering and failover suite and must not be
-scheduled inside the release-QA mutation window.
 
 This profile has not run for the current working tree. Its offline wrapper
 check is only a portable source gate; it does not authorize host validation,
