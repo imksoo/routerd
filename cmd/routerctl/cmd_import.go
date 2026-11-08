@@ -23,6 +23,23 @@ import (
 
 type importInterfaces []string
 
+type importAddresses []string
+
+func (v *importAddresses) String() string { return strings.Join(*v, ", ") }
+func (v *importAddresses) Set(value string) error {
+	prefix, err := netip.ParsePrefix(value)
+	if err != nil {
+		return fmt.Errorf("invalid address %q: %w", value, err)
+	}
+	for _, existing := range *v {
+		if existing == prefix.String() {
+			return nil
+		}
+	}
+	*v = append(*v, prefix.String())
+	return nil
+}
+
 func (v *importInterfaces) String() string { return strings.Join(*v, ", ") }
 func (v *importInterfaces) Set(value string) error {
 	if value == "" || filepath.Base(value) != value || value == "." || value == ".." {
@@ -103,10 +120,12 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("import", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	var interfaces importInterfaces
+	var addresses importAddresses
 	fs.Var(&interfaces, "interface", "physical interface to inspect (repeatable)")
+	fs.Var(&addresses, "address", "static address and prefix to import (repeatable)")
 	configPath := fs.String("config", "", "existing router configuration for interface names")
 	fs.Usage = func() {
-		fmt.Fprintln(stderr, "usage: routerctl import --interface <name> [--interface <name> ...] [--config <router.yaml>]")
+		fmt.Fprintln(stderr, "usage: routerctl import --interface <name> [--interface <name> ...] [--address <address/prefix> ...] [--config <router.yaml>]")
 		fmt.Fprintln(stderr, "Outputs an incomplete YAML candidate; merge it into a complete configuration before applying.")
 		fmt.Fprintln(stderr, "Run with sufficient privileges to read the active network manager configuration and leases; review all warnings.")
 	}
@@ -129,6 +148,7 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 	usedStaticNames := map[string]bool{}
 	staticIPv6 := map[string]api.Resource{}
 	virtualIPv4 := map[string]api.Resource{}
+	vrrpIPv4 := map[string]bool{}
 	usedVirtualNames := map[string]bool{}
 	if *configPath != "" {
 		router, err := config.Load(*configPath)
@@ -148,7 +168,12 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 					if err != nil {
 						return fmt.Errorf("existing VirtualAddress/%s: %w", resource.Metadata.Name, err)
 					}
-					virtualIPv4[spec.Interface+"|"+prefix.String()] = resource
+					key := spec.Interface + "|" + prefix.String()
+					if spec.Mode == "vrrp" {
+						vrrpIPv4[key] = true
+					} else {
+						virtualIPv4[key] = resource
+					}
 				}
 				if spec.Family == "ipv6" && (spec.Mode == "" || spec.Mode == "static") && spec.Address != "" {
 					prefix, err := netip.ParsePrefix(spec.Address)
@@ -188,6 +213,10 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 	}
 	router := api.Router{TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"}, Metadata: api.ObjectMeta{Name: name}}
 	var warnings []string
+	requested := map[string]bool{}
+	for _, address := range addresses {
+		requested[address] = false
+	}
 	for _, ifname := range interfaces {
 		if _, err := os.Stat(filepath.Join("/sys/class/net", ifname, "device")); err != nil {
 			return fmt.Errorf("interface %s is not a discoverable physical interface: %w", ifname, err)
@@ -241,7 +270,7 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 					resourceName = fmt.Sprintf("import-%s-%d", ifname, suffix)
 				}
 			}
-			resource = api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: resourceName}, Spec: api.InterfaceSpec{IfName: ifname, Managed: true, AdminUp: up}}
+			resource = api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: resourceName}, Spec: api.InterfaceSpec{IfName: ifname, Managed: true}}
 		}
 		usedNames[resource.Metadata.Name] = true
 		router.Spec.Resources = append(router.Spec.Resources, resource)
@@ -262,6 +291,12 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 				continue
 			}
 			prefix := netip.PrefixFrom(ip, address.PrefixLen).String()
+			if _, selected := requested[prefix]; !selected {
+				continue
+			}
+			if vrrpIPv4[resource.Metadata.Name+"|"+prefix] || vrrpIPv4[ifname+"|"+prefix] {
+				continue
+			}
 			virtual, existingVirtual := virtualIPv4[resource.Metadata.Name+"|"+prefix]
 			if !existingVirtual {
 				virtual, existingVirtual = virtualIPv4[ifname+"|"+prefix]
@@ -269,6 +304,7 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 			if existingVirtual && source != "DHCPv4" && ip.Is4() && importStaticAddress(address, ip) {
 				virtual.Status = nil
 				router.Spec.Resources = append(router.Spec.Resources, virtual)
+				requested[prefix] = true
 				continue
 			}
 			if source != "DHCPv4" && ip.Is4() && importStaticAddress(address, ip) {
@@ -288,6 +324,7 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 				}
 				usedStaticNames[static.Metadata.Name] = true
 				router.Spec.Resources = append(router.Spec.Resources, static)
+				requested[prefix] = true
 				warnings = append(warnings, fmt.Sprintf("%s: static address %s imported; review manager handoff and address attributes", ifname, prefix))
 				continue
 			}
@@ -309,12 +346,18 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 				}
 				usedVirtualNames[static.Metadata.Name] = true
 				router.Spec.Resources = append(router.Spec.Resources, static)
+				requested[prefix] = true
 				warnings = append(warnings, fmt.Sprintf("%s: static IPv6 address %s imported; review manager handoff and address attributes", ifname, prefix))
 				continue
 			}
 			warnings = append(warnings, fmt.Sprintf("%s: address %s/%d (%s, scope %s) was not imported", ifname, address.Local, address.PrefixLen, origin, address.Scope))
 		}
 
+	}
+	for _, address := range addresses {
+		if !requested[address] {
+			warnings = append(warnings, fmt.Sprintf("selected static address %s was not imported", address))
+		}
 	}
 	data, err := yaml.Marshal(router)
 	if err != nil {
