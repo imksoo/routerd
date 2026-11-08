@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/imksoo/routerd/internal/statusvalue"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/healthcheck"
@@ -160,7 +161,7 @@ func (e *Engine) evaluate(router, declared *api.Router, includePlan bool) (*Resu
 		case "DHCPv4Relay":
 			e.observeDHCPv4Relay(res, aliases, includePlan, &rr)
 		case "DSLiteTunnel":
-			e.observeDSLiteTunnel(res, aliases, includePlan, &rr)
+			e.observeDSLiteTunnel(router, res, aliases, includePlan, &rr)
 		case "HealthCheck":
 			e.observeHealthCheck(router, res, aliases, kinds, includePlan, &rr)
 		case "EgressRoutePolicy":
@@ -769,7 +770,7 @@ func (e *Engine) observeBFD(res api.Resource, includePlan bool, rr *ResourceResu
 	}
 }
 
-func (e *Engine) observeDSLiteTunnel(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
+func (e *Engine) observeDSLiteTunnel(router *api.Router, res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
 	spec, err := res.DSLiteTunnelSpec()
 	if err != nil {
 		rr.Phase = "Blocked"
@@ -912,6 +913,56 @@ func (e *Engine) observeDSLiteTunnel(res api.Resource, aliases map[string]string
 			rr.Phase = "Drifted"
 			rr.Observed["reason"] = "TunnelMismatch"
 			return
+		}
+		inner := "192.0.0.2"
+		if strings.TrimSpace(spec.LocalAddressFrom.Resource) != "" {
+			inner = statusvalue.Address(resourcequery.Value(e.Store, spec.LocalAddressFrom))
+			if inner == "" {
+				source := spec.LocalAddressFrom
+				if source.Field == "" {
+					source.Field = "address"
+				}
+				if values := resourcequery.ValuesFromRouter(router, source); len(values) > 0 {
+					inner = statusvalue.Address(values[0])
+				}
+			}
+			if inner == "" && spec.LocalAddressFrom.Optional {
+				inner = "192.0.0.2"
+			}
+		}
+		if inner != "" {
+			out, err := runCommand("ip", "-j", "-4", "address", "show", "dev", link.Name)
+			if err != nil {
+				rr.Phase = "Unknown"
+				rr.Warnings = append(rr.Warnings, fmt.Sprintf("observe DS-Lite inner address %s: %v", link.Name, err))
+				return
+			}
+			var addresses []struct {
+				Info []struct {
+					Local  string `json:"local"`
+					Peer   string `json:"address"`
+					Prefix int    `json:"prefixlen"`
+				} `json:"addr_info"`
+			}
+			if err := json.Unmarshal(out, &addresses); err != nil {
+				rr.Phase = "Unknown"
+				rr.Warnings = append(rr.Warnings, fmt.Sprintf("decode DS-Lite inner address %s: %v", link.Name, err))
+				return
+			}
+			rr.Observed["expectedInnerLocal"] = inner
+			matched := false
+			for _, item := range addresses {
+				for _, address := range item.Info {
+					if address.Local == inner && address.Peer == "192.0.0.1" && address.Prefix == 32 {
+						matched = true
+					}
+				}
+			}
+			if !matched {
+				rr.Phase = "Drifted"
+				rr.Observed["reason"] = "InnerAddressMismatch"
+				return
+			}
 		}
 		rr.Phase = "Unknown"
 		rr.Observed["reason"] = "TunnelAttributesPartiallyChecked"
