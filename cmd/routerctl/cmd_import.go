@@ -99,40 +99,6 @@ func importStaticAddress(address importAddress, ip netip.Addr) bool {
 		address.PrefixLen <= ip.BitLen() && (address.ValidLifetime == nil || *address.ValidLifetime == 0xffffffff)
 }
 
-func importGlobalDNS() ([]string, []string, error) {
-	out, err := exec.Command("systemd-analyze", "cat-config", "systemd/resolved.conf").Output()
-	if err != nil {
-		return nil, nil, err
-	}
-	var servers, warnings []string
-	section := ""
-	for _, line := range strings.Split(string(out), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
-			section = strings.TrimSpace(line[1 : len(line)-1])
-			continue
-		}
-		key, value, ok := strings.Cut(line, "=")
-		if !ok || section != "Resolve" || strings.TrimSpace(key) != "DNS" {
-			continue
-		}
-		values := strings.Fields(value)
-		if len(values) == 0 {
-			servers = nil
-			continue
-		}
-		for _, value := range values {
-			address, err := netip.ParseAddr(value)
-			if err != nil || address.Zone() != "" {
-				warnings = append(warnings, fmt.Sprintf("global DNS %q was not imported", value))
-				continue
-			}
-			servers = append(servers, address.String())
-		}
-	}
-	return servers, warnings, nil
-}
-
 func importCommand(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("import", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -164,8 +130,6 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 	staticIPv6 := map[string]api.Resource{}
 	virtualIPv4 := map[string]api.Resource{}
 	usedVirtualNames := map[string]bool{}
-	usedDNSNames := map[string]bool{}
-	existingDNS := map[string]api.Resource{}
 	if *configPath != "" {
 		router, err := config.Load(*configPath)
 		if err != nil {
@@ -173,19 +137,6 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 		}
 		name = router.Metadata.Name
 		for _, resource := range router.Spec.Resources {
-			if resource.Kind == "DNSUpstream" {
-				usedDNSNames[resource.Metadata.Name] = true
-				spec, err := resource.DNSUpstreamSpec()
-				if err != nil {
-					return err
-				}
-				if spec.Protocol == "udp" && (spec.Port == 0 || spec.Port == 53) {
-					if address, err := netip.ParseAddr(spec.Address); err == nil {
-						existingDNS[address.String()] = resource
-					}
-				}
-				continue
-			}
 			if resource.Kind == "VirtualAddress" {
 				usedVirtualNames[resource.Metadata.Name] = true
 				spec, err := resource.VirtualAddressSpec()
@@ -364,30 +315,6 @@ func importCommand(args []string, stdout, stderr io.Writer) error {
 			warnings = append(warnings, fmt.Sprintf("%s: address %s/%d (%s, scope %s) was not imported", ifname, address.Local, address.PrefixLen, origin, address.Scope))
 		}
 
-	}
-	servers, dnsWarnings, dnsErr := importGlobalDNS()
-	if dnsErr != nil {
-		warnings = append(warnings, fmt.Sprintf("global DNS configuration could not be read: %v", dnsErr))
-	}
-	warnings = append(warnings, dnsWarnings...)
-	seenDNS := map[string]bool{}
-	for _, address := range servers {
-		if seenDNS[address] {
-			continue
-		}
-		seenDNS[address] = true
-		upstream, exists := existingDNS[address]
-		if exists {
-			upstream.Status = nil
-		} else {
-			name := "imported-dns"
-			for suffix := 2; usedDNSNames[name]; suffix++ {
-				name = fmt.Sprintf("imported-dns-%d", suffix)
-			}
-			upstream = api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSUpstream"}, Metadata: api.ObjectMeta{Name: name}, Spec: api.DNSUpstreamSpec{Protocol: "udp", Address: address}}
-		}
-		usedDNSNames[upstream.Metadata.Name] = true
-		router.Spec.Resources = append(router.Spec.Resources, upstream)
 	}
 	data, err := yaml.Marshal(router)
 	if err != nil {
