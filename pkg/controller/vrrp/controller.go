@@ -250,6 +250,14 @@ func (c *Controller) cleanupStaleStaticAddresses(ctx context.Context, aliases ma
 	}
 	desired := map[staticVIP]bool{}
 	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion == api.NetAPIVersion && resource.Kind == "IPv4StaticAddress" {
+			spec, err := resource.IPv4StaticAddressSpec()
+			if err != nil {
+				return false, err
+			}
+			desired[staticVIP{IfName: aliases[spec.Interface], Address: spec.Address}] = true
+			continue
+		}
 		spec, ok, err := vrrpResourceSpec(resource)
 		if err != nil || !ok {
 			continue
