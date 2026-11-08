@@ -4551,7 +4551,7 @@ func (c IPv4StaticAddressController) teardownWhenFalseIPv4StaticAddress(ctx cont
 		address = candidate.spec.Address
 	}
 	removedAddress := false
-	if !c.DryRun && ifname != "" && address != "" && !ipv4StaticAddressDesiredByAnother(c.Router, c.Store, object.Name, ifname, address) {
+	if !c.DryRun && ifname != "" && address != "" && !c.ipv4AddressDesiredByAnother(object.Name, ifname, address) {
 		addressPresentFn := ipv4AddressPresent
 		if addressPresentFn(ctx, ifname, address) {
 			command := runCommandContext
@@ -4592,7 +4592,7 @@ func (c IPv4StaticAddressController) teardownRemovedIPv4StaticAddress(ctx contex
 	if !c.DryRun {
 		ifname := cleanStatusString(status.Status["ifname"])
 		address := cleanStatusString(status.Status["address"])
-		if ifname != "" && address != "" && !ipv4StaticAddressDesiredByAnother(c.Router, c.Store, status.Name, ifname, address) {
+		if ifname != "" && address != "" && !c.ipv4AddressDesiredByAnother(status.Name, ifname, address) {
 			addressPresentFn := ipv4AddressPresent
 			if addressPresentFn(ctx, ifname, address) {
 				command := runCommandContext
@@ -4638,7 +4638,7 @@ func (c IPv4StaticAddressController) cleanupPreviousIPv4StaticAddress(ctx contex
 	if previousAddress == strings.TrimSpace(desiredAddress) && previousIfName == strings.TrimSpace(desiredIfName) {
 		return nil
 	}
-	if ipv4StaticAddressDesiredByAnother(c.Router, c.Store, resourceName, previousIfName, previousAddress) {
+	if c.ipv4AddressDesiredByAnother(resourceName, previousIfName, previousAddress) {
 		return nil
 	}
 	addressPresentFn := ipv4AddressPresent
@@ -4647,6 +4647,15 @@ func (c IPv4StaticAddressController) cleanupPreviousIPv4StaticAddress(ctx contex
 	}
 	name, args := ipv4StaticAddressDeleteCommand(platform.CurrentOS(), previousIfName, previousAddress)
 	return command(ctx, name, args...)
+}
+
+func (c IPv4StaticAddressController) ipv4AddressDesiredByAnother(resourceName, ifname, address string) bool {
+	for _, desired := range c.MobilityDataplane.StaticAddresses {
+		if desired.Interface == ifname && desired.Address == address {
+			return true
+		}
+	}
+	return ipv4StaticAddressDesiredByAnother(c.Router, c.Store, resourceName, ifname, address)
 }
 
 func ipv4StaticAddressDesiredByAnother(router *api.Router, store Store, resourceName, ifname, address string) bool {
