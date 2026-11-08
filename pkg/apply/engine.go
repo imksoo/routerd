@@ -1982,25 +1982,36 @@ func (e *Engine) observeHealthCheck(router *api.Router, res api.Resource, aliase
 }
 
 func (e *Engine) observeSysctl(res api.Resource, includePlan bool, rr *ResourceResult) {
-	key := stringSpec(res, "key")
-	desired := stringSpec(res, "value")
-	runtime := boolSpecDefault(res, "runtime", true)
-	persistent := boolSpec(res, "persistent")
+	spec, err := res.SysctlSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	key := spec.Key
+	desired := spec.Value
+	runtime := api.BoolDefault(spec.Runtime, true)
+	persistent := spec.Persistent
 
 	rr.Observed["key"] = key
 	rr.Observed["desired"] = desired
 	rr.Observed["runtime"] = fmt.Sprintf("%t", runtime)
 	rr.Observed["persistent"] = fmt.Sprintf("%t", persistent)
 
-	if out, err := runCommand("sysctl", "-n", key); err == nil {
-		current := normalizeSysctlValue(string(out))
-		rr.Observed["current"] = current
-		if current != normalizeSysctlValue(desired) {
+	if runtime {
+		if out, err := runCommand("sysctl", "-n", key); err == nil {
+			current := normalizeSysctlValue(string(out))
+			expected := normalizeSysctlValue(defaultString(spec.ExpectedValue, desired))
+			rr.Observed["current"] = current
+			rr.Observed["expected"] = expected
+			matches, err := sysctlprofile.ValueMatches(current, expected, spec.Compare)
+			if err != nil || !matches {
+				rr.Phase = "Drifted"
+			}
+		} else if !spec.Optional {
 			rr.Phase = "Drifted"
+			rr.Warnings = append(rr.Warnings, fmt.Sprintf("could not observe sysctl %s: %v", key, err))
 		}
-	} else {
-		rr.Phase = "Drifted"
-		rr.Warnings = append(rr.Warnings, fmt.Sprintf("could not observe sysctl %s: %v", key, err))
 	}
 
 	if persistent && runtime {

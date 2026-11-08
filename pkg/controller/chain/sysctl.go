@@ -176,7 +176,7 @@ func (c SysctlController) applyOne(ctx context.Context, name, kind string, spec 
 		}
 		return sysctlApplyResult{skipped: true}, nil
 	}
-	matches, compareErr := sysctlValueMatches(current, expected, spec.Compare)
+	matches, compareErr := sysctlprofile.ValueMatches(current, expected, spec.Compare)
 	runtimeChanged := currentErr != nil || compareErr != nil || !matches
 	if runtimeChanged && !c.DryRun {
 		if out, err := command(ctx, "sysctl", "-w", spec.Key+"="+spec.Value); err != nil {
@@ -447,33 +447,4 @@ func safeSysctlName(name string) string { return sysctlprofile.SafeName(name) }
 
 func normalizeSysctlRuntimeValue(value string) string {
 	return strings.Join(strings.Fields(value), " ")
-}
-
-func sysctlValueMatches(current, expected, compare string) (bool, error) {
-	switch firstNonEmpty(compare, "exact") {
-	case "exact":
-		return current == expected, nil
-	case "atLeast":
-		currentFields := strings.Fields(current)
-		expectedFields := strings.Fields(expected)
-		if len(currentFields) != len(expectedFields) {
-			return false, fmt.Errorf("field count mismatch")
-		}
-		for i := range expectedFields {
-			c, err := strconv.ParseInt(currentFields[i], 10, 64)
-			if err != nil {
-				return false, err
-			}
-			e, err := strconv.ParseInt(expectedFields[i], 10, 64)
-			if err != nil {
-				return false, err
-			}
-			if c < e {
-				return false, nil
-			}
-		}
-		return true, nil
-	default:
-		return false, fmt.Errorf("unsupported compare %q", compare)
-	}
 }
