@@ -25,6 +25,7 @@ import (
 	"github.com/imksoo/routerd/pkg/healthcheck"
 	"github.com/imksoo/routerd/pkg/hostdeps"
 	"github.com/imksoo/routerd/pkg/hybrid"
+	"github.com/imksoo/routerd/pkg/pdclient"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/render"
 	"github.com/imksoo/routerd/pkg/resourcequery"
@@ -198,7 +199,7 @@ func (e *Engine) evaluate(router, declared *api.Router, includePlan bool) (*Resu
 
 		if rr.Phase == "Blocked" {
 			result.Phase = "Blocked"
-		} else if rr.Phase == "Drifted" && result.Phase == "Healthy" && (res.Kind == "Bridge" || res.Kind == "VXLANTunnel" || res.Kind == "IPv4Route" || res.Kind == "Package" || res.Kind == "TunnelInterface" || res.Kind == "DSLiteTunnel" || res.Kind == "VirtualAddress") {
+		} else if rr.Phase == "Drifted" && result.Phase == "Healthy" && (res.Kind == "Bridge" || res.Kind == "VXLANTunnel" || res.Kind == "IPv4Route" || res.Kind == "Package" || res.Kind == "TunnelInterface" || res.Kind == "DSLiteTunnel" || res.Kind == "VirtualAddress" || res.Kind == "IPv6DelegatedAddress") {
 			result.Phase = "Drifted"
 		}
 		result.Resources = append(result.Resources, rr)
@@ -639,6 +640,69 @@ func (e *Engine) observeIPv6DelegatedAddress(res api.Resource, aliases map[strin
 			rr.Plan = append(rr.Plan, fmt.Sprintf("send IPv6 router advertisements for delegated prefix on %s", ifname))
 		}
 	}
+	rr.Phase = "Unknown"
+	rr.Observed["reason"] = "DelegatedAddressNotFullyObserved"
+	if e.Store == nil || !resourcequery.DependenciesReady(e.Store, spec.DependsOn) {
+		return
+	}
+	if resourcequery.ResourceWhenPresent(spec.When) {
+		store, ok := e.Store.(resourcequery.StateStore)
+		if !ok || !resourcequery.ResourceWhenMatches(spec.When, store) {
+			return
+		}
+	}
+	pdStatus := e.Store.ObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", spec.PrefixDelegation)
+	observed, _ := pdStatus["observed"].(map[string]any)
+	phase := statusvalue.Field(observed, "phase")
+	if phase == "" {
+		phase = statusvalue.Field(pdStatus, "phase")
+	}
+	prefix := statusvalue.Field(observed, "currentPrefix")
+	if prefix == "" {
+		prefix = statusvalue.Field(pdStatus, "currentPrefix")
+	}
+	if phase != "Bound" || prefix == "" {
+		return
+	}
+	address, err := pdclient.DeriveIPv6Address(prefix, spec.SubnetID, spec.AddressSuffix)
+	if err != nil {
+		rr.Warnings = append(rr.Warnings, fmt.Sprintf("derive IPv6 delegated address: %v", err))
+		return
+	}
+	want, err := netip.ParsePrefix(address)
+	if err != nil {
+		return
+	}
+	if spec.PrefixLength != 0 && spec.PrefixLength != want.Bits() {
+		if spec.PrefixLength != 128 {
+			return
+		}
+		want = netip.PrefixFrom(want.Addr(), spec.PrefixLength)
+	}
+	if ifname == "" {
+		ifname = spec.Interface
+	}
+	iface, err := net.InterfaceByName(ifname)
+	if err != nil {
+		rr.Warnings = append(rr.Warnings, fmt.Sprintf("observe IPv6 delegated address interface %s: %v", ifname, err))
+		return
+	}
+	addresses, err := iface.Addrs()
+	if err != nil {
+		rr.Warnings = append(rr.Warnings, fmt.Sprintf("observe IPv6 delegated addresses on %s: %v", ifname, err))
+		return
+	}
+	rr.Observed["expectedAddress"] = want.String()
+	rr.Observed["ifname"] = ifname
+	for _, address := range addresses {
+		if actual, err := netip.ParsePrefix(address.String()); err == nil && actual == want {
+			rr.Observed["addressPresent"] = "true"
+			return
+		}
+	}
+	rr.Observed["addressPresent"] = "false"
+	rr.Observed["reason"] = "DelegatedAddressMissing"
+	rr.Phase = "Drifted"
 }
 
 func (e *Engine) observeDHCPv6Server(res api.Resource, includePlan bool, rr *ResourceResult) {

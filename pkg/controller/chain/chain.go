@@ -5024,7 +5024,7 @@ func derivePreviousDelegatedAddresses(snapshot pdclient.Snapshot, currentPrefix 
 		if err != nil || previousPrefix.Bits() != current.Bits() {
 			continue
 		}
-		address, err := DeriveIPv6Address(previousPrefix.String(), spec.SubnetID, spec.AddressSuffix)
+		address, err := pdclient.DeriveIPv6Address(previousPrefix.String(), spec.SubnetID, spec.AddressSuffix)
 		if err != nil {
 			return nil, err
 		}
@@ -5141,7 +5141,7 @@ func declaredCurrentIPv6AddressExclusions(router *api.Router, store Store, ifnam
 				add(cleanStatusString(status["address"]))
 				pdStatus := store.ObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", spec.PrefixDelegation)
 				if currentPrefix := statusStringPreferObserved(pdStatus, "currentPrefix"); currentPrefix != "" {
-					if address, deriveErr := DeriveIPv6Address(currentPrefix, spec.SubnetID, spec.AddressSuffix); deriveErr == nil {
+					if address, deriveErr := pdclient.DeriveIPv6Address(currentPrefix, spec.SubnetID, spec.AddressSuffix); deriveErr == nil {
 						if address, lengthErr := delegatedAddressWithPrefixLength(address, spec.PrefixLength); lengthErr == nil {
 							add(address)
 						}
@@ -5359,7 +5359,7 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name, map[string]any{"phase": "Pending"})
 			continue
 		}
-		addr, err := DeriveIPv6Address(prefix, spec.SubnetID, spec.AddressSuffix)
+		addr, err := pdclient.DeriveIPv6Address(prefix, spec.SubnetID, spec.AddressSuffix)
 		if err != nil {
 			return err
 		}
@@ -5961,7 +5961,7 @@ func (c LANAddressController) cleanupWhenFalseIPv6DelegatedAddresses(ctx context
 		if address == "" || address == "<nil>" {
 			if pdStatus := c.Store.ObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", pdName); statusStringPreferObserved(pdStatus, "phase") == daemonapi.ResourcePhaseBound {
 				if prefix := statusStringPreferObserved(pdStatus, "currentPrefix"); prefix != "" {
-					if derived, err := DeriveIPv6Address(prefix, spec.SubnetID, spec.AddressSuffix); err == nil {
+					if derived, err := pdclient.DeriveIPv6Address(prefix, spec.SubnetID, spec.AddressSuffix); err == nil {
 						address = derived
 					}
 				}
