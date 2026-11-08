@@ -43,8 +43,6 @@ func (m serveConfigMutator) mutateRuntime(next *api.Router, configYAML string) (
 	runtimeOutcome := outcome.Runtime
 	outcome, err = m.reconcileWithOutcome(next, configYAML)
 	outcome.Runtime = runtimeOutcome
-	// Standby is an intentional successful runtime update without a canonical
-	// commit; preserve the existing HA contract on this normal path as well.
 	if outcome.Canonical == canonicalReplaced || err == nil {
 		if !shapeChanged {
 			if updateErr := m.updateConfirmedRuntime(next); updateErr != nil {

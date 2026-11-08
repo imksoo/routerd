@@ -704,6 +704,9 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 		if decision.Enabled && !decision.Leader {
 			result.Phase = "Standby"
 			result.Warnings = append(result.Warnings, fmt.Sprintf("RouterdCluster/%s lease is held by %s; apply skipped on standby", clusterName, decision.Holder))
+			if err := outcome.commit(opts, configYAML); err != nil {
+				return result, fmt.Errorf("commit canonical config %s: %w", opts.ConfigPath, err)
+			}
 			outcome.Stage = "finish-generation"
 			if err := outcome.finish(stateStore, result.Phase, result.Warnings); err != nil {
 				return result, err
