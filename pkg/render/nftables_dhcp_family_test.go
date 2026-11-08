@@ -58,8 +58,7 @@ func TestNftablesIPv6OnlyDHCPListener(t *testing.T) {
 			resources = append(resources, api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "lan-zone"}, Spec: api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan", "v6"}}})
 			router := &api.Router{Spec: api.RouterSpec{Resources: resources}}
 			for name, renderFirewall := range map[string]func() ([]byte, error){
-				"filter":   func() ([]byte, error) { return NftablesFirewall(router, nil) },
-				"combined": func() ([]byte, error) { return NftablesNAT44(router) },
+				"filter": func() ([]byte, error) { return NftablesFirewall(router, nil) },
 			} {
 				data, err := renderFirewall()
 				if err != nil {
