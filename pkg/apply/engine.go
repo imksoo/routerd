@@ -1617,26 +1617,39 @@ func (e *Engine) observeNetworkAdoption(res api.Resource, aliases map[string]str
 	}
 }
 
-func InactiveDSLiteInterfaces(effective, declared *api.Router) map[string]bool {
+func InactiveDSLiteInterfaces(effective, declared *api.Router) map[string]string {
 	active := map[string]bool{}
+	disabled := map[string]bool{}
 	for _, res := range effective.Spec.Resources {
 		if res.Kind == "DSLiteTunnel" {
-			active[defaultString(stringSpec(res, "tunnelName"), res.Metadata.Name)] = true
+			spec, err := res.DSLiteTunnelSpec()
+			if err != nil {
+				continue
+			}
+			name := defaultString(spec.TunnelName, res.Metadata.Name)
+			if api.BoolDefault(spec.Enabled, true) {
+				active[name] = true
+			} else {
+				disabled[name] = true
+			}
 		}
 	}
-	inactive := map[string]bool{}
+	inactive := map[string]string{}
 	for _, res := range declared.Spec.Resources {
 		if res.Kind == "DSLiteTunnel" {
 			name := defaultString(stringSpec(res, "tunnelName"), res.Metadata.Name)
 			if !active[name] {
-				inactive[name] = true
+				inactive[name] = "WhenFalse"
+				if disabled[name] {
+					inactive[name] = "Disabled"
+				}
 			}
 		}
 	}
 	return inactive
 }
 
-func (e *Engine) observeInterface(res api.Resource, policy interfacePolicy, observedV4 []ipv4Assignment, inactiveTunnels map[string]bool, includePlan bool, rr *ResourceResult) {
+func (e *Engine) observeInterface(res api.Resource, policy interfacePolicy, observedV4 []ipv4Assignment, inactiveTunnels map[string]string, includePlan bool, rr *ResourceResult) {
 	rr.Observed["ifname"] = policy.IfName
 	rr.Observed["managed"] = fmt.Sprintf("%t", policy.Managed)
 	rr.Observed["owner"] = policy.Owner
@@ -1646,7 +1659,7 @@ func (e *Engine) observeInterface(res api.Resource, policy interfacePolicy, obse
 		rr.Observed["up"] = fmt.Sprintf("%t", up)
 	} else {
 		rr.Observed["exists"] = "false"
-		if !policy.Managed && inactiveTunnels[policy.IfName] {
+		if !policy.Managed && inactiveTunnels[policy.IfName] != "" {
 			rr.Phase = "Disabled"
 		} else {
 			rr.Phase = "Drifted"

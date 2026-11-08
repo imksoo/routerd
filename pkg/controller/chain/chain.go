@@ -4023,9 +4023,9 @@ func (c LinkController) Reconcile(ctx context.Context) error {
 					status["reason"] = "VRRPBackup"
 				}
 			}
-		} else if !spec.Managed && inactiveTunnels[ifname] {
+		} else if !spec.Managed && inactiveTunnels[ifname] != "" {
 			status["phase"] = "Disabled"
-			status["reason"] = "WhenFalse"
+			status["reason"] = inactiveTunnels[ifname]
 		} else {
 			status["reason"] = "InterfaceNotFound"
 			status["error"] = err.Error()
