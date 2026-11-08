@@ -1673,7 +1673,8 @@ func (c SystemdUnitController) applyHealthCheckSystemdUnit(ctx context.Context, 
 	if _, err := command(ctx, "systemctl", "is-active", "--quiet", unitName); err != nil {
 		active = false
 	}
-	if changed || !active {
+	previous := c.Store.ObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName)
+	if changed || !active || cleanStatusString(previous["phase"]) == "Error" {
 		if systemdUnitActive(ctx, command, render.RouterdUnitName) {
 			// Once routerd is READY, use a blocking restart and verify the helper
 			// became active. A successful systemctl invocation alone does not prove
