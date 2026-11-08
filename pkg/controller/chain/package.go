@@ -69,7 +69,8 @@ func (c PackageController) Reconcile(ctx context.Context) error {
 				continue
 			}
 			checkName, checkArgs := packageCheckCommand(manager, name)
-			if _, err := command(ctx, checkName, checkArgs...); err != nil {
+			out, err := command(ctx, checkName, checkArgs...)
+			if err != nil || (manager == "apt" && strings.TrimSpace(string(out)) != "installed") {
 				missing = append(missing, name)
 			}
 		}
@@ -192,7 +193,7 @@ func packageManagerForOS(osName string) string {
 func packageCheckCommand(manager, name string) (string, []string) {
 	switch manager {
 	case "apt":
-		return "dpkg-query", []string{"-W", "-f=${Status}", name}
+		return "dpkg-query", []string{"-W", "-f=${db:Status-Status}", name}
 	case "dnf":
 		return "rpm", []string{"-q", name}
 	case "pkg":
