@@ -524,6 +524,9 @@ func (c IPv4PolicyRouteController) applyRouteTables(ctx context.Context, aliases
 	var failures []string
 	desiredDefaults := map[int][]policyDefaultRoute{}
 	applyTarget := func(owner string, target api.EgressRoutePolicyTarget, skipMissing bool) {
+		if _, ok := desiredDefaults[target.EffectiveTable()]; !ok {
+			desiredDefaults[target.EffectiveTable()] = nil
+		}
 		if !c.egressTargetAvailable(ctx, aliases, target) {
 			return
 		}
@@ -534,6 +537,9 @@ func (c IPv4PolicyRouteController) applyRouteTables(ctx context.Context, aliases
 		c.applyRouteTarget(ctx, aliases, owner, target.EffectiveInterface(), target.EffectiveTable(), target.Priority, target.Mark, target.EffectiveMetric(), firstNonEmpty(target.GatewaySource, "none"), gateway, skipMissing, inspect, desiredDefaults, &failures)
 	}
 	applyCandidate := func(owner string, candidate api.EgressRoutePolicyCandidate) {
+		if _, ok := desiredDefaults[candidate.EffectiveTable()]; !ok {
+			desiredDefaults[candidate.EffectiveTable()] = nil
+		}
 		if egressRoutePolicyCandidateDisabled(candidate) {
 			return
 		}
@@ -807,6 +813,9 @@ func (c IPv4PolicyRouteController) removeExtraPolicyDefaults(ctx context.Context
 		}
 		output, err := exec.CommandContext(ctx, "ip", "-4", "route", "show", "default", "table", strconv.Itoa(table)).CombinedOutput()
 		if err != nil {
+			if strings.Contains(string(output), "FIB table does not exist") {
+				continue
+			}
 			return nil, fmt.Errorf("list IPv4 defaults in table %d: %w: %s", table, err, strings.TrimSpace(string(output)))
 		}
 		for _, line := range strings.Split(string(output), "\n") {
