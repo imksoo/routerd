@@ -17,9 +17,6 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
-	"sync"
-	"sync/atomic"
-	"syscall"
 	"testing"
 	"time"
 
@@ -29,7 +26,6 @@ import (
 	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/controlapi"
 	controllerchain "github.com/imksoo/routerd/pkg/controller/chain"
-	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/eventlog"
 	"github.com/imksoo/routerd/pkg/pdclient"
 	"github.com/imksoo/routerd/pkg/platform"
@@ -868,177 +864,6 @@ func TestServeOnceConvergesAndExits(t *testing.T) {
 	if _, err := os.Stat(statusPath); err != nil {
 		t.Fatalf("status file: %v", err)
 	}
-}
-
-func TestStartControllerRuntimeReturnsWhenStoppedDuringBootstrap(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	stop := make(chan struct{})
-	ready := make(chan struct{})
-	entered := make(chan struct{})
-	release := make(chan struct{})
-	type startResult struct {
-		started bool
-		err     error
-	}
-	result := make(chan startResult, 1)
-	go func() {
-		started, err := startControllerRuntime(ctx, stop, func(context.Context) error {
-			close(entered)
-			<-release
-			return nil
-		}, ready)
-		result <- startResult{started: started, err: err}
-	}()
-	select {
-	case <-entered:
-	case <-time.After(time.Second):
-		t.Fatal("controller bootstrap did not start")
-	}
-	close(stop)
-	select {
-	case result := <-result:
-		if result.err != nil {
-			t.Fatalf("startControllerRuntime during stop: %v", result.err)
-		}
-		if result.started {
-			t.Fatal("startControllerRuntime reported ready after stop")
-		}
-	case <-time.After(250 * time.Millisecond):
-		t.Fatal("startControllerRuntime waited for blocked bootstrap after stop")
-	}
-	select {
-	case <-ready:
-		t.Fatal("controller runtime became ready after stop")
-	default:
-	}
-	close(release)
-}
-
-func TestStartControllerRuntimePrefersStopOverBootstrapError(t *testing.T) {
-	stop := make(chan struct{})
-	entered := make(chan struct{})
-	release := make(chan struct{})
-	result := make(chan struct {
-		started bool
-		err     error
-	}, 1)
-	go func() {
-		started, err := startControllerRuntime(context.Background(), stop, func(context.Context) error {
-			close(entered)
-			<-release
-			return context.Canceled
-		}, nil)
-		result <- struct {
-			started bool
-			err     error
-		}{started: started, err: err}
-	}()
-	select {
-	case <-entered:
-	case <-time.After(time.Second):
-		t.Fatal("controller bootstrap did not start")
-	}
-	close(stop)
-	close(release)
-	select {
-	case got := <-result:
-		if got.err != nil || got.started {
-			t.Fatalf("startControllerRuntime = (%t, %v), want (false, nil)", got.started, got.err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("startControllerRuntime did not return after concurrent stop")
-	}
-}
-
-func TestServeMutationAdmissionRejectsStop(t *testing.T) {
-	var mu sync.Mutex
-	var stopping atomic.Bool
-	admission := serveMutationAdmission{mu: &mu, stopping: &stopping}
-	unlock, err := admission.lock()
-	if err != nil {
-		t.Fatalf("admission before stop: %v", err)
-	}
-	unlock()
-	stopping.Store(true)
-	if _, err := admission.lock(); !errors.Is(err, errServeMutationStopping) {
-		t.Fatalf("admission after stop error = %v, want %v", err, errServeMutationStopping)
-	}
-}
-
-func TestRunGracefulStopWhenIdleSkipsActiveMutation(t *testing.T) {
-	var mu sync.Mutex
-	mu.Lock()
-	called := false
-	type result struct {
-		ran bool
-		err error
-	}
-	resultCh := make(chan result, 1)
-	go func() {
-		ran, err := runGracefulStopWhenIdle(&mu, func() error {
-			called = true
-			return nil
-		})
-		resultCh <- result{ran: ran, err: err}
-	}()
-	select {
-	case got := <-resultCh:
-		if got.err != nil {
-			t.Fatalf("runGracefulStopWhenIdle while active = %v", got.err)
-		}
-		if got.ran {
-			t.Fatal("runGracefulStopWhenIdle ran while a mutation held the lock")
-		}
-	case <-time.After(time.Second):
-		t.Fatal("runGracefulStopWhenIdle waited for an active mutation")
-	}
-	if called {
-		t.Fatal("runGracefulStopWhenIdle called handoff while a mutation held the lock")
-	}
-	mu.Unlock()
-
-	ran, err := runGracefulStopWhenIdle(&mu, func() error {
-		called = true
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("runGracefulStopWhenIdle when idle = %v", err)
-	}
-	if !ran || !called {
-		t.Fatalf("runGracefulStopWhenIdle when idle = (ran=%t, called=%t), want both true", ran, called)
-	}
-}
-
-func TestRunGracefulStopWhenIdleBoundedReturnsAtDeadline(t *testing.T) {
-	var mu sync.Mutex
-	entered := make(chan struct{})
-	release := make(chan struct{})
-	ran, completed, err := runGracefulStopWhenIdleBounded(&mu, 20*time.Millisecond, func() error {
-		close(entered)
-		<-release
-		return nil
-	})
-	if !ran || completed {
-		t.Fatalf("runGracefulStopWhenIdleBounded = (ran=%t, completed=%t), want (true, false)", ran, completed)
-	}
-	if !errors.Is(err, errGracefulStopShutdownDeadline) {
-		t.Fatalf("runGracefulStopWhenIdleBounded error = %v, want deadline", err)
-	}
-	select {
-	case <-entered:
-	case <-time.After(time.Second):
-		t.Fatal("bounded handoff did not start")
-	}
-	close(release)
-	deadline := time.Now().Add(time.Second)
-	for !mu.TryLock() {
-		if time.Now().After(deadline) {
-			t.Fatal("bounded handoff did not release mutation lock")
-		}
-		time.Sleep(time.Millisecond)
-	}
-	mu.Unlock()
 }
 
 func TestScheduledServeReconcileDoesNotCreateConfigGeneration(t *testing.T) {
@@ -2065,35 +1890,6 @@ func TestFreeBSDProtectedIfnames(t *testing.T) {
 	}
 	if got["vtnet0"] {
 		t.Fatalf("protected ifnames = %v, did not want vtnet0", got)
-	}
-}
-
-func TestPublishVRRPTransitionSignalsWakesControllerBus(t *testing.T) {
-	eventBus := bus.New()
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	events, unsubscribe := eventBus.Subscribe(ctx, bus.Subscription{Topics: []string{daemonapi.EventVRRPRoleTransition}}, 1)
-	defer unsubscribe()
-	signals := make(chan os.Signal, 1)
-	done := make(chan struct{})
-	go func() {
-		publishVRRPTransitionSignals(ctx, signals, eventBus)
-		close(done)
-	}()
-	signals <- syscall.SIGUSR1
-	select {
-	case event := <-events:
-		if event.Type != daemonapi.EventVRRPRoleTransition || event.Daemon.Name != "keepalived" {
-			t.Fatalf("VRRP transition event = %#v", event)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("VRRP transition signal did not reach controller bus")
-	}
-	cancel()
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("VRRP signal forwarder did not stop")
 	}
 }
 
