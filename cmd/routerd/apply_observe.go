@@ -106,9 +106,6 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 				}
 			}
 		}
-		if client != api.IPv6PDClientRouterd && observedPrefix == "" && lease.CurrentPrefix != "" && lease.HasFreshTransactionEvidence(store.Now()) {
-			observedPrefix = lease.CurrentPrefix
-		}
 		if observedPrefix == "" {
 			if recorder, ok := store.(routerstate.EventRecorder); ok {
 				_ = recorder.RecordEvent(res.APIVersion, res.Kind, res.Metadata.Name, "Warning", "PrefixMissing", "delegated IPv6 prefix is not observable")
