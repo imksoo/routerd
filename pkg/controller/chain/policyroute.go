@@ -1491,14 +1491,18 @@ func (c IPv4PolicyRouteController) applyNftTable(ctx context.Context, nft, path,
 			return nil
 		}
 		out, err := exec.CommandContext(ctx, nft, "list", "table", family, table).CombinedOutput()
-		if nftListMissing(out, err) {
-			return nil
+		if !nftListMissing(out, err) {
+			if err != nil {
+				return fmt.Errorf("list nft table %s %s: %w: %s", family, table, err, strings.TrimSpace(string(out)))
+			}
+			if out, err := exec.CommandContext(ctx, nft, "delete", "table", family, table).CombinedOutput(); err != nil {
+				return fmt.Errorf("delete nft table %s %s: %w: %s", family, table, err, strings.TrimSpace(string(out)))
+			}
 		}
-		if err != nil {
-			return fmt.Errorf("list nft table %s %s: %w: %s", family, table, err, strings.TrimSpace(string(out)))
-		}
-		if out, err := exec.CommandContext(ctx, nft, "delete", "table", family, table).CombinedOutput(); err != nil {
-			return fmt.Errorf("delete nft table %s %s: %w: %s", family, table, err, strings.TrimSpace(string(out)))
+		for _, stale := range []string{path, path + ".verified"} {
+			if err := os.Remove(stale); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("remove stale policy file %s: %w", stale, err)
+			}
 		}
 		return nil
 	}
