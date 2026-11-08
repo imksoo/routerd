@@ -14,39 +14,9 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/dnsresolver"
-	"github.com/imksoo/routerd/pkg/healthcheck"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/resourcequery"
 )
-
-func validIAID(value string) bool {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return false
-	}
-	if strings.HasPrefix(value, "0x") || strings.HasPrefix(value, "0X") {
-		_, err := strconv.ParseUint(value[2:], 16, 32)
-		return err == nil
-	}
-	if len(value) == 8 && validHex(value) {
-		_, err := strconv.ParseUint(value, 16, 32)
-		return err == nil
-	}
-	_, err := strconv.ParseUint(value, 10, 32)
-	return err == nil
-}
-
-func validHex(value string) bool {
-	if value == "" {
-		return false
-	}
-	for _, r := range strings.ToLower(value) {
-		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
-			return false
-		}
-	}
-	return true
-}
 
 func validEventRuleCorrelation(value string) bool {
 	switch value {
@@ -642,24 +612,6 @@ func validateBGPTimerProfile(resourceID, path string, spec api.BGPTimersSpec) er
 	return nil
 }
 
-func validateBGPTimers(resourceID, path string, spec api.BGPTimersSpec) error {
-	keepalive, err := validateOptionalDuration(resourceID, path+".keepalive", spec.Keepalive)
-	if err != nil {
-		return err
-	}
-	holdTime, err := validateOptionalDuration(resourceID, path+".holdTime", spec.HoldTime)
-	if err != nil {
-		return err
-	}
-	if _, err := validateOptionalDuration(resourceID, path+".connectRetry", spec.ConnectRetry); err != nil {
-		return err
-	}
-	if keepalive > 0 && holdTime > 0 && holdTime <= keepalive {
-		return fmt.Errorf("%s %s.holdTime must be greater than keepalive", resourceID, path)
-	}
-	return nil
-}
-
 func validateBGPGracefulRestart(resourceID string, spec api.BGPGracefulRestartSpec) error {
 	if _, err := validateOptionalDuration(resourceID, "spec.gracefulRestart.restartTime", spec.RestartTime); err != nil {
 		return err
@@ -682,17 +634,6 @@ func validateOptionalDuration(resourceID, path, value string) (time.Duration, er
 		return 0, fmt.Errorf("%s %s must be positive", resourceID, path)
 	}
 	return duration, nil
-}
-
-func validateDSLiteInnerLocalAddress(value string) error {
-	addr, err := netip.ParseAddr(value)
-	if err != nil || !addr.Is4() {
-		return fmt.Errorf("must be an IPv4 address")
-	}
-	if addr.IsUnspecified() || addr.IsMulticast() || addr.IsLoopback() {
-		return fmt.Errorf("must be a usable unicast IPv4 address")
-	}
-	return nil
 }
 
 func validateSourceResourceRef(value string) error {
@@ -1031,35 +972,6 @@ func validateDNSUpstream(resourceID string, spec api.DNSUpstreamSpec) error {
 	}
 	if strings.EqualFold(spec.Protocol, "doh") && strings.TrimSpace(spec.Path) != "" && !strings.HasPrefix(strings.TrimSpace(spec.Path), "/") {
 		return fmt.Errorf("%s spec.path must start with /", resourceID)
-	}
-	return nil
-}
-
-func validateHealthCheckDerivedFwMark(router *api.Router, res api.Resource, spec api.HealthCheckSpec) error {
-	refs := healthcheck.DerivedFwMarkRefs(router, res.Metadata.Name)
-	if len(refs) == 0 {
-		return nil
-	}
-	var mark int
-	var first healthcheck.FwMarkRef
-	for _, ref := range refs {
-		if ref.Mark == 0 {
-			continue
-		}
-		if mark == 0 {
-			mark = ref.Mark
-			first = ref
-			continue
-		}
-		if mark != ref.Mark {
-			return fmt.Errorf("%s is referenced by routing targets with conflicting marks: %s/%s=0x%x and %s/%s=0x%x", res.ID(), first.Resource, first.Name, mark, ref.Resource, ref.Name, ref.Mark)
-		}
-	}
-	if mark == 0 {
-		return nil
-	}
-	if spec.FwMark != 0 && spec.FwMark != mark {
-		return fmt.Errorf("%s spec.fwmark 0x%x conflicts with routing target mark 0x%x; omit spec.fwmark to derive it from the referenced route target", res.ID(), spec.FwMark, mark)
 	}
 	return nil
 }

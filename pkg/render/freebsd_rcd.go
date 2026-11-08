@@ -491,45 +491,6 @@ func freeBSDRouterdSupervisesClientDaemons(router *api.Router) bool {
 	return true
 }
 
-func containsFreeBSDArg(args []string, needle string) bool {
-	for _, arg := range args {
-		if arg == needle {
-			return true
-		}
-	}
-	return false
-}
-
-func freeBSDBoolFlagValue(args []string, flag string, defaultValue bool) bool {
-	for i, arg := range args {
-		if arg == flag {
-			if i+1 >= len(args) {
-				return true
-			}
-			switch strings.ToLower(strings.TrimSpace(args[i+1])) {
-			case "false", "0", "no", "off":
-				return false
-			case "true", "1", "yes", "on":
-				return true
-			default:
-				return true
-			}
-		}
-		if strings.HasPrefix(arg, flag+"=") {
-			value := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(arg, flag+"=")))
-			switch value {
-			case "false", "0", "no", "off":
-				return false
-			case "true", "1", "yes", "on":
-				return true
-			default:
-				return defaultValue
-			}
-		}
-	}
-	return defaultValue
-}
-
 func wireGuardPeerSpecs(router *api.Router, ifname string) []api.WireGuardPeerSpec {
 	var peers []api.WireGuardPeerSpec
 	for _, res := range router.Spec.Resources {

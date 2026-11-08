@@ -14,7 +14,6 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -1220,13 +1219,6 @@ func (c DHCPv6ServerController) reconcileRouterAdvertisements(ctx context.Contex
 	return nil
 }
 
-func suffixedPath(path, oldSuffix, newSuffix string) string {
-	if strings.TrimSpace(path) == "" {
-		return ""
-	}
-	return strings.TrimSuffix(path, oldSuffix) + newSuffix
-}
-
 func dependencyStatusSnapshot(store Store, dependencies []api.ResourceDependencySpec) []string {
 	var out []string
 	for _, dependency := range dependencies {
@@ -1329,14 +1321,6 @@ func valueFromStatusRef(store Store, ref string) string {
 		}
 		return fmt.Sprint(value)
 	}
-}
-
-func valueFromStatusRefOrLiteral(store Store, value string) string {
-	trimmed := strings.TrimSpace(value)
-	if strings.HasPrefix(trimmed, "${") && strings.Contains(trimmed, ".status.") {
-		return valueFromStatusRef(store, trimmed)
-	}
-	return trimmed
 }
 
 func (c DSLiteTunnelController) localAddress(spec api.DSLiteTunnelSpec) (string, string, error) {
@@ -1630,15 +1614,6 @@ func prefixFromStatusOrAddress(store Store, ref string) string {
 		return netip.PrefixFrom(addr, 64).Masked().String()
 	}
 	return ""
-}
-
-func readyWhenAll(store Store, predicates []api.ReadyWhenSpec) bool {
-	for _, predicate := range predicates {
-		if !readyWhen(store, predicate) {
-			return false
-		}
-	}
-	return true
 }
 
 func readyWhen(store Store, predicate api.ReadyWhenSpec) bool {
@@ -2050,19 +2025,4 @@ func freeBSDDSLiteRuntimeIfName(name string) string {
 	sum := sha256.Sum256([]byte(name))
 	index := 100 + int(binary.BigEndian.Uint16(sum[:2])%900)
 	return "gif" + strconv.Itoa(index)
-}
-
-func writeDnsmasqDHCPv6Config(path, pidFile, ifname string, dnsServers []string, port int) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "port=%d\nno-resolv\nno-hosts\nlisten-address=127.0.0.1\nbind-interfaces\npid-file=%s\n", port, pidFile)
-	fmt.Fprintf(&b, "interface=%s\n", ifname)
-	b.WriteString("enable-ra\n")
-	fmt.Fprintf(&b, "dhcp-range=::,constructor:%s,ra-stateless,64,12h\n", ifname)
-	for _, server := range dnsServers {
-		fmt.Fprintf(&b, "dhcp-option=option6:dns-server,[%s]\n", server)
-	}
-	return os.WriteFile(path, []byte(b.String()), 0644)
 }

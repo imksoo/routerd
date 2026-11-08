@@ -358,19 +358,6 @@ func freeBSDModuleAlreadyLoaded(out []byte) bool {
 	return strings.Contains(text, "file exists") || strings.Contains(text, "already loaded")
 }
 
-func removeKernelModuleFile(path string, dryRun bool) (bool, error) {
-	if _, err := os.Stat(path); err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
-		return false, err
-	}
-	if dryRun {
-		return true, nil
-	}
-	return true, os.Remove(path)
-}
-
 func compactStringList(values []string) []string {
 	seen := map[string]bool{}
 	var out []string

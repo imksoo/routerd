@@ -2489,32 +2489,6 @@ type ipv6AddressEntry struct {
 	PrefixLen int
 }
 
-func ipv6AddressEntries(ifname string) []ipv6AddressEntry {
-	if platformDefaults.OS == platform.OSFreeBSD {
-		return freeBSDIPv6AddressEntries(ifname)
-	}
-	out, err := exec.Command("ip", "-brief", "-6", "addr", "show", "dev", ifname).CombinedOutput()
-	if err != nil {
-		return nil
-	}
-	var entries []ipv6AddressEntry
-	for _, field := range strings.Fields(string(out)) {
-		addrPart, _, ok := strings.Cut(field, "/")
-		if !ok {
-			continue
-		}
-		addr, err := netip.ParseAddr(addrPart)
-		if err == nil && addr.Is6() {
-			bits := 128
-			if prefix, err := netip.ParsePrefix(field); err == nil {
-				bits = prefix.Bits()
-			}
-			entries = append(entries, ipv6AddressEntry{Address: addr.String(), PrefixLen: bits})
-		}
-	}
-	return entries
-}
-
 func freeBSDIPv6AddressEntries(ifname string) []ipv6AddressEntry {
 	out, err := exec.Command("ifconfig", ifname).CombinedOutput()
 	if err != nil {

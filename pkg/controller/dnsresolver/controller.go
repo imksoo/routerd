@@ -699,17 +699,6 @@ func resolverUnixHTTPClient(socket string) *http.Client {
 	}}}
 }
 
-func joinPorts(listen []api.DNSResolverListenSpec) string {
-	out := ""
-	for _, l := range listen {
-		if out != "" {
-			out += ","
-		}
-		out += strconv.Itoa(l.Port)
-	}
-	return out
-}
-
 func expandStrings(store Store, values []string) []string {
 	var out []string
 	for _, value := range values {

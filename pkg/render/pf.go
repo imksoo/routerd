@@ -942,10 +942,6 @@ func pfZoneSelfExpr(zone firewallZone) string {
 	return "{ " + strings.Join(parts, ", ") + " }"
 }
 
-func pfFirewallRuleExprOn(onExpr, name string, spec api.FirewallRuleSpec, logging firewallLogging) string {
-	return pfFirewallRuleExprOnSelf(onExpr, "self", name, spec, logging)
-}
-
 func pfFirewallRuleExprOnSelf(onExpr, selfExpr, name string, spec api.FirewallRuleSpec, logging firewallLogging) string {
 	action := "block drop"
 	if spec.Action == "accept" {

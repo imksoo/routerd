@@ -348,14 +348,6 @@ func staleObjectStatusesForDesired(desired map[string]bool, statuses []routersta
 	return lifecycle.PlanStatusGC(desired, statuses).StatusDeletes
 }
 
-func syntheticObjectStatus(status routerstate.ObjectStatus) bool {
-	return lifecycle.SyntheticObjectStatus(status)
-}
-
-func desiredObjectStatusKeys(router *api.Router, store resourcequery.StateStore, now time.Time) (map[string]bool, error) {
-	return desiredObjectStatusKeysForOS(router, store, now, platform.CurrentOS())
-}
-
 func desiredObjectStatusKeysForOS(router *api.Router, store resourcequery.StateStore, now time.Time, targetOS platform.OS) (map[string]bool, error) {
 	out := map[string]bool{}
 	if router == nil {
@@ -409,23 +401,6 @@ func configuredResourceStatusKeys(router *api.Router) map[string]bool {
 		}
 		out[apiVersion+"/"+resource.Kind+"/"+resource.Metadata.Name] = true
 	}
-	return out
-}
-
-func configResourceObjectStatus(status routerstate.ObjectStatus) bool {
-	return lifecycle.ConfigResourceObjectStatus(status)
-}
-
-func unsupportedLegacyObjectStatuses(statuses []routerstate.ObjectStatus) []routerstate.ObjectStatus {
-	var out []routerstate.ObjectStatus
-	for _, status := range statuses {
-		if api.IsRemovedLegacyKind(status.Kind) {
-			out = append(out, status)
-		}
-	}
-	sort.Slice(out, func(i, j int) bool {
-		return objectStatusID(out[i]) < objectStatusID(out[j])
-	})
 	return out
 }
 

@@ -135,20 +135,3 @@ func telemetrySignalExporterEnv(signal string) string {
 		return "OTEL_" + strings.ToUpper(signal) + "_EXPORTER"
 	}
 }
-
-func mergeEnvironment(base, extra []string) []string {
-	if len(extra) == 0 {
-		return base
-	}
-	seen := map[string]bool{}
-	out := make([]string, 0, len(base)+len(extra))
-	for _, value := range append(base, extra...) {
-		key, _, _ := strings.Cut(value, "=")
-		if key == "" || seen[key] {
-			continue
-		}
-		seen[key] = true
-		out = append(out, value)
-	}
-	return out
-}

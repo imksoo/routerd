@@ -2545,29 +2545,6 @@ func staticAppliedPathValues(paths map[string]bgpdaemon.AppliedPath) []bgpdaemon
 	return out
 }
 
-func dynamicImportPolicyExpanded(previous, current bgpdaemon.AppliedConfig) bool {
-	previousPrefixes := appliedImportPolicyAllowedPrefixes(previous)
-	currentPrefixes := appliedImportPolicyAllowedPrefixes(current)
-	if sameStringSet(previousPrefixes, currentPrefixes) {
-		return false
-	}
-	for _, prefix := range dynamicPathExportPrefixes(current.Paths) {
-		if !stringSliceContains(previousPrefixes, prefix) && stringSliceContains(currentPrefixes, prefix) {
-			return true
-		}
-	}
-	return false
-}
-
-func appliedImportPolicyAllowedPrefixes(applied bgpdaemon.AppliedConfig) []string {
-	var prefixes []string
-	prefixes = append(prefixes, applied.Global.ImportPolicy.AllowedPrefixes...)
-	for _, peer := range applied.Peers {
-		prefixes = append(prefixes, peer.ImportPolicy.AllowedPrefixes...)
-	}
-	return stringutil.UniqueTrimmedSorted(prefixes)
-}
-
 func isMissingGoBGPPath(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "can't find a specified path")
 }
@@ -3638,52 +3615,6 @@ type allowedImportPrefix struct {
 	Prefix netip.Prefix
 	Min    int
 	Max    int
-}
-
-func fibRoutesFromStatePrefixes(prefixes []bgpstate.Prefix, allowed []allowedImportPrefix, admit func(netip.Prefix, string, string, []string) bool) []FIBRoute {
-	type stateRoute struct {
-		nextHops        map[string]bool
-		retainOnMissing bool
-	}
-	byPrefix := map[string]stateRoute{}
-	for _, prefix := range prefixes {
-		if !prefix.Best || !prefix.Valid || strings.TrimSpace(prefix.Prefix) == "" || bgpstate.HasCommunity(prefix.Communities, bgpstate.MobilityCommunityNodeLiveness) {
-			continue
-		}
-		nextHop := strings.TrimSpace(prefix.NextHop)
-		if nextHop == "" || nextHop == "0.0.0.0" || nextHop == "::" {
-			continue
-		}
-		parsed, err := netip.ParsePrefix(prefix.Prefix)
-		if err != nil {
-			continue
-		}
-		parsed = parsed.Masked()
-		if len(allowed) > 0 && !prefixAllowed(parsed, allowed) {
-			continue
-		}
-		if admit != nil && !admit(parsed, nextHop, nextHop, prefix.Communities) {
-			continue
-		}
-		key := parsed.String()
-		route := byPrefix[key]
-		if route.nextHops == nil {
-			route.nextHops = map[string]bool{}
-		}
-		route.nextHops[nextHop] = true
-		byPrefix[key] = route
-	}
-	var out []FIBRoute
-	for prefix, route := range byPrefix {
-		var hops []string
-		for hop := range route.nextHops {
-			hops = append(hops, hop)
-		}
-		sort.Strings(hops)
-		out = append(out, FIBRoute{Prefix: prefix, NextHops: hops, RetainOnMissing: route.retainOnMissing})
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Prefix < out[j].Prefix })
-	return out
 }
 
 type bgpPathRank struct {

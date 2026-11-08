@@ -633,12 +633,6 @@ func objectStatusChanged(kind string, current, next map[string]any) bool {
 	return statusChanged(current, statusWithOwnership("", kind, next))
 }
 
-func statusChangedFields(current, next map[string]any) []string {
-	currentStable := stableStatus(current)
-	nextStable := stableStatus(next)
-	return changedFields(currentStable, nextStable)
-}
-
 func changedFields(currentStable, nextStable map[string]any) []string {
 	keys := map[string]bool{}
 	for key := range currentStable {
@@ -1128,10 +1122,6 @@ func firewallStatusSubscriptions(router *api.Router) []bus.Subscription {
 		"IPAddressSet", "Interface", "DSLiteTunnel", "EgressRoutePolicy", "NAT44Rule", "VirtualAddress", "IPv4StaticAddress", "DHCPv4Client")
 	subs = append(subs, bus.Subscription{Topics: []string{"routerd.firewall.**"}})
 	return withMobilityPlanSubscriptions(subs)
-}
-
-func ipv4RouteStatusSubscriptions() []bus.Subscription {
-	return withDynamicConfigPartSubscriptions(withMobilityPlanSubscriptions(statusSubscriptions("DSLiteTunnel", "TunnelInterface", "EgressRoutePolicy", "VirtualAddress", "DHCPv4Client", "SAMTransportProfile")))
 }
 
 func ipv4StaticAddressStatusSubscriptions() []bus.Subscription {
@@ -5505,13 +5495,6 @@ func (c LANAddressController) vrrpVMACReadbackPresent(logical string) bool {
 	return false
 }
 
-func vrrpVMACActiveReadbackMatches(entry api.VirtualAddressVRRPFailoverVMACSpec, mac net.HardwareAddr, flags net.Flags, addrs []net.Addr) bool {
-	if flags&net.FlagUp == 0 || !vrrpVMACMACMatches(entry, mac) {
-		return false
-	}
-	return vrrpVMACHasConfiguredLinkLocal(entry, addrs)
-}
-
 func vrrpVMACStagingReadbackMatches(entry api.VirtualAddressVRRPFailoverVMACSpec, mac net.HardwareAddr, flags net.Flags, addrs []net.Addr) bool {
 	return flags&net.FlagUp == 0 && vrrpVMACMACMatches(entry, mac) && !hasIPv6LinkLocal(addrs)
 }
@@ -5522,23 +5505,6 @@ func vrrpVMACMACMatches(entry api.VirtualAddressVRRPFailoverVMACSpec, mac net.Ha
 		return false
 	}
 	return true
-}
-
-func vrrpVMACHasConfiguredLinkLocal(entry api.VirtualAddressVRRPFailoverVMACSpec, addrs []net.Addr) bool {
-	if strings.TrimSpace(entry.LinkLocalAddress) == "" {
-		return true
-	}
-	wantLL := net.ParseIP(entry.LinkLocalAddress)
-	if wantLL == nil {
-		return false
-	}
-	for _, addr := range addrs {
-		ip, _, err := net.ParseCIDR(addr.String())
-		if err == nil && ip.Equal(wantLL) {
-			return true
-		}
-	}
-	return false
 }
 
 func hasIPv6LinkLocal(addrs []net.Addr) bool {
@@ -5978,20 +5944,6 @@ func DNSMasqLeaseFile(router *api.Router, fallback string) (string, error) {
 		return declared, nil
 	}
 	return fallback, nil
-}
-
-func dnsmasqListenAddresses(addresses []string) []string {
-	var out []string
-	for _, address := range addresses {
-		address = strings.TrimSpace(address)
-		if address != "" {
-			out = append(out, address)
-		}
-	}
-	if len(out) == 0 {
-		return []string{"127.0.0.1"}
-	}
-	return out
 }
 
 func dnsmasqLANServiceLines(router *api.Router, store Store) ([]string, error) {

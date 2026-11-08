@@ -118,10 +118,6 @@ func pathMTUPoliciesWithLocalCaptureIntents(router *api.Router, intents []dynami
 	return policies, nil
 }
 
-func resourceMTUs(router *api.Router) (map[string]int, error) {
-	return resourceMTUsWithLocalCaptureIntents(router, nil)
-}
-
 func resourceMTUsWithLocalCaptureIntents(router *api.Router, intents []dynamicconfig.LocalCaptureIntent) (map[string]int, error) {
 	mtus := map[string]int{}
 	for _, iface := range pathMTUResourceInterfaces(router) {
@@ -139,10 +135,6 @@ func resourceMTUsWithLocalCaptureIntents(router *api.Router, intents []dynamicco
 		}
 	}
 	return mtus, nil
-}
-
-func derivedPathMTUPolicySpecs(router *api.Router, mtus map[string]int) []pathMTUPolicySpec {
-	return derivedPathMTUPolicySpecsWithLocalCaptureIntents(router, mtus, nil)
 }
 
 func derivedPathMTUPolicySpecsWithLocalCaptureIntents(router *api.Router, mtus map[string]int, intents []dynamicconfig.LocalCaptureIntent) []pathMTUPolicySpec {
@@ -190,10 +182,6 @@ func derivedPathMTUPolicySpecsWithLocalCaptureIntents(router *api.Router, mtus m
 	return compactPathMTUPolicySpecs(policies)
 }
 
-func derivedForwardedPathMTUPolicySpecs(router *api.Router, mtus map[string]int) []pathMTUPolicySpec {
-	return derivedForwardedPathMTUPolicySpecsWithLocalCaptureIntents(router, mtus, nil)
-}
-
 func derivedForwardedPathMTUPolicySpecsWithLocalCaptureIntents(router *api.Router, mtus map[string]int, intents []dynamicconfig.LocalCaptureIntent) []pathMTUPolicySpec {
 	var policies []pathMTUPolicySpec
 	for _, path := range pathMTUForwardedPathsWithLocalCaptureIntents(router, intents) {
@@ -218,10 +206,6 @@ func derivedForwardedPathMTUPolicySpecsWithLocalCaptureIntents(router *api.Route
 		})
 	}
 	return compactPathMTUPolicySpecs(policies)
-}
-
-func pathMTUForwardedPaths(router *api.Router) []pathMTUForwardedPath {
-	return pathMTUForwardedPathsWithLocalCaptureIntents(router, nil)
 }
 
 func pathMTUForwardedPathsWithLocalCaptureIntents(router *api.Router, intents []dynamicconfig.LocalCaptureIntent) []pathMTUForwardedPath {
@@ -417,10 +401,6 @@ func pathMTUOverlayPeers(router *api.Router) map[string]api.OverlayPeerSpec {
 		}
 	}
 	return out
-}
-
-func pathMTUForwardedPathInterfaces(router *api.Router) []string {
-	return pathMTUForwardedPathInterfacesWithLocalCaptureIntents(router, nil)
 }
 
 func pathMTUForwardedPathInterfacesWithLocalCaptureIntents(router *api.Router, intents []dynamicconfig.LocalCaptureIntent) []string {

@@ -10,9 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
-	"sort"
 	"strings"
-	"text/tabwriter"
 	"time"
 
 	"github.com/imksoo/routerd/internal/mapsort"
@@ -248,61 +246,6 @@ func combineDiagnosticOutput(stdout, stderr string) string {
 	default:
 		return stdout + "\n--- stderr ---\n" + stderr
 	}
-}
-
-func writeDiagnoseReport(stdout io.Writer, report diagnoseReport, output string) error {
-	switch output {
-	case "", "table":
-		return writeDiagnoseTable(stdout, report)
-	case "json":
-		return writeJSON(stdout, report)
-	case "yaml":
-		return writeYAML(stdout, report)
-	default:
-		return fmt.Errorf("unsupported output %q", output)
-	}
-}
-
-func writeDiagnoseTable(stdout io.Writer, report diagnoseReport) error {
-	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintf(w, "DIAGNOSE\t%s", report.Kind)
-	if report.Name != "" {
-		fmt.Fprintf(w, "\t%s", report.Name)
-	}
-	fmt.Fprintln(w)
-	if len(report.Summary) > 0 {
-		fmt.Fprintln(w, "SUMMARY\tKEY\tVALUE")
-		for _, key := range mapsort.Keys(report.Summary) {
-			fmt.Fprintf(w, "SUMMARY\t%s\t%v\n", key, report.Summary[key])
-		}
-	}
-	if len(report.Resources) > 0 {
-		fmt.Fprintln(w, "RESOURCE\tNAME\tPHASE\tDETAIL")
-		for _, resource := range report.Resources {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", resource.Kind, resource.Name, displayCell(fmt.Sprint(resource.Status["phase"])), compactDiagnoseMap(resource.Status))
-		}
-	}
-	if len(report.Commands) > 0 {
-		fmt.Fprintln(w, "COMMAND\tOK\tDETAIL")
-		for _, command := range report.Commands {
-			detail := command.Output
-			if detail == "" {
-				detail = command.Error
-			}
-			detail = strings.ReplaceAll(detail, "\n", " | ")
-			fmt.Fprintf(w, "%s\t%t\t%s\n", command.Name, command.OK, detail)
-		}
-	}
-	return w.Flush()
-}
-
-func dnsResolverSourceNames(sources []api.DNSResolverSourceSpec) []string {
-	var out []string
-	for _, source := range sources {
-		out = append(out, source.Name)
-	}
-	sort.Strings(out)
-	return out
 }
 
 func splitCSV(value string) []string {

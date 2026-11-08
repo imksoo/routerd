@@ -153,10 +153,6 @@ func ValidateExecutable(path string) error {
 	return nil
 }
 
-func validateExecutable(path string) error {
-	return ValidateExecutable(path)
-}
-
 func pluginTimeout(value string) (time.Duration, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {

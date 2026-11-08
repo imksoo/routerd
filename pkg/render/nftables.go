@@ -36,10 +36,6 @@ func refName(ref string) string {
 	return ref
 }
 
-func privateIPv4CIDRs() []string {
-	return []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"}
-}
-
 func NftablesTCPMSSClamp(router *api.Router) ([]byte, error) {
 	return NftablesTCPMSSClampWithLocalCaptureIntents(router, nil)
 }
@@ -480,29 +476,6 @@ func nftOutboundAliasesWithLocalCaptureIntents(router *api.Router, intents []dyn
 type vxlanUnderlayPort struct {
 	IfName  string
 	UDPPort int
-}
-
-func vxlanUnderlayPorts(vxlans []vxlanConfig) []vxlanUnderlayPort {
-	seen := map[string]bool{}
-	var out []vxlanUnderlayPort
-	for _, v := range vxlans {
-		if v.UnderlayIfName == "" {
-			continue
-		}
-		key := v.UnderlayIfName + ":" + strconv.Itoa(v.UDPPort)
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		out = append(out, vxlanUnderlayPort{IfName: v.UnderlayIfName, UDPPort: v.UDPPort})
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].IfName != out[j].IfName {
-			return out[i].IfName < out[j].IfName
-		}
-		return out[i].UDPPort < out[j].UDPPort
-	})
-	return out
 }
 
 type FirewallHole struct {
@@ -1264,17 +1237,6 @@ func implicitFirewallAction(fromRole, toRole string, policy firewallPolicy) stri
 	}
 }
 
-func nftFirewallRuleExpr(name string, spec api.FirewallRuleSpec, logging firewallLogging) (string, error) {
-	exprs, err := nftFirewallRuleExprs(name, spec, logging, nil)
-	if err != nil {
-		return "", err
-	}
-	if len(exprs) == 0 {
-		return "", nil
-	}
-	return exprs[0], nil
-}
-
 func nftFirewallRuleExprs(name string, spec api.FirewallRuleSpec, logging firewallLogging, addressSets map[string]nftIPAddressSet) ([]string, error) {
 	matches, err := nftFirewallMatchAlternatives(name, spec, addressSets)
 	if err != nil {
@@ -1575,54 +1537,9 @@ func nftFirewallConnLimitExprs(name string, limit api.FirewallConnLimitSpec, fam
 	}
 }
 
-func nftFirewallCIDRMatch(resourceID, direction string, cidrs []string) (string, error) {
-	var v4, v6 []string
-	for _, cidr := range cidrs {
-		prefix, err := netip.ParsePrefix(cidr)
-		if err != nil {
-			return "", fmt.Errorf("%s has invalid %s CIDR %q", resourceID, direction, cidr)
-		}
-		if prefix.Addr().Is4() {
-			v4 = append(v4, prefix.Masked().String())
-		} else {
-			v6 = append(v6, prefix.Masked().String())
-		}
-	}
-	var out []string
-	if len(v4) > 0 {
-		sort.Strings(v4)
-		if len(v4) == 1 {
-			out = append(out, "ip "+direction+" "+v4[0])
-		} else {
-			out = append(out, "ip "+direction+" { "+strings.Join(v4, ", ")+" }")
-		}
-	}
-	if len(v6) > 0 {
-		sort.Strings(v6)
-		if len(v6) == 1 {
-			out = append(out, "ip6 "+direction+" "+v6[0])
-		} else {
-			out = append(out, "ip6 "+direction+" { "+strings.Join(v6, ", ")+" }")
-		}
-	}
-	return strings.Join(out, " "), nil
-}
-
 type nftFirewallMatch struct {
 	Family string
 	Expr   string
-}
-
-func nftFirewallMatches(resourceID string, spec api.FirewallRuleSpec, addressSets map[string]nftIPAddressSet) ([]string, error) {
-	matches, err := nftFirewallMatchAlternatives(resourceID, spec, addressSets)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]string, 0, len(matches))
-	for _, match := range matches {
-		out = append(out, match.Expr)
-	}
-	return out, nil
 }
 
 func nftFirewallMatchAlternatives(resourceID string, spec api.FirewallRuleSpec, addressSets map[string]nftIPAddressSet) ([]nftFirewallMatch, error) {
@@ -1790,25 +1707,6 @@ func nftQuotedList(values []string) string {
 		quoted = append(quoted, nftQuote(value))
 	}
 	return strings.Join(quoted, ", ")
-}
-
-func nftIPv4SourcesMatch(resourceID string, sources []string) (string, error) {
-	if len(sources) == 0 {
-		return "", nil
-	}
-	var values []string
-	for _, source := range sources {
-		prefix, err := netip.ParsePrefix(source)
-		if err != nil || !prefix.Addr().Is4() {
-			return "", fmt.Errorf("%s has invalid IPv4 source CIDR %q", resourceID, source)
-		}
-		values = append(values, prefix.Masked().String())
-	}
-	sort.Strings(values)
-	if len(values) == 1 {
-		return " ip saddr " + values[0], nil
-	}
-	return " ip saddr { " + strings.Join(values, ", ") + " }", nil
 }
 
 func writeNAT44FlowDNATPinholeMaps(buf *bytes.Buffer, pinholes []api.Resource) {
@@ -2410,67 +2308,6 @@ func egressPolicyRendersPolicyMarks(spec api.EgressRoutePolicySpec) bool {
 		}
 	}
 	return false
-}
-
-func nftSourceNATRules(ifname, cidr string, translation api.IPv4NATTranslationSpec) ([]string, error) {
-	match := "oifname " + nftQuote(ifname) + " ip saddr " + cidr + " "
-	expr, err := nftNATExpression(translation)
-	if err != nil {
-		return nil, err
-	}
-	if defaultString(translation.PortMapping.Type, "auto") == "range" {
-		return []string{
-			match + "meta l4proto { tcp, udp } " + nftNATExpressionWithPortRange(expr, translation.PortMapping),
-			match + expr,
-		}, nil
-	}
-	portSuffix, err := nftPortMapping(translation.PortMapping)
-	if err != nil {
-		return nil, err
-	}
-	return []string{match + expr + portSuffix}, nil
-}
-
-func nftNATExpressionWithPortRange(expr string, portMapping api.IPv4NATPortMappingSpec) string {
-	portRange := strconv.Itoa(portMapping.Start) + "-" + strconv.Itoa(portMapping.End)
-	if strings.HasPrefix(expr, "snat to ") {
-		return expr + ":" + portRange
-	}
-	return expr + " to :" + portRange
-}
-
-func nftNATExpression(translation api.IPv4NATTranslationSpec) (string, error) {
-	switch translation.Type {
-	case "interfaceAddress":
-		return "masquerade", nil
-	case "address":
-		if translation.Address == "" {
-			return "", fmt.Errorf("translation.address is required")
-		}
-		return "snat to " + translation.Address, nil
-	case "pool":
-		if len(translation.Addresses) == 0 {
-			return "", fmt.Errorf("translation.addresses is required")
-		}
-		addresses := append([]string(nil), translation.Addresses...)
-		sort.Strings(addresses)
-		return "snat to " + strings.Join(addresses, "-"), nil
-	default:
-		return "", fmt.Errorf("unsupported translation.type %q", translation.Type)
-	}
-}
-
-func nftPortMapping(portMapping api.IPv4NATPortMappingSpec) (string, error) {
-	switch defaultString(portMapping.Type, "auto") {
-	case "auto":
-		return "", nil
-	case "range":
-		return "", nil
-	case "preserve":
-		return " persistent", nil
-	default:
-		return "", fmt.Errorf("unsupported portMapping.type %q", portMapping.Type)
-	}
 }
 
 func nftQuote(value string) string {

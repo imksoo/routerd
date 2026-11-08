@@ -759,10 +759,6 @@ func statusInt(value any) int {
 	}
 }
 
-func trackedPhaseHealthy(kind, phase string) bool {
-	return trackedPhaseState(kind, phase, "") == trackedResourceHealthy
-}
-
 func trackedPhaseState(kind, phase, reason string) trackedResourceState {
 	if phase == "Pending" && reason == "WhenFalse" {
 		return trackedResourceNeutral

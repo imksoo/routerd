@@ -524,32 +524,6 @@ func writeFreeBSDBridgeAliases(buf *bytes.Buffer, addresses map[string][]string)
 	}
 }
 
-func writeFreeBSDVXLANS(buf *bytes.Buffer, vxlans []vxlanConfig) {
-	if len(vxlans) == 0 {
-		return
-	}
-	for _, vxlan := range vxlans {
-		var args []string
-		args = append(args, "vxlanid "+strconv.Itoa(vxlan.VNI))
-		args = append(args, "vxlanlocal "+vxlan.LocalAddress)
-		if vxlan.MulticastGroup != "" {
-			args = append(args, "vxlangroup "+vxlan.MulticastGroup)
-		} else if len(vxlan.Remotes) > 0 {
-			args = append(args, "vxlanremote "+vxlan.Remotes[0])
-		}
-		if vxlan.UnderlayIfName != "" {
-			args = append(args, "vxlandev "+vxlan.UnderlayIfName)
-		}
-		args = append(args, "vxlanlocalport "+strconv.Itoa(vxlan.UDPPort))
-		args = append(args, "vxlanremoteport "+strconv.Itoa(vxlan.UDPPort))
-		if vxlan.MTU != 0 {
-			args = append(args, "mtu "+strconv.Itoa(vxlan.MTU))
-		}
-		args = append(args, "up")
-		buf.WriteString(fmt.Sprintf("ifconfig_%s=\"%s\"\n", vxlan.IfName, strings.Join(args, " ")))
-	}
-}
-
 func resourceKind(router *api.Router, name string) string {
 	for _, res := range router.Spec.Resources {
 		if res.Metadata.Name == name {
@@ -783,15 +757,6 @@ func freeBSDIPv4CIDR(value string) (string, error) {
 		return "", err
 	}
 	return prefix.Addr().String() + "/" + fmt.Sprintf("%d", prefix.Bits()), nil
-}
-
-func sortedFreeBSDMapKeys(values map[string]bool) []string {
-	var keys []string
-	for key := range values {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 func freeBSDMPDLabel(name string) string {

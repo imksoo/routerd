@@ -4,8 +4,6 @@ package main
 
 import (
 	"encoding/json"
-
-	"github.com/imksoo/routerd/pkg/api"
 )
 
 type showOptions struct {
@@ -23,17 +21,6 @@ type showOptions struct {
 	Verbose          bool
 	IncludeStale     bool
 	ConnectionsLimit int
-}
-
-func resourceIDSet(router *api.Router) map[string]bool {
-	out := map[string]bool{}
-	if router == nil {
-		return out
-	}
-	for _, res := range router.Spec.Resources {
-		out[res.ID()] = true
-	}
-	return out
 }
 
 func flattenAny(value any) map[string]any {
