@@ -162,10 +162,6 @@ func OpenSQLiteLedger(path string) (*SQLiteLedger, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	if err := ledger.migrateLegacyJSON(); err != nil {
-		_ = db.Close()
-		return nil, err
-	}
 	return ledger, nil
 }
 
@@ -190,9 +186,6 @@ CREATE TABLE IF NOT EXISTS artifacts (
   source TEXT,
   generation INTEGER,
   observed_at TEXT
-);
-CREATE TABLE IF NOT EXISTS ledger_migrations (
-  name TEXT PRIMARY KEY
 );
 CREATE TABLE IF NOT EXISTS objects (
   api_version TEXT NOT NULL,
@@ -368,69 +361,6 @@ func (l *SQLiteLedger) tableHasColumn(table, column string) (bool, error) {
 		}
 	}
 	return false, rows.Err()
-}
-
-func (l *SQLiteLedger) migrateLegacyJSON() error {
-	legacy := filepath.Join(filepath.Dir(l.path), "artifacts.json")
-	if _, err := os.Stat(legacy); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		return err
-	}
-	tx, err := l.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	var migrated int
-	if err := tx.QueryRow(`SELECT count(*) FROM ledger_migrations WHERE name = 'legacy-artifacts-json'`).Scan(&migrated); err != nil {
-		return err
-	}
-	if migrated != 0 {
-		// The import committed before an interrupted or failed rename. Never
-		// import again, even if all of that ownership has since been forgotten.
-		if err := tx.Commit(); err != nil {
-			return err
-		}
-		return os.Rename(legacy, legacy+".migrated")
-	}
-	var count int
-	if err := tx.QueryRow(`SELECT count(*) FROM artifacts`).Scan(&count); err != nil {
-		return err
-	}
-	if count != 0 {
-		return nil
-	}
-	jsonLedger, err := loadJSONLedgerFile(legacy)
-	if err != nil {
-		return err
-	}
-	if err := l.rememberArtifacts(tx, jsonLedger.Artifacts); err != nil {
-		return fmt.Errorf("migrate legacy ownership ledger: %w", err)
-	}
-	if _, err := tx.Exec(`INSERT INTO ledger_migrations(name) VALUES ('legacy-artifacts-json')`); err != nil {
-		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-	return os.Rename(legacy, legacy+".migrated")
-}
-
-func loadJSONLedgerFile(path string) (*JSONLedger, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	var ledger JSONLedger
-	if err := json.Unmarshal(data, &ledger); err != nil {
-		return nil, err
-	}
-	if ledger.Version == 0 {
-		ledger.Version = 1
-	}
-	return &ledger, nil
 }
 
 func (l *SQLiteLedger) Remember(artifacts []Artifact) error {
