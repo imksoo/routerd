@@ -223,7 +223,7 @@ func (c IPv4RouteController) removeMobilityRoute(ctx context.Context, route mobi
 	name := "ip"
 	if platform.CurrentOS() == platform.OSFreeBSD {
 		name, args = freeBSDIPv4RouteRemovalDeleteCommand(removal)
-	} else {
+	} else if routerHasBGP(c.Router) {
 		bgp, err := removedIPv4RouteRemovalIsCurrentlyBGP(ctx, c.run, removal)
 		if err != nil {
 			return err

@@ -683,7 +683,7 @@ func (c IPv4RouteController) teardownRemovedRoute(ctx context.Context, status ro
 			name := "ip"
 			if platform.CurrentOS() == platform.OSFreeBSD {
 				name, args = freeBSDIPv4RouteRemovalDeleteCommand(removal)
-			} else {
+			} else if routerHasBGP(c.Router) {
 				bgp, err := removedIPv4RouteRemovalIsCurrentlyBGP(ctx, c.run, removal)
 				if err != nil {
 					return fmt.Errorf("observe removed IPv4Route %s: %w", status.Name, err)
