@@ -4479,9 +4479,16 @@ func (c IPv4StaticAddressController) cleanupRemovedIPv4StaticAddresses(ctx conte
 			if err := c.teardownWhenFalseIPv4StaticAddress(ctx, status, candidate); err != nil {
 				return err
 			}
+			delete(whenFalse, ref)
 			continue
 		}
 		remaining = append(remaining, status)
+	}
+	for _, candidate := range whenFalse {
+		status := routerstate.ObjectStatus{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress", Name: candidate.resource.Metadata.Name}
+		if err := c.teardownWhenFalseIPv4StaticAddress(ctx, status, candidate); err != nil {
+			return err
+		}
 	}
 	desired := map[string]bool{}
 	declared := c.DeclaredRouter
@@ -4576,7 +4583,7 @@ func (c IPv4StaticAddressController) teardownWhenFalseIPv4StaticAddress(ctx cont
 	status["interface"] = candidate.spec.Interface
 	status["ifname"] = ifname
 	status["address"] = address
-	status["staticAddressRemoved"] = true
+	status["staticAddressRemoved"] = !c.DryRun && ifname != "" && address != ""
 	delete(status, "error")
 	if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", object.Name, status); err != nil {
 		return err
