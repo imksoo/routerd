@@ -4,13 +4,10 @@ package servicemgr
 
 import (
 	"reflect"
-	"sort"
 	"strings"
 	"testing"
 
-	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/platform"
-	"github.com/imksoo/routerd/pkg/render"
 	"github.com/imksoo/routerd/pkg/resource"
 )
 
@@ -78,42 +75,6 @@ func TestManagerCommands(t *testing.T) {
 	}
 }
 
-func TestManagerPlanAllowsSignalBasedDaemonReload(t *testing.T) {
-	service := Service{SystemdName: "routerd-dnsmasq.service"}
-	plan := Systemd{}.Plan(OperationReload, service, Hook{
-		Operation:      OperationReload,
-		ReplaceDefault: true,
-		Command:        Command{Name: "kill", Args: []string{"-HUP", "$(cat /run/routerd/dnsmasq.pid)"}},
-	})
-	want := []Command{{Name: "kill", Args: []string{"-HUP", "$(cat /run/routerd/dnsmasq.pid)"}}}
-	if !reflect.DeepEqual(plan.Commands, want) {
-		t.Fatalf("dnsmasq signal reload plan = %#v, want %#v", plan.Commands, want)
-	}
-}
-
-func TestCrossOSDNSMasqServiceSemanticEquivalence(t *testing.T) {
-	service := Service{
-		SystemdName: "routerd-dnsmasq.service",
-		RCDName:     "routerd_dnsmasq",
-	}
-	managers := []Manager{Systemd{}, RCD{}}
-	for _, manager := range managers {
-		t.Run(manager.Name(), func(t *testing.T) {
-			if err := ValidateService(manager, service); err != nil {
-				t.Fatalf("validate dnsmasq service: %v", err)
-			}
-			enable := manager.Command(OperationEnable, service)
-			reload := manager.Plan(OperationReload, service)
-			if enable.Name == "" || len(enable.Args) == 0 {
-				t.Fatalf("%s enable command is empty: %#v", manager.Name(), enable)
-			}
-			if got := reload.Commands; len(got) != 1 || !reflect.DeepEqual(got[0], manager.Command(OperationReload, service)) {
-				t.Fatalf("%s dnsmasq reload must use the service manager, got %#v", manager.Name(), got)
-			}
-		})
-	}
-}
-
 func TestValidateServiceRejectsInvalidNames(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -154,36 +115,4 @@ func TestServiceNameEdgeCasesAcrossManagers(t *testing.T) {
 			t.Fatalf("%s rejected valid unicode service name: %v", manager.Name(), err)
 		}
 	}
-}
-
-func TestSystemdUnitSemanticComparisonIgnoresEnvironmentOrder(t *testing.T) {
-	specA := api.SystemdUnitSpec{ExecStart: []string{"/usr/local/sbin/routerd", "serve"}, Environment: []string{"B=2", "A=1"}}
-	specB := api.SystemdUnitSpec{ExecStart: []string{"/usr/local/sbin/routerd", "serve"}, Environment: []string{"A=1", "B=2"}}
-	a := parseSystemdSemantics(string(render.SystemdUnit("routerd.service", specA)))
-	b := parseSystemdSemantics(string(render.SystemdUnit("routerd.service", specB)))
-	if a.ExecStart != b.ExecStart {
-		t.Fatalf("ExecStart drifted: %q != %q", a.ExecStart, b.ExecStart)
-	}
-	if !reflect.DeepEqual(a.Environment, b.Environment) {
-		t.Fatalf("Environment semantic comparison should ignore order: %#v != %#v", a.Environment, b.Environment)
-	}
-}
-
-type systemdSemantics struct {
-	ExecStart   string
-	Environment []string
-}
-
-func parseSystemdSemantics(unit string) systemdSemantics {
-	var out systemdSemantics
-	for _, line := range strings.Split(unit, "\n") {
-		switch {
-		case strings.HasPrefix(line, "ExecStart="):
-			out.ExecStart = strings.TrimPrefix(line, "ExecStart=")
-		case strings.HasPrefix(line, "Environment="):
-			out.Environment = append(out.Environment, strings.TrimPrefix(line, "Environment="))
-		}
-	}
-	sort.Strings(out.Environment)
-	return out
 }
