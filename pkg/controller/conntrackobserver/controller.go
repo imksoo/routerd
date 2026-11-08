@@ -44,7 +44,6 @@ type Controller struct {
 	Logger                 *slog.Logger
 	Snapshot               func() (conntrack.Snapshot, error)
 	SnapshotSource         string
-	Connections            func(limit int) (*observe.ConnectionTable, error)
 	ApplicationLayerStatus func(context.Context, string) api.TrafficFlowApplicationLayerStatus
 	lastCount              int
 	aboveThreshold         bool
@@ -166,11 +165,7 @@ func (c *Controller) recordTrafficFlows(ctx context.Context, count int) error {
 	if path == "" {
 		path = "/var/lib/routerd/traffic-flows.db"
 	}
-	connections := c.Connections
-	if connections == nil {
-		connections = observe.Connections
-	}
-	table, err := connections(10000)
+	table, err := observe.Connections(10000)
 	if err != nil {
 		return err
 	}
