@@ -2094,6 +2094,15 @@ func (e *Engine) observeIPv4Route(router *api.Router, res api.Resource, includeP
 	if resolved := resourcequery.Value(e.Store, spec.GatewayFrom); resolved != "" {
 		gateway = resolved
 	}
+	device = api.ResolveInterfaceIfName(router, device)
+	rr.Observed["expectedDestination"] = defaultString(spec.Destination, "0.0.0.0/0")
+	if device != "" {
+		rr.Observed["expectedDevice"] = device
+	}
+	if gateway != "" {
+		rr.Observed["expectedGateway"] = gateway
+	}
+	rr.Observed["expectedMetric"] = strconv.Itoa(spec.Metric)
 	if platform.CurrentOS() != platform.OSLinux || (defaultString(spec.Type, "unicast") != "blackhole" && device == "") || (spec.GatewayFrom.Resource != "" && gateway == "") {
 		rr.Phase = "Unknown"
 		rr.Observed["reason"] = "RouteNotObserved"
@@ -2122,7 +2131,6 @@ func (e *Engine) observeIPv4Route(router *api.Router, res api.Resource, includeP
 		rr.Warnings = append(rr.Warnings, fmt.Sprintf("decode IPv4 route %s: %v", destination, err))
 		return
 	}
-	device = api.ResolveInterfaceIfName(router, device)
 	wantType := defaultString(spec.Type, "unicast")
 	for _, route := range routes {
 		if defaultString(route.Type, "unicast") != wantType || route.Device != device || route.Gateway != gateway || route.Metric != spec.Metric || (spec.PreferredSource != "" && route.Source != spec.PreferredSource) {
