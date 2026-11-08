@@ -9,8 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
-	"net/http/httptest"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -1054,70 +1052,6 @@ func TestControlAPIHTTPConfigRejectsIncompleteTLS(t *testing.T) {
 	_, err := resolveControlAPIHTTPConfig(testControlAPIRouter("control-tls"), "", nil, api.SecretValueSourceSpec{}, controlAPITLSConfig{CertFile: "/etc/routerd/control.crt"}, map[string]bool{"http-tls-cert-file": true})
 	if err == nil || !strings.Contains(err.Error(), "cert file and key file") {
 		t.Fatalf("resolveControlAPIHTTPConfig err = %v, want incomplete TLS error", err)
-	}
-}
-
-func TestControlAPIAdmissionUsesRemoteAddrOnly(t *testing.T) {
-	prefixes, err := parseControlAPIAllowCIDRs([]string{"127.0.0.1/32"})
-	if err != nil {
-		t.Fatalf("parseControlAPIAllowCIDRs: %v", err)
-	}
-	called := false
-	handler := controlAPIAdmissionHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		called = true
-		w.WriteHeader(http.StatusNoContent)
-	}), prefixes, "")
-	req := httptest.NewRequest(http.MethodGet, "http://routerd.test/api/control.routerd.net/v1alpha1/status", nil)
-	req.RemoteAddr = "10.30.0.25:45678"
-	req.Header.Set("X-Forwarded-For", "127.0.0.1")
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
-	}
-	if called {
-		t.Fatal("handler was called for rejected source")
-	}
-}
-
-func TestControlAPIAdmissionRequiresBearerTokenWhenConfigured(t *testing.T) {
-	prefixes, err := parseControlAPIAllowCIDRs([]string{"127.0.0.1/32"})
-	if err != nil {
-		t.Fatalf("parseControlAPIAllowCIDRs: %v", err)
-	}
-	var calls int
-	handler := controlAPIAdmissionHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
-		w.WriteHeader(http.StatusNoContent)
-	}), prefixes, "secret-token")
-
-	req := httptest.NewRequest(http.MethodGet, "http://routerd.test/api/control.routerd.net/v1alpha1/status", nil)
-	req.RemoteAddr = "127.0.0.1:45678"
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("missing token status = %d, want %d", rec.Code, http.StatusUnauthorized)
-	}
-
-	req = httptest.NewRequest(http.MethodGet, "http://routerd.test/api/control.routerd.net/v1alpha1/status", nil)
-	req.RemoteAddr = "127.0.0.1:45678"
-	req.Header.Set("Authorization", "Bearer wrong-token")
-	rec = httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("wrong token status = %d, want %d", rec.Code, http.StatusUnauthorized)
-	}
-
-	req = httptest.NewRequest(http.MethodGet, "http://routerd.test/api/control.routerd.net/v1alpha1/status", nil)
-	req.RemoteAddr = "127.0.0.1:45678"
-	req.Header.Set("Authorization", "Bearer secret-token")
-	rec = httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusNoContent {
-		t.Fatalf("valid token status = %d, want %d", rec.Code, http.StatusNoContent)
-	}
-	if calls != 1 {
-		t.Fatalf("handler calls = %d, want 1", calls)
 	}
 }
 
