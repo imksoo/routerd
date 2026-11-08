@@ -725,6 +725,14 @@ func (e *Engine) observeDHCPv6PrefixDelegation(res api.Resource, aliases map[str
 				if active && ifname != "" && observed.Observed["interface"] != "" && observed.Observed["interface"] != ifname {
 					rr.Phase = "Drifted"
 					rr.Observed["reason"] = "PrefixDelegationInterfaceMismatch"
+				} else if active && ifname != "" && observed.Observed["interface"] == ifname && observed.Phase == daemonapi.ResourcePhaseBound {
+					if store, ok := e.Store.(routerstate.Store); ok {
+						lease, found := routerstate.PDLeaseFromStore(store, "ipv6PrefixDelegation."+res.Metadata.Name)
+						if found && lease.CurrentPrefix != "" && lease.CurrentPrefix == observed.Observed["currentPrefix"] && lease.HasFreshTransactionEvidence(time.Now()) {
+							rr.Phase = "Healthy"
+							delete(rr.Observed, "reason")
+						}
+					}
 				}
 				break
 			}
