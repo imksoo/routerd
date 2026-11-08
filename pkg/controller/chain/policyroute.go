@@ -40,7 +40,6 @@ type IPv4PolicyRouteController struct {
 	NftCommand          string
 	PolicyPath          string
 	DefaultRoutePath    string
-	LedgerPath          string
 	HostPolicyStatePath string
 	Logger              *slog.Logger
 }
@@ -617,7 +616,6 @@ func (c IPv4PolicyRouteController) cleanupPolicyRoutes(ctx context.Context, alia
 	if err != nil {
 		return err
 	}
-	var forgotten []resource.Artifact
 	for _, artifact := range actual {
 		if artifact.Kind != "linux.ipv4.fwmarkRule" {
 			continue
@@ -630,7 +628,6 @@ func (c IPv4PolicyRouteController) cleanupPolicyRoutes(ctx context.Context, alia
 			if err := c.deleteIPv4FwmarkRule(ctx, rule); err != nil {
 				return err
 			}
-			forgotten = append(forgotten, artifact)
 			delete(actual, artifact.Identity())
 			referencedTables[rule.Table]--
 		}
@@ -646,90 +643,9 @@ func (c IPv4PolicyRouteController) cleanupPolicyRoutes(ctx context.Context, alia
 		if err := c.flushIPv4RouteTable(ctx, table); err != nil {
 			return err
 		}
-		forgotten = append(forgotten, artifact)
 		delete(actual, artifact.Identity())
 	}
-	ledger, err := resource.LoadLedger(c.LedgerPath)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = ledger.Close() }()
-	ownedArtifacts, err := ledger.All()
-	if err != nil {
-		return err
-	}
-	var stale []resource.Artifact
-	for _, owned := range ownedArtifacts {
-		switch owned.Kind {
-		case "linux.ipv4.fwmarkRule", "linux.ipv4.routeTable":
-		default:
-			continue
-		}
-		if _, ok := desired[owned.Identity()]; ok {
-			continue
-		}
-		if observed, ok := actual[owned.Identity()]; ok && owned.Kind == "linux.ipv4.fwmarkRule" {
-			_, valid := ipv4FwmarkRuleFromPolicyArtifact(observed)
-			if valid {
-				continue
-			}
-		}
-		if observed, ok := actual[owned.Identity()]; ok {
-			stale = append(stale, observed)
-		} else {
-			stale = append(stale, owned)
-		}
-	}
-	sort.SliceStable(stale, func(i, j int) bool {
-		return policyRouteArtifactCleanupOrder(stale[i]) < policyRouteArtifactCleanupOrder(stale[j])
-	})
-	for _, artifact := range stale {
-		switch artifact.Kind {
-		case "linux.ipv4.fwmarkRule":
-			rule, ok := ipv4FwmarkRuleFromPolicyArtifact(artifact)
-			if !ok {
-				continue
-			}
-			if actual[artifact.Identity()].Kind != "" {
-				if err := c.deleteIPv4FwmarkRule(ctx, rule); err != nil {
-					return err
-				}
-			}
-			forgotten = append(forgotten, artifact)
-		case "linux.ipv4.routeTable":
-			table, ok := artifactIPv4Table(artifact)
-			if !ok {
-				continue
-			}
-			if actual[artifact.Identity()].Kind != "" && !desiredTables[table] && referencedTables[table] == 0 {
-				if err := c.flushIPv4RouteTable(ctx, table); err != nil {
-					return err
-				}
-			}
-			forgotten = append(forgotten, artifact)
-		}
-	}
-	if len(forgotten) == 0 {
-		return nil
-	}
-	if err := ledger.Forget(forgotten); err != nil {
-		return err
-	}
-	if c.LedgerPath != "" {
-		return ledger.Save(c.LedgerPath)
-	}
 	return nil
-}
-
-func policyRouteArtifactCleanupOrder(artifact resource.Artifact) int {
-	switch artifact.Kind {
-	case "linux.ipv4.fwmarkRule":
-		return 0
-	case "linux.ipv4.routeTable":
-		return 10
-	default:
-		return 100
-	}
 }
 
 func (c IPv4PolicyRouteController) healthCheckUsesFwMark(name string, mark int) bool {
