@@ -130,7 +130,7 @@ func (e *Engine) evaluate(router, declared *api.Router, includePlan bool) (*Resu
 		case "VXLANTunnel":
 			e.observeVXLANTunnel(res, aliases, includePlan, &rr)
 		case "IPv4StaticAddress":
-			e.observeIPv4Static(res, aliases, policies, includePlan, &rr)
+			e.observeIPv4Static(res, aliases, includePlan, &rr)
 		case "BFD":
 			e.observeBFD(res, includePlan, &rr)
 		case "DHCPv4Client":
@@ -2199,10 +2199,9 @@ func (e *Engine) observeInterface(res api.Resource, policy interfacePolicy, obse
 	}
 }
 
-func (e *Engine) observeIPv4Static(res api.Resource, aliases map[string]string, policies map[string]interfacePolicy, includePlan bool, rr *ResourceResult) {
+func (e *Engine) observeIPv4Static(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
 	iface := stringSpec(res, "interface")
 	ifname := aliases[iface]
-	policy := policies[iface]
 	addr := stringSpec(res, "address")
 
 	rr.Observed["interface"] = iface
@@ -2216,15 +2215,14 @@ func (e *Engine) observeIPv4Static(res api.Resource, aliases map[string]string, 
 		rr.Phase = "Drifted"
 	}
 
+	if boolSpec(res, "exclusive") {
+		rr.Warnings = append(rr.Warnings, "exclusive IPv4 address cleanup is not implemented")
+		if rr.Phase == "Healthy" {
+			rr.Phase = "Unknown"
+		}
+	}
 	if includePlan {
-		if !policy.Managed || policy.Owner == "external" {
-			rr.Plan = append(rr.Plan, "observe only; referenced interface is externally managed")
-			return
-		}
 		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure IPv4 address %s on %s", addr, ifname))
-		if boolSpec(res, "exclusive") {
-			rr.Plan = append(rr.Plan, fmt.Sprintf("remove other IPv4 addresses on %s", ifname))
-		}
 	}
 }
 
