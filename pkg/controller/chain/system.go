@@ -1891,6 +1891,23 @@ func (c SystemdUnitController) cleanupStaleClientDaemonUnits(ctx context.Context
 	if c.DryRun {
 		return nil
 	}
+	configured := map[string]bool{}
+	for _, resource := range c.Router.Spec.Resources {
+		switch resource.Kind {
+		case "DHCPv4Client":
+			configured["routerd-dhcpv4-client@"+resource.Metadata.Name+".service"] = true
+		case "DHCPv6PrefixDelegation":
+			configured["routerd-dhcpv6-client@"+resource.Metadata.Name+".service"] = true
+		case "PPPoESession":
+			spec, err := resource.PPPoESessionSpec()
+			if err != nil {
+				return err
+			}
+			if !pppoeSessionDisabled(spec) {
+				configured["routerd-pppoe-client@"+resource.Metadata.Name+".service"] = true
+			}
+		}
+	}
 	patterns := []string{
 		"routerd-dhcpv4-client@*.service",
 		"routerd-dhcpv6-client@*.service",
@@ -1913,7 +1930,7 @@ func (c SystemdUnitController) cleanupStaleClientDaemonUnits(ctx context.Context
 				"active":    active,
 				"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
 			}
-			if active {
+			if active && configured[unitName] {
 				status["phase"] = "Pending"
 				status["reason"] = "StaleClientDaemonUnitActive"
 				status["message"] = "stale client daemon unit is active; cleanup deferred to avoid service interruption"
