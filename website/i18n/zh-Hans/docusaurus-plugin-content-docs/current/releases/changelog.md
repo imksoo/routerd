@@ -11,6 +11,12 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20261108.1523
+
+### 修复
+
+- 按需 ARP 再次观察到客户端时刷新本地所有权期限，避免扫描之间过期。
+
 ## v20261108.1322
 
 ### 变更

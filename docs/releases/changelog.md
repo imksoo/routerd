@@ -12,6 +12,12 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20261108.1523
+
+### Fixed
+
+- Refresh local ownership leases when on-demand ARP rediscovers a client, preventing expiry between scans.
+
 ## v20261108.1322
 
 ### Changed

@@ -11,6 +11,12 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20261108.1523
+
+### 修正
+
+- 按需 ARP 再次觀察到用戶端時更新本機所有權期限，避免掃描之間過期。
+
 ## v20261108.1322
 
 ### 變更
