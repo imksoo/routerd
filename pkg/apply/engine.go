@@ -1180,6 +1180,10 @@ func (e *Engine) observeDSLiteTunnel(router *api.Router, res api.Resource, alias
 				return
 			}
 		}
+		if remoteErr == nil && localKnown && underlay != "" && actualEncap != "" && inner != "" && !spec.DefaultRoute {
+			rr.Phase = "Healthy"
+			return
+		}
 		rr.Phase = "Unknown"
 		rr.Observed["reason"] = "TunnelAttributesPartiallyChecked"
 		if remoteErr != nil || !localKnown {
