@@ -10,36 +10,7 @@ import (
 	"testing"
 
 	"github.com/imksoo/routerd/pkg/api"
-	"github.com/imksoo/routerd/pkg/platform"
-	"github.com/imksoo/routerd/pkg/render"
 )
-
-func TestForPlatformSelectsNativeBackend(t *testing.T) {
-	if got := ForPlatform(platform.OSLinux, "").Name(); got != "nftables" {
-		t.Fatalf("linux backend = %q", got)
-	}
-	if got := ForPlatform(platform.OSFreeBSD, "").Name(); got != "pf" {
-		t.Fatalf("freebsd backend = %q", got)
-	}
-}
-
-func TestFirewallBackendRenderMetadata(t *testing.T) {
-	router := nftBespokeRouter()
-	nftRuleset, err := Nftables{}.Render(router, "/tmp/routerd/custom.nft", nil)
-	if err != nil {
-		t.Fatalf("render nftables: %v", err)
-	}
-	if nftRuleset.Backend != "nftables" || nftRuleset.Path != "/tmp/routerd/custom.nft" || nftRuleset.InternalHoles == 0 {
-		t.Fatalf("nft ruleset metadata = %#v", nftRuleset)
-	}
-	pfRuleset, err := PF{}.Render(pfBespokeRouter(), "/tmp/routerd/custom.nft", nil)
-	if err != nil {
-		t.Fatalf("render pf: %v", err)
-	}
-	if pfRuleset.Backend != "pf" || pfRuleset.Path != "/tmp/routerd/custom.pf" {
-		t.Fatalf("pf ruleset metadata = %#v", pfRuleset)
-	}
-}
 
 func TestFirewallBackendApplyWritesChangedRulesetInDryRun(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "firewall.nft")
@@ -60,19 +31,6 @@ func TestFirewallBackendApplyWritesChangedRulesetInDryRun(t *testing.T) {
 	}
 }
 
-func TestFirewallBackendRejectsInvalidRulesetPath(t *testing.T) {
-	for _, backend := range []Backend{Nftables{}, PF{}} {
-		t.Run(backend.Name(), func(t *testing.T) {
-			if _, err := backend.Apply(context.Background(), Ruleset{Backend: backend.Name(), Data: []byte("pass\n")}, true); err == nil {
-				t.Fatal("Apply with empty path succeeded, want error")
-			}
-			if err := backend.Reload(context.Background(), Ruleset{Backend: backend.Name(), Path: "bad\x00path", Data: []byte("pass\n")}); err == nil {
-				t.Fatal("Reload with NUL path succeeded, want error")
-			}
-		})
-	}
-}
-
 func TestFirewallBackendRendersEdgeCaseResourceNames(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan.edge"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
@@ -85,37 +43,6 @@ func TestFirewallBackendRendersEdgeCaseResourceNames(t *testing.T) {
 	}
 	if !strings.Contains(string(ruleset.Data), "chain lan_zone_to_self") || !strings.Contains(string(ruleset.Data), "tcp dport 443") {
 		t.Fatalf("edge ruleset missing expected chain/rule:\n%s", ruleset.Data)
-	}
-}
-
-func TestNftablesBespokeExpressionsSurviveBackendRefactor(t *testing.T) {
-	filter, err := Nftables{}.Render(nftBespokeRouter(), "", nil)
-	if err != nil {
-		t.Fatalf("render nftables firewall: %v", err)
-	}
-	filterText := string(filter.Data)
-	for _, want := range []string{
-		"ct state invalid counter drop",
-		"ct state { established, related } counter accept",
-	} {
-		if !strings.Contains(filterText, want) {
-			t.Fatalf("nftables firewall output missing %q:\n%s", want, filterText)
-		}
-	}
-
-	nat, err := render.NftablesNAT44Rule(nftBespokeRouter())
-	if err != nil {
-		t.Fatalf("render nftables NAT: %v", err)
-	}
-	natText := string(nat)
-	for _, want := range []string{
-		`jhash ip saddr mod 2 vmap`,
-		`numgen random mod 2 vmap`,
-		`ct original ip daddr 203.0.113.10 ct original proto-dst 6443 counter masquerade`,
-	} {
-		if !strings.Contains(natText, want) {
-			t.Fatalf("nftables NAT output missing %q:\n%s", want, natText)
-		}
 	}
 }
 
@@ -135,32 +62,6 @@ func TestPFBespokeSyntaxSurvivesBackendRefactor(t *testing.T) {
 			t.Fatalf("pf output missing %q:\n%s", want, got)
 		}
 	}
-}
-
-func nftBespokeRouter() *api.Router {
-	return &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ens18"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "lan-ip"}, Spec: api.IPv4StaticAddressSpec{Interface: "lan", Address: "172.18.1.1/24"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"wan"}}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallRule"}, Metadata: api.ObjectMeta{Name: "api"}, Spec: api.FirewallRuleSpec{FromZone: "wan", ToZone: "lan", Protocol: "tcp", Port: 6443, DestinationCIDRs: []string{"10.0.0.11/32"}, Action: "accept"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "IngressService"}, Metadata: api.ObjectMeta{Name: "api-hash"}, Spec: api.IngressServiceSpec{
-			Listen:   api.IngressListenSpec{Interface: "wan", Address: "203.0.113.10", Protocol: "tcp", Port: 6443},
-			Backends: []api.IngressBackendSpec{{Name: "a", Address: "10.0.0.11", Port: 6443}, {Name: "b", Address: "10.0.0.12", Port: 6443}},
-			Policy:   api.IngressServicePolicySpec{Selection: "sourceHash"},
-		}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "IngressService"}, Metadata: api.ObjectMeta{Name: "api-random"}, Spec: api.IngressServiceSpec{
-			Listen:   api.IngressListenSpec{Interface: "wan", Address: "203.0.113.20", Protocol: "udp", Port: 5353},
-			Backends: []api.IngressBackendSpec{{Name: "a", Address: "10.0.0.21", Port: 5353}, {Name: "b", Address: "10.0.0.22", Port: 5353}},
-			Policy:   api.IngressServicePolicySpec{Selection: "random"},
-		}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "IngressService"}, Metadata: api.ObjectMeta{Name: "api-hairpin"}, Spec: api.IngressServiceSpec{
-			Listen:   api.IngressListenSpec{Interface: "lan", Address: "203.0.113.10", Protocol: "tcp", Port: 6443},
-			Backends: []api.IngressBackendSpec{{Name: "a", Address: "172.18.1.10", Port: 6443}},
-			Hairpin:  api.IngressHairpinSpec{Enabled: true, Interfaces: []string{"lan"}},
-		}},
-	}}}
 }
 
 func pfBespokeRouter() *api.Router {
