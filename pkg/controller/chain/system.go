@@ -1642,7 +1642,9 @@ func (c SystemdUnitController) applyHealthCheckSystemdUnit(ctx context.Context, 
 			}
 		}
 		if changed || systemdUnitEnabledOrActive(ctx, command, unitName) {
-			_, _ = command(ctx, "systemctl", "disable", "--now", unitName)
+			if _, err := command(ctx, "systemctl", "disable", "--now", unitName); err != nil {
+				return changed, false, fmt.Errorf("disable health check unit %s: %w", unitName, err)
+			}
 			_, _ = command(ctx, "systemctl", "reset-failed", unitName)
 		}
 		return changed, false, nil
