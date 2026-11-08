@@ -3,7 +3,6 @@
 package bgp
 
 import (
-	"math/bits"
 	"net/netip"
 	"strconv"
 	"strings"
@@ -61,22 +60,10 @@ func normalizeFreeBSDNetstatDestinationForFamily(value string, wantIPv4 bool) st
 
 type freeBSDLocalAddress struct {
 	Address netip.Addr
-	Prefix  netip.Prefix
-}
-
-// Kept as an alias so existing IPv4 callers and tests retain their contract.
-type freeBSDLocalIPv4Address = freeBSDLocalAddress
-
-func parseFreeBSDLocalIPv4Addresses(output string) []freeBSDLocalIPv4Address {
-	return filterFreeBSDLocalAddresses(parseFreeBSDLocalAddresses(output), true)
-}
-
-func parseFreeBSDLocalIPv6Addresses(output string) []freeBSDLocalAddress {
-	return filterFreeBSDLocalAddresses(parseFreeBSDLocalAddresses(output), false)
 }
 
 func parseFreeBSDLocalAddresses(output string) []freeBSDLocalAddress {
-	var out []freeBSDLocalIPv4Address
+	var out []freeBSDLocalAddress
 	for _, line := range strings.Split(output, "\n") {
 		fields := strings.Fields(line)
 		switch {
@@ -85,11 +72,7 @@ func parseFreeBSDLocalAddresses(output string) []freeBSDLocalAddress {
 			if err != nil || !addr.Is4() {
 				continue
 			}
-			bits, ok := freeBSDNetmaskBits(fields[3])
-			if !ok {
-				continue
-			}
-			out = append(out, freeBSDLocalAddress{Address: addr, Prefix: netip.PrefixFrom(addr, bits).Masked()})
+			out = append(out, freeBSDLocalAddress{Address: addr})
 		case len(fields) >= 4 && fields[0] == "inet6" && fields[2] == "prefixlen":
 			// Scoped link-local addresses require an interface zone. FIBRoute has
 			// no zone field, so leave them out rather than emitting ambiguous -ifa.
@@ -101,39 +84,8 @@ func parseFreeBSDLocalAddresses(output string) []freeBSDLocalAddress {
 			if err != nil || bitErr != nil || !addr.Is6() || bits < 0 || bits > 128 {
 				continue
 			}
-			out = append(out, freeBSDLocalAddress{Address: addr, Prefix: netip.PrefixFrom(addr, bits).Masked()})
+			out = append(out, freeBSDLocalAddress{Address: addr})
 		}
 	}
 	return out
-}
-
-func filterFreeBSDLocalAddresses(values []freeBSDLocalAddress, wantIPv4 bool) []freeBSDLocalAddress {
-	var out []freeBSDLocalAddress
-	for _, value := range values {
-		if value.Address.Is4() == wantIPv4 {
-			out = append(out, value)
-		}
-	}
-	return out
-}
-
-func freeBSDNetmaskBits(value string) (int, bool) {
-	if addr, err := netip.ParseAddr(value); err == nil && addr.Is4() {
-		mask := addr.As4()
-		return freeBSDMaskBits(uint32(mask[0])<<24 | uint32(mask[1])<<16 | uint32(mask[2])<<8 | uint32(mask[3]))
-	}
-	value = strings.TrimPrefix(strings.TrimSpace(value), "0x")
-	mask, err := strconv.ParseUint(value, 16, 32)
-	if err != nil {
-		return 0, false
-	}
-	return freeBSDMaskBits(uint32(mask))
-}
-
-func freeBSDMaskBits(mask uint32) (int, bool) {
-	ones := bits.OnesCount32(mask)
-	if mask != ^uint32(0)<<(32-ones) && ones != 0 {
-		return 0, false
-	}
-	return ones, true
 }

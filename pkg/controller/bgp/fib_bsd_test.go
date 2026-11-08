@@ -42,32 +42,6 @@ Destination                       Gateway                       Flags Netif Expi
 	}
 }
 
-func TestParseFreeBSDLocalIPv4Addresses(t *testing.T) {
-	got := parseFreeBSDLocalIPv4Addresses(`vtnet0: flags=8843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST>
-        inet 192.0.2.10 netmask 0xffffff00 broadcast 192.0.2.255
-vtnet1: flags=8843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST>
-        inet 198.51.100.10 netmask 255.255.255.0 broadcast 198.51.100.255
-`)
-	want := []freeBSDLocalIPv4Address{
-		{Address: mustFreeBSDAddr("192.0.2.10"), Prefix: mustFreeBSDPrefix("192.0.2.0/24")},
-		{Address: mustFreeBSDAddr("198.51.100.10"), Prefix: mustFreeBSDPrefix("198.51.100.0/24")},
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("local addresses = %#v, want %#v", got, want)
-	}
-}
-
-func TestParseFreeBSDLocalIPv6AddressesSkipsScopedLinkLocal(t *testing.T) {
-	got := parseFreeBSDLocalIPv6Addresses(`vtnet0: flags=8843<UP,RUNNING>
-        inet6 2001:db8:1::10 prefixlen 64
-        inet6 fe80::1%vtnet0 prefixlen 64 scopeid 0x1
-`)
-	want := []freeBSDLocalAddress{{Address: mustFreeBSDAddr("2001:db8:1::10"), Prefix: mustFreeBSDPrefix("2001:db8:1::/64")}}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("local IPv6 addresses = %#v, want %#v", got, want)
-	}
-}
-
 func TestFreeBSDFIBSyncerReplacesWithdrawsRetainsAndPreservesForeign(t *testing.T) {
 	var commands [][]string
 	netstat := `Destination Gateway Flags Netif
@@ -341,5 +315,4 @@ func TestFreeBSDFIBSyncerIPv6MultipathRetainAndRejectsScopedNextHop(t *testing.T
 	}
 }
 
-func mustFreeBSDAddr(value string) netip.Addr     { return netip.MustParseAddr(value) }
-func mustFreeBSDPrefix(value string) netip.Prefix { return netip.MustParsePrefix(value) }
+func mustFreeBSDAddr(value string) netip.Addr { return netip.MustParseAddr(value) }
