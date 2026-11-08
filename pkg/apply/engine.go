@@ -2669,7 +2669,7 @@ func (e *Engine) observeIPv4Route(router *api.Router, res api.Resource, includeP
 	}
 	wantType := defaultString(spec.Type, "unicast")
 	for _, route := range routes {
-		if defaultString(route.Type, "unicast") != wantType || route.Device != device || route.Gateway != gateway || route.Metric != spec.Metric || (spec.PreferredSource != "" && route.Source != spec.PreferredSource) {
+		if defaultString(route.Type, "unicast") != wantType || route.Device != device || route.Gateway != gateway || route.Metric != spec.Metric || route.Source != strings.TrimSpace(spec.PreferredSource) {
 			continue
 		}
 		if slices.Contains(route.Flags, "onlink") {
