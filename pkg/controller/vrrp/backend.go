@@ -416,6 +416,12 @@ func reloadOrRestartSystemdKeepalived(ctx context.Context, c *Controller, path s
 	return "restart", nil
 }
 
+// ObserveKeepalivedRoles reads the current roles without changing the host.
+func ObserveKeepalivedRoles(ctx context.Context, router *api.Router) map[string]string {
+	c := &Controller{Router: router}
+	return observeKeepalivedRoles(ctx, c, interfaceAliases(router))
+}
+
 func observeKeepalivedRoles(ctx context.Context, c *Controller, aliases map[string]string) map[string]string {
 	return observeKeepalivedRolesWithWait(ctx, c, aliases, false)
 }

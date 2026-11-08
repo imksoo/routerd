@@ -23,6 +23,7 @@ import (
 	"github.com/imksoo/routerd/internal/statusvalue"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/config"
+	"github.com/imksoo/routerd/pkg/controller/vrrp"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/healthcheck"
 	"github.com/imksoo/routerd/pkg/hostdeps"
@@ -312,6 +313,11 @@ func (e *Engine) observeVirtualAddress(router *api.Router, res api.Resource, ali
 	}
 	rr.Observed["addressPresent"] = strconv.FormatBool(present)
 	if spec.Mode == "vrrp" {
+		if platform.CurrentOS() == platform.OSLinux {
+			if role := vrrp.ObserveKeepalivedRoles(context.Background(), router)[res.Metadata.Name]; role != "" {
+				rr.Observed["role"] = role
+			}
+		}
 		return
 	}
 	if resourcequery.ResourceWhenPresent(spec.When) {
