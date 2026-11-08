@@ -519,6 +519,9 @@ func ipv4RouteInstalled(ctx context.Context, command outputCommandFunc, routeTyp
 		if gateway == "" && slices.Contains(fields, "via") {
 			continue
 		}
+		if preferredSource == "" && slices.Contains(fields, "src") {
+			continue
+		}
 		if ipv4RouteLineMatches(line, routeType, queryDestination, device, gateway, preferredSource, metric) && slices.Contains(fields, "onlink") == onLink {
 			return true
 		}
