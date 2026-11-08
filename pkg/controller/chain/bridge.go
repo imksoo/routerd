@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/apply"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/render"
 )
@@ -118,50 +119,14 @@ func (c BridgeController) Reconcile(ctx context.Context) error {
 }
 
 func (c BridgeController) removeExtraBridges(ctx context.Context) (bool, error) {
-	retained := map[string]bool{}
-	aliases := bridgeInterfaceAliases(c.Router)
-	for _, resource := range c.Router.Spec.Resources {
-		switch resource.Kind {
-		case "Bridge", "Interface":
-			retained[firstNonEmpty(aliases[resource.Metadata.Name], resource.Metadata.Name)] = true
-		case "MobilityPool":
-			spec, err := resource.MobilityPoolSpec()
-			if err != nil {
-				return false, err
-			}
-			for _, member := range spec.Members {
-				if member.Capture.Interface != "" {
-					retained[firstNonEmpty(aliases[member.Capture.Interface], member.Capture.Interface)] = true
-				}
-				for _, source := range member.OwnershipDiscovery.Sources {
-					if source.Interface != "" {
-						retained[firstNonEmpty(aliases[source.Interface], source.Interface)] = true
-					}
-					if source.Bridge != "" {
-						retained[firstNonEmpty(aliases[source.Bridge], source.Bridge)] = true
-					}
-				}
-			}
-		}
-	}
-	interfaces, err := net.Interfaces()
+	names, err := apply.ExtraBridgeInterfaces(c.Router)
 	if err != nil {
-		return false, fmt.Errorf("list Bridge interfaces: %w", err)
+		return false, err
 	}
 	changed := false
-	for _, iface := range interfaces {
-		if retained[iface.Name] {
-			continue
-		}
-		_, err := os.Stat(filepath.Join("/sys/class/net", iface.Name, "bridge"))
-		if os.IsNotExist(err) {
-			continue
-		}
-		if err != nil {
-			return changed, fmt.Errorf("observe Bridge %s: %w", iface.Name, err)
-		}
-		if err := c.command(ctx, "ip", "link", "delete", "dev", iface.Name, "type", "bridge"); err != nil {
-			return changed, fmt.Errorf("remove extra Bridge %s: %w", iface.Name, err)
+	for _, name := range names {
+		if err := c.command(ctx, "ip", "link", "delete", "dev", name, "type", "bridge"); err != nil {
+			return changed, fmt.Errorf("remove extra Bridge %s: %w", name, err)
 		}
 		changed = true
 	}

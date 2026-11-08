@@ -225,6 +225,15 @@ func (e *Engine) evaluate(router, declared *api.Router, includePlan bool) (*Resu
 			})
 		}
 		result.Orphans = append(result.Orphans, e.observeManagedOrphans(router, aliases)...)
+		if platform.CurrentOS() == platform.OSLinux {
+			bridges, err := ExtraBridgeInterfaces(router)
+			if err != nil {
+				return nil, err
+			}
+			for _, name := range bridges {
+				result.Orphans = append(result.Orphans, OrphanedArtifact{Kind: "Bridge", Name: name, Reason: "Not configured", Remediation: "Remove bridge"})
+			}
+		}
 		if len(result.Orphans) > 0 {
 			result.Warnings = append(result.Warnings, fmt.Sprintf("%d orphaned managed artifacts found", len(result.Orphans)))
 			if result.Phase == "Healthy" {
