@@ -12,34 +12,6 @@ import (
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
-func importActionRecordForPlannerTest(t *testing.T, store *routerstate.SQLiteStore, rec routerstate.ActionExecutionRecord) bool {
-	t.Helper()
-	rec.Status = routerstate.ActionPending
-	inserted, err := store.ImportAction(rec)
-	if err != nil {
-		t.Fatalf("ImportAction(%q): %v", rec.IdempotencyKey, err)
-	}
-	return inserted
-}
-
-func markActionSucceededByKey(t *testing.T, store *routerstate.SQLiteStore, key string, at time.Time) {
-	t.Helper()
-	rec, ok, err := store.GetActionByIdempotencyKey(key)
-	if err != nil || !ok {
-		t.Fatalf("GetActionByIdempotencyKey(%q): ok=%v err=%v", key, ok, err)
-	}
-	if err := store.ApproveAction(rec.ID, "test", at.Add(-time.Second)); err != nil {
-		t.Fatalf("ApproveAction(%q): %v", key, err)
-	}
-	claimed, err := store.BeginActionExecution(rec.ID, at.Add(-500*time.Millisecond))
-	if err != nil || !claimed {
-		t.Fatalf("BeginActionExecution(%q): claimed=%v err=%v", key, claimed, err)
-	}
-	if err := store.MarkActionResult(rec.ID, routerstate.ActionSucceeded, "ok", "", nil, at); err != nil {
-		t.Fatalf("MarkActionResult(%q): %v", key, err)
-	}
-}
-
 func testStore(t *testing.T, now time.Time) *routerstate.SQLiteStore {
 	t.Helper()
 	_ = now

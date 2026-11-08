@@ -4,12 +4,9 @@ package mobility
 
 import (
 	"strings"
-	"testing"
 
 	"github.com/imksoo/routerd/pkg/api"
 	bgpstate "github.com/imksoo/routerd/pkg/bgp"
-	"github.com/imksoo/routerd/pkg/dynamicconfig"
-	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 // testMobilityPoolSpec keeps the resolved topology separate from the declared
@@ -73,55 +70,6 @@ func placementPoolSpec() testMobilityPoolSpec {
 				Target:      map[string]string{"region": "japaneast", "ipConfigName": "capture-b"},
 			},
 			Placement: api.MobilityMemberPlacement{Group: "azure-edge", Priority: 20},
-		},
-	}
-	return spec
-}
-
-func centralizedOwnershipPoolSpec() testMobilityPoolSpec {
-	spec := placementPoolSpec()
-	spec.Members[1].Placement.Priority = 10
-	spec.Members[2].Placement.Priority = 20
-	return spec
-}
-
-func awsFailoverPoolSpec() testMobilityPoolSpec {
-	spec := plannedPoolSpec()
-	spec.Members = []api.ResolvedMobilityPoolMember{
-		spec.Members[0],
-		{
-			NodeRef: "aws-router-a",
-			Site:    "aws",
-			Role:    "cloud",
-			Capture: api.MobilityMemberCapture{
-				Type:        "provider-secondary-ip",
-				ProviderRef: "aws-provider",
-				NICRef:      "eni-a",
-				Target:      map[string]string{"region": "ap-northeast-1"},
-			},
-			Placement: api.MobilityMemberPlacement{Group: "aws-edge", Priority: 10},
-		},
-		{
-			NodeRef: "aws-router-b",
-			Site:    "aws",
-			Role:    "cloud",
-			Capture: api.MobilityMemberCapture{
-				Type:        "provider-secondary-ip",
-				ProviderRef: "aws-provider",
-				NICRef:      "eni-b",
-				Target:      map[string]string{"region": "ap-northeast-1"},
-			},
-			Placement: api.MobilityMemberPlacement{Group: "aws-edge", Priority: 20},
-		},
-		{
-			NodeRef: "azure-router",
-			Site:    "azure",
-			Role:    "cloud",
-		},
-		{
-			NodeRef: "oci-router",
-			Site:    "oci",
-			Role:    "cloud",
 		},
 	}
 	return spec
@@ -213,16 +161,6 @@ func planningRouterForNode(nodeName string, spec testMobilityPoolSpec) *api.Rout
 	}
 }
 
-func routerWithBGPRouter(router *api.Router) *api.Router {
-	cp := *router
-	cp.Spec.Resources = append(append([]api.Resource(nil), router.Spec.Resources...), api.Resource{
-		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"},
-		Metadata: api.ObjectMeta{Name: "mobility-bgp"},
-		Spec:     api.BGPRouterSpec{ASN: 64512, RouterID: "10.99.0.1"},
-	})
-	return &cp
-}
-
 func bgpOwnerPrefixesForInstalledNextHops(nextHops map[string][]string) []bgpstate.Prefix {
 	ownerByNextHop := map[string]string{
 		"10.99.0.1": "onprem-router",
@@ -253,53 +191,4 @@ func bgpOwnerPrefixesForInstalledNextHops(nextHops map[string][]string) []bgpsta
 		}
 	}
 	return out
-}
-
-func bgpOwnerPrefix(prefix, nextHop, owner string) map[string]any {
-	return map[string]any{
-		"prefix":  prefix,
-		"nextHop": nextHop,
-		"best":    true,
-		"valid":   true,
-		"communities": []string{
-			bgpstate.MobilityCommunityOwner,
-			bgpstate.MobilityNodeIdentityCommunity(owner),
-		},
-	}
-}
-
-func saveBGPStatus(t *testing.T, store interface {
-	SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error
-}, nextHops map[string][]string, prefixes []map[string]any, livenessMarkers map[string]string) {
-	t.Helper()
-	rawPrefixes := any(prefixes)
-	if len(prefixes) == 0 {
-		rawPrefixes = bgpOwnerPrefixesForInstalledNextHops(nextHops)
-	}
-	if err := store.SaveObjectStatus(api.NetAPIVersion, "BGPRouter", "mobility-bgp", map[string]any{"installedNextHops": nextHops, "prefixes": rawPrefixes, "livenessMarkers": livenessMarkers}); err != nil {
-		t.Fatalf("SaveObjectStatus(BGPRouter/mobility-bgp): %v", err)
-	}
-}
-
-func latestPart(t *testing.T, store interface {
-	GetDynamicConfigPartsBySource(string) ([]routerstate.DynamicConfigPartRecord, error)
-}, source string) routerstate.DynamicConfigPartRecord {
-	t.Helper()
-	parts, err := store.GetDynamicConfigPartsBySource(source)
-	if err != nil {
-		t.Fatalf("GetDynamicConfigPartsBySource(%s): %v", source, err)
-	}
-	if len(parts) == 0 {
-		t.Fatalf("GetDynamicConfigPartsBySource(%s) returned no parts", source)
-	}
-	return parts[0]
-}
-
-func findActionPlanByAddress(plans []dynamicconfig.ActionPlan, action, address string) *dynamicconfig.ActionPlan {
-	for i := range plans {
-		if plans[i].Action == action && plans[i].Target["address"] == address {
-			return &plans[i]
-		}
-	}
-	return nil
 }
