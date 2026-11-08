@@ -199,7 +199,7 @@ func (e *Engine) evaluate(router, declared *api.Router, includePlan bool) (*Resu
 
 		if rr.Phase == "Blocked" {
 			result.Phase = "Blocked"
-		} else if rr.Phase == "Drifted" && result.Phase == "Healthy" && ((res.Kind == "Interface" && (rr.Observed["reason"] == "MTUMismatch" || rr.Observed["reason"] == "AdminDown")) || res.Kind == "Bridge" || res.Kind == "VXLANTunnel" || res.Kind == "IPv4Route" || res.Kind == "Package" || res.Kind == "Sysctl" || res.Kind == "DHCPv6PrefixDelegation" || res.Kind == "TunnelInterface" || res.Kind == "DSLiteTunnel" || res.Kind == "VirtualAddress" || res.Kind == "IPv6DelegatedAddress" || res.Kind == "IPv4StaticAddress") {
+		} else if rr.Phase == "Drifted" && result.Phase == "Healthy" && ((res.Kind == "Interface" && (rr.Observed["reason"] == "MTUMismatch" || rr.Observed["reason"] == "AdminDown")) || res.Kind == "Bridge" || res.Kind == "VXLANTunnel" || res.Kind == "IPv4Route" || res.Kind == "Package" || res.Kind == "Sysctl" || res.Kind == "SysctlProfile" || res.Kind == "DHCPv6PrefixDelegation" || res.Kind == "TunnelInterface" || res.Kind == "DSLiteTunnel" || res.Kind == "VirtualAddress" || res.Kind == "IPv6DelegatedAddress" || res.Kind == "IPv4StaticAddress") {
 			result.Phase = "Drifted"
 		}
 		result.Resources = append(result.Resources, rr)
@@ -2049,19 +2049,43 @@ func (e *Engine) observeSysctlProfile(res api.Resource, includePlan bool, rr *Re
 	}
 	rr.Observed["profile"] = spec.Profile
 	rr.Observed["entries"] = fmt.Sprintf("%d", len(entries))
-	rr.Observed["runtime"] = fmt.Sprintf("%t", api.BoolDefault(spec.Runtime, true))
+	runtime := api.BoolDefault(spec.Runtime, true)
+	rr.Observed["runtime"] = fmt.Sprintf("%t", runtime)
 	rr.Observed["persistent"] = fmt.Sprintf("%t", spec.Persistent)
+	missingPersistent := 0
 	for _, entry := range entries {
-		if out, err := runCommand("sysctl", "-n", entry.Key); err == nil {
-			current := normalizeSysctlValue(string(out))
-			rr.Observed[entry.Key] = current
-			if current != normalizeSysctlValue(entry.Value) && !entry.Optional {
+		if runtime {
+			if out, err := runCommand("sysctl", "-n", entry.Key); err == nil {
+				current := normalizeSysctlValue(string(out))
+				rr.Observed[entry.Key] = current
+				matches, compareErr := sysctlprofile.ValueMatches(current, normalizeSysctlValue(entry.Value), entry.Compare)
+				if compareErr != nil || !matches {
+					rr.Phase = "Drifted"
+				}
+			} else if entry.Optional {
+				continue
+			} else {
+				rr.Phase = "Drifted"
+				rr.Warnings = append(rr.Warnings, fmt.Sprintf("could not observe sysctl %s: %v", entry.Key, err))
+			}
+		}
+		if spec.Persistent {
+			name := res.Metadata.Name + "-" + sysctlprofile.SafeName(entry.Key)
+			path := sysctlprofile.PersistentPath("/etc/sysctl.d", name)
+			contents, err := os.ReadFile(path)
+			if err != nil && !os.IsNotExist(err) {
+				if rr.Phase != "Drifted" {
+					rr.Phase = "Unknown"
+				}
+				rr.Warnings = append(rr.Warnings, fmt.Sprintf("could not observe persistent sysctl %s: %v", entry.Key, err))
+			} else if err != nil || !bytes.Equal(contents, sysctlprofile.PersistentContents(entry.Key, entry.Value)) {
+				missingPersistent++
 				rr.Phase = "Drifted"
 			}
-		} else if !entry.Optional {
-			rr.Phase = "Drifted"
-			rr.Warnings = append(rr.Warnings, fmt.Sprintf("could not observe sysctl %s: %v", entry.Key, err))
 		}
+	}
+	if spec.Persistent {
+		rr.Observed["persistentDriftCount"] = strconv.Itoa(missingPersistent)
 	}
 	if !includePlan {
 		return
