@@ -4,6 +4,7 @@ package apply
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,6 +23,7 @@ import (
 	"github.com/imksoo/routerd/internal/statusvalue"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/config"
+	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/healthcheck"
 	"github.com/imksoo/routerd/pkg/hostdeps"
 	"github.com/imksoo/routerd/pkg/hybrid"
@@ -598,7 +600,7 @@ func (e *Engine) observeDHCPv6PrefixDelegation(res api.Resource, aliases map[str
 		return
 	}
 	ifname := aliases[spec.Interface]
-	client := defaultString(spec.Client, "networkd")
+	client := api.EffectiveIPv6PDClient(string(platform.CurrentOS()), spec.Profile, spec.Client)
 	profile := defaultString(spec.Profile, api.IPv6PDProfileDefault)
 	rr.Observed["interface"] = spec.Interface
 	rr.Observed["ifname"] = ifname
@@ -610,6 +612,35 @@ func (e *Engine) observeDHCPv6PrefixDelegation(res api.Resource, aliases map[str
 	}
 	rr.Phase = "Unknown"
 	rr.Observed["reason"] = "PrefixDelegationRuntimeNotObserved"
+	if client == api.IPv6PDClientRouterd {
+		defaults, _ := platform.Current()
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		status, statusErr := daemonapi.ReadStatus(ctx, filepath.Join(defaults.RuntimeDir, "dhcpv6-client", res.Metadata.Name+".sock"))
+		cancel()
+		if statusErr != nil {
+			rr.Observed["observationError"] = statusErr.Error()
+		}
+		if statusErr == nil && status.Phase == daemonapi.PhaseRunning {
+			for _, observed := range status.Resources {
+				if observed.Resource.Kind != res.Kind || observed.Resource.Name != res.Metadata.Name {
+					continue
+				}
+				rr.Observed["leasePhase"] = observed.Phase
+				rr.Observed["currentPrefix"] = observed.Observed["currentPrefix"]
+				rr.Observed["observedIfname"] = observed.Observed["interface"]
+				rr.Observed["reason"] = "PrefixDelegationNotFullyObserved"
+				active := !resourcequery.ResourceWhenPresent(spec.When)
+				if store, ok := e.Store.(resourcequery.StateStore); ok && resourcequery.ResourceWhenMatches(spec.When, store) {
+					active = true
+				}
+				if active && ifname != "" && observed.Observed["interface"] != "" && observed.Observed["interface"] != ifname {
+					rr.Phase = "Drifted"
+					rr.Observed["reason"] = "PrefixDelegationInterfaceMismatch"
+				}
+				break
+			}
+		}
+	}
 	if includePlan {
 		rr.Plan = append(rr.Plan, fmt.Sprintf("request DHCPv6 prefix delegation on %s with %s", ifname, client))
 		switch profile {

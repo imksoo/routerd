@@ -3663,7 +3663,7 @@ func (r *Runner) arpObserverCommandPusher() arpObserverCommandPusher {
 type socketARPObserverCommandPusher struct{}
 
 func (socketARPObserverCommandPusher) Status(ctx context.Context, socketPath string) (daemonapi.DaemonStatus, error) {
-	return daemonStatus(ctx, socketPath)
+	return daemonapi.ReadStatus(ctx, socketPath)
 }
 
 func (socketARPObserverCommandPusher) SetIgnoredSenderMACs(ctx context.Context, socketPath string, macs []string) error {
@@ -4116,7 +4116,7 @@ func (c DaemonStatusController) Reconcile(ctx context.Context) error {
 	sockets, arpErr := c.daemonSockets()
 	for _, socket := range sockets {
 		statusCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-		status, err := daemonStatus(statusCtx, socket)
+		status, err := daemonapi.ReadStatus(statusCtx, socket)
 		cancel()
 		if err != nil {
 			if c.Logger != nil && ctx.Err() == nil {
@@ -6090,26 +6090,6 @@ func routerNeedsDnsmasq(router *api.Router) bool {
 		}
 	}
 	return false
-}
-
-func daemonStatus(ctx context.Context, socketPath string) (daemonapi.DaemonStatus, error) {
-	client := &http.Client{Transport: &http.Transport{DisableKeepAlives: true, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		var dialer net.Dialer
-		return dialer.DialContext(ctx, "unix", socketPath)
-	}}}
-	defer client.CloseIdleConnections()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://unix/v1/status", nil)
-	if err != nil {
-		return daemonapi.DaemonStatus{}, err
-	}
-	req.Close = true
-	resp, err := client.Do(req)
-	if err != nil {
-		return daemonapi.DaemonStatus{}, err
-	}
-	defer resp.Body.Close()
-	var status daemonapi.DaemonStatus
-	return status, json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&status)
 }
 
 func writeDnsmasqConfig(router *api.Router, store Store, path, pidFile string, port int, listenAddresses []string) (bool, bool, error) {

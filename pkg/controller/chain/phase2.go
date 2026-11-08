@@ -67,7 +67,7 @@ func (c DHCPv6InformationController) reconcile(ctx context.Context, pdName strin
 		if request {
 			_, _ = postDaemonCommand(ctx, socket, daemonapi.CommandInfoRequest)
 		}
-		status, err := daemonStatus(ctx, socket)
+		status, err := daemonapi.ReadStatus(ctx, socket)
 		if err != nil {
 			return err
 		}
