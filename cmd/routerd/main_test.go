@@ -670,45 +670,6 @@ func TestConfigGenerationHashIncludesEffectiveRouter(t *testing.T) {
 	}
 }
 
-func TestLoadServeRouterFallsBackToLastGoodGeneration(t *testing.T) {
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "router.yaml")
-	statePath := filepath.Join(dir, "routerd.db")
-	if err := os.WriteFile(configPath, []byte(`apiVersion: routerd.net/v1alpha1
-kind: Router
-metadata: {}
-spec:
-  resources: []
-`), 0644); err != nil {
-		t.Fatalf("write invalid canonical config: %v", err)
-	}
-	store, err := routerstate.OpenSQLite(statePath)
-	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
-	}
-	good := seedGeneration(t, store, "hash-good", testRouterYAML("last-good-router"), true, "Healthy")
-	_ = seedGeneration(t, store, "hash-bad", testRouterYAML("newer-errored-router"), true, "Errored")
-
-	router, fallback, err := loadServeRouter(configPath, store)
-	if err != nil {
-		t.Fatalf("load serve router: %v", err)
-	}
-	if !fallback.Used || fallback.Generation != good {
-		t.Fatalf("fallback = %+v, want generation %d", fallback, good)
-	}
-	if router.Metadata.Name != "last-good-router" {
-		t.Fatalf("router name = %q, want last-good-router", router.Metadata.Name)
-	}
-	var stderr strings.Builder
-	emitServeBootFallbackWarning(&stderr, nil, configPath, fallback)
-	if got := stderr.String(); !strings.Contains(got, "WARNING:") || !strings.Contains(got, fmt.Sprintf("generation %d", good)) {
-		t.Fatalf("fallback warning missing details:\n%s", got)
-	}
-	if err := store.Close(); err != nil {
-		t.Fatalf("close sqlite: %v", err)
-	}
-}
-
 func TestServeConfigMutatorRejectsInvalidCandidateWithoutChangingCanonical(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "router.yaml")
@@ -798,24 +759,7 @@ spec:
 	if len(router.Spec.Resources) != 1 {
 		t.Fatalf("running generation changed before restart: resources = %d, want 1", len(router.Spec.Resources))
 	}
-	store, err := routerstate.OpenSQLite(statePath)
-	if err != nil {
-		t.Fatalf("open state: %v", err)
-	}
-	defer func() { _ = store.Close() }()
-	if err := os.WriteFile(configPath, []byte("not: valid: YAML\n"), 0644); err != nil {
-		t.Fatalf("corrupt canonical config: %v", err)
-	}
-	fallbackRouter, fallback, err := loadServeRouter(configPath, routerstate.GenerationHistoryReader(store))
-	if err != nil {
-		t.Fatalf("load committed fallback: %v", err)
-	}
-	if !fallback.Used || fallback.Generation != result.Result.Generation {
-		t.Fatalf("committed fallback = %+v, want generation %d", fallback, result.Result.Generation)
-	}
-	if len(fallbackRouter.Spec.Resources) != 0 {
-		t.Fatalf("committed fallback resources = %d, want 0", len(fallbackRouter.Spec.Resources))
-	}
+
 }
 
 func TestServeOnceConvergesAndExits(t *testing.T) {

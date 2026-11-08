@@ -60,16 +60,16 @@ The CLI surface had also grown by implementation rather than intent:
 The single source of truth is one human-readable canonical `router.yaml` file.
 routerd does not move the truth into an opaque database.
 
-- The truth is the **last successfully applied** config. A config that fails
-  validation or reconcile never becomes the truth.
+- The canonical config file is the source of desired state. Invalid config
+  must be corrected by the operator before reconciliation.
 - Comments and ordering are preserved across machine mutations using a
   comment-preserving YAML round-trip (yaml.v3 `Node`).
 - Each successful apply writes the canonical file atomically (temp + fsync +
   rename) and snapshots a generation. History and rollback reuse the existing
   SQLite generations; no new history mechanism is introduced.
-- On boot, `serve` loads the canonical config; if it fails validation, serve
-  reconciles the last-good committed generation and warns loudly rather than
-  refusing to start or enshrining a broken file.
+- On boot, `serve` loads and validates the canonical config. It reports an
+  error if the file cannot be loaded or validated; it does not select an old
+  generation automatically.
 
 ### 2. Binary split
 
@@ -146,8 +146,7 @@ verbs are gated by socket membership, performed by the privileged daemon.
 
 - `delete` and `apply` become durable across reboot by construction, because the
   commit rewrites the canonical truth.
-- A config that fails to apply cannot become the running truth; boot falls back
-  to last-good.
+- A config that fails validation must be fixed before `serve` starts.
 - The verb surface shrinks and stops overlapping by data source.
 - The control API must gain apply/plan/delete/validate mutations -- the main
   implementation cost.
@@ -158,7 +157,7 @@ verbs are gated by socket membership, performed by the privileged daemon.
 
 - **Phase 1 -- Commit core.** Canonical writer in the daemon: yaml.v3 round-trip
   (comment/order preserving), atomic write, generation snapshot on successful
-  apply, and last-good boot fallback in `serve`.
+  apply; historical generations are available for explicit rollback.
 - **Phase 2 -- Control API mutations.** Add apply/plan/delete/validate to the
   control socket API with the socket permission model.
 - **Phase 3 -- Verb move.** `routerctl` gains validate/plan/apply/delete (via the
