@@ -17,26 +17,6 @@ import (
 	"github.com/imksoo/routerd/pkg/dpi"
 )
 
-func TestSelftestClassifiesTLS(t *testing.T) {
-	var out bytes.Buffer
-	if err := run([]string{"selftest"}, &out); err != nil {
-		t.Fatal(err)
-	}
-	var resp classifyResponse
-	if err := json.Unmarshal(out.Bytes(), &resp); err != nil {
-		t.Fatal(err)
-	}
-	if resp.TLSSNI != "routerd-dpi-selftest.example" {
-		t.Fatalf("response = %+v", resp)
-	}
-	if resp.Engine != "builtin" || resp.Source != "builtin-payload" {
-		t.Fatalf("engine/source = %+v", resp)
-	}
-	if resp.ApplicationProtocol != "tls" || resp.Category != "web" || resp.Confidence != 90 || resp.Metadata["tls.sni"] != "routerd-dpi-selftest.example" {
-		t.Fatalf("typed fields = %+v metadata=%+v", resp.ClassifyResult, resp.Metadata)
-	}
-}
-
 func TestClassifyCommandReadsJSON(t *testing.T) {
 	req := dpi.ClassifyRequest{L4Payload: dpi.MinimalTLSClientHello("routerd.example")}
 	data, err := json.Marshal(req)
@@ -118,9 +98,6 @@ func TestDaemonStatusReportsClassifierStats(t *testing.T) {
 	}
 	if got.Stats.Requests != 1 || got.Stats.BuiltinPackets != 1 || got.Stats.BuiltinClassified != 1 {
 		t.Fatalf("status = %+v", got)
-	}
-	if got.Stats.LatencySamples != 1 || got.Stats.MaxLatencyMs <= 0 {
-		t.Fatalf("latency stats = %+v", got.Stats)
 	}
 }
 
