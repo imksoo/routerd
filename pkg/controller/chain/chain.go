@@ -3934,7 +3934,7 @@ func (c LinkController) Reconcile(ctx context.Context) error {
 	if declared == nil {
 		declared = c.Router
 	}
-	inactiveTunnels := apply.InactiveDSLiteInterfaces(c.Router, declared)
+	inactiveTunnels := apply.InactiveDSLiteInterfaces(c.Router, declared, c.Store)
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "Interface" {
 			continue
@@ -4015,7 +4015,10 @@ func (c LinkController) Reconcile(ctx context.Context) error {
 				status["ipv6Addresses"] = ipv6
 				status["primaryIPv6"] = ipv6[0]
 			}
-			if ifi.Flags&net.FlagUp != 0 {
+			if !spec.Managed && inactiveTunnels[ifname] != "" {
+				status["phase"] = "Drifted"
+				status["reason"] = "InactiveDSLiteInterfacePresent"
+			} else if ifi.Flags&net.FlagUp != 0 {
 				status["phase"] = "Up"
 			} else if !spec.Managed {
 				_, owner, ok := (LANAddressController{Router: c.Router, DeclaredRouter: declared}).vrrpVMACOwner(resource.Metadata.Name)

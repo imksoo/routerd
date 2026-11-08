@@ -66,7 +66,7 @@ func (e *Engine) PlanEffective(effective, declared *api.Router) (*Result, error)
 }
 
 func (e *Engine) evaluate(router, declared *api.Router, includePlan bool) (*Result, error) {
-	inactiveTunnels := InactiveDSLiteInterfaces(router, declared)
+	inactiveTunnels := InactiveDSLiteInterfaces(router, declared, e.Store)
 	aliases := interfaceAliases(router)
 	kinds := resourceKinds(router)
 	osNet := e.detectOSNetworking()
@@ -1617,7 +1617,7 @@ func (e *Engine) observeNetworkAdoption(res api.Resource, aliases map[string]str
 	}
 }
 
-func InactiveDSLiteInterfaces(effective, declared *api.Router) map[string]string {
+func InactiveDSLiteInterfaces(effective, declared *api.Router, store resourcequery.Store) map[string]string {
 	active := map[string]bool{}
 	disabled := map[string]bool{}
 	for _, res := range effective.Spec.Resources {
@@ -1629,6 +1629,11 @@ func InactiveDSLiteInterfaces(effective, declared *api.Router) map[string]string
 			name := defaultString(spec.TunnelName, res.Metadata.Name)
 			if api.BoolDefault(spec.Enabled, true) {
 				active[name] = true
+				if store != nil {
+					if alias, ok := store.ObjectStatus(api.NetAPIVersion, "DSLiteTunnel", res.Metadata.Name)["aliasOf"].(string); ok && alias != "" {
+						active[alias] = true
+					}
+				}
 			} else {
 				disabled[name] = true
 			}
@@ -1657,6 +1662,10 @@ func (e *Engine) observeInterface(res api.Resource, policy interfacePolicy, obse
 	if exists, up := e.interfaceState(policy.IfName); exists {
 		rr.Observed["exists"] = "true"
 		rr.Observed["up"] = fmt.Sprintf("%t", up)
+		if !policy.Managed && inactiveTunnels[policy.IfName] != "" {
+			rr.Phase = "Drifted"
+			rr.Warnings = append(rr.Warnings, fmt.Sprintf("inactive DS-Lite interface %s still exists", policy.IfName))
+		}
 	} else {
 		rr.Observed["exists"] = "false"
 		if !policy.Managed && inactiveTunnels[policy.IfName] != "" {
