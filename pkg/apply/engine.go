@@ -874,9 +874,28 @@ func (e *Engine) observeDSLiteTunnel(res api.Resource, aliases map[string]string
 		expectedRemote, remoteErr := netip.ParseAddr(remote)
 		actualRemote, actualRemoteErr := netip.ParseAddr(link.Info.Data.Remote)
 		expectedLocal, localErr := netip.ParseAddr(spec.LocalAddress)
+		localKnown := localSource == "static" && localErr == nil
+		if localSource == "delegatedAddress" && spec.LocalAddressSuffix != "" && e.Store != nil {
+			status := e.Store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", spec.LocalDelegatedAddress)
+			address, _ := status["address"].(string)
+			prefix, prefixErr := netip.ParsePrefix(address)
+			suffix, suffixErr := netip.ParseAddr(spec.LocalAddressSuffix)
+			if prefixErr == nil && prefix.Addr().Is6() && (prefix.Bits() == 64 || prefix.Bits() == 128) && suffixErr == nil && suffix.Is6() {
+				base := netip.PrefixFrom(prefix.Addr(), 64).Masked().Addr().As16()
+				suffixBytes := suffix.As16()
+				for i := range base {
+					base[i] |= suffixBytes[i]
+				}
+				expectedLocal = netip.AddrFrom16(base)
+				localKnown = true
+			}
+		}
+		if localKnown {
+			rr.Observed["expectedLocal"] = expectedLocal.String()
+		}
 		actualLocal, actualLocalErr := netip.ParseAddr(link.Info.Data.Local)
 		remoteMismatch := remoteErr == nil && (actualRemoteErr != nil || expectedRemote != actualRemote)
-		localMismatch := localSource == "static" && localErr == nil && (actualLocalErr != nil || expectedLocal != actualLocal)
+		localMismatch := localKnown && (actualLocalErr != nil || expectedLocal != actualLocal)
 		if link.Info.Kind != "ip6tnl" || link.Info.Data.Proto != "ipip6" || !slices.Contains(link.Flags, "UP") || (spec.MTU != 0 && link.MTU != spec.MTU) || (underlay != "" && underlay != tunnelName && link.Info.Data.Link != underlay) || remoteMismatch || localMismatch {
 			rr.Phase = "Drifted"
 			rr.Observed["reason"] = "TunnelMismatch"
@@ -884,7 +903,7 @@ func (e *Engine) observeDSLiteTunnel(res api.Resource, aliases map[string]string
 		}
 		rr.Phase = "Unknown"
 		rr.Observed["reason"] = "TunnelAttributesPartiallyChecked"
-		if remoteErr != nil || localSource != "static" || localErr != nil {
+		if remoteErr != nil || !localKnown {
 			rr.Observed["reason"] = "DynamicEndpointsNotChecked"
 		}
 		return
