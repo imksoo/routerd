@@ -923,10 +923,6 @@ func newIPv4FwmarkRuleArtifact(owner string, priority, mark, table int) resource
 	}
 }
 
-func newIPv4RouteTableArtifact(owner string, table int) resource.Artifact {
-	return newIPv4RouteTableArtifactWithIfName(owner, table, "")
-}
-
 func newIPv4RouteTableArtifactWithIfName(owner string, table int, ifname string) resource.Artifact {
 	attrs := map[string]string{
 		"table": fmt.Sprintf("%d", table),
