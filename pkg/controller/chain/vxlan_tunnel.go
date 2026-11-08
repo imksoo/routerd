@@ -128,6 +128,12 @@ func (c VXLANTunnelController) cleanupExtraVXLANs(ctx context.Context, declared 
 		}
 		for _, resource := range router.Spec.Resources {
 			switch resource.Kind {
+			case "Interface":
+				spec, err := resource.InterfaceSpec()
+				if err != nil {
+					return err
+				}
+				retained[firstNonEmpty(spec.IfName, resource.Metadata.Name)] = true
 			case "VXLANTunnel":
 				spec, err := resource.VXLANTunnelSpec()
 				if err != nil {
