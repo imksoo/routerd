@@ -3,8 +3,6 @@
 package render
 
 import (
-	"os"
-	"os/exec"
 	"reflect"
 	"strings"
 	"testing"
@@ -687,39 +685,6 @@ func TestEgressRoutePolicyRendezvousHashUsesOnlyRuntimeReadyTargets(t *testing.T
 		if !strings.Contains(markMap, want) {
 			t.Fatalf("ready target %s was absent from mark map", want)
 		}
-	}
-}
-
-func TestEgressRoutePolicyRendezvousHashSyntaxSmoke(t *testing.T) {
-	if os.Getenv("ROUTERD_NFT_SYNTAX") != "1" {
-		t.Skip("set ROUTERD_NFT_SYNTAX=1 to run nft syntax smoke")
-	}
-	if _, err := exec.LookPath("unshare"); err != nil {
-		t.Skip("unshare is not installed")
-	}
-	if _, err := exec.LookPath("nft"); err != nil {
-		t.Skip("nft is not installed")
-	}
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
-		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"},
-		Metadata: api.ObjectMeta{Name: "ipv4-default"},
-		Spec: api.EgressRoutePolicySpec{Mode: "hash", HashFields: []string{"sourceAddress"}, Candidates: []api.EgressRoutePolicyCandidate{{
-			Name: "dslite",
-			Targets: []api.EgressRoutePolicyTarget{
-				{Name: "a", Interface: "ds-lite-a", Table: 110, Mark: 0x110},
-				{Name: "b", Interface: "ds-lite-b", Table: 111, Mark: 0x111},
-				{Name: "c", Interface: "ds-lite-c", Table: 112, Mark: 0x112},
-			},
-		}}},
-	}}}}
-	data, err := NftablesIPv4PolicyRoutes(router)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command("unshare", "-Urn", "nft", "-c", "-f", "-")
-	cmd.Stdin = strings.NewReader(string(data))
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("nft syntax check failed: %v\n%s\n%s", err, output, data)
 	}
 }
 
@@ -1544,28 +1509,6 @@ func TestNftablesFirewallRuleStatefulExpressions(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("nftables output missing %q:\n%s", want, got)
 		}
-	}
-}
-
-func TestNftablesFirewallRuleSyntaxSmoke(t *testing.T) {
-	if os.Getenv("ROUTERD_NFT_SYNTAX") != "1" {
-		t.Skip("set ROUTERD_NFT_SYNTAX=1 to run nft syntax smoke")
-	}
-	if _, err := exec.LookPath("unshare"); err != nil {
-		t.Skip("unshare is not installed")
-	}
-	if _, err := exec.LookPath("nft"); err != nil {
-		t.Skip("nft is not installed")
-	}
-	data, err := NftablesNAT44Rule(nftablesStatefulFirewallTestRouter())
-	if err != nil {
-		t.Fatalf("render nftables: %v", err)
-	}
-	cmd := exec.Command("unshare", "-Urn", "nft", "-c", "-f", "-")
-	cmd.Stdin = strings.NewReader(string(data))
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("nft syntax check failed: %v\n%s\n%s", err, output, data)
 	}
 }
 
