@@ -17,13 +17,6 @@ import (
 	"github.com/imksoo/routerd/pkg/platform"
 )
 
-type ipsecRuntimeApplyOptions struct {
-	ConfigDir       string
-	ConfigFile      string
-	LegacyConfigDir string
-	Load            func(context.Context) error
-}
-
 const ipsecPendingLoadMarker = ".routerd-pending-load"
 
 // swanctl resolves its credential stores relative to --file's directory. The
@@ -39,24 +32,6 @@ const freeBSDStrongSwanStartupTimeout = 15 * time.Second
 const freeBSDStrongSwanLoadTimeout = 20 * time.Second
 const freeBSDStrongSwanStopTimeout = 8 * time.Second
 const freeBSDStrongSwanProbeTimeout = 2 * time.Second
-
-func applyIPsecConnections(ctx context.Context, router *api.Router) ([]string, error) {
-	configDir := ipsecConfigDir()
-	configFile := filepath.Join(configDir, "routerd.conf")
-	return applyIPsecConnectionsWithOptions(ctx, router, ipsecRuntimeApplyOptions{
-		ConfigDir:       configDir,
-		ConfigFile:      configFile,
-		LegacyConfigDir: ipsecLegacyConfigDir(),
-		Load: func(ctx context.Context) error {
-			if err := ensureFreeBSDStrongSwan(ctx); err != nil {
-				return err
-			}
-			loadCtx, cancel := context.WithTimeout(ctx, freeBSDStrongSwanLoadTimeout)
-			defer cancel()
-			return (ipsec.Controller{Binary: ipsecSwanctlPath(), ConfigFile: configFile}).LoadAll(loadCtx)
-		},
-	})
-}
 
 func ensureFreeBSDStrongSwan(ctx context.Context) error {
 	if platformDefaults.OS != platform.OSFreeBSD {
@@ -195,22 +170,13 @@ func readAndRemoveCommandOutput(path string) string {
 	return string(data)
 }
 
-func applyIPsecConnectionsWithOptions(ctx context.Context, router *api.Router, opts ipsecRuntimeApplyOptions) ([]string, error) {
+func applyIPsecConnections(ctx context.Context, router *api.Router) ([]string, error) {
 	if router == nil {
 		return nil, nil
 	}
-	dir := strings.TrimSpace(opts.ConfigDir)
-	if dir == "" {
-		return nil, fmt.Errorf("IPsec swanctl configuration directory is required")
-	}
-	configFile := strings.TrimSpace(opts.ConfigFile)
-	if configFile == "" {
-		configFile = filepath.Join(dir, "routerd.conf")
-	}
-	if filepath.Dir(configFile) != dir || filepath.Base(configFile) != "routerd.conf" {
-		return nil, fmt.Errorf("IPsec swanctl aggregate configuration must be %s", filepath.Join(dir, "routerd.conf"))
-	}
-	legacyDir := strings.TrimSpace(opts.LegacyConfigDir)
+	dir := ipsecConfigDir()
+	configFile := filepath.Join(dir, "routerd.conf")
+	legacyDir := ipsecLegacyConfigDir()
 	if legacyDir != "" && filepath.Clean(legacyDir) == filepath.Clean(dir) {
 		legacyDir = ""
 	}
@@ -331,10 +297,12 @@ func applyIPsecConnectionsWithOptions(ctx context.Context, router *api.Router, o
 	} else if fileChanged {
 		changed = append(changed, configFile)
 	}
-	if opts.Load == nil {
-		return changed, fmt.Errorf("load IPsec swanctl configuration: no loader configured")
+	if err := ensureFreeBSDStrongSwan(ctx); err != nil {
+		return changed, fmt.Errorf("load IPsec swanctl configuration: %w", err)
 	}
-	if err := opts.Load(ctx); err != nil {
+	loadCtx, cancel := context.WithTimeout(ctx, freeBSDStrongSwanLoadTimeout)
+	defer cancel()
+	if err := (ipsec.Controller{Binary: ipsecSwanctlPath(), ConfigFile: configFile}).LoadAll(loadCtx); err != nil {
 		return changed, fmt.Errorf("load IPsec swanctl configuration: %w", err)
 	}
 	if len(desired) == 0 {
