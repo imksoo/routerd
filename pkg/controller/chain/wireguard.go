@@ -14,7 +14,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/imksoo/routerd/internal/statusvalue"
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/apply"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/mobilityconfig"
@@ -963,12 +965,20 @@ func samNodeWireGuardConfigured(spec api.SAMNodeWireGuardSpec) bool {
 		spec.PersistentKeepalive != 0
 }
 
-func (c WireGuardController) cleanupStaleResources(_ context.Context) error {
+func (c WireGuardController) cleanupStaleResources(ctx context.Context) error {
 	lister, ok := c.Store.(routerstate.ObjectStatusLister)
 	if !ok {
 		return nil
 	}
+	deleter, ok := c.Store.(routerstate.ObjectDeleteStore)
+	if !ok {
+		return nil
+	}
 	statuses, err := lister.ListObjectStatuses()
+	if err != nil {
+		return err
+	}
+	retained, err := apply.ConfiguredWireGuardInterfaces(c.Router)
 	if err != nil {
 		return err
 	}
@@ -982,8 +992,19 @@ func (c WireGuardController) cleanupStaleResources(_ context.Context) error {
 		if item.APIVersion != api.NetAPIVersion || (item.Kind != "WireGuardInterface" && item.Kind != "WireGuardPeer") || configured[item.Kind+"/"+item.Name] {
 			continue
 		}
-		if c.Logger != nil {
-			c.Logger.Warn("WireGuard status is no longer configured; cleanup requires review", "kind", item.Kind, "name", item.Name)
+		if c.DryRun {
+			continue
+		}
+		if item.Kind == "WireGuardInterface" {
+			ifname := firstNonEmpty(statusvalue.Field(item.Status, "ifname"), item.Name)
+			if !retained[ifname] {
+				if err := (TunnelInterfaceController{}).deleteTunnelInterface(ctx, ifname); err != nil {
+					return err
+				}
+			}
+		}
+		if err := deleter.DeleteObject(item.APIVersion, item.Kind, item.Name); err != nil {
+			return err
 		}
 	}
 	return nil
