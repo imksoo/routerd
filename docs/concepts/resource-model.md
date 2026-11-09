@@ -100,5 +100,5 @@ stop or become pending rather than continuing to advertise an old prefix.
 ## Next steps
 
 - [Apply and render](./apply-and-render.md) — how validate, plan, dry-run, and serve use the resource graph
-- [State and ownership](./state-and-ownership.md) — how routerd tracks what it owns on the host
+- [State](./state.md) — where runtime state is stored
 - [Resource API reference](../api-v1alpha1.md) — full field reference for every resource kind

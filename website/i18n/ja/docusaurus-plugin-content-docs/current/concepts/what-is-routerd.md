@@ -69,5 +69,5 @@ FreeBSD も同じリソースモデルを使い、反映先だけが OS に合�
 - [設計思想](./design-philosophy)
 - [リソースモデル](./resource-model)
 - [適用と生成](./apply-and-render)
-- [状態と所有](./state-and-ownership)
+- [状態](./state)
 - [インストール](../tutorials/install)

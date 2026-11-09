@@ -154,7 +154,7 @@ routerd 的設定以資源集合來描述。概念上類似 Kubernetes，但 api
 常見的參照格式包括：`addressFrom`、`ipv4From`、`ipv6From`、`prefixFrom`、`rdnssFrom`、`gatewayFrom` 等。
 相依關係（`dependsOn`）也以相同機制宣告。
 
-詳情請參閱[資源模型](./concepts/resource-model.md)與[狀態與擁有權](./concepts/state-and-ownership.md)。
+詳情請參閱[資源模型](./concepts/resource-model.md)與[狀態](./concepts/state.md)。
 
 ---
 
@@ -234,7 +234,7 @@ routerd 提供以下方式觀測運轉狀態。
 - [資源模型](./concepts/resource-model.md)
 - [設計理念](./concepts/design-philosophy.md)
 - [套用與產生](./concepts/apply-and-render.md)
-- [狀態與擁有權](./concepts/state-and-ownership.md)
+- [狀態](./concepts/state.md)
 - [reconcile loop](./operations/reconcile)
 - [狀態 DB 運維](./operations/state-database.md)
 - [API 參考文件 v1alpha1](./api-v1alpha1.md)

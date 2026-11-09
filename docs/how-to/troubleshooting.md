@@ -118,5 +118,5 @@ Some environments do not expose `/proc/net/nf_conntrack`. In that case, routerd 
 
 ## See also
 
-- [State and ownership](../concepts/state-and-ownership.md)
+- [State](../concepts/state.md)
 - [Reconcile loop](../operations/reconcile)

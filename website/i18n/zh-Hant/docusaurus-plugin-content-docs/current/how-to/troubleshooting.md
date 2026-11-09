@@ -115,5 +115,5 @@ nft list table ip routerd_nat
 
 ## 相關參考
 
-- [狀態與擁有權](../concepts/state-and-ownership.md)
+- [狀態](../concepts/state.md)
 - [Reconcile loop](../operations/reconcile)

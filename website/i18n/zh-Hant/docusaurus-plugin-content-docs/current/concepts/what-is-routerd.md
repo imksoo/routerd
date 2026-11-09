@@ -69,5 +69,5 @@ FreeBSD 使用相同的資源模型，只有反映目標會依各 OS 採用對�
 - [設計理念](./design-philosophy)
 - [資源模型](./resource-model)
 - [套用與產生](./apply-and-render)
-- [狀態與擁有權](./state-and-ownership)
+- [狀態](./state)
 - [安裝](../tutorials/install)

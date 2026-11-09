@@ -118,5 +118,5 @@ AFTR の FQDN が解決できない場合は、`DNSResolver` の `forward` sourc
 
 ## 関連項目
 
-- [状態と所有権](../concepts/state-and-ownership.md)
+- [状態](../concepts/state.md)
 - [リコンサイルループ](../operations/reconcile)

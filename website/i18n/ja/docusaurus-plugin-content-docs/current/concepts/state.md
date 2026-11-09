@@ -1,16 +1,15 @@
 ---
-title: 状態と所有
-slug: /concepts/state-and-ownership
+title: 状態
+slug: /concepts/state
 sidebar_position: 5
 ---
 
-# 状態と所有
+# 状態
 
 routerd は、宣言した意図と観測した状態を分けて扱います。
 YAML は、利用者が管理する意図です。
 SQLite、lease ファイル、events.jsonl は、routerd と専用デーモンが観測した状態です。
 
-![effective config、ownership ledger、object status、host inventory から dry-run 可能な GC planner と teardown registry へ進む lifecycle GC 図](/img/diagrams/lifecycle-gc.png)
 
 ## 状態の置き場所
 
@@ -32,29 +31,6 @@ Linux での状態の保存先は次の通りです。
 FreeBSD でも、設定と実行ファイルは `/usr/local` 配下に置きます。
 実行時ソケットは `/var/run/routerd` に置きます。
 永続状態は `/var/db/routerd` に置きます。
-
-## 所有の考え方
-
-routerd が作るホスト側の構成物には、それぞれ所有元のリソースがあります。
-たとえば dnsmasq 設定は DHCP と RA の各リソースから、`routerd-dns-resolver` の設定は `DNSResolver` と `DNSZone` から、nftables の NAT テーブルは `NAT44Rule` から作られます。
-複数のトンネルから集約される TCP MSS clamp テーブルは、最上位の `Router` が所有します。
-
-所有元が分かると、次の判断ができます。
-
-- この構成物を routerd が変更してよいか。
-- YAML からリソースを消したとき、ホスト側も消してよいか。
-- 既存の設定を取り込むだけか、それとも routerd が新しく作るのか。
-
-所有キーは `apiVersion/kind/name` です。適用世代は識別に含めません。
-リソースの status には所有元とライフサイクル情報を含めるため、古くなった構成物の削除時にも、routerd が管理するリソースと、引き継いだものや外部のオブジェクトを区別できます。
-
-## ライフサイクル GC
-
-routerd は、具体的なホスト成果物の所有台帳と、リソースごとの解体に必要なオブジェクト状態を保存します。適用時、serve 起動時、削除フローでは、汎用の GC プランナーがこれらの記録を、適用と同じ有効設定と比較します。有効設定には、`when` フィルター適用後の起動 YAML、動的設定、生成済み SAM リソースが含まれます。
-
-GC の計画は、所有する成果物の削除、リソースの解体、台帳行の忘却、古い status 行の削除、イベント記録、破壊的な削除前の状態バックアップを表せます。未対応 OS の統合はスキップし、引き継いだものや外部管理の status はそのまま残します。
-
-リソースごとの成果物対応表と解体の契約は、[リソース所有](../resource-ownership.md) を参照してください。
 
 ## 古くなった状態を使わない
 

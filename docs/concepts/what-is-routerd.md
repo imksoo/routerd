@@ -97,5 +97,5 @@ are tracked in the platform matrix.
 - [Design philosophy](./design-philosophy)
 - [Resource model](./resource-model)
 - [Apply and render](./apply-and-render)
-- [State and ownership](./state-and-ownership)
+- [State](./state)
 - [Install](../tutorials/install)

@@ -160,7 +160,7 @@ routerd の設定はリソースの集合として記述します。Kubernetes �
 
 `*From` 参照の対象がまだ値を公開していない状態は、エラーではなく通常のブートストラップ条件です。参照元のコントローラーはそのリソースを `Pending`（未解決の参照を理由に記載）と報告し、参照先の status が変わったときに再リコンサイルします。明示的な `dependsOn` は不要です。たとえば、`upstreamFrom` が `DHCPv6Information` のサーバーを指す `DNSResolver` のフォワードソースは、そのサーバーが DNS サーバーを学習するまで `Pending` にとどまり、次のリコンサイルで `Applied` になります。upstream を一切宣言しないソース（`upstreams` も `upstreamFrom` もなし）は本当の設定誤りであり、検証で拒否されます。
 
-詳細は [リソースモデル](./concepts/resource-model.md) と [状態と所有権](./concepts/state-and-ownership.md) を参照してください。
+詳細は [リソースモデル](./concepts/resource-model.md) と [状態](./concepts/state.md) を参照してください。
 
 ---
 
@@ -271,7 +271,7 @@ OpenTelemetry エクスポートは `observability.routerd.net/v1alpha1` の `Te
 - [リソースモデル](./concepts/resource-model.md)
 - [設計思想](./concepts/design-philosophy.md)
 - [apply と render](./concepts/apply-and-render.md)
-- [状態と所有権](./concepts/state-and-ownership.md)
+- [状態](./concepts/state.md)
 - [reconcile loop](./operations/reconcile)
 - [状態 DB の運用](./operations/state-database.md)
 - [API リファレンス v1alpha1](./api-v1alpha1.md)

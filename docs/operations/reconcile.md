@@ -110,6 +110,6 @@ Generation-based rollback is supported. `routerctl rollback --list` shows the st
 
 ## See also
 
-- [State and ownership](../concepts/state-and-ownership.md)
+- [State](../concepts/state.md)
 - [Apply and render](../concepts/apply-and-render.md)
 - [Troubleshooting](../how-to/troubleshooting.md)

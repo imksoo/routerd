@@ -1,16 +1,15 @@
 ---
-title: 狀態與擁有權
-slug: /concepts/state-and-ownership
+title: 狀態
+slug: /concepts/state
 sidebar_position: 5
 ---
 
-# 狀態與擁有權
+# 狀態
 
 routerd 將宣告的意圖與觀測到的狀態分開處理。
 YAML 是使用者管理的意圖。
 SQLite、租約檔案、events.jsonl 則是 routerd 及專屬常駐程式觀測到的狀態。
 
-![lifecycle GC 圖：effective config、ownership ledger、object status 與 host inventory 輸入 GC planner 和 teardown registry](/img/diagrams/lifecycle-gc.png)
 
 ## 狀態的存放位置
 
@@ -31,36 +30,6 @@ Linux 上的狀態存放位置如下所示。
 FreeBSD 上，設定與執行檔同樣存放在 `/usr/local` 下。
 執行時 socket 存放在 `/var/run/routerd`。
 持久狀態存放在 `/var/db/routerd`。
-
-## 擁有權的概念
-
-routerd 在主機端建立的設定物件，各自有其擁有來源資源。
-例如 dnsmasq 設定由 DHCP 和 RA 各資源產生（render），`routerd-dns-resolver` 的設定由 `DNSResolver` 和 `DNSZone` 產生，nftables 的 NAT 表格由 `NAT44Rule` 產生。
-從多個通道彙集而來的 TCP MSS clamp 表格則由最上層的 `Router` 擁有。
-
-明確掌握擁有來源後，可以判斷以下事項：
-
-- 這個設定物件是否允許 routerd 修改。
-- 從 YAML 中刪除資源時，是否也可以刪除主機端的對應設定。
-- 只是納管既有設定，還是由 routerd 全新建立。
-
-owner key 是 `apiVersion/kind/name`；apply generation 不屬於該 identity。
-resource status 包含 owner 與 lifecycle metadata，使 stale cleanup path 也能區分
-routerd-managed resource 與 adopted/external object。
-
-## lifecycle GC
-
-routerd 儲存具體 host artifact 的 ownership ledger，以及 resource-specific teardown
-所需的 object status。在 apply、serve startup 與 delete flow 中，generic GC planner
-會將這些記錄與 apply 使用的同一份 effective config 比較。effective config 包含
-`when` filtering 之後的 startup YAML、active dynamic config 與產生的 SAM resource。
-
-GC plan 可以表示 owned artifact 刪除、resource teardown、ledger row forget、stale status
-row 刪除、event 記錄，以及破壞性 cleanup 前所需的 state backup。不支援的 OS integration
-會被跳過，adopted 或 externally managed status 會被保留。
-
-resource 對應的 artifact map 與 teardown contract 請參閱
-[資源擁有權](../resource-ownership.md)。
 
 ## 不使用過時狀態
 

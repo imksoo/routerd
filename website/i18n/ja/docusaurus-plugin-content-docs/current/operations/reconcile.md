@@ -96,6 +96,6 @@ routerd が削除するのは、所有を確認できる成果物（routerd が�
 
 ## 関連項目
 
-- [状態と所有権](../concepts/state-and-ownership.md)
+- [状態](../concepts/state.md)
 - [Apply と render](../concepts/apply-and-render.md)
 - [トラブルシューティング](../how-to/troubleshooting.md)

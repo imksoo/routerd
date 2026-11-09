@@ -177,7 +177,7 @@ servers, then becomes `Applied` on the next reconcile. A source that declares no
 upstream at all (neither `upstreams` nor `upstreamFrom`) is a real
 misconfiguration and is rejected by validation instead.
 
-For details, see [resource model](./concepts/resource-model.md) and [state and ownership](./concepts/state-and-ownership.md).
+For details, see [resource model](./concepts/resource-model.md) and [state](./concepts/state.md).
 
 DNS forwarding separates ordinary per-upstream `queryTimeout` from background
 health-check deadlines. The optional positive duration inherits
@@ -406,7 +406,7 @@ the managed dnsmasq process; verify DHCPv4, DHCPv6 and RA after upgrading.
 - [Resource model](./concepts/resource-model.md)
 - [Design philosophy](./concepts/design-philosophy.md)
 - [Apply and render](./concepts/apply-and-render.md)
-- [State and ownership](./concepts/state-and-ownership.md)
+- [State](./concepts/state.md)
 - [Reconcile loop](./operations/reconcile)
 - [State database operations](./operations/state-database.md)
 - [API reference v1alpha1](./api-v1alpha1.md)

@@ -89,5 +89,5 @@ deviceFrom:
 ## 次に読むもの
 
 - [適用と生成](./apply-and-render.md) — validate、plan、dry-run、serve がリソースグラフをどう使うか
-- [状態と所有](./state-and-ownership.md) — routerd がホスト上の所有物をどう追跡するか
+- [状態](./state.md) — 実行状態の保存先
 - [リソース API リファレンス](../api-v1alpha1.md) — 全リソース Kind のフィールドリファレンス

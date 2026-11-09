@@ -101,6 +101,6 @@ routerd 只删除可确认拥有权的产物（即 routerd 先前创建或明确
 
 ## 相关项目
 
-- [状态与拥有权](../concepts/state-and-ownership.md)
+- [状态](../concepts/state.md)
 - [应用与生成（render）](../concepts/apply-and-render.md)
 - [故障排查](../how-to/troubleshooting.md)
