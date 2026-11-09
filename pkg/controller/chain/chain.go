@@ -211,7 +211,6 @@ func (s eventedStore) SaveObjectStatus(apiVersion, kind, name string, status map
 	if s.Store == nil {
 		return nil
 	}
-	status = s.statusWithLifecycle(apiVersion, kind, name, status)
 	if statusEventHistoryRequired(s.Router) {
 		return s.saveStatusWithHistory(apiVersion, kind, name, status, false)
 	}
@@ -241,7 +240,7 @@ func (s eventedStore) MergeObjectStatus(apiVersion, kind, name string, updates m
 	if s.Store == nil {
 		return nil
 	}
-	status := s.statusWithLifecycle(apiVersion, kind, name, copyStatusMap(updates))
+	status := copyStatusMap(updates)
 	if statusEventHistoryRequired(s.Router) {
 		return s.saveStatusWithHistory(apiVersion, kind, name, status, true)
 	}
@@ -278,15 +277,6 @@ func (s eventedStore) MergeObjectStatus(apiVersion, kind, name string, updates m
 func (s eventedStore) withRouter(router *api.Router) eventedStore {
 	s.Router = router
 	return s
-}
-
-func (s eventedStore) statusWithLifecycle(apiVersion, kind, name string, status map[string]any) map[string]any {
-	resource, found := s.resourceForStatus(apiVersion, kind, name)
-	return statusWithLifecycle(apiVersion, kind, name, resource, found, status)
-}
-
-func statusWithOwnership(apiVersion, kind string, status map[string]any) map[string]any {
-	return statusWithLifecycle(apiVersion, kind, "", api.Resource{}, false, status)
 }
 
 func copyStatusMap(status map[string]any) map[string]any {
@@ -337,137 +327,6 @@ func preserveStatusFields(status, current map[string]any, fields ...string) map[
 		}
 	}
 	return out
-}
-
-func statusWithLifecycle(apiVersion, kind, name string, resource api.Resource, found bool, status map[string]any) map[string]any {
-	out := make(map[string]any, len(status)+8)
-	for key, value := range status {
-		out[key] = value
-	}
-	if _, ok := out["owner"]; !ok {
-		if owner := resourceOwnerController(kind); owner != "" {
-			out["owner"] = owner
-		}
-	}
-	if _, ok := out["managedBy"]; !ok {
-		if managed, ok := statusvalue.ExtendedBool(out["managed"]); ok && !managed {
-			out["managedBy"] = "external"
-		} else {
-			out["managedBy"] = "routerd"
-		}
-	}
-	if _, ok := out["management"]; !ok {
-		switch strings.ToLower(strings.TrimSpace(fmt.Sprint(out["managedBy"]))) {
-		case "", "routerd":
-			out["management"] = "managed"
-		case "external":
-			out["management"] = "adopted"
-		default:
-			if managed, ok := statusvalue.ExtendedBool(out["managed"]); ok && !managed {
-				out["management"] = "adopted"
-			} else {
-				out["management"] = "managed"
-			}
-		}
-	}
-	if !syntheticLifecycleStatus(apiVersion, kind, name) {
-		if _, ok := out["ownerRef"]; !ok && strings.TrimSpace(name) != "" {
-			out["ownerRef"] = lifecycle.OwnerRefStatusMap(lifecycle.SelfOwnerRef(apiVersion, kind, name))
-		}
-		if _, ok := out["ownerKey"]; !ok && strings.TrimSpace(name) != "" {
-			out["ownerKey"] = lifecycle.OwnerKey(apiVersion, kind, name)
-		}
-		if found {
-			if refs := lifecycle.OwnerRefsStatusList(resource.Metadata.OwnerRefs); len(refs) > 0 {
-				if _, ok := out["ownerRefs"]; !ok {
-					out["ownerRefs"] = refs
-				}
-			}
-			if declaration, ok := lifecycle.DeclarationForResource(resource); ok {
-				if _, ok := out["lifecycleClass"]; !ok {
-					out["lifecycleClass"] = string(declaration.Class)
-				}
-			}
-		} else if declaration, ok := lifecycle.Lookup(apiVersion, kind); ok {
-			if _, ok := out["lifecycleClass"]; !ok {
-				out["lifecycleClass"] = string(declaration.Class)
-			}
-		}
-	}
-	return out
-}
-
-func (s eventedStore) resourceForStatus(apiVersion, kind, name string) (api.Resource, bool) {
-	if s.Router == nil || strings.TrimSpace(kind) == "" || strings.TrimSpace(name) == "" {
-		return api.Resource{}, false
-	}
-	for _, resource := range s.Router.Spec.Resources {
-		resourceAPIVersion := resource.APIVersion
-		if resourceAPIVersion == "" {
-			resourceAPIVersion = lifecycle.APIVersionForKind(resource.Kind)
-		}
-		if resourceAPIVersion == apiVersion && resource.Kind == kind && resource.Metadata.Name == name {
-			return resource, true
-		}
-	}
-	return api.Resource{}, false
-}
-
-func syntheticLifecycleStatus(apiVersion, kind, _ string) bool {
-	if apiVersion == api.RouterAPIVersion {
-		return true
-	}
-	switch kind {
-	case "ConntrackObserver", "ConntrackTuning", "Router":
-		return true
-	default:
-		return false
-	}
-}
-
-func resourceOwnerController(kind string) string {
-	switch kind {
-	case "IPv4StaticAddress", "IPv6DelegatedAddress", "IPv6RAAddress", "Interface":
-		return "address"
-	case "VirtualAddress":
-		return "vrrp"
-	case "BGPRouter", "BGPPeer":
-		return "bgp"
-	case "BFD":
-		return "bfd"
-	case "DHCPv4Client":
-		return "dhcpv4client"
-	case "DHCPv4Server", "DHCPv6Server", "DHCPv6Information", "IPv6RouterAdvertisement":
-		return "dhcpv6"
-	case "DNSResolver", "DNSForwarder", "DNSUpstream", "DNSZone":
-		return "dns-resolver"
-	case "DSLiteTunnel":
-		return "dslite"
-	case "TunnelInterface":
-		return "tunnel"
-	case "WireGuardInterface", "WireGuardPeer":
-		return "wireguard"
-	case "FirewallZone", "FirewallPolicy", "FirewallRule", "FirewallFlowPinhole", "ClientPolicy":
-		return "firewall"
-	case "NAT44Rule", "NAT44FlowDNATPinhole":
-		return "nat"
-	case "IPAddressSet", "LocalServiceRedirect":
-		return "ip-address-set"
-	case "NetworkAdoption":
-		return "network-adoption"
-	case "Package", "KernelModule":
-		return "package"
-	case "PPPoESession":
-		return "pppoesession"
-	case "IPv4Route", "IPv4StaticRoute", "IPv6StaticRoute", "EgressRoutePolicy", "HybridRoute", "SAMTransportProfile":
-		return "route"
-	case "ServiceUnit", "TailscaleNode", "HealthCheck", "NTPClient", "NTPServer", "SysctlProfile", "Sysctl", "LogRetention", "Hostname", "ConntrackTuning":
-		return "service-unit"
-	case "ConntrackObserver", "TrafficFlowLog":
-		return "conntrack"
-	default:
-		return ""
-	}
 }
 
 func (s eventedStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
@@ -624,8 +483,8 @@ func statusChanged(current, next map[string]any) bool {
 	return !reflect.DeepEqual(stableStatus(current), stableStatus(next))
 }
 
-func objectStatusChanged(kind string, current, next map[string]any) bool {
-	return statusChanged(current, statusWithOwnership("", kind, next))
+func objectStatusChanged(_ string, current, next map[string]any) bool {
+	return statusChanged(current, next)
 }
 
 func changedFields(currentStable, nextStable map[string]any) []string {

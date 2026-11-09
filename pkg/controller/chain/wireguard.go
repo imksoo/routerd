@@ -14,12 +14,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/imksoo/routerd/internal/statusvalue"
 	"github.com/imksoo/routerd/pkg/api"
-	"github.com/imksoo/routerd/pkg/apply"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
-	"github.com/imksoo/routerd/pkg/lifecycle"
 	"github.com/imksoo/routerd/pkg/mobilityconfig"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/samenrollment"
@@ -966,12 +963,8 @@ func samNodeWireGuardConfigured(spec api.SAMNodeWireGuardSpec) bool {
 		spec.PersistentKeepalive != 0
 }
 
-func (c WireGuardController) cleanupStaleResources(ctx context.Context) error {
+func (c WireGuardController) cleanupStaleResources(_ context.Context) error {
 	lister, ok := c.Store.(routerstate.ObjectStatusLister)
-	if !ok {
-		return nil
-	}
-	deleter, ok := c.Store.(routerstate.ObjectDeleteStore)
 	if !ok {
 		return nil
 	}
@@ -979,153 +972,21 @@ func (c WireGuardController) cleanupStaleResources(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	desiredInterfaces, err := apply.ConfiguredWireGuardInterfaces(c.Router)
-	if err != nil {
-		return err
-	}
-	desiredPeers := map[string]struct{}{}
-	desiredListenPorts := map[int]struct{}{}
-	desired := map[string]bool{}
-	for _, resource := range c.Router.Spec.Resources {
-		switch resource.Kind {
-		case "WireGuardInterface":
-			desired[lifecycle.OwnerKey(api.NetAPIVersion, "WireGuardInterface", resource.Metadata.Name)] = true
-			if spec, err := resource.WireGuardInterfaceSpec(); err == nil && spec.ListenPort > 0 {
-				desiredListenPorts[spec.ListenPort] = struct{}{}
-			}
-			if ifname := interfaceIfName(c.Router, resource.Metadata.Name); ifname != "" {
-				desired[lifecycle.OwnerKey(api.NetAPIVersion, "WireGuardInterface", ifname)] = true
-			}
-		case "WireGuardPeer":
-			desiredPeers[resource.Metadata.Name] = struct{}{}
-			desired[lifecycle.OwnerKey(api.NetAPIVersion, "WireGuardPeer", resource.Metadata.Name)] = true
-		}
-	}
-	staleInterfaces := map[string]struct{}{}
-	plan := lifecycle.PlanResourceTeardownGC(desired, statuses)
-	for _, action := range plan.Actions {
-		if action.Type != lifecycle.GCActionTeardownResource {
-			continue
-		}
-		item := action.Status
-		if item.APIVersion != api.NetAPIVersion || item.Kind != "WireGuardInterface" || !routerdManagedObjectStatus(item) {
-			continue
-		}
-		ifname := firstNonEmpty(statusvalue.Field(item.Status, "ifname"), statusvalue.Field(item.Status, "interface"), item.Name)
-		if desiredInterfaces[ifname] || desiredInterfaces[api.ResolveInterfaceIfName(c.Router, ifname)] {
-			ifname = ""
-		}
-		if err := c.teardownWireGuardInterface(ctx, item, ifname, desiredListenPorts, deleter); err != nil {
-			return err
-		}
-		staleInterfaces[item.Name] = struct{}{}
-		if ifname != "" {
-			staleInterfaces[ifname] = struct{}{}
-		}
-	}
-	for _, action := range plan.Actions {
-		if action.Type != lifecycle.GCActionTeardownResource {
-			continue
-		}
-		item := action.Status
-		if item.APIVersion != api.NetAPIVersion || item.Kind != "WireGuardPeer" || !routerdManagedObjectStatus(item) {
-			continue
-		}
-		if err := c.teardownWireGuardPeer(ctx, item, deleter); err != nil {
-			return err
+	configured := map[string]bool{}
+	for _, res := range c.Router.Spec.Resources {
+		if res.Kind == "WireGuardInterface" || res.Kind == "WireGuardPeer" {
+			configured[res.Kind+"/"+res.Metadata.Name] = true
 		}
 	}
 	for _, item := range statuses {
-		if item.APIVersion != api.NetAPIVersion || item.Kind != "WireGuardPeer" || !routerdManagedObjectStatus(item) {
+		if item.APIVersion != api.NetAPIVersion || (item.Kind != "WireGuardInterface" && item.Kind != "WireGuardPeer") || configured[item.Kind+"/"+item.Name] {
 			continue
 		}
-		if _, peerStillDesired := desiredPeers[item.Name]; !peerStillDesired {
-			continue
-		}
-		if _, interfaceRemoved := staleInterfaces[statusvalue.Field(item.Status, "interface")]; !interfaceRemoved {
-			continue
-		}
-		if err := c.teardownWireGuardPeer(ctx, item, deleter); err != nil {
-			return err
+		if c.Logger != nil {
+			c.Logger.Warn("WireGuard status is no longer configured; cleanup requires review", "kind", item.Kind, "name", item.Name)
 		}
 	}
 	return nil
-}
-
-func (c WireGuardController) teardownWireGuardInterface(ctx context.Context, item routerstate.ObjectStatus, ifname string, desiredListenPorts map[int]struct{}, deleter routerstate.ObjectDeleteStore) error {
-	if ifname != "" && !c.DryRun && platform.CurrentOS() != platform.OSLinux {
-		if err := c.deleteWireGuardInterface(ctx, ifname); err != nil {
-			return err
-		}
-	}
-	if port := wireGuardHostFirewallPort(item.Status); port > 0 {
-		if _, stillDesired := desiredListenPorts[port]; !stillDesired && !c.DryRun {
-			if err := c.deleteWireGuardInputAccept(ctx, port); err != nil {
-				return err
-			}
-		}
-	}
-	if err := deleter.DeleteObject(item.APIVersion, item.Kind, item.Name); err != nil {
-		return err
-	}
-	return c.publishWireGuardRemoved(ctx, item, map[string]string{"interface": ifname})
-}
-
-func (c WireGuardController) teardownWireGuardPeer(ctx context.Context, item routerstate.ObjectStatus, deleter routerstate.ObjectDeleteStore) error {
-	if err := deleter.DeleteObject(item.APIVersion, item.Kind, item.Name); err != nil {
-		return err
-	}
-	return c.publishWireGuardRemoved(ctx, item, map[string]string{"interface": statusvalue.Field(item.Status, "interface")})
-}
-
-func (c WireGuardController) publishWireGuardRemoved(ctx context.Context, item routerstate.ObjectStatus, attrs map[string]string) error {
-	if c.Bus == nil {
-		return nil
-	}
-	event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.wireguard.resource.removed", daemonapi.SeverityInfo)
-	event.Resource = &daemonapi.ResourceRef{APIVersion: item.APIVersion, Kind: item.Kind, Name: item.Name}
-	event.Attributes = attrs
-	return c.Bus.Publish(ctx, event)
-}
-
-func (c WireGuardController) deleteWireGuardInterface(ctx context.Context, ifname string) error {
-	run := wireguard.DefaultCommandRunner
-	out, err := run(ctx, "ip", "link", "delete", "dev", ifname)
-	if err == nil || wireGuardDeleteMissingLink(out, err) {
-		return nil
-	}
-	return fmt.Errorf("delete stale WireGuard interface %s: %w: %s", ifname, err, strings.TrimSpace(string(out)))
-}
-
-func wireGuardDeleteMissingLink(out []byte, err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := strings.ToLower(strings.TrimSpace(string(out)) + " " + err.Error())
-	for _, needle := range []string{"cannot find device", "does not exist", "not found", "no such device"} {
-		if strings.Contains(msg, needle) {
-			return true
-		}
-	}
-	return false
-}
-
-func routerdManagedObjectStatus(item routerstate.ObjectStatus) bool {
-	if managed, ok := statusvalue.ExtendedBool(item.Status["managed"]); ok && !managed {
-		return false
-	}
-	managedBy := firstNonEmpty(item.ManagedBy, statusvalue.Field(item.Status, "managedBy"))
-	if strings.EqualFold(managedBy, "external") {
-		return false
-	}
-	management := firstNonEmpty(item.Management, statusvalue.Field(item.Status, "management"))
-	if strings.EqualFold(management, "adopted") {
-		return false
-	}
-	if managedBy == "" && management == "" && resourceOwnerController(item.Kind) == "" {
-		return false
-	}
-	return true
 }
 
 func (c WireGuardController) reconcileInterface(ctx context.Context, resource api.Resource, peersFrom []wireGuardPeersFromStatus, pendingSources []string) error {
@@ -1198,10 +1059,9 @@ func (c WireGuardController) reconcileInterface(ctx context.Context, resource ap
 		observed, statusErr = c.interfaceStatus(ctx, cfg.Name)
 	}
 	firewallStatus := map[string]any{
-		"managedBy": "routerd",
-		"protocol":  "udp",
-		"port":      cfg.ListenPort,
-		"chain":     "INPUT",
+		"protocol": "udp",
+		"port":     cfg.ListenPort,
+		"chain":    "INPUT",
 	}
 	if cfg.ListenPort > 0 {
 		if platform.CurrentOS() != platform.OSLinux {
@@ -1269,24 +1129,6 @@ func (c WireGuardController) reconcileInterface(ctx context.Context, resource ap
 	return nil
 }
 
-func wireGuardHostFirewallPort(status map[string]any) int {
-	hostFirewall := statusValueMap(status["hostFirewall"])
-	if !strings.EqualFold(statusvalue.Field(hostFirewall, "managedBy"), "routerd") {
-		return 0
-	}
-	if !strings.EqualFold(statusvalue.Field(hostFirewall, "protocol"), "udp") {
-		return 0
-	}
-	if !strings.EqualFold(statusvalue.Field(hostFirewall, "chain"), "INPUT") {
-		return 0
-	}
-	port, ok := statusInt(hostFirewall["port"])
-	if !ok || port <= 0 {
-		return 0
-	}
-	return port
-}
-
 func (c WireGuardController) selfNodeRef(spec api.WireGuardInterfaceSpec) string {
 	if self := strings.TrimSpace(spec.SelfNodeRef); self != "" {
 		return self
@@ -1314,20 +1156,8 @@ func (c WireGuardController) ensureWireGuardInputAccept(ctx context.Context, por
 	return nil
 }
 
-func (c WireGuardController) deleteWireGuardInputAccept(ctx context.Context, port int) error {
-	if port <= 0 || platform.CurrentOS() != platform.OSLinux {
-		return nil
-	}
-	deleteRule := []string{"-D", "INPUT", "-p", "udp", "--dport", strconv.Itoa(port), "-j", "ACCEPT"}
-	if out, err := c.runWireGuardHostCommand(ctx, "iptables", deleteRule...); err != nil && !wireGuardIPTablesRuleMissing(out, err) {
-		return fmt.Errorf("iptables %s: %w: %s", strings.Join(deleteRule, " "), err, strings.TrimSpace(string(out)))
-	}
-	return nil
-}
-
 func (c WireGuardController) runWireGuardHostCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
-	run := wireguard.DefaultCommandRunner
-	return run(ctx, name, args...)
+	return wireguard.DefaultCommandRunner(ctx, name, args...)
 }
 
 func wireGuardIPTablesRuleMissing(out []byte, err error) bool {
