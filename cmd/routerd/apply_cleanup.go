@@ -40,25 +40,6 @@ func appendPrefixDelegationStateWarnings(result *apply.Result, router *api.Route
 	}
 }
 
-func appendUniqueOrphans(existing, additions []apply.OrphanedArtifact) []apply.OrphanedArtifact {
-	seen := map[string]int{}
-	for i, orphan := range existing {
-		seen[orphan.Name+"/"+orphan.Remediation] = i
-	}
-	for _, orphan := range additions {
-		id := orphan.Name + "/" + orphan.Remediation
-		if index, ok := seen[id]; ok {
-			if existing[index].Owner == "" && orphan.Owner != "" {
-				existing[index] = orphan
-			}
-			continue
-		}
-		seen[id] = len(existing)
-		existing = append(existing, orphan)
-	}
-	return existing
-}
-
 func recordLastAppliedPath(router *api.Router, store routerstate.Store, path string) error {
 	if path == "" {
 		return nil

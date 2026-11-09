@@ -675,10 +675,6 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 		}
 	}
 	applyWarnings := append([]string{}, result.Warnings...)
-	var plannedOrphans []apply.OrphanedArtifact
-	if opts.DryRun {
-		plannedOrphans = result.Orphans
-	}
 	outcome.Stage = "observe"
 	dynamicRouters, err = controllerchain.BuildDynamicRouteSAMObjectStatusRouters(effectiveRouter, stateStore, time.Now().UTC(), platform.CurrentOS())
 	if err != nil {
@@ -694,10 +690,6 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 		result.Generation = generation
 	}
 	result.Warnings = append(result.Warnings, applyWarnings...)
-	result.Orphans = appendUniqueOrphans(result.Orphans, plannedOrphans)
-	if len(result.Orphans) > 0 && result.Phase == "Healthy" {
-		result.Phase = "Drifted"
-	}
 	if opts.DryRun && result.Phase == "Healthy" {
 		for _, resource := range result.Resources {
 			if resource.Phase == "Unknown" {

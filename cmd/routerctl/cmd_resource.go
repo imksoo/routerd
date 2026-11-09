@@ -544,8 +544,6 @@ func canonicalShowKind(kind string) string {
 		"kmod":                            "KernelModule",
 		"inventory":                       "Inventory",
 		"inv":                             "Inventory",
-		"orphan":                          "Orphan",
-		"orphans":                         "Orphan",
 		"route":                           "EgressRoutePolicy",
 		"routeset":                        "EgressRoutePolicy",
 		"ipv4route":                       "IPv4Route",

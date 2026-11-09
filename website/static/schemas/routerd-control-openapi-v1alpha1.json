@@ -45,41 +45,6 @@
               "generation": {
                 "type": "integer"
               },
-              "orphans": {
-                "items": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "kind": {
-                      "type": "string"
-                    },
-                    "name": {
-                      "type": "string"
-                    },
-                    "observed": {
-                      "additionalProperties": {
-                        "type": "string"
-                      },
-                      "type": "object"
-                    },
-                    "owner": {
-                      "type": "string"
-                    },
-                    "reason": {
-                      "type": "string"
-                    },
-                    "remediation": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "kind",
-                    "name",
-                    "reason"
-                  ],
-                  "type": "object"
-                },
-                "type": "array"
-              },
               "phase": {
                 "type": "string"
               },
@@ -720,41 +685,6 @@
             "properties": {
               "generation": {
                 "type": "integer"
-              },
-              "orphans": {
-                "items": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "kind": {
-                      "type": "string"
-                    },
-                    "name": {
-                      "type": "string"
-                    },
-                    "observed": {
-                      "additionalProperties": {
-                        "type": "string"
-                      },
-                      "type": "object"
-                    },
-                    "owner": {
-                      "type": "string"
-                    },
-                    "reason": {
-                      "type": "string"
-                    },
-                    "remediation": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "kind",
-                    "name",
-                    "reason"
-                  ],
-                  "type": "object"
-                },
-                "type": "array"
               },
               "phase": {
                 "type": "string"
