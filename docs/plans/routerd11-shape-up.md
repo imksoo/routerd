@@ -26,7 +26,9 @@
 
 - 同日、pve-rt07はVM稼働中だがゲストエージェントが断続的に応答せず、現行CLIの転送・比較を中断した。PVEホストのルート領域は使用率29%、inodeは3%だったが、ゲスト内の容量とエージェント不調の原因は未確認。作業用ファイルは削除した。
 
-- 同日、所有者の指示でpve-rt07（VM 169）を強制リセットした。再起動後はゲストエージェントとrouterdがactive、routerdはHealthy、BGP 2 peerがEstablishedで、IPIP 2本の対向へのpingが成功した。ゲストの `/` 使用率は容量2%、inode 1%。エージェント不調の原因と長期安定性は未確認。
+- 同日、所有者の指示でpve-rt07（VM 169）を強制リセットした。再起動後はゲストエージェントとrouterdがactive、routerdはHealthy、BGP 2 peerがEstablishedで、IPIP 2本の対向へのpingが成功した。ゲストの `/` 使用率は容量2%、inode 1%。その後、ゲストエージェントの読み取りが再びタイムアウトした。不調の原因は未確認。
+
+- 同日、homert02の実設定・実状態DBを使い、`0ae7dc6d` のCLIと稼働版の `dynamic render` を比較した。削除済みの所有権フィールドを除く構造は一致し、稼働版の比較前後の出力も一致した。変更後daemonによるapply・復旧は未確認。一時バイナリは削除した。
 
 - 2026-11-09、k8s-rt02の実設定・実状態DBを使い、`a8c87aca` のCLIと稼働版の `dynamic render` を比較した。削除済みの `Interface.spec.owner` と `metadata.ownerRefs` を除く構造差分は0件で、稼働版の比較前後の出力も一致した。変更後daemonの通信・復旧は未確認。一時ファイルは削除した。
 
