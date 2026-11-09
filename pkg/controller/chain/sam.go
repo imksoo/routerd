@@ -31,17 +31,13 @@ type SAMController struct {
 	Store               Store
 	LocalCaptureIntents []dynamicconfig.LocalCaptureIntent
 	DryRun              bool
-	OS                  platform.OS
 }
 
 func (c SAMController) Reconcile(ctx context.Context) error {
 	if c.Router == nil || c.Store == nil {
 		return nil
 	}
-	targetOS := c.OS
-	if targetOS == "" {
-		targetOS = platform.CurrentOS()
-	}
+	targetOS := platform.CurrentOS()
 	if targetOS != platform.OSLinux && targetOS != platform.OSFreeBSD {
 		return nil
 	}
@@ -503,10 +499,7 @@ func (c SAMController) reconcileProxyARPSysctls(ctx context.Context, actions []s
 	if c.DryRun {
 		return nil
 	}
-	targetOS := c.OS
-	if targetOS == "" {
-		targetOS = platform.CurrentOS()
-	}
+	targetOS := platform.CurrentOS()
 	applier := defaultSAMProxyNeighborApplier()
 	desired := map[string]bool{}
 	if targetOS == platform.OSFreeBSD {
