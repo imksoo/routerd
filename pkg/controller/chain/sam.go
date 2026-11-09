@@ -24,8 +24,14 @@ type samProxyNeighborApplier interface {
 	SetIPForwarding(ctx context.Context, enabled bool) error
 	EnsureProxyNeighbor(ctx context.Context, address, ifname string) error
 	DeleteProxyNeighbor(ctx context.Context, address, ifname string) error
+	ListProxyNeighbors(ctx context.Context) ([]samObservedProxyNeighbor, error)
 	EnsureOSAddressAbsent(ctx context.Context, address string) (samOSAddressDeassignResult, error)
 	ReconcileForwardPaths(ctx context.Context, paths []sam.CaptureAction, preserveExisting bool) error
+}
+
+type samObservedProxyNeighbor struct {
+	address       string
+	interfaceName string
 }
 
 type samGratuitousARPAnnouncer interface {
@@ -44,6 +50,7 @@ type SAMController struct {
 	Router              *api.Router
 	Store               Store
 	LocalCaptureIntents []dynamicconfig.LocalCaptureIntent
+	MobilityReadyPools  map[string]bool
 	DryRun              bool
 	OS                  platform.OS
 	Applier             samProxyNeighborApplier
@@ -113,8 +120,9 @@ func (c SAMController) Reconcile(ctx context.Context) (resultErr error) {
 	if err := c.reconcileForwardPaths(ctx, state); err != nil {
 		return err
 	}
-	if err := c.cleanupReleasedProxyNeighbors(ctx, actions, state); err != nil {
-		return err
+	cleanupErr := c.cleanupReleasedProxyNeighbors(ctx, actions, state)
+	if cleanupErr != nil && !errors.Is(cleanupErr, errSAMCapturePlanPending) {
+		return cleanupErr
 	}
 	for _, action := range actions {
 		if action.Kind != "proxy-neighbor" || blocked[action.IntentID] || c.DryRun {
@@ -135,9 +143,9 @@ func (c SAMController) Reconcile(ctx context.Context) (resultErr error) {
 		}
 	}
 	if len(failures) != 0 {
-		return fmt.Errorf("SAM capture failed: %s", strings.Join(failures, "; "))
+		return errors.Join(cleanupErr, fmt.Errorf("SAM capture failed: %s", strings.Join(failures, "; ")))
 	}
-	return c.saveAppliedDataplane(actions, state)
+	return errors.Join(cleanupErr, c.saveAppliedDataplane(actions, state))
 }
 
 type samAppliedProxyNeighbor struct {
@@ -326,29 +334,86 @@ func samHeldCaptures(intents []dynamicconfig.LocalCaptureIntent) (map[string]sam
 	return held, proxyARP, nil
 }
 
-// cleanupReleasedProxyNeighbors uses observed, successfully-applied state only.
-// Desired capture remains exclusively in LocalCaptureIntents; status is never
-// consulted to recreate it.
+var errSAMCapturePlanPending = errors.New("SAM proxy neighbor cleanup awaits current MobilityPool plans")
+
+// cleanupReleasedProxyNeighbors compares actual proxy entries with current capture intents.
 func (c SAMController) cleanupReleasedProxyNeighbors(ctx context.Context, actions []sam.CaptureAction, state samReconcileState) error {
+	if c.DryRun {
+		return nil
+	}
 	desired := map[string]bool{}
+	key := func(address, ifname string) string {
+		return strings.TrimSpace(ifname) + "\x00" + strings.TrimSpace(address)
+	}
 	for _, action := range actions {
 		if action.Kind == "proxy-neighbor" {
-			desired[samProxyNeighborKey(action.IntentID, action.Address, action.Interface)] = true
+			desired[key(action.Address, action.Interface)] = true
 		}
 	}
-	// CaptureHold is deliberately not lowered to new actions. Retain only an
-	// effect we previously recorded as applied for that same intent; it must not
-	// turn an uncertain observation into a new capture.
-	for _, applied := range state.heldProxyNeighbors {
-		desired[samProxyNeighborKey(applied.ID, applied.Address, applied.Interface)] = true
+	for _, intent := range c.LocalCaptureIntents {
+		if intent.Disposition == dynamicconfig.CaptureHold && (intent.CaptureType == "proxy-arp" || intent.CaptureType == "provider-secondary-ip") {
+			desired[key(intent.Address, intent.CaptureInterface)] = true
+		}
 	}
 	applier := c.Applier
 	if applier == nil {
 		applier = defaultSAMProxyNeighborApplier()
 	}
+	targetOS := c.OS
+	if targetOS == "" {
+		targetOS = platform.CurrentOS()
+	}
+	if targetOS == platform.OSLinux {
+		var pendingPools []netip.Prefix
+		for _, resource := range c.Router.Spec.Resources {
+			if resource.Kind != "MobilityPool" || c.MobilityReadyPools[resource.Metadata.Name] {
+				continue
+			}
+			spec, err := resource.MobilityPoolSpec()
+			if err != nil {
+				return err
+			}
+			prefix, err := netip.ParsePrefix(spec.Prefix)
+			if err != nil || !prefix.Addr().Is4() {
+				return fmt.Errorf("invalid MobilityPool/%s prefix %q", resource.Metadata.Name, spec.Prefix)
+			}
+			pendingPools = append(pendingPools, prefix.Masked())
+		}
+		observed, err := applier.ListProxyNeighbors(ctx)
+		if err != nil {
+			return fmt.Errorf("list SAM proxy neighbors: %w", err)
+		}
+		var pending bool
+		for _, neighbor := range observed {
+			if desired[key(neighbor.address, neighbor.interfaceName)] {
+				continue
+			}
+			address, err := netip.ParsePrefix(neighbor.address)
+			if err != nil {
+				return fmt.Errorf("invalid observed proxy neighbor %q: %w", neighbor.address, err)
+			}
+			unknown := false
+			for _, pool := range pendingPools {
+				if pool.Contains(address.Addr()) {
+					unknown = true
+					break
+				}
+			}
+			if unknown {
+				pending = true
+				continue
+			}
+			if err := applier.DeleteProxyNeighbor(ctx, neighbor.address, neighbor.interfaceName); err != nil {
+				return fmt.Errorf("remove stale SAM proxy neighbor %s dev %s: %w", neighbor.address, neighbor.interfaceName, err)
+			}
+		}
+		if pending {
+			return errSAMCapturePlanPending
+		}
+		return nil
+	}
 	for _, applied := range state.previousProxyNeighbors {
-		key := samProxyNeighborKey(applied.ID, applied.Address, applied.Interface)
-		if desired[key] || c.DryRun {
+		if desired[key(applied.Address, applied.Interface)] {
 			continue
 		}
 		if err := applier.DeleteProxyNeighbor(ctx, applied.Address, applied.Interface); err != nil {
@@ -674,9 +739,19 @@ func (c SAMController) reconcileProxyARPSysctls(ctx context.Context, actions []s
 	}
 	sort.Strings(ordered)
 	state.nextProxyARP = map[string]samAppliedProxyARP{}
+	pendingPool := false
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.Kind == "MobilityPool" && !c.MobilityReadyPools[resource.Metadata.Name] {
+			pendingPool = true
+			break
+		}
+	}
 	for _, iface := range ordered {
-		if !desired[iface] && state.uncertainProxyARP[iface] {
+		if !desired[iface] && (state.uncertainProxyARP[iface] || pendingPool) {
 			state.nextProxyARP[iface] = state.previousProxyARP[iface]
+			if pendingPool {
+				state.recordError = errors.Join(state.recordError, errSAMCapturePlanPending)
+			}
 			continue
 		}
 		if err := applier.SetProxyARP(ctx, iface, desired[iface]); err != nil {

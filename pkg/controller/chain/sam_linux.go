@@ -157,6 +157,32 @@ func (netlinkSAMProxyNeighborApplier) EnsureProxyNeighbor(_ context.Context, add
 	return netlink.NeighSet(neigh)
 }
 
+func (netlinkSAMProxyNeighborApplier) ListProxyNeighbors(ctx context.Context) ([]samObservedProxyNeighbor, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	neighbors, err := netlink.NeighProxyList(0, netlink.FAMILY_V4)
+	if err != nil {
+		return nil, err
+	}
+	var out []samObservedProxyNeighbor
+	for _, neighbor := range neighbors {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		ip := neighbor.IP.To4()
+		if ip == nil || neighbor.Flags&netlink.NTF_PROXY == 0 {
+			continue
+		}
+		link, err := netlink.LinkByIndex(neighbor.LinkIndex)
+		if err != nil {
+			return nil, fmt.Errorf("lookup proxy neighbor interface %d: %w", neighbor.LinkIndex, err)
+		}
+		out = append(out, samObservedProxyNeighbor{address: ip.String() + "/32", interfaceName: link.Attrs().Name})
+	}
+	return out, nil
+}
+
 func (netlinkSAMProxyNeighborApplier) DeleteProxyNeighbor(_ context.Context, address, ifname string) error {
 	_, neigh, err := samProxyNeighbor(address, ifname)
 	if err != nil {

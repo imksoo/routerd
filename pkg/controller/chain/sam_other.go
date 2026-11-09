@@ -33,6 +33,10 @@ func (unsupportedSAMProxyNeighborApplier) EnsureProxyNeighbor(context.Context, s
 	return fmt.Errorf("SAM capture not implemented on this OS")
 }
 
+func (unsupportedSAMProxyNeighborApplier) ListProxyNeighbors(context.Context) ([]samObservedProxyNeighbor, error) {
+	return nil, nil
+}
+
 func (unsupportedSAMProxyNeighborApplier) DeleteProxyNeighbor(context.Context, string, string) error {
 	return nil
 }

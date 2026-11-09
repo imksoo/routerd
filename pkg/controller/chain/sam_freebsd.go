@@ -126,6 +126,10 @@ func freeBSDRouteOutputInterface(out []byte) string {
 	return ""
 }
 
+func (freeBSDSAMProxyNeighborApplier) ListProxyNeighbors(context.Context) ([]samObservedProxyNeighbor, error) {
+	return nil, nil
+}
+
 func (freeBSDSAMProxyNeighborApplier) DeleteProxyNeighbor(ctx context.Context, address, ifname string) error {
 	_, err := samIPv4Address(address)
 	return err

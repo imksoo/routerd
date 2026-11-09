@@ -2475,6 +2475,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current.Router = view.EffectiveRouter
 			current.Store = store.withRouter(view.EffectiveRouter)
 			current.LocalCaptureIntents = view.MobilityDataplane.Captures
+			current.MobilityReadyPools = view.MobilityReadyPools
 			// FreeBSD routeguard intentionally refuses to delete an owned ARP
 			// neighbor while a stale /32 resolves through a tunnel. Tear down
 			// owned routes from the same effective route view first. If that
