@@ -4581,11 +4581,9 @@ func ipv4StaticAddressDesiredByAnother(router *api.Router, store Store, resource
 			if err != nil || spec.Family != "ipv4" || interfaceIfName(router, spec.Interface) != ifname {
 				continue
 			}
-			if spec.Mode == "vrrp" {
-				if store == nil || !strings.EqualFold(cleanStatusString(store.ObjectStatus(api.NetAPIVersion, resource.Kind, resource.Metadata.Name)["role"]), "master") {
-					continue
-				}
-			} else if spec.Mode != "" && spec.Mode != "static" {
+			// The VRRP backend controls whether its configured address is present.
+			// Its kernel update can precede or follow publication of the role.
+			if spec.Mode != "" && spec.Mode != "static" && spec.Mode != "vrrp" {
 				continue
 			}
 			value, err := render.VirtualAddress(router, spec)
