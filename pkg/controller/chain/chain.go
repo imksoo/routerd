@@ -2270,8 +2270,8 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current.Router = effective
 			return didWorkError(current.reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "ipv4-policy-route", Subs: statusSubscriptions("DSLiteTunnel", "HealthCheck", "IPv4StaticAddress", "Interface", "VirtualAddress"), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			effective, err := effectiveForReconcile()
+		framework.FuncController{ControllerName: "ipv4-policy-route", Subs: withDynamicConfigPartSubscriptions(statusSubscriptions("DSLiteTunnel", "HealthCheck", "IPv4StaticAddress", "Interface", "VirtualAddress")), PeriodicFunc: func(ctx context.Context) (bool, error) {
+			effective, err := effectiveDynamicForReconcile()
 			if err != nil {
 				return false, err
 			}
