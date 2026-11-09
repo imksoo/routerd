@@ -23,16 +23,13 @@ import (
 	"github.com/imksoo/routerd/pkg/sysctlprofile"
 )
 
-type outputCommandFunc func(ctx context.Context, name string, args ...string) ([]byte, error)
-
 type SysctlController struct {
 	Router *api.Router
 	Bus    interface {
 		Publish(context.Context, daemonapi.DaemonEvent) error
 	}
-	Store   Store
-	BaseDir string
-	DryRun  bool
+	Store  Store
+	DryRun bool
 }
 
 func (c SysctlController) Reconcile(ctx context.Context) error {
@@ -207,11 +204,7 @@ func (c SysctlController) applyOne(ctx context.Context, name, kind string, spec 
 	persistentPath := ""
 	persistentChanged := false
 	if spec.Persistent {
-		baseDir := c.BaseDir
-		if baseDir == "" {
-			baseDir = "/etc/sysctl.d"
-		}
-		persistentPath = sysctlprofile.PersistentPath(baseDir, name)
+		persistentPath = sysctlprofile.PersistentPath("/etc/sysctl.d", name)
 		data := sysctlprofile.PersistentContents(spec.Key, spec.Value)
 		var err error
 		persistentChanged, err = writeFileIfChanged(persistentPath, data, 0644, c.DryRun)
