@@ -247,8 +247,8 @@ func (c IPv4RouteController) appliedMobilityRoutes() ([]mobilityAppliedIPv4Route
 	if !statusValuePresent(status, "appliedMobilityRoutes") {
 		return nil, nil
 	}
-	var decoded []mobilityAppliedIPv4Route
-	if !decodeAppliedDataplaneStatus(status["appliedMobilityRoutes"], &decoded) || decoded == nil {
+	decoded, ok := decodeAppliedDataplaneStatus[mobilityAppliedIPv4Route](status["appliedMobilityRoutes"])
+	if !ok || decoded == nil {
 		return nil, fmt.Errorf("must be a non-null JSON array")
 	}
 	byID := map[string]mobilityAppliedIPv4Route{}
@@ -473,8 +473,8 @@ func (c IPv4StaticAddressController) appliedMobilityStaticAddresses() ([]mobilit
 	if !statusValuePresent(status, "appliedMobilityStaticAddresses") {
 		return nil, nil
 	}
-	var decoded []mobilityAppliedIPv4Address
-	if !decodeAppliedDataplaneStatus(status["appliedMobilityStaticAddresses"], &decoded) || decoded == nil {
+	decoded, ok := decodeAppliedDataplaneStatus[mobilityAppliedIPv4Address](status["appliedMobilityStaticAddresses"])
+	if !ok || decoded == nil {
 		return nil, fmt.Errorf("must be a non-null JSON array")
 	}
 	byID := map[string]mobilityAppliedIPv4Address{}

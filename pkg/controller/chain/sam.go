@@ -365,8 +365,8 @@ func samAppliedProxyNeighbors(value any, present bool) ([]samAppliedProxyNeighbo
 	if !present {
 		return nil, nil
 	}
-	var decoded []samAppliedProxyNeighbor
-	if !decodeAppliedDataplaneStatus(value, &decoded) || decoded == nil {
+	decoded, ok := decodeAppliedDataplaneStatus[samAppliedProxyNeighbor](value)
+	if !ok || decoded == nil {
 		return nil, fmt.Errorf("must be a non-null JSON array")
 	}
 	byKey := map[string]samAppliedProxyNeighbor{}
@@ -397,8 +397,8 @@ func samAppliedForwardPaths(value any, present bool) ([]samAppliedForwardPath, e
 	if !present {
 		return nil, nil
 	}
-	var decoded []samAppliedForwardPath
-	if !decodeAppliedDataplaneStatus(value, &decoded) || decoded == nil {
+	decoded, ok := decodeAppliedDataplaneStatus[samAppliedForwardPath](value)
+	if !ok || decoded == nil {
 		return nil, fmt.Errorf("must be a non-null JSON array")
 	}
 	byKey := map[string]samAppliedForwardPath{}
@@ -427,8 +427,8 @@ func samAppliedProxyARPSettings(value any, present bool, targetOS platform.OS) (
 	if !present {
 		return map[string]samAppliedProxyARP{}, nil
 	}
-	var decoded []samAppliedProxyARP
-	if !decodeAppliedDataplaneStatus(value, &decoded) || decoded == nil {
+	decoded, ok := decodeAppliedDataplaneStatus[samAppliedProxyARP](value)
+	if !ok || decoded == nil {
 		return nil, fmt.Errorf("must be a non-null JSON array")
 	}
 	settings := make(map[string]samAppliedProxyARP, len(decoded))
@@ -501,17 +501,18 @@ func statusValuePresent(status map[string]any, key string) bool {
 // effects. Desired state never crosses this boundary: it comes only from the
 // typed MobilityDataplane plan. JSON keeps SQLite-decoded map values and
 // in-memory typed test/runtime values on the same small, validated path.
-func decodeAppliedDataplaneStatus(value any, target any) bool {
+func decodeAppliedDataplaneStatus[T any](value any) ([]T, bool) {
 	data, err := json.Marshal(value)
 	if err != nil {
-		return false
+		return nil, false
 	}
+	var decoded []T
 	decoder := json.NewDecoder(strings.NewReader(string(data)))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		return false
+	if err := decoder.Decode(&decoded); err != nil {
+		return nil, false
 	}
-	return decoder.Decode(&struct{}{}) == io.EOF
+	return decoded, decoder.Decode(&struct{}{}) == io.EOF
 }
 
 func samProxyNeighborKey(id, address, ifname string) string {
