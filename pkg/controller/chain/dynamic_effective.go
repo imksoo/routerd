@@ -30,17 +30,6 @@ type dynamicRouteSAMView struct {
 	MobilityDataplane dynamicconfig.MobilityDataplanePlan
 }
 
-// BuildDynamicRouteSAMEffectiveRouter returns the route-facing effective router
-// used by generic route controllers after dynamic config and Hybrid lowerings.
-// Mobility effects are deliberately returned separately as a typed plan.
-func BuildDynamicRouteSAMEffectiveRouter(startup *api.Router, store any, now time.Time, targetOS platform.OS) (*api.Router, error) {
-	view, err := buildDynamicRouteSAMView(startup, store, now, targetOS)
-	if err != nil {
-		return nil, err
-	}
-	return view.RouteRouter, nil
-}
-
 // BuildDynamicRouteSAMObjectStatusRouters returns the effective resource views
 // whose objects can legitimately own status rows. EffectiveRouter keeps
 // dynamic config resources visible to their controllers; RouteRouter includes
