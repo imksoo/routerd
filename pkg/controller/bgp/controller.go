@@ -49,36 +49,6 @@ type dynamicConfigPartLister interface {
 	ListDynamicConfigParts() ([]routerstate.DynamicConfigPartRecord, error)
 }
 
-type GoBGPServer interface {
-	Serve()
-	Stop()
-	GetBgp(context.Context, *gobgpapi.GetBgpRequest) (*gobgpapi.GetBgpResponse, error)
-	StartBgp(context.Context, *gobgpapi.StartBgpRequest) error
-	StopBgp(context.Context, *gobgpapi.StopBgpRequest) error
-	AddPeer(context.Context, *gobgpapi.AddPeerRequest) error
-	UpdatePeer(context.Context, *gobgpapi.UpdatePeerRequest) (*gobgpapi.UpdatePeerResponse, error)
-	ResetPeer(context.Context, *gobgpapi.ResetPeerRequest) error
-	DeletePeer(context.Context, *gobgpapi.DeletePeerRequest) error
-	ListPeer(context.Context, *gobgpapi.ListPeerRequest, func(*gobgpapi.Peer)) error
-	ListDefinedSet(context.Context, *gobgpapi.ListDefinedSetRequest, func(*gobgpapi.DefinedSet)) error
-	ListPolicy(context.Context, *gobgpapi.ListPolicyRequest, func(*gobgpapi.Policy)) error
-	ListPolicyAssignment(context.Context, *gobgpapi.ListPolicyAssignmentRequest, func(*gobgpapi.PolicyAssignment)) error
-	SetPolicies(context.Context, *gobgpapi.SetPoliciesRequest) error
-	SetPolicyAssignment(context.Context, *gobgpapi.SetPolicyAssignmentRequest) error
-	AddPeerGroup(context.Context, *gobgpapi.AddPeerGroupRequest) error
-	DeletePeerGroup(context.Context, *gobgpapi.DeletePeerGroupRequest) error
-	ListPeerGroup(context.Context, *gobgpapi.ListPeerGroupRequest, func(*gobgpapi.PeerGroup)) error
-	AddDynamicNeighbor(context.Context, *gobgpapi.AddDynamicNeighborRequest) error
-	DeleteDynamicNeighbor(context.Context, *gobgpapi.DeleteDynamicNeighborRequest) error
-	ListDynamicNeighbor(context.Context, *gobgpapi.ListDynamicNeighborRequest, func(*gobgpapi.DynamicNeighbor)) error
-	AddPath(context.Context, *gobgpapi.AddPathRequest) (*gobgpapi.AddPathResponse, error)
-	DeletePath(context.Context, *gobgpapi.DeletePathRequest) error
-	ListPath(context.Context, *gobgpapi.ListPathRequest, func(*gobgpapi.Destination)) error
-	WatchEvent(context.Context, *gobgpapi.WatchEventRequest, func(*gobgpapi.WatchEventResponse) error) error
-	AppliedConfig(context.Context) (bgpdaemon.AppliedConfig, error)
-	SaveAppliedConfig(context.Context, bgpdaemon.AppliedConfig) error
-}
-
 type FIBSyncer interface {
 	SyncBGP(ctx context.Context, routes []FIBRoute) (FIBSyncResult, error)
 }
@@ -110,10 +80,9 @@ type Controller struct {
 	// transactions. Framework reconciles are gated by their worker.
 	MutationGate *sync.RWMutex
 
-	Server    GoBGPServer
-	NewServer func() GoBGPServer
-	Daemon    manageddaemon.Spec
-	FIB       FIBSyncer
+	Server *remoteGoBGPServer
+	Daemon manageddaemon.Spec
+	FIB    FIBSyncer
 
 	MaxPrefixes         int
 	WatchReconnectDelay time.Duration
@@ -612,12 +581,7 @@ func (c *Controller) hydrateAppliedState(applied bgpdaemon.AppliedConfig) {
 func (c *Controller) ensureServer(ctx context.Context, spec routerapi.BGPRouterSpec) error {
 	key := bgpGlobalKey(spec)
 	if c.Server == nil {
-		if c.NewServer != nil {
-			c.Server = c.NewServer()
-		} else {
-			c.Server = newRemoteGoBGPServer(c.daemonSpec())
-		}
-		c.Server.Serve()
+		c.Server = newRemoteGoBGPServer(c.daemonSpec())
 	}
 	req := &gobgpapi.StartBgpRequest{Global: &gobgpapi.Global{
 		Asn:              spec.ASN,

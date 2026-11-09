@@ -26,11 +26,9 @@ type remoteGoBGPServer struct {
 	client gobgpapi.GoBgpServiceClient
 }
 
-func newRemoteGoBGPServer(daemon manageddaemon.Spec) GoBGPServer {
+func newRemoteGoBGPServer(daemon manageddaemon.Spec) *remoteGoBGPServer {
 	return &remoteGoBGPServer{daemon: daemon}
 }
-
-func (s *remoteGoBGPServer) Serve() {}
 
 func (s *remoteGoBGPServer) Stop() {
 	if s.conn != nil {
