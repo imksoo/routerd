@@ -34,8 +34,6 @@ type Store interface {
 	ObjectStatus(apiVersion, kind, name string) map[string]any
 }
 
-type outputCommandFunc func(context.Context, string, ...string) ([]byte, error)
-
 type Controller struct {
 	Router        *api.Router
 	Bus           *bus.Bus
@@ -342,7 +340,6 @@ func (c Controller) applyLease(ctx context.Context, name string, current, next m
 		next["applyMode"] = "dry-run"
 		return nil
 	}
-	command := runOutputCommandContext
 	previousGateway := mapString(current, "appliedDefaultGateway")
 	previousMetric := mapString(current, "appliedRouteMetric")
 	if previousGateway != "" && (!api.BoolDefault(spec.UseRoutes, true) || previousGateway != mapString(next, "defaultGateway") || mapString(current, "ifname") != ifname || previousMetric != strconv.Itoa(spec.RouteMetric)) {
@@ -362,13 +359,13 @@ func (c Controller) applyLease(ctx context.Context, name string, current, next m
 			return err
 		}
 	}
-	addressPresent, err := dhcpv4LeaseAddressMatches(ctx, platform.CurrentOS(), command, ifname, wantedAddress, spec.RouteMetric)
+	addressPresent, err := dhcpv4LeaseAddressMatches(ctx, platform.CurrentOS(), ifname, wantedAddress, spec.RouteMetric)
 	if err != nil {
 		return err
 	}
 	next["addressPresent"] = addressPresent
 	if !addressPresent {
-		if err := replaceIPv4Address(ctx, platform.CurrentOS(), command, ifname, wantedAddress, spec.RouteMetric); err != nil {
+		if err := replaceIPv4Address(ctx, platform.CurrentOS(), ifname, wantedAddress, spec.RouteMetric); err != nil {
 			return err
 		}
 		next["addressPresent"] = true
@@ -378,13 +375,13 @@ func (c Controller) applyLease(ctx context.Context, name string, current, next m
 	if api.BoolDefault(spec.UseRoutes, true) {
 		gateway := strings.TrimSpace(fmt.Sprint(next["defaultGateway"]))
 		if gateway != "" {
-			routePresent, err := dhcpv4DefaultRoutePresent(ctx, platform.CurrentOS(), command, ifname, gateway, spec.RouteMetric)
+			routePresent, err := dhcpv4DefaultRoutePresent(ctx, platform.CurrentOS(), ifname, gateway, spec.RouteMetric)
 			if err != nil {
 				return err
 			}
 			next["defaultRoutePresent"] = routePresent
 			if !routePresent {
-				if err := replaceDefaultRoute(ctx, platform.CurrentOS(), command, ifname, gateway, spec.RouteMetric); err != nil {
+				if err := replaceDefaultRoute(ctx, platform.CurrentOS(), ifname, gateway, spec.RouteMetric); err != nil {
 					return err
 				}
 				next["defaultRoutePresent"] = true
@@ -396,7 +393,7 @@ func (c Controller) applyLease(ctx context.Context, name string, current, next m
 	if api.BoolDefault(spec.UseDNS, true) {
 		servers := stringSlice(next["dnsServers"])
 		if len(servers) > 0 {
-			if err := applyDNS(ctx, platform.CurrentOS(), command, ifname, "/etc/resolv.conf", name, servers, c.DryRun); err != nil {
+			if err := applyDNS(ctx, platform.CurrentOS(), ifname, "/etc/resolv.conf", name, servers, c.DryRun); err != nil {
 				return err
 			}
 			next["appliedDNSServers"] = strings.Join(servers, ",")
@@ -493,17 +490,16 @@ func (c Controller) removeLeaseRoute(ctx context.Context, name string, current, 
 	if c.DryRun {
 		return nil
 	}
-	command := runOutputCommandContext
-	present, err := dhcpv4DefaultRoutePresent(ctx, platform.CurrentOS(), command, ifname, gateway, metric)
+	present, err := dhcpv4DefaultRoutePresent(ctx, platform.CurrentOS(), ifname, gateway, metric)
 	if err != nil {
 		return err
 	}
 	if present {
 		if platform.CurrentOS() == platform.OSFreeBSD {
-			if _, err := command(ctx, "route", "-n", "delete", "default", gateway); err != nil {
+			if _, err := runOutputCommandContext(ctx, "route", "-n", "delete", "default", gateway); err != nil {
 				return fmt.Errorf("remove expired DHCPv4 route: %w", err)
 			}
-		} else if _, err := command(ctx, "ip", "-4", "route", "del", "default", "via", gateway, "dev", ifname, "metric", strconv.Itoa(metric)); err != nil {
+		} else if _, err := runOutputCommandContext(ctx, "ip", "-4", "route", "del", "default", "via", gateway, "dev", ifname, "metric", strconv.Itoa(metric)); err != nil {
 			return fmt.Errorf("remove expired DHCPv4 route: %w", err)
 		}
 	}
@@ -549,13 +545,12 @@ func (c Controller) removeLeaseAddress(ctx context.Context, current, next map[st
 	if c.DryRun {
 		return nil
 	}
-	command := runOutputCommandContext
-	present, err := dhcpv4LeaseAddressPresent(ctx, platform.CurrentOS(), command, ifname, address)
+	present, err := dhcpv4LeaseAddressPresent(ctx, platform.CurrentOS(), ifname, address)
 	if err != nil {
 		return err
 	}
 	if present {
-		if err := removeIPv4Address(ctx, platform.CurrentOS(), command, ifname, address); err != nil {
+		if err := removeIPv4Address(ctx, platform.CurrentOS(), ifname, address); err != nil {
 			return fmt.Errorf("remove DHCPv4 address %s: %w", address, err)
 		}
 	}
@@ -602,22 +597,22 @@ func (c Controller) clearDHCPDNS(ctx context.Context, current, next map[string]a
 		if _, err := runOutputCommandContext(ctx, "resolvectl", "revert", ifname); err != nil {
 			return fmt.Errorf("clear DHCP DNS for %s: %w", ifname, err)
 		}
-	} else if err := applyDNS(ctx, platform.CurrentOS(), runOutputCommandContext, ifname, "/etc/resolv.conf", "static", nil, false); err != nil {
+	} else if err := applyDNS(ctx, platform.CurrentOS(), ifname, "/etc/resolv.conf", "static", nil, false); err != nil {
 		return err
 	}
 	delete(next, "appliedDNSServers")
 	return nil
 }
 
-func applyDNS(ctx context.Context, osName platform.OS, command outputCommandFunc, ifname, resolvConfPath, resource string, servers []string, dryRun bool) error {
+func applyDNS(ctx context.Context, osName platform.OS, ifname, resolvConfPath, resource string, servers []string, dryRun bool) error {
 	if osName == platform.OSLinux && systemdResolvedResolvConf(resolvConfPath) {
 		if dryRun {
 			return nil
 		}
-		if _, err := command(ctx, "resolvectl", append([]string{"dns", ifname}, servers...)...); err != nil {
+		if _, err := runOutputCommandContext(ctx, "resolvectl", append([]string{"dns", ifname}, servers...)...); err != nil {
 			return fmt.Errorf("set systemd-resolved DNS for %s: %w", ifname, err)
 		}
-		if _, err := command(ctx, "resolvectl", "domain", ifname, "~."); err != nil {
+		if _, err := runOutputCommandContext(ctx, "resolvectl", "domain", ifname, "~."); err != nil {
 			return fmt.Errorf("set systemd-resolved default DNS domain for %s: %w", ifname, err)
 		}
 		return nil
@@ -700,24 +695,24 @@ func (c Controller) leaseSpecAndIfName(name string) (api.DHCPv4ClientSpec, strin
 	return api.DHCPv4ClientSpec{}, "", false, nil
 }
 
-func replaceIPv4Address(ctx context.Context, osName platform.OS, command outputCommandFunc, ifname, address string, metric int) error {
+func replaceIPv4Address(ctx context.Context, osName platform.OS, ifname, address string, metric int) error {
 	if osName == platform.OSFreeBSD {
-		_, err := command(ctx, "ifconfig", ifname, "inet", address, "alias")
+		_, err := runOutputCommandContext(ctx, "ifconfig", ifname, "inet", address, "alias")
 		return err
 	}
 	args := []string{"-4", "addr", "replace", address, "dev", ifname}
 	if metric > 0 {
 		args = append(args, "metric", strconv.Itoa(metric))
 	}
-	_, err := command(ctx, "ip", args...)
+	_, err := runOutputCommandContext(ctx, "ip", args...)
 	return err
 }
 
-func dhcpv4LeaseAddressMatches(ctx context.Context, osName platform.OS, command outputCommandFunc, ifname, address string, metric int) (bool, error) {
+func dhcpv4LeaseAddressMatches(ctx context.Context, osName platform.OS, ifname, address string, metric int) (bool, error) {
 	if osName == platform.OSFreeBSD {
-		return dhcpv4LeaseAddressPresent(ctx, osName, command, ifname, address)
+		return dhcpv4LeaseAddressPresent(ctx, osName, ifname, address)
 	}
-	out, err := command(ctx, "ip", "-j", "-4", "addr", "show", "dev", ifname)
+	out, err := runOutputCommandContext(ctx, "ip", "-j", "-4", "addr", "show", "dev", ifname)
 	if err != nil {
 		return false, fmt.Errorf("observe IPv4 addresses on %s: %w", ifname, err)
 	}
@@ -741,12 +736,12 @@ func dhcpv4LeaseAddressMatches(ctx context.Context, osName platform.OS, command 
 	return false, nil
 }
 
-func dhcpv4LeaseAddressPresent(ctx context.Context, osName platform.OS, command outputCommandFunc, ifname, address string) (bool, error) {
+func dhcpv4LeaseAddressPresent(ctx context.Context, osName platform.OS, ifname, address string) (bool, error) {
 	if strings.TrimSpace(address) == "" {
 		return false, nil
 	}
 	if osName == platform.OSFreeBSD {
-		out, err := command(ctx, "ifconfig", ifname)
+		out, err := runOutputCommandContext(ctx, "ifconfig", ifname)
 		if err != nil {
 			return false, fmt.Errorf("observe IPv4 addresses on %s: %w", ifname, err)
 		}
@@ -761,29 +756,29 @@ func dhcpv4LeaseAddressPresent(ctx context.Context, osName platform.OS, command 
 		}
 		return false, nil
 	}
-	out, err := command(ctx, "ip", "-4", "addr", "show", "dev", ifname)
+	out, err := runOutputCommandContext(ctx, "ip", "-4", "addr", "show", "dev", ifname)
 	if err != nil {
 		return false, fmt.Errorf("observe IPv4 addresses on %s: %w", ifname, err)
 	}
 	return strings.Contains(string(out), "inet "+address+" "), nil
 }
 
-func removeIPv4Address(ctx context.Context, osName platform.OS, command outputCommandFunc, ifname, address string) error {
+func removeIPv4Address(ctx context.Context, osName platform.OS, ifname, address string) error {
 	if osName == platform.OSFreeBSD {
 		host := address
 		if value, _, ok := strings.Cut(host, "/"); ok {
 			host = value
 		}
-		_, err := command(ctx, "ifconfig", ifname, "inet", host, "-alias")
+		_, err := runOutputCommandContext(ctx, "ifconfig", ifname, "inet", host, "-alias")
 		return err
 	}
-	_, err := command(ctx, "ip", "-4", "addr", "del", address, "dev", ifname)
+	_, err := runOutputCommandContext(ctx, "ip", "-4", "addr", "del", address, "dev", ifname)
 	return err
 }
 
-func dhcpv4DefaultRoutePresent(ctx context.Context, osName platform.OS, command outputCommandFunc, ifname, gateway string, metric int) (bool, error) {
+func dhcpv4DefaultRoutePresent(ctx context.Context, osName platform.OS, ifname, gateway string, metric int) (bool, error) {
 	if osName == platform.OSFreeBSD {
-		out, err := command(ctx, "route", "-n", "get", "default")
+		out, err := runOutputCommandContext(ctx, "route", "-n", "get", "default")
 		if err != nil {
 			message := strings.ToLower(string(out) + " " + err.Error())
 			if strings.Contains(message, "not in table") || strings.Contains(message, "not found") {
@@ -800,7 +795,7 @@ func dhcpv4DefaultRoutePresent(ctx context.Context, osName platform.OS, command 
 		}
 		return values["interface"] == ifname && values["gateway"] == gateway, nil
 	}
-	out, err := command(ctx, "ip", "-4", "route", "show", "default")
+	out, err := runOutputCommandContext(ctx, "ip", "-4", "route", "show", "default")
 	if err != nil {
 		return false, fmt.Errorf("observe default routes: %w", err)
 	}
@@ -834,19 +829,19 @@ func dhcpv4RouteFieldsContainPair(fields []string, key, value string) bool {
 	return false
 }
 
-func replaceDefaultRoute(ctx context.Context, osName platform.OS, command outputCommandFunc, ifname, gateway string, metric int) error {
+func replaceDefaultRoute(ctx context.Context, osName platform.OS, ifname, gateway string, metric int) error {
 	if osName == platform.OSFreeBSD {
-		if _, err := command(ctx, "route", "-n", "change", "default", gateway); err == nil {
+		if _, err := runOutputCommandContext(ctx, "route", "-n", "change", "default", gateway); err == nil {
 			return nil
 		}
-		_, err := command(ctx, "route", "-n", "add", "default", gateway)
+		_, err := runOutputCommandContext(ctx, "route", "-n", "add", "default", gateway)
 		return err
 	}
 	args := []string{"-4", "route", "replace", "default", "via", gateway, "dev", ifname}
 	if metric != 0 {
 		args = append(args, "metric", strconv.Itoa(metric))
 	}
-	_, err := command(ctx, "ip", args...)
+	_, err := runOutputCommandContext(ctx, "ip", args...)
 	return err
 }
 
