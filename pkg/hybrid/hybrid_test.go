@@ -41,9 +41,6 @@ func TestExpandHybridRoutesTwoCIDRs(t *testing.T) {
 		if spec.Device != "wg-hybrid" || spec.Metric != 120 || spec.Type != "unicast" {
 			t.Fatalf("route spec = %#v", spec)
 		}
-		if len(route.Metadata.OwnerRefs) != 1 || route.Metadata.OwnerRefs[0].Kind != "HybridRoute" {
-			t.Fatalf("ownerRefs = %#v", route.Metadata.OwnerRefs)
-		}
 	}
 }
 

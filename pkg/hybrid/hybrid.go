@@ -103,14 +103,7 @@ func ExpandHybridRoutes(router api.Router) (api.Router, []HybridLowering, error)
 			syntheticNames[name] = true
 			route := api.Resource{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4Route"},
-				Metadata: api.ObjectMeta{
-					Name: name,
-					OwnerRefs: []api.OwnerRef{{
-						APIVersion: api.HybridAPIVersion,
-						Kind:       "HybridRoute",
-						Name:       resource.Metadata.Name,
-					}},
-				},
+				Metadata: api.ObjectMeta{Name: name},
 				Spec: api.IPv4RouteSpec{
 					Destination: cidr,
 					Type:        "unicast",
