@@ -22,6 +22,8 @@
 
 ## 実機確認の記録
 
+- 2026-11-09、chatty側からpve-rt07の2本とk8s-rt02の8本のIPIPトンネルを読み取り確認した。有効設定と実体の種類・対向・トンネル内IPv4アドレスが一致し、全件UP。対向との通信と変更後daemonでの復元は未確認。
+
 - 2026-11-09、homert02の稼働版と `2bd6d70b` のCLIで、実設定と状態DBから生成した動的設定のSHA-256が一致した。稼働中daemonはactive、BGP peer 2件はEstablished、LANのVRRPはmaster。chattyからゲートウェイとhomert02/03へのping、外部名の解決が成功した。変更後daemonの適用・設定復元・切替は未確認。
 
 - 2026-11-09、`ec183691` の `routerctl` を homert02 で読み取り実行した。実設定・状態から生成した動的設定は稼働版 CLI と一致し、routerd は active、管理ネットワークのゲートウェイへの ping は成功した。変更後 daemon の適用や WireGuard の鍵復元は確認していない。homert02 の `ens20` 管理アドレスは routerd の DHCPv4Client ではなく既存の netplan/networkd の DHCP から得ている。DS-Lite は各トンネルに設定の静的アドレスに加え point-to-point アドレスを持つ。IPv4 余剰撤去では実際の動的生成元を考慮し、管理 NIC の引き継ぎが決まるまで通信を損なう適用を行わない。
