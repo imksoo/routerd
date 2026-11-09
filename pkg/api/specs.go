@@ -1307,7 +1307,6 @@ type DNSZoneSpec struct {
 	Records      []DNSZoneRecordSpec    `yaml:"records,omitempty" json:"records,omitempty"`
 	DHCPDerived  DNSZoneDHCPDerivedSpec `yaml:"dhcpDerived,omitempty" json:"dhcpDerived,omitempty"`
 	ReverseZones []DNSZoneReverseSpec   `yaml:"reverseZones,omitempty" json:"reverseZones,omitempty"`
-	OwnerRefs    []OwnerRef             `yaml:"ownerRefs,omitempty" json:"ownerRefs,omitempty"`
 }
 
 type DNSZoneDNSSECSpec struct {

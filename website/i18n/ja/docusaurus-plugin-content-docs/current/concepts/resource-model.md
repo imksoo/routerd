@@ -6,7 +6,6 @@ sidebar_position: 3
 
 # リソースモデル
 
-![Router YAML から reference、dependency ordering、owner key、status、event、ledger artifact へつながる routerd resource model](/img/diagrams/concept-resource-model.png)
 
 routerd の設定は、最上位の `Router` と、その下に並ぶ複数のリソースで構成します。
 各リソースは Kubernetes に近い形をとります。
@@ -78,11 +77,9 @@ deviceFrom:
 
 この形にすることで、検証、計画、イベント購読、コントローラーの調整（リコンサイル）から依存関係が見えるようになります。
 
-## 所有参照
+## DHCPv6-PD
 
-`ownerRefs` は、あるリソースが別のリソースに従属することを表します。
-親が準備できないとき、子は古くなった構成を出し続けません。
-これは、DHCPv6-PD が失われたときに古い LAN IPv6 設定を残さないための重要な仕組みです。
+DHCPv6-PD が失われたときに古い LAN IPv6 設定を残さないための重要な仕組みです。
 委任されたプレフィックスに依存する LAN IPv6 アドレス、RA、DNS レコード、DS-Lite は、
 親が準備できない間は古い状態を出さないようにします。
 

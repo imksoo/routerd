@@ -6,7 +6,6 @@ sidebar_position: 3
 
 # 資源模型
 
-![從 Router YAML 到 reference、dependency ordering、owner key、status、event 與 ledger artifact 的 routerd resource model](/img/diagrams/concept-resource-model.png)
 
 routerd 的設定由最上層的 `Router` 以及其下並列的多個資源所構成。
 每個資源的格式與 Kubernetes 相近。
@@ -76,9 +75,7 @@ deviceFrom:
   field: interface
 ```
 
-## 擁有參照
+## DHCPv6-PD
 
-`ownerRefs` 表示某個資源從屬於另一個資源。
-當父資源尚未就緒時，子資源不會持續輸出過時的設定。
-這是一個重要機制，用於防止 DHCPv6-PD 遺失時遺留舊有的 LAN IPv6 設定。
+這可防止 DHCPv6-PD 遺失時遺留舊有的 LAN IPv6 設定。
 依賴委派前綴的 LAN IPv6 位址、RA、DNS 記錄、DS-Lite，在父資源尚未就緒期間均不會輸出過時狀態。

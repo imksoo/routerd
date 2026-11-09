@@ -6,7 +6,6 @@ sidebar_position: 3
 
 # Resource model
 
-![Diagram showing the routerd resource model from Router YAML through references, dependency ordering, owner keys, status, events, and ledger artifacts](/img/diagrams/concept-resource-model.png)
 
 routerd configuration is a top-level `Router` resource with a list of typed
 resources. The shape is intentionally close to Kubernetes resources, but
@@ -88,10 +87,7 @@ deviceFrom:
 This keeps dependencies visible to validation, planning, event subscriptions,
 and controller reconciliation.
 
-## ownerRefs
-
-`ownerRefs` declares that one resource is owned by another. If the owner is not
-ready, the child should not keep publishing stale host state.
+## DHCPv6-PD
 
 This matters for delegated IPv6 networks. When DHCPv6-PD is lost, LAN IPv6
 addresses, RA, DNS records, and DS-Lite state that depend on that prefix should
