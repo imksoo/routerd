@@ -215,31 +215,25 @@ func AtomicWriteFile(path string, data []byte) error {
 	return err
 }
 
-// AtomicWriteOutcome distinguishes visible replacement from confirmed file
-// and directory synchronization. An error after rename does not undo it.
-type AtomicWriteOutcome struct {
-	Replaced            bool
-	DurabilityConfirmed bool
-}
-
-func AtomicWriteFileWithOutcome(path string, data []byte) (outcome AtomicWriteOutcome, err error) {
+// AtomicWriteFileWithOutcome reports whether rename completed, even if a later operation fails.
+func AtomicWriteFileWithOutcome(path string, data []byte) (replaced bool, err error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
-		return outcome, errors.New("atomic write path is empty")
+		return replaced, errors.New("atomic write path is empty")
 	}
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return outcome, err
+		return replaced, err
 	}
 	mode := os.FileMode(0644)
 	if info, err := os.Stat(path); err == nil {
 		mode = info.Mode().Perm()
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return outcome, err
+		return replaced, err
 	}
 	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
 	if err != nil {
-		return outcome, err
+		return replaced, err
 	}
 	tmpPath := tmp.Name()
 	cleanup := true
@@ -250,32 +244,31 @@ func AtomicWriteFileWithOutcome(path string, data []byte) (outcome AtomicWriteOu
 	}()
 	if err := tmp.Chmod(mode); err != nil {
 		_ = tmp.Close()
-		return outcome, err
+		return replaced, err
 	}
 	if _, err := tmp.Write(data); err != nil {
 		_ = tmp.Close()
-		return outcome, err
+		return replaced, err
 	}
 	if err := tmp.Sync(); err != nil {
 		_ = tmp.Close()
-		return outcome, err
+		return replaced, err
 	}
 	if err := tmp.Close(); err != nil {
-		return outcome, err
+		return replaced, err
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
-		return outcome, err
+		return replaced, err
 	}
-	outcome.Replaced = true
+	replaced = true
 	cleanup = false
 	if err := os.Chmod(path, mode); err != nil {
-		return outcome, err
+		return replaced, err
 	}
 	if err := syncDir(dir); err != nil {
-		return outcome, err
+		return replaced, err
 	}
-	outcome.DurabilityConfirmed = true
-	return outcome, nil
+	return replaced, nil
 }
 
 type resourceNodeID struct {

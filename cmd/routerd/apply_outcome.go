@@ -25,14 +25,13 @@ const (
 // applyAttemptOutcome records independent facts, including partial progress.
 // Phase remains a dataplane observation, never a persistence acknowledgement.
 type applyAttemptOutcome struct {
-	Result              *apply.Result
-	Stage               string
-	Generation          int64
-	GenerationCreated   bool
-	Canonical           canonicalWriteState
-	DurabilityConfirmed bool
-	TerminalAttempted   bool
-	Runtime             controllerchain.RuntimeReloadOutcome
+	Result            *apply.Result
+	Stage             string
+	Generation        int64
+	GenerationCreated bool
+	Canonical         canonicalWriteState
+	TerminalAttempted bool
+	Runtime           controllerchain.RuntimeReloadOutcome
 }
 
 type applyAttemptError struct {
@@ -41,7 +40,7 @@ type applyAttemptError struct {
 }
 
 func (e *applyAttemptError) Error() string {
-	return fmt.Sprintf("apply failed: %v; stage=%s generation=%d canonical=%s durabilityConfirmed=%t terminalAttempted=%t runtimeKnown=%t runtimeAvailable=%t activeEpoch=%d operation=%d", e.Cause, e.Outcome.Stage, e.Outcome.Generation, e.Outcome.Canonical, e.Outcome.DurabilityConfirmed, e.Outcome.TerminalAttempted, e.Outcome.Runtime.Active.Known, e.Outcome.Runtime.Active.Available, e.Outcome.Runtime.Active.Epoch, e.Outcome.Runtime.OperationID)
+	return fmt.Sprintf("apply failed: %v; stage=%s generation=%d canonical=%s terminalAttempted=%t runtimeKnown=%t runtimeAvailable=%t activeEpoch=%d operation=%d", e.Cause, e.Outcome.Stage, e.Outcome.Generation, e.Outcome.Canonical, e.Outcome.TerminalAttempted, e.Outcome.Runtime.Active.Known, e.Outcome.Runtime.Active.Available, e.Outcome.Runtime.Active.Epoch, e.Outcome.Runtime.OperationID)
 }
 
 func (e *applyAttemptError) Unwrap() error { return e.Cause }
@@ -79,9 +78,8 @@ func (o *applyAttemptOutcome) commit(opts applyOptions, configYAML string) error
 	o.Stage = "canonical-write"
 	o.Canonical = canonicalNotReplaced
 	written, err := config.AtomicWriteFileWithOutcome(opts.ConfigPath, []byte(configYAML))
-	if written.Replaced {
+	if written {
 		o.Canonical = canonicalReplaced
 	}
-	o.DurabilityConfirmed = written.DurabilityConfirmed
 	return err
 }
