@@ -14,6 +14,8 @@
 
 - pve-rt07 の実状態 DB にある SAM transport・RR の計8リソースについて、変更後の `routerctl dynamic diff` と稼働版の出力が一致した。読み取り確認であり、変更後 daemon の BGP 通信・VRRP フェイルオーバーを確認したものではない。
 
+- k8s-rt02 の実状態 DB に対する変更後 `routerctl dynamic diff` は、稼働版と33行すべて一致した。稼働版 BGP は Established、14 peer だった。こちらも daemon の入れ替えは伴わない。
+
 ## 残件
 
 - 現時点では未記載。
