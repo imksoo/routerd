@@ -2261,8 +2261,8 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			}
 			return nil
 		}},
-		framework.FuncController{ControllerName: "dslite", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.currentRouter(), []string{"DSLiteTunnel"}, "DHCPv6Information", "IPv6DelegatedAddress", "DNSResolver"), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			effective, err := effectiveForReconcile()
+		framework.FuncController{ControllerName: "dslite", Every: 30 * time.Second, Subs: withDynamicConfigPartSubscriptions(statusSubscriptionsWithWhen(r.currentRouter(), []string{"DSLiteTunnel"}, "DHCPv6Information", "IPv6DelegatedAddress", "DNSResolver")), PeriodicFunc: func(ctx context.Context) (bool, error) {
+			effective, err := effectiveDynamicForReconcile()
 			if err != nil {
 				return false, err
 			}

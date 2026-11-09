@@ -24,6 +24,7 @@ import (
 
 	"github.com/imksoo/routerd/internal/statusvalue"
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/apply"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
@@ -157,6 +158,44 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 			if platform.CurrentOS() == platform.OSFreeBSD {
 				if alias, ok := c.Store.ObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name)["aliasOf"].(string); ok && alias != "" {
 					enabled[alias] = struct{}{}
+				}
+			}
+		}
+	}
+	if !c.DryRun && platform.CurrentOS() == platform.OSLinux {
+		retained, err := apply.ConfiguredVXLANInterfaces(declared, c.Router)
+		if err != nil {
+			return err
+		}
+		for _, resource := range declared.Spec.Resources {
+			if resource.Kind == "DSLiteTunnel" {
+				spec, err := resource.DSLiteTunnelSpec()
+				if err != nil {
+					return err
+				}
+				retained[firstNonEmpty(spec.TunnelName, resource.Metadata.Name)] = true
+			}
+		}
+		out, err := exec.CommandContext(ctx, "ip", "-j", "-d", "link", "show", "type", "ip6tnl").CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("list DS-Lite links: %w: %s", err, strings.TrimSpace(string(out)))
+		}
+		var links []struct {
+			Name string `json:"ifname"`
+			Info struct {
+				Data struct {
+					Proto string `json:"proto"`
+				} `json:"info_data"`
+			} `json:"linkinfo"`
+		}
+		if err := json.Unmarshal(out, &links); err != nil {
+			return fmt.Errorf("decode DS-Lite links: %w", err)
+		}
+		for _, link := range links {
+			_, active := desired[link.Name]
+			if link.Name != "" && link.Name != "ip6tnl0" && link.Info.Data.Proto == "ipip6" && !active && !retained[link.Name] {
+				if err := deleteDSLiteTunnel(ctx, link.Name); err != nil {
+					return err
 				}
 			}
 		}
