@@ -27,11 +27,11 @@ type netlinkSAMProxyNeighborApplier struct{}
 
 var samForwardPathMu sync.Mutex
 
-func defaultSAMProxyNeighborApplier() samProxyNeighborApplier {
+func defaultSAMProxyNeighborApplier() netlinkSAMProxyNeighborApplier {
 	return netlinkSAMProxyNeighborApplier{}
 }
 
-func defaultSAMGratuitousARPAnnouncer() samGratuitousARPAnnouncer {
+func defaultSAMGratuitousARPAnnouncer() packetSAMGratuitousARPAnnouncer {
 	return packetSAMGratuitousARPAnnouncer{}
 }
 

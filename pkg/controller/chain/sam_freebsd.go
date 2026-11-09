@@ -47,11 +47,11 @@ func freeBSDSAMRunCommandInput(ctx context.Context, name, input string, args ...
 // the native mechanism for answering only addresses routed via another link.
 type freeBSDSAMProxyNeighborApplier struct{}
 
-func defaultSAMProxyNeighborApplier() samProxyNeighborApplier {
+func defaultSAMProxyNeighborApplier() freeBSDSAMProxyNeighborApplier {
 	return freeBSDSAMProxyNeighborApplier{}
 }
 
-func defaultSAMGratuitousARPAnnouncer() samGratuitousARPAnnouncer {
+func defaultSAMGratuitousARPAnnouncer() freeBSDSAMGratuitousARPAnnouncer {
 	return freeBSDSAMGratuitousARPAnnouncer{}
 }
 

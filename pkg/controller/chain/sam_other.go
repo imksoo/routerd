@@ -13,11 +13,11 @@ import (
 
 type unsupportedSAMProxyNeighborApplier struct{}
 
-func defaultSAMProxyNeighborApplier() samProxyNeighborApplier {
+func defaultSAMProxyNeighborApplier() unsupportedSAMProxyNeighborApplier {
 	return unsupportedSAMProxyNeighborApplier{}
 }
 
-func defaultSAMGratuitousARPAnnouncer() samGratuitousARPAnnouncer {
+func defaultSAMGratuitousARPAnnouncer() unsupportedSAMGratuitousARPAnnouncer {
 	return unsupportedSAMGratuitousARPAnnouncer{}
 }
 

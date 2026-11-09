@@ -18,19 +18,6 @@ import (
 	"github.com/imksoo/routerd/pkg/sam"
 )
 
-type samProxyNeighborApplier interface {
-	SetProxyARP(ctx context.Context, ifname string, enabled bool) error
-	SetIPForwarding(ctx context.Context, enabled bool) error
-	EnsureProxyNeighbor(ctx context.Context, address, ifname string) error
-	DeleteProxyNeighbor(ctx context.Context, address, ifname string) error
-	EnsureOSAddressAbsent(ctx context.Context, address string) (samOSAddressDeassignResult, error)
-	ReconcileForwardPaths(ctx context.Context, paths []sam.CaptureAction) error
-}
-
-type samGratuitousARPAnnouncer interface {
-	SendGratuitousARP(ctx context.Context, address, ifname string) error
-}
-
 type samOSAddressDeassignResult struct {
 	address, ifname      string
 	removedThisReconcile bool
