@@ -22,6 +22,8 @@
 
 ## 実機確認の記録
 
+- 2026-11-09、k8s担当がk8s-rt02・pve-rt07のIPv4 main tableと設定・動的状態を読み取り比較した。kernel・DHCP・BGP以外の表示はそれぞれ9件・11件で、k8s側の8件とpve側の2件はSAM endpoint設定、pve側の8件はSAM capture構成、両機の既定経路はDHCP適用済み状態と宛先が一致した。単時点の比較であり、変更後daemonの復元・通信は未確認。
+
 - 2026-11-09、pve-rt01〜08とk8s-rt01・02の有効設定とIPv4 policy ruleをPVEゲストエージェントで読み取り比較した。各機はOS標準の3 ruleで、現行の撤去条件に該当するruleはなかった。homert02の14 ruleも、設定とTailscaleの動的ruleを考慮すると撤去対象はなかった。変更後daemonでのrule・table撤去は未確認。
 
 - 2026-11-09、PVEゲストエージェントからpve-rt01〜08の実行中設定とカーネルを読み取り、各機のIPIP TunnelInterface 2件と実リンク2本の名前が一致した。k8s-rt02も設定8件と実リンク8本が一致した。変更後daemonでの維持・撤去は未確認。
