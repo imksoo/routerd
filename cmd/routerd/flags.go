@@ -11,7 +11,6 @@ type applyFlagValues struct {
 	DnsmasqConfigPath  *string
 	DnsmasqServicePath *string
 	NftablesPath       *string
-	LedgerPath         *string
 	StatePath          *string
 	Once               *bool
 	DryRun             *bool
@@ -28,7 +27,6 @@ func registerApplyFlags(fs *flag.FlagSet, includeConfig, includeOnce bool) apply
 	flags.DnsmasqConfigPath = fs.String("dnsmasq-file", defaultDnsmasqConfigPath, "routerd-managed dnsmasq config file")
 	flags.DnsmasqServicePath = fs.String("dnsmasq-service-file", defaultDnsmasqServicePath, "routerd-managed dnsmasq systemd unit file")
 	flags.NftablesPath = fs.String("nftables-file", defaultNftablesPath, "routerd-managed nftables ruleset file")
-	flags.LedgerPath = fs.String("ledger-file", defaultLedgerPath, "routerd ownership ledger file")
 	flags.StatePath = fs.String("state-file", defaultStatePath, "routerd state database file")
 	if includeOnce {
 		flags.Once = fs.Bool("once", false, "run one apply loop")
@@ -46,7 +44,6 @@ func (flags applyFlagValues) applyOptions(configPath string) applyOptions {
 		DnsmasqConfigPath:   *flags.DnsmasqConfigPath,
 		DnsmasqServicePath:  runtimeDnsmasqServicePath(*flags.DnsmasqServicePath),
 		NftablesPath:        *flags.NftablesPath,
-		LedgerPath:          *flags.LedgerPath,
 		StatePath:           *flags.StatePath,
 		DryRun:              *flags.DryRun,
 		AllowMgmtLockout:    *flags.AllowMgmtLockout,

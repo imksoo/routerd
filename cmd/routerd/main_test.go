@@ -80,46 +80,6 @@ func TestRouterWithDryRunLeaseFilesKeepsDHCPLeaseStateInArtifacts(t *testing.T) 
 	}
 }
 
-func TestRunApplyChainOnceDryRunDoesNotCreateStateDB(t *testing.T) {
-	dir := t.TempDir()
-	stateDir := filepath.Join(dir, "state")
-	statePath := filepath.Join(stateDir, "routerd.db")
-	ledgerDir := filepath.Join(dir, "ledger")
-	ledgerPath := filepath.Join(ledgerDir, "routerd.db")
-	statusPath := filepath.Join(dir, "status.json")
-	router := &api.Router{
-		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
-		Metadata: api.ObjectMeta{
-			Name: "test-router",
-		},
-	}
-	result, err := runApplyChainOnce(context.Background(), router, applyOptions{
-		DryRun:     true,
-		StatePath:  statePath,
-		LedgerPath: ledgerPath,
-		StatusFile: statusPath,
-		ConfigPath: filepath.Join(dir, "router.yaml"),
-	}, io.Discard, &eventlog.Logger{})
-	if err != nil {
-		t.Fatalf("dry-run apply: %v", err)
-	}
-	if result.Generation != 0 {
-		t.Fatalf("dry-run generation = %d, want 0", result.Generation)
-	}
-	if _, err := os.Stat(statePath); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("dry-run state db stat error = %v, want not exist", err)
-	}
-	if _, err := os.Stat(stateDir); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("dry-run state dir stat error = %v, want not exist", err)
-	}
-	if _, err := os.Stat(ledgerPath); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("dry-run ledger db stat error = %v, want not exist", err)
-	}
-	if _, err := os.Stat(ledgerDir); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("dry-run ledger dir stat error = %v, want not exist", err)
-	}
-}
-
 func findApplyResult(result *apply.Result, id string) *apply.ResourceResult {
 	for i := range result.Resources {
 		if result.Resources[i].ID == id {

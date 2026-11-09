@@ -144,20 +144,6 @@ func ensureLoopbackUp() error {
 	return exec.Command("ip", "link", "set", "lo", "up").Run()
 }
 
-func cleanupServeLedgerOwnedOrphans(effective, declared *api.Router, ledgerPath string, logger *eventlog.Logger) ([]string, error) {
-	removed, err := cleanupLedgerOwnedOrphansEffective(effective, declared, ledgerPath)
-	if len(removed) > 0 && logger != nil {
-		logger.Emit(eventlog.LevelInfo, "serve", "removed ledger-owned orphaned artifacts", map[string]string{
-			"count":     strconv.Itoa(len(removed)),
-			"artifacts": strings.Join(removed, ","),
-		})
-	}
-	if err != nil && logger != nil {
-		logger.Emit(eventlog.LevelWarning, "serve", "ledger orphan cleanup encountered an error", map[string]string{"error": err.Error()})
-	}
-	return removed, err
-}
-
 func startPeerGroupSyncServer(ctx context.Context, store *routerstate.SQLiteStore, logger *eventlog.Logger) error {
 	listener, err := net.Listen("tcp", net.JoinHostPort("0.0.0.0", strconv.Itoa(mobilitycontroller.PeerGroupSyncPort)))
 	if err != nil {
@@ -301,7 +287,6 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	dnsmasqConfigPath := fs.String("dnsmasq-file", defaultDnsmasqConfigPath, "routerd-managed dnsmasq config file")
 	dnsmasqServicePath := fs.String("dnsmasq-service-file", defaultDnsmasqServicePath, "routerd-managed dnsmasq systemd unit file")
 	nftablesPath := fs.String("nftables-file", defaultNftablesPath, "routerd-managed nftables ruleset file")
-	ledgerPath := fs.String("ledger-file", defaultLedgerPath, "routerd ownership ledger file")
 	bgpSocketPath := fs.String("bgp-socket", defaultBGPSocket, "routerd-bgp GoBGP gRPC Unix socket path")
 	bgpControlSocketPath := fs.String("bgp-control-socket", defaultBGPControlSocket, "routerd-bgp control Unix socket path")
 	bgpStatePath := fs.String("bgp-state-file", defaultBGPState, "routerd-bgp applied state JSON path")
@@ -404,7 +389,6 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		DnsmasqConfigPath:    *dnsmasqConfigPath,
 		DnsmasqServicePath:   runtimeDnsmasqServicePath(*dnsmasqServicePath),
 		NftablesPath:         *nftablesPath,
-		LedgerPath:           *ledgerPath,
 		StatePath:            *statePath,
 		BGPSocketPath:        *bgpSocketPath,
 		BGPControlSocketPath: *bgpControlSocketPath,
@@ -439,15 +423,6 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	var controllerBus *bus.Bus
 	if _, cleanupErr := cleanupUnsupportedLegacyObjectStatuses(router, stateStore, *statePath, time.Now().UTC(), logger); cleanupErr != nil {
 		logger.Emit(eventlog.LevelWarning, "serve", "stale state cleanup encountered an error", map[string]string{"error": cleanupErr.Error()})
-	}
-	{
-		effectiveRouter := filterRouterByWhen(router, stateStore)
-		dynamicRouters, dynamicErr := controllerchain.BuildDynamicRouteSAMObjectStatusRouters(effectiveRouter, stateStore, time.Now().UTC(), platform.CurrentOS())
-		if dynamicErr != nil {
-			logger.Emit(eventlog.LevelWarning, "serve", "could not derive dynamic configuration for orphan cleanup", map[string]string{"error": dynamicErr.Error()})
-		} else {
-			_, _ = cleanupServeLedgerOwnedOrphans(dynamicRouters[0], router, *ledgerPath, logger)
-		}
 	}
 	engine := apply.New()
 	engine.Store = stateStore

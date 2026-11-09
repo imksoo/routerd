@@ -60,7 +60,6 @@ func checkCommand(args []string, stdout io.Writer) (err error) {
 		ConfigPath:          *configPath,
 		StatusFile:          *statusFile,
 		StatePath:           defaultStatePath,
-		LedgerPath:          defaultLedgerPath,
 		DryRun:              true,
 		AnnounceDryRunToCLI: false,
 	}

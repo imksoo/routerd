@@ -35,7 +35,6 @@ var (
 	defaultNftablesPath        = platformDefaults.ManagedNftablesFile()
 	defaultRouteNftablesPath   = platformDefaults.DefaultRouteNftablesFile
 	defaultTimesyncdPath       = platformDefaults.TimesyncdDropinFile
-	defaultLedgerPath          = platformDefaults.DBFile()
 	defaultStatePath           = platformDefaults.DBFile()
 	pdClientLeaseDir           = filepath.Join(platformDefaults.StateDir, "dhcpv6-client")
 	legacyFreeBSDStateDir      = "/var/lib/routerd"

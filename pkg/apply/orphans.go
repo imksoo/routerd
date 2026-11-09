@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/imksoo/routerd/pkg/api"
-	"github.com/imksoo/routerd/pkg/lifecycle"
 	"github.com/imksoo/routerd/pkg/resource"
 )
 
@@ -26,55 +25,6 @@ func (e *Engine) observeManagedOrphans(router *api.Router, aliases map[string]st
 	orphans = append(orphans, e.observeIPv4RouteTableOrphans(router, aliases)...)
 	orphans = append(orphans, e.observeNftTableOrphans(router, aliases)...)
 	return orphans
-}
-
-// LedgerOwnedOrphansEffective validates the declared graph while computing
-// orphan candidates only from the effective graph.
-func (e *Engine) LedgerOwnedOrphansEffective(effective, declared *api.Router, ledger resource.Ledger) ([]OrphanedArtifact, []resource.Artifact, error) {
-	plan, err := e.LedgerOwnedOrphanPlanEffective(effective, declared, ledger)
-	if err != nil {
-		return nil, nil, err
-	}
-	var result []OrphanedArtifact
-	var artifacts []resource.Artifact
-	for _, removal := range plan.ArtifactRemovals {
-		result = append(result, orphanedArtifactFromLifecycle(removal))
-		artifacts = append(artifacts, removal.Artifact)
-	}
-	return result, artifacts, nil
-}
-
-// LedgerOwnedOrphanPlanEffective validates the declared graph while deriving
-// desired artifacts from the effective graph.
-func (e *Engine) LedgerOwnedOrphanPlanEffective(effective, declared *api.Router, ledger resource.Ledger) (lifecycle.GCPlan, error) {
-	if err := e.Validate(declared); err != nil {
-		return lifecycle.GCPlan{}, err
-	}
-	if ledger == nil {
-		return lifecycle.GCPlan{}, nil
-	}
-	aliases := interfaceAliases(effective)
-	desired := DesiredOwnedArtifacts(effective, aliases)
-	owned, err := ledger.All()
-	if err != nil {
-		return lifecycle.GCPlan{}, err
-	}
-	return lifecycle.PlanArtifactOrphans(lifecycle.GCPlanInput{
-		DesiredArtifacts: desired,
-		LedgerArtifacts:  owned,
-		HostArtifacts:    e.actualInventoryBackedArtifacts(),
-	}), nil
-}
-
-func orphanedArtifactFromLifecycle(removal lifecycle.GCArtifactRemoval) OrphanedArtifact {
-	return OrphanedArtifact{
-		Kind:        removal.Artifact.Kind,
-		Name:        removal.Artifact.Name,
-		Owner:       removal.Artifact.Owner,
-		Reason:      removal.Reason,
-		Remediation: removal.Remediation,
-		Observed:    removal.Artifact.Attributes,
-	}
 }
 
 func DesiredOwnedArtifacts(router *api.Router, aliases map[string]string) []resource.Artifact {

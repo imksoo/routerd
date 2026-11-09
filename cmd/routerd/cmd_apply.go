@@ -73,7 +73,6 @@ type applyOptions struct {
 	DnsmasqConfigPath    string
 	DnsmasqServicePath   string
 	NftablesPath         string
-	LedgerPath           string
 	StatePath            string
 	BGPSocketPath        string
 	BGPControlSocketPath string
@@ -623,9 +622,6 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 	}
 	result.Warnings = append(result.Warnings, optionWarnings...)
 	appendPrefixDelegationStateWarnings(result, router, stateStore)
-	if err := appendLedgerOwnedOrphans(result, planRouter, router, opts.LedgerPath, opts.DryRun); err != nil {
-		return nil, err
-	}
 	decision := ha.Decision{Leader: true}
 	if !opts.DryRun {
 		outcome.Stage = "ha-admission"
@@ -715,9 +711,6 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 	result.Orphans = appendUniqueOrphans(result.Orphans, plannedOrphans)
 	if len(result.Orphans) > 0 && result.Phase == "Healthy" {
 		result.Phase = "Drifted"
-	}
-	if err := appendLedgerOwnedOrphans(result, planRouter, router, opts.LedgerPath, opts.DryRun); err != nil {
-		return nil, err
 	}
 	if opts.DryRun && result.Phase == "Healthy" {
 		for _, resource := range result.Resources {

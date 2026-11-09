@@ -11,10 +11,7 @@ type showOptions struct {
 	Output           string
 	ConfigPath       string
 	StatePath        string
-	LedgerPath       string
 	Diff             bool
-	LedgerOnly       bool
-	AdoptOnly        bool
 	Events           bool
 	SpecOnly         bool
 	StatusOnly       bool

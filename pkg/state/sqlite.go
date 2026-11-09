@@ -19,7 +19,6 @@ import (
 
 	"github.com/imksoo/routerd/internal/statusvalue"
 	"github.com/imksoo/routerd/pkg/daemonapi"
-	"github.com/imksoo/routerd/pkg/resource"
 )
 
 const (
@@ -298,9 +297,6 @@ CREATE INDEX IF NOT EXISTS action_executions_status ON action_executions(status,
 	if err := s.ensureDynamicConfigPartColumns(); err != nil {
 		return err
 	}
-	if err := s.ensureArtifactsTable(); err != nil {
-		return err
-	}
 	if err := s.ensureActionExecutionColumns(); err != nil {
 		return err
 	}
@@ -398,26 +394,6 @@ func (s *SQLiteStore) ensureObjectColumns() error {
 		}
 	}
 	return nil
-}
-
-func (s *SQLiteStore) ensureArtifactsTable() error {
-	if _, err := s.db.Exec(`
-CREATE TABLE IF NOT EXISTS artifacts (
-  artifact_id TEXT PRIMARY KEY,
-  kind TEXT NOT NULL,
-  name TEXT NOT NULL,
-  owner_api_version TEXT,
-  owner_kind TEXT,
-  owner_name TEXT,
-  attributes TEXT,
-  source TEXT,
-  generation INTEGER,
-  observed_at TEXT
-);
-`); err != nil {
-		return err
-	}
-	return resource.MigrateLegacyArtifactsTable(s.db)
 }
 
 func (s *SQLiteStore) migrateLegacyStateTable() error {
