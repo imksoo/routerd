@@ -24,6 +24,8 @@
 
 - pve-rt07 の実状態 DB にある SAM transport・RR の計8リソースについて、変更後の `routerctl dynamic diff` と稼働版の出力が一致した。読み取り確認であり、変更後 daemon の BGP 通信・VRRP フェイルオーバーを確認したものではない。
 
+- pve-rt07 の設定全体の JSON 表示では、YAML コピーの削除によって空の SAMPeerGroup の `nodes` が `[]` から `null` に変わる回帰を発見し、修正した。同じ実状態 DB で修正後の表示全体は稼働版と一致した。
+
 - k8s-rt02 の実状態 DB に対する変更後 `routerctl dynamic diff` は、稼働版と33行すべて一致した。稼働版 BGP は Established、14 peer だった。こちらも daemon の入れ替えは伴わない。
 
 - Cloud SAM の稼働先は未特定。`routerd-labs/cloudedge-mobility/terraform/envs` 内の AWS・Azure・OCI の state はいずれも資源が空だったが、他の稼働先の有無を示すものではない。Cloud SAM で変更後の実動作は未確認。

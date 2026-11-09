@@ -175,6 +175,16 @@ func BuildEffectiveConfigForOS(startup api.Router, parts []DynamicConfigPart, po
 			if existing := addedDynamicIDs[id]; existing != "" {
 				return api.Router{}, result, fmt.Errorf("dynamic resource conflicts with another dynamic resource: source=%q resource=%s existingSource=%q", part.Spec.Source, res.ID(), existing)
 			}
+			if res.APIVersion == api.MobilityAPIVersion && res.Kind == "SAMPeerGroup" {
+				spec, err := res.SAMPeerGroupSpec()
+				if err != nil {
+					return api.Router{}, result, err
+				}
+				if spec.Nodes == nil {
+					spec.Nodes = []api.SAMNodeSpec{}
+					res.Spec = spec
+				}
+			}
 			effective.Spec.Resources = append(effective.Spec.Resources, res)
 			addedDynamicIDs[id] = part.Spec.Source
 			result.AddedResources = append(result.AddedResources, AddedResource{
