@@ -3797,18 +3797,6 @@ type LANAddressController struct {
 	Store          Store
 	DryRun         bool
 	Logger         *slog.Logger
-	Command        commandFunc
-	AddressPresent func(context.Context, string, string) bool
-	// StagingAddressPresent is the VMAC standby readback seam. Production uses
-	// the staging-specific Linux readback; tests may inject the same contract.
-	StagingAddressPresent func(context.Context, string, string) bool
-	// DeprecatedAddressPresent verifies that a DS-Lite-only address is not a
-	// preferred source for unrelated host traffic.
-	DeprecatedAddressPresent func(context.Context, string, string) bool
-	// EnsureVMAC is used only for standby staging.  The authoritative VRRP
-	// helper creates the configured macvlan cold and leaves it DOWN.
-	EnsureVMAC  func(context.Context, string) error
-	VMACPresent func(string) bool
 }
 
 type LinkController struct {
@@ -5142,43 +5130,24 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 		}
 		changed := objectStatusChanged("IPv6DelegatedAddress", previousStatus, status)
 		addressPresent := true
-		addressPresentFn := c.AddressPresent
+		addressPresentFn := ipv6AddressPresent
 		if stagingVMAC {
-			addressPresentFn = c.StagingAddressPresent
-			if addressPresentFn == nil {
-				// Keep the existing test seam, while production always uses the
-				// standby-specific exact-prefix readback.
-				addressPresentFn = c.AddressPresent
-			}
-			if addressPresentFn == nil {
-				addressPresentFn = ipv6StagedAddressPresentWithPrefix
-			}
-		} else if addressPresentFn == nil {
-			addressPresentFn = ipv6AddressPresent
-			if spec.PrefixLength == 128 {
-				addressPresentFn = ipv6AddressPresentWithPrefix
-			}
+			addressPresentFn = ipv6StagedAddressPresentWithPrefix
+		} else if spec.PrefixLength == 128 {
+			addressPresentFn = ipv6AddressPresentWithPrefix
 		}
 		if !c.DryRun {
 			addressPresent = addressPresentFn(ctx, ifname, addr)
 		}
-		command := c.Command
-		if command == nil {
-			command = runCommandContext
-		}
 		addressDeprecated := true
 		if !c.DryRun && dsliteSource {
-			deprecatedAddressPresent := c.DeprecatedAddressPresent
-			if deprecatedAddressPresent == nil {
-				deprecatedAddressPresent = ipv6DeprecatedAddressPresentWithPrefix
-			}
-			addressDeprecated = deprecatedAddressPresent(ctx, ifname, addr)
+			addressDeprecated = ipv6DeprecatedAddressPresentWithPrefix(ctx, ifname, addr)
 		}
 		if !c.DryRun && (currentChanged || !addressPresent || !addressDeprecated) {
 			if !addressPresent {
 				for _, stale := range ipv6StaticAddressDeleteCandidates(addr) {
 					deleteName, deleteArgs := ipv6StaticAddressDeleteCommand(platform.CurrentOS(), ifname, stale)
-					if err := command(ctx, deleteName, deleteArgs...); err != nil && c.Logger != nil {
+					if err := runCommandContext(ctx, deleteName, deleteArgs...); err != nil && c.Logger != nil {
 						c.Logger.Debug("delete stale IPv6 delegated address before apply skipped", "resource", resource.Metadata.Name, "address", stale, "interface", ifname, "error", err)
 					}
 				}
@@ -5187,7 +5156,7 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 			if dsliteSource {
 				name, args = ipv6PermanentDeprecatedAddressApplyCommand(platform.CurrentOS(), ifname, addr)
 			}
-			if err := command(ctx, name, args...); err != nil {
+			if err := runCommandContext(ctx, name, args...); err != nil {
 				return err
 			}
 			if !addressPresentFn(ctx, ifname, addr) {
@@ -5227,7 +5196,7 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 				var deleteErr error
 				for _, candidate := range ipv6StaticAddressDeleteCandidates(stale.Address) {
 					name, args := ipv6StaticAddressDeleteCommand(platform.CurrentOS(), ifname, candidate)
-					if err := command(ctx, name, args...); err != nil {
+					if err := runCommandContext(ctx, name, args...); err != nil {
 						deleteErr = err
 						if c.Logger != nil {
 							c.Logger.Debug("delete expired previous IPv6 delegated address skipped", "resource", resource.Metadata.Name, "address", candidate, "interface", ifname, "error", err)
@@ -5251,12 +5220,12 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 				}
 				if platform.CurrentOS() == platform.OSFreeBSD && present {
 					name, args := ipv6StaticAddressDeleteCommand(platform.CurrentOS(), ifname, previous.Address)
-					if err := command(ctx, name, args...); err != nil {
+					if err := runCommandContext(ctx, name, args...); err != nil {
 						return err
 					}
 				}
 				name, args := ipv6DeprecatedAddressApplyCommand(platform.CurrentOS(), ifname, previous.Address, validSeconds)
-				if err := command(ctx, name, args...); err != nil {
+				if err := runCommandContext(ctx, name, args...); err != nil {
 					return err
 				}
 			}
@@ -5357,13 +5326,6 @@ func (c LANAddressController) delegatedAddressDependenciesReady(dependencies []a
 // a VMAC left UP or retaining any link-local identity must be reconciled by the
 // helper before delegated addresses can be staged.
 func (c LANAddressController) stagingVMACPresent(logical string) bool {
-	if c.VMACPresent != nil {
-		return c.VMACPresent(logical)
-	}
-	return c.vrrpVMACReadbackPresent(logical)
-}
-
-func (c LANAddressController) vrrpVMACReadbackPresent(logical string) bool {
 	router := c.DeclaredRouter
 	if router == nil {
 		router = c.Router
@@ -5436,9 +5398,6 @@ func (c LANAddressController) ensureStagingVMAC(ctx context.Context, logical str
 	if !ok {
 		return fmt.Errorf("no VRRP VMAC configured for %s", logical)
 	}
-	if c.EnsureVMAC != nil {
-		return c.EnsureVMAC(ctx, logical)
-	}
 	router := c.DeclaredRouter
 	if router == nil {
 		router = c.Router
@@ -5450,7 +5409,6 @@ func (c LANAddressController) ensureStagingVMAC(ctx context.Context, logical str
 		// an actual Linux interface name instead.
 		parent = entry.ParentInterface
 	}
-	command := c.Command
 	args := []string{"deactivate", "--vmac", parent + "," + entry.Interface + "," + entry.MACAddress + "," + entry.LinkLocalAddress + "," + fmt.Sprintf("%t", entry.WithdrawRouterAdvertisement)}
 	if owner != "" {
 		// A fresh PD snapshot is reconciled both while the VMAC is a cold
@@ -5459,9 +5417,6 @@ func (c LANAddressController) ensureStagingVMAC(ctx context.Context, logical str
 		// used by the authoritative keepalived and VRRP reconciliation paths.
 		// Otherwise this call can turn a newly activated MASTER VMAC back DOWN.
 		args = append(args, "--guard-resource", owner, "--reconcile")
-	}
-	if command != nil {
-		return command(ctx, "/usr/local/sbin/routerd-vrrp-vmac", args...)
 	}
 	output, err := exec.CommandContext(ctx, "/usr/local/sbin/routerd-vrrp-vmac", args...).CombinedOutput()
 	if err != nil {
@@ -5648,15 +5603,11 @@ func (c LANAddressController) cleanupWhenFalseIPv6DelegatedAddresses(ctx context
 			if ifname == "" {
 				ifname = spec.Interface
 			}
-			command := c.Command
-			if command == nil {
-				command = runCommandContext
-			}
 			for _, trackedAddress := range addresses {
 				var deleteErr error
 				for _, stale := range ipv6StaticAddressDeleteCandidates(trackedAddress) {
 					name, args := ipv6StaticAddressDeleteCommand(platform.CurrentOS(), ifname, stale)
-					if err := command(ctx, name, args...); err != nil {
+					if err := runCommandContext(ctx, name, args...); err != nil {
 						deleteErr = err
 						if c.Logger != nil {
 							c.Logger.Debug("delete when-false IPv6 delegated address skipped", "resource", resource.Metadata.Name, "address", stale, "interface", ifname, "error", err)
