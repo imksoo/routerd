@@ -30,10 +30,10 @@ func pppoeInterfaceExists(osName platform.OS, ifname string) (bool, error) {
 	return false, nil
 }
 
-// waitForOwnedPPPoEInterfaceTeardown holds lifecycle completion until the
+// waitForPPPoEInterfaceTeardown holds lifecycle completion until the
 // kernel removes the exact interface derived for this resource. Child exit is
 // insufficient on both supported OS paths because interface teardown is async.
-func waitForOwnedPPPoEInterfaceTeardown(osName platform.OS, ifname string) error {
+func waitForPPPoEInterfaceTeardown(osName platform.OS, ifname string) error {
 	deadline := time.NewTimer(pppoeInterfaceTeardownTimeout)
 	defer deadline.Stop()
 	ticker := time.NewTicker(pppoeInterfaceProbeInterval)
@@ -48,7 +48,7 @@ func waitForOwnedPPPoEInterfaceTeardown(osName platform.OS, ifname string) error
 		}
 		select {
 		case <-deadline.C:
-			return fmt.Errorf("managed PPPoE child exited but owned interface %q did not disappear within %s", ifname, pppoeInterfaceTeardownTimeout)
+			return fmt.Errorf("PPPoE child exited but interface %q did not disappear within %s", ifname, pppoeInterfaceTeardownTimeout)
 		case <-ticker.C:
 		}
 	}

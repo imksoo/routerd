@@ -426,7 +426,7 @@ func (d *daemon) startSession(ctx context.Context) error {
 	go d.scanLog(stderr)
 	go func() {
 		childErr := cmd.Wait()
-		teardownErr := waitForOwnedPPPoEInterfaceTeardown(osName, freeBSDIfName)
+		teardownErr := waitForPPPoEInterfaceTeardown(osName, freeBSDIfName)
 		d.finishSession(cmd, completion, childErr, teardownErr)
 	}()
 	return nil
