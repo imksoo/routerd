@@ -3,8 +3,10 @@
 package chain
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/netip"
@@ -23,7 +25,7 @@ type samProxyNeighborApplier interface {
 	EnsureProxyNeighbor(ctx context.Context, address, ifname string) error
 	DeleteProxyNeighbor(ctx context.Context, address, ifname string) error
 	EnsureOSAddressAbsent(ctx context.Context, address string) (samOSAddressDeassignResult, error)
-	ReconcileForwardPaths(ctx context.Context, paths []sam.CaptureAction) error
+	ReconcileForwardPaths(ctx context.Context, paths []sam.CaptureAction, preserveExisting bool) error
 }
 
 type samGratuitousARPAnnouncer interface {
@@ -48,7 +50,7 @@ type SAMController struct {
 	GARP                samGratuitousARPAnnouncer
 }
 
-func (c SAMController) Reconcile(ctx context.Context) error {
+func (c SAMController) Reconcile(ctx context.Context) (resultErr error) {
 	if c.Router == nil || c.Store == nil {
 		return nil
 	}
@@ -67,6 +69,7 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	defer func() { resultErr = errors.Join(resultErr, state.recordError) }()
 	if !c.DryRun && (len(actions) != 0 || len(state.previousProxyNeighbors) != 0 || len(state.heldForwardPaths) != 0 || len(state.previousProxyARP) != 0) {
 		if _, ok := c.Store.(objectStatusMerger); !ok {
 			return fmt.Errorf("SAM capture effects require an applied-effect status merger")
@@ -171,30 +174,59 @@ type samReconcileState struct {
 	heldProxyNeighbors     []samAppliedProxyNeighbor
 	heldForwardPaths       []samAppliedForwardPath
 	heldProxyARPIDs        map[string]bool
+	uncertainProxyARP      map[string]bool
 	previousProxyARP       map[string]samAppliedProxyARP
 	nextProxyARP           map[string]samAppliedProxyARP
 	forwardPaths           []sam.CaptureAction
+	preserveForward        bool
+	invalidNeighbors       []json.RawMessage
+	invalidPaths           []json.RawMessage
+	invalidProxyARP        []json.RawMessage
+	invalidFields          map[string]bool
+	recordError            error
 }
 
 func (c SAMController) reconcileState(actions []sam.CaptureAction, targetOS platform.OS) (samReconcileState, error) {
 	status := c.Store.ObjectStatus(api.RouterAPIVersion, "Router", samDataplaneStatusName)
-	previousProxyNeighbors, err := samAppliedProxyNeighbors(status["appliedProxyNeighbors"], statusValuePresent(status, "appliedProxyNeighbors"))
-	if err != nil {
-		return samReconcileState{}, fmt.Errorf("decode applied SAM proxy-neighbor ledger: %w", err)
+	previousProxyNeighbors, invalidNeighbors, neighborsMalformed, neighborErr := samDecodeRecords(status["appliedProxyNeighbors"], statusValuePresent(status, "appliedProxyNeighbors"), validateSAMAppliedProxyNeighbor, func(v samAppliedProxyNeighbor) string {
+		return samProxyNeighborKey(v.ID, v.Address, v.Interface)
+	})
+	previousForwardPaths, invalidPaths, pathsMalformed, pathErr := samDecodeRecords(status["appliedForwardPaths"], statusValuePresent(status, "appliedForwardPaths"), validateSAMAppliedForwardPath, samForwardPathKey)
+	proxySettings, invalidProxyARP, proxyMalformed, proxyErr := samDecodeRecords(status["appliedProxyARP"], statusValuePresent(status, "appliedProxyARP"), func(setting samAppliedProxyARP) error {
+		if targetOS == platform.OSFreeBSD {
+			if setting.Interface != "" {
+				return fmt.Errorf("FreeBSD proxyall ledger interface must be empty")
+			}
+			return nil
+		}
+		if err := sam.ValidateCaptureInterface(setting.Interface); err != nil {
+			return fmt.Errorf("proxy_arp ledger interface: %w", err)
+		}
+		return nil
+	}, func(v samAppliedProxyARP) string { return v.Interface })
+	previousProxyARP := make(map[string]samAppliedProxyARP, len(proxySettings))
+	for _, setting := range proxySettings {
+		previousProxyARP[setting.Interface] = setting
 	}
-	previousForwardPaths, err := samAppliedForwardPaths(status["appliedForwardPaths"], statusValuePresent(status, "appliedForwardPaths"))
-	if err != nil {
-		return samReconcileState{}, fmt.Errorf("decode applied SAM forward-path ledger: %w", err)
+	if neighborErr != nil {
+		neighborErr = fmt.Errorf("proxy-neighbor records: %w", neighborErr)
 	}
-	previousProxyARP, err := samAppliedProxyARPSettings(status["appliedProxyARP"], statusValuePresent(status, "appliedProxyARP"), targetOS)
-	if err != nil {
-		return samReconcileState{}, fmt.Errorf("decode applied SAM proxy_arp ledger: %w", err)
+	if pathErr != nil {
+		pathErr = fmt.Errorf("forward-path records: %w", pathErr)
+	}
+	if proxyErr != nil {
+		proxyErr = fmt.Errorf("proxy_arp records: %w", proxyErr)
 	}
 	held, heldProxyARPIDs, err := samHeldCaptures(c.LocalCaptureIntents)
 	if err != nil {
 		return samReconcileState{}, err
 	}
 	state := samReconcileState{
+		invalidNeighbors:       invalidNeighbors,
+		invalidPaths:           invalidPaths,
+		invalidProxyARP:        invalidProxyARP,
+		invalidFields:          map[string]bool{"appliedProxyNeighbors": neighborsMalformed, "appliedForwardPaths": pathsMalformed, "appliedProxyARP": proxyMalformed},
+		recordError:            errors.Join(neighborErr, pathErr, proxyErr),
 		previousProxyNeighbors: previousProxyNeighbors,
 		heldProxyARPIDs:        heldProxyARPIDs,
 		previousProxyARP:       previousProxyARP,
@@ -210,6 +242,19 @@ func (c SAMController) reconcileState(actions []sam.CaptureAction, targetOS plat
 			state.heldForwardPaths = append(state.heldForwardPaths, applied)
 		}
 	}
+	if len(invalidNeighbors) != 0 || neighborsMalformed {
+		state.uncertainProxyARP = map[string]bool{}
+		for id, hold := range held {
+			if heldProxyARPIDs[id] {
+				if targetOS == platform.OSFreeBSD {
+					state.uncertainProxyARP[""] = true
+				} else {
+					state.uncertainProxyARP[hold.captureInterface] = true
+				}
+			}
+		}
+	}
+	state.preserveForward = len(held) != 0 && (len(invalidPaths) != 0 || pathsMalformed)
 	state.forwardPaths = reconciledSAMForwardPaths(actions, state.heldForwardPaths)
 	return state, nil
 }
@@ -354,95 +399,90 @@ func (c SAMController) saveAppliedDataplane(actions []sam.CaptureAction, state s
 		proxyARP = append(proxyARP, setting)
 	}
 	sort.Slice(proxyARP, func(i, j int) bool { return proxyARP[i].Interface < proxyARP[j].Interface })
-	return merger.MergeObjectStatus(api.RouterAPIVersion, "Router", samDataplaneStatusName, map[string]any{
-		"appliedProxyNeighbors": neighbors,
-		"appliedForwardPaths":   paths,
-		"appliedProxyARP":       proxyARP,
-	})
+	updates := map[string]any{}
+	if !state.invalidFields["appliedProxyNeighbors"] {
+		updates["appliedProxyNeighbors"] = samRecordsWithInvalid(neighbors, state.invalidNeighbors)
+	}
+	if !state.invalidFields["appliedForwardPaths"] {
+		updates["appliedForwardPaths"] = samRecordsWithInvalid(paths, state.invalidPaths)
+	}
+	if !state.invalidFields["appliedProxyARP"] {
+		updates["appliedProxyARP"] = samRecordsWithInvalid(proxyARP, state.invalidProxyARP)
+	}
+	return merger.MergeObjectStatus(api.RouterAPIVersion, "Router", samDataplaneStatusName, updates)
 }
 
-func samAppliedProxyNeighbors(value any, present bool) ([]samAppliedProxyNeighbor, error) {
+// samDecodeRecords isolates malformed entries so valid effects can still reconcile.
+func samDecodeRecords[T comparable](value any, present bool, validate func(T) error, key func(T) string) ([]T, []json.RawMessage, bool, error) {
 	if !present {
-		return nil, nil
+		return nil, nil, false, nil
 	}
-	decoded, ok := decodeAppliedDataplaneStatus[samAppliedProxyNeighbor](value)
-	if !ok || decoded == nil {
-		return nil, fmt.Errorf("must be a non-null JSON array")
+	data, err := json.Marshal(value)
+	if err != nil {
+		return nil, nil, true, fmt.Errorf("encode SAM applied records: %w", err)
 	}
-	byKey := map[string]samAppliedProxyNeighbor{}
-	for _, neighbor := range decoded {
-		if err := validateSAMAppliedProxyNeighbor(neighbor); err != nil {
-			return nil, err
+	var entries []json.RawMessage
+	if err := json.Unmarshal(data, &entries); err != nil || entries == nil {
+		return nil, nil, true, fmt.Errorf("SAM applied records must be a non-null array")
+	}
+	type parsedRecord struct {
+		value T
+		raw   json.RawMessage
+		valid bool
+	}
+	var parsed []parsedRecord
+	var invalid []json.RawMessage
+	var failures []error
+	byKey := map[string]int{}
+	conflicts := map[string]bool{}
+	for i, entry := range entries {
+		var item T
+		decoder := json.NewDecoder(bytes.NewReader(entry))
+		decoder.DisallowUnknownFields()
+		err := decoder.Decode(&item)
+		if err == nil {
+			err = validate(item)
 		}
-		key := samProxyNeighborKey(neighbor.ID, neighbor.Address, neighbor.Interface)
-		if previous, found := byKey[key]; found {
-			if previous != neighbor {
-				return nil, fmt.Errorf("conflicting proxy-neighbor ledger entries for %q", key)
+		if err != nil {
+			invalid = append(invalid, entry)
+			failures = append(failures, fmt.Errorf("record %d: %w", i, err))
+			continue
+		}
+		k := key(item)
+		if conflicts[k] {
+			invalid = append(invalid, entry)
+			continue
+		}
+		if previous, ok := byKey[k]; ok {
+			if parsed[previous].value != item {
+				parsed[previous].valid = false
+				invalid = append(invalid, parsed[previous].raw, entry)
+				conflicts[k] = true
+				failures = append(failures, fmt.Errorf("record %d conflicts with another record", i))
 			}
 			continue
 		}
-		byKey[key] = neighbor
+		byKey[k] = len(parsed)
+		parsed = append(parsed, parsedRecord{value: item, raw: entry, valid: true})
 	}
-	out := make([]samAppliedProxyNeighbor, 0, len(byKey))
-	for _, neighbor := range byKey {
-		out = append(out, neighbor)
+	valid := make([]T, 0, len(parsed))
+	for _, entry := range parsed {
+		if entry.valid {
+			valid = append(valid, entry.value)
+		}
 	}
-	sort.Slice(out, func(i, j int) bool {
-		return samProxyNeighborKey(out[i].ID, out[i].Address, out[i].Interface) < samProxyNeighborKey(out[j].ID, out[j].Address, out[j].Interface)
-	})
-	return out, nil
+	return valid, invalid, false, errors.Join(failures...)
 }
 
-func samAppliedForwardPaths(value any, present bool) ([]samAppliedForwardPath, error) {
-	if !present {
-		return nil, nil
+func samRecordsWithInvalid[T any](valid []T, invalid []json.RawMessage) []any {
+	out := make([]any, 0, len(valid)+len(invalid))
+	for _, entry := range valid {
+		out = append(out, entry)
 	}
-	decoded, ok := decodeAppliedDataplaneStatus[samAppliedForwardPath](value)
-	if !ok || decoded == nil {
-		return nil, fmt.Errorf("must be a non-null JSON array")
+	for _, entry := range invalid {
+		out = append(out, entry)
 	}
-	byKey := map[string]samAppliedForwardPath{}
-	for _, path := range decoded {
-		if err := validateSAMAppliedForwardPath(path); err != nil {
-			return nil, err
-		}
-		key := samForwardPathKey(path)
-		if previous, found := byKey[key]; found {
-			if previous != path {
-				return nil, fmt.Errorf("conflicting forward-path ledger entries for %q", key)
-			}
-			continue
-		}
-		byKey[key] = path
-	}
-	out := make([]samAppliedForwardPath, 0, len(byKey))
-	for _, path := range byKey {
-		out = append(out, path)
-	}
-	sort.Slice(out, func(i, j int) bool { return samForwardPathKey(out[i]) < samForwardPathKey(out[j]) })
-	return out, nil
-}
-
-func samAppliedProxyARPSettings(value any, present bool, targetOS platform.OS) (map[string]samAppliedProxyARP, error) {
-	if !present {
-		return map[string]samAppliedProxyARP{}, nil
-	}
-	decoded, ok := decodeAppliedDataplaneStatus[samAppliedProxyARP](value)
-	if !ok || decoded == nil {
-		return nil, fmt.Errorf("must be a non-null JSON array")
-	}
-	settings := make(map[string]samAppliedProxyARP, len(decoded))
-	for _, setting := range decoded {
-		if targetOS == platform.OSFreeBSD {
-			if setting.Interface != "" {
-				return nil, fmt.Errorf("FreeBSD proxyall ledger interface must be empty")
-			}
-		} else if err := sam.ValidateCaptureInterface(setting.Interface); err != nil {
-			return nil, fmt.Errorf("proxy_arp ledger interface: %w", err)
-		}
-		settings[setting.Interface] = samAppliedProxyARP{Interface: setting.Interface}
-	}
-	return settings, nil
+	return out
 }
 
 func validateSAMAppliedProxyNeighbor(neighbor samAppliedProxyNeighbor) error {
@@ -589,7 +629,7 @@ func (c SAMController) reconcileForwardPaths(ctx context.Context, state samRecon
 	if applier == nil {
 		applier = defaultSAMProxyNeighborApplier()
 	}
-	return applier.ReconcileForwardPaths(ctx, state.forwardPaths)
+	return applier.ReconcileForwardPaths(ctx, state.forwardPaths, state.preserveForward)
 }
 
 func (c SAMController) reconcileProxyARPSysctls(ctx context.Context, actions []sam.CaptureAction, blocked map[string]bool, state *samReconcileState) error {
@@ -635,6 +675,10 @@ func (c SAMController) reconcileProxyARPSysctls(ctx context.Context, actions []s
 	sort.Strings(ordered)
 	state.nextProxyARP = map[string]samAppliedProxyARP{}
 	for _, iface := range ordered {
+		if !desired[iface] && state.uncertainProxyARP[iface] {
+			state.nextProxyARP[iface] = state.previousProxyARP[iface]
+			continue
+		}
 		if err := applier.SetProxyARP(ctx, iface, desired[iface]); err != nil {
 			return fmt.Errorf("set SAM proxy_arp %q=%t: %w", iface, desired[iface], err)
 		}
