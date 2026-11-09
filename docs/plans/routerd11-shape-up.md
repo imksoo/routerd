@@ -22,6 +22,8 @@
 
 ## 実機確認の記録
 
+- 2026-11-09、pve-rt01〜08とk8s-rt01・02の有効設定とIPv4 policy ruleをPVEゲストエージェントで読み取り比較した。各機はOS標準の3 ruleで、現行の撤去条件に該当するruleはなかった。homert02の14 ruleも、設定とTailscaleの動的ruleを考慮すると撤去対象はなかった。変更後daemonでのrule・table撤去は未確認。
+
 - 2026-11-09、PVEゲストエージェントからpve-rt01〜08の実行中設定とカーネルを読み取り、各機のIPIP TunnelInterface 2件と実リンク2本の名前が一致した。k8s-rt02も設定8件と実リンク8本が一致した。変更後daemonでの維持・撤去は未確認。
 
 - 2026-11-09、pve-rt01〜06・08は全機VM稼働中、稼働版 `v20261108.1523` のrouterdはactive・Healthyで、各機のBGP 2 peerはともにEstablished。k8s-rt02からpve-rt01〜08の各IPIP対向への単発pingも成功した。変更後daemonの通信と切替・復旧は未確認。
