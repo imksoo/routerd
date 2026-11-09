@@ -198,7 +198,7 @@ func (netlinkSAMProxyNeighborApplier) EnsureOSAddressAbsent(_ context.Context, a
 	return result, nil
 }
 
-func (netlinkSAMProxyNeighborApplier) ReconcileForwardPaths(ctx context.Context, paths []sam.CaptureAction, preserveExisting bool) error {
+func (netlinkSAMProxyNeighborApplier) ReconcileForwardPaths(ctx context.Context, paths []sam.CaptureAction) error {
 	samForwardPathMu.Lock()
 	defer samForwardPathMu.Unlock()
 
@@ -270,7 +270,7 @@ func (netlinkSAMProxyNeighborApplier) ReconcileForwardPaths(ctx context.Context,
 		}
 	}
 	for ifname := range currentIfaces {
-		if preserveExisting || acceptLocal[ifname] {
+		if acceptLocal[ifname] {
 			continue
 		}
 		key := "net.ipv4.conf." + ifname + ".accept_local"
@@ -289,10 +289,8 @@ func (netlinkSAMProxyNeighborApplier) ReconcileForwardPaths(ctx context.Context,
 			return err
 		}
 	}
-	if !preserveExisting {
-		if err := deleteStaleIPTablesRules(chain, desired, runIPTables); err != nil {
-			return err
-		}
+	if err := deleteStaleIPTablesRules(chain, desired, runIPTables); err != nil {
+		return err
 	}
 	return nil
 }

@@ -41,7 +41,7 @@ func (unsupportedSAMProxyNeighborApplier) EnsureOSAddressAbsent(context.Context,
 	return samOSAddressDeassignResult{}, nil
 }
 
-func (unsupportedSAMProxyNeighborApplier) ReconcileForwardPaths(context.Context, []sam.CaptureAction, bool) error {
+func (unsupportedSAMProxyNeighborApplier) ReconcileForwardPaths(context.Context, []sam.CaptureAction) error {
 	return nil
 }
 

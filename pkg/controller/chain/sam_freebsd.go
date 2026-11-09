@@ -153,7 +153,7 @@ func (freeBSDSAMProxyNeighborApplier) EnsureOSAddressAbsent(ctx context.Context,
 	return result, nil
 }
 
-func (freeBSDSAMProxyNeighborApplier) ReconcileForwardPaths(ctx context.Context, paths []sam.CaptureAction, preserveExisting bool) error {
+func (freeBSDSAMProxyNeighborApplier) ReconcileForwardPaths(ctx context.Context, paths []sam.CaptureAction) error {
 	freeBSDSAMForwardPathMu.Lock()
 	defer freeBSDSAMForwardPathMu.Unlock()
 
@@ -169,7 +169,7 @@ func (freeBSDSAMProxyNeighborApplier) ReconcileForwardPaths(ctx context.Context,
 		return fmt.Errorf("pfctl -a %s -sr: %w: %s", freeBSDSAMForwardAnchor, err, strings.TrimSpace(string(out)))
 	}
 	if len(paths) == 0 {
-		if preserveExisting || strings.TrimSpace(string(out)) == "" {
+		if strings.TrimSpace(string(out)) == "" {
 			return nil
 		}
 		flushed, flushErr := freeBSDSAMRunCommand(ctx, "pfctl", "-a", freeBSDSAMForwardAnchor, "-F", "rules")
@@ -184,19 +184,6 @@ func (freeBSDSAMProxyNeighborApplier) ReconcileForwardPaths(ctx context.Context,
 	rules, err := freeBSDSAMForwardRules(paths)
 	if err != nil {
 		return err
-	}
-	if preserveExisting && strings.TrimSpace(string(out)) != "" {
-		existing := strings.Split(strings.TrimSpace(string(out)), "\n")
-		seen := make(map[string]bool, len(existing))
-		for _, rule := range existing {
-			seen[strings.TrimSpace(rule)] = true
-		}
-		for _, rule := range rules {
-			if !seen[strings.TrimSpace(rule)] {
-				existing = append(existing, rule)
-			}
-		}
-		rules = existing
 	}
 	loaded, loadErr := freeBSDSAMRunCommandInput(ctx, "pfctl", strings.Join(rules, "\n")+"\n", "-a", freeBSDSAMForwardAnchor, "-f", "-")
 	if loadErr != nil {
