@@ -668,7 +668,7 @@ func (c IPv4PolicyRouteController) removeExtraIPv4Policy(ctx context.Context) er
 		if route.Table == "" || tables[route.Table] {
 			continue
 		}
-		if _, err := strconv.ParseUint(route.Table, 10, 32); err != nil {
+		if table, err := strconv.ParseUint(route.Table, 10, 32); err != nil || table == 0 {
 			continue
 		}
 		out, err := exec.CommandContext(ctx, "ip", "-4", "route", "flush", "table", route.Table).CombinedOutput()
