@@ -4990,31 +4990,22 @@ func (c *Controller) previousPeers() map[string]bgpstate.Peer {
 }
 
 func peersFromStatus(value any) []bgpstate.Peer {
-	switch typed := value.(type) {
-	case []bgpstate.Peer:
-		return typed
-	case []any:
-		out := make([]bgpstate.Peer, 0, len(typed))
-		for _, raw := range typed {
-			item, ok := raw.(map[string]any)
-			if !ok {
-				continue
-			}
-			out = append(out, bgpstate.Peer{
-				Address:           statusvalue.Text(item["address"]),
-				ASN:               uint32(statusInt(item["asn"])),
-				State:             statusvalue.Text(item["state"]),
-				Established:       statusvalue.BoolOrFalse(item["established"]),
-				PrefixesReceived:  statusInt(item["prefixesReceived"]),
-				LastEstablishedAt: statusvalue.Text(item["lastEstablishedAt"]),
-				LastErrorAt:       statusvalue.Text(item["lastErrorAt"]),
-				LastErrorReason:   statusvalue.Text(item["lastErrorReason"]),
-			})
+	peers, _ := value.([]any)
+	var out []bgpstate.Peer
+	for _, raw := range peers {
+		item, ok := raw.(map[string]any)
+		if !ok {
+			continue
 		}
-		return out
-	default:
-		return nil
+		out = append(out, bgpstate.Peer{
+			Address:           statusvalue.Text(item["address"]),
+			Established:       statusvalue.BoolOrFalse(item["established"]),
+			LastEstablishedAt: statusvalue.Text(item["lastEstablishedAt"]),
+			LastErrorAt:       statusvalue.Text(item["lastErrorAt"]),
+			LastErrorReason:   statusvalue.Text(item["lastErrorReason"]),
+		})
 	}
+	return out
 }
 
 func observedCommunities(prefixes []bgpstate.Prefix) []string {
@@ -5175,29 +5166,6 @@ func firstNonZero(values ...uint32) uint32 {
 
 func cBool(value *bool) bool {
 	return value != nil && *value
-}
-
-func statusInt(value any) int {
-	switch typed := value.(type) {
-	case int:
-		return typed
-	case uint:
-		return int(typed)
-	case uint32:
-		return int(typed)
-	case uint64:
-		return int(typed)
-	case int64:
-		return int(typed)
-	case float64:
-		return int(typed)
-	case string:
-		var out int
-		_, _ = fmt.Sscanf(strings.TrimSpace(typed), "%d", &out)
-		return out
-	default:
-		return 0
-	}
 }
 
 func (c *Controller) Close() {
