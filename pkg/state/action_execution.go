@@ -69,41 +69,9 @@ type ActionExecutionFilter struct {
 	Provider string
 }
 
-// ensureActionExecutionColumns is the additive migration for the
-// action_executions journal. It creates the table when a pre-existing database
-// lacks it (backward compatible: a database without the table simply gets it
-// created here) and is the place to add future columns via tableHasColumn
-// checks, mirroring the other ensure*Columns migrations.
+// ensureActionExecutionColumns adds the observed facts column to existing databases.
 func (s *SQLiteStore) ensureActionExecutionColumns() error {
-	if _, err := s.db.Exec(`
-CREATE TABLE IF NOT EXISTS action_executions (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  idempotency_key TEXT NOT NULL UNIQUE,
-  source TEXT,
-  provider TEXT NOT NULL,
-  provider_ref TEXT,
-  action TEXT NOT NULL,
-  target_json TEXT,
-  parameters_json TEXT,
-  undo_json TEXT,
-  risk_level TEXT,
-  status TEXT NOT NULL,
-  approved_by TEXT,
-  approved_at TEXT,
-  executed_at TEXT,
-  result_message TEXT,
-  error TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS action_executions_status ON action_executions(status, id);
-`); err != nil {
-		return err
-	}
-	// Additive column for the executor's Observed facts (e.g.
-	// priorSourceDestCheck). Backward compatible: a pre-existing table without it
-	// gets the column added; a table created fresh above does not yet have it, so
-	// we add it here either way via the tableHasColumn guard.
+	// The executor records observed facts such as priorSourceDestCheck here.
 	hasObserved, err := s.tableHasColumn("action_executions", "observed_json")
 	if err != nil {
 		return err
