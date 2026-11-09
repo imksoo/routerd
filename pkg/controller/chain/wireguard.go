@@ -1277,9 +1277,6 @@ func (c WireGuardController) interfaceMatchesDesired(ctx context.Context, cfg wi
 	for _, peer := range observed.Peers {
 		byKey[peer.PublicKey] = peer
 	}
-	if len(byKey) != len(cfg.Peers) {
-		return false
-	}
 	for _, desired := range cfg.Peers {
 		current, ok := byKey[desired.PublicKey]
 		if !ok {

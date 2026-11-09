@@ -154,9 +154,7 @@ func RenderSetConf(cfg InterfaceConfig) ([]byte, error) {
 		if peer.Endpoint != "" {
 			fmt.Fprintf(&out, "Endpoint = %s\n", peer.Endpoint)
 		}
-		if peer.PersistentKeepalive != 0 {
-			fmt.Fprintf(&out, "PersistentKeepalive = %d\n", peer.PersistentKeepalive)
-		}
+		fmt.Fprintf(&out, "PersistentKeepalive = %d\n", peer.PersistentKeepalive)
 	}
 	return out.Bytes(), nil
 }
@@ -307,7 +305,7 @@ func applyLinux(ctx context.Context, cfg InterfaceConfig, conf []byte) ([]byte, 
 			return nil, err
 		}
 	}
-	if _, err := runCommandStdin(ctx, conf, "wg", "setconf", cfg.Name, "/dev/stdin"); err != nil {
+	if _, err := runCommandStdin(ctx, conf, "wg", "addconf", cfg.Name, "/dev/stdin"); err != nil {
 		return nil, err
 	}
 	if _, err := runCommand(ctx, "ip", "link", "set", "up", "dev", cfg.Name); err != nil {
@@ -325,7 +323,7 @@ func applyFreeBSD(ctx context.Context, cfg InterfaceConfig, conf []byte) ([]byte
 			}
 		}
 	}
-	if _, err := runCommandStdin(ctx, conf, "wg", "setconf", cfg.Name, "/dev/stdin"); err != nil {
+	if _, err := runCommandStdin(ctx, conf, "wg", "addconf", cfg.Name, "/dev/stdin"); err != nil {
 		return nil, err
 	}
 	if cfg.MTU != 0 {
