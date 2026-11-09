@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/pppoeclient"
 )
 
@@ -31,20 +32,8 @@ func runFreeBSDPPPoEObserverCommand(ctx context.Context, name string, args ...st
 	return exec.CommandContext(ctx, name, args...).Output()
 }
 
-func freeBSDPPPoEInterfaceExists(ctx context.Context, ifname string) (bool, error) {
-	_, err := runFreeBSDPPPoEObserverCommand(ctx, "ifconfig", ifname)
-	if err == nil {
-		return true, nil
-	}
-	var exitError *exec.ExitError
-	if errors.As(err, &exitError) && exitError.ExitCode() == 1 {
-		return false, nil
-	}
-	return false, fmt.Errorf("inspect FreeBSD PPPoE interface %q ownership: %w", ifname, err)
-}
-
 func ensureFreeBSDPPPoEInterfaceAbsent(ctx context.Context, ifname string) error {
-	exists, err := freeBSDPPPoEInterfaceExists(ctx, ifname)
+	exists, err := pppoeInterfaceExists(ctx, platform.OSFreeBSD, ifname)
 	if err != nil {
 		return err
 	}

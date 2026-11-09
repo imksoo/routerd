@@ -327,11 +327,7 @@ func (d *daemon) Run(ctx context.Context) error {
 
 func (d *daemon) startSession(ctx context.Context) error {
 	d.mu.Lock()
-	if d.teardownFailed {
-		d.mu.Unlock()
-		return errors.New("PPPoE session start is blocked: prior routerd-owned interface cleanup is unresolved")
-	}
-	if d.cmd != nil || d.sessionStarting {
+	if d.sessionStarting || (d.cmd != nil && !d.teardownFailed) {
 		d.mu.Unlock()
 		return errors.New("PPPoE session start is already active or stopping")
 	}
@@ -339,6 +335,8 @@ func (d *daemon) startSession(ctx context.Context) error {
 	startDone := make(chan struct{})
 	d.startDone = startDone
 	managedCtx := d.lifetimeCtx
+	checkTeardown := d.teardownFailed
+	ifname := d.snapshot.IfName
 	d.mu.Unlock()
 	if managedCtx == nil {
 		managedCtx = ctx
@@ -356,6 +354,21 @@ func (d *daemon) startSession(ctx context.Context) error {
 		}
 		d.mu.Unlock()
 	}()
+
+	if checkTeardown {
+		exists, err := pppoeInterfaceExists(ctx, platform.CurrentOS(), ifname)
+		if err != nil {
+			return fmt.Errorf("recheck PPPoE interface %q after teardown failure: %w", ifname, err)
+		}
+		if exists {
+			return fmt.Errorf("PPPoE session start is blocked: interface %q remains after teardown", ifname)
+		}
+		d.mu.Lock()
+		d.teardownFailed = false
+		d.cmd = nil
+		d.cmdDone = nil
+		d.mu.Unlock()
+	}
 
 	if err := d.renderRuntimeConfig(); err != nil {
 		return err

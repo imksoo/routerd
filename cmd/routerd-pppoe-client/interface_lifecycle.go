@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
 	"time"
 
 	"github.com/imksoo/routerd/pkg/platform"
@@ -15,14 +16,25 @@ const pppoeInterfaceTeardownTimeout = 5 * time.Second
 const pppoeInterfaceProbeInterval = 50 * time.Millisecond
 
 func pppoeInterfaceExists(ctx context.Context, osName platform.OS, ifname string) (bool, error) {
-	switch osName {
-	case platform.OSFreeBSD:
-		return freeBSDPPPoEInterfaceExists(ctx, ifname)
-	case platform.OSLinux:
-		return linuxPPPoEInterfaceExists(ctx, ifname)
-	default:
+	if osName != platform.OSLinux && osName != platform.OSFreeBSD {
 		return false, nil
 	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return false, fmt.Errorf("list interfaces for PPPoE teardown: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	for _, iface := range interfaces {
+		if iface.Name == ifname {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // waitForOwnedPPPoEInterfaceTeardown holds lifecycle completion until the
