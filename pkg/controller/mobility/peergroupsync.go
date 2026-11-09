@@ -322,7 +322,7 @@ func (c *PeerGroupSyncClient) saveSyncResource(name string, resource api.Resourc
 	if expiresAt.IsZero() || !expiresAt.After(now) {
 		expiresAt = now.Add(DefaultLeaseTTL)
 	}
-	part := dynamicconfig.NewPart(safeName(peerGroupSyncCacheKind+"-"+strings.TrimSpace(name)), PeerGroupSyncDynamicSource(name), nil, dynamicGeneration, now, expiresAt)
+	part := dynamicconfig.NewPart(safeName(peerGroupSyncCacheKind+"-"+strings.TrimSpace(name)), PeerGroupSyncDynamicSource(name), dynamicGeneration, now, expiresAt)
 	part.Spec.Resources = []api.Resource{resource}
 	part.Spec.ActionPlans = []dynamicconfig.ActionPlan{}
 	part.Spec.Digest = digestDynamicPart(part)

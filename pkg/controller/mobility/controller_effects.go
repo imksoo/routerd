@@ -184,11 +184,7 @@ func (c Controller) upsertBGPPlan(ctx context.Context, poolName, selfNode string
 	if err != nil {
 		return fmt.Errorf("get previous MobilityPool dynamic config part %s: %w", source, err)
 	}
-	part := dynamicconfig.NewPart(safeName("mobility-"+poolName+"-"+selfNode), DynamicSource(poolName, selfNode), []api.OwnerRef{{
-		APIVersion: api.MobilityAPIVersion,
-		Kind:       "MobilityPool",
-		Name:       poolName,
-	}}, dynamicGeneration, now, now.Add(DefaultLeaseTTL))
+	part := dynamicconfig.NewPart(safeName("mobility-"+poolName+"-"+selfNode), DynamicSource(poolName, selfNode), dynamicGeneration, now, now.Add(DefaultLeaseTTL))
 	// Mobility effects are not generic Router resources. Keep the ordinary
 	// dynamic resource payload explicitly empty so a new plan also clears the
 	// older synthetic IPv4Route projection from this source.
@@ -300,7 +296,6 @@ func (c Controller) expireMobilityPlanSource(ctx context.Context, source string,
 	part := dynamicconfig.NewPart(
 		safeName("mobility-"+parsed.PoolRef+"-"+parsed.NodeRef),
 		source,
-		[]api.OwnerRef{{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool", Name: parsed.PoolRef}},
 		dynamicGeneration,
 		now,
 		now,

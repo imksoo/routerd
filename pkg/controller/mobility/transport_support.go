@@ -107,11 +107,7 @@ func (c TransportController) remoteEndpoint(peer api.SAMTransportPeerSpec) (stri
 }
 
 func (c TransportController) upsertTransportDynamicPart(ctx context.Context, owner api.Resource, source, namePrefix string, resources []api.Resource, now time.Time) (string, error) {
-	part := dynamicconfig.NewPart(safeName(namePrefix+"-"+owner.Metadata.Name), source, []api.OwnerRef{{
-		APIVersion: api.MobilityAPIVersion,
-		Kind:       "SAMTransportProfile",
-		Name:       owner.Metadata.Name,
-	}}, dynamicGeneration, now, now.Add(DefaultLeaseTTL))
+	part := dynamicconfig.NewPart(safeName(namePrefix+"-"+owner.Metadata.Name), source, dynamicGeneration, now, now.Add(DefaultLeaseTTL))
 	part.Spec.Resources = append([]api.Resource(nil), resources...)
 	part.Spec.ActionPlans = []dynamicconfig.ActionPlan{}
 	part.Spec.Digest = digestDynamicPart(part)
@@ -143,14 +139,7 @@ func (c TransportController) upsertTransportPeerGroupPart(ctx context.Context, o
 		groupName := owner.Metadata.Name
 		resources = append(resources, api.Resource{
 			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMPeerGroup"},
-			Metadata: api.ObjectMeta{
-				Name: groupName,
-				OwnerRefs: []api.OwnerRef{{
-					APIVersion: api.MobilityAPIVersion,
-					Kind:       "SAMTransportProfile",
-					Name:       owner.Metadata.Name,
-				}},
-			},
+			Metadata: api.ObjectMeta{Name: groupName},
 			Spec: api.SAMPeerGroupSpec{
 				Nodes: []api.SAMNodeSpec{{
 					NodeRef:     strings.TrimSpace(spec.SelfNodeRef),

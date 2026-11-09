@@ -47,10 +47,10 @@ type DynamicConfigPart struct {
 // DynamicConfigPart. Producers fill only the typed payloads they own; keeping
 // the envelope here prevents otherwise-identical source, lease and empty
 // directive setup from drifting between controllers.
-func NewPart(name, source string, owners []api.OwnerRef, generation int64, observedAt, expiresAt time.Time) DynamicConfigPart {
+func NewPart(name, source string, generation int64, observedAt, expiresAt time.Time) DynamicConfigPart {
 	return DynamicConfigPart{
 		TypeMeta: api.TypeMeta{APIVersion: ConfigAPIVersion, Kind: "DynamicConfigPart"},
-		Metadata: api.ObjectMeta{Name: name, OwnerRefs: append([]api.OwnerRef(nil), owners...)},
+		Metadata: api.ObjectMeta{Name: name},
 		Spec: DynamicConfigPartSpec{
 			Source:     source,
 			Generation: generation,
