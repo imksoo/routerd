@@ -13,19 +13,16 @@ import (
 
 // RuntimeSnapshot describes the confirmed controller generation, independently
 // of Runner.Router, which is also used while preparing a replacement. Router
-// must be treated as immutable by readers. Epoch is process-local and advances
-// only when a prepared generation is handed to its event loop.
+// must be treated as immutable by readers.
 type RuntimeSnapshot struct {
 	Router    *api.Router
-	Epoch     uint64
 	Known     bool
 	Available bool
 }
 
 type RuntimeReloadOutcome struct {
-	Active      RuntimeSnapshot
-	OperationID uint64
-	Accepted    bool
+	Active   RuntimeSnapshot
+	Accepted bool
 	// Restored means the previous configuration was rebuilt after the requested
 	// configuration failed. During a rollback request this can be the new config.
 	Restored bool
@@ -36,7 +33,6 @@ var ErrRuntimeMutationStopped = errors.New("runtime mutation admission is stoppe
 type generationReload struct {
 	router *api.Router
 	ctx    context.Context
-	id     uint64
 	done   chan generationReloadResult
 }
 
@@ -67,15 +63,13 @@ func (r *Runner) ReloadRuntimeWithOutcome(ctx context.Context, router *api.Route
 		r.reloadMu.Unlock()
 		return initial, ErrRuntimeMutationStopped
 	}
-	r.runtimeOperation++
-	request := generationReload{router: router, ctx: ctx, id: r.runtimeOperation, done: make(chan generationReloadResult, 1)}
+	request := generationReload{router: router, ctx: ctx, done: make(chan generationReloadResult, 1)}
 	stopping := r.runtimeStop
 	grace := r.reloadCancelGrace
 	r.reloadMu.Unlock()
 	if grace <= 0 {
 		grace = time.Second
 	}
-	initial.OperationID = request.id
 	select {
 	case ch <- request:
 	case <-ctx.Done():
@@ -189,14 +183,14 @@ func (r *Runner) publishRuntimeGeneration(generation *controllerGeneration) bool
 	if r.runtimeFenced || generation.ctx.Err() != nil {
 		return false
 	}
-	r.runtimeSnapshot = RuntimeSnapshot{Router: generation.router, Epoch: r.runtimeSnapshot.Epoch + 1, Known: true, Available: true}
+	r.runtimeSnapshot = RuntimeSnapshot{Router: generation.router, Known: true, Available: true}
 	return true
 }
 
 func (r *Runner) clearRuntimeGeneration(known bool) {
 	r.reloadMu.Lock()
 	defer r.reloadMu.Unlock()
-	r.runtimeSnapshot = RuntimeSnapshot{Epoch: r.runtimeSnapshot.Epoch, Known: known}
+	r.runtimeSnapshot = RuntimeSnapshot{Known: known}
 }
 
 func (r *Runner) fenceRuntime(cancelServe bool) {
@@ -204,7 +198,7 @@ func (r *Runner) fenceRuntime(cancelServe bool) {
 	wasFenced := r.runtimeFenced
 	r.runtimeFenced = true
 	if r.runtimeSnapshot.Available {
-		r.runtimeSnapshot = RuntimeSnapshot{Epoch: r.runtimeSnapshot.Epoch}
+		r.runtimeSnapshot = RuntimeSnapshot{}
 	}
 	notifyServe := cancelServe && !r.runtimeCancelRequested
 	if notifyServe {
@@ -226,7 +220,7 @@ func (r *Runner) acknowledgeRuntimeReload(request generationReload, restored boo
 	if request.ctx != nil {
 		err = errors.Join(err, request.ctx.Err())
 	}
-	request.done <- generationReloadResult{outcome: RuntimeReloadOutcome{Active: r.ActiveRuntimeSnapshot(), OperationID: request.id, Accepted: true, Restored: restored}, err: err}
+	request.done <- generationReloadResult{outcome: RuntimeReloadOutcome{Active: r.ActiveRuntimeSnapshot(), Accepted: true, Restored: restored}, err: err}
 }
 
 func runtimeStoppedError(err error) error {

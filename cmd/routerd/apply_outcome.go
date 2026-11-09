@@ -40,7 +40,7 @@ type applyAttemptError struct {
 }
 
 func (e *applyAttemptError) Error() string {
-	return fmt.Sprintf("apply failed: %v; stage=%s generation=%d canonical=%s terminalAttempted=%t runtimeKnown=%t runtimeAvailable=%t activeEpoch=%d operation=%d", e.Cause, e.Outcome.Stage, e.Outcome.Generation, e.Outcome.Canonical, e.Outcome.TerminalAttempted, e.Outcome.Runtime.Active.Known, e.Outcome.Runtime.Active.Available, e.Outcome.Runtime.Active.Epoch, e.Outcome.Runtime.OperationID)
+	return fmt.Sprintf("apply failed: %v; stage=%s generation=%d canonical=%s terminalAttempted=%t runtimeKnown=%t runtimeAvailable=%t", e.Cause, e.Outcome.Stage, e.Outcome.Generation, e.Outcome.Canonical, e.Outcome.TerminalAttempted, e.Outcome.Runtime.Active.Known, e.Outcome.Runtime.Active.Available)
 }
 
 func (e *applyAttemptError) Unwrap() error { return e.Cause }

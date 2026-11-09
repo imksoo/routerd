@@ -1132,7 +1132,6 @@ type Runner struct {
 	reloadCh               chan generationReload
 	routerMu               sync.RWMutex
 	runtimeSnapshot        RuntimeSnapshot
-	runtimeOperation       uint64
 	runtimeReady           chan struct{}
 	runtimeReadyClosed     bool
 	runtimeStop            chan struct{}
