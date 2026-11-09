@@ -206,7 +206,6 @@ func (c TransportController) deriveTransportResources(ctx context.Context, owner
 		bgpPeerName := safeName("sam-transport-" + owner.Metadata.Name + "-" + self + "-" + peerNode)
 		routeName := safeName("sam-endpoint-" + owner.Metadata.Name + "-" + self + "-" + peerNode)
 		underlay := strings.TrimSpace(spec.UnderlayInterface)
-		ownerRef := []api.OwnerRef{{APIVersion: api.MobilityAPIVersion, Kind: "SAMTransportProfile", Name: owner.Metadata.Name}}
 		tunnelSpec := api.TunnelInterfaceSpec{
 			Mode:              strings.TrimSpace(spec.Mode),
 			Local:             strings.TrimSpace(spec.LocalEndpoint),
@@ -224,7 +223,7 @@ func (c TransportController) deriveTransportResources(ctx context.Context, owner
 		}
 		out.Resources = append(out.Resources, api.Resource{
 			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
-			Metadata: api.ObjectMeta{Name: tunnelName, OwnerRefs: ownerRef, Annotations: transportAnnotations(owner.Metadata.Name, self, peerNode)},
+			Metadata: api.ObjectMeta{Name: tunnelName, Annotations: transportAnnotations(owner.Metadata.Name, self, peerNode)},
 			Spec:     tunnelSpec,
 		})
 		remoteEndpoint, pending := c.remoteEndpoint(peer)
@@ -238,7 +237,7 @@ func (c TransportController) deriveTransportResources(ctx context.Context, owner
 			}
 			out.Resources = append(out.Resources, api.Resource{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4Route"},
-				Metadata: api.ObjectMeta{Name: routeName, OwnerRefs: ownerRef, Annotations: transportAnnotations(owner.Metadata.Name, self, peerNode)},
+				Metadata: api.ObjectMeta{Name: routeName, Annotations: transportAnnotations(owner.Metadata.Name, self, peerNode)},
 				Spec: api.IPv4RouteSpec{
 					Destination: endpointAddr.String() + "/32",
 					Device:      underlay,
@@ -252,7 +251,7 @@ func (c TransportController) deriveTransportResources(ctx context.Context, owner
 			bfdRef = "BFD/" + bfdName
 			out.Resources = append(out.Resources, api.Resource{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BFD"},
-				Metadata: api.ObjectMeta{Name: bfdName, OwnerRefs: ownerRef, Annotations: transportAnnotations(owner.Metadata.Name, self, peerNode)},
+				Metadata: api.ObjectMeta{Name: bfdName, Annotations: transportAnnotations(owner.Metadata.Name, self, peerNode)},
 				Spec: api.BFDSpec{
 					Peer:             "BGPPeer/" + bgpPeerName,
 					Interface:        strings.TrimSpace(spec.BGP.BFD.Interface),
@@ -296,7 +295,7 @@ func (c TransportController) deriveTransportResources(ctx context.Context, owner
 			}
 			out.Resources = append(out.Resources, api.Resource{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"},
-				Metadata: api.ObjectMeta{Name: bgpPeerName, OwnerRefs: ownerRef, Annotations: annotations},
+				Metadata: api.ObjectMeta{Name: bgpPeerName, Annotations: annotations},
 				Spec: api.BGPPeerSpec{
 					RouterRef:               strings.TrimSpace(spec.BGP.RouterRef),
 					PeerASN:                 spec.BGP.PeerASN,

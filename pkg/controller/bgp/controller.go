@@ -2658,10 +2658,8 @@ func (c *Controller) mobilityFIBVerdicts() []dynamicconfig.FIBVerdict {
 }
 
 // samTransportTransitScopes derives the RR forwarding authority from the raw
-// transport-generated BGPPeer resource. It deliberately does not use the
-// effective peer policy: router defaults can widen that policy with unrelated
-// dynamic export prefixes. A malformed or manually authored peer contributes
-// no authority, leaving mobility-tagged paths fail-closed.
+// BGPPeer resource. It deliberately does not use the effective peer policy:
+// router defaults can widen that policy with unrelated dynamic export prefixes.
 func (c *Controller) samTransportTransitScopes() []mobilityfib.TransitScope {
 	if c.Router == nil {
 		return nil
@@ -2686,7 +2684,7 @@ func (c *Controller) samTransportTransitScopes() []mobilityfib.TransitScope {
 		if resource.APIVersion != routerapi.NetAPIVersion || resource.Kind != "BGPPeer" {
 			continue
 		}
-		profileName, selfNode, peerNode, ok := samTransportPeerProvenance(resource)
+		profileName, selfNode, peerNode, ok := samTransportPeerIdentity(resource)
 		if !ok {
 			continue
 		}
@@ -2736,19 +2734,14 @@ func (c *Controller) samTransportTransitScopes() []mobilityfib.TransitScope {
 	return out
 }
 
-func samTransportPeerProvenance(resource routerapi.Resource) (profileName, selfNode, peerNode string, ok bool) {
+func samTransportPeerIdentity(resource routerapi.Resource) (profileName, selfNode, peerNode string, ok bool) {
 	profileName = strings.TrimSpace(resource.Metadata.Annotations["mobility.routerd.net/transport-profile"])
 	selfNode = strings.TrimSpace(resource.Metadata.Annotations["mobility.routerd.net/self-node"])
 	peerNode = strings.TrimSpace(resource.Metadata.Annotations["mobility.routerd.net/peer-node"])
 	if profileName == "" || selfNode == "" || peerNode == "" || selfNode == peerNode {
 		return "", "", "", false
 	}
-	for _, owner := range resource.Metadata.OwnerRefs {
-		if owner.APIVersion == routerapi.MobilityAPIVersion && owner.Kind == "SAMTransportProfile" && strings.TrimSpace(owner.Name) == profileName {
-			return profileName, selfNode, peerNode, true
-		}
-	}
-	return "", "", "", false
+	return profileName, selfNode, peerNode, true
 }
 
 func exactIPv4TransitPrefixes(policy routerapi.BGPImportPolicySpec) ([]netip.Prefix, bool) {
