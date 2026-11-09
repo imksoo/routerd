@@ -34,7 +34,7 @@ type Defaults struct {
 	PluginDir string
 	// RuntimeDir holds runtime sockets, status files, and pid files.
 	RuntimeDir string
-	// StateDir holds the ownership ledger and other persistent state.
+	// StateDir holds persistent state.
 	StateDir string
 	// SystemdUnitDir is where the routerd systemd unit is installed
 	// on Linux. Empty on platforms that do not use systemd.
@@ -140,12 +140,7 @@ func (d Defaults) LockFile() string {
 	return d.RuntimeDir + "/routerd.lock"
 }
 
-// LedgerFile returns the default ownership ledger path.
-func (d Defaults) LedgerFile() string {
-	return d.StateDir + "/artifacts.json"
-}
-
-// DBFile returns the default structured state and ownership database path.
+// DBFile returns the default structured state database path.
 func (d Defaults) DBFile() string {
 	return d.StateDir + "/routerd.db"
 }
@@ -155,9 +150,7 @@ func (d Defaults) FirewallLogFile() string {
 	return strings.TrimRight(d.StateDir, "/") + "/firewall-logs.db"
 }
 
-// ManagedDnsmasqConfigFile returns the config used by both apply and the
-// continuous controller. Keep the legacy canonical path available separately
-// for artifact ownership and migration checks.
+// ManagedDnsmasqConfigFile returns the config used by apply and the controller.
 func (d Defaults) ManagedDnsmasqConfigFile() string {
 	if d.OS == OSLinux {
 		return strings.TrimRight(d.RuntimeDir, "/") + "/dnsmasq.conf"
@@ -166,7 +159,6 @@ func (d Defaults) ManagedDnsmasqConfigFile() string {
 }
 
 // ManagedNftablesFile returns the NAT artifact shared by apply and serve.
-// The canonical NftablesFile remains available for legacy ownership checks.
 func (d Defaults) ManagedNftablesFile() string {
 	if d.OS == OSLinux {
 		return strings.TrimRight(d.RuntimeDir, "/") + "/nat44.nft"
