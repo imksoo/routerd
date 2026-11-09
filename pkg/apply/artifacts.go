@@ -28,7 +28,6 @@ func resourceArtifactIntentsForOS(res api.Resource, aliases map[string]string, t
 }
 
 type serviceDeclarationContext struct {
-	owner    string
 	res      api.Resource
 	targetOS platform.OS
 	features platform.Features
@@ -106,7 +105,7 @@ func declaredServiceIntents(ctx serviceDeclarationContext) []resource.Intent {
 }
 
 func serviceIntent(ctx serviceDeclarationContext, service servicemgr.Service, action string, attrs map[string]string) resource.Intent {
-	return servicemgr.IntentForPlatform(ctx.owner, ctx.features, service, action, attrs)
+	return servicemgr.IntentForPlatform(ctx.features, service, action, attrs)
 }
 
 func dnsmasqServiceIntent(ctx serviceDeclarationContext) resource.Intent {
@@ -117,18 +116,17 @@ func dnsmasqServiceIntent(ctx serviceDeclarationContext) resource.Intent {
 }
 
 func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]string, targetOS platform.OS, features platform.Features) []resource.Intent {
-	owner := res.ID()
 	artifact := func(kind, name, action, applyWith string, attrs map[string]string) resource.Intent {
 		if attrs == nil {
 			attrs = map[string]string{}
 		}
 		return resource.Intent{
-			Artifact:  resource.Artifact{Kind: kind, Name: name, Owner: owner, Attributes: attrs},
+			Artifact:  resource.Artifact{Kind: kind, Name: name, Attributes: attrs},
 			Action:    action,
 			ApplyWith: applyWith,
 		}
 	}
-	serviceContext := serviceDeclarationContext{owner: owner, res: res, targetOS: targetOS, features: features}
+	serviceContext := serviceDeclarationContext{res: res, targetOS: targetOS, features: features}
 	switch res.Kind {
 	case "NAT44SessionSync":
 		spec, err := res.NAT44SessionSyncSpec()
@@ -385,19 +383,19 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 		if features.HasPF {
 			return []resource.Intent{artifact("pf.anchor", "routerd_nat", resource.ActionEnsure, "pfctl", nil)}
 		}
-		return []resource.Intent{{Artifact: newNftTableArtifact(owner, "ip", "routerd_nat"), Action: resource.ActionEnsure, ApplyWith: "nft"}}
+		return []resource.Intent{{Artifact: newNftTableArtifact("ip", "routerd_nat"), Action: resource.ActionEnsure, ApplyWith: "nft"}}
 	case "NAT44Rule", "NAT44FlowDNATPinhole":
 		if _, features := platform.Current(); features.HasPF {
 			return []resource.Intent{artifact("pf.anchor", "routerd_nat", resource.ActionEnsure, "pfctl", nil)}
 		}
 		return []resource.Intent{
-			{Artifact: newNftTableArtifact(owner, "ip", "routerd_nat"), Action: resource.ActionEnsure, ApplyWith: "nft"},
-			{Artifact: newNftTableArtifact(owner, "ip6", "routerd_nat"), Action: resource.ActionEnsure, ApplyWith: "nft"},
+			{Artifact: newNftTableArtifact("ip", "routerd_nat"), Action: resource.ActionEnsure, ApplyWith: "nft"},
+			{Artifact: newNftTableArtifact("ip6", "routerd_nat"), Action: resource.ActionEnsure, ApplyWith: "nft"},
 		}
 	case "FirewallZone":
 		return []resource.Intent{artifact("routerd.firewall.zone", res.Metadata.Name, resource.ActionEnsure, "nft", nil)}
 	case "FirewallPolicy", "FirewallRule", "FirewallFlowPinhole":
-		return []resource.Intent{{Artifact: newNftTableArtifact(owner, "inet", "routerd_filter"), Action: resource.ActionEnsure, ApplyWith: "nft"}}
+		return []resource.Intent{{Artifact: newNftTableArtifact("inet", "routerd_filter"), Action: resource.ActionEnsure, ApplyWith: "nft"}}
 	case "VXLANSegment":
 		spec, err := res.VXLANSegmentSpec()
 		if err != nil {
@@ -463,34 +461,30 @@ func routerArtifactIntentsForOS(router *api.Router, aliases map[string]string, t
 	var intents []resource.Intent
 	if targetOS == platform.OSLinux {
 		if ipv4, ipv6, err := render.LocalServiceRedirectFamilies(router, aliases); err == nil {
-			owner := api.RouterAPIVersion + "/Router/" + router.Metadata.Name
 			if ipv4 {
-				intents = append(intents, resource.Intent{Artifact: newNftTableArtifact(owner, "ip", "routerd_nat"), Action: resource.ActionEnsure, ApplyWith: "nft"})
+				intents = append(intents, resource.Intent{Artifact: newNftTableArtifact("ip", "routerd_nat"), Action: resource.ActionEnsure, ApplyWith: "nft"})
 			}
 			if ipv6 {
-				intents = append(intents, resource.Intent{Artifact: newNftTableArtifact(owner, "ip6", "routerd_nat"), Action: resource.ActionEnsure, ApplyWith: "nft"})
+				intents = append(intents, resource.Intent{Artifact: newNftTableArtifact("ip6", "routerd_nat"), Action: resource.ActionEnsure, ApplyWith: "nft"})
 			}
 		}
 		if wants, err := render.RouterWantsTCPMSSClamp(router); err == nil && wants {
-			owner := api.RouterAPIVersion + "/Router/" + router.Metadata.Name
 			intents = append(intents, resource.Intent{
-				Artifact:  newNftTableArtifact(owner, "inet", "routerd_mss"),
+				Artifact:  newNftTableArtifact("inet", "routerd_mss"),
 				Action:    resource.ActionEnsure,
 				ApplyWith: "nft",
 			})
 		}
 		if wants, err := render.RouterWantsL2TCPMSSClamp(router); err == nil && wants {
-			owner := api.RouterAPIVersion + "/Router/" + router.Metadata.Name
 			intents = append(intents, resource.Intent{
-				Artifact:  newNftTableArtifact(owner, "bridge", "routerd_l2_mss"),
+				Artifact:  newNftTableArtifact("bridge", "routerd_l2_mss"),
 				Action:    resource.ActionEnsure,
 				ApplyWith: "nft",
 			})
 		}
 		if wants, err := render.RouterWantsIPv4ForceFragment(router); err == nil && wants {
-			owner := api.RouterAPIVersion + "/Router/" + router.Metadata.Name
 			intents = append(intents, resource.Intent{
-				Artifact:  newNftTableArtifact(owner, "ip", "routerd_forcefrag"),
+				Artifact:  newNftTableArtifact("ip", "routerd_forcefrag"),
 				Action:    resource.ActionEnsure,
 				ApplyWith: "nft",
 			})
@@ -541,14 +535,14 @@ func egressRoutePolicyArtifacts(res api.Resource, aliases map[string]string) []r
 	mode := defaultString(spec.Mode, "")
 	if mode == "priority" {
 		intents = append(intents, resource.Intent{
-			Artifact:  newNftTableArtifact(res.ID(), "ip", "routerd_default_route"),
+			Artifact:  newNftTableArtifact("ip", "routerd_default_route"),
 			Action:    resource.ActionEnsure,
 			ApplyWith: "nft",
 		})
 	}
 	if mode == "mark" || mode == "hash" || egressRoutePolicyHasTargetCandidates(spec) {
 		intents = append(intents, resource.Intent{
-			Artifact:  newNftTableArtifact(res.ID(), "ip", "routerd_policy"),
+			Artifact:  newNftTableArtifact("ip", "routerd_policy"),
 			Action:    resource.ActionEnsure,
 			ApplyWith: "nft",
 		})
@@ -565,11 +559,11 @@ func egressRoutePolicyArtifacts(res api.Resource, aliases map[string]string) []r
 				if target.Name == "" {
 					target.Name = fmt.Sprintf("%s-%d", defaultString(candidate.Name, res.Metadata.Name), i)
 				}
-				intents = append(intents, egressPolicyTargetArtifacts(res.ID(), target, aliases)...)
+				intents = append(intents, egressPolicyTargetArtifacts(target, aliases)...)
 			}
 			continue
 		}
-		intents = append(intents, egressPolicyTargetArtifacts(res.ID(), egressTargetFromCandidate(candidate), aliases)...)
+		intents = append(intents, egressPolicyTargetArtifacts(egressTargetFromCandidate(candidate), aliases)...)
 	}
 	return intents
 }
@@ -583,7 +577,7 @@ func egressRoutePolicyHasTargetCandidates(spec api.EgressRoutePolicySpec) bool {
 	return false
 }
 
-func egressPolicyTargetArtifacts(owner string, target api.EgressRoutePolicyTarget, aliases map[string]string) []resource.Intent {
+func egressPolicyTargetArtifacts(target api.EgressRoutePolicyTarget, aliases map[string]string) []resource.Intent {
 	table := target.EffectiveTable()
 	if target.Priority == 0 || target.Mark == 0 || table == 0 {
 		return nil
@@ -596,9 +590,8 @@ func egressPolicyTargetArtifacts(owner string, target api.EgressRoutePolicyTarge
 	return []resource.Intent{
 		{
 			Artifact: resource.Artifact{
-				Kind:  "linux.ipv4.routeTable",
-				Name:  routeName,
-				Owner: owner,
+				Kind: "linux.ipv4.routeTable",
+				Name: routeName,
 				Attributes: map[string]string{
 					"table":  fmt.Sprintf("%d", table),
 					"ifname": ifname,
@@ -608,7 +601,7 @@ func egressPolicyTargetArtifacts(owner string, target api.EgressRoutePolicyTarge
 			ApplyWith: "ip-route",
 		},
 		{
-			Artifact:  newIPv4FwmarkRuleArtifact(owner, target.Priority, target.Mark, table),
+			Artifact:  newIPv4FwmarkRuleArtifact(target.Priority, target.Mark, table),
 			Action:    resource.ActionEnsure,
 			ApplyWith: "ip-rule",
 		},

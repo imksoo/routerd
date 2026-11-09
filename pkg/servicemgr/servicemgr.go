@@ -38,7 +38,7 @@ type Manager interface {
 	ApplyWith() string
 	ServiceName(Service) string
 	Command(Operation, Service) Command
-	Intent(owner string, service Service, action string, attrs map[string]string) resource.Intent
+	Intent(service Service, action string, attrs map[string]string) resource.Intent
 }
 
 func ForPlatform(features platform.Features) Manager {
@@ -50,8 +50,8 @@ func ForPlatform(features platform.Features) Manager {
 	}
 }
 
-func IntentForPlatform(owner string, features platform.Features, service Service, action string, attrs map[string]string) resource.Intent {
-	return ForPlatform(features).Intent(owner, service, action, attrs)
+func IntentForPlatform(features platform.Features, service Service, action string, attrs map[string]string) resource.Intent {
+	return ForPlatform(features).Intent(service, action, attrs)
 }
 
 type Systemd struct{}
@@ -77,8 +77,8 @@ func (m Systemd) Command(op Operation, s Service) Command {
 		return Command{}
 	}
 }
-func (m Systemd) Intent(owner string, service Service, action string, attrs map[string]string) resource.Intent {
-	return serviceIntent(owner, stringutil.FirstNonBlank(service.SystemdArtifactKind, m.ArtifactKind()), m.ServiceName(service), action, m.ApplyWith(), attrs)
+func (m Systemd) Intent(service Service, action string, attrs map[string]string) resource.Intent {
+	return serviceIntent(stringutil.FirstNonBlank(service.SystemdArtifactKind, m.ArtifactKind()), m.ServiceName(service), action, m.ApplyWith(), attrs)
 }
 
 type RCD struct{}
@@ -104,16 +104,16 @@ func (m RCD) Command(op Operation, s Service) Command {
 		return Command{}
 	}
 }
-func (m RCD) Intent(owner string, service Service, action string, attrs map[string]string) resource.Intent {
-	return serviceIntent(owner, m.ArtifactKind(), m.ServiceName(service), action, m.ApplyWith(), attrs)
+func (m RCD) Intent(service Service, action string, attrs map[string]string) resource.Intent {
+	return serviceIntent(m.ArtifactKind(), m.ServiceName(service), action, m.ApplyWith(), attrs)
 }
 
-func serviceIntent(owner, kind, name, action, applyWith string, attrs map[string]string) resource.Intent {
+func serviceIntent(kind, name, action, applyWith string, attrs map[string]string) resource.Intent {
 	if attrs == nil {
 		attrs = map[string]string{}
 	}
 	return resource.Intent{
-		Artifact:  resource.Artifact{Kind: kind, Name: name, Owner: owner, Attributes: attrs},
+		Artifact:  resource.Artifact{Kind: kind, Name: name, Attributes: attrs},
 		Action:    action,
 		ApplyWith: applyWith,
 	}

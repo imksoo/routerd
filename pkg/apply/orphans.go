@@ -29,11 +29,10 @@ func freeBSDIPv4MaskPrefix(mask string) string {
 	return fmt.Sprintf("%d", prefix)
 }
 
-func newIPv4FwmarkRuleArtifact(owner string, priority, mark, table int) resource.Artifact {
+func newIPv4FwmarkRuleArtifact(priority, mark, table int) resource.Artifact {
 	return resource.Artifact{
-		Kind:  "linux.ipv4.fwmarkRule",
-		Name:  fmt.Sprintf("priority=%d,mark=0x%x,table=%d", priority, mark, table),
-		Owner: owner,
+		Kind: "linux.ipv4.fwmarkRule",
+		Name: fmt.Sprintf("priority=%d,mark=0x%x,table=%d", priority, mark, table),
 		Attributes: map[string]string{
 			"priority": fmt.Sprintf("%d", priority),
 			"mark":     fmt.Sprintf("0x%x", mark),
@@ -42,11 +41,10 @@ func newIPv4FwmarkRuleArtifact(owner string, priority, mark, table int) resource
 	}
 }
 
-func newNftTableArtifact(owner, family, name string) resource.Artifact {
+func newNftTableArtifact(family, name string) resource.Artifact {
 	return resource.Artifact{
-		Kind:  "nft.table",
-		Name:  family + "/" + name,
-		Owner: owner,
+		Kind: "nft.table",
+		Name: family + "/" + name,
 		Attributes: map[string]string{
 			"family": family,
 			"name":   name,
