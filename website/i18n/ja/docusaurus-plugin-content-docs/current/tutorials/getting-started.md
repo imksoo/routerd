@@ -56,8 +56,6 @@ spec:
         ifname: ens18
         adminUp: true
         managed: false
-        owner: external
-
     # LAN 側だけを routerd が管理する候補にする。
     - apiVersion: net.routerd.net/v1alpha1
       kind: Interface
@@ -67,7 +65,6 @@ spec:
         ifname: ens19
         adminUp: true
         managed: true
-        owner: routerd
 ```
 
 この段階ではまだ WAN の DHCP、LAN の IP アドレス、NAT は入れません。

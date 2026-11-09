@@ -37,8 +37,6 @@ spec:
         ifname: ens18
         adminUp: true
         managed: false
-        owner: external
-
     - apiVersion: net.routerd.net/v1alpha1
       kind: Interface
       metadata:
@@ -47,7 +45,6 @@ spec:
         ifname: ens19
         adminUp: true
         managed: true
-        owner: routerd
 ```
 
 `metadata.name` 是配置内部使用的名字；`spec.ifname` 才是 Linux 实际看到的接口名。把 WAN 标为 `external` 是一种保守起点：先不要让 routerd 直接接管上游链接。

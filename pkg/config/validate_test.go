@@ -614,7 +614,7 @@ func TestValidateHealthCheckRole(t *testing.T) {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 				Metadata: api.ObjectMeta{Name: "wan"},
-				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
+				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"},
@@ -642,7 +642,7 @@ func TestValidateHealthCheckRejectsUnknownRole(t *testing.T) {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 				Metadata: api.ObjectMeta{Name: "wan"},
-				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
+				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"},
@@ -670,7 +670,7 @@ func TestValidatePPPoESessionDaemonFields(t *testing.T) {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 				Metadata: api.ObjectMeta{Name: "wan-ether"},
-				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
+				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoESession"},
@@ -699,7 +699,7 @@ func TestValidatePPPoESessionRequiresOnePasswordSource(t *testing.T) {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 				Metadata: api.ObjectMeta{Name: "wan-ether"},
-				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
+				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoESession"},
@@ -728,7 +728,7 @@ func TestValidatePPPoESession(t *testing.T) {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 				Metadata: api.ObjectMeta{Name: "wan-ether"},
-				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
+				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoESession"},
@@ -757,7 +757,7 @@ func TestValidateTierSResources(t *testing.T) {
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
 		Spec: api.RouterSpec{Resources: []api.Resource{
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ens18", Managed: false}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Bridge"}, Metadata: api.ObjectMeta{Name: "br240"}, Spec: api.BridgeSpec{IfName: "br240", Members: []string{"vx240"}}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"}, Metadata: api.ObjectMeta{Name: "wg-lab"}, Spec: api.WireGuardInterfaceSpec{ListenPort: 51820, MTU: 1420}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardPeer"}, Metadata: api.ObjectMeta{Name: "peer-a"}, Spec: api.WireGuardPeerSpec{Interface: "wg-lab", PublicKey: "pub", AllowedIPs: []string{"10.44.0.2/32"}}},
@@ -1794,7 +1794,7 @@ func TestValidateNAT44RuleRequiresValidCIDR(t *testing.T) {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 				Metadata: api.ObjectMeta{Name: "wan"},
-				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
+				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule"},
@@ -1865,7 +1865,7 @@ func TestValidatePortForwardAndIngressService(t *testing.T) {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 				Metadata: api.ObjectMeta{Name: "wan"},
-				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
+				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
@@ -1875,7 +1875,7 @@ func TestValidatePortForwardAndIngressService(t *testing.T) {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 				Metadata: api.ObjectMeta{Name: "lan"},
-				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: false, Owner: "external"},
+				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: false},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "PortForward"},
@@ -2192,7 +2192,7 @@ func TestValidateNAT44RuleRejectsInvalidPortRange(t *testing.T) {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 				Metadata: api.ObjectMeta{Name: "wan"},
-				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
+				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule"},
@@ -2226,7 +2226,7 @@ func TestValidateNAT44RuleRejectsMixedShapes(t *testing.T) {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 				Metadata: api.ObjectMeta{Name: "wan"},
-				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
+				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule"},
@@ -2256,12 +2256,12 @@ func TestValidateFirewallPolicyAndRule(t *testing.T) {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 				Metadata: api.ObjectMeta{Name: "lan"},
-				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: false, Owner: "external"},
+				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: false},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 				Metadata: api.ObjectMeta{Name: "wan"},
-				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
+				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
@@ -2304,8 +2304,8 @@ func TestValidateFirewallRuleStatefulExpressions(t *testing.T) {
 			TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 			Metadata: api.ObjectMeta{Name: "test"},
 			Spec: api.RouterSpec{Resources: []api.Resource{
-				{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19", Managed: false, Owner: "external"}},
-				{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"}},
+				{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19", Managed: false}},
+				{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ens18", Managed: false}},
 				{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}}},
 				{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"wan"}}},
 				{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallRule"}, Metadata: api.ObjectMeta{Name: "rule"}, Spec: spec},
@@ -2352,7 +2352,7 @@ func TestValidateClientPolicy(t *testing.T) {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 				Metadata: api.ObjectMeta{Name: "lan"},
-				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: false, Owner: "external"},
+				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: false},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"},
@@ -2406,7 +2406,7 @@ func TestValidateClientPolicyIPv6Addresses(t *testing.T) {
 				{
 					TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 					Metadata: api.ObjectMeta{Name: "lan"},
-					Spec:     api.InterfaceSpec{IfName: "vtnet0", Managed: false, Owner: "external"},
+					Spec:     api.InterfaceSpec{IfName: "vtnet0", Managed: false},
 				},
 				{
 					TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "ClientPolicy"},
@@ -2439,7 +2439,7 @@ func TestValidateClientPolicyFreeBSDRequiresExplicitIdentity(t *testing.T) {
 				{
 					TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 					Metadata: api.ObjectMeta{Name: "lan"},
-					Spec:     api.InterfaceSpec{IfName: "vtnet0", Managed: false, Owner: "external"},
+					Spec:     api.InterfaceSpec{IfName: "vtnet0", Managed: false},
 				},
 				{
 					TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "ClientPolicy"},

@@ -89,7 +89,7 @@ func routedMeshRouter(self routedMeshSite, sites []routedMeshSite) *api.Router {
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 			Metadata: api.ObjectMeta{Name: "lan"},
-			Spec:     api.InterfaceSpec{IfName: "lan0", Managed: true, Owner: "routerd", AdminUp: true},
+			Spec:     api.InterfaceSpec{IfName: "lan0", Managed: true, AdminUp: true},
 		},
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},

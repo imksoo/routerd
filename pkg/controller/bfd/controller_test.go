@@ -199,7 +199,7 @@ func bfdRouter() *api.Router {
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 			Metadata: api.ObjectMeta{Name: "wg-hybrid"},
-			Spec:     api.InterfaceSpec{IfName: "wg0", Managed: false, Owner: "external"},
+			Spec:     api.InterfaceSpec{IfName: "wg0", Managed: false},
 		},
 	}}}
 }

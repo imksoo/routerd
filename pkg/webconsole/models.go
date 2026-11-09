@@ -185,7 +185,6 @@ type InterfaceSummary struct {
 	Role            string   `json:"role,omitempty"`
 	Zone            string   `json:"zone,omitempty"`
 	Managed         bool     `json:"managed,omitempty"`
-	Owner           string   `json:"owner,omitempty"`
 	MTU             int      `json:"mtu,omitempty"`
 	HardwareAddress string   `json:"hardwareAddress,omitempty"`
 	Flags           string   `json:"flags,omitempty"`

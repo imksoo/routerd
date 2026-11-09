@@ -483,7 +483,6 @@ type InterfaceSummary = {
   role?: string;
   zone?: string;
   managed?: boolean;
-  owner?: string;
   mtu?: number;
   hardwareAddress?: string;
   flags?: string;
@@ -5503,8 +5502,7 @@ function InterfaceOverview({ interfaces }: { interfaces: InterfaceSummary[] }) {
           </div>
           <div className={styles.interfaceLine}>
             {item.hardwareAddress ? <Text size={200} className={styles.muted}>{item.hardwareAddress}</Text> : null}
-            {item.owner ? <Text size={200} className={styles.muted}>owner {item.owner}</Text> : null}
-            <Text size={200} className={styles.muted}>{item.managed ? "managed by routerd" : "adopted (external)"}</Text>
+            <Text size={200} className={styles.muted}>{item.managed ? "configured" : "reference"}</Text>
           </div>
         </div>
       ))}

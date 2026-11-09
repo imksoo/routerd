@@ -380,7 +380,7 @@ func TestNftablesAllowsWANIPv6ClientControlPlane(t *testing.T) {
 				{
 					TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 					Metadata: api.ObjectMeta{Name: "wan"},
-					Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
+					Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false},
 				},
 				{
 					TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
@@ -566,12 +566,12 @@ func TestNftablesClientPolicyIncludeGuestMACs(t *testing.T) {
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 			Metadata: api.ObjectMeta{Name: "lan"},
-			Spec:     api.InterfaceSpec{IfName: "ens19", Managed: false, Owner: "external"},
+			Spec:     api.InterfaceSpec{IfName: "ens19", Managed: false},
 		},
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 			Metadata: api.ObjectMeta{Name: "wan"},
-			Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
+			Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false},
 		},
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
@@ -624,7 +624,7 @@ func TestNftablesClientPolicyShortFormUsesTrustZonesAndDiscoveryDeny(t *testing.
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 			Metadata: api.ObjectMeta{Name: "lan"},
-			Spec:     api.InterfaceSpec{IfName: "ens19", Managed: false, Owner: "external"},
+			Spec:     api.InterfaceSpec{IfName: "ens19", Managed: false},
 		},
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
@@ -669,7 +669,7 @@ func TestNftablesClientPolicyExcludeTrustedMACs(t *testing.T) {
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 			Metadata: api.ObjectMeta{Name: "lan"},
-			Spec:     api.InterfaceSpec{IfName: "ens19", Managed: false, Owner: "external"},
+			Spec:     api.InterfaceSpec{IfName: "ens19", Managed: false},
 		},
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},

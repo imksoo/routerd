@@ -14,8 +14,6 @@ spec:
         ifname: ens20
         adminUp: true
         managed: false
-        owner: external
-
     - apiVersion: net.routerd.net/v1alpha1
       kind: BGPRouter
       metadata:

@@ -50,7 +50,7 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 			return FreeBSDConfig{}, err
 		}
 		aliases[res.Metadata.Name] = spec.IfName
-		managed[res.Metadata.Name] = spec.Managed && spec.Owner != "external"
+		managed[res.Metadata.Name] = spec.Managed
 	}
 	for _, res := range router.Spec.Resources {
 		if res.Kind != "Bridge" {
@@ -97,7 +97,7 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 		if err != nil {
 			return FreeBSDConfig{}, err
 		}
-		if spec.AdminUp && spec.IfName != "" && spec.Managed && spec.Owner != "external" {
+		if spec.AdminUp && spec.IfName != "" && spec.Managed {
 			adminUpIfaces[res.Metadata.Name] = spec.IfName
 		}
 	}

@@ -95,7 +95,7 @@ spec:
     - apiVersion: net.routerd.net/v1alpha1
       kind: Interface
       metadata: { name: lo }
-      spec: { ifname: lo, managed: false, owner: external }
+      spec: { ifname: lo, managed: false }
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4StaticAddress

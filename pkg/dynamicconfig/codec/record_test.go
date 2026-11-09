@@ -25,7 +25,7 @@ func TestEncodeDecodeRoundTripCorePart(t *testing.T) {
 			Resources: []api.Resource{{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 				Metadata: api.ObjectMeta{Name: "lan"},
-				Spec:     api.InterfaceSpec{IfName: "lan0", Managed: true, Owner: "routerd"},
+				Spec:     api.InterfaceSpec{IfName: "lan0", Managed: true},
 			}},
 			Directives: []dynamicconfig.DynamicConfigDirective{{
 				Op:     dynamicconfig.DirectiveOpMask,

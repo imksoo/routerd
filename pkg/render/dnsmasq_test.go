@@ -15,12 +15,12 @@ func TestDnsmasqConfigUsesSelfDNSWithDHCPv4Upstream(t *testing.T) {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 				Metadata: api.ObjectMeta{Name: "wan"},
-				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
+				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 				Metadata: api.ObjectMeta{Name: "lan"},
-				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true, Owner: "routerd"},
+				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
@@ -93,7 +93,7 @@ func TestDnsmasqConfigRendersLogDHCPWhenEnabled(t *testing.T) {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 				Metadata: api.ObjectMeta{Name: "lan"},
-				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true, Owner: "routerd"},
+				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
@@ -129,7 +129,7 @@ func TestDnsmasqConfigRendersLogDHCPWhenEnabled(t *testing.T) {
 func TestDnsmasqConfigRendersStickyHostsInScope(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19", Managed: true, Owner: "routerd"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19", Managed: true}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "lan-ipv4"}, Spec: api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.10.3/24"}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "dhcpv4"}, Spec: api.DHCPv4ServerSpec{Server: "dnsmasq", Managed: true, ListenInterfaces: []string{"lan"}}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan-dhcpv4"}, Spec: api.DHCPv4ServerSpec{Interface: "lan", RangeStart: "192.168.10.130", RangeEnd: "192.168.10.139", LeaseTime: "12h", RouterSource: "none", DNSSource: "none"}},
@@ -156,7 +156,7 @@ func TestDnsmasqConfigExcludesStickyHostsConflictingWithReservation(t *testing.T
 	const reservedIP = "192.168.10.150"
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19", Managed: true, Owner: "routerd"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19", Managed: true}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "lan-ipv4"}, Spec: api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.10.3/24"}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan-dhcpv4"}, Spec: api.DHCPv4ServerSpec{
 				Interface: "lan", RangeStart: "192.168.10.100", RangeEnd: "192.168.10.199", LeaseTime: "12h", RouterSource: "none", DNSSource: "none",
@@ -203,7 +203,7 @@ func TestDnsmasqConfigRendersLogDHCPForDirectServer(t *testing.T) {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 				Metadata: api.ObjectMeta{Name: "lan"},
-				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true, Owner: "routerd"},
+				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"},
@@ -232,7 +232,7 @@ func TestDnsmasqConfigRendersVirtualAddressSourcesForDirectDHCPv4(t *testing.T) 
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 				Metadata: api.ObjectMeta{Name: "lan"},
-				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true, Owner: "routerd"},
+				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
@@ -285,7 +285,7 @@ func TestDnsmasqConfigRendersDHCPv4Reservation(t *testing.T) {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 				Metadata: api.ObjectMeta{Name: "lan"},
-				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true, Owner: "routerd"},
+				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
@@ -335,7 +335,7 @@ func TestDnsmasqConfigRendersDHCPv4Reservation(t *testing.T) {
 func TestDnsmasqConfigRendersDirectLANServiceKinds(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19", Managed: true, Owner: "routerd"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19", Managed: true}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSZone"}, Metadata: api.ObjectMeta{Name: "lan-zone"}, Spec: api.DNSZoneSpec{Zone: "lan"}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan-v4"}, Spec: api.DHCPv4ServerSpec{
 				Managed:     true,
@@ -400,7 +400,7 @@ func TestDnsmasqConfigRendersDirectLANServiceKinds(t *testing.T) {
 func TestDnsmasqConfigResolvesDirectIPv6SourcesFromDelegatedAddress(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "vtnet1", Managed: true, Owner: "routerd"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "vtnet1", Managed: true}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-ipv6"}, Spec: api.IPv6DelegatedAddressSpec{
 				PrefixDelegation: "wan-pd",
 				Interface:        "lan",
@@ -440,7 +440,7 @@ func TestDnsmasqConfigResolvesDirectIPv6SourcesFromDelegatedAddress(t *testing.T
 
 func TestDnsmasqConfigResolvesDirectIPv6SourcesFromObservedAddressFallback(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "vtnet1", Managed: true, Owner: "routerd"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "vtnet1", Managed: true}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-ipv6"}, Spec: api.IPv6DelegatedAddressSpec{
 			PrefixDelegation: "wan-pd",
 			Interface:        "lan",
@@ -470,12 +470,12 @@ func TestDnsmasqConfigCanPassThroughDHCPv4DNS(t *testing.T) {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 				Metadata: api.ObjectMeta{Name: "wan"},
-				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
+				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 				Metadata: api.ObjectMeta{Name: "lan"},
-				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true, Owner: "routerd"},
+				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
@@ -524,7 +524,7 @@ func TestDnsmasqConfigSkipsTransitDHCPServerRole(t *testing.T) {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 				Metadata: api.ObjectMeta{Name: "lan"},
-				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true, Owner: "routerd"},
+				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"},
@@ -567,7 +567,7 @@ func TestDnsmasqConfigRendersIPv6StatelessScope(t *testing.T) {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 				Metadata: api.ObjectMeta{Name: "lan"},
-				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true, Owner: "routerd"},
+				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"},
@@ -711,7 +711,7 @@ func TestDnsmasqConfigAcceptsDHCPv6InformationSourcesInStaticRender(t *testing.T
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 				Metadata: api.ObjectMeta{Name: "lan"},
-				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true, Owner: "routerd"},
+				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Server"},
@@ -747,7 +747,7 @@ func TestDnsmasqConfigSkipsIPv6ScopeUntilDelegatedPrefixExists(t *testing.T) {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 				Metadata: api.ObjectMeta{Name: "lan"},
-				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true, Owner: "routerd"},
+				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
@@ -977,7 +977,7 @@ func TestDnsmasqConfigExcludesDNSResolverSources(t *testing.T) {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 				Metadata: api.ObjectMeta{Name: "lan"},
-				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true, Owner: "routerd"},
+				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
@@ -1031,7 +1031,7 @@ func TestDnsmasqConfigIgnoresDNSResolverWhenObservedEmpty(t *testing.T) {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 				Metadata: api.ObjectMeta{Name: "lan"},
-				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true, Owner: "routerd"},
+				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},

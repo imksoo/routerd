@@ -23,7 +23,6 @@ spec:
         ifname: ens18
         adminUp: true
         managed: false
-        owner: external
     - apiVersion: net.routerd.net/v1alpha1
       kind: DHCPv4Client
       metadata:
@@ -38,7 +37,6 @@ spec:
         ifname: ens19
         adminUp: true
         managed: true
-        owner: routerd
     - apiVersion: net.routerd.net/v1alpha1
       kind: Interface
       metadata:

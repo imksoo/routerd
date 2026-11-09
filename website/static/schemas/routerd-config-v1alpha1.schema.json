@@ -1985,13 +1985,6 @@
                         "minimum": 576,
                         "type": "integer"
                       },
-                      "owner": {
-                        "enum": [
-                          "routerd",
-                          "external"
-                        ],
-                        "type": "string"
-                      },
                       "when": {
                         "additionalProperties": false,
                         "properties": {

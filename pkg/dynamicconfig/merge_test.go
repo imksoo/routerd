@@ -287,7 +287,6 @@ func testInterface(name, ifname string) api.Resource {
 		Spec: api.InterfaceSpec{
 			IfName:  ifname,
 			Managed: true,
-			Owner:   "routerd",
 		},
 	}
 }

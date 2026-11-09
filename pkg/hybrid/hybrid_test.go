@@ -152,7 +152,7 @@ func TestTunnelUnderlayMTUEstimate(t *testing.T) {
 		{
 			name: "ipip over plain interface",
 			resources: []api.Resource{
-				{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external", MTU: 1500}},
+				{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ens18", Managed: false, MTU: 1500}},
 			},
 			tunnel:        api.TunnelInterfaceSpec{Mode: "ipip", UnderlayInterface: "wan"},
 			underlayType:  "ipip",

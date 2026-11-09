@@ -60,8 +60,6 @@ spec:
         ifname: ens18 # replace with the lab WAN interface
         adminUp: true
         managed: false
-        owner: external
-
     - apiVersion: net.routerd.net/v1alpha1
       kind: Interface
       metadata:
@@ -70,7 +68,6 @@ spec:
         ifname: ens19 # replace with the lab LAN interface
         adminUp: true
         managed: true
-        owner: routerd
 ```
 
 Each item has a `kind` (what it is), a `metadata.name` (the short name used by

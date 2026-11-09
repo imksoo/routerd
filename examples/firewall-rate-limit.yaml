@@ -13,8 +13,6 @@ spec:
       spec:
         ifname: ens18
         managed: false
-        owner: external
-
     - apiVersion: net.routerd.net/v1alpha1
       kind: Interface
       metadata:
@@ -22,8 +20,6 @@ spec:
       spec:
         ifname: ens19
         managed: false
-        owner: external
-
     - apiVersion: firewall.routerd.net/v1alpha1
       kind: FirewallZone
       metadata:

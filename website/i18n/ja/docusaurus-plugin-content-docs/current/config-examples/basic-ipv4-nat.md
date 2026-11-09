@@ -58,8 +58,6 @@ WAN は、最初は外部のネットワーク設定が所有します。LAN は
     ifname: ens18
     adminUp: true
     managed: false
-    owner: external
-
 - apiVersion: net.routerd.net/v1alpha1
   kind: Interface
   metadata:
@@ -68,8 +66,6 @@ WAN は、最初は外部のネットワーク設定が所有します。LAN は
     ifname: ens19
     adminUp: true
     managed: true
-    owner: routerd
-
 - apiVersion: net.routerd.net/v1alpha1
   kind: IPv4StaticAddress
   metadata:

@@ -16,17 +16,17 @@ func TestPFRenderFirewallAndNAT(t *testing.T) {
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 			Metadata: api.ObjectMeta{Name: "wan"},
-			Spec:     api.InterfaceSpec{IfName: "em0", Managed: false, Owner: "external"},
+			Spec:     api.InterfaceSpec{IfName: "em0", Managed: false},
 		},
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 			Metadata: api.ObjectMeta{Name: "lan"},
-			Spec:     api.InterfaceSpec{IfName: "em1", Managed: true, Owner: "routerd"},
+			Spec:     api.InterfaceSpec{IfName: "em1", Managed: true},
 		},
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 			Metadata: api.ObjectMeta{Name: "mgmt"},
-			Spec:     api.InterfaceSpec{IfName: "em2", Managed: true, Owner: "routerd"},
+			Spec:     api.InterfaceSpec{IfName: "em2", Managed: true},
 		},
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
@@ -627,7 +627,7 @@ func TestPFRenderNAT44SNAT(t *testing.T) {
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 			Metadata: api.ObjectMeta{Name: "wan"},
-			Spec:     api.InterfaceSpec{IfName: "em0", Managed: false, Owner: "external"},
+			Spec:     api.InterfaceSpec{IfName: "em0", Managed: false},
 		},
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule"},

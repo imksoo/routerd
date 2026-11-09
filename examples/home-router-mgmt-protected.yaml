@@ -22,15 +22,15 @@ spec:
     - apiVersion: net.routerd.net/v1alpha1
       kind: Interface
       metadata: {name: wan0}
-      spec: {ifname: ens18, managed: false, owner: external}
+      spec: {ifname: ens18, managed: false}
     - apiVersion: net.routerd.net/v1alpha1
       kind: Interface
       metadata: {name: lan0}
-      spec: {ifname: ens19, adminUp: true, managed: true, owner: routerd}
+      spec: {ifname: ens19, adminUp: true, managed: true}
     - apiVersion: net.routerd.net/v1alpha1
       kind: Interface
       metadata: {name: mgmt0}
-      spec: {ifname: ens20, adminUp: true, managed: true, owner: routerd}
+      spec: {ifname: ens20, adminUp: true, managed: true}
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4StaticAddress
       metadata: {name: lan-v4}

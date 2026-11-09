@@ -57,7 +57,6 @@ func (h Handler) interfaceSummaries(resources []routerstate.ObjectStatus) []Inte
 			IfName:  spec.IfName,
 			Phase:   stringFromMap(status, "phase"),
 			Managed: spec.Managed,
-			Owner:   spec.Owner,
 		}
 		if zone, ok := zones["Interface/"+resource.Metadata.Name]; ok {
 			item.Role = zone.role

@@ -1625,7 +1625,7 @@ func (e *Engine) observeNAT44SourceNATFields(res api.Resource, spec api.NAT44Rul
 	if !includePlan {
 		return
 	}
-	if !policy.Managed || policy.Owner == "external" {
+	if !policy.Managed {
 		rr.Plan = append(rr.Plan, "plan NAT rule for externally managed outbound interface")
 	}
 	switch spec.Translation.Type {
@@ -2262,7 +2262,6 @@ func InactiveDSLiteInterfaces(effective, declared *api.Router, store resourceque
 func (e *Engine) observeInterface(res api.Resource, policy interfacePolicy, observedV4 []ipv4Assignment, inactiveTunnels map[string]string, includePlan bool, rr *ResourceResult) {
 	rr.Observed["ifname"] = policy.IfName
 	rr.Observed["managed"] = fmt.Sprintf("%t", policy.Managed)
-	rr.Observed["owner"] = policy.Owner
 
 	spec, err := res.InterfaceSpec()
 	if err != nil {
@@ -2373,7 +2372,7 @@ func (e *Engine) observeDHCP(res api.Resource, aliases map[string]string, polici
 		}
 	}
 	if includePlan {
-		if !policy.Managed || policy.Owner == "external" {
+		if !policy.Managed {
 			rr.Plan = append(rr.Plan, "observe only; referenced interface is externally managed")
 			return
 		}
@@ -2430,7 +2429,7 @@ func (e *Engine) observeIPv6RAAddress(res api.Resource, aliases map[string]strin
 			rr.Plan = append(rr.Plan, "observe IPv6 RA/SLAAC address and default route")
 			return
 		}
-		if !policy.Managed || policy.Owner == "external" {
+		if !policy.Managed {
 			rr.Plan = append(rr.Plan, "configure IPv6 RA/SLAAC through host network renderer for externally managed interface")
 			return
 		}
@@ -2793,7 +2792,6 @@ type interfacePolicy struct {
 	Name    string
 	IfName  string
 	Managed bool
-	Owner   string
 	OS      osNetworking
 }
 
@@ -2804,12 +2802,10 @@ func interfacePolicies(router *api.Router, osNet osNetworking) map[string]interf
 			continue
 		}
 		managed := boolSpec(res, "managed")
-		owner := stringSpecDefault(res, "owner", ownerFromManaged(managed))
 		policies[res.Metadata.Name] = interfacePolicy{
 			Name:    res.Metadata.Name,
 			IfName:  stringSpec(res, "ifname"),
 			Managed: managed,
-			Owner:   owner,
 			OS:      osNet,
 		}
 	}
@@ -2828,13 +2824,6 @@ func runCommand(name string, args ...string) ([]byte, error) {
 		return out, err
 	}
 	return out, nil
-}
-
-func ownerFromManaged(managed bool) string {
-	if managed {
-		return "routerd"
-	}
-	return "external"
 }
 
 func sortedEgressRouteCandidates(candidates []api.EgressRoutePolicyCandidate) []api.EgressRoutePolicyCandidate {
@@ -2858,8 +2847,6 @@ func stringSpec(res api.Resource, key string) string {
 		switch key {
 		case "ifname":
 			return spec.IfName
-		case "owner":
-			return spec.Owner
 		}
 	case api.BridgeSpec:
 		if key == "ifname" {
