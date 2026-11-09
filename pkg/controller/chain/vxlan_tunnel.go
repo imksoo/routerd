@@ -28,12 +28,11 @@ type VXLANTunnelController struct {
 	Router *api.Router
 	// DeclaredRouter retains resources filtered from Router by spec.when. It is
 	// required to perform fail-closed teardown on BACKUP and unknown HA roles.
-	DeclaredRouter  *api.Router
-	Store           Store
-	DryRun          bool
-	OperatingSystem platform.OS
-	StartedAt       time.Time
-	Mu              *sync.Mutex
+	DeclaredRouter *api.Router
+	Store          Store
+	DryRun         bool
+	StartedAt      time.Time
+	Mu             *sync.Mutex
 }
 
 var errVXLANGateRevisionChanged = errors.New("VXLAN gate dependency revision changed")
@@ -56,11 +55,7 @@ func (c VXLANTunnelController) Reconcile(ctx context.Context) error {
 	if c.Store == nil {
 		return nil
 	}
-	osName := c.OperatingSystem
-	if osName == "" {
-		osName = platform.CurrentOS()
-	}
-	if osName != platform.OSLinux {
+	if platform.CurrentOS() != platform.OSLinux {
 		return nil
 	}
 	declared := c.DeclaredRouter

@@ -21,22 +21,16 @@ import (
 // status from the actual kernel links. It deliberately renders only Bridge
 // artifacts; unrelated network resources remain owned by their controllers.
 type BridgeController struct {
-	Router          *api.Router
-	Store           Store
-	DryRun          bool
-	NetworkdDir     string
-	OperatingSystem platform.OS
+	Router *api.Router
+	Store  Store
+	DryRun bool
 }
 
 func (c BridgeController) Reconcile(ctx context.Context) error {
 	if c.Router == nil || c.Store == nil {
 		return nil
 	}
-	osName := c.OperatingSystem
-	if osName == "" {
-		osName = platform.CurrentOS()
-	}
-	if osName != platform.OSLinux {
+	if platform.CurrentOS() != platform.OSLinux {
 		return nil
 	}
 	files, err := render.NetworkdBridgeFiles(c.Router)
@@ -292,11 +286,8 @@ func (c BridgeController) saveStatus(resource api.Resource, changed bool) error 
 }
 
 func (c BridgeController) networkdPath(path string) string {
-	base := strings.TrimSpace(c.NetworkdDir)
-	if base == "" {
-		defaults, _ := platform.Current()
-		base = defaults.NetworkdDropinDir
-	}
+	defaults, _ := platform.Current()
+	base := defaults.NetworkdDropinDir
 	if base == "" {
 		base = "/etc/systemd/network"
 	}
