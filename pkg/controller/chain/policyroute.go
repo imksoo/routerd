@@ -1571,7 +1571,7 @@ func (c IPv4PolicyRouteController) ensureFwmarkRule(ctx context.Context, priorit
 	markText := fmt.Sprintf("0x%x", mark)
 	tableText := fmt.Sprintf("%d", table)
 	for {
-		out, err := exec.CommandContext(ctx, "ip", "-4", "rule", "show", "priority", priorityText).CombinedOutput()
+		out, err := exec.CommandContext(ctx, "ip", "-N", "-4", "rule", "show", "priority", priorityText).CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("ip -4 rule show priority %s: %w: %s", priorityText, err, strings.TrimSpace(string(out)))
 		}
@@ -1606,7 +1606,7 @@ type ipv4SourcePolicyRule struct {
 
 func (c IPv4PolicyRouteController) currentPolicyRouteArtifacts(ctx context.Context) (map[string]resource.Artifact, map[int]int, []ipv4SourcePolicyRule, error) {
 	out := map[string]resource.Artifact{}
-	rules, err := exec.CommandContext(ctx, "ip", "-4", "rule", "show").CombinedOutput()
+	rules, err := exec.CommandContext(ctx, "ip", "-N", "-4", "rule", "show").CombinedOutput()
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -1635,7 +1635,7 @@ func (c IPv4PolicyRouteController) currentPolicyRouteArtifacts(ctx context.Conte
 	for _, artifact := range parseIPv4PolicyFwmarkRuleArtifacts(string(rules)) {
 		out[artifact.Identity()] = artifact
 	}
-	tables, err := exec.CommandContext(ctx, "ip", "-4", "route", "show", "table", "all").CombinedOutput()
+	tables, err := exec.CommandContext(ctx, "ip", "-N", "-4", "route", "show", "table", "all").CombinedOutput()
 	if err != nil {
 		return nil, nil, nil, err
 	}

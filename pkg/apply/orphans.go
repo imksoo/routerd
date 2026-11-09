@@ -114,10 +114,10 @@ func DesiredOwnedArtifacts(router *api.Router, aliases map[string]string) []reso
 
 func (e *Engine) actualInventoryBackedArtifacts() []resource.Artifact {
 	var actual []resource.Artifact
-	if out, err := runCommand("ip", "-4", "rule", "show"); err == nil {
+	if out, err := runCommand("ip", "-N", "-4", "rule", "show"); err == nil {
 		actual = append(actual, parseIPv4FwmarkRuleArtifacts(string(out))...)
 	}
-	if out, err := runCommand("ip", "-4", "route", "show", "table", "all"); err == nil {
+	if out, err := runCommand("ip", "-N", "-4", "route", "show", "table", "all"); err == nil {
 		actual = append(actual, parseIPv4RouteTableArtifacts(string(out))...)
 	}
 	if out, err := runCommand("nft", "list", "tables"); err == nil {
@@ -337,7 +337,7 @@ func (e *Engine) actualIPIP6TunnelArtifacts() []resource.Artifact {
 
 func (e *Engine) observeIPv4FwmarkRuleOrphans(router *api.Router) []OrphanedArtifact {
 	desired := desiredIPv4FwmarkRuleArtifacts(router)
-	out, err := runCommand("ip", "-4", "rule", "show")
+	out, err := runCommand("ip", "-N", "-4", "rule", "show")
 	if err != nil {
 		return nil
 	}
@@ -438,7 +438,7 @@ func (e *Engine) observeIPv4RouteTableOrphans(router *api.Router, aliases map[st
 	if err != nil {
 		return nil
 	}
-	rules, err := runCommand("ip", "-4", "rule", "show")
+	rules, err := runCommand("ip", "-N", "-4", "rule", "show")
 	if err != nil {
 		return nil
 	}
@@ -458,7 +458,7 @@ func (e *Engine) observeIPv4RouteTableOrphans(router *api.Router, aliases map[st
 			references[rule.Table]--
 		}
 	}
-	out, err := runCommand("ip", "-4", "route", "show", "table", "all")
+	out, err := runCommand("ip", "-N", "-4", "route", "show", "table", "all")
 	if err != nil {
 		return nil
 	}
