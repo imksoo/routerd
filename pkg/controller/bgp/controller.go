@@ -3062,8 +3062,7 @@ func (c *Controller) saveObservedStatuses(routerName string, spec routerapi.BGPR
 			}
 			groupName := "routerd-dynamic-" + sanitizeBGPPolicyName(resource.Metadata.Name)
 			sourcePrefixes := stringutil.UniqueTrimmedSorted(spec.Listen.SourcePrefixes)
-			peerStatuses := dynamicPeerStatusMaps(groupName, c.lastDynamicPeers, c.lastDynamicAdmission)
-			accepted, rejected := dynamicPeerAdmissionTotals(peerStatuses)
+			peerStatuses, accepted, rejected := dynamicPeerStatusMaps(groupName, c.lastDynamicPeers, c.lastDynamicAdmission)
 			status := map[string]any{
 				"phase":                "Ready",
 				"backend":              "gobgp",
@@ -4573,12 +4572,17 @@ func dynamicPeerObservationFromPeer(peer *gobgpapi.Peer, admission samDynamicCla
 	return observation, true
 }
 
-func dynamicPeerStatusMaps(groupName string, observations []dynamicPeerObservation, summary dynamicRouteAdmissionSummary) []map[string]any {
+func dynamicPeerStatusMaps(groupName string, observations []dynamicPeerObservation, summary dynamicRouteAdmissionSummary) ([]map[string]any, int, int) {
 	var out []map[string]any
+	accepted, rejected := 0, 0
 	for _, peer := range observations {
 		if peer.PeerGroup != groupName {
 			continue
 		}
+		acceptedRoutes := summary.AcceptedByNextHop[peer.RemoteAddress]
+		rejectedRoutes := summary.RejectedByNextHop[peer.RemoteAddress]
+		accepted += acceptedRoutes
+		rejected += rejectedRoutes
 		status := map[string]any{
 			"remoteAddress":    peer.RemoteAddress,
 			"peerGroup":        peer.PeerGroup,
@@ -4587,8 +4591,8 @@ func dynamicPeerStatusMaps(groupName string, observations []dynamicPeerObservati
 			"established":      peer.Established,
 			"receivedPrefixes": peer.ReceivedPrefixes,
 			"acceptedPrefixes": peer.AcceptedPrefixes,
-			"acceptedRoutes":   summary.AcceptedByNextHop[peer.RemoteAddress],
-			"rejectedRoutes":   summary.RejectedByNextHop[peer.RemoteAddress],
+			"acceptedRoutes":   acceptedRoutes,
+			"rejectedRoutes":   rejectedRoutes,
 		}
 		if peer.EnrollmentClaim != "" {
 			status["enrollmentClaimRef"] = peer.EnrollmentClaim
@@ -4598,16 +4602,7 @@ func dynamicPeerStatusMaps(groupName string, observations []dynamicPeerObservati
 		}
 		out = append(out, status)
 	}
-	return out
-}
-
-func dynamicPeerAdmissionTotals(peerStatuses []map[string]any) (int, int) {
-	accepted, rejected := 0, 0
-	for _, status := range peerStatuses {
-		accepted += statusInt(status["acceptedRoutes"])
-		rejected += statusInt(status["rejectedRoutes"])
-	}
-	return accepted, rejected
+	return out, accepted, rejected
 }
 
 func normalizeAddressString(value string) string {
