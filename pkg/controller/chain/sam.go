@@ -5,7 +5,6 @@ package chain
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/netip"
@@ -44,14 +43,13 @@ type SAMController struct {
 	Router              *api.Router
 	Store               Store
 	LocalCaptureIntents []dynamicconfig.LocalCaptureIntent
-	MobilityReadyPools  map[string]bool
 	DryRun              bool
 	OS                  platform.OS
 	Applier             samProxyNeighborApplier
 	GARP                samGratuitousARPAnnouncer
 }
 
-func (c SAMController) Reconcile(ctx context.Context) (resultErr error) {
+func (c SAMController) Reconcile(ctx context.Context) error {
 	if c.Router == nil || c.Store == nil {
 		return nil
 	}
@@ -70,7 +68,6 @@ func (c SAMController) Reconcile(ctx context.Context) (resultErr error) {
 	if err != nil {
 		return err
 	}
-	defer func() { resultErr = errors.Join(resultErr, state.recordError) }()
 	if !c.DryRun && (len(actions) != 0 || len(state.previousProxyNeighbors) != 0 || len(state.heldForwardPaths) != 0 || len(state.previousProxyARP) != 0) {
 		if _, ok := c.Store.(objectStatusMerger); !ok {
 			return fmt.Errorf("SAM capture effects require an applied-effect status merger")
@@ -165,11 +162,9 @@ type samReconcileState struct {
 	heldProxyNeighbors     []samAppliedProxyNeighbor
 	heldForwardPaths       []samAppliedForwardPath
 	heldProxyARPIDs        map[string]bool
-	uncertainProxyARP      map[string]bool
 	previousProxyARP       map[string]samAppliedProxyARP
 	nextProxyARP           map[string]samAppliedProxyARP
 	forwardPaths           []sam.CaptureAction
-	recordError            error
 }
 
 func (c SAMController) reconcileState(actions []sam.CaptureAction, targetOS platform.OS) (samReconcileState, error) {
@@ -289,9 +284,7 @@ func samHeldCaptures(intents []dynamicconfig.LocalCaptureIntent) (map[string]sam
 	return held, proxyARP, nil
 }
 
-var errSAMCapturePlanPending = errors.New("SAM proxy neighbor cleanup awaits current MobilityPool plans")
-
-// cleanupReleasedProxyNeighbors compares actual proxy entries with current capture intents.
+// cleanupReleasedProxyNeighbors removes recorded entries no longer needed by capture intents.
 func (c SAMController) cleanupReleasedProxyNeighbors(ctx context.Context, actions []sam.CaptureAction, state samReconcileState) error {
 	if c.DryRun {
 		return nil
@@ -604,37 +597,13 @@ func (c SAMController) reconcileProxyARPSysctls(ctx context.Context, actions []s
 	for iface := range state.previousProxyARP {
 		interfaces[iface] = true
 	}
-	if targetOS == platform.OSLinux {
-		for _, intent := range c.LocalCaptureIntents {
-			if intent.Disposition == dynamicconfig.CaptureHold && intent.CaptureType == "proxy-arp" {
-				if state.uncertainProxyARP == nil {
-					state.uncertainProxyARP = map[string]bool{}
-				}
-				state.uncertainProxyARP[intent.CaptureInterface] = true
-			}
-		}
-	}
 	ordered := make([]string, 0, len(interfaces))
 	for iface := range interfaces {
 		ordered = append(ordered, iface)
 	}
 	sort.Strings(ordered)
 	state.nextProxyARP = map[string]samAppliedProxyARP{}
-	pendingPool := false
-	for _, resource := range c.Router.Spec.Resources {
-		if resource.Kind == "MobilityPool" && !c.MobilityReadyPools[resource.Metadata.Name] {
-			pendingPool = true
-			break
-		}
-	}
 	for _, iface := range ordered {
-		if !desired[iface] && (state.uncertainProxyARP[iface] || pendingPool) {
-			state.nextProxyARP[iface] = samAppliedProxyARP{Interface: iface}
-			if pendingPool {
-				state.recordError = errors.Join(state.recordError, errSAMCapturePlanPending)
-			}
-			continue
-		}
 		if err := applier.SetProxyARP(ctx, iface, desired[iface]); err != nil {
 			return fmt.Errorf("set SAM proxy_arp %q=%t: %w", iface, desired[iface], err)
 		}

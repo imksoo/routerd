@@ -24,11 +24,10 @@ type dynamicConfigPartLister interface {
 }
 
 type dynamicRouteSAMView struct {
-	EffectiveRouter    *api.Router
-	RouteRouter        *api.Router
-	HybridLowerings    []hybrid.HybridLowering
-	MobilityDataplane  dynamicconfig.MobilityDataplanePlan
-	MobilityReadyPools map[string]bool
+	EffectiveRouter   *api.Router
+	RouteRouter       *api.Router
+	HybridLowerings   []hybrid.HybridLowering
+	MobilityDataplane dynamicconfig.MobilityDataplanePlan
 }
 
 // BuildDynamicRouteSAMObjectStatusRouters returns the effective resource views
@@ -82,13 +81,6 @@ func buildDynamicRouteSAMView(startup *api.Router, store dynamicConfigPartLister
 	if err != nil {
 		return dynamicRouteSAMView{}, err
 	}
-	readyPools := map[string]bool{}
-	active, _ := codec.ActiveMobilityPoolPlanRecords(records, now)
-	for _, record := range active {
-		if !record.Source.ARPObserver {
-			readyPools[record.Source.PoolRef] = true
-		}
-	}
 
 	routeRouter := effective
 	hybridLowerings := []hybrid.HybridLowering(nil)
@@ -102,11 +94,10 @@ func buildDynamicRouteSAMView(startup *api.Router, store dynamicConfigPartLister
 	}
 
 	return dynamicRouteSAMView{
-		EffectiveRouter:    &effective,
-		RouteRouter:        &routeRouter,
-		HybridLowerings:    hybridLowerings,
-		MobilityDataplane:  mobilityDataplane,
-		MobilityReadyPools: readyPools,
+		EffectiveRouter:   &effective,
+		RouteRouter:       &routeRouter,
+		HybridLowerings:   hybridLowerings,
+		MobilityDataplane: mobilityDataplane,
 	}, nil
 }
 
