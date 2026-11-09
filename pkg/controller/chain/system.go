@@ -45,7 +45,6 @@ func (c NetworkAdoptionController) Reconcile(ctx context.Context) error {
 	defaults, features := platform.Current()
 	c.networkdDropinBase = defaults.NetworkdDropinDir
 	c.resolvedDropinDir = "/etc/systemd/resolved.conf.d"
-	command := runOutputCommandContext
 	lanInterfaceNames := hostdeps.LANDistributionInterfaceNames(c.Router)
 	lanInterfaces := map[string]bool{}
 	for _, ifname := range lanInterfaceNames {
@@ -79,7 +78,7 @@ func (c NetworkAdoptionController) Reconcile(ctx context.Context) error {
 		if ifname == "" && spec.Interface != "" {
 			ifname = interfaceIfName(c.Router, spec.Interface)
 		}
-		paths, changed, err := c.applyNetworkAdoption(ctx, resource.Metadata.Name, ifname, spec, command)
+		paths, changed, err := c.applyNetworkAdoption(ctx, resource.Metadata.Name, ifname, spec)
 		if firstNonEmpty(spec.State, "present") != "absent" && networkdAdoptionConfigured(spec.SystemdNetworkd) && len(paths) > 0 {
 			desiredNetworkdDropins[filepath.Clean(paths[0])] = true
 		}
@@ -99,7 +98,7 @@ func (c NetworkAdoptionController) Reconcile(ctx context.Context) error {
 			continue
 		}
 		if changed && !c.DryRun && firstNonEmpty(spec.State, "present") != "absent" && lanInterfaces[ifname] && spec.SystemdNetworkd.DisableIPv6RA {
-			if err := flushLANIPv6RADefaultRoute(ctx, command, ifname); err != nil {
+			if err := flushLANIPv6RADefaultRoute(ctx, ifname); err != nil {
 				return err
 			}
 		}
@@ -128,18 +127,18 @@ func (c NetworkAdoptionController) Reconcile(ctx context.Context) error {
 	}
 	if features.HasSystemd {
 		if len(adoptionErrors) == 0 {
-			if err := c.cleanupStaleNetworkdAdoptionDropins(ctx, desiredNetworkdDropins, command); err != nil {
+			if err := c.cleanupStaleNetworkdAdoptionDropins(ctx, desiredNetworkdDropins); err != nil {
 				adoptionErrors = append(adoptionErrors, err)
 			}
 		}
-		if _, _, err := c.cleanupStaleResolvedAdoptionDropins(ctx, desiredResolvedDropins, command); err != nil {
+		if _, _, err := c.cleanupStaleResolvedAdoptionDropins(ctx, desiredResolvedDropins); err != nil {
 			adoptionErrors = append(adoptionErrors, err)
 		}
 	}
 	return errors.Join(adoptionErrors...)
 }
 
-func (c NetworkAdoptionController) cleanupStaleNetworkdAdoptionDropins(ctx context.Context, desired map[string]bool, command outputCommandFunc) error {
+func (c NetworkAdoptionController) cleanupStaleNetworkdAdoptionDropins(ctx context.Context, desired map[string]bool) error {
 	paths, err := filepath.Glob(filepath.Join(c.networkdDropinBase, "*.network.d", "90-routerd-adoption.conf"))
 	if err != nil {
 		return err
@@ -163,7 +162,7 @@ func (c NetworkAdoptionController) cleanupStaleNetworkdAdoptionDropins(ctx conte
 		}
 		return nil
 	}
-	out, err := command(ctx, "networkctl", "--json=short", "list")
+	out, err := runOutputCommandContext(ctx, "networkctl", "--json=short", "list")
 	if err != nil {
 		return fmt.Errorf("observe networkd interfaces: %w", err)
 	}
@@ -214,12 +213,12 @@ func (c NetworkAdoptionController) cleanupStaleNetworkdAdoptionDropins(ctx conte
 	if c.DryRun {
 		return nil
 	}
-	if _, err := command(ctx, "networkctl", "reload"); err != nil {
+	if _, err := runOutputCommandContext(ctx, "networkctl", "reload"); err != nil {
 		return fmt.Errorf("reload networkd after adoption cleanup: %w", err)
 	}
 	for _, iface := range status.Interfaces {
 		if iface.NetworkFile != "" && stale[filepath.Base(iface.NetworkFile)+".d"] {
-			if _, err := command(ctx, "networkctl", "reconfigure", iface.Name); err != nil {
+			if _, err := runOutputCommandContext(ctx, "networkctl", "reconfigure", iface.Name); err != nil {
 				return fmt.Errorf("reconfigure %s after adoption cleanup: %w", iface.Name, err)
 			}
 		}
@@ -230,7 +229,7 @@ func (c NetworkAdoptionController) cleanupStaleNetworkdAdoptionDropins(ctx conte
 	return nil
 }
 
-func (c NetworkAdoptionController) cleanupStaleResolvedAdoptionDropins(ctx context.Context, desired map[string]bool, command outputCommandFunc) ([]string, bool, error) {
+func (c NetworkAdoptionController) cleanupStaleResolvedAdoptionDropins(ctx context.Context, desired map[string]bool) ([]string, bool, error) {
 	path := filepath.Join(c.resolvedDropinDir, "90-routerd-adoption.conf")
 	if desired[filepath.Clean(path)] {
 		return nil, false, nil
@@ -263,7 +262,7 @@ func (c NetworkAdoptionController) cleanupStaleResolvedAdoptionDropins(ctx conte
 	if !pending {
 		return nil, false, nil
 	}
-	if _, err := command(ctx, "systemctl", "restart", "systemd-resolved.service"); err != nil {
+	if _, err := runOutputCommandContext(ctx, "systemctl", "restart", "systemd-resolved.service"); err != nil {
 		return paths, present, fmt.Errorf("restart systemd-resolved after stale network adoption cleanup: %w", err)
 	}
 	if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "NetworkAdoptionCleanup", cleanupStatus, map[string]any{"pending": false}); err != nil {
@@ -272,12 +271,12 @@ func (c NetworkAdoptionController) cleanupStaleResolvedAdoptionDropins(ctx conte
 	return paths, true, nil
 }
 
-func flushLANIPv6RADefaultRoute(ctx context.Context, command outputCommandFunc, ifname string) error {
+func flushLANIPv6RADefaultRoute(ctx context.Context, ifname string) error {
 	ifname = strings.TrimSpace(ifname)
 	if ifname == "" || ifname == "lo" || unsafeSysctlName.MatchString(ifname) {
 		return nil
 	}
-	out, err := command(ctx, "ip", "-6", "route", "flush", "default", "dev", ifname, "proto", "ra")
+	out, err := runOutputCommandContext(ctx, "ip", "-6", "route", "flush", "default", "dev", ifname, "proto", "ra")
 	if err != nil {
 		return fmt.Errorf("flush LAN RA default route on %s: %w: %s", ifname, err, strings.TrimSpace(string(out)))
 	}
@@ -306,7 +305,7 @@ func networkAdoptionOSName(goos string) string {
 	return id
 }
 
-func (c NetworkAdoptionController) applyNetworkAdoption(ctx context.Context, name, ifname string, spec api.NetworkAdoptionSpec, command outputCommandFunc) ([]string, bool, error) {
+func (c NetworkAdoptionController) applyNetworkAdoption(ctx context.Context, name, ifname string, spec api.NetworkAdoptionSpec) ([]string, bool, error) {
 	state := firstNonEmpty(spec.State, "present")
 	var paths []string
 	var changed bool
@@ -322,7 +321,7 @@ func (c NetworkAdoptionController) applyNetworkAdoption(ctx context.Context, nam
 		networkFile := ""
 		if _, err := os.Stat(filepath.Join("/sys/class/net", ifname)); err == nil {
 			var err error
-			networkFile, err = networkdNetworkFile(ctx, command, ifname)
+			networkFile, err = networkdNetworkFile(ctx, ifname)
 			if err != nil {
 				return paths, changed, err
 			}
@@ -399,18 +398,18 @@ func (c NetworkAdoptionController) applyNetworkAdoption(ctx context.Context, nam
 	}
 	retry := c.Store.ObjectStatus(api.SystemAPIVersion, "NetworkAdoption", name)["phase"] == "Error"
 	if networkdChanged || (retry && networkdManaged) {
-		if _, err := command(ctx, "networkctl", "reload"); err != nil {
+		if _, err := runOutputCommandContext(ctx, "networkctl", "reload"); err != nil {
 			return paths, changed, fmt.Errorf("reload networkd: %w", err)
 		}
 		if ifname != "" {
-			if _, err := command(ctx, "networkctl", "reconfigure", ifname); err != nil {
+			if _, err := runOutputCommandContext(ctx, "networkctl", "reconfigure", ifname); err != nil {
 				return paths, changed, fmt.Errorf("reconfigure %s: %w", ifname, err)
 			}
 		}
 		changed = true
 	}
 	if resolvedChanged || (retry && resolvedAdoptionConfigured(spec.SystemdResolved)) {
-		if _, err := command(ctx, "systemctl", "restart", "systemd-resolved.service"); err != nil {
+		if _, err := runOutputCommandContext(ctx, "systemctl", "restart", "systemd-resolved.service"); err != nil {
 			return paths, changed, fmt.Errorf("restart systemd-resolved: %w", err)
 		}
 	}
@@ -2219,8 +2218,8 @@ func scheduleRouterdServiceRestart(ctx context.Context) error {
 	return nil
 }
 
-func networkdNetworkFile(ctx context.Context, command outputCommandFunc, ifname string) (string, error) {
-	out, err := command(ctx, "networkctl", "--json=short", "status", ifname)
+func networkdNetworkFile(ctx context.Context, ifname string) (string, error) {
+	out, err := runOutputCommandContext(ctx, "networkctl", "--json=short", "status", ifname)
 	if err != nil {
 		return "", fmt.Errorf("observe networkd configuration for %s: %w", ifname, err)
 	}
