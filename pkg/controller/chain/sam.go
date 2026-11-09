@@ -84,7 +84,6 @@ func (c SAMController) Reconcile(ctx context.Context) (resultErr error) {
 			return fmt.Errorf("SAM capture effects require an applied-effect status merger")
 		}
 	}
-	blocked := map[string]bool{}
 	deassigned := map[string]bool{}
 	var failures []string
 	applier := c.Applier
@@ -97,7 +96,6 @@ func (c SAMController) Reconcile(ctx context.Context) (resultErr error) {
 		}
 		result, err := applier.EnsureOSAddressAbsent(ctx, action.Address)
 		if err != nil {
-			blocked[action.IntentID] = true
 			failures = append(failures, fmt.Sprintf("%s deassign %s: %v", action.IntentID, action.Address, err))
 			continue
 		}
@@ -106,15 +104,8 @@ func (c SAMController) Reconcile(ctx context.Context) (resultErr error) {
 	if len(failures) != 0 {
 		return fmt.Errorf("SAM capture failed: %s", strings.Join(failures, "; "))
 	}
-	if targetOS == platform.OSLinux {
-		if err := c.reconcileProxyARPSysctls(ctx, actions, nil, &state); err != nil {
-			return err
-		}
-	}
-	if targetOS == platform.OSFreeBSD {
-		if err := c.reconcileProxyARPSysctls(ctx, actions, blocked, &state); err != nil {
-			return err
-		}
+	if err := c.reconcileProxyARPSysctls(ctx, actions, &state); err != nil {
+		return err
 	}
 	if err := c.reconcileSAMIPForwarding(ctx, targetOS, actions, state); err != nil {
 		return err
@@ -127,7 +118,7 @@ func (c SAMController) Reconcile(ctx context.Context) (resultErr error) {
 		return cleanupErr
 	}
 	for _, action := range actions {
-		if action.Kind != "proxy-neighbor" || blocked[action.IntentID] || c.DryRun {
+		if action.Kind != "proxy-neighbor" || c.DryRun {
 			continue
 		}
 		if err := applier.EnsureProxyNeighbor(ctx, action.Address, action.Interface); err != nil {
@@ -695,7 +686,7 @@ func (c SAMController) reconcileForwardPaths(ctx context.Context, state samRecon
 	return applier.ReconcileForwardPaths(ctx, state.forwardPaths, state.preserveForward)
 }
 
-func (c SAMController) reconcileProxyARPSysctls(ctx context.Context, actions []sam.CaptureAction, blocked map[string]bool, state *samReconcileState) error {
+func (c SAMController) reconcileProxyARPSysctls(ctx context.Context, actions []sam.CaptureAction, state *samReconcileState) error {
 	if c.DryRun {
 		return nil
 	}
@@ -709,7 +700,7 @@ func (c SAMController) reconcileProxyARPSysctls(ctx context.Context, actions []s
 	}
 	desired := map[string]bool{}
 	if targetOS == platform.OSFreeBSD {
-		if freeBSDProxyARPEnabled(actions, blocked) || len(state.heldProxyNeighbors) != 0 {
+		if freeBSDProxyARPEnabled(actions) || len(state.heldProxyNeighbors) != 0 {
 			desired[""] = true
 		}
 	} else {
@@ -811,9 +802,9 @@ func (c SAMController) reconcileProxyARPSysctls(ctx context.Context, actions []s
 	return nil
 }
 
-func freeBSDProxyARPEnabled(actions []sam.CaptureAction, blocked map[string]bool) bool {
+func freeBSDProxyARPEnabled(actions []sam.CaptureAction) bool {
 	for _, action := range actions {
-		if action.Kind == "proxy-neighbor" && !blocked[action.IntentID] {
+		if action.Kind == "proxy-neighbor" {
 			return true
 		}
 	}
