@@ -4550,6 +4550,13 @@ func ipv4StaticAddressDesiredByAnother(router *api.Router, store Store, resource
 		return false
 	}
 	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion == api.HybridAPIVersion && resource.Kind == "TunnelInterface" {
+			spec, err := resource.TunnelInterfaceSpec()
+			if err == nil && strings.TrimSpace(resource.Metadata.Name) == ifname && strings.TrimSpace(spec.Address) == strings.TrimSpace(address) {
+				return true
+			}
+			continue
+		}
 		if resource.APIVersion != api.NetAPIVersion {
 			continue
 		}
