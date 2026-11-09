@@ -1441,6 +1441,10 @@ func wireGuardPublicKeyFromConfig(cfg wireguard.InterfaceConfig) string {
 }
 
 func (c WireGuardController) interfaceMatchesDesired(ctx context.Context, cfg wireguard.InterfaceConfig, observed wireguard.InterfaceStatus) bool {
+	publicKey := wireGuardPublicKeyFromConfig(cfg)
+	if publicKey == "" || observed.PublicKey != publicKey {
+		return false
+	}
 	if cfg.ListenPort != 0 && observed.ListenPort != cfg.ListenPort {
 		return false
 	}
