@@ -73,17 +73,6 @@ type ProbeRecord struct {
 	ProbeEvidence
 }
 
-// HistoryEntries returns a defensive copy. State exposes the slice directly
-// in JSON so this is mostly a helper for tests and callers that mutate.
-func (s State) HistoryEntries() []ProbeRecord {
-	if len(s.History) == 0 {
-		return nil
-	}
-	out := make([]ProbeRecord, len(s.History))
-	copy(out, s.History)
-	return out
-}
-
 // classifyError maps an error returned from the probe into a stable
 // FailureKind. We use errors.Is for the well-known sentinels and fall back
 // to substring matching for anything more exotic. The empty string means
