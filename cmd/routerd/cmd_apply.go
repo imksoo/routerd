@@ -281,6 +281,7 @@ func recordHostInventoryState(store routerstate.Store) error {
 }
 
 type staleObjectStatusCleanupStore interface {
+	ListDynamicConfigParts() ([]routerstate.DynamicConfigPartRecord, error)
 	routerstate.ObjectStatusLister
 	routerstate.ObjectDeleteStore
 	routerstate.EventRecorder
@@ -340,7 +341,7 @@ func cleanupUnsupportedLegacyObjectStatusesForOS(router *api.Router, store stale
 	return staleObjectStatusCleanupResult{Removed: removed, SnapshotPath: snapshotPath}, nil
 }
 
-func desiredObjectStatusKeysForOS(router *api.Router, store resourcequery.StateStore, now time.Time, targetOS platform.OS) (map[string]bool, error) {
+func desiredObjectStatusKeysForOS(router *api.Router, store staleObjectStatusCleanupStore, now time.Time, targetOS platform.OS) (map[string]bool, error) {
 	out := map[string]bool{}
 	if router == nil {
 		return out, nil

@@ -85,6 +85,7 @@ type dnsmasqSystemdState struct {
 type Store interface {
 	SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error
 	ObjectStatus(apiVersion, kind, name string) map[string]any
+	ListDynamicConfigParts() ([]routerstate.DynamicConfigPartRecord, error)
 }
 
 type objectStatusMerger interface {
@@ -568,13 +569,7 @@ func (s eventedStore) ListDynamicConfigParts() ([]routerstate.DynamicConfigPartR
 	if s.Store == nil {
 		return nil, nil
 	}
-	lister, ok := s.Store.(interface {
-		ListDynamicConfigParts() ([]routerstate.DynamicConfigPartRecord, error)
-	})
-	if !ok {
-		return nil, nil
-	}
-	return lister.ListDynamicConfigParts()
+	return s.Store.ListDynamicConfigParts()
 }
 
 func (s eventedStore) DeleteObject(apiVersion, kind, name string) error {
@@ -3143,11 +3138,10 @@ func (r *Runner) mobilityARPObserverDaemonSpecsWithError() ([]mobilityARPObserve
 	if r == nil {
 		return nil, nil
 	}
-	lister, ok := r.Store.(dynamicConfigPartLister)
-	if !ok {
+	if r.Store == nil {
 		return nil, errors.New("ARP observer configuration store is unavailable")
 	}
-	records, err := lister.ListDynamicConfigParts()
+	records, err := r.Store.ListDynamicConfigParts()
 	if err != nil {
 		return nil, fmt.Errorf("read ARP observer configuration: %w", err)
 	}

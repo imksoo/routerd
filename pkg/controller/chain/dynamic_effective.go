@@ -35,7 +35,7 @@ type dynamicRouteSAMView struct {
 // dynamic config resources visible to their controllers; RouteRouter includes
 // generic route-facing lowerings such as Hybrid routes. Mobility effects never
 // become generic resources and are instead held in MobilityDataplane.
-func BuildDynamicRouteSAMObjectStatusRouters(startup *api.Router, store any, now time.Time, targetOS platform.OS) ([]*api.Router, error) {
+func BuildDynamicRouteSAMObjectStatusRouters(startup *api.Router, store dynamicConfigPartLister, now time.Time, targetOS platform.OS) ([]*api.Router, error) {
 	view, err := buildDynamicRouteSAMView(startup, store, now, targetOS)
 	if err != nil {
 		return nil, err
@@ -43,15 +43,15 @@ func BuildDynamicRouteSAMObjectStatusRouters(startup *api.Router, store any, now
 	return []*api.Router{view.EffectiveRouter, view.RouteRouter}, nil
 }
 
-func buildDynamicRouteSAMView(startup *api.Router, store any, now time.Time, targetOS platform.OS) (dynamicRouteSAMView, error) {
+func buildDynamicRouteSAMView(startup *api.Router, store dynamicConfigPartLister, now time.Time, targetOS platform.OS) (dynamicRouteSAMView, error) {
 	if startup == nil {
 		return dynamicRouteSAMView{}, fmt.Errorf("startup router is required")
 	}
 	effective := *startup
 	var records []routerstate.DynamicConfigPartRecord
-	if lister, ok := store.(dynamicConfigPartLister); ok {
+	if store != nil {
 		var err error
-		records, err = lister.ListDynamicConfigParts()
+		records, err = store.ListDynamicConfigParts()
 		if err != nil {
 			return dynamicRouteSAMView{}, fmt.Errorf("list dynamic config parts: %w", err)
 		}
