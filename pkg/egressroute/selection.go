@@ -4,7 +4,6 @@ package egressroute
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
@@ -178,15 +177,8 @@ func selectionStatusChanged(previous map[string]any, selected CandidateState) bo
 
 func statusInt(value any) int {
 	switch v := value.(type) {
-	case int:
-		return v
-	case int64:
-		return int(v)
 	case float64:
 		return int(v)
-	case json.Number:
-		i, _ := strconv.Atoi(v.String())
-		return i
 	case string:
 		i, _ := strconv.Atoi(v)
 		return i
