@@ -441,7 +441,7 @@ func (c IPv4RouteController) reconcile(ctx context.Context) error {
 			localSource := true
 			if preferredSource != "" && routeType != "blackhole" {
 				var err error
-				localSource, err = ipv4PreferredSourceIsLocal(ctx, c.run, preferredSource)
+				localSource, err = ipv4PreferredSourceIsLocal(ctx, preferredSource)
 				if err != nil {
 					failures = append(failures, fmt.Sprintf("%s: observe preferred source: %v", resource.Metadata.Name, err))
 					status["phase"] = "Error"
@@ -464,7 +464,7 @@ func (c IPv4RouteController) reconcile(ctx context.Context) error {
 			} else if preferredSource != "" {
 				status["effectivePreferredSource"] = preferredSource
 			}
-			if platform.CurrentOS() != platform.OSFreeBSD && ipv4RouteInstalled(ctx, c.run, routeType, destination, device, gateway, preferredSource, spec.Metric) {
+			if platform.CurrentOS() != platform.OSFreeBSD && ipv4RouteInstalled(ctx, routeType, destination, device, gateway, preferredSource, spec.Metric) {
 				status["kernelRouteAlreadyCurrent"] = true
 				status["changed"] = changed
 				if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4Route", resource.Metadata.Name, status); err != nil {
@@ -488,10 +488,10 @@ func (c IPv4RouteController) reconcile(ctx context.Context) error {
 			if platform.CurrentOS() == platform.OSFreeBSD {
 				name, args = freeBSDIPv4RouteApplyCommand(routeType, destination, device, gateway, preferredSource)
 			}
-			out, err := c.run(ctx, name, args...)
+			out, err := runOutputCommandContext(ctx, name, args...)
 			if err != nil && platform.CurrentOS() == platform.OSFreeBSD && freeBSDRouteNeedsAdd(out) {
 				args = freeBSDIPv4RouteAddArgs(args)
-				out, err = c.run(ctx, name, args...)
+				out, err = runOutputCommandContext(ctx, name, args...)
 			}
 			if err != nil {
 				message := strings.TrimSpace(string(out))
@@ -526,15 +526,12 @@ func (c IPv4RouteController) reconcile(ctx context.Context) error {
 	return nil
 }
 
-func ipv4RouteInstalled(ctx context.Context, command outputCommandFunc, routeType, destination, device, gateway, preferredSource string, metric int) bool {
-	if command == nil {
-		command = runOutputCommandContext
-	}
+func ipv4RouteInstalled(ctx context.Context, routeType, destination, device, gateway, preferredSource string, metric int) bool {
 	queryDestination := destination
 	if destination == "" || destination == "0.0.0.0/0" {
 		queryDestination = "default"
 	}
-	out, err := command(ctx, "ip", "route", "show", queryDestination)
+	out, err := runOutputCommandContext(ctx, "ip", "route", "show", queryDestination)
 	if err != nil {
 		return false
 	}
@@ -592,23 +589,20 @@ func routeFieldsContainPair(fields []string, key, value string) bool {
 	return false
 }
 
-func ipv4PreferredSourceIsLocal(ctx context.Context, command outputCommandFunc, preferredSource string) (bool, error) {
+func ipv4PreferredSourceIsLocal(ctx context.Context, preferredSource string) (bool, error) {
 	addr, err := netip.ParseAddr(strings.TrimSpace(preferredSource))
 	if err != nil || !addr.Is4() {
 		return false, fmt.Errorf("invalid IPv4 preferred source %q", preferredSource)
 	}
-	if command == nil {
-		command = runOutputCommandContext
-	}
 	switch platform.CurrentOS() {
 	case platform.OSFreeBSD:
-		out, err := command(ctx, "ifconfig", "-a", "inet")
+		out, err := runOutputCommandContext(ctx, "ifconfig", "-a", "inet")
 		if err != nil {
 			return false, fmt.Errorf("ifconfig -a inet: %w: %s", err, strings.TrimSpace(string(out)))
 		}
 		return ifconfigHasIPv4Address(out, addr.String()), nil
 	default:
-		out, err := command(ctx, "ip", "-j", "-4", "addr", "show")
+		out, err := runOutputCommandContext(ctx, "ip", "-j", "-4", "addr", "show")
 		if err != nil {
 			return false, fmt.Errorf("ip -j -4 addr show: %w: %s", err, strings.TrimSpace(string(out)))
 		}
@@ -683,7 +677,7 @@ func (c IPv4RouteController) teardownRemovedRoute(ctx context.Context, status ro
 			if platform.CurrentOS() == platform.OSFreeBSD {
 				name, args = freeBSDIPv4RouteRemovalDeleteCommand(removal)
 			} else if routerHasBGP(c.Router) {
-				bgp, err := removedIPv4RouteRemovalIsCurrentlyBGP(ctx, c.run, removal)
+				bgp, err := removedIPv4RouteRemovalIsCurrentlyBGP(ctx, removal)
 				if err != nil {
 					return fmt.Errorf("observe removed IPv4Route %s: %w", status.Name, err)
 				}
@@ -692,7 +686,7 @@ func (c IPv4RouteController) teardownRemovedRoute(ctx context.Context, status ro
 				}
 			}
 			if len(args) > 0 {
-				out, err := c.run(ctx, name, args...)
+				out, err := runOutputCommandContext(ctx, name, args...)
 				if err != nil && !missingIPv4RouteDelete(err, out) {
 					return fmt.Errorf("delete removed IPv4Route %s: %s %s: %w: %s", status.Name, name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 				}
@@ -753,12 +747,12 @@ func routeStatusString(value any) string {
 	return text
 }
 
-func removedIPv4RouteRemovalIsCurrentlyBGP(ctx context.Context, run outputCommandFunc, removal ipv4RouteRemoval) (bool, error) {
+func removedIPv4RouteRemovalIsCurrentlyBGP(ctx context.Context, removal ipv4RouteRemoval) (bool, error) {
 	destination := removal.Destination
 	if destination == "" {
 		return false, nil
 	}
-	out, err := run(ctx, "ip", "-j", "-4", "route", "show", "exact", destination)
+	out, err := runOutputCommandContext(ctx, "ip", "-j", "-4", "route", "show", "exact", destination)
 	if err != nil {
 		return false, fmt.Errorf("observe BGP route %s: %w: %s", destination, err, strings.TrimSpace(string(out)))
 	}
@@ -813,10 +807,6 @@ func routeLineMatchesDestination(got, want string) bool {
 		return true
 	}
 	return false
-}
-
-func (c IPv4RouteController) run(ctx context.Context, name string, args ...string) ([]byte, error) {
-	return exec.CommandContext(ctx, name, args...).CombinedOutput()
 }
 
 func ipv4RouteRemovalDeleteArgs(removal ipv4RouteRemoval) []string {

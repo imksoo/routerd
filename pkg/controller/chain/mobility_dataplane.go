@@ -171,7 +171,7 @@ func (c IPv4RouteController) applyMobilityRoute(ctx context.Context, route dynam
 	}
 	preferredSource := route.PreferredSource
 	if preferredSource != "" {
-		local, err := ipv4PreferredSourceIsLocal(ctx, c.run, preferredSource)
+		local, err := ipv4PreferredSourceIsLocal(ctx, preferredSource)
 		if err != nil {
 			return mobilityAppliedIPv4Route{}, fmt.Errorf("observe preferred source: %w", err)
 		}
@@ -180,7 +180,7 @@ func (c IPv4RouteController) applyMobilityRoute(ctx context.Context, route dynam
 		}
 	}
 	applied.PreferredSource = preferredSource
-	if platform.CurrentOS() != platform.OSFreeBSD && ipv4RouteInstalled(ctx, c.run, "unicast", route.Destination, route.Device, "", preferredSource, route.Metric) {
+	if platform.CurrentOS() != platform.OSFreeBSD && ipv4RouteInstalled(ctx, "unicast", route.Destination, route.Device, "", preferredSource, route.Metric) {
 		return applied, nil
 	}
 	args := []string{"route", "replace", route.Destination, "dev", route.Device}
@@ -194,10 +194,10 @@ func (c IPv4RouteController) applyMobilityRoute(ctx context.Context, route dynam
 	if platform.CurrentOS() == platform.OSFreeBSD {
 		name, args = freeBSDIPv4RouteApplyCommand("unicast", route.Destination, route.Device, "", preferredSource)
 	}
-	out, err := c.run(ctx, name, args...)
+	out, err := runOutputCommandContext(ctx, name, args...)
 	if err != nil && platform.CurrentOS() == platform.OSFreeBSD && freeBSDRouteNeedsAdd(out) {
 		args = freeBSDIPv4RouteAddArgs(args)
-		out, err = c.run(ctx, name, args...)
+		out, err = runOutputCommandContext(ctx, name, args...)
 	}
 	if err != nil {
 		return mobilityAppliedIPv4Route{}, fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
@@ -224,7 +224,7 @@ func (c IPv4RouteController) removeMobilityRoute(ctx context.Context, route mobi
 	if platform.CurrentOS() == platform.OSFreeBSD {
 		name, args = freeBSDIPv4RouteRemovalDeleteCommand(removal)
 	} else if routerHasBGP(c.Router) {
-		bgp, err := removedIPv4RouteRemovalIsCurrentlyBGP(ctx, c.run, removal)
+		bgp, err := removedIPv4RouteRemovalIsCurrentlyBGP(ctx, removal)
 		if err != nil {
 			return err
 		}
@@ -232,7 +232,7 @@ func (c IPv4RouteController) removeMobilityRoute(ctx context.Context, route mobi
 			return nil
 		}
 	}
-	out, err := c.run(ctx, name, args...)
+	out, err := runOutputCommandContext(ctx, name, args...)
 	if err != nil && !missingIPv4RouteDelete(err, out) {
 		return fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
