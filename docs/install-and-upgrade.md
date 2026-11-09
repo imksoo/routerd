@@ -449,7 +449,6 @@ sudo routerd validate --config /usr/local/etc/routerd/router.yaml
 workdir=$(mktemp -d)
 sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once --dry-run \
   --state-file "$workdir/state.db" \
-  --ledger-file "$workdir/ledger.db" \
   --status-file "$workdir/status.json"
 rm -rf "$workdir"
 ```

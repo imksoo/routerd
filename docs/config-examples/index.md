@@ -84,7 +84,6 @@ sudo routerd validate --config router.yaml
 workdir=$(mktemp -d)
 sudo routerd apply --config router.yaml --once --dry-run \
   --state-file "$workdir/state.db" \
-  --ledger-file "$workdir/ledger.db" \
   --status-file "$workdir/status.json"
 rm -rf "$workdir"
 

@@ -87,7 +87,6 @@ routerd validate --config examples/example-port-forward-web.yaml
 workdir=$(mktemp -d)
 routerd apply --config examples/example-port-forward-web.yaml --once --dry-run \
   --state-file "$workdir/state.db" \
-  --ledger-file "$workdir/ledger.db" \
   --status-file "$workdir/status.json"
 rm -rf "$workdir"
 ```

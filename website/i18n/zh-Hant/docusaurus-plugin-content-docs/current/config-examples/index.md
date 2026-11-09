@@ -81,7 +81,6 @@ LAB_DIR="$(mktemp -d)"
 sudo routerd validate --config router.yaml
 sudo routerd apply --config router.yaml --once --dry-run \
   --state-file "$LAB_DIR/state.db" \
-  --ledger-file "$LAB_DIR/ledger.db" \
   --status-file "$LAB_DIR/status.json"
 rm -rf "$LAB_DIR"
 ```

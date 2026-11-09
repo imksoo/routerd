@@ -106,7 +106,6 @@ routerd 将资源对应至以下 FreeBSD 机制。
 workdir=$(mktemp -d)
 sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once --dry-run \
   --state-file "$workdir/state.db" \
-  --ledger-file "$workdir/ledger.db" \
   --status-file "$workdir/status.json"
 ```
 

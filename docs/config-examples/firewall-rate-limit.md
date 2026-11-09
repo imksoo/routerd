@@ -28,7 +28,6 @@ routerd validate --config examples/firewall-rate-limit.yaml
 workdir=$(mktemp -d)
 routerd apply --config examples/firewall-rate-limit.yaml --once --dry-run \
   --state-file "$workdir/state.db" \
-  --ledger-file "$workdir/ledger.db" \
   --status-file "$workdir/status.json"
 rm -rf "$workdir"
 ```

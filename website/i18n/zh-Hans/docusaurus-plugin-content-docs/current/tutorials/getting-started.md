@@ -64,7 +64,7 @@ routerd validate --config first-router.yaml
 
 ```bash
 workdir=$(mktemp -d)
-routerd apply --once --dry-run --config first-router.yaml --status-file "$workdir/status.json" --state-file "$workdir/state.db" --ledger-file "$workdir/ledger.db" --netplan-file "$workdir/50-routerd.yaml" --dnsmasq-file "$workdir/dnsmasq.conf" --dnsmasq-service-file "$workdir/routerd-dnsmasq.service" --nftables-file "$workdir/routerd-nat.nft"
+routerd apply --once --dry-run --config first-router.yaml --status-file "$workdir/status.json" --state-file "$workdir/state.db" --netplan-file "$workdir/50-routerd.yaml" --dnsmasq-file "$workdir/dnsmasq.conf" --dnsmasq-service-file "$workdir/routerd-dnsmasq.service" --nftables-file "$workdir/routerd-nat.nft"
 rm -rf "$workdir"
 ```
 

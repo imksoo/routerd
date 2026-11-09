@@ -87,7 +87,7 @@ routerd validate --config first-router.yaml
 
 ## 5. Run a non-destructive preview
 
-Use temporary state, ledger, and status paths. This exercises loading,
+Use temporary state and status paths. This exercises loading,
 dependency ordering, and rendering without applying the network change or
 writing routerd's normal state files.
 
@@ -95,7 +95,6 @@ writing routerd's normal state files.
 workdir=$(mktemp -d)
 routerd apply --config first-router.yaml --once --dry-run \
   --state-file "$workdir/state.db" \
-  --ledger-file "$workdir/ledger.db" \
   --status-file "$workdir/status.json"
 ```
 

@@ -78,7 +78,6 @@ routerd validate --config examples/wireguard-hub-spoke.yaml
 workdir=$(mktemp -d)
 routerd apply --config examples/wireguard-hub-spoke.yaml --once --dry-run \
   --state-file "$workdir/state.db" \
-  --ledger-file "$workdir/ledger.db" \
   --status-file "$workdir/status.json"
 rm -rf "$workdir"
 ```

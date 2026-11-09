@@ -14,7 +14,6 @@ routerd validate --config examples/<name>.yaml
 workdir=$(mktemp -d)
 routerd apply --config examples/<name>.yaml --once --dry-run \
   --state-file "$workdir/state.db" \
-  --ledger-file "$workdir/ledger.db" \
   --status-file "$workdir/status.json"
 rm -rf "$workdir"
 ```

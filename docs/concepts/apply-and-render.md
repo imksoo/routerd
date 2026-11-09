@@ -34,7 +34,6 @@ For a first lab, keep every generated state file in a new temporary directory:
 workdir=$(mktemp -d)
 routerd apply --config /path/to/router.yaml --once --dry-run \
   --state-file "$workdir/state.db" \
-  --ledger-file "$workdir/ledger.db" \
   --status-file "$workdir/status.json"
 ```
 

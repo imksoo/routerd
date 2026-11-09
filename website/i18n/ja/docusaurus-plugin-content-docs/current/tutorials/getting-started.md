@@ -87,14 +87,13 @@ sudo routerd validate --config ./first-router.yaml
 
 ## 4. 使い捨ての場所で dry-run する
 
-次は、適用の流れを試します。`state`、`ledger`、`status` の保存先を明示的に
+次は、適用の流れを試します。`state`、`status` の保存先を明示的に
 一時ディレクトリへ向けます。
 
 ```sh
 LAB_DIR="$(mktemp -d)"
 sudo routerd apply --config ./first-router.yaml --once --dry-run \
   --state-file "$LAB_DIR/state.db" \
-  --ledger-file "$LAB_DIR/ledger.db" \
   --status-file "$LAB_DIR/status.json"
 sudo sed -n "1,120p" "$LAB_DIR/status.json"
 rm -rf "$LAB_DIR"

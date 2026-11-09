@@ -74,7 +74,6 @@ LAB_DIR="$(mktemp -d)"
 sudo routerd validate --config examples/example-port-forward-web.yaml
 sudo routerd apply --config examples/example-port-forward-web.yaml --once --dry-run \
   --state-file "$LAB_DIR/state.db" \
-  --ledger-file "$LAB_DIR/ledger.db" \
   --status-file "$LAB_DIR/status.json"
 rm -rf "$LAB_DIR"
 ```

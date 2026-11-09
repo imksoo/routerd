@@ -83,7 +83,6 @@ routerd validate --config examples/tailscale-exit-subnet.yaml
 workdir=$(mktemp -d)
 routerd apply --config examples/tailscale-exit-subnet.yaml --once --dry-run \
   --state-file "$workdir/state.db" \
-  --ledger-file "$workdir/ledger.db" \
   --status-file "$workdir/status.json"
 rm -rf "$workdir"
 ```

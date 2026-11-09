@@ -46,13 +46,11 @@ dry-run は、読み込んだリソースの順番と生成する内容を確認
 LAB_DIR="$(mktemp -d)"
 sudo routerd apply --config ./router.yaml --once --dry-run \
   --state-file "$LAB_DIR/state.db" \
-  --ledger-file "$LAB_DIR/ledger.db" \
   --status-file "$LAB_DIR/status.json"
 sed -n "1,120p" "$LAB_DIR/status.json"
 ```
 
 - **state** は、routerd が見た状態を保存するデータベースです。
-- **ledger** は、routerd が所有する成果物の記録です。
 - **status** は、今回の結果を書いた JSON ファイルです。
 
 `--dry-run` がある間はネットワークを本当に変更しません。それでも、設定の内容は

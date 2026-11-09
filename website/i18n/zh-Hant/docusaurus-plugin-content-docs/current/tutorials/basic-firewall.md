@@ -80,7 +80,7 @@ routerd 是預發布軟體。這裡的區域與策略資源不是通用防火牆
 ```bash
 routerd validate --config router.yaml
 workdir=$(mktemp -d)
-routerd apply --once --dry-run --config router.yaml --status-file "$workdir/status.json" --state-file "$workdir/state.db" --ledger-file "$workdir/ledger.db" --netplan-file "$workdir/50-routerd.yaml" --dnsmasq-file "$workdir/dnsmasq.conf" --dnsmasq-service-file "$workdir/routerd-dnsmasq.service" --nftables-file "$workdir/routerd-nat.nft"
+routerd apply --once --dry-run --config router.yaml --status-file "$workdir/status.json" --state-file "$workdir/state.db" --netplan-file "$workdir/50-routerd.yaml" --dnsmasq-file "$workdir/dnsmasq.conf" --dnsmasq-service-file "$workdir/routerd-dnsmasq.service" --nftables-file "$workdir/routerd-nat.nft"
 ```
 
 只有在 `routerd serve` 已藉由主控台或獨立管理路徑啟動後，才以 `routerctl` 檢查運行結果：

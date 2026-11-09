@@ -32,7 +32,6 @@ LAB_DIR="$(mktemp -d)"
 sudo routerd validate --config examples/firewall-rate-limit.yaml
 sudo routerd apply --config examples/firewall-rate-limit.yaml --once --dry-run \
   --state-file "$LAB_DIR/state.db" \
-  --ledger-file "$LAB_DIR/ledger.db" \
   --status-file "$LAB_DIR/status.json"
 sudo sed -n "1,160p" "$LAB_DIR/status.json"
 ```

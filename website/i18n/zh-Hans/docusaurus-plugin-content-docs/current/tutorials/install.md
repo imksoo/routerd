@@ -42,7 +42,6 @@ sudo routerd validate --config /usr/local/etc/routerd/router.yaml
 LAB_DIR="$(mktemp -d)"
 sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once --dry-run \
   --state-file "$LAB_DIR/state.db" \
-  --ledger-file "$LAB_DIR/ledger.db" \
   --status-file "$LAB_DIR/status.json" \
   --netplan-file "$LAB_DIR/50-routerd.yaml" \
   --dnsmasq-file "$LAB_DIR/dnsmasq.conf" \
