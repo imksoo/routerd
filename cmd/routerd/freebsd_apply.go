@@ -13,16 +13,6 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 )
 
-type freeBSDConfigApplyOptions struct {
-	ManageServices bool
-	PFEnabled      func() bool
-}
-
-type freeBSDPFApplyOptions struct {
-	ManageServices bool
-	PFEnabled      func() bool
-}
-
 func applyFreeBSDRCDScripts(scripts map[string][]byte, rcScriptDir string) ([]string, error) {
 	if len(scripts) == 0 || rcScriptDir == "" {
 		return nil, nil
