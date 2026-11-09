@@ -444,9 +444,8 @@ func (c IPv4StaticAddressController) applyMobilityStaticAddress(ctx context.Cont
 	if present {
 		return applied, nil
 	}
-	command := runCommandContext
 	name, args := ipv4StaticAddressApplyCommand(platform.CurrentOS(), address.Interface, address.Address)
-	if err := command(ctx, name, args...); err != nil {
+	if err := runCommandContext(ctx, name, args...); err != nil {
 		return mobilityAppliedIPv4Address{}, fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
 	}
 	return applied, nil
@@ -463,9 +462,8 @@ func (c IPv4StaticAddressController) removeMobilityStaticAddress(ctx context.Con
 	if !present {
 		return nil
 	}
-	command := runCommandContext
 	name, args := ipv4StaticAddressDeleteCommand(platform.CurrentOS(), address.Interface, address.Address)
-	if err := command(ctx, name, args...); err != nil {
+	if err := runCommandContext(ctx, name, args...); err != nil {
 		return fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
 	}
 	return nil
