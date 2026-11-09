@@ -3,7 +3,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"net"
 	"time"
@@ -15,19 +14,13 @@ const pppoeInterfaceTeardownTimeout = 5 * time.Second
 
 const pppoeInterfaceProbeInterval = 50 * time.Millisecond
 
-func pppoeInterfaceExists(ctx context.Context, osName platform.OS, ifname string) (bool, error) {
+func pppoeInterfaceExists(osName platform.OS, ifname string) (bool, error) {
 	if osName != platform.OSLinux && osName != platform.OSFreeBSD {
 		return false, nil
-	}
-	if err := ctx.Err(); err != nil {
-		return false, err
 	}
 	interfaces, err := net.Interfaces()
 	if err != nil {
 		return false, fmt.Errorf("list interfaces for PPPoE teardown: %w", err)
-	}
-	if err := ctx.Err(); err != nil {
-		return false, err
 	}
 	for _, iface := range interfaces {
 		if iface.Name == ifname {
@@ -46,9 +39,7 @@ func waitForOwnedPPPoEInterfaceTeardown(osName platform.OS, ifname string) error
 	ticker := time.NewTicker(pppoeInterfaceProbeInterval)
 	defer ticker.Stop()
 	for {
-		ctx, cancel := context.WithTimeout(context.Background(), freeBSDPPPoEObserveTimeout)
-		exists, err := pppoeInterfaceExists(ctx, osName, ifname)
-		cancel()
+		exists, err := pppoeInterfaceExists(osName, ifname)
 		if err != nil {
 			return err
 		}

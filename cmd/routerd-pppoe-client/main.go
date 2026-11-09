@@ -356,7 +356,7 @@ func (d *daemon) startSession(ctx context.Context) error {
 	}()
 
 	if checkTeardown {
-		exists, err := pppoeInterfaceExists(ctx, platform.CurrentOS(), ifname)
+		exists, err := pppoeInterfaceExists(platform.CurrentOS(), ifname)
 		if err != nil {
 			return fmt.Errorf("recheck PPPoE interface %q after teardown failure: %w", ifname, err)
 		}
@@ -379,7 +379,7 @@ func (d *daemon) startSession(ctx context.Context) error {
 	}
 	osName := platform.CurrentOS()
 	if osName == platform.OSFreeBSD {
-		if err := ensureFreeBSDPPPoEInterfaceAbsent(ctx, d.config().IfName); err != nil {
+		if err := ensureFreeBSDPPPoEInterfaceAbsent(d.config().IfName); err != nil {
 			d.markFailed(err.Error())
 			return err
 		}

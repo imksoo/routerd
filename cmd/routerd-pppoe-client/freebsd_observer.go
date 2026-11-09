@@ -32,8 +32,8 @@ func runFreeBSDPPPoEObserverCommand(ctx context.Context, name string, args ...st
 	return exec.CommandContext(ctx, name, args...).Output()
 }
 
-func ensureFreeBSDPPPoEInterfaceAbsent(ctx context.Context, ifname string) error {
-	exists, err := pppoeInterfaceExists(ctx, platform.OSFreeBSD, ifname)
+func ensureFreeBSDPPPoEInterfaceAbsent(ifname string) error {
+	exists, err := pppoeInterfaceExists(platform.OSFreeBSD, ifname)
 	if err != nil {
 		return err
 	}
