@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/apply"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/render"
 )
@@ -75,6 +76,25 @@ func (c BridgeController) Reconcile(ctx context.Context) error {
 		}
 	}
 	if !c.DryRun {
+		retained, err := apply.ConfiguredVXLANInterfaces(c.Router)
+		if err != nil {
+			return err
+		}
+		for _, ifname := range bridgeInterfaceAliases(c.Router) {
+			retained[ifname] = true
+		}
+		links, err := os.ReadDir("/sys/class/net")
+		if err != nil {
+			return fmt.Errorf("list network links: %w", err)
+		}
+		for _, link := range links {
+			if !retained[link.Name()] && c.isKernelBridge(link.Name()) {
+				if err := c.command(ctx, "ip", "link", "delete", "dev", link.Name(), "type", "bridge"); err != nil {
+					return fmt.Errorf("delete Bridge %s: %w", link.Name(), err)
+				}
+				changed = true
+			}
+		}
 		for _, resource := range c.Router.Spec.Resources {
 			if resource.Kind != "Bridge" {
 				continue
