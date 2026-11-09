@@ -52,19 +52,10 @@ type SAMEnrollmentClientStore interface {
 	GetDynamicConfigPartsBySource(source string) ([]routerstate.DynamicConfigPartRecord, error)
 }
 
-// SAMEnrollmentJoinClient represents one bootstrap endpoint. The controller
-// may issue topology GETs concurrently to distinct endpoint instances, but
-// always serializes claim submissions.
-type SAMEnrollmentJoinClient interface {
-	SubmitSAMEnrollmentClaim(context.Context, controlapi.SAMEnrollmentClaimSubmitRequest) (*controlapi.SAMEnrollmentClaimSubmitResult, error)
-	GetSAMEnrollmentTopology(context.Context, controlapi.SAMEnrollmentTopologyGetRequest) (*controlapi.SAMEnrollmentTopologyGetResult, error)
-}
-
 type SAMEnrollmentClientController struct {
 	Router *api.Router
 	Store  SAMEnrollmentClientStore
 
-	ClientFactory  func(api.SAMEnrollmentClientSpec) []SAMEnrollmentJoinClient
 	requestTimeout time.Duration
 }
 
@@ -407,7 +398,7 @@ func (c SAMEnrollmentClientController) reconcileOne(ctx context.Context, owner a
 }
 
 type samEnrollmentSubmittedClient struct {
-	client SAMEnrollmentJoinClient
+	client *controlapi.Client
 	result *controlapi.SAMEnrollmentClaimSubmitResult
 }
 
@@ -507,7 +498,7 @@ func (c SAMEnrollmentClientController) joinFetchAndPersist(ctx context.Context, 
 // the verified RRSet while withdrawing only the optional direct group. The
 // preflight's sole job is to stop an automatic POST when any RR reports a
 // revoke, an old ambiguous response, an unattested claim, or a request error.
-func (c SAMEnrollmentClientController) preflightDirectEnrollment(ctx context.Context, clients []SAMEnrollmentJoinClient, claimResource api.Resource, claim api.SAMEnrollmentClaimSpec, rrSetName string) error {
+func (c SAMEnrollmentClientController) preflightDirectEnrollment(ctx context.Context, clients []*controlapi.Client, claimResource api.Resource, claim api.SAMEnrollmentClaimSpec, rrSetName string) error {
 	if len(clients) == 0 {
 		return fmt.Errorf("no SAM enrollment bootstrap endpoint configured")
 	}
@@ -714,7 +705,7 @@ func samEnrollmentClientDirectAdmissionPermitted(err error, claimResource api.Re
 	return permitted
 }
 
-func (c SAMEnrollmentClientController) fetchAndPersistTopology(ctx context.Context, client SAMEnrollmentJoinClient, claimResource api.Resource, claim api.SAMEnrollmentClaimSpec, rrSetName string, observedAt, expiresAt time.Time) error {
+func (c SAMEnrollmentClientController) fetchAndPersistTopology(ctx context.Context, client *controlapi.Client, claimResource api.Resource, claim api.SAMEnrollmentClaimSpec, rrSetName string, observedAt, expiresAt time.Time) error {
 	topology, err := c.fetchSAMEnrollmentTopology(ctx, client, claimResource, claim, rrSetName)
 	if err != nil {
 		return err
@@ -722,7 +713,7 @@ func (c SAMEnrollmentClientController) fetchAndPersistTopology(ctx context.Conte
 	return c.persistFetchedSAMEnrollmentTopology(topology, observedAt, expiresAt)
 }
 
-func (c SAMEnrollmentClientController) fetchAgreedDirectTopology(ctx context.Context, clients []SAMEnrollmentJoinClient, claimResource api.Resource, claim api.SAMEnrollmentClaimSpec, rrSetName string) (samEnrollmentFetchedTopology, error) {
+func (c SAMEnrollmentClientController) fetchAgreedDirectTopology(ctx context.Context, clients []*controlapi.Client, claimResource api.Resource, claim api.SAMEnrollmentClaimSpec, rrSetName string) (samEnrollmentFetchedTopology, error) {
 	if len(clients) == 0 {
 		return samEnrollmentFetchedTopology{}, fmt.Errorf("no SAM enrollment bootstrap endpoint configured")
 	}
@@ -740,7 +731,7 @@ func (c SAMEnrollmentClientController) fetchAgreedDirectTopology(ctx context.Con
 	var reads sync.WaitGroup
 	reads.Add(len(clients))
 	for index, client := range clients {
-		go func(index int, client SAMEnrollmentJoinClient) {
+		go func(index int, client *controlapi.Client) {
 			defer reads.Done()
 			results[index].topology, results[index].err = c.fetchSAMEnrollmentTopology(ctx, client, claimResource, claim, rrSetName)
 		}(index, client)
@@ -876,7 +867,7 @@ func samEnrollmentClientTransportFailure(err error) bool {
 	return errors.As(requestErr.Err, &networkErr) || errors.Is(requestErr.Err, context.DeadlineExceeded)
 }
 
-func (c SAMEnrollmentClientController) fetchSAMEnrollmentTopology(ctx context.Context, client SAMEnrollmentJoinClient, claimResource api.Resource, claim api.SAMEnrollmentClaimSpec, rrSetName string) (samEnrollmentFetchedTopology, error) {
+func (c SAMEnrollmentClientController) fetchSAMEnrollmentTopology(ctx context.Context, client *controlapi.Client, claimResource api.Resource, claim api.SAMEnrollmentClaimSpec, rrSetName string) (samEnrollmentFetchedTopology, error) {
 	claimDigest := samEnrollmentClientClaimDigest(claimResource)
 	if claimDigest == "" {
 		return samEnrollmentFetchedTopology{}, fmt.Errorf("cannot calculate enrollment claim digest for %s", claimResource.ID())
@@ -1050,11 +1041,8 @@ func (c SAMEnrollmentClientController) persistCachedRRSetWithoutDirect(rrSetName
 	return true, nil
 }
 
-func (c SAMEnrollmentClientController) clients(spec api.SAMEnrollmentClientSpec) ([]SAMEnrollmentJoinClient, error) {
-	if c.ClientFactory != nil {
-		return c.ClientFactory(spec), nil
-	}
-	var out []SAMEnrollmentJoinClient
+func (c SAMEnrollmentClientController) clients(spec api.SAMEnrollmentClientSpec) ([]*controlapi.Client, error) {
+	var out []*controlapi.Client
 	if socket := strings.TrimSpace(spec.RRSocket); socket != "" {
 		out = append(out, controlapi.NewUnixClient(socket))
 	}
