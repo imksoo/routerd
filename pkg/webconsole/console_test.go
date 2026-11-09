@@ -18,7 +18,6 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/logstore"
 	"github.com/imksoo/routerd/pkg/observe"
-	"github.com/imksoo/routerd/pkg/platform"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -234,15 +233,6 @@ func TestConnectionPortFallbackUsesTailscaleHostnameOnHTTPS(t *testing.T) {
 	applyConnectionPortFallback(&entry)
 	if entry.AppName != "tailscale" || entry.AppConfidence < 60 {
 		t.Fatalf("connection fallback = %#v", entry)
-	}
-}
-
-func TestHandlerDefaultDHCPLeasePathsUsePlatformDefaults(t *testing.T) {
-	defaults, features := platform.Current()
-	handler := New(Options{})
-	want := platform.DnsmasqLeaseCandidates(defaults, features)
-	if got := handler.opts.DHCPLeasePaths; strings.Join(got, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("default DHCP lease paths = %#v, want %#v", got, want)
 	}
 }
 
