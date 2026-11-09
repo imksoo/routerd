@@ -54,7 +54,7 @@ func (c DHCPv6InformationController) reconcile(ctx context.Context, pdName strin
 		if err != nil {
 			return err
 		}
-		if !c.matchesPD(resource, spec, pdName) {
+		if !c.matchesPD(spec, pdName) {
 			continue
 		}
 		if !clientSocketReady(socket) {
@@ -105,12 +105,7 @@ func (c DHCPv6InformationController) saveDHCPv6InformationPending(name, pdName, 
 	})
 }
 
-func (c DHCPv6InformationController) matchesPD(resource api.Resource, spec api.DHCPv6InformationSpec, pdName string) bool {
-	for _, owner := range resource.Metadata.OwnerRefs {
-		if owner.Kind == "DHCPv6PrefixDelegation" && owner.Name == pdName {
-			return true
-		}
-	}
+func (c DHCPv6InformationController) matchesPD(spec api.DHCPv6InformationSpec, pdName string) bool {
 	for _, candidate := range c.Router.Spec.Resources {
 		if candidate.Kind != "DHCPv6PrefixDelegation" || candidate.Metadata.Name != pdName {
 			continue
