@@ -38,7 +38,6 @@ type Controller struct {
 	Router *api.Router
 	Bus    *bus.Bus
 	Store  Store
-	Now    func() time.Time
 }
 
 type CandidateState struct {
@@ -57,7 +56,7 @@ type CandidateState struct {
 }
 
 func (c Controller) Reconcile(ctx context.Context) error {
-	now := c.now()
+	now := time.Now().UTC()
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "EgressRoutePolicy" {
 			continue
@@ -258,7 +257,7 @@ func (c Controller) healthCheckReady(name string) bool {
 	if checkedAt.IsZero() {
 		return false
 	}
-	return !c.now().After(checkedAt.Add(c.healthCheckFreshness(name)))
+	return !time.Now().UTC().After(checkedAt.Add(c.healthCheckFreshness(name)))
 }
 
 func (c Controller) healthCheckUnhealthyThreshold(name string) int {
@@ -418,13 +417,6 @@ func parseTime(value string) time.Time {
 		return time.Time{}
 	}
 	return parsed
-}
-
-func (c Controller) now() time.Time {
-	if c.Now != nil {
-		return c.Now()
-	}
-	return time.Now().UTC()
 }
 
 func defaultString(value, fallback string) string {
