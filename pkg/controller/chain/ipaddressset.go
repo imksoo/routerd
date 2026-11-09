@@ -43,7 +43,6 @@ func (c IPAddressSetController) Reconcile(ctx context.Context) error {
 	}
 	now := time.Now().UTC()
 	resolver := systemDNSResolver{}
-	command := runOutputCommandContext
 	referenced := referencedIPAddressSetTargets(c.Router)
 	var reconcileErrors []error
 resources:
@@ -86,7 +85,7 @@ resources:
 			nft := firstNonEmpty(c.NftCommand, "nft")
 			var observationErrors []error
 			for _, target := range activeTargets {
-				exists, output, err := nftSetSnapshot(ctx, command, nft, target.TableFamily, target.Table, target.SetName)
+				exists, output, err := nftSetSnapshot(ctx, nft, target.TableFamily, target.Table, target.SetName)
 				if err != nil {
 					observationErrors = append(observationErrors, err)
 					continue
@@ -169,7 +168,7 @@ resources:
 				continue
 			}
 			for _, target := range sortedIPAddressSetTargets(existingTargets) {
-				if err := c.applyNftSet(ctx, command, target.TableFamily, target.Table, target.SetName, result.addressesForFamily(target.AddressFamily), existingOutputs[target.key()]); err != nil {
+				if err := c.applyNftSet(ctx, target.TableFamily, target.Table, target.SetName, result.addressesForFamily(target.AddressFamily), existingOutputs[target.key()]); err != nil {
 					reconcileErrors = append(reconcileErrors, fmt.Errorf("%s target %s: %w", resource.ID(), target.String(), err))
 					if saveErr := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPAddressSet", resource.Metadata.Name, map[string]any{
 						"phase":               "Error",
@@ -371,7 +370,7 @@ func ipAddressSetRefreshDue(status map[string]any, now time.Time) bool {
 	return !now.Before(t)
 }
 
-func (c IPAddressSetController) applyNftSet(ctx context.Context, command outputCommandFunc, family, table, setName string, addresses []string, currentOutput string) error {
+func (c IPAddressSetController) applyNftSet(ctx context.Context, family, table, setName string, addresses []string, currentOutput string) error {
 	additions, removals := ipAddressSetElementDiff(currentOutput, addresses)
 	if len(additions) == 0 && len(removals) == 0 {
 		return nil
@@ -401,7 +400,7 @@ func (c IPAddressSetController) applyNftSet(ctx context.Context, command outputC
 		return err
 	}
 	nft := firstNonEmpty(c.NftCommand, "nft")
-	if out, err := command(ctx, nft, "-f", path); err != nil {
+	if out, err := runOutputCommandContext(ctx, nft, "-f", path); err != nil {
 		return fmt.Errorf("%s -f %s: %w: %s", nft, path, err, strings.TrimSpace(string(out)))
 	}
 	return nil
@@ -450,8 +449,8 @@ func ipAddressSetElements(output string) map[string]bool {
 	return out
 }
 
-func nftSetSnapshot(ctx context.Context, command outputCommandFunc, nft, family, table, setName string) (bool, string, error) {
-	out, err := command(ctx, nft, "list", "set", family, table, setName)
+func nftSetSnapshot(ctx context.Context, nft, family, table, setName string) (bool, string, error) {
+	out, err := runOutputCommandContext(ctx, nft, "list", "set", family, table, setName)
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && nftListMissing(out, err) {
