@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"os"
@@ -27,42 +26,31 @@ const (
 )
 
 func main() {
-	os.Exit(exitCodeWithHardTimeout(func() error {
-		return run(os.Args[1:])
-	}, hardTimeout, os.Stderr))
-}
-
-func exitCodeWithHardTimeout(runFunc func() error, timeout time.Duration, stderr io.Writer) int {
 	done := make(chan error, 1)
 	go func() {
-		done <- runFunc()
+		done <- run(os.Args[1:])
 	}()
 	select {
 	case err := <-done:
 		if err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
 		}
-		return 0
-	case <-time.After(timeout):
-		fmt.Fprintln(stderr, "dhcp-event-relay: hard timeout")
-		return 2
+	case <-time.After(hardTimeout):
+		fmt.Fprintln(os.Stderr, "dhcp-event-relay: hard timeout")
+		os.Exit(2)
 	}
 }
 
 func run(args []string) error {
 	defaults, _ := platform.Current()
-	return runWithDefaults(args, os.Environ(), defaults)
-}
-
-func runWithDefaults(args, env []string, defaults platform.Defaults) error {
 	fs := flag.NewFlagSet("routerd-dhcp-event-relay", flag.ContinueOnError)
 	socket := fs.String("socket", defaults.SocketFile(), "explicit control socket: submit through the API instead of the local durable queue")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	event, err := eventFromArgs(fs.Args(), env)
+	event, err := eventFromArgs(fs.Args(), os.Environ())
 	if err != nil {
 		return err
 	}
