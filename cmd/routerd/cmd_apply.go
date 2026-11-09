@@ -602,20 +602,6 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 	if err != nil {
 		return nil, err
 	}
-	if opts.DryRun {
-		policy := controllerchain.IPv4PolicyRouteController{Router: planRouter, Store: stateStore, DryRun: true}
-		orphans, err := policy.PlanExtraPolicyDefaults(ctx)
-		if err != nil {
-			return nil, err
-		}
-		if len(orphans) > 0 {
-			result.Orphans = appendUniqueOrphans(result.Orphans, orphans)
-			result.Warnings = append(result.Warnings, fmt.Sprintf("%d extra policy default routes found", len(orphans)))
-			if result.Phase == "Healthy" {
-				result.Phase = "Drifted"
-			}
-		}
-	}
 	outcome.Result = result
 	if generation != 0 {
 		result.Generation = generation

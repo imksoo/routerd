@@ -20,7 +20,3 @@ func deleteIPv4FwmarkRule(rule ipv4FwmarkRule) error {
 		"table", fmt.Sprintf("%d", rule.Table),
 	)
 }
-
-func flushIPv4RouteTable(table int) error {
-	return runLogged("ip", "-4", "route", "flush", "table", fmt.Sprintf("%d", table))
-}
