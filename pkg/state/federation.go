@@ -58,7 +58,7 @@ func (s *SQLiteStore) RecordFederationEvent(rec EventRecord) error {
 	if rec.DedupeKey == "" {
 		rec.DedupeKey = rec.ID
 	}
-	now := s.now().UTC()
+	now := time.Now().UTC()
 	if rec.RecordedAt.IsZero() {
 		rec.RecordedAt = now
 	}

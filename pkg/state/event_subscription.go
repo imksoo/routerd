@@ -5,6 +5,7 @@ package state
 import (
 	"database/sql"
 	"fmt"
+	"time"
 )
 
 // SubscriptionRun is a persisted EventSubscriptionController processing record
@@ -64,7 +65,7 @@ func (s *SQLiteStore) UpsertSubscriptionRunStart(subscription, eventID, eventGro
 	if eventID == "" {
 		return fmt.Errorf("event id is required")
 	}
-	now := formatStateTime(s.now().UTC())
+	now := formatStateTime(time.Now().UTC())
 	_, err := s.db.Exec(`
 		INSERT INTO event_subscription_runs (subscription, event_id, event_group, plugin, status, attempts, started_at)
 		VALUES (?, ?, ?, ?, 'pending', 1, ?)
@@ -89,7 +90,7 @@ func (s *SQLiteStore) MarkSubscriptionRunResult(subscription, eventID, status, d
 	if s.closed {
 		return errStoreClosed
 	}
-	completedAt := formatStateTime(s.now().UTC())
+	completedAt := formatStateTime(time.Now().UTC())
 	var genArg any
 	if dynamicGeneration > 0 {
 		genArg = dynamicGeneration

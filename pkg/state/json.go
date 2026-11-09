@@ -181,7 +181,6 @@ type Event struct {
 
 type JSONStore struct {
 	Values map[string]Value `json:"variables"`
-	now    func() time.Time
 }
 
 func New() Store {
@@ -189,7 +188,7 @@ func New() Store {
 }
 
 func NewJSON() *JSONStore {
-	return &JSONStore{Values: map[string]Value{}, now: time.Now}
+	return &JSONStore{Values: map[string]Value{}}
 }
 
 func Load(path string) (Store, error) {
@@ -270,7 +269,7 @@ func (s *JSONStore) Save(path string) error {
 func (s *JSONStore) Get(name string) Value {
 	value, ok := s.Values[name]
 	if !ok || value.Status == "" {
-		now := s.now().UTC()
+		now := time.Now().UTC()
 		return Value{Status: StatusUnknown, Since: now, UpdatedAt: now}
 	}
 	return value
@@ -296,7 +295,7 @@ func (s *JSONStore) Delete(name string) {
 }
 
 func (s *JSONStore) set(name, status, value, reason string) Value {
-	now := s.now().UTC()
+	now := time.Now().UTC()
 	current := s.Get(name)
 	since := current.Since
 	if current.Status != status || current.Value != value {
@@ -308,11 +307,11 @@ func (s *JSONStore) set(name, status, value, reason string) Value {
 }
 
 func (s *JSONStore) Age(name string) time.Duration {
-	return s.now().UTC().Sub(s.Get(name).Since)
+	return time.Now().UTC().Sub(s.Get(name).Since)
 }
 
 func (s *JSONStore) Now() time.Time {
-	return s.now().UTC()
+	return time.Now().UTC()
 }
 
 func (s *JSONStore) Variables() map[string]Value {

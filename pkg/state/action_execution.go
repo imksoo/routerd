@@ -136,7 +136,7 @@ func (s *SQLiteStore) ImportAction(rec ActionExecutionRecord) (bool, error) {
 	if strings.TrimSpace(rec.Action) == "" {
 		return false, fmt.Errorf("action import requires action")
 	}
-	now := s.now().UTC()
+	now := time.Now().UTC()
 	if rec.Status == "" {
 		rec.Status = ActionPending
 	}
@@ -291,7 +291,7 @@ func (s *SQLiteStore) ApproveAction(id int64, approvedBy string, now time.Time) 
 		return nil
 	}
 	if now.IsZero() {
-		now = s.now().UTC()
+		now = time.Now().UTC()
 	}
 	result, err := s.db.Exec(`UPDATE action_executions SET status = ?, approved_by = ?, approved_at = ?, updated_at = ? WHERE id = ? AND status = ?`,
 		ActionApproved, nullableString(approvedBy), formatStateTime(now), formatStateTime(now), id, ActionPending)
@@ -311,7 +311,7 @@ func (s *SQLiteStore) BeginActionExecution(id int64, now time.Time) (bool, error
 		return false, nil
 	}
 	if now.IsZero() {
-		now = s.now().UTC()
+		now = time.Now().UTC()
 	}
 	result, err := s.db.Exec(`UPDATE action_executions SET status = ?, updated_at = ? WHERE id = ? AND status = ?`,
 		ActionRunning, formatStateTime(now), id, ActionApproved)
@@ -338,7 +338,7 @@ func (s *SQLiteStore) RequeueStaleRunningActions(cutoff, now time.Time) (int, er
 		return 0, fmt.Errorf("stale running cutoff is required")
 	}
 	if now.IsZero() {
-		now = s.now().UTC()
+		now = time.Now().UTC()
 	}
 	result, err := s.db.Exec(`UPDATE action_executions
 SET status = ?, result_message = ?, error = NULL, executed_at = NULL, observed_json = NULL, updated_at = ?
@@ -371,7 +371,7 @@ func (s *SQLiteStore) MarkActionResult(id int64, status, message, errMsg string,
 	default:
 		return fmt.Errorf("action %d result status %q must be succeeded, failed, or skipped", id, status)
 	}
-	now := s.now().UTC()
+	now := time.Now().UTC()
 	if executedAt.IsZero() {
 		executedAt = now
 	}
@@ -406,7 +406,7 @@ func (s *SQLiteStore) MarkActionSkippedByIdempotencyKey(key, message string, now
 		return fmt.Errorf("action idempotencyKey is required")
 	}
 	if now.IsZero() {
-		now = s.now().UTC()
+		now = time.Now().UTC()
 	}
 	_, err := s.db.Exec(`UPDATE action_executions SET status = ?, result_message = ?, executed_at = ?, updated_at = ? WHERE idempotency_key = ? AND status IN (?, ?)`,
 		ActionSkipped, nullableString(message), formatStateTime(now), formatStateTime(now), key, ActionPending, ActionApproved)
@@ -422,7 +422,7 @@ func (s *SQLiteStore) MarkActionRolledBack(id int64, message string, now time.Ti
 		return nil
 	}
 	if now.IsZero() {
-		now = s.now().UTC()
+		now = time.Now().UTC()
 	}
 	result, err := s.db.Exec(`UPDATE action_executions SET status = ?, result_message = ?, updated_at = ? WHERE id = ? AND status = ?`,
 		ActionRolledBack, nullableString(message), formatStateTime(now), id, ActionSucceeded)

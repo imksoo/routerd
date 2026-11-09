@@ -72,10 +72,10 @@ func (s *SQLiteStore) ensureEventJournalCapacityLocked(incomingBytes int64) erro
 	if err := s.pruneExpiredJournalBatchLocked(); err != nil {
 		return err
 	}
-	targetRows := s.eventJournalMaxRows * 9 / 10
-	targetBytes := s.eventJournalMaxBytes * 7 / 8
+	targetRows := defaultEventJournalMaxRows * 9 / 10
+	targetBytes := defaultEventJournalMaxPayloadBytes * 7 / 8
 	pruned := false
-	for s.eventJournalRows >= s.eventJournalMaxRows || s.eventJournalPayloadBytes+incomingBytes > s.eventJournalMaxBytes {
+	for s.eventJournalRows >= defaultEventJournalMaxRows || s.eventJournalPayloadBytes+incomingBytes > defaultEventJournalMaxPayloadBytes {
 		remove := s.eventJournalRows - targetRows
 		if remove < 1 {
 			remove = 1
@@ -93,7 +93,7 @@ FROM events WHERE id IN (SELECT id FROM events ORDER BY id LIMIT ?)`, remove).Sc
 			if err := s.loadEventJournalUsage(); err != nil {
 				return err
 			}
-			if s.eventJournalRows < s.eventJournalMaxRows && s.eventJournalPayloadBytes+incomingBytes <= s.eventJournalMaxBytes {
+			if s.eventJournalRows < defaultEventJournalMaxRows && s.eventJournalPayloadBytes+incomingBytes <= defaultEventJournalMaxPayloadBytes {
 				return nil
 			}
 			return fmt.Errorf("event journal payload exceeds the safe limit without prunable rows")
@@ -127,7 +127,7 @@ FROM events WHERE id IN (SELECT id FROM events ORDER BY id LIMIT ?)`, remove).Sc
 }
 
 func (s *SQLiteStore) pruneExpiredJournalBatchLocked() error {
-	now := s.now().UTC()
+	now := time.Now().UTC()
 	if !s.eventJournalLastAgePrune.IsZero() && now.Sub(s.eventJournalLastAgePrune) < eventJournalAgePruneInterval {
 		return nil
 	}
@@ -189,7 +189,7 @@ func (s *SQLiteStore) noteStorageWriteErrorLocked(err error) error {
 		return err
 	}
 	if s.storageAlert == nil {
-		alert := NewStorageAlert(s.path, s.now().UTC())
+		alert := NewStorageAlert(s.path, time.Now().UTC())
 		s.storageAlert = &alert
 		if s.storageAlertHandler != nil {
 			s.storageAlertHandler(alert)
@@ -236,7 +236,7 @@ type EventJournalStats struct {
 func (s *SQLiteStore) EventJournalStats() EventJournalStats {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	stats := EventJournalStats{Rows: s.eventJournalRows, MaxRows: s.eventJournalMaxRows, PayloadBytes: s.eventJournalPayloadBytes, MaxPayloadBytes: s.eventJournalMaxBytes}
+	stats := EventJournalStats{Rows: s.eventJournalRows, MaxRows: defaultEventJournalMaxRows, PayloadBytes: s.eventJournalPayloadBytes, MaxPayloadBytes: defaultEventJournalMaxPayloadBytes}
 	if s.storageAlert != nil {
 		copy := *s.storageAlert
 		stats.StorageAlert = &copy

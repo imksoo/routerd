@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/imksoo/routerd/pkg/daemonapi"
 )
@@ -101,7 +102,7 @@ func (s *SQLiteStore) writeObjectStatusAndEvent(apiVersion, kind, name string, s
 	if event != nil && (event.Resource == nil || event.Resource.APIVersion != apiVersion || event.Resource.Kind != kind || event.Resource.Name != name) {
 		return nil, fmt.Errorf("status event must reference the updated object")
 	}
-	now := s.now().UTC()
+	now := time.Now().UTC()
 	_, err = tx.Exec(`INSERT INTO objects(api_version,kind,name,uid,resource_version,observed_generation,status,created_at,modified_at)
 VALUES(?,?,?,?,1,?,?,?,?)
 ON CONFLICT(api_version,kind,name) DO UPDATE SET resource_version=resource_version+1,observed_generation=excluded.observed_generation,status=excluded.status,modified_at=excluded.modified_at`,

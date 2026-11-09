@@ -100,7 +100,7 @@ func (s *SQLiteStore) UpdateDeliveryStatus(eventID, peer, status string, attempt
 	if peer == "" {
 		return fmt.Errorf("delivery peer is required")
 	}
-	lastAttempt := s.now().UTC().Unix()
+	lastAttempt := time.Now().UTC().Unix()
 	var delivered sql.NullInt64
 	if !deliveredAt.IsZero() {
 		delivered = sql.NullInt64{Int64: deliveredAt.UTC().Unix(), Valid: true}

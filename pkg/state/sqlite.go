@@ -37,12 +37,9 @@ const (
 type SQLiteStore struct {
 	path                     string
 	db                       *sql.DB
-	now                      func() time.Time
 	generation               int64
 	eventJournalRows         int64
 	eventJournalPayloadBytes int64
-	eventJournalMaxRows      int64
-	eventJournalMaxBytes     int64
 	eventJournalLastAgePrune time.Time
 	storageAlert             *StorageAlert
 	storageAlertHandler      func(StorageAlert)
@@ -88,9 +85,7 @@ PRAGMA wal_checkpoint(TRUNCATE);
 		return nil, err
 	}
 	store := &SQLiteStore{
-		path: path, db: db, now: time.Now,
-		eventJournalMaxRows:  defaultEventJournalMaxRows,
-		eventJournalMaxBytes: defaultEventJournalMaxPayloadBytes,
+		path: path, db: db,
 	}
 	if err := store.init(); err != nil {
 		_ = db.Close()
@@ -132,7 +127,7 @@ func openSQLiteReadOnly(path string, immutable bool) (*SQLiteStore, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	return &SQLiteStore{path: path, db: db, now: time.Now}, nil
+	return &SQLiteStore{path: path, db: db}, nil
 }
 
 func (s *SQLiteStore) init() error {
@@ -534,13 +529,13 @@ func (s *SQLiteStore) Get(name string) Value {
 	ref := objectRefForKey(name)
 	status, _, err := s.loadStatus(ref.APIVersion, ref.Kind, ref.Name)
 	if err != nil {
-		now := s.now().UTC()
+		now := time.Now().UTC()
 		return Value{Status: StatusUnknown, Since: now, UpdatedAt: now}
 	}
 	if value, ok := valueFromStatus(status, ref.Field); ok {
 		return value
 	}
-	now := s.now().UTC()
+	now := time.Now().UTC()
 	return Value{Status: StatusUnknown, Since: now, UpdatedAt: now}
 }
 
@@ -594,7 +589,7 @@ func (s *SQLiteStore) Delete(name string) {
 }
 
 func (s *SQLiteStore) setLocked(name, status, value, reason string) Value {
-	now := s.now().UTC()
+	now := time.Now().UTC()
 	current := s.getLocked(name)
 	since := current.Since
 	if current.Status != status || current.Value != value || since.IsZero() {
@@ -609,22 +604,22 @@ func (s *SQLiteStore) getLocked(name string) Value {
 	ref := objectRefForKey(name)
 	status, _, err := s.loadStatus(ref.APIVersion, ref.Kind, ref.Name)
 	if err != nil {
-		now := s.now().UTC()
+		now := time.Now().UTC()
 		return Value{Status: StatusUnknown, Since: now, UpdatedAt: now}
 	}
 	if value, ok := valueFromStatus(status, ref.Field); ok {
 		return value
 	}
-	now := s.now().UTC()
+	now := time.Now().UTC()
 	return Value{Status: StatusUnknown, Since: now, UpdatedAt: now}
 }
 
 func (s *SQLiteStore) put(name string, value Value) error {
 	if value.Since.IsZero() {
-		value.Since = s.now().UTC()
+		value.Since = time.Now().UTC()
 	}
 	if value.UpdatedAt.IsZero() {
-		value.UpdatedAt = s.now().UTC()
+		value.UpdatedAt = time.Now().UTC()
 	}
 	ref := objectRefForKey(name)
 	status, _, err := s.loadStatus(ref.APIVersion, ref.Kind, ref.Name)
@@ -650,7 +645,7 @@ func (s *SQLiteStore) loadStatus(apiVersion, kind, name string) (objectStatus, i
 }
 
 func (s *SQLiteStore) saveStatus(ref objectRef, status objectStatus) error {
-	now := s.now().UTC().Format(time.RFC3339Nano)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
 	data, _ := json.Marshal(status)
 	if same, err := s.objectStatusUnchanged(ref, data); err != nil {
 		return err
@@ -745,8 +740,8 @@ func nullGeneration(generation int64) any {
 	return generation
 }
 
-func (s *SQLiteStore) Age(name string) time.Duration { return s.now().UTC().Sub(s.Get(name).Since) }
-func (s *SQLiteStore) Now() time.Time                { return s.now().UTC() }
+func (s *SQLiteStore) Age(name string) time.Duration { return time.Now().UTC().Sub(s.Get(name).Since) }
+func (s *SQLiteStore) Now() time.Time                { return time.Now().UTC() }
 
 func (s *SQLiteStore) Variables() map[string]Value {
 	s.mu.RLock()
@@ -830,7 +825,7 @@ func (s *SQLiteStore) UpsertDynamicConfigPart(part DynamicConfigPartRecord) erro
 	if s.closed {
 		return nil
 	}
-	now := s.now().UTC()
+	now := time.Now().UTC()
 	if part.ObservedAt.IsZero() {
 		part.ObservedAt = now
 	}
@@ -891,7 +886,7 @@ func (s *SQLiteStore) RecordSAMEnrollmentRevokedIdentity(claimSource, identityDi
 		return nil
 	}
 	if revokedAt.IsZero() {
-		revokedAt = s.now().UTC()
+		revokedAt = time.Now().UTC()
 	}
 	_, err := s.db.Exec(`INSERT INTO sam_enrollment_revoked_identities(identity_digest,claim_source,revoked_at)
 	VALUES(?,?,?) ON CONFLICT(identity_digest) DO NOTHING`, identityDigest, claimSource, formatStateTime(revokedAt.UTC()))
@@ -947,7 +942,7 @@ func (s *SQLiteStore) RecordPluginRun(run PluginRunRecord) (int64, error) {
 		return 0, nil
 	}
 	if run.StartedAt.IsZero() {
-		run.StartedAt = s.now().UTC()
+		run.StartedAt = time.Now().UTC()
 	}
 	result, err := s.db.Exec(`INSERT INTO plugin_runs(plugin,trigger_type,trigger_topic,started_at,completed_at,exit_code,status,stdout_digest,stderr,error)
 VALUES(?,?,?,?,?,?,?,?,?,?)`,
@@ -965,7 +960,7 @@ func (s *SQLiteStore) CompletePluginRun(id int64, completedAt time.Time, exitCod
 		return nil
 	}
 	if completedAt.IsZero() {
-		completedAt = s.now().UTC()
+		completedAt = time.Now().UTC()
 	}
 	var exit any
 	if exitCode != nil {
@@ -1054,7 +1049,7 @@ func (s *SQLiteStore) BeginGeneration(configHash string) (int64, error) {
 	if s.closed {
 		return 0, nil
 	}
-	now := s.now().UTC().Format(time.RFC3339Nano)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
 	result, err := s.db.Exec(`INSERT INTO generations(started_at,warnings,config_hash) VALUES(?,'[]',?)`, now, configHash)
 	if err != nil {
 		return 0, err
@@ -1079,7 +1074,7 @@ func (s *SQLiteStore) BeginGenerationIfChanged(configHash, configYAML string) (i
 	if s.closed {
 		return 0, false, nil
 	}
-	now := s.now().UTC().Format(time.RFC3339Nano)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
 	result, err := s.db.Exec(`
 INSERT INTO generations(started_at,warnings,config_hash,config_yaml)
 SELECT ?,'[]',?,?
@@ -1152,7 +1147,7 @@ func (s *SQLiteStore) FinishGeneration(generation int64, phase string, warnings 
 		generation = s.generation
 	}
 	data, _ := json.Marshal(warnings)
-	_, err := s.db.Exec(`UPDATE generations SET finished_at = ?, phase = ?, warnings = ? WHERE generation = ?`, s.now().UTC().Format(time.RFC3339Nano), phase, string(data), generation)
+	_, err := s.db.Exec(`UPDATE generations SET finished_at = ?, phase = ?, warnings = ? WHERE generation = ?`, time.Now().UTC().Format(time.RFC3339Nano), phase, string(data), generation)
 	return err
 }
 
@@ -1353,7 +1348,7 @@ func (s *SQLiteStore) SaveObjectApplySource(apiVersion, kind, name, path string)
 	if s.closed {
 		return nil
 	}
-	now := s.now().UTC().Format(time.RFC3339Nano)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
 	uid := apiVersion + "/" + kind + "/" + name
 	_, err := s.db.Exec(`INSERT INTO objects(api_version,kind,name,uid,resource_version,last_applied_path,status,created_at,modified_at)
 VALUES(?,?,?,?,1,?,'{}',?,?)
@@ -1470,7 +1465,7 @@ func (s *SQLiteStore) RecordEvent(apiVersion, kind, name, eventType, reason, mes
 		return s.noteStorageWriteErrorLocked(err)
 	}
 	_, err := s.db.Exec(`INSERT INTO events(api_version,kind,name,type,reason,message,generation,created_at) VALUES(?,?,?,?,?,?,?,?)`,
-		apiVersion, kind, name, eventType, reason, message, nullGeneration(s.generation), s.now().UTC().Format(time.RFC3339Nano))
+		apiVersion, kind, name, eventType, reason, message, nullGeneration(s.generation), time.Now().UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return s.noteStorageWriteErrorLocked(err)
 	}
@@ -1490,7 +1485,7 @@ func (s *SQLiteStore) RecordBusEvent(_ context.Context, event daemonapi.DaemonEv
 	if err := s.ensureEventJournalCapacityLocked(payloadBytes); err != nil {
 		return "", s.noteStorageWriteErrorLocked(err)
 	}
-	cursor, payloadBytes, err := recordBusEvent(s.db, s.generation, s.now().UTC(), bounded)
+	cursor, payloadBytes, err := recordBusEvent(s.db, s.generation, time.Now().UTC(), bounded)
 	if err != nil {
 		return "", s.noteStorageWriteErrorLocked(err)
 	}
@@ -1653,7 +1648,7 @@ func (s *SQLiteStore) LoadOrInitializeEventConsumerCursor(consumer string) (int6
 	if s.closed {
 		return 0, nil
 	}
-	now := s.now().UTC().Format(time.RFC3339Nano)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if _, err := s.db.Exec(`INSERT INTO event_consumer_cursors(consumer,cursor,updated_at)
 SELECT ?,COALESCE(MAX(id),0),? FROM events WHERE true
 ON CONFLICT(consumer) DO NOTHING`, consumer, now); err != nil {
@@ -1672,7 +1667,7 @@ func (s *SQLiteStore) SaveEventConsumerCursor(consumer string, cursor int64) err
 	}
 	_, err := s.db.Exec(`INSERT INTO event_consumer_cursors(consumer,cursor,updated_at) VALUES(?,?,?)
 ON CONFLICT(consumer) DO UPDATE SET cursor=excluded.cursor,updated_at=excluded.updated_at`,
-		consumer, cursor, s.now().UTC().Format(time.RFC3339Nano))
+		consumer, cursor, time.Now().UTC().Format(time.RFC3339Nano))
 	return err
 }
 
