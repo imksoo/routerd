@@ -482,7 +482,6 @@ func (c IPv4RouteController) reconcile(ctx context.Context) error {
 				status["effectivePreferredSource"] = preferredSource
 			}
 			if platform.CurrentOS() != platform.OSFreeBSD && ipv4RouteInstalled(ctx, routeType, destination, device, gateway, preferredSource, spec.Metric) {
-				status["kernelRouteAlreadyCurrent"] = true
 				status["changed"] = changed
 				if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4Route", resource.Metadata.Name, status); err != nil {
 					return err
