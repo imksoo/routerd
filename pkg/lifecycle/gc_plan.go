@@ -6,8 +6,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/imksoo/routerd/internal/statusvalue"
-	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
@@ -80,9 +78,6 @@ func PlanStatusGC(desired map[string]bool, statuses []routerstate.ObjectStatus) 
 		if !ConfigResourceObjectStatus(status) {
 			continue
 		}
-		if !routerdManagedStatus(status) {
-			continue
-		}
 		if resourceLifecycleObjectStatus(status) {
 			continue
 		}
@@ -136,9 +131,6 @@ func resourceLifecycleObjectStatus(status routerstate.ObjectStatus) bool {
 	if status.APIVersion == api.HybridAPIVersion && status.Kind == "TunnelInterface" {
 		return true
 	}
-	if !routerdManagedStatus(status) {
-		return false
-	}
 	declaration, ok := Lookup(status.APIVersion, status.Kind)
 	if !ok || declaration.TeardownLifecycle != TeardownLifecycleResource {
 		return false
@@ -151,18 +143,6 @@ func resourceLifecycleObjectStatus(status routerstate.ObjectStatus) bool {
 	default:
 		return false
 	}
-}
-
-func routerdManagedStatus(status routerstate.ObjectStatus) bool {
-	if managed, ok := statusvalue.ExtendedBool(status.Status["managed"]); ok && !managed {
-		return false
-	}
-	managedBy := stringutil.FirstNonBlank(status.ManagedBy, statusvalue.Field(status.Status, "managedBy"))
-	if strings.EqualFold(managedBy, "external") {
-		return false
-	}
-	management := stringutil.FirstNonBlank(status.Management, statusvalue.Field(status.Status, "management"))
-	return !strings.EqualFold(management, "adopted")
 }
 
 func ObjectStatusID(status routerstate.ObjectStatus) string {

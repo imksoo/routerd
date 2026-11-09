@@ -47,7 +47,7 @@ func (h Handler) resourceStatuses() ([]routerstate.ObjectStatus, error) {
 	}
 	resources = h.mergeConfiguredResourceStatuses(resources)
 	resources = h.filterStaleObjectStatuses(resources)
-	return annotateResourceOwnership(resources, h.controllerStatuses()), nil
+	return resources, nil
 }
 
 func (h Handler) mergeConfiguredResourceStatuses(resources []routerstate.ObjectStatus) []routerstate.ObjectStatus {
@@ -120,94 +120,6 @@ func (h Handler) filterStaleObjectStatuses(resources []routerstate.ObjectStatus)
 		out = append(out, resource)
 	}
 	return out
-}
-
-func annotateResourceOwnership(resources []routerstate.ObjectStatus, controllers []controlapi.ControllerStatus) []routerstate.ObjectStatus {
-	ownerByKind := map[string]string{}
-	for _, controller := range controllers {
-		for _, kind := range controller.ResourceKinds {
-			if _, exists := ownerByKind[kind]; !exists {
-				ownerByKind[kind] = controller.Name
-			}
-		}
-	}
-	for i := range resources {
-		status := resources[i].Status
-		if status == nil {
-			status = map[string]any{}
-			resources[i].Status = status
-		}
-		if resources[i].Owner == "" {
-			resources[i].Owner = statusText(status, "owner")
-		}
-		if resources[i].Owner == "" {
-			resources[i].Owner = ownerByKind[resources[i].Kind]
-		}
-		if resources[i].Owner == "" {
-			resources[i].Owner = defaultResourceOwnerController(resources[i].Kind)
-		}
-		if resources[i].Owner != "" {
-			status["owner"] = resources[i].Owner
-		}
-		if resources[i].ManagedBy == "" {
-			resources[i].ManagedBy = statusText(status, "managedBy")
-		}
-		if resources[i].ManagedBy == "" {
-			if managed, ok := statusBoolValue(status["managed"]); ok && !managed {
-				resources[i].ManagedBy = "external"
-			} else {
-				resources[i].ManagedBy = "routerd"
-			}
-		}
-		status["managedBy"] = resources[i].ManagedBy
-		if resources[i].Management == "" {
-			resources[i].Management = statusText(status, "management")
-		}
-		if resources[i].Management == "" {
-			if managed, ok := statusBoolValue(status["managed"]); ok && !managed {
-				resources[i].Management = "adopted"
-			} else if strings.EqualFold(resources[i].ManagedBy, "external") {
-				resources[i].Management = "adopted"
-			} else {
-				resources[i].Management = "managed"
-			}
-		}
-		status["management"] = resources[i].Management
-	}
-	return resources
-}
-
-func defaultResourceOwnerController(kind string) string {
-	switch kind {
-	case "IPv4StaticAddress", "IPv6DelegatedAddress", "IPv6RAAddress", "Interface", "Link":
-		return "address"
-	case "DHCPv4Client":
-		return "dhcpv4client"
-	case "DHCPv4Server", "DHCPv6Server", "DHCPv6Information", "IPv6RouterAdvertisement":
-		return "dhcpv6"
-	case "DNSResolver", "DNSZone":
-		return "dns-resolver"
-	case "DSLiteTunnel":
-		return "dslite"
-	case "FirewallZone", "FirewallPolicy", "FirewallRule", "ClientPolicy":
-		return "firewall"
-	case "NAT44Rule":
-		return "nat"
-	case "NetworkAdoption":
-		return "network-adoption"
-	case "Package", "KernelModule":
-		return "package"
-	case "PPPoESession":
-		return "pppoesession"
-	case "IPv4Route", "IPv4StaticRoute", "IPv6StaticRoute", "ClusterNetworkRoute", "EgressRoutePolicy":
-		return "route"
-	case "ServiceUnit", "TailscaleNode", "HealthCheck", "NTPClient", "NTPServer", "SysctlProfile", "Sysctl", "LogRetention", "Hostname", "ConntrackTuning":
-		return "service-unit"
-	case "ConntrackObserver", "TrafficFlowLog":
-		return "conntrack"
-	default:
-		return ""
-	}
 }
 
 func phaseCounts(resources []routerstate.ObjectStatus) map[string]int {

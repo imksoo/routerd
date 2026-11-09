@@ -152,9 +152,6 @@ type ResourceStatus = {
   apiVersion?: string;
   kind?: string;
   name?: string;
-  owner?: string;
-  managedBy?: string;
-  management?: string;
   status?: Record<string, unknown>;
 };
 
@@ -4391,7 +4388,6 @@ function ResourceTable({ resources, controllers, navigateTo }: { resources: Reso
                   <TableCell>{dryRunController ? <ModeBadge mode="dry-run" /> : <Text size={200} className={styles.muted}>live</Text>}</TableCell>
                   <TableCell>
                     <div className={styles.connectionFlow}>
-                      <OwnershipLine resource={resource} />
                       <code className={styles.wrapCode}><Highlighted text={resourceDetail(status)} query={query} /></code>
                       <ResourceStatusExtra resource={resource} />
                       {navigateTo ? <Button size="small" appearance="outline" icon={<DocumentTextRegular />} onClick={() => { try { window.localStorage?.setItem("routerd:config:initialQuery", String(resource.name ?? "")); } catch {} navigateTo("config"); }}>YAML</Button> : null}
@@ -4416,7 +4412,6 @@ function ResourceTable({ resources, controllers, navigateTo }: { resources: Reso
               <code className={styles.code}><Highlighted text={resource.name ?? ""} query={query} /></code>
               <div className={styles.resourceMobileMeta}>
                 {dryRunController ? <ModeBadge mode="dry-run" /> : <Text size={200} className={styles.muted}>live</Text>}
-                <OwnershipLine resource={resource} />
                 <code className={styles.wrapCode}><Highlighted text={resourceDetail(status)} query={query} /></code>
                 <ResourceStatusExtra resource={resource} />
                 {navigateTo ? <Button size="small" appearance="subtle" onClick={() => navigateTo("config")}>View YAML</Button> : null}
@@ -5015,21 +5010,6 @@ function ResourceStatusExtra({ resource }: { resource: ResourceStatus }) {
 
 function arrayValue(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
-}
-
-function OwnershipLine({ resource }: { resource: ResourceStatus }) {
-  const styles = useStyles();
-  const status = resource.status ?? {};
-  const owner = String(resource.owner ?? status.owner ?? "").trim();
-  const managedBy = String(resource.managedBy ?? status.managedBy ?? "").trim();
-  const management = String(resource.management ?? status.management ?? "").trim();
-  const parts = [
-    owner ? `owner ${owner}` : "",
-    managedBy ? `managed-by ${managedBy}` : "",
-    management ? management : "",
-  ].filter(Boolean);
-  if (parts.length === 0) return null;
-  return <Text size={200} className={styles.muted}>{parts.join(" / ")}</Text>;
 }
 
 function SearchControl({
@@ -7034,9 +7014,6 @@ function resourceSearchText(resource: ResourceStatus) {
     resource.apiVersion,
     resource.kind,
     resource.name,
-    resource.owner,
-    resource.managedBy,
-    resource.management,
     resource.status?.phase,
     resourceDetail(resource.status ?? {}),
     JSON.stringify(resource.status ?? {}),

@@ -16,34 +16,11 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
-	"github.com/imksoo/routerd/pkg/controlapi"
 	"github.com/imksoo/routerd/pkg/logstore"
 	"github.com/imksoo/routerd/pkg/observe"
 	"github.com/imksoo/routerd/pkg/platform"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
-
-func TestAnnotateResourceOwnershipFromControllerModes(t *testing.T) {
-	resources := annotateResourceOwnership([]routerstate.ObjectStatus{{
-		APIVersion: "net.routerd.net/v1alpha1",
-		Kind:       "EgressRoutePolicy",
-		Name:       "wan-egress",
-		Status:     map[string]any{"phase": "Applied"},
-	}}, []controlapi.ControllerStatus{{
-		Name:          "route",
-		Mode:          "live",
-		ResourceKinds: []string{"EgressRoutePolicy"},
-	}})
-	if len(resources) != 1 {
-		t.Fatalf("resources = %d", len(resources))
-	}
-	if resources[0].Owner != "route" || resources[0].Status["owner"] != "route" {
-		t.Fatalf("owner metadata not annotated: %+v status=%+v", resources[0], resources[0].Status)
-	}
-	if resources[0].ManagedBy != "routerd" || resources[0].Management != "managed" {
-		t.Fatalf("management metadata = %q/%q", resources[0].ManagedBy, resources[0].Management)
-	}
-}
 
 func TestGatewayHealthAggregatesGatewayResources(t *testing.T) {
 	health := gatewayHealth([]routerstate.ObjectStatus{

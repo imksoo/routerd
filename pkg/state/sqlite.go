@@ -17,7 +17,6 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/imksoo/routerd/internal/statusvalue"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 )
 
@@ -1283,9 +1282,6 @@ func (s *SQLiteStore) ListObjectStatuses() ([]ObjectStatus, error) {
 		if err := json.Unmarshal([]byte(raw), &item.Status); err != nil {
 			item.Status = map[string]any{"error": err.Error()}
 		}
-		item.Owner = statusvalue.Field(item.Status, "owner")
-		item.ManagedBy = statusvalue.Field(item.Status, "managedBy")
-		item.Management = statusvalue.Field(item.Status, "management")
 		out = append(out, item)
 	}
 	if err := rows.Err(); err != nil {
