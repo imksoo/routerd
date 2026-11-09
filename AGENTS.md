@@ -17,10 +17,10 @@ before declaring a dependency unused. Examples are not live configurations.
 ## Apply the configuration
 
 Configuration is the source of the settings routerd applies. Apply must repair
-missing or changed configured objects and remove objects removed from the
-configuration. Leave unrelated host settings and manually added objects alone,
-including on interfaces referenced by the configuration. Do not track or check
-ownership or creation history. Retain valid DHCP/PD/BGP/SAM and other dynamic
+missing or changed configured objects and remove extra objects not required by
+the configuration or its valid dynamic state. Do not preserve objects solely
+because they were manually added. Do not track or check ownership or creation
+history. Retain the OS foundation and valid DHCP/PD/BGP/SAM and other dynamic
 state required by configured operation; do not treat it as static YAML.
 
 ## Real operation first
