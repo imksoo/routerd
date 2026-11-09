@@ -1415,20 +1415,23 @@ func (c IPv4PolicyRouteController) applyNftTable(ctx context.Context, nft, path,
 }
 
 func (c IPv4PolicyRouteController) ensureFwmarkRule(ctx context.Context, priority, mark, table int) error {
-	priorityText := strconv.Itoa(priority)
+	priorityText := fmt.Sprintf("%d", priority)
 	markText := fmt.Sprintf("0x%x", mark)
-	tableText := strconv.Itoa(table)
-	out, err := exec.CommandContext(ctx, "ip", "-N", "-4", "rule", "show", "priority", priorityText).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("ip -4 rule show priority %s: %w: %s", priorityText, err, strings.TrimSpace(string(out)))
-	}
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		fields := strings.Fields(line)
+	tableText := fmt.Sprintf("%d", table)
+	for {
+		out, err := exec.CommandContext(ctx, "ip", "-N", "-4", "rule", "show", "priority", priorityText).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("ip -4 rule show priority %s: %w: %s", priorityText, err, strings.TrimSpace(string(out)))
+		}
+		fields := strings.Fields(string(out))
 		if len(fields) == 0 {
-			continue
+			break
 		}
 		if len(fields) == 7 && fields[0] == priorityText+":" && fields[1] == "from" && fields[2] == "all" && fields[3] == "fwmark" && fields[4] == markText && fields[5] == "lookup" && fields[6] == tableText {
 			return nil
+		}
+		if out, err := exec.CommandContext(ctx, "ip", "-4", "rule", "del", "priority", priorityText).CombinedOutput(); err != nil {
+			return fmt.Errorf("ip -4 rule del priority %s: %w: %s", priorityText, err, strings.TrimSpace(string(out)))
 		}
 	}
 	if out, err := exec.CommandContext(ctx, "ip", "-4", "rule", "add", "priority", priorityText, "fwmark", markText, "table", tableText).CombinedOutput(); err != nil {
