@@ -3,7 +3,6 @@
 package chain
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -154,7 +153,6 @@ type samAppliedForwardPath struct {
 // samAppliedProxyARP records interfaces that may require cleanup after removal.
 type samAppliedProxyARP struct {
 	Interface string `json:"interface"`
-	Owned     bool   `json:"owned,omitempty"`
 }
 
 const samDataplaneStatusName = "sam-dataplane"
@@ -433,9 +431,7 @@ func samDecodeRecords[T comparable](value any, present bool, validate func(T) er
 	byKey := map[string]int{}
 	for i, entry := range entries {
 		var item T
-		decoder := json.NewDecoder(bytes.NewReader(entry))
-		decoder.DisallowUnknownFields()
-		err := decoder.Decode(&item)
+		err := json.Unmarshal(entry, &item)
 		if err == nil {
 			err = validate(item)
 		}

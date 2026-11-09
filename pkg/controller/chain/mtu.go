@@ -184,12 +184,7 @@ func (c PathMTUController) applyL2MSSTable(ctx context.Context, nft, path string
 	}
 	batch.Write(data)
 	if batch.Len() == 0 {
-		removed, err := removeFileIfExists(path, false)
-		if err != nil {
-			return false, err
-		}
-		removedOwner, err := removeFileIfExists(path+".owner", false)
-		return removed || removedOwner, err
+		return removeFileIfExists(path, false)
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return false, err
@@ -204,16 +199,12 @@ func (c PathMTUController) applyL2MSSTable(ctx context.Context, nft, path string
 	if out, err := c.runNFT(ctx, nft, "-f", path); err != nil {
 		return false, fmt.Errorf("%s -f %s: %w: %s", nft, path, err, strings.TrimSpace(string(out)))
 	}
-	removedOwner, err := removeFileIfExists(path+".owner", false)
-	if err != nil {
-		return false, err
-	}
 	if len(bytes.TrimSpace(data)) == 0 {
 		if _, err := removeFileIfExists(path, false); err != nil {
 			return false, err
 		}
 	}
-	return changed || removedOwner || (hadCurrent != (len(bytes.TrimSpace(data)) > 0)), nil
+	return changed || (hadCurrent != (len(bytes.TrimSpace(data)) > 0)), nil
 }
 
 func (c PathMTUController) applyTable(ctx context.Context, nft, path, family, table string, data []byte) (bool, error) {
