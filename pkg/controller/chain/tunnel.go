@@ -27,7 +27,6 @@ type TunnelInterfaceController struct {
 	Bus    *bus.Bus
 	Store  Store
 	DryRun bool
-	OS     platform.OS
 	Logger *slog.Logger
 }
 
@@ -66,10 +65,7 @@ func (c TunnelInterfaceController) Reconcile(ctx context.Context) error {
 	if c.Router == nil || c.Store == nil {
 		return nil
 	}
-	targetOS := c.OS
-	if targetOS == "" {
-		targetOS = platform.CurrentOS()
-	}
+	targetOS := platform.CurrentOS()
 	if targetOS == platform.OSLinux || targetOS == platform.OSFreeBSD {
 		if err := c.cleanupStaleResources(ctx); err != nil {
 			return err
@@ -222,7 +218,7 @@ func (c TunnelInterfaceController) reconcileInterface(ctx context.Context, resou
 		applied = true
 		created = true
 	} else {
-		keyUnobserved := c.targetOS() == platform.OSFreeBSD && desired.Mode == "gre" && !observed.KeyKnown
+		keyUnobserved := platform.CurrentOS() == platform.OSFreeBSD && desired.Mode == "gre" && !observed.KeyKnown
 		if keyUnobserved {
 			// Compare the remaining attributes, then explicitly enforce the key.
 			observed.Key = desired.Key
@@ -258,7 +254,7 @@ func (c TunnelInterfaceController) reconcileInterface(ctx context.Context, resou
 		applied = applied || addressChanged
 	}
 	status = tunnelStatus(desired, c.DryRun, map[string]any{"phase": "Up"})
-	if c.targetOS() == platform.OSFreeBSD && desired.Address != "" {
+	if platform.CurrentOS() == platform.OSFreeBSD && desired.Address != "" {
 		out, err := c.run(ctx, "ifconfig", desired.Name)
 		if err != nil {
 			return c.saveApplyError(resource, desired, fmt.Errorf("read FreeBSD tunnel interface %s point-to-point address: %w: %s", desired.Name, err, strings.TrimSpace(string(out))))
@@ -505,7 +501,7 @@ func tunnelLinkMatches(observed tunnelObserved, desired tunnelDesired) bool {
 }
 
 func (c TunnelInterfaceController) observeTunnel(ctx context.Context, ifname string) (tunnelObserved, error) {
-	if c.targetOS() == platform.OSFreeBSD {
+	if platform.CurrentOS() == platform.OSFreeBSD {
 		out, err := c.run(ctx, "ifconfig", ifname)
 		if err != nil {
 			if tunnelMissingLink(out, err) {
@@ -678,7 +674,7 @@ func freeBSDNetmaskBits(value string) int {
 }
 
 func (c TunnelInterfaceController) addTunnelInterface(ctx context.Context, desired tunnelDesired) error {
-	if c.targetOS() == platform.OSFreeBSD {
+	if platform.CurrentOS() == platform.OSFreeBSD {
 		if _, err := c.run(ctx, "ifconfig", desired.Name, "create"); err != nil {
 			return commandError("create FreeBSD tunnel interface "+desired.Name, err)
 		}
@@ -689,7 +685,7 @@ func (c TunnelInterfaceController) addTunnelInterface(ctx context.Context, desir
 }
 
 func (c TunnelInterfaceController) changeTunnelInterface(ctx context.Context, desired tunnelDesired) error {
-	if c.targetOS() == platform.OSFreeBSD {
+	if platform.CurrentOS() == platform.OSFreeBSD {
 		if _, err := c.run(ctx, "ifconfig", desired.Name, "tunnel", desired.Local, desired.Remote); err != nil {
 			return commandError("configure FreeBSD tunnel endpoints "+desired.Name, err)
 		}
@@ -705,7 +701,7 @@ func (c TunnelInterfaceController) changeTunnelInterface(ctx context.Context, de
 }
 
 func (c TunnelInterfaceController) deleteTunnelInterface(ctx context.Context, ifname string) error {
-	if c.targetOS() == platform.OSFreeBSD {
+	if platform.CurrentOS() == platform.OSFreeBSD {
 		out, err := c.run(ctx, "ifconfig", ifname, "destroy")
 		if err == nil || tunnelMissingLink(out, err) {
 			return nil
@@ -720,7 +716,7 @@ func (c TunnelInterfaceController) deleteTunnelInterface(ctx context.Context, if
 }
 
 func (c TunnelInterfaceController) setTunnelLink(ctx context.Context, desired tunnelDesired) error {
-	if c.targetOS() == platform.OSFreeBSD {
+	if platform.CurrentOS() == platform.OSFreeBSD {
 		args := []string{desired.Name}
 		if desired.MTU > 0 {
 			args = append(args, "mtu", strconv.Itoa(desired.MTU))
@@ -739,7 +735,7 @@ func (c TunnelInterfaceController) setTunnelLink(ctx context.Context, desired tu
 }
 
 func (c TunnelInterfaceController) setTunnelLinkUp(ctx context.Context, ifname string) error {
-	if c.targetOS() == platform.OSFreeBSD {
+	if platform.CurrentOS() == platform.OSFreeBSD {
 		_, err := c.run(ctx, "ifconfig", ifname, "up")
 		return commandError("bring FreeBSD tunnel interface "+ifname+" up", err)
 	}
@@ -765,7 +761,7 @@ func (c TunnelInterfaceController) reconcileTunnelAddress(ctx context.Context, d
 		changed = true
 	}
 	if hasDesired {
-		if c.targetOS() == platform.OSFreeBSD && desired.PeerAddress != "" {
+		if platform.CurrentOS() == platform.OSFreeBSD && desired.PeerAddress != "" {
 			out, err := c.run(ctx, "ifconfig", desired.Name)
 			if err != nil {
 				return changed, fmt.Errorf("read FreeBSD tunnel interface %s peer address: %w: %s", desired.Name, err, strings.TrimSpace(string(out)))
@@ -789,7 +785,7 @@ func (c TunnelInterfaceController) reconcileTunnelAddress(ctx context.Context, d
 }
 
 func (c TunnelInterfaceController) tunnelIPv4Addresses(ctx context.Context, ifname string) ([]string, error) {
-	if c.targetOS() == platform.OSFreeBSD {
+	if platform.CurrentOS() == platform.OSFreeBSD {
 		out, err := c.run(ctx, "ifconfig", ifname)
 		if err != nil {
 			return nil, fmt.Errorf("list FreeBSD tunnel interface %s addresses: %w: %s", ifname, err, strings.TrimSpace(string(out)))
@@ -825,7 +821,7 @@ func parseIPv4AddressPrefixes(out []byte) []string {
 }
 
 func (c TunnelInterfaceController) deleteTunnelAddress(ctx context.Context, ifname, address string) error {
-	if c.targetOS() == platform.OSFreeBSD {
+	if platform.CurrentOS() == platform.OSFreeBSD {
 		_, err := c.run(ctx, "ifconfig", ifname, "inet", address, "-alias")
 		return commandError("delete FreeBSD tunnel interface "+ifname+" address "+address, err)
 	}
@@ -834,7 +830,7 @@ func (c TunnelInterfaceController) deleteTunnelAddress(ctx context.Context, ifna
 }
 
 func (c TunnelInterfaceController) setTunnelAddress(ctx context.Context, desired tunnelDesired) error {
-	if c.targetOS() == platform.OSFreeBSD {
+	if platform.CurrentOS() == platform.OSFreeBSD {
 		_, err := c.run(ctx, "ifconfig", desired.Name, "inet", desired.Address, desired.PeerAddress)
 		return commandError("set FreeBSD tunnel interface "+desired.Name+" address", err)
 	}
@@ -915,7 +911,7 @@ func (c TunnelInterfaceController) rememberSharedFOUListener(listener fouListene
 }
 
 func (c TunnelInterfaceController) ensureFOUListener(ctx context.Context, desired tunnelDesired) error {
-	if c.targetOS() == platform.OSFreeBSD && (desired.Mode == "fou" || desired.Mode == "gue") {
+	if platform.CurrentOS() == platform.OSFreeBSD && (desired.Mode == "fou" || desired.Mode == "gue") {
 		return fmt.Errorf("FreeBSD TunnelInterface mode %s has no equivalent FOU/GUE listener", desired.Mode)
 	}
 	if desired.Mode != "fou" && desired.Mode != "gue" {
@@ -1023,13 +1019,6 @@ func tunnelChangeArgs(desired tunnelDesired) []string {
 func (c TunnelInterfaceController) run(ctx context.Context, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	return cmd.CombinedOutput()
-}
-
-func (c TunnelInterfaceController) targetOS() platform.OS {
-	if c.OS != "" {
-		return c.OS
-	}
-	return platform.CurrentOS()
 }
 
 func commandError(action string, err error) error {
