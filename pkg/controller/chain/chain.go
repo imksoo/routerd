@@ -2164,7 +2164,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 		}
 	}
 	daemonStatusSync := DaemonStatusController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DaemonSockets: opts.DaemonSockets, Logger: logger}
-	wan := egressroute.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, Logger: logger}
+	wan := egressroute.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store}
 	durableEvents, _ := r.Store.(eventconsumer.Store)
 	rules := eventrule.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, Events: durableEvents, Logger: logger}
 	derivedEvents := derived.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, Logger: logger}

@@ -2660,16 +2660,6 @@ func standardCommunities(values []string) ([]uint32, error) {
 	return out, nil
 }
 
-func stringSliceContains(values []string, want string) bool {
-	want = strings.TrimSpace(want)
-	for _, value := range values {
-		if strings.TrimSpace(value) == want {
-			return true
-		}
-	}
-	return false
-}
-
 func (c *Controller) mobilityFIBVerdicts() []dynamicconfig.FIBVerdict {
 	lister, ok := c.Store.(dynamicConfigPartLister)
 	if !ok {
@@ -3964,14 +3954,6 @@ func fibUnsupportedCount(result FIBSyncResult) int {
 	return len(result.Unsupported)
 }
 
-func importAllowedPrefixes(spec routerapi.BGPRouterSpec, peers map[string]desiredPeer) []allowedImportPrefix {
-	out := importAllowedPrefixesFromPolicy(spec.ImportPolicy)
-	for _, peer := range peers {
-		out = append(out, importAllowedPrefixesFromPolicy(peer.ImportPolicy)...)
-	}
-	return out
-}
-
 func importAllowedPrefixesFromApplied(applied bgpdaemon.AppliedConfig) []allowedImportPrefix {
 	var out []allowedImportPrefix
 	out = append(out, importAllowedPrefixesFromAppliedPolicy(applied.Global.ImportPolicy)...)
@@ -4039,24 +4021,6 @@ func importNextHopRewrite(spec routerapi.BGPImportPolicySpec) string {
 	default:
 		return "peer-address"
 	}
-}
-
-func importPolicyKey(spec routerapi.BGPImportPolicySpec) string {
-	normalized := routerapi.BGPImportPolicySpec{
-		AllowedPrefixes:        stringutil.UniqueTrimmedSorted(spec.AllowedPrefixes),
-		AllowedPrefixLengthMin: spec.AllowedPrefixLengthMin,
-		AllowedPrefixLengthMax: spec.AllowedPrefixLengthMax,
-		RequiredCommunities:    stringutil.UniqueTrimmedSorted(spec.RequiredCommunities),
-		ForbiddenCommunities:   stringutil.UniqueTrimmedSorted(spec.ForbiddenCommunities),
-		NextHopRewrite:         importNextHopRewrite(spec),
-		LocalPreference:        spec.LocalPreference,
-	}
-	data, err := json.Marshal(normalized)
-	if err != nil {
-		return ""
-	}
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
 }
 
 func bgpPoliciesKey(importSpec routerapi.BGPImportPolicySpec, peers map[string]desiredPeer, dynamicPeers map[string]desiredDynamicPeer) string {

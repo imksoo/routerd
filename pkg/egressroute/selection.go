@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"sort"
 	"strconv"
 	"strings"
@@ -38,12 +37,10 @@ type Store interface {
 }
 
 type Controller struct {
-	Router   *api.Router
-	Bus      *bus.Bus
-	Store    Store
-	Interval time.Duration
-	Now      func() time.Time
-	Logger   *slog.Logger
+	Router *api.Router
+	Bus    *bus.Bus
+	Store  Store
+	Now    func() time.Time
 }
 
 type CandidateState struct {
@@ -68,43 +65,6 @@ type Selection struct {
 
 type Selector interface {
 	Reconcile(ctx context.Context, policy api.Resource, candidates []CandidateState) (Selection, error)
-}
-
-func (c Controller) Start(ctx context.Context) {
-	if c.Router == nil || c.Bus == nil || c.Store == nil {
-		return
-	}
-	interval := c.Interval
-	if interval == 0 {
-		interval = 5 * time.Second
-	}
-	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.**"}}, 64)
-	go func() {
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		for {
-			select {
-			case event, ok := <-ch:
-				if !ok {
-					return
-				}
-				if event.Type == EventRouteChanged {
-					continue
-				}
-				c.reconcileLogged(ctx)
-			case <-ticker.C:
-				c.reconcileLogged(ctx)
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-}
-
-func (c Controller) reconcileLogged(ctx context.Context) {
-	if err := c.Reconcile(ctx); err != nil && c.Logger != nil {
-		c.Logger.Warn("egress route reconcile failed", "error", err)
-	}
 }
 
 func (c Controller) Reconcile(ctx context.Context) error {
