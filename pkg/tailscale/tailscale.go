@@ -5,6 +5,7 @@ package tailscale
 import (
 	"context"
 	"encoding/json"
+	"os/exec"
 	"sort"
 	"strings"
 	"time"
@@ -15,8 +16,6 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 )
-
-type CommandFunc func(ctx context.Context, name string, args ...string) ([]byte, error)
 
 type Status struct {
 	BackendState    string       `json:"backendState,omitempty" yaml:"backendState,omitempty"`
@@ -66,11 +65,11 @@ type peerJSON struct {
 	TxBytes        int64    `json:"TxBytes"`
 }
 
-func Fetch(ctx context.Context, binary string, command CommandFunc) (Status, error) {
+func Fetch(ctx context.Context, binary string) (Status, error) {
 	if strings.TrimSpace(binary) == "" {
 		binary = "tailscale"
 	}
-	out, err := command(ctx, binary, "status", "--json")
+	out, err := exec.CommandContext(ctx, binary, "status", "--json").CombinedOutput()
 	if err != nil {
 		return Status{}, err
 	}

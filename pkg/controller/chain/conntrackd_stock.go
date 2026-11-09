@@ -9,12 +9,12 @@ import (
 
 // Conflicts alone lets a package restart stop the managed synchronization unit.
 // Never force replacement of a local unit or release a pre-existing mask.
-func (c SystemdUnitController) ensureStockConntrackdMasked(ctx context.Context, command outputCommandFunc) error {
+func (c SystemdUnitController) ensureStockConntrackdMasked(ctx context.Context) error {
 	if c.DryRun {
 		return nil
 	}
 	maskedInactive := func() (bool, error) {
-		out, err := command(ctx, "systemctl", "show", "conntrackd.service", "--property=LoadState,ActiveState")
+		out, err := runOutputCommandContext(ctx, "systemctl", "show", "conntrackd.service", "--property=LoadState,ActiveState")
 		if err != nil {
 			return false, fmt.Errorf("inspect distribution conntrackd: %w: %s", err, strings.TrimSpace(string(out)))
 		}
@@ -34,7 +34,7 @@ func (c SystemdUnitController) ensureStockConntrackdMasked(ctx context.Context, 
 	if ok {
 		return nil
 	}
-	out, err := command(ctx, "systemctl", "mask", "--now", "conntrackd.service")
+	out, err := runOutputCommandContext(ctx, "systemctl", "mask", "--now", "conntrackd.service")
 	if err != nil {
 		return fmt.Errorf("mask distribution conntrackd: %w: %s", err, strings.TrimSpace(string(out)))
 	}

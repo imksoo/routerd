@@ -461,14 +461,9 @@ type SystemdUnitController struct {
 	Bus            interface {
 		Publish(context.Context, daemonapi.DaemonEvent) error
 	}
-	Store            Store
-	Command          outputCommandFunc
-	DryRun           bool
-	SystemdSystemDir string
-	// StateDir overrides the platform state directory for eventd runtime
-	// configuration and its applied-config marker. It is primarily useful for
-	// isolated controller tests; normal runtime uses platform.Current().
-	StateDir                    string
+	Store                       Store
+	DryRun                      bool
+	systemdSystemDir            string
 	SynthesizeClientDaemonUnits bool
 	BGPSocketPath               string
 	BGPControlSocketPath        string
@@ -512,16 +507,8 @@ func routerdServiceSystemdSpec(router *api.Router, telemetryEnv []string) api.Sy
 
 func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 	defaults, features := platform.Current()
-	if c.SystemdSystemDir == "" {
-		c.SystemdSystemDir = defaults.SystemdSystemDir
-	}
-	command := c.Command
-	if command == nil {
-		command = runOutputCommandContext
-	}
-	eventdStateDir := strings.TrimRight(c.StateDir, "/")
-	if eventdStateDir == "" {
-		eventdStateDir = defaults.StateDir
+	if c.systemdSystemDir == "" {
+		c.systemdSystemDir = defaults.SystemdSystemDir
 	}
 	telemetryEnv, err := render.TelemetryEnvironment(c.Router)
 	if err != nil {
@@ -530,35 +517,35 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 	if features.HasSystemd {
 		explicitUnits := map[string]bool{}
 		routerdSpec := routerdServiceSystemdSpec(c.Router, telemetryEnv)
-		if err := c.reconcileSyntheticSystemdHelperUnit(ctx, render.RouterdUnitName, "Router/"+c.Router.Metadata.Name, routerdSpec, command); err != nil {
+		if err := c.reconcileSyntheticSystemdHelperUnit(ctx, render.RouterdUnitName, "Router/"+c.Router.Metadata.Name, routerdSpec); err != nil {
 			return err
 		}
 		if routerHasBGP(c.Router) {
-			if err := c.reconcileLongLivedSystemdHelperUnit(ctx, render.BGPUnitName, "Router/"+c.Router.Metadata.Name+"/BGPRouter", c.bgpSystemdSpec(defaults), command); err != nil {
+			if err := c.reconcileLongLivedSystemdHelperUnit(ctx, render.BGPUnitName, "Router/"+c.Router.Metadata.Name+"/BGPRouter", c.bgpSystemdSpec(defaults)); err != nil {
 				return err
 			}
 		} else {
-			if err := c.cleanupLongLivedSystemdHelperUnit(ctx, render.BGPUnitName, "Router/"+c.Router.Metadata.Name+"/BGPRouter", command); err != nil {
+			if err := c.cleanupLongLivedSystemdHelperUnit(ctx, render.BGPUnitName, "Router/"+c.Router.Metadata.Name+"/BGPRouter"); err != nil {
 				return err
 			}
 		}
-		if err := c.reconcileDNSResolverUnits(ctx, defaults.StateDir, command); err != nil {
+		if err := c.reconcileDNSResolverUnits(ctx, defaults.StateDir); err != nil {
 			return err
 		}
-		if err := c.cleanupStaleDNSResolverUnits(ctx, command); err != nil {
+		if err := c.cleanupStaleDNSResolverUnits(ctx); err != nil {
 			return err
 		}
-		if err := c.reconcileEventFederationUnits(ctx, eventdStateDir, command); err != nil {
+		if err := c.reconcileEventFederationUnits(ctx, defaults.StateDir); err != nil {
 			return err
 		}
-		if err := c.cleanupStaleEventFederationUnits(ctx, command); err != nil {
+		if err := c.cleanupStaleEventFederationUnits(ctx); err != nil {
 			return err
 		}
 		if c.SynthesizeClientDaemonUnits {
-			if err := c.reconcileClientDaemonUnits(ctx, explicitUnits, telemetryEnv, command); err != nil {
+			if err := c.reconcileClientDaemonUnits(ctx, explicitUnits, telemetryEnv); err != nil {
 				return err
 			}
-		} else if err := c.cleanupStaleClientDaemonUnits(ctx, command); err != nil {
+		} else if err := c.cleanupStaleClientDaemonUnits(ctx); err != nil {
 			return err
 		}
 		for _, resource := range c.Router.Spec.Resources {
@@ -571,11 +558,11 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 			}
 			unit := render.TailscaleSystemdSpec(resource.Metadata.Name, spec)
 			unitName := firstNonEmpty(unit.UnitName, render.TailscaleUnitName(resource.Metadata.Name))
-			path := filepath.Join(c.SystemdSystemDir, unitName)
+			path := filepath.Join(c.systemdSystemDir, unitName)
 			changed := false
 			if !explicitUnits[unitName] {
 				var err error
-				changed, err = c.applySystemdUnit(ctx, resource.Metadata.Name, path, unitName, unit, command)
+				changed, err = c.applySystemdUnit(ctx, resource.Metadata.Name, path, unitName, unit)
 				if err != nil {
 					if saveErr := c.Store.SaveObjectStatus(api.NetAPIVersion, "TailscaleNode", resource.Metadata.Name, map[string]any{
 						"phase":     "Error",
@@ -612,7 +599,7 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 				"updatedAt":         time.Now().UTC().Format(time.RFC3339Nano),
 			}
 			if firstNonEmpty(spec.State, "present") != "absent" && !c.DryRun {
-				runtimeStatus, err := observeTailscaleRuntime(ctx, command, spec)
+				runtimeStatus, err := observeTailscaleRuntime(ctx, spec)
 				if err != nil {
 					status["runtimeObserved"] = false
 					status["runtimeError"] = err.Error()
@@ -649,7 +636,7 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 				}
 			}
 		}
-		if err := c.cleanupWhenFalseSystemdUnits(ctx, command); err != nil {
+		if err := c.cleanupWhenFalseSystemdUnits(ctx); err != nil {
 			return err
 		}
 		for _, resource := range c.Router.Spec.Resources {
@@ -664,8 +651,8 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 			if explicitUnits[unitName] {
 				continue
 			}
-			path := filepath.Join(c.SystemdSystemDir, unitName)
-			changed, activationQueued, err := c.applyHealthCheckSystemdUnit(ctx, path, unitName, resource.Metadata.Name, spec, telemetryEnv, command)
+			path := filepath.Join(c.systemdSystemDir, unitName)
+			changed, activationQueued, err := c.applyHealthCheckSystemdUnit(ctx, path, unitName, resource.Metadata.Name, spec, telemetryEnv)
 			if err != nil {
 				if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, map[string]any{
 					"phase":     "Error",
@@ -724,20 +711,20 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 				}
 			}
 		}
-		if err := c.cleanupStaleHealthCheckUnits(ctx, explicitUnits, command); err != nil {
+		if err := c.cleanupStaleHealthCheckUnits(ctx, explicitUnits); err != nil {
 			return err
 		}
 		if render.RouterWantsDPIClassifier(c.Router) {
 			dpiSpec := render.DPIClassifierSystemdSpec("/run")
 			dpiSpec.Environment = mergeStringEnvs(dpiSpec.Environment, telemetryEnv)
-			if err := c.reconcileSyntheticSystemdHelperUnit(ctx, render.DPIClassifierUnitName, "TrafficFlowLog/FirewallEventLog", dpiSpec, command); err != nil {
+			if err := c.reconcileSyntheticSystemdHelperUnit(ctx, render.DPIClassifierUnitName, "TrafficFlowLog/FirewallEventLog", dpiSpec); err != nil {
 				return err
 			}
 		}
 		if render.RouterWantsNDPIAgent(c.Router) {
 			ndpiSpec := render.NDPIAgentSystemdSpec("/run")
 			ndpiSpec.Environment = mergeStringEnvs(ndpiSpec.Environment, telemetryEnv)
-			if err := c.reconcileSyntheticSystemdHelperUnit(ctx, render.NDPIAgentUnitName, "TrafficFlowLog/FirewallEventLog", ndpiSpec, command); err != nil {
+			if err := c.reconcileSyntheticSystemdHelperUnit(ctx, render.NDPIAgentUnitName, "TrafficFlowLog/FirewallEventLog", ndpiSpec); err != nil {
 				return err
 			}
 		}
@@ -758,11 +745,11 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 			}
 			unit := render.FirewallLoggerSystemdSpec(spec, dpiSocket)
 			unit.Environment = mergeStringEnvs(unit.Environment, telemetryEnv)
-			if err := c.reconcileSyntheticSystemdHelperUnit(ctx, "routerd-firewall-logger.service", "FirewallEventLog/"+resource.Metadata.Name, unit, command); err != nil {
+			if err := c.reconcileSyntheticSystemdHelperUnit(ctx, "routerd-firewall-logger.service", "FirewallEventLog/"+resource.Metadata.Name, unit); err != nil {
 				return err
 			}
 		}
-		if err := c.reconcileConntrackdSyncUnits(ctx, command); err != nil {
+		if err := c.reconcileConntrackdSyncUnits(ctx); err != nil {
 			return err
 		}
 	}
@@ -772,7 +759,7 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 	return nil
 }
 
-func (c SystemdUnitController) reconcileConntrackdSyncUnits(ctx context.Context, command outputCommandFunc) error {
+func (c SystemdUnitController) reconcileConntrackdSyncUnits(ctx context.Context) error {
 	aliases := interfaceAliases(c.Router)
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "NAT44SessionSync" {
@@ -796,7 +783,7 @@ func (c SystemdUnitController) reconcileConntrackdSyncUnits(ctx context.Context,
 		if err != nil {
 			return fmt.Errorf("render conntrackd config for %s: %w", resource.ID(), err)
 		}
-		if err := c.ensureStockConntrackdMasked(ctx, command); err != nil {
+		if err := c.ensureStockConntrackdMasked(ctx); err != nil {
 			return fmt.Errorf("protect conntrackd sync for %s: %w", resource.ID(), err)
 		}
 		configPath := filepath.Join("/etc/conntrackd", "routerd-"+resource.Metadata.Name+".conf")
@@ -806,8 +793,8 @@ func (c SystemdUnitController) reconcileConntrackdSyncUnits(ctx context.Context,
 		}
 		unitName := "routerd-conntrackd@" + resource.Metadata.Name + ".service"
 		unit := conntrackdSystemdSpec(resource.Metadata.Name, configPath)
-		unitPath := filepath.Join(c.SystemdSystemDir, unitName)
-		unitChanged, err := c.applySystemdUnit(ctx, resource.Metadata.Name, unitPath, unitName, unit, command)
+		unitPath := filepath.Join(c.systemdSystemDir, unitName)
+		unitChanged, err := c.applySystemdUnit(ctx, resource.Metadata.Name, unitPath, unitName, unit)
 		if err != nil {
 			return err
 		}
@@ -893,9 +880,9 @@ type tailscaleRuntimeStatus struct {
 	Peers           []tailscale.PeerStatus
 }
 
-func observeTailscaleRuntime(ctx context.Context, command outputCommandFunc, spec api.TailscaleNodeSpec) (tailscaleRuntimeStatus, error) {
+func observeTailscaleRuntime(ctx context.Context, spec api.TailscaleNodeSpec) (tailscaleRuntimeStatus, error) {
 	binary := firstNonEmpty(spec.BinaryPath, "tailscale")
-	status, err := tailscale.Fetch(ctx, binary, tailscale.CommandFunc(command))
+	status, err := tailscale.Fetch(ctx, binary)
 	if err != nil {
 		return tailscaleRuntimeStatus{}, err
 	}
@@ -946,7 +933,7 @@ func boolPointerStatus(value *bool) any {
 	return *value
 }
 
-func (c SystemdUnitController) reconcileClientDaemonUnits(ctx context.Context, explicitUnits map[string]bool, telemetryEnv []string, command outputCommandFunc) error {
+func (c SystemdUnitController) reconcileClientDaemonUnits(ctx context.Context, explicitUnits map[string]bool, telemetryEnv []string) error {
 	aliases := interfaceAliases(c.Router)
 	for _, resource := range c.Router.Spec.Resources {
 		switch resource.Kind {
@@ -963,7 +950,7 @@ func (c SystemdUnitController) reconcileClientDaemonUnits(ctx context.Context, e
 			if explicitUnits[unitName] {
 				continue
 			}
-			if err := c.reconcileSyntheticSystemdUnit(ctx, api.NetAPIVersion, "DHCPv4Client", resource.Metadata.Name, unitName, dhcpv4ClientUnitSpec(resource.Metadata.Name, ifname, spec, telemetryEnv), command); err != nil {
+			if err := c.reconcileSyntheticSystemdUnit(ctx, api.NetAPIVersion, "DHCPv4Client", resource.Metadata.Name, unitName, dhcpv4ClientUnitSpec(resource.Metadata.Name, ifname, spec, telemetryEnv)); err != nil {
 				return err
 			}
 		case "DHCPv6PrefixDelegation":
@@ -979,7 +966,7 @@ func (c SystemdUnitController) reconcileClientDaemonUnits(ctx context.Context, e
 			if explicitUnits[unitName] {
 				continue
 			}
-			if err := c.reconcileSyntheticSystemdUnit(ctx, api.NetAPIVersion, "DHCPv6PrefixDelegation", resource.Metadata.Name, unitName, dhcpv6ClientUnitSpec(resource.Metadata.Name, ifname, spec, telemetryEnv), command); err != nil {
+			if err := c.reconcileSyntheticSystemdUnit(ctx, api.NetAPIVersion, "DHCPv6PrefixDelegation", resource.Metadata.Name, unitName, dhcpv6ClientUnitSpec(resource.Metadata.Name, ifname, spec, telemetryEnv)); err != nil {
 				return err
 			}
 		case "IPv6RouterAdvertisement":
@@ -995,7 +982,7 @@ func (c SystemdUnitController) reconcileClientDaemonUnits(ctx context.Context, e
 			if explicitUnits[unitName] {
 				continue
 			}
-			if err := c.reconcileSyntheticSystemdUnit(ctx, api.NetAPIVersion, "RogueRADetector", resource.Metadata.Name, unitName, raObserverUnitSpec(resource.Metadata.Name, ifname, telemetryEnv), command); err != nil {
+			if err := c.reconcileSyntheticSystemdUnit(ctx, api.NetAPIVersion, "RogueRADetector", resource.Metadata.Name, unitName, raObserverUnitSpec(resource.Metadata.Name, ifname, telemetryEnv)); err != nil {
 				return err
 			}
 		}
@@ -1003,7 +990,7 @@ func (c SystemdUnitController) reconcileClientDaemonUnits(ctx context.Context, e
 	return nil
 }
 
-func (c SystemdUnitController) reconcileDNSResolverUnits(ctx context.Context, stateDir string, command outputCommandFunc) error {
+func (c SystemdUnitController) reconcileDNSResolverUnits(ctx context.Context, stateDir string) error {
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "DNSResolver" {
 			continue
@@ -1014,7 +1001,7 @@ func (c SystemdUnitController) reconcileDNSResolverUnits(ctx context.Context, st
 		}
 		unitName := dnsResolverUnitName(resource.Metadata.Name)
 		configPath := filepath.Join(stateDir, "dns-resolver", resource.Metadata.Name, "config.json")
-		if err := c.reconcileLongLivedSystemdHelperUnit(ctx, unitName, "Router/"+c.Router.Metadata.Name+"/DNSResolver/"+resource.Metadata.Name, render.DNSResolverSystemdSpec(resource.Metadata.Name, spec, "/usr/local/sbin/routerd-dns-resolver", configPath), command); err != nil {
+		if err := c.reconcileLongLivedSystemdHelperUnit(ctx, unitName, "Router/"+c.Router.Metadata.Name+"/DNSResolver/"+resource.Metadata.Name, render.DNSResolverSystemdSpec(resource.Metadata.Name, spec, "/usr/local/sbin/routerd-dns-resolver", configPath)); err != nil {
 			return err
 		}
 	}
@@ -1025,7 +1012,7 @@ func dnsResolverUnitName(name string) string {
 	return "routerd-dns-resolver@" + name + ".service"
 }
 
-func (c SystemdUnitController) reconcileEventFederationUnits(ctx context.Context, stateDir string, command outputCommandFunc) error {
+func (c SystemdUnitController) reconcileEventFederationUnits(ctx context.Context, stateDir string) error {
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "EventGroup" {
 			continue
@@ -1043,11 +1030,11 @@ func (c SystemdUnitController) reconcileEventFederationUnits(ctx context.Context
 		// Capture the state before reconcile. A newly-started helper reads the
 		// current config itself; only an already-running helper needs an explicit
 		// restart when the digest changes.
-		wasActive := systemdUnitActive(ctx, command, unitName)
-		if err := c.reconcileLongLivedSystemdHelperUnit(ctx, unitName, "Router/"+c.Router.Metadata.Name+"/EventGroup/"+group, render.EventdSystemdSpec(group, "/usr/local/sbin/routerd-eventd", configPath), command); err != nil {
+		wasActive := systemdUnitActive(ctx, unitName)
+		if err := c.reconcileLongLivedSystemdHelperUnit(ctx, unitName, "Router/"+c.Router.Metadata.Name+"/EventGroup/"+group, render.EventdSystemdSpec(group, "/usr/local/sbin/routerd-eventd", configPath)); err != nil {
 			return err
 		}
-		if err := c.applyEventFederationConfig(ctx, stateDir, group, unitName, wasActive, command); err != nil {
+		if err := c.applyEventFederationConfig(ctx, stateDir, group, unitName, wasActive); err != nil {
 			return err
 		}
 	}
@@ -1060,7 +1047,7 @@ func (c SystemdUnitController) reconcileEventFederationUnits(ctx context.Context
 // The durable digest marker records the configuration successfully handed to
 // the helper. This keeps ordinary/status-only reconciliations from restarting
 // it repeatedly, while a failed restart leaves the marker stale for retry.
-func (c SystemdUnitController) applyEventFederationConfig(ctx context.Context, stateDir, group, unitName string, wasActive bool, command outputCommandFunc) error {
+func (c SystemdUnitController) applyEventFederationConfig(ctx context.Context, stateDir, group, unitName string, wasActive bool) error {
 	if c.DryRun {
 		return nil
 	}
@@ -1084,17 +1071,17 @@ func (c SystemdUnitController) applyEventFederationConfig(ctx context.Context, s
 	}
 
 	if wasActive {
-		if _, err := command(ctx, "systemctl", "restart", unitName); err != nil {
+		if _, err := runOutputCommandContext(ctx, "systemctl", "restart", unitName); err != nil {
 			return fmt.Errorf("restart event federation helper %s after config change: %w", unitName, err)
 		}
 		// systemctl restart normally waits for the job, but do not record the
 		// digest merely because the command itself returned successfully. A
 		// helper that immediately failed its restart must retain the stale marker
 		// so the next reconciliation can repair the handoff.
-		if !systemdUnitActive(ctx, command, unitName) {
+		if !systemdUnitActive(ctx, unitName) {
 			return fmt.Errorf("event federation helper %s is not active after config restart", unitName)
 		}
-	} else if !systemdUnitActive(ctx, command, unitName) {
+	} else if !systemdUnitActive(ctx, unitName) {
 		// reconcileLongLivedSystemdHelperUnit has attempted the initial start.
 		// Do not claim this config was applied unless the helper actually came
 		// up; a future reconciliation will retry start and this handoff.
@@ -1127,9 +1114,9 @@ func eventGroupRunsEventd(spec api.EventGroupSpec) bool {
 	return strings.TrimSpace(spec.Auth.SecretFile) != ""
 }
 
-func (c SystemdUnitController) reconcileSyntheticSystemdUnit(ctx context.Context, apiVersion, kind, resourceName, unitName string, spec api.SystemdUnitSpec, command outputCommandFunc) error {
-	path := filepath.Join(c.SystemdSystemDir, unitName)
-	changed, err := c.applySystemdUnit(ctx, resourceName, path, unitName, spec, command)
+func (c SystemdUnitController) reconcileSyntheticSystemdUnit(ctx context.Context, apiVersion, kind, resourceName, unitName string, spec api.SystemdUnitSpec) error {
+	path := filepath.Join(c.systemdSystemDir, unitName)
+	changed, err := c.applySystemdUnit(ctx, resourceName, path, unitName, spec)
 	if err != nil {
 		if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, map[string]any{
 			"phase":     "Error",
@@ -1181,9 +1168,9 @@ func (c SystemdUnitController) reconcileSyntheticSystemdUnit(ctx context.Context
 	return nil
 }
 
-func (c SystemdUnitController) reconcileSyntheticSystemdHelperUnit(ctx context.Context, unitName, source string, spec api.SystemdUnitSpec, command outputCommandFunc) error {
-	path := filepath.Join(c.SystemdSystemDir, unitName)
-	changed, err := c.applySystemdUnit(ctx, unitName, path, unitName, spec, command)
+func (c SystemdUnitController) reconcileSyntheticSystemdHelperUnit(ctx context.Context, unitName, source string, spec api.SystemdUnitSpec) error {
+	path := filepath.Join(c.systemdSystemDir, unitName)
+	changed, err := c.applySystemdUnit(ctx, unitName, path, unitName, spec)
 	if err != nil {
 		if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, map[string]any{
 			"phase":     "Error",
@@ -1224,9 +1211,9 @@ func (c SystemdUnitController) reconcileSyntheticSystemdHelperUnit(ctx context.C
 	return nil
 }
 
-func (c SystemdUnitController) reconcileLongLivedSystemdHelperUnit(ctx context.Context, unitName, source string, spec api.SystemdUnitSpec, command outputCommandFunc) error {
-	path := filepath.Join(c.SystemdSystemDir, unitName)
-	changed, err := c.applyLongLivedSystemdUnit(ctx, path, unitName, spec, command)
+func (c SystemdUnitController) reconcileLongLivedSystemdHelperUnit(ctx context.Context, unitName, source string, spec api.SystemdUnitSpec) error {
+	path := filepath.Join(c.systemdSystemDir, unitName)
+	changed, err := c.applyLongLivedSystemdUnit(ctx, path, unitName, spec)
 	if err != nil {
 		if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, map[string]any{
 			"phase":     "Error",
@@ -1259,13 +1246,13 @@ func (c SystemdUnitController) reconcileLongLivedSystemdHelperUnit(ctx context.C
 	return c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, status)
 }
 
-func (c SystemdUnitController) cleanupLongLivedSystemdHelperUnit(ctx context.Context, unitName, source string, command outputCommandFunc) error {
-	if c.SystemdSystemDir == "" {
+func (c SystemdUnitController) cleanupLongLivedSystemdHelperUnit(ctx context.Context, unitName, source string) error {
+	if c.systemdSystemDir == "" {
 		defaults, _ := platform.Current()
-		c.SystemdSystemDir = defaults.SystemdSystemDir
+		c.systemdSystemDir = defaults.SystemdSystemDir
 	}
-	path := filepath.Join(c.SystemdSystemDir, unitName)
-	changed, err := c.applySystemdUnit(ctx, unitName, path, unitName, api.SystemdUnitSpec{State: "absent"}, command)
+	path := filepath.Join(c.systemdSystemDir, unitName)
+	changed, err := c.applySystemdUnit(ctx, unitName, path, unitName, api.SystemdUnitSpec{State: "absent"})
 	if err != nil {
 		if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, map[string]any{
 			"phase":     "Error",
@@ -1303,7 +1290,7 @@ type synthesizedUnitRef struct {
 	Source     string
 }
 
-func (c SystemdUnitController) cleanupWhenFalseSystemdUnits(ctx context.Context, command outputCommandFunc) error {
+func (c SystemdUnitController) cleanupWhenFalseSystemdUnits(ctx context.Context) error {
 	if c.DeclaredRouter == nil {
 		return nil
 	}
@@ -1320,7 +1307,7 @@ func (c SystemdUnitController) cleanupWhenFalseSystemdUnits(ctx context.Context,
 		if !ok {
 			continue
 		}
-		if err := c.cleanupWhenFalseSystemdUnit(ctx, ref, command); err != nil {
+		if err := c.cleanupWhenFalseSystemdUnit(ctx, ref); err != nil {
 			return err
 		}
 	}
@@ -1363,9 +1350,9 @@ func synthesizedUnitForResource(resource api.Resource) (synthesizedUnitRef, bool
 	return ref, true
 }
 
-func (c SystemdUnitController) cleanupWhenFalseSystemdUnit(ctx context.Context, ref synthesizedUnitRef, command outputCommandFunc) error {
-	path := filepath.Join(c.SystemdSystemDir, ref.UnitName)
-	changed, err := c.applySystemdUnit(ctx, ref.Name, path, ref.UnitName, api.SystemdUnitSpec{State: "absent"}, command)
+func (c SystemdUnitController) cleanupWhenFalseSystemdUnit(ctx context.Context, ref synthesizedUnitRef) error {
+	path := filepath.Join(c.systemdSystemDir, ref.UnitName)
+	changed, err := c.applySystemdUnit(ctx, ref.Name, path, ref.UnitName, api.SystemdUnitSpec{State: "absent"})
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if err != nil {
 		status := map[string]any{
@@ -1608,7 +1595,7 @@ func appendMissingStrings(values []string, additions ...string) []string {
 	return out
 }
 
-func (c SystemdUnitController) applyHealthCheckSystemdUnit(ctx context.Context, path, unitName, resourceName string, spec api.HealthCheckSpec, telemetryEnv []string, command outputCommandFunc) (bool, bool, error) {
+func (c SystemdUnitController) applyHealthCheckSystemdUnit(ctx context.Context, path, unitName, resourceName string, spec api.HealthCheckSpec, telemetryEnv []string) (bool, bool, error) {
 	socket := filepath.Join("/run/routerd/healthcheck", resourceName+".sock")
 	resolved := healthcheck.ResolveSpecWithStoreForResource(c.Router, c.Store, resourceName, spec)
 	data := render.HealthCheckSystemdUnit(render.HealthCheckSystemdOptions{
@@ -1635,7 +1622,7 @@ func (c SystemdUnitController) applyHealthCheckSystemdUnit(ctx context.Context, 
 		return changed, false, err
 	}
 	if !c.DryRun && !changed {
-		out, err := command(ctx, "systemctl", "show", "--property=NeedDaemonReload", "--value", unitName)
+		out, err := runOutputCommandContext(ctx, "systemctl", "show", "--property=NeedDaemonReload", "--value", unitName)
 		if err != nil {
 			return false, false, fmt.Errorf("check unit %s reload state: %w", unitName, err)
 		}
@@ -1646,15 +1633,15 @@ func (c SystemdUnitController) applyHealthCheckSystemdUnit(ctx context.Context, 
 			return changed, false, nil
 		}
 		if changed {
-			if _, err := command(ctx, "systemctl", "daemon-reload"); err != nil {
+			if _, err := runOutputCommandContext(ctx, "systemctl", "daemon-reload"); err != nil {
 				return changed, false, err
 			}
 		}
-		if changed || systemdUnitEnabledOrActive(ctx, command, unitName) {
-			if _, err := command(ctx, "systemctl", "disable", "--now", unitName); err != nil {
+		if changed || systemdUnitEnabledOrActive(ctx, unitName) {
+			if _, err := runOutputCommandContext(ctx, "systemctl", "disable", "--now", unitName); err != nil {
 				return changed, false, fmt.Errorf("disable health check unit %s: %w", unitName, err)
 			}
-			_, _ = command(ctx, "systemctl", "reset-failed", unitName)
+			_, _ = runOutputCommandContext(ctx, "systemctl", "reset-failed", unitName)
 		}
 		return changed, false, nil
 	}
@@ -1662,29 +1649,29 @@ func (c SystemdUnitController) applyHealthCheckSystemdUnit(ctx context.Context, 
 		return changed, false, nil
 	}
 	if changed {
-		if _, err := command(ctx, "systemctl", "daemon-reload"); err != nil {
+		if _, err := runOutputCommandContext(ctx, "systemctl", "daemon-reload"); err != nil {
 			return changed, false, err
 		}
 	}
-	if changed || !systemdUnitEnabled(ctx, command, unitName) {
-		if _, err := command(ctx, "systemctl", "enable", unitName); err != nil {
+	if changed || !systemdUnitEnabled(ctx, unitName) {
+		if _, err := runOutputCommandContext(ctx, "systemctl", "enable", unitName); err != nil {
 			return changed, false, err
 		}
 	}
 	active := true
-	if _, err := command(ctx, "systemctl", "is-active", "--quiet", unitName); err != nil {
+	if _, err := runOutputCommandContext(ctx, "systemctl", "is-active", "--quiet", unitName); err != nil {
 		active = false
 	}
 	previous := c.Store.ObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName)
 	if changed || !active || cleanStatusString(previous["phase"]) == "Error" {
-		if systemdUnitActive(ctx, command, render.RouterdUnitName) {
+		if systemdUnitActive(ctx, render.RouterdUnitName) {
 			// Once routerd is READY, use a blocking restart and verify the helper
 			// became active. A successful systemctl invocation alone does not prove
 			// that ExecStart stayed up.
-			if _, err := command(ctx, "systemctl", "restart", unitName); err != nil {
+			if _, err := runOutputCommandContext(ctx, "systemctl", "restart", unitName); err != nil {
 				return changed, false, err
 			}
-			if !systemdUnitActive(ctx, command, unitName) {
+			if !systemdUnitActive(ctx, unitName) {
 				return changed, false, fmt.Errorf("healthcheck helper %s is not active after restart", unitName)
 			}
 			return true, false, nil
@@ -1694,7 +1681,7 @@ func (c SystemdUnitController) applyHealthCheckSystemdUnit(ctx context.Context, 
 		// cannot start the helper until routerd emits READY, while routerd would
 		// be waiting here for the helper job to finish. Queue the restart and
 		// report it as Activating; a later reconciliation observes the result.
-		if _, err := command(ctx, "systemctl", "--no-block", "restart", unitName); err != nil {
+		if _, err := runOutputCommandContext(ctx, "systemctl", "--no-block", "restart", unitName); err != nil {
 			return changed, false, err
 		}
 		return true, true, nil
@@ -1702,7 +1689,7 @@ func (c SystemdUnitController) applyHealthCheckSystemdUnit(ctx context.Context, 
 	return changed, false, nil
 }
 
-func (c SystemdUnitController) cleanupStaleHealthCheckUnits(ctx context.Context, explicitUnits map[string]bool, command outputCommandFunc) error {
+func (c SystemdUnitController) cleanupStaleHealthCheckUnits(ctx context.Context, explicitUnits map[string]bool) error {
 	if c.DryRun {
 		return nil
 	}
@@ -1719,7 +1706,7 @@ func (c SystemdUnitController) cleanupStaleHealthCheckUnits(ctx context.Context,
 		}
 		desired[healthCheckUnitName(resource.Metadata.Name)] = true
 	}
-	matches, err := filepath.Glob(filepath.Join(c.SystemdSystemDir, "routerd-healthcheck@*.service"))
+	matches, err := filepath.Glob(filepath.Join(c.systemdSystemDir, "routerd-healthcheck@*.service"))
 	if err != nil {
 		return err
 	}
@@ -1729,24 +1716,24 @@ func (c SystemdUnitController) cleanupStaleHealthCheckUnits(ctx context.Context,
 		if desired[unitName] {
 			continue
 		}
-		if _, err := command(ctx, "systemctl", "disable", "--now", unitName); err != nil {
+		if _, err := runOutputCommandContext(ctx, "systemctl", "disable", "--now", unitName); err != nil {
 			return fmt.Errorf("disable stale health check unit %s: %w", unitName, err)
 		}
-		_, _ = command(ctx, "systemctl", "reset-failed", unitName)
+		_, _ = runOutputCommandContext(ctx, "systemctl", "reset-failed", unitName)
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return err
 		}
 		removed = true
 	}
 	if removed {
-		if _, err := command(ctx, "systemctl", "daemon-reload"); err != nil {
+		if _, err := runOutputCommandContext(ctx, "systemctl", "daemon-reload"); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (c SystemdUnitController) cleanupStaleDNSResolverUnits(ctx context.Context, command outputCommandFunc) error {
+func (c SystemdUnitController) cleanupStaleDNSResolverUnits(ctx context.Context) error {
 	if c.DryRun {
 		return nil
 	}
@@ -1760,7 +1747,7 @@ func (c SystemdUnitController) cleanupStaleDNSResolverUnits(ctx context.Context,
 		}
 		desired[dnsResolverUnitName(resource.Metadata.Name)] = true
 	}
-	matches, err := filepath.Glob(filepath.Join(c.SystemdSystemDir, "routerd-dns-resolver@*.service"))
+	matches, err := filepath.Glob(filepath.Join(c.systemdSystemDir, "routerd-dns-resolver@*.service"))
 	if err != nil {
 		return err
 	}
@@ -1780,7 +1767,7 @@ func (c SystemdUnitController) cleanupStaleDNSResolverUnits(ctx context.Context,
 		if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, status); err != nil {
 			return err
 		}
-		if _, err := command(ctx, "systemctl", "disable", "--now", unitName); err != nil {
+		if _, err := runOutputCommandContext(ctx, "systemctl", "disable", "--now", unitName); err != nil {
 			status["phase"] = "Error"
 			status["error"] = err.Error()
 			status["updatedAt"] = time.Now().UTC().Format(time.RFC3339Nano)
@@ -1789,7 +1776,7 @@ func (c SystemdUnitController) cleanupStaleDNSResolverUnits(ctx context.Context,
 			}
 			return fmt.Errorf("disable stale DNS resolver unit %s: %w", unitName, err)
 		}
-		_, _ = command(ctx, "systemctl", "reset-failed", unitName)
+		_, _ = runOutputCommandContext(ctx, "systemctl", "reset-failed", unitName)
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return err
 		}
@@ -1801,14 +1788,14 @@ func (c SystemdUnitController) cleanupStaleDNSResolverUnits(ctx context.Context,
 		removed = true
 	}
 	if removed {
-		if _, err := command(ctx, "systemctl", "daemon-reload"); err != nil {
+		if _, err := runOutputCommandContext(ctx, "systemctl", "daemon-reload"); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (c SystemdUnitController) cleanupStaleEventFederationUnits(ctx context.Context, command outputCommandFunc) error {
+func (c SystemdUnitController) cleanupStaleEventFederationUnits(ctx context.Context) error {
 	if c.DryRun {
 		return nil
 	}
@@ -1826,12 +1813,12 @@ func (c SystemdUnitController) cleanupStaleEventFederationUnits(ctx context.Cont
 		}
 		desired[eventFederationUnitName(resource.Metadata.Name)] = true
 	}
-	matches, err := filepath.Glob(filepath.Join(c.SystemdSystemDir, "routerd-eventd@*.service"))
+	matches, err := filepath.Glob(filepath.Join(c.systemdSystemDir, "routerd-eventd@*.service"))
 	if err != nil {
 		return err
 	}
-	legacyPath := filepath.Join(c.SystemdSystemDir, "routerd-eventd.service")
-	legacyPresent, err := legacyEventdUnitNeedsCleanup(ctx, command, legacyPath)
+	legacyPath := filepath.Join(c.systemdSystemDir, "routerd-eventd.service")
+	legacyPresent, err := legacyEventdUnitNeedsCleanup(ctx, legacyPath)
 	if err != nil {
 		return err
 	}
@@ -1858,7 +1845,7 @@ func (c SystemdUnitController) cleanupStaleEventFederationUnits(ctx context.Cont
 		if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, status); err != nil {
 			return err
 		}
-		if _, err := command(ctx, "systemctl", "disable", "--now", unitName); err != nil {
+		if _, err := runOutputCommandContext(ctx, "systemctl", "disable", "--now", unitName); err != nil {
 			status["phase"] = "Error"
 			status["error"] = err.Error()
 			status["updatedAt"] = time.Now().UTC().Format(time.RFC3339Nano)
@@ -1867,7 +1854,7 @@ func (c SystemdUnitController) cleanupStaleEventFederationUnits(ctx context.Cont
 			}
 			return fmt.Errorf("disable stale event federation unit %s: %w", unitName, err)
 		}
-		_, _ = command(ctx, "systemctl", "reset-failed", unitName)
+		_, _ = runOutputCommandContext(ctx, "systemctl", "reset-failed", unitName)
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return err
 		}
@@ -1879,23 +1866,23 @@ func (c SystemdUnitController) cleanupStaleEventFederationUnits(ctx context.Cont
 		removed = true
 	}
 	if removed {
-		if _, err := command(ctx, "systemctl", "daemon-reload"); err != nil {
+		if _, err := runOutputCommandContext(ctx, "systemctl", "daemon-reload"); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func legacyEventdUnitNeedsCleanup(ctx context.Context, command outputCommandFunc, path string) (bool, error) {
+func legacyEventdUnitNeedsCleanup(ctx context.Context, path string) (bool, error) {
 	if _, err := os.Stat(path); err == nil {
 		return true, nil
 	} else if err != nil && !os.IsNotExist(err) {
 		return false, err
 	}
-	return systemdUnitEnabledOrActive(ctx, command, "routerd-eventd.service"), nil
+	return systemdUnitEnabledOrActive(ctx, "routerd-eventd.service"), nil
 }
 
-func (c SystemdUnitController) cleanupStaleClientDaemonUnits(ctx context.Context, command outputCommandFunc) error {
+func (c SystemdUnitController) cleanupStaleClientDaemonUnits(ctx context.Context) error {
 	if c.DryRun {
 		return nil
 	}
@@ -1923,13 +1910,13 @@ func (c SystemdUnitController) cleanupStaleClientDaemonUnits(ctx context.Context
 	}
 	var removed bool
 	for _, pattern := range patterns {
-		matches, err := filepath.Glob(filepath.Join(c.SystemdSystemDir, pattern))
+		matches, err := filepath.Glob(filepath.Join(c.systemdSystemDir, pattern))
 		if err != nil {
 			return err
 		}
 		for _, path := range matches {
 			unitName := filepath.Base(path)
-			active := systemdUnitActive(ctx, command, unitName)
+			active := systemdUnitActive(ctx, unitName)
 			status := map[string]any{
 				"phase":     "Removing",
 				"reason":    "StaleClientDaemonUnit",
@@ -1959,7 +1946,7 @@ func (c SystemdUnitController) cleanupStaleClientDaemonUnits(ctx context.Context
 			if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, status); err != nil {
 				return err
 			}
-			if _, err := command(ctx, "systemctl", "disable", "--now", unitName); err != nil {
+			if _, err := runOutputCommandContext(ctx, "systemctl", "disable", "--now", unitName); err != nil {
 				status["phase"] = "Error"
 				status["error"] = err.Error()
 				status["updatedAt"] = time.Now().UTC().Format(time.RFC3339Nano)
@@ -1977,7 +1964,7 @@ func (c SystemdUnitController) cleanupStaleClientDaemonUnits(ctx context.Context
 				}
 				return fmt.Errorf("disable stale client daemon unit %s: %w", unitName, err)
 			}
-			_, _ = command(ctx, "systemctl", "reset-failed", unitName)
+			_, _ = runOutputCommandContext(ctx, "systemctl", "reset-failed", unitName)
 			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 				return err
 			}
@@ -1999,26 +1986,26 @@ func (c SystemdUnitController) cleanupStaleClientDaemonUnits(ctx context.Context
 		}
 	}
 	if removed {
-		if _, err := command(ctx, "systemctl", "daemon-reload"); err != nil {
+		if _, err := runOutputCommandContext(ctx, "systemctl", "daemon-reload"); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func systemdUnitActive(ctx context.Context, command outputCommandFunc, unitName string) bool {
-	_, err := command(ctx, "systemctl", "is-active", "--quiet", unitName)
+func systemdUnitActive(ctx context.Context, unitName string) bool {
+	_, err := runOutputCommandContext(ctx, "systemctl", "is-active", "--quiet", unitName)
 	return err == nil
 }
 
-func (c SystemdUnitController) applySystemdUnit(ctx context.Context, name, path, unitName string, spec api.SystemdUnitSpec, command outputCommandFunc) (bool, error) {
+func (c SystemdUnitController) applySystemdUnit(ctx context.Context, name, path, unitName string, spec api.SystemdUnitSpec) (bool, error) {
 	state := firstNonEmpty(spec.State, "present")
 	var changed bool
 	if state == "absent" {
 		if c.DryRun {
 			return removeFileIfExists(path, true)
 		}
-		unitState, err := command(ctx, "systemctl", "show", "--property=ActiveState", "--property=UnitFileState", unitName)
+		unitState, err := runOutputCommandContext(ctx, "systemctl", "show", "--property=ActiveState", "--property=UnitFileState", unitName)
 		if err != nil {
 			return false, fmt.Errorf("check unit %s state: %w", unitName, err)
 		}
@@ -2036,7 +2023,7 @@ func (c SystemdUnitController) applySystemdUnit(ctx context.Context, name, path,
 			}
 		}
 		if active || enabled {
-			if _, err := command(ctx, "systemctl", "disable", "--now", unitName); err != nil {
+			if _, err := runOutputCommandContext(ctx, "systemctl", "disable", "--now", unitName); err != nil {
 				return false, fmt.Errorf("disable unit %s: %w", unitName, err)
 			}
 			changed = true
@@ -2046,12 +2033,12 @@ func (c SystemdUnitController) applySystemdUnit(ctx context.Context, name, path,
 			return changed, err
 		}
 		changed = changed || removed
-		out, err := command(ctx, "systemctl", "show", "--property=NeedDaemonReload", "--value", unitName)
+		out, err := runOutputCommandContext(ctx, "systemctl", "show", "--property=NeedDaemonReload", "--value", unitName)
 		if err != nil {
 			return changed, fmt.Errorf("check unit %s reload state: %w", unitName, err)
 		}
 		if removed || strings.TrimSpace(string(out)) == "yes" {
-			if _, err := command(ctx, "systemctl", "daemon-reload"); err != nil {
+			if _, err := runOutputCommandContext(ctx, "systemctl", "daemon-reload"); err != nil {
 				return changed, err
 			}
 		}
@@ -2067,7 +2054,7 @@ func (c SystemdUnitController) applySystemdUnit(ctx context.Context, name, path,
 		return changed, nil
 	}
 	if !fileChanged {
-		out, err := command(ctx, "systemctl", "show", "--property=NeedDaemonReload", "--value", unitName)
+		out, err := runOutputCommandContext(ctx, "systemctl", "show", "--property=NeedDaemonReload", "--value", unitName)
 		if err != nil {
 			return changed, fmt.Errorf("check unit %s reload state: %w", unitName, err)
 		}
@@ -2075,27 +2062,27 @@ func (c SystemdUnitController) applySystemdUnit(ctx context.Context, name, path,
 		changed = changed || fileChanged
 	}
 	if fileChanged {
-		if _, err := command(ctx, "systemctl", "daemon-reload"); err != nil {
+		if _, err := runOutputCommandContext(ctx, "systemctl", "daemon-reload"); err != nil {
 			return changed, err
 		}
 	}
 	if api.BoolDefault(spec.Enabled, true) {
-		if fileChanged || !systemdUnitEnabled(ctx, command, unitName) {
-			if _, err := command(ctx, "systemctl", "unmask", unitName); err != nil {
+		if fileChanged || !systemdUnitEnabled(ctx, unitName) {
+			if _, err := runOutputCommandContext(ctx, "systemctl", "unmask", unitName); err != nil {
 				return changed, err
 			}
-			if _, err := command(ctx, "systemctl", "enable", unitName); err != nil {
+			if _, err := runOutputCommandContext(ctx, "systemctl", "enable", unitName); err != nil {
 				return changed, err
 			}
 		}
-	} else if systemdUnitEnabledOrActive(ctx, command, unitName) {
-		if _, err := command(ctx, "systemctl", "disable", "--now", unitName); err != nil {
+	} else if systemdUnitEnabledOrActive(ctx, unitName) {
+		if _, err := runOutputCommandContext(ctx, "systemctl", "disable", "--now", unitName); err != nil {
 			return changed, err
 		}
 	}
 	if api.BoolDefault(spec.Started, true) {
 		if unitName == "routerd.service" && fileChanged {
-			if err := scheduleRouterdServiceRestart(ctx, command); err != nil {
+			if err := scheduleRouterdServiceRestart(ctx); err != nil {
 				return changed, err
 			}
 			return true, nil
@@ -2109,12 +2096,12 @@ func (c SystemdUnitController) applySystemdUnit(ctx context.Context, name, path,
 		}
 		active := true
 		if !fileChanged {
-			if _, err := command(ctx, "systemctl", "is-active", "--quiet", unitName); err != nil {
+			if _, err := runOutputCommandContext(ctx, "systemctl", "is-active", "--quiet", unitName); err != nil {
 				active = false
 			}
 		}
 		if fileChanged || !active {
-			if _, err := command(ctx, "systemctl", "restart", unitName); err != nil {
+			if _, err := runOutputCommandContext(ctx, "systemctl", "restart", unitName); err != nil {
 				return changed, err
 			}
 			return true, nil
@@ -2123,7 +2110,7 @@ func (c SystemdUnitController) applySystemdUnit(ctx context.Context, name, path,
 	return changed, nil
 }
 
-func (c SystemdUnitController) applyLongLivedSystemdUnit(ctx context.Context, path, unitName string, spec api.SystemdUnitSpec, command outputCommandFunc) (bool, error) {
+func (c SystemdUnitController) applyLongLivedSystemdUnit(ctx context.Context, path, unitName string, spec api.SystemdUnitSpec) (bool, error) {
 	data := render.SystemdUnit(unitName, spec)
 	fileChanged, err := writeFileIfChanged(path, data, 0644, c.DryRun)
 	if err != nil {
@@ -2133,41 +2120,41 @@ func (c SystemdUnitController) applyLongLivedSystemdUnit(ctx context.Context, pa
 		return fileChanged, nil
 	}
 	if !fileChanged {
-		out, err := command(ctx, "systemctl", "show", "--property=NeedDaemonReload", "--value", unitName)
+		out, err := runOutputCommandContext(ctx, "systemctl", "show", "--property=NeedDaemonReload", "--value", unitName)
 		if err != nil {
 			return false, fmt.Errorf("check unit %s reload state: %w", unitName, err)
 		}
 		fileChanged = strings.TrimSpace(string(out)) == "yes"
 	}
 	if fileChanged {
-		if _, err := command(ctx, "systemctl", "daemon-reload"); err != nil {
+		if _, err := runOutputCommandContext(ctx, "systemctl", "daemon-reload"); err != nil {
 			return fileChanged, err
 		}
 	}
 	if api.BoolDefault(spec.Enabled, true) {
-		if fileChanged || !systemdUnitEnabled(ctx, command, unitName) {
-			if _, err := command(ctx, "systemctl", "unmask", unitName); err != nil {
+		if fileChanged || !systemdUnitEnabled(ctx, unitName) {
+			if _, err := runOutputCommandContext(ctx, "systemctl", "unmask", unitName); err != nil {
 				return true, err
 			}
-			if _, err := command(ctx, "systemctl", "enable", unitName); err != nil {
+			if _, err := runOutputCommandContext(ctx, "systemctl", "enable", unitName); err != nil {
 				return true, err
 			}
 		}
-	} else if systemdUnitEnabledOrActive(ctx, command, unitName) {
-		if _, err := command(ctx, "systemctl", "disable", "--now", unitName); err != nil {
+	} else if systemdUnitEnabledOrActive(ctx, unitName) {
+		if _, err := runOutputCommandContext(ctx, "systemctl", "disable", "--now", unitName); err != nil {
 			return true, err
 		}
 		return true, nil
 	}
 	if api.BoolDefault(spec.Started, true) {
-		if _, err := command(ctx, "systemctl", "is-active", "--quiet", unitName); err != nil {
-			if _, err := command(ctx, "systemctl", "start", unitName); err != nil {
+		if _, err := runOutputCommandContext(ctx, "systemctl", "is-active", "--quiet", unitName); err != nil {
+			if _, err := runOutputCommandContext(ctx, "systemctl", "start", unitName); err != nil {
 				return true, err
 			}
 			return true, nil
 		}
-		if !longLivedHelperSocketsPresent(ctx, unitName, command) {
-			if _, err := command(ctx, "systemctl", "restart", unitName); err != nil {
+		if !longLivedHelperSocketsPresent(ctx, unitName) {
+			if _, err := runOutputCommandContext(ctx, "systemctl", "restart", unitName); err != nil {
 				return true, err
 			}
 			return true, nil
@@ -2176,7 +2163,7 @@ func (c SystemdUnitController) applyLongLivedSystemdUnit(ctx context.Context, pa
 	return fileChanged, nil
 }
 
-func longLivedHelperSocketsPresent(ctx context.Context, unitName string, command outputCommandFunc) bool {
+func longLivedHelperSocketsPresent(ctx context.Context, unitName string) bool {
 	var sockets []string
 	switch unitName {
 	case render.BGPUnitName:
@@ -2185,7 +2172,7 @@ func longLivedHelperSocketsPresent(ctx context.Context, unitName string, command
 		return true
 	}
 	for _, socket := range sockets {
-		if _, err := command(ctx, "test", "-S", socket); err != nil {
+		if _, err := runOutputCommandContext(ctx, "test", "-S", socket); err != nil {
 			return false
 		}
 	}
@@ -2204,21 +2191,21 @@ func routerHasBGP(router *api.Router) bool {
 	return false
 }
 
-func systemdUnitEnabledOrActive(ctx context.Context, command outputCommandFunc, unitName string) bool {
-	if _, err := command(ctx, "systemctl", "is-active", "--quiet", unitName); err == nil {
+func systemdUnitEnabledOrActive(ctx context.Context, unitName string) bool {
+	if _, err := runOutputCommandContext(ctx, "systemctl", "is-active", "--quiet", unitName); err == nil {
 		return true
 	}
-	return systemdUnitEnabled(ctx, command, unitName)
+	return systemdUnitEnabled(ctx, unitName)
 }
 
-func systemdUnitEnabled(ctx context.Context, command outputCommandFunc, unitName string) bool {
-	_, err := command(ctx, "systemctl", "is-enabled", "--quiet", unitName)
+func systemdUnitEnabled(ctx context.Context, unitName string) bool {
+	_, err := runOutputCommandContext(ctx, "systemctl", "is-enabled", "--quiet", unitName)
 	return err == nil
 }
 
-func scheduleRouterdServiceRestart(ctx context.Context, command outputCommandFunc) error {
+func scheduleRouterdServiceRestart(ctx context.Context) error {
 	unitName := fmt.Sprintf("routerd-self-restart-%d-%d.service", os.Getpid(), time.Now().UnixNano())
-	_, err := command(ctx,
+	_, err := runOutputCommandContext(ctx,
 		"systemd-run",
 		"--unit", unitName,
 		"--description", "Restart routerd after managed unit update",
