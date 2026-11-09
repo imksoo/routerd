@@ -32,18 +32,10 @@ type gracefulStopTarget struct {
 type gracefulStopOptions struct {
 	Timeout          time.Duration
 	PollInterval     time.Duration
-	BGPPaths         mobilitycontroller.BGPPathClient
+	BGPPaths         *bgpdaemon.ControlClient
 	ProviderAction   provideractioncontroller.Controller
 	Logger           *eventlog.Logger
 	ControllerLogger *slog.Logger
-}
-
-// gracefulStopObservedPathClient is deliberately separate from
-// mobilitycontroller.BGPPathClient.  ListPaths is the local applied-path
-// journal, whereas graceful handoff must prove that a peer route is present
-// in this router's live RIB.
-type gracefulStopObservedPathClient interface {
-	ListObservedPaths(context.Context) ([]bgpdaemon.ObservedPath, error)
 }
 
 func runGracefulStopHandoff(ctx context.Context, router *api.Router, store *routerstate.SQLiteStore, opts gracefulStopOptions) error {
@@ -109,18 +101,14 @@ func runGracefulStopHandoff(ctx context.Context, router *api.Router, store *rout
 	return nil
 }
 
-func gracefulStopLiveRIB(ctx context.Context, bgp mobilitycontroller.BGPPathClient) (gracefulStopObservedPathClient, error) {
-	observed, ok := bgp.(gracefulStopObservedPathClient)
-	if !ok {
-		return nil, fmt.Errorf("graceful mobility stop requires live BGP RIB observation")
-	}
-	if _, err := observed.ListObservedPaths(ctx); err != nil {
+func gracefulStopLiveRIB(ctx context.Context, bgp *bgpdaemon.ControlClient) (*bgpdaemon.ControlClient, error) {
+	if _, err := bgp.ListObservedPaths(ctx); err != nil {
 		return nil, fmt.Errorf("probe live BGP RIB before graceful mobility stop: %w", err)
 	}
-	return observed, nil
+	return bgp, nil
 }
 
-func gracefulStopTargets(ctx context.Context, router *api.Router, bgp mobilitycontroller.BGPPathClient) ([]gracefulStopTarget, error) {
+func gracefulStopTargets(ctx context.Context, router *api.Router, bgp *bgpdaemon.ControlClient) ([]gracefulStopTarget, error) {
 	var targets []gracefulStopTarget
 	for _, res := range router.Spec.Resources {
 		if res.APIVersion != api.MobilityAPIVersion || res.Kind != "MobilityPool" {
@@ -218,7 +206,7 @@ func gracefulStopSuccessorCommunities(router *api.Router, spec api.MobilityPoolS
 	return successors, nil
 }
 
-func waitForGracefulStopTakeover(ctx context.Context, bgp gracefulStopObservedPathClient, targets []gracefulStopTarget, poll time.Duration) error {
+func waitForGracefulStopTakeover(ctx context.Context, bgp *bgpdaemon.ControlClient, targets []gracefulStopTarget, poll time.Duration) error {
 	for {
 		complete, err := gracefulStopTakeoverComplete(ctx, bgp, targets)
 		if err != nil {
@@ -237,7 +225,7 @@ func waitForGracefulStopTakeover(ctx context.Context, bgp gracefulStopObservedPa
 	}
 }
 
-func gracefulStopTakeoverComplete(ctx context.Context, bgp gracefulStopObservedPathClient, targets []gracefulStopTarget) (bool, error) {
+func gracefulStopTakeoverComplete(ctx context.Context, bgp *bgpdaemon.ControlClient, targets []gracefulStopTarget) (bool, error) {
 	paths, err := bgp.ListObservedPaths(ctx)
 	if err != nil {
 		return false, fmt.Errorf("list live BGP RIB paths for graceful stop takeover: %w", err)
@@ -314,7 +302,7 @@ func runGracefulStopHandoffExclusive(ctx context.Context, gate *sync.RWMutex, ha
 	return handoff(ctx)
 }
 
-func withdrawGracefulStopSelfPaths(ctx context.Context, bgp mobilitycontroller.BGPPathClient, targets []gracefulStopTarget) error {
+func withdrawGracefulStopSelfPaths(ctx context.Context, bgp *bgpdaemon.ControlClient, targets []gracefulStopTarget) error {
 	for _, target := range targets {
 		paths, err := bgp.ListPaths(ctx, target.Source)
 		if err != nil {

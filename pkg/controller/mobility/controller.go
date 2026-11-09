@@ -67,17 +67,11 @@ type mobilityEventRecorder interface {
 	RecordBusEvent(context.Context, daemonapi.DaemonEvent) (string, error)
 }
 
-type BGPPathClient interface {
-	ListPaths(ctx context.Context, source string) ([]bgpdaemon.AppliedPath, error)
-	UpsertPath(ctx context.Context, path bgpdaemon.AppliedPath) (bgpdaemon.AppliedPath, error)
-	DeletePath(ctx context.Context, path bgpdaemon.AppliedPath) error
-}
-
 type Controller struct {
 	Router   *api.Router
 	Bus      *bus.Bus
 	Store    Store
-	BGPPaths BGPPathClient
+	BGPPaths *bgpdaemon.ControlClient
 
 	// StartedAt is supplied by the Runner so the shared placement core receives
 	// one explicit process startup epoch rather than consulting package state.
