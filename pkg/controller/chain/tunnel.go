@@ -268,13 +268,11 @@ func (c TunnelInterfaceController) reconcileInterface(ctx context.Context, resou
 		}
 		applied = true
 	}
-	if desired.Address != "" || statusvalue.Field(previous, "address") != "" {
-		addressChanged, err := c.reconcileTunnelAddress(ctx, desired)
-		if err != nil {
-			return c.saveApplyError(resource, desired, err)
-		}
-		applied = applied || addressChanged
+	addressChanged, err := c.reconcileTunnelAddress(ctx, desired)
+	if err != nil {
+		return c.saveApplyError(resource, desired, err)
 	}
+	applied = applied || addressChanged
 	status = tunnelStatus(desired, c.DryRun, map[string]any{"phase": "Up"})
 	if platform.CurrentOS() == platform.OSFreeBSD && desired.Address != "" {
 		out, err := c.run(ctx, "ifconfig", desired.Name)
