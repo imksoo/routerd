@@ -4,6 +4,7 @@ package chain
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/imksoo/routerd/internal/statusvalue"
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/apply"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/hybrid"
@@ -69,6 +71,11 @@ func (c TunnelInterfaceController) Reconcile(ctx context.Context) error {
 	if targetOS == "" {
 		targetOS = platform.CurrentOS()
 	}
+	if targetOS == platform.OSLinux && !c.DryRun {
+		if err := c.cleanupExtraLinuxTunnels(ctx); err != nil {
+			return err
+		}
+	}
 	if targetOS == platform.OSLinux || targetOS == platform.OSFreeBSD {
 		if err := c.cleanupStaleResources(ctx); err != nil {
 			return err
@@ -92,6 +99,41 @@ func (c TunnelInterfaceController) Reconcile(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
+func (c TunnelInterfaceController) cleanupExtraLinuxTunnels(ctx context.Context) error {
+	retained, err := apply.ConfiguredWireGuardInterfaces(c.Router)
+	if err != nil {
+		return err
+	}
+	retained["tunl0"] = true
+	retained["gre0"] = true
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion == api.HybridAPIVersion && resource.Kind == "TunnelInterface" {
+			retained[resource.Metadata.Name] = true
+		}
+	}
+	out, err := c.run(ctx, "ip", "-j", "-d", "link", "show")
+	if err != nil {
+		return fmt.Errorf("list tunnel interfaces: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	var links []struct {
+		Name string `json:"ifname"`
+		Info struct {
+			Kind string `json:"info_kind"`
+		} `json:"linkinfo"`
+	}
+	if err := json.Unmarshal(out, &links); err != nil {
+		return fmt.Errorf("decode tunnel interfaces: %w", err)
+	}
+	for _, link := range links {
+		if (link.Info.Kind == "ipip" || link.Info.Kind == "gre") && link.Name != "" && !retained[link.Name] {
+			if err := c.deleteTunnelInterface(ctx, link.Name); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func (c TunnelInterfaceController) cleanupStaleResources(ctx context.Context) error {
 	lister, ok := c.Store.(routerstate.ObjectStatusLister)
 	if !ok {
@@ -102,6 +144,10 @@ func (c TunnelInterfaceController) cleanupStaleResources(ctx context.Context) er
 		return nil
 	}
 	statuses, err := lister.ListObjectStatuses()
+	if err != nil {
+		return err
+	}
+	retained, err := apply.ConfiguredWireGuardInterfaces(c.Router)
 	if err != nil {
 		return err
 	}
@@ -119,7 +165,7 @@ func (c TunnelInterfaceController) cleanupStaleResources(ctx context.Context) er
 			continue
 		}
 		ifname := firstNonEmpty(statusvalue.Field(item.Status, "ifname"), statusvalue.Field(item.Status, "interface"), item.Name)
-		if ifname != "" && !c.DryRun {
+		if ifname != "" && !retained[ifname] && !c.DryRun {
 			if err := c.deleteTunnelInterface(ctx, ifname); err != nil {
 				return err
 			}
