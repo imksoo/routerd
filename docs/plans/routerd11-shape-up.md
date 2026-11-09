@@ -30,6 +30,8 @@
 
 - homert03 の実設定と状態 DB に対する変更後・稼働版 `routerctl dynamic render -o json` は SHA-256 が一致した。待機系 daemon の差し替えは承認待ちであり、実行していない。
 
+- k8s-rt02 の実設定と動的状態から `routerctl dynamic render -o json` で得た設定全体も、変更後 CLI と稼働版の SHA-256 が一致した。
+
 ## 残件
 
 - FreeBSD で DHCPv6 client を supervisor を介さず `--lease-file` なしで手動起動すると、既定の lease パスと controller の読み取りパスが異なる。supervisor は正しいパスを渡す。実運用で手動起動が必要か未確認であり、調査・修正には別途承認を要する。
