@@ -146,7 +146,7 @@ func resourceLifecycleObjectStatus(status routerstate.ObjectStatus) bool {
 }
 
 func ObjectStatusID(status routerstate.ObjectStatus) string {
-	return OwnerKey(status.APIVersion, status.Kind, status.Name)
+	return ResourceKey(status.APIVersion, status.Kind, status.Name)
 }
 
 func legacyStatusAPIVersionForKind(kind string) string {

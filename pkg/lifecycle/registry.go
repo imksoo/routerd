@@ -3,7 +3,6 @@
 package lifecycle
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/imksoo/routerd/pkg/api"
@@ -36,38 +35,8 @@ type Declaration struct {
 	NoHostTeardownReason string
 }
 
-func OwnerKey(apiVersion, kind, name string) string {
+func ResourceKey(apiVersion, kind, name string) string {
 	return strings.TrimSpace(apiVersion) + "/" + strings.TrimSpace(kind) + "/" + strings.TrimSpace(name)
-}
-
-func SelfOwnerRef(apiVersion, kind, name string) api.OwnerRef {
-	return api.OwnerRef{APIVersion: strings.TrimSpace(apiVersion), Kind: strings.TrimSpace(kind), Name: strings.TrimSpace(name)}
-}
-
-func OwnerRefKey(ref api.OwnerRef) string {
-	return OwnerKey(ref.APIVersion, ref.Kind, ref.Name)
-}
-
-func OwnerRefStatusMap(ref api.OwnerRef) map[string]any {
-	out := map[string]any{
-		"kind": ref.Kind,
-		"name": ref.Name,
-	}
-	if strings.TrimSpace(ref.APIVersion) != "" {
-		out["apiVersion"] = ref.APIVersion
-	}
-	return out
-}
-
-func OwnerRefsStatusList(refs []api.OwnerRef) []any {
-	out := make([]any, 0, len(refs))
-	for _, ref := range refs {
-		if strings.TrimSpace(ref.Kind) == "" || strings.TrimSpace(ref.Name) == "" {
-			continue
-		}
-		out = append(out, OwnerRefStatusMap(ref))
-	}
-	return out
 }
 
 func DeclarationForResource(resource api.Resource) (Declaration, bool) {
@@ -94,13 +63,6 @@ func APIVersionForKind(kind string) string {
 	default:
 		return ""
 	}
-}
-
-func MustOwnerKey(apiVersion, kind, name string) (string, error) {
-	if strings.TrimSpace(apiVersion) == "" || strings.TrimSpace(kind) == "" || strings.TrimSpace(name) == "" {
-		return "", fmt.Errorf("owner key requires apiVersion, kind, and name")
-	}
-	return OwnerKey(apiVersion, kind, name), nil
 }
 
 func Lookup(apiVersion, kind string) (Declaration, bool) {

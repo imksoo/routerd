@@ -636,7 +636,7 @@ func (c IPv4RouteController) cleanupRemovedRoutes(ctx context.Context) error {
 	desired := map[string]bool{}
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.APIVersion == api.NetAPIVersion && resource.Kind == "IPv4Route" {
-			desired[lifecycle.OwnerKey(resource.APIVersion, resource.Kind, resource.Metadata.Name)] = true
+			desired[lifecycle.ResourceKey(resource.APIVersion, resource.Kind, resource.Metadata.Name)] = true
 		}
 	}
 	plan := lifecycle.PlanResourceTeardownGC(desired, statuses)

@@ -286,7 +286,7 @@ func (c SysctlController) cleanupRemovedSAMProxyARP(ctx context.Context, desired
 	for key := range desired {
 		name := strings.TrimPrefix(key, "Sysctl/")
 		if name != key && name != "" {
-			desiredStatusIDs[lifecycle.OwnerKey(api.SystemAPIVersion, "Sysctl", name)] = true
+			desiredStatusIDs[lifecycle.ResourceKey(api.SystemAPIVersion, "Sysctl", name)] = true
 		}
 	}
 	plan := lifecycle.PlanResourceTeardownGC(desiredStatusIDs, statuses)

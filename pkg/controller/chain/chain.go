@@ -4214,7 +4214,7 @@ func (c IPv4StaticAddressController) cleanupRemovedIPv4StaticAddresses(ctx conte
 	whenFalse := c.whenFalseIPv4StaticAddresses()
 	remaining := make([]routerstate.ObjectStatus, 0, len(statuses))
 	for _, status := range statuses {
-		ref := lifecycle.OwnerKey(status.APIVersion, status.Kind, status.Name)
+		ref := lifecycle.ResourceKey(status.APIVersion, status.Kind, status.Name)
 		if candidate, ok := whenFalse[ref]; ok && status.APIVersion == api.NetAPIVersion && status.Kind == "IPv4StaticAddress" {
 			if err := c.teardownWhenFalseIPv4StaticAddress(ctx, status, candidate); err != nil {
 				return err
@@ -4241,7 +4241,7 @@ func (c IPv4StaticAddressController) cleanupRemovedIPv4StaticAddresses(ctx conte
 			apiVersion = resourcequery.APIVersionForKind(resource.Kind)
 		}
 		if apiVersion == api.NetAPIVersion && resource.Kind == "IPv4StaticAddress" {
-			desired[lifecycle.OwnerKey(apiVersion, resource.Kind, resource.Metadata.Name)] = true
+			desired[lifecycle.ResourceKey(apiVersion, resource.Kind, resource.Metadata.Name)] = true
 		}
 	}
 	plan := lifecycle.PlanResourceTeardownGC(desired, remaining)
@@ -4287,7 +4287,7 @@ func (c IPv4StaticAddressController) whenFalseIPv4StaticAddresses() map[string]w
 		if err != nil {
 			continue
 		}
-		out[lifecycle.OwnerKey(api.NetAPIVersion, resource.Kind, resource.Metadata.Name)] = whenFalseIPv4StaticAddress{resource: resource, spec: spec}
+		out[lifecycle.ResourceKey(api.NetAPIVersion, resource.Kind, resource.Metadata.Name)] = whenFalseIPv4StaticAddress{resource: resource, spec: spec}
 	}
 	return out
 }
