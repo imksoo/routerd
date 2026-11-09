@@ -43,18 +43,18 @@ type Controller struct {
 }
 
 type CandidateState struct {
-	Name          string
-	Source        string
-	Device        string
-	Gateway       string
-	GatewaySource string
-	RouteTable    int
-	Metric        int
-	Ready         bool
-	Disabled      bool
-	Weight        int
-	Priority      int
-	Index         int
+	Device        string `json:"device"`
+	Disabled      bool   `json:"disabled"`
+	Gateway       string `json:"gateway"`
+	GatewaySource string `json:"gatewaySource"`
+	Metric        int    `json:"metric"`
+	Name          string `json:"name"`
+	Ready         bool   `json:"ready"`
+	RouteTable    int    `json:"routeTable"`
+	Source        string `json:"source"`
+	Weight        int    `json:"weight"`
+	Priority      int    `json:"-"`
+	Index         int    `json:"-"`
 }
 
 func (c Controller) Reconcile(ctx context.Context) error {
@@ -89,7 +89,7 @@ func (c Controller) reconcilePolicy(ctx context.Context, resource api.Resource, 
 	candidates := c.candidateStates(spec)
 	selected, ok := SelectHighestWeightReady(candidates)
 	if !ok {
-		status := map[string]any{"phase": PhasePending, "reason": ReasonNoReadyCandidates, "candidates": statusCandidates(candidates)}
+		status := map[string]any{"phase": PhasePending, "reason": ReasonNoReadyCandidates, "candidates": candidates}
 		return c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", resource.Metadata.Name, status)
 	}
 
@@ -127,7 +127,7 @@ func (c Controller) reconcilePolicy(ctx context.Context, resource api.Resource, 
 		"hysteresis":            hysteresis.String(),
 		"role":                  "advisory",
 		"advisory":              true,
-		"candidates":            statusCandidates(candidates),
+		"candidates":            candidates,
 	}
 	if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", resource.Metadata.Name, status); err != nil {
 		return err
@@ -397,25 +397,6 @@ func candidateByName(candidates []CandidateState, name string) (CandidateState, 
 		}
 	}
 	return CandidateState{}, false
-}
-
-func statusCandidates(candidates []CandidateState) []map[string]any {
-	out := make([]map[string]any, 0, len(candidates))
-	for _, candidate := range candidates {
-		out = append(out, map[string]any{
-			"name":          candidate.Name,
-			"source":        candidate.Source,
-			"device":        candidate.Device,
-			"gateway":       candidate.Gateway,
-			"gatewaySource": candidate.GatewaySource,
-			"routeTable":    candidate.RouteTable,
-			"metric":        candidate.Metric,
-			"weight":        candidate.Weight,
-			"ready":         candidate.Ready,
-			"disabled":      candidate.Disabled,
-		})
-	}
-	return out
 }
 
 func destinationCIDRs(spec api.EgressRoutePolicySpec) []string {
