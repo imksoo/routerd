@@ -14,6 +14,7 @@ Options:
   --skip-checks         Skip local test/schema/example/website checks.
   --prepare-only        Create the release commit without a tag or push.
   --no-push             Create the commit and tag locally but do not push.
+  --message-file FILE   Use a reviewed commit message from FILE.
   --dry-run             Print the computed release tag and exit.
   -h, --help            Show this help.
 
@@ -29,6 +30,7 @@ skip_checks=0
 prepare_only=0
 no_push=0
 dry_run=0
+message_file=
 
 while [ "$#" -gt 0 ]; do
 	case "$1" in
@@ -50,6 +52,11 @@ while [ "$#" -gt 0 ]; do
 			;;
 		--no-push)
 			no_push=1
+			;;
+		--message-file)
+			shift
+			[ "$#" -gt 0 ] || { echo "--message-file requires a path" >&2; exit 2; }
+			message_file=$1
 			;;
 		--dry-run)
 			dry_run=1
@@ -93,6 +100,11 @@ release_tag="v${release_date}.${release_time}"
 if [ "$dry_run" -eq 1 ]; then
 	printf '%s\n' "$release_tag"
 	exit 0
+fi
+
+if [ -n "$message_file" ] && [ ! -f "$message_file" ]; then
+	echo "commit message file not found: $message_file" >&2
+	exit 2
 fi
 
 if git rev-parse -q --verify "refs/tags/${release_tag}" >/dev/null; then
@@ -224,7 +236,12 @@ if git diff --cached --quiet; then
 	exit 1
 fi
 
-git commit -m "Release ${release_tag}"
+git diff --cached --stat
+if [ -n "$message_file" ]; then
+	git commit -F "$message_file"
+else
+	git commit --edit -m "Release ${release_tag}"
+fi
 
 if [ "$prepare_only" -eq 1 ]; then
 	printf 'prepared release %s\n' "$release_tag"

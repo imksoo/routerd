@@ -25,6 +25,13 @@ to the new release tag while leaving a fresh empty `Unreleased` heading,
 regenerates the checked-in schemas, commits the change, creates the tag, and
 pushes both `main` and the tag.
 
+Before committing, the helper shows the staged summary and opens the Git editor.
+Review the staged diff and add the `Rule-Check`, `Scope-Check`, `Validation`,
+and `Cleanup` explanations required by [AGENTS.md](../../AGENTS.md). For a
+non-interactive release, `--message-file FILE` supplies a complete, reviewed
+commit message; keep that file outside the working tree and use an absolute path. The commit hook validates it; the helper does not create the
+explanations. Do not release without the owner's authorization.
+
 For example, a release started at 15:30 UTC uses the `.1530` suffix.
 
 Useful options:

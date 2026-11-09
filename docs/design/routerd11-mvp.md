@@ -63,8 +63,8 @@ routerctl importを追加する。既存ホストを読んで、1.1で使用す�
 ~~~sh
 routerctl import --interface enp1s0 --address 192.0.2.1/24 > imported.yaml
 # imported.yamlを既存の完全なrouter.yamlへ統合してから適用する
-routerctl plan -f router.yaml
-routerctl apply -f router.yaml
+routerctl plan -f router.yaml --replace
+routerctl apply -f router.yaml --replace
 ~~~
 
 NICを指定した部分取り込みを、マシン全体の完成した設定としてそのままapplyしない。既存のサービス・動的機能・他のNIC等を含む設定へ統合する。初回導入でも、管理するマシン全体の必要な設定を揃えてから全面管理へ移す。
