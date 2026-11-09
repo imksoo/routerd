@@ -125,8 +125,20 @@ func (c TunnelInterfaceController) cleanupStaleResources(ctx context.Context) er
 		}
 		ifname := firstNonEmpty(statusvalue.Field(item.Status, "ifname"), statusvalue.Field(item.Status, "interface"), item.Name)
 		if ifname != "" && !retained[ifname] && !c.DryRun {
-			if err := c.deleteTunnelInterface(ctx, ifname); err != nil {
+			observed, err := c.observeTunnel(ctx, ifname)
+			if err != nil {
 				return err
+			}
+			if observed.Exists && (observed.Mode == "" || observed.Mode != statusvalue.Field(item.Status, "mode")) {
+				if c.Logger != nil {
+					c.Logger.Warn("tunnel interface has a different type; cleanup requires review", "interface", ifname)
+				}
+				continue
+			}
+			if observed.Exists {
+				if err := c.deleteTunnelInterface(ctx, ifname); err != nil {
+					return err
+				}
 			}
 		}
 		if listener, ok := fouListenerFromStatus(item.Status); ok && !c.DryRun {
