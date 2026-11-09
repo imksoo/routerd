@@ -26,7 +26,7 @@ func rejectFreeBSDNonLocalBind(_, address string, _ syscall.RawConn) error {
 	if host == "" || ip == nil || ip.IsUnspecified() {
 		return nil
 	}
-	addrs, err := mustInterfaceAddrs()
+	addrs, err := net.InterfaceAddrs()
 	if err != nil {
 		return fmt.Errorf("list FreeBSD interface addresses: %w", err)
 	}
@@ -38,5 +38,3 @@ func rejectFreeBSDNonLocalBind(_, address string, _ syscall.RawConn) error {
 	}
 	return fmt.Errorf("FreeBSD does not support Linux IP_FREEBIND; assign listener address %s before starting the resolver", host)
 }
-
-var mustInterfaceAddrs = net.InterfaceAddrs
