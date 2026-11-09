@@ -4105,8 +4105,7 @@ func (c IPv4StaticAddressController) Reconcile(ctx context.Context) error {
 			"address":   spec.Address,
 			"dryRun":    c.DryRun,
 		}
-		devicePresentFn := interfaceDevicePresent
-		if !c.DryRun && !devicePresentFn(ctx, ifname) {
+		if !c.DryRun && !interfaceDevicePresent(ctx, ifname) {
 			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", resource.Metadata.Name, map[string]any{
 				"phase":     "Pending",
 				"reason":    "InterfaceNotPresent",
@@ -4119,8 +4118,8 @@ func (c IPv4StaticAddressController) Reconcile(ctx context.Context) error {
 			}
 			continue
 		}
-		changed := statusChanged(c.Store.ObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", resource.Metadata.Name), status)
 		previous := c.Store.ObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", resource.Metadata.Name)
+		changed := statusChanged(previous, status)
 		addressPresent := true
 		if !c.DryRun {
 			addressPresent, err = ipv4AddressPresent(ctx, ifname, spec.Address)
