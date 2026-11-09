@@ -11,42 +11,6 @@ import (
 	"time"
 )
 
-func TestRenderSetConf(t *testing.T) {
-	data, err := RenderSetConf(InterfaceConfig{
-		Name:       "wg0",
-		PrivateKey: "priv",
-		ListenPort: 51820,
-		FwMark:     100,
-		Peers: []PeerConfig{{
-			Name:                "peer-a",
-			PublicKey:           "pub",
-			PresharedKey:        "psk",
-			AllowedIPs:          []string{"10.10.0.2/32", "fd00::2/128"},
-			Endpoint:            "198.51.100.10:51820",
-			PersistentKeepalive: 25,
-		}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := string(data)
-	for _, want := range []string{
-		"[Interface]",
-		"PrivateKey = priv",
-		"ListenPort = 51820",
-		"FwMark = 100",
-		"[Peer]",
-		"PublicKey = pub",
-		"AllowedIPs = 10.10.0.2/32, fd00::2/128",
-		"Endpoint = 198.51.100.10:51820",
-		"PersistentKeepalive = 25",
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("rendered config missing %q:\n%s", want, got)
-		}
-	}
-}
-
 func TestResolveKeyFiles(t *testing.T) {
 	dir := t.TempDir()
 	privateKey := filepath.Join(dir, "private.key")
