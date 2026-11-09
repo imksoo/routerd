@@ -437,8 +437,11 @@ func (c IPv4StaticAddressController) applyMobilityStaticAddress(ctx context.Cont
 	if !devicePresent(ctx, address.Interface) {
 		return mobilityAppliedIPv4Address{}, fmt.Errorf("device %q is not ready", address.Interface)
 	}
-	addressPresent := ipv4AddressPresent
-	if addressPresent(ctx, address.Interface, address.Address) {
+	present, err := ipv4AddressPresent(ctx, address.Interface, address.Address)
+	if err != nil {
+		return mobilityAppliedIPv4Address{}, err
+	}
+	if present {
 		return applied, nil
 	}
 	command := runCommandContext
@@ -453,8 +456,11 @@ func (c IPv4StaticAddressController) removeMobilityStaticAddress(ctx context.Con
 	if c.DryRun {
 		return nil
 	}
-	addressPresent := ipv4AddressPresent
-	if !addressPresent(ctx, address.Interface, address.Address) {
+	present, err := ipv4AddressPresent(ctx, address.Interface, address.Address)
+	if err != nil {
+		return err
+	}
+	if !present {
 		return nil
 	}
 	command := runCommandContext

@@ -4280,8 +4280,10 @@ func (c IPv4StaticAddressController) Reconcile(ctx context.Context) error {
 		previous := c.Store.ObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", resource.Metadata.Name)
 		addressPresent := true
 		if !c.DryRun {
-			addressPresentFn := ipv4AddressPresent
-			addressPresent = addressPresentFn(ctx, ifname, spec.Address)
+			addressPresent, err = ipv4AddressPresent(ctx, ifname, spec.Address)
+			if err != nil {
+				return fmt.Errorf("observe IPv4StaticAddress %s: %w", resource.Metadata.Name, err)
+			}
 		}
 		if !c.DryRun && (changed || !addressPresent) {
 			command := runCommandContext
@@ -4446,8 +4448,11 @@ func (c IPv4StaticAddressController) teardownWhenFalseIPv4StaticAddress(ctx cont
 	}
 	removedAddress := false
 	if !c.DryRun && ifname != "" && address != "" && !c.ipv4AddressDesiredByAnother(object.Name, ifname, address) {
-		addressPresentFn := ipv4AddressPresent
-		if addressPresentFn(ctx, ifname, address) {
+		present, err := ipv4AddressPresent(ctx, ifname, address)
+		if err != nil {
+			return fmt.Errorf("observe when-false IPv4StaticAddress %s: %w", object.Name, err)
+		}
+		if present {
 			command := runCommandContext
 			name, args := ipv4StaticAddressDeleteCommand(platform.CurrentOS(), ifname, address)
 			if err := command(ctx, name, args...); err != nil {
@@ -4487,8 +4492,11 @@ func (c IPv4StaticAddressController) teardownRemovedIPv4StaticAddress(ctx contex
 		ifname := cleanStatusString(status.Status["ifname"])
 		address := cleanStatusString(status.Status["address"])
 		if ifname != "" && address != "" && !c.ipv4AddressDesiredByAnother(status.Name, ifname, address) {
-			addressPresentFn := ipv4AddressPresent
-			if addressPresentFn(ctx, ifname, address) {
+			present, err := ipv4AddressPresent(ctx, ifname, address)
+			if err != nil {
+				return fmt.Errorf("observe removed IPv4StaticAddress %s: %w", status.Name, err)
+			}
+			if present {
 				command := runCommandContext
 				name, args := ipv4StaticAddressDeleteCommand(platform.CurrentOS(), ifname, address)
 				if err := command(ctx, name, args...); err != nil {
@@ -4535,8 +4543,11 @@ func (c IPv4StaticAddressController) cleanupPreviousIPv4StaticAddress(ctx contex
 	if c.ipv4AddressDesiredByAnother(resourceName, previousIfName, previousAddress) {
 		return nil
 	}
-	addressPresentFn := ipv4AddressPresent
-	if !addressPresentFn(ctx, previousIfName, previousAddress) {
+	present, err := ipv4AddressPresent(ctx, previousIfName, previousAddress)
+	if err != nil {
+		return err
+	}
+	if !present {
 		return nil
 	}
 	name, args := ipv4StaticAddressDeleteCommand(platform.CurrentOS(), previousIfName, previousAddress)
@@ -4622,19 +4633,36 @@ func interfaceDevicePresent(ctx context.Context, ifname string) bool {
 	return exec.CommandContext(ctx, "ip", "link", "show", "dev", ifname).Run() == nil
 }
 
-func ipv4AddressPresent(ctx context.Context, ifname, address string) bool {
-	if platform.CurrentOS() == platform.OSFreeBSD {
-		out, err := exec.CommandContext(ctx, "ifconfig", ifname).Output()
-		if err != nil {
-			return false
-		}
-		return ifconfigHasIPv4Address(out, address)
+func ipv4AddressPresent(ctx context.Context, ifname, address string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
 	}
-	out, err := exec.CommandContext(ctx, "ip", "-4", "-o", "addr", "show", "dev", ifname).Output()
+	interfaces, err := net.Interfaces()
 	if err != nil {
-		return false
+		return false, fmt.Errorf("list interfaces: %w", err)
 	}
-	return linuxIPv4AddressPresent(out, address)
+	found := false
+	for _, iface := range interfaces {
+		if iface.Name == ifname {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return false, nil
+	}
+	name, args := "ip", []string{"-4", "-o", "addr", "show", "dev", ifname}
+	if platform.CurrentOS() == platform.OSFreeBSD {
+		name, args = "ifconfig", []string{ifname}
+	}
+	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
+	if err != nil {
+		return false, fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+	}
+	if platform.CurrentOS() == platform.OSFreeBSD {
+		return ifconfigHasIPv4Address(out, address), nil
+	}
+	return linuxIPv4AddressPresent(out, address), nil
 }
 
 // linuxIPv4AddressPresent requires the address and prefix length to match.
