@@ -44,7 +44,7 @@ type Snapshot struct {
 }
 
 func (c *Client) Snapshot() Snapshot {
-	now := c.now()
+	now := time.Now().UTC()
 	s := Snapshot{
 		Resource:   c.Config.Resource,
 		Interface:  c.Config.Interface,
@@ -87,7 +87,7 @@ func (c *Client) Snapshot() Snapshot {
 }
 
 func (c *Client) Restore(snapshot Snapshot) {
-	now := c.now()
+	now := time.Now().UTC()
 	if snapshotCarriesUsableLease(snapshot.State) && !snapshotMatchesConfig(snapshot, c.Config, now) {
 		c.State = StateIdle
 		c.Lease = Lease{}

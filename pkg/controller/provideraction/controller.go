@@ -30,7 +30,6 @@ type Controller struct {
 	Router *api.Router
 	Bus    *bus.Bus
 	Store  Store
-	Now    func() time.Time
 	DryRun bool
 	Logger *slog.Logger
 }
@@ -39,7 +38,7 @@ func (c Controller) Reconcile(ctx context.Context) error {
 	if c.Store == nil {
 		return nil
 	}
-	now := c.now()
+	now := time.Now().UTC()
 	policy, plugins, err := enginepkg.PolicyAndPlugins(c.Router)
 	if err != nil {
 		return err
@@ -112,13 +111,6 @@ func providerCaptureAction(action string) bool {
 	default:
 		return false
 	}
-}
-
-func (c Controller) now() time.Time {
-	if c.Now != nil {
-		return c.Now().UTC()
-	}
-	return time.Now().UTC()
 }
 
 func (c Controller) log(msg string, args ...any) {

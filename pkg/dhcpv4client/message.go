@@ -64,7 +64,6 @@ type Config struct {
 	RequestedAddress string
 	ClassID          string
 	ClientID         string
-	Now              func() time.Time
 }
 
 type Lease struct {

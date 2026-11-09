@@ -69,26 +69,14 @@ type Store interface {
 	DataStore
 }
 
-type triggerTimer interface {
-	Reset(time.Duration) bool
-	Stop() bool
-}
-
-type triggerTimerFactory func(time.Duration, func()) triggerTimer
-
 // Controller reconciles EventSubscription resources. See package doc.
 type Controller struct {
-	Router      *api.Router
-	Bus         *bus.Bus
-	Store       Store
-	DryRun      bool
-	RuntimeDir  string
-	StateDir    string
-	Now         func() time.Time
-	MaxAttempts int
-	NewTimer    triggerTimerFactory
-	AfterFunc   func(context.Context, func()) func() bool
-
+	Router     *api.Router
+	Bus        *bus.Bus
+	Store      Store
+	DryRun     bool
+	RuntimeDir string
+	StateDir   string
 	mu         sync.Mutex
 	schedules  map[string]*subscriptionSchedule
 	processing map[string]bool
@@ -106,29 +94,8 @@ type subscriptionSchedule struct {
 	events   map[string]routerstate.EventRecord
 	ctx      context.Context
 	bytes    int
-	timer    triggerTimer
+	timer    *time.Timer
 	stop     func() bool
-}
-
-func (c *Controller) now() time.Time {
-	if c.Now != nil {
-		return c.Now().UTC()
-	}
-	return time.Now().UTC()
-}
-
-func (c *Controller) maxAttempts() int {
-	if c.MaxAttempts > 0 {
-		return c.MaxAttempts
-	}
-	return defaultMaxAttempts
-}
-
-func (c *Controller) newTimer(d time.Duration, fn func()) triggerTimer {
-	if c.NewTimer != nil {
-		return c.NewTimer(d, fn)
-	}
-	return time.AfterFunc(d, fn)
 }
 
 // Reconcile processes every EventSubscription once. With no EventSubscription it
@@ -168,7 +135,7 @@ func (c *Controller) reconcileSubscription(ctx context.Context, resource api.Res
 		return nil
 	}
 
-	now := c.now()
+	now := time.Now().UTC()
 	events, err := c.Store.ListFederationEvents(spec.GroupRef, false, now.Unix())
 	if err != nil {
 		return fmt.Errorf("list federation events for %q: %w", subName, err)
@@ -384,11 +351,7 @@ func (c *Controller) deferBatch(ctx context.Context, resource api.Resource, spec
 			ctx:      ctx,
 		}
 		c.schedules[subKey] = sched
-		afterFunc := context.AfterFunc
-		if c.AfterFunc != nil {
-			afterFunc = c.AfterFunc
-		}
-		sched.stop = afterFunc(ctx, func() {
+		sched.stop = context.AfterFunc(ctx, func() {
 			c.mu.Lock()
 			defer c.mu.Unlock()
 			current := c.schedules[subKey]
@@ -429,7 +392,7 @@ func (c *Controller) deferBatch(ctx context.Context, resource api.Resource, spec
 			delay = 0
 		}
 		if sched.timer == nil {
-			sched.timer = c.newTimer(delay, func() {
+			sched.timer = time.AfterFunc(delay, func() {
 				c.fireScheduled(subKey)
 			})
 		} else {
@@ -482,7 +445,7 @@ func (c *Controller) fireScheduled(subKey string) {
 		c.finishProcessing(subKey)
 		return
 	}
-	if err := c.processBatch(sched.ctx, resource, spec, pluginSpec, batch, c.now()); err != nil {
+	if err := c.processBatch(sched.ctx, resource, spec, pluginSpec, batch, time.Now().UTC()); err != nil {
 		c.saveStatus(resource.Metadata.Name, "Degraded", err.Error(), len(batch))
 	}
 	c.finishProcessing(subKey)
@@ -524,7 +487,7 @@ func coalesceDelay(now, firstAt time.Time, batchWindow, debounce time.Duration) 
 
 // eligible reports whether an event should be processed this tick: new events,
 // pending events, and failed events with retries remaining are eligible;
-// succeeded events and failed events that have exhausted MaxAttempts are not.
+// succeeded events and failed events that have exhausted the retry limit are not.
 func (c *Controller) eligible(subscription, eventID string) (bool, error) {
 	status, attempts, found, err := c.Store.SubscriptionRunStatus(subscription, eventID)
 	if err != nil {
@@ -538,7 +501,7 @@ func (c *Controller) eligible(subscription, eventID string) (bool, error) {
 		return false, nil
 	case "failed":
 		// Give up once attempts have reached the cap.
-		return attempts < c.maxAttempts(), nil
+		return attempts < defaultMaxAttempts, nil
 	default:
 		// pending: a prior tick recorded a start but never marked a result
 		// (e.g. crash). Re-process.
@@ -563,7 +526,7 @@ func (c *Controller) completeRun(runID int64, outcome routerplugin.RunOutcome, s
 	if runError == "" {
 		runError = outcome.Error
 	}
-	_ = c.Store.CompletePluginRun(runID, c.now(), exitCode, status, outcome.StdoutDigest, outcome.Stderr, runError)
+	_ = c.Store.CompletePluginRun(runID, time.Now().UTC(), exitCode, status, outcome.StdoutDigest, outcome.Stderr, runError)
 }
 
 func (c *Controller) findPlugin(name string) (api.PluginSpec, bool) {
@@ -589,7 +552,7 @@ func (c *Controller) saveStatus(subName, phase, message string, matched int) {
 	status := map[string]any{
 		"phase":     phase,
 		"matched":   matched,
-		"updatedAt": c.now().Format(time.RFC3339Nano),
+		"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	if message != "" {
 		status["message"] = message

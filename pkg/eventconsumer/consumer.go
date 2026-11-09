@@ -63,10 +63,6 @@ func Drain(ctx context.Context, store Store, consumer string, process func(conte
 // Backoff suppresses drain attempts after a consumer failure. It is intended
 // to be owned by one consumer loop.
 type Backoff struct {
-	Initial time.Duration
-	Max     time.Duration
-	Now     func() time.Time
-
 	failures int
 	retryAt  time.Time
 }
@@ -75,7 +71,7 @@ func (b *Backoff) Ready() bool {
 	if b.retryAt.IsZero() {
 		return true
 	}
-	return !b.now().Before(b.retryAt)
+	return !time.Now().Before(b.retryAt)
 }
 
 func (b *Backoff) Success() {
@@ -84,14 +80,8 @@ func (b *Backoff) Success() {
 }
 
 func (b *Backoff) Failure() {
-	initial := b.Initial
-	if initial <= 0 {
-		initial = time.Second
-	}
-	maximum := b.Max
-	if maximum <= 0 {
-		maximum = time.Minute
-	}
+	initial := time.Second
+	maximum := time.Minute
 	delay := initial
 	for i := 0; i < b.failures && delay < maximum; i++ {
 		if delay > maximum/2 {
@@ -104,14 +94,7 @@ func (b *Backoff) Failure() {
 		delay = maximum
 	}
 	b.failures++
-	b.retryAt = b.now().Add(delay)
-}
-
-func (b *Backoff) now() time.Time {
-	if b.Now != nil {
-		return b.Now()
-	}
-	return time.Now()
+	b.retryAt = time.Now().Add(delay)
 }
 
 func Event(stored routerstate.StoredEvent) daemonapi.DaemonEvent {

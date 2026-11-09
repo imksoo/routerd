@@ -6,7 +6,6 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
@@ -42,31 +41,5 @@ func TestSQLiteInitialCursorUsesCurrentMaxID(t *testing.T) {
 	}
 	if cursor != 2 {
 		t.Fatalf("initial cursor = %d, want MAX(id)=2", cursor)
-	}
-}
-
-func TestBackoffSuppressesRetriesAndCapsDelay(t *testing.T) {
-	now := time.Unix(100, 0)
-	backoff := Backoff{
-		Initial: time.Second,
-		Max:     4 * time.Second,
-		Now:     func() time.Time { return now },
-	}
-	for _, delay := range []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 4 * time.Second} {
-		if !backoff.Ready() {
-			t.Fatal("backoff was not ready before failure")
-		}
-		backoff.Failure()
-		if backoff.Ready() {
-			t.Fatal("backoff allowed an immediate retry")
-		}
-		now = now.Add(delay)
-		if !backoff.Ready() {
-			t.Fatalf("backoff was not ready after %s", delay)
-		}
-	}
-	backoff.Success()
-	if !backoff.Ready() {
-		t.Fatal("successful drain did not reset backoff")
 	}
 }

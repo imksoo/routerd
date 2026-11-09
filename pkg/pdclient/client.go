@@ -35,14 +35,11 @@ const (
 )
 
 type Config struct {
-	Resource    string
-	Interface   string
-	ClientDUID  []byte
-	IAID        uint32
-	WantPrefix  int
-	Now         func() time.Time
-	Transaction func() (uint32, error)
-	Random      func() float64
+	Resource   string
+	Interface  string
+	ClientDUID []byte
+	IAID       uint32
+	WantPrefix int
 }
 
 type Lease struct {
@@ -139,7 +136,7 @@ func (c *Client) Tick(ctx context.Context) error {
 }
 
 func (c *Client) TickWithMargin(ctx context.Context, renewMargin, rebindMargin time.Duration) error {
-	now := c.now()
+	now := time.Now().UTC()
 	c.prunePreviousPrefixes(now)
 	if c.State == StateSoliciting && !c.solicitRetryAt.IsZero() && !now.Before(c.solicitRetryAt) {
 		return c.retransmitSolicit(ctx, now)
@@ -217,7 +214,7 @@ func (c *Client) InfoRequest(ctx context.Context) error {
 	if c.Transport == nil {
 		return fmt.Errorf("transport is required")
 	}
-	xid, err := c.transaction()
+	xid, err := transaction()
 	if err != nil {
 		return err
 	}
@@ -296,12 +293,12 @@ func (c *Client) acceptInformation(msg Message) {
 		DNSServers:   append([]netip.Addr(nil), msg.DNSServers...),
 		SNTPServers:  append([]netip.Addr(nil), msg.SNTPServers...),
 		DomainSearch: append([]string(nil), msg.DomainSearch...),
-		UpdatedAt:    c.now(),
+		UpdatedAt:    time.Now().UTC(),
 	}
 }
 
 func (c *Client) acceptReply(msg Message) {
-	now := c.now()
+	now := time.Now().UTC()
 	c.rememberPreviousPrefix(msg.Prefix, now)
 	t1 := seconds(msg.T1)
 	t2 := seconds(msg.T2)
@@ -368,7 +365,7 @@ func (c *Client) send(ctx context.Context, next State, msg Message) error {
 	if c.Transport == nil {
 		return fmt.Errorf("transport is required")
 	}
-	xid, err := c.transaction()
+	xid, err := transaction()
 	if err != nil {
 		return err
 	}
@@ -396,13 +393,13 @@ func (c *Client) send(ctx context.Context, next State, msg Message) error {
 	c.lastMessage = msg
 	if next == StateSoliciting {
 		c.solicitRetryTimeout = c.nextSolicitRetryTimeout(0)
-		c.solicitRetryAt = c.now().Add(c.solicitRetryTimeout)
+		c.solicitRetryAt = time.Now().UTC().Add(c.solicitRetryTimeout)
 	} else {
 		c.clearSolicitRetry()
 	}
 	if next == StateRenewing || next == StateRebinding {
 		c.leaseRetryTimeout = c.nextLeaseRetryTimeout(next, 0)
-		c.leaseRetryAt = c.now().Add(c.leaseRetryTimeout)
+		c.leaseRetryAt = time.Now().UTC().Add(c.leaseRetryTimeout)
 	} else {
 		c.clearLeaseRetry()
 	}
@@ -479,7 +476,7 @@ func (c *Client) nextSolicitRetryTimeout(previous time.Duration) time.Duration {
 }
 
 func (c *Client) nextExchangeRetryTimeout(previous, initial, maximum time.Duration, strictlyAboveInitial bool) time.Duration {
-	random := c.random()
+	random := random()
 	if previous <= 0 {
 		if strictlyAboveInitial {
 			// RFC 8415 requires the first Solicit RT to be strictly greater than
@@ -496,17 +493,7 @@ func (c *Client) nextExchangeRetryTimeout(previous, initial, maximum time.Durati
 	return next
 }
 
-func (c *Client) now() time.Time {
-	if c.Config.Now != nil {
-		return c.Config.Now().UTC()
-	}
-	return time.Now().UTC()
-}
-
-func (c *Client) transaction() (uint32, error) {
-	if c.Config.Transaction != nil {
-		return c.Config.Transaction()
-	}
+func transaction() (uint32, error) {
 	var raw [3]byte
 	if _, err := rand.Read(raw[:]); err != nil {
 		return 0, err
@@ -514,18 +501,7 @@ func (c *Client) transaction() (uint32, error) {
 	return uint32(raw[0])<<16 | uint32(raw[1])<<8 | uint32(raw[2]), nil
 }
 
-func (c *Client) random() float64 {
-	if c.Config.Random != nil {
-		value := c.Config.Random()
-		switch {
-		case value < 0:
-			return 0
-		case value >= 1:
-			return 1
-		default:
-			return value
-		}
-	}
+func random() float64 {
 	var raw [8]byte
 	if _, err := rand.Read(raw[:]); err != nil {
 		return 0.5
