@@ -468,10 +468,6 @@ func (c VXLANTunnelController) reconcileOne(ctx context.Context, resource api.Re
 			if _, err := c.command(ctx, "ip", "link", "set", "dev", cfg.IfName, "master", cfg.Bridge); err != nil {
 				return err
 			}
-		} else if strings.Contains(string(observed), " master ") {
-			if _, err := c.command(ctx, "ip", "link", "set", "dev", cfg.IfName, "nomaster"); err != nil {
-				return err
-			}
 		}
 	}
 	if c.gateState(resource) != vxlanGateEnabled || (guarded && !c.revisionStillCurrent(resource, gateRevision)) {
@@ -786,7 +782,7 @@ func vxlanDetailsMatch(observed string, cfg vxlan.Config) bool {
 	if cfg.Bridge != "" {
 		return strings.Contains(observed, "master "+cfg.Bridge)
 	}
-	return !strings.Contains(observed, " master ")
+	return true
 }
 
 func vxlanLinkFlag(observed, wanted string) bool {
