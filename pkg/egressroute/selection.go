@@ -20,7 +20,6 @@ import (
 
 const (
 	SelectionHighestWeightReady = "highest-weight-ready"
-	SelectionWeightedECMP       = "weighted-ecmp"
 
 	PhaseApplied = "Applied"
 	PhasePending = "Pending"
@@ -56,15 +55,6 @@ type CandidateState struct {
 	Weight        int
 	Priority      int
 	Index         int
-}
-
-type Selection struct {
-	Candidate CandidateState
-	Reason    string
-}
-
-type Selector interface {
-	Reconcile(ctx context.Context, policy api.Resource, candidates []CandidateState) (Selection, error)
 }
 
 func (c Controller) Reconcile(ctx context.Context) error {
