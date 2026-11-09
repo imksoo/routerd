@@ -3026,7 +3026,7 @@ func (c *Controller) saveObservedStatuses(routerName string, spec routerapi.BGPR
 			}
 			groupName := "routerd-dynamic-" + sanitizeBGPPolicyName(resource.Metadata.Name)
 			sourcePrefixes := stringutil.UniqueTrimmedSorted(spec.Listen.SourcePrefixes)
-			peerStatuses, accepted, rejected := dynamicPeerStatusMaps(groupName, c.lastDynamicPeers, c.lastDynamicAdmission)
+			peerStatuses, accepted, rejected := dynamicPeerStatuses(groupName, c.lastDynamicPeers, c.lastDynamicAdmission)
 			status := map[string]any{
 				"phase":                "Ready",
 				"backend":              "gobgp",
@@ -4536,8 +4536,24 @@ func dynamicPeerObservationFromPeer(peer *gobgpapi.Peer, admission samDynamicCla
 	return observation, true
 }
 
-func dynamicPeerStatusMaps(groupName string, observations []dynamicPeerObservation, summary dynamicRouteAdmissionSummary) ([]map[string]any, int, int) {
-	var out []map[string]any
+type dynamicPeerStatus struct {
+	AcceptedPrefixes int     `json:"acceptedPrefixes"`
+	AcceptedRoutes   int     `json:"acceptedRoutes"`
+	ASN              uint32  `json:"asn"`
+	BGPRouterID      *string `json:"bgpRouterID,omitempty"`
+	EnrollmentClaim  *string `json:"enrollmentClaimRef,omitempty"`
+	Established      bool    `json:"established"`
+	LeafID           *string `json:"leafID,omitempty"`
+	PeerGroup        string  `json:"peerGroup"`
+	ReceivedPrefixes int     `json:"receivedPrefixes"`
+	RejectedRoutes   int     `json:"rejectedRoutes"`
+	RemoteAddress    string  `json:"remoteAddress"`
+	State            string  `json:"state"`
+	TunnelAddress    *string `json:"tunnelAddress,omitempty"`
+}
+
+func dynamicPeerStatuses(groupName string, observations []dynamicPeerObservation, summary dynamicRouteAdmissionSummary) ([]dynamicPeerStatus, int, int) {
+	var out []dynamicPeerStatus
 	accepted, rejected := 0, 0
 	for _, peer := range observations {
 		if peer.PeerGroup != groupName {
@@ -4547,22 +4563,22 @@ func dynamicPeerStatusMaps(groupName string, observations []dynamicPeerObservati
 		rejectedRoutes := summary.RejectedByNextHop[peer.RemoteAddress]
 		accepted += acceptedRoutes
 		rejected += rejectedRoutes
-		status := map[string]any{
-			"remoteAddress":    peer.RemoteAddress,
-			"peerGroup":        peer.PeerGroup,
-			"asn":              peer.ASN,
-			"state":            peer.State,
-			"established":      peer.Established,
-			"receivedPrefixes": peer.ReceivedPrefixes,
-			"acceptedPrefixes": peer.AcceptedPrefixes,
-			"acceptedRoutes":   acceptedRoutes,
-			"rejectedRoutes":   rejectedRoutes,
+		status := dynamicPeerStatus{
+			AcceptedPrefixes: peer.AcceptedPrefixes,
+			AcceptedRoutes:   acceptedRoutes,
+			ASN:              peer.ASN,
+			Established:      peer.Established,
+			PeerGroup:        peer.PeerGroup,
+			ReceivedPrefixes: peer.ReceivedPrefixes,
+			RejectedRoutes:   rejectedRoutes,
+			RemoteAddress:    peer.RemoteAddress,
+			State:            peer.State,
 		}
 		if peer.EnrollmentClaim != "" {
-			status["enrollmentClaimRef"] = peer.EnrollmentClaim
-			status["leafID"] = peer.EnrollmentLeafID
-			status["bgpRouterID"] = peer.EnrollmentBGPRID
-			status["tunnelAddress"] = peer.EnrollmentTunnel
+			status.BGPRouterID = &peer.EnrollmentBGPRID
+			status.EnrollmentClaim = &peer.EnrollmentClaim
+			status.LeafID = &peer.EnrollmentLeafID
+			status.TunnelAddress = &peer.EnrollmentTunnel
 		}
 		out = append(out, status)
 	}
