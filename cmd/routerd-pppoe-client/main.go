@@ -84,7 +84,7 @@ type eventsResponse struct {
 	Events []daemonapi.DaemonEvent `json:"events"`
 }
 
-var loadFreeBSDPPPoEModule = func(ctx context.Context, module string) error {
+func loadFreeBSDPPPoEModule(ctx context.Context, module string) error {
 	out, err := exec.CommandContext(ctx, "kldload", "-n", module).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("load FreeBSD %s kernel module: %w: %s", module, err, strings.TrimSpace(string(out)))
@@ -108,21 +108,17 @@ func ensureFreeBSDPPPoEModules(ctx context.Context, osName platform.OS) error {
 	return nil
 }
 
-var ensureFreeBSDPPPoEModule = func(ctx context.Context) error {
+func ensureFreeBSDPPPoEModule(ctx context.Context) error {
 	return ensureFreeBSDPPPoEModules(ctx, platform.CurrentOS())
 }
 
-var currentPPPoEOS = platform.CurrentOS
-
-var pppoeSessionCommand = pppoeclient.Command
-
-var pppoeStopGracePeriod = time.Second
+const pppoeStopGracePeriod = time.Second
 
 // pppoeStopGraceForOS keeps Linux's existing one-second stop behavior while
 // allowing FreeBSD mpd5 to complete its documented two-second termination
 // path and destroy its ng_iface-owned point-to-point interface before the
 // common ownership barrier evaluates it.
-var pppoeStopGraceForOS = func(osName platform.OS) time.Duration {
+func pppoeStopGraceForOS(osName platform.OS) time.Duration {
 	if osName == platform.OSFreeBSD {
 		return 3 * time.Second
 	}
@@ -368,14 +364,14 @@ func (d *daemon) startSession(ctx context.Context) error {
 		d.markFailed(err.Error())
 		return err
 	}
-	osName := currentPPPoEOS()
+	osName := platform.CurrentOS()
 	if osName == platform.OSFreeBSD {
 		if err := ensureFreeBSDPPPoEInterfaceAbsent(ctx, d.config().IfName); err != nil {
 			d.markFailed(err.Error())
 			return err
 		}
 	}
-	name, argv := pppoeSessionCommand(d.config())
+	name, argv := pppoeclient.Command(d.config())
 	cmd := exec.CommandContext(managedCtx, name, argv...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -487,7 +483,7 @@ func (d *daemon) stopSession() {
 
 		if cmd.Process != nil {
 			_ = cmd.Process.Signal(os.Interrupt)
-			timer := time.NewTimer(pppoeStopGraceForOS(currentPPPoEOS()))
+			timer := time.NewTimer(pppoeStopGraceForOS(platform.CurrentOS()))
 			select {
 			case <-completion:
 				timer.Stop()

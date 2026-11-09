@@ -10,9 +10,9 @@ import (
 	"github.com/imksoo/routerd/pkg/platform"
 )
 
-var pppoeInterfaceTeardownTimeout = 5 * time.Second
+const pppoeInterfaceTeardownTimeout = 5 * time.Second
 
-var pppoeInterfaceProbeInterval = 50 * time.Millisecond
+const pppoeInterfaceProbeInterval = 50 * time.Millisecond
 
 func pppoeInterfaceExists(ctx context.Context, osName platform.OS, ifname string) (bool, error) {
 	switch osName {

@@ -2,8 +2,6 @@
 
 package api
 
-import "sort"
-
 const (
 	ProvidesTypeString     = "string"
 	ProvidesTypeStringList = "stringList"
@@ -18,35 +16,6 @@ type ProvidedFieldSpec struct {
 	Name        string
 	Type        string
 	Description string
-}
-
-type ResourceProvidesSpec struct {
-	Kind   string
-	Fields []ProvidedFieldSpec
-}
-
-func ResourceProvides(kind string) []ProvidedFieldSpec {
-	fields := resourceProvidesTable()[kind]
-	if len(fields) == 0 {
-		return nil
-	}
-	out := append([]ProvidedFieldSpec(nil), fields...)
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	return out
-}
-
-func ResourceProvidesContract() []ResourceProvidesSpec {
-	table := resourceProvidesTable()
-	kinds := make([]string, 0, len(table))
-	for kind := range table {
-		kinds = append(kinds, kind)
-	}
-	sort.Strings(kinds)
-	out := make([]ResourceProvidesSpec, 0, len(kinds))
-	for _, kind := range kinds {
-		out = append(out, ResourceProvidesSpec{Kind: kind, Fields: ResourceProvides(kind)})
-	}
-	return out
 }
 
 func ResourceProvidesField(kind, field string) bool {

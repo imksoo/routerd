@@ -2,10 +2,7 @@
 
 package api
 
-import (
-	"fmt"
-	"sort"
-)
+import "fmt"
 
 var removedLegacyKindMessages = map[string]string{
 	"SystemdUnit":            "%s is not supported; declare router intent and let routerd generate service units",
@@ -26,15 +23,6 @@ var removedLegacyKindMessages = map[string]string{
 	"FirewallLog":            "%s is not supported; use FirewallEventLog for firewall event logging intent",
 	"IPv4ReversePathFilter":  "%s is not supported; routerd derives reverse path filter sysctls automatically",
 	"PathMTUPolicy":          "%s is not supported; routerd derives path MTU and TCP MSS handling from tunnel and interface resources",
-}
-
-func RemovedLegacyKinds() []string {
-	kinds := make([]string, 0, len(removedLegacyKindMessages))
-	for kind := range removedLegacyKindMessages {
-		kinds = append(kinds, kind)
-	}
-	sort.Strings(kinds)
-	return kinds
 }
 
 func IsRemovedLegacyKind(kind string) bool {

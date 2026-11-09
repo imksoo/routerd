@@ -11,7 +11,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -1687,11 +1686,6 @@ func (s *SQLiteStore) Close() error {
 	return s.db.Close()
 }
 
-func JSONValue(value any) string {
-	data, _ := json.Marshal(value)
-	return string(data)
-}
-
 func objectRefForKey(key string) objectRef {
 	if rest, ok := strings.CutPrefix(key, "ipv6PrefixDelegation."); ok {
 		name, field, ok := strings.Cut(rest, ".")
@@ -1853,20 +1847,4 @@ func variablesFromObject(apiVersion, kind, name string, status objectStatus) map
 		}
 	}
 	return out
-}
-
-func DebugObjects(db *sql.DB) string {
-	rows, err := db.Query(`SELECT api_version,kind,name,status FROM objects ORDER BY api_version,kind,name`)
-	if err != nil {
-		return err.Error()
-	}
-	defer rows.Close()
-	var lines []string
-	for rows.Next() {
-		var apiVersion, kind, name, status string
-		_ = rows.Scan(&apiVersion, &kind, &name, &status)
-		lines = append(lines, fmt.Sprintf("%s %s %s %s", apiVersion, kind, name, status))
-	}
-	sort.Strings(lines)
-	return strings.Join(lines, "\n")
 }

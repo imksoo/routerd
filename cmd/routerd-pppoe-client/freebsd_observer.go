@@ -18,7 +18,7 @@ import (
 
 const freeBSDPPPoEObserveTimeout = time.Second
 
-var freeBSDPPPoEObserveInterval = 500 * time.Millisecond
+const freeBSDPPPoEObserveInterval = 500 * time.Millisecond
 
 type freeBSDPPPoEObservation struct {
 	CurrentAddress string
@@ -27,13 +27,11 @@ type freeBSDPPPoEObservation struct {
 	BytesOut       uint64
 }
 
-// runFreeBSDPPPoEObserverCommand is injected by unit tests. Production uses
-// only base FreeBSD tools and gives each probe a short, independent deadline.
-var runFreeBSDPPPoEObserverCommand = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+func runFreeBSDPPPoEObserverCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
 	return exec.CommandContext(ctx, name, args...).Output()
 }
 
-var freeBSDPPPoEInterfaceExists = func(ctx context.Context, ifname string) (bool, error) {
+func freeBSDPPPoEInterfaceExists(ctx context.Context, ifname string) (bool, error) {
 	_, err := runFreeBSDPPPoEObserverCommand(ctx, "ifconfig", ifname)
 	if err == nil {
 		return true, nil
@@ -56,7 +54,7 @@ func ensureFreeBSDPPPoEInterfaceAbsent(ctx context.Context, ifname string) error
 	return nil
 }
 
-var observeFreeBSDPPPoEInterface = func(ctx context.Context, ifname string) (freeBSDPPPoEObservation, error) {
+func observeFreeBSDPPPoEInterface(ctx context.Context, ifname string) (freeBSDPPPoEObservation, error) {
 	ifconfigOutput, err := runFreeBSDPPPoEObserverCommand(ctx, "ifconfig", ifname)
 	if err != nil {
 		return freeBSDPPPoEObservation{}, fmt.Errorf("observe FreeBSD PPPoE interface %q addresses: %w", ifname, err)
