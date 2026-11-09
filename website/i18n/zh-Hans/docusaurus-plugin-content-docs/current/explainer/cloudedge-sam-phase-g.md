@@ -148,5 +148,5 @@ flowchart TB
 - ADR 0009: Pluggable Overlay Underlay（ipip/gre/fou/gue）
 - ADR 0013: IPv4 Force Fragmentation
 - reference: Selective Address Mobility
-- how-to: cloudedge-mobility-demo / cloudedge-autonomous-lab
+- how-to: cloudedge-mobility-demo
 - 幻灯片: `docs/slides/cloudedge-sam-phase-g.md`
