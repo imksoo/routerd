@@ -483,6 +483,12 @@ func (d *daemon) stopSession() {
 			}
 			continue
 		}
+		if d.teardownFailed {
+			// The child has already exited; retain the teardown error until a
+			// later start has rechecked the interface.
+			d.mu.Unlock()
+			return
+		}
 		cmd := d.cmd
 		completion := d.cmdDone
 		if cmd == nil || completion == nil {
