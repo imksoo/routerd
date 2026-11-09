@@ -153,7 +153,7 @@ slug: /how-to/dns-private-upstream
 
 `DNSUpstream.spec.sourceInterface` 将对外的 DNS 查询绑定至 Linux 的接口名称。
 请使用 OS 接口的实际名称（例如 `ens18`）。
-若该接口由其他资源（如 tunnel）建立，请通过 `ownerRefs` 或顺序声明依赖关系，使解析器在接口建立前保持 pending 状态。
+若该接口由其他资源（如 tunnel）建立，请通过顺序声明依赖关系，使解析器在接口建立前保持 pending 状态。
 
 FreeBSD 没有对等的 `SO_BINDTODEVICE` 强制机制，因此在平台专属文档中不保证相同的行为。
 

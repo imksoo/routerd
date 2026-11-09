@@ -153,7 +153,7 @@ slug: /how-to/dns-private-upstream
 
 `DNSUpstream.spec.sourceInterface` 將對外的 DNS 查詢綁定至 Linux 的介面名稱。
 請使用 OS 介面的實際名稱（例如 `ens18`）。
-若該介面由其他資源（如 tunnel）建立，請透過 `ownerRefs` 或順序宣告依賴關係，使解析器在介面建立前保持 pending 狀態。
+若該介面由其他資源（如 tunnel）建立，請透過順序宣告依賴關係，使解析器在介面建立前保持 pending 狀態。
 
 FreeBSD 沒有對等的 `SO_BINDTODEVICE` 強制機制，因此在平台專屬文件中不保證相同的行為。
 

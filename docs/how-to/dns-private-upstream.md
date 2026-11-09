@@ -199,7 +199,7 @@ The `DNSUpstream.spec.bootstrap` field provides the same protection at a finer g
 
 ## Interface binding
 
-`DNSUpstream.spec.sourceInterface` binds outgoing DNS queries to a specific Linux interface name. Use a literal OS interface name such as `ens18`. If the interface is created by another resource (e.g. a tunnel), declare the relationship with `ownerRefs` or resource ordering and keep the resolver pending until the interface exists.
+`DNSUpstream.spec.sourceInterface` binds outgoing DNS queries to a specific Linux interface name. Use a literal OS interface name such as `ens18`. If the interface is created by another resource (e.g. a tunnel), use resource ordering and keep the resolver pending until the interface exists.
 
 FreeBSD does not currently provide the same `SO_BINDTODEVICE` enforcement, so platform-specific docs do not promise identical behaviour there.
 
