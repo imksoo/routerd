@@ -930,11 +930,10 @@ func (c SAMEnrollmentClientController) persistFetchedSAMEnrollmentTopology(topol
 		expiresAt = observedAt.Add(DefaultLeaseTTL)
 	}
 	recordOptions := codec.FetchedSAMEnrollmentTopologyRecordOptions{
-		Name:                              safeName("fetched-sam-enrollment-topology-" + topology.rrSet.Metadata.Name),
-		Generation:                        dynamicGeneration,
-		DefaultTTL:                        DefaultLeaseTTL,
-		IncludeEmptyDirectivesActionPlans: true,
-		Digest:                            digestDynamicPart,
+		Name:       safeName("fetched-sam-enrollment-topology-" + topology.rrSet.Metadata.Name),
+		Generation: dynamicGeneration,
+		DefaultTTL: DefaultLeaseTTL,
+		Digest:     digestDynamicPart,
 	}
 	record, err := codec.FetchedSAMEnrollmentTopologyRecord(topology.rrSet, topology.directPeerGroup, observedAt, expiresAt, recordOptions)
 	if err != nil && topology.directPeerGroup != nil {
@@ -1026,11 +1025,10 @@ func (c SAMEnrollmentClientController) persistCachedRRSetWithoutDirect(rrSetName
 		return false, nil
 	}
 	fallback, err := codec.FetchedSAMEnrollmentTopologyRecord(selectedRRSet, nil, selected.ObservedAt, selected.ExpiresAt, codec.FetchedSAMEnrollmentTopologyRecordOptions{
-		Name:                              safeName("fetched-sam-enrollment-topology-" + selectedRRSet.Metadata.Name),
-		Generation:                        dynamicGeneration,
-		DefaultTTL:                        DefaultLeaseTTL,
-		IncludeEmptyDirectivesActionPlans: true,
-		Digest:                            digestDynamicPart,
+		Name:       safeName("fetched-sam-enrollment-topology-" + selectedRRSet.Metadata.Name),
+		Generation: dynamicGeneration,
+		DefaultTTL: DefaultLeaseTTL,
+		Digest:     digestDynamicPart,
 	})
 	if err != nil {
 		return false, err

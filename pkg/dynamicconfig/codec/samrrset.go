@@ -12,16 +12,12 @@ import (
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
-// FetchedSAMEnrollmentTopologyRecordOptions preserves the local persistence
-// policy of an enrollment topology fetcher. Different fetchers intentionally
-// have different lease and digest policies, but must construct the same
-// source, owner, and resource shape before persisting the result.
+// FetchedSAMEnrollmentTopologyRecordOptions configures the fetched topology record.
 type FetchedSAMEnrollmentTopologyRecordOptions struct {
-	Name                              string
-	Generation                        int64
-	DefaultTTL                        time.Duration
-	IncludeEmptyDirectivesActionPlans bool
-	Digest                            func(dynamicconfig.DynamicConfigPart) string
+	Name       string
+	Generation int64
+	DefaultTTL time.Duration
+	Digest     func(dynamicconfig.DynamicConfigPart) string
 }
 
 // FetchedSAMEnrollmentTopologyRecord validates and persists one fetched
@@ -74,12 +70,8 @@ func FetchedSAMEnrollmentTopologyRecord(rrSet api.Resource, peerGroup *api.Resou
 			Resources:  resources,
 		},
 	}
-	if options.IncludeEmptyDirectivesActionPlans {
-		part.Spec.Directives = []dynamicconfig.DynamicConfigDirective{}
-		part.Spec.ActionPlans = []dynamicconfig.ActionPlan{}
-	}
-	if options.Digest != nil {
-		part.Spec.Digest = options.Digest(part)
-	}
+	part.Spec.Directives = []dynamicconfig.DynamicConfigDirective{}
+	part.Spec.ActionPlans = []dynamicconfig.ActionPlan{}
+	part.Spec.Digest = options.Digest(part)
 	return Encode(part)
 }
