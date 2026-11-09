@@ -14,14 +14,14 @@ existing tests, and the mere existence of code are not reasons to keep them.
 Trace runtime generation, references, startup, renewal, recovery, and removal
 before declaring a dependency unused. Examples are not live configurations.
 
-## Configuration owns the machine
+## Apply the configuration
 
-Configuration is the source of desired router state. Apply must repair missing
-or changed objects and remove unwanted additions, regardless of who created
-them. Manual host edits must not silently become desired configuration.
-Include valid DHCP/PD/BGP/SAM and other configured dynamic results in desired
-state. Do not delete legitimate runtime state merely because it is not written
-literally in YAML. Historical creation proofs must not block convergence.
+Configuration is the source of the settings routerd applies. Apply must repair
+missing or changed configured objects and remove objects removed from the
+configuration. Leave unrelated host settings and manually added objects alone,
+including on interfaces referenced by the configuration. Do not track or check
+ownership or creation history. Retain valid DHCP/PD/BGP/SAM and other dynamic
+state required by configured operation; do not treat it as static YAML.
 
 ## Real operation first
 
