@@ -144,7 +144,7 @@ func (c TunnelInterfaceController) cleanupStaleResources(ctx context.Context) er
 			continue
 		}
 		ifname := firstNonEmpty(statusvalue.Field(item.Status, "ifname"), statusvalue.Field(item.Status, "interface"), item.Name)
-		if ifname != "" && !retained[ifname] && !c.DryRun {
+		if ifname != "" && !retained[ifname] && !c.DryRun && platform.CurrentOS() == platform.OSFreeBSD {
 			observed, err := c.observeTunnel(ctx, ifname)
 			if err != nil {
 				return err
