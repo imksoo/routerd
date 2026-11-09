@@ -62,9 +62,6 @@ func (c WireGuardController) Reconcile(ctx context.Context) error {
 	}
 	current := c
 	current.Router = resolved.Router
-	if err := current.cleanupStaleResources(ctx); err != nil {
-		return err
-	}
 	for _, resource := range current.Router.Spec.Resources {
 		if resource.Kind != "WireGuardInterface" {
 			continue
@@ -73,7 +70,7 @@ func (c WireGuardController) Reconcile(ctx context.Context) error {
 			return err
 		}
 	}
-	return nil
+	return current.cleanupStaleResources(ctx)
 }
 
 func (c WireGuardController) resolvePeerResources() (wireGuardPeerResolution, error) {
