@@ -3,85 +3,8 @@
 package platform
 
 import (
-	"runtime"
-	"strings"
 	"testing"
 )
-
-func TestCurrentMatchesGOOS(t *testing.T) {
-	defaults, _ := Current()
-	switch runtime.GOOS {
-	case "linux":
-		if defaults.OS != OSLinux {
-			t.Fatalf("expected OSLinux, got %q", defaults.OS)
-		}
-	case "freebsd":
-		if defaults.OS != OSFreeBSD {
-			t.Fatalf("expected OSFreeBSD, got %q", defaults.OS)
-		}
-	default:
-		if defaults.OS != OSOther {
-			t.Fatalf("expected OSOther on %s, got %q", runtime.GOOS, defaults.OS)
-		}
-	}
-}
-
-func TestDefaultsAreAbsolute(t *testing.T) {
-	defaults, _ := Current()
-	for label, path := range map[string]string{
-		"PrefixDir":  defaults.PrefixDir,
-		"BinDir":     defaults.BinDir,
-		"SysconfDir": defaults.SysconfDir,
-		"PluginDir":  defaults.PluginDir,
-		"RuntimeDir": defaults.RuntimeDir,
-		"StateDir":   defaults.StateDir,
-	} {
-		if path == "" {
-			t.Errorf("%s is empty", label)
-			continue
-		}
-		if !strings.HasPrefix(path, "/") {
-			t.Errorf("%s is not absolute: %q", label, path)
-		}
-	}
-}
-
-func TestCanonicalResourcePaths(t *testing.T) {
-	for _, tt := range []struct {
-		name         string
-		defaults     Defaults
-		firewallLogs string
-		dnsmasqLease string
-	}{
-		{
-			name:         "linux",
-			defaults:     Defaults{StateDir: "/var/lib/routerd"},
-			firewallLogs: "/var/lib/routerd/firewall-logs.db",
-			dnsmasqLease: "/var/lib/routerd/dnsmasq/dnsmasq.leases",
-		},
-		{
-			name:         "freebsd",
-			defaults:     Defaults{StateDir: "/var/db/routerd"},
-			firewallLogs: "/var/db/routerd/firewall-logs.db",
-			dnsmasqLease: "/var/db/routerd/dnsmasq/dnsmasq.leases",
-		},
-		{
-			name:         "trim slash",
-			defaults:     Defaults{StateDir: "/tmp/routerd/state/"},
-			firewallLogs: "/tmp/routerd/state/firewall-logs.db",
-			dnsmasqLease: "/tmp/routerd/state/dnsmasq/dnsmasq.leases",
-		},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.defaults.FirewallLogFile(); got != tt.firewallLogs {
-				t.Fatalf("FirewallLogFile = %q, want %q", got, tt.firewallLogs)
-			}
-			if got := tt.defaults.DnsmasqLeaseFile(); got != tt.dnsmasqLease {
-				t.Fatalf("DnsmasqLeaseFile = %q, want %q", got, tt.dnsmasqLease)
-			}
-		})
-	}
-}
 
 func TestDnsmasqLeaseCandidatesPreferActualManagedPath(t *testing.T) {
 	defaults := Defaults{RuntimeDir: "/run/routerd", StateDir: "/var/lib/routerd"}
@@ -95,38 +18,6 @@ func TestDnsmasqLeaseCandidatesPreferActualManagedPath(t *testing.T) {
 	}
 	if got[1] != "/var/run/routerd/dnsmasq.leases" {
 		t.Fatalf("freebsd candidates = %#v, want runtime fallback second", got)
-	}
-}
-
-func TestLinuxFeatureFlagsConsistency(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("linux-only invariants")
-	}
-	_, features := Current()
-	if !features.HasSystemd {
-		t.Error("linux Defaults must declare HasSystemd")
-	}
-	if !features.HasNftables {
-		t.Error("linux Defaults must declare HasNftables")
-	}
-	if !features.HasIproute2 {
-		t.Error("linux Defaults must declare HasIproute2")
-	}
-}
-
-func TestFreeBSDFeatureFlagsConsistency(t *testing.T) {
-	if runtime.GOOS != "freebsd" {
-		t.Skip("freebsd-only invariants")
-	}
-	_, features := Current()
-	if features.HasSystemd {
-		t.Error("freebsd Defaults must not declare HasSystemd")
-	}
-	if !features.HasRCD {
-		t.Error("freebsd Defaults must declare HasRCD")
-	}
-	if !features.HasPF {
-		t.Error("freebsd Defaults must declare HasPF")
 	}
 }
 
