@@ -26,15 +26,9 @@ evidence and caches after publishing the concise result.
 ## CI workflow
 
 `.github/workflows/ci.yaml` runs on branch pushes and pull requests.
-It uses an Ubuntu runner and checks the development surface that should stay
-green before review:
-
-```sh
-go test ./...
-make check-schema
-make validate-example
-make website-build
-```
+The shared quality workflow checks Linux and FreeBSD builds, generated schemas,
+example configurations, and shell scripts. The website build runs when the
+website changes or the workflow explicitly requests it.
 
 When a change touches `webconsole/`, its checked-in static assets, the shared
 quality workflow, or the Makefile, CI also runs the Web Console-specific gate:
