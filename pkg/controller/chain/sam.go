@@ -45,8 +45,6 @@ type SAMController struct {
 	LocalCaptureIntents []dynamicconfig.LocalCaptureIntent
 	DryRun              bool
 	OS                  platform.OS
-	Applier             samProxyNeighborApplier
-	GARP                samGratuitousARPAnnouncer
 }
 
 func (c SAMController) Reconcile(ctx context.Context) error {
@@ -75,10 +73,7 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 	}
 	deassigned := map[string]bool{}
 	var failures []string
-	applier := c.Applier
-	if applier == nil {
-		applier = defaultSAMProxyNeighborApplier()
-	}
+	applier := defaultSAMProxyNeighborApplier()
 	for _, action := range actions {
 		if action.Kind != "deassign-os-address" || c.DryRun {
 			continue
@@ -114,10 +109,7 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 			continue
 		}
 		if action.GratuitousARP && deassigned[action.IntentID] {
-			announcer := c.GARP
-			if announcer == nil {
-				announcer = defaultSAMGratuitousARPAnnouncer()
-			}
+			announcer := defaultSAMGratuitousARPAnnouncer()
 			if err := announcer.SendGratuitousARP(ctx, action.Address, action.Interface); err != nil {
 				failures = append(failures, fmt.Sprintf("%s gratuitous ARP %s dev %s: %v", action.IntentID, action.Address, action.Interface, err))
 			}
@@ -303,10 +295,7 @@ func (c SAMController) cleanupReleasedProxyNeighbors(ctx context.Context, action
 			desired[key(intent.Address, intent.CaptureInterface)] = true
 		}
 	}
-	applier := c.Applier
-	if applier == nil {
-		applier = defaultSAMProxyNeighborApplier()
-	}
+	applier := defaultSAMProxyNeighborApplier()
 	for _, applied := range state.previousProxyNeighbors {
 		if desired[key(applied.Address, applied.Interface)] {
 			continue
@@ -508,10 +497,7 @@ func (c SAMController) reconcileSAMIPForwarding(ctx context.Context, targetOS pl
 	if !forwardingIntent && len(state.heldForwardPaths) == 0 {
 		return fmt.Errorf("SAM forwarding path is missing planned %s=1", key)
 	}
-	applier := c.Applier
-	if applier == nil {
-		applier = defaultSAMProxyNeighborApplier()
-	}
+	applier := defaultSAMProxyNeighborApplier()
 	if err := applier.SetIPForwarding(ctx, true); err != nil {
 		return fmt.Errorf("enable SAM IP forwarding: %w", err)
 	}
@@ -522,10 +508,7 @@ func (c SAMController) reconcileForwardPaths(ctx context.Context, state samRecon
 	if c.DryRun {
 		return nil
 	}
-	applier := c.Applier
-	if applier == nil {
-		applier = defaultSAMProxyNeighborApplier()
-	}
+	applier := defaultSAMProxyNeighborApplier()
 	return applier.ReconcileForwardPaths(ctx, state.forwardPaths)
 }
 
@@ -537,10 +520,7 @@ func (c SAMController) reconcileProxyARPSysctls(ctx context.Context, actions []s
 	if targetOS == "" {
 		targetOS = platform.CurrentOS()
 	}
-	applier := c.Applier
-	if applier == nil {
-		applier = defaultSAMProxyNeighborApplier()
-	}
+	applier := defaultSAMProxyNeighborApplier()
 	desired := map[string]bool{}
 	if targetOS == platform.OSFreeBSD {
 		if freeBSDProxyARPEnabled(actions) || len(state.heldProxyNeighbors) != 0 {
