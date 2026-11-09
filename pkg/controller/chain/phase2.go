@@ -2005,8 +2005,20 @@ func addressFromRouterResource(router *api.Router, source api.StatusValueSourceS
 
 func ensureLinuxDSLiteInnerIPv4(ctx context.Context, ifname, innerLocal string) error {
 	out, err := exec.CommandContext(ctx, "ip", "-4", "addr", "show", "dev", ifname).CombinedOutput()
-	if err == nil && strings.Contains(string(out), "inet "+innerLocal+" ") && strings.Contains(string(out), "peer "+dsliteInnerRemoteIPv4+" ") {
-		return nil
+	if err != nil {
+		return fmt.Errorf("ip -4 addr show dev %s: %w: %s", ifname, err, strings.TrimSpace(string(out)))
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		for i := 0; i+3 < len(fields); i++ {
+			if fields[i] != "inet" || fields[i+1] != innerLocal || fields[i+2] != "peer" {
+				continue
+			}
+			peer := fields[i+3]
+			if peer == dsliteInnerRemoteIPv4 || peer == dsliteInnerRemoteIPv4+"/32" {
+				return nil
+			}
+		}
 	}
 	args := []string{"-4", "addr", "replace", innerLocal + "/32", "peer", dsliteInnerRemoteIPv4 + "/32", "dev", ifname}
 	if out, err := exec.CommandContext(ctx, "ip", args...).CombinedOutput(); err != nil {
