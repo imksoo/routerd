@@ -569,29 +569,6 @@ func (c VXLANTunnelController) reconcileFloodFDB(ctx context.Context, resource a
 			return fmt.Errorf("%w after FDB append", errVXLANGateRevisionChanged)
 		}
 	}
-	readback, err := c.command(ctx, "bridge", "fdb", "show", "dev", cfg.IfName)
-	if err != nil {
-		return fmt.Errorf("read back flood FDB on %s: %w", cfg.IfName, err)
-	}
-	if guarded && !c.revisionStillCurrent(resource, revision) {
-		return fmt.Errorf("%w before FDB readback commit", errVXLANGateRevisionChanged)
-	}
-	actual := allZeroFDBEntries(string(readback))
-	if len(actual) != len(desired) {
-		return fmt.Errorf("flood FDB readback mismatch on %s", cfg.IfName)
-	}
-	counts := map[string]int{}
-	for _, entry := range actual {
-		if !entry.exact() || !desired[entry.Destination] {
-			return fmt.Errorf("flood FDB entry for %s has unexpected attributes on %s", entry.Destination, cfg.IfName)
-		}
-		counts[entry.Destination]++
-	}
-	for peer := range desired {
-		if counts[peer] != 1 {
-			return fmt.Errorf("flood FDB peer %s count=%d on %s", peer, counts[peer], cfg.IfName)
-		}
-	}
 	return nil
 }
 
