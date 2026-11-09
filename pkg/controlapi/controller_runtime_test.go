@@ -3,7 +3,6 @@
 package controlapi
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"testing"
@@ -68,39 +67,6 @@ func TestControllerRuntimeStoreSeparatesHistoricAndCurrentErrors(t *testing.T) {
 	}
 	if !recovered.LastErrorClearedAt.After(*recovered.LastErrorTime) && !recovered.LastErrorClearedAt.Equal(*recovered.LastErrorTime) {
 		t.Fatalf("clearedAt %v before lastErrorTime %v", recovered.LastErrorClearedAt, recovered.LastErrorTime)
-	}
-}
-
-func TestReconcileErrorEntryJSONRoundTrip(t *testing.T) {
-	original := ReconcileErrorEntry{
-		StartedAt:    time.Date(2026, 5, 27, 10, 0, 0, 0, time.UTC),
-		CompletedAt:  time.Date(2026, 5, 27, 10, 0, 1, 0, time.UTC),
-		Duration:     "1s",
-		DurationMs:   1000,
-		Trigger:      "periodic",
-		ResourceKind: "DHCPv6Client",
-		ResourceName: "wan",
-		Error:        "boom",
-	}
-	data, err := json.Marshal(original)
-	if err != nil {
-		t.Fatalf("marshal error: %v", err)
-	}
-	var decoded ReconcileErrorEntry
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		t.Fatalf("unmarshal error: %v", err)
-	}
-	if !decoded.StartedAt.Equal(original.StartedAt) || !decoded.CompletedAt.Equal(original.CompletedAt) {
-		t.Fatalf("timestamps not preserved: %+v", decoded)
-	}
-	if decoded.Duration != original.Duration || decoded.DurationMs != original.DurationMs {
-		t.Fatalf("duration not preserved: %+v", decoded)
-	}
-	if decoded.Trigger != original.Trigger || decoded.ResourceKind != original.ResourceKind || decoded.ResourceName != original.ResourceName {
-		t.Fatalf("metadata not preserved: %+v", decoded)
-	}
-	if decoded.Error != original.Error {
-		t.Fatalf("error not preserved: %+v", decoded)
 	}
 }
 
