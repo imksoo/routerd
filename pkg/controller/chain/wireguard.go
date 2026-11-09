@@ -1317,8 +1317,12 @@ func wireGuardPublicKeyFromConfig(cfg wireguard.InterfaceConfig) string {
 }
 
 func (c WireGuardController) interfaceMatchesDesired(ctx context.Context, cfg wireguard.InterfaceConfig, observed wireguard.InterfaceStatus) bool {
-	publicKey := wireGuardPublicKeyFromConfig(cfg)
-	if publicKey == "" || observed.PublicKey != publicKey {
+	resolved, err := wireguard.ResolveKeyFiles(cfg)
+	if err != nil {
+		return false
+	}
+	publicKey, err := wireguard.PublicKeyFromPrivateKey(resolved.PrivateKey)
+	if err != nil || observed.PublicKey != publicKey {
 		return false
 	}
 	if cfg.ListenPort != 0 && observed.ListenPort != cfg.ListenPort {
@@ -1328,10 +1332,6 @@ func (c WireGuardController) interfaceMatchesDesired(ctx context.Context, cfg wi
 		return false
 	}
 	if cfg.MTU != 0 && !c.linkMTUMatches(ctx, cfg.Name, cfg.MTU) {
-		return false
-	}
-	resolved, err := wireguard.ResolveKeyFiles(cfg)
-	if err != nil {
 		return false
 	}
 	byKey := map[string]wireguard.PeerStatus{}
