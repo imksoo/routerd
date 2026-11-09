@@ -501,7 +501,6 @@ func samDecodeRecords[T comparable](value any, present bool, validate func(T) er
 	var invalid []json.RawMessage
 	var failures []error
 	byKey := map[string]int{}
-	conflicts := map[string]bool{}
 	for i, entry := range entries {
 		var item T
 		decoder := json.NewDecoder(bytes.NewReader(entry))
@@ -516,15 +515,12 @@ func samDecodeRecords[T comparable](value any, present bool, validate func(T) er
 			continue
 		}
 		k := key(item)
-		if conflicts[k] {
-			invalid = append(invalid, entry)
-			continue
-		}
 		if previous, ok := byKey[k]; ok {
-			if parsed[previous].value != item {
+			if !parsed[previous].valid {
+				invalid = append(invalid, entry)
+			} else if parsed[previous].value != item {
 				parsed[previous].valid = false
 				invalid = append(invalid, parsed[previous].raw, entry)
-				conflicts[k] = true
 				failures = append(failures, fmt.Errorf("record %d conflicts with another record", i))
 			}
 			continue
