@@ -20,4 +20,4 @@
 
 ## 残件
 
-- 現時点では未記載。
+- FreeBSD で DHCPv6 client を supervisor を介さず `--lease-file` なしで手動起動すると、既定の lease パスと controller の読み取りパスが異なる。supervisor は正しいパスを渡す。実運用で手動起動が必要か未確認であり、調査・修正には別途承認を要する。

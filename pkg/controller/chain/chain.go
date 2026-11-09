@@ -3807,18 +3807,8 @@ type LANAddressController struct {
 	DeprecatedAddressPresent func(context.Context, string, string) bool
 	// EnsureVMAC is used only for standby staging.  The authoritative VRRP
 	// helper creates the configured macvlan cold and leaves it DOWN.
-	EnsureVMAC          func(context.Context, string) error
-	VMACPresent         func(string) bool
-	Now                 func() time.Time
-	PDLeaseSnapshotPath func(string) string
-	OperatingSystem     platform.OS
-}
-
-func (c LANAddressController) currentOS() platform.OS {
-	if c.OperatingSystem != "" {
-		return c.OperatingSystem
-	}
-	return platform.CurrentOS()
+	EnsureVMAC  func(context.Context, string) error
+	VMACPresent func(string) bool
 }
 
 type LinkController struct {
@@ -5029,9 +5019,6 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 	}
 	stagedSnapshot, stagedSnapshotFresh := c.freshStagedPDSnapshot(pdName)
 	now := time.Now().UTC()
-	if c.Now != nil {
-		now = c.Now().UTC()
-	}
 	if !activePD && !stagedSnapshotFresh {
 		return nil
 	}
@@ -5140,7 +5127,7 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 			"prefixSource": pdName,
 			"dryRun":       c.DryRun,
 		}
-		dsliteSource := c.currentOS() == platform.OSLinux && delegatedAddressUsedByDSLite(sourceRouter, resource.Metadata.Name)
+		dsliteSource := platform.CurrentOS() == platform.OSLinux && delegatedAddressUsedByDSLite(sourceRouter, resource.Metadata.Name)
 		if dsliteSource {
 			status["sourceSelection"] = "deprecated"
 		}
@@ -5190,15 +5177,15 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 		if !c.DryRun && (currentChanged || !addressPresent || !addressDeprecated) {
 			if !addressPresent {
 				for _, stale := range ipv6StaticAddressDeleteCandidates(addr) {
-					deleteName, deleteArgs := ipv6StaticAddressDeleteCommand(c.currentOS(), ifname, stale)
+					deleteName, deleteArgs := ipv6StaticAddressDeleteCommand(platform.CurrentOS(), ifname, stale)
 					if err := command(ctx, deleteName, deleteArgs...); err != nil && c.Logger != nil {
 						c.Logger.Debug("delete stale IPv6 delegated address before apply skipped", "resource", resource.Metadata.Name, "address", stale, "interface", ifname, "error", err)
 					}
 				}
 			}
-			name, args := ipv6StaticAddressApplyCommand(c.currentOS(), ifname, addr)
+			name, args := ipv6StaticAddressApplyCommand(platform.CurrentOS(), ifname, addr)
 			if dsliteSource {
-				name, args = ipv6PermanentDeprecatedAddressApplyCommand(c.currentOS(), ifname, addr)
+				name, args = ipv6PermanentDeprecatedAddressApplyCommand(platform.CurrentOS(), ifname, addr)
 			}
 			if err := command(ctx, name, args...); err != nil {
 				return err
@@ -5239,7 +5226,7 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 				}
 				var deleteErr error
 				for _, candidate := range ipv6StaticAddressDeleteCandidates(stale.Address) {
-					name, args := ipv6StaticAddressDeleteCommand(c.currentOS(), ifname, candidate)
+					name, args := ipv6StaticAddressDeleteCommand(platform.CurrentOS(), ifname, candidate)
 					if err := command(ctx, name, args...); err != nil {
 						deleteErr = err
 						if c.Logger != nil {
@@ -5262,13 +5249,13 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 				if expiresAt, ok := managedPrevious[previous.Address]; ok && expiresAt.Equal(previous.ExpiresAt) && present {
 					continue
 				}
-				if c.currentOS() == platform.OSFreeBSD && present {
-					name, args := ipv6StaticAddressDeleteCommand(c.currentOS(), ifname, previous.Address)
+				if platform.CurrentOS() == platform.OSFreeBSD && present {
+					name, args := ipv6StaticAddressDeleteCommand(platform.CurrentOS(), ifname, previous.Address)
 					if err := command(ctx, name, args...); err != nil {
 						return err
 					}
 				}
-				name, args := ipv6DeprecatedAddressApplyCommand(c.currentOS(), ifname, previous.Address, validSeconds)
+				name, args := ipv6DeprecatedAddressApplyCommand(platform.CurrentOS(), ifname, previous.Address, validSeconds)
 				if err := command(ctx, name, args...); err != nil {
 					return err
 				}
@@ -5553,9 +5540,6 @@ func (c LANAddressController) freshStagedPDSnapshot(pdName string) (pdclient.Sna
 		return pdclient.Snapshot{}, false
 	}
 	path := defaultDHCPv6PDLeaseFile(pdName)
-	if c.PDLeaseSnapshotPath != nil {
-		path = c.PDLeaseSnapshotPath(pdName)
-	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return pdclient.Snapshot{}, false
@@ -5601,9 +5585,6 @@ func (c LANAddressController) freshStagedPDSnapshot(pdName string) (pdclient.Sna
 		expires = snapshot.AcquiredAt.Add(time.Duration(snapshot.Valid) * time.Second)
 	}
 	now := time.Now().UTC()
-	if c.Now != nil {
-		now = c.Now().UTC()
-	}
 	if expires.IsZero() || !now.Before(expires) {
 		return pdclient.Snapshot{}, false
 	}
