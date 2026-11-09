@@ -2118,8 +2118,8 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 		}},
 		framework.FuncController{ControllerName: "sysctl", Every: 5 * time.Minute, Subs: []bus.Subscription{{Topics: []string{"routerd.controller.bootstrap", "routerd.system.network_adoption.applied"}}}, PeriodicFunc: didWorkPeriodic(sysctl.Reconcile)},
 		framework.FuncController{ControllerName: "hostname", Every: 5 * time.Minute, Subs: bootstrapSubscriptions(), PeriodicFunc: didWorkPeriodic(hostname.Reconcile)},
-		framework.FuncController{ControllerName: "bridge", Every: 30 * time.Second, Subs: statusSubscriptions("Interface", "VXLANTunnel", "VXLANSegment"), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			effective, err := effectiveForReconcile()
+		framework.FuncController{ControllerName: "bridge", Every: 30 * time.Second, Subs: withDynamicConfigPartSubscriptions(statusSubscriptions("Interface", "VXLANTunnel", "VXLANSegment")), PeriodicFunc: func(ctx context.Context) (bool, error) {
+			effective, err := effectiveDynamicForReconcile()
 			if err != nil {
 				return false, err
 			}
@@ -2128,8 +2128,8 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current.Store = store.withRouter(effective)
 			return didWorkError(current.Reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "vxlan-tunnel", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.currentRouter(), []string{"VXLANTunnel"}, "Bridge", "WireGuardInterface"), NextAfter: vxlanTunnel.NextExpiryAfter, PeriodicFunc: func(ctx context.Context) (bool, error) {
-			effective, err := effectiveForReconcile()
+		framework.FuncController{ControllerName: "vxlan-tunnel", Every: 30 * time.Second, Subs: withDynamicConfigPartSubscriptions(statusSubscriptionsWithWhen(r.currentRouter(), []string{"VXLANTunnel"}, "Bridge", "WireGuardInterface")), NextAfter: vxlanTunnel.NextExpiryAfter, PeriodicFunc: func(ctx context.Context) (bool, error) {
+			effective, err := effectiveDynamicForReconcile()
 			if err != nil {
 				return false, err
 			}
