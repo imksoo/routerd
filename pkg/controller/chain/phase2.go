@@ -415,11 +415,6 @@ func (c IPv4RouteController) reconcile(ctx context.Context) error {
 		status := map[string]any{"phase": "Installed", "type": routeType, "destination": destination, "device": device, "gateway": gateway, "preferredSource": preferredSource, "metric": spec.Metric, "dryRun": c.DryRun}
 		previous := c.Store.ObjectStatus(api.NetAPIVersion, "IPv4Route", resource.Metadata.Name)
 		changed := routeInstallStatusChanged(previous, status)
-		if changed {
-			status["installedAt"] = time.Now().UTC().Format(time.RFC3339Nano)
-		} else if installedAt, ok := previous["installedAt"]; ok {
-			status["installedAt"] = installedAt
-		}
 		if !c.DryRun {
 			localSource := true
 			if preferredSource != "" && routeType != "blackhole" {
