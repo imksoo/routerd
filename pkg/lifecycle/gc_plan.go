@@ -10,31 +10,7 @@ import (
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
-type GCActionType string
-
-const (
-	GCActionBackupState      GCActionType = "backupState"
-	GCActionTeardownResource GCActionType = "teardownResource"
-	GCActionDeleteStatus     GCActionType = "deleteStatus"
-	GCActionRecordEvent      GCActionType = "recordEvent"
-)
-
-type GCPlan struct {
-	ResourceTeardowns []routerstate.ObjectStatus
-	StatusDeletes     []routerstate.ObjectStatus
-	Actions           []GCAction
-	BackupRequired    bool
-}
-
-type GCAction struct {
-	Type        GCActionType
-	Status      routerstate.ObjectStatus
-	Reason      string
-	Remediation string
-	Label       string
-}
-
-func PlanResourceTeardownGC(desired map[string]bool, statuses []routerstate.ObjectStatus) GCPlan {
+func PlanResourceTeardownGC(desired map[string]bool, statuses []routerstate.ObjectStatus) []routerstate.ObjectStatus {
 	var teardowns []routerstate.ObjectStatus
 	for _, status := range statuses {
 		if !resourceLifecycleObjectStatus(status) {
@@ -48,24 +24,10 @@ func PlanResourceTeardownGC(desired map[string]bool, statuses []routerstate.Obje
 	sort.Slice(teardowns, func(i, j int) bool {
 		return ObjectStatusID(teardowns[i]) < ObjectStatusID(teardowns[j])
 	})
-	plan := GCPlan{ResourceTeardowns: teardowns}
-	if len(teardowns) > 0 {
-		plan.BackupRequired = true
-		plan.Actions = append(plan.Actions, GCAction{Type: GCActionBackupState, Reason: "resource teardown cleanup requires a state backup before deletion"})
-		for _, status := range teardowns {
-			plan.Actions = append(plan.Actions, GCAction{
-				Type:   GCActionTeardownResource,
-				Status: status,
-				Label:  ObjectStatusID(status),
-				Reason: "resource status is no longer desired and requires resource-specific teardown",
-			})
-		}
-		plan.Actions = append(plan.Actions, GCAction{Type: GCActionRecordEvent, Reason: "ResourceTeardownCleanup"})
-	}
-	return plan
+	return teardowns
 }
 
-func PlanStatusGC(desired map[string]bool, statuses []routerstate.ObjectStatus) GCPlan {
+func PlanStatusGC(desired map[string]bool, statuses []routerstate.ObjectStatus) []routerstate.ObjectStatus {
 	var deletes []routerstate.ObjectStatus
 	for _, status := range statuses {
 		if api.IsRemovedLegacyKind(status.Kind) {
@@ -89,16 +51,7 @@ func PlanStatusGC(desired map[string]bool, statuses []routerstate.ObjectStatus) 
 	sort.Slice(deletes, func(i, j int) bool {
 		return ObjectStatusID(deletes[i]) < ObjectStatusID(deletes[j])
 	})
-	plan := GCPlan{StatusDeletes: deletes}
-	if len(deletes) > 0 {
-		plan.BackupRequired = true
-		plan.Actions = append(plan.Actions, GCAction{Type: GCActionBackupState, Reason: "stale object status cleanup requires a state backup before deletion"})
-		for _, status := range deletes {
-			plan.Actions = append(plan.Actions, GCAction{Type: GCActionDeleteStatus, Status: status, Label: ObjectStatusID(status)})
-		}
-		plan.Actions = append(plan.Actions, GCAction{Type: GCActionRecordEvent, Reason: "StaleStateCleanup"})
-	}
-	return plan
+	return deletes
 }
 
 func SyntheticObjectStatus(status routerstate.ObjectStatus) bool {

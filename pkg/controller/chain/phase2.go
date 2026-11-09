@@ -639,13 +639,8 @@ func (c IPv4RouteController) cleanupRemovedRoutes(ctx context.Context) error {
 			desired[lifecycle.ResourceKey(resource.APIVersion, resource.Kind, resource.Metadata.Name)] = true
 		}
 	}
-	plan := lifecycle.PlanResourceTeardownGC(desired, statuses)
 	var failures []error
-	for _, action := range plan.Actions {
-		if action.Type != lifecycle.GCActionTeardownResource {
-			continue
-		}
-		status := action.Status
+	for _, status := range lifecycle.PlanResourceTeardownGC(desired, statuses) {
 		if status.APIVersion != api.NetAPIVersion || status.Kind != "IPv4Route" {
 			continue
 		}

@@ -4242,12 +4242,7 @@ func (c IPv4StaticAddressController) cleanupRemovedIPv4StaticAddresses(ctx conte
 			desired[lifecycle.ResourceKey(apiVersion, resource.Kind, resource.Metadata.Name)] = true
 		}
 	}
-	plan := lifecycle.PlanResourceTeardownGC(desired, remaining)
-	for _, action := range plan.Actions {
-		if action.Type != lifecycle.GCActionTeardownResource {
-			continue
-		}
-		status := action.Status
+	for _, status := range lifecycle.PlanResourceTeardownGC(desired, remaining) {
 		if status.APIVersion != api.NetAPIVersion || status.Kind != "IPv4StaticAddress" {
 			continue
 		}

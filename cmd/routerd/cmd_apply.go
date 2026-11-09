@@ -283,61 +283,24 @@ type staleObjectStatusCleanupStore interface {
 	ListDynamicConfigParts() ([]routerstate.DynamicConfigPartRecord, error)
 	routerstate.ObjectStatusLister
 	routerstate.ObjectDeleteStore
-	routerstate.EventRecorder
 	resourcequery.StateStore
 }
 
-type staleObjectStatusCleanupResult struct {
-	Removed      []routerstate.ObjectStatus
-	SnapshotPath string
-	Skipped      bool
-}
-
-func cleanupUnsupportedLegacyObjectStatuses(router *api.Router, store staleObjectStatusCleanupStore, statePath string, now time.Time, logger *eventlog.Logger) (staleObjectStatusCleanupResult, error) {
-	return cleanupUnsupportedLegacyObjectStatusesForOS(router, store, statePath, now, logger, platform.CurrentOS())
-}
-
-func cleanupUnsupportedLegacyObjectStatusesForOS(router *api.Router, store staleObjectStatusCleanupStore, statePath string, now time.Time, logger *eventlog.Logger, targetOS platform.OS) (staleObjectStatusCleanupResult, error) {
-	if store == nil {
-		return staleObjectStatusCleanupResult{}, nil
-	}
+func cleanupUnsupportedLegacyObjectStatuses(router *api.Router, store staleObjectStatusCleanupStore) error {
 	statuses, err := store.ListObjectStatuses()
 	if err != nil {
-		emitStateCleanupWarning(logger, "stale state cleanup skipped: list object statuses failed", map[string]string{"error": err.Error()})
-		recordStateCleanupEvent(router, store, "StaleStateCleanupSkipped", "stale state cleanup skipped: "+err.Error())
-		return staleObjectStatusCleanupResult{Skipped: true}, err
+		return err
 	}
-	desired, err := desiredObjectStatusKeysForOS(router, store, now, targetOS)
+	desired, err := desiredObjectStatusKeysForOS(router, store, time.Now(), platform.CurrentOS())
 	if err != nil {
-		emitStateCleanupWarning(logger, "stale state cleanup skipped: build effective resource view failed", map[string]string{"error": err.Error()})
-		recordStateCleanupEvent(router, store, "StaleStateCleanupSkipped", "stale state cleanup skipped: "+err.Error())
-		return staleObjectStatusCleanupResult{Skipped: true}, err
+		return err
 	}
-	plan := lifecycle.PlanStatusGC(desired, statuses)
-	removed := plan.StatusDeletes
-	if len(removed) == 0 {
-		return staleObjectStatusCleanupResult{}, nil
-	}
-	snapshotPath := staleStateCleanupSnapshotPath(statePath, now)
-	if err := writeStaleStateCleanupSnapshot(snapshotPath, removed); err != nil {
-		msg := fmt.Sprintf("stale state cleanup skipped: failed to write snapshot %s: %v", snapshotPath, err)
-		emitStateCleanupWarning(logger, msg, map[string]string{"snapshot": snapshotPath, "error": err.Error(), "resources": staleObjectStatusIDs(removed)})
-		recordStateCleanupEvent(router, store, "StaleStateCleanupSkipped", msg)
-		return staleObjectStatusCleanupResult{Removed: removed, SnapshotPath: snapshotPath, Skipped: true}, nil
-	}
-	for _, status := range removed {
+	for _, status := range lifecycle.PlanStatusGC(desired, statuses) {
 		if err := store.DeleteObject(status.APIVersion, status.Kind, status.Name); err != nil {
-			msg := fmt.Sprintf("stale state cleanup stopped after snapshot %s: delete %s failed: %v", snapshotPath, objectStatusID(status), err)
-			emitStateCleanupWarning(logger, msg, map[string]string{"snapshot": snapshotPath, "error": err.Error(), "resource": objectStatusID(status)})
-			recordStateCleanupEvent(router, store, "StaleStateCleanupPartial", msg)
-			return staleObjectStatusCleanupResult{Removed: removed, SnapshotPath: snapshotPath, Skipped: true}, err
+			return fmt.Errorf("delete stale status %s/%s/%s: %w", status.APIVersion, status.Kind, status.Name, err)
 		}
 	}
-	pruneStaleStateCleanupBackups(statePath, 5, logger)
-	msg := fmt.Sprintf("removed %d stale resource status rows after snapshot %s", len(removed), snapshotPath)
-	emitStateCleanupWarning(logger, msg, map[string]string{"snapshot": snapshotPath, "count": strconv.Itoa(len(removed)), "resources": staleObjectStatusIDs(removed)})
-	recordStateCleanupEvent(router, store, "StaleStateCleanup", msg)
-	return staleObjectStatusCleanupResult{Removed: removed, SnapshotPath: snapshotPath}, nil
+	return nil
 }
 
 func desiredObjectStatusKeysForOS(router *api.Router, store staleObjectStatusCleanupStore, now time.Time, targetOS platform.OS) (map[string]bool, error) {
@@ -396,78 +359,6 @@ func configuredResourceStatusKeys(router *api.Router) map[string]bool {
 	return out
 }
 
-func staleStateCleanupSnapshotPath(statePath string, now time.Time) string {
-	base := filepath.Base(statePath)
-	if base == "." || base == string(filepath.Separator) || base == "" {
-		base = "routerd.db"
-	}
-	return filepath.Join(filepath.Dir(statePath), fmt.Sprintf("%s.stale-cleanup.%s.json", base, now.UTC().Format("20060102T150405Z")))
-}
-
-type staleStateCleanupSnapshot struct {
-	CreatedAt string                     `json:"createdAt"`
-	Resources []routerstate.ObjectStatus `json:"resources"`
-}
-
-func writeStaleStateCleanupSnapshot(path string, removed []routerstate.ObjectStatus) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
-	snapshot := staleStateCleanupSnapshot{
-		CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
-		Resources: removed,
-	}
-	data, err := json.MarshalIndent(snapshot, "", "  ")
-	if err != nil {
-		return err
-	}
-	data = append(data, '\n')
-	return os.WriteFile(path, data, 0600)
-}
-
-func pruneStaleStateCleanupBackups(statePath string, keep int, logger *eventlog.Logger) {
-	if keep <= 0 {
-		return
-	}
-	matches, err := filepath.Glob(filepath.Join(filepath.Dir(statePath), filepath.Base(statePath)+".stale-cleanup.*"))
-	if err != nil || len(matches) <= keep {
-		return
-	}
-	sort.Sort(sort.Reverse(sort.StringSlice(matches)))
-	for _, path := range matches[keep:] {
-		if err := os.Remove(path); err != nil {
-			emitStateCleanupWarning(logger, "failed to prune stale state cleanup snapshot", map[string]string{"snapshot": path, "error": err.Error()})
-		}
-	}
-}
-
-func emitStateCleanupWarning(logger *eventlog.Logger, message string, attrs map[string]string) {
-	if logger == nil {
-		return
-	}
-	logger.Emit(eventlog.LevelWarning, "serve", message, attrs)
-}
-
-func recordStateCleanupEvent(router *api.Router, recorder routerstate.EventRecorder, reason, message string) {
-	if recorder == nil {
-		return
-	}
-	name := "router"
-	if router != nil && strings.TrimSpace(router.Metadata.Name) != "" {
-		name = strings.TrimSpace(router.Metadata.Name)
-	}
-	_ = recorder.RecordEvent(api.RouterAPIVersion, "Router", name, "Warning", reason, message)
-}
-
-func staleObjectStatusIDs(statuses []routerstate.ObjectStatus) string {
-	ids := make([]string, 0, len(statuses))
-	for _, status := range statuses {
-		ids = append(ids, objectStatusID(status))
-	}
-	sort.Strings(ids)
-	return strings.Join(ids, ",")
-}
-
 func reportManagementPlaneFindings(w io.Writer, findings []config.ManagementPlaneFinding, allowLockout bool) {
 	if w == nil || len(findings) == 0 {
 		return
@@ -510,10 +401,6 @@ func checkManagementPlaneBeforeApply(router *api.Router, opts applyOptions) ([]s
 		return warnings, errors.New("management plane lockout risk; fix ManagementAccess findings or re-run with --allow-mgmt-lockout")
 	}
 	return warnings, nil
-}
-
-func objectStatusID(status routerstate.ObjectStatus) string {
-	return status.APIVersion + "/" + status.Kind + "/" + status.Name
 }
 
 func runApplyChainOnce(ctx context.Context, router *api.Router, opts applyOptions, stdout io.Writer, logger *eventlog.Logger) (*apply.Result, error) {

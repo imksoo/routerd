@@ -421,7 +421,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		cancelControllers()
 	}()
 	var controllerBus *bus.Bus
-	if _, cleanupErr := cleanupUnsupportedLegacyObjectStatuses(router, stateStore, *statePath, time.Now().UTC(), logger); cleanupErr != nil {
+	if cleanupErr := cleanupUnsupportedLegacyObjectStatuses(router, stateStore); cleanupErr != nil {
 		logger.Emit(eventlog.LevelWarning, "serve", "stale state cleanup encountered an error", map[string]string{"error": cleanupErr.Error()})
 	}
 	engine := apply.New()
