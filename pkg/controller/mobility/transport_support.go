@@ -347,10 +347,3 @@ func mobilityPoolImportPrefixes(router *api.Router) []string {
 	}
 	return mergeTransportPolicyStrings(prefixes)
 }
-
-func controllerNow(fn func() time.Time) time.Time {
-	if fn != nil {
-		return fn().UTC()
-	}
-	return time.Now().UTC()
-}

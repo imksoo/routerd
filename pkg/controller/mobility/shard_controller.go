@@ -32,7 +32,6 @@ type ShardController struct {
 	Router *api.Router
 	Bus    *bus.Bus
 	Store  ShardStore
-	Now    func() time.Time
 }
 
 func (c ShardController) HandleEvent(ctx context.Context, _ interface{}) error {
@@ -43,7 +42,7 @@ func (c ShardController) Reconcile(ctx context.Context) error {
 	if c.Router == nil || c.Store == nil {
 		return nil
 	}
-	now := c.now()
+	now := time.Now()
 	for _, res := range c.Router.Spec.Resources {
 		if res.APIVersion != api.MobilityAPIVersion || res.Kind != "SAMSubnetPolicy" {
 			continue
@@ -157,11 +156,4 @@ func ResolveShardScope(store shardEventReader, group, poolRef, selfNode string, 
 	}
 	sort.Strings(prefixes)
 	return prefixes
-}
-
-func (c ShardController) now() time.Time {
-	if c.Now != nil {
-		return c.Now()
-	}
-	return time.Now()
 }

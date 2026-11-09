@@ -61,9 +61,9 @@ type SAMEnrollmentJoinClient interface {
 }
 
 type SAMEnrollmentClientController struct {
-	Router         *api.Router
-	Store          SAMEnrollmentClientStore
-	Now            func() time.Time
+	Router *api.Router
+	Store  SAMEnrollmentClientStore
+
 	ClientFactory  func(api.SAMEnrollmentClientSpec) []SAMEnrollmentJoinClient
 	requestTimeout time.Duration
 }
@@ -72,7 +72,7 @@ func (c SAMEnrollmentClientController) Reconcile(ctx context.Context) error {
 	if c.Router == nil || c.Store == nil {
 		return nil
 	}
-	now := controllerNow(c.Now)
+	now := time.Now().UTC()
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMEnrollmentClient" {
 			continue
@@ -99,7 +99,7 @@ func (c SAMEnrollmentClientController) NextReconcileAfter() time.Duration {
 	if c.Router == nil || c.Store == nil {
 		return 0
 	}
-	now := controllerNow(c.Now)
+	now := time.Now().UTC()
 	var earliest time.Time
 	consider := func(deadline time.Time) {
 		if !deadline.After(now) {
@@ -328,7 +328,7 @@ func (c SAMEnrollmentClientController) reconcileOne(ctx context.Context, owner a
 				// recovery backoff. Anchor the deadline at completion, not reconcile
 				// start, so this status update cannot wake the controller into an
 				// immediate timeout-rate retry loop.
-				retryFrom := controllerNow(c.Now)
+				retryFrom := time.Now().UTC()
 				if retryFrom.Before(now) {
 					retryFrom = now
 				}

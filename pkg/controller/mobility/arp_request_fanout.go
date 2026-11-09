@@ -114,7 +114,7 @@ func (c DiscoveryController) handleOnPremARPRequestEvent(event daemonapi.DaemonE
 	if !ok || c.Router == nil || c.Store == nil {
 		return nil
 	}
-	now := controllerNow(c.Now)
+	now := time.Now().UTC()
 	observedAt := event.Time.UTC()
 	if observedAt.IsZero() {
 		observedAt = now
@@ -213,7 +213,7 @@ func (c DiscoveryController) ReconcileARPProbeRequests(ctx context.Context) erro
 	if c.Router == nil || c.Store == nil || c.ProbeARP == nil {
 		return nil
 	}
-	now := controllerNow(c.Now)
+	now := time.Now().UTC()
 	var errs []error
 	for _, res := range c.Router.Spec.Resources {
 		if res.APIVersion != api.MobilityAPIVersion || res.Kind != "MobilityPool" {

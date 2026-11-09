@@ -52,8 +52,8 @@ type DiscoveryController struct {
 	Store            DiscoveryStore
 	ProbeARP         ARPProbeFunc
 	ARPProbeRequests *ARPProbeRequestTracker
-	Now              func() time.Time
-	StartedAt        time.Time
+
+	StartedAt time.Time
 }
 
 func (c DiscoveryController) HandleEvent(ctx context.Context, event daemonapi.DaemonEvent) error {
@@ -74,7 +74,7 @@ func (c DiscoveryController) reconcile(ctx context.Context, forceProviderScan bo
 	if c.Router == nil || c.Store == nil {
 		return nil
 	}
-	now := controllerNow(c.Now)
+	now := time.Now().UTC()
 	for _, res := range c.Router.Spec.Resources {
 		if res.APIVersion != api.MobilityAPIVersion || res.Kind != "MobilityPool" {
 			continue
@@ -411,7 +411,7 @@ func (c DiscoveryController) handleOnPremDiscoveryEvent(ctx context.Context, eve
 	if !ok || c.Router == nil || c.Store == nil {
 		return nil
 	}
-	now := controllerNow(c.Now)
+	now := time.Now().UTC()
 	recorded := false
 	for _, res := range c.Router.Spec.Resources {
 		if res.APIVersion != api.MobilityAPIVersion || res.Kind != "MobilityPool" {

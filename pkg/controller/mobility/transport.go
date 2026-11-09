@@ -28,8 +28,8 @@ type TransportController struct {
 	Bus           *bus.Bus
 	Store         Store
 	PeerGroupSync *PeerGroupSyncClient
-	Now           func() time.Time
-	OS            platform.OS
+
+	OS platform.OS
 }
 
 type transportDerivation struct {
@@ -51,7 +51,7 @@ func (c TransportController) Reconcile(ctx context.Context) error {
 	if c.Router == nil || c.Store == nil {
 		return nil
 	}
-	now := controllerNow(c.Now)
+	now := time.Now().UTC()
 	desiredSources := map[string]bool{}
 	for _, res := range c.Router.Spec.Resources {
 		if res.APIVersion != api.MobilityAPIVersion || res.Kind != "SAMTransportProfile" {
@@ -932,7 +932,7 @@ func (c TransportController) samNodeEndpointForTransport(profile api.SAMTranspor
 
 func (c TransportController) lastKnownSyncedPeerGroup(name string) (api.SAMPeerGroupSpec, string, bool, error) {
 	name = strings.TrimSpace(name)
-	resource, status, found, err := latestSyncedMobilityResource(c.Store, PeerGroupSyncDynamicSource(name), "SAMPeerGroup", name, controllerNow(c.Now))
+	resource, status, found, err := latestSyncedMobilityResource(c.Store, PeerGroupSyncDynamicSource(name), "SAMPeerGroup", name, time.Now().UTC())
 	if err != nil || !found {
 		return api.SAMPeerGroupSpec{}, status, found, err
 	}
@@ -948,7 +948,7 @@ func (c TransportController) samEnrollmentNodeSet(ref string) (api.SAMNodeSetSpe
 	if err != nil || !found {
 		return api.SAMNodeSetSpec{}, found, 0, nil, err
 	}
-	selection, err := samenrollment.ActiveClaims(c.Router.Spec.Resources, ref, policy, controllerNow(c.Now))
+	selection, err := samenrollment.ActiveClaims(c.Router.Spec.Resources, ref, policy, time.Now().UTC())
 	if err != nil {
 		return api.SAMNodeSetSpec{}, true, selection.Skipped, selection.SkippedReasons, err
 	}

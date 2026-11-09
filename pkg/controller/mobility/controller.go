@@ -78,7 +78,7 @@ type Controller struct {
 	Bus      *bus.Bus
 	Store    Store
 	BGPPaths BGPPathClient
-	Now      func() time.Time
+
 	// StartedAt is supplied by the Runner so the shared placement core receives
 	// one explicit process startup epoch rather than consulting package state.
 	StartedAt time.Time
@@ -119,7 +119,7 @@ func (c Controller) Reconcile(ctx context.Context) error {
 	if c.Router == nil || c.Store == nil {
 		return nil
 	}
-	now := controllerNow(c.Now)
+	now := time.Now().UTC()
 	desiredSources := map[string]bool{}
 	retainPoolSources := map[string]bool{}
 	for _, res := range c.Router.Spec.Resources {

@@ -55,7 +55,6 @@ type PeerGroupSyncResponse struct {
 
 type PeerGroupSyncServer struct {
 	Store peerGroupPartStore
-	Now   func() time.Time
 }
 
 func NewPeerGroupSyncServer(store peerGroupPartStore) *PeerGroupSyncServer {
@@ -116,7 +115,7 @@ func (s *PeerGroupSyncServer) syncResources() ([]api.Resource, error) {
 	if s == nil || s.Store == nil {
 		return nil, nil
 	}
-	now := controllerNow(s.Now)
+	now := time.Now().UTC()
 	records, err := s.Store.ListDynamicConfigParts()
 	if err != nil {
 		return nil, err
@@ -151,7 +150,6 @@ type PeerGroupSyncClient struct {
 	HTTPClient *http.Client
 	Discover   PeerGroupEndpointDiscovery
 	Port       int
-	Now        func() time.Time
 }
 
 type syncMetadata struct {
@@ -298,7 +296,7 @@ func (c *PeerGroupSyncClient) syncResource(ctx context.Context, router *api.Rout
 	if len(candidates) == 0 {
 		return api.Resource{}, syncMetadata{}, false, firstErr
 	}
-	selected, err := selectSyncCandidate(candidates, controllerNow(c.Now))
+	selected, err := selectSyncCandidate(candidates, time.Now().UTC())
 	if err != nil {
 		return api.Resource{}, syncMetadata{}, false, err
 	}
@@ -335,7 +333,7 @@ func fetchSyncResourceFromEndpoint(ctx context.Context, client *http.Client, end
 }
 
 func (c *PeerGroupSyncClient) saveSyncResource(name string, resource api.Resource, meta syncMetadata) error {
-	now := controllerNow(c.Now)
+	now := time.Now().UTC()
 	resource.TypeMeta = api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: peerGroupSyncResourceKind}
 	resource.Metadata.Name = strings.TrimSpace(name)
 	expiresAt := meta.ValidUntil
