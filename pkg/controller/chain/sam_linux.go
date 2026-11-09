@@ -166,15 +166,15 @@ func (netlinkSAMProxyNeighborApplier) DeleteProxyNeighbor(_ context.Context, add
 	return nil
 }
 
-func (netlinkSAMProxyNeighborApplier) EnsureOSAddressAbsent(_ context.Context, address string) (samOSAddressDeassignResult, error) {
+func (netlinkSAMProxyNeighborApplier) EnsureOSAddressAbsent(_ context.Context, address string) (bool, error) {
 	ip, _, err := net.ParseCIDR(address)
 	if err != nil {
 		ip = net.ParseIP(address)
 	}
 	if ip == nil || ip.To4() == nil {
-		return samOSAddressDeassignResult{}, fmt.Errorf("invalid IPv4 address %q", address)
+		return false, fmt.Errorf("invalid IPv4 address %q", address)
 	}
-	result := samOSAddressDeassignResult{}
+	result := false
 	links, err := netlink.LinkList()
 	if err != nil {
 		return result, err
@@ -191,7 +191,7 @@ func (netlinkSAMProxyNeighborApplier) EnsureOSAddressAbsent(_ context.Context, a
 			if err := netlink.AddrDel(link, &addr); err != nil && !isNetlinkNotFound(err) {
 				return result, err
 			}
-			result.removedThisReconcile = true
+			result = true
 		}
 	}
 	return result, nil

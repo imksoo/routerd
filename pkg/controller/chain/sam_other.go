@@ -37,8 +37,8 @@ func (unsupportedSAMProxyNeighborApplier) DeleteProxyNeighbor(context.Context, s
 	return nil
 }
 
-func (unsupportedSAMProxyNeighborApplier) EnsureOSAddressAbsent(context.Context, string) (samOSAddressDeassignResult, error) {
-	return samOSAddressDeassignResult{}, nil
+func (unsupportedSAMProxyNeighborApplier) EnsureOSAddressAbsent(context.Context, string) (bool, error) {
+	return false, nil
 }
 
 func (unsupportedSAMProxyNeighborApplier) ReconcileForwardPaths(context.Context, []sam.CaptureAction) error {

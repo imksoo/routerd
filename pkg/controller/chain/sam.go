@@ -18,10 +18,6 @@ import (
 	"github.com/imksoo/routerd/pkg/sam"
 )
 
-type samOSAddressDeassignResult struct {
-	removedThisReconcile bool
-}
-
 // SAMController applies only the typed local capture intents emitted by a
 // MobilityPool plan. It deliberately does not inspect status or legacy SAM
 // resources to rediscover desired state.
@@ -65,7 +61,7 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 			failures = append(failures, fmt.Sprintf("%s deassign %s: %v", action.IntentID, action.Address, err))
 			continue
 		}
-		deassigned[action.IntentID] = result.removedThisReconcile
+		deassigned[action.IntentID] = result
 	}
 	if len(failures) != 0 {
 		return fmt.Errorf("SAM capture failed: %s", strings.Join(failures, "; "))

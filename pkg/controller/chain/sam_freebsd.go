@@ -131,26 +131,25 @@ func (freeBSDSAMProxyNeighborApplier) DeleteProxyNeighbor(ctx context.Context, a
 	return err
 }
 
-func (freeBSDSAMProxyNeighborApplier) EnsureOSAddressAbsent(ctx context.Context, address string) (samOSAddressDeassignResult, error) {
+func (freeBSDSAMProxyNeighborApplier) EnsureOSAddressAbsent(ctx context.Context, address string) (bool, error) {
 	ip, err := samIPv4Address(address)
 	if err != nil {
-		return samOSAddressDeassignResult{}, err
+		return false, err
 	}
-	result := samOSAddressDeassignResult{}
 	out, err := freeBSDSAMRunCommand(ctx, "ifconfig", "-l")
 	if err != nil {
-		return result, fmt.Errorf("list FreeBSD interfaces: %w: %s", err, strings.TrimSpace(string(out)))
+		return false, fmt.Errorf("list FreeBSD interfaces: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	for _, ifname := range strings.Fields(string(out)) {
 		data, err := freeBSDSAMRunCommand(ctx, "ifconfig", ifname)
 		if err != nil {
-			return result, fmt.Errorf("observe %s for SAM address collision: %w: %s", ifname, err, strings.TrimSpace(string(data)))
+			return false, fmt.Errorf("observe %s for SAM address collision: %w: %s", ifname, err, strings.TrimSpace(string(data)))
 		}
 		if freeBSDInterfaceHasIPv4(data, ip) {
-			return result, fmt.Errorf("foreign OS address %s remains configured on %s", ip, ifname)
+			return false, fmt.Errorf("foreign OS address %s remains configured on %s", ip, ifname)
 		}
 	}
-	return result, nil
+	return false, nil
 }
 
 func (freeBSDSAMProxyNeighborApplier) ReconcileForwardPaths(ctx context.Context, paths []sam.CaptureAction) error {
