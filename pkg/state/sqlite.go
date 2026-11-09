@@ -1788,13 +1788,21 @@ func variablesMap(status objectStatus) map[string]any {
 	return map[string]any{}
 }
 
-func encodeValueMap(value Value) map[string]any {
-	return map[string]any{
-		"status":    value.Status,
-		"value":     value.Value,
-		"reason":    value.Reason,
-		"since":     value.Since.Format(time.RFC3339Nano),
-		"updatedAt": value.UpdatedAt.Format(time.RFC3339Nano),
+type storedValue struct {
+	Reason    string `json:"reason"`
+	Since     string `json:"since"`
+	Status    string `json:"status"`
+	UpdatedAt string `json:"updatedAt"`
+	Value     string `json:"value"`
+}
+
+func encodeValueMap(value Value) storedValue {
+	return storedValue{
+		Reason:    value.Reason,
+		Since:     value.Since.Format(time.RFC3339Nano),
+		Status:    value.Status,
+		UpdatedAt: value.UpdatedAt.Format(time.RFC3339Nano),
+		Value:     value.Value,
 	}
 }
 
@@ -1803,13 +1811,7 @@ func decodeValue(raw any) (Value, bool) {
 		return Value{}, false
 	}
 	data, _ := json.Marshal(raw)
-	var decoded struct {
-		Status    string `json:"status"`
-		Value     string `json:"value"`
-		Reason    string `json:"reason"`
-		Since     string `json:"since"`
-		UpdatedAt string `json:"updatedAt"`
-	}
+	var decoded storedValue
 	if err := json.Unmarshal(data, &decoded); err != nil || decoded.Status == "" {
 		return Value{}, false
 	}
