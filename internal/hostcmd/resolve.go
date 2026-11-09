@@ -22,7 +22,7 @@ var defaultSearchDirs = []string{
 
 // Resolve returns an executable path for host commands that may live outside
 // the service PATH, such as commands installed through package profiles.
-func Resolve(name string, extraDirs ...string) string {
+func Resolve(name string) string {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return name
@@ -33,7 +33,7 @@ func Resolve(name string, extraDirs ...string) string {
 	if path, err := exec.LookPath(name); err == nil {
 		return path
 	}
-	for _, dir := range append(extraDirs, defaultSearchDirs...) {
+	for _, dir := range defaultSearchDirs {
 		if dir = strings.TrimSpace(dir); dir == "" {
 			continue
 		}
