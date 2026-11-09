@@ -3001,3 +3001,22 @@ func refName(ref string) string {
 	}
 	return ref
 }
+
+func freeBSDIPv4MaskPrefix(mask string) string {
+	mask = strings.TrimPrefix(mask, "0x")
+	if len(mask) != 8 {
+		return ""
+	}
+	value, err := strconv.ParseUint(mask, 16, 32)
+	if err != nil {
+		return ""
+	}
+	prefix := 0
+	for i := 31; i >= 0; i-- {
+		if value&(1<<uint(i)) == 0 {
+			break
+		}
+		prefix++
+	}
+	return fmt.Sprintf("%d", prefix)
+}

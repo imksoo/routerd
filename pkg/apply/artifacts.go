@@ -650,3 +650,26 @@ func networkdAdoptionConfigured(spec api.NetworkAdoptionNetworkdSpec) bool {
 func resolvedAdoptionConfigured(spec api.NetworkAdoptionResolvedSpec) bool {
 	return spec.DisableDNSStubListener || len(spec.DNSServers) > 0 || len(spec.FallbackDNSServers) > 0
 }
+
+func newIPv4FwmarkRuleArtifact(priority, mark, table int) resource.Artifact {
+	return resource.Artifact{
+		Kind: "linux.ipv4.fwmarkRule",
+		Name: fmt.Sprintf("priority=%d,mark=0x%x,table=%d", priority, mark, table),
+		Attributes: map[string]string{
+			"priority": fmt.Sprintf("%d", priority),
+			"mark":     fmt.Sprintf("0x%x", mark),
+			"table":    fmt.Sprintf("%d", table),
+		},
+	}
+}
+
+func newNftTableArtifact(family, name string) resource.Artifact {
+	return resource.Artifact{
+		Kind: "nft.table",
+		Name: family + "/" + name,
+		Attributes: map[string]string{
+			"family": family,
+			"name":   name,
+		},
+	}
+}
