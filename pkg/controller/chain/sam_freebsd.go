@@ -270,39 +270,6 @@ func samIPv4Address(address string) (string, error) {
 	return ip.To4().String(), nil
 }
 
-func freeBSDARPEntry(ctx context.Context, address, ifname string) (string, bool, error) {
-	// FreeBSD arp(8) accepts a hostname/address for the single-entry form;
-	// -a selects all entries and cannot be combined with that operand.
-	out, err := freeBSDSAMRunCommand(ctx, "arp", "-n", "-i", ifname, address)
-	if err != nil {
-		text := strings.TrimSpace(string(out))
-		// FreeBSD arp(8) reports an absent single entry as a nonzero command
-		// with either the unscoped "ADDRESS (ADDRESS) -- no entry" form or,
-		// when -i is used, that exact form followed by " on IFACE". Those are
-		// the only nonzero lookup outcomes safe to normalize; every other error
-		// leaves ownership unknown and remains fail-closed.
-		if freeBSDARPEntryAbsent(text, address, ifname) {
-			return "", false, nil
-		}
-		return "", false, fmt.Errorf("observe ARP %s: %w: %s", address, err, text)
-	}
-	for _, line := range strings.Split(string(out), "\n") {
-		if strings.Contains(line, "("+address+")") {
-			return line, true, nil
-		}
-	}
-	return "", false, nil
-}
-
-func freeBSDARPEntryAbsent(text, address, ifname string) bool {
-	base := address + " (" + address + ") -- no entry"
-	return text == base || text == base+" on "+ifname
-}
-
-func freeBSDPublishedARPMatches(entry, ifname string) bool {
-	return strings.Contains(entry, " on "+ifname+" ") && strings.Contains(strings.ToLower(entry), "published")
-}
-
 func freeBSDInterfaceHasIPv4(out []byte, address string) bool {
 	for _, line := range strings.Split(string(out), "\n") {
 		fields := strings.Fields(line)
