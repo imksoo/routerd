@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/apply"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/resourcequery"
 	routerstate "github.com/imksoo/routerd/pkg/state"
@@ -64,6 +65,29 @@ func (c VXLANTunnelController) Reconcile(ctx context.Context) error {
 	}
 	if declared == nil {
 		return nil
+	}
+	if !c.DryRun {
+		retained, err := apply.ConfiguredVXLANInterfaces(declared, c.Router)
+		if err != nil {
+			return err
+		}
+		out, err := c.command(ctx, "ip", "-j", "link", "show", "type", "vxlan")
+		if err != nil {
+			return fmt.Errorf("list VXLAN links: %w: %s", err, strings.TrimSpace(string(out)))
+		}
+		var links []struct {
+			Name string `json:"ifname"`
+		}
+		if err := json.Unmarshal(out, &links); err != nil {
+			return fmt.Errorf("decode VXLAN links: %w", err)
+		}
+		for _, link := range links {
+			if link.Name != "" && !retained[link.Name] {
+				if out, err := c.command(ctx, "ip", "link", "delete", "dev", link.Name, "type", "vxlan"); err != nil {
+					return fmt.Errorf("delete VXLAN %s: %w: %s", link.Name, err, strings.TrimSpace(string(out)))
+				}
+			}
+		}
 	}
 	effective := vxlansByName(c.Router)
 	aliases := bridgeInterfaceAliases(declared)
