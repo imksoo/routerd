@@ -32,7 +32,6 @@ type applyAttemptOutcome struct {
 	Canonical           canonicalWriteState
 	DurabilityConfirmed bool
 	TerminalAttempted   bool
-	TerminalSucceeded   bool
 	Runtime             controllerchain.RuntimeReloadOutcome
 }
 
@@ -42,7 +41,7 @@ type applyAttemptError struct {
 }
 
 func (e *applyAttemptError) Error() string {
-	return fmt.Sprintf("apply failed: %v; stage=%s generation=%d canonical=%s durabilityConfirmed=%t terminalAttempted=%t terminalSucceeded=%t runtimeKnown=%t runtimeAvailable=%t activeEpoch=%d operation=%d", e.Cause, e.Outcome.Stage, e.Outcome.Generation, e.Outcome.Canonical, e.Outcome.DurabilityConfirmed, e.Outcome.TerminalAttempted, e.Outcome.TerminalSucceeded, e.Outcome.Runtime.Active.Known, e.Outcome.Runtime.Active.Available, e.Outcome.Runtime.Active.Epoch, e.Outcome.Runtime.OperationID)
+	return fmt.Sprintf("apply failed: %v; stage=%s generation=%d canonical=%s durabilityConfirmed=%t terminalAttempted=%t runtimeKnown=%t runtimeAvailable=%t activeEpoch=%d operation=%d", e.Cause, e.Outcome.Stage, e.Outcome.Generation, e.Outcome.Canonical, e.Outcome.DurabilityConfirmed, e.Outcome.TerminalAttempted, e.Outcome.Runtime.Active.Known, e.Outcome.Runtime.Active.Available, e.Outcome.Runtime.Active.Epoch, e.Outcome.Runtime.OperationID)
 }
 
 func (e *applyAttemptError) Unwrap() error { return e.Cause }
@@ -52,9 +51,7 @@ func (o *applyAttemptOutcome) finish(store *routerstate.SQLiteStore, phase strin
 		return nil
 	}
 	o.TerminalAttempted = true
-	err := store.FinishGeneration(o.Generation, phase, warnings)
-	o.TerminalSucceeded = err == nil
-	return err
+	return store.FinishGeneration(o.Generation, phase, warnings)
 }
 
 func (o *applyAttemptOutcome) finishEarlyFailure(store *routerstate.SQLiteStore, err *error) {
