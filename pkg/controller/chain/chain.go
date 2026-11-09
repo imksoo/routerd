@@ -2062,6 +2062,8 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	tunnel := TunnelInterfaceController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, OS: platform.CurrentOS(), Logger: logger}
 	wireGuard := WireGuardController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, Logger: logger}
 	ipv4Static := IPv4StaticAddressController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), WhenRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunAddress, Logger: logger}
+	// Static cleanup reads DHCP lease status, which is saved after kernel changes.
+	var ipv4AddressMu sync.Mutex
 	lan := LANAddressController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunAddress, Logger: logger}
 	dslite := DSLiteTunnelController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunDSLite, ResolverPort: opts.DnsmasqPort}
 	route := IPv4RouteController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, Logger: logger}
@@ -2369,6 +2371,8 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "ipv4-static-address", Subs: ipv4StaticAddressStatusSubscriptions(), PeriodicFunc: func(ctx context.Context) (bool, error) {
+			ipv4AddressMu.Lock()
+			defer ipv4AddressMu.Unlock()
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return false, err
@@ -2511,6 +2515,8 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			return didWorkError(current.reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "dhcpv4-lease", Every: 10 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.dhcpv4.client.**"}}}, PeriodicFunc: func(ctx context.Context) (bool, error) {
+			ipv4AddressMu.Lock()
+			defer ipv4AddressMu.Unlock()
 			current := dhcp4Client
 			current.Router = r.currentRouter()
 			current.Store = store.withRouter(current.Router)
