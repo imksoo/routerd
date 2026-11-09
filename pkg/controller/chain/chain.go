@@ -1718,11 +1718,6 @@ func (r *Runner) runControllerGenerations(ctx context.Context, logger *slog.Logg
 	return ctx.Err()
 }
 
-func (r *Runner) prepareReloadedControllerGeneration(ctx context.Context, logger *slog.Logger, store eventedStore, router *api.Router) (*controllerGeneration, error) {
-	generation, _, err := r.prepareRuntimeReload(ctx, logger, store, generationReload{router: router})
-	return generation, err
-}
-
 func (r *Runner) prepareRuntimeReload(ctx context.Context, logger *slog.Logger, store eventedStore, request generationReload) (*controllerGeneration, bool, error) {
 	previous := r.currentRouter()
 	if err := ctx.Err(); err != nil {
