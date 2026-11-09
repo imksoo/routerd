@@ -20,8 +20,6 @@ import (
 	"github.com/imksoo/routerd/pkg/platform"
 )
 
-var commandContext = exec.CommandContext
-
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -59,7 +57,7 @@ func run(ctx context.Context, args []string) error {
 	if !*once {
 		journalArgs = append(journalArgs, "-f")
 	}
-	cmd := commandContext(ctx, "journalctl", journalArgs...)
+	cmd := exec.CommandContext(ctx, "journalctl", journalArgs...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return err
