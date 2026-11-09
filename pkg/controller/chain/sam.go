@@ -179,10 +179,8 @@ type samReconcileState struct {
 
 func (c SAMController) reconcileState(actions []sam.CaptureAction, targetOS platform.OS) (samReconcileState, error) {
 	status := c.Store.ObjectStatus(api.RouterAPIVersion, "Router", samDataplaneStatusName)
-	previousProxyNeighbors, invalidNeighbors, neighborsMalformed, neighborErr := samDecodeRecords(status["appliedProxyNeighbors"], statusValuePresent(status, "appliedProxyNeighbors"), validateSAMAppliedProxyNeighbor, func(v samAppliedProxyNeighbor) string {
-		return samProxyNeighborKey(v.ID, v.Address, v.Interface)
-	})
-	previousForwardPaths, invalidPaths, pathsMalformed, pathErr := samDecodeRecords(status["appliedForwardPaths"], statusValuePresent(status, "appliedForwardPaths"), validateSAMAppliedForwardPath, samForwardPathKey)
+	previousProxyNeighbors, invalidNeighbors, neighborsMalformed, neighborErr := samDecodeRecords(status["appliedProxyNeighbors"], statusValuePresent(status, "appliedProxyNeighbors"), validateSAMAppliedProxyNeighbor)
+	previousForwardPaths, invalidPaths, pathsMalformed, pathErr := samDecodeRecords(status["appliedForwardPaths"], statusValuePresent(status, "appliedForwardPaths"), validateSAMAppliedForwardPath)
 	proxySettings, invalidProxyARP, proxyMalformed, proxyErr := samDecodeRecords(status["appliedProxyARP"], statusValuePresent(status, "appliedProxyARP"), func(setting samAppliedProxyARP) error {
 		if targetOS == platform.OSFreeBSD {
 			if setting.Interface != "" {
@@ -194,7 +192,7 @@ func (c SAMController) reconcileState(actions []sam.CaptureAction, targetOS plat
 			return fmt.Errorf("proxy_arp ledger interface: %w", err)
 		}
 		return nil
-	}, func(v samAppliedProxyARP) string { return v.Interface })
+	})
 	previousProxyARP := make(map[string]samAppliedProxyARP, len(proxySettings))
 	for _, setting := range proxySettings {
 		previousProxyARP[setting.Interface] = setting
@@ -408,7 +406,7 @@ func (c SAMController) saveAppliedDataplane(actions []sam.CaptureAction, state s
 }
 
 // samDecodeRecords isolates malformed entries so valid effects can still reconcile.
-func samDecodeRecords[T comparable](value any, present bool, validate func(T) error, key func(T) string) ([]T, []json.RawMessage, bool, error) {
+func samDecodeRecords[T any](value any, present bool, validate func(T) error) ([]T, []json.RawMessage, bool, error) {
 	if !present {
 		return nil, nil, false, nil
 	}
@@ -420,15 +418,9 @@ func samDecodeRecords[T comparable](value any, present bool, validate func(T) er
 	if err := json.Unmarshal(data, &entries); err != nil || entries == nil {
 		return nil, nil, true, fmt.Errorf("SAM applied records must be a non-null array")
 	}
-	type parsedRecord struct {
-		value T
-		raw   json.RawMessage
-		valid bool
-	}
-	var parsed []parsedRecord
+	var valid []T
 	var invalid []json.RawMessage
 	var failures []error
-	byKey := map[string]int{}
 	for i, entry := range entries {
 		var item T
 		err := json.Unmarshal(entry, &item)
@@ -440,25 +432,7 @@ func samDecodeRecords[T comparable](value any, present bool, validate func(T) er
 			failures = append(failures, fmt.Errorf("record %d: %w", i, err))
 			continue
 		}
-		k := key(item)
-		if previous, ok := byKey[k]; ok {
-			if !parsed[previous].valid {
-				invalid = append(invalid, entry)
-			} else if parsed[previous].value != item {
-				parsed[previous].valid = false
-				invalid = append(invalid, parsed[previous].raw, entry)
-				failures = append(failures, fmt.Errorf("record %d conflicts with another record", i))
-			}
-			continue
-		}
-		byKey[k] = len(parsed)
-		parsed = append(parsed, parsedRecord{value: item, raw: entry, valid: true})
-	}
-	valid := make([]T, 0, len(parsed))
-	for _, entry := range parsed {
-		if entry.valid {
-			valid = append(valid, entry.value)
-		}
+		valid = append(valid, item)
 	}
 	return valid, invalid, false, errors.Join(failures...)
 }
