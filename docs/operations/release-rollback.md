@@ -53,15 +53,3 @@ non-success result for an uncommitted apply, an `ApplyResult` phase that does
 not commit canonical config, a missing commit event, or an unchanged canonical
 mtime is a failed configuration rollback. Stop and preserve evidence rather
 than restarting routerd with an ambiguous runtime-only configuration.
-
-## Certification and qualification evidence
-
-The certification manifest or attached evidence must identify the binary
-artifact and SHA-256, the selected rollback scope, every configuration
-candidate used, and the resulting canonical config SHA-256. A qualification
-run may proceed only after the selected rollback path has passed its readiness
-and connectivity checks.
-
-See [Release environment certification](release-environment-certification.md)
-and [Release qualification policy](release-qualification-policy.md) for the
-phase boundaries and qualification gates.

@@ -10,37 +10,6 @@ routerd 採用以日期為基礎的版本號。
 執行檔版本號、發布標籤與發布封存檔名稱均使用 `vYYYYMMDD.HHmm` 格式。
 日期與時間預設以 `UTC` 為基準計算。
 
-## Qualification 的觀測結果
-
-區分實際觀測到的產品違規（`product_failure`）、證據不足或含糊造成的觀測不成立
-（`observation_inconclusive`）以及執行環境故障（`infra_failure`）。
-觀測不成立仍保留 `status: fail`，既不證明產品存在缺陷，也不代表 qualification 通過。
-即使後續嘗試成功，也應保留每次失敗、傳送端實際開始和結束時間及結果。
-管理 RPC 的時間本身不能證明刺激實際發生的時間。
-
-先重播保存的失敗與相鄰正常範例，再驗證現有環境中的相關節點。
-根據變更影響範圍，事先說明追加測試的對象和理由。重新採集觀測必須處於同一期限、
-採集視窗和故障狀態內。不得改寫封存結果、在不同條件下沿用部分 PASS，或為了除錯測試
-而重新部署全部雲端環境。參見 [qualification 原則（英語）](/docs/operations/release-qualification-policy)。
-
-## 開始實機驗證之前
-
-驗證即將凍結的最終 contract 原始檔：
-
-```sh
-python3 scripts/release_certification.py validate-contract \
-  --contract prospective-contract.json --environment "$environment" \
-  --topology "$topology" --providers "$providers" > contract-validation.json
-```
-
-此檢查驗證準備輸入與 contract 的 SHA256；實際連線仍需另行驗證。
-
-保留失敗的 run，使用保存資料及負例重現擷取、判定或準備缺陷，修正並驗證後再凍結
-新的 run。不要反覆建立雲端資源來除錯已知的測試程式缺陷。產品改善不能成為這些返工
-的藉口。產品二進位檔不變時，僅 QA 的修正本身不要求重新進行四環境產品驗證。
-參見 [R1–R12 原因分類、前提、失敗範例及重試條件](https://github.com/imksoo/routerd/blob/main/tools/release-qa-labs/qualification-lessons.md)。
-實際費用與浪費金額須核對帳單，不能僅憑經過時間推斷。
-
 ## 自動發布
 
 確保工作目錄乾淨後，執行發布輔助指令：

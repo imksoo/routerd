@@ -11,39 +11,6 @@ routerd は日付ベースのリリース版番号を使います。
 `vYYYYMMDD.HHmm` 形式です。
 日付と時刻は、既定で `UTC` を基準に算出します。
 
-## Qualification の観測結果
-
-実測した製品違反（`product_failure`）、証拠の不足・曖昧さによる観測不成立
-（`observation_inconclusive`）、実行基盤の障害（`infra_failure`）を区別します。
-観測不成立は `status: fail` のままで、製品不具合や qualification 合格を意味しません。
-後の試行が成功しても、各試行の失敗、送信側の実開始・終了時刻、結果を残します。
-管理 RPC の時刻だけでは刺激の発生時刻を証明できません。
-
-保存された失敗と正常隣接例を先に再現し、既存環境の該当ノードを確認します。
-追加試験は変更の影響範囲に応じて対象と理由を事前に示します。観測の再取得は同じ期限・
-採取窓・障害状態の中で行います。封印済み結果の変更、条件が異なる部分 PASS の流用、
-試験のデバッグを目的としたクラウド全環境の再展開は行いません。
-詳細は [qualification 方針（英語）](/docs/operations/release-qualification-policy) を参照してください。
-
-## 実機試験を開始する前に
-
-凍結予定の最終 contract 原本を検証します。
-
-```sh
-python3 scripts/release_certification.py validate-contract \
-  --contract prospective-contract.json --environment "$environment" \
-  --topology "$topology" --providers "$providers" > contract-validation.json
-```
-
-この確認は準備情報と contract の SHA256 を検証します。実機の疎通は別途確認します。
-
-失敗したrunは保存し、採取・判定・準備の欠陥を保存データと負例で再現してから
-修正・検証し、新しいrunを凍結します。既知の試験コードの不備を調べるために
-クラウドを繰り返し起動しません。製品改善の成果は、その手戻りの正当化にはなりません。
-製品バイナリが同一のQAだけの修正を理由に、4環境の製品試験を繰り返す必要はありません。
-[R1〜R12の原因分類・前提・失敗例・再試験基準](https://github.com/imksoo/routerd/blob/main/tools/release-qa-labs/qualification-lessons.md)
-を参照してください。実額や無駄になった費用は、経過時間から推測せず請求データで確認します。
-
 ## 自動リリース
 
 作業ツリーをクリーンにした状態で、リリース用ヘルパーを実行します。
