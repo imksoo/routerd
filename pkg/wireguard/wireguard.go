@@ -349,7 +349,7 @@ func ParseDump(data []byte) ([]PeerStatus, error) {
 
 func ParseInterfaceDump(name string, data []byte) (InterfaceStatus, error) {
 	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	if len(lines) <= 1 || strings.TrimSpace(string(data)) == "" {
+	if strings.TrimSpace(string(data)) == "" {
 		return InterfaceStatus{Name: name}, nil
 	}
 	status := InterfaceStatus{Name: name}
