@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/imksoo/routerd/internal/statusvalue"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/conntracktuning"
 	"github.com/imksoo/routerd/pkg/daemonapi"
@@ -288,10 +287,6 @@ func (c SysctlController) cleanupRemovedSAMProxyARP(ctx context.Context, desired
 	if err != nil {
 		return err
 	}
-	command := c.Command
-	if command == nil {
-		command = runOutputCommandContext
-	}
 	desiredStatusIDs := map[string]bool{}
 	for key := range desired {
 		name := strings.TrimPrefix(key, "Sysctl/")
@@ -312,13 +307,6 @@ func (c SysctlController) cleanupRemovedSAMProxyARP(ctx context.Context, desired
 			continue
 		}
 		key := strings.TrimSpace(fmt.Sprint(status.Status["key"]))
-		previous := strings.TrimSpace(fmt.Sprint(status.Status["previousValue"]))
-		changed, _ := statusvalue.ExtendedBool(status.Status["changed"])
-		if changed && key != "" && key != "<nil>" && previous != "" && previous != "<nil>" && previous != "1" {
-			if out, err := command(ctx, "sysctl", "-w", key+"="+previous); err != nil {
-				return fmt.Errorf("restore removed SAM proxy_arp sysctl %s: %w: %s", key, err, strings.TrimSpace(string(out)))
-			}
-		}
 		if err := deleter.DeleteObject(api.SystemAPIVersion, "Sysctl", status.Name); err != nil {
 			return err
 		}

@@ -15,12 +15,14 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
+	"github.com/imksoo/routerd/pkg/hostdeps"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/sam"
 )
 
 type samProxyNeighborApplier interface {
 	SetProxyARP(ctx context.Context, ifname string, enabled bool) error
+	ListEnabledProxyARP(ctx context.Context) ([]string, error)
 	SetIPForwarding(ctx context.Context, enabled bool) error
 	EnsureProxyNeighbor(ctx context.Context, address, ifname string) error
 	DeleteProxyNeighbor(ctx context.Context, address, ifname string) error
@@ -725,6 +727,38 @@ func (c SAMController) reconcileProxyARPSysctls(ctx context.Context, actions []s
 				desired[applied.Interface] = true
 			}
 		}
+		for _, resource := range hostdeps.SysctlResources(c.Router) {
+			var settings []sysctlSetting
+			switch resource.Kind {
+			case "Sysctl":
+				spec, err := resource.SysctlSpec()
+				if err != nil {
+					return err
+				}
+				settings = []sysctlSetting{{Key: spec.Key, Value: spec.Value}}
+			case "SysctlProfile":
+				spec, err := resource.SysctlProfileSpec()
+				if err != nil {
+					return err
+				}
+				settings, err = sysctlProfileSettings(spec)
+				if err != nil {
+					return err
+				}
+			}
+			for _, setting := range settings {
+				key := strings.TrimSpace(setting.Key)
+				iface := ""
+				if strings.HasPrefix(key, "net.ipv4.conf.") && strings.HasSuffix(key, ".proxy_arp") {
+					iface = strings.ReplaceAll(strings.TrimSuffix(strings.TrimPrefix(key, "net.ipv4.conf."), ".proxy_arp"), "/", ".")
+				} else if strings.HasPrefix(key, "net/ipv4/conf/") && strings.HasSuffix(key, "/proxy_arp") {
+					iface = strings.TrimSuffix(strings.TrimPrefix(key, "net/ipv4/conf/"), "/proxy_arp")
+				}
+				if strings.TrimSpace(setting.Value) == "1" && iface != "" {
+					desired[iface] = true
+				}
+			}
+		}
 	}
 	interfaces := map[string]bool{}
 	for iface := range desired {
@@ -732,6 +766,23 @@ func (c SAMController) reconcileProxyARPSysctls(ctx context.Context, actions []s
 	}
 	for iface := range state.previousProxyARP {
 		interfaces[iface] = true
+	}
+	if targetOS == platform.OSLinux {
+		enabled, err := applier.ListEnabledProxyARP(ctx)
+		if err != nil {
+			return fmt.Errorf("list enabled proxy_arp settings: %w", err)
+		}
+		for _, iface := range enabled {
+			interfaces[iface] = true
+		}
+		for _, intent := range c.LocalCaptureIntents {
+			if intent.Disposition == dynamicconfig.CaptureHold && intent.CaptureType == "proxy-arp" {
+				if state.uncertainProxyARP == nil {
+					state.uncertainProxyARP = map[string]bool{}
+				}
+				state.uncertainProxyARP[intent.CaptureInterface] = true
+			}
+		}
 	}
 	ordered := make([]string, 0, len(interfaces))
 	for iface := range interfaces {
@@ -748,7 +799,7 @@ func (c SAMController) reconcileProxyARPSysctls(ctx context.Context, actions []s
 	}
 	for _, iface := range ordered {
 		if !desired[iface] && (state.uncertainProxyARP[iface] || pendingPool) {
-			state.nextProxyARP[iface] = state.previousProxyARP[iface]
+			state.nextProxyARP[iface] = samAppliedProxyARP{Interface: iface}
 			if pendingPool {
 				state.recordError = errors.Join(state.recordError, errSAMCapturePlanPending)
 			}

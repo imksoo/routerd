@@ -78,6 +78,10 @@ func (freeBSDSAMProxyNeighborApplier) SetProxyARP(ctx context.Context, _ string,
 	return nil
 }
 
+func (freeBSDSAMProxyNeighborApplier) ListEnabledProxyARP(context.Context) ([]string, error) {
+	return nil, nil
+}
+
 func (freeBSDSAMProxyNeighborApplier) SetIPForwarding(ctx context.Context, enabled bool) error {
 	value := "0"
 	if enabled {

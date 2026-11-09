@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -37,19 +38,54 @@ func defaultSAMGratuitousARPAnnouncer() samGratuitousARPAnnouncer {
 type packetSAMGratuitousARPAnnouncer struct{}
 
 func (netlinkSAMProxyNeighborApplier) SetProxyARP(ctx context.Context, ifname string, enabled bool) error {
-	key := "net.ipv4.conf." + ifname + ".proxy_arp"
-	current, err := samReadBinarySysctl(ctx, key)
-	if err != nil {
+	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if err := sam.ValidateCaptureInterface(ifname); err != nil {
+		return err
+	}
+	path := filepath.Join("/proc/sys/net/ipv4/conf", ifname, "proxy_arp")
+	current, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", path, err)
 	}
 	value := "0"
 	if enabled {
 		value = "1"
 	}
-	if current == value {
+	if strings.TrimSpace(string(current)) == value {
 		return nil
 	}
-	return samSetSysctl(ctx, key, value)
+	if err := os.WriteFile(path, []byte(value+"\n"), 0644); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	return nil
+}
+
+func (netlinkSAMProxyNeighborApplier) ListEnabledProxyARP(ctx context.Context) ([]string, error) {
+	const base = "/proc/sys/net/ipv4/conf"
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		return nil, err
+	}
+	var enabled []string
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		path := filepath.Join(base, entry.Name(), "proxy_arp")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("read %s: %w", path, err)
+		}
+		value := strings.TrimSpace(string(data))
+		if value == "1" {
+			enabled = append(enabled, entry.Name())
+		} else if value != "0" {
+			return nil, fmt.Errorf("%s has unexpected value %q", path, value)
+		}
+	}
+	return enabled, nil
 }
 
 func (netlinkSAMProxyNeighborApplier) SetIPForwarding(ctx context.Context, enabled bool) error {
@@ -66,18 +102,6 @@ func samSetSysctl(ctx context.Context, key, value string) error {
 		return fmt.Errorf("sysctl -w %s=%s: %w: %s", key, value, err, strings.TrimSpace(string(out)))
 	}
 	return nil
-}
-
-func samReadBinarySysctl(ctx context.Context, key string) (string, error) {
-	out, err := exec.CommandContext(ctx, "sysctl", "-n", key).CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("sysctl -n %s: %w: %s", key, err, strings.TrimSpace(string(out)))
-	}
-	value := strings.TrimSpace(string(out))
-	if value != "0" && value != "1" {
-		return "", fmt.Errorf("sysctl %s has unexpected value %q", key, value)
-	}
-	return value, nil
 }
 
 func (packetSAMGratuitousARPAnnouncer) SendGratuitousARP(ctx context.Context, address, ifname string) error {

@@ -25,6 +25,10 @@ func (unsupportedSAMProxyNeighborApplier) SetProxyARP(context.Context, string, b
 	return nil
 }
 
+func (unsupportedSAMProxyNeighborApplier) ListEnabledProxyARP(context.Context) ([]string, error) {
+	return nil, nil
+}
+
 func (unsupportedSAMProxyNeighborApplier) SetIPForwarding(context.Context, bool) error {
 	return nil
 }
