@@ -143,13 +143,9 @@ func (s *PeerGroupSyncServer) syncResources() ([]api.Resource, error) {
 	return out, nil
 }
 
-type PeerGroupEndpointDiscovery func(ctx context.Context, router *api.Router, underlayInterface string) ([]netip.Addr, error)
-
 type PeerGroupSyncClient struct {
-	Store      peerGroupSyncStore
-	HTTPClient *http.Client
-	Discover   PeerGroupEndpointDiscovery
-	Port       int
+	Store  peerGroupSyncStore
+	client *http.Client
 }
 
 type syncMetadata struct {
@@ -211,10 +207,8 @@ func selectSyncCandidate(candidates []syncCandidate, now time.Time) (syncCandida
 
 func NewPeerGroupSyncClient(store peerGroupSyncStore) *PeerGroupSyncClient {
 	return &PeerGroupSyncClient{
-		Store:      store,
-		HTTPClient: &http.Client{Timeout: 2 * time.Second},
-		Discover:   DiscoverWireGuardPeerGroupSyncEndpoints,
-		Port:       PeerGroupSyncPort,
+		Store:  store,
+		client: &http.Client{Timeout: 2 * time.Second},
 	}
 }
 
@@ -245,24 +239,12 @@ func (c *PeerGroupSyncClient) syncResource(ctx context.Context, router *api.Rout
 	if c == nil || c.Store == nil || name == "" {
 		return api.Resource{}, syncMetadata{}, false, nil
 	}
-	discover := c.Discover
-	if discover == nil {
-		discover = DiscoverWireGuardPeerGroupSyncEndpoints
-	}
-	endpoints, err := discover(ctx, router, underlayInterface)
+	endpoints, err := DiscoverWireGuardPeerGroupSyncEndpoints(ctx, router, underlayInterface)
 	if err != nil {
 		return api.Resource{}, syncMetadata{}, false, err
 	}
 	if len(endpoints) == 0 {
 		return api.Resource{}, syncMetadata{}, false, nil
-	}
-	client := c.HTTPClient
-	if client == nil {
-		client = &http.Client{Timeout: 2 * time.Second}
-	}
-	port := c.Port
-	if port == 0 {
-		port = PeerGroupSyncPort
 	}
 	results := make(chan syncFetchResult, len(endpoints))
 	var wg sync.WaitGroup
@@ -270,7 +252,7 @@ func (c *PeerGroupSyncClient) syncResource(ctx context.Context, router *api.Rout
 		wg.Add(1)
 		go func(endpoint netip.Addr) {
 			defer wg.Done()
-			resource, metadata, found, fetchErr := fetchSyncResourceFromEndpoint(ctx, client, endpoint, port, name)
+			resource, metadata, found, fetchErr := fetchSyncResourceFromEndpoint(ctx, c.client, endpoint, PeerGroupSyncPort, name)
 			if metadata.PublisherID == "" {
 				metadata.PublisherID = endpoint.String()
 			}
