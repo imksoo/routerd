@@ -169,16 +169,6 @@ CREATE TABLE IF NOT EXISTS event_consumer_cursors (
   cursor INTEGER NOT NULL,
   updated_at TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS access_logs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  ts TEXT,
-  user TEXT,
-  method TEXT,
-  path TEXT,
-  status_code INTEGER,
-  duration_ms INTEGER,
-  generation INTEGER
-);
 CREATE TABLE IF NOT EXISTS dynamic_config_parts (
   id INTEGER PRIMARY KEY,
   source TEXT NOT NULL,
