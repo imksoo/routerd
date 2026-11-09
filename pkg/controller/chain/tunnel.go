@@ -67,11 +67,6 @@ func (c TunnelInterfaceController) Reconcile(ctx context.Context) error {
 		return nil
 	}
 	targetOS := platform.CurrentOS()
-	if targetOS == platform.OSLinux || targetOS == platform.OSFreeBSD {
-		if err := c.cleanupStaleResources(ctx); err != nil {
-			return err
-		}
-	}
 	var errs []error
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.APIVersion != api.HybridAPIVersion || resource.Kind != "TunnelInterface" {
@@ -87,22 +82,13 @@ func (c TunnelInterfaceController) Reconcile(ctx context.Context) error {
 			errs = append(errs, err)
 		}
 	}
+	if targetOS == platform.OSLinux || targetOS == platform.OSFreeBSD {
+		errs = append(errs, c.cleanupStaleResources(ctx))
+	}
 	return errors.Join(errs...)
 }
 
 func (c TunnelInterfaceController) cleanupStaleResources(ctx context.Context) error {
-	lister, ok := c.Store.(routerstate.ObjectStatusLister)
-	if !ok {
-		return nil
-	}
-	deleter, ok := c.Store.(routerstate.ObjectDeleteStore)
-	if !ok {
-		return nil
-	}
-	statuses, err := lister.ListObjectStatuses()
-	if err != nil {
-		return err
-	}
 	retained, err := apply.ConfiguredWireGuardInterfaces(c.Router)
 	if err != nil {
 		return err
@@ -135,6 +121,18 @@ func (c TunnelInterfaceController) cleanupStaleResources(ctx context.Context) er
 				}
 			}
 		}
+	}
+	lister, ok := c.Store.(routerstate.ObjectStatusLister)
+	if !ok {
+		return nil
+	}
+	deleter, ok := c.Store.(routerstate.ObjectDeleteStore)
+	if !ok {
+		return nil
+	}
+	statuses, err := lister.ListObjectStatuses()
+	if err != nil {
+		return err
 	}
 	for _, item := range statuses {
 		if item.APIVersion != api.HybridAPIVersion || item.Kind != "TunnelInterface" {
