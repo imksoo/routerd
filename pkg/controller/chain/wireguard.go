@@ -1310,6 +1310,10 @@ func (c WireGuardController) interfaceMatchesDesired(ctx context.Context, cfg wi
 	if cfg.MTU != 0 && !c.linkMTUMatches(ctx, cfg.Name, cfg.MTU) {
 		return false
 	}
+	resolved, err := wireguard.ResolveKeyFiles(cfg)
+	if err != nil {
+		return false
+	}
 	byKey := map[string]wireguard.PeerStatus{}
 	for _, peer := range observed.Peers {
 		byKey[peer.PublicKey] = peer
@@ -1317,9 +1321,12 @@ func (c WireGuardController) interfaceMatchesDesired(ctx context.Context, cfg wi
 	if len(byKey) != len(cfg.Peers) {
 		return false
 	}
-	for _, desired := range cfg.Peers {
+	for _, desired := range resolved.Peers {
 		current, ok := byKey[desired.PublicKey]
 		if !ok {
+			return false
+		}
+		if current.PresharedKeyHash != sha256.Sum256([]byte(desired.PresharedKey)) {
 			return false
 		}
 		if !stringSetEqual(desired.AllowedIPs, current.AllowedIPs) {

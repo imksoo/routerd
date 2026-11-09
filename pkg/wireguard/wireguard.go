@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
 	"os"
@@ -48,6 +49,7 @@ type PeerConfig struct {
 }
 
 type PeerStatus struct {
+	PresharedKeyHash    [32]byte `json:"-" yaml:"-"`
 	PublicKey           string
 	AllowedIPs          []string
 	LatestHandshake     time.Time
@@ -374,6 +376,7 @@ func ParseInterfaceDump(name string, data []byte) (InterfaceStatus, error) {
 		}
 		peers = append(peers, PeerStatus{
 			PublicKey:           wireGuardDumpValue(fields[0]),
+			PresharedKeyHash:    sha256.Sum256([]byte(wireGuardDumpValue(fields[1]))),
 			AllowedIPs:          parseDumpAllowedIPs(fields[3]),
 			LatestEndpoint:      wireGuardDumpValue(fields[2]),
 			LatestHandshake:     handshake,
@@ -419,6 +422,7 @@ func ParseAllDump(data []byte) ([]InterfaceStatus, error) {
 			}
 			status.Peers = append(status.Peers, PeerStatus{
 				PublicKey:           wireGuardDumpValue(fields[1]),
+				PresharedKeyHash:    sha256.Sum256([]byte(wireGuardDumpValue(fields[2]))),
 				AllowedIPs:          parseDumpAllowedIPs(fields[4]),
 				LatestEndpoint:      wireGuardDumpValue(fields[3]),
 				LatestHandshake:     handshake,
