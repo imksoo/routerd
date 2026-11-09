@@ -18,7 +18,7 @@
 - 4: BGP・SAM・LAN PD・VRRP・DNS の未使用の注入口や interface を除去。複数 OS の FIB や稼働中の observer 接続は残す。
 - 5: 実装追従、偽装時刻・NIC、仮定した旧 DB、名前走査のテストと専用補助を削除。計画開始時比で Go テスト 1,363 行削除、追加なし。
 
-現在の main で変更対象の BGP、BFD、SAM、chain、dynamicconfig、egress、state 利用側、HealthCheck、plugin、control API と対象 command のチェック、および対象 Linux build と DNS の FreeBSD build は成功。変更後 daemon の実機再起動・BGP/SAM 更新・PD 更新・VRRP handoff は未実施である。
+変更対象の BGP、BFD、SAM、chain、dynamicconfig、egress、state 利用側、HealthCheck、plugin、control API と対象 command のチェック、および対象 Linux build と DNS の FreeBSD build は成功。homert の変更後 daemon は両機で起動した。SAM 更新・PD 更新・VRRP handoff は未確認である。
 
 ## 実機確認の記録
 
@@ -30,7 +30,7 @@
 
 - Cloud SAM の稼働先は未特定。`routerd-labs/cloudedge-mobility/terraform/envs` 内の AWS・Azure・OCI の state はいずれも資源が空だったが、他の稼働先の有無を示すものではない。Cloud SAM で変更後の実動作は未確認。
 
-- homert03 の実設定と状態 DB に対する変更後・稼働版 `routerctl dynamic render -o json` は SHA-256 が一致した。待機系 daemon の差し替えは承認待ちであり、実行していない。
+- homert03 の実設定と状態 DB に対する変更後・稼働版 `routerctl dynamic render -o json` は SHA-256 が一致した。2026-11-09 に homert03、次いで homert02 の daemon と変更対象 helper を `6ac8fbdb` に交換した。両機 Healthy、BGP Established、homert02 master・homert03 backup を確認し、実クライアント chatty からの名前解決と外部への ping が成功した。強制的な VRRP 切り替えや DHCP/PD 更新は確認していない。
 
 - k8s-rt02 の実設定と動的状態から `routerctl dynamic render -o json` で得た設定全体も、変更後 CLI と稼働版の SHA-256 が一致した。
 
