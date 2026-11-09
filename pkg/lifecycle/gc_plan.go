@@ -131,10 +131,6 @@ func resourceLifecycleObjectStatus(status routerstate.ObjectStatus) bool {
 	if status.APIVersion == api.HybridAPIVersion && status.Kind == "TunnelInterface" {
 		return true
 	}
-	declaration, ok := Lookup(status.APIVersion, status.Kind)
-	if !ok || declaration.TeardownLifecycle != TeardownLifecycleResource {
-		return false
-	}
 	switch {
 	case status.APIVersion == api.NetAPIVersion && (status.Kind == "IPv4Route" || status.Kind == "IPv4StaticAddress" || status.Kind == "WireGuardInterface" || status.Kind == "WireGuardPeer"):
 		return true
