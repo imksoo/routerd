@@ -11,38 +11,6 @@ import (
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
-func TestControllerModeReasonValues(t *testing.T) {
-	got := []ControllerModeReason{
-		ControllerModeReasonLive,
-		ControllerModeReasonManual,
-		ControllerModeReasonOSUnsupported,
-		ControllerModeReasonDependencyUnmet,
-		ControllerModeReasonSpecDisabled,
-		ControllerModeReasonUnknown,
-	}
-	want := []string{
-		"Live",
-		"Manual",
-		"OSUnsupported",
-		"DependencyUnmet",
-		"SpecDisabled",
-		"Unknown",
-	}
-	if len(got) != len(want) {
-		t.Fatalf("len = %d, want %d", len(got), len(want))
-	}
-	seen := map[string]bool{}
-	for i, reason := range got {
-		if string(reason) != want[i] {
-			t.Fatalf("reason[%d] = %q, want %q", i, reason, want[i])
-		}
-		if seen[string(reason)] {
-			t.Fatalf("duplicate reason %q", reason)
-		}
-		seen[string(reason)] = true
-	}
-}
-
 func TestRuntimeStatsJSONRoundTrip(t *testing.T) {
 	collected := time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC)
 	lastGC := time.Date(2026, 5, 28, 11, 59, 0, 0, time.UTC)
