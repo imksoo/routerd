@@ -21,11 +21,7 @@ type RuntimeSnapshot struct {
 }
 
 type RuntimeReloadOutcome struct {
-	Active   RuntimeSnapshot
-	Accepted bool
-	// Restored means the previous configuration was rebuilt after the requested
-	// configuration failed. During a rollback request this can be the new config.
-	Restored bool
+	Active RuntimeSnapshot
 }
 
 var ErrRuntimeMutationStopped = errors.New("runtime mutation admission is stopped")
@@ -216,11 +212,11 @@ func (r *Runner) fenceRuntime(cancelServe bool) {
 	}
 }
 
-func (r *Runner) acknowledgeRuntimeReload(request generationReload, restored bool, err error) {
+func (r *Runner) acknowledgeRuntimeReload(request generationReload, err error) {
 	if request.ctx != nil {
 		err = errors.Join(err, request.ctx.Err())
 	}
-	request.done <- generationReloadResult{outcome: RuntimeReloadOutcome{Active: r.ActiveRuntimeSnapshot(), Accepted: true, Restored: restored}, err: err}
+	request.done <- generationReloadResult{outcome: RuntimeReloadOutcome{Active: r.ActiveRuntimeSnapshot()}, err: err}
 }
 
 func runtimeStoppedError(err error) error {

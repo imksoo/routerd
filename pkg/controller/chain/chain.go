@@ -1609,14 +1609,13 @@ func (r *Runner) runControllerGenerations(ctx context.Context, logger *slog.Logg
 	defer stopAdmission()
 	var pending *generationReload
 	var reloadErr error
-	var restored bool
 	defer func() {
 		closeControllerGeneration(generation)
 		r.clearRuntimeGeneration(true)
 		r.fenceRuntime(err != nil && ctx.Err() == nil)
 		r.markRuntimeReady()
 		if pending != nil {
-			r.acknowledgeRuntimeReload(*pending, restored, errors.Join(reloadErr, runtimeStoppedError(err)))
+			r.acknowledgeRuntimeReload(*pending, errors.Join(reloadErr, runtimeStoppedError(err)))
 		}
 	}()
 	for ctx.Err() == nil {
@@ -1624,7 +1623,7 @@ func (r *Runner) runControllerGenerations(ctx context.Context, logger *slog.Logg
 			select {
 			case request := <-reloads:
 				pending = &request
-				generation, restored, reloadErr = r.prepareRuntimeReload(ctx, logger, store, request)
+				generation, reloadErr = r.prepareRuntimeReload(ctx, logger, store, request)
 				if generation == nil {
 					return runtimeStoppedError(reloadErr)
 				}
@@ -1679,7 +1678,7 @@ func (r *Runner) runControllerGenerations(ctx context.Context, logger *slog.Logg
 		}
 		r.markRuntimeReady()
 		if pending != nil {
-			r.acknowledgeRuntimeReload(*pending, restored, reloadErr)
+			r.acknowledgeRuntimeReload(*pending, reloadErr)
 			pending = nil
 		}
 	waitForGeneration:
@@ -1699,7 +1698,7 @@ func (r *Runner) runControllerGenerations(ctx context.Context, logger *slog.Logg
 			r.clearRuntimeGeneration(false)
 		case request := <-reloads:
 			if request.ctx != nil && request.ctx.Err() != nil {
-				r.acknowledgeRuntimeReload(request, false, request.ctx.Err())
+				r.acknowledgeRuntimeReload(request, request.ctx.Err())
 				goto waitForGeneration
 			}
 			pending = &request
@@ -1708,7 +1707,7 @@ func (r *Runner) runControllerGenerations(ctx context.Context, logger *slog.Logg
 			<-loopDone
 			closeControllerGeneration(generation)
 			r.clearRuntimeGeneration(false)
-			generation, restored, reloadErr = r.prepareRuntimeReload(ctx, logger, store, request)
+			generation, reloadErr = r.prepareRuntimeReload(ctx, logger, store, request)
 			if generation == nil {
 				return runtimeStoppedError(reloadErr)
 			}
@@ -1717,28 +1716,28 @@ func (r *Runner) runControllerGenerations(ctx context.Context, logger *slog.Logg
 	return ctx.Err()
 }
 
-func (r *Runner) prepareRuntimeReload(ctx context.Context, logger *slog.Logger, store eventedStore, request generationReload) (*controllerGeneration, bool, error) {
+func (r *Runner) prepareRuntimeReload(ctx context.Context, logger *slog.Logger, store eventedStore, request generationReload) (*controllerGeneration, error) {
 	previous := r.currentRouter()
 	if err := ctx.Err(); err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	if err := r.RuntimeMutationError(); err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	r.setRuntimeRouter(request.router)
 	next, err := r.prepareControllerGenerationForRequest(ctx, request.ctx, logger, store.withRouter(request.router), nil)
 	if err == nil {
-		return next, false, nil
+		return next, nil
 	}
 	if ctx.Err() != nil || r.RuntimeMutationError() != nil {
-		return nil, false, errors.Join(err, ctx.Err(), r.RuntimeMutationError())
+		return nil, errors.Join(err, ctx.Err(), r.RuntimeMutationError())
 	}
 	r.setRuntimeRouter(previous)
 	rollback, rollbackErr := r.prepareControllerGenerationWithGate(ctx, logger, store.withRouter(previous), nil)
 	if rollbackErr != nil {
-		return nil, false, errors.Join(err, fmt.Errorf("restore previous generation: %w", rollbackErr))
+		return nil, errors.Join(err, fmt.Errorf("restore previous generation: %w", rollbackErr))
 	}
-	return rollback, true, err
+	return rollback, err
 }
 
 func closeControllerGeneration(generation *controllerGeneration) {
