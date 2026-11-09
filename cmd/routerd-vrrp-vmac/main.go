@@ -50,8 +50,6 @@ type vmacRuntimeState struct {
 const conntrackdRoleStatePath = "/run/routerd/vrrp-vmac-conntrackd-role"
 const vrrpRuntimeDir = "/run/routerd"
 
-type commandRunner func(name string, args ...string) ([]byte, error)
-
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -169,7 +167,7 @@ func run(args []string) (runErr error) {
 		// Withdraw the client-facing VIP before RA, VMAC and conntrack role
 		// changes. This closes the window in which clients can select a node
 		// whose DS-Lite data path is already being dismantled.
-		withdrawErr := withdrawDeferredVIP(opts, runCommand)
+		withdrawErr := withdrawDeferredVIP(opts)
 		// Always refresh the BACKUP marker and wake routerd. If the immediate
 		// delete failed, the controller must see BACKUP and retry withdrawal;
 		// conntrack remains primary until that retry can complete.
@@ -177,7 +175,7 @@ func run(args []string) (runErr error) {
 			return err
 		}
 		if electionTransition || !opts.reconcile {
-			if err := notifyRouterdVRRPTransition(runCommand); err != nil {
+			if err := notifyRouterdVRRPTransition(); err != nil {
 				fmt.Fprintln(os.Stderr, fmt.Errorf("notify routerd of VRRP transition: %w", err))
 			}
 			notified = true
@@ -220,7 +218,7 @@ func run(args []string) (runErr error) {
 			// upper tunnels before removing their outer WAN identity. Routerd
 			// will delete role-gated tunnels as it reconciles BACKUP; this fast
 			// path closes the interval before that controller pass completes.
-			if err := quiesceUpperIP6Tunnels(entry.ifname, runCommand); err != nil {
+			if err := quiesceUpperIP6Tunnels(entry.ifname); err != nil {
 				fmt.Fprintln(os.Stderr, fmt.Errorf("quiesce upper IPv6 tunnels on %s: %w", entry.ifname, err))
 			}
 		}
@@ -230,7 +228,7 @@ func run(args []string) (runErr error) {
 		if ready[index] {
 			commands = steadyStateCommands(entry)
 		}
-		if err := runVMACCommands(opts.action, commands, runCommand); err != nil {
+		if err := runVMACCommands(opts.action, commands); err != nil {
 			return err
 		}
 	}
@@ -287,7 +285,7 @@ func run(args []string) (runErr error) {
 		}
 	}
 	if (conntrackdTransition || electionTransition) && !notified {
-		if err := notifyRouterdVRRPTransition(runCommand); err != nil {
+		if err := notifyRouterdVRRPTransition(); err != nil {
 			fmt.Fprintln(os.Stderr, fmt.Errorf("notify routerd of VRRP transition: %w", err))
 		}
 	}
@@ -299,8 +297,8 @@ func run(args []string) (runErr error) {
 // BACKUP reconciliation deletes role-gated DS-Lite tunnels concurrently.
 // Discovery and individual link failures are returned to the caller as a
 // best-effort warning; they must never prevent the WAN VMAC from being lowered.
-func quiesceUpperIP6Tunnels(parent string, command commandRunner) error {
-	output, err := command("ip", "-d", "-o", "link", "show")
+func quiesceUpperIP6Tunnels(parent string) error {
+	output, err := runCommand("ip", "-d", "-o", "link", "show")
 	if err != nil {
 		return fmt.Errorf("list detailed links: %w: %s", err, strings.TrimSpace(string(output)))
 	}
@@ -315,7 +313,7 @@ func quiesceUpperIP6Tunnels(parent string, command commandRunner) error {
 		if !found || lower != parent || !containsField(fields, "ip6tnl") {
 			continue
 		}
-		linkOutput, linkErr := command("ip", "link", "set", "dev", ifname, "down")
+		linkOutput, linkErr := runCommand("ip", "link", "set", "dev", ifname, "down")
 		if linkErr == nil || isMissingNetworkInterfaceOutput(linkOutput) {
 			continue
 		}
@@ -369,17 +367,17 @@ func vmacActionOrder(action string, entries []vmac) []int {
 // notifyRouterdVRRPTransition is a best-effort fast path. routerd retains its
 // periodic kernel role observation, so a missing or restarting service cannot
 // make keepalived's transition fail.
-func notifyRouterdVRRPTransition(command commandRunner) error {
-	output, err := command("systemctl", "kill", "--kill-whom=main", "--signal=USR1", "routerd.service")
+func notifyRouterdVRRPTransition() error {
+	output, err := runCommand("systemctl", "kill", "--kill-whom=main", "--signal=USR1", "routerd.service")
 	if err != nil {
 		return fmt.Errorf("systemctl kill routerd.service: %w: %s", err, strings.TrimSpace(string(output)))
 	}
 	return nil
 }
 
-func runVMACCommands(action string, commands [][]string, command commandRunner) error {
+func runVMACCommands(action string, commands [][]string) error {
 	for _, args := range commands {
-		output, err := command(args[0], args[1:]...)
+		output, err := runCommand(args[0], args[1:]...)
 		if err == nil {
 			continue
 		}
@@ -519,11 +517,11 @@ func writeElectionRole(resource, action string) error {
 	return os.Rename(temporary, path)
 }
 
-func withdrawDeferredVIP(opts options, command commandRunner) error {
+func withdrawDeferredVIP(opts options) error {
 	if opts.resource == "" {
 		return nil
 	}
-	output, err := command("ip", "addr", "del", opts.deferredAddress, "dev", opts.deferredInterface)
+	output, err := runCommand("ip", "addr", "del", opts.deferredAddress, "dev", opts.deferredInterface)
 	if err == nil {
 		return nil
 	}
