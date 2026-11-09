@@ -127,14 +127,14 @@ func (c VXLANTunnelController) cleanupExtraVXLANs(ctx context.Context, declared 
 		return err
 	}
 	filesChanged := false
-	for _, suffix := range []string{".owner", ".netdev", ".network"} {
+	for _, suffix := range []string{".netdev", ".network"} {
 		paths, err := filepath.Glob(c.networkdPath("/etc/systemd/network/31-routerd-*" + suffix))
 		if err != nil {
 			return err
 		}
 		for _, path := range paths {
 			ifname := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(path), "31-routerd-"), suffix)
-			if suffix != ".owner" && retained[ifname] {
+			if retained[ifname] {
 				continue
 			}
 			if c.DryRun {
@@ -143,9 +143,7 @@ func (c VXLANTunnelController) cleanupExtraVXLANs(ctx context.Context, declared 
 			if err := c.removeFile(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return err
 			}
-			if suffix != ".owner" {
-				filesChanged = true
-			}
+			filesChanged = true
 		}
 	}
 	if filesChanged && !c.DryRun {
@@ -432,7 +430,7 @@ func (c VXLANTunnelController) reconcileOne(ctx context.Context, resource api.Re
 		status["phase"], status["reason"], status["forwarding"], status["error"] = "Error", "LinkObserveFailed", "unknown", showErr.Error()
 		return c.Store.SaveObjectStatus(api.NetAPIVersion, "VXLANTunnel", resource.Metadata.Name, status)
 	}
-	legacyRemoved, err := c.removeOwnedLegacyArtifacts(cfg.IfName)
+	legacyRemoved, err := c.removeLegacyArtifacts(cfg.IfName)
 	if err != nil {
 		return err
 	}
@@ -441,7 +439,6 @@ func (c VXLANTunnelController) reconcileOne(ctx context.Context, resource api.Re
 			return fmt.Errorf("reload after removing legacy VXLAN artifacts: %w", err)
 		}
 	}
-	status["managedBy"] = "routerd"
 	status["restartPersistent"] = false
 	if showErr == nil && !vxlanDetailsConfigMatch(string(observed), cfg) {
 		if err := requireVirtualLink(cfg.IfName); err != nil {
@@ -658,7 +655,7 @@ func (c VXLANTunnelController) teardownOne(ctx context.Context, resource api.Res
 		}
 		status["deleted"] = true
 	}
-	removed, err := c.removeOwnedArtifacts(ifname)
+	removed, err := c.removeLegacyArtifacts(ifname)
 	if err != nil {
 		return c.saveTeardownError(resource, status, "ArtifactDeleteFailed", err)
 	}
@@ -742,7 +739,6 @@ func (c VXLANTunnelController) networkdPath(path string) string {
 
 func (c VXLANTunnelController) artifactPaths(ifname string) []string {
 	return []string{
-		c.networkdPath(filepath.Join("/etc/systemd/network", "31-routerd-"+ifname+".owner")),
 		// Legacy auto-activating artifacts are cleanup-only. Gated VXLANs are
 		// runtime resources and must never be recreated before fresh predicates.
 		c.networkdPath(filepath.Join("/etc/systemd/network", "31-routerd-"+ifname+".netdev")),
@@ -750,28 +746,9 @@ func (c VXLANTunnelController) artifactPaths(ifname string) []string {
 	}
 }
 
-func (c VXLANTunnelController) removeOwnedArtifacts(ifname string) (bool, error) {
+func (c VXLANTunnelController) removeLegacyArtifacts(ifname string) (bool, error) {
 	removed := false
-	for i, path := range c.artifactPaths(ifname) {
-		_, err := c.readFile(path)
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return removed, err
-		}
-		if err := c.removeFile(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return removed, err
-		}
-		removed = removed || i > 0
-	}
-	return removed, nil
-}
-
-func (c VXLANTunnelController) removeOwnedLegacyArtifacts(ifname string) (bool, error) {
-	removed := false
-	paths := c.artifactPaths(ifname)
-	for _, path := range paths[1:] {
+	for _, path := range c.artifactPaths(ifname) {
 		_, err := c.readFile(path)
 		if errors.Is(err, os.ErrNotExist) {
 			continue

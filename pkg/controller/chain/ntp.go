@@ -95,12 +95,11 @@ func (c NTPClientController) Reconcile(ctx context.Context) error {
 		}
 		if provider == "ntpd" && hasManagedNTPServer(c.Router, provider) {
 			if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "NTPClient", resource.Metadata.Name, map[string]any{
-				"phase":     "Applied",
-				"provider":  provider,
-				"source":    source,
-				"servers":   servers,
-				"managedBy": "NTPServer",
-				"dryRun":    c.DryRun,
+				"phase":    "Applied",
+				"provider": provider,
+				"source":   source,
+				"servers":  servers,
+				"dryRun":   c.DryRun,
 			}); err != nil {
 				return err
 			}

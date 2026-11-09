@@ -1075,15 +1075,14 @@ func (c DHCPv6ServerController) saveDHCPv4ReservationStatuses(renderRouter *api.
 			return err
 		}
 		status := map[string]any{
-			"server":         spec.Server,
-			"macAddress":     strings.ToLower(spec.MACAddress),
-			"ipAddress":      spec.IPAddress,
-			"hostname":       spec.Hostname,
-			"configPath":     configPath,
-			"pidFile":        pidFile,
-			"renderer":       "dnsmasq",
-			"lifecycleClass": "renderer-input",
-			"dryRun":         c.DryRun,
+			"server":     spec.Server,
+			"macAddress": strings.ToLower(spec.MACAddress),
+			"ipAddress":  spec.IPAddress,
+			"hostname":   spec.Hostname,
+			"configPath": configPath,
+			"pidFile":    pidFile,
+			"renderer":   "dnsmasq",
+			"dryRun":     c.DryRun,
 		}
 		if !c.resourceWhenMatches(resource) {
 			status["phase"] = "Pending"
@@ -1151,7 +1150,7 @@ func (c DHCPv6ServerController) reconcileRouterAdvertisements(ctx context.Contex
 		}
 		if !c.resourceWhenMatches(resource) {
 			status := map[string]any{"phase": "Pending", "reason": "WhenFalse", "interface": spec.Interface, "configPath": configPath, "pidFile": pidFile, "renderer": "dnsmasq", "dryRun": c.DryRun}
-			status = preserveStatusFields(status, c.Store.ObjectStatus(api.NetAPIVersion, "IPv6RouterAdvertisement", resource.Metadata.Name), "managedBy", "unitName")
+			status = preserveStatusFields(status, c.Store.ObjectStatus(api.NetAPIVersion, "IPv6RouterAdvertisement", resource.Metadata.Name), "unitName")
 			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6RouterAdvertisement", resource.Metadata.Name, status)
 			continue
 		}
@@ -1181,7 +1180,7 @@ func (c DHCPv6ServerController) reconcileRouterAdvertisements(ctx context.Contex
 				return fmt.Errorf("%s advertise previous delegated prefixes: %w", resource.ID(), err)
 			}
 		}
-		status = preserveStatusFields(status, c.Store.ObjectStatus(api.NetAPIVersion, "IPv6RouterAdvertisement", resource.Metadata.Name), "managedBy", "unitName")
+		status = preserveStatusFields(status, c.Store.ObjectStatus(api.NetAPIVersion, "IPv6RouterAdvertisement", resource.Metadata.Name), "unitName")
 		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6RouterAdvertisement", resource.Metadata.Name, status); err != nil {
 			return err
 		}

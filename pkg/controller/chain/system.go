@@ -1150,7 +1150,6 @@ func (c SystemdUnitController) reconcileSyntheticSystemdUnit(ctx context.Context
 	resourceStatus := map[string]any{
 		"phase":     phase,
 		"unitName":  unitName,
-		"managedBy": "systemd",
 		"dryRun":    c.DryRun,
 		"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
 	}
@@ -1390,7 +1389,6 @@ func (c SystemdUnitController) cleanupWhenFalseSystemdUnit(ctx context.Context, 
 			"phase":     "Pending",
 			"reason":    "WhenFalse",
 			"unitName":  ref.UnitName,
-			"managedBy": "systemd",
 			"dryRun":    c.DryRun,
 			"updatedAt": now,
 		}

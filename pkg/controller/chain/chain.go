@@ -686,8 +686,6 @@ func stableStatus(status map[string]any) map[string]any {
 			continue
 		case "observed":
 			continue
-		case "ownerKey", "ownerRef", "ownerRefs", "lifecycleClass":
-			continue
 		case "handshakeAgeSeconds", "latestHandshake", "transferRxBytes", "transferTxBytes", "peers", "internalHoles":
 			continue
 		case "activeFlows", "count", "max", "usageRatio":
