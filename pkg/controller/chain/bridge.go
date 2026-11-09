@@ -183,12 +183,30 @@ func (c BridgeController) reconcileBridge(ctx context.Context, resource api.Reso
 		changed = true
 	}
 	aliases := bridgeInterfaceAliases(c.Router)
+	desired := map[string]bool{}
+	for _, member := range api.BridgeVXLANMembers(c.Router, resource.Metadata.Name) {
+		desired[member] = true
+	}
 	for _, member := range spec.Members {
 		memberIfName := firstNonEmpty(aliases[member], member)
+		desired[memberIfName] = true
 		if c.memberMaster(memberIfName) == ifname {
 			continue
 		}
 		if err := c.command(ctx, "ip", "link", "set", "dev", memberIfName, "master", ifname); err != nil {
+			return changed, err
+		}
+		changed = true
+	}
+	members, err := os.ReadDir(filepath.Join("/sys/class/net", ifname, "brif"))
+	if err != nil {
+		return changed, err
+	}
+	for _, member := range members {
+		if desired[member.Name()] {
+			continue
+		}
+		if err := c.command(ctx, "ip", "link", "set", "dev", member.Name(), "nomaster"); err != nil {
 			return changed, err
 		}
 		changed = true
