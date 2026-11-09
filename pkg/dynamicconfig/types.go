@@ -133,35 +133,12 @@ func ParseMobilityPoolPlanSource(source string) (MobilityPoolPlanSource, bool) {
 	return result, true
 }
 
-// IsMobilityPoolPlanSource reports whether a DynamicConfigPart belongs to a
-// reserved typed MobilityPool channel. Such parts must never contribute
-// generic Resources or Directives, including an upgrade-stale payload written
-// by the removed synthetic-resource bridge.
-func IsMobilityPoolPlanSource(source string) bool {
-	_, ok := ParseMobilityPoolPlanSource(source)
-	return ok
-}
-
 // IsMobilityPoolReservedSource reports whether source occupies the namespace
 // reserved for the strict MobilityPool plan protocol. A malformed entry in
 // this namespace is inert; it must never fall back into generic DynamicConfig
 // resource/directive merging.
 func IsMobilityPoolReservedSource(source string) bool {
 	return strings.HasPrefix(strings.TrimSpace(source), "MobilityPool/")
-}
-
-// IsMobilityPoolMainPlanSource reports whether source is the main typed plan
-// channel, which alone may carry local dataplane and FIB effects.
-func IsMobilityPoolMainPlanSource(source string) bool {
-	parsed, ok := ParseMobilityPoolPlanSource(source)
-	return ok && !parsed.ARPObserver
-}
-
-// IsMobilityPoolARPObserverPlanSource reports whether source is the typed
-// ARP-observer channel, which alone may carry ARP observer intents.
-func IsMobilityPoolARPObserverPlanSource(source string) bool {
-	parsed, ok := ParseMobilityPoolPlanSource(source)
-	return ok && parsed.ARPObserver
 }
 
 // CaptureDisposition is the one ownership decision a local dataplane

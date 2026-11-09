@@ -4,7 +4,6 @@ package render
 
 import (
 	"path/filepath"
-	"strings"
 
 	"github.com/imksoo/routerd/pkg/api"
 )
@@ -47,15 +46,6 @@ func DPIClassifierSystemdSpec(runtimeRoot string) api.SystemdUnitSpec {
 	}
 }
 
-func MaybeAugmentDPIClassifierSpec(unitName string, spec api.SystemdUnitSpec, agentUnitName string) api.SystemdUnitSpec {
-	if unitName != DPIClassifierUnitName || !SystemdUnitUsesNDPIAgent(spec) {
-		return spec
-	}
-	spec.Wants = appendUniqueString(spec.Wants, agentUnitName)
-	spec.After = appendUniqueString(spec.After, agentUnitName)
-	return spec
-}
-
 func RouterWantsNDPIAgent(router *api.Router) bool {
 	return RouterWantsDPIClassifier(router)
 }
@@ -79,42 +69,4 @@ func RouterWantsDPIClassifier(router *api.Router) bool {
 		}
 	}
 	return false
-}
-
-func SystemdUnitUsesNDPIAgent(spec api.SystemdUnitSpec) bool {
-	args := spec.ExecStart
-	if len(args) == 0 || !strings.HasSuffix(filepath.Base(args[0]), "routerd-dpi-classifier") {
-		return false
-	}
-	for i, arg := range args {
-		if arg == "--engine" && i+1 < len(args) {
-			return isNDPIAgentEngine(args[i+1])
-		}
-		if strings.HasPrefix(arg, "--engine=") {
-			return isNDPIAgentEngine(strings.TrimPrefix(arg, "--engine="))
-		}
-	}
-	return false
-}
-
-func isNDPIAgentEngine(value string) bool {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "auto", "ndpi-agent":
-		return true
-	default:
-		return false
-	}
-}
-
-func appendUniqueString(values []string, value string) []string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return values
-	}
-	for _, existing := range values {
-		if existing == value {
-			return values
-		}
-	}
-	return append(values, value)
 }

@@ -36,10 +36,6 @@ func refName(ref string) string {
 	return ref
 }
 
-func NftablesTCPMSSClamp(router *api.Router) ([]byte, error) {
-	return NftablesTCPMSSClampWithLocalCaptureIntents(router, nil)
-}
-
 // NftablesTCPMSSClampWithLocalCaptureIntents renders path-MTU policy from the
 // already-decided mobility local-dataplane plan. Supplying nil preserves the
 // static-config-only renderer contract.
@@ -185,10 +181,6 @@ func l2MSSClampPolicies(router *api.Router, aliases map[string]string) ([]l2MSSC
 		return out[i].VXLAN < out[j].VXLAN
 	})
 	return out, nil
-}
-
-func NftablesIPv4ForceFragment(router *api.Router) ([]byte, error) {
-	return NftablesIPv4ForceFragmentWithLocalCaptureIntents(router, nil)
 }
 
 // NftablesIPv4ForceFragmentWithLocalCaptureIntents renders IPv4 fragmentation
