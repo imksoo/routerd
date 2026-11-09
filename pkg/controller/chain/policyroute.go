@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -619,9 +620,18 @@ func (c IPv4PolicyRouteController) cleanupPolicyRoutes(ctx context.Context, alia
 			desired[artifact.Identity()] = artifact
 		}
 	}
-	actual, referencedTables, err := c.currentPolicyRouteArtifacts(ctx)
+	actual, referencedTables, sourceRules, err := c.currentPolicyRouteArtifacts(ctx)
 	if err != nil {
 		return err
+	}
+	for _, rule := range sourceRules {
+		out, err := exec.CommandContext(ctx, "ip", "-4", "rule", "del", "priority", rule.priority, "from", rule.source, "table", rule.table).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("delete IPv4 source rule priority %s from %s lookup %s: %w: %s", rule.priority, rule.source, rule.table, err, strings.TrimSpace(string(out)))
+		}
+		if table, err := strconv.Atoi(rule.table); err == nil {
+			referencedTables[table]--
+		}
 	}
 	for _, artifact := range actual {
 		if artifact.Kind != "linux.ipv4.fwmarkRule" {
@@ -1588,23 +1598,50 @@ type ipv4PolicyFwmarkRule struct {
 	Table    int
 }
 
-func (c IPv4PolicyRouteController) currentPolicyRouteArtifacts(ctx context.Context) (map[string]resource.Artifact, map[int]int, error) {
+type ipv4SourcePolicyRule struct {
+	priority string
+	source   string
+	table    string
+}
+
+func (c IPv4PolicyRouteController) currentPolicyRouteArtifacts(ctx context.Context) (map[string]resource.Artifact, map[int]int, []ipv4SourcePolicyRule, error) {
 	out := map[string]resource.Artifact{}
 	rules, err := exec.CommandContext(ctx, "ip", "-4", "rule", "show").CombinedOutput()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	referencedTables := apply.IPv4RuleTableReferences(string(rules))
+	var sourceRules []ipv4SourcePolicyRule
+	for _, line := range strings.Split(string(rules), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 5 || fields[1] != "from" || fields[2] == "all" || fields[3] != "lookup" {
+			continue
+		}
+		priority := strings.TrimSuffix(fields[0], ":")
+		if _, err := strconv.Atoi(priority); err != nil {
+			continue
+		}
+		prefix, err := netip.ParsePrefix(fields[2])
+		if err != nil {
+			addr, addrErr := netip.ParseAddr(fields[2])
+			if addrErr != nil || !addr.Is4() {
+				continue
+			}
+		} else if !prefix.Addr().Is4() {
+			continue
+		}
+		sourceRules = append(sourceRules, ipv4SourcePolicyRule{priority: priority, source: fields[2], table: fields[4]})
+	}
 	for _, artifact := range parseIPv4PolicyFwmarkRuleArtifacts(string(rules)) {
 		out[artifact.Identity()] = artifact
 	}
 	tables, err := exec.CommandContext(ctx, "ip", "-4", "route", "show", "table", "all").CombinedOutput()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	dynamicTables, err := apply.IPv4TailscaleRouteTables(c.Router, string(tables))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	for table := range dynamicTables {
 		referencedTables[table]++
@@ -1612,7 +1649,7 @@ func (c IPv4PolicyRouteController) currentPolicyRouteArtifacts(ctx context.Conte
 	for _, artifact := range parseIPv4PolicyRouteTableArtifacts(string(tables)) {
 		out[artifact.Identity()] = artifact
 	}
-	return out, referencedTables, nil
+	return out, referencedTables, sourceRules, nil
 }
 
 func (c IPv4PolicyRouteController) deleteIPv4FwmarkRule(ctx context.Context, rule ipv4PolicyFwmarkRule) error {
