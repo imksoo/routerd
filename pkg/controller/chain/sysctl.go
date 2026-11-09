@@ -31,7 +31,6 @@ type SysctlController struct {
 		Publish(context.Context, daemonapi.DaemonEvent) error
 	}
 	Store   Store
-	Command outputCommandFunc
 	BaseDir string
 	DryRun  bool
 }
@@ -160,17 +159,13 @@ func (c SysctlController) applyOne(ctx context.Context, name, kind string, spec 
 		}
 		return sysctlApplyResult{skipped: true}, nil
 	}
-	command := c.Command
-	if command == nil {
-		command = runOutputCommandContext
-	}
 	var currentOut []byte
 	var currentErr error
 	current := ""
 	expected := normalizeSysctlRuntimeValue(firstNonEmpty(spec.ExpectedValue, spec.Value))
 	runtimeChanged := false
 	if runtime {
-		currentOut, currentErr = command(ctx, "sysctl", "-n", spec.Key)
+		currentOut, currentErr = runOutputCommandContext(ctx, "sysctl", "-n", spec.Key)
 		current = normalizeSysctlRuntimeValue(string(currentOut))
 		if currentErr != nil && spec.Optional {
 			if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, kind, name, map[string]any{
@@ -191,7 +186,7 @@ func (c SysctlController) applyOne(ctx context.Context, name, kind string, spec 
 		matches, compareErr := sysctlprofile.ValueMatches(current, expected, spec.Compare)
 		runtimeChanged = currentErr != nil || compareErr != nil || !matches
 		if runtimeChanged && !c.DryRun {
-			if out, err := command(ctx, "sysctl", "-w", spec.Key+"="+spec.Value); err != nil {
+			if out, err := runOutputCommandContext(ctx, "sysctl", "-w", spec.Key+"="+spec.Value); err != nil {
 				status := map[string]any{
 					"phase":        "Error",
 					"reason":       "ApplyFailed",

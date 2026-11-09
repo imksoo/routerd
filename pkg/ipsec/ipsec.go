@@ -12,11 +12,8 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 )
 
-type CommandRunner func(ctx context.Context, name string, args ...string) ([]byte, error)
-
 type Controller struct {
-	Command CommandRunner
-	DryRun  bool
+	DryRun bool
 	// Binary optionally overrides the swanctl executable. FreeBSD packages
 	// install it under /usr/local/sbin while Linux normally resolves swanctl
 	// from PATH.
@@ -81,10 +78,6 @@ func (c Controller) LoadAll(ctx context.Context) error {
 	if c.DryRun {
 		return nil
 	}
-	run := c.Command
-	if run == nil {
-		run = runCommand
-	}
 	binary := strings.TrimSpace(c.Binary)
 	if binary == "" {
 		binary = "swanctl"
@@ -93,7 +86,7 @@ func (c Controller) LoadAll(ctx context.Context) error {
 	if file := strings.TrimSpace(c.ConfigFile); file != "" {
 		args = append(args, "--file", file)
 	}
-	out, err := run(ctx, binary, args...)
+	out, err := runCommand(ctx, binary, args...)
 	if err != nil {
 		return fmt.Errorf("swanctl %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}

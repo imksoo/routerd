@@ -20,10 +20,8 @@ type PackageController struct {
 	Bus    interface {
 		Publish(context.Context, daemonapi.DaemonEvent) error
 	}
-	Store   Store
-	Command outputCommandFunc
-	DryRun  bool
-	OSName  string
+	Store  Store
+	DryRun bool
 }
 
 func (c PackageController) Reconcile(ctx context.Context) error {
@@ -32,10 +30,7 @@ func (c PackageController) Reconcile(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		osName := c.OSName
-		if osName == "" {
-			osName = packageOSName(runtime.GOOS)
-		}
+		osName := packageOSName(runtime.GOOS)
 		set, ok := packageSetForOS(spec, osName)
 		if !ok {
 			_ = c.Store.SaveObjectStatus(api.SystemAPIVersion, "Package", resource.Metadata.Name, map[string]any{
@@ -58,10 +53,6 @@ func (c PackageController) Reconcile(ctx context.Context) error {
 			})
 			continue
 		}
-		command := c.Command
-		if command == nil {
-			command = runOutputCommandContext
-		}
 		var missing []string
 		for _, name := range set.Names {
 			name = strings.TrimSpace(name)
@@ -69,7 +60,7 @@ func (c PackageController) Reconcile(ctx context.Context) error {
 				continue
 			}
 			checkName, checkArgs := hostdeps.PackageCheckCommand(manager, name)
-			out, err := command(ctx, checkName, checkArgs...)
+			out, err := runOutputCommandContext(ctx, checkName, checkArgs...)
 			if err != nil || (manager == "apt" && strings.TrimSpace(string(out)) != "installed") {
 				missing = append(missing, name)
 			}
@@ -92,7 +83,7 @@ func (c PackageController) Reconcile(ctx context.Context) error {
 		}
 		if changed {
 			name, args := packageInstallCommand(manager, missing)
-			if out, err := command(ctx, name, args...); err != nil {
+			if out, err := runOutputCommandContext(ctx, name, args...); err != nil {
 				if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "Package", resource.Metadata.Name, map[string]any{
 					"phase":     "Error",
 					"reason":    "InstallFailed",

@@ -29,22 +29,15 @@ type KernelModuleController struct {
 	Bus    interface {
 		Publish(context.Context, daemonapi.DaemonEvent) error
 	}
-	Store           Store
-	Command         outputCommandFunc
-	DryRun          bool
-	OSName          string
-	BaseDir         string
-	ProcModulesPath string
+	Store  Store
+	DryRun bool
 }
 
 func (c KernelModuleController) Reconcile(ctx context.Context) error {
 	if c.Router == nil {
 		return nil
 	}
-	osName := c.OSName
-	if osName == "" {
-		osName = packageOSName(runtime.GOOS)
-	}
+	osName := packageOSName(runtime.GOOS)
 	resources := kernelModuleControllerResources(c.Router, osName)
 	activePersistentFiles := map[string]bool{}
 	for _, resource := range resources {
@@ -65,7 +58,7 @@ func (c KernelModuleController) Reconcile(ctx context.Context) error {
 			continue
 		}
 		if spec.Persistent {
-			activePersistentFiles[c.kernelModulePersistencePath(resource.Metadata.Name, osName)] = true
+			activePersistentFiles[kernelModulePersistencePath(resource.Metadata.Name, osName)] = true
 		}
 		changed, loaded, skipped, err := c.applyKernelModules(ctx, resource.Metadata.Name, spec, osName)
 		if err != nil {
@@ -148,12 +141,8 @@ func (c KernelModuleController) applyKernelModules(ctx context.Context, name str
 	}
 	changed := false
 	var loaded, skipped []string
-	command := c.Command
-	if command == nil {
-		command = runOutputCommandContext
-	}
 	if api.BoolDefault(spec.Runtime, true) {
-		loadedModules := c.loadedKernelModules(ctx, command, osName, modules)
+		loadedModules := loadedKernelModules(ctx, osName, modules)
 		for _, module := range modules {
 			if loadedModules[module] {
 				loaded = append(loaded, module)
@@ -167,7 +156,7 @@ func (c KernelModuleController) applyKernelModules(ctx context.Context, name str
 			if osName == "freebsd" {
 				commandName = "kldload"
 			}
-			out, err := command(ctx, commandName, module)
+			out, err := runOutputCommandContext(ctx, commandName, module)
 			if err != nil {
 				if osName == "freebsd" && freeBSDModuleAlreadyLoaded(out) {
 					loaded = append(loaded, module)
@@ -184,7 +173,7 @@ func (c KernelModuleController) applyKernelModules(ctx context.Context, name str
 		}
 	}
 	if spec.Persistent {
-		path := c.kernelModulePersistencePath(name, osName)
+		path := kernelModulePersistencePath(name, osName)
 		data := renderKernelModulePersistence(modules, osName)
 		fileChanged, err := c.writeKernelModulePersistence(path, data)
 		if err != nil {
@@ -215,14 +204,10 @@ func isFreeBSDLoaderModuleInitial(value byte) bool {
 	return value == '_' || value >= 'A' && value <= 'Z' || value >= 'a' && value <= 'z' || value >= '0' && value <= '9'
 }
 
-func (c KernelModuleController) kernelModulePersistencePath(name, osName string) string {
-	baseDir := c.BaseDir
-	if baseDir == "" {
-		if osName == "freebsd" {
-			baseDir = freeBSDKernelModuleBaseDir
-		} else {
-			baseDir = "/etc/modules-load.d"
-		}
+func kernelModulePersistencePath(name, osName string) string {
+	baseDir := "/etc/modules-load.d"
+	if osName == "freebsd" {
+		baseDir = freeBSDKernelModuleBaseDir
 	}
 	return filepath.Join(baseDir, "90-routerd-"+safeSysctlName(name)+".conf")
 }
@@ -289,7 +274,7 @@ func (c KernelModuleController) writeKernelModulePersistence(path string, data [
 }
 
 func (c KernelModuleController) removeStaleKernelModuleFiles(active map[string]bool, osName string) (bool, error) {
-	baseDir := filepath.Dir(c.kernelModulePersistencePath("", osName))
+	baseDir := filepath.Dir(kernelModulePersistencePath("", osName))
 	entries, err := os.ReadDir(baseDir)
 	if os.IsNotExist(err) {
 		return false, nil
@@ -325,21 +310,17 @@ func (c KernelModuleController) removeStaleKernelModuleFiles(active map[string]b
 	return changed, nil
 }
 
-func (c KernelModuleController) loadedKernelModules(ctx context.Context, command outputCommandFunc, osName string, modules []string) map[string]bool {
+func loadedKernelModules(ctx context.Context, osName string, modules []string) map[string]bool {
 	if osName == "freebsd" {
 		out := map[string]bool{}
 		for _, module := range modules {
-			if _, err := command(ctx, "kldstat", "-q", "-m", module); err == nil {
+			if _, err := runOutputCommandContext(ctx, "kldstat", "-q", "-m", module); err == nil {
 				out[module] = true
 			}
 		}
 		return out
 	}
-	path := c.ProcModulesPath
-	if path == "" {
-		path = "/proc/modules"
-	}
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile("/proc/modules")
 	if err != nil {
 		return nil
 	}
