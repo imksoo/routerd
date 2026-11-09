@@ -22,6 +22,8 @@
 
 ## 実機確認の記録
 
+- 2026-11-09、`ec183691` の `routerctl` を homert02 で読み取り実行した。実設定・状態から生成した動的設定は稼働版 CLI と一致し、routerd は active、管理ネットワークのゲートウェイへの ping は成功した。変更後 daemon の適用や WireGuard の鍵復元は確認していない。homert02 の `ens20` 管理アドレスは routerd の DHCPv4Client ではなく既存の netplan/networkd の DHCP から得ている。DS-Lite は各トンネルに設定の静的アドレスに加え point-to-point アドレスを持つ。IPv4 余剰撤去では実際の動的生成元を考慮し、管理 NIC の引き継ぎが決まるまで通信を損なう適用を行わない。
+
 - pve-rt07 の実状態 DB にある SAM transport・RR の計8リソースについて、変更後の `routerctl dynamic diff` と稼働版の出力が一致した。読み取り確認であり、変更後 daemon の BGP 通信・VRRP フェイルオーバーを確認したものではない。
 
 - pve-rt07 の設定全体の JSON 表示では、YAML コピーの削除によって空の SAMPeerGroup の `nodes` が `[]` から `null` に変わる回帰を発見し、修正した。同じ実状態 DB で修正後の表示全体は稼働版と一致した。
