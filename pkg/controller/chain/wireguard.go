@@ -964,18 +964,6 @@ func samNodeWireGuardConfigured(spec api.SAMNodeWireGuardSpec) bool {
 }
 
 func (c WireGuardController) cleanupStaleResources(ctx context.Context) error {
-	lister, ok := c.Store.(routerstate.ObjectStatusLister)
-	if !ok {
-		return nil
-	}
-	deleter, ok := c.Store.(routerstate.ObjectDeleteStore)
-	if !ok {
-		return nil
-	}
-	statuses, err := lister.ListObjectStatuses()
-	if err != nil {
-		return err
-	}
 	retained, err := apply.ConfiguredWireGuardInterfaces(c.Router)
 	if err != nil {
 		return err
@@ -1011,6 +999,18 @@ func (c WireGuardController) cleanupStaleResources(ctx context.Context) error {
 				}
 			}
 		}
+	}
+	lister, ok := c.Store.(routerstate.ObjectStatusLister)
+	if !ok {
+		return nil
+	}
+	deleter, ok := c.Store.(routerstate.ObjectDeleteStore)
+	if !ok {
+		return nil
+	}
+	statuses, err := lister.ListObjectStatuses()
+	if err != nil {
+		return err
 	}
 	for _, item := range statuses {
 		if item.APIVersion != api.NetAPIVersion || (item.Kind != "WireGuardInterface" && item.Kind != "WireGuardPeer") || configured[item.Kind+"/"+item.Name] {
