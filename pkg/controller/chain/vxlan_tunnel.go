@@ -535,7 +535,7 @@ func (c VXLANTunnelController) reconcileFloodFDB(ctx context.Context, resource a
 	}
 	peersToDelete := make([]string, 0)
 	for peer, entries := range observedByPeer {
-		if !desired[peer] || (len(entries) == 1 && entries[0].exact()) {
+		if desired[peer] && len(entries) == 1 && entries[0].exact() {
 			continue
 		}
 		for range entries {
@@ -577,12 +577,12 @@ func (c VXLANTunnelController) reconcileFloodFDB(ctx context.Context, resource a
 		return fmt.Errorf("%w before FDB readback commit", errVXLANGateRevisionChanged)
 	}
 	actual := allZeroFDBEntries(string(readback))
+	if len(actual) != len(desired) {
+		return fmt.Errorf("flood FDB readback mismatch on %s", cfg.IfName)
+	}
 	counts := map[string]int{}
 	for _, entry := range actual {
-		if !desired[entry.Destination] {
-			continue
-		}
-		if !entry.exact() {
+		if !entry.exact() || !desired[entry.Destination] {
 			return fmt.Errorf("flood FDB entry for %s has unexpected attributes on %s", entry.Destination, cfg.IfName)
 		}
 		counts[entry.Destination]++
