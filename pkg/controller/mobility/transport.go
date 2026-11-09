@@ -61,7 +61,7 @@ func (c TransportController) Reconcile(ctx context.Context) error {
 		if err != nil {
 			source := TransportDynamicSource(res.Metadata.Name, "")
 			desiredSources[source] = true
-			digest, _ := c.upsertTransportDynamicPart(ctx, res, source, "sam-transport", nil, now)
+			digest, _ := c.upsertTransportDynamicPart(ctx, res, source, nil, now)
 			_ = c.saveTransportStatus(res.Metadata.Name, map[string]any{
 				"phase":         "Degraded",
 				"reason":        err.Error(),
@@ -72,7 +72,7 @@ func (c TransportController) Reconcile(ctx context.Context) error {
 		source := TransportDynamicSource(res.Metadata.Name, spec.SelfNodeRef)
 		desiredSources[source] = true
 		degrade := func(cause error) error {
-			digest, err := c.upsertTransportDynamicPart(ctx, res, source, "sam-transport", nil, now)
+			digest, err := c.upsertTransportDynamicPart(ctx, res, source, nil, now)
 			if err != nil {
 				return err
 			}
@@ -106,7 +106,7 @@ func (c TransportController) Reconcile(ctx context.Context) error {
 			}
 			continue
 		}
-		digest, err := c.upsertTransportDynamicPart(ctx, res, source, "sam-transport", derived.Resources, now)
+		digest, err := c.upsertTransportDynamicPart(ctx, res, source, derived.Resources, now)
 		if err != nil {
 			return err
 		}

@@ -169,7 +169,7 @@ func normalizedSAMNodeSetMACAddresses(router *api.Router) []string {
 
 func (c DiscoveryController) upsertARPObserverIntents(pool NormalizedMobilityPool, intents []dynamicconfig.ARPObserverIntent, now time.Time) error {
 	now = now.UTC()
-	part := dynamicconfig.NewPart(safeName("mobility-"+pool.Name+"-"+pool.SelfNode+"-arp-observer"), ARPObserverDynamicSource(pool.Name, pool.SelfNode), dynamicGeneration, now, now.Add(DefaultLeaseTTL))
+	part := dynamicconfig.NewPart(ARPObserverDynamicSource(pool.Name, pool.SelfNode), dynamicGeneration, now, now.Add(DefaultLeaseTTL))
 	part.Spec.Resources = []api.Resource{}
 	part.Spec.ActionPlans = []dynamicconfig.ActionPlan{}
 	part.Spec.MobilityDataplane = dynamicconfig.MobilityDataplanePlan{}

@@ -106,8 +106,8 @@ func (c TransportController) remoteEndpoint(peer api.SAMTransportPeerSpec) (stri
 	return value, ""
 }
 
-func (c TransportController) upsertTransportDynamicPart(ctx context.Context, owner api.Resource, source, namePrefix string, resources []api.Resource, now time.Time) (string, error) {
-	part := dynamicconfig.NewPart(safeName(namePrefix+"-"+owner.Metadata.Name), source, dynamicGeneration, now, now.Add(DefaultLeaseTTL))
+func (c TransportController) upsertTransportDynamicPart(ctx context.Context, owner api.Resource, source string, resources []api.Resource, now time.Time) (string, error) {
+	part := dynamicconfig.NewPart(source, dynamicGeneration, now, now.Add(DefaultLeaseTTL))
 	part.Spec.Resources = append([]api.Resource(nil), resources...)
 	part.Spec.ActionPlans = []dynamicconfig.ActionPlan{}
 	part.Spec.Digest = digestDynamicPart(part)
@@ -148,7 +148,7 @@ func (c TransportController) upsertTransportPeerGroupPart(ctx context.Context, o
 			},
 		})
 	}
-	digest, err := c.upsertTransportDynamicPart(ctx, owner, source, "sam-peer-group", resources, now)
+	digest, err := c.upsertTransportDynamicPart(ctx, owner, source, resources, now)
 	if err != nil {
 		return "", "", err
 	}
@@ -192,7 +192,7 @@ func (c TransportController) deprovisionStaleTransportSources(ctx context.Contex
 			if _, err := c.upsertTransportDynamicPart(ctx, api.Resource{
 				TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMTransportProfile"},
 				Metadata: api.ObjectMeta{Name: firstNonEmpty(profile, "deleted-peer-group")},
-			}, part.Source, "sam-peer-group", nil, now); err != nil {
+			}, part.Source, nil, now); err != nil {
 				return err
 			}
 			continue
@@ -201,7 +201,7 @@ func (c TransportController) deprovisionStaleTransportSources(ctx context.Contex
 		if _, err := c.upsertTransportDynamicPart(ctx, api.Resource{
 			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMTransportProfile"},
 			Metadata: api.ObjectMeta{Name: firstNonEmpty(profile, "deleted-"+self)},
-		}, part.Source, "sam-transport", nil, now); err != nil {
+		}, part.Source, nil, now); err != nil {
 			return err
 		}
 	}
