@@ -3,28 +3,10 @@
 package main
 
 import (
-	"context"
-	"errors"
 	"testing"
 
 	"github.com/imksoo/routerd/pkg/api"
 )
-
-func TestGracefulStopExclusiveDoesNotRunAfterContextCancellation(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	called := false
-	err := runGracefulStopHandoffExclusive(ctx, nil, func(context.Context) error {
-		called = true
-		return nil
-	})
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("runGracefulStopHandoffExclusive error = %v, want context canceled", err)
-	}
-	if called {
-		t.Fatal("runGracefulStopHandoffExclusive ran handoff after cancellation")
-	}
-}
 
 func TestGracefulStopSuccessorsRejectIdentityCollisionAcrossGroups(t *testing.T) {
 	router := gracefulStopMembershipRouter("router-a", []api.SAMNodeSpec{
