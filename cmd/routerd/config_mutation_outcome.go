@@ -52,14 +52,11 @@ func (m serveConfigMutator) mutateRuntime(next *api.Router, configYAML string) (
 				err = errors.Join(err, updateErr)
 			}
 		}
-	} else if shapeChanged && outcome.Canonical != canonicalUnknown {
+	} else if shapeChanged {
 		restored, restoreErr := m.reloadRuntimeOutcome(previous)
 		outcome.Runtime = restored
 		m.publishConfirmedRuntime(restored.Active)
 		if restoreErr != nil {
-			if err == nil {
-				outcome.Stage = "runtime-restore"
-			}
 			err = errors.Join(err, restoreErr)
 		}
 	}
