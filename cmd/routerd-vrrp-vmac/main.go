@@ -52,60 +52,10 @@ const vrrpRuntimeDir = "/run/routerd"
 
 type commandRunner func(name string, args ...string) ([]byte, error)
 
-type runHooks struct {
-	command                    commandRunner
-	inspectVMAC                func(vmac) (vmacRuntimeState, error)
-	withdrawRA                 func(string) error
-	requestRA                  func(string) error
-	quiesceUpperTunnels        func(string) error
-	conntrackdTransitionNeeded func(string) (bool, error)
-	reconcileConntrackdRole    func(string) error
-	writeConntrackdRole        func(string) error
-	lockElection               func(string) (func() error, error)
-	readElectionRole           func(string) (string, error)
-	electionTransitionNeeded   func(string, string) (bool, error)
-	writeElectionRole          func(string, string) error
-	withdrawDeferredVIP        func(options) error
-	notifyRouterd              func() error
-	warn                       func(error)
-}
-
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
-	}
-}
-
-func run(args []string) error {
-	return runWithHooks(args, productionRunHooks())
-}
-
-func productionRunHooks() runHooks {
-	return runHooks{
-		command:     runCommand,
-		inspectVMAC: inspectVMACRuntimeState,
-		withdrawRA:  withdrawRouterAdvertisement,
-		requestRA:   requestRouterAdvertisement,
-		quiesceUpperTunnels: func(ifname string) error {
-			return quiesceUpperIP6Tunnels(ifname, runCommand)
-		},
-		conntrackdTransitionNeeded: conntrackdRoleTransitionNeeded,
-		reconcileConntrackdRole:    reconcileConntrackdRole,
-		writeConntrackdRole:        writeConntrackdRole,
-		lockElection:               lockElection,
-		readElectionRole:           readElectionRole,
-		electionTransitionNeeded:   electionRoleTransitionNeeded,
-		writeElectionRole:          writeElectionRole,
-		withdrawDeferredVIP: func(opts options) error {
-			return withdrawDeferredVIP(opts, runCommand)
-		},
-		notifyRouterd: func() error {
-			return notifyRouterdVRRPTransition(runCommand)
-		},
-		warn: func(err error) {
-			fmt.Fprintln(os.Stderr, err)
-		},
 	}
 }
 
@@ -170,7 +120,7 @@ func vmacStateReadyForAction(action string, entry vmac, state vmacRuntimeState) 
 	}
 }
 
-func runWithHooks(args []string, hooks runHooks) (runErr error) {
+func run(args []string) (runErr error) {
 	opts, err := parseOptions(args)
 	if err != nil {
 		return err
@@ -179,8 +129,8 @@ func runWithHooks(args []string, hooks runHooks) (runErr error) {
 	if guardResource == "" {
 		guardResource = opts.guardResource
 	}
-	if guardResource != "" && hooks.lockElection != nil {
-		unlock, lockErr := hooks.lockElection(guardResource)
+	if guardResource != "" {
+		unlock, lockErr := lockElection(guardResource)
 		if lockErr != nil {
 			return fmt.Errorf("lock VRRP election for %s: %w", guardResource, lockErr)
 		}
@@ -190,8 +140,8 @@ func runWithHooks(args []string, hooks runHooks) (runErr error) {
 			}
 		}()
 	}
-	if opts.reconcile && guardResource != "" && hooks.readElectionRole != nil {
-		role, readErr := hooks.readElectionRole(guardResource)
+	if opts.reconcile && guardResource != "" {
+		role, readErr := readElectionRole(guardResource)
 		if readErr != nil {
 			return readErr
 		}
@@ -203,13 +153,13 @@ func runWithHooks(args []string, hooks runHooks) (runErr error) {
 			return nil
 		}
 	}
-	conntrackdTransition, err := hooks.conntrackdTransitionNeeded(opts.action)
+	conntrackdTransition, err := conntrackdRoleTransitionNeeded(opts.action)
 	if err != nil {
 		return err
 	}
 	electionTransition := false
 	if opts.resource != "" {
-		electionTransition, err = hooks.electionTransitionNeeded(opts.resource, opts.action)
+		electionTransition, err = electionRoleTransitionNeeded(opts.resource, opts.action)
 		if err != nil {
 			return err
 		}
@@ -219,16 +169,16 @@ func runWithHooks(args []string, hooks runHooks) (runErr error) {
 		// Withdraw the client-facing VIP before RA, VMAC and conntrack role
 		// changes. This closes the window in which clients can select a node
 		// whose DS-Lite data path is already being dismantled.
-		withdrawErr := hooks.withdrawDeferredVIP(opts)
+		withdrawErr := withdrawDeferredVIP(opts, runCommand)
 		// Always refresh the BACKUP marker and wake routerd. If the immediate
 		// delete failed, the controller must see BACKUP and retry withdrawal;
 		// conntrack remains primary until that retry can complete.
-		if err := hooks.writeElectionRole(opts.resource, opts.action); err != nil {
+		if err := writeElectionRole(opts.resource, opts.action); err != nil {
 			return err
 		}
-		if hooks.notifyRouterd != nil && (electionTransition || !opts.reconcile) {
-			if err := hooks.notifyRouterd(); err != nil && hooks.warn != nil {
-				hooks.warn(fmt.Errorf("notify routerd of VRRP transition: %w", err))
+		if electionTransition || !opts.reconcile {
+			if err := notifyRouterdVRRPTransition(runCommand); err != nil {
+				fmt.Fprintln(os.Stderr, fmt.Errorf("notify routerd of VRRP transition: %w", err))
 			}
 			notified = true
 		}
@@ -237,19 +187,17 @@ func runWithHooks(args []string, hooks runHooks) (runErr error) {
 		}
 	}
 	ready := make([]bool, len(opts.vmacs))
-	if hooks.inspectVMAC != nil {
-		for index, entry := range opts.vmacs {
-			state, inspectErr := hooks.inspectVMAC(entry)
-			if inspectErr != nil {
-				return fmt.Errorf("inspect VMAC %s: %w", entry.ifname, inspectErr)
-			}
-			ready[index] = vmacStateReadyForAction(opts.action, entry, state)
+	for index, entry := range opts.vmacs {
+		state, inspectErr := inspectVMACRuntimeState(entry)
+		if inspectErr != nil {
+			return fmt.Errorf("inspect VMAC %s: %w", entry.ifname, inspectErr)
 		}
+		ready[index] = vmacStateReadyForAction(opts.action, entry, state)
 	}
 	if opts.action == "deactivate" {
 		for index, vmac := range opts.vmacs {
 			if vmac.withdraw && !ready[index] {
-				if err := hooks.withdrawRA(vmac.parent); err != nil && !isMissingRAInterface(err) {
+				if err := withdrawRouterAdvertisement(vmac.parent); err != nil && !isMissingRAInterface(err) {
 					return fmt.Errorf("withdraw router advertisement on %s: %w", vmac.parent, err)
 				}
 			}
@@ -260,20 +208,20 @@ func runWithHooks(args []string, hooks runHooks) (runErr error) {
 	// reach the newly elected router during the VMAC/RA work and be classified
 	// as INVALID before the replicated NAT state exists in the kernel.
 	if opts.action == "activate" && conntrackdTransition {
-		if err := hooks.reconcileConntrackdRole(opts.action); err != nil {
+		if err := reconcileConntrackdRole(opts.action); err != nil {
 			return err
 		}
 	}
 	for _, index := range vmacActionOrder(opts.action, opts.vmacs) {
 		entry := opts.vmacs[index]
-		if opts.action == "deactivate" && !entry.withdraw && hooks.quiesceUpperTunnels != nil {
+		if opts.action == "deactivate" && !entry.withdraw {
 			// The client-facing VMAC has already been lowered by the action
 			// ordering above. Stop locally generated traffic on DS-Lite-style
 			// upper tunnels before removing their outer WAN identity. Routerd
 			// will delete role-gated tunnels as it reconciles BACKUP; this fast
 			// path closes the interval before that controller pass completes.
-			if err := hooks.quiesceUpperTunnels(entry.ifname); err != nil && hooks.warn != nil {
-				hooks.warn(fmt.Errorf("quiesce upper IPv6 tunnels on %s: %w", entry.ifname, err))
+			if err := quiesceUpperIP6Tunnels(entry.ifname, runCommand); err != nil {
+				fmt.Fprintln(os.Stderr, fmt.Errorf("quiesce upper IPv6 tunnels on %s: %w", entry.ifname, err))
 			}
 		}
 		single := opts
@@ -282,7 +230,7 @@ func runWithHooks(args []string, hooks runHooks) (runErr error) {
 		if ready[index] {
 			commands = steadyStateCommands(entry)
 		}
-		if err := runVMACCommands(opts.action, commands, hooks.command); err != nil {
+		if err := runVMACCommands(opts.action, commands, runCommand); err != nil {
 			return err
 		}
 	}
@@ -291,11 +239,11 @@ func runWithHooks(args []string, hooks runHooks) (runErr error) {
 			if vmac.withdraw {
 				continue
 			}
-			output, err := hooks.command("ip", "-6", "route", "show", "default", "dev", vmac.ifname)
+			output, err := runCommand("ip", "-6", "route", "show", "default", "dev", vmac.ifname)
 			if err != nil {
 				return fmt.Errorf("read IPv6 default route for %s: %w: %s", vmac.ifname, err, strings.TrimSpace(string(output)))
 			}
-			addressOutput, _ := hooks.command("ip", "-6", "-o", "addr", "show", "dev", vmac.ifname, "scope", "global")
+			addressOutput, _ := runCommand("ip", "-6", "-o", "addr", "show", "dev", vmac.ifname, "scope", "global")
 			source := preferredVMACGlobalAddress(string(addressOutput))
 			// A healthy MASTER already has both an eligible SLAAC address and an
 			// RA default route. Re-soliciting on every reconcile needlessly resets
@@ -303,7 +251,7 @@ func runWithHooks(args []string, hooks runHooks) (runErr error) {
 			// makes systemd-networkd re-acquire IPv6LL continuously. Keep RS as a
 			// repair path only when the link was changed or RA state is incomplete.
 			if !ready[index] || source == "" || !hasVMACDefaultRoute(string(output), vmac.ifname) {
-				if err := hooks.requestRA(vmac.ifname); err != nil {
+				if err := requestRouterAdvertisement(vmac.ifname); err != nil {
 					return err
 				}
 			}
@@ -313,14 +261,14 @@ func runWithHooks(args []string, hooks runHooks) (runErr error) {
 			// VMAC route after RA is learned; repeated MASTER reconciliation makes
 			// this converge even when RA arrives after the link is raised.
 			if command, ok := preferVMACDefaultCommand(string(output), vmac.ifname, source); ok {
-				if output, err := hooks.command(command[0], command[1:]...); err != nil {
+				if output, err := runCommand(command[0], command[1:]...); err != nil {
 					return fmt.Errorf("%s: %w: %s", strings.Join(command, " "), err, strings.TrimSpace(string(output)))
 				}
 			}
 		}
 	}
 	if opts.action != "activate" && conntrackdTransition {
-		if err := hooks.reconcileConntrackdRole(opts.action); err != nil {
+		if err := reconcileConntrackdRole(opts.action); err != nil {
 			return err
 		}
 	}
@@ -329,20 +277,18 @@ func runWithHooks(args []string, hooks runHooks) (runErr error) {
 		// state, VMAC identity and the initial RA solicitation are complete.
 		// routerd can then reconcile PD-derived addresses and DS-Lite while the
 		// deferred LAN VIP is still absent.
-		if err := hooks.writeElectionRole(opts.resource, opts.action); err != nil {
+		if err := writeElectionRole(opts.resource, opts.action); err != nil {
 			return err
 		}
 	}
 	if conntrackdTransition {
-		if err := hooks.writeConntrackdRole(opts.action); err != nil {
+		if err := writeConntrackdRole(opts.action); err != nil {
 			return err
 		}
 	}
 	if (conntrackdTransition || electionTransition) && !notified {
-		if hooks.notifyRouterd != nil {
-			if err := hooks.notifyRouterd(); err != nil && hooks.warn != nil {
-				hooks.warn(fmt.Errorf("notify routerd of VRRP transition: %w", err))
-			}
+		if err := notifyRouterdVRRPTransition(runCommand); err != nil {
+			fmt.Fprintln(os.Stderr, fmt.Errorf("notify routerd of VRRP transition: %w", err))
 		}
 	}
 	return nil
