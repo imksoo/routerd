@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/netip"
@@ -995,6 +996,25 @@ func (c WireGuardController) cleanupStaleResources(ctx context.Context) error {
 			configured[res.Kind+"/"+res.Metadata.Name] = true
 		}
 	}
+	if !c.DryRun && platform.CurrentOS() == platform.OSLinux {
+		out, err := c.runWireGuardHostCommand(ctx, "ip", "-j", "link", "show", "type", "wireguard")
+		if err != nil {
+			return fmt.Errorf("list WireGuard links: %w: %s", err, strings.TrimSpace(string(out)))
+		}
+		var links []struct {
+			Name string `json:"ifname"`
+		}
+		if err := json.Unmarshal(out, &links); err != nil {
+			return fmt.Errorf("decode WireGuard links: %w", err)
+		}
+		for _, link := range links {
+			if link.Name != "" && !retained[link.Name] && !vxlan[link.Name] {
+				if out, err := c.runWireGuardHostCommand(ctx, "ip", "link", "delete", "dev", link.Name, "type", "wireguard"); err != nil {
+					return fmt.Errorf("delete WireGuard %s: %w: %s", link.Name, err, strings.TrimSpace(string(out)))
+				}
+			}
+		}
+	}
 	for _, item := range statuses {
 		if item.APIVersion != api.NetAPIVersion || (item.Kind != "WireGuardInterface" && item.Kind != "WireGuardPeer") || configured[item.Kind+"/"+item.Name] {
 			continue
@@ -1002,7 +1022,7 @@ func (c WireGuardController) cleanupStaleResources(ctx context.Context) error {
 		if c.DryRun {
 			continue
 		}
-		if item.Kind == "WireGuardInterface" {
+		if item.Kind == "WireGuardInterface" && platform.CurrentOS() != platform.OSLinux {
 			ifname := firstNonEmpty(statusvalue.Field(item.Status, "ifname"), item.Name)
 			if !retained[ifname] && !vxlan[ifname] {
 				out, err := c.runWireGuardHostCommand(ctx, "wg", "show", "interfaces")
