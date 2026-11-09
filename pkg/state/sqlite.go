@@ -1785,12 +1785,7 @@ func variablesMap(status objectStatus) map[string]any {
 	if vars, ok := status["_variables"].(map[string]any); ok {
 		return vars
 	}
-	vars := map[string]any{}
-	if raw, ok := status["_variables"]; ok {
-		data, _ := json.Marshal(raw)
-		_ = json.Unmarshal(data, &vars)
-	}
-	return vars
+	return map[string]any{}
 }
 
 func encodeValueMap(value Value) map[string]any {
