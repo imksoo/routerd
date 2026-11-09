@@ -16,10 +16,6 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 )
 
-var routeLookupCommand = func(ctx context.Context, args ...string) ([]byte, error) {
-	return exec.CommandContext(ctx, "ip", args...).Output()
-}
-
 // lookupRoute uses `ip -j route get TARGET` to discover the nexthop, output
 // interface and source address the kernel would pick for the probe. We treat
 // "ip" missing or returning non-zero as a soft failure: the probe still ran
@@ -58,7 +54,7 @@ func lookupRoute(ctx context.Context, spec api.HealthCheckSpec) (RouteInfo, erro
 	if oif := strings.TrimSpace(spec.SourceInterface); oif != "" {
 		args = append(args, "oif", oif)
 	}
-	out, err := routeLookupCommand(ctx, args...)
+	out, err := exec.CommandContext(ctx, "ip", args...).Output()
 	if err != nil {
 		return RouteInfo{}, fmt.Errorf("ip route get: %w", err)
 	}

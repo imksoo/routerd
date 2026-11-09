@@ -222,18 +222,7 @@ type AtomicWriteOutcome struct {
 	DurabilityConfirmed bool
 }
 
-func AtomicWriteFileWithOutcome(path string, data []byte) (AtomicWriteOutcome, error) {
-	return atomicWriteFile(path, data, atomicFileOps{rename: os.Rename, chmod: os.Chmod, syncDir: syncDir})
-}
-
-// Per-call operations keep fault injection local to one writer/test.
-type atomicFileOps struct {
-	rename  func(string, string) error
-	chmod   func(string, os.FileMode) error
-	syncDir func(string) error
-}
-
-func atomicWriteFile(path string, data []byte, ops atomicFileOps) (outcome AtomicWriteOutcome, err error) {
+func AtomicWriteFileWithOutcome(path string, data []byte) (outcome AtomicWriteOutcome, err error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return outcome, errors.New("atomic write path is empty")
@@ -274,15 +263,15 @@ func atomicWriteFile(path string, data []byte, ops atomicFileOps) (outcome Atomi
 	if err := tmp.Close(); err != nil {
 		return outcome, err
 	}
-	if err := ops.rename(tmpPath, path); err != nil {
+	if err := os.Rename(tmpPath, path); err != nil {
 		return outcome, err
 	}
 	outcome.Replaced = true
 	cleanup = false
-	if err := ops.chmod(path, mode); err != nil {
+	if err := os.Chmod(path, mode); err != nil {
 		return outcome, err
 	}
-	if err := ops.syncDir(dir); err != nil {
+	if err := syncDir(dir); err != nil {
 		return outcome, err
 	}
 	outcome.DurabilityConfirmed = true

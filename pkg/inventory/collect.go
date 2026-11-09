@@ -37,45 +37,18 @@ type DMIInfo struct {
 	BoardName      string `json:"boardName,omitempty" yaml:"boardName,omitempty"`
 }
 
-type Collector struct {
-	GOOS          string
-	LookPath      func(string) (string, error)
-	CommandOutput func(string, ...string) ([]byte, error)
-	ReadFile      func(string) ([]byte, error)
-	Stat          func(string) (os.FileInfo, error)
-}
-
 func Collect() Status {
-	return DefaultCollector().Collect()
-}
-
-func DefaultCollector() Collector {
-	return Collector{
-		GOOS:          runtime.GOOS,
-		LookPath:      exec.LookPath,
-		CommandOutput: commandOutput,
-		ReadFile:      os.ReadFile,
-		Stat:          os.Stat,
-	}
-}
-
-func commandOutput(name string, args ...string) ([]byte, error) {
-	return exec.Command(name, args...).CombinedOutput()
-}
-
-func (c Collector) Collect() Status {
-	c = c.withDefaults()
 	status := Status{
-		OS:       OSInfo{GOOS: c.GOOS},
+		OS:       OSInfo{GOOS: runtime.GOOS},
 		Commands: map[string]bool{},
 	}
-	status.OS.KernelName = c.trimmedCommand("uname", "-s")
-	status.OS.KernelRelease = c.trimmedCommand("uname", "-r")
-	status.OS.KernelVersion = c.trimmedCommand("uname", "-v")
-	status.OS.Uname = c.trimmedCommand("uname", "-a")
-	status.Virtualization.Type = c.virtualizationType()
-	status.DMI = c.dmi()
-	status.ServiceManager = c.serviceManager()
+	status.OS.KernelName = trimmedCommand("uname", "-s")
+	status.OS.KernelRelease = trimmedCommand("uname", "-r")
+	status.OS.KernelVersion = trimmedCommand("uname", "-v")
+	status.OS.Uname = trimmedCommand("uname", "-a")
+	status.Virtualization.Type = virtualizationType()
+	status.DMI = dmi()
+	status.ServiceManager = serviceManager()
 	for _, name := range []string{
 		"systemd-detect-virt",
 		"nft",
@@ -110,52 +83,37 @@ func (c Collector) Collect() Status {
 		"service",
 		"sysrc",
 	} {
-		status.Commands[name] = c.commandExists(name)
+		status.Commands[name] = commandExists(name)
 	}
 	return status
 }
 
-func (c Collector) withDefaults() Collector {
-	if c.GOOS == "" {
-		c.GOOS = runtime.GOOS
-	}
-	if c.LookPath == nil {
-		c.LookPath = exec.LookPath
-	}
-	if c.CommandOutput == nil {
-		c.CommandOutput = commandOutput
-	}
-	if c.ReadFile == nil {
-		c.ReadFile = os.ReadFile
-	}
-	if c.Stat == nil {
-		c.Stat = os.Stat
-	}
-	return c
+func commandOutput(name string, args ...string) ([]byte, error) {
+	return exec.Command(name, args...).CombinedOutput()
 }
 
-func (c Collector) virtualizationType() string {
-	switch c.GOOS {
+func virtualizationType() string {
+	switch runtime.GOOS {
 	case "linux":
-		if !c.commandExists("systemd-detect-virt") {
+		if !commandExists("systemd-detect-virt") {
 			return "unknown"
 		}
-		out, err := c.CommandOutput("systemd-detect-virt", "--vm")
+		out, err := commandOutput("systemd-detect-virt", "--vm")
 		value := strings.TrimSpace(string(out))
 		if err == nil && value != "" {
 			return value
 		}
-		out, err = c.CommandOutput("systemd-detect-virt", "--container")
+		out, err = commandOutput("systemd-detect-virt", "--container")
 		value = strings.TrimSpace(string(out))
 		if err == nil && value != "" {
 			return value
 		}
 		return "none"
 	case "freebsd":
-		if !c.commandExists("sysctl") {
+		if !commandExists("sysctl") {
 			return "unknown"
 		}
-		value := c.trimmedCommand("sysctl", "-n", "kern.vm_guest")
+		value := trimmedCommand("sysctl", "-n", "kern.vm_guest")
 		if value == "" {
 			return "unknown"
 		}
@@ -165,49 +123,49 @@ func (c Collector) virtualizationType() string {
 	}
 }
 
-func (c Collector) dmi() DMIInfo {
+func dmi() DMIInfo {
 	return DMIInfo{
-		SysVendor:      c.trimmedFile("/sys/class/dmi/id/sys_vendor"),
-		ProductName:    c.trimmedFile("/sys/class/dmi/id/product_name"),
-		ProductVersion: c.trimmedFile("/sys/class/dmi/id/product_version"),
-		BoardVendor:    c.trimmedFile("/sys/class/dmi/id/board_vendor"),
-		BoardName:      c.trimmedFile("/sys/class/dmi/id/board_name"),
+		SysVendor:      trimmedFile("/sys/class/dmi/id/sys_vendor"),
+		ProductName:    trimmedFile("/sys/class/dmi/id/product_name"),
+		ProductVersion: trimmedFile("/sys/class/dmi/id/product_version"),
+		BoardVendor:    trimmedFile("/sys/class/dmi/id/board_vendor"),
+		BoardName:      trimmedFile("/sys/class/dmi/id/board_name"),
 	}
 }
 
-func (c Collector) serviceManager() string {
-	if c.commandExists("systemctl") && c.pathExists("/run/systemd/system") {
+func serviceManager() string {
+	if commandExists("systemctl") && pathExists("/run/systemd/system") {
 		return "systemd"
 	}
-	if c.GOOS == "freebsd" || c.pathExists("/etc/rc.d") {
+	if runtime.GOOS == "freebsd" || pathExists("/etc/rc.d") {
 		return "rc.d"
 	}
 	return "unknown"
 }
 
-func (c Collector) commandExists(name string) bool {
-	_, err := c.LookPath(name)
+func commandExists(name string) bool {
+	_, err := exec.LookPath(name)
 	return err == nil
 }
 
-func (c Collector) pathExists(path string) bool {
-	_, err := c.Stat(path)
+func pathExists(path string) bool {
+	_, err := os.Stat(path)
 	return err == nil
 }
 
-func (c Collector) trimmedCommand(name string, args ...string) string {
-	if !c.commandExists(name) {
+func trimmedCommand(name string, args ...string) string {
+	if !commandExists(name) {
 		return ""
 	}
-	out, err := c.CommandOutput(name, args...)
+	out, err := commandOutput(name, args...)
 	if err != nil {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
 }
 
-func (c Collector) trimmedFile(path string) string {
-	data, err := c.ReadFile(path)
+func trimmedFile(path string) string {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return ""
 	}

@@ -49,7 +49,6 @@ GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || true)
 GO_LDFLAGS ?= -s -w -X github.com/imksoo/routerd/pkg/version.Version=$(VERSION) $(if $(GIT_COMMIT),-X github.com/imksoo/routerd/pkg/version.Commit=$(GIT_COMMIT))
 GO_BUILD_FLAGS ?= -buildvcs=false -trimpath -ldflags="$(GO_LDFLAGS)"
 EXAMPLE_CONFIGS ?= $(wildcard examples/*.yaml)
-PLAYWRIGHT_INSTALL_FLAGS ?= --with-deps
 WEBSITE_SCHEMA_DIR := website/static/schemas
 CONFIG_SCHEMA := routerd-config-v1alpha1.schema.json
 CONTROL_SCHEMA := routerd-control-v1alpha1.schema.json
@@ -58,7 +57,7 @@ WIZARD_FIXTURE_DIR := website/fixtures/wizard
 
 WEBSITE_NODE_MODULES_STAMP := website/node_modules/.package-lock.json
 
-.PHONY: test check-version-ldflags build build-daemons build-provider-executors build-ndpi-agent build-ndpi-agent-libndpi build-daemons-freebsd check-freebsd-cross-compile check-linux-static check-ndpi-agent-libndpi cloudedge-acceptance-lint webconsole-build webconsole-browser-install webconsole-screenshot generate-schema sync-website-schemas check-schema check-website-schemas generate-wizard-fixtures check-wizard-fixtures validate-wizard-fixtures website-deps website-build third-party-licenses check-build-deps dist deb deb-ndpi dist-ndpi-agent-libndpi live-iso validate-example release clean
+.PHONY: test check-version-ldflags build build-daemons build-provider-executors build-ndpi-agent build-ndpi-agent-libndpi build-daemons-freebsd check-freebsd-cross-compile check-linux-static check-ndpi-agent-libndpi cloudedge-acceptance-lint webconsole-build generate-schema sync-website-schemas check-schema check-website-schemas generate-wizard-fixtures check-wizard-fixtures validate-wizard-fixtures website-deps website-build third-party-licenses check-build-deps dist deb deb-ndpi dist-ndpi-agent-libndpi live-iso validate-example release clean
 
 test: check-version-ldflags
 	go test ./...
@@ -150,12 +149,6 @@ cloudedge-acceptance-lint:
 
 webconsole-build:
 	cd webconsole && npm ci && npm run build
-
-webconsole-browser-install:
-	cd webconsole && npx playwright install $(PLAYWRIGHT_INSTALL_FLAGS) chromium
-
-webconsole-screenshot: webconsole-build webconsole-browser-install
-	cd webconsole && npm run screenshot
 
 generate-schema:
 	install -d schemas
