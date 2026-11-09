@@ -1801,28 +1801,6 @@
                 },
                 "name": {
                   "type": "string"
-                },
-                "ownerRefs": {
-                  "items": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "apiVersion": {
-                        "type": "string"
-                      },
-                      "kind": {
-                        "type": "string"
-                      },
-                      "name": {
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "kind",
-                      "name"
-                    ],
-                    "type": "object"
-                  },
-                  "type": "array"
                 }
               },
               "required": [
@@ -2031,28 +2009,6 @@
                 },
                 "name": {
                   "type": "string"
-                },
-                "ownerRefs": {
-                  "items": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "apiVersion": {
-                        "type": "string"
-                      },
-                      "kind": {
-                        "type": "string"
-                      },
-                      "name": {
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "kind",
-                      "name"
-                    ],
-                    "type": "object"
-                  },
-                  "type": "array"
                 }
               },
               "required": [
@@ -2094,28 +2050,6 @@
                 },
                 "name": {
                   "type": "string"
-                },
-                "ownerRefs": {
-                  "items": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "apiVersion": {
-                        "type": "string"
-                      },
-                      "kind": {
-                        "type": "string"
-                      },
-                      "name": {
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "kind",
-                      "name"
-                    ],
-                    "type": "object"
-                  },
-                  "type": "array"
                 }
               },
               "required": [

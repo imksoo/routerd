@@ -98,14 +98,7 @@ func submitSAMEnrollmentClaim(router *api.Router, store samEnrollmentClaimStore,
 	}
 	part := dynamicconfig.DynamicConfigPart{
 		TypeMeta: api.TypeMeta{APIVersion: dynamicconfig.ConfigAPIVersion, Kind: "DynamicConfigPart"},
-		Metadata: api.ObjectMeta{
-			Name: "sam-enrollment-claim-" + claimResource.Metadata.Name,
-			OwnerRefs: []api.OwnerRef{{
-				APIVersion: api.MobilityAPIVersion,
-				Kind:       "SAMEnrollmentClaim",
-				Name:       claimResource.Metadata.Name,
-			}},
-		},
+		Metadata: api.ObjectMeta{Name: "sam-enrollment-claim-" + claimResource.Metadata.Name},
 		Spec: dynamicconfig.DynamicConfigPartSpec{
 			Source:     source,
 			Generation: samEnrollmentClaimDynamicGeneration,
@@ -286,14 +279,7 @@ func revokeSAMEnrollmentClaim(router *api.Router, store samEnrollmentClaimStore,
 	claimResource.Spec = claim
 	part := dynamicconfig.DynamicConfigPart{
 		TypeMeta: api.TypeMeta{APIVersion: dynamicconfig.ConfigAPIVersion, Kind: "DynamicConfigPart"},
-		Metadata: api.ObjectMeta{
-			Name: "sam-enrollment-claim-" + claimResource.Metadata.Name,
-			OwnerRefs: []api.OwnerRef{{
-				APIVersion: api.MobilityAPIVersion,
-				Kind:       "SAMEnrollmentClaim",
-				Name:       claimResource.Metadata.Name,
-			}},
-		},
+		Metadata: api.ObjectMeta{Name: "sam-enrollment-claim-" + claimResource.Metadata.Name},
 		Spec: dynamicconfig.DynamicConfigPartSpec{
 			Source:     source,
 			Generation: samEnrollmentClaimDynamicGeneration,

@@ -65,14 +65,7 @@ func FetchedSAMEnrollmentTopologyRecord(rrSet api.Resource, peerGroup *api.Resou
 	}
 	part := dynamicconfig.DynamicConfigPart{
 		TypeMeta: api.TypeMeta{APIVersion: dynamicconfig.ConfigAPIVersion, Kind: "DynamicConfigPart"},
-		Metadata: api.ObjectMeta{
-			Name: options.Name,
-			OwnerRefs: []api.OwnerRef{{
-				APIVersion: api.MobilityAPIVersion,
-				Kind:       "SAMRRSet",
-				Name:       rrSet.Metadata.Name,
-			}},
-		},
+		Metadata: api.ObjectMeta{Name: options.Name},
 		Spec: dynamicconfig.DynamicConfigPartSpec{
 			Source:     "SAMRRSet/" + rrSet.Metadata.Name,
 			Generation: options.Generation,
