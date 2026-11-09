@@ -1831,37 +1831,17 @@ func (c *Controller) bfdPeerState(ref, address string) string {
 
 func bfdPeerState(status map[string]any, address string) string {
 	address = strings.TrimSpace(address)
-	peerStates, ok := status["peerStates"].(map[string]any)
-	if ok {
+	if peerStates, ok := status["peerStates"].(map[string]any); ok {
 		return strings.TrimSpace(fmt.Sprint(peerStates[address]))
 	}
-	if typed, ok := status["peerStates"].(map[string]string); ok {
-		return strings.TrimSpace(typed[address])
-	}
-	for _, item := range statusSlice(status["peers"]) {
-		itemAddress := strings.TrimSpace(fmt.Sprint(item["address"]))
-		if itemAddress == address {
+	peers, _ := status["peers"].([]any)
+	for _, raw := range peers {
+		item, ok := raw.(map[string]any)
+		if ok && strings.TrimSpace(fmt.Sprint(item["address"])) == address {
 			return strings.TrimSpace(fmt.Sprint(item["state"]))
 		}
 	}
 	return ""
-}
-
-func statusSlice(value any) []map[string]any {
-	switch typed := value.(type) {
-	case []map[string]any:
-		return typed
-	case []any:
-		out := make([]map[string]any, 0, len(typed))
-		for _, item := range typed {
-			if m, ok := item.(map[string]any); ok {
-				out = append(out, m)
-			}
-		}
-		return out
-	default:
-		return nil
-	}
 }
 
 func mapKeys(values map[string]bool) []string {
