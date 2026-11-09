@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
@@ -18,7 +17,6 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
-	"github.com/imksoo/routerd/pkg/apply"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/resourcequery"
 	routerstate "github.com/imksoo/routerd/pkg/state"
@@ -34,7 +32,6 @@ type VXLANTunnelController struct {
 	Store           Store
 	DryRun          bool
 	OperatingSystem platform.OS
-	NetworkdDir     string
 	StartedAt       time.Time
 	Mu              *sync.Mutex
 }
@@ -73,10 +70,6 @@ func (c VXLANTunnelController) Reconcile(ctx context.Context) error {
 	if declared == nil {
 		return nil
 	}
-	if err := c.cleanupExtraVXLANs(ctx, declared); err != nil {
-		return err
-	}
-
 	effective := vxlansByName(c.Router)
 	aliases := bridgeInterfaceAliases(declared)
 	seen := map[string]bool{}
@@ -116,39 +109,6 @@ func (c VXLANTunnelController) Reconcile(ctx context.Context) error {
 		}
 		if err := c.reconcileResource(ctx, resource, bridgeInterfaceAliases(c.Router)); err != nil {
 			return err
-		}
-	}
-	return nil
-}
-
-func (c VXLANTunnelController) cleanupExtraVXLANs(ctx context.Context, declared *api.Router) error {
-	retained, err := apply.ConfiguredVXLANInterfaces(declared, c.Router)
-	if err != nil {
-		return err
-	}
-	filesChanged := false
-	for _, suffix := range []string{".netdev", ".network"} {
-		paths, err := filepath.Glob(c.networkdPath("/etc/systemd/network/31-routerd-*" + suffix))
-		if err != nil {
-			return err
-		}
-		for _, path := range paths {
-			ifname := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(path), "31-routerd-"), suffix)
-			if retained[ifname] {
-				continue
-			}
-			if c.DryRun {
-				continue
-			}
-			if err := c.removeFile(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-				return err
-			}
-			filesChanged = true
-		}
-	}
-	if filesChanged && !c.DryRun {
-		if output, err := c.command(ctx, "networkctl", "reload"); err != nil {
-			return fmt.Errorf("reload after removing stale VXLAN files: %w: %s", err, strings.TrimSpace(string(output)))
 		}
 	}
 	return nil
@@ -430,15 +390,6 @@ func (c VXLANTunnelController) reconcileOne(ctx context.Context, resource api.Re
 		status["phase"], status["reason"], status["forwarding"], status["error"] = "Error", "LinkObserveFailed", "unknown", showErr.Error()
 		return c.Store.SaveObjectStatus(api.NetAPIVersion, "VXLANTunnel", resource.Metadata.Name, status)
 	}
-	legacyRemoved, err := c.removeLegacyArtifacts(cfg.IfName)
-	if err != nil {
-		return err
-	}
-	if legacyRemoved {
-		if _, err := c.command(ctx, "networkctl", "reload"); err != nil {
-			return fmt.Errorf("reload after removing legacy VXLAN artifacts: %w", err)
-		}
-	}
 	status["restartPersistent"] = false
 	if showErr == nil && !vxlanDetailsConfigMatch(string(observed), cfg) {
 		if err := requireVirtualLink(cfg.IfName); err != nil {
@@ -485,7 +436,7 @@ func (c VXLANTunnelController) reconcileOne(ctx context.Context, resource api.Re
 	if _, err := c.command(ctx, "ip", "link", "set", "dev", cfg.IfName, "up"); err != nil {
 		return err
 	}
-	observed, err = c.command(ctx, "ip", "-details", "link", "show", "dev", cfg.IfName)
+	observed, err := c.command(ctx, "ip", "-details", "link", "show", "dev", cfg.IfName)
 	if err != nil || !vxlanDetailsMatch(string(observed), cfg) {
 		status["phase"] = "Drifted"
 		status["reason"] = "ReadbackMismatch"
@@ -628,15 +579,6 @@ func (c VXLANTunnelController) teardownOne(ctx context.Context, resource api.Res
 		}
 		status["deleted"] = true
 	}
-	removed, err := c.removeLegacyArtifacts(ifname)
-	if err != nil {
-		return c.saveTeardownError(resource, status, "ArtifactDeleteFailed", err)
-	}
-	if removed {
-		if _, err := c.command(ctx, "networkctl", "reload"); err != nil {
-			return c.saveTeardownError(resource, status, "NetworkdReloadFailed", err)
-		}
-	}
 	finalObserved, finalErr := c.command(ctx, "ip", "-details", "link", "show", "dev", ifname)
 	if finalErr == nil {
 		return c.saveTeardownError(resource, status, "LinkReappeared", fmt.Errorf("VXLAN link %s exists after teardown", ifname))
@@ -695,54 +637,6 @@ func (c VXLANTunnelController) baseStatus(cfg vxlan.Config) map[string]any {
 		"outerDF":        defaultVXLANOuterDF(cfg.OuterDF),
 		"observedAt":     time.Now().UTC().Format(time.RFC3339Nano),
 	}
-}
-
-func (c VXLANTunnelController) networkdPath(path string) string {
-	base := strings.TrimSpace(c.NetworkdDir)
-	if base == "" {
-		defaults, _ := platform.Current()
-		base = defaults.NetworkdDropinDir
-	}
-	if base == "" {
-		base = "/etc/systemd/network"
-	}
-	rel := strings.TrimPrefix(filepath.Clean(path), filepath.Clean("/etc/systemd/network"))
-	return filepath.Join(base, strings.TrimPrefix(rel, string(filepath.Separator)))
-}
-
-func (c VXLANTunnelController) artifactPaths(ifname string) []string {
-	return []string{
-		// Legacy auto-activating artifacts are cleanup-only. Gated VXLANs are
-		// runtime resources and must never be recreated before fresh predicates.
-		c.networkdPath(filepath.Join("/etc/systemd/network", "31-routerd-"+ifname+".netdev")),
-		c.networkdPath(filepath.Join("/etc/systemd/network", "31-routerd-"+ifname+".network")),
-	}
-}
-
-func (c VXLANTunnelController) removeLegacyArtifacts(ifname string) (bool, error) {
-	removed := false
-	for _, path := range c.artifactPaths(ifname) {
-		_, err := c.readFile(path)
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return removed, err
-		}
-		if err := c.removeFile(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return removed, err
-		}
-		removed = true
-	}
-	return removed, nil
-}
-
-func (c VXLANTunnelController) readFile(path string) ([]byte, error) {
-	return os.ReadFile(path)
-}
-
-func (c VXLANTunnelController) removeFile(path string) error {
-	return os.Remove(path)
 }
 
 func (c VXLANTunnelController) command(ctx context.Context, name string, args ...string) ([]byte, error) {
