@@ -40,8 +40,6 @@ const (
 	doctorFederationSourceProviderOwner = "provider-discovery"
 )
 
-var doctorNow = time.Now
-
 var doctorMACAddressPattern = regexp.MustCompile(`(?i)\b(?:[0-9a-f]{2}:){5}[0-9a-f]{2}\b`)
 
 type doctorCheck struct {
@@ -350,7 +348,7 @@ func (r doctorRunner) runArea(area string) []doctorCheck {
 }
 
 func (r doctorRunner) doctorIncidentDump() doctorIncidentReport {
-	dump := doctorIncidentReport{GeneratedAt: doctorNow().UTC().Format(time.RFC3339)}
+	dump := doctorIncidentReport{GeneratedAt: time.Now().UTC().Format(time.RFC3339)}
 	if status, err := fetchStatus(r.opts.Socket, r.opts.Timeout); err == nil {
 		dump.Status = status
 	} else {
@@ -606,7 +604,7 @@ func (r doctorRunner) doctorSAMEnrollmentClientRRSetCheck(name string, spec api.
 	if len(records) == 0 {
 		return doctorCheck{Area: "sam-enrollment-client", Name: name + " fetched RRSet", Status: doctorWarn, Detail: "no dynamic state for " + source, Remedy: "run enrollment or wait for SAMEnrollmentClient to fetch the RRSet"}
 	}
-	now := doctorNow().UTC()
+	now := time.Now().UTC()
 	active := 0
 	var latest routerstate.DynamicConfigPartRecord
 	for _, record := range records {
@@ -864,7 +862,7 @@ func (r doctorRunner) doctorSAMFederationDiscoveryChecks(pool string, poolSpec a
 	if !ok {
 		return []doctorCheck{{Area: "sam", Name: label, Status: doctorWarn, Detail: "state backend does not expose federation events"}}
 	}
-	now := doctorNow().UTC()
+	now := time.Now().UTC()
 	events, err := federationStore.ListFederationEvents(groupRef, false, now.Unix())
 	if err != nil {
 		return []doctorCheck{{Area: "sam", Name: label, Status: doctorFail, Detail: err.Error(), Remedy: "check state backend and retry"}}

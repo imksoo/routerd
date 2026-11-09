@@ -78,7 +78,7 @@ func (r doctorRunner) doctorFederation() []doctorCheck {
 	fedStore, hasFedEvents := r.store.(routerstate.FederationEventStore)
 	deliveryStore, hasDeliveries := r.store.(routerstate.FederationDeliveryStore)
 
-	now := doctorNow().UTC()
+	now := time.Now().UTC()
 	rows, err := summaryStore.ListDeliverySummary("", "", "", false, now)
 	if err != nil {
 		return []doctorCheck{{Area: "federation", Name: "delivery summary", Status: doctorFail, Detail: err.Error(), Remedy: "check state backend and retry"}}
@@ -420,7 +420,7 @@ func (r doctorRunner) buildFederationSummary(checks []doctorCheck) *doctorFedera
 	if !ok {
 		return fs
 	}
-	rows, err := summaryStore.ListDeliverySummary("", "", "", false, doctorNow().UTC())
+	rows, err := summaryStore.ListDeliverySummary("", "", "", false, time.Now().UTC())
 	if err != nil {
 		return fs
 	}
@@ -564,7 +564,7 @@ func (r doctorRunner) buildFederationSLOStatus(rows []routerstate.DeliverySummar
 
 func (r doctorRunner) buildFederationRemediationPlan(checks []doctorCheck) *doctorRemediationPlan {
 	plan := &doctorRemediationPlan{
-		GeneratedAt: doctorNow().UTC().Format("2006-01-02T15:04:05Z"),
+		GeneratedAt: time.Now().UTC().Format("2006-01-02T15:04:05Z"),
 		Actions:     []doctorRemediationAction{},
 	}
 
@@ -649,7 +649,7 @@ func remediationActionFromCheck(c doctorCheck) doctorRemediationAction {
 		return doctorRemediationAction{
 			Action: remediationInspectFailedSubscriptionRuns, Reason: c.Detail,
 			TargetResource: targetResource,
-			Safe: true, RequiresOperatorApproval: false,
+			Safe:           true, RequiresOperatorApproval: false,
 		}
 	}
 	return doctorRemediationAction{}
