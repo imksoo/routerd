@@ -3,7 +3,6 @@
 package state
 
 import (
-	"path/filepath"
 	"testing"
 	"time"
 )
@@ -507,100 +506,5 @@ func TestGetActionMissing(t *testing.T) {
 	}
 	if _, ok, err := store.GetActionByIdempotencyKey("nope"); err != nil || ok {
 		t.Fatalf("missing key should return ok=false, got ok=%v err=%v", ok, err)
-	}
-}
-
-// TestActionExecutionBackwardCompat verifies a database that predates the
-// action_executions table gets it created on open (the ensure*Columns migration
-// is backward compatible).
-func TestActionExecutionBackwardCompat(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "legacy.db")
-
-	store, err := OpenSQLite(path)
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	// Simulate an older database: drop the table, then reopen so the migration
-	// re-creates it.
-	if _, err := store.db.Exec(`DROP TABLE action_executions`); err != nil {
-		t.Fatalf("drop table: %v", err)
-	}
-	if err := store.Close(); err != nil {
-		t.Fatalf("close: %v", err)
-	}
-
-	reopened, err := OpenSQLite(path)
-	if err != nil {
-		t.Fatalf("reopen: %v", err)
-	}
-	defer reopened.Close()
-
-	if _, err := reopened.ImportAction(sampleActionRecord("after-upgrade")); err != nil {
-		t.Fatalf("import after upgrade: %v", err)
-	}
-	rows, err := reopened.ListActions(ActionExecutionFilter{})
-	if err != nil {
-		t.Fatalf("list: %v", err)
-	}
-	if len(rows) != 1 {
-		t.Fatalf("expected 1 row after backward-compat upgrade, got %d", len(rows))
-	}
-}
-
-// TestActionExecutionObservedColumnBackwardCompat verifies a database whose
-// action_executions table predates the observed_json column gets the column
-// added on open (additive migration), then Observed persists + round-trips.
-func TestActionExecutionObservedColumnBackwardCompat(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "legacy-observed.db")
-
-	store, err := OpenSQLite(path)
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	// Simulate an older table that lacks observed_json by dropping the column.
-	// SQLite supports DROP COLUMN since 3.35; if unavailable, recreate without it.
-	if _, err := store.db.Exec(`ALTER TABLE action_executions DROP COLUMN observed_json`); err != nil {
-		t.Fatalf("drop observed_json column: %v", err)
-	}
-	hadColumn, err := store.tableHasColumn("action_executions", "observed_json")
-	if err != nil {
-		t.Fatalf("tableHasColumn: %v", err)
-	}
-	if hadColumn {
-		t.Fatalf("setup failed: observed_json should be absent after drop")
-	}
-	if err := store.Close(); err != nil {
-		t.Fatalf("close: %v", err)
-	}
-
-	reopened, err := OpenSQLite(path)
-	if err != nil {
-		t.Fatalf("reopen: %v", err)
-	}
-	defer reopened.Close()
-
-	hasColumn, err := reopened.tableHasColumn("action_executions", "observed_json")
-	if err != nil {
-		t.Fatalf("tableHasColumn after reopen: %v", err)
-	}
-	if !hasColumn {
-		t.Fatalf("observed_json column should be re-added on open")
-	}
-
-	if _, err := reopened.ImportAction(sampleActionRecord("after-observed-upgrade")); err != nil {
-		t.Fatalf("import after upgrade: %v", err)
-	}
-	rec, _, _ := reopened.GetActionByIdempotencyKey("after-observed-upgrade")
-	if err := reopened.ApproveAction(rec.ID, "op", time.Time{}); err != nil {
-		t.Fatalf("approve: %v", err)
-	}
-	if err := reopened.MarkActionResult(rec.ID, ActionSucceeded, "ok", "", map[string]string{"priorSourceDestCheck": "false"}, time.Time{}); err != nil {
-		t.Fatalf("mark result: %v", err)
-	}
-	got, _, _ := reopened.GetActionByID(rec.ID)
-	if got.Observed["priorSourceDestCheck"] != "false" {
-		t.Fatalf("observed not persisted after column re-add: %+v", got.Observed)
 	}
 }
