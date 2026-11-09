@@ -483,10 +483,6 @@ func statusChanged(current, next map[string]any) bool {
 	return !reflect.DeepEqual(stableStatus(current), stableStatus(next))
 }
 
-func objectStatusChanged(_ string, current, next map[string]any) bool {
-	return statusChanged(current, next)
-}
-
 func changedFields(currentStable, nextStable map[string]any) []string {
 	keys := map[string]bool{}
 	for key := range currentStable {
@@ -4130,7 +4126,7 @@ func (c IPv4StaticAddressController) Reconcile(ctx context.Context) error {
 			}
 			continue
 		}
-		changed := objectStatusChanged("IPv4StaticAddress", c.Store.ObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", resource.Metadata.Name), status)
+		changed := statusChanged(c.Store.ObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", resource.Metadata.Name), status)
 		previous := c.Store.ObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", resource.Metadata.Name)
 		addressPresent := true
 		if !c.DryRun {
@@ -5010,11 +5006,11 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 		}
 		currentStatus := copyStatusMap(previousStatus)
 		delete(currentStatus, "previousAddresses")
-		currentChanged := objectStatusChanged("IPv6DelegatedAddress", currentStatus, status)
+		currentChanged := statusChanged(currentStatus, status)
 		if len(previousAddresses) > 0 {
 			status["previousAddresses"] = previousAddresses
 		}
-		changed := objectStatusChanged("IPv6DelegatedAddress", previousStatus, status)
+		changed := statusChanged(previousStatus, status)
 		addressPresent := true
 		addressPresentFn := ipv6AddressPresent
 		if stagingVMAC {

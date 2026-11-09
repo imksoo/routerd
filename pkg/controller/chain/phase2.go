@@ -79,7 +79,7 @@ func (c DHCPv6InformationController) reconcile(ctx context.Context, pdName strin
 			"domainSearch": decodeStringList(observed["domainSearch"]),
 			"source":       pdName,
 		}
-		changed := objectStatusChanged("DHCPv6Information", c.Store.ObjectStatus(api.NetAPIVersion, "DHCPv6Information", resource.Metadata.Name), next)
+		changed := statusChanged(c.Store.ObjectStatus(api.NetAPIVersion, "DHCPv6Information", resource.Metadata.Name), next)
 		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6Information", resource.Metadata.Name, next); err != nil {
 			return err
 		}
@@ -251,7 +251,7 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 			continue
 		}
 		status := map[string]any{"phase": "Up", "interface": ifname, "tunnelName": ifname, "device": ifname, "localIPv6": local, "innerLocalIPv4": innerLocal, "innerRemoteIPv4": dsliteInnerRemoteIPv4, "localInterface": localIfName, "aftrName": aftrName, "aftrIPv6": remote, "mtu": mtu, "dryRun": c.DryRun}
-		changed := objectStatusChanged("DSLiteTunnel", c.Store.ObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name), status)
+		changed := statusChanged(c.Store.ObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name), status)
 		if !c.DryRun {
 			if localIfName != "" {
 				delegatedSource := firstNonEmpty(spec.LocalAddressSource, "interface") == "delegatedAddress"
