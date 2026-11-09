@@ -4,6 +4,7 @@ package chain
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -110,6 +111,29 @@ func (c TunnelInterfaceController) cleanupStaleResources(ctx context.Context) er
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.APIVersion == api.HybridAPIVersion && resource.Kind == "TunnelInterface" {
 			desired[resource.Metadata.Name] = struct{}{}
+		}
+	}
+	if !c.DryRun && platform.CurrentOS() == platform.OSLinux {
+		for _, kind := range []string{"ipip", "gre"} {
+			out, err := c.run(ctx, "ip", "-j", "link", "show", "type", kind)
+			if err != nil {
+				return fmt.Errorf("list %s tunnels: %w: %s", kind, err, strings.TrimSpace(string(out)))
+			}
+			var links []struct {
+				Name string `json:"ifname"`
+			}
+			if err := json.Unmarshal(out, &links); err != nil {
+				return fmt.Errorf("decode %s tunnels: %w", kind, err)
+			}
+			for _, link := range links {
+				_, configured := desired[link.Name]
+				if link.Name == "" || link.Name == "tunl0" || link.Name == "gre0" || configured || retained[link.Name] {
+					continue
+				}
+				if out, err := c.run(ctx, "ip", "link", "delete", "dev", link.Name, "type", kind); err != nil {
+					return fmt.Errorf("delete %s tunnel %s: %w: %s", kind, link.Name, err, strings.TrimSpace(string(out)))
+				}
+			}
 		}
 	}
 	for _, item := range statuses {
