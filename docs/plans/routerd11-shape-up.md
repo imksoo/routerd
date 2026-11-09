@@ -28,6 +28,8 @@
 
 - Cloud SAM の稼働先は未特定。`routerd-labs/cloudedge-mobility/terraform/envs` 内の AWS・Azure・OCI の state はいずれも資源が空だったが、他の稼働先の有無を示すものではない。Cloud SAM で変更後の実動作は未確認。
 
+- homert03 の実設定と状態 DB に対する変更後・稼働版 `routerctl dynamic render -o json` は SHA-256 が一致した。待機系 daemon の差し替えは承認待ちであり、実行していない。
+
 ## 残件
 
 - FreeBSD で DHCPv6 client を supervisor を介さず `--lease-file` なしで手動起動すると、既定の lease パスと controller の読み取りパスが異なる。supervisor は正しいパスを渡す。実運用で手動起動が必要か未確認であり、調査・修正には別途承認を要する。
