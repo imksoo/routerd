@@ -19,7 +19,6 @@ import (
 )
 
 type samOSAddressDeassignResult struct {
-	address, ifname      string
 	removedThisReconcile bool
 }
 

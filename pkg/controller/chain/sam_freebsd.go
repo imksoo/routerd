@@ -136,7 +136,7 @@ func (freeBSDSAMProxyNeighborApplier) EnsureOSAddressAbsent(ctx context.Context,
 	if err != nil {
 		return samOSAddressDeassignResult{}, err
 	}
-	result := samOSAddressDeassignResult{address: address}
+	result := samOSAddressDeassignResult{}
 	out, err := freeBSDSAMRunCommand(ctx, "ifconfig", "-l")
 	if err != nil {
 		return result, fmt.Errorf("list FreeBSD interfaces: %w: %s", err, strings.TrimSpace(string(out)))
