@@ -10,6 +10,16 @@
 
 各段階の結果と未確認事項はコミットに記す。計画外で対応したいことは、以下の残件に記載して最後に説明し、所有者の承認前には着手しない。
 
+## 実施状況
+
+- 1: BGP 動的 peer の観測・経路数を型付きで集計し、保存 status の項目を維持。過去 peer は履歴に必要な項目だけを復元する。
+- 2: 動的設定合成時の YAML 往復を除去。SAM の JSON API は境界で map を受け取る実経路があるため、必要な型変換を維持。
+- 3: egress 候補と SQLite 状態値を型付きにし、SAM 適用済み状態の復号先も型で固定。使用する数値・文字列の保存形式を保持。
+- 4: BGP・SAM・LAN PD・VRRP・DNS の未使用の注入口や interface を除去。複数 OS の FIB や稼働中の observer 接続は残す。
+- 5: 実装追従、偽装時刻・NIC、仮定した旧 DB、名前走査のテストと専用補助を削除。計画開始時比で Go テスト 1,363 行削除、追加なし。
+
+現在の main で変更対象の BGP、BFD、SAM、chain、dynamicconfig、egress、state 利用側、HealthCheck、plugin、control API と対象 command のチェック、および対象 Linux build と DNS の FreeBSD build は成功。変更後 daemon の実機再起動・BGP/SAM 更新・PD 更新・VRRP handoff は未実施である。
+
 ## 実機確認の記録
 
 - pve-rt07 の実状態 DB にある SAM transport・RR の計8リソースについて、変更後の `routerctl dynamic diff` と稼働版の出力が一致した。読み取り確認であり、変更後 daemon の BGP 通信・VRRP フェイルオーバーを確認したものではない。
