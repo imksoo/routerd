@@ -24,7 +24,6 @@ import (
 
 	"github.com/imksoo/routerd/internal/statusvalue"
 	"github.com/imksoo/routerd/pkg/api"
-	"github.com/imksoo/routerd/pkg/apply"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
@@ -143,17 +142,6 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 	declared := c.DeclaredRouter
 	if declared == nil {
 		declared = c.Router
-	}
-	if platform.CurrentOS() == platform.OSLinux && !c.DryRun {
-		names, err := apply.ExtraDSLiteInterfaces(ctx, declared, c.Router)
-		if err != nil {
-			return err
-		}
-		for _, name := range names {
-			if err := deleteDSLiteTunnel(ctx, name); err != nil {
-				return err
-			}
-		}
 	}
 	desired := map[string]struct{}{}
 	enabled := map[string]struct{}{}

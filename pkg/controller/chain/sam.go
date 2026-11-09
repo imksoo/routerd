@@ -22,18 +22,11 @@ import (
 
 type samProxyNeighborApplier interface {
 	SetProxyARP(ctx context.Context, ifname string, enabled bool) error
-	ListEnabledProxyARP(ctx context.Context) ([]string, error)
 	SetIPForwarding(ctx context.Context, enabled bool) error
 	EnsureProxyNeighbor(ctx context.Context, address, ifname string) error
 	DeleteProxyNeighbor(ctx context.Context, address, ifname string) error
-	ListProxyNeighbors(ctx context.Context) ([]samObservedProxyNeighbor, error)
 	EnsureOSAddressAbsent(ctx context.Context, address string) (samOSAddressDeassignResult, error)
 	ReconcileForwardPaths(ctx context.Context, paths []sam.CaptureAction, preserveExisting bool) error
-}
-
-type samObservedProxyNeighbor struct {
-	address       string
-	interfaceName string
 }
 
 type samGratuitousARPAnnouncer interface {
@@ -113,9 +106,8 @@ func (c SAMController) Reconcile(ctx context.Context) (resultErr error) {
 	if err := c.reconcileForwardPaths(ctx, state); err != nil {
 		return err
 	}
-	cleanupErr := c.cleanupReleasedProxyNeighbors(ctx, actions, state)
-	if cleanupErr != nil && !errors.Is(cleanupErr, errSAMCapturePlanPending) {
-		return cleanupErr
+	if err := c.cleanupReleasedProxyNeighbors(ctx, actions, state); err != nil {
+		return err
 	}
 	for _, action := range actions {
 		if action.Kind != "proxy-neighbor" || c.DryRun {
@@ -136,9 +128,9 @@ func (c SAMController) Reconcile(ctx context.Context) (resultErr error) {
 		}
 	}
 	if len(failures) != 0 {
-		return errors.Join(cleanupErr, fmt.Errorf("SAM capture failed: %s", strings.Join(failures, "; ")))
+		return fmt.Errorf("SAM capture failed: %s", strings.Join(failures, "; "))
 	}
-	return errors.Join(cleanupErr, c.saveAppliedDataplane(actions, state))
+	return c.saveAppliedDataplane(actions, state)
 }
 
 type samAppliedProxyNeighbor struct {
@@ -351,59 +343,6 @@ func (c SAMController) cleanupReleasedProxyNeighbors(ctx context.Context, action
 	applier := c.Applier
 	if applier == nil {
 		applier = defaultSAMProxyNeighborApplier()
-	}
-	targetOS := c.OS
-	if targetOS == "" {
-		targetOS = platform.CurrentOS()
-	}
-	if targetOS == platform.OSLinux {
-		var pendingPools []netip.Prefix
-		for _, resource := range c.Router.Spec.Resources {
-			if resource.Kind != "MobilityPool" || c.MobilityReadyPools[resource.Metadata.Name] {
-				continue
-			}
-			spec, err := resource.MobilityPoolSpec()
-			if err != nil {
-				return err
-			}
-			prefix, err := netip.ParsePrefix(spec.Prefix)
-			if err != nil || !prefix.Addr().Is4() {
-				return fmt.Errorf("invalid MobilityPool/%s prefix %q", resource.Metadata.Name, spec.Prefix)
-			}
-			pendingPools = append(pendingPools, prefix.Masked())
-		}
-		observed, err := applier.ListProxyNeighbors(ctx)
-		if err != nil {
-			return fmt.Errorf("list SAM proxy neighbors: %w", err)
-		}
-		var pending bool
-		for _, neighbor := range observed {
-			if desired[key(neighbor.address, neighbor.interfaceName)] {
-				continue
-			}
-			address, err := netip.ParsePrefix(neighbor.address)
-			if err != nil {
-				return fmt.Errorf("invalid observed proxy neighbor %q: %w", neighbor.address, err)
-			}
-			unknown := false
-			for _, pool := range pendingPools {
-				if pool.Contains(address.Addr()) {
-					unknown = true
-					break
-				}
-			}
-			if unknown {
-				pending = true
-				continue
-			}
-			if err := applier.DeleteProxyNeighbor(ctx, neighbor.address, neighbor.interfaceName); err != nil {
-				return fmt.Errorf("remove stale SAM proxy neighbor %s dev %s: %w", neighbor.address, neighbor.interfaceName, err)
-			}
-		}
-		if pending {
-			return errSAMCapturePlanPending
-		}
-		return nil
 	}
 	for _, applied := range state.previousProxyNeighbors {
 		if desired[key(applied.Address, applied.Interface)] {
@@ -755,13 +694,6 @@ func (c SAMController) reconcileProxyARPSysctls(ctx context.Context, actions []s
 		interfaces[iface] = true
 	}
 	if targetOS == platform.OSLinux {
-		enabled, err := applier.ListEnabledProxyARP(ctx)
-		if err != nil {
-			return fmt.Errorf("list enabled proxy_arp settings: %w", err)
-		}
-		for _, iface := range enabled {
-			interfaces[iface] = true
-		}
 		for _, intent := range c.LocalCaptureIntents {
 			if intent.Disposition == dynamicconfig.CaptureHold && intent.CaptureType == "proxy-arp" {
 				if state.uncertainProxyARP == nil {

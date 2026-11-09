@@ -62,32 +62,6 @@ func (netlinkSAMProxyNeighborApplier) SetProxyARP(ctx context.Context, ifname st
 	return nil
 }
 
-func (netlinkSAMProxyNeighborApplier) ListEnabledProxyARP(ctx context.Context) ([]string, error) {
-	const base = "/proc/sys/net/ipv4/conf"
-	entries, err := os.ReadDir(base)
-	if err != nil {
-		return nil, err
-	}
-	var enabled []string
-	for _, entry := range entries {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		path := filepath.Join(base, entry.Name(), "proxy_arp")
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return nil, fmt.Errorf("read %s: %w", path, err)
-		}
-		value := strings.TrimSpace(string(data))
-		if value == "1" {
-			enabled = append(enabled, entry.Name())
-		} else if value != "0" {
-			return nil, fmt.Errorf("%s has unexpected value %q", path, value)
-		}
-	}
-	return enabled, nil
-}
-
 func (netlinkSAMProxyNeighborApplier) SetIPForwarding(ctx context.Context, enabled bool) error {
 	value := "0"
 	if enabled {
@@ -179,32 +153,6 @@ func (netlinkSAMProxyNeighborApplier) EnsureProxyNeighbor(_ context.Context, add
 	}
 	_ = link
 	return netlink.NeighSet(neigh)
-}
-
-func (netlinkSAMProxyNeighborApplier) ListProxyNeighbors(ctx context.Context) ([]samObservedProxyNeighbor, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	neighbors, err := netlink.NeighProxyList(0, netlink.FAMILY_V4)
-	if err != nil {
-		return nil, err
-	}
-	var out []samObservedProxyNeighbor
-	for _, neighbor := range neighbors {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		ip := neighbor.IP.To4()
-		if ip == nil || neighbor.Flags&netlink.NTF_PROXY == 0 {
-			continue
-		}
-		link, err := netlink.LinkByIndex(neighbor.LinkIndex)
-		if err != nil {
-			return nil, fmt.Errorf("lookup proxy neighbor interface %d: %w", neighbor.LinkIndex, err)
-		}
-		out = append(out, samObservedProxyNeighbor{address: ip.String() + "/32", interfaceName: link.Attrs().Name})
-	}
-	return out, nil
 }
 
 func (netlinkSAMProxyNeighborApplier) DeleteProxyNeighbor(_ context.Context, address, ifname string) error {

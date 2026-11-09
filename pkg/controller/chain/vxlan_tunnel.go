@@ -122,7 +122,7 @@ func (c VXLANTunnelController) Reconcile(ctx context.Context) error {
 }
 
 func (c VXLANTunnelController) cleanupExtraVXLANs(ctx context.Context, declared *api.Router) error {
-	retained, links, err := apply.ExtraVXLANInterfaces(ctx, declared, c.Router)
+	retained, err := apply.ConfiguredVXLANInterfaces(declared, c.Router)
 	if err != nil {
 		return err
 	}
@@ -151,13 +151,6 @@ func (c VXLANTunnelController) cleanupExtraVXLANs(ctx context.Context, declared 
 	if filesChanged && !c.DryRun {
 		if output, err := c.command(ctx, "networkctl", "reload"); err != nil {
 			return fmt.Errorf("reload after removing stale VXLAN files: %w: %s", err, strings.TrimSpace(string(output)))
-		}
-	}
-	if !c.DryRun {
-		for _, name := range links {
-			if output, err := c.command(ctx, "ip", "link", "delete", "dev", name); err != nil {
-				return fmt.Errorf("remove extra VXLAN %s: %w: %s", name, err, strings.TrimSpace(string(output)))
-			}
 		}
 	}
 	return nil

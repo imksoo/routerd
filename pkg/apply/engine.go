@@ -226,36 +226,6 @@ func (e *Engine) evaluate(router, declared *api.Router, includePlan bool) (*Resu
 			})
 		}
 		result.Orphans = append(result.Orphans, e.observeManagedOrphans(router, aliases)...)
-		if platform.CurrentOS() == platform.OSLinux {
-			bridges, err := ExtraBridgeInterfaces(router)
-			if err != nil {
-				return nil, err
-			}
-			for _, name := range bridges {
-				result.Orphans = append(result.Orphans, OrphanedArtifact{Kind: "Bridge", Name: name, Reason: "Not configured", Remediation: "Remove bridge"})
-			}
-			_, vxlans, err := ExtraVXLANInterfaces(context.Background(), declared, router)
-			if err != nil {
-				return nil, err
-			}
-			for _, name := range vxlans {
-				result.Orphans = append(result.Orphans, OrphanedArtifact{Kind: "VXLANTunnel", Name: name, Reason: "Not configured", Remediation: "Remove VXLAN"})
-			}
-			wireguards, err := ExtraWireGuardInterfaces(context.Background(), router)
-			if err != nil {
-				return nil, err
-			}
-			for _, name := range wireguards {
-				result.Orphans = append(result.Orphans, OrphanedArtifact{Kind: "WireGuardInterface", Name: name, Reason: "Not configured", Remediation: "Remove WireGuard interface"})
-			}
-			dslite, err := ExtraDSLiteInterfaces(context.Background(), declared, router)
-			if err != nil {
-				return nil, err
-			}
-			for _, name := range dslite {
-				result.Orphans = append(result.Orphans, OrphanedArtifact{Kind: "DSLiteTunnel", Name: name, Reason: "Not configured", Remediation: "Remove DS-Lite tunnel"})
-			}
-		}
 		if len(result.Orphans) > 0 {
 			result.Warnings = append(result.Warnings, fmt.Sprintf("%d orphaned managed artifacts found", len(result.Orphans)))
 			if result.Phase == "Healthy" {

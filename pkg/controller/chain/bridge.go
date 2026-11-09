@@ -12,7 +12,6 @@ import (
 	"strings"
 
 	"github.com/imksoo/routerd/pkg/api"
-	"github.com/imksoo/routerd/pkg/apply"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/render"
 )
@@ -82,13 +81,6 @@ func (c BridgeController) Reconcile(ctx context.Context) error {
 		}
 	}
 	if !c.DryRun {
-		removed, err := c.removeExtraBridges(ctx)
-		if err != nil {
-			return err
-		}
-		changed = changed || removed
-	}
-	if !c.DryRun {
 		for _, resource := range c.Router.Spec.Resources {
 			if resource.Kind != "Bridge" {
 				continue
@@ -116,21 +108,6 @@ func (c BridgeController) Reconcile(ctx context.Context) error {
 		}
 	}
 	return nil
-}
-
-func (c BridgeController) removeExtraBridges(ctx context.Context) (bool, error) {
-	names, err := apply.ExtraBridgeInterfaces(c.Router)
-	if err != nil {
-		return false, err
-	}
-	changed := false
-	for _, name := range names {
-		if err := c.command(ctx, "ip", "link", "delete", "dev", name, "type", "bridge"); err != nil {
-			return changed, fmt.Errorf("remove extra Bridge %s: %w", name, err)
-		}
-		changed = true
-	}
-	return changed, nil
 }
 
 func (c BridgeController) reconcileBridge(ctx context.Context, resource api.Resource) (bool, error) {
@@ -212,30 +189,12 @@ func (c BridgeController) reconcileBridge(ctx context.Context, resource api.Reso
 		changed = true
 	}
 	aliases := bridgeInterfaceAliases(c.Router)
-	desired := map[string]bool{}
-	for _, member := range api.BridgeVXLANMembers(c.Router, resource.Metadata.Name) {
-		desired[member] = true
-	}
 	for _, member := range spec.Members {
 		memberIfName := firstNonEmpty(aliases[member], member)
-		desired[memberIfName] = true
 		if c.memberMaster(memberIfName) == ifname {
 			continue
 		}
 		if err := c.command(ctx, "ip", "link", "set", "dev", memberIfName, "master", ifname); err != nil {
-			return changed, err
-		}
-		changed = true
-	}
-	members, err := os.ReadDir(filepath.Join("/sys/class/net", ifname, "brif"))
-	if err != nil {
-		return changed, err
-	}
-	for _, member := range members {
-		if desired[member.Name()] {
-			continue
-		}
-		if err := c.command(ctx, "ip", "link", "set", "dev", member.Name(), "nomaster"); err != nil {
 			return changed, err
 		}
 		changed = true
@@ -316,30 +275,14 @@ func (c BridgeController) saveStatus(resource api.Resource, changed bool) error 
 		return c.Store.SaveObjectStatus(api.NetAPIVersion, "Bridge", resource.Metadata.Name, status)
 	}
 	aliases := bridgeInterfaceAliases(c.Router)
-	desired := map[string]bool{}
-	for _, member := range api.BridgeVXLANMembers(c.Router, resource.Metadata.Name) {
-		desired[member] = true
-	}
 	for _, member := range spec.Members {
 		memberIfName := aliases[member]
 		if memberIfName == "" {
 			memberIfName = member
 		}
-		desired[memberIfName] = true
 		if c.memberMaster(memberIfName) != ifname {
 			status["reason"] = "MemberNotAttached"
 			status["member"] = memberIfName
-			return c.Store.SaveObjectStatus(api.NetAPIVersion, "Bridge", resource.Metadata.Name, status)
-		}
-	}
-	members, err := os.ReadDir(filepath.Join("/sys/class/net", ifname, "brif"))
-	if err != nil {
-		return fmt.Errorf("observe Bridge %s members: %w", ifname, err)
-	}
-	for _, member := range members {
-		if !desired[member.Name()] {
-			status["reason"] = "UnexpectedMember"
-			status["member"] = member.Name()
 			return c.Store.SaveObjectStatus(api.NetAPIVersion, "Bridge", resource.Metadata.Name, status)
 		}
 	}

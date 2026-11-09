@@ -3,12 +3,6 @@
 package apply
 
 import (
-	"context"
-	"encoding/json"
-	"fmt"
-	"os/exec"
-	"strings"
-
 	"github.com/imksoo/routerd/pkg/api"
 )
 
@@ -47,32 +41,4 @@ func ConfiguredWireGuardInterfaces(router *api.Router) (map[string]bool, error) 
 		}
 	}
 	return retained, nil
-}
-
-// ExtraWireGuardInterfaces lists Linux WireGuard links not present in the effective configuration.
-func ExtraWireGuardInterfaces(ctx context.Context, router *api.Router) ([]string, error) {
-	retained, err := ConfiguredWireGuardInterfaces(router)
-	if err != nil {
-		return nil, err
-	}
-	out, err := exec.CommandContext(ctx, "ip", "-j", "-d", "link", "show").CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("list WireGuard links: %w: %s", err, strings.TrimSpace(string(out)))
-	}
-	var links []struct {
-		IfName string `json:"ifname"`
-		Info   struct {
-			Kind string `json:"info_kind"`
-		} `json:"linkinfo"`
-	}
-	if err := json.Unmarshal(out, &links); err != nil {
-		return nil, fmt.Errorf("decode WireGuard links: %w", err)
-	}
-	var extra []string
-	for _, link := range links {
-		if link.Info.Kind == "wireguard" && link.IfName != "" && !retained[link.IfName] {
-			extra = append(extra, link.IfName)
-		}
-	}
-	return extra, nil
 }

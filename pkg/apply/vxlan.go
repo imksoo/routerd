@@ -3,17 +3,11 @@
 package apply
 
 import (
-	"context"
-	"encoding/json"
-	"fmt"
-	"os/exec"
-	"strings"
-
 	"github.com/imksoo/routerd/pkg/api"
 )
 
-// ExtraVXLANInterfaces lists VXLAN links outside the declared and effective configurations.
-func ExtraVXLANInterfaces(ctx context.Context, routers ...*api.Router) (map[string]bool, []string, error) {
+// ConfiguredVXLANInterfaces lists interfaces needed by the configurations.
+func ConfiguredVXLANInterfaces(routers ...*api.Router) (map[string]bool, error) {
 	retained := map[string]bool{}
 	for _, router := range routers {
 		if router == nil {
@@ -25,25 +19,25 @@ func ExtraVXLANInterfaces(ctx context.Context, routers ...*api.Router) (map[stri
 			case "Interface":
 				spec, err := resource.InterfaceSpec()
 				if err != nil {
-					return nil, nil, err
+					return nil, err
 				}
 				retained[defaultString(spec.IfName, resource.Metadata.Name)] = true
 			case "VXLANTunnel":
 				spec, err := resource.VXLANTunnelSpec()
 				if err != nil {
-					return nil, nil, err
+					return nil, err
 				}
 				retained[defaultString(spec.IfName, resource.Metadata.Name)] = true
 			case "VXLANSegment":
 				spec, err := resource.VXLANSegmentSpec()
 				if err != nil {
-					return nil, nil, err
+					return nil, err
 				}
 				retained[defaultString(spec.IfName, resource.Metadata.Name)] = true
 			case "MobilityPool":
 				spec, err := resource.MobilityPoolSpec()
 				if err != nil {
-					return nil, nil, err
+					return nil, err
 				}
 				for _, member := range spec.Members {
 					if member.Capture.Interface != "" {
@@ -58,24 +52,5 @@ func ExtraVXLANInterfaces(ctx context.Context, routers ...*api.Router) (map[stri
 			}
 		}
 	}
-	out, err := exec.CommandContext(ctx, "ip", "-j", "-d", "link", "show").CombinedOutput()
-	if err != nil {
-		return nil, nil, fmt.Errorf("list VXLAN links: %w: %s", err, strings.TrimSpace(string(out)))
-	}
-	var links []struct {
-		IfName string `json:"ifname"`
-		Info   struct {
-			Kind string `json:"info_kind"`
-		} `json:"linkinfo"`
-	}
-	if err := json.Unmarshal(out, &links); err != nil {
-		return nil, nil, fmt.Errorf("decode VXLAN links: %w", err)
-	}
-	var extra []string
-	for _, link := range links {
-		if link.Info.Kind == "vxlan" && link.IfName != "" && !retained[link.IfName] {
-			extra = append(extra, link.IfName)
-		}
-	}
-	return retained, extra, nil
+	return retained, nil
 }

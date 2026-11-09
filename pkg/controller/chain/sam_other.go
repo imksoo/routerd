@@ -25,20 +25,12 @@ func (unsupportedSAMProxyNeighborApplier) SetProxyARP(context.Context, string, b
 	return nil
 }
 
-func (unsupportedSAMProxyNeighborApplier) ListEnabledProxyARP(context.Context) ([]string, error) {
-	return nil, nil
-}
-
 func (unsupportedSAMProxyNeighborApplier) SetIPForwarding(context.Context, bool) error {
 	return nil
 }
 
 func (unsupportedSAMProxyNeighborApplier) EnsureProxyNeighbor(context.Context, string, string) error {
 	return fmt.Errorf("SAM capture not implemented on this OS")
-}
-
-func (unsupportedSAMProxyNeighborApplier) ListProxyNeighbors(context.Context) ([]samObservedProxyNeighbor, error) {
-	return nil, nil
 }
 
 func (unsupportedSAMProxyNeighborApplier) DeleteProxyNeighbor(context.Context, string, string) error {

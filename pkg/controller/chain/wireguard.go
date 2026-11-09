@@ -62,17 +62,6 @@ func (c WireGuardController) Reconcile(ctx context.Context) error {
 	}
 	current := c
 	current.Router = resolved.Router
-	if platform.CurrentOS() == platform.OSLinux && !c.DryRun {
-		names, err := apply.ExtraWireGuardInterfaces(ctx, current.Router)
-		if err != nil {
-			return err
-		}
-		for _, name := range names {
-			if err := current.deleteWireGuardInterface(ctx, name); err != nil {
-				return err
-			}
-		}
-	}
 	if err := current.cleanupStaleResources(ctx); err != nil {
 		return err
 	}

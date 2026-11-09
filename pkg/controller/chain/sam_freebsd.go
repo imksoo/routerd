@@ -78,10 +78,6 @@ func (freeBSDSAMProxyNeighborApplier) SetProxyARP(ctx context.Context, _ string,
 	return nil
 }
 
-func (freeBSDSAMProxyNeighborApplier) ListEnabledProxyARP(context.Context) ([]string, error) {
-	return nil, nil
-}
-
 func (freeBSDSAMProxyNeighborApplier) SetIPForwarding(ctx context.Context, enabled bool) error {
 	value := "0"
 	if enabled {
@@ -128,10 +124,6 @@ func freeBSDRouteOutputInterface(out []byte) string {
 		}
 	}
 	return ""
-}
-
-func (freeBSDSAMProxyNeighborApplier) ListProxyNeighbors(context.Context) ([]samObservedProxyNeighbor, error) {
-	return nil, nil
 }
 
 func (freeBSDSAMProxyNeighborApplier) DeleteProxyNeighbor(ctx context.Context, address, ifname string) error {
