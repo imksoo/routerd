@@ -14,7 +14,6 @@ import (
 
 // FetchedSAMEnrollmentTopologyRecordOptions configures the fetched topology record.
 type FetchedSAMEnrollmentTopologyRecordOptions struct {
-	Name       string
 	Generation int64
 	DefaultTTL time.Duration
 	Digest     func(dynamicconfig.DynamicConfigPart) string
@@ -60,8 +59,6 @@ func FetchedSAMEnrollmentTopologyRecord(rrSet api.Resource, peerGroup *api.Resou
 		expiresAt = observedAt.Add(options.DefaultTTL)
 	}
 	part := dynamicconfig.DynamicConfigPart{
-		TypeMeta: api.TypeMeta{APIVersion: dynamicconfig.ConfigAPIVersion, Kind: "DynamicConfigPart"},
-		Metadata: api.ObjectMeta{Name: options.Name},
 		Spec: dynamicconfig.DynamicConfigPartSpec{
 			Source:     "SAMRRSet/" + rrSet.Metadata.Name,
 			Generation: options.Generation,
