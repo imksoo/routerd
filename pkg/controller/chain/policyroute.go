@@ -57,7 +57,7 @@ func (c IPv4PolicyRouteController) Reconcile(ctx context.Context) error {
 	if err := c.applyRouteTables(ctx, aliases); err != nil {
 		return err
 	}
-	if err := c.removeExtraIPv4Rules(ctx); err != nil {
+	if err := c.removeExtraIPv4Policy(ctx); err != nil {
 		return err
 	}
 	if err := c.applyPolicyNft(ctx, nft, policyPath, activeTargetCandidates); err != nil {
@@ -579,15 +579,23 @@ func (c IPv4PolicyRouteController) applyRouteTables(ctx context.Context, aliases
 	return nil
 }
 
-func (c IPv4PolicyRouteController) removeExtraIPv4Rules(ctx context.Context) error {
+func (c IPv4PolicyRouteController) removeExtraIPv4Policy(ctx context.Context) error {
 	if c.DryRun {
 		return nil
 	}
 	priorities := map[int]bool{0: true, 32766: true, 32767: true}
+	tables := map[string]bool{"253": true, "254": true, "255": true}
 	tailscale := false
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind == "TailscaleNode" {
 			tailscale = true
+		}
+		if resource.Kind == "VRF" {
+			spec, err := resource.VRFSpec()
+			if err != nil {
+				return err
+			}
+			tables[strconv.Itoa(spec.RouteTable)] = true
 		}
 		if resource.Kind != "EgressRoutePolicy" {
 			continue
@@ -605,18 +613,21 @@ func (c IPv4PolicyRouteController) removeExtraIPv4Rules(ctx context.Context) err
 			}
 			if len(candidate.Targets) == 0 {
 				priorities[candidate.Priority] = true
+				tables[strconv.Itoa(candidate.EffectiveTable())] = true
 			}
 			for _, target := range candidate.Targets {
 				priorities[target.Priority] = true
+				tables[strconv.Itoa(target.EffectiveTable())] = true
 			}
 		}
 	}
-	out, err := exec.CommandContext(ctx, "ip", "-j", "-4", "rule", "show").CombinedOutput()
+	out, err := exec.CommandContext(ctx, "ip", "-N", "-j", "-4", "rule", "show").CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("list IPv4 rules: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	var rules []struct {
 		Priority int             `json:"priority"`
+		Table    string          `json:"table"`
 		Protocol string          `json:"protocol"`
 		L3MDev   json.RawMessage `json:"l3mdev"`
 	}
@@ -625,7 +636,8 @@ func (c IPv4PolicyRouteController) removeExtraIPv4Rules(ctx context.Context) err
 	}
 	for _, rule := range rules {
 		// Tailscale manages this priority range while enabled.
-		if priorities[rule.Priority] || rule.Protocol == "kernel" || len(rule.L3MDev) != 0 || (tailscale && rule.Priority >= 5200 && rule.Priority <= 5500) {
+		if priorities[rule.Priority] || rule.Protocol == "2" || rule.Protocol == "16" || rule.Protocol == "186" || len(rule.L3MDev) != 0 || (tailscale && rule.Priority >= 5200 && rule.Priority <= 5500) {
+			tables[rule.Table] = true
 			continue
 		}
 		priority := strconv.Itoa(rule.Priority)
@@ -633,6 +645,37 @@ func (c IPv4PolicyRouteController) removeExtraIPv4Rules(ctx context.Context) err
 		if err != nil {
 			return fmt.Errorf("delete IPv4 rule priority %s: %w: %s", priority, err, strings.TrimSpace(string(out)))
 		}
+	}
+	out, err = exec.CommandContext(ctx, "ip", "-N", "-j", "-4", "route", "show", "table", "all").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("list IPv4 routes: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	var routes []struct {
+		Table    string `json:"table"`
+		Protocol string `json:"protocol"`
+		Device   string `json:"dev"`
+	}
+	if err := json.Unmarshal(out, &routes); err != nil {
+		return fmt.Errorf("decode IPv4 routes: %w", err)
+	}
+	// Numeric protocols 2, 16 and 186 are kernel, DHCP and BGP.
+	for _, route := range routes {
+		if route.Protocol == "2" || route.Protocol == "16" || route.Protocol == "186" || (tailscale && route.Device == "tailscale0") {
+			tables[route.Table] = true
+		}
+	}
+	for _, route := range routes {
+		if route.Table == "" || tables[route.Table] {
+			continue
+		}
+		if _, err := strconv.ParseUint(route.Table, 10, 32); err != nil {
+			continue
+		}
+		out, err := exec.CommandContext(ctx, "ip", "-4", "route", "flush", "table", route.Table).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("flush IPv4 route table %s: %w: %s", route.Table, err, strings.TrimSpace(string(out)))
+		}
+		tables[route.Table] = true
 	}
 	return nil
 }
