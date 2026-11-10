@@ -68,6 +68,8 @@
 
 - 2026-11-10、homert03のSSH鍵をPVE07のVM 158のゲストエージェント経由で照合し、eth2のnetworkd設定に `Domains=~lain.local` を追加した。OS経由の名前解決を確認し、`1694b89d` のdaemonを投入、同じ設定の `apply --replace` はgeneration 53532・Healthy、111リソースにError/Failed/Degradedなし。homert03はVRRP master・PD Bound、homert02はbackup・PD WhenFalseでPending、両機BGP 2 peer Established。chattyからVIPと外部IPへのping、名前解決が成功した。SAM切替と手動変更からの復元は未確認。
 
+- 2026-11-10、変更後daemonをpve-rt01〜08とk8s-rt01・02に順次投入し、実設定の `apply --replace` は全機Healthyだった。pve-rt各機はBGP 2 peer Established、IPIP 2本UP、proxy neighbor件数は投入前後で一致し、各BGP対向へのpingも成功。k8s-rt両機はBGP 14 peer Established、IPIP 8本UP。設定を手動で変更した後の復元とSAM切替は未確認。k8s担当Codexへの依頼は接続エラーで届かなかったため、両機とも本作業で適用した。
+
 ## 残件
 
 - FreeBSD で DHCPv6 client を supervisor を介さず `--lease-file` なしで手動起動すると、既定の lease パスと controller の読み取りパスが異なる。supervisor は正しいパスを渡す。実運用で手動起動が必要か未確認であり、調査・修正には別途承認を要する。

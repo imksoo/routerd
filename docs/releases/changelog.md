@@ -12,6 +12,10 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Changed
+
+- Simplify configuration reconciliation and remove applied-ownership history and unused code.
+
 ## v20261108.1523
 
 ### Fixed

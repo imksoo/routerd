@@ -11,6 +11,10 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### Changed
+
+- 簡化設定套用，移除套用所有權歷史與不必要的程式碼。
+
 ## v20261108.1523
 
 ### 修正
