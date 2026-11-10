@@ -1266,77 +1266,7 @@ func (c IPv4PolicyRouteController) targetHealthy(name string) bool {
 	if name == "" {
 		return true
 	}
-	status := healthCheckEffectiveStatus(c.Store.ObjectStatus(api.NetAPIVersion, "HealthCheck", name))
-	switch fmt.Sprint(status["phase"]) {
-	case "Healthy":
-	case "Failing":
-		failed, ok := statusInt(status["consecutiveFailed"])
-		if !ok || failed <= 0 || failed >= c.healthCheckUnhealthyThreshold(name) {
-			return false
-		}
-	case PhaseDisabled, PhaseStandby, PhaseNotApplicable:
-		return false
-	default:
-		return false
-	}
-	checkedAt, ok := parseStatusTimestamp(status["lastCheckedAt"])
-	if !ok {
-		return false
-	}
-	maxAge := c.healthCheckFreshness(name)
-	return time.Since(checkedAt) <= maxAge
-}
-
-func healthCheckEffectiveStatus(status map[string]any) map[string]any {
-	observed, ok := status["observed"].(map[string]any)
-	if !ok || len(observed) == 0 {
-		return status
-	}
-	return observed
-}
-
-func (c IPv4PolicyRouteController) healthCheckFreshness(name string) time.Duration {
-	freshness := 2 * time.Minute
-	if c.Router == nil {
-		return freshness
-	}
-	for _, res := range c.Router.Spec.Resources {
-		if res.Kind != "HealthCheck" || res.Metadata.Name != name {
-			continue
-		}
-		spec, err := res.HealthCheckSpec()
-		if err != nil {
-			return freshness
-		}
-		interval := parseDurationDefault(spec.Interval, 30*time.Second)
-		timeout := parseDurationDefault(spec.Timeout, 3*time.Second)
-		candidate := interval*3 + timeout
-		if candidate > freshness {
-			return candidate
-		}
-		return freshness
-	}
-	return freshness
-}
-
-func (c IPv4PolicyRouteController) healthCheckUnhealthyThreshold(name string) int {
-	if c.Router == nil {
-		return 3
-	}
-	for _, res := range c.Router.Spec.Resources {
-		if res.Kind != "HealthCheck" || res.Metadata.Name != name {
-			continue
-		}
-		spec, err := res.HealthCheckSpec()
-		if err != nil {
-			return 3
-		}
-		if spec.UnhealthyThreshold > 0 {
-			return spec.UnhealthyThreshold
-		}
-		return 3
-	}
-	return 3
+	return (egressroute.Controller{Router: c.Router, Store: c.Store}).HealthCheckReady(name)
 }
 
 func statusInt(value any) (int, bool) {

@@ -218,7 +218,7 @@ func (c Controller) candidateStates(spec api.EgressRoutePolicySpec) []CandidateS
 func (c Controller) ready(candidate api.EgressRoutePolicyCandidate) bool {
 	healthChecked := false
 	if candidate.HealthCheck != "" {
-		if !c.healthCheckReady(candidate.HealthCheck) {
+		if !c.HealthCheckReady(candidate.HealthCheck) {
 			return false
 		}
 		healthChecked = true
@@ -241,12 +241,15 @@ func (c Controller) ready(candidate api.EgressRoutePolicyCandidate) bool {
 	return c.hasResolvedOutput(candidate)
 }
 
-func (c Controller) healthCheckReady(name string) bool {
+func (c Controller) HealthCheckReady(name string) bool {
 	status := c.Store.ObjectStatus(api.NetAPIVersion, "HealthCheck", name)
+	if observed, ok := status["observed"].(map[string]any); ok && len(observed) > 0 {
+		status = observed
+	}
 	switch fmt.Sprint(status["phase"]) {
 	case "Healthy":
 	case "Failing":
-		failed := statusInt(status["consecutiveFailed"])
+		failed, _ := strconv.Atoi(strings.TrimSpace(fmt.Sprint(status["consecutiveFailed"])))
 		if failed <= 0 || failed >= c.healthCheckUnhealthyThreshold(name) {
 			return false
 		}
