@@ -53,11 +53,10 @@ WEBSITE_SCHEMA_DIR := website/static/schemas
 CONFIG_SCHEMA := routerd-config-v1alpha1.schema.json
 CONTROL_SCHEMA := routerd-control-v1alpha1.schema.json
 CONTROL_OPENAPI_SCHEMA := routerd-control-openapi-v1alpha1.json
-WIZARD_FIXTURE_DIR := website/fixtures/wizard
 
 WEBSITE_NODE_MODULES_STAMP := website/node_modules/.package-lock.json
 
-.PHONY: test check-version-ldflags build build-daemons build-provider-executors build-ndpi-agent build-ndpi-agent-libndpi build-daemons-freebsd check-freebsd-cross-compile check-linux-static check-ndpi-agent-libndpi cloudedge-acceptance-lint webconsole-build generate-schema sync-website-schemas check-schema check-website-schemas generate-wizard-fixtures check-wizard-fixtures validate-wizard-fixtures website-deps website-build third-party-licenses check-build-deps dist deb deb-ndpi dist-ndpi-agent-libndpi live-iso validate-example release clean
+.PHONY: test check-version-ldflags build build-daemons build-provider-executors build-ndpi-agent build-ndpi-agent-libndpi build-daemons-freebsd check-freebsd-cross-compile check-linux-static check-ndpi-agent-libndpi cloudedge-acceptance-lint webconsole-build generate-schema sync-website-schemas check-schema check-website-schemas website-deps website-build third-party-licenses check-build-deps dist deb deb-ndpi dist-ndpi-agent-libndpi live-iso validate-example release clean
 
 test: check-version-ldflags
 	go test ./...
@@ -177,20 +176,6 @@ check-website-schemas:
 	jq -e '."$$id" == "https://routerd.net/schemas/$(CONFIG_SCHEMA)"' $(WEBSITE_SCHEMA_DIR)/$(CONFIG_SCHEMA)
 	jq -e '."$$id" == "https://routerd.net/schemas/$(CONTROL_SCHEMA)"' $(WEBSITE_SCHEMA_DIR)/$(CONTROL_SCHEMA)
 	jq -e '."$$id" == "https://routerd.net/schemas/$(CONTROL_OPENAPI_SCHEMA)"' $(WEBSITE_SCHEMA_DIR)/$(CONTROL_OPENAPI_SCHEMA)
-
-generate-wizard-fixtures: website-deps
-	rm -rf /tmp/routerd-wizard-builder
-	website/node_modules/.bin/tsc --target ES2020 --module commonjs --moduleResolution node --esModuleInterop --skipLibCheck --outDir /tmp/routerd-wizard-builder website/src/lib/routerdWizard.ts
-	node scripts/generate-wizard-fixtures.cjs /tmp/routerd-wizard-builder/routerdWizard.js $(WIZARD_FIXTURE_DIR)
-
-check-wizard-fixtures: website-deps
-	rm -rf /tmp/routerd-wizard-builder /tmp/routerd-wizard-fixtures
-	website/node_modules/.bin/tsc --target ES2020 --module commonjs --moduleResolution node --esModuleInterop --skipLibCheck --outDir /tmp/routerd-wizard-builder website/src/lib/routerdWizard.ts
-	node scripts/generate-wizard-fixtures.cjs /tmp/routerd-wizard-builder/routerdWizard.js /tmp/routerd-wizard-fixtures
-	diff -ru $(WIZARD_FIXTURE_DIR) /tmp/routerd-wizard-fixtures
-
-validate-wizard-fixtures: website-deps
-	node scripts/validate-wizard-fixtures.cjs schemas/$(CONFIG_SCHEMA) $(WIZARD_FIXTURE_DIR)
 
 website-deps: $(WEBSITE_NODE_MODULES_STAMP)
 

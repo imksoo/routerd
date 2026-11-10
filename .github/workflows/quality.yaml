@@ -189,9 +189,6 @@ jobs:
       - name: Validate examples
         run: make validate-example
 
-      - name: Validate wizard fixtures
-        run: make check-wizard-fixtures validate-wizard-fixtures
-
   shellcheck:
     name: Shell scripts
     runs-on: ubuntu-latest

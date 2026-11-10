@@ -32,7 +32,6 @@ VS Code と YAML 拡張機能はこの modeline を読み、該当ファイル�
 - `examples/*.yaml`
 - `examples/cloudedge-mobility-demo/*.yaml`
 - `examples/event-federation/*.yaml`
-- `website/fixtures/wizard/**/*.yaml`
 - `routerd/**/*.yaml`
 - `*.routerd.yaml`
 - `**/routerd.yaml`
@@ -47,7 +46,6 @@ VS Code と YAML 拡張機能はこの modeline を読み、該当ファイル�
       "examples/*.yaml",
       "examples/cloudedge-mobility-demo/*.yaml",
       "examples/event-federation/*.yaml",
-      "website/fixtures/wizard/**/*.yaml",
       "routerd/**/*.yaml",
       "*.routerd.yaml",
       "**/routerd.yaml",

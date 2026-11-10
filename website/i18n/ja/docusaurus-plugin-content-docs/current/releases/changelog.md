@@ -11,6 +11,10 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### Fixed
+
+- 設定ウィザードが削除済みの所有権・排他フィールドを出力しないよう修正しました。
+
 ## v20261110.0347
 
 ### Changed

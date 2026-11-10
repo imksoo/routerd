@@ -34,7 +34,6 @@ enum 驗證和型別診斷。
 - `examples/*.yaml`
 - `examples/cloudedge-mobility-demo/*.yaml`
 - `examples/event-federation/*.yaml`
-- `website/fixtures/wizard/**/*.yaml`
 - `routerd/**/*.yaml`
 - `*.routerd.yaml`
 - `**/routerd.yaml`
@@ -49,7 +48,6 @@ enum 驗證和型別診斷。
       "examples/*.yaml",
       "examples/cloudedge-mobility-demo/*.yaml",
       "examples/event-federation/*.yaml",
-      "website/fixtures/wizard/**/*.yaml",
       "routerd/**/*.yaml",
       "*.routerd.yaml",
       "**/routerd.yaml",

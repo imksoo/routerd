@@ -332,7 +332,6 @@ export function buildHomeRouterConfig(state: HomeRouterWizardState): RouterConfi
     ifname: state.interfaces.wan || DEFAULT_HOME_ROUTER_STATE.interfaces.wan,
     adminUp: true,
     managed: false,
-    owner: "external",
   }));
 
   state.interfaces.lans.forEach((ifname, index) => {
@@ -341,7 +340,6 @@ export function buildHomeRouterConfig(state: HomeRouterWizardState): RouterConfi
       ifname,
       adminUp: true,
       managed: true,
-      owner: "routerd",
     }));
   });
 
@@ -350,14 +348,12 @@ export function buildHomeRouterConfig(state: HomeRouterWizardState): RouterConfi
       ifname: state.interfaces.guest,
       adminUp: true,
       managed: true,
-      owner: "routerd",
     }));
   }
 
   resources.push(resource(NET_API, "IPv4StaticAddress", "lan-base", {
     interface: lanName,
     address: lanAddress,
-    exclusive: false,
   }));
 
   addWanResources(resources, state, wanEgress);
@@ -693,7 +689,6 @@ function addWanResources(resources: RouterResource[], state: HomeRouterWizardSta
       resources.push(resource(NET_API, "IPv4StaticAddress", "wan-static", {
         interface: "wan",
         address: state.wan.staticAddress || DEFAULT_HOME_ROUTER_STATE.wan.staticAddress,
-        exclusive: false,
       }));
       resources.push(resource(NET_API, "IPv4Route", "wan-default", {
         destination: "0.0.0.0/0",

@@ -12,6 +12,10 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- Stop the configuration wizard from emitting removed ownership and exclusivity fields.
+
 ## v20261110.0347
 
 ### Changed
