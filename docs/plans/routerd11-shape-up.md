@@ -74,4 +74,5 @@
 
 ## 残件
 
+- 2026-11-10時点のHealth判定整理と実機での復元・切替・復帰は、[堅牢化の残作業](routerd11-hardening-remaining.md)にまとめる。
 - FreeBSD で DHCPv6 client を supervisor を介さず `--lease-file` なしで手動起動すると、既定の lease パスと controller の読み取りパスが異なる。supervisor は正しいパスを渡す。実運用で手動起動が必要か未確認であり、調査・修正には別途承認を要する。
