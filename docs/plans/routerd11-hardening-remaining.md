@@ -63,3 +63,10 @@ homert02・03の現在のmaster/backupを確認し、master側を停止してbac
 結果はこの文書に対象・revision・操作・実通信の結果・未確認事項を短く追記する。修正は差分を確認してcommit・publishし、公開後に作業用バイナリ、ログ、一時ファイルと作業用キャッシュを削除する。生ログをソースへ追加しない。
 
 上記の実装整理と、使用中の構成に必要な復元・切替・復帰の確認が終われば、この残作業を完了とする。実施できなかった確認は理由とともに未確認として残す。1.5の旧計画全項目の移植や、新しい機能・網羅的試験を完了条件に加えない。
+
+## 実施状況
+
+- 2026-11-10、`dda28462` でHealth判定を共通化し、`routerd`・`routerctl` をビルドした。homert02に投入し、backup維持、同一設定apply Healthy、IX2215・HGWのHealth、待機側の経路・rule・nftablesを確認。chattyからのHTTPS・DNSはmasterのhomert03経由で成功した。変更版による実転送と切替は未確認。
+- 同日、homert02で `internet-via-ix2215` のHealth helperを再起動し、再起動後の新しい成功観測とHealthyへの復帰を確認した。待機側候補はこのHealthCheckを直接参照せず、Healthに応じた経路切替の確認ではない。
+- 同日、pve-rt08でSAM proxy neighbor、IPIPのMTU、endpoint経路を変更または削除し、同一設定apply後に復元を確認。k8s-rt02でもIPIPのMTUがapply後に復元し、BGP 14/14、IPIP 8本、API VIPのHTTP 200を確認した。常時reconcileとapplyの寄与は分離していない。
+- 同日、pve-rt08の片系IPIP停止中にhomert02→03の実経路がもう一方へ移り、ICMPは往復とも成功。復帰後はBGP 2/2、2経路、両IPIPとproxy neighborが戻った。連続監視ではなく無停止を示さない。既存のSAM `.0/32` 到達性WARNは残る。
