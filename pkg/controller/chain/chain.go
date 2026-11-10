@@ -973,7 +973,7 @@ func firewallStatusSubscriptions(router *api.Router) []bus.Subscription {
 }
 
 func ipv4StaticAddressStatusSubscriptions() []bus.Subscription {
-	return withDynamicConfigPartSubscriptions(withMobilityPlanSubscriptions(statusSubscriptions("WireGuardInterface", "TunnelInterface")))
+	return withDynamicConfigPartSubscriptions(withMobilityPlanSubscriptions(statusSubscriptions("WireGuardInterface", "TunnelInterface", "DHCPv4Client", "PPPoESession", "DSLiteTunnel", "VirtualAddress", "TailscaleNode")))
 }
 
 func ipv4RouteControllerStatusSubscriptions(router *api.Router) []bus.Subscription {
@@ -1217,7 +1217,6 @@ func (r *Runner) saveWhenFalseStatuses(store eventedStore) error {
 		if statusIsWhenFalse(current) {
 			next := copyStatusMap(current)
 			changed := preserveStaticVirtualAddressCleanupStatus(res, current, next)
-			changed = preserveIPv4StaticAddressCleanupStatus(r.currentRouter(), res, current, next) || changed
 			changed = preserveIPv6DelegatedAddressCleanupStatus(res, current, next) || changed
 			if changed {
 				if err := store.SaveObjectStatus(apiVersion, res.Kind, res.Metadata.Name, next); err != nil {
@@ -1232,7 +1231,6 @@ func (r *Runner) saveWhenFalseStatuses(store eventedStore) error {
 			"observedAt": now.Format(time.RFC3339Nano),
 		}
 		preserveStaticVirtualAddressCleanupStatus(res, current, status)
-		preserveIPv4StaticAddressCleanupStatus(r.currentRouter(), res, current, status)
 		preserveIPv6DelegatedAddressCleanupStatus(res, current, status)
 		if err := store.SaveObjectStatus(apiVersion, res.Kind, res.Metadata.Name, status); err != nil {
 			return err
@@ -1270,34 +1268,6 @@ func preserveStaticVirtualAddressCleanupStatus(res api.Resource, current, status
 	for key, value := range map[string]string{"address": spec.Address, "interface": spec.Interface} {
 		if strings.TrimSpace(value) != "" && statusvalue.Field(status, key) == "" {
 			status[key] = value
-			changed = true
-		}
-	}
-	return changed
-}
-
-// preserveIPv4StaticAddressCleanupStatus retains the physical interface name
-// for a static address which is about to be filtered out because its when
-// condition is false. The IPv4 static-address controller needs this ownership
-// information to remove the address from a persistent interface.
-func preserveIPv4StaticAddressCleanupStatus(router *api.Router, res api.Resource, current, status map[string]any) bool {
-	if res.Kind != "IPv4StaticAddress" {
-		return false
-	}
-	spec, err := res.IPv4StaticAddressSpec()
-	if err != nil {
-		return false
-	}
-	changed := false
-	ifname := statusvalue.Field(current, "ifname")
-	if ifname != "" && statusvalue.Field(status, "ifname") == "" {
-		status["ifname"] = ifname
-		changed = true
-	}
-	if statusvalue.Field(status, "ifname") == "" {
-		ifname = interfaceIfName(router, spec.Interface)
-		if ifname != "" {
-			status["ifname"] = ifname
 			changed = true
 		}
 	}
@@ -4125,20 +4095,6 @@ func (c IPv4StaticAddressController) Reconcile(ctx context.Context) error {
 			}
 		}
 		if !c.DryRun && (changed || !addressPresent) {
-			if err := c.cleanupPreviousIPv4StaticAddress(ctx, resource.Metadata.Name, previous, ifname, spec.Address); err != nil {
-				if saveErr := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", resource.Metadata.Name, map[string]any{
-					"phase":     "Error",
-					"reason":    "CleanupFailed",
-					"interface": spec.Interface,
-					"ifname":    ifname,
-					"address":   spec.Address,
-					"error":     err.Error(),
-					"dryRun":    c.DryRun,
-				}); saveErr != nil {
-					return saveErr
-				}
-				return err
-			}
 			name, args := ipv4StaticAddressApplyCommand(platform.CurrentOS(), ifname, spec.Address)
 			if err := runCommandContext(ctx, name, args...); err != nil {
 				if saveErr := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", resource.Metadata.Name, map[string]any{
@@ -4167,25 +4123,24 @@ func (c IPv4StaticAddressController) Reconcile(ctx context.Context) error {
 			}
 		}
 	}
-	if err := c.cleanupRemovedIPv4StaticAddresses(ctx); err != nil {
+	if err := c.reconcileMobilityStaticAddresses(ctx); err != nil {
 		return err
 	}
-	return c.reconcileMobilityStaticAddresses(ctx)
+	if err := c.reconcileCurrentIPv4Addresses(ctx); err != nil {
+		return err
+	}
+	return c.cleanupRemovedIPv4StaticAddresses()
 }
 
-func (c IPv4StaticAddressController) cleanupRemovedIPv4StaticAddresses(ctx context.Context) error {
-	if c.Store == nil {
+func (c IPv4StaticAddressController) cleanupRemovedIPv4StaticAddresses() error {
+	if c.DryRun {
 		return nil
 	}
-	lister, ok := c.Store.(interface {
-		ListObjectStatuses() ([]routerstate.ObjectStatus, error)
-	})
+	lister, ok := c.Store.(routerstate.ObjectStatusLister)
 	if !ok {
 		return nil
 	}
-	deleter, ok := c.Store.(interface {
-		DeleteObject(apiVersion, kind, name string) error
-	})
+	deleter, ok := c.Store.(routerstate.ObjectDeleteStore)
 	if !ok {
 		return nil
 	}
@@ -4193,159 +4148,22 @@ func (c IPv4StaticAddressController) cleanupRemovedIPv4StaticAddresses(ctx conte
 	if err != nil {
 		return err
 	}
-	whenFalse := c.whenFalseIPv4StaticAddresses()
-	remaining := make([]routerstate.ObjectStatus, 0, len(statuses))
-	for _, status := range statuses {
-		ref := lifecycle.ResourceKey(status.APIVersion, status.Kind, status.Name)
-		if candidate, ok := whenFalse[ref]; ok && status.APIVersion == api.NetAPIVersion && status.Kind == "IPv4StaticAddress" {
-			if err := c.teardownWhenFalseIPv4StaticAddress(ctx, status, candidate); err != nil {
+	desired := map[string]bool{}
+	for _, router := range []*api.Router{c.Router, c.WhenRouter} {
+		if router == nil {
+			continue
+		}
+		for _, resource := range router.Spec.Resources {
+			if resource.APIVersion == api.NetAPIVersion && resource.Kind == "IPv4StaticAddress" {
+				desired[lifecycle.ResourceKey(resource.APIVersion, resource.Kind, resource.Metadata.Name)] = true
+			}
+		}
+	}
+	for _, status := range lifecycle.PlanResourceTeardownGC(desired, statuses) {
+		if status.APIVersion == api.NetAPIVersion && status.Kind == "IPv4StaticAddress" {
+			if err := deleter.DeleteObject(status.APIVersion, status.Kind, status.Name); err != nil {
 				return err
 			}
-			delete(whenFalse, ref)
-			continue
-		}
-		remaining = append(remaining, status)
-	}
-	for _, candidate := range whenFalse {
-		status := routerstate.ObjectStatus{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress", Name: candidate.resource.Metadata.Name}
-		if err := c.teardownWhenFalseIPv4StaticAddress(ctx, status, candidate); err != nil {
-			return err
-		}
-	}
-	desired := map[string]bool{}
-	declared := c.DeclaredRouter
-	if declared == nil {
-		declared = c.Router
-	}
-	for _, resource := range declared.Spec.Resources {
-		apiVersion := resource.APIVersion
-		if apiVersion == "" {
-			apiVersion = resourcequery.APIVersionForKind(resource.Kind)
-		}
-		if apiVersion == api.NetAPIVersion && resource.Kind == "IPv4StaticAddress" {
-			desired[lifecycle.ResourceKey(apiVersion, resource.Kind, resource.Metadata.Name)] = true
-		}
-	}
-	for _, status := range lifecycle.PlanResourceTeardownGC(desired, remaining) {
-		if status.APIVersion != api.NetAPIVersion || status.Kind != "IPv4StaticAddress" {
-			continue
-		}
-		if err := c.teardownRemovedIPv4StaticAddress(ctx, status, deleter); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-type whenFalseIPv4StaticAddress struct {
-	resource api.Resource
-	spec     api.IPv4StaticAddressSpec
-}
-
-func (c IPv4StaticAddressController) whenFalseIPv4StaticAddresses() map[string]whenFalseIPv4StaticAddress {
-	router := c.WhenRouter
-	if router == nil {
-		return nil
-	}
-	state, ok := c.Store.(resourcequery.StateStore)
-	if !ok {
-		return nil
-	}
-	out := map[string]whenFalseIPv4StaticAddress{}
-	for _, resource := range router.Spec.Resources {
-		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "IPv4StaticAddress" {
-			continue
-		}
-		when := resourcequery.ResourceWhen(resource)
-		if !resourcequery.ResourceWhenPresent(when) || resourcequery.ResourceWhenMatches(when, state) || resourcequery.ResourceWhenIndeterminate(when, state) {
-			continue
-		}
-		spec, err := resource.IPv4StaticAddressSpec()
-		if err != nil {
-			continue
-		}
-		out[lifecycle.ResourceKey(api.NetAPIVersion, resource.Kind, resource.Metadata.Name)] = whenFalseIPv4StaticAddress{resource: resource, spec: spec}
-	}
-	return out
-}
-
-func (c IPv4StaticAddressController) teardownWhenFalseIPv4StaticAddress(ctx context.Context, object routerstate.ObjectStatus, candidate whenFalseIPv4StaticAddress) error {
-	status := copyStatusMap(object.Status)
-	ifname := cleanStatusString(status["ifname"])
-	if ifname == "" {
-		ifname = interfaceIfName(c.WhenRouter, candidate.spec.Interface)
-	}
-	address := cleanStatusString(status["address"])
-	if address == "" {
-		address = candidate.spec.Address
-	}
-	removedAddress := false
-	if !c.DryRun && ifname != "" && address != "" && !c.ipv4AddressDesiredByAnother(object.Name, ifname, address) {
-		present, err := ipv4AddressPresent(ctx, ifname, address)
-		if err != nil {
-			return fmt.Errorf("observe when-false IPv4StaticAddress %s: %w", object.Name, err)
-		}
-		if present {
-			name, args := ipv4StaticAddressDeleteCommand(platform.CurrentOS(), ifname, address)
-			if err := runCommandContext(ctx, name, args...); err != nil {
-				status["phase"] = "Error"
-				status["reason"] = "WhenFalseCleanupFailed"
-				status["error"] = err.Error()
-				_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", object.Name, status)
-				return fmt.Errorf("delete when-false IPv4StaticAddress %s %s dev %s: %w", object.Name, address, ifname, err)
-			}
-			removedAddress = true
-		}
-	}
-	status["phase"] = "Pending"
-	status["reason"] = "WhenFalse"
-	status["interface"] = candidate.spec.Interface
-	status["ifname"] = ifname
-	status["address"] = address
-	status["staticAddressRemoved"] = !c.DryRun && ifname != "" && address != ""
-	delete(status, "error")
-	if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", object.Name, status); err != nil {
-		return err
-	}
-	if removedAddress && c.Bus != nil {
-		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.lan.ipv4_address.removed", daemonapi.SeverityInfo)
-		event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress", Name: object.Name}
-		event.Attributes = map[string]string{"address": address, "interface": candidate.spec.Interface, "ifname": ifname, "dryRun": fmt.Sprintf("%t", c.DryRun), "reason": "WhenFalse"}
-		if err := c.Bus.Publish(ctx, event); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (c IPv4StaticAddressController) teardownRemovedIPv4StaticAddress(ctx context.Context, status routerstate.ObjectStatus, deleter routerstate.ObjectDeleteStore) error {
-	removedAddress := false
-	if !c.DryRun {
-		ifname := cleanStatusString(status.Status["ifname"])
-		address := cleanStatusString(status.Status["address"])
-		if ifname != "" && address != "" && !c.ipv4AddressDesiredByAnother(status.Name, ifname, address) {
-			present, err := ipv4AddressPresent(ctx, ifname, address)
-			if err != nil {
-				return fmt.Errorf("observe removed IPv4StaticAddress %s: %w", status.Name, err)
-			}
-			if present {
-				name, args := ipv4StaticAddressDeleteCommand(platform.CurrentOS(), ifname, address)
-				if err := runCommandContext(ctx, name, args...); err != nil {
-					return fmt.Errorf("delete removed IPv4StaticAddress %s %s dev %s: %w", status.Name, address, ifname, err)
-				}
-				removedAddress = true
-			}
-		}
-	}
-	if err := deleter.DeleteObject(api.NetAPIVersion, "IPv4StaticAddress", status.Name); err != nil {
-		return err
-	}
-	if removedAddress && c.Bus != nil {
-		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.lan.ipv4_address.removed", daemonapi.SeverityInfo)
-		event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress", Name: status.Name}
-		event.Attributes = map[string]string{"address": fmt.Sprint(status.Status["address"]), "ifname": fmt.Sprint(status.Status["ifname"])}
-		if err := c.Bus.Publish(ctx, event); err != nil {
-			return err
 		}
 	}
 	return nil
@@ -4360,98 +4178,6 @@ func cleanStatusString(value any) string {
 		return ""
 	}
 	return out
-}
-
-func (c IPv4StaticAddressController) cleanupPreviousIPv4StaticAddress(ctx context.Context, resourceName string, previous map[string]any, desiredIfName, desiredAddress string) error {
-	previousAddress := cleanStatusString(previous["address"])
-	previousIfName := cleanStatusString(previous["ifname"])
-	if previousAddress == "" || previousIfName == "" {
-		return nil
-	}
-	if previousAddress == strings.TrimSpace(desiredAddress) && previousIfName == strings.TrimSpace(desiredIfName) {
-		return nil
-	}
-	if c.ipv4AddressDesiredByAnother(resourceName, previousIfName, previousAddress) {
-		return nil
-	}
-	present, err := ipv4AddressPresent(ctx, previousIfName, previousAddress)
-	if err != nil {
-		return err
-	}
-	if !present {
-		return nil
-	}
-	name, args := ipv4StaticAddressDeleteCommand(platform.CurrentOS(), previousIfName, previousAddress)
-	return runCommandContext(ctx, name, args...)
-}
-
-func (c IPv4StaticAddressController) ipv4AddressDesiredByAnother(resourceName, ifname, address string) bool {
-	for _, desired := range c.MobilityDataplane.StaticAddresses {
-		if desired.Interface == ifname && desired.Address == address {
-			return true
-		}
-	}
-	return ipv4StaticAddressDesiredByAnother(c.Router, c.Store, resourceName, ifname, address)
-}
-
-func ipv4StaticAddressDesiredByAnother(router *api.Router, store Store, resourceName, ifname, address string) bool {
-	if router == nil {
-		return false
-	}
-	for _, resource := range router.Spec.Resources {
-		if resource.APIVersion == api.HybridAPIVersion && resource.Kind == "TunnelInterface" {
-			spec, err := resource.TunnelInterfaceSpec()
-			if err == nil && strings.TrimSpace(resource.Metadata.Name) == ifname && strings.TrimSpace(spec.Address) == strings.TrimSpace(address) {
-				return true
-			}
-			continue
-		}
-		if resource.APIVersion != api.NetAPIVersion {
-			continue
-		}
-		switch resource.Kind {
-		case "IPv4StaticAddress":
-			if resource.Metadata.Name == resourceName {
-				continue
-			}
-			spec, err := resource.IPv4StaticAddressSpec()
-			if err == nil && strings.TrimSpace(spec.Address) == strings.TrimSpace(address) && interfaceIfName(router, spec.Interface) == ifname {
-				return true
-			}
-		case "VirtualAddress":
-			spec, err := resource.VirtualAddressSpec()
-			if err != nil || spec.Family != "ipv4" || interfaceIfName(router, spec.Interface) != ifname {
-				continue
-			}
-			// The VRRP backend controls whether its configured address is present.
-			// Its kernel update can precede or follow publication of the role.
-			if spec.Mode != "" && spec.Mode != "static" && spec.Mode != "vrrp" {
-				continue
-			}
-			value, err := render.VirtualAddress(router, spec)
-			if err == nil && value == strings.TrimSpace(address) {
-				return true
-			}
-		case "DHCPv4Client":
-			if store == nil {
-				continue
-			}
-			spec, err := resource.DHCPv4ClientSpec()
-			if err != nil || interfaceIfName(router, spec.Interface) != ifname {
-				continue
-			}
-			status := store.ObjectStatus(api.NetAPIVersion, resource.Kind, resource.Metadata.Name)
-			phase := cleanStatusString(status["phase"])
-			if phase != daemonapi.ResourcePhaseBound && phase != daemonapi.ResourcePhaseRefreshing && phase != daemonapi.ResourcePhaseRebinding && phase != daemonapi.ResourcePhaseAcquiring {
-				continue
-			}
-			expires, err := time.Parse(time.RFC3339Nano, cleanStatusString(status["expiresAt"]))
-			if err == nil && time.Now().Before(expires) && cleanStatusString(status["ifname"]) == ifname && cleanStatusString(status["appliedAddress"]) == strings.TrimSpace(address) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func interfaceDevicePresent(ctx context.Context, ifname string) bool {
