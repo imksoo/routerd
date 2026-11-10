@@ -85,7 +85,7 @@ func resourceLifecycleObjectStatus(status routerstate.ObjectStatus) bool {
 		return true
 	}
 	switch {
-	case status.APIVersion == api.NetAPIVersion && (status.Kind == "IPv4Route" || status.Kind == "IPv4StaticAddress" || status.Kind == "WireGuardInterface" || status.Kind == "WireGuardPeer"):
+	case status.APIVersion == api.NetAPIVersion && (status.Kind == "IPv4StaticAddress" || status.Kind == "WireGuardInterface" || status.Kind == "WireGuardPeer"):
 		return true
 	case status.APIVersion == api.SystemAPIVersion && status.Kind == "Sysctl" && strings.HasPrefix(status.Name, "sam-proxy-arp-"):
 		return true

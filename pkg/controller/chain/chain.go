@@ -2589,11 +2589,8 @@ func didWorkPeriodic(fn func(context.Context) error) func(context.Context) (bool
 // retain a failed teardown for retry; do not run SAM if that prerequisite
 // fails.
 func reconcileSAMAfterRouteTeardown(ctx context.Context, route IPv4RouteController, controller SAMController) error {
-	if err := route.cleanupRemovedMobilityRoutes(ctx); err != nil {
-		return fmt.Errorf("teardown stale mobility IPv4 routes before SAM cleanup: %w", err)
-	}
-	if err := route.cleanupRemovedRoutes(ctx); err != nil {
-		return fmt.Errorf("teardown stale IPv4Routes before SAM cleanup: %w", err)
+	if err := route.cleanupIPv4MainRoutes(ctx); err != nil {
+		return fmt.Errorf("teardown stale IPv4 routes before SAM cleanup: %w", err)
 	}
 	return controller.Reconcile(ctx)
 }

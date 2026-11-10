@@ -15,20 +15,6 @@ import (
 	"github.com/imksoo/routerd/pkg/sam"
 )
 
-// mobilityAppliedIPv4Route is an observed local effect, not an alternate
-// desired-state channel. Its only purpose is exact, safe withdrawal of a
-// route which the typed MobilityDataplane plan previously installed.
-type mobilityAppliedIPv4Route struct {
-	ID              string `json:"id"`
-	PoolRef         string `json:"poolRef"`
-	PoolPrefix      string `json:"poolPrefix"`
-	Purpose         string `json:"purpose"`
-	Destination     string `json:"destination"`
-	Device          string `json:"device"`
-	PreferredSource string `json:"preferredSource,omitempty"`
-	Metric          int    `json:"metric,omitempty"`
-}
-
 // mobilityAppliedIPv4Address is the corresponding exact applied-address
 // ledger. It is intentionally independent from user-authored
 // IPv4StaticAddress object status.
@@ -46,142 +32,33 @@ func (c IPv4RouteController) reconcileMobilityRoutes(ctx context.Context) error 
 	if err != nil {
 		return err
 	}
-	previous, err := c.appliedMobilityRoutes()
-	if err != nil {
-		return fmt.Errorf("decode applied mobility IPv4 route ledger: %w", err)
-	}
-	if len(desired) == 0 && len(previous) == 0 {
-		return nil
-	}
-	if (len(desired) != 0 || len(previous) != 0) && !c.DryRun {
-		if _, ok := c.Store.(objectStatusMerger); !ok {
-			return fmt.Errorf("mobility IPv4 route effects require an applied-effect status merger")
-		}
-	}
-	previousByID := make(map[string]mobilityAppliedIPv4Route, len(previous))
-	for _, route := range previous {
-		previousByID[route.ID] = route
-	}
-
-	next := map[string]mobilityAppliedIPv4Route{}
-	failed := map[string]bool{}
-	var failures []string
 	for _, route := range desired {
-		applied, err := c.applyMobilityRoute(ctx, route)
-		if err != nil {
-			failed[route.ID] = true
-			if previous, ok := previousByID[route.ID]; ok && mobilityRouteMatchesIntent(previous, route) {
-				next[route.ID] = previous
-			}
-			failures = append(failures, fmt.Sprintf("%s: %v", route.ID, err))
-			continue
+		if err := c.applyMobilityRoute(ctx, route); err != nil {
+			return fmt.Errorf("%s: %w", route.ID, err)
 		}
-		next[route.ID] = applied
-	}
-	for _, applied := range previous {
-		if current, ok := next[applied.ID]; ok && mobilityRoutesEqual(applied, current) {
-			continue
-		}
-		// `ip route replace` updates preferred source in place for an otherwise
-		// identical route. Deleting the old ledger tuple afterward would use the
-		// same destination/device/metric selector and remove that replacement.
-		if current, ok := next[applied.ID]; ok && mobilityRouteReplacedInPlace(applied, current) {
-			continue
-		}
-		// If replacement could not be installed, retain the precisely recorded
-		// old route. Removing it would turn a transient local failure into a
-		// needless traffic interruption.
-		if failed[applied.ID] {
-			next[applied.ID] = applied
-			continue
-		}
-		if err := c.removeMobilityRoute(ctx, applied); err != nil {
-			next[applied.ID] = applied
-			failures = append(failures, fmt.Sprintf("remove %s: %v", applied.ID, err))
-		}
-	}
-	if err := c.saveAppliedMobilityRoutes(next); err != nil {
-		return err
-	}
-	if len(failures) != 0 {
-		return fmt.Errorf("reconcile mobility IPv4 routes: %s", strings.Join(failures, "; "))
 	}
 	return nil
 }
 
-// cleanupRemovedMobilityRoutes performs the withdrawal half before SAM tears
-// down proxy-neighbor state. FreeBSD routeguard requires this ordering.
-func (c IPv4RouteController) cleanupRemovedMobilityRoutes(ctx context.Context) error {
-	desired, err := normalizedMobilityRouteIntents(c.MobilityDataplane.Routes)
-	if err != nil {
-		return err
-	}
-	desiredByID := make(map[string]bool, len(desired))
-	for _, route := range desired {
-		desiredByID[route.ID] = true
-	}
-	previous, err := c.appliedMobilityRoutes()
-	if err != nil {
-		return fmt.Errorf("decode applied mobility IPv4 route ledger: %w", err)
-	}
-	if len(previous) == 0 {
-		return nil
-	}
-	if !c.DryRun {
-		if _, ok := c.Store.(objectStatusMerger); !ok {
-			return fmt.Errorf("mobility IPv4 route effects require an applied-effect status merger")
-		}
-	}
-	next := map[string]mobilityAppliedIPv4Route{}
-	var failures []string
-	for _, applied := range previous {
-		if desiredByID[applied.ID] {
-			next[applied.ID] = applied
-			continue
-		}
-		if err := c.removeMobilityRoute(ctx, applied); err != nil {
-			next[applied.ID] = applied
-			failures = append(failures, fmt.Sprintf("remove %s: %v", applied.ID, err))
-		}
-	}
-	if err := c.saveAppliedMobilityRoutes(next); err != nil {
-		return err
-	}
-	if len(failures) != 0 {
-		return fmt.Errorf("withdraw mobility IPv4 routes: %s", strings.Join(failures, "; "))
-	}
-	return nil
-}
-
-func (c IPv4RouteController) applyMobilityRoute(ctx context.Context, route dynamicconfig.MobilityIPv4RouteIntent) (mobilityAppliedIPv4Route, error) {
-	applied := mobilityAppliedIPv4Route{
-		ID:          route.ID,
-		PoolRef:     route.PoolRef,
-		PoolPrefix:  route.PoolPrefix,
-		Purpose:     string(route.Purpose),
-		Destination: route.Destination,
-		Device:      route.Device,
-		Metric:      route.Metric,
-	}
+func (c IPv4RouteController) applyMobilityRoute(ctx context.Context, route dynamicconfig.MobilityIPv4RouteIntent) error {
 	if c.DryRun {
-		return applied, nil
+		return nil
 	}
 	if !interfaceDevicePresent(ctx, route.Device) {
-		return mobilityAppliedIPv4Route{}, fmt.Errorf("device %q is not ready", route.Device)
+		return fmt.Errorf("device %q is not ready", route.Device)
 	}
 	preferredSource := route.PreferredSource
 	if preferredSource != "" {
 		local, err := ipv4PreferredSourceIsLocal(ctx, preferredSource)
 		if err != nil {
-			return mobilityAppliedIPv4Route{}, fmt.Errorf("observe preferred source: %w", err)
+			return fmt.Errorf("observe preferred source: %w", err)
 		}
 		if !local {
 			preferredSource = ""
 		}
 	}
-	applied.PreferredSource = preferredSource
 	if platform.CurrentOS() != platform.OSFreeBSD && ipv4RouteInstalled(ctx, "unicast", route.Destination, route.Device, "", preferredSource, route.Metric) {
-		return applied, nil
+		return nil
 	}
 	args := []string{"route", "replace", route.Destination, "dev", route.Device}
 	if preferredSource != "" {
@@ -200,84 +77,9 @@ func (c IPv4RouteController) applyMobilityRoute(ctx context.Context, route dynam
 		out, err = runOutputCommandContext(ctx, name, args...)
 	}
 	if err != nil {
-		return mobilityAppliedIPv4Route{}, fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
-	}
-	return applied, nil
-}
-
-func (c IPv4RouteController) removeMobilityRoute(ctx context.Context, route mobilityAppliedIPv4Route) error {
-	if c.DryRun {
-		return nil
-	}
-	removal := ipv4RouteRemoval{
-		Type:            "unicast",
-		Destination:     route.Destination,
-		Device:          route.Device,
-		PreferredSource: route.PreferredSource,
-		Metric:          fmt.Sprintf("%d", route.Metric),
-	}
-	args := ipv4RouteRemovalDeleteArgs(removal)
-	if len(args) == 0 {
-		return nil
-	}
-	name := "ip"
-	if platform.CurrentOS() == platform.OSFreeBSD {
-		name, args = freeBSDIPv4RouteRemovalDeleteCommand(removal)
-	} else if routerHasBGP(c.Router) {
-		bgp, err := removedIPv4RouteRemovalIsCurrentlyBGP(ctx, removal)
-		if err != nil {
-			return err
-		}
-		if bgp {
-			return nil
-		}
-	}
-	out, err := runOutputCommandContext(ctx, name, args...)
-	if err != nil && !missingIPv4RouteDelete(err, out) {
 		return fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
 	return nil
-}
-
-func (c IPv4RouteController) appliedMobilityRoutes() ([]mobilityAppliedIPv4Route, error) {
-	if c.Store == nil {
-		return nil, nil
-	}
-	status := c.Store.ObjectStatus(api.RouterAPIVersion, "Router", samDataplaneStatusName)
-	if !statusValuePresent(status, "appliedMobilityRoutes") {
-		return nil, nil
-	}
-	decoded, ok := decodeAppliedDataplaneStatus[mobilityAppliedIPv4Route](status["appliedMobilityRoutes"])
-	if !ok || decoded == nil {
-		return nil, fmt.Errorf("must be a non-null JSON array")
-	}
-	byID := map[string]mobilityAppliedIPv4Route{}
-	for _, route := range decoded {
-		if err := validateAppliedMobilityRoute(route); err != nil {
-			return nil, err
-		}
-		if previous, exists := byID[route.ID]; exists {
-			if previous != route {
-				return nil, fmt.Errorf("conflicting mobility IPv4 route ledger entries for id %q", route.ID)
-			}
-			continue
-		}
-		byID[route.ID] = route
-	}
-	return sortedMobilityAppliedRoutes(byID), nil
-}
-
-func (c IPv4RouteController) saveAppliedMobilityRoutes(routes map[string]mobilityAppliedIPv4Route) error {
-	if c.DryRun || c.Store == nil {
-		return nil
-	}
-	merger, ok := c.Store.(objectStatusMerger)
-	if !ok {
-		return fmt.Errorf("mobility IPv4 route effects require an applied-effect status merger")
-	}
-	return merger.MergeObjectStatus(api.RouterAPIVersion, "Router", samDataplaneStatusName, map[string]any{
-		"appliedMobilityRoutes": sortedMobilityAppliedRoutes(routes),
-	})
 }
 
 func normalizedMobilityRouteIntents(intents []dynamicconfig.MobilityIPv4RouteIntent) ([]dynamicconfig.MobilityIPv4RouteIntent, error) {
@@ -330,44 +132,6 @@ func normalizedMobilityRouteIntents(intents []dynamicconfig.MobilityIPv4RouteInt
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
-}
-
-func mobilityRouteMatchesIntent(applied mobilityAppliedIPv4Route, intent dynamicconfig.MobilityIPv4RouteIntent) bool {
-	return applied.ID == intent.ID && applied.PoolRef == intent.PoolRef && applied.PoolPrefix == intent.PoolPrefix && applied.Purpose == string(intent.Purpose) &&
-		applied.Destination == intent.Destination && applied.Device == intent.Device && applied.Metric == intent.Metric
-}
-
-func mobilityRoutesEqual(left, right mobilityAppliedIPv4Route) bool {
-	return left == right
-}
-
-func mobilityRouteReplacedInPlace(previous, current mobilityAppliedIPv4Route) bool {
-	return previous.ID == current.ID && previous.Destination == current.Destination &&
-		previous.Device == current.Device && previous.Metric == current.Metric
-}
-
-func sortedMobilityAppliedRoutes(routes map[string]mobilityAppliedIPv4Route) []mobilityAppliedIPv4Route {
-	out := make([]mobilityAppliedIPv4Route, 0, len(routes))
-	for _, route := range routes {
-		out = append(out, route)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out
-}
-
-func validateAppliedMobilityRoute(route mobilityAppliedIPv4Route) error {
-	intent := dynamicconfig.MobilityIPv4RouteIntent{
-		ID:              route.ID,
-		PoolRef:         route.PoolRef,
-		PoolPrefix:      route.PoolPrefix,
-		Purpose:         dynamicconfig.MobilityIPv4RoutePurpose(route.Purpose),
-		Destination:     route.Destination,
-		Device:          route.Device,
-		PreferredSource: route.PreferredSource,
-		Metric:          route.Metric,
-	}
-	_, err := normalizedMobilityRouteIntents([]dynamicconfig.MobilityIPv4RouteIntent{intent})
-	return err
 }
 
 func (c IPv4StaticAddressController) reconcileMobilityStaticAddresses(ctx context.Context) error {

@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -28,10 +27,8 @@ import (
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
-	"github.com/imksoo/routerd/pkg/lifecycle"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/resourcequery"
-	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 type DHCPv6InformationController struct {
@@ -408,9 +405,6 @@ type IPv4RouteController struct {
 
 func (c IPv4RouteController) reconcile(ctx context.Context) error {
 	var failures []string
-	if err := c.cleanupRemovedRoutes(ctx); err != nil {
-		failures = append(failures, err.Error())
-	}
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "IPv4Route" {
 			continue
@@ -539,7 +533,7 @@ func (c IPv4RouteController) reconcile(ctx context.Context) error {
 	if len(failures) > 0 {
 		return fmt.Errorf("%s", strings.Join(failures, "; "))
 	}
-	return nil
+	return c.cleanupIPv4MainRoutes(ctx)
 }
 
 func ipv4RouteInstalled(ctx context.Context, routeType, destination, device, gateway, preferredSource string, metric int) bool {
@@ -641,173 +635,6 @@ func ipJSONHasIPv4Address(data []byte, address string) (bool, error) {
 	return false, nil
 }
 
-func (c IPv4RouteController) cleanupRemovedRoutes(ctx context.Context) error {
-	if c.Store == nil {
-		return nil
-	}
-	lister, ok := c.Store.(interface {
-		ListObjectStatuses() ([]routerstate.ObjectStatus, error)
-	})
-	if !ok {
-		return nil
-	}
-	deleter, ok := c.Store.(interface {
-		DeleteObject(apiVersion, kind, name string) error
-	})
-	if !ok {
-		return nil
-	}
-	statuses, err := lister.ListObjectStatuses()
-	if err != nil {
-		return err
-	}
-	desired := map[string]bool{}
-	for _, resource := range c.Router.Spec.Resources {
-		if resource.APIVersion == api.NetAPIVersion && resource.Kind == "IPv4Route" {
-			desired[lifecycle.ResourceKey(resource.APIVersion, resource.Kind, resource.Metadata.Name)] = true
-		}
-	}
-	var failures []error
-	for _, status := range lifecycle.PlanResourceTeardownGC(desired, statuses) {
-		if status.APIVersion != api.NetAPIVersion || status.Kind != "IPv4Route" {
-			continue
-		}
-		if err := c.teardownRemovedRoute(ctx, status, deleter); err != nil {
-			failures = append(failures, err)
-		}
-	}
-	return errors.Join(failures...)
-}
-
-func (c IPv4RouteController) teardownRemovedRoute(ctx context.Context, status routerstate.ObjectStatus, deleter routerstate.ObjectDeleteStore) error {
-	removal := ipv4RouteRemovalFromStatus(status.Status)
-	if !c.DryRun {
-		args := ipv4RouteRemovalDeleteArgs(removal)
-		if len(args) > 0 {
-			name := "ip"
-			if platform.CurrentOS() == platform.OSFreeBSD {
-				name, args = freeBSDIPv4RouteRemovalDeleteCommand(removal)
-			} else if routerHasBGP(c.Router) {
-				bgp, err := removedIPv4RouteRemovalIsCurrentlyBGP(ctx, removal)
-				if err != nil {
-					return fmt.Errorf("observe removed IPv4Route %s: %w", status.Name, err)
-				}
-				if bgp {
-					args = nil
-				}
-			}
-			if len(args) > 0 {
-				out, err := runOutputCommandContext(ctx, name, args...)
-				if err != nil && !missingIPv4RouteDelete(err, out) {
-					return fmt.Errorf("delete removed IPv4Route %s: %s %s: %w: %s", status.Name, name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
-				}
-			}
-		}
-	}
-	if err := deleter.DeleteObject(api.NetAPIVersion, "IPv4Route", status.Name); err != nil {
-		return err
-	}
-	if c.Bus != nil {
-		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.ipv4.route.removed", daemonapi.SeverityInfo)
-		event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "IPv4Route", Name: status.Name}
-		event.Attributes = map[string]string{"destination": removal.Destination, "device": removal.Device}
-		if err := c.Bus.Publish(ctx, event); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// ipv4RouteRemoval identifies the exact route being withdrawn.  The regular
-// IPv4Route controller constructs it at the persisted-status boundary; typed
-// Mobility dataplane effects construct it directly from their applied-effect
-// ledger.  Keeping the removal logic typed avoids treating a status map as an
-// internal route-planning API.
-type ipv4RouteRemoval struct {
-	Type            string
-	Destination     string
-	Device          string
-	Gateway         string
-	PreferredSource string
-	Metric          string
-}
-
-func ipv4RouteRemovalFromStatus(status map[string]any) ipv4RouteRemoval {
-	removal := ipv4RouteRemoval{
-		Type:        routeStatusString(status["type"]),
-		Destination: routeStatusString(status["destination"]),
-		Device:      routeStatusString(status["device"]),
-		Gateway:     routeStatusString(status["gateway"]),
-	}
-	if removal.Type == "" {
-		removal.Type = "unicast"
-	}
-	removal.PreferredSource = routeStatusString(status["effectivePreferredSource"])
-	if removal.PreferredSource == "" {
-		removal.PreferredSource = routeStatusString(status["preferredSource"])
-	}
-	removal.Metric = routeStatusString(status["metric"])
-	return removal
-}
-
-func routeStatusString(value any) string {
-	text := fmt.Sprint(value)
-	if text == "<nil>" {
-		return ""
-	}
-	return text
-}
-
-func removedIPv4RouteRemovalIsCurrentlyBGP(ctx context.Context, removal ipv4RouteRemoval) (bool, error) {
-	destination := removal.Destination
-	if destination == "" {
-		return false, nil
-	}
-	out, err := runOutputCommandContext(ctx, "ip", "-j", "-4", "route", "show", "exact", destination)
-	if err != nil {
-		return false, fmt.Errorf("observe BGP route %s: %w: %s", destination, err, strings.TrimSpace(string(out)))
-	}
-	var routes []struct {
-		Protocol string `json:"protocol"`
-		Type     string `json:"type"`
-		Metric   int    `json:"metric"`
-		Device   string `json:"dev"`
-		Gateway  string `json:"gateway"`
-		Nexthops []struct {
-			Device  string `json:"dev"`
-			Gateway string `json:"gateway"`
-		} `json:"nexthops"`
-	}
-	if err := json.Unmarshal(out, &routes); err != nil {
-		return false, fmt.Errorf("decode BGP route %s: %w", destination, err)
-	}
-	for _, route := range routes {
-		if route.Protocol != "bgp" || (removal.Type == "blackhole") != (route.Type == "blackhole") || (removal.metricForMatch() != 0 && route.Metric != removal.metricForMatch()) {
-			continue
-		}
-		matches := func(device, gateway string) bool {
-			return (removal.Device == "" || removal.Device == device) && (removal.Gateway == "" || removal.Gateway == gateway)
-		}
-		if matches(route.Device, route.Gateway) {
-			return true, nil
-		}
-		for _, hop := range route.Nexthops {
-			if matches(hop.Device, hop.Gateway) {
-				return true, nil
-			}
-		}
-	}
-	return false, nil
-}
-
-func (r ipv4RouteRemoval) metricForMatch() int {
-	metric := 0
-	if r.Metric != "" {
-		_, _ = fmt.Sscanf(r.Metric, "%d", &metric)
-	}
-	return metric
-}
-
 func routeLineMatchesDestination(got, want string) bool {
 	got = strings.TrimSpace(got)
 	want = strings.TrimSpace(want)
@@ -818,29 +645,6 @@ func routeLineMatchesDestination(got, want string) bool {
 		return true
 	}
 	return false
-}
-
-func ipv4RouteRemovalDeleteArgs(removal ipv4RouteRemoval) []string {
-	destination := removal.Destination
-	if destination == "" {
-		return nil
-	}
-	args := []string{"route", "del"}
-	if removal.Type == "blackhole" {
-		args = append(args, "blackhole", destination)
-	} else {
-		args = append(args, destination)
-		if removal.Gateway != "" {
-			args = append(args, "via", removal.Gateway)
-		}
-		if removal.Device != "" {
-			args = append(args, "dev", removal.Device)
-		}
-	}
-	if removal.Metric != "" && removal.Metric != "0" {
-		args = append(args, "metric", removal.Metric)
-	}
-	return args
 }
 
 func missingIPv4RouteDelete(err error, output []byte) bool {
@@ -882,10 +686,6 @@ func freeBSDIPv4RouteAddArgs(changeArgs []string) []string {
 		}
 	}
 	return out
-}
-
-func freeBSDIPv4RouteRemovalDeleteCommand(removal ipv4RouteRemoval) (string, []string) {
-	return "route", append([]string{"-n", "delete"}, freeBSDRouteDestinationArgs(removal.Destination)...)
 }
 
 func freeBSDRouteDestination(destination string) string {
