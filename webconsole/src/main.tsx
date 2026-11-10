@@ -7899,13 +7899,13 @@ function ConnectionPurposeSummary({ table, resources, activePath, onSelect }: {
   const addresses = dsliteSNATAddresses(resources);
   const dsliteSNAT = Array.from(addresses).reduce((total, address) => total + (table?.bySNAT?.[address]?.total ?? 0), 0);
   const rows = [
-    { key: "dslite-snat", label: "DS-LiteクライアントSNAT", count: dsliteSNAT, detail: "LANクライアントをトンネル側アドレスへ変換" },
-    { key: "other-snat", label: "その他のSNAT", count: Math.max(0, counts.sourceNAT - dsliteSNAT), detail: "DS-Lite以外の送信元変換" },
-    { key: "external-without-nat", label: "外部宛て（SNATなし）", count: counts.externalWithoutNAT, detail: "ルーター自身の監視など、送信元を変換せず外部へ送信" },
-    { key: "local-redirect", label: "Local Redirect", count: counts.localRedirect, detail: "DNS・NTPなどをルーター内サービスへ転送" },
-    { key: "internal", label: "内部・管理通信", count: counts.internal, detail: "loopback、LAN、管理・制御サービス間の通信" },
-    { key: "destination-nat", label: "その他の宛先変換", count: counts.destinationNAT, detail: "Local Redirect以外の宛先変換" },
-    { key: "unclassified", label: "未分類", count: counts.unclassified, detail: "宛先を判定できなかった通信" },
+    { key: "dslite-snat", label: "DS-Lite SNAT", count: dsliteSNAT },
+    { key: "other-snat", label: "その他のSNAT", count: Math.max(0, counts.sourceNAT - dsliteSNAT) },
+    { key: "external-without-nat", label: "外部宛て・SNATなし", count: counts.externalWithoutNAT },
+    { key: "local-redirect", label: "Local Redirect", count: counts.localRedirect },
+    { key: "internal", label: "内部・管理", count: counts.internal },
+    { key: "destination-nat", label: "その他の宛先変換", count: counts.destinationNAT },
+    { key: "unclassified", label: "未分類", count: counts.unclassified },
   ];
   const classifiedTotal = rows.reduce((total, row) => total + row.count, 0);
   return <Card>
@@ -7918,13 +7918,9 @@ function ConnectionPurposeSummary({ table, resources, activePath, onSelect }: {
         key={row.key}
         appearance={activePath === row.key ? "primary" : "secondary"}
         onClick={() => onSelect(activePath === row.key ? "all" : row.key)}
-        title={row.detail}
         style={{ height: "auto", padding: "10px", justifyContent: "flex-start" }}
       >
-        <span style={{ display: "grid", gap: "2px", textAlign: "left" }}>
-          <strong>{row.label}: {row.count}</strong>
-          <span>{row.detail}</span>
-        </span>
+        {row.label}: {row.count}
       </Button>)}
     </div>
     <Text size={200} style={{ color: "#9aa4b2" }}>内訳合計 {classifiedTotal} / IPv4 {counts.ipv4}件。AFTR側だけで行われるNATはこの画面からは観測できません。</Text>
