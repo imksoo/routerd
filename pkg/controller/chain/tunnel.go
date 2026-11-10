@@ -121,6 +121,9 @@ func (c TunnelInterfaceController) cleanupStaleResources(ctx context.Context) er
 				}
 			}
 		}
+		if err := c.cleanupFOUListeners(ctx); err != nil {
+			return err
+		}
 	}
 	lister, ok := c.Store.(routerstate.ObjectStatusLister)
 	if !ok {
@@ -159,15 +162,6 @@ func (c TunnelInterfaceController) cleanupStaleResources(ctx context.Context) er
 				}
 			}
 		}
-		if listener, ok := fouListenerFromStatus(item.Status); ok && !c.DryRun {
-			if c.desiredUsesFOUListener(listener, "") {
-				if err := c.rememberSharedFOUListener(listener, item.Name); err != nil {
-					return err
-				}
-			} else if err := c.deleteFOUListener(ctx, listener); err != nil {
-				return err
-			}
-		}
 		if err := deleter.DeleteObject(item.APIVersion, item.Kind, item.Name); err != nil {
 			return err
 		}
@@ -194,7 +188,6 @@ func (c TunnelInterfaceController) reconcileInterface(ctx context.Context, resou
 	if err != nil {
 		return err
 	}
-	previous := c.Store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", resource.Metadata.Name)
 	desired, pending, pendingReason, err := c.resolveTunnelDesired(resource.Metadata.Name, spec)
 	if err != nil {
 		return c.saveResolveError(resource, tunnelDesiredFromSpec(*c.Router, resource.Metadata.Name, spec), err)
@@ -285,15 +278,6 @@ func (c TunnelInterfaceController) reconcileInterface(ctx context.Context, resou
 		}
 		status["observedAddress"] = desired.Address
 		status["observedPeerAddress"] = observedPeer
-	}
-	if previousListener, ok := fouListenerFromStatus(previous); ok && !c.DryRun && !fouListenerMatchesStatus(previousListener, status) {
-		if c.desiredUsesFOUListener(previousListener, resource.Metadata.Name) {
-			if err := c.rememberSharedFOUListener(previousListener, resource.Metadata.Name); err != nil {
-				return c.saveApplyError(resource, desired, err)
-			}
-		} else if err := c.deleteFOUListener(ctx, previousListener); err != nil {
-			return c.saveApplyError(resource, desired, err)
-		}
 	}
 	if !applied {
 		status["reason"] = "AlreadyConfigured"
@@ -870,64 +854,46 @@ func fouListenerForDesired(desired tunnelDesired) (fouListener, bool) {
 	return fouListener{Mode: desired.Mode, Port: desired.EncapSport}, true
 }
 
-func fouListenerFromStatus(status map[string]any) (fouListener, bool) {
-	mode := statusvalue.Field(status, "mode")
-	port, ok := statusInt(status["encapSport"])
-	if (mode != "fou" && mode != "gue") || !ok || port < 1 || port > 65535 {
-		return fouListener{}, false
-	}
-	return fouListener{Mode: mode, Port: port}, true
-}
-
-func fouListenerMatchesStatus(listener fouListener, status map[string]any) bool {
-	previous, ok := fouListenerFromStatus(status)
-	return ok && previous == listener
-}
-
-func (c TunnelInterfaceController) desiredUsesFOUListener(listener fouListener, exceptName string) bool {
-	if c.Router == nil {
-		return false
-	}
+func (c TunnelInterfaceController) cleanupFOUListeners(ctx context.Context) error {
+	wanted := map[int]bool{}
 	for _, resource := range c.Router.Spec.Resources {
-		if resource.APIVersion != api.HybridAPIVersion || resource.Kind != "TunnelInterface" || resource.Metadata.Name == exceptName {
+		if resource.APIVersion != api.HybridAPIVersion || resource.Kind != "TunnelInterface" {
 			continue
 		}
 		spec, err := resource.TunnelInterfaceSpec()
 		if err != nil {
-			continue
+			return err
 		}
-		if candidate, ok := fouListenerForDesired(tunnelDesiredFromSpec(*c.Router, resource.Metadata.Name, spec)); ok && candidate == listener {
-			return true
+		if listener, ok := fouListenerForDesired(tunnelDesiredFromSpec(*c.Router, resource.Metadata.Name, spec)); ok {
+			wanted[listener.Port] = true
 		}
 	}
-	return false
-}
-
-func (c TunnelInterfaceController) rememberSharedFOUListener(listener fouListener, exceptName string) error {
-	if c.Router == nil || c.Store == nil {
-		return nil
+	out, err := c.run(ctx, "ip", "fou", "show")
+	if err != nil {
+		if len(out) != 0 && tunnelFOUMissing(out, err) {
+			return nil
+		}
+		return fmt.Errorf("list FOU listeners: %w: %s", err, strings.TrimSpace(string(out)))
 	}
-	for _, resource := range c.Router.Spec.Resources {
-		if resource.APIVersion != api.HybridAPIVersion || resource.Kind != "TunnelInterface" || resource.Metadata.Name == exceptName {
-			continue
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		for i, field := range fields {
+			if field != "port" || i+1 >= len(fields) {
+				continue
+			}
+			port, err := strconv.Atoi(fields[i+1])
+			if err != nil {
+				return fmt.Errorf("invalid FOU listener port %q: %w", fields[i+1], err)
+			}
+			if !wanted[port] {
+				if err := c.deleteFOUListener(ctx, fouListener{Mode: "fou", Port: port}); err != nil {
+					return err
+				}
+			}
+			break
 		}
-		spec, err := resource.TunnelInterfaceSpec()
-		if err != nil {
-			continue
-		}
-		candidate, ok := fouListenerForDesired(tunnelDesiredFromSpec(*c.Router, resource.Metadata.Name, spec))
-		if !ok || candidate != listener {
-			continue
-		}
-		status := c.Store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", resource.Metadata.Name)
-		if status == nil {
-			status = map[string]any{}
-		}
-		status["encapSport"] = listener.Port
-		status["mode"] = listener.Mode
-		return c.Store.SaveObjectStatus(api.HybridAPIVersion, "TunnelInterface", resource.Metadata.Name, status)
 	}
-	return fmt.Errorf("no desired TunnelInterface references %s listener port %d", listener.Mode, listener.Port)
+	return nil
 }
 
 func (c TunnelInterfaceController) ensureFOUListener(ctx context.Context, desired tunnelDesired) error {
