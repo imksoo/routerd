@@ -64,6 +64,8 @@
 
 - k8s-rt02 の実設定と動的状態から `routerctl dynamic render -o json` で得た設定全体も、変更後 CLI と稼働版の SHA-256 が一致した。
 
+- 2026-11-10、homert02のsystemd-resolvedは `lain.local` のDNSルートがなく、routerd DNSでは解決できる `syslog.lain.local` がOS経由では失敗していた。ens20のnetworkd設定に `Domains=~lain.local` を追加し、OS経由の解決を確認した。daemonを `4e8f199c` に交換し、同じ設定の `apply --replace` は generation 15959・Healthy、80リソースにError/Failed/Degradedなし。BGP 2 peerはEstablished、homert02はVRRP backup、PDはWhenFalseでPending。chattyからVIPと外部IPへのping、名前解決が成功し、VIPとhomert03のARPは同じMACを示した。homert03へのSSHはホスト鍵不一致のため状態を直接確認していない。SAM切替と手動変更からの復元は未確認。
+
 ## 残件
 
 - FreeBSD で DHCPv6 client を supervisor を介さず `--lease-file` なしで手動起動すると、既定の lease パスと controller の読み取りパスが異なる。supervisor は正しいパスを渡す。実運用で手動起動が必要か未確認であり、調査・修正には別途承認を要する。
