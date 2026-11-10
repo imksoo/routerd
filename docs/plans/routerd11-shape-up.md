@@ -70,6 +70,8 @@
 
 - 2026-11-10、変更後daemonをpve-rt01〜08とk8s-rt01・02に順次投入し、実設定の `apply --replace` は全機Healthyだった。pve-rt各機はBGP 2 peer Established、IPIP 2本UP、proxy neighbor件数は投入前後で一致し、各BGP対向へのpingも成功。k8s-rt両機はBGP 14 peer Established、IPIP 8本UP。設定を手動で変更した後の復元とSAM切替は未確認。k8s担当Codexへの依頼は接続エラーで届かなかったため、両機とも本作業で適用した。
 
+- 2026-11-10、UTCリリース `v20261110.0354` のISOをSHA-256照合し、pve-rt01〜08の既存設定ディスクを維持して順次起動した。各機は同版でactive、BGP 2 peer Established、各対向へのpingと同一設定のapplyがHealthy。01・02では稼働中のLive ISO差し替えによりSquashFS読み取りエラーが生じ、リセットして復旧した。03〜08は旧ISOを維持したまま正常停止してから差し替えた。k8s-rt01・02にも公開版daemonを適用し、両機apply Healthy・BGP 14 peer Established。全VM設定を確認し、未参照の旧Live ISO 49本を削除、他VMが参照する旧ISOと設定メディアは維持した。SAM切替や手動変更からの復元は未確認。
+
 ## 残件
 
 - FreeBSD で DHCPv6 client を supervisor を介さず `--lease-file` なしで手動起動すると、既定の lease パスと controller の読み取りパスが異なる。supervisor は正しいパスを渡す。実運用で手動起動が必要か未確認であり、調査・修正には別途承認を要する。
