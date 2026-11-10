@@ -38,7 +38,7 @@
 
 完了条件は、確認した相違がapplyで解消され、必要な動的状態が残ること。Healthy表示だけで完了としない。失敗を見つけたら、その適用経路を小さく直して同じ実機で再確認する。
 
-### 3. 上流断・復帰とHealth helperの再起動を確かめる — 実機確認済み
+### 3. 上流断・復帰とHealth helperの再起動を確かめる — 一部実機確認
 
 homertの実際のWANと実クライアントを使い、一方の上流を止めた時の代替経路への切替と、戻した時の設定どおりの選択を確認する。Health helperの再起動も別に行い、古い観測だけで経路を選び続けず、新しい観測に基づく通常動作へ戻ることを確認する。
 
@@ -73,6 +73,7 @@ homert02・03の現在のmaster/backupを確認し、master側を停止してbac
 - 同日、homert03を停止し、変更版を使うhomert02へのVRRP切替を確認した。homert02でVIP・PD Bound・RA/DHCP Applied、DS-LiteのHealth・経路・nftablesを確認し、chattyからHTTPS・DNSが成功した。homert03復帰後は設定のpreempt無効に従いhomert02 master・homert03 backup。切替直後は管理SSHが一時タイムアウトし、通信断の長さやDHCP/PDの更新自体は確認できなかった。
 - 同日、homert03にも `dda28462` を投入し、backup維持と同一設定apply Healthyを確認した。masterのhomert02で使用中のDS-Lite Health helperを再起動し、新しい成功観測を確認した。
 - 同日、homert02のDS-Lite一経路の実パケットを一時遮断した。HealthはUnhealthyとなり、新規フロー向けnftablesの振り分けから対象マークが外れ、他の2経路とchattyのHTTPS・DNSは動作した。遮断解除後はHealthがHealthyに戻り、3経路の振り分けが復帰した。上流機器そのものの停止は行っていない。
+- 同日、homertの実設定履歴 `6f0ba0b` を確認した。`internet-via-ix2215` はHealth監視用route policyにあり、`ipv4-default` の `ix2215-static` からは意図的に参照を外している。この通常候補はHealth失敗による選択解除を行わないため、上流停止時の自動切替を実証した扱いにはしない。現設定の変更は行っていない。
 - 同日、k8s-rt02のSAMトンネルの動的IPv4アドレスを削除し、同一設定のapply後に復元と対向通信を確認。pve-rt08ではMSS生成ファイルを変更し、apply後に元の内容とカーネルの規則を確認した。BGPは各々14/14・2/2、SAM経路・proxy、端末間通信、API VIPも確認した。常時reconcileとapplyの寄与は分離していない。
 - 同日、待機側homert03の静的IPv4アドレス、Health監視用の経路・policy ruleをそれぞれ削除し、同一設定apply後に復元を確認。sysctl生成ファイルの変更も元に戻り、実行時sysctl、Health、主従とchattyからの通信は正常だった。通常reconcileとapplyの寄与は分離していない。
 - 同日、homert03に設定外のIPv4アドレス、main経路、fwmark policy ruleをそれぞれ一時追加し、同一設定apply後に撤去を確認。既存アドレス・経路・rule、管理DHCP、VPN、主従とchattyの通信は維持された。通常reconcileとapplyの寄与は分離していない。
