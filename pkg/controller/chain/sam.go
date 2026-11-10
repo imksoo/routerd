@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/netip"
 	"sort"
 	"strings"
@@ -40,11 +41,11 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	state, err := c.reconcileState(actions, targetOS)
+	state, err := c.reconcileState(actions)
 	if err != nil {
 		return err
 	}
-	if !c.DryRun && (len(actions) != 0 || len(state.previousProxyNeighbors) != 0 || len(state.heldForwardPaths) != 0 || len(state.previousProxyARP) != 0) {
+	if !c.DryRun && (len(actions) != 0 || len(state.previousProxyNeighbors) != 0 || len(state.heldForwardPaths) != 0) {
 		if _, ok := c.Store.(objectStatusMerger); !ok {
 			return fmt.Errorf("SAM capture effects require an applied-effect status merger")
 		}
@@ -66,7 +67,7 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 	if len(failures) != 0 {
 		return fmt.Errorf("SAM capture failed: %s", strings.Join(failures, "; "))
 	}
-	if err := c.reconcileProxyARPSysctls(ctx, actions, &state); err != nil {
+	if err := c.reconcileProxyARPSysctls(ctx, actions, state); err != nil {
 		return err
 	}
 	if err := c.reconcileSAMIPForwarding(ctx, targetOS, actions, state); err != nil {
@@ -117,11 +118,6 @@ type samAppliedForwardPath struct {
 	PeerInterface string `json:"peerInterface"`
 }
 
-// samAppliedProxyARP records interfaces that may require cleanup after removal.
-type samAppliedProxyARP struct {
-	Interface string `json:"interface"`
-}
-
 const samDataplaneStatusName = "sam-dataplane"
 
 // samReconcileState is one observed snapshot for a local SAM reconcile. The
@@ -132,12 +128,10 @@ type samReconcileState struct {
 	heldProxyNeighbors     []samAppliedProxyNeighbor
 	heldForwardPaths       []samAppliedForwardPath
 	heldProxyARPIDs        map[string]bool
-	previousProxyARP       map[string]samAppliedProxyARP
-	nextProxyARP           map[string]samAppliedProxyARP
 	forwardPaths           []sam.CaptureAction
 }
 
-func (c SAMController) reconcileState(actions []sam.CaptureAction, targetOS platform.OS) (samReconcileState, error) {
+func (c SAMController) reconcileState(actions []sam.CaptureAction) (samReconcileState, error) {
 	status := c.Store.ObjectStatus(api.RouterAPIVersion, "Router", samDataplaneStatusName)
 	previousProxyNeighbors, err := samDecodeRecords(status["appliedProxyNeighbors"], statusValuePresent(status, "appliedProxyNeighbors"), validateSAMAppliedProxyNeighbor)
 	if err != nil {
@@ -147,22 +141,6 @@ func (c SAMController) reconcileState(actions []sam.CaptureAction, targetOS plat
 	if err != nil {
 		return samReconcileState{}, fmt.Errorf("decode applied SAM forward-path ledger: %w", err)
 	}
-	proxySettings, err := samDecodeRecords(status["appliedProxyARP"], statusValuePresent(status, "appliedProxyARP"), func(setting samAppliedProxyARP) error {
-		if targetOS == platform.OSFreeBSD {
-			if setting.Interface != "" {
-				return fmt.Errorf("FreeBSD proxyall ledger interface must be empty")
-			}
-			return nil
-		}
-		return sam.ValidateCaptureInterface(setting.Interface)
-	})
-	if err != nil {
-		return samReconcileState{}, fmt.Errorf("decode applied SAM proxy_arp ledger: %w", err)
-	}
-	previousProxyARP := make(map[string]samAppliedProxyARP, len(proxySettings))
-	for _, setting := range proxySettings {
-		previousProxyARP[setting.Interface] = setting
-	}
 	held, heldProxyARPIDs, err := samHeldCaptures(c.LocalCaptureIntents)
 	if err != nil {
 		return samReconcileState{}, err
@@ -170,8 +148,6 @@ func (c SAMController) reconcileState(actions []sam.CaptureAction, targetOS plat
 	state := samReconcileState{
 		previousProxyNeighbors: previousProxyNeighbors,
 		heldProxyARPIDs:        heldProxyARPIDs,
-		previousProxyARP:       previousProxyARP,
-		nextProxyARP:           map[string]samAppliedProxyARP{},
 	}
 	for _, applied := range state.previousProxyNeighbors {
 		if hold, ok := held[applied.ID]; ok && hold.matchesProxyNeighbor(applied) {
@@ -321,15 +297,9 @@ func (c SAMController) saveAppliedDataplane(actions []sam.CaptureAction, state s
 		paths = append(paths, path)
 	}
 	sort.Slice(paths, func(i, j int) bool { return samForwardPathKey(paths[i]) < samForwardPathKey(paths[j]) })
-	proxyARP := make([]samAppliedProxyARP, 0, len(state.nextProxyARP))
-	for _, setting := range state.nextProxyARP {
-		proxyARP = append(proxyARP, setting)
-	}
-	sort.Slice(proxyARP, func(i, j int) bool { return proxyARP[i].Interface < proxyARP[j].Interface })
 	return merger.MergeObjectStatus(api.RouterAPIVersion, "Router", samDataplaneStatusName, map[string]any{
 		"appliedProxyNeighbors": neighbors,
 		"appliedForwardPaths":   paths,
-		"appliedProxyARP":       proxyARP,
 	})
 }
 
@@ -490,7 +460,7 @@ func (c SAMController) reconcileForwardPaths(ctx context.Context, state samRecon
 	return applier.ReconcileForwardPaths(ctx, state.forwardPaths)
 }
 
-func (c SAMController) reconcileProxyARPSysctls(ctx context.Context, actions []sam.CaptureAction, state *samReconcileState) error {
+func (c SAMController) reconcileProxyARPSysctls(ctx context.Context, actions []sam.CaptureAction, state samReconcileState) error {
 	if c.DryRun {
 		return nil
 	}
@@ -512,58 +482,67 @@ func (c SAMController) reconcileProxyARPSysctls(ctx context.Context, actions []s
 				desired[applied.Interface] = true
 			}
 		}
-		for _, resource := range hostdeps.SysctlResources(c.Router) {
-			var settings []sysctlSetting
-			switch resource.Kind {
-			case "Sysctl":
-				spec, err := resource.SysctlSpec()
-				if err != nil {
-					return err
-				}
-				settings = []sysctlSetting{{Key: spec.Key, Value: spec.Value}}
-			case "SysctlProfile":
-				spec, err := resource.SysctlProfileSpec()
-				if err != nil {
-					return err
-				}
-				settings, err = sysctlProfileSettings(spec)
-				if err != nil {
-					return err
-				}
+	}
+	for _, resource := range hostdeps.SysctlResources(c.Router) {
+		var settings []sysctlSetting
+		switch resource.Kind {
+		case "Sysctl":
+			spec, err := resource.SysctlSpec()
+			if err != nil {
+				return err
 			}
-			for _, setting := range settings {
-				key := strings.TrimSpace(setting.Key)
-				iface := ""
-				if strings.HasPrefix(key, "net.ipv4.conf.") && strings.HasSuffix(key, ".proxy_arp") {
-					iface = strings.ReplaceAll(strings.TrimSuffix(strings.TrimPrefix(key, "net.ipv4.conf."), ".proxy_arp"), "/", ".")
-				} else if strings.HasPrefix(key, "net/ipv4/conf/") && strings.HasSuffix(key, "/proxy_arp") {
-					iface = strings.TrimSuffix(strings.TrimPrefix(key, "net/ipv4/conf/"), "/proxy_arp")
-				}
-				if strings.TrimSpace(setting.Value) == "1" && iface != "" {
-					desired[iface] = true
-				}
+			settings = []sysctlSetting{{Key: spec.Key, Value: spec.Value}}
+		case "SysctlProfile":
+			spec, err := resource.SysctlProfileSpec()
+			if err != nil {
+				return err
+			}
+			settings, err = sysctlProfileSettings(spec)
+			if err != nil {
+				return err
+			}
+		}
+		for _, setting := range settings {
+			key := strings.TrimSpace(setting.Key)
+			if targetOS == platform.OSFreeBSD && strings.ReplaceAll(key, "/", ".") == "net.link.ether.inet.proxyall" && strings.TrimSpace(setting.Value) == "1" {
+				desired[""] = true
+			}
+			iface := ""
+			if strings.HasPrefix(key, "net.ipv4.conf.") && strings.HasSuffix(key, ".proxy_arp") {
+				iface = strings.ReplaceAll(strings.TrimSuffix(strings.TrimPrefix(key, "net.ipv4.conf."), ".proxy_arp"), "/", ".")
+			} else if strings.HasPrefix(key, "net/ipv4/conf/") && strings.HasSuffix(key, "/proxy_arp") {
+				iface = strings.TrimSuffix(strings.TrimPrefix(key, "net/ipv4/conf/"), "/proxy_arp")
+			}
+			if strings.TrimSpace(setting.Value) == "1" && iface != "" {
+				desired[iface] = true
 			}
 		}
 	}
 	interfaces := map[string]bool{}
-	for iface := range desired {
-		interfaces[iface] = true
-	}
-	for iface := range state.previousProxyARP {
-		interfaces[iface] = true
+	if targetOS == platform.OSFreeBSD {
+		interfaces[""] = true
+	} else {
+		for iface := range desired {
+			if iface != "all" && iface != "default" {
+				interfaces[iface] = true
+			}
+		}
+		links, err := net.Interfaces()
+		if err != nil {
+			return err
+		}
+		for _, link := range links {
+			interfaces[link.Name] = true
+		}
 	}
 	ordered := make([]string, 0, len(interfaces))
 	for iface := range interfaces {
 		ordered = append(ordered, iface)
 	}
 	sort.Strings(ordered)
-	state.nextProxyARP = map[string]samAppliedProxyARP{}
 	for _, iface := range ordered {
 		if err := applier.SetProxyARP(ctx, iface, desired[iface]); err != nil {
 			return fmt.Errorf("set SAM proxy_arp %q=%t: %w", iface, desired[iface], err)
-		}
-		if desired[iface] {
-			state.nextProxyARP[iface] = samAppliedProxyARP{Interface: iface}
 		}
 	}
 	return nil
