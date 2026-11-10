@@ -17,8 +17,6 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 - 修正設定精靈輸出已移除的所有權與排他欄位。
 
-## v20261110.0347
-
 ### Changed
 
 - 簡化設定套用，移除套用所有權歷史與不必要的程式碼。

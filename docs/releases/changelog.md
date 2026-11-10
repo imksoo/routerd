@@ -18,8 +18,6 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 - Stop the configuration wizard from emitting removed ownership and exclusivity fields.
 
-## v20261110.0347
-
 ### Changed
 
 - Simplify configuration reconciliation and remove applied-ownership history and unused code.
