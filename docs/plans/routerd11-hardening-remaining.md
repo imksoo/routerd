@@ -70,3 +70,11 @@ homert02・03の現在のmaster/backupを確認し、master側を停止してbac
 - 同日、homert02で `internet-via-ix2215` のHealth helperを再起動し、再起動後の新しい成功観測とHealthyへの復帰を確認した。待機側候補はこのHealthCheckを直接参照せず、Healthに応じた経路切替の確認ではない。
 - 同日、pve-rt08でSAM proxy neighbor、IPIPのMTU、endpoint経路を変更または削除し、同一設定apply後に復元を確認。k8s-rt02でもIPIPのMTUがapply後に復元し、BGP 14/14、IPIP 8本、API VIPのHTTP 200を確認した。常時reconcileとapplyの寄与は分離していない。
 - 同日、pve-rt08の片系IPIP停止中にhomert02→03の実経路がもう一方へ移り、ICMPは往復とも成功。復帰後はBGP 2/2、2経路、両IPIPとproxy neighborが戻った。連続監視ではなく無停止を示さない。既存のSAM `.0/32` 到達性WARNは残る。
+- 同日、homert03を停止し、変更版を使うhomert02へのVRRP切替を確認した。homert02でVIP・PD Bound・RA/DHCP Applied、DS-LiteのHealth・経路・nftablesを確認し、chattyからHTTPS・DNSが成功した。homert03復帰後は設定のpreempt無効に従いhomert02 master・homert03 backup。切替直後は管理SSHが一時タイムアウトし、通信断の長さやDHCP/PDの更新自体は確認できなかった。
+- 同日、homert03にも `dda28462` を投入し、backup維持と同一設定apply Healthyを確認した。masterのhomert02で使用中のDS-Lite Health helperを再起動し、新しい成功観測を確認した。
+- 同日、homert02のDS-Lite一経路の実パケットを一時遮断した。HealthはUnhealthyとなり、新規フロー向けnftablesの振り分けから対象マークが外れ、他の2経路とchattyのHTTPS・DNSは動作した。遮断解除後はHealthがHealthyに戻り、3経路の振り分けが復帰した。上流機器そのものの停止は行っていない。
+- 同日、k8s-rt02のSAMトンネルの動的IPv4アドレスを削除し、同一設定のapply後に復元と対向通信を確認。pve-rt08ではMSS生成ファイルを変更し、apply後に元の内容とカーネルの規則を確認した。BGPは各々14/14・2/2、SAM経路・proxy、端末間通信、API VIPも確認した。常時reconcileとapplyの寄与は分離していない。
+- 同日、待機側homert03の静的IPv4アドレス、Health監視用の経路・policy ruleをそれぞれ削除し、同一設定apply後に復元を確認。sysctl生成ファイルの変更も元に戻り、実行時sysctl、Health、主従とchattyからの通信は正常だった。通常reconcileとapplyの寄与は分離していない。
+- 同日、homert03に設定外のIPv4アドレス、main経路、fwmark policy ruleをそれぞれ一時追加し、同一設定apply後に撤去を確認。既存アドレス・経路・rule、管理DHCP、VPN、主従とchattyの通信は維持された。通常reconcileとapplyの寄与は分離していない。
+- 同日、homert03に送信元prefix指定の余剰ruleを追加し、apply後に撤去を確認。待機側のNTP向け静的経路を完全設定から一時的に除き、`--replace` applyで撤去された後、元の完全設定を再applyして経路を復元した。両applyはHealthy。
+- 同日、homert02のDHCPv6-PD helperの通常renewを実行し、Reply・更新イベント、同じprefixのBound、委譲アドレス・DS-Lite経路とchattyの通信を確認した。chattyのDHCPv4 renew後も通信は維持されたが、server側のREQUEST・ACKとの時刻上の対応は未確認。pve-rt03ではsvnet側DHCPv4の通常renewで送信・lease Boundを確認し、アドレス、SAM経路・BGPと対向通信は維持された。k8s-rt両台でも公開版daemon投入後の自然更新イベントを確認したが、稼働中helperと公開版のビルド一致は未確認。
