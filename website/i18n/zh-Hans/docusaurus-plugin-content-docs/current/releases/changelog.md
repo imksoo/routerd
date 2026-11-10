@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20261110.0354
+
 ### Fixed
 
 - 修正配置向导输出已移除的所有权和排他字段。
