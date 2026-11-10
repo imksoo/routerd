@@ -3152,7 +3152,7 @@ function App() {
                   dpi={summary?.dpi}
                 />
                 <Card id="overview-interfaces" className={styles.connectionAnchor}>
-                  <CardHeader header={<Text weight="semibold">Interfaces</Text>} description={<Text className={styles.muted}>Role, link state, MTU, and assigned addresses</Text>} />
+                  <CardHeader header={<Text weight="semibold">Interfaces</Text>} />
                   <InterfaceOverview interfaces={summary?.interfaces ?? []} />
                 </Card>
                 <OverviewActivity resources={summary?.resources ?? []} events={events} navigateTo={navigateTo} />
@@ -3162,7 +3162,6 @@ function App() {
               <Card id="resources-table" className={styles.connectionAnchor}>
                 <CardHeader
                   header={<Text weight="semibold">Resources</Text>}
-                  description={<Text className={styles.muted}>Resource phase, controller mode, and status detail</Text>}
                 />
                 <div className={styles.grid}>
                   <Metric label="total" value={String(resources.length)} />
@@ -3181,7 +3180,6 @@ function App() {
               <Card id="controllers-table" className={styles.connectionAnchor}>
                 <CardHeader
                   header={<Text weight="semibold">Controllers</Text>}
-                  description={<Text className={styles.muted}>Controller mode, reason, and resource ownership surface</Text>}
                 />
                 <div className={styles.grid}>
                   <Metric label="total" value={String(controllers.length)} />
@@ -3199,7 +3197,7 @@ function App() {
                   <Card id="clients-inventory" className={styles.connectionAnchor}>
                     <CardHeader
                       header={<Text weight="semibold">Client inventory</Text>}
-                      description={<Text className={styles.muted}>DHCP leases, neighbors, and observed traffic grouped by client. Showing {filteredClients.length} of {summary?.clients?.length ?? 0}</Text>}
+                      description={<Text className={styles.muted}>Showing {filteredClients.length} of {summary?.clients?.length ?? 0}</Text>}
                     />
                     <div className={styles.clientFilters}>
                       <SearchControl label="Search clients" value={clientQuery} placeholder="name, MAC, address, vendor, peer" onChange={setClientQuery} />
@@ -3216,13 +3214,13 @@ function App() {
                 ) : null}
                 {activeClientTargetID === "clients-traffic" ? (
                   <Card id="clients-traffic" className={styles.connectionAnchor}>
-                    <CardHeader header={<Text weight="semibold">Client traffic</Text>} description={<Text className={styles.muted}>Traffic grouped by client address</Text>} />
+                    <CardHeader header={<Text weight="semibold">Client traffic</Text>} />
                     <ClientTraffic flows={summary?.trafficFlows ?? []} onShowConnectionsForAddress={showAddressConnections} />
                   </Card>
                 ) : null}
                 {activeClientTargetID === "clients-leases" ? (
                   <Card id="clients-leases" className={styles.connectionAnchor}>
-                    <CardHeader header={<Text weight="semibold">DHCP leases</Text>} description={<Text className={styles.muted}>dnsmasq lease file entries</Text>} />
+                    <CardHeader header={<Text weight="semibold">DHCP leases</Text>} />
                     <DHCPLeaseTable leases={summary?.dhcpLeases ?? []} />
                   </Card>
                 ) : null}
@@ -3232,7 +3230,6 @@ function App() {
               <Card>
             <CardHeader
               header={<Text weight="semibold">Connections</Text>}
-              description={<Text className={styles.muted}>conntrack flows grouped by family and protocol</Text>}
             />
             <div className={styles.grid}>
               <Metric label="IPv4" value={String(connectionFamilyCount(summary?.connections, "ipv4"))} />
@@ -3396,14 +3393,12 @@ function App() {
                 <Card id="vpn-tailscale" className={styles.connectionAnchor}>
                   <CardHeader
                     header={<Text weight="semibold">Tailscale</Text>}
-                    description={<Text className={styles.muted}>Local node, advertised routes, and peers from tailscale status</Text>}
                   />
                   <TailscalePanel status={summary?.vpn?.tailscale} errors={summary?.vpn?.errors ?? []} />
                 </Card>
                 <Card id="vpn-wireguard" className={styles.connectionAnchor}>
                   <CardHeader
                     header={<Text weight="semibold">WireGuard</Text>}
-                    description={<Text className={styles.muted}>Kernel WireGuard interfaces and peers from wg show</Text>}
                   />
                   <WireGuardPanel interfaces={summary?.vpn?.wireGuard ?? []} errors={summary?.vpn?.errors ?? []} />
                 </Card>
@@ -3415,7 +3410,7 @@ function App() {
             {selected === "events" ? (
               <div className={styles.eventsGrid}>
                 <Card id="events-list" className={styles.connectionAnchor}>
-                  <CardHeader header={<Text weight="semibold">Events</Text>} description={<Text className={styles.muted}>Bus events from routerd controllers and daemons</Text>} />
+                  <CardHeader header={<Text weight="semibold">Events</Text>} />
                   <div className={styles.grid}>
                     <Metric label="total" value={String(events.length)} />
                     <Metric label="filter matched" value={String(filteredEvents.length)} />
@@ -3464,7 +3459,6 @@ function App() {
                 <Card>
                   <CardHeader
                     header={<Text weight="semibold">Deny activity</Text>}
-                    description={<Text className={styles.muted}>Drop/reject rate over the last 24 hours. Filters below narrow the ranking and timeline.</Text>}
                   />
                   <div className={styles.grid}>
                     <Metric label="total denies (24h)" value={String(denyTimelineTotal(firewallDenyTimeline))} />
@@ -3500,29 +3494,28 @@ function App() {
                   <Text size={200} className={styles.muted}>Showing {filteredFirewallLogs.length} of {firewallLogs.length} deny log rows</Text>
                 </Card>
                 <Card>
-                  <CardHeader header={<Text weight="semibold">Source IP top-N</Text>} description={<Text className={styles.muted}>Top denied sources in the filtered view</Text>} />
+                  <CardHeader header={<Text weight="semibold">Source IP top-N</Text>} />
                   <FirewallSourceTopN logs={filteredFirewallLogs} dnsLabels={dnsLabels} leases={leaseMap} onSourceClick={ip => setFirewallFilters(current => ({ ...current, source: ip }))} />
                 </Card>
                 <Card id="firewall-tuning" className={styles.connectionAnchor}>
                   <CardHeader
                     header={<Text weight="semibold">Tuning Suggestions</Text>}
-                    description={<Text className={styles.muted}>Read-only conntrack timeout recommendations from DPI flows and expired-return observations</Text>}
                   />
                   <ConntrackTuningView tuning={summary?.conntrackTuning} />
                 </Card>
                 <Card id="firewall-ranking" className={styles.connectionAnchor}>
-                  <CardHeader header={<Text weight="semibold">Deny ranking</Text>} description={<Text className={styles.muted}>Grouped by source, destination, and protocol</Text>} />
+                  <CardHeader header={<Text weight="semibold">Deny ranking</Text>} />
                   <RecentDeny logs={filteredFirewallLogs} dnsLabels={dnsLabels} leases={leaseMap} />
                 </Card>
                 <Card id="firewall-timeline" className={styles.connectionAnchor}>
-                  <CardHeader header={<Text weight="semibold">Deny timeline</Text>} description={<Text className={styles.muted}>Newest firewall log rows</Text>} />
+                  <CardHeader header={<Text weight="semibold">Deny timeline</Text>} />
                   <FirewallTimeline logs={filteredFirewallLogs} dnsLabels={dnsLabels} leases={leaseMap} />
                 </Card>
               </div>
             ) : null}
             {selected === "config" ? (
               <Card id="config-view" className={styles.connectionAnchor}>
-                <CardHeader header={<Text weight="semibold">Config</Text>} description={<Text className={styles.muted}>{config?.path ?? ""}</Text>} />
+                <CardHeader header={<Text weight="semibold">Config</Text>} />
                 <ConfigView config={config} latestGeneration={generations.find(row => row.hasYaml)} planDiff={configPlanDiff} loadPlanDiff={loadConfigPlanDiff} />
               </Card>
             ) : null}
@@ -3694,13 +3687,13 @@ function GenerationsView({
         </div>
         {diff ? (
           <Card id="generation-result" tabIndex={-1} aria-live="polite">
-            <CardHeader header={<Text weight="semibold">Diff</Text>} description={<Text className={styles.muted}>Unified diff between selected generations</Text>} />
+            <CardHeader header={<Text weight="semibold">Diff</Text>} />
             <DiffView diff={diff} />
           </Card>
         ) : null}
         {config ? (
           <Card id="generation-result" tabIndex={-1} aria-live="polite">
-            <CardHeader header={<Text weight="semibold">Generation #{config.generation}</Text>} description={<Text className={styles.muted}>Stored YAML snapshot</Text>} />
+            <CardHeader header={<Text weight="semibold">Generation #{config.generation}</Text>} />
             <div className={styles.diffPanel} data-routerd-scroll-key={`generation-${config.generation}-yaml`}><pre className={styles.pre}>{config.text}</pre></div>
           </Card>
         ) : null}
@@ -4047,31 +4040,31 @@ function OverviewDPIInsights({ flows, clients, connections, dpi }: { flows?: Tra
   return (
     <div id="overview-dpi" className={`${styles.dpiInsightGrid} ${styles.connectionAnchor}`}>
       <Card className={styles.chartCard}>
-        <CardHeader header={<Text weight="semibold">Classification</Text>} description={<Text className={styles.muted}>Active flow identification ratio from DPI and port fallback</Text>} />
+        <CardHeader header={<Text weight="semibold">Classification</Text>} />
         <ConnectionClassificationMeter stats={classification} />
       </Card>
       <Card className={styles.chartCard}>
-        <CardHeader header={<Text weight="semibold">DPI engine</Text>} description={<Text className={styles.muted}>Classifier and nDPI agent service status</Text>} />
+        <CardHeader header={<Text weight="semibold">DPI engine</Text>} />
         <DPIServiceSummary dpi={dpi} />
       </Card>
       <Card className={styles.chartCard}>
-        <CardHeader header={<Text weight="semibold">Top protocols</Text>} description={<Text className={styles.muted}>DPI protocols and weak port guesses from recent observed flows</Text>} />
+        <CardHeader header={<Text weight="semibold">Top protocols</Text>} />
         <RankList rows={protocols} empty={flowEmpty} formatLabel={formatProtocolRankLabel} formatValue={formatBytes} />
       </Card>
       <Card className={styles.chartCard}>
-        <CardHeader header={<Text weight="semibold">DPI sources</Text>} description={<Text className={styles.muted}>Observed flow volume by classifier source</Text>} />
+        <CardHeader header={<Text weight="semibold">DPI sources</Text>} />
         <RankList rows={sources} empty={flowEmpty} formatLabel={formatTrafficSourceLabel} formatValue={formatBytes} />
       </Card>
       <Card className={styles.chartCard}>
-        <CardHeader header={<Text weight="semibold">Top talkers</Text>} description={<Text className={styles.muted}>Clients with DPI-classified traffic volume</Text>} />
+        <CardHeader header={<Text weight="semibold">Top talkers</Text>} />
         <RankList rows={talkers} empty={flowEmpty} formatValue={formatBytes} />
       </Card>
       <Card className={styles.chartCard}>
-        <CardHeader header={<Text weight="semibold">Top SNI / domains</Text>} description={<Text className={styles.muted}>Recent TLS SNI, HTTP host, DNS, or reverse DNS labels</Text>} />
+        <CardHeader header={<Text weight="semibold">Top SNI / domains</Text>} />
         <RankList rows={domains} empty={flowEmpty} formatValue={formatBytes} />
       </Card>
       <Card className={styles.chartCard}>
-        <CardHeader header={<Text weight="semibold">Traffic classes</Text>} description={<Text className={styles.muted}>Active connection visibility from conntrack and DPI enrichment</Text>} />
+        <CardHeader header={<Text weight="semibold">Traffic classes</Text>} />
         <RankList rows={classes} empty={connectionEmpty} />
       </Card>
     </div>
@@ -4467,7 +4460,6 @@ function VRRPView({ resources, links }: { resources: ResourceStatus[]; links: Co
       <Card id="vrrp-summary" className={styles.connectionAnchor}>
         <CardHeader
           header={<Text weight="semibold">VRRP</Text>}
-          description={<Text className={styles.muted}>VirtualAddress role, priority, and transition status</Text>}
         />
         <div className={styles.grid}>
           <Metric label="virtual addresses" value={String(vrrp.length)} />
@@ -4479,7 +4471,6 @@ function VRRPView({ resources, links }: { resources: ResourceStatus[]; links: Co
       <Card id="vrrp-consoles" className={styles.connectionAnchor}>
         <CardHeader
           header={<Text weight="semibold">Management UI</Text>}
-          description={<Text className={styles.muted}>Configured peer and local console shortcuts</Text>}
         />
         {links.length ? (
           <div className={styles.linkGrid}>
@@ -4501,7 +4492,6 @@ function VRRPView({ resources, links }: { resources: ResourceStatus[]; links: Co
       <Card id="vrrp-addresses" className={styles.connectionAnchor}>
         <CardHeader
           header={<Text weight="semibold">Virtual addresses</Text>}
-          description={<Text className={styles.muted}>Role and effective priority from keepalived-backed VirtualAddress resources</Text>}
         />
         <div className={styles.tableWrap} data-routerd-scroll-key="vrrp-addresses">
           <Table size="small">
@@ -4539,7 +4529,6 @@ function VRRPView({ resources, links }: { resources: ResourceStatus[]; links: Co
       <Card id="vrrp-track" className={styles.connectionAnchor}>
         <CardHeader
           header={<Text weight="semibold">Track state</Text>}
-          description={<Text className={styles.muted}>Health checks and penalties contributing to effective priority</Text>}
         />
         <div className={styles.tableWrap} data-routerd-scroll-key="vrrp-track">
           <Table size="small">
@@ -4641,7 +4630,6 @@ function SAMView({ status }: { status: SAMStatusResponse | null }) {
       <Card id="sam-topology" className={styles.connectionAnchor}>
         <CardHeader
           header={<Text weight="semibold">Topology</Text>}
-          description={<Text className={styles.muted}>SAM node mesh: Spine (RR) and Leaf nodes</Text>}
         />
         {nodes.length === 0 ? (
           <Text className={styles.muted} style={{ padding: "1rem" }}>No SAMNodeSet configured</Text>
@@ -4746,7 +4734,6 @@ function SAMView({ status }: { status: SAMStatusResponse | null }) {
         <Card id="sam-tunnels" className={styles.connectionAnchor}>
           <CardHeader
             header={<Text weight="semibold">Transport Tunnels</Text>}
-            description={<Text className={styles.muted}>WireGuard overlay tunnels for SAM transport</Text>}
           />
           <Table size="small">
             <TableHeader><TableRow>
@@ -4775,7 +4762,6 @@ function SAMView({ status }: { status: SAMStatusResponse | null }) {
         <Card id="sam-federation" className={styles.connectionAnchor}>
           <CardHeader
             header={<Text weight="semibold">Event Federation</Text>}
-            description={<Text className={styles.muted}>Cross-node event bus groups for SAM coordination</Text>}
           />
           <Table size="small">
             <TableHeader><TableRow>
@@ -4849,7 +4835,6 @@ function RoutesView({ status }: { status: RoutesStatus | null }) {
     <Card id="routes-table" className={styles.connectionAnchor}>
       <CardHeader
         header={<Text weight="semibold">Routes</Text>}
-        description={<Text className={styles.muted}>Kernel, configured, DHCP, and BGP routes with next-hop and observation state</Text>}
       />
       <div className={styles.grid}>
         <Metric label="total routes" value={String(routes.length)} />
@@ -4974,7 +4959,7 @@ function RoutePeers({ peers }: { peers: RouteBGPPeer[] }) {
   if (peers.length === 0) return null;
   return (
     <div className={styles.routePeerSection}>
-      <CardHeader header={<Text weight="semibold">BGP peers</Text>} description={<Text className={styles.muted}>Peer state associated with BGP route observations</Text>} />
+      <CardHeader header={<Text weight="semibold">BGP peers</Text>} />
       <div className={`${styles.tableWrap} ${styles.resourceDesktopTable}`} data-routerd-scroll-key="routes-bgp-peers">
         <Table size="small" className={styles.resourceTable}>
           <TableHeader>
@@ -5230,7 +5215,7 @@ function EventDetail({ event, id }: { event?: RouterEvent; id?: string }) {
   const rows = [...baseRows, ...eventAttributeEntries(event)].filter(([, value]) => value !== undefined && value !== "");
   return (
     <Card id={id} className={styles.detailPanel}>
-      <CardHeader header={<Text weight="semibold">Detail</Text>} description={<Text className={styles.muted}>Event {event.id ?? "-"}</Text>} />
+      <CardHeader header={<Text weight="semibold">Detail</Text>} />
       <div className={styles.detailList}>
         {rows.map(([key, value]) => (
           <React.Fragment key={key}>
@@ -5562,7 +5547,6 @@ function OverviewActivity({
       <Card>
         <CardHeader
           header={<Text weight="semibold">Active alerts</Text>}
-          description={<Text className={styles.muted}>Resources that are not currently in a healthy applied phase</Text>}
           action={<Button size="small" appearance="secondary" onClick={() => navigateTo("resources")}>Resources</Button>}
         />
         {alerts.length === 0 ? (
@@ -5584,7 +5568,6 @@ function OverviewActivity({
       <Card>
         <CardHeader
           header={<Text weight="semibold">Recent changes</Text>}
-          description={<Text className={styles.muted}>Latest bus events observed by routerd</Text>}
           action={<Button size="small" appearance="secondary" onClick={() => navigateTo("events")}>Events</Button>}
         />
         {recent.length === 0 ? (
@@ -7900,18 +7883,17 @@ function ConnectionPurposeSummary({ table, resources, activePath, onSelect }: {
   const dsliteSNAT = Array.from(addresses).reduce((total, address) => total + (table?.bySNAT?.[address]?.total ?? 0), 0);
   const rows = [
     { key: "dslite-snat", label: "DS-Lite SNAT", count: dsliteSNAT },
-    { key: "other-snat", label: "その他のSNAT", count: Math.max(0, counts.sourceNAT - dsliteSNAT) },
-    { key: "external-without-nat", label: "外部宛て・SNATなし", count: counts.externalWithoutNAT },
+    { key: "other-snat", label: "Other SNAT", count: Math.max(0, counts.sourceNAT - dsliteSNAT) },
+    { key: "external-without-nat", label: "External, no SNAT", count: counts.externalWithoutNAT },
     { key: "local-redirect", label: "Local Redirect", count: counts.localRedirect },
-    { key: "internal", label: "内部・管理", count: counts.internal },
-    { key: "destination-nat", label: "その他の宛先変換", count: counts.destinationNAT },
-    { key: "unclassified", label: "未分類", count: counts.unclassified },
+    { key: "internal", label: "Internal / management", count: counts.internal },
+    { key: "destination-nat", label: "Other destination NAT", count: counts.destinationNAT },
+    { key: "unclassified", label: "Unclassified", count: counts.unclassified },
   ];
   const classifiedTotal = rows.reduce((total, row) => total + row.count, 0);
   return <Card>
     <CardHeader
-      header={<Text weight="semibold">IPv4通信の行き先</Text>}
-      description={<Text>同じconntrackスナップショットを用途別に分けています。各項目を選ぶと、読み込み済みの一覧を絞り込みます。</Text>}
+      header={<Text weight="semibold">IPv4 connection paths</Text>}
     />
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "8px" }}>
       {rows.map(row => <Button
@@ -7923,7 +7905,7 @@ function ConnectionPurposeSummary({ table, resources, activePath, onSelect }: {
         {row.label}: {row.count}
       </Button>)}
     </div>
-    <Text size={200} style={{ color: "#9aa4b2" }}>内訳合計 {classifiedTotal} / IPv4 {counts.ipv4}件。AFTR側だけで行われるNATはこの画面からは観測できません。</Text>
+    <Text size={200} style={{ color: "#9aa4b2" }}>Total: {classifiedTotal} / IPv4: {counts.ipv4}</Text>
   </Card>;
 }
 
@@ -7931,11 +7913,10 @@ function DSLiteNATSummary({ table, resources }: { table?: ConnectionTable; resou
   const tunnels = resources.filter(resource => resource.kind === "DSLiteTunnel");
   if (tunnels.length === 0) return null;
   return <Card>
-    <CardHeader header={<Text weight="semibold">routerdでSNATしたDS-Liteクライアント通信</Text>}
-      description={<Text>ルーター自身が開始した通信と、AFTR側だけで変換される通信は含みません。一覧の表示上限・絞り込みとは独立した集計です。同じSNATアドレスを共有するトンネルは合算値になります。</Text>} />
+    <CardHeader header={<Text weight="semibold">DS-Lite SNAT entries</Text>} />
     <div style={{ overflowX: "auto" }}>
-      <table className="dslite-nat-summary" aria-label="routerdでSNATしたDS-Liteクライアント通信">
-        <thead><tr><th>トンネル</th><th>SNATアドレス</th><th>合計</th><th>TCP</th><th>UDP</th><th>その他</th></tr></thead>
+      <table className="dslite-nat-summary" aria-label="DS-Lite SNAT entries">
+        <thead><tr><th>Tunnel</th><th>SNAT address</th><th>Total</th><th>TCP</th><th>UDP</th><th>Other</th></tr></thead>
         <tbody>{tunnels.map(resource => {
           const address = String(resource.status?.innerLocalIPv4 ?? "");
           const count = address && table?.bySNAT != null
