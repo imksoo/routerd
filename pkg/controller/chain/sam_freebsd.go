@@ -90,6 +90,10 @@ func (freeBSDSAMProxyNeighborApplier) SetIPForwarding(ctx context.Context, enabl
 	return nil
 }
 
+func (freeBSDSAMProxyNeighborApplier) ListProxyNeighbors(context.Context) ([]samObservedProxy, error) {
+	return nil, nil
+}
+
 func (freeBSDSAMProxyNeighborApplier) EnsureProxyNeighbor(ctx context.Context, address, ifname string) error {
 	ip, err := samIPv4Address(address)
 	if err != nil {
@@ -152,7 +156,7 @@ func (freeBSDSAMProxyNeighborApplier) EnsureOSAddressAbsent(ctx context.Context,
 	return false, nil
 }
 
-func (freeBSDSAMProxyNeighborApplier) ReconcileForwardPaths(ctx context.Context, paths []sam.CaptureAction) error {
+func (freeBSDSAMProxyNeighborApplier) ReconcileForwardPaths(ctx context.Context, paths, held []sam.CaptureAction) error {
 	freeBSDSAMForwardPathMu.Lock()
 	defer freeBSDSAMForwardPathMu.Unlock()
 
@@ -167,7 +171,38 @@ func (freeBSDSAMProxyNeighborApplier) ReconcileForwardPaths(ctx context.Context,
 		}
 		return fmt.Errorf("pfctl -a %s -sr: %w: %s", freeBSDSAMForwardAnchor, err, strings.TrimSpace(string(out)))
 	}
-	if len(paths) == 0 {
+	rules, err := freeBSDSAMForwardRules(paths)
+	if err != nil {
+		return err
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 || fields[0] != "pass" {
+			continue
+		}
+		var iface, source, destination string
+		for i, field := range fields {
+			if i+1 >= len(fields) {
+				break
+			}
+			switch field {
+			case "on":
+				iface = fields[i+1]
+			case "from":
+				source = strings.TrimSuffix(fields[i+1], "/32")
+			case "to":
+				destination = strings.TrimSuffix(fields[i+1], "/32")
+			}
+		}
+		for _, path := range held {
+			address := strings.TrimSuffix(path.Address, "/32")
+			if (iface == path.PeerInterface && source == address && destination == "any") || (iface == path.Interface && source == "any" && destination == address) {
+				rules = append(rules, line)
+				break
+			}
+		}
+	}
+	if len(rules) == 0 {
 		if strings.TrimSpace(string(out)) == "" {
 			return nil
 		}
@@ -177,11 +212,12 @@ func (freeBSDSAMProxyNeighborApplier) ReconcileForwardPaths(ctx context.Context,
 		}
 		return nil
 	}
-	if err := freeBSDSAMForwardAnchorReachable(ctx); err != nil {
-		return err
+	if len(paths) == 0 {
+		if err := (freeBSDSAMProxyNeighborApplier{}).SetIPForwarding(ctx, true); err != nil {
+			return err
+		}
 	}
-	rules, err := freeBSDSAMForwardRules(paths)
-	if err != nil {
+	if err := freeBSDSAMForwardAnchorReachable(ctx); err != nil {
 		return err
 	}
 	loaded, loadErr := freeBSDSAMRunCommandInput(ctx, "pfctl", strings.Join(rules, "\n")+"\n", "-a", freeBSDSAMForwardAnchor, "-f", "-")

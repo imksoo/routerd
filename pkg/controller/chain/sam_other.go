@@ -29,6 +29,10 @@ func (unsupportedSAMProxyNeighborApplier) SetIPForwarding(context.Context, bool)
 	return nil
 }
 
+func (unsupportedSAMProxyNeighborApplier) ListProxyNeighbors(context.Context) ([]samObservedProxy, error) {
+	return nil, nil
+}
+
 func (unsupportedSAMProxyNeighborApplier) EnsureProxyNeighbor(context.Context, string, string) error {
 	return fmt.Errorf("SAM capture not implemented on this OS")
 }
@@ -41,7 +45,7 @@ func (unsupportedSAMProxyNeighborApplier) EnsureOSAddressAbsent(context.Context,
 	return false, nil
 }
 
-func (unsupportedSAMProxyNeighborApplier) ReconcileForwardPaths(context.Context, []sam.CaptureAction) error {
+func (unsupportedSAMProxyNeighborApplier) ReconcileForwardPaths(context.Context, []sam.CaptureAction, []sam.CaptureAction) error {
 	return nil
 }
 

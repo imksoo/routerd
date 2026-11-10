@@ -146,6 +146,25 @@ func htons(value uint16) uint16 {
 	return (value<<8)&0xff00 | value>>8
 }
 
+func (netlinkSAMProxyNeighborApplier) ListProxyNeighbors(_ context.Context) ([]samObservedProxy, error) {
+	entries, err := netlink.NeighProxyList(0, netlink.FAMILY_V4)
+	if err != nil {
+		return nil, err
+	}
+	var neighbors []samObservedProxy
+	for _, entry := range entries {
+		if entry.IP.To4() == nil {
+			continue
+		}
+		iface, err := net.InterfaceByIndex(entry.LinkIndex)
+		if err != nil {
+			return nil, err
+		}
+		neighbors = append(neighbors, samObservedProxy{Address: entry.IP.String() + "/32", Interface: iface.Name})
+	}
+	return neighbors, nil
+}
+
 func (netlinkSAMProxyNeighborApplier) EnsureProxyNeighbor(_ context.Context, address, ifname string) error {
 	link, neigh, err := samProxyNeighbor(address, ifname)
 	if err != nil {
@@ -197,7 +216,7 @@ func (netlinkSAMProxyNeighborApplier) EnsureOSAddressAbsent(_ context.Context, a
 	return result, nil
 }
 
-func (netlinkSAMProxyNeighborApplier) ReconcileForwardPaths(ctx context.Context, paths []sam.CaptureAction) error {
+func (netlinkSAMProxyNeighborApplier) ReconcileForwardPaths(ctx context.Context, paths, held []sam.CaptureAction) error {
 	samForwardPathMu.Lock()
 	defer samForwardPathMu.Unlock()
 
@@ -245,22 +264,55 @@ func (netlinkSAMProxyNeighborApplier) ReconcileForwardPaths(ctx context.Context,
 		return paths[i].PeerInterface < paths[j].PeerInterface
 	})
 	desired := map[string][]string{}
+	heldCandidates := map[string][]string{}
+	heldRules := map[string][]string{}
 	acceptLocal := map[string]bool{}
-	for _, path := range paths {
+	addPath := func(rules map[string][]string, path sam.CaptureAction) {
 		address := strings.TrimSpace(path.Address)
 		captureIface := strings.TrimSpace(path.Interface)
 		tunnelIface := strings.TrimSpace(path.PeerInterface)
 		if address == "" || captureIface == "" || tunnelIface == "" {
-			continue
+			return
 		}
-		acceptLocal[captureIface] = true
-		acceptLocal[tunnelIface] = true
 		if path.Kind == "forward-local-path" {
-			addDesiredIPTablesRule(desired, "-i", tunnelIface, "-o", captureIface, "-d", address, "-j", "ACCEPT")
-			addDesiredIPTablesRule(desired, "-i", captureIface, "-o", tunnelIface, "-s", address, "-j", "ACCEPT")
+			addDesiredIPTablesRule(rules, "-i", tunnelIface, "-o", captureIface, "-d", address, "-j", "ACCEPT")
+			addDesiredIPTablesRule(rules, "-i", captureIface, "-o", tunnelIface, "-s", address, "-j", "ACCEPT")
 		} else {
-			addDesiredIPTablesRule(desired, "-i", captureIface, "-o", tunnelIface, "-d", address, "-j", "ACCEPT")
-			addDesiredIPTablesRule(desired, "-i", tunnelIface, "-o", captureIface, "-s", address, "-j", "ACCEPT")
+			addDesiredIPTablesRule(rules, "-i", captureIface, "-o", tunnelIface, "-d", address, "-j", "ACCEPT")
+			addDesiredIPTablesRule(rules, "-i", tunnelIface, "-o", captureIface, "-s", address, "-j", "ACCEPT")
+		}
+	}
+	for _, path := range paths {
+		addPath(desired, path)
+		acceptLocal[path.Interface] = true
+		acceptLocal[path.PeerInterface] = true
+	}
+	for _, path := range held {
+		addPath(heldCandidates, path)
+	}
+	if len(heldCandidates) != 0 {
+		out, err := runIPTables("-S", chain)
+		if err != nil {
+			return fmt.Errorf("iptables -S %s: %w: %s", chain, err, strings.TrimSpace(string(out)))
+		}
+		for _, line := range strings.Split(string(out), "\n") {
+			prefix := "-A " + chain + " "
+			if !strings.HasPrefix(line, prefix) {
+				continue
+			}
+			rule := strings.Fields(strings.TrimPrefix(line, prefix))
+			key := iptablesRuleKey(rule)
+			if _, ok := heldCandidates[key]; ok {
+				heldRules[key] = rule
+				for _, ifname := range forwardPathInterfacesFromRule(rule) {
+					acceptLocal[ifname] = true
+				}
+			}
+		}
+	}
+	if len(paths) == 0 && len(heldRules) != 0 {
+		if err := (netlinkSAMProxyNeighborApplier{}).SetIPForwarding(ctx, true); err != nil {
+			return err
 		}
 	}
 	for ifname := range acceptLocal {
@@ -287,6 +339,9 @@ func (netlinkSAMProxyNeighborApplier) ReconcileForwardPaths(ctx context.Context,
 		if err := ensureIPTablesRule(chain, runIPTables, rule...); err != nil {
 			return err
 		}
+	}
+	for key, rule := range heldRules {
+		desired[key] = rule
 	}
 	if err := deleteStaleIPTablesRules(chain, desired, runIPTables); err != nil {
 		return err
