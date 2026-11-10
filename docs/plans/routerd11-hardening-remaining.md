@@ -22,7 +22,7 @@
 
 ## 作業順序
 
-### 1. Health判定の重複を減らす — 未着手
+### 1. Health判定の重複を減らす — 実施済み
 
 [経路選択](../../pkg/egressroute/selection.go)と[PBR](../../pkg/controller/chain/policyroute.go)で重複しているHealth観測の読み取り、失敗閾値、有効期限の判定を小さく共通化する。現在のStore/API境界を使い、内部で必要な具体型へ一度変換する。同じ観測と基準時刻なら同じ判定になるようにし、既存の閾値・期限の意味を維持する。置き換えた解析・判定処理を削除する。
 
@@ -30,7 +30,7 @@
 
 完了条件は、重複した判断がなくなり、対象のビルドが通り、使用中のhomertで経路選択・カーネルの経路/nftables・実クライアント通信が整合すること。障害時の確認は第3段階で続ける。
 
-### 2. 同じ設定のapplyによる復元を確かめる — 実機未確認
+### 2. 同じ設定のapplyによる復元を確かめる — 使用中の対象で確認
 
 現在使用中の対象で、設定された実体の変更・削除、設定外の追加、生成ファイルの変更からの復元を、一つずつ確認する。アドレス・経路・policy rule、Bridge、WireGuard、VXLAN、トンネル、SAM proxy設定は、実設定で使用するものを選ぶ。WireGuardを使用する対象では、設定と鍵ファイルを変えずにカーネルの鍵が変わった場合も含める。未使用機能を試すための構成は追加しない。
 
@@ -38,19 +38,19 @@
 
 完了条件は、確認した相違がapplyで解消され、必要な動的状態が残ること。Healthy表示だけで完了としない。失敗を見つけたら、その適用経路を小さく直して同じ実機で再確認する。
 
-### 3. 上流断・復帰とHealth helperの再起動を確かめる — 実機未確認
+### 3. 上流断・復帰とHealth helperの再起動を確かめる — 実機確認済み
 
 homertの実際のWANと実クライアントを使い、一方の上流を止めた時の代替経路への切替と、戻した時の設定どおりの選択を確認する。Health helperの再起動も別に行い、古い観測だけで経路を選び続けず、新しい観測に基づく通常動作へ戻ることを確認する。
 
 完了条件は、Health観測、選択結果、カーネルの経路/nftables、実通信が一致すること。設定・プロトコルにある期限で判断し、独自の短時間合格条件は設けない。
 
-### 4. homertのVRRP切替と動的設定の復帰を確かめる — 実機未確認
+### 4. homertのVRRP切替と動的設定の復帰を確かめる — 一部実機確認
 
 homert02・03の現在のmaster/backupを確認し、master側を停止してbackup側への引き継ぎを確認する。復帰後の役割は現在の優先度・preempt設定に従う。VIP、経路、DNS、実クライアント通信と、役割に依存するDHCP/PDの取得・更新・撤去を確認する。
 
 完了条件は、設定に従う役割で必要な通信と動的更新が再開し、不要になったVIP・経路・prefixが各機能の期限に従って撤去されること。動的な取得値を静的YAMLへ書き込まない。
 
-### 5. pve-rt・k8s-rtのSAM切替と復帰を確かめる — 実機未確認
+### 5. pve-rt・k8s-rtのSAM切替と復帰を確かめる — 片系で実機確認済み
 
 現在のSAM構成から、対象のアドレス、転送経路、切替先と実クライアントを確定する。該当する稼働ノードまたは実経路を一つ停止し、復帰させる。既存の構成で必要な切替について、BGP広告、トンネル、proxy neighbor、選択されたアドレスへの実通信を前後で確認する。
 
@@ -77,4 +77,5 @@ homert02・03の現在のmaster/backupを確認し、master側を停止してbac
 - 同日、待機側homert03の静的IPv4アドレス、Health監視用の経路・policy ruleをそれぞれ削除し、同一設定apply後に復元を確認。sysctl生成ファイルの変更も元に戻り、実行時sysctl、Health、主従とchattyからの通信は正常だった。通常reconcileとapplyの寄与は分離していない。
 - 同日、homert03に設定外のIPv4アドレス、main経路、fwmark policy ruleをそれぞれ一時追加し、同一設定apply後に撤去を確認。既存アドレス・経路・rule、管理DHCP、VPN、主従とchattyの通信は維持された。通常reconcileとapplyの寄与は分離していない。
 - 同日、homert03に送信元prefix指定の余剰ruleを追加し、apply後に撤去を確認。待機側のNTP向け静的経路を完全設定から一時的に除き、`--replace` applyで撤去された後、元の完全設定を再applyして経路を復元した。両applyはHealthy。
-- 同日、homert02のDHCPv6-PD helperの通常renewを実行し、Reply・更新イベント、同じprefixのBound、委譲アドレス・DS-Lite経路とchattyの通信を確認した。chattyのDHCPv4 renew後も通信は維持されたが、server側のREQUEST・ACKとの時刻上の対応は未確認。pve-rt03ではsvnet側DHCPv4の通常renewで送信・lease Boundを確認し、アドレス、SAM経路・BGPと対向通信は維持された。k8s-rt両台でも公開版daemon投入後の自然更新イベントを確認したが、稼働中helperと公開版のビルド一致は未確認。
+- 同日、homert02のDHCPv6-PD helperの通常renewを実行し、Reply・更新イベント、同じprefixのBound、委譲アドレス・DS-Lite経路とchattyの通信を確認した。chattyのDHCPv4は再度のrenew時刻とサーバー側のREQUEST・ACKが一致し、アドレスと通信を維持。lease期限の延長は確認できなかった。pve-rt03ではsvnet側DHCPv4の通常renewで送信・lease Boundを確認し、アドレス、SAM経路・BGPと対向通信は維持された。k8s-rt両台でも公開版daemon投入後の自然更新イベントを確認したが、稼働中helperと公開版のビルド一致は未確認。
+- 最終確認時、homert02はmaster、homert03はbackupで、IPv4 VIPはmasterのみ。backupのDOWN状態のVMACには現在有効なprefixのIPv6アドレスがstagedとして残り、RAはPendingで、該当IPv6経路はなかった。backupのPD leaseはBoundかつ未期限切れで、実装は有効なleaseから待機側へ事前設定する。異なる旧prefixは観測されなかった。prefix変更や期限切れ後の撤去は実機未確認。
