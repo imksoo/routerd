@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20261110.0347
+
 ### Changed
 
 - 設定の反映を簡潔にし、適用時の所有履歴と不要なコードを削除しました。
