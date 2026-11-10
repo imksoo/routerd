@@ -4504,7 +4504,7 @@ type managedPreviousDelegatedAddress struct {
 }
 
 func derivePreviousDelegatedAddresses(snapshot pdclient.Snapshot, currentPrefix string, spec api.IPv6DelegatedAddressSpec, now time.Time) ([]managedPreviousDelegatedAddress, error) {
-	if spec.PrefixLength == 128 || snapshot.CurrentPrefix != currentPrefix {
+	if snapshot.CurrentPrefix != currentPrefix {
 		return nil, nil
 	}
 	current, err := netip.ParsePrefix(currentPrefix)
