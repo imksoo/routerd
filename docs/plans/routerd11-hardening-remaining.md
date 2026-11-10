@@ -46,9 +46,9 @@ homertの実際のWANと実クライアントを使い、一方の上流を止�
 
 ### 4. homertのVRRP切替と動的設定の復帰を確かめる — 一部実機確認
 
-homert02・03の現在のmaster/backupを確認し、master側を停止してbackup側への引き継ぎを確認する。復帰後の役割は現在の優先度・preempt設定に従う。VIP、経路、DNS、実クライアント通信と、役割に依存するDHCP/PDの取得・更新・撤去を確認する。
+homert02・03の現在のmaster/backupを確認し、master側を停止してbackup側への引き継ぎを確認する。復帰後の役割は現在の優先度・preempt設定に従う。VIP、経路、DNS、実クライアント通信と、役割に依存するDHCP/PDの取得・通常更新を確認する。VRRP遷移では旧masterのRA router lifetimeを0にして既定ルーター広告を撤去する一方、現在の委譲global addressはdown状態のVMACにstagedとして残す実装である。これはPD prefix変更による旧prefixのdeprecated広告とは別の処理である。prefix変動を人為的に発生させる試験は、所有者指示により今回の対象外とする。自然に観測できた状態は記録するが、変動発生を待つことは完了条件にしない。
 
-完了条件は、設定に従う役割で必要な通信と動的更新が再開し、不要になったVIP・経路・prefixが各機能の期限に従って撤去されること。動的な取得値を静的YAMLへ書き込まない。
+完了条件は、設定に従う役割で必要な通信と動的更新が再開し、不要になったVIP・経路が各機能の規則に従って撤去されること。動的な取得値を静的YAMLへ書き込まない。
 
 ### 5. pve-rt・k8s-rtのSAM切替と復帰を確かめる — 片系で実機確認済み
 
@@ -83,3 +83,5 @@ homert02・03の現在のmaster/backupを確認し、master側を停止してbac
 - 追加のソース調査で、PD prefix変更時にDS-Lite用 `/128` が旧leaseの期限付き処理から除外され、旧アドレスが無期限に残り得る経路を確認した。`c179c950` で除外条件を削り、有効な旧leaseの期限に基づく既存の処理を使う。homert03・02へ順次投入し、両機の同一設定apply Healthy、主従、PD、Health、経路、chattyのHTTPS・DNSを確認した。実際のprefix変更・失効は発生しておらず、その条件での撤去は実機未確認。
 - 同日、homert02で非選択の `ds-lite-ra` のMTUを1450に変更し、完全設定のapply後に設定値1454への復元を確認した。通常reconcileとapplyの寄与は分離していない。主従、PD、4経路のHealth、chattyのHTTPS・DNSは正常だった。homert両機とpve-rt・k8s-rt全10台の現行設定と実体には、routerd管理のBridge・WireGuard・VXLANは確認されなかった。
 - 同日、実機12台に旧networkd drop-inと旧単独eventd unitがないことを確認し、`ef2edb58` でその移行処理を削除した。homert両機に適用し、主従、現行adoption、PD、Health、HTTPS・DNSを確認。pve-rt03では変更版を一時起動し、EventGroupの7 peerへの配信、BGP 2/2、SAM経路・proxyと対向通信を確認後、公開版へ戻した。既存のSAM `.0/32` WARNは残る。
+- 2026-11-10 22:56 UTC、homert担当Codexが現行設定・実体を再確認。両機は `f4da703f` ビルド、homert02 master・homert03 backup、BGP各2対向 Established。`dslite-pd-balanced` のHealthと経路表110～112・nftables 3 mark・実クライアント通信は一致。DS-Lite経路は同じWAN物理側を共有し、IX2215の通常候補はHealthを参照しない。上流機器停止と再VRRP切替は独立した復旧経路を確認できず実施しなかった。前回の一経路パケット遮断によるHealth切替・復帰は既に確認済みだが、上流機器そのものの停止は未確認。現在のPD prefixは `2409:10:3d60:1220::/60`、previousPrefixesは空。prefix変動試験は所有者指示により今回の対象外とし、変動・失効後の撤去を確認する試験は行わない。VRRP直後の管理断時間も未測定。今回の状態確認のみではこれらの条件を実証していない。
+- 2026-11-10 23:04 UTC、既存 `~/k8s` Codexがpve07 / VM 153上のk8s-rt-02を約56秒一時停止し、PVEからの自動復帰を確認。停止中は全8 leafがBGP 1/2へ収束し、対象経路・proxyとhomert02↔03のICMP 3/3・TCP、API VIP HTTP 200を確認。復帰後、全8 leafがBGP 2/2、k8s-rt-02が一時10/14から14/14へ自然収束し、両IPIP・対象2経路・proxy・端末通信も復帰した。停止に伴う約55秒のゲスト時計遅れはPVE時刻で補正し、chrony Normalを確認。設定ファイルのSHA-256は前後一致。コード・テスト・模擬環境は変更していない。SAM `.0/32` WARNは残り、core完全停止や全対象アドレスの網羅確認は未実施。
