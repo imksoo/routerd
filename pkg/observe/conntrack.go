@@ -15,13 +15,24 @@ import (
 )
 
 type ConnectionTable struct {
-	Count    int                        `json:"count" yaml:"count"`
-	Max      int                        `json:"max,omitempty" yaml:"max,omitempty"`
-	ByMark   map[string]int             `json:"byMark,omitempty" yaml:"byMark,omitempty"`
-	ByFamily map[string]int             `json:"byFamily,omitempty" yaml:"byFamily,omitempty"`
-	BySNAT   *map[string]NATEntryCounts `json:"bySNAT,omitempty" yaml:"bySNAT,omitempty"`
-	Entries  []ConnectionEntry          `json:"entries,omitempty" yaml:"entries,omitempty"`
-	Stats    []ConntrackCPUStats        `json:"stats,omitempty" yaml:"stats,omitempty"`
+	Count     int                        `json:"count" yaml:"count"`
+	Max       int                        `json:"max,omitempty" yaml:"max,omitempty"`
+	ByMark    map[string]int             `json:"byMark,omitempty" yaml:"byMark,omitempty"`
+	ByFamily  map[string]int             `json:"byFamily,omitempty" yaml:"byFamily,omitempty"`
+	BySNAT    *map[string]NATEntryCounts `json:"bySNAT,omitempty" yaml:"bySNAT,omitempty"`
+	ByPurpose *ConnectionPurposeCounts   `json:"byPurpose,omitempty" yaml:"byPurpose,omitempty"`
+	Entries   []ConnectionEntry          `json:"entries,omitempty" yaml:"entries,omitempty"`
+	Stats     []ConntrackCPUStats        `json:"stats,omitempty" yaml:"stats,omitempty"`
+}
+
+type ConnectionPurposeCounts struct {
+	IPv4               int `json:"ipv4" yaml:"ipv4"`
+	SourceNAT          int `json:"sourceNAT" yaml:"sourceNAT"`
+	LocalRedirect      int `json:"localRedirect" yaml:"localRedirect"`
+	DestinationNAT     int `json:"destinationNAT" yaml:"destinationNAT"`
+	ExternalWithoutNAT int `json:"externalWithoutNAT" yaml:"externalWithoutNAT"`
+	Internal           int `json:"internal" yaml:"internal"`
+	Unclassified       int `json:"unclassified" yaml:"unclassified"`
 }
 
 // NATEntryCounts counts local IPv4 SNAT state, not provider-side AFTR state.
@@ -70,7 +81,15 @@ type ConnectionEntry struct {
 	TLSSNI        string            `json:"tlsSNI,omitempty" yaml:"tlsSNI,omitempty"`
 	HTTPHost      string            `json:"httpHost,omitempty" yaml:"httpHost,omitempty"`
 	DNSQuery      string            `json:"dnsQuery,omitempty" yaml:"dnsQuery,omitempty"`
+	Purpose       string            `json:"purpose,omitempty" yaml:"purpose,omitempty"`
 	RawAttributes map[string]string `json:"rawAttributes,omitempty" yaml:"rawAttributes,omitempty"`
+}
+
+func (table *ConnectionTable) LimitEntries(limit int) {
+	if table == nil {
+		return
+	}
+	table.Entries = selectConnectionEntries(table.Entries, limit)
 }
 
 type LocalRedirect struct {

@@ -265,6 +265,15 @@ type ConnectionTable = {
   max?: number;
   byFamily?: Record<string, number>;
   bySNAT?: Record<string, { total: number; tcp: number; udp: number; other: number }> | null;
+  byPurpose?: {
+    ipv4: number;
+    sourceNAT: number;
+    localRedirect: number;
+    destinationNAT: number;
+    externalWithoutNAT: number;
+    internal: number;
+    unclassified: number;
+  };
   entries?: ConnectionEntry[];
 };
 
@@ -298,6 +307,7 @@ type ConnectionEntry = {
   tlsSNI?: string;
   httpHost?: string;
   dnsQuery?: string;
+  purpose?: string;
 };
 
 type LocalRedirect = {
@@ -637,6 +647,7 @@ type ConnectionFilters = {
   state: string;
   sort: string;
   direction: string;
+  path: string;
 };
 
 type FirewallFilters = {
@@ -2565,6 +2576,7 @@ function App() {
     state: "all",
     sort: "traffic",
     direction: "desc",
+    path: "all",
   });
   const [firewallFilters, setFirewallFilters] = useState<FirewallFilters>({
     query: "",
@@ -2783,12 +2795,13 @@ function App() {
   }, [generations, generationFrom, generationTo]);
 
   const connections = summary?.connections?.entries ?? [];
+  const dsliteAddresses = useMemo(() => dsliteSNATAddresses(summary?.resources ?? []), [summary?.resources]);
   const dnsLabels = useMemo(() => dnsLabelMap(summary?.dnsQueries ?? []), [summary?.dnsQueries]);
   const leaseMap = useMemo(() => dhcpLeaseMap(summary?.dhcpLeases ?? []), [summary?.dhcpLeases]);
   const clientIdentities = useMemo(() => clientIdentityMap(summary?.clients ?? []), [summary?.clients]);
   const connectionCandidates = useMemo(
-    () => filterConnections(connections, dnsLabels, clientIdentities, connectionFilters),
-    [connections, dnsLabels, clientIdentities, connectionFilters],
+    () => filterConnections(connections, dnsLabels, clientIdentities, connectionFilters, dsliteAddresses),
+    [connections, dnsLabels, clientIdentities, connectionFilters, dsliteAddresses],
   );
   const connectionSortSignature = [
     connectionFilters.query,
@@ -2800,6 +2813,7 @@ function App() {
     connectionFilters.state,
     connectionFilters.sort,
     connectionFilters.direction,
+    connectionFilters.path,
     connectionSortRevision,
   ].join("\u0001");
   const filteredConnections = useMemo(() => {
@@ -3226,6 +3240,12 @@ function App() {
               <Metric label="Showing" value={connectionShowingValue(summary?.connections, filteredConnections.length)} />
               <Metric label="Groups" value={String(connectionGroupsList.length)} />
             </div>
+            <ConnectionPurposeSummary
+              table={summary?.connections}
+              resources={summary?.resources ?? []}
+              activePath={connectionFilters.path}
+              onSelect={path => updateConnectionFilter("path", path)}
+            />
             <DSLiteNATSummary table={summary?.connections} resources={summary?.resources ?? []} />
             <div className={styles.connectionJumpBar}>
               <Button size="small" appearance="secondary" icon={<ArrowUpRegular />} onClick={scrollToTop}>Top</Button>
@@ -3266,6 +3286,19 @@ function App() {
             ) : null}
             <div className={styles.connectionFilters}>
               <SearchControl label="Filter" value={connectionFilters.query} placeholder="address, port, state, label" onChange={value => updateConnectionFilter("query", value)} />
+              <div className={styles.filterControl}>
+                <Text size={200} className={styles.muted}>Path</Text>
+                <Select size="small" value={connectionFilters.path} onChange={event => updateConnectionFilter("path", event.target.value)}>
+                  <option value="all">All</option>
+                  <option value="dslite-snat">DS-Lite client SNAT</option>
+                  <option value="other-snat">Other SNAT</option>
+                  <option value="local-redirect">Local Redirect</option>
+                  <option value="external-without-nat">External without SNAT</option>
+                  <option value="internal">Internal / management</option>
+                  <option value="destination-nat">Other destination translation</option>
+                  <option value="unclassified">Unclassified</option>
+                </Select>
+              </div>
               <div className={styles.filterControl}>
                 <Text size={200} className={styles.muted}>Family</Text>
                 <Select size="small" value={connectionFilters.family} onChange={event => updateConnectionFilter("family", event.target.value)}>
@@ -7018,11 +7051,12 @@ function resourceSearchText(resource: ResourceStatus) {
   ].filter(Boolean).join(" ").toLowerCase();
 }
 
-function filterConnections(entries: ConnectionEntry[], dnsLabels: Record<string, string>, clientIdentities: Map<string, ClientIdentity>, filters: ConnectionFilters) {
+function filterConnections(entries: ConnectionEntry[], dnsLabels: Record<string, string>, clientIdentities: Map<string, ClientIdentity>, filters: ConnectionFilters, dsliteAddresses: Set<string>) {
   const query = filters.query.trim().toLowerCase();
   const clientAddresses = splitConnectionClientFilter(filters.client);
   return entries.filter(entry => {
     if (clientAddresses.length > 0 && !connectionTouchesAnyAddress(entry, clientAddresses)) return false;
+    if (filters.path !== "all" && connectionDisplayPath(entry, dsliteAddresses) !== filters.path) return false;
     if (filters.family !== "all" && normalizeFacet(entry.family, "other") !== filters.family) return false;
     if (filters.protocol !== "all" && normalizeFacet(entry.protocol, "other") !== filters.protocol) return false;
     if (filters.app !== "all" && connectionApp(entry) !== filters.app) return false;
@@ -7842,14 +7876,69 @@ function stringSort(a: string, b: string) {
   return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
 }
 
+function dsliteSNATAddresses(resources: ResourceStatus[]) {
+  return new Set(resources
+    .filter(resource => resource.kind === "DSLiteTunnel")
+    .map(resource => String(resource.status?.innerLocalIPv4 ?? ""))
+    .filter(Boolean));
+}
+
+function connectionDisplayPath(entry: ConnectionEntry, dsliteAddresses: Set<string>) {
+  if (entry.purpose !== "source-nat") return entry.purpose || "unclassified";
+  return dsliteAddresses.has(String(entry.reply?.destination ?? "")) ? "dslite-snat" : "other-snat";
+}
+
+function ConnectionPurposeSummary({ table, resources, activePath, onSelect }: {
+  table?: ConnectionTable;
+  resources: ResourceStatus[];
+  activePath: string;
+  onSelect: (path: string) => void;
+}) {
+  const counts = table?.byPurpose;
+  if (!counts) return null;
+  const addresses = dsliteSNATAddresses(resources);
+  const dsliteSNAT = Array.from(addresses).reduce((total, address) => total + (table?.bySNAT?.[address]?.total ?? 0), 0);
+  const rows = [
+    { key: "dslite-snat", label: "DS-LiteクライアントSNAT", count: dsliteSNAT, detail: "LANクライアントをトンネル側アドレスへ変換" },
+    { key: "other-snat", label: "その他のSNAT", count: Math.max(0, counts.sourceNAT - dsliteSNAT), detail: "DS-Lite以外の送信元変換" },
+    { key: "external-without-nat", label: "外部宛て（SNATなし）", count: counts.externalWithoutNAT, detail: "ルーター自身の監視など、送信元を変換せず外部へ送信" },
+    { key: "local-redirect", label: "Local Redirect", count: counts.localRedirect, detail: "DNS・NTPなどをルーター内サービスへ転送" },
+    { key: "internal", label: "内部・管理通信", count: counts.internal, detail: "loopback、LAN、管理・制御サービス間の通信" },
+    { key: "destination-nat", label: "その他の宛先変換", count: counts.destinationNAT, detail: "Local Redirect以外の宛先変換" },
+    { key: "unclassified", label: "未分類", count: counts.unclassified, detail: "宛先を判定できなかった通信" },
+  ];
+  const classifiedTotal = rows.reduce((total, row) => total + row.count, 0);
+  return <Card>
+    <CardHeader
+      header={<Text weight="semibold">IPv4通信の行き先</Text>}
+      description={<Text>同じconntrackスナップショットを用途別に分けています。各項目を選ぶと、読み込み済みの一覧を絞り込みます。</Text>}
+    />
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "8px" }}>
+      {rows.map(row => <Button
+        key={row.key}
+        appearance={activePath === row.key ? "primary" : "secondary"}
+        onClick={() => onSelect(activePath === row.key ? "all" : row.key)}
+        title={row.detail}
+        style={{ height: "auto", padding: "10px", justifyContent: "flex-start" }}
+      >
+        <span style={{ display: "grid", gap: "2px", textAlign: "left" }}>
+          <strong>{row.label}: {row.count}</strong>
+          <span>{row.detail}</span>
+        </span>
+      </Button>)}
+    </div>
+    <Text size={200} style={{ color: "#9aa4b2" }}>内訳合計 {classifiedTotal} / IPv4 {counts.ipv4}件。AFTR側だけで行われるNATはこの画面からは観測できません。</Text>
+  </Card>;
+}
+
 function DSLiteNATSummary({ table, resources }: { table?: ConnectionTable; resources: ResourceStatus[] }) {
   const tunnels = resources.filter(resource => resource.kind === "DSLiteTunnel");
   if (tunnels.length === 0) return null;
   return <Card>
-    <CardHeader header={<Text weight="semibold">DS-Lite NATエントリー数</Text>}
-      description={<Text>このルーターのIPv4 SNAT状態です。AFTR側の件数ではありません。一覧の表示上限・絞り込みとは独立した集計です。同じSNATアドレスを共有するトンネルは合算値になります。</Text>} />
+    <CardHeader header={<Text weight="semibold">routerdでSNATしたDS-Liteクライアント通信</Text>}
+      description={<Text>ルーター自身が開始した通信と、AFTR側だけで変換される通信は含みません。一覧の表示上限・絞り込みとは独立した集計です。同じSNATアドレスを共有するトンネルは合算値になります。</Text>} />
     <div style={{ overflowX: "auto" }}>
-      <table className="dslite-nat-summary" aria-label="DS-Lite NATエントリー数">
+      <table className="dslite-nat-summary" aria-label="routerdでSNATしたDS-Liteクライアント通信">
         <thead><tr><th>トンネル</th><th>SNATアドレス</th><th>合計</th><th>TCP</th><th>UDP</th><th>その他</th></tr></thead>
         <tbody>{tunnels.map(resource => {
           const address = String(resource.status?.innerLocalIPv4 ?? "");

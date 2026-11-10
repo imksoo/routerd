@@ -58,19 +58,23 @@ func (h Handler) snapshot(ctx context.Context, opts SnapshotOptions) Snapshot {
 	}
 	var connections *observe.ConnectionTable
 	if opts.ConnectionsLimit >= 0 {
-		connections, err = observe.Connections(opts.ConnectionsLimit)
+		connections, err = observe.Connections(-1)
 		if err != nil {
 			errors = append(errors, err.Error())
-		} else if opts.IncludeDPIEnrichment {
-			if err := h.enrichConnectionsWithDPI(ctx, connections, now, clientObservationWindow); err != nil {
+		} else {
+			h.enrichConnectionsWithLocalRedirect(connections)
+			classifyConnectionPurposes(connections)
+			connections.LimitEntries(opts.ConnectionsLimit)
+			if opts.IncludeDPIEnrichment {
+				if err := h.enrichConnectionsWithDPI(ctx, connections, now, clientObservationWindow); err != nil {
+					errors = append(errors, err.Error())
+				}
+			} else {
+				applyConnectionTablePortFallback(connections)
+			}
+			if err := h.enrichConnectionsWithRemoteIdentity(ctx, connections); err != nil {
 				errors = append(errors, err.Error())
 			}
-		} else {
-			applyConnectionTablePortFallback(connections)
-		}
-		h.enrichConnectionsWithLocalRedirect(connections)
-		if err := h.enrichConnectionsWithRemoteIdentity(ctx, connections); err != nil {
-			errors = append(errors, err.Error())
 		}
 	}
 	var dnsQueries []logstore.DNSQuery

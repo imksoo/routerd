@@ -17,16 +17,19 @@ import (
 )
 
 func (h Handler) connections(w http.ResponseWriter, r *http.Request) {
-	table, err := observe.Connections(intQuery(r, "limit", h.opts.ConnectionsLimit))
+	limit := intQuery(r, "limit", h.opts.ConnectionsLimit)
+	table, err := observe.Connections(-1)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.enrichConnectionsWithLocalRedirect(table)
+	classifyConnectionPurposes(table)
+	table.LimitEntries(limit)
 	if err := h.enrichConnectionsWithDPI(r.Context(), table, time.Now().UTC(), time.Hour); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	h.enrichConnectionsWithLocalRedirect(table)
 	if err := h.enrichConnectionsWithRemoteIdentity(r.Context(), table); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
