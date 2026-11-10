@@ -362,14 +362,6 @@ func (c NetworkAdoptionController) applyNetworkAdoption(ctx context.Context, nam
 					return paths, changed, err
 				}
 				networkdChanged = fileChanged
-				for _, legacyPath := range legacyNetworkdAdoptionDropins(c.networkdDropinBase, ifname, path) {
-					paths = append(paths, legacyPath)
-					removed, err := removeFileIfExists(legacyPath, c.DryRun)
-					if err != nil {
-						return paths, changed, err
-					}
-					networkdChanged = networkdChanged || removed
-				}
 			}
 			changed = changed || networkdChanged
 		}
@@ -414,21 +406,6 @@ func (c NetworkAdoptionController) applyNetworkAdoption(ctx context.Context, nam
 		}
 	}
 	return paths, changed, nil
-}
-
-func legacyNetworkdAdoptionDropins(base, ifname, desiredPath string) []string {
-	dir := networkdDropinDir(base, ifname)
-	candidates := []string{
-		filepath.Join(dir, "50-routerd-no-dhcpv6.conf"),
-	}
-	var out []string
-	for _, candidate := range candidates {
-		if filepath.Clean(candidate) == filepath.Clean(desiredPath) {
-			continue
-		}
-		out = append(out, candidate)
-	}
-	return out
 }
 
 func resolvedAdoptionConfigured(spec api.NetworkAdoptionResolvedSpec) bool {
@@ -1814,27 +1791,15 @@ func (c SystemdUnitController) cleanupStaleEventFederationUnits(ctx context.Cont
 	if err != nil {
 		return err
 	}
-	legacyPath := filepath.Join(c.systemdSystemDir, "routerd-eventd.service")
-	legacyPresent, err := legacyEventdUnitNeedsCleanup(ctx, legacyPath)
-	if err != nil {
-		return err
-	}
-	if legacyPresent {
-		matches = append(matches, legacyPath)
-	}
 	var removed bool
 	for _, path := range matches {
 		unitName := filepath.Base(path)
 		if desired[unitName] {
 			continue
 		}
-		reason := "StaleEventFederationUnit"
-		if unitName == "routerd-eventd.service" {
-			reason = "LegacyEventFederationUnit"
-		}
 		status := map[string]any{
 			"phase":     "Removing",
-			"reason":    reason,
+			"reason":    "StaleEventFederationUnit",
 			"unitName":  unitName,
 			"path":      path,
 			"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
@@ -1868,15 +1833,6 @@ func (c SystemdUnitController) cleanupStaleEventFederationUnits(ctx context.Cont
 		}
 	}
 	return nil
-}
-
-func legacyEventdUnitNeedsCleanup(ctx context.Context, path string) (bool, error) {
-	if _, err := os.Stat(path); err == nil {
-		return true, nil
-	} else if err != nil && !os.IsNotExist(err) {
-		return false, err
-	}
-	return systemdUnitEnabledOrActive(ctx, "routerd-eventd.service"), nil
 }
 
 func (c SystemdUnitController) cleanupStaleClientDaemonUnits(ctx context.Context) error {
