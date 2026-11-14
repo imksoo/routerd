@@ -161,19 +161,20 @@ func IPv4Addresses(ctx context.Context, name string) ([]string, error) {
 	if err := json.Unmarshal(out, &links); err != nil {
 		return nil, fmt.Errorf("decode tunnel addresses: %w", err)
 	}
-	if len(links) != 1 || links[0].Info == nil {
-		return nil, fmt.Errorf("missing tunnel address data for %s", name)
-	}
+	// ip -4 omits links without IPv4 addresses. An empty list is the normal
+	// initial state that reconciliation must fill, not an observation failure.
 	addresses := []string{}
-	for _, a := range links[0].Info {
-		if a.Prefix == nil {
-			return nil, fmt.Errorf("missing tunnel address prefix")
+	for _, link := range links {
+		for _, a := range link.Info {
+			if a.Prefix == nil {
+				return nil, fmt.Errorf("missing tunnel address prefix")
+			}
+			p, err := netip.ParsePrefix(fmt.Sprintf("%s/%d", a.Local, *a.Prefix))
+			if err != nil || !p.Addr().Is4() {
+				return nil, fmt.Errorf("invalid tunnel IPv4 address")
+			}
+			addresses = append(addresses, p.String())
 		}
-		p, err := netip.ParsePrefix(fmt.Sprintf("%s/%d", a.Local, *a.Prefix))
-		if err != nil || !p.Addr().Is4() {
-			return nil, fmt.Errorf("invalid tunnel IPv4 address")
-		}
-		addresses = append(addresses, p.String())
 	}
 	return addresses, nil
 }
