@@ -181,7 +181,14 @@ func (h Handler) snapshot(ctx context.Context, opts SnapshotOptions) Snapshot {
 	if h.opts.Result != nil {
 		result = h.opts.Result()
 	}
-	dpiStatus := h.dpiStatus(ctx)
+	var dpiStatus *DPIStatus
+	if !opts.SkipDPIStatus {
+		dpiStatus = h.dpiStatus(ctx)
+	}
+	var interfaces []InterfaceSummary
+	if !opts.SkipInterfaces {
+		interfaces = h.interfaceSummaries(resources)
+	}
 	systemUsage := h.readSystemUsage()
 	result = resultWithLatestGeneration(result, h.opts.Store)
 	controllers := h.controllerStatuses()
@@ -194,7 +201,7 @@ func (h Handler) snapshot(ctx context.Context, opts SnapshotOptions) Snapshot {
 		GatewayHealth:    gatewayHealth(resources),
 		Phases:           phaseCounts(resources),
 		Resources:        resources,
-		Interfaces:       h.interfaceSummaries(resources),
+		Interfaces:       interfaces,
 		Events:           events,
 		Connections:      connections,
 		DNSQueries:       dnsQueries,
@@ -256,6 +263,8 @@ func (h Handler) summary(w http.ResponseWriter, r *http.Request) {
 		IncludeConntrackTuning: boolQuery(r, "tuning", false),
 		IncludeVPN:             boolQuery(r, "vpn", true),
 		SkipResources:          !boolQuery(r, "resources", true),
+		SkipInterfaces:         !boolQuery(r, "interfaces", true),
+		SkipDPIStatus:          !boolQuery(r, "dpiStatus", true),
 		SkipDHCPLeases:         !boolQuery(r, "dhcpLeases", true),
 	}))
 }

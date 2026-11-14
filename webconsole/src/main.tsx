@@ -2643,6 +2643,8 @@ function App() {
       tuning: includeTuning ? "1" : "0",
       vpn: includeVPN ? "1" : "0",
       resources: includeResources ? "1" : "0",
+      interfaces: selected === "overview" ? "1" : "0",
+      dpiStatus: selected === "overview" ? "1" : "0",
       dhcpLeases: includeDHCPLeases ? "1" : "0",
     });
     try {
