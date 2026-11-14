@@ -91,6 +91,9 @@ func (o *Outbox) RunOnce(ctx context.Context) error {
 }
 
 func (o *Outbox) runOnceInner(ctx context.Context) error {
+	if o.pusher == nil || len(o.pusher.peers) == 0 {
+		return nil
+	}
 	now := time.Now()
 	records, err := o.store.ListLocalFederationEvents(o.group, o.nodeName, now.Unix())
 	if err != nil {
@@ -137,7 +140,7 @@ type peerDrain struct {
 // failing peer from becoming a global head-of-line blocker and preserves the
 // ordering of attempts to that peer.
 func (o *Outbox) drainPeers(ctx context.Context, events []outboxEvent) error {
-	if o.pusher == nil || len(events) == 0 {
+	if len(events) == 0 {
 		return nil
 	}
 	jobs := make([]peerDrain, 0, len(o.pusher.peers))
