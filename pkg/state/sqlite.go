@@ -1563,7 +1563,7 @@ func (s *SQLiteStore) RecordBusEvent(_ context.Context, event daemonapi.DaemonEv
 }
 
 func recordBusEvent(executor interface {
-	Exec(string, ...any) (sql.Result, error)
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
 }, generation int64, now time.Time, event daemonapi.DaemonEvent, attrs string) (string, error) {
 	apiVersion := event.APIVersion
 	kind := event.Kind
@@ -1579,7 +1579,7 @@ func recordBusEvent(executor interface {
 		resourceKind = event.Resource.Kind
 		resourceName = event.Resource.Name
 	}
-	result, err := executor.Exec(`INSERT INTO events(api_version,kind,name,type,reason,message,generation,created_at,topic,source_kind,source_instance,resource_api_version,resource_kind,resource_name,severity,attributes)
+	result, err := executor.ExecContext(context.Background(), `INSERT INTO events(api_version,kind,name,type,reason,message,generation,created_at,topic,source_kind,source_instance,resource_api_version,resource_kind,resource_name,severity,attributes)
 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		apiVersion, kind, name, event.Type, event.Reason, event.Message, nullGeneration(generation), now.UTC().Format(time.RFC3339Nano),
 		event.Type, event.Daemon.Kind, event.Daemon.Instance, resourceAPI, resourceKind, resourceName, event.Severity, attrs)

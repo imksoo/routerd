@@ -47,14 +47,21 @@ func (s *SQLiteStore) writeObjectStatusAndEvent(apiVersion, kind, name string, s
 	if err := s.ensureEventJournalCapacityLocked(maxStatusEventPayload); err != nil {
 		return nil, s.noteStorageWriteErrorLocked(err)
 	}
-	tx, err := s.db.BeginTx(context.Background(), nil)
+	ctx := context.Background()
+	tx, err := s.db.Conn(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer tx.Close()
+	// Reserve the writer before reading; a deferred transaction can lose the
+	// write race to another SQLite connection and fail to upgrade its snapshot.
+	if _, err := tx.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
+		return nil, err
+	}
+	defer tx.ExecContext(ctx, `ROLLBACK`)
 	var raw, created, modified string
 	var generation sql.NullInt64
-	err = tx.QueryRow(`SELECT coalesce(status,'{}'), observed_generation,created_at,modified_at FROM objects WHERE api_version = ? AND kind = ? AND name = ?`, apiVersion, kind, name).Scan(&raw, &generation, &created, &modified)
+	err = tx.QueryRowContext(ctx, `SELECT coalesce(status,'{}'), observed_generation,created_at,modified_at FROM objects WHERE api_version = ? AND kind = ? AND name = ?`, apiVersion, kind, name).Scan(&raw, &generation, &created, &modified)
 	found := err == nil
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
@@ -113,7 +120,7 @@ func (s *SQLiteStore) writeObjectStatusAndEvent(apiVersion, kind, name string, s
 		return nil, fmt.Errorf("status event must reference the updated object")
 	}
 	now := time.Now().UTC()
-	_, err = tx.Exec(`INSERT INTO objects(api_version,kind,name,uid,resource_version,observed_generation,status,created_at,modified_at)
+	_, err = tx.ExecContext(ctx, `INSERT INTO objects(api_version,kind,name,uid,resource_version,observed_generation,status,created_at,modified_at)
 VALUES(?,?,?,?,1,?,?,?,?)
 ON CONFLICT(api_version,kind,name) DO UPDATE SET resource_version=resource_version+1,observed_generation=excluded.observed_generation,status=excluded.status,modified_at=excluded.modified_at`,
 		apiVersion, kind, name, apiVersion+"/"+kind+"/"+name, nullGeneration(s.generation), string(data), formatStateTime(now), formatStateTime(now))
@@ -135,7 +142,7 @@ ON CONFLICT(api_version,kind,name) DO UPDATE SET resource_version=resource_versi
 			return nil, s.noteStorageWriteErrorLocked(err)
 		}
 	}
-	if err := tx.Commit(); err != nil {
+	if _, err := tx.ExecContext(ctx, `COMMIT`); err != nil {
 		return nil, s.noteStorageWriteErrorLocked(err)
 	}
 	s.statusWriteCount++
