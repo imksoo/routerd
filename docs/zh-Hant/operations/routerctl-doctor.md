@@ -115,4 +115,3 @@ JSON 形式、area 識別字與 status 列舉是 v1alpha1 的維運契約。後�
 ## 相關項目
 
 - [調整（reconcile）與回滾](reconcile.md)
-- [`routerctl ledger` 維護](reconcile.md#刪除)

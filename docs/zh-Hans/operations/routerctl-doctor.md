@@ -115,4 +115,3 @@ JSON 形式、area 标识符与 status 枚举是 v1alpha1 的运维契约。后�
 ## 参见
 
 - [调整（reconcile）与回滚](reconcile.md)
-- [`routerctl ledger` 维护](reconcile.md#删除)

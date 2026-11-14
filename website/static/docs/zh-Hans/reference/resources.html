@@ -185,6 +185,7 @@ spec:
 <p>在逻辑接口声明静态IPv4地址，由controller协调配置，不是DHCP租约。</p>
 <h2 id="virtualaddress">VirtualAddress</h2>
 <p><a href="resources/VirtualAddress.html">VirtualAddress</a></p>
+<p>维护静态或选举后的浮动地址。Linux 静态使用 iproute2、VRRP 使用 keepalived；FreeBSD 使用 ifconfig/CARP。</p>
 <h2 id="bgprouter">BGPRouter</h2>
 <p><a href="resources/BGPRouter.html">BGPRouter</a></p>
 <p>配置本机 GoBGP 实例、接纳路由及本机起源通告。内核安装与远端可达性不同于 BGP Established 状态。</p>
@@ -335,8 +336,10 @@ spec:
 <p>声明应用前管理连接中断检查所检查的接口。此资源不创建管理监听端或防火墙允许规则。</p>
 <h2 id="portforward">PortForward</h2>
 <p><a href="resources/PortForward.html">PortForward</a></p>
+<p>将 TCP/UDP 端口转发至单一 IPv4 端点，可选内部回送 NAT。Linux 生成 DNAT 与转发允许，FreeBSD 使用 rdr pass。</p>
 <h2 id="ingressservice">IngressService</h2>
 <p><a href="resources/IngressService.html">IngressService</a></p>
+<p>以后端选择与主动健康检查公开 IPv4 TCP/UDP 端点，可搭配本机 DNS 与内部回送 NAT。属于第 4 层 NAT，不是 HTTP 反向代理或 TLS 终止。</p>
 <h2 id="ipaddressset">IPAddressSet</h2>
 <p><a href="resources/IPAddressSet.html">IPAddressSet</a></p>
 <p>在支持的 nftables NAT、路由及防火墙规则间共享固定与 DNS 解析的 IP 地址。不创建路由或启动 DNS 服务。</p>

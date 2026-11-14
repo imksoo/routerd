@@ -185,6 +185,7 @@ spec:
 <p>論理インターフェースへ固定IPv4アドレスを宣言します。controllerが設定に収束させるアドレスであり、DHCPリースではありません。</p>
 <h2 id="virtualaddress">VirtualAddress</h2>
 <p><a href="resources/VirtualAddress.html">VirtualAddress</a></p>
+<p>固定アドレス、または選出したノードの共有アドレスを維持します。Linuxは固定にiproute2・VRRPにkeepalived、FreeBSDはifconfig・CARPを使います。</p>
 <h2 id="bgprouter">BGPRouter</h2>
 <p><a href="resources/BGPRouter.html">BGPRouter</a></p>
 <p>ローカルGoBGPインスタンス・受理経路・自起源広告を設定します。カーネルへの適用や対向疎通はBGPのEstablishedとは別です。</p>
@@ -335,8 +336,10 @@ spec:
 <p>反映前の管理経路確認で検査するインターフェースを宣言します。管理用の待受やファイアウォール許可ルールを生成するリソースではありません。</p>
 <h2 id="portforward">PortForward</h2>
 <p><a href="resources/PortForward.html">PortForward</a></p>
+<p>TCP・UDPポートを1つのIPv4先へ転送し、任意で内部折り返しNATを設定します。LinuxはDNATと転送許可、FreeBSDはrdr passを生成します。</p>
 <h2 id="ingressservice">IngressService</h2>
 <p><a href="resources/IngressService.html">IngressService</a></p>
+<p>IPv4 TCP・UDPの公開先をヘルスチェックと転送先選択で制御し、任意でローカルDNS・内部折り返しNATを使います。L4 NATであり、HTTPプロキシ・TLS終端ではありません。</p>
 <h2 id="ipaddressset">IPAddressSet</h2>
 <p><a href="resources/IPAddressSet.html">IPAddressSet</a></p>
 <p>固定IPとDNS解決したIPを、対応するnftablesのNAT・経路・ファイアウォールルールで共有します。経路やDNSサービスを作成する機能ではありません。</p>

@@ -185,6 +185,7 @@ spec:
 <p>Declares a static IPv4 address on a logical interface. The controller converges configured addresses; this is not a DHCP lease.</p>
 <h2 id="virtualaddress">VirtualAddress</h2>
 <p><a href="resources/VirtualAddress.html">VirtualAddress</a></p>
+<p>Maintain a static address or an elected floating address. Linux uses iproute2 for static addresses and keepalived for VRRP; FreeBSD uses ifconfig and CARP.</p>
 <h2 id="bgprouter">BGPRouter</h2>
 <p><a href="resources/BGPRouter.html">BGPRouter</a></p>
 <p>Configure the local GoBGP instance, its admitted routes and locally originated advertisements. Actual kernel installation and remote reachability are separate from a BGP Established state.</p>
@@ -335,8 +336,10 @@ spec:
 <p>Declare the interfaces checked by the pre-apply management-lockout check. This resource does not create a management listener or firewall allow rule.</p>
 <h2 id="portforward">PortForward</h2>
 <p><a href="resources/PortForward.html">PortForward</a></p>
+<p>Forward a TCP/UDP port to one IPv4 endpoint with optional hairpin NAT. Linux generates DNAT plus matching forward allowances; FreeBSD uses rdr pass.</p>
 <h2 id="ingressservice">IngressService</h2>
 <p><a href="resources/IngressService.html">IngressService</a></p>
+<p>Expose an IPv4 TCP/UDP endpoint through backend selection and active health checks, with optional local DNS publication and hairpin NAT. This is layer-4 NAT, not an HTTP reverse proxy or TLS terminator.</p>
 <h2 id="ipaddressset">IPAddressSet</h2>
 <p><a href="resources/IPAddressSet.html">IPAddressSet</a></p>
 <p>Share literal and DNS-resolved IP addresses among supported nftables NAT, routing and firewall rules. It does not create routes or start a DNS service.</p>

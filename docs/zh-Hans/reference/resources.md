@@ -287,6 +287,8 @@ spec:
 
 [VirtualAddress](resources/VirtualAddress.md)
 
+维护静态或选举后的浮动地址。Linux 静态使用 iproute2、VRRP 使用 keepalived；FreeBSD 使用 ifconfig/CARP。
+
 
 ## BGPRouter
 
@@ -638,10 +640,14 @@ spec:
 
 [PortForward](resources/PortForward.md)
 
+将 TCP/UDP 端口转发至单一 IPv4 端点，可选内部回送 NAT。Linux 生成 DNAT 与转发允许，FreeBSD 使用 rdr pass。
+
 
 ## IngressService
 
 [IngressService](resources/IngressService.md)
+
+以后端选择与主动健康检查公开 IPv4 TCP/UDP 端点，可搭配本机 DNS 与内部回送 NAT。属于第 4 层 NAT，不是 HTTP 反向代理或 TLS 终止。
 
 
 ## IPAddressSet

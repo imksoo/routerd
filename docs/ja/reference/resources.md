@@ -287,6 +287,8 @@ LinuxのVRFデバイス・経路表・参加インターフェースの意図を
 
 [VirtualAddress](resources/VirtualAddress.md)
 
+固定アドレス、または選出したノードの共有アドレスを維持します。Linuxは固定にiproute2・VRRPにkeepalived、FreeBSDはifconfig・CARPを使います。
+
 
 ## BGPRouter
 
@@ -638,10 +640,14 @@ SSHイベントストリーム、または常時稼働のconntrackd FTFWリン�
 
 [PortForward](resources/PortForward.md)
 
+TCP・UDPポートを1つのIPv4先へ転送し、任意で内部折り返しNATを設定します。LinuxはDNATと転送許可、FreeBSDはrdr passを生成します。
+
 
 ## IngressService
 
 [IngressService](resources/IngressService.md)
+
+IPv4 TCP・UDPの公開先をヘルスチェックと転送先選択で制御し、任意でローカルDNS・内部折り返しNATを使います。L4 NATであり、HTTPプロキシ・TLS終端ではありません。
 
 
 ## IPAddressSet

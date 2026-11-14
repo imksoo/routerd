@@ -287,6 +287,8 @@ Declares a static IPv4 address on a logical interface. The controller converges 
 
 [VirtualAddress](resources/VirtualAddress.md)
 
+Maintain a static address or an elected floating address. Linux uses iproute2 for static addresses and keepalived for VRRP; FreeBSD uses ifconfig and CARP.
+
 
 ## BGPRouter
 
@@ -638,10 +640,14 @@ Declare the interfaces checked by the pre-apply management-lockout check. This r
 
 [PortForward](resources/PortForward.md)
 
+Forward a TCP/UDP port to one IPv4 endpoint with optional hairpin NAT. Linux generates DNAT plus matching forward allowances; FreeBSD uses rdr pass.
+
 
 ## IngressService
 
 [IngressService](resources/IngressService.md)
+
+Expose an IPv4 TCP/UDP endpoint through backend selection and active health checks, with optional local DNS publication and hairpin NAT. This is layer-4 NAT, not an HTTP reverse proxy or TLS terminator.
 
 
 ## IPAddressSet

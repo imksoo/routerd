@@ -9490,5 +9490,680 @@
       "pkg/controller/bgp/controller.go",
       "pkg/controller/bfd/controller.go"
     ]
+  },
+  "PortForward": {
+    "purpose": [
+      "Forward a TCP/UDP port to one IPv4 endpoint with optional hairpin NAT. Linux generates DNAT plus matching forward allowances; FreeBSD uses rdr pass.",
+      "TCP・UDPポートを1つのIPv4先へ転送し、任意で内部折り返しNATを設定します。LinuxはDNATと転送許可、FreeBSDはrdr passを生成します。",
+      "將 TCP/UDP 連接埠轉送至單一 IPv4 端點，可選內部迴送 NAT。Linux 產生 DNAT 與轉送允許，FreeBSD 使用 rdr pass。",
+      "将 TCP/UDP 端口转发至单一 IPv4 端点，可选内部回送 NAT。Linux 生成 DNAT 与转发允许，FreeBSD 使用 rdr pass。"
+    ],
+    "rules": [
+      [
+        "listen and target are required. target needs exactly one address/addressFrom and a port; a literal target must be bare IPv4, not hostname or CIDR. listen may omit both address forms, matching every destination on its interface.",
+        "listen・targetが必須です。targetはaddress・addressFromのちょうど一方とportが必要で、固定値はホスト名・CIDRでなく裸のIPv4です。listenのアドレスを両方省略すると、そのインターフェース上の全宛先が対象です。",
+        "listen/target 必填。target 需要且只能提供 address/addressFrom 其中之一與 port；固定目標必須是純 IPv4，不接受主機名或 CIDR。listen 兩者皆省略時比對介面所有目的。",
+        "listen/target 必填。target 需要且只能提供 address/addressFrom 其中之一与 port；固定目标必须是纯 IPv4，不接受主机名或 CIDR。listen 两者均省略时匹配接口所有目标。"
+      ],
+      [
+        "Address references must exist and declare a supported provided field, but this NAT renderer reads only declared IPv4StaticAddress.address/VirtualAddress.address. optional=true may omit a rule for an unresolved supported source, not enable arbitrary dynamic sources. There is no backend health check in PortForward.",
+        "参照先存在・提供fieldを検証しますが、本NAT描画が読むのは宣言済みIPv4StaticAddress.address・VirtualAddress.addressだけです。optional=trueは対応参照の未解決時にルールを省略できるだけで、任意の動的参照にはなりません。PortForwardにbackendヘルスチェックはありません。",
+        "參照須存在並提供對應欄位，但 NAT 產生器只讀宣告的 IPv4StaticAddress.address/VirtualAddress.address。optional=true 可在支援來源未解析時省略規則，不會啟用任意動態來源。PortForward 沒有後端健康檢查。",
+        "引用须存在并提供对应字段，但 NAT 生成器仅读声明的 IPv4StaticAddress.address/VirtualAddress.address。optional=true 可在支持来源未解析时省略规则，不会启用任意动态来源。PortForward 没有后端健康检查。"
+      ]
+    ],
+    "fields": {
+      "listen": [
+        "Required IPv4 ingress endpoint. This creates NAT/firewall rules, not an application listener or address assignment.",
+        "必須のIPv4公開側設定です。NAT・ファイアウォールを作り、アプリの待受・アドレス割当は行いません。",
+        "必填 IPv4 入口端點，建立 NAT/防火牆規則，不建立應用程式監聽或指派位址。",
+        "必填 IPv4 入口端点，创建 NAT/防火墙规则，不创建应用程序监听或分配地址。"
+      ],
+      "listen.interface": [
+        "Required bare declared logical interface name, not Kind/name. Must exist in the configuration interface index and resolve to an OS ifname.",
+        "必須の裸の論理インターフェース名で、Kind/nameではありません。設定索引に存在し、OS名を解決する必要があります。",
+        "必填單純已宣告邏輯介面名稱，不是 Kind/name。須存在設定索引並可解析 OS ifname。",
+        "必填单独已声明逻辑接口名称，不是 Kind/name。须存在配置索引并可解析 OS ifname。"
+      ],
+      "listen.address": [
+        "Optional bare IPv4 destination address. Mutually exclusive with addressFrom; omission matches any destination address on the listen interface.",
+        "任意の裸の宛先IPv4です。addressFromと排他で、省略すると待受インターフェース上の全宛先アドレスに一致します。",
+        "選用純 IPv4 目的位址，與 addressFrom 互斥。省略時比對監聽介面上任意目的位址。",
+        "可选纯 IPv4 目标地址，与 addressFrom 互斥。省略时匹配监听接口上任意目标地址。"
+      ],
+      "listen.addressFrom": [
+        "Optional common resource/field/optional reference, mutually exclusive with address. NAT/static rendering supports declared IPv4StaticAddress.address or VirtualAddress.address, not arbitrary runtime status. Generic reference validation does not guarantee renderer support.",
+        "addressと排他の共通resource・field・optional参照です。NAT・静的描画は宣言済みIPv4StaticAddress.address・VirtualAddress.addressに対応し、任意の実行時statusは読みません。一般参照の検証成功だけでは描画対応を保証しません。",
+        "選用共用 resource/field/optional 參照，與 address 互斥。NAT/靜態產生支援宣告的 IPv4StaticAddress.address 或 VirtualAddress.address，不讀任意執行期狀態。一般參照驗證通過不保證產生器支援。",
+        "可选通用 resource/field/optional 引用，与 address 互斥。NAT/静态生成支持声明的 IPv4StaticAddress.address 或 VirtualAddress.address，不读任意运行时状态。普通引用验证通过不保证生成器支持。"
+      ],
+      "listen.protocol": [
+        "Required tcp or udp, no default. This selects forwarded traffic; it does not select the health-check protocol.",
+        "tcp・udpが必須で既定値はありません。転送通信の選択であり、ヘルスチェック方式とは別です。",
+        "必填 tcp/udp，無預設值。選擇轉送流量，不決定健康檢查協定。",
+        "必填 tcp/udp，无默认值。选择转发流量，不决定健康检查协议。"
+      ],
+      "listen.port": [
+        "Required destination port 1–65535. No range/list and no default.",
+        "必須の宛先ポート1～65535です。範囲・一覧・既定値はありません。",
+        "必填目的連接埠 1–65535，無範圍、清單或預設值。",
+        "必填目标端口 1–65535，无范围、列表或默认值。"
+      ],
+      "hairpin": [
+        "Optional loopback-through-public-address NAT settings. Requires a resolved listen address when active. PortForward defaults off; IngressService defaults auto.",
+        "公開アドレス経由で内部へ戻す任意のNAT設定です。有効時はlistenアドレスの解決が必要です。PortForwardの既定はoff、IngressServiceはautoです。",
+        "選用經公開位址返回內部的 NAT 設定，啟用時需可解析 listen 位址。PortForward 預設 off，IngressService 預設 auto。",
+        "可选经公开地址返回内部的 NAT 配置，启用时需可解析 listen 地址。PortForward 默认 off，IngressService 默认 auto。"
+      ],
+      "hairpin.enabled": [
+        "Default false. With omitted mode, true selects manual on PortForward; IngressService still defaults auto. Explicit off disables hairpin even when enabled is true.",
+        "既定falseです。mode省略時、trueはPortForwardでmanual、IngressServiceは引き続きautoです。mode=offはtrueでも無効にします。",
+        "預設 false。mode 省略時 true 讓 PortForward 使用 manual，IngressService 仍預設 auto。明確 off 即使 enabled=true 也停用。",
+        "默认 false。mode 省略时 true 让 PortForward 使用 manual，IngressService 仍默认 auto。明确 off 即使 enabled=true 也禁用。"
+      ],
+      "hairpin.mode": [
+        "auto, manual or off. auto detects the listen interface when listen and backend share a declared IPv4 subnet or the same private /24; it does not discover arbitrary LAN routes. manual needs enabled=true and interfaces to produce rules.",
+        "auto・manual・offです。autoはlisten・backendが宣言IPv4サブネットまたは同じプライベート/24にある場合にlisten側を選び、任意LAN経路を検出するものではありません。manualでルールを作るにはenabled=trueとinterfacesが必要です。",
+        "auto/manual/off。auto 在 listen 與後端同屬宣告 IPv4 子網或相同私有 /24 時選 listen 介面，不探索任意 LAN 路由。manual 需 enabled=true 與 interfaces 才產生規則。",
+        "auto/manual/off。auto 在 listen 与后端同属声明 IPv4 子网或相同私有 /24 时选 listen 接口，不发现任意 LAN 路由。manual 需 enabled=true 与 interfaces 才生成规则。"
+      ],
+      "hairpin.interfaces": [
+        "Optional bare declared logical interface names, no duplicates; enabled/manual requires a nonempty list. auto may additionally use the listen interface. IPv4 DNAT plus masquerade/PF SNAT ensures a return through the router.",
+        "任意の裸の宣言論理名で重複は禁止です。有効なmanualには1件以上必要です。autoはlisten側も追加し、IPv4 DNATとmasquerade・PF SNATで戻りをルーター経由にします。",
+        "選用單純宣告邏輯介面名，不可重複，啟用 manual 時需非空。auto 可另加入 listen 介面。IPv4 DNAT 加 masquerade/PF SNAT 讓回程經路由器。",
+        "可选单独声明逻辑接口名，不可重复，启用 manual 时需非空。auto 可另加入 listen 接口。IPv4 DNAT 加 masquerade/PF SNAT 让回程经路由器。"
+      ],
+      "when": [
+        "Optional common activation condition, default unconditional. False conditions exclude the resource from effective generation; see common fields for predicates/schema limits.",
+        "共通の有効化条件で、既定は無条件です。不成立は実効生成から除きます。判定・スキーマ制約は共通項を参照してください。",
+        "選用共用啟用條件，預設無條件。不成立時從有效產生排除；條件與結構描述限制請見共用欄位。",
+        "可选通用启用条件，默认无条件。不成立时从有效生成排除；条件与模式限制请见通用字段。"
+      ],
+      "target": [
+        "Required single internal endpoint. Setting a target does not assign its IP or start its service.",
+        "必須の単一内部転送先です。IP割当・サービス起動は行いません。",
+        "必填單一內部端點，不指派 IP 或啟動服務。",
+        "必填单一内部端点，不分配 IP 或启动服务。"
+      ],
+      "target.address": [
+        "Bare IPv4 target, mutually exclusive with target.addressFrom; one is required. No default.",
+        "裸のIPv4転送先で、target.addressFromとちょうど一方が必須です。既定なしです。",
+        "純 IPv4 目標，與 target.addressFrom 必須擇一，無預設。",
+        "纯 IPv4 目标，与 target.addressFrom 必须择一，无默认。"
+      ],
+      "target.addressFrom": [
+        "Common resource/field/optional reference; same declared-field rendering limits as listen.addressFrom. Must resolve to IPv4.",
+        "共通resource・field・optional参照で、listen.addressFromと同じ宣言値の制約です。IPv4への解決が必要です。",
+        "共用 resource/field/optional 參照，與 listen.addressFrom 相同宣告欄位限制，須解析為 IPv4。",
+        "通用 resource/field/optional 引用，与 listen.addressFrom 相同声明字段限制，须解析为 IPv4。"
+      ],
+      "target.port": [
+        "Required internal TCP/UDP port 1–65535, independent of listen.port.",
+        "listen.portとは独立した必須の内部TCP・UDPポート1～65535です。",
+        "必填內部 TCP/UDP 連接埠 1–65535，獨立於 listen.port。",
+        "必填内部 TCP/UDP 端口 1–65535，独立于 listen.port。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_firewall.go",
+      "pkg/config/diagnostics.go",
+      "pkg/config/validate.go",
+      "pkg/render/ingress.go",
+      "pkg/render/status_source.go",
+      "pkg/render/nftables.go",
+      "pkg/render/pf.go"
+    ]
+  },
+  "IngressService": {
+    "purpose": [
+      "Expose an IPv4 TCP/UDP endpoint through backend selection and active health checks, with optional local DNS publication and hairpin NAT. This is layer-4 NAT, not an HTTP reverse proxy or TLS terminator.",
+      "IPv4 TCP・UDPの公開先をヘルスチェックと転送先選択で制御し、任意でローカルDNS・内部折り返しNATを使います。L4 NATであり、HTTPプロキシ・TLS終端ではありません。",
+      "以後端選擇與主動健康檢查公開 IPv4 TCP/UDP 端點，可搭配本機 DNS 與內部迴送 NAT。屬於第 4 層 NAT，不是 HTTP 反向代理或 TLS 終止。",
+      "以后端选择与主动健康检查公开 IPv4 TCP/UDP 端点，可搭配本机 DNS 与内部回送 NAT。属于第 4 层 NAT，不是 HTTP 反向代理或 TLS 终止。"
+    ],
+    "rules": [
+      [
+        "listen and at least one backend are required. Every backend needs exactly one address/addressFrom and a port; literal backend addresses may be IPv4 or hostnames. All data-plane forwarding remains IPv4. Backend names should be stable and unique because health history is keyed by name; unnamed entries use backend-0, backend-1, etc.",
+        "listenと1件以上のbackendが必須です。各backendはaddress・addressFromのちょうど一方とportが必要で、固定値はIPv4・ホスト名を受け付けます。転送はIPv4です。ヘルス履歴は名前単位のため、安定した一意の名前を使ってください。省略時はbackend-0・backend-1等です。",
+        "listen 與至少一個後端必填。每個後端需且僅提供 address/addressFrom 之一與 port；固定值可為 IPv4 或主機名。資料轉送仍為 IPv4。健康歷史依名稱索引，請使用穩定唯一名稱；省略使用 backend-0、backend-1 等。",
+        "listen 与至少一个后端必填。每个后端需且仅提供 address/addressFrom 之一与 port；固定值可为 IPv4 或主机名。数据转发仍为 IPv4。健康历史按名称索引，请使用稳定唯一名称；省略使用 backend-0、backend-1 等。"
+      ],
+      [
+        "Health checks normally reconcile every 5s regardless of healthCheck.interval; each backend is checked in turn. A missing health-check protocol defaults TCP, even for a UDP listen endpoint. Hostnames resolve to the lexicographically first IPv4; DNS failure may reuse the previous resolved address, which is still health-checked.",
+        "healthCheck.intervalにかかわらず通常5秒ごとに各backendを順番に確認します。方式省略はlistenがUDPでもTCPです。ホスト名は文字列順の先頭IPv4を使い、DNS失敗時は前回アドレスを再利用する場合がありますが、疎通確認は継続します。",
+        "不論 healthCheck.interval，通常每 5 秒依序檢查後端。未指定協定時預設 TCP，即使 listen 是 UDP。主機名使用字串排序第一個 IPv4；DNS 失敗可重用先前位址，但仍進行健康檢查。",
+        "不论 healthCheck.interval，通常每 5 秒依次检查后端。未指定协议时默认 TCP，即使 listen 是 UDP。主机名使用字符串排序第一个 IPv4；DNS 失败可复用先前地址，但仍进行健康检查。"
+      ],
+      [
+        "NoHealthyBackends and policy.onNoHealthyBackends are status outputs, not a generated drop/reject guarantee. When there is no active backend, the NAT controller leaves the original backend definition in place; rendering can fall back to its first configured static backend. Do not rely on this setting for fail-closed behavior.",
+        "NoHealthyBackends・policy.onNoHealthyBackendsは状態表示で、drop・reject生成の保証ではありません。有効backendがないとNAT側は元のbackend定義を残すため、最初の静的転送先へ戻る場合があります。本設定を全異常時の確実な遮断として扱わないでください。",
+        "NoHealthyBackends 與 policy.onNoHealthyBackends 是狀態輸出，不保證產生 drop/reject。沒有有效後端時 NAT 控制器保留原後端定義，可能回到第一個設定的靜態後端。不可依賴此設定在全數異常時可靠封鎖。",
+        "NoHealthyBackends 与 policy.onNoHealthyBackends 是状态输出，不保证生成 drop/reject。没有有效后端时 NAT 控制器保留原后端定义，可能回到第一个配置的静态后端。不可依赖此配置在全部异常时可靠封锁。"
+      ],
+      [
+        "failover chooses the first healthy backend in declaration order. Linux sourceHash/random can distribute across all healthy resolved backends; weights are unused. PF emits only the selected first target and does not implement those distribution algorithms. Static rendering has no health-store selection and can use the first declared backend.",
+        "failoverは宣言順で最初の正常backendを選びます。LinuxのsourceHash・randomは正常な解決済み転送先へ分散できますがweightは使いません。PFは先頭の選択先だけを出し分散方式を実装しません。静的描画はヘルス状態による選択をせず、宣言先頭を使う場合があります。",
+        "failover 依宣告順序選第一個健康後端。Linux sourceHash/random 可分散至所有健康且已解析後端，不使用權重。PF 僅產生第一個選定目標，不實作分散演算法。靜態產生不依健康資料庫選擇，可能使用第一個宣告後端。",
+        "failover 按声明顺序选第一个健康后端。Linux sourceHash/random 可分散至所有健康且已解析后端，不使用权重。PF 仅生成第一个所选目标，不实现分散算法。静态生成不按健康数据库选择，可能使用第一个声明后端。"
+      ]
+    ],
+    "fields": {
+      "listen": [
+        "Required IPv4 ingress endpoint. This creates NAT/firewall rules, not an application listener or address assignment.",
+        "必須のIPv4公開側設定です。NAT・ファイアウォールを作り、アプリの待受・アドレス割当は行いません。",
+        "必填 IPv4 入口端點，建立 NAT/防火牆規則，不建立應用程式監聽或指派位址。",
+        "必填 IPv4 入口端点，创建 NAT/防火墙规则，不创建应用程序监听或分配地址。"
+      ],
+      "listen.interface": [
+        "Required bare declared logical interface name, not Kind/name. Must exist in the configuration interface index and resolve to an OS ifname.",
+        "必須の裸の論理インターフェース名で、Kind/nameではありません。設定索引に存在し、OS名を解決する必要があります。",
+        "必填單純已宣告邏輯介面名稱，不是 Kind/name。須存在設定索引並可解析 OS ifname。",
+        "必填单独已声明逻辑接口名称，不是 Kind/name。须存在配置索引并可解析 OS ifname。"
+      ],
+      "listen.address": [
+        "Optional bare IPv4 destination address. Mutually exclusive with addressFrom; omission matches any destination address on the listen interface.",
+        "任意の裸の宛先IPv4です。addressFromと排他で、省略すると待受インターフェース上の全宛先アドレスに一致します。",
+        "選用純 IPv4 目的位址，與 addressFrom 互斥。省略時比對監聽介面上任意目的位址。",
+        "可选纯 IPv4 目标地址，与 addressFrom 互斥。省略时匹配监听接口上任意目标地址。"
+      ],
+      "listen.addressFrom": [
+        "Optional common resource/field/optional reference, mutually exclusive with address. NAT/static rendering supports declared IPv4StaticAddress.address or VirtualAddress.address, not arbitrary runtime status. Generic reference validation does not guarantee renderer support.",
+        "addressと排他の共通resource・field・optional参照です。NAT・静的描画は宣言済みIPv4StaticAddress.address・VirtualAddress.addressに対応し、任意の実行時statusは読みません。一般参照の検証成功だけでは描画対応を保証しません。",
+        "選用共用 resource/field/optional 參照，與 address 互斥。NAT/靜態產生支援宣告的 IPv4StaticAddress.address 或 VirtualAddress.address，不讀任意執行期狀態。一般參照驗證通過不保證產生器支援。",
+        "可选通用 resource/field/optional 引用，与 address 互斥。NAT/静态生成支持声明的 IPv4StaticAddress.address 或 VirtualAddress.address，不读任意运行时状态。普通引用验证通过不保证生成器支持。"
+      ],
+      "listen.protocol": [
+        "Required tcp or udp, no default. This selects forwarded traffic; it does not select the health-check protocol.",
+        "tcp・udpが必須で既定値はありません。転送通信の選択であり、ヘルスチェック方式とは別です。",
+        "必填 tcp/udp，無預設值。選擇轉送流量，不決定健康檢查協定。",
+        "必填 tcp/udp，无默认值。选择转发流量，不决定健康检查协议。"
+      ],
+      "listen.port": [
+        "Required destination port 1–65535. No range/list and no default.",
+        "必須の宛先ポート1～65535です。範囲・一覧・既定値はありません。",
+        "必填目的連接埠 1–65535，無範圍、清單或預設值。",
+        "必填目标端口 1–65535，无范围、列表或默认值。"
+      ],
+      "hairpin": [
+        "Optional loopback-through-public-address NAT settings. Requires a resolved listen address when active. PortForward defaults off; IngressService defaults auto.",
+        "公開アドレス経由で内部へ戻す任意のNAT設定です。有効時はlistenアドレスの解決が必要です。PortForwardの既定はoff、IngressServiceはautoです。",
+        "選用經公開位址返回內部的 NAT 設定，啟用時需可解析 listen 位址。PortForward 預設 off，IngressService 預設 auto。",
+        "可选经公开地址返回内部的 NAT 配置，启用时需可解析 listen 地址。PortForward 默认 off，IngressService 默认 auto。"
+      ],
+      "hairpin.enabled": [
+        "Default false. With omitted mode, true selects manual on PortForward; IngressService still defaults auto. Explicit off disables hairpin even when enabled is true.",
+        "既定falseです。mode省略時、trueはPortForwardでmanual、IngressServiceは引き続きautoです。mode=offはtrueでも無効にします。",
+        "預設 false。mode 省略時 true 讓 PortForward 使用 manual，IngressService 仍預設 auto。明確 off 即使 enabled=true 也停用。",
+        "默认 false。mode 省略时 true 让 PortForward 使用 manual，IngressService 仍默认 auto。明确 off 即使 enabled=true 也禁用。"
+      ],
+      "hairpin.mode": [
+        "auto, manual or off. auto detects the listen interface when listen and backend share a declared IPv4 subnet or the same private /24; it does not discover arbitrary LAN routes. manual needs enabled=true and interfaces to produce rules.",
+        "auto・manual・offです。autoはlisten・backendが宣言IPv4サブネットまたは同じプライベート/24にある場合にlisten側を選び、任意LAN経路を検出するものではありません。manualでルールを作るにはenabled=trueとinterfacesが必要です。",
+        "auto/manual/off。auto 在 listen 與後端同屬宣告 IPv4 子網或相同私有 /24 時選 listen 介面，不探索任意 LAN 路由。manual 需 enabled=true 與 interfaces 才產生規則。",
+        "auto/manual/off。auto 在 listen 与后端同属声明 IPv4 子网或相同私有 /24 时选 listen 接口，不发现任意 LAN 路由。manual 需 enabled=true 与 interfaces 才生成规则。"
+      ],
+      "hairpin.interfaces": [
+        "Optional bare declared logical interface names, no duplicates; enabled/manual requires a nonempty list. auto may additionally use the listen interface. IPv4 DNAT plus masquerade/PF SNAT ensures a return through the router.",
+        "任意の裸の宣言論理名で重複は禁止です。有効なmanualには1件以上必要です。autoはlisten側も追加し、IPv4 DNATとmasquerade・PF SNATで戻りをルーター経由にします。",
+        "選用單純宣告邏輯介面名，不可重複，啟用 manual 時需非空。auto 可另加入 listen 介面。IPv4 DNAT 加 masquerade/PF SNAT 讓回程經路由器。",
+        "可选单独声明逻辑接口名，不可重复，启用 manual 时需非空。auto 可另加入 listen 接口。IPv4 DNAT 加 masquerade/PF SNAT 让回程经路由器。"
+      ],
+      "when": [
+        "Optional common activation condition, default unconditional. False conditions exclude the resource from effective generation; see common fields for predicates/schema limits.",
+        "共通の有効化条件で、既定は無条件です。不成立は実効生成から除きます。判定・スキーマ制約は共通項を参照してください。",
+        "選用共用啟用條件，預設無條件。不成立時從有效產生排除；條件與結構描述限制請見共用欄位。",
+        "可选通用启用条件，默认无条件。不成立时从有效生成排除；条件与模式限制请见通用字段。"
+      ],
+      "hostname": [
+        "Optional FQDN for local DNS publication and status, default empty. Does not select HTTP Host routing or health-check Host/SNI. Requires an appropriate DNSZone served by DNSResolver for publication.",
+        "任意のFQDNで、ローカルDNS登録・状態表示に使います。既定は空で、HTTP Host振分・検査Host/SNIには使いません。登録には対応するDNSZoneをDNSResolverで提供する必要があります。",
+        "選用 FQDN，用於本機 DNS 發布與狀態，預設空。不作 HTTP Host 路由或健康檢查 Host/SNI。發布需有 DNSResolver 服務的適當 DNSZone。",
+        "可选 FQDN，用于本机 DNS 发布与状态，默认空。不作 HTTP Host 路由或健康检查 Host/SNI。发布需有 DNSResolver 服务的适当 DNSZone。"
+      ],
+      "externalDNS": [
+        "Default false. True skips routerd’s automatic local hostname record and DNS-coverage warnings; it does not update an external DNS provider.",
+        "既定falseです。trueは自動ローカル名登録とDNS提供範囲の警告を省き、外部DNS事業者への登録は行いません。",
+        "預設 false。true 略過 routerd 自動本機名稱紀錄與 DNS 範圍警告，不更新外部 DNS 供應商。",
+        "默认 false。true 跳过 routerd 自动本机名称记录与 DNS 范围警告，不更新外部 DNS 提供商。"
+      ],
+      "backends": [
+        "Required nonempty backend list; order selects failover priority. Configuration permits hostnames, but static NAT rendering needs IPv4 resolution and does not perform DNS itself.",
+        "1件以上必須の転送先一覧で、宣言順がfailover優先順です。設定はホスト名を受理しますが、静的NAT描画はIPv4解決済み値が必要でDNSを引きません。",
+        "必填非空後端清單，順序為 failover 優先順。設定接受主機名，但靜態 NAT 產生需已解析 IPv4，不自行查 DNS。",
+        "必填非空后端列表，顺序为 failover 优先顺。配置接受主机名，但静态 NAT 生成需已解析 IPv4，不自行查 DNS。"
+      ],
+      "backends[].name": [
+        "Optional stable health-history key, default backend-<zero-based index>. Duplicate names are not rejected by this validator and can mix history; use unique names.",
+        "任意のヘルス履歴キーで、既定はbackend-<0始まり番号>です。重複はこの検証で拒否せず履歴が混ざり得るため、一意名にしてください。",
+        "選用穩定健康歷史鍵，預設 backend-<從零起算索引>。此驗證不拒絕重複名稱，可能混合歷史，請用唯一名稱。",
+        "可选稳定健康历史键，默认 backend-<从零起算索引>。此验证不拒绝重复名称，可能混合历史，请用唯一名称。"
+      ],
+      "backends[].address": [
+        "Bare IPv4 or hostname, mutually exclusive with addressFrom; one is required. Hostname resolution uses IPv4 only and retains a previous address on DNS failure when available.",
+        "裸のIPv4・ホスト名で、addressFromとちょうど一方が必須です。ホスト名はIPv4だけを解決し、DNS失敗時に前回値があれば保持します。",
+        "純 IPv4 或主機名，與 addressFrom 必須擇一。主機名僅解析 IPv4，DNS 失敗時有先前位址則保留。",
+        "纯 IPv4 或主机名，与 addressFrom 必须择一。主机名仅解析 IPv4，DNS 失败时有先前地址则保留。"
+      ],
+      "backends[].addressFrom": [
+        "Optional common resource/field/optional source, excluding address. The active checker reads runtime status; optional does not make an unresolved backend healthy. Static rendering supports only declared address fields described above.",
+        "addressと排他の共通参照です。稼働検査は実行statusを読み、optionalでも未解決先を正常にしません。静的描画の対応は前述の宣言アドレス値だけです。",
+        "與 address 互斥的共用來源。主動檢查讀執行狀態，optional 不會讓未解析後端變健康。靜態產生僅支援上述宣告位址欄位。",
+        "与 address 互斥的通用来源。主动检查读运行状态，optional 不会让未解析后端变健康。静态生成仅支持上述声明地址字段。"
+      ],
+      "backends[].port": [
+        "Required backend port 1–65535. Used by data-plane translation and the configured health-check protocol.",
+        "必須の転送先ポート1～65535です。実通信の変換先とヘルスチェック方式の接続先に使います。",
+        "必填後端連接埠 1–65535，用於資料轉換與健康檢查連線。",
+        "必填后端端口 1–65535，用于数据转换与健康检查连接。"
+      ],
+      "backends[].weight": [
+        "Nonnegative integer accepted, default 0; current health selection and Linux/PF NAT rendering do not read it. No weighted distribution.",
+        "0以上の整数で既定0ですが、現在のヘルス選択・Linux/PF NATは読みません。重み付き分散にはなりません。",
+        "接受非負整數，預設 0；目前健康選擇與 Linux/PF NAT 產生器不讀取。不提供加權分散。",
+        "接受非负整数，默认 0；当前健康选择与 Linux/PF NAT 生成器不读取。不提供加权分散。"
+      ],
+      "healthCheck": [
+        "Optional active check settings. Omission still enables TCP checking rather than disabling checks.",
+        "任意の稼働検査設定です。省略は無効化でなくTCP検査になります。",
+        "選用主動健康檢查設定，省略仍啟用 TCP 檢查，不是停用。",
+        "可选主动健康检查配置，省略仍启用 TCP 检查，不是禁用。"
+      ],
+      "healthCheck.protocol": [
+        "tcp (default), http or https. Independent from listen.protocol. HTTP(S) sends GET directly to the resolved backend address and port.",
+        "tcp（既定）・http・httpsです。listen.protocolとは独立し、HTTP(S)は解決済みbackendのアドレス・ポートへGETします。",
+        "tcp（預設）、http 或 https，獨立於 listen.protocol。HTTP(S) 直接向已解析後端位址與連接埠發 GET。",
+        "tcp（默认）、http 或 https，独立于 listen.protocol。HTTP(S) 直接向已解析后端地址与端口发 GET。"
+      ],
+      "healthCheck.interval": [
+        "Go duration accepted by validation but not read by the controller. Actual scheduling uses the chain’s 5s cadence plus reconciliation events.",
+        "検証でGo形式の期間を受け付けますが、コントローラーは読みません。実際はチェーンの5秒間隔と再評価イベントです。",
+        "驗證接受 Go 時間長度，但控制器不讀取。實際使用鏈的 5 秒週期與協調事件。",
+        "验证接受 Go 时长，但控制器不读取。实际使用链的 5 秒周期与协调事件。"
+      ],
+      "healthCheck.timeout": [
+        "Positive Go duration, effective default 1s. Omitted/zero/negative values use 1s even though syntax validation accepts nonpositive durations. Applies per backend probe, not the whole cycle or DNS lookup.",
+        "実効既定1sの正のGo形式期間です。0・負数も構文検証は通りますが、実行時は省略と同じ1sです。backendごとの検査で、全周期・DNS解決の期限ではありません。",
+        "正 Go 時間長度，有效預設 1s。省略/零/負值即使通過語法驗證也使用 1s。適用每後端探測，不是整輪或 DNS 查詢期限。",
+        "正 Go 时长，有效默认 1s。省略/零/负值即使通过语法验证也使用 1s。适用每后端探测，不是整轮或 DNS 查询期限。"
+      ],
+      "healthCheck.path": [
+        "HTTP(S) URL path, default /. Nonempty must begin with /. Not used by TCP checks.",
+        "HTTP(S)のURLパスで既定/です。非空は/で始め、TCP検査では使いません。",
+        "HTTP(S) URL 路徑，預設 /；非空須以 / 開頭，TCP 不使用。",
+        "HTTP(S) URL 路径，默认 /；非空须以 / 开头，TCP 不使用。"
+      ],
+      "healthCheck.host": [
+        "Optional HTTP Host header and HTTPS TLS ServerName/SNI override, default empty. Without it, URL uses the resolved IP. No whitespace/control characters.",
+        "任意のHTTP Hostヘッダー・HTTPS TLS ServerName/SNI指定です。既定は空で、URLは解決済みIPを使います。空白・制御文字は禁止です。",
+        "選用 HTTP Host 與 HTTPS TLS ServerName/SNI 覆寫，預設空，URL 使用解析 IP。不可含空白或控制字元。",
+        "可选 HTTP Host 与 HTTPS TLS ServerName/SNI 覆盖，默认空，URL 使用解析 IP。不可含空白或控制字符。"
+      ],
+      "healthCheck.expectedStatus": [
+        "Optional exact HTTP status allowlist 100–599. Omitted/empty accepts 200–399; HTTP client follows redirects by default before evaluating the resulting response.",
+        "任意のHTTP状態許可一覧100～599です。省略・空は200～399を許可し、HTTPクライアントは既定でリダイレクトを追った結果を評価します。",
+        "選用完整 HTTP 狀態允許清單 100–599。省略/空接受 200–399；HTTP 用戶端預設先跟隨重新導向再評估回應。",
+        "可选完整 HTTP 状态允许列表 100–599。省略/空接受 200–399；HTTP 客户端默认先跟随重定向再评估响应。"
+      ],
+      "healthCheck.tlsSkipVerify": [
+        "Default false. True disables HTTPS certificate/hostname verification for health probes only, not data-plane TLS handling.",
+        "既定falseです。trueはHTTPS検査の証明書・ホスト検証だけを省き、実通信のTLS処理ではありません。",
+        "預設 false。true 僅停用 HTTPS 健康探測的憑證/主機名驗證，不是資料 TLS 處理。",
+        "默认 false。true 仅禁用 HTTPS 健康探测的证书/主机名验证，不是数据 TLS 处理。"
+      ],
+      "healthCheck.expectedBody": [
+        "Optional case-sensitive substring in the first 1 MiB of HTTP response body. Default empty disables body matching; not a regular expression.",
+        "HTTP応答本文の先頭1MiB内の大文字小文字を区別する部分一致です。既定の空は本文検査なしで、正規表現ではありません。",
+        "HTTP 回應本文前 1 MiB 中區分大小寫的子字串。預設空停用本文比對，不是正規表示式。",
+        "HTTP 响应正文前 1 MiB 中区分大小写的子字符串。默认空禁用正文匹配，不是正则表达式。"
+      ],
+      "healthCheck.healthyThreshold": [
+        "Successful consecutive checks to promote healthy; omitted/0 means 1. Healthy state and counts are restored from backend status. Schema minimum 1 differs from accepted zero default.",
+        "正常へ移す連続成功数で、省略・0は1です。状態・回数はbackend statusから引き継ぎます。スキーマ最小1と実装の0既定は異なります。",
+        "升為健康的連續成功次數，省略/0 為 1。健康與計數從後端狀態恢復。結構描述最小 1 與接受零預設不同。",
+        "升为健康的连续成功次数，省略/0 为 1。健康与计数从后端状态恢复。模式最小 1 与接受零默认不同。"
+      ],
+      "healthCheck.unhealthyThreshold": [
+        "Consecutive failures to remove an already healthy backend; omitted/0 means 1. Initial unresolved backends start unhealthy.",
+        "正常だったbackendを外す連続失敗数です。省略・0は1で、初回の未解決先は異常から開始します。",
+        "移除已健康後端的連續失敗次數，省略/0 為 1。初始未解析後端為不健康。",
+        "移除已健康后端的连续失败次数，省略/0 为 1。初始未解析后端为不健康。"
+      ],
+      "policy": [
+        "Optional selection settings. Defaults failover/drop, but the no-healthy action is currently reported only.",
+        "任意の選択設定で既定はfailover・dropです。ただし全異常時の動作は現在、表示だけです。",
+        "選用選擇設定，預設 failover/drop，但目前無健康動作僅報告。",
+        "可选选择配置，默认 failover/drop，但当前无健康动作仅报告。"
+      ],
+      "policy.selection": [
+        "failover (default), sourceHash or random. Linux sourceHash hashes client IPv4 source; random selects modulo equal backend count. One healthy backend falls back to failover. PF always emits one target.",
+        "failover（既定）・sourceHash・randomです。LinuxのsourceHashはクライアントIPv4送信元のハッシュ、randomは同じ重みのbackend件数で選びます。正常1件はfailoverへ戻し、PFは常に1先です。",
+        "failover（預設）、sourceHash 或 random。Linux sourceHash 雜湊用戶端 IPv4 來源，random 以等權後端數取模。單一健康後端退回 failover；PF 一律單一目標。",
+        "failover（默认）、sourceHash 或 random。Linux sourceHash 哈希客户端 IPv4 源，random 以等权后端数取模。单一健康后端回退 failover；PF 一律单一目标。"
+      ],
+      "policy.onNoHealthyBackends": [
+        "drop (default) or reject accepted, but only copied to status.conditions.reason. No explicit drop/reject rule is generated; see the no-healthy fallback limitation above.",
+        "drop（既定）・rejectを受理しますがstatus.conditions.reasonに入れるだけです。明示drop・rejectルールは生成せず、前述の全異常時の戻り挙動に注意してください。",
+        "接受 drop（預設）/reject，但僅寫入 status.conditions.reason，不產生明確 drop/reject；請見上述無健康後端限制。",
+        "接受 drop（默认）/reject，但仅写入 status.conditions.reason，不生成明确 drop/reject；请见上述无健康后端限制。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_firewall.go",
+      "pkg/config/diagnostics.go",
+      "pkg/config/validate.go",
+      "pkg/controller/ingressservice/controller.go",
+      "pkg/controller/nat44/controller.go",
+      "pkg/controller/chain/chain.go",
+      "pkg/controller/dnsresolver/controller.go",
+      "pkg/render/ingress.go",
+      "pkg/render/status_source.go",
+      "pkg/render/nftables.go",
+      "pkg/render/pf.go"
+    ]
+  },
+  "VirtualAddress": {
+    "purpose": [
+      "Maintain a static address or an elected floating address. Linux uses iproute2 for static addresses and keepalived for VRRP; FreeBSD uses ifconfig and CARP.",
+      "固定アドレス、または選出したノードの共有アドレスを維持します。Linuxは固定にiproute2・VRRPにkeepalived、FreeBSDはifconfig・CARPを使います。",
+      "維護靜態或選舉後的浮動位址。Linux 靜態使用 iproute2、VRRP 使用 keepalived；FreeBSD 使用 ifconfig/CARP。",
+      "维护静态或选举后的浮动地址。Linux 静态使用 iproute2、VRRP 使用 keepalived；FreeBSD 使用 ifconfig/CARP。"
+    ],
+    "rules": [
+      [
+        "family, interface and exactly one address/addressFrom are required. Literal IPv4 must be /32; IPv6 VRRP/CARP must be /128, while static IPv6 may retain a different prefix length. A bare address obtained from addressFrom is promoted to /32 or /128.",
+        "family・interfaceとaddress・addressFromのちょうど一方が必須です。固定IPv4値は/32、IPv6 VRRP・CARPは/128で、固定IPv6だけは他のプレフィックス長も許可します。addressFromの裸の値は/32・/128にします。",
+        "family/interface 與 address/addressFrom 擇一必填。固定 IPv4 須 /32，IPv6 VRRP/CARP 須 /128；靜態 IPv6 可保留其他前綴長度。addressFrom 的純位址提升為 /32 或 /128。",
+        "family/interface 与 address/addressFrom 择一必填。固定 IPv4 须 /32，IPv6 VRRP/CARP 须 /128；静态 IPv6 可保留其他前缀长度。addressFrom 的纯地址提升为 /32 或 /128。"
+      ],
+      [
+        "interface must exist in the configuration interface index. IPv4StaticAddress and VirtualAddress cannot manage the same indexed address on one interface; using addressFrom=IPv4StaticAddress on that same interface is rejected. VRRP IDs must be unique per family/interface.",
+        "interfaceは設定のインターフェース索引に存在する必要があります。同じインターフェースでIPv4StaticAddressと同じ索引アドレスを管理できず、同インターフェースのIPv4StaticAddressをaddressFromにする指定も拒否します。VRRP IDはfamily・interfaceごとに一意です。",
+        "interface 須存在設定介面索引。同介面上不可同時由 IPv4StaticAddress 與 VirtualAddress 管理相同索引位址；addressFrom 指向同介面的 IPv4StaticAddress 也會拒絕。VRRP ID 須依 family/interface 唯一。",
+        "interface 须存在配置接口索引。同接口上不可同时由 IPv4StaticAddress 与 VirtualAddress 管理相同索引地址；addressFrom 指向同接口的 IPv4StaticAddress 也会拒绝。VRRP ID 须按 family/interface 唯一。"
+      ],
+      [
+        "addressFrom passes ordinary source/field validation but the address renderer reads declared IPv4StaticAddress.address or VirtualAddress.address only, not arbitrary runtime status. optional does not allow an empty final VIP; rendering/apply may report Error or Pending.",
+        "addressFromは一般の参照・field検証を通しますが、アドレス描画は宣言済みIPv4StaticAddress.address・VirtualAddress.addressだけを読み、任意の実行statusは読みません。optionalでも最終VIPは空にできず、描画・適用でError・Pendingになる場合があります。",
+        "addressFrom 經一般來源/欄位驗證，但位址產生器僅讀宣告的 IPv4StaticAddress.address/VirtualAddress.address，不讀任意執行期狀態。optional 不允許最終 VIP 為空，可能出現 Error/Pending。",
+        "addressFrom 经普通来源/字段验证，但地址生成器仅读声明的 IPv4StaticAddress.address/VirtualAddress.address，不读任意运行时状态。optional 不允许最终 VIP 为空，可能出现 Error/Pending。"
+      ],
+      [
+        "mode=vrrp requires virtualRouterID and, on Linux, a nonempty unicast peer list. FreeBSD uses native CARP and does not use peers as a unicast delivery list. Omitted preempt disables preemption; CARP preemption is host-global and any true instance enables that sysctl.",
+        "mode=vrrpはvirtualRouterIDが必須で、Linuxでは1件以上のユニキャストpeersも必要です。FreeBSDはCARPでpeersをユニキャスト配送先に使いません。preempt省略は無効ですが、CARPのpreemptはホスト共通で1件でもtrueならsysctlを有効にします。",
+        "mode=vrrp 需要 virtualRouterID，Linux 另需非空單播 peers。FreeBSD 使用原生 CARP，不將 peers 作單播目標。省略 preempt 停用搶占；CARP 搶占為主機全域，任一實例 true 即啟用 sysctl。",
+        "mode=vrrp 需要 virtualRouterID，Linux 另需非空单播 peers。FreeBSD 使用原生 CARP，不将 peers 作单播目标。省略 preempt 禁用抢占；CARP 抢占为主机全局，任一实例 true 即启用 sysctl。"
+      ],
+      [
+        "Failover VMACs follow the single VIP’s authoritative election, rather than holding separate VRRP elections. Linux-only VMAC helpers validate names/MAC/link-local values again when invoked; additionalFailoverVMACs has weaker YAML validation than the primary entry. A valid parent reference and installed helper are required at render/apply time.",
+        "切替VMACは別のVRRP選挙を持たず、このVIPの選出に従います。Linux専用ヘルパーは実行時も名前・MAC・リンクローカル値を検証しますが、additionalFailoverVMACsのYAML検証は主項目より限定的です。描画・適用時に有効な親参照とヘルパーが必要です。",
+        "容錯 VMAC 依同一 VIP 的權威選舉，不另建 VRRP 選舉。Linux 專用輔助程式執行時再驗證名稱/MAC/鏈路本地值；additionalFailoverVMACs 的 YAML 驗證較主項目弱。產生/套用時需要有效父介面參照與已安裝輔助程式。",
+        "切换 VMAC 依同一 VIP 的权威选举，不另建 VRRP 选举。Linux 专用辅助程序运行时再验证名称/MAC/链路本地值；additionalFailoverVMACs 的 YAML 验证较主条目弱。生成/应用时需要有效父接口引用与已安装辅助程序。"
+      ],
+      [
+        "gracefulActivation is Linux IPv4 VRRP only. Election/VMAC activation can happen before publishing the VIP; readiness admits the VIP. Timeout reports failure while keeping the VIP withheld and retrying, never forcing publication. After a successfully published VIP, later readiness degradation does not withdraw it while still master.",
+        "gracefulActivationはLinux IPv4 VRRP専用です。VIP公開前に選出・VMAC有効化を行い、readyWhenがVIP公開を許可します。期限超過は失敗表示だけでVIPを保留して再試行し、強制公開しません。一度正常に公開したVIPは、主系のままなら後の準備条件低下だけでは取り下げません。",
+        "gracefulActivation 僅 Linux IPv4 VRRP。選舉/VMAC 可先於 VIP 公布，準備條件允許 VIP 加入。逾時只報失敗並持續保留與重試，絕不強制公布。VIP 成功公布後，只要仍為 master，後續準備條件退化不撤回 VIP。",
+        "gracefulActivation 仅 Linux IPv4 VRRP。选举/VMAC 可先于 VIP 发布，就绪条件允许 VIP 加入。超时仅报失败并持续保留与重试，绝不强制发布。VIP 成功发布后，只要仍为 master，后续就绪条件退化不撤回 VIP。"
+      ],
+      [
+        "VRRP advertisement timing is derived (normally 1s) rather than configurable through advertInterval/preemptDelay; these legacy members are excluded from YAML/JSON schema. Protocol priority/authentication behavior still depends on keepalived or CARP.",
+        "VRRP広告間隔は実装が決め（通常1秒）、advertInterval・preemptDelayでは設定しません。旧メンバーはYAML・JSONスキーマから除外しています。優先度・認証の実際の動作はkeepalived・CARPにも依存します。",
+        "VRRP 公告時間由實作決定（通常 1 秒），不透過 advertInterval/preemptDelay 設定；這些舊成員排除於 YAML/JSON 結構描述。協定優先權/驗證仍依 keepalived/CARP。",
+        "VRRP 通告时间由实现决定（通常 1 秒），不通过 advertInterval/preemptDelay 配置；这些旧成员排除于 YAML/JSON 模式。协议优先级/认证仍依 keepalived/CARP。"
+      ]
+    ],
+    "fields": {
+      "family": [
+        "Required ipv4 or ipv6; no default. Must match the address family.",
+        "ipv4・ipv6が必須で既定値はありません。アドレスの系統と一致させます。",
+        "必填 ipv4/ipv6，無預設，須與位址族一致。",
+        "必填 ipv4/ipv6，无默认，须与地址族一致。"
+      ],
+      "interface": [
+        "Required bare declared logical interface name; resolves to the OS device. Not Kind/name.",
+        "必須の裸の宣言論理インターフェース名で、OS名へ解決します。Kind/nameではありません。",
+        "必填單純宣告邏輯介面名稱，解析為 OS 裝置，不是 Kind/name。",
+        "必填单独声明逻辑接口名称，解析为 OS 设备，不是 Kind/name。"
+      ],
+      "address": [
+        "Literal prefix, excluding addressFrom. IPv4 /32; IPv6 /128 unless static mode. JSON Schema marks address required even though semantic validation permits addressFrom instead.",
+        "addressFromと排他の固定プレフィックスです。IPv4は/32、IPv6は固定mode以外/128です。意味検証はaddressFromを許可しますが、JSON Schemaはaddressを必須としています。",
+        "與 addressFrom 互斥的固定位址前綴。IPv4 /32；IPv6 除靜態模式外 /128。語意驗證允許 addressFrom 替代，但 JSON Schema 將 address 標為必填。",
+        "与 addressFrom 互斥的固定地址前缀。IPv4 /32；IPv6 除静态模式外 /128。语义验证允许 addressFrom 替代，但 JSON Schema 将 address 标为必填。"
+      ],
+      "addressFrom": [
+        "Common resource/field/optional source, mutually exclusive with address. Effective renderer support is declared IPv4StaticAddress.address/VirtualAddress.address; use an explicit field. Nested VirtualAddress sources are not recursively resolved.",
+        "addressと排他の共通参照です。実効描画は宣言IPv4StaticAddress.address・VirtualAddress.addressで、field明示が必要です。VirtualAddressの参照を再帰的にたどりません。",
+        "與 address 互斥的共用來源，產生器支援宣告 IPv4StaticAddress.address/VirtualAddress.address，須明確 field。不遞迴解析巢狀 VirtualAddress 來源。",
+        "与 address 互斥的通用来源，生成器支持声明 IPv4StaticAddress.address/VirtualAddress.address，须明确 field。不递归解析嵌套 VirtualAddress 来源。"
+      ],
+      "hostname": [
+        "Optional FQDN for automatic local DNS records in a served DNSZone and for status. Does not change OS hostname or create an external DNS record.",
+        "提供中のDNSZoneへのローカル名登録・状態表示用FQDNです。既定空で、OSホスト名・外部DNS登録は変更しません。",
+        "選用 FQDN，用於已服務 DNSZone 的自動本機 DNS 紀錄與狀態。不改 OS 主機名或建立外部 DNS 紀錄。",
+        "可选 FQDN，用于已服务 DNSZone 的自动本机 DNS 记录与状态。不改 OS 主机名或创建外部 DNS 记录。"
+      ],
+      "externalDNS": [
+        "Default false. True opts out of automatic local hostname records/DNS-coverage warnings; does not contact an external DNS provider.",
+        "既定falseです。trueはローカル名登録・DNS提供範囲警告を省き、外部DNSへの通信はしません。",
+        "預設 false，true 略過自動本機名稱紀錄與 DNS 範圍警告，不連絡外部 DNS 供應商。",
+        "默认 false，true 跳过自动本机名称记录与 DNS 范围警告，不联系外部 DNS 提供商。"
+      ],
+      "mode": [
+        "static (default) or vrrp. static applies on this host without election; vrrp selects keepalived on Linux or CARP on FreeBSD. VRRP and tracking objects do not gate static ownership.",
+        "static（既定）・vrrpです。staticは選挙なしで自機に適用し、vrrpはLinux keepalived・FreeBSD CARPです。vrrp・trackオブジェクトは固定の所有を制御しません。",
+        "static（預設）或 vrrp。static 不選舉直接套用本機；vrrp 使用 Linux keepalived/FreeBSD CARP。VRRP/track 物件不限制靜態持有。",
+        "static（默认）或 vrrp。static 不选举直接应用本机；vrrp 使用 Linux keepalived/FreeBSD CARP。VRRP/track 对象不限制静态持有。"
+      ],
+      "gratuitousARP": [
+        "Default false. Only Linux static IPv4 permits true. After adding/restoring a missing VIP it runs arping -U -c 3; normal reconciliation does not announce repeatedly. An announcement failure is reported and retried.",
+        "既定falseで、trueはLinux固定IPv4だけです。欠落VIPの追加・復元後にarping -U -c 3を使い、通常の再評価では連発しません。失敗は報告し再試行します。",
+        "預設 false，僅 Linux 靜態 IPv4 可 true。新增/恢復遺失 VIP 後執行 arping -U -c 3，一般協調不反覆公告。失敗會報告並重試。",
+        "默认 false，仅 Linux 静态 IPv4 可 true。新增/恢复缺失 VIP 后执行 arping -U -c 3，普通协调不反复公告。失败会报告并重试。"
+      ],
+      "when": [
+        "Optional common resource activation condition, default unconditional. This filters the entire resource; separate from gracefulActivation.readyWhen’s admission gate.",
+        "共通の有効化条件で、既定は無条件です。リソース全体を除外する条件で、gracefulActivation.readyWhenの公開条件とは別です。",
+        "選用共用資源啟用條件，預設無條件。篩選整個資源，與 gracefulActivation.readyWhen 的加入閘門不同。",
+        "可选通用资源启用条件，默认无条件。筛选整个资源，与 gracefulActivation.readyWhen 的加入门槛不同。"
+      ],
+      "vrrp": [
+        "Election settings used only by mode=vrrp. Static mode ignores them; not all nested values are validated when static.",
+        "mode=vrrp専用の選出設定です。staticは使わず、staticでは子項目すべてを検証するわけではありません。",
+        "僅 mode=vrrp 使用的選舉設定。靜態模式忽略，且不驗證所有內層值。",
+        "仅 mode=vrrp 使用的选举配置。静态模式忽略，且不验证所有内层值。"
+      ],
+      "vrrp.virtualRouterID": [
+        "Required 1–255 in vrrp mode; mapped to CARP vhid. Unique for family/interface in this Router; peers for the same election must agree.",
+        "vrrpで必須の1～255で、CARPのvhidへ対応します。同じRouterのfamily・interfaceごとに一意とし、同じ選挙の相手と合わせます。",
+        "vrrp 必填 1–255，映射 CARP vhid。同 Router 的 family/interface 內唯一，同次選舉的節點須一致。",
+        "vrrp 必填 1–255，映射 CARP vhid。同 Router 的 family/interface 内唯一，同次选举的节点须一致。"
+      ],
+      "vrrp.priority": [
+        "1–254, omitted/0 means 100. Tracking penalties lower effective priority, clamped to at least 1. CARP converts priority to advskew=max(1,254-priority).",
+        "1～254で省略・0は100です。trackの減点後も最小1にし、CARPはadvskew=max(1,254-priority)へ変換します。",
+        "1–254，省略/0 為 100。追蹤扣分後至少 1；CARP 轉換為 advskew=max(1,254-priority)。",
+        "1–254，省略/0 为 100。跟踪扣分后至少 1；CARP 转换为 advskew=max(1,254-priority)。"
+      ],
+      "vrrp.preempt": [
+        "Omitted/false disables taking ownership back solely for higher priority. True enables preemption. CARP applies a host-global net.inet.carp.preempt, true if any configured instance requests true.",
+        "省略・falseは高優先度だけを理由に主系を奪い返しません。trueで有効です。CARPは全体のnet.inet.carp.preemptで、1定義でもtrueなら有効です。",
+        "省略/false 不僅因較高優先權奪回持有；true 啟用搶占。CARP 使用主機全域 net.inet.carp.preempt，任一設定實例 true 即啟用。",
+        "省略/false 不仅因较高优先级夺回持有；true 启用抢占。CARP 使用主机全局 net.inet.carp.preempt，任一配置实例 true 即启用。"
+      ],
+      "vrrp.peers": [
+        "Linux vrrp requires nonempty peer address/hostname list for unicast. Values are syntax-validated, deduplicated/sorted for rendering. FreeBSD CARP does not use this list as peers.",
+        "Linux vrrpで必須の相手アドレス・ホスト名一覧です。構文を検証し、描画で重複排除・ソートします。FreeBSD CARPは相手指定として使いません。",
+        "Linux vrrp 必填非空對等位址/主機名清單。語法驗證，產生時去重排序。FreeBSD CARP 不將此清單作對等設定。",
+        "Linux vrrp 必填非空对等地址/主机名列表。语法验证，生成时去重排序。FreeBSD CARP 不将此列表作对等配置。"
+      ],
+      "vrrp.authentication": [
+        "Optional plaintext authentication value, default absent. Excludes authenticationFrom. Linux emits keepalived auth_type PASS; CARP uses pass. This is protocol authentication, not encrypted VRRP traffic.",
+        "任意の平文認証値で、既定はなしです。authenticationFromと排他です。Linuxはkeepalived auth_type PASS、CARPはpassで、VRRP通信の暗号化ではありません。",
+        "選用明文驗證值，預設無，與 authenticationFrom 互斥。Linux 產生 keepalived auth_type PASS，CARP 使用 pass。是協定驗證，不是加密 VRRP 流量。",
+        "可选明文认证值，默认无，与 authenticationFrom 互斥。Linux 生成 keepalived auth_type PASS，CARP 使用 pass。是协议认证，不是加密 VRRP 流量。"
+      ],
+      "vrrp.authenticationFrom": [
+        "Optional secret source, excludes plaintext authentication. Exactly one file/env when configured. Read during rendering; missing file/env or invalid Base64 fails then. Empty resolved value omits authentication.",
+        "平文authenticationと排他の秘密値取得元です。指定時はfile・envのちょうど一方が必要です。描画時に読み、ファイル・環境欠落や不正Base64はそこで失敗します。解決結果が空なら認証を省略します。",
+        "選用密鑰來源，與明文 authentication 互斥。設定時 file/env 必須擇一。產生時讀取，遺失檔案/環境或無效 Base64 會失敗；解析空值會省略驗證。",
+        "可选密钥来源，与明文 authentication 互斥。配置时 file/env 必须择一。生成时读取，缺失文件/环境或无效 Base64 会失败；解析空值会省略认证。"
+      ],
+      "vrrp.authenticationFrom.file": [
+        "Secret file path on the router, mutually exclusive with env. Renderer strips trailing CR/LF, not all leading/trailing spaces.",
+        "ルーター上の秘密値ファイルでenvと排他です。描画は末尾CR・LFを除きますが、全空白を除くわけではありません。",
+        "路由器上的密鑰檔案路徑，與 env 互斥。產生器移除尾端 CR/LF，不移除全部前後空格。",
+        "路由器上的密钥文件路径，与 env 互斥。生成器移除末尾 CR/LF，不移除全部前后空格。"
+      ],
+      "vrrp.authenticationFrom.env": [
+        "Environment variable of the routerd process, mutually exclusive with file. Not a shell expansion or a remote environment variable.",
+        "routerdプロセスの環境変数名でfileと排他です。シェル展開・相手環境変数ではありません。",
+        "routerd 程序的環境變數名稱，與 file 互斥。不是 shell 展開或遠端環境變數。",
+        "routerd 进程的环境变量名称，与 file 互斥。不是 shell 展开或远端环境变量。"
+      ],
+      "vrrp.authenticationFrom.base64": [
+        "Default false; true decodes standard Base64 after trimming surrounding encoded whitespace, then strips trailing CR/LF from decoded bytes.",
+        "既定falseです。trueは符号化値前後の空白を除いて標準Base64を解読し、結果末尾のCR・LFも除きます。",
+        "預設 false。true 在移除編碼值前後空白後解碼標準 Base64，再移除解碼結果尾端 CR/LF。",
+        "默认 false。true 在移除编码值前后空白后解码标准 Base64，再移除解码结果末尾 CR/LF。"
+      ],
+      "vrrp.failoverVMAC": [
+        "Optional Linux macvlan L2 identity controlled by this VRRP election; no independent election. Primary entry is validated in Linux VRRP mode; unavailable on FreeBSD.",
+        "本VRRP選出で制御する任意のLinux macvlan識別です。別選挙はありません。主項目はLinux VRRPで検証し、FreeBSDでは使えません。",
+        "選用由同一 VRRP 選舉控制的 Linux macvlan L2 身分，不另選舉。主項目在 Linux VRRP 模式驗證，FreeBSD 不支援。",
+        "可选由同一 VRRP 选举控制的 Linux macvlan L2 身份，不另选举。主条目在 Linux VRRP 模式验证，FreeBSD 不支持。"
+      ],
+      "vrrp.additionalFailoverVMACs": [
+        "Optional additional VMAC entries following the same role transition, default empty. Same field meanings as failoverVMAC. Current YAML validation does not fully validate these entries; the Linux helper/rendering still requires valid parents, interface names and Ethernet MACs.",
+        "同じ役割遷移に従う追加VMACで、既定は空です。子項目はfailoverVMACと同じ意味です。現行YAML検証は限定的ですが、Linuxヘルパー・描画で正しい親・インターフェース名・Ethernet MACが必要です。",
+        "選用依相同角色轉換的額外 VMAC，預設空，欄位同 failoverVMAC。目前 YAML 驗證不完整，Linux 輔助程式/產生仍需有效父介面、名稱與 Ethernet MAC。",
+        "可选依相同角色转换的额外 VMAC，默认空，字段同 failoverVMAC。当前 YAML 验证不完整，Linux 辅助程序/生成仍需有效父接口、名称与 Ethernet MAC。"
+      ],
+      "vrrp.gracefulActivation": [
+        "Optional Linux IPv4 VRRP admission gate. No gate by default; other families/FreeBSD are rejected. Waits to publish VIP after election while preparing dependent state.",
+        "任意のLinux IPv4 VRRP公開条件です。既定なしで、他family・FreeBSDは禁止です。選出後に依存状態を準備し、VIP公開を待ちます。",
+        "選用 Linux IPv4 VRRP 加入閘門，預設無；其他位址族/FreeBSD 拒絕。選舉後準備相依狀態並等待公布 VIP。",
+        "可选 Linux IPv4 VRRP 加入门槛，默认无；其他地址族/FreeBSD 拒绝。选举后准备依赖状态并等待发布 VIP。"
+      ],
+      "vrrp.gracefulActivation.readyWhen": [
+        "Required nonempty common state/all/any condition when gate is supplied. Resource references and predicates are validated. It gates initial publication, not ongoing withdrawal after successful publication.",
+        "条件定義時に必須の空でない共通state・all・anyです。参照・条件を検証し、初回公開だけを制御して、正常公開後の継続取り下げ条件ではありません。",
+        "提供閘門時必填非空共用 state/all/any 條件。驗證參照與條件，只控制初次公布，不控制成功公布後的持續撤回。",
+        "提供门槛时必填非空通用 state/all/any 条件。验证引用与条件，仅控制初次发布，不控制成功发布后的持续撤回。"
+      ],
+      "vrrp.gracefulActivation.timeout": [
+        "Strictly positive Go duration, default 45s. Expiry changes activation status to Failed/ReadinessTimeout; it does not force VIP publication, stop retries or restart the router.",
+        "正のGo形式期間で既定45sです。満了はFailed・ReadinessTimeout表示に変えるだけで、VIP強制公開・再試行停止・ルーター再起動はしません。",
+        "嚴格正 Go 時間長度，預設 45s。到期只將啟用狀態改為 Failed/ReadinessTimeout，不強制公布、不停止重試或重啟路由器。",
+        "严格正 Go 时长，默认 45s。到期仅将启用状态改为 Failed/ReadinessTimeout，不强制发布、不停止重试或重启路由器。"
+      ],
+      "track": [
+        "Optional resource-health tracking list, default empty; vrrp only. Penalties add across unhealthy tracks and affect effective election priority. It does not directly remove static VIPs.",
+        "任意のリソース健全性一覧で既定は空、vrrp専用です。異常の減点を合計して選出優先度を下げ、固定VIPを直接消しません。",
+        "選用資源健康追蹤清單，預設空，僅 vrrp。異常扣分累加影響選舉優先權，不直接移除靜態 VIP。",
+        "可选资源健康跟踪列表，默认空，仅 vrrp。异常扣分累加影响选举优先级，不直接移除静态 VIP。"
+      ],
+      "track[].resource": [
+        "Required Kind/name format; validator checks format, not referenced existence here. Reads that resource phase: common ready phases are healthy; BGPRouter/BGPPeer require Established. Disabled/Standby/NotApplicable and when-false are neutral and preserve the current penalty decision.",
+        "必須のKind/name形式で、ここでは形式のみを検証します。phaseを読み、通常の準備完了系phaseは正常、BGPRouter・BGPPeerはEstablishedが必要です。Disabled・Standby・NotApplicable・when不成立は中立で現在の減点状態を維持します。",
+        "必填 Kind/name 格式，此處驗證格式不驗存在。讀取 phase，一般就緒 phase 為健康，BGPRouter/BGPPeer 需 Established。Disabled/Standby/NotApplicable 與 when=false 為中立，保留目前扣分決定。",
+        "必填 Kind/name 格式，此处验证格式不验存在。读取 phase，普通就绪 phase 为健康，BGPRouter/BGPPeer 需 Established。Disabled/Standby/NotApplicable 与 when=false 为中立，保留当前扣分决定。"
+      ],
+      "track[].unhealthyPenalty": [
+        "0–254; omitted/0 means 50, so zero cannot disable a track penalty. Applied after unhealthy confirmation, removed after healthy confirmation.",
+        "0～254で省略・0は50です。0で減点を無効にはできません。異常確認後に適用し、正常確認後に戻します。",
+        "0–254，省略/0 為 50，零無法停用扣分。確認異常後套用，確認健康後移除。",
+        "0–254，省略/0 为 50，零无法禁用扣分。确认异常后应用，确认健康后移除。"
+      ],
+      "track[].confirmConsecutiveUnhealthy": [
+        "Consecutive unhealthy evaluations before penalizing, omitted/0 means 3; explicit 1–255. Evaluations are reconciliation observations, not elapsed seconds.",
+        "減点前の連続異常評価数で、省略・0は3、明示値1～255です。秒数でなく再評価の観測回数です。",
+        "扣分前連續異常評估次數，省略/0 為 3，明確 1–255。是協調觀測次數，不是秒數。",
+        "扣分前连续异常评估次数，省略/0 为 3，明确 1–255。是协调观测次数，不是秒数。"
+      ],
+      "track[].confirmConsecutiveHealthy": [
+        "Consecutive healthy evaluations to remove a penalty, omitted/0 means 2; explicit 1–255. Track decisions/counters can restore from saved status after restart.",
+        "減点解除までの連続正常評価数で、省略・0は2、明示値1～255です。減点判断・回数は再起動後に保存statusから復元できます。",
+        "解除扣分前連續健康次數，省略/0 為 2，明確 1–255。追蹤決定/計數可在重啟後由保存狀態還原。",
+        "解除扣分前连续健康次数，省略/0 为 2，明确 1–255。跟踪决定/计数可在重启后由保存状态恢复。"
+      ],
+      "vrrp.failoverVMAC.parentInterface": [
+        "Required configured logical parent interface, resolved to OS name during rendering. Not an arbitrary status source.",
+        "必須の設定論理親インターフェース名で、描画時にOS名へ解決します。状態値参照ではありません。",
+        "必填設定的邏輯父介面，產生時解析為 OS 名稱，不是狀態來源。",
+        "必填配置的逻辑父接口，生成时解析为 OS 名称，不是状态来源。"
+      ],
+      "vrrp.additionalFailoverVMACs[].parentInterface": [
+        "Required configured logical parent interface, resolved to OS name during rendering. Not an arbitrary status source.",
+        "必須の設定論理親インターフェース名で、描画時にOS名へ解決します。状態値参照ではありません。",
+        "必填設定的邏輯父介面，產生時解析為 OS 名稱，不是狀態來源。",
+        "必填配置的逻辑父接口，生成时解析为 OS 名称，不是状态来源。"
+      ],
+      "vrrp.failoverVMAC.interface": [
+        "Required Linux VMAC device name, at most 15 characters with valid interface syntax. Created/activated or deactivated by the role helper.",
+        "必須のLinux VMACデバイス名です。15文字以内の有効なインターフェース名とし、役割ヘルパーが作成・有効化・無効化します。",
+        "必填 Linux VMAC 裝置名稱，最多 15 字元且須有效介面語法，由角色輔助程式建立/啟用/停用。",
+        "必填 Linux VMAC 设备名称，最多 15 字符且须有效接口语法，由角色辅助程序创建/启用/禁用。"
+      ],
+      "vrrp.additionalFailoverVMACs[].interface": [
+        "Required Linux VMAC device name, at most 15 characters with valid interface syntax. Created/activated or deactivated by the role helper.",
+        "必須のLinux VMACデバイス名です。15文字以内の有効なインターフェース名とし、役割ヘルパーが作成・有効化・無効化します。",
+        "必填 Linux VMAC 裝置名稱，最多 15 字元且須有效介面語法，由角色輔助程式建立/啟用/停用。",
+        "必填 Linux VMAC 设备名称，最多 15 字符且须有效接口语法，由角色辅助程序创建/启用/禁用。"
+      ],
+      "vrrp.failoverVMAC.macAddress": [
+        "Required six-byte Ethernet MAC. Peers sharing the failover identity must configure the same value; not auto-derived from VRID.",
+        "必須の6バイトEthernet MACです。同じ切替識別を持つ相手と合わせ、VRIDから自動生成しません。",
+        "必填六位元組 Ethernet MAC，共用切換身分的節點須一致，不從 VRID 自動產生。",
+        "必填六字节 Ethernet MAC，共享切换身份的节点须一致，不从 VRID 自动生成。"
+      ],
+      "vrrp.additionalFailoverVMACs[].macAddress": [
+        "Required six-byte Ethernet MAC. Peers sharing the failover identity must configure the same value; not auto-derived from VRID.",
+        "必須の6バイトEthernet MACです。同じ切替識別を持つ相手と合わせ、VRIDから自動生成しません。",
+        "必填六位元組 Ethernet MAC，共用切換身分的節點須一致，不從 VRID 自動產生。",
+        "必填六字节 Ethernet MAC，共享切换身份的节点须一致，不从 VRID 自动生成。"
+      ],
+      "vrrp.failoverVMAC.linkLocalAddress": [
+        "Optional bare IPv6 link-local identity (fe80::/10), no prefix/zone suffix. The Linux helper validates it at invocation; omission leaves its normal link-local handling.",
+        "任意の裸のIPv6リンクローカル識別（fe80::/10）で、プレフィックス・ゾーン接尾辞なしです。Linuxヘルパーが実行時に検証し、省略時は通常のリンクローカル処理です。",
+        "選用純 IPv6 鏈路本地身分（fe80::/10），不含前綴/區域後綴。Linux 輔助程式呼叫時驗證，省略採一般鏈路本地處理。",
+        "可选纯 IPv6 链路本地身份（fe80::/10），不含前缀/区域后缀。Linux 辅助程序调用时验证，省略采用普通链路本地处理。"
+      ],
+      "vrrp.additionalFailoverVMACs[].linkLocalAddress": [
+        "Optional bare IPv6 link-local identity (fe80::/10), no prefix/zone suffix. The Linux helper validates it at invocation; omission leaves its normal link-local handling.",
+        "任意の裸のIPv6リンクローカル識別（fe80::/10）で、プレフィックス・ゾーン接尾辞なしです。Linuxヘルパーが実行時に検証し、省略時は通常のリンクローカル処理です。",
+        "選用純 IPv6 鏈路本地身分（fe80::/10），不含前綴/區域後綴。Linux 輔助程式呼叫時驗證，省略採一般鏈路本地處理。",
+        "可选纯 IPv6 链路本地身份（fe80::/10），不含前缀/区域后缀。Linux 辅助程序调用时验证，省略采用普通链路本地处理。"
+      ],
+      "vrrp.failoverVMAC.withdrawRouterAdvertisement": [
+        "Default false. With the multi-VMAC argument form, true sends a zero-router-lifetime RA before deactivation when a link-local source exists. Single-VMAC legacy argument form with no explicit linkLocalAddress does not pass this flag.",
+        "既定falseです。複数VMAC引数形式ではtrueで無効化前にrouter lifetime=0のRAを送り、リンクローカル送信元が必要です。linkLocalAddressなしの単一VMAC旧引数形式は本フラグを渡しません。",
+        "預設 false。多 VMAC 引數形式中 true 會在停用前以鏈路本地來源送出 router lifetime=0 RA。未明確 linkLocalAddress 的單 VMAC 舊引數形式不傳遞此旗標。",
+        "默认 false。多 VMAC 参数形式中 true 会在禁用前以链路本地源发出 router lifetime=0 RA。未明确 linkLocalAddress 的单 VMAC 旧参数形式不传递此标志。"
+      ],
+      "vrrp.additionalFailoverVMACs[].withdrawRouterAdvertisement": [
+        "Default false. With the multi-VMAC argument form, true sends a zero-router-lifetime RA before deactivation when a link-local source exists. Single-VMAC legacy argument form with no explicit linkLocalAddress does not pass this flag.",
+        "既定falseです。複数VMAC引数形式ではtrueで無効化前にrouter lifetime=0のRAを送り、リンクローカル送信元が必要です。linkLocalAddressなしの単一VMAC旧引数形式は本フラグを渡しません。",
+        "預設 false。多 VMAC 引數形式中 true 會在停用前以鏈路本地來源送出 router lifetime=0 RA。未明確 linkLocalAddress 的單 VMAC 舊引數形式不傳遞此旗標。",
+        "默认 false。多 VMAC 参数形式中 true 会在禁用前以链路本地源发出 router lifetime=0 RA。未明确 linkLocalAddress 的单 VMAC 旧参数形式不传递此标志。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/diagnostics.go",
+      "pkg/config/validate.go",
+      "pkg/config/index.go",
+      "pkg/config/cluster_secret_validate.go",
+      "pkg/controller/vrrp/controller.go",
+      "pkg/controller/vrrp/backend.go",
+      "pkg/controller/dnsresolver/controller.go",
+      "pkg/render/vrrp.go",
+      "pkg/render/carp.go",
+      "pkg/render/status_source.go",
+      "pkg/render/secrets.go",
+      "cmd/routerd-vrrp-vmac/main.go"
+    ]
   }
 }
