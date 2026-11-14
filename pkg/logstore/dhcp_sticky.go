@@ -37,10 +37,6 @@ type DHCPStickyLog struct {
 	db *sql.DB
 }
 
-func OpenDHCPStickyLog(path string) (*DHCPStickyLog, error) {
-	return OpenDHCPStickyLogContext(context.Background(), path)
-}
-
 // OpenDHCPStickyLogContext allows the asynchronous queue consumer to cancel storage work.
 func OpenDHCPStickyLogContext(ctx context.Context, path string) (*DHCPStickyLog, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

@@ -62,17 +62,6 @@ func EncodePDLease(lease PDLease) string {
 	return string(data)
 }
 
-func DecodePDLease(value string) (PDLease, bool) {
-	var lease PDLease
-	if strings.TrimSpace(value) == "" {
-		return lease, false
-	}
-	if err := json.Unmarshal([]byte(value), &lease); err != nil {
-		return lease, false
-	}
-	return lease, true
-}
-
 func PDLeaseFromStore(store Store, base string) (PDLease, bool, error) {
 	return store.PDLease(base)
 }

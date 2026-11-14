@@ -117,9 +117,9 @@ func TestSQLiteStoreMigratesLegacyJSONAndRenames(t *testing.T) {
 		t.Fatalf("open sqlite store: %v", err)
 	}
 	defer store.Close()
-	lease, ok := DecodePDLease(store.Get("ipv6PrefixDelegation.wan-pd.lease").Value)
-	if !ok || lease.LastPrefix != "2001:db8:1200:1210::/60" {
-		t.Fatalf("lease = %+v ok=%v", lease, ok)
+	lease, ok, err := store.PDLease("ipv6PrefixDelegation.wan-pd")
+	if err != nil || !ok || lease.LastPrefix != "2001:db8:1200:1210::/60" {
+		t.Fatalf("lease = %+v ok=%v err=%v", lease, ok, err)
 	}
 	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
 		t.Fatalf("legacy state still present: %v", err)
@@ -147,9 +147,9 @@ INSERT INTO state(key,value,status,reason,since,updated_at) VALUES('ipv6PrefixDe
 		t.Fatalf("open sqlite store: %v", err)
 	}
 	defer store.Close()
-	lease, ok := DecodePDLease(store.Get("ipv6PrefixDelegation.wan-pd.lease").Value)
-	if !ok || lease.LastPrefix != "2001:db8:1200:1210::/60" {
-		t.Fatalf("lease = %+v ok=%v", lease, ok)
+	lease, ok, err := store.PDLease("ipv6PrefixDelegation.wan-pd")
+	if err != nil || !ok || lease.LastPrefix != "2001:db8:1200:1210::/60" {
+		t.Fatalf("lease = %+v ok=%v err=%v", lease, ok, err)
 	}
 	db, err = sql.Open("sqlite", path)
 	if err != nil {
