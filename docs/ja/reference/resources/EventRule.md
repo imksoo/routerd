@@ -6,6 +6,8 @@
 
 永続化されたローカルイベント履歴のパターンからイベントを生成します。相関キーごとに状態を分離できます。
 
+
+循環を防ぐため、EventRuleリソースのstatus変更イベントは入力にしません。他のリソースのstatus変更イベントは利用できます。
 ## 指定条件と参照関係
 
 - pattern.operatorとemit.topicが必須です。topic・topics・trigger・expectedのいずれかも必要ですが、この検証だけでは動作するパターンとは限りません。expectedだけでは入力一覧にならず、absenceにはtriggerまたはtopicが必要です。トピックのリソース存在確認は行いません。

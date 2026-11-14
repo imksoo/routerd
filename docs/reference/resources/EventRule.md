@@ -6,6 +6,8 @@
 
 Derive an event from patterns in the persisted local event journal, with optional per-correlation state.
 
+
+To prevent feedback loops, EventRule does not consume status-change events for EventRule resources. Status changes of other resources remain available.
 ## Conditions and references
 
 - pattern.operator and emit.topic are required. At least one of topic, topics, trigger or expected must be supplied, but this loose validation does not guarantee a usable pattern: expected alone is not an input list and absence needs a trigger/topic. No topic-to-resource existence check is performed.
