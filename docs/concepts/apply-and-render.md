@@ -6,8 +6,6 @@ sidebar_position: 4
 
 # Apply and render
 
-![Diagram showing how standalone routerd validation and dry-run differ from routerctl requests to a running daemon](/img/diagrams/concept-apply-and-render.png)
-
 There are two ways to work with a routerd configuration. The important first
 question is whether `routerd` is already running as a service.
 

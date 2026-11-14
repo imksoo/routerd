@@ -5,8 +5,6 @@ slug: /operations/inventory
 
 # Host inventory
 
-![Diagram showing host inventory detection of OS, service manager, commands, kernel features, and paths feeding platform decisions and validation or planning output](/img/diagrams/operations-inventory.png)
-
 routerd inspects the host's operating system, available commands, and network features. This inventory is used by the renderers and the apply path to make OS-specific decisions explicit instead of failing at runtime.
 
 ## What routerctl plans
@@ -46,4 +44,4 @@ If a configuration depends on a feature the host does not provide, routerd repor
 ## See also
 
 - [Supported platforms](/docs/platforms)
-- [Reconcile and removal](./reconcile)
+- [Reconcile and removal](reconcile.md)

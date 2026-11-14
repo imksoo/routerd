@@ -5,8 +5,6 @@ slug: /how-to/flets-ipv6-setup
 
 # DS-Lite over DHCPv6-PD (IPv6-only access network)
 
-![Diagram showing IPv6-only access with DHCPv6-PD, delegated LAN IPv6, conditional AFTR DNS forwarding, DS-Lite tunnel egress, and safe RA behavior](/img/diagrams/how-to-flets-ipv6-setup.png)
-
 ## Scenario
 
 The ISP delivers an IPv6-only access network and provides IPv4 connectivity through a DS-Lite tunnel to an Address Family Transition Router (AFTR). The router needs to:
@@ -144,5 +142,5 @@ Only apply for real once the plan looks right and a rollback path is in place.
 ## See also
 
 - [WAN-side services](../tutorials/wan-side-services.md)
-- [Multi-WAN egress](./multi-wan.md)
+- [Multi-WAN egress](multi-wan.md)
 - [Path MTU and MSS clamping](../concepts/path-mtu.md)

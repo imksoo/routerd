@@ -156,9 +156,9 @@ validate_changelog() {
 # sections. Missing optional translations are reported and skipped; a malformed
 # available changelog leaves the repository untouched.
 validate_changelog docs/releases/changelog.md
-validate_changelog website/i18n/ja/docusaurus-plugin-content-docs/current/releases/changelog.md
-validate_changelog website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/releases/changelog.md
-validate_changelog website/i18n/zh-Hans/docusaurus-plugin-content-docs/current/releases/changelog.md
+validate_changelog docs/ja/releases/changelog.md
+validate_changelog docs/zh-Hant/releases/changelog.md
+validate_changelog docs/zh-Hans/releases/changelog.md
 
 replace_version() {
 	file=$1
@@ -169,7 +169,7 @@ replace_version() {
 replace_version Makefile
 replace_version pkg/version/version.go
 replace_version docs/install-and-upgrade.md
-replace_version website/i18n/ja/docusaurus-plugin-content-docs/current/install-and-upgrade.md
+replace_version docs/ja/install-and-upgrade.md
 
 promote_changelog() {
 	file=$1
@@ -215,9 +215,9 @@ promote_changelog() {
 }
 
 promote_changelog docs/releases/changelog.md
-promote_changelog website/i18n/ja/docusaurus-plugin-content-docs/current/releases/changelog.md
-promote_changelog website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/releases/changelog.md
-promote_changelog website/i18n/zh-Hans/docusaurus-plugin-content-docs/current/releases/changelog.md
+promote_changelog docs/ja/releases/changelog.md
+promote_changelog docs/zh-Hant/releases/changelog.md
+promote_changelog docs/zh-Hans/releases/changelog.md
 
 make generate-schema
 

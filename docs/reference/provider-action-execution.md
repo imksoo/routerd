@@ -1,14 +1,12 @@
 # Provider Action Execution (experimental)
 
 > **Experimental.** This feature is gated, default-off, and under active
-> development. See [ADR 0007](../adr/0007-provider-action-execution.md) for the
+> development. See ADR 0007 for the
 > design and safety rationale.
 
 routerd can drive an approved cloud provider mutation (for example, attaching a
-secondary IP for [Selective Address Mobility](./selective-address-mobility))
+secondary IP for [Selective Address Mobility](selective-address-mobility.md))
 through an **executor plugin** — without ever holding cloud credentials.
-
-![Provider action execution diagram showing actionPlans stored as inert proposals, imported into an action journal, approved by policy gates, and executed by a credential-holding executor plugin](/img/diagrams/dynamic-config-provider-actions.png)
 
 ## Credential model
 
@@ -108,5 +106,5 @@ approve actions first, then execute only the approved entries that pass policy.
   hard safety stops are satisfied: `enabled`, not `dryRunOnly`, approved (or
   policy auto-approve), allowlist match, and within `maxActionsPerRun`.
 
-See [ADR 0007](../adr/0007-provider-action-execution.md) for the full list of
+See ADR 0007 for the full list of
 hard safety stops.

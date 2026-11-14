@@ -41,14 +41,14 @@ The key to understanding CloudEdge SAM is to **separate two planes**.
 
 | Plane | Responsibility | Source of truth |
 | --- | --- | --- |
-| **Reachability (overlay)** | which node owns an address, and where to carry its packets | the **BGP best path** ([ADR 0012](../adr/0012-bgp-address-mobility.md)) |
+| **Reachability (overlay)** | which node owns an address, and where to carry its packets | the **BGP best path** (ADR 0012) |
 | **Cloud ingress** | whether the cloud fabric admits external packets to the right VM | **provider secondary IP / route tables** (reconciled in the background) |
 
 The point is the division of labor: **the BGP RIB owns the truth of
 reachability, and cloud API operations only follow it after the fact**. Older
 routerd did this with a bespoke control plane of lease tables and epochs; today
 it leans on plain BGP unicast `/32` (see
-[ADR 0012](../adr/0012-bgp-address-mobility.md)).
+ADR 0012).
 
 ```
             pick only the "addresses to move" out of an on-prem /24
@@ -151,7 +151,7 @@ To reconcile all three, routerd combines the following mechanisms (details in
   — how to author `SAMNodeSet`, a local `MobilityPool` overlay, and capture policy.
 - [CloudEdge SAM internals](../reference/cloudedge-sam-internals.md)
   — the BGP community taxonomy, placement, no-preempt, holder-beacon, failover.
-- [ADR 0012: BGP /32 Address Mobility](../adr/0012-bgp-address-mobility.md)
+- ADR 0012: BGP /32 Address Mobility
   — the decision to make BGP the source of truth.
 - [CloudEdge mobility demo](../how-to/cloudedge-mobility-demo.md)
   — a hands-on lab running four sites (on-prem/AWS/Azure/OCI).

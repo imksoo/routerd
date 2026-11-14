@@ -5,14 +5,11 @@ sidebar_position: 60
 
 # Guest and IoT client isolation
 
-![Diagram showing ClientPolicy classifying guest and IoT MAC addresses on a shared LAN and denying LAN or management access](/img/diagrams/config-example-guest-isolation.png)
-
 This example shows how a router can classify selected MAC addresses as guest or
 IoT clients and apply a `ClientPolicy` to traffic that reaches the router.
 
 The complete, validated YAML is in `examples/guest-mode.yaml`.
 
-:::danger This is not complete guest-network isolation
 This policy only controls traffic that passes through the router. Devices on
 the same switch, VLAN, or Wi-Fi SSID can send layer-2 traffic directly to each
 other without visiting the router. A MAC address is also not a strong identity;
@@ -21,7 +18,6 @@ it can be copied.
 For a real guest network, use a separate VLAN, SSID, or physical port and turn
 on the access point or switch's client-isolation feature. Treat this example as
 an additional router policy, not the security boundary by itself.
-:::
 
 ## Topology
 

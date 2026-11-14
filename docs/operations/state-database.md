@@ -5,8 +5,6 @@ slug: /operations/state-database
 
 # State database
 
-![Diagram showing routerd state database paths, daemon lease and event files, routerctl get events access, and backup philosophy where YAML remains authoritative and event databases provide forensic history](/img/diagrams/operations-state-database.png)
-
 routerd persists state and events in SQLite. Each managed daemon additionally keeps its own lease or state file and an event log.
 
 ## Key paths
@@ -82,4 +80,4 @@ If you want history of operational events for forensic purposes, export or take 
 ## See also
 
 - [Log storage](../concepts/log-storage.md)
-- [Reconcile and removal](./reconcile)
+- [Reconcile and removal](reconcile.md)

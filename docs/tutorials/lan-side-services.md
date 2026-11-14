@@ -5,19 +5,15 @@ sidebar_position: 5
 
 # LAN-side services
 
-![Diagram showing LAN-side routerd services for LAN addresses, DHCPv4 and DHCPv6, router advertisements, local DNS, lease events, and client options](/img/diagrams/tutorial-lan-side-services.png)
-
 This page introduces the routerd resources that handle the LAN side of a router: addresses on the inside interface, DHCPv4 / DHCPv6 leases, IPv6 Router Advertisement, and the local DNS resolver.
 
-The companion page on the [WAN side](./wan-side-services.md) covers how the router gets its upstream addresses; this page is what the router publishes to the inside.
+The companion page on the [WAN side](wan-side-services.md) covers how the router gets its upstream addresses; this page is what the router publishes to the inside.
 
-:::caution These are building blocks, not a complete file
 Every YAML block on this page is a fragment to add to the same top-level
 `spec.resources:` list. It assumes the referenced `Interface`, address, and DNS
 resources already exist. Do not paste one fragment into an empty file and apply
-it to a live LAN. Start with [the first lab router](./first-router.md), then add
+it to a live LAN. Start with [the first lab router](first-router.md), then add
 one service and test it at a time.
-:::
 
 ## Service split
 
@@ -251,6 +247,6 @@ dig @<lan-ip> example.com
 
 ## See also
 
-- [WAN-side services](./wan-side-services.md)
+- [WAN-side services](wan-side-services.md)
 - [Local DNS zones](../how-to/dns-local-zone.md)
 - [Private DNS upstreams](../how-to/dns-private-upstream.md)

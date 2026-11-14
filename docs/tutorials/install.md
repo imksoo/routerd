@@ -16,9 +16,9 @@ the workflow.
 
 After installation, continue in this order:
 
-1. [Network basics](./network-basics.md)
-2. [Getting started safely](./getting-started.md)
-3. [Bring up the first lab router](./first-router.md)
+1. [Network basics](network-basics.md)
+2. [Getting started safely](getting-started.md)
+3. [Bring up the first lab router](first-router.md)
 
 Do not run a live apply over the only SSH connection to a router. The install
 page explains how to validate and dry-run a file before starting the service.

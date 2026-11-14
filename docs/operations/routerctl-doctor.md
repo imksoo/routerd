@@ -5,8 +5,6 @@ sidebar_label: routerctl doctor
 
 # routerctl doctor — runtime health diagnostics
 
-![Diagram showing routerctl doctor read-only diagnostics combining state, status socket, and optional host probes into area checks, stable JSON or YAML output, and fail-only nonzero exit behavior](/img/diagrams/operations-routerctl-doctor.png)
-
 `routerctl doctor` runs a battery of read-only checks and reports whether
 this router is currently functioning as a home gateway. It does not
 change host state. It is designed to be used by operators, CI, monitoring
@@ -131,5 +129,5 @@ v1alpha1 minor builds.
 
 ## See also
 
-- [Reconcile and rollback](./reconcile.md)
-- [`routerctl ledger` maintenance](./reconcile.md#removal)
+- [Reconcile and rollback](reconcile.md)
+- [`routerctl ledger` maintenance](reconcile.md#removal)

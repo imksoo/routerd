@@ -5,8 +5,6 @@ slug: /how-to/dns-private-upstream
 
 # Private DNS upstreams
 
-![Diagram showing DNSForwarder and DNSUpstream routing local, provider, and default DNS queries through UDP, TCP, DoT, DoH, and addressFrom sources](/img/diagrams/how-to-dns-private-upstream.png)
-
 ## Scenario
 
 You want the resolver on the router to:
@@ -205,5 +203,5 @@ FreeBSD does not currently provide the same `SO_BINDTODEVICE` enforcement, so pl
 
 ## See also
 
-- [Local DNS zones](./dns-local-zone.md)
+- [Local DNS zones](dns-local-zone.md)
 - [DNS resolver concept](../concepts/dns-resolver.md)

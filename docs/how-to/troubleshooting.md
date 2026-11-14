@@ -5,8 +5,6 @@ slug: /how-to/troubleshooting
 
 # Troubleshooting
 
-![Diagram showing routerd troubleshooting order from routerctl get status and plan intent to OS state, daemon sockets, events, and common DHCP, DNS, and conntrack checks](/img/diagrams/how-to-troubleshooting.png)
-
 When investigating routerd, first separate **what routerd intends** from **what the host actually has**. Verify routerd's view, then compare against the OS state.
 
 ## When the service or status command fails
@@ -119,4 +117,4 @@ Some environments do not expose `/proc/net/nf_conntrack`. In that case, routerd 
 ## See also
 
 - [State](../concepts/state.md)
-- [Reconcile loop](../operations/reconcile)
+- [Reconcile loop](../operations/reconcile.md)

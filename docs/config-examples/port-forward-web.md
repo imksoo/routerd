@@ -5,18 +5,14 @@ sidebar_position: 50
 
 # Port forward to an inside web server
 
-![Diagram showing PortForward ingress DNAT, LAN hairpin access, and firewall zone separation for an internal HTTPS server](/img/diagrams/config-example-port-forward-web.png)
-
 This example publishes one internal HTTPS server through one WAN-side IPv4
 address and enables hairpin access so LAN clients can use the same public name.
 
 The complete, validated YAML is in `examples/example-port-forward-web.yaml`.
 
-:::danger Publishing a service changes who can reach it
 This example makes one inside service reachable from the WAN. Use a test
 address first, verify the backend is patched and authenticated, and confirm an
 independent firewall/security review before exposing a real service.
-:::
 
 ## Topology
 

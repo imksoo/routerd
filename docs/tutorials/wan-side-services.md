@@ -5,18 +5,14 @@ sidebar_position: 4
 
 # WAN-side services
 
-![Diagram showing WAN-side routerd services for DHCPv4, DHCPv6-PD, PPPoE, DS-Lite, health checks, egress selection, NAT44, and downstream status inputs](/img/diagrams/tutorial-wan-side-services.png)
-
 This page introduces the routerd resources that handle the WAN side of a router: getting an upstream link, obtaining IP addresses and prefixes from the ISP, terminating tunnels, and exposing one or more upstream paths to the rest of the controller chain.
 
-The companion page on the [LAN side](./lan-side-services.md) covers what the router serves to its inside.
+The companion page on the [LAN side](lan-side-services.md) covers what the router serves to its inside.
 
-:::caution These are guided fragments, not an ISP configuration
 Each block belongs in a complete `Router.spec.resources` list with matching
 interfaces and LAN resources. ISP settings, credentials, AFTR names, and
-address ranges are not interchangeable. Build the [first lab router](./first-router.md)
+address ranges are not interchangeable. Build the [first lab router](first-router.md)
 first, then use a matching complete example before making a live WAN change.
-:::
 
 ## Summary table
 
@@ -190,7 +186,7 @@ The Web Console summarises the same information under the **Overview** and **Res
 
 ## See also
 
-- [LAN-side services](./lan-side-services.md)
+- [LAN-side services](lan-side-services.md)
 - [Multi-WAN egress](../how-to/multi-wan.md)
 - [DS-Lite via NTT NGN](../how-to/flets-ipv6-setup.md)
 - [Path MTU and MSS clamping](../concepts/path-mtu.md)

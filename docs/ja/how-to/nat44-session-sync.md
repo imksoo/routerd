@@ -1,0 +1,170 @@
+---
+title: HA ルータ向け NAT44 セッション同期
+slug: /how-to/nat44-session-sync
+---
+
+# HA ルーター向け NAT44 セッション同期
+
+`NAT44SessionSync` は、LAN 側ゲートウェイの役割を共有する 2 台の
+routerd ノードで、active ノードの NAT44 conntrack セッションを standby
+ノードへ同期するためのリソースです。開始時に一度だけ snapshot を復元し、その後は
+conntrack イベントを差分として各ターゲットに反映します。
+
+通常は `spec.when` で active ノードだけが動くようにします。VRRP 構成では
+ローカル `VirtualAddress` の role を条件にするのが基本です。
+
+## 対象 NAT rule を同期する
+
+同期したい SNAT アドレスを持つ NAT rule を参照します。動的 SNAT アドレスは
+`NAT44Rule` の status から読みます。そのため、session sync が active になる
+前に NAT44 コントローラーが `snatAddress` を解決している必要があります。
+
+```yaml
+- apiVersion: net.routerd.net/v1alpha1
+  kind: NAT44SessionSync
+  metadata:
+    name: dslite-abc-sessions
+  spec:
+    mode: event-stream
+    natRules:
+      - NAT44Rule/lan-to-dslite-a
+      - NAT44Rule/lan-to-dslite-b
+      - NAT44Rule/lan-to-dslite-c
+    excludeNatRules:
+      - NAT44Rule/lan-to-dslite-ra
+    targets:
+      - name: standby
+        host: routerd-standby.lan.example
+        user: routerd
+        restoreCommand: [sudo, conntrack]
+    when:
+      state:
+        VirtualAddress/lan-vip.role:
+          equals: master
+```
+
+アドレスが固定であれば、`snatAddresses` で直接指定できます。
+
+```yaml
+spec:
+  snatAddresses: [192.0.0.2, 192.0.0.3, 192.0.0.4]
+```
+
+## conntrackd で確立済み TCP を引き継ぐ
+
+VRRP role 変更後も確立済み TCP flow を引き継ぐ場合は
+`mode: conntrackd` を使います。両 peer で conntrackd を常時動作させるため、
+この mode では `spec.when` を指定しません。
+
+切替時に飛行中だった TCP segment が新しい active peer へ届くと、小さな window
+差異が生じる場合があります。Linux conntrack がこれを受け入れるための host
+前提条件を明示的に宣言します。VRRP hook はこの値を暗黙に変更しません。
+
+```yaml
+- apiVersion: system.routerd.net/v1alpha1
+  kind: Sysctl
+  metadata:
+    name: conntrack-tcp-ha-liberal
+  spec:
+    key: net.netfilter.nf_conntrack_tcp_be_liberal
+    value: "1"
+    runtime: true
+    persistent: true
+
+- apiVersion: net.routerd.net/v1alpha1
+  kind: NAT44SessionSync
+  metadata:
+    name: dslite-sessions
+  spec:
+    mode: conntrackd
+    snatAddresses: [192.0.2.2]
+    conntrackd:
+      interface: ha-sync
+      localAddress: 192.0.2.10
+      peerAddress: 192.0.2.11
+      port: 3780
+```
+
+Linux の conntrackd mode は、runtime 有効・non-optional な `Sysctl` で
+`net.netfilter.nf_conntrack_tcp_be_liberal=1` が宣言されていない場合、
+validation で拒否されます。再起動後に routerd より先に前提条件を満たすため、
+`persistent: true` を推奨します。
+
+## 復元の仕組み
+
+コントローラーは以下を実行します。
+
+```bash
+conntrack --dump -o extended -n <snat-address>
+```
+
+`extended` 出力には conntrack mark が含まれます。routerd は各行を
+delete-then-insert の復元スクリプトへ変換し、SSH 経由でターゲットに送ります。
+既存フローを同じ出口経路に残すには `ct mark` の維持が重要です。
+
+`restoreCommand` の既定値は `[conntrack]` です。ターゲット側のユーザーに権限昇格が必要な場合は `[sudo, conntrack]` を指定します。
+
+## イベントストリーム方式
+
+`spec.mode: event-stream` は、開始時に 1 回だけ snapshot を復元した後、
+`conntrack -E -o extended` で受け取る `NEW`、`UPDATE`、`DESTROY` を差分として
+standby へ反映します。イベントは最大 5 秒または 512 件でバッチ化されます。
+ストリームまたは接続が切れた場合は、再接続前に再度 snapshot を復元します。
+
+SSH の接続確立を再利用するには、target の `sshOptions` に OpenSSH の
+`ControlMaster`、`ControlPersist`、`ControlPath` を指定します。
+
+```yaml
+spec:
+  mode: event-stream
+  natRules:
+    - NAT44Rule/lan-to-dslite-a
+  targets:
+    - name: standby
+      host: routerd-standby.lan.example
+      user: root
+      sshOptions:
+        - -o
+        - ControlMaster=auto
+        - -o
+        - ControlPersist=yes
+        - -o
+        - ControlPath=/run/routerd/nat44-session-sync-%C
+```
+
+`routerctl describe NAT44SessionSync/<name>` の `streamState: running`、
+`lastResyncAt`、`lastEventAt`、`lastBatchAt` を確認します。`resyncCount` は
+開始時およびストリームの再接続後に増加します。
+
+## 確認する
+
+```bash
+routerctl describe NAT44SessionSync/dslite-abc-sessions
+routerctl doctor nat
+routerd serve --controllers nat44-session-sync --config router.yaml
+```
+
+`spec.when` が false の間は `Pending` / `WhenFalse` になります。参照した
+`NAT44Rule` がまだ `snatAddress` を解決していない場合は、`Pending` /
+`SNATAddressPending` になります。
+
+conntrackd mode では、runtime の `nf_conntrack_tcp_be_liberal` が `1` でない、
+または読み取れない場合に `routerctl doctor nat` が FAIL します。
+`--no-host` ではこのチェックを SKIP として報告します。
+
+### 標準の通信追跡同期サービスとの競合防止
+
+`mode: conntrackd` を使う場合、管理用の同期を開始する前に、標準の
+`conntrackd.service` を停止して起動禁止にします。競合設定だけでは、
+ログ整理に伴う標準サービスの再起動で管理用の同期が停止します。
+自動起動の無効化だけでも、明示的な再起動は防げません。
+禁止後の状態を検証し、失敗時は適用を成功扱いしません。
+既存の独自サービスファイルを強制上書きせず、模擬適用では変更しません。
+
+所有権の記録は `systemd.mask/conntrackd.service` です。
+資源を削除しても起動禁止は残し、管理者が先に設定した禁止も解除しません。
+標準サービスへ戻す場合は、対象の資源を除き、管理用サービスを停止・無効化します。
+変更前の状態を確認してから `systemctl unmask conntrackd.service` を実行し、
+元の自動起動・稼働状態だけを復元してください。
+管理用の同期が動作中のまま禁止を解除しないでください。
+この保護は通信転送やカーネルの通信追跡表の設定を変更しません。

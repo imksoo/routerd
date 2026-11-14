@@ -4,8 +4,6 @@ title: Replacing a hypervisor-to-hypervisor overlay VPN
 
 # Replacing a hypervisor-to-hypervisor overlay VPN
 
-![Diagram showing replacement of a hypervisor overlay VPN with WireGuard underlay, optional VXLAN, health checks, MTU verification, and CLI visibility](/img/diagrams/how-to-pve-overlay.png)
-
 ## Scenario
 
 You run a hypervisor cluster (Proxmox VE, KVM, etc.) where the inter-node bridge currently rides on top of a heavyweight overlay VPN — for example, a vendor-supplied SoftEther bridge or another tap-based tunnel. Symptoms include poor throughput between guests on different hosts, MTU mismatches, and operational fragility because the overlay is a separate product from the hypervisor and the router.
@@ -132,6 +130,6 @@ ping -M do -s 1342 <peer-overlay-host>        # 1370 - 20 IP - 8 ICMP
 
 ## See also
 
-- [Stretching a PVE LAN to QEMU guests on OCI](./oci-qemu-vxlan-l2.md)
+- [Stretching a PVE LAN to QEMU guests on OCI](oci-qemu-vxlan-l2.md)
 - [Path MTU and MSS clamping](../concepts/path-mtu.md)
-- [Multi-WAN egress with health-based selection](./multi-wan.md)
+- [Multi-WAN egress with health-based selection](multi-wan.md)

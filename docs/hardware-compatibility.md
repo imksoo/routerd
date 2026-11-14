@@ -4,8 +4,6 @@ title: Hardware compatibility
 
 # Hardware compatibility
 
-![Diagram showing hardware compatibility decisions from platform class selection through CPU, memory, NIC, storage, live ISO persistence, and validation checklist](/img/diagrams/hardware-compatibility.png)
-
 routerd can run on any supported OS that exposes the needed kernel and userland
 features. The practical question is whether the hardware has enough network
 interfaces, CPU, memory, and storage endurance for router duty.
@@ -92,7 +90,7 @@ persistence, the same mini PC can reboot into the saved router configuration.
 
 Ubuntu Server is the primary target. NixOS and FreeBSD are supported through
 their platform-specific renderers and service integrations. Check
-[Platforms](./platforms) before relying on a feature on a non-Linux host.
+[Platforms](platforms.md) before relying on a feature on a non-Linux host.
 
 ## Validation checklist
 

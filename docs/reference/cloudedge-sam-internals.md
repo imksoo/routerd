@@ -33,7 +33,7 @@ BGP advertisement**.
 - Failure detection is accelerated by **BFD** (FRR `bfdd`); when BFD is unstable,
   BGP hold timers remain the non-destructive authority for route withdrawal.
 
-This is the decision in [ADR 0012](../adr/0012-bgp-address-mobility.md), which
+This is the decision in ADR 0012, which
 replaced the older bespoke ledgers (`AddressLease` / `ownershipEpoch` /
 `captureEpoch`).
 
@@ -244,7 +244,7 @@ The direct group is deliberately optional. `SAMTransportProfile` keeps the
 receive a higher local preference only while their BGP session is alive. If the
 group is missing, expired, incompatible, or its underlay route cannot be built,
 routerd omits those direct artifacts and continues to use the RR peers. See the
-[dynamic RR/leaf enrollment runbook](../operations/dynamic-rr-leaf-enrollment-test.md).
+dynamic RR/leaf enrollment runbook.
 
 TTL expiry does not mean the data plane should be dismantled. If a leaf has a
 previously fetched peer group and the RR publisher disappears, routerd treats the
@@ -391,6 +391,6 @@ Measured on an unequal-priority pair (priority 10 vs 20, Azure hardware):
 
 - [What is CloudEdge SAM](../concepts/cloudedge-sam.md) — concepts and new terms
 - [Selective Address Mobility](selective-address-mobility.md) — the `MobilityPool` config model
-- [ADR 0012: BGP /32 Address Mobility](../adr/0012-bgp-address-mobility.md) — the decision to make BGP the source of truth
-- [ADR 0008: Capture Coordination via Fencing](../adr/0008-capture-coordination-fencing.md) — background on fencing
+- ADR 0012: BGP /32 Address Mobility — the decision to make BGP the source of truth
+- ADR 0008: Capture Coordination via Fencing — background on fencing
 - [provider action execution](provider-action-execution.md) — the approval/execution gate for provider operations

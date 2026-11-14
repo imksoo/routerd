@@ -11,3 +11,7 @@ HTML、Markdown、YAML、JSON Schemaをそのまま公開する静的サイト�
 `npm ci && npm run build`、出力 `build`）もそのまま利用できます。
 package.jsonはこの設定用の互換入口であり、npm依存はありません。
 新規設定ではビルドコマンドを `sh build.sh` にできます。
+
+文書は英語を `docs/`、他の3言語を `docs/ja/`、`docs/zh-Hant/`、
+`docs/zh-Hans/` に置きます。リソース参照の更新は開発時に
+`make generate-resource-docs` で行い、公開時には生成しません。

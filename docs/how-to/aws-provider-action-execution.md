@@ -1,16 +1,12 @@
 # How-to: execute the AWS SAM provider action via the gated executor
 
-![Diagram showing AWS SAM provider action execution through read-only preflight, gated journal approval, executor IAM identity, and reversible AWS mutations](/img/diagrams/how-to-aws-provider-action-execution.png)
-
-:::warning Experimental — Phase 5.1
 This is the **gated live-mutation** path for CloudEdge provider action execution.
 It is **experimental** and AWS-only. It builds on
-[ADR 0007: Provider Action Execution](../adr/0007-provider-action-execution.md)
-and the [Selective Address Mobility](../reference/selective-address-mobility)
+ADR 0007: Provider Action Execution
+and the [Selective Address Mobility](../reference/selective-address-mobility.md)
 dataplane. Do **not** run the live execute step in production or against shared
 resources. Live execute happens **only after explicit owner go** following review
 of this runbook and the read-only preflight evidence.
-:::
 
 The SAM dataplane is already real-cloud validated on AWS×PVE (an ENI secondary
 private IP plus source/dest check disabled). Until now that attach/detach was a

@@ -67,15 +67,13 @@ file without committing network changes. `routerd apply --once` and
 `routerd serve` can change the host network. Only run those live commands from
 a console or an independent management path.
 
-:::caution Firewall boundary
 routerd is pre-release software. Its firewall resources are groundwork, not a
 security certification. Do not expose an Internet-facing router or rely on a
 single example as your only security boundary.
-:::
 
 ## Next steps
 
 1. [Install routerd](../install-and-upgrade.md) on an isolated Ubuntu Server VM.
-2. [Run the safe first check](./getting-started.md) without changing its network.
-3. [Build the first IPv4 lab router](./first-router.md) only after you have a
+2. [Run the safe first check](getting-started.md) without changing its network.
+3. [Build the first IPv4 lab router](first-router.md) only after you have a
    console path.

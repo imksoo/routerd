@@ -1,7 +1,5 @@
 # CloudEdge Mobility Demo
 
-![Diagram showing the four-site CloudEdge SAM mobility demo with shared /24 owners, MobilityPool, SAMTransportProfile IPIP transport, BGP /32 delivery, and provider or proxy-ARP capture](/img/diagrams/how-to-cloudedge-mobility-demo.png)
-
 > Experimental (CloudEdge). A lab demo of **Selective Address Mobility (SAM)**:
 > on-prem, AWS, Azure, and OCI share one logical `/24`, and each site can serve an
 > address that is *owned* by another site — without NAT and without changing the
@@ -38,7 +36,7 @@ All four sites share one logical subnet; each site owns exactly one `/32` within
 Logical subnet: **`10.77.60.0/24`**. The router-to-router transport uses a
 separate RFC1918 endpoint/inner addressing plan (kept clear of link-local
 `169.254/16` and CGNAT `100.64/10`); see
-[Selective Address Mobility](../reference/selective-address-mobility) for the
+[Selective Address Mobility](../reference/selective-address-mobility.md) for the
 addressing constraints.
 
 On the on-prem side, only `10.77.60.10/32` is declared with static ownership.
@@ -88,7 +86,7 @@ The operator declares only intent; everything else is derived.
 - **Provider action executor** — performs the gated cloud mutation (assign /
   unassign secondary IP, forwarding) under `ProviderActionPolicy`, using the
   instance's own cloud-native identity (see
-  [ADR 0007](../adr/0007-provider-action-execution.md)).
+  ADR 0007).
 - **pathSig fencing** — provider actions are fenced against the current BGP
   desired path signature and holder, so stale actions cannot mutate a route that
   has reconverged elsewhere.
@@ -128,7 +126,7 @@ Run `reset-lab.sh` after every run, even on failure.
 - **D5** cloud maintenance / **capture migration PASS** — drain `aws-router-a`, the
   captured address moves to `aws-router-b`, traffic recovers via B; the stale
   pathSig action is fenced (`skipped: stale mobility desired path`). See
-  [the D5 evidence](../releases/evidence/cloudedge-mobility-d5-aws-maintenance-20260531.md).
+  the D5 evidence.
 
 ## Caveats
 

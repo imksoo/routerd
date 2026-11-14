@@ -4,8 +4,6 @@ title: Getting started on FreeBSD
 
 # Getting started on FreeBSD
 
-![Diagram showing the FreeBSD getting started flow from release archive install to rendered rc.d, rc.conf.d, pf, dnsmasq, mpd5, and apply validation](/img/diagrams/tutorial-freebsd-getting-started.png)
-
 FreeBSD uses the same routerd resource model as Ubuntu, but it is a second-tier
 target with selected native integration paths rather than first-lab parity.
 Start on an isolated test host with a console. routerd renders `rc.conf.d`, `rc.d` scripts,
@@ -160,5 +158,5 @@ firewall log store for `routerctl` and the Web Console.
 ## See also
 
 - [Supported platforms](../platforms.md)
-- [WAN-side services](./wan-side-services.md)
-- [Basic firewall](./basic-firewall.md)
+- [WAN-side services](wan-side-services.md)
+- [Basic firewall](basic-firewall.md)

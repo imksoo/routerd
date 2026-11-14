@@ -4,8 +4,6 @@ title: Multi-WAN egress with health-based selection
 
 # Multi-WAN egress with health-based selection
 
-![Diagram showing multi-WAN candidate paths selected by HealthCheck and EgressRoutePolicy, NAT following the selected path, conntrack preservation, and hysteresis](/img/diagrams/how-to-multi-wan.png)
-
 ## Scenario
 
 You have a router with more than one path to the internet and want routerd to:
@@ -149,5 +147,5 @@ With this combination, RFC 1918 destinations are routed (not NATed), and the pub
 ## See also
 
 - [Path MTU and MSS clamping](../concepts/path-mtu.md)
-- [Firewall rule basics](./firewall-rule.md)
-- [DS-Lite setup](./flets-ipv6-setup.md)
+- [Firewall rule basics](firewall-rule.md)
+- [DS-Lite setup](flets-ipv6-setup.md)

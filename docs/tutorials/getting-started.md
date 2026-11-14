@@ -4,12 +4,9 @@ title: Getting started safely
 
 # Getting started safely
 
-![Diagram showing the safe first routerd loop from interface discovery and a small YAML config to validate, dry-run, live apply, serve, and routerctl get status](/img/diagrams/tutorial-getting-started.png)
-
 This is the first route through routerd for someone learning how routers work.
 It deliberately starts with a file check, not with a change to a network.
 
-:::caution Use a lab for the first live change
 Use an isolated Ubuntu Server VM or a spare computer. Keep a hypervisor,
 serial, or physical console open, or keep a separate management NIC that this
 configuration does not change. Do **not** start by changing the only router
@@ -18,9 +15,8 @@ for your home, school, or work network.
 `routerd apply --once` and `routerd serve` can change network state. The first
 two checks below do not commit network changes when you use the temporary paths
 shown here.
-:::
 
-Before continuing, read [Network basics](./network-basics.md). It explains WAN,
+Before continuing, read [Network basics](network-basics.md). It explains WAN,
 LAN, DHCP, DNS, NAT, and the `/24` notation used in the examples.
 
 ## 1. Install on an Ubuntu Server lab host
@@ -105,12 +101,12 @@ rm -rf "$workdir"
 
 The small file above only names interfaces; it does not provide DHCP, NAT, or
 Internet access. Leave the service stopped and continue to
-[Bring up the first lab router](./first-router.md) for a complete, reviewed
+[Bring up the first lab router](first-router.md) for a complete, reviewed
 configuration, service startup, status checks, and a LAN client test.
 
 ## Next steps
 
-- [Bring up the first lab router](./first-router.md) — DHCP, DNS advertisement,
+- [Bring up the first lab router](first-router.md) — DHCP, DNS advertisement,
   and IPv4 NAT in an isolated lab
-- [LAN-side services](./lan-side-services.md) — local DNS, DHCPv6, RA, and NTP
-- [WAN-side services](./wan-side-services.md) — DHCPv6-PD, PPPoE, and DS-Lite
+- [LAN-side services](lan-side-services.md) — local DNS, DHCPv6, RA, and NTP
+- [WAN-side services](wan-side-services.md) — DHCPv6-PD, PPPoE, and DS-Lite

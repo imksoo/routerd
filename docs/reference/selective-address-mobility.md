@@ -15,8 +15,6 @@ routerd-to-routerd overlay. TCP/IP source and destination addresses are
 preserved by the abstraction. Firewall and NAT are separate routerd layers, not
 fields on mobility resources.
 
-![Selective Address Mobility transport diagram showing MobilityPool and SAMTransportProfile as the authoring surface, generated IPIP delivery, BGP peers, ECMP next hops, and capture by secondary IP or proxy ARP](/img/diagrams/cloudedge-sam-ipip.png)
-
 ## Resource Model
 
 For the CloudEdge Mobility control plane, `SAMNodeSet` is the shared
@@ -150,7 +148,7 @@ derive it from configured key material.
 
 For hub/spoke deployments, `peersFrom` removes repeated peer authoring after a
 trusted node registry exists, but it does not by itself solve first-contact
-registration. [ADR 0015](../adr/0015-wireguard-peer-enrollment.md) describes a
+registration. ADR 0015 describes a
 proposed WireGuard peer enrollment flow where leaf routers submit their
 WireGuard identity to a fixed RR/spine endpoint over a non-WireGuard bootstrap
 path, and the RR/spine approves the registration before it becomes generated
