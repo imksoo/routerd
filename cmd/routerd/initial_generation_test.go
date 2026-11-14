@@ -20,6 +20,7 @@ func TestInitialGenerationRestart(t *testing.T) {
 	const source = "apiVersion: routerd.net/v1alpha1\nkind: Router\nmetadata:\n  name: restart\nspec:\n  resources: []\n"
 	const changedSource = "apiVersion: routerd.net/v1alpha1\nkind: Router\nmetadata:\n  name: changed\nspec:\n  resources: []\n"
 	for _, tc := range []struct {
+		pdClientDefault  bool
 		name             string
 		errorKind        string
 		phase            string
@@ -33,6 +34,7 @@ func TestInitialGenerationRestart(t *testing.T) {
 	}{
 		{name: "healthy", phase: "Healthy", restore: true},
 		{name: "applied", phase: "Applied", restore: true},
+		{name: "default-pd-client", phase: "Healthy", pdClientDefault: true, restore: true},
 		{name: "latest-error", phase: "Healthy", latest: "Error"},
 		{name: "latest-committed", phase: "Healthy", latest: "Committed"},
 		{name: "latest-unfinished", phase: "Healthy", latest: "unfinished"},
@@ -46,6 +48,28 @@ func TestInitialGenerationRestart(t *testing.T) {
 		{name: "hash-error", phase: "Healthy", errorKind: "hash"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			source := source
+			if tc.pdClientDefault {
+				source = `apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: restart
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: wan
+      spec:
+        ifname: eth0
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv6PrefixDelegation
+      metadata:
+        name: wan-pd
+      spec:
+        interface: wan
+`
+			}
 			dir := t.TempDir()
 			configPath := filepath.Join(dir, "router.yaml")
 			if err := os.WriteFile(configPath, []byte(source), 0600); err != nil {
@@ -63,7 +87,11 @@ func TestInitialGenerationRestart(t *testing.T) {
 			defer func() { _ = store.Close() }()
 			var successful int64
 			if !tc.empty {
-				hash, err := configGenerationHash(source, router)
+				effective, _, err := routerWithIPv6PDClientOptions(router, string(platformDefaults.OS))
+				if err != nil {
+					t.Fatal(err)
+				}
+				hash, err := configGenerationHash(source, effective)
 				if err != nil {
 					t.Fatal(err)
 				}

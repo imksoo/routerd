@@ -1966,7 +1966,11 @@ func restoreInitialGeneration(result *apply.Result, store *routerstate.SQLiteSto
 	if err != nil {
 		return nil, err
 	}
-	hash, err := configGenerationHash(configYAML, router)
+	effective, _, err := routerWithIPv6PDClientOptions(router, string(platformDefaults.OS))
+	if err != nil {
+		return nil, err
+	}
+	hash, err := configGenerationHash(configYAML, effective)
 	if err != nil {
 		return nil, err
 	}
