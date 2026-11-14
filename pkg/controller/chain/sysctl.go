@@ -19,7 +19,6 @@ import (
 	"github.com/imksoo/routerd/pkg/hostdeps"
 	"github.com/imksoo/routerd/pkg/lifecycle"
 	"github.com/imksoo/routerd/pkg/logstore"
-	routerstate "github.com/imksoo/routerd/pkg/state"
 	"github.com/imksoo/routerd/pkg/sysctlprofile"
 )
 
@@ -259,19 +258,7 @@ func (c SysctlController) cleanupRemovedSAMProxyARP(ctx context.Context, desired
 	if c.DryRun || c.Store == nil {
 		return nil
 	}
-	lister, ok := c.Store.(interface {
-		ListObjectStatuses() ([]routerstate.ObjectStatus, error)
-	})
-	if !ok {
-		return nil
-	}
-	deleter, ok := c.Store.(interface {
-		DeleteObject(apiVersion, kind, name string) error
-	})
-	if !ok {
-		return nil
-	}
-	statuses, err := lister.ListObjectStatuses()
+	statuses, err := c.Store.ListObjectStatuses()
 	if err != nil {
 		return err
 	}
@@ -290,7 +277,7 @@ func (c SysctlController) cleanupRemovedSAMProxyARP(ctx context.Context, desired
 			continue
 		}
 		key := strings.TrimSpace(fmt.Sprint(status.Status["key"]))
-		if err := deleter.DeleteObject(api.SystemAPIVersion, "Sysctl", status.Name); err != nil {
+		if err := c.Store.DeleteObject(api.SystemAPIVersion, "Sysctl", status.Name); err != nil {
 			return err
 		}
 		if c.Bus != nil {

@@ -36,3 +36,9 @@ Linux IPIPのendpoint/TTL/MTU/アドレスの希望状態、実体観測、一�
 改修版による実設定比較、実apply・削除、通常更新、秘密値非露出、実EventRuleの発火、復帰と通信は未実施。Cloud SAMの実稼働先は特定できていない。過去の記録やビルド成功を今回の実動作証拠として流用しない。
 
 Podと共有キャッシュは他項目の実装中のため稼働を継続している。成果物の保全と公開後に、一時環境と作業用データを整理する。
+
+## A04の完了監査で追加した整理
+
+controller側に残るStoreの一覧・削除・状態参照能力の推測も撤去し、必要なメソッドを既存chain.Storeに明記した。保持期限の削除はeventedStoreからSQLiteへ直接委譲し、能力不足として省略される分岐をなくした。24時間の既存保持期間とdry-runの早期returnは維持する。新しい万能Storeやテストは作っていない。
+
+既存の実SQLiteによる保持期限テストと、Linux/FreeBSDのrouterd・routerctl・DHCPv6 helper・eventdビルドが成功。監査前の9b5aaff最終バイナリでは、実設定12台のvalidateとhomert両機・k8s-rt02の実checkが成功した。追加整理後の稼働daemonへの反映と実機の保持期限削除は未実施。

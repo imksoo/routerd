@@ -19,7 +19,6 @@ import (
 	"github.com/imksoo/routerd/pkg/dynamicconfig/codec"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/resourcequery"
-	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 type observedIPv4MainRoute struct {
@@ -301,18 +300,14 @@ func (c IPv4RouteController) cleanupIPv4MainRoutes(ctx context.Context) error {
 		}
 	}
 	// Status is an observation, not the source of route deletion candidates.
-	if lister, ok := c.Store.(routerstate.ObjectStatusLister); ok {
-		if deleter, ok := c.Store.(routerstate.ObjectDeleteStore); ok {
-			statuses, err := lister.ListObjectStatuses()
-			if err != nil {
+	statuses, err := c.Store.ListObjectStatuses()
+	if err != nil {
+		return err
+	}
+	for _, status := range statuses {
+		if status.APIVersion == api.NetAPIVersion && status.Kind == "IPv4Route" && !configured[status.Name] {
+			if err := c.Store.DeleteObject(status.APIVersion, status.Kind, status.Name); err != nil {
 				return err
-			}
-			for _, status := range statuses {
-				if status.APIVersion == api.NetAPIVersion && status.Kind == "IPv4Route" && !configured[status.Name] {
-					if err := deleter.DeleteObject(status.APIVersion, status.Kind, status.Name); err != nil {
-						return err
-					}
-				}
 			}
 		}
 	}

@@ -1269,8 +1269,8 @@ func (c SystemdUnitController) cleanupWhenFalseSystemdUnits(ctx context.Context)
 	if c.DeclaredRouter == nil {
 		return nil
 	}
-	stateStore, ok := c.Store.(resourcequery.StateStore)
-	if !ok {
+	stateStore := c.Store
+	if stateStore == nil {
 		return nil
 	}
 	for _, resource := range c.DeclaredRouter.Spec.Resources {

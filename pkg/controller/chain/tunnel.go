@@ -22,7 +22,6 @@ import (
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/hybrid"
 	"github.com/imksoo/routerd/pkg/platform"
-	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 type TunnelInterfaceController struct {
@@ -127,15 +126,7 @@ func (c TunnelInterfaceController) cleanupStaleResources(ctx context.Context) er
 			return err
 		}
 	}
-	lister, ok := c.Store.(routerstate.ObjectStatusLister)
-	if !ok {
-		return nil
-	}
-	deleter, ok := c.Store.(routerstate.ObjectDeleteStore)
-	if !ok {
-		return nil
-	}
-	statuses, err := lister.ListObjectStatuses()
+	statuses, err := c.Store.ListObjectStatuses()
 	if err != nil {
 		return err
 	}
@@ -164,7 +155,7 @@ func (c TunnelInterfaceController) cleanupStaleResources(ctx context.Context) er
 				}
 			}
 		}
-		if err := deleter.DeleteObject(item.APIVersion, item.Kind, item.Name); err != nil {
+		if err := c.Store.DeleteObject(item.APIVersion, item.Kind, item.Name); err != nil {
 			return err
 		}
 	}

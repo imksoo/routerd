@@ -147,8 +147,8 @@ func (c VXLANTunnelController) gateState(resource api.Resource) vxlanGateState {
 	if !resourcequery.ResourceWhenPresent(when) {
 		return vxlanGateEnabled
 	}
-	state, ok := c.Store.(resourcequery.StateStore)
-	if !ok || state == nil {
+	state := c.Store
+	if state == nil {
 		return vxlanGateUnknown
 	}
 	if vxlanWhenAcceptsUnknown(when) {
@@ -185,7 +185,7 @@ func vxlanWhenAcceptsUnknown(when api.ResourceWhenSpec) bool {
 	return false
 }
 
-func (c VXLANTunnelController) whenFreshThisBoot(when api.ResourceWhenSpec, state resourcequery.StateStore) bool {
+func (c VXLANTunnelController) whenFreshThisBoot(when api.ResourceWhenSpec, state Store) bool {
 	if c.StartedAt.IsZero() {
 		return true
 	}
@@ -202,7 +202,7 @@ func (c VXLANTunnelController) whenFreshThisBoot(when api.ResourceWhenSpec, stat
 	return true
 }
 
-func stateReferenceFresh(ref string, match api.StateMatchSpec, state resourcequery.StateStore, startedAt time.Time) bool {
+func stateReferenceFresh(ref string, match api.StateMatchSpec, state Store, startedAt time.Time) bool {
 	maxAge := 30 * time.Second
 	if match.MaxAge != "" {
 		parsed, err := time.ParseDuration(match.MaxAge)
@@ -215,11 +215,10 @@ func stateReferenceFresh(ref string, match api.StateMatchSpec, state resourceque
 	trimmed := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(ref, "${"), "}"))
 	if left, _, ok := strings.Cut(trimmed, ".status."); ok {
 		kind, name, valid := resourcequery.SplitResource(left)
-		store, storeOK := state.(resourcequery.Store)
-		if !valid || !storeOK {
+		if !valid {
 			return false
 		}
-		status := store.ObjectStatus(resourcequery.APIVersionForKind(kind), kind, name)
+		status := state.ObjectStatus(resourcequery.APIVersionForKind(kind), kind, name)
 		for _, key := range []string{"observedAt", "updatedAt", "lastTransitionAt"} {
 			if observed, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(fmt.Sprint(status[key]))); err == nil {
 				return !observed.Before(startedAt) && now.Sub(observed) <= maxAge
@@ -232,8 +231,8 @@ func stateReferenceFresh(ref string, match api.StateMatchSpec, state resourceque
 }
 
 func (c VXLANTunnelController) NextExpiryAfter() time.Duration {
-	state, ok := c.Store.(resourcequery.StateStore)
-	if !ok || state == nil || c.DeclaredRouter == nil {
+	state := c.Store
+	if state == nil || c.DeclaredRouter == nil {
 		return 0
 	}
 	now := state.Now().UTC()
@@ -286,15 +285,14 @@ func walkWhen(when api.ResourceWhenSpec, visit func(string, api.StateMatchSpec))
 	}
 }
 
-func stateReferenceUpdatedAt(ref string, state resourcequery.StateStore) (time.Time, bool) {
+func stateReferenceUpdatedAt(ref string, state Store) (time.Time, bool) {
 	trimmed := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(ref, "${"), "}"))
 	if left, _, ok := strings.Cut(trimmed, ".status."); ok {
 		kind, name, valid := resourcequery.SplitResource(left)
-		store, storeOK := state.(resourcequery.Store)
-		if !valid || !storeOK {
+		if !valid {
 			return time.Time{}, false
 		}
-		status := store.ObjectStatus(resourcequery.APIVersionForKind(kind), kind, name)
+		status := state.ObjectStatus(resourcequery.APIVersionForKind(kind), kind, name)
 		for _, key := range []string{"observedAt", "updatedAt", "lastTransitionAt"} {
 			if observed, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(fmt.Sprint(status[key]))); err == nil {
 				return observed.UTC(), true
@@ -311,8 +309,8 @@ func stateReferenceUpdatedAt(ref string, state resourcequery.StateStore) (time.T
 // any producer change between gate evaluation and a kernel commit invalidates
 // the commit, including changes that leave the boolean predicate unchanged.
 func (c VXLANTunnelController) dependencyRevision(resource api.Resource) (string, bool) {
-	state, ok := c.Store.(resourcequery.StateStore)
-	if !ok || state == nil {
+	state := c.Store
+	if state == nil {
 		return "", false
 	}
 	entries := map[string]any{}
@@ -320,9 +318,8 @@ func (c VXLANTunnelController) dependencyRevision(resource api.Resource) (string
 		trimmed := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(ref, "${"), "}"))
 		if left, _, found := strings.Cut(trimmed, ".status."); found {
 			kind, name, valid := resourcequery.SplitResource(left)
-			store, storeOK := state.(resourcequery.Store)
-			if valid && storeOK {
-				entries[ref] = store.ObjectStatus(resourcequery.APIVersionForKind(kind), kind, name)
+			if valid {
+				entries[ref] = state.ObjectStatus(resourcequery.APIVersionForKind(kind), kind, name)
 			}
 			return
 		}

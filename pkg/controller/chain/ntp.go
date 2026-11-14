@@ -157,8 +157,8 @@ func (c NTPClientController) cleanupWhenFalseNTPClients(ctx context.Context) err
 	if declared == nil {
 		return nil
 	}
-	stateStore, ok := c.Store.(resourcequery.StateStore)
-	if !ok {
+	stateStore := c.Store
+	if stateStore == nil {
 		return nil
 	}
 	defaults, _ := platform.Current()
@@ -601,8 +601,8 @@ func (c NTPServerController) cleanupWhenFalseNTPServers(ctx context.Context) err
 	if c.DeclaredRouter == nil {
 		return nil
 	}
-	stateStore, ok := c.Store.(resourcequery.StateStore)
-	if !ok {
+	stateStore := c.Store
+	if stateStore == nil {
 		return nil
 	}
 	for _, resource := range c.DeclaredRouter.Spec.Resources {

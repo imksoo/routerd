@@ -82,6 +82,12 @@ type dnsmasqSystemdState struct {
 }
 
 type Store interface {
+	ListObjectStatuses() ([]routerstate.ObjectStatus, error)
+	DeleteObject(apiVersion, kind, name string) error
+	Get(name string) routerstate.Value
+	Age(name string) time.Duration
+	Now() time.Time
+	PruneEventsOlderThan(cutoff time.Time) (int64, error)
 	SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error
 	ObjectStatus(apiVersion, kind, name string) map[string]any
 	ListDynamicConfigParts() ([]routerstate.DynamicConfigPartRecord, error)
@@ -353,6 +359,10 @@ func (s eventedStore) ListDynamicConfigParts() ([]routerstate.DynamicConfigPartR
 
 func (s eventedStore) DeleteObject(apiVersion, kind, name string) error {
 	return s.Store.DeleteObject(apiVersion, kind, name)
+}
+
+func (s eventedStore) PruneEventsOlderThan(cutoff time.Time) (int64, error) {
+	return s.Store.PruneEventsOlderThan(cutoff)
 }
 
 func newerStatus(current, next map[string]any) bool {
@@ -3943,8 +3953,8 @@ func (c IPv4StaticAddressController) Reconcile(ctx context.Context) error {
 			return err
 		}
 		if resourcequery.ResourceWhenPresent(spec.When) {
-			stateStore, ok := c.Store.(resourcequery.StateStore)
-			if ok && !resourcequery.ResourceWhenMatches(spec.When, stateStore) {
+			stateStore := c.Store
+			if stateStore != nil && !resourcequery.ResourceWhenMatches(spec.When, stateStore) {
 				if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", resource.Metadata.Name, map[string]any{
 					"phase":     "Pending",
 					"reason":    "WhenFalse",
@@ -4038,18 +4048,10 @@ func (c IPv4StaticAddressController) Reconcile(ctx context.Context) error {
 }
 
 func (c IPv4StaticAddressController) cleanupRemovedIPv4StaticAddresses() error {
-	if c.DryRun {
+	if c.DryRun || c.Store == nil {
 		return nil
 	}
-	lister, ok := c.Store.(routerstate.ObjectStatusLister)
-	if !ok {
-		return nil
-	}
-	deleter, ok := c.Store.(routerstate.ObjectDeleteStore)
-	if !ok {
-		return nil
-	}
-	statuses, err := lister.ListObjectStatuses()
+	statuses, err := c.Store.ListObjectStatuses()
 	if err != nil {
 		return err
 	}
@@ -4066,7 +4068,7 @@ func (c IPv4StaticAddressController) cleanupRemovedIPv4StaticAddresses() error {
 	}
 	for _, status := range lifecycle.PlanResourceTeardownGC(desired, statuses) {
 		if status.APIVersion == api.NetAPIVersion && status.Kind == "IPv4StaticAddress" {
-			if err := deleter.DeleteObject(status.APIVersion, status.Kind, status.Name); err != nil {
+			if err := c.Store.DeleteObject(status.APIVersion, status.Kind, status.Name); err != nil {
 				return err
 			}
 		}
@@ -4800,8 +4802,8 @@ func (c LANAddressController) delegatedAddressStagingEligible(resource api.Resou
 	if !resourcequery.ResourceWhenPresent(when) {
 		return true
 	}
-	stateStore, ok := c.Store.(resourcequery.StateStore)
-	if !ok {
+	stateStore := c.Store
+	if stateStore == nil {
 		return false
 	}
 	return resourcequery.ResourceWhenMatches(when, stateStore) || resourcequery.ResourceWhenIndeterminate(when, stateStore)
@@ -5056,8 +5058,8 @@ func (c LANAddressController) cleanupWhenFalseIPv6DelegatedAddresses(ctx context
 	if declared == nil {
 		return nil
 	}
-	stateStore, ok := c.Store.(resourcequery.StateStore)
-	if !ok {
+	stateStore := c.Store
+	if stateStore == nil {
 		return nil
 	}
 	pdStatus := c.Store.ObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", pdName)
