@@ -259,6 +259,7 @@ spec:
 <p>A DNS server endpoint referenced by DNSForwarder; declaration alone does not start a listener or forward queries.</p>
 <h2 id="dslitetunnel">DSLiteTunnel</h2>
 <p><a href="resources/DSLiteTunnel.html">DSLiteTunnel</a></p>
+<p>Encapsulate IPv4 in IPv6 toward an AFTR. Tunnel setup, an IPv4 default route, NAT and reachability checks are separate concerns.</p>
 <h2 id="tunnelinterface">TunnelInterface</h2>
 <p><a href="resources/TunnelInterface.html">TunnelInterface</a></p>
 <h2 id="overlaypeer">OverlayPeer</h2>
@@ -290,8 +291,10 @@ spec:
 <p>Declare shared SAM node identity/topology used by transport, event peers, WireGuard and MobilityPool member resolution. Local provider capture/discovery details belong in a MobilityPool self overlay, not here.</p>
 <h2 id="samenrollmentpolicy">SAMEnrollmentPolicy</h2>
 <p><a href="resources/SAMEnrollmentPolicy.html">SAMEnrollmentPolicy</a></p>
+<p>Define RR-side admission boundaries for SAM leaf identity, transport addresses, optional join authentication and authorized mobility ownership. Leaves consume the admitted topology instead of copying this policy.</p>
 <h2 id="samenrollmentclaim">SAMEnrollmentClaim</h2>
 <p><a href="resources/SAMEnrollmentClaim.html">SAMEnrollmentClaim</a></p>
+<p>Declare the leaf-authored identity, transport and mobility intent submitted for SAM enrollment. Expiry and revocation are RR/controller administration state, not part of the leaf join HMAC.</p>
 <h2 id="samenrollmentclient">SAMEnrollmentClient</h2>
 <p><a href="resources/SAMEnrollmentClient.html">SAMEnrollmentClient</a></p>
 <p>Submit a local enrollment claim to bootstrap RR control APIs, fetch admitted topology and persist it as dynamic SAMRRSet/optional direct peer-group state for existing controllers. No cloud infrastructure is created.</p>

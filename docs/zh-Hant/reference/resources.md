@@ -460,6 +460,8 @@ spec:
 
 [DSLiteTunnel](resources/DSLiteTunnel.md)
 
+向 AFTR 以 IPv6 封裝 IPv4。通道設定、IPv4 預設路由、NAT 與連通檢查是不同事項。
+
 
 ## TunnelInterface
 
@@ -534,10 +536,14 @@ spec:
 
 [SAMEnrollmentPolicy](resources/SAMEnrollmentPolicy.md)
 
+定義 RR 端 SAM leaf 身分、傳輸位址、選用 join 認證及允許移動所有權的接納邊界。leaf 使用接納拓撲，不複製此原則。
+
 
 ## SAMEnrollmentClaim
 
 [SAMEnrollmentClaim](resources/SAMEnrollmentClaim.md)
+
+宣告提交 SAM 註冊的 leaf 自有身分、傳輸與移動意圖。到期及撤銷是 RR/控制器管理狀態，不屬於 leaf join HMAC。
 
 
 ## SAMEnrollmentClient

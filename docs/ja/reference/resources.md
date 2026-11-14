@@ -460,6 +460,8 @@ DNSForwarderが参照するDNSサーバーの接続先です。宣言だけで�
 
 [DSLiteTunnel](resources/DSLiteTunnel.md)
 
+AFTRへ向けてIPv4をIPv6にカプセル化します。トンネル作成、IPv4デフォルト経路、NAT、疎通確認は別の設定・処理です。
+
 
 ## TunnelInterface
 
@@ -534,10 +536,14 @@ routerctl doctorが共有イベント配送・購読を診断するときのグ�
 
 [SAMEnrollmentPolicy](resources/SAMEnrollmentPolicy.md)
 
+RR側でSAM leafの識別・トンネルアドレス・任意のjoin認証・所有許可を規定します。leafはこのポリシーを複製せず、許可されたトポロジーを取得します。
+
 
 ## SAMEnrollmentClaim
 
 [SAMEnrollmentClaim](resources/SAMEnrollmentClaim.md)
+
+SAM登録へ送るleaf自身の識別・トランスポート・所有権の要求を宣言します。期限・失効はRR・コントローラーの管理状態で、leafのjoin HMACには含めません。
 
 
 ## SAMEnrollmentClient

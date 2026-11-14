@@ -5,6 +5,12 @@
 <main class="doclayout wrap"><article class="document"><h1 id="samenrollmentpolicy">SAMEnrollmentPolicy</h1>
 <p><a href="../resources.html#samenrollmentpolicy">各资源的配置</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: mobility.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>定义 RR 端 SAM leaf 身份、传输地址、可选 join 认证及允许移动所有权的接纳边界。leaf 使用接纳拓扑，不复制此策略。</p>
+<h2 id="指定条件与引用关系">指定条件与引用关系</h2>
+<ul>
+<li>RR 输出名称每个策略须唯一，rrSetRef/rrNodeSetRef 成对配置。directMesh 另要求 pair-stable 传输寻址及 RR 备用。</li>
+<li>同一策略内检查 leaf ID、隧道地址、非空 WireGuard 密钥、拥有地址及非空 BGP router ID 冲突。端点、WireGuard 额外前缀及移动所有权分别授权。</li>
+</ul>
 <h2 id="yaml定义">YAML定义</h2>
 <p>此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。</p>
 <pre><code class="language-yaml">- apiVersion: mobility.routerd.net/v1alpha1
@@ -41,9 +47,111 @@
       interface: &quot;&lt;string&gt;&quot; # 必填; string
       persistentKeepalive: 0 # 选填; integer; minimum=0; maximum=65535
 </code></pre>
+<h2 id="字段含义与默认值">字段含义与默认值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>字段含义与默认值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.transportProfileRef</code></td>
+<td>必填同一 Router 中已有 SAMTransportProfile/name，将接纳的 leaf 绑定至该传输配置，不是状态来源。</td>
+</tr>
+<tr>
+<td><code>spec.rrSetRef</code></td>
+<td>可选运行时输出名称 SAMRRSet/name，须与 rrNodeSetRef 同时配置且跨注册策略唯一。这是生成快照名称，不是静态编写 SAMRRSet。direct mesh 与 leaf 客户端获取需要此值。</td>
+</tr>
+<tr>
+<td><code>spec.rrNodeSetRef</code></td>
+<td>供应 RR 身份的已有 SAMNodeSet/name，与 rrSetRef 同时必填。该 NodeSet 所有节点须为 routeReflector:true，不在策略内复制 RR 注册信息。</td>
+</tr>
+<tr>
+<td><code>spec.joinTokenFrom</code></td>
+<td>可选共享 HMAC 密钥来源。省略不要求 join HMAC，由受保护 ControlAPI 作为信任边界。提供时 file/env 只能一项，请求须有 nonce/timestamp/HMAC。与 ControlAPI Bearer 认证不同。</td>
+</tr>
+<tr>
+<td><code>spec.joinTokenFrom.file</code></td>
+<td>路由器本机原始 HMAC 密钥文件，与 env 互斥，移除首尾空白。即使离线验证无法读取，实际提交时缺少密钥仍会失败。</td>
+</tr>
+<tr>
+<td><code>spec.joinTokenFrom.env</code></td>
+<td>存放 HMAC 密钥的 routerd 进程环境变量名称，与 file 互斥，不自动加载环境文件。</td>
+</tr>
+<tr>
+<td><code>spec.joinTokenFrom.base64</code></td>
+<td>默认 false，true 对移除首尾空白的来源执行标准 Base64 解码，解码字节作为 HMAC 密钥。Base64 不是加密。</td>
+</tr>
+<tr>
+<td><code>spec.joinAudience</code></td>
+<td>配置 joinTokenFrom 时可选的预期请求 audience，非空值须等于 claim.joinAudience，无默认 audience。</td>
+</tr>
+<tr>
+<td><code>spec.allowedLeafIDs</code></td>
+<td>可选 leaf 身份限制对象，省略不施加正则表达式限制。</td>
+</tr>
+<tr>
+<td><code>spec.allowedLeafIDs.pattern</code></td>
+<td>匹配移除首尾空白 leafID 的 Go 正则表达式。空值允许其他条件有效的任意 ID，不自动加首尾锚点，完整匹配请用 ^...$。</td>
+</tr>
+<tr>
+<td><code>spec.tunnelAddressPrefixes</code></td>
+<td>必填且不可为空的 IPv4 CIDR 列表，授权 claim.tunnelAddress /32 身份，不自动分配地址。</td>
+</tr>
+<tr>
+<td><code>spec.endpointPrefixes</code></td>
+<td>可选外层端点 IPv4 CIDR 允许列表，空值不限制端点前缀。wireGuard.endpointPrefixes 为空时，也作为 WireGuard 端点允许列表。</td>
+</tr>
+<tr>
+<td><code>spec.wireGuard</code></td>
+<td>可选接纳 leaf 的 WireGuard 控制。使用其他操作性 WireGuard 配置时需 interface，仅端点前缀验证不供应 WireGuard 设备。</td>
+</tr>
+<tr>
+<td><code>spec.wireGuard.interface</code></td>
+<td>可选已有 WireGuardInterface metadata.name，不是 Kind/name。限制导入此策略的本机 WireGuard 接口，不自动创建。</td>
+</tr>
+<tr>
+<td><code>spec.wireGuard.endpointPrefixes</code></td>
+<td>可选 IPv4 CIDR，限制请求的 WireGuard 外层端点 IP。空值使用 endpointPrefixes，两者均空则无此前缀限制。</td>
+</tr>
+<tr>
+<td><code>spec.wireGuard.allowedExtraIPPrefixes</code></td>
+<td>可选 IPv4 CIDR，授权额外 claim.wireGuard.allowedIPs。隧道 /32 会另行加入生成的对等端；空值不授权额外前缀。</td>
+</tr>
+<tr>
+<td><code>spec.wireGuard.persistentKeepalive</code></td>
+<td>秒数 0–65535，默认 0。请求 keepalive 为 0 时供生成的 WireGuard 对等端使用，请求的明确非零值优先。</td>
+</tr>
+<tr>
+<td><code>spec.directMesh</code></td>
+<td>可选且限于此策略的 direct leaf mesh 输出，不移除 RR 备用路径。</td>
+</tr>
+<tr>
+<td><code>spec.directMesh.peerGroupRef</code></td>
+<td>SAMPeerGroup/name 运行时输出，空值禁用 direct mesh。需要 rrSetRef 及引用传输的 addressingMode: pair-stable，跨策略须唯一，不是静态编写 SAMPeerGroup。</td>
+</tr>
+<tr>
+<td><code>spec.mobilityPoolRefs</code></td>
+<td>可选已有 MobilityPool/name 列表，提供允许的所有权前缀，与 mobilityPrefixes 合并，不要求创建池或云端资源。</td>
+</tr>
+<tr>
+<td><code>spec.mobilityPrefixes</code></td>
+<td>可选额外 CIDR，授权请求的拥有 IPv4 /32，与引用池合并。此值及池引用均空时不授权拥有地址。</td>
+</tr>
+<tr>
+<td><code>spec.ttl</code></td>
+<td>可选 Go duration，实际提交接纳省略时默认租约 5 分钟。配置 TTL 也限制从 joinTimestamp 起的请求寿命及明确 expiresAt。结构验证仅解析时间，但运行时无效或非正寿命会视为过期。</td>
+</tr>
+</tbody>
+</table>
+<p>实现: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_mobility.go">pkg/config/validate_mobility.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/cluster_secret_validate.go">pkg/config/cluster_secret_validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/samenrollment/enrollment.go">pkg/samenrollment/enrollment.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd/sam_enrollment_submit.go">cmd/routerd/sam_enrollment_submit.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/wireguard.go">pkg/controller/chain/wireguard.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/mobility/enrollmentclient.go">pkg/controller/mobility/enrollmentclient.go</a></p>
 <p><a href="/examples/cloudedge-dynamic-rr-a-hub.yaml">配置示例</a></p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
 <ul>
+<li><a href="#指定条件与引用关系">指定条件与引用关系</a></li>
 <li><a href="#yaml定义">YAML定义</a></li>
+<li><a href="#字段含义与默认值">字段含义与默认值</a></li>
 </ul>
 </div>
 </aside></main>

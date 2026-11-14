@@ -259,6 +259,7 @@ spec:
 <p>供 DNSForwarder 參照的 DNS 伺服器端點；僅宣告不會啟動接聽或轉送查詢。</p>
 <h2 id="dslitetunnel">DSLiteTunnel</h2>
 <p><a href="resources/DSLiteTunnel.html">DSLiteTunnel</a></p>
+<p>向 AFTR 以 IPv6 封裝 IPv4。通道設定、IPv4 預設路由、NAT 與連通檢查是不同事項。</p>
 <h2 id="tunnelinterface">TunnelInterface</h2>
 <p><a href="resources/TunnelInterface.html">TunnelInterface</a></p>
 <h2 id="overlaypeer">OverlayPeer</h2>
@@ -290,8 +291,10 @@ spec:
 <p>宣告供傳輸、事件對等端、WireGuard 與 MobilityPool 成員解析共用的 SAM 節點身分與拓撲。本機供應者擷取/探索設定應放在 MobilityPool 自節點覆寫，不放在此處。</p>
 <h2 id="samenrollmentpolicy">SAMEnrollmentPolicy</h2>
 <p><a href="resources/SAMEnrollmentPolicy.html">SAMEnrollmentPolicy</a></p>
+<p>定義 RR 端 SAM leaf 身分、傳輸位址、選用 join 認證及允許移動所有權的接納邊界。leaf 使用接納拓撲，不複製此原則。</p>
 <h2 id="samenrollmentclaim">SAMEnrollmentClaim</h2>
 <p><a href="resources/SAMEnrollmentClaim.html">SAMEnrollmentClaim</a></p>
+<p>宣告提交 SAM 註冊的 leaf 自有身分、傳輸與移動意圖。到期及撤銷是 RR/控制器管理狀態，不屬於 leaf join HMAC。</p>
 <h2 id="samenrollmentclient">SAMEnrollmentClient</h2>
 <p><a href="resources/SAMEnrollmentClient.html">SAMEnrollmentClient</a></p>
 <p>將本機註冊要求提交至啟動 RR ControlAPI，取得允許的拓撲，儲存為動態 SAMRRSet 及選用 direct 對等群組供既有控制器使用，不建立雲端基礎設施。</p>

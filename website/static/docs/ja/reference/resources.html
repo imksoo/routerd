@@ -259,6 +259,7 @@ spec:
 <p>DNSForwarderが参照するDNSサーバーの接続先です。宣言だけで待受を開始したり問い合わせを転送したりはしません。</p>
 <h2 id="dslitetunnel">DSLiteTunnel</h2>
 <p><a href="resources/DSLiteTunnel.html">DSLiteTunnel</a></p>
+<p>AFTRへ向けてIPv4をIPv6にカプセル化します。トンネル作成、IPv4デフォルト経路、NAT、疎通確認は別の設定・処理です。</p>
 <h2 id="tunnelinterface">TunnelInterface</h2>
 <p><a href="resources/TunnelInterface.html">TunnelInterface</a></p>
 <h2 id="overlaypeer">OverlayPeer</h2>
@@ -290,8 +291,10 @@ spec:
 <p>トランスポート・イベントピア・WireGuard・MobilityPoolメンバーで共有するSAMのノード識別・トポロジーを宣言します。ローカルのプロバイダー取得・探索設定はここではなくMobilityPoolの自ノード上書きに置きます。</p>
 <h2 id="samenrollmentpolicy">SAMEnrollmentPolicy</h2>
 <p><a href="resources/SAMEnrollmentPolicy.html">SAMEnrollmentPolicy</a></p>
+<p>RR側でSAM leafの識別・トンネルアドレス・任意のjoin認証・所有許可を規定します。leafはこのポリシーを複製せず、許可されたトポロジーを取得します。</p>
 <h2 id="samenrollmentclaim">SAMEnrollmentClaim</h2>
 <p><a href="resources/SAMEnrollmentClaim.html">SAMEnrollmentClaim</a></p>
+<p>SAM登録へ送るleaf自身の識別・トランスポート・所有権の要求を宣言します。期限・失効はRR・コントローラーの管理状態で、leafのjoin HMACには含めません。</p>
 <h2 id="samenrollmentclient">SAMEnrollmentClient</h2>
 <p><a href="resources/SAMEnrollmentClient.html">SAMEnrollmentClient</a></p>
 <p>ローカル登録要求を起動用RRのControlAPIへ送り、許可されたトポロジーを取得して動的SAMRRSet・任意のdirectピアグループとして既存コントローラーへ渡します。クラウド基盤の新規作成は行いません。</p>

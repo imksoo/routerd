@@ -8337,5 +8337,510 @@
       "pkg/render/conntrackd.go",
       "cmd/routerd-vrrp-vmac/main.go"
     ]
+  },
+  "DSLiteTunnel": {
+    "purpose": [
+      "Encapsulate IPv4 in IPv6 toward an AFTR. Tunnel setup, an IPv4 default route, NAT and reachability checks are separate concerns.",
+      "AFTRへ向けてIPv4をIPv6にカプセル化します。トンネル作成、IPv4デフォルト経路、NAT、疎通確認は別の設定・処理です。",
+      "向 AFTR 以 IPv6 封裝 IPv4。通道設定、IPv4 預設路由、NAT 與連通檢查是不同事項。",
+      "向 AFTR 以 IPv6 封装 IPv4。隧道配置、IPv4 默认路由、NAT 与连通检查是不同事项。"
+    ],
+    "rules": [
+      [
+        "interface and at least one of aftrFrom/aftrFQDN/aftrIPv6/remoteAddress are required even when disabled. AFTR sources may coexist; runtime tries them in that order until one resolves.",
+        "無効時もinterfaceとaftrFrom・aftrFQDN・aftrIPv6・remoteAddressのいずれかが必須です。AFTR指定は併用でき、実行時はこの順で解決できるものを探します。",
+        "停用時仍需 interface 及 aftrFrom/aftrFQDN/aftrIPv6/remoteAddress 至少一項。來源可並用，依此順序嘗試至成功。",
+        "禁用时仍需 interface 及 aftrFrom/aftrFQDN/aftrIPv6/remoteAddress 至少一项。来源可并用，按此顺序尝试至成功。"
+      ],
+      [
+        "localAddress is the outer IPv6 source, but localAddressFrom currently selects the INNER IPv4 source. They are not interchangeable. The inner source defaults 192.0.0.2 and inner remote is 192.0.0.1. No IPv4-from reference means the default inner source.",
+        "localAddressは外側のIPv6送信元ですが、現行のlocalAddressFromは内側のIPv4送信元を選びます。両者は置き換え可能な指定ではありません。内側送信元の既定は192.0.0.2、対向は192.0.0.1です。IPv4の参照がなければ既定の送信元を使います。",
+        "localAddress 是外層 IPv6 來源，但目前 localAddressFrom 選擇內層 IPv4 來源，兩者不可互換。內層來源預設 192.0.0.2，遠端 192.0.0.1。無 IPv4 來源參照時使用預設。",
+        "localAddress 是外层 IPv6 源地址，但目前 localAddressFrom 选择内层 IPv4 源地址，两者不可互换。内层源地址默认 192.0.0.2，远端 192.0.0.1。无 IPv4 来源引用时使用默认值。"
+      ],
+      [
+        "Missing AFTR/local/dependency values produce Pending. Up records configured tunnel/link state, not AFTR reachability or working Internet access. A false activation condition or disabled resource removes an unused tunnel; dependency failure alone skips reconciliation rather than promising immediate teardown.",
+        "AFTR・送信元・依存値の未解決はPendingです。Upはトンネル・リンク設定を示し、AFTRやインターネットへの疎通を保証しません。有効化条件が偽、または無効なリソースは未使用のトンネルを削除しますが、依存条件の不成立だけでは処理を見送るため即時削除を保証しません。",
+        "AFTR／本機／相依值缺失時為 Pending。Up 僅表示通道與連結設定，不保證 AFTR 或網際網路可達。啟用條件為假或停用時會移除未使用通道；僅相依失敗會略過協調，不保證立即刪除。",
+        "AFTR／本机／依赖值缺失时为 Pending。Up 仅表示隧道与链路配置，不保证 AFTR 或互联网可达。启用条件为假或禁用时会移除未使用隧道；仅依赖失败会跳过协调，不保证立即删除。"
+      ],
+      [
+        "Linux uses ip6tnl mode ipip6. FreeBSD uses a gif device; a requested non-gif name maps deterministically to gif100–gif999 and the actual name is published in status. Removed aftrSource and ready_when are rejected; use aftrFrom and dependsOn.",
+        "Linuxはip6tnlのipip6、FreeBSDはgifを使います。gif名でない希望名はgif100～gif999へ決定的に変換し、実名を状態で公開します。廃止したaftrSource・ready_whenは拒否されるため、aftrFrom・dependsOnを使います。",
+        "Linux 使用 ip6tnl/ipip6，FreeBSD 使用 gif。非 gif 名稱會確定性映射至 gif100–gif999，實際名稱發布於狀態。已移除的 aftrSource/ready_when 會被拒絕，請用 aftrFrom/dependsOn。",
+        "Linux 使用 ip6tnl/ipip6，FreeBSD 使用 gif。非 gif 名称会确定性映射至 gif100–gif999，实际名称发布于状态。已移除的 aftrSource/ready_when 会被拒绝，请用 aftrFrom/dependsOn。"
+      ]
+    ],
+    "fields": {
+      "interface": [
+        "Required declared logical underlay interface; normal reference validation requires it to exist.",
+        "宣言済みの論理アンダーレイインターフェースが必須で、通常の参照検証で存在を確認します。",
+        "必填且已宣告的邏輯底層介面，正常參照驗證檢查其存在。",
+        "必填且已声明的逻辑底层接口，正常引用验证检查其存在。"
+      ],
+      "tunnelName": [
+        "Optional desired device name, default metadata.name. FreeBSD may publish a different gif name as described above.",
+        "任意のデバイス名で、既定はmetadata.nameです。FreeBSDは前述のgif名に変換する場合があります。",
+        "選用裝置名稱，預設 metadata.name；FreeBSD 可能使用上述不同的 gif 名稱。",
+        "可选设备名称，默认 metadata.name；FreeBSD 可能使用上述不同的 gif 名称。"
+      ],
+      "enabled": [
+        "Default true. False removes an unused configured tunnel and reports Disabled; validation still applies.",
+        "既定はtrueです。falseは未使用の設定トンネルを削除しDisabledにしますが、検証は免除しません。",
+        "預設 true。false 移除未使用設定通道並回報 Disabled，仍須通過驗證。",
+        "默认 true。false 移除未使用配置隧道并报告 Disabled，仍须通过验证。"
+      ],
+      "aftrFQDN": [
+        "Optional AFTR hostname; no whitespace or slash. Tried after aftrFrom, before literal alternatives.",
+        "任意のAFTRホスト名で、空白・スラッシュは禁止です。aftrFromの後、固定アドレスの前に試します。",
+        "選用 AFTR 主機名稱，不可有空白或斜線。在 aftrFrom 之後、固定地址之前嘗試。",
+        "可选 AFTR 主机名，不可有空白或斜线。在 aftrFrom 之后、固定地址之前尝试。"
+      ],
+      "aftrIPv6": [
+        "Optional bare AFTR IPv6 address, tried after aftrFQDN. No default.",
+        "任意のAFTR IPv6アドレスです。aftrFQDNの後に試し、既定値はありません。",
+        "選用純 AFTR IPv6 位址，在 aftrFQDN 之後嘗試，無預設值。",
+        "可选纯 AFTR IPv6 地址，在 aftrFQDN 之后尝试，无默认值。"
+      ],
+      "remoteAddress": [
+        "Optional IPv6 AFTR alternative, last in the resolution order. Not an inner IPv4 destination.",
+        "解決順序の最後に使う任意のAFTR IPv6アドレスです。内側IPv4の宛先ではありません。",
+        "選用 IPv6 AFTR 替代值，最後嘗試，不是內層 IPv4 目的地。",
+        "可选 IPv6 AFTR 替代值，最后尝试，不是内层 IPv4 目的地。"
+      ],
+      "aftrFrom": [
+        "Optional common resource/field source, usually a DHCPv6-provided AFTR name. It must name an existing source and provided field. Runtime also reads dnsServers from that same resource and merges them with aftrDNSServers.",
+        "共通のresource・field参照で、通常はDHCPv6のAFTR名を使います。実在する参照先・提供フィールドが必要です。同じリソースのdnsServersも読み、aftrDNSServersに加えます。",
+        "選用共用 resource/field 來源，通常為 DHCPv6 提供的 AFTR 名稱。需存在且為提供欄位。執行時另讀同一資源的 dnsServers 並與 aftrDNSServers 合併。",
+        "可选通用 resource/field 来源，通常为 DHCPv6 提供的 AFTR 名称。需存在且为提供字段。运行时另读同一资源的 dnsServers 并与 aftrDNSServers 合并。"
+      ],
+      "aftrDNSServers": [
+        "Optional bare IPv4/IPv6 DNS servers, queried on port 53. If no explicit or source-derived servers exist, runtime uses 127.0.0.1:1053 by default. Supply reachable DNS servers; declaring this does not start a resolver.",
+        "任意のIPv4・IPv6 DNSサーバーです。53番で問い合わせます。明示値・参照由来の両方がなければ実行時は既定で127.0.0.1:1053を使います。宣言してもリゾルバーは起動しないため、利用可能なサーバーを指定します。",
+        "選用純 IPv4/IPv6 DNS 伺服器，查詢埠 53。無明確或來源伺服器時，執行時預設 127.0.0.1:1053。此宣告不啟動解析器，請提供可達伺服器。",
+        "可选纯 IPv4/IPv6 DNS 服务器，查询端口 53。无明确或来源服务器时，运行时默认 127.0.0.1:1053。此声明不启动解析器，请提供可达服务器。"
+      ],
+      "aftrAddressOrdinal": [
+        "One-based AAAA selection, default 1. Explicit selection sorts normalized IPv6 strings lexically before indexing; omission with no selection mode retains resolver order.",
+        "AAAAの1始まりの選択番号で、既定は1です。番号・選択モードを明示するとIPv6文字列の辞書順で選び、両方省略ならリゾルバーの順序を使います。",
+        "AAAA 選擇索引從 1 開始，預設 1。明確指定索引或模式時先按 IPv6 字串字典序排序；兩者省略則保留解析器順序。",
+        "AAAA 选择索引从 1 开始，默认 1。明确指定索引或模式时先按 IPv6 字符串字典序排序；两者省略则保留解析器顺序。"
+      ],
+      "aftrAddressSelection": [
+        "ordinal by default; out-of-range ordinal fails. ordinalModulo wraps (ordinal−1) by record count. Does not distribute traffic across AFTRs.",
+        "既定はordinalで、件数外の番号は失敗します。ordinalModuloは番号−1を件数で循環させ、AFTR間の通信量を分散する指定ではありません。",
+        "預設 ordinal，超出範圍會失敗。ordinalModulo 將索引減 1 後依筆數循環，不在 AFTR 間分配流量。",
+        "默认 ordinal，超出范围会失败。ordinalModulo 将索引减 1 后按条数循环，不在 AFTR 间分配流量。"
+      ],
+      "localAddress": [
+        "Optional literal OUTER IPv6 source; required with localAddressSource: static. Not the inner IPv4 source.",
+        "任意の外側IPv6送信元です。localAddressSource:staticでは必須で、内側IPv4送信元ではありません。",
+        "選用固定外層 IPv6 來源；localAddressSource:static 時必填，不是內層 IPv4 來源。",
+        "可选固定外层 IPv6 源地址；localAddressSource:static 时必填，不是内层 IPv4 源地址。"
+      ],
+      "localAddressFrom": [
+        "Optional common status source for INNER IPv4. Runtime first reads status, then declared IPv4StaticAddress.address. Unresolved required source yields Pending; optional true falls back to 192.0.0.2. Resolved value must be usable unicast IPv4.",
+        "内側IPv4の共通状態参照です。状態を先に読み、次に宣言済みIPv4StaticAddress.addressを読みます。必須値未解決はPending、optional:trueは192.0.0.2へ戻ります。有効なユニキャストIPv4が必要です。",
+        "選用的內層 IPv4 共用狀態來源，先讀狀態，再讀宣告的 IPv4StaticAddress.address。必要來源缺值為 Pending；optional:true 使用 192.0.0.2。結果須為可用單播 IPv4。",
+        "可选的内层 IPv4 通用状态来源，先读状态，再读声明的 IPv4StaticAddress.address。必要来源缺值为 Pending；optional:true 使用 192.0.0.2。结果须为可用单播 IPv4。"
+      ],
+      "localAddressSource": [
+        "interface default discovers a usable global IPv6 unless localAddress supplies one. static requires localAddress. delegatedAddress derives from localDelegatedAddress and may stage a /128 until DAD completes.",
+        "既定のinterfaceはlocalAddressがなければ利用可能なグローバルIPv6を探します。staticはlocalAddress必須です。delegatedAddressはlocalDelegatedAddressから導出し、DAD完了まで/128を準備して待つ場合があります。",
+        "預設 interface 在無 localAddress 時尋找可用全域 IPv6。static 需 localAddress。delegatedAddress 從 localDelegatedAddress 推導，可能先配置 /128 並等待 DAD。",
+        "默认 interface 在无 localAddress 时寻找可用全局 IPv6。static 需 localAddress。delegatedAddress 从 localDelegatedAddress 推导，可能先配置 /128 并等待 DAD。"
+      ],
+      "localDelegatedAddress": [
+        "Bare existing IPv6DelegatedAddress name, required for delegatedAddress mode. Validation checks any supplied reference even in other modes.",
+        "既存IPv6DelegatedAddressの裸名で、delegatedAddress時に必須です。他モードでも指定した参照は存在を確認します。",
+        "既有 IPv6DelegatedAddress 裸名稱，delegatedAddress 模式必填。其他模式指定時也檢查其存在。",
+        "现有 IPv6DelegatedAddress 裸名称，delegatedAddress 模式必填。其他模式指定时也检查其存在。"
+      ],
+      "localAddressSuffix": [
+        "Optional IPv6 suffix. Delegated mode precedence: this value → referenced addressSuffix → ::1. Interface mode can also derive a source using this suffix.",
+        "任意のIPv6サフィックスです。委譲モードの優先順は本項目→参照先addressSuffix→::1です。interfaceモードでもこの値で送信元を導出できます。",
+        "選用 IPv6 後綴。委派模式優先順：此值→參照的 addressSuffix→::1。interface 模式也可用此後綴推導來源。",
+        "可选 IPv6 后缀。委派模式优先顺：此值→引用的 addressSuffix→::1。interface 模式也可用此后缀推导源地址。"
+      ],
+      "defaultRoute": [
+        "Default false. FreeBSD runtime can change/add the default via 192.0.0.1. The Linux tunnel controller does not install an IPv4 default from this flag; use IPv4Route/EgressRoutePolicy.",
+        "既定はfalseです。FreeBSDの実行処理は192.0.0.1経由のデフォルト経路を変更・追加できます。Linuxのトンネル処理はこの値でIPv4デフォルトを作らないため、IPv4Route・EgressRoutePolicyを使います。",
+        "預設 false。FreeBSD 執行時可變更／新增經 192.0.0.1 的預設路由。Linux 通道控制器不依此安裝 IPv4 預設，請用 IPv4Route/EgressRoutePolicy。",
+        "默认 false。FreeBSD 运行时可变更／新增经 192.0.0.1 的默认路由。Linux 隧道控制器不按此安装 IPv4 默认，请用 IPv4Route/EgressRoutePolicy。"
+      ],
+      "routeMetric": [
+        "Optional nonnegative integer, decoded default 0. Current DS-Lite runtime does not pass it when configuring the default route.",
+        "任意の0以上の整数で、デコード時の既定は0です。現行DS-Liteの実行処理はデフォルト経路設定にこの値を渡しません。",
+        "選用非負整數，解碼預設 0。目前 DS-Lite 執行流程不將它傳入預設路由設定。",
+        "可选非负整数，解码默认 0。目前 DS-Lite 执行流程不将它传入默认路由配置。"
+      ],
+      "mtu": [
+        "Optional 1280–65535, runtime default 1460. Applied to the tunnel link; it does not prove the underlay path supports that size.",
+        "任意の1280～65535で、実行時の既定は1460です。トンネルリンクに適用し、アンダーレイ経路がそのサイズを通すことは保証しません。",
+        "選用 1280–65535，執行時預設 1460。套用至通道連結，不保證底層路徑支援此大小。",
+        "可选 1280–65535，运行时默认 1460。应用至隧道链路，不保证底层路径支持此大小。"
+      ],
+      "encapsulationLimit": [
+        "Linux encaplimit argument, default none. No detailed value validation here; invalid values can fail the ip command. FreeBSD runtime does not use this argument.",
+        "Linuxのencaplimit引数で、既定はnoneです。詳細値をここでは検証せず、不正値はipコマンドで失敗します。FreeBSDの実行処理では使いません。",
+        "Linux encaplimit 引數，預設 none。此處無詳細值驗證，不合法值可使 ip 命令失敗。FreeBSD 執行流程不使用。",
+        "Linux encaplimit 参数，默认 none。此处无详细值验证，不合法值可使 ip 命令失败。FreeBSD 执行流程不使用。"
+      ],
+      "when": [
+        "Optional common activation predicate, default unconditional; false removes the unused configured tunnel.",
+        "任意の共通有効化条件で、既定は無条件です。偽なら未使用の設定トンネルを削除します。",
+        "選用共用啟用條件，預設無條件；為假時移除未使用設定通道。",
+        "可选通用启用条件，默认无条件；为假时移除未使用配置隧道。"
+      ],
+      "dependsOn": [
+        "Optional AND-list of common dependency predicates, default empty. Unmet conditions yield Pending/DependsOnFalse and skip tunnel updates.",
+        "共通依存条件のANDリストで、既定は空です。不成立ならPending/DependsOnFalseとしてトンネル更新を見送ります。",
+        "選用共用相依條件 AND 清單，預設空。不滿足時為 Pending/DependsOnFalse 並略過更新。",
+        "可选通用依赖条件 AND 列表，默认空。不满足时为 Pending/DependsOnFalse 并跳过更新。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_wan.go",
+      "pkg/config/validate.go",
+      "pkg/controller/chain/phase2.go",
+      "pkg/controller/chain/ipv4_main_routes.go"
+    ]
+  },
+  "SAMEnrollmentPolicy": {
+    "purpose": [
+      "Define RR-side admission boundaries for SAM leaf identity, transport addresses, optional join authentication and authorized mobility ownership. Leaves consume the admitted topology instead of copying this policy.",
+      "RR側でSAM leafの識別・トンネルアドレス・任意のjoin認証・所有許可を規定します。leafはこのポリシーを複製せず、許可されたトポロジーを取得します。",
+      "定義 RR 端 SAM leaf 身分、傳輸位址、選用 join 認證及允許移動所有權的接納邊界。leaf 使用接納拓撲，不複製此原則。",
+      "定义 RR 端 SAM leaf 身份、传输地址、可选 join 认证及允许移动所有权的接纳边界。leaf 使用接纳拓扑，不复制此策略。"
+    ],
+    "rules": [
+      [
+        "RR output names are unique per policy; rrSetRef/rrNodeSetRef form a pair. directMesh additionally requires pair-stable transport addressing and an RR fallback.",
+        "RR出力名はポリシーごとに一意にし、rrSetRef・rrNodeSetRefは組で指定します。directMeshにはpair-stableのトンネル割当とRR代替経路も必要です。",
+        "RR 輸出名稱每個原則須唯一，rrSetRef/rrNodeSetRef 成對設定。directMesh 另要求 pair-stable 傳輸定址及 RR 備援。",
+        "RR 输出名称每个策略须唯一，rrSetRef/rrNodeSetRef 成对配置。directMesh 另要求 pair-stable 传输寻址及 RR 备用。"
+      ],
+      [
+        "Claim IDs, tunnel addresses, nonempty WireGuard keys, owned addresses and nonempty BGP router IDs are checked for collisions within the same policy. Endpoint, WireGuard extra-prefix and mobility authorization checks are separate.",
+        "同じポリシー内のleaf ID・トンネルアドレス・非空WireGuard鍵・所有アドレス・非空BGP router IDの衝突を確認します。終端・WireGuard追加prefix・移動所有権は別々に認可します。",
+        "同一原則內檢查 leaf ID、隧道位址、非空 WireGuard 金鑰、擁有位址及非空 BGP router ID 衝突。端點、WireGuard 額外前綴及移動所有權分別授權。",
+        "同一策略内检查 leaf ID、隧道地址、非空 WireGuard 密钥、拥有地址及非空 BGP router ID 冲突。端点、WireGuard 额外前缀及移动所有权分别授权。"
+      ]
+    ],
+    "fields": {
+      "transportProfileRef": [
+        "Required existing SAMTransportProfile/name in this Router. Binds admitted leaves to that transport profile; not a status source.",
+        "同じRouterに存在するSAMTransportProfile/nameが必須です。登録leafをそのプロファイルへ結び付ける参照で、状態値参照ではありません。",
+        "必填同一 Router 中既有 SAMTransportProfile/name，將接納的 leaf 綁定至該傳輸設定，不是狀態來源。",
+        "必填同一 Router 中已有 SAMTransportProfile/name，将接纳的 leaf 绑定至该传输配置，不是状态来源。"
+      ],
+      "rrSetRef": [
+        "Optional runtime output name SAMRRSet/name. Must be paired with rrNodeSetRef and unique across enrollment policies. Names a generated snapshot, not a statically authored SAMRRSet. Required for direct mesh and leaf-client topology fetching.",
+        "任意の実行時出力名SAMRRSet/nameです。rrNodeSetRefと同時指定し、ポリシー間で一意にします。静的に記述するSAMRRSetではなく生成スナップショット名です。direct mesh・leaf側の取得では必要です。",
+        "選用執行時輸出名稱 SAMRRSet/name，須與 rrNodeSetRef 同時設定且跨註冊原則唯一。這是產生快照名稱，不是靜態編寫 SAMRRSet。direct mesh 與 leaf 用戶端擷取需要此值。",
+        "可选运行时输出名称 SAMRRSet/name，须与 rrNodeSetRef 同时配置且跨注册策略唯一。这是生成快照名称，不是静态编写 SAMRRSet。direct mesh 与 leaf 客户端获取需要此值。"
+      ],
+      "rrNodeSetRef": [
+        "Existing SAMNodeSet/name supplying RR identities; required exactly when rrSetRef is supplied. Every node in that NodeSet must have routeReflector:true. No duplicate RR registry in the policy.",
+        "RR識別情報を供給する既存SAMNodeSet/nameです。rrSetRefと同時指定が必要で、全ノードがrouteReflector:trueである必要があります。ポリシー内に別のRR一覧は持ちません。",
+        "供應 RR 身分的既有 SAMNodeSet/name，與 rrSetRef 同時必填。該 NodeSet 所有節點須為 routeReflector:true，不在原則內複製 RR 登錄。",
+        "供应 RR 身份的已有 SAMNodeSet/name，与 rrSetRef 同时必填。该 NodeSet 所有节点须为 routeReflector:true，不在策略内复制 RR 注册信息。"
+      ],
+      "joinTokenFrom": [
+        "Optional shared HMAC secret source. If absent, no join HMAC is required; the protected ControlAPI becomes the trust boundary. If present, exactly one file/env and valid claim nonce/timestamp/HMAC are required. Separate from ControlAPI Bearer authentication.",
+        "任意のHMAC共通鍵参照です。省略時はjoin HMACを要求せず、保護されたControlAPIが信頼境界になります。指定時はfile・envのどちらか一方と、要求側のnonce・timestamp・HMACが必要です。ControlAPIのBearer認証とは別です。",
+        "選用共用 HMAC 密鑰來源。省略不要求 join HMAC，由受保護 ControlAPI 作為信任邊界。提供時 file/env 只能一項，要求須有 nonce/timestamp/HMAC。與 ControlAPI Bearer 認證不同。",
+        "可选共享 HMAC 密钥来源。省略不要求 join HMAC，由受保护 ControlAPI 作为信任边界。提供时 file/env 只能一项，请求须有 nonce/timestamp/HMAC。与 ControlAPI Bearer 认证不同。"
+      ],
+      "joinTokenFrom.file": [
+        "Router-local raw HMAC secret file, exclusive with env. Surrounding whitespace is removed; unavailable secrets fail actual submission even where offline validation cannot read them.",
+        "ルーター上の生HMAC鍵ファイルでenvと排他です。前後空白を除き、オフライン検証で読めなくても実際の登録時には鍵欠落で失敗します。",
+        "路由器本機原始 HMAC 密鑰檔，與 env 互斥，移除首尾空白。即使離線驗證無法讀取，實際提交時缺少密鑰仍會失敗。",
+        "路由器本机原始 HMAC 密钥文件，与 env 互斥，移除首尾空白。即使离线验证无法读取，实际提交时缺少密钥仍会失败。"
+      ],
+      "joinTokenFrom.env": [
+        "Name of routerd process environment variable holding the HMAC secret; exclusive with file. No automatic environment-file loading.",
+        "HMAC鍵を持つrouterdプロセス環境変数名です。fileと排他で、環境ファイル自動読込はありません。",
+        "存放 HMAC 密鑰的 routerd 程序環境變數名稱，與 file 互斥，不自動載入環境檔。",
+        "存放 HMAC 密钥的 routerd 进程环境变量名称，与 file 互斥，不自动加载环境文件。"
+      ],
+      "joinTokenFrom.base64": [
+        "Default false; true standard-Base64-decodes the trimmed secret source. Decoded bytes become the HMAC key; Base64 is not encryption.",
+        "既定falseです。trueなら前後空白除去後の値を標準Base64デコードし、復号したバイト列をHMAC鍵に使います。Base64は暗号化ではありません。",
+        "預設 false，true 對去除首尾空白的來源執行標準 Base64 解碼，解碼位元組作為 HMAC 金鑰。Base64 不是加密。",
+        "默认 false，true 对移除首尾空白的来源执行标准 Base64 解码，解码字节作为 HMAC 密钥。Base64 不是加密。"
+      ],
+      "joinAudience": [
+        "Optional expected claim audience when joinTokenFrom is configured; nonempty must equal claim.joinAudience. No default audience.",
+        "joinTokenFrom利用時の任意の要求audienceです。非空ならclaim.joinAudienceとの一致が必要で、既定audienceはありません。",
+        "設定 joinTokenFrom 時選用的預期要求 audience，非空值須等於 claim.joinAudience，無預設 audience。",
+        "配置 joinTokenFrom 时可选的预期请求 audience，非空值须等于 claim.joinAudience，无默认 audience。"
+      ],
+      "allowedLeafIDs": [
+        "Optional leaf-identity restriction object; omission imposes no regex restriction.",
+        "任意のleaf識別子制限です。省略時は正規表現による制限なしです。",
+        "選用 leaf 身分限制物件，省略不施加正規表示式限制。",
+        "可选 leaf 身份限制对象，省略不施加正则表达式限制。"
+      ],
+      "allowedLeafIDs.pattern": [
+        "Go regular expression matched against leafID after trimming. Empty accepts any otherwise valid ID; patterns are not implicitly anchored, so use ^...$ for a whole-ID match.",
+        "前後空白除去後のleafIDに照合するGo正規表現です。空なら他条件を満たす任意IDを許可し、自動で先頭末尾を固定しないため完全一致には^...$を使います。",
+        "比對去除首尾空白 leafID 的 Go 正規表示式。空值允許其他條件有效的任意 ID，不自動加首尾錨點，完整比對請用 ^...$。",
+        "匹配移除首尾空白 leafID 的 Go 正则表达式。空值允许其他条件有效的任意 ID，不自动加首尾锚点，完整匹配请用 ^...$。"
+      ],
+      "tunnelAddressPrefixes": [
+        "Required nonempty IPv4 CIDR list authorizing claim.tunnelAddress /32 identities. No address auto-allocation is performed by this field.",
+        "要求のtunnelAddress /32を許可する必須の非空IPv4 CIDR一覧です。この項目によるアドレス自動割当はありません。",
+        "必填且不可為空的 IPv4 CIDR 清單，授權 claim.tunnelAddress /32 身分，不自動分配位址。",
+        "必填且不可为空的 IPv4 CIDR 列表，授权 claim.tunnelAddress /32 身份，不自动分配地址。"
+      ],
+      "endpointPrefixes": [
+        "Optional IPv4 CIDR allowlist for supplied outer endpoint addresses. Empty imposes no endpoint-prefix restriction. Used as WireGuard endpoint fallback allowlist when wireGuard.endpointPrefixes is empty.",
+        "任意の外側終端IPv4 CIDR許可一覧です。空なら終端prefix制限なしです。wireGuard.endpointPrefixesが空のときはWireGuard終端の許可一覧にも使います。",
+        "選用外層端點 IPv4 CIDR 允許清單，空值不限制端點前綴。wireGuard.endpointPrefixes 為空時，也作為 WireGuard 端點允許清單。",
+        "可选外层端点 IPv4 CIDR 允许列表，空值不限制端点前缀。wireGuard.endpointPrefixes 为空时，也作为 WireGuard 端点允许列表。"
+      ],
+      "wireGuard": [
+        "Optional admitted-leaf WireGuard controls. interface is required when other operational WireGuard settings are used; endpoint-prefix validation alone does not supply a WireGuard device.",
+        "任意の登録leaf WireGuard制御です。実動作のWireGuard設定を使う場合はinterfaceが必要で、終端prefix制限だけでデバイスは作成しません。",
+        "選用接納 leaf 的 WireGuard 控制。使用其他操作性 WireGuard 設定時需 interface，僅端點前綴驗證不供應 WireGuard 裝置。",
+        "可选接纳 leaf 的 WireGuard 控制。使用其他操作性 WireGuard 配置时需 interface，仅端点前缀验证不供应 WireGuard 设备。"
+      ],
+      "wireGuard.interface": [
+        "Optional existing WireGuardInterface metadata.name, not Kind/name. Limits which local WireGuard interface imports this policy; no default creation.",
+        "既存WireGuardInterfaceのmetadata.nameです。Kind/nameではありません。どのローカルWireGuardが本ポリシーを取り込むかを制限し、自動作成は行いません。",
+        "選用既有 WireGuardInterface metadata.name，不是 Kind/name。限制匯入此原則的本機 WireGuard 介面，不自動建立。",
+        "可选已有 WireGuardInterface metadata.name，不是 Kind/name。限制导入此策略的本机 WireGuard 接口，不自动创建。"
+      ],
+      "wireGuard.endpointPrefixes": [
+        "Optional IPv4 CIDR allowlist for claim WireGuard outer endpoint IPs. If empty, endpointPrefixes applies; if both empty, no such prefix restriction.",
+        "要求のWireGuard外側終端IPを許可する任意IPv4 CIDR一覧です。空ならendpointPrefixesを使い、両方空ならこのprefix制限はありません。",
+        "選用 IPv4 CIDR，限制要求的 WireGuard 外層端點 IP。空值使用 endpointPrefixes，兩者皆空則無此前綴限制。",
+        "可选 IPv4 CIDR，限制请求的 WireGuard 外层端点 IP。空值使用 endpointPrefixes，两者均空则无此前缀限制。"
+      ],
+      "wireGuard.allowedExtraIPPrefixes": [
+        "Optional IPv4 CIDRs authorizing additional claim.wireGuard.allowedIPs. Tunnel /32 is added independently to generated peers. Empty authorizes no additional prefixes.",
+        "claim.wireGuard.allowedIPsの追加分を許可する任意IPv4 CIDR一覧です。トンネル/32は別途生成ピアに加え、空なら追加prefixを許可しません。",
+        "選用 IPv4 CIDR，授權額外 claim.wireGuard.allowedIPs。隧道 /32 會另行加入產生的對等端；空值不授權額外前綴。",
+        "可选 IPv4 CIDR，授权额外 claim.wireGuard.allowedIPs。隧道 /32 会另行加入生成的对等端；空值不授权额外前缀。"
+      ],
+      "wireGuard.persistentKeepalive": [
+        "Seconds 0–65535, default 0. Used for generated WireGuard peers when a claim leaves its keepalive at 0; explicit claim nonzero wins.",
+        "0～65535秒で、既定0です。要求のkeepaliveが0の場合の生成WireGuardピア既定値で、要求の非0値を優先します。",
+        "秒數 0–65535，預設 0。要求 keepalive 為 0 時供產生的 WireGuard 對等端使用，要求的明確非零值優先。",
+        "秒数 0–65535，默认 0。请求 keepalive 为 0 时供生成的 WireGuard 对等端使用，请求的明确非零值优先。"
+      ],
+      "directMesh": [
+        "Optional policy-scoped direct leaf mesh output. Does not eliminate the RR fallback.",
+        "任意のポリシー単位direct leaf mesh出力です。RRの代替経路を除く指定ではありません。",
+        "選用且限於此原則的 direct leaf mesh 輸出，不移除 RR 備援路徑。",
+        "可选且限于此策略的 direct leaf mesh 输出，不移除 RR 备用路径。"
+      ],
+      "directMesh.peerGroupRef": [
+        "SAMPeerGroup/name runtime output; empty disables direct mesh. Requires rrSetRef and a referenced SAMTransportProfile with addressingMode: pair-stable; must be unique across policies. Not a statically authored SAMPeerGroup.",
+        "SAMPeerGroup/nameの実行時出力です。空ならdirect mesh無効で、rrSetRefと参照SAMTransportProfileのaddressingMode: pair-stableが必要です。ポリシー間で一意にし、静的SAMPeerGroupではありません。",
+        "SAMPeerGroup/name 執行時輸出，空值停用 direct mesh。需要 rrSetRef 及參照傳輸的 addressingMode: pair-stable，跨原則須唯一，不是靜態編寫 SAMPeerGroup。",
+        "SAMPeerGroup/name 运行时输出，空值禁用 direct mesh。需要 rrSetRef 及引用传输的 addressingMode: pair-stable，跨策略须唯一，不是静态编写 SAMPeerGroup。"
+      ],
+      "mobilityPoolRefs": [
+        "Optional existing MobilityPool/name list supplying authorized ownership prefixes. Combined with mobilityPrefixes, not a request to create pools or cloud resources.",
+        "所有権prefixの許可元となる既存MobilityPool/name一覧です。mobilityPrefixesと合成し、プール・クラウド資源作成の指定ではありません。",
+        "選用既有 MobilityPool/name 清單，提供允許的所有權前綴，與 mobilityPrefixes 合併，不要求建立集區或雲端資源。",
+        "可选已有 MobilityPool/name 列表，提供允许的所有权前缀，与 mobilityPrefixes 合并，不要求创建池或云端资源。"
+      ],
+      "mobilityPrefixes": [
+        "Optional additional CIDRs authorizing claimed owned IPv4 /32 addresses. Combined with referenced pools; empty plus no pool refs authorizes no owned addresses.",
+        "要求する所有IPv4 /32の追加許可CIDRです。参照プールと合成し、プール参照も空なら所有アドレスを許可しません。",
+        "選用額外 CIDR，授權要求的擁有 IPv4 /32，與參照集區合併。此值及集區參照皆空時不授權擁有位址。",
+        "可选额外 CIDR，授权请求的拥有 IPv4 /32，与引用池合并。此值及池引用均空时不授权拥有地址。"
+      ],
+      "ttl": [
+        "Optional Go duration. Actual submitted admission defaults to a 5m lease if omitted. A configured TTL also bounds claim lifetime from joinTimestamp and any explicit expiresAt; invalid/nonpositive lifetimes expire fail-closed at runtime even though shape validation only parses duration.",
+        "任意のGo durationです。省略時の実登録は既定5分リースです。指定TTLはjoinTimestampからの要求寿命と明示expiresAtも制限します。形の検証は構文のみですが、不正・非正の寿命は実行時に失効扱いになります。",
+        "選用 Go duration，實際提交接納省略時預設租約 5 分鐘。設定 TTL 也限制從 joinTimestamp 起的要求壽命及明確 expiresAt。結構驗證僅解析時間，但執行時無效或非正壽命會視為過期。",
+        "可选 Go duration，实际提交接纳省略时默认租约 5 分钟。配置 TTL 也限制从 joinTimestamp 起的请求寿命及明确 expiresAt。结构验证仅解析时间，但运行时无效或非正寿命会视为过期。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_mobility.go",
+      "pkg/config/validate.go",
+      "pkg/config/cluster_secret_validate.go",
+      "pkg/samenrollment/enrollment.go",
+      "cmd/routerd/sam_enrollment_submit.go",
+      "pkg/controller/chain/wireguard.go",
+      "pkg/controller/mobility/enrollmentclient.go"
+    ]
+  },
+  "SAMEnrollmentClaim": {
+    "purpose": [
+      "Declare the leaf-authored identity, transport and mobility intent submitted for SAM enrollment. Expiry and revocation are RR/controller administration state, not part of the leaf join HMAC.",
+      "SAM登録へ送るleaf自身の識別・トランスポート・所有権の要求を宣言します。期限・失効はRR・コントローラーの管理状態で、leafのjoin HMACには含めません。",
+      "宣告提交 SAM 註冊的 leaf 自有身分、傳輸與移動意圖。到期及撤銷是 RR/控制器管理狀態，不屬於 leaf join HMAC。",
+      "声明提交 SAM 注册的 leaf 自有身份、传输与移动意图。到期及撤销是 RR/控制器管理状态，不属于 leaf join HMAC。"
+    ],
+    "rules": [
+      [
+        "A locally served claim needs an existing SAMEnrollmentPolicy. A claim referenced by SAMEnrollmentClient may name a remote policy absent locally; the RR applies admission/HMAC/authorization checks when submitted. Local shape validation is not admission success.",
+        "ローカルで扱う要求は既存SAMEnrollmentPolicyが必要です。SAMEnrollmentClientの要求はローカルにないリモートポリシーを指定でき、RRで登録・HMAC・認可を検証します。ローカルの形の検証成功は登録成功ではありません。",
+        "本機服務的要求需既有 SAMEnrollmentPolicy。由 SAMEnrollmentClient 參照的要求可指定本機不存在的遠端原則，由 RR 在提交時執行接納/HMAC/授權檢查。本機結構驗證通過不等於接納成功。",
+        "本机服务的请求需已有 SAMEnrollmentPolicy。由 SAMEnrollmentClient 引用的请求可指定本机不存在的远端策略，由 RR 在提交时执行接纳/HMAC/授权检查。本机结构验证通过不等于接纳成功。"
+      ],
+      [
+        "When joinTokenFrom is configured, nonce, timestamp and HMAC are required, audience must match any configured audience, and nonces cannot collide within a policy. HMAC is SHA-256 over the canonical leaf payload, including directMesh:true when opted in; changing signed identity/intent requires a new signature.",
+        "joinTokenFrom利用時はnonce・timestamp・HMACが必須で、設定されたaudienceと一致し、ポリシー内のnonce重複は禁止です。HMACはdirectMesh:trueを含む正規化leafペイロードのSHA-256で、署名対象の識別・要求を変えると再署名が必要です。",
+        "設定 joinTokenFrom 時需 nonce/timestamp/HMAC，audience 須符合設定值，且同一原則內 nonce 不可衝突。HMAC 為正規 leaf 酬載的 SHA-256，選用 direct 時包含 directMesh:true；變更簽署身分/意圖須重新簽署。",
+        "配置 joinTokenFrom 时需 nonce/timestamp/HMAC，audience 须符合配置值，且同一策略内 nonce 不可冲突。HMAC 为规范 leaf 载荷的 SHA-256，选择 direct 时包含 directMesh:true；更改签名身份/意图须重新签名。"
+      ],
+      [
+        "Revoked or expired claims are excluded from derived topology. Direct claims with no owned addresses may retain transport adjacency but receive no permitted mobility-route imports; a policy-wide address range is not an unrestricted direct /32 authorization.",
+        "失効・期限切れ要求は派生トポロジーから除きます。所有アドレスがないdirect要求はトランスポート接続を保持できても移動経路の受信を許可しません。ポリシー全体の範囲をdirectの全/32許可には使いません。",
+        "已撤銷或過期要求排除於衍生拓撲。無擁有位址的 direct 要求仍可保留傳輸鄰接，但不允許匯入移動路由；原則整體範圍不代表 無限制 direct /32 授權。",
+        "已撤销或过期请求排除于派生拓扑。无拥有地址的 direct 请求仍可保留传输邻接，但不允许导入移动路由；策略整体范围不代表无限制 direct /32 授权。"
+      ]
+    ],
+    "fields": {
+      "policyRef": [
+        "Required SAMEnrollmentPolicy/name. Must exist locally unless this is a leaf claim referenced by SAMEnrollmentClient for remote admission.",
+        "必須のSAMEnrollmentPolicy/nameです。SAMEnrollmentClientがリモート登録に使うleaf要求以外は、ローカルの存在が必要です。",
+        "必填 SAMEnrollmentPolicy/name，除 SAMEnrollmentClient 用於遠端接納的 leaf 要求外，必須在本機存在。",
+        "必填 SAMEnrollmentPolicy/name，除 SAMEnrollmentClient 用于远端接纳的 leaf 请求外，必须在本机存在。"
+      ],
+      "rrSetRef": [
+        "Optional in shape, but SAMEnrollmentClient requires SAMRRSet/name at runtime. Must equal policy.rrSetRef when that policy output is configured. Names runtime RR topology, not a static resource to author.",
+        "形の上では任意ですが、SAMEnrollmentClient実行時にはSAMRRSet/nameが必須です。ポリシーのrrSetRefがあれば一致させます。実行時RRトポロジーの名前で、静的記述するリソースではありません。",
+        "結構上選用，但 SAMEnrollmentClient 執行時需 SAMRRSet/name。原則設定 rrSetRef 時須相等。此為執行時 RR 拓撲名稱，不是需編寫的靜態資源。",
+        "结构上可选，但 SAMEnrollmentClient 运行时需 SAMRRSet/name。策略配置 rrSetRef 时须相等。此为运行时 RR 拓扑名称，不是需编写的静态资源。"
+      ],
+      "leafID": [
+        "Required stable node identity, matched against allowedLeafIDs.pattern and unique within the policy. Used as generated nodeRef.",
+        "必須の安定したノード識別子です。allowedLeafIDs.patternに照合し、ポリシー内で一意にします。生成nodeRefにも使います。",
+        "必填穩定節點身分，須符合 allowedLeafIDs.pattern 且在原則內唯一，用作產生的 nodeRef。",
+        "必填稳定节点身份，须符合 allowedLeafIDs.pattern 且在策略内唯一，用作生成的 nodeRef。"
+      ],
+      "joinAudience": [
+        "Optional signed audience; required to equal the nonempty policy audience when join-token authentication is active.",
+        "任意の署名対象audienceです。join-token認証が有効でポリシーaudienceが非空なら一致が必要です。",
+        "選用且納入簽署的 audience；啟用 join-token 認證且原則 audience 非空時須相等。",
+        "可选且纳入签名的 audience；启用 join-token 认证且策略 audience 非空时须相等。"
+      ],
+      "joinNonce": [
+        "Optional signed nonce; required with joinHMAC or a join-token policy. Same-policy duplicate nonce use is rejected. No automatic generation by this YAML field.",
+        "任意の署名対象nonceです。joinHMACまたはjoin-tokenポリシー時に必須で、同ポリシー内の重複を拒否します。このYAML指定では自動生成しません。",
+        "選用且納入簽署的 nonce，設定 joinHMAC 或使用 join-token 原則時必填。同一原則內重複會拒絕，此 YAML 欄位不自動產生。",
+        "可选且纳入签名的 nonce，配置 joinHMAC 或使用 join-token 策略时必填。同一策略内重复会拒绝，此 YAML 字段不自动生成。"
+      ],
+      "joinTimestamp": [
+        "Optional signed RFC3339/RFC3339Nano timestamp. Required with join-token policy, and when explicit expiresAt is checked against policy TTL. A configured TTL also expires a claim based on this timestamp when present.",
+        "任意の署名対象RFC3339・RFC3339Nano時刻です。join-tokenポリシー時と、明示expiresAtをポリシーTTLに照合する場合は必須です。指定TTLはこの時刻があればここからの寿命も制限します。",
+        "選用且納入簽署的 RFC3339/RFC3339Nano 時間戳。join-token 原則或以原則 TTL 檢查明確 expiresAt 時必填；有此時間時，TTL 也限制從此起的要求壽命。",
+        "可选且纳入签名的 RFC3339/RFC3339Nano 时间戳。join-token 策略或以策略 TTL 检查明确 expiresAt 时必填；有此时间时，TTL 也限制从此起的请求寿命。"
+      ],
+      "joinHMAC": [
+        "Optional hexadecimal HMAC-SHA256 signature of the canonical claim, mandatory for a join-token policy. It is a signature, not the join secret or ControlAPI Bearer token.",
+        "正規化要求の任意の16進HMAC-SHA256署名で、join-tokenポリシーでは必須です。共通鍵そのものやControlAPI Bearerトークンではありません。",
+        "正規要求的選用十六進位 HMAC-SHA256 簽章，join-token 原則時必填。是簽章，不是 join 密鑰或 ControlAPI Bearer 權杖。",
+        "规范请求的可选十六进制 HMAC-SHA256 签名，join-token 策略时必填。是签名，不是 join 密钥或 ControlAPI Bearer 令牌。"
+      ],
+      "tunnelAddress": [
+        "Required bare IPv4 address or /32 CIDR; authorized by policy.tunnelAddressPrefixes and unique in that policy. Not an automatically allocated address.",
+        "必須のIPv4アドレス・/32 CIDRです。policy.tunnelAddressPrefixesの許可範囲内かつポリシー内で一意にし、自動割当ではありません。",
+        "必填純 IPv4 位址或 /32 CIDR，須在 policy.tunnelAddressPrefixes 授權範圍且在原則內唯一，不自動分配。",
+        "必填纯 IPv4 地址或 /32 CIDR，须在 policy.tunnelAddressPrefixes 授权范围且在策略内唯一，不自动分配。"
+      ],
+      "endpoint": [
+        "Optional outer tunnel IP endpoint. If policy.endpointPrefixes is nonempty, it must lie inside that IPv4 allowlist. Separate from the WireGuard UDP endpoint.",
+        "任意の外側トンネルIP終端です。policy.endpointPrefixesが非空ならそのIPv4許可範囲内が必要です。WireGuard UDP終端とは別です。",
+        "選用外層隧道 IP 端點，policy.endpointPrefixes 非空時須位於該 IPv4 允許清單，與 WireGuard UDP 端點不同。",
+        "可选外层隧道 IP 端点，policy.endpointPrefixes 非空时须位于该 IPv4 允许列表，与 WireGuard UDP 端点不同。"
+      ],
+      "wireGuard": [
+        "Optional public WireGuard material. Any nonempty subfield requires publicKey. Does not contain a private key.",
+        "任意のWireGuard公開情報です。1項目でも非空ならpublicKeyが必要で、秘密鍵は含めません。",
+        "選用公開 WireGuard 資料，任一子欄位非空時需 publicKey，不包含私密金鑰。",
+        "可选公开 WireGuard 数据，任一子字段非空时需 publicKey，不包含私钥。"
+      ],
+      "wireGuard.publicKey": [
+        "Public key required when WireGuard data is present; nonempty keys must be unique within the policy. No key auto-generation here.",
+        "WireGuard情報があれば必須の公開鍵です。非空鍵はポリシー内で一意にし、ここで自動生成はしません。",
+        "提供 WireGuard 資料時必填公開金鑰，非空金鑰在原則內須唯一，此處不自動產生。",
+        "提供 WireGuard 数据时必填公钥，非空密钥在策略内须唯一，此处不自动生成。"
+      ],
+      "wireGuard.endpoint": [
+        "Optional host:port (1–65535) for WireGuard UDP. Prefix admission requires a parseable endpoint IP and uses wireGuard.endpointPrefixes or policy.endpointPrefixes fallback; do not assume a hostname passes admission.",
+        "任意のWireGuard UDP host:port（1～65535）です。prefix認可では終端IPの解析が必要で、wireGuard.endpointPrefixesまたはpolicy.endpointPrefixesを使います。ホスト名で認可に通るとは扱わないでください。",
+        "選用 WireGuard UDP host:port（1–65535）。前綴接納要求端點 IP 可解析，使用 wireGuard.endpointPrefixes 或 policy.endpointPrefixes；不可假設主機名稱會通過接納。",
+        "可选 WireGuard UDP host:port（1–65535）。前缀接纳要求端点 IP 可解析，使用 wireGuard.endpointPrefixes 或 policy.endpointPrefixes；不可假设主机名会通过接纳。"
+      ],
+      "wireGuard.allowedIPs": [
+        "Optional additional IPv4 CIDRs, each contained by policy.wireGuard.allowedExtraIPPrefixes. Empty grants no extras; generated peer independently includes tunnelAddress /32.",
+        "任意の追加IPv4 CIDR一覧で、各項目はpolicy.wireGuard.allowedExtraIPPrefixes内が必要です。空なら追加なしで、生成ピアは別にtunnelAddress /32を含めます。",
+        "選用額外 IPv4 CIDR，各項須包含於 policy.wireGuard.allowedExtraIPPrefixes。空值無額外前綴，產生對等端另包含 tunnelAddress /32。",
+        "可选额外 IPv4 CIDR，各项须包含于 policy.wireGuard.allowedExtraIPPrefixes。空值无额外前缀，生成对等端另包含 tunnelAddress /32。"
+      ],
+      "wireGuard.persistentKeepalive": [
+        "Integer seconds 0–65535, default 0 uses policy WireGuard keepalive in generated topology. Nonzero overrides that default.",
+        "0～65535の整数秒です。既定0は生成トポロジーでポリシー側のkeepaliveを使い、非0値は上書きします。",
+        "整數秒 0–65535，預設 0 在產生拓撲時使用原則 WireGuard keepalive，非零覆寫預設值。",
+        "整数秒 0–65535，默认 0 在生成拓扑时使用策略 WireGuard keepalive，非零覆盖默认值。"
+      ],
+      "directMesh": [
+        "Default false keeps this leaf on RR peers only. True requests participation in the policy direct peer group and is signed; it does not bypass policy enablement or owned-/32 admission.",
+        "既定falseはRRピアのみです。trueはポリシーのdirectピアグループ参加を要求する署名対象で、ポリシー有効化・所有/32認可を回避しません。",
+        "預設 false 僅使用 RR 對等端。true 要求加入原則 direct 對等群組並納入簽署，不略過原則啟用或擁有 /32 接納檢查。",
+        "默认 false 仅使用 RR 对等端。true 请求加入策略 direct 对等组并纳入签名，不跳过策略启用或拥有 /32 接纳检查。"
+      ],
+      "mobility": [
+        "Optional declared mobility ownership, default no owned addresses. Does not itself discover clients.",
+        "任意の宣言した移動所有権です。既定は所有アドレスなしで、端末探索そのものは行いません。",
+        "選用宣告移動所有權，預設無擁有位址，本身不探索用戶端。",
+        "可选声明移动所有权，默认无拥有地址，本身不发现客户端。"
+      ],
+      "mobility.ownedAddresses": [
+        "Bare IPv4 addresses or /32s authorized by policy mobilityPrefixes/MobilityPool refs. Duplicates across active same-policy claims are rejected. Direct BGP imports are narrowed to exactly the admitted owned /32s.",
+        "ポリシーのmobilityPrefixes・MobilityPool参照で許可されたIPv4アドレス・/32です。同ポリシーの有効要求間重複は拒否し、direct BGP受信は許可された所有/32だけに絞ります。",
+        "由原則 mobilityPrefixes/MobilityPool 參照授權的純 IPv4 位址或 /32。同一原則的有效要求間不可重複；direct BGP 匯入僅限接納的擁有 /32。",
+        "由策略 mobilityPrefixes/MobilityPool 引用授权的纯 IPv4 地址或 /32。同一策略的有效请求间不可重复；direct BGP 导入仅限接纳的拥有 /32。"
+      ],
+      "bgp": [
+        "Optional signed BGP identity intent. It is not a BGPRouter resource reference.",
+        "任意の署名対象BGP識別要求で、BGPRouterリソース参照ではありません。",
+        "選用且納入簽署的 BGP 身分意圖，不是 BGPRouter 資源參照。",
+        "可选且纳入签名的 BGP 身份意图，不是 BGPRouter 资源引用。"
+      ],
+      "bgp.asn": [
+        "Optional uint32 ASN carried in the signed claim, decoded default 0. Schema requires >=1 when present, but shape validation does not otherwise require a nonzero ASN. Not an override of policy transport peerASN.",
+        "署名要求に含める任意のuint32 ASNで、デコード既定0です。スキーマは明示時1以上ですが、形の検証は非0を必須としません。ポリシートランスポートpeerASNの上書きではありません。",
+        "簽署要求中的選用 uint32 ASN，解碼預設 0。結構描述要求提供時 >=1，但結構驗證不另要求非零。不是覆寫原則傳輸 peerASN。",
+        "签名请求中的可选 uint32 ASN，解码默认 0。模式要求提供时 >=1，但结构验证不另要求非零。不是覆盖策略传输 peerASN。"
+      ],
+      "bgp.routerID": [
+        "Optional IPv4 BGP identifier, no derived default. Nonempty IDs must be unique within a policy; does not create a BGPRouter.",
+        "任意のIPv4 BGP識別子で、自動既定値はありません。非空IDはポリシー内で一意にし、BGPRouterを作成しません。",
+        "選用 IPv4 BGP 識別碼，無衍生預設值。非空 ID 在原則內須唯一，不建立 BGPRouter。",
+        "可选 IPv4 BGP 标识符，无派生默认值。非空 ID 在策略内须唯一，不创建 BGPRouter。"
+      ],
+      "expiresAt": [
+        "Optional RR/admin-owned RFC3339 expiry, excluded from join HMAC. Admission normally assigns a lease expiry (policy TTL, otherwise 5m). Explicit expiry cannot exceed joinTimestamp+policy TTL when both are supplied. Expired values exclude the claim.",
+        "任意のRR・管理者側RFC3339期限で、join HMAC対象外です。通常登録でポリシーTTLまたは既定5分の期限を設定します。両方指定時はjoinTimestamp+ポリシーTTLを超えられず、期限切れ要求は除外します。",
+        "選用 RR/管理者擁有的 RFC3339 到期時間，不納入 join HMAC。接納通常指派原則 TTL 或預設 5 分鐘到期。兩者提供時明確期限不可超過 joinTimestamp+原則 TTL，過期則排除。",
+        "可选 RR/管理员拥有的 RFC3339 到期时间，不纳入 join HMAC。接纳通常分配策略 TTL 或默认 5 分钟到期。两者提供时明确期限不可超过 joinTimestamp+策略 TTL，过期则排除。"
+      ],
+      "revoked": [
+        "Default false; true is RR/admin revocation state, excluded from join HMAC, and prevents topology admission. A leaf cannot use a replayed signature to clear stored revocation.",
+        "既定falseです。trueはRR・管理者側の失効状態で、join HMAC対象外となりトポロジー取り込みを防ぎます。leafは署名の再送で保持済み失効を解除できません。",
+        "預設 false，true 為 RR/管理者撤銷狀態，不納入 join HMAC，阻止拓撲接納。leaf 無法重送簽章以清除已保存撤銷。",
+        "默认 false，true 为 RR/管理员撤销状态，不纳入 join HMAC，阻止拓扑接纳。leaf 无法重发签名以清除已保存撤销。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_mobility.go",
+      "pkg/config/validate.go",
+      "pkg/samenrollment/enrollment.go",
+      "cmd/routerd/sam_enrollment_submit.go",
+      "pkg/controller/mobility/enrollmentclient.go"
+    ]
   }
 }

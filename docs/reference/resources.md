@@ -460,6 +460,8 @@ A DNS server endpoint referenced by DNSForwarder; declaration alone does not sta
 
 [DSLiteTunnel](resources/DSLiteTunnel.md)
 
+Encapsulate IPv4 in IPv6 toward an AFTR. Tunnel setup, an IPv4 default route, NAT and reachability checks are separate concerns.
+
 
 ## TunnelInterface
 
@@ -534,10 +536,14 @@ Declare shared SAM node identity/topology used by transport, event peers, WireGu
 
 [SAMEnrollmentPolicy](resources/SAMEnrollmentPolicy.md)
 
+Define RR-side admission boundaries for SAM leaf identity, transport addresses, optional join authentication and authorized mobility ownership. Leaves consume the admitted topology instead of copying this policy.
+
 
 ## SAMEnrollmentClaim
 
 [SAMEnrollmentClaim](resources/SAMEnrollmentClaim.md)
+
+Declare the leaf-authored identity, transport and mobility intent submitted for SAM enrollment. Expiry and revocation are RR/controller administration state, not part of the leaf join HMAC.
 
 
 ## SAMEnrollmentClient
