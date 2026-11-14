@@ -132,6 +132,36 @@ func isCompactableMobilityObserved(rec EventRecord) bool {
 	}
 }
 
+// FederationEventExists checks an event ID within its group without loading payloads.
+func (s *SQLiteStore) FederationEventExists(group, id string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return false, errStoreClosed
+	}
+	var exists bool
+	err := s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM federation_events WHERE group_name = ? AND id = ?)`, group, id).Scan(&exists)
+	return exists, err
+}
+
+// CountFederationEvents counts retained events, including expired events.
+func (s *SQLiteStore) CountFederationEvents(group string) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return 0, errStoreClosed
+	}
+	query := `SELECT COUNT(*) FROM federation_events`
+	var args []any
+	if group != "" {
+		query += ` WHERE group_name = ?`
+		args = append(args, group)
+	}
+	var count int
+	err := s.db.QueryRow(query, args...).Scan(&count)
+	return count, err
+}
+
 // ListFederationEvents returns federation events ordered by observed_at. When
 // group is non-empty it filters to that group. Unless includeExpired is set,
 // events whose expires_at is set and in the past relative to now (unix seconds)
