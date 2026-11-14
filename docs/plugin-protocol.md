@@ -33,7 +33,7 @@ A plugin can take part in:
 - Host state observation
 - Host state application
 
-Validate network behavior on the actual target and its peers as described in the [routerd 1.1 MVP](design/routerd11-mvp.md).
+Validate network behavior on the actual target and its peers as required by [AGENTS.md](../AGENTS.md).
 
 ## MVP policy
 

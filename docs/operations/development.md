@@ -17,7 +17,7 @@ operating system and architecture archives and publishes GitHub Release assets.
 
 ## Current development rules
 
-Follow [AGENTS.md](../../AGENTS.md) and the [routerd 1.1 MVP](../design/routerd11-mvp.md).
+Follow [AGENTS.md](../../AGENTS.md) and the current owner request.
 Use real targets and peers for operational checks. New or expanded tests require
 specific owner approval, and mock, fake, and simulated environments are prohibited.
 Keep raw logs and captures out of tracked source; remove task-owned temporary

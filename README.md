@@ -19,8 +19,8 @@ Release automation for maintainers is documented in
 
 ## Current development scope
 
-[AGENTS.md](AGENTS.md) and the [current routerd 1.1 requirements](docs/design/routerd11-mvp.md)
-are the development authority. The active targets are homert02/03,
+[AGENTS.md](AGENTS.md) is the development authority. The implemented configuration
+contract is described in [reconciliation](docs/operations/reconcile.md). The active targets are homert02/03,
 k8s-rt01/02, and pve-rt01..08. Completed plans and historical audit results
 are not an active work queue; product changes are summarized in the changelog.
 
