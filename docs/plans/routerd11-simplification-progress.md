@@ -72,3 +72,9 @@ Cloud SAMの実稼働先と他OSの対応方式の確定、PD移行・通常rene
 ## 成果物保全と後片付け
 
 以前の開発Pod、キャッシュ、一時ログは成果物の保全後、すべて削除済み。文書更新に使用したPodも、成果物の保全後に削除する。
+
+## 利用者依頼による秘匿化テスト
+
+2026-11-14、利用者の「じゃあテストしてよ」という指示で、`TestConfigViewsRedactSecretsWithoutChangingSources` を追加した。使い捨てPodで本物のWebConsole handlerをHTTP提供し、実ファイルとSQLiteの2世代を用いて検証した。実装から期待値を生成せず、無害なpassword/privateKey/tokenの確認用文字列が現行設定・両世代・text/JSON差分に露出せず、設定中では `***REDACTED***` となること、公開項目と差分の方向が維持されること、元ファイルと保存YAMLがバイト単位で不変なことを確認した。
+
+`go test -p 2 ./pkg/webconsole -run ^TestConfigViewsRedactSecretsWithoutChangingSources$ -count=1 -v` が成功。モック・偽のStore/応答・ルーターネットワークの代替環境は使っていない。本番設定・実際の秘密情報・実機の役割は変更していない。この結果は秘匿化の振る舞いの確認であり、本番の利用者別認可を検証したものではない。
