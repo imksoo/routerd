@@ -1,6 +1,8 @@
 # routerd 1.1 簡素化の実装状況
 
-基準: `1cd7cfc7a65603e9026e7683a46d524d1e7bfa23`。2026-11-14、使い捨てKubernetes Pod内の公式exec-serverを利用した。全計画は実装・実機確認の途中であり、完了宣言ではない。
+基準: `1cd7cfc7a65603e9026e7683a46d524d1e7bfa23`。2026-11-14、使い捨てKubernetes Pod内の公式exec-serverを利用した。全実装・ビルドは使い捨てPodで行い、待機系への改修版導入・再起動・切戻しはhomert担当が行った。全計画は実装・実機確認の途中であり、未確認事項は未完了として扱う。
+
+`a1c22a8`、`9b5aaff`、`38ab89d`、最終版`5e4bd58`は、`simplify/routerd11-all`へ公開済み。以下の段階別記録は当時の確認範囲であり、最終版の検証結果とは区別する。
 
 ## 第一段階
 
@@ -13,13 +15,13 @@
 - Runnerの保存先をSQLiteへ固定し、能力不明時の無処理成功を除去した。状態遷移イベント構築を共用し、履歴要否を宣言設定世代で保持する。状態・イベントの既存トランザクションと公開順序は維持する。
 - EventSubscriptionの実装と異なる将来互換コメントと、生成schemaの説明を修正した。
 
-## 実施した確認
+### 第一段階で実施した確認
 
 Pod内でLinuxのrouterd・routerctl、保存層利用helperのrouterd-eventdをビルドし成功。version確認スクリプトで実バイナリへのversion/revision注入確認が成功した。
 
 既存テストのみを実行した。PDクライアント選択・既知NG組合せ・操作コマンド語彙、renderのMSS/RA関連3件、SQLiteの一覧失敗・Merge保持・世代とイベント保存が成功した。テスト追加・増補はしていない。schema再生成の差分は集約窓/待機の説明2箇所のみで、Webサイト側との一致も確認した。
 
-実機は読取りのみ。homert02/03とk8s-rt01/02・pve-rt01〜08の設定を確認し、旧IPsec綴りの使用はなかった。稼働unitに旧serve互換フラグもなかった。homertはCLI 6ac8fbdb、coreはv20261108.1523、leafはv20261110.0354で、今回の改修版ではない。
+第一段階の実機確認は読取りのみ。homert02/03とk8s-rt01/02・pve-rt01〜08の設定を確認し、旧IPsec綴りの使用はなかった。稼働unitに旧serve互換フラグもなかった。当時のhomertはCLI 6ac8fbdb、coreはv20261108.1523、leafはv20261110.0354で、第一段階の改修版ではない。
 
 ## 後続の実装
 
@@ -29,16 +31,44 @@ Linux IPIPのendpoint/TTL/MTU/アドレスの希望状態、実体観測、一�
 
 旧serveの無視フラグ登録・警告と、IPsec旧綴りの正規化・専用ケースを撤去した。現行表記のIPsecと、生成・更新・撤去の本体は維持する。OS・事業者対応は、Cloudの実利用を確定せず削除しない。
 
-後続のLinux主要バイナリとFreeBSD向けrouterd/routerctl/DHCPv6 helperのクロスビルド、既存state関連テスト、IPsecの既存確認が成功した。取得済み実設定12台のvalidate、homert両機とk8s-rt02の実環境で一時バイナリによるcheckも成功した。checkはdry-runであり、稼働daemonの置換・実apply・リース移行の実証ではない。この実機check後に加えたPD不正メタデータ検査等の最終差分はビルドと既存テストで確認しており、同じ最終バイナリの実機確認は別途必要である。
+### 後続実装時点の確認
 
-## 残件
-
-改修版による実設定比較、実apply・削除、通常更新、秘密値非露出、実EventRuleの発火、復帰と通信は未実施。Cloud SAMの実稼働先は特定できていない。過去の記録やビルド成功を今回の実動作証拠として流用しない。
-
-Podと共有キャッシュは他項目の実装中のため稼働を継続している。成果物の保全と公開後に、一時環境と作業用データを整理する。
+この段階のLinux主要バイナリとFreeBSD向けrouterd/routerctl/DHCPv6 helperのクロスビルド、既存state関連テスト、IPsecの既存確認が成功した。取得済み実設定12台のvalidate、homert両機とk8s-rt02の実環境で一時バイナリによるcheckも成功した。checkはdry-runであり、稼働daemonの置換・実apply・リース移行の実証ではない。この実機check後に加えたPD不正メタデータ検査等の当時の最終差分はビルドと既存テストで確認したが、その時点では同じバイナリの実機確認は未実施だった。最終版の確認範囲は後述する。
 
 ## A04の完了監査で追加した整理
 
 controller側に残るStoreの一覧・削除・状態参照能力の推測も撤去し、必要なメソッドを既存chain.Storeに明記した。保持期限の削除はeventedStoreからSQLiteへ直接委譲し、能力不足として省略される分岐をなくした。24時間の既存保持期間とdry-runの早期returnは維持する。新しい万能Storeやテストは作っていない。
 
-既存の実SQLiteによる保持期限テストと、Linux/FreeBSDのrouterd・routerctl・DHCPv6 helper・eventdビルドが成功。監査前の9b5aaff最終バイナリでは、実設定12台のvalidateとhomert両機・k8s-rt02の実checkが成功した。追加整理後の稼働daemonへの反映と実機の保持期限削除は未実施。
+### A04追加整理時点の確認
+
+既存の実SQLiteによる保持期限テストと、Linux/FreeBSDのrouterd・routerctl・DHCPv6 helper・eventdビルドが成功。監査前の`9b5aaff`（当時の最終バイナリ）では、実設定12台のvalidateとhomert両機・k8s-rt02の実checkが成功した。この時点では追加整理後の稼働daemonへの反映と実機の保持期限削除は未実施だった。保持期限削除の実機確認は現在も残件である。
+
+## 公開済み最終版と確認範囲
+
+### 38ab89dでの設定読込み・比較
+
+`38ab89d`では、実設定12台のvalidateが成功した。homert03の旧新版checkは80リソースの全フィールドが一致したが、状態はUnknownであり、Healthyの確認ではない。これは同版のcheck結果であり、`5e4bd58`での再実施や実applyの実証ではない。
+
+### 5e4bd58の実装・Pod内確認
+
+最終`5e4bd58`では、specAsの受入れを`T`、非nilの`*T`、実JSON入力の`map[string]any`に限定し、誤った内部型をJSON往復で変換する処理を撤去した。Podで4コマンドのビルドと、既存の`pkg/api`、`pkg/config`、`pkg/dynamicconfig/codec`テストが成功した。過去段階のFreeBSDクロスビルド等を、この最終版の確認結果としては扱わない。
+
+### 5e4bd58の待機homert03限定確認
+
+`~/homert02`の既存Codexが、最終版の4本を現在待機系のhomert03だけへ転送し、SHA照合、起動、再起動、旧版への切戻しを実施した。設定SHAは不変。DB・鍵を上書きせず、切戻し時も最新DBを維持した。主系はmaster／PD Bound、待機系はbackup／Standby、110リソースで、既存のpublic-dns／ntpのResolveFailedを維持した。
+
+通信確認は管理GWへのpingのみ。実apply・削除・PD更新・SAM通信・Web権限の確認は行っていない。起動・再起動・切戻しの確認を、これらの動作確認や主系への最終版投入と混同しない。
+
+### 世代表示の観測と未解決点
+
+`status.generation`は53534から0となり、旧版へ切り戻した後も0だった。一方、SQLiteの読取りで`generations`と`sqlite_sequence`の53534、および`config_yaml`と稼働設定の完全一致を確認した。原因は未断定であり、世代消失とはしない。表示と保存状態の差の原因確認は残件である。
+
+## 現在の残件
+
+Cloud SAMの実稼働先と他OSの対応方式の確定、PD移行・通常renew・when・有効leaseを保持した旧版切戻しは未完了。実apply・削除と設定への復元、実機の保持期限削除、Web権限・秘密値非露出・実EventRuleの発火・SAM動作・対向通信も未完了である。待機homert03で確認した起動・再起動・切戻しを超える復帰・通信は、確認済みとしない。
+
+過去段階のビルド、validate、checkや今回の限定確認を、未実施の実動作確認へ流用しない。計画全体の完了宣言ではない。
+
+## 成果物保全と後片付け
+
+以前の開発Pod、キャッシュ、一時ログは成果物の保全後、すべて削除済み。文書更新に使用したPodも、成果物の保全後に削除する。
