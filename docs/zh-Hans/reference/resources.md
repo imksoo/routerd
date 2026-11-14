@@ -307,6 +307,8 @@ spec:
 
 [ClusterNetworkRoute](resources/ClusterNetworkRoute.md)
 
+通过明确指定的下一跳，配置前往 Kubernetes Pod 与 Service 网络的 IPv4 路由。不会自动发现集群 CIDR 或节点。
+
 
 ## DHCPv4Server
 

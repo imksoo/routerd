@@ -307,6 +307,8 @@ LinuxのVRFデバイス・経路表・参加インターフェースの意図を
 
 [ClusterNetworkRoute](resources/ClusterNetworkRoute.md)
 
+KubernetesのPod・ServiceネットワークへのIPv4経路を、明示したネクストホップ経由で設定します。クラスターのCIDRやノードを自動検出する機能ではありません。
+
 
 ## DHCPv4Server
 

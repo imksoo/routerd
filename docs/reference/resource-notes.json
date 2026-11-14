@@ -1792,5 +1792,99 @@
       "pkg/dhcpv4client/message.go",
       "cmd/routerd-dhcpv4-client/main.go"
     ]
+  },
+  "ClusterNetworkRoute": {
+    "purpose": [
+      "Declare IPv4 routes to Kubernetes Pod and Service networks through explicitly configured next hops. This does not discover cluster CIDRs or nodes.",
+      "KubernetesのPod・ServiceネットワークへのIPv4経路を、明示したネクストホップ経由で設定します。クラスターのCIDRやノードを自動検出する機能ではありません。",
+      "透過明確指定的下一跳，設定前往 Kubernetes Pod 與 Service 網路的 IPv4 路由。不會自動探索叢集 CIDR 或節點。",
+      "通过明确指定的下一跳，配置前往 Kubernetes Pod 与 Service 网络的 IPv4 路由。不会自动发现集群 CIDR 或节点。"
+    ],
+    "rules": [
+      [
+        "At least one CIDR across pods and services, and at least one via entry, are required. All CIDRs must be IPv4; duplicates and overlapping prefixes are rejected across both lists.",
+        "podsとservicesを合わせて1件以上のCIDRと、1件以上のviaが必要です。CIDRはIPv4限定で、両リストをまたぐ重複・包含関係も拒否されます。",
+        "pods 與 services 合計至少需要一個 CIDR，via 至少需要一個項目。僅接受 IPv4，兩個清單之間也不允許重複或重疊的網段。",
+        "pods 与 services 合计至少需要一个 CIDR，via 至少需要一个条目。仅接受 IPv4，两个列表之间也不允许重复或重叠的网段。"
+      ],
+      [
+        "Each CIDR × via pair expands to an IPv4StaticRoute named <name>-pods-NN-via-NN or <name>-services-NN-via-NN (one-based indices). An explicitly declared resource with the same API version, kind and name takes precedence over the generated route.",
+        "CIDRとviaの組み合わせごとに、<name>-pods-NN-via-NNまたは<name>-services-NN-via-NNというIPv4StaticRouteを生成します。番号は1始まりです。同じapiVersion・kind・nameの明示リソースがある場合、その経路を優先して生成を省略します。",
+        "每個 CIDR 與 via 的組合會產生名為 <name>-pods-NN-via-NN 或 <name>-services-NN-via-NN 的 IPv4StaticRoute，編號從 1 開始。若已明確宣告相同 apiVersion、kind、name 的資源，則優先使用該資源並略過產生。",
+        "每个 CIDR 与 via 的组合会生成名为 <name>-pods-NN-via-NN 或 <name>-services-NN-via-NN 的 IPv4StaticRoute，编号从 1 开始。若已明确声明相同 apiVersion、kind、name 的资源，则优先使用该资源并跳过生成。"
+      ],
+      [
+        "weight becomes a route metric, not an ECMP traffic-share weight: omitted/0 → 100; 1–999 → 1000 − weight. Larger positive weights therefore produce lower metrics; weight 0 has the same metric as 900.",
+        "weightはECMPの通信量配分ではなく経路メトリックです。省略・0は100、1～999は1000−weightに変換します。正の値は大きいほどメトリックが小さくなり、0と900は同じメトリックになります。",
+        "weight 轉換為路由 metric，並非 ECMP 流量分配權重：省略或 0 為 100；1–999 為 1000 − weight。正值越大，metric 越低；0 與 900 的 metric 相同。",
+        "weight 转换为路由 metric，并非 ECMP 流量分配权重：省略或 0 为 100；1–999 为 1000 − weight。正值越大，metric 越低；0 与 900 的 metric 相同。"
+      ]
+    ],
+    "fields": {
+      "pods": [
+        "Optional group of Pod-network CIDRs; no implicit CIDRs.",
+        "PodネットワークのCIDR群です。省略時の自動補完はありません。",
+        "選用的 Pod 網路 CIDR 群組；不會自動補入 CIDR。",
+        "可选的 Pod 网络 CIDR 组；不会自动补入 CIDR。"
+      ],
+      "pods.cidrs": [
+        "IPv4 prefixes for Pod networks. Empty by default; required if services.cidrs is empty. No duplicates or overlaps within or across groups.",
+        "PodネットワークのIPv4プレフィックスです。既定は空で、services.cidrsも空なら必須です。両グループ内外の重複・包含は不可です。",
+        "Pod 網路的 IPv4 前綴。預設為空；services.cidrs 為空時必填。群組內及群組間皆不可重複或重疊。",
+        "Pod 网络的 IPv4 前缀。默认为空；services.cidrs 为空时必填。组内及组间均不可重复或重叠。"
+      ],
+      "services": [
+        "Optional group of Service-network CIDRs; no implicit CIDRs.",
+        "ServiceネットワークのCIDR群です。省略時の自動補完はありません。",
+        "選用的 Service 網路 CIDR 群組；不會自動補入 CIDR。",
+        "可选的 Service 网络 CIDR 组；不会自动补入 CIDR。"
+      ],
+      "services.cidrs": [
+        "IPv4 prefixes for Service networks. Empty by default; required if pods.cidrs is empty. The same overlap restrictions apply across both groups.",
+        "ServiceネットワークのIPv4プレフィックスです。既定は空で、pods.cidrsも空なら必須です。両グループを通して同じ重複・包含制限が適用されます。",
+        "Service 網路的 IPv4 前綴。預設為空；pods.cidrs 為空時必填。兩個群組皆適用相同的重複與重疊限制。",
+        "Service 网络的 IPv4 前缀。默认为空；pods.cidrs 为空时必填。两个组均适用相同的重复与重叠限制。"
+      ],
+      "via": [
+        "Required nonempty next-hop list. Each entry applies to every CIDR. Duplicate interface + nextHop pairs are rejected even when their weights differ.",
+        "1件以上必要なネクストホップ一覧です。各項目をすべてのCIDRに適用します。interfaceとnextHopが同じ組み合わせはweightが異なっても重複エラーです。",
+        "必填且不可為空的下一跳清單。每個項目皆套用至所有 CIDR。相同 interface 與 nextHop 組合即使 weight 不同也會被拒絕。",
+        "必填且不可为空的下一跳列表。每个条目均应用于所有 CIDR。相同 interface 与 nextHop 组合即使 weight 不同也会被拒绝。"
+      ],
+      "via[].interface": [
+        "Required logical interface name declared in the same Router. It must resolve in the configuration interface index; this is not a status-value source.",
+        "同じRouterで宣言した論理インターフェース名が必須です。設定のインターフェース索引で解決する必要があり、ステータス値参照ではありません。",
+        "必填，為同一 Router 中宣告的邏輯介面名稱。必須能在設定的介面索引中解析，並非狀態值來源。",
+        "必填，为同一 Router 中声明的逻辑接口名称。必须能在配置的接口索引中解析，并非状态值来源。"
+      ],
+      "via[].nextHop": [
+        "Required bare IPv4 next-hop address, not a CIDR or resource reference. No default or dynamic discovery.",
+        "CIDRではないIPv4のネクストホップアドレスが必須です。リソース参照ではなく、既定値・自動検出はありません。",
+        "必填，為不含 CIDR 的 IPv4 下一跳位址，不接受資源參照。沒有預設值或自動探索。",
+        "必填，为不含 CIDR 的 IPv4 下一跳地址，不接受资源引用。没有默认值或自动发现。"
+      ],
+      "via[].weight": [
+        "Optional integer 0–999, default 0. Converted to the metric described above; it is not proportional traffic weighting.",
+        "0～999の整数で、既定は0です。前述のメトリックに変換され、通信量の比例配分にはなりません。",
+        "選用整數 0–999，預設為 0。依上述規則轉換為 metric，不是流量比例。",
+        "可选整数 0–999，默认为 0。按上述规则转换为 metric，不是流量比例。"
+      ],
+      "when": [
+        "Optional common state predicate; omitted means unconditional. See common fields for state/all/any semantics and schema limitations. Filtering takes place before generated routes are expanded.",
+        "共通の状態条件です。省略時は無条件です。state/all/anyの意味とスキーマ上の制限は共通項を参照してください。条件で絞り込んだ後に経路を生成します。",
+        "選用的共用狀態條件；省略表示無條件。state/all/any 的語意與結構描述限制請見共用欄位。先篩選條件，再展開產生的路由。",
+        "可选的通用状态条件；省略表示无条件。state/all/any 的语义与模式限制请见通用字段。先筛选条件，再展开生成的路由。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/api/cluster_routes.go",
+      "pkg/config/cluster_secret_validate.go",
+      "pkg/config/validate.go",
+      "pkg/resourcequery/when.go",
+      "pkg/render/networkd.go",
+      "pkg/render/freebsd.go",
+      "pkg/controller/chain/ipv4_main_routes.go"
+    ]
   }
 }

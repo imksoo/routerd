@@ -307,6 +307,8 @@ Runs the managed routerd-dhcpv4-client daemon and applies its current lease addr
 
 [ClusterNetworkRoute](resources/ClusterNetworkRoute.md)
 
+Declare IPv4 routes to Kubernetes Pod and Service networks through explicitly configured next hops. This does not discover cluster CIDRs or nodes.
+
 
 ## DHCPv4Server
 
