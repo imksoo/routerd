@@ -878,7 +878,7 @@ func (s *SQLiteStore) PruneExpiredSubscriptionParts(now time.Time) error {
 	if s.closed {
 		return fmt.Errorf("state store is closed")
 	}
-	where := ` WHERE source LIKE 'EventSubscription/%/%'
+	where := ` WHERE source GLOB 'EventSubscription/*/*'
 		  AND expires_at <> '0001-01-01T00:00:00Z'
 		  AND julianday(expires_at) < julianday(?)
 		  AND coalesce(actionplans_json, '') IN ('', 'null', '[]')
