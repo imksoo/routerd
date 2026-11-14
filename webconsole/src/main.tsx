@@ -8482,15 +8482,29 @@ function formatDetailValue(value: unknown) {
 
 function unifiedLineDiff(fromName: string, toName: string, fromText: string, toText: string) {
   if (fromText === toText) return `--- ${fromName}\n+++ ${toName}\n# no changes\n`;
-  const from = fromText.replace(/\n$/, "").split(/\n/);
-  const to = toText.replace(/\n$/, "").split(/\n/);
+  const fromAll = fromText.replace(/\n$/, "").split(/\n/);
+  const toAll = toText.replace(/\n$/, "").split(/\n/);
+  let start = 0;
+  while (start < fromAll.length && start < toAll.length && fromAll[start] === toAll[start]) start++;
+  let endFrom = fromAll.length;
+  let endTo = toAll.length;
+  while (endFrom > start && endTo > start && fromAll[endFrom - 1] === toAll[endTo - 1]) { endFrom--; endTo--; }
+  const from = fromAll.slice(start, endFrom);
+  const to = toAll.slice(start, endTo);
+  const lines = [`--- ${fromName}`, `+++ ${toName}`];
+  for (let n = 0; n < start; n++) lines.push(` ${fromAll[n]}`);
+  if (from.length > 0 && to.length > Math.floor(1000000 / from.length)) {
+    for (const line of from) lines.push(`-${line}`);
+    for (const line of to) lines.push(`+${line}`);
+    for (let n = endFrom; n < fromAll.length; n++) lines.push(` ${fromAll[n]}`);
+    return `${lines.join("\n")}\n`;
+  }
   const table = Array.from({ length: from.length + 1 }, () => Array<number>(to.length + 1).fill(0));
   for (let i = from.length - 1; i >= 0; i--) {
     for (let j = to.length - 1; j >= 0; j--) {
       table[i][j] = from[i] === to[j] ? table[i + 1][j + 1] + 1 : Math.max(table[i + 1][j], table[i][j + 1]);
     }
   }
-  const lines = [`--- ${fromName}`, `+++ ${toName}`];
   let i = 0;
   let j = 0;
   while (i < from.length || j < to.length) {
@@ -8506,6 +8520,7 @@ function unifiedLineDiff(fromName: string, toName: string, fromText: string, toT
       i++;
     }
   }
+  for (let n = endFrom; n < fromAll.length; n++) lines.push(` ${fromAll[n]}`);
   return `${lines.join("\n")}\n`;
 }
 

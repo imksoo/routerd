@@ -181,6 +181,37 @@ func splitDiffLines(text string) []string {
 }
 
 func diffLineOps(a, b []string) []diffLineOp {
+	start := 0
+	for start < len(a) && start < len(b) && a[start] == b[start] {
+		start++
+	}
+	endA, endB := len(a), len(b)
+	for endA > start && endB > start && a[endA-1] == b[endB-1] {
+		endA--
+		endB--
+	}
+	var ops []diffLineOp
+	for _, line := range a[:start] {
+		ops = append(ops, diffLineOp{prefix: ' ', line: line})
+	}
+	middleA, middleB := a[start:endA], b[start:endB]
+	if len(middleA) > 0 && len(middleB) > 1000000/len(middleA) {
+		for _, line := range middleA {
+			ops = append(ops, diffLineOp{prefix: '-', line: line})
+		}
+		for _, line := range middleB {
+			ops = append(ops, diffLineOp{prefix: '+', line: line})
+		}
+	} else {
+		ops = append(ops, diffMiddleOps(middleA, middleB)...)
+	}
+	for _, line := range a[endA:] {
+		ops = append(ops, diffLineOp{prefix: ' ', line: line})
+	}
+	return ops
+}
+
+func diffMiddleOps(a, b []string) []diffLineOp {
 	lcs := make([][]int, len(a)+1)
 	for i := range lcs {
 		lcs[i] = make([]int, len(b)+1)
