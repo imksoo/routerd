@@ -603,6 +603,8 @@ IP宛先を確認し、経路選択用のHealthy・Unhealthy状態を発行し�
 
 [TrafficFlowLog](resources/TrafficFlowLog.md)
 
+接続のスナップショットをSQLiteのフローDBに記録し、利用可能ならDPIキャッシュの情報を補います。パケットキャプチャーや全パケットの記録ではありません。
+
 
 ## FirewallZone
 

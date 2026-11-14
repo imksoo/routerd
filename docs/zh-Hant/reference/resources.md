@@ -603,6 +603,8 @@ spec:
 
 [TrafficFlowLog](resources/TrafficFlowLog.md)
 
+將連線快照記錄至 SQLite 流量資料庫，並可從 DPI 快取補充資訊。不是封包擷取，也不記錄每個封包。
+
 
 ## FirewallZone
 

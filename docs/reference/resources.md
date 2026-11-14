@@ -603,6 +603,8 @@ Declare the interfaces checked by the pre-apply management-lockout check. This r
 
 [TrafficFlowLog](resources/TrafficFlowLog.md)
 
+Record connection snapshots in a SQLite flow database, optionally enriching them from the DPI cache. This is not a packet capture or a log of every packet.
+
 
 ## FirewallZone
 

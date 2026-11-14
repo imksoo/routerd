@@ -4176,5 +4176,73 @@
       "pkg/config/validate_event.go",
       "cmd/routerctl/doctor_federation.go"
     ]
+  },
+  "TrafficFlowLog": {
+    "purpose": [
+      "Record connection snapshots in a SQLite flow database, optionally enriching them from the DPI cache. This is not a packet capture or a log of every packet.",
+      "接続のスナップショットをSQLiteのフローDBに記録し、利用可能ならDPIキャッシュの情報を補います。パケットキャプチャーや全パケットの記録ではありません。",
+      "將連線快照記錄至 SQLite 流量資料庫，並可從 DPI 快取補充資訊。不是封包擷取，也不記錄每個封包。",
+      "将连接快照记录至 SQLite 流量数据库，并可从 DPI 缓存补充信息。不是抓包，也不记录每个数据包。"
+    ],
+    "rules": [
+      [
+        "The observer selects the first decodable TrafficFlowLog resource, even if disabled; a later enabled resource does not override it. Configure one resource for predictable recording.",
+        "監視処理は無効なものも含め、最初にデコードできたTrafficFlowLogを選びます。後続の有効なリソースでは上書きしません。記録対象を確定するため1件で設定してください。",
+        "觀察器選擇第一個可解碼的 TrafficFlowLog，即使它已停用；後續啟用的資源不會覆蓋。請設定單一資源以確定記錄行為。",
+        "观察器选择第一个可解码的 TrafficFlowLog，即使它已禁用；后续启用的资源不会覆盖。请配置单个资源以确定记录行为。"
+      ],
+      [
+        "Recording runs after successful conntrack observation; unavailable observation prevents that round of recording. The connection query is limited to 10000 entries. Sampling occurs on observer reconciliation, normally every 30s unless runtime options change it.",
+        "記録はconntrack情報の取得成功後に行い、取得できない回は記録しません。接続一覧の取得上限は10000件です。監視処理の再実行時に記録し、通常は30秒間隔ですが実行オプションによって変わります。",
+        "成功觀察 conntrack 後才記錄；觀察不可用時該輪不記錄。連線查詢上限為 10000 筆。每次觀察器協調時取樣，通常每 30 秒一次，可由執行選項調整。",
+        "成功观察 conntrack 后才记录；观察不可用时该轮不记录。连接查询上限为 10000 条。每次观察器协调时采样，通常每 30 秒一次，可由运行选项调整。"
+      ],
+      [
+        "DPI enrichment reads the first enabled FirewallEventLog database when available, matching connection tuples against cached classification within one hour. Enrichment is not guaranteed by either include flag; both false also do not prevent enrichment if that cache is available. Use LogRetention signal trafficFlows to manage flow retention.",
+        "DPI補完は最初の有効なFirewallEventLogのDBが利用できる場合に、接続情報に一致する1時間以内の分類キャッシュを使います。includeの各フラグは補完成功を保証せず、両方falseでも利用可能なキャッシュから補完します。フローの保持期間はLogRetentionのtrafficFlowsで管理します。",
+        "DPI 補充會讀取第一個啟用的 FirewallEventLog 資料庫，使用一小時內符合連線組合的分類快取。include 旗標不保證成功補充；兩者皆 false 時仍可使用可用快取。保留期間由 LogRetention 的 trafficFlows 管理。",
+        "DPI 补充会读取第一个启用的 FirewallEventLog 数据库，使用一小时内符合连接组合的分类缓存。include 标志不保证成功补充；两者均 false 时仍可使用可用缓存。保留期限由 LogRetention 的 trafficFlows 管理。"
+      ]
+    ],
+    "fields": {
+      "enabled": [
+        "Default false. True enables recording for the selected resource; it does not make an unavailable connection source work.",
+        "既定はfalseです。trueは選ばれたリソースの記録を有効にしますが、取得不能な接続情報を利用可能にする指定ではありません。",
+        "預設 false。true 啟用所選資源的記錄，不會使不可用的連線來源變為可用。",
+        "默认 false。true 启用所选资源的记录，不会使不可用的连接来源变为可用。"
+      ],
+      "path": [
+        "SQLite database path on the router. Required when enabled by normal validation. The reader has an internal /var/lib/routerd/traffic-flows.db fallback, but it does not waive that enabled-path requirement.",
+        "ルーター上のSQLite DBパスです。通常の設定検証ではenabled時に必須です。読み取り側には/var/lib/routerd/traffic-flows.dbの内部既定値がありますが、enabled時の指定要件は免除されません。",
+        "路由器上的 SQLite 資料庫路徑，正常驗證在 enabled 時必填。讀取器有內部 /var/lib/routerd/traffic-flows.db 後備值，但不免除啟用時的路徑要求。",
+        "路由器上的 SQLite 数据库路径，正常验证在 enabled 时必填。读取器有内部 /var/lib/routerd/traffic-flows.db 后备值，但不免除启用时的路径要求。"
+      ],
+      "source": [
+        "Only omitted/conntrack is accepted; effective label defaults to conntrack. It does not select a different collector or allow arbitrary backend names.",
+        "省略またはconntrackのみを指定でき、実効ラベルの既定はconntrackです。別の収集処理や任意のバックエンドを選ぶ項目ではありません。",
+        "僅接受省略或 conntrack，實際標籤預設 conntrack。不用於選擇其他收集器或任意後端名稱。",
+        "仅接受省略或 conntrack，实际标签默认 conntrack。不用于选择其他采集器或任意后端名称。"
+      ],
+      "includeApplicationLayer": [
+        "Default false. With enabled true, requests DPI helper services and Linux DPI observation rules. Also includes applicationLayer availability/status from the nDPI agent in resource status; it does not guarantee libndpi is loaded or classification exists.",
+        "既定はfalseです。enabledとともにtrueにするとDPIヘルパーとLinuxのDPI観測ルールを要求し、nDPIエージェントの利用可否をapplicationLayerとして状態に記録します。libndpiのロードや分類結果の存在は保証しません。",
+        "預設 false。與 enabled 同為 true 時要求 DPI 輔助服務及 Linux DPI 觀察規則，並在資源狀態的 applicationLayer 記錄 nDPI 可用性。不保證 libndpi 載入或分類存在。",
+        "默认 false。与 enabled 同为 true 时请求 DPI 辅助服务及 Linux DPI 观察规则，并在资源状态的 applicationLayer 记录 nDPI 可用性。不保证 libndpi 加载或分类存在。"
+      ],
+      "includeTLSSNI": [
+        "Default false. With enabled true, requests the same DPI helpers/observation path. Not a TLS decryption option, guaranteed SNI capture, or a separate storage redaction/filter switch; encrypted/unobserved names may remain unavailable.",
+        "既定はfalseです。enabledとともにtrueにすると同じDPIヘルパー・観測経路を要求します。TLS復号やSNI取得の保証、保存内容の独立した秘匿化・フィルタースイッチではなく、暗号化・未観測の名前は取得できない場合があります。",
+        "預設 false。與 enabled 同為 true 時要求相同 DPI 輔助程式及觀察流程。不是 TLS 解密、SNI 擷取保證或獨立儲存遮蔽／篩選開關；加密或未觀察到的名稱可能不可用。",
+        "默认 false。与 enabled 同为 true 时请求相同 DPI 辅助程序及观察流程。不是 TLS 解密、SNI 采集保证或独立存储脱敏／过滤开关；加密或未观察到的名称可能不可用。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_firewall.go",
+      "pkg/controller/conntrackobserver/controller.go",
+      "pkg/render/dpi_systemd.go",
+      "pkg/render/nftables.go",
+      "pkg/controller/chain/logretention.go"
+    ]
   }
 }
