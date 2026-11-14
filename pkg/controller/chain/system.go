@@ -1095,14 +1095,13 @@ func (c SystemdUnitController) reconcileSyntheticSystemdUnit(ctx context.Context
 	changed, err := c.applySystemdUnit(ctx, resourceName, path, unitName, spec)
 	if err != nil {
 		if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, map[string]any{
-			"phase":     "Error",
-			"reason":    "ApplyFailed",
-			"unitName":  unitName,
-			"path":      path,
-			"source":    kind + "/" + resourceName,
-			"error":     err.Error(),
-			"dryRun":    c.DryRun,
-			"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+			"phase":    "Error",
+			"reason":   "ApplyFailed",
+			"unitName": unitName,
+			"path":     path,
+			"source":   kind + "/" + resourceName,
+			"error":    err.Error(),
+			"dryRun":   c.DryRun,
 		}); saveErr != nil {
 			return saveErr
 		}
@@ -1113,13 +1112,12 @@ func (c SystemdUnitController) reconcileSyntheticSystemdUnit(ctx context.Context
 		phase = "Rendered"
 	}
 	status := map[string]any{
-		"phase":     phase,
-		"unitName":  unitName,
-		"path":      path,
-		"source":    kind + "/" + resourceName,
-		"changed":   changed,
-		"dryRun":    c.DryRun,
-		"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+		"phase":    phase,
+		"unitName": unitName,
+		"path":     path,
+		"source":   kind + "/" + resourceName,
+		"changed":  changed,
+		"dryRun":   c.DryRun,
 	}
 	if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, status); err != nil {
 		return err
@@ -1148,14 +1146,13 @@ func (c SystemdUnitController) reconcileSyntheticSystemdHelperUnit(ctx context.C
 	changed, err := c.applySystemdUnit(ctx, unitName, path, unitName, spec)
 	if err != nil {
 		if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, map[string]any{
-			"phase":     "Error",
-			"reason":    "ApplyFailed",
-			"unitName":  unitName,
-			"path":      path,
-			"source":    source,
-			"error":     err.Error(),
-			"dryRun":    c.DryRun,
-			"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+			"phase":    "Error",
+			"reason":   "ApplyFailed",
+			"unitName": unitName,
+			"path":     path,
+			"source":   source,
+			"error":    err.Error(),
+			"dryRun":   c.DryRun,
 		}); saveErr != nil {
 			return saveErr
 		}
@@ -1166,13 +1163,12 @@ func (c SystemdUnitController) reconcileSyntheticSystemdHelperUnit(ctx context.C
 		phase = "Rendered"
 	}
 	status := map[string]any{
-		"phase":     phase,
-		"unitName":  unitName,
-		"path":      path,
-		"source":    source,
-		"changed":   changed,
-		"dryRun":    c.DryRun,
-		"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+		"phase":    phase,
+		"unitName": unitName,
+		"path":     path,
+		"source":   source,
+		"changed":  changed,
+		"dryRun":   c.DryRun,
 	}
 	if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, status); err != nil {
 		return err
