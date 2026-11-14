@@ -72,12 +72,7 @@ const config: Config = {
           exclude: ['**/*.ja.md', 'internal/**'],
           editUrl: 'https://github.com/imksoo/routerd/edit/main/docs/',
         },
-        blog: {
-          showReadingTime: true,
-          routeBasePath: 'blog',
-          blogTitle: 'routerd field notes',
-          blogDescription: 'Practical routerd walkthroughs and design notes.',
-        },
+        blog: false,
         theme: {
           customCss: './src/css/custom.css',
         },
