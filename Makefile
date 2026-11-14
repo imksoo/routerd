@@ -54,7 +54,6 @@ CONFIG_SCHEMA := routerd-config-v1alpha1.schema.json
 CONTROL_SCHEMA := routerd-control-v1alpha1.schema.json
 CONTROL_OPENAPI_SCHEMA := routerd-control-openapi-v1alpha1.json
 
-WEBSITE_NODE_MODULES_STAMP := website/node_modules/.package-lock.json
 
 .PHONY: build-routerd test check-version-ldflags build build-daemons build-provider-executors build-ndpi-agent build-ndpi-agent-libndpi build-daemons-freebsd check-freebsd-cross-compile check-linux-static check-ndpi-agent-libndpi cloudedge-acceptance-lint webconsole-build generate-schema sync-website-schemas check-schema check-website-schemas website-deps website-build third-party-licenses check-build-deps dist deb deb-ndpi dist-ndpi-agent-libndpi live-iso validate-example release clean
 
@@ -179,13 +178,11 @@ check-website-schemas:
 	jq -e '."$$id" == "https://routerd.net/schemas/$(CONTROL_SCHEMA)"' $(WEBSITE_SCHEMA_DIR)/$(CONTROL_SCHEMA)
 	jq -e '."$$id" == "https://routerd.net/schemas/$(CONTROL_OPENAPI_SCHEMA)"' $(WEBSITE_SCHEMA_DIR)/$(CONTROL_OPENAPI_SCHEMA)
 
-website-deps: $(WEBSITE_NODE_MODULES_STAMP)
+website-deps:
+	@echo "Static contents: no dependencies"
 
-$(WEBSITE_NODE_MODULES_STAMP): website/package.json website/package-lock.json
-	cd website && npm ci --prefer-offline --no-audit
-
-website-build: website-deps
-	cd website && npm run build
+website-build:
+	cd website && sh build.sh
 
 third-party-licenses:
 	./scripts/collect-third-party-licenses.sh THIRD_PARTY_LICENSES.md

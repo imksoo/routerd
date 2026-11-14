@@ -11,7 +11,7 @@ Create a date-and-time-based routerd release.
 Options:
   --date YYYYMMDD       Override the release date. Defaults to UTC today.
   --timezone TZ         Override the timezone used for date/time calculation.
-  --skip-checks         Skip local test/schema/example/website checks.
+  --skip-checks         Skip local test/schema/example checks.
   --prepare-only        Create the release commit without a tag or push.
   --no-push             Create the commit and tag locally but do not push.
   --message-file FILE   Use a reviewed commit message from FILE.
@@ -226,7 +226,6 @@ if [ "$skip_checks" -ne 1 ]; then
 	make check-version-ldflags
 	make check-schema
 	make validate-example
-	make website-build
 fi
 
 git add -A

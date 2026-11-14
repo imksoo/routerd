@@ -37,16 +37,18 @@ esac
 docs=false
 website=false
 webconsole=false
+backend=false
 while IFS= read -r -d '' path; do
   case "$path" in
     .github/workflows/quality.yaml|scripts/ci/detect-quality-changes.sh)
       docs=true
       website=true
       webconsole=true
+      backend=true
       ;;
     docs/releases/changelog.md|website/i18n/*/releases/changelog.md)
       ;;
-    docs/*)
+    docs/*|README*|AGENTS.md|LICENSE*|NOTICE*)
       docs=true
       ;;
     website/*)
@@ -54,11 +56,16 @@ while IFS= read -r -d '' path; do
       ;;
     Makefile|webconsole/*|pkg/webconsole/static/*)
       webconsole=true
+      backend=true
+      ;;
+    *)
+      backend=true
       ;;
   esac
 done < "$changed_files"
 
 {
+  echo "backend=$backend"
   echo "docs=$docs"
   echo "website=$website"
   echo "webconsole=$webconsole"
