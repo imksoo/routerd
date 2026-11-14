@@ -37,7 +37,7 @@ func TestNftablesFirewallKeepsStandbyVMACAndDSLiteInterfaces(t *testing.T) {
 }
 
 func TestNftablesNAT44ResolvedSNATRule(t *testing.T) {
-	data, err := NftablesNAT44Rules([]NAT44RenderRule{{
+	data, err := NftablesNAT44RulesForRouter(nil, []NAT44RenderRule{{
 		Name:            "lan-to-wan",
 		Type:            "snat",
 		EgressInterface: "ppp0",
@@ -83,7 +83,7 @@ func TestNftablesDefaultRoutePolicyFlushesTable(t *testing.T) {
 }
 
 func TestNftablesNAT44RuleCanExcludeDestinations(t *testing.T) {
-	data, err := NftablesNAT44Rules([]NAT44RenderRule{{
+	data, err := NftablesNAT44RulesForRouter(nil, []NAT44RenderRule{{
 		Name:                    "lan-to-hgw",
 		Type:                    "masquerade",
 		EgressInterface:         "ens18",
