@@ -65,10 +65,10 @@ func buildStatusTransition(apiVersion, kind, name string, current, next map[stri
 	if newerStatus(current, next) {
 		return false, nil
 	}
-	if !shouldPublishStatusChangedEvent(apiVersion, kind, current, next) {
+	changed, changedFields := statusEventChange(apiVersion, kind, current, next)
+	if !changed {
 		return true, nil
 	}
-	changedFields := statusChangedFieldsForEvent(apiVersion, kind, current, next)
 	event := daemonapi.DaemonEvent{
 		TypeMeta: daemonapi.TypeMeta{APIVersion: daemonapi.APIVersion, Kind: daemonapi.KindDaemonEvent},
 		Daemon:   daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "store"},

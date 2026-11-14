@@ -422,27 +422,22 @@ func changedFields(currentStable, nextStable map[string]any) []string {
 	return out
 }
 
-func statusChangedForEvent(apiVersion, kind string, current, next map[string]any) bool {
+func statusEventChange(apiVersion, kind string, current, next map[string]any) (bool, []string) {
 	currentStable := statusForEvent(apiVersion, kind, current)
 	nextStable := statusForEvent(apiVersion, kind, next)
 	currentData, currentErr := json.Marshal(currentStable)
 	nextData, nextErr := json.Marshal(nextStable)
+	var changed bool
 	if currentErr == nil && nextErr == nil {
-		return !bytes.Equal(currentData, nextData)
+		changed = !bytes.Equal(currentData, nextData)
+	} else {
+		changed = !reflect.DeepEqual(currentStable, nextStable)
 	}
-	return !reflect.DeepEqual(currentStable, nextStable)
-}
-
-func statusChangedFieldsForEvent(apiVersion, kind string, current, next map[string]any) []string {
-	return changedFields(statusForEvent(apiVersion, kind, current), statusForEvent(apiVersion, kind, next))
-}
-
-func shouldPublishStatusChangedEvent(apiVersion, kind string, current, next map[string]any) bool {
-	if !statusChangedForEvent(apiVersion, kind, current, next) {
-		return false
+	if !changed {
+		return false, nil
 	}
-	fields := statusChangedFieldsForEvent(apiVersion, kind, current, next)
-	return !suppressStatusChangedEvent(apiVersion, kind, current, next, fields)
+	fields := changedFields(currentStable, nextStable)
+	return !suppressStatusChangedEvent(apiVersion, kind, current, next, fields), fields
 }
 
 func suppressStatusChangedEvent(apiVersion, kind string, current, next map[string]any, fields []string) bool {

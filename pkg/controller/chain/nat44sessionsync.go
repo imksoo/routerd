@@ -255,7 +255,8 @@ func (c NAT44SessionSyncController) reconcileEventStreamJob(ctx context.Context,
 }
 
 func nat44SessionSyncPersistentStatusChanged(current, next map[string]any) bool {
-	return statusChangedForEvent(api.NetAPIVersion, "NAT44SessionSync", current, next)
+	changed, _ := statusEventChange(api.NetAPIVersion, "NAT44SessionSync", current, next)
+	return changed
 }
 
 func (c NAT44SessionSyncController) dumpEntries(ctx context.Context, job nat44SessionSyncJob) ([]conntrackRestoreEntry, error) {
