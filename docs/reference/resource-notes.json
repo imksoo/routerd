@@ -1991,124 +1991,6 @@
       "pkg/controller/chain/ipv4_main_routes.go"
     ]
   },
-  "IPv4StaticRoute": {
-    "purpose": [
-      "Declare a static IPv4 route with a literal next hop and logical output interface.",
-      "固定ネクストホップと論理インターフェースで宣言するIPv4の静的経路です。",
-      "以固定下一跳與邏輯輸出介面宣告 IPv4 靜態路由。",
-      "以固定下一跳与逻辑输出接口声明 IPv4 静态路由。"
-    ],
-    "rules": [
-      [
-        "destination, via and interface are required. There are no dynamic status sources or per-resource activation/dependency fields on this kind.",
-        "destination・via・interfaceは必須です。このKindには動的な状態参照やリソース単位の有効化・依存条件フィールドはありません。",
-        "destination、via 與 interface 必填。此 Kind 沒有動態狀態來源或個別資源的啟用／相依條件欄位。",
-        "destination、via 与 interface 必填。此 Kind 没有动态状态来源或单个资源的启用／依赖条件字段。"
-      ],
-      [
-        "FreeBSD renders rc.conf static-route entries. This is not a standalone Linux route installer: the current Linux code declares route artifacts but does not render or install this kind. Use IPv4Route for an actively reconciled Linux IPv4 route.",
-        "FreeBSDではrc.confの静的経路項目を生成します。現行LinuxコードにはこのKindを描画・インストールする単独の処理がなく、経路成果物を宣言するだけです。Linuxで能動的に再適用するIPv4経路にはIPv4Routeを使用してください。",
-        "FreeBSD 會產生 rc.conf 靜態路由項目。目前 Linux 程式碼僅宣告路由產物，沒有描繪或安裝此 Kind 的獨立流程。Linux 上需持續協調的 IPv4 路由請使用 IPv4Route。",
-        "FreeBSD 会生成 rc.conf 静态路由条目。目前 Linux 代码仅声明路由产物，没有渲染或安装此 Kind 的独立流程。Linux 上需持续协调的 IPv4 路由请使用 IPv4Route。"
-      ]
-    ],
-    "fields": {
-      "destination": [
-        "Required IPv4 CIDR. The default route is 0.0.0.0/0; the literal word default is rejected by validation.",
-        "必須のIPv4 CIDRです。デフォルト経路は0.0.0.0/0で指定し、defaultという文字列は検証で拒否されます。",
-        "必填的 IPv4 CIDR。預設路由使用 0.0.0.0/0；驗證不接受 default 字串。",
-        "必填的 IPv4 CIDR。默认路由使用 0.0.0.0/0；验证不接受 default 字符串。"
-      ],
-      "via": [
-        "Required bare IPv4 next-hop address, not a CIDR or resource reference. No default.",
-        "必須のIPv4ネクストホップアドレスです。CIDRやリソース参照は指定できず、既定値はありません。",
-        "必填的純 IPv4 下一跳位址，不接受 CIDR 或資源參照，沒有預設值。",
-        "必填的纯 IPv4 下一跳地址，不接受 CIDR 或资源引用，没有默认值。"
-      ],
-      "interface": [
-        "Required logical interface name declared in the same Router, resolved through the configuration interface index. Do not substitute an undeclared OS name.",
-        "同じRouterで宣言した論理インターフェース名が必須です。設定のインターフェース索引で解決するため、未宣言のOS名では代用できません。",
-        "必填，為同一 Router 內宣告的邏輯介面名稱，透過設定的介面索引解析，不可替換為未宣告的 OS 名稱。",
-        "必填，为同一 Router 内声明的逻辑接口名称，通过配置的接口索引解析，不可替换为未声明的 OS 名称。"
-      ],
-      "metric": [
-        "Optional integer, schema minimum 0, decoded default 0. FreeBSD static-route rendering does not emit this field. Declaring it does not make the Linux installer described above exist.",
-        "スキーマ上は0以上の任意の整数で、デコード時の既定は0です。FreeBSDの静的経路出力には含めません。指定しても前述のLinuxのインストール処理が有効になるわけではありません。",
-        "選用整數，結構描述最小值為 0，解碼預設值為 0。FreeBSD 靜態路由不輸出此欄位。設定它不會啟用上述不存在的 Linux 安裝流程。",
-        "可选整数，模式最小值为 0，解码默认值为 0。FreeBSD 静态路由不输出此字段。设置它不会启用上述不存在的 Linux 安装流程。"
-      ]
-    },
-    "sources": [
-      "pkg/api/specs.go",
-      "pkg/config/validate_wan.go",
-      "pkg/config/validate.go",
-      "pkg/render/freebsd.go",
-      "pkg/apply/artifacts.go",
-      "pkg/controller/chain/ipv4_main_routes.go"
-    ]
-  },
-  "IPv6StaticRoute": {
-    "purpose": [
-      "Declare a static IPv6 route with a literal next hop and logical output interface.",
-      "固定ネクストホップと論理インターフェースで宣言するIPv6の静的経路です。",
-      "以固定下一跳與邏輯輸出介面宣告 IPv6 靜態路由。",
-      "以固定下一跳与逻辑输出接口声明 IPv6 静态路由。"
-    ],
-    "rules": [
-      [
-        "destination, via and interface are required. There are no dynamic status sources or per-resource activation/dependency fields on this kind.",
-        "destination・via・interfaceは必須です。このKindには動的な状態参照やリソース単位の有効化・依存条件フィールドはありません。",
-        "destination、via 與 interface 必填。此 Kind 沒有動態狀態來源或個別資源的啟用／相依條件欄位。",
-        "destination、via 与 interface 必填。此 Kind 没有动态状态来源或单个资源的启用／依赖条件字段。"
-      ],
-      [
-        "FreeBSD renders rc.conf static-route entries. This is not a standalone Linux route installer: the current Linux code declares route artifacts but does not render or install this kind. Use IPv4Route for an actively reconciled Linux IPv4 route.",
-        "FreeBSDではrc.confの静的経路項目を生成します。現行LinuxコードにはこのKindを描画・インストールする単独の処理がなく、経路成果物を宣言するだけです。Linuxで能動的に再適用するIPv4経路にはIPv4Routeを使用してください。",
-        "FreeBSD 會產生 rc.conf 靜態路由項目。目前 Linux 程式碼僅宣告路由產物，沒有描繪或安裝此 Kind 的獨立流程。Linux 上需持續協調的 IPv4 路由請使用 IPv4Route。",
-        "FreeBSD 会生成 rc.conf 静态路由条目。目前 Linux 代码仅声明路由产物，没有渲染或安装此 Kind 的独立流程。Linux 上需持续协调的 IPv4 路由请使用 IPv4Route。"
-      ],
-      [
-        "For a link-local next hop beginning fe80:, FreeBSD appends %<OS-interface> when no scope is present. The logical interface is resolved before adding this scope.",
-        "fe80:で始まるリンクローカルのネクストホップにスコープ指定がない場合、FreeBSDの出力では%<OSインターフェース名>を補います。論理名をOS名に解決してから追加します。",
-        "下一跳以 fe80: 開頭且未指定作用域時，FreeBSD 輸出會補上 %<OS介面名稱>，先解析邏輯介面名稱再加入作用域。",
-        "下一跳以 fe80: 开头且未指定作用域时，FreeBSD 输出会补上 %<OS接口名称>，先解析逻辑接口名称再加入作用域。"
-      ]
-    ],
-    "fields": {
-      "destination": [
-        "Required IPv6 CIDR. The default route is ::/0; the literal word default is rejected by validation.",
-        "必須のIPv6 CIDRです。デフォルト経路は::/0で指定し、defaultという文字列は検証で拒否されます。",
-        "必填的 IPv6 CIDR。預設路由使用 ::/0；驗證不接受 default 字串。",
-        "必填的 IPv6 CIDR。默认路由使用 ::/0；验证不接受 default 字符串。"
-      ],
-      "via": [
-        "Required bare IPv6 next-hop address, not a CIDR or resource reference. No default.",
-        "必須のIPv6ネクストホップアドレスです。CIDRやリソース参照は指定できず、既定値はありません。",
-        "必填的純 IPv6 下一跳位址，不接受 CIDR 或資源參照，沒有預設值。",
-        "必填的纯 IPv6 下一跳地址，不接受 CIDR 或资源引用，没有默认值。"
-      ],
-      "interface": [
-        "Required logical interface name declared in the same Router, resolved through the configuration interface index. Do not substitute an undeclared OS name.",
-        "同じRouterで宣言した論理インターフェース名が必須です。設定のインターフェース索引で解決するため、未宣言のOS名では代用できません。",
-        "必填，為同一 Router 內宣告的邏輯介面名稱，透過設定的介面索引解析，不可替換為未宣告的 OS 名稱。",
-        "必填，为同一 Router 内声明的逻辑接口名称，通过配置的接口索引解析，不可替换为未声明的 OS 名称。"
-      ],
-      "metric": [
-        "Optional integer, schema minimum 0, decoded default 0. FreeBSD static-route rendering does not emit this field. Declaring it does not make the Linux installer described above exist.",
-        "スキーマ上は0以上の任意の整数で、デコード時の既定は0です。FreeBSDの静的経路出力には含めません。指定しても前述のLinuxのインストール処理が有効になるわけではありません。",
-        "選用整數，結構描述最小值為 0，解碼預設值為 0。FreeBSD 靜態路由不輸出此欄位。設定它不會啟用上述不存在的 Linux 安裝流程。",
-        "可选整数，模式最小值为 0，解码默认值为 0。FreeBSD 静态路由不输出此字段。设置它不会启用上述不存在的 Linux 安装流程。"
-      ]
-    },
-    "sources": [
-      "pkg/api/specs.go",
-      "pkg/config/validate_wan.go",
-      "pkg/config/validate.go",
-      "pkg/render/freebsd.go",
-      "pkg/apply/artifacts.go",
-      "pkg/controller/chain/ipv4_main_routes.go"
-    ]
-  },
   "WireGuardInterface": {
     "purpose": [
       "Create or configure a WireGuard device and apply its complete peer configuration with wg setconf. Address assignment and ordinary routing are separate resources.",
@@ -3353,6 +3235,61 @@
       "pkg/config/diagnostics.go",
       "pkg/controller/dnsresolver/controller.go",
       "cmd/routerd-dns-resolver/zone.go"
+    ]
+  },
+  "ManagementAccess": {
+    "purpose": [
+      "Declare the interfaces checked by the pre-apply management-lockout check. This resource does not create a management listener or firewall allow rule.",
+      "反映前の管理経路確認で検査するインターフェースを宣言します。管理用の待受やファイアウォール許可ルールを生成するリソースではありません。",
+      "宣告套用前管理連線中斷檢查所檢查的介面。此資源不建立管理接聽端或防火牆允許規則。",
+      "声明应用前管理连接中断检查所检查的接口。此资源不创建管理监听端或防火墙允许规则。"
+    ],
+    "rules": [
+      [
+        "The check runs before apply and is also exposed by routerctl doctor. Fail findings block real application unless --allow-mgmt-lockout is explicitly supplied; dry-run reports findings without blocking. It inspects configuration, not live management reachability.",
+        "反映前とrouterctl doctorで確認します。fail判定は実反映を止めますが、明示的な--allow-mgmt-lockout指定時は続行します。dry-runは報告のみです。検査対象は設定であり、実際の管理疎通を測定するものではありません。",
+        "套用前與 routerctl doctor 會執行檢查。fail 結果會阻止實際套用，除非明確指定 --allow-mgmt-lockout；dry-run 僅報告。檢查的是設定，不是實際管理連線。",
+        "应用前与 routerctl doctor 会执行检查。fail 结果会阻止实际应用，除非明确指定 --allow-mgmt-lockout；dry-run 仅报告。检查的是配置，不是实际管理连接。"
+      ],
+      [
+        "Each interface must be a declared Interface. If any FirewallZone exists, each management interface must belong to a zone whose role is trust or mgmt. A named Bridge/WireGuard resource alone does not satisfy this specific check.",
+        "各参照先はInterfaceとして宣言する必要があります。FirewallZoneが1件でもある場合、各管理インターフェースはroleがtrustまたはmgmtのゾーンに所属する必要があります。Bridge・WireGuardのリソース名だけではこの検査を満たしません。",
+        "每個介面必須宣告為 Interface。只要存在任何 FirewallZone，每個管理介面就必須屬於 role 為 trust 或 mgmt 的區域。僅有同名 Bridge/WireGuard 資源無法滿足此檢查。",
+        "每个接口必须声明为 Interface。只要存在任何 FirewallZone，每个管理接口就必须属于 role 为 trust 或 mgmt 的区域。仅有同名 Bridge/WireGuard 资源无法满足此检查。"
+      ],
+      [
+        "When no ManagementAccess is declared, this check adds no findings. requireWebConsoleBound checks explicit wildcard listen addresses; it does not require a WebConsole to exist or prove its address belongs to a listed management interface.",
+        "ManagementAccess自体がなければ、この検査は指摘を追加しません。requireWebConsoleBoundは明示された全アドレス待受を検査するもので、WebConsoleの存在や待受アドレスが管理インターフェースに属することまでは要求・証明しません。",
+        "未宣告 ManagementAccess 時，此檢查不產生結果。requireWebConsoleBound 檢查明確的萬用接聽位址，不要求 WebConsole 存在，也不證明其位址屬於所列管理介面。",
+        "未声明 ManagementAccess 时，此检查不产生结果。requireWebConsoleBound 检查明确的通配监听地址，不要求 WebConsole 存在，也不证明其地址属于所列管理接口。"
+      ]
+    ],
+    "fields": {
+      "interfaces": [
+        "Required nonempty list of bare Interface names or Interface/name. Duplicates are rejected after normalization. These identify declared resources, not arbitrary OS names.",
+        "1件以上のInterface名またはInterface/nameが必須です。正規化後の重複は拒否されます。任意のOS名ではなく、宣言済みリソースの名前です。",
+        "必填且不可為空的 Interface 名稱或 Interface/name 清單。正規化後重複會被拒絕。指的是已宣告資源，不是任意 OS 名稱。",
+        "必填且不可为空的 Interface 名称或 Interface/name 列表。规范化后重复会被拒绝。指的是已声明资源，不是任意 OS 名称。"
+      ],
+      "allowSourceCIDRs": [
+        "Optional IPv4/IPv6 CIDR list, default empty. Syntax is validated, but the current management check and firewall renderers do not consume it. It does not enforce a source-address access list.",
+        "IPv4・IPv6のCIDR一覧で、既定は空です。書式は検証しますが、現行の管理経路検査・ファイアウォール出力では使用しません。送信元アドレスのアクセス制限にはなりません。",
+        "選用的 IPv4/IPv6 CIDR 清單，預設為空。會驗證語法，但目前管理檢查與防火牆產生器不使用此欄位，不會強制來源位址存取限制。",
+        "可选的 IPv4/IPv6 CIDR 列表，默认为空。会验证语法，但目前管理检查与防火墙生成器不使用此字段，不会强制源地址访问限制。"
+      ],
+      "requireWebConsoleBound": [
+        "Default true. An enabled WebConsole explicitly listening on 0.0.0.0 or :: produces fail; false downgrades that finding to warn. With multiple ManagementAccess resources, any omitted/true value keeps this requirement enabled. A derived listen address produces only a warning; omitted listenAddress without a source is not flagged here.",
+        "既定はtrueです。有効なWebConsoleが0.0.0.0または::を明示して待ち受けるとfail、falseならwarnです。複数のManagementAccessがある場合、いずれか1件の省略・trueでこの条件を有効にします。動的な待受アドレスは警告だけで、参照もないlistenAddress省略にはここでは指摘しません。",
+        "預設 true。啟用的 WebConsole 明確接聽 0.0.0.0 或 :: 時產生 fail；false 則降為 warn。多個 ManagementAccess 中任一省略或 true 都會啟用要求。動態接聽位址僅警告；未設定來源且省略 listenAddress 時，此處不產生結果。",
+        "默认 true。启用的 WebConsole 明确监听 0.0.0.0 或 :: 时产生 fail；false 则降为 warn。多个 ManagementAccess 中任一省略或 true 都会启用要求。动态监听地址仅警告；未配置来源且省略 listenAddress 时，此处不产生结果。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_firewall.go",
+      "pkg/config/management.go",
+      "cmd/routerd/cmd_apply.go",
+      "cmd/routerctl/doctor.go"
     ]
   }
 }

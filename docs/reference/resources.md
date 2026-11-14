@@ -555,6 +555,8 @@ Publish asserted/retracted events when conditions over resource status change. U
 
 [ManagementAccess](resources/ManagementAccess.md)
 
+Declare the interfaces checked by the pre-apply management-lockout check. This resource does not create a management listener or firewall allow rule.
+
 
 ## PortForward
 

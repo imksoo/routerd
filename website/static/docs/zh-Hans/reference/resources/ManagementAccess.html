@@ -5,6 +5,13 @@
 <main class="doclayout wrap"><article class="document"><h1 id="managementaccess">ManagementAccess</h1>
 <p><a href="../resources.html#managementaccess">各资源的配置</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>声明应用前管理连接中断检查所检查的接口。此资源不创建管理监听端或防火墙允许规则。</p>
+<h2 id="指定条件与引用关系">指定条件与引用关系</h2>
+<ul>
+<li>应用前与 routerctl doctor 会执行检查。fail 结果会阻止实际应用，除非明确指定 --allow-mgmt-lockout；dry-run 仅报告。检查的是配置，不是实际管理连接。</li>
+<li>每个接口必须声明为 Interface。只要存在任何 FirewallZone，每个管理接口就必须属于 role 为 trust 或 mgmt 的区域。仅有同名 Bridge/WireGuard 资源无法满足此检查。</li>
+<li>未声明 ManagementAccess 时，此检查不产生结果。requireWebConsoleBound 检查明确的通配监听地址，不要求 WebConsole 存在，也不证明其地址属于所列管理接口。</li>
+</ul>
 <h2 id="yaml定义">YAML定义</h2>
 <p>此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。</p>
 <pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
@@ -18,9 +25,35 @@
       - &quot;&lt;string&gt;&quot; # string
     requireWebConsoleBound: true # 选填; boolean
 </code></pre>
+<h2 id="字段含义与默认值">字段含义与默认值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>字段含义与默认值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.interfaces</code></td>
+<td>必填且不可为空的 Interface 名称或 Interface/name 列表。规范化后重复会被拒绝。指的是已声明资源，不是任意 OS 名称。</td>
+</tr>
+<tr>
+<td><code>spec.allowSourceCIDRs</code></td>
+<td>可选的 IPv4/IPv6 CIDR 列表，默认为空。会验证语法，但目前管理检查与防火墙生成器不使用此字段，不会强制源地址访问限制。</td>
+</tr>
+<tr>
+<td><code>spec.requireWebConsoleBound</code></td>
+<td>默认 true。启用的 WebConsole 明确监听 0.0.0.0 或 :: 时产生 fail；false 则降为 warn。多个 ManagementAccess 中任一省略或 true 都会启用要求。动态监听地址仅警告；未配置来源且省略 listenAddress 时，此处不产生结果。</td>
+</tr>
+</tbody>
+</table>
+<p>实现: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_firewall.go">pkg/config/validate_firewall.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/management.go">pkg/config/management.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd/cmd_apply.go">cmd/routerd/cmd_apply.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerctl/doctor.go">cmd/routerctl/doctor.go</a></p>
 <p><a href="/examples/home-router-mgmt-protected.yaml">配置示例</a></p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
 <ul>
+<li><a href="#指定条件与引用关系">指定条件与引用关系</a></li>
 <li><a href="#yaml定义">YAML定义</a></li>
+<li><a href="#字段含义与默认值">字段含义与默认值</a></li>
 </ul>
 </div>
 </aside></main>

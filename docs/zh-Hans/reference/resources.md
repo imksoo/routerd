@@ -555,6 +555,8 @@ spec:
 
 [ManagementAccess](resources/ManagementAccess.md)
 
+声明应用前管理连接中断检查所检查的接口。此资源不创建管理监听端或防火墙允许规则。
+
 
 ## PortForward
 

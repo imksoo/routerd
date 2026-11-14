@@ -5,6 +5,13 @@
 <main class="doclayout wrap"><article class="document"><h1 id="managementaccess">ManagementAccess</h1>
 <p><a href="../resources.html#managementaccess">リソース別の設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>反映前の管理経路確認で検査するインターフェースを宣言します。管理用の待受やファイアウォール許可ルールを生成するリソースではありません。</p>
+<h2 id="指定条件と参照関係">指定条件と参照関係</h2>
+<ul>
+<li>反映前とrouterctl doctorで確認します。fail判定は実反映を止めますが、明示的な--allow-mgmt-lockout指定時は続行します。dry-runは報告のみです。検査対象は設定であり、実際の管理疎通を測定するものではありません。</li>
+<li>各参照先はInterfaceとして宣言する必要があります。FirewallZoneが1件でもある場合、各管理インターフェースはroleがtrustまたはmgmtのゾーンに所属する必要があります。Bridge・WireGuardのリソース名だけではこの検査を満たしません。</li>
+<li>ManagementAccess自体がなければ、この検査は指摘を追加しません。requireWebConsoleBoundは明示された全アドレス待受を検査するもので、WebConsoleの存在や待受アドレスが管理インターフェースに属することまでは要求・証明しません。</li>
+</ul>
 <h2 id="yaml定義">YAML定義</h2>
 <p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
 <pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
@@ -18,9 +25,35 @@
       - &quot;&lt;string&gt;&quot; # string
     requireWebConsoleBound: true # 任意; boolean
 </code></pre>
+<h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>項目の意味と既定値</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.interfaces</code></td>
+<td>1件以上のInterface名またはInterface/nameが必須です。正規化後の重複は拒否されます。任意のOS名ではなく、宣言済みリソースの名前です。</td>
+</tr>
+<tr>
+<td><code>spec.allowSourceCIDRs</code></td>
+<td>IPv4・IPv6のCIDR一覧で、既定は空です。書式は検証しますが、現行の管理経路検査・ファイアウォール出力では使用しません。送信元アドレスのアクセス制限にはなりません。</td>
+</tr>
+<tr>
+<td><code>spec.requireWebConsoleBound</code></td>
+<td>既定はtrueです。有効なWebConsoleが0.0.0.0または::を明示して待ち受けるとfail、falseならwarnです。複数のManagementAccessがある場合、いずれか1件の省略・trueでこの条件を有効にします。動的な待受アドレスは警告だけで、参照もないlistenAddress省略にはここでは指摘しません。</td>
+</tr>
+</tbody>
+</table>
+<p>実装: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_firewall.go">pkg/config/validate_firewall.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/management.go">pkg/config/management.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd/cmd_apply.go">cmd/routerd/cmd_apply.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerctl/doctor.go">cmd/routerctl/doctor.go</a></p>
 <p><a href="/examples/home-router-mgmt-protected.yaml">設定例</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
 <ul>
+<li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
 <li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
 </ul>
 </div>
 </aside></main>

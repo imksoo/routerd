@@ -555,6 +555,8 @@ spec:
 
 [ManagementAccess](resources/ManagementAccess.md)
 
+宣告套用前管理連線中斷檢查所檢查的介面。此資源不建立管理接聽端或防火牆允許規則。
+
 
 ## PortForward
 

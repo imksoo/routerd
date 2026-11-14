@@ -555,6 +555,8 @@ DNSForwarderが参照するDNSサーバーの接続先です。宣言だけで�
 
 [ManagementAccess](resources/ManagementAccess.md)
 
+反映前の管理経路確認で検査するインターフェースを宣言します。管理用の待受やファイアウォール許可ルールを生成するリソースではありません。
+
 
 ## PortForward
 
