@@ -1566,7 +1566,7 @@ func scheduledReconcileSkipsController(name string) bool {
 		// periodic cadence and status subscriptions. Running them again from
 		// --apply-interval makes the scheduled pass probe or rewrite host state
 		// without adding a stronger convergence signal.
-		"link", "tunnel", "wireguard", "ipv4-static-address", "ipv4-policy-route", "ipv4-route", "hybrid-route",
+		"link", "bridge", "vxlan-tunnel", "tunnel", "wireguard", "ipv4-static-address", "ipv4-policy-route", "ipv4-route", "hybrid-route",
 		"sam", "sam-enrollment-client", "sam-transport", "path-mtu", "dslite", "dhcpv6-information", "lan-address",
 		"dhcpv6-server", "dhcpv4-lease", "pppoe-session", "dns-resolver", "event-federation", "event-subscription",
 		"mobility-discovery", "mobility-arp-request", "mobility", "mobility-shard", "provider-action-execution", "egress-route-policy",
