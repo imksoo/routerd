@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>新增防火墙例外规则 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/how-to/firewall-rule.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/how-to/firewall-rule.html" lang="en" hreflang="en">English</a><a href="/docs/ja/how-to/firewall-rule.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/how-to/firewall-rule.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/firewall-rule.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="新增防火墙例外规则">新增防火墙例外规则</h1>
+<h2 id="适用场景">适用场景</h2>
+<p><code>FirewallZone</code> 的角色式默认已能满足大多数需求，但有时仍需要例外处理。</p>
+<ul>
+<li>希望允许来自特定管理子网的 SSH 连接。</li>
+<li>需要开放路由器本机上的服务端口（如 metrics 端点、自定义 listener）。</li>
+<li>需要让 WAN 的 inbound 连接通往某台特定的 LAN 主机（类似 port forward 或 DMZ 的用途）。</li>
+</ul>
+<h2 id="routerd-的解决方式">routerd 的解决方式</h2>
+<p>使用 <code>FirewallRule</code> 声明例外，覆盖隐含的角色矩阵。
+规则的评估优先于角色矩阵，而 routerd 自动派生的内部通行孔（DHCP、DNS、DHCPv6-PD、DS-Lite 控制等）又优先于用户规则。
+这个顺序确保即使新增限制规则，受管服务仍能正常运作。</p>
+<h2 id="示例允许来自管理网络的-ssh">示例：允许来自管理网络的 SSH</h2>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallRule
+  metadata:
+    name: allow-admin-ssh
+  spec:
+    fromZone: management
+    toZone: self
+    protocol: tcp
+    port: 22
+    action: accept
+</code></pre>
+<p><code>fromZone</code> / <code>toZone</code> 参照 <code>FirewallZone</code> 的名称。
+<code>toZone: self</code> 表示路由器本身终止的通信（非 forward）。</p>
+<h2 id="示例开放路由器本机的服务端口">示例：开放路由器本机的服务端口</h2>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallRule
+  metadata:
+    name: allow-metrics
+  spec:
+    fromZone: lan
+    toZone: self
+    protocol: tcp
+    destinationPorts:
+      - &quot;9100&quot;
+    action: accept
+</code></pre>
+<h2 id="示例仅允许-lan-访问管理区域中的特定主机">示例：仅允许 LAN 访问管理区域中的特定主机</h2>
+<p>若只需对目的区域内的特定主机开例外，可指定 <code>destinationCIDRs</code>，
+无需开放整个管理区域。</p>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallRule
+  metadata:
+    name: allow-lan-to-admin-console
+  spec:
+    fromZone: lan
+    toZone: management
+    destinationCIDRs:
+      - 192.0.2.126/32
+    protocol: tcp
+    destinationPorts:
+      - &quot;8080&quot;
+    action: accept
+</code></pre>
+<h2 id="示例多个-web-端口与-icmp-echo">示例：多个 Web 端口与 ICMP echo</h2>
+<p>若需在单一规则中处理多个 TCP / UDP 端口，请使用 <code>destinationPorts</code>。
+ICMP 规则可依 type 名称进行过滤。</p>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallRule
+  metadata:
+    name: wan-web
+  spec:
+    fromZone: wan
+    toZone: self
+    protocol: tcp
+    destinationPorts:
+      - &quot;80&quot;
+      - &quot;443&quot;
+    action: accept
+
+- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallRule
+  metadata:
+    name: wan-icmp-echo
+  spec:
+    fromZone: wan
+    toZone: self
+    protocol: icmp
+    icmpType: echo-request
+    action: accept
+</code></pre>
+<h2 id="示例拒绝超过速率连接限制的-ssh">示例：拒绝超过速率／连接限制的 SSH</h2>
+<p><code>rateLimit</code> 会匹配超过设定阈值的流量；<code>connLimit</code> 则在相同来源已持有超过允许数量的并行跟踪状态时匹配。</p>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallRule
+  metadata:
+    name: ssh-bruteforce-over-limit
+  spec:
+    fromZone: wan
+    toZone: self
+    protocol: tcp
+    destinationPorts:
+      - &quot;22&quot;
+    action: reject
+    rateLimit:
+      rate: 8
+      burst: 16
+      unit: packet
+      per: minute
+      log: true
+    connLimit:
+      maxPerSource: 4
+      log: true
+</code></pre>
+<h2 id="应用前的确认">应用前的确认</h2>
+<p>请先在本机模拟器确认行为，再正式应用。</p>
+<pre><code class="language-sh">routerctl firewall test from=wan to=self proto=tcp dport=22
+</code></pre>
+<p>第一个命令针对指定的 5-tuple 返回 <code>accept</code> / <code>drop</code>。</p>
+<h2 id="相关项目">相关项目</h2>
+<ul>
+<li><a href="firewall-zone.html">定义防火墙区域</a></li>
+<li><a href="../concepts/firewall.html">防火墙概念说明</a></li>
+</ul></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#适用场景">适用场景</a></li>
+<li><a href="#routerd-的解决方式">routerd 的解决方式</a></li>
+<li><a href="#示例允许来自管理网络的-ssh">示例：允许来自管理网络的 SSH</a></li>
+<li><a href="#示例开放路由器本机的服务端口">示例：开放路由器本机的服务端口</a></li>
+<li><a href="#示例仅允许-lan-访问管理区域中的特定主机">示例：仅允许 LAN 访问管理区域中的特定主机</a></li>
+<li><a href="#示例多个-web-端口与-icmp-echo">示例：多个 Web 端口与 ICMP echo</a></li>
+<li><a href="#示例拒绝超过速率连接限制的-ssh">示例：拒绝超过速率／连接限制的 SSH</a></li>
+<li><a href="#应用前的确认">应用前的确认</a></li>
+<li><a href="#相关项目">相关项目</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/how-to/firewall-rule.md">GitHub</a></div></footer></body></html>

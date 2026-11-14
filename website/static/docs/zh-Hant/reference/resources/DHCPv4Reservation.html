@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DHCPv4Reservation · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/reference/resources/DHCPv4Reservation.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/reference/resources/DHCPv4Reservation.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/DHCPv4Reservation.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/DHCPv4Reservation.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/reference/resources/DHCPv4Reservation.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="dhcpv4reservation">DHCPv4Reservation</h1>
+<p><a href="../resources.html#dhcpv4reservation">各資源的設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>在已宣告的 DHCPv4Server 為一個 MAC 位址保留 IPv4 位址。</p>
+<h2 id="指定條件與參照關係">指定條件與參照關係</h2>
+<ul>
+<li>雖然結構描述將 server 標為選用，server、macAddress、ipAddress 在語意上必填。server 須為 interface 非空的 DHCPv4Server 裸名；一般驗證即使僅有一台也不允許省略。scope 會被拒絕。</li>
+<li>目前在共用 dnsmasq 主機附檔寫入帶資源標籤的保留。server 關聯用於驗證、狀態及自訂選項產生，不代表獨立程序或主機檔案命名空間。Applied 不證明客戶端已取得租約。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DHCPv4Reservation
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    hostname: &quot;&lt;string&gt;&quot; # 選填; string
+    ipAddress: &quot;&lt;string&gt;&quot; # 必填; string
+    leaseTime: &quot;&lt;string&gt;&quot; # 選填; string
+    macAddress: &quot;&lt;string&gt;&quot; # 必填; string
+    options: # 選填; array
+      - # object
+        code: 1 # 選填; integer; minimum=1; maximum=65535
+        name: &quot;&lt;string&gt;&quot; # 選填; string
+        value: &quot;&lt;string&gt;&quot; # 選填; string
+    scope: &quot;&lt;string&gt;&quot; # 選填; string
+    server: &quot;&lt;string&gt;&quot; # 選填; string
+    when: # 選填; object
+      state: # 選填; object
+        &quot;&lt;key&gt;&quot;: # 選填; object
+          contains: &quot;&lt;string&gt;&quot; # 選填; string
+          equals: &quot;&lt;string&gt;&quot; # 選填; string
+          exists: true # 選填; boolean
+          for: &quot;&lt;string&gt;&quot; # 選填; string
+          in: # 選填; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # 選填; string
+          status: &quot;set&quot; # 選填; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<h2 id="欄位意義與預設值">欄位意義與預設值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>欄位意義與預設值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.scope</code></td>
+<td>已移除欄位，非空值會被拒絕，請用 server。</td>
+</tr>
+<tr>
+<td><code>spec.server</code></td>
+<td>必填已設定 interface 的既有直接 DHCPv4Server metadata.name，此處不移除 Kind/name 前綴。</td>
+</tr>
+<tr>
+<td><code>spec.macAddress</code></td>
+<td>必填可由 net.ParseMAC 解析的 MAC 位址，以小寫輸出，無預設值。</td>
+</tr>
+<tr>
+<td><code>spec.hostname</code></td>
+<td>選用且不含空白或逗號的主機名稱，預設省略。可供已啟用 DNSZone 的 DHCP 衍生主機快照使用。</td>
+</tr>
+<tr>
+<td><code>spec.ipAddress</code></td>
+<td>必填純 IPv4 保留位址。目前驗證位址族，但此處不要求位於伺服器集區內，也不拒絕重複保留 IP/MAC。</td>
+</tr>
+<tr>
+<td><code>spec.leaseTime</code></td>
+<td>選用後端期間字串，預設空值且拒絕逗號。目前執行時保留主機行不輸出此欄位，因此不會在此路徑覆寫租約時間。</td>
+</tr>
+<tr>
+<td><code>spec.options</code></td>
+<td>以此保留標籤輸出的選用 DHCP 選項清單，每項須有 code/name 其中之一及非空 value，預設空。</td>
+</tr>
+<tr>
+<td><code>spec.options[].code</code></td>
+<td>數字選項識別碼，與 name 互斥，結構描述範圍 1–65535，無預設識別碼。</td>
+</tr>
+<tr>
+<td><code>spec.options[].name</code></td>
+<td>dnsmasq 選項名稱，與 code 互斥，不可含空白或逗號。</td>
+</tr>
+<tr>
+<td><code>spec.options[].value</code></td>
+<td>必填非空後端格式值，不可含 CR/LF；原樣傳入，逗號可分隔多個選項值。</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>選用共用狀態條件，預設無條件。不成立時排除保留並回報 Pending/WhenFalse，伺服器不可用時為 ServerPending。</td>
+</tr>
+</tbody>
+</table>
+<p>實作: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_dhcp.go">pkg/config/validate_dhcp.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/index.go">pkg/config/index.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go">pkg/controller/chain/chain.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/phase2.go">pkg/controller/chain/phase2.go</a></p>
+<h2 id="可參照的狀態欄位">可參照的狀態欄位</h2>
+<p>一般狀態參照驗證接受此 Kind 的下列欄位名稱。列於允許清單不保證目前有值，請檢查實際狀態。這些是輸出，不是 YAML spec 設定。</p>
+<p><code>phase</code>, <code>address</code>, <code>hostname</code></p>
+<p><a href="/examples/example-lan-dns-dhcp.yaml">設定範例</a></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#指定條件與參照關係">指定條件與參照關係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#欄位意義與預設值">欄位意義與預設值</a></li>
+<li><a href="#可參照的狀態欄位">可參照的狀態欄位</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/reference/resources/DHCPv4Reservation.md">GitHub</a></div></footer></body></html>

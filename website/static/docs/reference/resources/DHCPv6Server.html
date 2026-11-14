@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DHCPv6Server · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/reference/resources/DHCPv6Server.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/reference/resources/DHCPv6Server.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/reference/resources/DHCPv6Server.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/DHCPv6Server.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/DHCPv6Server.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="dhcpv6server">DHCPv6Server</h1>
+<p><a href="../resources.html#dhcpv6server">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Provide LAN DHCPv6 address/information service and associated RA behavior using the shared dnsmasq process.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>The current live writer differs from the older static renderer: interface is needed, delegatedAddress-only does not create a live range, dnsSource/selfAddressPolicy do not supply self DNS, and ra-only follows the stateless branch. Use explicit fields documented below and verify actual DHCP/RA traffic.</li>
+<li>Normal validation limits delegatedAddress mode to stateless/ra-only. Without delegatedAddress, every non-stateless mode including ra-only requires a valid IPv6 start/end pair. domainSearch and domainSearchFrom are exclusive; literals and DNS/SNTP value sources may coexist.</li>
+<li>One dnsmasq instance serves the resources; mode constructors use a /64 on the actual interface. Applied records successful reconciliation, not a client lease, RA reception or default-route installation. Removed ready_when is rejected.</li>
+</ul>
+<h2 id="yaml-definition">YAML definition</h2>
+<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DHCPv6Server
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    addressPool: # optional; object
+      end: &quot;&lt;string&gt;&quot; # optional; string
+      leaseTime: &quot;&lt;string&gt;&quot; # optional; string
+      start: &quot;&lt;string&gt;&quot; # optional; string
+    configPath: &quot;&lt;string&gt;&quot; # optional; string
+    defaultRoute: true # optional; boolean
+    delegatedAddress: &quot;&lt;string&gt;&quot; # optional; string
+    dependsOn: # optional; array
+      - # object
+        equals: &quot;&lt;string&gt;&quot; # optional; string
+        field: &quot;&lt;string&gt;&quot; # optional; string
+        notEmpty: true # optional; boolean
+        optional: true # optional; boolean
+        phase: &quot;&lt;string&gt;&quot; # optional; string
+        resource: &quot;&lt;string&gt;&quot; # Required; string
+    dnsServerFrom: # optional; array
+      - # object
+        field: &quot;&lt;string&gt;&quot; # optional; string
+        optional: true # optional; boolean
+        resource: &quot;&lt;string&gt;&quot; # Required; string
+    dnsServers: # optional; array
+      - &quot;&lt;string&gt;&quot; # string
+    dnsSource: &quot;self&quot; # optional; string; enum=[&quot;self&quot;, &quot;static&quot;, &quot;none&quot;]
+    domainSearch: # optional; array
+      - &quot;&lt;string&gt;&quot; # string
+    domainSearchFrom: # optional; array
+      - # object
+        field: &quot;&lt;string&gt;&quot; # optional; string
+        optional: true # optional; boolean
+        resource: &quot;&lt;string&gt;&quot; # Required; string
+    interface: &quot;&lt;string&gt;&quot; # optional; string
+    leaseFile: &quot;&lt;string&gt;&quot; # optional; string
+    leaseTime: &quot;&lt;string&gt;&quot; # optional; string
+    listenInterfaces: # optional; array
+      - &quot;&lt;string&gt;&quot; # string
+    logDHCP: true # optional; boolean
+    managed: true # optional; boolean
+    mode: &quot;stateless&quot; # optional; string; enum=[&quot;stateless&quot;, &quot;stateful&quot;, &quot;both&quot;, &quot;ra-only&quot;]
+    pidFile: &quot;&lt;string&gt;&quot; # optional; string
+    rapidCommit: true # optional; boolean
+    role: &quot;server&quot; # optional; string; enum=[&quot;server&quot;, &quot;transit&quot;]
+    selfAddressPolicy: &quot;&lt;string&gt;&quot; # optional; string
+    server: &quot;dnsmasq&quot; # optional; string; enum=[&quot;dnsmasq&quot;]
+    sntpServerFrom: # optional; array
+      - # object
+        field: &quot;&lt;string&gt;&quot; # optional; string
+        optional: true # optional; boolean
+        resource: &quot;&lt;string&gt;&quot; # Required; string
+    sntpServers: # optional; array
+      - &quot;&lt;string&gt;&quot; # string
+    stickyHoldDays: 0 # optional; integer; minimum=0
+    when: # optional; object
+      state: # optional; object
+        &quot;&lt;key&gt;&quot;: # optional; object
+          contains: &quot;&lt;string&gt;&quot; # optional; string
+          equals: &quot;&lt;string&gt;&quot; # optional; string
+          exists: true # optional; boolean
+          for: &quot;&lt;string&gt;&quot; # optional; string
+          in: # optional; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # optional; string
+          status: &quot;set&quot; # optional; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.server</code></td>
+<td>Optional dnsmasq, default dnsmasq. No other backend accepted. The live service is shared with DHCPv4 and RA resources.</td>
+</tr>
+<tr>
+<td><code>spec.managed</code></td>
+<td>Boolean default false; current live service writer/controller does not use this flag to disable mutation.</td>
+</tr>
+<tr>
+<td><code>spec.role</code></td>
+<td>server/transit, default server in validation/static rendering. Current live writer does not honor transit to suppress service.</td>
+</tr>
+<tr>
+<td><code>spec.listenInterfaces</code></td>
+<td>Optional declared logical interfaces, all validated for existence. If delegatedAddress is given and this list is nonempty, it must include that address resource interface. Used in family/firewall planning; current live pool writer still requires interface itself.</td>
+</tr>
+<tr>
+<td><code>spec.logDHCP</code></td>
+<td>Default false; static renderer can emit log-dhcp, but current live writer does not consume it.</td>
+</tr>
+<tr>
+<td><code>spec.stickyHoldDays</code></td>
+<td>Nonnegative days, default 0/off. Positive dnsmasq values retain lease assignments in dhcp-sticky.db for reuse; runtime uses the maximum across IPv6 servers for all IPv6 lease events, not per-interface selection. DHCPv6ServerLeaseSync does not copy this sticky DB.</td>
+</tr>
+<tr>
+<td><code>spec.interface</code></td>
+<td>Declared logical LAN interface. Required for current live writer even when validation permits delegatedAddress alone; an absent interface skips live pool rendering.</td>
+</tr>
+<tr>
+<td><code>spec.delegatedAddress</code></td>
+<td>Optional bare existing IPv6DelegatedAddress name. Static renderer derives interface/prefix/self DNS from it, but current live writer uses interface and constructor directly and does not substitute this resource. When set, validation limits mode to stateless or ra-only.</td>
+</tr>
+<tr>
+<td><code>spec.mode</code></td>
+<td>Default stateless. stateful emits a constructor range; both adds slaac; current live writer treats ra-only through the same ra-stateless default branch, so it does not actually disable DHCPv6 information service. Without delegatedAddress, validation also requires a pool for ra-only.</td>
+</tr>
+<tr>
+<td><code>spec.addressPool</code></td>
+<td>IPv6 stateful allocation range. Required for non-stateless modes when delegatedAddress is absent; not used as an allocation range by stateless. No endpoints inferred.</td>
+</tr>
+<tr>
+<td><code>spec.addressPool.start</code></td>
+<td>IPv6 start address, inclusive and &lt;= end. Live stateful range uses constructor:<ifname> and prefix length 64.</td>
+</tr>
+<tr>
+<td><code>spec.addressPool.end</code></td>
+<td>IPv6 end address, inclusive and &gt;= start; paired with start.</td>
+</tr>
+<tr>
+<td><code>spec.addressPool.leaseTime</code></td>
+<td>Backend duration, preferred over leaseTime; empty falls back to leaseTime then 12h. Not parsed as Go duration here.</td>
+</tr>
+<tr>
+<td><code>spec.defaultRoute</code></td>
+<td>Boolean default false. Static renderer can control default-router lifetime, but current live writer does not read this field. DHCPv6 itself does not distribute an IPv6 default route.</td>
+</tr>
+<tr>
+<td><code>spec.dnsSource</code></td>
+<td>Validated self/static/none, default self in static rendering; static requires dnsServers. Current live writer ignores this selector and uses explicit dnsServers/dnsServerFrom only; none does not suppress those explicit options.</td>
+</tr>
+<tr>
+<td><code>spec.selfAddressPolicy</code></td>
+<td>Optional bare existing SelfAddressPolicy reference; validated even though current live LAN generation does not consume it. Older static self-DNS selection uses it.</td>
+</tr>
+<tr>
+<td><code>spec.dnsServers</code></td>
+<td>Optional literal IPv6 DNS-server list; default empty. Merged with dnsServerFrom and emitted as tagged option6:dns-server. No DNS listener is started.</td>
+</tr>
+<tr>
+<td><code>spec.dnsServerFrom</code></td>
+<td>Optional common resource/field source list, optional false by default. Required missing values make the server Pending even when literal DNS entries exist. Resolved status values are passed through without full IP-family validation by this reader.</td>
+</tr>
+<tr>
+<td><code>spec.sntpServers</code></td>
+<td>Optional literal IPv6 SNTP-server list, default empty; merged with sntpServerFrom for tagged option6:sntp-server. Does not start an NTP daemon.</td>
+</tr>
+<tr>
+<td><code>spec.sntpServerFrom</code></td>
+<td>Optional common status-source list. Same required/optional blocking behavior as dnsServerFrom; default no references.</td>
+</tr>
+<tr>
+<td><code>spec.domainSearch</code></td>
+<td>Optional single-domain strings, default empty; no whitespace/slash/comma. Exclusive with domainSearchFrom. Emitted as tagged option6:domain-search.</td>
+</tr>
+<tr>
+<td><code>spec.domainSearchFrom</code></td>
+<td>Optional sources restricted to DNSZone/<name>, field: zone; resources must exist. Reads declared zones before status. Required missing values block this server; optional true skips missing values. Exclusive with domainSearch.</td>
+</tr>
+<tr>
+<td><code>spec.leaseTime</code></td>
+<td>Fallback backend duration after addressPool.leaseTime; default 12h.</td>
+</tr>
+<tr>
+<td><code>spec.rapidCommit</code></td>
+<td>Boolean default false. Current writer emits tagged option6:rapid-commit; it does not emit a separate dnsmasq dhcp-rapid-commit directive, so do not treat the flag alone as proof of negotiated two-message Rapid Commit.</td>
+</tr>
+<tr>
+<td><code>spec.configPath</code></td>
+<td>Optional decoded string, default empty; current controller uses shared dnsmasq options instead of this per-resource path.</td>
+</tr>
+<tr>
+<td><code>spec.pidFile</code></td>
+<td>Optional decoded string, default empty; current controller uses shared dnsmasq options instead of this per-resource path.</td>
+</tr>
+<tr>
+<td><code>spec.leaseFile</code></td>
+<td>Optional lease database path, default <StateDir>/dnsmasq/dnsmasq.leases. All explicit DHCPv4/6 leaseFile values must match because one dnsmasq service shares the file; disagreement fails runtime generation.</td>
+</tr>
+<tr>
+<td><code>spec.dependsOn</code></td>
+<td>Common dependency list accepted and references validated, default empty. Current live DHCPv6 server writer/status path does not evaluate this list; it is not a reliable service gate here. Dynamic-value requirements and when are evaluated separately.</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>Optional common condition, default unconditional. False removes this resource from effective config and reports Pending/WhenFalse.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_dhcp.go">pkg/config/validate_dhcp.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go">pkg/controller/chain/chain.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/phase2.go">pkg/controller/chain/phase2.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/dnsmasq.go">pkg/render/dnsmasq.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd/runtime_services.go">cmd/routerd/runtime_services.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/platform/platform.go">pkg/platform/platform.go</a></p>
+<h2 id="referenceable-status-fields">Referenceable status fields</h2>
+<p>The ordinary status-reference validator accepts these field names for this kind. This allowlist does not guarantee that every field is currently populated; inspect runtime status. These are outputs, not YAML spec fields.</p>
+<p><code>phase</code>, <code>interface</code>, <code>dnsServers</code>, <code>sntpServers</code>, <code>configPath</code>, <code>dryRun</code></p>
+<p><a href="/examples/dhcp-lease-sync-ha.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
+<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
+<li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/reference/resources/DHCPv6Server.md">GitHub</a></div></footer></body></html>

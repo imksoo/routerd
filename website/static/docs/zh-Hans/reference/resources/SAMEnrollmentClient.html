@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SAMEnrollmentClient · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/reference/resources/SAMEnrollmentClient.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/reference/resources/SAMEnrollmentClient.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/SAMEnrollmentClient.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/SAMEnrollmentClient.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/SAMEnrollmentClient.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="samenrollmentclient">SAMEnrollmentClient</h1>
+<p><a href="../resources.html#samenrollmentclient">各资源的配置</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: mobility.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>将本机注册请求提交至引导 RR ControlAPI，取得允许的拓扑，保存为动态 SAMRRSet 及可选 direct 对等组供已有控制器使用，不创建云端基础设施。</p>
+<h2 id="指定条件与引用关系">指定条件与引用关系</h2>
+<ul>
+<li>claimRef 须解析为本机 SAMEnrollmentClaim，运行时该请求的 rrSetRef 须为 SAMRRSet/name。leaf 请求可引用远端策略，不需在本机复制 SAMEnrollmentPolicy。</li>
+<li>至少需一个 bootstrapEndpoints 或 rrSocket，两者不互斥。先使用 Unix 套接字，再依次使用 HTTP(S) 端点。普通接纳可使用成功的 RR 响应；direct 拓扑要求配置端点间一致，无法安全接纳时保留 RR 路径。</li>
+<li>禁用 direct-mesh 时，会先移除缓存 direct 拓扑，再联系可能无法连接的 RR。客户端重试/更新状态会保存，拓扑更新不代表隧道或 BGP 已运行。</li>
+</ul>
+<h2 id="yaml定义">YAML定义</h2>
+<p>此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。</p>
+<pre><code class="language-yaml">- apiVersion: mobility.routerd.net/v1alpha1
+  kind: SAMEnrollmentClient
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    bootstrapEndpoints: # 选填; array
+      - &quot;&lt;string&gt;&quot; # string
+    claimRef: &quot;&lt;string&gt;&quot; # 必填; string
+    controlAPITLS: # 选填; object
+      caFile: &quot;&lt;string&gt;&quot; # 选填; string
+      certFile: &quot;&lt;string&gt;&quot; # 选填; string
+      insecureSkipVerify: true # 选填; boolean
+      keyFile: &quot;&lt;string&gt;&quot; # 选填; string
+      serverName: &quot;&lt;string&gt;&quot; # 选填; string
+    controlAPITokenFrom: # 选填; object
+      base64: true # 选填; boolean
+      env: &quot;&lt;string&gt;&quot; # 选填; string
+      file: &quot;&lt;string&gt;&quot; # 选填; string
+    retryBackoff: # 选填; object
+      max: &quot;&lt;string&gt;&quot; # 选填; string
+      min: &quot;&lt;string&gt;&quot; # 选填; string
+    rrSocket: &quot;&lt;string&gt;&quot; # 选填; string
+    stateTTLRefreshBefore: &quot;&lt;string&gt;&quot; # 选填; string
+</code></pre>
+<h2 id="字段含义与默认值">字段含义与默认值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>字段含义与默认值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.claimRef</code></td>
+<td>必填同一 Router 声明的 SAMEnrollmentClaim/name，不使用状态字段选择器。</td>
+</tr>
+<tr>
+<td><code>spec.bootstrapEndpoints</code></td>
+<td>可选且有顺序的绝对 HTTP(S) ControlAPI URL，须含主机。未提供 rrSocket 时至少一个，不自动发现。每个注册请求目前使用 10 秒请求期限。</td>
+</tr>
+<tr>
+<td><code>spec.controlAPITokenFrom</code></td>
+<td>仅供 HTTP(S) 客户端使用的可选 Bearer 令牌来源。省略不传 Bearer 标头，提供时 file/env 只能指定一项，与请求的 join HMAC 凭据不同。</td>
+</tr>
+<tr>
+<td><code>spec.controlAPITokenFrom.file</code></td>
+<td>路由器本机原始令牌文件，与 env 互斥。会移除首尾空白；配置 HTTP 端点时，缺失、无法读取或为空会失败。</td>
+</tr>
+<tr>
+<td><code>spec.controlAPITokenFrom.env</code></td>
+<td>存放令牌的 routerd 进程环境变量名称，与 file 互斥，不是环境文件路径。</td>
+</tr>
+<tr>
+<td><code>spec.controlAPITokenFrom.base64</code></td>
+<td>默认 false，true 执行标准 Base64 解码并移除解码后首尾空白，不是加密。</td>
+</tr>
+<tr>
+<td><code>spec.controlAPITLS</code></td>
+<td>可选 HTTPS 客户端配置，不用于 Unix 套接字，不会将 http URL 自动转成 https。</td>
+</tr>
+<tr>
+<td><code>spec.controlAPITLS.caFile</code></td>
+<td>可选 PEM CA 文件，提供时以文件内证书替换客户端根证书集；省略使用普通信任配置。</td>
+</tr>
+<tr>
+<td><code>spec.controlAPITLS.certFile</code></td>
+<td>可选客户端证书文件，须与 keyFile 同时配置，没有默认证书或自动生成的凭据。</td>
+</tr>
+<tr>
+<td><code>spec.controlAPITLS.keyFile</code></td>
+<td>可选客户端私钥文件，须与 certFile 同时配置。</td>
+</tr>
+<tr>
+<td><code>spec.controlAPITLS.serverName</code></td>
+<td>可选 TLS SNI/验证名称覆盖，空值依 URL 主机行为，不更改端点路由。</td>
+</tr>
+<tr>
+<td><code>spec.controlAPITLS.insecureSkipVerify</code></td>
+<td>默认 false。true 禁用服务器证书链及主机名验证，对纯 HTTP URL 无效。</td>
+</tr>
+<tr>
+<td><code>spec.rrSocket</code></td>
+<td>可选本机 RR Unix 套接字绝对路径，可与 HTTP(S) 端点并用。Unix 客户端不使用 Bearer 令牌或 TLS。</td>
+</tr>
+<tr>
+<td><code>spec.stateTTLRefreshBefore</code></td>
+<td>提前更新的 Go duration，默认 10 分钟。若大于等于观察到的正 RR 租约长度，运行时改用一半租约以避免立即重复更新。验证仅检查可解析性，不强制正值，请用正值。</td>
+</tr>
+<tr>
+<td><code>spec.retryBackoff</code></td>
+<td>可选指数重试配置，失败时由 min 倍增至 max。direct 拓扑恢复另有较短的收敛重试路径。</td>
+</tr>
+<tr>
+<td><code>spec.retryBackoff.min</code></td>
+<td>Go duration，默认 10 秒。仅验证可解析性，接受零或负值；请用正值避免立即或排在过去的重试。</td>
+</tr>
+<tr>
+<td><code>spec.retryBackoff.max</code></td>
+<td>Go duration，默认 15 分钟。min/max 都明确指定时要求 max&gt;=min，请用正值。验证比较不纳入省略字段的默认值。</td>
+</tr>
+</tbody>
+</table>
+<p>实现: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_mobility.go">pkg/config/validate_mobility.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/mobility/enrollmentclient.go">pkg/controller/mobility/enrollmentclient.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/mobility/core_helpers.go">pkg/controller/mobility/core_helpers.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controlapi/client.go">pkg/controlapi/client.go</a></p>
+<h2 id="可引用的状态字段">可引用的状态字段</h2>
+<p>常规状态引用验证接受此 Kind 的下列字段名称。列于允许列表不保证目前有值，请检查实际状态。这些是输出，不是 YAML spec 配置。</p>
+<p><code>phase</code>, <code>claimRef</code>, <code>observedRRSet</code>, <code>observedDirectPeerGroup</code>, <code>lastAttempt</code>, <code>lastSuccess</code>, <code>nextAttempt</code>, <code>backoff</code>, <code>failureCount</code>, <code>directTopologyPending</code>, <code>reason</code></p>
+<p><a href="/examples/cloudedge-dynamic-leaf-a-wg.yaml">配置示例</a></p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件与引用关系">指定条件与引用关系</a></li>
+<li><a href="#yaml定义">YAML定义</a></li>
+<li><a href="#字段含义与默认值">字段含义与默认值</a></li>
+<li><a href="#可引用的状态字段">可引用的状态字段</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/reference/resources/SAMEnrollmentClient.md">GitHub</a></div></footer></body></html>

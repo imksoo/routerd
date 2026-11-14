@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LogRetention · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/reference/resources/LogRetention.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/reference/resources/LogRetention.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/LogRetention.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/LogRetention.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/LogRetention.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="logretention">LogRetention</h1>
+<p><a href="../resources.html#logretention">各资源的配置</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: system.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>清理运维日志的SQLite记录，并可在删除前转发保存；不管理任意OS日志文件。</p>
+<h2 id="指定条件与引用关系">指定条件与引用关系</h2>
+<ul>
+<li>首次协调执行，之后距lastRunAt至少23小时才再次执行。省略schedule与daily都按经过时间判断，不是午夜cron；dry-run不开启或清理外部日志DB。</li>
+<li>事件日志另有24小时及记录数、容量上限；此处设置更长时间不会延长事件日志上限。</li>
+<li>指定sinks时，每条记录删除前先转发；保存端错误会阻止该条记录成功删除。当前LogSink的otlp不会发送，不能作为有效保存目的地。</li>
+</ul>
+<h2 id="yaml定义">YAML定义</h2>
+<p>此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。</p>
+<pre><code class="language-yaml">- apiVersion: system.routerd.net/v1alpha1
+  kind: LogRetention
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    retention: &quot;&lt;string&gt;&quot; # 必填; string
+    schedule: &quot;&quot; # 选填; string; enum=[&quot;&quot;, &quot;daily&quot;]
+    signals: # 选填; array
+      - &quot;events&quot; # string; enum=[&quot;events&quot;, &quot;accessLogs&quot;, &quot;pluginRuns&quot;, &quot;dnsQueries&quot;, &quot;trafficFlows&quot;, &quot;firewallEvents&quot;, &quot;dhcpFingerprints&quot;]
+    sinks: # 选填; array
+      - &quot;&lt;string&gt;&quot; # string
+    vacuum: true # 选填; boolean
+</code></pre>
+<h2 id="字段含义与默认值">字段含义与默认值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>字段含义与默认值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.retention</code></td>
+<td>保留期限，必填且无默认值，例如7d或24h。d为整数天数乘24小时，其他使用Go duration。验证器仅解析，不要求正值。 保留期限请使用正值。</td>
+</tr>
+<tr>
+<td><code>spec.signals</code></td>
+<td>要清理的日志类别；默认包含events、accessLogs、pluginRuns、dnsQueries、trafficFlows、firewallEvents、dhcpFingerprints全部七种。DB路径来自相关日志资源或OS默认值。</td>
+</tr>
+<tr>
+<td><code>spec.sinks</code></td>
+<td>删除前保存目的地，默认空表示不保存。可用LogSink/名称或纯名称；Router整体验证要求目标存在，执行时排除禁用输出端。</td>
+</tr>
+<tr>
+<td><code>spec.vacuum</code></td>
+<td>删除后是否对目标SQLite执行VACUUM；默认false，用于整理DB空间而非选择保留对象。</td>
+</tr>
+<tr>
+<td><code>spec.schedule</code></td>
+<td>省略或daily；均为首次及之后至少23小时才执行。不支持时刻或cron表达式。</td>
+</tr>
+</tbody>
+</table>
+<p>实现: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_system.go">pkg/config/validate_system.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go">pkg/config/diagnostics.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/logretention.go">pkg/controller/chain/logretention.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/logstore/retention.go">pkg/logstore/retention.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/eventlog/eventlog.go">pkg/eventlog/eventlog.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a></p>
+<h2 id="可引用的状态字段">可引用的状态字段</h2>
+<p>常规状态引用验证接受此 Kind 的下列字段名称。列于允许列表不保证目前有值，请检查实际状态。这些是输出，不是 YAML spec 配置。</p>
+<p><code>phase</code>, <code>targets</code>, <code>updatedAt</code></p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件与引用关系">指定条件与引用关系</a></li>
+<li><a href="#yaml定义">YAML定义</a></li>
+<li><a href="#字段含义与默认值">字段含义与默认值</a></li>
+<li><a href="#可引用的状态字段">可引用的状态字段</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/reference/resources/LogRetention.md">GitHub</a></div></footer></body></html>

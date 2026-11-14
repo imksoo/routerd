@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SAMSubnetPolicy · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/reference/resources/SAMSubnetPolicy.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/reference/resources/SAMSubnetPolicy.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/SAMSubnetPolicy.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/SAMSubnetPolicy.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/SAMSubnetPolicy.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="samsubnetpolicy">SAMSubnetPolicy</h1>
+<p><a href="../resources.html#samsubnetpolicy">各资源的配置</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: mobility.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>将分片分配发布为联邦事件，让各节点将 MobilityPool 所有权发现限缩至负责的 IPv4 子网。这是发现范围分配，不是 IP 路由资源。</p>
+<h2 id="指定条件与引用关系">指定条件与引用关系</h2>
+<ul>
+<li>sourcePrefix 及所有分片须为 IPv4 CIDR。分片须位于 sourcePrefix 内且不可重叠，但不要求完整覆盖源前缀。每个分片至少需一个非空且不重复的分配节点。</li>
+<li>分配事件 10 分钟后过期，由协调程序更新。分配缺失、过期或事件存储读取错误时，不应用分片过滤，而非拒绝全部。不可仅以此资源作为授权边界。</li>
+</ul>
+<h2 id="yaml定义">YAML定义</h2>
+<p>此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。</p>
+<pre><code class="language-yaml">- apiVersion: mobility.routerd.net/v1alpha1
+  kind: SAMSubnetPolicy
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    groupRef: &quot;&lt;string&gt;&quot; # 必填; string
+    poolRef: &quot;&lt;string&gt;&quot; # 必填; string
+    shards: # 必填; array
+      - # object
+        assignedNodes: # 必填; array
+          - &quot;&lt;string&gt;&quot; # string
+        prefix: &quot;&lt;string&gt;&quot; # 必填; string
+    sourcePrefix: &quot;&lt;string&gt;&quot; # 必填; string
+</code></pre>
+<h2 id="字段含义与默认值">字段含义与默认值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>字段含义与默认值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.sourcePrefix</code></td>
+<td>必填 IPv4 CIDR，限制所有分片范围，无默认值。用于包含验证，不应用为地址或路由。</td>
+</tr>
+<tr>
+<td><code>spec.poolRef</code></td>
+<td>必填 MobilityPool metadata.name，作为事件载荷精确匹配键，不是 Kind/name。目前验证只检查非空，不确认资源存在，须符合使用该事件的池名称。</td>
+</tr>
+<tr>
+<td><code>spec.groupRef</code></td>
+<td>必填 EventGroup 引用，供发布及读取分配使用。运行时须能解析组，结构验证仅检查非空。请与目标 MobilityPool.groupRef 使用相同引用写法。</td>
+</tr>
+<tr>
+<td><code>spec.shards</code></td>
+<td>必填且不可为空的不重叠子网及负责 nodeRef 列表。同一节点可出现在不同分片。</td>
+</tr>
+<tr>
+<td><code>spec.shards[].prefix</code></td>
+<td>必填且位于 sourcePrefix 内的 IPv4 CIDR，可等于整个源前缀。拒绝分片间重复或重叠。</td>
+</tr>
+<tr>
+<td><code>spec.shards[].assignedNodes</code></td>
+<td>必填且不可为空的 nodeRef 列表，同一分片内不可重复。目前不检查 SAMNodeSet 成员资格，值须符合消费端 EventGroup 本机节点标识。</td>
+</tr>
+</tbody>
+</table>
+<p>实现: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_mobility.go">pkg/config/validate_mobility.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/mobility/shard_controller.go">pkg/controller/mobility/shard_controller.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/mobility/discovery.go">pkg/controller/mobility/discovery.go</a></p>
+<h2 id="可引用的状态字段">可引用的状态字段</h2>
+<p>常规状态引用验证接受此 Kind 的下列字段名称。列于允许列表不保证目前有值，请检查实际状态。这些是输出，不是 YAML spec 配置。</p>
+<p>此 Kind 未登记常规状态引用的允许字段。</p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件与引用关系">指定条件与引用关系</a></li>
+<li><a href="#yaml定义">YAML定义</a></li>
+<li><a href="#字段含义与默认值">字段含义与默认值</a></li>
+<li><a href="#可引用的状态字段">可引用的状态字段</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/reference/resources/SAMSubnetPolicy.md">GitHub</a></div></footer></body></html>

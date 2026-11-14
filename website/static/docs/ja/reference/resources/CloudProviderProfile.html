@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CloudProviderProfile · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/reference/resources/CloudProviderProfile.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/reference/resources/CloudProviderProfile.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/CloudProviderProfile.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/reference/resources/CloudProviderProfile.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/CloudProviderProfile.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="cloudproviderprofile">CloudProviderProfile</h1>
+<p><a href="../resources.html#cloudproviderprofile">リソース別の設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: hybrid.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>プロバイダー操作の計画で使う識別情報・対象メタデータの既定値です。この宣言自体はクラウド認証や資源作成を行いません。</p>
+<h2 id="指定条件と参照関係">指定条件と参照関係</h2>
+<ul>
+<li>provider、空でないcapabilities、auth.mode・auth.commandが必須です。認証設定は宣言を検証するだけで、現行実行処理はauth.commandを実行しません。プロバイダー変更はProviderActionPolicyに従う別の実行用Pluginが行います。</li>
+<li>Mobilityのcaptureなどの利用側はmetadata.nameでプロファイルを選び、共通の状態値参照ではありません。subscriptionID・resourceGroupは操作対象の値が未指定の場合にだけ補い、明示値を上書きしません。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
+<pre><code class="language-yaml">- apiVersion: hybrid.routerd.net/v1alpha1
+  kind: CloudProviderProfile
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    auth: # 必須; object
+      command: &quot;&lt;string&gt;&quot; # 任意; string
+      mode: &quot;external-command&quot; # 必須; string; enum=[&quot;external-command&quot;]
+    capabilities: # 必須; array
+      - &quot;&lt;string&gt;&quot; # string
+    provider: &quot;azure&quot; # 必須; string; enum=[&quot;azure&quot;, &quot;aws&quot;, &quot;oci&quot;, &quot;gcp&quot;]
+    resourceGroup: &quot;&lt;string&gt;&quot; # 任意; string
+    subscriptionID: &quot;&lt;string&gt;&quot; # 任意; string
+</code></pre>
+<h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>項目の意味と既定値</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.provider</code></td>
+<td>azure・aws・oci・gcpが必須で、既定値はありません。計画・実行Plugin選択用の識別子で、認証情報を自動検出する指定ではありません。</td>
+</tr>
+<tr>
+<td><code>spec.subscriptionID</code></td>
+<td>対象サブスクリプションIDで、既定は空です。対象のsubscriptionIdが未設定の場合に補い、実在確認やログインは行いません。</td>
+</tr>
+<tr>
+<td><code>spec.resourceGroup</code></td>
+<td>操作対象のresourceGroupの補完値で、既定は空です。資源グループの作成・検証は行いません。</td>
+</tr>
+<tr>
+<td><code>spec.capabilities</code></td>
+<td>空でない文字列一覧が必須で、空要素は不可です。現行の検証は既知の語彙に制限せず、実行ポリシーの操作許可リストとしても扱いません。</td>
+</tr>
+<tr>
+<td><code>spec.auth</code></td>
+<td>必須の認証宣言です。現行実装は検証だけを行い、コマンドを呼び出しません。</td>
+</tr>
+<tr>
+<td><code>spec.auth.mode</code></td>
+<td>external-commandが必須で、唯一の許可値です。auth.commandを常駐サービスとして起動するものではありません。</td>
+</tr>
+<tr>
+<td><code>spec.auth.command</code></td>
+<td>空でない宣言が必須で、既定値はありません。現行の実行処理は実行せず、そこから取得した認証情報を渡す処理もありません。</td>
+</tr>
+</tbody>
+</table>
+<p>実装: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_hybrid.go">pkg/config/validate_hybrid.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/mobility/planner.go">pkg/controller/mobility/planner.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/provideraction/policy.go">pkg/provideraction/policy.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/provideraction/engine.go">pkg/provideraction/engine.go</a></p>
+<h2 id="状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</h2>
+<p>通常の状態値参照の検証で、このKindについて許可するフィールド名です。許可一覧にあるだけでは値の生成・取得を保証しないため、実際の状態を確認してください。YAMLのspecに設定する項目ではなく出力です。</p>
+<p><code>phase</code>, <code>provider</code>, <code>capabilities</code></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
+<li><a href="#状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/reference/resources/CloudProviderProfile.md">GitHub</a></div></footer></body></html>

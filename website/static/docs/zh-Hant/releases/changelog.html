@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>變更記錄 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/releases/changelog.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/releases/changelog.html" lang="en" hreflang="en">English</a><a href="/docs/ja/releases/changelog.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/releases/changelog.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/releases/changelog.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="變更記錄">變更記錄</h1>
+<p>routerd 的版本歷程。格式遵循 <a href="https://keepachangelog.com/zh-TW/">Keep a Changelog</a>。
+變更分類為「新增」「變更」「棄用」「移除」「修正」「安全性」。
+但版號不採用 Semantic Versioning，而是使用日期與時間型的 <code>vYYYYMMDD.HHmm</code> 格式。
+本軟體仍在 v1alpha1 階段，版本之間可能含有破壞性變更。</p>
+<h2 id="unreleased">Unreleased</h2>
+<ul>
+<li>移除瀏覽器設定精靈，改為發布包含所有資源種類YAML定義的Markdown文件。</li>
+</ul>
+<h2 id="v202611140631">v20261114.0631</h2>
+<h3 id="fixed">Fixed</h3>
+<ul>
+<li>將空的 IPv4 位址清單視為尚未設定的 IPIP 介面，讓首次啟動可繼續配置位址。</li>
+<li>Live ISO 採用既有 casper <code>noprompt</code> 選項，移除重新啟動時等待媒體移除確認的互動步驟。</li>
+</ul>
+<h2 id="v202611140607">v20261114.0607</h2>
+<h3 id="changed">Changed</h3>
+<ul>
+<li>簡化型別化設定存取、SQLite 儲存層、狀態轉換、事件處理、MTU 選擇、SAM 輸入解碼與 Linux IPIP 觀測，移除未使用的相容路徑及測試專用程式碼。</li>
+<li>將 PD 租約集中至單一權威狀態並統一儲存欄位定義，保留身分、期限及舊前綴。</li>
+</ul>
+<h3 id="fixed_1">Fixed</h3>
+<ul>
+<li>daemon 重新啟動後恢復相符的已套用設定世代。</li>
+<li>設定變更時停止舊 EventRule 的待處理計時器，並於設定儲存成功後清理過時狀態。</li>
+</ul>
+<p><a href="https://github.com/imksoo/routerd/releases">Release history</a></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#unreleased">Unreleased</a></li>
+<li><a href="#v202611140631">v20261114.0631</a><ul>
+<li><a href="#fixed">Fixed</a></li>
+</ul>
+</li>
+<li><a href="#v202611140607">v20261114.0607</a><ul>
+<li><a href="#changed">Changed</a></li>
+<li><a href="#fixed_1">Fixed</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/releases/changelog.md">GitHub</a></div></footer></body></html>

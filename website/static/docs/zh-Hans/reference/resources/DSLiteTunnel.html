@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DSLiteTunnel · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/reference/resources/DSLiteTunnel.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/reference/resources/DSLiteTunnel.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/DSLiteTunnel.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/DSLiteTunnel.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/DSLiteTunnel.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="dslitetunnel">DSLiteTunnel</h1>
+<p><a href="../resources.html#dslitetunnel">各资源的配置</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>向 AFTR 以 IPv6 封装 IPv4。隧道配置、IPv4 默认路由、NAT 与连通检查是不同事项。</p>
+<h2 id="指定条件与引用关系">指定条件与引用关系</h2>
+<ul>
+<li>禁用时仍需 interface 及 aftrFrom/aftrFQDN/aftrIPv6/remoteAddress 至少一项。来源可并用，按此顺序尝试至成功。</li>
+<li>localAddress 是外层 IPv6 源地址，但目前 localAddressFrom 选择内层 IPv4 源地址，两者不可互换。内层源地址默认 192.0.0.2，远端 192.0.0.1。无 IPv4 来源引用时使用默认值。</li>
+<li>AFTR／本机／依赖值缺失时为 Pending。Up 仅表示隧道与链路配置，不保证 AFTR 或互联网可达。启用条件为假或禁用时会移除未使用隧道；仅依赖失败会跳过协调，不保证立即删除。</li>
+<li>Linux 使用 ip6tnl/ipip6，FreeBSD 使用 gif。非 gif 名称会确定性映射至 gif100–gif999，实际名称发布于状态。已移除的 aftrSource/ready_when 会被拒绝，请用 aftrFrom/dependsOn。</li>
+</ul>
+<h2 id="yaml定义">YAML定义</h2>
+<p>此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DSLiteTunnel
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    aftrAddressOrdinal: 1 # 选填; integer; minimum=1
+    aftrAddressSelection: &quot;ordinal&quot; # 选填; string; enum=[&quot;ordinal&quot;, &quot;ordinalModulo&quot;]
+    aftrDNSServers: # 选填; array
+      - &quot;&lt;string&gt;&quot; # string
+    aftrFQDN: &quot;&lt;string&gt;&quot; # 选填; string
+    aftrFrom: # 选填; object
+      field: &quot;&lt;string&gt;&quot; # 选填; string
+      optional: true # 选填; boolean
+      resource: &quot;&lt;string&gt;&quot; # 必填; string
+    aftrIPv6: &quot;&lt;string&gt;&quot; # 选填; string
+    defaultRoute: true # 选填; boolean
+    dependsOn: # 选填; array
+      - # object
+        equals: &quot;&lt;string&gt;&quot; # 选填; string
+        field: &quot;&lt;string&gt;&quot; # 选填; string
+        notEmpty: true # 选填; boolean
+        optional: true # 选填; boolean
+        phase: &quot;&lt;string&gt;&quot; # 选填; string
+        resource: &quot;&lt;string&gt;&quot; # 必填; string
+    enabled: true # 选填; boolean
+    encapsulationLimit: &quot;&lt;string&gt;&quot; # 选填; string
+    interface: &quot;&lt;string&gt;&quot; # 必填; string
+    localAddress: &quot;&lt;string&gt;&quot; # 选填; string
+    localAddressFrom: # 选填; object
+      field: &quot;&lt;string&gt;&quot; # 选填; string
+      optional: true # 选填; boolean
+      resource: &quot;&lt;string&gt;&quot; # 必填; string
+    localAddressSource: &quot;interface&quot; # 选填; string; enum=[&quot;interface&quot;, &quot;static&quot;, &quot;delegatedAddress&quot;]
+    localAddressSuffix: &quot;&lt;string&gt;&quot; # 选填; string
+    localDelegatedAddress: &quot;&lt;string&gt;&quot; # 选填; string
+    mtu: 1280 # 选填; integer; minimum=1280; maximum=65535
+    remoteAddress: &quot;&lt;string&gt;&quot; # 选填; string
+    routeMetric: 0 # 选填; integer; minimum=0
+    tunnelName: &quot;&lt;string&gt;&quot; # 选填; string
+    when: # 选填; object
+      state: # 选填; object
+        &quot;&lt;key&gt;&quot;: # 选填; object
+          contains: &quot;&lt;string&gt;&quot; # 选填; string
+          equals: &quot;&lt;string&gt;&quot; # 选填; string
+          exists: true # 选填; boolean
+          for: &quot;&lt;string&gt;&quot; # 选填; string
+          in: # 选填; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # 选填; string
+          status: &quot;set&quot; # 选填; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<h2 id="字段含义与默认值">字段含义与默认值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>字段含义与默认值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.interface</code></td>
+<td>必填且已声明的逻辑底层接口，正常引用验证检查其存在。</td>
+</tr>
+<tr>
+<td><code>spec.tunnelName</code></td>
+<td>可选设备名称，默认 metadata.name；FreeBSD 可能使用上述不同的 gif 名称。</td>
+</tr>
+<tr>
+<td><code>spec.enabled</code></td>
+<td>默认 true。false 移除未使用配置隧道并报告 Disabled，仍须通过验证。</td>
+</tr>
+<tr>
+<td><code>spec.aftrFQDN</code></td>
+<td>可选 AFTR 主机名，不可有空白或斜线。在 aftrFrom 之后、固定地址之前尝试。</td>
+</tr>
+<tr>
+<td><code>spec.aftrIPv6</code></td>
+<td>可选纯 AFTR IPv6 地址，在 aftrFQDN 之后尝试，无默认值。</td>
+</tr>
+<tr>
+<td><code>spec.remoteAddress</code></td>
+<td>可选 IPv6 AFTR 替代值，最后尝试，不是内层 IPv4 目的地。</td>
+</tr>
+<tr>
+<td><code>spec.aftrFrom</code></td>
+<td>可选通用 resource/field 来源，通常为 DHCPv6 提供的 AFTR 名称。需存在且为提供字段。运行时另读同一资源的 dnsServers 并与 aftrDNSServers 合并。</td>
+</tr>
+<tr>
+<td><code>spec.aftrDNSServers</code></td>
+<td>可选纯 IPv4/IPv6 DNS 服务器，查询端口 53。无明确或来源服务器时，运行时默认 127.0.0.1:1053。此声明不启动解析器，请提供可达服务器。</td>
+</tr>
+<tr>
+<td><code>spec.aftrAddressOrdinal</code></td>
+<td>AAAA 选择索引从 1 开始，默认 1。明确指定索引或模式时先按 IPv6 字符串字典序排序；两者省略则保留解析器顺序。</td>
+</tr>
+<tr>
+<td><code>spec.aftrAddressSelection</code></td>
+<td>默认 ordinal，超出范围会失败。ordinalModulo 将索引减 1 后按条数循环，不在 AFTR 间分配流量。</td>
+</tr>
+<tr>
+<td><code>spec.localAddress</code></td>
+<td>可选固定外层 IPv6 源地址；localAddressSource:static 时必填，不是内层 IPv4 源地址。</td>
+</tr>
+<tr>
+<td><code>spec.localAddressFrom</code></td>
+<td>可选的内层 IPv4 通用状态来源，先读状态，再读声明的 IPv4StaticAddress.address。必要来源缺值为 Pending；optional:true 使用 192.0.0.2。结果须为可用单播 IPv4。</td>
+</tr>
+<tr>
+<td><code>spec.localAddressSource</code></td>
+<td>默认 interface 在无 localAddress 时寻找可用全局 IPv6。static 需 localAddress。delegatedAddress 从 localDelegatedAddress 推导，可能先配置 /128 并等待 DAD。</td>
+</tr>
+<tr>
+<td><code>spec.localDelegatedAddress</code></td>
+<td>现有 IPv6DelegatedAddress 裸名称，delegatedAddress 模式必填。其他模式指定时也检查其存在。</td>
+</tr>
+<tr>
+<td><code>spec.localAddressSuffix</code></td>
+<td>可选 IPv6 后缀。委派模式优先顺：此值→引用的 addressSuffix→::1。interface 模式也可用此后缀推导源地址。</td>
+</tr>
+<tr>
+<td><code>spec.defaultRoute</code></td>
+<td>默认 false。FreeBSD 运行时可变更／新增经 192.0.0.1 的默认路由。Linux 隧道控制器不按此安装 IPv4 默认，请用 IPv4Route/EgressRoutePolicy。</td>
+</tr>
+<tr>
+<td><code>spec.routeMetric</code></td>
+<td>可选非负整数，解码默认 0。目前 DS-Lite 执行流程不将它传入默认路由配置。</td>
+</tr>
+<tr>
+<td><code>spec.mtu</code></td>
+<td>可选 1280–65535，运行时默认 1460。应用至隧道链路，不保证底层路径支持此大小。</td>
+</tr>
+<tr>
+<td><code>spec.encapsulationLimit</code></td>
+<td>Linux encaplimit 参数，默认 none。此处无详细值验证，不合法值可使 ip 命令失败。FreeBSD 执行流程不使用。</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>可选通用启用条件，默认无条件；为假时移除未使用配置隧道。</td>
+</tr>
+<tr>
+<td><code>spec.dependsOn</code></td>
+<td>可选通用依赖条件 AND 列表，默认空。不满足时为 Pending/DependsOnFalse 并跳过更新。</td>
+</tr>
+</tbody>
+</table>
+<p>实现: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_wan.go">pkg/config/validate_wan.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/phase2.go">pkg/controller/chain/phase2.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/ipv4_main_routes.go">pkg/controller/chain/ipv4_main_routes.go</a></p>
+<h2 id="可引用的状态字段">可引用的状态字段</h2>
+<p>常规状态引用验证接受此 Kind 的下列字段名称。列于允许列表不保证目前有值，请检查实际状态。这些是输出，不是 YAML spec 配置。</p>
+<p><code>phase</code>, <code>interface</code>, <code>device</code>, <code>tunnelName</code>, <code>localIPv6</code>, <code>innerLocalIPv4</code>, <code>innerRemoteIPv4</code>, <code>localInterface</code>, <code>aftrName</code>, <code>aftrIPv6</code>, <code>mtu</code>, <code>dryRun</code></p>
+<p><a href="/examples/example-dslite-home.yaml">配置示例</a></p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件与引用关系">指定条件与引用关系</a></li>
+<li><a href="#yaml定义">YAML定义</a></li>
+<li><a href="#字段含义与默认值">字段含义与默认值</a></li>
+<li><a href="#可引用的状态字段">可引用的状态字段</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/reference/resources/DSLiteTunnel.md">GitHub</a></div></footer></body></html>

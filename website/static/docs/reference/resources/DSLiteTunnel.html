@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DSLiteTunnel · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/reference/resources/DSLiteTunnel.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/reference/resources/DSLiteTunnel.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/reference/resources/DSLiteTunnel.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/DSLiteTunnel.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/DSLiteTunnel.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="dslitetunnel">DSLiteTunnel</h1>
+<p><a href="../resources.html#dslitetunnel">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Encapsulate IPv4 in IPv6 toward an AFTR. Tunnel setup, an IPv4 default route, NAT and reachability checks are separate concerns.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>interface and at least one of aftrFrom/aftrFQDN/aftrIPv6/remoteAddress are required even when disabled. AFTR sources may coexist; runtime tries them in that order until one resolves.</li>
+<li>localAddress is the outer IPv6 source, but localAddressFrom currently selects the INNER IPv4 source. They are not interchangeable. The inner source defaults 192.0.0.2 and inner remote is 192.0.0.1. No IPv4-from reference means the default inner source.</li>
+<li>Missing AFTR/local/dependency values produce Pending. Up records configured tunnel/link state, not AFTR reachability or working Internet access. A false activation condition or disabled resource removes an unused tunnel; dependency failure alone skips reconciliation rather than promising immediate teardown.</li>
+<li>Linux uses ip6tnl mode ipip6. FreeBSD uses a gif device; a requested non-gif name maps deterministically to gif100–gif999 and the actual name is published in status. Removed aftrSource and ready_when are rejected; use aftrFrom and dependsOn.</li>
+</ul>
+<h2 id="yaml-definition">YAML definition</h2>
+<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DSLiteTunnel
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    aftrAddressOrdinal: 1 # optional; integer; minimum=1
+    aftrAddressSelection: &quot;ordinal&quot; # optional; string; enum=[&quot;ordinal&quot;, &quot;ordinalModulo&quot;]
+    aftrDNSServers: # optional; array
+      - &quot;&lt;string&gt;&quot; # string
+    aftrFQDN: &quot;&lt;string&gt;&quot; # optional; string
+    aftrFrom: # optional; object
+      field: &quot;&lt;string&gt;&quot; # optional; string
+      optional: true # optional; boolean
+      resource: &quot;&lt;string&gt;&quot; # Required; string
+    aftrIPv6: &quot;&lt;string&gt;&quot; # optional; string
+    defaultRoute: true # optional; boolean
+    dependsOn: # optional; array
+      - # object
+        equals: &quot;&lt;string&gt;&quot; # optional; string
+        field: &quot;&lt;string&gt;&quot; # optional; string
+        notEmpty: true # optional; boolean
+        optional: true # optional; boolean
+        phase: &quot;&lt;string&gt;&quot; # optional; string
+        resource: &quot;&lt;string&gt;&quot; # Required; string
+    enabled: true # optional; boolean
+    encapsulationLimit: &quot;&lt;string&gt;&quot; # optional; string
+    interface: &quot;&lt;string&gt;&quot; # Required; string
+    localAddress: &quot;&lt;string&gt;&quot; # optional; string
+    localAddressFrom: # optional; object
+      field: &quot;&lt;string&gt;&quot; # optional; string
+      optional: true # optional; boolean
+      resource: &quot;&lt;string&gt;&quot; # Required; string
+    localAddressSource: &quot;interface&quot; # optional; string; enum=[&quot;interface&quot;, &quot;static&quot;, &quot;delegatedAddress&quot;]
+    localAddressSuffix: &quot;&lt;string&gt;&quot; # optional; string
+    localDelegatedAddress: &quot;&lt;string&gt;&quot; # optional; string
+    mtu: 1280 # optional; integer; minimum=1280; maximum=65535
+    remoteAddress: &quot;&lt;string&gt;&quot; # optional; string
+    routeMetric: 0 # optional; integer; minimum=0
+    tunnelName: &quot;&lt;string&gt;&quot; # optional; string
+    when: # optional; object
+      state: # optional; object
+        &quot;&lt;key&gt;&quot;: # optional; object
+          contains: &quot;&lt;string&gt;&quot; # optional; string
+          equals: &quot;&lt;string&gt;&quot; # optional; string
+          exists: true # optional; boolean
+          for: &quot;&lt;string&gt;&quot; # optional; string
+          in: # optional; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # optional; string
+          status: &quot;set&quot; # optional; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.interface</code></td>
+<td>Required declared logical underlay interface; normal reference validation requires it to exist.</td>
+</tr>
+<tr>
+<td><code>spec.tunnelName</code></td>
+<td>Optional desired device name, default metadata.name. FreeBSD may publish a different gif name as described above.</td>
+</tr>
+<tr>
+<td><code>spec.enabled</code></td>
+<td>Default true. False removes an unused configured tunnel and reports Disabled; validation still applies.</td>
+</tr>
+<tr>
+<td><code>spec.aftrFQDN</code></td>
+<td>Optional AFTR hostname; no whitespace or slash. Tried after aftrFrom, before literal alternatives.</td>
+</tr>
+<tr>
+<td><code>spec.aftrIPv6</code></td>
+<td>Optional bare AFTR IPv6 address, tried after aftrFQDN. No default.</td>
+</tr>
+<tr>
+<td><code>spec.remoteAddress</code></td>
+<td>Optional IPv6 AFTR alternative, last in the resolution order. Not an inner IPv4 destination.</td>
+</tr>
+<tr>
+<td><code>spec.aftrFrom</code></td>
+<td>Optional common resource/field source, usually a DHCPv6-provided AFTR name. It must name an existing source and provided field. Runtime also reads dnsServers from that same resource and merges them with aftrDNSServers.</td>
+</tr>
+<tr>
+<td><code>spec.aftrDNSServers</code></td>
+<td>Optional bare IPv4/IPv6 DNS servers, queried on port 53. If no explicit or source-derived servers exist, runtime uses 127.0.0.1:1053 by default. Supply reachable DNS servers; declaring this does not start a resolver.</td>
+</tr>
+<tr>
+<td><code>spec.aftrAddressOrdinal</code></td>
+<td>One-based AAAA selection, default 1. Explicit selection sorts normalized IPv6 strings lexically before indexing; omission with no selection mode retains resolver order.</td>
+</tr>
+<tr>
+<td><code>spec.aftrAddressSelection</code></td>
+<td>ordinal by default; out-of-range ordinal fails. ordinalModulo wraps (ordinal−1) by record count. Does not distribute traffic across AFTRs.</td>
+</tr>
+<tr>
+<td><code>spec.localAddress</code></td>
+<td>Optional literal OUTER IPv6 source; required with localAddressSource: static. Not the inner IPv4 source.</td>
+</tr>
+<tr>
+<td><code>spec.localAddressFrom</code></td>
+<td>Optional common status source for INNER IPv4. Runtime first reads status, then declared IPv4StaticAddress.address. Unresolved required source yields Pending; optional true falls back to 192.0.0.2. Resolved value must be usable unicast IPv4.</td>
+</tr>
+<tr>
+<td><code>spec.localAddressSource</code></td>
+<td>interface default discovers a usable global IPv6 unless localAddress supplies one. static requires localAddress. delegatedAddress derives from localDelegatedAddress and may stage a /128 until DAD completes.</td>
+</tr>
+<tr>
+<td><code>spec.localDelegatedAddress</code></td>
+<td>Bare existing IPv6DelegatedAddress name, required for delegatedAddress mode. Validation checks any supplied reference even in other modes.</td>
+</tr>
+<tr>
+<td><code>spec.localAddressSuffix</code></td>
+<td>Optional IPv6 suffix. Delegated mode precedence: this value → referenced addressSuffix → ::1. Interface mode can also derive a source using this suffix.</td>
+</tr>
+<tr>
+<td><code>spec.defaultRoute</code></td>
+<td>Default false. FreeBSD runtime can change/add the default via 192.0.0.1. The Linux tunnel controller does not install an IPv4 default from this flag; use IPv4Route/EgressRoutePolicy.</td>
+</tr>
+<tr>
+<td><code>spec.routeMetric</code></td>
+<td>Optional nonnegative integer, decoded default 0. Current DS-Lite runtime does not pass it when configuring the default route.</td>
+</tr>
+<tr>
+<td><code>spec.mtu</code></td>
+<td>Optional 1280–65535, runtime default 1460. Applied to the tunnel link; it does not prove the underlay path supports that size.</td>
+</tr>
+<tr>
+<td><code>spec.encapsulationLimit</code></td>
+<td>Linux encaplimit argument, default none. No detailed value validation here; invalid values can fail the ip command. FreeBSD runtime does not use this argument.</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>Optional common activation predicate, default unconditional; false removes the unused configured tunnel.</td>
+</tr>
+<tr>
+<td><code>spec.dependsOn</code></td>
+<td>Optional AND-list of common dependency predicates, default empty. Unmet conditions yield Pending/DependsOnFalse and skip tunnel updates.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_wan.go">pkg/config/validate_wan.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/phase2.go">pkg/controller/chain/phase2.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/ipv4_main_routes.go">pkg/controller/chain/ipv4_main_routes.go</a></p>
+<h2 id="referenceable-status-fields">Referenceable status fields</h2>
+<p>The ordinary status-reference validator accepts these field names for this kind. This allowlist does not guarantee that every field is currently populated; inspect runtime status. These are outputs, not YAML spec fields.</p>
+<p><code>phase</code>, <code>interface</code>, <code>device</code>, <code>tunnelName</code>, <code>localIPv6</code>, <code>innerLocalIPv4</code>, <code>innerRemoteIPv4</code>, <code>localInterface</code>, <code>aftrName</code>, <code>aftrIPv6</code>, <code>mtu</code>, <code>dryRun</code></p>
+<p><a href="/examples/example-dslite-home.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
+<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
+<li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/reference/resources/DSLiteTunnel.md">GitHub</a></div></footer></body></html>

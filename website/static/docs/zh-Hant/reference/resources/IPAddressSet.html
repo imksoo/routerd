@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>IPAddressSet · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/reference/resources/IPAddressSet.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/reference/resources/IPAddressSet.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/IPAddressSet.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/IPAddressSet.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/reference/resources/IPAddressSet.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="ipaddressset">IPAddressSet</h1>
+<p><a href="../resources.html#ipaddressset">各資源的設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>在支援的 nftables NAT、路由及防火牆規則間共用固定與 DNS 解析的 IP 位址。不建立路由或啟動 DNS 服務。</p>
+<h2 id="指定條件與參照關係">指定條件與參照關係</h2>
+<ul>
+<li>addresses 或 names 至少一筆，兩者可並用。位址為單一 IPv4/IPv6，不接受 CIDR。各設定清單內重複會被拒絕；解析結果則合併並去重。</li>
+<li>使用端以裸名稱或 IPAddressSet/name 參照。支援的 nftables 使用端包含 LocalServiceRedirect、NAT44Rule/FlowDNATPinhole、EgressRoutePolicy 與 FirewallRule/FlowPinhole。未被參照時僅回報 Observed/referenced:false，不解析名稱或建立核心集合。</li>
+<li>更新前須由使用端產生器建立 nftables 集合，否則為 Pending/SetMissing。名稱透過 /etc/resolv.conf 查詢 A/AAAA，不使用 DNSUpstream 參照。部分 DNS 失敗仍可套用其餘位址；全數失敗則為 Pending/ResolveFailed，該輪不替換現有集合。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: IPAddressSet
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    addresses: # 選填; array
+      - &quot;&lt;string&gt;&quot; # string
+    names: # 選填; array
+      - &quot;&lt;string&gt;&quot; # string
+    refreshInterval: &quot;&lt;string&gt;&quot; # 選填; string
+    when: # 選填; object
+      state: # 選填; object
+        &quot;&lt;key&gt;&quot;: # 選填; object
+          contains: &quot;&lt;string&gt;&quot; # 選填; string
+          equals: &quot;&lt;string&gt;&quot; # 選填; string
+          exists: true # 選填; boolean
+          for: &quot;&lt;string&gt;&quot; # 選填; string
+          in: # 選填; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # 選填; string
+          status: &quot;set&quot; # 選填; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<h2 id="欄位意義與預設值">欄位意義與預設值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>欄位意義與預設值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.addresses</code></td>
+<td>選用的固定 IPv4/IPv6 清單，預設為空；names 為空時必填。IPv4 映射 IPv6 會轉為 IPv4，不展開子網路。</td>
+</tr>
+<tr>
+<td><code>spec.names</code></td>
+<td>選用的 DNS 名稱，預設為空；addresses 為空時必填。拒絕空名稱與去除前後空白後的重複。A/AAAA 結果與固定值合併，不展開萬用名稱。</td>
+</tr>
+<tr>
+<td><code>spec.refreshInterval</code></td>
+<td>選用 Go duration。預設為最小正 DNS TTL 的一半，最低 1m；無正 TTL 時視為 5m，因此為 2m30s。正設定值只能縮短週期，可低於 1m。0／負值可解析但不縮短。實際更新在控制器協調時執行。</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>選用的共用啟用條件，預設無條件。state/all/any 與使用端啟用行為請見共用欄位。</td>
+</tr>
+</tbody>
+</table>
+<p>實作: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_firewall.go">pkg/config/validate_firewall.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/ipaddressset.go">pkg/controller/chain/ipaddressset.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/local_service_redirect.go">pkg/render/local_service_redirect.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/resourcequery/when.go">pkg/resourcequery/when.go</a></p>
+<h2 id="可參照的狀態欄位">可參照的狀態欄位</h2>
+<p>一般狀態參照驗證接受此 Kind 的下列欄位名稱。列於允許清單不保證目前有值，請檢查實際狀態。這些是輸出，不是 YAML spec 設定。</p>
+<p><code>phase</code>, <code>addresses</code>, <code>ipv4Addresses</code>, <code>ipv6Addresses</code>, <code>updatedAt</code></p>
+<p><a href="/examples/example-local-dns-redirect.yaml">設定範例</a></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#指定條件與參照關係">指定條件與參照關係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#欄位意義與預設值">欄位意義與預設值</a></li>
+<li><a href="#可參照的狀態欄位">可參照的狀態欄位</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/reference/resources/IPAddressSet.md">GitHub</a></div></footer></body></html>

@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VXLANTunnel · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/reference/resources/VXLANTunnel.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/reference/resources/VXLANTunnel.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/VXLANTunnel.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/VXLANTunnel.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/VXLANTunnel.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="vxlantunnel">VXLANTunnel</h1>
+<p><a href="../resources.html#vxlantunnel">各资源的配置</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>管理具有静态泛洪目标及可选桥接的 Linux VXLAN 设备，不配置组播发现或动态 MAC 学习。</p>
+<h2 id="指定条件与引用关系">指定条件与引用关系</h2>
+<ul>
+<li>操作控制器在非 Linux 系统直接返回，不应用配置。此资源应使用 Linux 目标，模式验证通过不代表 FreeBSD 可运行。</li>
+<li>when 采用关闭优先：false、未解析、过期或开机前的状态会先停用再删除设备，不只是跳过更新。每个引用状态默认有效 30 秒，可用 maxAge 覆盖。验证拒绝接受 unknown 的条件。</li>
+<li>tcpMSSClamp 需要 bridge 与明确指定的 mtu &gt;=1280。生成规则时还需真正的 Bridge 资源及可解析的成员接口；全局引用验证仅确认共享接口索引中的存在。</li>
+</ul>
+<h2 id="yaml定义">YAML定义</h2>
+<p>此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: VXLANTunnel
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    bridge: &quot;&lt;string&gt;&quot; # 选填; string
+    ifname: &quot;&lt;string&gt;&quot; # 选填; string
+    localAddress: &quot;&lt;string&gt;&quot; # 必填; string
+    mtu: 0 # 选填; integer; minimum=0
+    outerDF: &quot;&quot; # 选填; string; enum=[&quot;&quot;, &quot;inherit&quot;, &quot;set&quot;, &quot;unset&quot;]
+    peers: # 选填; array
+      - &quot;&lt;string&gt;&quot; # string
+    tcpMSSClamp: true # 选填; boolean
+    udpPort: 1 # 选填; integer; minimum=1; maximum=65535
+    underlayInterface: &quot;&lt;string&gt;&quot; # 必填; string
+    vni: 1 # 必填; integer; minimum=1; maximum=16777215
+    when: # 选填; object
+      state: # 选填; object
+        &quot;&lt;key&gt;&quot;: # 选填; object
+          contains: &quot;&lt;string&gt;&quot; # 选填; string
+          equals: &quot;&lt;string&gt;&quot; # 选填; string
+          exists: true # 选填; boolean
+          for: &quot;&lt;string&gt;&quot; # 选填; string
+          in: # 选填; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # 选填; string
+          status: &quot;set&quot; # 选填; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<h2 id="字段含义与默认值">字段含义与默认值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>字段含义与默认值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.ifname</code></td>
+<td>OS VXLAN 名称，默认 metadata.name，最多 15 字符，不可含空白或斜线。</td>
+</tr>
+<tr>
+<td><code>spec.vni</code></td>
+<td>必填 VXLAN 网络标识符，整数 1–16777215，须与目标远端二层网段一致。</td>
+</tr>
+<tr>
+<td><code>spec.localAddress</code></td>
+<td>必填的外层本机 IP 地址，不提供动态状态来源。验证只确认 IP 格式，不检查本机分配或与对等端地址族一致。</td>
+</tr>
+<tr>
+<td><code>spec.peers</code></td>
+<td>可选的远端外层 IP 列表，默认为空。同步为 00:00:00:00:00:00 的 permanent self 泛洪 FDB 条目，移除多余泛洪条目。空列表不提供静态远端泛洪目标。</td>
+</tr>
+<tr>
+<td><code>spec.underlayInterface</code></td>
+<td>必填同一 Router 中声明的逻辑接口，会解析为 OS 设备名称。无状态来源或自动选择。</td>
+</tr>
+<tr>
+<td><code>spec.udpPort</code></td>
+<td>外层 UDP 目标端口，省略或 0 默认 4789，明确范围为 1–65535。</td>
+</tr>
+<tr>
+<td><code>spec.mtu</code></td>
+<td>可选的内层设备 MTU 576–9216，省略或 0 使用 OS/已有 MTU。即使模式下限为 0，tcpMSSClamp 仍要求明确值 &gt;=1280。</td>
+</tr>
+<tr>
+<td><code>spec.bridge</code></td>
+<td>可选的已声明网桥名称，解析为 OS 名称并接为 VXLAN master，默认不连接。tcpMSSClamp 时必填，请使用 Bridge 资源而非其他接口类型。</td>
+</tr>
+<tr>
+<td><code>spec.outerDF</code></td>
+<td>外层 IPv4 DF 策略，默认 inherit，也可用 set/unset，传入 ip link VXLAN df。不配置内层地址或路由。</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>可选的通用 state/all/any 条件，另适用上述关闭优先及新鲜度规则。省略表示无条件；接受 unknown 的条件不可启用此隧道。</td>
+</tr>
+<tr>
+<td><code>spec.tcpMSSClamp</code></td>
+<td>默认 false。true 为此 VXLAN 与 Bridge 成员端口之间创建 Linux bridge 族 IPv4/IPv6 TCP SYN MSS 规则。取 VXLAN/网桥/成员的最小正 MTU，IPv4 减 40、IPv6 减 60，不处理任意路由流量。</td>
+</tr>
+</tbody>
+</table>
+<p>实现: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_interface.go">pkg/config/validate_interface.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/vxlan_tunnel.go">pkg/controller/chain/vxlan_tunnel.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/vxlan/vxlan.go">pkg/vxlan/vxlan.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/nftables.go">pkg/render/nftables.go</a></p>
+<h2 id="可引用的状态字段">可引用的状态字段</h2>
+<p>常规状态引用验证接受此 Kind 的下列字段名称。列于允许列表不保证目前有值，请检查实际状态。这些是输出，不是 YAML spec 配置。</p>
+<p><code>phase</code>, <code>ifname</code>, <code>vni</code></p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件与引用关系">指定条件与引用关系</a></li>
+<li><a href="#yaml定义">YAML定义</a></li>
+<li><a href="#字段含义与默认值">字段含义与默认值</a></li>
+<li><a href="#可引用的状态字段">可引用的状态字段</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/reference/resources/VXLANTunnel.md">GitHub</a></div></footer></body></html>

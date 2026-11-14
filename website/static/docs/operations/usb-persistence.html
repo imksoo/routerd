@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>USB persistence · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/operations/usb-persistence.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/operations/usb-persistence.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/operations/usb-persistence.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/operations/usb-persistence.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/operations/usb-persistence.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="usb-persistence">USB persistence</h1>
+<p>The routerd live ISO can run as a diskless router. In that mode, the ISO keeps
+the active system in RAM and stores only the selected router state on a USB
+device.</p>
+<p>This is intended for mini PCs that boot from removable media. It avoids a
+permanent internal disk while still preserving the router configuration across
+reboots.</p>
+<p>The current Ubuntu live ISO uses the persistence helper described here.
+Alpine <code>lbu</code> instructions from older images do not apply to this image.</p>
+<h2 id="layout">Layout</h2>
+<p>When USB persistence is enabled, routerd uses this layout on the selected
+partition:</p>
+<pre><code class="language-text">routerd/
+  router.yaml
+  usb-device
+  usb-flush-enabled
+  log-limit
+  secrets/
+  logs/
+  state/
+</code></pre>
+<p>At boot, <code>/usr/share/routerd/live-persistence.sh init</code> tries to find config
+media. It first checks the remembered device, then <code>routerd.usb=</code> on the kernel
+command line, then devices labeled <code>ROUTERD_CONFIG</code> or <code>ROUTERD</code>. Writable
+partitions are used for persistence. Read-only ISO9660/UDF CD-ROM media, such
+as a Proxmox <code>media=cdrom</code> config ISO, are accepted for config import only.</p>
+<p>The selected partition is mounted at <code>/media/routerd-usb</code>. The helper looks for
+host-specific configs first, then a generic config:</p>
+<ul>
+<li><code>/media/routerd-usb/routerd/hosts/&lt;hostname&gt;.yaml</code></li>
+<li><code>/media/routerd-usb/routerd/hosts/&lt;mac&gt;.yaml</code> with either colon-separated or
+  compact lowercase MAC address</li>
+<li><code>/media/routerd-usb/routerd/router.yaml</code></li>
+</ul>
+<p>If a config is found, it is copied to <code>/usr/local/etc/routerd/router.yaml</code> and
+applied by the live ISO startup path. The source and SHA256 are recorded in
+<code>/run/routerd/live-config-source</code> and <code>/run/routerd/live-config-sha256</code> for
+acceptance tests and troubleshooting.
+Secrets are restored before apply. The helper accepts these layouts, in order:</p>
+<ul>
+<li><code>routerd/hosts/&lt;hostname&gt;/secrets/</code></li>
+<li><code>routerd/hosts/&lt;mac&gt;/secrets/</code> with either colon-separated or compact lowercase
+  MAC address</li>
+<li><code>routerd/secrets/</code></li>
+</ul>
+<p>Files are installed under <code>/usr/local/etc/routerd/secrets</code> with mode <code>0600</code>.
+If no saved config is found and <code>/usr/local/etc/routerd/router.yaml</code> is still
+missing, the ISO starts the configure wizard.</p>
+<h2 id="filesystems">Filesystems</h2>
+<p>The live helper detects the filesystem with <code>blkid</code> and mounts it with
+filesystem-specific options.</p>
+<table>
+<thead>
+<tr>
+<th>Filesystem</th>
+<th>Default mount options</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ext4</code></td>
+<td><code>rw,async,noatime</code></td>
+<td>Best choice for persistent router use.</td>
+</tr>
+<tr>
+<td><code>vfat</code></td>
+<td><code>rw,async,noatime,utf8,shortname=mixed</code></td>
+<td>Useful for simple removable media. No Unix permissions.</td>
+</tr>
+<tr>
+<td><code>exfat</code></td>
+<td><code>rw,async,noatime</code></td>
+<td>Useful for larger USB sticks shared with desktop OSes.</td>
+</tr>
+<tr>
+<td><code>iso9660</code> / <code>udf</code></td>
+<td><code>ro,noatime</code></td>
+<td>Read-only config import media. Persistence flush is disabled.</td>
+</tr>
+</tbody>
+</table>
+<p>FAT32 normally appears as <code>vfat</code> in <code>blkid</code> output. The live helper does not
+force a FAT32 mount first; it detects the filesystem type and then chooses
+the matching options.</p>
+<p><code>async,noatime</code> is the default because it reduces write pressure on USB flash.
+For debugging or very conservative flush behavior, pass this kernel parameter:</p>
+<pre><code class="language-text">routerd.usb_mount=sync
+</code></pre>
+<p>Use <code>routerd.usb_mount=async</code> to force the default explicitly.</p>
+<h2 id="log-buffering">Log buffering</h2>
+<p>Runtime logs are buffered in tmpfs:</p>
+<pre><code class="language-text">/run/routerd/logs
+</code></pre>
+<p>The default buffer limit is 100 MiB. When the buffer grows beyond the limit, the
+oldest files are removed first.</p>
+<p>If the daily flush job is enabled, <code>/etc/periodic/daily/routerd-usb-flush</code>
+copies these artifacts to USB:</p>
+<ul>
+<li>current <code>router.yaml</code></li>
+<li>files under <code>/usr/local/etc/routerd/secrets</code></li>
+<li>state archive from <code>/var/lib/routerd</code></li>
+<li>state archive from <code>/var/db/routerd</code></li>
+<li>compressed log archive from <code>/run/routerd/logs</code></li>
+</ul>
+<p>You can flush manually:</p>
+<pre><code class="language-sh">/usr/share/routerd/live-persistence.sh flush
+</code></pre>
+<h2 id="safe-removal">Safe removal</h2>
+<p>Do not pull the USB device while the persistence mount is active. Ask the live
+helper to flush and unmount it first:</p>
+<pre><code class="language-sh">/usr/share/routerd/live-persistence.sh flush
+/usr/share/routerd/live-persistence.sh umount
+</code></pre>
+<p>Check the current state with:</p>
+<pre><code class="language-sh">/usr/share/routerd/live-persistence.sh status
+</code></pre>
+<p>If the device is removed unexpectedly, routerd keeps running from RAM. The live
+helper logs a warning and stops treating the USB path as durable until the
+device is reinserted and mounted again.</p>
+<h2 id="historical-alpine-lbu-integration">Historical Alpine lbu integration</h2>
+<p>Earlier Alpine-based images used <code>lbu</code> and <code>/etc/periodic/daily</code> integration.
+That is historical platform-specific behavior, not a prerequisite or command
+sequence for the current Ubuntu live ISO. Use the current helper’s <code>save-config</code>,
+<code>flush</code>, and <code>umount</code> commands below.</p>
+<h2 id="useful-commands">Useful commands</h2>
+<p>List candidate devices:</p>
+<pre><code class="language-sh">/usr/share/routerd/live-persistence.sh list-devices
+</code></pre>
+<p>Save a config to USB:</p>
+<pre><code class="language-sh">/usr/share/routerd/live-persistence.sh save-config /dev/sdb1 /usr/local/etc/routerd/router.yaml yes 100M
+</code></pre>
+<p><code>save-config</code> also copies <code>/usr/local/etc/routerd/secrets</code> to
+<code>routerd/secrets/</code> on the persistence device when that directory exists. Use
+root-owned secret files and avoid vfat/exfat for long-lived secret storage when
+you need Unix permissions on the removable device itself.</p>
+<p>Restore happens automatically at boot. To force the boot-time logic from a
+shell:</p>
+<pre><code class="language-sh">/usr/share/routerd/live-persistence.sh init
+</code></pre></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#layout">Layout</a></li>
+<li><a href="#filesystems">Filesystems</a></li>
+<li><a href="#log-buffering">Log buffering</a></li>
+<li><a href="#safe-removal">Safe removal</a></li>
+<li><a href="#historical-alpine-lbu-integration">Historical Alpine lbu integration</a></li>
+<li><a href="#useful-commands">Useful commands</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/operations/usb-persistence.md">GitHub</a></div></footer></body></html>

@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CloudEdge Mobility Demo · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/how-to/cloudedge-mobility-demo.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/how-to/cloudedge-mobility-demo.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/how-to/cloudedge-mobility-demo.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/how-to/cloudedge-mobility-demo.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/cloudedge-mobility-demo.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="cloudedge-mobility-demo">CloudEdge Mobility Demo</h1>
+<blockquote>
+<p>Experimental (CloudEdge). A lab demo of <strong>Selective Address Mobility (SAM)</strong>:
+on-prem, AWS, Azure, and OCI share one logical <code>/24</code>, and each site can serve an
+address that is <em>owned</em> by another site — without NAT and without changing the
+client's default gateway. The runnable package is
+<a href="https://github.com/imksoo/routerd/tree/main/examples/cloudedge-mobility-demo"><code>examples/cloudedge-mobility-demo/</code></a>.</p>
+</blockquote>
+<p><img alt="CloudEdge Mobility demo: four sites sharing 10.77.60.0/24, each owner address captured at every non-owner site over generated SAM transport, with no NAT and source IPs preserved" src="../images/cloudedge-mobility-demo.png" /></p>
+<h2 id="what-this-demo-shows">What this demo shows</h2>
+<ul>
+<li><strong>One logical <code>/24</code> shared across four sites</strong> — on-prem / AWS / Azure / OCI all
+  treat <code>10.77.60.0/24</code> as a single logical address space.</li>
+<li><strong>Non-owner sites capture the owner's address</strong> — each owner address is made
+  reachable <em>at every other site</em> (cloud: provider <strong>secondary IP</strong>; on-prem:
+  <strong>proxy ARP</strong>), arbitrated to a single owner.</li>
+<li><strong>12 directed SSH flows pass</strong> across the four demo clients.</li>
+<li><strong>NAT-less, source-preserved, gateway-unchanged</strong> — connectivity keeps the real
+  source IP, performs no NAT, and does not touch the client's default gateway.</li>
+<li><strong>Cloud maintenance capture migration (D5)</strong> — a captured address moves from one
+  cloud router to a standby in the same provider with traffic recovering through
+  the new holder.</li>
+</ul>
+<h2 id="address-design">Address design</h2>
+<p>All four sites share one logical subnet; each site owns exactly one <code>/32</code> within it.</p>
+<table>
+<thead>
+<tr>
+<th>Site</th>
+<th>routerd node</th>
+<th>Owner address</th>
+<th>Capture mechanism</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>On-prem</td>
+<td><code>onprem-router</code></td>
+<td><code>10.77.60.10/32</code></td>
+<td>Proxy ARP on the LAN</td>
+</tr>
+<tr>
+<td>AWS</td>
+<td><code>aws-router-a</code></td>
+<td><code>10.77.60.11/32</code></td>
+<td>ENI secondary IP</td>
+</tr>
+<tr>
+<td>Azure</td>
+<td><code>azure-router</code></td>
+<td><code>10.77.60.12/32</code></td>
+<td>NIC secondary ipConfig</td>
+</tr>
+<tr>
+<td>OCI</td>
+<td><code>oci-router</code></td>
+<td><code>10.77.60.13/32</code></td>
+<td>VNIC secondary private IP</td>
+</tr>
+</tbody>
+</table>
+<p>Logical subnet: <strong><code>10.77.60.0/24</code></strong>. The router-to-router transport uses a
+separate RFC1918 endpoint/inner addressing plan (kept clear of link-local
+<code>169.254/16</code> and CGNAT <code>100.64/10</code>); see
+<a href="../reference/selective-address-mobility.html">Selective Address Mobility</a> for the
+addressing constraints.</p>
+<p>On the on-prem side, only <code>10.77.60.10/32</code> is declared with static ownership.
+To discover additional on-prem clients, define <code>ownershipDiscovery</code> on the on-prem
+member as <code>mode: onprem-l2</code> and provide an <code>arp-observer</code> source on <code>ens21</code>.</p>
+<h2 id="data-plane">Data plane</h2>
+<ul>
+<li><strong>provider-secondary-ip capture</strong> — on each cloud router, the owner addresses of
+  the <em>other</em> sites are attached as secondary IPs on its ENI / NIC / VNIC, so the
+  cloud fabric delivers them to that router.</li>
+<li><strong>proxy-ARP capture</strong> — on-prem, the router answers ARP for the other sites'
+  owner addresses on the LAN.</li>
+<li><strong>BGP /32 delivery</strong> — each owner advertises its owned <code>/32</code>; other routers
+  import the best path and forward over the overlay to the owning site's router.</li>
+<li><strong>Generated SAM transport</strong> — routers interconnect through
+  <code>SAMTransportProfile</code>-derived IPIP tunnels and BGP peers. WireGuard, when
+  enabled, is endpoint-only encryption underlay; its <code>AllowedIPs</code> contain
+  transport endpoint prefixes, not mobile <code>/32</code>s.</li>
+</ul>
+<p>Because delivery is routed (not NAT'd), the <strong>source IP is preserved</strong> and the
+client's <strong>default gateway is unchanged</strong>.</p>
+<h2 id="control-plane">Control plane</h2>
+<p>The operator declares only intent; everything else is derived.</p>
+<ul>
+<li><strong>SAMNodeSet</strong> — the single shared identity/topology/placement registry for
+  all seven routers.</li>
+<li><strong>MobilityPool</strong> — the local address/capture intent. It imports that node set
+  and retains only its self provider, capture, and discovery overlay.</li>
+<li><strong>North-star member shape</strong> — each rendered config declares its own site
+  completely with <code>profiles.cloudCaptures</code>, <code>spec.values</code>, <code>targetFrom</code>, and
+  <code>subnetRefFrom</code>; it does not repeat remote member entries or their provider
+  NIC/subnet implementation details.</li>
+<li><strong>SAMTransportProfile</strong> — derives the per-peer <code>TunnelInterface</code>, endpoint
+  <code>/32</code> <code>IPv4Route</code>, and <code>BGPPeer</code> resources from a shared topology and inner
+  prefix.</li>
+<li><strong>BGP /32 mobility paths</strong> — each owner advertises its owned host route; other
+  sites learn the current best path over the generated SAM transport.</li>
+<li><strong>Provider trap actions</strong> — cloud routers eventually assign/unassign remote
+  owned /32s as secondary IPs for local trapping; these actions are no longer on
+  the critical forwarding path.</li>
+<li><strong>Event Federation</strong> — <code>routerd.client.ipv4.observed</code> facts propagate between
+  sites (<code>EventGroup</code> / <code>EventPeer</code> / <code>EventSubscription</code>, see
+  <a href="../reference/event-federation.html">Event Federation</a>).</li>
+<li><strong>Provider action executor</strong> — performs the gated cloud mutation (assign /
+  unassign secondary IP, forwarding) under <code>ProviderActionPolicy</code>, using the
+  instance's own cloud-native identity (see
+  ADR 0007).</li>
+<li><strong>pathSig fencing</strong> — provider actions are fenced against the current BGP
+  desired path signature and holder, so stale actions cannot mutate a route that
+  has reconverged elsewhere.</li>
+</ul>
+<p>The example configs use a shared <code>SAMNodeSet</code> and <code>MobilityPool.membersFrom</code>.
+Each Pool retains exactly one local self overlay; remote identity, placement,
+and maintenance stay in the node set. <code>routerctl validate</code>, plan, and apply
+reject provider, capture, or discovery details on remote members.</p>
+<h2 id="how-to-run-it">How to run it</h2>
+<p>Use the package under <code>examples/cloudedge-mobility-demo/</code>. It assumes the lab
+instances, NICs/VNICs, identity permissions, SSH, optional WireGuard endpoint
+keys, and provider CLIs are already prepared — the scripts do <strong>not</strong> provision
+cloud resources.</p>
+<pre><code class="language-sh">cd examples/cloudedge-mobility-demo
+cp env.example env
+$EDITOR env            # fill every placeholder; keep secrets out of git
+
+./run-demo.sh          # render + deploy, emit events, run D3, then D5 migration
+./collect-evidence.sh  # gather provider state, journals, and connectivity
+./reset-lab.sh         # best-effort teardown; stops compute to avoid idle cost
+</code></pre>
+<p>Run <code>reset-lab.sh</code> after every run, even on failure.</p>
+<h2 id="verified-results">Verified results</h2>
+<ul>
+<li><strong>D1</strong> location auto-reflection: an owner address appearing on-prem is recognized
+  by each cloud router.</li>
+<li><strong>D2</strong> cloud→on-prem capture (proxy ARP).</li>
+<li><strong>D3</strong> four-site <strong>12 directed ping + SSH PASS</strong> — source preserved, no NAT,
+  default gateway unchanged.</li>
+<li><strong>D4</strong> on-prem HA / VRRP capture failover.</li>
+<li><strong>D5</strong> cloud maintenance / <strong>capture migration PASS</strong> — drain <code>aws-router-a</code>, the
+  captured address moves to <code>aws-router-b</code>, traffic recovers via B; the stale
+  pathSig action is fenced (<code>skipped: stale mobility desired path</code>). See
+  the D5 evidence.</li>
+</ul>
+<h2 id="caveats">Caveats</h2>
+<ul>
+<li>This is a <strong>lab demo</strong>, not a production turnkey.</li>
+<li>It is <strong>not</strong> full L2 extension / EVPN — there is no broadcast/multicast bridging.</li>
+<li>It is <strong>selective <code>/32</code> address mobility</strong>: chosen addresses are made mobile across
+  sites, not the whole subnet.</li>
+<li>The scripts assume pre-provisioned instances and use placeholder, non-secret
+  logical addresses; never commit real account/subscription/OCID/ENI/VNIC IDs or
+  private keys.</li>
+</ul></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#what-this-demo-shows">What this demo shows</a></li>
+<li><a href="#address-design">Address design</a></li>
+<li><a href="#data-plane">Data plane</a></li>
+<li><a href="#control-plane">Control plane</a></li>
+<li><a href="#how-to-run-it">How to run it</a></li>
+<li><a href="#verified-results">Verified results</a></li>
+<li><a href="#caveats">Caveats</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/how-to/cloudedge-mobility-demo.md">GitHub</a></div></footer></body></html>

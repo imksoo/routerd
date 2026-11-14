@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>IPsecConnection · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/reference/resources/IPsecConnection.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/reference/resources/IPsecConnection.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/reference/resources/IPsecConnection.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/IPsecConnection.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/IPsecConnection.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="ipsecconnection">IPsecConnection</h1>
+<p><a href="../resources.html#ipsecconnection">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Render a strongSwan swanctl connection and synchronize all routerd IPsec connections together. A traffic-triggered CHILD_SA trap is configured; loading the connection is not proof of an established SA.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>Exactly one of preSharedKey and certificateRef is required. certificateRef is passed directly to swanctl local.certs, not resolved as a routerd resource.</li>
+<li>The aggregate lives under /etc/routerd/swanctl on Linux or /usr/local/etc/routerd/swanctl on FreeBSD. swanctl --load-all --file synchronizes the whole managed set, including secrets. Certificates, trust anchors and matching private keys must be provisioned in the credential stores used by that configuration.</li>
+</ul>
+<h2 id="yaml-definition">YAML definition</h2>
+<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: IPsecConnection
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    certificateRef: &quot;&lt;string&gt;&quot; # optional; string
+    cloudProviderHint: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;aws&quot;, &quot;azure&quot;, &quot;gcp&quot;]
+    leftSubnet: &quot;&lt;string&gt;&quot; # Required; string
+    localAddress: &quot;&lt;string&gt;&quot; # Required; string
+    phase1Proposals: # optional; array
+      - &quot;&lt;string&gt;&quot; # string
+    phase2Proposals: # optional; array
+      - &quot;&lt;string&gt;&quot; # string
+    preSharedKey: &quot;&lt;string&gt;&quot; # optional; string
+    remoteAddress: &quot;&lt;string&gt;&quot; # Required; string
+    rightSubnet: &quot;&lt;string&gt;&quot; # Required; string
+</code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.localAddress</code></td>
+<td>Required local endpoint IP address, IPv4 or IPv6; no hostname or interface reference.</td>
+</tr>
+<tr>
+<td><code>spec.remoteAddress</code></td>
+<td>Required remote endpoint IP address, IPv4 or IPv6. The validator does not enforce matching address families across endpoints and traffic selectors.</td>
+</tr>
+<tr>
+<td><code>spec.preSharedKey</code></td>
+<td>Inline IKE shared secret; required unless certificateRef is used. No default, file or environment source. Rendered into the managed swanctl secrets section.</td>
+</tr>
+<tr>
+<td><code>spec.certificateRef</code></td>
+<td>Certificate name/path understood by strongSwan local.certs; required unless preSharedKey is used. Selects remote auth=pubkey. Does not create certificates or select a routerd Secret resource.</td>
+</tr>
+<tr>
+<td><code>spec.phase1Proposals</code></td>
+<td>IKE proposal list, default [aes256-sha256-modp2048]. Nonempty lists are comma-joined verbatim; routerd does not validate algorithm support.</td>
+</tr>
+<tr>
+<td><code>spec.phase2Proposals</code></td>
+<td>ESP proposal list, default [aes256-sha256]. Applied to the child named net; algorithm validity is checked by strongSwan when loading.</td>
+</tr>
+<tr>
+<td><code>spec.leftSubnet</code></td>
+<td>Required local traffic-selector CIDR, IPv4 or IPv6; emitted as local_ts.</td>
+</tr>
+<tr>
+<td><code>spec.rightSubnet</code></td>
+<td>Required remote traffic-selector CIDR, IPv4 or IPv6; emitted as remote_ts.</td>
+</tr>
+<tr>
+<td><code>spec.cloudProviderHint</code></td>
+<td>Optional aws, azure or gcp label, default empty. Reported by observation but not used to change proposals, credentials or swanctl rendering. No cloud resources are created.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_interface.go">pkg/config/validate_interface.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/ipsec/ipsec.go">pkg/ipsec/ipsec.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd/ipsec_apply.go">cmd/routerd/ipsec_apply.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/apply/engine.go">pkg/apply/engine.go</a></p>
+<h2 id="referenceable-status-fields">Referenceable status fields</h2>
+<p>The ordinary status-reference validator accepts these field names for this kind. This allowlist does not guarantee that every field is currently populated; inspect runtime status. These are outputs, not YAML spec fields.</p>
+<p><code>phase</code></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
+<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
+<li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/reference/resources/IPsecConnection.md">GitHub</a></div></footer></body></html>

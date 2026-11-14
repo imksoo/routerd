@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>IPv4StaticAddress · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/reference/resources/IPv4StaticAddress.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/reference/resources/IPv4StaticAddress.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/IPv4StaticAddress.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/IPv4StaticAddress.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/IPv4StaticAddress.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="ipv4staticaddress">IPv4StaticAddress</h1>
+<p><a href="../resources.html#ipv4staticaddress">各资源的配置</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>在逻辑接口声明静态IPv4地址，由controller协调配置，不是DHCP租约。</p>
+<h2 id="指定条件与引用关系">指定条件与引用关系</h2>
+<ul>
+<li>interface引用与address/prefix必填。同逻辑接口及掩码后网络前缀的两个静态资源，即使主机地址不同也拒绝；与相同组合的VirtualAddress重叠也拒绝。</li>
+</ul>
+<h2 id="yaml定义">YAML定义</h2>
+<p>此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: IPv4StaticAddress
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    address: &quot;&lt;string&gt;&quot; # 必填; string
+    allowOverlap: true # 选填; boolean
+    allowOverlapReason: &quot;&lt;string&gt;&quot; # 选填; string
+    exclusive: true # 选填; boolean
+    interface: &quot;&lt;string&gt;&quot; # 必填; string
+    when: # 选填; object
+      state: # 选填; object
+        &quot;&lt;key&gt;&quot;: # 选填; object
+          contains: &quot;&lt;string&gt;&quot; # 选填; string
+          equals: &quot;&lt;string&gt;&quot; # 选填; string
+          exists: true # 选填; boolean
+          for: &quot;&lt;string&gt;&quot; # 选填; string
+          in: # 选填; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # 选填; string
+          status: &quot;set&quot; # 选填; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<h2 id="字段含义与默认值">字段含义与默认值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>字段含义与默认值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.interface</code></td>
+<td>必填Router接口索引中的逻辑名称，不加Interface/，必须在声明配置存在，无默认值。</td>
+</tr>
+<tr>
+<td><code>spec.address</code></td>
+<td>必填含前缀长度的IPv4主机地址，例如192.0.2.1/24，无默认值或隐含/32。解析器检查前缀语法，运行时使用IPv4操作。</td>
+</tr>
+<tr>
+<td><code>spec.exclusive</code></td>
+<td>默认false。当前观察器警告exclusive清理未实现，运行时地址controller也不读取此标记。额外地址的整体协调独立，false不保证保留手动地址。</td>
+</tr>
+<tr>
+<td><code>spec.allowOverlap</code></td>
+<td>默认false，保留供解码但当前验证与地址协调不使用，不会跳过重复/冲突检查。</td>
+</tr>
+<tr>
+<td><code>spec.allowOverlapReason</code></td>
+<td>默认空，仅保留声明，不授权重叠或改变allowOverlap效果。</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>启用条件，省略不设限制；state/all/any、unknown及时间条件请见共用条件参考。</td>
+</tr>
+</tbody>
+</table>
+<p>实现: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_interface.go">pkg/config/validate_interface.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/index.go">pkg/config/index.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go">pkg/controller/chain/chain.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/apply/engine.go">pkg/apply/engine.go</a></p>
+<h2 id="可引用的状态字段">可引用的状态字段</h2>
+<p>常规状态引用验证接受此 Kind 的下列字段名称。列于允许列表不保证目前有值，请检查实际状态。这些是输出，不是 YAML spec 配置。</p>
+<p><code>phase</code>, <code>interface</code>, <code>ifname</code>, <code>address</code>, <code>dryRun</code></p>
+<p><a href="/examples/basic-static.yaml">配置示例</a></p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件与引用关系">指定条件与引用关系</a></li>
+<li><a href="#yaml定义">YAML定义</a></li>
+<li><a href="#字段含义与默认值">字段含义与默认值</a></li>
+<li><a href="#可引用的状态字段">可引用的状态字段</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/reference/resources/IPv4StaticAddress.md">GitHub</a></div></footer></body></html>

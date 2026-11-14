@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ingress maintenance · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/operations/ingress-maintenance.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/operations/ingress-maintenance.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/operations/ingress-maintenance.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/operations/ingress-maintenance.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/operations/ingress-maintenance.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="ingress-maintenance">Ingress maintenance</h1>
+<p>Use <code>routerctl ingress drain</code> when an <code>IngressService</code> backend needs temporary
+maintenance without editing the router YAML:</p>
+<pre><code class="language-sh">routerctl ingress drain ingress/kubernetes-api backend=cp-01 --duration 10m
+routerctl get IngressService
+</code></pre>
+<p>The drain state is stored in the routerd state database. During the drain
+window, the ingress controller marks that backend as <code>drained: true</code>,
+<code>healthy: false</code>, and <code>reason: Drained</code>; new flows are sent to the remaining
+healthy backends on the next reconcile. Existing conntrack entries are not
+flushed.</p>
+<p>The backend is restored automatically when <code>--duration</code> expires. To restore it
+immediately:</p>
+<pre><code class="language-sh">routerctl ingress undrain ingress/kubernetes-api backend=cp-01
+</code></pre></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul></ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/operations/ingress-maintenance.md">GitHub</a></div></footer></body></html>

@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NAT44SessionSync · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/reference/resources/NAT44SessionSync.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/reference/resources/NAT44SessionSync.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/reference/resources/NAT44SessionSync.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/NAT44SessionSync.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/NAT44SessionSync.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="nat44sessionsync">NAT44SessionSync</h1>
+<p><a href="../resources.html#nat44sessionsync">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Replicate Linux conntrack state using either an SSH event stream or a continuously running conntrackd FTFW peer link. This is not FreeBSD PF state synchronization.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>mode defaults event-stream. Both modes require a nonempty snatAddresses or natRules list in YAML validation. Event-stream also requires targets; conntrackd requires conntrackd.interface/localAddress/peerAddress and an empty when condition.</li>
+<li>Event-stream initially reconciles a dump, then consumes conntrack -E extended events, batching changes (normally up to 5s or 512 operations) and applying insert/delete scripts over SSH. It supports IPv4 TCP/UDP/ICMP records; TCP inserts lacking state are skipped. It does not replicate complete TCP window/sequence tracking, so it is not the full established-TCP failover mechanism.</li>
+<li>In conntrackd mode both peers replicate continuously; the legacy SSH worker is stopped. snatAddresses/natRules/excludeNatRules are not used to filter the conntrackd configuration despite being validated. Its renderer permits TCP/UDP/ICMP and excludes loopback plus ignoreIPv4. targets/conntrackCommand/interval do not control conntrackd.</li>
+<li>Linux conntrackd validation additionally requires an explicit nonoptional Sysctl net.netfilter.nf_conntrack_tcp_be_liberal with value=1, expectedValue effectively 1 and runtime enabled. A SysctlProfile alone does not satisfy it. Conntrackd addresses/ignoreIPv4 are bare IPv4 addresses; no automatic peer discovery or key distribution.</li>
+<li>Use a single conntrackd resource: generated instances share /run/routerd/conntrackd.ctl and lock paths. The current routerd-vrrp-vmac promotion integration explicitly targets /etc/conntrackd/routerd-dslite-sessions.conf, so that integration expects metadata.name=dslite-sessions; an arbitrary resource name does not automatically wire its cache into VRRP promotion.</li>
+</ul>
+<h2 id="yaml-definition">YAML definition</h2>
+<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: NAT44SessionSync
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    conntrackCommand: &quot;&lt;string&gt;&quot; # optional; string
+    conntrackd: # optional; object
+      ignoreIPv4: # optional; array
+        - &quot;&lt;string&gt;&quot; # string
+      interface: &quot;&lt;string&gt;&quot; # Required; string
+      localAddress: &quot;&lt;string&gt;&quot; # Required; string
+      peerAddress: &quot;&lt;string&gt;&quot; # Required; string
+      port: 1 # optional; integer; minimum=1; maximum=65535
+    excludeNatRules: # optional; array
+      - &quot;&lt;string&gt;&quot; # string
+    interval: &quot;&lt;string&gt;&quot; # optional; string
+    mode: &quot;event-stream&quot; # optional; string; enum=[&quot;event-stream&quot;, &quot;conntrackd&quot;]
+    natRules: # optional; array
+      - &quot;&lt;string&gt;&quot; # string
+    snatAddresses: # optional; array
+      - &quot;&lt;string&gt;&quot; # string
+    targets: # optional; array
+      - # object
+        host: &quot;&lt;string&gt;&quot; # Required; string
+        name: &quot;&lt;string&gt;&quot; # optional; string
+        restoreCommand: # optional; array
+          - &quot;&lt;string&gt;&quot; # string
+        sshOptions: # optional; array
+          - &quot;&lt;string&gt;&quot; # string
+        user: &quot;&lt;string&gt;&quot; # optional; string
+    when: # optional; object
+      state: # optional; object
+        &quot;&lt;key&gt;&quot;: # optional; object
+          contains: &quot;&lt;string&gt;&quot; # optional; string
+          equals: &quot;&lt;string&gt;&quot; # optional; string
+          exists: true # optional; boolean
+          for: &quot;&lt;string&gt;&quot; # optional; string
+          in: # optional; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # optional; string
+          status: &quot;set&quot; # optional; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.mode</code></td>
+<td>event-stream (default) or conntrackd. The former relays selected tuples via SSH; the latter runs native FTFW replication via systemd on Linux.</td>
+</tr>
+<tr>
+<td><code>spec.interval</code></td>
+<td>No supported polling interval. Any nonempty value is rejected in event-stream mode; in conntrackd mode accepted but unused.</td>
+</tr>
+<tr>
+<td><code>spec.conntrackCommand</code></td>
+<td>Event-stream executable name/path, default conntrack. Treated as one executable argument, not a shell command line. Ignored by conntrackd mode.</td>
+</tr>
+<tr>
+<td><code>spec.snatAddresses</code></td>
+<td>Bare IPv4 addresses selecting event-stream tuples, default empty. Combined with addresses resolved from natRules, deduplicated and sorted. At least one address or natRules entry is required; conntrackd does not use this list as a replication filter.</td>
+</tr>
+<tr>
+<td><code>spec.natRules</code></td>
+<td>Optional NAT44Rule/name or bare rule names. Reference syntax only is validated, not existence. Event-stream reads declared snatAddress then NAT44Rule status.snatAddress; any unresolved nonexcluded rule blocks the worker with Pending. Alternative translation.address/pool is not resolved here.</td>
+</tr>
+<tr>
+<td><code>spec.excludeNatRules</code></td>
+<td>Optional NAT44Rule/name or bare names skipped while resolving natRules. Does not subtract explicit snatAddresses or filter conntrackd. Default empty.</td>
+</tr>
+<tr>
+<td><code>spec.targets</code></td>
+<td>Required nonempty in event-stream mode. Each target receives SSH restoration operations; the same targets are unused by conntrackd.</td>
+</tr>
+<tr>
+<td><code>spec.targets[].name</code></td>
+<td>Optional descriptive target/status name, default empty; host determines the actual destination.</td>
+</tr>
+<tr>
+<td><code>spec.targets[].host</code></td>
+<td>Required nonblank SSH host (or SSH config alias). Remote user must be able to execute the restoration command with conntrack privileges. No automatic credentials are provisioned.</td>
+</tr>
+<tr>
+<td><code>spec.targets[].user</code></td>
+<td>Optional remote SSH user, default empty leaves selection to SSH configuration. Nonempty produces user@host.</td>
+</tr>
+<tr>
+<td><code>spec.targets[].sshOptions</code></td>
+<td>Optional SSH argument list, default adds BatchMode=yes and ConnectTimeout=10 unless overridden by explicit options. Each list item is one argument; no embedded newlines. Command operations also have an implementation timeout of 2m.</td>
+</tr>
+<tr>
+<td><code>spec.targets[].restoreCommand</code></td>
+<td>Optional remote conntrack command argv, default [conntrack]. Can supply a privilege wrapper as separate arguments, for example [sudo, -n, conntrack]. It is not a periodic full-state transfer command.</td>
+</tr>
+<tr>
+<td><code>spec.conntrackd</code></td>
+<td>Required object for conntrackd mode; otherwise unused by event-stream. Both HA peers must run continuously and have the replication link allowed.</td>
+</tr>
+<tr>
+<td><code>spec.conntrackd.interface</code></td>
+<td>Required replication interface. A configured logical alias is resolved when available; otherwise used as a kernel name. No ordinary interface-resource existence check here; renderer rejects whitespace.</td>
+</tr>
+<tr>
+<td><code>spec.conntrackd.localAddress</code></td>
+<td>Required bare IPv4 local replication address; must already be configured on the host. Not an address assignment.</td>
+</tr>
+<tr>
+<td><code>spec.conntrackd.peerAddress</code></td>
+<td>Required bare IPv4 remote replication destination. No discovery or multicast membership is configured.</td>
+</tr>
+<tr>
+<td><code>spec.conntrackd.port</code></td>
+<td>UDP replication port; omitted/0 resolves to 3780 in the renderer. Valid positive values 1–65535. JSON Schema marks minimum 1 even though the Go runtime accepts zero as default.</td>
+</tr>
+<tr>
+<td><code>spec.conntrackd.ignoreIPv4</code></td>
+<td>Optional bare IPv4 exclusions, default empty in YAML. Renderer always adds 127.0.0.1 and excludes IPv6 ::1, deduplicates/sorts IPv4 values, and rejects invalid values when rendering.</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>Optional common activation condition for event-stream, default unconditional; may gate the active SSH worker. Must be completely empty for conntrackd so both peers continue replication while standby.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_firewall.go">pkg/config/validate_firewall.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/nat44sessionsync.go">pkg/controller/chain/nat44sessionsync.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/filesync.go">pkg/controller/chain/filesync.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/system.go">pkg/controller/chain/system.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go">pkg/controller/chain/chain.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/conntrackd.go">pkg/render/conntrackd.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd-vrrp-vmac/main.go">cmd/routerd-vrrp-vmac/main.go</a></p>
+<h2 id="referenceable-status-fields">Referenceable status fields</h2>
+<p>The ordinary status-reference validator accepts these field names for this kind. This allowlist does not guarantee that every field is currently populated; inspect runtime status. These are outputs, not YAML spec fields.</p>
+<p><code>phase</code>, <code>mode</code>, <code>streamState</code>, <code>sessionCount</code>, <code>remoteSessionCount</code>, <code>targetCount</code>, <code>snatAddresses</code>, <code>targets</code>, <code>deleteOK</code>, <code>deleteMissing</code>, <code>deleteFailed</code>, <code>pruneOK</code>, <code>pruneMissing</code>, <code>pruneFailed</code>, <code>pruneCandidateCount</code>, <code>insertOK</code>, <code>insertExisting</code>, <code>insertFailed</code>, <code>queuedEventCount</code>, <code>lastBatchEvents</code>, <code>resyncCount</code>, <code>syncedAt</code>, <code>lastEventAt</code>, <code>lastBatchAt</code>, <code>lastResyncAt</code>, <code>dryRun</code></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
+<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
+<li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/reference/resources/NAT44SessionSync.md">GitHub</a></div></footer></body></html>

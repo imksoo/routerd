@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HA ルーター向け NAT44 セッション同期 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/how-to/nat44-session-sync.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/how-to/nat44-session-sync.html" lang="en" hreflang="en">English</a><a href="/docs/ja/how-to/nat44-session-sync.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/how-to/nat44-session-sync.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/nat44-session-sync.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="ha-ルーター向け-nat44-セッション同期">HA ルーター向け NAT44 セッション同期</h1>
+<p><code>NAT44SessionSync</code> は、LAN 側ゲートウェイの役割を共有する 2 台の
+routerd ノードで、active ノードの NAT44 conntrack セッションを standby
+ノードへ同期するためのリソースです。開始時に一度だけ snapshot を復元し、その後は
+conntrack イベントを差分として各ターゲットに反映します。</p>
+<p>通常は <code>spec.when</code> で active ノードだけが動くようにします。VRRP 構成では
+ローカル <code>VirtualAddress</code> の role を条件にするのが基本です。</p>
+<h2 id="対象-nat-rule-を同期する">対象 NAT rule を同期する</h2>
+<p>同期したい SNAT アドレスを持つ NAT rule を参照します。動的 SNAT アドレスは
+<code>NAT44Rule</code> の status から読みます。そのため、session sync が active になる
+前に NAT44 コントローラーが <code>snatAddress</code> を解決している必要があります。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: NAT44SessionSync
+  metadata:
+    name: dslite-abc-sessions
+  spec:
+    mode: event-stream
+    natRules:
+      - NAT44Rule/lan-to-dslite-a
+      - NAT44Rule/lan-to-dslite-b
+      - NAT44Rule/lan-to-dslite-c
+    excludeNatRules:
+      - NAT44Rule/lan-to-dslite-ra
+    targets:
+      - name: standby
+        host: routerd-standby.lan.example
+        user: routerd
+        restoreCommand: [sudo, conntrack]
+    when:
+      state:
+        VirtualAddress/lan-vip.role:
+          equals: master
+</code></pre>
+<p>アドレスが固定であれば、<code>snatAddresses</code> で直接指定できます。</p>
+<pre><code class="language-yaml">spec:
+  snatAddresses: [192.0.0.2, 192.0.0.3, 192.0.0.4]
+</code></pre>
+<h2 id="conntrackd-で確立済み-tcp-を引き継ぐ">conntrackd で確立済み TCP を引き継ぐ</h2>
+<p>VRRP role 変更後も確立済み TCP flow を引き継ぐ場合は
+<code>mode: conntrackd</code> を使います。両 peer で conntrackd を常時動作させるため、
+この mode では <code>spec.when</code> を指定しません。</p>
+<p>切替時に飛行中だった TCP segment が新しい active peer へ届くと、小さな window
+差異が生じる場合があります。Linux conntrack がこれを受け入れるための host
+前提条件を明示的に宣言します。VRRP hook はこの値を暗黙に変更しません。</p>
+<pre><code class="language-yaml">- apiVersion: system.routerd.net/v1alpha1
+  kind: Sysctl
+  metadata:
+    name: conntrack-tcp-ha-liberal
+  spec:
+    key: net.netfilter.nf_conntrack_tcp_be_liberal
+    value: &quot;1&quot;
+    runtime: true
+    persistent: true
+
+- apiVersion: net.routerd.net/v1alpha1
+  kind: NAT44SessionSync
+  metadata:
+    name: dslite-sessions
+  spec:
+    mode: conntrackd
+    snatAddresses: [192.0.2.2]
+    conntrackd:
+      interface: ha-sync
+      localAddress: 192.0.2.10
+      peerAddress: 192.0.2.11
+      port: 3780
+</code></pre>
+<p>Linux の conntrackd mode は、runtime 有効・non-optional な <code>Sysctl</code> で
+<code>net.netfilter.nf_conntrack_tcp_be_liberal=1</code> が宣言されていない場合、
+validation で拒否されます。再起動後に routerd より先に前提条件を満たすため、
+<code>persistent: true</code> を推奨します。</p>
+<h2 id="復元の仕組み">復元の仕組み</h2>
+<p>コントローラーは以下を実行します。</p>
+<pre><code class="language-bash">conntrack --dump -o extended -n &lt;snat-address&gt;
+</code></pre>
+<p><code>extended</code> 出力には conntrack mark が含まれます。routerd は各行を
+delete-then-insert の復元スクリプトへ変換し、SSH 経由でターゲットに送ります。
+既存フローを同じ出口経路に残すには <code>ct mark</code> の維持が重要です。</p>
+<p><code>restoreCommand</code> の既定値は <code>[conntrack]</code> です。ターゲット側のユーザーに権限昇格が必要な場合は <code>[sudo, conntrack]</code> を指定します。</p>
+<h2 id="イベントストリーム方式">イベントストリーム方式</h2>
+<p><code>spec.mode: event-stream</code> は、開始時に 1 回だけ snapshot を復元した後、
+<code>conntrack -E -o extended</code> で受け取る <code>NEW</code>、<code>UPDATE</code>、<code>DESTROY</code> を差分として
+standby へ反映します。イベントは最大 5 秒または 512 件でバッチ化されます。
+ストリームまたは接続が切れた場合は、再接続前に再度 snapshot を復元します。</p>
+<p>SSH の接続確立を再利用するには、target の <code>sshOptions</code> に OpenSSH の
+<code>ControlMaster</code>、<code>ControlPersist</code>、<code>ControlPath</code> を指定します。</p>
+<pre><code class="language-yaml">spec:
+  mode: event-stream
+  natRules:
+    - NAT44Rule/lan-to-dslite-a
+  targets:
+    - name: standby
+      host: routerd-standby.lan.example
+      user: root
+      sshOptions:
+        - -o
+        - ControlMaster=auto
+        - -o
+        - ControlPersist=yes
+        - -o
+        - ControlPath=/run/routerd/nat44-session-sync-%C
+</code></pre>
+<p><code>routerctl describe NAT44SessionSync/&lt;name&gt;</code> の <code>streamState: running</code>、
+<code>lastResyncAt</code>、<code>lastEventAt</code>、<code>lastBatchAt</code> を確認します。<code>resyncCount</code> は
+開始時およびストリームの再接続後に増加します。</p>
+<h2 id="確認する">確認する</h2>
+<pre><code class="language-bash">routerctl describe NAT44SessionSync/dslite-abc-sessions
+routerctl doctor nat
+routerd serve --controllers nat44-session-sync --config router.yaml
+</code></pre>
+<p><code>spec.when</code> が false の間は <code>Pending</code> / <code>WhenFalse</code> になります。参照した
+<code>NAT44Rule</code> がまだ <code>snatAddress</code> を解決していない場合は、<code>Pending</code> /
+<code>SNATAddressPending</code> になります。</p>
+<p>conntrackd mode では、runtime の <code>nf_conntrack_tcp_be_liberal</code> が <code>1</code> でない、
+または読み取れない場合に <code>routerctl doctor nat</code> が FAIL します。
+<code>--no-host</code> ではこのチェックを SKIP として報告します。</p>
+<h3 id="標準の通信追跡同期サービスとの競合防止">標準の通信追跡同期サービスとの競合防止</h3>
+<p><code>mode: conntrackd</code> を使う場合、管理用の同期を開始する前に、標準の
+<code>conntrackd.service</code> を停止して起動禁止にします。競合設定だけでは、
+ログ整理に伴う標準サービスの再起動で管理用の同期が停止します。
+自動起動の無効化だけでも、明示的な再起動は防げません。
+禁止後の状態を検証し、失敗時は適用を成功扱いしません。
+既存の独自サービスファイルを強制上書きせず、模擬適用では変更しません。</p>
+<p>所有権の記録は <code>systemd.mask/conntrackd.service</code> です。
+資源を削除しても起動禁止は残し、管理者が先に設定した禁止も解除しません。
+標準サービスへ戻す場合は、対象の資源を除き、管理用サービスを停止・無効化します。
+変更前の状態を確認してから <code>systemctl unmask conntrackd.service</code> を実行し、
+元の自動起動・稼働状態だけを復元してください。
+管理用の同期が動作中のまま禁止を解除しないでください。
+この保護は通信転送やカーネルの通信追跡表の設定を変更しません。</p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#対象-nat-rule-を同期する">対象 NAT rule を同期する</a></li>
+<li><a href="#conntrackd-で確立済み-tcp-を引き継ぐ">conntrackd で確立済み TCP を引き継ぐ</a></li>
+<li><a href="#復元の仕組み">復元の仕組み</a></li>
+<li><a href="#イベントストリーム方式">イベントストリーム方式</a></li>
+<li><a href="#確認する">確認する</a><ul>
+<li><a href="#標準の通信追跡同期サービスとの競合防止">標準の通信追跡同期サービスとの競合防止</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/how-to/nat44-session-sync.md">GitHub</a></div></footer></body></html>

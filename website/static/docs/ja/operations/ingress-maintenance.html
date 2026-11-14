@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ingress のメンテナンス · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/operations/ingress-maintenance.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/operations/ingress-maintenance.html" lang="en" hreflang="en">English</a><a href="/docs/ja/operations/ingress-maintenance.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/operations/ingress-maintenance.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/operations/ingress-maintenance.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="ingress-のメンテナンス">Ingress のメンテナンス</h1>
+<p>ルーターの YAML を編集せずに <code>IngressService</code> のバックエンドを一時的に外したい場合は、<code>routerctl ingress drain</code> を使います。</p>
+<pre><code class="language-sh">routerctl ingress drain ingress/kubernetes-api backend=cp-01 --duration 10m
+routerctl get IngressService
+</code></pre>
+<p>ドレインの状態は routerd の状態データベースに保存します。ドレイン中、ingress コントローラーは該当バックエンドを <code>drained: true</code>、<code>healthy: false</code>、<code>reason: Drained</code> として扱い、次回以降の調整（リコンサイル）では、新規フローを残りの healthy なバックエンドへ送ります。既存の conntrack エントリーは削除しません。</p>
+<p><code>--duration</code> が切れると、自動で復帰します。すぐに戻す場合は、次を実行します。</p>
+<pre><code class="language-sh">routerctl ingress undrain ingress/kubernetes-api backend=cp-01
+</code></pre></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul></ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/operations/ingress-maintenance.md">GitHub</a></div></footer></body></html>

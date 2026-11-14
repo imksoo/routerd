@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RouterdCluster · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/reference/resources/RouterdCluster.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/reference/resources/RouterdCluster.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/RouterdCluster.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/RouterdCluster.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/reference/resources/RouterdCluster.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="routerdcluster">RouterdCluster</h1>
+<p><a href="../resources.html#routerdcluster">各資源的設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: system.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>透過檔案租約與OS檔案鎖協調哪個routerd可以變更狀態，不是VRRP選舉或對端網路探索。</p>
+<h2 id="指定條件與參照關係">指定條件與參照關係</h2>
+<ul>
+<li>參與者需要共享且鎖定語意可靠的leasePath。peers是識別而非端點；租約實作只用非空清單啟用協調，不連線對端或驗證成員資格。待命controller以dry-run變更路徑運作。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。</p>
+<pre><code class="language-yaml">- apiVersion: system.routerd.net/v1alpha1
+  kind: RouterdCluster
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    identity: &quot;&lt;string&gt;&quot; # 選填; string
+    leasePath: &quot;&lt;string&gt;&quot; # 選填; string
+    leaseTTL: &quot;&lt;string&gt;&quot; # 選填; string
+    peers: # 必填; array
+      - &quot;&lt;string&gt;&quot; # string
+    when: # 選填; object
+      state: # 選填; object
+        &quot;&lt;key&gt;&quot;: # 選填; object
+          contains: &quot;&lt;string&gt;&quot; # 選填; string
+          equals: &quot;&lt;string&gt;&quot; # 選填; string
+          exists: true # 選填; boolean
+          for: &quot;&lt;string&gt;&quot; # 選填; string
+          in: # 選填; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # 選填; string
+          status: &quot;set&quot; # 選填; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<h2 id="欄位意義與預設值">欄位意義與預設值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>欄位意義與預設值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.peers</code></td>
+<td>去除空白與重複後至少兩項的必填清單，無預設值；不是Kind/名稱參照或實際連線位址。</td>
+</tr>
+<tr>
+<td><code>spec.leaseTTL</code></td>
+<td>租約期限預設30s，明確值須為5s–10m的Go duration。互斥變更仍由鎖控制，期限本身不是網路故障偵測器。</td>
+</tr>
+<tr>
+<td><code>spec.leasePath</code></td>
+<td>必填租約檔絕對路徑，不可含換行，無預設值；各主機獨立檔案不會協調主機間狀態。</td>
+</tr>
+<tr>
+<td><code>spec.identity</code></td>
+<td>本機租約持有者識別，省略使用修剪後os.Hostname()，不是Router.metadata.name。</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>啟用條件，省略不設限制，請見共用條件參考。</td>
+</tr>
+</tbody>
+</table>
+<p>實作: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_system.go">pkg/config/validate_system.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go">pkg/controller/chain/chain.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/ha/lease.go">pkg/ha/lease.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd/cmd_apply.go">cmd/routerd/cmd_apply.go</a></p>
+<h2 id="可參照的狀態欄位">可參照的狀態欄位</h2>
+<p>一般狀態參照驗證接受此 Kind 的下列欄位名稱。列於允許清單不保證目前有值，請檢查實際狀態。這些是輸出，不是 YAML spec 設定。</p>
+<p><code>phase</code>, <code>leader</code>, <code>leaseExpiresAt</code></p>
+<p><a href="/examples/ha-2-node.yaml">設定範例</a></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#指定條件與參照關係">指定條件與參照關係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#欄位意義與預設值">欄位意義與預設值</a></li>
+<li><a href="#可參照的狀態欄位">可參照的狀態欄位</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/reference/resources/RouterdCluster.md">GitHub</a></div></footer></body></html>

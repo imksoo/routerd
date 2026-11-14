@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Selective Address Mobility · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/reference/selective-address-mobility.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/reference/selective-address-mobility.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/selective-address-mobility.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/selective-address-mobility.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/selective-address-mobility.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="selective-address-mobility">Selective Address Mobility</h1>
+<p>Selective Address Mobility (SAM) 不是 full L2 extension。routerd CloudEdge 不把
+Ethernet segment 延伸到 public cloud，而是只移动选定的 IPv4 <code>/32</code>。source/destination
+address 会保留；firewall 与 NAT 是单独的 routerd layer。</p>
+<h2 id="primary-resource-model">primary resource model</h2>
+<p>当前 CloudEdge Mobility 的 operator-authored surface 是：</p>
+<ul>
+<li><code>SAMNodeSet</code>: 一次性声明完整共享的 node identity、topology、placement 与 SAM endpoint。</li>
+<li><code>MobilityPool</code>: 声明 mobility prefix、EventGroup、BGP delivery、以及本 node 的
+  capture/discovery/provider trap local overlay。</li>
+<li><code>SAMTransportProfile</code>: 声明 router-to-router transport、<code>selfNodeRef</code>、<code>innerPrefix</code>、
+  underlay interface、BGP router，以及从 <code>SAMNodeSet</code> 选择的 peer source。</li>
+</ul>
+<p><code>MobilityPool</code> 通过 <code>membersFrom</code> 导入共享 <code>SAMNodeSet</code>，并且只保留 self-member
+overlay。不要在 Pool 内重复 remote identity、placement 或 maintenance。provider、capture
+与 discovery detail 只能属于 self-member overlay。所有 node 应获得相同的 <code>SAMNodeSet</code>，以便
+deterministic projection。</p>
+<p><code>SAMNodeSet.spec.nodes[].macAddresses</code> 可静态列出同一 fabric 中 member 的 MAC
+地址。on-prem ARP observer 会把所有 member MAC 的并集作为 ignore set，避免 routerd
+member 发出的 ARP frame 被当作 mobile <code>/32</code> 的 ownership signal。<code>macAddresses</code>
+的编辑是声明式 intent：routerd 会导出 observer ignore set，并通过 observer socket
+自动收敛，不需要重启 observer 或 routerd。observer status 会显示当前生效的 ignore set
+和被忽略的 observation 计数，便于确认收敛状态。</p>
+<h2 id="transport">transport</h2>
+<p>当前 SAM transport 默认使用 IPIP delivery plane。WireGuard 如存在，只作为加密 underlay；
+WireGuard peer 的 <code>AllowedIPs</code> 应只包含 transport endpoint prefix，不应包含 mobile <code>/32</code>。</p>
+<p><code>SAMTransportProfile</code> 会生成 per-peer <code>TunnelInterface</code>、endpoint <code>/32</code> <code>IPv4Route</code>
+与 <code>BGPPeer</code>。所有 profile 通过 <code>peersFrom</code> 使用相同的 <code>SAMNodeSet</code>，因此每条 node pair
+edge 都能导出相同的 <code>/31</code>。<code>nodeRefs</code> 可将 peer 限制为实际 adjacency；省略时会选择带
+<code>samEndpoint</code> 的所有非 self node。</p>
+<p>已签名的 enrollment 可以在同一个 runtime snapshot 中额外返回一个
+<code>SAMPeerGroup</code>，并在 <code>peersFrom</code> 中标记为 <code>direct: true</code>。它只是在可达 leaf 之间尝试
+一条可选的 L3 直连路径；前面的非 optional <code>SAMRRSet</code> 仍是启动和故障时的回退路径。
+direct source 必须使用 <code>addressingMode: pair-stable</code>，并且不能把 peer 配成 route
+reflector client。</p>
+<p>当 direct BGP session 建立后，routerd 会给它导入的路由设置比 RR 更高的 BGP
+<code>LOCAL_PREF</code>。这不是根据 AS_PATH 长度或 administrative distance 选择：iBGP 的 RR
+反射不会可靠地把额外的转发 hop 写入 AS_PATH。profile 必须显式设置 RR 的
+<code>bgp.importPolicy.localPreference</code>，<code>bgp.directLocalPreference</code> 必须更高。每个 direct
+leaf 还只能通告其签名 claim 中列出的 IPv4 <code>/32</code>；没有、过期、不兼容或不可达的 direct
+group 会被忽略，RR 路径继续工作。</p>
+<p>RR import 的 <code>nextHopRewrite</code> 请保持默认的 <code>peer-address</code>，或显式写出该值。direct
+profile 应使用 <code>peer-address</code> 而不是 <code>unchanged</code>：RR 反射的路由可能来自另一台 leaf，但真正可达的下一跳是
+直接相连的 RR tunnel。若旧的 direct profile 明确保留了 <code>unchanged</code>，routerd 会在运行时
+安全地将有效策略规范化为 <code>peer-address</code>，以便 daemon 启动后可以替换 YAML。请把 YAML
+更新为显式形式；non-direct profile 原有的 <code>unchanged</code> 语义不变。它只决定学习到路由后的
+转发下一跳，不会改变是否接纳 direct peer。</p>
+<h2 id="dynamic-rr-sync-fail-static">dynamic RR sync fail-static</h2>
+<p>RR 可以发布 <code>SAMPeerGroup</code>，leaf 通过 TCP 19652 获取缺失的 transport peer group。
+<code>SAMPeerGroup</code> 仅是运行时同步 payload，不能作为 top-level <code>spec.resources</code> 声明。
+获取成功后，leaf 会把它保存为带 TTL 的 dynamic config part：</p>
+<ul>
+<li><code>peer-group-sync/&lt;name&gt;</code> 对应 <code>SAMPeerGroup</code></li>
+</ul>
+<p>TTL 过期或 RR publisher 消失时，leaf 不会删除已经生成的 tunnel 或 BGP peer。routerd
+会继续使用 last-known-good 记录，并把来源标记为 <code>Stale</code>，同时在 status 中输出
+<code>warning</code>。MobilityPool membership 直接从静态 <code>SAMNodeSet</code> 配置解析，不依赖成员资格
+同步端点。</p>
+<h2 id="capture-and-delivery">capture and delivery</h2>
+<p><code>MobilityPool</code> 始终使用 BGP delivery。owner advertise selected <code>/32</code>，non-owner 将
+BGP best path import 到 local FIB。</p>
+<p>支持的 capture type：</p>
+<table>
+<thead>
+<tr>
+<th>Type</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>provider-secondary-ip</code></td>
+<td>cloud fabric 通过 provider secondary address object 或等价机制 capture <code>/32</code>。</td>
+</tr>
+<tr>
+<td><code>proxy-arp</code></td>
+<td>site router 在本地对 selected address 回答 ARP。</td>
+</tr>
+</tbody>
+</table>
+<p>cloud <code>provider-secondary-ip</code> capture 可选择 capture strategy。当前 release lab
+认证仅覆盖 <code>secondary-ip</code> capture。<code>route-table</code> strategy 目前为 <strong>uncertified</strong>：
+在 Azure 上它通过 UDR 指向 holder，并要求 routerd 等待 provider inventory 观测到
+该 UDR 指向本地 router 后，才将已 capture 的 <code>/32</code> 广告到 BGP。这个 provider
+观测 gate 是 <code>route-table</code> strategy 特有的；<code>secondary-ip</code> capture 不使用
+route-table 观测来决定何时广告 overlay holder。由于该设计会把 ARM/provider API
+延迟传递到 overlay 收敛，route-table strategy 需要在 release lab 中完成 provider
+观测、BGP 广告耦合和 provider API 延迟行为验证后才能认证。</p>
+<p>on-prem <code>proxy-arp</code> capture 可使用 <code>activeWhen.type: single-router</code> 作为单 router
+always-active capture，也可使用 <code>vrrp-master</code> 由 HA pair 的 VRRP master gate 控制。
+<code>activeWhen</code> 仅支持此 on-prem <code>proxy-arp</code> capture；cloud
+<code>provider-secondary-ip</code> capture 设置该字段会被拒绝，因此本地 VRRP 状态变化
+不会在缺少对应 BGP 和本地数据平面计划时创建 provider assignment。</p>
+<p><code>on-demand-arp</code> source 会以低速 proactive sweep 探测 mobility prefix：每个
+<code>scanInterval</code> 探测一个 target，使已启动但安静的 L2 client 也能被观测到。</p>
+<h2 id="provider-actions">provider actions</h2>
+<p>provider capture planner 可输出 <code>assign-secondary-ip</code>、<code>ensure-forwarding-enabled</code> 等
+provider <code>ActionPlan</code>。planner 本身不调用 provider API。action plan 只有在导入
+provider-action journal 并通过 <code>ProviderActionPolicy</code>、approval、allowlist 与 executor
+plugin gate 后才可能执行。</p>
+<h2 id="rr-admission-filters">RR admission filters</h2>
+<p>Generated route-reflector client BGP peers derive an import admission policy from
+the SAM topology and <code>importPolicy.allowedPrefixes</code>; if that prefix list is
+omitted, routerd defaults it from declared <code>MobilityPool</code> prefixes. Imported
+routes must be <code>/32</code>s under the permitted prefixes, must carry the advertising
+leaf's own node-identity community, and must not carry another topology node's
+identity. This prevents a leaf from claiming another node identity or advertising
+a broad mobility prefix through the generated RR session. A compromised leaf can
+still advertise a pool-local <code>/32</code> with its own identity; constraining per-node
+ownership requires a separate authorization signal beyond this route filter.</p>
+<h2 id="ownership-inspection">ownership inspection</h2>
+<p><code>MobilityPool</code> status exposes one per-address operational view:
+<code>ownershipResolverControlPlaneOwnerTable</code>. <code>doctor sam</code>, FIB checks, and
+operators use this control-plane table. It keeps one deterministic row per
+observed mobility address and includes owner provider/NIC/subnet/resource,
+local evidence, capture state and final <code>captureDisposition</code>/<code>captureReason</code>,
+advertise/suppression state, and conflict details.</p>
+<p>Use <code>routerctl mobility explain --pool &lt;pool&gt; --address &lt;ipv4/32&gt;</code> to render an
+owner-table row together with pool-level provider status. <code>OwnershipResolved</code>
+comes from the row. <code>providerActionFailedAddresses</code> makes
+<code>ProviderActionApplied=False</code> only for a named address, and
+<code>providerObservationPendingAddresses</code> makes <code>ProviderObserved=False</code> only for
+a named address. Those conditions remain <code>Unknown</code> for all other addresses;
+the pool-level provider phase is not projected as a failure for every address.</p>
+<p>When two fresh provider owners claim the same <code>/32</code>, the row state is
+<code>Conflict</code> with <code>conflictReason=duplicate-provider-home-owners</code>. The row also
+includes <code>conflictWinnerNode</code> and <code>conflictResolution</code>: the healed BGP owner
+wins when present; otherwise the lowest stable owner key wins (<code>nodeRef</code>,
+provider ref, resource ref, NIC ref, subnet ref, then address), independent of
+provider scan recency. A losing node that still observes a local
+provider-secondary capture reports <code>loser-release-local-capture</code> and releases
+only that local capture after the stale-capture hold-down.</p>
+<h2 id="firewall-and-nat">firewall and NAT</h2>
+<p>SAM 不包含 <code>nat</code>、<code>preserveSource</code>、firewall 或 zone 字段。若要 firewall/NAT mobile
+address，请在现有 <code>FirewallZone</code>、<code>FirewallRule</code>、<code>NAT44Rule</code> 中引用 literal <code>/32</code>。
+SAM forwarded traffic 仍会经过普通 forwarding/firewall/conntrack path。</p>
+<h3 id="conntrack-cleanup-design-note">conntrack cleanup design note</h3>
+<p>routerd 曾短暂公开 BGP mode SAM failover 的手动 opt-in scoped conntrack cleanup hook。
+该功能已经移除。
+在参考 SAM leaf 构成中，routerd 不会绘制让 delivered overlay flow 进入 conntrack 的
+dataplane rule，因此 leaf 侧 scoped cleanup 是 no-op，也不能解决 failover flow anomaly。</p>
+<p>这个问题陈述对未来 stateful SAM leaf 设计仍然成立：如果某个 router 有意追踪 forwarded
+mobile <code>/32</code> flow，它在成为 holder 时可能需要 scoped recovery hook。重新引入时应检测
+routerd-managed ct-engage dataplane，并只在该场景自动启用 cleanup。不要以手动 opt-in flag
+的形式重新引入。</p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#primary-resource-model">primary resource model</a></li>
+<li><a href="#transport">transport</a></li>
+<li><a href="#dynamic-rr-sync-fail-static">dynamic RR sync fail-static</a></li>
+<li><a href="#capture-and-delivery">capture and delivery</a></li>
+<li><a href="#provider-actions">provider actions</a></li>
+<li><a href="#rr-admission-filters">RR admission filters</a></li>
+<li><a href="#ownership-inspection">ownership inspection</a></li>
+<li><a href="#firewall-and-nat">firewall and NAT</a><ul>
+<li><a href="#conntrack-cleanup-design-note">conntrack cleanup design note</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/reference/selective-address-mobility.md">GitHub</a></div></footer></body></html>

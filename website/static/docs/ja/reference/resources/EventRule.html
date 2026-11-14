@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>EventRule · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/reference/resources/EventRule.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/reference/resources/EventRule.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/EventRule.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/reference/resources/EventRule.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/EventRule.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="eventrule">EventRule</h1>
+<p><a href="../resources.html#eventrule">リソース別の設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>永続化されたローカルイベント履歴のパターンからイベントを生成します。相関キーごとに状態を分離できます。</p>
+<h2 id="指定条件と参照関係">指定条件と参照関係</h2>
+<ul>
+<li>pattern.operatorとemit.topicが必須です。topic・topics・trigger・expectedのいずれかも必要ですが、この検証だけでは動作するパターンとは限りません。expectedだけでは入力一覧にならず、absenceにはtriggerまたはtopicが必要です。トピックのリソース存在確認は行いません。</li>
+<li>入力順はtopics、topic、triggerです。all_of・sequenceはトピックの完全一致を使います。any_of・window・count・throttle・debounce・absenceはドット区切りの*（1区間）と**（0区間以上）に対応します。</li>
+<li>all_ofは受信済みトピックを発火後も保持し、すべて受信した後は該当イベントのたびに再発火します。sequenceは完了時、またはstrict指定時の一覧内順序違反でリセットします。windowは閾値到達後に時間窓を、countはカウンターをリセットします。</li>
+<li>カウンター・途中の順序・タイマーはメモリー上にあり、プロセス再起動後は空から開始します。イベント読取位置は永続化し、新規読取処理は履歴の現在の末尾から開始します。読取位置の保存失敗時は入力が再処理され得ます。routerd-eventruleが生成したイベントは、連鎖ループ防止のため全ルールから除外します。</li>
+<li>相関状態はルールごとに最大4096キーで、最も古く観測したキーのカウンター・タイマーを破棄します。window・throttleは入力イベント時刻で比較し、absence・debounceのタイマーは処理中の経過時間を使います。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: EventRule
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    emit: # 必須; object
+      attributes: # 任意; object
+        &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # 任意; string
+      topic: &quot;&lt;string&gt;&quot; # 必須; string
+    pattern: # 必須; object
+      allow_missing_correlation: true # 任意; boolean
+      correlate_by: &quot;&lt;string&gt;&quot; # 任意; string
+      duration: &quot;&lt;string&gt;&quot; # 任意; string
+      expected: &quot;&lt;string&gt;&quot; # 任意; string
+      interval: &quot;&lt;string&gt;&quot; # 任意; string
+      operator: &quot;all_of&quot; # 必須; string; enum=[&quot;all_of&quot;, &quot;any_of&quot;, &quot;sequence&quot;, &quot;window&quot;, &quot;absence&quot;, &quot;throttle&quot;, &quot;debounce&quot;, &quot;count&quot;]
+      quiet: &quot;&lt;string&gt;&quot; # 任意; string
+      rate: 0 # 任意; integer; minimum=0
+      strict: true # 任意; boolean
+      threshold: 0 # 任意; integer; minimum=0
+      topic: &quot;&lt;string&gt;&quot; # 任意; string
+      topics: # 任意; array
+        - &quot;&lt;string&gt;&quot; # string
+      trigger: &quot;&lt;string&gt;&quot; # 任意; string
+      window: &quot;&lt;string&gt;&quot; # 任意; string
+</code></pre>
+<h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>項目の意味と既定値</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.pattern</code></td>
+<td>必須のパターン定義です。選択した演算子で使わない項目も排他エラーにはなりません。</td>
+</tr>
+<tr>
+<td><code>spec.pattern.operator</code></td>
+<td>all_of・any_of・sequence・window・absence・throttle・debounce・countのいずれかが必須で、既定値はありません。</td>
+</tr>
+<tr>
+<td><code>spec.pattern.topic</code></td>
+<td>topicsの後に追加する単一入力トピックです。absenceではtriggerが空の場合の開始トピックになります。既定は空です。</td>
+</tr>
+<tr>
+<td><code>spec.pattern.topics</code></td>
+<td>順序付きの入力一覧で、既定は空です。sequenceでは順序に意味があり、all_ofでは一覧の全トピックの受信が必要です。</td>
+</tr>
+<tr>
+<td><code>spec.pattern.trigger</code></td>
+<td>absenceのタイマーを開始・再開するトピックで、topicより優先します。他の演算子の入力一覧にもtopicの後で追加されます。既定は空です。</td>
+</tr>
+<tr>
+<td><code>spec.pattern.expected</code></td>
+<td>absenceの取り消しトピックです。同じ相関キーの待機タイマーを取り消し、triggerの一致より先に判定します。通常の入力一覧には入りません。既定は空で、取り消しなしです。</td>
+</tr>
+<tr>
+<td><code>spec.pattern.duration</code></td>
+<td>Go形式の期間です。window・throttle・absenceの既定は1m、debounceは1sです。個別のwindow・interval・quietを優先します。0・負数も検証を通るため、待機には正の値を使用してください。</td>
+</tr>
+<tr>
+<td><code>spec.pattern.window</code></td>
+<td>windowの集計期間です。durationより優先し、両方省略時は1mです。開始境界以降を数え、閾値到達後は窓を空にします。他の演算子では使いません。</td>
+</tr>
+<tr>
+<td><code>spec.pattern.quiet</code></td>
+<td>debounceの無入力待機期間です。durationより優先し、両方省略時は1sです。該当入力ごとにタイマーを再開し、最後の入力に基づき発火します。</td>
+</tr>
+<tr>
+<td><code>spec.pattern.interval</code></td>
+<td>throttleの相関キーごとの最短発火間隔です。durationより優先し、両方省略時は1mです。最初の該当イベントは直ちに発火します。</td>
+</tr>
+<tr>
+<td><code>spec.pattern.rate</code></td>
+<td>0以上の整数で既定は0ですが、現行エンジンは読みません。throttleの制御にはintervalを使用してください。</td>
+</tr>
+<tr>
+<td><code>spec.pattern.threshold</code></td>
+<td>window・countの必要イベント数です。0以上で、省略・0は1として扱います。他の演算子では使いません。</td>
+</tr>
+<tr>
+<td><code>spec.pattern.correlate_by</code></td>
+<td>attributes.<key>、resource.name/kind/apiVersion、daemon.instance/kindで状態を分離します。空なら共通キーdefaultです。入力トピックは文字列で、Kind/name参照ではありません。</td>
+</tr>
+<tr>
+<td><code>spec.pattern.allow_missing_correlation</code></td>
+<td>既定はfalseで、相関値欠落の入力を飛ばしwarningCountを増やします。trueでは空キーにまとめます。ただしresourceオブジェクトが存在して選択メンバーだけ空の場合は、falseでも受け入れます。</td>
+</tr>
+<tr>
+<td><code>spec.pattern.strict</code></td>
+<td>既定はfalseです。sequenceで一覧内のトピックが順序違いで来ると進行を0に戻します。その入力を新しい先頭として再利用しません。一覧外のトピックは無視します。</td>
+</tr>
+<tr>
+<td><code>spec.emit</code></td>
+<td>必須の出力イベント定義です。重要度はinfoで、resourceは本EventRuleになります。</td>
+</tr>
+<tr>
+<td><code>spec.emit.topic</code></td>
+<td>空でない出力イベント型が必須です。既定値はなく、ルールエンジンは自身の生成イベントを入力にしません。</td>
+</tr>
+<tr>
+<td><code>spec.emit.attributes</code></td>
+<td>任意の文字列マップです。${event.type}・${correlation}・${count}・${resource.name/kind/apiVersion}・${attributes.<key>}を展開し、未解決の式は文字列のまま残ります。正のcountと空でないcorrelationは同名の出力キーを上書きします。</td>
+</tr>
+</tbody>
+</table>
+<p>実装: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_route.go">pkg/config/validate_route.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/eventrule/engine.go">pkg/eventrule/engine.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/eventconsumer/consumer.go">pkg/eventconsumer/consumer.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/bus/bus.go">pkg/bus/bus.go</a></p>
+<h2 id="状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</h2>
+<p>通常の状態値参照の検証で、このKindについて許可するフィールド名です。許可一覧にあるだけでは値の生成・取得を保証しないため、実際の状態を確認してください。YAMLのspecに設定する項目ではなく出力です。</p>
+<p><code>phase</code>, <code>topic</code></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
+<li><a href="#状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/reference/resources/EventRule.md">GitHub</a></div></footer></body></html>

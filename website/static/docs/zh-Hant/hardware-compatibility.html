@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>硬體相容性 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/hardware-compatibility.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/hardware-compatibility.html" lang="en" hreflang="en">English</a><a href="/docs/ja/hardware-compatibility.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/hardware-compatibility.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/hardware-compatibility.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="硬體相容性">硬體相容性</h1>
+<p>routerd 可在具備必要核心功能與使用者空間功能的支援 OS 上運行。
+實務上的重點在於，作為路由器使用時，網路介面、CPU、記憶體與儲存裝置耐久性是否充足。</p>
+<h2 id="建議類型">建議類型</h2>
+<table>
+<thead>
+<tr>
+<th>類型</th>
+<th>適性</th>
+<th>備註</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Intel NUC</td>
+<td>適合實驗室路由器</td>
+<td>可靠性通常較高。但多數機型只有一個 Ethernet 埠，使用 USB Ethernet 或 VLAN trunk 時需謹慎評估。</td>
+</tr>
+<tr>
+<td>Intel N100 mini PC</td>
+<td>適合家庭路由器</td>
+<td>每瓦效能優秀。建議選擇搭載 Intel i226/i225 NIC 並具備良好散熱的機型。</td>
+</tr>
+<tr>
+<td>Raspberry Pi 5</td>
+<td>適合 edge 或展示用途</td>
+<td>需要高品質電源及相容性良好的 USB/NVMe 儲存裝置。吞吐量取決於轉接器。</td>
+</tr>
+</tbody>
+</table>
+<h2 id="候選硬體">候選硬體</h2>
+<p>以下清單僅供參考。
+狀態未標示為「已驗證」者，請視為預期適用。
+正式作為路由器使用前，請先確認 NIC、MTU 及重新開機後的收斂狀況。</p>
+<table>
+<thead>
+<tr>
+<th>硬體</th>
+<th>預期用途</th>
+<th>狀態</th>
+<th>備註</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>搭配 USB Ethernet 的 Intel NUC</td>
+<td>Proxmox 實驗室路由器、live ISO 展示</td>
+<td>預期可用</td>
+<td>建議選用有實績的 USB Ethernet 轉接器。測試時請將管理路徑分隔至獨立的 VLAN 或介面。</td>
+</tr>
+<tr>
+<td>N100 4 埠 2.5GbE mini PC</td>
+<td>家庭路由器、DS-Lite、PPPoE 故障切換、VPN overlay</td>
+<td>預期可用</td>
+<td>無磁碟 routerd 設備的首選。請確認 Intel i226/i225 NIC 及散熱狀況。</td>
+</tr>
+<tr>
+<td>N100 6 埠 2.5GbE mini PC</td>
+<td>多 LAN、訪客網路、管理路徑分離</td>
+<td>預期可用</td>
+<td>適合以實體埠分隔 WAN、LAN、訪客、管理網路的場景。同時請確認 BIOS 的電源恢復設定。</td>
+</tr>
+<tr>
+<td>搭配 USB 或 PCIe NIC 的 Raspberry Pi 5</td>
+<td>展示、edge 路由器、省電實驗室</td>
+<td>預期可用</td>
+<td>需要強力電源。吞吐量高度依賴 NIC 與儲存路徑。</td>
+</tr>
+<tr>
+<td>搭載 Intel NIC 的舊型 thin client</td>
+<td>備援路由器、實驗室節點</td>
+<td>預期可用</td>
+<td>適合測試使用。請確認 AES 支援、散熱及儲存裝置的健康狀態。</td>
+</tr>
+<tr>
+<td>Proxmox 上的虛擬機</td>
+<td>SDN/VNET 路由、類 CI 實驗室、整合測試</td>
+<td>實驗室已驗證</td>
+<td>同一份資源日後可遷移至實體 mini PC，這正是 routerd 的優勢所在。</td>
+</tr>
+</tbody>
+</table>
+<h2 id="cpu-與記憶體">CPU 與記憶體</h2>
+<p>家庭或小型辦公室環境的參考標準如下。</p>
+<ul>
+<li>基本的路由控制、DHCP、DNS、NAT 及 Web 管理介面，2 核心即已足夠。</li>
+<li>若使用加密 DNS、OpenTelemetry 或日誌保存，4 核心較為合適。</li>
+<li>1 GiB RAM 為實用下限。</li>
+<li>使用 live ISO 與日誌緩衝區時，建議 2 GiB 以上。</li>
+</ul>
+<h2 id="網路介面">網路介面</h2>
+<p>建議至少配備 2 個實體介面。</p>
+<ul>
+<li>WAN 或 untrust</li>
+<li>LAN 或 trust</li>
+</ul>
+<p>若有第 3 個管理介面，防火牆變更的測試將更為安全，可將 SSH 與 Web 管理介面從 WAN/LAN 策略中分離。</p>
+<p>也可以在單一 NIC 上進行 VLAN 路由設定，但初始設定時遺失管理路徑的風險較高。套用前請務必先確認 plan 的結果。</p>
+<h2 id="儲存裝置">儲存裝置</h2>
+<p>一般安裝建議使用 SSD 或 NVMe。
+無磁碟 mini PC 可搭配 USB 持久化的 live ISO 使用。</p>
+<ul>
+<li>將設定儲存至 USB 裝置。</li>
+<li>日誌暫存於 <code>/run/routerd/logs</code> 的 tmpfs。</li>
+<li>每日一次，將壓縮日誌與狀態快照寫入 USB。</li>
+</ul>
+<p>這樣可以減少對低價快閃儲存媒體的寫入次數。</p>
+<h2 id="live-iso-與-usb-持久化">Live ISO 與 USB 持久化</h2>
+<p>Live ISO 同時適用於短期評估與無磁碟運作。</p>
+<ul>
+<li>從 ISO 開機。</li>
+<li>在螢幕或序列 console 上執行文字精靈。</li>
+<li>將 <code>router.yaml</code> 與選定狀態儲存至 USB。</li>
+<li>日誌暫存於 tmpfs。</li>
+<li>每日一次，將壓縮日誌與狀態快照寫入 USB。</li>
+</ul>
+<p>未使用 USB 持久化時，live ISO 作為臨時展示路由器運作。
+使用 USB 持久化時，同一台 mini PC 可以用儲存的設定重新開機並繼續服務。</p>
+<h2 id="nic-備註">NIC 備註</h2>
+<table>
+<thead>
+<tr>
+<th>NIC 類型</th>
+<th>建議</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Intel i210/i211</td>
+<td>穩健可靠的選擇。</td>
+</tr>
+<tr>
+<td>Intel i225/i226</td>
+<td>2.5GbE 的良好選擇。請保持 firmware 與 OS 驅動程式在最新版本。</td>
+</tr>
+<tr>
+<td>Realtek 2.5GbE</td>
+<td>通常可正常運作，但正式環境使用前請先進行負載測試。</td>
+</tr>
+<tr>
+<td>USB Ethernet</td>
+<td>展示或 NUC 上很方便。正式路由器請避免使用來路不明的轉接器。</td>
+</tr>
+</tbody>
+</table>
+<h2 id="平台備註">平台備註</h2>
+<p>Ubuntu Server 為主要支援對象。
+FreeBSD 透過平台專屬的產生器（renderer）與服務整合提供支援。
+在 Linux 以外的平台上依賴特定功能時，請參閱<a href="platforms.html">平台</a>頁面確認。</p>
+<h2 id="驗證清單">驗證清單</h2>
+<ol>
+<li>啟動目標 OS 或 live ISO。</li>
+<li>確認所有 NIC 名稱穩定不變。</li>
+<li>執行 <code>routerctl validate</code> 與 <code>routerctl plan</code>。</li>
+<li>若可行，請在管理路徑分離後再套用。</li>
+<li>確認 DHCP、DNS、NAT、防火牆及路由策略正常運作。</li>
+<li>執行吞吐量測試。</li>
+<li>確認 CPU 溫度與封包遺失狀況。</li>
+<li>重新開機後，確認無需手動指令即可自動收斂。</li>
+</ol></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#建議類型">建議類型</a></li>
+<li><a href="#候選硬體">候選硬體</a></li>
+<li><a href="#cpu-與記憶體">CPU 與記憶體</a></li>
+<li><a href="#網路介面">網路介面</a></li>
+<li><a href="#儲存裝置">儲存裝置</a></li>
+<li><a href="#live-iso-與-usb-持久化">Live ISO 與 USB 持久化</a></li>
+<li><a href="#nic-備註">NIC 備註</a></li>
+<li><a href="#平台備註">平台備註</a></li>
+<li><a href="#驗證清單">驗證清單</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/hardware-compatibility.md">GitHub</a></div></footer></body></html>

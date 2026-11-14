@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HealthCheck · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/reference/resources/HealthCheck.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/reference/resources/HealthCheck.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/reference/resources/HealthCheck.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/HealthCheck.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/HealthCheck.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="healthcheck">HealthCheck</h1>
+<p><a href="../resources.html#healthcheck">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Probe an IP target and publish Healthy/Unhealthy state for route selection. A successful probe verifies only its configured protocol and path.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>Specify target explicitly for operation. targetSource and interface influence validation/plan presentation, but the current daemon renderer passes target directly without resolving an automatic default gateway or DS-Lite remote target; the helper rejects an empty target.</li>
+<li>Source binding and socket marks are derived from referring EgressRoutePolicy candidates/targets, not exposed as HealthCheck YAML fields. Conflicting derived bindings cannot select a unique path. DS-Lite-associated probes require their binding to be available.</li>
+<li>TCP checks connection establishment only. DNS resolves example.com A records through the target server. HTTP sends GET http://<target>:<port>/ and accepts status 200–499, including 4xx; it does not check an application-specific URL or response body.</li>
+</ul>
+<h2 id="yaml-definition">YAML definition</h2>
+<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: HealthCheck
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    addressFamily: &quot;ipv4&quot; # optional; string; enum=[&quot;ipv4&quot;, &quot;ipv6&quot;]
+    enabled: true # optional; boolean
+    healthyThreshold: 1 # optional; integer; minimum=1
+    interface: &quot;&lt;string&gt;&quot; # optional; string
+    interval: &quot;&lt;string&gt;&quot; # optional; string
+    port: 0 # optional; integer; minimum=0; maximum=65535
+    protocol: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;icmp&quot;, &quot;tcp&quot;, &quot;dns&quot;, &quot;http&quot;]
+    role: &quot;link&quot; # optional; string; enum=[&quot;link&quot;, &quot;next-hop&quot;, &quot;internet&quot;, &quot;service&quot;, &quot;policy&quot;]
+    target: &quot;&lt;string&gt;&quot; # optional; string
+    targetSource: &quot;auto&quot; # optional; string; enum=[&quot;auto&quot;, &quot;static&quot;, &quot;defaultGateway&quot;, &quot;dsliteRemote&quot;]
+    timeout: &quot;&lt;string&gt;&quot; # optional; string
+    type: &quot;ping&quot; # optional; string; enum=[&quot;ping&quot;]
+    unhealthyThreshold: 1 # optional; integer; minimum=1
+    when: # optional; object
+      state: # optional; object
+        &quot;&lt;key&gt;&quot;: # optional; object
+          contains: &quot;&lt;string&gt;&quot; # optional; string
+          equals: &quot;&lt;string&gt;&quot; # optional; string
+          exists: true # optional; boolean
+          for: &quot;&lt;string&gt;&quot; # optional; string
+          in: # optional; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # optional; string
+          status: &quot;set&quot; # optional; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.enabled</code></td>
+<td>Default true; false disables probing.</td>
+</tr>
+<tr>
+<td><code>spec.type</code></td>
+<td>Default ping; only ping is accepted. Use protocol to choose TCP/DNS/HTTP despite the type name.</td>
+</tr>
+<tr>
+<td><code>spec.role</code></td>
+<td>Optional link/next-hop/internet/service/policy classification; validation/plan default next-hop. It does not choose the probe target or protocol at runtime.</td>
+</tr>
+<tr>
+<td><code>spec.addressFamily</code></td>
+<td>Optional ipv4/ipv6. Target validation treats omission as ipv4, so specify ipv6 with an IPv6 target. This is not DNS hostname resolution: target must be an IP literal.</td>
+</tr>
+<tr>
+<td><code>spec.target</code></td>
+<td>Bare IP address matching addressFamily. Semantically required when targetSource is static; also operationally required by the current helper for all modes. No usable runtime default.</td>
+</tr>
+<tr>
+<td><code>spec.targetSource</code></td>
+<td>auto by validation default; static/defaultGateway/dsliteRemote also accepted. The current renderer does not implement their automatic target lookup; see the operational restriction above.</td>
+</tr>
+<tr>
+<td><code>spec.interface</code></td>
+<td>Optional logical interface/PPPoESession/DSLiteTunnel name; if supplied it must exist in the shared interface/tunnel index. This field alone does not become --source-interface in the current helper renderer.</td>
+</tr>
+<tr>
+<td><code>spec.protocol</code></td>
+<td>icmp by default; tcp/dns/http select the checks described above. HTTP is plaintext, not HTTPS.</td>
+</tr>
+<tr>
+<td><code>spec.port</code></td>
+<td>0–65535; default 0 delegates to the protocol: TCP 443, DNS 53, HTTP 80. ICMP does not use a port.</td>
+</tr>
+<tr>
+<td><code>spec.interval</code></td>
+<td>Positive Go duration; helper/runtime default 30s. The plan observer currently displays 60s on omission, which is not the helper default.</td>
+</tr>
+<tr>
+<td><code>spec.timeout</code></td>
+<td>Positive Go duration per probe, default 3s. This is the configured probe timeout, not a router reboot deadline.</td>
+</tr>
+<tr>
+<td><code>spec.healthyThreshold</code></td>
+<td>Consecutive successful probes to Healthy, default 1. A failure resets the success streak. Use positive integers; explicit 0 is outside the schema minimum.</td>
+</tr>
+<tr>
+<td><code>spec.unhealthyThreshold</code></td>
+<td>Consecutive failures to Unhealthy, default 3. A success resets the failure streak; intermediate failures report Failing.</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>Optional common activation predicate; omitted means unconditional. Refer to common fields for nested state/all/any and their conditions.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_wan.go">pkg/config/validate_wan.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/healthcheck/engine.go">pkg/healthcheck/engine.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/healthcheck/dslite_binding.go">pkg/healthcheck/dslite_binding.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/healthcheck_systemd.go">pkg/render/healthcheck_systemd.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/system.go">pkg/controller/chain/system.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd-healthcheck/main.go">cmd/routerd-healthcheck/main.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/apply/engine.go">pkg/apply/engine.go</a></p>
+<h2 id="referenceable-status-fields">Referenceable status fields</h2>
+<p>The ordinary status-reference validator accepts these field names for this kind. This allowlist does not guarantee that every field is currently populated; inspect runtime status. These are outputs, not YAML spec fields.</p>
+<p><code>phase</code>, <code>role</code>, <code>target</code>, <code>sourceAddress</code>, <code>sourceInterface</code>, <code>protocol</code>, <code>consecutiveFailed</code>, <code>lastCheckedAt</code></p>
+<p><a href="/examples/home-router-mgmt-protected.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
+<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
+<li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/reference/resources/HealthCheck.md">GitHub</a></div></footer></body></html>

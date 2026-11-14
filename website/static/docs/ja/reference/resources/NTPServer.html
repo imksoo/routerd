@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NTPServer · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/reference/resources/NTPServer.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/reference/resources/NTPServer.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/NTPServer.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/reference/resources/NTPServer.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/NTPServer.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="ntpserver">NTPServer</h1>
+<p><a href="../resources.html#ntpserver">リソース別の設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: system.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>chronyまたはFreeBSD ntpdを使い、時刻サーバーと上流サーバーを設定します。</p>
+<h2 id="指定条件と参照関係">指定条件と参照関係</h2>
+<ul>
+<li>managedの既定値はfalseです。trueでは上流の取得元宣言が必要で、staticならserversが追加で必須です。待受・許可元の配列は結合しますが、上流の各取得方法はsourceの選択順で切り替えます。</li>
+<li>ntpdの生成処理はallowCIDRsによる制限を出力しません。この一覧の宣言だけでntpdへのクライアント制限が適用されるとは扱わないでください。</li>
+<li>動的なsourceでは、上流の値が未解決でも、それだけでサーバー設定の生成を止めません。上流なしの設定になる場合があります。Appliedは設定・サービスの反映を示し、時刻同期済みの証明ではありません。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
+<pre><code class="language-yaml">- apiVersion: system.routerd.net/v1alpha1
+  kind: NTPServer
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    allowCIDRFrom: # 任意; array
+      - # object
+        field: &quot;&lt;string&gt;&quot; # 任意; string
+        optional: true # 任意; boolean
+        resource: &quot;&lt;string&gt;&quot; # 必須; string
+    allowCIDRs: # 任意; array
+      - &quot;&lt;string&gt;&quot; # string
+    fallbackServers: # 任意; array
+      - &quot;&lt;string&gt;&quot; # string
+    listenAddressFrom: # 任意; array
+      - # object
+        field: &quot;&lt;string&gt;&quot; # 任意; string
+        optional: true # 任意; boolean
+        resource: &quot;&lt;string&gt;&quot; # 必須; string
+    listenAddresses: # 任意; array
+      - &quot;&lt;string&gt;&quot; # string
+    managed: true # 任意; boolean
+    provider: &quot;chrony&quot; # 任意; string; enum=[&quot;chrony&quot;, &quot;ntpd&quot;]
+    serverFrom: # 任意; array
+      - # object
+        field: &quot;&lt;string&gt;&quot; # 任意; string
+        optional: true # 任意; boolean
+        resource: &quot;&lt;string&gt;&quot; # 必須; string
+    servers: # 任意; array
+      - &quot;&lt;string&gt;&quot; # string
+    source: &quot;static&quot; # 任意; string; enum=[&quot;static&quot;, &quot;auto&quot;, &quot;dhcp&quot;, &quot;dhcpv6&quot;]
+    when: # 任意; object
+      state: # 任意; object
+        &quot;&lt;key&gt;&quot;: # 任意; object
+          contains: &quot;&lt;string&gt;&quot; # 任意; string
+          equals: &quot;&lt;string&gt;&quot; # 任意; string
+          exists: true # 任意; boolean
+          for: &quot;&lt;string&gt;&quot; # 任意; string
+          in: # 任意; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # 任意; string
+          status: &quot;set&quot; # 任意; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>項目の意味と既定値</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.managed</code></td>
+<td>省略時falseで、時刻サービスを設定・起動せずObservedを記録します。ファイルとサービスを管理する場合はtrueにします。</td>
+</tr>
+<tr>
+<td><code>spec.source</code></td>
+<td>省略時staticでserversを使います。auto・dhcp・dhcpv6はいずれも、解決したserverFrom、fallbackServers、serversの順で選びます。DHCPの取得元を自動探索する指定ではありません。</td>
+</tr>
+<tr>
+<td><code>spec.servers</code></td>
+<td>上流サーバーのホスト名またはIPアドレス。省略時は空ですが、managed=trueかつsource省略/staticでは必須です。各要素は空白を含まない単一の値で、リソース参照ではありません。</td>
+</tr>
+<tr>
+<td><code>spec.serverFrom</code></td>
+<td>明示する値の取得元一覧。省略時は空です。例はDHCPv4Client/wanのntpServers、DHCPv6PrefixDelegation/wan-pdのsntpServersです。auto/dhcp/dhcpv6で使い、各resourceとfieldの存在が必要です。 この取得処理はoptionalを使わず、値がなければ次の取得方法へ進みます。</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>有効化条件。省略時は条件を設けません。state/all/any、unknown、経過時間の条件は共通の条件指定を参照してください。</td>
+</tr>
+<tr>
+<td><code>spec.provider</code></td>
+<td>サーバー実装。通常はchrony、FreeBSDではntpdが既定値です。ntpdはFreeBSDでのみ対応します。</td>
+</tr>
+<tr>
+<td><code>spec.fallbackServers</code></td>
+<td>代替上流の一覧。省略時は空です。auto/dhcp/dhcpv6でserverFromに値がないとき、serversより先に選びます。独立した代替指示は生成しません。</td>
+</tr>
+<tr>
+<td><code>spec.listenAddresses</code></td>
+<td>固定の待受IPアドレス。省略時は空です。CIDRはホスト部分のIPへ変換します。待受設定が空ならbindaddress/interface listen指示を生成せず、実装サービスの既定動作を使います。</td>
+</tr>
+<tr>
+<td><code>spec.listenAddressFrom</code></td>
+<td>追加の待受アドレス取得元。省略時は空で、listenAddressesと結合します。各要素のresourceとfieldが必要です。待受設定を宣言したのに結合結果が空ならPending/NoListenAddressesです。</td>
+</tr>
+<tr>
+<td><code>spec.allowCIDRs</code></td>
+<td>利用を許可するクライアントのCIDR一覧。省略時は空です。chronyでは各allowを生成しますが、ntpdの生成設定にはこの一覧を使いません。固定値の入力検証は空白でないことまでで、CIDR構文は確認しません。</td>
+</tr>
+<tr>
+<td><code>spec.allowCIDRFrom</code></td>
+<td>allowCIDRsと結合するCIDR取得元。省略時は空です。optionalでない取得元に値がなければPending/AllowCIDRFromPending、取得値が不正なCIDRならPending/AllowCIDRFromInvalidです。プレフィックス長のないIPアドレスはCIDRとして受理しません。</td>
+</tr>
+</tbody>
+</table>
+<p>実装: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_system.go">pkg/config/validate_system.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/ntp.go">pkg/controller/chain/ntp.go</a></p>
+<h2 id="状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</h2>
+<p>通常の状態値参照の検証で、このKindについて許可するフィールド名です。許可一覧にあるだけでは値の生成・取得を保証しないため、実際の状態を確認してください。YAMLのspecに設定する項目ではなく出力です。</p>
+<p><code>phase</code>, <code>servers</code>, <code>listenAddresses</code>, <code>allowCIDRs</code>, <code>source</code>, <code>updatedAt</code></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
+<li><a href="#状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/reference/resources/NTPServer.md">GitHub</a></div></footer></body></html>

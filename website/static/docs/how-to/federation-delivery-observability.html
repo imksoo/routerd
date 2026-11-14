@@ -1,0 +1,744 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Federation delivery observability · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/how-to/federation-delivery-observability.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/how-to/federation-delivery-observability.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/intro.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/intro.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/intro.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="federation-delivery-observability">Federation delivery observability</h1>
+<p>Event Federation (ADR 0006, Phase 2) pushes events between routerd nodes via
+the outbox. This guide explains how to verify that deliveries are healthy, spot
+problems, and act on them using <code>routerctl</code>.</p>
+<h2 id="quick-check">Quick check</h2>
+<pre><code class="language-sh">routerctl doctor federation --state-file /var/lib/routerd/routerd.db
+</code></pre>
+<p>A healthy system prints all <code>PASS</code>:</p>
+<pre><code>DOCTOR  PASS  pass=7 warn=0 fail=0 skip=0
+AREA        STATUS  CHECK                                        DETAIL                                  REMEDY
+federation  PASS    cloudedge/leaf-az failed deliveries           no failed deliveries
+federation  PASS    cloudedge/leaf-az pending deliveries          no pending deliveries
+federation  PASS    cloudedge/leaf-az stale TTL                   no stale TTL deliveries
+federation  PASS    cloudedge/leaf-az delivery lag                max delivery lag 2s
+federation  PASS    cloudedge/leaf-az event expiry                nearest event expires in 1740s
+federation  PASS    cloudedge/leaf-az expected delivery           all 3 active event(s) have delivery rows
+federation  SKIP    expected peers                                no self-emitted active events to deliver
+</code></pre>
+<h2 id="commands">Commands</h2>
+<h3 id="delivery-summary">Delivery summary</h3>
+<p>Per-(group, peer) aggregate of all active delivery rows:</p>
+<pre><code class="language-sh">routerctl federation deliveries summary \
+  --group cloudedge \
+  --state-file /var/lib/routerd/routerd.db
+</code></pre>
+<p>Output:</p>
+<pre><code>GROUP      PEER     EVENTS  DELIVERED  STALE_TTL  FAILED  PENDING  MAX_LAG  MIN_EXPIRES_IN
+cloudedge  leaf-az  3       3          0          0       0        2s       29m0s
+cloudedge  leaf-oci 3       2          0          1       0        4s       29m0s
+</code></pre>
+<p>Add <code>-o json</code> or <code>-o yaml</code> for machine-readable output. Use <code>--include-expired</code>
+to include events whose TTL has already passed.</p>
+<h3 id="doctor-federation">Doctor federation</h3>
+<p><code>routerctl doctor federation</code> runs two categories of checks:</p>
+<ol>
+<li><strong>Recorded-delivery checks</strong> — examine existing delivery rows per (group,
+   peer) for failures, pending expiry, stale TTL, and delivery lag.</li>
+<li><strong>Expected-peer audit</strong> — derive the expected peer set from <code>EventGroup</code> and
+   <code>EventPeer</code> resources in the startup config, then verify that every
+   self-emitted active event has a delivery row for each expected peer.</li>
+</ol>
+<p>Run against a specific area:</p>
+<pre><code class="language-sh">routerctl doctor federation \
+  --state-file /var/lib/routerd/routerd.db \
+  --config /usr/local/etc/routerd/router.yaml
+</code></pre>
+<p><code>--config</code> is needed for expected-peer checks because the audit reads
+<code>EventGroup</code> (for the self node name) and <code>EventPeer</code> (for declared peers) from
+the startup config.</p>
+<h2 id="reading-the-summary-table">Reading the summary table</h2>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>GROUP</strong></td>
+<td>EventGroup name (e.g. <code>cloudedge</code>)</td>
+</tr>
+<tr>
+<td><strong>PEER</strong></td>
+<td>Target peer node name</td>
+</tr>
+<tr>
+<td><strong>EVENTS</strong></td>
+<td>Total active event-delivery pairs</td>
+</tr>
+<tr>
+<td><strong>DELIVERED</strong></td>
+<td>Successfully pushed to peer</td>
+</tr>
+<tr>
+<td><strong>STALE_TTL</strong></td>
+<td>Delivered but the event TTL was refreshed since delivery (<code>event.expires_at &gt; delivery.event_expires_at</code>); the peer holds a stale copy</td>
+</tr>
+<tr>
+<td><strong>FAILED</strong></td>
+<td>All retry attempts exhausted</td>
+</tr>
+<tr>
+<td><strong>PENDING</strong></td>
+<td>Enqueued but not yet delivered</td>
+</tr>
+<tr>
+<td><strong>MAX_LAG</strong></td>
+<td>Worst-case time between event observation and delivery</td>
+</tr>
+<tr>
+<td><strong>MIN_EXPIRES_IN</strong></td>
+<td>Time until the soonest event expires; negative means already expired</td>
+</tr>
+</tbody>
+</table>
+<p>Healthy state: <code>DELIVERED == EVENTS</code>, <code>FAILED == 0</code>, <code>PENDING == 0</code>,
+<code>STALE_TTL == 0</code>.</p>
+<h2 id="federationslo">FederationSLO</h2>
+<p>You can declare a <code>FederationSLO</code> resource to override the default doctor
+thresholds for a specific EventGroup:</p>
+<pre><code class="language-yaml">apiVersion: federation.routerd.net/v1alpha1
+kind: FederationSLO
+metadata:
+  name: cloudedge-slo
+spec:
+  groupRef: cloudedge
+  delivery:
+    lagWarnSeconds: 60      # default: 60
+    lagFailSeconds: 180     # default: 180
+    expiresSoonSeconds: 120 # default: 120
+  subscription:
+    maxPendingRuns: 0       # default: 0 (any pending triggers warn)
+    maxFailedRuns: 0        # default: 0 (any failure triggers fail)
+</code></pre>
+<p>When a <code>FederationSLO</code> is present, <code>routerctl doctor federation</code> uses its
+thresholds instead of the hardcoded defaults. The JSON output includes an
+<code>slo</code> object showing the effective thresholds and any violations.</p>
+<p>Without a <code>FederationSLO</code> resource, the default thresholds apply unchanged.</p>
+<p>Validation rules:</p>
+<ul>
+<li><code>spec.groupRef</code> is required and must reference an existing <code>EventGroup</code>
+  resource by <code>metadata.name</code>.</li>
+<li>Only one <code>FederationSLO</code> per <code>EventGroup</code> is allowed; duplicate <code>groupRef</code>
+  values are rejected at config validation time.</li>
+<li><code>spec.delivery.lagWarnSeconds</code> must be strictly less than <code>lagFailSeconds</code>
+  after applying defaults (0 falls back to the default). For example,
+  <code>lagWarnSeconds: 200</code> with <code>lagFailSeconds: 0</code> (default 180) is rejected
+  because effective 200 &gt;= 180.</li>
+<li>Zero values (<code>0</code>) mean "use the default threshold"; negative values are
+  rejected.</li>
+</ul>
+<h2 id="remediation-plan">Remediation plan</h2>
+<p>Generate a plan of suggested actions without executing them:</p>
+<pre><code class="language-sh">routerctl doctor federation --remediation-plan -o json \
+  --state-file /var/lib/routerd/routerd.db \
+  --config /usr/local/etc/routerd/router.yaml
+</code></pre>
+<p>The plan includes structured actions with <code>action</code>, <code>reason</code>, <code>targetPeer</code>,
+<code>targetGroup</code>, <code>safe</code>, and <code>requiresOperatorApproval</code> fields:</p>
+<pre><code class="language-json">{
+  &quot;remediationPlan&quot;: {
+    &quot;generatedAt&quot;: &quot;2026-06-18T01:00:00Z&quot;,
+    &quot;actions&quot;: [
+      {
+        &quot;action&quot;: &quot;retry-failed-deliveries&quot;,
+        &quot;reason&quot;: &quot;1 of 1 delivery(s) failed&quot;,
+        &quot;targetPeer&quot;: &quot;leaf-az&quot;,
+        &quot;targetGroup&quot;: &quot;cloudedge&quot;,
+        &quot;safe&quot;: true,
+        &quot;requiresOperatorApproval&quot;: false
+      }
+    ]
+  }
+}
+</code></pre>
+<p>The <code>--remediation-plan</code> flag is opt-in; without it, no <code>remediationPlan</code> key
+appears in the JSON output. The plan is read-only — it never mutates state.</p>
+<p>Field meanings:</p>
+<ul>
+<li><code>safe</code>: the suggested action is idempotent and can be retried without risk.</li>
+<li><code>requiresOperatorApproval</code>: the action changes configuration and requires
+  human review before execution.</li>
+</ul>
+<h3 id="remediation-action-reference">Remediation action reference</h3>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Trigger</th>
+<th><code>safe</code></th>
+<th><code>requiresOperatorApproval</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>retry-failed-deliveries</code></td>
+<td>Failed delivery rows exist</td>
+<td>true</td>
+<td>false</td>
+</tr>
+<tr>
+<td><code>investigate-pending-deliveries</code></td>
+<td>Pending deliveries with possible expiry risk</td>
+<td>true</td>
+<td>false</td>
+</tr>
+<tr>
+<td><code>force-repush-stale-ttl</code></td>
+<td>Stale TTL detected (event TTL refreshed since last push)</td>
+<td>true</td>
+<td>false</td>
+</tr>
+<tr>
+<td><code>check-peer-connectivity</code></td>
+<td>Delivery lag exceeds SLO threshold</td>
+<td>true</td>
+<td>false</td>
+</tr>
+<tr>
+<td><code>configure-peer-endpoint</code></td>
+<td>EventPeer endpoint is empty</td>
+<td>false</td>
+<td>true</td>
+</tr>
+<tr>
+<td><code>investigate-missing-delivery-rows</code></td>
+<td>Expected peer has no delivery rows</td>
+<td>true</td>
+<td>false</td>
+</tr>
+<tr>
+<td><code>inspect-failed-subscription-runs</code></td>
+<td>Subscription runs in failed status</td>
+<td>true</td>
+<td>false</td>
+</tr>
+</tbody>
+</table>
+<h2 id="doctor-check-reference">Doctor check reference</h2>
+<h3 id="recorded-delivery-checks">Recorded-delivery checks</h3>
+<p>These run per (group, peer) pair that has delivery rows in the state store.
+Thresholds are derived from <code>FederationSLO</code> when present, otherwise defaults
+apply.</p>
+<table>
+<thead>
+<tr>
+<th>Check</th>
+<th>FAIL</th>
+<th>WARN</th>
+<th>PASS</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>failed deliveries</strong></td>
+<td>Any delivery row in <code>failed</code> status</td>
+<td>—</td>
+<td><code>FAILED == 0</code></td>
+</tr>
+<tr>
+<td><strong>pending deliveries</strong></td>
+<td>Pending events whose TTL expires within <code>expiresSoonSeconds</code></td>
+<td>Pending exists but no imminent expiry</td>
+<td><code>PENDING == 0</code></td>
+</tr>
+<tr>
+<td><strong>stale TTL</strong></td>
+<td>All delivered events have stale TTL (<code>STALE_TTL == DELIVERED</code>)</td>
+<td>Some deliveries have stale TTL</td>
+<td><code>STALE_TTL == 0</code></td>
+</tr>
+<tr>
+<td><strong>delivery lag</strong></td>
+<td>Max lag &gt;= <code>lagFailSeconds</code> (default 180 s)</td>
+<td>Max lag &gt;= <code>lagWarnSeconds</code> (default 60 s)</td>
+<td>Below <code>lagWarnSeconds</code></td>
+</tr>
+<tr>
+<td><strong>event expiry</strong></td>
+<td>Nearest expiry &lt; <code>expiresSoonSeconds</code> (default 120 s) with pending/failed deliveries</td>
+<td>Nearest expiry &lt; <code>expiresSoonSeconds</code>, all delivered</td>
+<td>Comfortable margin</td>
+</tr>
+</tbody>
+</table>
+<h3 id="expected-peer-audit">Expected-peer audit</h3>
+<p>These check that the config-declared peers actually have delivery rows.</p>
+<table>
+<thead>
+<tr>
+<th>Check</th>
+<th>FAIL</th>
+<th>SKIP</th>
+<th>PASS</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>expected delivery</strong></td>
+<td>Self-emitted active events exist but no delivery row for this peer</td>
+<td>No self-emitted events in the group</td>
+<td>All active events have delivery rows</td>
+</tr>
+<tr>
+<td><strong>empty endpoint</strong></td>
+<td><code>EventPeer.spec.endpoint</code> is empty</td>
+<td>—</td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+<p>The audit excludes the self node: if <code>EventGroup.spec.nodeName</code> matches
+<code>EventPeer.spec.nodeName</code>, that peer is skipped (a node does not push events to
+itself).</p>
+<h2 id="common-failures-and-remedies">Common failures and remedies</h2>
+<h3 id="eventpeer-endpoint-not-set">EventPeer endpoint not set</h3>
+<pre><code>FAIL  cloudedge/leaf-oci expected delivery  EventPeer endpoint is empty
+      set spec.endpoint on EventPeer/leaf-oci for group cloudedge
+</code></pre>
+<p>The <code>EventPeer</code> resource declares the peer but has no endpoint URL. The outbox
+cannot push events without a target. Set <code>spec.endpoint</code> to the peer's federation
+listener (e.g. <code>https://10.252.0.3:8443/v1/federation/events</code>).</p>
+<h3 id="missing-delivery-rows-for-expected-peer">Missing delivery rows for expected peer</h3>
+<pre><code>FAIL  cloudedge/leaf-oci expected delivery  2 of 3 active event(s) have no delivery row: evt-abc, evt-def
+      outbox never enqueued delivery for this peer; check EventPeer config and outbox peer filter
+</code></pre>
+<p>The outbox creates delivery rows only for events where <code>SourceNode</code> matches the
+local <code>EventGroup.spec.nodeName</code>. If the self node name in the EventGroup does
+not match the <code>source_node</code> column in <code>federation_events</code>, no delivery is
+enqueued. Verify:</p>
+<pre><code class="language-sh">routerctl federation event list --group cloudedge --state-file /var/lib/routerd/routerd.db
+</code></pre>
+<p>Check the <code>SOURCE</code> column matches the EventGroup <code>nodeName</code>. Also confirm that
+the outbox controller is running (<code>eventd</code> daemon) and that no <code>types</code> /
+<code>subjectPrefixes</code> filter on the <code>EventPeer</code> silently excludes the events.</p>
+<h3 id="hmac-authentication-mismatch">HMAC authentication mismatch</h3>
+<p>The outbox push returns HTTP 403 or 401. Check <code>journalctl -u routerd-eventd</code>
+for authentication errors. Verify that both ends share the same
+<code>EventGroup.spec.auth.hmacSecretRef</code> and that the referenced Secret exists and
+contains the correct key.</p>
+<h3 id="outbox-not-running">Outbox not running</h3>
+<pre><code>FAIL  cloudedge/leaf-az pending deliveries  3 pending; 2 event(s) expire within 120s without delivery
+      outbox may be stalled or peer unreachable; check eventd logs and peer endpoint
+</code></pre>
+<p>Delivery rows were created but nothing was pushed. Confirm <code>routerd-eventd</code> is
+running:</p>
+<pre><code class="language-sh">systemctl status routerd-eventd
+journalctl -u routerd-eventd --since &quot;10 min ago&quot;
+</code></pre>
+<h3 id="stale-ttl-after-refresh">Stale TTL after refresh</h3>
+<pre><code>WARN  cloudedge/leaf-az stale TTL  1 of 3 delivered event(s) have stale TTL (event.expiresAt &gt; delivery.eventExpiresAt)
+      outbox should re-push refreshed events on next tick; if this persists, check outbox interval and delivery filtering
+</code></pre>
+<p>An event's TTL was extended (e.g. by re-emitting with <code>--ttl</code>) but the delivery
+record still holds the old <code>event_expires_at</code>. The outbox should detect this on
+its next tick and re-push (PR #531). If the warning persists, check the outbox
+interval and that the re-push logic is working:</p>
+<pre><code class="language-sh">routerctl federation event deliveries \
+  --group cloudedge --peer leaf-az \
+  --state-file /var/lib/routerd/routerd.db
+</code></pre>
+<p>Compare <code>EVENT_EXPIRES_AT</code> in the delivery row against the event's <code>EXPIRES</code>
+column in <code>routerctl federation event list</code>.</p>
+<h3 id="sourcenode-does-not-match-eventgroup-nodename">SourceNode does not match EventGroup nodeName</h3>
+<p>Events emitted with a <code>--source-node</code> that differs from the local
+<code>EventGroup.spec.nodeName</code> are not pushed by the outbox (the outbox only pushes
+self-emitted events). The expected-peer audit will show these events as missing
+delivery rows. Verify the source node matches:</p>
+<pre><code class="language-sh">routerctl federation event list --group cloudedge -o json \
+  --state-file /var/lib/routerd/routerd.db | jq '.[].sourceNode'
+</code></pre>
+<h2 id="samsubnetpolicy-delivery-verification">SAMSubnetPolicy delivery verification</h2>
+<p>For CloudEdge SAM deployments, <code>routerd.mobility.shard.assigned</code> events carry
+the shard assignment from the hub to leaf nodes. Verify delivery:</p>
+<pre><code class="language-sh"># Hub node: check deliveries to all leaf peers
+routerctl federation deliveries summary --group cloudedge \
+  --state-file /var/lib/routerd/routerd.db
+
+# Hub node: doctor check including expected-peer audit
+routerctl doctor federation \
+  --state-file /var/lib/routerd/routerd.db \
+  --config /usr/local/etc/routerd/router.yaml
+
+# Leaf node: confirm the event was received and the subscription processed it
+routerctl federation event list --group cloudedge \
+  --state-file /var/lib/routerd/routerd.db
+routerctl dynamic list --state-file /var/lib/routerd/routerd.db
+</code></pre>
+<p>On the leaf, <code>routerctl dynamic list</code> should show a <code>DynamicConfigPart</code> with
+provenance <code>routerd.net/event-group: cloudedge</code>. If the event is delivered but
+no dynamic config appears, the issue is on the subscription/plugin side, not
+delivery is consumed directly by the MobilityPool controller.</p>
+<h2 id="json-output-for-automation">JSON output for automation</h2>
+<p>Both commands support JSON output for integration with monitoring or scripts:</p>
+<pre><code class="language-sh"># Summary as JSON
+routerctl federation deliveries summary --group cloudedge -o json \
+  --state-file /var/lib/routerd/routerd.db
+
+# Doctor as JSON
+routerctl doctor federation -o json \
+  --state-file /var/lib/routerd/routerd.db \
+  --config /usr/local/etc/routerd/router.yaml
+</code></pre>
+<p>The doctor JSON includes <code>summary.overall</code> (<code>"pass"</code>, <code>"warn"</code>, or <code>"fail"</code>)
+for alerting thresholds. A non-<code>"pass"</code> overall status indicates at least one
+check that warrants investigation.</p>
+<h3 id="federation-summary-in-doctor-json">Federation summary in doctor JSON</h3>
+<p>When the <code>federation</code> area is checked, the doctor JSON includes a
+<code>federation</code> object with aggregated delivery statistics:</p>
+<pre><code class="language-json">{
+  &quot;federation&quot;: {
+    &quot;severityCounts&quot;: {&quot;pass&quot;: 7, &quot;warn&quot;: 0, &quot;fail&quot;: 0, &quot;skip&quot;: 1},
+    &quot;failedDeliveryCount&quot;: 0,
+    &quot;staleTTLCount&quot;: 0,
+    &quot;pendingDeliveryCount&quot;: 0,
+    &quot;missingExpectedPeerCount&quot;: 0,
+    &quot;maxDeliveryLagSeconds&quot;: 2,
+    &quot;minExpiresInSeconds&quot;: 1740,
+    &quot;totalEvents&quot;: 3,
+    &quot;totalDelivered&quot;: 3,
+    &quot;subscriptionRunsTotal&quot;: 3,
+    &quot;subscriptionRunsSucceeded&quot;: 3,
+    &quot;subscriptionRunsFailed&quot;: 0,
+    &quot;subscriptionRunsPending&quot;: 0,
+    &quot;slo&quot;: {
+      &quot;groups&quot;: [
+        {
+          &quot;group&quot;: &quot;cloudedge&quot;,
+          &quot;defined&quot;: true,
+          &quot;thresholds&quot;: {
+            &quot;delivery&quot;: {
+              &quot;lagWarnSeconds&quot;: 60,
+              &quot;lagFailSeconds&quot;: 180,
+              &quot;expiresSoonSeconds&quot;: 120
+            },
+            &quot;subscription&quot;: {
+              &quot;maxPendingRuns&quot;: 0,
+              &quot;maxFailedRuns&quot;: 0
+            }
+          },
+          &quot;violations&quot;: []
+        }
+      ]
+    }
+  }
+}
+</code></pre>
+<p>The <code>slo.groups</code> array contains one entry per EventGroup (union of config
+and observed groups, sorted by name). Each entry has:</p>
+<ul>
+<li><code>defined</code>: whether a <code>FederationSLO</code> resource is configured for this group</li>
+<li><code>thresholds.delivery</code>: effective delivery lag/expiry thresholds</li>
+<li><code>thresholds.subscription</code>: effective subscription run thresholds</li>
+<li><code>violations</code>: threshold breaches with check name, threshold, actual value,
+  and severity (empty <code>[]</code> when healthy)</li>
+</ul>
+<h3 id="jq-examples">jq examples</h3>
+<pre><code class="language-sh"># Overall status for alerting
+routerctl doctor federation -o json \
+  --state-file /var/lib/routerd/routerd.db \
+  --config /usr/local/etc/routerd/router.yaml \
+  | jq -r '.summary.overall'
+
+# Failed delivery count (exit 1 if &gt; 0)
+routerctl doctor federation -o json \
+  --state-file /var/lib/routerd/routerd.db \
+  --config /usr/local/etc/routerd/router.yaml \
+  | jq -e '.federation.failedDeliveryCount == 0'
+
+# Missing expected peers
+routerctl doctor federation -o json \
+  --state-file /var/lib/routerd/routerd.db \
+  --config /usr/local/etc/routerd/router.yaml \
+  | jq '.federation.missingExpectedPeerCount'
+
+# All failing checks with remedies
+routerctl doctor federation -o json \
+  --state-file /var/lib/routerd/routerd.db \
+  --config /usr/local/etc/routerd/router.yaml \
+  | jq '[.checks[] | select(.status == &quot;fail&quot;) | {name, detail, remedy}]'
+
+# Stale TTL and pending counts for monitoring
+routerctl doctor federation -o json \
+  --state-file /var/lib/routerd/routerd.db \
+  --config /usr/local/etc/routerd/router.yaml \
+  | jq '{stale: .federation.staleTTLCount, pending: .federation.pendingDeliveryCount, lag: .federation.maxDeliveryLagSeconds}'
+
+# Subscription run failures (exit 1 if &gt; 0)
+routerctl doctor federation -o json \
+  --state-file /var/lib/routerd/routerd.db \
+  --config /usr/local/etc/routerd/router.yaml \
+  | jq -e '.federation.subscriptionRunsFailed == 0'
+</code></pre>
+<h2 id="subscription-monitoring">Subscription monitoring</h2>
+<p>When <code>EventSubscription</code> resources are configured, <code>routerctl doctor federation</code>
+also checks subscription processing health. Thresholds are derived from the
+<code>FederationSLO</code> for the subscription's <code>groupRef</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Check</th>
+<th>FAIL</th>
+<th>WARN</th>
+<th>PASS</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>subscription runs</strong></td>
+<td>Failed &gt; <code>maxFailedRuns</code> (default 0)</td>
+<td>Pending &gt; <code>maxPendingRuns</code> (default 0)</td>
+<td>Within SLO thresholds</td>
+</tr>
+</tbody>
+</table>
+<h3 id="inspecting-subscription-runs">Inspecting subscription runs</h3>
+<p>List processing records for a specific subscription:</p>
+<pre><code class="language-sh">routerctl federation subscription runs \
+  --subscription EventSubscription/cloud-claims \
+  --state-file /var/lib/routerd/routerd.db
+</code></pre>
+<p>Output:</p>
+<pre><code>ID  SUBSCRIPTION                      EVENT_ID  GROUP      PLUGIN        STATUS     ATTEMPTS  STARTED                    COMPLETED                  ERROR
+1   EventSubscription/cloud-claims    evt-abc   cloudedge  cloud-claims  succeeded  1         2026-06-17T12:00:00Z       2026-06-17T12:00:01Z
+2   EventSubscription/cloud-claims    evt-def   cloudedge  cloud-claims  failed     3         2026-06-17T12:01:00Z       2026-06-17T12:01:05Z       plugin exited 1
+</code></pre>
+<p>Add <code>-o json</code> for machine-readable output. Failed runs indicate the plugin
+returned an error; check the plugin output and event payload.</p>
+<h3 id="end-to-end-delivery-verification">End-to-end delivery verification</h3>
+<p>To verify the full pipeline from event emission to DynamicConfigPart:</p>
+<pre><code class="language-sh"># 1. Verify events are delivered
+routerctl federation deliveries summary --group cloudedge \
+  --state-file /var/lib/routerd/routerd.db
+
+# 2. Verify subscriptions processed events
+routerctl federation subscription runs \
+  --subscription EventSubscription/cloud-claims \
+  --state-file /var/lib/routerd/routerd.db
+
+# 3. Verify DynamicConfigParts were generated
+routerctl dynamic list --state-file /var/lib/routerd/routerd.db
+</code></pre>
+<p>If events are delivered but subscription runs show failures, the issue is in the
+plugin or its inputs. If subscription runs succeed but no DynamicConfigPart
+appears, check the plugin output format.</p>
+<h2 id="opentelemetry-metrics-reference">OpenTelemetry metrics reference</h2>
+<p><code>routerd-eventd</code> emits the following metrics when an OTLP endpoint is configured
+(see <a href="opentelemetry.html">Send telemetry to an OTLP collector</a>):</p>
+<h3 id="outbox-delivery-metrics">Outbox delivery metrics</h3>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Type</th>
+<th>Labels</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>routerd_eventd_outbox_delivery_total</code></td>
+<td>counter</td>
+<td>group, peer, event_type, status</td>
+<td>Delivery results (delivered/failed)</td>
+</tr>
+<tr>
+<td><code>routerd_eventd_outbox_delivery_attempts_total</code></td>
+<td>counter</td>
+<td>group, peer, event_type, status</td>
+<td>Total push attempts</td>
+</tr>
+<tr>
+<td><code>routerd_eventd_outbox_delivery_lag_seconds</code></td>
+<td>histogram</td>
+<td>group, peer, event_type</td>
+<td>Time between event observation and delivery</td>
+</tr>
+<tr>
+<td><code>routerd_eventd_outbox_repush_total</code></td>
+<td>counter</td>
+<td>group, peer, event_type</td>
+<td>Re-pushes after TTL refresh</td>
+</tr>
+<tr>
+<td><code>routerd_eventd_outbox_stale_ttl_delivery_total</code></td>
+<td>counter</td>
+<td>group, peer, event_type</td>
+<td>Stale TTL detections</td>
+</tr>
+</tbody>
+</table>
+<h3 id="outbox-loop-health-metrics">Outbox loop health metrics</h3>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Type</th>
+<th>Labels</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>routerd_eventd_outbox_tick_total</code></td>
+<td>counter</td>
+<td>group</td>
+<td>Outbox loop iterations</td>
+</tr>
+<tr>
+<td><code>routerd_eventd_outbox_tick_errors_total</code></td>
+<td>counter</td>
+<td>group</td>
+<td>Failed outbox iterations</td>
+</tr>
+<tr>
+<td><code>routerd_eventd_outbox_tick_duration_seconds</code></td>
+<td>histogram</td>
+<td>group</td>
+<td>Time per outbox iteration</td>
+</tr>
+</tbody>
+</table>
+<h3 id="receiver-metrics">Receiver metrics</h3>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Type</th>
+<th>Labels</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>routerd_eventd_receiver_accepted_total</code></td>
+<td>counter</td>
+<td>group</td>
+<td>Events accepted</td>
+</tr>
+<tr>
+<td><code>routerd_eventd_receiver_duplicate_total</code></td>
+<td>counter</td>
+<td>group</td>
+<td>Duplicate events received</td>
+</tr>
+<tr>
+<td><code>routerd_eventd_receiver_reject_total</code></td>
+<td>counter</td>
+<td>group, reason</td>
+<td>Events rejected (reason: bad_timestamp, stale_timestamp, bad_signature, bad_body, validation, read_body, store_error)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="pruner-metrics">Pruner metrics</h3>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Type</th>
+<th>Labels</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>routerd_eventd_pruner_tick_total</code></td>
+<td>counter</td>
+<td>group</td>
+<td>Pruner loop iterations</td>
+</tr>
+<tr>
+<td><code>routerd_eventd_pruner_pruned_total</code></td>
+<td>counter</td>
+<td>group</td>
+<td>Events pruned by retention</td>
+</tr>
+<tr>
+<td><code>routerd_eventd_pruner_tick_errors_total</code></td>
+<td>counter</td>
+<td>group</td>
+<td>Failed pruner iterations</td>
+</tr>
+</tbody>
+</table>
+<h3 id="label-policy">Label policy</h3>
+<p>Allowed labels: <code>group</code>, <code>peer</code>, <code>event_type</code>, <code>status</code>, <code>reason</code>. High-cardinality
+values (<code>event_id</code>, <code>subject</code>, <code>address</code>, <code>dedupe_key</code>, <code>endpoint</code>, raw <code>error</code>
+strings) are never used as metric labels.</p>
+<h3 id="alerting-thresholds">Alerting thresholds</h3>
+<p>Recommended Prometheus alerting rules:</p>
+<pre><code># Outbox loop stalled (no tick in 5 minutes)
+rate(routerd_eventd_outbox_tick_total[5m]) == 0
+
+# High delivery failure rate
+rate(routerd_eventd_outbox_delivery_total{status=&quot;failed&quot;}[5m]) &gt; 0
+
+# Outbox loop errors
+rate(routerd_eventd_outbox_tick_errors_total[5m]) &gt; 0
+
+# Receiver rejecting events
+rate(routerd_eventd_receiver_reject_total[5m]) &gt; 0.1
+
+# Pruner errors
+rate(routerd_eventd_pruner_tick_errors_total[5m]) &gt; 0
+
+# Delivery lag p99 above 60s
+histogram_quantile(0.99, rate(routerd_eventd_outbox_delivery_lag_seconds_bucket[5m])) &gt; 60
+</code></pre></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#quick-check">Quick check</a></li>
+<li><a href="#commands">Commands</a><ul>
+<li><a href="#delivery-summary">Delivery summary</a></li>
+<li><a href="#doctor-federation">Doctor federation</a></li>
+</ul>
+</li>
+<li><a href="#reading-the-summary-table">Reading the summary table</a></li>
+<li><a href="#federationslo">FederationSLO</a></li>
+<li><a href="#remediation-plan">Remediation plan</a><ul>
+<li><a href="#remediation-action-reference">Remediation action reference</a></li>
+</ul>
+</li>
+<li><a href="#doctor-check-reference">Doctor check reference</a><ul>
+<li><a href="#recorded-delivery-checks">Recorded-delivery checks</a></li>
+<li><a href="#expected-peer-audit">Expected-peer audit</a></li>
+</ul>
+</li>
+<li><a href="#common-failures-and-remedies">Common failures and remedies</a><ul>
+<li><a href="#eventpeer-endpoint-not-set">EventPeer endpoint not set</a></li>
+<li><a href="#missing-delivery-rows-for-expected-peer">Missing delivery rows for expected peer</a></li>
+<li><a href="#hmac-authentication-mismatch">HMAC authentication mismatch</a></li>
+<li><a href="#outbox-not-running">Outbox not running</a></li>
+<li><a href="#stale-ttl-after-refresh">Stale TTL after refresh</a></li>
+<li><a href="#sourcenode-does-not-match-eventgroup-nodename">SourceNode does not match EventGroup nodeName</a></li>
+</ul>
+</li>
+<li><a href="#samsubnetpolicy-delivery-verification">SAMSubnetPolicy delivery verification</a></li>
+<li><a href="#json-output-for-automation">JSON output for automation</a><ul>
+<li><a href="#federation-summary-in-doctor-json">Federation summary in doctor JSON</a></li>
+<li><a href="#jq-examples">jq examples</a></li>
+</ul>
+</li>
+<li><a href="#subscription-monitoring">Subscription monitoring</a><ul>
+<li><a href="#inspecting-subscription-runs">Inspecting subscription runs</a></li>
+<li><a href="#end-to-end-delivery-verification">End-to-end delivery verification</a></li>
+</ul>
+</li>
+<li><a href="#opentelemetry-metrics-reference">OpenTelemetry metrics reference</a><ul>
+<li><a href="#outbox-delivery-metrics">Outbox delivery metrics</a></li>
+<li><a href="#outbox-loop-health-metrics">Outbox loop health metrics</a></li>
+<li><a href="#receiver-metrics">Receiver metrics</a></li>
+<li><a href="#pruner-metrics">Pruner metrics</a></li>
+<li><a href="#label-policy">Label policy</a></li>
+<li><a href="#alerting-thresholds">Alerting thresholds</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/how-to/federation-delivery-observability.md">GitHub</a></div></footer></body></html>

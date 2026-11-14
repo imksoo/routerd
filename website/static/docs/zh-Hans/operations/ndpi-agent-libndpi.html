@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>nDPI 代理程序原生软件包 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/operations/ndpi-agent-libndpi.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/operations/ndpi-agent-libndpi.html" lang="en" hreflang="en">English</a><a href="/docs/ja/operations/ndpi-agent-libndpi.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/operations/ndpi-agent-libndpi.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/operations/ndpi-agent-libndpi.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="ndpi-代理程序原生软件包">nDPI 代理程序原生软件包</h1>
+<p>routerd 的一般 Linux 发布归档以 <code>CGO_ENABLED=0</code> 构建，确保归档内所有 routerd 二进制文件均为静态链接。可选的 <code>routerd-ndpi-agent-libndpi</code> 归档是针对需要原生 nDPI 分类功能的主机所提供的例外软件包。</p>
+<p>此归档仅包含下列项目：</p>
+<ul>
+<li><code>bin/routerd-ndpi-agent</code></li>
+<li><code>share/doc/README.md</code></li>
+<li><code>share/doc/VERSION</code></li>
+<li><code>share/doc/TARGET</code></li>
+</ul>
+<p>此二进制文件以 <code>CGO_ENABLED=1 -tags libndpi</code> 构建，并链接至目标系统的 <code>libndpi</code> 运行期库。它的用途是覆盖已安装一般 routerd 归档之主机上的对应二进制文件。</p>
+<h2 id="install">Install</h2>
+<p>同时下载一般 routerd 发布归档与对应的原生代理程序归档，并让安装程序以单一事务方式应用。</p>
+<pre><code class="language-sh">curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz.sha256
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz.sha256
+sha256sum -c routerd-linux-amd64.tar.gz.sha256
+sha256sum -c routerd-ndpi-agent-libndpi-linux-amd64.tar.gz.sha256
+tar -xzf routerd-linux-amd64.tar.gz
+sudo ./install.sh --with-ndpi \
+  --with-ndpi-archive ./routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
+</code></pre>
+<p>主机需要安装与归档构建时具有相同共享库 ABI 的 <code>libndpi</code> 运行期软件包。在 Debian/Ubuntu 上，可通过以下命令安装可选的运行期依赖：</p>
+<pre><code class="language-sh">sudo apt-get install libndpi-bin
+</code></pre>
+<p>确认原生后端是否已启用：</p>
+<pre><code class="language-sh">sudo curl --silent --unix-socket /run/routerd/ndpi-agent/default.sock \
+  http://unix/v1/status
+</code></pre>
+<p>响应中应包含 <code>"libndpiLoaded": true</code>。</p>
+<h2 id="upgrade-note">Upgrade note</h2>
+<p>一般 routerd 归档内含默认的静态版 <code>routerd-ndpi-agent</code>。
+升级时，若现有原生代理程序的 <code>selftest</code> 返回 <code>"libndpiLoaded": true</code>，而归档中的代理程序不返回，则 <code>install.sh</code> 会保留现有的原生代理程序。</p>
+<p>若主机需要原生应用层分类功能，请在执行一般安装程序时加上 <code>--with-ndpi</code>。若最终安装的代理程序未返回 <code>"libndpiLoaded": true</code>，安装程序将会失败。此机制可防止静态版退路在无声无息的情况下取代原生 nDPI 的预期行为。</p>
+<p>若为新安装，或希望明确以原生代理程序归档为正本，请传入 <code>--with-ndpi-archive PATH</code>。安装程序会验证归档的目标标记、拒绝不安全的 tar 路径、验证相邻的 <code>.sha256</code> 文件（如存在），并确认归档中的代理程序是否返回 <code>"libndpiLoaded": true</code>。若覆盖操作失败，将回滚整个安装。</p>
+<h2 id="configure">Configure</h2>
+<p><code>routerd-dpi-classifier</code> 需以 <code>--engine auto</code> 或 <code>--engine ndpi-agent</code> 搭配指向代理程序 socket 的 <code>--ndpi-agent-socket</code> 进行配置。
+建议使用 <code>auto</code>，以便在原生代理程序无法使用时退回至内置分类器。</p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#install">Install</a></li>
+<li><a href="#upgrade-note">Upgrade note</a></li>
+<li><a href="#configure">Configure</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/operations/ndpi-agent-libndpi.md">GitHub</a></div></footer></body></html>

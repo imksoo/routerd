@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ClusterNetworkRoute · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/reference/resources/ClusterNetworkRoute.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/reference/resources/ClusterNetworkRoute.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/ClusterNetworkRoute.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/reference/resources/ClusterNetworkRoute.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/ClusterNetworkRoute.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="clusternetworkroute">ClusterNetworkRoute</h1>
+<p><a href="../resources.html#clusternetworkroute">リソース別の設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>KubernetesのPod・ServiceネットワークへのIPv4経路を、明示したネクストホップ経由で設定します。クラスターのCIDRやノードを自動検出する機能ではありません。</p>
+<h2 id="指定条件と参照関係">指定条件と参照関係</h2>
+<ul>
+<li>podsとservicesを合わせて1件以上のCIDRと、1件以上のviaが必要です。CIDRはIPv4限定で、両リストをまたぐ重複・包含関係も拒否されます。</li>
+<li>CIDRとviaの組み合わせごとに、<name>-pods-NN-via-NNまたは<name>-services-NN-via-NNというIPv4StaticRouteを生成します。番号は1始まりです。同じapiVersion・kind・nameの明示リソースがある場合、その経路を優先して生成を省略します。</li>
+<li>weightはECMPの通信量配分ではなく経路メトリックです。省略・0は100、1～999は1000−weightに変換します。正の値は大きいほどメトリックが小さくなり、0と900は同じメトリックになります。</li>
+<li>生成経路にもIPv4StaticRouteの実装制限が適用されます。FreeBSDは出力しますが、現行Linuxの処理は生成された静的経路をインストールしません。展開・検証の成功だけでは転送動作の証明になりません。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: ClusterNetworkRoute
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    pods: # 任意; object
+      cidrs: # 任意; array
+        - &quot;&lt;string&gt;&quot; # string
+    services: # 任意; object
+      cidrs: # 任意; array
+        - &quot;&lt;string&gt;&quot; # string
+    via: # 必須; array
+      - # object
+        interface: &quot;&lt;string&gt;&quot; # 必須; string
+        nextHop: &quot;&lt;string&gt;&quot; # 必須; string
+        weight: 0 # 任意; integer; minimum=0; maximum=999
+    when: # 任意; object
+      state: # 任意; object
+        &quot;&lt;key&gt;&quot;: # 任意; object
+          contains: &quot;&lt;string&gt;&quot; # 任意; string
+          equals: &quot;&lt;string&gt;&quot; # 任意; string
+          exists: true # 任意; boolean
+          for: &quot;&lt;string&gt;&quot; # 任意; string
+          in: # 任意; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # 任意; string
+          status: &quot;set&quot; # 任意; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>項目の意味と既定値</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.pods</code></td>
+<td>PodネットワークのCIDR群です。省略時の自動補完はありません。</td>
+</tr>
+<tr>
+<td><code>spec.pods.cidrs</code></td>
+<td>PodネットワークのIPv4プレフィックスです。既定は空で、services.cidrsも空なら必須です。両グループ内外の重複・包含は不可です。</td>
+</tr>
+<tr>
+<td><code>spec.services</code></td>
+<td>ServiceネットワークのCIDR群です。省略時の自動補完はありません。</td>
+</tr>
+<tr>
+<td><code>spec.services.cidrs</code></td>
+<td>ServiceネットワークのIPv4プレフィックスです。既定は空で、pods.cidrsも空なら必須です。両グループを通して同じ重複・包含制限が適用されます。</td>
+</tr>
+<tr>
+<td><code>spec.via</code></td>
+<td>1件以上必要なネクストホップ一覧です。各項目をすべてのCIDRに適用します。interfaceとnextHopが同じ組み合わせはweightが異なっても重複エラーです。</td>
+</tr>
+<tr>
+<td><code>spec.via[].interface</code></td>
+<td>同じRouterで宣言した論理インターフェース名が必須です。設定のインターフェース索引で解決する必要があり、ステータス値参照ではありません。</td>
+</tr>
+<tr>
+<td><code>spec.via[].nextHop</code></td>
+<td>CIDRではないIPv4のネクストホップアドレスが必須です。リソース参照ではなく、既定値・自動検出はありません。</td>
+</tr>
+<tr>
+<td><code>spec.via[].weight</code></td>
+<td>0～999の整数で、既定は0です。前述のメトリックに変換され、通信量の比例配分にはなりません。</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>共通の状態条件です。省略時は無条件です。state/all/anyの意味とスキーマ上の制限は共通項を参照してください。条件で絞り込んだ後に経路を生成します。</td>
+</tr>
+</tbody>
+</table>
+<p>実装: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/cluster_routes.go">pkg/api/cluster_routes.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/cluster_secret_validate.go">pkg/config/cluster_secret_validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/resourcequery/when.go">pkg/resourcequery/when.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/networkd.go">pkg/render/networkd.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/freebsd.go">pkg/render/freebsd.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/ipv4_main_routes.go">pkg/controller/chain/ipv4_main_routes.go</a></p>
+<h2 id="状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</h2>
+<p>通常の状態値参照の検証で、このKindについて許可するフィールド名です。許可一覧にあるだけでは値の生成・取得を保証しないため、実際の状態を確認してください。YAMLのspecに設定する項目ではなく出力です。</p>
+<p><code>phase</code>, <code>pods</code>, <code>services</code></p>
+<p><a href="/examples/k8s-cluster-routes.yaml">設定例</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
+<li><a href="#状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/reference/resources/ClusterNetworkRoute.md">GitHub</a></div></footer></body></html>

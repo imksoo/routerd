@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ProviderActionPolicy · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/reference/resources/ProviderActionPolicy.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/reference/resources/ProviderActionPolicy.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/ProviderActionPolicy.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/reference/resources/ProviderActionPolicy.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/ProviderActionPolicy.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="provideractionpolicy">ProviderActionPolicy</h1>
+<p><a href="../resources.html#provideractionpolicy">リソース別の設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: hybrid.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>実行用Pluginに渡すプロバイダー操作の許可条件です。ポリシーの宣言だけでは操作やクラウドへのログインは行いません。</p>
+<h2 id="指定条件と参照関係">指定条件と参照関係</h2>
+<ul>
+<li>最初のProviderActionPolicyだけを使います。省略時はenabled:false・dryRunOnly:true・requireApproval:true・プロバイダーと操作の許可なし・maxActionsPerRun:0です。各許可条件は組み合わせて適用し、適用対象の条件はdry-runの事前確認にも必要です。</li>
+<li>自動実行にはenabled:true・dryRunOnly:false・requireApproval:false・正の上限に加え、許可リストへの適合とexecute.providerAction能力を持つ適切な実行Pluginが必要です。外部認証情報と実際のプロバイダー権限は実行Plugin側で扱います。</li>
+<li>executionWindowは現行実装でどの文字列も許可し、実行時間を制限しません。allowUndoは必要なundo情報がある場合のベストエフォートな巻き戻しを許可するだけで、原子的なトランザクションを保証しません。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
+<pre><code class="language-yaml">- apiVersion: hybrid.routerd.net/v1alpha1
+  kind: ProviderActionPolicy
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    allowUndo: true # 任意; boolean
+    allowedActions: # 任意; array
+      - &quot;&lt;string&gt;&quot; # string
+    allowedCIDRs: # 任意; array
+      - &quot;&lt;string&gt;&quot; # string
+    allowedProviderRefs: # 任意; array
+      - &quot;&lt;string&gt;&quot; # string
+    allowedProviders: # 任意; array
+      - &quot;&lt;string&gt;&quot; # string
+    dryRunOnly: true # 任意; boolean
+    enabled: true # 任意; boolean
+    executionWindow: &quot;&lt;string&gt;&quot; # 任意; string
+    maxActionsPerRun: 0 # 任意; integer
+    requireApproval: true # 任意; boolean
+</code></pre>
+<h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>項目の意味と既定値</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.enabled</code></td>
+<td>既定はfalseです。操作実行・事前確認の許可にはtrueが必要です。</td>
+</tr>
+<tr>
+<td><code>spec.dryRunOnly</code></td>
+<td>既定はtrueです。falseでも他の条件をすべて満たす必要があります。trueの事前確認にもenabled・許可リストが必要です。</td>
+</tr>
+<tr>
+<td><code>spec.requireApproval</code></td>
+<td>既定はtrueです。falseによる自動承認はenabled:true・dryRunOnly:falseの場合だけです。許可リストやPlugin選択を回避しません。</td>
+</tr>
+<tr>
+<td><code>spec.allowedProviders</code></td>
+<td>aws・azure・oci・gcpの完全一致許可リストです。既定の空はすべて拒否し、前後空白のない標準表記を使います。</td>
+</tr>
+<tr>
+<td><code>spec.allowedProviderRefs</code></td>
+<td>操作のproviderRefに対する任意の完全一致リストです。空なら参照名の制限なしです。状態値参照として解決せず、この検証ではプロファイルの存在も確認しません。実際の操作のproviderRefと表記を合わせます。</td>
+</tr>
+<tr>
+<td><code>spec.allowedActions</code></td>
+<td>assign-secondary-ip・unassign-secondary-ip・assign-route-table-route・unassign-route-table-route・ensure-forwarding-enabled・ensure-forwarding-disabledの完全一致許可リストです。空ならすべて拒否します。</td>
+</tr>
+<tr>
+<td><code>spec.allowedCIDRs</code></td>
+<td>任意のIPv4・IPv6 CIDRです。空ならCIDR制限なし、指定時はtarget.addressの存在と、IP部分がいずれかの範囲内であることを要求します。CIDR形式の対象でもホスト部で判定し、Pluginが変更する全アドレスを検査するものではありません。</td>
+</tr>
+<tr>
+<td><code>spec.maxActionsPerRun</code></td>
+<td>0以上の整数で、既定の0は実行を拒否します。正の値は自動コントローラーの1回の候補選択件数を制限し、単一操作のエンジン呼び出しは正であることだけを確認します。累計件数や課金額の上限ではありません。</td>
+</tr>
+<tr>
+<td><code>spec.allowUndo</code></td>
+<td>既定はfalseです。trueはundo情報とポリシー条件を満たす場合のベストエフォートな巻き戻しを許可します。</td>
+</tr>
+<tr>
+<td><code>spec.executionWindow</code></td>
+<td>任意の自由形式文字列で、既定は空です。現行処理ではスケジュールとして解析せず実行時にも制約しないため、時間制限にはなりません。</td>
+</tr>
+</tbody>
+</table>
+<p>実装: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_hybrid.go">pkg/config/validate_hybrid.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/provideraction/policy.go">pkg/provideraction/policy.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/provideraction/engine.go">pkg/provideraction/engine.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/provideraction/controller.go">pkg/controller/provideraction/controller.go</a></p>
+<h2 id="状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</h2>
+<p>通常の状態値参照の検証で、このKindについて許可するフィールド名です。許可一覧にあるだけでは値の生成・取得を保証しないため、実際の状態を確認してください。YAMLのspecに設定する項目ではなく出力です。</p>
+<p>このKindには通常の状態値参照の許可フィールドが登録されていません。</p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
+<li><a href="#状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/reference/resources/ProviderActionPolicy.md">GitHub</a></div></footer></body></html>

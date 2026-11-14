@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>專用 DNS 上游 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/how-to/dns-private-upstream.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/how-to/dns-private-upstream.html" lang="en" hreflang="en">English</a><a href="/docs/ja/how-to/dns-private-upstream.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/how-to/dns-private-upstream.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/how-to/dns-private-upstream.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="專用-dns-上游">專用 DNS 上游</h1>
+<h2 id="適用情境">適用情境</h2>
+<p>當您希望路由器上的解析器具備以下行為時：</p>
+<ul>
+<li>將接取網路的內部區域（例如：ISP 的 AFTR FQDN、企業內部網域）轉送至動態學習到的 DNS 伺服器。</li>
+<li>平時以加密 DNS 提供商（DoH / DoT）作為預設上游。</li>
+<li>加密上游異常時，退回至明文 DNS。</li>
+<li>不在共享範例中寫入提供商帳號 ID 或私有 endpoint。</li>
+</ul>
+<h2 id="routerd-的解決方式">routerd 的解決方式</h2>
+<p><code>DNSResolver</code> 會啟動 <code>routerd-dns-resolver</code> 常駐程式。
+常駐程式監聽 UDP/TCP。隸屬於解析器的 <code>DNSForwarder</code> 表示 match 規則，<code>DNSUpstream</code> 表示可重複使用的上游 endpoint。</p>
+<table>
+<thead>
+<tr>
+<th>Scheme</th>
+<th>類別</th>
+<th>預設埠</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>https://</code></td>
+<td>DNS over HTTPS</td>
+<td>依 URL 而定</td>
+</tr>
+<tr>
+<td><code>tls://</code></td>
+<td>DNS over TLS</td>
+<td>853</td>
+</tr>
+<tr>
+<td><code>udp://</code></td>
+<td>明文 DNS over UDP</td>
+<td>53</td>
+</tr>
+<tr>
+<td><code>tcp://</code></td>
+<td>明文 DNS over TCP</td>
+<td>53</td>
+</tr>
+</tbody>
+</table>
+<p><code>DNSForwarder.spec.upstreams</code> 的順序即為優先順序。優先嘗試優先度最高且健康的上游，失敗後依序往下。</p>
+<p>使用 <code>DNSUpstream.spec.addressFrom</code>，可從其他資源的 status 取得上游位址清單。
+這是利用 DHCPv6 information-request 取得的 DNS 伺服器時所使用的機制。</p>
+<h2 id="條件式轉送範例">條件式轉送範例</h2>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSResolver
+  metadata:
+    name: lan-resolver
+  spec:
+    listen:
+      - name: lan
+        addresses:
+          - 192.0.2.1
+        port: 53
+        sources:
+          - local-zone
+          - access-network
+          - provider-bootstrap
+          - default
+    cache:
+      enabled: true
+      maxEntries: 10000
+      minTTL: 60s
+      maxTTL: 24h
+      negativeTTL: 30s
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSForwarder
+  metadata:
+    name: local-zone
+  spec:
+    resolver: DNSResolver/lan-resolver
+    match: [lan.example.org]
+    zoneRefs: [DNSZone/lan]
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSForwarder
+  metadata:
+    name: access-network
+  spec:
+    resolver: DNSResolver/lan-resolver
+    match: [transix.jp, corp.example.com]
+    upstreams: [DNSUpstream/access-network]
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSUpstream
+  metadata:
+    name: access-network
+  spec:
+    protocol: udp
+    addressFrom:
+      - resource: DHCPv6Information/wan-info
+        field: dnsServers
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSForwarder
+  metadata:
+    name: provider-bootstrap
+  spec:
+    resolver: DNSResolver/lan-resolver
+    match: [dns.example-provider.net]
+    upstreams: [DNSUpstream/cloudflare-udp, DNSUpstream/google-udp]
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSForwarder
+  metadata:
+    name: default
+  spec:
+    resolver: DNSResolver/lan-resolver
+    match: [&quot;.&quot;]
+    upstreams: [DNSUpstream/provider-doh, DNSUpstream/provider-dot, DNSUpstream/cloudflare-udp]
+    healthcheck:
+      interval: 15s
+      timeout: 3s
+      failThreshold: 3
+      passThreshold: 2
+    dnssecValidate: true
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSUpstream
+  metadata:
+    name: provider-doh
+  spec:
+    protocol: doh
+    address: dns.example-provider.net
+    path: /dns-query
+    sourceInterface: ens18
+    bootstrap: [1.1.1.1, 2606:4700:4700::1111]
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSUpstream
+  metadata:
+    name: provider-dot
+  spec:
+    protocol: dot
+    address: dns.example-provider.net
+    sourceInterface: ens18
+    bootstrap: [1.1.1.1, 2606:4700:4700::1111]
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSUpstream
+  metadata:
+    name: cloudflare-udp
+  spec:
+    protocol: udp
+    address: 1.1.1.1
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSUpstream
+  metadata:
+    name: google-udp
+  spec:
+    protocol: udp
+    address: 8.8.8.8
+</code></pre>
+<h2 id="提供商的-bootstrap-處理">提供商的 bootstrap 處理</h2>
+<p>部分私有 DNS 提供商以該提供商自身的網域發布解析器 endpoint。
+若主機試圖「透過該提供商本身」解析其提供商名稱，在解析器健全之前將會發生迴圈或失敗。</p>
+<p>請為該提供商的網域建立條件式 source，並將查詢導向公眾解析器或 access-network 的 DNS。
+提供商的帳號 ID（例如 profile ID）請勿寫入共享範例，應僅置於主機本地的 secrets 檔案或各主機專屬的 YAML overlay 中。</p>
+<p><code>DNSUpstream.spec.bootstrap</code> 以更精細的方式提供相同保護。它指定在建立加密傳輸之前，用於解析該上游 endpoint 名稱的解析器。</p>
+<h2 id="介面綁定">介面綁定</h2>
+<p><code>DNSUpstream.spec.sourceInterface</code> 將對外的 DNS 查詢綁定至 Linux 的介面名稱。
+請使用 OS 介面的實際名稱（例如 <code>ens18</code>）。
+若該介面由其他資源（如 tunnel）建立，請透過順序宣告依賴關係，使解析器在介面建立前保持 pending 狀態。</p>
+<p>FreeBSD 沒有對等的 <code>SO_BINDTODEVICE</code> 強制機制，因此在平台專屬文件中不保證相同的行為。</p>
+<h2 id="相關文件">相關文件</h2>
+<ul>
+<li><a href="dns-local-zone.html">本地 DNS 區域</a></li>
+<li><a href="../concepts/dns-resolver.html">DNS 解析器概念</a></li>
+</ul></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#適用情境">適用情境</a></li>
+<li><a href="#routerd-的解決方式">routerd 的解決方式</a></li>
+<li><a href="#條件式轉送範例">條件式轉送範例</a></li>
+<li><a href="#提供商的-bootstrap-處理">提供商的 bootstrap 處理</a></li>
+<li><a href="#介面綁定">介面綁定</a></li>
+<li><a href="#相關文件">相關文件</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/how-to/dns-private-upstream.md">GitHub</a></div></footer></body></html>

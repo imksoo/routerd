@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FederationSLO · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/reference/resources/FederationSLO.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/reference/resources/FederationSLO.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/FederationSLO.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/FederationSLO.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/FederationSLO.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="federationslo">FederationSLO</h1>
+<p><a href="../resources.html#federationslo">各资源的配置</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: federation.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>配置 routerctl doctor 诊断联合发送与订阅时使用的每组阈值，不改变发送重试或 Plugin 执行策略。</p>
+<h2 id="指定条件与引用关系">指定条件与引用关系</h2>
+<ul>
+<li>groupRef 必填且须为已有 EventGroup 名称。每个组最多一个 FederationSLO。所有数值须非负；应用零值默认值后，有效 lagWarnSeconds 必须严格小于有效 lagFailSeconds。</li>
+<li>延迟达到阈值（&gt;=）即 WARN/FAIL；订阅数量严格超过允许最大值才 WARN/FAIL。即将过期使用剩余 TTL 严格小于阈值；待发或失败发送可使该诊断由 WARN 升为 FAIL。</li>
+</ul>
+<h2 id="yaml定义">YAML定义</h2>
+<p>此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。</p>
+<pre><code class="language-yaml">- apiVersion: federation.routerd.net/v1alpha1
+  kind: FederationSLO
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    delivery: # 选填; object
+      expiresSoonSeconds: 0 # 选填; integer; minimum=0
+      lagFailSeconds: 0 # 选填; integer; minimum=0
+      lagWarnSeconds: 0 # 选填; integer; minimum=0
+    groupRef: &quot;&lt;string&gt;&quot; # 必填; string
+    subscription: # 选填; object
+      maxFailedRuns: 0 # 选填; integer; minimum=0
+      maxPendingRuns: 0 # 选填; integer; minimum=0
+</code></pre>
+<h2 id="字段含义与默认值">字段含义与默认值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>字段含义与默认值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.groupRef</code></td>
+<td>必填单独 EventGroup metadata.name，不是 EventGroup/name。验证存在性与每组唯一性。</td>
+</tr>
+<tr>
+<td><code>spec.delivery</code></td>
+<td>可选的发送诊断阈值，省略字段使用下列默认值。不是传输超时或重试配置。</td>
+</tr>
+<tr>
+<td><code>spec.delivery.lagWarnSeconds</code></td>
+<td>非负秒数，省略或 0 为 60。最大测量发送延迟 &gt;= 此值时为 WARN，除非已达 FAIL 阈值。</td>
+</tr>
+<tr>
+<td><code>spec.delivery.lagFailSeconds</code></td>
+<td>非负秒数，省略或 0 为 180。最大测量发送延迟 &gt;= 此值时为 FAIL，须大于有效 WARN 阈值。</td>
+</tr>
+<tr>
+<td><code>spec.delivery.expiresSoonSeconds</code></td>
+<td>非负秒数，省略或 0 为 120。事件剩余 TTL 低于此值视为即将过期。0 无法禁用检查，无期限事件另行处理。</td>
+</tr>
+<tr>
+<td><code>spec.subscription</code></td>
+<td>可选的订阅执行诊断容许数，默认 pending/failed 容许均为 0。不限制控制器队列或重试次数。</td>
+</tr>
+<tr>
+<td><code>spec.subscription.maxPendingRuns</code></td>
+<td>非负数量，默认 0。待处理数大于此值时为 WARN，但若失败数已导致 FAIL 则优先 FAIL。</td>
+</tr>
+<tr>
+<td><code>spec.subscription.maxFailedRuns</code></td>
+<td>非负数量，默认 0。失败数大于此值时为 FAIL，不改变订阅最多三次的尝试策略。</td>
+</tr>
+</tbody>
+</table>
+<p>实现: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_event.go">pkg/config/validate_event.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerctl/doctor_federation.go">cmd/routerctl/doctor_federation.go</a></p>
+<h2 id="可引用的状态字段">可引用的状态字段</h2>
+<p>常规状态引用验证接受此 Kind 的下列字段名称。列于允许列表不保证目前有值，请检查实际状态。这些是输出，不是 YAML spec 配置。</p>
+<p>此 Kind 未登记常规状态引用的允许字段。</p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件与引用关系">指定条件与引用关系</a></li>
+<li><a href="#yaml定义">YAML定义</a></li>
+<li><a href="#字段含义与默认值">字段含义与默认值</a></li>
+<li><a href="#可引用的状态字段">可引用的状态字段</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/reference/resources/FederationSLO.md">GitHub</a></div></footer></body></html>

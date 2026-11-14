@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OverlayPeer · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/reference/resources/OverlayPeer.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/reference/resources/OverlayPeer.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/reference/resources/OverlayPeer.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/OverlayPeer.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/OverlayPeer.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="overlaypeer">OverlayPeer</h1>
+<p><a href="../resources.html#overlaypeer">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: hybrid.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Describe an existing transport used by HybridRoute and path-MTU policy derivation. This resource does not establish WireGuard, Tailscale, IPsec or a tunnel by itself.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>role, nodeID and underlay.type are required. wireguard/ipip/gre/fou/gue require underlay.interface in normal validation; using any type through HybridRoute requires it at expansion time, including tailscale/ipsec/route.</li>
+<li>For ipip/gre/fou/gue the bare underlay.interface must reference a declared TunnelInterface; validation does not check that its mode matches underlay.type. WireGuard may reference an externally managed device (warning rather than rejection). Other underlay devices must already be usable.</li>
+<li>nodeID/remote.nodeID and role are descriptors, not discovery, authentication, HA election or automatic topology matching. No when or dependsOn exists on this resource.</li>
+</ul>
+<h2 id="yaml-definition">YAML definition</h2>
+<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
+<pre><code class="language-yaml">- apiVersion: hybrid.routerd.net/v1alpha1
+  kind: OverlayPeer
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    nodeID: &quot;&lt;string&gt;&quot; # Required; string
+    pathMTU: # optional; object
+      forceFragmentIPv4: true # optional; boolean
+    remote: # optional; object
+      address: &quot;&lt;string&gt;&quot; # optional; string
+      nodeID: &quot;&lt;string&gt;&quot; # optional; string
+    role: &quot;onprem&quot; # Required; string; enum=[&quot;onprem&quot;, &quot;cloud&quot;]
+    underlay: # Required; object
+      address: &quot;&lt;string&gt;&quot; # optional; string
+      interface: &quot;&lt;string&gt;&quot; # optional; string
+      type: &quot;wireguard&quot; # Required; string; enum=[&quot;wireguard&quot;, &quot;tailscale&quot;, &quot;ipsec&quot;, &quot;route&quot;, &quot;ipip&quot;, &quot;gre&quot;, &quot;fou&quot;, &quot;gue&quot;]
+</code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.role</code></td>
+<td>Required onprem or cloud. No default; does not create cloud resources or choose a provider.</td>
+</tr>
+<tr>
+<td><code>spec.nodeID</code></td>
+<td>Required nonblank local node identity label. Not resolved to a host or external account.</td>
+</tr>
+<tr>
+<td><code>spec.underlay</code></td>
+<td>Required transport descriptor. Configure the actual network transport separately.</td>
+</tr>
+<tr>
+<td><code>spec.underlay.type</code></td>
+<td>Required wireguard/tailscale/ipsec/route/ipip/gre/fou/gue. Selects route lowering and MTU-overhead estimation, not daemon creation.</td>
+</tr>
+<tr>
+<td><code>spec.underlay.interface</code></td>
+<td>Device/logical interface used by generated IPv4Route; required for route expansion. Bare TunnelInterface name for tunnel modes; use actual OS device name for externally managed devices. No automatic interface discovery.</td>
+</tr>
+<tr>
+<td><code>spec.underlay.address</code></td>
+<td>Optional bare IPv4/IPv6 descriptor, validated as an IP. Current HybridRoute target derivation does not use it as gateway/local bind or assign it to the interface.</td>
+</tr>
+<tr>
+<td><code>spec.remote</code></td>
+<td>Optional remote descriptor, default empty. No peer registration or negotiation.</td>
+</tr>
+<tr>
+<td><code>spec.remote.nodeID</code></td>
+<td>Optional remote identity label; default empty, not used for live peer discovery or authorization.</td>
+</tr>
+<tr>
+<td><code>spec.remote.address</code></td>
+<td>Optional IP string. For ipsec route lowering, a parseable IPv4 value becomes gateway; invalid/IPv6/empty yields a device-only route. Other types do not use it as a gateway, and this field is not separately validated as an IP by OverlayPeer validation.</td>
+</tr>
+<tr>
+<td><code>spec.pathMTU</code></td>
+<td>Optional forwarded-path MTU options, default no force-fragment request. Does not encrypt the underlay.</td>
+</tr>
+<tr>
+<td><code>spec.pathMTU.forceFragmentIPv4</code></td>
+<td>Default false; true accepted only for wireguard/ipip/gre/fou/gue. Requests DF clearing for oversized IPv4 on matching derived forwarded paths using Linux nftables; not a global tunnel flag or IPv6 fragmentation. FreeBSD skips this nftables controller and has no equivalent DF-clear action in this path.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_hybrid.go">pkg/config/validate_hybrid.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/cluster_secret_validate.go">pkg/config/cluster_secret_validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/hybrid/hybrid.go">pkg/hybrid/hybrid.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/mtu.go">pkg/render/mtu.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/nftables.go">pkg/render/nftables.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/mtu.go">pkg/controller/chain/mtu.go</a></p>
+<h2 id="referenceable-status-fields">Referenceable status fields</h2>
+<p>The ordinary status-reference validator accepts these field names for this kind. This allowlist does not guarantee that every field is currently populated; inspect runtime status. These are outputs, not YAML spec fields.</p>
+<p><code>phase</code>, <code>nodeID</code>, <code>role</code>, <code>underlayType</code>, <code>underlayInterface</code></p>
+<p><a href="/examples/hybrid-l3-fou.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
+<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
+<li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/reference/resources/OverlayPeer.md">GitHub</a></div></footer></body></html>

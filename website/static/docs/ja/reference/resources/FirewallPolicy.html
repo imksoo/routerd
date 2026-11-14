@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FirewallPolicy · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/reference/resources/FirewallPolicy.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/reference/resources/FirewallPolicy.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/FirewallPolicy.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/reference/resources/FirewallPolicy.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/FirewallPolicy.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="firewallpolicy">FirewallPolicy</h1>
+<p><a href="../resources.html#firewallpolicy">リソース別の設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: firewall.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>ゾーン・明示ルールと併用する共通の暗黙ファイアウォール設定です。複数定義は独立せず集約します。</p>
+<h2 id="指定条件と参照関係">指定条件と参照関係</h2>
+<ul>
+<li>必須のspec項目はありません。logDenyは複数定義のORです。描画側のsameRoleAcceptはtrueで開始しfalseを代入する経路がないため、現行実装ではfalseを指定しても同じ区分間の転送を無効化できません。</li>
+<li>Linux nftablesとFreeBSD PFでは暗黙・明示ルールの順序が違います。PFは許可経路の広い暗黙許可を明示拒否より前に出し、Linuxはゾーン間の明示ルールをその組の暗黙判定より先に出します。明示拒否が暗黙許可・制御通信・状態追跡の全例外を上書きするとは限りません。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallPolicy
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    logDeny: true # 任意; boolean
+    sameRoleAccept: true # 任意; boolean
+</code></pre>
+<h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>項目の意味と既定値</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.logDeny</code></td>
+<td>既定falseです。いずれかがtrueならLinuxの暗黙input・forward拒否ログを有効にします。明示dropにはそのルールのlogが必要です。現行PFは本項目を読みません。</td>
+</tr>
+<tr>
+<td><code>spec.sameRoleAccept</code></td>
+<td>デコード時の既定はfalseですが、実効値は常にtrueでfalseの効果はありません。Linuxではuntrust同士も含みます。PFはuntrust同士の広い暗黙転送許可を出しません。</td>
+</tr>
+</tbody>
+</table>
+<p>実装: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_firewall.go">pkg/config/validate_firewall.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/nftables.go">pkg/render/nftables.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/pf.go">pkg/render/pf.go</a></p>
+<h2 id="状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</h2>
+<p>通常の状態値参照の検証で、このKindについて許可するフィールド名です。許可一覧にあるだけでは値の生成・取得を保証しないため、実際の状態を確認してください。YAMLのspecに設定する項目ではなく出力です。</p>
+<p><code>phase</code></p>
+<p><a href="/examples/example-basic-ipv4-nat.yaml">設定例</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
+<li><a href="#状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/reference/resources/FirewallPolicy.md">GitHub</a></div></footer></body></html>

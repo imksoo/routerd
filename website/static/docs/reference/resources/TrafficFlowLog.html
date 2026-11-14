@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TrafficFlowLog · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/reference/resources/TrafficFlowLog.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/reference/resources/TrafficFlowLog.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/reference/resources/TrafficFlowLog.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/TrafficFlowLog.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/TrafficFlowLog.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="trafficflowlog">TrafficFlowLog</h1>
+<p><a href="../resources.html#trafficflowlog">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Record connection snapshots in a SQLite flow database, optionally enriching them from the DPI cache. This is not a packet capture or a log of every packet.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>The observer selects the first decodable TrafficFlowLog resource, even if disabled; a later enabled resource does not override it. Configure one resource for predictable recording.</li>
+<li>Recording runs after successful conntrack observation; unavailable observation prevents that round of recording. The connection query is limited to 10000 entries. Sampling occurs on observer reconciliation, normally every 30s unless runtime options change it.</li>
+<li>DPI enrichment reads the first enabled FirewallEventLog database when available, matching connection tuples against cached classification within one hour. Enrichment is not guaranteed by either include flag; both false also do not prevent enrichment if that cache is available. Use LogRetention signal trafficFlows to manage flow retention.</li>
+</ul>
+<h2 id="yaml-definition">YAML definition</h2>
+<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: TrafficFlowLog
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    enabled: true # optional; boolean
+    includeApplicationLayer: true # optional; boolean
+    includeTLSSNI: true # optional; boolean
+    path: &quot;&lt;string&gt;&quot; # optional; string
+    source: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;conntrack&quot;]
+</code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.enabled</code></td>
+<td>Default false. True enables recording for the selected resource; it does not make an unavailable connection source work.</td>
+</tr>
+<tr>
+<td><code>spec.path</code></td>
+<td>SQLite database path on the router. Required when enabled by normal validation. The reader has an internal /var/lib/routerd/traffic-flows.db fallback, but it does not waive that enabled-path requirement.</td>
+</tr>
+<tr>
+<td><code>spec.source</code></td>
+<td>Only omitted/conntrack is accepted; effective label defaults to conntrack. It does not select a different collector or allow arbitrary backend names.</td>
+</tr>
+<tr>
+<td><code>spec.includeApplicationLayer</code></td>
+<td>Default false. With enabled true, requests DPI helper services and Linux DPI observation rules. Also includes applicationLayer availability/status from the nDPI agent in resource status; it does not guarantee libndpi is loaded or classification exists.</td>
+</tr>
+<tr>
+<td><code>spec.includeTLSSNI</code></td>
+<td>Default false. With enabled true, requests the same DPI helpers/observation path. Not a TLS decryption option, guaranteed SNI capture, or a separate storage redaction/filter switch; encrypted/unobserved names may remain unavailable.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_firewall.go">pkg/config/validate_firewall.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/conntrackobserver/controller.go">pkg/controller/conntrackobserver/controller.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/dpi_systemd.go">pkg/render/dpi_systemd.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/nftables.go">pkg/render/nftables.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/logretention.go">pkg/controller/chain/logretention.go</a></p>
+<h2 id="referenceable-status-fields">Referenceable status fields</h2>
+<p>The ordinary status-reference validator accepts these field names for this kind. This allowlist does not guarantee that every field is currently populated; inspect runtime status. These are outputs, not YAML spec fields.</p>
+<p><code>phase</code>, <code>path</code>, <code>sinks</code></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
+<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
+<li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/reference/resources/TrafficFlowLog.md">GitHub</a></div></footer></body></html>

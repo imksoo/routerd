@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NAT44FlowDNATPinhole · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/reference/resources/NAT44FlowDNATPinhole.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/reference/resources/NAT44FlowDNATPinhole.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/NAT44FlowDNATPinhole.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/reference/resources/NAT44FlowDNATPinhole.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/NAT44FlowDNATPinhole.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="nat44flowdnatpinhole">NAT44FlowDNATPinhole</h1>
+<p><a href="../resources.html#nat44flowdnatpinhole">リソース別の設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>送信UDPからIPv4内部エンドポイントを学習し、受信UDPの宛先ポートで動的DNATします。Linux nftables専用で、現行PFは実装していません。</p>
+<h2 id="指定条件と参照関係">指定条件と参照関係</h2>
+<ul>
+<li>fromInterfaceRefs・outbound・inboundと送信元選別が必須です。インターフェース・IPAddressSetの参照先は同じRouterに存在する必要があります。IPv4・UDP専用のポート起動DNATで、通常のconntrack応答処理とは別です。</li>
+<li>キーは送信のローカルUDP送信元ポート、値はSNAT前の内部IPv4と同じポートです。選択インターフェースはリソースごとの1マップを共有します。同じポートを使う別クライアントは上書きし、相手アドレスをキーに含めません。</li>
+<li>受信DNATは選択した入力インターフェース・相手送信元ポート・学習済み宛先ポートを確認します。送信宛先CIDR・集合を受信相手に再適用せず、転送許可ルールも生成しません。変換後通信はファイアウォール側の許可も必要です。</li>
+<li>学習マップはカーネル実行状態で、設定・永続DBではありません。NATテーブル再作成・再起動で失われ、送信通信による再学習が必要です。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: NAT44FlowDNATPinhole
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    correlation: # 任意; object
+      key: &quot;&quot; # 任意; string; enum=[&quot;&quot;, &quot;localPort&quot;]
+    fromInterfaceRefs: # 任意; array
+      - &quot;&lt;string&gt;&quot; # string
+    inbound: # 必須; object
+      sourcePorts: # 必須; array
+        - &quot;&lt;string&gt;&quot; # string
+    outbound: # 必須; object
+      destinationCIDRs: # 任意; array
+        - &quot;&lt;string&gt;&quot; # string
+      destinationPorts: # 必須; array
+        - &quot;&lt;string&gt;&quot; # string
+      destinationSetRefs: # 任意; array
+        - &quot;&lt;string&gt;&quot; # string
+      protocol: &quot;udp&quot; # 必須; string; enum=[&quot;udp&quot;]
+      sourceCIDRs: # 任意; array
+        - &quot;&lt;string&gt;&quot; # string
+      sourceSetRef: &quot;&lt;string&gt;&quot; # 任意; string
+    timeout: &quot;&lt;string&gt;&quot; # 任意; string
+    when: # 任意; object
+      state: # 任意; object
+        &quot;&lt;key&gt;&quot;: # 任意; object
+          contains: &quot;&lt;string&gt;&quot; # 任意; string
+          equals: &quot;&lt;string&gt;&quot; # 任意; string
+          exists: true # 任意; boolean
+          for: &quot;&lt;string&gt;&quot; # 任意; string
+          in: # 任意; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # 任意; string
+          status: &quot;set&quot; # 任意; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>項目の意味と既定値</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.outbound</code></td>
+<td>必須の送信学習条件です。該当UDP通信の識別を記録しますが、送信通信自体のファイアウォール許可ではありません。</td>
+</tr>
+<tr>
+<td><code>spec.outbound.sourceSetRef</code></td>
+<td>既存IPAddressSet/<name>の送信元選別です。sourceCIDRsと少なくとも一方が必須で、両方あればORです。既定は空です。</td>
+</tr>
+<tr>
+<td><code>spec.outbound.sourceCIDRs</code></td>
+<td>任意のIPv4送信元CIDRのOR一覧で、既定は空です。送信元選別が最低1つ必要です。IPv6は拒否し、描画時はホスト部をマスクします。</td>
+</tr>
+<tr>
+<td><code>spec.outbound.destinationCIDRs</code></td>
+<td>学習対象の任意のIPv4相手宛先で、既定は空です。destinationSetRefsとORで組み合わせ、両方なければ相手アドレス不問です。</td>
+</tr>
+<tr>
+<td><code>spec.outbound.destinationSetRefs</code></td>
+<td>任意の既存IPAddressSet/<name>相手宛先参照です。重複は禁止、既定は空です。送信元と宛先の条件群はANDで組み合わせます。</td>
+</tr>
+<tr>
+<td><code>spec.outbound.protocol</code></td>
+<td>udpが必須で既定値はありません。この学習機構はTCP・IPv6に対応しません。</td>
+</tr>
+<tr>
+<td><code>spec.outbound.destinationPorts</code></td>
+<td>1件以上必須の送信UDP宛先ポートです。1～65535の数値か、唯一のstart-end範囲を指定します。範囲と他項目の併用は禁止です。</td>
+</tr>
+<tr>
+<td><code>spec.inbound</code></td>
+<td>必須の戻り通信条件です。sourcePortsは相手UDP送信元ポートを選び、ローカル宛先ポートではありません。</td>
+</tr>
+<tr>
+<td><code>spec.inbound.sourcePorts</code></td>
+<td>1件以上必須の相手UDP送信元ポート一覧です。outbound.destinationPortsと同じ1～65535・範囲単独の制約です。</td>
+</tr>
+<tr>
+<td><code>spec.timeout</code></td>
+<td>任意の正のGo形式期間で、既定3mです。該当送信パケットごとに学習要素を更新します。描画は秒単位へ丸め最低1秒にし、UDPプロトコルのタイムアウトでなく学習状態の期限です。</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>共通の有効化条件で、既定は無条件です。除外したリソースの学習マップ・集合ルールは生成しません。入れ子条件とスキーマ制約は共通項を参照してください。</td>
+</tr>
+<tr>
+<td><code>spec.fromInterfaceRefs</code></td>
+<td>1件以上必須の入出力インターフェース一覧です。裸名・Interface/name・PPPoESession/name・DSLiteTunnel/nameを受け付け、同じ一覧を送信oifname・受信iifnameで使います。</td>
+</tr>
+<tr>
+<td><code>spec.correlation</code></td>
+<td>任意の相関定義でlocalPortのみ対応します。省略時も同じキーです。</td>
+</tr>
+<tr>
+<td><code>spec.correlation.key</code></td>
+<td>空またはlocalPortのみです。描画側に別分岐はなく、常にUDP送信元ポートで学習マップを引きます。</td>
+</tr>
+</tbody>
+</table>
+<p>実装: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_firewall.go">pkg/config/validate_firewall.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/nftables.go">pkg/render/nftables.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/local_service_redirect.go">pkg/render/local_service_redirect.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/nat44/controller.go">pkg/controller/nat44/controller.go</a></p>
+<h2 id="状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</h2>
+<p>通常の状態値参照の検証で、このKindについて許可するフィールド名です。許可一覧にあるだけでは値の生成・取得を保証しないため、実際の状態を確認してください。YAMLのspecに設定する項目ではなく出力です。</p>
+<p><code>phase</code></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
+<li><a href="#状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/reference/resources/NAT44FlowDNATPinhole.md">GitHub</a></div></footer></body></html>

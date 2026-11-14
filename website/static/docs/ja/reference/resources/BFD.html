@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BFD · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/reference/resources/BFD.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/reference/resources/BFD.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/BFD.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/reference/resources/BFD.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/BFD.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="bfd">BFD</h1>
+<p><a href="../resources.html#bfd">リソース別の設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>vtysh経由でFRR bfddのセッションを設定・観測し、BGPPeerの障害処理に使います。GoBGPとは別バックエンドで、BFD DownによりBGPピアをリセットします。</p>
+<h2 id="指定条件と参照関係">指定条件と参照関係</h2>
+<ul>
+<li>宣言したBFDは少なくとも1つのBGPPeer.bfdから参照される必要があります。BFDのpeerは参照元BGPPeer名またはその相手アドレスに一致する必要があり、BGPDynamicPeerにはbfd項目がありません。</li>
+<li>Linux・FreeBSDでFRR bfdd・vtyshが必要です。interfaceなしは参照BGPRouter.routerIDをローカルに使うmultihopで、直接IP指定かつinterfaceなしの場合はBGPRouterがちょうど1件必要です。interfaceありはsingle-hopです。</li>
+<li>BFDはそのセッションの障害を検出するもので、Upでも全宛先の疎通は保証しません。GoBGPは過去のBFD UpまたはBGP確立後のDown観測に反応し、起動時・不明状態をすべてDownとは扱いません。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: BFD
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    detectMultiplier: 1 # 任意; integer; minimum=1; maximum=50
+    interface: &quot;&lt;string&gt;&quot; # 任意; string
+    minRx: &quot;&lt;string&gt;&quot; # 任意; string
+    minTx: &quot;&lt;string&gt;&quot; # 任意; string
+    peer: &quot;&lt;string&gt;&quot; # 必須; string
+    profile: &quot;&quot; # 任意; string; enum=[&quot;&quot;, &quot;fast&quot;, &quot;normal&quot;, &quot;slow&quot;]
+    when: # 任意; object
+      state: # 任意; object
+        &quot;&lt;key&gt;&quot;: # 任意; object
+          contains: &quot;&lt;string&gt;&quot; # 任意; string
+          equals: &quot;&lt;string&gt;&quot; # 任意; string
+          exists: true # 任意; boolean
+          for: &quot;&lt;string&gt;&quot; # 任意; string
+          in: # 任意; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # 任意; string
+          status: &quot;set&quot; # 任意; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>項目の意味と既定値</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.peer</code></td>
+<td>IPアドレスそのものかBGPPeer/name参照が必須です。BGPPeer参照は全相手アドレスへ展開し、routerRef先のrouterIDをローカルアドレスに使います。直接指定のホスト名は不可です。</td>
+</tr>
+<tr>
+<td><code>spec.interface</code></td>
+<td>任意のsingle-hopインターフェースです。Interface/nameなら宣言したInterface.ifnameへ解決します。名前だけの場合は論理インターフェースの存在を検証しますが、実行時はその文字列をFRRへ渡すため、Interface/nameを推奨します。省略時はmultihopです。</td>
+</tr>
+<tr>
+<td><code>spec.profile</code></td>
+<td>fast・省略はminRx=minTx=300ms・倍率3、normalは500ms・500ms・3、slowは1000ms・1000ms・5です。個別指定があれば優先します。</td>
+</tr>
+<tr>
+<td><code>spec.minRx</code></td>
+<td>任意のGo durationで50ms～60000msです。プロファイルの受信間隔を上書きして整数msに変換し、省略時はプロファイル値です。BFDプロトコルタイマーであり、ルーター再起動の期限ではありません。</td>
+</tr>
+<tr>
+<td><code>spec.minTx</code></td>
+<td>任意のGo durationで50ms～60000msです。プロファイルの送信間隔を上書きし、整数msで出力します。</td>
+</tr>
+<tr>
+<td><code>spec.detectMultiplier</code></td>
+<td>任意の整数1～50です。省略・デコード値0ならプロファイル既定（通常3、slowは5）です。交渉された検出間隔の倍率で、routerdの再調整回数ではありません。</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>任意の共通有効化条件です。省略時は無条件です。state・all・any、参照検証、スキーマ制限は共通項を参照してください。</td>
+</tr>
+</tbody>
+</table>
+<p>実装: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/bgp_validate.go">pkg/config/bgp_validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/bfd/controller.go">pkg/controller/bfd/controller.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/bgp/controller.go">pkg/controller/bgp/controller.go</a></p>
+<h2 id="状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</h2>
+<p>通常の状態値参照の検証で、このKindについて許可するフィールド名です。許可一覧にあるだけでは値の生成・取得を保証しないため、実際の状態を確認してください。YAMLのspecに設定する項目ではなく出力です。</p>
+<p><code>phase</code>, <code>peer</code></p>
+<p><a href="/examples/bgp-bfd.yaml">設定例</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
+<li><a href="#状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/reference/resources/BFD.md">GitHub</a></div></footer></body></html>

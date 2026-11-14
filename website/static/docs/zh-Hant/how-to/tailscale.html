@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tailscale 的 exit node 與 subnet router · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/how-to/tailscale.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/how-to/tailscale.html" lang="en" hreflang="en">English</a><a href="/docs/ja/how-to/tailscale.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/how-to/tailscale.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/how-to/tailscale.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="tailscale-的-exit-node-與-subnet-router">Tailscale 的 exit node 與 subnet router</h1>
+<h2 id="適用情境">適用情境</h2>
+<p>當 routerd 主機需要加入 tailnet，並廣告以下路由時，請使用 <code>TailscaleNode</code>。</p>
+<ul>
+<li>exit node（<code>0.0.0.0/0</code> 與 <code>::/0</code>）</li>
+<li>一個或多個 subnet route</li>
+<li>exit node 與 subnet route 兩者並行</li>
+</ul>
+<p>routerd 不會取代 <code>tailscaled</code>。
+routerd 會產生一個 systemd unit 來執行 <code>tailscale up</code>，並管理節點的廣告設定。
+Tailscale 的帳號、控制平面及路由核准流程留在 Tailscale 端處理；
+routerd 負責管理主機上的宣告式設定。</p>
+<h2 id="安裝-tailscale">安裝 tailscale</h2>
+<p>以 <code>Package</code> 宣告相依套件，讓必要的套件從 YAML 中即可一目了然。</p>
+<pre><code class="language-yaml">apiVersion: system.routerd.net/v1alpha1
+kind: Package
+metadata:
+  name: router-service-dependencies
+spec:
+  packages:
+    - os: ubuntu
+      manager: apt
+      names:
+        - tailscale
+        - tailscale-archive-keyring
+    - os: freebsd
+      manager: pkg
+      names:
+        - tailscale
+      optional: true
+</code></pre>
+<p>在 Ubuntu 上，<code>Package</code> 安裝 <code>tailscale</code> 之前，需先確保 Tailscale 的 apt 儲存庫已可用。
+請透過一般的初始建置程序完成儲存庫的新增。</p>
+<h2 id="不將密鑰留在-git-中">不將密鑰留在 Git 中</h2>
+<p>正式環境建議使用 <code>authKeyEnv</code> 搭配 <code>authKeyFile</code>。</p>
+<pre><code class="language-yaml">apiVersion: net.routerd.net/v1alpha1
+kind: TailscaleNode
+metadata:
+  name: edge
+spec:
+  hostname: edge
+  advertiseExitNode: true
+  advertiseRoutes:
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+  acceptDNS: false
+  acceptRoutes: false
+  authKeyEnv: TS_AUTHKEY
+  authKeyFile: /usr/local/etc/routerd/secrets/tailscale.env
+</code></pre>
+<p>環境變數檔案置於 routerd YAML 之外。</p>
+<pre><code class="language-sh">sudo install -d -m 0700 /usr/local/etc/routerd/secrets
+sudo sh -c 'printf &quot;%s\n&quot; &quot;TS_AUTHKEY=REDACTED&quot; &gt; /usr/local/etc/routerd/secrets/tailscale.env'
+sudo chmod 0600 /usr/local/etc/routerd/secrets/tailscale.env
+</code></pre>
+<p>節點已登入的情況下，可省略 <code>authKey</code>、<code>authKeyEnv</code>、<code>authKeyFile</code>。
+此時 routerd 不會將密鑰嵌入 systemd unit，只會重新套用廣告設定。</p>
+<p>Tailscale 預設使用 UDP/41641。
+當設定中存在 <code>TailscaleNode</code> 時，routerd 會將此埠視為已保留。
+若 <code>WireGuardInterface</code> 設定使用相同埠，驗證時會予以拒絕。</p>
+<h2 id="廣告所有私有位址">廣告所有私有位址</h2>
+<p>當路由器作為自宅或據點網路的 tailnet 入口時，可廣告 RFC 1918 的全部私有位址空間。</p>
+<pre><code class="language-yaml">apiVersion: net.routerd.net/v1alpha1
+kind: TailscaleNode
+metadata:
+  name: edge
+spec:
+  hostname: edge
+  advertiseExitNode: true
+  advertiseRoutes:
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+  acceptDNS: false
+  acceptRoutes: false
+</code></pre>
+<p>套用設定後，請在 Tailscale 管理主控台核准廣告的路由。
+核准前，<code>tailscale debug prefs</code> 可看到請求的路由；
+但 <code>tailscale status --self --json</code> 的 <code>Self.AllowedIPs</code> 中可能尚未出現。</p>
+<h2 id="防火牆-zone-的配置">防火牆 zone 的配置</h2>
+<p>將 <code>tailscale0</code> 宣告為 <code>Interface</code>，使其顯示在狀態與 Web 管理介面的介面清單中。</p>
+<pre><code class="language-yaml">apiVersion: net.routerd.net/v1alpha1
+kind: Interface
+metadata:
+  name: tailscale
+spec:
+  ifname: tailscale0
+  mtu: 1280
+  managed: false
+</code></pre>
+<p>指定 <code>mtu: 1280</code> 可讓衍生的 TCP MSS clamp 在考量 Tailscale 路由的同時，
+不會對無關的 LAN 至 WAN 路由降低 MTU。</p>
+<p>家庭路由器建議將 <code>tailscale0</code> 放在 <code>trust</code> zone，而非 <code>mgmt</code> zone。</p>
+<pre><code class="language-yaml">apiVersion: firewall.routerd.net/v1alpha1
+kind: FirewallZone
+metadata:
+  name: lan
+spec:
+  role: trust
+  interfaces:
+    - Interface/lan
+    - Interface/tailscale
+
+---
+
+apiVersion: firewall.routerd.net/v1alpha1
+kind: FirewallZone
+metadata:
+  name: management
+spec:
+  role: mgmt
+  interfaces:
+    - Interface/mgmt
+</code></pre>
+<p>此設定下，tailnet 的客戶端可透過 <code>trust -&gt; self</code> 的路徑存取 routerd 的 Web 管理介面等服務。
+只要防火牆拒絕 <code>trust -&gt; mgmt</code> 的轉發，tailnet 便無法廣泛存取管理 VLAN。</p>
+<p>僅在希望將整個 tailnet 視為管理網路時，才將 <code>tailscale0</code> 放入 <code>mgmt</code>。</p>
+<h2 id="套用與確認">套用與確認</h2>
+<p>確認設定後重啟 routerd。</p>
+<pre><code class="language-sh">routerctl validate -f /usr/local/etc/routerd/router.yaml --replace
+systemctl restart routerd.service
+</code></pre>
+<p>確認產生的 systemd unit。</p>
+<pre><code class="language-sh">systemctl cat routerd-tailscale-edge.service
+</code></pre>
+<p>確認 Tailscale 端的狀態。</p>
+<pre><code class="language-sh">tailscale status --self --json | jq '.BackendState, .Self.AllowedIPs'
+tailscale debug prefs | jq '.AdvertiseRoutes'
+</code></pre>
+<p>確認 routerd 端的狀態。</p>
+<pre><code class="language-sh">routerctl get status -o json
+routerctl get TailscaleNode/edge -o yaml
+routerctl vpn tailscale peers
+</code></pre>
+<p><code>routerctl vpn tailscale peers -o json</code> 會讀取 <code>tailscale status --json</code>，並以 routerd CLI 格式顯示對等節點清單。Web 管理介面的 Resources 頁面也會在 <code>TailscaleNode</code> 中顯示對等節點的線上狀態、relay、最後上線時間及允許的路由。</p>
+<p>若要透過 Tailscale 存取 Web 管理介面，請使用路由器的 Tailscale 位址或已核准路由上的位址。</p>
+<pre><code class="language-sh">curl -f http://100.64.0.1:8080/
+</code></pre>
+<p>上述位址僅為範例，請替換為實際的路由器 Tailscale IP。</p>
+<h2 id="補充說明">補充說明</h2>
+<ul>
+<li>設定 <code>acceptDNS: false</code> 可防止 Tailscale 覆蓋路由器本身的 DNS 設定。routerd 的基本方針是優先使用 LAN 端的 DNS。<code>DNSResolver</code>、本地 zone、DHCP 衍生記錄及條件式轉發均以 LAN 端為權威，不讓 MagicDNS 接管主機的解析器。</li>
+<li>設定 <code>acceptRoutes: false</code> 可防止路由器匯入其他節點廣告的路由。對於負責向外廣告路由的路由器而言，此為合理的設定。</li>
+<li>routerd 會針對 Tailscale 對等節點匯出 <code>routerd.tailscale.peer.count</code> 與 <code>routerd.tailscale.last_handshake.seconds</code> 指標。運維上判斷握手經過時間時，請使用 Tailscale status 的 <code>LastSeen</code>。</li>
+<li>exit node 與 subnet route 的核准在 Tailscale 端進行。</li>
+<li>請勿將 auth key 留在範例或 Git 記錄中。實機部署請使用 <code>authKeyFile</code>。</li>
+</ul></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#適用情境">適用情境</a></li>
+<li><a href="#安裝-tailscale">安裝 tailscale</a></li>
+<li><a href="#不將密鑰留在-git-中">不將密鑰留在 Git 中</a></li>
+<li><a href="#廣告所有私有位址">廣告所有私有位址</a></li>
+<li><a href="#防火牆-zone-的配置">防火牆 zone 的配置</a></li>
+<li><a href="#套用與確認">套用與確認</a></li>
+<li><a href="#補充說明">補充說明</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/how-to/tailscale.md">GitHub</a></div></footer></body></html>

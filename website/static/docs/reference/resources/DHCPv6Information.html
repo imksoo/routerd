@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DHCPv6Information · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/reference/resources/DHCPv6Information.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/reference/resources/DHCPv6Information.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/reference/resources/DHCPv6Information.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/DHCPv6Information.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/DHCPv6Information.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="dhcpv6information">DHCPv6Information</h1>
+<p><a href="../resources.html#dhcpv6information">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Projects AFTR, DNS, SNTP and domain-search information from the DHCPv6-PD daemon that uses the same interface. It does not start a standalone information-request client.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>A DHCPv6PrefixDelegation resource on the exact same logical interface must reach Bound before this controller reads its daemon socket. Without such a PD resource there is no source to project. Info-request is triggered on bootstrap/transition to Bound, not as a separate lease lifecycle.</li>
+<li>The information controller uses the declared Router rather than the when-filtered effective view and does not evaluate dependsOn. Its Ready status reflects a daemon status read, not proof of a fresh information reply. ready_when is rejected; use supported declarations with the runtime limitations below.</li>
+</ul>
+<h2 id="yaml-definition">YAML definition</h2>
+<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DHCPv6Information
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    dependsOn: # optional; array
+      - # object
+        equals: &quot;&lt;string&gt;&quot; # optional; string
+        field: &quot;&lt;string&gt;&quot; # optional; string
+        notEmpty: true # optional; boolean
+        optional: true # optional; boolean
+        phase: &quot;&lt;string&gt;&quot; # optional; string
+        resource: &quot;&lt;string&gt;&quot; # Required; string
+    interface: &quot;&lt;string&gt;&quot; # Required; string
+    request: # optional; array
+      - &quot;&lt;string&gt;&quot; # string
+    when: # optional; object
+      state: # optional; object
+        &quot;&lt;key&gt;&quot;: # optional; object
+          contains: &quot;&lt;string&gt;&quot; # optional; string
+          equals: &quot;&lt;string&gt;&quot; # optional; string
+          exists: true # optional; boolean
+          for: &quot;&lt;string&gt;&quot; # optional; string
+          in: # optional; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # optional; string
+          status: &quot;set&quot; # optional; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.interface</code></td>
+<td>Required interface identifier matched exactly against DHCPv6PrefixDelegation.spec.interface. No default. Use the same logical interface name in both declarations.</td>
+</tr>
+<tr>
+<td><code>spec.request</code></td>
+<td>Requested-option declaration, default empty. The current controller does not use it: the daemon InfoRequest sends its fixed ORO for AFTR name, DNS servers, SNTP servers and domain search.</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>Conditional declaration, default absent. Validated using the shared when rules, but the current information controller does not filter its own work by this field. Do not use it as an information-request stop switch.</td>
+</tr>
+<tr>
+<td><code>spec.dependsOn</code></td>
+<td>Dependency declaration, default empty. Reference targets/fields are validated, but this controller does not enforce these predicates before reading or requesting information.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_wan.go">pkg/config/validate_wan.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go">pkg/config/diagnostics.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/phase2.go">pkg/controller/chain/phase2.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go">pkg/controller/chain/chain.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/pdclient/client.go">pkg/pdclient/client.go</a></p>
+<h2 id="referenceable-status-fields">Referenceable status fields</h2>
+<p>The ordinary status-reference validator accepts these field names for this kind. This allowlist does not guarantee that every field is currently populated; inspect runtime status. These are outputs, not YAML spec fields.</p>
+<p><code>phase</code>, <code>source</code>, <code>aftrName</code>, <code>dnsServers</code>, <code>sntpServers</code>, <code>domainSearch</code></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
+<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
+<li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/reference/resources/DHCPv6Information.md">GitHub</a></div></footer></body></html>

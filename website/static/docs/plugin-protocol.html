@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Plugin protocol · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/plugin-protocol.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/plugin-protocol.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/plugin-protocol.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/plugin-protocol.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/plugin-protocol.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="plugin-protocol">Plugin protocol</h1>
+<p>routerd plugins are trusted local executables. The plugin mechanism lets you add resource-specific behaviour as a small program on the same host, without modifying the routerd binary.</p>
+<p>Remote plugin registration, remote installation, and a public plugin registry are intentionally out of scope.</p>
+<h2 id="layout">Layout</h2>
+<p>The default install path is:</p>
+<pre><code class="language-text">/usr/local/libexec/routerd/plugins/&lt;name&gt;/
+</code></pre>
+<p>Each plugin has a manifest and an executable:</p>
+<pre><code class="language-text">plugin.yaml
+bin/&lt;plugin&gt;
+</code></pre>
+<h2 id="responsibilities">Responsibilities</h2>
+<p>A plugin can take part in:</p>
+<ul>
+<li>Resource validation</li>
+<li>Plan generation</li>
+<li>Host state observation</li>
+<li>Host state application</li>
+</ul>
+<p>Validate network behavior on the actual target and its peers as required by <a href="https://github.com/imksoo/routerd/blob/main/AGENTS.md">AGENTS.md</a>.</p>
+<h2 id="mvp-policy">MVP policy</h2>
+<p>For the CloudEdge MVP, plugins are trusted local executables only. routerd does
+not fetch plugins from a remote registry or install plugins remotely.</p>
+<p>Plugin output is always validated before it is stored as dynamic-config or used
+to derive effective-config. A plugin can propose resources, directives,
+provider action plans, and events. <code>actionPlans</code> are inert inside dynamic-config
+and are never executed by the plugin runner or merge path. They can be imported
+into the provider-action journal and handed to an executor plugin only after
+<code>ProviderActionPolicy</code>, approval, allowlist, and dry-run/live mode gates pass.</p>
+<h2 id="resource-shapes">Resource shapes</h2>
+<p>A plugin is declared as a local executable and optional trigger set:</p>
+<pre><code class="language-yaml">apiVersion: plugin.routerd.net/v1alpha1
+kind: Plugin
+metadata:
+  name: oci-inventory
+spec:
+  executable: /usr/local/libexec/routerd/plugins/oci-inventory/bin/oci-inventory
+  timeout: 10s
+  capabilities: [observe.cloud, propose.dynamicConfig]
+  triggers:
+    - type: interval
+      every: 300s
+    - type: event
+      topic: routerd.cloud.oci.refresh
+</code></pre>
+<p>A dynamic config source binds a plugin to dynamic-config production policy:</p>
+<pre><code class="language-yaml">apiVersion: plugin.routerd.net/v1alpha1
+kind: DynamicConfigSource
+metadata:
+  name: oci-inventory
+spec:
+  pluginRef: oci-inventory
+  ttl: 300s
+  mergePolicy:
+    conflict: reject
+</code></pre>
+<p>The runner requires <code>spec.executable</code> to be an absolute executable file. Plugin
+capabilities are currently <code>observe.cloud</code>, <code>observe.providerPrivateIPs</code>,
+<code>propose.dynamicConfig</code>, <code>propose.providerAction</code>, and
+<code>execute.providerAction</code>. Interval triggers use <code>every</code>; event triggers use
+<code>topic</code>.</p>
+<h2 id="triggers">Triggers</h2>
+<p>Plugins run from explicit triggers:</p>
+<table>
+<thead>
+<tr>
+<th>Trigger</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>interval</code></td>
+<td>Periodic refresh, usually for inventory or lease-like observations.</td>
+</tr>
+<tr>
+<td><code>event</code></td>
+<td>Event-bus driven refresh for a named topic.</td>
+</tr>
+</tbody>
+</table>
+<p>The <code>PluginRequest.spec.trigger</code> field records the actual trigger for one
+invocation. <code>trigger.type</code> is <code>interval</code> or <code>event</code>; <code>trigger.topic</code> is set for
+event-triggered invocations.</p>
+<h2 id="io-contract">I/O contract</h2>
+<p>routerd starts the plugin executable, writes one <code>PluginRequest</code> JSON object to
+stdin, and expects one <code>PluginResult</code> JSON object on stdout. Timestamps use
+RFC3339. Duration strings use Go-style duration syntax such as <code>300s</code>.</p>
+<p>The child process receives a minimal environment: <code>PATH</code> from routerd's
+environment, or a fixed system fallback if <code>PATH</code> is unset, plus explicit
+<code>Plugin.spec.env</code> entries. routerd does not pass through the full parent
+environment.</p>
+<h3 id="pluginrequest">PluginRequest</h3>
+<pre><code class="language-json">{
+  &quot;apiVersion&quot;: &quot;plugin.routerd.net/v1alpha1&quot;,
+  &quot;kind&quot;: &quot;PluginRequest&quot;,
+  &quot;metadata&quot;: {
+    &quot;name&quot;: &quot;oci-inventory&quot;
+  },
+  &quot;spec&quot;: {
+    &quot;trigger&quot;: {
+      &quot;type&quot;: &quot;interval&quot;,
+      &quot;topic&quot;: &quot;&quot;
+    },
+    &quot;startupConfigHash&quot;: &quot;sha256:...&quot;,
+    &quot;effectiveGeneration&quot;: 44,
+    &quot;previousDynamicGeneration&quot;: 12,
+    &quot;now&quot;: &quot;2026-05-29T12:00:00Z&quot;
+  }
+}
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.trigger</code></td>
+<td>Why this plugin invocation happened.</td>
+</tr>
+<tr>
+<td><code>spec.startupConfigHash</code></td>
+<td>Digest of the current startup-config.</td>
+</tr>
+<tr>
+<td><code>spec.effectiveGeneration</code></td>
+<td>Current effective-config generation before this result.</td>
+</tr>
+<tr>
+<td><code>spec.previousDynamicGeneration</code></td>
+<td>Last accepted generation for this source.</td>
+</tr>
+<tr>
+<td><code>spec.now</code></td>
+<td>routerd's invocation timestamp.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="pluginresult">PluginResult</h3>
+<pre><code class="language-json">{
+  &quot;apiVersion&quot;: &quot;plugin.routerd.net/v1alpha1&quot;,
+  &quot;kind&quot;: &quot;PluginResult&quot;,
+  &quot;metadata&quot;: {
+    &quot;name&quot;: &quot;oci-inventory&quot;
+  },
+  &quot;status&quot;: {
+    &quot;observedAt&quot;: &quot;2026-05-29T12:00:00Z&quot;,
+    &quot;ttl&quot;: &quot;300s&quot;,
+    &quot;resources&quot;: [
+      {
+        &quot;apiVersion&quot;: &quot;net.routerd.net/v1alpha1&quot;,
+        &quot;kind&quot;: &quot;IPv4Route&quot;,
+        &quot;metadata&quot;: { &quot;name&quot;: &quot;cloud-app-static-fallback&quot; },
+        &quot;spec&quot;: { &quot;destination&quot;: &quot;10.0.1.123/32&quot;, &quot;gateway&quot;: &quot;192.0.2.1&quot; }
+      }
+    ],
+    &quot;directives&quot;: [
+      {
+        &quot;op&quot;: &quot;mask&quot;,
+        &quot;target&quot;: {
+          &quot;apiVersion&quot;: &quot;net.routerd.net/v1alpha1&quot;,
+          &quot;kind&quot;: &quot;IPv4Route&quot;,
+          &quot;name&quot;: &quot;cloud-app-static-fallback&quot;
+        },
+        &quot;reason&quot;: &quot;provider inventory confirms the dynamic route&quot;
+      }
+    ],
+    &quot;actionPlans&quot;: [
+      {
+        &quot;name&quot;: &quot;assign-cloud-secondary-ip&quot;,
+        &quot;provider&quot;: &quot;oci&quot;,
+        &quot;action&quot;: &quot;assign-secondary-ip&quot;,
+        &quot;target&quot;: {
+          &quot;nicRef&quot;: &quot;ocid1.vnic.oc1..example&quot;,
+          &quot;address&quot;: &quot;10.0.1.123&quot;
+        },
+        &quot;undo&quot;: {
+          &quot;action&quot;: &quot;unassign-secondary-ip&quot;
+        }
+      }
+    ],
+    &quot;events&quot;: [
+      {
+        &quot;type&quot;: &quot;InventoryObserved&quot;,
+        &quot;message&quot;: &quot;observed app private address&quot;,
+        &quot;attributes&quot;: {
+          &quot;provider&quot;: &quot;oci&quot;,
+          &quot;address&quot;: &quot;10.0.1.123&quot;
+        }
+      }
+    ]
+  }
+}
+</code></pre>
+<p>routerd decodes plugin stdout with YAML decoding, even when the plugin emits
+JSON, so resource specs are restored to typed routerd structs. It validates the
+plugin result shape, stores accepted output as a <code>DynamicConfigPart</code>, and derives
+<code>expiresAt</code> from <code>observedAt + ttl</code>. Full effective-config validation, including
+dynamic override policy evaluation, happens when dynamic parts are merged with
+startup config.</p>
+<p><code>actionPlans</code> describe provider operations an operator may choose to import into
+the provider-action journal. The plugin result itself must stay a dry-run plan;
+<code>mode: execute</code> is rejected. Live provider mutation, when used, happens only via
+<code>routerctl action execute --approved</code> or the daemon auto-execution gate, and the
+executor plugin receives no routerd-held secrets.</p>
+<h3 id="observeprivateipsresult">ObservePrivateIPsResult</h3>
+<p>Plugins with <code>observe.providerPrivateIPs</code> return
+<code>providerinventory.routerd.net/v1alpha1</code> <code>ObservePrivateIPsResult</code> objects. The
+legacy <code>status.ips</code> field remains wire-compatible and is treated as observed
+candidate addresses for ownership-discovery events. New plugins should also set
+<code>status.localIPs</code> to the authoritative local provider inventory for the scanned
+VPC/VNet/VCN or subnet, including VM NIC and private-endpoint addresses before
+routerd applies trap exclusions or ownership selectors. If <code>localIPs</code> is absent,
+routerd falls back to <code>observedCandidates</code> and then <code>ips</code>.</p>
+<p><code>status.observedCandidates</code> can be used when a plugin wants to return a narrower
+event-emission candidate set while still exposing the full local inventory in
+<code>localIPs</code>. SAM uses that local inventory only to establish the router's own
+NIC, private-IP, and trusted-subnet scope. Durable ownership facts are emitted
+from the filtered <code>observedCandidates</code> set, or legacy <code>ips</code> when candidates are
+not supplied.</p>
+<p>Each private-IP record should set <code>resourceRef</code> to the owning compute instance
+ID when the provider can report it, and <code>resourceType</code> to distinguish router
+NICs from ordinary instance NICs or private endpoints. <code>status.self</code> may also
+set <code>resourceRef</code>/<code>resourceType</code> for the local router instance. SAM uses this
+identity to distinguish a secondary IP captured onto the router instance from a
+real home client address on the same provider subnet.</p>
+<h2 id="cli">CLI</h2>
+<p>The MVP operator commands are:</p>
+<pre><code class="language-text">routerctl plugin list [--config &lt;startup&gt;] [-o table|json|yaml]
+routerctl plugin run &lt;name&gt; [--dry-run] [--config &lt;startup&gt;] [--state-file &lt;db&gt;] [-o table|json|yaml]
+routerctl action import|list|show|approve|execute|journal|rollback ...
+</code></pre>
+<p><code>plugin run --dry-run</code> executes the plugin and prints the candidate
+<code>DynamicConfigPart</code> without writing state. Without <code>--dry-run</code>, routerctl records
+the plugin run and stores the validated dynamic part in the local state
+database.</p>
+<h2 id="current-status">Current status</h2>
+<p>The main router features are advanced inside the routerd binary and its managed daemons. The plugin protocol is the safe foundation for site-local extensions; the manifest format and the I/O contract may still change before the protocol is frozen as a stable public surface.</p>
+<p>See also <a href="reference/dynamic-config.html">Dynamic config reference</a>.</p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#layout">Layout</a></li>
+<li><a href="#responsibilities">Responsibilities</a></li>
+<li><a href="#mvp-policy">MVP policy</a></li>
+<li><a href="#resource-shapes">Resource shapes</a></li>
+<li><a href="#triggers">Triggers</a></li>
+<li><a href="#io-contract">I/O contract</a><ul>
+<li><a href="#pluginrequest">PluginRequest</a></li>
+<li><a href="#pluginresult">PluginResult</a></li>
+<li><a href="#observeprivateipsresult">ObservePrivateIPsResult</a></li>
+</ul>
+</li>
+<li><a href="#cli">CLI</a></li>
+<li><a href="#current-status">Current status</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/plugin-protocol.md">GitHub</a></div></footer></body></html>

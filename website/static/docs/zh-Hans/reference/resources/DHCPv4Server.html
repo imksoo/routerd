@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DHCPv4Server · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/reference/resources/DHCPv4Server.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/reference/resources/DHCPv4Server.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/DHCPv4Server.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/DHCPv4Server.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/DHCPv4Server.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="dhcpv4server">DHCPv4Server</h1>
+<p><a href="../resources.html#dhcpv4server">各资源的配置</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>通过当前共用 dnsmasq 服务提供 IPv4 DHCP 地址池、带选择条件的范围与保留。</p>
+<h2 id="指定条件与引用关系">指定条件与引用关系</h2>
+<ul>
+<li>当前实时控制器请用 interface/addressPool 与 gateway/gatewayFrom、dnsServers/dnsServerFrom、ntpServers/ntpServerFrom。静态渲染与实时写入行为不同，旧 routerSource/dnsSource、内嵌 dns、authoritative 不应视为可用实时控制。</li>
+<li>有效地址池需有现有逻辑接口及有效 IPv4 起止地址。会检查 start &lt;= end，但验证不确立子网成员关系、地址池重叠或所提供网关的可达性。</li>
+<li>通用值来源须有现有资源与明确提供字段。gateway/DNS/NTP/domain 必要来源 optional false 缺值时，即使有固定替代值仍暂停地址池；optional true 跳过缺值。动态地址读取器不对所有状态值强制 IPv4。</li>
+<li>范围使用 MAC/OUI 替代条件及本地 profileRef 或内嵌配置，不能并用。配置档与范围需有效起止值。动态租约符合选择器但不在任何匹配地址池时，应用会移除并重启 dnsmasq，保留明确保留；不强制客户端立即更新。</li>
+</ul>
+<h2 id="yaml定义">YAML定义</h2>
+<p>此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DHCPv4Server
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    addressPool: # 选填; object
+      end: &quot;&lt;string&gt;&quot; # 选填; string
+      leaseTime: &quot;&lt;string&gt;&quot; # 选填; string
+      start: &quot;&lt;string&gt;&quot; # 选填; string
+    authoritative: true # 选填; boolean
+    dns: # 选填; object
+      cacheSize: 0 # 选填; integer; minimum=0
+      enabled: true # 选填; boolean
+      upstreamInterface: &quot;&lt;string&gt;&quot; # 选填; string
+      upstreamServers: # 选填; array
+        - &quot;&lt;string&gt;&quot; # string
+      upstreamSource: &quot;dhcpv4&quot; # 选填; string; enum=[&quot;dhcpv4&quot;, &quot;static&quot;, &quot;system&quot;, &quot;none&quot;]
+    dnsInterface: &quot;&lt;string&gt;&quot; # 选填; string
+    dnsServerFrom: # 选填; array
+      - # object
+        field: &quot;&lt;string&gt;&quot; # 选填; string
+        optional: true # 选填; boolean
+        resource: &quot;&lt;string&gt;&quot; # 必填; string
+    dnsServers: # 选填; array
+      - &quot;&lt;string&gt;&quot; # string
+    dnsSource: &quot;dhcpv4&quot; # 选填; string; enum=[&quot;dhcpv4&quot;, &quot;static&quot;, &quot;self&quot;, &quot;none&quot;]
+    domain: &quot;&lt;string&gt;&quot; # 选填; string
+    domainFrom: # 选填; object
+      field: &quot;&lt;string&gt;&quot; # 选填; string
+      optional: true # 选填; boolean
+      resource: &quot;&lt;string&gt;&quot; # 必填; string
+    gateway: &quot;&lt;string&gt;&quot; # 选填; string
+    gatewayFrom: # 选填; object
+      field: &quot;&lt;string&gt;&quot; # 选填; string
+      optional: true # 选填; boolean
+      resource: &quot;&lt;string&gt;&quot; # 必填; string
+    interface: &quot;&lt;string&gt;&quot; # 选填; string
+    leaseFile: &quot;&lt;string&gt;&quot; # 选填; string
+    leaseTime: &quot;&lt;string&gt;&quot; # 选填; string
+    listenInterfaces: # 选填; array
+      - &quot;&lt;string&gt;&quot; # string
+    logDHCP: true # 选填; boolean
+    managed: true # 选填; boolean
+    ntpServerFrom: # 选填; array
+      - # object
+        field: &quot;&lt;string&gt;&quot; # 选填; string
+        optional: true # 选填; boolean
+        resource: &quot;&lt;string&gt;&quot; # 必填; string
+    ntpServers: # 选填; array
+      - &quot;&lt;string&gt;&quot; # string
+    options: # 选填; array
+      - # object
+        code: 1 # 选填; integer; minimum=1; maximum=65535
+        name: &quot;&lt;string&gt;&quot; # 选填; string
+        value: &quot;&lt;string&gt;&quot; # 选填; string
+    profiles: # 选填; array
+      - # object
+        addressPool: # 必填; object
+          end: &quot;&lt;string&gt;&quot; # 选填; string
+          leaseTime: &quot;&lt;string&gt;&quot; # 选填; string
+          start: &quot;&lt;string&gt;&quot; # 选填; string
+        dnsServers: # 选填; array
+          - &quot;&lt;string&gt;&quot; # string
+        gateway: &quot;&lt;string&gt;&quot; # 选填; string
+        name: &quot;&lt;string&gt;&quot; # 必填; string
+        netmask: &quot;&lt;string&gt;&quot; # 选填; string
+        ntpServers: # 选填; array
+          - &quot;&lt;string&gt;&quot; # string
+        options: # 选填; array
+          - # object
+            code: 1 # 选填; integer; minimum=1; maximum=65535
+            name: &quot;&lt;string&gt;&quot; # 选填; string
+            value: &quot;&lt;string&gt;&quot; # 选填; string
+    rangeEnd: &quot;&lt;string&gt;&quot; # 选填; string
+    rangeStart: &quot;&lt;string&gt;&quot; # 选填; string
+    role: &quot;server&quot; # 选填; string; enum=[&quot;server&quot;, &quot;transit&quot;]
+    router: &quot;&lt;string&gt;&quot; # 选填; string
+    routerSource: &quot;interfaceAddress&quot; # 选填; string; enum=[&quot;interfaceAddress&quot;, &quot;static&quot;, &quot;none&quot;]
+    scopes: # 选填; array
+      - # object
+        addressPool: # 必填; object
+          end: &quot;&lt;string&gt;&quot; # 选填; string
+          leaseTime: &quot;&lt;string&gt;&quot; # 选填; string
+          start: &quot;&lt;string&gt;&quot; # 选填; string
+        dnsServers: # 选填; array
+          - &quot;&lt;string&gt;&quot; # string
+        gateway: &quot;&lt;string&gt;&quot; # 选填; string
+        match: # 必填; object
+          macAddresses: # 选填; array
+            - &quot;&lt;string&gt;&quot; # string
+          ouiPrefixes: # 选填; array
+            - &quot;&lt;string&gt;&quot; # string
+        name: &quot;&lt;string&gt;&quot; # 必填; string
+        netmask: &quot;&lt;string&gt;&quot; # 选填; string
+        ntpServers: # 选填; array
+          - &quot;&lt;string&gt;&quot; # string
+        options: # 选填; array
+          - # object
+            code: 1 # 选填; integer; minimum=1; maximum=65535
+            name: &quot;&lt;string&gt;&quot; # 选填; string
+            value: &quot;&lt;string&gt;&quot; # 选填; string
+        profileRef: &quot;&lt;string&gt;&quot; # 选填; string
+    server: &quot;dnsmasq&quot; # 选填; string; enum=[&quot;dnsmasq&quot;, &quot;kea&quot;, &quot;dhcpd&quot;]
+    stickyHoldDays: 0 # 选填; integer; minimum=0
+    when: # 选填; object
+      state: # 选填; object
+        &quot;&lt;key&gt;&quot;: # 选填; object
+          contains: &quot;&lt;string&gt;&quot; # 选填; string
+          equals: &quot;&lt;string&gt;&quot; # 选填; string
+          exists: true # 选填; boolean
+          for: &quot;&lt;string&gt;&quot; # 选填; string
+          in: # 选填; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # 选填; string
+          status: &quot;set&quot; # 选填; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<h2 id="字段含义与默认值">字段含义与默认值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>字段含义与默认值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.server</code></td>
+<td>模式接受 dnsmasq/kea/dhcpd，规划与依赖选择默认 dnsmasq。当前实时控制器仍一律启动 dnsmasq，不能切换到 kea/dhcpd。固定保留天数仅计入 dnsmasq 服务器。</td>
+</tr>
+<tr>
+<td><code>spec.managed</code></td>
+<td>布尔值默认 false，当前实时 DHCP 控制器不检查；false 不表示仅观察或禁用。</td>
+</tr>
+<tr>
+<td><code>spec.role</code></td>
+<td>验证 server/transit，默认 server。静态渲染器区分 transit，但当前实时 LAN 生成不遵循此切换，不可用 transit 抑制分配。</td>
+</tr>
+<tr>
+<td><code>spec.listenInterfaces</code></td>
+<td>可选已声明逻辑接口列表，所有名称须存在。用于验证与防火墙规划，但当前实时地址池仅使用 interface，此列表不能替代 interface。</td>
+</tr>
+<tr>
+<td><code>spec.logDHCP</code></td>
+<td>默认 false，静态渲染可输出 log-dhcp，但当前实时写入不使用此标志，租约事件回调生成与此独立。</td>
+</tr>
+<tr>
+<td><code>spec.stickyHoldDays</code></td>
+<td>非负保留天数，默认 0 禁用。正值将释放或到期的分配保存在 dhcp-sticky.db 以便重用。当前对全部 IPv4 租约事件采用 dnsmasq DHCPv4Server 中的最大值，不按接口区分；明确保留优先。</td>
+</tr>
+<tr>
+<td><code>spec.interface</code></td>
+<td>主地址池的已声明逻辑接口。虽然模式与验证允许省略，当前实时地址池生成仍需要它，且须存在于 Router 接口索引。</td>
+</tr>
+<tr>
+<td><code>spec.addressPool</code></td>
+<td>主 IPv4 分配池；设置 interface 时 start/end 必填，各字段优先于旧 rangeStart/rangeEnd/leaseTime。</td>
+</tr>
+<tr>
+<td><code>spec.addressPool.start</code></td>
+<td>纯 IPv4 起始地址，包含端点；除非 rangeStart 补足，否则必填，须 &lt;= end，不自动推导子网或地址池。</td>
+</tr>
+<tr>
+<td><code>spec.addressPool.end</code></td>
+<td>纯 IPv4 结束地址，包含端点；除非 rangeEnd 补足，否则必填，须 &gt;= start。</td>
+</tr>
+<tr>
+<td><code>spec.addressPool.leaseTime</code></td>
+<td>后端租约时长字符串，优先级 addressPool.leaseTime → leaseTime → 12h，此资源验证不按 Go duration 解析。</td>
+</tr>
+<tr>
+<td><code>spec.rangeStart</code></td>
+<td>addressPool.start 的旧式替代值，默认空值；也会切换静态渲染器至旧式范围路径，建议用 addressPool。</td>
+</tr>
+<tr>
+<td><code>spec.rangeEnd</code></td>
+<td>addressPool.end 的旧式替代值，静态渲染器切换同 rangeStart。</td>
+</tr>
+<tr>
+<td><code>spec.leaseTime</code></td>
+<td>addressPool.leaseTime 为空时使用的后端租约时长，默认 12h。</td>
+</tr>
+<tr>
+<td><code>spec.routerSource</code></td>
+<td>验证 interfaceAddress/static/none，static 需要 router。静态渲染默认 interfaceAddress 并读 IPv4StaticAddress，但当前实时写入忽略 routerSource/router，改用 gateway/gatewayFrom。</td>
+</tr>
+<tr>
+<td><code>spec.router</code></td>
+<td>routerSource: static 时必填 IPv4 值，仅旧静态渲染使用，当前实时网关选项路径不使用。</td>
+</tr>
+<tr>
+<td><code>spec.gateway</code></td>
+<td>可选纯 IPv4 DHCP 路由器选项，默认不明确输出；有效 gatewayFrom 值优先，可并用。</td>
+</tr>
+<tr>
+<td><code>spec.gatewayFrom</code></td>
+<td>可选含 resource/field 的状态来源，optional 默认 false；来源未解析时即使有 gateway 仍为 Pending。optional true 缺值时可用 gateway。</td>
+</tr>
+<tr>
+<td><code>spec.dnsSource</code></td>
+<td>验证 dhcpv4/static/self/none，static 需要 dnsServers，dhcpv4 需要 dnsInterface。静态默认 self；当前实时写入忽略选择器并使用 dnsServers 与 dnsServerFrom。</td>
+</tr>
+<tr>
+<td><code>spec.dnsInterface</code></td>
+<td>dnsSource: dhcpv4 所需的已声明逻辑接口。即使用其他选择器，提供此值仍验证存在；当前实时写入不以此发现 DNS。</td>
+</tr>
+<tr>
+<td><code>spec.dnsServers</code></td>
+<td>可选纯 IPv4 DNS 服务器列表，默认空值；与 dnsServerFrom 合并形成 DHCP 选项 6，不会启动 DNSResolver 或 DNS 监听。</td>
+</tr>
+<tr>
+<td><code>spec.dnsServerFrom</code></td>
+<td>可选通用 resource/field 来源列表，optional 默认 false。必要值缺失即使有固定 DNS 仍阻挡整个服务器。运行时读状态并去除 CIDR，请用提供 IPv4 的字段。</td>
+</tr>
+<tr>
+<td><code>spec.ntpServers</code></td>
+<td>可选纯 IPv4 NTP 列表，默认空；与 ntpServerFrom 合并为 DHCP 选项 42，不启动 NTPServer。</td>
+</tr>
+<tr>
+<td><code>spec.ntpServerFrom</code></td>
+<td>可选通用 resource/field 来源列表，必要与可选等待条件及仅读状态同 dnsServerFrom，默认无引用。</td>
+</tr>
+<tr>
+<td><code>spec.domain</code></td>
+<td>可选单一域名，不可含空白、斜线或逗号，与 domainFrom 互斥。输出 domain-name，若未明确提供选项 119/domain-search 亦输出 domain-search。</td>
+</tr>
+<tr>
+<td><code>spec.domainFrom</code></td>
+<td>可选来源限 DNSZone/<name>、field: zone，资源须存在，可在状态建立前读声明 zone。optional false 缺值时等待，true 可省略；与 domain 互斥。</td>
+</tr>
+<tr>
+<td><code>spec.authoritative</code></td>
+<td>默认 false，影响旧静态渲染及范围路径选择；当前实时写入不据此输出 dhcp-authoritative。</td>
+</tr>
+<tr>
+<td><code>spec.leaseFile</code></td>
+<td>可选路径，默认 <StateDir>/dnsmasq/dnsmasq.leases，通常为 /var/lib/routerd/dnsmasq/dnsmasq.leases。共用 dnsmasq，所有 DHCPv4/6 服务器明确 leaseFile 须一致，否则运行失败。</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>可选通用状态条件，默认无条件。不成立则排除地址池并为 Pending/WhenFalse；必要动态值未解析也可另使其 Pending。</td>
+</tr>
+<tr>
+<td><code>spec.dns</code></td>
+<td>旧式 dnsmasq 内嵌 DNS 配置。当前实时写入固定 port=0 与 no-resolv，无法以此启用 DNS 转发，请改用 DNSResolver/DNSForwarder/DNSUpstream；部分值仍影响验证。</td>
+</tr>
+<tr>
+<td><code>spec.dns.enabled</code></td>
+<td>默认 false；true 在监听冲突验证中保留 TCP/UDP 53，但不实际开启 DNS 监听。</td>
+</tr>
+<tr>
+<td><code>spec.dns.upstreamSource</code></td>
+<td>接受空值/dhcpv4/static/system/none；dhcpv4 须有 upstreamInterface，static 须有 upstreamServers，当前不影响实时 DNS 转发。</td>
+</tr>
+<tr>
+<td><code>spec.dns.upstreamInterface</code></td>
+<td>dns.upstreamSource: dhcpv4 时必须非空，当前不参与实时 DNS 解析。不同于 dnsInterface，此旧字段不对照接口索引。</td>
+</tr>
+<tr>
+<td><code>spec.dns.upstreamServers</code></td>
+<td>upstreamSource 为 static 时必填 IPv4/IPv6 固定值，默认空；会验证但当前实时 DNS 转发不使用。</td>
+</tr>
+<tr>
+<td><code>spec.dns.cacheSize</code></td>
+<td>模式要求非负整数，默认 0，当前实时配置写入不使用，与 DNSResolver.cache 分开。</td>
+</tr>
+<tr>
+<td><code>spec.profiles</code></td>
+<td>此服务器内可选的可重用配置，未由 scopes[].profileRef 选取即无作用，不是独立资源，默认空。</td>
+</tr>
+<tr>
+<td><code>spec.profiles[].name</code></td>
+<td>服务器内必填且唯一的配置档名称，不可含空白或逗号，不加 Kind/name 前缀。</td>
+</tr>
+<tr>
+<td><code>spec.scopes</code></td>
+<td>可选的条件专用地址池，在主通用地址池前生成；未符合选择器的客户端使用主地址池。默认空，验证不拒绝同时符合多个范围。</td>
+</tr>
+<tr>
+<td><code>spec.scopes[].name</code></td>
+<td>服务器内必填且唯一的范围名称，不可含空白或逗号，用于生成 dnsmasq 标签，不是外部资源引用。</td>
+</tr>
+<tr>
+<td><code>spec.scopes[].match</code></td>
+<td>必填选择器，macAddresses 或 ouiPrefixes 至少有一项。各项为替代匹配，不要求同时符合两个列表。</td>
+</tr>
+<tr>
+<td><code>spec.scopes[].match.macAddresses</code></td>
+<td>可选完整 MAC 列表，由 net.ParseMAC 解析，默认空。dnsmasq 输出请用标准冒号分隔六字节格式。</td>
+</tr>
+<tr>
+<td><code>spec.scopes[].match.ouiPrefixes</code></td>
+<td>可选三字节 OUI 前缀，请用 aa:bb:cc，运行时原样附加 :<em>:</em>:*。验证虽规范化其他写法，实时写入不使用该规范化结果。</td>
+</tr>
+<tr>
+<td><code>spec.scopes[].profileRef</code></td>
+<td>同一服务器现有 profiles[] 的裸名，与内嵌 addressPool 字段、netmask、gateway、dnsServers、ntpServers、options 互斥；空值使用内嵌配置。</td>
+</tr>
+<tr>
+<td><code>spec.profiles[].addressPool</code></td>
+<td>配置档与内嵌范围所需 IPv4 地址池，端点无默认值。</td>
+</tr>
+<tr>
+<td><code>spec.profiles[].addressPool.start</code></td>
+<td>必填且包含端点的纯 IPv4 起始值，须 &lt;= end，不验证地址池间重叠。</td>
+</tr>
+<tr>
+<td><code>spec.profiles[].addressPool.end</code></td>
+<td>必填且包含端点的纯 IPv4 结束值，须 &gt;= start。</td>
+</tr>
+<tr>
+<td><code>spec.profiles[].addressPool.leaseTime</code></td>
+<td>可选后端租约时长，空值继承服务器有效时长（addressPool.leaseTime → leaseTime → 12h）。</td>
+</tr>
+<tr>
+<td><code>spec.profiles[].netmask</code></td>
+<td>可选连续 1–32 位的点分 IPv4 掩码，空值不输出并由 dnsmasq 推导，不从其他配置档继承。</td>
+</tr>
+<tr>
+<td><code>spec.profiles[].gateway</code></td>
+<td>此标签地址池的可选纯 IPv4 路由器选项，空值不复制 server.gateway。</td>
+</tr>
+<tr>
+<td><code>spec.profiles[].dnsServers</code></td>
+<td>此标签地址池的可选 IPv4 DNS 列表，默认空，无动态来源字段或自动继承服务器列表。</td>
+</tr>
+<tr>
+<td><code>spec.profiles[].ntpServers</code></td>
+<td>此标签地址池的可选 IPv4 NTP 列表，默认空，无动态来源字段。</td>
+</tr>
+<tr>
+<td><code>spec.profiles[].options</code></td>
+<td>此地址池的可选额外选项，每项须有 code/name 其中之一及非空 value，默认空。</td>
+</tr>
+<tr>
+<td><code>spec.profiles[].options[].code</code></td>
+<td>数字选项，与 name 互斥，模式 1–65535。</td>
+</tr>
+<tr>
+<td><code>spec.profiles[].options[].name</code></td>
+<td>dnsmasq 选项名称，与 code 互斥，不可含空白或逗号。</td>
+</tr>
+<tr>
+<td><code>spec.profiles[].options[].value</code></td>
+<td>必填后端格式值，不可含 CR/LF，逗号可分隔多个值。</td>
+</tr>
+<tr>
+<td><code>spec.scopes[].addressPool</code></td>
+<td>配置档与内嵌范围所需 IPv4 地址池，端点无默认值。</td>
+</tr>
+<tr>
+<td><code>spec.scopes[].addressPool.start</code></td>
+<td>必填且包含端点的纯 IPv4 起始值，须 &lt;= end，不验证地址池间重叠。</td>
+</tr>
+<tr>
+<td><code>spec.scopes[].addressPool.end</code></td>
+<td>必填且包含端点的纯 IPv4 结束值，须 &gt;= start。</td>
+</tr>
+<tr>
+<td><code>spec.scopes[].addressPool.leaseTime</code></td>
+<td>可选后端租约时长，空值继承服务器有效时长（addressPool.leaseTime → leaseTime → 12h）。</td>
+</tr>
+<tr>
+<td><code>spec.scopes[].netmask</code></td>
+<td>可选连续 1–32 位的点分 IPv4 掩码，空值不输出并由 dnsmasq 推导，不从其他配置档继承。</td>
+</tr>
+<tr>
+<td><code>spec.scopes[].gateway</code></td>
+<td>此标签地址池的可选纯 IPv4 路由器选项，空值不复制 server.gateway。</td>
+</tr>
+<tr>
+<td><code>spec.scopes[].dnsServers</code></td>
+<td>此标签地址池的可选 IPv4 DNS 列表，默认空，无动态来源字段或自动继承服务器列表。</td>
+</tr>
+<tr>
+<td><code>spec.scopes[].ntpServers</code></td>
+<td>此标签地址池的可选 IPv4 NTP 列表，默认空，无动态来源字段。</td>
+</tr>
+<tr>
+<td><code>spec.scopes[].options</code></td>
+<td>此地址池的可选额外选项，每项须有 code/name 其中之一及非空 value，默认空。</td>
+</tr>
+<tr>
+<td><code>spec.scopes[].options[].code</code></td>
+<td>数字选项，与 name 互斥，模式 1–65535。</td>
+</tr>
+<tr>
+<td><code>spec.scopes[].options[].name</code></td>
+<td>dnsmasq 选项名称，与 code 互斥，不可含空白或逗号。</td>
+</tr>
+<tr>
+<td><code>spec.scopes[].options[].value</code></td>
+<td>必填后端格式值，不可含 CR/LF，逗号可分隔多个值。</td>
+</tr>
+<tr>
+<td><code>spec.options</code></td>
+<td>此地址池的可选额外选项，每项须有 code/name 其中之一及非空 value，默认空。</td>
+</tr>
+<tr>
+<td><code>spec.options[].code</code></td>
+<td>数字选项，与 name 互斥，模式 1–65535。</td>
+</tr>
+<tr>
+<td><code>spec.options[].name</code></td>
+<td>dnsmasq 选项名称，与 code 互斥，不可含空白或逗号。</td>
+</tr>
+<tr>
+<td><code>spec.options[].value</code></td>
+<td>必填后端格式值，不可含 CR/LF，逗号可分隔多个值。</td>
+</tr>
+</tbody>
+</table>
+<p>实现: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_dhcp.go">pkg/config/validate_dhcp.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go">pkg/config/diagnostics.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/listen_ports.go">pkg/config/listen_ports.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go">pkg/controller/chain/chain.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/phase2.go">pkg/controller/chain/phase2.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/dhcp_profile_leases.go">pkg/controller/chain/dhcp_profile_leases.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/dnsmasq.go">pkg/render/dnsmasq.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd/runtime_services.go">cmd/routerd/runtime_services.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/platform/platform.go">pkg/platform/platform.go</a></p>
+<h2 id="可引用的状态字段">可引用的状态字段</h2>
+<p>常规状态引用验证接受此 Kind 的下列字段名称。列于允许列表不保证目前有值，请检查实际状态。这些是输出，不是 YAML spec 配置。</p>
+<p><code>phase</code>, <code>interface</code>, <code>dnsServers</code>, <code>ntpServers</code>, <code>domain</code>, <code>configPath</code>, <code>dryRun</code></p>
+<p><a href="/examples/dhcp-lease-sync-ha.yaml">配置示例</a></p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件与引用关系">指定条件与引用关系</a></li>
+<li><a href="#yaml定义">YAML定义</a></li>
+<li><a href="#字段含义与默认值">字段含义与默认值</a></li>
+<li><a href="#可引用的状态字段">可引用的状态字段</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/reference/resources/DHCPv4Server.md">GitHub</a></div></footer></body></html>

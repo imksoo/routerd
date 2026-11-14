@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Multi-WAN egress with health-based selection · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/how-to/multi-wan.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/how-to/multi-wan.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/how-to/multi-wan.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/how-to/multi-wan.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/multi-wan.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="multi-wan-egress-with-health-based-selection">Multi-WAN egress with health-based selection</h1>
+<h2 id="scenario">Scenario</h2>
+<p>You have a router with more than one path to the internet and want routerd to:</p>
+<ul>
+<li>Pick the best available path automatically.</li>
+<li>Fall back to a slower or backup link if the preferred one becomes unhealthy.</li>
+<li>Avoid hard cutovers that drop existing connections.</li>
+</ul>
+<p>Typical examples:</p>
+<ul>
+<li>A home router with a DS-Lite tunnel as primary and the upstream residential gateway as a NAT fallback.</li>
+<li>A SOHO router with two ISP uplinks (e.g. fibre + LTE) for redundancy.</li>
+<li>A site router that prefers a private VPN circuit but falls back to public internet.</li>
+</ul>
+<h2 id="how-routerd-solves-it">How routerd solves it</h2>
+<p><code>EgressRoutePolicy</code> declares the candidate paths and how to choose between them.
+At any moment routerd selects the highest-weight candidate that is <strong>ready</strong> (the source resource has settled) and <strong>healthy</strong> (its <code>HealthCheck</code> is passing).
+On a transition, routerd updates the OS route table and reapplies any NAT rule that follows the policy. It does <strong>not</strong> flush conntrack, so existing flows continue on their current path while new flows take the freshly selected one.</p>
+<p>Convergence is intentional: a low-weight backup can serve traffic the moment it is ready at boot, and routerd switches to the preferred path only after that path is confirmed healthy.</p>
+<p>For fallback links that consume scarce sessions, such as a test PPPoE login,
+keep the resource in YAML but set <code>enabled: false</code> on the <code>PPPoESession</code>,
+its <code>HealthCheck</code>, and the matching <code>EgressRoutePolicy</code> candidate. routerd
+will stop and disable the generated services during normal apply. The rendered
+unit remains available for an explicit manual test.</p>
+<h2 id="minimal-configuration">Minimal configuration</h2>
+<p>Three building blocks: a <code>HealthCheck</code> per candidate, an <code>EgressRoutePolicy</code> that lists the candidates, and a <code>NAT44Rule</code> that follows the policy.</p>
+<h3 id="health-checks">Health checks</h3>
+<pre><code class="language-yaml">apiVersion: net.routerd.net/v1alpha1
+kind: HealthCheck
+metadata:
+  name: internet-via-primary
+spec:
+  target: 1.1.1.1
+  protocol: tcp
+  port: 443
+  interval: 30s
+  timeout: 3s
+</code></pre>
+<p>Reference each check from the matching <code>EgressRoutePolicy</code> candidate. routerd derives the probe source binding and socket mark from that reference, so the probe rides the candidate path without exposing host-specific mechanics in config. Use TCP/443 against a well-known stable target rather than ICMP, so transient ICMP filtering does not flap the selection.</p>
+<h3 id="egress-policy">Egress policy</h3>
+<pre><code class="language-yaml">apiVersion: net.routerd.net/v1alpha1
+kind: EgressRoutePolicy
+metadata:
+  name: ipv4-default
+spec:
+  family: ipv4
+  destinationCIDRs:
+    - 0.0.0.0/0
+  selection: highest-weight-ready
+  hysteresis: 30s
+  candidates:
+    - name: ds-lite-primary
+      source: DSLiteTunnel/ds-lite-primary
+      deviceFrom:
+        resource: DSLiteTunnel/ds-lite-primary
+        field: interface
+      gatewaySource: none
+      weight: 90
+      healthCheck: internet-via-primary
+
+    - name: hgw-fallback
+      source: Interface/wan
+      deviceFrom:
+        resource: Interface/wan
+        field: ifname
+      gatewaySource: static
+      gateway: 192.0.2.1
+      weight: 50
+      healthCheck: internet-via-hgw
+</code></pre>
+<p><code>hysteresis</code> damps flapping: routerd waits this long after a candidate becomes unhealthy before demoting it.</p>
+<h3 id="nat-that-follows-the-policy">NAT that follows the policy</h3>
+<pre><code class="language-yaml">apiVersion: net.routerd.net/v1alpha1
+kind: NAT44Rule
+metadata:
+  name: lan-to-egress
+spec:
+  type: masquerade
+  egressPolicyRef: ipv4-default
+  sourceRanges:
+    - 192.0.2.0/24
+</code></pre>
+<p>The masquerade source address is taken from the interface routerd selected at this instant. When the policy switches, the next packet is masqueraded with the new path's address.</p>
+<h2 id="avoiding-nat-for-private-destinations">Avoiding NAT for private destinations</h2>
+<p>If the upstream gateway has a static route back to the LAN, you can keep NAT for the public internet but skip it when traffic is destined for other private networks.</p>
+<pre><code class="language-yaml">apiVersion: net.routerd.net/v1alpha1
+kind: NAT44Rule
+metadata:
+  name: lan-to-wan-hgw
+spec:
+  type: masquerade
+  egressInterface: wan
+  sourceRanges:
+    - 192.0.2.0/24
+  excludeDestinationCIDRs:
+    - 192.168.0.0/16
+    - 172.16.0.0/12
+    - 10.0.0.0/8
+
+---
+
+apiVersion: net.routerd.net/v1alpha1
+kind: IPv4Route
+metadata:
+  name: hgw-lan
+spec:
+  destination: 192.168.0.0/16
+  device: wan
+</code></pre>
+<p>With this combination, RFC 1918 destinations are routed (not NATed), and the public internet still flows through the selected egress.</p>
+<h2 id="operational-notes">Operational notes</h2>
+<ul>
+<li>Always keep an out-of-band management path (mgmt interface, console, dedicated SSH NIC). Do not test router SSH over an untrusted WAN path while applying firewall or route changes.</li>
+<li>Prefer health checks that are referenced by exactly one candidate, so routerd can derive a single probe path and a failure clearly means that path is broken.</li>
+<li>Avoid clearing conntrack when the path switches. routerd does not flush conntrack on purpose; existing TCP flows that already finished their handshake should be allowed to die naturally.</li>
+<li>The selected candidate is visible at any time via <code>routerctl describe EgressRoutePolicy/&lt;name&gt;</code> (<code>status.selectedCandidate</code>).</li>
+</ul>
+<h2 id="see-also">See also</h2>
+<ul>
+<li><a href="../concepts/path-mtu.html">Path MTU and MSS clamping</a></li>
+<li><a href="firewall-rule.html">Firewall rule basics</a></li>
+<li><a href="flets-ipv6-setup.html">DS-Lite setup</a></li>
+</ul></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#scenario">Scenario</a></li>
+<li><a href="#how-routerd-solves-it">How routerd solves it</a></li>
+<li><a href="#minimal-configuration">Minimal configuration</a><ul>
+<li><a href="#health-checks">Health checks</a></li>
+<li><a href="#egress-policy">Egress policy</a></li>
+<li><a href="#nat-that-follows-the-policy">NAT that follows the policy</a></li>
+</ul>
+</li>
+<li><a href="#avoiding-nat-for-private-destinations">Avoiding NAT for private destinations</a></li>
+<li><a href="#operational-notes">Operational notes</a></li>
+<li><a href="#see-also">See also</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/how-to/multi-wan.md">GitHub</a></div></footer></body></html>

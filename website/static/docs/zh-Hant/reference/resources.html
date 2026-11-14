@@ -1,0 +1,467 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>各資源的設定 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/reference/resources.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/reference/resources.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/reference/resources.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="各資源的設定">各資源的設定</h1>
+<p>資源寫在Router.spec.resources內。範例的名稱、介面、位址、憑證及對端設定必須依環境調整。必填表示在所屬物件內必須指定。跨資源參照與語意限制還須以routerd validate確認。</p>
+<p><a href="common-fields.html">Kind/name · when · dependsOn</a></p>
+<pre><code class="language-sh">routerd validate --config router.yaml
+</code></pre>
+<p><a href="https://github.com/imksoo/routerd/blob/main/schemas/routerd-config-v1alpha1.schema.json">JSON Schema</a> · <a href="https://github.com/imksoo/routerd/tree/main/examples">YAML</a></p>
+<h3 id="router">Router</h3>
+<pre><code class="language-yaml">apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: &quot;&lt;router-name&gt;&quot;
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: &quot;&lt;name&gt;&quot;
+      spec:
+        ifname: &quot;&lt;interface-name&gt;&quot;
+</code></pre>
+<ul>
+<li><a href="resources/Plugin.html">Plugin</a></li>
+<li><a href="resources/DynamicConfigSource.html">DynamicConfigSource</a></li>
+<li><a href="resources/DynamicOverridePolicy.html">DynamicOverridePolicy</a></li>
+<li><a href="resources/LogSink.html">LogSink</a></li>
+<li><a href="resources/Telemetry.html">Telemetry</a></li>
+<li><a href="resources/ObservabilityPipeline.html">ObservabilityPipeline</a></li>
+<li><a href="resources/LogRetention.html">LogRetention</a></li>
+<li><a href="resources/Sysctl.html">Sysctl</a></li>
+<li><a href="resources/SysctlProfile.html">SysctlProfile</a></li>
+<li><a href="resources/Package.html">Package</a></li>
+<li><a href="resources/NTPClient.html">NTPClient</a></li>
+<li><a href="resources/NTPServer.html">NTPServer</a></li>
+<li><a href="resources/WebConsole.html">WebConsole</a></li>
+<li><a href="resources/ControlAPI.html">ControlAPI</a></li>
+<li><a href="resources/RouterdCluster.html">RouterdCluster</a></li>
+<li><a href="resources/Interface.html">Interface</a></li>
+<li><a href="resources/PPPoESession.html">PPPoESession</a></li>
+<li><a href="resources/WireGuardInterface.html">WireGuardInterface</a></li>
+<li><a href="resources/WireGuardPeer.html">WireGuardPeer</a></li>
+<li><a href="resources/TailscaleNode.html">TailscaleNode</a></li>
+<li><a href="resources/IPsecConnection.html">IPsecConnection</a></li>
+<li><a href="resources/VRF.html">VRF</a></li>
+<li><a href="resources/VXLANTunnel.html">VXLANTunnel</a></li>
+<li><a href="resources/IPv4StaticAddress.html">IPv4StaticAddress</a></li>
+<li><a href="resources/VirtualAddress.html">VirtualAddress</a></li>
+<li><a href="resources/BGPRouter.html">BGPRouter</a></li>
+<li><a href="resources/BGPPeer.html">BGPPeer</a></li>
+<li><a href="resources/BGPDynamicPeer.html">BGPDynamicPeer</a></li>
+<li><a href="resources/BFD.html">BFD</a></li>
+<li><a href="resources/DHCPv4Client.html">DHCPv4Client</a></li>
+<li><a href="resources/ClusterNetworkRoute.html">ClusterNetworkRoute</a></li>
+<li><a href="resources/DHCPv4Server.html">DHCPv4Server</a></li>
+<li><a href="resources/DHCPv4Reservation.html">DHCPv4Reservation</a></li>
+<li><a href="resources/DHCPv6Address.html">DHCPv6Address</a></li>
+<li><a href="resources/IPv6RAAddress.html">IPv6RAAddress</a></li>
+<li><a href="resources/DHCPv6PrefixDelegation.html">DHCPv6PrefixDelegation</a></li>
+<li><a href="resources/IPv6DelegatedAddress.html">IPv6DelegatedAddress</a></li>
+<li><a href="resources/DHCPv6Information.html">DHCPv6Information</a></li>
+<li><a href="resources/IPv6RouterAdvertisement.html">IPv6RouterAdvertisement</a></li>
+<li><a href="resources/DHCPv6Server.html">DHCPv6Server</a></li>
+<li><a href="resources/DHCPv4ServerLeaseSync.html">DHCPv4ServerLeaseSync</a></li>
+<li><a href="resources/DHCPv6ServerLeaseSync.html">DHCPv6ServerLeaseSync</a></li>
+<li><a href="resources/DHCPv6PrefixDelegationLeaseSync.html">DHCPv6PrefixDelegationLeaseSync</a></li>
+<li><a href="resources/DHCPv4Relay.html">DHCPv4Relay</a></li>
+<li><a href="resources/SelfAddressPolicy.html">SelfAddressPolicy</a></li>
+<li><a href="resources/DNSZone.html">DNSZone</a></li>
+<li><a href="resources/DNSResolver.html">DNSResolver</a></li>
+<li><a href="resources/DNSForwarder.html">DNSForwarder</a></li>
+<li><a href="resources/DNSUpstream.html">DNSUpstream</a></li>
+<li><a href="resources/DSLiteTunnel.html">DSLiteTunnel</a></li>
+<li><a href="resources/TunnelInterface.html">TunnelInterface</a></li>
+<li><a href="resources/OverlayPeer.html">OverlayPeer</a></li>
+<li><a href="resources/HybridRoute.html">HybridRoute</a></li>
+<li><a href="resources/CloudProviderProfile.html">CloudProviderProfile</a></li>
+<li><a href="resources/ProviderActionPolicy.html">ProviderActionPolicy</a></li>
+<li><a href="resources/EventGroup.html">EventGroup</a></li>
+<li><a href="resources/EventPeer.html">EventPeer</a></li>
+<li><a href="resources/EventSubscription.html">EventSubscription</a></li>
+<li><a href="resources/FederationSLO.html">FederationSLO</a></li>
+<li><a href="resources/MobilityPool.html">MobilityPool</a></li>
+<li><a href="resources/SAMNodeSet.html">SAMNodeSet</a></li>
+<li><a href="resources/SAMEnrollmentPolicy.html">SAMEnrollmentPolicy</a></li>
+<li><a href="resources/SAMEnrollmentClaim.html">SAMEnrollmentClaim</a></li>
+<li><a href="resources/SAMEnrollmentClient.html">SAMEnrollmentClient</a></li>
+<li><a href="resources/SAMTransportProfile.html">SAMTransportProfile</a></li>
+<li><a href="resources/SAMSubnetPolicy.html">SAMSubnetPolicy</a></li>
+<li><a href="resources/IPv4Route.html">IPv4Route</a></li>
+<li><a href="resources/HealthCheck.html">HealthCheck</a></li>
+<li><a href="resources/EgressRoutePolicy.html">EgressRoutePolicy</a></li>
+<li><a href="resources/EventRule.html">EventRule</a></li>
+<li><a href="resources/DerivedEvent.html">DerivedEvent</a></li>
+<li><a href="resources/NAT44Rule.html">NAT44Rule</a></li>
+<li><a href="resources/NAT44FlowDNATPinhole.html">NAT44FlowDNATPinhole</a></li>
+<li><a href="resources/NAT44SessionSync.html">NAT44SessionSync</a></li>
+<li><a href="resources/ManagementAccess.html">ManagementAccess</a></li>
+<li><a href="resources/PortForward.html">PortForward</a></li>
+<li><a href="resources/IngressService.html">IngressService</a></li>
+<li><a href="resources/IPAddressSet.html">IPAddressSet</a></li>
+<li><a href="resources/LocalServiceRedirect.html">LocalServiceRedirect</a></li>
+<li><a href="resources/FirewallFlowPinhole.html">FirewallFlowPinhole</a></li>
+<li><a href="resources/TrafficFlowLog.html">TrafficFlowLog</a></li>
+<li><a href="resources/FirewallZone.html">FirewallZone</a></li>
+<li><a href="resources/FirewallPolicy.html">FirewallPolicy</a></li>
+<li><a href="resources/ClientPolicy.html">ClientPolicy</a></li>
+<li><a href="resources/FirewallRule.html">FirewallRule</a></li>
+<li><a href="resources/FirewallEventLog.html">FirewallEventLog</a></li>
+<li><a href="resources/Hostname.html">Hostname</a></li>
+</ul>
+<h2 id="plugin">Plugin</h2>
+<p><a href="resources/Plugin.html">Plugin</a></p>
+<p>註冊實作routerd外掛協定的執行檔，由明確操作或EventSubscription等使用端呼叫。</p>
+<h2 id="dynamicconfigsource">DynamicConfigSource</h2>
+<p><a href="resources/DynamicConfigSource.html">DynamicConfigSource</a></p>
+<p>宣告以外掛取得的動態設定來源。目前有型別解碼與驗證，但沒有讀取DynamicConfigSourceSpec的runtime處理，宣告本身不會執行外掛。</p>
+<h2 id="dynamicoverridepolicy">DynamicOverridePolicy</h2>
+<p><a href="resources/DynamicOverridePolicy.html">DynamicOverridePolicy</a></p>
+<p>授權指定動態來源在動態部分有效期間遮蔽特定啟動設定資源，不改寫已儲存的啟動設定。</p>
+<h2 id="logsink">LogSink</h2>
+<p><a href="resources/LogSink.html">LogSink</a></p>
+<p>依type選擇操作事件記錄的輸出目的地，與ObservabilityPipeline內的記錄輸出設定不同。</p>
+<h2 id="telemetry">Telemetry</h2>
+<p><a href="resources/Telemetry.html">Telemetry</a></p>
+<p>為產生的受管服務設定OpenTelemetry環境變數，不定義LogSink或獨立collector程序。</p>
+<h2 id="observabilitypipeline">ObservabilityPipeline</h2>
+<p><a href="resources/ObservabilityPipeline.html">ObservabilityPipeline</a></p>
+<p>結合受管服務的OpenTelemetry環境宣告與獨立內建操作事件記錄consumer。</p>
+<h2 id="logretention">LogRetention</h2>
+<p><a href="resources/LogRetention.html">LogRetention</a></p>
+<p>清除操作記錄的SQLite資料列，並可在刪除前轉送保存；不管理任意OS記錄檔。</p>
+<h2 id="sysctl">Sysctl</h2>
+<p><a href="resources/Sysctl.html">Sysctl</a></p>
+<p>協調一項核心sysctl，並可寫入持久sysctl.d檔案；沒有指向其他routerd資源的參照欄位。</p>
+<h2 id="sysctlprofile">SysctlProfile</h2>
+<p><a href="resources/SysctlProfile.html">SysctlProfile</a></p>
+<p>依名稱套用路由器用sysctl集合，並可逐鍵覆寫；不是依名稱參照Sysctl資源。</p>
+<h2 id="package">Package</h2>
+<p><a href="resources/Package.html">Package</a></p>
+<p>確保所選OS套件已安裝，選取第一個os與執行主機完全相符的套件集合。</p>
+<h2 id="ntpclient">NTPClient</h2>
+<p><a href="resources/NTPClient.html">NTPClient</a></p>
+<p>管理或觀察向上游同步時間的用戶端。</p>
+<h2 id="ntpserver">NTPServer</h2>
+<p><a href="resources/NTPServer.html">NTPServer</a></p>
+<p>使用chrony或FreeBSD ntpd設定時間伺服器與上游。</p>
+<h2 id="webconsole">WebConsole</h2>
+<p><a href="resources/WebConsole.html">WebConsole</a></p>
+<p>由routerd提供唯讀Web主控台，HTTP監聽與可變更設定的ControlAPI不同。</p>
+<h2 id="controlapi">ControlAPI</h2>
+<p><a href="resources/ControlAPI.html">ControlAPI</a></p>
+<p>啟用可讀狀態及變更設定的HTTP Control API，與Unix socket控制及WebConsole分開。</p>
+<h2 id="routerdcluster">RouterdCluster</h2>
+<p><a href="resources/RouterdCluster.html">RouterdCluster</a></p>
+<p>透過檔案租約與OS檔案鎖協調哪個routerd可以變更狀態，不是VRRP選舉或對端網路探索。</p>
+<h2 id="interface">Interface</h2>
+<p><a href="resources/Interface.html">Interface</a></p>
+<p>為既有OS介面提供metadata.name邏輯名稱，供其他資源參照，不建立實體介面。</p>
+<h2 id="pppoesession">PPPoESession</h2>
+<p><a href="resources/PPPoESession.html">PPPoESession</a></p>
+<p>監督執行 routerd-pppoe-client，在 Linux 使用 pppd、FreeBSD 使用 mpd5，並公開協商的 IPv4 工作階段狀態。部分舊欄位僅影響手動 FreeBSD render 輸出，不影響此精靈路徑。</p>
+<h2 id="wireguardinterface">WireGuardInterface</h2>
+<p><a href="resources/WireGuardInterface.html">WireGuardInterface</a></p>
+<p>建立或設定 WireGuard 裝置，透過 wg setconf 套用完整對等端設定。位址指派與一般路由由其他資源設定。</p>
+<h2 id="wireguardpeer">WireGuardPeer</h2>
+<p><a href="resources/WireGuardPeer.html">WireGuardPeer</a></p>
+<p>定義已宣告 WireGuardInterface 上的對等端。AllowedIPs 設定 WireGuard 的加密路由；此控制器不會自動建立一般 IP 路由。</p>
+<h2 id="tailscalenode">TailscaleNode</h2>
+<p><a href="resources/TailscaleNode.html">TailscaleNode</a></p>
+<p>透過 routerd 產生的 Linux systemd oneshot 或 FreeBSD rc.d 指令稿管理 Tailscale 註冊選項，再讀取 tailscale status --json。Tailscale/Headscale 伺服器端核准仍需另行處理。</p>
+<h2 id="ipsecconnection">IPsecConnection</h2>
+<p><a href="resources/IPsecConnection.html">IPsecConnection</a></p>
+<p>產生 strongSwan swanctl 連線，並一併同步所有 routerd IPsec 連線。CHILD_SA 設為流量觸發的 trap；載入設定不代表 SA 已建立。</p>
+<h2 id="vrf">VRF</h2>
+<p><a href="resources/VRF.html">VRF</a></p>
+<p>宣告Linux VRF裝置、路由表與成員意圖。目前產生計畫/artifact識別並保護路由表，但沒有建立VRF/連接成員的controller；計畫輸出不證明VRF已建立。</p>
+<h2 id="vxlantunnel">VXLANTunnel</h2>
+<p><a href="resources/VXLANTunnel.html">VXLANTunnel</a></p>
+<p>管理具有靜態泛洪目的地及選用橋接的 Linux VXLAN 裝置，不設定多播探索或動態 MAC 學習。</p>
+<h2 id="ipv4staticaddress">IPv4StaticAddress</h2>
+<p><a href="resources/IPv4StaticAddress.html">IPv4StaticAddress</a></p>
+<p>在邏輯介面宣告靜態IPv4位址，由controller協調設定，不是DHCP租約。</p>
+<h2 id="virtualaddress">VirtualAddress</h2>
+<p><a href="resources/VirtualAddress.html">VirtualAddress</a></p>
+<p>維護靜態或選舉後的浮動位址。Linux 靜態使用 iproute2、VRRP 使用 keepalived；FreeBSD 使用 ifconfig/CARP。</p>
+<h2 id="bgprouter">BGPRouter</h2>
+<p><a href="resources/BGPRouter.html">BGPRouter</a></p>
+<p>設定本機 GoBGP 執行個體、接納路由及本機起源廣告。核心安裝與遠端可達性不同於 BGP Established 狀態。</p>
+<h2 id="bgppeer">BGPPeer</h2>
+<p><a href="resources/BGPPeer.html">BGPPeer</a></p>
+<p>在已宣告的 BGPRouter 設定一個或多個靜態 BGP 鄰居。</p>
+<h2 id="bgpdynamicpeer">BGPDynamicPeer</h2>
+<p><a href="resources/BGPDynamicPeer.html">BGPDynamicPeer</a></p>
+<p>定義 GoBGP 傳入動態鄰居接納群組，不是個別對等端或 WireGuard/SAM 授權身分。</p>
+<h2 id="bfd">BFD</h2>
+<p><a href="resources/BFD.html">BFD</a></p>
+<p>透過 vtysh 設定及觀察 FRR bfdd 工作階段，供 BGPPeer 故障處理使用。與 GoBGP 為不同後端，BFD Down 可觸發 BGP 對等端重設。</p>
+<h2 id="dhcpv4client">DHCPv4Client</h2>
+<p><a href="resources/DHCPv4Client.html">DHCPv4Client</a></p>
+<p>執行受管routerd-dhcpv4-client daemon，套用租約位址，以及選用的預設路由與主機DNS設定。</p>
+<h2 id="clusternetworkroute">ClusterNetworkRoute</h2>
+<p><a href="resources/ClusterNetworkRoute.html">ClusterNetworkRoute</a></p>
+<p>透過明確指定的下一跳，設定前往 Kubernetes Pod 與 Service 網路的 IPv4 路由。不會自動探索叢集 CIDR 或節點。</p>
+<h2 id="dhcpv4server">DHCPv4Server</h2>
+<p><a href="resources/DHCPv4Server.html">DHCPv4Server</a></p>
+<p>透過目前共用 dnsmasq 服務提供 IPv4 DHCP 集區、帶選擇條件的範圍與保留。</p>
+<h2 id="dhcpv4reservation">DHCPv4Reservation</h2>
+<p><a href="resources/DHCPv4Reservation.html">DHCPv4Reservation</a></p>
+<p>在已宣告的 DHCPv4Server 為一個 MAC 位址保留 IPv4 位址。</p>
+<h2 id="dhcpv6address">DHCPv6Address</h2>
+<p><a href="resources/DHCPv6Address.html">DHCPv6Address</a></p>
+<p>宣告主機DHCPv6 client取得的IPv6位址，與DHCPv6PrefixDelegation不同，不分配LAN前綴。</p>
+<h2 id="ipv6raaddress">IPv6RAAddress</h2>
+<p><a href="resources/IPv6RAAddress.html">IPv6RAAddress</a></p>
+<p>宣告主機接收IPv6 RA/SLAAC，屬於RA client，不是向LAN公告的IPv6RouterAdvertisement。</p>
+<h2 id="dhcpv6prefixdelegation">DHCPv6PrefixDelegation</h2>
+<p><a href="resources/DHCPv6PrefixDelegation.html">DHCPv6PrefixDelegation</a></p>
+<p>在上行介面取得 IPv6 委派前綴。下游或主機位址須以 IPv6DelegatedAddress 衍生並套用，僅取得前綴不會向客戶端公告。</p>
+<h2 id="ipv6delegatedaddress">IPv6DelegatedAddress</h2>
+<p><a href="resources/IPv6DelegatedAddress.html">IPv6DelegatedAddress</a></p>
+<p>從 DHCPv6PrefixDelegation 前綴衍生並安裝本機 IPv6 位址。</p>
+<h2 id="dhcpv6information">DHCPv6Information</h2>
+<p><a href="resources/DHCPv6Information.html">DHCPv6Information</a></p>
+<p>從使用同介面的DHCPv6-PD daemon取得AFTR、DNS、SNTP與搜尋網域資訊，不啟動獨立Information-request client。</p>
+<h2 id="ipv6routeradvertisement">IPv6RouterAdvertisement</h2>
+<p><a href="resources/IPv6RouterAdvertisement.html">IPv6RouterAdvertisement</a></p>
+<p>設定 LAN 的 IPv6 路由器公告選項，並棄用先前委派的前綴。</p>
+<h2 id="dhcpv6server">DHCPv6Server</h2>
+<p><a href="resources/DHCPv6Server.html">DHCPv6Server</a></p>
+<p>使用共用 dnsmasq 程序提供 LAN DHCPv6 位址或資訊服務及相關 RA 行為。</p>
+<h2 id="dhcpv4serverleasesync">DHCPv4ServerLeaseSync</h2>
+<p><a href="resources/DHCPv4ServerLeaseSync.html">DHCPv4ServerLeaseSync</a></p>
+<p>以 SSH 上的 rsync 將 DHCPv4 伺服器租約檔與現有固定保留狀態複製到對等主機，並非 DHCP 容錯移轉協定。</p>
+<h2 id="dhcpv6serverleasesync">DHCPv6ServerLeaseSync</h2>
+<p><a href="resources/DHCPv6ServerLeaseSync.html">DHCPv6ServerLeaseSync</a></p>
+<p>以 SSH 上的 rsync 將 DHCPv6 伺服器租約檔複製到對等主機，並非 DHCP 容錯移轉協定。</p>
+<h2 id="dhcpv6prefixdelegationleasesync">DHCPv6PrefixDelegationLeaseSync</h2>
+<p><a href="resources/DHCPv6PrefixDelegationLeaseSync.html">DHCPv6PrefixDelegationLeaseSync</a></p>
+<p>複製內建 DHCPv6-PD 客戶端租約快照到對等主機，供復原與接管。</p>
+<h2 id="dhcpv4relay">DHCPv4Relay</h2>
+<p><a href="resources/DHCPv4Relay.html">DHCPv4Relay</a></p>
+<p>透過 dnsmasq 將 DHCPv4 請求轉送至明確指定的一個 IPv4 伺服器。</p>
+<h2 id="selfaddresspolicy">SelfAddressPolicy</h2>
+<p><a href="resources/SelfAddressPolicy.html">SelfAddressPolicy</a></p>
+<p>描述供支援的靜態 DHCPv6 轉譯使用的有序自身位址選擇策略，不會指派介面位址。</p>
+<h2 id="dnszone">DNSZone</h2>
+<p><a href="resources/DNSZone.html">DNSZone</a></p>
+<p>透過 DNSForwarder.zoneRefs 提供本機 A/AAAA 記錄及自動 PTR 回應；不是支援任意記錄類型、區域傳送或簽署的通用權威 DNS。</p>
+<h2 id="dnsresolver">DNSResolver</h2>
+<p><a href="resources/DNSResolver.html">DNSResolver</a></p>
+<p>具有 UDP 與 TCP 接聽端點、連接 DNSForwarder 規則的本機 DNS 服務。</p>
+<h2 id="dnsforwarder">DNSForwarder</h2>
+<p><a href="resources/DNSForwarder.html">DNSForwarder</a></p>
+<p>依查詢名稱替一個 DNSResolver 選擇本機區域或上游 DNS 的規則。</p>
+<h2 id="dnsupstream">DNSUpstream</h2>
+<p><a href="resources/DNSUpstream.html">DNSUpstream</a></p>
+<p>供 DNSForwarder 參照的 DNS 伺服器端點；僅宣告不會啟動接聽或轉送查詢。</p>
+<h2 id="dslitetunnel">DSLiteTunnel</h2>
+<p><a href="resources/DSLiteTunnel.html">DSLiteTunnel</a></p>
+<p>向 AFTR 以 IPv6 封裝 IPv4。通道設定、IPv4 預設路由、NAT 與連通檢查是不同事項。</p>
+<h2 id="tunnelinterface">TunnelInterface</h2>
+<p><a href="resources/TunnelInterface.html">TunnelInterface</a></p>
+<p>建立並調和未加密的 IPv4 外層隧道及選用內層 IPv4 位址，metadata.name 為實際 OS 隧道名稱。</p>
+<h2 id="overlaypeer">OverlayPeer</h2>
+<p><a href="resources/OverlayPeer.html">OverlayPeer</a></p>
+<p>描述供 HybridRoute 與路徑 MTU 策略衍生使用的既有傳輸；本資源不自行建立 WireGuard、Tailscale、IPsec 或隧道。</p>
+<h2 id="hybridroute">HybridRoute</h2>
+<p><a href="resources/HybridRoute.html">HybridRoute</a></p>
+<p>將明確列出的 IPv4 目的網路展開為經 OverlayPeer 的主路由表 IPv4Route。</p>
+<h2 id="cloudproviderprofile">CloudProviderProfile</h2>
+<p><a href="resources/CloudProviderProfile.html">CloudProviderProfile</a></p>
+<p>描述規劃供應商操作所用的身分及目標中繼資料預設值。此宣告本身不進行雲端驗證或建立資源。</p>
+<h2 id="provideractionpolicy">ProviderActionPolicy</h2>
+<p><a href="resources/ProviderActionPolicy.html">ProviderActionPolicy</a></p>
+<p>控制交給執行 Plugin 的供應商操作。宣告政策本身不會執行操作或登入雲端。</p>
+<h2 id="eventgroup">EventGroup</h2>
+<p><a href="resources/EventGroup.html">EventGroup</a></p>
+<p>宣告共用的聯邦事件群組，以及此路由器的識別、對等節點來源、接收與本機保留設定。</p>
+<h2 id="eventpeer">EventPeer</h2>
+<p><a href="resources/EventPeer.html">EventPeer</a></p>
+<p>宣告 EventGroup 的一個遠端傳送目標。傳輸驗證與本機識別由群組提供。</p>
+<h2 id="eventsubscription">EventSubscription</h2>
+<p><a href="resources/EventSubscription.html">EventSubscription</a></p>
+<p>從持久化資料庫比對尚未到期的聯邦事件，呼叫本機 Plugin，將結果儲存為 DynamicConfigPart。</p>
+<h2 id="federationslo">FederationSLO</h2>
+<p><a href="resources/FederationSLO.html">FederationSLO</a></p>
+<p>設定 routerctl doctor 診斷聯邦配送與訂閱時使用的每群組門檻，不改變配送重試或 Plugin 執行策略。</p>
+<h2 id="mobilitypool">MobilityPool</h2>
+<p><a href="resources/MobilityPool.html">MobilityPool</a></p>
+<p>結合共用 SAM 拓撲、本機所有權觀察及 BGP/聯邦狀態，規劃位址移動與本機擷取。YAML 是本機意圖，共用身分位於 SAMNodeSet。</p>
+<h2 id="samnodeset">SAMNodeSet</h2>
+<p><a href="resources/SAMNodeSet.html">SAMNodeSet</a></p>
+<p>宣告供傳輸、事件對等端、WireGuard 與 MobilityPool 成員解析共用的 SAM 節點身分與拓撲。本機供應者擷取/探索設定應放在 MobilityPool 自節點覆寫，不放在此處。</p>
+<h2 id="samenrollmentpolicy">SAMEnrollmentPolicy</h2>
+<p><a href="resources/SAMEnrollmentPolicy.html">SAMEnrollmentPolicy</a></p>
+<p>定義 RR 端 SAM leaf 身分、傳輸位址、選用 join 認證及允許移動所有權的接納邊界。leaf 使用接納拓撲，不複製此原則。</p>
+<h2 id="samenrollmentclaim">SAMEnrollmentClaim</h2>
+<p><a href="resources/SAMEnrollmentClaim.html">SAMEnrollmentClaim</a></p>
+<p>宣告提交 SAM 註冊的 leaf 自有身分、傳輸與移動意圖。到期及撤銷是 RR/控制器管理狀態，不屬於 leaf join HMAC。</p>
+<h2 id="samenrollmentclient">SAMEnrollmentClient</h2>
+<p><a href="resources/SAMEnrollmentClient.html">SAMEnrollmentClient</a></p>
+<p>將本機註冊要求提交至啟動 RR ControlAPI，取得允許的拓撲，儲存為動態 SAMRRSet 及選用 direct 對等群組供既有控制器使用，不建立雲端基礎設施。</p>
+<h2 id="samtransportprofile">SAMTransportProfile</h2>
+<p><a href="resources/SAMTransportProfile.html">SAMTransportProfile</a></p>
+<p>從共用拓撲或接納的 RR/direct 快照衍生節點間 SAM 隧道、端點 /32 路由及選用 BGP/BFD。</p>
+<h2 id="samsubnetpolicy">SAMSubnetPolicy</h2>
+<p><a href="resources/SAMSubnetPolicy.html">SAMSubnetPolicy</a></p>
+<p>將分片指派發布為聯邦事件，讓各節點將 MobilityPool 所有權探索限縮至負責的 IPv4 子網。這是探索範圍指派，不是 IP 路由資源。</p>
+<h2 id="ipv4route">IPv4Route</h2>
+<p><a href="resources/IPv4Route.html">IPv4Route</a></p>
+<p>安裝 IPv4 單播或黑洞路由，可從資源狀態取得裝置與閘道。</p>
+<h2 id="healthcheck">HealthCheck</h2>
+<p><a href="resources/HealthCheck.html">HealthCheck</a></p>
+<p>探測 IP 目標並發布 Healthy/Unhealthy 狀態供路由選擇。成功僅代表設定的協定與路徑通過。</p>
+<h2 id="egressroutepolicy">EgressRoutePolicy</h2>
+<p><a href="resources/EgressRoutePolicy.html">EgressRoutePolicy</a></p>
+<p>選擇或設定出口路由，實際行為取決於明確 mode 與 hostTraffic。</p>
+<h2 id="eventrule">EventRule</h2>
+<p><a href="resources/EventRule.html">EventRule</a></p>
+<p>從持久化的本機事件紀錄比對模式並產生事件，可依關聯鍵分開維護狀態。</p>
+<h2 id="derivedevent">DerivedEvent</h2>
+<p><a href="resources/DerivedEvent.html">DerivedEvent</a></p>
+<p>資源狀態條件改變時，發送成立或撤回事件。與 EventRule 不同，此處評估目前狀態而非事件序列。</p>
+<h2 id="nat44rule">NAT44Rule</h2>
+<p><a href="resources/NAT44Rule.html">NAT44Rule</a></p>
+<p>透過輸出介面或 EgressRoutePolicy 選定裝置轉換路由 IPv4 來源。NAT 本身不允許轉送，也不指派轉換位址。</p>
+<h2 id="nat44flowdnatpinhole">NAT44FlowDNATPinhole</h2>
+<p><a href="resources/NAT44FlowDNATPinhole.html">NAT44FlowDNATPinhole</a></p>
+<p>從送出 IPv4 UDP 學習內部端點，依收到 UDP 的目的連接埠動態 DNAT。僅 Linux nftables，目前 PF 未實作此資源。</p>
+<h2 id="nat44sessionsync">NAT44SessionSync</h2>
+<p><a href="resources/NAT44SessionSync.html">NAT44SessionSync</a></p>
+<p>使用 SSH 事件串流或持續執行的 conntrackd FTFW 對等連結複製 Linux conntrack 狀態，不是 FreeBSD PF 狀態同步。</p>
+<h2 id="managementaccess">ManagementAccess</h2>
+<p><a href="resources/ManagementAccess.html">ManagementAccess</a></p>
+<p>宣告套用前管理連線中斷檢查所檢查的介面。此資源不建立管理接聽端或防火牆允許規則。</p>
+<h2 id="portforward">PortForward</h2>
+<p><a href="resources/PortForward.html">PortForward</a></p>
+<p>將 TCP/UDP 連接埠轉送至單一 IPv4 端點，可選內部迴送 NAT。Linux 產生 DNAT 與轉送允許，FreeBSD 使用 rdr pass。</p>
+<h2 id="ingressservice">IngressService</h2>
+<p><a href="resources/IngressService.html">IngressService</a></p>
+<p>以後端選擇與主動健康檢查公開 IPv4 TCP/UDP 端點，可搭配本機 DNS 與內部迴送 NAT。屬於第 4 層 NAT，不是 HTTP 反向代理或 TLS 終止。</p>
+<h2 id="ipaddressset">IPAddressSet</h2>
+<p><a href="resources/IPAddressSet.html">IPAddressSet</a></p>
+<p>在支援的 nftables NAT、路由及防火牆規則間共用固定與 DNS 解析的 IP 位址。不建立路由或啟動 DNS 服務。</p>
+<h2 id="localserviceredirect">LocalServiceRedirect</h2>
+<p><a href="resources/LocalServiceRedirect.html">LocalServiceRedirect</a></p>
+<p>以 nftables prerouting NAT 將指定介面收到的符合流量重新導向路由器本機服務連接埠。</p>
+<h2 id="firewallflowpinhole">FirewallFlowPinhole</h2>
+<p><a href="resources/FirewallFlowPinhole.html">FirewallFlowPinhole</a></p>
+<p>為防火牆區域配對學習允許的返回 IPv4 UDP 端點，不轉換位址。僅 Linux nftables，目前 PF 省略此資源。</p>
+<h2 id="trafficflowlog">TrafficFlowLog</h2>
+<p><a href="resources/TrafficFlowLog.html">TrafficFlowLog</a></p>
+<p>將連線快照記錄至 SQLite 流量資料庫，並可從 DPI 快取補充資訊。不是封包擷取，也不記錄每個封包。</p>
+<h2 id="firewallzone">FirewallZone</h2>
+<p><a href="resources/FirewallZone.html">FirewallZone</a></p>
+<p>將已設定介面歸入具名信任角色，用於產生防火牆規則。不建立 OS 介面或獨立路由、橋接網域。</p>
+<h2 id="firewallpolicy">FirewallPolicy</h2>
+<p><a href="resources/FirewallPolicy.html">FirewallPolicy</a></p>
+<p>設定與區域及明確規則搭配的共用隱含防火牆選項。多個資源會彙總，不是獨立套用。</p>
+<h2 id="clientpolicy">ClientPolicy</h2>
+<p><a href="resources/ClientPolicy.html">ClientPolicy</a></p>
+<p>對選定或非例外用戶端套用訪客服務與路由目的限制。Linux 以設定的 MAC 識別，FreeBSD PF 需要明確 IP 身分。</p>
+<h2 id="firewallrule">FirewallRule</h2>
+<p><a href="resources/FirewallRule.html">FirewallRule</a></p>
+<p>宣告區域路徑的具名允許、丟棄或拒絕規則，支援位址、協定、連接埠比對及 Linux 速率/連線條件。</p>
+<h2 id="firewalleventlog">FirewallEventLog</h2>
+<p><a href="resources/FirewallEventLog.html">FirewallEventLog</a></p>
+<p>啟用防火牆封包紀錄收集器，設定資料庫、Linux NFLOG 群組與規則產生時的紀錄選項。部分接受的篩選與封存欄位目前沒有執行期使用者。</p>
+<h2 id="hostname">Hostname</h2>
+<p><a href="resources/Hostname.html">Hostname</a></p>
+<p>管理OS主機名稱，與Router.metadata.name及資源名稱不同。</p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#router">Router</a></li>
+<li><a href="#plugin">Plugin</a></li>
+<li><a href="#dynamicconfigsource">DynamicConfigSource</a></li>
+<li><a href="#dynamicoverridepolicy">DynamicOverridePolicy</a></li>
+<li><a href="#logsink">LogSink</a></li>
+<li><a href="#telemetry">Telemetry</a></li>
+<li><a href="#observabilitypipeline">ObservabilityPipeline</a></li>
+<li><a href="#logretention">LogRetention</a></li>
+<li><a href="#sysctl">Sysctl</a></li>
+<li><a href="#sysctlprofile">SysctlProfile</a></li>
+<li><a href="#package">Package</a></li>
+<li><a href="#ntpclient">NTPClient</a></li>
+<li><a href="#ntpserver">NTPServer</a></li>
+<li><a href="#webconsole">WebConsole</a></li>
+<li><a href="#controlapi">ControlAPI</a></li>
+<li><a href="#routerdcluster">RouterdCluster</a></li>
+<li><a href="#interface">Interface</a></li>
+<li><a href="#pppoesession">PPPoESession</a></li>
+<li><a href="#wireguardinterface">WireGuardInterface</a></li>
+<li><a href="#wireguardpeer">WireGuardPeer</a></li>
+<li><a href="#tailscalenode">TailscaleNode</a></li>
+<li><a href="#ipsecconnection">IPsecConnection</a></li>
+<li><a href="#vrf">VRF</a></li>
+<li><a href="#vxlantunnel">VXLANTunnel</a></li>
+<li><a href="#ipv4staticaddress">IPv4StaticAddress</a></li>
+<li><a href="#virtualaddress">VirtualAddress</a></li>
+<li><a href="#bgprouter">BGPRouter</a></li>
+<li><a href="#bgppeer">BGPPeer</a></li>
+<li><a href="#bgpdynamicpeer">BGPDynamicPeer</a></li>
+<li><a href="#bfd">BFD</a></li>
+<li><a href="#dhcpv4client">DHCPv4Client</a></li>
+<li><a href="#clusternetworkroute">ClusterNetworkRoute</a></li>
+<li><a href="#dhcpv4server">DHCPv4Server</a></li>
+<li><a href="#dhcpv4reservation">DHCPv4Reservation</a></li>
+<li><a href="#dhcpv6address">DHCPv6Address</a></li>
+<li><a href="#ipv6raaddress">IPv6RAAddress</a></li>
+<li><a href="#dhcpv6prefixdelegation">DHCPv6PrefixDelegation</a></li>
+<li><a href="#ipv6delegatedaddress">IPv6DelegatedAddress</a></li>
+<li><a href="#dhcpv6information">DHCPv6Information</a></li>
+<li><a href="#ipv6routeradvertisement">IPv6RouterAdvertisement</a></li>
+<li><a href="#dhcpv6server">DHCPv6Server</a></li>
+<li><a href="#dhcpv4serverleasesync">DHCPv4ServerLeaseSync</a></li>
+<li><a href="#dhcpv6serverleasesync">DHCPv6ServerLeaseSync</a></li>
+<li><a href="#dhcpv6prefixdelegationleasesync">DHCPv6PrefixDelegationLeaseSync</a></li>
+<li><a href="#dhcpv4relay">DHCPv4Relay</a></li>
+<li><a href="#selfaddresspolicy">SelfAddressPolicy</a></li>
+<li><a href="#dnszone">DNSZone</a></li>
+<li><a href="#dnsresolver">DNSResolver</a></li>
+<li><a href="#dnsforwarder">DNSForwarder</a></li>
+<li><a href="#dnsupstream">DNSUpstream</a></li>
+<li><a href="#dslitetunnel">DSLiteTunnel</a></li>
+<li><a href="#tunnelinterface">TunnelInterface</a></li>
+<li><a href="#overlaypeer">OverlayPeer</a></li>
+<li><a href="#hybridroute">HybridRoute</a></li>
+<li><a href="#cloudproviderprofile">CloudProviderProfile</a></li>
+<li><a href="#provideractionpolicy">ProviderActionPolicy</a></li>
+<li><a href="#eventgroup">EventGroup</a></li>
+<li><a href="#eventpeer">EventPeer</a></li>
+<li><a href="#eventsubscription">EventSubscription</a></li>
+<li><a href="#federationslo">FederationSLO</a></li>
+<li><a href="#mobilitypool">MobilityPool</a></li>
+<li><a href="#samnodeset">SAMNodeSet</a></li>
+<li><a href="#samenrollmentpolicy">SAMEnrollmentPolicy</a></li>
+<li><a href="#samenrollmentclaim">SAMEnrollmentClaim</a></li>
+<li><a href="#samenrollmentclient">SAMEnrollmentClient</a></li>
+<li><a href="#samtransportprofile">SAMTransportProfile</a></li>
+<li><a href="#samsubnetpolicy">SAMSubnetPolicy</a></li>
+<li><a href="#ipv4route">IPv4Route</a></li>
+<li><a href="#healthcheck">HealthCheck</a></li>
+<li><a href="#egressroutepolicy">EgressRoutePolicy</a></li>
+<li><a href="#eventrule">EventRule</a></li>
+<li><a href="#derivedevent">DerivedEvent</a></li>
+<li><a href="#nat44rule">NAT44Rule</a></li>
+<li><a href="#nat44flowdnatpinhole">NAT44FlowDNATPinhole</a></li>
+<li><a href="#nat44sessionsync">NAT44SessionSync</a></li>
+<li><a href="#managementaccess">ManagementAccess</a></li>
+<li><a href="#portforward">PortForward</a></li>
+<li><a href="#ingressservice">IngressService</a></li>
+<li><a href="#ipaddressset">IPAddressSet</a></li>
+<li><a href="#localserviceredirect">LocalServiceRedirect</a></li>
+<li><a href="#firewallflowpinhole">FirewallFlowPinhole</a></li>
+<li><a href="#trafficflowlog">TrafficFlowLog</a></li>
+<li><a href="#firewallzone">FirewallZone</a></li>
+<li><a href="#firewallpolicy">FirewallPolicy</a></li>
+<li><a href="#clientpolicy">ClientPolicy</a></li>
+<li><a href="#firewallrule">FirewallRule</a></li>
+<li><a href="#firewalleventlog">FirewallEventLog</a></li>
+<li><a href="#hostname">Hostname</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/reference/resources.md">GitHub</a></div></footer></body></html>

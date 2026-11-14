@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>変更履歴 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/releases/changelog.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/releases/changelog.html" lang="en" hreflang="en">English</a><a href="/docs/ja/releases/changelog.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/releases/changelog.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/releases/changelog.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="変更履歴">変更履歴</h1>
+<p>routerd のリリース履歴です。形式は <a href="https://keepachangelog.com/ja/">Keep a Changelog</a> に準拠します。
+変更は「追加」「変更」「非推奨」「削除」「修正」「セキュリティ」に分類します。
+ただし版番号は Semantic Versioning ではなく、日付と時刻に基づく <code>vYYYYMMDD.HHmm</code> 形式を使います。
+ソフトウェアは v1alpha1 段階のため、リリース間で破壊的変更を含むことがあります。</p>
+<h2 id="unreleased">Unreleased</h2>
+<ul>
+<li>ブラウザーのコンフィグ作成ツールを削除し、全リソース種類のYAML定義を含むMarkdown文書へ切り替えました。</li>
+</ul>
+<h2 id="v202611140631">v20261114.0631</h2>
+<h3 id="fixed">Fixed</h3>
+<ul>
+<li>IPIPのIPv4アドレス一覧が空の場合は未設定として扱い、初回起動時に設定を進められるよう修正しました。</li>
+<li>Live ISOに既存のcasper <code>noprompt</code> を指定し、再起動時のメディア取り外し確認による入力待ちをなくしました。</li>
+</ul>
+<h2 id="v202611140607">v20261114.0607</h2>
+<h3 id="changed">Changed</h3>
+<ul>
+<li>型付き設定参照、SQLite保存層、状態遷移、イベント処理、MTU選択、SAM入力復号、Linux IPIP観測を簡略化し、未使用の互換経路とテスト専用コードを削除しました。</li>
+<li>PDリースを単一の正本へ集約し、保存項目の定義を一本化しました。識別情報、期限、旧prefixは維持します。</li>
+</ul>
+<h3 id="fixed_1">Fixed</h3>
+<ul>
+<li>daemon再起動後に、一致する適用済み設定の世代表示を復元するよう修正しました。</li>
+<li>設定変更時に旧EventRuleの保留タイマーを停止し、設定保存成功後に古いstatusを整理するよう修正しました。</li>
+</ul>
+<p><a href="https://github.com/imksoo/routerd/releases">Release history</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#unreleased">Unreleased</a></li>
+<li><a href="#v202611140631">v20261114.0631</a><ul>
+<li><a href="#fixed">Fixed</a></li>
+</ul>
+</li>
+<li><a href="#v202611140607">v20261114.0607</a><ul>
+<li><a href="#changed">Changed</a></li>
+<li><a href="#fixed_1">Fixed</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/releases/changelog.md">GitHub</a></div></footer></body></html>

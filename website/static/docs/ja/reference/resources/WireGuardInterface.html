@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WireGuardInterface · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/reference/resources/WireGuardInterface.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/reference/resources/WireGuardInterface.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/WireGuardInterface.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/reference/resources/WireGuardInterface.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/WireGuardInterface.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="wireguardinterface">WireGuardInterface</h1>
+<p><a href="../resources.html#wireguardinterface">リソース別の設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>WireGuardデバイスを作成・設定し、wg setconfでピア設定全体を適用します。アドレス割当と通常の経路設定は別リソースです。</p>
+<h2 id="指定条件と参照関係">指定条件と参照関係</h2>
+<ul>
+<li>実行時の適用にはprivateKeyまたはprivateKeyFileが必要で、どちらもなければPending/PrivateKeyMissingです。排他ではなくprivateKeyを優先しますが、併記したprivateKeyFileも適用時に確認・生成します。</li>
+<li>静的WireGuardPeer.interfaceはifnameではなく本リソースのmetadata.nameを参照します。取り込むピアはKind/nameで統合し、後の参照元が先の生成ピアを、明示的なWireGuardPeerが同名の生成ピアを置き換えます。</li>
+<li>登録に基づくdirect SAMPeerGroupはpeersFromの最後に置き、その前にoptionalでないSAMRRSetが必要です。実行時は同じ登録ポリシーの利用可能なRRピアも必要で、direct側が利用不能・非互換でもRRピアを抑止しません。</li>
+<li>listenPortは他の設定済み待受と重複できません。Linuxでは正のポート指定時にINPUTのUDP許可規則も追加します。Upはインターフェース設定を示し、ピアのハンドシェイク成功を保証しません。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: WireGuardInterface
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    ifname: &quot;&lt;string&gt;&quot; # 任意; string
+    listenPort: 1 # 任意; integer; minimum=1; maximum=65535
+    mtu: 576 # 任意; integer; minimum=576; maximum=9216
+    peersFrom: # 任意; array
+      - # object
+        optional: true # 任意; boolean
+        resource: &quot;&lt;string&gt;&quot; # 必須; string
+    privateKey: &quot;&lt;string&gt;&quot; # 任意; string
+    privateKeyFile: &quot;&lt;string&gt;&quot; # 任意; string
+    selfNodeRef: &quot;&lt;string&gt;&quot; # 任意; string
+</code></pre>
+<h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>項目の意味と既定値</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.ifname</code></td>
+<td>OSデバイス名です。既定はmetadata.nameです。現行検証はifname指定時もmetadata.nameの空白・スラッシュ・15文字上限を確認し、ifname自体には同じ検査を行いません。</td>
+</tr>
+<tr>
+<td><code>spec.selfNodeRef</code></td>
+<td>取り込みから除外する自身のSAMノード識別子です。既定はRouter.metadata.nameで、Kind/name形式の状態参照ではなくnodeRefの値です。</td>
+</tr>
+<tr>
+<td><code>spec.privateKey</code></td>
+<td>WireGuard秘密鍵の直接指定です。既定は空でprivateKeyFileより優先します。WireGuardのBase64鍵形式を使います。設定検証だけでは鍵の正当性を保証せず、適用時のwgやファイル鍵検証で失敗する場合があります。</td>
+</tr>
+<tr>
+<td><code>spec.privateKeyFile</code></td>
+<td>ルーター上の鍵ファイルのパスです。実適用時にファイルがなければ0600で生成し、新規親ディレクトリは0700にします。既存ファイルは32バイトの有効なBase64秘密鍵が必要で、空・読取不能なら上書きせず失敗します。環境変数ファイルではありません。</td>
+</tr>
+<tr>
+<td><code>spec.listenPort</code></td>
+<td>UDP待受ポート1～65535です。省略・0ではwg設定にListenPortを出力せず、WireGuard側の選択・保持に任せます。0の場合、routerdは明示的なポート許可を追加しません。</td>
+</tr>
+<tr>
+<td><code>spec.mtu</code></td>
+<td>任意のMTUで576～9216です。省略・0なら既存値・OS作成時の既定値を使い、この処理ではwg-quickのMTU自動計算を行いません。</td>
+</tr>
+<tr>
+<td><code>spec.peersFrom</code></td>
+<td>順序付きSAMピア参照元一覧です。既定は空です。optionalでない参照元が見つからないとPending/PeersFromPendingになり、静的ピアがあっても適用を保留します。解決済みの空リストと参照元欠落は区別します。</td>
+</tr>
+<tr>
+<td><code>spec.peersFrom[].resource</code></td>
+<td>SAMNodeSet/name、SAMPeerGroup/name、SAMEnrollmentPolicy/name、SAMRRSet/nameの参照が必須です。field指定はありません。構文検証後、ピア解決時に参照元を検索します。自身とWireGuard情報のないノードは除外します。</td>
+</tr>
+<tr>
+<td><code>spec.peersFrom[].optional</code></td>
+<td>既定はfalseです。trueなら参照元欠落だけではインターフェースを保留しませんが、不正な参照元のエラー全般を抑止するものではありません。登録directグループには前述のRR維持規則も適用します。</td>
+</tr>
+</tbody>
+</table>
+<p>実装: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_interface.go">pkg/config/validate_interface.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/index.go">pkg/config/index.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/wireguard.go">pkg/controller/chain/wireguard.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/wireguard/wireguard.go">pkg/wireguard/wireguard.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/firewall_holes.go">pkg/render/firewall_holes.go</a></p>
+<h2 id="状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</h2>
+<p>通常の状態値参照の検証で、このKindについて許可するフィールド名です。許可一覧にあるだけでは値の生成・取得を保証しないため、実際の状態を確認してください。YAMLのspecに設定する項目ではなく出力です。</p>
+<p><code>phase</code>, <code>publicKey</code>, <code>selfNodeRef</code>, <code>listenPort</code>, <code>fwmark</code>, <code>peerCount</code>, <code>hostFirewall</code>, <code>peersFrom</code>, <code>pendingSources</code></p>
+<p><a href="/examples/cloudedge-aws-rr-dynamic-leaf.yaml">設定例</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
+<li><a href="#状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/reference/resources/WireGuardInterface.md">GitHub</a></div></footer></body></html>

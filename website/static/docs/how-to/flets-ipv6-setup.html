@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DS-Lite over DHCPv6-PD (IPv6-only access network) · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/how-to/flets-ipv6-setup.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/how-to/flets-ipv6-setup.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/how-to/flets-ipv6-setup.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/how-to/flets-ipv6-setup.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/flets-ipv6-setup.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="ds-lite-over-dhcpv6-pd-ipv6-only-access-network">DS-Lite over DHCPv6-PD (IPv6-only access network)</h1>
+<h2 id="scenario">Scenario</h2>
+<p>The ISP delivers an IPv6-only access network and provides IPv4 connectivity through a DS-Lite tunnel to an Address Family Transition Router (AFTR). The router needs to:</p>
+<ul>
+<li>Take an IPv6 prefix via DHCPv6-PD and use it to address the LAN.</li>
+<li>Establish a DS-Lite (IPv4-in-IPv6 / <code>ip6tnl</code>) tunnel to the AFTR.</li>
+<li>Resolve the AFTR FQDN through the access-network DNS, since AFTR records are usually only authoritative inside the carrier network.</li>
+<li>Advertise IPv6 with RDNSS so SLAAC clients (Android included) get a working DNS server.</li>
+</ul>
+<p>This pattern is common with several Japanese fibre carriers (NTT NGN with <code>gw.transix.jp</code> and similar AFTRs), but the configuration applies to any DS-Lite deployment.</p>
+<h2 id="prerequisites">Prerequisites</h2>
+<ul>
+<li>The WAN-facing interface is connected to a residential gateway or ONU that runs an IPv6-only access network.</li>
+<li>DHCPv6-PD is available on that interface.</li>
+<li>The AFTR DNS records may or may not be returned in DHCPv6 information-request; always plan for both cases.</li>
+</ul>
+<h2 id="dhcpv6-pd">DHCPv6-PD</h2>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DHCPv6PrefixDelegation
+  metadata:
+    name: wan-pd
+  spec:
+    interface: wan
+</code></pre>
+<p>The lease is persisted at:</p>
+<pre><code class="language-text">/var/lib/routerd/dhcpv6-client/wan-pd/lease.json
+</code></pre>
+<p>The daemon's status is available over its Unix socket:</p>
+<pre><code class="language-bash">curl --unix-socket /run/routerd/dhcpv6-client/wan-pd.sock http://unix/v1/status
+</code></pre>
+<h2 id="lan-address-derivation-and-ra">LAN address derivation and RA</h2>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: IPv6DelegatedAddress
+  metadata:
+    name: lan-from-pd
+  spec:
+    interface: lan
+    prefixDelegation: wan-pd
+    dependsOn:
+      - resource: DHCPv6PrefixDelegation/wan-pd
+        phase: Bound
+    addressSuffix: &quot;::1&quot;
+
+- apiVersion: net.routerd.net/v1alpha1
+  kind: IPv6RouterAdvertisement
+  metadata:
+    name: lan-ra
+  spec:
+    interface: lan
+    prefixFrom:
+      resource: IPv6DelegatedAddress/lan-from-pd
+      field: address
+    oFlag: true
+    rdnssFrom:
+      - resource: IPv6DelegatedAddress/lan-from-pd
+        field: address
+</code></pre>
+<p>The advertised RDNSS uses the LAN-side address derived from the delegated prefix. SLAAC clients pick up that resolver automatically.</p>
+<h2 id="aftr-dns-servers">AFTR DNS servers</h2>
+<p>The AFTR FQDN is normally only resolvable through carrier DNS. Configure those
+DNS server addresses on the tunnel itself. <code>DSLiteTunnel</code> sends its AAAA lookup
+directly to <code>aftrDNSServers</code>; it does not use a <code>DNSResolver</code> or a
+<code>DNSForwarder</code> resource for this lookup.</p>
+<h2 id="ds-lite-tunnel">DS-Lite tunnel</h2>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DSLiteTunnel
+  metadata:
+    name: ds-lite
+  spec:
+    interface: wan
+    tunnelName: ds-routerd
+    localAddressSource: interface
+    aftrFQDN: gw.transix.jp
+    aftrDNSServers:
+      - 2404:8e00::feed:101
+</code></pre>
+<p><code>localAddressSource: interface</code> uses the WAN-side IPv6 address that SLAAC/RA gave you (rather than a delegated-prefix-derived one) as the local endpoint of the tunnel. That address is usually available before LAN derivation finishes, so the tunnel comes up sooner.</p>
+<p>Replace <code>gw.transix.jp</code> and the DNS server addresses with values your ISP
+publishes. A separate <code>DNSResolver</code> can still serve LAN clients, but it does
+not configure AFTR resolution for this tunnel.</p>
+<p>If your ISP publishes a stable AFTR address and you prefer to skip DNS resolution, set <code>aftrIPv6</code> directly:</p>
+<pre><code class="language-yaml">spec:
+  aftrIPv6: 2001:db8:cafe::1
+</code></pre>
+<p>When AFTR is not returned in DHCPv6 information-request (common with NTT NGN HGWs), the static <code>aftrFQDN</code> or <code>aftrIPv6</code> configuration is the correct fallback.</p>
+<p>For the tunnel inner IPv4 address, the normal DS-Lite example uses the RFC 6333 B4-AFTR link range <code>192.0.0.0/29</code>.
+If you need to carve an address from a LAN range instead, keep the address in an <code>IPv4StaticAddress</code> resource and reference it from <code>DSLiteTunnel.localAddressFrom</code> and <code>NAT44Rule.snatAddressFrom</code>.
+See <code>examples/dslite-lan-range-snat.yaml</code> for the optional form.</p>
+<h2 id="verification">Verification</h2>
+<pre><code class="language-bash"># Before a daemon exists:
+sudo routerd validate --config router.yaml
+
+# After the local routerd daemon is running:
+sudo routerctl plan -f router.yaml --replace
+sudo routerctl get status
+
+sudo ip -6 tunnel show
+sudo ip route show default
+sudo nft list table ip routerd_nat
+
+# IPv4 reachability through the tunnel
+sudo curl --interface ds-routerd https://1.1.1.1/
+</code></pre>
+<p>Only apply for real once the plan looks right and a rollback path is in place.</p>
+<h2 id="see-also">See also</h2>
+<ul>
+<li><a href="../tutorials/wan-side-services.html">WAN-side services</a></li>
+<li><a href="multi-wan.html">Multi-WAN egress</a></li>
+<li><a href="../concepts/path-mtu.html">Path MTU and MSS clamping</a></li>
+</ul></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#scenario">Scenario</a></li>
+<li><a href="#prerequisites">Prerequisites</a></li>
+<li><a href="#dhcpv6-pd">DHCPv6-PD</a></li>
+<li><a href="#lan-address-derivation-and-ra">LAN address derivation and RA</a></li>
+<li><a href="#aftr-dns-servers">AFTR DNS servers</a></li>
+<li><a href="#ds-lite-tunnel">DS-Lite tunnel</a></li>
+<li><a href="#verification">Verification</a></li>
+<li><a href="#see-also">See also</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/how-to/flets-ipv6-setup.md">GitHub</a></div></footer></body></html>

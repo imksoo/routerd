@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Stateful firewall · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/concepts/firewall.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/concepts/firewall.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/concepts/firewall.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/concepts/firewall.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/concepts/firewall.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="stateful-firewall">Stateful firewall</h1>
+<p>routerd manages a stateful nftables filter table named <code>inet routerd_filter</code>.
+The firewall model has four resource kinds:</p>
+<ul>
+<li><code>FirewallZone</code> assigns interfaces to a named zone and gives that zone a role.</li>
+<li><code>FirewallPolicy</code> sets global behavior such as deny logging.</li>
+<li><code>FirewallRule</code> adds explicit exceptions to the role matrix.</li>
+<li><code>ClientPolicy</code> classifies LAN clients by MAC address for guest isolation.</li>
+</ul>
+<p>The supported roles are <code>untrust</code>, <code>trust</code>, and <code>mgmt</code>. Zone names describe
+topology, such as <code>wan</code>, <code>lan</code>, or <code>management</code>. Roles describe policy.</p>
+<p>The implicit matrix is:</p>
+<table>
+<thead>
+<tr>
+<th>From</th>
+<th>To self</th>
+<th>To mgmt</th>
+<th>To trust</th>
+<th>To untrust</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>mgmt</code></td>
+<td>accept</td>
+<td>accept</td>
+<td>accept</td>
+<td>accept</td>
+</tr>
+<tr>
+<td><code>trust</code></td>
+<td>accept</td>
+<td>drop</td>
+<td>accept</td>
+<td>accept</td>
+</tr>
+<tr>
+<td><code>untrust</code></td>
+<td>drop</td>
+<td>drop</td>
+<td>drop</td>
+<td>drop</td>
+</tr>
+</tbody>
+</table>
+<p>The generated rules always accept established and related connections, loopback
+traffic, and required ICMPv6 traffic. Controllers also derive internal openings
+for routerd-managed services such as DHCPv6 prefix delegation, DS-Lite,
+dnsmasq DHCP service, and <code>routerd-dns-resolver</code>.</p>
+<p>The firewall table is separate from NAT. NAT44 continues to use <code>ip
+routerd_nat</code>.</p>
+<h2 id="rule-expressions">Rule expressions</h2>
+<p><code>FirewallRule</code> supports CIDR source/destination matches, reusable
+<code>IPAddressSet</code> destination references, TCP/UDP <code>sourcePorts</code> and
+<code>destinationPorts</code>, ICMP / ICMPv6 type names, nftables <code>rateLimit</code>, and
+per-source <code>connLimit</code>. <code>rateLimit</code> and <code>connLimit</code> match over-limit traffic,
+so they are usually paired with <code>drop</code> or <code>reject</code> rules for dampening scans or
+brute-force attempts.</p>
+<h2 id="guest-client-isolation">Guest client isolation</h2>
+<p><code>ClientPolicy</code> is a MAC-based guest mode for shared LAN segments. It is meant
+for the case where trusted and guest devices receive addresses from the same
+DHCP server, but guest devices must not reach private networks.</p>
+<p>The policy has two modes:</p>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>Behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>include</code></td>
+<td>Listed MAC addresses are guests. All other clients remain trusted.</td>
+</tr>
+<tr>
+<td><code>exclude</code></td>
+<td>Listed MAC addresses are trusted. All other clients on the target interfaces are guests.</td>
+</tr>
+</tbody>
+</table>
+<p><code>ClientPolicy.spec.macs</code> is the short form for the common case. <code>interfaces</code>
+can be omitted when the policy should target every interface in a <code>trust</code>
+<code>FirewallZone</code>. <code>spec.isolation</code> provides readable intent for guest mode:
+internet, LAN, management, and local discovery can be allowed or denied without
+hand-writing CIDR lists.</p>
+<p>Guest clients can use the router's local DNS, DHCP, and NTP services. By
+default they cannot forward traffic to <code>10.0.0.0/8</code>, <code>172.16.0.0/12</code>,
+<code>192.168.0.0/16</code>, or <code>fc00::/7</code>. Global internet egress still follows the
+normal zone matrix and route policy.</p>
+<p><code>ClientPolicy</code> is implemented by the Linux nftables renderer with Ethernet
+source address sets. FreeBSD pf cannot provide that MAC/L2 matching model in
+the routed filter path. On FreeBSD, routerd instead renders IPv4 rules from a
+<code>DHCPv4Reservation</code> and IPv6 rules only from explicit
+<code>classification[].ipv6Addresses</code>. It never derives IPv6 identity from a MAC or
+IPv4 reservation. This preserves a safe, address-based guest-deny model but
+does not cover privacy or otherwise unlisted IPv6 addresses; use separate
+network segmentation when that is required.</p>
+<h2 id="logging">Logging</h2>
+<p>When <code>FirewallPolicy.spec.logDeny</code> is true and a <code>FirewallEventLog</code> resource is
+enabled, generated nftables rules log denied packets to the configured NFLOG
+group. On Linux, <code>routerd-firewall-logger</code> reads that group directly through
+nfnetlink and stores rows in <code>firewall-logs.db</code>. This keeps NFLOG prefixes,
+interfaces, packet family, protocol, addresses, and ports without running a
+separate packet capture process.</p>
+<p>The Web Console Firewall tab and <code>routerctl get firewall-logs</code> read from that
+database. When <code>FirewallEventLog.spec.enabled</code> is true, routerd derives the
+<code>routerd-firewall-logger</code> service artifact and passes the configured database
+path and NFLOG group to it.</p>
+<p>For accepted-flow DPI observation, set <code>FirewallEventLog.spec.log.copyRange</code> to cap
+the NFLOG payload copied from each packet. Values such as <code>1536</code> or <code>2048</code>
+bytes keep the first payload visible for TLS/HTTP/DNS classification without
+copying full packets into user space.</p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#rule-expressions">Rule expressions</a></li>
+<li><a href="#guest-client-isolation">Guest client isolation</a></li>
+<li><a href="#logging">Logging</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/concepts/firewall.md">GitHub</a></div></footer></body></html>

@@ -21,8 +21,7 @@ sudo routerd validate --config /usr/local/etc/routerd/router.yaml
   tutorial](../tutorials/first-router.md) and review the file before starting.
 - Missing socket or connection refused: `routerctl` requires the running daemon.
   A one-shot `routerd apply --once` exits and does not provide control sockets.
-- Permission denied: first try `sudo routerctl get status`. For read-only
-  access without sudo, follow [local socket access](../install-and-upgrade.md#local-control-socket-access-for-non-root-operators).
+- Permission denied: first try `sudo routerctl get status`.
 - Service is active but the client cannot connect: inspect the WAN lease, LAN
   address/gateway, then DNS, as described in [the client checks](../tutorials/first-router.md).
 

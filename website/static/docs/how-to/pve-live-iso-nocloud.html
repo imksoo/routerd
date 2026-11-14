@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PVE NoCloud bootstrap for the live ISO · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/how-to/pve-live-iso-nocloud.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/how-to/pve-live-iso-nocloud.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/how-to/pve-live-iso-nocloud.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/intro.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/intro.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="pve-nocloud-bootstrap-for-the-live-iso">PVE NoCloud bootstrap for the live ISO</h1>
+<p>The routerd live ISO is built from an Ubuntu <code>debootstrap</code> root filesystem and
+does not install the full <code>cloud-init</code> package. For Proxmox VE lab nodes, the
+image supports the small part of NoCloud that is needed before routerd starts:
+it reads <code>hostname</code>, <code>routerd.config_url</code>, and <code>routerd.config_sha256</code> from
+<code>user-data</code> on a <code>cidata</code>/<code>CIDATA</code> config drive.</p>
+<p>This keeps the live ISO small while still letting multiple VMs boot from the
+same ISO, appear as distinct hosts over SSH and in PVE validation logs, and pull
+their full routerd config from HTTP or object storage.</p>
+<h2 id="user-data">user-data</h2>
+<p>Create a PVE snippet with a top-level <code>hostname</code> field and an optional routerd
+config pointer:</p>
+<pre><code class="language-yaml">#cloud-config
+hostname: pve-rt07
+routerd:
+  config_url: http://10.0.0.10/routerd/pve-rt07/router.yaml
+  config_sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+ssh_authorized_keys:
+  - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... admin@example
+</code></pre>
+<p>Attach it as the VM's cloud-init user-data while the VM is stopped:</p>
+<pre><code class="language-sh">qm set 169 --ide2 local:iso/routerd-live.iso,media=cdrom
+qm set 169 --cicustom user=local:snippets/routerd-pve-rt07.yaml
+qm set 169 --boot order=ide2
+qm start 169
+</code></pre>
+<p>At boot, the live setup service:</p>
+<ol>
+<li>Applies <code>hostname</code> from NoCloud user-data.</li>
+<li>Regenerates SSH host keys so every VM has a distinct host identity.</li>
+<li>Installs <code>ssh_authorized_keys</code> into <code>/root/.ssh/authorized_keys</code> and enables
+   <code>ssh.service</code>.</li>
+<li>Tries a <code>ROUTERD_CONFIG</code> config disk first. It restores <code>router.yaml</code> and
+   root-only regular files from a sibling <code>secrets/</code> directory before routerd
+   starts.</li>
+<li>If no config disk is present, fetches <code>routerd.config_url</code> with <code>curl</code>.</li>
+<li>Verifies <code>routerd.config_sha256</code> when present.</li>
+<li>Installs the fetched <code>router.yaml</code> or extracts a supported config bundle.</li>
+<li>Falls back to the last validated cache, then to the built-in sample config
+   when no external config is available.</li>
+<li>Removes the bootstrap systemd-networkd DHCP profile and starts
+   <code>routerd.service</code>.</li>
+</ol>
+<p>Supported bundle URLs currently end in <code>.tar.zst</code>, <code>.tzst</code>, <code>.tar.gz</code>, <code>.tgz</code>,
+or <code>.tar</code>. Bundles must contain <code>router.yaml</code> at the archive root. Optional
+<code>secrets/</code> and <code>metadata.json</code> entries are installed under
+<code>/usr/local/etc/routerd/</code>.</p>
+<p>A persistent <code>ROUTERD_CONFIG</code> filesystem uses the same minimal layout:</p>
+<pre><code class="language-text">router.yaml
+secrets/
+  wg-l2.key
+</code></pre>
+<p>Secret files are installed under <code>/usr/local/etc/routerd/secrets</code> with mode
+<code>0600</code>; the directory itself is mode <code>0700</code>. Keep the config filesystem
+root-only at the hypervisor/storage layer because it contains private keys.</p>
+<p>After a successful fetch and checksum verification, the installed <code>router.yaml</code>
+is cached under <code>/var/lib/routerd/validated-config/router.yaml</code>. This cache has
+the lifetime of its state filesystem. Ordinary Live ISO COW storage is volatile:
+neither this cache nor SQLite history survives a VM reboot. Use persistent
+<code>ROUTERD_CONFIG</code> media for the authoritative configuration and keys; follow the
+<a href="../operations/state-database.html">state database policy</a> for state and history.</p>
+<p>The ISO's default DHCP profile exists only so first boot can reach
+<code>routerd.config_url</code>. After config restore, the setup service removes that
+profile before starting routerd, so routerd's own <code>DHCPv4Client</code>,
+<code>IPv4StaticAddress</code>, and route resources become the network authority.</p>
+<h2 id="updating-a-running-live-iso-vm">Updating a running Live ISO VM</h2>
+<p>Do not replace the mounted ISO of a running Live guest. Its root filesystem
+still reads SquashFS blocks from that medium; changing the medium underneath it
+can cause read and decompression errors.</p>
+<ol>
+<li>Download a version-specific ISO to shared storage and verify its published
+   SHA256. Retain the known-good old ISO and the VM's config/cidata media.</li>
+<li>Check the current configuration and keys against their persistent source.
+   Identify any state that cannot be reconstructed and preserve a consistent
+   external snapshot where required. Do not overwrite a newly running database
+   with an older history snapshot.</li>
+<li>Keep the old ISO attached while requesting a normal guest poweroff. Observe
+   the serial console and hypervisor state until the VM is actually stopped.
+   Older media can ask to remove the installation medium and press Enter;
+   acknowledge that real prompt rather than treating absent QGA as failure.</li>
+<li>Only after the VM is stopped, change its ISO and start it. Preserve its
+   config disk, cidata, NIC identities, and recovery path. Update redundant
+   routers one at a time.</li>
+<li>Observe actual boot progress, QGA, address acquisition, enrollment, BGP/IPIP,
+   and real peer traffic. Judge the configured state and explicit errors, not
+   an arbitrary number of elapsed seconds. Reapply the actual configuration
+   where needed and verify the resulting runtime.</li>
+</ol>
+<p>Current media uses casper's existing <code>noprompt</code> kernel option to avoid the
+interactive media-removal wait on the next shutdown/reboot. This does not
+promise completion within a fixed duration. Keep console access and distinguish
+a normal agent restart from a stalled or failed boot; do not reset solely
+because an observation command reached its deadline.</p>
+<h2 id="scope">Scope</h2>
+<p>This is intentionally not a full cloud-init implementation. The live ISO only
+uses NoCloud for early hostname identity, root SSH authorized keys, and routerd
+config bootstrap. It does not run cloud-init modules or apply network, user, or
+package configuration from user-data.</p>
+<p>For richer bootstrap behavior, keep using routerd configuration media or install
+Ubuntu Server to disk and manage normal cloud-init there.</p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#user-data">user-data</a></li>
+<li><a href="#updating-a-running-live-iso-vm">Updating a running Live ISO VM</a></li>
+<li><a href="#scope">Scope</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/how-to/pve-live-iso-nocloud.md">GitHub</a></div></footer></body></html>

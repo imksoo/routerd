@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Add firewall exceptions · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/how-to/firewall-rule.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/how-to/firewall-rule.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/how-to/firewall-rule.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/how-to/firewall-rule.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/firewall-rule.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="add-firewall-exceptions">Add firewall exceptions</h1>
+<h2 id="scenario">Scenario</h2>
+<p>The role-based defaults from <code>FirewallZone</code> cover the common case, but you need an exception:</p>
+<ul>
+<li>Allow SSH from a specific management subnet.</li>
+<li>Open a service port on the router itself (a metrics endpoint, a custom listener).</li>
+<li>Permit a specific LAN host to receive inbound connections from the WAN (port forward / DMZ-style).</li>
+</ul>
+<h2 id="how-routerd-solves-it">How routerd solves it</h2>
+<p><code>FirewallRule</code> declares an exception that overrides the implicit role matrix. Rules are evaluated <strong>before</strong> the implicit matrix, and routerd-derived internal openings (DHCP, DNS, DHCPv6-PD, DS-Lite control traffic, etc.) are evaluated before user rules. That ordering keeps managed services alive even when you add restrictive rules.</p>
+<h2 id="example-allow-ssh-from-the-management-network">Example: allow SSH from the management network</h2>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallRule
+  metadata:
+    name: allow-admin-ssh
+  spec:
+    fromZone: management
+    toZone: self
+    protocol: tcp
+    port: 22
+    action: accept
+</code></pre>
+<p><code>fromZone</code> and <code>toZone</code> reference <code>FirewallZone</code> names. <code>toZone: self</code> means traffic terminated by the router itself (as opposed to forwarded traffic).</p>
+<h2 id="example-open-a-service-port-on-the-router">Example: open a service port on the router</h2>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallRule
+  metadata:
+    name: allow-metrics
+  spec:
+    fromZone: lan
+    toZone: self
+    protocol: tcp
+    destinationPorts:
+      - &quot;9100&quot;
+    action: accept
+</code></pre>
+<h2 id="example-allow-one-management-host-from-the-lan">Example: allow one management host from the LAN</h2>
+<p>Use <code>destinationCIDRs</code> when the exception should apply to a specific host
+inside the destination zone. This keeps the rest of the management segment
+closed by the role matrix.</p>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallRule
+  metadata:
+    name: allow-lan-to-admin-console
+  spec:
+    fromZone: lan
+    toZone: management
+    destinationCIDRs:
+      - 192.0.2.126/32
+    protocol: tcp
+    destinationPorts:
+      - &quot;8080&quot;
+    action: accept
+</code></pre>
+<h2 id="example-multi-port-web-and-icmp-echo">Example: multi-port web and ICMP echo</h2>
+<p>Use <code>destinationPorts</code> when a rule covers more than one TCP or UDP port.
+ICMP rules can be narrowed to specific type names.</p>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallRule
+  metadata:
+    name: wan-web
+  spec:
+    fromZone: wan
+    toZone: self
+    protocol: tcp
+    destinationPorts:
+      - &quot;80&quot;
+      - &quot;443&quot;
+    action: accept
+
+- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallRule
+  metadata:
+    name: wan-icmp-echo
+  spec:
+    fromZone: wan
+    toZone: self
+    protocol: icmp
+    icmpType: echo-request
+    action: accept
+</code></pre>
+<h2 id="example-reject-ssh-over-a-rate-or-connection-limit">Example: reject SSH over a rate or connection limit</h2>
+<p><code>rateLimit</code> matches traffic over the configured threshold. <code>connLimit</code> matches
+when one source already has more than the allowed concurrent tracked states.</p>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallRule
+  metadata:
+    name: ssh-bruteforce-over-limit
+  spec:
+    fromZone: wan
+    toZone: self
+    protocol: tcp
+    destinationPorts:
+      - &quot;22&quot;
+    action: reject
+    rateLimit:
+      rate: 8
+      burst: 16
+      unit: packet
+      per: minute
+      log: true
+    connLimit:
+      maxPerSource: 4
+      log: true
+</code></pre>
+<h2 id="validating-before-apply">Validating before apply</h2>
+<p>Use the local simulator to check what the rule would do before you apply it:</p>
+<pre><code class="language-sh">routerctl firewall test from=wan to=self proto=tcp dport=22
+</code></pre>
+<p>The first command reports <code>accept</code> or <code>drop</code> for the specific 5-tuple.</p>
+<h2 id="see-also">See also</h2>
+<ul>
+<li><a href="firewall-zone.html">Define firewall zones</a></li>
+<li><a href="../concepts/firewall.html">Firewall concept</a></li>
+</ul></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#scenario">Scenario</a></li>
+<li><a href="#how-routerd-solves-it">How routerd solves it</a></li>
+<li><a href="#example-allow-ssh-from-the-management-network">Example: allow SSH from the management network</a></li>
+<li><a href="#example-open-a-service-port-on-the-router">Example: open a service port on the router</a></li>
+<li><a href="#example-allow-one-management-host-from-the-lan">Example: allow one management host from the LAN</a></li>
+<li><a href="#example-multi-port-web-and-icmp-echo">Example: multi-port web and ICMP echo</a></li>
+<li><a href="#example-reject-ssh-over-a-rate-or-connection-limit">Example: reject SSH over a rate or connection limit</a></li>
+<li><a href="#validating-before-apply">Validating before apply</a></li>
+<li><a href="#see-also">See also</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/how-to/firewall-rule.md">GitHub</a></div></footer></body></html>

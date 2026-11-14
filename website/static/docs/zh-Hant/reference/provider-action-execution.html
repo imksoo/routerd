@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Provider Action Execution（實驗性） · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/reference/provider-action-execution.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/reference/provider-action-execution.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/provider-action-execution.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/provider-action-execution.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/reference/provider-action-execution.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="provider-action-execution實驗性">Provider Action Execution（實驗性）</h1>
+<blockquote>
+<p><strong>實驗性。</strong> 此功能帶有閘控，預設停用，正在積極開發中。
+關於設計和安全性依據，請參見 ADR 0007。</p>
+</blockquote>
+<p>routerd 可以透過 <strong>executor plugin</strong> 執行經核准的雲端供應商變更（例如：為
+<a href="selective-address-mobility.html">選擇性位址移動性</a>指派 secondary IP）。routerd
+不持有雲端憑證。</p>
+<h2 id="憑證模型">憑證模型</h2>
+<ul>
+<li><strong>持有憑證的是 executor plugin，而非 routerd。</strong>
+  executor（capability <code>execute.providerAction</code>）在自己的行程中執行，透過雲端原生
+  identity（AWS instance profile、Azure managed identity、OCI instance principal）
+  或自身環境進行驗證。</li>
+<li><strong>routerd 核心不持有、讀取或傳遞供應商憑證。</strong>
+  routerd 僅向 executor 傳遞已核准的 action plan（不含金鑰）和經過允許清單化、
+  脫敏處理的 plugin 脈絡。</li>
+<li><code>action_executions</code> journal 僅記錄計畫及其結果，不包含任何金鑰。</li>
+</ul>
+<h2 id="provideractionpolicy"><code>ProviderActionPolicy</code></h2>
+<p><code>apiVersion: hybrid.routerd.net/v1alpha1</code>，<code>kind: ProviderActionPolicy</code>。零值為
+安全的鎖定狀態。執行停用，僅 dry-run，需要核准，無允許清單。</p>
+<table>
+<thead>
+<tr>
+<th>欄位</th>
+<th>型別</th>
+<th>預設值</th>
+<th>含義</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>enabled</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>非 <code>true</code> 時執行被停用。</td>
+</tr>
+<tr>
+<td><code>dryRunOnly</code></td>
+<td>bool (pointer)</td>
+<td>省略時 <code>true</code></td>
+<td>僅允許 dry-run。拒絕實際變更。</td>
+</tr>
+<tr>
+<td><code>requireApproval</code></td>
+<td>bool (pointer)</td>
+<td>省略時 <code>true</code></td>
+<td>執行前需要維運人員核准。</td>
+</tr>
+<tr>
+<td><code>allowedProviders</code></td>
+<td>list</td>
+<td>空 = 無</td>
+<td>允許的供應商：<code>aws</code>、<code>azure</code>、<code>oci</code>、<code>gcp</code>。</td>
+</tr>
+<tr>
+<td><code>allowedProviderRefs</code></td>
+<td>list</td>
+<td>空 = 不限制</td>
+<td>限制為指定的 <code>CloudProviderProfile</code> ref。</td>
+</tr>
+<tr>
+<td><code>allowedActions</code></td>
+<td>list</td>
+<td>空 = 無</td>
+<td>規範動詞：<code>assign-secondary-ip</code>、<code>unassign-secondary-ip</code>、<code>ensure-forwarding-enabled</code>、<code>ensure-forwarding-disabled</code>。</td>
+</tr>
+<tr>
+<td><code>allowedCIDRs</code></td>
+<td>list</td>
+<td>空 = 不限制</td>
+<td>action 的目標位址必須在某個 CIDR 範圍內。</td>
+</tr>
+<tr>
+<td><code>maxActionsPerRun</code></td>
+<td>int</td>
+<td><code>0</code> = 無 action</td>
+<td>每次執行的 action 上限。設定正值以允許。</td>
+</tr>
+<tr>
+<td><code>allowUndo</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>允許盡力回復。</td>
+</tr>
+<tr>
+<td><code>executionWindow</code></td>
+<td>string</td>
+<td>空 = 無視窗</td>
+<td>選用的時間視窗。寬鬆驗證。</td>
+</tr>
+</tbody>
+</table>
+<p>範例（除單一允許清單化的 action 外全部鎖定）：</p>
+<pre><code class="language-yaml">apiVersion: hybrid.routerd.net/v1alpha1
+kind: ProviderActionPolicy
+metadata:
+  name: sam-execution
+spec:
+  enabled: true
+  dryRunOnly: false
+  requireApproval: true
+  allowedProviders: [aws]
+  allowedActions: [assign-secondary-ip, unassign-secondary-ip]
+  allowedCIDRs: [10.88.60.0/24]
+  maxActionsPerRun: 4
+  allowUndo: true
+</code></pre>
+<h2 id="action-生命週期">action 生命週期</h2>
+<p>planner plugin 提議的 action plan 被匯入到 journal 中，經歷以下狀態轉換。</p>
+<pre><code class="language-text">pending  -&gt;  approved  -&gt;  succeeded
+                       -&gt;  failed
+                       -&gt;  skipped
+                            (succeeded) -&gt; rolledBack
+</code></pre>
+<ul>
+<li><strong>pending</strong> — 從 <code>actionPlan</code> 匯入，以 <code>idempotencyKey</code> 為鍵，等待核准。</li>
+<li><strong>approved</strong> — 維運人員已核准，或策略自動核准
+  （當 <code>requireApproval: false</code> 且 <code>enabled</code> 且非 <code>dryRunOnly</code> 時）。</li>
+<li><strong>succeeded / failed / skipped</strong> — executor 回報的結果。<code>skipped</code> 表示已
+  succeeded 的 <code>idempotencyKey</code> 的重複，或策略拒絕的 action。</li>
+<li><strong>rolledBack</strong> — 對先前 succeeded 的 action 套用盡力 undo
+  （僅在 <code>allowUndo</code> 為 true 時）。</li>
+</ul>
+<p>匯入是冪等的。重新匯入相同的 <code>idempotencyKey</code> 不會建立第二列，因此已 succeeded
+的 action 不會被執行兩次。</p>
+<h2 id="routerctl-action-命令"><code>routerctl action</code> 命令</h2>
+<p>目前面向維運人員的介面有意採用 journal 導向。先匯入或核准 action，僅執行通過策略
+的已核准項目。</p>
+<table>
+<thead>
+<tr>
+<th>命令</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>routerctl action list</code></td>
+<td>列出 journal 項目（按狀態/供應商篩選）。</td>
+</tr>
+<tr>
+<td><code>routerctl action show ID</code></td>
+<td>顯示單一 journal 項目。</td>
+</tr>
+<tr>
+<td><code>routerctl action approve ID</code></td>
+<td>維運人員核准：從 <code>pending</code> 變為 <code>approved</code>。</td>
+</tr>
+<tr>
+<td><code>routerctl action execute --dry-run</code></td>
+<td>驗證和預覽。無變更。</td>
+</tr>
+<tr>
+<td><code>routerctl action execute --approved</code></td>
+<td>執行策略允許的已核准 action。</td>
+</tr>
+<tr>
+<td><code>routerctl action journal</code></td>
+<td>輸出執行 journal / 稽核軌跡。</td>
+</tr>
+<tr>
+<td><code>routerctl action rollback ID --dry-run</code></td>
+<td>盡力 undo 的預覽（無變更）。</td>
+</tr>
+</tbody>
+</table>
+<h2 id="dry-run-vs-執行">dry-run vs 執行</h2>
+<ul>
+<li><strong>dry-run</strong> 是預設行為，是 <code>dryRunOnly</code> 為 true（或 <code>enabled</code> 為 false）期間
+  唯一允許的路徑。它驗證計畫、檢查策略並預覽效果，但<strong>不進行</strong>任何供應商變更。</li>
+<li><strong>執行</strong> 透過 executor 進行實際變更，僅在所有硬安全停止條件滿足時才執行：
+  <code>enabled</code>、非 <code>dryRunOnly</code>、已核准（或策略自動核准）、允許清單比對、
+  在 <code>maxActionsPerRun</code> 以內。</li>
+</ul>
+<p>關於硬安全停止條件的完整清單，請參見
+ADR 0007。</p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#憑證模型">憑證模型</a></li>
+<li><a href="#provideractionpolicy">ProviderActionPolicy</a></li>
+<li><a href="#action-生命週期">action 生命週期</a></li>
+<li><a href="#routerctl-action-命令">routerctl action 命令</a></li>
+<li><a href="#dry-run-vs-執行">dry-run vs 執行</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/reference/provider-action-execution.md">GitHub</a></div></footer></body></html>

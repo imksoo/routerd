@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ClientPolicy · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/reference/resources/ClientPolicy.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/reference/resources/ClientPolicy.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/ClientPolicy.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/ClientPolicy.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/reference/resources/ClientPolicy.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="clientpolicy">ClientPolicy</h1>
+<p><a href="../resources.html#clientpolicy">各資源的設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: firewall.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>對選定或非例外用戶端套用訪客服務與路由目的限制。Linux 以設定的 MAC 識別，FreeBSD PF 需要明確 IP 身分。</p>
+<h2 id="指定條件與參照關係">指定條件與參照關係</h2>
+<ul>
+<li>mode 必須為 include/exclude。include 限制選定集合，exclude 限制選定可信集合以外的用戶端。Linux include 沒有選定 MAC 時不產生限制；exclude 集合空時比對所選介面全部用戶端。</li>
+<li>Linux 分類僅使用 match.macs：guest/isolated 加入 include 集合，trusted 加入 exclude 集合。OUI、主機名、指紋選擇器會驗證，但防火牆產生器不使用。ipv4Reservation/ipv6Addresses 不形成 Linux 比對身分。</li>
+<li>FreeBSD 拒絕頂層 MAC 與所有 match 選擇器；每類改需 ipv4Reservation 或明確 ipv6Addresses。PF 使用預約的 ipAddress，不是 MAC。PF 請明確提供 interfaces；省略時不繼承 trust 區域介面。</li>
+<li>這是路由/本機輸入限制，不是 L2 交換器埠隔離。既有狀態、控制與服務允許可能先執行。PF 的 trust/mgmt-to-self 隱含允許在用戶端本機限制之前，且目前本機服務限制僅使用 IPv4 身分。不可視為兩個 OS 或所有位址族皆一致強制。</li>
+<li>Linux guestEgressAllow 先於探索/拒絕規則，可覆蓋它們；其餘流量繼續區域規則。PF IPv4 允許先於拒絕，但 IPv6 拒絕規則在全域前段，無法由之後的 IPv6 允許覆蓋。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。</p>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: ClientPolicy
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    classification: # 選填; array
+      - # object
+        ipv4Reservation: &quot;&lt;string&gt;&quot; # 選填; string
+        ipv6Addresses: # 選填; array
+          - &quot;&lt;string&gt;&quot; # string
+        match: # 必填; object
+          dhcpFingerprints: # 選填; array
+            - &quot;&lt;string&gt;&quot; # string
+          hostnamePatterns: # 選填; array
+            - &quot;&lt;string&gt;&quot; # string
+          macs: # 選填; array
+            - &quot;&lt;string&gt;&quot; # string
+          ouiPrefixes: # 選填; array
+            - &quot;&lt;string&gt;&quot; # string
+        mode: &quot;trusted&quot; # 必填; string; enum=[&quot;trusted&quot;, &quot;guest&quot;, &quot;isolated&quot;]
+        name: &quot;&lt;string&gt;&quot; # 選填; string
+    guestEgressAllow: # 選填; array
+      - &quot;&lt;string&gt;&quot; # string
+    guestEgressDeny: # 選填; array
+      - &quot;&lt;string&gt;&quot; # string
+    guestServices: # 選填; array
+      - &quot;&lt;string&gt;&quot; # string
+    interfaces: # 選填; array
+      - &quot;&lt;string&gt;&quot; # string
+    isolation: # 選填; object
+      lanInternet: &quot;&quot; # 選填; string; enum=[&quot;&quot;, &quot;allow&quot;, &quot;deny&quot;]
+      lanLAN: &quot;&quot; # 選填; string; enum=[&quot;&quot;, &quot;allow&quot;, &quot;deny&quot;]
+      lanMgmt: &quot;&quot; # 選填; string; enum=[&quot;&quot;, &quot;allow&quot;, &quot;deny&quot;]
+      mDNSBroadcast: &quot;&quot; # 選填; string; enum=[&quot;&quot;, &quot;allow&quot;, &quot;deny&quot;]
+    macs: # 選填; array
+      - &quot;&lt;string&gt;&quot; # string
+    mode: &quot;include&quot; # 必填; string; enum=[&quot;include&quot;, &quot;exclude&quot;]
+</code></pre>
+<h2 id="欄位意義與預設值">欄位意義與預設值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>欄位意義與預設值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.mode</code></td>
+<td>必填 include/exclude，無預設值。決定身分集合為限制對象或例外。</td>
+</tr>
+<tr>
+<td><code>spec.interfaces</code></td>
+<td>選用 Interface/name 或單純邏輯介面名，參照須存在且不可重複。Linux 省略時使用所有 trust 區域介面，皆無則失敗。PF 省略時沒有適用介面限制。</td>
+</tr>
+<tr>
+<td><code>spec.macs</code></td>
+<td>選用 Linux 固定 MAC 清單，預設空。此清單與 classification.match.macs 間正規化後的重複會被拒絕。FreeBSD 禁用。</td>
+</tr>
+<tr>
+<td><code>spec.classification</code></td>
+<td>選用分類清單，預設空。Linux 每類需至少一個選擇器，但只有 MAC 形成防火牆集合。FreeBSD 需要穩定 IP 身分並禁止選擇器。</td>
+</tr>
+<tr>
+<td><code>spec.classification[].name</code></td>
+<td>選用描述名稱，預設空。不改變比對優先順序，也不建立資源識別。</td>
+</tr>
+<tr>
+<td><code>spec.classification[].mode</code></td>
+<td>必填 trusted、guest 或 isolated。include 將 guest/isolated 同樣加入限制集合；exclude 將 trusted 加入例外集合。</td>
+</tr>
+<tr>
+<td><code>spec.classification[].match</code></td>
+<td>Linux 至少需要一個非空選擇器清單。FreeBSD 即使提供穩定 IP 也須留空。目前防火牆不將各選擇器動態解析成用戶端 MAC。</td>
+</tr>
+<tr>
+<td><code>spec.classification[].match.macs</code></td>
+<td>選用完整 MAC 清單，是 Linux 的有效分類器。MAC 須有效，且不可跨類別或頂層 macs 重複。</td>
+</tr>
+<tr>
+<td><code>spec.classification[].match.ouiPrefixes</code></td>
+<td>接受如 18:ec:e7 的三個十六進位八位元組，同類重複會被拒絕。目前不形成防火牆強制，FreeBSD 拒絕。</td>
+</tr>
+<tr>
+<td><code>spec.classification[].match.hostnamePatterns</code></td>
+<td>接受非空 Go path.Match glob，不是正規表示式。目前僅驗證語法，不解析為防火牆身分；FreeBSD 拒絕。</td>
+</tr>
+<tr>
+<td><code>spec.classification[].match.dhcpFingerprints</code></td>
+<td>接受非空且不含空白的代碼，同類不可重複。目前不形成防火牆集合；FreeBSD 拒絕。</td>
+</tr>
+<tr>
+<td><code>spec.classification[].ipv4Reservation</code></td>
+<td>選用既有 DHCPv4Reservation 的單純 metadata.name，拒絕 Kind/name。PF 使用其非空 ipAddress；Linux 驗證參照但不以位址比對用戶端。</td>
+</tr>
+<tr>
+<td><code>spec.classification[].ipv6Addresses</code></td>
+<td>選用 PF 的純 IPv6 位址，不接受 CIDR 或 IPv4 映射格式。所有類別間正規化後不可重複。不從 MAC/IPv4 預約推導，Linux 用戶端比對不使用。</td>
+</tr>
+<tr>
+<td><code>spec.isolation</code></td>
+<td>選用 allow/deny 提示，只有 Linux 產生器讀取這四個欄位；PF 使用明確 guest egress 清單或預設。不會逐類獨立套用。</td>
+</tr>
+<tr>
+<td><code>spec.isolation.lanInternet</code></td>
+<td>預設空。Linux deny 且未明確設 guestEgressDeny 時，將拒絕集合換成 0.0.0.0/0 與 ::/0。allow/空不增加無條件網際網路允許。PF 忽略。</td>
+</tr>
+<tr>
+<td><code>spec.isolation.lanLAN</code></td>
+<td>預設空。Linux 僅在 lanLAN 與 lanMgmt 皆 allow 時移除預設私有前綴拒絕，不區分個別 LAN。明確 guestEgressDeny 覆寫預設。PF 忽略。</td>
+</tr>
+<tr>
+<td><code>spec.isolation.lanMgmt</code></td>
+<td>預設空，與 lanLAN 共同決定預設集合。不會獨立解析管理區域目的。PF 忽略。</td>
+</tr>
+<tr>
+<td><code>spec.isolation.mDNSBroadcast</code></td>
+<td>預設空。Linux deny 在 guestEgressAllow 後加入轉送 mDNS/SSDP 多播與 UDP 137/138 丟棄。不控制 L2 橋接或獨立封鎖本機服務。PF 忽略。</td>
+</tr>
+<tr>
+<td><code>spec.guestServices</code></td>
+<td>允許的本機服務名稱：dns、dhcp、ntp、mdns、ssdp。省略或空預設 dhcp/dns/ntp，空清單無法停用全部例外。只開放防火牆，不啟動服務。</td>
+</tr>
+<tr>
+<td><code>spec.guestEgressDeny</code></td>
+<td>選用 IPv4/IPv6 CIDR。省略或空預設 10.0.0.0/8、172.16.0.0/12、192.168.0.0/16、fc00::/7，Linux 依上述 isolation 調整。明確值取代而非附加預設；PF 空時固定使用私有前綴預設。</td>
+</tr>
+<tr>
+<td><code>spec.guestEgressAllow</code></td>
+<td>選用 IPv4/IPv6 CIDR 例外，預設空。Linux 與 PF IPv4 先於拒絕評估，PF IPv6 則在拒絕之後。這些是路由目的前綴，不是資源參照。</td>
+</tr>
+</tbody>
+</table>
+<p>實作: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_firewall.go">pkg/config/validate_firewall.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/nftables.go">pkg/render/nftables.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/pf.go">pkg/render/pf.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/webconsole/clients.go">pkg/webconsole/clients.go</a></p>
+<h2 id="可參照的狀態欄位">可參照的狀態欄位</h2>
+<p>一般狀態參照驗證接受此 Kind 的下列欄位名稱。列於允許清單不保證目前有值，請檢查實際狀態。這些是輸出，不是 YAML spec 設定。</p>
+<p><code>phase</code></p>
+<p><a href="/examples/guest-mode.yaml">設定範例</a></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#指定條件與參照關係">指定條件與參照關係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#欄位意義與預設值">欄位意義與預設值</a></li>
+<li><a href="#可參照的狀態欄位">可參照的狀態欄位</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/reference/resources/ClientPolicy.md">GitHub</a></div></footer></body></html>

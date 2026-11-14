@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>插件协议 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/plugin-protocol.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/plugin-protocol.html" lang="en" hreflang="en">English</a><a href="/docs/ja/plugin-protocol.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/plugin-protocol.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/plugin-protocol.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="插件协议">插件协议</h1>
+<p>routerd 的插件是受信任的本机可执行文件。
+这是一种机制，可在同一主机上以小型程序的形式添加不内置于核心的资源专用处理逻辑。</p>
+<p>目前不支持从远端注册插件、远端安装或公开注册表。</p>
+<h2 id="部署位置">部署位置</h2>
+<p>标准部署路径如下：</p>
+<pre><code class="language-text">/usr/local/libexec/routerd/plugins/&lt;name&gt;/
+</code></pre>
+<p>每个插件包含一个 manifest 与可执行文件：</p>
+<pre><code class="language-text">plugin.yaml
+bin/&lt;plugin&gt;
+</code></pre>
+<h2 id="职责">职责</h2>
+<p>插件可负责下列类型的处理：</p>
+<ul>
+<li>资源验证</li>
+<li>变更计划创建</li>
+<li>主机状态观测</li>
+<li>应用至主机</li>
+</ul>
+<p>不过，会修改网络状态的处理应拆分为易于测试的小单元。
+网络行为应在实际目标和对端上验证。</p>
+<h2 id="当前定位">当前定位</h2>
+<p>routerd 的主要路由器功能正持续通过核心资源与专用守护进程实现。
+插件是用于安全集成各用户本地扩展功能的基础架构。
+在正式固定为公开兼容 API 之前，manifest 与输入输出格式可能会有所变更。</p>
+<h2 id="cloudedge-mvp">CloudEdge MVP</h2>
+<p>CloudEdge MVP 的插件仅限受信任的本机可执行文件。routerd 不会从远端注册表获取插件，
+也不会远端安装插件。</p>
+<p>插件输出在写入 dynamic-config 或用于构建 effective-config 之前总会被验证。插件可提出
+resource、directive、provider action plan 与 event。<code>actionPlans</code> 在 dynamic-config
+内部是 inert 的；plugin runner 与 merge path 不会执行它们。operator 可将其导入
+provider-action journal，只有在 <code>ProviderActionPolicy</code>、approval、allowlist 与
+dry-run/live mode gate 通过后，才会交给 executor plugin。</p>
+<p>可用 capability 包括 <code>observe.cloud</code>、<code>observe.providerPrivateIPs</code>、
+<code>propose.dynamicConfig</code>、<code>propose.providerAction</code>、<code>execute.providerAction</code>。
+executor plugin 不会从 routerd core 接收 cloud credential；它在自己的进程中使用
+cloud-native identity 或自身环境认证。</p>
+<p>常用 CLI：</p>
+<pre><code class="language-text">routerctl plugin list [--config &lt;startup&gt;] [-o table|json|yaml]
+routerctl plugin run &lt;name&gt; [--dry-run] [--config &lt;startup&gt;] [--state-file &lt;db&gt;] [-o table|json|yaml]
+routerctl action import|list|show|approve|execute|journal|rollback ...
+</code></pre></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#部署位置">部署位置</a></li>
+<li><a href="#职责">职责</a></li>
+<li><a href="#当前定位">当前定位</a></li>
+<li><a href="#cloudedge-mvp">CloudEdge MVP</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/plugin-protocol.md">GitHub</a></div></footer></body></html>

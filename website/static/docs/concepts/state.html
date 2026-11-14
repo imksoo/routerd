@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>State · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/concepts/state.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/concepts/state.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/concepts/state.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/concepts/state.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/concepts/state.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="state">State</h1>
+<p>routerd separates declared intent from observed state.
+YAML is the intent you manage.
+SQLite, lease files, and <code>events.jsonl</code> are state that routerd and its dedicated daemons observe.</p>
+<h2 id="where-state-lives">Where state lives</h2>
+<p>Release installs use <code>/usr/local/etc/routerd/router.yaml</code> for the canonical
+configuration and <code>/usr/local/sbin</code> for routerd binaries.</p>
+<p>Linux state defaults:</p>
+<table>
+<thead>
+<tr>
+<th>Kind</th>
+<th>Example</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>routerd state database</td>
+<td><code>/var/lib/routerd/routerd.db</code></td>
+</tr>
+<tr>
+<td>DHCPv6-PD lease</td>
+<td><code>/var/lib/routerd/dhcpv6-client/wan-pd/lease.json</code></td>
+</tr>
+<tr>
+<td>DHCPv4 lease</td>
+<td><code>/var/lib/routerd/dhcpv4-client/wan/lease.json</code></td>
+</tr>
+<tr>
+<td>PPPoE state</td>
+<td><code>/var/lib/routerd/pppoe-client/&lt;name&gt;/state.json</code></td>
+</tr>
+<tr>
+<td>HealthCheck state</td>
+<td><code>/var/lib/routerd/healthcheck/&lt;name&gt;/state.json</code></td>
+</tr>
+<tr>
+<td>Runtime sockets</td>
+<td><code>/run/routerd/.../*.sock</code></td>
+</tr>
+</tbody>
+</table>
+<p>FreeBSD uses the same configuration and binary paths under <code>/usr/local</code>.
+Its runtime sockets live under <code>/var/run/routerd</code>, and persistent state lives
+under <code>/var/db/routerd</code>.</p>
+<h2 id="dont-act-on-stale-state">Don't act on stale state</h2>
+<p>Leases and observed values are useful, but acting on stale data is dangerous.
+DHCPv6-PD prefixes in particular are propagated downstream only while they are confirmed <code>Bound</code>.
+When that confirmation is missing, routerd suppresses the matching AAAA records, RA, DHCPv6 server, and LAN IPv6 address applications instead of advertising broken connectivity.</p>
+<h2 id="events">Events</h2>
+<p>routerd and its daemons record state changes as events.
+Events are persisted in the SQLite <code>events</code> table and in per-daemon <code>events.jsonl</code> files.
+<code>EventRule</code> and <code>DerivedEvent</code> consume that stream to synthesize virtual state changes.</p>
+<h2 id="apply-generations">Apply generations</h2>
+<p>The <code>generation</code> value in status output is the latest committed apply generation.
+It is incremented when <code>routerctl apply</code> changes the host-side intent store and records a completed apply in SQLite.
+It is not a reconcile loop counter.
+Dry-run plans, daemon events, health checks, and periodic controller runtime reconciliation do not increment it.
+New apply generations store the YAML snapshot that was applied.
+The Web Console uses those snapshots to show a read-only generation history and unified diffs between stored generations.
+Rows created before YAML snapshot storage was introduced remain valid history, but they cannot be diffed.</p>
+<h2 id="stateful-packet-filters">Stateful packet filters</h2>
+<p>On Linux, routerd updates managed nftables tables with a single <code>nft -f</code> transaction.
+Generated rulesets create the managed table if needed, flush that table, and then load the replacement chains in the same nftables batch.
+For named sets owned by routerd, such as firewall zone interface sets and
+client-policy MAC sets, the generated ruleset destroys the managed set before
+defining it again. That prevents removed set elements from surviving a reload.
+routerd does not delete a live NAT or filter table before adding the replacement table.
+Existing conntrack entries therefore remain attached to the kernel state table during routerd restarts and normal configuration changes.</p>
+<p>On FreeBSD, routerd loads generated pf rules with <code>pfctl -f</code>.
+pf keeps the existing state table across rule reloads unless states are explicitly flushed.
+routerd does not flush pf states during normal apply.</p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#where-state-lives">Where state lives</a></li>
+<li><a href="#dont-act-on-stale-state">Don't act on stale state</a></li>
+<li><a href="#events">Events</a></li>
+<li><a href="#apply-generations">Apply generations</a></li>
+<li><a href="#stateful-packet-filters">Stateful packet filters</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/concepts/state.md">GitHub</a></div></footer></body></html>

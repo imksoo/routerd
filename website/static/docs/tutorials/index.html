@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tutorials · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/tutorials/index.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/tutorials/index.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/tutorials/index.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/tutorials/index.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/tutorials/index.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="tutorials">Tutorials</h1>
+<p>Start with one small, observable goal. Do not start with a production router or
+an ISP-specific configuration.</p>
+<h2 id="first-path-an-isolated-ubuntu-lab">First path: an isolated Ubuntu lab</h2>
+<ol>
+<li><a href="network-basics.html">Network basics</a> — learn WAN, LAN, DHCP, DNS, NAT, and
+   the shape of a routerd resource.</li>
+<li><a href="../install-and-upgrade.html">Install and upgrade</a> — install the release on an
+   Ubuntu Server VM or spare computer.</li>
+<li><a href="getting-started.html">Getting started safely</a> — validate and dry-run a file
+   before any live change.</li>
+<li><a href="first-router.html">Bring up the first lab router</a> — test DHCP and IPv4 NAT
+   with a client on an isolated LAN.</li>
+<li><a href="lan-side-services.html">LAN-side services</a> and
+   <a href="wan-side-services.html">WAN-side services</a> — add one feature at a time.</li>
+</ol>
+<h2 id="choose-the-next-tutorial-by-goal">Choose the next tutorial by goal</h2>
+<table>
+<thead>
+<tr>
+<th>Goal</th>
+<th>Read this next</th>
+<th>Prerequisite</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Add local DHCP, DNS, RA, or NTP</td>
+<td><a href="lan-side-services.html">LAN-side services</a></td>
+<td>Working isolated LAN</td>
+</tr>
+<tr>
+<td>Add DHCPv6-PD, PPPoE, or DS-Lite</td>
+<td><a href="wan-side-services.html">WAN-side services</a></td>
+<td>ISP-specific facts and a recovery path</td>
+</tr>
+<tr>
+<td>Understand current firewall resources</td>
+<td><a href="basic-firewall.html">Basic NAT and firewall policy</a></td>
+<td>Do not use as the only Internet security boundary</td>
+</tr>
+<tr>
+<td>Use a diskless mini PC</td>
+<td>Diskless mini PC walkthrough</td>
+<td>A removable USB you can identify safely</td>
+</tr>
+<tr>
+<td>Start from FreeBSD</td>
+<td><a href="freebsd-getting-started.html">FreeBSD getting started</a></td>
+<td>Feature support review; Ubuntu is the first-lab target</td>
+</tr>
+</tbody>
+</table>
+<h2 id="advanced-examples-come-later">Advanced examples come later</h2>
+<p>The configuration examples for DS-Lite, multi-WAN, WireGuard, Tailscale,
+CloudEdge SAM, Kubernetes, and high availability solve real problems, but each
+assumes a working basic router first. Read their prerequisites before applying
+them. A sample is a map of one situation, not a safe default for every network.</p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#first-path-an-isolated-ubuntu-lab">First path: an isolated Ubuntu lab</a></li>
+<li><a href="#choose-the-next-tutorial-by-goal">Choose the next tutorial by goal</a></li>
+<li><a href="#advanced-examples-come-later">Advanced examples come later</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/tutorials/index.md">GitHub</a></div></footer></body></html>

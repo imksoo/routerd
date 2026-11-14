@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DNSUpstream · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/reference/resources/DNSUpstream.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/reference/resources/DNSUpstream.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/DNSUpstream.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/DNSUpstream.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/reference/resources/DNSUpstream.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="dnsupstream">DNSUpstream</h1>
+<p><a href="../resources.html#dnsupstream">各資源的設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>供 DNSForwarder 參照的 DNS 伺服器端點；僅宣告不會啟動接聽或轉送查詢。</p>
+<h2 id="指定條件與參照關係">指定條件與參照關係</h2>
+<ul>
+<li>protocol 必填，即使內部 URL 產生器有 udp 預設。address 或 addressFrom 至少提供一個，可同時使用並合併端點。動態 addressFrom 目前僅支援 UDP。</li>
+<li>必要 addressFrom 未解析時，即使有固定端點，仍暫停包含它的整個轉送來源；選用值則略過。bootstrap 不同：固定清單可補足必要動態 bootstrap 的缺值。</li>
+<li>sourceInterface 原樣傳入通訊端綁定，不解析邏輯名稱或 Kind/name。Linux 請宣告 metadata.name 與 OS ifname 相同的介面。FreeBSD 通訊端路徑拒絕直接 ifname 綁定，而一般設定驗證也未提供可用的 fib:<n> 替代方式。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSUpstream
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    address: &quot;&lt;string&gt;&quot; # 選填; string
+    addressFrom: # 選填; array
+      - # object
+        field: &quot;&lt;string&gt;&quot; # 選填; string
+        optional: true # 選填; boolean
+        resource: &quot;&lt;string&gt;&quot; # 必填; string
+    bootstrap: # 選填; array
+      - &quot;&lt;string&gt;&quot; # string
+    bootstrapFrom: # 選填; array
+      - # object
+        field: &quot;&lt;string&gt;&quot; # 必填; string
+        optional: true # 選填; boolean
+        resource: &quot;&lt;string&gt;&quot; # 必填; string
+    path: &quot;&lt;string&gt;&quot; # 選填; string
+    port: 1 # 選填; integer; minimum=1; maximum=65535
+    protocol: &quot;udp&quot; # 必填; string; enum=[&quot;udp&quot;, &quot;tcp&quot;, &quot;dot&quot;, &quot;doh&quot;]
+    sourceInterface: &quot;&lt;string&gt;&quot; # 選填; string
+    tlsName: &quot;&lt;string&gt;&quot; # 選填; string
+    when: # 選填; object
+      state: # 選填; object
+        &quot;&lt;key&gt;&quot;: # 選填; object
+          contains: &quot;&lt;string&gt;&quot; # 選填; string
+          equals: &quot;&lt;string&gt;&quot; # 選填; string
+          exists: true # 選填; boolean
+          for: &quot;&lt;string&gt;&quot; # 選填; string
+          in: # 選填; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # 選填; string
+          status: &quot;set&quot; # 選填; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<h2 id="欄位意義與預設值">欄位意義與預設值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>欄位意義與預設值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.protocol</code></td>
+<td>必填 udp、tcp、dot 或 doh，請用標準小寫。UDP/TCP 為明文 DNS，DoT 使用 TLS，DoH 使用 HTTPS。</td>
+</tr>
+<tr>
+<td><code>spec.address</code></td>
+<td>不含協定、連接埠或路徑的伺服器 IP 或主機名稱；addressFrom 為空時必填。無隱含伺服器，若提供 bootstrap 則用於名稱解析。</td>
+</tr>
+<tr>
+<td><code>spec.addressFrom</code></td>
+<td>選用且僅限 UDP 的狀態值來源清單，每項須有已宣告 resource 與明確提供欄位；optional 預設 false。動態純位址會獨立於此資源 port 正規化為 UDP 53，可傳回多個伺服器。</td>
+</tr>
+<tr>
+<td><code>spec.port</code></td>
+<td>選用 1–65535；省略或 0 時 udp/tcp 為 53、dot 為 853、doh 為 443。用於固定 address，不套用至 addressFrom 傳回的純位址。</td>
+</tr>
+<tr>
+<td><code>spec.path</code></td>
+<td>DoH URL 路徑，預設 /dns-query；doh 提供此值時須以 / 開頭。其他協定不使用。</td>
+</tr>
+<tr>
+<td><code>spec.tlsName</code></td>
+<td>DoT 憑證驗證與 SNI 伺服器名稱，省略使用端點主機名稱。DoH 明確設定會被驗證拒絕；UDP/TCP 雖可通過驗證但會忽略。</td>
+</tr>
+<tr>
+<td><code>spec.bootstrap</code></td>
+<td>選用的上游主機名稱解析 DNS 清單。與 bootstrapFrom 皆空或省略且無必要相依等待時，使用 OS 解析器。同一轉送規則的上游共用合併後設定。</td>
+</tr>
+<tr>
+<td><code>spec.bootstrapFrom</code></td>
+<td>選用且 field 必填的來源清單；resource/field 須非空，optional 預設 false。請使用既有 Kind/name 及其提供的狀態欄位；但此型別不同於一般 StatusValueSourceSpec，目前驗證不檢查目標存在或提供欄位成員資格。動態與固定 bootstrap 合併，固定清單可補足必要動態值的缺值。</td>
+</tr>
+<tr>
+<td><code>spec.sourceInterface</code></td>
+<td>選用的已宣告 Interface 或 WireGuardInterface 名稱；預設空值由 OS 選路。綁定由轉送池共用，須注意上述原樣名稱及 FreeBSD 限制。</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>選用共用狀態條件，預設無條件。篩除此上游可能使轉送規則沒有可用端點。</td>
+</tr>
+</tbody>
+</table>
+<p>實作: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_dns.go">pkg/config/validate_dns.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go">pkg/config/diagnostics.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/dnsresolver/controller.go">pkg/controller/dnsresolver/controller.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/dnsresolver/dnsresolver.go">pkg/dnsresolver/dnsresolver.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd-dns-resolver/upstream.go">cmd/routerd-dns-resolver/upstream.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd-dns-resolver/upstream_bind_linux.go">cmd/routerd-dns-resolver/upstream_bind_linux.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd-dns-resolver/upstream_bind_freebsd.go">cmd/routerd-dns-resolver/upstream_bind_freebsd.go</a></p>
+<h2 id="可參照的狀態欄位">可參照的狀態欄位</h2>
+<p>一般狀態參照驗證接受此 Kind 的下列欄位名稱。列於允許清單不保證目前有值，請檢查實際狀態。這些是輸出，不是 YAML spec 設定。</p>
+<p><code>phase</code>, <code>address</code>, <code>url</code></p>
+<p><a href="/examples/example-dslite-home.yaml">設定範例</a></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#指定條件與參照關係">指定條件與參照關係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#欄位意義與預設值">欄位意義與預設值</a></li>
+<li><a href="#可參照的狀態欄位">可參照的狀態欄位</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/reference/resources/DNSUpstream.md">GitHub</a></div></footer></body></html>

@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Legal and Redistribution · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/legal.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/legal.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/legal.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/legal.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/legal.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="legal-and-redistribution">Legal and Redistribution</h1>
+<p>routerd itself is distributed under the BSD 3-Clause License. The full license
+text is in the repository root as <code>LICENSE</code>.</p>
+<p>The routerd copyright notice is:</p>
+<pre><code class="language-text">Copyright (c) 2026 Kirino Minato &lt;kirino.minato@gmail.com&gt; (https://github.com/imksoo) and routerd contributors
+</code></pre>
+<p>This page summarizes the practical redistribution rules for routerd release
+archives and the routerd live ISO. It is an operational note, not legal advice.</p>
+<h2 id="routerd-binaries">routerd binaries</h2>
+<p>The routerd binaries are built from Go source code in this repository. Before a
+release, run:</p>
+<pre><code class="language-sh">make third-party-licenses
+</code></pre>
+<p>That command regenerates <code>THIRD_PARTY_LICENSES.md</code>. It lists:</p>
+<ul>
+<li>Go modules linked into routerd binaries</li>
+<li>detected license text type</li>
+<li>license file name</li>
+<li>module source URL</li>
+<li>Ubuntu base-package source and license metadata guidance</li>
+</ul>
+<p>The current audit path checks Go module license files for GPL, LGPL, and AGPL
+text. If such a linked Go module appears, stop the release and review whether
+the routerd binary license needs to change or the dependency needs to be
+removed.</p>
+<p>Source files use SPDX identifiers such as:</p>
+<pre><code class="language-text">SPDX-License-Identifier: BSD-3-Clause
+</code></pre>
+<p>Those headers identify the routerd source license. They do not change the
+licenses of bundled tools, OS packages, Go modules, or other third-party
+components listed in <code>THIRD_PARTY_LICENSES.md</code>.</p>
+<h2 id="release-archives">Release archives</h2>
+<p>Release archives contain:</p>
+<ul>
+<li>routerd binaries</li>
+<li>installer scripts</li>
+<li>systemd or rc.d service templates</li>
+<li>sample configuration</li>
+<li><code>share/doc/LICENSE</code></li>
+<li><code>share/doc/THIRD_PARTY_LICENSES.md</code></li>
+</ul>
+<p>When redistributing a release archive, keep those files with the archive.</p>
+<h2 id="live-iso">Live ISO</h2>
+<p>The current live ISO is built from Ubuntu using <code>debootstrap</code> (the default
+suite is <code>noble</code>). The generated inventory points to Ubuntu archive metadata
+for the base OS packages; it is not a complete per-package source inventory.
+Review the source and license information for the exact base release before
+redistributing an image.</p>
+<p>The live ISO is an aggregate distribution. It combines:</p>
+<ul>
+<li>routerd binaries and scripts</li>
+<li>Ubuntu base files</li>
+<li>Ubuntu packages such as dnsmasq, nftables, WireGuard tools, ppp, iproute2,
+  chrony, tcpdump, and related utilities</li>
+</ul>
+<p>Those OS packages keep their own upstream licenses. Some are GPL licensed.
+The live ISO is not relicensed as a single GPL work.</p>
+<p>The live ISO includes the routerd notices at:</p>
+<pre><code class="language-text">/usr/local/share/doc/routerd/LICENSE
+/usr/local/share/doc/routerd/THIRD_PARTY_LICENSES.txt
+</code></pre>
+<p>Source information for the Ubuntu base packages is available from Ubuntu
+archive metadata for the release used to build the ISO, as explained in
+<code>THIRD_PARTY_LICENSES.md</code>.</p>
+<h2 id="release-checklist">Release checklist</h2>
+<p>Before publishing a release:</p>
+<ol>
+<li>Run <code>make third-party-licenses</code>.</li>
+<li>Confirm the Go module copyleft check reports no GPL, LGPL, or AGPL module.</li>
+<li>Confirm GPL-family licenses only appear in separately distributed OS
+   packages or other external tools.</li>
+<li>Run the normal test, schema, example, website, archive, and live ISO checks.</li>
+<li>Confirm release archives include <code>share/doc/LICENSE</code> and
+   <code>share/doc/THIRD_PARTY_LICENSES.md</code>.</li>
+<li>Confirm the live ISO includes <code>/usr/local/share/doc/routerd/</code>.</li>
+</ol>
+<p>If the dependency set changes substantially, review this page and the generated
+license inventory before tagging the release.</p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#routerd-binaries">routerd binaries</a></li>
+<li><a href="#release-archives">Release archives</a></li>
+<li><a href="#live-iso">Live ISO</a></li>
+<li><a href="#release-checklist">Release checklist</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/legal.md">GitHub</a></div></footer></body></html>

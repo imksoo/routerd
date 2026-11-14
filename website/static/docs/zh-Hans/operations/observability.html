@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>观测管线 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/operations/observability.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/operations/observability.html" lang="en" hreflang="en">English</a><a href="/docs/ja/operations/observability.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/operations/observability.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/operations/observability.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="观测管线">观测管线</h1>
+<p><code>Telemetry</code> 是一个小型资源，用于将 routerd 自身的指标、追踪与日志输出至 OTLP。<code>LogSink</code> 代表运维事件与观测日志的转发路径。OTLP 类型的 <code>LogSink</code> 通过引用 <code>Telemetry</code> 资源来避免重复填写采集器端点。若需将 routerd 的事件日志传送至 Loki 等管线型远端 sink，请使用 <code>ObservabilityPipeline</code>。</p>
+<p><code>ObservabilityPipeline</code> 是 routerd 内置的管线，而非随附的 <code>otelcol</code> 进程。OTLP 的日志、指标与追踪使用标准 OpenTelemetry SDK 送出，配置的日志 sink 则由轻量事件导出器负责传送。</p>
+<p>目前支持的日志 sink 如下：</p>
+<ul>
+<li><code>stdout</code>：JSON 格式的事件行。</li>
+<li><code>syslog</code>：与现有 <code>LogSink</code> 相同的 syslog 格式。</li>
+<li><code>loki</code>：通过 HTTP push 至 <code>/loki/api/v1/push</code>。</li>
+</ul>
+<p><code>kafka</code> 作为元数据接受，以便在配置中保留预期的外部管线意图。
+routerd 目前尚未直接发布至 Kafka。</p>
+<pre><code class="language-yaml">apiVersion: system.routerd.net/v1alpha1
+kind: ObservabilityPipeline
+metadata:
+  name: remote-observability
+spec:
+  otlp:
+    endpoint: http://otel-collector.lan:4317
+    insecure: true
+  serviceNamespace: routerd
+  attributes:
+    site: edge
+  signals: [logs, metrics, traces]
+  sampling:
+    rate: 1
+  logs:
+    sinks:
+      - name: loki
+        type: loki
+        minLevel: info
+        loki:
+          url: http://loki.lan:3100/loki/api/v1/push
+          tenant: routerd
+</code></pre>
+<p>OTLP 字段会展开为 routerd 所管理单元的标准 OpenTelemetry 环境变量。日志 sink 的导出器会订阅进程内总线的 <code>routerd.**</code> 事件，因此无需 scrape <code>journalctl</code>，即可转发控制器状态变更与守护进程事件。</p>
+<p>完整示例请参阅 <code>examples/observability-loki.yaml</code>。</p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul></ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/operations/observability.md">GitHub</a></div></footer></body></html>

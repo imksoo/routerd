@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DerivedEvent · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/reference/resources/DerivedEvent.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/reference/resources/DerivedEvent.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/DerivedEvent.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/DerivedEvent.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/DerivedEvent.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="derivedevent">DerivedEvent</h1>
+<p><a href="../resources.html#derivedevent">各资源的配置</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>资源状态条件改变时，发送成立或撤回事件。与 EventRule 不同，此处评估当前状态而非事件序列。</p>
+<h2 id="指定条件与引用关系">指定条件与引用关系</h2>
+<ul>
+<li>topic 与非空 inputs 列表必填。输入使用 field/equals/not_empty/any_of 结构，不是通用 resource/field 来源、dependsOn 或 when。</li>
+<li>当前以 Kind/name.status.field（可包在 ${...} 中）读取 net.routerd.net/v1alpha1 状态。不含 .status. 的字符串视为固定值，不是状态引用。普通状态来源验证不会检查这些输入的来源存在性或提供字段兼容性。</li>
+<li>控制器在启动、收到自身以外的本机 routerd.** 事件及定期处理时评估（默认 5 秒）。进程重启会重置转换状态与滞后计时器，不会从已存状态恢复。</li>
+<li>retractWhen 会验证，但当前评估器不读取。撤回按 emitWhen 判定的反值，因此改变 retractWhen 不会改变行为。</li>
+</ul>
+<h2 id="yaml定义">YAML定义</h2>
+<p>此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DerivedEvent
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    emitInitial: true # 选填; boolean
+    emitWhen: &quot;all_true&quot; # 选填; string; enum=[&quot;all_true&quot;, &quot;any_true&quot;]
+    hysteresis: &quot;&lt;string&gt;&quot; # 选填; string
+    inputs: # 必填; array
+      - # object
+        any_of: # 选填; array
+          - # array
+            - # object
+              equals: &quot;&lt;string&gt;&quot; # 选填; string
+              field: &quot;&lt;string&gt;&quot; # 选填; string
+              not_empty: true # 选填; boolean
+        equals: &quot;&lt;string&gt;&quot; # 选填; string
+        field: &quot;&lt;string&gt;&quot; # 选填; string
+        not_empty: true # 选填; boolean
+    retractWhen: &quot;any_false&quot; # 选填; string; enum=[&quot;any_false&quot;, &quot;all_false&quot;]
+    topic: &quot;&lt;string&gt;&quot; # 必填; string
+</code></pre>
+<h2 id="字段含义与默认值">字段含义与默认值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>字段含义与默认值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.topic</code></td>
+<td>必填的基础事件主题。成立发送 <topic>.asserted，不成立发送 <topic>.retracted；不发送裸主题事件。</td>
+</tr>
+<tr>
+<td><code>spec.inputs</code></td>
+<td>必填且非空的条件列表，由 emitWhen 组合。空条件对象会评估为 true，请明确填写条件。</td>
+</tr>
+<tr>
+<td><code>spec.inputs[].field</code></td>
+<td>可选字符串，默认空。Kind/name.status.field 读取状态顶层成员；来源或成员不存在则为空。其他字符串视为固定值。数组转为 JSON 字符串，equals 比较完整序列化值。</td>
+</tr>
+<tr>
+<td><code>spec.inputs[].equals</code></td>
+<td>可选、区分大小写的完全匹配。默认空表示不比较。field 非空且未设 equals/not_empty 时，隐含要求值非空白。</td>
+</tr>
+<tr>
+<td><code>spec.inputs[].not_empty</code></td>
+<td>默认 false。true 拒绝空值或纯空白；equals 亦非空时，两个条件均须成立。</td>
+</tr>
+<tr>
+<td><code>spec.inputs[].any_of</code></td>
+<td>可选的 AND 组 OR 列表。非空时优先于此输入的 field/equals/not_empty。每组至少一个条件且全部成立；空组为 false。</td>
+</tr>
+<tr>
+<td><code>spec.inputs[].any_of[][].field</code></td>
+<td>组条件字段，状态或固定值规则同 inputs[].field。</td>
+</tr>
+<tr>
+<td><code>spec.inputs[].any_of[][].equals</code></td>
+<td>组完全匹配；空值与默认语义同 inputs[].equals。</td>
+</tr>
+<tr>
+<td><code>spec.inputs[].any_of[][].not_empty</code></td>
+<td>组非空白检查，默认 false，语义同 inputs[].not_empty。</td>
+</tr>
+<tr>
+<td><code>spec.emitWhen</code></td>
+<td>默认 all_true 要求所有输入成立；any_true 要求至少一项成立。此目标变为 false 也会决定撤回。</td>
+</tr>
+<tr>
+<td><code>spec.retractWhen</code></td>
+<td>接受 any_false（默认）与 all_false，但验证后未使用。不可依赖独立的撤回条件。</td>
+</tr>
+<tr>
+<td><code>spec.hysteresis</code></td>
+<td>可选 Go 时长，默认 0 为立即转换。新目标须持续至计时到期再检查；恢复旧目标会取消。初始状态不等待。验证接受负值，会立即触发。</td>
+</tr>
+<tr>
+<td><code>spec.emitInitial</code></td>
+<td>默认 false，仅保存初始状态而不发送事件。true 在每次新控制器状态建立时发送初始结果，包含重启后。</td>
+</tr>
+</tbody>
+</table>
+<p>实现: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_route.go">pkg/config/validate_route.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go">pkg/config/diagnostics.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/derived/engine.go">pkg/derived/engine.go</a></p>
+<h2 id="可引用的状态字段">可引用的状态字段</h2>
+<p>常规状态引用验证接受此 Kind 的下列字段名称。列于允许列表不保证目前有值，请检查实际状态。这些是输出，不是 YAML spec 配置。</p>
+<p><code>phase</code>, <code>topic</code></p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件与引用关系">指定条件与引用关系</a></li>
+<li><a href="#yaml定义">YAML定义</a></li>
+<li><a href="#字段含义与默认值">字段含义与默认值</a></li>
+<li><a href="#可引用的状态字段">可引用的状态字段</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/reference/resources/DerivedEvent.md">GitHub</a></div></footer></body></html>

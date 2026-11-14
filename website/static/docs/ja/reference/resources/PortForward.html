@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PortForward · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/reference/resources/PortForward.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/reference/resources/PortForward.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/PortForward.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/reference/resources/PortForward.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/PortForward.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="portforward">PortForward</h1>
+<p><a href="../resources.html#portforward">リソース別の設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: firewall.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>TCP・UDPポートを1つのIPv4先へ転送し、任意で内部折り返しNATを設定します。LinuxはDNATと転送許可、FreeBSDはrdr passを生成します。</p>
+<h2 id="指定条件と参照関係">指定条件と参照関係</h2>
+<ul>
+<li>listen・targetが必須です。targetはaddress・addressFromのちょうど一方とportが必要で、固定値はホスト名・CIDRでなく裸のIPv4です。listenのアドレスを両方省略すると、そのインターフェース上の全宛先が対象です。</li>
+<li>参照先存在・提供fieldを検証しますが、本NAT描画が読むのは宣言済みIPv4StaticAddress.address・VirtualAddress.addressだけです。optional=trueは対応参照の未解決時にルールを省略できるだけで、任意の動的参照にはなりません。PortForwardにbackendヘルスチェックはありません。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: PortForward
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    hairpin: # 任意; object
+      enabled: true # 任意; boolean
+      interfaces: # 任意; array
+        - &quot;&lt;string&gt;&quot; # string
+      mode: &quot;&quot; # 任意; string; enum=[&quot;&quot;, &quot;auto&quot;, &quot;manual&quot;, &quot;off&quot;]
+    listen: # 必須; object
+      address: &quot;&lt;string&gt;&quot; # 任意; string
+      addressFrom: # 任意; object
+        field: &quot;&lt;string&gt;&quot; # 任意; string
+        optional: true # 任意; boolean
+        resource: &quot;&lt;string&gt;&quot; # 必須; string
+      interface: &quot;&lt;string&gt;&quot; # 必須; string
+      port: 1 # 必須; integer; minimum=1; maximum=65535
+      protocol: &quot;tcp&quot; # 必須; string; enum=[&quot;tcp&quot;, &quot;udp&quot;]
+    target: # 必須; object
+      address: &quot;&lt;string&gt;&quot; # 任意; string
+      addressFrom: # 任意; object
+        field: &quot;&lt;string&gt;&quot; # 任意; string
+        optional: true # 任意; boolean
+        resource: &quot;&lt;string&gt;&quot; # 必須; string
+      port: 1 # 必須; integer; minimum=1; maximum=65535
+    when: # 任意; object
+      state: # 任意; object
+        &quot;&lt;key&gt;&quot;: # 任意; object
+          contains: &quot;&lt;string&gt;&quot; # 任意; string
+          equals: &quot;&lt;string&gt;&quot; # 任意; string
+          exists: true # 任意; boolean
+          for: &quot;&lt;string&gt;&quot; # 任意; string
+          in: # 任意; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # 任意; string
+          status: &quot;set&quot; # 任意; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>項目の意味と既定値</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.listen</code></td>
+<td>必須のIPv4公開側設定です。NAT・ファイアウォールを作り、アプリの待受・アドレス割当は行いません。</td>
+</tr>
+<tr>
+<td><code>spec.listen.interface</code></td>
+<td>必須の裸の論理インターフェース名で、Kind/nameではありません。設定索引に存在し、OS名を解決する必要があります。</td>
+</tr>
+<tr>
+<td><code>spec.listen.address</code></td>
+<td>任意の裸の宛先IPv4です。addressFromと排他で、省略すると待受インターフェース上の全宛先アドレスに一致します。</td>
+</tr>
+<tr>
+<td><code>spec.listen.addressFrom</code></td>
+<td>addressと排他の共通resource・field・optional参照です。NAT・静的描画は宣言済みIPv4StaticAddress.address・VirtualAddress.addressに対応し、任意の実行時statusは読みません。一般参照の検証成功だけでは描画対応を保証しません。</td>
+</tr>
+<tr>
+<td><code>spec.listen.protocol</code></td>
+<td>tcp・udpが必須で既定値はありません。転送通信の選択であり、ヘルスチェック方式とは別です。</td>
+</tr>
+<tr>
+<td><code>spec.listen.port</code></td>
+<td>必須の宛先ポート1～65535です。範囲・一覧・既定値はありません。</td>
+</tr>
+<tr>
+<td><code>spec.hairpin</code></td>
+<td>公開アドレス経由で内部へ戻す任意のNAT設定です。有効時はlistenアドレスの解決が必要です。PortForwardの既定はoff、IngressServiceはautoです。</td>
+</tr>
+<tr>
+<td><code>spec.hairpin.enabled</code></td>
+<td>既定falseです。mode省略時、trueはPortForwardでmanual、IngressServiceは引き続きautoです。mode=offはtrueでも無効にします。</td>
+</tr>
+<tr>
+<td><code>spec.hairpin.mode</code></td>
+<td>auto・manual・offです。autoはlisten・backendが宣言IPv4サブネットまたは同じプライベート/24にある場合にlisten側を選び、任意LAN経路を検出するものではありません。manualでルールを作るにはenabled=trueとinterfacesが必要です。</td>
+</tr>
+<tr>
+<td><code>spec.hairpin.interfaces</code></td>
+<td>任意の裸の宣言論理名で重複は禁止です。有効なmanualには1件以上必要です。autoはlisten側も追加し、IPv4 DNATとmasquerade・PF SNATで戻りをルーター経由にします。</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>共通の有効化条件で、既定は無条件です。不成立は実効生成から除きます。判定・スキーマ制約は共通項を参照してください。</td>
+</tr>
+<tr>
+<td><code>spec.target</code></td>
+<td>必須の単一内部転送先です。IP割当・サービス起動は行いません。</td>
+</tr>
+<tr>
+<td><code>spec.target.address</code></td>
+<td>裸のIPv4転送先で、target.addressFromとちょうど一方が必須です。既定なしです。</td>
+</tr>
+<tr>
+<td><code>spec.target.addressFrom</code></td>
+<td>共通resource・field・optional参照で、listen.addressFromと同じ宣言値の制約です。IPv4への解決が必要です。</td>
+</tr>
+<tr>
+<td><code>spec.target.port</code></td>
+<td>listen.portとは独立した必須の内部TCP・UDPポート1～65535です。</td>
+</tr>
+</tbody>
+</table>
+<p>実装: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_firewall.go">pkg/config/validate_firewall.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go">pkg/config/diagnostics.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/ingress.go">pkg/render/ingress.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/status_source.go">pkg/render/status_source.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/nftables.go">pkg/render/nftables.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/pf.go">pkg/render/pf.go</a></p>
+<h2 id="状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</h2>
+<p>通常の状態値参照の検証で、このKindについて許可するフィールド名です。許可一覧にあるだけでは値の生成・取得を保証しないため、実際の状態を確認してください。YAMLのspecに設定する項目ではなく出力です。</p>
+<p><code>phase</code>, <code>listenAddress</code>, <code>target</code>, <code>dryRun</code></p>
+<p><a href="/examples/example-port-forward-web.yaml">設定例</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
+<li><a href="#状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/reference/resources/PortForward.md">GitHub</a></div></footer></body></html>

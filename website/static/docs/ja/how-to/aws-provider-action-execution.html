@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AWS SAM プロバイダーアクションをゲート付き executor で実行する · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/how-to/aws-provider-action-execution.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/how-to/aws-provider-action-execution.html" lang="en" hreflang="en">English</a><a href="/docs/ja/how-to/aws-provider-action-execution.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/how-to/aws-provider-action-execution.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/aws-provider-action-execution.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="aws-sam-プロバイダーアクションをゲート付き-executor-で実行する">AWS SAM プロバイダーアクションをゲート付き executor で実行する</h1>
+<p>これは CloudEdge プロバイダーアクション実行のための<strong>ゲート付きライブ変更</strong>パスです。
+<strong>実験的</strong>であり AWS 限定です。
+ADR 0007: Provider Action Execution および
+<a href="../reference/selective-address-mobility.html">Selective Address Mobility</a>
+データプレーンの上に構築されています。本番環境や共有リソースに対してライブ実行ステップを<strong>実行しないでください</strong>。ライブ実行は、この Runbook と読み取り専用 preflight のエビデンスをレビューした後、<strong>オーナーの明示的な承認を得てからのみ</strong>行います。</p>
+<p>SAM データプレーンは AWS×PVE（ENI セカンダリプライベート IP + source/dest check 無効化）ですでに実クラウド検証済みです。これまでその attach/detach は<strong>運用者の手動操作</strong>でした。このガイドでは、同じ変更を手動の代わりに<strong>ゲート付きジャーナル化</strong>実行パス（ADR 0007）で行う <code>aws-provider-executor</code> プラグインについて説明します。</p>
+<h2 id="1-スコープと境界">1. スコープと境界</h2>
+<ul>
+<li><strong>AWS のみ。プロバイダーは 1 つだけ。</strong> この Runbook には Azure も OCI も含みません。</li>
+<li><strong>トポロジー:</strong> <code>routerd-cloud</code> ノード 1 台 + cloud-client 1 台 + on-prem-client 1 台で、on-prem から cloud ENI へ移動する捕捉済み <strong><code>/32</code> は 1 つだけ</strong>です。ラボアドレスとしては（SAM リファレンスに従い）cloud-client が <code>.7</code>、on-prem-client が <code>.9</code> です。</li>
+<li><strong>専用ラボ限定。</strong> このテスト用に作成した使い捨ての VPC / サブネット / インスタンスです。<strong>本番リソースや共有リソースは使いません。</strong> 他が依存する EIP、セキュリティグループ、ルートテーブル、インスタンスもありません。</li>
+<li><strong>ライブ実行はオーナーの明示的な承認後のみ。</strong> 読み取り専用 preflight（Section 4）まではいつでも実行できます。Section 7 の変更はゲートされています。</li>
+</ul>
+<h2 id="2-executor-の設計">2. Executor の設計</h2>
+<p><code>aws-provider-executor</code> は <code>execute.providerAction</code> ケーパビリティ（<code>PluginSpec.Capabilities</code> の Phase 5 列挙値）を通知するプラグインです。<strong>独立したプロセス</strong>で動作し、AWS CLI 経由で <strong>EC2 インスタンス IAM ロール（インスタンスプロファイル）</strong> を使って認証します。<strong>routerd コアは認証情報を一切渡しません</strong> — executor は ADR 0007 のハード不変条件に従い、クラウドネイティブの識別情報のみを使います。</p>
+<p>executor は <strong>stdin</strong> から <code>ExecuteActionRequest</code> を 1 つ読み取り、stdout に <code>ExecuteActionResult</code> を 1 つ出力します。リクエスト仕様には <code>Action</code>、<code>Provider</code>、<code>ProviderRef</code>、<code>Target</code>（プロバイダーキー: AWS の場合は <code>nicRef</code> = ENI id、<code>address</code>、<code>region</code>）、<code>Parameters</code>、<code>Mode</code>（<code>dry-run</code> | <code>execute</code>）、<code>IdempotencyKey</code>、許可リスト済みの <code>Context</code> が含まれます。結果には <code>Status</code>（<code>succeeded</code> | <code>failed</code> | <code>skipped</code>）、<code>Message</code>、<code>Observed</code>（ジャーナルが記録する非秘密の事実）、<code>UndoAvailable</code>、<code>Error</code> が含まれます。</p>
+<p><strong><code>dry-run</code> モードは変更を一切行いません</strong> — describe / 読み取り専用の呼び出しのみです。<code>execute</code> モードが変更を行います。</p>
+<h3 id="assign-secondary-ip"><code>assign-secondary-ip</code></h3>
+<p>捕捉した <code>/32</code> を cloud ENI にアタッチします。</p>
+<ul>
+<li><strong>dry-run</strong>（読み取り専用）: ENI を describe して現在のセカンダリ IP を報告し、<code>would assign &lt;address&gt; to &lt;eni&gt;</code> と出力します。</li>
+</ul>
+<p><code>sh
+  aws ec2 describe-network-interfaces \
+    --network-interface-ids "&lt;eni-id&gt;" --region "&lt;region&gt;"</code></p>
+<ul>
+<li><strong>execute</strong>（変更）:</li>
+</ul>
+<p><code>sh
+  aws ec2 assign-private-ip-addresses \
+    --network-interface-id "&lt;eni-id&gt;" \
+    --private-ip-addresses "&lt;address&gt;" --region "&lt;region&gt;"</code></p>
+<h3 id="ensure-forwarding-enabled"><code>ensure-forwarding-enabled</code></h3>
+<p>捕捉したアドレスのために cloud ノードが転送できるよう、ENI の source/dest check を無効化します。</p>
+<ul>
+<li>
+<p><strong>dry-run</strong>（読み取り専用）: 現在の <code>SourceDestCheck</code> を describe し、<code>would set SourceDestCheck=false</code> と出力します。</p>
+</li>
+<li>
+<p><strong>execute</strong>（変更）: <strong>まず現在の <code>SourceDestCheck</code> を describe して変更前の値を <code>Observed</code> に記録し、その後</strong>無効化します。</p>
+</li>
+</ul>
+<p>```sh
+  # 1. 変更前に変更前の状態をキャプチャ（読み取り専用）
+  aws ec2 describe-network-interfaces \
+    --network-interface-ids "<eni-id>" --region "<region>" \
+    --query 'NetworkInterfaces[0].SourceDestCheck'</p>
+<p># 2. 変更
+  aws ec2 modify-network-interface-attribute \
+    --network-interface-id "<eni-id>" \
+    --no-source-dest-check --region "<region>"
+  ```</p>
+<p>結果の <code>Observed</code> には <code>priorSourceDestCheck=&lt;true|false&gt;</code> を<strong>必ず</strong>含めてください。これにより、このアクション実行前に存在していた状態をジャーナルが記録します。undo ステップはこの値に依存します。</p>
+<h3 id="unassign-secondary-ipassign-secondary-ip-の-undo"><code>unassign-secondary-ip</code>（<code>assign-secondary-ip</code> の undo）</h3>
+<pre><code class="language-sh">aws ec2 unassign-private-ip-addresses \
+  --network-interface-id &quot;&lt;eni-id&gt;&quot; \
+  --private-ip-addresses &quot;&lt;address&gt;&quot; --region &quot;&lt;region&gt;&quot;
+</code></pre>
+<h3 id="ensure-forwarding-disabledensure-forwarding-enabled-の-undo"><code>ensure-forwarding-disabled</code>（<code>ensure-forwarding-enabled</code> の undo）</h3>
+<p><strong>ジャーナルの <code>Observed.priorSourceDestCheck</code> に記録された変更前の状態を復元します。</strong>
+これが安全性を支える重要なルールです:</p>
+<ul>
+<li><code>priorSourceDestCheck == true</code> の場合 → 操作前にチェックが有効だった → 復元します:</li>
+</ul>
+<p><code>sh
+  aws ec2 modify-network-interface-attribute \
+    --network-interface-id "&lt;eni-id&gt;" \
+    --source-dest-check --region "&lt;region&gt;"</code></p>
+<ul>
+<li><code>priorSourceDestCheck == false</code> の場合 → 操作前に<strong>すでに無効だった</strong>（ENI はすでにフォワーダーだった） → <strong>何もしません</strong>。<code>Status=skipped</code> を返します。チェックを強制的に再有効化<strong>しないでください</strong>。</li>
+</ul>
+<p><strong>undo = チェックを有効化、とハードコードしてはいけません。</strong> 盲目的に「undo で source/dest-check を再有効化する」と、独自の理由ですでにフォワーダーとして動作していたアプライアンス/ENI を壊します。undo は観測した値を読み戻し、実際に変更した部分だけを元に戻す必要があります。</p>
+<h2 id="3-iam-最小権限">3. IAM 最小権限</h2>
+<p>executor の EC2 インスタンスにアタッチされたインスタンスプロファイルには、<strong>以下の 4 つの EC2 アクションのみ</strong>を付与します:</p>
+<table>
+<thead>
+<tr>
+<th>アクション</th>
+<th>使用箇所</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ec2:DescribeNetworkInterfaces</code></td>
+<td>dry-run + preflight + 変更前状態キャプチャ</td>
+</tr>
+<tr>
+<td><code>ec2:AssignPrivateIpAddresses</code></td>
+<td><code>assign-secondary-ip</code> の execute</td>
+</tr>
+<tr>
+<td><code>ec2:UnassignPrivateIpAddresses</code></td>
+<td><code>unassign-secondary-ip</code> の undo</td>
+</tr>
+<tr>
+<td><code>ec2:ModifyNetworkInterfaceAttribute</code></td>
+<td>forwarding の有効化/無効化 execute</td>
+</tr>
+</tbody>
+</table>
+<p>ラボの ENI / VPC にスコープを限定するため、API がサポートする範囲でリソース ARN と条件を設定します（変更系の ENI アクションはラボ ENI ARN にリソーススコープ可能、<code>Describe*</code> はリソーススコープ不可のため <code>ec2:Region</code> / <code>ec2:Vpc</code> などの条件キーで制限）:</p>
+<pre><code class="language-json">{
+  &quot;Version&quot;: &quot;2012-10-17&quot;,
+  &quot;Statement&quot;: [
+    {
+      &quot;Sid&quot;: &quot;DescribeEnis&quot;,
+      &quot;Effect&quot;: &quot;Allow&quot;,
+      &quot;Action&quot;: &quot;ec2:DescribeNetworkInterfaces&quot;,
+      &quot;Resource&quot;: &quot;*&quot;,
+      &quot;Condition&quot;: { &quot;StringEquals&quot;: { &quot;ec2:Region&quot;: &quot;&lt;region&gt;&quot; } }
+    },
+    {
+      &quot;Sid&quot;: &quot;MutateLabEni&quot;,
+      &quot;Effect&quot;: &quot;Allow&quot;,
+      &quot;Action&quot;: [
+        &quot;ec2:AssignPrivateIpAddresses&quot;,
+        &quot;ec2:UnassignPrivateIpAddresses&quot;,
+        &quot;ec2:ModifyNetworkInterfaceAttribute&quot;
+      ],
+      &quot;Resource&quot;: &quot;arn:aws:ec2:&lt;region&gt;:&lt;account-id&gt;:network-interface/&lt;eni-id&gt;&quot;
+    }
+  ]
+}
+</code></pre>
+<p><strong>これ以上の EC2 権限は不要です。IAM/STS の書き込み権限も不要です。他の AWS サービスも不要です。</strong> 必要な呼び出しがこのリストにない場合、ロールを拡大するのではなく Runbook を停止します。</p>
+<h2 id="4-読み取り専用-preflight">4. 読み取り専用 preflight</h2>
+<p><strong>変更前に</strong>、専用ラボに対して実行し、ターゲットを確認します。<strong>これらはいずれも変更しません。</strong> lab-codex がこれらを実行して出力をキャプチャし、オーナーが go を出す前にレビューするエビデンスとします。</p>
+<pre><code class="language-sh"># ターゲット ENI + 現在のセカンダリプライベート IP + 現在の SourceDestCheck
+aws ec2 describe-network-interfaces \
+  --network-interface-ids &quot;&lt;eni-id&gt;&quot; --region &quot;&lt;region&gt;&quot; \
+  --query 'NetworkInterfaces[0].{Eni:NetworkInterfaceId,SrcDstCheck:SourceDestCheck,PrivateIps:PrivateIpAddresses[*].PrivateIpAddress}'
+
+# ENI がアタッチされているインスタンス
+aws ec2 describe-instances \
+  --filters &quot;Name=network-interface.network-interface-id,Values=&lt;eni-id&gt;&quot; \
+  --region &quot;&lt;region&gt;&quot;
+
+# ENI のサブネット
+aws ec2 describe-subnets \
+  --subnet-ids &quot;&lt;subnet-id&gt;&quot; --region &quot;&lt;region&gt;&quot;
+
+# そのサブネットのルートテーブル（デフォルトゲートウェイに予期しない変更がないか確認）
+aws ec2 describe-route-tables \
+  --filters &quot;Name=association.subnet-id,Values=&lt;subnet-id&gt;&quot; \
+  --region &quot;&lt;region&gt;&quot;
+</code></pre>
+<p>確認事項:</p>
+<ol>
+<li><strong>IAM ロールが Section 3 の 4 権限のみであること</strong> — インスタンスプロファイルのアタッチ済みポリシーを確認し、広い EC2 権限、IAM/STS 書き込み権限、他のサービスがないことを検証します。（ポリシードキュメントの読み取り専用検査です。ここでは変更しません。）</li>
+<li><strong>アドレスがまだ割り当てられていないこと</strong> — <code>&lt;address&gt;</code> が上記の最初の describe で取得した ENI の <code>PrivateIpAddresses</code> に<strong>まだ含まれていない</strong>ことを確認します。すでに含まれている場合、assign は no-op であり、ラボが汚れています — 停止して調査してください。</li>
+<li><strong><code>SourceDestCheck</code> の現在値が記録されていること</strong> — この値は executor が execute 時に <code>priorSourceDestCheck</code> としてキャプチャする値です。</li>
+</ol>
+<h2 id="5-スモークが依存するアクションジャーナルのフィールド">5. スモークが依存するアクションジャーナルのフィールド</h2>
+<p><code>action_executions</code> ジャーナルは、アクションごとに以下を記録します:</p>
+<ul>
+<li><code>idempotencyKey</code> — 重複排除キー。すでに succeeded のキーは再実行されません。</li>
+<li><code>provider</code> — <code>aws</code>。</li>
+<li><code>action</code> — 例: <code>assign-secondary-ip</code>、<code>ensure-forwarding-enabled</code>。</li>
+<li><code>target</code> — <code>eni</code>、<code>address</code>、<code>region</code>。</li>
+<li><code>status</code> — <code>pending</code> / <code>approved</code> / <code>succeeded</code> / <code>failed</code> / <code>skipped</code> / <code>rolledBack</code>。</li>
+<li><code>Observed.priorSourceDestCheck</code> — <code>true</code> | <code>false</code>。変更前にキャプチャされた値で、<code>ensure-forwarding-enabled</code> の undo がこの値を読みます。</li>
+<li><code>executedAt</code> — タイムスタンプ。</li>
+<li><code>result</code> / <code>error</code> — <code>ExecuteActionResult</code> のメッセージ / <code>Error</code>。</li>
+</ul>
+<p>ジャーナルは、何が実行されたかと冪等性ガードの単一の信頼できるソースです。認証情報は<strong>一切</strong>ジャーナルに記録されません。</p>
+<h2 id="6-undo-teardown-計画">6. Undo / teardown 計画</h2>
+<p>適用されたものを逆順で元に戻します。すべてのステップはライブ実行の<strong>前に</strong>記述可能でなければなりません。</p>
+<ol>
+<li><strong>Forwarding の undo</strong> — <code>ensure-forwarding-disabled</code>。Section 2 の<strong>変更前状態復元ルール</strong>を適用します: <code>Observed.priorSourceDestCheck</code> が <code>true</code> だった場合は <code>--source-dest-check</code> を実行して再有効化します。<code>false</code> だった場合は<strong>何もしません</strong>（skipped）。盲目的にチェックを有効化しないでください。</li>
+<li><strong>セカンダリ IP の割り当て解除</strong> — <code>unassign-secondary-ip</code>:</li>
+</ol>
+<p><code>sh
+   aws ec2 unassign-private-ip-addresses \
+     --network-interface-id "&lt;eni-id&gt;" \
+     --private-ip-addresses "&lt;address&gt;" --region "&lt;region&gt;"</code>
+3. <strong>ラボインスタンスの停止/終了とコスト発生リソースの解放</strong> — <code>routerd-cloud</code>、cloud-client、on-prem-client のラボインスタンスを停止または終了します。割り当て済みの <strong>EIP</strong> を解放し、孤立した <strong>EBS</strong> ボリュームを削除し、このテスト専用に作成した VPC/サブネット/SG を削除します。</p>
+<p><strong>エビデンスをキャプチャした後、すべてのコスト発生リソースを停止または削除してください。</strong> ラボインスタンスをアイドル状態で放置しないでください。</p>
+<h2 id="7-ライブ変更スモーク計画-受け入れ">7. ライブ変更スモーク計画 + 受け入れ</h2>
+<p>このスモークはゲート付きパス全体を検証します。Section 9 のゲートが承認された後にのみ実行してください。</p>
+<p>シーケンス:</p>
+<ol>
+<li><code>actionPlan</code> 生成（planner、dry-run、Phase 4.1 と同様）。</li>
+<li>アクションがジャーナルに <code>pending</code> として<strong>インポート</strong>される（<code>idempotencyKey</code> でキー付け）。</li>
+<li>アクションが<strong>承認</strong>される（<code>routerctl action approve</code>）。</li>
+<li>アクションが <strong><code>aws-provider-executor</code> によって実行</strong>される（<code>routerctl action execute --approved</code>）。</li>
+<li>ジャーナルに <code>succeeded</code> が表示される。</li>
+</ol>
+<p>受け入れ条件（すべて満たす必要があります）:</p>
+<ul>
+<li>[ ] actionPlan 生成 → インポート → 承認 → 実行 → ジャーナル <code>succeeded</code>。</li>
+<li>[ ] <strong>セカンダリ IP が ENI 上に存在する</strong>（<code>describe-network-interfaces</code> で <code>&lt;address&gt;</code> が <code>PrivateIpAddresses</code> に表示される）。</li>
+<li>[ ] ENI で <strong>Source/dest check が無効化</strong>されている（<code>SourceDestCheck=false</code>）。ジャーナルに <code>Observed.priorSourceDestCheck</code> が記録されている。</li>
+<li>[ ] BGP <code>provider-secondary-ip</code> では、<code>routerd-cloud</code> はアドレスを OS のローカルアドレスとして<strong>保持しない</strong>。プロバイダーのセカンダリ IP を ENI に残したままでも同じである。捕捉はプロバイダー ingress とルート/転送状態であり、Linux local <code>/32</code> ではない。</li>
+<li>[ ] <code>MobilityPool</code> が <strong>Ready</strong> に到達し、対象アドレスの provider action が成功または不要として収束する。</li>
+<li>[ ] <code>routerctl doctor</code> の hybrid チェックが<strong>パス</strong>する。</li>
+<li>[ ] cloud-client <strong><code>.7</code></strong> と on-prem-client <strong><code>.9</code></strong> — <strong>ping と ssh が双方向で</strong>成功する。</li>
+<li>[ ] 捕捉パスに <strong>NAT が存在しない</strong>（ルーティング/転送され、変換されない）。</li>
+<li>[ ] すべてのノードで<strong>デフォルトゲートウェイが変更されていない</strong>。</li>
+<li>[ ] Section 6 の <strong>Teardown / undo が成功する</strong>（source/dest-check の変更前状態復元ルールを含む）。</li>
+<li>[ ] エビデンスキャプチャ後に<strong>コスト発生リソースが停止/削除されている</strong>。</li>
+</ul>
+<h2 id="8-ハードストップ">8. ハードストップ</h2>
+<p>以下のいずれかに該当する場合は直ちに中止してください（「回避策」は取らない）:</p>
+<ol>
+<li>認証情報が <strong>routerd コアを経由する</strong>（してはいけません — executor は自身のインスタンスプロファイルのみを使用）。</li>
+<li>アクションが<strong>ラボ以外のリソース</strong>に影響を与える。</li>
+<li><strong>複数のプロバイダー</strong>が関与している。</li>
+<li><strong>ロールバック/クリーンアップが事前に記述できない。</strong></li>
+<li>プロバイダー API が<strong>曖昧な/部分的な成功</strong>を返す。</li>
+<li><strong>コスト発生リソースがアクティブなテストなしに稼働し続ける。</strong></li>
+<li>クラウドリソースが稼働中に人間の判断を <strong>10 分以上待つ</strong> → <strong>停止して deallocate する</strong>（インスタンスを停止してコスト削減）。判断後に再開します。</li>
+<li>いずれかのコマンドが<strong>本番または共有リソースへの変更を意味する</strong>。</li>
+</ol>
+<h2 id="9-ライブ実行のゲート">9. ライブ実行のゲート</h2>
+<p>ライブ変更は、オーナーが<strong>この Runbook</strong>と<strong>読み取り専用 preflight のエビデンス</strong>（Section 4）をレビューした後に<strong>明示的に go を出してからのみ</strong>実行されます。go が出るまでは、読み取り専用のステップのみ実行できます。</p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#1-スコープと境界">1. スコープと境界</a></li>
+<li><a href="#2-executor-の設計">2. Executor の設計</a><ul>
+<li><a href="#assign-secondary-ip">assign-secondary-ip</a></li>
+<li><a href="#ensure-forwarding-enabled">ensure-forwarding-enabled</a></li>
+<li><a href="#unassign-secondary-ipassign-secondary-ip-の-undo">unassign-secondary-ip（assign-secondary-ip の undo）</a></li>
+<li><a href="#ensure-forwarding-disabledensure-forwarding-enabled-の-undo">ensure-forwarding-disabled（ensure-forwarding-enabled の undo）</a></li>
+</ul>
+</li>
+<li><a href="#3-iam-最小権限">3. IAM 最小権限</a></li>
+<li><a href="#4-読み取り専用-preflight">4. 読み取り専用 preflight</a></li>
+<li><a href="#5-スモークが依存するアクションジャーナルのフィールド">5. スモークが依存するアクションジャーナルのフィールド</a></li>
+<li><a href="#6-undo-teardown-計画">6. Undo / teardown 計画</a></li>
+<li><a href="#7-ライブ変更スモーク計画-受け入れ">7. ライブ変更スモーク計画 + 受け入れ</a></li>
+<li><a href="#8-ハードストップ">8. ハードストップ</a></li>
+<li><a href="#9-ライブ実行のゲート">9. ライブ実行のゲート</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/how-to/aws-provider-action-execution.md">GitHub</a></div></footer></body></html>

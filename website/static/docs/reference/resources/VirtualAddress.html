@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VirtualAddress · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/reference/resources/VirtualAddress.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/reference/resources/VirtualAddress.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/reference/resources/VirtualAddress.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/VirtualAddress.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/VirtualAddress.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="virtualaddress">VirtualAddress</h1>
+<p><a href="../resources.html#virtualaddress">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Maintain a static address or an elected floating address. Linux uses iproute2 for static addresses and keepalived for VRRP; FreeBSD uses ifconfig and CARP.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>family, interface and exactly one address/addressFrom are required. Literal IPv4 must be /32; IPv6 VRRP/CARP must be /128, while static IPv6 may retain a different prefix length. A bare address obtained from addressFrom is promoted to /32 or /128.</li>
+<li>interface must exist in the configuration interface index. IPv4StaticAddress and VirtualAddress cannot manage the same indexed address on one interface; using addressFrom=IPv4StaticAddress on that same interface is rejected. VRRP IDs must be unique per family/interface.</li>
+<li>addressFrom passes ordinary source/field validation but the address renderer reads declared IPv4StaticAddress.address or VirtualAddress.address only, not arbitrary runtime status. optional does not allow an empty final VIP; rendering/apply may report Error or Pending.</li>
+<li>mode=vrrp requires virtualRouterID and, on Linux, a nonempty unicast peer list. FreeBSD uses native CARP and does not use peers as a unicast delivery list. Omitted preempt disables preemption; CARP preemption is host-global and any true instance enables that sysctl.</li>
+<li>Failover VMACs follow the single VIP’s authoritative election, rather than holding separate VRRP elections. Linux-only VMAC helpers validate names/MAC/link-local values again when invoked; additionalFailoverVMACs has weaker YAML validation than the primary entry. A valid parent reference and installed helper are required at render/apply time.</li>
+<li>gracefulActivation is Linux IPv4 VRRP only. Election/VMAC activation can happen before publishing the VIP; readiness admits the VIP. Timeout reports failure while keeping the VIP withheld and retrying, never forcing publication. After a successfully published VIP, later readiness degradation does not withdraw it while still master.</li>
+<li>VRRP advertisement timing is derived (normally 1s) rather than configurable through advertInterval/preemptDelay; these legacy members are excluded from YAML/JSON schema. Protocol priority/authentication behavior still depends on keepalived or CARP.</li>
+</ul>
+<h2 id="yaml-definition">YAML definition</h2>
+<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: VirtualAddress
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    address: &quot;&lt;string&gt;&quot; # Required; string
+    addressFrom: # optional; object
+      field: &quot;&lt;string&gt;&quot; # optional; string
+      optional: true # optional; boolean
+      resource: &quot;&lt;string&gt;&quot; # Required; string
+    externalDNS: true # optional; boolean
+    family: &quot;ipv4&quot; # Required; string; enum=[&quot;ipv4&quot;, &quot;ipv6&quot;]
+    gratuitousARP: true # optional; boolean
+    hostname: &quot;&lt;string&gt;&quot; # optional; string
+    interface: &quot;&lt;string&gt;&quot; # Required; string
+    mode: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;static&quot;, &quot;vrrp&quot;]
+    track: # optional; array
+      - # object
+        confirmConsecutiveHealthy: 1 # optional; integer; minimum=1; maximum=255
+        confirmConsecutiveUnhealthy: 1 # optional; integer; minimum=1; maximum=255
+        resource: &quot;&lt;string&gt;&quot; # Required; string
+        unhealthyPenalty: 0 # optional; integer; minimum=0; maximum=254
+    vrrp: # optional; object
+      additionalFailoverVMACs: # optional; array
+        - # object
+          interface: &quot;&lt;string&gt;&quot; # Required; string
+          linkLocalAddress: &quot;&lt;string&gt;&quot; # optional; string
+          macAddress: &quot;&lt;string&gt;&quot; # Required; string
+          parentInterface: &quot;&lt;string&gt;&quot; # Required; string
+          withdrawRouterAdvertisement: true # optional; boolean
+      authentication: &quot;&lt;string&gt;&quot; # optional; string
+      authenticationFrom: # optional; object
+        base64: true # optional; boolean
+        env: &quot;&lt;string&gt;&quot; # optional; string
+        file: &quot;&lt;string&gt;&quot; # optional; string
+      failoverVMAC: # optional; object
+        interface: &quot;&lt;string&gt;&quot; # Required; string
+        linkLocalAddress: &quot;&lt;string&gt;&quot; # optional; string
+        macAddress: &quot;&lt;string&gt;&quot; # Required; string
+        parentInterface: &quot;&lt;string&gt;&quot; # Required; string
+        withdrawRouterAdvertisement: true # optional; boolean
+      gracefulActivation: # optional; object
+        readyWhen: # Required; object
+          state: # optional; object
+            &quot;&lt;key&gt;&quot;: # optional; object
+              contains: &quot;&lt;string&gt;&quot; # optional; string
+              equals: &quot;&lt;string&gt;&quot; # optional; string
+              exists: true # optional; boolean
+              for: &quot;&lt;string&gt;&quot; # optional; string
+              in: # optional; array
+                - &quot;&lt;string&gt;&quot; # string
+              maxAge: &quot;&lt;string&gt;&quot; # optional; string
+              status: &quot;set&quot; # optional; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+        timeout: &quot;&lt;string&gt;&quot; # optional; string
+      peers: # optional; array
+        - &quot;&lt;string&gt;&quot; # string
+      preempt: true # optional; boolean
+      priority: 1 # optional; integer; minimum=1; maximum=254
+      virtualRouterID: 1 # Required; integer; minimum=1; maximum=255
+    when: # optional; object
+      state: # optional; object
+        &quot;&lt;key&gt;&quot;: # optional; object
+          contains: &quot;&lt;string&gt;&quot; # optional; string
+          equals: &quot;&lt;string&gt;&quot; # optional; string
+          exists: true # optional; boolean
+          for: &quot;&lt;string&gt;&quot; # optional; string
+          in: # optional; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # optional; string
+          status: &quot;set&quot; # optional; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.family</code></td>
+<td>Required ipv4 or ipv6; no default. Must match the address family.</td>
+</tr>
+<tr>
+<td><code>spec.interface</code></td>
+<td>Required bare declared logical interface name; resolves to the OS device. Not Kind/name.</td>
+</tr>
+<tr>
+<td><code>spec.address</code></td>
+<td>Literal prefix, excluding addressFrom. IPv4 /32; IPv6 /128 unless static mode. JSON Schema marks address required even though semantic validation permits addressFrom instead.</td>
+</tr>
+<tr>
+<td><code>spec.addressFrom</code></td>
+<td>Common resource/field/optional source, mutually exclusive with address. Effective renderer support is declared IPv4StaticAddress.address/VirtualAddress.address; use an explicit field. Nested VirtualAddress sources are not recursively resolved.</td>
+</tr>
+<tr>
+<td><code>spec.hostname</code></td>
+<td>Optional FQDN for automatic local DNS records in a served DNSZone and for status. Does not change OS hostname or create an external DNS record.</td>
+</tr>
+<tr>
+<td><code>spec.externalDNS</code></td>
+<td>Default false. True opts out of automatic local hostname records/DNS-coverage warnings; does not contact an external DNS provider.</td>
+</tr>
+<tr>
+<td><code>spec.mode</code></td>
+<td>static (default) or vrrp. static applies on this host without election; vrrp selects keepalived on Linux or CARP on FreeBSD. VRRP and tracking objects do not gate static ownership.</td>
+</tr>
+<tr>
+<td><code>spec.gratuitousARP</code></td>
+<td>Default false. Only Linux static IPv4 permits true. After adding/restoring a missing VIP it runs arping -U -c 3; normal reconciliation does not announce repeatedly. An announcement failure is reported and retried.</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>Optional common resource activation condition, default unconditional. This filters the entire resource; separate from gracefulActivation.readyWhen’s admission gate.</td>
+</tr>
+<tr>
+<td><code>spec.vrrp</code></td>
+<td>Election settings used only by mode=vrrp. Static mode ignores them; not all nested values are validated when static.</td>
+</tr>
+<tr>
+<td><code>spec.vrrp.virtualRouterID</code></td>
+<td>Required 1–255 in vrrp mode; mapped to CARP vhid. Unique for family/interface in this Router; peers for the same election must agree.</td>
+</tr>
+<tr>
+<td><code>spec.vrrp.priority</code></td>
+<td>1–254, omitted/0 means 100. Tracking penalties lower effective priority, clamped to at least 1. CARP converts priority to advskew=max(1,254-priority).</td>
+</tr>
+<tr>
+<td><code>spec.vrrp.preempt</code></td>
+<td>Omitted/false disables taking ownership back solely for higher priority. True enables preemption. CARP applies a host-global net.inet.carp.preempt, true if any configured instance requests true.</td>
+</tr>
+<tr>
+<td><code>spec.vrrp.peers</code></td>
+<td>Linux vrrp requires nonempty peer address/hostname list for unicast. Values are syntax-validated, deduplicated/sorted for rendering. FreeBSD CARP does not use this list as peers.</td>
+</tr>
+<tr>
+<td><code>spec.vrrp.authentication</code></td>
+<td>Optional plaintext authentication value, default absent. Excludes authenticationFrom. Linux emits keepalived auth_type PASS; CARP uses pass. This is protocol authentication, not encrypted VRRP traffic.</td>
+</tr>
+<tr>
+<td><code>spec.vrrp.authenticationFrom</code></td>
+<td>Optional secret source, excludes plaintext authentication. Exactly one file/env when configured. Read during rendering; missing file/env or invalid Base64 fails then. Empty resolved value omits authentication.</td>
+</tr>
+<tr>
+<td><code>spec.vrrp.authenticationFrom.file</code></td>
+<td>Secret file path on the router, mutually exclusive with env. Renderer strips trailing CR/LF, not all leading/trailing spaces.</td>
+</tr>
+<tr>
+<td><code>spec.vrrp.authenticationFrom.env</code></td>
+<td>Environment variable of the routerd process, mutually exclusive with file. Not a shell expansion or a remote environment variable.</td>
+</tr>
+<tr>
+<td><code>spec.vrrp.authenticationFrom.base64</code></td>
+<td>Default false; true decodes standard Base64 after trimming surrounding encoded whitespace, then strips trailing CR/LF from decoded bytes.</td>
+</tr>
+<tr>
+<td><code>spec.vrrp.failoverVMAC</code></td>
+<td>Optional Linux macvlan L2 identity controlled by this VRRP election; no independent election. Primary entry is validated in Linux VRRP mode; unavailable on FreeBSD.</td>
+</tr>
+<tr>
+<td><code>spec.vrrp.additionalFailoverVMACs</code></td>
+<td>Optional additional VMAC entries following the same role transition, default empty. Same field meanings as failoverVMAC. Current YAML validation does not fully validate these entries; the Linux helper/rendering still requires valid parents, interface names and Ethernet MACs.</td>
+</tr>
+<tr>
+<td><code>spec.vrrp.gracefulActivation</code></td>
+<td>Optional Linux IPv4 VRRP admission gate. No gate by default; other families/FreeBSD are rejected. Waits to publish VIP after election while preparing dependent state.</td>
+</tr>
+<tr>
+<td><code>spec.vrrp.gracefulActivation.readyWhen</code></td>
+<td>Required nonempty common state/all/any condition when gate is supplied. Resource references and predicates are validated. It gates initial publication, not ongoing withdrawal after successful publication.</td>
+</tr>
+<tr>
+<td><code>spec.vrrp.gracefulActivation.timeout</code></td>
+<td>Strictly positive Go duration, default 45s. Expiry changes activation status to Failed/ReadinessTimeout; it does not force VIP publication, stop retries or restart the router.</td>
+</tr>
+<tr>
+<td><code>spec.track</code></td>
+<td>Optional resource-health tracking list, default empty; vrrp only. Penalties add across unhealthy tracks and affect effective election priority. It does not directly remove static VIPs.</td>
+</tr>
+<tr>
+<td><code>spec.track[].resource</code></td>
+<td>Required Kind/name format; validator checks format, not referenced existence here. Reads that resource phase: common ready phases are healthy; BGPRouter/BGPPeer require Established. Disabled/Standby/NotApplicable and when-false are neutral and preserve the current penalty decision.</td>
+</tr>
+<tr>
+<td><code>spec.track[].unhealthyPenalty</code></td>
+<td>0–254; omitted/0 means 50, so zero cannot disable a track penalty. Applied after unhealthy confirmation, removed after healthy confirmation.</td>
+</tr>
+<tr>
+<td><code>spec.track[].confirmConsecutiveUnhealthy</code></td>
+<td>Consecutive unhealthy evaluations before penalizing, omitted/0 means 3; explicit 1–255. Evaluations are reconciliation observations, not elapsed seconds.</td>
+</tr>
+<tr>
+<td><code>spec.track[].confirmConsecutiveHealthy</code></td>
+<td>Consecutive healthy evaluations to remove a penalty, omitted/0 means 2; explicit 1–255. Track decisions/counters can restore from saved status after restart.</td>
+</tr>
+<tr>
+<td><code>spec.vrrp.failoverVMAC.parentInterface</code></td>
+<td>Required configured logical parent interface, resolved to OS name during rendering. Not an arbitrary status source.</td>
+</tr>
+<tr>
+<td><code>spec.vrrp.additionalFailoverVMACs[].parentInterface</code></td>
+<td>Required configured logical parent interface, resolved to OS name during rendering. Not an arbitrary status source.</td>
+</tr>
+<tr>
+<td><code>spec.vrrp.failoverVMAC.interface</code></td>
+<td>Required Linux VMAC device name, at most 15 characters with valid interface syntax. Created/activated or deactivated by the role helper.</td>
+</tr>
+<tr>
+<td><code>spec.vrrp.additionalFailoverVMACs[].interface</code></td>
+<td>Required Linux VMAC device name, at most 15 characters with valid interface syntax. Created/activated or deactivated by the role helper.</td>
+</tr>
+<tr>
+<td><code>spec.vrrp.failoverVMAC.macAddress</code></td>
+<td>Required six-byte Ethernet MAC. Peers sharing the failover identity must configure the same value; not auto-derived from VRID.</td>
+</tr>
+<tr>
+<td><code>spec.vrrp.additionalFailoverVMACs[].macAddress</code></td>
+<td>Required six-byte Ethernet MAC. Peers sharing the failover identity must configure the same value; not auto-derived from VRID.</td>
+</tr>
+<tr>
+<td><code>spec.vrrp.failoverVMAC.linkLocalAddress</code></td>
+<td>Optional bare IPv6 link-local identity (fe80::/10), no prefix/zone suffix. The Linux helper validates it at invocation; omission leaves its normal link-local handling.</td>
+</tr>
+<tr>
+<td><code>spec.vrrp.additionalFailoverVMACs[].linkLocalAddress</code></td>
+<td>Optional bare IPv6 link-local identity (fe80::/10), no prefix/zone suffix. The Linux helper validates it at invocation; omission leaves its normal link-local handling.</td>
+</tr>
+<tr>
+<td><code>spec.vrrp.failoverVMAC.withdrawRouterAdvertisement</code></td>
+<td>Default false. With the multi-VMAC argument form, true sends a zero-router-lifetime RA before deactivation when a link-local source exists. Single-VMAC legacy argument form with no explicit linkLocalAddress does not pass this flag.</td>
+</tr>
+<tr>
+<td><code>spec.vrrp.additionalFailoverVMACs[].withdrawRouterAdvertisement</code></td>
+<td>Default false. With the multi-VMAC argument form, true sends a zero-router-lifetime RA before deactivation when a link-local source exists. Single-VMAC legacy argument form with no explicit linkLocalAddress does not pass this flag.</td>
+</tr>
+<tr>
+<td><code>spec.vrrp.gracefulActivation.readyWhen.state</code></td>
+<td>Optional state-key predicate map within readyWhen; all entries must match. Select exactly one nonempty state/all/any branch. Predicate fields (equals/in/contains/exists/status/for/maxAge) follow common fields; resource-style keys must reference declared resources and provided fields.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go">pkg/config/diagnostics.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/index.go">pkg/config/index.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/cluster_secret_validate.go">pkg/config/cluster_secret_validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/vrrp/controller.go">pkg/controller/vrrp/controller.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/vrrp/backend.go">pkg/controller/vrrp/backend.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/dnsresolver/controller.go">pkg/controller/dnsresolver/controller.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/vrrp.go">pkg/render/vrrp.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/carp.go">pkg/render/carp.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/status_source.go">pkg/render/status_source.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/secrets.go">pkg/render/secrets.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd-vrrp-vmac/main.go">cmd/routerd-vrrp-vmac/main.go</a></p>
+<h2 id="referenceable-status-fields">Referenceable status fields</h2>
+<p>The ordinary status-reference validator accepts these field names for this kind. This allowlist does not guarantee that every field is currently populated; inspect runtime status. These are outputs, not YAML spec fields.</p>
+<p><code>phase</code>, <code>address</code>, <code>ifname</code>, <code>role</code>, <code>hostname</code>, <code>virtualRouterID</code>, <code>priority</code>, <code>failoverVMACs</code>, <code>dryRun</code></p>
+<p><a href="/examples/dhcp-lease-sync-ha.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
+<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
+<li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/reference/resources/VirtualAddress.md">GitHub</a></div></footer></body></html>

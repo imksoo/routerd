@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sysctl · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/reference/resources/Sysctl.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/reference/resources/Sysctl.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/Sysctl.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/Sysctl.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/reference/resources/Sysctl.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="sysctl">Sysctl</h1>
+<p><a href="../resources.html#sysctl">各資源的設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: system.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>協調一項核心sysctl，並可寫入持久sysctl.d檔案；沒有指向其他routerd資源的參照欄位。</p>
+<h2 id="指定條件與參照關係">指定條件與參照關係</h2>
+<ul>
+<li>runtime與persistent皆false時記為Skipped/RuntimeDisabled，不套用值；兩者可以同時為true。</li>
+<li>同一Router不可重複Sysctl鍵。Linux的NAT44SessionSync使用conntrackd時，另須明確宣告net.netfilter.nf_conntrack_tcp_be_liberal，啟用runtime、optional=false，且value與有效expectedValue皆為1。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。</p>
+<pre><code class="language-yaml">- apiVersion: system.routerd.net/v1alpha1
+  kind: Sysctl
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    compare: &quot;&quot; # 選填; string; enum=[&quot;&quot;, &quot;exact&quot;, &quot;atLeast&quot;]
+    expectedValue: &quot;&lt;string&gt;&quot; # 選填; string
+    key: &quot;&lt;string&gt;&quot; # 必填; string
+    optional: true # 選填; boolean
+    persistent: true # 選填; boolean
+    runtime: true # 選填; boolean
+    value: &quot;&lt;string&gt;&quot; # 必填; string
+</code></pre>
+<h2 id="欄位意義與預設值">欄位意義與預設值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>欄位意義與預設值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.key</code></td>
+<td>必填核心鍵，例如net.ipv4.ip_forward，無預設值；禁止空格、tab、換行及/，不是資源參照。</td>
+</tr>
+<tr>
+<td><code>spec.value</code></td>
+<td>傳給sysctl -w的必填非空字串，持久化時也使用此值。YAML中看似數字的值須加引號，無預設值。</td>
+</tr>
+<tr>
+<td><code>spec.expectedValue</code></td>
+<td>用於執行期偏差比較的預期值，預設為value，可處理寫入值與觀測表示不同的情況。拒絕僅空白的值。</td>
+</tr>
+<tr>
+<td><code>spec.compare</code></td>
+<td>預設exact，將空白正規化後以字串比較。atLeast逐一比較帶正負號整數，要求元素數相同且每個目前值不小於預期值。</td>
+</tr>
+<tr>
+<td><code>spec.runtime</code></td>
+<td>是否套用至目前核心，預設true；false時仍可在persistent=true下寫入持久設定。</td>
+</tr>
+<tr>
+<td><code>spec.persistent</code></td>
+<td>將key=value寫入routerd的sysctl.d檔案，預設false，與runtime獨立。</td>
+</tr>
+<tr>
+<td><code>spec.optional</code></td>
+<td>預設false。true時讀取失敗記為Skipped/ReadFailedOptional並略過此項後續套用；不會忽略任意寫入或持久化錯誤。</td>
+</tr>
+</tbody>
+</table>
+<p>實作: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_system.go">pkg/config/validate_system.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/sysctl.go">pkg/controller/chain/sysctl.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/sysctlprofile/compare.go">pkg/sysctlprofile/compare.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/sysctlprofile/persistent.go">pkg/sysctlprofile/persistent.go</a></p>
+<h2 id="可參照的狀態欄位">可參照的狀態欄位</h2>
+<p>一般狀態參照驗證接受此 Kind 的下列欄位名稱。列於允許清單不保證目前有值，請檢查實際狀態。這些是輸出，不是 YAML spec 設定。</p>
+<p><code>phase</code>, <code>key</code>, <code>value</code>, <code>dryRun</code></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#指定條件與參照關係">指定條件與參照關係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#欄位意義與預設值">欄位意義與預設值</a></li>
+<li><a href="#可參照的狀態欄位">可參照的狀態欄位</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/reference/resources/Sysctl.md">GitHub</a></div></footer></body></html>

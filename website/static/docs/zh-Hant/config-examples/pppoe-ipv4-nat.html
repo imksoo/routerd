@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PPPoE IPv4 NAT 路由器 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/config-examples/pppoe-ipv4-nat.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/config-examples/pppoe-ipv4-nat.html" lang="en" hreflang="en">English</a><a href="/docs/ja/config-examples/pppoe-ipv4-nat.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/config-examples/pppoe-ipv4-nat.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/config-examples/pppoe-ipv4-nat.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="pppoe-ipv4-nat-路由器">PPPoE IPv4 NAT 路由器</h1>
+<p>實體 WAN 使用 Ethernet，透過 PPPoE 連線建立 IPv4 網際網路出口的範例。</p>
+<p>完整 YAML 位於 <code>examples/example-pppoe-ipv4-nat.yaml</code>。</p>
+<h2 id="構成圖">構成圖</h2>
+<pre><code class="language-mermaid">flowchart LR
+  internet((Internet))
+  onu[&quot;[1] ONU / access line&quot;]
+  wan[&quot;[2] wan&lt;br/&gt;ens18&quot;]
+  ppp[&quot;[3] PPPoE&lt;br/&gt;ppp-home&quot;]
+  router[&quot;[4] routerd host&quot;]
+  lan[&quot;[5] lan&lt;br/&gt;192.168.40.1/24&quot;]
+  clients[&quot;[6] LAN clients&quot;]
+
+  internet --- onu --- wan --- router
+  router --- ppp
+  router --- lan --- clients
+</code></pre>
+<h2 id="圖示對應表">圖示對應表</h2>
+<table>
+<thead>
+<tr>
+<th>編號</th>
+<th>含義</th>
+<th>主要資源</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>[1]</td>
+<td>routerd 管理範圍之外的 access line / ONU。</td>
+<td>routerd 管理外</td>
+</tr>
+<tr>
+<td>[2]</td>
+<td>承載 PPPoE 的實體 Ethernet 介面。</td>
+<td><code>Interface/wan</code></td>
+</tr>
+<tr>
+<td>[3]</td>
+<td>PPPoE 連線與邏輯 egress 介面。</td>
+<td><code>PPPoESession/pppoe-home</code></td>
+</tr>
+<tr>
+<td>[4]</td>
+<td>導出 IPv4 forwarding 並套用 nftables NAT 的主機。</td>
+<td>Derived host runtime, <code>NAT44Rule/lan-to-pppoe</code></td>
+</tr>
+<tr>
+<td>[5]</td>
+<td>LAN 閘道與 DHCPv4 區段。</td>
+<td><code>IPv4StaticAddress/lan-base</code>, <code>DHCPv4Server/lan-dhcpv4</code></td>
+</tr>
+<tr>
+<td>[6]</td>
+<td>透過 NAT 使用 PPPoE 作為 IPv4 網際網路路由的用戶端。</td>
+<td><code>DHCPv4Server/lan-dhcpv4</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="本範例管理的項目">本範例管理的項目</h2>
+<table>
+<thead>
+<tr>
+<th>領域</th>
+<th>routerd 資源</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>PPPoE 連線</td>
+<td><code>PPPoESession/pppoe-home</code></td>
+</tr>
+<tr>
+<td>LAN 位址 / DHCPv4</td>
+<td><code>IPv4StaticAddress/lan-base</code>, <code>DHCPv4Server/lan-dhcpv4</code></td>
+</tr>
+<tr>
+<td>IPv4 網際網路連線</td>
+<td><code>NAT44Rule/lan-to-pppoe</code></td>
+</tr>
+<tr>
+<td>過濾</td>
+<td><code>FirewallZone/*</code>, <code>FirewallPolicy/home</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="要點">要點</h2>
+<pre><code class="language-yaml"># [3] 在實體 WAN 上建立的邏輯 PPPoE interface。
+- kind: PPPoESession
+  metadata:
+    name: pppoe-home
+  spec:
+    interface: wan
+    ifname: ppp-home
+    username: user@example.jp
+    passwordFile: /usr/local/etc/routerd/secrets/pppoe-home.password
+    mtu: 1454
+    mru: 1454
+    defaultRoute: true
+
+# [5] -&gt; [3] 將 LAN IPv4 traffic masquerade 到 PPPoE session 側。
+- kind: NAT44Rule
+  metadata:
+    name: lan-to-pppoe
+  spec:
+    type: masquerade
+    egressInterface: pppoe-home
+    sourceRanges:
+      - 192.168.40.0/24
+</code></pre>
+<h2 id="確認">確認</h2>
+<p>先在 daemon 尚未啟動時進行獨立檢查。下列指令需要具有 <code>sudo</code> 權限的本機使用者，但不會套用網路變更。</p>
+<pre><code class="language-bash">LAB_DIR=&quot;$(mktemp -d)&quot;
+sudo routerd validate --config examples/example-pppoe-ipv4-nat.yaml
+sudo routerd apply --config examples/example-pppoe-ipv4-nat.yaml --once --dry-run \
+  --state-file &quot;$LAB_DIR/state.db&quot; \
+  --status-file &quot;$LAB_DIR/status.json&quot;
+rm -rf &quot;$LAB_DIR&quot;
+</code></pre>
+<p>完成 live apply 並啟動服務後，才在路由器上執行 <code>sudo routerctl describe
+PPPoESession/pppoe-home</code>、<code>sudo ip link show ppp-home</code> 與 <code>sudo ip route show default</code>。</p>
+<h2 id="常見調整項目">常見調整項目</h2>
+<ul>
+<li>PPPoE 密碼請勿直接寫入 YAML，應放置於參照的 secret 檔案中。</li>
+<li><code>mtu</code> 與 <code>mru</code> 請依 ISP 提供的資訊調整。</li>
+<li>若將 PPPoE 作為備援路由，請設定 <code>defaultRoute: false</code>。</li>
+</ul></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#構成圖">構成圖</a></li>
+<li><a href="#圖示對應表">圖示對應表</a></li>
+<li><a href="#本範例管理的項目">本範例管理的項目</a></li>
+<li><a href="#要點">要點</a></li>
+<li><a href="#確認">確認</a></li>
+<li><a href="#常見調整項目">常見調整項目</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/config-examples/pppoe-ipv4-nat.md">GitHub</a></div></footer></body></html>

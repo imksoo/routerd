@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Plugin · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/reference/resources/Plugin.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/reference/resources/Plugin.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/Plugin.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/reference/resources/Plugin.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/Plugin.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="plugin">Plugin</h1>
+<p><a href="../resources.html#plugin">リソース別の設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: plugin.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>routerdのプラグインプロトコルで実行する外部プログラムを登録します。明示的な実行、またはEventSubscriptionなどの利用側から呼び出します。</p>
+<h2 id="指定条件と参照関係">指定条件と参照関係</h2>
+<ul>
+<li>executableは絶対パスが必須です。実行時には存在する通常ファイルであり、実行権限のビットが少なくとも1つあることを確認します。</li>
+<li>現行実装ではtriggersの宣言だけで周期・イベント実行は開始しません。値の検証とplugin listでの表示はありますが、プラグインを呼び出す利用側が必要です。</li>
+<li>contextの参照はapiVersion・kind・nameの3項目で指定します。参照先が存在しなくても設定検証ではエラーにせず、実行時の渡し先一覧から省きます。秘密情報は秘匿化されます。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
+<pre><code class="language-yaml">- apiVersion: plugin.routerd.net/v1alpha1
+  kind: Plugin
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    capabilities: # 任意; array
+      - &quot;observe.cloud&quot; # string; enum=[&quot;observe.cloud&quot;, &quot;observe.providerPrivateIPs&quot;, &quot;propose.dynamicConfig&quot;, &quot;propose.providerAction&quot;, &quot;execute.providerAction&quot;]
+    context: # 任意; object
+      resources: # 任意; array
+        - # object
+          apiVersion: &quot;&lt;string&gt;&quot; # 必須; string
+          kind: &quot;&lt;string&gt;&quot; # 必須; string
+          name: &quot;&lt;string&gt;&quot; # 必須; string
+    env: # 任意; object
+      &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # 任意; string
+    executable: &quot;&lt;string&gt;&quot; # 必須; string
+    timeout: &quot;&lt;string&gt;&quot; # 任意; string
+    triggers: # 任意; array
+      - # object
+        every: &quot;&lt;string&gt;&quot; # 任意; string
+        topic: &quot;&lt;string&gt;&quot; # 任意; string
+        type: &quot;interval&quot; # 必須; string; enum=[&quot;interval&quot;, &quot;event&quot;]
+</code></pre>
+<h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>項目の意味と既定値</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.executable</code></td>
+<td>外部プログラムの絶対パス。必須で既定値はありません。</td>
+</tr>
+<tr>
+<td><code>spec.timeout</code></td>
+<td>1回の実行時間の上限。省略時10s。指定する場合は30sなど、正のGo duration形式です。</td>
+</tr>
+<tr>
+<td><code>spec.env</code></td>
+<td>環境変数名をキーにした追加変数。省略時は空です。runner自身のPATH、なければ組込PATHを用意してから上書きします。それ以外の親環境変数は継承しません。空のキーと=を含むキーは無視します。</td>
+</tr>
+<tr>
+<td><code>spec.capabilities</code></td>
+<td>能力の宣言。省略時は空です。observe.cloud、observe.providerPrivateIPs、propose.dynamicConfig、propose.providerAction、execute.providerActionを受理します。インベントリ取得にはobserve.providerPrivateIPs、事業者操作の実行にはexecute.providerActionが必要です。この一覧自体は実行を開始しません。</td>
+</tr>
+<tr>
+<td><code>spec.context</code></td>
+<td>標準入力に渡す設定リソースの許可一覧。省略時は空で、設定を渡しません。</td>
+</tr>
+<tr>
+<td><code>spec.context.resources</code></td>
+<td>許可するリソース識別子の一覧。省略時は空です。ワイルドカード展開は行いません。</td>
+</tr>
+<tr>
+<td><code>spec.context.resources[].apiVersion</code></td>
+<td>参照する設定リソースのAPIグループとバージョン。各要素で必須です。</td>
+</tr>
+<tr>
+<td><code>spec.context.resources[].kind</code></td>
+<td>参照する設定リソースの種類。各要素で必須です。</td>
+</tr>
+<tr>
+<td><code>spec.context.resources[].name</code></td>
+<td>参照する設定リソースのmetadata.name。各要素で必須です。</td>
+</tr>
+<tr>
+<td><code>spec.triggers</code></td>
+<td>トリガー宣言の一覧。省略時は空です。現行runtimeでは検証・表示だけで、動作条件は上記の注意事項を参照してください。</td>
+</tr>
+<tr>
+<td><code>spec.triggers[].type</code></td>
+<td>トリガーの区分。intervalかeventの指定が必須で、既定値はありません。</td>
+</tr>
+<tr>
+<td><code>spec.triggers[].every</code></td>
+<td>intervalでは必須の正のGo duration。eventではこの項目による周期実行はありません。既定値はありません。</td>
+</tr>
+<tr>
+<td><code>spec.triggers[].topic</code></td>
+<td>イベントトピックの宣言。任意で省略時は空です。eventでも検証上は必須になりません。リソース名ではありません。</td>
+</tr>
+</tbody>
+</table>
+<p>実装: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_plugin.go">pkg/config/validate_plugin.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/plugin/runner.go">pkg/plugin/runner.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/plugin/context.go">pkg/plugin/context.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/providerinventory/executor.go">pkg/providerinventory/executor.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/provideraction/executor.go">pkg/provideraction/executor.go</a></p>
+<h2 id="状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</h2>
+<p>通常の状態値参照の検証で、このKindについて許可するフィールド名です。許可一覧にあるだけでは値の生成・取得を保証しないため、実際の状態を確認してください。YAMLのspecに設定する項目ではなく出力です。</p>
+<p>このKindには通常の状態値参照の許可フィールドが登録されていません。</p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
+<li><a href="#状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/reference/resources/Plugin.md">GitHub</a></div></footer></body></html>

@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VS Code YAML スキーマ · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/how-to/vscode-yaml-schema.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/how-to/vscode-yaml-schema.html" lang="en" hreflang="en">English</a><a href="/docs/ja/how-to/vscode-yaml-schema.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/how-to/vscode-yaml-schema.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/vscode-yaml-schema.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="vs-code-yaml-スキーマ">VS Code YAML スキーマ</h1>
+<p>routerd は生成済みの設定スキーマを次の URL で公開しています。</p>
+<pre><code class="language-text">https://routerd.net/schemas/routerd-config-v1alpha1.schema.json
+</code></pre>
+<h2 id="ファイルごとの-modeline">ファイルごとの modeline</h2>
+<p>routerd の設定ファイルの先頭に、次のコメントを置きます。</p>
+<pre><code class="language-yaml"># yaml-language-server: $schema=https://routerd.net/schemas/routerd-config-v1alpha1.schema.json
+apiVersion: routerd.net/v1alpha1
+kind: Router
+</code></pre>
+<p>VS Code と YAML 拡張機能はこの modeline を読み、該当ファイルで補完、ホバー情報、列挙値の検証、型診断を有効にします。</p>
+<h2 id="ワークスペースマッピング">ワークスペースマッピング</h2>
+<p>このリポジトリには、ルーター設定ファイル向けの <code>yaml.schemas</code> マッピングを持つ <code>.vscode/settings.json</code> が入っています。</p>
+<ul>
+<li><code>examples/*.yaml</code></li>
+<li><code>examples/cloudedge-mobility-demo/*.yaml</code></li>
+<li><code>examples/event-federation/*.yaml</code></li>
+<li><code>routerd/**/*.yaml</code></li>
+<li><code>*.routerd.yaml</code></li>
+<li><code>**/routerd.yaml</code></li>
+<li><code>**/router.yaml</code></li>
+</ul>
+<p>別のワークスペースでは、同じマッピングをそのワークスペースの設定ファイルに入れてください。</p>
+<pre><code class="language-json">{
+  &quot;yaml.schemas&quot;: {
+    &quot;https://routerd.net/schemas/routerd-config-v1alpha1.schema.json&quot;: [
+      &quot;examples/*.yaml&quot;,
+      &quot;examples/cloudedge-mobility-demo/*.yaml&quot;,
+      &quot;examples/event-federation/*.yaml&quot;,
+      &quot;routerd/**/*.yaml&quot;,
+      &quot;*.routerd.yaml&quot;,
+      &quot;**/routerd.yaml&quot;,
+      &quot;**/router.yaml&quot;
+    ]
+  }
+}
+</code></pre>
+<p>これらのパターンに合わない YAML ファイルでは modeline を使ってください。</p>
+<h2 id="整合性の確認">整合性の確認</h2>
+<p>スキーマは Go の API 型から生成されます。CI がリポジトリ内のスキーマと Web サイトで公開しているコピーの同期を確認するため、エディタの診断結果は <code>routerctl validate</code> が使う規約と常に一致します。</p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#ファイルごとの-modeline">ファイルごとの modeline</a></li>
+<li><a href="#ワークスペースマッピング">ワークスペースマッピング</a></li>
+<li><a href="#整合性の確認">整合性の確認</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/how-to/vscode-yaml-schema.md">GitHub</a></div></footer></body></html>

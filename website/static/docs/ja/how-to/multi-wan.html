@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ヘルスチェック付きマルチ WAN 切替 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/how-to/multi-wan.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/how-to/multi-wan.html" lang="en" hreflang="en">English</a><a href="/docs/ja/how-to/multi-wan.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/how-to/multi-wan.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/multi-wan.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="ヘルスチェック付きマルチ-wan-切替">ヘルスチェック付きマルチ WAN 切替</h1>
+<h2 id="想定するシーン">想定するシーン</h2>
+<p>ルーターから外向きの経路が複数あり、routerd に次のように振る舞ってほしい場合です。</p>
+<ul>
+<li>利用可能な経路の中から最良のものを自動で選ぶ。</li>
+<li>主回線が不調になったらフォールバック回線に切り替える。</li>
+<li>既存の接続を切らずに、なめらかに切り替える。</li>
+</ul>
+<p>代表的な例を挙げます。</p>
+<ul>
+<li>家庭ルーターで、DS-Lite トンネルを主回線、上流 HGW の NAT 越しをフォールバックにしたい。</li>
+<li>SOHO ルーターで、2 系統の ISP 回線（光 + LTE など）を冗長化したい。</li>
+<li>拠点ルーターで、社内 VPN 回線を優先し、つながらないときだけ公衆インターネットへ落としたい。</li>
+</ul>
+<h2 id="routerd-での解決方法">routerd での解決方法</h2>
+<p><code>EgressRoutePolicy</code> で候補の経路と選択方法を宣言します。
+routerd は常に、「ready（上流リソースが落ち着いている）かつ healthy（<code>HealthCheck</code> が通っている）」候補のうち、weight が最も高いものを選びます。
+切り替え時は OS の経路表を更新し、ポリシーに追従する <code>NAT44Rule</code> も適用し直しますが、conntrack はあえて消しません。
+既存のフローはそのまま継続し、新規のフローだけが新しい経路を使います。</p>
+<p>これにより、weight の低いフォールバックが起動直後から働き、あとから確認できた主回線へなめらかに移れます。</p>
+<p>試験用 PPPoE など、セッション枠を消費するフォールバックは、YAML に残したまま無効化できます。
+<code>PPPoESession</code>、対応する <code>HealthCheck</code>、<code>EgressRoutePolicy</code> の候補に <code>enabled: false</code> を指定します。
+通常の適用では生成済みのサービスを停止・無効化し、必要なときだけ手動で試験できます。</p>
+<h2 id="最小構成">最小構成</h2>
+<p>構成要素は 3 つです。候補ごとの <code>HealthCheck</code>、それらをまとめる <code>EgressRoutePolicy</code>、ポリシーに追従する <code>NAT44Rule</code> です。</p>
+<h3 id="ヘルスチェック">ヘルスチェック</h3>
+<pre><code class="language-yaml">apiVersion: net.routerd.net/v1alpha1
+kind: HealthCheck
+metadata:
+  name: internet-via-primary
+spec:
+  target: 1.1.1.1
+  protocol: tcp
+  port: 443
+  interval: 30s
+  timeout: 3s
+</code></pre>
+<p>各チェックは、対応する <code>EgressRoutePolicy</code> の候補から参照します。routerd はその参照からプローブの送信元バインドと socket mark を導出するため、設定にホスト固有の仕組みを書く必要はありません。
+ICMP は途中のフィルターで落ちやすいので、安定した宛先（1.1.1.1 など）に対して TCP/443 を使うのが確実です。</p>
+<h3 id="egress-ポリシー">Egress ポリシー</h3>
+<pre><code class="language-yaml">apiVersion: net.routerd.net/v1alpha1
+kind: EgressRoutePolicy
+metadata:
+  name: ipv4-default
+spec:
+  family: ipv4
+  destinationCIDRs:
+    - 0.0.0.0/0
+  selection: highest-weight-ready
+  hysteresis: 30s
+  candidates:
+    - name: ds-lite-primary
+      source: DSLiteTunnel/ds-lite-primary
+      deviceFrom:
+        resource: DSLiteTunnel/ds-lite-primary
+        field: interface
+      gatewaySource: none
+      weight: 90
+      healthCheck: internet-via-primary
+
+    - name: hgw-fallback
+      source: Interface/wan
+      deviceFrom:
+        resource: Interface/wan
+        field: ifname
+      gatewaySource: static
+      gateway: 192.0.2.1
+      weight: 50
+      healthCheck: internet-via-hgw
+</code></pre>
+<p><code>hysteresis</code> はチャタリングを防ぐためのものです。候補が unhealthy になっても、この時間は降格しません。</p>
+<h3 id="ポリシーに追従する-nat">ポリシーに追従する NAT</h3>
+<pre><code class="language-yaml">apiVersion: net.routerd.net/v1alpha1
+kind: NAT44Rule
+metadata:
+  name: lan-to-egress
+spec:
+  type: masquerade
+  egressPolicyRef: ipv4-default
+  sourceRanges:
+    - 192.0.2.0/24
+</code></pre>
+<p>masquerade の送信元アドレスは、その時点で routerd が選んでいる候補のインターフェースから取ります。切り替わると、次のパケットは新しい経路のアドレスで NAT します。</p>
+<h2 id="rfc1918-宛は-nat-しない">RFC1918 宛は NAT しない</h2>
+<p>上流ゲートウェイが LAN への戻り経路を持っている場合、公衆インターネット向けは NAT しつつ、ほかの社内ネットワーク宛は NAT を避けられます。</p>
+<pre><code class="language-yaml">apiVersion: net.routerd.net/v1alpha1
+kind: NAT44Rule
+metadata:
+  name: lan-to-wan-hgw
+spec:
+  type: masquerade
+  egressInterface: wan
+  sourceRanges:
+    - 192.0.2.0/24
+  excludeDestinationCIDRs:
+    - 192.168.0.0/16
+    - 172.16.0.0/12
+    - 10.0.0.0/8
+
+---
+
+apiVersion: net.routerd.net/v1alpha1
+kind: IPv4Route
+metadata:
+  name: hgw-lan
+spec:
+  destination: 192.168.0.0/16
+  device: wan
+</code></pre>
+<p>これで RFC1918 宛は経路で配り、公衆インターネット向けは選択された egress を経由します。</p>
+<h2 id="運用上のヒント">運用上のヒント</h2>
+<ul>
+<li>必ず帯域外の管理経路（mgmt インターフェース、コンソール、専用 SSH NIC など）を確保してください。WAN 経由の SSH で経路やファイアウォールを変えるのは危険です。</li>
+<li>1 つの <code>HealthCheck</code> は 1 つの候補から参照する形にしてください。routerd が単一のプローブ経路を導出でき、「プローブ失敗 = その経路が壊れている」と解釈しやすくなります。</li>
+<li>切り替え時に conntrack をフラッシュしないでください。routerd は意図的にフラッシュしません。すでにハンドシェイク済みの TCP は自然に終わらせます。</li>
+<li>現在選択中の候補は、<code>routerctl describe EgressRoutePolicy/&lt;name&gt;</code> の <code>status.selectedCandidate</code> で確認できます。</li>
+</ul>
+<h2 id="関連項目">関連項目</h2>
+<ul>
+<li><a href="../concepts/path-mtu.html">Path MTU と MSS clamping</a></li>
+<li><a href="firewall-rule.html">ファイアウォールルールの基本</a></li>
+<li><a href="flets-ipv6-setup.html">DS-Lite 設定</a></li>
+</ul></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#想定するシーン">想定するシーン</a></li>
+<li><a href="#routerd-での解決方法">routerd での解決方法</a></li>
+<li><a href="#最小構成">最小構成</a><ul>
+<li><a href="#ヘルスチェック">ヘルスチェック</a></li>
+<li><a href="#egress-ポリシー">Egress ポリシー</a></li>
+<li><a href="#ポリシーに追従する-nat">ポリシーに追従する NAT</a></li>
+</ul>
+</li>
+<li><a href="#rfc1918-宛は-nat-しない">RFC1918 宛は NAT しない</a></li>
+<li><a href="#運用上のヒント">運用上のヒント</a></li>
+<li><a href="#関連項目">関連項目</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/how-to/multi-wan.md">GitHub</a></div></footer></body></html>

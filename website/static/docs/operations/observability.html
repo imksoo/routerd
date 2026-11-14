@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Observability pipeline · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/operations/observability.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/operations/observability.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/operations/observability.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/operations/observability.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/operations/observability.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="observability-pipeline">Observability pipeline</h1>
+<p><code>Telemetry</code> remains the small OTLP-only resource for routerd's own metrics,
+traces, and logs. <code>LogSink</code> describes log forwarding routes for operational
+events and observed network logs; an OTLP <code>LogSink</code> should reference a
+<code>Telemetry</code> resource rather than duplicating collector endpoints. Use
+<code>ObservabilityPipeline</code> when the router should also forward routerd event logs
+to pipeline-style remote sinks such as Loki.</p>
+<p><code>ObservabilityPipeline</code> is a built-in pipeline, not a bundled <code>otelcol</code>
+process. routerd still uses the normal OpenTelemetry SDK for OTLP logs,
+metrics, and traces, and it starts a lightweight event exporter for configured
+log sinks.</p>
+<p>Supported log sinks today:</p>
+<ul>
+<li><code>stdout</code>: JSON event lines, useful for supervised service logs.</li>
+<li><code>syslog</code>: local or remote syslog using the existing <code>LogSink</code> syslog shape.</li>
+<li><code>loki</code>: HTTP push to <code>/loki/api/v1/push</code>.</li>
+</ul>
+<p><code>kafka</code> is accepted as documented metadata only so configs can record the
+intended external pipeline, but routerd does not publish to Kafka directly yet.</p>
+<p>Example:</p>
+<pre><code class="language-yaml">apiVersion: system.routerd.net/v1alpha1
+kind: ObservabilityPipeline
+metadata:
+  name: remote-observability
+spec:
+  otlp:
+    endpoint: http://otel-collector.lan:4317
+    insecure: true
+    headers:
+      authorization: Bearer example-token
+  serviceNamespace: routerd
+  attributes:
+    site: edge
+  signals: [logs, metrics, traces]
+  sampling:
+    rate: 1
+  logs:
+    sinks:
+      - name: loki
+        type: loki
+        minLevel: info
+        loki:
+          url: http://loki.lan:3100/loki/api/v1/push
+          tenant: routerd
+</code></pre>
+<p>The OTLP fields render to the standard OpenTelemetry environment variables for
+routerd-managed units. The log sink exporter subscribes to <code>routerd.**</code> events
+on the in-process bus, so it forwards controller status changes and daemon
+events without scraping <code>journalctl</code>.</p>
+<p>Sampling is deterministic per pipeline and applies before sink fan-out. Keep it
+at <code>1</code> for operational event logs unless a high-volume source is intentionally
+being downsampled.</p>
+<p>See <code>examples/observability-loki.yaml</code> for a complete config.</p>
+<h2 id="event-delivery-and-recovery-contracts">Event delivery and recovery contracts</h2>
+<p>The local bus uses bounded subscriber queues. A full queue drops wakeups; it
+does not remove events already committed to SQLite. The exporter and EventRule
+engine use the bus only to wake their journal drains, with a default one-second
+poll when no wakeup arrives. Failed drains back off from one second to one minute.
+Polling periods exclude execution time, database outages, and a stalled process.</p>
+<table>
+<thead>
+<tr>
+<th>Consumer</th>
+<th>Authoritative input</th>
+<th>Recovery and limit</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Route and other notification controllers</td>
+<td>Current configuration, dynamic parts, and object status</td>
+<td>Reread current inputs on an event or periodic reconcile. The IPv4 route controller's maximum normal period is 30 seconds. Duplicate or stale event payloads do not replace its desired state. Other controllers have their own periods.</td>
+</tr>
+<tr>
+<td>DerivedEvent</td>
+<td>Current referenced status</td>
+<td>Reevaluate periodically (five seconds by default); intermediate historical transitions cannot be reconstructed.</td>
+</tr>
+<tr>
+<td>EventRule</td>
+<td>Committed event journal</td>
+<td>Count, sequence, and window patterns require recorded history. A new consumer starts at the current journal cursor; it does not replay all older history. Rule correlation state is process-local.</td>
+</tr>
+<tr>
+<td>ObservabilityPipeline</td>
+<td>Committed event journal</td>
+<td>Retry stored events; sampling and sink severity filters still apply. This is not a complete audit log of every attempted status change.</td>
+</tr>
+<tr>
+<td>Provider action executor</td>
+<td>ActionExecution journal and stable idempotency key</td>
+<td>A durably succeeded action is skipped after retry/restart. A remote success before local outcome recording still requires executor idempotency or observation of provider state.</td>
+</tr>
+</tbody>
+</table>
+<p>When a configured EventRule pattern matches <code>routerd.resource.status.changed</code>,
+the standard SQLite-backed status store commits each meaningful status change
+and its event in one transaction. A journal failure rolls back that status write,
+so a producer retry can record the transition. Local delivery happens after
+commit using the same event ID. A crash before local delivery is recovered by
+journal polling. The status store and bus must share this transactional store;
+an unsupported or mismatched store returns an error before saving the status.
+Rules for unrelated topics and configurations without such rules do not require
+this extra store capability.</p>
+<p>Freshness checks and transition attributes use the transaction's current status,
+including fields retained by a concurrent merge. An identical status in a new
+generation refreshes its observed-generation metadata without emitting a new
+transition event.</p>
+<p>Without a matching history-consuming EventRule, status notifications retain
+their existing contract: status can commit before event persistence fails,
+the error is returned, and local delivery is still attempted. Saving an identical
+status later does not reconstruct missing history. Current-state consumers can
+recover by rescanning; a log exporter cannot recover an event that never reached
+the journal. The transaction guarantee above applies specifically to status
+transition events, not every daemon or derived-event producer.</p>
+<p>Journal consumption is at least once. If processing succeeds but cursor saving
+fails, the callback runs again for the same event ID. EventRule emissions and
+log sinks may therefore repeat. Successful delivery to multiple sinks is not
+atomic, and a cursor is not an exactly-once guarantee for an external API.
+The separate <a href="../reference/event-federation.html">event federation protocol</a> has
+its own delivery records and does not use the local status notification queue
+as its durable source of truth.</p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#event-delivery-and-recovery-contracts">Event delivery and recovery contracts</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/operations/observability.md">GitHub</a></div></footer></body></html>

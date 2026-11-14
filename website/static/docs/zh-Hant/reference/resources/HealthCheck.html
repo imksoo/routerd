@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HealthCheck · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/reference/resources/HealthCheck.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/reference/resources/HealthCheck.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/HealthCheck.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/HealthCheck.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/reference/resources/HealthCheck.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="healthcheck">HealthCheck</h1>
+<p><a href="../resources.html#healthcheck">各資源的設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>探測 IP 目標並發布 Healthy/Unhealthy 狀態供路由選擇。成功僅代表設定的協定與路徑通過。</p>
+<h2 id="指定條件與參照關係">指定條件與參照關係</h2>
+<ul>
+<li>運作時請明確指定 target。targetSource 與 interface 影響驗證及計畫顯示，但目前產生器直接傳入 target，不會自動解析預設閘道或 DS-Lite 遠端目標；輔助程式拒絕空目標。</li>
+<li>來源綁定與 socket mark 從參照此檢查的 EgressRoutePolicy 候選／目標推導，不能以 HealthCheck YAML 直接設定。推導值衝突時無法選出唯一路徑。DS-Lite 關聯探測需要可用的綁定。</li>
+<li>TCP 僅檢查連線建立。DNS 透過目標伺服器解析 example.com 的 A 記錄。HTTP 對 http://<target>:<port>/ 發送 GET，將含 4xx 的 200–499 視為成功，不檢查特定應用 URL 或回應內容。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: HealthCheck
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    addressFamily: &quot;ipv4&quot; # 選填; string; enum=[&quot;ipv4&quot;, &quot;ipv6&quot;]
+    enabled: true # 選填; boolean
+    healthyThreshold: 1 # 選填; integer; minimum=1
+    interface: &quot;&lt;string&gt;&quot; # 選填; string
+    interval: &quot;&lt;string&gt;&quot; # 選填; string
+    port: 0 # 選填; integer; minimum=0; maximum=65535
+    protocol: &quot;&quot; # 選填; string; enum=[&quot;&quot;, &quot;icmp&quot;, &quot;tcp&quot;, &quot;dns&quot;, &quot;http&quot;]
+    role: &quot;link&quot; # 選填; string; enum=[&quot;link&quot;, &quot;next-hop&quot;, &quot;internet&quot;, &quot;service&quot;, &quot;policy&quot;]
+    target: &quot;&lt;string&gt;&quot; # 選填; string
+    targetSource: &quot;auto&quot; # 選填; string; enum=[&quot;auto&quot;, &quot;static&quot;, &quot;defaultGateway&quot;, &quot;dsliteRemote&quot;]
+    timeout: &quot;&lt;string&gt;&quot; # 選填; string
+    type: &quot;ping&quot; # 選填; string; enum=[&quot;ping&quot;]
+    unhealthyThreshold: 1 # 選填; integer; minimum=1
+    when: # 選填; object
+      state: # 選填; object
+        &quot;&lt;key&gt;&quot;: # 選填; object
+          contains: &quot;&lt;string&gt;&quot; # 選填; string
+          equals: &quot;&lt;string&gt;&quot; # 選填; string
+          exists: true # 選填; boolean
+          for: &quot;&lt;string&gt;&quot; # 選填; string
+          in: # 選填; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # 選填; string
+          status: &quot;set&quot; # 選填; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<h2 id="欄位意義與預設值">欄位意義與預設值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>欄位意義與預設值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.enabled</code></td>
+<td>預設 true；false 停用探測。</td>
+</tr>
+<tr>
+<td><code>spec.type</code></td>
+<td>預設 ping，僅接受 ping。TCP/DNS/HTTP 由 protocol 選擇。</td>
+</tr>
+<tr>
+<td><code>spec.role</code></td>
+<td>選用分類 link/next-hop/internet/service/policy；驗證與計畫預設 next-hop。不會在執行時選擇目標或協定。</td>
+</tr>
+<tr>
+<td><code>spec.addressFamily</code></td>
+<td>選用 ipv4/ipv6。目標驗證將省略視為 ipv4，IPv6 目標須明確指定 ipv6。target 必須是 IP 常值，不是主機名稱解析設定。</td>
+</tr>
+<tr>
+<td><code>spec.target</code></td>
+<td>符合 addressFamily 的純 IP 位址。targetSource 為 static 時驗證必填，目前輔助程式在所有模式下實際都需要目標；無可用執行時預設值。</td>
+</tr>
+<tr>
+<td><code>spec.targetSource</code></td>
+<td>驗證預設 auto，也接受 static/defaultGateway/dsliteRemote。目前產生器不實作自動目標查詢，請見上述運作限制。</td>
+</tr>
+<tr>
+<td><code>spec.interface</code></td>
+<td>選用的邏輯介面／PPPoESession／DSLiteTunnel 名稱，指定時必須存在於共用介面／通道索引。此欄位本身不會轉為目前輔助程式的 --source-interface。</td>
+</tr>
+<tr>
+<td><code>spec.protocol</code></td>
+<td>預設 icmp；tcp/dns/http 選擇上述檢查。HTTP 為明文，不是 HTTPS。</td>
+</tr>
+<tr>
+<td><code>spec.port</code></td>
+<td>0–65535，預設 0 使用協定預設：TCP 443、DNS 53、HTTP 80。ICMP 不使用連接埠。</td>
+</tr>
+<tr>
+<td><code>spec.interval</code></td>
+<td>正值 Go duration；輔助程式／執行時預設 30s。目前計畫觀察器省略時顯示 60s，並非輔助程式預設。</td>
+</tr>
+<tr>
+<td><code>spec.timeout</code></td>
+<td>每次探測的正值 Go duration，預設 3s。這是探測逾時，不是路由器重新啟動期限。</td>
+</tr>
+<tr>
+<td><code>spec.healthyThreshold</code></td>
+<td>轉為 Healthy 所需連續成功次數，預設 1。失敗會重設成功計數。請使用正整數；明確的 0 不符合結構描述最小值。</td>
+</tr>
+<tr>
+<td><code>spec.unhealthyThreshold</code></td>
+<td>轉為 Unhealthy 所需連續失敗次數，預設 3。成功會重設失敗計數；未達門檻時為 Failing。</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>選用的共用啟用條件，省略表示無條件。巢狀 state/all/any 及條件請見共用欄位。</td>
+</tr>
+</tbody>
+</table>
+<p>實作: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_wan.go">pkg/config/validate_wan.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/healthcheck/engine.go">pkg/healthcheck/engine.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/healthcheck/dslite_binding.go">pkg/healthcheck/dslite_binding.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/healthcheck_systemd.go">pkg/render/healthcheck_systemd.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/system.go">pkg/controller/chain/system.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd-healthcheck/main.go">cmd/routerd-healthcheck/main.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/apply/engine.go">pkg/apply/engine.go</a></p>
+<h2 id="可參照的狀態欄位">可參照的狀態欄位</h2>
+<p>一般狀態參照驗證接受此 Kind 的下列欄位名稱。列於允許清單不保證目前有值，請檢查實際狀態。這些是輸出，不是 YAML spec 設定。</p>
+<p><code>phase</code>, <code>role</code>, <code>target</code>, <code>sourceAddress</code>, <code>sourceInterface</code>, <code>protocol</code>, <code>consecutiveFailed</code>, <code>lastCheckedAt</code></p>
+<p><a href="/examples/home-router-mgmt-protected.yaml">設定範例</a></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#指定條件與參照關係">指定條件與參照關係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#欄位意義與預設值">欄位意義與預設值</a></li>
+<li><a href="#可參照的狀態欄位">可參照的狀態欄位</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/reference/resources/HealthCheck.md">GitHub</a></div></footer></body></html>

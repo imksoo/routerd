@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Kubernetes API VIP with BGP · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/config-examples/kubernetes-api-vip.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/config-examples/kubernetes-api-vip.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/config-examples/kubernetes-api-vip.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/config-examples/kubernetes-api-vip.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/config-examples/kubernetes-api-vip.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="kubernetes-api-vip-with-bgp">Kubernetes API VIP with BGP</h1>
+<p>This example shows a routerd edge pair pattern for bootstrapping Kubernetes
+without putting the API endpoint inside the cluster. The router owns a VRRP
+VIP, forwards <code>k8s-api.cluster.example:6443</code> to three control-plane backends, checks
+<code>/readyz</code> over HTTPS, and peers with Kubernetes BGP speakers for Service
+prefixes.</p>
+<p>Use it only after a small lab router works. It is an end-to-end pattern with
+multiple failure domains, not a first copy-and-paste configuration. Validate
+and dry-run it before a daemon exists. First replace the interface names, VIP
+and peer addresses, backend names, and BGP peers with values from your lab.
+The supplied <code>*.cluster.example</code> backend names are placeholders, so validation
+can succeed while the dry-run correctly stops until those names resolve:</p>
+<pre><code class="language-bash">routerd validate --config examples/kubernetes-api-vip.yaml
+
+workdir=$(mktemp -d)
+routerd apply --config examples/kubernetes-api-vip.yaml --once --dry-run \
+  --state-file &quot;$workdir/state.db&quot; \
+  --status-file &quot;$workdir/status.json&quot;
+rm -rf &quot;$workdir&quot;
+</code></pre>
+<p>Topology:</p>
+<pre><code class="language-text">routerd-01/02  VRRP VIP 192.168.70.10
+       |
+       +-- k8s-cp-01..03 :6443  HTTPS /readyz
+       |
+       +-- k8s-wk-01..04  BGP ASN 64513
+</code></pre>
+<p>The important production-oriented settings are:</p>
+<table>
+<thead>
+<tr>
+<th>Resource</th>
+<th>Setting</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>VirtualAddress/k8s-api-vip</code></td>
+<td>VRRP preempt settings and track entries for API health and BGP health.</td>
+</tr>
+<tr>
+<td><code>IngressService/kubernetes-api</code></td>
+<td>HTTPS health check on <code>/readyz</code>, <code>tlsSkipVerify: true</code> for kubeadm self-signed bootstrap certs, failover selection, reject on no healthy backend, and automatic same-interface hairpin SNAT when selected control-plane backends are on the VIP LAN prefix or the same private <code>/24</code>.</td>
+</tr>
+<tr>
+<td><code>BGPRouter/lan</code></td>
+<td><code>convergenceProfile: fast</code>, BGP timers <code>3s/9s/5s</code>, graceful restart disabled by default, and an import allow-list for Kubernetes Service prefixes only.</td>
+</tr>
+<tr>
+<td><code>DNSResolver/lan</code></td>
+<td>Automatically serves <code>k8s-api.cluster.example</code> from the VIP <code>hostname</code> field, plus static control-plane and worker records.</td>
+</tr>
+</tbody>
+</table>
+<p>Keep the DHCP pool away from the VIP, control-plane addresses, worker
+addresses, and LoadBalancer/Service advertisement ranges.</p>
+<p>For operations, <code>routerctl get BGPRouter</code>, <code>routerctl get VirtualAddress</code>, and
+<code>routerctl get IngressService</code> provide table views for peer state, VIP role, and
+backend health without dumping raw status JSON. Inspect host <code>ip</code>, <code>nft</code>, and
+conntrack state directly when debugging live dataplane behavior.</p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul></ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/config-examples/kubernetes-api-vip.md">GitHub</a></div></footer></body></html>

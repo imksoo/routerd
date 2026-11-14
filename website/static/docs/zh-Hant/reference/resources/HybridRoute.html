@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HybridRoute · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/reference/resources/HybridRoute.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/reference/resources/HybridRoute.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/HybridRoute.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/HybridRoute.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/reference/resources/HybridRoute.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="hybridroute">HybridRoute</h1>
+<p><a href="../resources.html#hybridroute">各資源的設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: hybrid.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>將明確列出的 IPv4 目的網路展開為經 OverlayPeer 的主路由表 IPv4Route。</p>
+<h2 id="指定條件與參照關係">指定條件與參照關係</h2>
+<ul>
+<li>僅支援非預設 IPv4 CIDR，拒絕 default、0.0.0.0/0、IPv6 及非主表。目的前綴遮罩化後產生 &lt;資源名&gt;-<CIDR非英數連續字元改連字號>，例如 branch-10-20-0-0-16。</li>
+<li>產生名稱須唯一，不可與明確 IPv4Route 名稱或目的衝突。同一 HybridRoute 內重複正規化目的也會衝突。HealthCheck 異常僅改變狀態，不阻擋安裝、撤回路由或改選對端。</li>
+<li>產生 IPv4Route 使用 peer.underlay.interface 作 device，僅 ipsec 可將 IPv4 remote.address 作 gateway，其他為裝置路由。須另行提供隧道/VPN 與實際可達性。Linux 使用正 metric，FreeBSD 底層 IPv4Route 不套用 metric。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。</p>
+<pre><code class="language-yaml">- apiVersion: hybrid.routerd.net/v1alpha1
+  kind: HybridRoute
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    destinationCIDRs: # 必填; array
+      - &quot;&lt;string&gt;&quot; # string
+    healthCheckRef: &quot;&lt;string&gt;&quot; # 選填; string
+    install: # 選填; object
+      metric: 0 # 選填; integer; minimum=0
+      table: &quot;&quot; # 選填; string; enum=[&quot;&quot;, &quot;main&quot;]
+    peerRef: &quot;&lt;string&gt;&quot; # 必填; string
+</code></pre>
+<h2 id="欄位意義與預設值">欄位意義與預設值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>欄位意義與預設值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.destinationCIDRs</code></td>
+<td>必填非空且不含預設路由的 IPv4 CIDR 清單，不自動補遠端網路或探索。</td>
+</tr>
+<tr>
+<td><code>spec.peerRef</code></td>
+<td>必填既有 OverlayPeer metadata.name 裸名；展開雖可正規化 OverlayPeer/name，一般跨資源驗證仍要求裸名。</td>
+</tr>
+<tr>
+<td><code>spec.install</code></td>
+<td>選用路由安裝設定，預設主表、metric 0，不提供策略路由或自動 HA 選擇。</td>
+</tr>
+<tr>
+<td><code>spec.install.table</code></td>
+<td>僅空值或 main，兩者均展開為主表 IPv4Route，拒絕其他表名或編號。</td>
+</tr>
+<tr>
+<td><code>spec.install.metric</code></td>
+<td>非負整數，預設 0，複製至產生 IPv4Route；Linux 僅輸出正值，FreeBSD 路徑忽略。</td>
+</tr>
+<tr>
+<td><code>spec.healthCheckRef</code></td>
+<td>選用既有 HealthCheck 裸名，空值不附加健康狀態。unhealthy/failed/error 標示 Degraded 但不變更路由，此函式不將缺少或 unknown 狀態視為異常。</td>
+</tr>
+</tbody>
+</table>
+<p>實作: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_hybrid.go">pkg/config/validate_hybrid.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/hybrid/hybrid.go">pkg/hybrid/hybrid.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/dynamic_effective.go">pkg/controller/chain/dynamic_effective.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/hybrid.go">pkg/controller/chain/hybrid.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/phase2.go">pkg/controller/chain/phase2.go</a></p>
+<h2 id="可參照的狀態欄位">可參照的狀態欄位</h2>
+<p>一般狀態參照驗證接受此 Kind 的下列欄位名稱。列於允許清單不保證目前有值，請檢查實際狀態。這些是輸出，不是 YAML spec 設定。</p>
+<p><code>phase</code>, <code>routes</code>, <code>peerRef</code>, <code>defaultRouteUntouched</code>, <code>estimatedMTU</code></p>
+<p><a href="/examples/hybrid-l3-fou.yaml">設定範例</a></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#指定條件與參照關係">指定條件與參照關係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#欄位意義與預設值">欄位意義與預設值</a></li>
+<li><a href="#可參照的狀態欄位">可參照的狀態欄位</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/reference/resources/HybridRoute.md">GitHub</a></div></footer></body></html>

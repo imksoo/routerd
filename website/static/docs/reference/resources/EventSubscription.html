@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>EventSubscription · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/reference/resources/EventSubscription.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/reference/resources/EventSubscription.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/reference/resources/EventSubscription.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/EventSubscription.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/EventSubscription.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="eventsubscription">EventSubscription</h1>
+<p><a href="../resources.html#eventsubscription">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: federation.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Match nonexpired persisted federation events and invoke a local Plugin, storing its result as a DynamicConfigPart.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>groupRef, match.types (at least one) and trigger.pluginRef are required. Group and plugin references are bare metadata names, not Kind/name. They are not checked for existence by this validator: a missing Plugin yields Pending at runtime; a group with no matching stored events remains Idle.</li>
+<li>Matching is case-sensitive. Types, subject prefixes, payload entries and source-node restrictions combine with AND; list alternatives combine with OR. This is exact event-type matching, not local topic wildcard matching.</li>
+<li>The controller polls stored events (normally every 5s). Succeeded subscription/event pairs are skipped; failed pairs are retried up to three attempts; pending pairs can be retried after interruption. Processing is at least once, not an exactly-once guarantee for plugin side effects.</li>
+<li>With neither batching option positive, one invocation receives the current eligible batch, not necessarily one event. Batching timers are in memory; event/run records are persisted. Scheduled batches flush early at 1024 events or approximately 4 MiB of selected payload/identity data.</li>
+<li>The plugin receives matched event facts plus only the config resources explicitly allowlisted by Plugin.context.resources; secrets are redacted. Result TTL and generated resources come from PluginResult, not this subscription. Distinct event batches produce distinct active DynamicConfigPart sources.</li>
+</ul>
+<h2 id="yaml-definition">YAML definition</h2>
+<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
+<pre><code class="language-yaml">- apiVersion: federation.routerd.net/v1alpha1
+  kind: EventSubscription
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    groupRef: &quot;&lt;string&gt;&quot; # Required; string
+    match: # Required; object
+      payload: # optional; object
+        &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # optional; string
+      sourceNodes: # optional; array
+        - &quot;&lt;string&gt;&quot; # string
+      subjectPrefixes: # optional; array
+        - &quot;&lt;string&gt;&quot; # string
+      types: # Required; array
+        - &quot;&lt;string&gt;&quot; # string
+    trigger: # Required; object
+      batchWindow: &quot;&lt;string&gt;&quot; # optional; string
+      debounce: &quot;&lt;string&gt;&quot; # optional; string
+      pluginRef: &quot;&lt;string&gt;&quot; # Required; string
+</code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.groupRef</code></td>
+<td>Required bare EventGroup name used to select stored event group_name. No default; does not automatically create or start a group.</td>
+</tr>
+<tr>
+<td><code>spec.match</code></td>
+<td>Required matching object; types must be nonempty. Optional empty categories impose no restriction.</td>
+</tr>
+<tr>
+<td><code>spec.match.types</code></td>
+<td>Required exact event-type list with nonblank entries. At least one type must match; wildcards are literal strings.</td>
+</tr>
+<tr>
+<td><code>spec.match.subjectPrefixes</code></td>
+<td>Optional subject prefix list, default empty allows all. Matching is strings.HasPrefix, not path-component or wildcard matching.</td>
+</tr>
+<tr>
+<td><code>spec.match.payload</code></td>
+<td>Optional key-to-string equality map; every entry must match. Keys must be nonblank. A missing payload key reads as empty, so a requested empty value also matches a missing key.</td>
+</tr>
+<tr>
+<td><code>spec.match.sourceNodes</code></td>
+<td>Optional exact sourceNode allowlist, default empty permits all. It does not automatically exclude this node’s own events; specify the intended source identities.</td>
+</tr>
+<tr>
+<td><code>spec.trigger</code></td>
+<td>Required local plugin invocation settings. This is distinct from Plugin.triggers and is executed by the subscription controller.</td>
+</tr>
+<tr>
+<td><code>spec.trigger.pluginRef</code></td>
+<td>Required bare Plugin metadata.name, not Plugin/name. Missing plugin yields Pending. Execution uses that Plugin’s executable, timeout, environment and context restrictions.</td>
+</tr>
+<tr>
+<td><code>spec.trigger.batchWindow</code></td>
+<td>Optional Go duration measured from the first selected event; default empty/0 means no batching cap unless debounce is positive, when the cap defaults to 1m. Positive batchWindow bounds repeated debounce. Negative durations pass validation and act as nonpositive.</td>
+</tr>
+<tr>
+<td><code>spec.trigger.debounce</code></td>
+<td>Optional Go duration after the latest newly selected event, default empty/0 disabled. Reobserving the same event does not extend it. The earlier of debounce and batchWindow deadlines fires; no positive batchWindow gives a 1m cap.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_event.go">pkg/config/validate_event.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/eventsubscription/controller.go">pkg/controller/eventsubscription/controller.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go">pkg/controller/chain/chain.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/plugin/context.go">pkg/plugin/context.go</a></p>
+<h2 id="referenceable-status-fields">Referenceable status fields</h2>
+<p>The ordinary status-reference validator accepts these field names for this kind. This allowlist does not guarantee that every field is currently populated; inspect runtime status. These are outputs, not YAML spec fields.</p>
+<p>No fields are registered for this kind in the ordinary status-reference allowlist.</p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
+<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
+<li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/reference/resources/EventSubscription.md">GitHub</a></div></footer></body></html>

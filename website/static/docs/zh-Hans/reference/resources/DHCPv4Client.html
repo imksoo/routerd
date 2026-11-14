@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DHCPv4Client · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/reference/resources/DHCPv4Client.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/reference/resources/DHCPv4Client.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/DHCPv4Client.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/DHCPv4Client.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/DHCPv4Client.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="dhcpv4client">DHCPv4Client</h1>
+<p><a href="../resources.html#dhcpv4client">各资源的配置</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>运行受管routerd-dhcpv4-client daemon，应用租约地址，以及可选的默认路由与主机DNS配置。</p>
+<h2 id="指定条件与引用关系">指定条件与引用关系</h2>
+<ul>
+<li>interface须存在于声明Router。标识字段作为协议选项发送，不是资源引用。租约到期/Release会移除已应用地址、路由及主机DNS；useRoutes/useDNS不停止租约获取。</li>
+</ul>
+<h2 id="yaml定义">YAML定义</h2>
+<p>此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DHCPv4Client
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    classID: &quot;&lt;string&gt;&quot; # 选填; string
+    clientID: &quot;&lt;string&gt;&quot; # 选填; string
+    hostname: &quot;&lt;string&gt;&quot; # 选填; string
+    interface: &quot;&lt;string&gt;&quot; # 必填; string
+    requestedAddress: &quot;&lt;string&gt;&quot; # 选填; string
+    routeMetric: 0 # 选填; integer; minimum=0
+    useDNS: true # 选填; boolean
+    useRoutes: true # 选填; boolean
+    when: # 选填; object
+      state: # 选填; object
+        &quot;&lt;key&gt;&quot;: # 选填; object
+          contains: &quot;&lt;string&gt;&quot; # 选填; string
+          equals: &quot;&lt;string&gt;&quot; # 选填; string
+          exists: true # 选填; boolean
+          for: &quot;&lt;string&gt;&quot; # 选填; string
+          in: # 选填; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # 选填; string
+          status: &quot;set&quot; # 选填; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<h2 id="字段含义与默认值">字段含义与默认值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>字段含义与默认值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.interface</code></td>
+<td>必填Router接口索引中的逻辑名称，不加Interface/，必须在声明配置存在，无默认值。</td>
+</tr>
+<tr>
+<td><code>spec.hostname</code></td>
+<td>DHCP选项12主机名，默认空即不发送，不自动使用OS主机名，拒绝空白字符。</td>
+</tr>
+<tr>
+<td><code>spec.requestedAddress</code></td>
+<td>选填偏好IPv4地址，默认未指定，须为不含前缀长度的IPv4。以选项50请求，不保证分配，也不是静态配置。</td>
+</tr>
+<tr>
+<td><code>spec.classID</code></td>
+<td>以选项60发送的vendor class标识字符串字节，默认空则省略，不做十六进制解码。</td>
+</tr>
+<tr>
+<td><code>spec.clientID</code></td>
+<td>选项61客户端标识，显式值按字符串字节发送，不解码十六进制；默认为字节1加接口硬件地址。服务器以client ID标识租约时应保持稳定。</td>
+</tr>
+<tr>
+<td><code>spec.useRoutes</code></td>
+<td>默认true，租约有defaultGateway时应用默认路由。false移除先前受管默认路由，但保留租约获取与地址应用，也不隐藏状态中的gateway。</td>
+</tr>
+<tr>
+<td><code>spec.useDNS</code></td>
+<td>默认true；/etc/resolv.conf指向systemd-resolved时用resolvectl，否则写resolv.conf。false清除先前受管DNS，但状态DNS仍可供DNSResolver相关引用。</td>
+</tr>
+<tr>
+<td><code>spec.routeMetric</code></td>
+<td>默认0，用于默认路由metric及平台特定地址协调。Schema要求非负整数，不是路由表ID。</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>启用条件，省略不设限制；state/all/any、unknown及时间条件请见共用条件参考。</td>
+</tr>
+</tbody>
+</table>
+<p>实现: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_wan.go">pkg/config/validate_wan.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/listen_ports.go">pkg/config/listen_ports.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/system.go">pkg/controller/chain/system.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/dhcpv4client/controller.go">pkg/controller/dhcpv4client/controller.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/dhcpv4client/message.go">pkg/dhcpv4client/message.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd-dhcpv4-client/main.go">cmd/routerd-dhcpv4-client/main.go</a></p>
+<h2 id="可引用的状态字段">可引用的状态字段</h2>
+<p>常规状态引用验证接受此 Kind 的下列字段名称。列于允许列表不保证目前有值，请检查实际状态。这些是输出，不是 YAML spec 配置。</p>
+<p><code>phase</code>, <code>interface</code>, <code>device</code>, <code>currentAddress</code>, <code>gateway</code>, <code>defaultGateway</code>, <code>dnsServers</code>, <code>ntpServers</code>, <code>domain</code>, <code>leaseTime</code>, <code>renewAt</code>, <code>rebindAt</code>, <code>expiresAt</code></p>
+<p><a href="/examples/basic-dhcp.yaml">配置示例</a></p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件与引用关系">指定条件与引用关系</a></li>
+<li><a href="#yaml定义">YAML定义</a></li>
+<li><a href="#字段含义与默认值">字段含义与默认值</a></li>
+<li><a href="#可引用的状态字段">可引用的状态字段</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/reference/resources/DHCPv4Client.md">GitHub</a></div></footer></body></html>

@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>適用と生成 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/concepts/apply-and-render.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/concepts/apply-and-render.html" lang="en" hreflang="en">English</a><a href="/docs/ja/concepts/apply-and-render.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/concepts/apply-and-render.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/concepts/apply-and-render.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="適用と生成">適用と生成</h1>
+<p>routerd には、設定を書く段階で使う <code>routerd</code> と、動いている daemon
+（起動し続けるプログラム）に話しかける
+<code>routerctl</code> があります。最初は、この順番を守ると安全です。</p>
+<pre><code class="language-text">YAML を書く
+    ↓
+routerd validate
+    ↓
+routerd apply --once --dry-run
+    ↓
+安全を確認して routerd.service を起動
+    ↓
+routerctl get status
+</code></pre>
+<h2 id="1-検証する">1. 検証する</h2>
+<p><code>routerd validate</code> は YAML の書き方を確認します。Kind 名、必須の項目、値の範囲、
+分かりやすい参照ミスを見つけます。daemon はまだ必要なく、ホストのネットワークも
+変更しません。</p>
+<pre><code class="language-sh">sudo routerd validate --config ./router.yaml
+</code></pre>
+<p>初回に <code>routerctl validate</code> を使わない理由は、<code>routerctl</code> が動いている
+<code>routerd.service</code> のローカルソケットに接続するからです。</p>
+<h2 id="2-dry-run-する">2. dry-run する</h2>
+<p>dry-run は、読み込んだリソースの順番と生成する内容を確認する予行演習です。
+初回は常設の状態ファイルを使わず、使い捨ての場所を明示します。</p>
+<pre><code class="language-sh">LAB_DIR=&quot;$(mktemp -d)&quot;
+sudo routerd apply --config ./router.yaml --once --dry-run \
+  --state-file &quot;$LAB_DIR/state.db&quot; \
+  --status-file &quot;$LAB_DIR/status.json&quot;
+sed -n &quot;1,120p&quot; &quot;$LAB_DIR/status.json&quot;
+</code></pre>
+<ul>
+<li><strong>state</strong> は、routerd が見た状態を保存するデータベースです。</li>
+<li><strong>status</strong> は、今回の結果を書いた JSON ファイルです。</li>
+</ul>
+<p><code>--dry-run</code> がある間はネットワークを本当に変更しません。それでも、設定の内容は
+正しく読む必要があります。最初は隔離した Ubuntu Server VM とコンソールで行います。</p>
+<h2 id="3-適用する">3. 適用する</h2>
+<p><code>routerd apply --once</code> から <code>--dry-run</code> を外すと、本当にホストを変更できます。
+これは WAN、LAN、経路、NAT、サービスを変える可能性がある操作です。
+最初の VM では、いきなり一回だけの live apply を勧めません。</p>
+<p>代わりに、dry-run が安全だと確認してから設定を
+<code>/usr/local/etc/routerd/router.yaml</code> に置き、<code>routerd.service</code> を起動します。
+常駐するサービスは、設定と実際の状態の差を見つけて必要な処理を続けます。</p>
+<pre><code class="language-sh">sudo systemctl enable --now routerd.service
+sudo systemctl is-active routerd.service
+</code></pre>
+<h2 id="4-サービス起動後に-routerctl-を使う">4. サービス起動後に routerctl を使う</h2>
+<p>サービスが作るローカルソケットに接続できるようになったら、<code>routerctl</code> を使います。
+状態を読む例は次のとおりです。</p>
+<pre><code class="language-sh">sudo routerctl get status
+sudo routerctl get events --limit 20
+</code></pre>
+<p>動いている routerd に候補 YAML を渡して検証や計画を見る場合も、この後です。</p>
+<pre><code class="language-sh">sudo routerctl validate -f candidate.yaml --replace
+sudo routerctl plan -f candidate.yaml --replace
+</code></pre>
+<p>この 2 つは host の状態を変えませんが、稼働中の daemon が必要です。</p>
+<h2 id="適用途中で失敗した場合">適用途中で失敗した場合</h2>
+<p>エラーが返っても、canonical 設定ファイルは既に置換されている場合があります。
+エラーと daemon ログの <code>stage</code>、<code>generation</code>、<code>canonical</code>、
+<code>durabilityConfirmed</code>、世代完了記録の試行・成功フラグ、確定した runtime epoch を確認します。
+<code>Healthy</code> はデータプレーンの観測結果であり、設定保存の完了を証明しません。</p>
+<table>
+<thead>
+<tr>
+<th>失敗箇所</th>
+<th>canonical 設定</th>
+<th>runtime と完了記録</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>置換前</td>
+<td>旧設定</td>
+<td>切替済みなら復元を試みます。復元失敗時は実際の fallback または稼働世代なしを記録します。</td>
+</tr>
+<tr>
+<td>rename 後の chmod／directory sync</td>
+<td>新設定が可視</td>
+<td>新 runtime を維持し、耐久性は未確認として返します。</td>
+</tr>
+<tr>
+<td>世代完了の UPDATE</td>
+<td>新設定</td>
+<td>新 runtime を維持し、通常の成功結果を出力せず失敗を返します。</td>
+</tr>
+<tr>
+<td>結果や status の出力</td>
+<td>新設定</td>
+<td>完了済み世代は完了のまま、出力の失敗を返します。</td>
+</tr>
+</tbody>
+</table>
+<p>SQLite に保存できない間も、daemon は今回の失敗診断をメモリーに保持します。
+定期実行で正常な状態を観測しただけでは診断を消さず、次の設定操作で確認します。
+このメモリーは再起動を跨ぎません。再試行前にエラー、canonical YAML、世代履歴、
+controller status を照合してください。OS 全体の巻戻しや全ファイルシステムでの
+電源断耐久性を保証するものではありません。</p>
+<p>supervisor が runtime 切替要求を受け付けた後は、要求の context が期限切れになっても
+完了の確認応答まで mutation の排他責任を維持します。準備処理がキャンセルに応じない
+場合は新しい変更を拒否して serve の停止を通知します。停止しない builder の完了時間に
+厳密な上限はありません。確定した稼働世代は serve に属し、HTTP 要求終了だけでは停止しません。</p>
+<p><code>--no-reconcile</code> は設定だけを commit して稼働世代を変更しません。
+Standby の既存 HA 動作は維持し、canonical commit とホスト変更を行いません。
+dry-run は本番の世代記録や canonical を変更しません。</p>
+<p>dry-run は object status、状態変数、dynamic desired part を一つの SQLite read transaction
+からコピーし、観測時刻・期限・source・世代・digest・撤去意図を保持します。
+debug ログの入力 manifest には候補の hash と評価時刻を含め、payload は含めません。
+job、event cursor、event／action journal、federation 履歴、世代履歴はコピー対象外です。
+ホスト観測と controller の評価全体を凍結する仕組みではなく、実行時には TTL と ownership を
+再評価します。manifest 自体は将来の apply を許可する証拠にはなりません。</p>
+<h2 id="生成とは">生成とは</h2>
+<p>「生成」は、routerd が dnsmasq の設定、nftables の設定、systemd の unit など、
+ホスト向けのファイルを組み立てることです。生成しただけで、必ずホストが変わる
+わけではありません。dry-run では生成内容を確認し、live の適用やサービス起動で
+必要な変更を反映します。</p>
+<p>現在の routerd では、dnsmasq 向けには DHCPv4、DHCPv6、中継、RA の設定を
+生成します。DNS の待ち受け、ローカルゾーン、条件付き転送、暗号化 DNS は
+<code>DNSResolver</code> が扱います。</p>
+<h2 id="プラットフォームの範囲">プラットフォームの範囲</h2>
+<p>このページの初回手順は Ubuntu Server を対象にしています。netplan、systemd、
+nftables のような Linux 固有の生成は、対応する機能がある環境だけで使います。
+FreeBSD と NixOS の導入・サービス連携は土台がありますが、Ubuntu と同じ
+レンダラーの対応を意味しません。</p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#1-検証する">1. 検証する</a></li>
+<li><a href="#2-dry-run-する">2. dry-run する</a></li>
+<li><a href="#3-適用する">3. 適用する</a></li>
+<li><a href="#4-サービス起動後に-routerctl-を使う">4. サービス起動後に routerctl を使う</a></li>
+<li><a href="#適用途中で失敗した場合">適用途中で失敗した場合</a></li>
+<li><a href="#生成とは">生成とは</a></li>
+<li><a href="#プラットフォームの範囲">プラットフォームの範囲</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/concepts/apply-and-render.md">GitHub</a></div></footer></body></html>

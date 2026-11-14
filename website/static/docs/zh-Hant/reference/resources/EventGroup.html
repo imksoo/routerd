@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>EventGroup · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/reference/resources/EventGroup.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/reference/resources/EventGroup.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/EventGroup.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/EventGroup.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/reference/resources/EventGroup.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="eventgroup">EventGroup</h1>
+<p><a href="../resources.html#eventgroup">各資源的設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: federation.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>宣告共用的聯邦事件群組，以及此路由器的識別、對等節點來源、接收與本機保留設定。</p>
+<h2 id="指定條件與參照關係">指定條件與參照關係</h2>
+<ul>
+<li>nodeName 必填，metadata.name 為群組識別；參與節點使用相同群組名與共用密鑰。僅識別用途可省略 secretFile，但傳輸輔助程式僅在提供 secretFile 時啟動。Applied 表示執行設定已寫入，不保證事件已送達。</li>
+<li>設定驗證在 listen.address、peersFrom 或參照此群組的 EventPeer 存在時要求 secretFile，auth.secretRef 不能替代。eventd 啟動時檔案須存在，移除前後空白後的密鑰不可為空。</li>
+<li>接收器是否啟動由 listen.port &gt; 0 決定，並非只看 address。使用正連接埠時請明確指定地址；地址空白而連接埠為正可能綁定所有地址。連接埠 0 停用 TCP 接收，但可繼續推送與清理。</li>
+<li>peersFrom 匯入 SAMNodeSet 中有 eventEndpoint 的節點，排除 nodeRef 等於 nodeName 的自身節點。依遠端 nodeName 去重，後來源覆寫前來源，最後由靜態 EventPeer 覆寫匯入節點。必要來源遺失時維持 Pending 並保留舊設定；選用來源遺失則略過。</li>
+<li>eventd 在啟動及定期處理（預設 1 分鐘）執行本機清理。時間與數量限制同時適用；時間依 observedAt，數量保留最新觀測事件。這與每個事件的 expiresAt 及本機 EventRule 紀錄保留不同。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。</p>
+<pre><code class="language-yaml">- apiVersion: federation.routerd.net/v1alpha1
+  kind: EventGroup
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    auth: # 選填; object
+      mode: &quot;&quot; # 選填; string; enum=[&quot;&quot;, &quot;hmac&quot;]
+      secretFile: &quot;&lt;string&gt;&quot; # 選填; string
+      secretRef: &quot;&lt;string&gt;&quot; # 選填; string
+    listen: # 選填; object
+      address: &quot;&lt;string&gt;&quot; # 選填; string
+      port: 0 # 選填; integer; minimum=0; maximum=65535
+    nodeName: &quot;&lt;string&gt;&quot; # 必填; string
+    peersFrom: # 選填; array
+      - # object
+        optional: true # 選填; boolean
+        resource: &quot;&lt;string&gt;&quot; # 必填; string
+    replayWindow: &quot;&lt;string&gt;&quot; # 選填; string
+    retention: # 選填; object
+      maxAge: &quot;&lt;string&gt;&quot; # 選填; string
+      maxEvents: 0 # 選填; integer; minimum=0
+    when: # 選填; object
+      state: # 選填; object
+        &quot;&lt;key&gt;&quot;: # 選填; object
+          contains: &quot;&lt;string&gt;&quot; # 選填; string
+          equals: &quot;&lt;string&gt;&quot; # 選填; string
+          exists: true # 選填; boolean
+          for: &quot;&lt;string&gt;&quot; # 選填; string
+          in: # 選填; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # 選填; string
+          status: &quot;set&quot; # 選填; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<h2 id="欄位意義與預設值">欄位意義與預設值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>欄位意義與預設值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.nodeName</code></td>
+<td>必填且非空的本機節點識別，標記於本機產生的聯邦事件。無主機名稱預設；搭配 peersFrom 時須符合 SAMNodeSet.nodeRef。</td>
+</tr>
+<tr>
+<td><code>spec.peersFrom</code></td>
+<td>選用的有序來源清單，預設空。即使所有來源為選用或沒有節點，提供此欄位仍需要 auth.secretFile。</td>
+</tr>
+<tr>
+<td><code>spec.peersFrom[].resource</code></td>
+<td>必填 SAMNodeSet/<name> 參照。驗證格式；來源未宣告時依執行期 optional/Pending 處理，不當作一般狀態值參照拒絕。</td>
+</tr>
+<tr>
+<td><code>spec.peersFrom[].optional</code></td>
+<td>預設 false：遺失來源會阻止新設定。true 略過遺失來源，但格式錯誤或無法解碼仍失敗。</td>
+</tr>
+<tr>
+<td><code>spec.retention</code></td>
+<td>選用的本機聯邦事件保留設定，預設無時間或數量限制。僅在 eventd 清理執行時生效。</td>
+</tr>
+<tr>
+<td><code>spec.retention.maxEvents</code></td>
+<td>每群組的非負事件數上限，預設 0 為無限。正值在時間清理後保留 observedAt/id 最新的紀錄。</td>
+</tr>
+<tr>
+<td><code>spec.retention.maxAge</code></td>
+<td>選用 Go 時間長度，預設空為無限。零或負值可通過驗證，執行設定會省略，亦表示無時間限制。</td>
+</tr>
+<tr>
+<td><code>spec.auth</code></td>
+<td>選用的傳輸完整性設定。目前傳輸一律使用 HMAC，沒有未驗證模式。</td>
+</tr>
+<tr>
+<td><code>spec.auth.mode</code></td>
+<td>接受空或 hmac，預設空。傳輸執行時兩者皆使用 HMAC，控制器不以此選擇其他方案。</td>
+</tr>
+<tr>
+<td><code>spec.auth.secretRef</code></td>
+<td>預設空。接受但目前控制器與輔助程式不解析；不能替代 secretFile，也不作資源參照驗證。</td>
+</tr>
+<tr>
+<td><code>spec.auth.secretFile</code></td>
+<td>共用 HMAC 密鑰檔案路徑。空值停用傳輸輔助程式；指定接收地址或對等節點時依上述規則必填。不會自動分發密鑰。</td>
+</tr>
+<tr>
+<td><code>spec.listen</code></td>
+<td>選用 HTTP 接收綁定，預設地址空、連接埠 0。接收時請明確設定兩者。</td>
+</tr>
+<tr>
+<td><code>spec.listen.address</code></td>
+<td>接收綁定地址，預設空。非空時需要 1–65535 連接埠與 secretFile。輔助程式不會僅因地址空而停用接收，請見連接埠規則。</td>
+</tr>
+<tr>
+<td><code>spec.listen.port</code></td>
+<td>整數 0–65535，預設 0 停用接收。正值在 address 啟用純 HTTP；本資源沒有 TLS 憑證欄位。</td>
+</tr>
+<tr>
+<td><code>spec.replayWindow</code></td>
+<td>簽署請求時間戳偏差容許範圍，使用 Go 時間長度。省略、零或負值為 5m。不是事件保留時間或訊息去重 TTL。</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>選用的共用啟用條件，預設無條件。有效設定篩選控制傳輸設定與服務生命週期；條件與結構描述限制請見共用欄位。</td>
+</tr>
+</tbody>
+</table>
+<p>實作: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_event.go">pkg/config/validate_event.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/eventfederation/controller.go">pkg/controller/eventfederation/controller.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go">pkg/controller/chain/chain.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/system.go">pkg/controller/chain/system.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/eventd/config.go">pkg/eventd/config.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/eventd/prune.go">pkg/eventd/prune.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/eventd/receiver.go">pkg/eventd/receiver.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd-eventd/main.go">cmd/routerd-eventd/main.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/state/federation.go">pkg/state/federation.go</a></p>
+<h2 id="可參照的狀態欄位">可參照的狀態欄位</h2>
+<p>一般狀態參照驗證接受此 Kind 的下列欄位名稱。列於允許清單不保證目前有值，請檢查實際狀態。這些是輸出，不是 YAML spec 設定。</p>
+<p><code>phase</code>, <code>group</code>, <code>nodeName</code>, <code>peers</code>, <code>peersFrom</code>, <code>pendingSources</code>, <code>listenAddress</code>, <code>listenPort</code></p>
+<p><a href="/examples/cloudedge-mobility-demo/onprem.yaml">設定範例</a></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#指定條件與參照關係">指定條件與參照關係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#欄位意義與預設值">欄位意義與預設值</a></li>
+<li><a href="#可參照的狀態欄位">可參照的狀態欄位</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/reference/resources/EventGroup.md">GitHub</a></div></footer></body></html>

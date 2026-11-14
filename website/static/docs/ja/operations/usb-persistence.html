@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>USB 永続化 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/operations/usb-persistence.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/operations/usb-persistence.html" lang="en" hreflang="en">English</a><a href="/docs/ja/operations/usb-persistence.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/operations/usb-persistence.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/operations/usb-persistence.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="usb-永続化">USB 永続化</h1>
+<p>routerd のライブ ISO は、ディスクレスルーターとして動作できます。
+このモードでは、実行中のシステムを RAM に置きます。
+選択したルーター状態だけを USB デバイスへ保存します。</p>
+<p>これは、リムーバブルメディアから起動する mini PC 向けです。
+内蔵ディスクを使わずに、再起動後も設定を維持できます。</p>
+<p>現在の Ubuntu ライブ ISO は、このページの永続化ヘルパーを使います。
+旧 Alpine イメージ用の <code>lbu</code> 手順は、現在の ISO には適用しません。</p>
+<h2 id="配置">配置</h2>
+<p>USB 永続化を有効にすると、選択したパーティションに次の配置を作ります。</p>
+<pre><code class="language-text">routerd/
+  router.yaml
+  usb-device
+  usb-flush-enabled
+  log-limit
+  secrets/
+  logs/
+  state/
+</code></pre>
+<p>起動時には、<code>/usr/share/routerd/live-persistence.sh init</code> が設定メディアを探します。
+まず、記録済みのデバイスを確認します。
+次に、カーネルコマンドラインの <code>routerd.usb=</code> を確認します。
+最後に、<code>ROUTERD_CONFIG</code> または <code>ROUTERD</code> ラベルのデバイスを探します。
+書き込み可能なパーティションは、永続化用に使います。Proxmox の <code>media=cdrom</code> 設定 ISO のような読み取り専用の ISO9660/UDF CD-ROM メディアは、設定の取り込み専用として扱い、書き出し（flush）は無効にします。</p>
+<p>選択したパーティションは <code>/media/routerd-usb</code> にマウントします。
+ヘルパーは、ホスト固有の設定を先に探し、その後に汎用の設定を探します。</p>
+<ul>
+<li><code>/media/routerd-usb/routerd/hosts/&lt;hostname&gt;.yaml</code></li>
+<li><code>/media/routerd-usb/routerd/hosts/&lt;mac&gt;.yaml</code>。MAC はコロン区切り、または小文字の詰めた表記を使えます。</li>
+<li><code>/media/routerd-usb/routerd/router.yaml</code></li>
+</ul>
+<p>設定が見つかれば、<code>/usr/local/etc/routerd/router.yaml</code> へコピーします。
+その後、ライブ ISO の起動処理が設定を反映します。受け入れテストや障害調査のために、取得元と SHA256 を <code>/run/routerd/live-config-source</code> と <code>/run/routerd/live-config-sha256</code> に保存します。
+secrets は apply の前に復元します。ヘルパーは次の配置をこの順に探します。</p>
+<ul>
+<li><code>routerd/hosts/&lt;hostname&gt;/secrets/</code></li>
+<li><code>routerd/hosts/&lt;mac&gt;/secrets/</code>。MAC はコロン区切り、または小文字の詰めた表記を使えます。</li>
+<li><code>routerd/secrets/</code></li>
+</ul>
+<p>各ファイルは <code>/usr/local/etc/routerd/secrets</code> に mode <code>0600</code> で配置します。
+保存済みの設定がなく、<code>/usr/local/etc/routerd/router.yaml</code> もなければ、設定ウィザードを起動します。</p>
+<h2 id="ファイルシステム">ファイルシステム</h2>
+<p>ライブヘルパーは <code>blkid</code> でファイルシステムを判定します。
+判定結果に応じて、マウントオプションを切り替えます。</p>
+<table>
+<thead>
+<tr>
+<th>ファイルシステム</th>
+<th>既定のマウントオプション</th>
+<th>メモ</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ext4</code></td>
+<td><code>rw,async,noatime</code></td>
+<td>永続ルーター用途では第一候補です。</td>
+</tr>
+<tr>
+<td><code>vfat</code></td>
+<td><code>rw,async,noatime,utf8,shortname=mixed</code></td>
+<td>単純な USB メモリーで便利です。Unix のパーミッションはありません。</td>
+</tr>
+<tr>
+<td><code>exfat</code></td>
+<td><code>rw,async,noatime</code></td>
+<td>大容量の USB メモリーをデスクトップ OS と共用しやすい形式です。</td>
+</tr>
+<tr>
+<td><code>iso9660</code> / <code>udf</code></td>
+<td><code>ro,noatime</code></td>
+<td>読み取り専用の設定取り込みメディアです。永続化の書き出しは無効です。</td>
+</tr>
+</tbody>
+</table>
+<p>FAT32 は、通常 <code>blkid</code> では <code>vfat</code> として表示されます。
+ライブヘルパーは、FAT32 と決め打ちでマウントしません。
+ファイルシステムの種別を判定してから、対応するオプションを選びます。</p>
+<p>既定は <code>async,noatime</code> です。
+USB フラッシュへの書き込みを減らすためです。
+デバッグや保守的な書き込み確認を優先する場合は、次のカーネルパラメーターを指定します。</p>
+<pre><code class="language-text">routerd.usb_mount=sync
+</code></pre>
+<p>既定値を明示する場合は、<code>routerd.usb_mount=async</code> を使います。</p>
+<h2 id="ログバッファー">ログバッファー</h2>
+<p>実行時のログは tmpfs に一時保存します。</p>
+<pre><code class="language-text">/run/routerd/logs
+</code></pre>
+<p>既定の上限は 100 MiB です。
+上限を超えた場合は、古いファイルから削除します。</p>
+<p>日次の書き出しジョブを有効にすると、<code>/etc/periodic/daily/routerd-usb-flush</code> が次を USB へコピーします。</p>
+<ul>
+<li>現在の <code>router.yaml</code></li>
+<li><code>/usr/local/etc/routerd/secrets</code> のファイル</li>
+<li><code>/var/lib/routerd</code> の状態アーカイブ</li>
+<li><code>/var/db/routerd</code> の状態アーカイブ</li>
+<li><code>/run/routerd/logs</code> の圧縮ログアーカイブ</li>
+</ul>
+<p>手動でも書き出せます。</p>
+<pre><code class="language-sh">/usr/share/routerd/live-persistence.sh flush
+</code></pre>
+<h2 id="安全な取り外し">安全な取り外し</h2>
+<p>永続化用のマウントが有効なまま、USB デバイスを抜かないでください。
+先に、ライブヘルパーで書き出しとアンマウントを実行します。</p>
+<pre><code class="language-sh">/usr/share/routerd/live-persistence.sh flush
+/usr/share/routerd/live-persistence.sh umount
+</code></pre>
+<p>現在の状態は、次で確認します。</p>
+<pre><code class="language-sh">/usr/share/routerd/live-persistence.sh status
+</code></pre>
+<p>予期せず USB デバイスが抜かれた場合でも、routerd は RAM 上で動作を続けます。
+ライブヘルパーは警告を出します。
+再接続してマウントするまで、USB のパスを永続保存先としては扱いません。</p>
+<h2 id="よく使うコマンド">よく使うコマンド</h2>
+<p>候補のデバイスを表示します。</p>
+<pre><code class="language-sh">/usr/share/routerd/live-persistence.sh list-devices
+</code></pre>
+<p>設定を USB へ保存します。</p>
+<pre><code class="language-sh">/usr/share/routerd/live-persistence.sh save-config /dev/sdb1 /usr/local/etc/routerd/router.yaml yes 100M
+</code></pre>
+<p><code>save-config</code> は、<code>/usr/local/etc/routerd/secrets</code> が存在する場合、永続化デバイスの <code>routerd/secrets/</code> へもコピーします。秘密情報ファイルは root 所有にしてください。リムーバブルメディア側で Unix パーミッションも必要な場合は、vfat/exfat ではなく ext4 を使います。</p>
+<p>復元は、起動時に自動で行います。
+シェルから起動時の処理を再実行する場合は、次を使います。</p>
+<pre><code class="language-sh">/usr/share/routerd/live-persistence.sh init
+</code></pre></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#配置">配置</a></li>
+<li><a href="#ファイルシステム">ファイルシステム</a></li>
+<li><a href="#ログバッファー">ログバッファー</a></li>
+<li><a href="#安全な取り外し">安全な取り外し</a></li>
+<li><a href="#よく使うコマンド">よく使うコマンド</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/operations/usb-persistence.md">GitHub</a></div></footer></body></html>

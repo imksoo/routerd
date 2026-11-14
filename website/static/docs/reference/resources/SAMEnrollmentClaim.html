@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SAMEnrollmentClaim · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/reference/resources/SAMEnrollmentClaim.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/reference/resources/SAMEnrollmentClaim.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/reference/resources/SAMEnrollmentClaim.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/SAMEnrollmentClaim.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/SAMEnrollmentClaim.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="samenrollmentclaim">SAMEnrollmentClaim</h1>
+<p><a href="../resources.html#samenrollmentclaim">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: mobility.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Declare the leaf-authored identity, transport and mobility intent submitted for SAM enrollment. Expiry and revocation are RR/controller administration state, not part of the leaf join HMAC.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>A locally served claim needs an existing SAMEnrollmentPolicy. A claim referenced by SAMEnrollmentClient may name a remote policy absent locally; the RR applies admission/HMAC/authorization checks when submitted. Local shape validation is not admission success.</li>
+<li>When joinTokenFrom is configured, nonce, timestamp and HMAC are required, audience must match any configured audience, and nonces cannot collide within a policy. HMAC is SHA-256 over the canonical leaf payload, including directMesh:true when opted in; changing signed identity/intent requires a new signature.</li>
+<li>Revoked or expired claims are excluded from derived topology. Direct claims with no owned addresses may retain transport adjacency but receive no permitted mobility-route imports; a policy-wide address range is not an unrestricted direct /32 authorization.</li>
+</ul>
+<h2 id="yaml-definition">YAML definition</h2>
+<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
+<pre><code class="language-yaml">- apiVersion: mobility.routerd.net/v1alpha1
+  kind: SAMEnrollmentClaim
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    bgp: # optional; object
+      asn: 1 # optional; integer; minimum=1
+      routerID: &quot;&lt;string&gt;&quot; # optional; string
+    directMesh: true # optional; boolean
+    endpoint: &quot;&lt;string&gt;&quot; # optional; string
+    expiresAt: &quot;&lt;string&gt;&quot; # optional; string
+    joinAudience: &quot;&lt;string&gt;&quot; # optional; string
+    joinHMAC: &quot;&lt;string&gt;&quot; # optional; string
+    joinNonce: &quot;&lt;string&gt;&quot; # optional; string
+    joinTimestamp: &quot;&lt;string&gt;&quot; # optional; string
+    leafID: &quot;&lt;string&gt;&quot; # Required; string
+    mobility: # optional; object
+      ownedAddresses: # optional; array
+        - &quot;&lt;string&gt;&quot; # string
+    policyRef: &quot;&lt;string&gt;&quot; # Required; string
+    revoked: true # optional; boolean
+    rrSetRef: &quot;&lt;string&gt;&quot; # optional; string
+    tunnelAddress: &quot;&lt;string&gt;&quot; # Required; string
+    wireGuard: # optional; object
+      allowedIPs: # optional; array
+        - &quot;&lt;string&gt;&quot; # string
+      endpoint: &quot;&lt;string&gt;&quot; # optional; string
+      persistentKeepalive: 0 # optional; integer; minimum=0; maximum=65535
+      publicKey: &quot;&lt;string&gt;&quot; # Required; string
+</code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.policyRef</code></td>
+<td>Required SAMEnrollmentPolicy/name. Must exist locally unless this is a leaf claim referenced by SAMEnrollmentClient for remote admission.</td>
+</tr>
+<tr>
+<td><code>spec.rrSetRef</code></td>
+<td>Optional in shape, but SAMEnrollmentClient requires SAMRRSet/name at runtime. Must equal policy.rrSetRef when that policy output is configured. Names runtime RR topology, not a static resource to author.</td>
+</tr>
+<tr>
+<td><code>spec.leafID</code></td>
+<td>Required stable node identity, matched against allowedLeafIDs.pattern and unique within the policy. Used as generated nodeRef.</td>
+</tr>
+<tr>
+<td><code>spec.joinAudience</code></td>
+<td>Optional signed audience; required to equal the nonempty policy audience when join-token authentication is active.</td>
+</tr>
+<tr>
+<td><code>spec.joinNonce</code></td>
+<td>Optional signed nonce; required with joinHMAC or a join-token policy. Same-policy duplicate nonce use is rejected. No automatic generation by this YAML field.</td>
+</tr>
+<tr>
+<td><code>spec.joinTimestamp</code></td>
+<td>Optional signed RFC3339/RFC3339Nano timestamp. Required with join-token policy, and when explicit expiresAt is checked against policy TTL. A configured TTL also expires a claim based on this timestamp when present.</td>
+</tr>
+<tr>
+<td><code>spec.joinHMAC</code></td>
+<td>Optional hexadecimal HMAC-SHA256 signature of the canonical claim, mandatory for a join-token policy. It is a signature, not the join secret or ControlAPI Bearer token.</td>
+</tr>
+<tr>
+<td><code>spec.tunnelAddress</code></td>
+<td>Required bare IPv4 address or /32 CIDR; authorized by policy.tunnelAddressPrefixes and unique in that policy. Not an automatically allocated address.</td>
+</tr>
+<tr>
+<td><code>spec.endpoint</code></td>
+<td>Optional outer tunnel IP endpoint. If policy.endpointPrefixes is nonempty, it must lie inside that IPv4 allowlist. Separate from the WireGuard UDP endpoint.</td>
+</tr>
+<tr>
+<td><code>spec.wireGuard</code></td>
+<td>Optional public WireGuard material. Any nonempty subfield requires publicKey. Does not contain a private key.</td>
+</tr>
+<tr>
+<td><code>spec.wireGuard.publicKey</code></td>
+<td>Public key required when WireGuard data is present; nonempty keys must be unique within the policy. No key auto-generation here.</td>
+</tr>
+<tr>
+<td><code>spec.wireGuard.endpoint</code></td>
+<td>Optional host:port (1–65535) for WireGuard UDP. Prefix admission requires a parseable endpoint IP and uses wireGuard.endpointPrefixes or policy.endpointPrefixes fallback; do not assume a hostname passes admission.</td>
+</tr>
+<tr>
+<td><code>spec.wireGuard.allowedIPs</code></td>
+<td>Optional additional IPv4 CIDRs, each contained by policy.wireGuard.allowedExtraIPPrefixes. Empty grants no extras; generated peer independently includes tunnelAddress /32.</td>
+</tr>
+<tr>
+<td><code>spec.wireGuard.persistentKeepalive</code></td>
+<td>Integer seconds 0–65535, default 0 uses policy WireGuard keepalive in generated topology. Nonzero overrides that default.</td>
+</tr>
+<tr>
+<td><code>spec.directMesh</code></td>
+<td>Default false keeps this leaf on RR peers only. True requests participation in the policy direct peer group and is signed; it does not bypass policy enablement or owned-/32 admission.</td>
+</tr>
+<tr>
+<td><code>spec.mobility</code></td>
+<td>Optional declared mobility ownership, default no owned addresses. Does not itself discover clients.</td>
+</tr>
+<tr>
+<td><code>spec.mobility.ownedAddresses</code></td>
+<td>Bare IPv4 addresses or /32s authorized by policy mobilityPrefixes/MobilityPool refs. Duplicates across active same-policy claims are rejected. Direct BGP imports are narrowed to exactly the admitted owned /32s.</td>
+</tr>
+<tr>
+<td><code>spec.bgp</code></td>
+<td>Optional signed BGP identity intent. It is not a BGPRouter resource reference.</td>
+</tr>
+<tr>
+<td><code>spec.bgp.asn</code></td>
+<td>Optional uint32 ASN carried in the signed claim, decoded default 0. Schema requires &gt;=1 when present, but shape validation does not otherwise require a nonzero ASN. Not an override of policy transport peerASN.</td>
+</tr>
+<tr>
+<td><code>spec.bgp.routerID</code></td>
+<td>Optional IPv4 BGP identifier, no derived default. Nonempty IDs must be unique within a policy; does not create a BGPRouter.</td>
+</tr>
+<tr>
+<td><code>spec.expiresAt</code></td>
+<td>Optional RR/admin-owned RFC3339 expiry, excluded from join HMAC. Admission normally assigns a lease expiry (policy TTL, otherwise 5m). Explicit expiry cannot exceed joinTimestamp+policy TTL when both are supplied. Expired values exclude the claim.</td>
+</tr>
+<tr>
+<td><code>spec.revoked</code></td>
+<td>Default false; true is RR/admin revocation state, excluded from join HMAC, and prevents topology admission. A leaf cannot use a replayed signature to clear stored revocation.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_mobility.go">pkg/config/validate_mobility.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/samenrollment/enrollment.go">pkg/samenrollment/enrollment.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd/sam_enrollment_submit.go">cmd/routerd/sam_enrollment_submit.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/mobility/enrollmentclient.go">pkg/controller/mobility/enrollmentclient.go</a></p>
+<h2 id="referenceable-status-fields">Referenceable status fields</h2>
+<p>The ordinary status-reference validator accepts these field names for this kind. This allowlist does not guarantee that every field is currently populated; inspect runtime status. These are outputs, not YAML spec fields.</p>
+<p><code>phase</code>, <code>leafID</code>, <code>rrSetRef</code>, <code>tunnelAddress</code>, <code>endpoint</code>, <code>revoked</code>, <code>expiresAt</code></p>
+<p><a href="/examples/cloudedge-dynamic-leaf-a-wg.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
+<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
+<li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/reference/resources/SAMEnrollmentClaim.md">GitHub</a></div></footer></body></html>

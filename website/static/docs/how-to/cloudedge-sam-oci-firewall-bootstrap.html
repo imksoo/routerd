@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CloudEdge SAM: OCI Ubuntu image firewall bootstrap · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/how-to/cloudedge-sam-oci-firewall-bootstrap.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/how-to/cloudedge-sam-oci-firewall-bootstrap.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/how-to/cloudedge-sam-oci-firewall-bootstrap.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/how-to/cloudedge-sam-oci-firewall-bootstrap.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/cloudedge-sam-oci-firewall-bootstrap.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="cloudedge-sam-oci-ubuntu-image-firewall-bootstrap">CloudEdge SAM: OCI Ubuntu image firewall bootstrap</h1>
+<blockquote>
+<p>Experimental (CloudEdge SAM). This documents <strong>provider-image host firewall
+behavior</strong> seen on OCI Canonical Ubuntu images used as SAM routers, and the
+routerd-owned allowances that must converge on a clean host.</p>
+</blockquote>
+<h2 id="symptom">Symptom</h2>
+<p>On OCI, the Canonical Ubuntu 24.04 image boots with <code>iptables-nft</code> filter rules
+that <strong>reject inbound traffic except SSH/ICMP and reject all FORWARD traffic</strong>.
+With these defaults a SAM router will:</p>
+<ul>
+<li>receive no WireGuard handshake even though the OCI security list allows
+  <code>UDP/51820</code> and the VNIC has <code>skipSourceDestCheck=true</code> — the host firewall drops
+  the inbound WireGuard packets before they reach the <code>wg-hybrid</code> listener;</li>
+<li>not forward captured/overlay traffic — the default <code>FORWARD</code> reject blocks the SAM
+  delivery path between the VNIC interface and <code>wg-hybrid</code>.</li>
+</ul>
+<p>This is independent of the cloud security list / VNIC source-dest-check, which
+operate at the fabric layer; the <strong>guest OS firewall</strong> is a separate layer that must
+also permit the SAM paths.</p>
+<h2 id="required-allowances-guest-os">Required allowances (guest OS)</h2>
+<p>On each OCI SAM router, the host firewall must permit:</p>
+<ul>
+<li><strong>inbound <code>UDP/51820</code></strong> to the <code>wg-hybrid</code> WireGuard listener;</li>
+<li><strong><code>FORWARD</code></strong> between the OCI VNIC interface (e.g. <code>ens3</code>) and <code>wg-hybrid</code> in both
+  directions.</li>
+</ul>
+<p><code>WireGuardInterface.spec.listenPort</code> is routerd-owned on Linux: the
+<code>WireGuardInterface</code> controller ensures an <code>INPUT</code> accept rule for that UDP
+port and reports the result in <code>WireGuardInterface.status.hostFirewall</code>.</p>
+<p>Forwarding allowances remain path-specific. The typed <code>MobilityPool</code> local
+capture plan owns the capture-interface-to-tunnel <code>FORWARD</code> opening it needs.
+Until the full CloudEdge SAM path is green on clean OCI hosts,
+keep <code>routerctl doctor hybrid</code> in the acceptance gate so image-level
+reject-all <code>FORWARD</code> rules are detected instead of becoming a silent dataplane
+failure.</p>
+<h2 id="diagnosing-it">Diagnosing it</h2>
+<p><code>routerctl doctor hybrid</code> surfaces guest-firewall reject-all <code>FORWARD</code>/<code>INPUT</code>
+patterns that would block the WireGuard / SAM paths. <code>routerctl describe
+WireGuardInterface/&lt;name&gt;</code> also shows whether the listen-port opening was
+applied through <code>status.hostFirewall</code>. Run both on the OCI router after deploy:</p>
+<pre><code>routerctl doctor hybrid
+routerctl describe WireGuardInterface/wg-hybrid
+</code></pre>
+<p>If the WireGuard endpoint shows no handshake while the peer is sending keepalives,
+check the guest firewall first (this how-to), then the OCI security list, then the
+VNIC source-dest-check.</p>
+<h2 id="related">Related</h2>
+<ul>
+<li><a href="../reference/selective-address-mobility.html">Selective Address Mobility</a></li>
+<li>OCI Ubuntu images differ from AWS/Azure images in their default <code>iptables-nft</code>
+  posture; AWS/Azure SAM smokes did not hit this because their images do not
+  reject-all <code>FORWARD</code> by default.</li>
+</ul></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#symptom">Symptom</a></li>
+<li><a href="#required-allowances-guest-os">Required allowances (guest OS)</a></li>
+<li><a href="#diagnosing-it">Diagnosing it</a></li>
+<li><a href="#related">Related</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/how-to/cloudedge-sam-oci-firewall-bootstrap.md">GitHub</a></div></footer></body></html>

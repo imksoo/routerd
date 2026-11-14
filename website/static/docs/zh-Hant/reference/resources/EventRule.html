@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>EventRule · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/reference/resources/EventRule.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/reference/resources/EventRule.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/EventRule.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/EventRule.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/reference/resources/EventRule.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="eventrule">EventRule</h1>
+<p><a href="../resources.html#eventrule">各資源的設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>從持久化的本機事件紀錄比對模式並產生事件，可依關聯鍵分開維護狀態。</p>
+<h2 id="指定條件與參照關係">指定條件與參照關係</h2>
+<ul>
+<li>pattern.operator 與 emit.topic 必填。topic、topics、trigger、expected 至少提供一項，但寬鬆的驗證不保證模式可運作：只有 expected 不構成輸入清單，absence 需要 trigger/topic。不會檢查主題對應的資源是否存在。</li>
+<li>輸入順序為 topics、topic、trigger。all_of 與 sequence 使用完整主題字串比對；any_of、window、count、throttle、debounce、absence 支援以點分隔的 *（一段）與 **（零段以上）。</li>
+<li>all_of 觸發後仍保留已見主題，全部見過後每個符合事件都會再次觸發。sequence 完成後重設；strict 時清單內亂序事件也會重設。window 達門檻後清空時間桶，count 達門檻後重設計數。</li>
+<li>計數、未完成序列與計時器僅存於記憶體，程序重啟後從空狀態開始。事件讀取位置會持久化；新讀取者從目前紀錄尾端開始。位置儲存失敗可能重複處理輸入。所有規則都排除 routerd-eventrule 產生的事件，以避免連鎖迴圈。</li>
+<li>每條規則最多保留 4096 個關聯鍵，會移除最久未觀測鍵的計數與計時器。window/throttle 比較輸入事件時間；absence/debounce 使用程序經過時間計時。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: EventRule
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    emit: # 必填; object
+      attributes: # 選填; object
+        &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # 選填; string
+      topic: &quot;&lt;string&gt;&quot; # 必填; string
+    pattern: # 必填; object
+      allow_missing_correlation: true # 選填; boolean
+      correlate_by: &quot;&lt;string&gt;&quot; # 選填; string
+      duration: &quot;&lt;string&gt;&quot; # 選填; string
+      expected: &quot;&lt;string&gt;&quot; # 選填; string
+      interval: &quot;&lt;string&gt;&quot; # 選填; string
+      operator: &quot;all_of&quot; # 必填; string; enum=[&quot;all_of&quot;, &quot;any_of&quot;, &quot;sequence&quot;, &quot;window&quot;, &quot;absence&quot;, &quot;throttle&quot;, &quot;debounce&quot;, &quot;count&quot;]
+      quiet: &quot;&lt;string&gt;&quot; # 選填; string
+      rate: 0 # 選填; integer; minimum=0
+      strict: true # 選填; boolean
+      threshold: 0 # 選填; integer; minimum=0
+      topic: &quot;&lt;string&gt;&quot; # 選填; string
+      topics: # 選填; array
+        - &quot;&lt;string&gt;&quot; # string
+      trigger: &quot;&lt;string&gt;&quot; # 選填; string
+      window: &quot;&lt;string&gt;&quot; # 選填; string
+</code></pre>
+<h2 id="欄位意義與預設值">欄位意義與預設值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>欄位意義與預設值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.pattern</code></td>
+<td>必填的模式物件；不會拒絕所選運算子未使用的欄位。</td>
+</tr>
+<tr>
+<td><code>spec.pattern.operator</code></td>
+<td>必填：all_of、any_of、sequence、window、absence、throttle、debounce 或 count，無預設值。</td>
+</tr>
+<tr>
+<td><code>spec.pattern.topic</code></td>
+<td>選用的單一輸入主題，附加於 topics 後。absence 的 trigger 為空時以此作為啟動主題。預設空。</td>
+</tr>
+<tr>
+<td><code>spec.pattern.topics</code></td>
+<td>選用的有序輸入清單，預設空。sequence 依此順序；all_of 要求每個完整主題都曾出現。</td>
+</tr>
+<tr>
+<td><code>spec.pattern.trigger</code></td>
+<td>選用的 absence 啟動主題，優先於 topic，會啟動或重新啟動計時器。其他運算子的輸入清單也會在 topic 後加入此值。預設空。</td>
+</tr>
+<tr>
+<td><code>spec.pattern.expected</code></td>
+<td>選用的 absence 取消主題，同鍵符合時取消待處理計時器，優先於 trigger 比對。不是一般輸入主題。預設空，表示不取消。</td>
+</tr>
+<tr>
+<td><code>spec.pattern.duration</code></td>
+<td>選用 Go 時間長度；window/throttle/absence 預設 1m，debounce 預設 1s。專用 window/interval/quiet 優先。驗證也接受零或負值，延遲行為請使用正值。</td>
+</tr>
+<tr>
+<td><code>spec.pattern.window</code></td>
+<td>window 的回溯期間，優先於 duration，皆省略時為 1m。含起始邊界；達門檻後清空時間桶。其他運算子不使用。</td>
+</tr>
+<tr>
+<td><code>spec.pattern.quiet</code></td>
+<td>debounce 的安靜期間，優先於 duration，皆省略時為 1s。每次符合輸入都重啟計時器，依最後輸入產生事件。</td>
+</tr>
+<tr>
+<td><code>spec.pattern.interval</code></td>
+<td>throttle 每個關聯鍵的最短發送間隔，優先於 duration，皆省略時為 1m。第一個符合事件立即發送。</td>
+</tr>
+<tr>
+<td><code>spec.pattern.rate</code></td>
+<td>驗證接受的非負整數，預設 0，但目前引擎不讀取。無法控制 throttle；請使用 interval。</td>
+</tr>
+<tr>
+<td><code>spec.pattern.threshold</code></td>
+<td>window/count 的事件門檻，非負整數；省略或 0 表示 1。其他運算子不使用。</td>
+</tr>
+<tr>
+<td><code>spec.pattern.correlate_by</code></td>
+<td>選用 attributes.<key>、resource.name/kind/apiVersion 或 daemon.instance/kind 以分開狀態。空值使用共用鍵 default。輸入主題是字串，並非 Kind/name 參照。</td>
+</tr>
+<tr>
+<td><code>spec.pattern.allow_missing_correlation</code></td>
+<td>預設 false：略過缺少關聯值的輸入並增加 warningCount。true 將缺值歸入空鍵。但 resource 物件存在而所選成員為空時，false 也會接受。</td>
+</tr>
+<tr>
+<td><code>spec.pattern.strict</code></td>
+<td>預設 false，僅供 sequence。清單內主題亂序時進度歸零，該事件不會重新作為首項；忽略清單外主題。</td>
+</tr>
+<tr>
+<td><code>spec.emit</code></td>
+<td>必填的輸出事件物件。嚴重性固定 info，resource 為此 EventRule。</td>
+</tr>
+<tr>
+<td><code>spec.emit.topic</code></td>
+<td>必填且不可為空的輸出事件型別，無預設值。規則引擎不會消費自身產生的事件。</td>
+</tr>
+<tr>
+<td><code>spec.emit.attributes</code></td>
+<td>選用字串映射。展開 ${event.type}、${correlation}、${count}、${resource.name/kind/apiVersion}、${attributes.<key>}；無法解析的標記保持原樣。正 count 與非空 correlation 會覆寫同名輸出鍵。</td>
+</tr>
+</tbody>
+</table>
+<p>實作: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_route.go">pkg/config/validate_route.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/eventrule/engine.go">pkg/eventrule/engine.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/eventconsumer/consumer.go">pkg/eventconsumer/consumer.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/bus/bus.go">pkg/bus/bus.go</a></p>
+<h2 id="可參照的狀態欄位">可參照的狀態欄位</h2>
+<p>一般狀態參照驗證接受此 Kind 的下列欄位名稱。列於允許清單不保證目前有值，請檢查實際狀態。這些是輸出，不是 YAML spec 設定。</p>
+<p><code>phase</code>, <code>topic</code></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#指定條件與參照關係">指定條件與參照關係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#欄位意義與預設值">欄位意義與預設值</a></li>
+<li><a href="#可參照的狀態欄位">可參照的狀態欄位</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/reference/resources/EventRule.md">GitHub</a></div></footer></body></html>

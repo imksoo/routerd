@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SAMEnrollmentPolicy · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/reference/resources/SAMEnrollmentPolicy.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/reference/resources/SAMEnrollmentPolicy.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/reference/resources/SAMEnrollmentPolicy.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/SAMEnrollmentPolicy.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/SAMEnrollmentPolicy.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="samenrollmentpolicy">SAMEnrollmentPolicy</h1>
+<p><a href="../resources.html#samenrollmentpolicy">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: mobility.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Define RR-side admission boundaries for SAM leaf identity, transport addresses, optional join authentication and authorized mobility ownership. Leaves consume the admitted topology instead of copying this policy.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>RR output names are unique per policy; rrSetRef/rrNodeSetRef form a pair. directMesh additionally requires pair-stable transport addressing and an RR fallback.</li>
+<li>Claim IDs, tunnel addresses, nonempty WireGuard keys, owned addresses and nonempty BGP router IDs are checked for collisions within the same policy. Endpoint, WireGuard extra-prefix and mobility authorization checks are separate.</li>
+</ul>
+<h2 id="yaml-definition">YAML definition</h2>
+<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
+<pre><code class="language-yaml">- apiVersion: mobility.routerd.net/v1alpha1
+  kind: SAMEnrollmentPolicy
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    allowedLeafIDs: # optional; object
+      pattern: &quot;&lt;string&gt;&quot; # optional; string
+    directMesh: # optional; object
+      peerGroupRef: &quot;&lt;string&gt;&quot; # optional; string
+    endpointPrefixes: # optional; array
+      - &quot;&lt;string&gt;&quot; # string
+    joinAudience: &quot;&lt;string&gt;&quot; # optional; string
+    joinTokenFrom: # optional; object
+      base64: true # optional; boolean
+      env: &quot;&lt;string&gt;&quot; # optional; string
+      file: &quot;&lt;string&gt;&quot; # optional; string
+    mobilityPoolRefs: # optional; array
+      - &quot;&lt;string&gt;&quot; # string
+    mobilityPrefixes: # optional; array
+      - &quot;&lt;string&gt;&quot; # string
+    rrNodeSetRef: &quot;&lt;string&gt;&quot; # optional; string
+    rrSetRef: &quot;&lt;string&gt;&quot; # optional; string
+    transportProfileRef: &quot;&lt;string&gt;&quot; # Required; string
+    ttl: &quot;&lt;string&gt;&quot; # optional; string
+    tunnelAddressPrefixes: # Required; array
+      - &quot;&lt;string&gt;&quot; # string
+    wireGuard: # optional; object
+      allowedExtraIPPrefixes: # optional; array
+        - &quot;&lt;string&gt;&quot; # string
+      endpointPrefixes: # optional; array
+        - &quot;&lt;string&gt;&quot; # string
+      interface: &quot;&lt;string&gt;&quot; # Required; string
+      persistentKeepalive: 0 # optional; integer; minimum=0; maximum=65535
+</code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.transportProfileRef</code></td>
+<td>Required existing SAMTransportProfile/name in this Router. Binds admitted leaves to that transport profile; not a status source.</td>
+</tr>
+<tr>
+<td><code>spec.rrSetRef</code></td>
+<td>Optional runtime output name SAMRRSet/name. Must be paired with rrNodeSetRef and unique across enrollment policies. Names a generated snapshot, not a statically authored SAMRRSet. Required for direct mesh and leaf-client topology fetching.</td>
+</tr>
+<tr>
+<td><code>spec.rrNodeSetRef</code></td>
+<td>Existing SAMNodeSet/name supplying RR identities; required exactly when rrSetRef is supplied. Every node in that NodeSet must have routeReflector:true. No duplicate RR registry in the policy.</td>
+</tr>
+<tr>
+<td><code>spec.joinTokenFrom</code></td>
+<td>Optional shared HMAC secret source. If absent, no join HMAC is required; the protected ControlAPI becomes the trust boundary. If present, exactly one file/env and valid claim nonce/timestamp/HMAC are required. Separate from ControlAPI Bearer authentication.</td>
+</tr>
+<tr>
+<td><code>spec.joinTokenFrom.file</code></td>
+<td>Router-local raw HMAC secret file, exclusive with env. Surrounding whitespace is removed; unavailable secrets fail actual submission even where offline validation cannot read them.</td>
+</tr>
+<tr>
+<td><code>spec.joinTokenFrom.env</code></td>
+<td>Name of routerd process environment variable holding the HMAC secret; exclusive with file. No automatic environment-file loading.</td>
+</tr>
+<tr>
+<td><code>spec.joinTokenFrom.base64</code></td>
+<td>Default false; true standard-Base64-decodes the trimmed secret source. Decoded bytes become the HMAC key; Base64 is not encryption.</td>
+</tr>
+<tr>
+<td><code>spec.joinAudience</code></td>
+<td>Optional expected claim audience when joinTokenFrom is configured; nonempty must equal claim.joinAudience. No default audience.</td>
+</tr>
+<tr>
+<td><code>spec.allowedLeafIDs</code></td>
+<td>Optional leaf-identity restriction object; omission imposes no regex restriction.</td>
+</tr>
+<tr>
+<td><code>spec.allowedLeafIDs.pattern</code></td>
+<td>Go regular expression matched against leafID after trimming. Empty accepts any otherwise valid ID; patterns are not implicitly anchored, so use ^...$ for a whole-ID match.</td>
+</tr>
+<tr>
+<td><code>spec.tunnelAddressPrefixes</code></td>
+<td>Required nonempty IPv4 CIDR list authorizing claim.tunnelAddress /32 identities. No address auto-allocation is performed by this field.</td>
+</tr>
+<tr>
+<td><code>spec.endpointPrefixes</code></td>
+<td>Optional IPv4 CIDR allowlist for supplied outer endpoint addresses. Empty imposes no endpoint-prefix restriction. Used as WireGuard endpoint fallback allowlist when wireGuard.endpointPrefixes is empty.</td>
+</tr>
+<tr>
+<td><code>spec.wireGuard</code></td>
+<td>Optional admitted-leaf WireGuard controls. interface is required when other operational WireGuard settings are used; endpoint-prefix validation alone does not supply a WireGuard device.</td>
+</tr>
+<tr>
+<td><code>spec.wireGuard.interface</code></td>
+<td>Optional existing WireGuardInterface metadata.name, not Kind/name. Limits which local WireGuard interface imports this policy; no default creation.</td>
+</tr>
+<tr>
+<td><code>spec.wireGuard.endpointPrefixes</code></td>
+<td>Optional IPv4 CIDR allowlist for claim WireGuard outer endpoint IPs. If empty, endpointPrefixes applies; if both empty, no such prefix restriction.</td>
+</tr>
+<tr>
+<td><code>spec.wireGuard.allowedExtraIPPrefixes</code></td>
+<td>Optional IPv4 CIDRs authorizing additional claim.wireGuard.allowedIPs. Tunnel /32 is added independently to generated peers. Empty authorizes no additional prefixes.</td>
+</tr>
+<tr>
+<td><code>spec.wireGuard.persistentKeepalive</code></td>
+<td>Seconds 0–65535, default 0. Used for generated WireGuard peers when a claim leaves its keepalive at 0; explicit claim nonzero wins.</td>
+</tr>
+<tr>
+<td><code>spec.directMesh</code></td>
+<td>Optional policy-scoped direct leaf mesh output. Does not eliminate the RR fallback.</td>
+</tr>
+<tr>
+<td><code>spec.directMesh.peerGroupRef</code></td>
+<td>SAMPeerGroup/name runtime output; empty disables direct mesh. Requires rrSetRef and a referenced SAMTransportProfile with addressingMode: pair-stable; must be unique across policies. Not a statically authored SAMPeerGroup.</td>
+</tr>
+<tr>
+<td><code>spec.mobilityPoolRefs</code></td>
+<td>Optional existing MobilityPool/name list supplying authorized ownership prefixes. Combined with mobilityPrefixes, not a request to create pools or cloud resources.</td>
+</tr>
+<tr>
+<td><code>spec.mobilityPrefixes</code></td>
+<td>Optional additional CIDRs authorizing claimed owned IPv4 /32 addresses. Combined with referenced pools; empty plus no pool refs authorizes no owned addresses.</td>
+</tr>
+<tr>
+<td><code>spec.ttl</code></td>
+<td>Optional Go duration. Actual submitted admission defaults to a 5m lease if omitted. A configured TTL also bounds claim lifetime from joinTimestamp and any explicit expiresAt; invalid/nonpositive lifetimes expire fail-closed at runtime even though shape validation only parses duration.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_mobility.go">pkg/config/validate_mobility.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/cluster_secret_validate.go">pkg/config/cluster_secret_validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/samenrollment/enrollment.go">pkg/samenrollment/enrollment.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd/sam_enrollment_submit.go">cmd/routerd/sam_enrollment_submit.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/wireguard.go">pkg/controller/chain/wireguard.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/mobility/enrollmentclient.go">pkg/controller/mobility/enrollmentclient.go</a></p>
+<h2 id="referenceable-status-fields">Referenceable status fields</h2>
+<p>The ordinary status-reference validator accepts these field names for this kind. This allowlist does not guarantee that every field is currently populated; inspect runtime status. These are outputs, not YAML spec fields.</p>
+<p><code>phase</code>, <code>acceptedClaims</code>, <code>skippedClaims</code>, <code>leafIDs</code></p>
+<p><a href="/examples/cloudedge-dynamic-rr-a-hub.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
+<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
+<li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/reference/resources/SAMEnrollmentPolicy.md">GitHub</a></div></footer></body></html>

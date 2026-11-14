@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Apply and render · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/concepts/apply-and-render.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/concepts/apply-and-render.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/concepts/apply-and-render.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/concepts/apply-and-render.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/concepts/apply-and-render.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="apply-and-render">Apply and render</h1>
+<p>There are two ways to work with a routerd configuration. The important first
+question is whether <code>routerd</code> is already running as a service.</p>
+<table>
+<thead>
+<tr>
+<th>Situation</th>
+<th>Use</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Before the service exists</td>
+<td><code>routerd validate --config FILE</code></td>
+<td>Reads and validates a YAML file directly.</td>
+</tr>
+<tr>
+<td>Before a live change</td>
+<td><code>routerd apply --config FILE --once --dry-run</code></td>
+<td>Builds the desired work without committing host changes. Use explicit temporary state paths for a first lab.</td>
+</tr>
+<tr>
+<td>Service already running</td>
+<td><code>routerctl validate</code>, <code>routerctl plan</code>, <code>routerctl apply</code></td>
+<td>Sends a candidate file to the local routerd daemon through a Unix socket.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="validate-a-file-directly">Validate a file directly</h2>
+<pre><code class="language-bash">routerd validate --config /path/to/router.yaml
+</code></pre>
+<p>This is the safe first validation command. It does not need a running
+<code>routerd.service</code>.</p>
+<h2 id="preview-without-committing-a-network-change">Preview without committing a network change</h2>
+<p>For a first lab, keep every generated state file in a new temporary directory:</p>
+<pre><code class="language-bash">workdir=$(mktemp -d)
+routerd apply --config /path/to/router.yaml --once --dry-run \
+  --state-file &quot;$workdir/state.db&quot; \
+  --status-file &quot;$workdir/status.json&quot;
+</code></pre>
+<p>This is a preview, not a permission to apply the configuration to a production
+router. Read the result, then remove the temporary directory when finished.</p>
+<h2 id="live-one-shot-apply">Live one-shot apply</h2>
+<p><code>routerd apply --once</code> changes the host and exits. It does not supervise DHCP,
+PPPoE or DHCPv6-PD client processes, even if it transfers their configuration
+from an existing network manager. Start <code>routerd serve</code> for ongoing client
+operation. Use a console or an independent management path after reviewing the
+configuration:</p>
+<pre><code class="language-bash">sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once
+</code></pre>
+<h2 id="run-the-service-and-use-routerctl">Run the service and use <code>routerctl</code></h2>
+<p><code>routerd serve</code> is the long-running reconcile loop. The packaged service starts
+it for normal deployments:</p>
+<pre><code class="language-bash">sudo systemctl enable --now routerd.service
+sudo routerctl get status
+</code></pre>
+<p>Once the service is running, <code>routerctl</code> is the local control client. For
+example, a plan asks the daemon what it would change for a candidate file:</p>
+<pre><code class="language-bash">sudo routerctl plan -f /usr/local/etc/routerd/router.yaml --replace
+</code></pre>
+<p><code>routerctl apply</code> asks that daemon to make a live update. It is not a standalone
+one-shot host command, and neither <code>routerctl plan</code> nor a repeated plan is a
+dry-run apply.</p>
+<h2 id="interpreting-a-partial-apply-failure">Interpreting a partial apply failure</h2>
+<p>An apply error can occur after the canonical configuration has been replaced.
+The error and daemon log include <code>stage</code>, <code>generation</code>, <code>canonical</code>,
+<code>durabilityConfirmed</code>, terminal-record flags, and the confirmed runtime epoch.
+<code>Healthy</code> describes a dataplane observation; it does not confirm persistence.</p>
+<table>
+<thead>
+<tr>
+<th>Failure point</th>
+<th>Canonical configuration</th>
+<th>Runtime and completion</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Before replacement</td>
+<td>Previous configuration</td>
+<td>A changed runtime is restored if possible; a failed restoration reports the actual fallback or unavailable state.</td>
+</tr>
+<tr>
+<td>After rename, during chmod/directory sync</td>
+<td>New configuration is visible</td>
+<td>New runtime is retained; durability is unconfirmed.</td>
+</tr>
+<tr>
+<td>Terminal generation UPDATE</td>
+<td>New configuration</td>
+<td>New runtime is retained; the command/API fails without emitting a normal success result.</td>
+</tr>
+<tr>
+<td>Result/status output</td>
+<td>New configuration</td>
+<td>The completed generation remains completed; output failure is returned.</td>
+</tr>
+</tbody>
+</table>
+<p>The daemon retains failed configuration-attempt diagnostics in memory, including
+when SQLite cannot record them. A successful scheduled observation does not clear
+those diagnostics; a subsequent configuration operation must resolve the failure.
+This memory does not survive a process restart. Inspect the error, canonical YAML,
+generation history and controller status before retrying. These contracts do not
+promise rollback of all OS changes or power-loss durability on every filesystem.</p>
+<p>A runtime reload accepted by the supervisor retains exclusive mutation ownership
+until its completion acknowledgement, even if the request context expires. If
+preparation does not cooperate with cancellation, new mutations are fenced and
+serve is asked to stop. There is no hard completion-time guarantee for a stuck
+builder. A confirmed generation belongs to serve, not to the HTTP request context.</p>
+<p><code>--no-reconcile</code> deliberately commits configuration without changing the running
+generation. Standby keeps the existing HA behavior and skips canonical commit and
+host mutation. Dry-run creates no production generation or canonical change.</p>
+<p>Dry-run snapshots copy object statuses, state variables and dynamic desired parts
+from one SQLite read transaction, preserving timestamps, expiry, source,
+generation, digest and withdrawal intent. Debug logs contain an input manifest
+with the candidate hash and evaluation time, without payloads. Jobs, event cursors,
+event/action journals, federation history and generation history are excluded.
+Host observations and controller evaluation are not frozen; execution still checks
+TTL and ownership. The manifest is an account of acquired inputs, not authorization
+to apply them later.</p>
+<h2 id="render">Render</h2>
+<p>When this documentation says "render", it means routerd produces host-side
+files such as a dnsmasq configuration, an nftables ruleset, a systemd unit, or
+a NixOS module. Whether those files reach the host depends on the operation:
+validation only checks the description; a dry-run previews; a live apply or
+serve reconciliation can update the host.</p>
+<p>In current routerd, dnsmasq provides DHCPv4, DHCPv6, relay, and RA rendering.
+DNS listening, local zones, conditional forwarding, and encrypted DNS are
+handled by <code>DNSResolver</code> and <code>routerd-dns-resolver</code>.</p>
+<h2 id="reconcile">Reconcile</h2>
+<p>In serve mode, routerd consumes events and re-evaluates affected resources. The
+shrinking difference between the description and the observed host is called
+<strong>reconcile</strong>. For example, after a DHCPv6-PD renewal changes a prefix, routerd
+can update the derived LAN address, RA, DNS answers, and DS-Lite path in order.</p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#validate-a-file-directly">Validate a file directly</a></li>
+<li><a href="#preview-without-committing-a-network-change">Preview without committing a network change</a></li>
+<li><a href="#live-one-shot-apply">Live one-shot apply</a></li>
+<li><a href="#run-the-service-and-use-routerctl">Run the service and use routerctl</a></li>
+<li><a href="#interpreting-a-partial-apply-failure">Interpreting a partial apply failure</a></li>
+<li><a href="#render">Render</a></li>
+<li><a href="#reconcile">Reconcile</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/concepts/apply-and-render.md">GitHub</a></div></footer></body></html>

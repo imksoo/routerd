@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SAM Redundancy Cleanup Runbook · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/operations/sam-redundancy-cleanup.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/operations/sam-redundancy-cleanup.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/intro.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/intro.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/intro.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="sam-redundancy-cleanup-runbook">SAM Redundancy Cleanup Runbook</h1>
+<p>Use this runbook after a Cloud-SAM dynamic RR/leaf enrollment live test has
+already passed and its validation evidence has been archived. The goal is to
+remove lab resources without losing enough evidence to prove what existed
+before cleanup, what was removed, and what remained afterward.</p>
+<p>This procedure is intentionally evidence-first. Do not delete VMs, bridges,
+seed ISOs, state directories, or test keys until the archive tarball and
+pre-cleanup snapshot exist.</p>
+<h2 id="scope">Scope</h2>
+<p>The runbook covers a redundant PVE Cloud-SAM test shape:</p>
+<ul>
+<li>two route reflectors;</li>
+<li>two or more enrolled leaves;</li>
+<li>optional test clients attached to lab bridges;</li>
+<li>FOU or other SAM tunnel transports;</li>
+<li>RR-side <code>BGPDynamicPeer</code> dynamic BGP admission;</li>
+<li>leaf-side <code>SAMEnrollmentClient</code> claim submit and RRSet fetch.</li>
+</ul>
+<p>The concrete 2026-06-29 validation used VMIDs <code>9601-9608</code>, bridges
+<code>rsam999</code>, <code>rsam998</code>, and <code>rsamclnt</code>, and seed ISOs matching
+<code>routerd-samred-*-cidata.iso</code>. Treat those names as defaults for that evidence
+set, not as constants for every future lab.</p>
+<h2 id="inputs">Inputs</h2>
+<p>Set these variables before starting cleanup:</p>
+<pre><code class="language-sh">RUN_ID=routerd-samred-20260629T035652Z
+FREEZE_COMMIT=4a6dad6b8786ed01e63381dcf77230467b8a5021
+SRC=/tmp/$RUN_ID
+DST=/home/imksoo/routerd-labs-archive/evidence/samred-20260629T035652Z
+
+PVE_NODES=&quot;pve05 pve06 pve07&quot;
+VMIDS=&quot;9601 9602 9603 9604 9605 9606 9607 9608&quot;
+BRIDGES=&quot;rsam999 rsam998 rsamclnt&quot;
+ISO_GLOB=&quot;/mnt/pve/qnap/template/iso/routerd-samred-*-cidata.iso&quot;
+</code></pre>
+<p>For a new run, change <code>RUN_ID</code>, <code>DST</code>, VMIDs, bridge names, node list, and ISO
+glob to match the reviewed topology. Keep the run ID stable across validation,
+archive, cleanup, and manifest updates.</p>
+<h2 id="preconditions">Preconditions</h2>
+<p>Before cleanup, verify:</p>
+<ul>
+<li>the validation archive tarball exists in <code>$DST</code>;</li>
+<li>the validation archive checksum file exists in <code>$DST</code>;</li>
+<li><code>sha256sum -c</code> passes for the validation archive;</li>
+<li>the repository manifest records the freeze commit, archive path, checksum,
+  and live validation result;</li>
+<li>cleanup has an operator-approved target list for VMs, bridges, seed ISOs,
+  temporary keys, and local state directories.</li>
+</ul>
+<p>Do not use broad wildcard deletes except for reviewed test-only artifacts such
+as the run-specific seed ISO glob.</p>
+<h2 id="archive-validation-evidence">Archive Validation Evidence</h2>
+<p>If the validation archive has not already been frozen, create it first:</p>
+<pre><code class="language-sh">set -euo pipefail
+
+test -d &quot;$SRC&quot;
+mkdir -p &quot;$DST&quot;
+
+tar -C /tmp -czf &quot;/tmp/${RUN_ID}.tar.gz&quot; &quot;$RUN_ID&quot;
+sha256sum &quot;/tmp/${RUN_ID}.tar.gz&quot; | tee &quot;/tmp/${RUN_ID}.tar.gz.sha256&quot;
+
+cp &quot;/tmp/${RUN_ID}.tar.gz&quot; &quot;$DST/&quot;
+cp &quot;/tmp/${RUN_ID}.tar.gz.sha256&quot; &quot;$DST/&quot;
+
+(
+  cd &quot;$DST&quot;
+  sha256sum -c &quot;${RUN_ID}.tar.gz.sha256&quot;
+)
+</code></pre>
+<p>Record the checksum result before moving on.</p>
+<h2 id="pre-cleanup-snapshot">Pre-Cleanup Snapshot</h2>
+<p>Capture host-local state before deleting anything:</p>
+<pre><code class="language-sh">set -euo pipefail
+
+mkdir -p &quot;$DST/pre-cleanup&quot;
+
+ip addr &gt; &quot;$DST/pre-cleanup/ip-addr.txt&quot;
+ip route &gt; &quot;$DST/pre-cleanup/ip-route.txt&quot;
+ip tunnel show &gt; &quot;$DST/pre-cleanup/ip-tunnel-show.txt&quot;
+ip fou show &gt; &quot;$DST/pre-cleanup/ip-fou-show.txt&quot; 2&gt;&amp;1 || true
+ss -lntup &gt; &quot;$DST/pre-cleanup/ss-lntup.txt&quot;
+</code></pre>
+<p>If <code>routerctl</code> can still reach the lab instances, also capture routerd state
+from each RR and leaf:</p>
+<pre><code class="language-sh">routerctl get status &gt; &quot;$DST/pre-cleanup/routerctl-status.txt&quot; 2&gt;&amp;1 || true
+routerctl dynamic list -o yaml &gt; &quot;$DST/pre-cleanup/routerctl-dynamic-list.yaml&quot; 2&gt;&amp;1 || true
+routerctl dynamic render -o yaml &gt; &quot;$DST/pre-cleanup/routerctl-dynamic-render.yaml&quot; 2&gt;&amp;1 || true
+</code></pre>
+<p>For multi-node PVE cleanup, capture per-node inventory before deletion:</p>
+<pre><code class="language-sh">mkdir -p &quot;$DST/pre-cleanup/pve&quot;
+for node in $PVE_NODES; do
+  ssh &quot;$node&quot; &quot;hostname; qm list; ip -br link; ls -1 $ISO_GLOB 2&gt;/dev/null || true&quot; \
+    &gt; &quot;$DST/pre-cleanup/pve/${node}.txt&quot; 2&gt;&amp;1 || true
+done
+</code></pre>
+<h2 id="cleanup-session-log">Cleanup Session Log</h2>
+<p>Run the destructive phase inside a session log:</p>
+<pre><code class="language-sh">mkdir -p &quot;$DST/cleanup&quot;
+script -a &quot;$DST/cleanup/cleanup-session.log&quot;
+</code></pre>
+<p>Inside the <code>script</code> session, remove only reviewed resources:</p>
+<pre><code class="language-sh">set -euo pipefail
+
+for node in $PVE_NODES; do
+  for vmid in $VMIDS; do
+    ssh &quot;$node&quot; &quot;qm status $vmid &gt;/dev/null 2&gt;&amp;1 &amp;&amp; qm stop $vmid --skiplock 1 || true&quot;
+    ssh &quot;$node&quot; &quot;qm status $vmid &gt;/dev/null 2&gt;&amp;1 &amp;&amp; qm destroy $vmid --purge 1 --destroy-unreferenced-disks 1 || true&quot;
+  done
+done
+
+for node in $PVE_NODES; do
+  for bridge in $BRIDGES; do
+    ssh &quot;$node&quot; &quot;ip link show $bridge &gt;/dev/null 2&gt;&amp;1 &amp;&amp; ip link set $bridge down || true&quot;
+    ssh &quot;$node&quot; &quot;ip link show $bridge &gt;/dev/null 2&gt;&amp;1 &amp;&amp; ip link delete $bridge type bridge || true&quot;
+  done
+done
+
+for node in $PVE_NODES; do
+  ssh &quot;$node&quot; &quot;rm -f $ISO_GLOB&quot;
+done
+</code></pre>
+<p>Exit the session with <code>exit</code> or <code>Ctrl-D</code>. Keep the resulting
+<code>cleanup-session.log</code> in the evidence archive.</p>
+<p>If the lab created additional local state, delete it only after it has been
+listed in the session log. Examples include run-specific state DB copies,
+temporary SSH keys, generated cloud-init snippets, and packet captures already
+copied into <code>$DST</code>.</p>
+<h2 id="post-cleanup-snapshot">Post-Cleanup Snapshot</h2>
+<p>Capture the same local state after cleanup:</p>
+<pre><code class="language-sh">set -euo pipefail
+
+mkdir -p &quot;$DST/post-cleanup&quot;
+
+ip addr &gt; &quot;$DST/post-cleanup/ip-addr.txt&quot;
+ip route &gt; &quot;$DST/post-cleanup/ip-route.txt&quot;
+ip tunnel show &gt; &quot;$DST/post-cleanup/ip-tunnel-show.txt&quot;
+ip fou show &gt; &quot;$DST/post-cleanup/ip-fou-show.txt&quot; 2&gt;&amp;1 || true
+ss -lntup &gt; &quot;$DST/post-cleanup/ss-lntup.txt&quot;
+</code></pre>
+<p>Capture per-node post-cleanup inventory:</p>
+<pre><code class="language-sh">mkdir -p &quot;$DST/post-cleanup/pve&quot;
+for node in $PVE_NODES; do
+  ssh &quot;$node&quot; &quot;hostname; qm list; ip -br link; ls -1 $ISO_GLOB 2&gt;/dev/null || true&quot; \
+    &gt; &quot;$DST/post-cleanup/pve/${node}.txt&quot; 2&gt;&amp;1 || true
+done
+</code></pre>
+<p>Then assert that reviewed resources are absent:</p>
+<pre><code class="language-sh">mkdir -p &quot;$DST/post-cleanup/assertions&quot;
+for node in $PVE_NODES; do
+  {
+    echo &quot;node=$node&quot;
+    for vmid in $VMIDS; do
+      ssh &quot;$node&quot; &quot;qm status $vmid &gt;/dev/null 2&gt;&amp;1&quot; \
+        &amp;&amp; echo &quot;FAIL vmid-present $vmid&quot; \
+        || echo &quot;PASS vmid-absent $vmid&quot;
+    done
+    for bridge in $BRIDGES; do
+      ssh &quot;$node&quot; &quot;ip link show $bridge &gt;/dev/null 2&gt;&amp;1&quot; \
+        &amp;&amp; echo &quot;FAIL bridge-present $bridge&quot; \
+        || echo &quot;PASS bridge-absent $bridge&quot;
+    done
+    ssh &quot;$node&quot; &quot;ls -1 $ISO_GLOB 2&gt;/dev/null&quot; \
+      &amp;&amp; echo &quot;FAIL seed-iso-present&quot; \
+      || echo &quot;PASS seed-iso-absent&quot;
+  } &gt; &quot;$DST/post-cleanup/assertions/${node}.txt&quot; 2&gt;&amp;1
+done
+</code></pre>
+<p>Review the assertion files. Any <code>FAIL</code> line means the cleanup is incomplete
+and the session log must include the follow-up removal.</p>
+<h2 id="cleanup-evidence-archive">Cleanup Evidence Archive</h2>
+<p>After post-cleanup assertions pass, create a cleanup evidence tarball:</p>
+<pre><code class="language-sh">set -euo pipefail
+
+(
+  cd &quot;$DST&quot;
+  find pre-cleanup cleanup post-cleanup -type f -print0 \
+    | sort -z \
+    | xargs -0 sha256sum \
+    &gt; CLEANUP-EVIDENCE-SHA256SUMS.txt
+
+  tar -czf &quot;${RUN_ID}-cleanup-evidence.tar.gz&quot; \
+    pre-cleanup cleanup post-cleanup CLEANUP-EVIDENCE-SHA256SUMS.txt
+
+  sha256sum &quot;${RUN_ID}-cleanup-evidence.tar.gz&quot; \
+    | tee &quot;${RUN_ID}-cleanup-evidence.tar.gz.sha256&quot;
+
+  sha256sum -c &quot;${RUN_ID}-cleanup-evidence.tar.gz.sha256&quot;
+  sha256sum -c CLEANUP-EVIDENCE-SHA256SUMS.txt
+)
+</code></pre>
+<p>The cleanup archive is the durable evidence that the test lifecycle reached:</p>
+<pre><code class="language-text">live validation
+-&gt; evidence archive freeze
+-&gt; cleanup pre-snapshot
+-&gt; cleanup execution log
+-&gt; cleanup post-snapshot
+-&gt; cleanup checksum verification
+</code></pre>
+<h2 id="repository-manifest-update">Repository Manifest Update</h2>
+<p>Do not commit the evidence tarballs to the repository. Commit only the manifest
+and runbook references:</p>
+<ul>
+<li>validation freeze commit;</li>
+<li>validation archive path and checksum;</li>
+<li>cleanup archive path and checksum;</li>
+<li><code>sha256sum -c</code> results;</li>
+<li>post-cleanup assertions;</li>
+<li>cleanup status <code>complete</code>.</li>
+</ul>
+<p>For the 2026-06-29 run, this is recorded in
+<code>docs/releases/manifests/v20260629.samred.yaml</code>.</p>
+<h2 id="acceptance-checklist">Acceptance Checklist</h2>
+<p>Cleanup is complete when all of these are true:</p>
+<ul>
+<li>validation archive tarball exists outside the repository;</li>
+<li>validation archive checksum verification passes;</li>
+<li>pre-cleanup snapshot exists;</li>
+<li>cleanup session log exists;</li>
+<li>post-cleanup snapshot exists;</li>
+<li>reviewed VMs are absent on every PVE node;</li>
+<li>reviewed bridges are absent on every PVE node;</li>
+<li>reviewed seed ISOs are absent on every PVE node;</li>
+<li>cleanup evidence file manifest verification passes;</li>
+<li>cleanup evidence tarball verification passes;</li>
+<li>repository docs record cleanup status <code>complete</code>.</li>
+</ul></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#scope">Scope</a></li>
+<li><a href="#inputs">Inputs</a></li>
+<li><a href="#preconditions">Preconditions</a></li>
+<li><a href="#archive-validation-evidence">Archive Validation Evidence</a></li>
+<li><a href="#pre-cleanup-snapshot">Pre-Cleanup Snapshot</a></li>
+<li><a href="#cleanup-session-log">Cleanup Session Log</a></li>
+<li><a href="#post-cleanup-snapshot">Post-Cleanup Snapshot</a></li>
+<li><a href="#cleanup-evidence-archive">Cleanup Evidence Archive</a></li>
+<li><a href="#repository-manifest-update">Repository Manifest Update</a></li>
+<li><a href="#acceptance-checklist">Acceptance Checklist</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/operations/sam-redundancy-cleanup.md">GitHub</a></div></footer></body></html>

@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>プラグインプロトコル · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/plugin-protocol.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/plugin-protocol.html" lang="en" hreflang="en">English</a><a href="/docs/ja/plugin-protocol.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/plugin-protocol.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/plugin-protocol.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="プラグインプロトコル">プラグインプロトコル</h1>
+<p>routerd のプラグインは、信頼済みのローカル実行ファイルです。
+本体に組み込まないリソース固有の処理を、同じホスト上の小さなプログラムとして追加するための仕組みです。</p>
+<p>リモートからのプラグイン登録、リモートインストール、公開レジストリは、意図的に対象外です。</p>
+<h2 id="配置">配置</h2>
+<p>標準の配置先は次の通りです。</p>
+<pre><code class="language-text">/usr/local/libexec/routerd/plugins/&lt;name&gt;/
+</code></pre>
+<p>各プラグインはマニフェストと実行ファイルを持ちます。</p>
+<pre><code class="language-text">plugin.yaml
+bin/&lt;plugin&gt;
+</code></pre>
+<h2 id="役割">役割</h2>
+<p>プラグインは次のような処理を担当できます。</p>
+<ul>
+<li>リソースの検証</li>
+<li>変更計画の作成</li>
+<li>ホスト状態の観測</li>
+<li>ホストへの適用</li>
+</ul>
+<p>ただし、ネットワーク状態を変更する処理は、テストしやすい小さな単位に分けます。
+ネットワーク動作は実際の対象と相手機器で確認します。</p>
+<h2 id="mvp-のポリシー">MVP のポリシー</h2>
+<p>CloudEdge MVP のプラグインは、信頼済みのローカル実行ファイルだけを対象にします。
+routerd はリモートレジストリからの取得もリモートインストールも行いません。</p>
+<p>プラグインの出力は、dynamic-config への保存や effective-config の導出に使う前に、
+必ず検証されます。プラグインはリソース、ディレクティブ、プロバイダー action plan、
+イベントを提案できます。<code>actionPlans</code> は dynamic-config の中では不活性であり、
+プラグインランナーやマージパスで実行されることはありません。provider-action journal に
+インポートし、<code>ProviderActionPolicy</code>、承認、許可リスト、dry-run/live mode のゲートを
+通過した場合にのみ、エグゼキュータープラグインに渡せます。</p>
+<h2 id="リソース形状">リソース形状</h2>
+<p>プラグインは、ローカル実行ファイルと省略可のトリガーセットとして宣言します。</p>
+<pre><code class="language-yaml">apiVersion: plugin.routerd.net/v1alpha1
+kind: Plugin
+metadata:
+  name: oci-inventory
+spec:
+  executable: /usr/local/libexec/routerd/plugins/oci-inventory/bin/oci-inventory
+  timeout: 10s
+  capabilities: [observe.cloud, propose.dynamicConfig]
+  triggers:
+    - type: interval
+      every: 300s
+    - type: event
+      topic: routerd.cloud.oci.refresh
+</code></pre>
+<p>dynamic config ソースは、プラグインを dynamic-config 生成ポリシーにバインドします。</p>
+<pre><code class="language-yaml">apiVersion: plugin.routerd.net/v1alpha1
+kind: DynamicConfigSource
+metadata:
+  name: oci-inventory
+spec:
+  pluginRef: oci-inventory
+  ttl: 300s
+  mergePolicy:
+    conflict: reject
+</code></pre>
+<p>ランナーは <code>spec.executable</code> が絶対パスの実行可能ファイルであることを要求します。
+利用できる capability は <code>observe.cloud</code>、<code>observe.providerPrivateIPs</code>、
+<code>propose.dynamicConfig</code>、<code>propose.providerAction</code>、<code>execute.providerAction</code> です。
+interval トリガーは <code>every</code> を、event トリガーは <code>topic</code> を使います。</p>
+<h2 id="トリガー">トリガー</h2>
+<p>プラグインは明示的なトリガーで実行されます。</p>
+<table>
+<thead>
+<tr>
+<th>トリガー</th>
+<th>意味</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>interval</code></td>
+<td>定期的な更新。インベントリやリース的な観測に使います。</td>
+</tr>
+<tr>
+<td><code>event</code></td>
+<td>イベントバス駆動の更新。名前付きトピックで発火します。</td>
+</tr>
+</tbody>
+</table>
+<p><code>PluginRequest.spec.trigger</code> フィールドに、その呼び出しの実際のトリガーが記録されます。
+<code>trigger.type</code> は <code>interval</code> または <code>event</code> で、<code>trigger.topic</code> はイベントトリガーの
+場合に設定されます。</p>
+<h2 id="入出力の契約">入出力の契約</h2>
+<p>routerd はプラグインの実行ファイルを起動し、標準入力に <code>PluginRequest</code> の JSON
+オブジェクトを 1 つ書き込み、標準出力から <code>PluginResult</code> の JSON オブジェクトを 1 つ
+読み取ります。タイムスタンプは RFC3339 形式です。duration 文字列は <code>300s</code> のような
+Go 形式の構文です。</p>
+<p>子プロセスが受け取る環境変数は最小限です。routerd 自身の環境からの <code>PATH</code>（未設定なら
+固定のシステムフォールバック）と、<code>Plugin.spec.env</code> で明示した項目だけです。routerd は
+親プロセスの環境変数を丸ごと引き継ぎません。</p>
+<h3 id="pluginrequest">PluginRequest</h3>
+<pre><code class="language-json">{
+  &quot;apiVersion&quot;: &quot;plugin.routerd.net/v1alpha1&quot;,
+  &quot;kind&quot;: &quot;PluginRequest&quot;,
+  &quot;metadata&quot;: {
+    &quot;name&quot;: &quot;oci-inventory&quot;
+  },
+  &quot;spec&quot;: {
+    &quot;trigger&quot;: {
+      &quot;type&quot;: &quot;interval&quot;,
+      &quot;topic&quot;: &quot;&quot;
+    },
+    &quot;startupConfigHash&quot;: &quot;sha256:...&quot;,
+    &quot;effectiveGeneration&quot;: 44,
+    &quot;previousDynamicGeneration&quot;: 12,
+    &quot;now&quot;: &quot;2026-05-29T12:00:00Z&quot;
+  }
+}
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>フィールド</th>
+<th>意味</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.trigger</code></td>
+<td>このプラグイン呼び出しが発生した理由。</td>
+</tr>
+<tr>
+<td><code>spec.startupConfigHash</code></td>
+<td>現在の startup-config のダイジェスト。</td>
+</tr>
+<tr>
+<td><code>spec.effectiveGeneration</code></td>
+<td>この結果の適用前の effective-config の世代番号。</td>
+</tr>
+<tr>
+<td><code>spec.previousDynamicGeneration</code></td>
+<td>このソースで最後に受理された世代番号。</td>
+</tr>
+<tr>
+<td><code>spec.now</code></td>
+<td>routerd が呼び出した時刻。</td>
+</tr>
+</tbody>
+</table>
+<h3 id="pluginresult">PluginResult</h3>
+<pre><code class="language-json">{
+  &quot;apiVersion&quot;: &quot;plugin.routerd.net/v1alpha1&quot;,
+  &quot;kind&quot;: &quot;PluginResult&quot;,
+  &quot;metadata&quot;: {
+    &quot;name&quot;: &quot;oci-inventory&quot;
+  },
+  &quot;status&quot;: {
+    &quot;observedAt&quot;: &quot;2026-05-29T12:00:00Z&quot;,
+    &quot;ttl&quot;: &quot;300s&quot;,
+    &quot;resources&quot;: [
+      {
+        &quot;apiVersion&quot;: &quot;net.routerd.net/v1alpha1&quot;,
+        &quot;kind&quot;: &quot;IPv4Route&quot;,
+        &quot;metadata&quot;: { &quot;name&quot;: &quot;cloud-app-static-fallback&quot; },
+        &quot;spec&quot;: { &quot;destination&quot;: &quot;10.0.1.123/32&quot;, &quot;gateway&quot;: &quot;192.0.2.1&quot; }
+      }
+    ],
+    &quot;directives&quot;: [
+      {
+        &quot;op&quot;: &quot;mask&quot;,
+        &quot;target&quot;: {
+          &quot;apiVersion&quot;: &quot;net.routerd.net/v1alpha1&quot;,
+          &quot;kind&quot;: &quot;IPv4Route&quot;,
+          &quot;name&quot;: &quot;cloud-app-static-fallback&quot;
+        },
+        &quot;reason&quot;: &quot;provider inventory confirms the dynamic route&quot;
+      }
+    ],
+    &quot;actionPlans&quot;: [
+      {
+        &quot;name&quot;: &quot;assign-cloud-secondary-ip&quot;,
+        &quot;provider&quot;: &quot;oci&quot;,
+        &quot;action&quot;: &quot;assign-secondary-ip&quot;,
+        &quot;target&quot;: {
+          &quot;nicRef&quot;: &quot;ocid1.vnic.oc1..example&quot;,
+          &quot;address&quot;: &quot;10.0.1.123&quot;
+        },
+        &quot;undo&quot;: {
+          &quot;action&quot;: &quot;unassign-secondary-ip&quot;
+        }
+      }
+    ],
+    &quot;events&quot;: [
+      {
+        &quot;type&quot;: &quot;InventoryObserved&quot;,
+        &quot;message&quot;: &quot;observed app private address&quot;,
+        &quot;attributes&quot;: {
+          &quot;provider&quot;: &quot;oci&quot;,
+          &quot;address&quot;: &quot;10.0.1.123&quot;
+        }
+      }
+    ]
+  }
+}
+</code></pre>
+<p>routerd はプラグインの標準出力を YAML デコーダーで読み取ります（プラグインが JSON を
+出力した場合でも同様です）。これにより、リソースの spec が routerd の型付き構造体に
+復元されます。routerd は結果の形状を検証し、受理した出力を <code>DynamicConfigPart</code> として
+保存し、<code>observedAt + ttl</code> から <code>expiresAt</code> を導出します。dynamic override policy の
+評価を含む完全な effective-config の検証は、dynamic part が startup config とマージ
+されるときに行われます。</p>
+<p><code>actionPlans</code> は、運用者が provider-action journal にインポートすることを選べる
+プロバイダー操作を記述します。プラグインの結果そのものはドライランの計画に留まる必要が
+あり、<code>mode: execute</code> は拒否されます。実際のプロバイダー変更は、使用する場合も
+<code>routerctl action execute --approved</code> またはデーモンの自動実行ゲート経由でのみ行われ、
+エグゼキュータープラグインは routerd が保持する秘密を一切受け取りません。</p>
+<h3 id="observeprivateipsresult">ObservePrivateIPsResult</h3>
+<p><code>observe.providerPrivateIPs</code> capability を持つプラグインは
+<code>providerinventory.routerd.net/v1alpha1</code> の <code>ObservePrivateIPsResult</code> を返します。
+従来の <code>status.ips</code> は wire 互換のため残り、ownership-discovery event を発行する
+候補アドレスとして扱われます。新しいプラグインは、routerd が trap 除外や ownership
+selector を適用する前の、スキャン対象 VPC/VNet/VCN または subnet にある VM NIC と
+Private Endpoint のアドレス一覧を <code>status.localIPs</code> にも入れてください。<code>localIPs</code> が
+ない場合、routerd は <code>observedCandidates</code>、次に <code>ips</code> へフォールバックします。</p>
+<p>プラグインが完全な local inventory を <code>localIPs</code> で返しつつ、event 発行候補だけを狭めたい
+場合は <code>status.observedCandidates</code> を使えます。SAM はこの local inventory を router 自身の
+NIC、private IP、trusted subnet の範囲を確定するためだけに使います。永続的な ownership
+fact は filter 済みの <code>observedCandidates</code> から作られ、候補がなければ legacy <code>ips</code> を使います。</p>
+<p>各 private IP record は、プロバイダーが取得できる場合は <code>resourceRef</code> にその IP が
+紐づく compute instance ID を入れ、<code>resourceType</code> で router NIC、通常の instance NIC、
+Private Endpoint などを区別してください。<code>status.self</code> もローカル router instance の
+<code>resourceRef</code> / <code>resourceType</code> を設定できます。SAM はこの identity を使って、router
+instance に capture された secondary IP と、同じ provider subnet 上の本来の home client
+address を区別します。</p>
+<h2 id="cli">CLI</h2>
+<p>MVP の運用者向けコマンドは次の通りです。</p>
+<pre><code class="language-text">routerctl plugin list [--config &lt;startup&gt;] [-o table|json|yaml]
+routerctl plugin run &lt;name&gt; [--dry-run] [--config &lt;startup&gt;] [--state-file &lt;db&gt;] [-o table|json|yaml]
+routerctl action import|list|show|approve|execute|journal|rollback ...
+</code></pre>
+<p><code>plugin run --dry-run</code> はプラグインを実行し、候補の <code>DynamicConfigPart</code> を表示しますが、
+状態 DB には書き込みません。<code>--dry-run</code> なしの場合、routerctl はプラグインの実行を
+記録し、検証済みの dynamic part をローカルの状態データベースに保存します。</p>
+<h2 id="現在の位置付け">現在の位置付け</h2>
+<p>routerd の主要なルーター機能は、本体のバイナリと専用デーモンで実装を進めています。
+プラグインプロトコルは、利用者ごとのローカル拡張を安全に取り込むための基盤です。
+マニフェストの形式と入出力の契約は、安定した公開インターフェースとして固定するまでに
+変更される可能性があります。</p>
+<p><a href="reference/dynamic-config.html">Dynamic config リファレンス</a> も参照してください。</p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#配置">配置</a></li>
+<li><a href="#役割">役割</a></li>
+<li><a href="#mvp-のポリシー">MVP のポリシー</a></li>
+<li><a href="#リソース形状">リソース形状</a></li>
+<li><a href="#トリガー">トリガー</a></li>
+<li><a href="#入出力の契約">入出力の契約</a><ul>
+<li><a href="#pluginrequest">PluginRequest</a></li>
+<li><a href="#pluginresult">PluginResult</a></li>
+<li><a href="#observeprivateipsresult">ObservePrivateIPsResult</a></li>
+</ul>
+</li>
+<li><a href="#cli">CLI</a></li>
+<li><a href="#現在の位置付け">現在の位置付け</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/plugin-protocol.md">GitHub</a></div></footer></body></html>

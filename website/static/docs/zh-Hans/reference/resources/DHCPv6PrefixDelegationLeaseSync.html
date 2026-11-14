@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DHCPv6PrefixDelegationLeaseSync · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/reference/resources/DHCPv6PrefixDelegationLeaseSync.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/reference/resources/DHCPv6PrefixDelegationLeaseSync.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/DHCPv6PrefixDelegationLeaseSync.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/DHCPv6PrefixDelegationLeaseSync.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/DHCPv6PrefixDelegationLeaseSync.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="dhcpv6prefixdelegationleasesync">DHCPv6PrefixDelegationLeaseSync</h1>
+<p><a href="../resources.html#dhcpv6prefixdelegationleasesync">各资源的配置</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>复制内置 DHCPv6-PD 客户端租约快照到对等主机，供恢复与接管。</p>
+<h2 id="指定条件与引用关系">指定条件与引用关系</h2>
+<ul>
+<li>source.resource 须指定 DHCPv6PrefixDelegation，targets 不可为空。常规验证仅检查写法与类型，不确认存在，会直接按名称构建源路径。</li>
+<li>仅将 <StateDir>/dhcpv6-client/<name>/lease.json 复制到对端相同绝对路径。不复制事件日志、不启动或激活对端客户端，也不延长有效期。恢复仍检查快照新鲜度、身份及 PD 配置兼容性。</li>
+<li>每次执行使用 rsync -a --checksum --delay-updates，默认 rsync 无活动限制 60 秒、命令执行限制 2 分钟。SSH 默认 BatchMode=yes、ConnectTimeout=10，可由 sshOptions 覆盖。Synced 仅表示文件复制成功，不证明对端重新加载租约或客户端连续性。</li>
+</ul>
+<h2 id="yaml定义">YAML定义</h2>
+<p>此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DHCPv6PrefixDelegationLeaseSync
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    command: &quot;&lt;string&gt;&quot; # 选填; string
+    interval: &quot;&lt;string&gt;&quot; # 选填; string
+    source: # 选填; object
+      resource: &quot;&lt;string&gt;&quot; # 必填; string
+    targets: # 选填; array
+      - # object
+        host: &quot;&lt;string&gt;&quot; # 必填; string
+        name: &quot;&lt;string&gt;&quot; # 选填; string
+        options: # 选填; array
+          - &quot;&lt;string&gt;&quot; # string
+        sshOptions: # 选填; array
+          - &quot;&lt;string&gt;&quot; # string
+        user: &quot;&lt;string&gt;&quot; # 选填; string
+    when: # 选填; object
+      state: # 选填; object
+        &quot;&lt;key&gt;&quot;: # 选填; object
+          contains: &quot;&lt;string&gt;&quot; # 选填; string
+          equals: &quot;&lt;string&gt;&quot; # 选填; string
+          exists: true # 选填; boolean
+          for: &quot;&lt;string&gt;&quot; # 选填; string
+          in: # 选填; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # 选填; string
+          status: &quot;set&quot; # 选填; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<h2 id="字段含义与默认值">字段含义与默认值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>字段含义与默认值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.source</code></td>
+<td>必填含 resource 的来源描述，此处无文件路径覆盖。</td>
+</tr>
+<tr>
+<td><code>spec.source.resource</code></td>
+<td>必填 DHCPv6PrefixDelegation 裸名或 DHCPv6PrefixDelegation/name，来源固定 <StateDir>/dhcpv6-client/<name>/lease.json，无 field/optional 或源路径覆盖，不转换外部客户端格式。</td>
+</tr>
+<tr>
+<td><code>spec.command</code></td>
+<td>可选可执行文件名或路径，默认 rsync；直接接收 rsync 参数，不是 shell 命令字符串。</td>
+</tr>
+<tr>
+<td><code>spec.interval</code></td>
+<td>Go duration，默认 30s。距上次成功 syncedAt 未达时长则跳过；控制器另以 30 秒周期及订阅事件执行。零或负值仅禁用跳过，不会加快周期调度。</td>
+</tr>
+<tr>
+<td><code>spec.targets</code></td>
+<td>必填非空对等目标列表，逐一传送文件，第一个失败记录 Error/SyncFailed，不调用远端 routerd API。</td>
+</tr>
+<tr>
+<td><code>spec.targets[].name</code></td>
+<td>可选状态标签，默认空，不用于选择目标主机或来源。</td>
+</tr>
+<tr>
+<td><code>spec.targets[].host</code></td>
+<td>必填 SSH 主机或地址，不可含 CR/LF，须事先具备可达路由及非交互 SSH 认证。</td>
+</tr>
+<tr>
+<td><code>spec.targets[].user</code></td>
+<td>可选 SSH 用户，空值省略 user@ 并由 SSH 配置决定，不可含 CR/LF。</td>
+</tr>
+<tr>
+<td><code>spec.targets[].sshOptions</code></td>
+<td>可选 SSH 参数列表，组合至 rsync -e。未指定对应键时补上 -o BatchMode=yes 与 -o ConnectTimeout=10，条目不可含 CR/LF。</td>
+</tr>
+<tr>
+<td><code>spec.targets[].options</code></td>
+<td>可选额外 rsync 参数，附于默认值之后。提供 --timeout 或 --timeout=... 时不补入 --timeout=60，但不改变独立的 2 分钟进程限制；不可含 CR/LF。</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>可选通用状态条件，默认无条件。应以实际主用角色状态避免备用端写入，本资源不自行协商租约文件所有者。</td>
+</tr>
+</tbody>
+</table>
+<p>实现: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_dhcp.go">pkg/config/validate_dhcp.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/filesync.go">pkg/controller/chain/filesync.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go">pkg/controller/chain/chain.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/platform/platform.go">pkg/platform/platform.go</a></p>
+<h2 id="可引用的状态字段">可引用的状态字段</h2>
+<p>常规状态引用验证接受此 Kind 的下列字段名称。列于允许列表不保证目前有值，请检查实际状态。这些是输出，不是 YAML spec 配置。</p>
+<p><code>phase</code>, <code>command</code>, <code>sourceCount</code>, <code>targetCount</code>, <code>sources</code>, <code>targets</code>, <code>syncedAt</code>, <code>dryRun</code></p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件与引用关系">指定条件与引用关系</a></li>
+<li><a href="#yaml定义">YAML定义</a></li>
+<li><a href="#字段含义与默认值">字段含义与默认值</a></li>
+<li><a href="#可引用的状态字段">可引用的状态字段</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/reference/resources/DHCPv6PrefixDelegationLeaseSync.md">GitHub</a></div></footer></body></html>

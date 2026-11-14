@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PPPoESession · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/reference/resources/PPPoESession.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/reference/resources/PPPoESession.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/PPPoESession.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/reference/resources/PPPoESession.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/PPPoESession.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="pppoesession">PPPoESession</h1>
+<p><a href="../resources.html#pppoesession">リソース別の設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Linuxのpppd・FreeBSDのmpd5を使うrouterd-pppoe-clientを監視実行し、交渉したIPv4セッション状態を公開します。一部の旧項目はFreeBSDの手動render出力だけに使われ、主デーモン経路には効きません。</p>
+<h2 id="指定条件と参照関係">指定条件と参照関係</h2>
+<ul>
+<li>interfaceは同じRouterの基本Interfaceを参照し、PPPoESession・トンネル等を下位インターフェースには使えません。enabled:falseでもusernameとpassword・passwordFileのどちらか一方が必須です。</li>
+<li>実動作の監視処理はauthMethod・mtu/mru・serviceName/acName・lcpEchoInterval/lcpEchoFailureをデーモンへ渡しますが、ifname・managed・persist・ipv6・usePeerDNS・lcpInterval/lcpFailureは渡しません。別経路のFreeBSD手動render出力から実動作を推測しないでください。</li>
+<li>主デーモンの既定値は両OSともMTU・MRU 1454、LCP echo 30秒・4回です。別のFreeBSD手動mpd5生成では1492、旧LCP 20秒・3回です。設定計画やConnectedは実際の上流疎通を保証しません。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: PPPoESession
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    acName: &quot;&lt;string&gt;&quot; # 任意; string
+    authMethod: &quot;chap&quot; # 任意; string; enum=[&quot;chap&quot;, &quot;pap&quot;, &quot;both&quot;]
+    defaultRoute: true # 任意; boolean
+    enabled: true # 任意; boolean
+    ifname: &quot;&lt;string&gt;&quot; # 任意; string
+    interface: &quot;&lt;string&gt;&quot; # 必須; string
+    ipv6: true # 任意; boolean
+    lcpEchoFailure: 0 # 任意; integer; minimum=0
+    lcpEchoInterval: 0 # 任意; integer; minimum=0
+    lcpFailure: 0 # 任意; integer; minimum=0
+    lcpInterval: 0 # 任意; integer; minimum=0
+    managed: true # 任意; boolean
+    mru: 576 # 任意; integer; minimum=576; maximum=1500
+    mtu: 576 # 任意; integer; minimum=576; maximum=1500
+    password: &quot;&lt;string&gt;&quot; # 任意; string
+    passwordFile: &quot;&lt;string&gt;&quot; # 任意; string
+    persist: true # 任意; boolean
+    secretEncoding: &quot;plain&quot; # 任意; string; enum=[&quot;plain&quot;]
+    serviceName: &quot;&lt;string&gt;&quot; # 任意; string
+    usePeerDNS: true # 任意; boolean
+    username: &quot;&lt;string&gt;&quot; # 必須; string
+</code></pre>
+<h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>項目の意味と既定値</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.interface</code></td>
+<td>必須の下位基本Interfaceのmetadata.nameです。物理OS名へ解決し、状態値参照ではありません。</td>
+</tr>
+<tr>
+<td><code>spec.ifname</code></td>
+<td>希望するPPP名で、15文字以内・空白とスラッシュ不可です。省略時はppp-<name>が15文字以内である必要があります。現行の主監視処理はこの項目を渡さずデーモンのDefaultIfNameを使い、FreeBSDの手動renderのみ値を使います。実動作で独自名に依存しないでください。</td>
+</tr>
+<tr>
+<td><code>spec.enabled</code></td>
+<td>既定trueです。falseは起動を抑止し監視するセッションを停止してDisabledを表示しますが、設定検証は省略しません。</td>
+</tr>
+<tr>
+<td><code>spec.authMethod</code></td>
+<td>既定chapで、pap・bothも指定できます。実際のpppd・mpd5設定で許可するPAP・CHAPを制御します。</td>
+</tr>
+<tr>
+<td><code>spec.username</code></td>
+<td>必須のPPP認証ユーザー名で、自動の既定値はありません。</td>
+</tr>
+<tr>
+<td><code>spec.password</code></td>
+<td>平文PPPパスワードです。passwordFileがなければ必須で、passwordFileとは排他です。</td>
+</tr>
+<tr>
+<td><code>spec.passwordFile</code></td>
+<td>ルーター上の生パスワードファイルです。passwordがなければ必須で、起動時に読んで前後空白を除去します。欠落・読取不能・空なら失敗します。環境変数代入ファイルではありません。</td>
+</tr>
+<tr>
+<td><code>spec.mtu</code></td>
+<td>任意の576～1500です。省略・0なら主デーモンは1454、FreeBSD手動renderは1492です。PPPで1500を使うには対応する下位網が必要で、設定検証では保証しません。</td>
+</tr>
+<tr>
+<td><code>spec.mru</code></td>
+<td>受信上限の576～1500です。省略・0なら主デーモンは1454、FreeBSD手動renderは1492です。</td>
+</tr>
+<tr>
+<td><code>spec.serviceName</code></td>
+<td>任意のPPPoEサービス選択名です。空なら明示指定せず、改行は禁止です。</td>
+</tr>
+<tr>
+<td><code>spec.acName</code></td>
+<td>任意のアクセスコンセントレーター選択名です。空なら明示指定せず、改行は禁止です。</td>
+</tr>
+<tr>
+<td><code>spec.defaultRoute</code></td>
+<td>既定falseです。trueでは主経路のクリーンアップが観測済みPPPデバイスの既存デフォルト経路を保持しますが、デーモン設定は経路を追加しません。FreeBSD手動renderは追加指示を出します。実動作で自動追加が必要ならIPv4Routeを明示してください。</td>
+</tr>
+<tr>
+<td><code>spec.usePeerDNS</code></td>
+<td>既定falseですが、主デーモン経路は参照しません。LinuxPeerは常にusepeerdnsを出し、取得DNSはPPP状態に公開します。この項目でrouterdのDNS転送・resolv.confへの適用は制御できません。</td>
+</tr>
+<tr>
+<td><code>spec.persist</code></td>
+<td>任意の真偽値ですが、現行の監視デーモン設定では使いません。省略時にリソース独自の再試行ポリシーが決まるものではなく、監視処理のライフサイクルは別です。</td>
+</tr>
+<tr>
+<td><code>spec.lcpInterval</code></td>
+<td>旧形式の0以上の間隔で、FreeBSD手動renderだけが使い、省略・0は20秒です。主デーモンは無視し、lcpEchoIntervalを使用します。</td>
+</tr>
+<tr>
+<td><code>spec.lcpFailure</code></td>
+<td>旧形式の0以上の失敗回数で、FreeBSD手動renderだけが使い、省略・0は3です。主デーモンは無視し、lcpEchoFailureを使用します。</td>
+</tr>
+<tr>
+<td><code>spec.lcpEchoInterval</code></td>
+<td>0以上のLCP echo間隔（秒）です。省略・0は主デーモンの既定30秒で、echo無効化ではありません。FreeBSD手動renderはこの項目を使いません。</td>
+</tr>
+<tr>
+<td><code>spec.lcpEchoFailure</code></td>
+<td>0以上のLCP echo失敗回数です。省略・0は主デーモンの既定4です。Linuxはlcp-echo-failureに渡し、FreeBSDデーモンはkeep-aliveの間隔と間隔×回数を出力します。</td>
+</tr>
+<tr>
+<td><code>spec.ipv6</code></td>
+<td>既定falseです。現行の監視PPPデーモンには渡さず、その生成設定にもIPv6交渉オプションを出しません。このフラグでPPP上のIPv6を有効化できるとは扱わないでください。</td>
+</tr>
+<tr>
+<td><code>spec.managed</code></td>
+<td>既定falseですが、主監視処理はこの値に関係なくenabledなセッションを起動します。FreeBSD手動renderだけでは、trueの有効セッションをmpd5の既定load一覧に追加します。実動作の観測専用指定ではありません。</td>
+</tr>
+<tr>
+<td><code>spec.secretEncoding</code></td>
+<td>省略またはplainのみ指定できます。password・passwordFileのBase64デコードや暗号化は行いません。</td>
+</tr>
+</tbody>
+</table>
+<p>実装: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_wan.go">pkg/config/validate_wan.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go">pkg/controller/chain/chain.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/phase_status.go">pkg/controller/chain/phase_status.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/ipv4_main_routes.go">pkg/controller/chain/ipv4_main_routes.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/pppoesession/controller.go">pkg/controller/pppoesession/controller.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd-pppoe-client/main.go">cmd/routerd-pppoe-client/main.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/pppoeclient/client.go">pkg/pppoeclient/client.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/freebsd.go">pkg/render/freebsd.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd/cmd_render.go">cmd/routerd/cmd_render.go</a></p>
+<h2 id="状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</h2>
+<p>通常の状態値参照の検証で、このKindについて許可するフィールド名です。許可一覧にあるだけでは値の生成・取得を保証しないため、実際の状態を確認してください。YAMLのspecに設定する項目ではなく出力です。</p>
+<p><code>phase</code>, <code>interface</code>, <code>device</code>, <code>currentAddress</code>, <code>peerAddress</code>, <code>gateway</code>, <code>dnsServers</code>, <code>connectedAt</code>, <code>dryRun</code></p>
+<p><a href="/examples/example-pppoe-ipv4-nat.yaml">設定例</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
+<li><a href="#状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/reference/resources/PPPoESession.md">GitHub</a></div></footer></body></html>

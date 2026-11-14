@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>EgressRoutePolicy · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/concepts/egress-route.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/concepts/egress-route.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/concepts/egress-route.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/concepts/egress-route.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/concepts/egress-route.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="egressroutepolicy">EgressRoutePolicy</h1>
+<p><code>EgressRoutePolicy</code> selects the route used for outbound traffic. It replaces
+an earlier WAN route policy Kind. This is a clean break. The old Kind name is
+not accepted.</p>
+<p>The policy watches candidate resources and health checks. It stores the chosen
+candidate in status. Other resources can refer to that status.</p>
+<p><code>spec.mode</code> decides which controller owns the status. When <code>mode</code> is omitted,
+the egress-route selector publishes selection-only status and
+<code>routerd.lan.route.changed</code> events with <code>role: advisory</code> / <code>advisory: true</code>.
+That status is live controller output, not an apply dry run. When <code>mode</code> is set
+to <code>priority</code>, <code>mark</code>, or <code>hash</code>, the policy-route controller owns the applied
+routing/NAT mark state and dependent controllers follow
+<code>routerd.resource.status.changed</code> instead of the legacy route-changed event.</p>
+<p><code>mode: priority</code> still uses <code>selection: highest-weight-ready</code>. The highest
+weight ready candidate wins; <code>priority</code> is the tie-breaker and the policy-route
+rule priority, not a replacement for the selection policy. <code>weighted-ecmp</code> is
+reserved until implemented and is reported as <code>UnsupportedSelection</code> rather
+than being silently ignored. <code>enabled: false</code> removes the candidate from
+selection and from generated policy-route rule/table ownership.</p>
+<pre><code class="language-yaml">apiVersion: net.routerd.net/v1alpha1
+kind: EgressRoutePolicy
+metadata:
+  name: ipv4-default
+spec:
+  family: ipv4
+  destinationCIDRs:
+    - 0.0.0.0/0
+  selection: highest-weight-ready
+  candidates:
+    - name: ds-lite
+      source: DSLiteTunnel/ds-lite
+      deviceFrom:
+        resource: DSLiteTunnel/ds-lite
+        field: interface
+      gatewaySource: none
+      weight: 80
+      healthCheck: internet-tcp443
+    - name: ix2215
+      source: Interface/ix2215
+      deviceFrom:
+        resource: Interface/ix2215
+        field: ifname
+      gatewaySource: static
+      gateway: 172.17.0.1
+      weight: 50
+</code></pre>
+<p><code>destinationCIDRs</code> limits the destinations managed by the policy. If it is
+omitted, routerd uses <code>0.0.0.0/0</code> for IPv4 and <code>::/0</code> for IPv6.</p>
+<p><code>gatewaySource</code> describes how the gateway is chosen.</p>
+<ul>
+<li><code>none</code>: point-to-point devices such as DS-Lite do not need a gateway.</li>
+<li><code>static</code>: <code>gateway</code> contains the next-hop address.</li>
+<li><code>dhcpv4</code> and <code>dhcpv6</code>: reserved for gateway values learned from client
+  leases.</li>
+</ul>
+<p>The selected values are exposed as:</p>
+<ul>
+<li><code>status.selectedCandidate</code></li>
+<li><code>status.selectedDevice</code></li>
+<li><code>status.selectedGateway</code></li>
+<li><code>status.selectedWeight</code></li>
+<li><code>status.selectedTargets</code></li>
+<li><code>status.destinationCIDRs</code></li>
+</ul>
+<p>When a candidate is gated by <code>VirtualAddress/&lt;name&gt;.role: master</code>, applied
+<code>mode: priority</code> status also reports HA data-path convergence:</p>
+<ul>
+<li><code>status.datapathState</code> (<code>Standby</code>, <code>Converging</code>, or <code>Ready</code>)</li>
+<li><code>status.datapathRoleTransitionAt</code></li>
+<li><code>status.datapathReadyAt</code></li>
+<li><code>status.datapathReadyDuration</code> and <code>status.datapathReadyDurationMillis</code></li>
+<li><code>status.newFlowBehavior</code></li>
+</ul>
+<p>During <code>Converging</code>, routerd deliberately selects the next ready candidate for
+new unmarked flows (<code>datapathFallbackBehavior: select-next-ready-candidate</code>).
+It does not silently drop those flows. Existing flows with a replicated,
+non-zero conntrack mark keep that mark and do not enter new-flow selection.
+The keepalived transition hook wakes routerd immediately; the periodic VRRP
+observation remains as a recovery path if the notification cannot be delivered.</p>
+<p>At startup, the policy chooses the first ready candidate instead of waiting for
+the highest-weight path forever. If a higher-weight candidate becomes ready
+later, routerd updates <code>IPv4Route</code> and <code>NAT44Rule</code> through
+<code>routerd.lan.route.changed</code>. It does not flush conntrack. Existing flows keep
+the kernel state they already have, while new flows use the new route and NAT
+direction.</p>
+<p>For candidates with multiple <code>targets</code>, routerd hashes new flows into 256 fixed
+buckets and assigns those buckets with rendezvous hashing. The seed and target
+identity are stable across reconciliation and restart. If a target becomes
+unhealthy, only buckets owned by that target move to the next-ready target; a
+recovered target takes back the same buckets. Adding or removing a target also
+changes only the buckets whose rendezvous winner changes. Existing flows keep
+their non-zero conntrack mark and are not rehashed. The fixed bucket table is a
+small nftables rule-size cost in exchange for bounded remapping and stable
+source-address affinity.</p>
+<p><code>IPv4Route</code> can use those status fields:</p>
+<pre><code class="language-yaml">apiVersion: net.routerd.net/v1alpha1
+kind: IPv4Route
+metadata:
+  name: default-route
+spec:
+  destination: 0.0.0.0/0
+  deviceFrom:
+    resource: EgressRoutePolicy/ipv4-default
+    field: selectedDevice
+  gatewayFrom:
+    resource: EgressRoutePolicy/ipv4-default
+    field: selectedGateway
+</code></pre>
+<p>Private destinations that must not leave through a DS-Lite (or any) tunnel can
+be modeled as ordinary routes. Use a WAN-side route for the upstream gateway's
+private subnet, a dedicated route for any internal <code>10.0.0.0/8</code> or
+<code>172.16.0.0/12</code> ranges, and <code>type: blackhole</code> for ranges that should be
+discarded:</p>
+<pre><code class="language-yaml">apiVersion: net.routerd.net/v1alpha1
+kind: IPv4Route
+metadata:
+  name: private-10-blackhole
+spec:
+  type: blackhole
+  destination: 10.0.0.0/8
+</code></pre>
+<h2 id="health-checks">Health Checks</h2>
+<p><code>HealthCheck</code> can pin probes to a path.</p>
+<pre><code class="language-yaml">apiVersion: net.routerd.net/v1alpha1
+kind: HealthCheck
+metadata:
+  name: internet-tcp443
+spec:
+  target: 1.1.1.1
+  protocol: tcp
+  port: 443
+</code></pre>
+<p>When a <code>HealthCheck</code> is referenced by an <code>EgressRoutePolicy</code> candidate or
+target, routerd derives the health-check daemon, socket mark, and source binding
+from that route target automatically. The config describes the probe intent;
+platform-specific socket mechanics stay inside the controller and renderer.</p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#health-checks">Health Checks</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/concepts/egress-route.md">GitHub</a></div></footer></body></html>

@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DHCPv6Information · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/reference/resources/DHCPv6Information.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/reference/resources/DHCPv6Information.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/DHCPv6Information.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/DHCPv6Information.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/DHCPv6Information.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="dhcpv6information">DHCPv6Information</h1>
+<p><a href="../resources.html#dhcpv6information">各资源的配置</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>从使用同接口的DHCPv6-PD daemon获取AFTR、DNS、SNTP与搜索域信息，不启动独立Information-request client。</p>
+<h2 id="指定条件与引用关系">指定条件与引用关系</h2>
+<ul>
+<li>同一逻辑interface的DHCPv6PrefixDelegation须先达到Bound，才读取其daemon socket；无对应PD资源就没有来源。Info-request在bootstrap/转为Bound时触发，不是独立租约生命周期。</li>
+<li>信息controller使用声明Router而非when筛选后的有效视图，也不求值dependsOn。Ready表示读取daemon状态，不证明收到新信息回复。ready_when会被拒绝，须注意以下运行限制。</li>
+</ul>
+<h2 id="yaml定义">YAML定义</h2>
+<p>此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DHCPv6Information
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    dependsOn: # 选填; array
+      - # object
+        equals: &quot;&lt;string&gt;&quot; # 选填; string
+        field: &quot;&lt;string&gt;&quot; # 选填; string
+        notEmpty: true # 选填; boolean
+        optional: true # 选填; boolean
+        phase: &quot;&lt;string&gt;&quot; # 选填; string
+        resource: &quot;&lt;string&gt;&quot; # 必填; string
+    interface: &quot;&lt;string&gt;&quot; # 必填; string
+    request: # 选填; array
+      - &quot;&lt;string&gt;&quot; # string
+    when: # 选填; object
+      state: # 选填; object
+        &quot;&lt;key&gt;&quot;: # 选填; object
+          contains: &quot;&lt;string&gt;&quot; # 选填; string
+          equals: &quot;&lt;string&gt;&quot; # 选填; string
+          exists: true # 选填; boolean
+          for: &quot;&lt;string&gt;&quot; # 选填; string
+          in: # 选填; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # 选填; string
+          status: &quot;set&quot; # 选填; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<h2 id="字段含义与默认值">字段含义与默认值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>字段含义与默认值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.interface</code></td>
+<td>必填接口标识，与DHCPv6PrefixDelegation.spec.interface完全匹配，无默认值；两个声明使用相同逻辑接口名。</td>
+</tr>
+<tr>
+<td><code>spec.request</code></td>
+<td>请求选项声明默认空，当前controller不使用；daemon InfoRequest固定以ORO请求AFTR名称、DNS、SNTP与搜索域。</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>条件声明默认未指定，按共用when规则验证，但当前信息controller不使用它筛选自身工作，不能作为信息请求停止开关。</td>
+</tr>
+<tr>
+<td><code>spec.dependsOn</code></td>
+<td>依赖声明默认空；验证目标/field，但此controller不在读取或请求信息前强制这些条件。</td>
+</tr>
+</tbody>
+</table>
+<p>实现: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_wan.go">pkg/config/validate_wan.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go">pkg/config/diagnostics.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/phase2.go">pkg/controller/chain/phase2.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go">pkg/controller/chain/chain.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/pdclient/client.go">pkg/pdclient/client.go</a></p>
+<h2 id="可引用的状态字段">可引用的状态字段</h2>
+<p>常规状态引用验证接受此 Kind 的下列字段名称。列于允许列表不保证目前有值，请检查实际状态。这些是输出，不是 YAML spec 配置。</p>
+<p><code>phase</code>, <code>source</code>, <code>aftrName</code>, <code>dnsServers</code>, <code>sntpServers</code>, <code>domainSearch</code></p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件与引用关系">指定条件与引用关系</a></li>
+<li><a href="#yaml定义">YAML定义</a></li>
+<li><a href="#字段含义与默认值">字段含义与默认值</a></li>
+<li><a href="#可引用的状态字段">可引用的状态字段</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/reference/resources/DHCPv6Information.md">GitHub</a></div></footer></body></html>

@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CloudEdge SAM transport layering · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/how-to/cloudedge-sam-transport-layering.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/how-to/cloudedge-sam-transport-layering.html" lang="en" hreflang="en">English</a><a href="/docs/ja/how-to/cloudedge-sam-transport-layering.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/how-to/cloudedge-sam-transport-layering.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/cloudedge-sam-transport-layering.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="cloudedge-sam-transport-layering">CloudEdge SAM transport layering</h1>
+<p>CloudEdge SAM 不应把 mobile <code>/32</code> 放进 WireGuard <code>AllowedIPs</code>。WireGuard 的
+<code>AllowedIPs</code> 是 cryptokey routing；而 SAM delivery plane 中 <code>/32</code> owner 会随着 BGP
+best path、route reflector 与 ECMP 变化，两者职责不同。</p>
+<h2 id="推荐-layer">推荐 layer</h2>
+<p>可信 underlay，或已经通过其他方式加密的 underlay，优先使用 IPIP：</p>
+<pre><code class="language-text">physical underlay
+  IPIP tunnel
+    SAM overlay packets
+</code></pre>
+<p>需要加密时，将 WireGuard 作为 endpoint-only transport，再在其上承载 IPIP：</p>
+<pre><code class="language-text">physical underlay
+  WireGuard endpoint transport
+    IPIP tunnel
+      SAM overlay packets
+</code></pre>
+<p>此时 WireGuard peer 的 <code>AllowedIPs</code> 只包含 <code>10.252.0.2/32</code> 这类 router-to-router
+endpoint prefix。SAM mobile <code>/32</code> 由 BGP、kernel FIB 与 SAM resource 处理。</p>
+<h2 id="samtransportprofile">SAMTransportProfile</h2>
+<p>当前 CloudEdge example 使用 <code>SAMTransportProfile</code> 生成每个 peer 的
+<code>TunnelInterface</code>、endpoint <code>/32</code> <code>IPv4Route</code> 与 <code>BGPPeer</code>。</p>
+<pre><code class="language-yaml">apiVersion: mobility.routerd.net/v1alpha1
+kind: SAMNodeSet
+metadata:
+  name: cloudedge-nodes
+spec:
+  nodes:
+    - { nodeRef: onprem-router, site: onprem, role: onprem, routeReflector: true, samEndpoint: 10.252.0.1 }
+    - { nodeRef: aws-router-a, site: aws, role: cloud, samEndpoint: 10.252.0.2 }
+    - { nodeRef: azure-router, site: azure, role: cloud, samEndpoint: 10.252.0.3 }
+---
+apiVersion: mobility.routerd.net/v1alpha1
+kind: SAMTransportProfile
+metadata:
+  name: cloudedge-transport
+spec:
+  selfNodeRef: onprem-router
+  mode: ipip
+  encryption: wireguard
+  innerPrefix: 10.255.0.0/24
+  underlayInterface: wg-hybrid
+  localEndpointFrom:
+    resource: Interface/wg-hybrid
+    field: primaryIPv4
+  bgp:
+    routerRef: BGPRouter/mobility
+    peerASN: 64512
+    timersPreset: fast
+  peersFrom:
+    - resource: SAMNodeSet/cloudedge-nodes
+      nodeRefs: [aws-router-a]
+</code></pre>
+<p><code>spec.selfNodeRef</code> 是每台 router 的稳定 ID。<code>SAMNodeSet</code> 是共享的 identity、topology
+和 endpoint source；routerd 会排序该 node set，并为每个 unordered node pair 从
+<code>innerPrefix</code> 分配 deterministic <code>/31</code>。<code>SAMTransportProfile</code> 不接受直接的 peer 或
+topology list；<code>nodeRefs</code> 只选择需要建立 transport 的相邻 node。省略 <code>nodeRefs</code> 会选择
+所有带 <code>samEndpoint</code> 的非 self node。</p>
+<h2 id="cleanup">cleanup</h2>
+<p>profile 会为每个 self node 写入一个 <code>DynamicConfigPart</code>。删除 peer 时，该 part 被新的生成
+resource set 替换；删除 profile 时，则变成空的 active part，生成的 tunnel、BGP peer 与
+endpoint route 会从 effective config 消失。</p>
+<p>cleanup 由当前 lifecycle GC path 负责。desired set 使用 dynamic SAM 生成后的 effective
+view，因此 profile 存在时生成的 transport resource 会被保留，只有从 profile output 消失后
+才成为 GC 对象。</p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#推荐-layer">推荐 layer</a></li>
+<li><a href="#samtransportprofile">SAMTransportProfile</a></li>
+<li><a href="#cleanup">cleanup</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/how-to/cloudedge-sam-transport-layering.md">GitHub</a></div></footer></body></html>

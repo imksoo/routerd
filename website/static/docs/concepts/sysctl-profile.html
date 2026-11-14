@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sysctl profile · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/concepts/sysctl-profile.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/concepts/sysctl-profile.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/concepts/sysctl-profile.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/concepts/sysctl-profile.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/concepts/sysctl-profile.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="sysctl-profile">Sysctl profile</h1>
+<p>routerd derives the Linux router sysctl set from router resources.
+Normal home-router configs should not list <code>SysctlProfile</code> or many individual
+<code>Sysctl</code> entries. NAT, DS-Lite, BGP, IPv6 prefix delegation, RA, and LAN service
+resources imply the forwarding, redirect, reverse-path-filter, conntrack, TCP,
+and per-interface RA settings they need.</p>
+<p><code>Sysctl</code> and <code>SysctlProfile</code> remain as narrow escape hatches for hardware,
+kernel, or distribution-specific settings that routerd cannot yet derive. Treat
+such entries as implementation overrides, not as the main way to describe router
+intent.</p>
+<p><code>runtime: true</code> writes immediately to the running kernel when the controller
+chain is serving. <code>persistent: true</code> writes a persistent file under
+<code>/etc/sysctl.d/</code>. <code>routerctl apply</code> mutates only explicit <code>Sysctl</code> and
+<code>SysctlProfile</code> resources; derived sysctls are rendered and planned there, then
+applied by <code>routerd serve</code>.</p>
+<p>Use <code>overrides</code> only when you intentionally keep an explicit profile escape
+hatch.</p>
+<pre><code class="language-yaml">spec:
+  profile: router-linux
+  overrides:
+    net.netfilter.nf_conntrack_max: &quot;524288&quot;
+</code></pre>
+<p>routerd reads the current value before writing.
+If the current value already satisfies the expectation, routerd does not write — and does not emit an apply event for that key.</p>
+<p>Some sysctl values are rounded up by the kernel.
+For those, use <code>compare: atLeast</code>.
+<code>value</code> is what routerd writes; <code>expectedValue</code> is what routerd accepts on read-back.
+If <code>expectedValue</code> is omitted, <code>value</code> is used.
+Each explicit sysctl key may be declared by only one <code>Sysctl</code> resource.
+Validation rejects duplicate keys even when their values match, avoiding
+order-dependent runtime and persistent writes.</p>
+<pre><code class="language-yaml">apiVersion: system.routerd.net/v1alpha1
+kind: Sysctl
+metadata:
+  name: socket-buffer
+spec:
+  key: net.core.rmem_max
+  value: &quot;16777216&quot;
+  expectedValue: &quot;16777216&quot;
+  compare: atLeast
+  runtime: true
+</code></pre>
+<h2 id="values-in-the-router-linux-profile">Values in the <code>router-linux</code> profile</h2>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Value</th>
+<th>Reason</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>net.ipv4.ip_forward</code></td>
+<td><code>1</code></td>
+<td>Enable IPv4 forwarding.</td>
+</tr>
+<tr>
+<td><code>net.ipv4.conf.all.forwarding</code></td>
+<td><code>1</code></td>
+<td>Enable per-interface IPv4 forwarding.</td>
+</tr>
+<tr>
+<td><code>net.ipv4.conf.all.rp_filter</code></td>
+<td><code>0</code></td>
+<td>Prevent reverse-path filtering from dropping return traffic for policy routing or DS-Lite tunnels.</td>
+</tr>
+<tr>
+<td><code>net.ipv4.conf.default.rp_filter</code></td>
+<td><code>0</code></td>
+<td>Same, applied to interfaces created later (e.g. tunnels).</td>
+</tr>
+<tr>
+<td><code>net.ipv4.conf.all.send_redirects</code></td>
+<td><code>0</code></td>
+<td>Do not emit ICMP redirects from the router.</td>
+</tr>
+<tr>
+<td><code>net.ipv4.conf.default.send_redirects</code></td>
+<td><code>0</code></td>
+<td>Same, applied to interfaces created later.</td>
+</tr>
+<tr>
+<td><code>net.ipv4.conf.all.src_valid_mark</code></td>
+<td><code>1</code></td>
+<td>Allow <code>fwmark</code>-based routing decisions to participate in reverse-path validation.</td>
+</tr>
+<tr>
+<td><code>net.ipv6.conf.all.forwarding</code></td>
+<td><code>1</code></td>
+<td>Enable IPv6 forwarding.</td>
+</tr>
+<tr>
+<td><code>net.ipv6.conf.default.forwarding</code></td>
+<td><code>1</code></td>
+<td>Same, applied to interfaces created later.</td>
+</tr>
+<tr>
+<td><code>net.netfilter.nf_conntrack_acct</code></td>
+<td><code>1</code></td>
+<td>Enable per-flow packet/byte accounting; used by the Web Console client traffic view. Optional when conntrack is not loaded.</td>
+</tr>
+<tr>
+<td><code>net.netfilter.nf_conntrack_max</code></td>
+<td><code>262144</code></td>
+<td>Avoid table exhaustion under many devices and apps. Optional when conntrack is not loaded.</td>
+</tr>
+<tr>
+<td><code>net.netfilter.nf_conntrack_buckets</code></td>
+<td><code>65536</code></td>
+<td>Roughly <code>nf_conntrack_max / 4</code>. Optional — not all environments allow writing this.</td>
+</tr>
+<tr>
+<td><code>net.netfilter.nf_conntrack_tcp_timeout_established</code></td>
+<td><code>86400</code></td>
+<td>Reduce the default 5-day timeout to 24 hours (more appropriate for home routers). Optional when conntrack is not loaded.</td>
+</tr>
+<tr>
+<td><code>net.netfilter.nf_conntrack_udp_timeout</code></td>
+<td><code>30</code></td>
+<td>Shorten one-shot UDP retention. Optional when conntrack is not loaded.</td>
+</tr>
+<tr>
+<td><code>net.netfilter.nf_conntrack_udp_timeout_stream</code></td>
+<td><code>180</code></td>
+<td>Set sustained UDP retention to 3 minutes. Optional when conntrack is not loaded.</td>
+</tr>
+<tr>
+<td><code>net.core.rmem_max</code></td>
+<td><code>16777216</code></td>
+<td>Cap socket receive buffers at 16 MiB.</td>
+</tr>
+<tr>
+<td><code>net.core.wmem_max</code></td>
+<td><code>16777216</code></td>
+<td>Cap socket send buffers at 16 MiB.</td>
+</tr>
+<tr>
+<td><code>net.ipv4.tcp_rmem</code></td>
+<td><code>4096 87380 16777216</code></td>
+<td>Widen the TCP receive autotuning range.</td>
+</tr>
+<tr>
+<td><code>net.ipv4.tcp_wmem</code></td>
+<td><code>4096 65536 16777216</code></td>
+<td>Widen the TCP send autotuning range.</td>
+</tr>
+<tr>
+<td><code>net.core.netdev_max_backlog</code></td>
+<td><code>5000</code></td>
+<td>Reduce drops on short receive bursts.</td>
+</tr>
+<tr>
+<td><code>net.core.somaxconn</code></td>
+<td><code>4096</code></td>
+<td>Set an explicit listen backlog ceiling.</td>
+</tr>
+<tr>
+<td><code>net.ipv4.ip_local_port_range</code></td>
+<td><code>1024 65535</code></td>
+<td>Widen the ephemeral port range used by the router itself.</td>
+</tr>
+<tr>
+<td><code>net.ipv4.tcp_fin_timeout</code></td>
+<td><code>30</code></td>
+<td>Shorten FIN-WAIT-2 retention.</td>
+</tr>
+<tr>
+<td><code>net.ipv4.tcp_mtu_probing</code></td>
+<td><code>1</code></td>
+<td>Let TCP fall back to smaller segments when path-MTU notifications are blackholed.</td>
+</tr>
+<tr>
+<td><code>net.ipv4.tcp_tw_reuse</code></td>
+<td><code>1</code></td>
+<td>Allow reuse of TIME-WAIT sockets.</td>
+</tr>
+<tr>
+<td><code>net.ipv6.route.max_size</code></td>
+<td><code>16384</code></td>
+<td>Raise the IPv6 route cache ceiling.</td>
+</tr>
+</tbody>
+</table>
+<p><code>net.ipv4.route.max_size</code> is no longer effective on some recent Linux kernels and is <em>not</em> set by the default profile.
+If you need it, add it as a discrete <code>Sysctl</code> (not via <code>overrides</code>) and verify on the target host first.</p>
+<p><code>30</code> seconds is the Linux conntrack default for unreplied UDP flows and is also
+routerd's profile default. On busy home routers, <code>60</code> seconds can be a better
+operational override when short UDP flows are being correlated with firewall
+denies or DPI observations:</p>
+<pre><code class="language-yaml">spec:
+  profile: router-linux
+  overrides:
+    net.netfilter.nf_conntrack_udp_timeout: &quot;60&quot;
+</code></pre>
+<h2 id="kernel-modules">Kernel Modules</h2>
+<p><code>SysctlProfile</code> expects the relevant kernel subsystems to exist. routerd derives
+kernel module loading from resources such as NAT, firewall logging, traffic flow
+logging, and WireGuard. <code>KernelModule</code> is no longer a user-facing config kind;
+if a module is missing from the derived set, fix the derivation instead of
+adding implementation-specific YAML.</p>
+<h2 id="when-to-use-a-discrete-sysctl">When to use a discrete <code>Sysctl</code></h2>
+<p>Use a discrete <code>Sysctl</code> only for a setting that is truly outside routerd's
+derived model. Per-interface router needs such as DS-Lite tunnel
+<code>rp_filter=0</code>, WAN/LAN <code>accept_ra=2</code>, and LAN <code>send_redirects=0</code> are derived
+from resources and should not appear in normal configs.</p>
+<p>Example escape hatch for a lab kernel that needs a temporary socket-buffer
+override:</p>
+<pre><code class="language-yaml">apiVersion: system.routerd.net/v1alpha1
+kind: Sysctl
+metadata:
+  name: lab-rmem-max
+spec:
+  key: net.core.rmem_max
+  value: &quot;33554432&quot;
+  compare: atLeast
+  runtime: true
+  persistent: true
+</code></pre></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#values-in-the-router-linux-profile">Values in the router-linux profile</a></li>
+<li><a href="#kernel-modules">Kernel Modules</a></li>
+<li><a href="#when-to-use-a-discrete-sysctl">When to use a discrete Sysctl</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/concepts/sysctl-profile.md">GitHub</a></div></footer></body></html>

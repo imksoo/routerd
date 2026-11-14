@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SSH remote management on the live ISO · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/operations/live-iso-ssh.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/operations/live-iso-ssh.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/operations/live-iso-ssh.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/operations/live-iso-ssh.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/operations/live-iso-ssh.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="ssh-remote-management-on-the-live-iso">SSH remote management on the live ISO</h1>
+<p>The routerd live ISO does not run an SSH daemon by default. The default posture
+is closed: only the local and serial consoles are available (<code>tty1</code>, <code>tty2</code>,
+<code>ttyS0</code>). This keeps passwordless-root access off the network.</p>
+<p>For appliances running as hypervisor VMs (Proxmox VE, KVM, etc.) where serial
+console access is inconvenient, an opt-in SSH mode can be enabled without
+baking credentials into the ISO image.</p>
+<h2 id="prerequisites">Prerequisites</h2>
+<ul>
+<li>A config disk (labeled <code>ROUTERD_CONFIG</code> or <code>ROUTERD</code>, or passed with
+  <code>routerd.usb=</code>) containing an <code>authorized_keys</code> file.</li>
+<li>The ability to set kernel parameters at boot (edit the GRUB entry or set
+  the VM's kernel arguments from the hypervisor).</li>
+</ul>
+<h2 id="enabling-ssh">Enabling SSH</h2>
+<h3 id="step-1-place-your-public-key-on-the-config-disk">Step 1 — place your public key on the config disk</h3>
+<p>On the config disk (e.g. the Proxmox VM disk that holds <code>router.yaml</code>), create
+the <code>authorized_keys</code> file inside the <code>routerd/</code> directory:</p>
+<pre><code class="language-text">routerd/
+  router.yaml
+  authorized_keys       ← add this file
+</code></pre>
+<p>The file follows standard OpenSSH <code>authorized_keys</code> format:</p>
+<pre><code class="language-text">ssh-ed25519 AAAA...yourkey... user@host
+</code></pre>
+<p>Host-specific key files are also supported (looked up before the generic file):</p>
+<pre><code class="language-text">routerd/hosts/&lt;hostname&gt;/authorized_keys
+routerd/hosts/&lt;mac&gt;/authorized_keys   (colon-separated or compact lowercase)
+</code></pre>
+<h3 id="step-2-boot-with-routerdssh1">Step 2 — boot with <code>routerd.ssh=1</code></h3>
+<p>Add the <code>routerd.ssh=1</code> parameter to the kernel command line.</p>
+<p><strong>GRUB (live ISO boot menu — press <code>e</code> to edit):</strong></p>
+<pre><code class="language-text">linux /boot/vmlinuz-lts ... routerd.ssh=1
+</code></pre>
+<p><strong>Proxmox VE — set boot args on the VM:</strong></p>
+<pre><code class="language-sh">qm set &lt;vmid&gt; --args &quot;-append routerd.ssh=1&quot;
+</code></pre>
+<p>Or set it once in the VM's GRUB entry so it persists across reboots.</p>
+<h2 id="what-happens-at-boot">What happens at boot</h2>
+<ol>
+<li><code>live-persistence.sh init</code> mounts the config disk and restores <code>router.yaml</code>.</li>
+<li><code>live-autostart.sh</code> installs dependencies (including <code>openssh</code> if not already
+   present).</li>
+<li><code>live-ssh.sh</code> checks for <code>routerd.ssh=1</code> on the kernel command line.</li>
+<li>If the flag is set, it looks for <code>authorized_keys</code> on the mounted config disk.</li>
+<li>If found, the key(s) are installed to <code>/root/.ssh/authorized_keys</code>, host keys
+   are generated with <code>ssh-keygen -A</code>, and <code>sshd</code> is started.</li>
+<li>If <code>routerd.ssh=1</code> is set but no <code>authorized_keys</code> file is found, sshd is
+   <strong>not</strong> started and a warning is logged to <code>/run/routerd/logs/routerd-ssh.log</code>.</li>
+</ol>
+<h2 id="security-model">Security model</h2>
+<table>
+<thead>
+<tr>
+<th>Property</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Default state</td>
+<td>SSH disabled</td>
+</tr>
+<tr>
+<td>Authentication</td>
+<td>Public key only</td>
+</tr>
+<tr>
+<td>Password auth for root</td>
+<td>Permanently disabled (<code>PasswordAuthentication no</code>)</td>
+</tr>
+<tr>
+<td>Root login</td>
+<td><code>PermitRootLogin prohibit-password</code> (key-authenticated only)</td>
+</tr>
+<tr>
+<td>Credentials in ISO</td>
+<td>None — keys come from the config disk at runtime</td>
+</tr>
+</tbody>
+</table>
+<p>SSH is only enabled by explicit opt-in and only when credentials have been
+provided on external media. There is no fallback to password authentication.</p>
+<h2 id="troubleshooting">Troubleshooting</h2>
+<p><strong>sshd did not start:</strong></p>
+<pre><code class="language-sh">cat /run/routerd/logs/routerd-ssh.log
+</code></pre>
+<p>Common reasons:
+- <code>routerd.ssh=1</code> not present on the kernel command line — check
+  <code>/proc/cmdline</code>.
+- Config disk not mounted — check <code>/proc/mounts</code> for <code>/media/routerd-usb</code>.
+- <code>authorized_keys</code> not found at the expected path — <code>live-ssh.sh</code> logs the
+  expected location.</p>
+<p><strong>Verify sshd is running:</strong></p>
+<pre><code class="language-sh">pgrep -x sshd
+ss -tlnp | grep :22
+</code></pre>
+<p><strong>Re-run the SSH setup without rebooting:</strong></p>
+<pre><code class="language-sh">/usr/share/routerd/live-ssh.sh
+</code></pre>
+<h2 id="see-also">See also</h2>
+<ul>
+<li><a href="usb-persistence.html">USB persistence</a> — config disk layout and device
+  discovery</li>
+</ul></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#prerequisites">Prerequisites</a></li>
+<li><a href="#enabling-ssh">Enabling SSH</a><ul>
+<li><a href="#step-1-place-your-public-key-on-the-config-disk">Step 1 — place your public key on the config disk</a></li>
+<li><a href="#step-2-boot-with-routerdssh1">Step 2 — boot with routerd.ssh=1</a></li>
+</ul>
+</li>
+<li><a href="#what-happens-at-boot">What happens at boot</a></li>
+<li><a href="#security-model">Security model</a></li>
+<li><a href="#troubleshooting">Troubleshooting</a></li>
+<li><a href="#see-also">See also</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/operations/live-iso-ssh.md">GitHub</a></div></footer></body></html>

@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VS Code YAML schema · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/how-to/vscode-yaml-schema.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/how-to/vscode-yaml-schema.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/how-to/vscode-yaml-schema.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/how-to/vscode-yaml-schema.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/vscode-yaml-schema.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="vs-code-yaml-schema">VS Code YAML schema</h1>
+<p>routerd publishes its generated config schema at:</p>
+<pre><code class="language-text">https://routerd.net/schemas/routerd-config-v1alpha1.schema.json
+</code></pre>
+<h2 id="per-file-modeline">Per-file modeline</h2>
+<p>Put this comment at the top of any routerd config file:</p>
+<pre><code class="language-yaml"># yaml-language-server: $schema=https://routerd.net/schemas/routerd-config-v1alpha1.schema.json
+apiVersion: routerd.net/v1alpha1
+kind: Router
+</code></pre>
+<p>VS Code with the YAML extension reads the modeline and enables completion, hover text, enum validation, and type diagnostics for that file.</p>
+<h2 id="workspace-mapping">Workspace mapping</h2>
+<p>This repository includes <code>.vscode/settings.json</code> with a <code>yaml.schemas</code> mapping for router config files:</p>
+<ul>
+<li><code>examples/*.yaml</code></li>
+<li><code>examples/cloudedge-mobility-demo/*.yaml</code></li>
+<li><code>examples/event-federation/*.yaml</code></li>
+<li><code>routerd/**/*.yaml</code></li>
+<li><code>*.routerd.yaml</code></li>
+<li><code>**/routerd.yaml</code></li>
+<li><code>**/router.yaml</code></li>
+</ul>
+<p>For another workspace, copy the same mapping into that workspace settings file:</p>
+<pre><code class="language-json">{
+  &quot;yaml.schemas&quot;: {
+    &quot;https://routerd.net/schemas/routerd-config-v1alpha1.schema.json&quot;: [
+      &quot;examples/*.yaml&quot;,
+      &quot;examples/cloudedge-mobility-demo/*.yaml&quot;,
+      &quot;examples/event-federation/*.yaml&quot;,
+      &quot;routerd/**/*.yaml&quot;,
+      &quot;*.routerd.yaml&quot;,
+      &quot;**/routerd.yaml&quot;,
+      &quot;**/router.yaml&quot;
+    ]
+  }
+}
+</code></pre>
+<p>Use the modeline for arbitrary YAML filenames that do not match those patterns.</p>
+<h2 id="checks">Checks</h2>
+<p>The schema is generated from the Go API types. CI checks that the repository schema and the published website copy stay in sync, so editor feedback tracks the same contract used by <code>routerctl validate</code>.</p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#per-file-modeline">Per-file modeline</a></li>
+<li><a href="#workspace-mapping">Workspace mapping</a></li>
+<li><a href="#checks">Checks</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/how-to/vscode-yaml-schema.md">GitHub</a></div></footer></body></html>

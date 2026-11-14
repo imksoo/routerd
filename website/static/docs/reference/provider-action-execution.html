@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Provider Action Execution (experimental) · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/reference/provider-action-execution.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/reference/provider-action-execution.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/reference/provider-action-execution.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/provider-action-execution.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/provider-action-execution.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="provider-action-execution-experimental">Provider Action Execution (experimental)</h1>
+<blockquote>
+<p><strong>Experimental.</strong> This feature is gated, default-off, and under active
+development. See ADR 0007 for the
+design and safety rationale.</p>
+</blockquote>
+<p>routerd can drive an approved cloud provider mutation (for example, attaching a
+secondary IP for <a href="selective-address-mobility.html">Selective Address Mobility</a>)
+through an <strong>executor plugin</strong> — without ever holding cloud credentials.</p>
+<h2 id="credential-model">Credential model</h2>
+<ul>
+<li><strong>The executor plugin holds the credentials, not routerd.</strong> An executor
+  (capability <code>execute.providerAction</code>) runs in its own process and
+  authenticates with cloud-native identity (AWS instance profile, Azure managed
+  identity, OCI instance principal) or its own environment.</li>
+<li><strong>routerd core never holds, reads, or passes provider credentials.</strong> routerd
+  hands the executor only the approved action plan (no secrets) plus the
+  allowlisted, redacted plugin context.</li>
+<li>The <code>action_executions</code> journal records the plan and its outcome only — never
+  any secret.</li>
+</ul>
+<h2 id="provideractionpolicy"><code>ProviderActionPolicy</code></h2>
+<p><code>apiVersion: hybrid.routerd.net/v1alpha1</code>, <code>kind: ProviderActionPolicy</code>. The zero
+value is the safe locked-down state: execution disabled, dry-run only, approval
+required, nothing allowlisted.</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Default</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>enabled</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Execution is disabled unless <code>true</code>.</td>
+</tr>
+<tr>
+<td><code>dryRunOnly</code></td>
+<td>bool (pointer)</td>
+<td><code>true</code> when omitted</td>
+<td>Only dry-run permitted; live mutation rejected.</td>
+</tr>
+<tr>
+<td><code>requireApproval</code></td>
+<td>bool (pointer)</td>
+<td><code>true</code> when omitted</td>
+<td>Operator approval required before execution.</td>
+</tr>
+<tr>
+<td><code>allowedProviders</code></td>
+<td>list</td>
+<td>empty = none</td>
+<td>Providers permitted: <code>aws</code>, <code>azure</code>, <code>oci</code>, <code>gcp</code>.</td>
+</tr>
+<tr>
+<td><code>allowedProviderRefs</code></td>
+<td>list</td>
+<td>empty = no restriction</td>
+<td>Restrict to named <code>CloudProviderProfile</code> refs.</td>
+</tr>
+<tr>
+<td><code>allowedActions</code></td>
+<td>list</td>
+<td>empty = none</td>
+<td>Canonical verbs: <code>assign-secondary-ip</code>, <code>unassign-secondary-ip</code>, <code>assign-route-table-route</code>, <code>unassign-route-table-route</code>, <code>ensure-forwarding-enabled</code>, <code>ensure-forwarding-disabled</code>.</td>
+</tr>
+<tr>
+<td><code>allowedCIDRs</code></td>
+<td>list</td>
+<td>empty = no restriction</td>
+<td>Action target address must fall within one CIDR.</td>
+</tr>
+<tr>
+<td><code>maxActionsPerRun</code></td>
+<td>int</td>
+<td><code>0</code> = no actions</td>
+<td>Cap on actions per run; set a positive bound to permit any.</td>
+</tr>
+<tr>
+<td><code>allowUndo</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Permit best-effort rollback.</td>
+</tr>
+<tr>
+<td><code>executionWindow</code></td>
+<td>string</td>
+<td>empty = no window</td>
+<td>Optional time window; validated leniently.</td>
+</tr>
+</tbody>
+</table>
+<p>Example (still locked down except for a single allowlisted action):</p>
+<pre><code class="language-yaml">apiVersion: hybrid.routerd.net/v1alpha1
+kind: ProviderActionPolicy
+metadata:
+  name: sam-execution
+spec:
+  enabled: true
+  dryRunOnly: false
+  requireApproval: true
+  allowedProviders: [aws]
+  allowedActions: [assign-secondary-ip, unassign-secondary-ip]
+  allowedCIDRs: [10.88.60.0/24]
+  maxActionsPerRun: 4
+  allowUndo: true
+</code></pre>
+<h2 id="action-lifecycle">Action lifecycle</h2>
+<p>An action plan proposed by a planner plugin is imported into the journal and
+moves through these states:</p>
+<pre><code class="language-text">pending  -&gt;  approved  -&gt;  succeeded
+                       -&gt;  failed
+                       -&gt;  skipped
+                            (succeeded) -&gt; rolledBack
+</code></pre>
+<ul>
+<li><strong>pending</strong> — imported from an <code>actionPlan</code>, keyed by <code>idempotencyKey</code>,
+  awaiting approval.</li>
+<li><strong>approved</strong> — approved by an operator, or auto-approved by policy
+  (<code>requireApproval: false</code> with <code>enabled</code> and not <code>dryRunOnly</code>).</li>
+<li><strong>succeeded / failed / skipped</strong> — the executor's reported outcome. <code>skipped</code>
+  covers a duplicate <code>idempotencyKey</code> that already succeeded, or a
+  policy-declined action.</li>
+<li><strong>rolledBack</strong> — a best-effort undo was applied to a previously succeeded
+  action (only when <code>allowUndo</code> is true).</li>
+</ul>
+<p>Import is idempotent: re-importing the same <code>idempotencyKey</code> never creates a
+second row, so an action that already succeeded is never executed twice.</p>
+<h2 id="routerctl-action-commands"><code>routerctl action</code> commands</h2>
+<p>The current operator surface is intentionally journal-oriented: import or
+approve actions first, then execute only the approved entries that pass policy.</p>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>routerctl action list</code></td>
+<td>List journal entries (filter by status/provider).</td>
+</tr>
+<tr>
+<td><code>routerctl action show ID</code></td>
+<td>Show one journal entry.</td>
+</tr>
+<tr>
+<td><code>routerctl action approve ID</code></td>
+<td>Operator approval: <code>pending</code> to <code>approved</code>.</td>
+</tr>
+<tr>
+<td><code>routerctl action execute --dry-run</code></td>
+<td>Validate and preview; no mutation.</td>
+</tr>
+<tr>
+<td><code>routerctl action execute --approved</code></td>
+<td>Execute approved actions permitted by policy.</td>
+</tr>
+<tr>
+<td><code>routerctl action journal</code></td>
+<td>Print the execution journal / audit trail.</td>
+</tr>
+<tr>
+<td><code>routerctl action rollback ID --dry-run</code></td>
+<td>Preview a best-effort undo (no mutation).</td>
+</tr>
+</tbody>
+</table>
+<h2 id="dry-run-versus-execute">Dry-run versus execute</h2>
+<ul>
+<li><strong>Dry-run</strong> is the default and the only path permitted while <code>dryRunOnly</code> is
+  true (or <code>enabled</code> is false). It validates the plan, checks the policy, and
+  previews the effect, but makes <strong>no</strong> provider mutation.</li>
+<li><strong>Execute</strong> performs the real mutation through the executor, and only when all
+  hard safety stops are satisfied: <code>enabled</code>, not <code>dryRunOnly</code>, approved (or
+  policy auto-approve), allowlist match, and within <code>maxActionsPerRun</code>.</li>
+</ul>
+<p>See ADR 0007 for the full list of
+hard safety stops.</p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#credential-model">Credential model</a></li>
+<li><a href="#provideractionpolicy">ProviderActionPolicy</a></li>
+<li><a href="#action-lifecycle">Action lifecycle</a></li>
+<li><a href="#routerctl-action-commands">routerctl action commands</a></li>
+<li><a href="#dry-run-versus-execute">Dry-run versus execute</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/reference/provider-action-execution.md">GitHub</a></div></footer></body></html>

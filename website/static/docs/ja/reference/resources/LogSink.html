@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LogSink · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/reference/resources/LogSink.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/reference/resources/LogSink.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/LogSink.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/reference/resources/LogSink.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/LogSink.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="logsink">LogSink</h1>
+<p><a href="../resources.html#logsink">リソース別の設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: system.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>typeで選ぶ運用イベントログの出力先です。ObservabilityPipeline内のログ出力先とは別の設定です。</p>
+<h2 id="指定条件と参照関係">指定条件と参照関係</h2>
+<ul>
+<li>typeで実装を1つ選び、その種類のオブジェクトだけを使います。他の種類のオブジェクトは排他エラーにはせず、統合もしません。otlpは検証上telemetryRefとendpointのどちらか1つだけが必須ですが、現行OTLPSink.Emitはイベントを送信しません。</li>
+<li>journaldの実装はGoのlog.Printfへ出力します。journaldへの到達はプロセスのログ出力先とサービス管理側に依存し、journald APIへ直接送信する実装ではありません。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
+<pre><code class="language-yaml">- apiVersion: system.routerd.net/v1alpha1
+  kind: LogSink
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    enabled: true # 任意; boolean
+    file: # 任意; object
+      name: &quot;&lt;string&gt;&quot; # 任意; string
+    journald: # 任意; object
+      identifier: &quot;&lt;string&gt;&quot; # 任意; string
+    minLevel: &quot;debug&quot; # 任意; string; enum=[&quot;debug&quot;, &quot;info&quot;, &quot;warning&quot;, &quot;error&quot;]
+    otlp: # 任意; object
+      endpoint: &quot;&lt;string&gt;&quot; # 任意; string
+      telemetryRef: &quot;&lt;string&gt;&quot; # 任意; string
+    syslog: # 任意; object
+      address: &quot;&lt;string&gt;&quot; # 任意; string
+      facility: &quot;kern&quot; # 任意; string; enum=[&quot;kern&quot;, &quot;user&quot;, &quot;mail&quot;, &quot;daemon&quot;, &quot;auth&quot;, &quot;syslog&quot;, &quot;lpr&quot;, &quot;news&quot;, &quot;uucp&quot;, &quot;cron&quot;, &quot;authpriv&quot;, &quot;ftp&quot;, &quot;local0&quot;, &quot;local1&quot;, &quot;local2&quot;, &quot;local3&quot;, &quot;local4&quot;, &quot;local5&quot;, &quot;local6&quot;, &quot;local7&quot;]
+      network: &quot;&quot; # 任意; string; enum=[&quot;&quot;, &quot;unix&quot;, &quot;unixgram&quot;, &quot;tcp&quot;, &quot;udp&quot;]
+      tag: &quot;&lt;string&gt;&quot; # 任意; string
+    type: &quot;syslog&quot; # 必須; string; enum=[&quot;syslog&quot;, &quot;otlp&quot;, &quot;webhook&quot;, &quot;file&quot;, &quot;journald&quot;]
+    webhook: # 任意; object
+      headers: # 任意; object
+        &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # 任意; string
+      timeout: &quot;&lt;string&gt;&quot; # 任意; string
+      url: &quot;&lt;string&gt;&quot; # 任意; string
+</code></pre>
+<h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>項目の意味と既定値</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.type</code></td>
+<td>出力先の区分。syslog、otlp、webhook、file、journaldの指定が必須で既定値はありません。</td>
+</tr>
+<tr>
+<td><code>spec.enabled</code></td>
+<td>ログ出力先として選択するかの指定。省略時true。falseならLogRetentionから参照していても選びません。</td>
+</tr>
+<tr>
+<td><code>spec.minLevel</code></td>
+<td>最低重要度。省略時info。debug、info、warning、errorを指定し、下位の重要度のイベントを除外します。</td>
+</tr>
+<tr>
+<td><code>spec.syslog</code></td>
+<td>type=syslogで使う設定。省略時はローカルsyslog、facility=local6、tag=routerdです。</td>
+</tr>
+<tr>
+<td><code>spec.syslog.network</code></td>
+<td>転送方式。unix、unixgram、tcp、udpを指定します。省略時はGoのsyslog実装がローカルソケットを探索します。</td>
+</tr>
+<tr>
+<td><code>spec.syslog.address</code></td>
+<td>ソケットパスまたはhost:port。省略時は空です。転送方式を明示した場合は対応する宛先も指定します。この組合せは設定検証では必須化されず、接続エラーは実際の出力時に生じます。</td>
+</tr>
+<tr>
+<td><code>spec.syslog.facility</code></td>
+<td>syslogのfacility。省略時local6。受理する値はYAML内の列挙を参照してください。</td>
+</tr>
+<tr>
+<td><code>spec.syslog.tag</code></td>
+<td>syslogのタグ。省略時routerd。リソース参照ではありません。</td>
+</tr>
+<tr>
+<td><code>spec.otlp</code></td>
+<td>OTLPの宣言。type=otlpではtelemetryRefとendpointのどちらか1つが必須です。この出力先の実送信処理は実装されていません。</td>
+</tr>
+<tr>
+<td><code>spec.otlp.telemetryRef</code></td>
+<td>Telemetry/名前またはTelemetryの名前だけを指定します。endpointと排他で省略時は空です。他のtypeを選んでいても、Router全体の検証で参照先の存在を確認します。現行OTLPSinkはこの参照を送信に使いません。</td>
+</tr>
+<tr>
+<td><code>spec.otlp.endpoint</code></td>
+<td>意図する送信先URI。telemetryRefと排他で既定値はありません。URI構文は検証しますが、このLogSinkではexporterを生成しません。</td>
+</tr>
+<tr>
+<td><code>spec.webhook</code></td>
+<td>type=webhookで使う、JSONをHTTP POSTする送信先の設定です。</td>
+</tr>
+<tr>
+<td><code>spec.webhook.url</code></td>
+<td>type=webhookでは必須で既定値はありません。HTTP(S)の絶対URLを指定してください。検証はURI構文までです。送信成功と扱うのはHTTP 2xxだけです。</td>
+</tr>
+<tr>
+<td><code>spec.webhook.headers</code></td>
+<td>追加の要求ヘッダー。省略時は空です。既定のContent-Type: application/jsonを含め、同名ヘッダーを上書きします。</td>
+</tr>
+<tr>
+<td><code>spec.webhook.timeout</code></td>
+<td>HTTP要求の制限時間。省略時5sでGo duration形式です。検証は0や負値も受理し、HTTP clientでは0以下が時間制限なしになります。</td>
+</tr>
+<tr>
+<td><code>spec.file</code></td>
+<td>type=fileの保存先設定。JSON Lines形式で追記します。</td>
+</tr>
+<tr>
+<td><code>spec.file.name</code></td>
+<td>論理ファイル名。省略時routerd-eventsで、保存先は/var/lib/routerd/logs/<name>.jsonlです。パス区切り、NUL、改行は使えません。任意のファイルパスを指定する項目ではありません。</td>
+</tr>
+<tr>
+<td><code>spec.journald</code></td>
+<td>type=journaldの設定。プロセスのloggerを通して出力します。</td>
+</tr>
+<tr>
+<td><code>spec.journald.identifier</code></td>
+<td>プロセスのログメッセージに付ける接頭辞。省略時routerd。journaldのSYSLOG_IDENTIFIERを直接設定する実装ではありません。</td>
+</tr>
+</tbody>
+</table>
+<p>実装: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go">pkg/config/diagnostics.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/eventlog/eventlog.go">pkg/eventlog/eventlog.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a></p>
+<h2 id="状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</h2>
+<p>通常の状態値参照の検証で、このKindについて許可するフィールド名です。許可一覧にあるだけでは値の生成・取得を保証しないため、実際の状態を確認してください。YAMLのspecに設定する項目ではなく出力です。</p>
+<p><code>phase</code>, <code>type</code></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
+<li><a href="#状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/reference/resources/LogSink.md">GitHub</a></div></footer></body></html>

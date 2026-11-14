@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CloudEdge SAM トランスポートレイヤリング · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/how-to/cloudedge-sam-transport-layering.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/how-to/cloudedge-sam-transport-layering.html" lang="en" hreflang="en">English</a><a href="/docs/ja/how-to/cloudedge-sam-transport-layering.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/how-to/cloudedge-sam-transport-layering.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/cloudedge-sam-transport-layering.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="cloudedge-sam-トランスポートレイヤリング">CloudEdge SAM トランスポートレイヤリング</h1>
+<p>CloudEdge SAM では、アドレスモビリティのルートを WireGuard の <code>AllowedIPs</code> に入れません。</p>
+<p>WireGuard は <code>AllowedIPs</code> を cryptokey routing の状態として扱います。送信パケットは内側の宛先アドレスからピアを選び、受信パケットは復号後の内側ソースアドレスがそのピアに許可されている場合のみ受け入れます。これは WireGuard としては正しい動作ですが、BGP やルートリフレクター、ECMP によって <code>/32</code> がピア間を移動する SAM モビリティとは相容れません。</p>
+<h2 id="推奨レイヤー構成">推奨レイヤー構成</h2>
+<p>信頼済みのオンプレミスやホームアンダーレイでは、IPIP または GRE を直接使えます。</p>
+<pre><code class="language-text">physical underlay
+  IPIP or GRE tunnel
+    SAM overlay packets
+</code></pre>
+<p>暗号化が必要な場合は、WireGuard をエンドポイント専用レイヤーとして配置し、その上に IPIP または GRE を載せます。</p>
+<pre><code class="language-text">physical underlay
+  WireGuard endpoint transport
+    IPIP or GRE tunnel
+      SAM overlay packets
+</code></pre>
+<p>この構成では、WireGuard ピアの <code>AllowedIPs</code> には <code>10.252.0.2/32</code> のようなルーター間エンドポイントプレフィックスだけを入れます。<code>192.168.123.10/32</code> のような SAM プレフィックスは BGP、カーネル FIB、SAM リソースが扱います。</p>
+<h2 id="プロトコル選択">プロトコル選択</h2>
+<p>SAM が IPv4 モビリティプレフィックスを運ぶ場合は、まず IPIP を使ってください。現在の <code>SAMTransportProfile</code> の例では IPIP がデフォルトの配送面です。トンネルオーバーヘッドが最小で、WireGuard の cryptokey routing と SAM のルートモビリティの分離を維持できるためです。暗号化が必要な場合は、<code>AllowedIPs</code> にトランスポートエンドポイントアドレスのみを含む WireGuard インターフェースの上で IPIP を動かしてください。</p>
+<p>GRE は、IPv4 以外のプロトコル識別、GRE キー、またはより強力な FreeBSD 相互運用性が必要な場合に使います。</p>
+<p>VXLAN、Geneve、GRETAP は、L2 セマンティクスが明示的に必要でない限り避けてください。SAM は選択的な L3 アドレスモビリティなので、L2 オーバーレイヘッダーは通常不要です。</p>
+<p>FOU と GUE は物理アンダーレイで UDP カプセル化が有用な場合に役立ちますが、WireGuard の内側で使うと、物理ネットワークが見るのは WireGuard の UDP だけなので、物理アンダーレイの負荷分散を改善せずにオーバーヘッドだけが増えます。</p>
+<h2 id="設定のエルゴノミクス">設定のエルゴノミクス</h2>
+<p>低レベルリソースは DHCP/IPAM セーフなエンドポイントに対応できなければなりません。<code>TunnelInterface</code> は <code>local</code> や <code>remote</code> をリソースの status から導出でき、運用者が DHCP 管理のアドレスを静的設定に重複して書く必要がないようにすべきです。アンダーレイアドレスが routerd の外で管理されている場合（ライブイメージの DHCP クライアントなど）は、採用済みインターフェースの status を使います。</p>
+<pre><code class="language-yaml">apiVersion: hybrid.routerd.net/v1alpha1
+kind: TunnelInterface
+metadata:
+  name: tun-k8s-rt02
+spec:
+  mode: ipip
+  localFrom:
+    resource: Interface/mgmt
+    field: primaryIPv4
+  remote: 192.168.1.53
+  trustedUnderlay: true
+</code></pre>
+<p><code>primaryIPv4</code> にはプレフィックス長が含まれる場合があります（例: <code>192.168.1.32/24</code>）。トンネルコントローラーは <code>ip tunnel</code> が要求するアドレス形式に解決します。<code>Interface/...</code> の status ソースを使う場合、リンクコントローラーがインターフェースの status を同じ状態データベースに公開する必要があります。通常の <code>routerd serve</code> はこのコントローラーを実行しますが、トンネルの単体テストでは <code>link</code> と <code>tunnel</code> の両方を含めてください。</p>
+<h2 id="samtransportprofile">SAMTransportProfile</h2>
+<p>一般的な SAM トポロジでは <code>SAMTransportProfile</code> を使って、以下の不変条件を維持しながら低レベルの <code>TunnelInterface</code>、エンドポイント <code>/32</code> ルート、<code>BGPPeer</code> リソースを生成できます。</p>
+<ul>
+<li>WireGuard の <code>AllowedIPs</code> にはトランスポートエンドポイントプレフィックスのみを含む。</li>
+<li>SAM モビリティの <code>/32</code> は WireGuard ピアに注入しない。</li>
+<li>IPIP/GRE エンドポイントアドレスは DHCP/IPAM 由来の status フィールドから取得可能。</li>
+<li>MTU と MSS の挙動はトランスポートモードごとに明示的。</li>
+</ul>
+<p><code>spec.selfNodeRef</code> はすべてのルーターに必須です。決定論的な <code>/31</code> 内部アドレス導出に使う安定した識別子であり、routerd はホスト名や BGP ルーター ID からの推定は行いません。</p>
+<ul>
+<li><code>addressingMode: edge-index</code>（デフォルト）は、<code>spec.peersFrom</code> が参照する共有 <code>SAMNodeSet</code> を使います。routerd はその node set をソートし、順序なしノードペアにランクを付け、<code>innerPrefix</code> からランク順に <code>/31</code> を割り当てます。</li>
+<li><code>addressingMode: pair-stable</code> は各ノードペアの安定ハッシュから <code>/31</code> スロットを導出します。共有 node set を変えずに、adjacency selector で実際のピア（例: RR ノード）だけを選べます。</li>
+</ul>
+<p>本番ファブリックでは、衝突確率を考慮して <code>innerPrefix</code> のサイズを決めてください。<code>/24</code> は <code>/31</code> スロットが 128 個しかなく、ハッシュ + mod 方式では中程度のエッジ数で衝突する可能性があります。可能であれば <code>/20</code> 以上を使ってください。</p>
+<p><code>SAMNodeSet</code> は共有されるモビリティ配置とトランスポートトポロジを表します。<code>MobilityPool.spec.members</code> はローカルの所有権/捕捉 overlay だけを持ち、SAM トランスポートの BGP ピアトポロジではありません。</p>
+<pre><code class="language-yaml">apiVersion: mobility.routerd.net/v1alpha1
+kind: SAMNodeSet
+metadata:
+  name: lab-nodes
+spec:
+  nodes:
+    - nodeRef: pve-rt
+      site: pve
+      role: onprem
+      routeReflector: true
+      samEndpoint: 10.99.0.1
+    - nodeRef: k8s-rt
+      site: k8s
+      role: cloud
+      samEndpoint: 10.99.0.2
+---
+apiVersion: mobility.routerd.net/v1alpha1
+kind: SAMTransportProfile
+metadata:
+  name: lab-sam-transport
+spec:
+  selfNodeRef: pve-rt
+  mode: ipip
+  innerPrefix: 10.255.1.0/24
+  addressingMode: pair-stable
+  underlayInterface: wg-hybrid
+  localEndpointFrom:
+    resource: Interface/wg-hybrid
+    field: primaryIPv4
+  bgp:
+    routerRef: BGPRouter/mobility
+    peerASN: 64512
+    timersPreset: fast
+    # ルートリフレクターのコアルーターでのみ設定してください。
+    routeReflectorClient: true
+    routeReflectorClusterID: 192.168.1.38
+    # local MobilityPool を持たない transit RR は、mobility /32 の境界を
+    # ここで明示します。汎用 BGPRouter import policy は transit authority ではありません。
+    importPolicy:
+      allowedPrefixes: [192.168.123.0/24]
+      allowedPrefixLengthMin: 32
+      allowedPrefixLengthMax: 32
+  peersFrom:
+    - resource: SAMNodeSet/lab-nodes
+      nodeRefs: [k8s-rt]
+</code></pre>
+<p><code>SAMTransportProfile</code> に直接 peer または topology のリストはありません。共有の identity と endpoint はすべて <code>SAMNodeSet</code> に置き、<code>nodeRefs</code> では transport peer にする非 self node だけを選択します。<code>nodeRefs</code> を省略すると、<code>samEndpoint</code> を持つすべての非 self node を選びます。</p>
+<p><code>MobilityPool</code> planning を実行しない static RR にも、leaf 所有 route 用の狭い FIB authority が必要です。生成済み RR-client <code>BGPPeer</code> は、この profile の明示的な <code>/32</code> import policy と peer identity から authority を導出し、global BGP policy へは fallback しません。この明示 policy がない RR role は validation で拒否されます。この役割のために no-capture placeholder pool を作らないでください。RR と leaf profile は 1 つの完全な共有 <code>SAMNodeSet</code> を使い、<code>nodeRefs</code> で hub-spoke adjacency を選ぶか、<code>pair-stable</code> を使って derived <code>/31</code> peer address を cutover 前に確認してください。</p>
+<h2 id="クリーンアップ">クリーンアップ</h2>
+<p>プロファイルは self node ごとに <code>DynamicConfigPart</code> を 1 つ書きます。ピアの削除はその part を新しい生成リソースセットに置き換えます。プロファイルを削除すると空のアクティブ part になり、生成されたトンネル、BGP ピア、エンドポイントルートが実効設定から消えます。</p>
+<p>クリーンアップは通常のライフサイクル GC パスが担当します。desired set は動的 SAM 生成後の実効ビューなので、プロファイルが存在する限り生成されたトランスポートリソースは保持され、プロファイルの出力から消えた後にのみ GC 対象になります。生成された <code>TunnelInterface</code>、<code>BGPPeer</code>、<code>IPv4Route</code> リソースは独自の owner/status レコードを保持し、汎用 GC プランナーとリソース固有の teardown 契約を通じて解体されます。</p>
+<h2 id="関連-issue">関連 Issue</h2>
+<ul>
+<li>
+<h1 id="194-sam-モビリティプレフィックスを-wireguard-allowedips-から切り離す">194: SAM モビリティプレフィックスを WireGuard <code>AllowedIPs</code> から切り離す。</h1>
+</li>
+<li>
+<h1 id="196-tunnelinterface-エンドポイントをリソースの-status-から取得可能にする">196: <code>TunnelInterface</code> エンドポイントをリソースの status から取得可能にする。</h1>
+</li>
+<li>
+<h1 id="197-コンパクトな-sam-アンダーレイトランスポートプロファイルを追加する">197: コンパクトな SAM アンダーレイトランスポートプロファイルを追加する。</h1>
+</li>
+</ul>
+<h2 id="参考資料">参考資料</h2>
+<ul>
+<li>WireGuard の概念と cryptokey routing: https://www.wireguard.com/</li>
+<li>Linux トンネルリンクタイプ: https://man7.org/linux/man-pages/man8/ip-link.8.html</li>
+<li>FreeBSD GRE: https://man.freebsd.org/gre/4</li>
+</ul></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#推奨レイヤー構成">推奨レイヤー構成</a></li>
+<li><a href="#プロトコル選択">プロトコル選択</a></li>
+<li><a href="#設定のエルゴノミクス">設定のエルゴノミクス</a></li>
+<li><a href="#samtransportprofile">SAMTransportProfile</a></li>
+<li><a href="#クリーンアップ">クリーンアップ</a></li>
+<li><a href="#関連-issue">関連 Issue</a></li>
+<li><a href="#参考資料">参考資料</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/how-to/cloudedge-sam-transport-layering.md">GitHub</a></div></footer></body></html>

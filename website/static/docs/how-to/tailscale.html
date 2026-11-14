@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tailscale exit node and subnet router · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/how-to/tailscale.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/how-to/tailscale.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/how-to/tailscale.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/how-to/tailscale.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/tailscale.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="tailscale-exit-node-and-subnet-router">Tailscale exit node and subnet router</h1>
+<h2 id="scenario">Scenario</h2>
+<p>Use <code>TailscaleNode</code> when a routerd host should join a tailnet and advertise:</p>
+<ul>
+<li>an exit node (<code>0.0.0.0/0</code> and <code>::/0</code>)</li>
+<li>one or more routed subnets</li>
+<li>both at the same time</li>
+</ul>
+<p>routerd does not replace <code>tailscaled</code>. It generates and manages a systemd unit
+that runs <code>tailscale up</code> with the declared node options. This keeps the
+Tailscale account, control plane, and route approval workflow in Tailscale,
+while routerd owns the host-local intent.</p>
+<h2 id="install-tailscale">Install tailscale</h2>
+<p>Declare the OS package so the dependency is visible in the router config.</p>
+<pre><code class="language-yaml">apiVersion: system.routerd.net/v1alpha1
+kind: Package
+metadata:
+  name: router-service-dependencies
+spec:
+  packages:
+    - os: ubuntu
+      manager: apt
+      names:
+        - tailscale
+        - tailscale-archive-keyring
+    - os: nixos
+      manager: nix
+      names:
+        - tailscale
+    - os: freebsd
+      manager: pkg
+      names:
+        - tailscale
+      optional: true
+</code></pre>
+<p>On Ubuntu, the Tailscale apt repository must already be available before
+<code>Package</code> can install <code>tailscale</code>. Use your normal bootstrap method for that
+repository.</p>
+<h2 id="authenticate-without-committing-secrets">Authenticate without committing secrets</h2>
+<p>For production configs, prefer <code>authKeyEnv</code> plus <code>authKeyFile</code>.</p>
+<pre><code class="language-yaml">apiVersion: net.routerd.net/v1alpha1
+kind: TailscaleNode
+metadata:
+  name: edge
+spec:
+  hostname: edge
+  advertiseExitNode: true
+  advertiseRoutes:
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+  acceptDNS: false
+  acceptRoutes: false
+  authKeyEnv: TS_AUTHKEY
+  authKeyFile: /usr/local/etc/routerd/secrets/tailscale.env
+</code></pre>
+<p>The environment file is outside the routerd YAML:</p>
+<pre><code class="language-sh">sudo install -d -m 0700 /usr/local/etc/routerd/secrets
+sudo sh -c 'printf &quot;%s\n&quot; &quot;TS_AUTHKEY=REDACTED&quot; &gt; /usr/local/etc/routerd/secrets/tailscale.env'
+sudo chmod 0600 /usr/local/etc/routerd/secrets/tailscale.env
+</code></pre>
+<p>If the node is already logged in, omit <code>authKey</code>, <code>authKeyEnv</code>, and
+<code>authKeyFile</code>. routerd will reapply the advertised node options without
+embedding a secret in the service unit.</p>
+<p>Tailscale listens on UDP/41641 by default. routerd reserves that port when a
+<code>TailscaleNode</code> is present and validation rejects any <code>WireGuardInterface</code> that
+tries to reuse it.</p>
+<h2 id="advertise-private-subnets">Advertise private subnets</h2>
+<p>Advertising all RFC 1918 private address space is useful when the router should
+be the tailnet path back into home or site networks:</p>
+<pre><code class="language-yaml">apiVersion: net.routerd.net/v1alpha1
+kind: TailscaleNode
+metadata:
+  name: edge
+spec:
+  hostname: edge
+  advertiseExitNode: true
+  advertiseRoutes:
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+  acceptDNS: false
+  acceptRoutes: false
+</code></pre>
+<p>After applying this config, approve the advertised routes in the Tailscale
+admin console. Until approval, <code>tailscale debug prefs</code> shows the requested
+routes, but <code>tailscale status --self --json</code> may not include them in
+<code>Self.AllowedIPs</code>.</p>
+<h2 id="firewall-zone-placement">Firewall zone placement</h2>
+<p>Declare <code>tailscale0</code> as an <code>Interface</code> so it appears in status and in the Web
+Console.</p>
+<pre><code class="language-yaml">apiVersion: net.routerd.net/v1alpha1
+kind: Interface
+metadata:
+  name: tailscale
+spec:
+  ifname: tailscale0
+  mtu: 1280
+  managed: false
+</code></pre>
+<p><code>mtu: 1280</code> lets derived TCP MSS clamp rules account for the Tailscale source
+path without lowering unrelated LAN-to-WAN paths.</p>
+<p>For a home router, place <code>tailscale0</code> in the <code>trust</code> zone rather than the
+<code>mgmt</code> zone:</p>
+<pre><code class="language-yaml">apiVersion: firewall.routerd.net/v1alpha1
+kind: FirewallZone
+metadata:
+  name: lan
+spec:
+  role: trust
+  interfaces:
+    - Interface/lan
+    - Interface/tailscale
+
+---
+
+apiVersion: firewall.routerd.net/v1alpha1
+kind: FirewallZone
+metadata:
+  name: management
+spec:
+  role: mgmt
+  interfaces:
+    - Interface/mgmt
+</code></pre>
+<p>This allows tailnet clients to reach services on the router itself, such as the
+routerd Web Console, through the normal <code>trust -&gt; self</code> path. It does not grant
+the tailnet broad access to the management VLAN if the firewall policy still
+denies <code>trust -&gt; mgmt</code> forwarding.</p>
+<p>Use <code>mgmt</code> only when the tailnet should be treated as a full management
+network.</p>
+<h2 id="apply-and-verify">Apply and verify</h2>
+<p>Apply the config:</p>
+<pre><code class="language-sh">routerctl validate -f /usr/local/etc/routerd/router.yaml --replace
+systemctl restart routerd.service
+</code></pre>
+<p>Check the generated unit:</p>
+<pre><code class="language-sh">systemctl cat routerd-tailscale-edge.service
+</code></pre>
+<p>Check Tailscale state:</p>
+<pre><code class="language-sh">tailscale status --self --json | jq '.BackendState, .Self.AllowedIPs'
+tailscale debug prefs | jq '.AdvertiseRoutes'
+</code></pre>
+<p>Check routerd state:</p>
+<pre><code class="language-sh">routerctl get status -o json
+routerctl get TailscaleNode/edge -o yaml
+routerctl vpn tailscale peers
+</code></pre>
+<p><code>routerctl vpn tailscale peers -o json</code> reads <code>tailscale status --json</code> and formats
+the peer list through routerd's CLI. The Web Console also shows the current
+peer list on the <code>TailscaleNode</code> resource, including online state, relay, last
+seen time, and allowed routes.</p>
+<p>If the Web Console should be reachable over Tailscale, test it through the
+router's Tailscale address or through an approved routed address:</p>
+<pre><code class="language-sh">curl -f http://100.64.0.1:8080/
+</code></pre>
+<p>Replace the address with the actual Tailscale IP of the router.</p>
+<h2 id="notes">Notes</h2>
+<ul>
+<li><code>acceptDNS: false</code> keeps Tailscale from replacing the router's local DNS
+  resolver configuration. routerd's default model is "LAN DNS first":
+  <code>DNSResolver</code>, local zones, DHCP-derived records, and conditional forwarding
+  stay authoritative for LAN clients. Tailscale MagicDNS remains useful from
+  tailnet clients, but it should not take over the router's host resolver.</li>
+<li><code>acceptRoutes: false</code> keeps the router from importing other peers' advertised
+  routes. This is common for a router that advertises routes outward.</li>
+<li>routerd exports Tailscale peer gauges as <code>routerd.tailscale.peer.count</code> and
+  <code>routerd.tailscale.last_handshake.seconds</code>. Tailscale status exposes peer
+  <code>LastSeen</code>, so routerd uses that timestamp as the operational handshake-age
+  signal.</li>
+<li>Exit-node and subnet-route approval happens in Tailscale, not in routerd.</li>
+<li>Keep auth keys out of examples and Git history. Use <code>authKeyFile</code> for local
+  deployments.</li>
+</ul></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#scenario">Scenario</a></li>
+<li><a href="#install-tailscale">Install tailscale</a></li>
+<li><a href="#authenticate-without-committing-secrets">Authenticate without committing secrets</a></li>
+<li><a href="#advertise-private-subnets">Advertise private subnets</a></li>
+<li><a href="#firewall-zone-placement">Firewall zone placement</a></li>
+<li><a href="#apply-and-verify">Apply and verify</a></li>
+<li><a href="#notes">Notes</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/how-to/tailscale.md">GitHub</a></div></footer></body></html>

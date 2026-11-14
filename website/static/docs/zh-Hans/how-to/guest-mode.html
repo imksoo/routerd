@@ -1,0 +1,422 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>以 MAC 地址隔离访客设备 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/how-to/guest-mode.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/how-to/guest-mode.html" lang="en" hreflang="en">English</a><a href="/docs/ja/how-to/guest-mode.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/how-to/guest-mode.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/guest-mode.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="以-mac-地址隔离访客设备">以 MAC 地址隔离访客设备</h1>
+<p><code>ClientPolicy</code> 是 routerd 的访客模式。
+它依 MAC 地址对同一 LAN 上的设备进行分类，并在一般区域间防火墙矩阵之前，优先应用更严格的转发策略。</p>
+<p>即使尚未划分 VLAN，也能在受信任的设备与仅需使用互联网的设备之间，建立明确的界线。</p>
+<h2 id="使用场景">使用场景</h2>
+<p>常见用途如下：</p>
+<ul>
+<li>在家庭环境中，不希望来访者的智能手机、游戏机、家电或外带笔记本电脑能访问管理网络或家用服务器。</li>
+<li>在集合住宅或合租住宅中，默认将所有设备视为访客，只有明确指定的设备才视为受信任。</li>
+<li>隔离摄像头、HEMS、电视、音箱等 IoT 设备。允许其使用 DNS、DHCP、NTP 及互联网，但阻止横向通信。</li>
+<li>在小型办公室的访客网络中，共用物理 LAN，但封锁 RFC 1918 及 ULA 目的地的流量。</li>
+</ul>
+<p>完整示例请参阅 <a href="/examples/guest-mode.yaml">examples/guest-mode.yaml</a>。</p>
+<h2 id="运作原理">运作原理</h2>
+<p>在 Linux 上，routerd 将 <code>ClientPolicy</code> 生成至 nftables 的 <code>inet routerd_filter</code> 数据表。</p>
+<p>每条策略会生成以下规则：</p>
+<ul>
+<li>类似 <code>client_policy_guest_devices</code> 的 nftables <code>ether_addr</code> set。</li>
+<li><code>mode: include</code> 使用 <code>ether saddr @set</code> 匹配。</li>
+<li><code>mode: exclude</code> 使用 <code>ether saddr != @set</code> 匹配。</li>
+<li>允许访客设备访问路由器上特定服务的 self 向许可规则。</li>
+<li>封锁私有 IPv4 及 ULA IPv6 目的地的转发拒绝规则。</li>
+<li>优先于拒绝规则的可选许可规则。</li>
+</ul>
+<p>生成的规则会插入 <code>input</code> 链与 <code>forward</code> 链的较前位置。
+因此，即使在角色矩阵下本可被 <code>trust -&gt; self</code> 或 <code>trust -&gt; trust</code> 允许的通信，访客设备的流量也会更早被过滤。</p>
+<p><code>ClientPolicy</code> 并非 <code>FirewallZone</code> 的替代方案，一般模型照常使用：</p>
+<ul>
+<li><code>FirewallZone</code> 决定接口的一般角色。</li>
+<li><code>FirewallPolicy</code> 决定拒绝记录等通用行为。</li>
+<li><code>FirewallRule</code> 新增明确的例外。</li>
+<li><code>ClientPolicy</code> 在 LAN 内叠加以设备为单位的限制。</li>
+</ul>
+<p>MAC 匹配直接查看 Ethernet 源地址，因此不需要 DHCP 租约。
+不过，搭配 <code>DHCPv4Reservation</code> 使用，可让设备的 IPv4 地址、名称及 Web 管理界面中的显示更加稳定。</p>
+<h2 id="规格说明">规格说明</h2>
+<p><code>ClientPolicy</code> 属于 <code>firewall.routerd.net/v1alpha1</code>。</p>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: ClientPolicy
+  metadata:
+    name: guest-devices
+  spec:
+    mode: include
+    macs:
+      - &quot;18:ec:e7:33:12:6c&quot;
+    isolation:
+      lanInternet: allow
+      lanLAN: deny
+      lanMgmt: deny
+      mDNSBroadcast: deny
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>必填</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>mode</code></td>
+<td>是</td>
+<td><code>include</code> 或 <code>exclude</code>。</td>
+</tr>
+<tr>
+<td><code>interfaces</code></td>
+<td>否</td>
+<td>应用策略的 LAN 侧 <code>Interface</code> 参照。<code>Interface/lan</code> 与 <code>lan</code> 指向相同接口。省略时应用至所有属于 <code>trust</code> <code>FirewallZone</code> 的接口。</td>
+</tr>
+<tr>
+<td><code>macs</code></td>
+<td>否</td>
+<td>缩短格式的 MAC 列表。include 模式视为访客，exclude 模式视为受信任。</td>
+</tr>
+<tr>
+<td><code>isolation</code></td>
+<td>否</td>
+<td>表达访客的意图。可在 <code>lanInternet</code>、<code>lanLAN</code>、<code>lanMgmt</code>、<code>mDNSBroadcast</code> 指定 <code>allow</code> 或 <code>deny</code>。</td>
+</tr>
+<tr>
+<td><code>classification</code></td>
+<td>否</td>
+<td>结构化的客户端分类条目。</td>
+</tr>
+<tr>
+<td><code>classification[].mode</code></td>
+<td>是</td>
+<td><code>trusted</code>、<code>guest</code> 或 <code>isolated</code> 之一。</td>
+</tr>
+<tr>
+<td><code>classification[].match.macs</code></td>
+<td>否</td>
+<td>设备的 MAC 地址，routerd 在生成前会进行规范化。</td>
+</tr>
+<tr>
+<td><code>classification[].match.ouiPrefixes</code></td>
+<td>否</td>
+<td>厂商 OUI 前缀，例如 <code>18:ec:e7</code>。</td>
+</tr>
+<tr>
+<td><code>classification[].match.hostnamePatterns</code></td>
+<td>否</td>
+<td>针对观测到的 DHCP 主机名的 glob 模式。</td>
+</tr>
+<tr>
+<td><code>classification[].match.dhcpFingerprints</code></td>
+<td>否</td>
+<td>routerd 观测到的 DHCP 指纹标签。</td>
+</tr>
+<tr>
+<td><code>classification[].name</code></td>
+<td>否</td>
+<td>供人阅读的设备名称，目前为说明用途。</td>
+</tr>
+<tr>
+<td><code>classification[].ipv4Reservation</code></td>
+<td>否</td>
+<td><code>DHCPv4Reservation</code> 的名称，写 <code>aiseg2</code> 而非 <code>DHCPv4Reservation/aiseg2</code>。</td>
+</tr>
+<tr>
+<td><code>guestServices</code></td>
+<td>否</td>
+<td>允许访客设备访问的路由器服务。默认为 <code>dhcp</code>、<code>dns</code>、<code>ntp</code>。可指定 <code>dhcp</code>、<code>dns</code>、<code>ntp</code>、<code>mdns</code>、<code>ssdp</code>。</td>
+</tr>
+<tr>
+<td><code>guestEgressDeny</code></td>
+<td>否</td>
+<td>封锁访客设备转发目的地的 CIDR。省略时封锁 RFC 1918 与 ULA。</td>
+</tr>
+<tr>
+<td><code>guestEgressAllow</code></td>
+<td>否</td>
+<td>优先于拒绝规则的许可 CIDR。</td>
+</tr>
+</tbody>
+</table>
+<p>默认的 <code>guestEgressDeny</code> 如下：</p>
+<ul>
+<li><code>10.0.0.0/8</code></li>
+<li><code>172.16.0.0/12</code></li>
+<li><code>192.168.0.0/16</code></li>
+<li><code>fc00::/7</code></li>
+</ul>
+<p>指定 <code>isolation.mDNSBroadcast: deny</code> 时，也会拒绝访客发出的 mDNS、SSDP、NetBIOS 探索数据包的转发，防止访客设备通过多播或广播探索 LAN 内的其他设备。</p>
+<p>许可规则在拒绝规则之前生成，适合为打印机或 captive portal 辅助服务器等建立窄范围的例外。</p>
+<h2 id="示例-1最小-include-模式">示例 1：最小 include 模式</h2>
+<p>将单一 MAC 地址视为访客。</p>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: ClientPolicy
+  metadata:
+    name: guest-devices
+  spec:
+    mode: include
+    interfaces:
+      - Interface/lan
+    classification:
+      - mode: guest
+        match:
+          macs:
+            - &quot;18:ec:e7:33:12:6c&quot;
+        name: aiseg2
+</code></pre>
+<h2 id="示例-2多设备-include-模式">示例 2：多设备 include 模式</h2>
+<p>可将多台设备应用相同的访客规则。</p>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: ClientPolicy
+  metadata:
+    name: household-guests
+  spec:
+    mode: include
+    interfaces:
+      - Interface/lan
+    classification:
+      - mode: guest
+        match:
+          macs:
+            - &quot;18:ec:e7:33:12:6c&quot;
+        name: aiseg2
+        ipv4Reservation: aiseg2
+      - mode: guest
+        match:
+          macs:
+            - &quot;7c:2f:80:11:22:33&quot;
+        name: guest-phone
+      - mode: guest
+        match:
+          macs:
+            - &quot;90:09:d0:44:55:66&quot;
+        name: smart-tv
+</code></pre>
+<h2 id="示例-3byod-用的-exclude-模式">示例 3：BYOD 用的 exclude 模式</h2>
+<p>将目标接口上的所有设备默认视为访客，仅将列表中的 MAC 地址视为受信任。</p>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: ClientPolicy
+  metadata:
+    name: byod-default-guest
+  spec:
+    mode: exclude
+    interfaces:
+      - Interface/lan
+    classification:
+      - mode: trusted
+        match:
+          macs:
+            - &quot;bc:24:11:e0:8e:3a&quot;
+        name: admin-laptop
+      - mode: trusted
+        match:
+          macs:
+            - &quot;4e:20:15:aa:e0:67&quot;
+        name: owner-phone
+</code></pre>
+<h2 id="示例-4自定义拒绝与许可-cidr">示例 4：自定义拒绝与许可 CIDR</h2>
+<p>保留默认的私有目的地封锁，同时允许单台打印机。</p>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: ClientPolicy
+  metadata:
+    name: guest-with-printer
+  spec:
+    mode: include
+    interfaces:
+      - Interface/lan
+    guestEgressAllow:
+      - 172.18.20.10/32
+    guestEgressDeny:
+      - 10.0.0.0/8
+      - 172.16.0.0/12
+      - 192.168.0.0/16
+      - fc00::/7
+    classification:
+      - mode: guest
+        match:
+          macs:
+            - &quot;7c:2f:80:11:22:33&quot;
+        name: guest-phone
+</code></pre>
+<h2 id="示例-5本机探索服务">示例 5：本机探索服务</h2>
+<p>默认允许访客设备使用 DHCP、DNS、NTP。
+若路由器上有运行本机探索的 proxy 或中继，可明确新增 <code>mdns</code> 或 <code>ssdp</code>。</p>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: ClientPolicy
+  metadata:
+    name: media-guests
+  spec:
+    mode: include
+    interfaces:
+      - Interface/lan
+    guestServices:
+      - dhcp
+      - dns
+      - ntp
+      - mdns
+      - ssdp
+    classification:
+      - mode: guest
+        match:
+          macs:
+            - &quot;90:09:d0:44:55:66&quot;
+        name: smart-tv
+</code></pre>
+<p>启用探索服务前，请先了解所公开的信息范围。
+mDNS 与 SSDP 虽然便利，但可能泄露设备名称与服务信息。</p>
+<h2 id="示例-6iot-隔离与固定分配">示例 6：IoT 隔离与固定分配</h2>
+<p>固定分配可让排查问题更容易，也能让 Web 管理界面的设备列表及 DNS 记录更清晰。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DHCPv4Reservation
+  metadata:
+    name: thermostat
+  spec:
+    server: lan-v4
+    macAddress: &quot;02:11:22:33:44:55&quot;
+    hostname: thermostat
+    ipAddress: 172.18.0.151
+
+- apiVersion: firewall.routerd.net/v1alpha1
+  kind: ClientPolicy
+  metadata:
+    name: iot-isolation
+  spec:
+    mode: include
+    interfaces:
+      - Interface/lan
+    classification:
+      - mode: guest
+        match:
+          macs:
+            - &quot;02:11:22:33:44:55&quot;
+        name: thermostat
+        ipv4Reservation: thermostat
+</code></pre>
+<h2 id="与-dhcpv4reservation-的搭配">与 DHCPv4Reservation 的搭配</h2>
+<p><code>classification[].ipv4Reservation</code> 用于验证参照。
+routerd 会确认指定的 <code>DHCPv4Reservation</code> 存在。
+防火墙匹配使用 MAC 地址，而非租约的 IP 地址。</p>
+<p>此分离是刻意设计的：</p>
+<ul>
+<li>MAC 匹配让设备分类在 IP 层判断之前进行。</li>
+<li>IPv4 固定租约让 DNS 与 Web 管理界面的显示更稳定。</li>
+<li>即使设备的 IP 地址改变，访客隔离仍会跟踪 MAC 地址。</li>
+</ul>
+<p>若设备使用随机 MAC 地址，请登记该 SSID 或有线区段中路由器实际观测到的 MAC 地址。</p>
+<h2 id="确认生成的规则">确认生成的规则</h2>
+<p>生成配置，或确认运行中的 nftables 数据表：</p>
+<pre><code class="language-sh">routerd render nftables --config /usr/local/etc/routerd/router.yaml
+sudo nft list table inet routerd_filter
+</code></pre>
+<p>确认是否有类似以下的规则：</p>
+<pre><code class="language-nft">set client_policy_guest_devices {
+  type ether_addr
+  elements = { 18:ec:e7:33:12:6c }
+}
+
+iifname &quot;ens19&quot; ether saddr @client_policy_guest_devices udp dport 53 counter accept
+iifname &quot;ens19&quot; ether saddr @client_policy_guest_devices ip daddr 10.0.0.0/8 counter log prefix &quot;routerd client-policy guest-devices deny &quot; drop
+</code></pre>
+<h2 id="从访客设备验证">从访客设备验证</h2>
+<p>从访客设备执行以下确认：</p>
+<pre><code class="language-sh">curl -4 https://www.google.com/generate_204
+curl -4 --connect-timeout 3 http://192.168.1.1/
+curl -4 --connect-timeout 3 http://172.18.0.1:8080/
+</code></pre>
+<p>预期结果如下：</p>
+<ul>
+<li>互联网通信成功。</li>
+<li>私有目的地超时或失败。</li>
+<li>DNS、DHCP、NTP 继续正常运作。</li>
+</ul>
+<p>在路由器侧，使用 tcpdump 确认数据包路径：</p>
+<pre><code class="language-sh">sudo tcpdump -ni ens19 ether host 18:ec:e7:33:12:6c
+sudo nft list chain inet routerd_filter forward
+</code></pre>
+<p>当私有目的地被拒绝时，生成的 <code>ClientPolicy</code> 规则计数器会增加。</p>
+<h2 id="故障排查">故障排查</h2>
+<h3 id="mac-地址不匹配">MAC 地址不匹配</h3>
+<p>确认路由器所看到的 MAC 地址：</p>
+<pre><code class="language-sh">ip neigh show dev ens19
+sudo tcpdump -eni ens19
+</code></pre>
+<p>无线设备可能在不同 SSID 使用不同的 MAC 地址。
+智能手机与笔记本电脑也可能使用随机 MAC 地址。
+请使用路由器在 LAN 侧实际观测到的地址，而非印在设备上的地址。</p>
+<h3 id="访客设备仍能访问私有网络">访客设备仍能访问私有网络</h3>
+<p>请确认以下几点：</p>
+<ul>
+<li>策略是否参照了正确的 <code>Interface</code>。</li>
+<li>数据包是否确实从该接口进入。</li>
+<li><code>routerctl apply</code> 是否已应用最新的 nftables 数据表。</li>
+<li><code>guestEgressAllow</code> 中是否包含了宽范围的私有前缀。</li>
+<li>设备侧是否有 VPN 客户端等绕过路由器的路径。</li>
+</ul>
+<h3 id="访客设备无法连上互联网">访客设备无法连上互联网</h3>
+<p><code>ClientPolicy</code> 只限制私有目的地与 self 目的地的访问。
+若互联网连接失败，请检查路由策略、NAT44、DS-Lite、DNS 及 IP forwarding：</p>
+<pre><code class="language-sh">routerctl get status
+sysctl net.ipv4.ip_forward
+sudo nft list table ip routerd_nat
+</code></pre>
+<h3 id="guestservices-的作用">guestServices 的作用</h3>
+<p><code>guestServices</code> 仅控制对路由器本机服务的访问，并非允许转发至私有子网。
+转发的例外请通过 <code>guestEgressAllow</code> 表达。</p>
+<h2 id="安全注意事项">安全注意事项</h2>
+<p>以 MAC 地址进行隔离是实用的方式，但并非密码学意义上的识别。
+恶意用户若能控制设备，即可伪造受信任的 MAC 地址。</p>
+<p><code>ClientPolicy</code> 适合作为家庭或小型办公室的实用管控手段，
+不应作为对抗恶意用户的唯一防线。
+更强固的设计包括：</p>
+<ul>
+<li>VLAN 或 SSID 隔离。</li>
+<li>WPA3 Enterprise 或 802.1X。</li>
+<li>交换机的 port 隔离。</li>
+<li>各设备的专属证书。</li>
+<li>专用的访客 bridge 或 VRF。</li>
+</ul>
+<p>即使结合上述措施，<code>ClientPolicy</code> 仍有其价值，
+因为它能在 routerd 的资源模型中保留设备分类的意图。</p>
+<h2 id="os-支持">OS 支持</h2>
+<p>支持 Linux 的 nftables。</p>
+<p>FreeBSD 的 pf 在 routerd 用于 <code>FirewallZone</code> 与 <code>FirewallRule</code> 的路由式过滤路径中，
+没有等效的 MAC 式分类模型，因此 routerd 在 FreeBSD 上明确将 <code>ClientPolicy</code> 标示为不支持，
+不会以无作用的 no-op 策略静默应用。</p>
+<p>未来 FreeBSD 的支持方向可能是 bridge 层级的过滤器或专用的第二层隔离资源，
+但由于与路由式 pf 规则不等价，应视为独立设计。</p>
+<h2 id="相关资源">相关资源</h2>
+<ul>
+<li><code>FirewallZone</code>：将接口分配至 <code>trust</code>、<code>untrust</code>、<code>mgmt</code>。</li>
+<li><code>FirewallPolicy</code>：启用拒绝记录等通用行为。</li>
+<li><code>FirewallRule</code>：表达与 MAC 分类无关的例外。</li>
+<li><code>DHCPv4Reservation</code>：为已分类的设备提供稳定的 IPv4 地址与主机名。</li>
+<li>从隧道自动推导的 TCP MSS clamp，也适用于防火墙区域与隧道路径相符的访客转发。访客隔离不会绕过 MSS clamp。</li>
+</ul></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#使用场景">使用场景</a></li>
+<li><a href="#运作原理">运作原理</a></li>
+<li><a href="#规格说明">规格说明</a></li>
+<li><a href="#示例-1最小-include-模式">示例 1：最小 include 模式</a></li>
+<li><a href="#示例-2多设备-include-模式">示例 2：多设备 include 模式</a></li>
+<li><a href="#示例-3byod-用的-exclude-模式">示例 3：BYOD 用的 exclude 模式</a></li>
+<li><a href="#示例-4自定义拒绝与许可-cidr">示例 4：自定义拒绝与许可 CIDR</a></li>
+<li><a href="#示例-5本机探索服务">示例 5：本机探索服务</a></li>
+<li><a href="#示例-6iot-隔离与固定分配">示例 6：IoT 隔离与固定分配</a></li>
+<li><a href="#与-dhcpv4reservation-的搭配">与 DHCPv4Reservation 的搭配</a></li>
+<li><a href="#确认生成的规则">确认生成的规则</a></li>
+<li><a href="#从访客设备验证">从访客设备验证</a></li>
+<li><a href="#故障排查">故障排查</a><ul>
+<li><a href="#mac-地址不匹配">MAC 地址不匹配</a></li>
+<li><a href="#访客设备仍能访问私有网络">访客设备仍能访问私有网络</a></li>
+<li><a href="#访客设备无法连上互联网">访客设备无法连上互联网</a></li>
+<li><a href="#guestservices-的作用">guestServices 的作用</a></li>
+</ul>
+</li>
+<li><a href="#安全注意事项">安全注意事项</a></li>
+<li><a href="#os-支持">OS 支持</a></li>
+<li><a href="#相关资源">相关资源</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/how-to/guest-mode.md">GitHub</a></div></footer></body></html>

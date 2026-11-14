@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>使用 routerd 前的網路基礎 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/tutorials/network-basics.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/tutorials/network-basics.html" lang="en" hreflang="en">English</a><a href="/docs/ja/tutorials/network-basics.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/tutorials/network-basics.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/tutorials/network-basics.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="使用-routerd-前的網路基礎">使用 routerd 前的網路基礎</h1>
+<p>在試用 routerd 前，不必先背完所有網路術語。本頁只說明第一個教學需要的最小概念。</p>
+<h2 id="先記住這張圖">先記住這張圖</h2>
+<pre><code class="language-text">Internet / 學校 / 電信業者網路
+                |
+               WAN
+                |
+          [ routerd 主機 ]
+                |
+               LAN
+                |
+       電腦、手機、遊戲主機
+</code></pre>
+<ul>
+<li><strong>WAN</strong> 是連向電信業者、學校或上游路由器的一側。</li>
+<li><strong>LAN</strong> 是你自己管理的一側，例如家庭、教室或測試網路。</li>
+<li><strong>路由器</strong> 在 WAN 和 LAN 之間轉送封包；它不是 Wi-Fi AP，也不是 Ethernet switch。</li>
+</ul>
+<h2 id="六個先會用到的詞">六個先會用到的詞</h2>
+<table>
+<thead>
+<tr>
+<th>名詞</th>
+<th>白話說明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>IP 位址</td>
+<td>裝置在網路上的地址，像寄送地址。</td>
+</tr>
+<tr>
+<td>Gateway</td>
+<td>裝置要前往本 LAN 以外時，先交給的設備；小型網路通常就是路由器。</td>
+</tr>
+<tr>
+<td>DHCP</td>
+<td>自動發給裝置 IP 位址、gateway，以及常見 DNS server 的服務。</td>
+</tr>
+<tr>
+<td>DNS</td>
+<td>把 <code>example.com</code> 這類名稱換成 IP 位址的電話簿。</td>
+</tr>
+<tr>
+<td>NAT</td>
+<td>讓多台 LAN 裝置共用一條對外 IPv4 連線的方法。</td>
+</tr>
+<tr>
+<td><code>/24</code></td>
+<td>表示 <code>192.168.10.1</code> 到 <code>192.168.10.254</code> 這類一小段 IPv4 LAN 的簡寫。</td>
+</tr>
+</tbody>
+</table>
+<p>routerd 把這些選擇寫成 YAML。<code>Router</code> 檔案是一個裝有 <strong>resource（元件）</strong>
+清單的盒子。每個 resource 有 <code>kind</code>（種類）、<code>metadata.name</code>（你取的標籤）與
+<code>spec</code>（詳細資料）。</p>
+<pre><code class="language-yaml">apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: my-lab-router
+spec:
+  resources:
+    # 在這裡列出 Interface、DHCPv4Server、NAT44Rule 等元件。
+</code></pre>
+<p>不需要死背 resource 名稱。教學會一次加入一個工作，並在需要時連到參考文件。</p>
+<h2 id="安全地開始">安全地開始</h2>
+<p>第一次實驗請使用隔離的 Ubuntu Server VM 或備用電腦。保留 Proxmox/VM console、
+serial console，或獨立的 management NIC。不要一開始就更動承載家中、學校或工作網路的
+唯一一台路由器。</p>
+<p><code>routerd validate</code> 與 <code>routerd apply --once --dry-run</code> 用來確認設定檔而不提交網路變更。
+<code>routerd apply --once</code> 與 <code>routerd serve</code> 可能會變更主機網路。只有在有 console 或獨立
+管理路徑時才執行它們。</p>
+<p>routerd 是 pre-release 軟體。firewall resource 仍屬 groundwork，並非安全認證。
+不要把一份範例當成 Internet-facing router 的唯一安全邊界。</p>
+<h2 id="下一步">下一步</h2>
+<ol>
+<li>在隔離的 Ubuntu Server VM 上<a href="../install-and-upgrade.html">安裝 routerd</a>。</li>
+<li><a href="getting-started.html">執行安全的第一次檢查</a>，不變更網路。</li>
+<li>有 console 路徑後，再<a href="first-router.html">建立第一台 IPv4 實驗路由器</a>。</li>
+</ol></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#先記住這張圖">先記住這張圖</a></li>
+<li><a href="#六個先會用到的詞">六個先會用到的詞</a></li>
+<li><a href="#安全地開始">安全地開始</a></li>
+<li><a href="#下一步">下一步</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/tutorials/network-basics.md">GitHub</a></div></footer></body></html>

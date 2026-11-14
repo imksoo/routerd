@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PortForward · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/reference/resources/PortForward.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/reference/resources/PortForward.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/reference/resources/PortForward.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/PortForward.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/PortForward.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="portforward">PortForward</h1>
+<p><a href="../resources.html#portforward">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: firewall.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Forward a TCP/UDP port to one IPv4 endpoint with optional hairpin NAT. Linux generates DNAT plus matching forward allowances; FreeBSD uses rdr pass.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>listen and target are required. target needs exactly one address/addressFrom and a port; a literal target must be bare IPv4, not hostname or CIDR. listen may omit both address forms, matching every destination on its interface.</li>
+<li>Address references must exist and declare a supported provided field, but this NAT renderer reads only declared IPv4StaticAddress.address/VirtualAddress.address. optional=true may omit a rule for an unresolved supported source, not enable arbitrary dynamic sources. There is no backend health check in PortForward.</li>
+</ul>
+<h2 id="yaml-definition">YAML definition</h2>
+<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: PortForward
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    hairpin: # optional; object
+      enabled: true # optional; boolean
+      interfaces: # optional; array
+        - &quot;&lt;string&gt;&quot; # string
+      mode: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;auto&quot;, &quot;manual&quot;, &quot;off&quot;]
+    listen: # Required; object
+      address: &quot;&lt;string&gt;&quot; # optional; string
+      addressFrom: # optional; object
+        field: &quot;&lt;string&gt;&quot; # optional; string
+        optional: true # optional; boolean
+        resource: &quot;&lt;string&gt;&quot; # Required; string
+      interface: &quot;&lt;string&gt;&quot; # Required; string
+      port: 1 # Required; integer; minimum=1; maximum=65535
+      protocol: &quot;tcp&quot; # Required; string; enum=[&quot;tcp&quot;, &quot;udp&quot;]
+    target: # Required; object
+      address: &quot;&lt;string&gt;&quot; # optional; string
+      addressFrom: # optional; object
+        field: &quot;&lt;string&gt;&quot; # optional; string
+        optional: true # optional; boolean
+        resource: &quot;&lt;string&gt;&quot; # Required; string
+      port: 1 # Required; integer; minimum=1; maximum=65535
+    when: # optional; object
+      state: # optional; object
+        &quot;&lt;key&gt;&quot;: # optional; object
+          contains: &quot;&lt;string&gt;&quot; # optional; string
+          equals: &quot;&lt;string&gt;&quot; # optional; string
+          exists: true # optional; boolean
+          for: &quot;&lt;string&gt;&quot; # optional; string
+          in: # optional; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # optional; string
+          status: &quot;set&quot; # optional; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.listen</code></td>
+<td>Required IPv4 ingress endpoint. This creates NAT/firewall rules, not an application listener or address assignment.</td>
+</tr>
+<tr>
+<td><code>spec.listen.interface</code></td>
+<td>Required bare declared logical interface name, not Kind/name. Must exist in the configuration interface index and resolve to an OS ifname.</td>
+</tr>
+<tr>
+<td><code>spec.listen.address</code></td>
+<td>Optional bare IPv4 destination address. Mutually exclusive with addressFrom; omission matches any destination address on the listen interface.</td>
+</tr>
+<tr>
+<td><code>spec.listen.addressFrom</code></td>
+<td>Optional common resource/field/optional reference, mutually exclusive with address. NAT/static rendering supports declared IPv4StaticAddress.address or VirtualAddress.address, not arbitrary runtime status. Generic reference validation does not guarantee renderer support.</td>
+</tr>
+<tr>
+<td><code>spec.listen.protocol</code></td>
+<td>Required tcp or udp, no default. This selects forwarded traffic; it does not select the health-check protocol.</td>
+</tr>
+<tr>
+<td><code>spec.listen.port</code></td>
+<td>Required destination port 1–65535. No range/list and no default.</td>
+</tr>
+<tr>
+<td><code>spec.hairpin</code></td>
+<td>Optional loopback-through-public-address NAT settings. Requires a resolved listen address when active. PortForward defaults off; IngressService defaults auto.</td>
+</tr>
+<tr>
+<td><code>spec.hairpin.enabled</code></td>
+<td>Default false. With omitted mode, true selects manual on PortForward; IngressService still defaults auto. Explicit off disables hairpin even when enabled is true.</td>
+</tr>
+<tr>
+<td><code>spec.hairpin.mode</code></td>
+<td>auto, manual or off. auto detects the listen interface when listen and backend share a declared IPv4 subnet or the same private /24; it does not discover arbitrary LAN routes. manual needs enabled=true and interfaces to produce rules.</td>
+</tr>
+<tr>
+<td><code>spec.hairpin.interfaces</code></td>
+<td>Optional bare declared logical interface names, no duplicates; enabled/manual requires a nonempty list. auto may additionally use the listen interface. IPv4 DNAT plus masquerade/PF SNAT ensures a return through the router.</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>Optional common activation condition, default unconditional. False conditions exclude the resource from effective generation; see common fields for predicates/schema limits.</td>
+</tr>
+<tr>
+<td><code>spec.target</code></td>
+<td>Required single internal endpoint. Setting a target does not assign its IP or start its service.</td>
+</tr>
+<tr>
+<td><code>spec.target.address</code></td>
+<td>Bare IPv4 target, mutually exclusive with target.addressFrom; one is required. No default.</td>
+</tr>
+<tr>
+<td><code>spec.target.addressFrom</code></td>
+<td>Common resource/field/optional reference; same declared-field rendering limits as listen.addressFrom. Must resolve to IPv4.</td>
+</tr>
+<tr>
+<td><code>spec.target.port</code></td>
+<td>Required internal TCP/UDP port 1–65535, independent of listen.port.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_firewall.go">pkg/config/validate_firewall.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go">pkg/config/diagnostics.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/ingress.go">pkg/render/ingress.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/status_source.go">pkg/render/status_source.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/nftables.go">pkg/render/nftables.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/pf.go">pkg/render/pf.go</a></p>
+<h2 id="referenceable-status-fields">Referenceable status fields</h2>
+<p>The ordinary status-reference validator accepts these field names for this kind. This allowlist does not guarantee that every field is currently populated; inspect runtime status. These are outputs, not YAML spec fields.</p>
+<p><code>phase</code>, <code>listenAddress</code>, <code>target</code>, <code>dryRun</code></p>
+<p><a href="/examples/example-port-forward-web.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
+<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
+<li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/reference/resources/PortForward.md">GitHub</a></div></footer></body></html>

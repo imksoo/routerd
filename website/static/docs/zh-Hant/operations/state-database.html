@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>狀態資料庫 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/operations/state-database.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/operations/state-database.html" lang="en" hreflang="en">English</a><a href="/docs/ja/operations/state-database.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/operations/state-database.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/operations/state-database.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="狀態資料庫">狀態資料庫</h1>
+<p>routerd 將狀態與事件持久化至 SQLite。每個常駐程式除此之外還各自擁有自身的租約或狀態檔案與事件日誌。</p>
+<h2 id="主要路徑">主要路徑</h2>
+<table>
+<thead>
+<tr>
+<th>種類</th>
+<th>路徑</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>routerd 狀態 DB</td>
+<td><code>/var/lib/routerd/routerd.db</code></td>
+</tr>
+<tr>
+<td>DHCPv6-PD 租約</td>
+<td><code>/var/lib/routerd/dhcpv6-client/&lt;name&gt;/lease.json</code></td>
+</tr>
+<tr>
+<td>DHCPv4 租約</td>
+<td><code>/var/lib/routerd/dhcpv4-client/&lt;name&gt;/lease.json</code></td>
+</tr>
+<tr>
+<td>PPPoE 狀態</td>
+<td><code>/var/lib/routerd/pppoe-client/&lt;name&gt;/state.json</code></td>
+</tr>
+<tr>
+<td>HealthCheck 狀態</td>
+<td><code>/var/lib/routerd/healthcheck/&lt;name&gt;/state.json</code></td>
+</tr>
+<tr>
+<td>常駐程式別事件</td>
+<td><code>/var/lib/routerd/&lt;daemon&gt;/&lt;name&gt;/events.jsonl</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="events-資料表">events 資料表</h2>
+<p>事件匯流排會將事件持久化至 SQLite。<code>EventRule</code> 與 <code>DerivedEvent</code> 以此串流作為輸入。
+日常運維請使用 <code>routerctl get events</code>，而非直接操作 <code>sqlite3</code>：</p>
+<pre><code class="language-sh">routerctl get events --limit 20
+routerctl get events --topic routerd.resource.status.changed
+routerctl get events --resource DNSResolver/lan-resolver -o json
+</code></pre>
+<h3 id="mobility-holder-transitions">Mobility holder transitions</h3>
+<p>CloudEdge SAM failover 會發出 <code>routerd.mobility.holder.transition</code> 事件，
+其中包含 <code>transitionKind</code>、<code>address</code>、<code>timestamp</code>、<code>issuedAt</code>、
+<code>fromNode</code>、<code>toNode</code>、<code>mobilityPathSig</code>、<code>assignmentGeneration</code> 等機器可讀屬性。</p>
+<p>在 provider-secondary-IP capture 流程中，<code>seize-complete</code> 表示 active <code>/32</code>
+<code>bgpCaptureAssignment</code> 對應的 provider capture assign action 已在 action journal
+中記錄為 succeeded。<code>issuedAt</code> 使用 journal 的 <code>ExecutedAt</code>，因此
+<code>timestamp - issuedAt</code> 表示從 provider 接受寫入到事件記錄之間的延遲。
+<code>T_seize</code> 是 provider 接受寫入的時間。</p>
+<p><code>capture-confirmed</code> 仍然基於 discovery 觀測。<code>T_confirm</code> 是本機程序觀測到
+provider capture 生效的時間。兩者共同度量從接受到生效的區間。</p>
+<p>節點重啟或 rejoin 後的重新確認事件可能會重用原始 journal 接受時間作為
+<code>issuedAt</code>。此時，<code>timestamp - issuedAt</code> 會包含節點停止或缺席的時間。
+請將這類差值視為重新確認經過時間，不要解釋為收斂延遲。</p>
+<p>對於 static-owned、static-handover、local-home 等非 capture 流程，
+<code>seize-complete</code> 仍來自 active-holder 加 self-identity 的 BGP 觀測。目前 lab
+實證僅覆蓋 capture 流程；static/handover completion event 尚未在真實環境中實證。</p>
+<h2 id="備份思維">備份思維</h2>
+<p>狀態 DB 保存的是<strong>已觀測到</strong>的狀態，無法取代設定。
+意圖的正本是 YAML 設定檔，請以 git 管理。
+重建主機時，比起還原 SQLite，套用設定檔並讓 routerd 進行調和（reconcile）更為可靠。</p>
+<p>若出於鑑識目的需要保留操作事件歷史，請定期為 <code>events.db</code>、<code>dns-queries.db</code>、<code>traffic-flows.db</code>、<code>firewall-logs.db</code> 建立快照。這些檔案為僅附加模式，不需要像 <code>routerd.db</code> 那樣進行特定時間點的備份。</p>
+<h2 id="相關說明">相關說明</h2>
+<ul>
+<li><a href="../concepts/log-storage.html">日誌儲存</a></li>
+<li><a href="reconcile.html">調和（Reconcile）與刪除</a></li>
+</ul></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#主要路徑">主要路徑</a></li>
+<li><a href="#events-資料表">events 資料表</a><ul>
+<li><a href="#mobility-holder-transitions">Mobility holder transitions</a></li>
+</ul>
+</li>
+<li><a href="#備份思維">備份思維</a></li>
+<li><a href="#相關說明">相關說明</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/operations/state-database.md">GitHub</a></div></footer></body></html>

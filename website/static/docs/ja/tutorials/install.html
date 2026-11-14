@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>インストール · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/tutorials/install.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/tutorials/install.html" lang="en" hreflang="en">English</a><a href="/docs/ja/tutorials/install.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/tutorials/install.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/tutorials/install.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="インストール">インストール</h1>
+<p>このページは、最初の練習用の <strong>Ubuntu Server VM</strong> に routerd を入れる手順です。
+本物のルーターや、SSH しか入る方法がない機械では始めないでください。
+ハイパーバイザーの画面、シリアルコンソール、または別の管理 NIC を用意します。</p>
+<h2 id="0-vm-を安全に用意する">0. VM を安全に用意する</h2>
+<p>VM には、次のように役割を分けると安全です。</p>
+<ul>
+<li>管理用 NIC（ネットワークにつなぐ口）: SSH などで VM に入るための線。最初は routerd に任せません。</li>
+<li>WAN 用 NIC: 上流のテスト用ネットワークにつなぐ線。</li>
+<li>LAN 用 NIC: テスト用クライアントだけをつなぐ線。</li>
+</ul>
+<p>WAN と LAN は、普段のネットワークから分けます。WAN 用 NIC や LAN 用 NIC が
+止まっても、コンソールから VM を操作できることを先に確かめてください。</p>
+<h2 id="1-リリースアーカイブを入手する">1. リリースアーカイブを入手する</h2>
+<p>次は Linux amd64 の例です。まず <a href="https://github.com/imksoo/routerd/releases">GitHub Releases</a>
+で、使う版と CPU を確認してください。</p>
+<pre><code class="language-sh">RELEASE=v20260707.1514
+curl -fLO https://github.com/imksoo/routerd/releases/download/${RELEASE}/routerd-linux-amd64.tar.gz
+curl -fLO https://github.com/imksoo/routerd/releases/download/${RELEASE}/routerd-linux-amd64.tar.gz.sha256
+sha256sum -c routerd-linux-amd64.tar.gz.sha256
+tar -xzf routerd-linux-amd64.tar.gz
+sudo ./install.sh
+</code></pre>
+<p>arm64 の Ubuntu Server では、ファイル名の <code>linux-amd64</code> を <code>linux-arm64</code> に
+変えます。<code>install.sh</code> は必要な実行時パッケージを確認し、<code>routerd</code> と
+<code>routerctl</code> を <code>/usr/local/sbin</code> に置きます。Go や Makefile は不要です。</p>
+<p>新しい導入では、インストーラーだけでサービスは起動しません。設定を読んで
+安全を確かめてから、あとで自分で起動します。</p>
+<pre><code class="language-sh">routerd --version
+</code></pre>
+<h2 id="2-次のページで-yaml-を作る">2. 次のページで YAML を作る</h2>
+<p>設定例は <code>/usr/local/etc/routerd/router.yaml.sample</code> に置かれますが、最初は
+そのままサービスを起動しません。次の <a href="getting-started.html">はじめに</a> で
+<code>first-router.yaml</code> を実際に作り、<code>routerd validate</code> と使い捨ての場所での
+dry-run を行います。このページだけでは <code>first-router.yaml</code> はまだ存在しません。</p>
+<h2 id="3-サービスを起動するのは-dry-run-の後">3. サービスを起動するのは dry-run の後</h2>
+<p>次のページで WAN と LAN の名前、管理経路、dry-run の出力を確認してから、
+設定を標準の場所へ置き、サービスを起動します。<code>routerctl</code> はサービスが起動して
+ローカルソケットを作った後にだけ使います。初回は <code>sudo routerctl get status</code> の
+ように <code>sudo</code> を付けます。</p>
+<h2 id="ubuntu-以外について">Ubuntu 以外について</h2>
+<p>FreeBSD には rc.d と導入の土台があり、NixOS にも導入用の土台があります。
+ただし、Ubuntu と同じネットワーク設定の生成や機能がそろっているわけではありません。
+初めて試す手順としては Ubuntu Server を使い、他の OS は
+<a href="../platforms.html">対応プラットフォーム</a> を読んでから進めてください。</p>
+<h2 id="次に読むもの">次に読むもの</h2>
+<ul>
+<li><a href="getting-started.html">はじめに</a> — YAML の作成、検証、dry-run</li>
+<li><a href="../install-and-upgrade.html">インストールとアップグレード</a> — 更新、削除、配置先</li>
+</ul></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#0-vm-を安全に用意する">0. VM を安全に用意する</a></li>
+<li><a href="#1-リリースアーカイブを入手する">1. リリースアーカイブを入手する</a></li>
+<li><a href="#2-次のページで-yaml-を作る">2. 次のページで YAML を作る</a></li>
+<li><a href="#3-サービスを起動するのは-dry-run-の後">3. サービスを起動するのは dry-run の後</a></li>
+<li><a href="#ubuntu-以外について">Ubuntu 以外について</a></li>
+<li><a href="#次に読むもの">次に読むもの</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/tutorials/install.md">GitHub</a></div></footer></body></html>

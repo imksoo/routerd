@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DHCPv6Address · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/reference/resources/DHCPv6Address.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/reference/resources/DHCPv6Address.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/reference/resources/DHCPv6Address.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/DHCPv6Address.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/DHCPv6Address.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="dhcpv6address">DHCPv6Address</h1>
+<p><a href="../resources.html#dhcpv6address">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Declares an IPv6 address acquired by a host DHCPv6 client. It is separate from DHCPv6PrefixDelegation and does not allocate LAN prefixes.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>The current code validates/indexes this declaration and uses it in observation and host network-adoption decisions. It does not create a dedicated DHCPv6Address daemon. Host client setup must not be inferred solely from a successful plan.</li>
+<li>An external prefix-delegation client on the same interface must match the DHCPv6Address client selection. The configuration index treats an omitted client as networkd, whereas the current observe/plan display uses dhcpcd as its omitted default. Specify the client explicitly rather than relying on that inconsistent omission.</li>
+</ul>
+<h2 id="yaml-definition">YAML definition</h2>
+<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DHCPv6Address
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    client: &quot;&lt;string&gt;&quot; # optional; string
+    interface: &quot;&lt;string&gt;&quot; # Required; string
+    required: true # optional; boolean
+</code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.interface</code></td>
+<td>Required logical interface name from the Router interface index, without Interface/ prefix. It must exist in the declared config. No default.</td>
+</tr>
+<tr>
+<td><code>spec.client</code></td>
+<td>Host DHCPv6 client/program selector, default empty in the decoded config. networkd is recognized by adoption logic; other explicit names disable networkd DHCPv6 for that interface. The validator does not restrict this to a known enum. No resource-name reference.</td>
+</tr>
+<tr>
+<td><code>spec.required</code></td>
+<td>Default false. Decoded but not consumed by the current address observation/adoption implementation; it does not introduce a wait-for-address requirement.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/index.go">pkg/config/index.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_wan.go">pkg/config/validate_wan.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/apply/engine.go">pkg/apply/engine.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/hostdeps/hostdeps.go">pkg/hostdeps/hostdeps.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/system.go">pkg/controller/chain/system.go</a></p>
+<h2 id="referenceable-status-fields">Referenceable status fields</h2>
+<p>The ordinary status-reference validator accepts these field names for this kind. This allowlist does not guarantee that every field is currently populated; inspect runtime status. These are outputs, not YAML spec fields.</p>
+<p><code>phase</code>, <code>interface</code>, <code>address</code></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
+<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
+<li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/reference/resources/DHCPv6Address.md">GitHub</a></div></footer></body></html>

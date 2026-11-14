@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WireGuard Hub &amp; Spoke 模板 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/config-examples/wireguard-hub-spoke.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/config-examples/wireguard-hub-spoke.html" lang="en" hreflang="en">English</a><a href="/docs/ja/config-examples/wireguard-hub-spoke.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/config-examples/wireguard-hub-spoke.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/config-examples/wireguard-hub-spoke.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="wireguard-hub-spoke-模板">WireGuard Hub &amp; Spoke 模板</h1>
+<p>此为具备两个 spoke 的 routed WireGuard hub 模板。
+实际使用前，请替换密钥、endpoint 及要广播的前缀。</p>
+<p>完整的 YAML 位于 <code>examples/wireguard-hub-spoke.yaml</code>。</p>
+<h2 id="架构图">架构图</h2>
+<pre><code class="language-mermaid">flowchart LR
+  a[&quot;[1] spoke A&lt;br/&gt;172.30.11.0/24&quot;]
+  b[&quot;[2] spoke B&lt;br/&gt;172.30.12.0/24&quot;]
+  hub[&quot;[3] routerd hub&lt;br/&gt;10.44.0.1/24&quot;]
+
+  a --- hub --- b
+</code></pre>
+<h2 id="图示对照表">图示对照表</h2>
+<table>
+<thead>
+<tr>
+<th>编号</th>
+<th>说明</th>
+<th>主要资源</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>[1]</td>
+<td>spoke A 的 tunnel 地址与 routed LAN 前缀。</td>
+<td><code>WireGuardPeer/spoke-a</code></td>
+</tr>
+<tr>
+<td>[2]</td>
+<td>spoke B 的 tunnel 地址与 routed LAN 前缀。</td>
+<td><code>WireGuardPeer/spoke-b</code></td>
+</tr>
+<tr>
+<td>[3]</td>
+<td>hub 端的 WireGuard 接口与地址。</td>
+<td><code>WireGuardInterface/wg-hub</code>, <code>IPv4StaticAddress/wg-hub-ipv4</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="重点说明">重点说明</h2>
+<pre><code class="language-yaml"># [3] hub 端 WireGuard 接口与监听端口。
+- kind: WireGuardInterface
+  metadata:
+    name: wg-hub
+  spec:
+    privateKeyFile: /usr/local/etc/routerd/secrets/wg-hub.key
+    listenPort: 51820
+    mtu: 1420
+
+# [1] spoke A 的 tunnel 地址与 routed LAN 前缀。
+- kind: WireGuardPeer
+  metadata:
+    name: spoke-a
+  spec:
+    interface: wg-hub
+    publicKey: REPLACE_WITH_SPOKE_A_PUBLIC_KEY
+    allowedIPs:
+      - 10.44.0.11/32
+      - 172.30.11.0/24
+</code></pre>
+<h2 id="确认步骤">确认步骤</h2>
+<p>先在 daemon 未启动时进行独立检查。以下命令需要具有 <code>sudo</code> 权限的本地用户，但不会应用网络变更。</p>
+<pre><code class="language-bash">LAB_DIR=&quot;$(mktemp -d)&quot;
+sudo routerd validate --config examples/wireguard-hub-spoke.yaml
+sudo routerd apply --config examples/wireguard-hub-spoke.yaml --once --dry-run \
+  --state-file &quot;$LAB_DIR/state.db&quot; \
+  --status-file &quot;$LAB_DIR/status.json&quot;
+rm -rf &quot;$LAB_DIR&quot;
+</code></pre>
+<p>服务运行后，才在路由器上运行 <code>sudo routerctl describe WireGuardInterface/wg-hub</code>
+和 <code>sudo wg show</code>。</p>
+<h2 id="常见调整项目">常见调整项目</h2>
+<ul>
+<li>私钥请存放于限制访问权限的文件中。</li>
+<li>每个 peer 须明确指定 tunnel 地址 <code>/32</code> 与 routed LAN 前缀。</li>
+<li>若使用 routerd 管理 WAN 端防火墙，请一并添加 UDP 监听端口的放行规则。</li>
+</ul></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#架构图">架构图</a></li>
+<li><a href="#图示对照表">图示对照表</a></li>
+<li><a href="#重点说明">重点说明</a></li>
+<li><a href="#确认步骤">确认步骤</a></li>
+<li><a href="#常见调整项目">常见调整项目</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/config-examples/wireguard-hub-spoke.md">GitHub</a></div></footer></body></html>

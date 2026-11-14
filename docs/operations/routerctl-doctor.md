@@ -130,4 +130,3 @@ v1alpha1 minor builds.
 ## See also
 
 - [Reconcile and rollback](reconcile.md)
-- [`routerctl ledger` maintenance](reconcile.md#removal)

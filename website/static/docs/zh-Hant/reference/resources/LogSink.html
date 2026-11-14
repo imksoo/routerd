@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LogSink · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/reference/resources/LogSink.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/reference/resources/LogSink.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/LogSink.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/LogSink.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/reference/resources/LogSink.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="logsink">LogSink</h1>
+<p><a href="../resources.html#logsink">各資源的設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: system.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>依type選擇操作事件記錄的輸出目的地，與ObservabilityPipeline內的記錄輸出設定不同。</p>
+<h2 id="指定條件與參照關係">指定條件與參照關係</h2>
+<ul>
+<li>type選擇一種實作，只使用該分支；其他分支不會因互斥而報錯，也不會合併。otlp驗證要求telemetryRef與endpoint恰好一項，但目前OTLPSink.Emit不會傳送事件。</li>
+<li>journald分支使用Go的log.Printf，是否進入journald取決於程序記錄目的地及服務管理器，不直接呼叫journald API。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。</p>
+<pre><code class="language-yaml">- apiVersion: system.routerd.net/v1alpha1
+  kind: LogSink
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    enabled: true # 選填; boolean
+    file: # 選填; object
+      name: &quot;&lt;string&gt;&quot; # 選填; string
+    journald: # 選填; object
+      identifier: &quot;&lt;string&gt;&quot; # 選填; string
+    minLevel: &quot;debug&quot; # 選填; string; enum=[&quot;debug&quot;, &quot;info&quot;, &quot;warning&quot;, &quot;error&quot;]
+    otlp: # 選填; object
+      endpoint: &quot;&lt;string&gt;&quot; # 選填; string
+      telemetryRef: &quot;&lt;string&gt;&quot; # 選填; string
+    syslog: # 選填; object
+      address: &quot;&lt;string&gt;&quot; # 選填; string
+      facility: &quot;kern&quot; # 選填; string; enum=[&quot;kern&quot;, &quot;user&quot;, &quot;mail&quot;, &quot;daemon&quot;, &quot;auth&quot;, &quot;syslog&quot;, &quot;lpr&quot;, &quot;news&quot;, &quot;uucp&quot;, &quot;cron&quot;, &quot;authpriv&quot;, &quot;ftp&quot;, &quot;local0&quot;, &quot;local1&quot;, &quot;local2&quot;, &quot;local3&quot;, &quot;local4&quot;, &quot;local5&quot;, &quot;local6&quot;, &quot;local7&quot;]
+      network: &quot;&quot; # 選填; string; enum=[&quot;&quot;, &quot;unix&quot;, &quot;unixgram&quot;, &quot;tcp&quot;, &quot;udp&quot;]
+      tag: &quot;&lt;string&gt;&quot; # 選填; string
+    type: &quot;syslog&quot; # 必填; string; enum=[&quot;syslog&quot;, &quot;otlp&quot;, &quot;webhook&quot;, &quot;file&quot;, &quot;journald&quot;]
+    webhook: # 選填; object
+      headers: # 選填; object
+        &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # 選填; string
+      timeout: &quot;&lt;string&gt;&quot; # 選填; string
+      url: &quot;&lt;string&gt;&quot; # 選填; string
+</code></pre>
+<h2 id="欄位意義與預設值">欄位意義與預設值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>欄位意義與預設值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.type</code></td>
+<td>必填目的地類型：syslog、otlp、webhook、file或journald，無預設值。</td>
+</tr>
+<tr>
+<td><code>spec.enabled</code></td>
+<td>是否選用此輸出端，預設true。false時即使LogRetention參照也略過。</td>
+</tr>
+<tr>
+<td><code>spec.minLevel</code></td>
+<td>最低嚴重程度，預設info；接受debug、info、warning、error，略過較低程度事件。</td>
+</tr>
+<tr>
+<td><code>spec.syslog</code></td>
+<td>只在type=syslog使用，省略時採本機syslog、local6與標籤routerd。</td>
+</tr>
+<tr>
+<td><code>spec.syslog.network</code></td>
+<td>傳輸方式為unix、unixgram、tcp或udp；空值由Go syslog探索本機socket。</td>
+</tr>
+<tr>
+<td><code>spec.syslog.address</code></td>
+<td>目的socket路徑或host:port，預設空。明確指定傳輸方式時應提供對應位址；驗證器不強制此組合，連線錯誤在輸出時出現。</td>
+</tr>
+<tr>
+<td><code>spec.syslog.facility</code></td>
+<td>syslog facility，預設local6；可用值見YAML列舉。</td>
+</tr>
+<tr>
+<td><code>spec.syslog.tag</code></td>
+<td>syslog標籤，預設routerd，不是資源參照。</td>
+</tr>
+<tr>
+<td><code>spec.otlp</code></td>
+<td>OTLP宣告；type=otlp時telemetryRef與endpoint恰好一項必填，此輸出端尚無實際傳送處理。</td>
+</tr>
+<tr>
+<td><code>spec.otlp.telemetryRef</code></td>
+<td>Telemetry/名稱或單純Telemetry名稱，與endpoint互斥，預設空。即使選其他type，Router整體驗證仍檢查目標存在。目前OTLPSink不用它傳送。</td>
+</tr>
+<tr>
+<td><code>spec.otlp.endpoint</code></td>
+<td>預定目的URI，與telemetryRef互斥，無預設值；驗證URI語法，但此LogSink不建立exporter。</td>
+</tr>
+<tr>
+<td><code>spec.webhook</code></td>
+<td>type=webhook使用的JSON HTTP POST目的地設定。</td>
+</tr>
+<tr>
+<td><code>spec.webhook.url</code></td>
+<td>type=webhook時必填且無預設值。請使用HTTP(S)絕對URL；驗證器只檢查URI語法，只有HTTP 2xx視為傳送成功。</td>
+</tr>
+<tr>
+<td><code>spec.webhook.headers</code></td>
+<td>額外請求標頭，預設空；會覆寫同名標頭，包括預設Content-Type: application/json。</td>
+</tr>
+<tr>
+<td><code>spec.webhook.timeout</code></td>
+<td>HTTP請求逾時，預設5s，使用Go duration。驗證器也接受零及負值；HTTP client中不大於零表示不設逾時。</td>
+</tr>
+<tr>
+<td><code>spec.file</code></td>
+<td>type=file的檔案設定，以JSON Lines附加寫入。</td>
+</tr>
+<tr>
+<td><code>spec.file.name</code></td>
+<td>邏輯檔名，預設routerd-events，路徑為/var/lib/routerd/logs/<name>.jsonl。禁止路徑分隔符、NUL及換行，不是任意檔案路徑。</td>
+</tr>
+<tr>
+<td><code>spec.journald</code></td>
+<td>type=journald的設定，透過程序logger輸出。</td>
+</tr>
+<tr>
+<td><code>spec.journald.identifier</code></td>
+<td>加在程序記錄訊息前的前綴，預設routerd，不直接設定journald的SYSLOG_IDENTIFIER。</td>
+</tr>
+</tbody>
+</table>
+<p>實作: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go">pkg/config/diagnostics.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/eventlog/eventlog.go">pkg/eventlog/eventlog.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a></p>
+<h2 id="可參照的狀態欄位">可參照的狀態欄位</h2>
+<p>一般狀態參照驗證接受此 Kind 的下列欄位名稱。列於允許清單不保證目前有值，請檢查實際狀態。這些是輸出，不是 YAML spec 設定。</p>
+<p><code>phase</code>, <code>type</code></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#指定條件與參照關係">指定條件與參照關係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#欄位意義與預設值">欄位意義與預設值</a></li>
+<li><a href="#可參照的狀態欄位">可參照的狀態欄位</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/reference/resources/LogSink.md">GitHub</a></div></footer></body></html>

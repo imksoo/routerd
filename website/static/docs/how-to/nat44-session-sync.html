@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NAT44 session sync for HA routers · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/how-to/nat44-session-sync.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/how-to/nat44-session-sync.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/how-to/nat44-session-sync.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/how-to/nat44-session-sync.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/nat44-session-sync.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="nat44-session-sync-for-ha-routers">NAT44 session sync for HA routers</h1>
+<p>Use <code>NAT44SessionSync</code> when two routerd nodes share a LAN gateway role and the
+active node should keep selected NAT44 conntrack sessions warm on a standby
+node. It starts with a one-time conntrack snapshot safety net, then keeps a
+local conntrack event reader running and sends incremental batches.</p>
+<p>Gate the resource with <code>spec.when</code> so only the active node exports sessions.
+For VRRP-based failover, the usual gate is the local <code>VirtualAddress</code> role.</p>
+<h2 id="sync-selected-nat-rules">Sync selected NAT rules</h2>
+<p>Reference the NAT rules whose SNAT addresses should be mirrored. Dynamic SNAT
+addresses are read from <code>NAT44Rule</code> status, so run the NAT44 controller before
+expecting session sync to become active.</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: NAT44SessionSync
+  metadata:
+    name: dslite-abc-sessions
+  spec:
+    mode: event-stream
+    natRules:
+      - NAT44Rule/lan-to-dslite-a
+      - NAT44Rule/lan-to-dslite-b
+      - NAT44Rule/lan-to-dslite-c
+    excludeNatRules:
+      - NAT44Rule/lan-to-dslite-ra
+    targets:
+      - name: standby
+        host: routerd-standby.lan.example
+        user: routerd
+        restoreCommand: [sudo, conntrack]
+    when:
+      state:
+        VirtualAddress/lan-vip.role:
+          equals: master
+</code></pre>
+<p>You can also provide <code>snatAddresses</code> directly when the addresses are static:</p>
+<pre><code class="language-yaml">spec:
+  snatAddresses: [192.0.0.2, 192.0.0.3, 192.0.0.4]
+</code></pre>
+<h2 id="preserve-established-tcp-with-conntrackd">Preserve established TCP with conntrackd</h2>
+<p>Use <code>mode: conntrackd</code> when established TCP flows must survive a VRRP role
+change. Both peers run conntrackd continuously, so this mode must not use
+<code>spec.when</code>.</p>
+<p>Linux conntrack must accept the small TCP window mismatch that can occur when
+an in-flight segment reaches the new active peer. Declare that host prerequisite
+explicitly; routerd does not change it from a VRRP hook:</p>
+<pre><code class="language-yaml">- apiVersion: system.routerd.net/v1alpha1
+  kind: Sysctl
+  metadata:
+    name: conntrack-tcp-ha-liberal
+  spec:
+    key: net.netfilter.nf_conntrack_tcp_be_liberal
+    value: &quot;1&quot;
+    runtime: true
+    persistent: true
+
+- apiVersion: net.routerd.net/v1alpha1
+  kind: NAT44SessionSync
+  metadata:
+    name: dslite-sessions
+  spec:
+    mode: conntrackd
+    snatAddresses: [192.0.2.2]
+    conntrackd:
+      interface: ha-sync
+      localAddress: 192.0.2.10
+      peerAddress: 192.0.2.11
+      port: 3780
+</code></pre>
+<p>Validation rejects Linux conntrackd mode unless a runtime, non-optional
+<code>Sysctl</code> declares <code>net.netfilter.nf_conntrack_tcp_be_liberal=1</code>.
+<code>persistent: true</code> is recommended so the prerequisite is also present before
+routerd starts after a reboot.</p>
+<h2 id="how-restore-works">How restore works</h2>
+<p>The controller runs:</p>
+<pre><code class="language-bash">conntrack --dump -o extended -n &lt;snat-address&gt;
+</code></pre>
+<p><code>extended</code> output includes the conntrack mark. routerd converts each line into
+a delete-then-insert restore script and sends it over SSH. Preserving <code>ct mark</code>
+matters when policy routing uses conntrack marks to keep an existing flow on
+the same egress path.</p>
+<p><code>restoreCommand</code> defaults to <code>[conntrack]</code>. Use <code>[sudo, conntrack]</code> when the
+target user needs privilege elevation.</p>
+<h2 id="event-stream-operation">Event stream operation</h2>
+<p><code>NAT44SessionSync</code> always keeps a local <code>conntrack -E -o extended</code> reader
+alive and sends incremental create/update/destroy batches.</p>
+<p>On startup and after
+local stream loss, the target first receives a full snapshot resync. Only after
+that resync completes is the resource reported as <code>Synced</code>.</p>
+<pre><code class="language-yaml">spec:
+  mode: event-stream
+  natRules:
+    - NAT44Rule/lan-to-dslite-a
+  targets:
+    - name: standby
+      host: routerd-standby.lan.example
+      user: routerd
+      restoreCommand: [sudo, conntrack]
+</code></pre>
+<p>The operational differences are:</p>
+<ul>
+<li>lower steady-state <code>ssh</code> and <code>conntrack</code> process churn;</li>
+<li>lower failover warm-up delay for active sessions;</li>
+<li>status that reports stream state, queue depth, last event time, last batch
+  time, last resync time, and resync count;</li>
+<li>explicit fallback to snapshot resync when stream integrity is uncertain.</li>
+</ul>
+<p>The first event stream implementation still uses the existing SSH restore path
+for each event batch. Long-lived target restore sessions can be added later if
+the batch restore path becomes the next bottleneck.</p>
+<p>See ADR 0016 for the design
+and migration plan.</p>
+<h2 id="check-it">Check it</h2>
+<pre><code class="language-bash">routerctl describe NAT44SessionSync/dslite-abc-sessions
+routerctl doctor nat
+routerd serve --controllers nat44-session-sync --config router.yaml
+</code></pre>
+<p>When <code>spec.when</code> is false, status stays <code>Pending</code> with reason <code>WhenFalse</code>. When
+a referenced <code>NAT44Rule</code> has not resolved <code>snatAddress</code> yet, status stays
+<code>Pending</code> with reason <code>SNATAddressPending</code>.</p>
+<p>For conntrackd mode, <code>routerctl doctor nat</code> fails when the runtime
+<code>nf_conntrack_tcp_be_liberal</code> value is not <code>1</code> or cannot be read. With
+<code>--no-host</code>, this check is reported as <code>skip</code>.</p>
+<h3 id="distribution-conntrackd-service-ownership">Distribution conntrackd service ownership</h3>
+<p>In <code>mode: conntrackd</code>, routerd masks and stops the distribution
+<code>conntrackd.service</code> before starting its managed synchronization unit. A
+<code>Conflicts=</code> relationship alone allows a package log rotation restart to stop
+synchronization. Disabling the distribution unit alone does not block such a
+restart. The mask is verified, and an existing local unit file is never forcibly
+overwritten; a failure stops reconciliation. Dry-run does not change services.</p>
+<p>The <code>systemd.mask/conntrackd.service</code> ownership intent is retained when the
+resource is removed. This also preserves a pre-existing administrator mask.
+To return to the distribution daemon, first remove conntrackd-mode resources,
+stop and disable their <code>routerd-conntrackd@*.service</code> units, inspect the saved
+service state, then explicitly run <code>systemctl unmask conntrackd.service</code> and
+restore only the previously intended enable/start state. Never unmask it while
+routerd still owns synchronization. No packet-forwarding or conntrack kernel
+table setting is changed by this protection.</p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#sync-selected-nat-rules">Sync selected NAT rules</a></li>
+<li><a href="#preserve-established-tcp-with-conntrackd">Preserve established TCP with conntrackd</a></li>
+<li><a href="#how-restore-works">How restore works</a></li>
+<li><a href="#event-stream-operation">Event stream operation</a></li>
+<li><a href="#check-it">Check it</a><ul>
+<li><a href="#distribution-conntrackd-service-ownership">Distribution conntrackd service ownership</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/how-to/nat44-session-sync.md">GitHub</a></div></footer></body></html>

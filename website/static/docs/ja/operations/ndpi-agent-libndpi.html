@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>nDPI エージェントのネイティブパッケージ · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/operations/ndpi-agent-libndpi.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/operations/ndpi-agent-libndpi.html" lang="en" hreflang="en">English</a><a href="/docs/ja/operations/ndpi-agent-libndpi.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/operations/ndpi-agent-libndpi.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/operations/ndpi-agent-libndpi.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="ndpi-エージェントのネイティブパッケージ">nDPI エージェントのネイティブパッケージ</h1>
+<p>routerd の通常の Linux リリースアーカイブは <code>CGO_ENABLED=0</code> でビルドし、同梱する routerd のバイナリをすべて静的リンクに保ちます。任意の <code>routerd-ndpi-agent-libndpi</code> アーカイブは、ネイティブの nDPI 分類が必要なホスト向けの例外パッケージです。</p>
+<p>このアーカイブに含まれるのは、次のものだけです。</p>
+<ul>
+<li><code>bin/routerd-ndpi-agent</code></li>
+<li><code>share/doc/README.md</code></li>
+<li><code>share/doc/VERSION</code></li>
+<li><code>share/doc/TARGET</code></li>
+</ul>
+<p>このバイナリは <code>CGO_ENABLED=1 -tags libndpi</code> でビルドし、対象システムの <code>libndpi</code> ランタイムにリンクします。すでに通常の routerd アーカイブをインストール済みのホストで、それを上書きするためのものです。</p>
+<h2 id="インストール">インストール</h2>
+<p>通常の routerd リリースアーカイブと、対応するネイティブエージェントのアーカイブを両方ダウンロードし、インストーラーに 1 つのトランザクションとして適用させます。</p>
+<pre><code class="language-sh">curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz.sha256
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz.sha256
+sha256sum -c routerd-linux-amd64.tar.gz.sha256
+sha256sum -c routerd-ndpi-agent-libndpi-linux-amd64.tar.gz.sha256
+tar -xzf routerd-linux-amd64.tar.gz
+sudo ./install.sh --with-ndpi \
+  --with-ndpi-archive ./routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
+</code></pre>
+<p>ホストには、アーカイブのビルド時と同じ共有ライブラリ ABI を持つ <code>libndpi</code> ランタイムパッケージが必要です。Debian/Ubuntu では、任意のランタイム依存関係を次でインストールします。</p>
+<pre><code class="language-sh">sudo apt-get install libndpi-bin
+</code></pre>
+<p>ネイティブバックエンドが有効になっているかを確認します。</p>
+<pre><code class="language-sh">sudo curl --silent --unix-socket /run/routerd/ndpi-agent/default.sock \
+  http://unix/v1/status
+</code></pre>
+<p>応答に <code>"libndpiLoaded": true</code> が含まれているはずです。</p>
+<h2 id="アップグレード時の注意">アップグレード時の注意</h2>
+<p>通常の routerd アーカイブには、既定の静的な <code>routerd-ndpi-agent</code> が含まれます。
+アップグレード時、<code>install.sh</code> は、既存のネイティブエージェントの <code>selftest</code> が <code>"libndpiLoaded": true</code> を返し、かつアーカイブ側のエージェントが返さない場合に、既存のネイティブエージェントを保持します。</p>
+<p>ネイティブのアプリケーション層分類が必要なホストでは、通常のインストーラーを <code>--with-ndpi</code> 付きで実行します。最終的にインストールされたエージェントが <code>"libndpiLoaded": true</code> を返さない場合、インストーラーは失敗します。これにより、静的なフォールバックがネイティブ nDPI の意図を黙って満たしてしまうことを防ぎます。</p>
+<p>新規インストールの場合や、ネイティブエージェントのアーカイブを正本として明示したい場合は、<code>--with-ndpi-archive PATH</code> を渡します。インストーラーは、アーカイブのターゲットマーカーを検証し、安全でない tar パスを拒否し、隣接する <code>.sha256</code> ファイルがあれば検証し、アーカイブ側のエージェントが <code>"libndpiLoaded": true</code> を返すかを確認します。オーバーレイが失敗した場合は、インストール全体をロールバックします。</p>
+<h2 id="設定">設定</h2>
+<p><code>routerd-dpi-classifier</code> は、<code>--engine auto</code> または <code>--engine ndpi-agent</code> と、エージェントのソケットを指す <code>--ndpi-agent-socket</code> を指定して構成する必要があります。
+<code>auto</code> を推奨します。ネイティブエージェントが利用できない場合に、組み込みの分類器へフォールバックするためです。</p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#インストール">インストール</a></li>
+<li><a href="#アップグレード時の注意">アップグレード時の注意</a></li>
+<li><a href="#設定">設定</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/operations/ndpi-agent-libndpi.md">GitHub</a></div></footer></body></html>

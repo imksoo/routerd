@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WAN 側サービス · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/tutorials/wan-side-services.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/tutorials/wan-side-services.html" lang="en" hreflang="en">English</a><a href="/docs/ja/tutorials/wan-side-services.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/tutorials/wan-side-services.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/tutorials/wan-side-services.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="wan-側サービス">WAN 側サービス</h1>
+<p>このページでは、ルーターの WAN 側を扱う routerd リソースを紹介します。
+WAN 側のリソースは、上流リンクの確立、ISP からの IP アドレスとプレフィックスの取得、トンネルの終端、複数の上流経路のコントローラーチェーンへの提供といった役割を担います。</p>
+<p>LAN 側 (ルーターから内側に提供するサービス) は <a href="lan-side-services.html">LAN 側サービス</a> を参照してください。</p>
+<h2 id="一覧">一覧</h2>
+<table>
+<thead>
+<tr>
+<th>役割</th>
+<th>リソース</th>
+<th>担当デーモン</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>物理 / 仮想インターフェース</td>
+<td><code>Interface</code>、<code>IPv4StaticAddress</code></td>
+<td>(kernel)</td>
+</tr>
+<tr>
+<td>ISP から DHCP で IPv4 を取得</td>
+<td><code>DHCPv4Client</code></td>
+<td><code>routerd-dhcpv4-client</code></td>
+</tr>
+<tr>
+<td>ISP から IPv6 prefix を取得</td>
+<td><code>DHCPv6PrefixDelegation</code>、<code>IPv6DelegatedAddress</code></td>
+<td><code>routerd-dhcpv6-client</code></td>
+</tr>
+<tr>
+<td>その他の DHCPv6 オプション (DNS、AFTR 等)</td>
+<td><code>DHCPv6Information</code></td>
+<td><code>routerd-dhcpv6-client</code></td>
+</tr>
+<tr>
+<td>上流の時刻サーバー</td>
+<td><code>NTPClient</code></td>
+<td><code>systemd-timesyncd</code> または <code>ntpd</code></td>
+</tr>
+<tr>
+<td>PPPoE セッション</td>
+<td><code>PPPoESession</code></td>
+<td><code>routerd-pppoe-client</code></td>
+</tr>
+<tr>
+<td>IPv6 上の IPv4 (DS-Lite)</td>
+<td><code>DSLiteTunnel</code></td>
+<td>(kernel <code>ip6tnl</code>)</td>
+</tr>
+<tr>
+<td>WAN 経路選択</td>
+<td><code>EgressRoutePolicy</code>、<code>HealthCheck</code></td>
+<td><code>routerd-healthcheck@&lt;name&gt;</code></td>
+</tr>
+<tr>
+<td>IPv4 NAT (masquerade)</td>
+<td><code>NAT44Rule</code></td>
+<td>(nftables)</td>
+</tr>
+<tr>
+<td>静的 IPv4 経路</td>
+<td><code>IPv4Route</code></td>
+<td>(kernel)</td>
+</tr>
+</tbody>
+</table>
+<p>ISP の提供形態に応じて、必要なリソースの組み合わせを選びます。</p>
+<h2 id="パターン-a-ネイティブデュアルスタック-ipv4-ipv6">パターン A: ネイティブデュアルスタック (IPv4 + IPv6)</h2>
+<p>ISP が同一 WAN インターフェースで IPv4 (DHCPv4) と IPv6 prefix (DHCPv6-PD) を配布する構成です。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: Interface
+  metadata: {name: wan}
+  spec:
+    ifname: ens18
+    role: untrust
+
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DHCPv4Client
+  metadata: {name: wan-v4}
+  spec:
+    interface: wan
+
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DHCPv6PrefixDelegation
+  metadata: {name: wan-pd}
+  spec:
+    interface: wan
+
+- apiVersion: net.routerd.net/v1alpha1
+  kind: IPv6DelegatedAddress
+  metadata: {name: lan-base}
+  spec:
+    pdRef: wan-pd
+    interface: lan
+    suffix: ::1/64
+
+- apiVersion: net.routerd.net/v1alpha1
+  kind: NAT44Rule
+  metadata: {name: lan-to-wan}
+  spec:
+    type: masquerade
+    egressInterface: wan
+    sourceRanges:
+      - 192.0.2.0/24
+</code></pre>
+<p><code>DHCPv4Client</code> は <code>routerd-dhcpv4-client</code> を起動し、リース内容を <code>lease.json</code> に書き込みます。アドレス自体は kernel が保持し、routerd は下流リソース向けにイベントを発行します。</p>
+<p><code>DHCPv6PrefixDelegation</code> は <code>routerd-dhcpv6-client</code> を使って IA_PD を取得します。<code>IPv6DelegatedAddress</code> は、取得したプレフィックスから LAN 側に配る <code>/64</code> (またはその他の長さ) を切り出します。</p>
+<h2 id="上流-ntp-sntp">上流 NTP / SNTP</h2>
+<p><code>NTPClient</code> は、DHCPv4 option 42 または DHCPv6 option 31 から時刻サーバーを取り出せます。
+上流が時刻サーバーを配布しない場合は、指定した公開 NTP サーバーを OS の NTP クライアントに設定します。
+Linux では <code>systemd-timesyncd</code>、FreeBSD では <code>ntpd</code> を使います。</p>
+<pre><code class="language-yaml">- apiVersion: system.routerd.net/v1alpha1
+  kind: NTPClient
+  metadata: {name: system-time}
+  spec:
+    provider: systemd-timesyncd
+    managed: true
+    source: auto
+    serverFrom:
+      - resource: DHCPv4Client/wan-v4
+        field: ntpServers
+      - resource: DHCPv6Information/wan-info
+        field: sntpServers
+    fallbackServers:
+      - ntp.jst.mfeed.ad.jp
+      - ntp.nict.jp
+</code></pre>
+<p>ルーター自身を LAN クライアントの時刻参照先として配る場合は、LAN 側の <code>ntpServerFrom</code> と <code>sntpServerFrom</code> を併用します。</p>
+<h2 id="パターン-b-pppoe-ipv4-dhcpv6-pd-ipv6">パターン B: PPPoE (IPv4) + DHCPv6-PD (IPv6)</h2>
+<p>旧来の xDSL 系で、IPv4 は PPPoE、IPv6 は同一物理リンクのネイティブ DHCPv6-PD で取得する構成です。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: PPPoESession
+  metadata: {name: wan-pppoe}
+  spec:
+    interface: wan
+    user: &quot;user@isp.example&quot;
+    passwordFromSecret: pppoe-password
+    mtu: 1454
+    mru: 1454
+
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DHCPv6PrefixDelegation
+  metadata: {name: wan-pd}
+  spec:
+    interface: wan
+</code></pre>
+<p><code>PPPoESession</code> は <code>routerd-pppoe-client</code> を起動し、Linux では <code>pppd</code>/<code>rp-pppoe</code>、FreeBSD では <code>ppp(8)</code> をラップします。PPPoE セッションのインターフェース (通常 <code>ppp0</code>) は、経路や <code>NAT44Rule</code> の対象として参照できます。</p>
+<h2 id="パターン-c-ds-lite-ipv6-のみのアクセス網で-ipv4-をトンネルする">パターン C: DS-Lite (IPv6 のみのアクセス網で IPv4 をトンネルする)</h2>
+<p>ISP がネイティブで IPv4 を渡さず、IPv6 のみを提供する構成です。IPv4 は AFTR (Address Family Transition Router) への DS-Lite トンネルで実現します。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DHCPv6PrefixDelegation
+  metadata: {name: wan-pd}
+  spec:
+    interface: wan
+
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DHCPv6Information
+  metadata: {name: wan-info}
+  spec:
+    interface: wan
+
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DSLiteTunnel
+  metadata: {name: ds-lite-primary}
+  spec:
+    sourceInterface: wan
+    aftrFQDN: gw.transix.jp
+    aftrFQDNResolverFromResource:
+      resource: DHCPv6Information/wan-info
+      field: dnsServers
+    mtu: 1454
+</code></pre>
+<p><code>DSLiteTunnel</code> は、AFTR アドレスを解決できた時点で kernel の <code>ip6tnl</code> デバイスとして作成されます。
+AFTR レコードはアクセス網内の DNS でしか解けないことが多いため、<code>aftrFQDNResolverFromResource</code> で ISP の DNS を使うようにしてください。</p>
+<h2 id="パターン-d-マルチ-wan-主回線-バックアップ">パターン D: マルチ WAN (主回線 + バックアップ)</h2>
+<p>複数の経路がある場合は、WAN 取得リソースに <code>EgressRoutePolicy</code> と <code>HealthCheck</code> を組み合わせます。詳細は <a href="../how-to/multi-wan.html">マルチ WAN 切替</a> を参照してください。</p>
+<h2 id="状態確認">状態確認</h2>
+<p>各 WAN リソースの状況は <code>routerctl describe &lt;kind&gt;/&lt;name&gt;</code> で確認できます。例:</p>
+<pre><code class="language-sh">routerctl describe DHCPv6PrefixDelegation/wan-pd      # phase: Bound, prefix: 2001:db8:1::/56
+routerctl describe DSLiteTunnel/ds-lite-primary       # phase: Up, aftr: 2001:db8:cafe::1
+routerctl describe EgressRoutePolicy/ipv4-default     # selectedCandidate: ds-lite-primary
+</code></pre>
+<p>Web 管理画面の「概要」「リソース」タブからも同じ情報を確認できます。「コネクション」タブでは、WAN 経路ごとの実際の conntrack/pf state を表示します。</p>
+<h2 id="関連項目">関連項目</h2>
+<ul>
+<li><a href="lan-side-services.html">LAN 側サービス</a></li>
+<li><a href="../how-to/multi-wan.html">マルチ WAN 切替</a></li>
+<li><a href="../how-to/flets-ipv6-setup.html">NTT NGN での DS-Lite</a></li>
+<li><a href="../concepts/path-mtu.html">Path MTU と MSS clamping</a></li>
+</ul></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#一覧">一覧</a></li>
+<li><a href="#パターン-a-ネイティブデュアルスタック-ipv4-ipv6">パターン A: ネイティブデュアルスタック (IPv4 + IPv6)</a></li>
+<li><a href="#上流-ntp-sntp">上流 NTP / SNTP</a></li>
+<li><a href="#パターン-b-pppoe-ipv4-dhcpv6-pd-ipv6">パターン B: PPPoE (IPv4) + DHCPv6-PD (IPv6)</a></li>
+<li><a href="#パターン-c-ds-lite-ipv6-のみのアクセス網で-ipv4-をトンネルする">パターン C: DS-Lite (IPv6 のみのアクセス網で IPv4 をトンネルする)</a></li>
+<li><a href="#パターン-d-マルチ-wan-主回線-バックアップ">パターン D: マルチ WAN (主回線 + バックアップ)</a></li>
+<li><a href="#状態確認">状態確認</a></li>
+<li><a href="#関連項目">関連項目</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/tutorials/wan-side-services.md">GitHub</a></div></footer></body></html>

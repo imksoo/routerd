@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SysctlProfile · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/reference/resources/SysctlProfile.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/reference/resources/SysctlProfile.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/SysctlProfile.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/SysctlProfile.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/reference/resources/SysctlProfile.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="sysctlprofile">SysctlProfile</h1>
+<p><a href="../resources.html#sysctlprofile">各資源的設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: system.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>依名稱套用路由器用sysctl集合，並可逐鍵覆寫；不是依名稱參照Sysctl資源。</p>
+<h2 id="指定條件與參照關係">指定條件與參照關係</h2>
+<ul>
+<li>覆寫既有鍵只改變值，保留比較方式與optional。新增鍵採exact比較及optional=false。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。</p>
+<pre><code class="language-yaml">- apiVersion: system.routerd.net/v1alpha1
+  kind: SysctlProfile
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    overrides: # 選填; object
+      &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # 選填; string
+    persistent: true # 選填; boolean
+    profile: &quot;router-linux&quot; # 必填; string; enum=[&quot;router-linux&quot;, &quot;router-freebsd&quot;]
+    runtime: true # 選填; boolean
+</code></pre>
+<h2 id="欄位意義與預設值">欄位意義與預設值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>欄位意義與預設值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.profile</code></td>
+<td>必填router-linux或router-freebsd，不依OS自動選擇。FreeBSD集合啟用IPv4/IPv6轉送；Linux還包含佇列、socket、TCP及可選conntrack調整。完整鍵值請見實作連結。</td>
+</tr>
+<tr>
+<td><code>spec.runtime</code></td>
+<td>將集合各項套用至目前核心；預設true。</td>
+</tr>
+<tr>
+<td><code>spec.persistent</code></td>
+<td>為各項寫入持久sysctl.d檔案；預設false，與runtime獨立。</td>
+</tr>
+<tr>
+<td><code>spec.overrides</code></td>
+<td>核心sysctl鍵至非空白字串值的對照，預設空；替換既有鍵值並新增其他鍵。拒絕含空白或/的鍵及空白值，不是資源參照。</td>
+</tr>
+</tbody>
+</table>
+<p>實作: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_system.go">pkg/config/validate_system.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/sysctl.go">pkg/controller/chain/sysctl.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/sysctlprofile/profile.go">pkg/sysctlprofile/profile.go</a></p>
+<h2 id="可參照的狀態欄位">可參照的狀態欄位</h2>
+<p>一般狀態參照驗證接受此 Kind 的下列欄位名稱。列於允許清單不保證目前有值，請檢查實際狀態。這些是輸出，不是 YAML spec 設定。</p>
+<p><code>phase</code>, <code>profile</code>, <code>dryRun</code></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#指定條件與參照關係">指定條件與參照關係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#欄位意義與預設值">欄位意義與預設值</a></li>
+<li><a href="#可參照的狀態欄位">可參照的狀態欄位</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/reference/resources/SysctlProfile.md">GitHub</a></div></footer></body></html>

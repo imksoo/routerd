@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NAT44 とファイアウォールの準備 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/tutorials/basic-firewall.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/tutorials/basic-firewall.html" lang="en" hreflang="en">English</a><a href="/docs/ja/tutorials/basic-firewall.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/tutorials/basic-firewall.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/tutorials/basic-firewall.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="nat44-とファイアウォールの準備">NAT44 とファイアウォールの準備</h1>
+<p>このページでは、LAN の IPv4 を WAN へ出す NAT44 の書き方と、
+ファイアウォール機能を扱うときの大切な注意を説明します。</p>
+<p>routerd のファイアウォール用リソースは、現在も API、検証、生成の土台を
+整えている段階です。このページの設定は、インターネット公開用ルーターの
+完成した安全設計やセキュリティ保証ではありません。</p>
+<p>WAN をインターネットへ公開したり、自宅・学校・職場の唯一の防御にしたり
+しないでください。隔離した Ubuntu Server VM での学習に限り、実運用では
+別に設計・検証した防御を用意してください。</p>
+<h2 id="nat44-は何をするか">NAT44 は何をするか</h2>
+<p>NAT44 は、LAN の複数のプライベート IPv4 アドレスが、WAN 側へ出るときに
+1 つの外向き IPv4 アドレスを共有できるようにする仕組みです。
+NAT は「外からの通信を安全に止める」仕組みそのものではありません。
+NAT とファイアウォールは別の役目だと考えてください。</p>
+<p>ここでは、次の構成を想定します。</p>
+<ul>
+<li><code>wan</code>: 上流ネットワークにつながるインターフェース</li>
+<li><code>lan</code>: テスト用クライアントにつながるインターフェース</li>
+<li><code>192.168.50.0/24</code>: テスト用 LAN のアドレス範囲</li>
+</ul>
+<h2 id="正しい-nat44rule-の形">正しい NAT44Rule の形</h2>
+<p>次のリソースを、<code>Router.spec.resources</code> の中へ追加します。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: NAT44Rule
+  metadata:
+    name: lan-to-wan
+  spec:
+    type: masquerade
+    egressInterface: wan
+    sourceRanges:
+      - 192.168.50.0/24
+</code></pre>
+<ul>
+<li><code>type: masquerade</code> は、LAN の送信元を WAN 側の IPv4 アドレスへ置き換える NAT を選びます。</li>
+<li><code>egressInterface</code> は、外へ出る側の routerd リソース名です。</li>
+<li><code>sourceRanges</code> は、NAT してよい LAN の範囲です。</li>
+</ul>
+<p>DHCP でアドレスを受ける WAN、PPPoE、DS-Lite のどれでも、基本の形は同じです。
+外向きのリソース名だけを実際の構成に合わせます。</p>
+<h2 id="ファイアウォール用のリソース">ファイアウォール用のリソース</h2>
+<p><code>FirewallZone</code>、<code>FirewallPolicy</code>、<code>FirewallRule</code> は、どの線をどの役割として
+扱いたいかを書くためのリソースです。たとえば、WAN を <code>untrust</code>、LAN を <code>trust</code>
+として書く形は次のようになります。</p>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallZone
+  metadata:
+    name: wan
+  spec:
+    role: untrust
+    interfaces:
+      - wan
+
+- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallZone
+  metadata:
+    name: lan
+  spec:
+    role: trust
+    interfaces:
+      - lan
+
+- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallPolicy
+  metadata:
+    name: lab-default
+  spec: {}
+</code></pre>
+<p>この YAML が通ることと、外部から安全であることは同じではありません。
+特に初めての構成では、VM コンソールを残し、WAN を外部へ公開しません。</p>
+<h2 id="daemon-の前に確認する">daemon の前に確認する</h2>
+<p>設定ファイル全体を作ったら、サービスを起動する前に <code>routerd</code> 本体で確認します。</p>
+<pre><code class="language-sh">LAB_DIR=&quot;$(mktemp -d)&quot;
+sudo routerd validate --config ./router.yaml
+sudo routerd apply --config ./router.yaml --once --dry-run \
+  --state-file &quot;$LAB_DIR/state.db&quot; \
+  --status-file &quot;$LAB_DIR/status.json&quot;
+</code></pre>
+<p>NAT の対象が <code>192.168.50.0/24</code> だけか、WAN と LAN の取り違えがないか、
+dry-run の結果で確認します。</p>
+<h2 id="サービス起動後の観察">サービス起動後の観察</h2>
+<p>サービスを起動した<strong>後で</strong>、<code>routerctl</code> と <code>nft</code> で観察できます。</p>
+<pre><code class="language-sh">sudo systemctl is-active routerd.service
+sudo routerctl get status
+sudo routerctl describe NAT44Rule/lan-to-wan
+sudo routerctl firewall test from=wan to=lan proto=tcp dport=22
+sudo nft list table ip routerd_nat
+sudo nft list table inet routerd_filter
+</code></pre>
+<p>これらは「今見えている設定」を確認するためのコマンドです。外部攻撃に耐える
+ことの証明にはなりません。</p>
+<h2 id="次に読むもの">次に読むもの</h2>
+<ul>
+<li><a href="../config-examples/basic-ipv4-nat.html">基本的な IPv4 NAT ルーター</a></li>
+<li><a href="../concepts/firewall.html">ファイアウォールのコンセプト</a></li>
+<li><a href="../platforms.html">対応プラットフォーム</a> — Linux 以外の現在の対応範囲</li>
+</ul></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#nat44-は何をするか">NAT44 は何をするか</a></li>
+<li><a href="#正しい-nat44rule-の形">正しい NAT44Rule の形</a></li>
+<li><a href="#ファイアウォール用のリソース">ファイアウォール用のリソース</a></li>
+<li><a href="#daemon-の前に確認する">daemon の前に確認する</a></li>
+<li><a href="#サービス起動後の観察">サービス起動後の観察</a></li>
+<li><a href="#次に読むもの">次に読むもの</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/tutorials/basic-firewall.md">GitHub</a></div></footer></body></html>

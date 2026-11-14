@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>routerdの使い方 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/intro.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/intro.html" lang="en" hreflang="en">English</a><a href="/docs/ja/intro.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/intro.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/intro.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="routerdの使い方">routerdの使い方</h1>
+<p>routerdはYAMLに宣言したネットワーク構成をホストへ反映します。全体の設定をGitで管理し、アドレスを重複記述する代わりに名前付きリソースを参照します。DHCP・PD・BGPで取得する状態は静的設定として固定しません。</p>
+<ul>
+<li><a href="install-and-upgrade.html">インストールと更新</a></li>
+<li><a href="concepts/design-philosophy.html">設定の考え方</a></li>
+<li><a href="reference/resources.html">リソース別のフィールドとYAML</a></li>
+<li><a href="config-examples/index.html">設定例</a></li>
+<li><a href="operations/reconcile.html">運用</a></li>
+</ul>
+<p>例のインターフェース名・アドレス・対向設定を変更して使います。まずローカルで検証し、対象ルーターで計画を確認してください。--replaceは全体設定にだけ使います。反映時には管理接続も変わり得るため、コンソールを確保します。</p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul></ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/intro.md">GitHub</a></div></footer></body></html>

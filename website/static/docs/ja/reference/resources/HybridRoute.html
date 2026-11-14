@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HybridRoute · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/reference/resources/HybridRoute.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/reference/resources/HybridRoute.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/HybridRoute.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/reference/resources/HybridRoute.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/HybridRoute.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="hybridroute">HybridRoute</h1>
+<p><a href="../resources.html#hybridroute">リソース別の設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: hybrid.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>列挙したIPv4宛先網を、OverlayPeer経由の主経路表IPv4Routeへ展開します。</p>
+<h2 id="指定条件と参照関係">指定条件と参照関係</h2>
+<ul>
+<li>デフォルトでないIPv4 CIDRのみです。default・0.0.0.0/0・IPv6・主表以外は拒否します。宛先をネットワーク化し、&lt;資源名&gt;-<CIDR内の英数字以外の連続をハイフン化>、例branch-10-20-0-0-16の名前を生成します。</li>
+<li>生成名は一意で、明示IPv4Routeの名前・宛先との衝突はエラーです。同じHybridRoute内の正規化宛先重複も衝突します。HealthCheck異常はHybridRouteの状態表示だけを変え、適用待機・経路撤去・別相手選択は行いません。</li>
+<li>生成IPv4Routeはpeerのunderlay.interfaceをdeviceに使います。ipsecだけremote.addressがIPv4ならgatewayにし、他はデバイス経路です。トンネル・VPN設定と到達性は別途用意します。Linuxは正のmetricを使い、FreeBSDのIPv4Route適用はmetricを使いません。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
+<pre><code class="language-yaml">- apiVersion: hybrid.routerd.net/v1alpha1
+  kind: HybridRoute
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    destinationCIDRs: # 必須; array
+      - &quot;&lt;string&gt;&quot; # string
+    healthCheckRef: &quot;&lt;string&gt;&quot; # 任意; string
+    install: # 任意; object
+      metric: 0 # 任意; integer; minimum=0
+      table: &quot;&quot; # 任意; string; enum=[&quot;&quot;, &quot;main&quot;]
+    peerRef: &quot;&lt;string&gt;&quot; # 必須; string
+</code></pre>
+<h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>項目の意味と既定値</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.destinationCIDRs</code></td>
+<td>デフォルト経路を除く1件以上のIPv4 CIDRが必須です。相手ネットワークの補完・検出はしません。</td>
+</tr>
+<tr>
+<td><code>spec.peerRef</code></td>
+<td>既存OverlayPeerのmetadata.nameが必須です。展開関数はOverlayPeer/nameを正規化できますが、通常参照検証は裸名を必要とします。</td>
+</tr>
+<tr>
+<td><code>spec.install</code></td>
+<td>経路適用設定です。既定は主表・metric 0で、ポリシールーティング・HA自動選択ではありません。</td>
+</tr>
+<tr>
+<td><code>spec.install.table</code></td>
+<td>空・mainだけを許し、どちらも主表IPv4Routeにします。他の表名・番号は拒否します。</td>
+</tr>
+<tr>
+<td><code>spec.install.metric</code></td>
+<td>0以上の整数で既定0です。生成IPv4Routeへコピーし、Linuxは正値だけを出力しFreeBSDは使いません。</td>
+</tr>
+<tr>
+<td><code>spec.healthCheckRef</code></td>
+<td>既存HealthCheckの任意裸名です。空なら監視状態追加なしです。Unhealthy・failed・errorはDegradedにしますが経路は変えず、この関数は未取得・unknownを異常扱いしません。</td>
+</tr>
+</tbody>
+</table>
+<p>実装: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_hybrid.go">pkg/config/validate_hybrid.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/hybrid/hybrid.go">pkg/hybrid/hybrid.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/dynamic_effective.go">pkg/controller/chain/dynamic_effective.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/hybrid.go">pkg/controller/chain/hybrid.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/phase2.go">pkg/controller/chain/phase2.go</a></p>
+<h2 id="状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</h2>
+<p>通常の状態値参照の検証で、このKindについて許可するフィールド名です。許可一覧にあるだけでは値の生成・取得を保証しないため、実際の状態を確認してください。YAMLのspecに設定する項目ではなく出力です。</p>
+<p><code>phase</code>, <code>routes</code>, <code>peerRef</code>, <code>defaultRouteUntouched</code>, <code>estimatedMTU</code></p>
+<p><a href="/examples/hybrid-l3-fou.yaml">設定例</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
+<li><a href="#状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/reference/resources/HybridRoute.md">GitHub</a></div></footer></body></html>

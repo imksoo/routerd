@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NTPClient · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/reference/resources/NTPClient.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/reference/resources/NTPClient.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/NTPClient.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/NTPClient.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/reference/resources/NTPClient.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="ntpclient">NTPClient</h1>
+<p><a href="../resources.html#ntpclient">各資源的設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: system.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>管理或觀察向上游同步時間的用戶端。</p>
+<h2 id="指定條件與參照關係">指定條件與參照關係</h2>
+<ul>
+<li>managed=true須宣告servers/serverFrom/fallbackServers至少一項，static還要求servers本身。無法解析上游時用戶端為Pending/NoServers；管理chrony時停用系統systemd-timesyncd。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。</p>
+<pre><code class="language-yaml">- apiVersion: system.routerd.net/v1alpha1
+  kind: NTPClient
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    fallbackServers: # 選填; array
+      - &quot;&lt;string&gt;&quot; # string
+    interface: &quot;&lt;string&gt;&quot; # 選填; string
+    managed: true # 選填; boolean
+    provider: &quot;systemd-timesyncd&quot; # 選填; string; enum=[&quot;systemd-timesyncd&quot;, &quot;chrony&quot;, &quot;ntpd&quot;]
+    serverFrom: # 選填; array
+      - # object
+        field: &quot;&lt;string&gt;&quot; # 選填; string
+        optional: true # 選填; boolean
+        resource: &quot;&lt;string&gt;&quot; # 必填; string
+    servers: # 選填; array
+      - &quot;&lt;string&gt;&quot; # string
+    source: &quot;static&quot; # 選填; string; enum=[&quot;static&quot;, &quot;auto&quot;, &quot;dhcp&quot;, &quot;dhcpv6&quot;]
+    when: # 選填; object
+      state: # 選填; object
+        &quot;&lt;key&gt;&quot;: # 選填; object
+          contains: &quot;&lt;string&gt;&quot; # 選填; string
+          equals: &quot;&lt;string&gt;&quot; # 選填; string
+          exists: true # 選填; boolean
+          for: &quot;&lt;string&gt;&quot; # 選填; string
+          in: # 選填; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # 選填; string
+          status: &quot;set&quot; # 選填; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<h2 id="欄位意義與預設值">欄位意義與預設值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>欄位意義與預設值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.provider</code></td>
+<td>用戶端實作，通常預設systemd-timesyncd，FreeBSD預設ntpd，也接受chrony。ntpd需要FreeBSD rc.d，systemd-timesyncd需要平台支援。</td>
+</tr>
+<tr>
+<td><code>spec.managed</code></td>
+<td>預設false，只記錄Observed，不設定或啟動時間服務；管理檔案與服務時設true。</td>
+</tr>
+<tr>
+<td><code>spec.source</code></td>
+<td>預設static，使用servers。auto/dhcp/dhcpv6皆依serverFrom解析值、fallbackServers、servers的順序選取，不會自動探索DHCP來源。</td>
+</tr>
+<tr>
+<td><code>spec.interface</code></td>
+<td>選填邏輯介面名稱，預設空；指定時Router整體驗證要求存在。NTP controller不用它選來源或綁定服務。</td>
+</tr>
+<tr>
+<td><code>spec.servers</code></td>
+<td>上游主機名稱或IP，預設空；managed=true且source省略或static時必填。各項須為非空白單一值，不是資源參照。</td>
+</tr>
+<tr>
+<td><code>spec.serverFrom</code></td>
+<td>明確值來源清單，預設空。例如DHCPv4Client/wan的ntpServers或DHCPv6PrefixDelegation/wan-pd的sntpServers。只用於auto/dhcp/dhcpv6，每個resource與field須存在。 此解析器不使用optional旗標，缺值即選下一種替代來源。</td>
+</tr>
+<tr>
+<td><code>spec.fallbackServers</code></td>
+<td>備用上游，預設空；動態來源的serverFrom無值時採用。systemd-timesyncd還會產生FallbackNTP，chrony與ntpd不產生獨立備用指令。</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>啟用條件，省略不設限制；state/all/any、unknown及時間條件請見共用條件參考。</td>
+</tr>
+</tbody>
+</table>
+<p>實作: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_system.go">pkg/config/validate_system.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/ntp.go">pkg/controller/chain/ntp.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/resourcequery/resourcequery.go">pkg/resourcequery/resourcequery.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a></p>
+<h2 id="可參照的狀態欄位">可參照的狀態欄位</h2>
+<p>一般狀態參照驗證接受此 Kind 的下列欄位名稱。列於允許清單不保證目前有值，請檢查實際狀態。這些是輸出，不是 YAML spec 設定。</p>
+<p><code>phase</code>, <code>servers</code>, <code>source</code>, <code>updatedAt</code></p>
+<p><a href="/examples/router-lab.yaml">設定範例</a></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#指定條件與參照關係">指定條件與參照關係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#欄位意義與預設值">欄位意義與預設值</a></li>
+<li><a href="#可參照的狀態欄位">可參照的狀態欄位</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/reference/resources/NTPClient.md">GitHub</a></div></footer></body></html>

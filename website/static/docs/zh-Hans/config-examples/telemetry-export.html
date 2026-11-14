@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>将遥测数据发送至 OTLP 收集器 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/config-examples/telemetry-export.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/config-examples/telemetry-export.html" lang="en" hreflang="en">English</a><a href="/docs/ja/config-examples/telemetry-export.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/config-examples/telemetry-export.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/config-examples/telemetry-export.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="将遥测数据发送至-otlp-收集器">将遥测数据发送至 OTLP 收集器</h1>
+<p>此示例演示如何将 routerd 的遥测数据发送至 OpenTelemetry 收集器。
+可用于观测长时间运行状态、健康检查、DPI 以及应用操作的延迟。</p>
+<p>完整的 YAML 位于 <code>examples/telemetry-export.yaml</code>。</p>
+<h2 id="架构图">架构图</h2>
+<pre><code class="language-mermaid">flowchart LR
+  router[&quot;[1] routerd host&quot;]
+  collector[&quot;[2] OTLP collector&lt;br/&gt;collector.example.internal:4317&quot;]
+  backend[&quot;[3] metrics / logs / traces backend&quot;]
+
+  router --&gt; collector --&gt; backend
+</code></pre>
+<h2 id="图示对照表">图示对照表</h2>
+<table>
+<thead>
+<tr>
+<th>编号</th>
+<th>说明</th>
+<th>主要资源</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>[1]</td>
+<td>输出 logs、metrics、traces 的 routerd 程序。</td>
+<td><code>Telemetry/otlp</code></td>
+</tr>
+<tr>
+<td>[2]</td>
+<td>OTLP 收集器的 endpoint。</td>
+<td><code>Telemetry.spec.otlp.endpoint</code></td>
+</tr>
+<tr>
+<td>[3]</td>
+<td>收集器转发的目标后端。</td>
+<td>routerd 管理范围外</td>
+</tr>
+</tbody>
+</table>
+<h2 id="重点说明">重点说明</h2>
+<pre><code class="language-yaml"># [1] 启用 routerd 遥测数据导出。
+- apiVersion: observability.routerd.net/v1alpha1
+  kind: Telemetry
+  metadata:
+    name: otlp
+  spec:
+    # [2] OTLP collector 端点。
+    otlp:
+      endpoint: http://collector.example.internal:4317
+      insecure: true
+    serviceNamespace: routerd
+    attributes:
+      deployment.environment: lab
+      site: example
+    signals:
+      - logs
+      - metrics
+      - traces
+</code></pre>
+<h2 id="确认步骤">确认步骤</h2>
+<p>先在 daemon 未启动时进行独立检查。以下命令需要具有 <code>sudo</code> 权限的本地用户，但不会应用网络变更。</p>
+<pre><code class="language-bash">LAB_DIR=&quot;$(mktemp -d)&quot;
+sudo routerd validate --config examples/telemetry-export.yaml
+sudo routerd apply --config examples/telemetry-export.yaml --once --dry-run \
+  --state-file &quot;$LAB_DIR/state.db&quot; \
+  --status-file &quot;$LAB_DIR/status.json&quot;
+rm -rf &quot;$LAB_DIR&quot;
+</code></pre>
+<p>服务运行后，可在路由器上使用 <code>sudo routerctl describe Telemetry/otlp</code>；请同时确认收集器及后端均已正确接收数据。
+endpoint 应置于可信任的管理网络或专用观测网络中。</p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#架构图">架构图</a></li>
+<li><a href="#图示对照表">图示对照表</a></li>
+<li><a href="#重点说明">重点说明</a></li>
+<li><a href="#确认步骤">确认步骤</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/config-examples/telemetry-export.md">GitHub</a></div></footer></body></html>

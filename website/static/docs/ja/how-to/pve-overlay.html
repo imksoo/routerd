@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ハイパーバイザー間のオーバーレイ VPN を置き換える · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/how-to/pve-overlay.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/how-to/pve-overlay.html" lang="en" hreflang="en">English</a><a href="/docs/ja/how-to/pve-overlay.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/how-to/pve-overlay.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/pve-overlay.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="ハイパーバイザー間のオーバーレイ-vpn-を置き換える">ハイパーバイザー間のオーバーレイ VPN を置き換える</h1>
+<h2 id="想定するシーン">想定するシーン</h2>
+<p>ハイパーバイザークラスター (Proxmox VE、KVM など) で、ノード間のブリッジを、すでに何らかの重量級のオーバーレイ VPN (ベンダー製の SoftEther bridge、別の tap ベースのトンネルなど) に乗せている構成です。
+症状としては、別ホスト上のゲスト同士の通信が遅い、MTU がずれる、ハイパーバイザー本体やルーターとは別の製品なので運用が脆い、といった問題があります。</p>
+<p>これを、次の性質を備えた仕組みに置き換えたいとします。</p>
+<ul>
+<li>他のネットワーク設定と同じく、宣言型で管理する。</li>
+<li>L2 拡張ではなく、原則として L3 経路にする。</li>
+<li>MTU の挙動が予測できる。</li>
+<li>すでに使っている <code>routerctl</code> と Web 管理画面から観測できる。</li>
+</ul>
+<h2 id="routerd-での解決方法">routerd での解決方法</h2>
+<p>routerd は、オーバーレイを 4 つのプリミティブでモデル化します。</p>
+<table>
+<thead>
+<tr>
+<th>リソース</th>
+<th>役割</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>WireGuardInterface</code></td>
+<td>ハイパーバイザー間の暗号化 L3 underlay</td>
+</tr>
+<tr>
+<td><code>WireGuardPeer</code></td>
+<td>ピア (リモートホスト) ごとの公開鍵、エンドポイント、許可 IP</td>
+</tr>
+<tr>
+<td><code>VXLANTunnel</code></td>
+<td>underlay 上に乗せる L2 セグメント (本当に L2 拡張が必要なときのみ)</td>
+</tr>
+<tr>
+<td><code>EgressRoutePolicy</code> + <code>HealthCheck</code></td>
+<td>underlay の準備完了確認と L3 フェイルオーバー (任意)</td>
+</tr>
+</tbody>
+</table>
+<p>可能な限り L3 ルーティングを優先してください。L2 拡張は MTU の制約 (Ethernet ヘッダー + WireGuard のオーバーヘッド + VXLAN ヘッダー) を重ねるうえに、ブロードキャストストームが複数ホスト規模に広がります。
+<code>VXLANTunnel</code> は、本当にホスト間で広げる必要があるセグメントだけに使ってください。</p>
+<h2 id="最小構成">最小構成</h2>
+<p>ハイパーバイザー 2 ホスト (<code>alpha</code> / <code>beta</code>) が既存の IP トランスポートでつながっている前提で、まず WireGuard underlay を立ち上げ、必要なら VXLAN を 1 セグメント載せます。</p>
+<h3 id="2-ホスト間の-underlay">2 ホスト間の underlay</h3>
+<pre><code class="language-yaml">apiVersion: net.routerd.net/v1alpha1
+kind: WireGuardInterface
+metadata:
+  name: wg-cluster
+spec:
+  listenPort: 51820
+  mtu: 1420
+  privateKeyFile: /usr/local/etc/routerd/secrets/wg-cluster.key
+---
+apiVersion: net.routerd.net/v1alpha1
+kind: WireGuardPeer
+metadata:
+  name: beta
+spec:
+  interface: wg-cluster
+  publicKey: &quot;&lt;beta-public-key&gt;&quot;
+  endpoint: &quot;beta.cluster.example.net:51820&quot;
+  allowedIPs:
+    - 10.250.0.2/32
+  persistentKeepalive: 25
+</code></pre>
+<p><code>mtu: 1420</code> は、IPv4 underlay の既定値として保守的な値です (1500 - 20 IP - 8 UDP - 32 WireGuard オーバーヘッド - 8 nonce/key = 1432 が理論値で、余裕を込めています)。</p>
+<h3 id="underlay-上の-l2-拡張セグメント">Underlay 上の L2 拡張セグメント</h3>
+<pre><code class="language-yaml">apiVersion: net.routerd.net/v1alpha1
+kind: VXLANTunnel
+metadata:
+  name: vx-bridge1
+spec:
+  vni: 123001
+  localAddress: 10.250.0.1
+  peers:
+    - 10.250.0.2
+  underlayInterface: wg-cluster
+  udpPort: 4789
+  mtu: 1370
+</code></pre>
+<p>VXLAN は 50 バイトのヘッダー (外側 Ethernet 14 + 外側 IPv4 20 + UDP 8 + VXLAN 8) を加えるため、1420 の WireGuard 内では内側の MTU が 1370 になります。
+カプセル化を重ねるときは、MTU を明示し、自動計算に任せないでください。</p>
+<h2 id="動作確認">動作確認</h2>
+<pre><code class="language-sh"># Underlay
+routerctl describe WireGuardInterface/wg-cluster
+ip -d link show wg-cluster
+ping -M do -s 1392 &lt;peer-underlay-address&gt;   # 1420 - 20 IP - 8 ICMP
+
+# Overlay
+routerctl describe VXLANTunnel/vx-bridge1
+ip -d link show vx-bridge1
+ping -M do -s 1342 &lt;peer-overlay-host&gt;        # 1370 - 20 IP - 8 ICMP
+</code></pre>
+<p><code>routerctl doctor --probe egress</code> も役立ちます (例: 拠点向けのトラフィックを、公衆のデフォルト経路ではなく WireGuard underlay へ流したいとき)。</p>
+<h2 id="運用上のヒント">運用上のヒント</h2>
+<ul>
+<li><strong>まず 1 ホストのペアから試す</strong>。WireGuard や VXLAN が収束しない場合に備えて、ハイパーバイザーのコンソールアクセスを確保しておきます。</li>
+<li><strong>MTU の誤りは「ping は速いが大容量転送だけ遅い」という現象の最大の要因</strong>。<code>ping -M do -s &lt;size&gt;</code> で underlay と overlay の両方の MTU を確認してから本番に投入してください。</li>
+<li><strong>Linux NIC の offload をむやみに切らないでください</strong>。TSO/GSO/GRO そのものは、通常は問題ありません。<code>mtu greater than device maximum</code> の真因は、ゲスト側ではなくハイパーバイザーの tap/veth の offload にあることが多いです。</li>
+<li><strong>移行期間中は、新旧のオーバーレイを同一セグメントに載せない</strong>。新しい WireGuard underlay は旧 SoftEther とは別のセグメントに置き、計画的にカットオーバーしてください。</li>
+</ul>
+<h2 id="関連項目">関連項目</h2>
+<ul>
+<li><a href="../concepts/path-mtu.html">Path MTU と MSS clamping</a></li>
+<li><a href="multi-wan.html">マルチ WAN 切替</a></li>
+</ul></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#想定するシーン">想定するシーン</a></li>
+<li><a href="#routerd-での解決方法">routerd での解決方法</a></li>
+<li><a href="#最小構成">最小構成</a><ul>
+<li><a href="#2-ホスト間の-underlay">2 ホスト間の underlay</a></li>
+<li><a href="#underlay-上の-l2-拡張セグメント">Underlay 上の L2 拡張セグメント</a></li>
+</ul>
+</li>
+<li><a href="#動作確認">動作確認</a></li>
+<li><a href="#運用上のヒント">運用上のヒント</a></li>
+<li><a href="#関連項目">関連項目</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/how-to/pve-overlay.md">GitHub</a></div></footer></body></html>

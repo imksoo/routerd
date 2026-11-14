@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DSLiteTunnel · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/reference/resources/DSLiteTunnel.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/reference/resources/DSLiteTunnel.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/DSLiteTunnel.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/reference/resources/DSLiteTunnel.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/DSLiteTunnel.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="dslitetunnel">DSLiteTunnel</h1>
+<p><a href="../resources.html#dslitetunnel">リソース別の設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>AFTRへ向けてIPv4をIPv6にカプセル化します。トンネル作成、IPv4デフォルト経路、NAT、疎通確認は別の設定・処理です。</p>
+<h2 id="指定条件と参照関係">指定条件と参照関係</h2>
+<ul>
+<li>無効時もinterfaceとaftrFrom・aftrFQDN・aftrIPv6・remoteAddressのいずれかが必須です。AFTR指定は併用でき、実行時はこの順で解決できるものを探します。</li>
+<li>localAddressは外側のIPv6送信元ですが、現行のlocalAddressFromは内側のIPv4送信元を選びます。両者は置き換え可能な指定ではありません。内側送信元の既定は192.0.0.2、対向は192.0.0.1です。IPv4の参照がなければ既定の送信元を使います。</li>
+<li>AFTR・送信元・依存値の未解決はPendingです。Upはトンネル・リンク設定を示し、AFTRやインターネットへの疎通を保証しません。有効化条件が偽、または無効なリソースは未使用のトンネルを削除しますが、依存条件の不成立だけでは処理を見送るため即時削除を保証しません。</li>
+<li>Linuxはip6tnlのipip6、FreeBSDはgifを使います。gif名でない希望名はgif100～gif999へ決定的に変換し、実名を状態で公開します。廃止したaftrSource・ready_whenは拒否されるため、aftrFrom・dependsOnを使います。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DSLiteTunnel
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    aftrAddressOrdinal: 1 # 任意; integer; minimum=1
+    aftrAddressSelection: &quot;ordinal&quot; # 任意; string; enum=[&quot;ordinal&quot;, &quot;ordinalModulo&quot;]
+    aftrDNSServers: # 任意; array
+      - &quot;&lt;string&gt;&quot; # string
+    aftrFQDN: &quot;&lt;string&gt;&quot; # 任意; string
+    aftrFrom: # 任意; object
+      field: &quot;&lt;string&gt;&quot; # 任意; string
+      optional: true # 任意; boolean
+      resource: &quot;&lt;string&gt;&quot; # 必須; string
+    aftrIPv6: &quot;&lt;string&gt;&quot; # 任意; string
+    defaultRoute: true # 任意; boolean
+    dependsOn: # 任意; array
+      - # object
+        equals: &quot;&lt;string&gt;&quot; # 任意; string
+        field: &quot;&lt;string&gt;&quot; # 任意; string
+        notEmpty: true # 任意; boolean
+        optional: true # 任意; boolean
+        phase: &quot;&lt;string&gt;&quot; # 任意; string
+        resource: &quot;&lt;string&gt;&quot; # 必須; string
+    enabled: true # 任意; boolean
+    encapsulationLimit: &quot;&lt;string&gt;&quot; # 任意; string
+    interface: &quot;&lt;string&gt;&quot; # 必須; string
+    localAddress: &quot;&lt;string&gt;&quot; # 任意; string
+    localAddressFrom: # 任意; object
+      field: &quot;&lt;string&gt;&quot; # 任意; string
+      optional: true # 任意; boolean
+      resource: &quot;&lt;string&gt;&quot; # 必須; string
+    localAddressSource: &quot;interface&quot; # 任意; string; enum=[&quot;interface&quot;, &quot;static&quot;, &quot;delegatedAddress&quot;]
+    localAddressSuffix: &quot;&lt;string&gt;&quot; # 任意; string
+    localDelegatedAddress: &quot;&lt;string&gt;&quot; # 任意; string
+    mtu: 1280 # 任意; integer; minimum=1280; maximum=65535
+    remoteAddress: &quot;&lt;string&gt;&quot; # 任意; string
+    routeMetric: 0 # 任意; integer; minimum=0
+    tunnelName: &quot;&lt;string&gt;&quot; # 任意; string
+    when: # 任意; object
+      state: # 任意; object
+        &quot;&lt;key&gt;&quot;: # 任意; object
+          contains: &quot;&lt;string&gt;&quot; # 任意; string
+          equals: &quot;&lt;string&gt;&quot; # 任意; string
+          exists: true # 任意; boolean
+          for: &quot;&lt;string&gt;&quot; # 任意; string
+          in: # 任意; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # 任意; string
+          status: &quot;set&quot; # 任意; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>項目の意味と既定値</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.interface</code></td>
+<td>宣言済みの論理アンダーレイインターフェースが必須で、通常の参照検証で存在を確認します。</td>
+</tr>
+<tr>
+<td><code>spec.tunnelName</code></td>
+<td>任意のデバイス名で、既定はmetadata.nameです。FreeBSDは前述のgif名に変換する場合があります。</td>
+</tr>
+<tr>
+<td><code>spec.enabled</code></td>
+<td>既定はtrueです。falseは未使用の設定トンネルを削除しDisabledにしますが、検証は免除しません。</td>
+</tr>
+<tr>
+<td><code>spec.aftrFQDN</code></td>
+<td>任意のAFTRホスト名で、空白・スラッシュは禁止です。aftrFromの後、固定アドレスの前に試します。</td>
+</tr>
+<tr>
+<td><code>spec.aftrIPv6</code></td>
+<td>任意のAFTR IPv6アドレスです。aftrFQDNの後に試し、既定値はありません。</td>
+</tr>
+<tr>
+<td><code>spec.remoteAddress</code></td>
+<td>解決順序の最後に使う任意のAFTR IPv6アドレスです。内側IPv4の宛先ではありません。</td>
+</tr>
+<tr>
+<td><code>spec.aftrFrom</code></td>
+<td>共通のresource・field参照で、通常はDHCPv6のAFTR名を使います。実在する参照先・提供フィールドが必要です。同じリソースのdnsServersも読み、aftrDNSServersに加えます。</td>
+</tr>
+<tr>
+<td><code>spec.aftrDNSServers</code></td>
+<td>任意のIPv4・IPv6 DNSサーバーです。53番で問い合わせます。明示値・参照由来の両方がなければ実行時は既定で127.0.0.1:1053を使います。宣言してもリゾルバーは起動しないため、利用可能なサーバーを指定します。</td>
+</tr>
+<tr>
+<td><code>spec.aftrAddressOrdinal</code></td>
+<td>AAAAの1始まりの選択番号で、既定は1です。番号・選択モードを明示するとIPv6文字列の辞書順で選び、両方省略ならリゾルバーの順序を使います。</td>
+</tr>
+<tr>
+<td><code>spec.aftrAddressSelection</code></td>
+<td>既定はordinalで、件数外の番号は失敗します。ordinalModuloは番号−1を件数で循環させ、AFTR間の通信量を分散する指定ではありません。</td>
+</tr>
+<tr>
+<td><code>spec.localAddress</code></td>
+<td>任意の外側IPv6送信元です。localAddressSource:staticでは必須で、内側IPv4送信元ではありません。</td>
+</tr>
+<tr>
+<td><code>spec.localAddressFrom</code></td>
+<td>内側IPv4の共通状態参照です。状態を先に読み、次に宣言済みIPv4StaticAddress.addressを読みます。必須値未解決はPending、optional:trueは192.0.0.2へ戻ります。有効なユニキャストIPv4が必要です。</td>
+</tr>
+<tr>
+<td><code>spec.localAddressSource</code></td>
+<td>既定のinterfaceはlocalAddressがなければ利用可能なグローバルIPv6を探します。staticはlocalAddress必須です。delegatedAddressはlocalDelegatedAddressから導出し、DAD完了まで/128を準備して待つ場合があります。</td>
+</tr>
+<tr>
+<td><code>spec.localDelegatedAddress</code></td>
+<td>既存IPv6DelegatedAddressの裸名で、delegatedAddress時に必須です。他モードでも指定した参照は存在を確認します。</td>
+</tr>
+<tr>
+<td><code>spec.localAddressSuffix</code></td>
+<td>任意のIPv6サフィックスです。委譲モードの優先順は本項目→参照先addressSuffix→::1です。interfaceモードでもこの値で送信元を導出できます。</td>
+</tr>
+<tr>
+<td><code>spec.defaultRoute</code></td>
+<td>既定はfalseです。FreeBSDの実行処理は192.0.0.1経由のデフォルト経路を変更・追加できます。Linuxのトンネル処理はこの値でIPv4デフォルトを作らないため、IPv4Route・EgressRoutePolicyを使います。</td>
+</tr>
+<tr>
+<td><code>spec.routeMetric</code></td>
+<td>任意の0以上の整数で、デコード時の既定は0です。現行DS-Liteの実行処理はデフォルト経路設定にこの値を渡しません。</td>
+</tr>
+<tr>
+<td><code>spec.mtu</code></td>
+<td>任意の1280～65535で、実行時の既定は1460です。トンネルリンクに適用し、アンダーレイ経路がそのサイズを通すことは保証しません。</td>
+</tr>
+<tr>
+<td><code>spec.encapsulationLimit</code></td>
+<td>Linuxのencaplimit引数で、既定はnoneです。詳細値をここでは検証せず、不正値はipコマンドで失敗します。FreeBSDの実行処理では使いません。</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>任意の共通有効化条件で、既定は無条件です。偽なら未使用の設定トンネルを削除します。</td>
+</tr>
+<tr>
+<td><code>spec.dependsOn</code></td>
+<td>共通依存条件のANDリストで、既定は空です。不成立ならPending/DependsOnFalseとしてトンネル更新を見送ります。</td>
+</tr>
+</tbody>
+</table>
+<p>実装: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_wan.go">pkg/config/validate_wan.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/phase2.go">pkg/controller/chain/phase2.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/ipv4_main_routes.go">pkg/controller/chain/ipv4_main_routes.go</a></p>
+<h2 id="状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</h2>
+<p>通常の状態値参照の検証で、このKindについて許可するフィールド名です。許可一覧にあるだけでは値の生成・取得を保証しないため、実際の状態を確認してください。YAMLのspecに設定する項目ではなく出力です。</p>
+<p><code>phase</code>, <code>interface</code>, <code>device</code>, <code>tunnelName</code>, <code>localIPv6</code>, <code>innerLocalIPv4</code>, <code>innerRemoteIPv4</code>, <code>localInterface</code>, <code>aftrName</code>, <code>aftrIPv6</code>, <code>mtu</code>, <code>dryRun</code></p>
+<p><a href="/examples/example-dslite-home.yaml">設定例</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
+<li><a href="#状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/reference/resources/DSLiteTunnel.md">GitHub</a></div></footer></body></html>

@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DHCPv4Client · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/reference/resources/DHCPv4Client.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/reference/resources/DHCPv4Client.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/reference/resources/DHCPv4Client.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/DHCPv4Client.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/DHCPv4Client.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="dhcpv4client">DHCPv4Client</h1>
+<p><a href="../resources.html#dhcpv4client">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Runs the managed routerd-dhcpv4-client daemon and applies its current lease address, optional default route and optional host DNS settings.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>The interface must exist in the declared Router. DHCP identity fields are sent as protocol options, not resource references. Lease expiry/release removes the previously applied address, route and host DNS state; useRoutes/useDNS do not stop lease acquisition.</li>
+</ul>
+<h2 id="yaml-definition">YAML definition</h2>
+<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DHCPv4Client
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    classID: &quot;&lt;string&gt;&quot; # optional; string
+    clientID: &quot;&lt;string&gt;&quot; # optional; string
+    hostname: &quot;&lt;string&gt;&quot; # optional; string
+    interface: &quot;&lt;string&gt;&quot; # Required; string
+    requestedAddress: &quot;&lt;string&gt;&quot; # optional; string
+    routeMetric: 0 # optional; integer; minimum=0
+    useDNS: true # optional; boolean
+    useRoutes: true # optional; boolean
+    when: # optional; object
+      state: # optional; object
+        &quot;&lt;key&gt;&quot;: # optional; object
+          contains: &quot;&lt;string&gt;&quot; # optional; string
+          equals: &quot;&lt;string&gt;&quot; # optional; string
+          exists: true # optional; boolean
+          for: &quot;&lt;string&gt;&quot; # optional; string
+          in: # optional; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # optional; string
+          status: &quot;set&quot; # optional; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.interface</code></td>
+<td>Required logical interface name from the Router interface index, without Interface/ prefix. It must exist in the declared config. No default.</td>
+</tr>
+<tr>
+<td><code>spec.hostname</code></td>
+<td>DHCP option 12 hostname. Default empty: omit the option; it is not automatically filled from the OS hostname. Whitespace is rejected.</td>
+</tr>
+<tr>
+<td><code>spec.requestedAddress</code></td>
+<td>Optional preferred IPv4 address, default absent. Must be a bare IPv4 address without prefix. Sent as option 50; it is a request, not a guaranteed/static assignment.</td>
+</tr>
+<tr>
+<td><code>spec.classID</code></td>
+<td>Vendor class identifier sent as option 60 string bytes. Default empty: omit it. No hexadecimal decoding.</td>
+</tr>
+<tr>
+<td><code>spec.clientID</code></td>
+<td>Option 61 client identity. An explicit value is sent as string bytes, not decoded hex. Default is byte 1 followed by the interface hardware address. Keep the value stable when the DHCP server identifies leases by client ID.</td>
+</tr>
+<tr>
+<td><code>spec.useRoutes</code></td>
+<td>Default true: apply the lease defaultGateway as a default route when present. False removes the prior managed default route but retains lease acquisition and address application. It does not suppress the gateway value in status.</td>
+</tr>
+<tr>
+<td><code>spec.useDNS</code></td>
+<td>Default true: apply leased DNS servers to the host via resolvectl when /etc/resolv.conf points to systemd-resolved, otherwise write resolv.conf. False clears prior managed DNS state; DNS addresses remain available in status for DNSResolver-related references.</td>
+</tr>
+<tr>
+<td><code>spec.routeMetric</code></td>
+<td>Default 0. Used for the applied default-route metric and platform-specific lease-address reconciliation. Schema requires a nonnegative integer. It is not a routing-table ID.</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>Activation condition; omitted means no gate. See the shared condition reference for state/all/any, unknown handling and age predicates.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_wan.go">pkg/config/validate_wan.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/listen_ports.go">pkg/config/listen_ports.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/system.go">pkg/controller/chain/system.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/dhcpv4client/controller.go">pkg/controller/dhcpv4client/controller.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/dhcpv4client/message.go">pkg/dhcpv4client/message.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd-dhcpv4-client/main.go">cmd/routerd-dhcpv4-client/main.go</a></p>
+<h2 id="referenceable-status-fields">Referenceable status fields</h2>
+<p>The ordinary status-reference validator accepts these field names for this kind. This allowlist does not guarantee that every field is currently populated; inspect runtime status. These are outputs, not YAML spec fields.</p>
+<p><code>phase</code>, <code>interface</code>, <code>device</code>, <code>currentAddress</code>, <code>gateway</code>, <code>defaultGateway</code>, <code>dnsServers</code>, <code>ntpServers</code>, <code>domain</code>, <code>leaseTime</code>, <code>renewAt</code>, <code>rebindAt</code>, <code>expiresAt</code></p>
+<p><a href="/examples/basic-dhcp.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
+<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
+<li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/reference/resources/DHCPv4Client.md">GitHub</a></div></footer></body></html>

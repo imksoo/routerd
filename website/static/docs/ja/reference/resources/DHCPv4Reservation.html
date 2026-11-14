@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DHCPv4Reservation · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/reference/resources/DHCPv4Reservation.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/reference/resources/DHCPv4Reservation.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/DHCPv4Reservation.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/reference/resources/DHCPv4Reservation.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/DHCPv4Reservation.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="dhcpv4reservation">DHCPv4Reservation</h1>
+<p><a href="../resources.html#dhcpv4reservation">リソース別の設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>宣言したDHCPv4Serverに対し、MACアドレスへIPv4アドレスを予約します。</p>
+<h2 id="指定条件と参照関係">指定条件と参照関係</h2>
+<ul>
+<li>スキーマ上serverが任意でも、server・macAddress・ipAddressは意味上必須です。serverはinterfaceを持つDHCPv4Serverの裸名です。通常検証はサーバー1台でも省略を許しません。scopeは拒否されます。</li>
+<li>現行実行処理は、リソース別タグを付けた予約を共有dnsmasqホスト補助ファイルへ書きます。serverとの関連は検証・状態・個別オプション生成に使いますが、別プロセスや独立した予約ファイルにはなりません。Appliedはクライアントの取得成功を示しません。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DHCPv4Reservation
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    hostname: &quot;&lt;string&gt;&quot; # 任意; string
+    ipAddress: &quot;&lt;string&gt;&quot; # 必須; string
+    leaseTime: &quot;&lt;string&gt;&quot; # 任意; string
+    macAddress: &quot;&lt;string&gt;&quot; # 必須; string
+    options: # 任意; array
+      - # object
+        code: 1 # 任意; integer; minimum=1; maximum=65535
+        name: &quot;&lt;string&gt;&quot; # 任意; string
+        value: &quot;&lt;string&gt;&quot; # 任意; string
+    scope: &quot;&lt;string&gt;&quot; # 任意; string
+    server: &quot;&lt;string&gt;&quot; # 任意; string
+    when: # 任意; object
+      state: # 任意; object
+        &quot;&lt;key&gt;&quot;: # 任意; object
+          contains: &quot;&lt;string&gt;&quot; # 任意; string
+          equals: &quot;&lt;string&gt;&quot; # 任意; string
+          exists: true # 任意; boolean
+          for: &quot;&lt;string&gt;&quot; # 任意; string
+          in: # 任意; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # 任意; string
+          status: &quot;set&quot; # 任意; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>項目の意味と既定値</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.scope</code></td>
+<td>廃止フィールドで、非空値は拒否されます。serverを使用してください。</td>
+</tr>
+<tr>
+<td><code>spec.server</code></td>
+<td>interfaceを指定した既存DHCPv4Serverのmetadata.nameが必須です。Kind/nameの接頭辞はここでは除去しません。</td>
+</tr>
+<tr>
+<td><code>spec.macAddress</code></td>
+<td>net.ParseMACで解析できるMACアドレスが必須です。小文字で出力し、既定値はありません。</td>
+</tr>
+<tr>
+<td><code>spec.hostname</code></td>
+<td>空白・カンマを含まない任意ホスト名で、既定は省略です。有効化したDNSZoneのDHCP由来ホスト情報にも利用できます。</td>
+</tr>
+<tr>
+<td><code>spec.ipAddress</code></td>
+<td>予約する裸のIPv4アドレスが必須です。現行検証は系統を確認しますが、サーバープール内所属や予約IP・MACの重複はここで検査しません。</td>
+</tr>
+<tr>
+<td><code>spec.leaseTime</code></td>
+<td>任意のバックエンド期間文字列で、既定空です。カンマは拒否します。現行実行時の予約ホスト行には出力しないため、この経路でリース期間を変更しません。</td>
+</tr>
+<tr>
+<td><code>spec.options</code></td>
+<td>予約タグに対応する任意DHCPオプション一覧です。各項目はcode・nameの片方と非空valueが必要です。既定空です。</td>
+</tr>
+<tr>
+<td><code>spec.options[].code</code></td>
+<td>数値のオプション識別子でnameと排他です。スキーマ範囲1～65535で、既定識別子はありません。</td>
+</tr>
+<tr>
+<td><code>spec.options[].name</code></td>
+<td>dnsmasqのオプション名でcodeと排他です。空白・カンマは不可です。</td>
+</tr>
+<tr>
+<td><code>spec.options[].value</code></td>
+<td>非空のバックエンド形式値が必須です。CR/LFは不可で、そのまま出力するためカンマによる複数値指定は可能です。</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>共通の状態条件で、既定無条件です。不成立なら予約を除外しPending/WhenFalse、サーバー利用不可ならServerPendingです。</td>
+</tr>
+</tbody>
+</table>
+<p>実装: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_dhcp.go">pkg/config/validate_dhcp.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/index.go">pkg/config/index.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go">pkg/controller/chain/chain.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/phase2.go">pkg/controller/chain/phase2.go</a></p>
+<h2 id="状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</h2>
+<p>通常の状態値参照の検証で、このKindについて許可するフィールド名です。許可一覧にあるだけでは値の生成・取得を保証しないため、実際の状態を確認してください。YAMLのspecに設定する項目ではなく出力です。</p>
+<p><code>phase</code>, <code>address</code>, <code>hostname</code></p>
+<p><a href="/examples/example-lan-dns-dhcp.yaml">設定例</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
+<li><a href="#状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/reference/resources/DHCPv4Reservation.md">GitHub</a></div></footer></body></html>

@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Firewall rate limits and ICMP rules · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/config-examples/firewall-rate-limit.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/config-examples/firewall-rate-limit.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/config-examples/firewall-rate-limit.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/config-examples/firewall-rate-limit.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/config-examples/firewall-rate-limit.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="firewall-rate-limits-and-icmp-rules">Firewall rate limits and ICMP rules</h1>
+<p>This example shows stateful <code>FirewallRule</code> expressions for a small router:</p>
+<ul>
+<li>allow HTTP and HTTPS on the router with one multi-port rule</li>
+<li>allow only ICMP echo requests from the WAN</li>
+<li>reject SSH attempts that exceed a packet rate or per-source connection limit</li>
+</ul>
+<p>The complete YAML is in <code>examples/firewall-rate-limit.yaml</code>.</p>
+<p>These rules are an example of routerd's current firewall groundwork, not a
+complete Internet-security policy. Test them on an isolated host and do not use
+them as the only protection for a reachable router.</p>
+<h2 id="apply-sequence">Apply sequence</h2>
+<pre><code class="language-bash">routerd validate --config examples/firewall-rate-limit.yaml
+
+workdir=$(mktemp -d)
+routerd apply --config examples/firewall-rate-limit.yaml --once --dry-run \
+  --state-file &quot;$workdir/state.db&quot; \
+  --status-file &quot;$workdir/status.json&quot;
+rm -rf &quot;$workdir&quot;
+</code></pre>
+<h2 id="rule-excerpt">Rule excerpt</h2>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallRule
+  metadata:
+    name: ssh-bruteforce-over-limit
+  spec:
+    fromZone: wan
+    toZone: self
+    protocol: tcp
+    destinationPorts:
+      - &quot;22&quot;
+    action: reject
+    rateLimit:
+      rate: 8
+      burst: 16
+      unit: packet
+      per: minute
+      log: true
+    connLimit:
+      maxPerSource: 4
+      log: true
+</code></pre></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#apply-sequence">Apply sequence</a></li>
+<li><a href="#rule-excerpt">Rule excerpt</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/config-examples/firewall-rate-limit.md">GitHub</a></div></footer></body></html>

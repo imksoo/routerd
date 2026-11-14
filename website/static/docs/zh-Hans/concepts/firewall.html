@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>有状态防火墙 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/concepts/firewall.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/concepts/firewall.html" lang="en" hreflang="en">English</a><a href="/docs/ja/concepts/firewall.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/concepts/firewall.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/concepts/firewall.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="有状态防火墙">有状态防火墙</h1>
+<p>routerd 管理 nftables 的 <code>inet routerd_filter</code> 表。
+防火墙以 4 种资源表达。</p>
+<ul>
+<li><code>FirewallZone</code> 将接口分配至区域。</li>
+<li><code>FirewallPolicy</code> 表示拒绝日志等全局配置。</li>
+<li><code>FirewallRule</code> 表示无法以角色组合表达的例外。</li>
+<li><code>ClientPolicy</code> 依 MAC 地址分类 LAN 客户端。</li>
+</ul>
+<p>角色有 <code>untrust</code>、<code>trust</code>、<code>mgmt</code> 三种。<code>wan</code>、<code>lan</code>、
+<code>management</code> 等是区域名称，需与角色区分看待。</p>
+<p>默认行为由以下表格决定：</p>
+<table>
+<thead>
+<tr>
+<th>来源</th>
+<th>self</th>
+<th>mgmt</th>
+<th>trust</th>
+<th>untrust</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>mgmt</code></td>
+<td>允许</td>
+<td>允许</td>
+<td>允许</td>
+<td>允许</td>
+</tr>
+<tr>
+<td><code>trust</code></td>
+<td>允许</td>
+<td>拒绝</td>
+<td>允许</td>
+<td>允许</td>
+</tr>
+<tr>
+<td><code>untrust</code></td>
+<td>拒绝</td>
+<td>拒绝</td>
+<td>拒绝</td>
+<td>拒绝</td>
+</tr>
+</tbody>
+</table>
+<p>所生成的规则始终允许已建立的通信、关联通信、loopback，以及必要的 ICMPv6。
+DHCPv6 PD、DS-Lite、dnsmasq 的 DHCP、<code>routerd-dns-resolver</code> 等所需的开口也由 routerd 在内部生成。</p>
+<p>NAT44 使用独立的 <code>ip routerd_nat</code> 表。</p>
+<h2 id="rule-expression">Rule expression</h2>
+<p><code>FirewallRule</code> 支持依 CIDR 匹配来源 / 目的地、可复用的 <code>IPAddressSet</code> 目的地引用、TCP/UDP 的 <code>sourcePorts</code> / <code>destinationPorts</code>、ICMP / ICMPv6 的 type 名称、nftables 的 <code>rateLimit</code>，以及以来源为单位的 <code>connLimit</code>。
+<code>rateLimit</code> 与 <code>connLimit</code> 在超过阈值的通信时相符，因此基本上与 <code>drop</code> / <code>reject</code> 规则组合使用，以缓解扫描与暴力破解攻击。</p>
+<h2 id="访客设备隔离">访客设备隔离</h2>
+<p><code>ClientPolicy</code> 是依 MAC 地址分类同一 LAN 网段内设备的访客模式。
+适用于可信任设备与访客设备从同一 DHCP 服务器获取地址的环境。
+访客设备仅能使用路由器的最小限度服务，无法访问私有网络。</p>
+<p>策略有两种：</p>
+<table>
+<thead>
+<tr>
+<th>mode</th>
+<th>行为</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>include</code></td>
+<td>仅将列表中的 MAC 地址视为访客，其余为 trusted。</td>
+</tr>
+<tr>
+<td><code>exclude</code></td>
+<td>仅将列表中的 MAC 地址视为 trusted，对象接口上的其余设备视为访客。</td>
+</tr>
+</tbody>
+</table>
+<p><code>ClientPolicy.spec.macs</code> 是常用场景的简写形式。省略 <code>interfaces</code> 时，对象为所有属于 <code>trust</code> <code>FirewallZone</code> 的接口。<code>spec.isolation</code> 可以易读的方式表达互联网、LAN、management、本地探索的 allow / deny。</p>
+<p>访客设备默认可使用 DNS、DHCP、NTP。
+目的地为 <code>10.0.0.0/8</code>、<code>172.16.0.0/12</code>、<code>192.168.0.0/16</code>、<code>fc00::/7</code> 的通信会被拒绝。
+面向全球互联网的通信，依一般的区域矩阵与路由策略处理。</p>
+<p><code>ClientPolicy</code> 以 Linux nftables 的 Ethernet 来源地址集合实现。
+FreeBSD pf 在 routed filter path 上不具备相同的 MAC 匹配模型，routerd 明确将此资源视为不支持。</p>
+<h2 id="日志">日志</h2>
+<p><code>FirewallPolicy.spec.logDeny</code> 为 true，且 <code>FirewallEventLog</code> 资源有效时，
+所生成的 nftables 规则会将被拒绝的数据包送至配置好的 NFLOG group。
+在 Linux 上，<code>routerd-firewall-logger</code> 直接从 nfnetlink 读取该 group，
+并存储至 <code>firewall-logs.db</code>，不另外启动数据包捕获程序。
+可完整存储 NFLOG 的 prefix、接口、数据包 family、协议、
+地址及端口。</p>
+<p>Web 管理界面的 Firewall 标签页与 <code>routerctl get firewall-logs</code> 会读取此数据库。
+请以受管理的 <code>generated service artifacts</code> 方式启用 logger。
+例如使用 <code>routerd-firewall-logger daemon --path /var/lib/routerd/firewall-logs.db --nflog-group 1</code>。</p>
+<p>若要将已接受的流量用于 DPI 观测，可通过 <code>FirewallEventLog.spec.log.copyRange</code>
+配置 NFLOG 从每个数据包复制的数据量上限。
+配置为 <code>1536</code> 或 <code>2048</code> 字节左右，可在看到 TLS/HTTP/DNS 分类所需的数据包开头的同时，
+避免持续将整个数据包复制至用户空间。</p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#rule-expression">Rule expression</a></li>
+<li><a href="#访客设备隔离">访客设备隔离</a></li>
+<li><a href="#日志">日志</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/concepts/firewall.md">GitHub</a></div></footer></body></html>

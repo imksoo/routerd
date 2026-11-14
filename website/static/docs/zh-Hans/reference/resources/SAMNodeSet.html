@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SAMNodeSet · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/reference/resources/SAMNodeSet.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/reference/resources/SAMNodeSet.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/SAMNodeSet.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/SAMNodeSet.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/SAMNodeSet.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="samnodeset">SAMNodeSet</h1>
+<p><a href="../resources.html#samnodeset">各资源的配置</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: mobility.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>声明供传输、事件对等端、WireGuard 与 MobilityPool 成员解析共享的 SAM 节点身份与拓扑。本机提供商捕获/发现配置应放在 MobilityPool 自节点覆盖，不放在此处。</p>
+<h2 id="指定条件与引用关系">指定条件与引用关系</h2>
+<ul>
+<li>nodes 不可为空，移除首尾空白后 nodeRef 不可重复。不从 nodeRef 推定 role/site；MobilityPool 等使用端另施加角色及站点要求。</li>
+<li>配置任一 WireGuard 数据时，publicKey 及非空 allowedIPs 必填。结构验证中 endpoint/transportEndpoint 仍可选，但须符合所选传输。samEndpoint 与 samEndpointFrom 互斥。</li>
+<li>placement 组要求 role=cloud，且组内 site 一致。priority、drain=true 及正数 maxSecondaryIPs 均需非空 placement.group。</li>
+</ul>
+<h2 id="yaml定义">YAML定义</h2>
+<p>此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。</p>
+<pre><code class="language-yaml">- apiVersion: mobility.routerd.net/v1alpha1
+  kind: SAMNodeSet
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    nodes: # 必填; array
+      - # object
+        eventEndpoint: &quot;&lt;string&gt;&quot; # 选填; string
+        macAddresses: # 选填; array
+          - &quot;&lt;string&gt;&quot; # string; pattern=&quot;^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$&quot;
+        maintenance: # 选填; object
+          drain: true # 选填; boolean
+        maxSecondaryIPs: 0 # 选填; integer; minimum=0
+        nodeRef: &quot;&lt;string&gt;&quot; # 必填; string
+        placement: # 选填; object
+          group: &quot;&lt;string&gt;&quot; # 选填; string
+          priority: 0 # 选填; integer; minimum=0; maximum=1000000
+        role: &quot;&quot; # 选填; string; enum=[&quot;&quot;, &quot;onprem&quot;, &quot;cloud&quot;]
+        routeReflector: true # 选填; boolean
+        samEndpoint: &quot;&lt;string&gt;&quot; # 选填; string
+        samEndpointFrom: # 选填; object
+          field: &quot;&lt;string&gt;&quot; # 选填; string
+          optional: true # 选填; boolean
+          resource: &quot;&lt;string&gt;&quot; # 必填; string
+        site: &quot;&lt;string&gt;&quot; # 选填; string
+        wireGuard: # 选填; object
+          allowedIPs: # 选填; array
+            - &quot;&lt;string&gt;&quot; # string
+          endpoint: &quot;&lt;string&gt;&quot; # 选填; string
+          persistentKeepalive: 0 # 选填; integer; minimum=0; maximum=65535
+          publicKey: &quot;&lt;string&gt;&quot; # 选填; string
+          transportEndpoint: &quot;&lt;string&gt;&quot; # 选填; string
+</code></pre>
+<h2 id="字段含义与默认值">字段含义与默认值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>字段含义与默认值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.nodes</code></td>
+<td>必填且不可为空的共享节点列表，不自动加入本机节点。</td>
+</tr>
+<tr>
+<td><code>spec.nodes[].nodeRef</code></td>
+<td>必填稳定节点标识，在此 NodeSet 内唯一。使用端与 EventGroup 本机标识或 SAMTransportProfile.selfNodeRef 匹配，不是 Kind/name 引用。</td>
+</tr>
+<tr>
+<td><code>spec.nodes[].site</code></td>
+<td>可选站点标签，默认为空，不由 role 派生。MobilityPool 成员及 placement 规则可能要求明确且兼容的 site。</td>
+</tr>
+<tr>
+<td><code>spec.nodes[].role</code></td>
+<td>NodeSet 验证接受空值/onprem/cloud，无推定默认值。MobilityPool 成员需实际 onprem/cloud 角色，placement 仅供 cloud。</td>
+</tr>
+<tr>
+<td><code>spec.nodes[].routeReflector</code></td>
+<td>默认 false，标记节点可供注册拓扑选为 RR 身份，不会单独创建 BGPRouter 或 BGP 连接。</td>
+</tr>
+<tr>
+<td><code>spec.nodes[].eventEndpoint</code></td>
+<td>供生成事件对等端使用的可选绝对 HTTP(S) URL，须含主机，无默认值或状态来源。</td>
+</tr>
+<tr>
+<td><code>spec.nodes[].samEndpoint</code></td>
+<td>可选的节点外层传输端点 IPv4 地址或 CIDR，不接受 DNS 名称，与 samEndpointFrom 互斥。WireGuard 加密时优先使用 wireGuard.transportEndpoint。</td>
+</tr>
+<tr>
+<td><code>spec.nodes[].samEndpointFrom</code></td>
+<td>遵循通用 resource/field 规则的可选运行时状态来源。缺少值仍属未解析传输来源，optional 不会补入端点或忽略格式错误地址。</td>
+</tr>
+<tr>
+<td><code>spec.nodes[].samEndpointFrom.resource</code></td>
+<td>使用来源时必填的已声明资源 Kind/name，与固定 samEndpoint 互斥。</td>
+</tr>
+<tr>
+<td><code>spec.nodes[].samEndpointFrom.field</code></td>
+<td>指定 resource 时必填的明确提供状态字段，例如 DHCPv4Client 的 currentAddress。</td>
+</tr>
+<tr>
+<td><code>spec.nodes[].samEndpointFrom.optional</code></td>
+<td>默认 false，不跳过存在/字段验证；此传输使用端仍将端点缺失报告为未解析。</td>
+</tr>
+<tr>
+<td><code>spec.nodes[].macAddresses</code></td>
+<td>可选 MAC 地址列表，默认为空。ARP 观察意图将其列为忽略的发送端 MAC，避免将 SAM 路由器当客户端重新发现；不是更改 MAC 的请求。</td>
+</tr>
+<tr>
+<td><code>spec.nodes[].wireGuard</code></td>
+<td>可选公开 WireGuard 传输身份，任一子字段非空时需 publicKey 与 allowedIPs。私钥不应放入 NodeSet 拓扑。</td>
+</tr>
+<tr>
+<td><code>spec.nodes[].wireGuard.publicKey</code></td>
+<td>配置 wireGuard 时必填的对等端公钥，传入生成的 WireGuardPeer，无派生默认值。</td>
+</tr>
+<tr>
+<td><code>spec.nodes[].wireGuard.endpoint</code></td>
+<td>可选 WireGuard 外层 UDP host:port，IPv6 使用 [IPv6]:port，端口 1–65535，与内层 transportEndpoint 不同。</td>
+</tr>
+<tr>
+<td><code>spec.nodes[].wireGuard.transportEndpoint</code></td>
+<td>encryption=wireguard 时可选的内层 SAM 隧道 IPv4 地址/CIDR，优先于 samEndpoint/samEndpointFrom，不是 UDP 套接字地址。</td>
+</tr>
+<tr>
+<td><code>spec.nodes[].wireGuard.allowedIPs</code></td>
+<td>配置 WireGuard 时必填且非空的 IPv4/IPv6 CIDR，传入生成的对等端，不会为每个前缀自动创建普通路由。</td>
+</tr>
+<tr>
+<td><code>spec.nodes[].wireGuard.persistentKeepalive</code></td>
+<td>整数秒 0–65535，默认 0 禁用持续保活，复制至生成的对等端。</td>
+</tr>
+<tr>
+<td><code>spec.nodes[].placement</code></td>
+<td>可选共享捕获放置信息，仅 cloud 角色可声明组；成员须有一致 site/role，使用端也须符合提供商身份兼容性。</td>
+</tr>
+<tr>
+<td><code>spec.nodes[].placement.group</code></td>
+<td>可选放置组名称，默认空值表示不分组选择。priority、drain 或正容量配置时必填。</td>
+</tr>
+<tr>
+<td><code>spec.nodes[].placement.priority</code></td>
+<td>整数 0–1000000。省略或 0 按解析成员顺序分配 10、20…并避开明确值；单活选择优先较小的有效数值，非零需 group。</td>
+</tr>
+<tr>
+<td><code>spec.nodes[].maintenance</code></td>
+<td>可选声明式维护意图，默认不 drain，是共享拓扑信息，不是本机提供商凭据。</td>
+</tr>
+<tr>
+<td><code>spec.nodes[].maintenance.drain</code></td>
+<td>默认 false。true 将组成员排除于活动捕获选择之外，需 placement.group。</td>
+</tr>
+<tr>
+<td><code>spec.nodes[].maxSecondaryIPs</code></td>
+<td>非负整数，默认 0。正值需 placement.group，启用该组按容量分散捕获；0 表示无单个成员容量上限，不更改云端配额。</td>
+</tr>
+</tbody>
+</table>
+<p>实现: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_mobility.go">pkg/config/validate_mobility.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go">pkg/config/diagnostics.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/mobilityconfig/members.go">pkg/mobilityconfig/members.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/mobilityconfig/normalize.go">pkg/mobilityconfig/normalize.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/mobility/transport.go">pkg/controller/mobility/transport.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/mobility/arp_observer_intent.go">pkg/controller/mobility/arp_observer_intent.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/mobility/placement.go">pkg/controller/mobility/placement.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/mobility/capture_distribution.go">pkg/controller/mobility/capture_distribution.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/wireguard.go">pkg/controller/chain/wireguard.go</a></p>
+<h2 id="可引用的状态字段">可引用的状态字段</h2>
+<p>常规状态引用验证接受此 Kind 的下列字段名称。列于允许列表不保证目前有值，请检查实际状态。这些是输出，不是 YAML spec 配置。</p>
+<p><code>phase</code>, <code>nodeCount</code></p>
+<p><a href="/examples/cloudedge-dynamic-rr-a-hub.yaml">配置示例</a></p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件与引用关系">指定条件与引用关系</a></li>
+<li><a href="#yaml定义">YAML定义</a></li>
+<li><a href="#字段含义与默认值">字段含义与默认值</a></li>
+<li><a href="#可引用的状态字段">可引用的状态字段</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/reference/resources/SAMNodeSet.md">GitHub</a></div></footer></body></html>

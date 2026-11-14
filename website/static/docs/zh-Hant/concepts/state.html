@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>狀態 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/concepts/state.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/concepts/state.html" lang="en" hreflang="en">English</a><a href="/docs/ja/concepts/state.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/concepts/state.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/concepts/state.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="狀態">狀態</h1>
+<p>routerd 將宣告的意圖與觀測到的狀態分開處理。
+YAML 是使用者管理的意圖。
+SQLite、租約檔案、events.jsonl 則是 routerd 及專屬常駐程式觀測到的狀態。</p>
+<h2 id="狀態的存放位置">狀態的存放位置</h2>
+<p>正式版安裝時，設定的正本存放在 <code>/usr/local/etc/routerd/router.yaml</code>。
+routerd 執行檔存放在 <code>/usr/local/sbin</code>。</p>
+<p>Linux 上的狀態存放位置如下所示。</p>
+<table>
+<thead>
+<tr>
+<th>種類</th>
+<th>範例</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>routerd 狀態資料庫</td>
+<td><code>/var/lib/routerd/routerd.db</code></td>
+</tr>
+<tr>
+<td>DHCPv6-PD 租約</td>
+<td><code>/var/lib/routerd/dhcpv6-client/wan-pd/lease.json</code></td>
+</tr>
+<tr>
+<td>DHCPv4 租約</td>
+<td><code>/var/lib/routerd/dhcpv4-client/wan/lease.json</code></td>
+</tr>
+<tr>
+<td>PPPoE 狀態</td>
+<td><code>/var/lib/routerd/pppoe-client/&lt;name&gt;/state.json</code></td>
+</tr>
+<tr>
+<td>健康檢查狀態</td>
+<td><code>/var/lib/routerd/healthcheck/&lt;name&gt;/state.json</code></td>
+</tr>
+<tr>
+<td>執行時 socket</td>
+<td><code>/run/routerd/.../*.sock</code></td>
+</tr>
+</tbody>
+</table>
+<p>FreeBSD 上，設定與執行檔同樣存放在 <code>/usr/local</code> 下。
+執行時 socket 存放在 <code>/var/run/routerd</code>。
+持久狀態存放在 <code>/var/db/routerd</code>。</p>
+<h2 id="不使用過時狀態">不使用過時狀態</h2>
+<p>租約和觀測值雖然方便，但持續使用過時的值是危險的。
+特別是 DHCPv6-PD 的前綴，只有在確認為 Bound 狀態時才會向下游展開。
+無法確認時，會停止套用 AAAA 記錄、RA、DHCPv6 伺服器和 LAN IPv6 位址。</p>
+<h2 id="事件">事件</h2>
+<p>routerd 及專屬常駐程式會將狀態變化記錄為事件。
+事件保存在 SQLite 的 <code>events</code> 表格，以及各常駐程式的 <code>events.jsonl</code> 中。
+EventRule 和 DerivedEvent 會利用這些事件和狀態，產生虛擬的狀態變化。</p>
+<h2 id="套用世代">套用世代</h2>
+<p>status 中顯示的 <code>generation</code> 是最後完成的套用世代編號。
+此值在 <code>routerctl apply</code> 更新主機端意圖、並將套用完成記錄至 SQLite 時遞增。
+這不是調和（reconcile）循環的執行次數。
+dry-run 計畫、常駐程式事件、健康檢查、控制器鏈的定期調和均不會使其遞增。
+新的套用世代會儲存當時套用的 YAML 快照。
+Web 管理介面使用此快照，以唯讀方式顯示世代歷史記錄，以及世代間的差異（unified diff）。
+在 YAML 儲存功能導入之前的記錄仍作為歷史保留，但無法作為差異顯示的對象。</p>
+<h2 id="有狀態封包過濾器">有狀態封包過濾器</h2>
+<p>在 Linux 上，routerd 以一次 <code>nft -f</code> 交易更新 nftables 的管理表格。
+產生（render）的規則集會在必要時建立管理表格。
+之後在同一個 nftables 批次中清空表格，並載入新的鏈。
+防火牆區域的介面 set 或 client-policy 的 MAC set 等由 routerd 擁有的具名 set，
+在重新定義之前只會刪除受管理的 set。
+這樣可以防止已刪除的 set 元素在重新載入後殘留。
+不會將執行中的 NAT 表格或過濾器表格刪除後重建。
+因此，即使 routerd 重新啟動或進行一般設定變更，現有的 conntrack 項目仍會保留在核心的狀態表格中。</p>
+<p>在 FreeBSD 上，routerd 以 <code>pfctl -f</code> 載入產生的 pf 規則。
+pf 在重新載入規則時，只要不明確清除狀態，就會保留現有的狀態表格。
+routerd 的一般套用處理不會清除 pf 的狀態。</p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#狀態的存放位置">狀態的存放位置</a></li>
+<li><a href="#不使用過時狀態">不使用過時狀態</a></li>
+<li><a href="#事件">事件</a></li>
+<li><a href="#套用世代">套用世代</a></li>
+<li><a href="#有狀態封包過濾器">有狀態封包過濾器</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/concepts/state.md">GitHub</a></div></footer></body></html>

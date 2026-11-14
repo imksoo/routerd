@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Plugin · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/reference/resources/Plugin.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/reference/resources/Plugin.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/Plugin.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/Plugin.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/Plugin.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="plugin">Plugin</h1>
+<p><a href="../resources.html#plugin">各资源的配置</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: plugin.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>注册实现routerd插件协议的可执行文件，由显式操作或EventSubscription等使用方调用。</p>
+<h2 id="指定条件与引用关系">指定条件与引用关系</h2>
+<ul>
+<li>executable必须是绝对路径。执行时须为存在的普通文件，且至少有一个执行权限位。</li>
+<li>当前实现不会仅因声明triggers而启动周期或事件调度；它会验证并在plugin list显示，仍须由使用方调用。</li>
+<li>context使用apiVersion、kind、name三项标识资源。目标不存在不会造成配置验证错误，而是在执行时省略该项；秘密信息会脱敏。</li>
+</ul>
+<h2 id="yaml定义">YAML定义</h2>
+<p>此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。</p>
+<pre><code class="language-yaml">- apiVersion: plugin.routerd.net/v1alpha1
+  kind: Plugin
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    capabilities: # 选填; array
+      - &quot;observe.cloud&quot; # string; enum=[&quot;observe.cloud&quot;, &quot;observe.providerPrivateIPs&quot;, &quot;propose.dynamicConfig&quot;, &quot;propose.providerAction&quot;, &quot;execute.providerAction&quot;]
+    context: # 选填; object
+      resources: # 选填; array
+        - # object
+          apiVersion: &quot;&lt;string&gt;&quot; # 必填; string
+          kind: &quot;&lt;string&gt;&quot; # 必填; string
+          name: &quot;&lt;string&gt;&quot; # 必填; string
+    env: # 选填; object
+      &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # 选填; string
+    executable: &quot;&lt;string&gt;&quot; # 必填; string
+    timeout: &quot;&lt;string&gt;&quot; # 选填; string
+    triggers: # 选填; array
+      - # object
+        every: &quot;&lt;string&gt;&quot; # 选填; string
+        topic: &quot;&lt;string&gt;&quot; # 选填; string
+        type: &quot;interval&quot; # 必填; string; enum=[&quot;interval&quot;, &quot;event&quot;]
+</code></pre>
+<h2 id="字段含义与默认值">字段含义与默认值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>字段含义与默认值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.executable</code></td>
+<td>外部程序的绝对路径；必填，无默认值。</td>
+</tr>
+<tr>
+<td><code>spec.timeout</code></td>
+<td>单次执行时间上限。默认10s；显式指定时须为正的Go duration，例如30s。</td>
+</tr>
+<tr>
+<td><code>spec.env</code></td>
+<td>以变量名为键的额外环境变量，默认空。runner先设置自身PATH，缺少时使用内置路径，再应用这些值；不继承其他父进程变量。忽略空键及含=的键。</td>
+</tr>
+<tr>
+<td><code>spec.capabilities</code></td>
+<td>能力声明，默认空。接受observe.cloud、observe.providerPrivateIPs、propose.dynamicConfig、propose.providerAction、execute.providerAction。清单获取须有observe.providerPrivateIPs；供应商操作执行须有execute.providerAction；此列表本身不会启动执行。</td>
+</tr>
+<tr>
+<td><code>spec.context</code></td>
+<td>控制通过标准输入传入哪些配置资源的允许列表；默认空，不传入配置。</td>
+</tr>
+<tr>
+<td><code>spec.context.resources</code></td>
+<td>允许的资源标识列表，默认空；不展开通配符。</td>
+</tr>
+<tr>
+<td><code>spec.context.resources[].apiVersion</code></td>
+<td>引用配置资源的API组与版本；每项必填。</td>
+</tr>
+<tr>
+<td><code>spec.context.resources[].kind</code></td>
+<td>引用配置资源的类型；每项必填。</td>
+</tr>
+<tr>
+<td><code>spec.context.resources[].name</code></td>
+<td>引用配置资源的metadata.name；每项必填。</td>
+</tr>
+<tr>
+<td><code>spec.triggers</code></td>
+<td>触发声明列表，默认空；当前runtime仅验证与显示，请参照上方限制。</td>
+</tr>
+<tr>
+<td><code>spec.triggers[].type</code></td>
+<td>触发类型；必须指定interval或event，无默认值。</td>
+</tr>
+<tr>
+<td><code>spec.triggers[].every</code></td>
+<td>interval时必填，须为正的Go duration；event时此字段不产生周期调度，无默认值。</td>
+</tr>
+<tr>
+<td><code>spec.triggers[].topic</code></td>
+<td>事件主题声明；选填，默认空，event时验证器也不强制要求。这不是资源名称。</td>
+</tr>
+</tbody>
+</table>
+<p>实现: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_plugin.go">pkg/config/validate_plugin.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/plugin/runner.go">pkg/plugin/runner.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/plugin/context.go">pkg/plugin/context.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/providerinventory/executor.go">pkg/providerinventory/executor.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/provideraction/executor.go">pkg/provideraction/executor.go</a></p>
+<h2 id="可引用的状态字段">可引用的状态字段</h2>
+<p>常规状态引用验证接受此 Kind 的下列字段名称。列于允许列表不保证目前有值，请检查实际状态。这些是输出，不是 YAML spec 配置。</p>
+<p>此 Kind 未登记常规状态引用的允许字段。</p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件与引用关系">指定条件与引用关系</a></li>
+<li><a href="#yaml定义">YAML定义</a></li>
+<li><a href="#字段含义与默认值">字段含义与默认值</a></li>
+<li><a href="#可引用的状态字段">可引用的状态字段</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/reference/resources/Plugin.md">GitHub</a></div></footer></body></html>

@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>EventSubscription · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/reference/resources/EventSubscription.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/reference/resources/EventSubscription.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/EventSubscription.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/reference/resources/EventSubscription.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/EventSubscription.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="eventsubscription">EventSubscription</h1>
+<p><a href="../resources.html#eventsubscription">リソース別の設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: federation.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>期限内の共有イベントを永続DBから選び、ローカルのPluginを実行して結果をDynamicConfigPartとして保存します。</p>
+<h2 id="指定条件と参照関係">指定条件と参照関係</h2>
+<ul>
+<li>groupRef・1件以上のmatch.types・trigger.pluginRefが必須です。グループ・Pluginの参照はKind/nameでなく裸のmetadata名です。この検証では存在を確認せず、Pluginがなければ実行時Pending、該当保存イベントがないグループはIdleになります。</li>
+<li>大文字小文字を区別します。types・subject前方一致・payload各項目・sourceNodesの条件はAND、各一覧の選択肢はORです。イベント型は完全一致で、ローカルトピックのワイルドカードではありません。</li>
+<li>通常5秒ごとに保存イベントを確認します。成功済みの購読・イベント組は飛ばし、失敗は最大3回、処理中断のpendingは再処理できます。少なくとも1回の処理であり、Pluginの外部操作を厳密に1回だけにする保証ではありません。</li>
+<li>両待機設定が正でなければ、その時点の処理対象をまとめて1回実行し、1イベントごととは限りません。待機タイマーはメモリー上、イベント・実行履歴は永続化します。待機中は1024件または対象データ約4MiBで早期実行します。</li>
+<li>Pluginには該当イベントと、Plugin.context.resourcesで明示許可した設定だけを渡し、秘密値は伏せます。TTL・生成リソースは本購読でなくPluginResultが指定します。異なるイベント群は別のDynamicConfigPart取得元として共存します。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
+<pre><code class="language-yaml">- apiVersion: federation.routerd.net/v1alpha1
+  kind: EventSubscription
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    groupRef: &quot;&lt;string&gt;&quot; # 必須; string
+    match: # 必須; object
+      payload: # 任意; object
+        &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # 任意; string
+      sourceNodes: # 任意; array
+        - &quot;&lt;string&gt;&quot; # string
+      subjectPrefixes: # 任意; array
+        - &quot;&lt;string&gt;&quot; # string
+      types: # 必須; array
+        - &quot;&lt;string&gt;&quot; # string
+    trigger: # 必須; object
+      batchWindow: &quot;&lt;string&gt;&quot; # 任意; string
+      debounce: &quot;&lt;string&gt;&quot; # 任意; string
+      pluginRef: &quot;&lt;string&gt;&quot; # 必須; string
+</code></pre>
+<h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>項目の意味と既定値</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.groupRef</code></td>
+<td>保存イベントのgroup_nameを選ぶ裸のEventGroup名が必須です。既定値・グループの自動作成・起動はありません。</td>
+</tr>
+<tr>
+<td><code>spec.match</code></td>
+<td>必須の選別条件です。typesは1件以上必要で、他の条件が空ならその制限なしです。</td>
+</tr>
+<tr>
+<td><code>spec.match.types</code></td>
+<td>空でないイベント型を1件以上指定します。いずれかへの完全一致が必要で、ワイルドカードも単なる文字列です。</td>
+</tr>
+<tr>
+<td><code>spec.match.subjectPrefixes</code></td>
+<td>subjectの前方一致一覧です。既定の空は制限なしで、パス区間やワイルドカードでなく単純な文字列前方一致です。</td>
+</tr>
+<tr>
+<td><code>spec.match.payload</code></td>
+<td>任意のキー・文字列の完全一致マップで、全項目が必要です。空キーは禁止です。欠落キーは空として読むため、期待値が空ならキー欠落にも一致します。</td>
+</tr>
+<tr>
+<td><code>spec.match.sourceNodes</code></td>
+<td>sourceNodeの完全一致許可一覧です。既定の空はすべて許可し、自ノードのイベントも自動除外しません。必要な発信元を明示してください。</td>
+</tr>
+<tr>
+<td><code>spec.trigger</code></td>
+<td>必須のローカルPlugin起動設定です。Plugin.triggersとは別に、購読コントローラーが実行します。</td>
+</tr>
+<tr>
+<td><code>spec.trigger.pluginRef</code></td>
+<td>Plugin/nameでなく裸のPlugin metadata.nameが必須です。なければPendingです。そのPluginの実行ファイル・タイムアウト・環境・context制限を使います。</td>
+</tr>
+<tr>
+<td><code>spec.trigger.batchWindow</code></td>
+<td>最初の対象イベントから測るGo形式の待機上限です。既定の空・0は上限なしですが、debounceが正なら既定上限1mです。正のbatchWindowでdebounce延長を制限します。負数も検証を通り、非正値として扱います。</td>
+</tr>
+<tr>
+<td><code>spec.trigger.debounce</code></td>
+<td>新たに対象となった最後のイベントからの待機期間です。既定の空・0は無効で、同じイベントの再読取では延長しません。debounceとbatchWindowの早い方で実行し、正のbatchWindowがなければ上限1mです。</td>
+</tr>
+</tbody>
+</table>
+<p>実装: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_event.go">pkg/config/validate_event.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/eventsubscription/controller.go">pkg/controller/eventsubscription/controller.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go">pkg/controller/chain/chain.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/plugin/context.go">pkg/plugin/context.go</a></p>
+<h2 id="状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</h2>
+<p>通常の状態値参照の検証で、このKindについて許可するフィールド名です。許可一覧にあるだけでは値の生成・取得を保証しないため、実際の状態を確認してください。YAMLのspecに設定する項目ではなく出力です。</p>
+<p>このKindには通常の状態値参照の許可フィールドが登録されていません。</p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
+<li><a href="#状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/reference/resources/EventSubscription.md">GitHub</a></div></footer></body></html>

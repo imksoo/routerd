@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DNSUpstream · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/reference/resources/DNSUpstream.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/reference/resources/DNSUpstream.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/reference/resources/DNSUpstream.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/DNSUpstream.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/DNSUpstream.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="dnsupstream">DNSUpstream</h1>
+<p><a href="../resources.html#dnsupstream">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>A DNS server endpoint referenced by DNSForwarder; declaration alone does not start a listener or forward queries.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>protocol is required despite an internal URL-builder fallback to udp. At least one of address or addressFrom is required; they may coexist and their endpoints are combined. Dynamic addressFrom is currently UDP-only.</li>
+<li>Required unresolved addressFrom values suspend the containing forwarder source even if static addresses are available; optional missing values are skipped. Bootstrap references differ: a static bootstrap list can satisfy a missing required dynamic bootstrap.</li>
+<li>sourceInterface is passed verbatim to socket binding, with no logical-name or Kind/name resolution. On Linux use a declared interface whose metadata.name equals its OS ifname. The FreeBSD socket path rejects direct ifname binding, while normal configuration validation does not offer a valid fib:<n> alternative here.</li>
+</ul>
+<h2 id="yaml-definition">YAML definition</h2>
+<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSUpstream
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    address: &quot;&lt;string&gt;&quot; # optional; string
+    addressFrom: # optional; array
+      - # object
+        field: &quot;&lt;string&gt;&quot; # optional; string
+        optional: true # optional; boolean
+        resource: &quot;&lt;string&gt;&quot; # Required; string
+    bootstrap: # optional; array
+      - &quot;&lt;string&gt;&quot; # string
+    bootstrapFrom: # optional; array
+      - # object
+        field: &quot;&lt;string&gt;&quot; # Required; string
+        optional: true # optional; boolean
+        resource: &quot;&lt;string&gt;&quot; # Required; string
+    path: &quot;&lt;string&gt;&quot; # optional; string
+    port: 1 # optional; integer; minimum=1; maximum=65535
+    protocol: &quot;udp&quot; # Required; string; enum=[&quot;udp&quot;, &quot;tcp&quot;, &quot;dot&quot;, &quot;doh&quot;]
+    sourceInterface: &quot;&lt;string&gt;&quot; # optional; string
+    tlsName: &quot;&lt;string&gt;&quot; # optional; string
+    when: # optional; object
+      state: # optional; object
+        &quot;&lt;key&gt;&quot;: # optional; object
+          contains: &quot;&lt;string&gt;&quot; # optional; string
+          equals: &quot;&lt;string&gt;&quot; # optional; string
+          exists: true # optional; boolean
+          for: &quot;&lt;string&gt;&quot; # optional; string
+          in: # optional; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # optional; string
+          status: &quot;set&quot; # optional; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.protocol</code></td>
+<td>Required udp, tcp, dot or doh. Use lowercase canonical spelling. UDP/TCP use plaintext DNS, DoT TLS, DoH HTTPS.</td>
+</tr>
+<tr>
+<td><code>spec.address</code></td>
+<td>Server IP or hostname without scheme, port or path. Required if addressFrom is empty. No implicit server; hostname resolution uses bootstrap when supplied.</td>
+</tr>
+<tr>
+<td><code>spec.addressFrom</code></td>
+<td>Optional UDP-only common status-value source list. Each item requires existing resource and explicit provided field; optional defaults false. Dynamic bare addresses normalize to UDP port 53 independently of this resource port. Sources may return multiple servers.</td>
+</tr>
+<tr>
+<td><code>spec.port</code></td>
+<td>Optional 1–65535; omitted/0 defaults to 53 for udp/tcp, 853 for dot, 443 for doh. Used for the static address endpoint, not bare values returned by addressFrom.</td>
+</tr>
+<tr>
+<td><code>spec.path</code></td>
+<td>DoH URL path, default /dns-query; when supplied for doh it must start with /. Other protocols do not consume it.</td>
+</tr>
+<tr>
+<td><code>spec.tlsName</code></td>
+<td>DoT TLS server name for certificate verification/SNI; omitted uses the endpoint hostname. Explicit tlsName is rejected for DoH. UDP/TCP ignore it even though accepted by validation.</td>
+</tr>
+<tr>
+<td><code>spec.bootstrap</code></td>
+<td>Optional DNS server list for resolving upstream hostnames. Empty together with unresolved/absent bootstrapFrom uses the OS resolver only when no required dynamic dependency is waiting. All referenced upstreams in a forwarder share merged bootstrap settings.</td>
+</tr>
+<tr>
+<td><code>spec.bootstrapFrom</code></td>
+<td>Optional required-field source list. resource and field must be nonempty, optional defaults false. Use an existing Kind/name and its provided status field; unlike ordinary StatusValueSourceSpec, current validation does not check target existence or provided-field membership for this distinct type. Dynamic and static bootstrap servers are combined; static bootstrap satisfies a missing required dynamic value.</td>
+</tr>
+<tr>
+<td><code>spec.sourceInterface</code></td>
+<td>Optional declared Interface or WireGuardInterface name. Default empty lets OS routing choose. Binding is shared at forwarder-pool level; see the literal-name and FreeBSD restrictions above.</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>Optional common state predicate; default unconditional. Filtering this upstream can leave its forwarder without usable endpoints.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_dns.go">pkg/config/validate_dns.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go">pkg/config/diagnostics.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/dnsresolver/controller.go">pkg/controller/dnsresolver/controller.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/dnsresolver/dnsresolver.go">pkg/dnsresolver/dnsresolver.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd-dns-resolver/upstream.go">cmd/routerd-dns-resolver/upstream.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd-dns-resolver/upstream_bind_linux.go">cmd/routerd-dns-resolver/upstream_bind_linux.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd-dns-resolver/upstream_bind_freebsd.go">cmd/routerd-dns-resolver/upstream_bind_freebsd.go</a></p>
+<h2 id="referenceable-status-fields">Referenceable status fields</h2>
+<p>The ordinary status-reference validator accepts these field names for this kind. This allowlist does not guarantee that every field is currently populated; inspect runtime status. These are outputs, not YAML spec fields.</p>
+<p><code>phase</code>, <code>address</code>, <code>url</code></p>
+<p><a href="/examples/example-dslite-home.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
+<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
+<li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/reference/resources/DNSUpstream.md">GitHub</a></div></footer></body></html>

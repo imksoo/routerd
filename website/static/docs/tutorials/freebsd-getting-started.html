@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Getting started on FreeBSD · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/tutorials/freebsd-getting-started.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/tutorials/freebsd-getting-started.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/tutorials/freebsd-getting-started.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/tutorials/freebsd-getting-started.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/tutorials/freebsd-getting-started.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="getting-started-on-freebsd">Getting started on FreeBSD</h1>
+<p>FreeBSD uses the same routerd resource model as Ubuntu, but it is a second-tier
+target with selected native integration paths rather than first-lab parity.
+Start on an isolated test host with a console. routerd renders <code>rc.conf.d</code>, <code>rc.d</code> scripts,
+<code>pf.conf</code>, <code>dhclient.conf</code>, dnsmasq configuration, <code>mpd5.conf</code>, and dynamic
+<code>ifconfig gif</code> operations for DS-Lite.</p>
+<p>This tutorial assumes FreeBSD 14.x and a release install under <code>/usr/local</code>.
+Use <code>examples/freebsd-edge.yaml</code> as the reference configuration.</p>
+<h2 id="1-install-from-a-release-archive">1. Install from a release archive</h2>
+<p>Download the FreeBSD archive from the
+<a href="https://github.com/imksoo/routerd/releases">GitHub Releases page</a>, then run
+the bundled installer on the router.</p>
+<pre><code class="language-sh">fetch https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-freebsd-amd64.tar.gz
+fetch https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-freebsd-amd64.tar.gz.sha256
+cat routerd-freebsd-amd64.tar.gz.sha256
+sha256 routerd-freebsd-amd64.tar.gz
+tar -xzf routerd-freebsd-amd64.tar.gz
+sudo ./install.sh
+</code></pre>
+<p><code>install.sh</code> installs the FreeBSD packages routerd normally needs:
+<code>ca_root_nss</code>, <code>curl</code>, <code>dnsmasq</code>, <code>wireguard-tools</code>, <code>mpd5</code>, <code>bind-tools</code>,
+<code>tcpdump</code>, <code>jq</code>, <code>chrony</code>, and <code>strongswan</code>.
+Tailscale is optional; include it with <code>sudo ./install.sh --with-tailscale</code>.</p>
+<p>The FreeBSD base system already provides <code>ifconfig</code>, <code>route</code>, <code>sysctl</code>, <code>service</code>,
+<code>sysrc</code>, <code>pfctl</code>, <code>pflog0</code>, <code>netstat</code>, <code>sockstat</code>, <code>ping</code>, and <code>traceroute</code>.
+Use <code>./install.sh --list-deps</code> to inspect the package and command list.</p>
+<h2 id="2-place-the-router-configuration">2. Place the router configuration</h2>
+<pre><code class="language-sh">sudo install -d -m 0755 /usr/local/etc/routerd
+sudo install -m 0600 examples/freebsd-edge.yaml /usr/local/etc/routerd/router.yaml
+</code></pre>
+<p>Edit interface names, addresses, and secrets before applying. Keep management
+SSH on a separate interface or use a hypervisor console during the first run.</p>
+<h2 id="3-validate-and-review-generated-files">3. Validate and review generated files</h2>
+<p>Validate the configuration:</p>
+<pre><code class="language-sh">sudo routerd validate --config /usr/local/etc/routerd/router.yaml
+</code></pre>
+<p>Render FreeBSD artifacts into a temporary directory:</p>
+<pre><code class="language-sh">render_dir=$(mktemp -d)
+sudo routerd render freebsd \
+  --config /usr/local/etc/routerd/router.yaml \
+  --out-dir &quot;$render_dir&quot;
+</code></pre>
+<p>Expected files include:</p>
+<ul>
+<li><code>rc.conf.d-routerd</code></li>
+<li><code>dhclient.conf</code></li>
+<li><code>mpd5.conf</code></li>
+<li><code>pf.conf</code></li>
+<li><code>dnsmasq.conf</code></li>
+<li><code>install-packages.sh</code></li>
+<li><code>rc.d-*</code></li>
+</ul>
+<p>Review the output before touching the live host:</p>
+<pre><code class="language-sh">sudo less &quot;$render_dir/rc.conf.d-routerd&quot;
+sudo less &quot;$render_dir/pf.conf&quot;
+sudo less &quot;$render_dir/dnsmasq.conf&quot;
+</code></pre>
+<h2 id="4-understand-the-freebsd-host-surfaces">4. Understand the FreeBSD host surfaces</h2>
+<p>routerd maps resources to these FreeBSD components:</p>
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>Responsibility</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>rc.conf.d-routerd</code></td>
+<td>Interface aliases, forwarding, cloned interfaces, static routes, <code>pf</code>, <code>pflog</code>, and <code>mpd5</code> enablement</td>
+</tr>
+<tr>
+<td><code>rc.d-*</code> scripts</td>
+<td>routerd-managed daemons such as dnsmasq, firewall logger, healthcheck, Tailscale, and DHCP clients</td>
+</tr>
+<tr>
+<td><code>pf.conf</code></td>
+<td>Zone filtering, service holes, NAT, and firewall logging</td>
+</tr>
+<tr>
+<td><code>pflog0</code></td>
+<td>Firewall log source for <code>routerd-firewall-logger</code></td>
+</tr>
+<tr>
+<td><code>dnsmasq.conf</code></td>
+<td>DHCPv4, DHCPv6, DHCP relay, and Router Advertisement</td>
+</tr>
+<tr>
+<td><code>dhclient.conf</code></td>
+<td>FreeBSD DHCPv4 client behavior for adopted uplinks</td>
+</tr>
+<tr>
+<td><code>mpd5.conf</code></td>
+<td>PPPoE bundle, link, authentication, MTU/MRU, and default-route behavior</td>
+</tr>
+<tr>
+<td><code>ifconfig gif</code></td>
+<td>Dynamic DS-Lite tunnel application when static <code>rc.conf</code> is not enough</td>
+</tr>
+</tbody>
+</table>
+<h2 id="5-dry-run-then-apply-from-the-console">5. Dry-run, then apply from the console</h2>
+<p>Use temporary state files to perform a non-destructive preview:</p>
+<pre><code class="language-sh">workdir=$(mktemp -d)
+sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once --dry-run \
+  --state-file &quot;$workdir/state.db&quot; \
+  --status-file &quot;$workdir/status.json&quot;
+rm -rf &quot;$workdir&quot;
+</code></pre>
+<p>Apply only when the rendered files and dry-run are expected. This changes the
+host; use a console or separate management network:</p>
+<pre><code class="language-sh">sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once
+</code></pre>
+<p>routerd validates <code>pf.conf</code> with <code>pfctl -nf</code> before loading it. It validates
+dnsmasq with <code>dnsmasq --test</code> before restarting the service. Start the rc.d
+service after the one-shot apply:</p>
+<pre><code class="language-sh">sudo sysrc routerd_enable=YES
+sudo service routerd start
+</code></pre>
+<h2 id="6-inspect-status-and-logs">6. Inspect status and logs</h2>
+<p>Read routerctl get status:</p>
+<pre><code class="language-sh">sudo routerctl get status
+sudo routerctl get events --limit 20
+</code></pre>
+<p>Follow the system log:</p>
+<pre><code class="language-sh">tail -f /var/log/routerd.log
+</code></pre>
+<p>Check pf state:</p>
+<pre><code class="language-sh">sudo pfctl -ss -v
+</code></pre>
+<p>Check firewall logging through <code>pflog0</code>:</p>
+<pre><code class="language-sh">sudo tcpdump -n -e -ttt -i pflog0
+</code></pre>
+<p>If <code>FirewallEventLog</code> is enabled, routerd also imports <code>pflog0</code> entries into the
+firewall log store for <code>routerctl</code> and the Web Console.</p>
+<h2 id="see-also">See also</h2>
+<ul>
+<li><a href="../platforms.html">Supported platforms</a></li>
+<li><a href="wan-side-services.html">WAN-side services</a></li>
+<li><a href="basic-firewall.html">Basic firewall</a></li>
+</ul></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#1-install-from-a-release-archive">1. Install from a release archive</a></li>
+<li><a href="#2-place-the-router-configuration">2. Place the router configuration</a></li>
+<li><a href="#3-validate-and-review-generated-files">3. Validate and review generated files</a></li>
+<li><a href="#4-understand-the-freebsd-host-surfaces">4. Understand the FreeBSD host surfaces</a></li>
+<li><a href="#5-dry-run-then-apply-from-the-console">5. Dry-run, then apply from the console</a></li>
+<li><a href="#6-inspect-status-and-logs">6. Inspect status and logs</a></li>
+<li><a href="#see-also">See also</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/tutorials/freebsd-getting-started.md">GitHub</a></div></footer></body></html>

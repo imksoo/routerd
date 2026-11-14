@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HybridRoute · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/reference/resources/HybridRoute.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/reference/resources/HybridRoute.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/HybridRoute.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/HybridRoute.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/HybridRoute.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="hybridroute">HybridRoute</h1>
+<p><a href="../resources.html#hybridroute">各资源的配置</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: hybrid.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>将明确列出的 IPv4 目标网络展开为经 OverlayPeer 的主路由表 IPv4Route。</p>
+<h2 id="指定条件与引用关系">指定条件与引用关系</h2>
+<ul>
+<li>仅支持非默认 IPv4 CIDR，拒绝 default、0.0.0.0/0、IPv6 及非主表。目标前缀掩码化后生成 &lt;资源名&gt;-<CIDR非字母数字连续字符改连字符>，例如 branch-10-20-0-0-16。</li>
+<li>生成名称须唯一，不可与明确 IPv4Route 名称或目标冲突。同一 HybridRoute 内重复规范化目标也会冲突。HealthCheck 异常仅改变状态，不阻挡安装、撤回路由或改选对端。</li>
+<li>生成 IPv4Route 使用 peer.underlay.interface 作 device，仅 ipsec 可将 IPv4 remote.address 作 gateway，其他为设备路由。须另行提供隧道/VPN 与实际可达性。Linux 使用正 metric，FreeBSD 底层 IPv4Route 不应用 metric。</li>
+</ul>
+<h2 id="yaml定义">YAML定义</h2>
+<p>此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。</p>
+<pre><code class="language-yaml">- apiVersion: hybrid.routerd.net/v1alpha1
+  kind: HybridRoute
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    destinationCIDRs: # 必填; array
+      - &quot;&lt;string&gt;&quot; # string
+    healthCheckRef: &quot;&lt;string&gt;&quot; # 选填; string
+    install: # 选填; object
+      metric: 0 # 选填; integer; minimum=0
+      table: &quot;&quot; # 选填; string; enum=[&quot;&quot;, &quot;main&quot;]
+    peerRef: &quot;&lt;string&gt;&quot; # 必填; string
+</code></pre>
+<h2 id="字段含义与默认值">字段含义与默认值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>字段含义与默认值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.destinationCIDRs</code></td>
+<td>必填非空且不含默认路由的 IPv4 CIDR 列表，不自动补远端网络或发现。</td>
+</tr>
+<tr>
+<td><code>spec.peerRef</code></td>
+<td>必填现有 OverlayPeer metadata.name 裸名；展开虽可规范化 OverlayPeer/name，常规跨资源验证仍要求裸名。</td>
+</tr>
+<tr>
+<td><code>spec.install</code></td>
+<td>可选路由安装配置，默认主表、metric 0，不提供策略路由或自动 HA 选择。</td>
+</tr>
+<tr>
+<td><code>spec.install.table</code></td>
+<td>仅空值或 main，两者均展开为主表 IPv4Route，拒绝其他表名或编号。</td>
+</tr>
+<tr>
+<td><code>spec.install.metric</code></td>
+<td>非负整数，默认 0，复制至生成 IPv4Route；Linux 仅输出正值，FreeBSD 路径忽略。</td>
+</tr>
+<tr>
+<td><code>spec.healthCheckRef</code></td>
+<td>可选现有 HealthCheck 裸名，空值不附加健康状态。unhealthy/failed/error 标记 Degraded 但不更改路由，此函数不将缺少或 unknown 状态视为异常。</td>
+</tr>
+</tbody>
+</table>
+<p>实现: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_hybrid.go">pkg/config/validate_hybrid.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/hybrid/hybrid.go">pkg/hybrid/hybrid.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/dynamic_effective.go">pkg/controller/chain/dynamic_effective.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/hybrid.go">pkg/controller/chain/hybrid.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/phase2.go">pkg/controller/chain/phase2.go</a></p>
+<h2 id="可引用的状态字段">可引用的状态字段</h2>
+<p>常规状态引用验证接受此 Kind 的下列字段名称。列于允许列表不保证目前有值，请检查实际状态。这些是输出，不是 YAML spec 配置。</p>
+<p><code>phase</code>, <code>routes</code>, <code>peerRef</code>, <code>defaultRouteUntouched</code>, <code>estimatedMTU</code></p>
+<p><a href="/examples/hybrid-l3-fou.yaml">配置示例</a></p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件与引用关系">指定条件与引用关系</a></li>
+<li><a href="#yaml定义">YAML定义</a></li>
+<li><a href="#字段含义与默认值">字段含义与默认值</a></li>
+<li><a href="#可引用的状态字段">可引用的状态字段</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/reference/resources/HybridRoute.md">GitHub</a></div></footer></body></html>

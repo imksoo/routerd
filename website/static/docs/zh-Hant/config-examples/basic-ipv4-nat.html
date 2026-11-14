@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>基本 IPv4 NAT 閘道 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/config-examples/basic-ipv4-nat.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/config-examples/basic-ipv4-nat.html" lang="en" hreflang="en">English</a><a href="/docs/ja/config-examples/basic-ipv4-nat.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/config-examples/basic-ipv4-nat.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/config-examples/basic-ipv4-nat.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="基本-ipv4-nat-閘道">基本 IPv4 NAT 閘道</h1>
+<p>這是適合實驗室閱讀的家用 IPv4 閘道形狀：WAN 以 DHCPv4 取得位址，LAN 使用 <code>192.168.10.1/24</code>，用戶端經 NAT44 連往外部網路。完整 YAML 位於 <code>examples/example-basic-ipv4-nat.yaml</code>。</p>
+<p>請先在隔離的 Ubuntu Server VM 進行測試，並保留主控台。這不是將正在承載生產網路的設備直接改成路由器的捷徑。</p>
+<h2 id="拓撲">拓撲</h2>
+<pre><code class="language-text">網際網路／上游路由器
+          |
+        wan（DHCPv4）
+          |
+      routerd 主機
+          |
+  lan（192.168.10.1/24）
+          |
+      LAN 用戶端
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>工作</th>
+<th>主要資源</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>宣告 WAN 和 LAN</td>
+<td><code>Interface/wan</code>、<code>Interface/lan</code></td>
+</tr>
+<tr>
+<td>取得 WAN IPv4</td>
+<td><code>DHCPv4Client/wan-dhcpv4</code></td>
+</tr>
+<tr>
+<td>持有 LAN 閘道位址</td>
+<td><code>IPv4StaticAddress/lan-base</code></td>
+</tr>
+<tr>
+<td>分配 LAN 位址</td>
+<td><code>DHCPv4Server/lan-dhcpv4</code></td>
+</tr>
+<tr>
+<td>讓 LAN IPv4 對外連線</td>
+<td><code>NAT44Rule/lan-to-wan</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="重要設定現代-nat-欄位">重要設定：現代 NAT 欄位</h2>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: NAT44Rule
+  metadata:
+    name: lan-to-wan
+  spec:
+    type: masquerade
+    egressInterface: wan
+    sourceRanges:
+      - 192.168.10.0/24
+    excludeDestinationCIDRs:
+      - 10.0.0.0/8
+      - 172.16.0.0/12
+      - 192.168.0.0/16
+</code></pre>
+<p>這是目前 <code>NAT44Rule</code> 的結構：使用 <code>type</code>、<code>egressInterface</code> 和 <code>sourceRanges</code>。<code>masquerade</code> 適合 WAN 位址會改變的 DHCP 上游。排除的私有目的網段不會做 NAT，避免損壞內部、VPN 或管理路由。</p>
+<p>下列資源將 LAN 位址與 DHCP 位址池連起來：</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: IPv4StaticAddress
+  metadata:
+    name: lan-base
+  spec:
+    interface: lan
+    address: 192.168.10.1/24
+
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DHCPv4Server
+  metadata:
+    name: lan-dhcpv4
+  spec:
+    interface: lan
+    addressPool:
+      start: 192.168.10.100
+      end: 192.168.10.199
+      leaseTime: 12h
+    gatewayFrom:
+      resource: IPv4StaticAddress/lan-base
+      field: address
+    dnsServers:
+      - 1.1.1.1
+      - 1.0.0.1
+</code></pre>
+<p>這個第一輪實驗直接對用戶端公告外部 DNS 解析器 <code>1.1.1.1</code> 和 <code>1.0.0.1</code>，因此路由器本身暫時不需要承擔 DNS 服務。請先確認學校、家庭、公司或上游網路允許使用這些公共解析器；若網路政策指定 DNS，或你要讓路由器提供本地名稱、過濾或條件式轉送，請改用獲准的 DNS 位址，或先設定 <code>DNSResolver</code>，再公告路由器的 LAN 位址。</p>
+<h2 id="執行這個範例">執行這個範例</h2>
+<p><a href="../tutorials/first-router.html">第一台實驗路由器</a>提供符合安裝版本的檔案下載、
+介面修改、驗證、隔離 dry-run、真正套用、服務啟動及用戶端檢查的完整步驟。
+發布封存檔不包含儲存庫的 <code>examples/</code> 目錄。上面的片段用於解釋資源，實際執行時請用
+下載的完整檔案。</p>
+<h2 id="關於防火牆">關於防火牆</h2>
+<p>完整範例也包含 <code>FirewallZone</code> 和 <code>FirewallPolicy</code>，用來展示 NAT 與區域策略如何搭配。不過防火牆功能仍在預發布的基礎實作階段，不是完整安全邊界。NAT 成功、dry-run 成功，或看到 nftables 表存在，都不能證明對外曝露已安全。</p>
+<h2 id="常見調整">常見調整</h2>
+<ul>
+<li>將 <code>ens18</code>、<code>ens19</code> 換成真實介面名稱。</li>
+<li>若 <code>192.168.10.0/24</code> 與上游、VPN 或管理網路重疊，改用未使用的私有網段。</li>
+<li>若需要可信的訪客隔離，請採用 VLAN、獨立 SSID 或獨立實體埠；不要只依賴共用二層 LAN 上的 MAC 分類。</li>
+</ul></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#拓撲">拓撲</a></li>
+<li><a href="#重要設定現代-nat-欄位">重要設定：現代 NAT 欄位</a></li>
+<li><a href="#執行這個範例">執行這個範例</a></li>
+<li><a href="#關於防火牆">關於防火牆</a></li>
+<li><a href="#常見調整">常見調整</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/config-examples/basic-ipv4-nat.md">GitHub</a></div></footer></body></html>

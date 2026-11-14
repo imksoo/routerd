@@ -48,7 +48,7 @@ while IFS= read -r -d '' path; do
       ;;
     docs/releases/changelog.md|docs/*/releases/changelog.md)
       ;;
-    docs/*|README*|AGENTS.md|LICENSE*|NOTICE*)
+    docs/*|README*|AGENTS.md|LICENSE*|NOTICE*|scripts/generate-resource-docs.py|scripts/render-docs.py)
       docs=true
       ;;
     website/*)

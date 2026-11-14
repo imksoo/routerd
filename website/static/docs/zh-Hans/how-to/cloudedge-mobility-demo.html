@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CloudEdge Mobility 演示 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/how-to/cloudedge-mobility-demo.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/how-to/cloudedge-mobility-demo.html" lang="en" hreflang="en">English</a><a href="/docs/ja/how-to/cloudedge-mobility-demo.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/how-to/cloudedge-mobility-demo.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/cloudedge-mobility-demo.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="cloudedge-mobility-演示">CloudEdge Mobility 演示</h1>
+<blockquote>
+<p>实验性功能（CloudEdge）。<strong>Selective Address Mobility (SAM)</strong> 的实验室演示。on-prem、AWS、Azure、OCI 共享一个逻辑 <code>/24</code>，每个站点都能提供其他站点<em>拥有的</em>地址 — 无 NAT 且不变更客户端的默认网关。可执行包位于 <a href="https://github.com/imksoo/routerd/tree/main/examples/cloudedge-mobility-demo"><code>examples/cloudedge-mobility-demo/</code></a>。</p>
+</blockquote>
+<h2 id="本演示展示的内容">本演示展示的内容</h2>
+<ul>
+<li><strong>1 个逻辑 <code>/24</code> 由 4 个站点共享</strong> — on-prem / AWS / Azure / OCI 全部将 <code>10.77.60.0/24</code> 作为单一逻辑地址空间。</li>
+<li><strong>非拥有者站点捕获拥有者的地址</strong> — 每个拥有者地址在<em>所有其他站点</em>变为可达（云端：提供商的<strong>辅助 IP</strong>，on-prem：<strong>proxy ARP</strong>）。进行单一拥有者仲裁。</li>
+<li><strong>12 方向 SSH 流通过</strong> — 4 个演示客户端之间全方向通信。</li>
+<li><strong>无 NAT、源 IP 保留、网关无变更</strong> — 连接保持实际源 IP，不进行 NAT，不触碰客户端的默认网关。</li>
+<li><strong>云端维护捕获迁移（D5）</strong> — 捕获的地址在同一提供商内迁移到另一个路由器作为备用，流量通过新的持有者恢复。</li>
+</ul>
+<h2 id="地址设计">地址设计</h2>
+<p>所有 4 个站点共享一个逻辑子网，每个站点仅拥有其中 1 个 <code>/32</code>。</p>
+<table>
+<thead>
+<tr>
+<th>站点</th>
+<th>routerd 节点</th>
+<th>拥有者地址</th>
+<th>捕获机制</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>On-prem</td>
+<td><code>onprem-router</code></td>
+<td><code>10.77.60.10/32</code></td>
+<td>LAN 上的 Proxy ARP</td>
+</tr>
+<tr>
+<td>AWS</td>
+<td><code>aws-router-a</code></td>
+<td><code>10.77.60.11/32</code></td>
+<td>ENI 辅助 IP</td>
+</tr>
+<tr>
+<td>Azure</td>
+<td><code>azure-router</code></td>
+<td><code>10.77.60.12/32</code></td>
+<td>NIC 辅助 ipConfig</td>
+</tr>
+<tr>
+<td>OCI</td>
+<td><code>oci-router</code></td>
+<td><code>10.77.60.13/32</code></td>
+<td>VNIC 辅助私有 IP</td>
+</tr>
+</tbody>
+</table>
+<p>逻辑子网：<strong><code>10.77.60.0/24</code></strong>。路由器间传输使用独立的 RFC1918 端点/内部地址体系（与链路本地 <code>169.254/16</code> 或 CGNAT <code>100.64/10</code> 分离）。地址约束请参见 <a href="../reference/selective-address-mobility.html">Selective Address Mobility</a>。</p>
+<h2 id="数据平面">数据平面</h2>
+<ul>
+<li><strong>provider-secondary-ip 捕获</strong> — 在每个云端路由器上，<em>其他</em>站点的拥有者地址作为辅助 IP 附加到该 ENI / NIC / VNIC，云端 fabric 将流量交付到该路由器。</li>
+<li><strong>proxy-ARP 捕获</strong> — 在 on-prem，路由器在 LAN 上对其他站点的拥有者地址响应 ARP。</li>
+<li><strong>BGP <code>/32</code> 交付</strong> — 每个拥有者广告其拥有的 <code>/32</code>，其他路由器导入最佳路径并通过 overlay 转发到拥有站点的路由器。</li>
+<li><strong>生成的 SAM 传输</strong> — 路由器通过从 <code>SAMTransportProfile</code> 导出的 IPIP 隧道和 BGP 对等体互连。如果启用 WireGuard，则为端点限定的加密底层网络。其 <code>AllowedIPs</code> 包含传输端点前缀，不包含移动 <code>/32</code>。</li>
+</ul>
+<p>交付是路由（而非 NAT），因此<strong>源 IP 得以保留</strong>，客户端的<strong>默认网关不会变更</strong>。</p>
+<h2 id="控制平面">控制平面</h2>
+<p>操作员只需声明意图，其余均为导出。</p>
+<ul>
+<li><strong>SAMNodeSet</strong> — 7 台 router 的唯一共享 identity/topology/placement registry。</li>
+<li><strong>MobilityPool</strong> — 本地 address/capture intent。它导入该 node set，只保留 self 的 provider、capture、discovery overlay。</li>
+<li><strong>北极星成员结构</strong> — 每个渲染配置通过 <code>profiles.cloudCaptures</code>、<code>spec.values</code>、<code>targetFrom</code>、<code>subnetRefFrom</code> 完全声明自身站点，不重复 remote member 或其提供商 NIC/子网实现细节。</li>
+<li><strong>SAMTransportProfile</strong> — 从共享拓扑和内部前缀导出逐对等体的 <code>TunnelInterface</code>、端点 <code>/32</code> <code>IPv4Route</code>、<code>BGPPeer</code> 资源。</li>
+<li><strong>BGP <code>/32</code> mobility 路径</strong> — 每个拥有者广告其拥有的主机路由，其他站点通过生成的 SAM 传输学习当前最佳路径。</li>
+<li><strong>提供商 trap 操作</strong> — 云端路由器最终将远程拥有的 <code>/32</code> 作为辅助 IP assign/unassign 以进行本地捕获。这些操作不再位于关键转发路径上。</li>
+<li><strong>Event Federation</strong> — <code>routerd.client.ipv4.observed</code> 事实在站点间传播（<code>EventGroup</code> / <code>EventPeer</code> / <code>EventSubscription</code>，参见 <a href="../reference/event-federation.html">Event Federation</a>）。</li>
+<li><strong>提供商操作 executor</strong> — 在 <code>ProviderActionPolicy</code> 下，使用实例自身的云原生 ID 执行门控云端变更（辅助 IP 的 assign / unassign、forwarding）（参见 ADR 0007）。</li>
+<li><strong>pathSig fencing</strong> — 提供商操作针对当前 BGP 期望路径签名和持有者进行 fence，因此过时的操作无法变更在其他地方已重新收敛的路由。</li>
+</ul>
+<p>示例配置使用共享 <code>SAMNodeSet</code> 和 <code>MobilityPool.membersFrom</code>。每个 Pool 只保留一个 local
+self overlay；remote identity、placement、maintenance 留在 node set 中。remote member 的
+provider、capture 与 discovery detail 会被 <code>routerctl validate</code>、plan、apply 拒绝。</p>
+<h2 id="运行方法">运行方法</h2>
+<p>使用 <code>examples/cloudedge-mobility-demo/</code> 中的包。假设实验室实例、NIC/VNIC、ID 权限、SSH、可选的 WireGuard 端点密钥、提供商 CLI 已准备就绪 — 脚本<strong>不会</strong>配置云端资源。</p>
+<pre><code class="language-sh">cd examples/cloudedge-mobility-demo
+cp env.example env
+$EDITOR env            # 填写所有占位符。secret 不要放入 git
+
+./run-demo.sh          # 渲染 + 部署、事件发布、D3 运行，然后 D5 迁移
+./collect-evidence.sh  # 收集提供商状态、日志、连接信息
+./reset-lab.sh         # 尽力清理。停止计算资源以避免闲置费用
+</code></pre>
+<p>无论是否失败，每次运行后都请执行 <code>reset-lab.sh</code>。</p>
+<h2 id="已验证的结果">已验证的结果</h2>
+<ul>
+<li><strong>D1</strong> 位置自动反映：出现在 on-prem 的拥有者地址被各云端路由器识别。</li>
+<li><strong>D2</strong> 云端 -&gt; on-prem 捕获（proxy ARP）。</li>
+<li><strong>D3</strong> 4 站点 <strong>12 方向 ping + SSH 通过</strong> — 源 IP 保留、无 NAT、默认网关无变更。</li>
+<li><strong>D4</strong> on-prem HA / VRRP 捕获故障转移。</li>
+<li><strong>D5</strong> 云端维护 / <strong>捕获迁移通过</strong> — drain <code>aws-router-a</code> 后，捕获的地址迁移到 <code>aws-router-b</code>，流量通过 B 恢复。过时的 pathSig 操作被 fence（<code>skipped: stale mobility desired path</code>）。参见 D5 证据。</li>
+</ul>
+<h2 id="注意事项">注意事项</h2>
+<ul>
+<li>这是<strong>实验室演示</strong>，不是生产就绪的交钥匙方案。</li>
+<li><strong>不是</strong>完整的 L2 扩展 / EVPN — 没有广播/多播桥接。</li>
+<li>这是<strong>选择性 <code>/32</code> 地址移动性</strong>：不是整个子网，而是选定的地址在站点间移动。</li>
+<li>脚本假设预配置的实例，使用占位的非机密逻辑地址。绝不提交实际的账户/订阅/OCID/ENI/VNIC ID 或私钥。</li>
+</ul></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#本演示展示的内容">本演示展示的内容</a></li>
+<li><a href="#地址设计">地址设计</a></li>
+<li><a href="#数据平面">数据平面</a></li>
+<li><a href="#控制平面">控制平面</a></li>
+<li><a href="#运行方法">运行方法</a></li>
+<li><a href="#已验证的结果">已验证的结果</a></li>
+<li><a href="#注意事项">注意事项</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/how-to/cloudedge-mobility-demo.md">GitHub</a></div></footer></body></html>

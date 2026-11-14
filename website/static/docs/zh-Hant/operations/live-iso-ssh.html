@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Live ISO 的 SSH 遠端管理 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/operations/live-iso-ssh.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/operations/live-iso-ssh.html" lang="en" hreflang="en">English</a><a href="/docs/ja/operations/live-iso-ssh.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/operations/live-iso-ssh.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/operations/live-iso-ssh.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="live-iso-的-ssh-遠端管理">Live ISO 的 SSH 遠端管理</h1>
+<p>routerd Live ISO 預設不執行 SSH 守護程式。預設態勢是封閉的。僅本機主控台和序列主控台
+（<code>tty1</code>、<code>tty2</code>、<code>ttyS0</code>）可用。這樣可以避免無密碼 root 存取暴露在網路上。</p>
+<p>當以虛擬化管理器 VM（Proxmox VE、KVM 等）方式執行裝置，且序列主控台存取不方便時，
+可以在不將憑證嵌入 ISO 映像的情況下啟用選擇性的 SSH 模式。</p>
+<h2 id="先決條件">先決條件</h2>
+<ul>
+<li>包含 <code>authorized_keys</code> 檔案的 config 磁碟（標籤為 <code>ROUTERD_CONFIG</code> 或 <code>ROUTERD</code>，
+  或透過 <code>routerd.usb=</code> 指定）。</li>
+<li>在開機時設定核心參數的方式（編輯 GRUB 項目，或從虛擬化管理器設定 VM 的核心參數）。</li>
+</ul>
+<h2 id="啟用-ssh">啟用 SSH</h2>
+<h3 id="步驟-1-在-config-磁碟上放置公鑰">步驟 1 — 在 config 磁碟上放置公鑰</h3>
+<p>在 config 磁碟（例如：儲存 <code>router.yaml</code> 的 Proxmox VM 磁碟）上的 <code>routerd/</code>
+目錄中建立 <code>authorized_keys</code> 檔案。</p>
+<pre><code class="language-text">routerd/
+  router.yaml
+  authorized_keys       &lt;- 新增此檔案
+</code></pre>
+<p>該檔案遵循標準 OpenSSH <code>authorized_keys</code> 格式。</p>
+<pre><code class="language-text">ssh-ed25519 AAAA...yourkey... user@host
+</code></pre>
+<p>也支援主機特定的金鑰檔案（優先於通用檔案搜尋）。</p>
+<pre><code class="language-text">routerd/hosts/&lt;hostname&gt;/authorized_keys
+routerd/hosts/&lt;mac&gt;/authorized_keys   (冒號分隔或緊湊小寫)
+</code></pre>
+<h3 id="步驟-2-使用-routerdssh1-開機">步驟 2 — 使用 <code>routerd.ssh=1</code> 開機</h3>
+<p>在核心命令列中新增 <code>routerd.ssh=1</code> 參數。</p>
+<p><strong>GRUB（Live ISO 開機選單 — 按 <code>e</code> 編輯）：</strong></p>
+<pre><code class="language-text">linux /boot/vmlinuz-lts ... routerd.ssh=1
+</code></pre>
+<p><strong>Proxmox VE — 設定 VM 的開機參數：</strong></p>
+<pre><code class="language-sh">qm set &lt;vmid&gt; --args &quot;-append routerd.ssh=1&quot;
+</code></pre>
+<p>或者在 VM 的 GRUB 項目中設定一次，即可在重新開機後持續生效。</p>
+<h2 id="開機時的行為">開機時的行為</h2>
+<ol>
+<li><code>live-persistence.sh init</code> 掛載 config 磁碟並還原 <code>router.yaml</code>。</li>
+<li><code>live-autostart.sh</code> 安裝相依套件（如果尚未存在則包含 <code>openssh</code>）。</li>
+<li><code>live-ssh.sh</code> 在核心命令列中檢查 <code>routerd.ssh=1</code>。</li>
+<li>如果設定了該旗標，則在已掛載的 config 磁碟上搜尋 <code>authorized_keys</code>。</li>
+<li>如果找到，將金鑰安裝到 <code>/root/.ssh/authorized_keys</code>，透過 <code>ssh-keygen -A</code>
+   產生主機金鑰，並啟動 <code>sshd</code>。</li>
+<li>如果設定了 <code>routerd.ssh=1</code> 但未找到 <code>authorized_keys</code> 檔案，sshd <strong>不會啟動</strong>，
+   並在 <code>/run/routerd/logs/routerd-ssh.log</code> 中記錄警告。</li>
+</ol>
+<h2 id="安全模型">安全模型</h2>
+<table>
+<thead>
+<tr>
+<th>屬性</th>
+<th>值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>預設狀態</td>
+<td>SSH 停用</td>
+</tr>
+<tr>
+<td>認證方式</td>
+<td>僅公鑰</td>
+</tr>
+<tr>
+<td>root 的密碼認證</td>
+<td>永久停用（<code>PasswordAuthentication no</code>）</td>
+</tr>
+<tr>
+<td>root 登入</td>
+<td><code>PermitRootLogin prohibit-password</code>（僅金鑰認證）</td>
+</tr>
+<tr>
+<td>ISO 內的憑證</td>
+<td>無 — 金鑰在執行時從 config 磁碟取得</td>
+</tr>
+</tbody>
+</table>
+<p>SSH 僅透過明確選擇啟用，且僅在外部媒體提供了憑證時才能運作。不會退回到密碼認證。</p>
+<h2 id="疑難排解">疑難排解</h2>
+<p><strong>sshd 未啟動時：</strong></p>
+<pre><code class="language-sh">cat /run/routerd/logs/routerd-ssh.log
+</code></pre>
+<p>常見原因：
+- 核心命令列中缺少 <code>routerd.ssh=1</code> — 檢查 <code>/proc/cmdline</code>。
+- config 磁碟未掛載 — 在 <code>/proc/mounts</code> 中檢查 <code>/media/routerd-usb</code>。
+- 在預期路徑中未找到 <code>authorized_keys</code> — <code>live-ssh.sh</code> 會在日誌中記錄預期的位置。</p>
+<p><strong>檢查 sshd 是否正在執行：</strong></p>
+<pre><code class="language-sh">pgrep -x sshd
+ss -tlnp | grep :22
+</code></pre>
+<p><strong>無需重新開機重新執行 SSH 設定：</strong></p>
+<pre><code class="language-sh">/usr/share/routerd/live-ssh.sh
+</code></pre>
+<h2 id="相關內容">相關內容</h2>
+<ul>
+<li><a href="usb-persistence.html">USB persistence</a> — config 磁碟的配置與裝置偵測</li>
+</ul></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#先決條件">先決條件</a></li>
+<li><a href="#啟用-ssh">啟用 SSH</a><ul>
+<li><a href="#步驟-1-在-config-磁碟上放置公鑰">步驟 1 — 在 config 磁碟上放置公鑰</a></li>
+<li><a href="#步驟-2-使用-routerdssh1-開機">步驟 2 — 使用 routerd.ssh=1 開機</a></li>
+</ul>
+</li>
+<li><a href="#開機時的行為">開機時的行為</a></li>
+<li><a href="#安全模型">安全模型</a></li>
+<li><a href="#疑難排解">疑難排解</a></li>
+<li><a href="#相關內容">相關內容</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/operations/live-iso-ssh.md">GitHub</a></div></footer></body></html>

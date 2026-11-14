@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>routerd とは · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/concepts/what-is-routerd.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/concepts/what-is-routerd.html" lang="en" hreflang="en">English</a><a href="/docs/ja/concepts/what-is-routerd.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/concepts/what-is-routerd.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/concepts/what-is-routerd.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="routerd-とは">routerd とは</h1>
+<p>routerd は、Linux ホスト・FreeBSD をルーターとして動かすための宣言型の制御プレーンです。ルーターの構成を YAML リソースとして書くと、routerd がその意図を、インターフェース、アドレス、DHCP、DNS、NAT、経路、トンネル、ヘルスチェック、パッケージ、sysctl、サービスユニット、ログといった実際の状態へ反映します。</p>
+<p>routerd はディストリビューションでも、集中管理サービスでもありません。各ルーターのホスト上でローカルに動き、systemd-networkd、dnsmasq、nftables、pppd、WireGuard、systemd といったホスト側の部品を、必要な範囲で使います。</p>
+<h2 id="解決する問題">解決する問題</h2>
+<p>ルーターを手作業で作ると、状態が多くの場所に散らばります。</p>
+<ul>
+<li>インターフェースのアドレスは、netplan・systemd-networkd・rc.d に分かれます。</li>
+<li>DHCP、DHCPv6、DHCP 中継、RA は、dnsmasq の設定に分かれます。</li>
+<li>DNS 転送とローカルレコードは、リゾルバーごとの設定に分かれます。</li>
+<li>NAT、経路ポリシー、conntrack、ファイアウォールは、nftables と iproute2 に分かれます。</li>
+<li>DHCPv4、DHCPv6-PD、PPPoE、ヘルスチェック、ログは、別々のデーモンになります。</li>
+<li>パッケージ、sysctl、サービスユニットは、ホスト準備スクリプトに残りがちです。</li>
+</ul>
+<p>routerd は、これらをまとめてリソースとして扱います。YAML を見ればルーターの意図が分かり、変更は git の diff で追え、実際に観測した状態は <code>routerctl</code> と Web 管理画面で確認できます。</p>
+<h2 id="現在の構成">現在の構成</h2>
+<p><code>routerd serve</code> はリソースを読んで依存関係を解き、子デーモンを起動し、イベントを購読しながら、ホストを望ましい状態へ調整（リコンサイル）します。</p>
+<p>長く動き続けるプロトコル状態は、小さな管理対象デーモンに分けています。</p>
+<ul>
+<li><code>routerd-dhcpv6-client</code>: DHCPv6 のプレフィックス委任（PD）と情報要求を担当します。</li>
+<li><code>routerd-dhcpv4-client</code>: DHCPv4 の WAN リースを担当します。</li>
+<li><code>routerd-pppoe-client</code>: PPPoE セッションを担当します。</li>
+<li><code>routerd-healthcheck</code>: TCP、DNS、HTTP、ICMP の疎通確認を担当します。</li>
+<li><code>routerd-dns-resolver</code>: DNS ゾーン応答と、DoH・DoT・TCP・UDP の上流を担当します。</li>
+<li><code>routerd-dhcp-event-relay</code>: dnsmasq のリース変化を routerd のイベントへ変換します。</li>
+<li><code>routerd-firewall-logger</code>: ファイアウォールログを routerd のログ保存先へ取り込みます。</li>
+</ul>
+<p>各デーモンは、Unix ソケット上のローカル HTTP+JSON で状態を公開し、必要な状態はファイルに保存します。routerd はそれらのイベントを読み、LAN サービス、DNS レコード、DS-Lite、NAT、経路ポリシー、ヘルスチェックによる経路選択、観測用の保存先へ反映します。</p>
+<h2 id="管理できるもの">管理できるもの</h2>
+<p>現在の実装では、次を扱えます。</p>
+<ul>
+<li>DHCPv6-PD と、委任されたプレフィックスから作る IPv6 LAN アドレス</li>
+<li>DHCPv6 情報要求、AFTR の DNS 解決、DS-Lite</li>
+<li>DHCPv4 の WAN リース、DHCPv4 の LAN スコープ、固定割り当て</li>
+<li>DHCPv6 サーバーモード、IPv6 RA オプション</li>
+<li>DNS ゾーン、DHCP 由来のレコード、条件付き転送、DoH、DoT、TCP DNS、UDP フォールバック、複数待ち受け、キャッシュ</li>
+<li>NAT44、プライベート宛先の NAT 対象外指定、IPv4 経路ポリシー、reverse path filter、Path MTU 方針、TCP MSS 調整</li>
+<li>PPPoE、WireGuard、VXLAN、VRF、cloud VPN 向けの IPsec 接続定義、strongSwan <code>swanctl</code> 設定の生成</li>
+<li>パッケージ、sysctl プロファイル、ネットワーク引き継ぎ、systemd ユニット、NTP クライアント、ログ転送、ログ保管、Web 管理画面</li>
+<li><code>EgressRoutePolicy</code>、<code>HealthCheck</code>、<code>EventRule</code>、<code>DerivedEvent</code> による状態の連携</li>
+<li>状態、イベント、DNS クエリー、コネクション、通信フロー、ファイアウォールログの確認</li>
+</ul>
+<h2 id="意図して範囲を絞っていること">意図して範囲を絞っていること</h2>
+<p>routerd は v1alpha1 のプレリリースです。ルーターを安全にし、設定を分かりやすくするためなら、互換用の別名を残さずに名前やフィールドを変えることがあります。</p>
+<p>ステートフルなファイアウォールフィルターも、意図して範囲を絞っています。routerd が生成するのは、NAT44、ゾーンポリシー、管理対象サービス向けの許可、拒否ログ、通信の確認までで、汎用のファイアウォール規則言語ではありません。</p>
+<p>FreeBSD も同じリソースモデルを使い、反映先だけが OS に合った機構になります。プラットフォームごとの差は対応表に記載します。</p>
+<h2 id="次に読むもの">次に読むもの</h2>
+<ul>
+<li><a href="design-philosophy.html">設計思想</a></li>
+<li><a href="resource-model.html">リソースモデル</a></li>
+<li><a href="apply-and-render.html">適用と生成</a></li>
+<li><a href="state.html">状態</a></li>
+<li><a href="../tutorials/install.html">インストール</a></li>
+</ul></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#解決する問題">解決する問題</a></li>
+<li><a href="#現在の構成">現在の構成</a></li>
+<li><a href="#管理できるもの">管理できるもの</a></li>
+<li><a href="#意図して範囲を絞っていること">意図して範囲を絞っていること</a></li>
+<li><a href="#次に読むもの">次に読むもの</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/concepts/what-is-routerd.md">GitHub</a></div></footer></body></html>

@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>State database · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/operations/state-database.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/operations/state-database.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/operations/state-database.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/operations/state-database.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/operations/state-database.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="state-database">State database</h1>
+<p>routerd persists state and events in SQLite. Each managed daemon additionally keeps its own lease or state file and an event log.</p>
+<h2 id="key-paths">Key paths</h2>
+<table>
+<thead>
+<tr>
+<th>Kind</th>
+<th>Path</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>routerd state DB</td>
+<td><code>/var/lib/routerd/routerd.db</code></td>
+</tr>
+<tr>
+<td>DHCPv6-PD lease</td>
+<td><code>/var/lib/routerd/dhcpv6-client/&lt;name&gt;/lease.json</code></td>
+</tr>
+<tr>
+<td>DHCPv4 lease</td>
+<td><code>/var/lib/routerd/dhcpv4-client/&lt;name&gt;/lease.json</code></td>
+</tr>
+<tr>
+<td>PPPoE state</td>
+<td><code>/var/lib/routerd/pppoe-client/&lt;name&gt;/state.json</code></td>
+</tr>
+<tr>
+<td>HealthCheck state</td>
+<td><code>/var/lib/routerd/healthcheck/&lt;name&gt;/state.json</code></td>
+</tr>
+<tr>
+<td>Per-daemon events</td>
+<td><code>/var/lib/routerd/&lt;daemon&gt;/&lt;name&gt;/events.jsonl</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="events-table">Events table</h2>
+<p>The bus persists events into SQLite. <code>EventRule</code> and <code>DerivedEvent</code> consume this stream as input. For day-to-day operations, prefer <code>routerctl get events</code> over running <code>sqlite3</code> against the database directly:</p>
+<pre><code class="language-sh">routerctl get events --limit 20
+routerctl get events --topic routerd.resource.status.changed
+routerctl get events --resource DNSResolver/lan-resolver -o json
+</code></pre>
+<p>Even without a <code>LogRetention</code> resource, the local event journal is bounded to
+24 hours, 100,000 rows, and 64 MiB of logical payload. Use a <code>LogSink</code> before
+increasing local forensic retention; router operation must not depend on an
+unbounded event table.</p>
+<h3 id="storage-full-recovery">Storage-full recovery</h3>
+<p>Check <code>routerctl doctor disk</code>, <code>systemctl status routerd</code>, and
+<code>/run/routerd/storage-critical.json</code>. For a volatile Live ISO COW filesystem,
+reboot the router OS and then verify its persistent configuration contains the
+intended <code>LogRetention</code>. For persistent storage, stop routerd, run
+<code>routerctl ledger prune-events --older-than 24h</code>, and only run
+<code>routerctl ledger vacuum</code> after enough working space is available. A reboot by
+itself does not reclaim persistent storage.</p>
+<h3 id="mobility-holder-transitions">Mobility holder transitions</h3>
+<p>CloudEdge SAM failover emits <code>routerd.mobility.holder.transition</code> events with
+machine-readable attributes such as <code>transitionKind</code>, <code>address</code>, <code>timestamp</code>,
+<code>issuedAt</code>, <code>fromNode</code>, <code>toNode</code>, <code>mobilityPathSig</code>, and
+<code>assignmentGeneration</code>.</p>
+<p>For provider-secondary-IP capture, <code>seize-complete</code> means the provider capture
+assign action succeeded in the action journal for an active <code>/32</code>
+<code>bgpCaptureAssignment</code>. Its <code>issuedAt</code> is the journal <code>ExecutedAt</code>, so
+<code>timestamp - issuedAt</code> measures the delay from provider acceptance to event
+recording. <code>T_seize</code> is the provider acceptance time.</p>
+<p><code>capture-confirmed</code> is still discovery-observation based. <code>T_confirm</code> is the
+time the local process observed the provider capture taking effect. Together,
+<code>seize-complete</code> and <code>capture-confirmed</code> measure the accepted-to-effective
+interval.</p>
+<p>After a node restart or rejoin, reconfirmation events can reuse the original
+journal acceptance time as <code>issuedAt</code>. In that case, <code>timestamp - issuedAt</code>
+includes the time while the node was stopped or absent. Treat those deltas as
+reconfirmation age, not convergence latency.</p>
+<p>For non-capture flows such as static-owned, static-handover, and local-home,
+<code>seize-complete</code> still comes from the active-holder plus self-identity BGP
+observation. Lab evidence currently proves the capture flow; static and
+handover completion events are not yet proven in a real environment.</p>
+<h2 id="backup-philosophy">Backup philosophy</h2>
+<p>The state database holds <strong>observed</strong> state — it is not a substitute for the configuration. The authoritative description of intent lives in the YAML configuration, version-controlled in git. If a host is rebuilt, restoring the configuration and letting routerd reconcile is preferred over restoring the SQLite database.</p>
+<p>If you want history of operational events for forensic purposes, export or take periodic snapshots of <code>routerd.db</code>, <code>dns-queries.db</code>, <code>traffic-flows.db</code>, and <code>firewall-logs.db</code>. The controller event journal currently lives in <code>routerd.db</code>; preserve the complete database when event history is required.</p>
+<h2 id="see-also">See also</h2>
+<ul>
+<li><a href="../concepts/log-storage.html">Log storage</a></li>
+<li><a href="reconcile.html">Reconcile and removal</a></li>
+</ul></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#key-paths">Key paths</a></li>
+<li><a href="#events-table">Events table</a><ul>
+<li><a href="#storage-full-recovery">Storage-full recovery</a></li>
+<li><a href="#mobility-holder-transitions">Mobility holder transitions</a></li>
+</ul>
+</li>
+<li><a href="#backup-philosophy">Backup philosophy</a></li>
+<li><a href="#see-also">See also</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/operations/state-database.md">GitHub</a></div></footer></body></html>

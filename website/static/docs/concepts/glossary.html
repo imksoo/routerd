@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Glossary · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/concepts/glossary.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/concepts/glossary.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/concepts/glossary.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/concepts/glossary.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/concepts/glossary.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="glossary">Glossary</h1>
+<p>Key terms used throughout the routerd documentation.</p>
+<h2 id="networking-terms">Networking terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>interface</td>
+<td>A network interface on the host (physical NIC, VLAN, tunnel, etc.).</td>
+</tr>
+<tr>
+<td>route / routing</td>
+<td>A forwarding entry and the act of selecting it.</td>
+</tr>
+<tr>
+<td>gateway</td>
+<td>The next-hop router used to leave a network.</td>
+</tr>
+<tr>
+<td>NAT</td>
+<td>Network address translation.</td>
+</tr>
+<tr>
+<td>NAPT</td>
+<td>Dynamic many-to-one translation (port-overloaded NAT).</td>
+</tr>
+<tr>
+<td>firewall</td>
+<td>routerd's zone-based stateful filtering feature.</td>
+</tr>
+<tr>
+<td>filter / rule</td>
+<td>An individual allow or deny rule.</td>
+</tr>
+<tr>
+<td>prefix delegation (PD)</td>
+<td>DHCPv6 prefix delegation; a delegated IPv6 prefix the router redistributes to the LAN.</td>
+</tr>
+<tr>
+<td>upstream</td>
+<td>The provider side of DNS or routing.</td>
+</tr>
+<tr>
+<td>egress / ingress</td>
+<td>Outbound (egress) and inbound (ingress) traffic directions.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="declarative-model-terms">Declarative model terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>declarative</td>
+<td>Describing the desired state rather than the steps to reach it.</td>
+</tr>
+<tr>
+<td>resource</td>
+<td>A typed object in the router configuration.</td>
+</tr>
+<tr>
+<td>Kind</td>
+<td>The type of a resource.</td>
+</tr>
+<tr>
+<td>spec</td>
+<td>The desired state of a resource.</td>
+</tr>
+<tr>
+<td>status</td>
+<td>The observed, actual state of a resource.</td>
+</tr>
+<tr>
+<td>apply</td>
+<td>Bringing the host toward the desired state (<code>routerctl apply</code>).</td>
+</tr>
+<tr>
+<td>reconcile / reconcile loop</td>
+<td>The process that drives the actual state toward the desired state.</td>
+</tr>
+<tr>
+<td>controller</td>
+<td>The component that reconciles a class of resources.</td>
+</tr>
+<tr>
+<td>render</td>
+<td>Building host artifacts (config files, units) from resources.</td>
+</tr>
+<tr>
+<td>daemon</td>
+<td>A long-lived helper process managed by routerd.</td>
+</tr>
+<tr>
+<td>generation</td>
+<td>The SQLite-backed configuration generation number.</td>
+</tr>
+<tr>
+<td>owned / ownership</td>
+<td>The record of which artifacts routerd manages.</td>
+</tr>
+<tr>
+<td>bootstrap</td>
+<td>Preparing a host so routerd can run on it.</td>
+</tr>
+<tr>
+<td>appliance</td>
+<td>A fixed-function deployment of routerd.</td>
+</tr>
+<tr>
+<td>Tier (H/S/C/E)</td>
+<td>Feature stage labels used as proper nouns.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="other-notations">Other notations</h2>
+<ul>
+<li><strong>Web Console</strong> is routerd's read-only web UI. <code>WebConsole</code> (the Kind that enables it) is a code identifier and is kept verbatim.</li>
+</ul></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#networking-terms">Networking terms</a></li>
+<li><a href="#declarative-model-terms">Declarative model terms</a></li>
+<li><a href="#other-notations">Other notations</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/concepts/glossary.md">GitHub</a></div></footer></body></html>

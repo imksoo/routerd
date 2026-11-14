@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>安全起步：先检查，不先断网 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/tutorials/getting-started.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/tutorials/getting-started.html" lang="en" hreflang="en">English</a><a href="/docs/ja/tutorials/getting-started.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/tutorials/getting-started.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/tutorials/getting-started.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="安全起步先检查不先断网">安全起步：先检查，不先断网</h1>
+<p>本教程的目标不是马上把机器变成家庭网关，而是安全地完成第一轮：写一份很小的配置、检查它、再在不提交网络变更的条件下运行一次。请使用隔离的 Ubuntu Server VM 或备用电脑，并保留控制台。</p>
+<p>尚未安装时，先完成<a href="../install-and-upgrade.html">安装与升级</a>。</p>
+<h2 id="1-先找出接口名">1. 先找出接口名</h2>
+<pre><code class="language-bash">ip -br link
+</code></pre>
+<p>示例把 <code>ens18</code> 当 WAN、<code>ens19</code> 当 LAN。你的名字可能是 <code>enp1s0</code>、<code>eth0</code> 或别的名称，必须按输出替换。不要从正要被 routerd 接管的唯一网络接口远程 SSH 进去做实验。</p>
+<h2 id="2-写最小配置">2. 写最小配置</h2>
+<p>把下面内容保存为 <code>first-router.yaml</code>。这一步只声明两个接口；它还没有 DHCP 服务、NAT 或互联网共享。</p>
+<pre><code class="language-yaml">apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: first-router
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: wan
+      spec:
+        ifname: ens18
+        adminUp: true
+        managed: false
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: lan
+      spec:
+        ifname: ens19
+        adminUp: true
+        managed: true
+</code></pre>
+<p><code>metadata.name</code> 是配置内部使用的名字；<code>spec.ifname</code> 才是 Linux 实际看到的接口名。把 WAN 标为 <code>external</code> 是一种保守起点：先不要让 routerd 直接接管上游链接。</p>
+<h2 id="3-离线验证文件">3. 离线验证文件</h2>
+<pre><code class="language-bash">routerd validate --config first-router.yaml
+</code></pre>
+<p>这个命令独立工作，不要求 <code>routerd serve</code> 已启动，也不写入网络设置。出错时先改 YAML 或接口名，而不是尝试真实应用。</p>
+<h2 id="4-用临时路径做一次-dry-run">4. 用临时路径做一次 dry-run</h2>
+<pre><code class="language-bash">workdir=$(mktemp -d)
+routerd apply --once --dry-run --config first-router.yaml --status-file &quot;$workdir/status.json&quot; --state-file &quot;$workdir/state.db&quot; --netplan-file &quot;$workdir/50-routerd.yaml&quot; --dnsmasq-file &quot;$workdir/dnsmasq.conf&quot; --dnsmasq-service-file &quot;$workdir/routerd-dnsmasq.service&quot; --nftables-file &quot;$workdir/routerd-nat.nft&quot;
+rm -rf &quot;$workdir&quot;
+</code></pre>
+<p><code>--dry-run</code> 会计算依赖关系、计划和渲染意图，但不会提交主机网络变更。临时目录还避免状态报告和输出路径落入 <code>/run</code>、<code>/etc</code> 或 <code>/var/lib</code>。阅读输出，特别留意接口名、资源引用和管理路径警告。</p>
+<p>不要把 dry-run 当作连通性或安全测试：它不会替你验证真实 ISP、交换机 VLAN 或完整的防火墙暴露面。</p>
+<h2 id="5-在下一篇中进行真实变更">5. 在下一篇中进行真实变更</h2>
+<p>这个小文件只声明接口，没有 DHCP、NAT 或互联网共享。请保持服务停止，继续
+<a href="first-router.html">第一台实验路由器</a>，在那里按顺序检查完整配置、启动服务、
+查看状态并测试 LAN 客户端。</p>
+<h2 id="下一步">下一步</h2>
+<ul>
+<li><a href="first-router.html">第一台实验路由器</a>会加入 WAN DHCP 和 LAN 网关地址。</li>
+<li><a href="wan-side-services.html">WAN 侧服务</a>介绍更多上游连接方式。</li>
+<li><a href="lan-side-services.html">LAN 侧服务</a>介绍 DHCP、DNS、RA 和 NTP。</li>
+</ul></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#1-先找出接口名">1. 先找出接口名</a></li>
+<li><a href="#2-写最小配置">2. 写最小配置</a></li>
+<li><a href="#3-离线验证文件">3. 离线验证文件</a></li>
+<li><a href="#4-用临时路径做一次-dry-run">4. 用临时路径做一次 dry-run</a></li>
+<li><a href="#5-在下一篇中进行真实变更">5. 在下一篇中进行真实变更</a></li>
+<li><a href="#下一步">下一步</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/tutorials/getting-started.md">GitHub</a></div></footer></body></html>

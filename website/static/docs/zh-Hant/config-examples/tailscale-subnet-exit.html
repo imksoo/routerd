@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tailscale 子網路 / 出口節點 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/config-examples/tailscale-subnet-exit.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/config-examples/tailscale-subnet-exit.html" lang="en" hreflang="en">English</a><a href="/docs/ja/config-examples/tailscale-subnet-exit.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/config-examples/tailscale-subnet-exit.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/config-examples/tailscale-subnet-exit.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="tailscale-子網路-出口節點">Tailscale 子網路 / 出口節點</h1>
+<p>此範例設定已安裝的 Tailscale 用戶端，將路由器同時作為 subnet router 和 exit node
+進行廣告。YAML 只有 <code>TailscaleNode</code>，並不安裝 Tailscale；請先安裝用戶端並依 tailnet
+的註冊流程加入裝置。</p>
+<p>完整的 YAML 位於 <code>examples/tailscale-exit-subnet.yaml</code>。</p>
+<h2 id="架構圖">架構圖</h2>
+<pre><code class="language-mermaid">flowchart LR
+  tailnet[&quot;[1] Tailscale tailnet&quot;]
+  router[&quot;[2] routerd host&lt;br/&gt;edge-router&quot;]
+  lan[&quot;[3] LAN&lt;br/&gt;172.18.0.0/16&quot;]
+  mgmt[&quot;[4] management&lt;br/&gt;192.168.20.0/24&quot;]
+  internet((Internet))
+
+  tailnet --- router
+  router --- lan
+  router --- mgmt
+  router --- internet
+</code></pre>
+<h2 id="圖示對照表">圖示對照表</h2>
+<table>
+<thead>
+<tr>
+<th>編號</th>
+<th>說明</th>
+<th>主要資源</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>[1]</td>
+<td>接收路由與出口節點廣告的 tailnet。</td>
+<td>Tailscale control plane</td>
+</tr>
+<tr>
+<td>[2]</td>
+<td>以 Tailscale 節點身分註冊的路由器。</td>
+<td><code>TailscaleNode/home</code></td>
+</tr>
+<tr>
+<td>[3]</td>
+<td>廣告至 tailnet 的 LAN 前綴。</td>
+<td><code>advertiseRoutes</code></td>
+</tr>
+<tr>
+<td>[4]</td>
+<td>廣告至 tailnet 的遠端管理前綴。</td>
+<td><code>advertiseRoutes</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="重點說明">重點說明</h2>
+<pre><code class="language-yaml"># [2] 將路由器以具名 Tailscale 節點的身分進行註冊。
+- apiVersion: net.routerd.net/v1alpha1
+  kind: TailscaleNode
+  metadata:
+    name: home
+  spec:
+    hostname: edge-router
+    advertiseExitNode: true
+    # [3] + [4] 廣告至 tailnet 的前綴。
+    advertiseRoutes:
+      - 172.18.0.0/16
+      - 192.168.20.0/24
+    acceptDNS: false
+    authKeyEnv: TS_AUTHKEY
+    authKeyFile: /usr/local/etc/routerd/secrets/tailscale.env
+</code></pre>
+<h2 id="確認步驟">確認步驟</h2>
+<p>先在 daemon 尚未啟動時進行獨立檢查。下列指令需要具有 <code>sudo</code> 權限的本機使用者，但不會套用網路變更。</p>
+<pre><code class="language-bash">LAB_DIR=&quot;$(mktemp -d)&quot;
+sudo routerd validate --config examples/tailscale-exit-subnet.yaml
+sudo routerd apply --config examples/tailscale-exit-subnet.yaml --once --dry-run \
+  --state-file &quot;$LAB_DIR/state.db&quot; \
+  --status-file &quot;$LAB_DIR/status.json&quot;
+rm -rf &quot;$LAB_DIR&quot;
+</code></pre>
+<p>服務運行後，才在路由器上執行 <code>sudo routerctl describe TailscaleNode/home</code> 與
+<code>sudo tailscale status</code>。</p>
+<p>請依照 tailnet 的存取政策，在 Tailscale 管理主控台端核准路由與出口節點。</p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#架構圖">架構圖</a></li>
+<li><a href="#圖示對照表">圖示對照表</a></li>
+<li><a href="#重點說明">重點說明</a></li>
+<li><a href="#確認步驟">確認步驟</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/config-examples/tailscale-subnet-exit.md">GitHub</a></div></footer></body></html>

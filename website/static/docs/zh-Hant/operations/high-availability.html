@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>High availability · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/operations/high-availability.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/operations/high-availability.html" lang="en" hreflang="en">English</a><a href="/docs/ja/operations/high-availability.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/operations/high-availability.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/operations/high-availability.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="high-availability">High availability</h1>
+<p><code>RouterdCluster</code> 透過輕量的檔案式租約，控制產生器與套用處理的行為，與 VIP 的擁有權相互獨立。VIP 由哪台路由器持有由 keepalived 或 CARP 決定，routerd 則透過租約決定哪個節點可以變更主機設定。</p>
+<p>領導節點持有 <code>spec.leasePath</code> 的排他鎖，並在 <code>spec.leaseTTL</code> 到期前更新租約。待機節點持續執行控制器鏈以供觀測，但會強制讓變更狀態的控制器以 dry-run 模式運作。在單次套用模式下，照常建立計畫並記錄叢集狀態，但跳過 apply。</p>
+<pre><code class="language-yaml">apiVersion: system.routerd.net/v1alpha1
+kind: RouterdCluster
+metadata:
+  name: edge-ha
+spec:
+  peers:
+    - routerd-01.lain.local
+    - routerd-02.lain.local
+  leaseTTL: 30s
+  leasePath: /var/lib/routerd/ha-lease
+</code></pre>
+<p>若要在同一主機上只保留一個 routerd 處理程序，本地路徑即已足夠。
+若要在多台主機間選出單一套用處理程序，請使用 advisory lock 能正確運作的共用檔案系統路徑。</p>
+<p>最小設定範例請參閱 <code>examples/ha-2-node.yaml</code>。</p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul></ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/operations/high-availability.md">GitHub</a></div></footer></body></html>

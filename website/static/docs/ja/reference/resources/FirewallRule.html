@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FirewallRule · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/reference/resources/FirewallRule.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/reference/resources/FirewallRule.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/FirewallRule.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/reference/resources/FirewallRule.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/FirewallRule.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="firewallrule">FirewallRule</h1>
+<p><a href="../resources.html#firewallrule">リソース別の設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: firewall.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>ゾーン間の許可・破棄・拒否ルールです。アドレス・プロトコル・ポート条件と、Linuxのレート・接続数条件を指定できます。</p>
+<h2 id="指定条件と参照関係">指定条件と参照関係</h2>
+<ul>
+<li>fromZone・toZone・actionが必須です。ゾーンは既存名またはselfです。fromZone=selfも検証を通りますが、この描画処理は自発通信のチェーンを生成せず、ローカル発信はOS・outputの方針に従います。</li>
+<li>ルール順はYAML順でなくmetadata.name順です。既存状態・IPv6制御・生成サービスや公開通信の許可が先に成立する場合があります。PFは広い暗黙許可も先に出し、転送ルールのtoZoneから出力インターフェース・宛先ゾーン条件を作らないため、宛先制限にはdestinationCIDRsを明示してください。</li>
+<li>portとdestinationPortsは排他です。送信元・宛先ポートの指定にはtcpまたはudpが必要です。範囲は一覧内の唯一の項目とし、数値ポート・start-end文字列を指定できます。ICMP型には対応するプロトコルが必要です。</li>
+<li>Linuxでは送信元CIDRはOR、destinationCIDRsとdestinationSetRefsは和集合で、除外集合をその後で除きます。送信元・宛先・プロトコルのアドレスファミリーは整合が必要です。PFは検証を通してもアドレス集合参照・rateLimit・connLimitを使用しません。</li>
+<li>LinuxのrateLimitは指定レート超過、connLimitはmaxPerSource超過に一致し、超過分へactionを適用します。制限には適切なdrop・rejectを指定してください。両方を設定すると別々の選択肢を生成し、両閾値のANDにはなりません。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallRule
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    action: &quot;accept&quot; # 必須; string; enum=[&quot;accept&quot;, &quot;drop&quot;, &quot;reject&quot;]
+    connLimit: # 任意; object
+      log: true # 任意; boolean
+      maxPerSource: 0 # 任意; integer; minimum=0
+    destinationCIDRs: # 任意; array
+      - &quot;&lt;string&gt;&quot; # string
+    destinationPorts: # 任意; array
+      - &quot;&lt;string&gt;&quot; # string
+    destinationSetRefs: # 任意; array
+      - &quot;&lt;string&gt;&quot; # string
+    excludeDestinationSetRefs: # 任意; array
+      - &quot;&lt;string&gt;&quot; # string
+    fromZone: &quot;&lt;string&gt;&quot; # 必須; string
+    icmpType: &quot;&lt;string&gt;&quot; # 任意; string
+    icmpv6Type: &quot;&lt;string&gt;&quot; # 任意; string
+    log: true # 任意; boolean
+    port: 0 # 任意; integer; minimum=0; maximum=65535
+    protocol: &quot;&quot; # 任意; string; enum=[&quot;&quot;, &quot;tcp&quot;, &quot;udp&quot;, &quot;icmp&quot;, &quot;icmpv6&quot;, &quot;ipv6-icmp&quot;, &quot;ipip&quot;]
+    rateLimit: # 任意; object
+      burst: 0 # 任意; integer; minimum=0
+      log: true # 任意; boolean
+      packetsPerSecond: 0 # 任意; integer; minimum=0
+      per: &quot;&quot; # 任意; string; enum=[&quot;&quot;, &quot;second&quot;, &quot;minute&quot;]
+      rate: 0 # 任意; integer; minimum=0
+      unit: &quot;&quot; # 任意; string; enum=[&quot;&quot;, &quot;packet&quot;, &quot;byte&quot;, &quot;kilobyte&quot;, &quot;megabyte&quot;]
+    sourcePorts: # 任意; array
+      - &quot;&lt;string&gt;&quot; # string
+    srcCIDRs: # 任意; array
+      - &quot;&lt;string&gt;&quot; # string
+    toZone: &quot;&lt;string&gt;&quot; # 必須; string
+</code></pre>
+<h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>項目の意味と既定値</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.fromZone</code></td>
+<td>必須の裸のFirewallZone名またはselfです。selfは受理しますが、ここでローカル発信のフィルターにはなりません。</td>
+</tr>
+<tr>
+<td><code>spec.toZone</code></td>
+<td>必須の裸のFirewallZone名またはselfです。Linuxは入出力ゾーンのインターフェース、selfはローカル入力を選びます。PFのselfはルーターアドレスで、他のtoZoneは出力ゾーン条件になりません。</td>
+</tr>
+<tr>
+<td><code>spec.srcCIDRs</code></td>
+<td>任意の送信元IPv4・IPv6プレフィックスのOR一覧です。既定の空は送信元不問で、解析可能なCIDRが必要です。Linuxはホスト部をマスクして描画します。</td>
+</tr>
+<tr>
+<td><code>spec.destinationCIDRs</code></td>
+<td>任意の宛先CIDR一覧で既定は空です。LinuxはdestinationSetRefsと合わせてORにし、両方なければゾーン経路内の宛先不問です。PFはこの静的CIDRだけを使います。</td>
+</tr>
+<tr>
+<td><code>spec.destinationSetRefs</code></td>
+<td>任意の既存IPAddressSet/<name>参照で、既定は空です。Linuxは有効なIPv4・IPv6集合を参照しますが、現行PFは適用しません。</td>
+</tr>
+<tr>
+<td><code>spec.excludeDestinationSetRefs</code></td>
+<td>Linuxの宛先条件から除外する既存IPAddressSet/<name>参照です。既定は空で、現行PFは使いません。</td>
+</tr>
+<tr>
+<td><code>spec.protocol</code></td>
+<td>既定の空はプロトコル不問です。tcp・udp・icmp・icmpv6・ipv6-icmp・ipipを指定できます。ここでipipはIPv6 next-header 4のIPv4カプセル化であり、IPv4下位網のトンネル指定ではありません。</td>
+</tr>
+<tr>
+<td><code>spec.port</code></td>
+<td>任意の単一宛先ポートで、既定0は指定なしです。1～65535にはtcp・udpが必要で、destinationPortsと排他です。</td>
+</tr>
+<tr>
+<td><code>spec.sourcePorts</code></td>
+<td>任意のtcp・udp送信元ポートOR一覧です。各値は1～65535か唯一のstart-end範囲とし、既定の空はポート不問です。</td>
+</tr>
+<tr>
+<td><code>spec.destinationPorts</code></td>
+<td>任意のtcp・udp宛先ポートOR一覧で、送信元と同じ数値・範囲制約です。0以外のportと排他で、既定の空は制限なしです。</td>
+</tr>
+<tr>
+<td><code>spec.icmpType</code></td>
+<td>icmpが必要なIPv4 ICMP型です。echo-reply・destination-unreachable・source-quench・redirect・echo-request・router-advertisement・router-solicitation・time-exceeded・parameter-problem・timestamp-request・timestamp-replyに対応します。空は全型です。YAML別名icmp-typeより本キーを優先します。</td>
+</tr>
+<tr>
+<td><code>spec.icmpv6Type</code></td>
+<td>icmpv6・ipv6-icmpが必要です。destination-unreachable・packet-too-big・time-exceeded・parameter-problem・echo-request/reply・router-solicit/advert・neighbor-solicit/advertと、そのnd-別名に対応します。空は全型で、YAML別名icmpv6-typeより本キーを優先します。</td>
+</tr>
+<tr>
+<td><code>spec.action</code></td>
+<td>accept・drop・rejectが必須で既定値はありません。Linuxのレート・接続条件付きでは許容量でなく超過通信への判定です。</td>
+</tr>
+<tr>
+<td><code>spec.log</code></td>
+<td>既定falseです。trueで判定前にログを出し、Linuxはカーネルログまたは有効なFirewallEventLogのNFLOG、PFはlogを使います。</td>
+</tr>
+<tr>
+<td><code>spec.rateLimit</code></td>
+<td>任意のLinuxレート超過条件で、既定は無効です。現行PFは子項目を含め使いません。</td>
+</tr>
+<tr>
+<td><code>spec.rateLimit.rate</code></td>
+<td>0以上のレートで、既定0はpacketsPerSecondを使います。実効0は無効でunit・per・burst・logも空・0・falseが必要です。正のrateはpacketsPerSecondより優先します。</td>
+</tr>
+<tr>
+<td><code>spec.rateLimit.unit</code></td>
+<td>有効時の既定はpacketで、byte・kilobyte・megabyteも選べます。nftablesのレート・バースト単位で、正の実効レートが必要です。</td>
+</tr>
+<tr>
+<td><code>spec.rateLimit.per</code></td>
+<td>有効時の既定はsecondで、minuteも選べます。正の実効レートが必要です。</td>
+</tr>
+<tr>
+<td><code>spec.rateLimit.log</code></td>
+<td>既定falseです。trueでレート超過一致を判定前に記録し、正の実効レートが必要です。</td>
+</tr>
+<tr>
+<td><code>spec.rateLimit.packetsPerSecond</code></td>
+<td>rate=0時に使う旧来の0以上のレートで、既定0です。名前にかかわらずunit・perを明示した場合はその単位に従います。</td>
+</tr>
+<tr>
+<td><code>spec.rateLimit.burst</code></td>
+<td>選択単位の0以上のバースト量です。既定0はburst句を省略しnftablesの挙動に従います。0以外には有効なレートが必要です。</td>
+</tr>
+<tr>
+<td><code>spec.connLimit</code></td>
+<td>任意のLinux送信元別接続数条件で、既定は無効です。rateLimitと独立し、現行PFは使いません。</td>
+</tr>
+<tr>
+<td><code>spec.connLimit.maxPerSource</code></td>
+<td>0以上の上限で既定0は無効です。正のNでは送信元アドレス別のct count&gt;Nに一致しactionを適用します。IPv4・IPv6で別の計測を使います。</td>
+</tr>
+<tr>
+<td><code>spec.connLimit.log</code></td>
+<td>既定falseです。trueで接続数超過ログを加え、maxPerSource=0なら効果はありません。</td>
+</tr>
+</tbody>
+</table>
+<p>実装: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_firewall.go">pkg/config/validate_firewall.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go">pkg/config/diagnostics.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/nftables.go">pkg/render/nftables.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/pf.go">pkg/render/pf.go</a></p>
+<h2 id="状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</h2>
+<p>通常の状態値参照の検証で、このKindについて許可するフィールド名です。許可一覧にあるだけでは値の生成・取得を保証しないため、実際の状態を確認してください。YAMLのspecに設定する項目ではなく出力です。</p>
+<p><code>phase</code>, <code>action</code></p>
+<p><a href="/examples/firewall-rate-limit.yaml">設定例</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
+<li><a href="#状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/reference/resources/FirewallRule.md">GitHub</a></div></footer></body></html>

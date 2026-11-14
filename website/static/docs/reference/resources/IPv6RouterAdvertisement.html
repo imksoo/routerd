@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>IPv6RouterAdvertisement · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/reference/resources/IPv6RouterAdvertisement.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/reference/resources/IPv6RouterAdvertisement.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/reference/resources/IPv6RouterAdvertisement.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/IPv6RouterAdvertisement.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/IPv6RouterAdvertisement.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="ipv6routeradvertisement">IPv6RouterAdvertisement</h1>
+<p><a href="../resources.html#ipv6routeradvertisement">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Configure IPv6 router-advertisement options on a LAN and deprecate previously delegated prefixes.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>interface plus prefix or prefixFrom is required. The static renderer and live writer differ: current live generation emits interface/enable-ra/options but does not derive a normal dhcp-range from prefix/prefixFrom. Pair with a working DHCPv6Server/address configuration and confirm actual on-wire PIOs; the schema/Applied status alone cannot prove current-prefix advertisements.</li>
+<li>dnssl and dnsslFrom are mutually exclusive; prefix and prefixFrom, or rdnss and rdnssFrom, are not. All common resource references must exist and specify a provided field even when optional true. Removed prefixSource/ready_when are rejected.</li>
+<li>When prefixFrom points to IPv6DelegatedAddress, still-valid previous /64 prefixes are sent directly as deprecated PIOs (preferred 0, remaining valid lifetime), from a real link-local source with hop limit 255. Current-prefix normal service remains the shared dnsmasq path.</li>
+</ul>
+<h2 id="yaml-definition">YAML definition</h2>
+<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: IPv6RouterAdvertisement
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    configPath: &quot;&lt;string&gt;&quot; # optional; string
+    dependsOn: # optional; array
+      - # object
+        equals: &quot;&lt;string&gt;&quot; # optional; string
+        field: &quot;&lt;string&gt;&quot; # optional; string
+        notEmpty: true # optional; boolean
+        optional: true # optional; boolean
+        phase: &quot;&lt;string&gt;&quot; # optional; string
+        resource: &quot;&lt;string&gt;&quot; # Required; string
+    dnssl: # optional; array
+      - &quot;&lt;string&gt;&quot; # string
+    dnsslFrom: # optional; array
+      - # object
+        field: &quot;&lt;string&gt;&quot; # optional; string
+        optional: true # optional; boolean
+        resource: &quot;&lt;string&gt;&quot; # Required; string
+    interface: &quot;&lt;string&gt;&quot; # Required; string
+    mFlag: true # optional; boolean
+    mtu: 1280 # optional; integer; minimum=1280; maximum=65535
+    oFlag: true # optional; boolean
+    pidFile: &quot;&lt;string&gt;&quot; # optional; string
+    preferredLifetime: &quot;&lt;string&gt;&quot; # optional; string
+    prefix: &quot;&lt;string&gt;&quot; # optional; string
+    prefixFrom: # optional; object
+      field: &quot;&lt;string&gt;&quot; # optional; string
+      optional: true # optional; boolean
+      resource: &quot;&lt;string&gt;&quot; # Required; string
+    prfPreference: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;low&quot;, &quot;medium&quot;, &quot;high&quot;]
+    rdnss: # optional; array
+      - &quot;&lt;string&gt;&quot; # string
+    rdnssFrom: # optional; array
+      - # object
+        field: &quot;&lt;string&gt;&quot; # optional; string
+        optional: true # optional; boolean
+        resource: &quot;&lt;string&gt;&quot; # Required; string
+    validLifetime: &quot;&lt;string&gt;&quot; # optional; string
+    when: # optional; object
+      state: # optional; object
+        &quot;&lt;key&gt;&quot;: # optional; object
+          contains: &quot;&lt;string&gt;&quot; # optional; string
+          equals: &quot;&lt;string&gt;&quot; # optional; string
+          exists: true # optional; boolean
+          for: &quot;&lt;string&gt;&quot; # optional; string
+          in: # optional; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # optional; string
+          status: &quot;set&quot; # optional; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.interface</code></td>
+<td>Required logical interface. Current global reference validation does not verify this field for RA, unlike many address resources; runtime attempts alias resolution and then uses the literal as an OS name. Declare an Interface and use its name.</td>
+</tr>
+<tr>
+<td><code>spec.prefix</code></td>
+<td>Literal IPv6 prefix, required unless prefixFrom.resource is supplied. May coexist with prefixFrom as a status fallback. Current live writer does not generate a normal prefix range from this field; do not assume declaration alone advertises it.</td>
+</tr>
+<tr>
+<td><code>spec.prefixFrom</code></td>
+<td>Optional common resource/field/optional source, existing resource and explicit provided field required. Used for reported prefix and, when referencing IPv6DelegatedAddress, discovery of previous /64s to deprecate. Missing values do not gate normal config generation by themselves.</td>
+</tr>
+<tr>
+<td><code>spec.rdnss</code></td>
+<td>Optional literal IPv6 DNS-server list, default empty. Merged with rdnssFrom; emitted as untagged option6:dns-server in shared dnsmasq, not isolated per RA interface by this writer.</td>
+</tr>
+<tr>
+<td><code>spec.rdnssFrom</code></td>
+<td>Optional common status-value source list. No automatic source. Current RA path discards unresolved-source pending reasons and uses the values available; optional does not provide a service-readiness gate here.</td>
+</tr>
+<tr>
+<td><code>spec.dnssl</code></td>
+<td>Optional search-domain list, default empty; each value is a single domain without whitespace/slash/comma. Exclusive with dnsslFrom. Emitted as shared untagged option6:domain-search.</td>
+</tr>
+<tr>
+<td><code>spec.dnsslFrom</code></td>
+<td>Optional source list restricted to DNSZone/<name>, field: zone. Each resource must exist. Reads declared zone values before status; exclusive with dnssl. Current normal RA rendering ignores missing-source pending reasons.</td>
+</tr>
+<tr>
+<td><code>spec.mFlag</code></td>
+<td>Boolean default false. Used in direct advertisements deprecating previous delegated prefixes; current normal dnsmasq RA option generation does not map it to M.</td>
+</tr>
+<tr>
+<td><code>spec.oFlag</code></td>
+<td>Boolean default false. Same restricted direct-deprecation path as mFlag; not a current normal dnsmasq O-bit switch.</td>
+</tr>
+<tr>
+<td><code>spec.mtu</code></td>
+<td>Optional 1280–65535. Zero/omitted emits no explicit MTU unless a PathMTU-derived RA value takes precedence. Passed via dnsmasq ra-param mtu:<value>.</td>
+</tr>
+<tr>
+<td><code>spec.prfPreference</code></td>
+<td>Empty/medium default uses normal preference; low/high emit dnsmasq router preference and affect direct old-prefix advertisements.</td>
+</tr>
+<tr>
+<td><code>spec.preferredLifetime</code></td>
+<td>Optional string, default empty. Current live normal writer does not use it. Direct old-prefix PIOs always use preferred lifetime 0 regardless of this setting.</td>
+</tr>
+<tr>
+<td><code>spec.validLifetime</code></td>
+<td>For normal live dnsmasq rendering this is the ra-param router lifetime, not the current prefix PIO lifetime. Supply decimal seconds; omitted leaves dnsmasq default. Direct old-prefix RA parses decimal seconds, defaults 1800 on empty/invalid and caps at 65535, while old PIO validity is its remaining lease lifetime.</td>
+</tr>
+<tr>
+<td><code>spec.configPath</code></td>
+<td>Optional decoded string, default empty; current live controller uses its shared dnsmasq ConfigPath/PIDFile options and does not consume this per-resource override.</td>
+</tr>
+<tr>
+<td><code>spec.pidFile</code></td>
+<td>Optional decoded string, default empty; current live controller uses its shared dnsmasq ConfigPath/PIDFile options and does not consume this per-resource override.</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>Optional common state predicate, default unconditional. False filters the resource from effective config and reports Pending/WhenFalse.</td>
+</tr>
+<tr>
+<td><code>spec.dependsOn</code></td>
+<td>Optional common AND-list, default empty. Failed predicates report Pending/DependsOnFalse and skip direct old-prefix advertisements, but the normal shared dnsmasq line writer does not check this gate. It is not a complete normal-service suppression switch here.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_dhcp.go">pkg/config/validate_dhcp.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go">pkg/controller/chain/chain.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/phase2.go">pkg/controller/chain/phase2.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/routeradvertisement.go">pkg/controller/chain/routeradvertisement.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/dnsmasq.go">pkg/render/dnsmasq.go</a></p>
+<h2 id="referenceable-status-fields">Referenceable status fields</h2>
+<p>The ordinary status-reference validator accepts these field names for this kind. This allowlist does not guarantee that every field is currently populated; inspect runtime status. These are outputs, not YAML spec fields.</p>
+<p><code>phase</code>, <code>interface</code>, <code>prefix</code>, <code>rdnss</code>, <code>configPath</code>, <code>dryRun</code></p>
+<p><a href="/examples/example-dslite-home.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
+<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
+<li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/reference/resources/IPv6RouterAdvertisement.md">GitHub</a></div></footer></body></html>

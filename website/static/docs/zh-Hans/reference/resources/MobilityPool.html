@@ -1,0 +1,618 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MobilityPool · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/reference/resources/MobilityPool.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/reference/resources/MobilityPool.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/MobilityPool.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/MobilityPool.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/MobilityPool.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="mobilitypool">MobilityPool</h1>
+<p><a href="../resources.html#mobilitypool">各资源的配置</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: mobility.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>结合共享 SAM 拓扑、本机所有权观察及 BGP/联邦状态，规划地址移动与本机捕获。YAML 是本机意图，共享身份位于 SAMNodeSet。</p>
+<h2 id="指定条件与引用关系">指定条件与引用关系</h2>
+<ul>
+<li>prefix 须为 IPv4，groupRef 须解析至有 nodeName 的本机 EventGroup，该节点须存在于必需 membersFrom 拓扑。各成员需非空 site 及 onprem/cloud 角色，仅本机可带捕获/发现/静态所有权覆盖。</li>
+<li>onprem proxy-ARP 需 capture.interface 及明确 single-router/vrrp-master activeWhen。提供商捕获需 providerRef 及 nicRef（发现 NIC 时例外），route-table 另需 target.routeTableRef；提供商捕获禁用 activeWhen。</li>
+<li>Linux 使用每接口 proxy-ARP 控制，FreeBSD 使用按路由判断的全局 proxyall，而非 Linux sysctl 名称。捕获启用仍依实际所有权/就绪事实，有效 YAML 或计划意图不证明扩展网段可运行。</li>
+<li>配置以非零语义合并，空字符串/列表及 false 不清除继承字段。源地址固定值优先状态来源；map 以本机值优先合并，target 固定值再优先于 targetFrom。配置引用仅限 cloud。</li>
+</ul>
+<h2 id="yaml定义">YAML定义</h2>
+<p>此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。</p>
+<pre><code class="language-yaml">- apiVersion: mobility.routerd.net/v1alpha1
+  kind: MobilityPool
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    groupRef: &quot;&lt;string&gt;&quot; # 必填; string
+    members: # 选填; array
+      - # object
+        capture: # 选填; object
+          activeWhen: # 选填; object
+            type: &quot;&quot; # 选填; string; enum=[&quot;&quot;, &quot;single-router&quot;, &quot;vrrp-master&quot;]
+            virtualAddressRef: &quot;&lt;string&gt;&quot; # 选填; string
+          captureStrategy: &quot;&quot; # 选填; string; enum=[&quot;&quot;, &quot;route-table&quot;]
+          excludeAddresses: # 选填; array
+            - &quot;&lt;string&gt;&quot; # string
+          gratuitousARP: true # 选填; boolean
+          interface: &quot;&lt;string&gt;&quot; # 选填; string
+          nicRef: &quot;&lt;string&gt;&quot; # 选填; string
+          providerRef: &quot;&lt;string&gt;&quot; # 选填; string
+          sourceAddress: &quot;&lt;string&gt;&quot; # 选填; string
+          sourceAddressFrom: # 选填; object
+            field: &quot;&lt;string&gt;&quot; # 选填; string
+            optional: true # 选填; boolean
+            resource: &quot;&lt;string&gt;&quot; # 必填; string
+          target: # 选填; object
+            &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # 选填; string
+          targetFrom: # 选填; object
+            &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # 选填; string
+          type: &quot;provider-secondary-ip&quot; # 选填; string; enum=[&quot;provider-secondary-ip&quot;, &quot;proxy-arp&quot;]
+        nodeRef: &quot;&lt;string&gt;&quot; # 必填; string
+        ownershipDiscovery: # 选填; object
+          allowEmptyAfter: &quot;&lt;string&gt;&quot; # 选填; string
+          leaseTTL: &quot;&lt;string&gt;&quot; # 选填; string
+          mode: &quot;&quot; # 选填; string; enum=[&quot;&quot;, &quot;disabled&quot;, &quot;provider-private-ip&quot;, &quot;onprem-l2&quot;]
+          pluginRef: &quot;&lt;string&gt;&quot; # 选填; string
+          providerRef: &quot;&lt;string&gt;&quot; # 选填; string
+          scanInterval: &quot;&lt;string&gt;&quot; # 选填; string
+          scope: # 选填; object
+            excludeAddresses: # 选填; array
+              - &quot;&lt;string&gt;&quot; # string
+            includeAddresses: # 选填; array
+              - &quot;&lt;string&gt;&quot; # string
+          selector: # 选填; object
+            tags: # 选填; object
+              &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # 选填; string
+          sources: # 选填; array
+            - # object
+              bridge: &quot;&lt;string&gt;&quot; # 选填; string
+              interface: &quot;&lt;string&gt;&quot; # 选填; string
+              leaseTTL: &quot;&lt;string&gt;&quot; # 选填; string
+              network: &quot;&lt;string&gt;&quot; # 选填; string
+              probeRetries: 0 # 选填; integer; minimum=0; maximum=20
+              probeTimeout: &quot;&lt;string&gt;&quot; # 选填; string
+              resource: &quot;&lt;string&gt;&quot; # 选填; string
+              scanInterval: &quot;&lt;string&gt;&quot; # 选填; string
+              sourceAddressFrom: # 选填; object
+                field: &quot;&lt;string&gt;&quot; # 选填; string
+                optional: true # 选填; boolean
+                resource: &quot;&lt;string&gt;&quot; # 必填; string
+              type: &quot;dhcpv4-lease&quot; # 必填; string; enum=[&quot;dhcpv4-lease&quot;, &quot;arp-observer&quot;, &quot;on-demand-arp&quot;, &quot;pve-svnet&quot;]
+          stoppedInstancePolicy: &quot;&quot; # 选填; string; enum=[&quot;&quot;, &quot;hold&quot;, &quot;release&quot;]
+          subnetRef: &quot;&lt;string&gt;&quot; # 选填; string
+          subnetRefFrom: &quot;&lt;string&gt;&quot; # 选填; string
+        profileRef: &quot;&lt;string&gt;&quot; # 选填; string
+        staticOwnedAddresses: # 选填; array
+          - &quot;&lt;string&gt;&quot; # string
+    membersFrom: # 必填; array; minItems=1
+      - # object
+        optional: true # 选填; boolean
+        resource: &quot;&lt;string&gt;&quot; # 必填; string
+    prefix: &quot;&lt;string&gt;&quot; # 必填; string
+    profiles: # 选填; object
+      cloudCaptures: # 选填; object
+        &quot;&lt;key&gt;&quot;: # 选填; object
+          capture: # 选填; object
+            activeWhen: # 选填; object
+              type: &quot;&quot; # 选填; string; enum=[&quot;&quot;, &quot;single-router&quot;, &quot;vrrp-master&quot;]
+              virtualAddressRef: &quot;&lt;string&gt;&quot; # 选填; string
+            captureStrategy: &quot;&quot; # 选填; string; enum=[&quot;&quot;, &quot;route-table&quot;]
+            excludeAddresses: # 选填; array
+              - &quot;&lt;string&gt;&quot; # string
+            gratuitousARP: true # 选填; boolean
+            interface: &quot;&lt;string&gt;&quot; # 选填; string
+            nicRef: &quot;&lt;string&gt;&quot; # 选填; string
+            providerRef: &quot;&lt;string&gt;&quot; # 选填; string
+            sourceAddress: &quot;&lt;string&gt;&quot; # 选填; string
+            sourceAddressFrom: # 选填; object
+              field: &quot;&lt;string&gt;&quot; # 选填; string
+              optional: true # 选填; boolean
+              resource: &quot;&lt;string&gt;&quot; # 必填; string
+            target: # 选填; object
+              &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # 选填; string
+            targetFrom: # 选填; object
+              &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # 选填; string
+            type: &quot;provider-secondary-ip&quot; # 选填; string; enum=[&quot;provider-secondary-ip&quot;, &quot;proxy-arp&quot;]
+          ownershipDiscovery: # 选填; object
+            allowEmptyAfter: &quot;&lt;string&gt;&quot; # 选填; string
+            leaseTTL: &quot;&lt;string&gt;&quot; # 选填; string
+            mode: &quot;&quot; # 选填; string; enum=[&quot;&quot;, &quot;disabled&quot;, &quot;provider-private-ip&quot;, &quot;onprem-l2&quot;]
+            pluginRef: &quot;&lt;string&gt;&quot; # 选填; string
+            providerRef: &quot;&lt;string&gt;&quot; # 选填; string
+            scanInterval: &quot;&lt;string&gt;&quot; # 选填; string
+            scope: # 选填; object
+              excludeAddresses: # 选填; array
+                - &quot;&lt;string&gt;&quot; # string
+              includeAddresses: # 选填; array
+                - &quot;&lt;string&gt;&quot; # string
+            selector: # 选填; object
+              tags: # 选填; object
+                &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # 选填; string
+            sources: # 选填; array
+              - # object
+                bridge: &quot;&lt;string&gt;&quot; # 选填; string
+                interface: &quot;&lt;string&gt;&quot; # 选填; string
+                leaseTTL: &quot;&lt;string&gt;&quot; # 选填; string
+                network: &quot;&lt;string&gt;&quot; # 选填; string
+                probeRetries: 0 # 选填; integer; minimum=0; maximum=20
+                probeTimeout: &quot;&lt;string&gt;&quot; # 选填; string
+                resource: &quot;&lt;string&gt;&quot; # 选填; string
+                scanInterval: &quot;&lt;string&gt;&quot; # 选填; string
+                sourceAddressFrom: # 选填; object
+                  field: &quot;&lt;string&gt;&quot; # 选填; string
+                  optional: true # 选填; boolean
+                  resource: &quot;&lt;string&gt;&quot; # 必填; string
+                type: &quot;dhcpv4-lease&quot; # 必填; string; enum=[&quot;dhcpv4-lease&quot;, &quot;arp-observer&quot;, &quot;on-demand-arp&quot;, &quot;pve-svnet&quot;]
+            stoppedInstancePolicy: &quot;&quot; # 选填; string; enum=[&quot;&quot;, &quot;hold&quot;, &quot;release&quot;]
+            subnetRef: &quot;&lt;string&gt;&quot; # 选填; string
+            subnetRefFrom: &quot;&lt;string&gt;&quot; # 选填; string
+    staticHandovers: # 选填; array
+      - # object
+        address: &quot;&lt;string&gt;&quot; # 必填; string
+        fromNodeRef: &quot;&lt;string&gt;&quot; # 必填; string
+        toNodeRef: &quot;&lt;string&gt;&quot; # 必填; string
+    values: # 选填; object
+      &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # 选填; string
+</code></pre>
+<h2 id="字段含义与默认值">字段含义与默认值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>字段含义与默认值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.prefix</code></td>
+<td>必填池管理的 IPv4 CIDR，所有权/捕获地址须在其内，无默认前缀或自动地址分配。</td>
+</tr>
+<tr>
+<td><code>spec.groupRef</code></td>
+<td>必填具有 nodeName 的本机 EventGroup 引用，其本机节点标识须存在于 membersFrom 拓扑，用于所有权及到期事件。</td>
+</tr>
+<tr>
+<td><code>spec.values</code></td>
+<td>可选提供商标识字符串常量，供 targetFrom/subnetRefFrom 引用，不自动展开变量或保存密钥。</td>
+</tr>
+<tr>
+<td><code>spec.profiles</code></td>
+<td>可选可重用本机捕获/发现默认值，不包含共享拓扑身份。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures</code></td>
+<td>以配置名称为键的 map，仅供本机 cloud 成员 profileRef 选择，不支持 onprem 简写。包含未选用配置在内，所有 target/value 引用均会规范化。</td>
+</tr>
+<tr>
+<td><code>spec.membersFrom</code></td>
+<td>必填且非空 SAMNodeSet 来源列表，是成员身份、site、role、placement、maintenance 及容量唯一来源，不由 members 覆盖补入拓扑。</td>
+</tr>
+<tr>
+<td><code>spec.membersFrom[].resource</code></td>
+<td>必填 SAMNodeSet/name。导入 nodeRef 不可重复，每个解析成员需明确 site 及 onprem/cloud 角色。</td>
+</tr>
+<tr>
+<td><code>spec.membersFrom[].optional</code></td>
+<td>默认 false。非 optional 运行时来源缺失为 Pending，true 可容忍，但不能免除 EventGroup 本机节点必须在拓扑解析的要求。</td>
+</tr>
+<tr>
+<td><code>spec.members</code></td>
+<td>可选本机专属覆盖，nodeRef 须已由 membersFrom 导入。不可配置共享 site/role/placement/maintenance/容量，也不可配置远端捕获。</td>
+</tr>
+<tr>
+<td><code>spec.members[].nodeRef</code></td>
+<td>必填已导入 nodeRef，选择 EventGroup 本机成员，不能以覆盖新增成员。</td>
+</tr>
+<tr>
+<td><code>spec.members[].profileRef</code></td>
+<td>可选 profiles.cloudCaptures 键，仅支持 cloud，缺少配置使规范化失败。非空字符串/列表覆盖，map 合并，true 布尔为累加，空列表/false 无法清除继承值。</td>
+</tr>
+<tr>
+<td><code>spec.members[].staticOwnedAddresses</code></td>
+<td>可选 prefix 内明确 IPv4 /32 CIDR，仅 onprem。此处拒绝纯 IPv4，静态所有权不可重复，这些声明不依赖学习客户端事件。</td>
+</tr>
+<tr>
+<td><code>spec.staticHandovers</code></td>
+<td>可选计划静态所有权转移，观察到源成员释放后才投影目标，不是同时双重拥有。</td>
+</tr>
+<tr>
+<td><code>spec.staticHandovers[].address</code></td>
+<td>必填池内 IPv4 /32 CIDR，转移间须唯一。有静态拥有声明时，所有者须等于 fromNodeRef。</td>
+</tr>
+<tr>
+<td><code>spec.staticHandovers[].fromNodeRef</code></td>
+<td>必填已有已导入 onprem 成员 nodeRef，须不同于 toNodeRef。</td>
+</tr>
+<tr>
+<td><code>spec.staticHandovers[].toNodeRef</code></td>
+<td>必填已有已导入目标 nodeRef，须不同于来源，不隐含创建目标成员。</td>
+</tr>
+<tr>
+<td><code>spec.members[].capture</code></td>
+<td>本机捕获配置，type 须明确指定，不从 role 推定。仅本机成员可带捕获/发现覆盖。</td>
+</tr>
+<tr>
+<td><code>spec.members[].capture.type</code></td>
+<td>onprem 使用 proxy-arp，cloud 使用 provider-secondary-ip。空值表示无捕获机制，但本机 cloud 成员需解析的捕获配置。</td>
+</tr>
+<tr>
+<td><code>spec.members[].capture.providerRef</code></td>
+<td>provider-secondary-ip 必填的 CloudProviderProfile 名称，不是状态来源，亦为所有权发现 providerRef 默认值。</td>
+</tr>
+<tr>
+<td><code>spec.members[].capture.captureStrategy</code></td>
+<td>仅 provider-secondary-ip 可选用 route-table，需 target.routeTableRef。普通 secondary-IP/proxy-ARP 请省略，明确 secondary-ip/proxy-arp 策略值会被拒绝。</td>
+</tr>
+<tr>
+<td><code>spec.members[].capture.nicRef</code></td>
+<td>提供商 NIC 标识，除可由 provider-private-ip 发现解析外，提供商捕获必填。不可放在 target/targetFrom 下，该写法会被拒绝。</td>
+</tr>
+<tr>
+<td><code>spec.members[].capture.interface</code></td>
+<td>proxy-arp 必填的逻辑/OS 捕获接口，由使用端解析别名，不自动选择 LAN。</td>
+</tr>
+<tr>
+<td><code>spec.members[].capture.sourceAddress</code></td>
+<td>proxy-ARP/BGP 传送使用的可选池内本机 IPv4 源地址。固定值优先 sourceAddressFrom，此处不检查互斥；有效时派生 /32 地址及首选源地址，不是远端所有者地址。</td>
+</tr>
+<tr>
+<td><code>spec.members[].capture.sourceAddressFrom</code></td>
+<td>可选源地址状态引用，接受有效池内 IPv4，缺失或无效值仍不可用。不同于固定值，不生成 IPv4StaticAddress，因来源资源管理地址生命周期。</td>
+</tr>
+<tr>
+<td><code>spec.members[].capture.excludeAddresses</code></td>
+<td>可选排除于 proxy-ARP 捕获的池内 IPv4 地址/CIDR，默认无。供仅本机网关等使用，不是所有 BGP 路由过滤。</td>
+</tr>
+<tr>
+<td><code>spec.members[].capture.gratuitousARP</code></td>
+<td>默认 false。true 请求捕获更改时发送非请求 ARP 通告。配置继承为累加，本机 false 不清除 profile 的 true。</td>
+</tr>
+<tr>
+<td><code>spec.members[].capture.activeWhen</code></td>
+<td>onprem proxy-arp 必填的明确权限条件，provider-secondary-ip 禁用，不是普通 state/all/any 条件。</td>
+</tr>
+<tr>
+<td><code>spec.members[].capture.activeWhen.type</code></td>
+<td>single-router 无条件授权本机 proxy-ARP；vrrp-master 需引用 VirtualAddress 的 MASTER 状态。proxy-ARP 无默认值。</td>
+</tr>
+<tr>
+<td><code>spec.members[].capture.activeWhen.virtualAddressRef</code></td>
+<td>vrrp-master 必填已有本机 VirtualAddress 名称（也接受 VirtualAddress/name），single-router 禁用，仅对本机成员检查。</td>
+</tr>
+<tr>
+<td><code>spec.members[].capture.target</code></td>
+<td>可选非秘密提供商目标 map。键值不可为空，拒绝 secret/token/password/credential/private-key/access-key 类键。明确值优先于 targetFrom。</td>
+</tr>
+<tr>
+<td><code>spec.members[].capture.targetFrom</code></td>
+<td>可选从提供商目标键对应 spec.values 键的 map，引用常数缺失或空白会使规范化失败。禁用 nicRef，请用 capture.nicRef。</td>
+</tr>
+<tr>
+<td><code>spec.members[].capture.sourceAddressFrom.resource</code></td>
+<td>来源 Kind/name，通用验证要求资源存在。</td>
+</tr>
+<tr>
+<td><code>spec.members[].capture.sourceAddressFrom.field</code></td>
+<td>resource 配置时必填来源提供字段。</td>
+</tr>
+<tr>
+<td><code>spec.members[].capture.sourceAddressFrom.optional</code></td>
+<td>默认 false，不免除引用验证或补入缺失源地址。</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery</code></td>
+<td>本机所有权事实发现配置，默认禁用，仅本机成员可配置；接收的远端事件为另一输入。</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.mode</code></td>
+<td>空/disabled 不执行。provider-private-ip 需 cloud/provider-secondary-ip；onprem-l2 需 onprem/proxy-arp、capture.interface 及非空 sources。</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.providerRef</code></td>
+<td>提供商清单配置名称，默认 capture.providerRef，由 provider-private-ip 使用，不是事件资源引用。</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.pluginRef</code></td>
+<td>可选清单 Plugin 名称，空值按提供商名称或唯一具 observe.providerPrivateIPs 能力的插件解析；歧义或能力缺失使发现失败。</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.subnetRef</code></td>
+<td>可选提供商子网标识，明确值优先于 subnetRefFrom，空值可由支持的插件从自身 NIC 推定。</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.subnetRefFrom</code></td>
+<td>仅 subnetRef 为空时使用的可选 spec.values 键。常数缺失或为空使规范化失败，不是 Kind/name/field。</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.scanInterval</code></td>
+<td>提供商扫描间隔，默认 60 秒，明确值 &gt;=30 秒。onprem-l2 也会验证，但事件来源不需提供商扫描，观察轮询使用各来源 scanInterval。</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.leaseTTL</code></td>
+<td>所有权事件的正 Go duration，默认 5 分钟，onprem 观察由各来源 leaseTTL 覆盖。是所有权租约，不是重启期限。</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.stoppedInstancePolicy</code></td>
+<td>仅 provider-private-ip：hold/省略保留停止实例的所有权事实，release 使其过期。其他模式禁止非空值。</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.allowEmptyAfter</code></td>
+<td>仅 onprem-l2，来源启动后正数等待期间，之后零客户端可视为完成；省略则零客户端被动发现仍待处理。使用 profileRef 时目前合并不复制本机此字段覆盖，保留 profile 值。</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.sources</code></td>
+<td>onprem-l2 必填非空列表，provider-private-ip 禁用。拒绝重复的 type/resource/有效接口/network/bridge 组合。</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.sources[].type</code></td>
+<td>必填 dhcpv4-lease/arp-observer/on-demand-arp/pve-svnet。ARP/PVE 来源派生本机观察守护进程意图，DHCP 事实来自实际租约事件。</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.sources[].resource</code></td>
+<td>可选来源标识字符串，默认为空，用于去重及观察身份指纹，不是观察进程名称或验证存在的 Kind/name 引用。事件主要按 type/interface/network/bridge 匹配。</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.sources[].interface</code></td>
+<td>可选观察接口，默认 capture.interface。on-demand-arp 在替代解析后必填，使用端将声明别名解析为 OS 名称。</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.sources[].bridge</code></td>
+<td>可选本机网桥标签，供 PVE/svnet 观察匹配。默认空值不限制 bridge，不要求创建 Bridge。</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.sources[].network</code></td>
+<td>可选 PVE/svnet 逻辑网络标签，例如 svnet1。空值不限制 network 选择，不是 IP CIDR。</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.sources[].sourceAddressFrom</code></td>
+<td>可选主动 ARP 发送源状态。缺失或无法使用时改用已验证捕获源地址；两者均无法解析时不生成 on-demand probe 意图。</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.sources[].scanInterval</code></td>
+<td>可选观察轮询间隔，明确值 &gt;=1 秒；生成 ARP/PVE 守护进程默认 10 秒，事件驱动 DHCP 忽略轮询。</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.sources[].probeTimeout</code></td>
+<td>主动 ARP 重试之间的正 Go duration，观察守护进程默认 1 秒，仅供 on-demand probing。</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.sources[].probeRetries</code></td>
+<td>整数 0–20 额外 ARP 重试，默认 0，不是总尝试次数，初次尝试另计。</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.sources[].leaseTTL</code></td>
+<td>可选正数事件租约期间，覆盖此来源 ownershipDiscovery.leaseTTL，省略继承池发现租约（默认 5 分钟）。</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.scope</code></td>
+<td>可选池内所有权观察地址过滤，不授权任意外部前缀通告。</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.scope.includeAddresses</code></td>
+<td>可选池内 IPv4 纯地址/CIDR 允许列表，空值允许所有候选池地址。有效分片分配可替换此提供商发现列表。</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.scope.excludeAddresses</code></td>
+<td>可选池内 IPv4 纯地址/CIDR 排除列表，默认无，在包含匹配后排除。</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.selector</code></td>
+<td>可选提供商清单标签选择器，不更改云端标签。</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.selector.tags</code></td>
+<td>非空标签键与预期字符串值，所有键的修剪值均须符合，空 map 不限制。供提供商清单使用，不用于 onprem 事件来源匹配。</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.sources[].sourceAddressFrom.resource</code></td>
+<td>使用状态来源时必填已有 Kind/name。</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.sources[].sourceAddressFrom.field</code></td>
+<td>resource 配置时必填来源提供字段。</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.sources[].sourceAddressFrom.optional</code></td>
+<td>默认 false，不免除引用验证，也不补入未解析发送源地址。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture</code></td>
+<td>本机捕获配置，type 须明确指定，不从 role 推定。仅本机成员可带捕获/发现覆盖。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.type</code></td>
+<td>onprem 使用 proxy-arp，cloud 使用 provider-secondary-ip。空值表示无捕获机制，但本机 cloud 成员需解析的捕获配置。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.providerRef</code></td>
+<td>provider-secondary-ip 必填的 CloudProviderProfile 名称，不是状态来源，亦为所有权发现 providerRef 默认值。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.captureStrategy</code></td>
+<td>仅 provider-secondary-ip 可选用 route-table，需 target.routeTableRef。普通 secondary-IP/proxy-ARP 请省略，明确 secondary-ip/proxy-arp 策略值会被拒绝。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.nicRef</code></td>
+<td>提供商 NIC 标识，除可由 provider-private-ip 发现解析外，提供商捕获必填。不可放在 target/targetFrom 下，该写法会被拒绝。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.interface</code></td>
+<td>proxy-arp 必填的逻辑/OS 捕获接口，由使用端解析别名，不自动选择 LAN。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.sourceAddress</code></td>
+<td>proxy-ARP/BGP 传送使用的可选池内本机 IPv4 源地址。固定值优先 sourceAddressFrom，此处不检查互斥；有效时派生 /32 地址及首选源地址，不是远端所有者地址。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.sourceAddressFrom</code></td>
+<td>可选源地址状态引用，接受有效池内 IPv4，缺失或无效值仍不可用。不同于固定值，不生成 IPv4StaticAddress，因来源资源管理地址生命周期。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.excludeAddresses</code></td>
+<td>可选排除于 proxy-ARP 捕获的池内 IPv4 地址/CIDR，默认无。供仅本机网关等使用，不是所有 BGP 路由过滤。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.gratuitousARP</code></td>
+<td>默认 false。true 请求捕获更改时发送非请求 ARP 通告。配置继承为累加，本机 false 不清除 profile 的 true。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.activeWhen</code></td>
+<td>onprem proxy-arp 必填的明确权限条件，provider-secondary-ip 禁用，不是普通 state/all/any 条件。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.activeWhen.type</code></td>
+<td>single-router 无条件授权本机 proxy-ARP；vrrp-master 需引用 VirtualAddress 的 MASTER 状态。proxy-ARP 无默认值。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.activeWhen.virtualAddressRef</code></td>
+<td>vrrp-master 必填已有本机 VirtualAddress 名称（也接受 VirtualAddress/name），single-router 禁用，仅对本机成员检查。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.target</code></td>
+<td>可选非秘密提供商目标 map。键值不可为空，拒绝 secret/token/password/credential/private-key/access-key 类键。明确值优先于 targetFrom。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.targetFrom</code></td>
+<td>可选从提供商目标键对应 spec.values 键的 map，引用常数缺失或空白会使规范化失败。禁用 nicRef，请用 capture.nicRef。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.sourceAddressFrom.resource</code></td>
+<td>来源 Kind/name，通用验证要求资源存在。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.sourceAddressFrom.field</code></td>
+<td>resource 配置时必填来源提供字段。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.sourceAddressFrom.optional</code></td>
+<td>默认 false，不免除引用验证或补入缺失源地址。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery</code></td>
+<td>本机所有权事实发现配置，默认禁用，仅本机成员可配置；接收的远端事件为另一输入。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.mode</code></td>
+<td>空/disabled 不执行。provider-private-ip 需 cloud/provider-secondary-ip；onprem-l2 需 onprem/proxy-arp、capture.interface 及非空 sources。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.providerRef</code></td>
+<td>提供商清单配置名称，默认 capture.providerRef，由 provider-private-ip 使用，不是事件资源引用。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.pluginRef</code></td>
+<td>可选清单 Plugin 名称，空值按提供商名称或唯一具 observe.providerPrivateIPs 能力的插件解析；歧义或能力缺失使发现失败。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.subnetRef</code></td>
+<td>可选提供商子网标识，明确值优先于 subnetRefFrom，空值可由支持的插件从自身 NIC 推定。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.subnetRefFrom</code></td>
+<td>仅 subnetRef 为空时使用的可选 spec.values 键。常数缺失或为空使规范化失败，不是 Kind/name/field。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.scanInterval</code></td>
+<td>提供商扫描间隔，默认 60 秒，明确值 &gt;=30 秒。onprem-l2 也会验证，但事件来源不需提供商扫描，观察轮询使用各来源 scanInterval。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.leaseTTL</code></td>
+<td>所有权事件的正 Go duration，默认 5 分钟，onprem 观察由各来源 leaseTTL 覆盖。是所有权租约，不是重启期限。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.stoppedInstancePolicy</code></td>
+<td>仅 provider-private-ip：hold/省略保留停止实例的所有权事实，release 使其过期。其他模式禁止非空值。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.allowEmptyAfter</code></td>
+<td>仅 onprem-l2，来源启动后正数等待期间，之后零客户端可视为完成；省略则零客户端被动发现仍待处理。使用 profileRef 时目前合并不复制本机此字段覆盖，保留 profile 值。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.sources</code></td>
+<td>onprem-l2 必填非空列表，provider-private-ip 禁用。拒绝重复的 type/resource/有效接口/network/bridge 组合。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.sources[].type</code></td>
+<td>必填 dhcpv4-lease/arp-observer/on-demand-arp/pve-svnet。ARP/PVE 来源派生本机观察守护进程意图，DHCP 事实来自实际租约事件。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.sources[].resource</code></td>
+<td>可选来源标识字符串，默认为空，用于去重及观察身份指纹，不是观察进程名称或验证存在的 Kind/name 引用。事件主要按 type/interface/network/bridge 匹配。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.sources[].interface</code></td>
+<td>可选观察接口，默认 capture.interface。on-demand-arp 在替代解析后必填，使用端将声明别名解析为 OS 名称。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.sources[].bridge</code></td>
+<td>可选本机网桥标签，供 PVE/svnet 观察匹配。默认空值不限制 bridge，不要求创建 Bridge。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.sources[].network</code></td>
+<td>可选 PVE/svnet 逻辑网络标签，例如 svnet1。空值不限制 network 选择，不是 IP CIDR。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.sources[].sourceAddressFrom</code></td>
+<td>可选主动 ARP 发送源状态。缺失或无法使用时改用已验证捕获源地址；两者均无法解析时不生成 on-demand probe 意图。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.sources[].scanInterval</code></td>
+<td>可选观察轮询间隔，明确值 &gt;=1 秒；生成 ARP/PVE 守护进程默认 10 秒，事件驱动 DHCP 忽略轮询。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.sources[].probeTimeout</code></td>
+<td>主动 ARP 重试之间的正 Go duration，观察守护进程默认 1 秒，仅供 on-demand probing。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.sources[].probeRetries</code></td>
+<td>整数 0–20 额外 ARP 重试，默认 0，不是总尝试次数，初次尝试另计。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.sources[].leaseTTL</code></td>
+<td>可选正数事件租约期间，覆盖此来源 ownershipDiscovery.leaseTTL，省略继承池发现租约（默认 5 分钟）。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.scope</code></td>
+<td>可选池内所有权观察地址过滤，不授权任意外部前缀通告。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.scope.includeAddresses</code></td>
+<td>可选池内 IPv4 纯地址/CIDR 允许列表，空值允许所有候选池地址。有效分片分配可替换此提供商发现列表。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.scope.excludeAddresses</code></td>
+<td>可选池内 IPv4 纯地址/CIDR 排除列表，默认无，在包含匹配后排除。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.selector</code></td>
+<td>可选提供商清单标签选择器，不更改云端标签。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.selector.tags</code></td>
+<td>非空标签键与预期字符串值，所有键的修剪值均须符合，空 map 不限制。供提供商清单使用，不用于 onprem 事件来源匹配。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.sources[].sourceAddressFrom.resource</code></td>
+<td>使用状态来源时必填已有 Kind/name。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.sources[].sourceAddressFrom.field</code></td>
+<td>resource 配置时必填来源提供字段。</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.sources[].sourceAddressFrom.optional</code></td>
+<td>默认 false，不免除引用验证，也不补入未解析发送源地址。</td>
+</tr>
+</tbody>
+</table>
+<p>实现: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_mobility.go">pkg/config/validate_mobility.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/mobilityconfig/members.go">pkg/mobilityconfig/members.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/mobilityconfig/normalize.go">pkg/mobilityconfig/normalize.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/mobility/controller.go">pkg/controller/mobility/controller.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/mobility/controller_effects.go">pkg/controller/mobility/controller_effects.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/mobility/bgp_delivery_planner.go">pkg/controller/mobility/bgp_delivery_planner.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/mobility/discovery.go">pkg/controller/mobility/discovery.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/mobility/discovery_support.go">pkg/controller/mobility/discovery_support.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/mobility/discovery_facts.go">pkg/controller/mobility/discovery_facts.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/mobility/arp_observer_intent.go">pkg/controller/mobility/arp_observer_intent.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/mobility/pool_plan.go">pkg/controller/mobility/pool_plan.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/mobility/shard_controller.go">pkg/controller/mobility/shard_controller.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/sam.go">pkg/controller/chain/sam.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/sam_freebsd.go">pkg/controller/chain/sam_freebsd.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd-arp-observer/main.go">cmd/routerd-arp-observer/main.go</a></p>
+<h2 id="可引用的状态字段">可引用的状态字段</h2>
+<p>常规状态引用验证接受此 Kind 的下列字段名称。列于允许列表不保证目前有值，请检查实际状态。这些是输出，不是 YAML spec 配置。</p>
+<p><code>phase</code>, <code>groupRef</code>, <code>prefix</code>, <code>reason</code>, <code>generatedBGPPaths</code>, <code>resolvedMemberCount</code>, <code>pendingSources</code>, <code>placementGroup</code>, <code>placementActive</code>, <code>placementActiveNode</code>, <code>providerActionPhase</code>, <code>providerActionError</code>, <code>providerActionFailedAddresses</code>, <code>providerObservationPendingAddresses</code>, <code>ownershipResolverControlPlaneOwnerTable</code></p>
+<p><a href="/examples/cloudedge-mobility-demo/onprem.yaml">配置示例</a></p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件与引用关系">指定条件与引用关系</a></li>
+<li><a href="#yaml定义">YAML定义</a></li>
+<li><a href="#字段含义与默认值">字段含义与默认值</a></li>
+<li><a href="#可引用的状态字段">可引用的状态字段</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/reference/resources/MobilityPool.md">GitHub</a></div></footer></body></html>

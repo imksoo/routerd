@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>動的設定 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/reference/dynamic-config.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/reference/dynamic-config.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/dynamic-config.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/reference/dynamic-config.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/dynamic-config.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="動的設定">動的設定</h1>
+<p>起動時のYAMLは利用者が管理する設定です。検証済みの実行時データは一時的にリソースを追加でき、期限切れになると次の統合から除外されます。宣言した設定とDHCP・PD・BGPで得た状態は、リソースの状態表示で区別します。</p>
+<p>DynamicConfigSourceは現行実装では宣言の検証のみで、実行時の利用処理がありません。宣言してもPluginを定期実行せず、ttlもPluginResult.status.ttlを設定しません。EventSubscriptionはローカルのPluginを呼び出せます。手動呼び出しはrouterctl plugin runを使います。</p>
+<p>Pluginは結果にTTLを返します。ポリシーで許可した完全一致のmaskだけが、有効期間中に起動設定の対象リソースを抑制し、YAML自体は変更しません。プロバイダー操作案は別のProviderActionPolicyの条件に従い、実行時データの統合だけでは適用しません。</p>
+<p>変更を反映する前に、実効設定を確認します。</p>
+<pre><code class="language-sh">routerctl dynamic list
+routerctl dynamic describe &lt;source-or-part&gt;
+routerctl dynamic render
+routerctl dynamic diff
+routerctl plugin list
+</code></pre>
+<p>各項目の意味と実装上の制約はリソース別の説明を参照してください。</p>
+<ul>
+<li><a href="resources/Plugin.html">Plugin</a></li>
+<li><a href="resources/DynamicConfigSource.html">DynamicConfigSource</a></li>
+<li><a href="resources/DynamicOverridePolicy.html">DynamicOverridePolicy</a></li>
+<li><a href="resources/EventSubscription.html">EventSubscription</a></li>
+<li><a href="resources/ProviderActionPolicy.html">ProviderActionPolicy</a></li>
+</ul></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul></ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/reference/dynamic-config.md">GitHub</a></div></footer></body></html>

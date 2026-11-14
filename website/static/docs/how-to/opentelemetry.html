@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Send telemetry to an OTLP collector · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/how-to/opentelemetry.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/how-to/opentelemetry.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/how-to/opentelemetry.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/how-to/opentelemetry.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/opentelemetry.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="send-telemetry-to-an-otlp-collector">Send telemetry to an OTLP collector</h1>
+<h2 id="scenario">Scenario</h2>
+<p>You want to ship the router's logs, metrics, and traces to an OpenTelemetry-compatible backend (Grafana Loki/Tempo/Mimir, Datadog, Honeycomb, a self-hosted <code>otelcol-contrib</code>, …) without having to scrape <code>journalctl</code> or <code>routerctl get events</code>.</p>
+<p>routerd exposes OpenTelemetry export from every long-running daemon. There is no collector bundled in the router binary — you point routerd at an external OTLP endpoint that you already operate, and routerd sends data over OTLP/gRPC.</p>
+<h2 id="what-routerd-emits">What routerd emits</h2>
+<table>
+<thead>
+<tr>
+<th>Daemon</th>
+<th>service.name</th>
+<th>What you get</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>routerd</code> (control plane)</td>
+<td><code>routerd</code></td>
+<td><code>controller.reconcile</code> traces, <code>routerd.controller.reconcile</code> counter, structured slog records</td>
+</tr>
+<tr>
+<td><code>routerd-dhcpv6-client</code></td>
+<td><code>routerd-dhcpv6-client</code></td>
+<td>DHCPv6 lifecycle traces and structured logs (Solicit/Request/Renew, lease events)</td>
+</tr>
+<tr>
+<td><code>routerd-dhcpv4-client</code></td>
+<td><code>routerd-dhcpv4-client</code></td>
+<td>DHCPv4 lifecycle traces and structured logs</td>
+</tr>
+<tr>
+<td><code>routerd-pppoe-client</code></td>
+<td><code>routerd-pppoe-client</code></td>
+<td>PPPoE session lifecycle</td>
+</tr>
+<tr>
+<td><code>routerd-healthcheck</code></td>
+<td><code>routerd-healthcheck</code></td>
+<td>Probe results (success/failure with target attributes)</td>
+</tr>
+<tr>
+<td><code>routerd-eventd</code></td>
+<td><code>routerd-eventd</code></td>
+<td>Federation delivery metrics (outbox push/receive/TTL/lag counters, loop health, pruner)</td>
+</tr>
+</tbody>
+</table>
+<p>Each daemon adds <code>routerd.resource.name</code> as a resource attribute so you can split signals per resource (e.g. one DHCPv6 client per WAN).</p>
+<p>The export is OTLP/gRPC. logs, metrics, and traces share the same endpoint by default; you can point each signal at a different endpoint if your backend prefers it.</p>
+<h2 id="configure-the-export">Configure the export</h2>
+<p>routerd reads the standard OpenTelemetry environment variables. There is no routerd-specific syntax to learn; anything the upstream OTLP/gRPC exporter understands works.</p>
+<p>The key variables:</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>OTEL_EXPORTER_OTLP_ENDPOINT</code></td>
+<td>One endpoint for all signals (e.g. <code>http://collector.lan:4317</code>)</td>
+</tr>
+<tr>
+<td><code>OTEL_EXPORTER_OTLP_LOGS_ENDPOINT</code> / <code>_METRICS_ENDPOINT</code> / <code>_TRACES_ENDPOINT</code></td>
+<td>Per-signal override</td>
+</tr>
+<tr>
+<td><code>OTEL_EXPORTER_OTLP_INSECURE</code></td>
+<td><code>true</code> to disable TLS (lab use)</td>
+</tr>
+<tr>
+<td><code>OTEL_EXPORTER_OTLP_HEADERS</code></td>
+<td>e.g. <code>Authorization=Bearer ...</code> for managed backends</td>
+</tr>
+<tr>
+<td><code>OTEL_SERVICE_NAMESPACE</code></td>
+<td>Recommended: set to <code>routerd</code> so all daemons share a namespace</td>
+</tr>
+<tr>
+<td><code>OTEL_RESOURCE_ATTRIBUTES</code></td>
+<td>Free-form <code>key=value,...</code> for site/host attributes</td>
+</tr>
+</tbody>
+</table>
+<p>If none of <code>OTEL_EXPORTER_OTLP_ENDPOINT</code> / <code>_LOGS_ENDPOINT</code> / <code>_METRICS_ENDPOINT</code> / <code>_TRACES_ENDPOINT</code> is set, routerd skips telemetry initialization entirely. There is no per-daemon "off" switch — leaving the variables unset is the off state.</p>
+<h3 id="apply-the-variables-to-a-systemd-managed-routerd">Apply the variables to a systemd-managed routerd</h3>
+<p>On Linux installations the variables go into the systemd unit's environment. The cleanest place is a drop-in so an upstream unit refresh doesn't overwrite them:</p>
+<pre><code class="language-ini"># /etc/systemd/system/routerd.service.d/10-otel.conf
+[Service]
+Environment=OTEL_EXPORTER_OTLP_ENDPOINT=http://collector.lan:4317
+Environment=OTEL_EXPORTER_OTLP_INSECURE=true
+Environment=OTEL_SERVICE_NAMESPACE=routerd
+Environment=OTEL_RESOURCE_ATTRIBUTES=deployment.environment=home,host.name=edge-router
+</code></pre>
+<p>Repeat the same drop-in for every managed daemon you want to export from:</p>
+<ul>
+<li><code>/etc/systemd/system/routerd-dhcpv6-client@.service.d/10-otel.conf</code></li>
+<li><code>/etc/systemd/system/routerd-dhcpv4-client@.service.d/10-otel.conf</code></li>
+<li><code>/etc/systemd/system/routerd-pppoe-client@.service.d/10-otel.conf</code></li>
+<li><code>/etc/systemd/system/routerd-healthcheck@.service.d/10-otel.conf</code></li>
+</ul>
+<p>Then:</p>
+<pre><code class="language-bash">sudo systemctl daemon-reload
+sudo systemctl restart routerd.service \
+                       'routerd-dhcpv6-client@*.service' \
+                       'routerd-healthcheck@*.service'
+</code></pre>
+<h3 id="nixos">NixOS</h3>
+<p>Add the variables under each generated systemd unit. With the routerd NixOS module:</p>
+<pre><code class="language-nix">systemd.services.routerd.environment = {
+  OTEL_EXPORTER_OTLP_ENDPOINT = &quot;http://collector.lan:4317&quot;;
+  OTEL_EXPORTER_OTLP_INSECURE = &quot;true&quot;;
+  OTEL_SERVICE_NAMESPACE      = &quot;routerd&quot;;
+};
+</code></pre>
+<p>Mirror the same block on the per-daemon services routerd generated for you.</p>
+<h3 id="freebsd">FreeBSD</h3>
+<p>In the rc.d wrapper that routerd renders for each daemon, add the variables to the <code>command_args</code> environment block (or use <code>routerd_envfile=...</code> if your wrapper supports it).</p>
+<h2 id="run-a-receiver-to-verify">Run a receiver to verify</h2>
+<p>Any OTLP/gRPC backend works. The simplest one for a smoke test is <code>otelcol-contrib</code> with a <code>debug</code> exporter:</p>
+<pre><code class="language-yaml"># /tmp/otel-test.yaml
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+exporters:
+  debug:
+    verbosity: detailed
+
+service:
+  pipelines:
+    logs:    { receivers: [otlp], exporters: [debug] }
+    metrics: { receivers: [otlp], exporters: [debug] }
+    traces:  { receivers: [otlp], exporters: [debug] }
+</code></pre>
+<pre><code class="language-bash">otelcol-contrib --config /tmp/otel-test.yaml
+</code></pre>
+<p>After restarting routerd you should see, within a few seconds:</p>
+<ul>
+<li><code>routerd.controller.reconcile</code> Sum metric, increasing over time</li>
+<li><code>controller.reconcile</code> spans with status OK</li>
+<li>routerd's slog records as <code>LogRecord</code> entries</li>
+</ul>
+<p>If you only see records from <code>routerd</code> itself but the per-daemon services are silent, double-check that the per-daemon drop-ins were applied and that <code>daemon-reload</code> ran.</p>
+<h2 id="troubleshooting">Troubleshooting</h2>
+<p><strong>"address family not supported by protocol" in a daemon's journal.</strong> Current
+routerd-generated systemd units do not restrict address families. Check for an
+older local unit or drop-in that still sets <code>RestrictAddressFamilies</code>, then
+remove that override and run <code>systemctl daemon-reload</code>.</p>
+<p><strong>No data at the collector.</strong> Check that the endpoint is a hostname/IP routerd can reach (test with <code>getent ahosts</code> and <code>nc -vz host port</code>), and that <code>OTEL_EXPORTER_OTLP_INSECURE=true</code> is set when you skip TLS.</p>
+<p><strong>Records come through but service.name is wrong.</strong> Each daemon sets its own <code>service.name</code>; you can add <code>OTEL_RESOURCE_ATTRIBUTES=service.namespace=routerd,...</code> to group them in the backend, but do not override <code>service.name</code> itself.</p>
+<h2 id="what-routerd-does-not-ship">What routerd does not ship</h2>
+<ul>
+<li>A bundled OTLP collector. Run one alongside routerd or use a managed backend.</li>
+<li>A built-in storage backend. routerd has its own SQLite log databases (<code>events.db</code>, <code>dns-queries.db</code>, <code>traffic-flows.db</code>, <code>firewall-logs.db</code>) for local visibility through the Web Console; OTLP export is for sending the same data outside the host.</li>
+</ul>
+<h2 id="declarative-telemetry-resource">Declarative Telemetry resource</h2>
+<p>Use <code>Telemetry</code> to describe the OTLP endpoint in router YAML. routerd injects the matching OpenTelemetry environment variables into generated systemd, NixOS, and FreeBSD rc.d units. The collector is still external; routerd only prepares the exporter configuration.</p>
+<pre><code class="language-yaml">apiVersion: observability.routerd.net/v1alpha1
+kind: Telemetry
+metadata:
+  name: otlp
+spec:
+  otlp:
+    endpoint: http://collector.example.internal:4317
+    insecure: true
+  serviceNamespace: routerd
+  attributes:
+    deployment.environment: home
+    site: edge
+  signals: [logs, metrics, traces]
+</code></pre>
+<p>Use <code>ObservabilityPipeline</code> when you also want routerd to forward its internal
+event stream to stdout, syslog, or Loki without adding a separate local
+collector. See <a href="../operations/observability.html">Observability pipeline</a>.</p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#scenario">Scenario</a></li>
+<li><a href="#what-routerd-emits">What routerd emits</a></li>
+<li><a href="#configure-the-export">Configure the export</a><ul>
+<li><a href="#apply-the-variables-to-a-systemd-managed-routerd">Apply the variables to a systemd-managed routerd</a></li>
+<li><a href="#nixos">NixOS</a></li>
+<li><a href="#freebsd">FreeBSD</a></li>
+</ul>
+</li>
+<li><a href="#run-a-receiver-to-verify">Run a receiver to verify</a></li>
+<li><a href="#troubleshooting">Troubleshooting</a></li>
+<li><a href="#what-routerd-does-not-ship">What routerd does not ship</a></li>
+<li><a href="#declarative-telemetry-resource">Declarative Telemetry resource</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/how-to/opentelemetry.md">GitHub</a></div></footer></body></html>

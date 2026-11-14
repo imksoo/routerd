@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/reference/resources/Package.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/reference/resources/Package.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/Package.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/Package.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/Package.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="package">Package</h1>
+<p><a href="../resources.html#package">各资源的配置</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: system.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>确保所选OS软件包已安装，选择第一个os与运行主机完全匹配的软件包集合。</p>
+<h2 id="指定条件与引用关系">指定条件与引用关系</h2>
+<ul>
+<li>state仅支持present，不能移除软件包。找不到匹配OS集合时为Pending/NoMatchingOSPackageSet。集合的optional会被接受但controller不读取，安装失败仍返回错误。</li>
+</ul>
+<h2 id="yaml定义">YAML定义</h2>
+<p>此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。</p>
+<pre><code class="language-yaml">- apiVersion: system.routerd.net/v1alpha1
+  kind: Package
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    packages: # 必填; array
+      - # object
+        manager: &quot;&quot; # 选填; string; enum=[&quot;&quot;, &quot;apt&quot;, &quot;dnf&quot;, &quot;pkg&quot;]
+        names: # 必填; array
+          - &quot;&lt;string&gt;&quot; # string
+        optional: true # 选填; boolean
+        os: &quot;ubuntu&quot; # 必填; string; enum=[&quot;ubuntu&quot;, &quot;debian&quot;, &quot;fedora&quot;, &quot;rhel&quot;, &quot;rocky&quot;, &quot;almalinux&quot;, &quot;freebsd&quot;]
+    state: &quot;&quot; # 选填; string; enum=[&quot;&quot;, &quot;present&quot;]
+</code></pre>
+<h2 id="字段含义与默认值">字段含义与默认值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>字段含义与默认值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.state</code></td>
+<td>期望软件包状态，省略为present，拒绝其他值。</td>
+</tr>
+<tr>
+<td><code>spec.packages</code></td>
+<td>必填非空的OS软件包集合列表，不是资源引用。</td>
+</tr>
+<tr>
+<td><code>spec.packages[].os</code></td>
+<td>必填OS标识：ubuntu、debian、fedora、rhel、rocky、almalinux或freebsd。Linux读取/etc/os-release的ID，不按ID_LIKE匹配。</td>
+</tr>
+<tr>
+<td><code>spec.packages[].manager</code></td>
+<td>ubuntu/debian默认apt，fedora/rhel/rocky/almalinux默认dnf，freebsd默认pkg；显式指定也必须符合此映射。</td>
+</tr>
+<tr>
+<td><code>spec.packages[].names</code></td>
+<td>必填非空软件包名列表，拒绝空白名称及含空白或/的名称；此字段不隐含新增其他名称。</td>
+</tr>
+<tr>
+<td><code>spec.packages[].optional</code></td>
+<td>默认false；可解码此字段，但当前不影响PackageController的错误处理。</td>
+</tr>
+</tbody>
+</table>
+<p>实现: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_system.go">pkg/config/validate_system.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/package.go">pkg/controller/chain/package.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/hostdeps/hostdeps.go">pkg/hostdeps/hostdeps.go</a></p>
+<h2 id="可引用的状态字段">可引用的状态字段</h2>
+<p>常规状态引用验证接受此 Kind 的下列字段名称。列于允许列表不保证目前有值，请检查实际状态。这些是输出，不是 YAML spec 配置。</p>
+<p><code>phase</code>, <code>packages</code>, <code>dryRun</code></p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件与引用关系">指定条件与引用关系</a></li>
+<li><a href="#yaml定义">YAML定义</a></li>
+<li><a href="#字段含义与默认值">字段含义与默认值</a></li>
+<li><a href="#可引用的状态字段">可引用的状态字段</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/reference/resources/Package.md">GitHub</a></div></footer></body></html>

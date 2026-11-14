@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Troubleshooting · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/how-to/troubleshooting.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/how-to/troubleshooting.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/how-to/troubleshooting.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/how-to/troubleshooting.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/troubleshooting.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="troubleshooting">Troubleshooting</h1>
+<p>When investigating routerd, first separate <strong>what routerd intends</strong> from <strong>what the host actually has</strong>. Verify routerd's view, then compare against the OS state.</p>
+<h2 id="when-the-service-or-status-command-fails">When the service or status command fails</h2>
+<p>On Ubuntu, start by checking the service rather than retrying a live apply:</p>
+<pre><code class="language-bash">sudo systemctl status routerd.service --no-pager
+sudo journalctl -u routerd.service -n 50 --no-pager
+sudo routerd validate --config /usr/local/etc/routerd/router.yaml
+</code></pre>
+<ul>
+<li>Missing configuration or validation errors: return to <a href="../tutorials/first-router.html">the first-router
+  tutorial</a> and review the file before starting.</li>
+<li>Missing socket or connection refused: <code>routerctl</code> requires the running daemon.
+  A one-shot <code>routerd apply --once</code> exits and does not provide control sockets.</li>
+<li>Permission denied: first try <code>sudo routerctl get status</code>.</li>
+<li>Service is active but the client cannot connect: inspect the WAN lease, LAN
+  address/gateway, then DNS, as described in <a href="../tutorials/first-router.html">the client checks</a>.</li>
+</ul>
+<p>Do not run a second <code>routerd serve</code> or live one-shot apply alongside the installed
+service. Keep the console open while diagnosing a failed network change.</p>
+<h2 id="triage-order">Triage order</h2>
+<ol>
+<li><code>sudo routerctl get status</code> — overall view.</li>
+<li><code>sudo routerctl describe &lt;kind&gt;/&lt;name&gt;</code> — focus on a specific resource.</li>
+<li><code>sudo routerctl plan</code> — what would change next.</li>
+<li>OS commands (<code>ip</code>, <code>nft</code>, <code>ss</code>, <code>journalctl</code>) — actual host state.</li>
+<li>The relevant daemon's <code>/v1/status</code> and event log.</li>
+</ol>
+<h2 id="dhcpv6-pd">DHCPv6-PD</h2>
+<pre><code class="language-bash">curl --unix-socket /run/routerd/dhcpv6-client/wan-pd.sock http://unix/v1/status
+tail -n 20 /var/lib/routerd/dhcpv6-client/wan-pd/events.jsonl
+</code></pre>
+<p>Look for:</p>
+<ul>
+<li><code>phase</code> is <code>Bound</code>; an unexpired lease remains publicly <code>Bound</code> while a
+  Renew or Rebind exchange is in progress.</li>
+<li><code>observed.leaseState</code> identifies the detailed exchange state (<code>renewing</code> or
+  <code>rebinding</code>) and the <code>LeaseReady</code> condition remains true while that lease is
+  still usable.</li>
+<li><code>currentPrefix</code> is populated.</li>
+<li><code>renewAt</code> is in the future.</li>
+<li>The event log shows <code>Reply</code> and <code>Renew</code> records.</li>
+</ul>
+<p>If the prefix is <strong>not</strong> <code>Bound</code>, or <code>LeaseReady</code> becomes false, IPv6 RA, AAAA,
+and DHCPv6 should be paused on the LAN. routerd's safety contract is to keep an
+unexpired prefix available during renewal, but stop advertising it after it is
+no longer usable.</p>
+<h2 id="dhcpv4">DHCPv4</h2>
+<pre><code class="language-bash">curl --unix-socket /run/routerd/dhcpv4-client/wan.sock http://unix/v1/status
+</code></pre>
+<p>Confirm <code>DHCPv4Client</code> is <code>Bound</code>. If you need an immediate renewal, <code>POST /v1/commands/renew</code> triggers it.</p>
+<h2 id="dnsmasq">dnsmasq</h2>
+<p>In current routerd, dnsmasq is scoped to DHCPv4, DHCPv6, DHCP relay, and Router Advertisement. DNS resolution is handled by <code>routerd-dns-resolver</code>.</p>
+<p>Check that the generated dnsmasq configuration:</p>
+<ul>
+<li>Contains the expected <code>dhcp-range</code>.</li>
+<li>Has <code>port=0</code> (DNS handling disabled — that's <code>routerd-dns-resolver</code>'s job).</li>
+<li>References <code>dhcp-script=/usr/local/libexec/routerd/dhcp-event-relay</code> so lease changes are forwarded to routerd.</li>
+<li>Has <code>enable-ra</code> when RA is part of the configuration.</li>
+</ul>
+<h2 id="dns-resolver">DNS resolver</h2>
+<pre><code class="language-bash">sudo curl --unix-socket /run/routerd/dns-resolver/&lt;resource&gt;.sock http://unix/v1/healthz
+dig @&lt;lan-ip&gt; router.lan.example.org A
+dig @&lt;lan-ip&gt; example.com A
+</code></pre>
+<p>Verify in this order:</p>
+<ul>
+<li>The resolver listens on the expected addresses and ports (<code>ss -lnup</code>).</li>
+<li>Local authoritative zones answer (manual records and DHCP-derived records from <code>DNSZone</code>).</li>
+<li>Conditional forwarders reach their target upstream (<code>dig @&lt;lan-ip&gt; &lt;forwarded-domain&gt;</code>).</li>
+<li>The default upstream answers via the expected protocol (DoH / DoT / TCP / plain UDP). Inspect <code>/v1/status</code> for the resolver status and upstream health.</li>
+</ul>
+<h2 id="ds-lite">DS-Lite</h2>
+<pre><code class="language-bash">ip -6 tunnel show
+ip route show default
+nft list table ip routerd_nat
+</code></pre>
+<p>If the AFTR FQDN does not resolve, check the <code>DNSResolver</code> <code>forward</code> source for the AFTR domain. Public DNS often cannot resolve AFTR records that are scoped to a specific access network.</p>
+<h2 id="conntrack">conntrack</h2>
+<p>Some environments do not expose <code>/proc/net/nf_conntrack</code>. In that case, routerd falls back to sysctl-derived counters. An empty per-flow list does not necessarily mean NAT is broken; check the <code>routerctl get connections</code> summary instead.</p>
+<h2 id="things-to-avoid-during-diagnosis">Things to avoid during diagnosis</h2>
+<ul>
+<li>Do not run an old DHCP client (or a manual test daemon) on the production WAN at the same time as routerd. Two clients sending DHCPv6-PD on the same interface can confuse the upstream's lease state.</li>
+<li>Do not flush <code>nf_conntrack</code> while changing routes; routerd intentionally avoids that, and clearing it kills established sessions.</li>
+<li>Do not edit <code>/usr/local/etc/routerd/router.yaml</code> on a host while ad-hoc YAML overrides exist elsewhere on the same host. Keep one canonical config file per host so reconcile remains predictable.</li>
+</ul>
+<h2 id="see-also">See also</h2>
+<ul>
+<li><a href="../concepts/state.html">State</a></li>
+<li><a href="../operations/reconcile.html">Reconcile loop</a></li>
+</ul></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#when-the-service-or-status-command-fails">When the service or status command fails</a></li>
+<li><a href="#triage-order">Triage order</a></li>
+<li><a href="#dhcpv6-pd">DHCPv6-PD</a></li>
+<li><a href="#dhcpv4">DHCPv4</a></li>
+<li><a href="#dnsmasq">dnsmasq</a></li>
+<li><a href="#dns-resolver">DNS resolver</a></li>
+<li><a href="#ds-lite">DS-Lite</a></li>
+<li><a href="#conntrack">conntrack</a></li>
+<li><a href="#things-to-avoid-during-diagnosis">Things to avoid during diagnosis</a></li>
+<li><a href="#see-also">See also</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/how-to/troubleshooting.md">GitHub</a></div></footer></body></html>

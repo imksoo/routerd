@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>USB 持久化 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/operations/usb-persistence.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/operations/usb-persistence.html" lang="en" hreflang="en">English</a><a href="/docs/ja/operations/usb-persistence.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/operations/usb-persistence.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/operations/usb-persistence.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="usb-持久化">USB 持久化</h1>
+<p>routerd 的 Live ISO 可作为无盘路由器运行。
+在此模式下，运行中的系统放置于 RAM，
+只有选定的路由器状态才会保存至 USB 设备。</p>
+<p>这适合从可移动介质启动的 mini PC。
+不需要内置磁盘，重新启动后仍可保留配置。</p>
+<p>当前 Ubuntu Live ISO 使用本文说明的持久化辅助脚本。旧 Alpine 镜像的
+<code>lbu</code> 步骤不适用于当前 ISO。</p>
+<h2 id="目录配置">目录配置</h2>
+<p>启用 USB 持久化后，routerd 会在选定分区上创建以下配置。</p>
+<pre><code class="language-text">routerd/
+  router.yaml
+  usb-device
+  usb-flush-enabled
+  log-limit
+  secrets/
+  logs/
+  state/
+</code></pre>
+<p>启动时，<code>/usr/share/routerd/live-persistence.sh init</code> 会搜索配置介质。
+首先确认已记录的设备，
+接着确认内核命令行的 <code>routerd.usb=</code>，
+最后搜索标签为 <code>ROUTERD_CONFIG</code> 或 <code>ROUTERD</code> 的设备。
+可写入的分区用于持久化。Proxmox 的 <code>media=cdrom</code> 配置 ISO 等只读的 ISO9660/UDF CD-ROM 介质，
+仅作为配置导入用途，写出（flush）功能会停用。</p>
+<p>选定的分区挂载至 <code>/media/routerd-usb</code>。
+辅助程序会优先搜索主机专属配置，再搜索通用配置。</p>
+<ul>
+<li><code>/media/routerd-usb/routerd/hosts/&lt;hostname&gt;.yaml</code></li>
+<li><code>/media/routerd-usb/routerd/hosts/&lt;mac&gt;.yaml</code>（MAC 可使用冒号分隔或小写无分隔格式）</li>
+<li><code>/media/routerd-usb/routerd/router.yaml</code></li>
+</ul>
+<p>找到配置后，复制至 <code>/usr/local/etc/routerd/router.yaml</code>，
+接着由 Live ISO 的启动流程应用配置。为方便验收测试与故障排查，
+来源路径与 SHA256 会分别存储于 <code>/run/routerd/live-config-source</code> 与 <code>/run/routerd/live-config-sha256</code>。
+密钥会在 apply 前恢复。辅助程序按以下顺序查找：</p>
+<ul>
+<li><code>routerd/hosts/&lt;hostname&gt;/secrets/</code></li>
+<li><code>routerd/hosts/&lt;mac&gt;/secrets/</code>（MAC 可使用冒号分隔或小写无分隔格式）</li>
+<li><code>routerd/secrets/</code></li>
+</ul>
+<p>文件会以 mode <code>0600</code> 安装到 <code>/usr/local/etc/routerd/secrets</code>。
+若无已保存的配置，且 <code>/usr/local/etc/routerd/router.yaml</code> 也不存在，则启动配置向导。</p>
+<h2 id="文件系统">文件系统</h2>
+<p>Live 辅助程序使用 <code>blkid</code> 判断文件系统，并依判断结果切换挂载选项。</p>
+<table>
+<thead>
+<tr>
+<th>文件系统</th>
+<th>默认挂载选项</th>
+<th>备注</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ext4</code></td>
+<td><code>rw,async,noatime</code></td>
+<td>持久化路由器用途的首选。</td>
+</tr>
+<tr>
+<td><code>vfat</code></td>
+<td><code>rw,async,noatime,utf8,shortname=mixed</code></td>
+<td>适合一般 USB 随身盘。无 Unix 权限。</td>
+</tr>
+<tr>
+<td><code>exfat</code></td>
+<td><code>rw,async,noatime</code></td>
+<td>适合与桌面操作系统共用的大容量 USB 随身盘。</td>
+</tr>
+<tr>
+<td><code>iso9660</code> / <code>udf</code></td>
+<td><code>ro,noatime</code></td>
+<td>只读配置导入介质。持久化写出停用。</td>
+</tr>
+</tbody>
+</table>
+<p>FAT32 在 <code>blkid</code> 输出中通常显示为 <code>vfat</code>。
+Live 辅助程序不会直接以 FAT32 硬编码挂载，
+而是先判断文件系统类型，再选择对应的选项。</p>
+<p>默认使用 <code>async,noatime</code>，
+以减少对 USB 闪存的写入次数。
+若优先考量调试或保守的写入确认，请指定以下内核参数。</p>
+<pre><code class="language-text">routerd.usb_mount=sync
+</code></pre>
+<p>若要明确指定默认值，使用 <code>routerd.usb_mount=async</code>。</p>
+<h2 id="日志缓冲">日志缓冲</h2>
+<p>运行时日志暂存于 tmpfs。</p>
+<pre><code class="language-text">/run/routerd/logs
+</code></pre>
+<p>默认上限为 100 MiB。
+超过上限时，从最旧的文件开始删除。</p>
+<p>启用每日写出任务后，<code>/etc/periodic/daily/routerd-usb-flush</code> 会将以下内容复制至 USB。</p>
+<ul>
+<li>当前的 <code>router.yaml</code></li>
+<li><code>/usr/local/etc/routerd/secrets</code> 下的文件</li>
+<li><code>/var/lib/routerd</code> 的状态归档</li>
+<li><code>/var/db/routerd</code> 的状态归档</li>
+<li><code>/run/routerd/logs</code> 的压缩日志归档</li>
+</ul>
+<p>也可手动执行写出。</p>
+<pre><code class="language-sh">/usr/share/routerd/live-persistence.sh flush
+</code></pre>
+<p><code>save-config</code> 也会在 <code>/usr/local/etc/routerd/secrets</code> 存在时，将其复制到持久化设备的
+<code>routerd/secrets/</code>。若长期运行时需要 removable media 本身保留 Unix 权限，请优先使用
+ext4，而不是 vfat/exfat。</p>
+<h2 id="安全移除">安全移除</h2>
+<p>持久化挂载仍有效时，请勿直接拔除 USB 设备。
+请先通过 Live 辅助程序执行写出与卸载。</p>
+<pre><code class="language-sh">/usr/share/routerd/live-persistence.sh flush
+/usr/share/routerd/live-persistence.sh umount
+</code></pre>
+<p>当前状态可通过以下命令确认。</p>
+<pre><code class="language-sh">/usr/share/routerd/live-persistence.sh status
+</code></pre>
+<p>即使 USB 设备意外拔除，routerd 仍会继续在 RAM 上运行。
+Live 辅助程序会输出警告，在设备重新插入并挂载前，
+不再将 USB 路径作为持久存储目的地。</p>
+<h2 id="常用命令">常用命令</h2>
+<p>列出候选设备。</p>
+<pre><code class="language-sh">/usr/share/routerd/live-persistence.sh list-devices
+</code></pre>
+<p>将配置保存至 USB。</p>
+<pre><code class="language-sh">/usr/share/routerd/live-persistence.sh save-config /dev/sdb1 /usr/local/etc/routerd/router.yaml yes 100M
+</code></pre>
+<p>还原会在启动时自动执行。
+若需从 shell 重新执行启动流程，请使用以下命令。</p>
+<pre><code class="language-sh">/usr/share/routerd/live-persistence.sh init
+</code></pre></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#目录配置">目录配置</a></li>
+<li><a href="#文件系统">文件系统</a></li>
+<li><a href="#日志缓冲">日志缓冲</a></li>
+<li><a href="#安全移除">安全移除</a></li>
+<li><a href="#常用命令">常用命令</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/operations/usb-persistence.md">GitHub</a></div></footer></body></html>

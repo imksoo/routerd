@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>应用与恢复 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/operations/reconcile.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/operations/reconcile.html" lang="en" hreflang="en">English</a><a href="/docs/ja/operations/reconcile.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/operations/reconcile.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/operations/reconcile.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="应用与恢复">应用与恢复</h1>
+<p>配置是应用内容的依据。协调过程会修复缺失或变更的配置对象，并移除配置及有效动态状态不需要的对象。手动创建的对象不会仅因不是routerd创建而受到保护。OS基础及运行所需的DHCP、PD、BGP、SAM动态状态不属于静态配置。</p>
+<p>--replace须搭配完整配置。不使用--replace时，部分更新不会删除所有省略的资源。请检查删除计划并保留独立控制台。</p>
+<pre><code class="language-sh">routerctl validate -f router.yaml --replace
+routerctl plan -f router.yaml --replace
+routerctl apply -f router.yaml --replace
+routerctl get status
+routerctl get events --limit 20
+</code></pre>
+<p>常驻进程负责运行中的状态协调。validate或plan成功不代表流量正常。应用后须检查状态、事件及实际对端连接。</p>
+<pre><code class="language-sh">routerd serve --config router.yaml
+</code></pre>
+<p>恢复是重新应用已保存的配置，不会恢复过去的内核状态、连接或租约。</p>
+<pre><code class="language-sh">routerctl rollback --list
+routerctl rollback --to &lt;generation&gt;
+</code></pre>
+<p>import是显式导入所选物理接口及静态地址的操作。结果须先整合进完整配置，再使用--replace；不要将获取的动态状态导入静态YAML。</p>
+<pre><code class="language-sh">routerctl import --interface ens18 --address 192.0.2.1/24 --config router.yaml &gt; candidate.yaml
+</code></pre>
+<p><a href="state-database.html">DB</a> · <a href="../reference/resources.html">YAML</a></p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul></ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/operations/reconcile.md">GitHub</a></div></footer></body></html>

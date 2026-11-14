@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>IPsecConnection · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/reference/resources/IPsecConnection.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/reference/resources/IPsecConnection.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/IPsecConnection.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/IPsecConnection.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/reference/resources/IPsecConnection.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="ipsecconnection">IPsecConnection</h1>
+<p><a href="../resources.html#ipsecconnection">各資源的設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>產生 strongSwan swanctl 連線，並一併同步所有 routerd IPsec 連線。CHILD_SA 設為流量觸發的 trap；載入設定不代表 SA 已建立。</p>
+<h2 id="指定條件與參照關係">指定條件與參照關係</h2>
+<ul>
+<li>preSharedKey 與 certificateRef 必須且只能指定一項。certificateRef 直接傳入 swanctl local.certs，不解析為 routerd 資源。</li>
+<li>彙整設定位於 Linux 的 /etc/routerd/swanctl 或 FreeBSD 的 /usr/local/etc/routerd/swanctl。swanctl --load-all --file 同步整個管理集合與密鑰。憑證、信任錨點及配對私密金鑰須另行放入該設定使用的認證儲存區。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: IPsecConnection
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    certificateRef: &quot;&lt;string&gt;&quot; # 選填; string
+    cloudProviderHint: &quot;&quot; # 選填; string; enum=[&quot;&quot;, &quot;aws&quot;, &quot;azure&quot;, &quot;gcp&quot;]
+    leftSubnet: &quot;&lt;string&gt;&quot; # 必填; string
+    localAddress: &quot;&lt;string&gt;&quot; # 必填; string
+    phase1Proposals: # 選填; array
+      - &quot;&lt;string&gt;&quot; # string
+    phase2Proposals: # 選填; array
+      - &quot;&lt;string&gt;&quot; # string
+    preSharedKey: &quot;&lt;string&gt;&quot; # 選填; string
+    remoteAddress: &quot;&lt;string&gt;&quot; # 必填; string
+    rightSubnet: &quot;&lt;string&gt;&quot; # 必填; string
+</code></pre>
+<h2 id="欄位意義與預設值">欄位意義與預設值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>欄位意義與預設值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.localAddress</code></td>
+<td>必填的本機端點 IPv4/IPv6 位址，不接受主機名稱或介面參照。</td>
+</tr>
+<tr>
+<td><code>spec.remoteAddress</code></td>
+<td>必填的遠端 IPv4/IPv6 位址。驗證不強制兩端與流量選擇器的位址家族一致。</td>
+</tr>
+<tr>
+<td><code>spec.preSharedKey</code></td>
+<td>直接指定 IKE 共用密鑰；未使用 certificateRef 時必填。無預設值、檔案或環境來源，會寫入管理的 swanctl secrets 區段。</td>
+</tr>
+<tr>
+<td><code>spec.certificateRef</code></td>
+<td>strongSwan local.certs 使用的憑證名稱或路徑；未使用 preSharedKey 時必填，遠端認證設為 pubkey。不建立憑證或參照 routerd Secret。</td>
+</tr>
+<tr>
+<td><code>spec.phase1Proposals</code></td>
+<td>IKE 提案清單，預設 [aes256-sha256-modp2048]。非空清單直接以逗號連接，routerd 不驗證演算法支援。</td>
+</tr>
+<tr>
+<td><code>spec.phase2Proposals</code></td>
+<td>ESP 提案清單，預設 [aes256-sha256]，套用至名為 net 的子連線；演算法有效性由 strongSwan 載入時檢查。</td>
+</tr>
+<tr>
+<td><code>spec.leftSubnet</code></td>
+<td>必填的本機流量選擇器 IPv4/IPv6 CIDR，輸出為 local_ts。</td>
+</tr>
+<tr>
+<td><code>spec.rightSubnet</code></td>
+<td>必填的遠端流量選擇器 IPv4/IPv6 CIDR，輸出為 remote_ts。</td>
+</tr>
+<tr>
+<td><code>spec.cloudProviderHint</code></td>
+<td>選用的 aws、azure 或 gcp 標籤，預設為空。僅供觀察回報，不變更提案、認證或 swanctl 產生內容，不建立雲端資源。</td>
+</tr>
+</tbody>
+</table>
+<p>實作: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_interface.go">pkg/config/validate_interface.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/ipsec/ipsec.go">pkg/ipsec/ipsec.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd/ipsec_apply.go">cmd/routerd/ipsec_apply.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/apply/engine.go">pkg/apply/engine.go</a></p>
+<h2 id="可參照的狀態欄位">可參照的狀態欄位</h2>
+<p>一般狀態參照驗證接受此 Kind 的下列欄位名稱。列於允許清單不保證目前有值，請檢查實際狀態。這些是輸出，不是 YAML spec 設定。</p>
+<p><code>phase</code></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#指定條件與參照關係">指定條件與參照關係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#欄位意義與預設值">欄位意義與預設值</a></li>
+<li><a href="#可參照的狀態欄位">可參照的狀態欄位</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/reference/resources/IPsecConnection.md">GitHub</a></div></footer></body></html>

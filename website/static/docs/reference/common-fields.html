@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Shared reference and condition fields · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/reference/common-fields.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/reference/common-fields.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/reference/common-fields.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/common-fields.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/common-fields.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="shared-reference-and-condition-fields">Shared reference and condition fields</h1>
+<h2 id="resource-identity-and-value-sources">Resource identity and value sources</h2>
+<p><code>metadata.name</code> identifies a resource within its kind. A value-source <code>resource</code> uses <code>Kind/name</code>, not an OS interface name or a URL. Ordinary status-reference validation requires the referenced resource to exist in the same Router and the requested field to appear in that kind's provided-field list. <code>optional: true</code> does not bypass these checks.</p>
+<pre><code class="language-yaml">dnsServerFrom:
+  - resource: IPv4StaticAddress/lan-address
+    field: address
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning, default and condition</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>resource</code></td>
+<td>Source as <code>Kind/name</code>. Required when using the source, including when <code>field</code> is set. No wildcard.</td>
+</tr>
+<tr>
+<td><code>field</code></td>
+<td>Field to read, such as <code>address</code>, <code>phase</code> or <code>zone</code>, limited by the source kind. Although the low-level reader can default to <code>phase</code>, ordinary configuration validation requires an explicit field for a supplied resource. Specify it.</td>
+</tr>
+<tr>
+<td><code>optional</code></td>
+<td>Default <code>false</code>. Lets a supporting consumer tolerate an unresolved runtime value; it does not make a missing configuration resource valid. The individual resource documents how it handles missing values.</td>
+</tr>
+</tbody>
+</table>
+<p>Readers that use <code>ValuesFromStoreOrRouter</code> first read <code>DNSZone.zone</code> or <code>IPv4StaticAddress.address</code> from the declared config and then try status. Other readers consume status directly. A declared reference does not guarantee the dynamic value is ready, and it does not itself impose an execution order.</p>
+<h2 id="dependencies">Dependencies</h2>
+<p><code>dependsOn</code> is a list of dependency predicates. All entries must pass; an empty list has no dependency gate.</p>
+<pre><code class="language-yaml">dependsOn:
+  - resource: DHCPv6PrefixDelegation/wan-pd
+    phase: Bound
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning, default and condition</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>resource</code></td>
+<td>Dependency as <code>Kind/name</code>. Referenced configuration resource and field must exist.</td>
+</tr>
+<tr>
+<td><code>field</code></td>
+<td>Default <code>phase</code>. Used unless <code>phase</code> is specified.</td>
+</tr>
+<tr>
+<td><code>phase</code></td>
+<td>Shorthand for matching the source <code>phase</code>; when nonempty it takes precedence over both <code>field</code> and <code>equals</code>.</td>
+</tr>
+<tr>
+<td><code>equals</code></td>
+<td>Exact string required from any returned value. Default empty: require a nonempty first value.</td>
+</tr>
+<tr>
+<td><code>notEmpty</code></td>
+<td>Default <code>false</code>. Tests that the first normalized value is nonblank. The current reader already removes blank values, so setting this flag normally adds no further restriction.</td>
+</tr>
+<tr>
+<td><code>optional</code></td>
+<td>Default <code>false</code>. At runtime, absent source values pass only when true. It does not turn a resolved mismatching value into a match and does not relax configuration-reference validation.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="conditional-activation">Conditional activation</h2>
+<p>Omitting <code>when</code> imposes no condition. A nonempty condition must use exactly one of <code>state</code>, <code>all</code> and <code>any</code> at each level. <code>all</code> and <code>any</code> may contain nested conditions, but their child entries cannot be empty. Both are accepted by the implementation even though the JSON Schema omits these recursive properties.</p>
+<pre><code class="language-yaml">when:
+  all:
+    - state:
+        DHCPv6PrefixDelegation/wan-pd.phase:
+          equals: Bound
+    - state:
+        HealthCheck/upstream.phase:
+          equals: Healthy
+</code></pre>
+<p><code>state</code> combines all its entries with AND. <code>all</code> combines child conditions with AND; <code>any</code> combines them with OR. Resource status keys can use <code>Kind/name.field</code>, <code>Kind/name.status.field</code>, or the equivalent <code>${...}</code> spelling. Resource-style keys are checked against declared resources and provided fields; other state-key forms are handled as state-store names.</p>
+<table>
+<thead>
+<tr>
+<th>State predicate</th>
+<th>Meaning and omitted behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>exists</code></td>
+<td>Omitted: no presence constraint. <code>true</code> requires status <code>set</code>; <code>false</code> requires <code>unset</code>, which is different from <code>unknown</code>.</td>
+</tr>
+<tr>
+<td><code>equals</code></td>
+<td>Nonempty value requires exact, case-sensitive equality and status <code>set</code>. Empty disables this comparison; use <code>exists</code> or <code>status</code> to express absence.</td>
+</tr>
+<tr>
+<td><code>in</code></td>
+<td>Nonempty list requires an exact match to any member and status <code>set</code>. Empty disables the membership constraint.</td>
+</tr>
+<tr>
+<td><code>contains</code></td>
+<td>Nonempty string requires a case-sensitive substring and status <code>set</code>. Empty disables this constraint.</td>
+</tr>
+<tr>
+<td><code>status</code></td>
+<td>Optional state-store status: <code>set</code>, <code>unset</code> or <code>unknown</code>. This is not the resource's lifecycle <code>phase</code>.</td>
+</tr>
+<tr>
+<td><code>for</code></td>
+<td>Optional Go duration: require the observed state's age to be at least this duration. It tracks state age, not a separate timer for the entire predicate. Parsing is validated; positive duration is not enforced here.</td>
+</tr>
+<tr>
+<td><code>maxAge</code></td>
+<td>Optional strictly positive Go duration: state age must not exceed it. With <code>for</code>, both age constraints apply.</td>
+</tr>
+</tbody>
+</table>
+<p>Within one state entry, all supplied predicates apply together. Unresolved <code>unknown</code> values can be indeterminate rather than simply false; some effective-config paths keep indeterminate resources while resolved-only filtering does not. VXLANTunnel rejects conditions that explicitly accept unknown. Consult the individual resource for its pending/withdrawal behavior.</p>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go">reference validation</a>, <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">condition validation</a>, <a href="https://github.com/imksoo/routerd/blob/main/pkg/resourcequery/resourcequery.go">value/dependency readers</a>, <a href="https://github.com/imksoo/routerd/blob/main/pkg/resourcequery/when.go">condition evaluation</a>, <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/provides.go">provided fields</a>.</p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#resource-identity-and-value-sources">Resource identity and value sources</a></li>
+<li><a href="#dependencies">Dependencies</a></li>
+<li><a href="#conditional-activation">Conditional activation</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/reference/common-fields.md">GitHub</a></div></footer></body></html>

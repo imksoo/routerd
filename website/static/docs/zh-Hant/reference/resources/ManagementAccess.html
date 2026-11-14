@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ManagementAccess · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/reference/resources/ManagementAccess.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/reference/resources/ManagementAccess.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/ManagementAccess.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/ManagementAccess.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/reference/resources/ManagementAccess.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="managementaccess">ManagementAccess</h1>
+<p><a href="../resources.html#managementaccess">各資源的設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>宣告套用前管理連線中斷檢查所檢查的介面。此資源不建立管理接聽端或防火牆允許規則。</p>
+<h2 id="指定條件與參照關係">指定條件與參照關係</h2>
+<ul>
+<li>套用前與 routerctl doctor 會執行檢查。fail 結果會阻止實際套用，除非明確指定 --allow-mgmt-lockout；dry-run 僅報告。檢查的是設定，不是實際管理連線。</li>
+<li>每個介面必須宣告為 Interface。只要存在任何 FirewallZone，每個管理介面就必須屬於 role 為 trust 或 mgmt 的區域。僅有同名 Bridge/WireGuard 資源無法滿足此檢查。</li>
+<li>未宣告 ManagementAccess 時，此檢查不產生結果。requireWebConsoleBound 檢查明確的萬用接聽位址，不要求 WebConsole 存在，也不證明其位址屬於所列管理介面。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: ManagementAccess
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    allowSourceCIDRs: # 選填; array
+      - &quot;&lt;string&gt;&quot; # string
+    interfaces: # 必填; array
+      - &quot;&lt;string&gt;&quot; # string
+    requireWebConsoleBound: true # 選填; boolean
+</code></pre>
+<h2 id="欄位意義與預設值">欄位意義與預設值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>欄位意義與預設值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.interfaces</code></td>
+<td>必填且不可為空的 Interface 名稱或 Interface/name 清單。正規化後重複會被拒絕。指的是已宣告資源，不是任意 OS 名稱。</td>
+</tr>
+<tr>
+<td><code>spec.allowSourceCIDRs</code></td>
+<td>選用的 IPv4/IPv6 CIDR 清單，預設為空。會驗證語法，但目前管理檢查與防火牆產生器不使用此欄位，不會強制來源位址存取限制。</td>
+</tr>
+<tr>
+<td><code>spec.requireWebConsoleBound</code></td>
+<td>預設 true。啟用的 WebConsole 明確接聽 0.0.0.0 或 :: 時產生 fail；false 則降為 warn。多個 ManagementAccess 中任一省略或 true 都會啟用要求。動態接聽位址僅警告；未設定來源且省略 listenAddress 時，此處不產生結果。</td>
+</tr>
+</tbody>
+</table>
+<p>實作: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_firewall.go">pkg/config/validate_firewall.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/management.go">pkg/config/management.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd/cmd_apply.go">cmd/routerd/cmd_apply.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerctl/doctor.go">cmd/routerctl/doctor.go</a></p>
+<h2 id="可參照的狀態欄位">可參照的狀態欄位</h2>
+<p>一般狀態參照驗證接受此 Kind 的下列欄位名稱。列於允許清單不保證目前有值，請檢查實際狀態。這些是輸出，不是 YAML spec 設定。</p>
+<p><code>phase</code>, <code>interfaces</code></p>
+<p><a href="/examples/home-router-mgmt-protected.yaml">設定範例</a></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#指定條件與參照關係">指定條件與參照關係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#欄位意義與預設值">欄位意義與預設值</a></li>
+<li><a href="#可參照的狀態欄位">可參照的狀態欄位</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/reference/resources/ManagementAccess.md">GitHub</a></div></footer></body></html>

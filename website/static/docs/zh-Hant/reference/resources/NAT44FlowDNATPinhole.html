@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NAT44FlowDNATPinhole · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/reference/resources/NAT44FlowDNATPinhole.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/reference/resources/NAT44FlowDNATPinhole.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/NAT44FlowDNATPinhole.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/NAT44FlowDNATPinhole.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/reference/resources/NAT44FlowDNATPinhole.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="nat44flowdnatpinhole">NAT44FlowDNATPinhole</h1>
+<p><a href="../resources.html#nat44flowdnatpinhole">各資源的設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>從送出 IPv4 UDP 學習內部端點，依收到 UDP 的目的連接埠動態 DNAT。僅 Linux nftables，目前 PF 未實作此資源。</p>
+<h2 id="指定條件與參照關係">指定條件與參照關係</h2>
+<ul>
+<li>fromInterfaceRefs、outbound、inbound 與來源選擇器必填。介面與 IPAddressSet 參照須存在於同一 Router。僅 IPv4/UDP，屬於連接埠觸發 DNAT，不是一般 conntrack 回覆處理。</li>
+<li>映射鍵為送出本機 UDP 來源連接埠，值為 SNAT 前內部 IPv4 與相同連接埠。所有選定介面共用每資源一個映射。不同用戶端使用相同來源連接埠會覆寫，遠端位址不在鍵內。</li>
+<li>入站 DNAT 檢查選定輸入介面、允許的遠端來源連接埠與已學習目的連接埠。不會將送出目的 CIDR/集合重新套用到入站遠端位址，也不建立防火牆轉送允許；轉換流量仍需防火牆允許。</li>
+<li>學習映射是核心執行狀態，不是設定或持久化資料庫。重建 NAT 表或重啟會遺失，需送出流量重新學習。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: NAT44FlowDNATPinhole
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    correlation: # 選填; object
+      key: &quot;&quot; # 選填; string; enum=[&quot;&quot;, &quot;localPort&quot;]
+    fromInterfaceRefs: # 選填; array
+      - &quot;&lt;string&gt;&quot; # string
+    inbound: # 必填; object
+      sourcePorts: # 必填; array
+        - &quot;&lt;string&gt;&quot; # string
+    outbound: # 必填; object
+      destinationCIDRs: # 選填; array
+        - &quot;&lt;string&gt;&quot; # string
+      destinationPorts: # 必填; array
+        - &quot;&lt;string&gt;&quot; # string
+      destinationSetRefs: # 選填; array
+        - &quot;&lt;string&gt;&quot; # string
+      protocol: &quot;udp&quot; # 必填; string; enum=[&quot;udp&quot;]
+      sourceCIDRs: # 選填; array
+        - &quot;&lt;string&gt;&quot; # string
+      sourceSetRef: &quot;&lt;string&gt;&quot; # 選填; string
+    timeout: &quot;&lt;string&gt;&quot; # 選填; string
+    when: # 選填; object
+      state: # 選填; object
+        &quot;&lt;key&gt;&quot;: # 選填; object
+          contains: &quot;&lt;string&gt;&quot; # 選填; string
+          equals: &quot;&lt;string&gt;&quot; # 選填; string
+          exists: true # 選填; boolean
+          for: &quot;&lt;string&gt;&quot; # 選填; string
+          in: # 選填; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # 選填; string
+          status: &quot;set&quot; # 選填; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<h2 id="欄位意義與預設值">欄位意義與預設值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>欄位意義與預設值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.outbound</code></td>
+<td>必填的送出學習比對。記錄符合的 UDP 流量身分，但不會自行允許流量通過防火牆。</td>
+</tr>
+<tr>
+<td><code>spec.outbound.sourceSetRef</code></td>
+<td>選用既有 IPAddressSet/<name> 來源選擇器。此欄或 sourceCIDRs 至少一者必填；兩者可作 OR。預設空。</td>
+</tr>
+<tr>
+<td><code>spec.outbound.sourceCIDRs</code></td>
+<td>選用 IPv4 來源前綴 OR 清單，預設空，至少需要一個來源選擇器。拒絕 IPv6，產生時遮罩主機位元。</td>
+</tr>
+<tr>
+<td><code>spec.outbound.destinationCIDRs</code></td>
+<td>選用學習用 IPv4 遠端目的，預設空。與 destinationSetRefs 作 OR；兩者皆無時任意遠端位址。</td>
+</tr>
+<tr>
+<td><code>spec.outbound.destinationSetRefs</code></td>
+<td>選用既有 IPAddressSet/<name> 遠端目的參照，不可重複，預設空。來源與目的兩類以 AND 組合。</td>
+</tr>
+<tr>
+<td><code>spec.outbound.protocol</code></td>
+<td>必填 udp，無預設值。此學習機制不支援 TCP/IPv6。</td>
+</tr>
+<tr>
+<td><code>spec.outbound.destinationPorts</code></td>
+<td>必填非空送出 UDP 目的連接埠：數字 1–65535 或唯一 start-end 範圍。範圍不可與其他項目混用。</td>
+</tr>
+<tr>
+<td><code>spec.inbound</code></td>
+<td>必填返回流量比對。sourcePorts 選擇遠端 UDP 傳送者連接埠，不是本機目的連接埠。</td>
+</tr>
+<tr>
+<td><code>spec.inbound.sourcePorts</code></td>
+<td>必填非空遠端 UDP 來源連接埠清單，與 outbound.destinationPorts 相同的 1–65535/單獨範圍限制。</td>
+</tr>
+<tr>
+<td><code>spec.timeout</code></td>
+<td>選用嚴格為正的 Go 時間長度，預設 3m。每個符合送出封包更新學習項目。產生時四捨五入為秒且至少 1s；這是學習狀態到期，不是 UDP 協定逾時。</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>選用共用啟用條件，預設無條件。篩除資源不產生學習映射/集合規則。巢狀條件與結構描述限制請見共用欄位。</td>
+</tr>
+<tr>
+<td><code>spec.fromInterfaceRefs</code></td>
+<td>必填非空輸出/輸入介面清單，接受單純名稱或 Interface/name、PPPoESession/name、DSLiteTunnel/name。送出比對 oifname，入站比對同清單的 iifname。</td>
+</tr>
+<tr>
+<td><code>spec.correlation</code></td>
+<td>選用關聯物件，僅支援 localPort，省略亦使用相同鍵。</td>
+</tr>
+<tr>
+<td><code>spec.correlation.key</code></td>
+<td>僅空或 localPort。產生器無其他分支，一律以 UDP 來源連接埠索引學習映射。</td>
+</tr>
+</tbody>
+</table>
+<p>實作: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_firewall.go">pkg/config/validate_firewall.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/nftables.go">pkg/render/nftables.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/local_service_redirect.go">pkg/render/local_service_redirect.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/nat44/controller.go">pkg/controller/nat44/controller.go</a></p>
+<h2 id="可參照的狀態欄位">可參照的狀態欄位</h2>
+<p>一般狀態參照驗證接受此 Kind 的下列欄位名稱。列於允許清單不保證目前有值，請檢查實際狀態。這些是輸出，不是 YAML spec 設定。</p>
+<p><code>phase</code></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#指定條件與參照關係">指定條件與參照關係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#欄位意義與預設值">欄位意義與預設值</a></li>
+<li><a href="#可參照的狀態欄位">可參照的狀態欄位</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/reference/resources/NAT44FlowDNATPinhole.md">GitHub</a></div></footer></body></html>

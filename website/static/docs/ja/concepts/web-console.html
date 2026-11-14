@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Web 管理画面 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/concepts/web-console.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/concepts/web-console.html" lang="en" hreflang="en">English</a><a href="/docs/ja/concepts/web-console.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/concepts/web-console.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/concepts/web-console.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="web-管理画面">Web 管理画面</h1>
+<p>DNS・トラフィック・ファイアウォールのログDBがまだ存在しない場合、ログ一覧は空になります。
+DNS・トラフィックの集計も空となり、読み取りでファイルやディレクトリは作成しません。
+既存DBの破損などのエラーは引き続き表示します。</p>
+<p>Connectionsの「DS-Lite NATエントリー数」は、トンネルのinnerLocalIPv4に対応する
+ローカルIPv4 SNAT状態を合計・TCP・UDP・その他に分けて表示します。
+接続一覧の表示上限や絞り込みとは独立した全件集計です。
+取得不能は「未取得」と表示します。事業者側AFTRの件数ではありません。
+同じSNATアドレスを共有するトンネルは合算値になるため、行の単純合計はできません。</p>
+<p><code>WebConsole</code> は、routerd の状態を読むための HTTP 画面です。
+管理ネットワークでのローカル運用を想定しています。
+設定の変更、サービスの再起動、リソースの適用、状態データベースの編集は行いません。</p>
+<p>設定の変更は、YAML ファイルと <code>routerctl</code> コマンドに限定します。
+ブラウザーは観測専用です。</p>
+<pre><code class="language-yaml">apiVersion: system.routerd.net/v1alpha1
+kind: WebConsole
+metadata:
+  name: mgmt
+spec:
+  enabled: true
+  listenAddressFrom:
+    resource: Interface/mgmt
+    field: ipv4Addresses
+  port: 8080
+  title: edge-router
+</code></pre>
+<p>待ち受けは、管理アドレスに限定してください。
+untrust の WAN インターフェースでは公開しないでください。
+管理アドレスを OS や IPAM から受け取る場合は、<code>listenAddressFrom</code> を使います。
+routerd は、起動時にリソースの状態から値を解決します。
+固定の予備アドレスが必要な場合は、<code>listenAddress</code> も併用できます。</p>
+<h2 id="読み取る情報">読み取る情報</h2>
+<p>Web 管理画面は次の情報を読み取ります。</p>
+<ul>
+<li>routerd デーモン状態</li>
+<li>SQLite 状態データベース内のリソース状態</li>
+<li>SQLite イベントテーブル内のバスイベント</li>
+<li>conntrack または pf の state から得たコネクションの観測値</li>
+<li><code>dns-queries.db</code> の DNS クエリー履歴</li>
+<li><code>traffic-flows.db</code> の通信フロー履歴</li>
+<li><code>firewall-logs.db</code> のファイアウォール拒否履歴</li>
+<li>現在の dnsmasq の DHCP リースファイル。端末名、MAC アドレス、ローカルな
+  ベンダー候補を表示します。</li>
+<li>現在の YAML 設定。読み取り専用で表示し、secret フィールドは redact されています。</li>
+</ul>
+<h2 id="現在の画面">現在の画面</h2>
+<p>現在の Fluent UI 版 Web アプリケーションでは、次を表示します。</p>
+<ul>
+<li>PD、DS-Lite、DNS、NAT、経路、ヘルスチェック、VPN、パッケージ、sysctl、
+  systemd ユニット、ログリソースの状態概要</li>
+<li>フェーズや観測値が変わったリソースの強調表示</li>
+<li>選択したイベントの詳細ペイン。大きな属性でイベント表を崩しません。</li>
+<li>DHCP リースイベントの詳細。MAC アドレス、IP アドレス、ホスト名、リソース名を表示します。</li>
+<li>アドレスファミリーとプロトコルで分けたコネクション画面。
+  絞り込み、並べ替え、ページネーション、行数選択ができます。</li>
+<li>分離したログデータベースに基づく、DNS クエリー、通信フロー、ファイアウォールログの画面</li>
+<li><code>/bgp</code>、<code>/vrrp</code>、<code>/ingress</code> の BGP、VRRP、IngressService 専用の運用ページ。
+  これらは Server-Sent Events でリソース表を更新し、ブラウザー内に
+  5/15/60 分の軽量な SVG トレンドを保持し、関連リソースだけのイベントログを表示します。</li>
+<li>ファイアウォール行では、ファイアウォールログ、DNS 応答、DHCP リース、
+  MAC ベンダー候補、現在の conntrack の復路タプルをまとめて表示します。
+  これにより、拒否されたパケットが不要な外部通信なのか、既存の NAT 変換に近い別経路の応答なのかを判断しやすくします。</li>
+<li>構造化した折りたたみツリーと Raw YAML 表示を持つ、読み取り専用の Config 画面</li>
+</ul>
+<p>コネクション行は、基本的に往路を表示します。
+conntrack は同じ通信を往復の両方向で報告しますが、復路を主要行として重ねて表示することはしません。</p>
+<h2 id="api-境界">API 境界</h2>
+<p>Web 管理画面 API は読み取り専用です。
+JSON エンドポイントは <code>/api/v1</code> 配下にあり、SSE ストリームは短い
+<code>/api/events/stream</code> という別名でも利用できます。</p>
+<table>
+<thead>
+<tr>
+<th>パス</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/api/v1/summary</code></td>
+<td>状態、リソースフェーズ、直近イベント、コネクションの概要</td>
+</tr>
+<tr>
+<td><code>/api/v1/resources</code></td>
+<td>状態データベース内のリソース状態</td>
+</tr>
+<tr>
+<td><code>/api/v1/events?limit=200&amp;resourceKind=&amp;resourceName=&amp;q=</code></td>
+<td>任意の絞り込み条件付きの直近バスイベント</td>
+</tr>
+<tr>
+<td><code>/api/v1/events/stream</code> または <code>/api/events/stream</code></td>
+<td><code>routerd.*</code> バスイベントの Server-Sent Events ストリーム</td>
+</tr>
+<tr>
+<td><code>/api/v1/connections</code></td>
+<td>conntrack または pf の state から得たコネクションの観測値</td>
+</tr>
+<tr>
+<td><code>/api/v1/dns-queries?since=1h&amp;client=&amp;qname=&amp;limit=100</code></td>
+<td>DNS クエリーログの行</td>
+</tr>
+<tr>
+<td><code>/api/v1/traffic-flows?since=1h&amp;client=&amp;peer=&amp;limit=100</code></td>
+<td>DNS 由来のホスト名を含む通信フローログの行</td>
+</tr>
+<tr>
+<td><code>/api/v1/firewall-logs?since=24h&amp;action=drop&amp;src=&amp;limit=100</code></td>
+<td>ファイアウォールログの行</td>
+</tr>
+<tr>
+<td><code>/api/v1/bgp</code>、<code>/api/v1/vrrp</code>、<code>/api/v1/ingress</code></td>
+<td>Kubernetes edge の経路 / VIP リソース向けの運用状態</td>
+</tr>
+<tr>
+<td><code>/api/v1/config</code></td>
+<td>現在の YAML 設定（redact 済み）</td>
+</tr>
+<tr>
+<td><code>/api/v1/generations?limit=100</code></td>
+<td>完了した適用世代と、YAML スナップショットの有無</td>
+</tr>
+<tr>
+<td><code>/api/v1/generations/&lt;id&gt;/config</code></td>
+<td>1 つの適用世代に保存された YAML（redact 済み）</td>
+</tr>
+<tr>
+<td><code>/api/v1/generations/&lt;from&gt;/diff/&lt;to&gt;</code></td>
+<td>2 つの YAML 世代の差分（unified diff、redact 済み）</td>
+</tr>
+</tbody>
+</table>
+<h2 id="シークレットの-redaction">シークレットの redaction</h2>
+<p>config を返すエンドポイント — <code>/api/v1/config</code>、
+<code>/api/v1/generations/&lt;id&gt;/config</code>、
+<code>/api/v1/generations/&lt;from&gt;/diff/&lt;to&gt;</code> — は、<strong>シリアライズ前に secrets を
+redact します</strong>。WireGuard <code>privateKey</code> / <code>preSharedKey</code>、Tailscale
+<code>authKey</code>、BGP/PPPoE/IPsec <code>password</code>、WebConsole <code>initialPassword</code>、
+および bearer / token / API key 系のフィールドは、マーカー値
+（<code>***REDACTED***</code>）に置き換えられます。キーは残るため UI の構造は壊れません。</p>
+<p>読み取り専用の Web Console から生の secrets が見える経路はありません。
+特権ローカル経路（routerd の control socket、<code>routerctl describe</code>）は意図的に
+変更しておらず、必要なら生の intent を表示します。これらの経路はローカル
+socket の権限と <code>routerd</code> グループメンバーシップで守ってください。</p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#読み取る情報">読み取る情報</a></li>
+<li><a href="#現在の画面">現在の画面</a></li>
+<li><a href="#api-境界">API 境界</a></li>
+<li><a href="#シークレットの-redaction">シークレットの redaction</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/concepts/web-console.md">GitHub</a></div></footer></body></html>

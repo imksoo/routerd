@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DynamicOverridePolicy · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/reference/resources/DynamicOverridePolicy.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/reference/resources/DynamicOverridePolicy.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/DynamicOverridePolicy.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/reference/resources/DynamicOverridePolicy.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/DynamicOverridePolicy.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="dynamicoverridepolicy">DynamicOverridePolicy</h1>
+<p><a href="../resources.html#dynamicoverridepolicy">リソース別の設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: config.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>動的設定の有効期間中、指定した取得元が起動設定の特定リソースをmaskできるよう許可します。保存済みの起動設定自体は書き換えません。</p>
+<h2 id="指定条件と参照関係">指定条件と参照関係</h2>
+<ul>
+<li>取得元・操作・対象のapiVersion/kind/nameを完全一致で照合します。該当するallowがなければmaskは拒否します。同じ対象の許可済みmaskが複数あれば、最も遅い期限まで統合します。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
+<pre><code class="language-yaml">- apiVersion: config.routerd.net/v1alpha1
+  kind: DynamicOverridePolicy
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    allow: # 必須; array
+      - # object
+        operations: # 必須; array
+          - &quot;&lt;string&gt;&quot; # string
+        source: &quot;&lt;string&gt;&quot; # 必須; string
+        targets: # 必須; array
+          - # object
+            apiVersion: &quot;&lt;string&gt;&quot; # 必須; string
+            kind: &quot;&lt;string&gt;&quot; # 必須; string
+            name: &quot;&lt;string&gt;&quot; # 必須; string
+</code></pre>
+<h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>項目の意味と既定値</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.allow</code></td>
+<td>許可ルール一覧。空の場合は権限を付与せず、効果はありません。</td>
+</tr>
+<tr>
+<td><code>spec.allow[].source</code></td>
+<td>必須の取得元識別子。DynamicConfigPart.spec.sourceと完全一致で照合します。PluginやDynamicConfigSourceのリソース名とは限りません。ワイルドカード・既定値はありません。</td>
+</tr>
+<tr>
+<td><code>spec.allow[].operations</code></td>
+<td>許可する操作。受理する値はmaskだけで、空の場合は操作を許可しません。</td>
+</tr>
+<tr>
+<td><code>spec.allow[].targets</code></td>
+<td>maskの対象にできる起動設定リソースの完全識別子一覧。空なら対象を許可しません。</td>
+</tr>
+<tr>
+<td><code>spec.allow[].targets[].apiVersion</code></td>
+<td>対象のAPIグループとバージョン。各要素で必須、既定値はありません。</td>
+</tr>
+<tr>
+<td><code>spec.allow[].targets[].kind</code></td>
+<td>必須の対象リソース種類。ワイルドカード展開はありません。</td>
+</tr>
+<tr>
+<td><code>spec.allow[].targets[].name</code></td>
+<td>対象のmetadata.nameとの完全一致で使う必須値。ワイルドカード展開はありません。</td>
+</tr>
+</tbody>
+</table>
+<p>実装: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_config.go">pkg/config/validate_config.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/dynamicconfig/merge.go">pkg/dynamicconfig/merge.go</a></p>
+<h2 id="状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</h2>
+<p>通常の状態値参照の検証で、このKindについて許可するフィールド名です。許可一覧にあるだけでは値の生成・取得を保証しないため、実際の状態を確認してください。YAMLのspecに設定する項目ではなく出力です。</p>
+<p>このKindには通常の状態値参照の許可フィールドが登録されていません。</p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
+<li><a href="#状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/reference/resources/DynamicOverridePolicy.md">GitHub</a></div></footer></body></html>

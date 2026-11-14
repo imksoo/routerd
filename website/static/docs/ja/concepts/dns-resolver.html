@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DNS リゾルバ · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/concepts/dns-resolver.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/concepts/dns-resolver.html" lang="en" hreflang="en">English</a><a href="/docs/ja/concepts/dns-resolver.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/concepts/dns-resolver.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/concepts/dns-resolver.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="dns-リゾルバ">DNS リゾルバ</h1>
+<p>routerd の DNS は、権威データ、リゾルバプロセス、転送ルール、上流エンドポイントを、それぞれ小さなリソースに分けて表します。</p>
+<p><code>DNSZone</code> はローカルの権威データを持ちます。手で書いたレコードと、DHCP リースから派生したレコードを保存します。</p>
+<p><code>DNSResolver</code> はデーモンインスタンスを管理します。待ち受けアドレス、キャッシュ、メトリクス、query log を定義します。1 つの <code>DNSResolver</code> リソースが、1 つの <code>routerd-dns-resolver</code> プロセスを起動します。</p>
+<p><code>DNSForwarder</code> はリゾルバに属する 1 つの match ルールです。<code>DNSZone</code> から応答するか、一致した問い合わせを <code>DNSUpstream</code> へ転送します。</p>
+<p><code>DNSUpstream</code> は 1 つの上流エンドポイントです。平文の UDP/TCP DNS、DoT、DoH を表します。</p>
+<h2 id="起動と部分的な立ち上げ">起動と部分的な立ち上げ</h2>
+<p><code>DNSResolver</code> は、すべての依存関係がそろうまで応答開始を待ちません。起動時には、
+その時点で解決できている待ち受けアドレスと source でデーモンを立ち上げ、
+残りが準備できたあとに収束します。</p>
+<ul>
+<li>listen entry は、その時点で解決できるアドレスを bind します。<code>*From</code> source が
+  まだ準備できていないアドレス（たとえば DHCPv6 prefix delegation を待っている
+  delegated-prefix address）は、後続の reconcile で追加します。</li>
+<li>動的な上流が未解決の forward/upstream source（たとえば上流を
+  <code>DHCPv6Information</code> server から得る AFTR forwarder）は、その上流が現れるまで
+  省略します。zone source と、静的または解決済み上流を持つ source はすぐに応答します。</li>
+</ul>
+<p>一部がまだ待機中の間、リソースは <code>phase: Degraded</code> と、各 listen/source が何を
+待っているかを示す <code>waiting</code> list を報告します。これは通常の bootstrap 状態であり、
+障害ではありません。一般 DNS はすでに応答しています。依存リソースが status を公開すると、
+コントローラーが再度調整し、完全な構成で <code>phase: Applied</code> に収束します
+（最初からすべて解決済みで起動した場合と同一です）。リゾルバが <code>phase: Pending</code>
+（何も応答しない）を報告するのは、待ち受けアドレスを 1 つも解決できない場合、または
+利用可能な source が 1 つも残らない場合だけです。</p>
+<p>これにより、DHCPv6 prefix delegation を待つ間に DNS が拒否される起動時の空白時間が
+なくなります（本番ルーターでの実測では、AFTR forwarder が <code>Degraded</code> を示している間も
+起動直後から一般 DNS が応答し、delegated prefix 到着後に <code>Applied</code> へ収束しました）。
+リゾルバは独立したサービスユニットとして動くため、意図的に <code>routerd</code> を再起動しても
+DNS は再起動されません。プロセスを再起動したいときはリゾルバのユニットを明示的に
+再起動してください。</p>
+<h2 id="応答元の順序">応答元の順序</h2>
+<p>リゾルバを参照する <code>DNSForwarder</code> は、config に書いた順に評価します。
+<code>zoneRefs</code> を持つフォワーダーは <code>DNSZone</code> から応答します。
+<code>upstreams</code> を持つフォワーダーは、一致した問い合わせを上流へ転送します。
+<code>match: ["."]</code> は既定の再帰問い合わせ経路です。</p>
+<p>リゾルバは DoH、DoT、TCP DNS、平文 UDP DNS を扱います。
+一致した転送元の中で、明示指定した上流を状態と優先順位に応じて試します。
+すべて失敗した場合は <code>SERVFAIL</code> を返し、別の転送元には進みません。</p>
+<h2 id="複数の待ち受けプロファイル">複数の待ち受けプロファイル</h2>
+<p><code>spec.listen</code> は配列です。
+各待ち受けは、使う応答元名の部分集合を選べます。
+これにより、LAN 用と VPN 用の待ち受けで挙動を変えられます。
+それでも 1 つのリゾルバリソースを共有できます。
+<code>listen[].sources</code> の名前は <code>DNSForwarder</code> を参照します。省略すると、そのリゾルバに属するすべてのフォワーダーを使います。</p>
+<p>待ち受けアドレスをほかのリソース状態から得る場合は、<code>listen[].addressFrom</code> を使います。
+依存関係が明示されるため、元リソースが変わったときにデーモンを再構成できます。</p>
+<pre><code class="language-yaml">listen:
+  - name: lan
+    addresses:
+      - 192.0.2.1
+    addressFrom:
+      - resource: IPv6DelegatedAddress/lan-base
+        field: address
+    port: 53
+</code></pre>
+<p>必要なアドレスをまだ解決できないときは、リゾルバは古いアドレスで起動しません。
+<code>Pending(AddressUnresolved)</code> のまま待ちます。</p>
+<h2 id="動的なゾーンレコード">動的なゾーンレコード</h2>
+<p><code>DNSZone.spec.records[].ipv4</code> と <code>ipv6</code> は固定値です。
+レコードのアドレスをほかのリソース状態から得る場合は、<code>ipv4From</code> または
+<code>ipv6From</code> を使います。</p>
+<pre><code class="language-yaml">records:
+  - hostname: router
+    ipv4From:
+      resource: IPv4StaticAddress/lan-base
+      field: address
+    ipv6From:
+      resource: IPv6DelegatedAddress/lan-base
+      field: address
+</code></pre>
+<p>必要な参照先をまだ解決できないときは、そのレコードを <code>DNSZone.status.pendingRecords</code>
+に記録します。
+参照先リソースが変わるとリゾルバを再生成し、解決できたあとにレコードを公開します。</p>
+<h2 id="ネットワークを限定した上流">ネットワークを限定した上流</h2>
+<p><code>DNSUpstream.spec.sourceInterface</code> は、Linux で送信先インターフェースを束縛します。
+<code>ens18</code> や <code>wg0</code> のような OS インターフェース名を固定値で指定します。
+トンネルや VRF のリソースがそのインターフェースを作る場合は、リソースの所有や順序で依存関係を明示します。
+インターフェースができるまで、リゾルバを待機させます。</p>
+<p><code>DNSUpstream.spec.bootstrap</code> は、DoH や DoT の接続先名を解決する補助 DNS サーバーです。
+接続先名がアクセス網の内側でしか解決できないときに使います。</p>
+<p>上流サーバーの一覧をほかのリソース状態から得る場合は、<code>addressFrom</code> を使います。</p>
+<pre><code class="language-yaml">apiVersion: net.routerd.net/v1alpha1
+kind: DNSForwarder
+metadata:
+  name: ngn-aftr
+spec:
+  resolver: DNSResolver/lan-resolver
+  match:
+    - transix.jp
+  upstreams:
+    - DNSUpstream/wan-dns
+---
+apiVersion: net.routerd.net/v1alpha1
+kind: DNSUpstream
+metadata:
+  name: wan-dns
+spec:
+  protocol: udp
+  addressFrom:
+    - resource: DHCPv6Information/wan-info
+      field: dnsServers
+</code></pre>
+<p>ユーザーが書く YAML では <code>DNSResolver.spec.sources</code> を受け付けません。以前のインライン source は <code>DNSForwarder</code> と <code>DNSUpstream</code> に分けます。</p>
+<pre><code class="language-yaml">apiVersion: net.routerd.net/v1alpha1
+kind: DNSForwarder
+metadata:
+  name: default
+spec:
+  resolver: DNSResolver/lan-resolver
+  match:
+    - &quot;.&quot;
+  upstreams:
+    - DNSUpstream/cloudflare
+---
+apiVersion: net.routerd.net/v1alpha1
+kind: DNSUpstream
+metadata:
+  name: cloudflare
+spec:
+  protocol: doh
+  address: cloudflare-dns.com
+  path: /dns-query
+</code></pre>
+<h2 id="問い合わせの待ち時間と代替先">問い合わせの待ち時間と代替先</h2>
+<p><code>DNSForwarder.spec.queryTimeout</code> は、上流 1 台への通常問い合わせに対する正の待ち時間です。
+たとえば <code>1s</code> を指定できます。定期的なヘルスチェックとは独立しており、
+未指定時は従来どおり <code>healthcheck.timeout</code> を使います。両方未指定の場合は <code>3s</code> です。
+正常な上流を失敗中の上流より先に試し、同じ状態の中では <code>upstreams</code> の順序を使います。
+タイムアウト、通信エラー、
+サーバー側の失敗があれば次の候補へ進みます。
+正当な <code>NXDOMAIN</code> などの応答はそのまま返し、別の上流へ切り替えません。</p>
+<p>一致した転送元の候補がすべて失敗した場合は、<code>NXDOMAIN</code> ではなく <code>SERVFAIL</code> を返し、
+その失敗をキャッシュしません。別の転送元には進まないため、内部ドメインの問い合わせを
+公開 DNS の既定転送先へ流しません。許可する代替先は同じ <code>DNSForwarder</code> に明示します。
+DNSSEC 検証失敗も <code>SERVFAIL</code> になります。</p>
+<p>待ち時間は候補数に応じて加算されます。<code>queryTimeout: 1s</code> の候補が 2 台なら、
+全失敗まで約 2 秒とローカル処理時間がかかる場合があります。
+LAN → 中核リゾルバの多段構成では、外側のリゾルバやクライアントの待ち時間に、
+内側の全試行を待てる余裕を持たせてください。
+<a href="../how-to/dns-private-upstream.html">NextDNS を優先する例</a>も参照してください。</p>
+<h2 id="dnsmasq-との境界">dnsmasq との境界</h2>
+<p>dnsmasq は DHCPv4、DHCPv6、DHCP 中継、RA に限定します。
+<code>server=</code>、<code>local=</code>、<code>host-record=</code> は生成しません。
+DNS の応答と転送は、すべて <code>routerd-dns-resolver</code> が担当します。</p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#起動と部分的な立ち上げ">起動と部分的な立ち上げ</a></li>
+<li><a href="#応答元の順序">応答元の順序</a></li>
+<li><a href="#複数の待ち受けプロファイル">複数の待ち受けプロファイル</a></li>
+<li><a href="#動的なゾーンレコード">動的なゾーンレコード</a></li>
+<li><a href="#ネットワークを限定した上流">ネットワークを限定した上流</a></li>
+<li><a href="#問い合わせの待ち時間と代替先">問い合わせの待ち時間と代替先</a></li>
+<li><a href="#dnsmasq-との境界">dnsmasq との境界</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/concepts/dns-resolver.md">GitHub</a></div></footer></body></html>

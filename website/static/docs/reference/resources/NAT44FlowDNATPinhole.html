@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NAT44FlowDNATPinhole · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/reference/resources/NAT44FlowDNATPinhole.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/reference/resources/NAT44FlowDNATPinhole.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/reference/resources/NAT44FlowDNATPinhole.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/NAT44FlowDNATPinhole.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/NAT44FlowDNATPinhole.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="nat44flowdnatpinhole">NAT44FlowDNATPinhole</h1>
+<p><a href="../resources.html#nat44flowdnatpinhole">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Learn an IPv4 UDP internal endpoint from outbound traffic and dynamically DNAT inbound UDP by its destination port. Linux nftables only; the current PF renderer does not implement this resource.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>fromInterfaceRefs, outbound, inbound and a source selector are required. Every interface and IPAddressSet reference must exist in the same Router. IPv4/UDP only; this is port-triggered DNAT, not ordinary conntrack reply handling.</li>
+<li>The map key is the outbound local UDP source port; value is internal source IPv4 plus the same port, learned before SNAT. All selected interfaces share one map per resource. Different clients using the same source port overwrite the same mapping; remote address is not part of the key.</li>
+<li>Inbound DNAT checks selected incoming interfaces, allowed remote source ports and a learned destination port. It does not reapply outbound destination CIDRs/sets to the inbound remote address and does not create a firewall forward-accept rule; the firewall policy must also permit the translated traffic.</li>
+<li>Learned maps are kernel runtime state, not configuration or persistent DB records; recreating the NAT table or rebooting loses them. Outbound traffic must relearn mappings.</li>
+</ul>
+<h2 id="yaml-definition">YAML definition</h2>
+<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: NAT44FlowDNATPinhole
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    correlation: # optional; object
+      key: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;localPort&quot;]
+    fromInterfaceRefs: # optional; array
+      - &quot;&lt;string&gt;&quot; # string
+    inbound: # Required; object
+      sourcePorts: # Required; array
+        - &quot;&lt;string&gt;&quot; # string
+    outbound: # Required; object
+      destinationCIDRs: # optional; array
+        - &quot;&lt;string&gt;&quot; # string
+      destinationPorts: # Required; array
+        - &quot;&lt;string&gt;&quot; # string
+      destinationSetRefs: # optional; array
+        - &quot;&lt;string&gt;&quot; # string
+      protocol: &quot;udp&quot; # Required; string; enum=[&quot;udp&quot;]
+      sourceCIDRs: # optional; array
+        - &quot;&lt;string&gt;&quot; # string
+      sourceSetRef: &quot;&lt;string&gt;&quot; # optional; string
+    timeout: &quot;&lt;string&gt;&quot; # optional; string
+    when: # optional; object
+      state: # optional; object
+        &quot;&lt;key&gt;&quot;: # optional; object
+          contains: &quot;&lt;string&gt;&quot; # optional; string
+          equals: &quot;&lt;string&gt;&quot; # optional; string
+          exists: true # optional; boolean
+          for: &quot;&lt;string&gt;&quot; # optional; string
+          in: # optional; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # optional; string
+          status: &quot;set&quot; # optional; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.outbound</code></td>
+<td>Required outbound-learning match. It records eligible UDP flow identities but does not itself allow outbound traffic through the firewall.</td>
+</tr>
+<tr>
+<td><code>spec.outbound.sourceSetRef</code></td>
+<td>Optional existing IPAddressSet/<name> source selector. At least this or sourceCIDRs is required; both may be combined as OR alternatives. Default empty.</td>
+</tr>
+<tr>
+<td><code>spec.outbound.sourceCIDRs</code></td>
+<td>Optional IPv4 source-prefix OR list, default empty. At least one source selector is required. IPv6 is rejected; host bits are masked for rendering.</td>
+</tr>
+<tr>
+<td><code>spec.outbound.destinationCIDRs</code></td>
+<td>Optional IPv4 remote destinations for learning, default empty. Combined with destinationSetRefs as OR; no destination selector means any remote address.</td>
+</tr>
+<tr>
+<td><code>spec.outbound.destinationSetRefs</code></td>
+<td>Optional existing IPAddressSet/<name> remote destination references; duplicates rejected. Default empty. Source and destination categories combine with AND.</td>
+</tr>
+<tr>
+<td><code>spec.outbound.protocol</code></td>
+<td>Required udp; no default and no TCP/IPv6 support for this learning mechanism.</td>
+</tr>
+<tr>
+<td><code>spec.outbound.destinationPorts</code></td>
+<td>Required nonempty outbound UDP destination ports: numeric 1–65535 or a sole start-end range. A range cannot be combined with other list entries.</td>
+</tr>
+<tr>
+<td><code>spec.inbound</code></td>
+<td>Required return-traffic match; sourcePorts selects allowed remote UDP sender ports, not local destination ports.</td>
+</tr>
+<tr>
+<td><code>spec.inbound.sourcePorts</code></td>
+<td>Required nonempty remote UDP source-port list with the same 1–65535 / sole-range constraints as outbound.destinationPorts.</td>
+</tr>
+<tr>
+<td><code>spec.timeout</code></td>
+<td>Optional strictly positive Go duration; default 3m. Each matching outbound packet refreshes the learned element. Rendering rounds to seconds with a minimum of 1s; this is learned-state expiry, not a UDP protocol timeout.</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>Optional common activation condition, default unconditional. A filtered resource contributes no learned map/set rules. See common fields for nested conditions and schema limitations.</td>
+</tr>
+<tr>
+<td><code>spec.fromInterfaceRefs</code></td>
+<td>Required nonempty egress/ingress interface list; bare names or Interface/name, PPPoESession/name, DSLiteTunnel/name. Outbound matches oifname and inbound matches iifname on this same list.</td>
+</tr>
+<tr>
+<td><code>spec.correlation</code></td>
+<td>Optional correlation object; only localPort is supported. Default omitted uses the same key.</td>
+</tr>
+<tr>
+<td><code>spec.correlation.key</code></td>
+<td>Empty or localPort only. The configured key is not otherwise branched by the renderer: UDP source port always indexes the learned map.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_firewall.go">pkg/config/validate_firewall.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/nftables.go">pkg/render/nftables.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/local_service_redirect.go">pkg/render/local_service_redirect.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/nat44/controller.go">pkg/controller/nat44/controller.go</a></p>
+<h2 id="referenceable-status-fields">Referenceable status fields</h2>
+<p>The ordinary status-reference validator accepts these field names for this kind. This allowlist does not guarantee that every field is currently populated; inspect runtime status. These are outputs, not YAML spec fields.</p>
+<p><code>phase</code></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
+<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
+<li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/reference/resources/NAT44FlowDNATPinhole.md">GitHub</a></div></footer></body></html>

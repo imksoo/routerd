@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ClientPolicy · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/reference/resources/ClientPolicy.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/reference/resources/ClientPolicy.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/ClientPolicy.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/reference/resources/ClientPolicy.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/ClientPolicy.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="clientpolicy">ClientPolicy</h1>
+<p><a href="../resources.html#clientpolicy">リソース別の設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: firewall.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>対象クライアント、または例外以外のクライアントへ、ゲスト用の自機サービス・転送宛先制限を適用します。Linuxは設定MAC、FreeBSD PFは明示IPで識別します。</p>
+<h2 id="指定条件と参照関係">指定条件と参照関係</h2>
+<ul>
+<li>modeはinclude・excludeが必須です。includeは選択集合、excludeは選択した信頼集合の外側を制限します。Linuxのincludeで対象MACがなければ制限を生成せず、excludeで集合が空なら対象インターフェース上の全クライアントに一致します。</li>
+<li>Linuxの分類はmatch.macsだけを使い、guest・isolatedをinclude、trustedをexcludeの集合に加えます。OUI・ホスト名・指紋は検証されても描画の選別には使いません。ipv4Reservation・ipv6AddressesもLinuxの選別条件にはなりません。</li>
+<li>FreeBSDはトップレベルMAC・全match選別を拒否します。各分類にipv4Reservationまたは明示ipv6Addressesが必要で、PFは予約のMACでなくipAddressを使います。PFのinterfacesは明示してください。省略してもtrustゾーンを引き継ぎません。</li>
+<li>経路転送・自機入力の制限であり、L2スイッチポート分離ではありません。既存状態・制御・サービス許可が先に動く場合があります。PFはtrust・mgmtからselfへの暗黙許可がクライアント自機制限より先で、自機サービス制限も現在はIPv4識別だけです。両OS・全アドレスファミリーで同一の強制とは扱えません。</li>
+<li>LinuxはguestEgressAllowを探索遮断・拒否より先に評価するため上書きできます。残りはゾーン方針へ進みます。PFのIPv4許可は拒否より先ですが、IPv6拒否は全体の前段に出すため後のIPv6許可では上書きできません。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: ClientPolicy
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    classification: # 任意; array
+      - # object
+        ipv4Reservation: &quot;&lt;string&gt;&quot; # 任意; string
+        ipv6Addresses: # 任意; array
+          - &quot;&lt;string&gt;&quot; # string
+        match: # 必須; object
+          dhcpFingerprints: # 任意; array
+            - &quot;&lt;string&gt;&quot; # string
+          hostnamePatterns: # 任意; array
+            - &quot;&lt;string&gt;&quot; # string
+          macs: # 任意; array
+            - &quot;&lt;string&gt;&quot; # string
+          ouiPrefixes: # 任意; array
+            - &quot;&lt;string&gt;&quot; # string
+        mode: &quot;trusted&quot; # 必須; string; enum=[&quot;trusted&quot;, &quot;guest&quot;, &quot;isolated&quot;]
+        name: &quot;&lt;string&gt;&quot; # 任意; string
+    guestEgressAllow: # 任意; array
+      - &quot;&lt;string&gt;&quot; # string
+    guestEgressDeny: # 任意; array
+      - &quot;&lt;string&gt;&quot; # string
+    guestServices: # 任意; array
+      - &quot;&lt;string&gt;&quot; # string
+    interfaces: # 任意; array
+      - &quot;&lt;string&gt;&quot; # string
+    isolation: # 任意; object
+      lanInternet: &quot;&quot; # 任意; string; enum=[&quot;&quot;, &quot;allow&quot;, &quot;deny&quot;]
+      lanLAN: &quot;&quot; # 任意; string; enum=[&quot;&quot;, &quot;allow&quot;, &quot;deny&quot;]
+      lanMgmt: &quot;&quot; # 任意; string; enum=[&quot;&quot;, &quot;allow&quot;, &quot;deny&quot;]
+      mDNSBroadcast: &quot;&quot; # 任意; string; enum=[&quot;&quot;, &quot;allow&quot;, &quot;deny&quot;]
+    macs: # 任意; array
+      - &quot;&lt;string&gt;&quot; # string
+    mode: &quot;include&quot; # 必須; string; enum=[&quot;include&quot;, &quot;exclude&quot;]
+</code></pre>
+<h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>項目の意味と既定値</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.mode</code></td>
+<td>include・excludeが必須で既定値はありません。識別集合を制限対象にするか、例外にするかを選びます。</td>
+</tr>
+<tr>
+<td><code>spec.interfaces</code></td>
+<td>既存のInterface/nameまたは裸の論理名の一覧で、重複不可です。Linuxの省略時はtrustゾーン全インターフェースを使い、なければエラーです。PFの省略時は適用先がなく制限が生成されません。</td>
+</tr>
+<tr>
+<td><code>spec.macs</code></td>
+<td>任意のLinux固定MAC集合で既定は空です。本一覧・classification.match.macsをまたぐ正規化後の重複は禁止です。FreeBSDは禁止です。</td>
+</tr>
+<tr>
+<td><code>spec.classification</code></td>
+<td>任意の分類一覧で既定は空です。Linuxは各分類で1種類以上の選別が必須ですが、実際の集合にはMACだけを使います。FreeBSDは安定IPが必須で選別条件は禁止です。</td>
+</tr>
+<tr>
+<td><code>spec.classification[].name</code></td>
+<td>任意の説明名で既定は空です。優先順位を変えず、リソース識別子にもなりません。</td>
+</tr>
+<tr>
+<td><code>spec.classification[].mode</code></td>
+<td>trusted・guest・isolatedが必須です。includeではguest・isolatedを同じ対象集合に、excludeではtrustedを例外集合に加えます。</td>
+</tr>
+<tr>
+<td><code>spec.classification[].match</code></td>
+<td>Linuxでは1件以上の選別一覧が必要です。FreeBSDは安定IPを指定しても空にします。現行ファイアウォールは各種選別を動的にMACへ解決しません。</td>
+</tr>
+<tr>
+<td><code>spec.classification[].match.macs</code></td>
+<td>任意の完全MAC一覧で、Linuxで実効のある選別です。解釈可能なMACとし、分類間・トップレベルとの重複は禁止です。</td>
+</tr>
+<tr>
+<td><code>spec.classification[].match.ouiPrefixes</code></td>
+<td>18:ec:e7のような3個の16進オクテットで、分類内重複は禁止です。現行ファイアウォールの選別効果はなく、FreeBSDは拒否します。</td>
+</tr>
+<tr>
+<td><code>spec.classification[].match.hostnamePatterns</code></td>
+<td>空でないGo path.Match形式のglobです。正規表現ではありません。構文だけを検証し、現行ファイアウォールは識別集合へ解決しません。FreeBSDは拒否します。</td>
+</tr>
+<tr>
+<td><code>spec.classification[].match.dhcpFingerprints</code></td>
+<td>空白を含まない空でないトークンで、分類内重複は禁止です。現行のファイアウォール集合には使わず、FreeBSDは拒否します。</td>
+</tr>
+<tr>
+<td><code>spec.classification[].ipv4Reservation</code></td>
+<td>既存DHCPv4Reservationの裸のmetadata.nameです。Kind/nameは禁止です。PFはその空でないipAddressを使い、Linuxは参照検証だけで選別には使いません。</td>
+</tr>
+<tr>
+<td><code>spec.classification[].ipv6Addresses</code></td>
+<td>PF用のCIDRでないIPv6アドレスです。IPv4射影形式は禁止で、全分類を通して正規化後の重複も禁止です。MAC・IPv4予約から推測せず、Linuxの選別には使いません。</td>
+</tr>
+<tr>
+<td><code>spec.isolation</code></td>
+<td>任意のallow・deny設定です。4項目を読むのはLinuxだけで、PFはguestEgressの明示一覧・既定値を使います。分類ごとに独立適用する設定ではありません。</td>
+</tr>
+<tr>
+<td><code>spec.isolation.lanInternet</code></td>
+<td>既定は空です。LinuxのdenyはguestEgressDeny未指定時に拒否集合を0.0.0.0/0・::/0へ置き換えます。allow・空はインターネット無条件許可を追加しません。PFは使いません。</td>
+</tr>
+<tr>
+<td><code>spec.isolation.lanLAN</code></td>
+<td>既定は空です。LinuxはlanLAN・lanMgmtが両方allowのときだけ既定のプライベートCIDR拒否を外し、個別LANを識別しません。guestEgressDeny明示値が既定値に優先します。PFは使いません。</td>
+</tr>
+<tr>
+<td><code>spec.isolation.lanMgmt</code></td>
+<td>既定は空で、lanLANと組み合わせた既定集合の判定にだけ使います。管理ゾーンの宛先を独立に解決しません。PFは使いません。</td>
+</tr>
+<tr>
+<td><code>spec.isolation.mDNSBroadcast</code></td>
+<td>既定は空です。LinuxのdenyはguestEgressAllowより後に、転送mDNS・SSDPマルチキャストとUDP 137・138の拒否を加えます。L2ブリッジ・自機サービスを独立には制御しません。PFは使いません。</td>
+</tr>
+<tr>
+<td><code>spec.guestServices</code></td>
+<td>自機で許可するdns・dhcp・ntp・mdns・ssdpです。省略・空はdhcp・dns・ntpが既定で、空一覧で例外をすべて無効にはできません。通信を開けるだけでデーモンは起動しません。</td>
+</tr>
+<tr>
+<td><code>spec.guestEgressDeny</code></td>
+<td>任意のIPv4・IPv6 CIDRです。省略・空は10.0.0.0/8・172.16.0.0/12・192.168.0.0/16・fc00::/7で、Linuxでは前述のisolationにより調整します。明示値は追加でなく置換です。PFは空なら常にこのプライベート集合です。</td>
+</tr>
+<tr>
+<td><code>spec.guestEgressAllow</code></td>
+<td>任意のIPv4・IPv6 CIDR例外で、既定は空です。Linux・PF IPv4は拒否より先、PF IPv6は拒否より後に評価します。リソース参照でなく転送宛先プレフィックスです。</td>
+</tr>
+</tbody>
+</table>
+<p>実装: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_firewall.go">pkg/config/validate_firewall.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/nftables.go">pkg/render/nftables.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/pf.go">pkg/render/pf.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/webconsole/clients.go">pkg/webconsole/clients.go</a></p>
+<h2 id="状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</h2>
+<p>通常の状態値参照の検証で、このKindについて許可するフィールド名です。許可一覧にあるだけでは値の生成・取得を保証しないため、実際の状態を確認してください。YAMLのspecに設定する項目ではなく出力です。</p>
+<p><code>phase</code></p>
+<p><a href="/examples/guest-mode.yaml">設定例</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
+<li><a href="#状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/reference/resources/ClientPolicy.md">GitHub</a></div></footer></body></html>

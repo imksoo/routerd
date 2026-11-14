@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DHCPv6-PD 上の DS-Lite (IPv6 のみアクセス網) · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/how-to/flets-ipv6-setup.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/how-to/flets-ipv6-setup.html" lang="en" hreflang="en">English</a><a href="/docs/ja/how-to/flets-ipv6-setup.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/how-to/flets-ipv6-setup.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/flets-ipv6-setup.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="dhcpv6-pd-上の-ds-lite-ipv6-のみアクセス網">DHCPv6-PD 上の DS-Lite (IPv6 のみアクセス網)</h1>
+<h2 id="想定するシーン">想定するシーン</h2>
+<p>ISP が IPv6 のみのアクセス網を提供し、IPv4 接続は AFTR (Address Family Transition Router) への DS-Lite トンネルで実現する構成です。
+このとき、ルーターは次を担います。</p>
+<ul>
+<li>DHCPv6-PD で IPv6 プレフィックスを取得し、LAN へ配ります。</li>
+<li>AFTR への DS-Lite (IPv4-in-IPv6 / <code>ip6tnl</code>) トンネルを確立します。</li>
+<li>AFTR の FQDN はアクセス網の DNS でしか解けない場合があるため、条件付き転送を使います。</li>
+<li>IPv6 RA に RDNSS を含めて、SLAAC クライアント (Android を含む) へ DNS を伝えます。</li>
+</ul>
+<p>このパターンは、日本国内のフレッツ系回線 (NTT NGN + <code>gw.transix.jp</code> など) で典型的ですが、同様の DS-Lite 配備全般に適用できます。</p>
+<h2 id="前提">前提</h2>
+<ul>
+<li>WAN インターフェースが、HGW か ONU を経由して IPv6 のみのアクセス網につながっています。</li>
+<li>そのインターフェースで DHCPv6-PD を利用できます。</li>
+<li>AFTR の DNS が DHCPv6 の information-request で返るかどうかは ISP や HGW 次第です。どちらの場合にも備えてください。</li>
+</ul>
+<h2 id="dhcpv6-pd">DHCPv6-PD</h2>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DHCPv6PrefixDelegation
+  metadata:
+    name: wan-pd
+  spec:
+    interface: wan
+</code></pre>
+<p>リースは次の場所に保存されます。</p>
+<pre><code class="language-text">/var/lib/routerd/dhcpv6-client/wan-pd/lease.json
+</code></pre>
+<p>デーモンの状態は Unix ソケットで確認できます。</p>
+<pre><code class="language-bash">curl --unix-socket /run/routerd/dhcpv6-client/wan-pd.sock http://unix/v1/status
+</code></pre>
+<h2 id="lan-アドレス導出と-ra">LAN アドレス導出と RA</h2>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: IPv6DelegatedAddress
+  metadata:
+    name: lan-from-pd
+  spec:
+    interface: lan
+    prefixDelegation: wan-pd
+    dependsOn:
+      - resource: DHCPv6PrefixDelegation/wan-pd
+        phase: Bound
+    addressSuffix: &quot;::1&quot;
+
+- apiVersion: net.routerd.net/v1alpha1
+  kind: IPv6RouterAdvertisement
+  metadata:
+    name: lan-ra
+  spec:
+    interface: lan
+    prefixFrom:
+      resource: IPv6DelegatedAddress/lan-from-pd
+      field: address
+    oFlag: true
+    rdnssFrom:
+      - resource: IPv6DelegatedAddress/lan-from-pd
+        field: address
+</code></pre>
+<p>RA で広告する RDNSS には、委任されたプレフィックスから導出した LAN 側アドレスを使います。
+SLAAC クライアントは、このリゾルバを自動で取得します。</p>
+<h2 id="aftr-の条件付き-dns-転送">AFTR の条件付き DNS 転送</h2>
+<p>AFTR の FQDN は、通常 ISP のアクセス網 DNS でしか解けません。
+そのドメインだけをアクセス網のリゾルバへ転送し、それ以外は通常の上流に流します。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSResolver
+  metadata:
+    name: resolver
+  spec:
+    listen:
+      - name: local
+        addresses: [127.0.0.1]
+        port: 53
+    sources:
+      - name: aftr
+        kind: forward
+        match: [transix.jp]
+        upstreams:
+          - udp://[2404:8e00::feed:101]:53
+      - name: default
+        kind: upstream
+        match: [&quot;.&quot;]
+        upstreams:
+          - udp://1.1.1.1:53
+</code></pre>
+<p><code>transix.jp</code> と上流の IPv6 アドレスは、ISP が公開している値に置き換えてください。</p>
+<h2 id="ds-lite-トンネル">DS-Lite トンネル</h2>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DSLiteTunnel
+  metadata:
+    name: ds-lite
+  spec:
+    interface: wan
+    tunnelName: ds-routerd
+    localAddressSource: interface
+    aftrFQDN: gw.transix.jp
+    dependsOn:
+      - resource: DNSResolver/resolver
+        phase: Applied
+</code></pre>
+<p><code>localAddressSource: interface</code> は、SLAAC/RA で WAN 側に付いた IPv6 アドレスを、トンネルのローカルエンドポイントとして使います。
+このアドレスは LAN 側の導出より早く取れるため、トンネルが早く立ち上がります。</p>
+<p>ISP が安定した AFTR アドレスを公開していて、DNS 解決を省きたい場合は、<code>aftrIPv6</code> を直接指定します。</p>
+<pre><code class="language-yaml">spec:
+  aftrIPv6: 2001:db8:cafe::1
+</code></pre>
+<p>NTT NGN の HGW のように、DHCPv6 の information-request で AFTR が返らない環境では、<code>aftrFQDN</code> または <code>aftrIPv6</code> の静的な指定が正しいフォールバックです。</p>
+<p>トンネル内側の IPv4 アドレスには、通常 RFC 6333 の B4-AFTR リンク範囲 <code>192.0.0.0/29</code> を使います。
+LAN 範囲から切り出したアドレスを使いたい場合は、<code>IPv4StaticAddress</code> リソースで定義します。
+その値を <code>DSLiteTunnel.localAddressFrom</code> と <code>NAT44Rule.snatAddressFrom</code> から参照します。
+任意指定の例は <code>examples/dslite-lan-range-snat.yaml</code> にあります。</p>
+<h2 id="動作確認">動作確認</h2>
+<pre><code class="language-bash">routerctl plan -f router.yaml --replace
+routerctl get status
+
+ip -6 tunnel show
+ip route show default
+nft list table ip routerd_nat
+
+# トンネル経由で IPv4 の疎通を確認
+curl --interface ds-routerd https://1.1.1.1/
+</code></pre>
+<p>まず dry-run で確認し、計画が妥当でロールバック経路もある状態で本適用してください。</p>
+<h2 id="関連項目">関連項目</h2>
+<ul>
+<li><a href="../tutorials/wan-side-services.html">WAN 側サービス</a></li>
+<li><a href="multi-wan.html">マルチ WAN 切替</a></li>
+<li><a href="../concepts/path-mtu.html">Path MTU と MSS clamping</a></li>
+</ul></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#想定するシーン">想定するシーン</a></li>
+<li><a href="#前提">前提</a></li>
+<li><a href="#dhcpv6-pd">DHCPv6-PD</a></li>
+<li><a href="#lan-アドレス導出と-ra">LAN アドレス導出と RA</a></li>
+<li><a href="#aftr-の条件付き-dns-転送">AFTR の条件付き DNS 転送</a></li>
+<li><a href="#ds-lite-トンネル">DS-Lite トンネル</a></li>
+<li><a href="#動作確認">動作確認</a></li>
+<li><a href="#関連項目">関連項目</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/how-to/flets-ipv6-setup.md">GitHub</a></div></footer></body></html>

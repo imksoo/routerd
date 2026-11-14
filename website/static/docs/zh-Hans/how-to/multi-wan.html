@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>具备健康检查的多 WAN 切换 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/how-to/multi-wan.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/how-to/multi-wan.html" lang="en" hreflang="en">English</a><a href="/docs/ja/how-to/multi-wan.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/how-to/multi-wan.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/multi-wan.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="具备健康检查的多-wan-切换">具备健康检查的多 WAN 切换</h1>
+<h2 id="适用场景">适用场景</h2>
+<p>路由器有多条对外路径，希望 routerd 能够：</p>
+<ul>
+<li>从可用路径中自动选择最佳路径。</li>
+<li>主线路异常时自动切换至备援线路。</li>
+<li>切换时不中断现有连接，平滑完成转移。</li>
+</ul>
+<p>常见场景如下：</p>
+<ul>
+<li>家庭路由器以 DS-Lite 隧道为主线路，以上游 HGW NAT 为备援。</li>
+<li>SOHO 路由器以两条 ISP 线路（光纤 + LTE 等）进行冗余。</li>
+<li>分支办公室路由器优先使用企业 VPN 线路，仅在无法连接时切换至公共互联网。</li>
+</ul>
+<h2 id="routerd-的解决方式">routerd 的解决方式</h2>
+<p>使用 <code>EgressRoutePolicy</code> 声明候选路径与选择方式。
+routerd 会持续选取「ready（上游资源已稳定）且 healthy（<code>HealthCheck</code> 通过）」的候选中，
+weight 最高的路径。切换时更新 OS 路由表，并重新应用跟踪策略的 <code>NAT44Rule</code>，
+但刻意不清除 conntrack。现有连接继续维持，只有新连接使用新路径。</p>
+<p>这样的设计让 weight 较低的备援路径从启动之初即可使用，之后等主线路确认可用后再平滑切回。</p>
+<p>测试用 PPPoE 等会消耗 session 额度的备援路径，可保留在 YAML 中同时设为停用。
+在 <code>PPPoESession</code>、对应的 <code>HealthCheck</code> 及 <code>EgressRoutePolicy</code> 的候选中指定 <code>enabled: false</code>，
+正常应用时即会停止并停用已生成的服务，需要时可手动进行测试。</p>
+<h2 id="最小配置">最小配置</h2>
+<p>配置由三个组件组成：各候选路径的 <code>HealthCheck</code>、统整这些路径的 <code>EgressRoutePolicy</code>，
+以及跟踪策略的 <code>NAT44Rule</code>。</p>
+<h3 id="健康检查">健康检查</h3>
+<pre><code class="language-yaml">apiVersion: net.routerd.net/v1alpha1
+kind: HealthCheck
+metadata:
+  name: internet-via-primary
+spec:
+  target: 1.1.1.1
+  protocol: tcp
+  port: 443
+  interval: 30s
+  timeout: 3s
+</code></pre>
+<p>每个检查从对应的 <code>EgressRoutePolicy</code> 候选中参照。routerd 从该参照推导探针的来源绑定与 socket mark，
+因此配置中无需写入主机特定的设定。
+ICMP 容易被中途的过滤器丢弃，建议对稳定目的地（如 1.1.1.1）使用 TCP/443 较为可靠。</p>
+<h3 id="egress-策略">Egress 策略</h3>
+<pre><code class="language-yaml">apiVersion: net.routerd.net/v1alpha1
+kind: EgressRoutePolicy
+metadata:
+  name: ipv4-default
+spec:
+  family: ipv4
+  destinationCIDRs:
+    - 0.0.0.0/0
+  selection: highest-weight-ready
+  hysteresis: 30s
+  candidates:
+    - name: ds-lite-primary
+      source: DSLiteTunnel/ds-lite-primary
+      deviceFrom:
+        resource: DSLiteTunnel/ds-lite-primary
+        field: interface
+      gatewaySource: none
+      weight: 90
+      healthCheck: internet-via-primary
+
+    - name: hgw-fallback
+      source: Interface/wan
+      deviceFrom:
+        resource: Interface/wan
+        field: ifname
+      gatewaySource: static
+      gateway: 192.0.2.1
+      weight: 50
+      healthCheck: internet-via-hgw
+</code></pre>
+<p><code>hysteresis</code> 用于防止频繁切换（chatter）。候选路径变为 unhealthy 后，在此时间内不会降级。</p>
+<h3 id="跟踪策略的-nat">跟踪策略的 NAT</h3>
+<pre><code class="language-yaml">apiVersion: net.routerd.net/v1alpha1
+kind: NAT44Rule
+metadata:
+  name: lan-to-egress
+spec:
+  type: masquerade
+  egressPolicyRef: ipv4-default
+  sourceRanges:
+    - 192.0.2.0/24
+</code></pre>
+<p>masquerade 的源地址取自 routerd 当时所选候选路径的接口地址。
+切换后，下一个数据包即以新路径的地址进行 NAT。</p>
+<h2 id="不对-rfc1918-目的地执行-nat">不对 RFC1918 目的地执行 NAT</h2>
+<p>当上游网关拥有返回 LAN 的路由时，可对公共互联网执行 NAT，同时避免对其他内部网络目的地执行 NAT。</p>
+<pre><code class="language-yaml">apiVersion: net.routerd.net/v1alpha1
+kind: NAT44Rule
+metadata:
+  name: lan-to-wan-hgw
+spec:
+  type: masquerade
+  egressInterface: wan
+  sourceRanges:
+    - 192.0.2.0/24
+  excludeDestinationCIDRs:
+    - 192.168.0.0/16
+    - 172.16.0.0/12
+    - 10.0.0.0/8
+
+---
+
+apiVersion: net.routerd.net/v1alpha1
+kind: IPv4Route
+metadata:
+  name: hgw-lan
+spec:
+  destination: 192.168.0.0/16
+  device: wan
+</code></pre>
+<p>这样可让 RFC1918 目的地通过路由分配，公共互联网流量则经由所选的 egress 路径。</p>
+<h2 id="操作建议">操作建议</h2>
+<ul>
+<li>请务必确保带外管理路径（mgmt 接口、控制台、专用 SSH NIC 等）。通过 WAN 侧 SSH 修改路由或防火墙设置有一定风险。</li>
+<li>一个 <code>HealthCheck</code> 建议只由一个候选路径参照。这样 routerd 能推导出单一探针路径，「探针失败 = 该路径故障」的解读更清晰。</li>
+<li>切换时请勿清除 conntrack。routerd 刻意不清除，让已完成握手的 TCP 连接自然结束。</li>
+<li>当前选用的候选路径可通过 <code>routerctl describe EgressRoutePolicy/&lt;name&gt;</code> 的 <code>status.selectedCandidate</code> 确认。</li>
+</ul>
+<h2 id="相关项目">相关项目</h2>
+<ul>
+<li><a href="../concepts/path-mtu.html">Path MTU 与 MSS clamping</a></li>
+<li><a href="firewall-rule.html">防火墙规则基础</a></li>
+<li><a href="flets-ipv6-setup.html">DS-Lite 设定</a></li>
+</ul></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#适用场景">适用场景</a></li>
+<li><a href="#routerd-的解决方式">routerd 的解决方式</a></li>
+<li><a href="#最小配置">最小配置</a><ul>
+<li><a href="#健康检查">健康检查</a></li>
+<li><a href="#egress-策略">Egress 策略</a></li>
+<li><a href="#跟踪策略的-nat">跟踪策略的 NAT</a></li>
+</ul>
+</li>
+<li><a href="#不对-rfc1918-目的地执行-nat">不对 RFC1918 目的地执行 NAT</a></li>
+<li><a href="#操作建议">操作建议</a></li>
+<li><a href="#相关项目">相关项目</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/how-to/multi-wan.md">GitHub</a></div></footer></body></html>

@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FirewallRule · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/reference/resources/FirewallRule.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/reference/resources/FirewallRule.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/reference/resources/FirewallRule.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/FirewallRule.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/FirewallRule.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="firewallrule">FirewallRule</h1>
+<p><a href="../resources.html#firewallrule">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: firewall.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Declare a named accept/drop/reject rule for a zone path, with address/protocol/port matches and Linux rate/connection predicates.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>fromZone, toZone and action are required. Zone names must exist or be self. Although fromZone=self passes validation, these renderers do not generate a self-origin chain from it: local outbound traffic follows the OS/output policy instead.</li>
+<li>Rules are sorted by metadata.name, not YAML order. Existing state, IPv6 control traffic and generated service/ingress allowances can be accepted earlier. PF also emits broad implicit passes before explicit rules; for forwarded PF rules toZone does not add an output-interface/destination-zone match, so specify destinationCIDRs when destination scope is needed.</li>
+<li>port and destinationPorts are mutually exclusive. Any source/destination port requires tcp or udp. A range must be the only entry in its list; numeric ports and start-end strings are accepted. ICMP type selectors require their matching protocol.</li>
+<li>On Linux, source CIDRs are alternatives; destinationCIDRs and destinationSetRefs form a union; excluded sets are then subtracted. Source/destination/protocol families must be compatible. PF currently ignores address-set references, rateLimit and connLimit despite validation accepting them.</li>
+<li>Linux rateLimit matches traffic OVER the configured rate, and connLimit matches counts OVER maxPerSource; the rule action is applied to the excess. Use a suitable drop/reject action for limiting. With both enabled they produce separate alternatives, not an AND of both thresholds.</li>
+</ul>
+<h2 id="yaml-definition">YAML definition</h2>
+<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallRule
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    action: &quot;accept&quot; # Required; string; enum=[&quot;accept&quot;, &quot;drop&quot;, &quot;reject&quot;]
+    connLimit: # optional; object
+      log: true # optional; boolean
+      maxPerSource: 0 # optional; integer; minimum=0
+    destinationCIDRs: # optional; array
+      - &quot;&lt;string&gt;&quot; # string
+    destinationPorts: # optional; array
+      - &quot;&lt;string&gt;&quot; # string
+    destinationSetRefs: # optional; array
+      - &quot;&lt;string&gt;&quot; # string
+    excludeDestinationSetRefs: # optional; array
+      - &quot;&lt;string&gt;&quot; # string
+    fromZone: &quot;&lt;string&gt;&quot; # Required; string
+    icmpType: &quot;&lt;string&gt;&quot; # optional; string
+    icmpv6Type: &quot;&lt;string&gt;&quot; # optional; string
+    log: true # optional; boolean
+    port: 0 # optional; integer; minimum=0; maximum=65535
+    protocol: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;tcp&quot;, &quot;udp&quot;, &quot;icmp&quot;, &quot;icmpv6&quot;, &quot;ipv6-icmp&quot;, &quot;ipip&quot;]
+    rateLimit: # optional; object
+      burst: 0 # optional; integer; minimum=0
+      log: true # optional; boolean
+      packetsPerSecond: 0 # optional; integer; minimum=0
+      per: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;second&quot;, &quot;minute&quot;]
+      rate: 0 # optional; integer; minimum=0
+      unit: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;packet&quot;, &quot;byte&quot;, &quot;kilobyte&quot;, &quot;megabyte&quot;]
+    sourcePorts: # optional; array
+      - &quot;&lt;string&gt;&quot; # string
+    srcCIDRs: # optional; array
+      - &quot;&lt;string&gt;&quot; # string
+    toZone: &quot;&lt;string&gt;&quot; # Required; string
+</code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.fromZone</code></td>
+<td>Required bare FirewallZone name or self. self is accepted but does not produce local-outbound filtering here.</td>
+</tr>
+<tr>
+<td><code>spec.toZone</code></td>
+<td>Required bare FirewallZone name or self. Linux matches zone-pair input/output interfaces; self selects local input. PF self uses router addresses; other toZone values do not become an output-zone match.</td>
+</tr>
+<tr>
+<td><code>spec.srcCIDRs</code></td>
+<td>Optional IPv4/IPv6 source-prefix alternatives; default empty means any source. Prefixes must parse; Linux masks host bits before rendering.</td>
+</tr>
+<tr>
+<td><code>spec.destinationCIDRs</code></td>
+<td>Optional destination-prefix alternatives, default empty. Linux unions these with destinationSetRefs; with neither specified, destination is unrestricted within the zone path. PF uses only these static destination prefixes.</td>
+</tr>
+<tr>
+<td><code>spec.destinationSetRefs</code></td>
+<td>Optional existing IPAddressSet/<name> references, default empty; current PF does not enforce them. Linux references the enabled IPv4/IPv6 nftables sets.</td>
+</tr>
+<tr>
+<td><code>spec.excludeDestinationSetRefs</code></td>
+<td>Optional existing IPAddressSet/<name> references subtracted from Linux destination matches. Default empty; current PF ignores them.</td>
+</tr>
+<tr>
+<td><code>spec.protocol</code></td>
+<td>Default empty means any protocol. Allowed tcp, udp, icmp, icmpv6, ipv6-icmp, ipip. Here ipip is IPv4 encapsulation in IPv6 (IPv6 next-header 4), not an IPv4-underlay tunnel protocol rule.</td>
+</tr>
+<tr>
+<td><code>spec.port</code></td>
+<td>Optional single destination port, default 0 means absent. Positive 1–65535 requires tcp/udp and excludes destinationPorts.</td>
+</tr>
+<tr>
+<td><code>spec.sourcePorts</code></td>
+<td>Optional tcp/udp source-port OR list; each port 1–65535 or a sole start-end range. Default empty means any source port.</td>
+</tr>
+<tr>
+<td><code>spec.destinationPorts</code></td>
+<td>Optional tcp/udp destination-port OR list with the same port/range rules. Mutually exclusive with nonzero port; default empty means unrestricted.</td>
+</tr>
+<tr>
+<td><code>spec.icmpType</code></td>
+<td>Optional named IPv4 ICMP type, requires icmp. Supported: echo-reply, destination-unreachable, source-quench, redirect, echo-request, router-advertisement, router-solicitation, time-exceeded, parameter-problem, timestamp-request, timestamp-reply. Empty means all types. Camel-case key overrides the accepted YAML alias icmp-type.</td>
+</tr>
+<tr>
+<td><code>spec.icmpv6Type</code></td>
+<td>Optional IPv6 ICMP name, requires icmpv6/ipv6-icmp. Supported destination-unreachable, packet-too-big, time-exceeded, parameter-problem, echo-request/reply, router-solicit/advert, neighbor-solicit/advert and their nd- aliases. Empty means all types. Overrides YAML alias icmpv6-type.</td>
+</tr>
+<tr>
+<td><code>spec.action</code></td>
+<td>Required accept, drop or reject; no default. With rate/connection predicates on Linux, applies to excess traffic rather than defining an allowed quota.</td>
+</tr>
+<tr>
+<td><code>spec.log</code></td>
+<td>Default false. True adds logging before the rule action; Linux uses kernel logging or enabled FirewallEventLog NFLOG, PF uses its log action.</td>
+</tr>
+<tr>
+<td><code>spec.rateLimit</code></td>
+<td>Optional Linux over-rate predicate; default disabled. Current PF ignores all nested rate options.</td>
+</tr>
+<tr>
+<td><code>spec.rateLimit.rate</code></td>
+<td>Nonnegative rate, default 0 falls back to packetsPerSecond. Effective 0 disables the predicate and requires unit/per/burst/log to remain empty/zero/false. Positive rate takes precedence over packetsPerSecond.</td>
+</tr>
+<tr>
+<td><code>spec.rateLimit.unit</code></td>
+<td>packet (default when active), byte, kilobyte or megabyte. Selects nftables rate and burst units; no effect without a positive effective rate.</td>
+</tr>
+<tr>
+<td><code>spec.rateLimit.per</code></td>
+<td>second (default when active) or minute; requires a positive effective rate.</td>
+</tr>
+<tr>
+<td><code>spec.rateLimit.log</code></td>
+<td>Default false. True logs rate-exceeding matches before applying action; requires a positive effective rate.</td>
+</tr>
+<tr>
+<td><code>spec.rateLimit.packetsPerSecond</code></td>
+<td>Legacy nonnegative rate fallback when rate=0, default 0. Despite its name, explicit unit/per still control the effective units if supplied.</td>
+</tr>
+<tr>
+<td><code>spec.rateLimit.burst</code></td>
+<td>Nonnegative burst amount in the selected unit, default 0 omits the burst clause and uses nftables behavior. Requires an active rate if nonzero.</td>
+</tr>
+<tr>
+<td><code>spec.connLimit</code></td>
+<td>Optional Linux per-source connection-count predicate; default disabled. Independent from rateLimit; current PF ignores it.</td>
+</tr>
+<tr>
+<td><code>spec.connLimit.maxPerSource</code></td>
+<td>Nonnegative maximum, default 0 disabled. Positive N matches ct count over N per source address (separate IPv4/IPv6 meters), then applies action.</td>
+</tr>
+<tr>
+<td><code>spec.connLimit.log</code></td>
+<td>Default false. True adds a conn-limit log for excess-count matches; has no effect when maxPerSource=0.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_firewall.go">pkg/config/validate_firewall.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go">pkg/config/diagnostics.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/nftables.go">pkg/render/nftables.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/pf.go">pkg/render/pf.go</a></p>
+<h2 id="referenceable-status-fields">Referenceable status fields</h2>
+<p>The ordinary status-reference validator accepts these field names for this kind. This allowlist does not guarantee that every field is currently populated; inspect runtime status. These are outputs, not YAML spec fields.</p>
+<p><code>phase</code>, <code>action</code></p>
+<p><a href="/examples/firewall-rate-limit.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
+<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
+<li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/reference/resources/FirewallRule.md">GitHub</a></div></footer></body></html>

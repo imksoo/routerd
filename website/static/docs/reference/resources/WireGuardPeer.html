@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WireGuardPeer · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/reference/resources/WireGuardPeer.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/reference/resources/WireGuardPeer.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/reference/resources/WireGuardPeer.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/WireGuardPeer.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/WireGuardPeer.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="wireguardpeer">WireGuardPeer</h1>
+<p><a href="../resources.html#wireguardpeer">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Define a peer on a declared WireGuardInterface. Its AllowedIPs configure WireGuard cryptographic routing; they do not automatically create ordinary IP routes in this controller.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>The peer is applied as part of its interface complete wg setconf configuration, not as an independently scheduled service. An explicit peer with the same metadata.name replaces a peersFrom-generated peer, even if its interface differs.</li>
+<li>Inline presharedKey takes precedence over presharedKeyFile; they are not mutually exclusive. The file is read and trimmed only when no inline key is supplied; missing, unreadable or empty files fail real application.</li>
+<li>Connected means a handshake timestamp was observed, with its age reported separately; it is not a guarantee that the handshake is recent or that a destination is reachable. A peer with an endpoint but no handshake is Waiting/NoHandshakeYet.</li>
+</ul>
+<h2 id="yaml-definition">YAML definition</h2>
+<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: WireGuardPeer
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    allowedIPs: # Required; array
+      - &quot;&lt;string&gt;&quot; # string
+    endpoint: &quot;&lt;string&gt;&quot; # optional; string
+    interface: &quot;&lt;string&gt;&quot; # Required; string
+    persistentKeepalive: 0 # optional; integer; minimum=0; maximum=65535
+    presharedKey: &quot;&lt;string&gt;&quot; # optional; string
+    presharedKeyFile: &quot;&lt;string&gt;&quot; # optional; string
+    publicKey: &quot;&lt;string&gt;&quot; # Required; string
+</code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.interface</code></td>
+<td>Required metadata.name of an existing WireGuardInterface in the same Router. An OS ifname alone is not sufficient.</td>
+</tr>
+<tr>
+<td><code>spec.publicKey</code></td>
+<td>Required peer public key in WireGuard base64 format. The validator checks nonempty text, not decoded key length; wg validates during application.</td>
+</tr>
+<tr>
+<td><code>spec.allowedIPs</code></td>
+<td>Required nonempty list of IPv4/IPv6 CIDR prefixes. Controls the peer selected for outgoing packets and accepted source addresses for incoming packets. No implicit prefix or route creation.</td>
+</tr>
+<tr>
+<td><code>spec.endpoint</code></td>
+<td>Optional peer host:UDP-port, using [IPv6]:port for IPv6. Empty omits Endpoint and permits learning the endpoint from received packets. Syntax/DNS reachability is not checked by routerd configuration validation; wg handles it at apply.</td>
+</tr>
+<tr>
+<td><code>spec.persistentKeepalive</code></td>
+<td>Seconds between keepalive packets, integer 0–65535; default 0 disables persistent keepalive. Not a handshake-success deadline.</td>
+</tr>
+<tr>
+<td><code>spec.presharedKey</code></td>
+<td>Optional additional symmetric key in WireGuard base64 format; default none. Overrides presharedKeyFile, without an exclusion error.</td>
+</tr>
+<tr>
+<td><code>spec.presharedKeyFile</code></td>
+<td>Optional router-local file containing the raw preshared key text, not an environment file. No key is generated for a missing file. Only read when presharedKey is empty.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_interface.go">pkg/config/validate_interface.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/wireguard/wireguard.go">pkg/wireguard/wireguard.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/wireguard.go">pkg/controller/chain/wireguard.go</a></p>
+<h2 id="referenceable-status-fields">Referenceable status fields</h2>
+<p>The ordinary status-reference validator accepts these field names for this kind. This allowlist does not guarantee that every field is currently populated; inspect runtime status. These are outputs, not YAML spec fields.</p>
+<p><code>phase</code>, <code>latestEndpoint</code>, <code>latestHandshake</code>, <code>handshakeAgeSeconds</code>, <code>transferRxBytes</code>, <code>transferTxBytes</code></p>
+<p><a href="/examples/hybrid-l3-wireguard.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
+<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
+<li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/reference/resources/WireGuardPeer.md">GitHub</a></div></footer></body></html>

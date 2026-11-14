@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LAN DHCP とローカル DNS · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/config-examples/lan-dns-dhcp.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/config-examples/lan-dns-dhcp.html" lang="en" hreflang="en">English</a><a href="/docs/ja/config-examples/lan-dns-dhcp.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/config-examples/lan-dns-dhcp.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/config-examples/lan-dns-dhcp.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="lan-dhcp-とローカル-dns">LAN DHCP とローカル DNS</h1>
+<p>1 つの LAN インターフェースを、小さな家庭内 LAN や検証用 LAN のサービスセグメントとして使う例です。
+routerd が LAN アドレス、DHCPv4、ローカル DNS ゾーン、DHCP リース由来の名前を管理します。</p>
+<p>完全な YAML は <code>examples/example-lan-dns-dhcp.yaml</code> にあります。</p>
+<h2 id="構成図">構成図</h2>
+<pre><code class="language-mermaid">flowchart LR
+  router[&quot;[1] routerd host&lt;br/&gt;192.168.30.1&quot;]
+  lan[&quot;[2] LAN&lt;br/&gt;home.example&quot;]
+  dhcp[&quot;[3] DHCPv4 clients&lt;br/&gt;192.168.30.100-199&quot;]
+  nas[&quot;[4] NAS reservation&lt;br/&gt;192.168.30.10&quot;]
+
+  router --- lan
+  lan --- dhcp
+  lan --- nas
+</code></pre>
+<h2 id="図の対応表">図の対応表</h2>
+<table>
+<thead>
+<tr>
+<th>番号</th>
+<th>意味</th>
+<th>主なリソース</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>[1]</td>
+<td>LAN の DNS 待ち受けも兼ねるルーターのアドレス。</td>
+<td><code>IPv4StaticAddress/lan-base</code>, <code>DNSResolver/lan-resolver</code></td>
+</tr>
+<tr>
+<td>[2]</td>
+<td>DHCP の search domain として配るローカル DNS ゾーン。</td>
+<td><code>DNSZone/home</code></td>
+</tr>
+<tr>
+<td>[3]</td>
+<td>アドレスと DNS 設定を受け取る動的なクライアント。</td>
+<td><code>DHCPv4Server/lan-dhcpv4</code></td>
+</tr>
+<tr>
+<td>[4]</td>
+<td>固定リースと名前を持つ基盤ホスト。</td>
+<td><code>DHCPv4Reservation/nas</code>, <code>DNSZone/home</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="この例で管理するもの">この例で管理するもの</h2>
+<table>
+<thead>
+<tr>
+<th>領域</th>
+<th>routerd リソース</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>LAN アドレス</td>
+<td><code>Interface/lan</code>, <code>IPv4StaticAddress/lan-base</code></td>
+</tr>
+<tr>
+<td>ローカルの名前</td>
+<td><code>DNSZone/home</code></td>
+</tr>
+<tr>
+<td>リゾルバー</td>
+<td><code>DNSResolver/lan-resolver</code></td>
+</tr>
+<tr>
+<td>DHCPv4</td>
+<td><code>DHCPv4Server/lan-dhcpv4</code>, <code>DHCPv4Reservation/nas</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="設定の要点">設定の要点</h2>
+<pre><code class="language-yaml"># [2] router.home.example や nas.home.example のローカルゾーン。
+- kind: DNSZone
+  metadata:
+    name: home
+  spec:
+    zone: home.example
+    records:
+      - hostname: router
+        ipv4From:
+          resource: IPv4StaticAddress/lan-base
+          field: address
+    dhcpDerived:
+      sources:
+        - DHCPv4Server/lan-dhcpv4
+      ddns: true
+
+# [3] DHCP でルーターのアドレスをゲートウェイと DNS として配る。
+- kind: DHCPv4Server
+  metadata:
+    name: lan-dhcpv4
+  spec:
+    gatewayFrom:
+      resource: IPv4StaticAddress/lan-base
+      field: address
+    dnsServerFrom:
+      - resource: IPv4StaticAddress/lan-base
+        field: address
+    domainFrom:
+      resource: DNSZone/home
+      field: zone
+</code></pre>
+<h2 id="daemon-の前に確認する">daemon の前に確認する</h2>
+<p>以下は <code>sudo</code> を実行できる通常ユーザーを想定します。まだサービスを起動していないため、
+<code>routerctl</code> ではなく <code>routerd</code> を使い、dry-run の状態ファイルは一時ディレクトリへ隔離します。</p>
+<pre><code class="language-sh">LAB_DIR=&quot;$(mktemp -d)&quot;
+sudo routerd validate --config examples/example-lan-dns-dhcp.yaml
+sudo routerd apply --config examples/example-lan-dns-dhcp.yaml --once --dry-run \
+  --state-file &quot;$LAB_DIR/state.db&quot; \
+  --status-file &quot;$LAB_DIR/status.json&quot;
+sudo sed -n &quot;1,160p&quot; &quot;$LAB_DIR/status.json&quot;
+</code></pre>
+<h2 id="サービス起動後に確認する">サービス起動後に確認する</h2>
+<p>レビュー済みの設定を適用して <code>routerd.service</code> を起動した<strong>後で</strong>、ルーター上で次を実行します。
+<code>dig</code> は LAN 側のクライアントから実行します。</p>
+<pre><code class="language-sh">sudo routerctl describe DNSZone/home
+sudo routerctl describe DHCPv4Server/lan-dhcpv4
+dig @192.168.30.1 router.home.example
+</code></pre>
+<h2 id="よく変えるところ">よく変えるところ</h2>
+<ul>
+<li><code>home.example</code> を自分の search domain に変える。</li>
+<li>NAS、プリンター、基盤機器は <code>DHCPv4Reservation</code> に足す。</li>
+<li>一部のドメインだけプライベートな上流へ送りたい場合は <code>DNSForwarder</code> と <code>DNSUpstream</code> を追加する。</li>
+</ul></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#構成図">構成図</a></li>
+<li><a href="#図の対応表">図の対応表</a></li>
+<li><a href="#この例で管理するもの">この例で管理するもの</a></li>
+<li><a href="#設定の要点">設定の要点</a></li>
+<li><a href="#daemon-の前に確認する">daemon の前に確認する</a></li>
+<li><a href="#サービス起動後に確認する">サービス起動後に確認する</a></li>
+<li><a href="#よく変えるところ">よく変えるところ</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/config-examples/lan-dns-dhcp.md">GitHub</a></div></footer></body></html>

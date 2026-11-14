@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>基本 NAT 与防火墙：先理解边界 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/tutorials/basic-firewall.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/tutorials/basic-firewall.html" lang="en" hreflang="en">English</a><a href="/docs/ja/tutorials/basic-firewall.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/tutorials/basic-firewall.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/tutorials/basic-firewall.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="基本-nat-与防火墙先理解边界">基本 NAT 与防火墙：先理解边界</h1>
+<p>NAT 和防火墙不是同一个东西：</p>
+<ul>
+<li><strong>NAT44</strong> 让私有 LAN 地址借用 WAN 的 IPv4 地址访问外部网络。</li>
+<li><strong>防火墙</strong> 决定哪些流量可以经过或到达路由器。</li>
+</ul>
+<p>本页说明资源形状，不把它当作可直接暴露到互联网的生产安全方案。当前重点是 Linux 的 nftables 路径；Ubuntu Server 是主要入门平台。</p>
+<h2 id="一个现代-nat44rule">一个现代 NAT44Rule</h2>
+<p>假设已经有名为 <code>wan</code> 和 <code>lan</code> 的 <code>Interface</code> 资源，LAN 网段是 <code>192.168.10.0/24</code>。现代字段写法如下：</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: NAT44Rule
+  metadata:
+    name: lan-to-wan
+  spec:
+    type: masquerade
+    egressInterface: wan
+    sourceRanges:
+      - 192.168.10.0/24
+    excludeDestinationCIDRs:
+      - 10.0.0.0/8
+      - 172.16.0.0/12
+      - 192.168.0.0/16
+</code></pre>
+<p><code>type: masquerade</code> 表示使用出接口当前的 IPv4 地址；<code>egressInterface</code> 是逻辑接口资源名，不是随手猜的网卡名。<code>excludeDestinationCIDRs</code> 让发往常见私有网段的流量不被伪装，避免把本应走内部路由的流量误当作互联网流量。</p>
+<h2 id="防火墙资源表达什么">防火墙资源表达什么</h2>
+<p>下面是 WAN/LAN 区域和一个策略资源的最小形状：</p>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallZone
+  metadata:
+    name: wan
+  spec:
+    role: untrust
+    interfaces:
+      - wan
+
+- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallZone
+  metadata:
+    name: lan
+  spec:
+    role: trust
+    interfaces:
+      - lan
+
+- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallPolicy
+  metadata:
+    name: home
+  spec:
+    logDeny: true
+</code></pre>
+<p><code>FirewallZone</code> 使用角色 <code>untrust</code>、<code>trust</code>、<code>mgmt</code> 描述网络位置；<code>FirewallPolicy</code> 放置全局行为，例如拒绝日志。NAT44 和过滤使用不同的 nftables 表，因此“已经有 NAT”不等于“已经审查并保护了所有入口流量”。</p>
+<p>routerd 是预发布软件。这里的区域和策略资源不是通用防火墙语言，也不是安全认证。不要仅凭这段 YAML 就宣称 WAN 一定无法访问 LAN，或将机器暴露到公网。真实部署前需要针对接口、管理入口、VLAN、端口转发和回程流量做独立审查与测试。</p>
+<h2 id="安全检查配置">安全检查配置</h2>
+<p>先让 <code>routerd</code> 直接验证完整文件，并使用临时路径 dry-run：</p>
+<pre><code class="language-bash">routerd validate --config router.yaml
+workdir=$(mktemp -d)
+routerd apply --once --dry-run --config router.yaml --status-file &quot;$workdir/status.json&quot; --state-file &quot;$workdir/state.db&quot; --netplan-file &quot;$workdir/50-routerd.yaml&quot; --dnsmasq-file &quot;$workdir/dnsmasq.conf&quot; --dnsmasq-service-file &quot;$workdir/routerd-dnsmasq.service&quot; --nftables-file &quot;$workdir/routerd-nat.nft&quot;
+</code></pre>
+<p>只有在 <code>routerd serve</code> 已经通过控制台或独立管理路径启动后，才用 <code>routerctl</code> 查询运行结果：</p>
+<pre><code class="language-bash">sudo routerctl get status
+sudo routerctl describe NAT44Rule/lan-to-wan
+sudo nft list table ip routerd_nat
+</code></pre>
+<h2 id="继续阅读">继续阅读</h2>
+<ul>
+<li><a href="../config-examples/basic-ipv4-nat.html">基本 IPv4 NAT 网关</a></li>
+<li><a href="../concepts/firewall.html">防火墙概念</a></li>
+<li><a href="../platforms.html">支持的平台</a></li>
+</ul></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#一个现代-nat44rule">一个现代 NAT44Rule</a></li>
+<li><a href="#防火墙资源表达什么">防火墙资源表达什么</a></li>
+<li><a href="#安全检查配置">安全检查配置</a></li>
+<li><a href="#继续阅读">继续阅读</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/tutorials/basic-firewall.md">GitHub</a></div></footer></body></html>

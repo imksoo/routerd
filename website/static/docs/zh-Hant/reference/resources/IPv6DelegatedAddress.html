@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>IPv6DelegatedAddress · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/reference/resources/IPv6DelegatedAddress.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/reference/resources/IPv6DelegatedAddress.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/IPv6DelegatedAddress.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/IPv6DelegatedAddress.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/reference/resources/IPv6DelegatedAddress.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="ipv6delegatedaddress">IPv6DelegatedAddress</h1>
+<p><a href="../resources.html#ipv6delegatedaddress">各資源的設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>從 DHCPv6PrefixDelegation 前綴衍生並安裝本機 IPv6 位址。</p>
+<h2 id="指定條件與參照關係">指定條件與參照關係</h2>
+<ul>
+<li>prefixDelegation 須為既有 DHCPv6PrefixDelegation 裸名，interface 亦須存在於 Router 索引。一般主用安裝需要可用 Bound 前綴、就緒鏈路及成立的相依條件。HA VMAC 預置可在主用取得前使用新鮮同步快照。</li>
+<li>衍生前綴長為 max(64,委派長度)。subnetID 以十六進位移至該邊界後與基底 OR，suffix 僅取剩餘主機位元再 OR。目前不檢查 subnetID 是否落在委派區塊內，請選有效範圍。</li>
+<li>Linux 使用 ip address、FreeBSD 使用 ifconfig。主用套用後讀回位址才公布 Applied，暫定或 DAD 中可維持 Pending。前綴變更可將舊位址保留為已棄用直到有效期限，/128 作主機位址而非直連子網。</li>
+<li>sendRA/announce 不會讓目前位址控制器啟動 RA 服務，須另設 IPv6RouterAdvertisement 或 DHCPv6Server。已移除的 prefixSource/ready_when 會被拒絕。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: IPv6DelegatedAddress
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    addressSuffix: &quot;&lt;string&gt;&quot; # 必填; string
+    announce: true # 選填; boolean
+    dependsOn: # 選填; array
+      - # object
+        equals: &quot;&lt;string&gt;&quot; # 選填; string
+        field: &quot;&lt;string&gt;&quot; # 選填; string
+        notEmpty: true # 選填; boolean
+        optional: true # 選填; boolean
+        phase: &quot;&lt;string&gt;&quot; # 選填; string
+        resource: &quot;&lt;string&gt;&quot; # 必填; string
+    interface: &quot;&lt;string&gt;&quot; # 必填; string
+    prefixDelegation: &quot;&lt;string&gt;&quot; # 必填; string
+    prefixLength: 1 # 選填; integer; minimum=1; maximum=128
+    sendRA: true # 選填; boolean
+    subnetID: &quot;&lt;string&gt;&quot; # 選填; string
+    when: # 選填; object
+      state: # 選填; object
+        &quot;&lt;key&gt;&quot;: # 選填; object
+          contains: &quot;&lt;string&gt;&quot; # 選填; string
+          equals: &quot;&lt;string&gt;&quot; # 選填; string
+          exists: true # 選填; boolean
+          for: &quot;&lt;string&gt;&quot; # 選填; string
+          in: # 選填; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # 選填; string
+          status: &quot;set&quot; # 選填; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<h2 id="欄位意義與預設值">欄位意義與預設值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>欄位意義與預設值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.prefixDelegation</code></td>
+<td>必填 DHCPv6PrefixDelegation metadata.name 裸名，不是 Kind/name 或狀態運算式，無預設值。</td>
+</tr>
+<tr>
+<td><code>spec.interface</code></td>
+<td>必填已宣告的目標邏輯介面，最終 OS 名稱由 Router 解析。</td>
+</tr>
+<tr>
+<td><code>spec.subnetID</code></td>
+<td>選用十六進位字串，預設 0；"10" 為 0x10 而非十進位十，可加 0x。未嚴格檢查容納範圍，請選委派區塊內編號。</td>
+</tr>
+<tr>
+<td><code>spec.addressSuffix</code></td>
+<td>必填 IPv6 後綴如 ::1，僅使用衍生前綴邊界以下的主機位元，不作完整絕對位址，無自動 ::1 預設。</td>
+</tr>
+<tr>
+<td><code>spec.prefixLength</code></td>
+<td>省略或 0 保留衍生長度，通常 /64。執行時接受相同長度或 128；其他明確長度雖可通過 1–128 結構描述，套用仍失敗。/128 避免建立通常的直連前綴路由。</td>
+</tr>
+<tr>
+<td><code>spec.sendRA</code></td>
+<td>布林值預設 false，部分主機相依或轉送準備路徑使用，但不是即時位址控制器的自動 RA 開關。</td>
+</tr>
+<tr>
+<td><code>spec.announce</code></td>
+<td>布林值預設 false，即時 RA 服務限制同 sendRA，不保證主動鄰居或 RA 公告。</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>選用共用條件，預設無條件；條件為假可經明確清理路徑移除衍生位址。</td>
+</tr>
+<tr>
+<td><code>spec.dependsOn</code></td>
+<td>選用共用 AND 相依清單，預設空。不成立時為 Pending/DependsOnFalse。HA 預置對 PD/VMAC 前提有特定處理，請用實際資源 phase。</td>
+</tr>
+</tbody>
+</table>
+<p>實作: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_wan.go">pkg/config/validate_wan.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/pdclient/derive.go">pkg/pdclient/derive.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go">pkg/controller/chain/chain.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/hostdeps/hostdeps.go">pkg/hostdeps/hostdeps.go</a></p>
+<h2 id="可參照的狀態欄位">可參照的狀態欄位</h2>
+<p>一般狀態參照驗證接受此 Kind 的下列欄位名稱。列於允許清單不保證目前有值，請檢查實際狀態。這些是輸出，不是 YAML spec 設定。</p>
+<p><code>phase</code>, <code>address</code>, <code>interface</code>, <code>prefixSource</code>, <code>dryRun</code></p>
+<p><a href="/examples/example-dslite-home.yaml">設定範例</a></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#指定條件與參照關係">指定條件與參照關係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#欄位意義與預設值">欄位意義與預設值</a></li>
+<li><a href="#可參照的狀態欄位">可參照的狀態欄位</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/reference/resources/IPv6DelegatedAddress.md">GitHub</a></div></footer></body></html>

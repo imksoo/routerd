@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Log Storage · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/concepts/log-storage.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/concepts/log-storage.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/concepts/log-storage.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/concepts/log-storage.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/concepts/log-storage.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="log-storage">Log Storage</h1>
+<p>routerd keeps long-lived state separate from operational logs.</p>
+<p>The Linux default layout is:</p>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Purpose</th>
+<th>Typical retention</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/var/lib/routerd/routerd.db</code></td>
+<td>resource state plus event, access-log, and plugin-run log tables</td>
+<td>events: 24 hours by default; explicit policy for other log tables</td>
+</tr>
+<tr>
+<td><code>/var/lib/routerd/dns-queries.db</code></td>
+<td>DNS query rows from <code>routerd-dns-resolver</code></td>
+<td>30 days</td>
+</tr>
+<tr>
+<td><code>/var/lib/routerd/traffic-flows.db</code></td>
+<td>conntrack-derived traffic flows</td>
+<td>30 days</td>
+</tr>
+<tr>
+<td><code>/var/lib/routerd/firewall-logs.db</code></td>
+<td>firewall accept/drop/reject rows</td>
+<td>90 days</td>
+</tr>
+<tr>
+<td><code>/var/lib/routerd/dhcp-fingerprints.db</code></td>
+<td>DHCP client fingerprint observations</td>
+<td>30 days</td>
+</tr>
+</tbody>
+</table>
+<p>FreeBSD keeps the same database names under <code>/var/db/routerd</code>.</p>
+<p>The log tables use column names that can be mapped to OpenTelemetry log
+attributes. nDPI and TLS SNI columns are reserved in <code>traffic-flows.db</code>, even
+when no writer fills them yet.</p>
+<p>The event journal has an always-on safety bound even when no <code>LogRetention</code>
+resource is configured. routerd keeps at most 24 hours, 100,000 rows, and 64
+MiB of logical event payload; the first limit reached wins. Old events are
+removed in batches and state tables are never included. This bound protects
+small Live ISO COW filesystems and is not a substitute for archival retention.</p>
+<p><code>LogRetention</code> is the configurable local SQLite retention policy. It removes old rows
+by signal and can run SQLite incremental vacuum. It no longer exposes database
+paths or per-writer retention in user config; routerd derives the event, DNS
+query, traffic flow, firewall event, DHCP fingerprint, access-log, and
+plugin-run stores from the
+registered log-table catalogue. New operational log tables must register their
+signal and timestamp column in that catalogue before they can be retained.</p>
+<p><code>dhcp-sticky.db</code>, lease replication data, configuration generations, and
+federation state are operational state, not logs. They are intentionally not
+eligible for <code>LogRetention</code>, because deleting them can change router behaviour.</p>
+<p>Specify <code>LogRetention.spec.sinks</code> to archive rows to named <code>LogSink</code> resources
+before local deletion. A failed archive prevents deletion, so the local copy is
+not removed before the external destination acknowledges it.</p>
+<pre><code class="language-yaml">apiVersion: system.routerd.net/v1alpha1
+kind: LogRetention
+metadata:
+  name: default
+spec:
+  retention: 30d
+  schedule: daily
+  vacuum: true
+  signals:
+    - events
+    - accessLogs
+    - pluginRuns
+    - dnsQueries
+    - trafficFlows
+    - dhcpFingerprints
+  sinks:
+    - LogSink/local-syslog
+---
+apiVersion: system.routerd.net/v1alpha1
+kind: LogRetention
+metadata:
+  name: firewall-events
+spec:
+  retention: 90d
+  schedule: daily
+  vacuum: true
+  signals:
+    - firewallEvents
+</code></pre>
+<p>Inspection commands:</p>
+<pre><code class="language-sh">routerctl get dns-queries --limit 100
+routerctl get traffic-flows --limit 100
+routerctl get firewall-logs --limit 100
+routerctl doctor disk
+</code></pre>
+<p>If SQLite reports a full filesystem, routerd keeps locally-derived runtime
+events flowing without requiring their forensic journal write to succeed. It
+marks the overall status <code>Degraded</code>, exposes <code>EventJournalReadOnly</code> in runtime
+statistics and <code>routerctl doctor</code>, writes
+<code>/run/routerd/storage-critical.json</code>, and updates <code>systemctl status routerd</code>.
+For a volatile Live ISO overlay, reboot the router OS to clear the COW layer,
+then verify the configured retention. On persistent storage, rebooting alone
+does not free space: prune or compact the journal, or expand/move the state
+filesystem.</p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul></ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/concepts/log-storage.md">GitHub</a></div></footer></body></html>

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Dynamic configuration · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/reference/dynamic-config.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/reference/dynamic-config.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/reference/dynamic-config.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/dynamic-config.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/dynamic-config.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="dynamic-configuration">Dynamic configuration</h1>
+<p>The startup YAML remains the operator-managed configuration. Validated runtime parts can add resources temporarily; expired parts stop contributing at the next merge. Use resource status to distinguish declared configuration from acquired DHCP/PD/BGP state.</p>
+<p>DynamicConfigSource is currently a validated declaration without a runtime consumer. Declaring one does not schedule Plugin execution, and its ttl does not set PluginResult.status.ttl. An EventSubscription can invoke a local Plugin; manual invocation uses routerctl plugin run.</p>
+<p>A Plugin returns a TTL in its result. Only policy-authorized exact masks suppress matching startup resources while active; the YAML itself is unchanged. Provider action proposals use the separate ProviderActionPolicy gates and are not applied just by merging a runtime part.</p>
+<p>Inspect the effective configuration before applying changes:</p>
+<pre><code class="language-sh">routerctl dynamic list
+routerctl dynamic describe &lt;source-or-part&gt;
+routerctl dynamic render
+routerctl dynamic diff
+routerctl plugin list
+</code></pre>
+<p>Read the resource-specific field meanings and limitations:</p>
+<ul>
+<li><a href="resources/Plugin.html">Plugin</a></li>
+<li><a href="resources/DynamicConfigSource.html">DynamicConfigSource</a></li>
+<li><a href="resources/DynamicOverridePolicy.html">DynamicOverridePolicy</a></li>
+<li><a href="resources/EventSubscription.html">EventSubscription</a></li>
+<li><a href="resources/ProviderActionPolicy.html">ProviderActionPolicy</a></li>
+</ul></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul></ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/reference/dynamic-config.md">GitHub</a></div></footer></body></html>

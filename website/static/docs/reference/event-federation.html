@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Event Federation reference · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/reference/event-federation.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/reference/event-federation.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/reference/event-federation.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/event-federation.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/event-federation.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="event-federation-reference">Event Federation reference</h1>
+<blockquote>
+<p>Experimental (CloudEdge). See ADR 0006: CloudEdge Event Federation
+for the design and invariants, and the how-to
+<a href="../how-to/cloudedge-mobility-demo.html">CloudEdge mobility demo</a> for a worked
+example.</p>
+</blockquote>
+<p>Event Federation lets routerd nodes exchange <strong>typed, observed facts</strong> (e.g. "this
+client IPv4 was observed", "this address expired") over the overlay, and lets a
+subscriber turn matched events into derived configuration via a plugin. It is the
+control-plane substrate beneath
+<a href="cloudedge-sam-internals.html">Cloud SAM</a>: an observed address contributes typed
+ownership facts used by the receiving <code>MobilityPool</code> plan.</p>
+<p>The model is <strong>at-least-once delivery with idempotent, observed-fact events</strong>.
+Events are immutable statements about the world ("observed"), never imperative
+commands; a receiver re-deriving the same state from the same events is a no-op.
+For example, <code>routerd.mobility.arp.request.observed</code> states that a leaf saw a CE
+ask for an unresolved IPv4 target. A receiving leaf may apply its own
+MobilityPool scope and rate-limit policy and issue a local probe; the event does
+not instruct the receiver to execute one.</p>
+<h2 id="kinds">Kinds</h2>
+<h3 id="eventgroup"><code>EventGroup</code></h3>
+<p>The bus a node participates in. One node has one identity per group.</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>nodeName</code></td>
+<td>This node's identity in the group; stamped as <code>sourceNode</code> on emitted events.</td>
+</tr>
+<tr>
+<td><code>peersFrom</code></td>
+<td>Optional <code>SAMNodeSet/&lt;name&gt;</code> sources used to derive push peers from each node's <code>eventEndpoint</code>.</td>
+</tr>
+<tr>
+<td><code>retention</code></td>
+<td>Bounds how many events / how long the local store keeps them. Empty/zero = unlimited.</td>
+</tr>
+<tr>
+<td><code>auth</code></td>
+<td>HMAC secret material for peer delivery (push).</td>
+</tr>
+<tr>
+<td><code>listen</code></td>
+<td>Receiver bind (<code>address</code>) for inbound peer pushes. Empty = push-only (no receiver).</td>
+</tr>
+<tr>
+<td><code>replayWindow</code></td>
+<td>Go duration bounding accepted message timestamp skew for replay protection (default <code>5m</code>).</td>
+</tr>
+</tbody>
+</table>
+<p><code>peersFrom</code> lets an <code>EventGroup</code> import peer targets from a shared
+<code>SAMNodeSet</code>. The controller reads <code>SAMNodeSet.spec.nodes[].eventEndpoint</code>,
+skips the node whose <code>nodeRef</code> matches <code>nodeName</code>, and writes the resolved peers
+directly into the generated <code>routerd-eventd</code> config. Hand-authored <code>EventPeer</code>
+resources are still accepted and are overlaid after generated peers, so a static
+peer with the same <code>nodeName</code> acts as a bootstrap override.</p>
+<h3 id="eventpeer"><code>EventPeer</code></h3>
+<p>A remote node this node pushes events to.</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>groupRef</code></td>
+<td>The <code>EventGroup</code> this peer belongs to (required).</td>
+</tr>
+<tr>
+<td><code>nodeName</code></td>
+<td>Remote peer node identity (required).</td>
+</tr>
+<tr>
+<td><code>endpoint</code></td>
+<td>Base URL to push to, e.g. <code>http://10.99.0.7:8787</code> (required for push).</td>
+</tr>
+<tr>
+<td><code>direction</code></td>
+<td>Delivery direction; only <code>push</code> is supported. Empty defaults to <code>push</code>.</td>
+</tr>
+<tr>
+<td><code>types</code></td>
+<td>Optional event-type allowlist; empty delivers all.</td>
+</tr>
+<tr>
+<td><code>subjectPrefixes</code></td>
+<td>Optional subject-prefix allowlist; empty delivers all.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="eventsubscription"><code>EventSubscription</code></h3>
+<p>Turns matched events into a plugin invocation that emits a <code>DynamicConfigPart</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>groupRef</code></td>
+<td>The <code>EventGroup</code> to consume from.</td>
+</tr>
+<tr>
+<td><code>match</code></td>
+<td>Which events to act on (by type / subject).</td>
+</tr>
+<tr>
+<td><code>trigger.pluginRef</code></td>
+<td>The <code>Plugin</code> invoked for matched events.</td>
+</tr>
+<tr>
+<td><code>trigger.batchWindow</code></td>
+<td>Coalesce matched events into one invocation (Go duration).</td>
+</tr>
+<tr>
+<td><code>trigger.debounce</code></td>
+<td>Delay invocation until after the last matched event (Go duration).</td>
+</tr>
+</tbody>
+</table>
+<h2 id="routerctl-federation-cli"><code>routerctl federation</code> CLI</h2>
+<pre><code>routerctl federation event emit  --group &lt;g&gt; --type &lt;topic&gt; --subject &lt;entity&gt; [--source-node &lt;n&gt;] [--ttl &lt;dur&gt;] [--payload k=v ...]
+routerctl federation event list  --group &lt;g&gt;
+routerctl federation event deliveries --group &lt;g&gt;
+</code></pre>
+<p><code>emit</code> records an observed fact into the local store (e.g.
+<code>--type routerd.client.ipv4.observed --subject 10.88.60.9/32</code>). <code>list</code> shows
+recorded events; <code>deliveries</code> shows per-peer push delivery state.</p>
+<blockquote>
+<p>Self-capture guard (ADR 0006 no-feedback-loop invariant): a node must not emit
+<code>routerd.client.ipv4.observed</code> for an address already captured by its local
+<code>MobilityPool</code> plan, or the delivered capture address would loop back as a fresh
+observation.</p>
+</blockquote>
+<h2 id="transport-routerd-eventd">Transport — <code>routerd-eventd</code></h2>
+<p><code>routerd-eventd@&lt;group&gt;</code> is a long-lived per-group daemon (supervised by a
+generated systemd unit on Linux, rc.d on FreeBSD) that:</p>
+<ul>
+<li><strong>pushes</strong> locally-recorded events to each <code>EventPeer</code> over HTTP, signed with the
+  group HMAC; the receiver verifies the signature and rejects messages outside the
+  <code>replayWindow</code>.</li>
+<li>records <strong>deliveries</strong> (per peer, per event) so at-least-once retry is bounded and
+  observable.</li>
+<li><strong>prunes</strong> the local event store per the group <code>retention</code>.</li>
+</ul>
+<p>The outbox carries a <code>sourceNode</code> guard so a received event is not re-forwarded back
+to its origin (no delivery loop).</p>
+<p>When <code>EventGroup.spec.peersFrom</code> is present, <code>routerd-eventd</code> still sees ordinary
+peer entries in its config. The dynamic part is resolved by the routerd
+controller before writing <code>config.json</code>; no separate <code>DynamicConfigPart</code> is
+created for EventPeer derivation.</p>
+<h2 id="subscription-plugin-dynamicconfigpart-flow">Subscription → plugin → DynamicConfigPart flow</h2>
+<ol>
+<li>A node emits an observed fact (<code>routerctl federation event emit</code>, or a future
+   observer).</li>
+<li><code>routerd-eventd</code> delivers it to peers; each peer records it in its event store.</li>
+<li>A peer's <code>EventSubscription</code> matches the event and invokes <code>trigger.pluginRef</code>,
+   coalescing per <code>batchWindow</code> / <code>debounce</code>.</li>
+<li>The plugin returns observed facts or ordinary dynamic resources. The Mobility
+   controller consumes the facts and persists one typed local capture plan for the
+   dataplane.</li>
+</ol>
+<p>This keeps the operator-authored intent declarative: the operator declares the
+group/peers/subscription; capture and provider action plans are <strong>derived</strong>.</p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#kinds">Kinds</a><ul>
+<li><a href="#eventgroup">EventGroup</a></li>
+<li><a href="#eventpeer">EventPeer</a></li>
+<li><a href="#eventsubscription">EventSubscription</a></li>
+</ul>
+</li>
+<li><a href="#routerctl-federation-cli">routerctl federation CLI</a></li>
+<li><a href="#transport-routerd-eventd">Transport — routerd-eventd</a></li>
+<li><a href="#subscription-plugin-dynamicconfigpart-flow">Subscription → plugin → DynamicConfigPart flow</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/reference/event-federation.md">GitHub</a></div></footer></body></html>

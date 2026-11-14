@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HA 路由器的 NAT44 会话同步 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/how-to/nat44-session-sync.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/how-to/nat44-session-sync.html" lang="en" hreflang="en">English</a><a href="/docs/ja/how-to/nat44-session-sync.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/how-to/nat44-session-sync.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/nat44-session-sync.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="ha-路由器的-nat44-会话同步">HA 路由器的 NAT44 会话同步</h1>
+<p><code>NAT44SessionSync</code> 是一个资源，用于在共享 LAN 侧网关角色的 2 台
+routerd 节点间，将 active 节点的 NAT44 conntrack 会话同步到 standby
+节点。启动时 routerd 会执行一次快照恢复，随后持续处理 conntrack
+事件并向各 target 发送增量更新。</p>
+<p>通常通过 <code>spec.when</code> 确保仅 active 节点运行。在 VRRP 构成中，
+以本地 <code>VirtualAddress</code> 的 role 作为条件是基本做法。</p>
+<h2 id="同步目标-nat-规则">同步目标 NAT 规则</h2>
+<p>引用持有要同步的 SNAT 地址的 NAT 规则。动态 SNAT 地址从
+<code>NAT44Rule</code> 的 status 读取。因此，在 session sync 激活之前，
+NAT44 controller 需要已解析 <code>snatAddress</code>。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: NAT44SessionSync
+  metadata:
+    name: dslite-abc-sessions
+  spec:
+    mode: event-stream
+    natRules:
+      - NAT44Rule/lan-to-dslite-a
+      - NAT44Rule/lan-to-dslite-b
+      - NAT44Rule/lan-to-dslite-c
+    excludeNatRules:
+      - NAT44Rule/lan-to-dslite-ra
+    targets:
+      - name: standby
+        host: routerd-standby.lan.example
+        user: routerd
+        restoreCommand: [sudo, conntrack]
+    when:
+      state:
+        VirtualAddress/lan-vip.role:
+          equals: master
+</code></pre>
+<p>如果地址是固定的，可以通过 <code>snatAddresses</code> 直接指定。</p>
+<pre><code class="language-yaml">spec:
+  snatAddresses: [192.0.0.2, 192.0.0.3, 192.0.0.4]
+</code></pre>
+<h2 id="恢复机制">恢复机制</h2>
+<p>controller 执行以下操作：</p>
+<pre><code class="language-bash">conntrack --dump -o extended -n &lt;snat-address&gt;
+</code></pre>
+<p><code>extended</code> 输出包含 conntrack mark。routerd 将每行转换为
+delete-then-insert 恢复脚本，通过 SSH 发送到 target。
+维持 <code>ct mark</code> 对于将现有流保持在相同的出口路径上至关重要。</p>
+<p><code>restoreCommand</code> 的默认值为 <code>[conntrack]</code>。如果 target user 需要
+权限提升，请指定 <code>[sudo, conntrack]</code>。</p>
+<h2 id="确认">确认</h2>
+<pre><code class="language-bash">routerctl describe NAT44SessionSync/dslite-abc-sessions
+routerd serve --controllers nat44-session-sync --config router.yaml
+</code></pre>
+<p>当 <code>spec.when</code> 为 false 时，状态为 <code>Pending</code> / <code>WhenFalse</code>。当引用的
+<code>NAT44Rule</code> 尚未解析 <code>snatAddress</code> 时，状态为 <code>Pending</code> /
+<code>SNATAddressPending</code>。</p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#同步目标-nat-规则">同步目标 NAT 规则</a></li>
+<li><a href="#恢复机制">恢复机制</a></li>
+<li><a href="#确认">确认</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/how-to/nat44-session-sync.md">GitHub</a></div></footer></body></html>

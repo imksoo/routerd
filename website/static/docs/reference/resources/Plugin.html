@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Plugin · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/reference/resources/Plugin.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/reference/resources/Plugin.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/reference/resources/Plugin.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/Plugin.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/Plugin.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="plugin">Plugin</h1>
+<p><a href="../resources.html#plugin">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: plugin.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Registers an executable implementing the routerd plugin protocol. Invoke it explicitly or through a configured consumer such as EventSubscription.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>The executable must be an absolute path. At execution it must exist, be a regular file, and have at least one executable permission bit.</li>
+<li>Declaring triggers does not start an interval/event scheduler in the current runtime. The values are validated and displayed by plugin list; a real caller must invoke the plugin.</li>
+<li>Context references use the full apiVersion/kind/name identity. Missing targets yield no context entry at execution; they are not a configuration-validation error. Secrets are redacted.</li>
+</ul>
+<h2 id="yaml-definition">YAML definition</h2>
+<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
+<pre><code class="language-yaml">- apiVersion: plugin.routerd.net/v1alpha1
+  kind: Plugin
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    capabilities: # optional; array
+      - &quot;observe.cloud&quot; # string; enum=[&quot;observe.cloud&quot;, &quot;observe.providerPrivateIPs&quot;, &quot;propose.dynamicConfig&quot;, &quot;propose.providerAction&quot;, &quot;execute.providerAction&quot;]
+    context: # optional; object
+      resources: # optional; array
+        - # object
+          apiVersion: &quot;&lt;string&gt;&quot; # Required; string
+          kind: &quot;&lt;string&gt;&quot; # Required; string
+          name: &quot;&lt;string&gt;&quot; # Required; string
+    env: # optional; object
+      &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # optional; string
+    executable: &quot;&lt;string&gt;&quot; # Required; string
+    timeout: &quot;&lt;string&gt;&quot; # optional; string
+    triggers: # optional; array
+      - # object
+        every: &quot;&lt;string&gt;&quot; # optional; string
+        topic: &quot;&lt;string&gt;&quot; # optional; string
+        type: &quot;interval&quot; # Required; string; enum=[&quot;interval&quot;, &quot;event&quot;]
+</code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.executable</code></td>
+<td>Absolute executable path; required, with no default.</td>
+</tr>
+<tr>
+<td><code>spec.timeout</code></td>
+<td>Maximum duration of one invocation. Default 10s; an explicit value must be a positive Go duration, such as 30s.</td>
+</tr>
+<tr>
+<td><code>spec.env</code></td>
+<td>Additional environment variables, keyed by variable name. Default empty; the runner supplies PATH from its own environment, or its built-in path if absent, and overlays these entries. Other parent variables are not inherited. Empty keys and keys containing = are ignored.</td>
+</tr>
+<tr>
+<td><code>spec.capabilities</code></td>
+<td>Declared capabilities; default empty. Allowed values are observe.cloud, observe.providerPrivateIPs, propose.dynamicConfig, propose.providerAction and execute.providerAction. Inventory execution requires observe.providerPrivateIPs; provider action execution requires execute.providerAction. This list does not itself schedule execution.</td>
+</tr>
+<tr>
+<td><code>spec.context</code></td>
+<td>Allowlist controlling which configuration resources are passed on stdin. Default empty, so no configuration is passed.</td>
+</tr>
+<tr>
+<td><code>spec.context.resources</code></td>
+<td>List of allowed resource identities. Default empty; no wildcard expansion.</td>
+</tr>
+<tr>
+<td><code>spec.context.resources[].apiVersion</code></td>
+<td>API group and version of the referenced configuration resource; required in every entry.</td>
+</tr>
+<tr>
+<td><code>spec.context.resources[].kind</code></td>
+<td>Kind of the referenced configuration resource; required in every entry.</td>
+</tr>
+<tr>
+<td><code>spec.context.resources[].name</code></td>
+<td>metadata.name of the referenced configuration resource; required in every entry.</td>
+</tr>
+<tr>
+<td><code>spec.triggers</code></td>
+<td>Declared trigger list, default empty. The current runtime only validates/displays this list; see the resource rules.</td>
+</tr>
+<tr>
+<td><code>spec.triggers[].type</code></td>
+<td>Required trigger category: interval or event. There is no default.</td>
+</tr>
+<tr>
+<td><code>spec.triggers[].every</code></td>
+<td>Required for interval; positive Go duration. For event, this field has no scheduling effect. No default.</td>
+</tr>
+<tr>
+<td><code>spec.triggers[].topic</code></td>
+<td>Event-topic declaration; optional and empty by default. The validator does not require it even for event. It is not a resource name.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_plugin.go">pkg/config/validate_plugin.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/plugin/runner.go">pkg/plugin/runner.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/plugin/context.go">pkg/plugin/context.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/providerinventory/executor.go">pkg/providerinventory/executor.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/provideraction/executor.go">pkg/provideraction/executor.go</a></p>
+<h2 id="referenceable-status-fields">Referenceable status fields</h2>
+<p>The ordinary status-reference validator accepts these field names for this kind. This allowlist does not guarantee that every field is currently populated; inspect runtime status. These are outputs, not YAML spec fields.</p>
+<p>No fields are registered for this kind in the ordinary status-reference allowlist.</p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
+<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
+<li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/reference/resources/Plugin.md">GitHub</a></div></footer></body></html>

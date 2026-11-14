@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Telemetry · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/reference/resources/Telemetry.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/reference/resources/Telemetry.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/reference/resources/Telemetry.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/Telemetry.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/Telemetry.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="telemetry">Telemetry</h1>
+<p><a href="../resources.html#telemetry">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: observability.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Configures OpenTelemetry environment variables for rendered managed services. It does not define a LogSink or a separate collector process.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>Only one selected Telemetry or ObservabilityPipeline with a nonempty OTLP endpoint may supply the generated telemetry environment; multiple selected resources fail rendering. No resource-name reference is involved.</li>
+</ul>
+<h2 id="yaml-definition">YAML definition</h2>
+<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
+<pre><code class="language-yaml">- apiVersion: observability.routerd.net/v1alpha1
+  kind: Telemetry
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    attributes: # optional; object
+      &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # optional; string
+    otlp: # Required; object
+      endpoint: &quot;&lt;string&gt;&quot; # Required; string
+      insecure: true # optional; boolean
+    serviceNamespace: &quot;&lt;string&gt;&quot; # optional; string
+    signals: # optional; array
+      - &quot;logs&quot; # string; enum=[&quot;logs&quot;, &quot;metrics&quot;, &quot;traces&quot;]
+</code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.otlp</code></td>
+<td>Required OTLP connection object.</td>
+</tr>
+<tr>
+<td><code>spec.otlp.endpoint</code></td>
+<td>Required nonblank exporter endpoint; emitted as OTEL_EXPORTER_OTLP_ENDPOINT. No default. This validator checks nonblank content, not endpoint reachability.</td>
+</tr>
+<tr>
+<td><code>spec.otlp.insecure</code></td>
+<td>Default false. True emits OTEL_EXPORTER_OTLP_INSECURE=true; false does not emit that variable.</td>
+</tr>
+<tr>
+<td><code>spec.serviceNamespace</code></td>
+<td>OpenTelemetry service namespace, default routerd after trimming whitespace.</td>
+</tr>
+<tr>
+<td><code>spec.attributes</code></td>
+<td>Resource-attribute map, default empty. Sorted and serialized into OTEL_RESOURCE_ATTRIBUTES as comma-separated key=value entries; values are not escaped by this renderer.</td>
+</tr>
+<tr>
+<td><code>spec.signals</code></td>
+<td>logs, metrics and traces; default all three. A nonempty list disables omitted signals by emitting their exporter variable as none. It does not itself create a receiver.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_system.go">pkg/config/validate_system.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/telemetry.go">pkg/render/telemetry.go</a></p>
+<h2 id="referenceable-status-fields">Referenceable status fields</h2>
+<p>The ordinary status-reference validator accepts these field names for this kind. This allowlist does not guarantee that every field is currently populated; inspect runtime status. These are outputs, not YAML spec fields.</p>
+<p><code>phase</code>, <code>signals</code></p>
+<p><a href="/examples/telemetry-export.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
+<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
+<li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/reference/resources/Telemetry.md">GitHub</a></div></footer></body></html>

@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>EgressRoutePolicy · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/concepts/egress-route.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/concepts/egress-route.html" lang="en" hreflang="en">English</a><a href="/docs/ja/concepts/egress-route.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/concepts/egress-route.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/concepts/egress-route.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="egressroutepolicy">EgressRoutePolicy</h1>
+<p><code>EgressRoutePolicy</code> 选择对外通信所使用的路由，
+取代此前的 WAN 路由策略。
+不接受旧 Kind 名称。</p>
+<p>此策略观察候选资源与 HealthCheck，并将所选候选存储于 status。
+其他资源可引用该 status。</p>
+<p><code>spec.mode</code> 的不同会影响 status 的拥有者。省略 <code>mode</code> 时，
+egress-route 选择器仅输出含选择结果的 status，以及附有 <code>role: advisory</code> / <code>advisory: true</code>
+的 <code>routerd.lan.route.changed</code> 事件。此 status 是运行中控制器的输出，并非应用的模拟执行结果。
+<code>mode: priority</code>、<code>mark</code>、<code>hash</code> 时，policy 路由控制器成为
+实际应用的路由与 NAT mark 状态的拥有者。相依的控制器改为监听 <code>routerd.resource.status.changed</code>，而非旧式的 route-changed 事件。</p>
+<p><code>mode: priority</code> 同样使用 <code>selection: highest-weight-ready</code>。
+从准备就绪的候选中选出 weight 最高的那一个，<code>priority</code> 作为平局决胜与
+policy 路由规则的优先级。<code>priority</code> 不是选择策略的替代品。<code>weighted-ecmp</code> 是实现前的保留值，不会静默忽略，而是报告为 <code>UnsupportedSelection</code>。<code>enabled: false</code> 的候选不列入选择对象，也不拥有所生成的 policy 路由规则与路由表。</p>
+<pre><code class="language-yaml">apiVersion: net.routerd.net/v1alpha1
+kind: EgressRoutePolicy
+metadata:
+  name: ipv4-default
+spec:
+  family: ipv4
+  destinationCIDRs:
+    - 0.0.0.0/0
+  selection: highest-weight-ready
+  candidates:
+    - name: ds-lite
+      source: DSLiteTunnel/ds-lite
+      deviceFrom:
+        resource: DSLiteTunnel/ds-lite
+        field: interface
+      gatewaySource: none
+      weight: 80
+      healthCheck: internet-tcp443
+    - name: ix2215
+      source: Interface/ix2215
+      deviceFrom:
+        resource: Interface/ix2215
+        field: ifname
+      gatewaySource: static
+      gateway: 172.17.0.1
+      weight: 50
+</code></pre>
+<p><code>destinationCIDRs</code> 是策略的目的地范围。
+省略时，IPv4 默认使用 <code>0.0.0.0/0</code>。
+IPv6 默认使用 <code>::/0</code>。</p>
+<p><code>gatewaySource</code> 决定网关的选取方式。</p>
+<ul>
+<li><code>none</code>：用于 DS-Lite 等点对点设备。</li>
+<li><code>static</code>：在 <code>gateway</code> 中填写 next hop 地址。</li>
+<li><code>dhcpv4</code> 与 <code>dhcpv6</code>：用于来自 DHCP 客户端的网关。</li>
+</ul>
+<p>选择结果写入以下 status：</p>
+<ul>
+<li><code>status.selectedCandidate</code></li>
+<li><code>status.selectedDevice</code></li>
+<li><code>status.selectedGateway</code></li>
+<li><code>status.selectedWeight</code></li>
+<li><code>status.selectedTargets</code></li>
+<li><code>status.destinationCIDRs</code></li>
+</ul>
+<p>启动后，首先选择准备就绪的候选，不会无限期等待 weight 最高的路由。
+若之后 weight 较高的候选进入就绪状态，
+routerd 会发出 <code>routerd.lan.route.changed</code>，
+进而更新 <code>IPv4Route</code> 与 <code>NAT44Rule</code>。
+此时不会清除 conntrack。
+现有通信依内核持有的状态继续，
+新通信则使用新路由与新 NAT 方向。</p>
+<p><code>IPv4Route</code> 可引用这些 status：</p>
+<pre><code class="language-yaml">apiVersion: net.routerd.net/v1alpha1
+kind: IPv4Route
+metadata:
+  name: default-route
+spec:
+  destination: 0.0.0.0/0
+  deviceFrom:
+    resource: EgressRoutePolicy/ipv4-default
+    field: selectedDevice
+  gatewayFrom:
+    resource: EgressRoutePolicy/ipv4-default
+    field: selectedGateway
+</code></pre>
+<p>不应经由 DS-Lite（或任何隧道）的内部目的地，以一般路由方式表达。
+上游网关侧的私有子网指向 WAN 侧，内部的 <code>10.0.0.0/8</code> 或 <code>172.16.0.0/12</code> 使用专属路由，需要丢弃的范围使用 <code>type: blackhole</code>。</p>
+<pre><code class="language-yaml">apiVersion: net.routerd.net/v1alpha1
+kind: IPv4Route
+metadata:
+  name: private-10-blackhole
+spec:
+  type: blackhole
+  destination: 10.0.0.0/8
+</code></pre>
+<h2 id="healthcheck">HealthCheck</h2>
+<p><code>HealthCheck</code> 声明探测的意图。</p>
+<pre><code class="language-yaml">apiVersion: net.routerd.net/v1alpha1
+kind: HealthCheck
+metadata:
+  name: internet-tcp443
+spec:
+  target: 1.1.1.1
+  protocol: tcp
+  port: 443
+</code></pre>
+<p><code>HealthCheck</code> 被 <code>EgressRoutePolicy</code> 的候选或 target 引用时，
+routerd 自动从该路由 target 导出 health-check 守护进程、socket mark 及来源绑定。配置中只需描述探测的意图，各平台的 socket 机制则封闭在控制器与生成器内部。</p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#healthcheck">HealthCheck</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/concepts/egress-route.md">GitHub</a></div></footer></body></html>

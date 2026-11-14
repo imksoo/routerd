@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NAT44SessionSync · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/reference/resources/NAT44SessionSync.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/reference/resources/NAT44SessionSync.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/NAT44SessionSync.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/NAT44SessionSync.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/reference/resources/NAT44SessionSync.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="nat44sessionsync">NAT44SessionSync</h1>
+<p><a href="../resources.html#nat44sessionsync">各資源的設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>使用 SSH 事件串流或持續執行的 conntrackd FTFW 對等連結複製 Linux conntrack 狀態，不是 FreeBSD PF 狀態同步。</p>
+<h2 id="指定條件與參照關係">指定條件與參照關係</h2>
+<ul>
+<li>mode 預設 event-stream。兩種模式的 YAML 驗證都需要非空 snatAddresses 或 natRules。event-stream 另需 targets；conntrackd 需 conntrackd.interface/localAddress/peerAddress 且 when 必須空。</li>
+<li>event-stream 先協調快照，再消費 conntrack -E extended 事件，通常最多 5 秒或 512 操作一批，經 SSH 套用新增/刪除指令。支援 IPv4 TCP/UDP/ICMP；缺少狀態的 TCP 新增略過。不複製完整 TCP 視窗/序號追蹤，並非完整既有 TCP 容錯切換機制。</li>
+<li>conntrackd 模式兩端持續複製，停止舊 SSH 工作。snatAddresses/natRules/excludeNatRules 雖驗證，但不用於 conntrackd 篩選；產生器允許 TCP/UDP/ICMP，排除回環與 ignoreIPv4。targets/conntrackCommand/interval 不控制 conntrackd。</li>
+<li>Linux conntrackd 驗證另需明確、非 optional 的 Sysctl net.netfilter.nf_conntrack_tcp_be_liberal，value=1、有效 expectedValue=1 且 runtime 啟用。只有 SysctlProfile 不足。通訊/ignoreIPv4 使用純 IPv4；不自動探索對等節點或分發密鑰。</li>
+<li>請只使用一個 conntrackd 資源，產生的實例共用 /run/routerd/conntrackd.ctl 與鎖路徑。目前 routerd-vrrp-vmac 升主整合明確使用 /etc/conntrackd/routerd-dslite-sessions.conf，因此預期 metadata.name=dslite-sessions；任意名稱不會自動整合其快取。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: NAT44SessionSync
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    conntrackCommand: &quot;&lt;string&gt;&quot; # 選填; string
+    conntrackd: # 選填; object
+      ignoreIPv4: # 選填; array
+        - &quot;&lt;string&gt;&quot; # string
+      interface: &quot;&lt;string&gt;&quot; # 必填; string
+      localAddress: &quot;&lt;string&gt;&quot; # 必填; string
+      peerAddress: &quot;&lt;string&gt;&quot; # 必填; string
+      port: 1 # 選填; integer; minimum=1; maximum=65535
+    excludeNatRules: # 選填; array
+      - &quot;&lt;string&gt;&quot; # string
+    interval: &quot;&lt;string&gt;&quot; # 選填; string
+    mode: &quot;event-stream&quot; # 選填; string; enum=[&quot;event-stream&quot;, &quot;conntrackd&quot;]
+    natRules: # 選填; array
+      - &quot;&lt;string&gt;&quot; # string
+    snatAddresses: # 選填; array
+      - &quot;&lt;string&gt;&quot; # string
+    targets: # 選填; array
+      - # object
+        host: &quot;&lt;string&gt;&quot; # 必填; string
+        name: &quot;&lt;string&gt;&quot; # 選填; string
+        restoreCommand: # 選填; array
+          - &quot;&lt;string&gt;&quot; # string
+        sshOptions: # 選填; array
+          - &quot;&lt;string&gt;&quot; # string
+        user: &quot;&lt;string&gt;&quot; # 選填; string
+    when: # 選填; object
+      state: # 選填; object
+        &quot;&lt;key&gt;&quot;: # 選填; object
+          contains: &quot;&lt;string&gt;&quot; # 選填; string
+          equals: &quot;&lt;string&gt;&quot; # 選填; string
+          exists: true # 選填; boolean
+          for: &quot;&lt;string&gt;&quot; # 選填; string
+          in: # 選填; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # 選填; string
+          status: &quot;set&quot; # 選填; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<h2 id="欄位意義與預設值">欄位意義與預設值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>欄位意義與預設值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.mode</code></td>
+<td>event-stream（預設）或 conntrackd。前者透過 SSH 轉送選定組合；後者在 Linux systemd 執行原生 FTFW 複製。</td>
+</tr>
+<tr>
+<td><code>spec.interval</code></td>
+<td>不支援輪詢間隔。event-stream 拒絕非空值，conntrackd 接受但不使用。</td>
+</tr>
+<tr>
+<td><code>spec.conntrackCommand</code></td>
+<td>event-stream 執行檔名稱/路徑，預設 conntrack。視為單一執行檔，不是 shell 命令列；conntrackd 忽略。</td>
+</tr>
+<tr>
+<td><code>spec.snatAddresses</code></td>
+<td>選擇 event-stream 組合的純 IPv4 清單，預設空。與 natRules 解析位址合併、去重排序。此清單或 natRules 至少一項必填；conntrackd 不作複製篩選。</td>
+</tr>
+<tr>
+<td><code>spec.natRules</code></td>
+<td>選用 NAT44Rule/name 或單純規則名，只驗證格式不驗證存在。event-stream 先讀宣告 snatAddress，再讀 status.snatAddress；任一未排除規則未解析會使工作 Pending。不解析 translation.address/pool。</td>
+</tr>
+<tr>
+<td><code>spec.excludeNatRules</code></td>
+<td>選用 NAT44Rule/name 或單純名稱，在解析 natRules 時略過。預設空，不扣除明確 snatAddresses，也不篩選 conntrackd。</td>
+</tr>
+<tr>
+<td><code>spec.targets</code></td>
+<td>event-stream 必填非空清單，每個目標經 SSH 接收還原操作。conntrackd 不使用。</td>
+</tr>
+<tr>
+<td><code>spec.targets[].name</code></td>
+<td>選用描述/狀態名稱，預設空；實際目的由 host 決定。</td>
+</tr>
+<tr>
+<td><code>spec.targets[].host</code></td>
+<td>必填非空 SSH 主機或 SSH 別名。遠端使用者須有執行 conntrack 還原的權限，不自動佈建憑證。</td>
+</tr>
+<tr>
+<td><code>spec.targets[].user</code></td>
+<td>選用遠端 SSH 使用者，預設空交由 SSH 設定；非空產生 user@host。</td>
+</tr>
+<tr>
+<td><code>spec.targets[].sshOptions</code></td>
+<td>選用 SSH 引數清單，未明確覆寫時加入 BatchMode=yes 與 ConnectTimeout=10。每項為單一引數，不可含換行。命令操作另有實作的 2m 逾時。</td>
+</tr>
+<tr>
+<td><code>spec.targets[].restoreCommand</code></td>
+<td>選用遠端 conntrack 命令 argv，預設 [conntrack]。可用獨立引數提供權限包裝，如 [sudo, -n, conntrack]。不是定期完整狀態傳輸命令。</td>
+</tr>
+<tr>
+<td><code>spec.conntrackd</code></td>
+<td>conntrackd 模式必填物件，event-stream 不使用。兩個 HA 節點都須持續執行並允許複製連結。</td>
+</tr>
+<tr>
+<td><code>spec.conntrackd.interface</code></td>
+<td>必填複製介面。有設定邏輯別名時解析，否則視為核心名稱。此處無一般介面資源存在檢查；產生器拒絕空白。</td>
+</tr>
+<tr>
+<td><code>spec.conntrackd.localAddress</code></td>
+<td>必填純 IPv4 本機複製位址，須已設定於主機；不會指派位址。</td>
+</tr>
+<tr>
+<td><code>spec.conntrackd.peerAddress</code></td>
+<td>必填純 IPv4 遠端複製目的，不設定探索或多播成員。</td>
+</tr>
+<tr>
+<td><code>spec.conntrackd.port</code></td>
+<td>UDP 複製連接埠，省略/0 在產生時為 3780，正值 1–65535。Go 執行接受 0 作預設，但 JSON Schema 最小值為 1。</td>
+</tr>
+<tr>
+<td><code>spec.conntrackd.ignoreIPv4</code></td>
+<td>選用純 IPv4 排除清單，YAML 預設空。產生器固定加入 127.0.0.1 並排除 IPv6 ::1，IPv4 去重排序，產生時拒絕無效值。</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>event-stream 的選用共用啟用條件，預設無條件，可控制 SSH 工作。conntrackd 必須完全空白，讓待命端也持續複製。</td>
+</tr>
+</tbody>
+</table>
+<p>實作: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_firewall.go">pkg/config/validate_firewall.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/nat44sessionsync.go">pkg/controller/chain/nat44sessionsync.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/filesync.go">pkg/controller/chain/filesync.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/system.go">pkg/controller/chain/system.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go">pkg/controller/chain/chain.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/conntrackd.go">pkg/render/conntrackd.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd-vrrp-vmac/main.go">cmd/routerd-vrrp-vmac/main.go</a></p>
+<h2 id="可參照的狀態欄位">可參照的狀態欄位</h2>
+<p>一般狀態參照驗證接受此 Kind 的下列欄位名稱。列於允許清單不保證目前有值，請檢查實際狀態。這些是輸出，不是 YAML spec 設定。</p>
+<p><code>phase</code>, <code>mode</code>, <code>streamState</code>, <code>sessionCount</code>, <code>remoteSessionCount</code>, <code>targetCount</code>, <code>snatAddresses</code>, <code>targets</code>, <code>deleteOK</code>, <code>deleteMissing</code>, <code>deleteFailed</code>, <code>pruneOK</code>, <code>pruneMissing</code>, <code>pruneFailed</code>, <code>pruneCandidateCount</code>, <code>insertOK</code>, <code>insertExisting</code>, <code>insertFailed</code>, <code>queuedEventCount</code>, <code>lastBatchEvents</code>, <code>resyncCount</code>, <code>syncedAt</code>, <code>lastEventAt</code>, <code>lastBatchAt</code>, <code>lastResyncAt</code>, <code>dryRun</code></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#指定條件與參照關係">指定條件與參照關係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#欄位意義與預設值">欄位意義與預設值</a></li>
+<li><a href="#可參照的狀態欄位">可參照的狀態欄位</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/reference/resources/NAT44SessionSync.md">GitHub</a></div></footer></body></html>

@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ClusterNetworkRoute · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/reference/resources/ClusterNetworkRoute.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/reference/resources/ClusterNetworkRoute.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/ClusterNetworkRoute.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/ClusterNetworkRoute.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/ClusterNetworkRoute.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="clusternetworkroute">ClusterNetworkRoute</h1>
+<p><a href="../resources.html#clusternetworkroute">各资源的配置</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>通过明确指定的下一跳，配置前往 Kubernetes Pod 与 Service 网络的 IPv4 路由。不会自动发现集群 CIDR 或节点。</p>
+<h2 id="指定条件与引用关系">指定条件与引用关系</h2>
+<ul>
+<li>pods 与 services 合计至少需要一个 CIDR，via 至少需要一个条目。仅接受 IPv4，两个列表之间也不允许重复或重叠的网段。</li>
+<li>每个 CIDR 与 via 的组合会生成名为 <name>-pods-NN-via-NN 或 <name>-services-NN-via-NN 的 IPv4StaticRoute，编号从 1 开始。若已明确声明相同 apiVersion、kind、name 的资源，则优先使用该资源并跳过生成。</li>
+<li>weight 转换为路由 metric，并非 ECMP 流量分配权重：省略或 0 为 100；1–999 为 1000 − weight。正值越大，metric 越低；0 与 900 的 metric 相同。</li>
+<li>生成的路由也受 IPv4StaticRoute 实现限制：FreeBSD 会输出，但目前 Linux 流程不安装生成的静态路由。展开与验证成功并不证明能正常转发。</li>
+</ul>
+<h2 id="yaml定义">YAML定义</h2>
+<p>此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: ClusterNetworkRoute
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    pods: # 选填; object
+      cidrs: # 选填; array
+        - &quot;&lt;string&gt;&quot; # string
+    services: # 选填; object
+      cidrs: # 选填; array
+        - &quot;&lt;string&gt;&quot; # string
+    via: # 必填; array
+      - # object
+        interface: &quot;&lt;string&gt;&quot; # 必填; string
+        nextHop: &quot;&lt;string&gt;&quot; # 必填; string
+        weight: 0 # 选填; integer; minimum=0; maximum=999
+    when: # 选填; object
+      state: # 选填; object
+        &quot;&lt;key&gt;&quot;: # 选填; object
+          contains: &quot;&lt;string&gt;&quot; # 选填; string
+          equals: &quot;&lt;string&gt;&quot; # 选填; string
+          exists: true # 选填; boolean
+          for: &quot;&lt;string&gt;&quot; # 选填; string
+          in: # 选填; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # 选填; string
+          status: &quot;set&quot; # 选填; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<h2 id="字段含义与默认值">字段含义与默认值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>字段含义与默认值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.pods</code></td>
+<td>可选的 Pod 网络 CIDR 组；不会自动补入 CIDR。</td>
+</tr>
+<tr>
+<td><code>spec.pods.cidrs</code></td>
+<td>Pod 网络的 IPv4 前缀。默认为空；services.cidrs 为空时必填。组内及组间均不可重复或重叠。</td>
+</tr>
+<tr>
+<td><code>spec.services</code></td>
+<td>可选的 Service 网络 CIDR 组；不会自动补入 CIDR。</td>
+</tr>
+<tr>
+<td><code>spec.services.cidrs</code></td>
+<td>Service 网络的 IPv4 前缀。默认为空；pods.cidrs 为空时必填。两个组均适用相同的重复与重叠限制。</td>
+</tr>
+<tr>
+<td><code>spec.via</code></td>
+<td>必填且不可为空的下一跳列表。每个条目均应用于所有 CIDR。相同 interface 与 nextHop 组合即使 weight 不同也会被拒绝。</td>
+</tr>
+<tr>
+<td><code>spec.via[].interface</code></td>
+<td>必填，为同一 Router 中声明的逻辑接口名称。必须能在配置的接口索引中解析，并非状态值来源。</td>
+</tr>
+<tr>
+<td><code>spec.via[].nextHop</code></td>
+<td>必填，为不含 CIDR 的 IPv4 下一跳地址，不接受资源引用。没有默认值或自动发现。</td>
+</tr>
+<tr>
+<td><code>spec.via[].weight</code></td>
+<td>可选整数 0–999，默认为 0。按上述规则转换为 metric，不是流量比例。</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>可选的通用状态条件；省略表示无条件。state/all/any 的语义与模式限制请见通用字段。先筛选条件，再展开生成的路由。</td>
+</tr>
+</tbody>
+</table>
+<p>实现: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/cluster_routes.go">pkg/api/cluster_routes.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/cluster_secret_validate.go">pkg/config/cluster_secret_validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/resourcequery/when.go">pkg/resourcequery/when.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/networkd.go">pkg/render/networkd.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/freebsd.go">pkg/render/freebsd.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/ipv4_main_routes.go">pkg/controller/chain/ipv4_main_routes.go</a></p>
+<h2 id="可引用的状态字段">可引用的状态字段</h2>
+<p>常规状态引用验证接受此 Kind 的下列字段名称。列于允许列表不保证目前有值，请检查实际状态。这些是输出，不是 YAML spec 配置。</p>
+<p><code>phase</code>, <code>pods</code>, <code>services</code></p>
+<p><a href="/examples/k8s-cluster-routes.yaml">配置示例</a></p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件与引用关系">指定条件与引用关系</a></li>
+<li><a href="#yaml定义">YAML定义</a></li>
+<li><a href="#字段含义与默认值">字段含义与默认值</a></li>
+<li><a href="#可引用的状态字段">可引用的状态字段</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/reference/resources/ClusterNetworkRoute.md">GitHub</a></div></footer></body></html>

@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BFD · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/reference/resources/BFD.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/reference/resources/BFD.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/BFD.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/BFD.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/reference/resources/BFD.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="bfd">BFD</h1>
+<p><a href="../resources.html#bfd">各資源的設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>透過 vtysh 設定及觀察 FRR bfdd 工作階段，供 BGPPeer 故障處理使用。與 GoBGP 為不同後端，BFD Down 可觸發 BGP 對等端重設。</p>
+<h2 id="指定條件與參照關係">指定條件與參照關係</h2>
+<ul>
+<li>每個已宣告 BFD 至少須由一個 BGPPeer.bfd 參照，BFD peer 必須符合該 BGPPeer 名稱或其對等端位址。BGPDynamicPeer 沒有 bfd 欄位。</li>
+<li>支援 Linux/FreeBSD，需有 FRR bfdd/vtysh。無介面時為多跳，使用參照 BGPRouter.routerID 作為本機位址；直接 IP 對等端且無介面時要求恰有一個 BGPRouter。指定介面則為單跳。</li>
+<li>BFD 僅偵測自身工作階段故障，Up 不代表所有路由目的地可達。GoBGP 在先前 BFD Up 或 BGP 已建立後觀察到 Down 才處理，不將所有未知或啟動狀態視為 Down。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: BFD
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    detectMultiplier: 1 # 選填; integer; minimum=1; maximum=50
+    interface: &quot;&lt;string&gt;&quot; # 選填; string
+    minRx: &quot;&lt;string&gt;&quot; # 選填; string
+    minTx: &quot;&lt;string&gt;&quot; # 選填; string
+    peer: &quot;&lt;string&gt;&quot; # 必填; string
+    profile: &quot;&quot; # 選填; string; enum=[&quot;&quot;, &quot;fast&quot;, &quot;normal&quot;, &quot;slow&quot;]
+    when: # 選填; object
+      state: # 選填; object
+        &quot;&lt;key&gt;&quot;: # 選填; object
+          contains: &quot;&lt;string&gt;&quot; # 選填; string
+          equals: &quot;&lt;string&gt;&quot; # 選填; string
+          exists: true # 選填; boolean
+          for: &quot;&lt;string&gt;&quot; # 選填; string
+          in: # 選填; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # 選填; string
+          status: &quot;set&quot; # 選填; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<h2 id="欄位意義與預設值">欄位意義與預設值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>欄位意義與預設值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.peer</code></td>
+<td>必填純 IP 位址或 BGPPeer/name 參照。BGPPeer 參照展開為其所有對等端位址，並從 routerRef 的 routerID 取得本機位址。直接對等端不接受主機名稱。</td>
+</tr>
+<tr>
+<td><code>spec.interface</code></td>
+<td>選用單跳介面。建議 Interface/name，控制器會解析宣告的 Interface.ifname；單獨名稱雖驗證為邏輯介面，卻會原樣傳給 FRR。省略使用多跳。</td>
+</tr>
+<tr>
+<td><code>spec.profile</code></td>
+<td>fast 或省略：minRx=minTx=300ms、倍數 3；normal：500ms/500ms/3；slow：1000ms/1000ms/5。明確個別設定優先。</td>
+</tr>
+<tr>
+<td><code>spec.minRx</code></td>
+<td>選用 Go duration 50ms–60000ms，覆寫設定的接收間隔並轉為整數毫秒。省略使用 profile。這是 BFD 協定計時器，不是路由器重新啟動期限。</td>
+</tr>
+<tr>
+<td><code>spec.minTx</code></td>
+<td>選用 Go duration 50ms–60000ms，覆寫 profile 傳送間隔，輸出為整數毫秒。</td>
+</tr>
+<tr>
+<td><code>spec.detectMultiplier</code></td>
+<td>選用整數 1–50；解碼為 0 或省略時使用 profile 預設值（3，slow 為 5）。為協商偵測間隔倍數，不是 routerd 調整嘗試次數。</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>選用的共用啟用條件，省略表示無條件。state/all/any、參照驗證與結構描述限制請見共用欄位。</td>
+</tr>
+</tbody>
+</table>
+<p>實作: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/bgp_validate.go">pkg/config/bgp_validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/bfd/controller.go">pkg/controller/bfd/controller.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/bgp/controller.go">pkg/controller/bgp/controller.go</a></p>
+<h2 id="可參照的狀態欄位">可參照的狀態欄位</h2>
+<p>一般狀態參照驗證接受此 Kind 的下列欄位名稱。列於允許清單不保證目前有值，請檢查實際狀態。這些是輸出，不是 YAML spec 設定。</p>
+<p><code>phase</code>, <code>peer</code></p>
+<p><a href="/examples/bgp-bfd.yaml">設定範例</a></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#指定條件與參照關係">指定條件與參照關係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#欄位意義與預設值">欄位意義與預設值</a></li>
+<li><a href="#可參照的狀態欄位">可參照的狀態欄位</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/reference/resources/BFD.md">GitHub</a></div></footer></body></html>

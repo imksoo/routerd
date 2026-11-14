@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Multi-WAN IPv4 容錯切換 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/config-examples/multi-wan-failover.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/config-examples/multi-wan-failover.html" lang="en" hreflang="en">English</a><a href="/docs/ja/config-examples/multi-wan-failover.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/config-examples/multi-wan-failover.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/config-examples/multi-wan-failover.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="multi-wan-ipv4-容錯切換">Multi-WAN IPv4 容錯切換</h1>
+<p>此範例從兩個 DS-Lite tunnel 與 direct upstream-router IPv4 fallback 選出目前使用的
+IPv4 default route。完整 YAML 在 <code>examples/multi-wan-home.yaml</code>。<strong>此 YAML 不包含 PPPoE。</strong></p>
+<h2 id="架構">架構</h2>
+<pre><code class="language-mermaid">flowchart LR
+  internet((Internet))
+  wan[&quot;[1] wan access line&quot;]
+  router[&quot;[2] routerd host&quot;]
+  dsa[&quot;[3] DS-Lite A&quot;]
+  dsb[&quot;[4] DS-Lite B&quot;]
+  hgw[&quot;[5] HGW direct IPv4&quot;]
+  lan[&quot;[6] LAN clients&quot;]
+
+  internet --- dsa --- router
+  internet --- dsb --- router
+  internet --- hgw --- router
+  wan --- router --- lan
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>編號</th>
+<th>角色</th>
+<th>實際資源</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>[1]</td>
+<td>所有 WAN 候選共用的實體線路</td>
+<td><code>Interface/wan</code>、<code>DHCPv4Client/wan-dhcpv4</code></td>
+</tr>
+<tr>
+<td>[2]</td>
+<td>選擇 default route</td>
+<td><code>EgressRoutePolicy/ipv4-default</code></td>
+</tr>
+<tr>
+<td>[3]</td>
+<td>第一個 DS-Lite 候選</td>
+<td><code>DSLiteTunnel/ds-lite-a</code>、<code>HealthCheck/internet-a</code></td>
+</tr>
+<tr>
+<td>[4]</td>
+<td>第二個 DS-Lite 候選</td>
+<td><code>DSLiteTunnel/ds-lite-b</code>、<code>HealthCheck/internet-b</code></td>
+</tr>
+<tr>
+<td>[5]</td>
+<td>上游路由器直連的最後 IPv4 fallback</td>
+<td><code>DHCPv4Client/wan-dhcpv4</code></td>
+</tr>
+<tr>
+<td>[6]</td>
+<td>經由 NAT 使用選定出口的 LAN</td>
+<td><code>NAT44Rule/lan-to-selected-wan</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="選擇方式">選擇方式</h2>
+<p>選擇 <code>weight</code>（優先順序數字）較大且 health check 成功的候選。YAML 的實際形狀如下：</p>
+<pre><code class="language-yaml">- kind: EgressRoutePolicy
+  metadata:
+    name: ipv4-default
+  spec:
+    family: ipv4
+    destinationCIDRs: [0.0.0.0/0]
+    selection: highest-weight-ready
+    candidates:
+      - name: ds-lite-a
+        deviceFrom:
+          resource: DSLiteTunnel/ds-lite-a
+          field: device
+        gatewaySource: none
+        weight: 100
+        healthCheck: internet-a
+      - name: ds-lite-b
+        deviceFrom:
+          resource: DSLiteTunnel/ds-lite-b
+          field: device
+        gatewaySource: none
+        weight: 80
+        healthCheck: internet-b
+      - name: hgw-direct
+        deviceFrom:
+          resource: Interface/wan
+          field: ifname
+        gatewaySource: dhcpv4
+        gatewayFrom:
+          resource: DHCPv4Client/wan-dhcpv4
+          field: gateway
+        weight: 40
+</code></pre>
+<p>此範例未設定 <code>hysteresis</code>。只有觀察到實際線路頻繁切換且確有必要時，才依目前 API
+說明考慮加入它。</p>
+<h2 id="daemon-啟動前檢查">daemon 啟動前檢查</h2>
+<pre><code class="language-sh">LAB_DIR=&quot;$(mktemp -d)&quot;
+sudo routerd validate --config examples/multi-wan-home.yaml
+sudo routerd apply --config examples/multi-wan-home.yaml --once --dry-run \
+  --state-file &quot;$LAB_DIR/state.db&quot; \
+  --status-file &quot;$LAB_DIR/status.json&quot;
+rm -rf &quot;$LAB_DIR&quot;
+</code></pre>
+<p>在 dry-run 中確認 <code>ens18</code>、LAN <code>172.18.0.0/16</code> 與 DS-Lite 候選名稱符合你的實驗環境。
+若與平常的管理網路重疊，不要執行 live 操作。</p>
+<h2 id="服務啟動後檢查">服務啟動後檢查</h2>
+<p>首次安裝請以可使用 <code>sudo</code> 的使用者執行下列指令。若管理員透過 <code>routerd</code> 群組授予本機 socket 存取權，加入後必須重新登入才會生效；主機路由檢查仍應保留 <code>sudo</code>。</p>
+<pre><code class="language-sh">sudo routerctl describe EgressRoutePolicy/ipv4-default
+sudo ip route show default
+</code></pre>
+<p>本例不宣告 <code>IPv4Route/default</code>。<code>EgressRoutePolicy</code> controller 會導出選定的 default
+route，因此查看 policy 的 status 與 OS 路由表。</p>
+<h2 id="操作注意事項">操作注意事項</h2>
+<ul>
+<li>health check 間隔過短可能使品質較弱的線路反覆切換。</li>
+<li>除非有明確意圖，否則將 RFC1918 目的地排除在 NAT 與路由策略外。</li>
+<li>第一次請保留主控台或獨立管理 NIC。</li>
+</ul></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#架構">架構</a></li>
+<li><a href="#選擇方式">選擇方式</a></li>
+<li><a href="#daemon-啟動前檢查">daemon 啟動前檢查</a></li>
+<li><a href="#服務啟動後檢查">服務啟動後檢查</a></li>
+<li><a href="#操作注意事項">操作注意事項</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/config-examples/multi-wan-failover.md">GitHub</a></div></footer></body></html>

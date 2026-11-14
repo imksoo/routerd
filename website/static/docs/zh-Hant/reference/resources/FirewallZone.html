@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FirewallZone · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/reference/resources/FirewallZone.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/reference/resources/FirewallZone.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/FirewallZone.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/FirewallZone.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/reference/resources/FirewallZone.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="firewallzone">FirewallZone</h1>
+<p><a href="../resources.html#firewallzone">各資源的設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: firewall.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>將已設定介面歸入具名信任角色，用於產生防火牆規則。不建立 OS 介面或獨立路由、橋接網域。</p>
+<h2 id="指定條件與參照關係">指定條件與參照關係</h2>
+<ul>
+<li>role 與至少一個介面必填，同一區域內重複的介面字串會被拒絕。FirewallRule 使用區域 metadata.name；self 是路由器本機的特殊端點，不是一般介面區域。</li>
+<li>隱含規則允許 mgmt 前往所有角色與 self，trust 前往 self 及 mgmt 以外的角色。untrust 原則拒絕，但目前共用規則允許相同角色間轉送。既有連線、相關流量與控制協定例外另行評估。OS 順序限制請見 FirewallPolicy/FirewallRule。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。</p>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallZone
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    interfaces: # 必填; array
+      - &quot;&lt;string&gt;&quot; # string
+    role: &quot;untrust&quot; # 必填; string; enum=[&quot;untrust&quot;, &quot;trust&quot;, &quot;mgmt&quot;]
+</code></pre>
+<h2 id="欄位意義與預設值">欄位意義與預設值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>欄位意義與預設值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.role</code></td>
+<td>必填 untrust、trust 或 mgmt，無預設值。選擇隱含防火牆行為，不是介面所有權或驗證設定。</td>
+</tr>
+<tr>
+<td><code>spec.interfaces</code></td>
+<td>必填且非空的邏輯介面參照。單純名稱預設為 Interface；接受 Interface/name、PPPoESession/name、WireGuardInterface/name、DSLiteTunnel/name。必須可在設定介面/通道索引中解析，且產生規則時有非空核心介面名稱。</td>
+</tr>
+</tbody>
+</table>
+<p>實作: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_firewall.go">pkg/config/validate_firewall.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/nftables.go">pkg/render/nftables.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/pf.go">pkg/render/pf.go</a></p>
+<h2 id="可參照的狀態欄位">可參照的狀態欄位</h2>
+<p>一般狀態參照驗證接受此 Kind 的下列欄位名稱。列於允許清單不保證目前有值，請檢查實際狀態。這些是輸出，不是 YAML spec 設定。</p>
+<p><code>phase</code>, <code>interfaces</code></p>
+<p><a href="/examples/example-basic-ipv4-nat.yaml">設定範例</a></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#指定條件與參照關係">指定條件與參照關係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#欄位意義與預設值">欄位意義與預設值</a></li>
+<li><a href="#可參照的狀態欄位">可參照的狀態欄位</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/reference/resources/FirewallZone.md">GitHub</a></div></footer></body></html>

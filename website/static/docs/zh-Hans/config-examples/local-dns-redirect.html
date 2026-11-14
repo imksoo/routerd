@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>转发至本机服务 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/config-examples/local-dns-redirect.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/config-examples/local-dns-redirect.html" lang="en" hreflang="en">English</a><a href="/docs/ja/config-examples/local-dns-redirect.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/config-examples/local-dns-redirect.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/config-examples/local-dns-redirect.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="转发至本机服务">转发至本机服务</h1>
+<p>LocalServiceRedirect将匹配的客户端传入流量转发到本机端口，不会启动监听服务。请另行配置DNSResolver等服务；destinationSetRef引用IPAddressSet。这不是通用HTTP/HTTPS代理。</p>
+<p><a href="/examples/example-local-dns-redirect.yaml">YAML</a></p>
+<p><a href="../reference/resources.html">各资源字段与YAML</a></p>
+<p>使用前修改接口名、地址与对端配置。先在本地验证，再在目标路由器检查计划。--replace只用于完整配置。应用可能影响管理连接，请保留控制台。</p>
+<pre><code class="language-sh">routerd validate --config example-local-dns-redirect.yaml
+</code></pre></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul></ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/config-examples/local-dns-redirect.md">GitHub</a></div></footer></body></html>

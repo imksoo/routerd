@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>动态配置 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/reference/dynamic-config.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/reference/dynamic-config.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/dynamic-config.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/dynamic-config.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/dynamic-config.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="动态配置">动态配置</h1>
+<p>启动 YAML 仍由用户管理。经验证的运行时数据可临时加入资源，过期后于下次合并排除。请通过资源状态区分声明配置与 DHCP/PD/BGP 获取的状态。</p>
+<p>目前 DynamicConfigSource 仅验证声明，没有运行时使用流程。声明它不会调度 Plugin，也不会以 ttl 设置 PluginResult.status.ttl。EventSubscription 可调用本机 Plugin；手动调用使用 routerctl plugin run。</p>
+<p>Plugin 在结果中返回 TTL。仅策略允许的完全匹配 mask 会在有效期间抑制启动资源，不改写 YAML。提供商操作提案受独立 ProviderActionPolicy 控制，不会只因合并运行时数据而应用。</p>
+<p>应用变更前，先检查有效配置：</p>
+<pre><code class="language-sh">routerctl dynamic list
+routerctl dynamic describe &lt;source-or-part&gt;
+routerctl dynamic render
+routerctl dynamic diff
+routerctl plugin list
+</code></pre>
+<p>各字段的含义与实现限制请见资源说明：</p>
+<ul>
+<li><a href="resources/Plugin.html">Plugin</a></li>
+<li><a href="resources/DynamicConfigSource.html">DynamicConfigSource</a></li>
+<li><a href="resources/DynamicOverridePolicy.html">DynamicOverridePolicy</a></li>
+<li><a href="resources/EventSubscription.html">EventSubscription</a></li>
+<li><a href="resources/ProviderActionPolicy.html">ProviderActionPolicy</a></li>
+</ul></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul></ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/reference/dynamic-config.md">GitHub</a></div></footer></body></html>

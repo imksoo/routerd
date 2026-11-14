@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FirewallEventLog · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/reference/resources/FirewallEventLog.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/reference/resources/FirewallEventLog.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/reference/resources/FirewallEventLog.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/FirewallEventLog.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/FirewallEventLog.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="firewalleventlog">FirewallEventLog</h1>
+<p><a href="../resources.html#firewalleventlog">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: firewall.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Enable the firewall packet-log collector and configure its database, Linux NFLOG group and renderer logging options. Several accepted filter/archive fields currently have no runtime consumer.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>enabled defaults false. On Linux the collector uses NFLOG; FreeBSD uses pflog0. This does not turn every accept/deny rule into a logged rule: FirewallRule.log and FirewallPolicy.logDeny also determine which packets are logged.</li>
+<li>Use one enabled resource: renderer options come from the first enabled resource, while service generation uses a shared routerd-firewall-logger service name. Multiple independent collector instances are not provided by multiple resource names.</li>
+<li>fromZones/toZones must reference existing FirewallZone names or self; rules accepts FirewallRule/name or a bare rule name; sinks accepts LogSink/name or a bare sink name; retention accepts LogRetention/name or a bare retention name. These references are validated even though these fields currently do not filter, export or select retention at runtime.</li>
+</ul>
+<h2 id="yaml-definition">YAML definition</h2>
+<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallEventLog
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    enabled: true # optional; boolean
+    events: # optional; array
+      - &quot;deny&quot; # string; enum=[&quot;deny&quot;, &quot;allow&quot;, &quot;rateLimit&quot;, &quot;connLimit&quot;]
+    fromZones: # optional; array
+      - &quot;&lt;string&gt;&quot; # string
+    log: # optional; object
+      acceptSampleRate: 0 # optional; integer; minimum=0
+      copyRange: 0 # optional; integer; minimum=0
+      dropSampleRate: 0 # optional; integer; minimum=0
+      reject: true # optional; boolean
+    nflogGroup: 0 # optional; integer; minimum=0; maximum=65535
+    path: &quot;&lt;string&gt;&quot; # optional; string
+    retention: &quot;&lt;string&gt;&quot; # optional; string
+    rules: # optional; array
+      - &quot;&lt;string&gt;&quot; # string
+    sampleRate: 0 # optional; integer; minimum=0
+    sinks: # optional; array
+      - &quot;&lt;string&gt;&quot; # string
+    toZones: # optional; array
+      - &quot;&lt;string&gt;&quot; # string
+</code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.enabled</code></td>
+<td>Default false; true requests the collector service and enables grouped logging options. Also requests the DPI classifier helper in the current service renderer.</td>
+</tr>
+<tr>
+<td><code>spec.path</code></td>
+<td>Optional SQLite database path. Default /var/lib/routerd/firewall-logs.db on Linux and /var/db/routerd/firewall-logs.db on FreeBSD. This is a database, not a JSON-lines output file.</td>
+</tr>
+<tr>
+<td><code>spec.events</code></td>
+<td>Accepted values deny, allow, rateLimit, connLimit; default empty. Currently validated but not used to filter collector input or generated firewall logging.</td>
+</tr>
+<tr>
+<td><code>spec.fromZones</code></td>
+<td>Default empty. Source-zone references validated against FirewallZone names or self, but not used as a logging filter at runtime.</td>
+</tr>
+<tr>
+<td><code>spec.fromZones[]</code></td>
+<td>Existing FirewallZone metadata.name or the special self zone; not Kind/name. No runtime filtering effect currently.</td>
+</tr>
+<tr>
+<td><code>spec.toZones</code></td>
+<td>Default empty. Destination-zone references validated against FirewallZone names or self, but not used as a logging filter at runtime.</td>
+</tr>
+<tr>
+<td><code>spec.rules</code></td>
+<td>Default empty. Existing FirewallRule references (bare name or FirewallRule/name) are required when supplied; currently not used to select logged rules. Set FirewallRule.log on the actual rule.</td>
+</tr>
+<tr>
+<td><code>spec.sampleRate</code></td>
+<td>Nonnegative integer, default 0; accepted but unused by the collector and renderer. Use log.acceptSampleRate/log.dropSampleRate for the supported renderer controls.</td>
+</tr>
+<tr>
+<td><code>spec.sinks</code></td>
+<td>Default empty. Existing LogSink references are validated but the collector does not export to them; its output is the path database.</td>
+</tr>
+<tr>
+<td><code>spec.retention</code></td>
+<td>Optional existing LogRetention reference, default empty; currently not read to select a retention policy. Configure LogRetention with the firewallEvents signal to perform retention on this database.</td>
+</tr>
+<tr>
+<td><code>spec.nflogGroup</code></td>
+<td>Integer 0–65535; omitted or 0 selects group 1 on Linux for both nftables logging and the collector. FreeBSD uses pflog0 and ignores this group.</td>
+</tr>
+<tr>
+<td><code>spec.log</code></td>
+<td>Optional renderer logging options; omitted fields decode to zero/false. These options do not implement the unused top-level event/zone/rule filters.</td>
+</tr>
+<tr>
+<td><code>spec.log.acceptSampleRate</code></td>
+<td>Default 0 disables extra implicit-accept logging. On nftables, positive N logs approximately 1/N of eligible packets (1 logs all). PF uses a positive value only as an enable switch, not a 1/N sampler. Explicit FirewallRule.log is separate.</td>
+</tr>
+<tr>
+<td><code>spec.log.dropSampleRate</code></td>
+<td>Default 0; nftables rates 0/1 log all already-enabled implicit deny logs, positive N&gt;1 samples approximately 1/N. This does not itself enable FirewallPolicy.logDeny. PF does not use this sampling value.</td>
+</tr>
+<tr>
+<td><code>spec.log.copyRange</code></td>
+<td>Nonnegative NFLOG snaplen in bytes; default 0 omits the nftables snaplen argument. Positive values cap copied packet bytes. Not applied by the PF renderer.</td>
+</tr>
+<tr>
+<td><code>spec.log.reject</code></td>
+<td>Default false; decoded but not read by the current renderer or collector. It does not change a rule verdict or turn on reject logging.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_firewall.go">pkg/config/validate_firewall.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/nftables.go">pkg/render/nftables.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/pf.go">pkg/render/pf.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/firewall_logger.go">pkg/render/firewall_logger.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/freebsd_rcd.go">pkg/render/freebsd_rcd.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/dpi_systemd.go">pkg/render/dpi_systemd.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/system.go">pkg/controller/chain/system.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/logretention.go">pkg/controller/chain/logretention.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/platform/platform.go">pkg/platform/platform.go</a></p>
+<h2 id="referenceable-status-fields">Referenceable status fields</h2>
+<p>The ordinary status-reference validator accepts these field names for this kind. This allowlist does not guarantee that every field is currently populated; inspect runtime status. These are outputs, not YAML spec fields.</p>
+<p><code>phase</code>, <code>path</code>, <code>sinks</code></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
+<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
+<li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/reference/resources/FirewallEventLog.md">GitHub</a></div></footer></body></html>

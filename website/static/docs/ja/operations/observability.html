@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>観測パイプライン · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/operations/observability.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/operations/observability.html" lang="en" hreflang="en">English</a><a href="/docs/ja/operations/observability.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/operations/observability.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/operations/observability.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="観測パイプライン">観測パイプライン</h1>
+<p><code>Telemetry</code> は、routerd 自身のメトリクス・トレース・ログを OTLP へ出すための小さなリソースです。<code>LogSink</code> は、運用イベントや観測ログの転送経路を表します。OTLP の <code>LogSink</code> は、コレクターのエンドポイントを重複して書かず、<code>Telemetry</code> リソースを参照します。routerd のイベントログを Loki などパイプライン型のリモート sink に送りたい場合は、<code>ObservabilityPipeline</code> を使います。</p>
+<p><code>ObservabilityPipeline</code> は、同梱の <code>otelcol</code> プロセスではなく、routerd 内蔵のパイプラインです。OTLP のログ・メトリクス・トレースは通常の OpenTelemetry SDK を使い、設定したログ sink には軽量なイベントエクスポーターが送信します。</p>
+<p>現在のログ sink は次のとおりです。</p>
+<ul>
+<li><code>stdout</code>: JSON 形式のイベント行。サービスマネージャー配下で管理されるログ出力に適しています。</li>
+<li><code>syslog</code>: 既存の <code>LogSink</code> と同じ syslog 形式。ローカルまたはリモートの syslog を使います。</li>
+<li><code>loki</code>: <code>/loki/api/v1/push</code> への HTTP push。</li>
+</ul>
+<p><code>kafka</code> は、意図する外部パイプラインを設定に残すためのメタデータとして受け付けます。routerd はまだ Kafka へ直接 publish しません。</p>
+<p>設定例:</p>
+<pre><code class="language-yaml">apiVersion: system.routerd.net/v1alpha1
+kind: ObservabilityPipeline
+metadata:
+  name: remote-observability
+spec:
+  otlp:
+    endpoint: http://otel-collector.lan:4317
+    insecure: true
+    headers:
+      authorization: Bearer example-token
+  serviceNamespace: routerd
+  attributes:
+    site: edge
+  signals: [logs, metrics, traces]
+  sampling:
+    rate: 1
+  logs:
+    sinks:
+      - name: loki
+        type: loki
+        minLevel: info
+        loki:
+          url: http://loki.lan:3100/loki/api/v1/push
+          tenant: routerd
+</code></pre>
+<p>OTLP のフィールドは、routerd が管理するユニットの標準的な OpenTelemetry 環境変数に展開されます。ログ sink のエクスポーターはプロセス内バスの <code>routerd.**</code> イベントを購読するため、<code>journalctl</code> を scrape せずに、コントローラーの状態変化やデーモンのイベントを転送できます。</p>
+<p>サンプリングはパイプラインごとに決定的で、sink への分配の前に適用されます。運用イベントログでは <code>1</code>（全件）のままにしてください。高頻度のソースを意図的にダウンサンプリングする場合にのみ変更します。</p>
+<p>完全な例は <code>examples/observability-loki.yaml</code> にあります。</p>
+<h2 id="イベント配送と復旧の契約">イベント配送と復旧の契約</h2>
+<p>プロセス内バスの購読キューには上限があり、満杯になると通知を破棄します。SQLite に保存済みのイベントは削除しません。エクスポーターと EventRule エンジンはバス通知を履歴の再読込にだけ使い、通知がなくても既定で1秒ごとに再読込します。再読込失敗後の再試行間隔は1秒から1分まで増加します。これらの周期には処理時間、DB 障害、プロセス停止による遅延を含めません。</p>
+<table>
+<thead>
+<tr>
+<th>consumer</th>
+<th>正本となる入力</th>
+<th>復旧方法と限界</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>route などの再評価通知 consumer</td>
+<td>現在の設定、dynamic part、object status</td>
+<td>通知または周期 reconcile で最新入力を再読込します。IPv4 route controller の通常周期の上限は30秒です。古い通知や重複通知の payload で desired state を上書きしません。他の controller にはそれぞれの周期があります。</td>
+</tr>
+<tr>
+<td>DerivedEvent</td>
+<td>参照先の現在の status</td>
+<td>既定で5秒ごとに再評価します。途中の過去の遷移は復元できません。</td>
+</tr>
+<tr>
+<td>EventRule</td>
+<td>commit 済みのイベント履歴</td>
+<td>count、sequence、window には履歴が必要です。新規 consumer は現在の cursor から開始し、それ以前の全履歴を再生しません。相関状態はプロセス内に保持します。</td>
+</tr>
+<tr>
+<td>ObservabilityPipeline</td>
+<td>commit 済みのイベント履歴</td>
+<td>保存済みイベントを再試行します。sampling と sink の severity filter は引き続き適用します。全 status 更新試行を欠落なく残す監査ログではありません。</td>
+</tr>
+<tr>
+<td>provider action executor</td>
+<td>ActionExecution 履歴と安定した冪等キー</td>
+<td>成功を永続記録済みの操作は再試行・再起動後も再実行しません。外部成功後、ローカル結果記録前の障害には executor 側の冪等性または provider 状態の観測が必要です。</td>
+</tr>
+</tbody>
+</table>
+<p>設定された EventRule の pattern が <code>routerd.resource.status.changed</code> に一致するとき、通常の SQLite status store は意味のある status 更新とそのイベントを同一 transaction で保存します。イベント保存失敗時は status 更新も取り消すため、producer の再試行で遷移を記録できます。commit 後に同じイベント ID でローカル配送し、その直前にプロセスが終了しても履歴の周期再読込で復旧します。status store とバスは同じ transactional store を使う必要があり、能力不足や接続先不一致は status 保存前にエラーにします。無関係な topic の rule や該当する rule のない設定には、この追加能力を要求しません。</p>
+<p>鮮度の判定と遷移属性は、transaction 内の最新 status を基準とし、並行する merge が保持したフィールドも反映します。新しい設定世代で status が同値なら、observed-generation のメタデータだけ更新し、遷移イベントを追加しません。</p>
+<p>履歴を必要とする該当 EventRule がない場合、status 通知の既存契約を維持します。status 保存後にイベント保存だけ失敗し、エラーを返しながらローカル配送を試みる場合があります。同じ status の再保存では欠落した履歴を補完しません。現在値の consumer は再走査で回復できますが、履歴に一度も保存されなかったイベントを exporter が復元することはできません。上の transaction 保証は status 遷移イベントに限定し、全 daemon や derived-event producer を対象とはしません。</p>
+<p>履歴消費は at-least-once です。処理成功後に cursor 保存が失敗すると、同じイベント ID で callback を再実行します。EventRule の出力やログ配送には重複があり得ます。複数 sink への配送は原子的ではなく、cursor は外部 API の exactly-once を保証しません。<a href="../reference/event-federation.html">Event federation</a> は別の配送履歴を持ち、ローカル status 通知キューを永続的な正本には使いません。</p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#イベント配送と復旧の契約">イベント配送と復旧の契約</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/operations/observability.md">GitHub</a></div></footer></body></html>

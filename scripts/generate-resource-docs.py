@@ -8,12 +8,36 @@ ROOT = Path(__file__).resolve().parents[1]
 SCHEMA = ROOT / 'schemas/routerd-config-v1alpha1.schema.json'
 VARIANTS = json.loads(SCHEMA.read_text())['properties']['spec']['properties']['resources']['items']['oneOf']
 REPO = 'https://github.com/imksoo/routerd/blob/main/'
+NOTES = json.loads((ROOT / 'docs/reference/resource-notes.json').read_text())
+NOTE_LABELS = {
+    'en': ('Conditions and references', 'Field meaning and default', 'Implementation'),
+    'ja': ('指定条件と参照関係', '項目の意味と既定値', '実装'),
+    'zh-Hant': ('指定條件與參照關係', '欄位意義與預設值', '實作'),
+    'zh-Hans': ('指定条件与引用关系', '字段含义与默认值', '实现'),
+}
+
+# This is the same allowlist used by ordinary status-reference validation.
+# Names are identifiers; availability still depends on the actual controller.
+PROVIDED = {}
+for kind, fields in re.findall(r'^\s*"(\w+)":\s+withCommon\((.*)\),$', (ROOT / 'pkg/api/provides.go').read_text(), re.M):
+    PROVIDED[kind] = ['phase'] + re.findall(r'\b(?:s|ss|i|b|o|os|t)\("([^"]+)",', fields)
+PROVIDED_LABELS = {
+    'en': ('Referenceable status fields', 'The ordinary status-reference validator accepts these field names for this kind. This allowlist does not guarantee that every field is currently populated; inspect runtime status. These are outputs, not YAML spec fields.', 'No fields are registered for this kind in the ordinary status-reference allowlist.'),
+    'ja': ('状態値の参照に使えるフィールド', '通常の状態値参照の検証で、このKindについて許可するフィールド名です。許可一覧にあるだけでは値の生成・取得を保証しないため、実際の状態を確認してください。YAMLのspecに設定する項目ではなく出力です。', 'このKindには通常の状態値参照の許可フィールドが登録されていません。'),
+    'zh-Hant': ('可參照的狀態欄位', '一般狀態參照驗證接受此 Kind 的下列欄位名稱。列於允許清單不保證目前有值，請檢查實際狀態。這些是輸出，不是 YAML spec 設定。', '此 Kind 未登錄一般狀態參照的允許欄位。'),
+    'zh-Hans': ('可引用的状态字段', '常规状态引用验证接受此 Kind 的下列字段名称。列于允许列表不保证目前有值，请检查实际状态。这些是输出，不是 YAML spec 配置。', '此 Kind 未登记常规状态引用的允许字段。'),
+}
+
 EXAMPLES = {}
 # Only resource blocks under Router.spec.resources, not nested kinds or templates.
 paths = sorted((ROOT / 'examples').glob('*.yaml'))
 paths += sorted((ROOT / 'examples').glob('*/*.yaml'))
 for path in paths:
-    for kind in re.findall(r'^      kind: (\w+)\s*$', path.read_text(), re.M):
+    text = path.read_text()
+    # Demo templates require external substitution and are not ready YAML examples.
+    if '${DEMO_' in text:
+        continue
+    for kind in re.findall(r'^      kind: (\w+)\s*$', text, re.M):
         EXAMPLES.setdefault(kind, path)
 EXAMPLES['DSLiteTunnel'] = ROOT / 'examples/example-dslite-home.yaml'
 EXAMPLES['LocalServiceRedirect'] = ROOT / 'examples/example-local-dns-redirect.yaml'
@@ -27,10 +51,10 @@ LANGUAGES = {
 
 
 DEFINITIONS = {
-    'en': ('YAML definition', 'optional', 'All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; only a default annotation specifies a schema default. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.'),
-    'ja': ('YAML定義', '任意', '全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、既定値はdefault注記だけで示します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。'),
-    'zh-Hant': ('YAML定義', '選填', '此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；只有default註記表示預設值。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。'),
-    'zh-Hans': ('YAML定义', '选填', '此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；只有default注记表示默认值。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。'),
+    'en': ('YAML definition', 'optional', 'All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.'),
+    'ja': ('YAML定義', '任意', '全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。'),
+    'zh-Hant': ('YAML定義', '選填', '此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。'),
+    'zh-Hans': ('YAML定义', '选填', '此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。'),
 }
 
 
@@ -91,25 +115,41 @@ def yaml_items(node, required_label, optional_label, indent):
         yield prefix + ' ' + scalar(node) + ' # ' + annotation(node)
 
 
-for locale, labels in LANGUAGES.items():
+for locale_index, (locale, labels) in enumerate(LANGUAGES.items()):
     title, required, example, intro = labels
     definition, optional, guidance = DEFINITIONS[locale]
+    conditions, field_notes, implementation = NOTE_LABELS[locale]
     base = ROOT / 'docs' if locale == 'en' else ROOT / 'docs' / locale
-    lines = ['# ' + title, '', intro, '', guidance, '', '```sh', 'routerd validate --config router.yaml', '```', '', '[JSON Schema](' + REPO + 'schemas/routerd-config-v1alpha1.schema.json) · [YAML](' + REPO.replace('/blob/', '/tree/') + 'examples)', '']
-    lines += ['### Router', '', '```yaml', 'apiVersion: routerd.net/v1alpha1', 'kind: Router', 'metadata:', '  name: "<router-name>"', 'spec:', '  resources:', '    - apiVersion: net.routerd.net/v1alpha1', '      kind: Interface', '      metadata:', '        name: "<name>"', '      spec:', '        ifname: "<interface-name>"', '```', '']
+    lines = ['# ' + title, '', intro, '', '[Kind/name · when · dependsOn](common-fields.md)', '', '```sh', 'routerd validate --config router.yaml', '```', '', '[JSON Schema](' + REPO + 'schemas/routerd-config-v1alpha1.schema.json) · [YAML](' + REPO.replace('/blob/', '/tree/') + 'examples)', '', '### Router', '', '```yaml', 'apiVersion: routerd.net/v1alpha1', 'kind: Router', 'metadata:', '  name: "<router-name>"', 'spec:', '  resources:', '    - apiVersion: net.routerd.net/v1alpha1', '      kind: Interface', '      metadata:', '        name: "<name>"', '      spec:', '        ifname: "<interface-name>"', '```', '']
     for variant in VARIANTS:
-        props = variant['properties']
-        kind = props['kind']['const']
-        lines.append('- [' + kind + '](#' + kind.lower() + ')')
+        kind = variant['properties']['kind']['const']
+        lines.append('- [' + kind + '](resources/' + kind + '.md)')
     for variant in VARIANTS:
         props = variant['properties']; kind = props['kind']['const']
-        lines += ['', '## ' + kind, '', '`apiVersion: ' + props['apiVersion']['const'] + '` · `metadata.name`', '']
-        lines += ['### ' + definition, '', '```yaml', '- apiVersion: ' + props['apiVersion']['const'], '  kind: ' + kind, '  metadata:', '    name: "<name>"', '  spec:']
-        lines += list(yaml_fields(props['spec'], required, optional, 4))
-        lines += ['```', '']
+        notes = NOTES[kind]
+        lines += ['', '## ' + kind, '', '[' + kind + '](resources/' + kind + '.md)', '']
+        page = ['# ' + kind, '', '[' + title + '](../resources.md#' + kind.lower() + ') · [Kind/name · when · dependsOn](../common-fields.md)', '', '`apiVersion: ' + props['apiVersion']['const'] + '` · `metadata.name`', '']
+        if notes:
+            lines += [notes['purpose'][locale_index], '']
+            page += [notes['purpose'][locale_index], '', '## ' + conditions, '']
+            page += ['- ' + rule[locale_index] for rule in notes['rules']]
+            page += ['']
+        page += ['## ' + definition, '', guidance, '', '```yaml', '- apiVersion: ' + props['apiVersion']['const'], '  kind: ' + kind, '  metadata:', '    name: "<name>"', '  spec:']
+        page += list(yaml_fields(props['spec'], required, optional, 4))
+        page += ['```', '']
+        if notes:
+            page += ['## ' + field_notes, '', '| YAML | ' + field_notes + ' |', '| --- | --- |']
+            for path, text in notes['fields'].items():
+                page.append('| `spec.' + path + '` | ' + text[locale_index].replace('|', '&#124;') + ' |')
+            page += ['', implementation + ': ' + ' · '.join('[' + path + '](' + REPO + path + ')' for path in notes['sources']), '']
+        provided_title, provided_intro, provided_empty = PROVIDED_LABELS[locale]
+        page += ['## ' + provided_title, '', provided_intro, '']
+        page += [', '.join('`' + field + '`' for field in PROVIDED[kind]) if kind in PROVIDED else provided_empty, '']
         if kind in EXAMPLES:
             path = EXAMPLES[kind]
-            lines += ['[' + example + '](' + REPO + path.relative_to(ROOT).as_posix() + ')', '']
+            page += ['[' + example + '](' + REPO + path.relative_to(ROOT).as_posix() + ')', '']
+        target = base / 'reference/resources' / (kind + '.md')
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text('\n'.join(page).rstrip() + '\n')
     target = base / 'reference/resources.md'
-    target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text('\n'.join(lines).rstrip() + '\n')

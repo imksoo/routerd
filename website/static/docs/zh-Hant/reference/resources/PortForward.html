@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PortForward · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/reference/resources/PortForward.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/reference/resources/PortForward.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/PortForward.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/PortForward.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/reference/resources/PortForward.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="portforward">PortForward</h1>
+<p><a href="../resources.html#portforward">各資源的設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: firewall.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>將 TCP/UDP 連接埠轉送至單一 IPv4 端點，可選內部迴送 NAT。Linux 產生 DNAT 與轉送允許，FreeBSD 使用 rdr pass。</p>
+<h2 id="指定條件與參照關係">指定條件與參照關係</h2>
+<ul>
+<li>listen/target 必填。target 需要且只能提供 address/addressFrom 其中之一與 port；固定目標必須是純 IPv4，不接受主機名或 CIDR。listen 兩者皆省略時比對介面所有目的。</li>
+<li>參照須存在並提供對應欄位，但 NAT 產生器只讀宣告的 IPv4StaticAddress.address/VirtualAddress.address。optional=true 可在支援來源未解析時省略規則，不會啟用任意動態來源。PortForward 沒有後端健康檢查。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。</p>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: PortForward
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    hairpin: # 選填; object
+      enabled: true # 選填; boolean
+      interfaces: # 選填; array
+        - &quot;&lt;string&gt;&quot; # string
+      mode: &quot;&quot; # 選填; string; enum=[&quot;&quot;, &quot;auto&quot;, &quot;manual&quot;, &quot;off&quot;]
+    listen: # 必填; object
+      address: &quot;&lt;string&gt;&quot; # 選填; string
+      addressFrom: # 選填; object
+        field: &quot;&lt;string&gt;&quot; # 選填; string
+        optional: true # 選填; boolean
+        resource: &quot;&lt;string&gt;&quot; # 必填; string
+      interface: &quot;&lt;string&gt;&quot; # 必填; string
+      port: 1 # 必填; integer; minimum=1; maximum=65535
+      protocol: &quot;tcp&quot; # 必填; string; enum=[&quot;tcp&quot;, &quot;udp&quot;]
+    target: # 必填; object
+      address: &quot;&lt;string&gt;&quot; # 選填; string
+      addressFrom: # 選填; object
+        field: &quot;&lt;string&gt;&quot; # 選填; string
+        optional: true # 選填; boolean
+        resource: &quot;&lt;string&gt;&quot; # 必填; string
+      port: 1 # 必填; integer; minimum=1; maximum=65535
+    when: # 選填; object
+      state: # 選填; object
+        &quot;&lt;key&gt;&quot;: # 選填; object
+          contains: &quot;&lt;string&gt;&quot; # 選填; string
+          equals: &quot;&lt;string&gt;&quot; # 選填; string
+          exists: true # 選填; boolean
+          for: &quot;&lt;string&gt;&quot; # 選填; string
+          in: # 選填; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # 選填; string
+          status: &quot;set&quot; # 選填; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<h2 id="欄位意義與預設值">欄位意義與預設值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>欄位意義與預設值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.listen</code></td>
+<td>必填 IPv4 入口端點，建立 NAT/防火牆規則，不建立應用程式監聽或指派位址。</td>
+</tr>
+<tr>
+<td><code>spec.listen.interface</code></td>
+<td>必填單純已宣告邏輯介面名稱，不是 Kind/name。須存在設定索引並可解析 OS ifname。</td>
+</tr>
+<tr>
+<td><code>spec.listen.address</code></td>
+<td>選用純 IPv4 目的位址，與 addressFrom 互斥。省略時比對監聽介面上任意目的位址。</td>
+</tr>
+<tr>
+<td><code>spec.listen.addressFrom</code></td>
+<td>選用共用 resource/field/optional 參照，與 address 互斥。NAT/靜態產生支援宣告的 IPv4StaticAddress.address 或 VirtualAddress.address，不讀任意執行期狀態。一般參照驗證通過不保證產生器支援。</td>
+</tr>
+<tr>
+<td><code>spec.listen.protocol</code></td>
+<td>必填 tcp/udp，無預設值。選擇轉送流量，不決定健康檢查協定。</td>
+</tr>
+<tr>
+<td><code>spec.listen.port</code></td>
+<td>必填目的連接埠 1–65535，無範圍、清單或預設值。</td>
+</tr>
+<tr>
+<td><code>spec.hairpin</code></td>
+<td>選用經公開位址返回內部的 NAT 設定，啟用時需可解析 listen 位址。PortForward 預設 off，IngressService 預設 auto。</td>
+</tr>
+<tr>
+<td><code>spec.hairpin.enabled</code></td>
+<td>預設 false。mode 省略時 true 讓 PortForward 使用 manual，IngressService 仍預設 auto。明確 off 即使 enabled=true 也停用。</td>
+</tr>
+<tr>
+<td><code>spec.hairpin.mode</code></td>
+<td>auto/manual/off。auto 在 listen 與後端同屬宣告 IPv4 子網或相同私有 /24 時選 listen 介面，不探索任意 LAN 路由。manual 需 enabled=true 與 interfaces 才產生規則。</td>
+</tr>
+<tr>
+<td><code>spec.hairpin.interfaces</code></td>
+<td>選用單純宣告邏輯介面名，不可重複，啟用 manual 時需非空。auto 可另加入 listen 介面。IPv4 DNAT 加 masquerade/PF SNAT 讓回程經路由器。</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>選用共用啟用條件，預設無條件。不成立時從有效產生排除；條件與結構描述限制請見共用欄位。</td>
+</tr>
+<tr>
+<td><code>spec.target</code></td>
+<td>必填單一內部端點，不指派 IP 或啟動服務。</td>
+</tr>
+<tr>
+<td><code>spec.target.address</code></td>
+<td>純 IPv4 目標，與 target.addressFrom 必須擇一，無預設。</td>
+</tr>
+<tr>
+<td><code>spec.target.addressFrom</code></td>
+<td>共用 resource/field/optional 參照，與 listen.addressFrom 相同宣告欄位限制，須解析為 IPv4。</td>
+</tr>
+<tr>
+<td><code>spec.target.port</code></td>
+<td>必填內部 TCP/UDP 連接埠 1–65535，獨立於 listen.port。</td>
+</tr>
+</tbody>
+</table>
+<p>實作: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_firewall.go">pkg/config/validate_firewall.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go">pkg/config/diagnostics.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/ingress.go">pkg/render/ingress.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/status_source.go">pkg/render/status_source.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/nftables.go">pkg/render/nftables.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/pf.go">pkg/render/pf.go</a></p>
+<h2 id="可參照的狀態欄位">可參照的狀態欄位</h2>
+<p>一般狀態參照驗證接受此 Kind 的下列欄位名稱。列於允許清單不保證目前有值，請檢查實際狀態。這些是輸出，不是 YAML spec 設定。</p>
+<p><code>phase</code>, <code>listenAddress</code>, <code>target</code>, <code>dryRun</code></p>
+<p><a href="/examples/example-port-forward-web.yaml">設定範例</a></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#指定條件與參照關係">指定條件與參照關係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#欄位意義與預設值">欄位意義與預設值</a></li>
+<li><a href="#可參照的狀態欄位">可參照的狀態欄位</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/reference/resources/PortForward.md">GitHub</a></div></footer></body></html>

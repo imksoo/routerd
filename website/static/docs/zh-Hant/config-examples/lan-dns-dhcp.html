@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LAN DHCP 與本地 DNS · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/config-examples/lan-dns-dhcp.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/config-examples/lan-dns-dhcp.html" lang="en" hreflang="en">English</a><a href="/docs/ja/config-examples/lan-dns-dhcp.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/config-examples/lan-dns-dhcp.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/config-examples/lan-dns-dhcp.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="lan-dhcp-與本地-dns">LAN DHCP 與本地 DNS</h1>
+<p>將單一 LAN 介面作為小型家用 LAN 或驗證用 LAN 服務區段的範例。
+routerd 管理 LAN 位址、DHCPv4、本地 DNS 區域，以及 DHCP 租約衍生的名稱。</p>
+<p>完整 YAML 位於 <code>examples/example-lan-dns-dhcp.yaml</code>。</p>
+<h2 id="構成圖">構成圖</h2>
+<pre><code class="language-mermaid">flowchart LR
+  router[&quot;[1] routerd host&lt;br/&gt;192.168.30.1&quot;]
+  lan[&quot;[2] LAN&lt;br/&gt;home.example&quot;]
+  dhcp[&quot;[3] DHCPv4 clients&lt;br/&gt;192.168.30.100-199&quot;]
+  nas[&quot;[4] NAS reservation&lt;br/&gt;192.168.30.10&quot;]
+
+  router --- lan
+  lan --- dhcp
+  lan --- nas
+</code></pre>
+<h2 id="圖示對應表">圖示對應表</h2>
+<table>
+<thead>
+<tr>
+<th>編號</th>
+<th>含義</th>
+<th>主要資源</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>[1]</td>
+<td>同時負責 LAN DNS 監聽的路由器位址。</td>
+<td><code>IPv4StaticAddress/lan-base</code>, <code>DNSResolver/lan-resolver</code></td>
+</tr>
+<tr>
+<td>[2]</td>
+<td>作為 DHCP search domain 發送的本地 DNS 區域。</td>
+<td><code>DNSZone/home</code></td>
+</tr>
+<tr>
+<td>[3]</td>
+<td>接收位址與 DNS 設定的動態用戶端。</td>
+<td><code>DHCPv4Server/lan-dhcpv4</code></td>
+</tr>
+<tr>
+<td>[4]</td>
+<td>具有固定租約與名稱的基礎設施主機。</td>
+<td><code>DHCPv4Reservation/nas</code>, <code>DNSZone/home</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="本範例管理的項目">本範例管理的項目</h2>
+<table>
+<thead>
+<tr>
+<th>領域</th>
+<th>routerd 資源</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>LAN 位址</td>
+<td><code>Interface/lan</code>, <code>IPv4StaticAddress/lan-base</code></td>
+</tr>
+<tr>
+<td>本地名稱</td>
+<td><code>DNSZone/home</code></td>
+</tr>
+<tr>
+<td>解析器</td>
+<td><code>DNSResolver/lan-resolver</code></td>
+</tr>
+<tr>
+<td>DHCPv4</td>
+<td><code>DHCPv4Server/lan-dhcpv4</code>, <code>DHCPv4Reservation/nas</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="要點">要點</h2>
+<pre><code class="language-yaml"># [2] router.home.example 或 nas.home.example 的本地區域。
+- kind: DNSZone
+  metadata:
+    name: home
+  spec:
+    zone: home.example
+    dhcpDerived:
+      sources:
+        - DHCPv4Server/lan-dhcpv4
+      ddns: true
+
+# [3] 透過 DHCP 將 router address 作為 gateway / DNS 發放。
+- kind: DHCPv4Server
+  metadata:
+    name: lan-dhcpv4
+  spec:
+    gatewayFrom:
+      resource: IPv4StaticAddress/lan-base
+      field: address
+    dnsServerFrom:
+      - resource: IPv4StaticAddress/lan-base
+        field: address
+    domainFrom:
+      resource: DNSZone/home
+      field: zone
+</code></pre>
+<h2 id="確認">確認</h2>
+<p>先在 daemon 尚未啟動時進行獨立檢查。下列指令需要具有 <code>sudo</code> 權限的本機使用者，但不會套用網路變更。</p>
+<pre><code class="language-bash">LAB_DIR=&quot;$(mktemp -d)&quot;
+sudo routerd validate --config examples/example-lan-dns-dhcp.yaml
+sudo routerd apply --config examples/example-lan-dns-dhcp.yaml --once --dry-run \
+  --state-file &quot;$LAB_DIR/state.db&quot; \
+  --status-file &quot;$LAB_DIR/status.json&quot;
+rm -rf &quot;$LAB_DIR&quot;
+</code></pre>
+<p>服務啟動後，才在路由器上執行 <code>sudo routerctl describe DNSZone/home</code> 與
+<code>sudo routerctl describe DHCPv4Server/lan-dhcpv4</code>。從 LAN 用戶端執行
+<code>dig @192.168.30.1 router.home.example</code> 驗證本地名稱。</p>
+<h2 id="常見調整項目">常見調整項目</h2>
+<ul>
+<li>將 <code>home.example</code> 改為您自己的 search domain。</li>
+<li>NAS、印表機、基礎設施設備請加入 <code>DHCPv4Reservation</code>。</li>
+<li>若需將部分網域轉送至私有上游，請新增 <code>DNSForwarder</code> 與 <code>DNSUpstream</code>。</li>
+</ul></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#構成圖">構成圖</a></li>
+<li><a href="#圖示對應表">圖示對應表</a></li>
+<li><a href="#本範例管理的項目">本範例管理的項目</a></li>
+<li><a href="#要點">要點</a></li>
+<li><a href="#確認">確認</a></li>
+<li><a href="#常見調整項目">常見調整項目</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/config-examples/lan-dns-dhcp.md">GitHub</a></div></footer></body></html>

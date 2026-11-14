@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CloudEdge SAM とは · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/concepts/cloudedge-sam.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/concepts/cloudedge-sam.html" lang="en" hreflang="en">English</a><a href="/docs/ja/concepts/cloudedge-sam.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/concepts/cloudedge-sam.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/concepts/cloudedge-sam.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="cloudedge-sam-とは">CloudEdge SAM とは</h1>
+<p>CloudEdge SAM（Selective Address Mobility / 選択的アドレス移動）は、<strong>特定の
+<code>/32</code> IPv4 アドレスだけを、オンプレミスと複数のパブリッククラウド（AWS / Azure
+/ OCI）の間で「移動できる住所」として扱う</strong> routerd の機能です。</p>
+<p>一般的なルーターやクラウドのロードバランサーにはない概念なので、まず「何が新し
+いのか」「何を解決するのか」から説明します。これを理解しないと、設定項目を見て
+も何をしているのか分からないためです。</p>
+<h2 id="何が問題なのか">何が問題なのか</h2>
+<p>クラウドをまたいでサービスを冗長化したいとき、従来は次のどちらかを強いられま
+した。</p>
+<ol>
+<li><strong>L2 延伸（VXLAN/EVPN などで LAN を引き伸ばす）</strong> — パブリッククラウドは
+   オペレーターが制御できるブロードキャストドメインを公開しません。クラウドの
+   ファブリックは独自のルーティングとアドレス所有モデルを持っており、Ethernet
+   セグメントをそのまま延ばすことはできません。</li>
+<li><strong>DNS フェイルオーバーやグローバルロードバランサー</strong> — クライアントから見え
+   る IP アドレスが切り替わります。TCP コネクションは切れ、DNS TTL のキャッシュ
+   が残り、IP アドレスを直接握っているクライアントは追従できません。</li>
+</ol>
+<p>CloudEdge SAM は <strong>第3の道</strong> を取ります。「LAN 全体」ではなく「動かしたい
+<code>/32</code> アドレスだけ」を、routerd 同士のオーバーレイ越しに移動させます。クライア
+ントから見える送信元・宛先 IP アドレスは保存され、アドレスを保持するノード（=
+ホルダー）が AWS から Azure へ移っても、<strong>同じ IP アドレスがそのまま生き続けます</strong>。</p>
+<p>これは「クラウドをまたいで動く仮想 IP」と言い換えられます。VRRP の仮想 IP が
+同一 L2 セグメント内でしか動けないのに対し、CloudEdge SAM の <code>/32</code> は <strong>クラウ
+ドの境界を越えて</strong> 動きます。</p>
+<h2 id="全体像メンタルモデル">全体像（メンタルモデル）</h2>
+<p>CloudEdge SAM を理解する鍵は、<strong>2つの平面を分けて考える</strong> ことです。</p>
+<table>
+<thead>
+<tr>
+<th>平面</th>
+<th>担当</th>
+<th>真実の源</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>到達性（オーバーレイ）</strong></td>
+<td>どのノードがそのアドレスを持っているか、パケットをどこへ運ぶか</td>
+<td><strong>BGP の best-path</strong>（ADR 0012）</td>
+</tr>
+<tr>
+<td><strong>クラウド受け口（ingress）</strong></td>
+<td>クラウドのファブリックが外部からのパケットを正しい VM に入れるか</td>
+<td><strong>プロバイダー secondary IP / ルートテーブル</strong>（背景で同期）</td>
+</tr>
+</tbody>
+</table>
+<p>ポイントは、<strong>到達性の真実は BGP RIB が握り、クラウド API 操作はそれを後追いで
+合わせるだけ</strong> という役割分担です。昔の routerd はリース台帳やエポックといった
+独自の制御平面でこれをやっていましたが、今は素の BGP unicast <code>/32</code> に寄せていま
+す（詳細は ADR 0012）。</p>
+<pre><code>                オンプレ /24 の中の「動かしたい /32」だけを選ぶ
+                              │
+            ┌─────────────────┼─────────────────┐
+            ▼                 ▼                 ▼
+        ┌────────┐        ┌────────┐        ┌────────┐
+        │ AWS    │        │ Azure  │        │ OCI    │   ← routerd ノード群
+        │ routerd│◄──────►│ routerd│◄──────►│ routerd│   （WireGuard/IPIP オーバーレイ + BGP）
+        └────────┘        └────────┘        └────────┘
+            ▲ holder          standby           standby
+            │
+        この /32 の BGP best-path を出しているノードが「現在の持ち主（holder）」
+</code></pre>
+<h2 id="登場する新しい概念">登場する新しい概念</h2>
+<p>routerd 特有の用語が出てきます。最初に押さえるべきものだけ挙げます（網羅的な
+内部実装は <a href="../reference/cloudedge-sam-internals.html">CloudEdge SAM 内部実装</a> を参照）。</p>
+<ul>
+<li><strong>MobilityPool</strong> — 「どの <code>/32</code> を、どのノード群で、どう動かすか」を宣言する
+  唯一のオペレーター入力リソース。BGP peer リストのように、各ノードは他ノードの
+  identity（nodeRef / site / role / placement）を知っていればよく、相手の NIC ID
+  やサブネット ID を書く必要はありません。</li>
+<li><strong>capture（捕捉）</strong> — クラウド VM の NIC に対象 <code>/32</code> を secondary IP として
+  割り当て、その VM がそのアドレス宛てパケットを受け取れるようにする操作。これが
+  「クラウド受け口」を作ります。</li>
+<li><strong>ホルダー（持ち主）</strong> — いま実際にその <code>/32</code> を capture して BGP で
+  best-path 広告しているノード。placement group ごとに1つ。</li>
+<li><strong>placement group と priority</strong> — 「この <code>/32</code> 群は、この group の中で、
+  priority の高いノードを active にする」というアクティブ/スタンバイの宣言。
+  priority は <strong>数字が小さいほど高優先</strong>。</li>
+<li><strong>ホルダービーコン</strong> — active なホルダーだけが自分の owner <code>/32</code> に付ける BGP
+  community（<code>64512:121</code>）。他ノードは「この community が付いた best-path を出して
+  いるノードだけが本当のホルダー」と判断します。スタンバイの弱い広告や起動直後の
+  広告をホルダーと誤認しないための、<strong>権威ある目印</strong> です。</li>
+<li><strong>dynamic RR sync</strong> — ルートリフレクターは共有 transport peer group を leaf に
+  配布できます。leaf は RR publisher が消えても last-known-good の同期入力を保持し、
+  生成済み transport を tear down せず source を <code>Stale</code> と表示します。MobilityPool の
+  メンバーシップは <code>SAMNodeSet</code> から直接解決します。enrollment policy は、opt-in した
+  leaf に限り、任意の leaf 間直接経路も返せます。ただしこれは速い経路を
+  試すための最適化です。RR peer は常に残るので、直接 tunnel や BGP session が確立
+  しなければ RR 経由へ安全に fallback します。</li>
+<li><strong>RR admission filter</strong> — generated RR-client BGP peer では、自 leaf の
+  node-identity community を持つ <code>/32</code> mobility route だけを受け入れ、他 topology node
+  の identity を持つ route を拒否します。</li>
+</ul>
+<h2 id="切り替えの振る舞いここが本機能の価値">切り替えの振る舞い（ここが本機能の価値）</h2>
+<p>CloudEdge SAM が解こうとしている難問は「<strong>切り替え操作は最小にしたいが、本当に
+落ちたときは確実に引き継ぎたい</strong>」という相反する要求です。routerd は priority の
+関係で振る舞いを変えます。</p>
+<ul>
+<li><strong>同じ priority の2台（例 a=10, b=10）</strong> → <strong>no-preempt</strong>。一度どちらかが
+  ホルダーになったら、もう一方が復帰しても奪い返しません。無意味な切り替えで
+  データプレーンを揺らさないためです。</li>
+<li><strong>異なる priority（例 a=10 が高優先, b=20 が低優先）</strong> → <strong>自動復帰</strong>。高優先
+  ノードが落ちて低優先が引き継いだあと、高優先が戻ってきたら自動的に持ち主が
+  高優先へ戻ります。ただし <code>/32</code> を1つずつ移し、<strong>瞬断ゼロ</strong>で引き継ぎます。</li>
+<li><strong>稼働系が落ちたら（priority に関係なく）</strong> → <strong>確実にフェイルオーバー</strong>。ホルダーの
+  VM が停止/OS 障害で落ちたら、スタンバイが secondary IP を奪取（seize）して BGP
+  広告を引き継ぎ、データプレーンを自動回復します。</li>
+</ul>
+<p>この3つを両立させるために、routerd は次の機構を組み合わせています（詳細は
+<a href="../reference/cloudedge-sam-internals.html">内部実装</a>）。</p>
+<ol>
+<li><strong>startup fence（起動フェンス）</strong> — 復帰直後のノードは、観測が収束するまで
+   active 主張を保留する。古い自己状態で持ち主を奪い返す事故を防ぐ。</li>
+<li><strong>ホルダー保持（holder retention）</strong> — 実際に capture を握っている間は active
+   を維持する。決定的タイブレークや一時的な観測ゆらぎで持ち主を手放さない。</li>
+<li><strong>ホルダービーコン</strong> — 上記の「本当の持ち主」を BGP best-path 上で権威的に判定
+   する。cold-start の相互譲り合いデッドロックも解消する。</li>
+</ol>
+<h2 id="cloudedge-sam-ではないもの誤解を避ける">CloudEdge SAM ではないもの（誤解を避ける）</h2>
+<ul>
+<li><strong>L2 延伸ではありません。</strong> Ethernet ブロードキャストドメインをクラウドに伸ば
+  すわけではなく、選んだ <code>/32</code> だけをオーバーレイで運びます。</li>
+<li><strong>NAT やロードバランサーではありません。</strong> 送信元・宛先 IP は保存されます。
+  ファイアウォールや NAT は routerd の別レイヤーで、mobility リソースの項目では
+  ありません。</li>
+<li><strong>クラウドネイティブ ingress を魔法のように解決しません。</strong> オーバーレイ経由の
+  到達性は BGP 収束だけで回復しますが、VPC/VNet/VCN を通る外部 ingress は
+  プロバイダーの secondary IP / ルートテーブルが追いつくまで待つ必要があります。</li>
+</ul>
+<h2 id="次に読むもの">次に読むもの</h2>
+<ul>
+<li><a href="../reference/selective-address-mobility.html">Selective Address Mobility（設定モデル）</a>
+  — <code>SAMNodeSet</code>、ローカル <code>MobilityPool</code> overlay、capture ポリシーの宣言方法。</li>
+<li><a href="../reference/cloudedge-sam-internals.html">CloudEdge SAM 内部実装</a>
+  — BGP community 体系、placement、no-preempt、ホルダービーコン、failover の詳細。</li>
+<li>ADR 0012: BGP /32 Address Mobility
+  — なぜ BGP を真実の源にしたかという設計判断。</li>
+<li><a href="../how-to/cloudedge-mobility-demo.html">CloudEdge mobility デモ</a>
+  — オンプレ/AWS/Azure/OCI の4サイトを実際に動かすハンズオン。</li>
+</ul></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#何が問題なのか">何が問題なのか</a></li>
+<li><a href="#全体像メンタルモデル">全体像（メンタルモデル）</a></li>
+<li><a href="#登場する新しい概念">登場する新しい概念</a></li>
+<li><a href="#切り替えの振る舞いここが本機能の価値">切り替えの振る舞い（ここが本機能の価値）</a></li>
+<li><a href="#cloudedge-sam-ではないもの誤解を避ける">CloudEdge SAM ではないもの（誤解を避ける）</a></li>
+<li><a href="#次に読むもの">次に読むもの</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/concepts/cloudedge-sam.md">GitHub</a></div></footer></body></html>

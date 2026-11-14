@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WireGuardPeer · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/reference/resources/WireGuardPeer.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/reference/resources/WireGuardPeer.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/WireGuardPeer.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/reference/resources/WireGuardPeer.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/WireGuardPeer.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="wireguardpeer">WireGuardPeer</h1>
+<p><a href="../resources.html#wireguardpeer">リソース別の設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>宣言済みWireGuardInterfaceのピアを定義します。AllowedIPsはWireGuard内の送信先・受信元選択を設定し、このコントローラーは通常のIP経路を自動作成しません。</p>
+<h2 id="指定条件と参照関係">指定条件と参照関係</h2>
+<ul>
+<li>ピアは独立サービスではなく、所属インターフェースのwg setconf設定全体の一部として適用します。同じmetadata.nameの明示ピアは、所属interfaceが違ってもpeersFromによる生成ピアを置き換えます。</li>
+<li>presharedKeyとpresharedKeyFileは排他ではなく、直接指定を優先します。直接指定がない場合だけファイルを読み前後空白を除去します。欠落・読取不能・空ファイルは実適用で失敗します。</li>
+<li>Connectedはハンドシェイク時刻を観測したことを示し、その経過時間は別項目です。直近の成功や宛先疎通を保証しません。endpointがあってハンドシェイクがない場合はWaiting/NoHandshakeYetです。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: WireGuardPeer
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    allowedIPs: # 必須; array
+      - &quot;&lt;string&gt;&quot; # string
+    endpoint: &quot;&lt;string&gt;&quot; # 任意; string
+    interface: &quot;&lt;string&gt;&quot; # 必須; string
+    persistentKeepalive: 0 # 任意; integer; minimum=0; maximum=65535
+    presharedKey: &quot;&lt;string&gt;&quot; # 任意; string
+    presharedKeyFile: &quot;&lt;string&gt;&quot; # 任意; string
+    publicKey: &quot;&lt;string&gt;&quot; # 必須; string
+</code></pre>
+<h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>項目の意味と既定値</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.interface</code></td>
+<td>同じRouter内の既存WireGuardInterfaceのmetadata.nameが必須です。OS上のifnameだけでは参照できません。</td>
+</tr>
+<tr>
+<td><code>spec.publicKey</code></td>
+<td>WireGuardのBase64形式の相手公開鍵が必須です。設定検証は非空だけを確認し、鍵長のデコード検証は行わず、適用時にwgが検証します。</td>
+</tr>
+<tr>
+<td><code>spec.allowedIPs</code></td>
+<td>IPv4・IPv6 CIDRの空でない一覧が必須です。送信時のピア選択と受信時に許可する送信元を設定します。プレフィックス補完・通常経路作成はありません。</td>
+</tr>
+<tr>
+<td><code>spec.endpoint</code></td>
+<td>任意の相手host:UDPポートです。IPv6は[IPv6]:port形式です。空ならEndpointを省略し、受信パケットからの学習に任せます。routerdの設定検証は構文・DNS疎通を確認せず、適用時にwgが処理します。</td>
+</tr>
+<tr>
+<td><code>spec.persistentKeepalive</code></td>
+<td>キープアライブの送信間隔（秒）で、0～65535の整数です。既定0では継続キープアライブを無効にします。ハンドシェイク成功の期限ではありません。</td>
+</tr>
+<tr>
+<td><code>spec.presharedKey</code></td>
+<td>任意の追加共通鍵をWireGuardのBase64形式で指定します。既定はなしです。presharedKeyFileと併記してもエラーにはせず、こちらを優先します。</td>
+</tr>
+<tr>
+<td><code>spec.presharedKeyFile</code></td>
+<td>ルーター上で共通鍵そのものを格納するファイルです。環境変数ファイルではありません。欠落時の鍵生成は行わず、presharedKeyが空の場合だけ読みます。</td>
+</tr>
+</tbody>
+</table>
+<p>実装: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_interface.go">pkg/config/validate_interface.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/wireguard/wireguard.go">pkg/wireguard/wireguard.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/wireguard.go">pkg/controller/chain/wireguard.go</a></p>
+<h2 id="状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</h2>
+<p>通常の状態値参照の検証で、このKindについて許可するフィールド名です。許可一覧にあるだけでは値の生成・取得を保証しないため、実際の状態を確認してください。YAMLのspecに設定する項目ではなく出力です。</p>
+<p><code>phase</code>, <code>latestEndpoint</code>, <code>latestHandshake</code>, <code>handshakeAgeSeconds</code>, <code>transferRxBytes</code>, <code>transferTxBytes</code></p>
+<p><a href="/examples/hybrid-l3-wireguard.yaml">設定例</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
+<li><a href="#状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/reference/resources/WireGuardPeer.md">GitHub</a></div></footer></body></html>

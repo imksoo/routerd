@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Control API v1alpha1 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/control-api-v1alpha1.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/control-api-v1alpha1.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/control-api-v1alpha1.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/control-api-v1alpha1.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/control-api-v1alpha1.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="control-api-v1alpha1">Control API v1alpha1</h1>
+<p>ConnectionTable status.bySNAT maps translated IPv4 addresses to local SNAT
+entry counts (total, tcp, udp, other), computed before the entry limit. An empty
+object means no SNAT entries; an omitted field means unavailable/unsupported (including PF).
+Counts do not describe provider AFTR state or port-allocation capacity.</p>
+<p>routerd and its managed daemons expose a local HTTP+JSON API over Unix domain sockets. The API is <strong>not</strong> for remote management — it is the channel through which <code>routerctl</code>, the routerd controllers themselves, and operations scripts on the same host read state.</p>
+<h2 id="routerd-main-process">routerd main process</h2>
+<p><code>routerd serve</code> listens on:</p>
+<pre><code class="language-text">/run/routerd/routerd.sock
+/run/routerd/routerd-status.sock
+</code></pre>
+<p>The main control socket is intended for privileged local clients and exposes
+mutating endpoints such as apply and delete. The read-only status socket exposes
+only status-style endpoints and is safe for regular users to query.</p>
+<p>Read endpoints on the main control socket expose status, events, and resource
+state. Highlights:</p>
+<table>
+<thead>
+<tr>
+<th>Method and path</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET /api/control.routerd.net/v1alpha1/status</code></td>
+<td>routerd's own status</td>
+</tr>
+<tr>
+<td><code>GET /api/control.routerd.net/v1alpha1/connections</code></td>
+<td>live connections from conntrack or pf state</td>
+</tr>
+<tr>
+<td><code>GET /api/control.routerd.net/v1alpha1/dns-queries</code></td>
+<td>DNS query history</td>
+</tr>
+<tr>
+<td><code>GET /api/control.routerd.net/v1alpha1/traffic-flows</code></td>
+<td>traffic flow history</td>
+</tr>
+<tr>
+<td><code>GET /api/control.routerd.net/v1alpha1/firewall-logs</code></td>
+<td>firewall log entries</td>
+</tr>
+<tr>
+<td><code>POST /api/control.routerd.net/v1alpha1/dhcp-lease-event</code></td>
+<td>local dnsmasq lease-hook event</td>
+</tr>
+</tbody>
+</table>
+<h2 id="sam-enrollment-endpoints">SAM enrollment endpoints</h2>
+<p>Dynamic SAM enrollment uses the same API handler, but an RR exposes these
+endpoints only through the explicitly configured authenticated listener or
+privileged local socket described by the enrollment runbook. They are not a
+general remote-management API.</p>
+<table>
+<thead>
+<tr>
+<th>Method and path</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>POST /api/control.routerd.net/v1alpha1/sam-enrollment-claims</code></td>
+<td>Admit one leaf's client-authored enrollment claim.</td>
+</tr>
+<tr>
+<td><code>POST /api/control.routerd.net/v1alpha1/sam-enrollment-claims/{name}/revoke</code></td>
+<td>Revoke an accepted claim; use it for deliberate operator action, not recovery.</td>
+</tr>
+<tr>
+<td><code>GET /api/control.routerd.net/v1alpha1/sam-enrollment-topologies/{name}?claim=...&amp;claimDigest=...&amp;claimIdentityDigest=...</code></td>
+<td>Fetch the named RRSet and, only when it is attested, the optional direct peer group.</td>
+</tr>
+</tbody>
+</table>
+<p><code>claimIdentityDigest</code> is a hash of only client-authored claim material. With a
+<code>joinTokenFrom</code> policy, that material is authenticated by the join HMAC; without
+one, the deployment is a trusted control-plane boundary. A current RR uses the
+digest to distinguish an explicit revoke, an empty clean-boot admission store,
+and a different active identity. <code>SAMEnrollmentClient</code> treats identity-aware
+absence as permission to re-submit its current direct claim only after every
+bootstrap RR has been checked. A different active identity is replaceable only
+for initial admission or a local claim change, never a periodic renewal. A
+missing digest, an old/mixed RR, a revoke, or any request failure must keep the
+RR-only fallback; callers should use the client/controller rather than
+interpreting these responses themselves.</p>
+<h2 id="dhcp-lease-hook">DHCP lease hook</h2>
+<p><code>POST /api/control.routerd.net/v1alpha1/dhcp-lease-event</code> is a privileged,
+local hook endpoint for dnsmasq lease changes; it is not a remote-management or
+general-purpose event API. <code>routerd-dhcp-event-relay</code> runs once for each
+dnsmasq callback and normalizes dnsmasq's raw callback verbs. The managed hook
+(with no flags) commits directly to a bounded local queue, so a routerd restart
+does not discard the callback. An explicitly supplied <code>--socket</code> retains the
+HTTP transport: the selected daemon commits to its queue before returning
+<code>accepted</code>. There is no simultaneous local enqueue or fallback, and an
+unreachable explicit socket still returns an error.</p>
+<p>Direct callers must send only the canonical <code>action</code> values <code>added</code>, <code>renewed</code>,
+or <code>removed</code>. The raw dnsmasq verbs <code>add</code>, <code>old</code>, and <code>del</code> are accepted only at
+the relay boundary. <code>ip</code> is required; <code>mac</code>, <code>hostname</code>, and <code>interface</code> are
+optional. <code>interface</code> is the value reported by dnsmasq for the lease hook; raw
+environment variables are never forwarded through this API.</p>
+<p>The existing serve process drains accepted callbacks in commit order after its
+controllers have started. Queue/storage failure is an error, not acceptance.
+Delivery is at least once through sticky metadata and the durable event journal;
+a crash after journal commit but before queue deletion may duplicate history.
+<code>attributes.observedAt</code> preserves the original timestamp, while <code>createdAt</code>
+remains the journal ingestion time. Live subscriber delivery retains the bus
+contract and is not an acknowledgement from every downstream daemon.</p>
+<p>Historical callbacks are checked against current authoritative leases before
+live delivery. Superseded or unverifiable callbacks remain in history with
+<code>replayDisposition</code>; they do not mutate live DNS or ownership. See
+<a href="how-to/dhcp-lease-sync.html#callback-recovery-across-routerd-restarts">restart recovery</a>
+for bounds, recovery behavior, and limitations.</p>
+<p>Each action uses one exact event topic:</p>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Topic</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>added</code></td>
+<td><code>routerd.dhcp.lease.added</code></td>
+</tr>
+<tr>
+<td><code>renewed</code></td>
+<td><code>routerd.dhcp.lease.renewed</code></td>
+</tr>
+<tr>
+<td><code>removed</code></td>
+<td><code>routerd.dhcp.lease.removed</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="resource-count">Resource count</h2>
+<p><code>Status.status.resourceCount</code> counts the resources declared in the current runtime
+configuration. It includes resources whose <code>when</code> conditions are false and those
+omitted because their dependencies were filtered. Startup observation, immediate apply, and failed attempts
+use the same scope; synthetic plan entries are excluded. The count changes when
+the declaration changes, not when the redundant role or the observation path
+changes. It is an inventory count, not proof of resource readiness or forwarding.</p>
+<h2 id="controller-status">Controller status</h2>
+<p><code>Status.status.controllers</code> and the <code>Controllers</code> endpoint include both the
+configured controller mode and runtime reconcile state. Runtime fields include
+<code>interval</code>, <code>lastTrigger</code>, <code>lastReconcileTime</code>, <code>nextReconcileTime</code>,
+<code>reconcileCount</code>, <code>reconcileErrorCount</code>, <code>consecutiveErrorCount</code>,
+<code>currentError</code>, <code>lastDuration</code>, <code>maxDuration</code>, <code>averageDuration</code>, <code>lastError</code>,
+<code>lastErrorTime</code>, and <code>lastErrorClearedAt</code>. <code>reconcileErrorCount</code> is cumulative;
+use <code>currentError</code> and <code>consecutiveErrorCount</code> to decide whether the controller
+is failing now. These fields are observational; clients should tolerate them
+being absent before a controller has run.</p>
+<h2 id="managed-daemons">Managed daemons</h2>
+<p>Stateful daemons each have their own socket:</p>
+<pre><code class="language-text">/run/routerd/dhcpv6-client/wan-pd.sock
+/run/routerd/dhcpv4-client/wan.sock
+/run/routerd/pppoe-client/wan-pppoe.sock
+/run/routerd/healthcheck/internet.sock
+</code></pre>
+<p>On FreeBSD, the equivalent path is <code>/var/run/routerd/...</code>.</p>
+<h2 id="common-daemon-endpoints">Common daemon endpoints</h2>
+<table>
+<thead>
+<tr>
+<th>Method and path</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET /v1/healthz</code></td>
+<td>Liveness check</td>
+</tr>
+<tr>
+<td><code>GET /v1/status</code></td>
+<td>Daemon status and related resource state</td>
+</tr>
+<tr>
+<td><code>GET /v1/events</code></td>
+<td>Event log; supports <code>since</code>, <code>wait</code>, <code>topic</code> query parameters</td>
+</tr>
+<tr>
+<td><code>POST /v1/commands/reload</code></td>
+<td>Re-read configuration</td>
+</tr>
+<tr>
+<td><code>POST /v1/commands/renew</code></td>
+<td>Daemon-specific active operation (DHCPv6 Renew, DHCPv4 lease refresh, immediate health probe, etc.)</td>
+</tr>
+<tr>
+<td><code>POST /v1/commands/stop</code></td>
+<td>Graceful shutdown</td>
+</tr>
+</tbody>
+</table>
+<p>The semantics of <code>renew</code> differ per daemon: DHCPv6 sends a Renew, DHCPv4 refreshes the lease, healthcheck triggers an immediate probe.</p>
+<p>The ARP observer accepts <code>probe-target</code> through <code>POST /v1/commands</code>. After a
+successful command, <code>GET /v1/status</code> includes <code>observed.lastCommandProbe</code> as JSON
+text with <code>sequence</code>, <code>target</code>, <code>startedAt</code>, <code>completedAt</code>, and <code>packetsSent</code>.
+The sequence equals the same snapshot's <code>commandProbeCount</code>; timestamps use UTC
+RFC3339. Only the last success is retained. Rejections, cooldown suppression,
+partial failures, and autonomous probes do not replace it. Bind this diagnostic
+to the observer process and packet capture when correlating requests; it is not
+a request identifier or durable history. See the design.</p>
+<h2 id="phase-vocabulary">Phase vocabulary</h2>
+<p><code>ResourceStatus.phase</code> uses a shared vocabulary across resources:</p>
+<table>
+<thead>
+<tr>
+<th>Phase</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Pending</code></td>
+<td>Waiting for required input</td>
+</tr>
+<tr>
+<td><code>Bound</code></td>
+<td>A lease (DHCP, etc.) is held</td>
+</tr>
+<tr>
+<td><code>Applied</code></td>
+<td>Host-side state has been applied</td>
+</tr>
+<tr>
+<td><code>Up</code></td>
+<td>A tunnel or link is up</td>
+</tr>
+<tr>
+<td><code>Installed</code></td>
+<td>Routes or configuration files are installed</td>
+</tr>
+<tr>
+<td><code>Healthy</code></td>
+<td>Health check meets its success threshold</td>
+</tr>
+<tr>
+<td><code>Unhealthy</code></td>
+<td>Health check meets its failure threshold</td>
+</tr>
+<tr>
+<td><code>Error</code></td>
+<td>An operation failed</td>
+</tr>
+</tbody>
+</table>
+<p>Each phase carries a <code>conditions</code> array. Decisions in client code should be based on <code>phase</code> and <code>conditions</code>, not on log strings.</p>
+<h2 id="events">Events</h2>
+<p>Events have a topic and attributes:</p>
+<pre><code class="language-json">{
+  &quot;topic&quot;: &quot;routerd.dhcpv6.client.prefix.renewed&quot;,
+  &quot;attributes&quot;: {
+    &quot;resource.kind&quot;: &quot;DHCPv6PrefixDelegation&quot;,
+    &quot;resource.name&quot;: &quot;wan-pd&quot;
+  }
+}
+</code></pre>
+<p>routerd persists events into SQLite. Managed daemons additionally keep them in their own <code>events.jsonl</code> files. <code>EventRule</code> and <code>DerivedEvent</code> consume this stream to emit virtual events.</p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#routerd-main-process">routerd main process</a></li>
+<li><a href="#sam-enrollment-endpoints">SAM enrollment endpoints</a></li>
+<li><a href="#dhcp-lease-hook">DHCP lease hook</a></li>
+<li><a href="#resource-count">Resource count</a></li>
+<li><a href="#controller-status">Controller status</a></li>
+<li><a href="#managed-daemons">Managed daemons</a></li>
+<li><a href="#common-daemon-endpoints">Common daemon endpoints</a></li>
+<li><a href="#phase-vocabulary">Phase vocabulary</a></li>
+<li><a href="#events">Events</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/control-api-v1alpha1.md">GitHub</a></div></footer></body></html>

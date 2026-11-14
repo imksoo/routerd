@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>基本的な IPv4 NAT ルーター · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/config-examples/basic-ipv4-nat.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/config-examples/basic-ipv4-nat.html" lang="en" hreflang="en">English</a><a href="/docs/ja/config-examples/basic-ipv4-nat.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/config-examples/basic-ipv4-nat.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/config-examples/basic-ipv4-nat.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="基本的な-ipv4-nat-ルーター">基本的な IPv4 NAT ルーター</h1>
+<p>これは、テスト用 LAN の端末がルーターから DHCP（アドレスを自動で配る仕組み）で
+private IPv4 アドレスを受け取り、ルーターが WAN 側の IPv4 へ NAT（アドレスの書き換え）して
+外へ出す例です。最初は <strong>隔離した Ubuntu Server VM</strong> と VM コンソールで試してください。</p>
+<p>完全な YAML は <code>examples/example-basic-ipv4-nat.yaml</code> にあります。</p>
+<p>この例にはファイアウォール用リソースも含まれますが、routerd の
+ファイアウォール機能は現在も土台を整えている段階です。
+インターネットに公開するルーターや、家・学校・職場の唯一の防御としては
+使わないでください。</p>
+<h2 id="構成">構成</h2>
+<pre><code class="language-text">テスト用上流ネットワーク
+          |
+        ens18 (WAN, DHCPv4)
+          |
+      [ routerd VM ]
+          |
+        ens19 (LAN, 192.168.10.1/24)
+          |
+     テスト用クライアント
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>場所</th>
+<th>役割</th>
+<th>主なリソース</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>WAN</td>
+<td>上流から IPv4 を DHCP で受ける</td>
+<td><code>Interface/wan</code>、<code>DHCPv4Client/wan-dhcpv4</code></td>
+</tr>
+<tr>
+<td>LAN</td>
+<td>ルーター自身の IPv4 と DHCP の範囲</td>
+<td><code>Interface/lan</code>、<code>IPv4StaticAddress/lan-base</code>、<code>DHCPv4Server/lan-dhcpv4</code></td>
+</tr>
+<tr>
+<td>NAT</td>
+<td>LAN の IPv4 が WAN に出るときだけ書き換える</td>
+<td><code>NAT44Rule/lan-to-wan</code></td>
+</tr>
+</tbody>
+</table>
+<p>VM の NIC 名、LAN の番号、DHCP の範囲は例です。管理用 NIC と重ならない値に
+変えてください。</p>
+<h2 id="要点となる設定">要点となる設定</h2>
+<p>WAN は、最初は外部のネットワーク設定が所有します。LAN は routerd が管理します。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: Interface
+  metadata:
+    name: wan
+  spec:
+    ifname: ens18
+    adminUp: true
+    managed: false
+- apiVersion: net.routerd.net/v1alpha1
+  kind: Interface
+  metadata:
+    name: lan
+  spec:
+    ifname: ens19
+    adminUp: true
+    managed: true
+- apiVersion: net.routerd.net/v1alpha1
+  kind: IPv4StaticAddress
+  metadata:
+    name: lan-base
+  spec:
+    interface: lan
+    address: 192.168.10.1/24
+</code></pre>
+<p>LAN の DHCP サーバーは、LAN のアドレスをゲートウェイとしてクライアントへ配ります。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DHCPv4Server
+  metadata:
+    name: lan-dhcpv4
+  spec:
+    interface: lan
+    addressPool:
+      start: 192.168.10.100
+      end: 192.168.10.199
+      leaseTime: 12h
+    gatewayFrom:
+      resource: IPv4StaticAddress/lan-base
+      field: address
+    # この学習用の例では、routerd 自身ではなく外部 DNS を配る。
+    dnsServers:
+      - 1.1.1.1
+      - 1.0.0.1
+</code></pre>
+<h3 id="nat44rule-の形">NAT44Rule の形</h3>
+<p>NAT の項目名は <code>type</code>、<code>egressInterface</code>、<code>sourceRanges</code> です。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: NAT44Rule
+  metadata:
+    name: lan-to-wan
+  spec:
+    type: masquerade
+    egressInterface: wan
+    sourceRanges:
+      - 192.168.10.0/24
+    excludeDestinationCIDRs:
+      - 10.0.0.0/8
+      - 172.16.0.0/12
+      - 192.168.0.0/16
+</code></pre>
+<p><code>sourceRanges</code> は NAT してよい送信元だけを示します。
+<code>excludeDestinationCIDRs</code> は、ほかのプライベートネットワークへの通信を
+うっかり NAT しないための例です。実際の上流や VPN と重なる範囲は、
+自分の構成に合わせて見直します。</p>
+<p>この例の DHCP は、外部 DNS (<code>1.1.1.1</code> と <code>1.0.0.1</code>) をクライアントへ配ります。
+利用を許可された DNS を自分のネットワークに合わせて選んでください。routerd 自身を
+DNS サーバーとして配りたいときは、先に <code>DNSResolver</code> などの DNS サービスを追加します。</p>
+<h2 id="この設定例を実行する">この設定例を実行する</h2>
+<p><a href="../tutorials/first-router.html">最初のルーター</a>に、導入版に合うファイルの取得、
+インターフェース名の変更、検証、隔離 dry-run、反映、サービス起動、端末の確認を
+まとめています。リリースアーカイブにはリポジトリの <code>examples/</code> ディレクトリは
+含まれません。上の抜粋だけでなく、取得した完全なファイルを使ってください。</p>
+<h2 id="関連項目">関連項目</h2>
+<ul>
+<li><a href="../tutorials/basic-firewall.html">NAT44 とファイアウォールの準備</a></li>
+<li><a href="../tutorials/lan-side-services.html">LAN 側サービス</a></li>
+<li><a href="../concepts/apply-and-render.html">適用と生成</a></li>
+</ul></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#構成">構成</a></li>
+<li><a href="#要点となる設定">要点となる設定</a><ul>
+<li><a href="#nat44rule-の形">NAT44Rule の形</a></li>
+</ul>
+</li>
+<li><a href="#この設定例を実行する">この設定例を実行する</a></li>
+<li><a href="#関連項目">関連項目</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/config-examples/basic-ipv4-nat.md">GitHub</a></div></footer></body></html>

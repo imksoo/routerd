@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Local DNS zones · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/how-to/dns-local-zone.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/how-to/dns-local-zone.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/how-to/dns-local-zone.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/how-to/dns-local-zone.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/dns-local-zone.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="local-dns-zones">Local DNS zones</h1>
+<h2 id="scenario">Scenario</h2>
+<p>You want internal hosts to be reachable by name without hand-maintaining <code>/etc/hosts</code> files on every device. Specifically:</p>
+<ul>
+<li>A handful of static records (router, NAS, printer).</li>
+<li>Automatic A / AAAA / PTR records for every device that takes a DHCP lease.</li>
+<li>Forward and reverse lookups working for those names.</li>
+</ul>
+<h2 id="how-routerd-solves-it">How routerd solves it</h2>
+<p><code>DNSZone</code> stores local authoritative records for one DNS domain. It can combine <strong>manual records</strong> (declared in YAML) with <strong>DHCP-derived records</strong> (built from the lease database). <code>DNSResolver</code> reads <code>DNSZone</code> resources as one of its sources, so internal queries get answered locally and external queries fall through to the configured upstreams.</p>
+<p>DHCP-derived records are kept in sync via the event bus: dnsmasq invokes <code>routerd-dhcp-event-relay</code> whenever a lease changes, the relay publishes a routerd event, and <code>routerd-dns-resolver</code> updates its in-memory zone tables. The dnsmasq lease file is also re-read at startup so records survive a daemon restart.</p>
+<h2 id="example">Example</h2>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSZone
+  metadata:
+    name: lan
+  spec:
+    zone: lan.example.org
+    ttl: 300
+    dnssec:
+      enabled: false
+    records:
+      - hostname: router
+        ipv4: 192.0.2.1
+        ipv6: 2001:db8:1::1
+      - hostname: nas
+        ipv4: 192.0.2.10
+    dhcpDerived:
+      sources:
+        - DHCPv4Server/lan-dhcpv4
+        - DHCPv6Server/lan-dhcpv6
+      hostnameSuffix: lan.example.org
+      ddns: true
+      ttl: 60
+      leaseFile: /var/lib/routerd/dnsmasq/dnsmasq.leases
+    reverseZones:
+      - name: 2.0.192.in-addr.arpa
+</code></pre>
+<p>After this resource is applied, queries for <code>nas.lan.example.org</code> and <code>&lt;dhcp-client-name&gt;.lan.example.org</code> resolve to local addresses, and PTR lookups for <code>192.0.2.x</code> return the same names.</p>
+<h2 id="notes">Notes</h2>
+<ul>
+<li>Different static hostnames may share an IPv4 or IPv6 address. All declared names retain their A / AAAA answers; the first static name declared for each address supplies its PTR answer. DHCP-derived names do not replace these static answers.</li>
+<li>Choose a domain you control or one that is reserved for internal use (<code>example.org</code>, <code>home.arpa</code>, etc.). Do not invent suffixes that collide with the public DNS namespace (such as <code>.lan</code>).</li>
+<li>If you keep DNSSEC enabled (<code>dnssec.enabled: true</code>), upstream DNSSEC validation continues to work for external queries; the local zone is unsigned by design.</li>
+<li>For multiple internal subnets, declare one <code>reverseZones</code> entry per subnet so PTR lookups work in both directions.</li>
+</ul>
+<h2 id="see-also">See also</h2>
+<ul>
+<li><a href="dns-private-upstream.html">Private DNS upstreams</a></li>
+<li><a href="../concepts/dns-resolver.html">DNS resolver concept</a></li>
+</ul></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#scenario">Scenario</a></li>
+<li><a href="#how-routerd-solves-it">How routerd solves it</a></li>
+<li><a href="#example">Example</a></li>
+<li><a href="#notes">Notes</a></li>
+<li><a href="#see-also">See also</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/how-to/dns-local-zone.md">GitHub</a></div></footer></body></html>

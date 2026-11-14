@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TailscaleNode · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/reference/resources/TailscaleNode.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/reference/resources/TailscaleNode.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/TailscaleNode.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/TailscaleNode.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/TailscaleNode.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="tailscalenode">TailscaleNode</h1>
+<p><a href="../resources.html#tailscalenode">各资源的配置</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>通过 routerd 生成的 Linux systemd oneshot 或 FreeBSD rc.d 脚本管理 Tailscale 注册选项，再读取 tailscale status --json。Tailscale/Headscale 服务端批准仍需另行处理。</p>
+<h2 id="指定条件与引用关系">指定条件与引用关系</h2>
+<ul>
+<li>authKey 与 authKeyEnv、authKeyFile 互斥。authKeyEnv 可与 authKeyFile 搭配，指定从文件读取的变量名称；仅提供文件时使用 TS_AUTHKEY。</li>
+<li>authKeyFile 是环境变量赋值文件，不是原始密钥，使用 TS_AUTHKEY=tskey-... 或 authKeyEnv 指定的变量。FreeBSD 每行使用一个不加引号的赋值；选定变量缺失、重复或为空会失败。Linux 以 systemd EnvironmentFile 加载。</li>
+<li>present 节点会保留 UDP 41641，拒绝与其他已配置监听冲突。生成的命令为 tailscale up --timeout=30s。Applied/Rendered 表示服务应用，只有观察到 BackendState=Running 才报告 Running，均不保证通告子网可达。</li>
+<li>FreeBSD rc.d 拒绝更改缺少 routerd 管理标记的已有 tailscaled 进程。Linux 使用共享 tailscaled.service 与 routerd-tailscale-<name>.service 注册单元。state: absent 移除注册单元，不代表卸载软件包或删除 tailnet 节点。</li>
+</ul>
+<h2 id="yaml定义">YAML定义</h2>
+<p>此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: TailscaleNode
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    acceptDNS: true # 选填; boolean
+    acceptRoutes: true # 选填; boolean
+    advertiseExitNode: true # 选填; boolean
+    advertiseRoutes: # 选填; array
+      - &quot;&lt;string&gt;&quot; # string
+    advertiseTags: # 选填; array
+      - &quot;&lt;string&gt;&quot; # string
+    authKey: &quot;&lt;string&gt;&quot; # 选填; string
+    authKeyEnv: &quot;&lt;string&gt;&quot; # 选填; string
+    authKeyFile: &quot;&lt;string&gt;&quot; # 选填; string
+    hostname: &quot;&lt;string&gt;&quot; # 选填; string
+    loginServer: &quot;&lt;string&gt;&quot; # 选填; string
+    shieldsUp: true # 选填; boolean
+    ssh: true # 选填; boolean
+    state: &quot;&quot; # 选填; string; enum=[&quot;&quot;, &quot;present&quot;, &quot;absent&quot;]
+    when: # 选填; object
+      state: # 选填; object
+        &quot;&lt;key&gt;&quot;: # 选填; object
+          contains: &quot;&lt;string&gt;&quot; # 选填; string
+          equals: &quot;&lt;string&gt;&quot; # 选填; string
+          exists: true # 选填; boolean
+          for: &quot;&lt;string&gt;&quot; # 选填; string
+          in: # 选填; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # 选填; string
+          status: &quot;set&quot; # 选填; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<h2 id="字段含义与默认值">字段含义与默认值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>字段含义与默认值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.state</code></td>
+<td>默认 present；absent 移除管理的注册服务，不移除软件包或删除控制服务器上的节点。</td>
+</tr>
+<tr>
+<td><code>spec.hostname</code></td>
+<td>可选的 tailscale up --hostname 值，不是 Router.metadata.name，也不更改 OS 主机名。省略时不传入参数。</td>
+</tr>
+<tr>
+<td><code>spec.loginServer</code></td>
+<td>可选的 --login-server 控制服务器 URL，例如 Headscale。省略时依 Tailscale 客户端配置或默认值；routerd 不提供 URL 默认值或资源查找。</td>
+</tr>
+<tr>
+<td><code>spec.authKey</code></td>
+<td>可选的直接注册密钥，与 authKeyEnv/authKeyFile 互斥。若未配置其他来源则不传入密钥参数，依已有登录状态或客户端注册要求处理。</td>
+</tr>
+<tr>
+<td><code>spec.authKeyEnv</code></td>
+<td>可选的注册密钥环境变量名称，不是密钥本身。可指定 authKeyFile 中的变量。Linux 使用生成服务的环境，不会自动复制 routerd 进程环境。</td>
+</tr>
+<tr>
+<td><code>spec.authKeyFile</code></td>
+<td>可选的路由器本机环境文件绝对路径，默认读取 TS_AUTHKEY。跨 Linux/FreeBSD 请用不加引号的 NAME=value 格式。不是 Secret 资源引用。</td>
+</tr>
+<tr>
+<td><code>spec.advertiseExitNode</code></td>
+<td>默认 false；true 传入 --advertise-exit-node。不会在控制服务器批准出口节点，也不会让本机改用其他出口节点。</td>
+</tr>
+<tr>
+<td><code>spec.advertiseRoutes</code></td>
+<td>可选 IPv4/IPv6 CIDR 列表，以逗号分隔传入 --advertise-routes。空列表省略参数，而非明确传入空值。控制服务器所需批准另行处理。</td>
+</tr>
+<tr>
+<td><code>spec.advertiseTags</code></td>
+<td>可选标签字符串，以逗号分隔传入 --advertise-tags。验证拒绝空值及空白字符，但不强制 tag: 前缀或查验服务器 ACL 权限。空列表省略参数。</td>
+</tr>
+<tr>
+<td><code>spec.acceptRoutes</code></td>
+<td>可选的 --accept-routes 布尔值。省略时不传入参数，由 Tailscale 客户端决定；明确 false 仍会传入，与省略不同。</td>
+</tr>
+<tr>
+<td><code>spec.acceptDNS</code></td>
+<td>可选的 --accept-dns 布尔值，省略时不强制 true 或 false，仅传入明确值。不会配置 routerd DNSResolver/DNSForwarder 资源。</td>
+</tr>
+<tr>
+<td><code>spec.ssh</code></td>
+<td>默认 false 省略参数；true 传入 --ssh 启用 Tailscale SSH 请求。与 OS sshd 及 routerd 管理访问不同。</td>
+</tr>
+<tr>
+<td><code>spec.shieldsUp</code></td>
+<td>可选的 --shields-up 布尔值，省略不传入参数，明确 true/false 才传入。</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>可选的通用启用条件，省略表示无条件。state/all/any 及字段引用规则请见通用字段。控制生成服务，不会删除 tailnet 节点。</td>
+</tr>
+</tbody>
+</table>
+<p>实现: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_interface.go">pkg/config/validate_interface.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/index.go">pkg/config/index.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/tailscale_systemd.go">pkg/render/tailscale_systemd.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/freebsd_rcd.go">pkg/render/freebsd_rcd.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/system.go">pkg/controller/chain/system.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/tailscale/tailscale.go">pkg/tailscale/tailscale.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/firewall_holes.go">pkg/render/firewall_holes.go</a></p>
+<h2 id="可引用的状态字段">可引用的状态字段</h2>
+<p>常规状态引用验证接受此 Kind 的下列字段名称。列于允许列表不保证目前有值，请检查实际状态。这些是输出，不是 YAML spec 配置。</p>
+<p><code>phase</code>, <code>tailnetName</code>, <code>peerCount</code>, <code>advertiseRoutes</code></p>
+<p><a href="/examples/tailscale-exit-subnet.yaml">配置示例</a></p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件与引用关系">指定条件与引用关系</a></li>
+<li><a href="#yaml定义">YAML定义</a></li>
+<li><a href="#字段含义与默认值">字段含义与默认值</a></li>
+<li><a href="#可引用的状态字段">可引用的状态字段</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/reference/resources/TailscaleNode.md">GitHub</a></div></footer></body></html>

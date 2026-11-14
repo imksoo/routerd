@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>IPv6RouterAdvertisement · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/reference/resources/IPv6RouterAdvertisement.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/reference/resources/IPv6RouterAdvertisement.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/IPv6RouterAdvertisement.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/IPv6RouterAdvertisement.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/IPv6RouterAdvertisement.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="ipv6routeradvertisement">IPv6RouterAdvertisement</h1>
+<p><a href="../resources.html#ipv6routeradvertisement">各资源的配置</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>配置 LAN 的 IPv6 路由器通告选项，并弃用先前委派的前缀。</p>
+<h2 id="指定条件与引用关系">指定条件与引用关系</h2>
+<ul>
+<li>interface 及 prefix 或 prefixFrom 必填。静态渲染与实时写入不同：当前实时生成 interface/enable-ra/选项，但不由 prefix/prefixFrom 派生常规 dhcp-range。须搭配可用 DHCPv6Server/地址配置并确认实际线上 PIO，模式或 Applied 无法证明当前前缀通告。</li>
+<li>dnssl 与 dnsslFrom 互斥，prefix/prefixFrom、rdnss/rdnssFrom 可并用。即使 optional true，通用引用仍须有现有资源与明确提供字段。已移除 prefixSource/ready_when 会被拒绝。</li>
+<li>prefixFrom 指向 IPv6DelegatedAddress 时，仍有效的旧 /64 以前缀首选期 0、剩余有效期的 PIO 直接发送，使用实际链路本地源地址与跳数限制 255。常规当前前缀服务仍走共用 dnsmasq。</li>
+</ul>
+<h2 id="yaml定义">YAML定义</h2>
+<p>此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: IPv6RouterAdvertisement
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    configPath: &quot;&lt;string&gt;&quot; # 选填; string
+    dependsOn: # 选填; array
+      - # object
+        equals: &quot;&lt;string&gt;&quot; # 选填; string
+        field: &quot;&lt;string&gt;&quot; # 选填; string
+        notEmpty: true # 选填; boolean
+        optional: true # 选填; boolean
+        phase: &quot;&lt;string&gt;&quot; # 选填; string
+        resource: &quot;&lt;string&gt;&quot; # 必填; string
+    dnssl: # 选填; array
+      - &quot;&lt;string&gt;&quot; # string
+    dnsslFrom: # 选填; array
+      - # object
+        field: &quot;&lt;string&gt;&quot; # 选填; string
+        optional: true # 选填; boolean
+        resource: &quot;&lt;string&gt;&quot; # 必填; string
+    interface: &quot;&lt;string&gt;&quot; # 必填; string
+    mFlag: true # 选填; boolean
+    mtu: 1280 # 选填; integer; minimum=1280; maximum=65535
+    oFlag: true # 选填; boolean
+    pidFile: &quot;&lt;string&gt;&quot; # 选填; string
+    preferredLifetime: &quot;&lt;string&gt;&quot; # 选填; string
+    prefix: &quot;&lt;string&gt;&quot; # 选填; string
+    prefixFrom: # 选填; object
+      field: &quot;&lt;string&gt;&quot; # 选填; string
+      optional: true # 选填; boolean
+      resource: &quot;&lt;string&gt;&quot; # 必填; string
+    prfPreference: &quot;&quot; # 选填; string; enum=[&quot;&quot;, &quot;low&quot;, &quot;medium&quot;, &quot;high&quot;]
+    rdnss: # 选填; array
+      - &quot;&lt;string&gt;&quot; # string
+    rdnssFrom: # 选填; array
+      - # object
+        field: &quot;&lt;string&gt;&quot; # 选填; string
+        optional: true # 选填; boolean
+        resource: &quot;&lt;string&gt;&quot; # 必填; string
+    validLifetime: &quot;&lt;string&gt;&quot; # 选填; string
+    when: # 选填; object
+      state: # 选填; object
+        &quot;&lt;key&gt;&quot;: # 选填; object
+          contains: &quot;&lt;string&gt;&quot; # 选填; string
+          equals: &quot;&lt;string&gt;&quot; # 选填; string
+          exists: true # 选填; boolean
+          for: &quot;&lt;string&gt;&quot; # 选填; string
+          in: # 选填; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # 选填; string
+          status: &quot;set&quot; # 选填; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<h2 id="字段含义与默认值">字段含义与默认值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>字段含义与默认值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.interface</code></td>
+<td>必填逻辑接口。不同于许多地址资源，RA 此字段未由全局引用验证确认存在；运行时先解析别名，失败则原样作 OS 名称。请声明 Interface 并使用其名称。</td>
+</tr>
+<tr>
+<td><code>spec.prefix</code></td>
+<td>固定 IPv6 前缀，未提供 prefixFrom.resource 时必填，可作 prefixFrom 状态替代值。当前实时写入不以此生成常规前缀范围，不能假设仅声明即可通告。</td>
+</tr>
+<tr>
+<td><code>spec.prefixFrom</code></td>
+<td>可选通用 resource/field/optional 来源，须有现有资源与明确提供字段。用于报告前缀，引用 IPv6DelegatedAddress 时也找出待弃用的旧 /64；单纯缺值不阻挡常规配置生成。</td>
+</tr>
+<tr>
+<td><code>spec.rdnss</code></td>
+<td>可选固定 IPv6 DNS 列表，默认空，与 rdnssFrom 合并。在共用 dnsmasq 输出无标签 option6:dns-server，此写入器不按 RA 接口隔离。</td>
+</tr>
+<tr>
+<td><code>spec.rdnssFrom</code></td>
+<td>可选通用状态来源列表，无自动来源。当前 RA 路径忽略未解析来源的等待原因，仅使用已有值；optional 在此不提供服务就绪条件。</td>
+</tr>
+<tr>
+<td><code>spec.dnssl</code></td>
+<td>可选搜索域列表，默认空；每值为不含空白、斜线或逗号的单一域名，与 dnsslFrom 互斥，输出共用无标签 option6:domain-search。</td>
+</tr>
+<tr>
+<td><code>spec.dnsslFrom</code></td>
+<td>可选来源列表，限 DNSZone/<name>、field: zone，资源须存在；可先读声明值，与 dnssl 互斥。当前常规 RA 生成忽略来源缺值的等待原因。</td>
+</tr>
+<tr>
+<td><code>spec.mFlag</code></td>
+<td>布尔值默认 false，供直接弃用旧委派前缀的 RA 使用；当前常规 dnsmasq RA 生成不映射至 M。</td>
+</tr>
+<tr>
+<td><code>spec.oFlag</code></td>
+<td>布尔值默认 false，使用路径同 mFlag 的直接弃用通告，不是常规 dnsmasq O 位开关。</td>
+</tr>
+<tr>
+<td><code>spec.mtu</code></td>
+<td>可选 1280–65535，省略或 0 不输出明确 MTU，除非有优先的 PathMTU 派生值。经 dnsmasq ra-param mtu:&lt;值&gt; 传入。</td>
+</tr>
+<tr>
+<td><code>spec.prfPreference</code></td>
+<td>空值或 medium 使用常规偏好，low/high 输出 dnsmasq 路由器偏好并影响旧前缀直接通告。</td>
+</tr>
+<tr>
+<td><code>spec.preferredLifetime</code></td>
+<td>可选字符串，默认空，当前常规实时写入不使用。旧前缀直接 PIO 一律使用 preferred lifetime 0，不受此值影响。</td>
+</tr>
+<tr>
+<td><code>spec.validLifetime</code></td>
+<td>常规实时 dnsmasq 渲染将此值作 ra-param 路由器有效期，不是当前前缀 PIO 有效期。请用十进制秒，省略保留 dnsmasq 默认值。旧前缀直接 RA 空值或无效值为 1800、上限 65535，旧 PIO 则用租约剩余时长。</td>
+</tr>
+<tr>
+<td><code>spec.configPath</code></td>
+<td>可选解码字符串，默认空；当前实时控制器使用共用 dnsmasq ConfigPath/PIDFile 选项，不使用此资源覆盖。</td>
+</tr>
+<tr>
+<td><code>spec.pidFile</code></td>
+<td>可选解码字符串，默认空；当前实时控制器使用共用 dnsmasq ConfigPath/PIDFile 选项，不使用此资源覆盖。</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>可选通用状态条件，默认无条件；为假时从有效配置排除并为 Pending/WhenFalse。</td>
+</tr>
+<tr>
+<td><code>spec.dependsOn</code></td>
+<td>可选通用 AND 依赖列表，默认空。不成立报告 Pending/DependsOnFalse 并跳过旧前缀直接通告，但常规共用 dnsmasq 行写入器不检查此条件，不能完全抑制常规服务。</td>
+</tr>
+</tbody>
+</table>
+<p>实现: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_dhcp.go">pkg/config/validate_dhcp.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go">pkg/controller/chain/chain.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/phase2.go">pkg/controller/chain/phase2.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/routeradvertisement.go">pkg/controller/chain/routeradvertisement.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/dnsmasq.go">pkg/render/dnsmasq.go</a></p>
+<h2 id="可引用的状态字段">可引用的状态字段</h2>
+<p>常规状态引用验证接受此 Kind 的下列字段名称。列于允许列表不保证目前有值，请检查实际状态。这些是输出，不是 YAML spec 配置。</p>
+<p><code>phase</code>, <code>interface</code>, <code>prefix</code>, <code>rdnss</code>, <code>configPath</code>, <code>dryRun</code></p>
+<p><a href="/examples/example-dslite-home.yaml">配置示例</a></p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件与引用关系">指定条件与引用关系</a></li>
+<li><a href="#yaml定义">YAML定义</a></li>
+<li><a href="#字段含义与默认值">字段含义与默认值</a></li>
+<li><a href="#可引用的状态字段">可引用的状态字段</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/reference/resources/IPv6RouterAdvertisement.md">GitHub</a></div></footer></body></html>

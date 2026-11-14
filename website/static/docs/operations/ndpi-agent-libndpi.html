@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>nDPI agent native package · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/operations/ndpi-agent-libndpi.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/operations/ndpi-agent-libndpi.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/operations/ndpi-agent-libndpi.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/operations/ndpi-agent-libndpi.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/operations/ndpi-agent-libndpi.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="ndpi-agent-native-package">nDPI agent native package</h1>
+<p>routerd's normal Linux release archives are built with <code>CGO_ENABLED=0</code> and keep
+all included routerd binaries statically linked. The optional
+<code>routerd-ndpi-agent-libndpi</code> archive is the exception package for hosts that
+need native nDPI classification.</p>
+<p>This archive contains only:</p>
+<ul>
+<li><code>bin/routerd-ndpi-agent</code></li>
+<li><code>share/doc/README.md</code></li>
+<li><code>share/doc/VERSION</code></li>
+<li><code>share/doc/TARGET</code></li>
+</ul>
+<p>The binary is built with <code>CGO_ENABLED=1 -tags libndpi</code> and links to the target
+system's <code>libndpi</code> runtime. It is intended as an override for a host that
+already installed the normal routerd archive.</p>
+<h2 id="install">Install</h2>
+<p>Download both the normal routerd release archive and the matching native agent
+archive, then let the installer apply them in one transaction:</p>
+<pre><code class="language-sh">curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz.sha256
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz.sha256
+sha256sum -c routerd-linux-amd64.tar.gz.sha256
+sha256sum -c routerd-ndpi-agent-libndpi-linux-amd64.tar.gz.sha256
+tar -xzf routerd-linux-amd64.tar.gz
+sudo ./install.sh --with-ndpi \
+  --with-ndpi-archive ./routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
+</code></pre>
+<p>The host must provide a <code>libndpi</code> runtime package with the same shared-library
+ABI as the archive was built against. On Debian/Ubuntu, install the optional
+runtime dependencies with:</p>
+<pre><code class="language-sh">sudo apt-get install libndpi-bin
+</code></pre>
+<p>Verify that the native backend is active:</p>
+<pre><code class="language-sh">sudo curl --silent --unix-socket /run/routerd/ndpi-agent/default.sock \
+  http://unix/v1/status
+</code></pre>
+<p>The response should include <code>"libndpiLoaded": true</code>.</p>
+<h2 id="upgrade-note">Upgrade note</h2>
+<p>The normal routerd archive includes the default static <code>routerd-ndpi-agent</code>.
+During upgrades, <code>install.sh</code> preserves an existing native agent when its
+<code>selftest</code> reports <code>"libndpiLoaded": true</code> and the archive agent does not.</p>
+<p>Run the normal installer with <code>--with-ndpi</code> on hosts that require native
+application-layer classification. The installer fails if the final installed
+agent does not report <code>"libndpiLoaded": true</code>, so the static fallback cannot
+silently satisfy a native nDPI intent.</p>
+<p>For fresh installs, or when you want the native agent archive to be the explicit
+source of truth, pass <code>--with-ndpi-archive PATH</code>. The installer validates the
+archive target marker, rejects unsafe tar paths, verifies the neighboring
+<code>.sha256</code> file when present, checks that the archive agent reports
+<code>"libndpiLoaded": true</code>, and rolls back the whole install if the overlay fails.</p>
+<h2 id="configure">Configure</h2>
+<p><code>routerd-dpi-classifier</code> must be configured with <code>--engine auto</code> or
+<code>--engine ndpi-agent</code> and an <code>--ndpi-agent-socket</code> pointing at the agent socket.
+<code>auto</code> is recommended because it falls back to the built-in classifier if the
+native agent is unavailable.</p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#install">Install</a></li>
+<li><a href="#upgrade-note">Upgrade note</a></li>
+<li><a href="#configure">Configure</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/operations/ndpi-agent-libndpi.md">GitHub</a></div></footer></body></html>
