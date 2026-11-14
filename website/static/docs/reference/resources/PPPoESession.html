@@ -5,6 +5,13 @@
 <main class="doclayout wrap"><article class="document"><h1 id="pppoesession">PPPoESession</h1>
 <p><a href="../resources.html#pppoesession">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Run a supervised routerd-pppoe-client using pppd on Linux or mpd5 on FreeBSD, and publish negotiated IPv4 session status. Several legacy fields affect only manual FreeBSD render output, not this daemon path.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>interface must reference a base Interface declared in the same Router; PPPoESession, tunnels and other logical interfaces cannot be used as the lower interface. username and exactly one of password/passwordFile remain required even with enabled:false.</li>
+<li>The live supervisor passes authMethod, mtu/mru, serviceName/acName and lcpEchoInterval/lcpEchoFailure to the daemon. It does not pass ifname, managed, persist, ipv6, usePeerDNS, lcpInterval or lcpFailure. Do not infer live behavior from the separate manual FreeBSD render artifact.</li>
+<li>The live daemon defaults to MTU/MRU 1454 and LCP echo 30s/4 on both platforms. The separate manual FreeBSD mpd5 rendering defaults to 1492 and legacy LCP 20s/3. Neither the configured plan nor Connected status proves real upstream reachability.</li>
+</ul>
 <h2 id="yaml-definition">YAML definition</h2>
 <p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
 <pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
@@ -34,9 +41,107 @@
     usePeerDNS: true # optional; boolean
     username: &quot;&lt;string&gt;&quot; # Required; string
 </code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.interface</code></td>
+<td>Required lower base Interface metadata.name, resolved to its physical OS name. No status-value source.</td>
+</tr>
+<tr>
+<td><code>spec.ifname</code></td>
+<td>Optional desired PPP name, &lt;=15 characters without whitespace/slash; omission requires ppp-<name> to fit 15 characters. The live supervisor currently ignores this field and the daemon uses DefaultIfName; manual FreeBSD render uses this value. Avoid relying on a custom name in the live path.</td>
+</tr>
+<tr>
+<td><code>spec.enabled</code></td>
+<td>Default true. False suppresses startup, stops the supervised session and reports Disabled; it does not waive configuration validation.</td>
+</tr>
+<tr>
+<td><code>spec.authMethod</code></td>
+<td>chap by default; pap or both also accepted. Controls permitted PAP/CHAP authentication in the live pppd/mpd5 configuration.</td>
+</tr>
+<tr>
+<td><code>spec.username</code></td>
+<td>Required PPP authentication username, with no derived default.</td>
+</tr>
+<tr>
+<td><code>spec.password</code></td>
+<td>Inline plain-text PPP password, required unless passwordFile is supplied; mutually exclusive with passwordFile.</td>
+</tr>
+<tr>
+<td><code>spec.passwordFile</code></td>
+<td>Router-local raw password file; required unless password is supplied. Daemon reads it and trims surrounding whitespace at startup; missing/unreadable/empty fails. Not an environment assignment file.</td>
+</tr>
+<tr>
+<td><code>spec.mtu</code></td>
+<td>Optional 576–1500; omitted/0 defaults to 1454 in the live daemon, 1492 in manual FreeBSD render. A 1500-byte PPP MTU requires suitable underlay support; validation does not prove it.</td>
+</tr>
+<tr>
+<td><code>spec.mru</code></td>
+<td>Optional 576–1500 receive limit; omitted/0 defaults to 1454 in the live daemon, 1492 in manual FreeBSD render.</td>
+</tr>
+<tr>
+<td><code>spec.serviceName</code></td>
+<td>Optional PPPoE service selector; empty sends no explicit service-name setting. Newlines are rejected.</td>
+</tr>
+<tr>
+<td><code>spec.acName</code></td>
+<td>Optional access-concentrator selector; empty sends no explicit AC-name setting. Newlines are rejected.</td>
+</tr>
+<tr>
+<td><code>spec.defaultRoute</code></td>
+<td>Default false. The live main-route cleanup preserves an existing default route on the observed PPP device when true, but the daemon configuration does not create that route. Manual FreeBSD render emits a default-route directive when true. Use an explicit IPv4Route if automatic installation is required in the live path.</td>
+</tr>
+<tr>
+<td><code>spec.usePeerDNS</code></td>
+<td>Default false but not consulted by the live daemon path. LinuxPeer always emits usepeerdns and negotiated DNS is published in PPP status; this field does not control routerd DNS forwarding or resolv.conf application.</td>
+</tr>
+<tr>
+<td><code>spec.persist</code></td>
+<td>Optional boolean decoded but not used by the current supervised daemon configuration; omission does not establish a resource-specific retry policy. Supervisor lifecycle is separate.</td>
+</tr>
+<tr>
+<td><code>spec.lcpInterval</code></td>
+<td>Legacy nonnegative interval used only by manual FreeBSD render, with 0/omitted →20 seconds. The live daemon ignores it; use lcpEchoInterval.</td>
+</tr>
+<tr>
+<td><code>spec.lcpFailure</code></td>
+<td>Legacy nonnegative failure multiplier used only by manual FreeBSD render, with 0/omitted →3. The live daemon ignores it; use lcpEchoFailure.</td>
+</tr>
+<tr>
+<td><code>spec.lcpEchoInterval</code></td>
+<td>Nonnegative LCP echo interval in seconds; omitted/0 results in the live daemon default 30s, not disabled echoes. Manual FreeBSD render ignores this field.</td>
+</tr>
+<tr>
+<td><code>spec.lcpEchoFailure</code></td>
+<td>Nonnegative LCP echo failure count; omitted/0 results in live default 4. Linux passes lcp-echo-failure; FreeBSD daemon renders keep-alive interval and interval×count.</td>
+</tr>
+<tr>
+<td><code>spec.ipv6</code></td>
+<td>Default false; currently not passed to the supervised PPP daemon and does not emit IPv6 negotiation options in its generated configuration. Do not rely on this flag to enable IPv6 over PPP.</td>
+</tr>
+<tr>
+<td><code>spec.managed</code></td>
+<td>Default false. The live supervisor starts any enabled session regardless of this flag. In manual FreeBSD render only, true adds an enabled session to the mpd5 default load list. It is not observe-only protection for the live path.</td>
+</tr>
+<tr>
+<td><code>spec.secretEncoding</code></td>
+<td>Only omitted or plain is accepted. It does not decode base64 or encrypt password/passwordFile.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_wan.go">pkg/config/validate_wan.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go">pkg/controller/chain/chain.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/phase_status.go">pkg/controller/chain/phase_status.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/ipv4_main_routes.go">pkg/controller/chain/ipv4_main_routes.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/pppoesession/controller.go">pkg/controller/pppoesession/controller.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd-pppoe-client/main.go">cmd/routerd-pppoe-client/main.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/pppoeclient/client.go">pkg/pppoeclient/client.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/freebsd.go">pkg/render/freebsd.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd/cmd_render.go">cmd/routerd/cmd_render.go</a></p>
 <p><a href="/examples/example-pppoe-ipv4-nat.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
 <li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 </ul>
 </div>
 </aside></main>

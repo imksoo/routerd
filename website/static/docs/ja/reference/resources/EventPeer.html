@@ -5,6 +5,12 @@
 <main class="doclayout wrap"><article class="document"><h1 id="eventpeer">EventPeer</h1>
 <p><a href="../resources.html#eventpeer">リソース別の設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: federation.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>EventGroupの相手側配送先を1件宣言します。通信認証と自ノード識別名はグループ側で指定します。</p>
+<h2 id="指定条件と参照関係">指定条件と参照関係</h2>
+<ul>
+<li>groupRef・nodeNameは空でない値、endpointは必須です。groupRefはEventGroup/nameでなくEventGroupのmetadata.nameと照合します。EventPeerの検証は存在を確認せず、一致グループがなければ配送設定に入りません。</li>
+<li>静的配送先はnodeName単位で取得済み配送先を上書きし、同じnodeNameの静的定義は後が優先します。typesとsubjectPrefixesは両方の条件が必要で、各一覧内はORです。大文字小文字を区別し、typesは完全一致でトピックのワイルドカードではありません。</li>
+</ul>
 <h2 id="yaml定義">YAML定義</h2>
 <p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
 <pre><code class="language-yaml">- apiVersion: federation.routerd.net/v1alpha1
@@ -21,9 +27,47 @@
     types: # 任意; array
       - &quot;&lt;string&gt;&quot; # string
 </code></pre>
+<h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>項目の意味と既定値</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.groupRef</code></td>
+<td>必須の裸のEventGroup名です。配送には対象グループのauth.secretFileが必要です。既定値はありません。</td>
+</tr>
+<tr>
+<td><code>spec.nodeName</code></td>
+<td>必須の相手識別名で、配送先重複排除・配送履歴のキーです。YAMLの名前が違ってもnodeNameが同じなら独立した相手にはなりません。</td>
+</tr>
+<tr>
+<td><code>spec.endpoint</code></td>
+<td>例http://192.0.2.10:8787のような基底URLが必須です。送信側で末尾の/を除き/v1/eventsを付けるため、そのパスは含めません。URL・スキームの利用可否や疎通はローカルYAML検証では確認しません。</td>
+</tr>
+<tr>
+<td><code>spec.direction</code></td>
+<td>pushまたは空のみ受け付け、既定はpushです。常に送信先を作り、pullクライアントにはなりません。</td>
+</tr>
+<tr>
+<td><code>spec.types</code></td>
+<td>任意のイベント型完全一致の許可一覧です。既定の空は全型許可で、指定項目の空文字は禁止です。</td>
+</tr>
+<tr>
+<td><code>spec.subjectPrefixes</code></td>
+<td>任意のsubject前方一致一覧で、大文字小文字を区別します。既定の空は全subjectを許可し、一覧のいずれかへの前方一致で成立します。</td>
+</tr>
+</tbody>
+</table>
+<p>実装: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_event.go">pkg/config/validate_event.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/eventfederation/controller.go">pkg/controller/eventfederation/controller.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/eventd/push.go">pkg/eventd/push.go</a></p>
 <p><a href="/examples/cloudedge-mobility-demo/aws.yaml">設定例</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
 <ul>
+<li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
 <li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
 </ul>
 </div>
 </aside></main>

@@ -161,6 +161,7 @@ spec:
 <p>为现有OS接口提供metadata.name逻辑名称，供其他资源引用，不创建物理接口。</p>
 <h2 id="pppoesession">PPPoESession</h2>
 <p><a href="resources/PPPoESession.html">PPPoESession</a></p>
+<p>监督运行 routerd-pppoe-client，在 Linux 使用 pppd、FreeBSD 使用 mpd5，并公开协商的 IPv4 会话状态。部分旧字段仅影响手动 FreeBSD render 输出，不影响此守护进程路径。</p>
 <h2 id="wireguardinterface">WireGuardInterface</h2>
 <p><a href="resources/WireGuardInterface.html">WireGuardInterface</a></p>
 <p>创建或配置 WireGuard 设备，通过 wg setconf 应用完整对等端配置。地址分配与普通路由由其他资源配置。</p>
@@ -172,11 +173,13 @@ spec:
 <p>通过 routerd 生成的 Linux systemd oneshot 或 FreeBSD rc.d 脚本管理 Tailscale 注册选项，再读取 tailscale status --json。Tailscale/Headscale 服务端批准仍需另行处理。</p>
 <h2 id="ipsecconnection">IPsecConnection</h2>
 <p><a href="resources/IPsecConnection.html">IPsecConnection</a></p>
+<p>生成 strongSwan swanctl 连接，并统一同步所有 routerd IPsec 连接。CHILD_SA 设为流量触发的 trap；加载配置不代表 SA 已建立。</p>
 <h2 id="vrf">VRF</h2>
 <p><a href="resources/VRF.html">VRF</a></p>
 <p>声明Linux VRF设备、路由表与成员意图。当前生成计划/artifact标识并保护路由表，但没有创建VRF/连接成员的controller；计划输出不证明VRF已创建。</p>
 <h2 id="vxlantunnel">VXLANTunnel</h2>
 <p><a href="resources/VXLANTunnel.html">VXLANTunnel</a></p>
+<p>管理具有静态泛洪目标及可选桥接的 Linux VXLAN 设备，不配置组播发现或动态 MAC 学习。</p>
 <h2 id="ipv4staticaddress">IPv4StaticAddress</h2>
 <p><a href="resources/IPv4StaticAddress.html">IPv4StaticAddress</a></p>
 <p>在逻辑接口声明静态IPv4地址，由controller协调配置，不是DHCP租约。</p>
@@ -253,12 +256,16 @@ spec:
 <p><a href="resources/ProviderActionPolicy.html">ProviderActionPolicy</a></p>
 <h2 id="eventgroup">EventGroup</h2>
 <p><a href="resources/EventGroup.html">EventGroup</a></p>
+<p>声明共享的联合事件组，以及此路由器的标识、对等节点来源、接收与本机保留设置。</p>
 <h2 id="eventpeer">EventPeer</h2>
 <p><a href="resources/EventPeer.html">EventPeer</a></p>
+<p>声明 EventGroup 的一个远端发送目标。传输认证与本机标识由组提供。</p>
 <h2 id="eventsubscription">EventSubscription</h2>
 <p><a href="resources/EventSubscription.html">EventSubscription</a></p>
+<p>从持久化数据库匹配尚未过期的联合事件，调用本机 Plugin，将结果保存为 DynamicConfigPart。</p>
 <h2 id="federationslo">FederationSLO</h2>
 <p><a href="resources/FederationSLO.html">FederationSLO</a></p>
+<p>配置 routerctl doctor 诊断联合发送与订阅时使用的每组阈值，不改变发送重试或 Plugin 执行策略。</p>
 <h2 id="mobilitypool">MobilityPool</h2>
 <p><a href="resources/MobilityPool.html">MobilityPool</a></p>
 <h2 id="samnodeset">SAMNodeSet</h2>
@@ -278,6 +285,7 @@ spec:
 <p>安装 IPv4 单播或黑洞路由，可从资源状态取得设备与网关。</p>
 <h2 id="healthcheck">HealthCheck</h2>
 <p><a href="resources/HealthCheck.html">HealthCheck</a></p>
+<p>探测 IP 目标并发布 Healthy/Unhealthy 状态供路由选择。成功仅代表配置的协议与路径通过。</p>
 <h2 id="egressroutepolicy">EgressRoutePolicy</h2>
 <p><a href="resources/EgressRoutePolicy.html">EgressRoutePolicy</a></p>
 <h2 id="eventrule">EventRule</h2>

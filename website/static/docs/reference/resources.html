@@ -161,6 +161,7 @@ spec:
 <p>Names an existing OS interface so other resources can refer to its logical metadata.name. It does not create a physical interface.</p>
 <h2 id="pppoesession">PPPoESession</h2>
 <p><a href="resources/PPPoESession.html">PPPoESession</a></p>
+<p>Run a supervised routerd-pppoe-client using pppd on Linux or mpd5 on FreeBSD, and publish negotiated IPv4 session status. Several legacy fields affect only manual FreeBSD render output, not this daemon path.</p>
 <h2 id="wireguardinterface">WireGuardInterface</h2>
 <p><a href="resources/WireGuardInterface.html">WireGuardInterface</a></p>
 <p>Create or configure a WireGuard device and apply its complete peer configuration with wg setconf. Address assignment and ordinary routing are separate resources.</p>
@@ -172,11 +173,13 @@ spec:
 <p>Manage Tailscale enrollment options through a routerd-generated systemd oneshot on Linux or rc.d script on FreeBSD, then observe tailscale status --json. Tailscale/Headscale server-side approvals remain separate.</p>
 <h2 id="ipsecconnection">IPsecConnection</h2>
 <p><a href="resources/IPsecConnection.html">IPsecConnection</a></p>
+<p>Render a strongSwan swanctl connection and synchronize all routerd IPsec connections together. A traffic-triggered CHILD_SA trap is configured; loading the connection is not proof of an established SA.</p>
 <h2 id="vrf">VRF</h2>
 <p><a href="resources/VRF.html">VRF</a></p>
 <p>Declares a Linux VRF device, routing table and member intentions. The current implementation renders plans/artifact identities and protects its routing table, but has no VRF creation/member-attachment controller. Do not treat plan output as proof that a VRF was created.</p>
 <h2 id="vxlantunnel">VXLANTunnel</h2>
 <p><a href="resources/VXLANTunnel.html">VXLANTunnel</a></p>
+<p>Manage a Linux VXLAN device with static remote flood destinations and optional bridge attachment. No multicast discovery or dynamic MAC learning is configured.</p>
 <h2 id="ipv4staticaddress">IPv4StaticAddress</h2>
 <p><a href="resources/IPv4StaticAddress.html">IPv4StaticAddress</a></p>
 <p>Declares a static IPv4 address on a logical interface. The controller converges configured addresses; this is not a DHCP lease.</p>
@@ -253,12 +256,16 @@ spec:
 <p><a href="resources/ProviderActionPolicy.html">ProviderActionPolicy</a></p>
 <h2 id="eventgroup">EventGroup</h2>
 <p><a href="resources/EventGroup.html">EventGroup</a></p>
+<p>Declare a shared federation event group and this router’s identity, peer discovery, receiver and local retention settings.</p>
 <h2 id="eventpeer">EventPeer</h2>
 <p><a href="resources/EventPeer.html">EventPeer</a></p>
+<p>Declare one remote delivery target for an EventGroup. Transport authentication and local identity come from that group.</p>
 <h2 id="eventsubscription">EventSubscription</h2>
 <p><a href="resources/EventSubscription.html">EventSubscription</a></p>
+<p>Match nonexpired persisted federation events and invoke a local Plugin, storing its result as a DynamicConfigPart.</p>
 <h2 id="federationslo">FederationSLO</h2>
 <p><a href="resources/FederationSLO.html">FederationSLO</a></p>
+<p>Configure per-group thresholds used by routerctl doctor for federation delivery and subscription diagnostics. This does not change delivery retry or plugin execution policy.</p>
 <h2 id="mobilitypool">MobilityPool</h2>
 <p><a href="resources/MobilityPool.html">MobilityPool</a></p>
 <h2 id="samnodeset">SAMNodeSet</h2>
@@ -278,6 +285,7 @@ spec:
 <p>Install an IPv4 unicast or blackhole route, optionally resolving device and gateway from resource status.</p>
 <h2 id="healthcheck">HealthCheck</h2>
 <p><a href="resources/HealthCheck.html">HealthCheck</a></p>
+<p>Probe an IP target and publish Healthy/Unhealthy state for route selection. A successful probe verifies only its configured protocol and path.</p>
 <h2 id="egressroutepolicy">EgressRoutePolicy</h2>
 <p><a href="resources/EgressRoutePolicy.html">EgressRoutePolicy</a></p>
 <h2 id="eventrule">EventRule</h2>

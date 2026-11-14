@@ -161,6 +161,7 @@ spec:
 <p>既存のOSインターフェースに論理名metadata.nameを付け、他のリソースから参照できるようにします。物理インターフェースを新規作成する設定ではありません。</p>
 <h2 id="pppoesession">PPPoESession</h2>
 <p><a href="resources/PPPoESession.html">PPPoESession</a></p>
+<p>Linuxのpppd・FreeBSDのmpd5を使うrouterd-pppoe-clientを監視実行し、交渉したIPv4セッション状態を公開します。一部の旧項目はFreeBSDの手動render出力だけに使われ、主デーモン経路には効きません。</p>
 <h2 id="wireguardinterface">WireGuardInterface</h2>
 <p><a href="resources/WireGuardInterface.html">WireGuardInterface</a></p>
 <p>WireGuardデバイスを作成・設定し、wg setconfでピア設定全体を適用します。アドレス割当と通常の経路設定は別リソースです。</p>
@@ -172,11 +173,13 @@ spec:
 <p>Linuxのsystemd oneshotまたはFreeBSDのrc.dスクリプトを生成してTailscale登録オプションを適用し、tailscale status --jsonで状態を取得します。Tailscale・Headscaleサーバー側の承認は別操作です。</p>
 <h2 id="ipsecconnection">IPsecConnection</h2>
 <p><a href="resources/IPsecConnection.html">IPsecConnection</a></p>
+<p>strongSwanのswanctl接続を生成し、routerdの全IPsec接続をまとめて同期します。CHILD_SAは通信による起動用のtrap設定で、接続の読み込みはSA確立の証明ではありません。</p>
 <h2 id="vrf">VRF</h2>
 <p><a href="resources/VRF.html">VRF</a></p>
 <p>LinuxのVRFデバイス・経路表・参加インターフェースの意図を宣言します。現行実装は計画とartifact識別子の生成、経路表の保護を行いますが、VRF作成・メンバー接続のcontrollerはありません。plan表示をVRF作成済みの証拠とは扱わないでください。</p>
 <h2 id="vxlantunnel">VXLANTunnel</h2>
 <p><a href="resources/VXLANTunnel.html">VXLANTunnel</a></p>
+<p>静的なフラッド先と任意のブリッジ接続を持つLinuxのVXLANデバイスを管理します。マルチキャスト探索や動的MAC学習は設定しません。</p>
 <h2 id="ipv4staticaddress">IPv4StaticAddress</h2>
 <p><a href="resources/IPv4StaticAddress.html">IPv4StaticAddress</a></p>
 <p>論理インターフェースへ固定IPv4アドレスを宣言します。controllerが設定に収束させるアドレスであり、DHCPリースではありません。</p>
@@ -253,12 +256,16 @@ spec:
 <p><a href="resources/ProviderActionPolicy.html">ProviderActionPolicy</a></p>
 <h2 id="eventgroup">EventGroup</h2>
 <p><a href="resources/EventGroup.html">EventGroup</a></p>
+<p>共有するイベントグループと、このルーターの識別名・配送先取得・受信・ローカル保持設定を宣言します。</p>
 <h2 id="eventpeer">EventPeer</h2>
 <p><a href="resources/EventPeer.html">EventPeer</a></p>
+<p>EventGroupの相手側配送先を1件宣言します。通信認証と自ノード識別名はグループ側で指定します。</p>
 <h2 id="eventsubscription">EventSubscription</h2>
 <p><a href="resources/EventSubscription.html">EventSubscription</a></p>
+<p>期限内の共有イベントを永続DBから選び、ローカルのPluginを実行して結果をDynamicConfigPartとして保存します。</p>
 <h2 id="federationslo">FederationSLO</h2>
 <p><a href="resources/FederationSLO.html">FederationSLO</a></p>
+<p>routerctl doctorが共有イベント配送・購読を診断するときのグループ別閾値です。配送再試行やPlugin実行方針自体は変更しません。</p>
 <h2 id="mobilitypool">MobilityPool</h2>
 <p><a href="resources/MobilityPool.html">MobilityPool</a></p>
 <h2 id="samnodeset">SAMNodeSet</h2>
@@ -278,6 +285,7 @@ spec:
 <p>リソースの状態からデバイス・ゲートウェイを取得できる、IPv4の通常経路または破棄経路です。</p>
 <h2 id="healthcheck">HealthCheck</h2>
 <p><a href="resources/HealthCheck.html">HealthCheck</a></p>
+<p>IP宛先を確認し、経路選択用のHealthy・Unhealthy状態を発行します。成功が示す範囲は指定したプロトコルと経路に限られます。</p>
 <h2 id="egressroutepolicy">EgressRoutePolicy</h2>
 <p><a href="resources/EgressRoutePolicy.html">EgressRoutePolicy</a></p>
 <h2 id="eventrule">EventRule</h2>

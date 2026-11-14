@@ -3291,5 +3291,890 @@
       "cmd/routerd/cmd_apply.go",
       "cmd/routerctl/doctor.go"
     ]
+  },
+  "HealthCheck": {
+    "purpose": [
+      "Probe an IP target and publish Healthy/Unhealthy state for route selection. A successful probe verifies only its configured protocol and path.",
+      "IP宛先を確認し、経路選択用のHealthy・Unhealthy状態を発行します。成功が示す範囲は指定したプロトコルと経路に限られます。",
+      "探測 IP 目標並發布 Healthy/Unhealthy 狀態供路由選擇。成功僅代表設定的協定與路徑通過。",
+      "探测 IP 目标并发布 Healthy/Unhealthy 状态供路由选择。成功仅代表配置的协议与路径通过。"
+    ],
+    "rules": [
+      [
+        "Specify target explicitly for operation. targetSource and interface influence validation/plan presentation, but the current daemon renderer passes target directly without resolving an automatic default gateway or DS-Lite remote target; the helper rejects an empty target.",
+        "運用時はtargetを明示してください。targetSourceとinterfaceは検証・計画表示に使いますが、現行のヘルパー生成はtargetを直接渡し、デフォルトゲートウェイやDS-Lite対向を自動解決しません。ヘルパーはtargetが空なら起動を拒否します。",
+        "運作時請明確指定 target。targetSource 與 interface 影響驗證及計畫顯示，但目前產生器直接傳入 target，不會自動解析預設閘道或 DS-Lite 遠端目標；輔助程式拒絕空目標。",
+        "运行时请明确指定 target。targetSource 与 interface 影响验证及计划显示，但目前生成器直接传入 target，不会自动解析默认网关或 DS-Lite 远端目标；辅助程序拒绝空目标。"
+      ],
+      [
+        "Source binding and socket marks are derived from referring EgressRoutePolicy candidates/targets, not exposed as HealthCheck YAML fields. Conflicting derived bindings cannot select a unique path. DS-Lite-associated probes require their binding to be available.",
+        "送信元のバインドやソケットマークは参照元のEgressRoutePolicy候補・対象から導出し、HealthCheckのYAMLでは直接指定できません。異なる導出値が競合すると経路を一意に選べません。DS-Liteに関連する確認では必要なバインドが利用可能である必要があります。",
+        "來源綁定與 socket mark 從參照此檢查的 EgressRoutePolicy 候選／目標推導，不能以 HealthCheck YAML 直接設定。推導值衝突時無法選出唯一路徑。DS-Lite 關聯探測需要可用的綁定。",
+        "来源绑定与 socket mark 从引用此检查的 EgressRoutePolicy 候选／目标推导，不能以 HealthCheck YAML 直接设置。推导值冲突时无法选出唯一路径。DS-Lite 关联探测需要可用的绑定。"
+      ],
+      [
+        "TCP checks connection establishment only. DNS resolves example.com A records through the target server. HTTP sends GET http://<target>:<port>/ and accepts status 200–499, including 4xx; it does not check an application-specific URL or response body.",
+        "TCPは接続確立だけを確認します。DNSは対象サーバーでexample.comのAレコードを解決します。HTTPはhttp://<target>:<port>/へGETし、4xxを含む200～499を成功扱いにします。アプリケーション固有のURLや応答本文は検査しません。",
+        "TCP 僅檢查連線建立。DNS 透過目標伺服器解析 example.com 的 A 記錄。HTTP 對 http://<target>:<port>/ 發送 GET，將含 4xx 的 200–499 視為成功，不檢查特定應用 URL 或回應內容。",
+        "TCP 仅检查连接建立。DNS 通过目标服务器解析 example.com 的 A 记录。HTTP 对 http://<target>:<port>/ 发送 GET，将含 4xx 的 200–499 视为成功，不检查特定应用 URL 或响应内容。"
+      ]
+    ],
+    "fields": {
+      "enabled": [
+        "Default true; false disables probing.",
+        "既定はtrueで、falseは確認処理を無効にします。",
+        "預設 true；false 停用探測。",
+        "默认 true；false 禁用探测。"
+      ],
+      "type": [
+        "Default ping; only ping is accepted. Use protocol to choose TCP/DNS/HTTP despite the type name.",
+        "既定はpingで、pingのみ指定できます。TCP・DNS・HTTPは名前にかかわらずprotocolで選択します。",
+        "預設 ping，僅接受 ping。TCP/DNS/HTTP 由 protocol 選擇。",
+        "默认 ping，仅接受 ping。TCP/DNS/HTTP 由 protocol 选择。"
+      ],
+      "role": [
+        "Optional link/next-hop/internet/service/policy classification; validation/plan default next-hop. It does not choose the probe target or protocol at runtime.",
+        "link・next-hop・internet・service・policyの分類です。検証・計画の既定はnext-hopです。実行時の確認先やプロトコルを選ぶ値ではありません。",
+        "選用分類 link/next-hop/internet/service/policy；驗證與計畫預設 next-hop。不會在執行時選擇目標或協定。",
+        "可选分类 link/next-hop/internet/service/policy；验证与计划默认 next-hop。不会在运行时选择目标或协议。"
+      ],
+      "addressFamily": [
+        "Optional ipv4/ipv6. Target validation treats omission as ipv4, so specify ipv6 with an IPv6 target. This is not DNS hostname resolution: target must be an IP literal.",
+        "ipv4・ipv6を指定します。宛先の検証は省略をipv4扱いにするため、IPv6宛先にはipv6を明示します。targetはIPリテラルが必要で、ホスト名を解決する指定ではありません。",
+        "選用 ipv4/ipv6。目標驗證將省略視為 ipv4，IPv6 目標須明確指定 ipv6。target 必須是 IP 常值，不是主機名稱解析設定。",
+        "可选 ipv4/ipv6。目标验证将省略视为 ipv4，IPv6 目标须明确指定 ipv6。target 必须是 IP 字面值，不是主机名解析配置。"
+      ],
+      "target": [
+        "Bare IP address matching addressFamily. Semantically required when targetSource is static; also operationally required by the current helper for all modes. No usable runtime default.",
+        "addressFamilyと一致するIPアドレスです。targetSourceがstaticなら検証上も必須で、現行ヘルパーはすべてのモードで運用上必須です。実行時に使える既定値はありません。",
+        "符合 addressFamily 的純 IP 位址。targetSource 為 static 時驗證必填，目前輔助程式在所有模式下實際都需要目標；無可用執行時預設值。",
+        "符合 addressFamily 的纯 IP 地址。targetSource 为 static 时验证必填，目前辅助程序在所有模式下实际都需要目标；无可用运行时默认值。"
+      ],
+      "targetSource": [
+        "auto by validation default; static/defaultGateway/dsliteRemote also accepted. The current renderer does not implement their automatic target lookup; see the operational restriction above.",
+        "検証上の既定はautoで、static・defaultGateway・dsliteRemoteも指定できます。現行の生成処理では確認先の自動取得を実装していません。前述の運用上の制限を参照してください。",
+        "驗證預設 auto，也接受 static/defaultGateway/dsliteRemote。目前產生器不實作自動目標查詢，請見上述運作限制。",
+        "验证默认 auto，也接受 static/defaultGateway/dsliteRemote。目前生成器不实现自动目标查询，请见上述运行限制。"
+      ],
+      "interface": [
+        "Optional logical interface/PPPoESession/DSLiteTunnel name; if supplied it must exist in the shared interface/tunnel index. This field alone does not become --source-interface in the current helper renderer.",
+        "任意の論理インターフェース・PPPoESession・DSLiteTunnel名です。指定時は共通のインターフェース・トンネル索引に存在する必要があります。この項目だけでは現行ヘルパーの--source-interfaceになりません。",
+        "選用的邏輯介面／PPPoESession／DSLiteTunnel 名稱，指定時必須存在於共用介面／通道索引。此欄位本身不會轉為目前輔助程式的 --source-interface。",
+        "可选的逻辑接口／PPPoESession／DSLiteTunnel 名称，指定时必须存在于共用接口／隧道索引。此字段本身不会转为目前辅助程序的 --source-interface。"
+      ],
+      "protocol": [
+        "icmp by default; tcp/dns/http select the checks described above. HTTP is plaintext, not HTTPS.",
+        "既定はicmpで、tcp・dns・httpは前述の確認を選びます。HTTPはHTTPSではなく平文です。",
+        "預設 icmp；tcp/dns/http 選擇上述檢查。HTTP 為明文，不是 HTTPS。",
+        "默认 icmp；tcp/dns/http 选择上述检查。HTTP 为明文，不是 HTTPS。"
+      ],
+      "port": [
+        "0–65535; default 0 delegates to the protocol: TCP 443, DNS 53, HTTP 80. ICMP does not use a port.",
+        "0～65535です。既定の0はプロトコルに従い、TCPは443、DNSは53、HTTPは80です。ICMPはポートを使いません。",
+        "0–65535，預設 0 使用協定預設：TCP 443、DNS 53、HTTP 80。ICMP 不使用連接埠。",
+        "0–65535，默认 0 使用协议默认：TCP 443、DNS 53、HTTP 80。ICMP 不使用端口。"
+      ],
+      "interval": [
+        "Positive Go duration; helper/runtime default 30s. The plan observer currently displays 60s on omission, which is not the helper default.",
+        "正のGo durationです。ヘルパー・実行時の既定は30sです。現行の計画表示は省略時に60sと表示しますが、ヘルパーの既定値ではありません。",
+        "正值 Go duration；輔助程式／執行時預設 30s。目前計畫觀察器省略時顯示 60s，並非輔助程式預設。",
+        "正值 Go duration；辅助程序／运行时默认 30s。目前计划观察器省略时显示 60s，并非辅助程序默认。"
+      ],
+      "timeout": [
+        "Positive Go duration per probe, default 3s. This is the configured probe timeout, not a router reboot deadline.",
+        "1回の確認に対する正のGo durationで、既定は3sです。確認処理のタイムアウトであり、ルーター再起動の期限ではありません。",
+        "每次探測的正值 Go duration，預設 3s。這是探測逾時，不是路由器重新啟動期限。",
+        "每次探测的正值 Go duration，默认 3s。这是探测超时，不是路由器重启期限。"
+      ],
+      "healthyThreshold": [
+        "Consecutive successful probes to Healthy, default 1. A failure resets the success streak. Use positive integers; explicit 0 is outside the schema minimum.",
+        "Healthyに移る連続成功回数で、既定は1です。失敗すると成功回数をリセットします。正の整数を使い、明示の0はスキーマの最小値を満たしません。",
+        "轉為 Healthy 所需連續成功次數，預設 1。失敗會重設成功計數。請使用正整數；明確的 0 不符合結構描述最小值。",
+        "转为 Healthy 所需连续成功次数，默认 1。失败会重置成功计数。请使用正整数；明确的 0 不符合模式最小值。"
+      ],
+      "unhealthyThreshold": [
+        "Consecutive failures to Unhealthy, default 3. A success resets the failure streak; intermediate failures report Failing.",
+        "Unhealthyに移る連続失敗回数で、既定は3です。成功すると失敗回数をリセットし、閾値未満の失敗はFailingです。",
+        "轉為 Unhealthy 所需連續失敗次數，預設 3。成功會重設失敗計數；未達門檻時為 Failing。",
+        "转为 Unhealthy 所需连续失败次数，默认 3。成功会重置失败计数；未达阈值时为 Failing。"
+      ],
+      "when": [
+        "Optional common activation predicate; omitted means unconditional. Refer to common fields for nested state/all/any and their conditions.",
+        "任意の共通有効化条件で、省略時は無条件です。入れ子のstate・all・anyと指定条件は共通項を参照してください。",
+        "選用的共用啟用條件，省略表示無條件。巢狀 state/all/any 及條件請見共用欄位。",
+        "可选的通用启用条件，省略表示无条件。嵌套 state/all/any 及条件请见通用字段。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_wan.go",
+      "pkg/config/validate.go",
+      "pkg/healthcheck/engine.go",
+      "pkg/healthcheck/dslite_binding.go",
+      "pkg/render/healthcheck_systemd.go",
+      "pkg/controller/chain/system.go",
+      "cmd/routerd-healthcheck/main.go",
+      "pkg/apply/engine.go"
+    ]
+  },
+  "IPsecConnection": {
+    "purpose": [
+      "Render a strongSwan swanctl connection and synchronize all routerd IPsec connections together. A traffic-triggered CHILD_SA trap is configured; loading the connection is not proof of an established SA.",
+      "strongSwanのswanctl接続を生成し、routerdの全IPsec接続をまとめて同期します。CHILD_SAは通信による起動用のtrap設定で、接続の読み込みはSA確立の証明ではありません。",
+      "產生 strongSwan swanctl 連線，並一併同步所有 routerd IPsec 連線。CHILD_SA 設為流量觸發的 trap；載入設定不代表 SA 已建立。",
+      "生成 strongSwan swanctl 连接，并统一同步所有 routerd IPsec 连接。CHILD_SA 设为流量触发的 trap；加载配置不代表 SA 已建立。"
+    ],
+    "rules": [
+      [
+        "Exactly one of preSharedKey and certificateRef is required. certificateRef is passed directly to swanctl local.certs, not resolved as a routerd resource.",
+        "preSharedKeyとcertificateRefのどちらか一方が必須です。certificateRefはswanctlのlocal.certsに直接渡し、routerdのリソースとしては解決しません。",
+        "preSharedKey 與 certificateRef 必須且只能指定一項。certificateRef 直接傳入 swanctl local.certs，不解析為 routerd 資源。",
+        "preSharedKey 与 certificateRef 必须且只能指定一项。certificateRef 直接传入 swanctl local.certs，不解析为 routerd 资源。"
+      ],
+      [
+        "The aggregate lives under /etc/routerd/swanctl on Linux or /usr/local/etc/routerd/swanctl on FreeBSD. swanctl --load-all --file synchronizes the whole managed set, including secrets. Certificates, trust anchors and matching private keys must be provisioned in the credential stores used by that configuration.",
+        "集約設定はLinuxの/etc/routerd/swanctl、FreeBSDの/usr/local/etc/routerd/swanctlに置き、swanctl --load-all --fileで鍵を含む管理対象全体を同期します。証明書・信頼元・対応秘密鍵は、その設定の認証情報ストアに別途配置が必要です。",
+        "彙整設定位於 Linux 的 /etc/routerd/swanctl 或 FreeBSD 的 /usr/local/etc/routerd/swanctl。swanctl --load-all --file 同步整個管理集合與密鑰。憑證、信任錨點及配對私密金鑰須另行放入該設定使用的認證儲存區。",
+        "汇总配置位于 Linux 的 /etc/routerd/swanctl 或 FreeBSD 的 /usr/local/etc/routerd/swanctl。swanctl --load-all --file 同步整个管理集合与密钥。证书、信任锚点及配对私钥须另行放入该配置使用的凭据存储区。"
+      ]
+    ],
+    "fields": {
+      "localAddress": [
+        "Required local endpoint IP address, IPv4 or IPv6; no hostname or interface reference.",
+        "必須のローカル終端IPアドレスです。IPv4・IPv6を使え、ホスト名・インターフェース参照ではありません。",
+        "必填的本機端點 IPv4/IPv6 位址，不接受主機名稱或介面參照。",
+        "必填的本机端点 IPv4/IPv6 地址，不接受主机名或接口引用。"
+      ],
+      "remoteAddress": [
+        "Required remote endpoint IP address, IPv4 or IPv6. The validator does not enforce matching address families across endpoints and traffic selectors.",
+        "必須のリモート終端IPv4・IPv6アドレスです。検証は両終端・トラフィックセレクター間のアドレスファミリー一致までは確認しません。",
+        "必填的遠端 IPv4/IPv6 位址。驗證不強制兩端與流量選擇器的位址家族一致。",
+        "必填的远端 IPv4/IPv6 地址。验证不强制两端与流量选择器的地址族一致。"
+      ],
+      "preSharedKey": [
+        "Inline IKE shared secret; required unless certificateRef is used. No default, file or environment source. Rendered into the managed swanctl secrets section.",
+        "IKEの共通鍵そのものです。certificateRefを使わない場合は必須で、既定値・ファイル・環境変数参照はありません。管理するswanctlのsecrets節に出力します。",
+        "直接指定 IKE 共用密鑰；未使用 certificateRef 時必填。無預設值、檔案或環境來源，會寫入管理的 swanctl secrets 區段。",
+        "直接指定 IKE 预共享密钥；未使用 certificateRef 时必填。无默认值、文件或环境来源，会写入管理的 swanctl secrets 段。"
+      ],
+      "certificateRef": [
+        "Certificate name/path understood by strongSwan local.certs; required unless preSharedKey is used. Selects remote auth=pubkey. Does not create certificates or select a routerd Secret resource.",
+        "strongSwanのlocal.certsが扱う証明書名・パスです。preSharedKeyを使わない場合に必須で、相手認証をpubkeyにします。証明書の作成やrouterdのSecret参照ではありません。",
+        "strongSwan local.certs 使用的憑證名稱或路徑；未使用 preSharedKey 時必填，遠端認證設為 pubkey。不建立憑證或參照 routerd Secret。",
+        "strongSwan local.certs 使用的证书名称或路径；未使用 preSharedKey 时必填，远端认证设为 pubkey。不创建证书或引用 routerd Secret。"
+      ],
+      "phase1Proposals": [
+        "IKE proposal list, default [aes256-sha256-modp2048]. Nonempty lists are comma-joined verbatim; routerd does not validate algorithm support.",
+        "IKE proposal一覧で、既定は[aes256-sha256-modp2048]です。指定一覧をそのままカンマで結合し、アルゴリズムの対応可否はrouterdで検証しません。",
+        "IKE 提案清單，預設 [aes256-sha256-modp2048]。非空清單直接以逗號連接，routerd 不驗證演算法支援。",
+        "IKE 提案列表，默认 [aes256-sha256-modp2048]。非空列表直接以逗号连接，routerd 不验证算法支持。"
+      ],
+      "phase2Proposals": [
+        "ESP proposal list, default [aes256-sha256]. Applied to the child named net; algorithm validity is checked by strongSwan when loading.",
+        "ESP proposal一覧で、既定は[aes256-sha256]です。netという子接続に適用し、アルゴリズムの妥当性は読み込み時にstrongSwanが確認します。",
+        "ESP 提案清單，預設 [aes256-sha256]，套用至名為 net 的子連線；演算法有效性由 strongSwan 載入時檢查。",
+        "ESP 提案列表，默认 [aes256-sha256]，应用至名为 net 的子连接；算法有效性由 strongSwan 加载时检查。"
+      ],
+      "leftSubnet": [
+        "Required local traffic-selector CIDR, IPv4 or IPv6; emitted as local_ts.",
+        "必須のローカルトラフィックセレクターCIDRです。IPv4・IPv6を使え、local_tsに出力します。",
+        "必填的本機流量選擇器 IPv4/IPv6 CIDR，輸出為 local_ts。",
+        "必填的本机流量选择器 IPv4/IPv6 CIDR，输出为 local_ts。"
+      ],
+      "rightSubnet": [
+        "Required remote traffic-selector CIDR, IPv4 or IPv6; emitted as remote_ts.",
+        "必須のリモートトラフィックセレクターCIDRです。IPv4・IPv6を使え、remote_tsに出力します。",
+        "必填的遠端流量選擇器 IPv4/IPv6 CIDR，輸出為 remote_ts。",
+        "必填的远端流量选择器 IPv4/IPv6 CIDR，输出为 remote_ts。"
+      ],
+      "cloudProviderHint": [
+        "Optional aws, azure or gcp label, default empty. Reported by observation but not used to change proposals, credentials or swanctl rendering. No cloud resources are created.",
+        "任意のaws・azure・gcpラベルで、既定は空です。観測結果には載せますが、proposal・認証情報・swanctl生成には影響せず、クラウド資源も作成しません。",
+        "選用的 aws、azure 或 gcp 標籤，預設為空。僅供觀察回報，不變更提案、認證或 swanctl 產生內容，不建立雲端資源。",
+        "可选的 aws、azure 或 gcp 标签，默认为空。仅供观察报告，不更改提案、凭据或 swanctl 生成内容，不创建云端资源。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_interface.go",
+      "pkg/ipsec/ipsec.go",
+      "cmd/routerd/ipsec_apply.go",
+      "pkg/apply/engine.go"
+    ]
+  },
+  "VXLANTunnel": {
+    "purpose": [
+      "Manage a Linux VXLAN device with static remote flood destinations and optional bridge attachment. No multicast discovery or dynamic MAC learning is configured.",
+      "静的なフラッド先と任意のブリッジ接続を持つLinuxのVXLANデバイスを管理します。マルチキャスト探索や動的MAC学習は設定しません。",
+      "管理具有靜態泛洪目的地及選用橋接的 Linux VXLAN 裝置，不設定多播探索或動態 MAC 學習。",
+      "管理具有静态泛洪目标及可选桥接的 Linux VXLAN 设备，不配置组播发现或动态 MAC 学习。"
+    ],
+    "rules": [
+      [
+        "The operational controller returns without applying on non-Linux systems. Configure a Linux target for this resource; do not assume schema acceptance implies FreeBSD operation.",
+        "実動作コントローラーはLinux以外では適用せず終了します。本リソースはLinuxを対象にし、スキーマに通ることをFreeBSD対応と解釈しないでください。",
+        "操作控制器在非 Linux 系統直接返回，不套用設定。此資源應使用 Linux 目標，結構驗證通過不代表 FreeBSD 可運作。",
+        "操作控制器在非 Linux 系统直接返回，不应用配置。此资源应使用 Linux 目标，模式验证通过不代表 FreeBSD 可运行。"
+      ],
+      [
+        "when is fail-closed: false, unresolved, stale or pre-boot state tears down the device (down then delete), rather than only skipping updates. Freshness defaults to 30s per referenced state, overridden by maxAge. Unknown-accepting predicates are rejected by validation.",
+        "whenは成立を確認できない場合に転送を止めます。偽・未解決・古い状態・起動前の状態では更新を省略するだけでなく、デバイスをdown後に削除します。参照状態の有効期間は既定30秒でmaxAgeで変更できます。unknownを許容する条件は検証で拒否します。",
+        "when 採關閉優先：false、未解析、過期或開機前的狀態會先停用再刪除裝置，不只是略過更新。每個參照狀態預設有效 30 秒，可用 maxAge 覆寫。驗證拒絕接受 unknown 的條件。",
+        "when 采用关闭优先：false、未解析、过期或开机前的状态会先停用再删除设备，不只是跳过更新。每个引用状态默认有效 30 秒，可用 maxAge 覆盖。验证拒绝接受 unknown 的条件。"
+      ],
+      [
+        "tcpMSSClamp requires bridge plus explicit mtu >=1280. Rendering also requires that bridge to be an actual Bridge resource, with resolvable member interfaces; global reference validation alone only checks the shared interface index.",
+        "tcpMSSClampにはbridgeと明示的なmtu 1280以上が必要です。生成時には実際のBridgeリソースと解決可能なメンバーが必要で、全体の参照検証だけでは共通インターフェース索引の存在しか確認しません。",
+        "tcpMSSClamp 需要 bridge 與明確指定的 mtu >=1280。產生規則時還需真正的 Bridge 資源及可解析的成員介面；全域參照驗證僅確認共用介面索引中的存在。",
+        "tcpMSSClamp 需要 bridge 与明确指定的 mtu >=1280。生成规则时还需真正的 Bridge 资源及可解析的成员接口；全局引用验证仅确认共享接口索引中的存在。"
+      ]
+    ],
+    "fields": {
+      "ifname": [
+        "OS VXLAN name; defaults to metadata.name. Must be <=15 characters without whitespace or slash.",
+        "OS上のVXLAN名です。既定はmetadata.nameで、15文字以内・空白とスラッシュ不可です。",
+        "OS VXLAN 名稱，預設 metadata.name，最多 15 字元，不可含空白或斜線。",
+        "OS VXLAN 名称，默认 metadata.name，最多 15 字符，不可含空白或斜线。"
+      ],
+      "vni": [
+        "Required VXLAN network identifier, integer 1–16777215. Must match the intended remote layer-2 segment.",
+        "必須のVXLANネットワーク識別子で、1～16777215の整数です。対向のL2セグメントと合わせます。",
+        "必填 VXLAN 網路識別碼，整數 1–16777215，須與目標遠端第二層網段一致。",
+        "必填 VXLAN 网络标识符，整数 1–16777215，须与目标远端二层网段一致。"
+      ],
+      "localAddress": [
+        "Required local outer IP address; no dynamic status source. Validator accepts an IP address but does not verify local assignment or peer-family consistency.",
+        "必須の外側ローカルIPアドレスです。動的状態参照はありません。検証はIP形式のみで、ローカルへの割当・対向とのファミリー一致までは確認しません。",
+        "必填的外層本機 IP 位址，不提供動態狀態來源。驗證只確認 IP 格式，不檢查本機指派或與對等端家族一致。",
+        "必填的外层本机 IP 地址，不提供动态状态来源。验证只确认 IP 格式，不检查本机分配或与对等端地址族一致。"
+      ],
+      "peers": [
+        "Optional list of remote outer IP addresses, default empty. Reconciled as permanent self flood FDB entries for 00:00:00:00:00:00; undesired flood entries are removed. Empty provides no static remote flood destinations.",
+        "任意の外側対向IP一覧で、既定は空です。00:00:00:00:00:00のpermanent self FDBエントリーとして同期し、不要なフラッド先は削除します。空なら静的な対向フラッド先はありません。",
+        "選用的遠端外層 IP 清單，預設為空。同步為 00:00:00:00:00:00 的 permanent self 泛洪 FDB 項目，移除多餘泛洪項目。空清單不提供靜態遠端泛洪目的地。",
+        "可选的远端外层 IP 列表，默认为空。同步为 00:00:00:00:00:00 的 permanent self 泛洪 FDB 条目，移除多余泛洪条目。空列表不提供静态远端泛洪目标。"
+      ],
+      "underlayInterface": [
+        "Required declared logical interface in the same Router; resolved to its OS device name. No status-value source or auto-selection.",
+        "同じRouterで宣言した論理インターフェース名が必須で、OSデバイス名へ解決します。状態参照や自動選択はありません。",
+        "必填同一 Router 中宣告的邏輯介面，會解析為 OS 裝置名稱。無狀態來源或自動選擇。",
+        "必填同一 Router 中声明的逻辑接口，会解析为 OS 设备名称。无状态来源或自动选择。"
+      ],
+      "udpPort": [
+        "Outer UDP destination port, default 4789 when omitted/0; explicit range 1–65535.",
+        "外側UDP宛先ポートです。省略・0では4789、明示値は1～65535です。",
+        "外層 UDP 目的埠，省略或 0 預設 4789，明確範圍為 1–65535。",
+        "外层 UDP 目标端口，省略或 0 默认 4789，明确范围为 1–65535。"
+      ],
+      "mtu": [
+        "Optional inner-device MTU 576–9216; omitted/0 leaves OS/current MTU. tcpMSSClamp requires an explicit value >=1280 even though schema shows minimum 0.",
+        "任意の内側デバイスMTUで576～9216です。省略・0ならOS既定・既存値を使います。スキーマ下限は0ですが、tcpMSSClamp時は1280以上の明示が必要です。",
+        "選用的內層裝置 MTU 576–9216，省略或 0 使用 OS/既有 MTU。即使結構描述下限為 0，tcpMSSClamp 仍要求明確值 >=1280。",
+        "可选的内层设备 MTU 576–9216，省略或 0 使用 OS/已有 MTU。即使模式下限为 0，tcpMSSClamp 仍要求明确值 >=1280。"
+      ],
+      "bridge": [
+        "Optional declared bridge name, resolved to its OS name and attached as the VXLAN master. Default detached. Required for tcpMSSClamp; use a Bridge resource rather than another interface kind.",
+        "任意の宣言済みブリッジ名で、OS名へ解決してVXLANのmasterに接続します。既定は未接続です。tcpMSSClampでは必須で、他種のインターフェースではなくBridgeリソースを使います。",
+        "選用的已宣告橋接名稱，解析為 OS 名稱並接為 VXLAN master，預設不連接。tcpMSSClamp 時必填，請使用 Bridge 資源而非其他介面類型。",
+        "可选的已声明网桥名称，解析为 OS 名称并接为 VXLAN master，默认不连接。tcpMSSClamp 时必填，请使用 Bridge 资源而非其他接口类型。"
+      ],
+      "outerDF": [
+        "Outer IPv4 DF policy: inherit (default), set or unset, passed to ip link VXLAN df. Does not set an inner address or route.",
+        "外側IPv4のDF指定で、既定inherit、またはset・unsetです。ip linkのVXLAN dfへ渡します。内側アドレス・経路設定ではありません。",
+        "外層 IPv4 DF 策略，預設 inherit，也可用 set/unset，傳入 ip link VXLAN df。不設定內層位址或路由。",
+        "外层 IPv4 DF 策略，默认 inherit，也可用 set/unset，传入 ip link VXLAN df。不配置内层地址或路由。"
+      ],
+      "when": [
+        "Optional common state/all/any predicate with additional fail-closed freshness rules above. Omitted means unconditional; conditions that accept unknown cannot enable this tunnel.",
+        "任意の共通state・all・any条件です。前述の厳密な鮮度確認も適用します。省略時は無条件で、unknownを受け入れる条件は使えません。",
+        "選用的共用 state/all/any 條件，另適用上述關閉優先及新鮮度規則。省略表示無條件；接受 unknown 的條件不可啟用此隧道。",
+        "可选的通用 state/all/any 条件，另适用上述关闭优先及新鲜度规则。省略表示无条件；接受 unknown 的条件不可启用此隧道。"
+      ],
+      "tcpMSSClamp": [
+        "Default false. True creates Linux bridge-family IPv4/IPv6 TCP SYN MSS rules between this VXLAN and Bridge member ports. Uses the minimum positive VXLAN/bridge/member MTU, minus 40 for IPv4 or 60 for IPv6; does not clamp arbitrary routed traffic.",
+        "既定falseです。trueならVXLANとBridgeメンバーポート間にLinux bridgeファミリーのIPv4・IPv6 TCP SYN MSS規則を生成します。正のVXLAN・bridge・メンバーMTUの最小値からIPv4は40、IPv6は60を引き、任意のルーティング通信全般には適用しません。",
+        "預設 false。true 為此 VXLAN 與 Bridge 成員埠之間建立 Linux bridge 家族 IPv4/IPv6 TCP SYN MSS 規則。取 VXLAN/橋接/成員的最小正 MTU，IPv4 減 40、IPv6 減 60，不處理任意路由流量。",
+        "默认 false。true 为此 VXLAN 与 Bridge 成员端口之间创建 Linux bridge 族 IPv4/IPv6 TCP SYN MSS 规则。取 VXLAN/网桥/成员的最小正 MTU，IPv4 减 40、IPv6 减 60，不处理任意路由流量。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_interface.go",
+      "pkg/config/validate.go",
+      "pkg/controller/chain/vxlan_tunnel.go",
+      "pkg/vxlan/vxlan.go",
+      "pkg/render/nftables.go"
+    ]
+  },
+  "PPPoESession": {
+    "purpose": [
+      "Run a supervised routerd-pppoe-client using pppd on Linux or mpd5 on FreeBSD, and publish negotiated IPv4 session status. Several legacy fields affect only manual FreeBSD render output, not this daemon path.",
+      "Linuxのpppd・FreeBSDのmpd5を使うrouterd-pppoe-clientを監視実行し、交渉したIPv4セッション状態を公開します。一部の旧項目はFreeBSDの手動render出力だけに使われ、主デーモン経路には効きません。",
+      "監督執行 routerd-pppoe-client，在 Linux 使用 pppd、FreeBSD 使用 mpd5，並公開協商的 IPv4 工作階段狀態。部分舊欄位僅影響手動 FreeBSD render 輸出，不影響此精靈路徑。",
+      "监督运行 routerd-pppoe-client，在 Linux 使用 pppd、FreeBSD 使用 mpd5，并公开协商的 IPv4 会话状态。部分旧字段仅影响手动 FreeBSD render 输出，不影响此守护进程路径。"
+    ],
+    "rules": [
+      [
+        "interface must reference a base Interface declared in the same Router; PPPoESession, tunnels and other logical interfaces cannot be used as the lower interface. username and exactly one of password/passwordFile remain required even with enabled:false.",
+        "interfaceは同じRouterの基本Interfaceを参照し、PPPoESession・トンネル等を下位インターフェースには使えません。enabled:falseでもusernameとpassword・passwordFileのどちらか一方が必須です。",
+        "interface 必須參照同一 Router 的基本 Interface，不可使用 PPPoESession、隧道等作為底層介面。即使 enabled:false，仍需 username 及 password/passwordFile 其中一項。",
+        "interface 必须引用同一 Router 的基本 Interface，不可使用 PPPoESession、隧道等作为底层接口。即使 enabled:false，仍需 username 及 password/passwordFile 其中一项。"
+      ],
+      [
+        "The live supervisor passes authMethod, mtu/mru, serviceName/acName and lcpEchoInterval/lcpEchoFailure to the daemon. It does not pass ifname, managed, persist, ipv6, usePeerDNS, lcpInterval or lcpFailure. Do not infer live behavior from the separate manual FreeBSD render artifact.",
+        "実動作の監視処理はauthMethod・mtu/mru・serviceName/acName・lcpEchoInterval/lcpEchoFailureをデーモンへ渡しますが、ifname・managed・persist・ipv6・usePeerDNS・lcpInterval/lcpFailureは渡しません。別経路のFreeBSD手動render出力から実動作を推測しないでください。",
+        "實際監督流程傳入 authMethod、mtu/mru、serviceName/acName、lcpEchoInterval/lcpEchoFailure，不傳入 ifname、managed、persist、ipv6、usePeerDNS、lcpInterval/lcpFailure。請勿由另一條手動 FreeBSD render 路徑推定實際行為。",
+        "实际监督流程传入 authMethod、mtu/mru、serviceName/acName、lcpEchoInterval/lcpEchoFailure，不传入 ifname、managed、persist、ipv6、usePeerDNS、lcpInterval/lcpFailure。请勿由另一条手动 FreeBSD render 路径推定实际行为。"
+      ],
+      [
+        "The live daemon defaults to MTU/MRU 1454 and LCP echo 30s/4 on both platforms. The separate manual FreeBSD mpd5 rendering defaults to 1492 and legacy LCP 20s/3. Neither the configured plan nor Connected status proves real upstream reachability.",
+        "主デーモンの既定値は両OSともMTU・MRU 1454、LCP echo 30秒・4回です。別のFreeBSD手動mpd5生成では1492、旧LCP 20秒・3回です。設定計画やConnectedは実際の上流疎通を保証しません。",
+        "主精靈在兩個平台預設 MTU/MRU 1454、LCP echo 30 秒/4 次。獨立的手動 FreeBSD mpd5 產生路徑預設 1492、舊 LCP 20 秒/3 次。設定計畫或 Connected 不代表上游實際可達。",
+        "主守护进程在两个平台默认 MTU/MRU 1454、LCP echo 30 秒/4 次。独立的手动 FreeBSD mpd5 生成路径默认 1492、旧 LCP 20 秒/3 次。配置计划或 Connected 不代表上游实际可达。"
+      ]
+    ],
+    "fields": {
+      "interface": [
+        "Required lower base Interface metadata.name, resolved to its physical OS name. No status-value source.",
+        "必須の下位基本Interfaceのmetadata.nameです。物理OS名へ解決し、状態値参照ではありません。",
+        "必填的底層基本 Interface metadata.name，解析為實體 OS 名稱，不是狀態值來源。",
+        "必填的底层基本 Interface metadata.name，解析为物理 OS 名称，不是状态值来源。"
+      ],
+      "ifname": [
+        "Optional desired PPP name, <=15 characters without whitespace/slash; omission requires ppp-<name> to fit 15 characters. The live supervisor currently ignores this field and the daemon uses DefaultIfName; manual FreeBSD render uses this value. Avoid relying on a custom name in the live path.",
+        "希望するPPP名で、15文字以内・空白とスラッシュ不可です。省略時はppp-<name>が15文字以内である必要があります。現行の主監視処理はこの項目を渡さずデーモンのDefaultIfNameを使い、FreeBSDの手動renderのみ値を使います。実動作で独自名に依存しないでください。",
+        "選用的 PPP 名稱，最多 15 字元，不含空白或斜線；省略時 ppp-<name> 須在 15 字元內。目前主監督流程忽略此欄位，由精靈使用 DefaultIfName；手動 FreeBSD render 才使用此值。實際運作請勿依賴自訂名稱。",
+        "可选的 PPP 名称，最多 15 字符，不含空白或斜线；省略时 ppp-<name> 须在 15 字符内。目前主监督流程忽略此字段，由守护进程使用 DefaultIfName；手动 FreeBSD render 才使用此值。实际运行请勿依赖自定义名称。"
+      ],
+      "enabled": [
+        "Default true. False suppresses startup, stops the supervised session and reports Disabled; it does not waive configuration validation.",
+        "既定trueです。falseは起動を抑止し監視するセッションを停止してDisabledを表示しますが、設定検証は省略しません。",
+        "預設 true；false 不啟動並停止受監督的工作階段，回報 Disabled，但不略過設定驗證。",
+        "默认 true；false 不启动并停止受监督的会话，报告 Disabled，但不跳过配置验证。"
+      ],
+      "authMethod": [
+        "chap by default; pap or both also accepted. Controls permitted PAP/CHAP authentication in the live pppd/mpd5 configuration.",
+        "既定chapで、pap・bothも指定できます。実際のpppd・mpd5設定で許可するPAP・CHAPを制御します。",
+        "預設 chap，也接受 pap/both，控制實際 pppd/mpd5 設定中允許的 PAP/CHAP 認證。",
+        "默认 chap，也接受 pap/both，控制实际 pppd/mpd5 配置中允许的 PAP/CHAP 认证。"
+      ],
+      "username": [
+        "Required PPP authentication username, with no derived default.",
+        "必須のPPP認証ユーザー名で、自動の既定値はありません。",
+        "必填的 PPP 認證使用者名稱，無衍生預設值。",
+        "必填的 PPP 认证用户名，无派生默认值。"
+      ],
+      "password": [
+        "Inline plain-text PPP password, required unless passwordFile is supplied; mutually exclusive with passwordFile.",
+        "平文PPPパスワードです。passwordFileがなければ必須で、passwordFileとは排他です。",
+        "直接指定明文 PPP 密碼，未提供 passwordFile 時必填，與 passwordFile 互斥。",
+        "直接指定明文 PPP 密码，未提供 passwordFile 时必填，与 passwordFile 互斥。"
+      ],
+      "passwordFile": [
+        "Router-local raw password file; required unless password is supplied. Daemon reads it and trims surrounding whitespace at startup; missing/unreadable/empty fails. Not an environment assignment file.",
+        "ルーター上の生パスワードファイルです。passwordがなければ必須で、起動時に読んで前後空白を除去します。欠落・読取不能・空なら失敗します。環境変数代入ファイルではありません。",
+        "路由器本機原始密碼檔，未提供 password 時必填。精靈啟動時讀取並移除首尾空白；缺少、無法讀取或為空會失敗，不是環境變數指派檔。",
+        "路由器本机原始密码文件，未提供 password 时必填。守护进程启动时读取并移除首尾空白；缺少、无法读取或为空会失败，不是环境变量赋值文件。"
+      ],
+      "mtu": [
+        "Optional 576–1500; omitted/0 defaults to 1454 in the live daemon, 1492 in manual FreeBSD render. A 1500-byte PPP MTU requires suitable underlay support; validation does not prove it.",
+        "任意の576～1500です。省略・0なら主デーモンは1454、FreeBSD手動renderは1492です。PPPで1500を使うには対応する下位網が必要で、設定検証では保証しません。",
+        "選用 576–1500。省略或 0 時主精靈為 1454，手動 FreeBSD render 為 1492。PPP MTU 1500 需底層支援，驗證不保證可用。",
+        "可选 576–1500。省略或 0 时主守护进程为 1454，手动 FreeBSD render 为 1492。PPP MTU 1500 需底层支持，验证不保证可用。"
+      ],
+      "mru": [
+        "Optional 576–1500 receive limit; omitted/0 defaults to 1454 in the live daemon, 1492 in manual FreeBSD render.",
+        "受信上限の576～1500です。省略・0なら主デーモンは1454、FreeBSD手動renderは1492です。",
+        "選用接收上限 576–1500；省略或 0 時主精靈為 1454，手動 FreeBSD render 為 1492。",
+        "可选接收上限 576–1500；省略或 0 时主守护进程为 1454，手动 FreeBSD render 为 1492。"
+      ],
+      "serviceName": [
+        "Optional PPPoE service selector; empty sends no explicit service-name setting. Newlines are rejected.",
+        "任意のPPPoEサービス選択名です。空なら明示指定せず、改行は禁止です。",
+        "選用 PPPoE 服務選擇名稱，空值不明確指定，不接受換行。",
+        "可选 PPPoE 服务选择名称，空值不明确指定，不接受换行。"
+      ],
+      "acName": [
+        "Optional access-concentrator selector; empty sends no explicit AC-name setting. Newlines are rejected.",
+        "任意のアクセスコンセントレーター選択名です。空なら明示指定せず、改行は禁止です。",
+        "選用的存取集中器選擇名稱，空值不明確指定，不接受換行。",
+        "可选的接入集中器选择名称，空值不明确指定，不接受换行。"
+      ],
+      "defaultRoute": [
+        "Default false. The live main-route cleanup preserves an existing default route on the observed PPP device when true, but the daemon configuration does not create that route. Manual FreeBSD render emits a default-route directive when true. Use an explicit IPv4Route if automatic installation is required in the live path.",
+        "既定falseです。trueでは主経路のクリーンアップが観測済みPPPデバイスの既存デフォルト経路を保持しますが、デーモン設定は経路を追加しません。FreeBSD手動renderは追加指示を出します。実動作で自動追加が必要ならIPv4Routeを明示してください。",
+        "預設 false。true 時主路由清理保留觀察到的 PPP 裝置既有預設路由，但精靈設定不建立該路由。手動 FreeBSD render 會輸出預設路由指令。實際路徑若需自動安裝，請明確設定 IPv4Route。",
+        "默认 false。true 时主路由清理保留观察到的 PPP 设备已有默认路由，但守护进程配置不创建该路由。手动 FreeBSD render 会输出默认路由指令。实际路径若需自动安装，请明确配置 IPv4Route。"
+      ],
+      "usePeerDNS": [
+        "Default false but not consulted by the live daemon path. LinuxPeer always emits usepeerdns and negotiated DNS is published in PPP status; this field does not control routerd DNS forwarding or resolv.conf application.",
+        "既定falseですが、主デーモン経路は参照しません。LinuxPeerは常にusepeerdnsを出し、取得DNSはPPP状態に公開します。この項目でrouterdのDNS転送・resolv.confへの適用は制御できません。",
+        "預設 false，但主精靈路徑不讀取。LinuxPeer 一律輸出 usepeerdns，協商 DNS 會公開於 PPP 狀態；此欄位不控制 routerd DNS 轉送或 resolv.conf 套用。",
+        "默认 false，但主守护进程路径不读取。LinuxPeer 一律输出 usepeerdns，协商 DNS 会公开于 PPP 状态；此字段不控制 routerd DNS 转发或 resolv.conf 应用。"
+      ],
+      "persist": [
+        "Optional boolean decoded but not used by the current supervised daemon configuration; omission does not establish a resource-specific retry policy. Supervisor lifecycle is separate.",
+        "任意の真偽値ですが、現行の監視デーモン設定では使いません。省略時にリソース独自の再試行ポリシーが決まるものではなく、監視処理のライフサイクルは別です。",
+        "選用布林值，目前受監督精靈設定不使用；省略不會建立此資源的重試原則，監督生命週期另行處理。",
+        "可选布尔值，目前受监督守护进程配置不使用；省略不会建立此资源的重试策略，监督生命周期另行处理。"
+      ],
+      "lcpInterval": [
+        "Legacy nonnegative interval used only by manual FreeBSD render, with 0/omitted →20 seconds. The live daemon ignores it; use lcpEchoInterval.",
+        "旧形式の0以上の間隔で、FreeBSD手動renderだけが使い、省略・0は20秒です。主デーモンは無視し、lcpEchoIntervalを使用します。",
+        "僅手動 FreeBSD render 使用的舊式非負間隔，省略或 0 為 20 秒。主精靈忽略，請用 lcpEchoInterval。",
+        "仅手动 FreeBSD render 使用的旧式非负间隔，省略或 0 为 20 秒。主守护进程忽略，请用 lcpEchoInterval。"
+      ],
+      "lcpFailure": [
+        "Legacy nonnegative failure multiplier used only by manual FreeBSD render, with 0/omitted →3. The live daemon ignores it; use lcpEchoFailure.",
+        "旧形式の0以上の失敗回数で、FreeBSD手動renderだけが使い、省略・0は3です。主デーモンは無視し、lcpEchoFailureを使用します。",
+        "僅手動 FreeBSD render 使用的舊式非負失敗倍數，省略或 0 為 3。主精靈忽略，請用 lcpEchoFailure。",
+        "仅手动 FreeBSD render 使用的旧式非负失败倍数，省略或 0 为 3。主守护进程忽略，请用 lcpEchoFailure。"
+      ],
+      "lcpEchoInterval": [
+        "Nonnegative LCP echo interval in seconds; omitted/0 results in the live daemon default 30s, not disabled echoes. Manual FreeBSD render ignores this field.",
+        "0以上のLCP echo間隔（秒）です。省略・0は主デーモンの既定30秒で、echo無効化ではありません。FreeBSD手動renderはこの項目を使いません。",
+        "非負的 LCP echo 間隔秒數，省略或 0 使用主精靈預設 30 秒，不表示停用 echo。手動 FreeBSD render 忽略。",
+        "非负的 LCP echo 间隔秒数，省略或 0 使用主守护进程默认 30 秒，不表示禁用 echo。手动 FreeBSD render 忽略。"
+      ],
+      "lcpEchoFailure": [
+        "Nonnegative LCP echo failure count; omitted/0 results in live default 4. Linux passes lcp-echo-failure; FreeBSD daemon renders keep-alive interval and interval×count.",
+        "0以上のLCP echo失敗回数です。省略・0は主デーモンの既定4です。Linuxはlcp-echo-failureに渡し、FreeBSDデーモンはkeep-aliveの間隔と間隔×回数を出力します。",
+        "非負的 LCP echo 失敗次數，省略或 0 使用主預設 4。Linux 傳入 lcp-echo-failure，FreeBSD 精靈產生 keep-alive 間隔及間隔×次數。",
+        "非负的 LCP echo 失败次数，省略或 0 使用主默认 4。Linux 传入 lcp-echo-failure，FreeBSD 守护进程生成 keep-alive 间隔及间隔×次数。"
+      ],
+      "ipv6": [
+        "Default false; currently not passed to the supervised PPP daemon and does not emit IPv6 negotiation options in its generated configuration. Do not rely on this flag to enable IPv6 over PPP.",
+        "既定falseです。現行の監視PPPデーモンには渡さず、その生成設定にもIPv6交渉オプションを出しません。このフラグでPPP上のIPv6を有効化できるとは扱わないでください。",
+        "預設 false，目前不傳入受監督 PPP 精靈，其產生設定不輸出 IPv6 協商選項，請勿依賴此旗標啟用 PPP IPv6。",
+        "默认 false，目前不传入受监督 PPP 守护进程，其生成配置不输出 IPv6 协商选项，请勿依赖此标志启用 PPP IPv6。"
+      ],
+      "managed": [
+        "Default false. The live supervisor starts any enabled session regardless of this flag. In manual FreeBSD render only, true adds an enabled session to the mpd5 default load list. It is not observe-only protection for the live path.",
+        "既定falseですが、主監視処理はこの値に関係なくenabledなセッションを起動します。FreeBSD手動renderだけでは、trueの有効セッションをmpd5の既定load一覧に追加します。実動作の観測専用指定ではありません。",
+        "預設 false，但主監督流程不論此值都啟動 enabled 工作階段。僅手動 FreeBSD render 中，true 才將啟用的工作階段加入 mpd5 預設 load 清單。不是實際路徑的唯讀保護。",
+        "默认 false，但主监督流程不论此值都启动 enabled 会话。仅手动 FreeBSD render 中，true 才将启用的会话加入 mpd5 默认 load 列表。不是实际路径的只读保护。"
+      ],
+      "secretEncoding": [
+        "Only omitted or plain is accepted. It does not decode base64 or encrypt password/passwordFile.",
+        "省略またはplainのみ指定できます。password・passwordFileのBase64デコードや暗号化は行いません。",
+        "僅接受省略或 plain，不會對 password/passwordFile 執行 Base64 解碼或加密。",
+        "仅接受省略或 plain，不会对 password/passwordFile 执行 Base64 解码或加密。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_wan.go",
+      "pkg/config/validate.go",
+      "pkg/controller/chain/chain.go",
+      "pkg/controller/chain/phase_status.go",
+      "pkg/controller/chain/ipv4_main_routes.go",
+      "pkg/controller/pppoesession/controller.go",
+      "cmd/routerd-pppoe-client/main.go",
+      "pkg/pppoeclient/client.go",
+      "pkg/render/freebsd.go",
+      "cmd/routerd/cmd_render.go"
+    ]
+  },
+  "EventGroup": {
+    "purpose": [
+      "Declare a shared federation event group and this router’s identity, peer discovery, receiver and local retention settings.",
+      "共有するイベントグループと、このルーターの識別名・配送先取得・受信・ローカル保持設定を宣言します。",
+      "宣告共用的聯邦事件群組，以及此路由器的識別、對等節點來源、接收與本機保留設定。",
+      "声明共享的联合事件组，以及此路由器的标识、对等节点来源、接收与本机保留设置。"
+    ],
+    "rules": [
+      [
+        "nodeName is required. metadata.name is the group identifier; remote participants use the same group name and shared secret. Identity-only groups may omit secretFile, but the transport helper starts only when secretFile is supplied. Applied means runtime config was written, not proof that peers received events.",
+        "nodeNameが必須です。metadata.nameがグループ識別名で、相手側と同じグループ名・共有秘密鍵を使います。識別情報だけのグループならsecretFileを省略できますが、通信ヘルパーはsecretFile指定時のみ起動します。Appliedは実行設定の書き込み完了で、相手への配送成功ではありません。",
+        "nodeName 必填，metadata.name 為群組識別；參與節點使用相同群組名與共用密鑰。僅識別用途可省略 secretFile，但傳輸輔助程式僅在提供 secretFile 時啟動。Applied 表示執行設定已寫入，不保證事件已送達。",
+        "nodeName 必填，metadata.name 为组标识；参与节点使用相同组名与共享密钥。仅标识用途可省略 secretFile，但传输辅助程序仅在提供 secretFile 时启动。Applied 表示运行配置已写入，不保证事件已送达。"
+      ],
+      [
+        "secretFile is required by configuration validation when listen.address, peersFrom or a referencing EventPeer is present. auth.secretRef does not satisfy this requirement. The file must exist and contain nonblank secret bytes when eventd starts; surrounding whitespace is removed.",
+        "listen.address・peersFrom・本グループを参照するEventPeerがある場合、設定検証でsecretFileが必要です。auth.secretRefでは代用できません。eventd起動時にファイルが存在し、前後の空白を除いた秘密鍵が空でない必要があります。",
+        "設定驗證在 listen.address、peersFrom 或參照此群組的 EventPeer 存在時要求 secretFile，auth.secretRef 不能替代。eventd 啟動時檔案須存在，移除前後空白後的密鑰不可為空。",
+        "配置验证在 listen.address、peersFrom 或引用此组的 EventPeer 存在时要求 secretFile，auth.secretRef 不能替代。eventd 启动时文件须存在，移除前后空白后的密钥不可为空。"
+      ],
+      [
+        "Receiver startup is controlled by listen.port > 0, not by address alone. Always supply a specific address with a positive port; an empty address with a positive port can bind all addresses. Port 0 disables the TCP receiver; push and pruning can continue.",
+        "受信開始はaddressの有無ではなくlisten.port>0で決まります。正のポートとともに具体的なaddressを指定してください。addressが空でポートだけ正の場合、全アドレスで待ち受ける可能性があります。ポート0はTCP受信を無効にし、送信・保持削除は継続できます。",
+        "接收器是否啟動由 listen.port > 0 決定，並非只看 address。使用正連接埠時請明確指定地址；地址空白而連接埠為正可能綁定所有地址。連接埠 0 停用 TCP 接收，但可繼續推送與清理。",
+        "接收器是否启动由 listen.port > 0 决定，并非仅看 address。使用正端口时请明确指定地址；地址空白而端口为正可能绑定所有地址。端口 0 禁用 TCP 接收，但可继续推送与清理。"
+      ],
+      [
+        "peersFrom imports SAMNodeSet nodes with nonblank eventEndpoint, excluding nodeRef equal to nodeName. Peers are deduplicated by remote nodeName; later sources replace earlier ones, then static EventPeer entries override imported peers. A missing required source leaves Pending and preserves the last runtime config; optional missing sources are skipped.",
+        "peersFromはSAMNodeSet内のeventEndpointがあるノードを取得し、nodeRefがnodeNameと同じ自ノードは除外します。相手nodeNameで重複をまとめ、後の取得元が先を上書きし、最後に静的EventPeerが優先します。必須の取得元が欠けるとPendingになり、前の実行設定を残します。optionalの欠落は飛ばします。",
+        "peersFrom 匯入 SAMNodeSet 中有 eventEndpoint 的節點，排除 nodeRef 等於 nodeName 的自身節點。依遠端 nodeName 去重，後來源覆寫前來源，最後由靜態 EventPeer 覆寫匯入節點。必要來源遺失時維持 Pending 並保留舊設定；選用來源遺失則略過。",
+        "peersFrom 导入 SAMNodeSet 中有 eventEndpoint 的节点，排除 nodeRef 等于 nodeName 的自身节点。按远端 nodeName 去重，后来源覆盖前来源，最后由静态 EventPeer 覆盖导入节点。必要来源缺失时维持 Pending 并保留旧配置；可选来源缺失则跳过。"
+      ],
+      [
+        "Retention is enforced locally by eventd at startup and periodically (default 1m). Age and count limits both apply; age uses observedAt, and the count limit keeps newest observed events. This is separate from each event’s expiresAt and from local EventRule journal retention.",
+        "保持削除はeventdが起動時と定期処理（既定1分）でローカルに実施します。期間・件数制限を両方適用し、期間はobservedAt、件数は観測日時が新しい順で残します。各イベントのexpiresAtやローカルEventRule履歴の保持とは別です。",
+        "eventd 在啟動及定期處理（預設 1 分鐘）執行本機清理。時間與數量限制同時適用；時間依 observedAt，數量保留最新觀測事件。這與每個事件的 expiresAt 及本機 EventRule 紀錄保留不同。",
+        "eventd 在启动及定期处理（默认 1 分钟）执行本机清理。时间与数量限制同时应用；时间按 observedAt，数量保留最新观测事件。这与每个事件的 expiresAt 及本机 EventRule 记录保留不同。"
+      ]
+    ],
+    "fields": {
+      "nodeName": [
+        "Required nonblank local node identity, stamped on locally originated federation events. No hostname default; must match SAMNodeSet.nodeRef when used with peersFrom.",
+        "必須の空でない自ノード識別名です。ローカル生成した共有イベントに付与します。ホスト名の自動設定はなく、peersFrom利用時はSAMNodeSetのnodeRefに合わせます。",
+        "必填且非空的本機節點識別，標記於本機產生的聯邦事件。無主機名稱預設；搭配 peersFrom 時須符合 SAMNodeSet.nodeRef。",
+        "必填且非空的本机节点标识，标记于本机生成的联合事件。无主机名默认值；搭配 peersFrom 时须匹配 SAMNodeSet.nodeRef。"
+      ],
+      "peersFrom": [
+        "Optional ordered discovery-source list, default empty. Supplying it requires auth.secretFile, even if all sources are optional or yield no peers.",
+        "任意の順序付き取得元一覧で、既定は空です。すべてoptionalでも、配送先が0件でも、指定するとauth.secretFileが必要です。",
+        "選用的有序來源清單，預設空。即使所有來源為選用或沒有節點，提供此欄位仍需要 auth.secretFile。",
+        "可选的有序来源列表，默认空。即使所有来源为可选或没有节点，提供此字段仍需要 auth.secretFile。"
+      ],
+      "peersFrom[].resource": [
+        "Required SAMNodeSet/<name> reference. Format is validated; missing declared source is handled at runtime by optional/Pending rather than rejected as an ordinary status-value reference.",
+        "SAMNodeSet/<name>が必須です。形式を検証しますが、宣言がない場合は通常の状態値参照のように拒否せず、実行時にoptional・Pendingで処理します。",
+        "必填 SAMNodeSet/<name> 參照。驗證格式；來源未宣告時依執行期 optional/Pending 處理，不當作一般狀態值參照拒絕。",
+        "必填 SAMNodeSet/<name> 引用。验证格式；来源未声明时按运行时 optional/Pending 处理，不作为普通状态值引用拒绝。"
+      ],
+      "peersFrom[].optional": [
+        "Default false: missing source blocks new config. True skips a missing source. Malformed or undecodable sources still fail.",
+        "既定falseでは欠落が新設定を止めます。trueは欠落を飛ばしますが、不正形式や解釈不能な取得元はエラーです。",
+        "預設 false：遺失來源會阻止新設定。true 略過遺失來源，但格式錯誤或無法解碼仍失敗。",
+        "默认 false：来源缺失会阻止新配置。true 跳过缺失来源，但格式错误或无法解码仍失败。"
+      ],
+      "retention": [
+        "Optional local federation-event retention settings; defaults impose no age/count limit. Effective only while eventd pruning runs.",
+        "任意のローカル共有イベント保持設定です。既定では期間・件数制限なしです。eventdの保持削除が動く間に適用します。",
+        "選用的本機聯邦事件保留設定，預設無時間或數量限制。僅在 eventd 清理執行時生效。",
+        "可选的本机联合事件保留配置，默认无时间或数量限制。仅在 eventd 清理运行时生效。"
+      ],
+      "retention.maxEvents": [
+        "Nonnegative maximum event count per group, default 0 means unlimited. Positive values keep newest observedAt/id records after age pruning.",
+        "グループごとの最大件数で、0以上です。既定0は無制限、正数は期間削除後にobservedAt・idが新しいものを残します。",
+        "每群組的非負事件數上限，預設 0 為無限。正值在時間清理後保留 observedAt/id 最新的紀錄。",
+        "每组的非负事件数上限，默认 0 为无限。正值在时间清理后保留 observedAt/id 最新的记录。"
+      ],
+      "retention.maxAge": [
+        "Optional Go duration, default empty means unlimited. Zero/negative durations pass validation and are omitted from runtime config, also meaning no age limit.",
+        "任意のGo形式期間で、既定の空は無制限です。0・負数も検証を通り、実行設定から省略されるため期間制限なしです。",
+        "選用 Go 時間長度，預設空為無限。零或負值可通過驗證，執行設定會省略，亦表示無時間限制。",
+        "可选 Go 时长，默认空为无限。零或负值可通过验证，运行配置会省略，亦表示无时间限制。"
+      ],
+      "auth": [
+        "Optional transport integrity settings. Current transport always uses HMAC; there is no unauthenticated transport mode.",
+        "任意の通信完全性設定です。現行通信は常にHMACを使い、無認証モードはありません。",
+        "選用的傳輸完整性設定。目前傳輸一律使用 HMAC，沒有未驗證模式。",
+        "可选的传输完整性配置。当前传输一律使用 HMAC，没有未认证模式。"
+      ],
+      "auth.mode": [
+        "Accepted empty or hmac, default empty. Both use HMAC when transport runs; the controller does not use this value to select another scheme.",
+        "空またはhmacを受け付け、既定は空です。通信時はどちらもHMACになり、別方式の選択には使いません。",
+        "接受空或 hmac，預設空。傳輸執行時兩者皆使用 HMAC，控制器不以此選擇其他方案。",
+        "接受空或 hmac，默认空。传输运行时两者均使用 HMAC，控制器不以此选择其他方案。"
+      ],
+      "auth.secretRef": [
+        "Default empty. Accepted but not resolved by the current controller/helper; it does not replace secretFile and is not validated as a resource reference.",
+        "既定は空です。受理されますが現行の処理は解決せず、secretFileの代用にもリソース参照検証の対象にもなりません。",
+        "預設空。接受但目前控制器與輔助程式不解析；不能替代 secretFile，也不作資源參照驗證。",
+        "默认空。接受但当前控制器与辅助程序不解析；不能替代 secretFile，也不作资源引用验证。"
+      ],
+      "auth.secretFile": [
+        "Filesystem path to the shared HMAC secret. Empty disables the transport helper; required for receiver address or peers as described above. No automatic secret distribution.",
+        "共有HMAC秘密鍵のファイルパスです。空は通信ヘルパー無効で、前述の受信アドレス・配送先指定時には必須です。秘密鍵の自動配布は行いません。",
+        "共用 HMAC 密鑰檔案路徑。空值停用傳輸輔助程式；指定接收地址或對等節點時依上述規則必填。不會自動分發密鑰。",
+        "共享 HMAC 密钥文件路径。空值禁用传输辅助程序；指定接收地址或对等节点时按上述规则必填。不会自动分发密钥。"
+      ],
+      "listen": [
+        "Optional HTTP receiver bind, default address empty/port 0. Explicitly configure both for reception.",
+        "任意のHTTP受信設定で、既定はaddress空・port 0です。受信には両方を明示してください。",
+        "選用 HTTP 接收綁定，預設地址空、連接埠 0。接收時請明確設定兩者。",
+        "可选 HTTP 接收绑定，默认地址空、端口 0。接收时请明确设置两者。"
+      ],
+      "listen.address": [
+        "Receiver bind address, default empty. Nonempty requires port 1–65535 and secretFile. The daemon does not use empty address alone to disable listening; see the port rule.",
+        "受信待受アドレスで、既定は空です。非空ならport 1～65535とsecretFileが必要です。デーモンはaddressが空という理由だけでは受信を止めず、portの規則で決まります。",
+        "接收綁定地址，預設空。非空時需要 1–65535 連接埠與 secretFile。輔助程式不會僅因地址空而停用接收，請見連接埠規則。",
+        "接收绑定地址，默认空。非空时需要 1–65535 端口与 secretFile。辅助程序不会仅因地址空而禁用接收，请见端口规则。"
+      ],
+      "listen.port": [
+        "Integer 0–65535, default 0 disables receiver. Positive values enable plain HTTP on address; this resource has no TLS certificate fields.",
+        "0～65535の整数で、既定0は受信無効です。正数はaddressで平文HTTPを受信します。本リソースにTLS証明書の設定項目はありません。",
+        "整數 0–65535，預設 0 停用接收。正值在 address 啟用純 HTTP；本資源沒有 TLS 憑證欄位。",
+        "整数 0–65535，默认 0 禁用接收。正值在 address 启用明文 HTTP；本资源没有 TLS 证书字段。"
+      ],
+      "replayWindow": [
+        "Go duration bounding accepted signed-request timestamp skew. Omitted, zero or negative resolves to 5m. It is not event retention or a message deduplication TTL.",
+        "署名付き要求の時刻ずれ許容範囲をGo形式で指定します。省略・0・負数は5mです。イベント保持期間やメッセージ重複排除TTLではありません。",
+        "簽署請求時間戳偏差容許範圍，使用 Go 時間長度。省略、零或負值為 5m。不是事件保留時間或訊息去重 TTL。",
+        "签名请求时间戳偏差容许范围，使用 Go 时长。省略、零或负值为 5m。不是事件保留时间或消息去重 TTL。"
+      ],
+      "when": [
+        "Optional common activation condition, default unconditional. Effective-config filtering controls transport config and service lifecycle; see common fields for predicates and schema limitations.",
+        "共通の有効化条件で、省略時は無条件です。有効設定の絞り込みを通して通信設定・サービス動作を制御します。条件とスキーマ制限は共通項を参照してください。",
+        "選用的共用啟用條件，預設無條件。有效設定篩選控制傳輸設定與服務生命週期；條件與結構描述限制請見共用欄位。",
+        "可选的通用启用条件，默认无条件。有效配置筛选控制传输配置与服务生命周期；条件与模式限制请见通用字段。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_event.go",
+      "pkg/controller/eventfederation/controller.go",
+      "pkg/controller/chain/chain.go",
+      "pkg/controller/chain/system.go",
+      "pkg/eventd/config.go",
+      "pkg/eventd/prune.go",
+      "pkg/eventd/receiver.go",
+      "cmd/routerd-eventd/main.go",
+      "pkg/state/federation.go"
+    ]
+  },
+  "EventPeer": {
+    "purpose": [
+      "Declare one remote delivery target for an EventGroup. Transport authentication and local identity come from that group.",
+      "EventGroupの相手側配送先を1件宣言します。通信認証と自ノード識別名はグループ側で指定します。",
+      "宣告 EventGroup 的一個遠端傳送目標。傳輸驗證與本機識別由群組提供。",
+      "声明 EventGroup 的一个远端发送目标。传输认证与本机标识由组提供。"
+    ],
+    "rules": [
+      [
+        "groupRef and nodeName must be nonblank; endpoint is required. groupRef matches the bare EventGroup metadata.name, not EventGroup/name. Its existence is not checked by the EventPeer validator; unmatched peers are not included in a group config.",
+        "groupRef・nodeNameは空でない値、endpointは必須です。groupRefはEventGroup/nameでなくEventGroupのmetadata.nameと照合します。EventPeerの検証は存在を確認せず、一致グループがなければ配送設定に入りません。",
+        "groupRef、nodeName 不可為空，endpoint 必填。groupRef 比對 EventGroup 的單純 metadata.name，不是 EventGroup/name。EventPeer 驗證不檢查其存在；找不到群組就不加入配送設定。",
+        "groupRef、nodeName 不可为空，endpoint 必填。groupRef 匹配 EventGroup 的单独 metadata.name，不是 EventGroup/name。EventPeer 验证不检查其存在；找不到组就不加入配送配置。"
+      ],
+      [
+        "Static peers override imported peers by nodeName; later static entries with the same nodeName replace earlier ones. types and subjectPrefixes narrow delivery together (AND between categories, OR within each list). Matching is case-sensitive; types are exact strings, not topic wildcards.",
+        "静的配送先はnodeName単位で取得済み配送先を上書きし、同じnodeNameの静的定義は後が優先します。typesとsubjectPrefixesは両方の条件が必要で、各一覧内はORです。大文字小文字を区別し、typesは完全一致でトピックのワイルドカードではありません。",
+        "靜態節點依 nodeName 覆寫匯入節點；同名靜態項目以後者為準。types 與 subjectPrefixes 兩類皆須符合，各清單內為 OR。區分大小寫；types 使用完整字串，不是主題萬用字元。",
+        "静态节点按 nodeName 覆盖导入节点；同名静态条目以后者为准。types 与 subjectPrefixes 两类均须匹配，各列表内为 OR。区分大小写；types 使用完整字符串，不是主题通配符。"
+      ]
+    ],
+    "fields": {
+      "groupRef": [
+        "Required bare EventGroup name; the referenced group needs auth.secretFile to run peer transport. No default.",
+        "必須の裸のEventGroup名です。配送には対象グループのauth.secretFileが必要です。既定値はありません。",
+        "必填的單純 EventGroup 名稱，對等傳輸需要群組的 auth.secretFile。無預設值。",
+        "必填的单独 EventGroup 名称，对等传输需要组的 auth.secretFile。无默认值。"
+      ],
+      "nodeName": [
+        "Required remote identity and deduplication/delivery-record key. Distinct YAML names do not make independent peers if nodeName is the same.",
+        "必須の相手識別名で、配送先重複排除・配送履歴のキーです。YAMLの名前が違ってもnodeNameが同じなら独立した相手にはなりません。",
+        "必填遠端識別，也是去重與配送紀錄鍵。YAML 名稱不同但 nodeName 相同時，不會成為獨立節點。",
+        "必填远端标识，也是去重与配送记录键。YAML 名称不同但 nodeName 相同时，不会成为独立节点。"
+      ],
+      "endpoint": [
+        "Required base URL, for example http://192.0.2.10:8787. The pusher trims trailing slashes and appends /v1/events; do not include that path yourself. URL/scheme reachability is not checked by local YAML validation.",
+        "例http://192.0.2.10:8787のような基底URLが必須です。送信側で末尾の/を除き/v1/eventsを付けるため、そのパスは含めません。URL・スキームの利用可否や疎通はローカルYAML検証では確認しません。",
+        "必填基底 URL，例如 http://192.0.2.10:8787。推送端移除尾端斜線後附加 /v1/events，請勿自行加入此路徑。本機 YAML 驗證不檢查 URL、協定或可達性。",
+        "必填基础 URL，例如 http://192.0.2.10:8787。推送端移除末尾斜线后附加 /v1/events，请勿自行加入此路径。本机 YAML 验证不检查 URL、协议或可达性。"
+      ],
+      "direction": [
+        "Only push or empty accepted; default push. The renderer always creates an outbound push target, not a pull client.",
+        "pushまたは空のみ受け付け、既定はpushです。常に送信先を作り、pullクライアントにはなりません。",
+        "僅接受 push 或空，預設 push。產生的是向外推送目標，不是拉取用戶端。",
+        "仅接受 push 或空，默认 push。生成的是向外推送目标，不是拉取客户端。"
+      ],
+      "types": [
+        "Optional exact event-type allowlist, default empty permits all types. Nonempty entries cannot be blank.",
+        "任意のイベント型完全一致の許可一覧です。既定の空は全型許可で、指定項目の空文字は禁止です。",
+        "選用的事件型別完整比對允許清單，預設空允許全部型別。指定項目不可為空。",
+        "可选的事件类型完全匹配允许列表，默认空允许全部类型。指定条目不可为空。"
+      ],
+      "subjectPrefixes": [
+        "Optional case-sensitive subject prefix allowlist, default empty permits all subjects. Any prefix match passes this category.",
+        "任意のsubject前方一致一覧で、大文字小文字を区別します。既定の空は全subjectを許可し、一覧のいずれかへの前方一致で成立します。",
+        "選用、區分大小寫的 subject 前綴清單。預設空允許全部 subject；符合任一前綴即可通過此類條件。",
+        "可选、区分大小写的 subject 前缀列表。默认空允许全部 subject；匹配任一前缀即可通过此类条件。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_event.go",
+      "pkg/controller/eventfederation/controller.go",
+      "pkg/eventd/push.go"
+    ]
+  },
+  "EventSubscription": {
+    "purpose": [
+      "Match nonexpired persisted federation events and invoke a local Plugin, storing its result as a DynamicConfigPart.",
+      "期限内の共有イベントを永続DBから選び、ローカルのPluginを実行して結果をDynamicConfigPartとして保存します。",
+      "從持久化資料庫比對尚未到期的聯邦事件，呼叫本機 Plugin，將結果儲存為 DynamicConfigPart。",
+      "从持久化数据库匹配尚未过期的联合事件，调用本机 Plugin，将结果保存为 DynamicConfigPart。"
+    ],
+    "rules": [
+      [
+        "groupRef, match.types (at least one) and trigger.pluginRef are required. Group and plugin references are bare metadata names, not Kind/name. They are not checked for existence by this validator: a missing Plugin yields Pending at runtime; a group with no matching stored events remains Idle.",
+        "groupRef・1件以上のmatch.types・trigger.pluginRefが必須です。グループ・Pluginの参照はKind/nameでなく裸のmetadata名です。この検証では存在を確認せず、Pluginがなければ実行時Pending、該当保存イベントがないグループはIdleになります。",
+        "groupRef、至少一個 match.types 與 trigger.pluginRef 必填。群組與 Plugin 使用單純 metadata 名稱，不是 Kind/name。此驗證不檢查存在性：Plugin 遺失時執行期為 Pending，沒有符合保存事件的群組為 Idle。",
+        "groupRef、至少一个 match.types 与 trigger.pluginRef 必填。组与 Plugin 使用单独 metadata 名称，不是 Kind/name。此验证不检查存在性：Plugin 缺失时运行时为 Pending，没有匹配保存事件的组为 Idle。"
+      ],
+      [
+        "Matching is case-sensitive. Types, subject prefixes, payload entries and source-node restrictions combine with AND; list alternatives combine with OR. This is exact event-type matching, not local topic wildcard matching.",
+        "大文字小文字を区別します。types・subject前方一致・payload各項目・sourceNodesの条件はAND、各一覧の選択肢はORです。イベント型は完全一致で、ローカルトピックのワイルドカードではありません。",
+        "比對區分大小寫。型別、subject 前綴、各 payload 項與來源節點限制以 AND 組合；清單選項以 OR 組合。事件型別完整比對，不是本機主題萬用字元。",
+        "匹配区分大小写。类型、subject 前缀、各 payload 项与源节点限制以 AND 组合；列表选项以 OR 组合。事件类型完全匹配，不是本机主题通配符。"
+      ],
+      [
+        "The controller polls stored events (normally every 5s). Succeeded subscription/event pairs are skipped; failed pairs are retried up to three attempts; pending pairs can be retried after interruption. Processing is at least once, not an exactly-once guarantee for plugin side effects.",
+        "通常5秒ごとに保存イベントを確認します。成功済みの購読・イベント組は飛ばし、失敗は最大3回、処理中断のpendingは再処理できます。少なくとも1回の処理であり、Pluginの外部操作を厳密に1回だけにする保証ではありません。",
+        "控制器通常每 5 秒輪詢保存事件。成功的訂閱/事件組合略過，失敗最多嘗試三次；中斷後的 pending 可重試。處理為至少一次，並不保證 Plugin 外部副作用恰好一次。",
+        "控制器通常每 5 秒轮询保存事件。成功的订阅/事件组合跳过，失败最多尝试三次；中断后的 pending 可重试。处理为至少一次，并不保证 Plugin 外部副作用恰好一次。"
+      ],
+      [
+        "With neither batching option positive, one invocation receives the current eligible batch, not necessarily one event. Batching timers are in memory; event/run records are persisted. Scheduled batches flush early at 1024 events or approximately 4 MiB of selected payload/identity data.",
+        "両待機設定が正でなければ、その時点の処理対象をまとめて1回実行し、1イベントごととは限りません。待機タイマーはメモリー上、イベント・実行履歴は永続化します。待機中は1024件または対象データ約4MiBで早期実行します。",
+        "兩個批次選項都非正值時，一次呼叫接收當前合格批次，不一定逐事件呼叫。批次計時器在記憶體中，事件與執行紀錄持久化。排程批次達 1024 件或約 4 MiB 的選定資料時提早執行。",
+        "两个批处理选项都非正值时，一次调用接收当前合格批次，不一定逐事件调用。批处理计时器在内存中，事件与执行记录持久化。调度批次达 1024 件或约 4 MiB 的所选数据时提前执行。"
+      ],
+      [
+        "The plugin receives matched event facts plus only the config resources explicitly allowlisted by Plugin.context.resources; secrets are redacted. Result TTL and generated resources come from PluginResult, not this subscription. Distinct event batches produce distinct active DynamicConfigPart sources.",
+        "Pluginには該当イベントと、Plugin.context.resourcesで明示許可した設定だけを渡し、秘密値は伏せます。TTL・生成リソースは本購読でなくPluginResultが指定します。異なるイベント群は別のDynamicConfigPart取得元として共存します。",
+        "Plugin 接收符合事件，以及僅由 Plugin.context.resources 明確允許的設定資源；密鑰會遮蔽。TTL 與產生資源由 PluginResult 決定，不由此訂閱決定。不同事件批次產生不同的有效 DynamicConfigPart 來源。",
+        "Plugin 接收匹配事件，以及仅由 Plugin.context.resources 明确允许的配置资源；密钥会遮蔽。TTL 与生成资源由 PluginResult 决定，不由此订阅决定。不同事件批次生成不同的有效 DynamicConfigPart 来源。"
+      ]
+    ],
+    "fields": {
+      "groupRef": [
+        "Required bare EventGroup name used to select stored event group_name. No default; does not automatically create or start a group.",
+        "保存イベントのgroup_nameを選ぶ裸のEventGroup名が必須です。既定値・グループの自動作成・起動はありません。",
+        "必填單純 EventGroup 名稱，用於選擇保存事件的 group_name。無預設，不會自動建立或啟動群組。",
+        "必填单独 EventGroup 名称，用于选择保存事件的 group_name。无默认，不会自动创建或启动组。"
+      ],
+      "match": [
+        "Required matching object; types must be nonempty. Optional empty categories impose no restriction.",
+        "必須の選別条件です。typesは1件以上必要で、他の条件が空ならその制限なしです。",
+        "必填比對物件，types 不可為空。其他選用條件為空時不限制。",
+        "必填匹配对象，types 不可为空。其他可选条件为空时不限制。"
+      ],
+      "match.types": [
+        "Required exact event-type list with nonblank entries. At least one type must match; wildcards are literal strings.",
+        "空でないイベント型を1件以上指定します。いずれかへの完全一致が必要で、ワイルドカードも単なる文字列です。",
+        "必填完整事件型別清單，至少一個非空項目。符合任一型別即可；萬用字元視為一般字串。",
+        "必填完整事件类型列表，至少一个非空条目。匹配任一类型即可；通配符视为普通字符串。"
+      ],
+      "match.subjectPrefixes": [
+        "Optional subject prefix list, default empty allows all. Matching is strings.HasPrefix, not path-component or wildcard matching.",
+        "subjectの前方一致一覧です。既定の空は制限なしで、パス区間やワイルドカードでなく単純な文字列前方一致です。",
+        "選用 subject 前綴清單，預設空允許全部。使用字串前綴比對，不是路徑區段或萬用字元比對。",
+        "可选 subject 前缀列表，默认空允许全部。使用字符串前缀匹配，不是路径片段或通配符匹配。"
+      ],
+      "match.payload": [
+        "Optional key-to-string equality map; every entry must match. Keys must be nonblank. A missing payload key reads as empty, so a requested empty value also matches a missing key.",
+        "任意のキー・文字列の完全一致マップで、全項目が必要です。空キーは禁止です。欠落キーは空として読むため、期待値が空ならキー欠落にも一致します。",
+        "選用的鍵/字串完整比對映射，每個項目都須符合，鍵不可空白。遺失鍵讀為空字串，因此要求空值也會符合遺失鍵。",
+        "可选的键/字符串完全匹配映射，每个条目均须匹配，键不可空白。缺失键读为空字符串，因此要求空值也会匹配缺失键。"
+      ],
+      "match.sourceNodes": [
+        "Optional exact sourceNode allowlist, default empty permits all. It does not automatically exclude this node’s own events; specify the intended source identities.",
+        "sourceNodeの完全一致許可一覧です。既定の空はすべて許可し、自ノードのイベントも自動除外しません。必要な発信元を明示してください。",
+        "選用 sourceNode 完整比對允許清單，預設空允許全部。不會自動排除自身事件，請指定所需來源識別。",
+        "可选 sourceNode 完全匹配允许列表，默认空允许全部。不会自动排除自身事件，请指定所需源标识。"
+      ],
+      "trigger": [
+        "Required local plugin invocation settings. This is distinct from Plugin.triggers and is executed by the subscription controller.",
+        "必須のローカルPlugin起動設定です。Plugin.triggersとは別に、購読コントローラーが実行します。",
+        "必填的本機 Plugin 呼叫設定。與 Plugin.triggers 不同，由訂閱控制器執行。",
+        "必填的本机 Plugin 调用配置。与 Plugin.triggers 不同，由订阅控制器执行。"
+      ],
+      "trigger.pluginRef": [
+        "Required bare Plugin metadata.name, not Plugin/name. Missing plugin yields Pending. Execution uses that Plugin’s executable, timeout, environment and context restrictions.",
+        "Plugin/nameでなく裸のPlugin metadata.nameが必須です。なければPendingです。そのPluginの実行ファイル・タイムアウト・環境・context制限を使います。",
+        "必填單純 Plugin metadata.name，不是 Plugin/name。Plugin 遺失時為 Pending。使用該 Plugin 的執行檔、逾時、環境與 context 限制。",
+        "必填单独 Plugin metadata.name，不是 Plugin/name。Plugin 缺失时为 Pending。使用该 Plugin 的可执行文件、超时、环境与 context 限制。"
+      ],
+      "trigger.batchWindow": [
+        "Optional Go duration measured from the first selected event; default empty/0 means no batching cap unless debounce is positive, when the cap defaults to 1m. Positive batchWindow bounds repeated debounce. Negative durations pass validation and act as nonpositive.",
+        "最初の対象イベントから測るGo形式の待機上限です。既定の空・0は上限なしですが、debounceが正なら既定上限1mです。正のbatchWindowでdebounce延長を制限します。負数も検証を通り、非正値として扱います。",
+        "選用 Go 時間長度，自首個選定事件起算。預設空/0 無批次上限；但 debounce 為正時預設上限為 1m。正 batchWindow 限制反覆 debounce。負值可通過驗證，視為非正值。",
+        "可选 Go 时长，自首个所选事件起算。默认空/0 无批处理上限；但 debounce 为正时默认上限为 1m。正 batchWindow 限制反复 debounce。负值可通过验证，视为非正值。"
+      ],
+      "trigger.debounce": [
+        "Optional Go duration after the latest newly selected event, default empty/0 disabled. Reobserving the same event does not extend it. The earlier of debounce and batchWindow deadlines fires; no positive batchWindow gives a 1m cap.",
+        "新たに対象となった最後のイベントからの待機期間です。既定の空・0は無効で、同じイベントの再読取では延長しません。debounceとbatchWindowの早い方で実行し、正のbatchWindowがなければ上限1mです。",
+        "選用 Go 時間長度，自最後新增選定事件起算，預設空/0 停用。重讀相同事件不延長。debounce 與 batchWindow 較早期限觸發；無正 batchWindow 時上限 1m。",
+        "可选 Go 时长，自最后新增所选事件起算，默认空/0 禁用。重读相同事件不延长。debounce 与 batchWindow 较早期限触发；无正 batchWindow 时上限 1m。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_event.go",
+      "pkg/controller/eventsubscription/controller.go",
+      "pkg/controller/chain/chain.go",
+      "pkg/plugin/context.go"
+    ]
+  },
+  "FederationSLO": {
+    "purpose": [
+      "Configure per-group thresholds used by routerctl doctor for federation delivery and subscription diagnostics. This does not change delivery retry or plugin execution policy.",
+      "routerctl doctorが共有イベント配送・購読を診断するときのグループ別閾値です。配送再試行やPlugin実行方針自体は変更しません。",
+      "設定 routerctl doctor 診斷聯邦配送與訂閱時使用的每群組門檻，不改變配送重試或 Plugin 執行策略。",
+      "配置 routerctl doctor 诊断联合发送与订阅时使用的每组阈值，不改变发送重试或 Plugin 执行策略。"
+    ],
+    "rules": [
+      [
+        "groupRef is required and must name an existing EventGroup. At most one FederationSLO may reference each group. All numeric fields must be nonnegative; effective lagWarnSeconds must be strictly less than effective lagFailSeconds after zero-value defaults are applied.",
+        "groupRefは必須で、既存のEventGroup名が必要です。同じグループへのFederationSLOは最大1件です。数値はすべて0以上で、0の既定値適用後もlagWarnSeconds<lagFailSecondsが必要です。",
+        "groupRef 必填且須為既有 EventGroup 名稱。每個群組最多一個 FederationSLO。所有數值須非負；套用零值預設後，有效 lagWarnSeconds 必須嚴格小於有效 lagFailSeconds。",
+        "groupRef 必填且须为已有 EventGroup 名称。每个组最多一个 FederationSLO。所有数值须非负；应用零值默认值后，有效 lagWarnSeconds 必须严格小于有效 lagFailSeconds。"
+      ],
+      [
+        "Lag comparisons are inclusive (>= warn/fail threshold). Subscription counts warn/fail only when greater than their allowed maximum. Expiring-soon uses remaining TTL strictly below the threshold; pending/failed delivery can raise that diagnostic from WARN to FAIL.",
+        "遅延は閾値以上でWARN・FAIL、購読件数は許容最大を超えた場合にWARN・FAILです。期限接近は残TTLが閾値未満のときで、未配送・失敗があるとWARNからFAILになる場合があります。",
+        "延遲達到門檻（>=）即 WARN/FAIL；訂閱數量嚴格超過允許最大值才 WARN/FAIL。即將到期使用剩餘 TTL 嚴格小於門檻；待送或失敗配送可使該診斷由 WARN 升為 FAIL。",
+        "延迟达到阈值（>=）即 WARN/FAIL；订阅数量严格超过允许最大值才 WARN/FAIL。即将过期使用剩余 TTL 严格小于阈值；待发或失败发送可使该诊断由 WARN 升为 FAIL。"
+      ]
+    ],
+    "fields": {
+      "groupRef": [
+        "Required bare EventGroup metadata.name, not EventGroup/name; existence and uniqueness are validated.",
+        "EventGroup/nameでなく裸のEventGroup metadata.nameが必須です。存在とグループごとの一意性を検証します。",
+        "必填單純 EventGroup metadata.name，不是 EventGroup/name。驗證存在性與每群組唯一性。",
+        "必填单独 EventGroup metadata.name，不是 EventGroup/name。验证存在性与每组唯一性。"
+      ],
+      "delivery": [
+        "Optional delivery-diagnostic thresholds; omitted fields use defaults below. Not a transport timeout or retry configuration.",
+        "任意の配送診断閾値です。省略項目は以下の既定値になり、通信タイムアウト・再試行設定ではありません。",
+        "選用的配送診斷門檻，省略欄位使用下列預設。不是傳輸逾時或重試設定。",
+        "可选的发送诊断阈值，省略字段使用下列默认值。不是传输超时或重试配置。"
+      ],
+      "delivery.lagWarnSeconds": [
+        "Nonnegative seconds; omitted or 0 means 60. Maximum measured delivery lag >= this value produces WARN unless the fail threshold is met.",
+        "0以上の秒数です。省略・0は60で、配送遅延の最大測定値がこの値以上なら、FAIL条件でない限りWARNです。",
+        "非負秒數，省略或 0 為 60。最大測量配送延遲 >= 此值時為 WARN，除非已達 FAIL 門檻。",
+        "非负秒数，省略或 0 为 60。最大测量发送延迟 >= 此值时为 WARN，除非已达 FAIL 阈值。"
+      ],
+      "delivery.lagFailSeconds": [
+        "Nonnegative seconds; omitted or 0 means 180. Maximum measured delivery lag >= this value produces FAIL. Must exceed the effective warn threshold.",
+        "0以上の秒数で、省略・0は180です。配送遅延の最大測定値がこの値以上ならFAILです。実効WARN閾値より大きくする必要があります。",
+        "非負秒數，省略或 0 為 180。最大測量配送延遲 >= 此值時為 FAIL，須大於有效 WARN 門檻。",
+        "非负秒数，省略或 0 为 180。最大测量发送延迟 >= 此值时为 FAIL，须大于有效 WARN 阈值。"
+      ],
+      "delivery.expiresSoonSeconds": [
+        "Nonnegative seconds; omitted or 0 means 120. Remaining event TTL below this value is expiring soon. Zero cannot disable the check; events with no expiry are handled separately.",
+        "0以上の秒数で、省略・0は120です。イベントの残TTLがこの値未満なら期限接近です。0で無効化はできず、期限のないイベントは別扱いです。",
+        "非負秒數，省略或 0 為 120。事件剩餘 TTL 低於此值視為即將到期。0 無法停用檢查，無期限事件另行處理。",
+        "非负秒数，省略或 0 为 120。事件剩余 TTL 低于此值视为即将过期。0 无法禁用检查，无期限事件另行处理。"
+      ],
+      "subscription": [
+        "Optional subscription-run diagnostic allowances, default zero pending/failed tolerated. This does not cap the controller’s queue or retry count.",
+        "任意の購読実行診断の許容件数です。既定はpending・failedとも許容0件で、処理キュー・再試行回数の制限ではありません。",
+        "選用的訂閱執行診斷容許數，預設 pending/failed 容許皆為 0。不限制控制器佇列或重試次數。",
+        "可选的订阅执行诊断容许数，默认 pending/failed 容许均为 0。不限制控制器队列或重试次数。"
+      ],
+      "subscription.maxPendingRuns": [
+        "Nonnegative count, default 0. Pending run count greater than this value produces WARN when the failed-run allowance has not already produced FAIL.",
+        "0以上の件数で既定0です。pendingがこの値を超えるとWARNですが、failed側がFAILならそちらを優先します。",
+        "非負數量，預設 0。待處理數大於此值時為 WARN，但若失敗數已導致 FAIL 則優先 FAIL。",
+        "非负数量，默认 0。待处理数大于此值时为 WARN，但若失败数已导致 FAIL 则优先 FAIL。"
+      ],
+      "subscription.maxFailedRuns": [
+        "Nonnegative count, default 0. Failed run count greater than this value produces FAIL. It does not change the three-attempt subscription retry policy.",
+        "0以上の件数で既定0です。失敗件数がこの値を超えるとFAILになります。購読の最大3回の試行方針は変わりません。",
+        "非負數量，預設 0。失敗數大於此值時為 FAIL，不改變訂閱最多三次的嘗試策略。",
+        "非负数量，默认 0。失败数大于此值时为 FAIL，不改变订阅最多三次的尝试策略。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_event.go",
+      "cmd/routerctl/doctor_federation.go"
+    ]
   }
 }

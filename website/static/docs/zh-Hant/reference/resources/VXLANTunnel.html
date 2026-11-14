@@ -5,6 +5,13 @@
 <main class="doclayout wrap"><article class="document"><h1 id="vxlantunnel">VXLANTunnel</h1>
 <p><a href="../resources.html#vxlantunnel">各資源的設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>管理具有靜態泛洪目的地及選用橋接的 Linux VXLAN 裝置，不設定多播探索或動態 MAC 學習。</p>
+<h2 id="指定條件與參照關係">指定條件與參照關係</h2>
+<ul>
+<li>操作控制器在非 Linux 系統直接返回，不套用設定。此資源應使用 Linux 目標，結構驗證通過不代表 FreeBSD 可運作。</li>
+<li>when 採關閉優先：false、未解析、過期或開機前的狀態會先停用再刪除裝置，不只是略過更新。每個參照狀態預設有效 30 秒，可用 maxAge 覆寫。驗證拒絕接受 unknown 的條件。</li>
+<li>tcpMSSClamp 需要 bridge 與明確指定的 mtu &gt;=1280。產生規則時還需真正的 Bridge 資源及可解析的成員介面；全域參照驗證僅確認共用介面索引中的存在。</li>
+</ul>
 <h2 id="yaml定義">YAML定義</h2>
 <p>此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。</p>
 <pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
@@ -34,9 +41,67 @@
             - &quot;&lt;string&gt;&quot; # string
           maxAge: &quot;&lt;string&gt;&quot; # 選填; string
           status: &quot;set&quot; # 選填; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
-</code></pre></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+</code></pre>
+<h2 id="欄位意義與預設值">欄位意義與預設值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>欄位意義與預設值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.ifname</code></td>
+<td>OS VXLAN 名稱，預設 metadata.name，最多 15 字元，不可含空白或斜線。</td>
+</tr>
+<tr>
+<td><code>spec.vni</code></td>
+<td>必填 VXLAN 網路識別碼，整數 1–16777215，須與目標遠端第二層網段一致。</td>
+</tr>
+<tr>
+<td><code>spec.localAddress</code></td>
+<td>必填的外層本機 IP 位址，不提供動態狀態來源。驗證只確認 IP 格式，不檢查本機指派或與對等端家族一致。</td>
+</tr>
+<tr>
+<td><code>spec.peers</code></td>
+<td>選用的遠端外層 IP 清單，預設為空。同步為 00:00:00:00:00:00 的 permanent self 泛洪 FDB 項目，移除多餘泛洪項目。空清單不提供靜態遠端泛洪目的地。</td>
+</tr>
+<tr>
+<td><code>spec.underlayInterface</code></td>
+<td>必填同一 Router 中宣告的邏輯介面，會解析為 OS 裝置名稱。無狀態來源或自動選擇。</td>
+</tr>
+<tr>
+<td><code>spec.udpPort</code></td>
+<td>外層 UDP 目的埠，省略或 0 預設 4789，明確範圍為 1–65535。</td>
+</tr>
+<tr>
+<td><code>spec.mtu</code></td>
+<td>選用的內層裝置 MTU 576–9216，省略或 0 使用 OS/既有 MTU。即使結構描述下限為 0，tcpMSSClamp 仍要求明確值 &gt;=1280。</td>
+</tr>
+<tr>
+<td><code>spec.bridge</code></td>
+<td>選用的已宣告橋接名稱，解析為 OS 名稱並接為 VXLAN master，預設不連接。tcpMSSClamp 時必填，請使用 Bridge 資源而非其他介面類型。</td>
+</tr>
+<tr>
+<td><code>spec.outerDF</code></td>
+<td>外層 IPv4 DF 策略，預設 inherit，也可用 set/unset，傳入 ip link VXLAN df。不設定內層位址或路由。</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>選用的共用 state/all/any 條件，另適用上述關閉優先及新鮮度規則。省略表示無條件；接受 unknown 的條件不可啟用此隧道。</td>
+</tr>
+<tr>
+<td><code>spec.tcpMSSClamp</code></td>
+<td>預設 false。true 為此 VXLAN 與 Bridge 成員埠之間建立 Linux bridge 家族 IPv4/IPv6 TCP SYN MSS 規則。取 VXLAN/橋接/成員的最小正 MTU，IPv4 減 40、IPv6 減 60，不處理任意路由流量。</td>
+</tr>
+</tbody>
+</table>
+<p>實作: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_interface.go">pkg/config/validate_interface.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/vxlan_tunnel.go">pkg/controller/chain/vxlan_tunnel.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/vxlan/vxlan.go">pkg/vxlan/vxlan.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/nftables.go">pkg/render/nftables.go</a></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
 <ul>
+<li><a href="#指定條件與參照關係">指定條件與參照關係</a></li>
 <li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#欄位意義與預設值">欄位意義與預設值</a></li>
 </ul>
 </div>
 </aside></main>

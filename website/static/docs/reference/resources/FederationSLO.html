@@ -5,6 +5,12 @@
 <main class="doclayout wrap"><article class="document"><h1 id="federationslo">FederationSLO</h1>
 <p><a href="../resources.html#federationslo">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: federation.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Configure per-group thresholds used by routerctl doctor for federation delivery and subscription diagnostics. This does not change delivery retry or plugin execution policy.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>groupRef is required and must name an existing EventGroup. At most one FederationSLO may reference each group. All numeric fields must be nonnegative; effective lagWarnSeconds must be strictly less than effective lagFailSeconds after zero-value defaults are applied.</li>
+<li>Lag comparisons are inclusive (&gt;= warn/fail threshold). Subscription counts warn/fail only when greater than their allowed maximum. Expiring-soon uses remaining TTL strictly below the threshold; pending/failed delivery can raise that diagnostic from WARN to FAIL.</li>
+</ul>
 <h2 id="yaml-definition">YAML definition</h2>
 <p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
 <pre><code class="language-yaml">- apiVersion: federation.routerd.net/v1alpha1
@@ -20,9 +26,55 @@
     subscription: # optional; object
       maxFailedRuns: 0 # optional; integer; minimum=0
       maxPendingRuns: 0 # optional; integer; minimum=0
-</code></pre></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+</code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.groupRef</code></td>
+<td>Required bare EventGroup metadata.name, not EventGroup/name; existence and uniqueness are validated.</td>
+</tr>
+<tr>
+<td><code>spec.delivery</code></td>
+<td>Optional delivery-diagnostic thresholds; omitted fields use defaults below. Not a transport timeout or retry configuration.</td>
+</tr>
+<tr>
+<td><code>spec.delivery.lagWarnSeconds</code></td>
+<td>Nonnegative seconds; omitted or 0 means 60. Maximum measured delivery lag &gt;= this value produces WARN unless the fail threshold is met.</td>
+</tr>
+<tr>
+<td><code>spec.delivery.lagFailSeconds</code></td>
+<td>Nonnegative seconds; omitted or 0 means 180. Maximum measured delivery lag &gt;= this value produces FAIL. Must exceed the effective warn threshold.</td>
+</tr>
+<tr>
+<td><code>spec.delivery.expiresSoonSeconds</code></td>
+<td>Nonnegative seconds; omitted or 0 means 120. Remaining event TTL below this value is expiring soon. Zero cannot disable the check; events with no expiry are handled separately.</td>
+</tr>
+<tr>
+<td><code>spec.subscription</code></td>
+<td>Optional subscription-run diagnostic allowances, default zero pending/failed tolerated. This does not cap the controller’s queue or retry count.</td>
+</tr>
+<tr>
+<td><code>spec.subscription.maxPendingRuns</code></td>
+<td>Nonnegative count, default 0. Pending run count greater than this value produces WARN when the failed-run allowance has not already produced FAIL.</td>
+</tr>
+<tr>
+<td><code>spec.subscription.maxFailedRuns</code></td>
+<td>Nonnegative count, default 0. Failed run count greater than this value produces FAIL. It does not change the three-attempt subscription retry policy.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_event.go">pkg/config/validate_event.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerctl/doctor_federation.go">cmd/routerctl/doctor_federation.go</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
 <li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 </ul>
 </div>
 </aside></main>

@@ -231,6 +231,8 @@ spec:
 
 [PPPoESession](resources/PPPoESession.md)
 
+监督运行 routerd-pppoe-client，在 Linux 使用 pppd、FreeBSD 使用 mpd5，并公开协商的 IPv4 会话状态。部分旧字段仅影响手动 FreeBSD render 输出，不影响此守护进程路径。
+
 
 ## WireGuardInterface
 
@@ -257,6 +259,8 @@ spec:
 
 [IPsecConnection](resources/IPsecConnection.md)
 
+生成 strongSwan swanctl 连接，并统一同步所有 routerd IPsec 连接。CHILD_SA 设为流量触发的 trap；加载配置不代表 SA 已建立。
+
 
 ## VRF
 
@@ -268,6 +272,8 @@ spec:
 ## VXLANTunnel
 
 [VXLANTunnel](resources/VXLANTunnel.md)
+
+管理具有静态泛洪目标及可选桥接的 Linux VXLAN 设备，不配置组播发现或动态 MAC 学习。
 
 
 ## IPv4StaticAddress
@@ -454,20 +460,28 @@ spec:
 
 [EventGroup](resources/EventGroup.md)
 
+声明共享的联合事件组，以及此路由器的标识、对等节点来源、接收与本机保留设置。
+
 
 ## EventPeer
 
 [EventPeer](resources/EventPeer.md)
+
+声明 EventGroup 的一个远端发送目标。传输认证与本机标识由组提供。
 
 
 ## EventSubscription
 
 [EventSubscription](resources/EventSubscription.md)
 
+从持久化数据库匹配尚未过期的联合事件，调用本机 Plugin，将结果保存为 DynamicConfigPart。
+
 
 ## FederationSLO
 
 [FederationSLO](resources/FederationSLO.md)
+
+配置 routerctl doctor 诊断联合发送与订阅时使用的每组阈值，不改变发送重试或 Plugin 执行策略。
 
 
 ## MobilityPool
@@ -515,6 +529,8 @@ spec:
 ## HealthCheck
 
 [HealthCheck](resources/HealthCheck.md)
+
+探测 IP 目标并发布 Healthy/Unhealthy 状态供路由选择。成功仅代表配置的协议与路径通过。
 
 
 ## EgressRoutePolicy

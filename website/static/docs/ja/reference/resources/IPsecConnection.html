@@ -5,6 +5,12 @@
 <main class="doclayout wrap"><article class="document"><h1 id="ipsecconnection">IPsecConnection</h1>
 <p><a href="../resources.html#ipsecconnection">リソース別の設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>strongSwanのswanctl接続を生成し、routerdの全IPsec接続をまとめて同期します。CHILD_SAは通信による起動用のtrap設定で、接続の読み込みはSA確立の証明ではありません。</p>
+<h2 id="指定条件と参照関係">指定条件と参照関係</h2>
+<ul>
+<li>preSharedKeyとcertificateRefのどちらか一方が必須です。certificateRefはswanctlのlocal.certsに直接渡し、routerdのリソースとしては解決しません。</li>
+<li>集約設定はLinuxの/etc/routerd/swanctl、FreeBSDの/usr/local/etc/routerd/swanctlに置き、swanctl --load-all --fileで鍵を含む管理対象全体を同期します。証明書・信頼元・対応秘密鍵は、その設定の認証情報ストアに別途配置が必要です。</li>
+</ul>
 <h2 id="yaml定義">YAML定義</h2>
 <p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
 <pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
@@ -23,9 +29,59 @@
     preSharedKey: &quot;&lt;string&gt;&quot; # 任意; string
     remoteAddress: &quot;&lt;string&gt;&quot; # 必須; string
     rightSubnet: &quot;&lt;string&gt;&quot; # 必須; string
-</code></pre></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+</code></pre>
+<h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>項目の意味と既定値</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.localAddress</code></td>
+<td>必須のローカル終端IPアドレスです。IPv4・IPv6を使え、ホスト名・インターフェース参照ではありません。</td>
+</tr>
+<tr>
+<td><code>spec.remoteAddress</code></td>
+<td>必須のリモート終端IPv4・IPv6アドレスです。検証は両終端・トラフィックセレクター間のアドレスファミリー一致までは確認しません。</td>
+</tr>
+<tr>
+<td><code>spec.preSharedKey</code></td>
+<td>IKEの共通鍵そのものです。certificateRefを使わない場合は必須で、既定値・ファイル・環境変数参照はありません。管理するswanctlのsecrets節に出力します。</td>
+</tr>
+<tr>
+<td><code>spec.certificateRef</code></td>
+<td>strongSwanのlocal.certsが扱う証明書名・パスです。preSharedKeyを使わない場合に必須で、相手認証をpubkeyにします。証明書の作成やrouterdのSecret参照ではありません。</td>
+</tr>
+<tr>
+<td><code>spec.phase1Proposals</code></td>
+<td>IKE proposal一覧で、既定は[aes256-sha256-modp2048]です。指定一覧をそのままカンマで結合し、アルゴリズムの対応可否はrouterdで検証しません。</td>
+</tr>
+<tr>
+<td><code>spec.phase2Proposals</code></td>
+<td>ESP proposal一覧で、既定は[aes256-sha256]です。netという子接続に適用し、アルゴリズムの妥当性は読み込み時にstrongSwanが確認します。</td>
+</tr>
+<tr>
+<td><code>spec.leftSubnet</code></td>
+<td>必須のローカルトラフィックセレクターCIDRです。IPv4・IPv6を使え、local_tsに出力します。</td>
+</tr>
+<tr>
+<td><code>spec.rightSubnet</code></td>
+<td>必須のリモートトラフィックセレクターCIDRです。IPv4・IPv6を使え、remote_tsに出力します。</td>
+</tr>
+<tr>
+<td><code>spec.cloudProviderHint</code></td>
+<td>任意のaws・azure・gcpラベルで、既定は空です。観測結果には載せますが、proposal・認証情報・swanctl生成には影響せず、クラウド資源も作成しません。</td>
+</tr>
+</tbody>
+</table>
+<p>実装: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_interface.go">pkg/config/validate_interface.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/ipsec/ipsec.go">pkg/ipsec/ipsec.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd/ipsec_apply.go">cmd/routerd/ipsec_apply.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/apply/engine.go">pkg/apply/engine.go</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
 <ul>
+<li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
 <li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
 </ul>
 </div>
 </aside></main>

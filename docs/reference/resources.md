@@ -231,6 +231,8 @@ Names an existing OS interface so other resources can refer to its logical metad
 
 [PPPoESession](resources/PPPoESession.md)
 
+Run a supervised routerd-pppoe-client using pppd on Linux or mpd5 on FreeBSD, and publish negotiated IPv4 session status. Several legacy fields affect only manual FreeBSD render output, not this daemon path.
+
 
 ## WireGuardInterface
 
@@ -257,6 +259,8 @@ Manage Tailscale enrollment options through a routerd-generated systemd oneshot 
 
 [IPsecConnection](resources/IPsecConnection.md)
 
+Render a strongSwan swanctl connection and synchronize all routerd IPsec connections together. A traffic-triggered CHILD_SA trap is configured; loading the connection is not proof of an established SA.
+
 
 ## VRF
 
@@ -268,6 +272,8 @@ Declares a Linux VRF device, routing table and member intentions. The current im
 ## VXLANTunnel
 
 [VXLANTunnel](resources/VXLANTunnel.md)
+
+Manage a Linux VXLAN device with static remote flood destinations and optional bridge attachment. No multicast discovery or dynamic MAC learning is configured.
 
 
 ## IPv4StaticAddress
@@ -454,20 +460,28 @@ A DNS server endpoint referenced by DNSForwarder; declaration alone does not sta
 
 [EventGroup](resources/EventGroup.md)
 
+Declare a shared federation event group and this router’s identity, peer discovery, receiver and local retention settings.
+
 
 ## EventPeer
 
 [EventPeer](resources/EventPeer.md)
+
+Declare one remote delivery target for an EventGroup. Transport authentication and local identity come from that group.
 
 
 ## EventSubscription
 
 [EventSubscription](resources/EventSubscription.md)
 
+Match nonexpired persisted federation events and invoke a local Plugin, storing its result as a DynamicConfigPart.
+
 
 ## FederationSLO
 
 [FederationSLO](resources/FederationSLO.md)
+
+Configure per-group thresholds used by routerctl doctor for federation delivery and subscription diagnostics. This does not change delivery retry or plugin execution policy.
 
 
 ## MobilityPool
@@ -515,6 +529,8 @@ Install an IPv4 unicast or blackhole route, optionally resolving device and gate
 ## HealthCheck
 
 [HealthCheck](resources/HealthCheck.md)
+
+Probe an IP target and publish Healthy/Unhealthy state for route selection. A successful probe verifies only its configured protocol and path.
 
 
 ## EgressRoutePolicy

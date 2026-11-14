@@ -5,6 +5,15 @@
 <main class="doclayout wrap"><article class="document"><h1 id="eventgroup">EventGroup</h1>
 <p><a href="../resources.html#eventgroup">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: federation.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Declare a shared federation event group and this router’s identity, peer discovery, receiver and local retention settings.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>nodeName is required. metadata.name is the group identifier; remote participants use the same group name and shared secret. Identity-only groups may omit secretFile, but the transport helper starts only when secretFile is supplied. Applied means runtime config was written, not proof that peers received events.</li>
+<li>secretFile is required by configuration validation when listen.address, peersFrom or a referencing EventPeer is present. auth.secretRef does not satisfy this requirement. The file must exist and contain nonblank secret bytes when eventd starts; surrounding whitespace is removed.</li>
+<li>Receiver startup is controlled by listen.port &gt; 0, not by address alone. Always supply a specific address with a positive port; an empty address with a positive port can bind all addresses. Port 0 disables the TCP receiver; push and pruning can continue.</li>
+<li>peersFrom imports SAMNodeSet nodes with nonblank eventEndpoint, excluding nodeRef equal to nodeName. Peers are deduplicated by remote nodeName; later sources replace earlier ones, then static EventPeer entries override imported peers. A missing required source leaves Pending and preserves the last runtime config; optional missing sources are skipped.</li>
+<li>Retention is enforced locally by eventd at startup and periodically (default 1m). Age and count limits both apply; age uses observedAt, and the count limit keeps newest observed events. This is separate from each event’s expiresAt and from local EventRule journal retention.</li>
+</ul>
 <h2 id="yaml-definition">YAML definition</h2>
 <p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
 <pre><code class="language-yaml">- apiVersion: federation.routerd.net/v1alpha1
@@ -40,9 +49,87 @@
           maxAge: &quot;&lt;string&gt;&quot; # optional; string
           status: &quot;set&quot; # optional; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
 </code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.nodeName</code></td>
+<td>Required nonblank local node identity, stamped on locally originated federation events. No hostname default; must match SAMNodeSet.nodeRef when used with peersFrom.</td>
+</tr>
+<tr>
+<td><code>spec.peersFrom</code></td>
+<td>Optional ordered discovery-source list, default empty. Supplying it requires auth.secretFile, even if all sources are optional or yield no peers.</td>
+</tr>
+<tr>
+<td><code>spec.peersFrom[].resource</code></td>
+<td>Required SAMNodeSet/<name> reference. Format is validated; missing declared source is handled at runtime by optional/Pending rather than rejected as an ordinary status-value reference.</td>
+</tr>
+<tr>
+<td><code>spec.peersFrom[].optional</code></td>
+<td>Default false: missing source blocks new config. True skips a missing source. Malformed or undecodable sources still fail.</td>
+</tr>
+<tr>
+<td><code>spec.retention</code></td>
+<td>Optional local federation-event retention settings; defaults impose no age/count limit. Effective only while eventd pruning runs.</td>
+</tr>
+<tr>
+<td><code>spec.retention.maxEvents</code></td>
+<td>Nonnegative maximum event count per group, default 0 means unlimited. Positive values keep newest observedAt/id records after age pruning.</td>
+</tr>
+<tr>
+<td><code>spec.retention.maxAge</code></td>
+<td>Optional Go duration, default empty means unlimited. Zero/negative durations pass validation and are omitted from runtime config, also meaning no age limit.</td>
+</tr>
+<tr>
+<td><code>spec.auth</code></td>
+<td>Optional transport integrity settings. Current transport always uses HMAC; there is no unauthenticated transport mode.</td>
+</tr>
+<tr>
+<td><code>spec.auth.mode</code></td>
+<td>Accepted empty or hmac, default empty. Both use HMAC when transport runs; the controller does not use this value to select another scheme.</td>
+</tr>
+<tr>
+<td><code>spec.auth.secretRef</code></td>
+<td>Default empty. Accepted but not resolved by the current controller/helper; it does not replace secretFile and is not validated as a resource reference.</td>
+</tr>
+<tr>
+<td><code>spec.auth.secretFile</code></td>
+<td>Filesystem path to the shared HMAC secret. Empty disables the transport helper; required for receiver address or peers as described above. No automatic secret distribution.</td>
+</tr>
+<tr>
+<td><code>spec.listen</code></td>
+<td>Optional HTTP receiver bind, default address empty/port 0. Explicitly configure both for reception.</td>
+</tr>
+<tr>
+<td><code>spec.listen.address</code></td>
+<td>Receiver bind address, default empty. Nonempty requires port 1–65535 and secretFile. The daemon does not use empty address alone to disable listening; see the port rule.</td>
+</tr>
+<tr>
+<td><code>spec.listen.port</code></td>
+<td>Integer 0–65535, default 0 disables receiver. Positive values enable plain HTTP on address; this resource has no TLS certificate fields.</td>
+</tr>
+<tr>
+<td><code>spec.replayWindow</code></td>
+<td>Go duration bounding accepted signed-request timestamp skew. Omitted, zero or negative resolves to 5m. It is not event retention or a message deduplication TTL.</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>Optional common activation condition, default unconditional. Effective-config filtering controls transport config and service lifecycle; see common fields for predicates and schema limitations.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_event.go">pkg/config/validate_event.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/eventfederation/controller.go">pkg/controller/eventfederation/controller.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go">pkg/controller/chain/chain.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/system.go">pkg/controller/chain/system.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/eventd/config.go">pkg/eventd/config.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/eventd/prune.go">pkg/eventd/prune.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/eventd/receiver.go">pkg/eventd/receiver.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd-eventd/main.go">cmd/routerd-eventd/main.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/state/federation.go">pkg/state/federation.go</a></p>
 <p><a href="/examples/cloudedge-mobility-demo/aws.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
 <li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 </ul>
 </div>
 </aside></main>

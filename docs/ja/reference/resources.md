@@ -231,6 +231,8 @@ routerdから読取り用のWebコンソールを公開します。設定変更�
 
 [PPPoESession](resources/PPPoESession.md)
 
+Linuxのpppd・FreeBSDのmpd5を使うrouterd-pppoe-clientを監視実行し、交渉したIPv4セッション状態を公開します。一部の旧項目はFreeBSDの手動render出力だけに使われ、主デーモン経路には効きません。
+
 
 ## WireGuardInterface
 
@@ -257,6 +259,8 @@ Linuxのsystemd oneshotまたはFreeBSDのrc.dスクリプトを生成してTail
 
 [IPsecConnection](resources/IPsecConnection.md)
 
+strongSwanのswanctl接続を生成し、routerdの全IPsec接続をまとめて同期します。CHILD_SAは通信による起動用のtrap設定で、接続の読み込みはSA確立の証明ではありません。
+
 
 ## VRF
 
@@ -268,6 +272,8 @@ LinuxのVRFデバイス・経路表・参加インターフェースの意図を
 ## VXLANTunnel
 
 [VXLANTunnel](resources/VXLANTunnel.md)
+
+静的なフラッド先と任意のブリッジ接続を持つLinuxのVXLANデバイスを管理します。マルチキャスト探索や動的MAC学習は設定しません。
 
 
 ## IPv4StaticAddress
@@ -454,20 +460,28 @@ DNSForwarderが参照するDNSサーバーの接続先です。宣言だけで�
 
 [EventGroup](resources/EventGroup.md)
 
+共有するイベントグループと、このルーターの識別名・配送先取得・受信・ローカル保持設定を宣言します。
+
 
 ## EventPeer
 
 [EventPeer](resources/EventPeer.md)
+
+EventGroupの相手側配送先を1件宣言します。通信認証と自ノード識別名はグループ側で指定します。
 
 
 ## EventSubscription
 
 [EventSubscription](resources/EventSubscription.md)
 
+期限内の共有イベントを永続DBから選び、ローカルのPluginを実行して結果をDynamicConfigPartとして保存します。
+
 
 ## FederationSLO
 
 [FederationSLO](resources/FederationSLO.md)
+
+routerctl doctorが共有イベント配送・購読を診断するときのグループ別閾値です。配送再試行やPlugin実行方針自体は変更しません。
 
 
 ## MobilityPool
@@ -515,6 +529,8 @@ DNSForwarderが参照するDNSサーバーの接続先です。宣言だけで�
 ## HealthCheck
 
 [HealthCheck](resources/HealthCheck.md)
+
+IP宛先を確認し、経路選択用のHealthy・Unhealthy状態を発行します。成功が示す範囲は指定したプロトコルと経路に限られます。
 
 
 ## EgressRoutePolicy

@@ -5,6 +5,13 @@
 <main class="doclayout wrap"><article class="document"><h1 id="vxlantunnel">VXLANTunnel</h1>
 <p><a href="../resources.html#vxlantunnel">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Manage a Linux VXLAN device with static remote flood destinations and optional bridge attachment. No multicast discovery or dynamic MAC learning is configured.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>The operational controller returns without applying on non-Linux systems. Configure a Linux target for this resource; do not assume schema acceptance implies FreeBSD operation.</li>
+<li>when is fail-closed: false, unresolved, stale or pre-boot state tears down the device (down then delete), rather than only skipping updates. Freshness defaults to 30s per referenced state, overridden by maxAge. Unknown-accepting predicates are rejected by validation.</li>
+<li>tcpMSSClamp requires bridge plus explicit mtu &gt;=1280. Rendering also requires that bridge to be an actual Bridge resource, with resolvable member interfaces; global reference validation alone only checks the shared interface index.</li>
+</ul>
 <h2 id="yaml-definition">YAML definition</h2>
 <p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
 <pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
@@ -34,9 +41,67 @@
             - &quot;&lt;string&gt;&quot; # string
           maxAge: &quot;&lt;string&gt;&quot; # optional; string
           status: &quot;set&quot; # optional; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
-</code></pre></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+</code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.ifname</code></td>
+<td>OS VXLAN name; defaults to metadata.name. Must be &lt;=15 characters without whitespace or slash.</td>
+</tr>
+<tr>
+<td><code>spec.vni</code></td>
+<td>Required VXLAN network identifier, integer 1–16777215. Must match the intended remote layer-2 segment.</td>
+</tr>
+<tr>
+<td><code>spec.localAddress</code></td>
+<td>Required local outer IP address; no dynamic status source. Validator accepts an IP address but does not verify local assignment or peer-family consistency.</td>
+</tr>
+<tr>
+<td><code>spec.peers</code></td>
+<td>Optional list of remote outer IP addresses, default empty. Reconciled as permanent self flood FDB entries for 00:00:00:00:00:00; undesired flood entries are removed. Empty provides no static remote flood destinations.</td>
+</tr>
+<tr>
+<td><code>spec.underlayInterface</code></td>
+<td>Required declared logical interface in the same Router; resolved to its OS device name. No status-value source or auto-selection.</td>
+</tr>
+<tr>
+<td><code>spec.udpPort</code></td>
+<td>Outer UDP destination port, default 4789 when omitted/0; explicit range 1–65535.</td>
+</tr>
+<tr>
+<td><code>spec.mtu</code></td>
+<td>Optional inner-device MTU 576–9216; omitted/0 leaves OS/current MTU. tcpMSSClamp requires an explicit value &gt;=1280 even though schema shows minimum 0.</td>
+</tr>
+<tr>
+<td><code>spec.bridge</code></td>
+<td>Optional declared bridge name, resolved to its OS name and attached as the VXLAN master. Default detached. Required for tcpMSSClamp; use a Bridge resource rather than another interface kind.</td>
+</tr>
+<tr>
+<td><code>spec.outerDF</code></td>
+<td>Outer IPv4 DF policy: inherit (default), set or unset, passed to ip link VXLAN df. Does not set an inner address or route.</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>Optional common state/all/any predicate with additional fail-closed freshness rules above. Omitted means unconditional; conditions that accept unknown cannot enable this tunnel.</td>
+</tr>
+<tr>
+<td><code>spec.tcpMSSClamp</code></td>
+<td>Default false. True creates Linux bridge-family IPv4/IPv6 TCP SYN MSS rules between this VXLAN and Bridge member ports. Uses the minimum positive VXLAN/bridge/member MTU, minus 40 for IPv4 or 60 for IPv6; does not clamp arbitrary routed traffic.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_interface.go">pkg/config/validate_interface.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/vxlan_tunnel.go">pkg/controller/chain/vxlan_tunnel.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/vxlan/vxlan.go">pkg/vxlan/vxlan.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/nftables.go">pkg/render/nftables.go</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
 <li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 </ul>
 </div>
 </aside></main>

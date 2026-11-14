@@ -161,6 +161,7 @@ spec:
 <p>為既有OS介面提供metadata.name邏輯名稱，供其他資源參照，不建立實體介面。</p>
 <h2 id="pppoesession">PPPoESession</h2>
 <p><a href="resources/PPPoESession.html">PPPoESession</a></p>
+<p>監督執行 routerd-pppoe-client，在 Linux 使用 pppd、FreeBSD 使用 mpd5，並公開協商的 IPv4 工作階段狀態。部分舊欄位僅影響手動 FreeBSD render 輸出，不影響此精靈路徑。</p>
 <h2 id="wireguardinterface">WireGuardInterface</h2>
 <p><a href="resources/WireGuardInterface.html">WireGuardInterface</a></p>
 <p>建立或設定 WireGuard 裝置，透過 wg setconf 套用完整對等端設定。位址指派與一般路由由其他資源設定。</p>
@@ -172,11 +173,13 @@ spec:
 <p>透過 routerd 產生的 Linux systemd oneshot 或 FreeBSD rc.d 指令稿管理 Tailscale 註冊選項，再讀取 tailscale status --json。Tailscale/Headscale 伺服器端核准仍需另行處理。</p>
 <h2 id="ipsecconnection">IPsecConnection</h2>
 <p><a href="resources/IPsecConnection.html">IPsecConnection</a></p>
+<p>產生 strongSwan swanctl 連線，並一併同步所有 routerd IPsec 連線。CHILD_SA 設為流量觸發的 trap；載入設定不代表 SA 已建立。</p>
 <h2 id="vrf">VRF</h2>
 <p><a href="resources/VRF.html">VRF</a></p>
 <p>宣告Linux VRF裝置、路由表與成員意圖。目前產生計畫/artifact識別並保護路由表，但沒有建立VRF/連接成員的controller；計畫輸出不證明VRF已建立。</p>
 <h2 id="vxlantunnel">VXLANTunnel</h2>
 <p><a href="resources/VXLANTunnel.html">VXLANTunnel</a></p>
+<p>管理具有靜態泛洪目的地及選用橋接的 Linux VXLAN 裝置，不設定多播探索或動態 MAC 學習。</p>
 <h2 id="ipv4staticaddress">IPv4StaticAddress</h2>
 <p><a href="resources/IPv4StaticAddress.html">IPv4StaticAddress</a></p>
 <p>在邏輯介面宣告靜態IPv4位址，由controller協調設定，不是DHCP租約。</p>
@@ -253,12 +256,16 @@ spec:
 <p><a href="resources/ProviderActionPolicy.html">ProviderActionPolicy</a></p>
 <h2 id="eventgroup">EventGroup</h2>
 <p><a href="resources/EventGroup.html">EventGroup</a></p>
+<p>宣告共用的聯邦事件群組，以及此路由器的識別、對等節點來源、接收與本機保留設定。</p>
 <h2 id="eventpeer">EventPeer</h2>
 <p><a href="resources/EventPeer.html">EventPeer</a></p>
+<p>宣告 EventGroup 的一個遠端傳送目標。傳輸驗證與本機識別由群組提供。</p>
 <h2 id="eventsubscription">EventSubscription</h2>
 <p><a href="resources/EventSubscription.html">EventSubscription</a></p>
+<p>從持久化資料庫比對尚未到期的聯邦事件，呼叫本機 Plugin，將結果儲存為 DynamicConfigPart。</p>
 <h2 id="federationslo">FederationSLO</h2>
 <p><a href="resources/FederationSLO.html">FederationSLO</a></p>
+<p>設定 routerctl doctor 診斷聯邦配送與訂閱時使用的每群組門檻，不改變配送重試或 Plugin 執行策略。</p>
 <h2 id="mobilitypool">MobilityPool</h2>
 <p><a href="resources/MobilityPool.html">MobilityPool</a></p>
 <h2 id="samnodeset">SAMNodeSet</h2>
@@ -278,6 +285,7 @@ spec:
 <p>安裝 IPv4 單播或黑洞路由，可從資源狀態取得裝置與閘道。</p>
 <h2 id="healthcheck">HealthCheck</h2>
 <p><a href="resources/HealthCheck.html">HealthCheck</a></p>
+<p>探測 IP 目標並發布 Healthy/Unhealthy 狀態供路由選擇。成功僅代表設定的協定與路徑通過。</p>
 <h2 id="egressroutepolicy">EgressRoutePolicy</h2>
 <p><a href="resources/EgressRoutePolicy.html">EgressRoutePolicy</a></p>
 <h2 id="eventrule">EventRule</h2>
