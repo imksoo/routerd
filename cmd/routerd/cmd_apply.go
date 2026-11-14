@@ -316,6 +316,8 @@ func desiredObjectStatusKeysForOS(router *api.Router, store staleObjectStatusCle
 	if err != nil {
 		return nil, err
 	}
+	// Startup condition state may temporarily hide resources that are still declared.
+	routers = append(routers, router)
 	for _, candidate := range routers {
 		if targetOS == platform.OSLinux {
 			out[api.SystemAPIVersion+"/ServiceUnit/"+render.RouterdUnitName] = true
