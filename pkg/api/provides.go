@@ -23,13 +23,23 @@ func ResourceProvidesField(kind, field string) bool {
 	return ok
 }
 
-func ResourceProvidesFieldType(kind, field string) (string, bool) {
-	for _, provided := range resourceProvidesTable()[kind] {
-		if provided.Name == field {
-			return provided.Type, true
+// Only fixed definitions are cached. Runtime field values remain in the state store.
+var providedFieldTypes = func() map[string]map[string]string {
+	table := resourceProvidesTable()
+	types := make(map[string]map[string]string, len(table))
+	for kind, fields := range table {
+		byName := make(map[string]string, len(fields))
+		for _, field := range fields {
+			byName[field.Name] = field.Type
 		}
+		types[kind] = byName
 	}
-	return "", false
+	return types
+}()
+
+func ResourceProvidesFieldType(kind, field string) (string, bool) {
+	fieldType, ok := providedFieldTypes[kind][field]
+	return fieldType, ok
 }
 
 func resourceProvidesTable() map[string][]ProvidedFieldSpec {
