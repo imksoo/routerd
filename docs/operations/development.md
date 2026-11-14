@@ -9,7 +9,7 @@ title: Development checks
 routerd uses two separate automation paths.
 
 - The CI workflow checks normal pushes and pull requests.
-- The release workflow builds signed release archives after a release tag is pushed.
+- The release workflow builds release archives and checksums after a release tag is pushed.
 
 The release workflow is intentionally separate because it builds multiple
 operating system and architecture archives and publishes GitHub Release assets.
@@ -22,6 +22,12 @@ Use real targets and peers for operational checks. New or expanded tests require
 specific owner approval, and mock, fake, and simulated environments are prohibited.
 Keep raw logs and captures out of tracked source; remove task-owned temporary
 evidence and caches after publishing the concise result.
+
+Cloud SAM is shelved until a separate owner request and is not a blocker for
+the current homert/k8s-rt/pve-rt work. Keep existing shared functionality and
+do not create cloud resources or chargeable tests. Completed plans and old
+audit verdicts are not a current backlog; consult them only in Git history
+when investigating a present failure.
 
 ## CI workflow
 

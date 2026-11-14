@@ -17,7 +17,17 @@ Installation and upgrade are documented in
 Release automation for maintainers is documented in
 [`docs/operations/release-process.md`](docs/operations/release-process.md).
 
-Lease-sync failures retain bounded diagnostic details in the service log after recovery. SQLite shared-memory indexes are rebuilt on the receiver instead of being transferred. See [DHCP lease synchronization](docs/how-to/dhcp-lease-sync.md#investigate-a-recovered-synchronization-failure).
+## Current development scope
+
+[AGENTS.md](AGENTS.md) and the [current routerd 1.1 requirements](docs/design/routerd11-mvp.md)
+are the development authority. The active targets are homert02/03,
+k8s-rt01/02, and pve-rt01..08. Completed plans and historical audit results
+are not an active work queue; product changes are summarized in the changelog.
+
+Cloud SAM development and chargeable cloud tests are shelved until a separate
+owner request. Keep existing functionality; local SAM/IPIP/BGP used by the
+active targets remains in scope. Do not turn Cloud SAM into a release blocker
+or repeatedly request its environment details.
 
 ## Start safely
 
@@ -84,8 +94,8 @@ the managed dnsmasq process; verify DHCPv4, DHCPv6 and RA after upgrading.
 Install from a release archive on an Ubuntu Server lab host:
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260914.0729/routerd-linux-amd64.tar.gz
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260914.0729/routerd-linux-amd64.tar.gz.sha256
+curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-linux-amd64.tar.gz.sha256
 sha256sum -c routerd-linux-amd64.tar.gz.sha256
 tar -xzf routerd-linux-amd64.tar.gz
 sudo ./install.sh
@@ -94,7 +104,7 @@ sudo ./install.sh
 For FreeBSD, download `routerd-freebsd-amd64.tar.gz` from the stable release tag
 and run the same `./install.sh`.
 Use `routerd-linux-arm64.tar.gz` or `routerd-freebsd-arm64.tar.gz` on arm64 hosts.
-Versioned archives such as `routerd-v20260914.0729-linux-amd64.tar.gz` are also
+Versioned archives such as `routerd-vYYYYMMDD.HHmm-linux-amd64.tar.gz` are also
 available on the same release page when you need an explicitly named artifact.
 
 Linux release archives contain statically linked routerd binaries
@@ -352,12 +362,14 @@ Source builds require Go 1.25.0 or newer; `go.mod` selects the Go 1.25.9
 toolchain. Release-archive users do not need Go.
 
 ```sh
-make test
-make build
+make build-routerd
 make check-schema
-make validate-example
-make website-build
 ```
+
+Select existing checks relevant to the change and use the actual targets for
+operational verification. A full test or website build is not a prerequisite
+for every small change. Do not add test code without the specific owner
+approval required by AGENTS.md.
 
 The Makefile is for development tasks.
 End-user installation goes through the release archive and `install.sh`.
