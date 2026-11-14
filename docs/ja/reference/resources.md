@@ -147,10 +147,14 @@ typeで選ぶ運用イベントログの出力先です。ObservabilityPipeline�
 
 [Telemetry](resources/Telemetry.md)
 
+生成する管理サービスにOpenTelemetryの環境変数を設定します。LogSinkや独立したcollectorプロセスを定義するリソースではありません。
+
 
 ## ObservabilityPipeline
 
 [ObservabilityPipeline](resources/ObservabilityPipeline.md)
+
+管理サービス向けOpenTelemetry環境の宣言と、独立した組込み運用イベントログconsumerをまとめた設定です。
 
 
 ## LogRetention
@@ -178,35 +182,49 @@ typeで選ぶ運用イベントログの出力先です。ObservabilityPipeline�
 
 [Package](resources/Package.md)
 
+指定したOSパッケージの導入を確認します。稼働ホストのOSに完全一致する、最初のパッケージセットを選びます。
+
 
 ## NTPClient
 
 [NTPClient](resources/NTPClient.md)
+
+上流との時刻同期クライアントを管理、または観測します。
 
 
 ## NTPServer
 
 [NTPServer](resources/NTPServer.md)
 
+chronyまたはFreeBSD ntpdを使い、時刻サーバーと上流サーバーを設定します。
+
 
 ## WebConsole
 
 [WebConsole](resources/WebConsole.md)
+
+routerdから読取り用のWebコンソールを公開します。設定変更を行うControlAPIとは別のHTTP待受です。
 
 
 ## ControlAPI
 
 [ControlAPI](resources/ControlAPI.md)
 
+状態の取得と設定変更に使うHTTP Control APIを有効化します。Unixソケット経由の制御とWebConsoleは別です。
+
 
 ## RouterdCluster
 
 [RouterdCluster](resources/RouterdCluster.md)
 
+ファイルのリースとOSファイルロックで、どのrouterdが変更処理を行うかを調整します。VRRPの選出や対向ネットワークの自動探索ではありません。
+
 
 ## Interface
 
 [Interface](resources/Interface.md)
+
+既存のOSインターフェースに論理名metadata.nameを付け、他のリソースから参照できるようにします。物理インターフェースを新規作成する設定ではありません。
 
 
 ## PPPoESession
@@ -238,6 +256,8 @@ typeで選ぶ運用イベントログの出力先です。ObservabilityPipeline�
 
 [VRF](resources/VRF.md)
 
+LinuxのVRFデバイス・経路表・参加インターフェースの意図を宣言します。現行実装は計画とartifact識別子の生成、経路表の保護を行いますが、VRF作成・メンバー接続のcontrollerはありません。plan表示をVRF作成済みの証拠とは扱わないでください。
+
 
 ## VXLANTunnel
 
@@ -247,6 +267,8 @@ typeで選ぶ運用イベントログの出力先です。ObservabilityPipeline�
 ## IPv4StaticAddress
 
 [IPv4StaticAddress](resources/IPv4StaticAddress.md)
+
+論理インターフェースへ固定IPv4アドレスを宣言します。controllerが設定に収束させるアドレスであり、DHCPリースではありません。
 
 
 ## VirtualAddress
@@ -278,6 +300,8 @@ typeで選ぶ運用イベントログの出力先です。ObservabilityPipeline�
 
 [DHCPv4Client](resources/DHCPv4Client.md)
 
+管理下のrouterd-dhcpv4-client daemonを動かし、取得したリースのアドレス、必要に応じて既定経路とホストのDNS設定を反映します。
+
 
 ## ClusterNetworkRoute
 
@@ -298,10 +322,14 @@ typeで選ぶ運用イベントログの出力先です。ObservabilityPipeline�
 
 [DHCPv6Address](resources/DHCPv6Address.md)
 
+ホストのDHCPv6 clientで取得するIPv6アドレスを宣言します。DHCPv6PrefixDelegationとは別で、LAN向けプレフィックスの配布は行いません。
+
 
 ## IPv6RAAddress
 
 [IPv6RAAddress](resources/IPv6RAAddress.md)
+
+ホスト側でIPv6 RA/SLAACを受信する宣言です。RA clientであり、LANへRAを送るIPv6RouterAdvertisementとは別です。
 
 
 ## DHCPv6PrefixDelegation
@@ -317,6 +345,8 @@ typeで選ぶ運用イベントログの出力先です。ObservabilityPipeline�
 ## DHCPv6Information
 
 [DHCPv6Information](resources/DHCPv6Information.md)
+
+同じインターフェースを使うDHCPv6-PD daemonから、AFTR・DNS・SNTP・検索ドメインの情報を取り込みます。独立したInformation-request clientを起動するリソースではありません。
 
 
 ## IPv6RouterAdvertisement
@@ -562,3 +592,5 @@ typeで選ぶ運用イベントログの出力先です。ObservabilityPipeline�
 ## Hostname
 
 [Hostname](resources/Hostname.md)
+
+OSのホスト名を管理します。Router.metadata.nameや各リソース名とは別です。

@@ -147,10 +147,14 @@ spec:
 
 [Telemetry](resources/Telemetry.md)
 
+為產生的受管服務設定OpenTelemetry環境變數，不定義LogSink或獨立collector程序。
+
 
 ## ObservabilityPipeline
 
 [ObservabilityPipeline](resources/ObservabilityPipeline.md)
+
+結合受管服務的OpenTelemetry環境宣告與獨立內建操作事件記錄consumer。
 
 
 ## LogRetention
@@ -178,35 +182,49 @@ spec:
 
 [Package](resources/Package.md)
 
+確保所選OS套件已安裝，選取第一個os與執行主機完全相符的套件集合。
+
 
 ## NTPClient
 
 [NTPClient](resources/NTPClient.md)
+
+管理或觀察向上游同步時間的用戶端。
 
 
 ## NTPServer
 
 [NTPServer](resources/NTPServer.md)
 
+使用chrony或FreeBSD ntpd設定時間伺服器與上游。
+
 
 ## WebConsole
 
 [WebConsole](resources/WebConsole.md)
+
+由routerd提供唯讀Web主控台，HTTP監聽與可變更設定的ControlAPI不同。
 
 
 ## ControlAPI
 
 [ControlAPI](resources/ControlAPI.md)
 
+啟用可讀狀態及變更設定的HTTP Control API，與Unix socket控制及WebConsole分開。
+
 
 ## RouterdCluster
 
 [RouterdCluster](resources/RouterdCluster.md)
 
+透過檔案租約與OS檔案鎖協調哪個routerd可以變更狀態，不是VRRP選舉或對端網路探索。
+
 
 ## Interface
 
 [Interface](resources/Interface.md)
+
+為既有OS介面提供metadata.name邏輯名稱，供其他資源參照，不建立實體介面。
 
 
 ## PPPoESession
@@ -238,6 +256,8 @@ spec:
 
 [VRF](resources/VRF.md)
 
+宣告Linux VRF裝置、路由表與成員意圖。目前產生計畫/artifact識別並保護路由表，但沒有建立VRF/連接成員的controller；計畫輸出不證明VRF已建立。
+
 
 ## VXLANTunnel
 
@@ -247,6 +267,8 @@ spec:
 ## IPv4StaticAddress
 
 [IPv4StaticAddress](resources/IPv4StaticAddress.md)
+
+在邏輯介面宣告靜態IPv4位址，由controller協調設定，不是DHCP租約。
 
 
 ## VirtualAddress
@@ -278,6 +300,8 @@ spec:
 
 [DHCPv4Client](resources/DHCPv4Client.md)
 
+執行受管routerd-dhcpv4-client daemon，套用租約位址，以及選用的預設路由與主機DNS設定。
+
 
 ## ClusterNetworkRoute
 
@@ -298,10 +322,14 @@ spec:
 
 [DHCPv6Address](resources/DHCPv6Address.md)
 
+宣告主機DHCPv6 client取得的IPv6位址，與DHCPv6PrefixDelegation不同，不分配LAN前綴。
+
 
 ## IPv6RAAddress
 
 [IPv6RAAddress](resources/IPv6RAAddress.md)
+
+宣告主機接收IPv6 RA/SLAAC，屬於RA client，不是向LAN公告的IPv6RouterAdvertisement。
 
 
 ## DHCPv6PrefixDelegation
@@ -317,6 +345,8 @@ spec:
 ## DHCPv6Information
 
 [DHCPv6Information](resources/DHCPv6Information.md)
+
+從使用同介面的DHCPv6-PD daemon取得AFTR、DNS、SNTP與搜尋網域資訊，不啟動獨立Information-request client。
 
 
 ## IPv6RouterAdvertisement
@@ -562,3 +592,5 @@ spec:
 ## Hostname
 
 [Hostname](resources/Hostname.md)
+
+管理OS主機名稱，與Router.metadata.name及資源名稱不同。

@@ -56,7 +56,7 @@ typeで選ぶ運用イベントログの出力先です。ObservabilityPipeline�
 | `spec.syslog.facility` | syslogのfacility。省略時local6。受理する値はYAML内の列挙を参照してください。 |
 | `spec.syslog.tag` | syslogのタグ。省略時routerd。リソース参照ではありません。 |
 | `spec.otlp` | OTLPの宣言。type=otlpではtelemetryRefとendpointのどちらか1つが必須です。この出力先の実送信処理は実装されていません。 |
-| `spec.otlp.telemetryRef` | 意図するTelemetryの参照。endpointと排他で省略時は空です。現行実装は値の有無だけを検証し、参照先Telemetryの解決や、それを使う送信は行いません。 |
+| `spec.otlp.telemetryRef` | Telemetry/名前またはTelemetryの名前だけを指定します。endpointと排他で省略時は空です。他のtypeを選んでいても、Router全体の検証で参照先の存在を確認します。現行OTLPSinkはこの参照を送信に使いません。 |
 | `spec.otlp.endpoint` | 意図する送信先URI。telemetryRefと排他で既定値はありません。URI構文は検証しますが、このLogSinkではexporterを生成しません。 |
 | `spec.webhook` | type=webhookで使う、JSONをHTTP POSTする送信先の設定です。 |
 | `spec.webhook.url` | type=webhookでは必須で既定値はありません。HTTP(S)の絶対URLを指定してください。検証はURI構文までです。送信成功と扱うのはHTTP 2xxだけです。 |
@@ -67,4 +67,4 @@ typeで選ぶ運用イベントログの出力先です。ObservabilityPipeline�
 | `spec.journald` | type=journaldの設定。プロセスのloggerを通して出力します。 |
 | `spec.journald.identifier` | プロセスのログメッセージに付ける接頭辞。省略時routerd。journaldのSYSLOG_IDENTIFIERを直接設定する実装ではありません。 |
 
-実装: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/diagnostics.go](https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go) · [pkg/eventlog/eventlog.go](https://github.com/imksoo/routerd/blob/main/pkg/eventlog/eventlog.go)
+実装: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/diagnostics.go](https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go) · [pkg/eventlog/eventlog.go](https://github.com/imksoo/routerd/blob/main/pkg/eventlog/eventlog.go) · [pkg/config/validate.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go)

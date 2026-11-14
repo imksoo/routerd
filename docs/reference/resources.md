@@ -147,10 +147,14 @@ Defines an operational event-log destination selected by its type. It is separat
 
 [Telemetry](resources/Telemetry.md)
 
+Configures OpenTelemetry environment variables for rendered managed services. It does not define a LogSink or a separate collector process.
+
 
 ## ObservabilityPipeline
 
 [ObservabilityPipeline](resources/ObservabilityPipeline.md)
+
+Combines an OpenTelemetry environment declaration for managed services with an independent built-in operational-event log consumer.
 
 
 ## LogRetention
@@ -178,35 +182,49 @@ Applies a named set of router-oriented sysctls, with optional per-key overrides.
 
 [Package](resources/Package.md)
 
+Ensures selected OS packages are installed. The controller selects the first package set whose os exactly matches the running host.
+
 
 ## NTPClient
 
 [NTPClient](resources/NTPClient.md)
+
+Manages or observes an upstream time-synchronization client.
 
 
 ## NTPServer
 
 [NTPServer](resources/NTPServer.md)
 
+Configures a time server and its upstream servers using chrony or FreeBSD ntpd.
+
 
 ## WebConsole
 
 [WebConsole](resources/WebConsole.md)
+
+Serves the read-only router web console from routerd. Its HTTP listener is separate from the mutating ControlAPI listener.
 
 
 ## ControlAPI
 
 [ControlAPI](resources/ControlAPI.md)
 
+Enables the HTTP control API for reading state and changing configuration. Unix-socket control and the WebConsole are separate.
+
 
 ## RouterdCluster
 
 [RouterdCluster](resources/RouterdCluster.md)
 
+Coordinates which routerd process may perform mutations through a file lease and OS file locking. It is not VRRP election or peer network discovery.
+
 
 ## Interface
 
 [Interface](resources/Interface.md)
+
+Names an existing OS interface so other resources can refer to its logical metadata.name. It does not create a physical interface.
 
 
 ## PPPoESession
@@ -238,6 +256,8 @@ Applies a named set of router-oriented sysctls, with optional per-key overrides.
 
 [VRF](resources/VRF.md)
 
+Declares a Linux VRF device, routing table and member intentions. The current implementation renders plans/artifact identities and protects its routing table, but has no VRF creation/member-attachment controller. Do not treat plan output as proof that a VRF was created.
+
 
 ## VXLANTunnel
 
@@ -247,6 +267,8 @@ Applies a named set of router-oriented sysctls, with optional per-key overrides.
 ## IPv4StaticAddress
 
 [IPv4StaticAddress](resources/IPv4StaticAddress.md)
+
+Declares a static IPv4 address on a logical interface. The controller converges configured addresses; this is not a DHCP lease.
 
 
 ## VirtualAddress
@@ -278,6 +300,8 @@ Applies a named set of router-oriented sysctls, with optional per-key overrides.
 
 [DHCPv4Client](resources/DHCPv4Client.md)
 
+Runs the managed routerd-dhcpv4-client daemon and applies its current lease address, optional default route and optional host DNS settings.
+
 
 ## ClusterNetworkRoute
 
@@ -298,10 +322,14 @@ Applies a named set of router-oriented sysctls, with optional per-key overrides.
 
 [DHCPv6Address](resources/DHCPv6Address.md)
 
+Declares an IPv6 address acquired by a host DHCPv6 client. It is separate from DHCPv6PrefixDelegation and does not allocate LAN prefixes.
+
 
 ## IPv6RAAddress
 
 [IPv6RAAddress](resources/IPv6RAAddress.md)
+
+Declares host-side receipt of IPv6 router advertisements/SLAAC. This is an RA client, not an IPv6RouterAdvertisement server for the LAN.
 
 
 ## DHCPv6PrefixDelegation
@@ -317,6 +345,8 @@ Applies a named set of router-oriented sysctls, with optional per-key overrides.
 ## DHCPv6Information
 
 [DHCPv6Information](resources/DHCPv6Information.md)
+
+Projects AFTR, DNS, SNTP and domain-search information from the DHCPv6-PD daemon that uses the same interface. It does not start a standalone information-request client.
 
 
 ## IPv6RouterAdvertisement
@@ -562,3 +592,5 @@ Applies a named set of router-oriented sysctls, with optional per-key overrides.
 ## Hostname
 
 [Hostname](resources/Hostname.md)
+
+Manages the OS hostname, separately from Router.metadata.name and resource names.

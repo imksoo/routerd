@@ -56,7 +56,7 @@ All fields are shown as a structural reference, not a configuration to apply unc
 | `spec.syslog.facility` | Syslog facility, default local6. Accepted values are listed in the YAML enum. |
 | `spec.syslog.tag` | Syslog tag; default routerd. Not a resource reference. |
 | `spec.otlp` | OTLP declaration. Exactly one of telemetryRef and endpoint is required for type=otlp; actual transmission is not implemented in this sink. |
-| `spec.otlp.telemetryRef` | Intended Telemetry reference; mutually exclusive with endpoint and default empty. The current implementation checks only that a value is present; it does not resolve a Telemetry target or send through it. |
+| `spec.otlp.telemetryRef` | Telemetry/name or plain Telemetry resource name; mutually exclusive with endpoint, default empty. Router-wide validation checks the target exists, even if another type branch is selected. The current OTLPSink does not use it to send. |
 | `spec.otlp.endpoint` | Intended endpoint URI, mutually exclusive with telemetryRef; no default. URI syntax is validated, but this LogSink does not create an exporter. |
 | `spec.webhook` | JSON HTTP POST destination settings, used only for type=webhook. |
 | `spec.webhook.url` | Required when type=webhook, no default. Use an absolute HTTP(S) URL; the validator only checks URI syntax. Only HTTP 2xx counts as successful delivery. |
@@ -67,4 +67,4 @@ All fields are shown as a structural reference, not a configuration to apply unc
 | `spec.journald` | Settings for type=journald; output goes through the process logger. |
 | `spec.journald.identifier` | Prefix added to the process log message, default routerd. It is not a direct assignment of the journald SYSLOG_IDENTIFIER field. |
 
-Implementation: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/diagnostics.go](https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go) · [pkg/eventlog/eventlog.go](https://github.com/imksoo/routerd/blob/main/pkg/eventlog/eventlog.go)
+Implementation: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/diagnostics.go](https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go) · [pkg/eventlog/eventlog.go](https://github.com/imksoo/routerd/blob/main/pkg/eventlog/eventlog.go) · [pkg/config/validate.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go)

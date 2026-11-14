@@ -35,10 +35,10 @@
 
 | YAML | 項目の意味と既定値 |
 | --- | --- |
-| `spec.retention` | 保持期間。7dや24hなどの指定が必須で既定値はありません。dは整数日数×24時間、それ以外はGo duration形式です。検証は構文の解析までで、正の値であることは要求しません。 |
+| `spec.retention` | 保持期間。7dや24hなどの指定が必須で既定値はありません。dは整数日数×24時間、それ以外はGo duration形式です。検証は構文の解析までで、正の値であることは要求しません。 保持期間には正の値を指定してください。 |
 | `spec.signals` | 削除対象のログ区分。省略時はevents、accessLogs、pluginRuns、dnsQueries、trafficFlows、firewallEvents、dhcpFingerprintsの7種類すべてです。格納DBは関連ログリソースのパスまたはOS既定値から決めます。 |
-| `spec.sinks` | 削除前の保管先。省略時は保管しません。LogSink/名前または名前だけを受理し、有効なsystem.routerd.net/v1alpha1のLogSinkを選びます。存在しない名前は選択されずエラーにもならないため、指定を確認してください。 |
+| `spec.sinks` | 削除前の保管先。省略時は保管しません。LogSink/名前または名前だけで指定します。Router全体の検証で各LogSinkの存在を確認し、実行時には無効な出力先を除きます。 |
 | `spec.vacuum` | 削除後に対象SQLiteファイルをVACUUMする指定。省略時falseです。保持対象の選択ではなく、DBファイルの領域整理を行います。 |
 | `spec.schedule` | 省略またはdaily。いずれも初回実行と、その後23時間以上経過してからの実行です。時刻指定やcron式は受理しません。 |
 
-実装: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate_system.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_system.go) · [pkg/config/diagnostics.go](https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go) · [pkg/controller/chain/logretention.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/logretention.go) · [pkg/logstore/retention.go](https://github.com/imksoo/routerd/blob/main/pkg/logstore/retention.go) · [pkg/eventlog/eventlog.go](https://github.com/imksoo/routerd/blob/main/pkg/eventlog/eventlog.go)
+実装: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate_system.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_system.go) · [pkg/config/diagnostics.go](https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go) · [pkg/controller/chain/logretention.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/logretention.go) · [pkg/logstore/retention.go](https://github.com/imksoo/routerd/blob/main/pkg/logstore/retention.go) · [pkg/eventlog/eventlog.go](https://github.com/imksoo/routerd/blob/main/pkg/eventlog/eventlog.go) · [pkg/config/validate.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go)

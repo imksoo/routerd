@@ -281,10 +281,10 @@
     ],
     "fields": {
       "retention": [
-        "Required retention interval, e.g. 7d or 24h. d means an integer number of 24-hour days; other values use Go duration syntax. No default. The validator parses the duration but does not require it to be positive.",
-        "保持期間。7dや24hなどの指定が必須で既定値はありません。dは整数日数×24時間、それ以外はGo duration形式です。検証は構文の解析までで、正の値であることは要求しません。",
-        "保留期間，必填且無預設值，例如7d或24h。d為整數天數乘24小時，其他使用Go duration。驗證器只解析，不要求正值。",
-        "保留期限，必填且无默认值，例如7d或24h。d为整数天数乘24小时，其他使用Go duration。验证器仅解析，不要求正值。"
+        "Required retention interval, e.g. 7d or 24h. d means an integer number of 24-hour days; other values use Go duration syntax. No default. The validator parses the duration but does not require it to be positive. Use a positive interval for retention.",
+        "保持期間。7dや24hなどの指定が必須で既定値はありません。dは整数日数×24時間、それ以外はGo duration形式です。検証は構文の解析までで、正の値であることは要求しません。 保持期間には正の値を指定してください。",
+        "保留期間，必填且無預設值，例如7d或24h。d為整數天數乘24小時，其他使用Go duration。驗證器只解析，不要求正值。 保留期間請使用正值。",
+        "保留期限，必填且无默认值，例如7d或24h。d为整数天数乘24小时，其他使用Go duration。验证器仅解析，不要求正值。 保留期限请使用正值。"
       ],
       "signals": [
         "Log categories to prune. Default all seven: events, accessLogs, pluginRuns, dnsQueries, trafficFlows, firewallEvents, dhcpFingerprints. Storage files are resolved from the relevant logging resources or platform defaults.",
@@ -293,10 +293,10 @@
         "要清理的日志类别；默认包含events、accessLogs、pluginRuns、dnsQueries、trafficFlows、firewallEvents、dhcpFingerprints全部七种。DB路径来自相关日志资源或OS默认值。"
       ],
       "sinks": [
-        "Archive destinations before deletion. Default empty: no archive. Entries accept LogSink/name or plain name and select enabled system.routerd.net/v1alpha1 LogSink resources. Missing names are silently unselected; check names carefully.",
-        "削除前の保管先。省略時は保管しません。LogSink/名前または名前だけを受理し、有効なsystem.routerd.net/v1alpha1のLogSinkを選びます。存在しない名前は選択されずエラーにもならないため、指定を確認してください。",
-        "刪除前保存目的地；預設空，不保存。接受LogSink/名稱或單純名稱，選取啟用的system.routerd.net/v1alpha1 LogSink。不存在的名稱不會被選取，也不報錯，須確認名稱。",
-        "删除前保存目的地；默认空，不保存。接受LogSink/名称或纯名称，选择启用的system.routerd.net/v1alpha1 LogSink。不存在的名称不会被选中，也不报错，须确认名称。"
+        "Archive destinations before deletion, default empty (no archive). Use LogSink/name or a plain name. Router-wide validation requires each LogSink to exist; disabled sinks are excluded at execution.",
+        "削除前の保管先。省略時は保管しません。LogSink/名前または名前だけで指定します。Router全体の検証で各LogSinkの存在を確認し、実行時には無効な出力先を除きます。",
+        "刪除前保存目的地，預設空表示不保存。可用LogSink/名稱或單純名稱；Router整體驗證要求目標存在，執行時排除停用輸出端。",
+        "删除前保存目的地，默认空表示不保存。可用LogSink/名称或纯名称；Router整体验证要求目标存在，执行时排除禁用输出端。"
       ],
       "vacuum": [
         "Whether to VACUUM the target SQLite files after pruning. Default false. This changes database storage, not retention selection.",
@@ -317,7 +317,8 @@
       "pkg/config/diagnostics.go",
       "pkg/controller/chain/logretention.go",
       "pkg/logstore/retention.go",
-      "pkg/eventlog/eventlog.go"
+      "pkg/eventlog/eventlog.go",
+      "pkg/config/validate.go"
     ]
   },
   "Sysctl": {
@@ -519,10 +520,10 @@
         "OTLP声明；type=otlp时telemetryRef与endpoint恰好一项必填，此输出端尚无实际发送处理。"
       ],
       "otlp.telemetryRef": [
-        "Intended Telemetry reference; mutually exclusive with endpoint and default empty. The current implementation checks only that a value is present; it does not resolve a Telemetry target or send through it.",
-        "意図するTelemetryの参照。endpointと排他で省略時は空です。現行実装は値の有無だけを検証し、参照先Telemetryの解決や、それを使う送信は行いません。",
-        "預定Telemetry參照，與endpoint互斥，預設空。目前僅檢查是否有值，不解析Telemetry目標也不透過它傳送。",
-        "预定Telemetry引用，与endpoint互斥，默认空。当前仅检查是否有值，不解析Telemetry目标也不通过它发送。"
+        "Telemetry/name or plain Telemetry resource name; mutually exclusive with endpoint, default empty. Router-wide validation checks the target exists, even if another type branch is selected. The current OTLPSink does not use it to send.",
+        "Telemetry/名前またはTelemetryの名前だけを指定します。endpointと排他で省略時は空です。他のtypeを選んでいても、Router全体の検証で参照先の存在を確認します。現行OTLPSinkはこの参照を送信に使いません。",
+        "Telemetry/名稱或單純Telemetry名稱，與endpoint互斥，預設空。即使選其他type，Router整體驗證仍檢查目標存在。目前OTLPSink不用它傳送。",
+        "Telemetry/名称或纯Telemetry名称，与endpoint互斥，默认空。即使选择其他type，Router整体验证仍检查目标存在。当前OTLPSink不使用它发送。"
       ],
       "otlp.endpoint": [
         "Intended endpoint URI, mutually exclusive with telemetryRef; no default. URI syntax is validated, but this LogSink does not create an exporter.",
@@ -582,7 +583,1214 @@
     "sources": [
       "pkg/api/specs.go",
       "pkg/config/diagnostics.go",
-      "pkg/eventlog/eventlog.go"
+      "pkg/eventlog/eventlog.go",
+      "pkg/config/validate.go"
+    ]
+  },
+  "Telemetry": {
+    "purpose": [
+      "Configures OpenTelemetry environment variables for rendered managed services. It does not define a LogSink or a separate collector process.",
+      "生成する管理サービスにOpenTelemetryの環境変数を設定します。LogSinkや独立したcollectorプロセスを定義するリソースではありません。",
+      "為產生的受管服務設定OpenTelemetry環境變數，不定義LogSink或獨立collector程序。",
+      "为生成的受管服务设置OpenTelemetry环境变量，不定义LogSink或独立collector进程。"
+    ],
+    "rules": [
+      [
+        "Only one selected Telemetry or ObservabilityPipeline with a nonempty OTLP endpoint may supply the generated telemetry environment; multiple selected resources fail rendering. No resource-name reference is involved.",
+        "生成するテレメトリー環境の取得元は、TelemetryまたはOTLP endpointが空でないObservabilityPipelineのいずれか1つです。複数が選ばれると生成エラーになります。リソース名による相互参照ではありません。",
+        "產生的遙測環境只可選一個Telemetry或OTLP endpoint非空的ObservabilityPipeline；同時選到多個會產生錯誤，不透過資源名稱互相參照。",
+        "生成的遥测环境仅可选择一个Telemetry或OTLP endpoint非空的ObservabilityPipeline；同时选到多个会生成错误，不通过资源名互相引用。"
+      ]
+    ],
+    "fields": {
+      "otlp": [
+        "Required OTLP connection object.",
+        "必須のOTLP接続設定です。",
+        "必填OTLP連線設定。",
+        "必填OTLP连接配置。"
+      ],
+      "otlp.endpoint": [
+        "Required nonblank exporter endpoint; emitted as OTEL_EXPORTER_OTLP_ENDPOINT. No default. This validator checks nonblank content, not endpoint reachability.",
+        "必須の空白でない送信先。OTEL_EXPORTER_OTLP_ENDPOINTに設定し、既定値はありません。この検証では空白以外であることを確認し、送信先への到達性は確認しません。",
+        "必填且不可空白的匯出端點，寫入OTEL_EXPORTER_OTLP_ENDPOINT，無預設值。驗證器只檢查非空白，不確認可達性。",
+        "必填且不可空白的导出端点，写入OTEL_EXPORTER_OTLP_ENDPOINT，无默认值。验证器仅检查非空白，不确认可达性。"
+      ],
+      "otlp.insecure": [
+        "Default false. True emits OTEL_EXPORTER_OTLP_INSECURE=true; false does not emit that variable.",
+        "省略時false。trueならOTEL_EXPORTER_OTLP_INSECURE=trueを出力し、falseならその変数を出力しません。",
+        "預設false；true產生OTEL_EXPORTER_OTLP_INSECURE=true，false不產生此變數。",
+        "默认false；true生成OTEL_EXPORTER_OTLP_INSECURE=true，false不生成此变量。"
+      ],
+      "serviceNamespace": [
+        "OpenTelemetry service namespace, default routerd after trimming whitespace.",
+        "OpenTelemetryのサービス名前空間。空白を除去した結果が空ならrouterdです。",
+        "OpenTelemetry服務命名空間，去除前後空白後為空時預設routerd。",
+        "OpenTelemetry服务命名空间，去除首尾空白后为空时默认routerd。"
+      ],
+      "attributes": [
+        "Resource-attribute map, default empty. Sorted and serialized into OTEL_RESOURCE_ATTRIBUTES as comma-separated key=value entries; values are not escaped by this renderer.",
+        "リソース属性の対応表。省略時は空です。キー順に並べ、カンマ区切りのkey=valueとしてOTEL_RESOURCE_ATTRIBUTESへ出力します。この生成処理では値をエスケープしません。",
+        "資源屬性對照，預設空；按鍵排序並以逗號分隔key=value寫入OTEL_RESOURCE_ATTRIBUTES，此產生器不跳脫值。",
+        "资源属性映射，默认空；按键排序并以逗号分隔key=value写入OTEL_RESOURCE_ATTRIBUTES，此生成器不转义值。"
+      ],
+      "signals": [
+        "logs, metrics and traces; default all three. A nonempty list disables omitted signals by emitting their exporter variable as none. It does not itself create a receiver.",
+        "logs・metrics・tracesを指定し、省略時は3種類すべてです。空でない一覧では、省略されたsignalのexporter変数をnoneにします。受信プロセスを作る指定ではありません。",
+        "接受logs、metrics、traces，預設三者全部。非空清單會將省略訊號的exporter變數設為none，不會建立接收程序。",
+        "接受logs、metrics、traces，默认三者全部。非空列表会将省略信号的exporter变量设为none，不会创建接收进程。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_system.go",
+      "pkg/render/telemetry.go"
+    ]
+  },
+  "Package": {
+    "purpose": [
+      "Ensures selected OS packages are installed. The controller selects the first package set whose os exactly matches the running host.",
+      "指定したOSパッケージの導入を確認します。稼働ホストのOSに完全一致する、最初のパッケージセットを選びます。",
+      "確保所選OS套件已安裝，選取第一個os與執行主機完全相符的套件集合。",
+      "确保所选OS软件包已安装，选择第一个os与运行主机完全匹配的软件包集合。"
+    ],
+    "rules": [
+      [
+        "Only present is supported; this resource cannot remove packages. An unmatched host OS produces Pending/NoMatchingOSPackageSet. optional is accepted in each set but is not read by this controller; installation failures still return an error.",
+        "stateはpresentだけを扱い、パッケージの削除はできません。OSに一致するセットがなければPending/NoMatchingOSPackageSetです。各セットのoptionalは入力として受理しますが、このcontrollerは読み取らず、導入失敗はエラーになります。",
+        "state只支援present，不能移除套件。找不到相符OS集合時為Pending/NoMatchingOSPackageSet。集合的optional會被接受但controller不讀取，安裝失敗仍回傳錯誤。",
+        "state仅支持present，不能移除软件包。找不到匹配OS集合时为Pending/NoMatchingOSPackageSet。集合的optional会被接受但controller不读取，安装失败仍返回错误。"
+      ]
+    ],
+    "fields": {
+      "state": [
+        "Desired package state; omitted means present. Other values are rejected.",
+        "希望するパッケージの状態。省略時presentで、他の値は拒否します。",
+        "期望套件狀態，省略為present，拒絕其他值。",
+        "期望软件包状态，省略为present，拒绝其他值。"
+      ],
+      "packages": [
+        "Required nonempty list of OS-specific package sets. No resource references.",
+        "OS別パッケージセットの空でない配列が必須です。リソース参照ではありません。",
+        "必填非空的OS套件集合清單，不是資源參照。",
+        "必填非空的OS软件包集合列表，不是资源引用。"
+      ],
+      "packages[].os": [
+        "Required OS ID: ubuntu, debian, fedora, rhel, rocky, almalinux or freebsd. Linux reads /etc/os-release ID; there is no ID_LIKE matching.",
+        "OS識別子。ubuntu、debian、fedora、rhel、rocky、almalinux、freebsdのいずれかが必須です。Linuxでは/etc/os-releaseのIDを読み、ID_LIKEによる類似判定は行いません。",
+        "必填OS識別：ubuntu、debian、fedora、rhel、rocky、almalinux或freebsd。Linux讀取/etc/os-release的ID，不依ID_LIKE匹配。",
+        "必填OS标识：ubuntu、debian、fedora、rhel、rocky、almalinux或freebsd。Linux读取/etc/os-release的ID，不按ID_LIKE匹配。"
+      ],
+      "packages[].manager": [
+        "Default apt for ubuntu/debian, dnf for fedora/rhel/rocky/almalinux, pkg for freebsd. An explicit manager must match this OS mapping.",
+        "省略時はubuntu/debianならapt、fedora/rhel/rocky/almalinuxならdnf、freebsdならpkgです。明示する場合もこのOS対応と一致する必要があります。",
+        "ubuntu/debian預設apt，fedora/rhel/rocky/almalinux預設dnf，freebsd預設pkg；明確指定也必須符合此對應。",
+        "ubuntu/debian默认apt，fedora/rhel/rocky/almalinux默认dnf，freebsd默认pkg；显式指定也必须符合此映射。"
+      ],
+      "packages[].names": [
+        "Required nonempty package-name list. Each name must be nonblank and contain no whitespace or /. No implicit package names are added by this field.",
+        "必須の空でないパッケージ名一覧。空白の名前、空白文字や/を含む名前は拒否します。この項目から暗黙のパッケージ名を追加しません。",
+        "必填非空套件名稱清單，拒絕空白名稱及含空白或/的名稱；此欄位不隱含新增其他名稱。",
+        "必填非空软件包名列表，拒绝空白名称及含空白或/的名称；此字段不隐含新增其他名称。"
+      ],
+      "packages[].optional": [
+        "Default false. The field is decoded but currently has no effect on PackageController error handling.",
+        "省略時false。値は読み込みますが、現行のPackageControllerのエラー処理には影響しません。",
+        "預設false；可解碼此欄位，但目前不影響PackageController的錯誤處理。",
+        "默认false；可解码此字段，但当前不影响PackageController的错误处理。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_system.go",
+      "pkg/controller/chain/package.go",
+      "pkg/hostdeps/hostdeps.go"
+    ]
+  },
+  "NTPClient": {
+    "purpose": [
+      "Manages or observes an upstream time-synchronization client.",
+      "上流との時刻同期クライアントを管理、または観測します。",
+      "管理或觀察向上游同步時間的用戶端。",
+      "管理或观察向上游同步时间的客户端。"
+    ],
+    "rules": [
+      [
+        "With managed=true, at least one of servers/serverFrom/fallbackServers must be declared. Static mode additionally requires servers itself. With no resolved servers the client remains Pending/NoServers. chrony management disables the stock systemd-timesyncd service.",
+        "managed=trueではservers/serverFrom/fallbackServersのどれかが必要です。staticではさらにservers自体が必須です。サーバーが解決できなければクライアントはPending/NoServersとなります。chronyを管理する場合は標準のsystemd-timesyncdを無効化します。",
+        "managed=true須宣告servers/serverFrom/fallbackServers至少一項，static還要求servers本身。無法解析上游時用戶端為Pending/NoServers；管理chrony時停用系統systemd-timesyncd。",
+        "managed=true须声明servers/serverFrom/fallbackServers至少一项，static还要求servers本身。无法解析上游时客户端为Pending/NoServers；管理chrony时禁用系统systemd-timesyncd。"
+      ]
+    ],
+    "fields": {
+      "provider": [
+        "Client implementation. Default systemd-timesyncd except on FreeBSD, where it is ntpd. chrony is also accepted. ntpd requires FreeBSD rc.d support; systemd-timesyncd requires the platform feature.",
+        "クライアント実装。通常はsystemd-timesyncd、FreeBSDではntpdが既定値です。chronyも受理します。ntpdはFreeBSDのrc.d、systemd-timesyncdはOSの対応が必要です。",
+        "用戶端實作，通常預設systemd-timesyncd，FreeBSD預設ntpd，也接受chrony。ntpd需要FreeBSD rc.d，systemd-timesyncd需要平台支援。",
+        "客户端实现，通常默认systemd-timesyncd，FreeBSD默认ntpd，也接受chrony。ntpd需要FreeBSD rc.d，systemd-timesyncd需要平台支持。"
+      ],
+      "managed": [
+        "Default false: record Observed without configuring or starting the time service. Set true to manage files and services.",
+        "省略時falseで、時刻サービスを設定・起動せずObservedを記録します。ファイルとサービスを管理する場合はtrueにします。",
+        "預設false，只記錄Observed，不設定或啟動時間服務；管理檔案與服務時設true。",
+        "默认false，仅记录Observed，不配置或启动时间服务；管理文件与服务时设true。"
+      ],
+      "source": [
+        "Default static: use servers. auto/dhcp/dhcpv6 all use the same order: resolved serverFrom, then fallbackServers, then servers. They do not automatically discover DHCP sources.",
+        "省略時staticでserversを使います。auto・dhcp・dhcpv6はいずれも、解決したserverFrom、fallbackServers、serversの順で選びます。DHCPの取得元を自動探索する指定ではありません。",
+        "預設static，使用servers。auto/dhcp/dhcpv6皆依serverFrom解析值、fallbackServers、servers的順序選取，不會自動探索DHCP來源。",
+        "默认static，使用servers。auto/dhcp/dhcpv6均依serverFrom解析值、fallbackServers、servers的顺序选择，不会自动查找DHCP来源。"
+      ],
+      "interface": [
+        "Optional logical interface name, default empty. Router-wide validation requires it to exist when supplied. The NTP controller does not use it for source selection or service binding.",
+        "任意の論理インターフェース名。省略時は空で、指定時はRouter全体の検証で存在を確認します。現行NTP controllerは取得元の選択やサービスのbindには使いません。",
+        "選填邏輯介面名稱，預設空；指定時Router整體驗證要求存在。NTP controller不用它選來源或綁定服務。",
+        "选填逻辑接口名，默认空；指定时Router整体验证要求存在。NTP controller不使用它选择来源或绑定服务。"
+      ],
+      "servers": [
+        "Upstream hostnames or IP addresses, default empty. Required when managed=true and source is omitted/static. Entries must be nonblank single tokens; they are not resource references.",
+        "上流サーバーのホスト名またはIPアドレス。省略時は空ですが、managed=trueかつsource省略/staticでは必須です。各要素は空白を含まない単一の値で、リソース参照ではありません。",
+        "上游主機名稱或IP，預設空；managed=true且source省略或static時必填。各項須為非空白單一值，不是資源參照。",
+        "上游主机名或IP，默认空；managed=true且source省略或static时必填。各项须为非空白单一值，不是资源引用。"
+      ],
+      "serverFrom": [
+        "List of explicit value sources, default empty. Use for example DHCPv4Client/wan field ntpServers or DHCPv6PrefixDelegation/wan-pd field sntpServers. Used only for auto/dhcp/dhcpv6; each resource and field must exist. This resolver ignores the optional flag; missing values simply lead to the next source alternative.",
+        "明示する値の取得元一覧。省略時は空です。例はDHCPv4Client/wanのntpServers、DHCPv6PrefixDelegation/wan-pdのsntpServersです。auto/dhcp/dhcpv6で使い、各resourceとfieldの存在が必要です。 この取得処理はoptionalを使わず、値がなければ次の取得方法へ進みます。",
+        "明確值來源清單，預設空。例如DHCPv4Client/wan的ntpServers或DHCPv6PrefixDelegation/wan-pd的sntpServers。只用於auto/dhcp/dhcpv6，每個resource與field須存在。 此解析器不使用optional旗標，缺值即選下一種替代來源。",
+        "显式值来源列表，默认空。例如DHCPv4Client/wan的ntpServers或DHCPv6PrefixDelegation/wan-pd的sntpServers。仅用于auto/dhcp/dhcpv6，每个resource与field须存在。 此解析器不使用optional标记，缺值即选下一种替代来源。"
+      ],
+      "fallbackServers": [
+        "Fallback upstreams, default empty. For dynamic source modes they are selected when serverFrom yields no servers. systemd-timesyncd additionally receives FallbackNTP; chrony and ntpd do not receive a separate fallback directive.",
+        "代替の上流サーバー。省略時は空です。動的なsourceではserverFromに値がなければ選びます。systemd-timesyncdには追加でFallbackNTPとしても出力しますが、chronyとntpdには独立した代替指示を出力しません。",
+        "備用上游，預設空；動態來源的serverFrom無值時採用。systemd-timesyncd還會產生FallbackNTP，chrony與ntpd不產生獨立備用指令。",
+        "备用上游，默认空；动态来源的serverFrom无值时采用。systemd-timesyncd还会生成FallbackNTP，chrony与ntpd不生成独立备用指令。"
+      ],
+      "when": [
+        "Activation condition; omitted means no gate. See the shared condition reference for state/all/any, unknown handling and age predicates.",
+        "有効化条件。省略時は条件を設けません。state/all/any、unknown、経過時間の条件は共通の条件指定を参照してください。",
+        "啟用條件，省略不設限制；state/all/any、unknown及時間條件請見共用條件參考。",
+        "启用条件，省略不设限制；state/all/any、unknown及时间条件请见共用条件参考。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_system.go",
+      "pkg/controller/chain/ntp.go",
+      "pkg/resourcequery/resourcequery.go",
+      "pkg/config/validate.go"
+    ]
+  },
+  "NTPServer": {
+    "purpose": [
+      "Configures a time server and its upstream servers using chrony or FreeBSD ntpd.",
+      "chronyまたはFreeBSD ntpdを使い、時刻サーバーと上流サーバーを設定します。",
+      "使用chrony或FreeBSD ntpd設定時間伺服器與上游。",
+      "使用chrony或FreeBSD ntpd配置时间服务器与上游。"
+    ],
+    "rules": [
+      [
+        "managed defaults to false. With true, server-source validation requires a declared upstream source; static additionally requires servers. listen/allow source arrays are merged, while upstream source alternatives follow source selection order.",
+        "managedの既定値はfalseです。trueでは上流の取得元宣言が必要で、staticならserversが追加で必須です。待受・許可元の配列は結合しますが、上流の各取得方法はsourceの選択順で切り替えます。",
+        "managed預設false；true須宣告上游來源，static另須servers。接聽與允許來源清單會合併，上游替代來源則依source順序選擇。",
+        "managed默认false；true须声明上游来源，static另须servers。监听与允许来源列表会合并，上游替代来源则按source顺序选择。"
+      ],
+      [
+        "The ntpd renderer does not emit allowCIDRs restrictions. Do not assume that declaring this list enforces a client ACL on ntpd.",
+        "ntpdの生成処理はallowCIDRsによる制限を出力しません。この一覧の宣言だけでntpdへのクライアント制限が適用されるとは扱わないでください。",
+        "ntpd產生器不輸出allowCIDRs限制，不能假設宣告此清單就會對ntpd套用用戶端ACL。",
+        "ntpd生成器不输出allowCIDRs限制，不能假设声明此列表就会对ntpd应用客户端ACL。"
+      ],
+      [
+        "In a dynamic source mode, unresolved upstream values do not themselves stop the server renderer; it may emit a configuration with no upstreams. Applied denotes configuration/service work, not proof of clock synchronization.",
+        "動的なsourceでは、上流の値が未解決でも、それだけでサーバー設定の生成を止めません。上流なしの設定になる場合があります。Appliedは設定・サービスの反映を示し、時刻同期済みの証明ではありません。",
+        "動態來源模式下，上游值未解析本身不會停止產生伺服器設定，可能沒有上游。Applied表示設定/服務處理，不證明時鐘已同步。",
+        "动态来源模式下，上游值未解析本身不会停止生成服务器配置，可能没有上游。Applied表示配置/服务处理，不证明时钟已同步。"
+      ]
+    ],
+    "fields": {
+      "managed": [
+        "Default false: record Observed without configuring or starting the time service. Set true to manage files and services.",
+        "省略時falseで、時刻サービスを設定・起動せずObservedを記録します。ファイルとサービスを管理する場合はtrueにします。",
+        "預設false，只記錄Observed，不設定或啟動時間服務；管理檔案與服務時設true。",
+        "默认false，仅记录Observed，不配置或启动时间服务；管理文件与服务时设true。"
+      ],
+      "source": [
+        "Default static: use servers. auto/dhcp/dhcpv6 all use the same order: resolved serverFrom, then fallbackServers, then servers. They do not automatically discover DHCP sources.",
+        "省略時staticでserversを使います。auto・dhcp・dhcpv6はいずれも、解決したserverFrom、fallbackServers、serversの順で選びます。DHCPの取得元を自動探索する指定ではありません。",
+        "預設static，使用servers。auto/dhcp/dhcpv6皆依serverFrom解析值、fallbackServers、servers的順序選取，不會自動探索DHCP來源。",
+        "默认static，使用servers。auto/dhcp/dhcpv6均依serverFrom解析值、fallbackServers、servers的顺序选择，不会自动查找DHCP来源。"
+      ],
+      "servers": [
+        "Upstream hostnames or IP addresses, default empty. Required when managed=true and source is omitted/static. Entries must be nonblank single tokens; they are not resource references.",
+        "上流サーバーのホスト名またはIPアドレス。省略時は空ですが、managed=trueかつsource省略/staticでは必須です。各要素は空白を含まない単一の値で、リソース参照ではありません。",
+        "上游主機名稱或IP，預設空；managed=true且source省略或static時必填。各項須為非空白單一值，不是資源參照。",
+        "上游主机名或IP，默认空；managed=true且source省略或static时必填。各项须为非空白单一值，不是资源引用。"
+      ],
+      "serverFrom": [
+        "List of explicit value sources, default empty. Use for example DHCPv4Client/wan field ntpServers or DHCPv6PrefixDelegation/wan-pd field sntpServers. Used only for auto/dhcp/dhcpv6; each resource and field must exist. This resolver ignores the optional flag; missing values simply lead to the next source alternative.",
+        "明示する値の取得元一覧。省略時は空です。例はDHCPv4Client/wanのntpServers、DHCPv6PrefixDelegation/wan-pdのsntpServersです。auto/dhcp/dhcpv6で使い、各resourceとfieldの存在が必要です。 この取得処理はoptionalを使わず、値がなければ次の取得方法へ進みます。",
+        "明確值來源清單，預設空。例如DHCPv4Client/wan的ntpServers或DHCPv6PrefixDelegation/wan-pd的sntpServers。只用於auto/dhcp/dhcpv6，每個resource與field須存在。 此解析器不使用optional旗標，缺值即選下一種替代來源。",
+        "显式值来源列表，默认空。例如DHCPv4Client/wan的ntpServers或DHCPv6PrefixDelegation/wan-pd的sntpServers。仅用于auto/dhcp/dhcpv6，每个resource与field须存在。 此解析器不使用optional标记，缺值即选下一种替代来源。"
+      ],
+      "when": [
+        "Activation condition; omitted means no gate. See the shared condition reference for state/all/any, unknown handling and age predicates.",
+        "有効化条件。省略時は条件を設けません。state/all/any、unknown、経過時間の条件は共通の条件指定を参照してください。",
+        "啟用條件，省略不設限制；state/all/any、unknown及時間條件請見共用條件參考。",
+        "启用条件，省略不设限制；state/all/any、unknown及时间条件请见共用条件参考。"
+      ],
+      "provider": [
+        "Server implementation, default chrony except on FreeBSD, where it is ntpd. ntpd is supported only on FreeBSD.",
+        "サーバー実装。通常はchrony、FreeBSDではntpdが既定値です。ntpdはFreeBSDでのみ対応します。",
+        "伺服器實作，通常預設chrony，FreeBSD預設ntpd；ntpd僅支援FreeBSD。",
+        "服务器实现，通常默认chrony，FreeBSD默认ntpd；ntpd仅支持FreeBSD。"
+      ],
+      "fallbackServers": [
+        "Fallback upstream list, default empty. Selected only in auto/dhcp/dhcpv6 mode when serverFrom yields nothing, before servers. No separate fallback directives are written.",
+        "代替上流の一覧。省略時は空です。auto/dhcp/dhcpv6でserverFromに値がないとき、serversより先に選びます。独立した代替指示は生成しません。",
+        "備用上游清單，預設空；auto/dhcp/dhcpv6的serverFrom無值時，優先於servers採用，不產生獨立備用指令。",
+        "备用上游列表，默认空；auto/dhcp/dhcpv6的serverFrom无值时，优先于servers采用，不生成独立备用指令。"
+      ],
+      "listenAddresses": [
+        "Static listen IPs, default empty. CIDR values are reduced to their host address. Empty resolved listen settings produce no bindaddress/interface-listen directives, leaving backend defaults.",
+        "固定の待受IPアドレス。省略時は空です。CIDRはホスト部分のIPへ変換します。待受設定が空ならbindaddress/interface listen指示を生成せず、実装サービスの既定動作を使います。",
+        "靜態接聽IP，預設空；CIDR取其主機IP。解析結果為空時不產生bindaddress/interface listen指令，使用後端預設行為。",
+        "静态监听IP，默认空；CIDR取其主机IP。解析结果为空时不生成bindaddress/interface listen指令，使用后端默认行为。"
+      ],
+      "listenAddressFrom": [
+        "Additional listen-address sources, default empty, combined with listenAddresses. Both resource and field are required per source. If any listen setting was declared but the combined result is empty, status is Pending/NoListenAddresses.",
+        "追加の待受アドレス取得元。省略時は空で、listenAddressesと結合します。各要素のresourceとfieldが必要です。待受設定を宣言したのに結合結果が空ならPending/NoListenAddressesです。",
+        "額外接聽位址來源，預設空，與listenAddresses合併。每項須有resource與field。已宣告接聽設定但合併結果為空時，為Pending/NoListenAddresses。",
+        "额外监听地址来源，默认空，与listenAddresses合并。每项须有resource与field。已声明监听配置但合并结果为空时，为Pending/NoListenAddresses。"
+      ],
+      "allowCIDRs": [
+        "Allowed client CIDRs, default empty. chrony emits allow for each; ntpd does not consume this list in its generated configuration. Static entries are checked for nonblank text, not CIDR syntax, during validation.",
+        "利用を許可するクライアントのCIDR一覧。省略時は空です。chronyでは各allowを生成しますが、ntpdの生成設定にはこの一覧を使いません。固定値の入力検証は空白でないことまでで、CIDR構文は確認しません。",
+        "允許用戶端CIDR清單，預設空。chrony產生各allow，ntpd產生設定不使用此清單。靜態值在驗證時只檢查非空白，不檢查CIDR語法。",
+        "允许客户端CIDR列表，默认空。chrony生成各allow，ntpd生成配置不使用此列表。静态值在验证时仅检查非空白，不检查CIDR语法。"
+      ],
+      "allowCIDRFrom": [
+        "CIDR value sources combined with allowCIDRs, default empty. Missing values from a nonoptional source cause Pending/AllowCIDRFromPending; invalid derived CIDRs cause Pending/AllowCIDRFromInvalid. Bare addresses are not CIDRs.",
+        "allowCIDRsと結合するCIDR取得元。省略時は空です。optionalでない取得元に値がなければPending/AllowCIDRFromPending、取得値が不正なCIDRならPending/AllowCIDRFromInvalidです。プレフィックス長のないIPアドレスはCIDRとして受理しません。",
+        "與allowCIDRs合併的CIDR來源，預設空。非optional來源缺值時為Pending/AllowCIDRFromPending；衍生CIDR錯誤時為Pending/AllowCIDRFromInvalid。不接受沒有前綴長度的裸IP。",
+        "与allowCIDRs合并的CIDR来源，默认空。非optional来源缺值时为Pending/AllowCIDRFromPending；派生CIDR错误时为Pending/AllowCIDRFromInvalid。不接受没有前缀长度的裸IP。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_system.go",
+      "pkg/controller/chain/ntp.go"
+    ]
+  },
+  "WebConsole": {
+    "purpose": [
+      "Serves the read-only router web console from routerd. Its HTTP listener is separate from the mutating ControlAPI listener.",
+      "routerdから読取り用のWebコンソールを公開します。設定変更を行うControlAPIとは別のHTTP待受です。",
+      "由routerd提供唯讀Web主控台，HTTP監聽與可變更設定的ControlAPI不同。",
+      "由routerd提供只读Web控制台，HTTP监听与可变更配置的ControlAPI不同。"
+    ],
+    "rules": [
+      [
+        "The runtime selects the first WebConsole resource; it does not start one listener per resource. A resolved listenAddressFrom takes precedence over listenAddress; the latter is a fallback, not a mutually exclusive option.",
+        "runtimeは最初のWebConsoleを選び、リソースごとに待受を起動しません。listenAddressFromの解決値をlistenAddressより優先し、listenAddressは代替値として使えます。排他指定ではありません。",
+        "runtime選第一個WebConsole，不為每項各開監聽。listenAddressFrom解析值優先，listenAddress可作備用，兩者不互斥。",
+        "runtime选择第一个WebConsole，不为每项分别开启监听。listenAddressFrom解析值优先，listenAddress可作备用，两者不互斥。"
+      ]
+    ],
+    "fields": {
+      "enabled": [
+        "Default true when a WebConsole resource exists. False disables the console selected by the runtime. No resource means no console listener.",
+        "リソースがある場合の省略時はtrueです。falseなら選択されたコンソールを無効にします。リソース自体がなければ待受は起動しません。",
+        "存在WebConsole資源時預設true；false停用所選主控台，沒有資源則不開監聽。",
+        "存在WebConsole资源时默认true；false禁用所选控制台，没有资源则不开启监听。"
+      ],
+      "listenAddress": [
+        "Fallback bind IP, default 127.0.0.1. Must parse as an IP when nonblank. A resolved listenAddressFrom wins.",
+        "代替の待受IP。省略時127.0.0.1で、空白でない指定はIPとして解析可能である必要があります。listenAddressFromの解決値を優先します。",
+        "備用綁定位址，預設127.0.0.1；非空白值須為IP，listenAddressFrom解析值優先。",
+        "备用绑定地址，默认127.0.0.1；非空白值须为IP，listenAddressFrom解析值优先。"
+      ],
+      "listenAddressFrom": [
+        "Value source for a bind IP; default absent. Uses status first, then supported configured-interface/address resolution. Requires resource and field. If unresolved and no listenAddress is supplied, console startup fails even if optional=true.",
+        "待受IPの取得元。省略時は未指定です。状態を先に読み、その後、対応する設定上のインターフェース・アドレスを解決します。resourceとfieldが必要です。未解決でlistenAddressもなければ、optional=trueでもコンソール起動は失敗します。",
+        "綁定IP來源，預設未指定；先讀狀態，再嘗試支援的設定介面/位址解析。須有resource與field；無法解析且無listenAddress時，即使optional=true仍無法啟動。",
+        "绑定IP来源，默认未指定；先读状态，再尝试支持的配置接口/地址解析。须有resource与field；无法解析且无listenAddress时，即使optional=true仍无法启动。"
+      ],
+      "port": [
+        "TCP port, default 8080. Zero in the decoded config means use this default; explicit nonzero values must be 1–65535.",
+        "TCPポート。省略時8080。読込み値0も既定値を選び、0以外は1〜65535を指定します。",
+        "TCP埠，預設8080；解碼後0也選預設，非零值須為1–65535。",
+        "TCP端口，默认8080；解码后0也选默认，非零值须为1–65535。"
+      ],
+      "basePath": [
+        "HTTP path prefix, default /. A nonempty value must begin with / and contain no NUL or line breaks.",
+        "HTTPのパス接頭辞。省略時/です。空でない値は/で始め、NULや改行を含めません。",
+        "HTTP路徑前綴，預設/；非空值須以/開頭，不可含NUL或換行。",
+        "HTTP路径前缀，默认/；非空值须以/开头，不可含NUL或换行。"
+      ],
+      "title": [
+        "Console page title, default routerd. It does not rename the router or any resource.",
+        "コンソールのページタイトル。省略時routerdで、ルーターやリソース自体の名前は変更しません。",
+        "主控台頁面標題，預設routerd，不會重新命名路由器或資源。",
+        "控制台页面标题，默认routerd，不会重命名路由器或资源。"
+      ],
+      "links": [
+        "Optional additional console links, default empty. Entries with blank label or URL are omitted at display time.",
+        "追加リンクの一覧。省略時は空です。labelかURLが空白の要素は表示時に省きます。",
+        "額外主控台連結，預設空；label或URL空白時顯示階段略過。",
+        "额外控制台链接，默认空；label或URL空白时显示阶段跳过。"
+      ],
+      "links[].label": [
+        "Visible link text, no default; blank values are not displayed.",
+        "リンクの表示文字。既定値はなく、空白なら表示しません。",
+        "連結文字，無預設值，空白不顯示。",
+        "链接文字，无默认值，空白不显示。"
+      ],
+      "links[].url": [
+        "Link destination, no default. This is a URL, not Kind/name. The console trims surrounding whitespace.",
+        "リンク先URL。既定値はありません。Kind/名前の参照ではなく、前後の空白は除去します。",
+        "連結目的URL，無預設值，不是Kind/名稱參照，會去除前後空白。",
+        "链接目标URL，无默认值，不是Kind/名称引用，会去除首尾空白。"
+      ],
+      "links[].description": [
+        "Optional explanatory text, default empty; trimmed for display.",
+        "任意の説明文。省略時は空で、表示時に前後の空白を除去します。",
+        "選填說明，預設空，顯示時去除前後空白。",
+        "选填说明，默认空，显示时去除首尾空白。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_system.go",
+      "cmd/routerd/cmd_serve.go",
+      "pkg/webconsole/console.go"
+    ]
+  },
+  "ControlAPI": {
+    "purpose": [
+      "Enables the HTTP control API for reading state and changing configuration. Unix-socket control and the WebConsole are separate.",
+      "状態の取得と設定変更に使うHTTP Control APIを有効化します。Unixソケット経由の制御とWebConsoleは別です。",
+      "啟用可讀狀態及變更設定的HTTP Control API，與Unix socket控制及WebConsole分開。",
+      "启用可读状态及变更配置的HTTP Control API，与Unix socket控制及WebConsole分开。"
+    ],
+    "rules": [
+      [
+        "Only one ControlAPI resource is supported. Explicit HTTP CLI flags override the matching resource-derived settings. Without a resource or enabling CLI flag, HTTP control is disabled.",
+        "ControlAPIは1つだけ対応します。HTTP関連のCLIフラグを明示した場合は、対応するリソース由来の値より優先します。リソースも有効化するフラグもなければHTTP制御は無効です。",
+        "只支援一個ControlAPI。明確HTTP CLI旗標優先於相應資源設定；沒有資源或啟用旗標時停用HTTP控制。",
+        "仅支持一个ControlAPI。显式HTTP CLI参数优先于对应资源配置；没有资源或启用参数时禁用HTTP控制。"
+      ],
+      [
+        "tls.certFile and tls.keyFile must be set together. clientCAFile additionally requires both and enables required, verified client certificates. tokenFrom.file and tokenFrom.env are mutually exclusive.",
+        "tls.certFileとtls.keyFileは組で指定します。clientCAFileには両方が必要で、クライアント証明書の提示と検証を必須にします。tokenFrom.fileとtokenFrom.envは排他です。",
+        "tls.certFile與tls.keyFile須一起指定；clientCAFile另須兩者，並要求及驗證用戶端憑證。tokenFrom.file與env互斥。",
+        "tls.certFile与tls.keyFile须一起指定；clientCAFile另须两者，并要求及验证客户端证书。tokenFrom.file与env互斥。"
+      ]
+    ],
+    "fields": {
+      "enabled": [
+        "Default true when the resource exists; default disabled when absent. An explicit HTTP-listen CLI flag enables it.",
+        "リソースがあれば省略時true、なければ無効です。HTTP待受のCLIフラグを明示すると有効になります。",
+        "資源存在時預設true，不存在時停用；明確HTTP監聽CLI旗標會啟用。",
+        "资源存在时默认true，不存在时禁用；显式HTTP监听CLI参数会启用。"
+      ],
+      "listenAddress": [
+        "Bind IP, default 127.0.0.1. Nonblank values must be IP addresses; this does not itself change the source CIDR allowlist.",
+        "待受IP。省略時127.0.0.1です。空白でない値はIPアドレスである必要があり、指定しても接続元CIDR許可一覧は変更しません。",
+        "綁定IP，預設127.0.0.1；非空白值須為IP，不會自行變更來源CIDR允許清單。",
+        "绑定IP，默认127.0.0.1；非空白值须为IP，不会自行变更来源CIDR允许列表。"
+      ],
+      "port": [
+        "TCP port, default 65432. Decoded zero selects the default; other values must be 1–65535.",
+        "TCPポート。省略時65432。読込み値0も既定値を選び、他の値は1〜65535です。",
+        "TCP埠，預設65432；解碼值0也採預設，其餘須為1–65535。",
+        "TCP端口，默认65432；解码值0也用默认，其余须为1–65535。"
+      ],
+      "allowCIDRs": [
+        "Source-IP allowlist, default 127.0.0.1/32 and ::1/128. A nonempty resource list replaces that default. Valid CIDRs are required; 0.0.0.0/0 and ::/0 are rejected. This is separate from firewall rules.",
+        "接続元IPの許可一覧。省略時127.0.0.1/32と::1/128で、空でない一覧を指定すると置換します。有効なCIDRが必要で、0.0.0.0/0と::/0は拒否します。ファイアウォール設定とは別です。",
+        "來源IP允許清單，預設127.0.0.1/32與::1/128，非空清單會取代預設。須為有效CIDR，拒絕0.0.0.0/0與::/0，與防火牆規則不同。",
+        "来源IP允许列表，默认127.0.0.1/32与::1/128，非空列表会替换默认。须为有效CIDR，拒绝0.0.0.0/0与::/0，与防火墙规则不同。"
+      ],
+      "tokenFrom": [
+        "Optional bearer-token source. Default absent means no bearer-token check; source CIDR filtering still applies. Set exactly one of file or env when using a token. Not a reference to a routerd resource.",
+        "任意のBearerトークン取得元。省略時はトークン確認を行いませんが、接続元CIDRの制限は適用します。使う場合はfileかenvのどちらか1つを指定し、routerdリソースは参照しません。",
+        "選填Bearer token來源；省略不檢查token，但仍限制來源CIDR。使用時只指定file或env其中一項，不是routerd資源參照。",
+        "选填Bearer token来源；省略不检查token，但仍限制来源CIDR。使用时仅指定file或env其中一项，不是routerd资源引用。"
+      ],
+      "tokenFrom.file": [
+        "Token file path, default empty; mutually exclusive with env. Read by the routerd process at HTTP API setup; inaccessible files fail setup.",
+        "トークンのファイルパス。省略時は空でenvと排他です。HTTP APIの初期化時にrouterdが読み、読めなければ初期化は失敗します。",
+        "token檔案路徑，預設空，與env互斥；HTTP API初始化時由routerd讀取，無法讀取則初始化失敗。",
+        "token文件路径，默认空，与env互斥；HTTP API初始化时由routerd读取，无法读取则初始化失败。"
+      ],
+      "tokenFrom.env": [
+        "Name of a variable in the routerd process environment, default empty; mutually exclusive with file. Missing variables fail HTTP API setup.",
+        "routerdプロセスの環境変数名。省略時は空でfileと排他です。変数がなければHTTP APIの初期化は失敗します。",
+        "routerd程序環境變數名稱，預設空，與file互斥；變數不存在則HTTP API初始化失敗。",
+        "routerd进程环境变量名，默认空，与file互斥；变量不存在则HTTP API初始化失败。"
+      ],
+      "tokenFrom.base64": [
+        "Default false. True decodes the trimmed source using standard Base64, then trims the decoded token. A malformed or empty final token fails setup.",
+        "省略時false。trueなら取得値の前後空白を除去して標準Base64で復号し、復号後も前後空白を除去します。不正な値や最終的な空トークンは初期化エラーです。",
+        "預設false。true時先修剪來源，再用標準Base64解碼並再次修剪；格式錯誤或最終空token使初始化失敗。",
+        "默认false。true时先修剪来源，再用标准Base64解码并再次修剪；格式错误或最终空token使初始化失败。"
+      ],
+      "tls": [
+        "Optional server TLS settings. With no certificate/key, the HTTP listener is plaintext.",
+        "任意のサーバーTLS設定。証明書・鍵を指定しなければHTTP待受は平文です。",
+        "選填伺服器TLS設定，未指定憑證/金鑰時監聽為明文HTTP。",
+        "选填服务器TLS配置，未指定证书/密钥时监听为明文HTTP。"
+      ],
+      "tls.certFile": [
+        "Server certificate file, default absent; requires keyFile. Loaded as an X.509 key pair at startup; TLS minimum is 1.2.",
+        "サーバー証明書ファイル。省略時は未指定でkeyFileが必要です。起動時にX.509の鍵ペアとして読み込み、TLSの下限は1.2です。",
+        "伺服器憑證檔，預設未指定，須搭配keyFile。啟動時載入X.509金鑰對，最低TLS 1.2。",
+        "服务器证书文件，默认未指定，须搭配keyFile。启动时载入X.509密钥对，最低TLS 1.2。"
+      ],
+      "tls.keyFile": [
+        "Server private-key file, default absent; requires certFile. This is a local file path, not a resource reference.",
+        "サーバー秘密鍵のファイル。省略時は未指定でcertFileが必要です。ローカルファイルのパスでありリソース参照ではありません。",
+        "伺服器私鑰檔，預設未指定，須搭配certFile；為本機檔案路徑，不是資源參照。",
+        "服务器私钥文件，默认未指定，须搭配certFile；为本地文件路径，不是资源引用。"
+      ],
+      "tls.clientCAFile": [
+        "Optional PEM client-CA bundle. Requires certFile/keyFile and makes client certificate verification mandatory. Missing/invalid bundles fail startup.",
+        "任意のPEM形式クライアントCA束。certFileとkeyFileが必要で、クライアント証明書の検証を必須にします。ファイルがない場合や不正な場合は起動エラーです。",
+        "選填PEM用戶端CA集合，須搭配certFile/keyFile並強制驗證用戶端憑證；檔案缺少或無效則啟動失敗。",
+        "选填PEM客户端CA集合，须搭配certFile/keyFile并强制验证客户端证书；文件缺少或无效则启动失败。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_system.go",
+      "pkg/config/cluster_secret_validate.go",
+      "cmd/routerd/cmd_serve.go",
+      "pkg/controlapi/server.go"
+    ]
+  },
+  "RouterdCluster": {
+    "purpose": [
+      "Coordinates which routerd process may perform mutations through a file lease and OS file locking. It is not VRRP election or peer network discovery.",
+      "ファイルのリースとOSファイルロックで、どのrouterdが変更処理を行うかを調整します。VRRPの選出や対向ネットワークの自動探索ではありません。",
+      "透過檔案租約與OS檔案鎖協調哪個routerd可以變更狀態，不是VRRP選舉或對端網路探索。",
+      "通过文件租约与OS文件锁协调哪个routerd可以变更状态，不是VRRP选举或对端网络发现。"
+    ],
+    "rules": [
+      [
+        "Participants need a leasePath with shared, reliable locking semantics. peers are identities, not endpoints: the lease implementation only uses the nonempty list to enable coordination and does not contact peer addresses or validate membership. Standby controllers perform dry-run mutation paths.",
+        "参加者間で同じleasePathと信頼できるロック動作が必要です。peersは識別子で、接続先ではありません。リース実装は空でない一覧を調整の有効化に使い、対向への通信や参加資格の照合は行いません。待機側の変更controllerはdry-runで動作します。",
+        "參與者需要共享且鎖定語意可靠的leasePath。peers是識別而非端點；租約實作只用非空清單啟用協調，不連線對端或驗證成員資格。待命controller以dry-run變更路徑運作。",
+        "参与者需要共享且锁定语义可靠的leasePath。peers是标识而非端点；租约实现仅用非空列表启用协调，不连接对端或验证成员资格。待机controller以dry-run变更路径运行。"
+      ]
+    ],
+    "fields": {
+      "peers": [
+        "Required list with at least two distinct nonblank entries after compaction. No default; entries are not Kind/name references or network addresses to dial.",
+        "空白・重複を除去した後に2件以上となる一覧が必須です。既定値はなく、Kind/名前の参照や、実際に接続するネットワークアドレスではありません。",
+        "去除空白與重複後至少兩項的必填清單，無預設值；不是Kind/名稱參照或實際連線位址。",
+        "去除空白与重复后至少两项的必填列表，无默认值；不是Kind/名称引用或实际连接地址。"
+      ],
+      "leaseTTL": [
+        "Lease expiry interval, default 30s. Explicit values must be Go durations between 5s and 10m. The lock still controls exclusive mutation; expiry alone is not a network failure detector.",
+        "リースの有効期間。省略時30sで、明示する場合は5s〜10mのGo durationです。排他的な変更はロックが制御し、期限だけでネットワーク障害を検知する仕組みではありません。",
+        "租約期限預設30s，明確值須為5s–10m的Go duration。互斥變更仍由鎖控制，期限本身不是網路故障偵測器。",
+        "租约期限默认30s，显式值须为5s–10m的Go duration。互斥变更仍由锁控制，期限本身不是网络故障检测器。"
+      ],
+      "leasePath": [
+        "Required absolute lease-file path without line breaks. No default; a separate file on each host does not coordinate those hosts.",
+        "改行を含まない絶対パスのリースファイル。必須で既定値はありません。ホストごとに別のファイルを用意してもホスト間の調整にはなりません。",
+        "必填租約檔絕對路徑，不可含換行，無預設值；各主機獨立檔案不會協調主機間狀態。",
+        "必填租约文件绝对路径，不可含换行，无默认值；各主机独立文件不会协调主机间状态。"
+      ],
+      "identity": [
+        "Local lease-holder identity; defaults to os.Hostname() after trimming. It is not derived from Router.metadata.name.",
+        "ローカルのリース保持者の識別子。省略時は空白を除去したos.Hostname()です。Router.metadata.nameからは決めません。",
+        "本機租約持有者識別，省略使用修剪後os.Hostname()，不是Router.metadata.name。",
+        "本机租约持有者标识，省略使用修剪后os.Hostname()，不是Router.metadata.name。"
+      ],
+      "when": [
+        "Activation condition; omitted means no gate. See common reference conditions.",
+        "有効化条件。省略時は条件なし。共通の条件指定を参照してください。",
+        "啟用條件，省略不設限制，請見共用條件參考。",
+        "启用条件，省略不设限制，请见共用条件参考。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_system.go",
+      "pkg/controller/chain/chain.go",
+      "pkg/ha/lease.go",
+      "cmd/routerd/cmd_apply.go"
+    ]
+  },
+  "ObservabilityPipeline": {
+    "purpose": [
+      "Combines an OpenTelemetry environment declaration for managed services with an independent built-in operational-event log consumer.",
+      "管理サービス向けOpenTelemetry環境の宣言と、独立した組込み運用イベントログconsumerをまとめた設定です。",
+      "結合受管服務的OpenTelemetry環境宣告與獨立內建操作事件記錄consumer。",
+      "结合受管服务的OpenTelemetry环境声明与独立内置运维事件日志consumer。"
+    ],
+    "rules": [
+      [
+        "OTLP environment selection and built-in log forwarding are separate paths. signals controls the former; logs.enabled controls the latter. Empty log sinks do not imply stdout.",
+        "OTLP環境の選択と組込みログ転送は別経路です。signalsは前者、logs.enabledは後者を制御します。出力先が空でもstdoutには送りません。",
+        "OTLP環境選擇與內建記錄轉送是兩條路徑，signals控制前者，logs.enabled控制後者；輸出清單空白不代表stdout。",
+        "OTLP环境选择与内置日志转发是两条路径，signals控制前者，logs.enabled控制后者；输出列表为空不代表stdout。"
+      ],
+      [
+        "sampling.rate=0 is promoted to 1. kafka sinks and OTLP certificate-file fields are declarations without corresponding runtime execution in this implementation.",
+        "sampling.rate=0は1として扱います。この実装ではKafka出力先とOTLPの証明書ファイル項目は宣言だけで、対応する実行処理にはつながっていません。",
+        "sampling.rate=0轉為1；此實作中的Kafka輸出端與OTLP憑證檔欄位只有宣告，沒有相應執行處理。",
+        "sampling.rate=0转为1；此实现中的Kafka输出端与OTLP证书文件字段仅有声明，没有对应执行处理。"
+      ]
+    ],
+    "fields": {
+      "serviceNamespace": [
+        "OpenTelemetry service namespace, default routerd after trimming whitespace.",
+        "OpenTelemetryのサービス名前空間。空白を除去した結果が空ならrouterdです。",
+        "OpenTelemetry服務命名空間，去除前後空白後為空時預設routerd。",
+        "OpenTelemetry服务命名空间，去除首尾空白后为空时默认routerd。"
+      ],
+      "attributes": [
+        "Resource-attribute map, default empty. Sorted and serialized into OTEL_RESOURCE_ATTRIBUTES as comma-separated key=value entries; values are not escaped by this renderer.",
+        "リソース属性の対応表。省略時は空です。キー順に並べ、カンマ区切りのkey=valueとしてOTEL_RESOURCE_ATTRIBUTESへ出力します。この生成処理では値をエスケープしません。",
+        "資源屬性對照，預設空；按鍵排序並以逗號分隔key=value寫入OTEL_RESOURCE_ATTRIBUTES，此產生器不跳脫值。",
+        "资源属性映射，默认空；按键排序并以逗号分隔key=value写入OTEL_RESOURCE_ATTRIBUTES，此生成器不转义值。"
+      ],
+      "otlp": [
+        "Optional OTLP environment settings for generated services. A nonblank endpoint selects this resource as the telemetry environment source. Built-in log sinks operate separately.",
+        "生成するサービス向けの任意のOTLP環境設定。endpointが空白でなければテレメトリー環境の取得元として選びます。組込みログ出力先は別に動作します。",
+        "產生服務用的選填OTLP環境設定；endpoint非空白時選為遙測環境來源，內建記錄輸出端另行運作。",
+        "生成服务用的选填OTLP环境配置；endpoint非空白时选为遥测环境来源，内置日志输出端独立运行。"
+      ],
+      "otlp.endpoint": [
+        "Exporter endpoint, default empty. A nonblank value must parse as a URI and is emitted as OTEL_EXPORTER_OTLP_ENDPOINT. Multiple Telemetry/endpoint-bearing pipeline sources fail environment rendering.",
+        "送信先。省略時は空です。空白でない値はURIとして解析できる必要があり、OTEL_EXPORTER_OTLP_ENDPOINTへ出力します。Telemetryまたはendpoint付きpipelineが複数あれば環境生成に失敗します。",
+        "匯出端點預設空；非空白值須可解析為URI，寫入OTEL_EXPORTER_OTLP_ENDPOINT。多個Telemetry或含endpoint的pipeline會使環境產生失敗。",
+        "导出端点默认空；非空白值须可解析为URI，写入OTEL_EXPORTER_OTLP_ENDPOINT。多个Telemetry或含endpoint的pipeline会使环境生成失败。"
+      ],
+      "otlp.insecure": [
+        "Default false. True sets OTEL_EXPORTER_OTLP_INSECURE=true. tls.insecureSkipVerify=true also sets that same insecure variable.",
+        "省略時false。trueでOTEL_EXPORTER_OTLP_INSECURE=trueを出力します。tls.insecureSkipVerify=trueでも同じinsecure変数を出力します。",
+        "預設false；true產生OTEL_EXPORTER_OTLP_INSECURE=true，tls.insecureSkipVerify=true也設定相同變數。",
+        "默认false；true生成OTEL_EXPORTER_OTLP_INSECURE=true，tls.insecureSkipVerify=true也设置相同变量。"
+      ],
+      "otlp.headers": [
+        "Exporter request-header map, default empty. Serialized as sorted comma-separated key=value entries in OTEL_EXPORTER_OTLP_HEADERS without value escaping. It is not the header map of a Loki sink.",
+        "exporterの要求ヘッダー。省略時は空です。キー順のカンマ区切りkey=valueとしてOTEL_EXPORTER_OTLP_HEADERSへ出力し、値はエスケープしません。Lokiのヘッダーとは別です。",
+        "exporter請求標頭對照，預設空；排序後以逗號分隔key=value寫入OTEL_EXPORTER_OTLP_HEADERS，不跳脫值。與Loki標頭不同。",
+        "exporter请求头映射，默认空；排序后以逗号分隔key=value写入OTEL_EXPORTER_OTLP_HEADERS，不转义值。与Loki请求头不同。"
+      ],
+      "otlp.tls": [
+        "Decoded TLS options. Only insecureSkipVerify affects the current environment renderer; the three file fields are not wired into exporter configuration.",
+        "読み込むTLSオプションです。現行の環境生成に影響するのはinsecureSkipVerifyだけで、3つのファイル指定はexporter設定に接続されていません。",
+        "可解碼的TLS選項；目前只有insecureSkipVerify影響環境產生，三個檔案欄位未接至exporter設定。",
+        "可解码的TLS选项；当前仅insecureSkipVerify影响环境生成，三个文件字段未接入exporter配置。"
+      ],
+      "otlp.tls.caFile": [
+        "CA-file declaration, default empty. The current renderer and built-in exporter do not read it; setting it does not configure a trust store.",
+        "CAファイルの宣言。省略時は空です。現行の生成処理と組込みexporterは読み取らず、指定しても信頼する証明書の設定には反映しません。",
+        "CA檔案宣告預設空，目前產生器與內建exporter不讀取，設定後不會配置信任庫。",
+        "CA文件声明默认空，当前生成器与内置exporter不读取，设置后不会配置信任库。"
+      ],
+      "otlp.tls.certFile": [
+        "Client-certificate declaration, default empty and not consumed by the current OTLP configuration path.",
+        "クライアント証明書の宣言。省略時は空で、現行のOTLP設定経路では使いません。",
+        "用戶端憑證宣告預設空，目前OTLP設定路徑不使用。",
+        "客户端证书声明默认空，当前OTLP配置路径不使用。"
+      ],
+      "otlp.tls.keyFile": [
+        "Client-key declaration, default empty and not consumed. A certFile/keyFile pair here does not enable mutual TLS.",
+        "クライアント鍵の宣言。省略時は空で、現行では使いません。ここでcertFileとkeyFileを組で指定しても相互TLSは有効になりません。",
+        "用戶端金鑰宣告預設空，目前不使用；在此成對設定certFile/keyFile不會啟用雙向TLS。",
+        "客户端密钥声明默认空，当前不使用；在此成对设置certFile/keyFile不会启用双向TLS。"
+      ],
+      "otlp.tls.insecureSkipVerify": [
+        "Default false. The current renderer maps true to OTEL_EXPORTER_OTLP_INSECURE=true; it does not configure a TLS client that merely skips certificate checks.",
+        "省略時false。現行処理ではtrueをOTEL_EXPORTER_OTLP_INSECURE=trueへ変換します。証明書検証だけを省くTLS clientの設定ではありません。",
+        "預設false，目前將true轉成OTEL_EXPORTER_OTLP_INSECURE=true，不是只略過憑證檢查的TLS client設定。",
+        "默认false，当前将true转为OTEL_EXPORTER_OTLP_INSECURE=true，不是仅跳过证书检查的TLS client配置。"
+      ],
+      "signals": [
+        "Default logs/metrics/traces for generated OpenTelemetry environment. Omitted members of a nonempty list get exporter=none. The built-in log consumer ignores this list and is controlled by logs.enabled.",
+        "生成するOpenTelemetry環境では省略時logs/metrics/tracesすべてです。空でない一覧から除いたsignalはexporter=noneにします。組込みログconsumerはこの一覧を使わず、logs.enabledで制御します。",
+        "產生OpenTelemetry環境時預設logs/metrics/traces全部，非空清單未列出的訊號設exporter=none。內建記錄consumer不使用此清單，改由logs.enabled控制。",
+        "生成OpenTelemetry环境时默认logs/metrics/traces全部，非空列表未列出的信号设exporter=none。内置日志consumer不使用此列表，改由logs.enabled控制。"
+      ],
+      "sampling": [
+        "Built-in event-log sampling settings, independent of the generated OTLP environment.",
+        "組込みイベントログの抽出設定。生成するOTLP環境とは独立しています。",
+        "內建事件記錄抽樣設定，獨立於產生的OTLP環境。",
+        "内置事件日志采样配置，独立于生成的OTLP环境。"
+      ],
+      "sampling.rate": [
+        "Must be between 0 and 1. Omitted/zero becomes 1, sending all eligible events. Fractions use a deterministic sequence modulo 1000, not random sampling. Use logs.enabled=false to stop this consumer.",
+        "0〜1を指定します。省略/0は1になり、対象イベントをすべて送ります。小数値では連番の1000周期で抽出し、無作為抽出ではありません。consumerを止める場合はlogs.enabled=falseを使います。",
+        "須為0–1；省略/0轉為1，傳送全部符合事件。小數使用序號模1000的確定性抽樣，不是隨機。停止consumer請用logs.enabled=false。",
+        "须为0–1；省略/0转为1，发送全部符合事件。小数使用序号模1000的确定性采样，不是随机。停止consumer请用logs.enabled=false。"
+      ],
+      "logs": [
+        "Built-in database event-log forwarding settings, separate from the OTLP environment.",
+        "DBに保存されたイベントログを転送する組込み処理の設定。OTLP環境とは別です。",
+        "內建DB事件記錄轉送設定，與OTLP環境分開。",
+        "内置DB事件日志转发配置，与OTLP环境分开。"
+      ],
+      "logs.enabled": [
+        "Default true. False stops the built-in log consumer, but does not disable OTLP variables in rendered services.",
+        "省略時true。falseで組込みログconsumerを止めますが、生成サービスのOTLP変数は無効にしません。",
+        "預設true；false停止內建記錄consumer，但不停用產生服務的OTLP變數。",
+        "默认true；false停止内置日志consumer，但不禁用生成服务的OTLP变量。"
+      ],
+      "logs.sinks": [
+        "Sink list, default empty: no built-in output destination. There is no implicit stdout sink. Kafka entries are skipped by the exporter even when enabled.",
+        "出力先一覧。省略時は空で、組込みの出力先はありません。stdoutを暗黙には追加しません。Kafkaはenabledでもexporterが除外します。",
+        "輸出端清單預設空，沒有內建目的地；不會隱含stdout。Kafka項目即使啟用仍被exporter略過。",
+        "输出端列表默认空，没有内置目的地；不会隐含stdout。Kafka条目即使启用仍被exporter跳过。"
+      ],
+      "logs.sinks[].name": [
+        "Optional sink label, default empty. Not a LogSink resource reference; the current exporter does not use it to select destinations.",
+        "任意の出力先ラベル。省略時は空です。LogSinkリソースの参照ではなく、現行exporterは選択に使いません。",
+        "選填輸出標籤，預設空；不是LogSink資源參照，目前exporter不用它選目的地。",
+        "选填输出标签，默认空；不是LogSink资源引用，当前exporter不用它选择目的地。"
+      ],
+      "logs.sinks[].type": [
+        "Required stdout, syslog, loki or kafka. kafka is accepted as a declaration but not executed. Only the selected branch is used.",
+        "stdout・syslog・loki・kafkaの指定が必須です。kafkaは宣言を受理しますが実行しません。選択した種類の設定だけを使います。",
+        "必填stdout、syslog、loki或kafka；kafka只接受宣告而不執行，僅使用所選分支設定。",
+        "必填stdout、syslog、loki或kafka；kafka仅接受声明而不执行，仅使用所选分支配置。"
+      ],
+      "logs.sinks[].enabled": [
+        "Default true. False excludes this sink; kafka is excluded independently of this flag.",
+        "省略時true。falseならこの出力先を除外します。kafkaはこの値とは別に除外します。",
+        "預設true；false排除此輸出端，kafka另行無條件排除。",
+        "默认true；false排除此输出端，kafka另行无条件排除。"
+      ],
+      "logs.sinks[].minLevel": [
+        "Minimum severity, default info; accepts debug/info/warning/error. Applied after sampling.",
+        "最低重要度。省略時infoでdebug/info/warning/errorを受理し、sampling後に判定します。",
+        "最低嚴重程度預設info，接受debug/info/warning/error，在抽樣後判斷。",
+        "最低严重程度默认info，接受debug/info/warning/error，在采样后判断。"
+      ],
+      "logs.sinks[].labels": [
+        "Additional Loki stream labels, default empty. Sink labels override same-name global attributes and built-in labels after key sanitization. They are not used by stdout or syslog.",
+        "追加のLoki streamラベル。省略時は空です。キーを正規化してから同名の全体属性・組込みラベルを上書きします。stdoutやsyslogでは使いません。",
+        "額外Loki stream標籤預設空；鍵正規化後覆寫同名全域屬性及內建標籤，stdout/syslog不使用。",
+        "额外Loki stream标签默认空；键规范化后覆盖同名全局属性及内置标签，stdout/syslog不使用。"
+      ],
+      "logs.sinks[].loki": [
+        "Settings used only for type=loki.",
+        "type=lokiで使う設定です。",
+        "只用於type=loki的設定。",
+        "仅用于type=loki的配置。"
+      ],
+      "logs.sinks[].loki.url": [
+        "Required for loki, with no default. Use the complete Loki push URL; the exporter does not append a push path. Only HTTP 2xx counts as success.",
+        "lokiでは必須で既定値はありません。Lokiのpush先URL全体を指定し、exporterはpush用のパスを付け足しません。成功扱いはHTTP 2xxだけです。",
+        "loki時必填且無預設值，須提供完整Loki push URL，exporter不補push路徑；只有HTTP 2xx算成功。",
+        "loki时必填且无默认值，须提供完整Loki push URL，exporter不补push路径；只有HTTP 2xx算成功。"
+      ],
+      "logs.sinks[].loki.tenant": [
+        "Optional tenant ID, default empty. Nonempty values set X-Scope-OrgID.",
+        "任意のテナントID。省略時は空で、空でなければX-Scope-OrgIDを設定します。",
+        "選填租戶ID預設空，非空時設定X-Scope-OrgID。",
+        "选填租户ID默认空，非空时设置X-Scope-OrgID。"
+      ],
+      "logs.sinks[].loki.headers": [
+        "Additional HTTP headers, default empty. Override matching headers including Content-Type and the tenant header.",
+        "追加HTTPヘッダー。省略時は空です。Content-Typeとテナントのヘッダーを含め、同名の値を上書きします。",
+        "額外HTTP標頭預設空，覆寫同名標頭，包括Content-Type與租戶標頭。",
+        "额外HTTP请求头默认空，覆盖同名请求头，包括Content-Type与租户头。"
+      ],
+      "logs.sinks[].syslog": [
+        "Settings used only for type=syslog.",
+        "type=syslogで使う設定です。",
+        "只用於type=syslog的設定。",
+        "仅用于type=syslog的配置。"
+      ],
+      "logs.sinks[].syslog.network": [
+        "Transport: unix, unixgram, tcp or udp. Empty delegates to Go syslog local-socket discovery.",
+        "転送方式。unix、unixgram、tcp、udpを指定します。省略時はGoのsyslog実装がローカルソケットを探索します。",
+        "傳輸方式為unix、unixgram、tcp或udp；空值由Go syslog探索本機socket。",
+        "传输方式为unix、unixgram、tcp或udp；空值由Go syslog查找本机socket。"
+      ],
+      "logs.sinks[].syslog.address": [
+        "Destination socket path or host:port, default empty. Set a suitable address for an explicit transport; validation does not enforce this pairing, and connection errors surface during emission.",
+        "ソケットパスまたはhost:port。省略時は空です。転送方式を明示した場合は対応する宛先も指定します。この組合せは設定検証では必須化されず、接続エラーは実際の出力時に生じます。",
+        "目的socket路徑或host:port，預設空。明確指定傳輸方式時應提供對應位址；驗證器不強制此組合，連線錯誤在輸出時出現。",
+        "目标socket路径或host:port，默认空。显式指定传输方式时应提供对应地址；验证器不强制此组合，连接错误在输出时出现。"
+      ],
+      "logs.sinks[].syslog.tag": [
+        "Syslog tag; default routerd. Not a resource reference.",
+        "syslogのタグ。省略時routerd。リソース参照ではありません。",
+        "syslog標籤，預設routerd，不是資源參照。",
+        "syslog标签，默认routerd，不是资源引用。"
+      ],
+      "logs.sinks[].syslog.facility": [
+        "Default local6. This exporter maps local0–local7; any other supplied facility also falls back to local6, unlike the standalone LogSink syslog implementation.",
+        "省略時local6。このexporterが対応づけるのはlocal0〜local7で、それ以外を指定してもlocal6を使います。独立したLogSinkのsyslog実装とは異なります。",
+        "預設local6，此exporter只對應local0–local7，其他值也改用local6，與獨立LogSink的syslog實作不同。",
+        "默认local6，此exporter仅映射local0–local7，其他值也改用local6，与独立LogSink的syslog实现不同。"
+      ],
+      "logs.sinks[].kafka": [
+        "Kafka intention settings. They are validated but the built-in exporter skips this sink.",
+        "Kafkaの意図を記述する設定。検証は行いますが、組込みexporterではこの出力先を除外します。",
+        "Kafka意圖設定，會驗證但內建exporter略過此輸出端。",
+        "Kafka意图配置，会验证但内置exporter跳过此输出端。"
+      ],
+      "logs.sinks[].kafka.brokers": [
+        "For type=kafka, at least one nonblank broker is required. No connections are made by the current exporter.",
+        "type=kafkaでは空白でないbrokerが1件以上必要です。現行exporterは接続しません。",
+        "type=kafka須至少一個非空白broker，目前exporter不連線。",
+        "type=kafka须至少一个非空白broker，当前exporter不连接。"
+      ],
+      "logs.sinks[].kafka.topic": [
+        "Required nonblank topic for type=kafka. Not an EventRule topic or a resource reference; no current Kafka transmission.",
+        "type=kafkaでは空白でないtopicが必須です。EventRuleのtopicやリソース参照ではなく、現行ではKafka送信もしません。",
+        "type=kafka必填非空白topic，不是EventRule topic或資源參照，目前不傳送Kafka。",
+        "type=kafka必填非空白topic，不是EventRule topic或资源引用，当前不发送Kafka。"
+      ],
+      "when": [
+        "Activation condition; omitted means no gate. See the shared condition reference for state/all/any, unknown handling and age predicates.",
+        "有効化条件。省略時は条件を設けません。state/all/any、unknown、経過時間の条件は共通の条件指定を参照してください。",
+        "啟用條件，省略不設限制；state/all/any、unknown及時間條件請見共用條件參考。",
+        "启用条件，省略不设限制；state/all/any、unknown及时间条件请见共用条件参考。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_system.go",
+      "pkg/config/diagnostics.go",
+      "pkg/render/telemetry.go",
+      "pkg/observabilitypipeline/exporter.go"
+    ]
+  },
+  "Interface": {
+    "purpose": [
+      "Names an existing OS interface so other resources can refer to its logical metadata.name. It does not create a physical interface.",
+      "既存のOSインターフェースに論理名metadata.nameを付け、他のリソースから参照できるようにします。物理インターフェースを新規作成する設定ではありません。",
+      "為既有OS介面提供metadata.name邏輯名稱，供其他資源參照，不建立實體介面。",
+      "为现有OS接口提供metadata.name逻辑名称，供其他资源引用，不创建物理接口。"
+    ],
+    "rules": [
+      [
+        "Use the logical metadata.name in interface fields of dependent resources and put the real device name in ifname. managed=false does not suppress LinkController admin-up/MTU operations when those settings are requested.",
+        "依存するリソースのinterfaceには論理名metadata.name、ifnameには実デバイス名を指定します。managed=falseでも、adminUpやMTUを指定した場合のLinkControllerによる変更は抑止しません。",
+        "相依資源的interface使用metadata.name邏輯名稱，ifname填實際裝置名。managed=false不會抑制已要求的LinkController啟用/MTU變更。",
+        "依赖资源的interface使用metadata.name逻辑名称，ifname填写实际设备名。managed=false不会抑制已要求的LinkController启用/MTU变更。"
+      ]
+    ],
+    "fields": {
+      "ifname": [
+        "Required existing kernel device name, e.g. ens18; no default. Missing devices produce a Down/InterfaceNotFound status rather than being created.",
+        "ens18などの既存カーネルデバイス名。必須で既定値はありません。存在しなければ新規作成せず、Down/InterfaceNotFoundとして観測します。",
+        "必填既有核心裝置名稱，例如ens18，無預設值；不存在時不建立，而記為Down/InterfaceNotFound。",
+        "必填现有内核设备名，例如ens18，无默认值；不存在时不创建，而记为Down/InterfaceNotFound。"
+      ],
+      "managed": [
+        "Management declaration, decoded default false; JSON Schema asks for explicit presence. It affects management/observation metadata and surrounding logic, but is not an observe-only guarantee for adminUp or MTU.",
+        "管理対象の宣言。読込み上の既定値はfalseですが、JSON Schemaでは明示を要求します。管理・観測の状態や周辺処理に使いますが、adminUpやMTUを観測だけに限定する保証ではありません。",
+        "管理宣告，解碼預設false，但JSON Schema要求明確填寫。影響管理/觀察資訊及周邊處理，不保證adminUp/MTU只觀察不變更。",
+        "管理声明，解码默认false，但JSON Schema要求显式填写。影响管理/观察信息及周边处理，不保证adminUp/MTU仅观察不变更。"
+      ],
+      "adminUp": [
+        "Default false: no request to bring the link up. True brings an existing down link up. False does not mean administratively force the link down.",
+        "省略時falseで、UPにする要求を出しません。trueなら存在するDOWNのlinkをUPにします。falseは強制的にDOWNにする指定ではありません。",
+        "預設false，不要求啟用；true會啟用已存在但關閉的link。false不表示強制關閉。",
+        "默认false，不要求启用；true会启用已存在但关闭的link。false不表示强制关闭。"
+      ],
+      "mtu": [
+        "Default zero means preserve the current MTU. Explicit nonzero values must be 576–9216 and are applied when different.",
+        "省略時0は現在のMTUを維持します。0以外は576〜9216で、観測値と異なれば反映します。",
+        "預設0保留目前MTU；非零值須為576–9216，不同時套用。",
+        "默认0保留当前MTU；非零值须为576–9216，不同时应用。"
+      ],
+      "when": [
+        "Activation condition; omitted means no gate. See the shared condition reference for state/all/any, unknown handling and age predicates.",
+        "有効化条件。省略時は条件を設けません。state/all/any、unknown、経過時間の条件は共通の条件指定を参照してください。",
+        "啟用條件，省略不設限制；state/all/any、unknown及時間條件請見共用條件參考。",
+        "启用条件，省略不设限制；state/all/any、unknown及时间条件请见共用条件参考。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_interface.go",
+      "pkg/config/index.go",
+      "pkg/controller/chain/chain.go",
+      "pkg/resourcequery/when.go"
+    ]
+  },
+  "IPv4StaticAddress": {
+    "purpose": [
+      "Declares a static IPv4 address on a logical interface. The controller converges configured addresses; this is not a DHCP lease.",
+      "論理インターフェースへ固定IPv4アドレスを宣言します。controllerが設定に収束させるアドレスであり、DHCPリースではありません。",
+      "在邏輯介面宣告靜態IPv4位址，由controller協調設定，不是DHCP租約。",
+      "在逻辑接口声明静态IPv4地址，由controller协调配置，不是DHCP租约。"
+    ],
+    "rules": [
+      [
+        "An interface reference and address/prefix are required. Router-wide indexing rejects two static resources with the same logical interface and masked network prefix, even if the host address differs. VirtualAddress overlap on that same interface/prefix is also rejected.",
+        "interface参照とaddress/prefixが必須です。同じ論理インターフェースとマスク後のネットワークprefixを持つ固定アドレスは、ホスト部が異なっても重複として拒否します。同じ組合せのVirtualAddressとの重複も拒否します。",
+        "interface參照與address/prefix必填。同邏輯介面及遮罩後網路前綴的兩個靜態資源，即使主機位址不同也拒絕；與相同組合的VirtualAddress重疊也拒絕。",
+        "interface引用与address/prefix必填。同逻辑接口及掩码后网络前缀的两个静态资源，即使主机地址不同也拒绝；与相同组合的VirtualAddress重叠也拒绝。"
+      ]
+    ],
+    "fields": {
+      "interface": [
+        "Required logical interface name from the Router interface index, without Interface/ prefix. It must exist in the declared config. No default.",
+        "必須の論理インターフェース名。Interface/は付けず、宣言済みRouterのインターフェース一覧に存在する必要があります。既定値はありません。",
+        "必填Router介面索引中的邏輯名稱，不加Interface/，必須在宣告設定存在，無預設值。",
+        "必填Router接口索引中的逻辑名称，不加Interface/，必须在声明配置存在，无默认值。"
+      ],
+      "address": [
+        "Required IPv4 host address with prefix length, e.g. 192.0.2.1/24. The parser checks prefix syntax; runtime operations use IPv4. No default or implicit /32.",
+        "192.0.2.1/24などのプレフィックス長付きIPv4ホストアドレス。必須で既定値や暗黙の/32はありません。入力はprefix構文を確認し、実行時の操作はIPv4を使います。",
+        "必填含前綴長度的IPv4主機位址，例如192.0.2.1/24，無預設值或隱含/32。解析器檢查前綴語法，執行期使用IPv4操作。",
+        "必填含前缀长度的IPv4主机地址，例如192.0.2.1/24，无默认值或隐含/32。解析器检查前缀语法，运行时使用IPv4操作。"
+      ],
+      "exclusive": [
+        "Default false. The current observer warns that exclusive cleanup is not implemented; the runtime address controller does not read this flag. Global reconciliation of extra addresses is independent, so false does not promise to preserve manual addresses.",
+        "省略時false。現行observe処理はexclusiveによる掃除が未実装と警告し、実行時のアドレスcontrollerもこの値を読みません。余分なアドレスの全体reconcileは別なので、falseでも手作業のアドレスを維持する保証はありません。",
+        "預設false。目前觀察器警告exclusive清理未實作，執行期位址controller也不讀取此旗標。額外位址的整體協調獨立，false不保證保留手動位址。",
+        "默认false。当前观察器警告exclusive清理未实现，运行时地址controller也不读取此标记。额外地址的整体协调独立，false不保证保留手动地址。"
+      ],
+      "allowOverlap": [
+        "Default false. Retained as a readable field but not used by current config validation or address reconciliation; it does not bypass duplicate/conflict checks.",
+        "省略時false。読込み可能な項目として残りますが、現行の検証・アドレスreconcileでは使わず、重複・競合の検証も回避しません。",
+        "預設false，保留供解碼但目前驗證與位址協調不使用，不會略過重複/衝突檢查。",
+        "默认false，保留供解码但当前验证与地址协调不使用，不会跳过重复/冲突检查。"
+      ],
+      "allowOverlapReason": [
+        "Default empty. Stored declaration only; it does not authorize overlap or alter the effect of allowOverlap.",
+        "省略時は空です。宣言として保持するだけで、重複の許可やallowOverlapの効果を変えません。",
+        "預設空，僅保留宣告，不授權重疊或改變allowOverlap效果。",
+        "默认空，仅保留声明，不授权重叠或改变allowOverlap效果。"
+      ],
+      "when": [
+        "Activation condition; omitted means no gate. See the shared condition reference for state/all/any, unknown handling and age predicates.",
+        "有効化条件。省略時は条件を設けません。state/all/any、unknown、経過時間の条件は共通の条件指定を参照してください。",
+        "啟用條件，省略不設限制；state/all/any、unknown及時間條件請見共用條件參考。",
+        "启用条件，省略不设限制；state/all/any、unknown及时间条件请见共用条件参考。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_interface.go",
+      "pkg/config/validate.go",
+      "pkg/config/index.go",
+      "pkg/controller/chain/chain.go",
+      "pkg/apply/engine.go"
+    ]
+  },
+  "VRF": {
+    "purpose": [
+      "Declares a Linux VRF device, routing table and member intentions. The current implementation renders plans/artifact identities and protects its routing table, but has no VRF creation/member-attachment controller. Do not treat plan output as proof that a VRF was created.",
+      "LinuxのVRFデバイス・経路表・参加インターフェースの意図を宣言します。現行実装は計画とartifact識別子の生成、経路表の保護を行いますが、VRF作成・メンバー接続のcontrollerはありません。plan表示をVRF作成済みの証拠とは扱わないでください。",
+      "宣告Linux VRF裝置、路由表與成員意圖。目前產生計畫/artifact識別並保護路由表，但沒有建立VRF/連接成員的controller；計畫輸出不證明VRF已建立。",
+      "声明Linux VRF设备、路由表与成员意图。当前生成计划/artifact标识并保护路由表，但没有创建VRF/连接成员的controller；计划输出不证明VRF已创建。"
+    ],
+    "rules": [
+      [
+        "members uses logical interface names already declared in the Router. Self-membership is rejected. routeTable is also used to preserve the table during policy-route cleanup and may be referenced by BGP VRF configuration.",
+        "membersにはRouterに宣言済みの論理インターフェース名を指定します。自分自身への参加は拒否します。routeTableはポリシー経路の掃除でその表を維持するためにも使い、BGPのVRF設定からも参照します。",
+        "members須為Router已宣告的邏輯介面，拒絕自身成員。routeTable也用於策略路由清理時保留該表，BGP的VRF設定亦可參照。",
+        "members须为Router已声明的逻辑接口，拒绝自身成员。routeTable也用于策略路由清理时保留该表，BGP的VRF配置亦可引用。"
+      ]
+    ],
+    "fields": {
+      "ifname": [
+        "Kernel VRF name, default metadata.name. Must be at most 15 characters and contain no whitespace or /.",
+        "カーネルのVRF名。省略時metadata.name。15文字以下で、空白や/は使えません。",
+        "核心VRF名稱，預設metadata.name；最多15字元，不可含空白或/。",
+        "内核VRF名称，默认metadata.name；最多15字符，不可含空白或/。"
+      ],
+      "routeTable": [
+        "Required positive routing-table ID, no default. The schema limits it to 1–4294967295; the current Go validator checks the lower bound.",
+        "必須の正の経路表IDで既定値はありません。スキーマ上は1〜4294967295で、現行Go検証は下限を確認します。",
+        "必填正路由表ID，無預設值。Schema為1–4294967295，目前Go驗證檢查下限。",
+        "必填正路由表ID，无默认值。Schema为1–4294967295，当前Go验证检查下限。"
+      ],
+      "members": [
+        "Logical interface-name list, default empty. No Kind/ prefix. Each member must exist and must not equal this VRF metadata.name; actual attachment is not implemented.",
+        "論理インターフェース名の一覧。省略時は空でKind/は付けません。各要素が存在し、このVRFのmetadata.nameとは異なる必要があります。実際の接続処理は未実装です。",
+        "邏輯介面名稱清單，預設空，不加Kind/；每項須存在且不可為本VRF的metadata.name，實際連接未實作。",
+        "逻辑接口名列表，默认空，不加Kind/；每项须存在且不可为本VRF的metadata.name，实际连接未实现。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_interface.go",
+      "pkg/config/validate.go",
+      "pkg/apply/engine.go",
+      "pkg/apply/artifacts.go",
+      "pkg/controller/chain/policyroute.go"
+    ]
+  },
+  "Hostname": {
+    "purpose": [
+      "Manages the OS hostname, separately from Router.metadata.name and resource names.",
+      "OSのホスト名を管理します。Router.metadata.nameや各リソース名とは別です。",
+      "管理OS主機名稱，與Router.metadata.name及資源名稱不同。",
+      "管理OS主机名，与Router.metadata.name及资源名不同。"
+    ],
+    "rules": [
+      [
+        "Only one managed Hostname may be applied; multiple managed entries fail at reconcile. Unmanaged entries are ignored by the controller. Linux uses hostnamectl, FreeBSD uses sysrc and hostname.",
+        "管理するHostnameを複数指定するとreconcile時に失敗します。managed=falseの項目はcontrollerが無視します。Linuxではhostnamectl、FreeBSDではsysrcとhostnameを使います。",
+        "多個受管Hostname在協調時失敗；managed=false項目被controller忽略。Linux使用hostnamectl，FreeBSD使用sysrc與hostname。",
+        "多个受管Hostname在协调时失败；managed=false条目被controller忽略。Linux使用hostnamectl，FreeBSD使用sysrc与hostname。"
+      ]
+    ],
+    "fields": {
+      "hostname": [
+        "Required nonempty OS hostname, with no default. Spaces, tabs, newlines and / are rejected. This field does not refer to a DNSZone or Interface.",
+        "必須の空でないOSホスト名。既定値はなく、空白・タブ・改行・/を拒否します。DNSZoneやInterfaceの参照ではありません。",
+        "必填非空OS主機名稱，無預設值，拒絕空格、tab、換行與/；不是DNSZone或Interface參照。",
+        "必填非空OS主机名，无默认值，拒绝空格、tab、换行与/；不是DNSZone或Interface引用。"
+      ],
+      "managed": [
+        "Default false: no hostname changes. True observes the current/static hostname and changes it when needed; dry-run does not invoke the changing commands.",
+        "省略時falseでホスト名を変更しません。trueなら現在値と永続ホスト名を観測し、必要なら変更します。dry-runでは変更コマンドを実行しません。",
+        "預設false，不變更主機名稱。true觀察目前/靜態名稱並按需變更；dry-run不呼叫變更命令。",
+        "默认false，不变更主机名。true观察当前/静态名称并按需变更；dry-run不调用变更命令。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_system.go",
+      "pkg/controller/chain/hostname.go"
+    ]
+  },
+  "DHCPv6Address": {
+    "purpose": [
+      "Declares an IPv6 address acquired by a host DHCPv6 client. It is separate from DHCPv6PrefixDelegation and does not allocate LAN prefixes.",
+      "ホストのDHCPv6 clientで取得するIPv6アドレスを宣言します。DHCPv6PrefixDelegationとは別で、LAN向けプレフィックスの配布は行いません。",
+      "宣告主機DHCPv6 client取得的IPv6位址，與DHCPv6PrefixDelegation不同，不分配LAN前綴。",
+      "声明主机DHCPv6 client获取的IPv6地址，与DHCPv6PrefixDelegation不同，不分配LAN前缀。"
+    ],
+    "rules": [
+      [
+        "The current code validates/indexes this declaration and uses it in observation and host network-adoption decisions. It does not create a dedicated DHCPv6Address daemon. Host client setup must not be inferred solely from a successful plan.",
+        "現行コードでは宣言の検証・索引化・観測・ホストのネットワーク引継ぎ判定に使います。DHCPv6Address専用daemonを生成する処理はありません。planの成功だけでホストのclient設定が完了したとは判断できません。",
+        "目前用於宣告驗證/索引、觀察與主機網路接管判斷，不產生專屬DHCPv6Address daemon。計畫成功不代表主機client已設定完成。",
+        "当前用于声明验证/索引、观察与主机网络接管判断，不生成专属DHCPv6Address daemon。计划成功不代表主机client已配置完成。"
+      ],
+      [
+        "An external prefix-delegation client on the same interface must match the DHCPv6Address client selection. The configuration index treats an omitted client as networkd, whereas the current observe/plan display uses dhcpcd as its omitted default. Specify the client explicitly rather than relying on that inconsistent omission.",
+        "同じインターフェースで外部PD clientを使う場合、DHCPv6Addressのclient選択と一致する必要があります。設定索引はclient省略をnetworkdと扱い、現行observe/planの表示はdhcpcdと扱います。省略時の扱いが一貫しないため、利用するclientを明示してください。",
+        "同介面外部PD client須與DHCPv6Address的client選擇相符。設定索引將省略視為networkd，目前observe/plan卻顯示dhcpcd；省略行為不一致，請明確指定client。",
+        "同接口外部PD client须与DHCPv6Address的client选择匹配。配置索引将省略视为networkd，当前observe/plan却显示dhcpcd；省略行为不一致，请显式指定client。"
+      ]
+    ],
+    "fields": {
+      "interface": [
+        "Required logical interface name from the Router interface index, without Interface/ prefix. It must exist in the declared config. No default.",
+        "必須の論理インターフェース名。Interface/は付けず、宣言済みRouterのインターフェース一覧に存在する必要があります。既定値はありません。",
+        "必填Router介面索引中的邏輯名稱，不加Interface/，必須在宣告設定存在，無預設值。",
+        "必填Router接口索引中的逻辑名称，不加Interface/，必须在声明配置存在，无默认值。"
+      ],
+      "client": [
+        "Host DHCPv6 client/program selector, default empty in the decoded config. networkd is recognized by adoption logic; other explicit names disable networkd DHCPv6 for that interface. The validator does not restrict this to a known enum. No resource-name reference.",
+        "ホストDHCPv6 client・プログラムの選択。読込み上は省略時空です。networkdは引継ぎ判定で識別し、別名を明示した場合はそのIFのnetworkd DHCPv6を無効にします。検証時の既知の列挙値制限はなく、リソース名参照ではありません。",
+        "主機DHCPv6 client/程式選擇，解碼預設空。接管判斷識別networkd，其他明確名稱會停用該介面的networkd DHCPv6。驗證器不限制已知列舉，不是資源名稱參照。",
+        "主机DHCPv6 client/程序选择，解码默认空。接管判断识别networkd，其他显式名称会禁用该接口的networkd DHCPv6。验证器不限制已知枚举，不是资源名引用。"
+      ],
+      "required": [
+        "Default false. Decoded but not consumed by the current address observation/adoption implementation; it does not introduce a wait-for-address requirement.",
+        "省略時false。現行のアドレス観測・引継ぎ実装では使わず、アドレス取得を待つ条件は追加しません。",
+        "預設false，可解碼但目前位址觀察/接管處理不使用，不增加等待位址要求。",
+        "默认false，可解码但当前地址观察/接管处理不使用，不增加等待地址要求。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate.go",
+      "pkg/config/index.go",
+      "pkg/config/validate_wan.go",
+      "pkg/apply/engine.go",
+      "pkg/hostdeps/hostdeps.go",
+      "pkg/controller/chain/system.go"
+    ]
+  },
+  "IPv6RAAddress": {
+    "purpose": [
+      "Declares host-side receipt of IPv6 router advertisements/SLAAC. This is an RA client, not an IPv6RouterAdvertisement server for the LAN.",
+      "ホスト側でIPv6 RA/SLAACを受信する宣言です。RA clientであり、LANへRAを送るIPv6RouterAdvertisementとは別です。",
+      "宣告主機接收IPv6 RA/SLAAC，屬於RA client，不是向LAN公告的IPv6RouterAdvertisement。",
+      "声明主机接收IPv6 RA/SLAAC，属于RA client，不是向LAN通告的IPv6RouterAdvertisement。"
+    ],
+    "rules": [
+      [
+        "managed controls host RA setup. FreeBSD renders accept_rtadv/rtsold. Linux networkd adoption preserves/enables RA; when DHCPv6 is moved away from networkd, the drop-in also suppresses RA-triggered DHCPv6 startup. This declaration does not guarantee usable upstream RAs.",
+        "managedはホストのRA設定を制御します。FreeBSDはaccept_rtadv/rtsoldを生成します。Linuxのnetworkd引継ぎではRAを維持・有効化し、DHCPv6をnetworkdから切り離す場合はdrop-inでRA起点のDHCPv6起動も抑止します。上流から有効なRAが届く保証ではありません。",
+        "managed控制主機RA設定。FreeBSD產生accept_rtadv/rtsold；Linux networkd接管保留/啟用RA，將DHCPv6移離networkd時也由drop-in抑制RA觸發DHCPv6。不保證收到可用上游RA。",
+        "managed控制主机RA配置。FreeBSD生成accept_rtadv/rtsold；Linux networkd接管保留/启用RA，将DHCPv6移出networkd时也由drop-in抑制RA触发DHCPv6。不保证收到可用上游RA。"
+      ]
+    ],
+    "fields": {
+      "interface": [
+        "Required logical interface name from the Router interface index, without Interface/ prefix. It must exist in the declared config. No default.",
+        "必須の論理インターフェース名。Interface/は付けず、宣言済みRouterのインターフェース一覧に存在する必要があります。既定値はありません。",
+        "必填Router介面索引中的邏輯名稱，不加Interface/，必須在宣告設定存在，無預設值。",
+        "必填Router接口索引中的逻辑名称，不加Interface/，必须在声明配置存在，无默认值。"
+      ],
+      "managed": [
+        "Default true. False selects observation-only RA intent instead of requesting host RA settings. It is independent of the Interface managed flag.",
+        "省略時true。falseならホストのRA設定を要求せず観測する意図にします。Interfaceのmanagedとは独立しています。",
+        "預設true；false不要求主機RA設定，只選觀察意圖，與Interface的managed獨立。",
+        "默认true；false不要求主机RA配置，仅选择观察意图，与Interface的managed独立。"
+      ],
+      "required": [
+        "Default false. The current observation/rendering paths do not read this field; it does not require a completed SLAAC address before apply returns.",
+        "省略時false。現行の観測・生成経路では読み取らず、applyが戻る前にSLAACアドレス取得を完了させる条件にはなりません。",
+        "預設false，目前觀察/產生路徑不讀取，不要求apply返回前完成SLAAC位址取得。",
+        "默认false，当前观察/生成路径不读取，不要求apply返回前完成SLAAC地址获取。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate.go",
+      "pkg/config/validate_wan.go",
+      "pkg/apply/engine.go",
+      "pkg/render/freebsd.go",
+      "pkg/hostdeps/hostdeps.go",
+      "pkg/controller/chain/system.go"
+    ]
+  },
+  "DHCPv6Information": {
+    "purpose": [
+      "Projects AFTR, DNS, SNTP and domain-search information from the DHCPv6-PD daemon that uses the same interface. It does not start a standalone information-request client.",
+      "同じインターフェースを使うDHCPv6-PD daemonから、AFTR・DNS・SNTP・検索ドメインの情報を取り込みます。独立したInformation-request clientを起動するリソースではありません。",
+      "從使用同介面的DHCPv6-PD daemon取得AFTR、DNS、SNTP與搜尋網域資訊，不啟動獨立Information-request client。",
+      "从使用同接口的DHCPv6-PD daemon获取AFTR、DNS、SNTP与搜索域信息，不启动独立Information-request client。"
+    ],
+    "rules": [
+      [
+        "A DHCPv6PrefixDelegation resource on the exact same logical interface must reach Bound before this controller reads its daemon socket. Without such a PD resource there is no source to project. Info-request is triggered on bootstrap/transition to Bound, not as a separate lease lifecycle.",
+        "同じ論理interfaceのDHCPv6PrefixDelegationがBoundになってから、そのdaemon socketを読みます。対応するPDリソースがなければ取得元はありません。Info-requestはbootstrap/Bound遷移時に送り、独立したリース管理にはしません。",
+        "同一邏輯interface的DHCPv6PrefixDelegation須先達Bound，才讀取其daemon socket；無對應PD資源就沒有來源。Info-request於bootstrap/轉成Bound時觸發，不是獨立租約生命週期。",
+        "同一逻辑interface的DHCPv6PrefixDelegation须先达到Bound，才读取其daemon socket；无对应PD资源就没有来源。Info-request在bootstrap/转为Bound时触发，不是独立租约生命周期。"
+      ],
+      [
+        "The information controller uses the declared Router rather than the when-filtered effective view and does not evaluate dependsOn. Its Ready status reflects a daemon status read, not proof of a fresh information reply. ready_when is rejected; use supported declarations with the runtime limitations below.",
+        "情報controllerはwhenで絞った実効構成ではなく宣言済みRouterを使い、dependsOnを評価しません。Readyはdaemon状態を読めたことを示し、新しい情報応答を受信した証明ではありません。ready_whenは拒否し、下記の実装上の制約も確認してください。",
+        "資訊controller使用宣告Router而非when篩選後的有效檢視，也不評估dependsOn。Ready表示讀取daemon狀態，不證明收到新資訊回覆。ready_when會被拒絕，須注意以下執行限制。",
+        "信息controller使用声明Router而非when筛选后的有效视图，也不求值dependsOn。Ready表示读取daemon状态，不证明收到新信息回复。ready_when会被拒绝，须注意以下运行限制。"
+      ]
+    ],
+    "fields": {
+      "interface": [
+        "Required interface identifier matched exactly against DHCPv6PrefixDelegation.spec.interface. No default. Use the same logical interface name in both declarations.",
+        "DHCPv6PrefixDelegation.spec.interfaceと完全一致で照合する必須の識別子。既定値はありません。両方の宣言で同じ論理インターフェース名を使います。",
+        "必填介面識別，與DHCPv6PrefixDelegation.spec.interface完全相符，無預設值；兩個宣告使用相同邏輯介面名稱。",
+        "必填接口标识，与DHCPv6PrefixDelegation.spec.interface完全匹配，无默认值；两个声明使用相同逻辑接口名。"
+      ],
+      "request": [
+        "Requested-option declaration, default empty. The current controller does not use it: the daemon InfoRequest sends its fixed ORO for AFTR name, DNS servers, SNTP servers and domain search.",
+        "要求オプションの宣言。省略時は空ですが、現行controllerは使いません。daemonのInfoRequestはAFTR名・DNS・SNTP・検索ドメインを固定のOROで要求します。",
+        "請求選項宣告預設空，目前controller不使用；daemon InfoRequest固定以ORO要求AFTR名稱、DNS、SNTP與搜尋網域。",
+        "请求选项声明默认空，当前controller不使用；daemon InfoRequest固定以ORO请求AFTR名称、DNS、SNTP与搜索域。"
+      ],
+      "when": [
+        "Conditional declaration, default absent. Validated using the shared when rules, but the current information controller does not filter its own work by this field. Do not use it as an information-request stop switch.",
+        "条件の宣言。省略時は未指定で、共通whenのルールで検証します。ただし現行の情報controllerはこの値で自身の処理を絞らず、情報要求の停止スイッチには使えません。",
+        "條件宣告預設未指定，依共用when規則驗證，但目前資訊controller不用它篩選自身工作，不能作為資訊請求停止開關。",
+        "条件声明默认未指定，按共用when规则验证，但当前信息controller不使用它筛选自身工作，不能作为信息请求停止开关。"
+      ],
+      "dependsOn": [
+        "Dependency declaration, default empty. Reference targets/fields are validated, but this controller does not enforce these predicates before reading or requesting information.",
+        "依存条件の宣言。省略時は空です。参照先・fieldは検証しますが、このcontrollerは情報の読取り・要求の前提としてこれらの条件を評価しません。",
+        "相依宣告預設空；驗證目標/field，但此controller不在讀取或要求資訊前強制這些條件。",
+        "依赖声明默认空；验证目标/field，但此controller不在读取或请求信息前强制这些条件。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_wan.go",
+      "pkg/config/diagnostics.go",
+      "pkg/controller/chain/phase2.go",
+      "pkg/controller/chain/chain.go",
+      "pkg/pdclient/client.go"
+    ]
+  },
+  "DHCPv4Client": {
+    "purpose": [
+      "Runs the managed routerd-dhcpv4-client daemon and applies its current lease address, optional default route and optional host DNS settings.",
+      "管理下のrouterd-dhcpv4-client daemonを動かし、取得したリースのアドレス、必要に応じて既定経路とホストのDNS設定を反映します。",
+      "執行受管routerd-dhcpv4-client daemon，套用租約位址，以及選用的預設路由與主機DNS設定。",
+      "运行受管routerd-dhcpv4-client daemon，应用租约地址，以及可选的默认路由与主机DNS配置。"
+    ],
+    "rules": [
+      [
+        "The interface must exist in the declared Router. DHCP identity fields are sent as protocol options, not resource references. Lease expiry/release removes the previously applied address, route and host DNS state; useRoutes/useDNS do not stop lease acquisition.",
+        "interfaceは宣言済みRouterに存在する必要があります。識別情報はプロトコルのオプションとして送信し、リソース参照には使いません。リースの期限切れ・Releaseでは反映済みのアドレス・経路・ホストDNSを撤去します。useRoutes/useDNSはリース取得自体を止めません。",
+        "interface須存在於宣告Router。識別欄位作為協定選項傳送，不是資源參照。租約到期/Release會移除已套用位址、路由及主機DNS；useRoutes/useDNS不停止租約取得。",
+        "interface须存在于声明Router。标识字段作为协议选项发送，不是资源引用。租约到期/Release会移除已应用地址、路由及主机DNS；useRoutes/useDNS不停止租约获取。"
+      ]
+    ],
+    "fields": {
+      "interface": [
+        "Required logical interface name from the Router interface index, without Interface/ prefix. It must exist in the declared config. No default.",
+        "必須の論理インターフェース名。Interface/は付けず、宣言済みRouterのインターフェース一覧に存在する必要があります。既定値はありません。",
+        "必填Router介面索引中的邏輯名稱，不加Interface/，必須在宣告設定存在，無預設值。",
+        "必填Router接口索引中的逻辑名称，不加Interface/，必须在声明配置存在，无默认值。"
+      ],
+      "hostname": [
+        "DHCP option 12 hostname. Default empty: omit the option; it is not automatically filled from the OS hostname. Whitespace is rejected.",
+        "DHCPオプション12のホスト名。省略時は空で、オプションを送りません。OSのホスト名を自動設定する処理はなく、空白文字は拒否します。",
+        "DHCP選項12主機名稱，預設空即不傳送，不自動使用OS主機名稱，拒絕空白字元。",
+        "DHCP选项12主机名，默认空即不发送，不自动使用OS主机名，拒绝空白字符。"
+      ],
+      "requestedAddress": [
+        "Optional preferred IPv4 address, default absent. Must be a bare IPv4 address without prefix. Sent as option 50; it is a request, not a guaranteed/static assignment.",
+        "任意の希望IPv4アドレス。省略時は未指定です。プレフィックス長のないIPv4が必要で、オプション50として要求します。確実な割当てや静的設定にはなりません。",
+        "選填偏好IPv4位址，預設未指定，須為不含前綴長度的IPv4。以選項50請求，不保證分配，也不是靜態設定。",
+        "选填偏好IPv4地址，默认未指定，须为不含前缀长度的IPv4。以选项50请求，不保证分配，也不是静态配置。"
+      ],
+      "classID": [
+        "Vendor class identifier sent as option 60 string bytes. Default empty: omit it. No hexadecimal decoding.",
+        "オプション60として送るvendor class識別子の文字列バイト。省略時は送信しません。16進文字列の復号は行いません。",
+        "以選項60傳送的vendor class識別字串位元組，預設空則省略，不做十六進位解碼。",
+        "以选项60发送的vendor class标识字符串字节，默认空则省略，不做十六进制解码。"
+      ],
+      "clientID": [
+        "Option 61 client identity. An explicit value is sent as string bytes, not decoded hex. Default is byte 1 followed by the interface hardware address. Keep the value stable when the DHCP server identifies leases by client ID.",
+        "オプション61のclient識別子。明示値は文字列のバイトとして送り、16進復号しません。省略時は先頭バイト1とインターフェースのハードウェアアドレスです。サーバーがclient IDでリースを識別する場合は値を安定させます。",
+        "選項61用戶端識別，明確值按字串位元組傳送，不解碼十六進位；預設為位元組1加介面硬體位址。伺服器以client ID識別租約時應保持穩定。",
+        "选项61客户端标识，显式值按字符串字节发送，不解码十六进制；默认为字节1加接口硬件地址。服务器以client ID标识租约时应保持稳定。"
+      ],
+      "useRoutes": [
+        "Default true: apply the lease defaultGateway as a default route when present. False removes the prior managed default route but retains lease acquisition and address application. It does not suppress the gateway value in status.",
+        "省略時trueで、リースにdefaultGatewayがあれば既定経路へ反映します。falseなら以前の管理対象の既定経路を撤去しますが、リース取得とアドレス反映は続きます。状態のgateway情報は抑止しません。",
+        "預設true，租約有defaultGateway時套用預設路由。false移除先前受管預設路由，但保留租約取得與位址套用，也不隱藏狀態中的gateway。",
+        "默认true，租约有defaultGateway时应用默认路由。false移除先前受管默认路由，但保留租约获取与地址应用，也不隐藏状态中的gateway。"
+      ],
+      "useDNS": [
+        "Default true: apply leased DNS servers to the host via resolvectl when /etc/resolv.conf points to systemd-resolved, otherwise write resolv.conf. False clears prior managed DNS state; DNS addresses remain available in status for DNSResolver-related references.",
+        "省略時true。/etc/resolv.confがsystemd-resolvedを指す場合はresolvectl、それ以外はresolv.confへの書込みで取得DNSをホストへ反映します。falseは以前の管理DNSを解除します。DNSResolverなどから参照する状態上のDNSアドレスは残ります。",
+        "預設true；/etc/resolv.conf指向systemd-resolved時用resolvectl，否則寫resolv.conf。false清除先前受管DNS，但狀態DNS仍可供DNSResolver相關參照。",
+        "默认true；/etc/resolv.conf指向systemd-resolved时用resolvectl，否则写resolv.conf。false清除先前受管DNS，但状态DNS仍可供DNSResolver相关引用。"
+      ],
+      "routeMetric": [
+        "Default 0. Used for the applied default-route metric and platform-specific lease-address reconciliation. Schema requires a nonnegative integer. It is not a routing-table ID.",
+        "省略時0です。反映する既定経路のmetricと、OS別のリースアドレス調整に使います。スキーマは0以上の整数を要求し、経路表IDではありません。",
+        "預設0，用於預設路由metric及平台特定位址協調。Schema要求非負整數，不是路由表ID。",
+        "默认0，用于默认路由metric及平台特定地址协调。Schema要求非负整数，不是路由表ID。"
+      ],
+      "when": [
+        "Activation condition; omitted means no gate. See the shared condition reference for state/all/any, unknown handling and age predicates.",
+        "有効化条件。省略時は条件を設けません。state/all/any、unknown、経過時間の条件は共通の条件指定を参照してください。",
+        "啟用條件，省略不設限制；state/all/any、unknown及時間條件請見共用條件參考。",
+        "启用条件，省略不设限制；state/all/any、unknown及时间条件请见共用条件参考。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_wan.go",
+      "pkg/config/validate.go",
+      "pkg/config/listen_ports.go",
+      "pkg/controller/chain/system.go",
+      "pkg/controller/dhcpv4client/controller.go",
+      "pkg/dhcpv4client/message.go",
+      "cmd/routerd-dhcpv4-client/main.go"
     ]
   }
 }

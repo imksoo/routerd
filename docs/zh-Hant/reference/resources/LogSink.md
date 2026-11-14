@@ -56,7 +56,7 @@
 | `spec.syslog.facility` | syslog facility，預設local6；可用值見YAML列舉。 |
 | `spec.syslog.tag` | syslog標籤，預設routerd，不是資源參照。 |
 | `spec.otlp` | OTLP宣告；type=otlp時telemetryRef與endpoint恰好一項必填，此輸出端尚無實際傳送處理。 |
-| `spec.otlp.telemetryRef` | 預定Telemetry參照，與endpoint互斥，預設空。目前僅檢查是否有值，不解析Telemetry目標也不透過它傳送。 |
+| `spec.otlp.telemetryRef` | Telemetry/名稱或單純Telemetry名稱，與endpoint互斥，預設空。即使選其他type，Router整體驗證仍檢查目標存在。目前OTLPSink不用它傳送。 |
 | `spec.otlp.endpoint` | 預定目的URI，與telemetryRef互斥，無預設值；驗證URI語法，但此LogSink不建立exporter。 |
 | `spec.webhook` | type=webhook使用的JSON HTTP POST目的地設定。 |
 | `spec.webhook.url` | type=webhook時必填且無預設值。請使用HTTP(S)絕對URL；驗證器只檢查URI語法，只有HTTP 2xx視為傳送成功。 |
@@ -67,4 +67,4 @@
 | `spec.journald` | type=journald的設定，透過程序logger輸出。 |
 | `spec.journald.identifier` | 加在程序記錄訊息前的前綴，預設routerd，不直接設定journald的SYSLOG_IDENTIFIER。 |
 
-實作: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/diagnostics.go](https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go) · [pkg/eventlog/eventlog.go](https://github.com/imksoo/routerd/blob/main/pkg/eventlog/eventlog.go)
+實作: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/diagnostics.go](https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go) · [pkg/eventlog/eventlog.go](https://github.com/imksoo/routerd/blob/main/pkg/eventlog/eventlog.go) · [pkg/config/validate.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go)

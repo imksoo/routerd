@@ -35,10 +35,10 @@
 
 | YAML | 欄位意義與預設值 |
 | --- | --- |
-| `spec.retention` | 保留期間，必填且無預設值，例如7d或24h。d為整數天數乘24小時，其他使用Go duration。驗證器只解析，不要求正值。 |
+| `spec.retention` | 保留期間，必填且無預設值，例如7d或24h。d為整數天數乘24小時，其他使用Go duration。驗證器只解析，不要求正值。 保留期間請使用正值。 |
 | `spec.signals` | 要清除的記錄類別；預設包含events、accessLogs、pluginRuns、dnsQueries、trafficFlows、firewallEvents、dhcpFingerprints全部七種。DB路徑來自相關記錄資源或OS預設值。 |
-| `spec.sinks` | 刪除前保存目的地；預設空，不保存。接受LogSink/名稱或單純名稱，選取啟用的system.routerd.net/v1alpha1 LogSink。不存在的名稱不會被選取，也不報錯，須確認名稱。 |
+| `spec.sinks` | 刪除前保存目的地，預設空表示不保存。可用LogSink/名稱或單純名稱；Router整體驗證要求目標存在，執行時排除停用輸出端。 |
 | `spec.vacuum` | 刪除後是否對目標SQLite執行VACUUM；預設false，用於整理DB空間而非選擇保留對象。 |
 | `spec.schedule` | 省略或daily；皆為首次及之後至少23小時才執行。不支援時刻或cron表示式。 |
 
-實作: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate_system.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_system.go) · [pkg/config/diagnostics.go](https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go) · [pkg/controller/chain/logretention.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/logretention.go) · [pkg/logstore/retention.go](https://github.com/imksoo/routerd/blob/main/pkg/logstore/retention.go) · [pkg/eventlog/eventlog.go](https://github.com/imksoo/routerd/blob/main/pkg/eventlog/eventlog.go)
+實作: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate_system.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_system.go) · [pkg/config/diagnostics.go](https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go) · [pkg/controller/chain/logretention.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/logretention.go) · [pkg/logstore/retention.go](https://github.com/imksoo/routerd/blob/main/pkg/logstore/retention.go) · [pkg/eventlog/eventlog.go](https://github.com/imksoo/routerd/blob/main/pkg/eventlog/eventlog.go) · [pkg/config/validate.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go)
