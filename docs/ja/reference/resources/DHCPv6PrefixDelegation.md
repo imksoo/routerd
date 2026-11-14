@@ -45,10 +45,10 @@
 
 | YAML | 項目の意味と既定値 |
 | --- | --- |
-| `spec.interface` | 同じRouterの論理上流インターフェースが必須です。外部dhcp6c・dhcpcdを使う場合、同じインターフェースのDHCPv6Addressのclientと一致が必要です。 |
+| `spec.interface` | 同じRouterの論理上流インターフェースが必須です。同じインターフェースにDHCPv6Addressもある場合、外部dhcp6c・dhcpcdのPD clientはそちらのclientと一致が必要です。 |
 | `spec.client` | 既定routerd-dhcpv6-clientで、代替はnetworkd・dhcp6c・dhcpcdです。現行の監督処理はrouterd DHCPv6のsystemdユニットも合成するため、外部指定だけで内蔵デーモンの停止を一般には保証しません。 |
 | `spec.profile` | 空・default・ntt-ngn-direct-hikari-denwa・ntt-hgw-lan-pdです。NTTは対応する生成経路に/60とlink-layer DUID既定を補いますが、認証情報設定や内蔵デーモン引数変更は行いません。 |
-| `spec.prefixLength` | 任意の1～128です。省略・0はNTTで/60、defaultでは長さ指定なしです。サーバーの割当長を保証せず、内蔵取得処理には上記制限があります。 |
+| `spec.prefixLength` | 任意の1～128です。省略・0はNTTで/60、defaultでは長さ指定なしです。割当長を保証せず内蔵取得にも渡しません。一方、HA事前配置の復元は有効長との完全一致が必要で、defaultかつ省略時は0比較となり通常の委任プレフィックスと一致しません。この経路には実際の長さを明示してください。 |
 | `spec.clientDUID` | 区切りなし・偶数桁16進数の任意DUIDです。コロン・空白は拒否し、空なら内蔵クライアントがMAC由来DUID-LLを生成します。IDは復元リースの再利用条件にも影響します。 |
 | `spec.required` | 真偽値で既定falseです。読み込みますが現行実行処理は起動待ち方針に使いません。依存先は実際のBound状態・依存条件を使います。 |
 | `spec.when` | 共通の状態条件で、既定無条件です。監督対象は解決した条件で絞り込むため、宣言を残しても不成立なら取得を停止できます。 |

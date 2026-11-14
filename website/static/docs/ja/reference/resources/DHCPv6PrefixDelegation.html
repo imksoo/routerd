@@ -48,7 +48,7 @@
 <tbody>
 <tr>
 <td><code>spec.interface</code></td>
-<td>同じRouterの論理上流インターフェースが必須です。外部dhcp6c・dhcpcdを使う場合、同じインターフェースのDHCPv6Addressのclientと一致が必要です。</td>
+<td>同じRouterの論理上流インターフェースが必須です。同じインターフェースにDHCPv6Addressもある場合、外部dhcp6c・dhcpcdのPD clientはそちらのclientと一致が必要です。</td>
 </tr>
 <tr>
 <td><code>spec.client</code></td>
@@ -60,7 +60,7 @@
 </tr>
 <tr>
 <td><code>spec.prefixLength</code></td>
-<td>任意の1～128です。省略・0はNTTで/60、defaultでは長さ指定なしです。サーバーの割当長を保証せず、内蔵取得処理には上記制限があります。</td>
+<td>任意の1～128です。省略・0はNTTで/60、defaultでは長さ指定なしです。割当長を保証せず内蔵取得にも渡しません。一方、HA事前配置の復元は有効長との完全一致が必要で、defaultかつ省略時は0比較となり通常の委任プレフィックスと一致しません。この経路には実際の長さを明示してください。</td>
 </tr>
 <tr>
 <td><code>spec.clientDUID</code></td>

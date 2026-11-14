@@ -229,18 +229,22 @@ spec:
 <p>LANのIPv6ルーター広告オプションと、以前の委任プレフィックスの非推奨化を設定します。</p>
 <h2 id="dhcpv6server">DHCPv6Server</h2>
 <p><a href="resources/DHCPv6Server.html">DHCPv6Server</a></p>
+<p>共有dnsmasqでLAN向けDHCPv6アドレス・情報サービスと関連するRAを提供します。</p>
 <h2 id="dhcpv4serverleasesync">DHCPv4ServerLeaseSync</h2>
 <p><a href="resources/DHCPv4ServerLeaseSync.html">DHCPv4ServerLeaseSync</a></p>
 <p>DHCPv4サーバーのリースファイルと存在する固定保持状態を、SSH経由のrsyncで相手ホストへ複製します。DHCPのフェイルオーバープロトコルではありません。</p>
 <h2 id="dhcpv6serverleasesync">DHCPv6ServerLeaseSync</h2>
 <p><a href="resources/DHCPv6ServerLeaseSync.html">DHCPv6ServerLeaseSync</a></p>
+<p>DHCPv6サーバーのリースファイルをSSH経由のrsyncで相手へ複製します。DHCPのフェイルオーバープロトコルではありません。</p>
 <h2 id="dhcpv6prefixdelegationleasesync">DHCPv6PrefixDelegationLeaseSync</h2>
 <p><a href="resources/DHCPv6PrefixDelegationLeaseSync.html">DHCPv6PrefixDelegationLeaseSync</a></p>
+<p>内蔵DHCPv6-PDクライアントのリーススナップショットを、復旧・引継ぎ用に相手へ複製します。</p>
 <h2 id="dhcpv4relay">DHCPv4Relay</h2>
 <p><a href="resources/DHCPv4Relay.html">DHCPv4Relay</a></p>
 <p>dnsmasqを使い、DHCPv4要求を明示した1つのIPv4サーバーへ中継します。</p>
 <h2 id="selfaddresspolicy">SelfAddressPolicy</h2>
 <p><a href="resources/SelfAddressPolicy.html">SelfAddressPolicy</a></p>
+<p>対応するDHCPv6静的生成で使用する、順序付き自己アドレス選択方針です。インターフェースへアドレスを割り当てるものではありません。</p>
 <h2 id="dnszone">DNSZone</h2>
 <p><a href="resources/DNSZone.html">DNSZone</a></p>
 <p>DNSForwarder.zoneRefs経由で提供するローカルA/AAAAレコードと自動PTR応答です。任意レコード型・ゾーン転送・署名を備えた汎用権威DNSではありません。</p>
@@ -312,10 +316,13 @@ spec:
 <p>リソースの現在状態の条件が変わると、成立・取り消しイベントを発行します。EventRuleのようなイベント列の判定ではありません。</p>
 <h2 id="nat44rule">NAT44Rule</h2>
 <p><a href="resources/NAT44Rule.html">NAT44Rule</a></p>
+<p>送信インターフェースまたはEgressRoutePolicyで選んだデバイス経由で、転送IPv4の送信元を変換します。転送許可・変換先アドレスの割当自体は行いません。</p>
 <h2 id="nat44flowdnatpinhole">NAT44FlowDNATPinhole</h2>
 <p><a href="resources/NAT44FlowDNATPinhole.html">NAT44FlowDNATPinhole</a></p>
+<p>送信UDPからIPv4内部エンドポイントを学習し、受信UDPの宛先ポートで動的DNATします。Linux nftables専用で、現行PFは実装していません。</p>
 <h2 id="nat44sessionsync">NAT44SessionSync</h2>
 <p><a href="resources/NAT44SessionSync.html">NAT44SessionSync</a></p>
+<p>SSHイベントストリーム、または常時稼働のconntrackd FTFWリンクでLinux conntrack状態を複製します。FreeBSD PFの状態同期ではありません。</p>
 <h2 id="managementaccess">ManagementAccess</h2>
 <p><a href="resources/ManagementAccess.html">ManagementAccess</a></p>
 <p>反映前の管理経路確認で検査するインターフェースを宣言します。管理用の待受やファイアウォール許可ルールを生成するリソースではありません。</p>
@@ -331,6 +338,7 @@ spec:
 <p>宣言したインターフェースで受信した対象通信を、nftablesのprerouting NATでルーター自身のサービスポートへ転送します。</p>
 <h2 id="firewallflowpinhole">FirewallFlowPinhole</h2>
 <p><a href="resources/FirewallFlowPinhole.html">FirewallFlowPinhole</a></p>
+<p>ファイアウォールのゾーン組で、IPv4 UDPの戻り許可エンドポイントを学習します。アドレス変換は行いません。Linux nftables専用で、現行PFは生成しません。</p>
 <h2 id="trafficflowlog">TrafficFlowLog</h2>
 <p><a href="resources/TrafficFlowLog.html">TrafficFlowLog</a></p>
 <p>接続のスナップショットをSQLiteのフローDBに記録し、利用可能ならDPIキャッシュの情報を補います。パケットキャプチャーや全パケットの記録ではありません。</p>

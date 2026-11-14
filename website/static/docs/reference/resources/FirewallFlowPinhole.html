@@ -5,6 +5,14 @@
 <main class="doclayout wrap"><article class="document"><h1 id="firewallflowpinhole">FirewallFlowPinhole</h1>
 <p><a href="../resources.html#firewallflowpinhole">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: firewall.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Learn allowed return IPv4 UDP endpoints for a pair of firewall zones, without address translation. Linux nftables only; the current PF renderer omits this resource.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>fromZone and toZone must be different existing FirewallZone bare names; self is forbidden. Outbound/inbound and at least one source selector are required. All IPAddressSet references must exist.</li>
+<li>Outbound matching traffic updates a timed set but continues to later rules; it is not automatically accepted. Reverse traffic matches swapped source/destination restrictions, allowed remote UDP source ports and a learned tuple, then is accepted before ordinary explicit zone-pair rules.</li>
+<li>Default remoteAddress binds a learned tuple to remote IPv4 + local IPv4 + local UDP port. localEndpoint omits the remote address from the key, but the configured remote CIDR/set restriction still applies to inbound sources. Remote UDP destination ports are not part of the learned key.</li>
+<li>Learned elements are transient kernel sets; firewall table recreation or reboot loses them. Existing conntrack accepts and control exceptions can precede the pinhole rules, so this is not a replacement for the complete firewall policy.</li>
+</ul>
 <h2 id="yaml-definition">YAML definition</h2>
 <p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
 <pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
@@ -42,9 +50,83 @@
             - &quot;&lt;string&gt;&quot; # string
           maxAge: &quot;&lt;string&gt;&quot; # optional; string
           status: &quot;set&quot; # optional; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
-</code></pre></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+</code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.outbound</code></td>
+<td>Required outbound-learning match. It records eligible UDP flow identities but does not itself allow outbound traffic through the firewall.</td>
+</tr>
+<tr>
+<td><code>spec.outbound.sourceSetRef</code></td>
+<td>Optional existing IPAddressSet/<name> source selector. At least this or sourceCIDRs is required; both may be combined as OR alternatives. Default empty.</td>
+</tr>
+<tr>
+<td><code>spec.outbound.sourceCIDRs</code></td>
+<td>Optional IPv4 source-prefix OR list, default empty. At least one source selector is required. IPv6 is rejected; host bits are masked for rendering.</td>
+</tr>
+<tr>
+<td><code>spec.outbound.destinationCIDRs</code></td>
+<td>Optional IPv4 remote destinations for learning, default empty. Combined with destinationSetRefs as OR; no destination selector means any remote address.</td>
+</tr>
+<tr>
+<td><code>spec.outbound.destinationSetRefs</code></td>
+<td>Optional existing IPAddressSet/<name> remote destination references; duplicates rejected. Default empty. Source and destination categories combine with AND.</td>
+</tr>
+<tr>
+<td><code>spec.outbound.protocol</code></td>
+<td>Required udp; no default and no TCP/IPv6 support for this learning mechanism.</td>
+</tr>
+<tr>
+<td><code>spec.outbound.destinationPorts</code></td>
+<td>Required nonempty outbound UDP destination ports: numeric 1–65535 or a sole start-end range. A range cannot be combined with other list entries.</td>
+</tr>
+<tr>
+<td><code>spec.inbound</code></td>
+<td>Required return-traffic match; sourcePorts selects allowed remote UDP sender ports, not local destination ports.</td>
+</tr>
+<tr>
+<td><code>spec.inbound.sourcePorts</code></td>
+<td>Required nonempty remote UDP source-port list with the same 1–65535 / sole-range constraints as outbound.destinationPorts.</td>
+</tr>
+<tr>
+<td><code>spec.timeout</code></td>
+<td>Optional strictly positive Go duration; default 3m. Each matching outbound packet refreshes the learned element. Rendering rounds to seconds with a minimum of 1s; this is learned-state expiry, not a UDP protocol timeout.</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>Optional common activation condition, default unconditional. A filtered resource contributes no learned map/set rules. See common fields for nested conditions and schema limitations.</td>
+</tr>
+<tr>
+<td><code>spec.fromZone</code></td>
+<td>Required existing FirewallZone metadata.name for outbound origin. Must differ from toZone; self is rejected.</td>
+</tr>
+<tr>
+<td><code>spec.toZone</code></td>
+<td>Required existing FirewallZone metadata.name for outbound destination; becomes inbound origin for return checks. No self.</td>
+</tr>
+<tr>
+<td><code>spec.correlation</code></td>
+<td>Optional tuple-key selection; default remoteAddress. Does not configure a resource reference.</td>
+</tr>
+<tr>
+<td><code>spec.correlation.key</code></td>
+<td>remoteAddress (default) or localEndpoint. The former includes remote IPv4 in each key; the latter uses only internal IPv4 + UDP port.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_firewall.go">pkg/config/validate_firewall.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/nftables.go">pkg/render/nftables.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/pf.go">pkg/render/pf.go</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
 <li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 </ul>
 </div>
 </aside></main>

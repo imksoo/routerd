@@ -48,7 +48,7 @@
 <tbody>
 <tr>
 <td><code>spec.interface</code></td>
-<td>必填同一 Router 的邏輯上行介面。外部 dhcp6c/dhcpcd PD 客戶端須與同介面的 DHCPv6Address client 相符。</td>
+<td>必填同一 Router 的邏輯上行介面。若 DHCPv6Address 亦使用同一介面，外部 dhcp6c/dhcpcd PD client 須與該資源 client 相符。</td>
 </tr>
 <tr>
 <td><code>spec.client</code></td>
@@ -60,7 +60,7 @@
 </tr>
 <tr>
 <td><code>spec.prefixLength</code></td>
-<td>選用 1–128，省略或 0 時 NTT 為 /60，default 無長度提示，不保證伺服器分配長度；內建取得限制見上文。</td>
+<td>選用 1–128，省略或 0 時 NTT 為 /60，default 無長度提示，不保證分配長度，也不傳入內建取得。HA 預置快照重用卻要求有效長度完全相同：default 省略時為 0，不符合一般委派前綴，此路徑須明確指定實際長度。</td>
 </tr>
 <tr>
 <td><code>spec.clientDUID</code></td>

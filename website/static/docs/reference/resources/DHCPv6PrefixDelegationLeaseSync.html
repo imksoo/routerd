@@ -5,6 +5,13 @@
 <main class="doclayout wrap"><article class="document"><h1 id="dhcpv6prefixdelegationleasesync">DHCPv6PrefixDelegationLeaseSync</h1>
 <p><a href="../resources.html#dhcpv6prefixdelegationleasesync">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Replicate the built-in DHCPv6-PD client lease snapshot to peer hosts for recovery/takeover.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>source.resource must name a DHCPv6PrefixDelegation, and targets must be nonempty. Normal validation checks source spelling/type but not existence; the source path is constructed from that name regardless.</li>
+<li>Copies only <StateDir>/dhcpv6-client/<name>/lease.json to the same absolute peer path. It does not copy the event journal, start/activate the peer client or extend lease validity. Restoration still checks snapshot freshness, client identity and configured PD compatibility.</li>
+<li>Each invocation uses rsync -a --checksum --delay-updates, a default rsync inactivity timeout of 60s and a 2m command execution limit. SSH defaults BatchMode=yes and ConnectTimeout=10, overridable via sshOptions. A Synced status records file-copy success, not peer lease reload or client continuity.</li>
+</ul>
 <h2 id="yaml-definition">YAML definition</h2>
 <p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
 <pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
@@ -36,9 +43,67 @@
             - &quot;&lt;string&gt;&quot; # string
           maxAge: &quot;&lt;string&gt;&quot; # optional; string
           status: &quot;set&quot; # optional; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
-</code></pre></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+</code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.source</code></td>
+<td>Required source descriptor with resource; no filesystem path override here.</td>
+</tr>
+<tr>
+<td><code>spec.source.resource</code></td>
+<td>Required bare DHCPv6PrefixDelegation name or DHCPv6PrefixDelegation/name. Fixed source <StateDir>/dhcpv6-client/<name>/lease.json; no field/optional or source-path override. External-client lease formats are not converted.</td>
+</tr>
+<tr>
+<td><code>spec.command</code></td>
+<td>Optional executable name/path, default rsync; receives rsync arguments directly, not a shell command string.</td>
+</tr>
+<tr>
+<td><code>spec.interval</code></td>
+<td>Go duration, default 30s. Suppresses work until this long after the last successful syncedAt; controller itself is polled every 30s and also on subscriptions. Zero/negative values disable this skip, not accelerate the periodic scheduler.</td>
+</tr>
+<tr>
+<td><code>spec.targets</code></td>
+<td>Required nonempty peer-target list. Files are sent serially to each target; first failed transfer records Error/SyncFailed. No remote routerd API call is made.</td>
+</tr>
+<tr>
+<td><code>spec.targets[].name</code></td>
+<td>Optional status label, default empty; does not select the destination host or source.</td>
+</tr>
+<tr>
+<td><code>spec.targets[].host</code></td>
+<td>Required SSH host/address. CR/LF prohibited; must already be reachable and configured for noninteractive SSH.</td>
+</tr>
+<tr>
+<td><code>spec.targets[].user</code></td>
+<td>Optional SSH user; empty omits user@ and lets SSH choose its configured user. CR/LF prohibited.</td>
+</tr>
+<tr>
+<td><code>spec.targets[].sshOptions</code></td>
+<td>Optional SSH argument list assembled into rsync -e. Defaults add -o BatchMode=yes and -o ConnectTimeout=10 unless those keys are supplied. No CR/LF in entries.</td>
+</tr>
+<tr>
+<td><code>spec.targets[].options</code></td>
+<td>Optional extra rsync arguments, appended after defaults. A supplied --timeout or --timeout=... suppresses the default --timeout=60. Does not override the separate 2m process limit; no CR/LF.</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>Optional common state condition, default unconditional. Use actual active-role status to prevent standby writers; this resource does not itself negotiate which peer should own the lease file.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_dhcp.go">pkg/config/validate_dhcp.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/filesync.go">pkg/controller/chain/filesync.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go">pkg/controller/chain/chain.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/platform/platform.go">pkg/platform/platform.go</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
 <li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 </ul>
 </div>
 </aside></main>

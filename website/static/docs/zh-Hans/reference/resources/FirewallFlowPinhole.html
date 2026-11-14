@@ -5,6 +5,14 @@
 <main class="doclayout wrap"><article class="document"><h1 id="firewallflowpinhole">FirewallFlowPinhole</h1>
 <p><a href="../resources.html#firewallflowpinhole">各资源的配置</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: firewall.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>为防火墙区域配对学习允许的返回 IPv4 UDP 端点，不转换地址。仅 Linux nftables，当前 PF 省略此资源。</p>
+<h2 id="指定条件与引用关系">指定条件与引用关系</h2>
+<ul>
+<li>fromZone/toZone 必须为不同已有 FirewallZone 的单独名称，不允许 self。outbound/inbound 与至少一个源选择器必填，所有 IPAddressSet 引用须存在。</li>
+<li>发出匹配时更新带期限集合后继续后续规则，不自动允许。反向流量须匹配交换后的源/目标限制、允许远端 UDP 源端口及学习组合，随后在普通明确区域规则前允许。</li>
+<li>默认 remoteAddress 的键为远端 IPv4 + 本机 IPv4 + 本机 UDP 端口。localEndpoint 从键中省略远端地址，但配置的远端 CIDR/集合仍限制入站源。远端 UDP 目标端口不在学习键内。</li>
+<li>学习条目是临时内核集合，重建防火墙表或重启会丢失。已有 conntrack 允许与控制例外可能先执行，不能取代完整防火墙策略。</li>
+</ul>
 <h2 id="yaml定义">YAML定义</h2>
 <p>此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。</p>
 <pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
@@ -42,9 +50,83 @@
             - &quot;&lt;string&gt;&quot; # string
           maxAge: &quot;&lt;string&gt;&quot; # 选填; string
           status: &quot;set&quot; # 选填; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
-</code></pre></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+</code></pre>
+<h2 id="字段含义与默认值">字段含义与默认值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>字段含义与默认值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.outbound</code></td>
+<td>必填的发出学习匹配。记录匹配的 UDP 流量身份，但不会自行允许流量通过防火墙。</td>
+</tr>
+<tr>
+<td><code>spec.outbound.sourceSetRef</code></td>
+<td>可选已有 IPAddressSet/<name> 源选择器。此字段或 sourceCIDRs 至少一者必填；两者可作 OR。默认空。</td>
+</tr>
+<tr>
+<td><code>spec.outbound.sourceCIDRs</code></td>
+<td>可选 IPv4 源前缀 OR 列表，默认空，至少需要一个源选择器。拒绝 IPv6，生成时掩码主机位。</td>
+</tr>
+<tr>
+<td><code>spec.outbound.destinationCIDRs</code></td>
+<td>可选学习用 IPv4 远端目标，默认空。与 destinationSetRefs 作 OR；两者均无时任意远端地址。</td>
+</tr>
+<tr>
+<td><code>spec.outbound.destinationSetRefs</code></td>
+<td>可选已有 IPAddressSet/<name> 远端目标引用，不可重复，默认空。源与目标两类以 AND 组合。</td>
+</tr>
+<tr>
+<td><code>spec.outbound.protocol</code></td>
+<td>必填 udp，无默认值。此学习机制不支持 TCP/IPv6。</td>
+</tr>
+<tr>
+<td><code>spec.outbound.destinationPorts</code></td>
+<td>必填非空发出 UDP 目标端口：数字 1–65535 或唯一 start-end 范围。范围不可与其他条目混用。</td>
+</tr>
+<tr>
+<td><code>spec.inbound</code></td>
+<td>必填返回流量匹配。sourcePorts 选择远端 UDP 发送者端口，不是本机目标端口。</td>
+</tr>
+<tr>
+<td><code>spec.inbound.sourcePorts</code></td>
+<td>必填非空远端 UDP 源端口列表，与 outbound.destinationPorts 相同的 1–65535/单独范围限制。</td>
+</tr>
+<tr>
+<td><code>spec.timeout</code></td>
+<td>可选严格为正的 Go 时长，默认 3m。每个匹配发出数据包更新学习条目。生成时四舍五入为秒且至少 1s；这是学习状态过期，不是 UDP 协议超时。</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>可选通用启用条件，默认无条件。筛除资源不生成学习映射/集合规则。嵌套条件与模式限制请见通用字段。</td>
+</tr>
+<tr>
+<td><code>spec.fromZone</code></td>
+<td>必填发出源的已有 FirewallZone metadata.name，须与 toZone 不同，拒绝 self。</td>
+</tr>
+<tr>
+<td><code>spec.toZone</code></td>
+<td>必填发出目标的已有 FirewallZone metadata.name，返回检查时成为输入源，不允许 self。</td>
+</tr>
+<tr>
+<td><code>spec.correlation</code></td>
+<td>可选组合键选择，默认 remoteAddress，不是资源引用。</td>
+</tr>
+<tr>
+<td><code>spec.correlation.key</code></td>
+<td>remoteAddress（默认）或 localEndpoint。前者包含远端 IPv4，后者仅本机 IPv4 + UDP 端口。</td>
+</tr>
+</tbody>
+</table>
+<p>实现: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_firewall.go">pkg/config/validate_firewall.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/nftables.go">pkg/render/nftables.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/pf.go">pkg/render/pf.go</a></p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
 <ul>
+<li><a href="#指定条件与引用关系">指定条件与引用关系</a></li>
 <li><a href="#yaml定义">YAML定义</a></li>
+<li><a href="#字段含义与默认值">字段含义与默认值</a></li>
 </ul>
 </div>
 </aside></main>

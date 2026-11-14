@@ -5,6 +5,12 @@
 <main class="doclayout wrap"><article class="document"><h1 id="selfaddresspolicy">SelfAddressPolicy</h1>
 <p><a href="../resources.html#selfaddresspolicy">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Describe an ordered self-address selection policy used by supporting static DHCPv6 rendering. It does not assign an address to an interface.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>Current live DHCPv6 LAN generation does not consume DHCPv6Server.selfAddressPolicy or dnsSource: self. This policy can affect the separate static renderer, but declaring it does not currently make the running server advertise self DNS. Use explicit dnsServers/dnsServerFrom for the live path.</li>
+<li>References are bare declared Interface/IPv6DelegatedAddress names and are validated even when their source branch does not use them. No when or dependsOn fields exist on this resource.</li>
+</ul>
 <h2 id="yaml-definition">YAML definition</h2>
 <p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
 <pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
@@ -22,9 +28,59 @@
         matchSuffix: &quot;&lt;string&gt;&quot; # optional; string
         ordinal: 1 # optional; integer; minimum=1
         source: &quot;delegatedAddress&quot; # Required; string; enum=[&quot;delegatedAddress&quot;, &quot;interfaceAddress&quot;, &quot;static&quot;]
-</code></pre></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+</code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.addressFamily</code></td>
+<td>Required ipv4 or ipv6. Validation accepts both, but the current selection consumer is the older DHCPv6 static renderer; ipv4 does not provide an independent live address-selection service.</td>
+</tr>
+<tr>
+<td><code>spec.candidates</code></td>
+<td>Required nonempty ordered list. The supporting static renderer tries candidates in order and picks the first successful result; failure of all candidates is an error. No automatic candidates for an explicitly referenced policy.</td>
+</tr>
+<tr>
+<td><code>spec.candidates[].source</code></td>
+<td>Required delegatedAddress/interfaceAddress/static. delegatedAddress is IPv6-only and prohibits address/interface. interfaceAddress requires interface; static requires an address matching addressFamily. Unused extra fields on the latter two sources are not generally rejected.</td>
+</tr>
+<tr>
+<td><code>spec.candidates[].interface</code></td>
+<td>Required declared logical interface for interfaceAddress, forbidden for delegatedAddress. Any supplied value is checked for existence even when the chosen source does not consume it.</td>
+</tr>
+<tr>
+<td><code>spec.candidates[].delegatedAddress</code></td>
+<td>Required bare IPv6DelegatedAddress name for delegatedAddress source. Existing resource required; supporting renderer derives from observed prefixes for that resource interface, not a generic status-value field.</td>
+</tr>
+<tr>
+<td><code>spec.candidates[].address</code></td>
+<td>Required bare address matching addressFamily for static source. Forbidden for delegatedAddress; no automatic OS assignment is performed.</td>
+</tr>
+<tr>
+<td><code>spec.candidates[].addressSuffix</code></td>
+<td>For delegatedAddress, optional IPv6 suffix; omitted inherits the referenced resource addressSuffix. Other sources do not use it for selection.</td>
+</tr>
+<tr>
+<td><code>spec.candidates[].matchSuffix</code></td>
+<td>For interfaceAddress, optional IPv6 pattern. Each nonzero byte must match the address; zero bytes act as unconstrained positions, not a conventional contiguous suffix mask. If set, first matching global IPv6 wins and ordinal is ignored.</td>
+</tr>
+<tr>
+<td><code>spec.candidates[].ordinal</code></td>
+<td>One-based interfaceAddress index when matchSuffix is empty; omitted/0 becomes 1. Schema minimum 1; negative validation rejected. Ordering follows the observed-address list, not a promised stable address identity. Out-of-range tries the next candidate.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_dhcp.go">pkg/config/validate_dhcp.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/dnsmasq.go">pkg/render/dnsmasq.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go">pkg/controller/chain/chain.go</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
 <li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 </ul>
 </div>
 </aside></main>

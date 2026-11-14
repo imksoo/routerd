@@ -5,6 +5,14 @@
 <main class="doclayout wrap"><article class="document"><h1 id="firewallflowpinhole">FirewallFlowPinhole</h1>
 <p><a href="../resources.html#firewallflowpinhole">各資源的設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: firewall.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>為防火牆區域配對學習允許的返回 IPv4 UDP 端點，不轉換位址。僅 Linux nftables，目前 PF 省略此資源。</p>
+<h2 id="指定條件與參照關係">指定條件與參照關係</h2>
+<ul>
+<li>fromZone/toZone 必須為不同既有 FirewallZone 的單純名稱，不允許 self。outbound/inbound 與至少一個來源選擇器必填，所有 IPAddressSet 參照須存在。</li>
+<li>送出符合時更新具期限集合後繼續後續規則，不自動允許。反向流量須符合交換後的來源/目的限制、允許遠端 UDP 來源連接埠及學習組合，之後在一般明確區域規則前允許。</li>
+<li>預設 remoteAddress 的鍵為遠端 IPv4 + 本機 IPv4 + 本機 UDP 連接埠。localEndpoint 從鍵中省略遠端位址，但設定的遠端 CIDR/集合仍限制入站來源。遠端 UDP 目的連接埠不在學習鍵內。</li>
+<li>學習項目是暫時核心集合，重建防火牆表或重啟會遺失。既有 conntrack 允許與控制例外可能先執行，不能取代完整防火牆策略。</li>
+</ul>
 <h2 id="yaml定義">YAML定義</h2>
 <p>此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。</p>
 <pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
@@ -42,9 +50,83 @@
             - &quot;&lt;string&gt;&quot; # string
           maxAge: &quot;&lt;string&gt;&quot; # 選填; string
           status: &quot;set&quot; # 選填; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
-</code></pre></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+</code></pre>
+<h2 id="欄位意義與預設值">欄位意義與預設值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>欄位意義與預設值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.outbound</code></td>
+<td>必填的送出學習比對。記錄符合的 UDP 流量身分，但不會自行允許流量通過防火牆。</td>
+</tr>
+<tr>
+<td><code>spec.outbound.sourceSetRef</code></td>
+<td>選用既有 IPAddressSet/<name> 來源選擇器。此欄或 sourceCIDRs 至少一者必填；兩者可作 OR。預設空。</td>
+</tr>
+<tr>
+<td><code>spec.outbound.sourceCIDRs</code></td>
+<td>選用 IPv4 來源前綴 OR 清單，預設空，至少需要一個來源選擇器。拒絕 IPv6，產生時遮罩主機位元。</td>
+</tr>
+<tr>
+<td><code>spec.outbound.destinationCIDRs</code></td>
+<td>選用學習用 IPv4 遠端目的，預設空。與 destinationSetRefs 作 OR；兩者皆無時任意遠端位址。</td>
+</tr>
+<tr>
+<td><code>spec.outbound.destinationSetRefs</code></td>
+<td>選用既有 IPAddressSet/<name> 遠端目的參照，不可重複，預設空。來源與目的兩類以 AND 組合。</td>
+</tr>
+<tr>
+<td><code>spec.outbound.protocol</code></td>
+<td>必填 udp，無預設值。此學習機制不支援 TCP/IPv6。</td>
+</tr>
+<tr>
+<td><code>spec.outbound.destinationPorts</code></td>
+<td>必填非空送出 UDP 目的連接埠：數字 1–65535 或唯一 start-end 範圍。範圍不可與其他項目混用。</td>
+</tr>
+<tr>
+<td><code>spec.inbound</code></td>
+<td>必填返回流量比對。sourcePorts 選擇遠端 UDP 傳送者連接埠，不是本機目的連接埠。</td>
+</tr>
+<tr>
+<td><code>spec.inbound.sourcePorts</code></td>
+<td>必填非空遠端 UDP 來源連接埠清單，與 outbound.destinationPorts 相同的 1–65535/單獨範圍限制。</td>
+</tr>
+<tr>
+<td><code>spec.timeout</code></td>
+<td>選用嚴格為正的 Go 時間長度，預設 3m。每個符合送出封包更新學習項目。產生時四捨五入為秒且至少 1s；這是學習狀態到期，不是 UDP 協定逾時。</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>選用共用啟用條件，預設無條件。篩除資源不產生學習映射/集合規則。巢狀條件與結構描述限制請見共用欄位。</td>
+</tr>
+<tr>
+<td><code>spec.fromZone</code></td>
+<td>必填送出來源的既有 FirewallZone metadata.name，須與 toZone 不同，拒絕 self。</td>
+</tr>
+<tr>
+<td><code>spec.toZone</code></td>
+<td>必填送出目的的既有 FirewallZone metadata.name，返回檢查時成為輸入來源，不允許 self。</td>
+</tr>
+<tr>
+<td><code>spec.correlation</code></td>
+<td>選用組合鍵選擇，預設 remoteAddress，不是資源參照。</td>
+</tr>
+<tr>
+<td><code>spec.correlation.key</code></td>
+<td>remoteAddress（預設）或 localEndpoint。前者包含遠端 IPv4，後者僅本機 IPv4 + UDP 連接埠。</td>
+</tr>
+</tbody>
+</table>
+<p>實作: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_firewall.go">pkg/config/validate_firewall.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/nftables.go">pkg/render/nftables.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/pf.go">pkg/render/pf.go</a></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
 <ul>
+<li><a href="#指定條件與參照關係">指定條件與參照關係</a></li>
 <li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#欄位意義與預設值">欄位意義與預設值</a></li>
 </ul>
 </div>
 </aside></main>

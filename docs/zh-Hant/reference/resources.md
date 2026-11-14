@@ -390,6 +390,8 @@ spec:
 
 [DHCPv6Server](resources/DHCPv6Server.md)
 
+使用共用 dnsmasq 程序提供 LAN DHCPv6 位址或資訊服務及相關 RA 行為。
+
 
 ## DHCPv4ServerLeaseSync
 
@@ -402,10 +404,14 @@ spec:
 
 [DHCPv6ServerLeaseSync](resources/DHCPv6ServerLeaseSync.md)
 
+以 SSH 上的 rsync 將 DHCPv6 伺服器租約檔複製到對等主機，並非 DHCP 容錯移轉協定。
+
 
 ## DHCPv6PrefixDelegationLeaseSync
 
 [DHCPv6PrefixDelegationLeaseSync](resources/DHCPv6PrefixDelegationLeaseSync.md)
+
+複製內建 DHCPv6-PD 客戶端租約快照到對等主機，供復原與接管。
 
 
 ## DHCPv4Relay
@@ -418,6 +424,8 @@ spec:
 ## SelfAddressPolicy
 
 [SelfAddressPolicy](resources/SelfAddressPolicy.md)
+
+描述供支援的靜態 DHCPv6 轉譯使用的有序自身位址選擇策略，不會指派介面位址。
 
 
 ## DNSZone
@@ -588,15 +596,21 @@ spec:
 
 [NAT44Rule](resources/NAT44Rule.md)
 
+透過輸出介面或 EgressRoutePolicy 選定裝置轉換路由 IPv4 來源。NAT 本身不允許轉送，也不指派轉換位址。
+
 
 ## NAT44FlowDNATPinhole
 
 [NAT44FlowDNATPinhole](resources/NAT44FlowDNATPinhole.md)
 
+從送出 IPv4 UDP 學習內部端點，依收到 UDP 的目的連接埠動態 DNAT。僅 Linux nftables，目前 PF 未實作此資源。
+
 
 ## NAT44SessionSync
 
 [NAT44SessionSync](resources/NAT44SessionSync.md)
+
+使用 SSH 事件串流或持續執行的 conntrackd FTFW 對等連結複製 Linux conntrack 狀態，不是 FreeBSD PF 狀態同步。
 
 
 ## ManagementAccess
@@ -633,6 +647,8 @@ spec:
 ## FirewallFlowPinhole
 
 [FirewallFlowPinhole](resources/FirewallFlowPinhole.md)
+
+為防火牆區域配對學習允許的返回 IPv4 UDP 端點，不轉換位址。僅 Linux nftables，目前 PF 省略此資源。
 
 
 ## TrafficFlowLog

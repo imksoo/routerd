@@ -390,6 +390,8 @@ Configure IPv6 router-advertisement options on a LAN and deprecate previously de
 
 [DHCPv6Server](resources/DHCPv6Server.md)
 
+Provide LAN DHCPv6 address/information service and associated RA behavior using the shared dnsmasq process.
+
 
 ## DHCPv4ServerLeaseSync
 
@@ -402,10 +404,14 @@ Copy a DHCPv4 server lease file and available sticky-state files to peer hosts u
 
 [DHCPv6ServerLeaseSync](resources/DHCPv6ServerLeaseSync.md)
 
+Copy one DHCPv6 server lease file to peer hosts using rsync over SSH; not a DHCP failover protocol.
+
 
 ## DHCPv6PrefixDelegationLeaseSync
 
 [DHCPv6PrefixDelegationLeaseSync](resources/DHCPv6PrefixDelegationLeaseSync.md)
+
+Replicate the built-in DHCPv6-PD client lease snapshot to peer hosts for recovery/takeover.
 
 
 ## DHCPv4Relay
@@ -418,6 +424,8 @@ Relay DHCPv4 requests through dnsmasq to one explicitly configured IPv4 server.
 ## SelfAddressPolicy
 
 [SelfAddressPolicy](resources/SelfAddressPolicy.md)
+
+Describe an ordered self-address selection policy used by supporting static DHCPv6 rendering. It does not assign an address to an interface.
 
 
 ## DNSZone
@@ -588,15 +596,21 @@ Publish asserted/retracted events when conditions over resource status change. U
 
 [NAT44Rule](resources/NAT44Rule.md)
 
+Translate routed IPv4 source addresses through an egress interface or selected EgressRoutePolicy device. NAT does not itself permit forwarding or assign the translated address.
+
 
 ## NAT44FlowDNATPinhole
 
 [NAT44FlowDNATPinhole](resources/NAT44FlowDNATPinhole.md)
 
+Learn an IPv4 UDP internal endpoint from outbound traffic and dynamically DNAT inbound UDP by its destination port. Linux nftables only; the current PF renderer does not implement this resource.
+
 
 ## NAT44SessionSync
 
 [NAT44SessionSync](resources/NAT44SessionSync.md)
+
+Replicate Linux conntrack state using either an SSH event stream or a continuously running conntrackd FTFW peer link. This is not FreeBSD PF state synchronization.
 
 
 ## ManagementAccess
@@ -633,6 +647,8 @@ Redirect matching traffic received on a declared interface to a service port on 
 ## FirewallFlowPinhole
 
 [FirewallFlowPinhole](resources/FirewallFlowPinhole.md)
+
+Learn allowed return IPv4 UDP endpoints for a pair of firewall zones, without address translation. Linux nftables only; the current PF renderer omits this resource.
 
 
 ## TrafficFlowLog

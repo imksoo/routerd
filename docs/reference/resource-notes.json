@@ -6373,10 +6373,10 @@
     ],
     "fields": {
       "interface": [
-        "Required logical uplink interface in this Router. An external dhcp6c/dhcpcd PD client must match a DHCPv6Address client declared on the same interface.",
-        "同じRouterの論理上流インターフェースが必須です。外部dhcp6c・dhcpcdを使う場合、同じインターフェースのDHCPv6Addressのclientと一致が必要です。",
-        "必填同一 Router 的邏輯上行介面。外部 dhcp6c/dhcpcd PD 客戶端須與同介面的 DHCPv6Address client 相符。",
-        "必填同一 Router 的逻辑上行接口。外部 dhcp6c/dhcpcd PD 客户端须与同接口的 DHCPv6Address client 相符。"
+        "Required logical uplink interface in this Router. If DHCPv6Address also uses the same interface, an external dhcp6c/dhcpcd PD client must match that resource client.",
+        "同じRouterの論理上流インターフェースが必須です。同じインターフェースにDHCPv6Addressもある場合、外部dhcp6c・dhcpcdのPD clientはそちらのclientと一致が必要です。",
+        "必填同一 Router 的邏輯上行介面。若 DHCPv6Address 亦使用同一介面，外部 dhcp6c/dhcpcd PD client 須與該資源 client 相符。",
+        "必填同一 Router 的逻辑上行接口。若 DHCPv6Address 也使用同一接口，外部 dhcp6c/dhcpcd PD client 须与该资源 client 相符。"
       ],
       "client": [
         "Default routerd-dhcpv6-client; accepted alternatives networkd/dhcp6c/dhcpcd. Current supervision can also synthesize a routerd DHCPv6 systemd unit, so selecting an external client is not a general guarantee that the built-in daemon is disabled.",
@@ -6391,10 +6391,10 @@
         "空值/default、ntt-ngn-direct-hikari-denwa 或 ntt-hgw-lan-pd。NTT 在支持的生成路径提供 /60 与 link-layer DUID 默认值，不配置运营商凭据或变更内置命令。"
       ],
       "prefixLength": [
-        "Optional 1–128. Omitted/0 means /60 for NTT profiles and no configured hint for default; it is not a guarantee of the prefix size assigned by the server. See the built-in acquisition limitation above.",
-        "任意の1～128です。省略・0はNTTで/60、defaultでは長さ指定なしです。サーバーの割当長を保証せず、内蔵取得処理には上記制限があります。",
-        "選用 1–128，省略或 0 時 NTT 為 /60，default 無長度提示，不保證伺服器分配長度；內建取得限制見上文。",
-        "可选 1–128，省略或 0 时 NTT 为 /60，default 无长度提示，不保证服务器分配长度；内置获取限制见上文。"
+        "Optional 1–128. Omitted/0 means /60 for NTT profiles and no configured hint for default; it is not a guarantee of assigned size and is not passed to built-in acquisition. HA staged-snapshot reuse requires exact equality with this effective length: default profile with omitted length evaluates to 0 and does not match normal delegated prefixes. Specify the actual length for that path.",
+        "任意の1～128です。省略・0はNTTで/60、defaultでは長さ指定なしです。割当長を保証せず内蔵取得にも渡しません。一方、HA事前配置の復元は有効長との完全一致が必要で、defaultかつ省略時は0比較となり通常の委任プレフィックスと一致しません。この経路には実際の長さを明示してください。",
+        "選用 1–128，省略或 0 時 NTT 為 /60，default 無長度提示，不保證分配長度，也不傳入內建取得。HA 預置快照重用卻要求有效長度完全相同：default 省略時為 0，不符合一般委派前綴，此路徑須明確指定實際長度。",
+        "可选 1–128，省略或 0 时 NTT 为 /60，default 无长度提示，不保证分配长度，也不传入内置获取。HA 预置快照重用却要求有效长度完全相同：default 省略时为 0，不符合常规委派前缀，此路径须明确指定实际长度。"
       ],
       "clientDUID": [
         "Optional DUID as unseparated even-length hexadecimal. Colons/whitespace are rejected. Empty lets the built-in client derive DUID-LL from MAC; identity affects whether a restored lease can be reused.",
@@ -7225,6 +7225,1117 @@
       "pkg/controller/mobility/enrollmentclient.go",
       "pkg/controller/mobility/core_helpers.go",
       "pkg/controlapi/client.go"
+    ]
+  },
+  "DHCPv6ServerLeaseSync": {
+    "purpose": [
+      "Copy one DHCPv6 server lease file to peer hosts using rsync over SSH; not a DHCP failover protocol.",
+      "DHCPv6サーバーのリースファイルをSSH経由のrsyncで相手へ複製します。DHCPのフェイルオーバープロトコルではありません。",
+      "以 SSH 上的 rsync 將 DHCPv6 伺服器租約檔複製到對等主機，並非 DHCP 容錯移轉協定。",
+      "以 SSH 上的 rsync 将 DHCPv6 服务器租约文件复制到对等主机，并非 DHCP 故障转移协议。"
+    ],
+    "rules": [
+      [
+        "source.resource and at least one target host are required. Unlike status-value references, normal validation checks the source spelling/type but does not verify that this DHCPv6Server exists. A missing named source therefore falls back to the platform default lease path.",
+        "source.resourceと1件以上のtarget.hostが必須です。状態値参照とは異なり、通常検証は表記・型だけを確認し、DHCPv6Serverの存在を検証しません。存在しない名前でもプラットフォーム既定リースパスに補完します。",
+        "source.resource 與至少一個 target.host 必填。不同於狀態值參照，一般驗證僅檢查寫法與類型，不驗證 DHCPv6Server 是否存在；不存在的名稱會退回平台預設租約路徑。",
+        "source.resource 与至少一个 target.host 必填。不同于状态值引用，常规验证仅检查写法与类型，不验证 DHCPv6Server 是否存在；不存在的名称会回退至平台默认租约路径。"
+      ],
+      [
+        "Only the main lease file is copied; unlike DHCPv4ServerLeaseSync, this path does not include dhcp-sticky.db/WAL. The destination uses the same absolute path as the local source. No target path override or automatic peer service reload is provided.",
+        "主リースファイルだけを複製し、DHCPv4ServerLeaseSyncと異なりdhcp-sticky.db・WALを含めません。宛先はローカル送信元と同じ絶対パスです。宛先上書き・相手サービスの自動再読込はありません。",
+        "僅複製主要租約檔；不同於 DHCPv4ServerLeaseSync，此路徑不含 dhcp-sticky.db/WAL。目的端使用與本機來源相同的絕對路徑，無目標路徑覆寫或自動對端服務重新載入。",
+        "仅复制主租约文件；不同于 DHCPv4ServerLeaseSync，此路径不含 dhcp-sticky.db/WAL。目标端使用与本机来源相同的绝对路径，无目标路径覆盖或自动对端服务重新加载。"
+      ],
+      [
+        "Each invocation uses rsync -a --checksum --delay-updates, a default rsync inactivity timeout of 60s and a 2m command execution limit. SSH defaults BatchMode=yes and ConnectTimeout=10, overridable via sshOptions. A Synced status records file-copy success, not peer lease reload or client continuity.",
+        "各実行はrsync -a --checksum --delay-updatesを使い、既定のrsync無通信制限60秒とコマンド実行制限2分があります。SSH既定はBatchMode=yes・ConnectTimeout=10でsshOptionsから変更できます。Syncedは複製成功であり、相手のリース再読込や通信継続の証明ではありません。",
+        "每次執行使用 rsync -a --checksum --delay-updates，預設 rsync 無活動限制 60 秒、命令執行限制 2 分鐘。SSH 預設 BatchMode=yes、ConnectTimeout=10，可由 sshOptions 覆寫。Synced 僅表示檔案複製成功，不證明對端重新載入租約或客戶端連續性。",
+        "每次执行使用 rsync -a --checksum --delay-updates，默认 rsync 无活动限制 60 秒、命令执行限制 2 分钟。SSH 默认 BatchMode=yes、ConnectTimeout=10，可由 sshOptions 覆盖。Synced 仅表示文件复制成功，不证明对端重新加载租约或客户端连续性。"
+      ]
+    ],
+    "fields": {
+      "source": [
+        "Required source descriptor with resource; no filesystem path override here.",
+        "resourceを持つ送信元指定が必須です。ここでファイルパスは上書きできません。",
+        "必填含 resource 的來源描述，此處無檔案路徑覆寫。",
+        "必填含 resource 的来源描述，此处无文件路径覆盖。"
+      ],
+      "source.resource": [
+        "Required bare DHCPv6Server name or DHCPv6Server/name. Uses its nonblank leaseFile, otherwise <StateDir>/dnsmasq/dnsmasq.leases. This is not a status-value reference and has no field/optional members.",
+        "DHCPv6Serverの裸名またはDHCPv6Server/nameが必須です。そのleaseFileが非空なら使用し、なければ<StateDir>/dnsmasq/dnsmasq.leasesです。状態値参照ではなくfield・optionalはありません。",
+        "必填 DHCPv6Server 裸名或 DHCPv6Server/name。使用其非空 leaseFile，否則為 <StateDir>/dnsmasq/dnsmasq.leases。並非狀態來源，無 field/optional。",
+        "必填 DHCPv6Server 裸名或 DHCPv6Server/name。使用其非空 leaseFile，否则为 <StateDir>/dnsmasq/dnsmasq.leases。并非状态来源，无 field/optional。"
+      ],
+      "command": [
+        "Optional executable name/path, default rsync; receives rsync arguments directly, not a shell command string.",
+        "任意の実行ファイル名・パスで、既定rsyncです。シェル文字列ではなくrsync引数を直接受け取ります。",
+        "選用執行檔名稱或路徑，預設 rsync；直接接收 rsync 引數，不是殼層命令字串。",
+        "可选可执行文件名或路径，默认 rsync；直接接收 rsync 参数，不是 shell 命令字符串。"
+      ],
+      "interval": [
+        "Go duration, default 30s. Suppresses work until this long after the last successful syncedAt; controller itself is polled every 30s and also on subscriptions. Zero/negative values disable this skip, not accelerate the periodic scheduler.",
+        "Go durationで、既定30sです。前回成功syncedAtからの実行抑制期間で、コントローラーは別途30秒周期と購読イベントで動きます。0・負値は抑制をなくすだけで周期を短縮しません。",
+        "Go duration，預設 30s。距上次成功 syncedAt 未達期間則略過；控制器另以 30 秒週期及訂閱事件執行。零或負值僅停用略過，不會加快週期排程。",
+        "Go duration，默认 30s。距上次成功 syncedAt 未达时长则跳过；控制器另以 30 秒周期及订阅事件执行。零或负值仅禁用跳过，不会加快周期调度。"
+      ],
+      "targets": [
+        "Required nonempty peer-target list. Files are sent serially to each target; first failed transfer records Error/SyncFailed. No remote routerd API call is made.",
+        "1件以上の相手一覧が必須です。ファイルを各相手へ順番に送り、最初の失敗でError/SyncFailedになります。相手routerd APIは呼びません。",
+        "必填非空對等目標清單，逐一傳送檔案，第一個失敗記錄 Error/SyncFailed，不呼叫遠端 routerd API。",
+        "必填非空对等目标列表，逐一传送文件，第一个失败记录 Error/SyncFailed，不调用远端 routerd API。"
+      ],
+      "targets[].name": [
+        "Optional status label, default empty; does not select the destination host or source.",
+        "任意の状態表示名で、既定空です。宛先ホスト・送信元の選択には使いません。",
+        "選用狀態標籤，預設空，不用於選擇目的主機或來源。",
+        "可选状态标签，默认空，不用于选择目标主机或来源。"
+      ],
+      "targets[].host": [
+        "Required SSH host/address. CR/LF prohibited; must already be reachable and configured for noninteractive SSH.",
+        "SSHのホスト・アドレスが必須です。CR/LFは禁止で、到達経路と非対話SSH認証を事前に用意します。",
+        "必填 SSH 主機或位址，不可含 CR/LF，須事先具備可達路由及非互動 SSH 認證。",
+        "必填 SSH 主机或地址，不可含 CR/LF，须事先具备可达路由及非交互 SSH 认证。"
+      ],
+      "targets[].user": [
+        "Optional SSH user; empty omits user@ and lets SSH choose its configured user. CR/LF prohibited.",
+        "任意のSSHユーザーです。空ならuser@を付けずSSH設定のユーザーを使用します。CR/LFは禁止です。",
+        "選用 SSH 使用者，空值省略 user@ 並由 SSH 設定決定，不可含 CR/LF。",
+        "可选 SSH 用户，空值省略 user@ 并由 SSH 配置决定，不可含 CR/LF。"
+      ],
+      "targets[].sshOptions": [
+        "Optional SSH argument list assembled into rsync -e. Defaults add -o BatchMode=yes and -o ConnectTimeout=10 unless those keys are supplied. No CR/LF in entries.",
+        "rsync -eへ組み込むSSH引数一覧です。該当キーが未指定なら-o BatchMode=yesと-o ConnectTimeout=10を補います。各項目にCR/LFは使えません。",
+        "選用 SSH 引數清單，組合至 rsync -e。未指定對應鍵時補上 -o BatchMode=yes 與 -o ConnectTimeout=10，項目不可含 CR/LF。",
+        "可选 SSH 参数列表，组合至 rsync -e。未指定对应键时补上 -o BatchMode=yes 与 -o ConnectTimeout=10，条目不可含 CR/LF。"
+      ],
+      "targets[].options": [
+        "Optional extra rsync arguments, appended after defaults. A supplied --timeout or --timeout=... suppresses the default --timeout=60. Does not override the separate 2m process limit; no CR/LF.",
+        "既定の後に追加するrsync引数です。--timeoutまたは--timeout=...があれば既定--timeout=60を補いません。別の実行制限2分は変更しません。CR/LFは禁止です。",
+        "選用額外 rsync 引數，附於預設之後。提供 --timeout 或 --timeout=... 時不補入 --timeout=60，但不變更獨立的 2 分鐘程序限制；不可含 CR/LF。",
+        "可选额外 rsync 参数，附于默认值之后。提供 --timeout 或 --timeout=... 时不补入 --timeout=60，但不改变独立的 2 分钟进程限制；不可含 CR/LF。"
+      ],
+      "when": [
+        "Optional common state condition, default unconditional. Use actual active-role status to prevent standby writers; this resource does not itself negotiate which peer should own the lease file.",
+        "共通の状態条件で、既定無条件です。待機側からの書込を防ぐには実際の役割状態で条件を指定します。本リソース自体はリースファイルの主系を合意しません。",
+        "選用共用狀態條件，預設無條件。應以實際主用角色狀態避免備用端寫入，本資源不自行協商租約檔擁有者。",
+        "可选通用状态条件，默认无条件。应以实际主用角色状态避免备用端写入，本资源不自行协商租约文件所有者。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_dhcp.go",
+      "pkg/controller/chain/filesync.go",
+      "pkg/controller/chain/chain.go",
+      "pkg/platform/platform.go"
+    ]
+  },
+  "DHCPv6PrefixDelegationLeaseSync": {
+    "purpose": [
+      "Replicate the built-in DHCPv6-PD client lease snapshot to peer hosts for recovery/takeover.",
+      "内蔵DHCPv6-PDクライアントのリーススナップショットを、復旧・引継ぎ用に相手へ複製します。",
+      "複製內建 DHCPv6-PD 客戶端租約快照到對等主機，供復原與接管。",
+      "复制内置 DHCPv6-PD 客户端租约快照到对等主机，供恢复与接管。"
+    ],
+    "rules": [
+      [
+        "source.resource must name a DHCPv6PrefixDelegation, and targets must be nonempty. Normal validation checks source spelling/type but not existence; the source path is constructed from that name regardless.",
+        "source.resourceはDHCPv6PrefixDelegationを指定し、targetsは空でないことが必要です。通常検証は表記・型だけで存在は検証せず、名前から送信元パスを作ります。",
+        "source.resource 須指定 DHCPv6PrefixDelegation，targets 不可為空。一般驗證僅檢查寫法與類型，不確認存在，會直接依名稱建構來源路徑。",
+        "source.resource 须指定 DHCPv6PrefixDelegation，targets 不可为空。常规验证仅检查写法与类型，不确认存在，会直接按名称构建源路径。"
+      ],
+      [
+        "Copies only <StateDir>/dhcpv6-client/<name>/lease.json to the same absolute peer path. It does not copy the event journal, start/activate the peer client or extend lease validity. Restoration still checks snapshot freshness, client identity and configured PD compatibility.",
+        "<StateDir>/dhcpv6-client/<name>/lease.jsonだけを相手の同じ絶対パスへ複製します。イベント履歴の複製、相手クライアントの起動・主系化、有効期限延長はしません。復元は新しさ・クライアントID・PD設定の適合を別途確認します。",
+        "僅將 <StateDir>/dhcpv6-client/<name>/lease.json 複製到對端相同絕對路徑。不複製事件日誌、不啟動或啟用對端客戶端，也不延長有效期。還原仍檢查快照新鮮度、身分及 PD 設定相容性。",
+        "仅将 <StateDir>/dhcpv6-client/<name>/lease.json 复制到对端相同绝对路径。不复制事件日志、不启动或激活对端客户端，也不延长有效期。恢复仍检查快照新鲜度、身份及 PD 配置兼容性。"
+      ],
+      [
+        "Each invocation uses rsync -a --checksum --delay-updates, a default rsync inactivity timeout of 60s and a 2m command execution limit. SSH defaults BatchMode=yes and ConnectTimeout=10, overridable via sshOptions. A Synced status records file-copy success, not peer lease reload or client continuity.",
+        "各実行はrsync -a --checksum --delay-updatesを使い、既定のrsync無通信制限60秒とコマンド実行制限2分があります。SSH既定はBatchMode=yes・ConnectTimeout=10でsshOptionsから変更できます。Syncedは複製成功であり、相手のリース再読込や通信継続の証明ではありません。",
+        "每次執行使用 rsync -a --checksum --delay-updates，預設 rsync 無活動限制 60 秒、命令執行限制 2 分鐘。SSH 預設 BatchMode=yes、ConnectTimeout=10，可由 sshOptions 覆寫。Synced 僅表示檔案複製成功，不證明對端重新載入租約或客戶端連續性。",
+        "每次执行使用 rsync -a --checksum --delay-updates，默认 rsync 无活动限制 60 秒、命令执行限制 2 分钟。SSH 默认 BatchMode=yes、ConnectTimeout=10，可由 sshOptions 覆盖。Synced 仅表示文件复制成功，不证明对端重新加载租约或客户端连续性。"
+      ]
+    ],
+    "fields": {
+      "source": [
+        "Required source descriptor with resource; no filesystem path override here.",
+        "resourceを持つ送信元指定が必須です。ここでファイルパスは上書きできません。",
+        "必填含 resource 的來源描述，此處無檔案路徑覆寫。",
+        "必填含 resource 的来源描述，此处无文件路径覆盖。"
+      ],
+      "source.resource": [
+        "Required bare DHCPv6PrefixDelegation name or DHCPv6PrefixDelegation/name. Fixed source <StateDir>/dhcpv6-client/<name>/lease.json; no field/optional or source-path override. External-client lease formats are not converted.",
+        "DHCPv6PrefixDelegationの裸名またはDHCPv6PrefixDelegation/nameが必須です。送信元は<StateDir>/dhcpv6-client/<name>/lease.json固定で、field・optional・パス上書きはありません。外部クライアント形式は変換しません。",
+        "必填 DHCPv6PrefixDelegation 裸名或 DHCPv6PrefixDelegation/name，來源固定 <StateDir>/dhcpv6-client/<name>/lease.json，無 field/optional 或來源路徑覆寫，不轉換外部客戶端格式。",
+        "必填 DHCPv6PrefixDelegation 裸名或 DHCPv6PrefixDelegation/name，来源固定 <StateDir>/dhcpv6-client/<name>/lease.json，无 field/optional 或源路径覆盖，不转换外部客户端格式。"
+      ],
+      "command": [
+        "Optional executable name/path, default rsync; receives rsync arguments directly, not a shell command string.",
+        "任意の実行ファイル名・パスで、既定rsyncです。シェル文字列ではなくrsync引数を直接受け取ります。",
+        "選用執行檔名稱或路徑，預設 rsync；直接接收 rsync 引數，不是殼層命令字串。",
+        "可选可执行文件名或路径，默认 rsync；直接接收 rsync 参数，不是 shell 命令字符串。"
+      ],
+      "interval": [
+        "Go duration, default 30s. Suppresses work until this long after the last successful syncedAt; controller itself is polled every 30s and also on subscriptions. Zero/negative values disable this skip, not accelerate the periodic scheduler.",
+        "Go durationで、既定30sです。前回成功syncedAtからの実行抑制期間で、コントローラーは別途30秒周期と購読イベントで動きます。0・負値は抑制をなくすだけで周期を短縮しません。",
+        "Go duration，預設 30s。距上次成功 syncedAt 未達期間則略過；控制器另以 30 秒週期及訂閱事件執行。零或負值僅停用略過，不會加快週期排程。",
+        "Go duration，默认 30s。距上次成功 syncedAt 未达时长则跳过；控制器另以 30 秒周期及订阅事件执行。零或负值仅禁用跳过，不会加快周期调度。"
+      ],
+      "targets": [
+        "Required nonempty peer-target list. Files are sent serially to each target; first failed transfer records Error/SyncFailed. No remote routerd API call is made.",
+        "1件以上の相手一覧が必須です。ファイルを各相手へ順番に送り、最初の失敗でError/SyncFailedになります。相手routerd APIは呼びません。",
+        "必填非空對等目標清單，逐一傳送檔案，第一個失敗記錄 Error/SyncFailed，不呼叫遠端 routerd API。",
+        "必填非空对等目标列表，逐一传送文件，第一个失败记录 Error/SyncFailed，不调用远端 routerd API。"
+      ],
+      "targets[].name": [
+        "Optional status label, default empty; does not select the destination host or source.",
+        "任意の状態表示名で、既定空です。宛先ホスト・送信元の選択には使いません。",
+        "選用狀態標籤，預設空，不用於選擇目的主機或來源。",
+        "可选状态标签，默认空，不用于选择目标主机或来源。"
+      ],
+      "targets[].host": [
+        "Required SSH host/address. CR/LF prohibited; must already be reachable and configured for noninteractive SSH.",
+        "SSHのホスト・アドレスが必須です。CR/LFは禁止で、到達経路と非対話SSH認証を事前に用意します。",
+        "必填 SSH 主機或位址，不可含 CR/LF，須事先具備可達路由及非互動 SSH 認證。",
+        "必填 SSH 主机或地址，不可含 CR/LF，须事先具备可达路由及非交互 SSH 认证。"
+      ],
+      "targets[].user": [
+        "Optional SSH user; empty omits user@ and lets SSH choose its configured user. CR/LF prohibited.",
+        "任意のSSHユーザーです。空ならuser@を付けずSSH設定のユーザーを使用します。CR/LFは禁止です。",
+        "選用 SSH 使用者，空值省略 user@ 並由 SSH 設定決定，不可含 CR/LF。",
+        "可选 SSH 用户，空值省略 user@ 并由 SSH 配置决定，不可含 CR/LF。"
+      ],
+      "targets[].sshOptions": [
+        "Optional SSH argument list assembled into rsync -e. Defaults add -o BatchMode=yes and -o ConnectTimeout=10 unless those keys are supplied. No CR/LF in entries.",
+        "rsync -eへ組み込むSSH引数一覧です。該当キーが未指定なら-o BatchMode=yesと-o ConnectTimeout=10を補います。各項目にCR/LFは使えません。",
+        "選用 SSH 引數清單，組合至 rsync -e。未指定對應鍵時補上 -o BatchMode=yes 與 -o ConnectTimeout=10，項目不可含 CR/LF。",
+        "可选 SSH 参数列表，组合至 rsync -e。未指定对应键时补上 -o BatchMode=yes 与 -o ConnectTimeout=10，条目不可含 CR/LF。"
+      ],
+      "targets[].options": [
+        "Optional extra rsync arguments, appended after defaults. A supplied --timeout or --timeout=... suppresses the default --timeout=60. Does not override the separate 2m process limit; no CR/LF.",
+        "既定の後に追加するrsync引数です。--timeoutまたは--timeout=...があれば既定--timeout=60を補いません。別の実行制限2分は変更しません。CR/LFは禁止です。",
+        "選用額外 rsync 引數，附於預設之後。提供 --timeout 或 --timeout=... 時不補入 --timeout=60，但不變更獨立的 2 分鐘程序限制；不可含 CR/LF。",
+        "可选额外 rsync 参数，附于默认值之后。提供 --timeout 或 --timeout=... 时不补入 --timeout=60，但不改变独立的 2 分钟进程限制；不可含 CR/LF。"
+      ],
+      "when": [
+        "Optional common state condition, default unconditional. Use actual active-role status to prevent standby writers; this resource does not itself negotiate which peer should own the lease file.",
+        "共通の状態条件で、既定無条件です。待機側からの書込を防ぐには実際の役割状態で条件を指定します。本リソース自体はリースファイルの主系を合意しません。",
+        "選用共用狀態條件，預設無條件。應以實際主用角色狀態避免備用端寫入，本資源不自行協商租約檔擁有者。",
+        "可选通用状态条件，默认无条件。应以实际主用角色状态避免备用端写入，本资源不自行协商租约文件所有者。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_dhcp.go",
+      "pkg/controller/chain/filesync.go",
+      "pkg/controller/chain/chain.go",
+      "pkg/platform/platform.go"
+    ]
+  },
+  "SelfAddressPolicy": {
+    "purpose": [
+      "Describe an ordered self-address selection policy used by supporting static DHCPv6 rendering. It does not assign an address to an interface.",
+      "対応するDHCPv6静的生成で使用する、順序付き自己アドレス選択方針です。インターフェースへアドレスを割り当てるものではありません。",
+      "描述供支援的靜態 DHCPv6 轉譯使用的有序自身位址選擇策略，不會指派介面位址。",
+      "描述供支持的静态 DHCPv6 渲染使用的有序自身地址选择策略，不会分配接口地址。"
+    ],
+    "rules": [
+      [
+        "Current live DHCPv6 LAN generation does not consume DHCPv6Server.selfAddressPolicy or dnsSource: self. This policy can affect the separate static renderer, but declaring it does not currently make the running server advertise self DNS. Use explicit dnsServers/dnsServerFrom for the live path.",
+        "現行実行時のDHCPv6 LAN生成はDHCPv6Server.selfAddressPolicy・dnsSource: selfを参照しません。この方針は別の静的生成に作用しますが、宣言だけで稼働サーバーが自己DNSを配布することにはなりません。実行時はdnsServers・dnsServerFromを明示します。",
+        "目前即時 DHCPv6 LAN 產生不使用 DHCPv6Server.selfAddressPolicy 或 dnsSource: self。策略可影響獨立靜態轉譯器，但宣告不會讓執行中的伺服器公告自身 DNS，即時路徑請用明確 dnsServers/dnsServerFrom。",
+        "当前实时 DHCPv6 LAN 生成不使用 DHCPv6Server.selfAddressPolicy 或 dnsSource: self。策略可影响独立静态渲染器，但声明不会让运行中的服务器通告自身 DNS，实时路径请用明确 dnsServers/dnsServerFrom。"
+      ],
+      [
+        "References are bare declared Interface/IPv6DelegatedAddress names and are validated even when their source branch does not use them. No when or dependsOn fields exist on this resource.",
+        "参照は宣言したInterface・IPv6DelegatedAddressの裸名で、source分岐で使わなくても存在検証します。このリソースにwhen・dependsOnはありません。",
+        "參照為已宣告 Interface/IPv6DelegatedAddress 裸名，即使來源分支不使用仍驗證存在。本資源無 when/dependsOn。",
+        "引用为已声明 Interface/IPv6DelegatedAddress 裸名，即使来源分支不使用仍验证存在。本资源无 when/dependsOn。"
+      ]
+    ],
+    "fields": {
+      "addressFamily": [
+        "Required ipv4 or ipv6. Validation accepts both, but the current selection consumer is the older DHCPv6 static renderer; ipv4 does not provide an independent live address-selection service.",
+        "ipv4・ipv6が必須です。検証は両方を許しますが、現行の選択利用箇所は旧DHCPv6静的生成で、ipv4の独立した実行時選択サービスにはなりません。",
+        "必填 ipv4 或 ipv6，驗證接受兩者；目前選擇使用者為舊 DHCPv6 靜態轉譯器，ipv4 不會提供獨立即時位址選擇服務。",
+        "必填 ipv4 或 ipv6，验证接受两者；当前选择使用方为旧 DHCPv6 静态渲染器，ipv4 不会提供独立实时地址选择服务。"
+      ],
+      "candidates": [
+        "Required nonempty ordered list. The supporting static renderer tries candidates in order and picks the first successful result; failure of all candidates is an error. No automatic candidates for an explicitly referenced policy.",
+        "1件以上の順序付き候補一覧が必須です。対応する静的生成は順に試し、最初の成功を選んで全滅ならエラーです。明示参照したポリシーへの自動候補補完はありません。",
+        "必填非空有序候選清單，支援的靜態轉譯器依序選第一個成功值，全部失敗則報錯；明確參照的策略不自動補候選。",
+        "必填非空有序候选列表，支持的静态渲染器依序选第一个成功值，全部失败则报错；明确引用的策略不自动补候选。"
+      ],
+      "candidates[].source": [
+        "Required delegatedAddress/interfaceAddress/static. delegatedAddress is IPv6-only and prohibits address/interface. interfaceAddress requires interface; static requires an address matching addressFamily. Unused extra fields on the latter two sources are not generally rejected.",
+        "delegatedAddress・interfaceAddress・staticが必須です。delegatedAddressはIPv6専用でaddress・interface禁止です。interfaceAddressはinterface、staticはaddressFamilyに合うaddress必須です。後二者の不要な他フィールドは一般には拒否しません。",
+        "必填 delegatedAddress/interfaceAddress/static。delegatedAddress 僅限 IPv6，禁止 address/interface；interfaceAddress 需 interface，static 需符合 addressFamily 的 address。後兩者多餘欄位通常不拒絕。",
+        "必填 delegatedAddress/interfaceAddress/static。delegatedAddress 仅限 IPv6，禁止 address/interface；interfaceAddress 需 interface，static 需符合 addressFamily 的 address。后两者多余字段通常不拒绝。"
+      ],
+      "candidates[].interface": [
+        "Required declared logical interface for interfaceAddress, forbidden for delegatedAddress. Any supplied value is checked for existence even when the chosen source does not consume it.",
+        "interfaceAddressで必須の宣言済み論理インターフェースです。delegatedAddressでは禁止で、他sourceで使わなくても指定時は存在検証します。",
+        "interfaceAddress 必填的已宣告邏輯介面，delegatedAddress 禁用；即使所選來源不使用，提供時仍驗證存在。",
+        "interfaceAddress 必填的已声明逻辑接口，delegatedAddress 禁用；即使所选来源不使用，提供时仍验证存在。"
+      ],
+      "candidates[].delegatedAddress": [
+        "Required bare IPv6DelegatedAddress name for delegatedAddress source. Existing resource required; supporting renderer derives from observed prefixes for that resource interface, not a generic status-value field.",
+        "delegatedAddressで必須のIPv6DelegatedAddress裸名です。存在が必要で、対応生成はそのインターフェースの観測プレフィックスから生成し、汎用状態値fieldではありません。",
+        "delegatedAddress 來源必填的 IPv6DelegatedAddress 裸名，資源須存在；支援的轉譯器由該資源介面觀測前綴衍生，不是通用狀態 field。",
+        "delegatedAddress 来源必填的 IPv6DelegatedAddress 裸名，资源须存在；支持的渲染器由该资源接口观测前缀派生，不是通用状态 field。"
+      ],
+      "candidates[].address": [
+        "Required bare address matching addressFamily for static source. Forbidden for delegatedAddress; no automatic OS assignment is performed.",
+        "staticで必須の、addressFamilyと一致する裸アドレスです。delegatedAddressでは禁止で、OSへの自動割当は行いません。",
+        "static 來源必填且符合 addressFamily 的純位址，delegatedAddress 禁用，不會自動指派到 OS。",
+        "static 来源必填且符合 addressFamily 的纯地址，delegatedAddress 禁用，不会自动分配到 OS。"
+      ],
+      "candidates[].addressSuffix": [
+        "For delegatedAddress, optional IPv6 suffix; omitted inherits the referenced resource addressSuffix. Other sources do not use it for selection.",
+        "delegatedAddressの任意IPv6サフィックスです。省略時は参照リソースのaddressSuffixで、他sourceの選択には使いません。",
+        "delegatedAddress 的選用 IPv6 後綴，省略繼承參照資源 addressSuffix；其他來源不使用此值選擇。",
+        "delegatedAddress 的可选 IPv6 后缀，省略继承引用资源 addressSuffix；其他来源不使用此值选择。"
+      ],
+      "candidates[].matchSuffix": [
+        "For interfaceAddress, optional IPv6 pattern. Each nonzero byte must match the address; zero bytes act as unconstrained positions, not a conventional contiguous suffix mask. If set, first matching global IPv6 wins and ordinal is ignored.",
+        "interfaceAddressの任意IPv6パターンです。0でない各バイトを比較し、0のバイトは制約なしとなるため通常の連続サフィックスマスクではありません。指定時は最初に一致するグローバルIPv6を選びordinalは無視します。",
+        "interfaceAddress 的選用 IPv6 模式，各非零位元組須相符，零位元組不限制，並非傳統連續後綴遮罩。設定後選第一個符合的全域 IPv6，忽略 ordinal。",
+        "interfaceAddress 的可选 IPv6 模式，各非零字节须相符，零字节不限制，并非传统连续后缀掩码。设置后选第一个符合的全局 IPv6，忽略 ordinal。"
+      ],
+      "candidates[].ordinal": [
+        "One-based interfaceAddress index when matchSuffix is empty; omitted/0 becomes 1. Schema minimum 1; negative validation rejected. Ordering follows the observed-address list, not a promised stable address identity. Out-of-range tries the next candidate.",
+        "matchSuffixが空の場合のinterfaceAddressの1始まり番号です。省略・0は1で、スキーマ下限1、負値は検証拒否です。観測一覧の順序で、安定したアドレスIDではありません。範囲外なら次候補を試します。",
+        "matchSuffix 空值時的 interfaceAddress 一起算索引，省略或 0 為 1，結構描述下限 1，負值驗證拒絕。順序依觀測清單，不保證固定身分；超界則嘗試下一候選。",
+        "matchSuffix 空值时的 interfaceAddress 从一开始索引，省略或 0 为 1，模式下限 1，负值验证拒绝。顺序按观测列表，不保证固定身份；越界则尝试下一候选。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_dhcp.go",
+      "pkg/config/validate.go",
+      "pkg/render/dnsmasq.go",
+      "pkg/controller/chain/chain.go"
+    ]
+  },
+  "DHCPv6Server": {
+    "purpose": [
+      "Provide LAN DHCPv6 address/information service and associated RA behavior using the shared dnsmasq process.",
+      "共有dnsmasqでLAN向けDHCPv6アドレス・情報サービスと関連するRAを提供します。",
+      "使用共用 dnsmasq 程序提供 LAN DHCPv6 位址或資訊服務及相關 RA 行為。",
+      "使用共用 dnsmasq 进程提供 LAN DHCPv6 地址或信息服务及相关 RA 行为。"
+    ],
+    "rules": [
+      [
+        "The current live writer differs from the older static renderer: interface is needed, delegatedAddress-only does not create a live range, dnsSource/selfAddressPolicy do not supply self DNS, and ra-only follows the stateless branch. Use explicit fields documented below and verify actual DHCP/RA traffic.",
+        "現行実行時と旧静的生成は異なります。interfaceが必要でdelegatedAddressだけでは実行時範囲を作らず、dnsSource・selfAddressPolicyは自己DNSを補わず、ra-onlyもstateless分岐です。下記の明示値を使い、実際のDHCP・RA通信を確認します。",
+        "目前即時寫入與舊靜態轉譯不同：需要 interface，僅 delegatedAddress 不建立即時範圍，dnsSource/selfAddressPolicy 不提供自身 DNS，ra-only 亦走 stateless 分支。請用下列明確欄位並確認實際 DHCP/RA 流量。",
+        "当前实时写入与旧静态渲染不同：需要 interface，仅 delegatedAddress 不建立实时范围，dnsSource/selfAddressPolicy 不提供自身 DNS，ra-only 也走 stateless 分支。请用下列明确字段并确认实际 DHCP/RA 流量。"
+      ],
+      [
+        "Normal validation limits delegatedAddress mode to stateless/ra-only. Without delegatedAddress, every non-stateless mode including ra-only requires a valid IPv6 start/end pair. domainSearch and domainSearchFrom are exclusive; literals and DNS/SNTP value sources may coexist.",
+        "通常検証はdelegatedAddress指定時にmodeをstateless・ra-onlyへ制限します。delegatedAddressなしではra-onlyを含む非statelessに有効なIPv6開始・終了が必要です。domainSearchとdomainSearchFromは排他で、DNS・SNTPの固定値と参照は併用できます。",
+        "一般驗證限制 delegatedAddress 的 mode 為 stateless/ra-only。沒有 delegatedAddress 時，所有非 stateless 模式（含 ra-only）均須有效 IPv6 起訖值。domainSearch/domainSearchFrom 互斥，DNS/SNTP 固定與動態來源可並用。",
+        "常规验证限制 delegatedAddress 的 mode 为 stateless/ra-only。没有 delegatedAddress 时，所有非 stateless 模式（含 ra-only）均须有效 IPv6 起止值。domainSearch/domainSearchFrom 互斥，DNS/SNTP 固定与动态来源可并用。"
+      ],
+      [
+        "One dnsmasq instance serves the resources; mode constructors use a /64 on the actual interface. Applied records successful reconciliation, not a client lease, RA reception or default-route installation. Removed ready_when is rejected.",
+        "単一dnsmasqで各資源を処理し、constructorは実インターフェースの/64を使います。Appliedは再調整成功で、クライアント取得・RA受信・デフォルト経路成立を意味しません。廃止ready_whenは拒否します。",
+        "資源共用一個 dnsmasq，constructor 使用實際介面的 /64。Applied 僅記錄調和成功，不代表客戶端取得租約、收到 RA 或安裝預設路由；已移除 ready_when 會被拒絕。",
+        "资源共用一个 dnsmasq，constructor 使用实际接口的 /64。Applied 仅记录协调成功，不代表客户端取得租约、收到 RA 或安装默认路由；已移除 ready_when 会被拒绝。"
+      ]
+    ],
+    "fields": {
+      "server": [
+        "Optional dnsmasq, default dnsmasq. No other backend accepted. The live service is shared with DHCPv4 and RA resources.",
+        "任意のdnsmasqで、既定もdnsmasqです。他バックエンドは許さず、DHCPv4・RAとサービスを共有します。",
+        "選用 dnsmasq，預設亦為 dnsmasq，不接受其他後端；即時服務與 DHCPv4/RA 共用。",
+        "可选 dnsmasq，默认也为 dnsmasq，不接受其他后端；实时服务与 DHCPv4/RA 共用。"
+      ],
+      "managed": [
+        "Boolean default false; current live service writer/controller does not use this flag to disable mutation.",
+        "真偽値で既定falseです。現行実行処理はこの値で変更を抑止しません。",
+        "布林值預設 false，目前即時服務寫入器與控制器不以此停用變更。",
+        "布尔值默认 false，当前实时服务写入器与控制器不以此禁用更改。"
+      ],
+      "role": [
+        "server/transit, default server in validation/static rendering. Current live writer does not honor transit to suppress service.",
+        "server・transitで、検証・静的生成の既定serverです。現行実行時はtransitによるサービス抑止を行いません。",
+        "server/transit，驗證與靜態轉譯預設 server；目前即時寫入不以 transit 抑制服務。",
+        "server/transit，验证与静态渲染默认 server；当前实时写入不以 transit 抑制服务。"
+      ],
+      "listenInterfaces": [
+        "Optional declared logical interfaces, all validated for existence. If delegatedAddress is given and this list is nonempty, it must include that address resource interface. Used in family/firewall planning; current live pool writer still requires interface itself.",
+        "宣言済み論理インターフェース一覧で全参照の存在を検証します。delegatedAddressがあり一覧が非空なら、その参照先interfaceを含む必要があります。系統・ファイアウォール計画に使いますが、現行実行時プールにはinterface自体が必要です。",
+        "選用已宣告邏輯介面，皆驗證存在。提供 delegatedAddress 且清單非空時，須包含該位址資源介面。用於位址族及防火牆規劃，但目前即時集區仍需 interface 本身。",
+        "可选已声明逻辑接口，均验证存在。提供 delegatedAddress 且列表非空时，须包含该地址资源接口。用于地址族及防火墙规划，但当前实时地址池仍需 interface 本身。"
+      ],
+      "logDHCP": [
+        "Default false; static renderer can emit log-dhcp, but current live writer does not consume it.",
+        "既定falseです。静的生成ではlog-dhcpにしますが、現行実行時は参照しません。",
+        "預設 false，靜態轉譯可輸出 log-dhcp，但目前即時寫入不使用。",
+        "默认 false，静态渲染可输出 log-dhcp，但当前实时写入不使用。"
+      ],
+      "stickyHoldDays": [
+        "Nonnegative days, default 0/off. Positive dnsmasq values retain lease assignments in dhcp-sticky.db for reuse; runtime uses the maximum across IPv6 servers for all IPv6 lease events, not per-interface selection. DHCPv6ServerLeaseSync does not copy this sticky DB.",
+        "0以上の日数で既定0は無効です。正のdnsmasq値は割当をdhcp-sticky.dbへ保持して再利用し、実行時はIPv6サーバー全体の最大値を全IPv6イベントに使います。インターフェース別ではなく、DHCPv6ServerLeaseSyncはこのDBを複製しません。",
+        "非負天數，預設 0 停用。dnsmasq 正值將分配保留於 dhcp-sticky.db 供重用；執行時對全部 IPv6 事件採 IPv6 伺服器最大值，不依介面。DHCPv6ServerLeaseSync 不複製此資料庫。",
+        "非负天数，默认 0 禁用。dnsmasq 正值将分配保留于 dhcp-sticky.db 供重用；运行时对全部 IPv6 事件采用 IPv6 服务器最大值，不按接口。DHCPv6ServerLeaseSync 不复制此数据库。"
+      ],
+      "interface": [
+        "Declared logical LAN interface. Required for current live writer even when validation permits delegatedAddress alone; an absent interface skips live pool rendering.",
+        "宣言済み論理LANインターフェースです。検証がdelegatedAddressのみを許しても現行実行時には必要で、省略すると実行時プール生成を飛ばします。",
+        "已宣告的邏輯 LAN 介面，即使驗證允許僅有 delegatedAddress，目前即時寫入仍需要，省略則略過集區產生。",
+        "已声明的逻辑 LAN 接口，即使验证允许仅有 delegatedAddress，当前实时写入仍需要，省略则跳过地址池生成。"
+      ],
+      "delegatedAddress": [
+        "Optional bare existing IPv6DelegatedAddress name. Static renderer derives interface/prefix/self DNS from it, but current live writer uses interface and constructor directly and does not substitute this resource. When set, validation limits mode to stateless or ra-only.",
+        "任意の既存IPv6DelegatedAddress裸名です。静的生成はinterface・prefix・自己DNSを導出しますが、現行実行時はinterface・constructorを直接使い、この参照で補完しません。指定時はmodeをstateless・ra-onlyに制限します。",
+        "選用既有 IPv6DelegatedAddress 裸名。靜態轉譯可衍生介面、前綴與自身 DNS，但目前即時寫入直接用 interface/constructor，不以此替代。設定後驗證限制 mode 為 stateless 或 ra-only。",
+        "可选现有 IPv6DelegatedAddress 裸名。静态渲染可派生接口、前缀与自身 DNS，但当前实时写入直接用 interface/constructor，不以此替代。设置后验证限制 mode 为 stateless 或 ra-only。"
+      ],
+      "mode": [
+        "Default stateless. stateful emits a constructor range; both adds slaac; current live writer treats ra-only through the same ra-stateless default branch, so it does not actually disable DHCPv6 information service. Without delegatedAddress, validation also requires a pool for ra-only.",
+        "既定statelessです。statefulはconstructor範囲、bothはslaac付きです。現行実行時はra-onlyもra-statelessの既定分岐に入るため、DHCPv6情報サービスの無効化になりません。delegatedAddressなしではra-onlyでも検証上プール必須です。",
+        "預設 stateless；stateful 輸出 constructor 範圍，both 加 slaac。目前即時寫入將 ra-only 同樣送入 ra-stateless 預設分支，不能實際停用 DHCPv6 資訊服務。無 delegatedAddress 時驗證亦要求 ra-only 提供集區。",
+        "默认 stateless；stateful 输出 constructor 范围，both 加 slaac。当前实时写入将 ra-only 同样送入 ra-stateless 默认分支，不能实际禁用 DHCPv6 信息服务。无 delegatedAddress 时验证也要求 ra-only 提供地址池。"
+      ],
+      "addressPool": [
+        "IPv6 stateful allocation range. Required for non-stateless modes when delegatedAddress is absent; not used as an allocation range by stateless. No endpoints inferred.",
+        "IPv6の状態保持型割当範囲です。delegatedAddressなしで非statelessなら必須で、statelessの割当範囲には使いません。開始・終了の自動補完はありません。",
+        "IPv6 有狀態分配範圍，未有 delegatedAddress 且非 stateless 時必填；stateless 不作分配範圍，端點不自動補入。",
+        "IPv6 有状态分配范围，未有 delegatedAddress 且非 stateless 时必填；stateless 不作分配范围，端点不自动补入。"
+      ],
+      "addressPool.start": [
+        "IPv6 start address, inclusive and <= end. Live stateful range uses constructor:<ifname> and prefix length 64.",
+        "境界を含むIPv6開始値でend以下です。実行時のstateful範囲はconstructor:<OS名>・長さ64を使います。",
+        "IPv6 起始位址，包含端點且 <= end；即時 stateful 範圍使用 constructor:<OS名稱> 與前綴長 64。",
+        "IPv6 起始地址，包含端点且 <= end；实时 stateful 范围使用 constructor:<OS名称> 与前缀长 64。"
+      ],
+      "addressPool.end": [
+        "IPv6 end address, inclusive and >= start; paired with start.",
+        "境界を含むIPv6終了値でstart以上です。startと対で指定します。",
+        "IPv6 結束位址，包含端點且 >= start，與 start 配對。",
+        "IPv6 结束地址，包含端点且 >= start，与 start 配对。"
+      ],
+      "addressPool.leaseTime": [
+        "Backend duration, preferred over leaseTime; empty falls back to leaseTime then 12h. Not parsed as Go duration here.",
+        "バックエンド期間でleaseTimeより優先します。空ならleaseTime・12hの順で補完し、ここではGo durationとして解析しません。",
+        "後端期間，優先於 leaseTime；空值依 leaseTime、12h 補足，此處不按 Go duration 解析。",
+        "后端时长，优先于 leaseTime；空值按 leaseTime、12h 补足，此处不按 Go duration 解析。"
+      ],
+      "defaultRoute": [
+        "Boolean default false. Static renderer can control default-router lifetime, but current live writer does not read this field. DHCPv6 itself does not distribute an IPv6 default route.",
+        "真偽値で既定falseです。静的生成はルーター期間制御に使えますが、現行実行時は参照しません。DHCPv6自体がIPv6デフォルト経路を配るわけではありません。",
+        "布林值預設 false，靜態轉譯可控制預設路由器期限，但目前即時寫入不讀取。DHCPv6 本身不發送 IPv6 預設路由。",
+        "布尔值默认 false，静态渲染可控制默认路由器期限，但当前实时写入不读取。DHCPv6 本身不分发 IPv6 默认路由。"
+      ],
+      "dnsSource": [
+        "Validated self/static/none, default self in static rendering; static requires dnsServers. Current live writer ignores this selector and uses explicit dnsServers/dnsServerFrom only; none does not suppress those explicit options.",
+        "self・static・noneを検証し、静的生成の既定selfです。staticはdnsServers必須ですが、現行実行時はこの選択を無視して明示dnsServers・dnsServerFromだけを使い、noneでも明示オプションを抑止しません。",
+        "驗證 self/static/none，靜態預設 self，static 需 dnsServers。目前即時寫入忽略選擇器，僅用明確 dnsServers/dnsServerFrom，none 也不抑制這些明確選項。",
+        "验证 self/static/none，静态默认 self，static 需 dnsServers。当前实时写入忽略选择器，仅用明确 dnsServers/dnsServerFrom，none 也不抑制这些明确选项。"
+      ],
+      "selfAddressPolicy": [
+        "Optional bare existing SelfAddressPolicy reference; validated even though current live LAN generation does not consume it. Older static self-DNS selection uses it.",
+        "任意の既存SelfAddressPolicy裸名です。現行実行時のLAN生成は使わなくても存在検証し、旧静的自己DNS選択で使います。",
+        "選用既有 SelfAddressPolicy 裸名，即使目前即時 LAN 產生不使用仍驗證存在；供舊靜態自身 DNS 選擇。",
+        "可选现有 SelfAddressPolicy 裸名，即使当前实时 LAN 生成不使用仍验证存在；供旧静态自身 DNS 选择。"
+      ],
+      "dnsServers": [
+        "Optional literal IPv6 DNS-server list; default empty. Merged with dnsServerFrom and emitted as tagged option6:dns-server. No DNS listener is started.",
+        "任意のIPv6 DNS一覧で既定空です。dnsServerFromと結合してタグ付きoption6:dns-serverにし、DNS待受は起動しません。",
+        "選用固定 IPv6 DNS 清單，預設空，與 dnsServerFrom 合併輸出標籤式 option6:dns-server，不啟動 DNS 接聽。",
+        "可选固定 IPv6 DNS 列表，默认空，与 dnsServerFrom 合并输出带标签 option6:dns-server，不启动 DNS 监听。"
+      ],
+      "dnsServerFrom": [
+        "Optional common resource/field source list, optional false by default. Required missing values make the server Pending even when literal DNS entries exist. Resolved status values are passed through without full IP-family validation by this reader.",
+        "共通resource・field参照一覧でoptional既定falseです。必須未解決は固定DNSがあってもPendingにし、この読み取りは解決した全状態値のIP系統を完全検証せず渡します。",
+        "選用共用 resource/field 來源清單，optional 預設 false；必要缺值即使有固定 DNS 仍為 Pending，此讀取器不完整驗證所有狀態值位址族便傳入。",
+        "可选通用 resource/field 来源列表，optional 默认 false；必要缺值即使有固定 DNS 仍为 Pending，此读取器不完整验证所有状态值地址族便传入。"
+      ],
+      "sntpServers": [
+        "Optional literal IPv6 SNTP-server list, default empty; merged with sntpServerFrom for tagged option6:sntp-server. Does not start an NTP daemon.",
+        "任意のIPv6 SNTP一覧で既定空です。sntpServerFromと結合してタグ付きoption6:sntp-serverを出力し、NTPデーモンは起動しません。",
+        "選用固定 IPv6 SNTP 清單，預設空，與 sntpServerFrom 合併輸出標籤式 option6:sntp-server，不啟動 NTP 常駐程式。",
+        "可选固定 IPv6 SNTP 列表，默认空，与 sntpServerFrom 合并输出带标签 option6:sntp-server，不启动 NTP 守护进程。"
+      ],
+      "sntpServerFrom": [
+        "Optional common status-source list. Same required/optional blocking behavior as dnsServerFrom; default no references.",
+        "共通状態参照一覧です。必須・optionalの待機はdnsServerFromと同じで、既定参照なしです。",
+        "選用共用狀態來源清單，必要或選用阻擋行為同 dnsServerFrom，預設無參照。",
+        "可选通用状态来源列表，必要或可选阻挡行为同 dnsServerFrom，默认无引用。"
+      ],
+      "domainSearch": [
+        "Optional single-domain strings, default empty; no whitespace/slash/comma. Exclusive with domainSearchFrom. Emitted as tagged option6:domain-search.",
+        "任意の単一ドメイン一覧で既定空です。空白・スラッシュ・カンマ不可でdomainSearchFromと排他です。タグ付きoption6:domain-searchにします。",
+        "選用單一網域字串清單，預設空，不可含空白、斜線或逗號，與 domainSearchFrom 互斥，輸出標籤式 option6:domain-search。",
+        "可选单一域名字符串列表，默认空，不可含空白、斜线或逗号，与 domainSearchFrom 互斥，输出带标签 option6:domain-search。"
+      ],
+      "domainSearchFrom": [
+        "Optional sources restricted to DNSZone/<name>, field: zone; resources must exist. Reads declared zones before status. Required missing values block this server; optional true skips missing values. Exclusive with domainSearch.",
+        "DNSZone/<name>・field: zone限定の参照で、存在検証します。状態前でも宣言zoneを読み、必須未解決はサーバー待機、optional trueは省略です。domainSearchと排他です。",
+        "選用來源限 DNSZone/<name>、field: zone，須存在，可先讀宣告值。必要缺值阻擋伺服器，optional true 略過缺值，與 domainSearch 互斥。",
+        "可选来源限 DNSZone/<name>、field: zone，须存在，可先读声明值。必要缺值阻挡服务器，optional true 跳过缺值，与 domainSearch 互斥。"
+      ],
+      "leaseTime": [
+        "Fallback backend duration after addressPool.leaseTime; default 12h.",
+        "addressPool.leaseTimeに次ぐ期間補完で、既定12hです。",
+        "addressPool.leaseTime 之後的後端期間替代值，預設 12h。",
+        "addressPool.leaseTime 之后的后端时长替代值，默认 12h。"
+      ],
+      "rapidCommit": [
+        "Boolean default false. Current writer emits tagged option6:rapid-commit; it does not emit a separate dnsmasq dhcp-rapid-commit directive, so do not treat the flag alone as proof of negotiated two-message Rapid Commit.",
+        "真偽値で既定falseです。現行生成はタグ付きoption6:rapid-commitを出力し、別のdnsmasq dhcp-rapid-commit指令は出しません。この値だけで2メッセージRapid Commitの成立を保証しません。",
+        "布林值預設 false，目前輸出標籤式 option6:rapid-commit，不另輸出 dnsmasq dhcp-rapid-commit 指令，不能僅據此證明協商成兩訊息 Rapid Commit。",
+        "布尔值默认 false，当前输出带标签 option6:rapid-commit，不另输出 dnsmasq dhcp-rapid-commit 指令，不能仅据此证明协商成两消息 Rapid Commit。"
+      ],
+      "configPath": [
+        "Optional decoded string, default empty; current controller uses shared dnsmasq options instead of this per-resource path.",
+        "任意文字列で既定空です。現行コントローラーはリソース別パスではなく共有dnsmasqオプションを使います。",
+        "選用解碼字串，預設空，目前控制器使用共用 dnsmasq 選項而非此資源路徑。",
+        "可选解码字符串，默认空，当前控制器使用共用 dnsmasq 选项而非此资源路径。"
+      ],
+      "pidFile": [
+        "Optional decoded string, default empty; current controller uses shared dnsmasq options instead of this per-resource path.",
+        "任意文字列で既定空です。現行コントローラーはリソース別パスではなく共有dnsmasqオプションを使います。",
+        "選用解碼字串，預設空，目前控制器使用共用 dnsmasq 選項而非此資源路徑。",
+        "可选解码字符串，默认空，当前控制器使用共用 dnsmasq 选项而非此资源路径。"
+      ],
+      "leaseFile": [
+        "Optional lease database path, default <StateDir>/dnsmasq/dnsmasq.leases. All explicit DHCPv4/6 leaseFile values must match because one dnsmasq service shares the file; disagreement fails runtime generation.",
+        "リースファイルの任意パスで、既定<StateDir>/dnsmasq/dnsmasq.leasesです。単一サービス共有のため、全DHCPv4/6の明示leaseFileが不一致なら実行時生成で失敗します。",
+        "選用租約檔路徑，預設 <StateDir>/dnsmasq/dnsmasq.leases；單一服務共用，所有 DHCPv4/6 明確 leaseFile 須一致，否則即時產生失敗。",
+        "可选租约文件路径，默认 <StateDir>/dnsmasq/dnsmasq.leases；单一服务共用，所有 DHCPv4/6 明确 leaseFile 须一致，否则实时生成失败。"
+      ],
+      "dependsOn": [
+        "Common dependency list accepted and references validated, default empty. Current live DHCPv6 server writer/status path does not evaluate this list; it is not a reliable service gate here. Dynamic-value requirements and when are evaluated separately.",
+        "共通依存一覧として読み参照検証し、既定空です。現行実行時のDHCPv6サーバー生成・状態処理はこの一覧を評価せず、サービスの抑止条件としては使えません。動的値の必須条件・whenは別途評価します。",
+        "接受共用相依清單並驗證參照，預設空。目前即時 DHCPv6 伺服器寫入與狀態路徑不評估此清單，不能作可靠服務閘門；動態值要求及 when 另行評估。",
+        "接受通用依赖列表并验证引用，默认空。当前实时 DHCPv6 服务器写入与状态路径不评估此列表，不能作可靠服务条件；动态值要求及 when 另行评估。"
+      ],
+      "when": [
+        "Optional common condition, default unconditional. False removes this resource from effective config and reports Pending/WhenFalse.",
+        "共通条件で既定無条件です。不成立なら有効設定から除外してPending/WhenFalseです。",
+        "選用共用條件，預設無條件；為假時自有效設定排除並為 Pending/WhenFalse。",
+        "可选通用条件，默认无条件；为假时从有效配置排除并为 Pending/WhenFalse。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_dhcp.go",
+      "pkg/config/validate.go",
+      "pkg/controller/chain/chain.go",
+      "pkg/controller/chain/phase2.go",
+      "pkg/render/dnsmasq.go",
+      "cmd/routerd/runtime_services.go",
+      "pkg/platform/platform.go"
+    ]
+  },
+  "NAT44Rule": {
+    "purpose": [
+      "Translate routed IPv4 source addresses through an egress interface or selected EgressRoutePolicy device. NAT does not itself permit forwarding or assign the translated address.",
+      "送信インターフェースまたはEgressRoutePolicyで選んだデバイス経由で、転送IPv4の送信元を変換します。転送許可・変換先アドレスの割当自体は行いません。",
+      "透過輸出介面或 EgressRoutePolicy 選定裝置轉換路由 IPv4 來源。NAT 本身不允許轉送，也不指派轉換位址。",
+      "通过输出接口或 EgressRoutePolicy 所选设备转换路由 IPv4 源地址。NAT 本身不允许转发，也不分配转换地址。"
+    ],
+    "rules": [
+      [
+        "Use type + egressInterface/egressPolicyRef + sourceRanges for the runtime controller. type is required (masquerade or snat); at least one egress selector and at least one IPv4 source range are required. Explicit egressInterface wins if both egress selectors are supplied.",
+        "実行コントローラーにはtype・egressInterface/egressPolicyRef・sourceRangesの形を使います。typeはmasquerade・snatのいずれか、送信先選択1種類以上、IPv4送信元範囲1件以上が必須です。両送信先指定があるとegressInterfaceが優先します。",
+        "執行控制器請使用 type + egressInterface/egressPolicyRef + sourceRanges。type 必須為 masquerade/snat；至少一個輸出選擇與一個 IPv4 來源範圍必填。兩種輸出選擇皆有時，egressInterface 優先。",
+        "运行控制器请使用 type + egressInterface/egressPolicyRef + sourceRanges。type 必须为 masquerade/snat；至少一个输出选择与一个 IPv4 源范围必填。两种输出选择均有时，egressInterface 优先。"
+      ],
+      [
+        "snat requires exactly one of snatAddress and snatAddressFrom. masquerade prohibits both. A dynamic address source follows common resource/field validation and leaves Pending while no usable address resolves; optional does not skip the need for a SNAT address.",
+        "snatはsnatAddress・snatAddressFromのちょうど一方が必須で、masqueradeでは両方禁止です。動的参照は共通のresource・field検証に従い、有効アドレス未解決ならPendingです。optionalでもSNATアドレスは必要です。",
+        "snat 必須且只能提供 snatAddress 或 snatAddressFrom 其中之一；masquerade 禁止兩者。動態來源遵循共用 resource/field 驗證，無可用位址時維持 Pending；optional 不會略過 SNAT 位址需求。",
+        "snat 必须且只能提供 snatAddress 或 snatAddressFrom 其中之一；masquerade 禁止两者。动态来源遵循通用 resource/field 验证，无可用地址时维持 Pending；optional 不会跳过 SNAT 地址需求。"
+      ],
+      [
+        "The alternative outboundInterface/sourceCIDRs/translation shape is accepted by validation and shown in plans, but the runtime NAT44 controller does not translate it into its render rule. It can remain Pending or fail rendering rather than apply on Linux. Static PF rendering supports only interfaceAddress/address of this shape, not pool; portMapping has no renderer effect. Do not use this shape as a working runtime configuration.",
+        "別形状のoutboundInterface・sourceCIDRs・translationは検証・計画にありますが、実行NAT44コントローラーは描画ルールへ変換しません。Linuxで適用されずPendingや描画エラーになる場合があります。静的PFはこの形状のinterfaceAddress・addressだけに対応しpoolは非対応です。portMappingも描画効果がありません。動作する実行設定として使わないでください。",
+        "替代 outboundInterface/sourceCIDRs/translation 形式可通過驗證並出現在計畫，但執行 NAT44 控制器不會轉成渲染規則；Linux 可能維持 Pending 或產生錯誤而不套用。靜態 PF 僅支援此形式的 interfaceAddress/address，不支援 pool；portMapping 無產生效果。請勿視為可用執行設定。",
+        "替代 outboundInterface/sourceCIDRs/translation 形式可通过验证并出现在计划，但运行 NAT44 控制器不会转成渲染规则；Linux 可能维持 Pending 或产生错误而不应用。静态 PF 仅支持此形式的 interfaceAddress/address，不支持 pool；portMapping 无生成效果。请勿视为可用运行配置。"
+      ],
+      [
+        "The two shapes are mutually exclusive. Alternative shape requires outboundInterface, nonempty IPv4 sourceCIDRs and translation.type; it prohibits all traditional type/egress/sourceRanges/destination/SNAT fields. Irrelevant translation.address/addresses are not mutually rejected, but only the selected branch would use them.",
+        "2形状は排他です。別形状はoutboundInterface・1件以上のIPv4 sourceCIDRs・translation.typeが必須で、従来形状のtype・egress・sourceRanges・宛先・SNAT項目を併用できません。translation.address・addressesの不要側は拒否されませんが、選択した分岐だけが使います。",
+        "兩種形式互斥。替代形式需 outboundInterface、非空 IPv4 sourceCIDRs 與 translation.type，禁止傳統 type/egress/sourceRanges/目的/SNAT 欄位。未使用的 translation.address/addresses 不互斥拒絕，但僅選定分支會使用。",
+        "两种形式互斥。替代形式需 outboundInterface、非空 IPv4 sourceCIDRs 与 translation.type，禁止传统 type/egress/sourceRanges/目标/SNAT 字段。未使用的 translation.address/addresses 不互斥拒绝，但仅所选分支会使用。"
+      ],
+      [
+        "Linux combines destinationCIDRs and destinationSetRefs as alternatives, then excludes the configured CIDRs/sets. PF applies static destination/exclusion CIDRs but ignores both address-set reference lists. Rule ordering uses metadata.name, not YAML order.",
+        "LinuxはdestinationCIDRs・destinationSetRefsをORにし、指定CIDR・集合を除外します。PFは静的宛先・除外CIDRを適用しますが、アドレス集合参照は両一覧とも使いません。ルール順はYAML順でなくmetadata.name順です。",
+        "Linux 將 destinationCIDRs 與 destinationSetRefs 作 OR，再排除指定 CIDR/集合。PF 套用靜態目的與排除 CIDR，但忽略兩個位址集合參照清單。規則依 metadata.name 排序，不依 YAML 順序。",
+        "Linux 将 destinationCIDRs 与 destinationSetRefs 作 OR，再排除指定 CIDR/集合。PF 应用静态目标与排除 CIDR，但忽略两个地址集合引用列表。规则按 metadata.name 排序，不按 YAML 顺序。"
+      ]
+    ],
+    "fields": {
+      "type": [
+        "Required in runtime shape: masquerade uses the egress address, snat uses a supplied address. No default; prohibited with alternative source-NAT fields.",
+        "実行形状で必須です。masqueradeは送信側アドレス、snatは指定アドレスを使います。既定なしで別形状とは併用禁止です。",
+        "執行形式必填：masquerade 使用輸出位址，snat 使用提供位址。無預設；不可搭配替代形式。",
+        "运行形式必填：masquerade 使用输出地址，snat 使用提供地址。无默认；不可搭配替代形式。"
+      ],
+      "egressInterface": [
+        "Optional bare configured logical interface/tunnel name; if supplied, must resolve in the interface/DSLite index. Takes precedence over egressPolicyRef.",
+        "任意の裸の論理インターフェース・トンネル名です。指定時は設定内のインターフェース・DSLite索引での解決が必要で、egressPolicyRefより優先します。",
+        "選用單純設定邏輯介面/通道名稱，指定時須在介面/DSLite 索引中存在，優先於 egressPolicyRef。",
+        "可选单独配置逻辑接口/隧道名称，指定时须在接口/DSLite 索引中存在，优先于 egressPolicyRef。"
+      ],
+      "egressPolicyRef": [
+        "Bare EgressRoutePolicy name when egressInterface is absent. The controller requires its status.phase=Applied and selectedDevice nonempty. Reference existence is not checked by the NAT44 validator, so an unresolved/misnamed policy leaves Pending.",
+        "egressInterface省略時の裸のEgressRoutePolicy名です。status.phase=Appliedと空でないselectedDeviceが必要です。NAT44の検証では存在を確認せず、名前違い・未解決はPendingです。",
+        "egressInterface 缺省時使用的單純 EgressRoutePolicy 名稱。需要 status.phase=Applied 與非空 selectedDevice。NAT44 驗證不檢查存在性，錯名或未解析會 Pending。",
+        "egressInterface 缺省时使用的单独 EgressRoutePolicy 名称。需要 status.phase=Applied 与非空 selectedDevice。NAT44 验证不检查存在性，错名或未解析会 Pending。"
+      ],
+      "sourceRanges": [
+        "Required nonempty IPv4 CIDR alternatives in runtime shape. No implicit LAN discovery; mutually exclusive with sourceCIDRs/translation shape.",
+        "実行形状で必須の1件以上のIPv4 CIDRです。LAN自動取得はなく、sourceCIDRs・translation形状と排他です。",
+        "執行形式必填非空 IPv4 CIDR OR 清單。不自動探索 LAN，與 sourceCIDRs/translation 形式互斥。",
+        "运行形式必填非空 IPv4 CIDR OR 列表。不自动发现 LAN，与 sourceCIDRs/translation 形式互斥。"
+      ],
+      "destinationCIDRs": [
+        "Optional IPv4 destination alternatives, default empty. Linux unions with destinationSetRefs; PF uses these static CIDRs.",
+        "任意のIPv4宛先OR一覧で既定は空です。LinuxはdestinationSetRefsと和集合にし、PFはこの静的CIDRを使います。",
+        "選用 IPv4 目的 OR 清單，預設空。Linux 與 destinationSetRefs 取聯集；PF 使用靜態 CIDR。",
+        "可选 IPv4 目标 OR 列表，默认空。Linux 与 destinationSetRefs 取并集；PF 使用静态 CIDR。"
+      ],
+      "destinationSetRefs": [
+        "Optional existing IPAddressSet/<name> references; duplicates rejected. Default empty. Effective on Linux, ignored by PF.",
+        "任意の既存IPAddressSet/<name>参照で重複は禁止です。既定は空、Linuxで有効、PFは無視します。",
+        "選用既有 IPAddressSet/<name> 參照，不可重複。預設空，Linux 有效，PF 忽略。",
+        "可选已有 IPAddressSet/<name> 引用，不可重复。默认空，Linux 有效，PF 忽略。"
+      ],
+      "excludeDestinationCIDRs": [
+        "Optional IPv4 destinations exempt from this NAT selection. Default empty. PF emits no-nat entries before this rule’s translations.",
+        "本NATから除外する任意のIPv4宛先です。既定は空で、PFは本ルールの変換より前にno natを生成します。",
+        "選用從此 NAT 選擇排除的 IPv4 目的，預設空。PF 在此規則轉換前產生 no-nat。",
+        "可选从此 NAT 选择排除的 IPv4 目标，默认空。PF 在此规则转换前生成 no-nat。"
+      ],
+      "excludeDestinationSetRefs": [
+        "Optional existing IPAddressSet/<name> exclusions, default empty. Effective only on Linux; PF ignores them.",
+        "任意の既存IPAddressSet/<name>除外で既定は空です。Linuxだけで有効、PFは無視します。",
+        "選用既有 IPAddressSet/<name> 排除，預設空。僅 Linux 有效，PF 忽略。",
+        "可选已有 IPAddressSet/<name> 排除，默认空。仅 Linux 有效，PF 忽略。"
+      ],
+      "snatAddress": [
+        "Bare IPv4 translation address for type=snat; exactly one of this and snatAddressFrom is required. Prohibited with masquerade. Does not assign the address.",
+        "type=snat用の裸のIPv4変換アドレスです。snatAddressFromとちょうど一方が必須で、masqueradeでは禁止です。アドレス割当は行いません。",
+        "type=snat 的純 IPv4 轉換位址，與 snatAddressFrom 必須且只能擇一。masquerade 禁用。不會指派位址。",
+        "type=snat 的纯 IPv4 转换地址，与 snatAddressFrom 必须且只能择一。masquerade 禁用。不会分配地址。"
+      ],
+      "snatAddressFrom": [
+        "Optional common resource/field/optional source, only for snat. Reads status first, then a supported declared resource field; unusable value stays Pending. Specify an IPv4 address-providing field.",
+        "snat専用の共通resource・field・optional参照です。状態を先に読み、対応する宣言済みリソース値を次に使い、利用可能な値がなければPendingです。IPv4アドレスを提供するfieldを指定してください。",
+        "僅供 snat 的共用 resource/field/optional 來源。先讀狀態，再讀支援的宣告資源欄位；無可用值時 Pending。請指定提供 IPv4 位址的欄位。",
+        "仅供 snat 的通用 resource/field/optional 来源。先读状态，再读支持的声明资源字段；无可用值时 Pending。请指定提供 IPv4 地址的字段。"
+      ],
+      "outboundInterface": [
+        "Required bare configured interface name for the alternative validated shape; no runtime-controller support as described above. Do not combine with egressInterface/egressPolicyRef.",
+        "別形状で必須の裸の設定インターフェース名です。前述のとおり実行コントローラーは対応しません。egressInterface・egressPolicyRefとの併用は禁止です。",
+        "替代驗證形式必填的單純介面名稱；如上所述執行控制器不支援。不可搭配 egressInterface/egressPolicyRef。",
+        "替代验证形式必填的单独接口名称；如上所述运行控制器不支持。不可搭配 egressInterface/egressPolicyRef。"
+      ],
+      "sourceCIDRs": [
+        "Required nonempty IPv4 prefixes for the alternative shape; no default. Not consumed by the runtime controller.",
+        "別形状で1件以上必須のIPv4プレフィックスです。既定なしで、実行コントローラーは読みません。",
+        "替代形式必填非空 IPv4 前綴，無預設。執行控制器不使用。",
+        "替代形式必填非空 IPv4 前缀，无默认。运行控制器不使用。"
+      ],
+      "translation": [
+        "Alternative-shape translation object; needed with outboundInterface/sourceCIDRs. Validation/planning support is not proof of runtime installation.",
+        "outboundInterface・sourceCIDRsと組み合わせる別形状の変換定義です。検証・計画への対応は実行適用の保証ではありません。",
+        "替代形式的轉換物件，搭配 outboundInterface/sourceCIDRs。通過驗證與出現計畫不代表執行安裝。",
+        "替代形式的转换对象，搭配 outboundInterface/sourceCIDRs。通过验证与出现计划不代表运行安装。"
+      ],
+      "translation.type": [
+        "Required interfaceAddress, address or pool in the alternative shape. Static PF supports interfaceAddress/address only; runtime controller does not apply this shape.",
+        "別形状ではinterfaceAddress・address・poolが必須です。静的PFは前2種だけに対応し、実行コントローラーは本形状を適用しません。",
+        "替代形式必填 interfaceAddress/address/pool。靜態 PF 僅支援前兩者，執行控制器不套用此形式。",
+        "替代形式必填 interfaceAddress/address/pool。静态 PF 仅支持前两者，运行控制器不应用此形式。"
+      ],
+      "translation.address": [
+        "Bare IPv4 required when translation.type=address; default empty. Other translation types do not consume it.",
+        "translation.type=addressで必須の裸のIPv4です。既定は空で、他の型は使いません。",
+        "translation.type=address 時必填純 IPv4，預設空。其他型別不使用。",
+        "translation.type=address 时必填纯 IPv4，默认空。其他类型不使用。"
+      ],
+      "translation.addresses": [
+        "Nonempty bare IPv4 list required when type=pool. Accepted/planned but not implemented by the current runtime controller or static PF renderer.",
+        "type=poolで必須の1件以上の裸のIPv4です。受理・計画されますが、現行の実行コントローラー・静的PFは実装していません。",
+        "type=pool 時必填非空純 IPv4 清單。接受並規劃，但目前執行控制器與靜態 PF 未實作。",
+        "type=pool 时必填非空纯 IPv4 列表。接受并规划，但当前运行控制器与静态 PF 未实现。"
+      ],
+      "translation.portMapping": [
+        "Optional alternative-shape port policy, validated and planned only. Current Linux runtime and PF renderer do not enforce these port settings.",
+        "任意の別形状のポート方針で、検証・計画だけです。現行Linux実行・PF描画はこのポート設定を強制しません。",
+        "選用替代形式連接埠策略，僅驗證與規劃。目前 Linux 執行與 PF 不強制這些設定。",
+        "可选替代形式端口策略，仅验证与规划。当前 Linux 运行与 PF 不强制这些配置。"
+      ],
+      "translation.portMapping.type": [
+        "auto (default), preserve or range. auto/preserve prohibit start/end; range requires both endpoints. Currently no renderer effect.",
+        "auto（既定）・preserve・rangeです。auto・preserveではstart・end禁止、rangeは両端必須です。現行描画の効果はありません。",
+        "auto（預設）、preserve 或 range。auto/preserve 禁止 start/end，range 需要兩端。目前無產生效果。",
+        "auto（默认）、preserve 或 range。auto/preserve 禁止 start/end，range 需要两端。当前无生成效果。"
+      ],
+      "translation.portMapping.start": [
+        "Range start, required only for range: 1–65535 and <= end. Default 0 means absent. Currently validated only.",
+        "range時だけ必須の開始値です。1～65535でend以下、既定0は未指定です。現行では検証だけです。",
+        "僅 range 必填起點，1–65535 且 <= end。預設 0 為未指定，目前僅驗證。",
+        "仅 range 必填起点，1–65535 且 <= end。默认 0 为未指定，当前仅验证。"
+      ],
+      "translation.portMapping.end": [
+        "Range end, required only for range: 1–65535 and >= start. Default 0 means absent. Currently validated only.",
+        "range時だけ必須の終了値です。1～65535でstart以上、既定0は未指定です。現行では検証だけです。",
+        "僅 range 必填終點，1–65535 且 >= start。預設 0 為未指定，目前僅驗證。",
+        "仅 range 必填终点，1–65535 且 >= start。默认 0 为未指定，当前仅验证。"
+      ],
+      "when": [
+        "Optional common activation condition; default unconditional. Inactive/filtered rules are omitted from effective NAT generation. See common fields for predicate semantics and schema limitations.",
+        "共通の有効化条件で、省略は無条件です。不成立で除外したルールは実効NAT生成に含めません。条件とスキーマ制約は共通項を参照してください。",
+        "選用共用啟用條件，預設無條件。未啟用或已篩除規則不納入有效 NAT 產生。條件與結構描述限制請見共用欄位。",
+        "可选通用启用条件，默认无条件。未启用或已筛除规则不纳入有效 NAT 生成。条件与模式限制请见通用字段。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_firewall.go",
+      "pkg/config/diagnostics.go",
+      "pkg/config/validate.go",
+      "pkg/controller/nat44/controller.go",
+      "pkg/render/nftables.go",
+      "pkg/render/pf.go",
+      "pkg/apply/engine.go"
+    ]
+  },
+  "NAT44FlowDNATPinhole": {
+    "purpose": [
+      "Learn an IPv4 UDP internal endpoint from outbound traffic and dynamically DNAT inbound UDP by its destination port. Linux nftables only; the current PF renderer does not implement this resource.",
+      "送信UDPからIPv4内部エンドポイントを学習し、受信UDPの宛先ポートで動的DNATします。Linux nftables専用で、現行PFは実装していません。",
+      "從送出 IPv4 UDP 學習內部端點，依收到 UDP 的目的連接埠動態 DNAT。僅 Linux nftables，目前 PF 未實作此資源。",
+      "从发出 IPv4 UDP 学习内部端点，按收到 UDP 的目标端口动态 DNAT。仅 Linux nftables，当前 PF 未实现此资源。"
+    ],
+    "rules": [
+      [
+        "fromInterfaceRefs, outbound, inbound and a source selector are required. Every interface and IPAddressSet reference must exist in the same Router. IPv4/UDP only; this is port-triggered DNAT, not ordinary conntrack reply handling.",
+        "fromInterfaceRefs・outbound・inboundと送信元選別が必須です。インターフェース・IPAddressSetの参照先は同じRouterに存在する必要があります。IPv4・UDP専用のポート起動DNATで、通常のconntrack応答処理とは別です。",
+        "fromInterfaceRefs、outbound、inbound 與來源選擇器必填。介面與 IPAddressSet 參照須存在於同一 Router。僅 IPv4/UDP，屬於連接埠觸發 DNAT，不是一般 conntrack 回覆處理。",
+        "fromInterfaceRefs、outbound、inbound 与源选择器必填。接口与 IPAddressSet 引用须存在于同一 Router。仅 IPv4/UDP，属于端口触发 DNAT，不是普通 conntrack 回复处理。"
+      ],
+      [
+        "The map key is the outbound local UDP source port; value is internal source IPv4 plus the same port, learned before SNAT. All selected interfaces share one map per resource. Different clients using the same source port overwrite the same mapping; remote address is not part of the key.",
+        "キーは送信のローカルUDP送信元ポート、値はSNAT前の内部IPv4と同じポートです。選択インターフェースはリソースごとの1マップを共有します。同じポートを使う別クライアントは上書きし、相手アドレスをキーに含めません。",
+        "映射鍵為送出本機 UDP 來源連接埠，值為 SNAT 前內部 IPv4 與相同連接埠。所有選定介面共用每資源一個映射。不同用戶端使用相同來源連接埠會覆寫，遠端位址不在鍵內。",
+        "映射键为发出本机 UDP 源端口，值为 SNAT 前内部 IPv4 与相同端口。所有所选接口共享每资源一个映射。不同客户端使用相同源端口会覆盖，远端地址不在键内。"
+      ],
+      [
+        "Inbound DNAT checks selected incoming interfaces, allowed remote source ports and a learned destination port. It does not reapply outbound destination CIDRs/sets to the inbound remote address and does not create a firewall forward-accept rule; the firewall policy must also permit the translated traffic.",
+        "受信DNATは選択した入力インターフェース・相手送信元ポート・学習済み宛先ポートを確認します。送信宛先CIDR・集合を受信相手に再適用せず、転送許可ルールも生成しません。変換後通信はファイアウォール側の許可も必要です。",
+        "入站 DNAT 檢查選定輸入介面、允許的遠端來源連接埠與已學習目的連接埠。不會將送出目的 CIDR/集合重新套用到入站遠端位址，也不建立防火牆轉送允許；轉換流量仍需防火牆允許。",
+        "入站 DNAT 检查所选输入接口、允许的远端源端口与已学习目标端口。不会将发出目标 CIDR/集合重新应用到入站远端地址，也不创建防火墙转发允许；转换流量仍需防火墙允许。"
+      ],
+      [
+        "Learned maps are kernel runtime state, not configuration or persistent DB records; recreating the NAT table or rebooting loses them. Outbound traffic must relearn mappings.",
+        "学習マップはカーネル実行状態で、設定・永続DBではありません。NATテーブル再作成・再起動で失われ、送信通信による再学習が必要です。",
+        "學習映射是核心執行狀態，不是設定或持久化資料庫。重建 NAT 表或重啟會遺失，需送出流量重新學習。",
+        "学习映射是内核运行状态，不是配置或持久化数据库。重建 NAT 表或重启会丢失，需发出流量重新学习。"
+      ]
+    ],
+    "fields": {
+      "outbound": [
+        "Required outbound-learning match. It records eligible UDP flow identities but does not itself allow outbound traffic through the firewall.",
+        "必須の送信学習条件です。該当UDP通信の識別を記録しますが、送信通信自体のファイアウォール許可ではありません。",
+        "必填的送出學習比對。記錄符合的 UDP 流量身分，但不會自行允許流量通過防火牆。",
+        "必填的发出学习匹配。记录匹配的 UDP 流量身份，但不会自行允许流量通过防火墙。"
+      ],
+      "outbound.sourceSetRef": [
+        "Optional existing IPAddressSet/<name> source selector. At least this or sourceCIDRs is required; both may be combined as OR alternatives. Default empty.",
+        "既存IPAddressSet/<name>の送信元選別です。sourceCIDRsと少なくとも一方が必須で、両方あればORです。既定は空です。",
+        "選用既有 IPAddressSet/<name> 來源選擇器。此欄或 sourceCIDRs 至少一者必填；兩者可作 OR。預設空。",
+        "可选已有 IPAddressSet/<name> 源选择器。此字段或 sourceCIDRs 至少一者必填；两者可作 OR。默认空。"
+      ],
+      "outbound.sourceCIDRs": [
+        "Optional IPv4 source-prefix OR list, default empty. At least one source selector is required. IPv6 is rejected; host bits are masked for rendering.",
+        "任意のIPv4送信元CIDRのOR一覧で、既定は空です。送信元選別が最低1つ必要です。IPv6は拒否し、描画時はホスト部をマスクします。",
+        "選用 IPv4 來源前綴 OR 清單，預設空，至少需要一個來源選擇器。拒絕 IPv6，產生時遮罩主機位元。",
+        "可选 IPv4 源前缀 OR 列表，默认空，至少需要一个源选择器。拒绝 IPv6，生成时掩码主机位。"
+      ],
+      "outbound.destinationCIDRs": [
+        "Optional IPv4 remote destinations for learning, default empty. Combined with destinationSetRefs as OR; no destination selector means any remote address.",
+        "学習対象の任意のIPv4相手宛先で、既定は空です。destinationSetRefsとORで組み合わせ、両方なければ相手アドレス不問です。",
+        "選用學習用 IPv4 遠端目的，預設空。與 destinationSetRefs 作 OR；兩者皆無時任意遠端位址。",
+        "可选学习用 IPv4 远端目标，默认空。与 destinationSetRefs 作 OR；两者均无时任意远端地址。"
+      ],
+      "outbound.destinationSetRefs": [
+        "Optional existing IPAddressSet/<name> remote destination references; duplicates rejected. Default empty. Source and destination categories combine with AND.",
+        "任意の既存IPAddressSet/<name>相手宛先参照です。重複は禁止、既定は空です。送信元と宛先の条件群はANDで組み合わせます。",
+        "選用既有 IPAddressSet/<name> 遠端目的參照，不可重複，預設空。來源與目的兩類以 AND 組合。",
+        "可选已有 IPAddressSet/<name> 远端目标引用，不可重复，默认空。源与目标两类以 AND 组合。"
+      ],
+      "outbound.protocol": [
+        "Required udp; no default and no TCP/IPv6 support for this learning mechanism.",
+        "udpが必須で既定値はありません。この学習機構はTCP・IPv6に対応しません。",
+        "必填 udp，無預設值。此學習機制不支援 TCP/IPv6。",
+        "必填 udp，无默认值。此学习机制不支持 TCP/IPv6。"
+      ],
+      "outbound.destinationPorts": [
+        "Required nonempty outbound UDP destination ports: numeric 1–65535 or a sole start-end range. A range cannot be combined with other list entries.",
+        "1件以上必須の送信UDP宛先ポートです。1～65535の数値か、唯一のstart-end範囲を指定します。範囲と他項目の併用は禁止です。",
+        "必填非空送出 UDP 目的連接埠：數字 1–65535 或唯一 start-end 範圍。範圍不可與其他項目混用。",
+        "必填非空发出 UDP 目标端口：数字 1–65535 或唯一 start-end 范围。范围不可与其他条目混用。"
+      ],
+      "inbound": [
+        "Required return-traffic match; sourcePorts selects allowed remote UDP sender ports, not local destination ports.",
+        "必須の戻り通信条件です。sourcePortsは相手UDP送信元ポートを選び、ローカル宛先ポートではありません。",
+        "必填返回流量比對。sourcePorts 選擇遠端 UDP 傳送者連接埠，不是本機目的連接埠。",
+        "必填返回流量匹配。sourcePorts 选择远端 UDP 发送者端口，不是本机目标端口。"
+      ],
+      "inbound.sourcePorts": [
+        "Required nonempty remote UDP source-port list with the same 1–65535 / sole-range constraints as outbound.destinationPorts.",
+        "1件以上必須の相手UDP送信元ポート一覧です。outbound.destinationPortsと同じ1～65535・範囲単独の制約です。",
+        "必填非空遠端 UDP 來源連接埠清單，與 outbound.destinationPorts 相同的 1–65535/單獨範圍限制。",
+        "必填非空远端 UDP 源端口列表，与 outbound.destinationPorts 相同的 1–65535/单独范围限制。"
+      ],
+      "timeout": [
+        "Optional strictly positive Go duration; default 3m. Each matching outbound packet refreshes the learned element. Rendering rounds to seconds with a minimum of 1s; this is learned-state expiry, not a UDP protocol timeout.",
+        "任意の正のGo形式期間で、既定3mです。該当送信パケットごとに学習要素を更新します。描画は秒単位へ丸め最低1秒にし、UDPプロトコルのタイムアウトでなく学習状態の期限です。",
+        "選用嚴格為正的 Go 時間長度，預設 3m。每個符合送出封包更新學習項目。產生時四捨五入為秒且至少 1s；這是學習狀態到期，不是 UDP 協定逾時。",
+        "可选严格为正的 Go 时长，默认 3m。每个匹配发出数据包更新学习条目。生成时四舍五入为秒且至少 1s；这是学习状态过期，不是 UDP 协议超时。"
+      ],
+      "when": [
+        "Optional common activation condition, default unconditional. A filtered resource contributes no learned map/set rules. See common fields for nested conditions and schema limitations.",
+        "共通の有効化条件で、既定は無条件です。除外したリソースの学習マップ・集合ルールは生成しません。入れ子条件とスキーマ制約は共通項を参照してください。",
+        "選用共用啟用條件，預設無條件。篩除資源不產生學習映射/集合規則。巢狀條件與結構描述限制請見共用欄位。",
+        "可选通用启用条件，默认无条件。筛除资源不生成学习映射/集合规则。嵌套条件与模式限制请见通用字段。"
+      ],
+      "fromInterfaceRefs": [
+        "Required nonempty egress/ingress interface list; bare names or Interface/name, PPPoESession/name, DSLiteTunnel/name. Outbound matches oifname and inbound matches iifname on this same list.",
+        "1件以上必須の入出力インターフェース一覧です。裸名・Interface/name・PPPoESession/name・DSLiteTunnel/nameを受け付け、同じ一覧を送信oifname・受信iifnameで使います。",
+        "必填非空輸出/輸入介面清單，接受單純名稱或 Interface/name、PPPoESession/name、DSLiteTunnel/name。送出比對 oifname，入站比對同清單的 iifname。",
+        "必填非空输出/输入接口列表，接受单独名称或 Interface/name、PPPoESession/name、DSLiteTunnel/name。发出匹配 oifname，入站匹配同列表的 iifname。"
+      ],
+      "correlation": [
+        "Optional correlation object; only localPort is supported. Default omitted uses the same key.",
+        "任意の相関定義でlocalPortのみ対応します。省略時も同じキーです。",
+        "選用關聯物件，僅支援 localPort，省略亦使用相同鍵。",
+        "可选关联对象，仅支持 localPort，省略亦使用相同键。"
+      ],
+      "correlation.key": [
+        "Empty or localPort only. The configured key is not otherwise branched by the renderer: UDP source port always indexes the learned map.",
+        "空またはlocalPortのみです。描画側に別分岐はなく、常にUDP送信元ポートで学習マップを引きます。",
+        "僅空或 localPort。產生器無其他分支，一律以 UDP 來源連接埠索引學習映射。",
+        "仅空或 localPort。生成器无其他分支，一律以 UDP 源端口索引学习映射。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_firewall.go",
+      "pkg/config/validate.go",
+      "pkg/render/nftables.go",
+      "pkg/render/local_service_redirect.go",
+      "pkg/controller/nat44/controller.go"
+    ]
+  },
+  "FirewallFlowPinhole": {
+    "purpose": [
+      "Learn allowed return IPv4 UDP endpoints for a pair of firewall zones, without address translation. Linux nftables only; the current PF renderer omits this resource.",
+      "ファイアウォールのゾーン組で、IPv4 UDPの戻り許可エンドポイントを学習します。アドレス変換は行いません。Linux nftables専用で、現行PFは生成しません。",
+      "為防火牆區域配對學習允許的返回 IPv4 UDP 端點，不轉換位址。僅 Linux nftables，目前 PF 省略此資源。",
+      "为防火墙区域配对学习允许的返回 IPv4 UDP 端点，不转换地址。仅 Linux nftables，当前 PF 省略此资源。"
+    ],
+    "rules": [
+      [
+        "fromZone and toZone must be different existing FirewallZone bare names; self is forbidden. Outbound/inbound and at least one source selector are required. All IPAddressSet references must exist.",
+        "fromZone・toZoneは異なる既存FirewallZoneの裸名が必須で、selfは禁止です。outbound・inboundと送信元選別が必要で、IPAddressSet参照先も必須です。",
+        "fromZone/toZone 必須為不同既有 FirewallZone 的單純名稱，不允許 self。outbound/inbound 與至少一個來源選擇器必填，所有 IPAddressSet 參照須存在。",
+        "fromZone/toZone 必须为不同已有 FirewallZone 的单独名称，不允许 self。outbound/inbound 与至少一个源选择器必填，所有 IPAddressSet 引用须存在。"
+      ],
+      [
+        "Outbound matching traffic updates a timed set but continues to later rules; it is not automatically accepted. Reverse traffic matches swapped source/destination restrictions, allowed remote UDP source ports and a learned tuple, then is accepted before ordinary explicit zone-pair rules.",
+        "送信条件への一致は期限付き集合を更新して後続へ進み、自動許可ではありません。逆方向は送信元・宛先を入れ替えた制限、相手UDP送信元ポート、学習済み組に一致すると、通常のゾーン間明示ルールより先に許可します。",
+        "送出符合時更新具期限集合後繼續後續規則，不自動允許。反向流量須符合交換後的來源/目的限制、允許遠端 UDP 來源連接埠及學習組合，之後在一般明確區域規則前允許。",
+        "发出匹配时更新带期限集合后继续后续规则，不自动允许。反向流量须匹配交换后的源/目标限制、允许远端 UDP 源端口及学习组合，随后在普通明确区域规则前允许。"
+      ],
+      [
+        "Default remoteAddress binds a learned tuple to remote IPv4 + local IPv4 + local UDP port. localEndpoint omits the remote address from the key, but the configured remote CIDR/set restriction still applies to inbound sources. Remote UDP destination ports are not part of the learned key.",
+        "既定remoteAddressは相手IPv4・内部IPv4・内部UDPポートをキーにします。localEndpointはキーから相手を除きますが、設定した相手CIDR・集合は受信送信元にも適用します。送信時の相手UDP宛先ポートは学習キーに含めません。",
+        "預設 remoteAddress 的鍵為遠端 IPv4 + 本機 IPv4 + 本機 UDP 連接埠。localEndpoint 從鍵中省略遠端位址，但設定的遠端 CIDR/集合仍限制入站來源。遠端 UDP 目的連接埠不在學習鍵內。",
+        "默认 remoteAddress 的键为远端 IPv4 + 本机 IPv4 + 本机 UDP 端口。localEndpoint 从键中省略远端地址，但配置的远端 CIDR/集合仍限制入站源。远端 UDP 目标端口不在学习键内。"
+      ],
+      [
+        "Learned elements are transient kernel sets; firewall table recreation or reboot loses them. Existing conntrack accepts and control exceptions can precede the pinhole rules, so this is not a replacement for the complete firewall policy.",
+        "学習要素は一時的なカーネル集合で、ファイアウォールテーブル再作成・再起動で消えます。既存conntrack許可・制御例外が先に評価されるため、全体のファイアウォール方針を置き換えるものではありません。",
+        "學習項目是暫時核心集合，重建防火牆表或重啟會遺失。既有 conntrack 允許與控制例外可能先執行，不能取代完整防火牆策略。",
+        "学习条目是临时内核集合，重建防火墙表或重启会丢失。已有 conntrack 允许与控制例外可能先执行，不能取代完整防火墙策略。"
+      ]
+    ],
+    "fields": {
+      "outbound": [
+        "Required outbound-learning match. It records eligible UDP flow identities but does not itself allow outbound traffic through the firewall.",
+        "必須の送信学習条件です。該当UDP通信の識別を記録しますが、送信通信自体のファイアウォール許可ではありません。",
+        "必填的送出學習比對。記錄符合的 UDP 流量身分，但不會自行允許流量通過防火牆。",
+        "必填的发出学习匹配。记录匹配的 UDP 流量身份，但不会自行允许流量通过防火墙。"
+      ],
+      "outbound.sourceSetRef": [
+        "Optional existing IPAddressSet/<name> source selector. At least this or sourceCIDRs is required; both may be combined as OR alternatives. Default empty.",
+        "既存IPAddressSet/<name>の送信元選別です。sourceCIDRsと少なくとも一方が必須で、両方あればORです。既定は空です。",
+        "選用既有 IPAddressSet/<name> 來源選擇器。此欄或 sourceCIDRs 至少一者必填；兩者可作 OR。預設空。",
+        "可选已有 IPAddressSet/<name> 源选择器。此字段或 sourceCIDRs 至少一者必填；两者可作 OR。默认空。"
+      ],
+      "outbound.sourceCIDRs": [
+        "Optional IPv4 source-prefix OR list, default empty. At least one source selector is required. IPv6 is rejected; host bits are masked for rendering.",
+        "任意のIPv4送信元CIDRのOR一覧で、既定は空です。送信元選別が最低1つ必要です。IPv6は拒否し、描画時はホスト部をマスクします。",
+        "選用 IPv4 來源前綴 OR 清單，預設空，至少需要一個來源選擇器。拒絕 IPv6，產生時遮罩主機位元。",
+        "可选 IPv4 源前缀 OR 列表，默认空，至少需要一个源选择器。拒绝 IPv6，生成时掩码主机位。"
+      ],
+      "outbound.destinationCIDRs": [
+        "Optional IPv4 remote destinations for learning, default empty. Combined with destinationSetRefs as OR; no destination selector means any remote address.",
+        "学習対象の任意のIPv4相手宛先で、既定は空です。destinationSetRefsとORで組み合わせ、両方なければ相手アドレス不問です。",
+        "選用學習用 IPv4 遠端目的，預設空。與 destinationSetRefs 作 OR；兩者皆無時任意遠端位址。",
+        "可选学习用 IPv4 远端目标，默认空。与 destinationSetRefs 作 OR；两者均无时任意远端地址。"
+      ],
+      "outbound.destinationSetRefs": [
+        "Optional existing IPAddressSet/<name> remote destination references; duplicates rejected. Default empty. Source and destination categories combine with AND.",
+        "任意の既存IPAddressSet/<name>相手宛先参照です。重複は禁止、既定は空です。送信元と宛先の条件群はANDで組み合わせます。",
+        "選用既有 IPAddressSet/<name> 遠端目的參照，不可重複，預設空。來源與目的兩類以 AND 組合。",
+        "可选已有 IPAddressSet/<name> 远端目标引用，不可重复，默认空。源与目标两类以 AND 组合。"
+      ],
+      "outbound.protocol": [
+        "Required udp; no default and no TCP/IPv6 support for this learning mechanism.",
+        "udpが必須で既定値はありません。この学習機構はTCP・IPv6に対応しません。",
+        "必填 udp，無預設值。此學習機制不支援 TCP/IPv6。",
+        "必填 udp，无默认值。此学习机制不支持 TCP/IPv6。"
+      ],
+      "outbound.destinationPorts": [
+        "Required nonempty outbound UDP destination ports: numeric 1–65535 or a sole start-end range. A range cannot be combined with other list entries.",
+        "1件以上必須の送信UDP宛先ポートです。1～65535の数値か、唯一のstart-end範囲を指定します。範囲と他項目の併用は禁止です。",
+        "必填非空送出 UDP 目的連接埠：數字 1–65535 或唯一 start-end 範圍。範圍不可與其他項目混用。",
+        "必填非空发出 UDP 目标端口：数字 1–65535 或唯一 start-end 范围。范围不可与其他条目混用。"
+      ],
+      "inbound": [
+        "Required return-traffic match; sourcePorts selects allowed remote UDP sender ports, not local destination ports.",
+        "必須の戻り通信条件です。sourcePortsは相手UDP送信元ポートを選び、ローカル宛先ポートではありません。",
+        "必填返回流量比對。sourcePorts 選擇遠端 UDP 傳送者連接埠，不是本機目的連接埠。",
+        "必填返回流量匹配。sourcePorts 选择远端 UDP 发送者端口，不是本机目标端口。"
+      ],
+      "inbound.sourcePorts": [
+        "Required nonempty remote UDP source-port list with the same 1–65535 / sole-range constraints as outbound.destinationPorts.",
+        "1件以上必須の相手UDP送信元ポート一覧です。outbound.destinationPortsと同じ1～65535・範囲単独の制約です。",
+        "必填非空遠端 UDP 來源連接埠清單，與 outbound.destinationPorts 相同的 1–65535/單獨範圍限制。",
+        "必填非空远端 UDP 源端口列表，与 outbound.destinationPorts 相同的 1–65535/单独范围限制。"
+      ],
+      "timeout": [
+        "Optional strictly positive Go duration; default 3m. Each matching outbound packet refreshes the learned element. Rendering rounds to seconds with a minimum of 1s; this is learned-state expiry, not a UDP protocol timeout.",
+        "任意の正のGo形式期間で、既定3mです。該当送信パケットごとに学習要素を更新します。描画は秒単位へ丸め最低1秒にし、UDPプロトコルのタイムアウトでなく学習状態の期限です。",
+        "選用嚴格為正的 Go 時間長度，預設 3m。每個符合送出封包更新學習項目。產生時四捨五入為秒且至少 1s；這是學習狀態到期，不是 UDP 協定逾時。",
+        "可选严格为正的 Go 时长，默认 3m。每个匹配发出数据包更新学习条目。生成时四舍五入为秒且至少 1s；这是学习状态过期，不是 UDP 协议超时。"
+      ],
+      "when": [
+        "Optional common activation condition, default unconditional. A filtered resource contributes no learned map/set rules. See common fields for nested conditions and schema limitations.",
+        "共通の有効化条件で、既定は無条件です。除外したリソースの学習マップ・集合ルールは生成しません。入れ子条件とスキーマ制約は共通項を参照してください。",
+        "選用共用啟用條件，預設無條件。篩除資源不產生學習映射/集合規則。巢狀條件與結構描述限制請見共用欄位。",
+        "可选通用启用条件，默认无条件。筛除资源不生成学习映射/集合规则。嵌套条件与模式限制请见通用字段。"
+      ],
+      "fromZone": [
+        "Required existing FirewallZone metadata.name for outbound origin. Must differ from toZone; self is rejected.",
+        "送信開始側の既存FirewallZone metadata.nameが必須です。toZoneと異なる必要があり、selfは禁止です。",
+        "必填送出來源的既有 FirewallZone metadata.name，須與 toZone 不同，拒絕 self。",
+        "必填发出源的已有 FirewallZone metadata.name，须与 toZone 不同，拒绝 self。"
+      ],
+      "toZone": [
+        "Required existing FirewallZone metadata.name for outbound destination; becomes inbound origin for return checks. No self.",
+        "送信先側の既存FirewallZone metadata.nameが必須です。戻り判定では入力側になり、selfは禁止です。",
+        "必填送出目的的既有 FirewallZone metadata.name，返回檢查時成為輸入來源，不允許 self。",
+        "必填发出目标的已有 FirewallZone metadata.name，返回检查时成为输入源，不允许 self。"
+      ],
+      "correlation": [
+        "Optional tuple-key selection; default remoteAddress. Does not configure a resource reference.",
+        "任意の組み合わせキー選択で、既定はremoteAddressです。リソース参照ではありません。",
+        "選用組合鍵選擇，預設 remoteAddress，不是資源參照。",
+        "可选组合键选择，默认 remoteAddress，不是资源引用。"
+      ],
+      "correlation.key": [
+        "remoteAddress (default) or localEndpoint. The former includes remote IPv4 in each key; the latter uses only internal IPv4 + UDP port.",
+        "remoteAddress（既定）・localEndpointです。前者は相手IPv4をキーに含み、後者は内部IPv4・UDPポートだけです。",
+        "remoteAddress（預設）或 localEndpoint。前者包含遠端 IPv4，後者僅本機 IPv4 + UDP 連接埠。",
+        "remoteAddress（默认）或 localEndpoint。前者包含远端 IPv4，后者仅本机 IPv4 + UDP 端口。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_firewall.go",
+      "pkg/config/validate.go",
+      "pkg/render/nftables.go",
+      "pkg/render/pf.go"
+    ]
+  },
+  "NAT44SessionSync": {
+    "purpose": [
+      "Replicate Linux conntrack state using either an SSH event stream or a continuously running conntrackd FTFW peer link. This is not FreeBSD PF state synchronization.",
+      "SSHイベントストリーム、または常時稼働のconntrackd FTFWリンクでLinux conntrack状態を複製します。FreeBSD PFの状態同期ではありません。",
+      "使用 SSH 事件串流或持續執行的 conntrackd FTFW 對等連結複製 Linux conntrack 狀態，不是 FreeBSD PF 狀態同步。",
+      "使用 SSH 事件流或持续运行的 conntrackd FTFW 对等链路复制 Linux conntrack 状态，不是 FreeBSD PF 状态同步。"
+    ],
+    "rules": [
+      [
+        "mode defaults event-stream. Both modes require a nonempty snatAddresses or natRules list in YAML validation. Event-stream also requires targets; conntrackd requires conntrackd.interface/localAddress/peerAddress and an empty when condition.",
+        "modeの既定はevent-streamです。両方式ともYAML検証でsnatAddresses・natRulesのいずれか1件以上が必要です。event-streamはtargets、conntrackdはconntrackd.interface・localAddress・peerAddressと空のwhenが必須です。",
+        "mode 預設 event-stream。兩種模式的 YAML 驗證都需要非空 snatAddresses 或 natRules。event-stream 另需 targets；conntrackd 需 conntrackd.interface/localAddress/peerAddress 且 when 必須空。",
+        "mode 默认 event-stream。两种模式的 YAML 验证均需要非空 snatAddresses 或 natRules。event-stream 另需 targets；conntrackd 需 conntrackd.interface/localAddress/peerAddress 且 when 必须空。"
+      ],
+      [
+        "Event-stream initially reconciles a dump, then consumes conntrack -E extended events, batching changes (normally up to 5s or 512 operations) and applying insert/delete scripts over SSH. It supports IPv4 TCP/UDP/ICMP records; TCP inserts lacking state are skipped. It does not replicate complete TCP window/sequence tracking, so it is not the full established-TCP failover mechanism.",
+        "event-streamは最初にダンプを整合し、その後conntrack -E extendedを読み、通常最大5秒・512操作でまとめてSSH経由で追加・削除します。IPv4 TCP・UDP・ICMPに対応し、状態のないTCP追加は飛ばします。TCPウィンドウ・シーケンス追跡全体は複製しないため、確立済みTCPの完全な引継ぎ方式ではありません。",
+        "event-stream 先協調快照，再消費 conntrack -E extended 事件，通常最多 5 秒或 512 操作一批，經 SSH 套用新增/刪除指令。支援 IPv4 TCP/UDP/ICMP；缺少狀態的 TCP 新增略過。不複製完整 TCP 視窗/序號追蹤，並非完整既有 TCP 容錯切換機制。",
+        "event-stream 先协调快照，再消费 conntrack -E extended 事件，通常最多 5 秒或 512 操作一批，经 SSH 应用新增/删除命令。支持 IPv4 TCP/UDP/ICMP；缺少状态的 TCP 新增跳过。不复制完整 TCP 窗口/序号跟踪，并非完整已有 TCP 故障切换机制。"
+      ],
+      [
+        "In conntrackd mode both peers replicate continuously; the legacy SSH worker is stopped. snatAddresses/natRules/excludeNatRules are not used to filter the conntrackd configuration despite being validated. Its renderer permits TCP/UDP/ICMP and excludes loopback plus ignoreIPv4. targets/conntrackCommand/interval do not control conntrackd.",
+        "conntrackd方式は両系で常時複製し、旧SSH処理を止めます。snatAddresses・natRules・excludeNatRulesは検証されてもconntrackdのフィルターに使いません。描画はTCP・UDP・ICMPを許可し、ループバック・ignoreIPv4を除外します。targets・conntrackCommand・intervalはconntrackdを制御しません。",
+        "conntrackd 模式兩端持續複製，停止舊 SSH 工作。snatAddresses/natRules/excludeNatRules 雖驗證，但不用於 conntrackd 篩選；產生器允許 TCP/UDP/ICMP，排除回環與 ignoreIPv4。targets/conntrackCommand/interval 不控制 conntrackd。",
+        "conntrackd 模式两端持续复制，停止旧 SSH 工作。snatAddresses/natRules/excludeNatRules 虽验证，但不用于 conntrackd 筛选；生成器允许 TCP/UDP/ICMP，排除回环与 ignoreIPv4。targets/conntrackCommand/interval 不控制 conntrackd。"
+      ],
+      [
+        "Linux conntrackd validation additionally requires an explicit nonoptional Sysctl net.netfilter.nf_conntrack_tcp_be_liberal with value=1, expectedValue effectively 1 and runtime enabled. A SysctlProfile alone does not satisfy it. Conntrackd addresses/ignoreIPv4 are bare IPv4 addresses; no automatic peer discovery or key distribution.",
+        "Linux conntrackdは追加で、net.netfilter.nf_conntrack_tcp_be_liberalの明示的かつoptionalでないSysctlを要求します。value=1・実効expectedValue=1・runtime有効が必要で、SysctlProfileだけでは満たしません。通信・除外アドレスは裸のIPv4で、相手検出・鍵配布は行いません。",
+        "Linux conntrackd 驗證另需明確、非 optional 的 Sysctl net.netfilter.nf_conntrack_tcp_be_liberal，value=1、有效 expectedValue=1 且 runtime 啟用。只有 SysctlProfile 不足。通訊/ignoreIPv4 使用純 IPv4；不自動探索對等節點或分發密鑰。",
+        "Linux conntrackd 验证另需明确、非 optional 的 Sysctl net.netfilter.nf_conntrack_tcp_be_liberal，value=1、有效 expectedValue=1 且 runtime 启用。仅有 SysctlProfile 不足。通信/ignoreIPv4 使用纯 IPv4；不自动发现对等节点或分发密钥。"
+      ],
+      [
+        "Use a single conntrackd resource: generated instances share /run/routerd/conntrackd.ctl and lock paths. The current routerd-vrrp-vmac promotion integration explicitly targets /etc/conntrackd/routerd-dslite-sessions.conf, so that integration expects metadata.name=dslite-sessions; an arbitrary resource name does not automatically wire its cache into VRRP promotion.",
+        "conntrackdは1リソースにしてください。生成プロセスは/run/routerd/conntrackd.ctl・ロックパスを共有します。現行routerd-vrrp-vmacの昇格連携は/etc/conntrackd/routerd-dslite-sessions.confを明示参照するため、連携にはmetadata.name=dslite-sessionsを想定し、任意名で自動連携するわけではありません。",
+        "請只使用一個 conntrackd 資源，產生的實例共用 /run/routerd/conntrackd.ctl 與鎖路徑。目前 routerd-vrrp-vmac 升主整合明確使用 /etc/conntrackd/routerd-dslite-sessions.conf，因此預期 metadata.name=dslite-sessions；任意名稱不會自動整合其快取。",
+        "请仅使用一个 conntrackd 资源，生成的实例共享 /run/routerd/conntrackd.ctl 与锁路径。当前 routerd-vrrp-vmac 升主集成明确使用 /etc/conntrackd/routerd-dslite-sessions.conf，因此预期 metadata.name=dslite-sessions；任意名称不会自动集成其缓存。"
+      ]
+    ],
+    "fields": {
+      "mode": [
+        "event-stream (default) or conntrackd. The former relays selected tuples via SSH; the latter runs native FTFW replication via systemd on Linux.",
+        "event-stream（既定）・conntrackdです。前者は選択した組をSSH転送し、後者はLinuxのsystemdでFTFW複製を動かします。",
+        "event-stream（預設）或 conntrackd。前者透過 SSH 轉送選定組合；後者在 Linux systemd 執行原生 FTFW 複製。",
+        "event-stream（默认）或 conntrackd。前者通过 SSH 转发所选组合；后者在 Linux systemd 运行原生 FTFW 复制。"
+      ],
+      "interval": [
+        "No supported polling interval. Any nonempty value is rejected in event-stream mode; in conntrackd mode accepted but unused.",
+        "ポーリング間隔の設定はありません。event-streamは非空を拒否し、conntrackdは受理しても使いません。",
+        "不支援輪詢間隔。event-stream 拒絕非空值，conntrackd 接受但不使用。",
+        "不支持轮询间隔。event-stream 拒绝非空值，conntrackd 接受但不使用。"
+      ],
+      "conntrackCommand": [
+        "Event-stream executable name/path, default conntrack. Treated as one executable argument, not a shell command line. Ignored by conntrackd mode.",
+        "event-streamの実行ファイル名・パスで既定conntrackです。シェルコマンド行でなく1つの実行名として扱い、conntrackdでは無視します。",
+        "event-stream 執行檔名稱/路徑，預設 conntrack。視為單一執行檔，不是 shell 命令列；conntrackd 忽略。",
+        "event-stream 可执行文件名称/路径，默认 conntrack。视为单一可执行文件，不是 shell 命令行；conntrackd 忽略。"
+      ],
+      "snatAddresses": [
+        "Bare IPv4 addresses selecting event-stream tuples, default empty. Combined with addresses resolved from natRules, deduplicated and sorted. At least one address or natRules entry is required; conntrackd does not use this list as a replication filter.",
+        "event-streamで選ぶ裸のIPv4一覧です。既定は空で、natRulesからの解決値と合わせ重複排除・ソートします。本一覧またはnatRulesが1件以上必要ですが、conntrackdの複製フィルターにはなりません。",
+        "選擇 event-stream 組合的純 IPv4 清單，預設空。與 natRules 解析位址合併、去重排序。此清單或 natRules 至少一項必填；conntrackd 不作複製篩選。",
+        "选择 event-stream 组合的纯 IPv4 列表，默认空。与 natRules 解析地址合并、去重排序。此列表或 natRules 至少一项必填；conntrackd 不作复制筛选。"
+      ],
+      "natRules": [
+        "Optional NAT44Rule/name or bare rule names. Reference syntax only is validated, not existence. Event-stream reads declared snatAddress then NAT44Rule status.snatAddress; any unresolved nonexcluded rule blocks the worker with Pending. Alternative translation.address/pool is not resolved here.",
+        "NAT44Rule/nameまたは裸の名前です。存在でなく参照形式だけを検証します。event-streamは宣言snatAddress、次にstatus.snatAddressを読み、除外以外の未解決が1件でもあればPendingです。translation.address・poolは解決しません。",
+        "選用 NAT44Rule/name 或單純規則名，只驗證格式不驗證存在。event-stream 先讀宣告 snatAddress，再讀 status.snatAddress；任一未排除規則未解析會使工作 Pending。不解析 translation.address/pool。",
+        "可选 NAT44Rule/name 或单独规则名，仅验证格式不验证存在。event-stream 先读声明 snatAddress，再读 status.snatAddress；任一未排除规则未解析会使工作 Pending。不解析 translation.address/pool。"
+      ],
+      "excludeNatRules": [
+        "Optional NAT44Rule/name or bare names skipped while resolving natRules. Does not subtract explicit snatAddresses or filter conntrackd. Default empty.",
+        "natRules解決時に飛ばすNAT44Rule/nameまたは裸の名前です。既定は空で、明示snatAddressesの除外・conntrackdの絞り込みにはなりません。",
+        "選用 NAT44Rule/name 或單純名稱，在解析 natRules 時略過。預設空，不扣除明確 snatAddresses，也不篩選 conntrackd。",
+        "可选 NAT44Rule/name 或单独名称，在解析 natRules 时跳过。默认空，不扣除明确 snatAddresses，也不筛选 conntrackd。"
+      ],
+      "targets": [
+        "Required nonempty in event-stream mode. Each target receives SSH restoration operations; the same targets are unused by conntrackd.",
+        "event-streamで1件以上必須です。各宛先へSSHで復元操作を送り、conntrackdは使いません。",
+        "event-stream 必填非空清單，每個目標經 SSH 接收還原操作。conntrackd 不使用。",
+        "event-stream 必填非空列表，每个目标经 SSH 接收恢复操作。conntrackd 不使用。"
+      ],
+      "targets[].name": [
+        "Optional descriptive target/status name, default empty; host determines the actual destination.",
+        "任意の説明・状態表示名で既定は空です。実際の宛先はhostで決まります。",
+        "選用描述/狀態名稱，預設空；實際目的由 host 決定。",
+        "可选描述/状态名称，默认空；实际目标由 host 决定。"
+      ],
+      "targets[].host": [
+        "Required nonblank SSH host (or SSH config alias). Remote user must be able to execute the restoration command with conntrack privileges. No automatic credentials are provisioned.",
+        "必須の空でないSSHホスト名・SSH別名です。相手ユーザーにconntrack操作権限が必要で、認証情報は自動準備しません。",
+        "必填非空 SSH 主機或 SSH 別名。遠端使用者須有執行 conntrack 還原的權限，不自動佈建憑證。",
+        "必填非空 SSH 主机或 SSH 别名。远端用户须有执行 conntrack 恢复的权限，不自动配置凭证。"
+      ],
+      "targets[].user": [
+        "Optional remote SSH user, default empty leaves selection to SSH configuration. Nonempty produces user@host.",
+        "任意の相手SSHユーザーです。既定の空はSSH設定に従い、非空はuser@hostにします。",
+        "選用遠端 SSH 使用者，預設空交由 SSH 設定；非空產生 user@host。",
+        "可选远端 SSH 用户，默认空交由 SSH 配置；非空生成 user@host。"
+      ],
+      "targets[].sshOptions": [
+        "Optional SSH argument list, default adds BatchMode=yes and ConnectTimeout=10 unless overridden by explicit options. Each list item is one argument; no embedded newlines. Command operations also have an implementation timeout of 2m.",
+        "SSH引数の一覧です。明示上書きがなければBatchMode=yes・ConnectTimeout=10を追加します。各要素は1引数で改行は禁止です。操作には実装上の2分タイムアウトもあります。",
+        "選用 SSH 引數清單，未明確覆寫時加入 BatchMode=yes 與 ConnectTimeout=10。每項為單一引數，不可含換行。命令操作另有實作的 2m 逾時。",
+        "可选 SSH 参数列表，未明确覆盖时加入 BatchMode=yes 与 ConnectTimeout=10。每项为单一参数，不可含换行。命令操作另有实现的 2m 超时。"
+      ],
+      "targets[].restoreCommand": [
+        "Optional remote conntrack command argv, default [conntrack]. Can supply a privilege wrapper as separate arguments, for example [sudo, -n, conntrack]. It is not a periodic full-state transfer command.",
+        "相手conntrack実行argvで、既定は[conntrack]です。[sudo, -n, conntrack]のように権限コマンドを別引数で指定できます。定期的な完全状態転送コマンドではありません。",
+        "選用遠端 conntrack 命令 argv，預設 [conntrack]。可用獨立引數提供權限包裝，如 [sudo, -n, conntrack]。不是定期完整狀態傳輸命令。",
+        "可选远端 conntrack 命令 argv，默认 [conntrack]。可用独立参数提供权限包装，如 [sudo, -n, conntrack]。不是定期完整状态传输命令。"
+      ],
+      "conntrackd": [
+        "Required object for conntrackd mode; otherwise unused by event-stream. Both HA peers must run continuously and have the replication link allowed.",
+        "conntrackd方式で必須、event-streamでは使いません。両HAノードで常時稼働し、複製リンクを許可する必要があります。",
+        "conntrackd 模式必填物件，event-stream 不使用。兩個 HA 節點都須持續執行並允許複製連結。",
+        "conntrackd 模式必填对象，event-stream 不使用。两个 HA 节点均须持续运行并允许复制链路。"
+      ],
+      "conntrackd.interface": [
+        "Required replication interface. A configured logical alias is resolved when available; otherwise used as a kernel name. No ordinary interface-resource existence check here; renderer rejects whitespace.",
+        "必須の複製インターフェースです。設定別名があれば解決し、なければOS名として使います。通常の存在参照検証はなく、描画では空白を拒否します。",
+        "必填複製介面。有設定邏輯別名時解析，否則視為核心名稱。此處無一般介面資源存在檢查；產生器拒絕空白。",
+        "必填复制接口。有配置逻辑别名时解析，否则视为内核名称。此处无普通接口资源存在检查；生成器拒绝空白。"
+      ],
+      "conntrackd.localAddress": [
+        "Required bare IPv4 local replication address; must already be configured on the host. Not an address assignment.",
+        "必須の裸の自IPv4複製アドレスです。ホストへの事前設定が必要で、アドレス割当ではありません。",
+        "必填純 IPv4 本機複製位址，須已設定於主機；不會指派位址。",
+        "必填纯 IPv4 本机复制地址，须已配置于主机；不会分配地址。"
+      ],
+      "conntrackd.peerAddress": [
+        "Required bare IPv4 remote replication destination. No discovery or multicast membership is configured.",
+        "必須の裸の相手IPv4複製先です。相手検出・マルチキャスト参加は設定しません。",
+        "必填純 IPv4 遠端複製目的，不設定探索或多播成員。",
+        "必填纯 IPv4 远端复制目标，不配置发现或组播成员。"
+      ],
+      "conntrackd.port": [
+        "UDP replication port; omitted/0 resolves to 3780 in the renderer. Valid positive values 1–65535. JSON Schema marks minimum 1 even though the Go runtime accepts zero as default.",
+        "UDP複製ポートです。省略・0は描画時3780にします。正数は1～65535です。Go実行は0を既定として受け付けますがJSON Schemaは最小1です。",
+        "UDP 複製連接埠，省略/0 在產生時為 3780，正值 1–65535。Go 執行接受 0 作預設，但 JSON Schema 最小值為 1。",
+        "UDP 复制端口，省略/0 在生成时为 3780，正值 1–65535。Go 运行接受 0 作默认，但 JSON Schema 最小值为 1。"
+      ],
+      "conntrackd.ignoreIPv4": [
+        "Optional bare IPv4 exclusions, default empty in YAML. Renderer always adds 127.0.0.1 and excludes IPv6 ::1, deduplicates/sorts IPv4 values, and rejects invalid values when rendering.",
+        "任意の裸のIPv4除外一覧です。YAMLの既定は空ですが、描画は常に127.0.0.1とIPv6 ::1を除外し、IPv4を重複排除・ソートして不正値を拒否します。",
+        "選用純 IPv4 排除清單，YAML 預設空。產生器固定加入 127.0.0.1 並排除 IPv6 ::1，IPv4 去重排序，產生時拒絕無效值。",
+        "可选纯 IPv4 排除列表，YAML 默认空。生成器固定加入 127.0.0.1 并排除 IPv6 ::1，IPv4 去重排序，生成时拒绝无效值。"
+      ],
+      "when": [
+        "Optional common activation condition for event-stream, default unconditional; may gate the active SSH worker. Must be completely empty for conntrackd so both peers continue replication while standby.",
+        "event-stream用の共通有効化条件で、既定は無条件です。SSH処理を制御できます。conntrackdは待機側も複製するため完全に空である必要があります。",
+        "event-stream 的選用共用啟用條件，預設無條件，可控制 SSH 工作。conntrackd 必須完全空白，讓待命端也持續複製。",
+        "event-stream 的可选通用启用条件，默认无条件，可控制 SSH 工作。conntrackd 必须完全空白，让备用端也持续复制。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_firewall.go",
+      "pkg/config/validate.go",
+      "pkg/controller/chain/nat44sessionsync.go",
+      "pkg/controller/chain/filesync.go",
+      "pkg/controller/chain/system.go",
+      "pkg/controller/chain/chain.go",
+      "pkg/render/conntrackd.go",
+      "cmd/routerd-vrrp-vmac/main.go"
     ]
   }
 }

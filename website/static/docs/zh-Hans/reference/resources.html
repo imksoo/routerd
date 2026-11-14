@@ -229,18 +229,22 @@ spec:
 <p>配置 LAN 的 IPv6 路由器通告选项，并弃用先前委派的前缀。</p>
 <h2 id="dhcpv6server">DHCPv6Server</h2>
 <p><a href="resources/DHCPv6Server.html">DHCPv6Server</a></p>
+<p>使用共用 dnsmasq 进程提供 LAN DHCPv6 地址或信息服务及相关 RA 行为。</p>
 <h2 id="dhcpv4serverleasesync">DHCPv4ServerLeaseSync</h2>
 <p><a href="resources/DHCPv4ServerLeaseSync.html">DHCPv4ServerLeaseSync</a></p>
 <p>以 SSH 上的 rsync 将 DHCPv4 服务器租约文件与现有固定保留状态复制到对等主机，并非 DHCP 故障转移协议。</p>
 <h2 id="dhcpv6serverleasesync">DHCPv6ServerLeaseSync</h2>
 <p><a href="resources/DHCPv6ServerLeaseSync.html">DHCPv6ServerLeaseSync</a></p>
+<p>以 SSH 上的 rsync 将 DHCPv6 服务器租约文件复制到对等主机，并非 DHCP 故障转移协议。</p>
 <h2 id="dhcpv6prefixdelegationleasesync">DHCPv6PrefixDelegationLeaseSync</h2>
 <p><a href="resources/DHCPv6PrefixDelegationLeaseSync.html">DHCPv6PrefixDelegationLeaseSync</a></p>
+<p>复制内置 DHCPv6-PD 客户端租约快照到对等主机，供恢复与接管。</p>
 <h2 id="dhcpv4relay">DHCPv4Relay</h2>
 <p><a href="resources/DHCPv4Relay.html">DHCPv4Relay</a></p>
 <p>通过 dnsmasq 将 DHCPv4 请求转发至明确指定的一个 IPv4 服务器。</p>
 <h2 id="selfaddresspolicy">SelfAddressPolicy</h2>
 <p><a href="resources/SelfAddressPolicy.html">SelfAddressPolicy</a></p>
+<p>描述供支持的静态 DHCPv6 渲染使用的有序自身地址选择策略，不会分配接口地址。</p>
 <h2 id="dnszone">DNSZone</h2>
 <p><a href="resources/DNSZone.html">DNSZone</a></p>
 <p>通过 DNSForwarder.zoneRefs 提供本地 A/AAAA 记录及自动 PTR 响应；不是支持任意记录类型、区域传送或签名的通用权威 DNS。</p>
@@ -312,10 +316,13 @@ spec:
 <p>资源状态条件改变时，发送成立或撤回事件。与 EventRule 不同，此处评估当前状态而非事件序列。</p>
 <h2 id="nat44rule">NAT44Rule</h2>
 <p><a href="resources/NAT44Rule.html">NAT44Rule</a></p>
+<p>通过输出接口或 EgressRoutePolicy 所选设备转换路由 IPv4 源地址。NAT 本身不允许转发，也不分配转换地址。</p>
 <h2 id="nat44flowdnatpinhole">NAT44FlowDNATPinhole</h2>
 <p><a href="resources/NAT44FlowDNATPinhole.html">NAT44FlowDNATPinhole</a></p>
+<p>从发出 IPv4 UDP 学习内部端点，按收到 UDP 的目标端口动态 DNAT。仅 Linux nftables，当前 PF 未实现此资源。</p>
 <h2 id="nat44sessionsync">NAT44SessionSync</h2>
 <p><a href="resources/NAT44SessionSync.html">NAT44SessionSync</a></p>
+<p>使用 SSH 事件流或持续运行的 conntrackd FTFW 对等链路复制 Linux conntrack 状态，不是 FreeBSD PF 状态同步。</p>
 <h2 id="managementaccess">ManagementAccess</h2>
 <p><a href="resources/ManagementAccess.html">ManagementAccess</a></p>
 <p>声明应用前管理连接中断检查所检查的接口。此资源不创建管理监听端或防火墙允许规则。</p>
@@ -331,6 +338,7 @@ spec:
 <p>以 nftables prerouting NAT 将指定接口收到的匹配流量重定向至路由器本机服务端口。</p>
 <h2 id="firewallflowpinhole">FirewallFlowPinhole</h2>
 <p><a href="resources/FirewallFlowPinhole.html">FirewallFlowPinhole</a></p>
+<p>为防火墙区域配对学习允许的返回 IPv4 UDP 端点，不转换地址。仅 Linux nftables，当前 PF 省略此资源。</p>
 <h2 id="trafficflowlog">TrafficFlowLog</h2>
 <p><a href="resources/TrafficFlowLog.html">TrafficFlowLog</a></p>
 <p>将连接快照记录至 SQLite 流量数据库，并可从 DPI 缓存补充信息。不是抓包，也不记录每个数据包。</p>

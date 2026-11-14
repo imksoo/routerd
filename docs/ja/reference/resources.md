@@ -390,6 +390,8 @@ LANのIPv6ルーター広告オプションと、以前の委任プレフィッ�
 
 [DHCPv6Server](resources/DHCPv6Server.md)
 
+共有dnsmasqでLAN向けDHCPv6アドレス・情報サービスと関連するRAを提供します。
+
 
 ## DHCPv4ServerLeaseSync
 
@@ -402,10 +404,14 @@ DHCPv4サーバーのリースファイルと存在する固定保持状態を�
 
 [DHCPv6ServerLeaseSync](resources/DHCPv6ServerLeaseSync.md)
 
+DHCPv6サーバーのリースファイルをSSH経由のrsyncで相手へ複製します。DHCPのフェイルオーバープロトコルではありません。
+
 
 ## DHCPv6PrefixDelegationLeaseSync
 
 [DHCPv6PrefixDelegationLeaseSync](resources/DHCPv6PrefixDelegationLeaseSync.md)
+
+内蔵DHCPv6-PDクライアントのリーススナップショットを、復旧・引継ぎ用に相手へ複製します。
 
 
 ## DHCPv4Relay
@@ -418,6 +424,8 @@ dnsmasqを使い、DHCPv4要求を明示した1つのIPv4サーバーへ中継�
 ## SelfAddressPolicy
 
 [SelfAddressPolicy](resources/SelfAddressPolicy.md)
+
+対応するDHCPv6静的生成で使用する、順序付き自己アドレス選択方針です。インターフェースへアドレスを割り当てるものではありません。
 
 
 ## DNSZone
@@ -588,15 +596,21 @@ IP宛先を確認し、経路選択用のHealthy・Unhealthy状態を発行し�
 
 [NAT44Rule](resources/NAT44Rule.md)
 
+送信インターフェースまたはEgressRoutePolicyで選んだデバイス経由で、転送IPv4の送信元を変換します。転送許可・変換先アドレスの割当自体は行いません。
+
 
 ## NAT44FlowDNATPinhole
 
 [NAT44FlowDNATPinhole](resources/NAT44FlowDNATPinhole.md)
 
+送信UDPからIPv4内部エンドポイントを学習し、受信UDPの宛先ポートで動的DNATします。Linux nftables専用で、現行PFは実装していません。
+
 
 ## NAT44SessionSync
 
 [NAT44SessionSync](resources/NAT44SessionSync.md)
+
+SSHイベントストリーム、または常時稼働のconntrackd FTFWリンクでLinux conntrack状態を複製します。FreeBSD PFの状態同期ではありません。
 
 
 ## ManagementAccess
@@ -633,6 +647,8 @@ IP宛先を確認し、経路選択用のHealthy・Unhealthy状態を発行し�
 ## FirewallFlowPinhole
 
 [FirewallFlowPinhole](resources/FirewallFlowPinhole.md)
+
+ファイアウォールのゾーン組で、IPv4 UDPの戻り許可エンドポイントを学習します。アドレス変換は行いません。Linux nftables専用で、現行PFは生成しません。
 
 
 ## TrafficFlowLog

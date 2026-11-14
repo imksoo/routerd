@@ -45,10 +45,10 @@
 
 | YAML | 欄位意義與預設值 |
 | --- | --- |
-| `spec.interface` | 必填同一 Router 的邏輯上行介面。外部 dhcp6c/dhcpcd PD 客戶端須與同介面的 DHCPv6Address client 相符。 |
+| `spec.interface` | 必填同一 Router 的邏輯上行介面。若 DHCPv6Address 亦使用同一介面，外部 dhcp6c/dhcpcd PD client 須與該資源 client 相符。 |
 | `spec.client` | 預設 routerd-dhcpv6-client，接受 networkd/dhcp6c/dhcpcd。目前監督亦可能合成 routerd DHCPv6 systemd 單元，選外部客戶端不普遍保證停用內建常駐程式。 |
 | `spec.profile` | 空值/default、ntt-ngn-direct-hikari-denwa 或 ntt-hgw-lan-pd。NTT 在支援的產生路徑提供 /60 與 link-layer DUID 預設，不設定業者憑證或變更內建命令。 |
-| `spec.prefixLength` | 選用 1–128，省略或 0 時 NTT 為 /60，default 無長度提示，不保證伺服器分配長度；內建取得限制見上文。 |
+| `spec.prefixLength` | 選用 1–128，省略或 0 時 NTT 為 /60，default 無長度提示，不保證分配長度，也不傳入內建取得。HA 預置快照重用卻要求有效長度完全相同：default 省略時為 0，不符合一般委派前綴，此路徑須明確指定實際長度。 |
 | `spec.clientDUID` | 選用無分隔符且偶數長度的十六進位 DUID，拒絕冒號與空白。空值由內建客戶端從 MAC 衍生 DUID-LL，身分亦影響還原租約是否可重用。 |
 | `spec.required` | 布林值預設 false，會解碼但目前不作為必要性或開機等待策略。相依者應使用實際 Bound 狀態及相依條件。 |
 | `spec.when` | 選用共用狀態條件，預設無條件。監督客戶端依已解析條件篩選，條件為假可在保留宣告時停止取得。 |

@@ -5,6 +5,13 @@
 <main class="doclayout wrap"><article class="document"><h1 id="dhcpv6serverleasesync">DHCPv6ServerLeaseSync</h1>
 <p><a href="../resources.html#dhcpv6serverleasesync">各資源的設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>以 SSH 上的 rsync 將 DHCPv6 伺服器租約檔複製到對等主機，並非 DHCP 容錯移轉協定。</p>
+<h2 id="指定條件與參照關係">指定條件與參照關係</h2>
+<ul>
+<li>source.resource 與至少一個 target.host 必填。不同於狀態值參照，一般驗證僅檢查寫法與類型，不驗證 DHCPv6Server 是否存在；不存在的名稱會退回平台預設租約路徑。</li>
+<li>僅複製主要租約檔；不同於 DHCPv4ServerLeaseSync，此路徑不含 dhcp-sticky.db/WAL。目的端使用與本機來源相同的絕對路徑，無目標路徑覆寫或自動對端服務重新載入。</li>
+<li>每次執行使用 rsync -a --checksum --delay-updates，預設 rsync 無活動限制 60 秒、命令執行限制 2 分鐘。SSH 預設 BatchMode=yes、ConnectTimeout=10，可由 sshOptions 覆寫。Synced 僅表示檔案複製成功，不證明對端重新載入租約或客戶端連續性。</li>
+</ul>
 <h2 id="yaml定義">YAML定義</h2>
 <p>此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。</p>
 <pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
@@ -36,9 +43,67 @@
             - &quot;&lt;string&gt;&quot; # string
           maxAge: &quot;&lt;string&gt;&quot; # 選填; string
           status: &quot;set&quot; # 選填; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
-</code></pre></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+</code></pre>
+<h2 id="欄位意義與預設值">欄位意義與預設值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>欄位意義與預設值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.source</code></td>
+<td>必填含 resource 的來源描述，此處無檔案路徑覆寫。</td>
+</tr>
+<tr>
+<td><code>spec.source.resource</code></td>
+<td>必填 DHCPv6Server 裸名或 DHCPv6Server/name。使用其非空 leaseFile，否則為 <StateDir>/dnsmasq/dnsmasq.leases。並非狀態來源，無 field/optional。</td>
+</tr>
+<tr>
+<td><code>spec.command</code></td>
+<td>選用執行檔名稱或路徑，預設 rsync；直接接收 rsync 引數，不是殼層命令字串。</td>
+</tr>
+<tr>
+<td><code>spec.interval</code></td>
+<td>Go duration，預設 30s。距上次成功 syncedAt 未達期間則略過；控制器另以 30 秒週期及訂閱事件執行。零或負值僅停用略過，不會加快週期排程。</td>
+</tr>
+<tr>
+<td><code>spec.targets</code></td>
+<td>必填非空對等目標清單，逐一傳送檔案，第一個失敗記錄 Error/SyncFailed，不呼叫遠端 routerd API。</td>
+</tr>
+<tr>
+<td><code>spec.targets[].name</code></td>
+<td>選用狀態標籤，預設空，不用於選擇目的主機或來源。</td>
+</tr>
+<tr>
+<td><code>spec.targets[].host</code></td>
+<td>必填 SSH 主機或位址，不可含 CR/LF，須事先具備可達路由及非互動 SSH 認證。</td>
+</tr>
+<tr>
+<td><code>spec.targets[].user</code></td>
+<td>選用 SSH 使用者，空值省略 user@ 並由 SSH 設定決定，不可含 CR/LF。</td>
+</tr>
+<tr>
+<td><code>spec.targets[].sshOptions</code></td>
+<td>選用 SSH 引數清單，組合至 rsync -e。未指定對應鍵時補上 -o BatchMode=yes 與 -o ConnectTimeout=10，項目不可含 CR/LF。</td>
+</tr>
+<tr>
+<td><code>spec.targets[].options</code></td>
+<td>選用額外 rsync 引數，附於預設之後。提供 --timeout 或 --timeout=... 時不補入 --timeout=60，但不變更獨立的 2 分鐘程序限制；不可含 CR/LF。</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>選用共用狀態條件，預設無條件。應以實際主用角色狀態避免備用端寫入，本資源不自行協商租約檔擁有者。</td>
+</tr>
+</tbody>
+</table>
+<p>實作: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_dhcp.go">pkg/config/validate_dhcp.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/filesync.go">pkg/controller/chain/filesync.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go">pkg/controller/chain/chain.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/platform/platform.go">pkg/platform/platform.go</a></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
 <ul>
+<li><a href="#指定條件與參照關係">指定條件與參照關係</a></li>
 <li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#欄位意義與預設值">欄位意義與預設值</a></li>
 </ul>
 </div>
 </aside></main>

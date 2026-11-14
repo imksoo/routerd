@@ -48,7 +48,7 @@
 <tbody>
 <tr>
 <td><code>spec.interface</code></td>
-<td>Required logical uplink interface in this Router. An external dhcp6c/dhcpcd PD client must match a DHCPv6Address client declared on the same interface.</td>
+<td>Required logical uplink interface in this Router. If DHCPv6Address also uses the same interface, an external dhcp6c/dhcpcd PD client must match that resource client.</td>
 </tr>
 <tr>
 <td><code>spec.client</code></td>
@@ -60,7 +60,7 @@
 </tr>
 <tr>
 <td><code>spec.prefixLength</code></td>
-<td>Optional 1–128. Omitted/0 means /60 for NTT profiles and no configured hint for default; it is not a guarantee of the prefix size assigned by the server. See the built-in acquisition limitation above.</td>
+<td>Optional 1–128. Omitted/0 means /60 for NTT profiles and no configured hint for default; it is not a guarantee of assigned size and is not passed to built-in acquisition. HA staged-snapshot reuse requires exact equality with this effective length: default profile with omitted length evaluates to 0 and does not match normal delegated prefixes. Specify the actual length for that path.</td>
 </tr>
 <tr>
 <td><code>spec.clientDUID</code></td>

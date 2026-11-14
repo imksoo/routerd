@@ -45,10 +45,10 @@ All fields are shown as a structural reference, not a configuration to apply unc
 
 | YAML | Field meaning and default |
 | --- | --- |
-| `spec.interface` | Required logical uplink interface in this Router. An external dhcp6c/dhcpcd PD client must match a DHCPv6Address client declared on the same interface. |
+| `spec.interface` | Required logical uplink interface in this Router. If DHCPv6Address also uses the same interface, an external dhcp6c/dhcpcd PD client must match that resource client. |
 | `spec.client` | Default routerd-dhcpv6-client; accepted alternatives networkd/dhcp6c/dhcpcd. Current supervision can also synthesize a routerd DHCPv6 systemd unit, so selecting an external client is not a general guarantee that the built-in daemon is disabled. |
 | `spec.profile` | Empty/default, ntt-ngn-direct-hikari-denwa or ntt-hgw-lan-pd. NTT profiles supply /60 and link-layer DUID defaults to supporting generation paths; they do not configure provider credentials or change the built-in daemon command. |
-| `spec.prefixLength` | Optional 1–128. Omitted/0 means /60 for NTT profiles and no configured hint for default; it is not a guarantee of the prefix size assigned by the server. See the built-in acquisition limitation above. |
+| `spec.prefixLength` | Optional 1–128. Omitted/0 means /60 for NTT profiles and no configured hint for default; it is not a guarantee of assigned size and is not passed to built-in acquisition. HA staged-snapshot reuse requires exact equality with this effective length: default profile with omitted length evaluates to 0 and does not match normal delegated prefixes. Specify the actual length for that path. |
 | `spec.clientDUID` | Optional DUID as unseparated even-length hexadecimal. Colons/whitespace are rejected. Empty lets the built-in client derive DUID-LL from MAC; identity affects whether a restored lease can be reused. |
 | `spec.required` | Boolean default false, decoded but not consumed as a required/startup wait policy by current runtime. Dependents should use actual Bound status and dependency predicates. |
 | `spec.when` | Optional common state condition, default unconditional. Supervised client generation filters resolved conditions; false can stop acquisition while the declared resource remains. |
