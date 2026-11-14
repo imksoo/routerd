@@ -326,10 +326,14 @@ KubernetesのPod・ServiceネットワークへのIPv4経路を、明示した�
 
 [DHCPv4Server](resources/DHCPv4Server.md)
 
+共有dnsmasqサービスでIPv4 DHCPプール、選別条件付きの追加プール、予約を提供します。
+
 
 ## DHCPv4Reservation
 
 [DHCPv4Reservation](resources/DHCPv4Reservation.md)
+
+宣言したDHCPv4Serverに対し、MACアドレスへIPv4アドレスを予約します。
 
 
 ## DHCPv6Address
@@ -377,6 +381,8 @@ KubernetesのPod・ServiceネットワークへのIPv4経路を、明示した�
 
 [DHCPv4ServerLeaseSync](resources/DHCPv4ServerLeaseSync.md)
 
+DHCPv4サーバーのリースファイルと存在する固定保持状態を、SSH経由のrsyncで相手ホストへ複製します。DHCPのフェイルオーバープロトコルではありません。
+
 
 ## DHCPv6ServerLeaseSync
 
@@ -391,6 +397,8 @@ KubernetesのPod・ServiceネットワークへのIPv4経路を、明示した�
 ## DHCPv4Relay
 
 [DHCPv4Relay](resources/DHCPv4Relay.md)
+
+dnsmasqを使い、DHCPv4要求を明示した1つのIPv4サーバーへ中継します。
 
 
 ## SelfAddressPolicy

@@ -4244,5 +4244,723 @@
       "pkg/render/nftables.go",
       "pkg/controller/chain/logretention.go"
     ]
+  },
+  "DHCPv4Relay": {
+    "purpose": [
+      "Relay DHCPv4 requests through dnsmasq to one explicitly configured IPv4 server.",
+      "dnsmasqを使い、DHCPv4要求を明示した1つのIPv4サーバーへ中継します。",
+      "透過 dnsmasq 將 DHCPv4 請求轉送至明確指定的一個 IPv4 伺服器。",
+      "通过 dnsmasq 将 DHCPv4 请求转发至明确指定的一个 IPv4 服务器。"
+    ],
+    "rules": [
+      [
+        "At least one declared interface and a bare IPv4 upstream address are required. No server discovery, upstream list, per-interface local relay address or condition field is provided.",
+        "1件以上の宣言済みインターフェースと、裸のIPv4上流アドレスが必要です。自動検出・上流一覧・インターフェース別の中継元アドレス・条件フィールドはありません。",
+        "至少需要一個已宣告介面與純 IPv4 上游位址，不提供自動探索、上游清單、個別介面中繼來源位址或條件欄位。",
+        "至少需要一个已声明接口与纯 IPv4 上游地址，不提供自动发现、上游列表、各接口中继源地址或条件字段。"
+      ],
+      [
+        "Runtime emits dhcp-relay=0.0.0.0,<upstream>,<resolved-ifname> for each interface in the shared dnsmasq process on Linux and FreeBSD. The upstream must be reachable using the host routing configuration.",
+        "Linux・FreeBSDとも共有dnsmasqプロセスに、各インターフェースのdhcp-relay=0.0.0.0,<upstream>,<OS名>を生成します。上流へ到達できるホスト経路が必要です。",
+        "Linux 與 FreeBSD 皆在共用 dnsmasq 程序為各介面產生 dhcp-relay=0.0.0.0,<upstream>,<OS名稱>。主機路由須能到達上游。",
+        "Linux 与 FreeBSD 均在共用 dnsmasq 进程为各接口生成 dhcp-relay=0.0.0.0,<upstream>,<OS名称>。主机路由须能到达上游。"
+      ]
+    ],
+    "fields": {
+      "interfaces": [
+        "Required nonempty logical interface-name list; each name must exist in the same Router interface index. Runtime resolves Interface.ifname and supported generated-interface aliases. No default.",
+        "空でない論理インターフェース一覧が必須です。同じRouterのインターフェース索引に存在する必要があり、実行時はInterface.ifnameなどの対応する別名を解決します。既定値はありません。",
+        "必填且不可為空的邏輯介面清單，各名稱須存在於同一 Router 的介面索引。執行時解析 Interface.ifname 與支援的產生介面別名，無預設值。",
+        "必填且不可为空的逻辑接口列表，各名称须存在于同一 Router 的接口索引。运行时解析 Interface.ifname 与支持的生成接口别名，无默认值。"
+      ],
+      "upstream": [
+        "Required bare IPv4 DHCP server address, without port, CIDR or resource reference. No default.",
+        "ポート・CIDR・リソース参照ではない、DHCPサーバーのIPv4アドレスが必須です。既定値はありません。",
+        "必填的 DHCP 伺服器純 IPv4 位址，不含連接埠、CIDR 或資源參照，無預設值。",
+        "必填的 DHCP 服务器纯 IPv4 地址，不含端口、CIDR 或资源引用，无默认值。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_dhcp.go",
+      "pkg/config/validate.go",
+      "pkg/controller/chain/chain.go"
+    ]
+  },
+  "DHCPv4Reservation": {
+    "purpose": [
+      "Reserve one IPv4 address for a MAC address on a declared DHCPv4Server.",
+      "宣言したDHCPv4Serverに対し、MACアドレスへIPv4アドレスを予約します。",
+      "在已宣告的 DHCPv4Server 為一個 MAC 位址保留 IPv4 位址。",
+      "在已声明的 DHCPv4Server 为一个 MAC 地址保留 IPv4 地址。"
+    ],
+    "rules": [
+      [
+        "server, macAddress and ipAddress are semantically required even though the schema marks server optional. server must be the bare name of a DHCPv4Server with nonempty interface; there is no implicit single-server fallback in normal validation. scope is rejected.",
+        "スキーマ上serverが任意でも、server・macAddress・ipAddressは意味上必須です。serverはinterfaceを持つDHCPv4Serverの裸名です。通常検証はサーバー1台でも省略を許しません。scopeは拒否されます。",
+        "雖然結構描述將 server 標為選用，server、macAddress、ipAddress 在語意上必填。server 須為 interface 非空的 DHCPv4Server 裸名；一般驗證即使僅有一台也不允許省略。scope 會被拒絕。",
+        "虽然模式将 server 标为可选，server、macAddress、ipAddress 在语义上必填。server 须为 interface 非空的 DHCPv4Server 裸名；常规验证即使仅有一台也不允许省略。scope 会被拒绝。"
+      ],
+      [
+        "Current runtime places reservations in the shared dnsmasq hosts sidecar with a per-resource tag. Server association controls validity/status and custom-option rendering; it is not a separate dnsmasq process or independent host-file namespace. Applied does not prove that a client obtained the lease.",
+        "現行実行処理は、リソース別タグを付けた予約を共有dnsmasqホスト補助ファイルへ書きます。serverとの関連は検証・状態・個別オプション生成に使いますが、別プロセスや独立した予約ファイルにはなりません。Appliedはクライアントの取得成功を示しません。",
+        "目前在共用 dnsmasq 主機附檔寫入帶資源標籤的保留。server 關聯用於驗證、狀態及自訂選項產生，不代表獨立程序或主機檔案命名空間。Applied 不證明客戶端已取得租約。",
+        "当前在共用 dnsmasq 主机附属文件写入带资源标签的保留。server 关联用于验证、状态及自定义选项生成，不代表独立进程或主机文件命名空间。Applied 不证明客户端已取得租约。"
+      ]
+    ],
+    "fields": {
+      "scope": [
+        "Removed field; any nonempty value is rejected. Use server.",
+        "廃止フィールドで、非空値は拒否されます。serverを使用してください。",
+        "已移除欄位，非空值會被拒絕，請用 server。",
+        "已移除字段，非空值会被拒绝，请用 server。"
+      ],
+      "server": [
+        "Required bare metadata.name of an existing direct DHCPv4Server with interface set; Kind/name is not stripped here.",
+        "interfaceを指定した既存DHCPv4Serverのmetadata.nameが必須です。Kind/nameの接頭辞はここでは除去しません。",
+        "必填已設定 interface 的既有直接 DHCPv4Server metadata.name，此處不移除 Kind/name 前綴。",
+        "必填已设置 interface 的现有直接 DHCPv4Server metadata.name，此处不移除 Kind/name 前缀。"
+      ],
+      "macAddress": [
+        "Required MAC address parsed by net.ParseMAC; emitted lowercase. No default.",
+        "net.ParseMACで解析できるMACアドレスが必須です。小文字で出力し、既定値はありません。",
+        "必填可由 net.ParseMAC 解析的 MAC 位址，以小寫輸出，無預設值。",
+        "必填可由 net.ParseMAC 解析的 MAC 地址，以小写输出，无默认值。"
+      ],
+      "hostname": [
+        "Optional hostname without whitespace or comma; default omitted. Can feed the DNSZone DHCP-derived host snapshot when enabled.",
+        "空白・カンマを含まない任意ホスト名で、既定は省略です。有効化したDNSZoneのDHCP由来ホスト情報にも利用できます。",
+        "選用且不含空白或逗號的主機名稱，預設省略。可供已啟用 DNSZone 的 DHCP 衍生主機快照使用。",
+        "可选且不含空白或逗号的主机名，默认省略。可供已启用 DNSZone 的 DHCP 派生主机快照使用。"
+      ],
+      "ipAddress": [
+        "Required bare IPv4 reservation address. Current validation checks family but does not require membership in the server pool or reject duplicate reservation IP/MAC pairs here.",
+        "予約する裸のIPv4アドレスが必須です。現行検証は系統を確認しますが、サーバープール内所属や予約IP・MACの重複はここで検査しません。",
+        "必填純 IPv4 保留位址。目前驗證位址族，但此處不要求位於伺服器集區內，也不拒絕重複保留 IP/MAC。",
+        "必填纯 IPv4 保留地址。当前验证地址族，但此处不要求位于服务器地址池内，也不拒绝重复保留 IP/MAC。"
+      ],
+      "leaseTime": [
+        "Optional backend duration string, default empty. Commas are rejected; current runtime reservation host-line writer does not emit this field, so it does not override the lease lifetime there.",
+        "任意のバックエンド期間文字列で、既定空です。カンマは拒否します。現行実行時の予約ホスト行には出力しないため、この経路でリース期間を変更しません。",
+        "選用後端期間字串，預設空值且拒絕逗號。目前執行時保留主機行不輸出此欄位，因此不會在此路徑覆寫租約時間。",
+        "可选后端时长字符串，默认空值且拒绝逗号。当前运行时保留主机行不输出此字段，因此不会在此路径覆盖租约时间。"
+      ],
+      "options": [
+        "Optional DHCP option list emitted using this reservation tag. Each item needs exactly one of code/name and a nonempty value. Default empty.",
+        "予約タグに対応する任意DHCPオプション一覧です。各項目はcode・nameの片方と非空valueが必要です。既定空です。",
+        "以此保留標籤輸出的選用 DHCP 選項清單，每項須有 code/name 其中之一及非空 value，預設空。",
+        "以此保留标签输出的可选 DHCP 选项列表，每项须有 code/name 其中之一及非空 value，默认空。"
+      ],
+      "options[].code": [
+        "Numeric option identifier, exclusive with name; schema range 1–65535. No default identifier.",
+        "数値のオプション識別子でnameと排他です。スキーマ範囲1～65535で、既定識別子はありません。",
+        "數字選項識別碼，與 name 互斥，結構描述範圍 1–65535，無預設識別碼。",
+        "数字选项标识符，与 name 互斥，模式范围 1–65535，无默认标识符。"
+      ],
+      "options[].name": [
+        "dnsmasq option name, exclusive with code; no whitespace or commas.",
+        "dnsmasqのオプション名でcodeと排他です。空白・カンマは不可です。",
+        "dnsmasq 選項名稱，與 code 互斥，不可含空白或逗號。",
+        "dnsmasq 选项名称，与 code 互斥，不可含空白或逗号。"
+      ],
+      "options[].value": [
+        "Required nonempty backend-formatted value; no CR/LF. Passed through, so commas may separate multiple DHCP option values.",
+        "非空のバックエンド形式値が必須です。CR/LFは不可で、そのまま出力するためカンマによる複数値指定は可能です。",
+        "必填非空後端格式值，不可含 CR/LF；原樣傳入，逗號可分隔多個選項值。",
+        "必填非空后端格式值，不可含 CR/LF；原样传入，逗号可分隔多个选项值。"
+      ],
+      "when": [
+        "Optional common state condition; default unconditional. False excludes the reservation and reports Pending/WhenFalse; an unavailable server reports ServerPending.",
+        "共通の状態条件で、既定無条件です。不成立なら予約を除外しPending/WhenFalse、サーバー利用不可ならServerPendingです。",
+        "選用共用狀態條件，預設無條件。不成立時排除保留並回報 Pending/WhenFalse，伺服器不可用時為 ServerPending。",
+        "可选通用状态条件，默认无条件。不成立时排除保留并报告 Pending/WhenFalse，服务器不可用时为 ServerPending。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_dhcp.go",
+      "pkg/config/validate.go",
+      "pkg/config/index.go",
+      "pkg/controller/chain/chain.go",
+      "pkg/controller/chain/phase2.go"
+    ]
+  },
+  "DHCPv4ServerLeaseSync": {
+    "purpose": [
+      "Copy a DHCPv4 server lease file and available sticky-state files to peer hosts using rsync over SSH. This is file replication, not the DHCP failover protocol.",
+      "DHCPv4サーバーのリースファイルと存在する固定保持状態を、SSH経由のrsyncで相手ホストへ複製します。DHCPのフェイルオーバープロトコルではありません。",
+      "以 SSH 上的 rsync 將 DHCPv4 伺服器租約檔與現有固定保留狀態複製到對等主機，並非 DHCP 容錯移轉協定。",
+      "以 SSH 上的 rsync 将 DHCPv4 服务器租约文件与现有固定保留状态复制到对等主机，并非 DHCP 故障转移协议。"
+    ],
+    "rules": [
+      [
+        "source.resource and at least one target host are required. Unlike status-value references, normal validation checks the source spelling/type but does not verify that this DHCPv4Server exists. A missing named source therefore falls back to the platform default lease path.",
+        "source.resourceと1件以上のtarget.hostが必須です。状態値参照とは異なり、通常検証は表記・型だけを確認し、DHCPv4Serverの存在を検証しません。存在しない名前でもプラットフォーム既定リースパスに補完します。",
+        "source.resource 與至少一個 target.host 必填。不同於狀態值參照，一般驗證僅檢查寫法與類型，不驗證 DHCPv4Server 是否存在；不存在的名稱會退回平台預設租約路徑。",
+        "source.resource 与至少一个 target.host 必填。不同于状态值引用，常规验证仅检查写法与类型，不验证 DHCPv4Server 是否存在；不存在的名称会回退至平台默认租约路径。"
+      ],
+      [
+        "Target paths are the same absolute paths as the local sources; YAML provides no target path field. When stickyHoldDays is positive on the named source, dhcp-sticky.db and its -wal file are copied if present; -shm is not copied. The main lease file is mandatory.",
+        "宛先パスはローカル送信元と同じ絶対パスで、YAMLに宛先パス指定はありません。名前が一致する送信元のstickyHoldDaysが正なら、存在するdhcp-sticky.dbと-walも複製し、-shmは複製しません。主リースファイルは必須です。",
+        "目標路徑與本機來源的絕對路徑相同，YAML 無目標路徑欄位。具名來源的 stickyHoldDays 為正時，若存在則複製 dhcp-sticky.db 及 -wal，不複製 -shm。主要租約檔必須存在。",
+        "目标路径与本机来源的绝对路径相同，YAML 无目标路径字段。具名来源的 stickyHoldDays 为正时，若存在则复制 dhcp-sticky.db 及 -wal，不复制 -shm。主租约文件必须存在。"
+      ],
+      [
+        "Each invocation uses rsync -a --checksum --delay-updates, a default rsync inactivity timeout of 60s and a 2m command execution limit. SSH defaults BatchMode=yes and ConnectTimeout=10, overridable via sshOptions. A Synced status records file-copy success, not peer lease reload or client continuity.",
+        "各実行はrsync -a --checksum --delay-updatesを使い、既定のrsync無通信制限60秒とコマンド実行制限2分があります。SSH既定はBatchMode=yes・ConnectTimeout=10でsshOptionsから変更できます。Syncedは複製成功であり、相手のリース再読込や通信継続の証明ではありません。",
+        "每次執行使用 rsync -a --checksum --delay-updates，預設 rsync 無活動限制 60 秒、命令執行限制 2 分鐘。SSH 預設 BatchMode=yes、ConnectTimeout=10，可由 sshOptions 覆寫。Synced 僅表示檔案複製成功，不證明對端重新載入租約或客戶端連續性。",
+        "每次执行使用 rsync -a --checksum --delay-updates，默认 rsync 无活动限制 60 秒、命令执行限制 2 分钟。SSH 默认 BatchMode=yes、ConnectTimeout=10，可由 sshOptions 覆盖。Synced 仅表示文件复制成功，不证明对端重新加载租约或客户端连续性。"
+      ]
+    ],
+    "fields": {
+      "source": [
+        "Required source descriptor with resource; no filesystem path override here.",
+        "resourceを持つ送信元指定が必須です。ここでファイルパスは上書きできません。",
+        "必填含 resource 的來源描述，此處無檔案路徑覆寫。",
+        "必填含 resource 的来源描述，此处无文件路径覆盖。"
+      ],
+      "source.resource": [
+        "Required bare DHCPv4Server name or DHCPv4Server/name. Uses its nonblank leaseFile, otherwise <StateDir>/dnsmasq/dnsmasq.leases. This is not a status-value reference and has no field/optional members.",
+        "DHCPv4Serverの裸名またはDHCPv4Server/nameが必須です。そのleaseFileが非空なら使用し、なければ<StateDir>/dnsmasq/dnsmasq.leasesです。状態値参照ではなくfield・optionalはありません。",
+        "必填 DHCPv4Server 裸名或 DHCPv4Server/name。使用其非空 leaseFile，否則為 <StateDir>/dnsmasq/dnsmasq.leases。並非狀態來源，無 field/optional。",
+        "必填 DHCPv4Server 裸名或 DHCPv4Server/name。使用其非空 leaseFile，否则为 <StateDir>/dnsmasq/dnsmasq.leases。并非状态来源，无 field/optional。"
+      ],
+      "command": [
+        "Optional executable name/path, default rsync; receives rsync arguments directly, not a shell command string.",
+        "任意の実行ファイル名・パスで、既定rsyncです。シェル文字列ではなくrsync引数を直接受け取ります。",
+        "選用執行檔名稱或路徑，預設 rsync；直接接收 rsync 引數，不是殼層命令字串。",
+        "可选可执行文件名或路径，默认 rsync；直接接收 rsync 参数，不是 shell 命令字符串。"
+      ],
+      "interval": [
+        "Go duration, default 30s. Suppresses work until this long after the last successful syncedAt; controller itself is polled every 30s and also on subscriptions. Zero/negative values disable this skip, not accelerate the periodic scheduler.",
+        "Go durationで、既定30sです。前回成功syncedAtからの実行抑制期間で、コントローラーは別途30秒周期と購読イベントで動きます。0・負値は抑制をなくすだけで周期を短縮しません。",
+        "Go duration，預設 30s。距上次成功 syncedAt 未達期間則略過；控制器另以 30 秒週期及訂閱事件執行。零或負值僅停用略過，不會加快週期排程。",
+        "Go duration，默认 30s。距上次成功 syncedAt 未达时长则跳过；控制器另以 30 秒周期及订阅事件执行。零或负值仅禁用跳过，不会加快周期调度。"
+      ],
+      "targets": [
+        "Required nonempty peer-target list. Files are sent serially to each target; first failed transfer records Error/SyncFailed. No remote routerd API call is made.",
+        "1件以上の相手一覧が必須です。ファイルを各相手へ順番に送り、最初の失敗でError/SyncFailedになります。相手routerd APIは呼びません。",
+        "必填非空對等目標清單，逐一傳送檔案，第一個失敗記錄 Error/SyncFailed，不呼叫遠端 routerd API。",
+        "必填非空对等目标列表，逐一传送文件，第一个失败记录 Error/SyncFailed，不调用远端 routerd API。"
+      ],
+      "targets[].name": [
+        "Optional status label, default empty; does not select the destination host or source.",
+        "任意の状態表示名で、既定空です。宛先ホスト・送信元の選択には使いません。",
+        "選用狀態標籤，預設空，不用於選擇目的主機或來源。",
+        "可选状态标签，默认空，不用于选择目标主机或来源。"
+      ],
+      "targets[].host": [
+        "Required SSH host/address. CR/LF prohibited; must already be reachable and configured for noninteractive SSH.",
+        "SSHのホスト・アドレスが必須です。CR/LFは禁止で、到達経路と非対話SSH認証を事前に用意します。",
+        "必填 SSH 主機或位址，不可含 CR/LF，須事先具備可達路由及非互動 SSH 認證。",
+        "必填 SSH 主机或地址，不可含 CR/LF，须事先具备可达路由及非交互 SSH 认证。"
+      ],
+      "targets[].user": [
+        "Optional SSH user; empty omits user@ and lets SSH choose its configured user. CR/LF prohibited.",
+        "任意のSSHユーザーです。空ならuser@を付けずSSH設定のユーザーを使用します。CR/LFは禁止です。",
+        "選用 SSH 使用者，空值省略 user@ 並由 SSH 設定決定，不可含 CR/LF。",
+        "可选 SSH 用户，空值省略 user@ 并由 SSH 配置决定，不可含 CR/LF。"
+      ],
+      "targets[].sshOptions": [
+        "Optional SSH argument list assembled into rsync -e. Defaults add -o BatchMode=yes and -o ConnectTimeout=10 unless those keys are supplied. No CR/LF in entries.",
+        "rsync -eへ組み込むSSH引数一覧です。該当キーが未指定なら-o BatchMode=yesと-o ConnectTimeout=10を補います。各項目にCR/LFは使えません。",
+        "選用 SSH 引數清單，組合至 rsync -e。未指定對應鍵時補上 -o BatchMode=yes 與 -o ConnectTimeout=10，項目不可含 CR/LF。",
+        "可选 SSH 参数列表，组合至 rsync -e。未指定对应键时补上 -o BatchMode=yes 与 -o ConnectTimeout=10，条目不可含 CR/LF。"
+      ],
+      "targets[].options": [
+        "Optional extra rsync arguments, appended after defaults. A supplied --timeout or --timeout=... suppresses the default --timeout=60. Does not override the separate 2m process limit; no CR/LF.",
+        "既定の後に追加するrsync引数です。--timeoutまたは--timeout=...があれば既定--timeout=60を補いません。別の実行制限2分は変更しません。CR/LFは禁止です。",
+        "選用額外 rsync 引數，附於預設之後。提供 --timeout 或 --timeout=... 時不補入 --timeout=60，但不變更獨立的 2 分鐘程序限制；不可含 CR/LF。",
+        "可选额外 rsync 参数，附于默认值之后。提供 --timeout 或 --timeout=... 时不补入 --timeout=60，但不改变独立的 2 分钟进程限制；不可含 CR/LF。"
+      ],
+      "when": [
+        "Optional common state condition, default unconditional. Use actual active-role status to prevent standby writers; this resource does not itself negotiate which peer should own the lease file.",
+        "共通の状態条件で、既定無条件です。待機側からの書込を防ぐには実際の役割状態で条件を指定します。本リソース自体はリースファイルの主系を合意しません。",
+        "選用共用狀態條件，預設無條件。應以實際主用角色狀態避免備用端寫入，本資源不自行協商租約檔擁有者。",
+        "可选通用状态条件，默认无条件。应以实际主用角色状态避免备用端写入，本资源不自行协商租约文件所有者。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_dhcp.go",
+      "pkg/controller/chain/filesync.go",
+      "pkg/controller/chain/chain.go",
+      "pkg/platform/platform.go"
+    ]
+  },
+  "DHCPv4Server": {
+    "purpose": [
+      "Serve IPv4 DHCP pools, tagged selector scopes and reservations through the current shared dnsmasq service.",
+      "共有dnsmasqサービスでIPv4 DHCPプール、選別条件付きの追加プール、予約を提供します。",
+      "透過目前共用 dnsmasq 服務提供 IPv4 DHCP 集區、帶選擇條件的範圍與保留。",
+      "通过当前共用 dnsmasq 服务提供 IPv4 DHCP 地址池、带选择条件的范围与保留。"
+    ],
+    "rules": [
+      [
+        "Use interface plus addressPool and gateway/gatewayFrom, dnsServers/dnsServerFrom, ntpServers/ntpServerFrom for the current live controller. The static renderer and runtime writer have different behavior; older routerSource/dnsSource, embedded dns and authoritative settings must not be presented as working runtime controls.",
+        "現行の実行処理ではinterface・addressPoolとgateway/gatewayFrom、dnsServers/dnsServerFrom、ntpServers/ntpServerFromを使います。静的生成と実行時生成の挙動は異なり、旧routerSource・dnsSource、内蔵dns、authoritativeを実行時制御として扱えません。",
+        "目前即時控制器請用 interface/addressPool 與 gateway/gatewayFrom、dnsServers/dnsServerFrom、ntpServers/ntpServerFrom。靜態轉譯與即時寫入行為不同，舊 routerSource/dnsSource、內嵌 dns、authoritative 不應視為可用即時控制。",
+        "当前实时控制器请用 interface/addressPool 与 gateway/gatewayFrom、dnsServers/dnsServerFrom、ntpServers/ntpServerFrom。静态渲染与实时写入行为不同，旧 routerSource/dnsSource、内嵌 dns、authoritative 不应视为可用实时控制。"
+      ],
+      [
+        "An existing logical interface and valid IPv4 start/end are needed for an active pool. Pool start <= end is checked; subnet membership, cross-pool overlaps and reachability of offered gateways are not established by validation.",
+        "有効プールには既存論理インターフェースと有効なIPv4開始・終了が必要です。start<=endを検証しますが、サブネット内所属・プール間重複・配布ゲートウェイの到達性は検証で保証しません。",
+        "有效集區需有既有邏輯介面及有效 IPv4 起訖位址。會檢查 start <= end，但驗證不確立子網成員關係、集區重疊或所提供閘道的可達性。",
+        "有效地址池需有现有逻辑接口及有效 IPv4 起止地址。会检查 start <= end，但验证不确立子网成员关系、地址池重叠或所提供网关的可达性。"
+      ],
+      [
+        "Common value sources require an existing resource and explicit provided field. A missing required gateway/DNS/NTP/domain source with optional false suspends the pool even if literal alternatives exist; optional true skips missing values. Dynamic address readers do not themselves enforce IPv4 on every resolved status value.",
+        "共通の値参照は既存リソースと提供フィールドの明示が必要です。gateway・DNS・NTP・domainの必須参照がoptional falseで未解決なら、固定値があってもプールを見送ります。optional trueなら未解決値を省略します。動的アドレス読み取りは全解決値のIPv4系統を強制しません。",
+        "共用值來源須有既有資源與明確提供欄位。gateway/DNS/NTP/domain 必要來源 optional false 缺值時，即使有固定替代值仍暫停集區；optional true 略過缺值。動態位址讀取器不對所有狀態值強制 IPv4。",
+        "通用值来源须有现有资源与明确提供字段。gateway/DNS/NTP/domain 必要来源 optional false 缺值时，即使有固定替代值仍暂停地址池；optional true 跳过缺值。动态地址读取器不对所有状态值强制 IPv4。"
+      ],
+      [
+        "Scopes use MAC/OUI alternatives and either a local profileRef or inline settings, never both. Profiles/scopes require valid endpoint pairs. When a dynamic lease matches a selector but lies outside all matching pools, apply prunes it and restarts dnsmasq; explicit reservations are preserved. This does not force the client to renew immediately.",
+        "スコープはMAC/OUIの選択条件と、ローカルprofileRefまたはインライン設定の片方を使います。プロファイル・スコープは有効な開始・終了が必要です。条件一致の動的リースが全一致プールの外なら適用時に除去してdnsmasqを再起動し、明示予約は残します。クライアントへの即時更新強制ではありません。",
+        "範圍使用 MAC/OUI 替代條件及本機 profileRef 或內嵌設定，不能並用。設定檔與範圍需有效起訖值。動態租約符合選擇器但不在任何匹配集區時，套用會移除並重新啟動 dnsmasq，保留明確保留；不強制客戶端立即更新。",
+        "范围使用 MAC/OUI 替代条件及本地 profileRef 或内嵌配置，不能并用。配置档与范围需有效起止值。动态租约符合选择器但不在任何匹配地址池时，应用会移除并重启 dnsmasq，保留明确保留；不强制客户端立即更新。"
+      ]
+    ],
+    "fields": {
+      "server": [
+        "Schema accepts dnsmasq/kea/dhcpd; default dnsmasq in planners/dependency selection. Current live controller still launches dnsmasq regardless of this field; kea/dhcpd are not working backend switches. Sticky-retention day selection only includes dnsmasq servers.",
+        "スキーマはdnsmasq・kea・dhcpdを許し、計画・依存選択の既定はdnsmasqです。現行の実行コントローラーはこの値によらずdnsmasqを使い、kea・dhcpdへの切替にはなりません。固定保持日数の選択はdnsmasq指定だけを対象にします。",
+        "結構描述接受 dnsmasq/kea/dhcpd，規劃與相依選擇預設 dnsmasq。目前即時控制器仍一律啟動 dnsmasq，不能切換到 kea/dhcpd。固定保留天數僅計入 dnsmasq 伺服器。",
+        "模式接受 dnsmasq/kea/dhcpd，规划与依赖选择默认 dnsmasq。当前实时控制器仍一律启动 dnsmasq，不能切换到 kea/dhcpd。固定保留天数仅计入 dnsmasq 服务器。"
+      ],
+      "managed": [
+        "Boolean default false. Current live DHCP service controller does not check it: false is not an observe-only or disabled mode.",
+        "真偽値で既定falseです。現行の実行処理は参照せず、falseを観測専用・無効化として使えません。",
+        "布林值預設 false，目前即時 DHCP 控制器不檢查；false 不表示僅觀察或停用。",
+        "布尔值默认 false，当前实时 DHCP 控制器不检查；false 不表示仅观察或禁用。"
+      ],
+      "role": [
+        "Validated server/transit, default server. The static renderer distinguishes transit, but current live LAN-line generation does not honor this switch. Do not use transit to suppress allocations.",
+        "server・transitを検証し、既定serverです。静的レンダラーはtransitを区別しますが、現行の実行時生成はこの切替を反映しません。割当抑止にtransitを使わないでください。",
+        "驗證 server/transit，預設 server。靜態轉譯器區分 transit，但目前即時 LAN 產生不遵循此切換，不可用 transit 抑制分配。",
+        "验证 server/transit，默认 server。静态渲染器区分 transit，但当前实时 LAN 生成不遵循此切换，不可用 transit 抑制分配。"
+      ],
+      "listenInterfaces": [
+        "Optional declared logical interfaces; all names must exist. Used by validation/firewall planning, but current live pool generation uses only interface, not this list. It cannot replace interface.",
+        "任意の宣言済み論理インターフェース一覧で、全参照の存在が必要です。検証・ファイアウォール計画に使いますが、現行の実行時プール生成はinterfaceだけを使い、この一覧で代替できません。",
+        "選用已宣告邏輯介面清單，所有名稱須存在。用於驗證與防火牆規劃，但目前即時集區僅使用 interface，此清單不能替代 interface。",
+        "可选已声明逻辑接口列表，所有名称须存在。用于验证与防火墙规划，但当前实时地址池仅使用 interface，此列表不能替代 interface。"
+      ],
+      "logDHCP": [
+        "Default false. Static rendering can emit log-dhcp, but current live config writer does not consume this flag; lease-event callback generation is independent.",
+        "既定falseです。静的生成はlog-dhcpを出力できますが、現行の実行時設定はこのフラグを使いません。リースイベントのコールバック生成とは別です。",
+        "預設 false，靜態轉譯可輸出 log-dhcp，但目前即時寫入不使用此旗標，租約事件回呼產生與此獨立。",
+        "默认 false，静态渲染可输出 log-dhcp，但当前实时写入不使用此标志，租约事件回调生成与此独立。"
+      ],
+      "stickyHoldDays": [
+        "Nonnegative retention days, default 0 (off). Positive values retain released/expired DHCP assignments in dhcp-sticky.db for reuse. Runtime uses the maximum value across dnsmasq DHCPv4Server resources for all IPv4 lease events, not a per-interface lookup. Explicit reservations take precedence.",
+        "0以上の保持日数で、既定0は無効です。正なら解放・期限切れ割当をdhcp-sticky.dbに保持して再利用します。実行時はdnsmasqのDHCPv4Server全体の最大値を全IPv4イベントに使い、インターフェース別には選びません。明示予約が優先です。",
+        "非負保留天數，預設 0 停用。正值將釋放或到期的分配保存在 dhcp-sticky.db 以便重用。目前對全部 IPv4 租約事件採 dnsmasq DHCPv4Server 中的最大值，不依介面區分；明確保留優先。",
+        "非负保留天数，默认 0 禁用。正值将释放或到期的分配保存在 dhcp-sticky.db 以便重用。当前对全部 IPv4 租约事件采用 dnsmasq DHCPv4Server 中的最大值，不按接口区分；明确保留优先。"
+      ],
+      "interface": [
+        "Declared logical interface for the primary pool; required for useful current live pool generation, although schema/validation permit omission. Must exist in the Router interface index.",
+        "主プールの宣言済み論理インターフェースです。スキーマ・検証は省略を許しますが、現行の実行時プール生成には必要です。Routerの索引に存在する必要があります。",
+        "主要集區的已宣告邏輯介面。雖然結構描述與驗證允許省略，目前即時集區產生仍需要它，且須存在於 Router 介面索引。",
+        "主地址池的已声明逻辑接口。虽然模式与验证允许省略，当前实时地址池生成仍需要它，且须存在于 Router 接口索引。"
+      ],
+      "addressPool": [
+        "Primary IPv4 allocation pool; start/end required when interface is set. These fields take precedence over legacy rangeStart/rangeEnd/leaseTime.",
+        "主IPv4割当プールです。interface指定時はstart・endが必須です。各値は旧rangeStart・rangeEnd・leaseTimeより優先します。",
+        "主要 IPv4 分配集區；設定 interface 時 start/end 必填，各欄位優先於舊 rangeStart/rangeEnd/leaseTime。",
+        "主 IPv4 分配池；设置 interface 时 start/end 必填，各字段优先于旧 rangeStart/rangeEnd/leaseTime。"
+      ],
+      "addressPool.start": [
+        "Bare IPv4 first address, inclusive; required unless rangeStart supplies it. Must be <= end. No inferred subnet/pool.",
+        "裸IPv4の開始アドレスで、境界を含みます。rangeStartで補わない限り必須で、end以下が必要です。サブネット・範囲の自動推定はありません。",
+        "純 IPv4 起始位址，包含端點；除非 rangeStart 補足，否則必填，須 <= end，不自動推導子網或集區。",
+        "纯 IPv4 起始地址，包含端点；除非 rangeStart 补足，否则必填，须 <= end，不自动推导子网或地址池。"
+      ],
+      "addressPool.end": [
+        "Bare IPv4 last address, inclusive; required unless rangeEnd supplies it, and >= start.",
+        "裸IPv4の終了アドレスで、境界を含みます。rangeEndで補わない限り必須で、start以上が必要です。",
+        "純 IPv4 結束位址，包含端點；除非 rangeEnd 補足，否則必填，須 >= start。",
+        "纯 IPv4 结束地址，包含端点；除非 rangeEnd 补足，否则必填，须 >= start。"
+      ],
+      "addressPool.leaseTime": [
+        "Backend lease-duration string; precedence addressPool.leaseTime → leaseTime → 12h. Not parsed as Go duration by this resource validator.",
+        "バックエンドのリース期間文字列です。addressPool.leaseTime→leaseTime→12hの順に選びます。本リソースの検証はGo durationとして解析しません。",
+        "後端租約期間字串，優先序 addressPool.leaseTime → leaseTime → 12h，此資源驗證不按 Go duration 解析。",
+        "后端租约时长字符串，优先级 addressPool.leaseTime → leaseTime → 12h，此资源验证不按 Go duration 解析。"
+      ],
+      "rangeStart": [
+        "Legacy fallback for addressPool.start, default empty. Also switches the static renderer to its older scope-style path; prefer addressPool.",
+        "addressPool.startの旧補完値で、既定空です。静的レンダラーを旧経路に切り替える指定でもあるためaddressPoolを推奨します。",
+        "addressPool.start 的舊式替代值，預設空值；亦會切換靜態轉譯器至舊式範圍路徑，建議用 addressPool。",
+        "addressPool.start 的旧式替代值，默认空值；也会切换静态渲染器至旧式范围路径，建议用 addressPool。"
+      ],
+      "rangeEnd": [
+        "Legacy fallback for addressPool.end; same static-renderer switch as rangeStart.",
+        "addressPool.endの旧補完値です。静的レンダラーの切替はrangeStartと同じです。",
+        "addressPool.end 的舊式替代值，靜態轉譯器切換同 rangeStart。",
+        "addressPool.end 的旧式替代值，静态渲染器切换同 rangeStart。"
+      ],
+      "leaseTime": [
+        "Fallback backend lease duration when addressPool.leaseTime is empty; default 12h.",
+        "addressPool.leaseTimeが空の場合のリース期間で、既定12hです。",
+        "addressPool.leaseTime 為空時使用的後端租約期間，預設 12h。",
+        "addressPool.leaseTime 为空时使用的后端租约时长，默认 12h。"
+      ],
+      "routerSource": [
+        "Validated interfaceAddress/static/none; static requires router. Static renderer defaults interfaceAddress and derives from IPv4StaticAddress, but current live writer ignores routerSource/router and uses gateway/gatewayFrom instead.",
+        "interfaceAddress・static・noneを検証し、staticはrouter必須です。静的生成の既定はinterfaceAddressでIPv4StaticAddressから取得しますが、現行実行時はrouterSource・routerを使わずgateway・gatewayFromを使用します。",
+        "驗證 interfaceAddress/static/none，static 需要 router。靜態轉譯預設 interfaceAddress 並讀 IPv4StaticAddress，但目前即時寫入忽略 routerSource/router，改用 gateway/gatewayFrom。",
+        "验证 interfaceAddress/static/none，static 需要 router。静态渲染默认 interfaceAddress 并读 IPv4StaticAddress，但当前实时写入忽略 routerSource/router，改用 gateway/gatewayFrom。"
+      ],
+      "router": [
+        "IPv4 value required with routerSource: static. Used by the older static renderer only, not the current live gateway option path.",
+        "routerSource: staticで必須のIPv4値です。旧静的生成だけで使い、現行実行時のゲートウェイオプションには使いません。",
+        "routerSource: static 時必填 IPv4 值，僅舊靜態轉譯使用，目前即時閘道選項路徑不使用。",
+        "routerSource: static 时必填 IPv4 值，仅旧静态渲染使用，当前实时网关选项路径不使用。"
+      ],
+      "gateway": [
+        "Optional bare IPv4 DHCP router option; default no explicit router option. A usable gatewayFrom value takes precedence. Not exclusive with gatewayFrom.",
+        "任意の裸IPv4によるDHCPルーターオプションです。既定は明示オプションなしで、有効なgatewayFromが優先します。gatewayFromと排他ではありません。",
+        "選用純 IPv4 DHCP 路由器選項，預設不明確輸出；有效 gatewayFrom 值優先，可並用。",
+        "可选纯 IPv4 DHCP 路由器选项，默认不明确输出；有效 gatewayFrom 值优先，可并用。"
+      ],
+      "gatewayFrom": [
+        "Optional common status source with resource and field. Default optional false: unresolved source makes this server Pending even if gateway is set. With optional true, missing values can use gateway.",
+        "resource・fieldを指定する状態値参照です。optional既定falseで、未解決ならgateway指定があってもサーバーをPendingにします。optional trueなら未解決時にgatewayを使えます。",
+        "選用含 resource/field 的狀態來源，optional 預設 false；來源未解析時即使有 gateway 仍為 Pending。optional true 缺值時可用 gateway。",
+        "可选含 resource/field 的状态来源，optional 默认 false；来源未解析时即使有 gateway 仍为 Pending。optional true 缺值时可用 gateway。"
+      ],
+      "dnsSource": [
+        "Validated dhcpv4/static/self/none; static requires dnsServers, dhcpv4 requires dnsInterface. Default self in static renderer. Current live writer ignores this selector and uses dnsServers plus dnsServerFrom.",
+        "dhcpv4・static・self・noneを検証し、staticはdnsServers、dhcpv4はdnsInterface必須です。静的生成の既定selfですが、現行実行時はこの選択を無視してdnsServers・dnsServerFromを使用します。",
+        "驗證 dhcpv4/static/self/none，static 需要 dnsServers，dhcpv4 需要 dnsInterface。靜態預設 self；目前即時寫入忽略選擇器並使用 dnsServers 與 dnsServerFrom。",
+        "验证 dhcpv4/static/self/none，static 需要 dnsServers，dhcpv4 需要 dnsInterface。静态默认 self；当前实时写入忽略选择器并使用 dnsServers 与 dnsServerFrom。"
+      ],
+      "dnsInterface": [
+        "Declared logical interface required by dnsSource: dhcpv4. Reference is validated even when another selector is used; current live writer does not use this field to discover DNS servers.",
+        "dnsSource: dhcpv4で必須の宣言済み論理インターフェースです。他の選択でも指定時は存在検証し、現行実行時はこの指定によるDNS取得を行いません。",
+        "dnsSource: dhcpv4 所需的已宣告邏輯介面。即使用其他選擇器，提供此值仍驗證存在；目前即時寫入不以此探索 DNS。",
+        "dnsSource: dhcpv4 所需的已声明逻辑接口。即使用其他选择器，提供此值仍验证存在；当前实时写入不以此发现 DNS。"
+      ],
+      "dnsServers": [
+        "Optional bare IPv4 DNS-server list. Default empty; merged with resolved dnsServerFrom values for DHCP option 6. Does not start DNSResolver or a DNS listener.",
+        "裸IPv4のDNSサーバー一覧です。既定空で、dnsServerFrom解決値と結合してDHCPオプション6にします。DNSResolverやDNS待受は開始しません。",
+        "選用純 IPv4 DNS 伺服器清單，預設空值；與 dnsServerFrom 合併形成 DHCP 選項 6，不會啟動 DNSResolver 或 DNS 接聽。",
+        "可选纯 IPv4 DNS 服务器列表，默认空值；与 dnsServerFrom 合并形成 DHCP 选项 6，不会启动 DNSResolver 或 DNS 监听。"
+      ],
+      "dnsServerFrom": [
+        "Optional common resource/field source list; optional defaults false. Required missing values block the whole server despite static DNS entries. Runtime reads status and strips CIDR to addresses; use IPv4-providing fields.",
+        "resource・fieldによる状態値参照一覧で、optional既定falseです。必須の未解決値は固定DNSがあってもサーバー全体を待機にします。実行時は状態から読みCIDRをアドレス化するため、IPv4を提供するフィールドを選びます。",
+        "選用共用 resource/field 來源清單，optional 預設 false。必要值缺失即使有固定 DNS 仍阻擋整個伺服器。執行時讀狀態並去除 CIDR，請用提供 IPv4 的欄位。",
+        "可选通用 resource/field 来源列表，optional 默认 false。必要值缺失即使有固定 DNS 仍阻挡整个服务器。运行时读状态并去除 CIDR，请用提供 IPv4 的字段。"
+      ],
+      "ntpServers": [
+        "Optional bare IPv4 NTP-server list; default empty. Merged with ntpServerFrom for DHCP option 42; does not run NTPServer.",
+        "任意の裸IPv4 NTPサーバー一覧で、既定空です。ntpServerFromと結合してオプション42にし、NTPServerは起動しません。",
+        "選用純 IPv4 NTP 清單，預設空；與 ntpServerFrom 合併為 DHCP 選項 42，不啟動 NTPServer。",
+        "可选纯 IPv4 NTP 列表，默认空；与 ntpServerFrom 合并为 DHCP 选项 42，不启动 NTPServer。"
+      ],
+      "ntpServerFrom": [
+        "Optional common resource/field source list. Same required/optional gating and status-only resolution as dnsServerFrom; default no references.",
+        "共通のresource・field参照一覧です。必須・optionalの待機条件と状態のみの読み取りはdnsServerFromと同じで、既定参照なしです。",
+        "選用共用 resource/field 來源清單，必要與選用等待條件及僅讀狀態同 dnsServerFrom，預設無參照。",
+        "可选通用 resource/field 来源列表，必要与可选等待条件及仅读状态同 dnsServerFrom，默认无引用。"
+      ],
+      "domain": [
+        "Optional single domain without whitespace, slash or comma. Exclusive with domainFrom. Emits domain-name and, unless option 119/name domain-search is explicitly supplied, domain-search.",
+        "空白・スラッシュ・カンマを含まない単一ドメインで、domainFromと排他です。domain-nameと、オプション119・domain-searchを別指定しない場合のdomain-searchを生成します。",
+        "選用單一網域，不可含空白、斜線或逗號，與 domainFrom 互斥。輸出 domain-name，若未明確提供選項 119/domain-search 亦輸出 domain-search。",
+        "可选单一域名，不可含空白、斜线或逗号，与 domainFrom 互斥。输出 domain-name，若未明确提供选项 119/domain-search 亦输出 domain-search。"
+      ],
+      "domainFrom": [
+        "Optional source restricted to DNSZone/<name>, field: zone; resource must exist. Declared zone value is readable before status. optional false blocks on no value; true can omit the domain. Exclusive with domain.",
+        "DNSZone/<name>・field: zoneに限定する参照です。参照先の存在が必要で、状態確定前でも宣言zoneを読めます。optional falseなら未解決で待機し、trueなら省略できます。domainと排他です。",
+        "選用來源限 DNSZone/<name>、field: zone，資源須存在，可在狀態建立前讀宣告 zone。optional false 缺值時等待，true 可省略；與 domain 互斥。",
+        "可选来源限 DNSZone/<name>、field: zone，资源须存在，可在状态建立前读声明 zone。optional false 缺值时等待，true 可省略；与 domain 互斥。"
+      ],
+      "authoritative": [
+        "Default false. Affects the older static renderer and selects its scope-style path; current live writer does not emit dhcp-authoritative from it.",
+        "既定falseです。旧静的生成の切替とdhcp-authoritativeに使いますが、現行実行時はこの指定を出力しません。",
+        "預設 false，影響舊靜態轉譯及範圍路徑選擇；目前即時寫入不據此輸出 dhcp-authoritative。",
+        "默认 false，影响旧静态渲染及范围路径选择；当前实时写入不据此输出 dhcp-authoritative。"
+      ],
+      "leaseFile": [
+        "Optional path, default <StateDir>/dnsmasq/dnsmasq.leases (normally /var/lib/routerd/dnsmasq/dnsmasq.leases). One dnsmasq instance shares the file: all explicit DHCPv4/6 server leaseFile values must agree or runtime fails.",
+        "任意パスで、既定<StateDir>/dnsmasq/dnsmasq.leases、通常/var/lib/routerd/dnsmasq/dnsmasq.leasesです。共有dnsmasqなので全DHCPv4/6Serverの明示leaseFileが一致しないと実行時エラーです。",
+        "選用路徑，預設 <StateDir>/dnsmasq/dnsmasq.leases，通常為 /var/lib/routerd/dnsmasq/dnsmasq.leases。共用 dnsmasq，所有 DHCPv4/6 伺服器明確 leaseFile 須一致，否則執行失敗。",
+        "可选路径，默认 <StateDir>/dnsmasq/dnsmasq.leases，通常为 /var/lib/routerd/dnsmasq/dnsmasq.leases。共用 dnsmasq，所有 DHCPv4/6 服务器明确 leaseFile 须一致，否则运行失败。"
+      ],
+      "when": [
+        "Optional common state predicate; default unconditional. False excludes the pool and yields Pending/WhenFalse. Required dynamic values can separately keep the server Pending.",
+        "共通の状態条件で既定無条件です。不成立ならプールを除外してPending/WhenFalseとなり、別途必須動的値の未解決でもPendingになります。",
+        "選用共用狀態條件，預設無條件。不成立則排除集區並為 Pending/WhenFalse；必要動態值未解析也可另使其 Pending。",
+        "可选通用状态条件，默认无条件。不成立则排除地址池并为 Pending/WhenFalse；必要动态值未解析也可另使其 Pending。"
+      ],
+      "dns": [
+        "Legacy embedded dnsmasq DNS settings. Current live writer forces port=0 and no-resolv, so these settings do not enable DNS forwarding. Use DNSResolver/DNSForwarder/DNSUpstream instead. Some values still affect validation.",
+        "旧dnsmasq内蔵DNS設定です。現行実行時はport=0・no-resolvを固定出力するため、この設定でDNS転送を有効にできません。DNSResolver・DNSForwarder・DNSUpstreamを使用します。一部は検証に影響します。",
+        "舊式 dnsmasq 內嵌 DNS 設定。目前即時寫入固定 port=0 與 no-resolv，無法以此啟用 DNS 轉送，請改用 DNSResolver/DNSForwarder/DNSUpstream；部分值仍影響驗證。",
+        "旧式 dnsmasq 内嵌 DNS 配置。当前实时写入固定 port=0 与 no-resolv，无法以此启用 DNS 转发，请改用 DNSResolver/DNSForwarder/DNSUpstream；部分值仍影响验证。"
+      ],
+      "dns.enabled": [
+        "Default false. true reserves TCP/UDP 53 in listener-conflict validation but does not actually open a live DNS listener.",
+        "既定falseです。trueは待受競合の検証でTCP/UDP 53を予約しますが、実行時のDNS待受は開きません。",
+        "預設 false；true 在接聽衝突驗證中保留 TCP/UDP 53，但不實際開啟 DNS 接聽。",
+        "默认 false；true 在监听冲突验证中保留 TCP/UDP 53，但不实际开启 DNS 监听。"
+      ],
+      "dns.upstreamSource": [
+        "Accepted empty/dhcpv4/static/system/none. dhcpv4 requires upstreamInterface, static requires upstreamServers. No current live DNS-forwarding effect.",
+        "空・dhcpv4・static・system・noneを許します。dhcpv4はupstreamInterface、staticはupstreamServersが必要です。現行実行時のDNS転送には影響しません。",
+        "接受空值/dhcpv4/static/system/none；dhcpv4 須有 upstreamInterface，static 須有 upstreamServers，目前不影響即時 DNS 轉送。",
+        "接受空值/dhcpv4/static/system/none；dhcpv4 须有 upstreamInterface，static 须有 upstreamServers，当前不影响实时 DNS 转发。"
+      ],
+      "dns.upstreamInterface": [
+        "Required nonempty string with dns.upstreamSource: dhcpv4; not used for current live DNS resolution. Unlike dnsInterface, this legacy field is not checked against the interface index here.",
+        "dns.upstreamSource: dhcpv4で非空必須です。現行実行時のDNS解決には使わず、dnsInterfaceと異なりこの旧値はインターフェース索引との照合もありません。",
+        "dns.upstreamSource: dhcpv4 時必須非空，目前不參與即時 DNS 解析。不同於 dnsInterface，此舊欄位不對照介面索引。",
+        "dns.upstreamSource: dhcpv4 时必须非空，当前不参与实时 DNS 解析。不同于 dnsInterface，此旧字段不对照接口索引。"
+      ],
+      "dns.upstreamServers": [
+        "IPv4/IPv6 literals required when upstreamSource is static; default empty. Validated but not consumed by current live DNS forwarding.",
+        "upstreamSourceがstaticなら必須のIPv4/IPv6固定値です。既定空で、検証しますが現行実行時のDNS転送では使いません。",
+        "upstreamSource 為 static 時必填 IPv4/IPv6 固定值，預設空；會驗證但目前即時 DNS 轉送不使用。",
+        "upstreamSource 为 static 时必填 IPv4/IPv6 固定值，默认空；会验证但当前实时 DNS 转发不使用。"
+      ],
+      "dns.cacheSize": [
+        "Nonnegative schema integer, default 0; not used by the current live config writer. DNSResolver.cache is separate.",
+        "スキーマ上0以上の整数で、既定0です。現行実行時の設定生成では使いません。DNSResolver.cacheとは別です。",
+        "結構描述要求非負整數，預設 0，目前即時設定寫入不使用，與 DNSResolver.cache 分開。",
+        "模式要求非负整数，默认 0，当前实时配置写入不使用，与 DNSResolver.cache 分开。"
+      ],
+      "profiles": [
+        "Optional reusable settings local to this server. Profiles are inert unless selected by scopes[].profileRef; they are not separate resources. Default empty.",
+        "このサーバー内で再利用する設定一覧です。scopes[].profileRefから選ばなければ作用しない、別リソースではない項目です。既定空です。",
+        "此伺服器內選用的可重用設定，未由 scopes[].profileRef 選取即無作用，不是獨立資源，預設空。",
+        "此服务器内可选的可重用配置，未由 scopes[].profileRef 选取即无作用，不是独立资源，默认空。"
+      ],
+      "profiles[].name": [
+        "Required unique profile name within the server, with no whitespace or commas. No Kind/name prefix.",
+        "サーバー内で一意のプロファイル名が必須です。空白・カンマ不可で、Kind/name接頭辞は付けません。",
+        "伺服器內必填且唯一的設定檔名稱，不可含空白或逗號，不加 Kind/name 前綴。",
+        "服务器内必填且唯一的配置档名称，不可含空白或逗号，不加 Kind/name 前缀。"
+      ],
+      "scopes": [
+        "Optional selector-specific pools rendered before the primary catch-all pool. Clients that match no selector use the primary pool. Default empty. Multiple matching scopes are not rejected by validation.",
+        "主プールより先に生成する、選別条件付きの追加プール一覧です。条件不一致のクライアントは主プールを使います。既定空で、複数条件への同時一致は検証で拒否しません。",
+        "選用的條件專用集區，在主要全域集區前產生；未符合選擇器的客戶端使用主要集區。預設空，驗證不拒絕同時符合多個範圍。",
+        "可选的条件专用地址池，在主通用地址池前生成；未符合选择器的客户端使用主地址池。默认空，验证不拒绝同时符合多个范围。"
+      ],
+      "scopes[].name": [
+        "Required unique scope name within this server; no whitespace or commas. Used to derive dnsmasq tags, not an external resource reference.",
+        "サーバー内で一意のスコープ名が必須です。空白・カンマ不可で、dnsmasqタグ生成に使い、外部リソース参照ではありません。",
+        "伺服器內必填且唯一的範圍名稱，不可含空白或逗號，用於產生 dnsmasq 標籤，不是外部資源參照。",
+        "服务器内必填且唯一的范围名称，不可含空白或逗号，用于生成 dnsmasq 标签，不是外部资源引用。"
+      ],
+      "scopes[].match": [
+        "Required selector with at least one macAddresses or ouiPrefixes entry. Entries are alternatives, not a requirement to match both lists.",
+        "macAddressesまたはouiPrefixesを1件以上持つ選別条件が必要です。項目は選択肢であり、両リスト同時一致の条件ではありません。",
+        "必填選擇器，macAddresses 或 ouiPrefixes 至少有一項。各項為替代匹配，不要求同時符合兩個清單。",
+        "必填选择器，macAddresses 或 ouiPrefixes 至少有一项。各项为替代匹配，不要求同时符合两个列表。"
+      ],
+      "scopes[].match.macAddresses": [
+        "Optional exact MAC list parsed by net.ParseMAC. Default empty. Use canonical colon-separated six-octet MACs for dnsmasq output.",
+        "net.ParseMACで解析するMAC完全一致の一覧です。既定空です。dnsmasq出力にはコロン区切り6バイトの標準表記を使います。",
+        "選用完整 MAC 清單，由 net.ParseMAC 解析，預設空。dnsmasq 輸出請用標準冒號分隔六位元組格式。",
+        "可选完整 MAC 列表，由 net.ParseMAC 解析，默认空。dnsmasq 输出请用标准冒号分隔六字节格式。"
+      ],
+      "scopes[].match.ouiPrefixes": [
+        "Optional three-octet OUI prefixes. Use aa:bb:cc: runtime appends :*:*:* to the literal value. Validator normalizes alternate spellings for checking but live writer does not reuse that normalization.",
+        "任意の3バイトOUIプレフィックスです。実行時は指定値に:*:*:*を付けるためaa:bb:cc形式を使います。検証は別表記を正規化しても、実行時生成はその正規化値を使いません。",
+        "選用三位元組 OUI 前綴，請用 aa:bb:cc，執行時原樣附加 :*:*:*。驗證雖正規化其他寫法，即時寫入不使用該正規化結果。",
+        "可选三字节 OUI 前缀，请用 aa:bb:cc，运行时原样附加 :*:*:*。验证虽规范化其他写法，实时写入不使用该规范化结果。"
+      ],
+      "scopes[].profileRef": [
+        "Bare name of an existing profiles[] entry in the same server. Exclusive with inline addressPool fields, netmask, gateway, dnsServers, ntpServers and options. Empty selects inline settings.",
+        "同じサーバーのprofiles[]名を指定します。インラインのaddressPool各値・netmask・gateway・dnsServers・ntpServers・optionsと排他です。空ならインライン設定です。",
+        "同一伺服器既有 profiles[] 的裸名，與內嵌 addressPool 欄位、netmask、gateway、dnsServers、ntpServers、options 互斥；空值使用內嵌設定。",
+        "同一服务器现有 profiles[] 的裸名，与内嵌 addressPool 字段、netmask、gateway、dnsServers、ntpServers、options 互斥；空值使用内嵌配置。"
+      ],
+      "profiles[].addressPool": [
+        "Required IPv4 pool settings in profiles and inline scopes; no default endpoints.",
+        "プロファイル・インラインスコープのIPv4プールで、開始・終了の既定値はありません。",
+        "設定檔與內嵌範圍所需 IPv4 集區，端點無預設值。",
+        "配置档与内嵌范围所需 IPv4 地址池，端点无默认值。"
+      ],
+      "profiles[].addressPool.start": [
+        "Required inclusive bare IPv4 start, <= end. No cross-pool overlap validation.",
+        "境界を含む裸IPv4開始値が必須でend以下です。プール間重複の検証はありません。",
+        "必填且包含端點的純 IPv4 起始值，須 <= end，不驗證集區間重疊。",
+        "必填且包含端点的纯 IPv4 起始值，须 <= end，不验证地址池间重叠。"
+      ],
+      "profiles[].addressPool.end": [
+        "Required inclusive bare IPv4 end, >= start.",
+        "境界を含む裸IPv4終了値が必須でstart以上です。",
+        "必填且包含端點的純 IPv4 結束值，須 >= start。",
+        "必填且包含端点的纯 IPv4 结束值，须 >= start。"
+      ],
+      "profiles[].addressPool.leaseTime": [
+        "Optional backend lease duration. Empty inherits the server effective lease duration (addressPool.leaseTime → leaseTime → 12h).",
+        "任意のバックエンド期間です。空ならサーバーの有効期間（addressPool.leaseTime→leaseTime→12h）を継承します。",
+        "選用後端租約期間，空值繼承伺服器有效期間（addressPool.leaseTime → leaseTime → 12h）。",
+        "可选后端租约时长，空值继承服务器有效时长（addressPool.leaseTime → leaseTime → 12h）。"
+      ],
+      "profiles[].netmask": [
+        "Optional contiguous IPv4 dotted netmask with 1–32 one bits. Empty omits the explicit mask and lets dnsmasq derive it; not inherited from another profile.",
+        "1～32ビットが連続するドット表記IPv4ネットマスクです。空なら明示せずdnsmasqの導出に任せ、別プロファイルからは継承しません。",
+        "選用連續 1–32 位元的點分 IPv4 遮罩，空值不輸出並由 dnsmasq 推導，不自其他設定檔繼承。",
+        "可选连续 1–32 位的点分 IPv4 掩码，空值不输出并由 dnsmasq 推导，不从其他配置档继承。"
+      ],
+      "profiles[].gateway": [
+        "Optional bare IPv4 router option for this tagged pool. Empty does not copy server.gateway.",
+        "このタグ付きプールの任意IPv4ルーターオプションです。空でもserver.gatewayをコピーしません。",
+        "此標籤集區的選用純 IPv4 路由器選項，空值不複製 server.gateway。",
+        "此标签地址池的可选纯 IPv4 路由器选项，空值不复制 server.gateway。"
+      ],
+      "profiles[].dnsServers": [
+        "Optional IPv4 DNS addresses for this tagged pool, default empty; no dynamic-source field or automatic server-list inheritance.",
+        "このタグ付きプールのIPv4 DNS一覧で既定空です。動的参照やサーバー一覧の自動継承はありません。",
+        "此標籤集區的選用 IPv4 DNS 清單，預設空，無動態來源欄位或自動繼承伺服器清單。",
+        "此标签地址池的可选 IPv4 DNS 列表，默认空，无动态来源字段或自动继承服务器列表。"
+      ],
+      "profiles[].ntpServers": [
+        "Optional IPv4 NTP addresses for this tagged pool, default empty; no dynamic-source field.",
+        "このタグ付きプールの任意IPv4 NTP一覧で、既定空です。動的参照フィールドはありません。",
+        "此標籤集區的選用 IPv4 NTP 清單，預設空，無動態來源欄位。",
+        "此标签地址池的可选 IPv4 NTP 列表，默认空，无动态来源字段。"
+      ],
+      "profiles[].options": [
+        "Optional extra options for this pool; exactly one code/name and a nonempty value per item. Default empty.",
+        "プール個別の任意追加オプションです。各項目はcode・nameの片方と非空valueが必要で、既定空です。",
+        "此集區的選用額外選項，每項須有 code/name 其中之一及非空 value，預設空。",
+        "此地址池的可选额外选项，每项须有 code/name 其中之一及非空 value，默认空。"
+      ],
+      "profiles[].options[].code": [
+        "Numeric option, exclusive with name; schema 1–65535.",
+        "数値のオプションでnameと排他です。スキーマ範囲1～65535です。",
+        "數字選項，與 name 互斥，結構描述 1–65535。",
+        "数字选项，与 name 互斥，模式 1–65535。"
+      ],
+      "profiles[].options[].name": [
+        "dnsmasq option name, exclusive with code; whitespace and comma prohibited.",
+        "dnsmasqオプション名でcodeと排他です。空白・カンマは禁止です。",
+        "dnsmasq 選項名稱，與 code 互斥，不可含空白或逗號。",
+        "dnsmasq 选项名称，与 code 互斥，不可含空白或逗号。"
+      ],
+      "profiles[].options[].value": [
+        "Required backend-formatted value, no CR/LF; commas may separate multiple values.",
+        "バックエンド形式値が必須です。CR/LFは不可で、カンマによる複数値は可能です。",
+        "必填後端格式值，不可含 CR/LF，逗號可分隔多個值。",
+        "必填后端格式值，不可含 CR/LF，逗号可分隔多个值。"
+      ],
+      "scopes[].addressPool": [
+        "Required IPv4 pool settings in profiles and inline scopes; no default endpoints.",
+        "プロファイル・インラインスコープのIPv4プールで、開始・終了の既定値はありません。",
+        "設定檔與內嵌範圍所需 IPv4 集區，端點無預設值。",
+        "配置档与内嵌范围所需 IPv4 地址池，端点无默认值。"
+      ],
+      "scopes[].addressPool.start": [
+        "Required inclusive bare IPv4 start, <= end. No cross-pool overlap validation.",
+        "境界を含む裸IPv4開始値が必須でend以下です。プール間重複の検証はありません。",
+        "必填且包含端點的純 IPv4 起始值，須 <= end，不驗證集區間重疊。",
+        "必填且包含端点的纯 IPv4 起始值，须 <= end，不验证地址池间重叠。"
+      ],
+      "scopes[].addressPool.end": [
+        "Required inclusive bare IPv4 end, >= start.",
+        "境界を含む裸IPv4終了値が必須でstart以上です。",
+        "必填且包含端點的純 IPv4 結束值，須 >= start。",
+        "必填且包含端点的纯 IPv4 结束值，须 >= start。"
+      ],
+      "scopes[].addressPool.leaseTime": [
+        "Optional backend lease duration. Empty inherits the server effective lease duration (addressPool.leaseTime → leaseTime → 12h).",
+        "任意のバックエンド期間です。空ならサーバーの有効期間（addressPool.leaseTime→leaseTime→12h）を継承します。",
+        "選用後端租約期間，空值繼承伺服器有效期間（addressPool.leaseTime → leaseTime → 12h）。",
+        "可选后端租约时长，空值继承服务器有效时长（addressPool.leaseTime → leaseTime → 12h）。"
+      ],
+      "scopes[].netmask": [
+        "Optional contiguous IPv4 dotted netmask with 1–32 one bits. Empty omits the explicit mask and lets dnsmasq derive it; not inherited from another profile.",
+        "1～32ビットが連続するドット表記IPv4ネットマスクです。空なら明示せずdnsmasqの導出に任せ、別プロファイルからは継承しません。",
+        "選用連續 1–32 位元的點分 IPv4 遮罩，空值不輸出並由 dnsmasq 推導，不自其他設定檔繼承。",
+        "可选连续 1–32 位的点分 IPv4 掩码，空值不输出并由 dnsmasq 推导，不从其他配置档继承。"
+      ],
+      "scopes[].gateway": [
+        "Optional bare IPv4 router option for this tagged pool. Empty does not copy server.gateway.",
+        "このタグ付きプールの任意IPv4ルーターオプションです。空でもserver.gatewayをコピーしません。",
+        "此標籤集區的選用純 IPv4 路由器選項，空值不複製 server.gateway。",
+        "此标签地址池的可选纯 IPv4 路由器选项，空值不复制 server.gateway。"
+      ],
+      "scopes[].dnsServers": [
+        "Optional IPv4 DNS addresses for this tagged pool, default empty; no dynamic-source field or automatic server-list inheritance.",
+        "このタグ付きプールのIPv4 DNS一覧で既定空です。動的参照やサーバー一覧の自動継承はありません。",
+        "此標籤集區的選用 IPv4 DNS 清單，預設空，無動態來源欄位或自動繼承伺服器清單。",
+        "此标签地址池的可选 IPv4 DNS 列表，默认空，无动态来源字段或自动继承服务器列表。"
+      ],
+      "scopes[].ntpServers": [
+        "Optional IPv4 NTP addresses for this tagged pool, default empty; no dynamic-source field.",
+        "このタグ付きプールの任意IPv4 NTP一覧で、既定空です。動的参照フィールドはありません。",
+        "此標籤集區的選用 IPv4 NTP 清單，預設空，無動態來源欄位。",
+        "此标签地址池的可选 IPv4 NTP 列表，默认空，无动态来源字段。"
+      ],
+      "scopes[].options": [
+        "Optional extra options for this pool; exactly one code/name and a nonempty value per item. Default empty.",
+        "プール個別の任意追加オプションです。各項目はcode・nameの片方と非空valueが必要で、既定空です。",
+        "此集區的選用額外選項，每項須有 code/name 其中之一及非空 value，預設空。",
+        "此地址池的可选额外选项，每项须有 code/name 其中之一及非空 value，默认空。"
+      ],
+      "scopes[].options[].code": [
+        "Numeric option, exclusive with name; schema 1–65535.",
+        "数値のオプションでnameと排他です。スキーマ範囲1～65535です。",
+        "數字選項，與 name 互斥，結構描述 1–65535。",
+        "数字选项，与 name 互斥，模式 1–65535。"
+      ],
+      "scopes[].options[].name": [
+        "dnsmasq option name, exclusive with code; whitespace and comma prohibited.",
+        "dnsmasqオプション名でcodeと排他です。空白・カンマは禁止です。",
+        "dnsmasq 選項名稱，與 code 互斥，不可含空白或逗號。",
+        "dnsmasq 选项名称，与 code 互斥，不可含空白或逗号。"
+      ],
+      "scopes[].options[].value": [
+        "Required backend-formatted value, no CR/LF; commas may separate multiple values.",
+        "バックエンド形式値が必須です。CR/LFは不可で、カンマによる複数値は可能です。",
+        "必填後端格式值，不可含 CR/LF，逗號可分隔多個值。",
+        "必填后端格式值，不可含 CR/LF，逗号可分隔多个值。"
+      ],
+      "options": [
+        "Optional extra options for this pool; exactly one code/name and a nonempty value per item. Default empty.",
+        "プール個別の任意追加オプションです。各項目はcode・nameの片方と非空valueが必要で、既定空です。",
+        "此集區的選用額外選項，每項須有 code/name 其中之一及非空 value，預設空。",
+        "此地址池的可选额外选项，每项须有 code/name 其中之一及非空 value，默认空。"
+      ],
+      "options[].code": [
+        "Numeric option, exclusive with name; schema 1–65535.",
+        "数値のオプションでnameと排他です。スキーマ範囲1～65535です。",
+        "數字選項，與 name 互斥，結構描述 1–65535。",
+        "数字选项，与 name 互斥，模式 1–65535。"
+      ],
+      "options[].name": [
+        "dnsmasq option name, exclusive with code; whitespace and comma prohibited.",
+        "dnsmasqオプション名でcodeと排他です。空白・カンマは禁止です。",
+        "dnsmasq 選項名稱，與 code 互斥，不可含空白或逗號。",
+        "dnsmasq 选项名称，与 code 互斥，不可含空白或逗号。"
+      ],
+      "options[].value": [
+        "Required backend-formatted value, no CR/LF; commas may separate multiple values.",
+        "バックエンド形式値が必須です。CR/LFは不可で、カンマによる複数値は可能です。",
+        "必填後端格式值，不可含 CR/LF，逗號可分隔多個值。",
+        "必填后端格式值，不可含 CR/LF，逗号可分隔多个值。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_dhcp.go",
+      "pkg/config/validate.go",
+      "pkg/config/diagnostics.go",
+      "pkg/config/listen_ports.go",
+      "pkg/controller/chain/chain.go",
+      "pkg/controller/chain/phase2.go",
+      "pkg/controller/chain/dhcp_profile_leases.go",
+      "pkg/render/dnsmasq.go",
+      "cmd/routerd/runtime_services.go",
+      "pkg/platform/platform.go"
+    ]
   }
 }

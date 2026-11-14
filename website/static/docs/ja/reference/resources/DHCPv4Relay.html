@@ -5,6 +5,12 @@
 <main class="doclayout wrap"><article class="document"><h1 id="dhcpv4relay">DHCPv4Relay</h1>
 <p><a href="../resources.html#dhcpv4relay">リソース別の設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>dnsmasqを使い、DHCPv4要求を明示した1つのIPv4サーバーへ中継します。</p>
+<h2 id="指定条件と参照関係">指定条件と参照関係</h2>
+<ul>
+<li>1件以上の宣言済みインターフェースと、裸のIPv4上流アドレスが必要です。自動検出・上流一覧・インターフェース別の中継元アドレス・条件フィールドはありません。</li>
+<li>Linux・FreeBSDとも共有dnsmasqプロセスに、各インターフェースのdhcp-relay=0.0.0.0,<upstream>,<OS名>を生成します。上流へ到達できるホスト経路が必要です。</li>
+</ul>
 <h2 id="yaml定義">YAML定義</h2>
 <p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
 <pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
@@ -15,9 +21,31 @@
     interfaces: # 必須; array
       - &quot;&lt;string&gt;&quot; # string
     upstream: &quot;&lt;string&gt;&quot; # 必須; string
-</code></pre></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+</code></pre>
+<h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>項目の意味と既定値</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.interfaces</code></td>
+<td>空でない論理インターフェース一覧が必須です。同じRouterのインターフェース索引に存在する必要があり、実行時はInterface.ifnameなどの対応する別名を解決します。既定値はありません。</td>
+</tr>
+<tr>
+<td><code>spec.upstream</code></td>
+<td>ポート・CIDR・リソース参照ではない、DHCPサーバーのIPv4アドレスが必須です。既定値はありません。</td>
+</tr>
+</tbody>
+</table>
+<p>実装: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_dhcp.go">pkg/config/validate_dhcp.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go">pkg/controller/chain/chain.go</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
 <ul>
+<li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
 <li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
 </ul>
 </div>
 </aside></main>

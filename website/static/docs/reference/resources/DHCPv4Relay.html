@@ -5,6 +5,12 @@
 <main class="doclayout wrap"><article class="document"><h1 id="dhcpv4relay">DHCPv4Relay</h1>
 <p><a href="../resources.html#dhcpv4relay">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Relay DHCPv4 requests through dnsmasq to one explicitly configured IPv4 server.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>At least one declared interface and a bare IPv4 upstream address are required. No server discovery, upstream list, per-interface local relay address or condition field is provided.</li>
+<li>Runtime emits dhcp-relay=0.0.0.0,<upstream>,<resolved-ifname> for each interface in the shared dnsmasq process on Linux and FreeBSD. The upstream must be reachable using the host routing configuration.</li>
+</ul>
 <h2 id="yaml-definition">YAML definition</h2>
 <p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
 <pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
@@ -15,9 +21,31 @@
     interfaces: # Required; array
       - &quot;&lt;string&gt;&quot; # string
     upstream: &quot;&lt;string&gt;&quot; # Required; string
-</code></pre></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+</code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.interfaces</code></td>
+<td>Required nonempty logical interface-name list; each name must exist in the same Router interface index. Runtime resolves Interface.ifname and supported generated-interface aliases. No default.</td>
+</tr>
+<tr>
+<td><code>spec.upstream</code></td>
+<td>Required bare IPv4 DHCP server address, without port, CIDR or resource reference. No default.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_dhcp.go">pkg/config/validate_dhcp.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go">pkg/controller/chain/chain.go</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
 <li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 </ul>
 </div>
 </aside></main>

@@ -5,6 +5,12 @@
 <main class="doclayout wrap"><article class="document"><h1 id="dhcpv4reservation">DHCPv4Reservation</h1>
 <p><a href="../resources.html#dhcpv4reservation">各资源的配置</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>在已声明的 DHCPv4Server 为一个 MAC 地址保留 IPv4 地址。</p>
+<h2 id="指定条件与引用关系">指定条件与引用关系</h2>
+<ul>
+<li>虽然模式将 server 标为可选，server、macAddress、ipAddress 在语义上必填。server 须为 interface 非空的 DHCPv4Server 裸名；常规验证即使仅有一台也不允许省略。scope 会被拒绝。</li>
+<li>当前在共用 dnsmasq 主机附属文件写入带资源标签的保留。server 关联用于验证、状态及自定义选项生成，不代表独立进程或主机文件命名空间。Applied 不证明客户端已取得租约。</li>
+</ul>
 <h2 id="yaml定义">YAML定义</h2>
 <p>此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。</p>
 <pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
@@ -35,9 +41,67 @@
           maxAge: &quot;&lt;string&gt;&quot; # 选填; string
           status: &quot;set&quot; # 选填; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
 </code></pre>
+<h2 id="字段含义与默认值">字段含义与默认值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>字段含义与默认值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.scope</code></td>
+<td>已移除字段，非空值会被拒绝，请用 server。</td>
+</tr>
+<tr>
+<td><code>spec.server</code></td>
+<td>必填已设置 interface 的现有直接 DHCPv4Server metadata.name，此处不移除 Kind/name 前缀。</td>
+</tr>
+<tr>
+<td><code>spec.macAddress</code></td>
+<td>必填可由 net.ParseMAC 解析的 MAC 地址，以小写输出，无默认值。</td>
+</tr>
+<tr>
+<td><code>spec.hostname</code></td>
+<td>可选且不含空白或逗号的主机名，默认省略。可供已启用 DNSZone 的 DHCP 派生主机快照使用。</td>
+</tr>
+<tr>
+<td><code>spec.ipAddress</code></td>
+<td>必填纯 IPv4 保留地址。当前验证地址族，但此处不要求位于服务器地址池内，也不拒绝重复保留 IP/MAC。</td>
+</tr>
+<tr>
+<td><code>spec.leaseTime</code></td>
+<td>可选后端时长字符串，默认空值且拒绝逗号。当前运行时保留主机行不输出此字段，因此不会在此路径覆盖租约时间。</td>
+</tr>
+<tr>
+<td><code>spec.options</code></td>
+<td>以此保留标签输出的可选 DHCP 选项列表，每项须有 code/name 其中之一及非空 value，默认空。</td>
+</tr>
+<tr>
+<td><code>spec.options[].code</code></td>
+<td>数字选项标识符，与 name 互斥，模式范围 1–65535，无默认标识符。</td>
+</tr>
+<tr>
+<td><code>spec.options[].name</code></td>
+<td>dnsmasq 选项名称，与 code 互斥，不可含空白或逗号。</td>
+</tr>
+<tr>
+<td><code>spec.options[].value</code></td>
+<td>必填非空后端格式值，不可含 CR/LF；原样传入，逗号可分隔多个选项值。</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>可选通用状态条件，默认无条件。不成立时排除保留并报告 Pending/WhenFalse，服务器不可用时为 ServerPending。</td>
+</tr>
+</tbody>
+</table>
+<p>实现: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_dhcp.go">pkg/config/validate_dhcp.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/index.go">pkg/config/index.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go">pkg/controller/chain/chain.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/phase2.go">pkg/controller/chain/phase2.go</a></p>
 <p><a href="/examples/example-lan-dns-dhcp.yaml">配置示例</a></p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
 <ul>
+<li><a href="#指定条件与引用关系">指定条件与引用关系</a></li>
 <li><a href="#yaml定义">YAML定义</a></li>
+<li><a href="#字段含义与默认值">字段含义与默认值</a></li>
 </ul>
 </div>
 </aside></main>

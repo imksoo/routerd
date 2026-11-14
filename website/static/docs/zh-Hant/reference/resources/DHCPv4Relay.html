@@ -5,6 +5,12 @@
 <main class="doclayout wrap"><article class="document"><h1 id="dhcpv4relay">DHCPv4Relay</h1>
 <p><a href="../resources.html#dhcpv4relay">各資源的設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>透過 dnsmasq 將 DHCPv4 請求轉送至明確指定的一個 IPv4 伺服器。</p>
+<h2 id="指定條件與參照關係">指定條件與參照關係</h2>
+<ul>
+<li>至少需要一個已宣告介面與純 IPv4 上游位址，不提供自動探索、上游清單、個別介面中繼來源位址或條件欄位。</li>
+<li>Linux 與 FreeBSD 皆在共用 dnsmasq 程序為各介面產生 dhcp-relay=0.0.0.0,<upstream>,<OS名稱>。主機路由須能到達上游。</li>
+</ul>
 <h2 id="yaml定義">YAML定義</h2>
 <p>此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。</p>
 <pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
@@ -15,9 +21,31 @@
     interfaces: # 必填; array
       - &quot;&lt;string&gt;&quot; # string
     upstream: &quot;&lt;string&gt;&quot; # 必填; string
-</code></pre></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+</code></pre>
+<h2 id="欄位意義與預設值">欄位意義與預設值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>欄位意義與預設值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.interfaces</code></td>
+<td>必填且不可為空的邏輯介面清單，各名稱須存在於同一 Router 的介面索引。執行時解析 Interface.ifname 與支援的產生介面別名，無預設值。</td>
+</tr>
+<tr>
+<td><code>spec.upstream</code></td>
+<td>必填的 DHCP 伺服器純 IPv4 位址，不含連接埠、CIDR 或資源參照，無預設值。</td>
+</tr>
+</tbody>
+</table>
+<p>實作: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_dhcp.go">pkg/config/validate_dhcp.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go">pkg/controller/chain/chain.go</a></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
 <ul>
+<li><a href="#指定條件與參照關係">指定條件與參照關係</a></li>
 <li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#欄位意義與預設值">欄位意義與預設值</a></li>
 </ul>
 </div>
 </aside></main>

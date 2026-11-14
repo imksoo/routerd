@@ -201,8 +201,10 @@ spec:
 <p>透過明確指定的下一跳，設定前往 Kubernetes Pod 與 Service 網路的 IPv4 路由。不會自動探索叢集 CIDR 或節點。</p>
 <h2 id="dhcpv4server">DHCPv4Server</h2>
 <p><a href="resources/DHCPv4Server.html">DHCPv4Server</a></p>
+<p>透過目前共用 dnsmasq 服務提供 IPv4 DHCP 集區、帶選擇條件的範圍與保留。</p>
 <h2 id="dhcpv4reservation">DHCPv4Reservation</h2>
 <p><a href="resources/DHCPv4Reservation.html">DHCPv4Reservation</a></p>
+<p>在已宣告的 DHCPv4Server 為一個 MAC 位址保留 IPv4 位址。</p>
 <h2 id="dhcpv6address">DHCPv6Address</h2>
 <p><a href="resources/DHCPv6Address.html">DHCPv6Address</a></p>
 <p>宣告主機DHCPv6 client取得的IPv6位址，與DHCPv6PrefixDelegation不同，不分配LAN前綴。</p>
@@ -222,12 +224,14 @@ spec:
 <p><a href="resources/DHCPv6Server.html">DHCPv6Server</a></p>
 <h2 id="dhcpv4serverleasesync">DHCPv4ServerLeaseSync</h2>
 <p><a href="resources/DHCPv4ServerLeaseSync.html">DHCPv4ServerLeaseSync</a></p>
+<p>以 SSH 上的 rsync 將 DHCPv4 伺服器租約檔與現有固定保留狀態複製到對等主機，並非 DHCP 容錯移轉協定。</p>
 <h2 id="dhcpv6serverleasesync">DHCPv6ServerLeaseSync</h2>
 <p><a href="resources/DHCPv6ServerLeaseSync.html">DHCPv6ServerLeaseSync</a></p>
 <h2 id="dhcpv6prefixdelegationleasesync">DHCPv6PrefixDelegationLeaseSync</h2>
 <p><a href="resources/DHCPv6PrefixDelegationLeaseSync.html">DHCPv6PrefixDelegationLeaseSync</a></p>
 <h2 id="dhcpv4relay">DHCPv4Relay</h2>
 <p><a href="resources/DHCPv4Relay.html">DHCPv4Relay</a></p>
+<p>透過 dnsmasq 將 DHCPv4 請求轉送至明確指定的一個 IPv4 伺服器。</p>
 <h2 id="selfaddresspolicy">SelfAddressPolicy</h2>
 <p><a href="resources/SelfAddressPolicy.html">SelfAddressPolicy</a></p>
 <h2 id="dnszone">DNSZone</h2>

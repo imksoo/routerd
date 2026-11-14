@@ -201,8 +201,10 @@ spec:
 <p>KubernetesのPod・ServiceネットワークへのIPv4経路を、明示したネクストホップ経由で設定します。クラスターのCIDRやノードを自動検出する機能ではありません。</p>
 <h2 id="dhcpv4server">DHCPv4Server</h2>
 <p><a href="resources/DHCPv4Server.html">DHCPv4Server</a></p>
+<p>共有dnsmasqサービスでIPv4 DHCPプール、選別条件付きの追加プール、予約を提供します。</p>
 <h2 id="dhcpv4reservation">DHCPv4Reservation</h2>
 <p><a href="resources/DHCPv4Reservation.html">DHCPv4Reservation</a></p>
+<p>宣言したDHCPv4Serverに対し、MACアドレスへIPv4アドレスを予約します。</p>
 <h2 id="dhcpv6address">DHCPv6Address</h2>
 <p><a href="resources/DHCPv6Address.html">DHCPv6Address</a></p>
 <p>ホストのDHCPv6 clientで取得するIPv6アドレスを宣言します。DHCPv6PrefixDelegationとは別で、LAN向けプレフィックスの配布は行いません。</p>
@@ -222,12 +224,14 @@ spec:
 <p><a href="resources/DHCPv6Server.html">DHCPv6Server</a></p>
 <h2 id="dhcpv4serverleasesync">DHCPv4ServerLeaseSync</h2>
 <p><a href="resources/DHCPv4ServerLeaseSync.html">DHCPv4ServerLeaseSync</a></p>
+<p>DHCPv4サーバーのリースファイルと存在する固定保持状態を、SSH経由のrsyncで相手ホストへ複製します。DHCPのフェイルオーバープロトコルではありません。</p>
 <h2 id="dhcpv6serverleasesync">DHCPv6ServerLeaseSync</h2>
 <p><a href="resources/DHCPv6ServerLeaseSync.html">DHCPv6ServerLeaseSync</a></p>
 <h2 id="dhcpv6prefixdelegationleasesync">DHCPv6PrefixDelegationLeaseSync</h2>
 <p><a href="resources/DHCPv6PrefixDelegationLeaseSync.html">DHCPv6PrefixDelegationLeaseSync</a></p>
 <h2 id="dhcpv4relay">DHCPv4Relay</h2>
 <p><a href="resources/DHCPv4Relay.html">DHCPv4Relay</a></p>
+<p>dnsmasqを使い、DHCPv4要求を明示した1つのIPv4サーバーへ中継します。</p>
 <h2 id="selfaddresspolicy">SelfAddressPolicy</h2>
 <p><a href="resources/SelfAddressPolicy.html">SelfAddressPolicy</a></p>
 <h2 id="dnszone">DNSZone</h2>

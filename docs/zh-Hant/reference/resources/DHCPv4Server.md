@@ -4,6 +4,15 @@
 
 `apiVersion: net.routerd.net/v1alpha1` · `metadata.name`
 
+透過目前共用 dnsmasq 服務提供 IPv4 DHCP 集區、帶選擇條件的範圍與保留。
+
+## 指定條件與參照關係
+
+- 目前即時控制器請用 interface/addressPool 與 gateway/gatewayFrom、dnsServers/dnsServerFrom、ntpServers/ntpServerFrom。靜態轉譯與即時寫入行為不同，舊 routerSource/dnsSource、內嵌 dns、authoritative 不應視為可用即時控制。
+- 有效集區需有既有邏輯介面及有效 IPv4 起訖位址。會檢查 start <= end，但驗證不確立子網成員關係、集區重疊或所提供閘道的可達性。
+- 共用值來源須有既有資源與明確提供欄位。gateway/DNS/NTP/domain 必要來源 optional false 缺值時，即使有固定替代值仍暫停集區；optional true 略過缺值。動態位址讀取器不對所有狀態值強制 IPv4。
+- 範圍使用 MAC/OUI 替代條件及本機 profileRef 或內嵌設定，不能並用。設定檔與範圍需有效起訖值。動態租約符合選擇器但不在任何匹配集區時，套用會移除並重新啟動 dnsmasq，保留明確保留；不強制客戶端立即更新。
+
 ## YAML定義
 
 此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。
@@ -125,5 +134,83 @@
           maxAge: "<string>" # 選填; string
           status: "set" # 選填; string; enum=["set", "unset", "unknown"]
 ```
+
+## 欄位意義與預設值
+
+| YAML | 欄位意義與預設值 |
+| --- | --- |
+| `spec.server` | 結構描述接受 dnsmasq/kea/dhcpd，規劃與相依選擇預設 dnsmasq。目前即時控制器仍一律啟動 dnsmasq，不能切換到 kea/dhcpd。固定保留天數僅計入 dnsmasq 伺服器。 |
+| `spec.managed` | 布林值預設 false，目前即時 DHCP 控制器不檢查；false 不表示僅觀察或停用。 |
+| `spec.role` | 驗證 server/transit，預設 server。靜態轉譯器區分 transit，但目前即時 LAN 產生不遵循此切換，不可用 transit 抑制分配。 |
+| `spec.listenInterfaces` | 選用已宣告邏輯介面清單，所有名稱須存在。用於驗證與防火牆規劃，但目前即時集區僅使用 interface，此清單不能替代 interface。 |
+| `spec.logDHCP` | 預設 false，靜態轉譯可輸出 log-dhcp，但目前即時寫入不使用此旗標，租約事件回呼產生與此獨立。 |
+| `spec.stickyHoldDays` | 非負保留天數，預設 0 停用。正值將釋放或到期的分配保存在 dhcp-sticky.db 以便重用。目前對全部 IPv4 租約事件採 dnsmasq DHCPv4Server 中的最大值，不依介面區分；明確保留優先。 |
+| `spec.interface` | 主要集區的已宣告邏輯介面。雖然結構描述與驗證允許省略，目前即時集區產生仍需要它，且須存在於 Router 介面索引。 |
+| `spec.addressPool` | 主要 IPv4 分配集區；設定 interface 時 start/end 必填，各欄位優先於舊 rangeStart/rangeEnd/leaseTime。 |
+| `spec.addressPool.start` | 純 IPv4 起始位址，包含端點；除非 rangeStart 補足，否則必填，須 <= end，不自動推導子網或集區。 |
+| `spec.addressPool.end` | 純 IPv4 結束位址，包含端點；除非 rangeEnd 補足，否則必填，須 >= start。 |
+| `spec.addressPool.leaseTime` | 後端租約期間字串，優先序 addressPool.leaseTime → leaseTime → 12h，此資源驗證不按 Go duration 解析。 |
+| `spec.rangeStart` | addressPool.start 的舊式替代值，預設空值；亦會切換靜態轉譯器至舊式範圍路徑，建議用 addressPool。 |
+| `spec.rangeEnd` | addressPool.end 的舊式替代值，靜態轉譯器切換同 rangeStart。 |
+| `spec.leaseTime` | addressPool.leaseTime 為空時使用的後端租約期間，預設 12h。 |
+| `spec.routerSource` | 驗證 interfaceAddress/static/none，static 需要 router。靜態轉譯預設 interfaceAddress 並讀 IPv4StaticAddress，但目前即時寫入忽略 routerSource/router，改用 gateway/gatewayFrom。 |
+| `spec.router` | routerSource: static 時必填 IPv4 值，僅舊靜態轉譯使用，目前即時閘道選項路徑不使用。 |
+| `spec.gateway` | 選用純 IPv4 DHCP 路由器選項，預設不明確輸出；有效 gatewayFrom 值優先，可並用。 |
+| `spec.gatewayFrom` | 選用含 resource/field 的狀態來源，optional 預設 false；來源未解析時即使有 gateway 仍為 Pending。optional true 缺值時可用 gateway。 |
+| `spec.dnsSource` | 驗證 dhcpv4/static/self/none，static 需要 dnsServers，dhcpv4 需要 dnsInterface。靜態預設 self；目前即時寫入忽略選擇器並使用 dnsServers 與 dnsServerFrom。 |
+| `spec.dnsInterface` | dnsSource: dhcpv4 所需的已宣告邏輯介面。即使用其他選擇器，提供此值仍驗證存在；目前即時寫入不以此探索 DNS。 |
+| `spec.dnsServers` | 選用純 IPv4 DNS 伺服器清單，預設空值；與 dnsServerFrom 合併形成 DHCP 選項 6，不會啟動 DNSResolver 或 DNS 接聽。 |
+| `spec.dnsServerFrom` | 選用共用 resource/field 來源清單，optional 預設 false。必要值缺失即使有固定 DNS 仍阻擋整個伺服器。執行時讀狀態並去除 CIDR，請用提供 IPv4 的欄位。 |
+| `spec.ntpServers` | 選用純 IPv4 NTP 清單，預設空；與 ntpServerFrom 合併為 DHCP 選項 42，不啟動 NTPServer。 |
+| `spec.ntpServerFrom` | 選用共用 resource/field 來源清單，必要與選用等待條件及僅讀狀態同 dnsServerFrom，預設無參照。 |
+| `spec.domain` | 選用單一網域，不可含空白、斜線或逗號，與 domainFrom 互斥。輸出 domain-name，若未明確提供選項 119/domain-search 亦輸出 domain-search。 |
+| `spec.domainFrom` | 選用來源限 DNSZone/<name>、field: zone，資源須存在，可在狀態建立前讀宣告 zone。optional false 缺值時等待，true 可省略；與 domain 互斥。 |
+| `spec.authoritative` | 預設 false，影響舊靜態轉譯及範圍路徑選擇；目前即時寫入不據此輸出 dhcp-authoritative。 |
+| `spec.leaseFile` | 選用路徑，預設 <StateDir>/dnsmasq/dnsmasq.leases，通常為 /var/lib/routerd/dnsmasq/dnsmasq.leases。共用 dnsmasq，所有 DHCPv4/6 伺服器明確 leaseFile 須一致，否則執行失敗。 |
+| `spec.when` | 選用共用狀態條件，預設無條件。不成立則排除集區並為 Pending/WhenFalse；必要動態值未解析也可另使其 Pending。 |
+| `spec.dns` | 舊式 dnsmasq 內嵌 DNS 設定。目前即時寫入固定 port=0 與 no-resolv，無法以此啟用 DNS 轉送，請改用 DNSResolver/DNSForwarder/DNSUpstream；部分值仍影響驗證。 |
+| `spec.dns.enabled` | 預設 false；true 在接聽衝突驗證中保留 TCP/UDP 53，但不實際開啟 DNS 接聽。 |
+| `spec.dns.upstreamSource` | 接受空值/dhcpv4/static/system/none；dhcpv4 須有 upstreamInterface，static 須有 upstreamServers，目前不影響即時 DNS 轉送。 |
+| `spec.dns.upstreamInterface` | dns.upstreamSource: dhcpv4 時必須非空，目前不參與即時 DNS 解析。不同於 dnsInterface，此舊欄位不對照介面索引。 |
+| `spec.dns.upstreamServers` | upstreamSource 為 static 時必填 IPv4/IPv6 固定值，預設空；會驗證但目前即時 DNS 轉送不使用。 |
+| `spec.dns.cacheSize` | 結構描述要求非負整數，預設 0，目前即時設定寫入不使用，與 DNSResolver.cache 分開。 |
+| `spec.profiles` | 此伺服器內選用的可重用設定，未由 scopes[].profileRef 選取即無作用，不是獨立資源，預設空。 |
+| `spec.profiles[].name` | 伺服器內必填且唯一的設定檔名稱，不可含空白或逗號，不加 Kind/name 前綴。 |
+| `spec.scopes` | 選用的條件專用集區，在主要全域集區前產生；未符合選擇器的客戶端使用主要集區。預設空，驗證不拒絕同時符合多個範圍。 |
+| `spec.scopes[].name` | 伺服器內必填且唯一的範圍名稱，不可含空白或逗號，用於產生 dnsmasq 標籤，不是外部資源參照。 |
+| `spec.scopes[].match` | 必填選擇器，macAddresses 或 ouiPrefixes 至少有一項。各項為替代匹配，不要求同時符合兩個清單。 |
+| `spec.scopes[].match.macAddresses` | 選用完整 MAC 清單，由 net.ParseMAC 解析，預設空。dnsmasq 輸出請用標準冒號分隔六位元組格式。 |
+| `spec.scopes[].match.ouiPrefixes` | 選用三位元組 OUI 前綴，請用 aa:bb:cc，執行時原樣附加 :*:*:*。驗證雖正規化其他寫法，即時寫入不使用該正規化結果。 |
+| `spec.scopes[].profileRef` | 同一伺服器既有 profiles[] 的裸名，與內嵌 addressPool 欄位、netmask、gateway、dnsServers、ntpServers、options 互斥；空值使用內嵌設定。 |
+| `spec.profiles[].addressPool` | 設定檔與內嵌範圍所需 IPv4 集區，端點無預設值。 |
+| `spec.profiles[].addressPool.start` | 必填且包含端點的純 IPv4 起始值，須 <= end，不驗證集區間重疊。 |
+| `spec.profiles[].addressPool.end` | 必填且包含端點的純 IPv4 結束值，須 >= start。 |
+| `spec.profiles[].addressPool.leaseTime` | 選用後端租約期間，空值繼承伺服器有效期間（addressPool.leaseTime → leaseTime → 12h）。 |
+| `spec.profiles[].netmask` | 選用連續 1–32 位元的點分 IPv4 遮罩，空值不輸出並由 dnsmasq 推導，不自其他設定檔繼承。 |
+| `spec.profiles[].gateway` | 此標籤集區的選用純 IPv4 路由器選項，空值不複製 server.gateway。 |
+| `spec.profiles[].dnsServers` | 此標籤集區的選用 IPv4 DNS 清單，預設空，無動態來源欄位或自動繼承伺服器清單。 |
+| `spec.profiles[].ntpServers` | 此標籤集區的選用 IPv4 NTP 清單，預設空，無動態來源欄位。 |
+| `spec.profiles[].options` | 此集區的選用額外選項，每項須有 code/name 其中之一及非空 value，預設空。 |
+| `spec.profiles[].options[].code` | 數字選項，與 name 互斥，結構描述 1–65535。 |
+| `spec.profiles[].options[].name` | dnsmasq 選項名稱，與 code 互斥，不可含空白或逗號。 |
+| `spec.profiles[].options[].value` | 必填後端格式值，不可含 CR/LF，逗號可分隔多個值。 |
+| `spec.scopes[].addressPool` | 設定檔與內嵌範圍所需 IPv4 集區，端點無預設值。 |
+| `spec.scopes[].addressPool.start` | 必填且包含端點的純 IPv4 起始值，須 <= end，不驗證集區間重疊。 |
+| `spec.scopes[].addressPool.end` | 必填且包含端點的純 IPv4 結束值，須 >= start。 |
+| `spec.scopes[].addressPool.leaseTime` | 選用後端租約期間，空值繼承伺服器有效期間（addressPool.leaseTime → leaseTime → 12h）。 |
+| `spec.scopes[].netmask` | 選用連續 1–32 位元的點分 IPv4 遮罩，空值不輸出並由 dnsmasq 推導，不自其他設定檔繼承。 |
+| `spec.scopes[].gateway` | 此標籤集區的選用純 IPv4 路由器選項，空值不複製 server.gateway。 |
+| `spec.scopes[].dnsServers` | 此標籤集區的選用 IPv4 DNS 清單，預設空，無動態來源欄位或自動繼承伺服器清單。 |
+| `spec.scopes[].ntpServers` | 此標籤集區的選用 IPv4 NTP 清單，預設空，無動態來源欄位。 |
+| `spec.scopes[].options` | 此集區的選用額外選項，每項須有 code/name 其中之一及非空 value，預設空。 |
+| `spec.scopes[].options[].code` | 數字選項，與 name 互斥，結構描述 1–65535。 |
+| `spec.scopes[].options[].name` | dnsmasq 選項名稱，與 code 互斥，不可含空白或逗號。 |
+| `spec.scopes[].options[].value` | 必填後端格式值，不可含 CR/LF，逗號可分隔多個值。 |
+| `spec.options` | 此集區的選用額外選項，每項須有 code/name 其中之一及非空 value，預設空。 |
+| `spec.options[].code` | 數字選項，與 name 互斥，結構描述 1–65535。 |
+| `spec.options[].name` | dnsmasq 選項名稱，與 code 互斥，不可含空白或逗號。 |
+| `spec.options[].value` | 必填後端格式值，不可含 CR/LF，逗號可分隔多個值。 |
+
+實作: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate_dhcp.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_dhcp.go) · [pkg/config/validate.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go) · [pkg/config/diagnostics.go](https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go) · [pkg/config/listen_ports.go](https://github.com/imksoo/routerd/blob/main/pkg/config/listen_ports.go) · [pkg/controller/chain/chain.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go) · [pkg/controller/chain/phase2.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/phase2.go) · [pkg/controller/chain/dhcp_profile_leases.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/dhcp_profile_leases.go) · [pkg/render/dnsmasq.go](https://github.com/imksoo/routerd/blob/main/pkg/render/dnsmasq.go) · [cmd/routerd/runtime_services.go](https://github.com/imksoo/routerd/blob/main/cmd/routerd/runtime_services.go) · [pkg/platform/platform.go](https://github.com/imksoo/routerd/blob/main/pkg/platform/platform.go)
 
 [設定範例](https://github.com/imksoo/routerd/blob/main/examples/dhcp-lease-sync-ha.yaml)

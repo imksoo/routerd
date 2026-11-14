@@ -326,10 +326,14 @@ Declare IPv4 routes to Kubernetes Pod and Service networks through explicitly co
 
 [DHCPv4Server](resources/DHCPv4Server.md)
 
+Serve IPv4 DHCP pools, tagged selector scopes and reservations through the current shared dnsmasq service.
+
 
 ## DHCPv4Reservation
 
 [DHCPv4Reservation](resources/DHCPv4Reservation.md)
+
+Reserve one IPv4 address for a MAC address on a declared DHCPv4Server.
 
 
 ## DHCPv6Address
@@ -377,6 +381,8 @@ Projects AFTR, DNS, SNTP and domain-search information from the DHCPv6-PD daemon
 
 [DHCPv4ServerLeaseSync](resources/DHCPv4ServerLeaseSync.md)
 
+Copy a DHCPv4 server lease file and available sticky-state files to peer hosts using rsync over SSH. This is file replication, not the DHCP failover protocol.
+
 
 ## DHCPv6ServerLeaseSync
 
@@ -391,6 +397,8 @@ Projects AFTR, DNS, SNTP and domain-search information from the DHCPv6-PD daemon
 ## DHCPv4Relay
 
 [DHCPv4Relay](resources/DHCPv4Relay.md)
+
+Relay DHCPv4 requests through dnsmasq to one explicitly configured IPv4 server.
 
 
 ## SelfAddressPolicy

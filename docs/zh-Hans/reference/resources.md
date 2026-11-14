@@ -326,10 +326,14 @@ spec:
 
 [DHCPv4Server](resources/DHCPv4Server.md)
 
+通过当前共用 dnsmasq 服务提供 IPv4 DHCP 地址池、带选择条件的范围与保留。
+
 
 ## DHCPv4Reservation
 
 [DHCPv4Reservation](resources/DHCPv4Reservation.md)
+
+在已声明的 DHCPv4Server 为一个 MAC 地址保留 IPv4 地址。
 
 
 ## DHCPv6Address
@@ -377,6 +381,8 @@ spec:
 
 [DHCPv4ServerLeaseSync](resources/DHCPv4ServerLeaseSync.md)
 
+以 SSH 上的 rsync 将 DHCPv4 服务器租约文件与现有固定保留状态复制到对等主机，并非 DHCP 故障转移协议。
+
 
 ## DHCPv6ServerLeaseSync
 
@@ -391,6 +397,8 @@ spec:
 ## DHCPv4Relay
 
 [DHCPv4Relay](resources/DHCPv4Relay.md)
+
+通过 dnsmasq 将 DHCPv4 请求转发至明确指定的一个 IPv4 服务器。
 
 
 ## SelfAddressPolicy
