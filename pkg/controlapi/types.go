@@ -672,14 +672,6 @@ func NewLogLevelResult(level string) LogLevelResult {
 	}
 }
 
-func NewDHCPv6EventResult(resource string) DHCPv6EventResult {
-	return DHCPv6EventResult{
-		TypeMeta: TypeMeta{APIVersion: APIVersion, Kind: "DHCPv6EventResult"},
-		Accepted: true,
-		Resource: resource,
-	}
-}
-
 func NewDHCPLeaseEventResult() DHCPLeaseEventResult {
 	return DHCPLeaseEventResult{
 		TypeMeta: TypeMeta{APIVersion: APIVersion, Kind: "DHCPLeaseEventResult"},
