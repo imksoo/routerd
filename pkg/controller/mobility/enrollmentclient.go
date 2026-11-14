@@ -893,6 +893,7 @@ func (c SAMEnrollmentClientController) fetchSAMEnrollmentTopology(ctx context.Co
 	if err != nil {
 		return samEnrollmentFetchedTopology{}, err
 	}
+	topology.RRSet.Spec = rrSetSpec
 	if strings.TrimSpace(rrSetSpec.EnrollmentPolicyRef) != strings.TrimSpace(claim.PolicyRef) {
 		return samEnrollmentFetchedTopology{}, fmt.Errorf("enrollment topology SAMRRSet/%s enrollmentPolicyRef %q does not match claim policyRef %q", rrSetName, rrSetSpec.EnrollmentPolicyRef, claim.PolicyRef)
 	}
@@ -909,14 +910,25 @@ func (c SAMEnrollmentClientController) fetchSAMEnrollmentTopology(ctx context.Co
 		directPeerGroup = nil
 	}
 	var directPayloadError error
-	if err := config.ValidateFetchedSAMEnrollmentTopology(topology.RRSet, directPeerGroup); err != nil {
+	var topologyErr error
+	if directPeerGroup != nil {
+		var peerGroupSpec api.SAMPeerGroupSpec
+		peerGroupSpec, topologyErr = directPeerGroup.SAMPeerGroupSpec()
+		if topologyErr == nil {
+			directPeerGroup.Spec = peerGroupSpec
+		}
+	}
+	if topologyErr == nil {
+		topologyErr = config.ValidateFetchedSAMEnrollmentTopology(topology.RRSet, directPeerGroup)
+	}
+	if topologyErr != nil {
 		if !claim.DirectMesh || directPeerGroup == nil {
-			return samEnrollmentFetchedTopology{}, err
+			return samEnrollmentFetchedTopology{}, topologyErr
 		}
 		// Direct peers are opportunistic. Validate their full runtime shape
 		// before persistence, then retain only the independently valid RRSet
 		// when the direct payload is stale, malformed, or incompatible.
-		directPayloadError = err
+		directPayloadError = topologyErr
 		directPeerGroup = nil
 		if fallbackErr := config.ValidateFetchedSAMEnrollmentTopology(topology.RRSet, nil); fallbackErr != nil {
 			return samEnrollmentFetchedTopology{}, fallbackErr

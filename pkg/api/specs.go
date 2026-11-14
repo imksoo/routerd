@@ -1843,10 +1843,10 @@ type EventSubscriptionTrigger struct {
 	// PluginRef names the Plugin resource invoked for matched events.
 	PluginRef string `yaml:"pluginRef" json:"pluginRef"`
 	// BatchWindow optionally coalesces matched events into one invocation
-	// (Go duration). MVP invokes per poll tick; this is accepted forward-compat.
+	// (Go duration), measured from the first matched event.
 	BatchWindow string `yaml:"batchWindow,omitempty" json:"batchWindow,omitempty"`
 	// Debounce optionally delays invocation after the last matched event
-	// (Go duration). Accepted forward-compat; MVP uses poll-tick batching.
+	// (Go duration), bounded by BatchWindow or the default maximum wait.
 	Debounce string `yaml:"debounce,omitempty" json:"debounce,omitempty"`
 }
 

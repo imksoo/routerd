@@ -45,7 +45,7 @@ GO_BUILD_ENV := CGO_ENABLED=0 GOOS=$(ROUTERD_OS)
 ifneq ($(GOARCH),)
 GO_BUILD_ENV += GOARCH=$(GOARCH)
 endif
-GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || true)
+GIT_COMMIT ?= $(shell git -c safe.directory=/workspace rev-parse --short HEAD 2>/dev/null || true)
 GO_LDFLAGS ?= -s -w -X github.com/imksoo/routerd/pkg/version.Version=$(VERSION) $(if $(GIT_COMMIT),-X github.com/imksoo/routerd/pkg/version.Commit=$(GIT_COMMIT))
 GO_BUILD_FLAGS ?= -buildvcs=false -trimpath -ldflags="$(GO_LDFLAGS)"
 EXAMPLE_CONFIGS ?= $(wildcard examples/*.yaml)
@@ -56,7 +56,7 @@ CONTROL_OPENAPI_SCHEMA := routerd-control-openapi-v1alpha1.json
 
 WEBSITE_NODE_MODULES_STAMP := website/node_modules/.package-lock.json
 
-.PHONY: test check-version-ldflags build build-daemons build-provider-executors build-ndpi-agent build-ndpi-agent-libndpi build-daemons-freebsd check-freebsd-cross-compile check-linux-static check-ndpi-agent-libndpi cloudedge-acceptance-lint webconsole-build generate-schema sync-website-schemas check-schema check-website-schemas website-deps website-build third-party-licenses check-build-deps dist deb deb-ndpi dist-ndpi-agent-libndpi live-iso validate-example release clean
+.PHONY: build-routerd test check-version-ldflags build build-daemons build-provider-executors build-ndpi-agent build-ndpi-agent-libndpi build-daemons-freebsd check-freebsd-cross-compile check-linux-static check-ndpi-agent-libndpi cloudedge-acceptance-lint webconsole-build generate-schema sync-website-schemas check-schema check-website-schemas website-deps website-build third-party-licenses check-build-deps dist deb deb-ndpi dist-ndpi-agent-libndpi live-iso validate-example release clean
 
 test: check-version-ldflags
 	go test ./...
@@ -67,9 +67,11 @@ check-version-ldflags:
 build: webconsole-build
 	$(MAKE) build-daemons
 
-build-daemons:
+build-routerd:
 	install -d $(BUILDDIR)
 	$(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(ROUTERD_BIN) ./cmd/routerd
+
+build-daemons: build-routerd
 	$(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(ROUTERCTL_BIN) ./cmd/routerctl
 	$(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(ROUTERD_DHCPv4_CLIENT_BIN) ./cmd/routerd-dhcpv4-client
 	$(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(ROUTERD_DHCPv6_CLIENT_BIN) ./cmd/routerd-dhcpv6-client

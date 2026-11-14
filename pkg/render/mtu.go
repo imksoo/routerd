@@ -4,7 +4,6 @@ package render
 
 import (
 	"fmt"
-	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -456,85 +455,90 @@ func pathMTUResourceInterface(router *api.Router, res api.Resource) (pathMTUTunn
 	if strings.TrimSpace(res.Metadata.Name) == "" {
 		return pathMTUTunnel{}, false
 	}
-	value := reflect.ValueOf(res.Spec)
-	if !value.IsValid() {
-		return pathMTUTunnel{}, false
-	}
-	if value.Kind() == reflect.Pointer {
-		if value.IsNil() {
+	// Accept only the current concrete specs, in value or pointer form.
+	// Do not decode untyped specs or infer participation from field or Kind names.
+	value := res.Spec
+	switch spec := value.(type) {
+	case *api.InterfaceSpec:
+		if spec == nil {
 			return pathMTUTunnel{}, false
 		}
-		value = value.Elem()
+		value = *spec
+	case *api.DSLiteTunnelSpec:
+		if spec == nil {
+			return pathMTUTunnel{}, false
+		}
+		value = *spec
+	case *api.PPPoESessionSpec:
+		if spec == nil {
+			return pathMTUTunnel{}, false
+		}
+		value = *spec
+	case *api.WireGuardInterfaceSpec:
+		if spec == nil {
+			return pathMTUTunnel{}, false
+		}
+		value = *spec
+	case *api.TunnelInterfaceSpec:
+		if spec == nil {
+			return pathMTUTunnel{}, false
+		}
+		value = *spec
+	case *api.BridgeSpec:
+		if spec == nil {
+			return pathMTUTunnel{}, false
+		}
+		value = *spec
+	case *api.VXLANSegmentSpec:
+		if spec == nil {
+			return pathMTUTunnel{}, false
+		}
+		value = *spec
+	case *api.VXLANTunnelSpec:
+		if spec == nil {
+			return pathMTUTunnel{}, false
+		}
+		value = *spec
 	}
-	if value.Kind() != reflect.Struct || !pathMTUResourceEnabled(value) || !pathMTUResourceLooksLikeInterface(res, value) {
+	var mtu, defaultMTU int
+	var underlay string
+	switch spec := value.(type) {
+	case api.InterfaceSpec:
+		mtu, defaultMTU = spec.MTU, 1500
+	case api.DSLiteTunnelSpec:
+		if !api.BoolDefault(spec.Enabled, true) {
+			return pathMTUTunnel{}, false
+		}
+		mtu, defaultMTU, underlay = spec.MTU, 1454, spec.Interface
+	case api.PPPoESessionSpec:
+		if !api.BoolDefault(spec.Enabled, true) {
+			return pathMTUTunnel{}, false
+		}
+		mtu, defaultMTU, underlay = spec.MTU, 1454, spec.Interface
+	case api.WireGuardInterfaceSpec:
+		mtu, defaultMTU = spec.MTU, 1420
+	case api.TunnelInterfaceSpec:
+		mtu, underlay = spec.MTU, spec.UnderlayInterface
+		if mtu <= 0 && router != nil {
+			defaultMTU = hybrid.TunnelInterfaceEffectiveMTU(*router, spec)
+		}
+	case api.BridgeSpec:
+		mtu = spec.MTU
+	case api.VXLANSegmentSpec:
+		mtu, underlay = spec.MTU, spec.UnderlayInterface
+	case api.VXLANTunnelSpec:
+		mtu, underlay = spec.MTU, spec.UnderlayInterface
+	default:
 		return pathMTUTunnel{}, false
 	}
-	mtu := pathMTUResourceMTU(router, res, value)
+	if mtu <= 0 {
+		mtu = defaultMTU
+	}
 	if mtu == 0 {
 		return pathMTUTunnel{}, false
 	}
-	return pathMTUTunnel{Name: res.Metadata.Name, Underlay: pathMTUResourceUnderlay(value), MTU: mtu}, true
-}
-
-func pathMTUResourceEnabled(value reflect.Value) bool {
-	field := value.FieldByName("Enabled")
-	if !field.IsValid() {
-		return true
-	}
-	switch field.Kind() {
-	case reflect.Bool:
-		return field.Bool()
-	case reflect.Pointer:
-		if field.IsNil() {
-			return true
-		}
-		if field.Elem().Kind() == reflect.Bool {
-			return field.Elem().Bool()
-		}
-	}
-	return true
-}
-
-func pathMTUResourceLooksLikeInterface(res api.Resource, value reflect.Value) bool {
-	if value.FieldByName("IfName").IsValid() || value.FieldByName("TunnelName").IsValid() || value.FieldByName("UnderlayInterface").IsValid() {
-		return true
-	}
-	return strings.HasSuffix(res.Kind, "Interface")
-}
-
-func pathMTUResourceMTU(router *api.Router, res api.Resource, value reflect.Value) int {
-	if field := value.FieldByName("MTU"); field.IsValid() && field.Kind() == reflect.Int && field.Int() > 0 {
-		return int(field.Int())
-	}
-	// Keep zero-value compatibility for resources whose existing renderers
-	// already imply a non-1500 tunnel MTU. New tunnel-like resources participate
-	// automatically when they expose an explicit spec.mtu.
-	switch res.Kind {
-	case "Interface":
-		return 1500
-	case "PPPoESession", "DSLiteTunnel":
-		return 1454
-	case "WireGuardInterface":
-		return 1420
-	case "TunnelInterface":
-		spec, err := res.TunnelInterfaceSpec()
-		if err != nil || router == nil {
-			return 0
-		}
-		return hybrid.TunnelInterfaceEffectiveMTU(*router, spec)
-	default:
-		return 0
-	}
-}
-
-func pathMTUResourceUnderlay(value reflect.Value) string {
-	for _, name := range []string{"UnderlayInterface", "Interface"} {
-		field := value.FieldByName(name)
-		if field.IsValid() && field.Kind() == reflect.String {
-			return strings.TrimSpace(field.String())
-		}
-	}
-	return ""
+	// The path-MTU map uses resource names, not IfName or TunnelName.
+	return pathMTUTunnel{Name: res.Metadata.Name, Underlay: strings.TrimSpace(underlay), MTU: mtu}, true
 }
 
 func compactPathMTUPolicySpecs(specs []pathMTUPolicySpec) []pathMTUPolicySpec {

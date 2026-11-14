@@ -76,11 +76,20 @@ func (e *Engine) PlanEffective(effective, declared *api.Router) (*Result, error)
 }
 
 func (e *Engine) evaluate(router, declared *api.Router, includePlan bool) (*Result, error) {
-	inactiveTunnels := InactiveDSLiteInterfaces(router, declared, e.Store)
-	aliases := interfaceAliases(router)
+	inactiveTunnels, err := InactiveDSLiteInterfaces(router, declared, e.Store)
+	if err != nil {
+		return nil, err
+	}
+	aliases, err := interfaceAliases(router)
+	if err != nil {
+		return nil, err
+	}
 	kinds := resourceKinds(router)
 	osNet := e.detectOSNetworking()
-	policies := interfacePolicies(router, osNet)
+	policies, err := interfacePolicies(router, osNet)
+	if err != nil {
+		return nil, err
+	}
 	observedV4 := e.observedIPv4Prefixes(policies)
 	observedV4ByInterface := ipv4AssignmentsByInterface(observedV4)
 	result := &Result{
@@ -659,7 +668,7 @@ func (e *Engine) observeDHCPv6PrefixDelegation(res api.Resource, aliases map[str
 		return
 	}
 	ifname := aliases[spec.Interface]
-	client := api.EffectiveIPv6PDClient(string(platform.CurrentOS()), spec.Profile, spec.Client)
+	client := api.EffectiveIPv6PDClient(spec.Client)
 	profile := defaultString(spec.Profile, api.IPv6PDProfileDefault)
 	rr.Observed["interface"] = spec.Interface
 	rr.Observed["ifname"] = ifname
@@ -1057,11 +1066,6 @@ func (e *Engine) observeDSLiteTunnel(router *api.Router, res api.Resource, alias
 	}
 	if disabled || platform.CurrentOS() != platform.OSLinux {
 		return
-	}
-	if platform.CurrentOS() == platform.OSFreeBSD && e.Store != nil {
-		if alias, ok := e.Store.ObjectStatus(api.NetAPIVersion, "DSLiteTunnel", res.Metadata.Name)["aliasOf"].(string); ok && alias != "" {
-			tunnelName = alias
-		}
 	}
 	out, err := runCommand("ip", "-j", "-d", "link", "show", "type", "ip6tnl")
 	if err != nil {
@@ -2216,14 +2220,14 @@ func (e *Engine) observeNetworkAdoption(res api.Resource, aliases map[string]str
 	}
 }
 
-func InactiveDSLiteInterfaces(effective, declared *api.Router, store resourcequery.Store) map[string]string {
+func InactiveDSLiteInterfaces(effective, declared *api.Router, store resourcequery.Store) (map[string]string, error) {
 	active := map[string]bool{}
 	disabled := map[string]bool{}
 	for _, res := range effective.Spec.Resources {
 		if res.Kind == "DSLiteTunnel" {
 			spec, err := res.DSLiteTunnelSpec()
 			if err != nil {
-				continue
+				return nil, err
 			}
 			name := defaultString(spec.TunnelName, res.Metadata.Name)
 			if api.BoolDefault(spec.Enabled, true) {
@@ -2241,7 +2245,11 @@ func InactiveDSLiteInterfaces(effective, declared *api.Router, store resourceque
 	inactive := map[string]string{}
 	for _, res := range declared.Spec.Resources {
 		if res.Kind == "DSLiteTunnel" {
-			name := defaultString(stringSpec(res, "tunnelName"), res.Metadata.Name)
+			spec, err := res.DSLiteTunnelSpec()
+			if err != nil {
+				return nil, err
+			}
+			name := defaultString(spec.TunnelName, res.Metadata.Name)
 			if !active[name] {
 				inactive[name] = "WhenFalse"
 				if disabled[name] {
@@ -2250,7 +2258,7 @@ func InactiveDSLiteInterfaces(effective, declared *api.Router, store resourceque
 			}
 		}
 	}
-	return inactive
+	return inactive, nil
 }
 
 func (e *Engine) observeInterface(res api.Resource, policy interfacePolicy, observedV4 []ipv4Assignment, inactiveTunnels map[string]string, includePlan bool, rr *ResourceResult) {
@@ -2320,9 +2328,15 @@ func (e *Engine) observeInterface(res api.Resource, policy interfacePolicy, obse
 }
 
 func (e *Engine) observeIPv4Static(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
-	iface := stringSpec(res, "interface")
+	spec, err := res.IPv4StaticAddressSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	iface := spec.Interface
 	ifname := aliases[iface]
-	addr := stringSpec(res, "address")
+	addr := spec.Address
 
 	rr.Observed["interface"] = iface
 	rr.Observed["ifname"] = ifname
@@ -2335,7 +2349,7 @@ func (e *Engine) observeIPv4Static(res api.Resource, aliases map[string]string, 
 		rr.Phase = "Drifted"
 	}
 
-	if boolSpec(res, "exclusive") {
+	if spec.Exclusive {
 		rr.Warnings = append(rr.Warnings, "exclusive IPv4 address cleanup is not implemented")
 		if rr.Phase == "Healthy" {
 			rr.Phase = "Unknown"
@@ -2347,10 +2361,16 @@ func (e *Engine) observeIPv4Static(res api.Resource, aliases map[string]string, 
 }
 
 func (e *Engine) observeDHCP(res api.Resource, aliases map[string]string, policies map[string]interfacePolicy, family string, includePlan bool, rr *ResourceResult) {
-	iface := stringSpec(res, "interface")
+	spec, err := res.DHCPv6AddressSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	iface := spec.Interface
 	ifname := aliases[iface]
 	policy := policies[iface]
-	client := stringSpecDefault(res, "client", "dhcpcd")
+	client := defaultString(spec.Client, "dhcpcd")
 
 	rr.Observed["interface"] = iface
 	rr.Observed["ifname"] = ifname
@@ -2407,10 +2427,16 @@ func (e *Engine) observeDHCPv4Client(res api.Resource, aliases map[string]string
 }
 
 func (e *Engine) observeIPv6RAAddress(res api.Resource, aliases map[string]string, policies map[string]interfacePolicy, includePlan bool, rr *ResourceResult) {
-	iface := stringSpec(res, "interface")
+	spec, err := res.IPv6RAAddressSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	iface := spec.Interface
 	ifname := aliases[iface]
 	policy := policies[iface]
-	managed := boolSpecDefault(res, "managed", true)
+	managed := api.BoolDefault(spec.Managed, true)
 
 	rr.Observed["interface"] = iface
 	rr.Observed["ifname"] = ifname
@@ -2697,31 +2723,59 @@ func (e *Engine) observedIPv4Prefixes(policies map[string]interfacePolicy) []ipv
 	return assignments
 }
 
-func interfaceAliases(router *api.Router) map[string]string {
+func interfaceAliases(router *api.Router) (map[string]string, error) {
 	aliases := map[string]string{}
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
 		case "Interface":
-			aliases[res.Metadata.Name] = stringSpec(res, "ifname")
+			spec, err := res.InterfaceSpec()
+			if err != nil {
+				return nil, err
+			}
+			aliases[res.Metadata.Name] = spec.IfName
 		case "Bridge":
-			aliases[res.Metadata.Name] = stringSpecDefault(res, "ifname", res.Metadata.Name)
+			spec, err := res.BridgeSpec()
+			if err != nil {
+				return nil, err
+			}
+			aliases[res.Metadata.Name] = defaultString(spec.IfName, res.Metadata.Name)
 		case "VXLANSegment":
-			aliases[res.Metadata.Name] = stringSpecDefault(res, "ifname", res.Metadata.Name)
+			spec, err := res.VXLANSegmentSpec()
+			if err != nil {
+				return nil, err
+			}
+			aliases[res.Metadata.Name] = defaultString(spec.IfName, res.Metadata.Name)
 		case "WireGuardInterface":
 			aliases[res.Metadata.Name] = res.Metadata.Name
 		case "TunnelInterface":
 			aliases[res.Metadata.Name] = res.Metadata.Name
 		case "VRF":
-			aliases[res.Metadata.Name] = stringSpecDefault(res, "ifname", res.Metadata.Name)
+			spec, err := res.VRFSpec()
+			if err != nil {
+				return nil, err
+			}
+			aliases[res.Metadata.Name] = defaultString(spec.IfName, res.Metadata.Name)
 		case "VXLANTunnel":
-			aliases[res.Metadata.Name] = stringSpecDefault(res, "ifname", res.Metadata.Name)
+			spec, err := res.VXLANTunnelSpec()
+			if err != nil {
+				return nil, err
+			}
+			aliases[res.Metadata.Name] = defaultString(spec.IfName, res.Metadata.Name)
 		case "PPPoESession":
-			aliases[res.Metadata.Name] = defaultString(stringSpec(res, "ifname"), "ppp-"+res.Metadata.Name)
+			spec, err := res.PPPoESessionSpec()
+			if err != nil {
+				return nil, err
+			}
+			aliases[res.Metadata.Name] = defaultString(spec.IfName, "ppp-"+res.Metadata.Name)
 		case "DSLiteTunnel":
-			aliases[res.Metadata.Name] = defaultString(stringSpec(res, "tunnelName"), res.Metadata.Name)
+			spec, err := res.DSLiteTunnelSpec()
+			if err != nil {
+				return nil, err
+			}
+			aliases[res.Metadata.Name] = defaultString(spec.TunnelName, res.Metadata.Name)
 		}
 	}
-	return aliases
+	return aliases, nil
 }
 
 func resourceKinds(router *api.Router) map[string]string {
@@ -2789,21 +2843,24 @@ type interfacePolicy struct {
 	OS      osNetworking
 }
 
-func interfacePolicies(router *api.Router, osNet osNetworking) map[string]interfacePolicy {
+func interfacePolicies(router *api.Router, osNet osNetworking) (map[string]interfacePolicy, error) {
 	policies := map[string]interfacePolicy{}
 	for _, res := range router.Spec.Resources {
 		if res.Kind != "Interface" {
 			continue
 		}
-		managed := boolSpec(res, "managed")
+		spec, err := res.InterfaceSpec()
+		if err != nil {
+			return nil, err
+		}
 		policies[res.Metadata.Name] = interfacePolicy{
 			Name:    res.Metadata.Name,
-			IfName:  stringSpec(res, "ifname"),
-			Managed: managed,
+			IfName:  spec.IfName,
+			Managed: spec.Managed,
 			OS:      osNet,
 		}
 	}
-	return policies
+	return policies, nil
 }
 
 func runCommand(name string, args ...string) ([]byte, error) {
@@ -2826,165 +2883,6 @@ func sortedEgressRouteCandidates(candidates []api.EgressRoutePolicyCandidate) []
 		return result[i].Priority < result[j].Priority
 	})
 	return result
-}
-
-func stringSpec(res api.Resource, key string) string {
-	switch spec := res.Spec.(type) {
-	case api.SysctlSpec:
-		switch key {
-		case "key":
-			return spec.Key
-		case "value":
-			return spec.Value
-		}
-	case api.InterfaceSpec:
-		switch key {
-		case "ifname":
-			return spec.IfName
-		}
-	case api.BridgeSpec:
-		if key == "ifname" {
-			return spec.IfName
-		}
-	case api.VXLANSegmentSpec:
-		if key == "ifname" {
-			return spec.IfName
-		}
-	case api.VRFSpec:
-		if key == "ifname" {
-			return spec.IfName
-		}
-	case api.VXLANTunnelSpec:
-		if key == "ifname" {
-			return spec.IfName
-		}
-	case api.PPPoESessionSpec:
-		switch key {
-		case "ifname":
-			return spec.IfName
-		case "interface":
-			return spec.Interface
-		case "authMethod":
-			return spec.AuthMethod
-		case "username":
-			return spec.Username
-		}
-	case api.IPv4StaticAddressSpec:
-		switch key {
-		case "interface":
-			return spec.Interface
-		case "address":
-			return spec.Address
-		}
-	case api.DHCPv4ClientSpec:
-		switch key {
-		case "interface":
-			return spec.Interface
-		case "hostname":
-			return spec.Hostname
-		case "requestedAddress":
-			return spec.RequestedAddress
-		case "classID":
-			return spec.ClassID
-		case "clientID":
-			return spec.ClientID
-		case "routeMetric":
-			return fmt.Sprint(spec.RouteMetric)
-		}
-	case api.DHCPv4ServerSpec:
-		switch key {
-		case "server":
-			return spec.Server
-		case "interface":
-			return spec.Interface
-		case "rangeStart":
-			return defaultString(spec.AddressPool.Start, spec.RangeStart)
-		case "rangeEnd":
-			return defaultString(spec.AddressPool.End, spec.RangeEnd)
-		case "leaseTime":
-			return defaultString(spec.AddressPool.LeaseTime, spec.LeaseTime)
-		case "router":
-			return spec.Router
-		}
-	case api.DHCPv6AddressSpec:
-		switch key {
-		case "interface":
-			return spec.Interface
-		case "client":
-			return spec.Client
-		}
-	case api.IPv6RAAddressSpec:
-		if key == "interface" {
-			return spec.Interface
-		}
-	case api.DSLiteTunnelSpec:
-		switch key {
-		case "interface":
-			return spec.Interface
-		case "tunnelName":
-			return spec.TunnelName
-		}
-	case api.HostnameSpec:
-		switch key {
-		case "hostname":
-			return spec.Hostname
-		}
-	}
-	return ""
-}
-
-func stringSpecDefault(res api.Resource, key, fallback string) string {
-	if value := stringSpec(res, key); value != "" {
-		return value
-	}
-	return fallback
-}
-
-func boolSpec(res api.Resource, key string) bool {
-	switch spec := res.Spec.(type) {
-	case api.SysctlSpec:
-		switch key {
-		case "runtime":
-			return api.BoolDefault(spec.Runtime, false)
-		case "persistent":
-			return spec.Persistent
-		}
-	case api.InterfaceSpec:
-		switch key {
-		case "adminUp":
-			return spec.AdminUp
-		case "managed":
-			return spec.Managed
-		}
-	case api.IPv4StaticAddressSpec:
-		switch key {
-		case "exclusive":
-			return spec.Exclusive
-		}
-	case api.DHCPv6AddressSpec:
-		if key == "required" {
-			return spec.Required
-		}
-	case api.IPv6RAAddressSpec:
-		switch key {
-		case "managed":
-			return api.BoolDefault(spec.Managed, true)
-		case "required":
-			return spec.Required
-		}
-	case api.HostnameSpec:
-		if key == "managed" {
-			return spec.Managed
-		}
-	}
-	return false
-}
-
-func boolSpecDefault(res api.Resource, key string, fallback bool) bool {
-	if spec, ok := res.Spec.(api.SysctlSpec); ok && key == "runtime" {
-		return api.BoolDefault(spec.Runtime, fallback)
-	}
-	return boolSpec(res, key)
 }
 
 func defaultString(value, fallback string) string {

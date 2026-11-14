@@ -18,7 +18,6 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/pdclient"
-	"github.com/imksoo/routerd/pkg/platform"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -50,7 +49,7 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 			return nil, err
 		}
 		profile := defaultString(spec.Profile, api.IPv6PDProfileDefault)
-		client := api.EffectiveIPv6PDClient(string(platform.CurrentOS()), profile, spec.Client)
+		client := api.EffectiveIPv6PDClient(spec.Client)
 		prefixLength := api.EffectiveIPv6PDPrefixLength(profile, spec.PrefixLength)
 		base := "ipv6PrefixDelegation." + res.Metadata.Name
 		lease, _ := routerstate.PDLeaseFromStore(store, base)

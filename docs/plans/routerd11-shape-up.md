@@ -76,3 +76,7 @@
 
 - 2026-11-10時点のHealth判定整理と実機での復元・切替・復帰は、[堅牢化の残作業](routerd11-hardening-remaining.md)にまとめる。
 - FreeBSD で DHCPv6 client を supervisor を介さず `--lease-file` なしで手動起動すると、既定の lease パスと controller の読み取りパスが異なる。supervisor は正しいパスを渡す。実運用で手動起動が必要か未確認であり、調査・修正には別途承認を要する。
+
+## 2026-11-14 の追加整理
+
+基準 revision `1cd7cfc7a65603e9026e7683a46d524d1e7bfa23` から、簡素化開発計画の A01・A02・A03・A10・A11・A13 を実装した。具体型の設定参照、PD 選択の未使用引数削除、未使用 JSON 秘匿化と AST 台帳・同一型往復テストの撤去、version 単体ビルド、EventSubscription の説明と生成 schema の修正を対象とする。今回の確認結果と残件は [実装記録](routerd11-simplification-progress.md) に記す。コミット・push・本番操作は行わず、実設定の読取り比較・PD 通常更新・Web Console の権限別表示・実通信は残件である。過去の実機記録を今回の検証結果には含めない。

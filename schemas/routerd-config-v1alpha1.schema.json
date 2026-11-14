@@ -8352,11 +8352,11 @@
                         "description": "Trigger names the plugin to invoke and optional batching.",
                         "properties": {
                           "batchWindow": {
-                            "description": "BatchWindow optionally coalesces matched events into one invocation\n(Go duration). MVP invokes per poll tick; this is accepted forward-compat.",
+                            "description": "BatchWindow optionally coalesces matched events into one invocation\n(Go duration), measured from the first matched event.",
                             "type": "string"
                           },
                           "debounce": {
-                            "description": "Debounce optionally delays invocation after the last matched event\n(Go duration). Accepted forward-compat; MVP uses poll-tick batching.",
+                            "description": "Debounce optionally delays invocation after the last matched event\n(Go duration), bounded by BatchWindow or the default maximum wait.",
                             "type": "string"
                           },
                           "pluginRef": {

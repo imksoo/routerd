@@ -10,19 +10,11 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
-	routerstate "github.com/imksoo/routerd/pkg/state"
 )
-
-type atomicStatusEventStore interface {
-	bus.EventStore
-	SaveObjectStatusAndEvent(string, string, string, map[string]any, routerstate.StatusEventBuilder) (*daemonapi.DaemonEvent, error)
-	MergeObjectStatusAndEvent(string, string, string, map[string]any, routerstate.StatusEventBuilder) (*daemonapi.DaemonEvent, error)
-}
 
 // EventRule count/sequence/window/absence patterns consume history. Their
 // inputs cannot be reconstructed from a later status rescan. Only rules that
-// actually match status transitions require this capability; notification-only
-// controllers and lightweight unused stores retain their existing contract.
+// actually match status transitions require transactional history.
 func statusEventHistoryRequired(router *api.Router) bool {
 	if router == nil {
 		return false
@@ -46,27 +38,12 @@ func statusEventHistoryRequired(router *api.Router) bool {
 }
 
 func (s eventedStore) saveStatusWithHistory(apiVersion, kind, name string, updates map[string]any, merge bool) error {
-	store, ok := s.Store.(atomicStatusEventStore)
-	if !ok || s.Bus == nil || !s.Bus.PersistsTo(store) {
+	store := s.Store
+	if s.Bus == nil || !s.Bus.PersistsTo(store) {
 		return fmt.Errorf("EventRule status history requires status and bus to share a transactional event store")
 	}
 	build := func(current, next map[string]any) (bool, *daemonapi.DaemonEvent) {
-		if newerStatus(current, next) {
-			return false, nil
-		}
-		if !shouldPublishStatusChangedEvent(apiVersion, kind, current, next) {
-			return true, nil
-		}
-		changedFields := statusChangedFieldsForEvent(apiVersion, kind, current, next)
-		event := daemonapi.DaemonEvent{
-			TypeMeta: daemonapi.TypeMeta{APIVersion: daemonapi.APIVersion, Kind: daemonapi.KindDaemonEvent},
-			Daemon:   daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "store"},
-			Type:     "routerd.resource.status.changed",
-			Severity: statusChangedEventSeverity(apiVersion, kind, current, next, changedFields),
-		}
-		event.Resource = &daemonapi.ResourceRef{APIVersion: apiVersion, Kind: kind, Name: name}
-		event.Attributes = map[string]string{"phase": fmt.Sprint(next["phase"]), "previousPhase": fmt.Sprint(current["phase"]), "changedFields": strings.Join(changedFields, ",")}
-		return true, &event
+		return buildStatusTransition(apiVersion, kind, name, current, next)
 	}
 	var event *daemonapi.DaemonEvent
 	var err error
@@ -82,4 +59,23 @@ func (s eventedStore) saveStatusWithHistory(apiVersion, kind, name string, updat
 		return nil
 	}
 	return s.Bus.PublishRecorded(context.Background(), *event)
+}
+
+func buildStatusTransition(apiVersion, kind, name string, current, next map[string]any) (bool, *daemonapi.DaemonEvent) {
+	if newerStatus(current, next) {
+		return false, nil
+	}
+	if !shouldPublishStatusChangedEvent(apiVersion, kind, current, next) {
+		return true, nil
+	}
+	changedFields := statusChangedFieldsForEvent(apiVersion, kind, current, next)
+	event := daemonapi.DaemonEvent{
+		TypeMeta: daemonapi.TypeMeta{APIVersion: daemonapi.APIVersion, Kind: daemonapi.KindDaemonEvent},
+		Daemon:   daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "store"},
+		Type:     "routerd.resource.status.changed",
+		Severity: statusChangedEventSeverity(apiVersion, kind, current, next, changedFields),
+	}
+	event.Resource = &daemonapi.ResourceRef{APIVersion: apiVersion, Kind: kind, Name: name}
+	event.Attributes = map[string]string{"phase": fmt.Sprint(next["phase"]), "previousPhase": fmt.Sprint(current["phase"]), "changedFields": strings.Join(changedFields, ",")}
+	return true, &event
 }

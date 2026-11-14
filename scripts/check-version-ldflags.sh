@@ -6,7 +6,7 @@ commit=${2:-testcommit}
 tmpdir=$(mktemp -d)
 trap 'rm -rf "${tmpdir}"' EXIT
 
-make -s build-daemons \
+make -s build-routerd \
   BUILDDIR="${tmpdir}/bin" \
   ROUTERD_OS="$(go env GOOS)" \
   GOARCH="$(go env GOARCH)" \

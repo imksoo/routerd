@@ -114,7 +114,7 @@ func routerWithIPv6PDClientOptions(router *api.Router, osName string) (*api.Rout
 			return nil, nil, err
 		}
 		profile := defaultString(spec.Profile, api.IPv6PDProfileDefault)
-		spec.Client = api.EffectiveIPv6PDClient(osName, profile, spec.Client)
+		spec.Client = api.EffectiveIPv6PDClient(spec.Client)
 		if !api.ValidIPv6PDClient(spec.Client) {
 			return nil, nil, fmt.Errorf("%s spec.client is invalid: %q", res.ID(), spec.Client)
 		}
