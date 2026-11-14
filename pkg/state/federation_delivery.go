@@ -191,6 +191,37 @@ func (s *SQLiteStore) ListDeliveries(eventID, peer string) ([]DeliveryRecord, er
 	return records, nil
 }
 
+// DeliveredFederationPeers returns delivered peers for live local events.
+func (s *SQLiteStore) DeliveredFederationPeers(group, node string, now time.Time) (map[string][]DeliveryRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil, errStoreClosed
+	}
+	rows, err := s.db.Query(`SELECT d.event_id, d.peer, d.event_expires_at
+		FROM event_deliveries d JOIN federation_events e ON e.id = d.event_id
+		WHERE e.group_name = ? AND e.source_node = ? AND d.status = ?
+		  AND (e.expires_at IS NULL OR e.expires_at = 0 OR e.expires_at >= ?)`,
+		group, node, DeliveryDelivered, now.UTC().Unix())
+	if err != nil {
+		return nil, fmt.Errorf("list delivered federation peers: %w", err)
+	}
+	defer rows.Close()
+	result := make(map[string][]DeliveryRecord)
+	for rows.Next() {
+		var rec DeliveryRecord
+		var expiry sql.NullInt64
+		if err := rows.Scan(&rec.EventID, &rec.Peer, &expiry); err != nil {
+			return nil, err
+		}
+		if expiry.Valid && expiry.Int64 > 0 {
+			rec.EventExpiresAt = time.Unix(expiry.Int64, 0).UTC()
+		}
+		result[rec.EventID] = append(result[rec.EventID], rec)
+	}
+	return result, rows.Err()
+}
+
 // ListDeliveriesFiltered returns delivery rows filtered by any combination of
 // group, eventID, peer, and status (empty string = no filter on that column).
 // When group != "" it JOINs federation_events on event_id = id and filters by

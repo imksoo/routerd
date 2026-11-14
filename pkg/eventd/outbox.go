@@ -26,26 +26,24 @@ const DefaultMaxConcurrentPeerDrains = 4
 // pending/failed pairs are re-attempted each pass, which yields the
 // restart/peer-recovery resend property.
 type Outbox struct {
-	events     EventStore
-	deliveries DeliveryStore
-	pusher     *Pusher
-	group      string
-	nodeName   string
-	interval   time.Duration
-	metrics    *Metrics
+	store    *routerstate.SQLiteStore
+	pusher   *Pusher
+	group    string
+	nodeName string
+	interval time.Duration
+	metrics  *Metrics
 
 	maxConcurrentPeerDrains int
 }
 
 // NewOutbox builds an Outbox. interval <= 0
 // falls back to DefaultPushInterval.
-func NewOutbox(events EventStore, deliveries DeliveryStore, pusher *Pusher, group, nodeName string, interval time.Duration) *Outbox {
+func NewOutbox(store *routerstate.SQLiteStore, pusher *Pusher, group, nodeName string, interval time.Duration) *Outbox {
 	if interval <= 0 {
 		interval = DefaultPushInterval
 	}
 	return &Outbox{
-		events:                  events,
-		deliveries:              deliveries,
+		store:                   store,
 		pusher:                  pusher,
 		group:                   group,
 		nodeName:                nodeName,
@@ -93,7 +91,12 @@ func (o *Outbox) RunOnce(ctx context.Context) error {
 }
 
 func (o *Outbox) runOnceInner(ctx context.Context) error {
-	records, err := o.events.ListFederationEvents(o.group, false, time.Now().Unix())
+	now := time.Now()
+	records, err := o.store.ListFederationEvents(o.group, false, now.Unix())
+	if err != nil {
+		return err
+	}
+	deliveries, err := o.store.DeliveredFederationPeers(o.group, o.nodeName, now)
 	if err != nil {
 		return err
 	}
@@ -117,10 +120,7 @@ func (o *Outbox) runOnceInner(ctx context.Context) error {
 			ObservedAt: rec.ObservedAt,
 			ExpiresAt:  rec.ExpiresAt,
 		}
-		delivered, err := o.deliveredPeers(ctx, rec.ID, rec.Type, rec.ExpiresAt)
-		if err != nil {
-			return err
-		}
+		delivered := o.deliveredPeers(ctx, deliveries[rec.ID], rec.Type, rec.ExpiresAt)
 		events = append(events, outboxEvent{event: ev, delivered: delivered})
 	}
 	return o.drainPeers(ctx, events)
@@ -224,16 +224,9 @@ func (o *Outbox) drainPeer(ctx context.Context, peer PeerConfig, events []outbox
 // the event's current ExpiresAt. When the event's TTL has been refreshed
 // (ExpiresAt moved forward since the last push), the peer is treated as
 // not-yet-delivered so the outbox re-pushes the refreshed event.
-func (o *Outbox) deliveredPeers(ctx context.Context, eventID, eventType string, eventExpiresAt time.Time) (map[string]bool, error) {
-	rows, err := o.deliveries.ListDeliveries(eventID, "")
-	if err != nil {
-		return nil, err
-	}
+func (o *Outbox) deliveredPeers(ctx context.Context, rows []routerstate.DeliveryRecord, eventType string, eventExpiresAt time.Time) map[string]bool {
 	set := make(map[string]bool, len(rows))
 	for _, row := range rows {
-		if row.Status != routerstate.DeliveryDelivered {
-			continue
-		}
 		if !eventExpiresAt.IsZero() && row.EventExpiresAt.Before(eventExpiresAt) {
 			o.metrics.RecordStaleTTL(ctx, o.group, row.Peer, eventType)
 			o.metrics.RecordRepush(ctx, o.group, row.Peer, eventType)
@@ -241,5 +234,5 @@ func (o *Outbox) deliveredPeers(ctx context.Context, eventID, eventType string, 
 		}
 		set[row.Peer] = true
 	}
-	return set, nil
+	return set
 }

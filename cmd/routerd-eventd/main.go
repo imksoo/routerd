@@ -159,7 +159,7 @@ func daemonCommand(args []string) error {
 	// peers (or a push-only node) runs this as a harmless no-op / push-only.
 	pusher := eventd.NewPusher(store, secret, cfg.Peers, cfg.PushRetry)
 	pusher.SetMetrics(metrics)
-	outbox := eventd.NewOutbox(store, store, pusher, cfg.Group, cfg.NodeName, cfg.PushInterval)
+	outbox := eventd.NewOutbox(store, pusher, cfg.Group, cfg.NodeName, cfg.PushInterval)
 	outbox.SetMetrics(metrics)
 	go func() {
 		defer workers.Done()
