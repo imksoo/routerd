@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20261114.0607
+
 ### Changed
 
 - 简化类型化配置访问、SQLite 存储层、状态转换、事件处理、MTU 选择、SAM 输入解码及 Linux IPIP 观测，移除未使用的兼容路径及测试专用代码。

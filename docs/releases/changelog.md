@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20261114.0607
+
 ### Changed
 
 - Simplify typed configuration access, SQLite-backed controller stores, status transitions, event consumers, MTU selection, SAM input decoding, and Linux IPIP observation. Remove unused compatibility paths and redundant test-only code.

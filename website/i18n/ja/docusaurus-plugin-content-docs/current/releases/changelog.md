@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20261114.0607
+
 ### Changed
 
 - 型付き設定参照、SQLite保存層、状態遷移、イベント処理、MTU選択、SAM入力復号、Linux IPIP観測を簡略化し、未使用の互換経路とテスト専用コードを削除しました。
