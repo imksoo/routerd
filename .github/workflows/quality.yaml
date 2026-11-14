@@ -66,9 +66,7 @@ jobs:
 
       - name: Audit Web Console dependencies
         working-directory: webconsole
-        run: |
-          npm audit --audit-level=high
-          npm audit --omit=dev --audit-level=high
+        run: npm audit --audit-level=high
 
       - name: Type-check Web Console
         working-directory: webconsole
