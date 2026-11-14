@@ -247,6 +247,7 @@ CREATE TABLE IF NOT EXISTS event_subscription_runs (
   UNIQUE(subscription, event_id)
 );
 CREATE INDEX IF NOT EXISTS event_subscription_runs_sub ON event_subscription_runs(subscription, status);
+CREATE INDEX IF NOT EXISTS event_subscription_runs_event ON event_subscription_runs(event_id);
 CREATE TABLE IF NOT EXISTS action_executions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   idempotency_key TEXT NOT NULL UNIQUE,

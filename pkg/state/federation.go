@@ -270,7 +270,8 @@ func scanFederationEvents(rows *sql.Rows) ([]EventRecord, error) {
 	return records, nil
 }
 
-// PruneFederationEvents enforces EventGroup retention (ADR 0006). It removes
+// PruneFederationEvents enforces EventGroup retention (ADR 0006). With no
+// retention limits, it removes expired events without dependent history. It removes
 // rows older than maxAge (when maxAge > 0) and, when maxEvents > 0, trims the
 // group down to the newest maxEvents rows (by observed_at desc, id desc). It
 // returns the total number of rows deleted.
@@ -287,6 +288,26 @@ func (s *SQLiteStore) PruneFederationEvents(group string, maxAge time.Duration, 
 		return 0, errStoreClosed
 	}
 	var total int64
+	// Without explicit retention, remove expired events only when no delivery
+	// or subscription history depends on their identity.
+	if maxAge <= 0 && maxEvents <= 0 {
+		query := `DELETE FROM federation_events
+			WHERE expires_at IS NOT NULL AND expires_at > 0 AND expires_at < ?
+			  AND NOT EXISTS (SELECT 1 FROM event_deliveries d WHERE d.event_id = federation_events.id)
+			  AND NOT EXISTS (SELECT 1 FROM event_subscription_runs r WHERE r.event_id = federation_events.id)`
+		args := []any{now.UTC().Unix()}
+		if group != "" {
+			query += ` AND group_name = ?`
+			args = append(args, group)
+		}
+		res, err := s.db.Exec(query, args...)
+		if err != nil {
+			return total, fmt.Errorf("prune expired federation events: %w", err)
+		}
+		if n, err := res.RowsAffected(); err == nil {
+			total += n
+		}
+	}
 	if maxAge > 0 {
 		cutoff := now.UTC().Add(-maxAge).Unix()
 		var (
