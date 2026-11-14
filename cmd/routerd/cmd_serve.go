@@ -366,6 +366,10 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	engine := apply.New()
 	engine.Store = stateStore
 	if result, observeErr := engine.ObserveEffective(filterRouterByWhen(router, stateStore), router); observeErr == nil {
+		result, err = restoreInitialGeneration(result, stateStore, router, applyOpts)
+		if err != nil {
+			return fmt.Errorf("restore initial observation generation: %w", err)
+		}
 		cache.Store(result)
 		_ = statuswriter.Write(*statusFile, result)
 	} else {
@@ -1939,6 +1943,39 @@ func (c *resultCache) Load() *apply.Result {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.result
+}
+
+// restoreInitialGeneration only associates the startup observation with the latest
+// completed configuration when both the source and effective settings match.
+func restoreInitialGeneration(result *apply.Result, store *routerstate.SQLiteStore, router *api.Router, opts applyOptions) (*apply.Result, error) {
+	if result == nil || result.Generation != 0 {
+		return result, nil
+	}
+	generations, err := store.ListGenerations(1)
+	if err != nil {
+		return nil, err
+	}
+	if len(generations) == 0 {
+		return result, nil
+	}
+	latest := generations[0]
+	if !latest.HasYAML || (latest.Phase != "Healthy" && latest.Phase != "Applied") {
+		return result, nil
+	}
+	configYAML, err := routerConfigYAML(router, opts)
+	if err != nil {
+		return nil, err
+	}
+	hash, err := configGenerationHash(configYAML, router)
+	if err != nil {
+		return nil, err
+	}
+	if hash != latest.ConfigHash {
+		return result, nil
+	}
+	observed := *result
+	observed.Generation = latest.Generation
+	return &observed, nil
 }
 
 func resultWithLatestGeneration(result *apply.Result, store *routerstate.SQLiteStore) *apply.Result {

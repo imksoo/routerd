@@ -78,3 +78,9 @@ Cloud SAMの実稼働先と他OSの対応方式の確定、PD移行・通常rene
 2026-11-14、利用者の「じゃあテストしてよ」という指示で、`TestConfigViewsRedactSecretsWithoutChangingSources` を追加した。使い捨てPodで本物のWebConsole handlerをHTTP提供し、実ファイルとSQLiteの2世代を用いて検証した。実装から期待値を生成せず、無害なpassword/privateKey/tokenの確認用文字列が現行設定・両世代・text/JSON差分に露出せず、設定中では `***REDACTED***` となること、公開項目と差分の方向が維持されること、元ファイルと保存YAMLがバイト単位で不変なことを確認した。
 
 `go test -p 2 ./pkg/webconsole -run ^TestConfigViewsRedactSecretsWithoutChangingSources$ -count=1 -v` が成功。モック・偽のStore/応答・ルーターネットワークの代替環境は使っていない。本番設定・実際の秘密情報・実機の役割は変更していない。この結果は秘匿化の振る舞いの確認であり、本番の利用者別認可を検証したものではない。
+
+## 再起動後のstatus世代0の修正
+
+原因は、serve起動時に空のresultCacheへGeneration未設定のObserve結果を入れ、DBの適用済み設定世代を復元していなかったことだった。起動時に最新保存世代がHealthy/Appliedで、保存設定あり、現行の宣言設定と有効設定の既存ハッシュが一致するときだけ世代を復元する。過去の成功へ遡る処理や最新番号の無条件補完は追加せず、既存観測の世代も上書きしない。DB・設定読込み・ハッシュ計算のエラーは起動元へ返す。
+
+利用者依頼に基づき、使い捨てPodで実SQLiteを閉じて再オープンし、実Observe・cache・status出力を使うTestInitialGenerationRestartを追加。正常復元、後続観測での保持、失敗/Committed/未完了世代、設定/有効設定不一致、元観測不変、実DB等のエラー伝搬の13ケースが成功。CGO無効のrouterd/routerctlビルドも成功。新たなDB/schemaやモック・疑似ネットワークは追加していない。実機の同一修正確認は別途記録する。
