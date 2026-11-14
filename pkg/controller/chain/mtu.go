@@ -5,7 +5,6 @@ package chain
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -153,30 +152,15 @@ func (c PathMTUController) applyL2MSSTable(ctx context.Context, nft, path string
 		}
 		return writeFileIfChanged(path, data, 0644, false)
 	}
-	out, err := c.runNFT(ctx, nft, "-j", "list", "tables")
-	if err != nil {
-		return false, fmt.Errorf("list nft tables: %w: %s", err, strings.TrimSpace(string(out)))
-	}
-	var listing struct {
-		Objects []struct {
-			Table *struct {
-				Family string `json:"family"`
-				Name   string `json:"name"`
-			} `json:"table"`
-		} `json:"nftables"`
-	}
-	if err := json.Unmarshal(out, &listing); err != nil {
-		return false, fmt.Errorf("decode nft tables: %w", err)
+	out, err := c.runNFT(ctx, nft, "list", "table", "bridge", "routerd_l2_mss")
+	missing := nftListMissing(out, err)
+	if err != nil && !missing {
+		return false, fmt.Errorf("list nft table bridge routerd_l2_mss: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	var batch bytes.Buffer
-	hadCurrent := false
-	for _, object := range listing.Objects {
-		table := object.Table
-		if table == nil || table.Family != "bridge" || table.Name != "routerd_l2_mss" {
-			continue
-		}
-		fmt.Fprintf(&batch, "delete table bridge %s\n", table.Name)
-		hadCurrent = true
+	hadCurrent := !missing
+	if hadCurrent {
+		batch.WriteString("delete table bridge routerd_l2_mss\n")
 	}
 	batch.Write(data)
 	if batch.Len() == 0 {
