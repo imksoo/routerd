@@ -30,11 +30,14 @@ import (
 	controllerchain "github.com/imksoo/routerd/pkg/controller/chain"
 	"github.com/imksoo/routerd/pkg/eventlog"
 	"github.com/imksoo/routerd/pkg/ha"
+	"github.com/imksoo/routerd/pkg/hostdeps"
 	"github.com/imksoo/routerd/pkg/inventory"
 	"github.com/imksoo/routerd/pkg/lifecycle"
 	"github.com/imksoo/routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/render"
 	"github.com/imksoo/routerd/pkg/resourcequery"
 	routerstate "github.com/imksoo/routerd/pkg/state"
+	"github.com/imksoo/routerd/pkg/sysctlprofile"
 )
 
 func applyCommand(args []string, stdout, stderr io.Writer) (err error) {
@@ -314,11 +317,57 @@ func desiredObjectStatusKeysForOS(router *api.Router, store staleObjectStatusCle
 		return nil, err
 	}
 	for _, candidate := range routers {
+		if targetOS == platform.OSLinux {
+			out[api.SystemAPIVersion+"/ServiceUnit/"+render.RouterdUnitName] = true
+			out[api.SystemAPIVersion+"/ServiceUnit/"+render.BGPUnitName] = true
+			if render.RouterWantsDPIClassifier(candidate) {
+				out[api.SystemAPIVersion+"/ServiceUnit/"+render.DPIClassifierUnitName] = true
+			}
+			if render.RouterWantsNDPIAgent(candidate) {
+				out[api.SystemAPIVersion+"/ServiceUnit/"+render.NDPIAgentUnitName] = true
+			}
+			for _, resource := range candidate.Spec.Resources {
+				if resource.Kind == "FirewallEventLog" {
+					spec, err := resource.FirewallEventLogSpec()
+					if err != nil {
+						return nil, err
+					}
+					if spec.Enabled {
+						out[api.SystemAPIVersion+"/ServiceUnit/routerd-firewall-logger.service"] = true
+					}
+				}
+			}
+		}
 		for key := range configuredResourceStatusKeys(candidate) {
 			out[key] = true
 		}
+		generated := hostdeps.PackageResources(candidate)
+		generated = append(generated, hostdeps.KernelModuleResourcesForOS(candidate, targetOS)...)
+		generated = append(generated, hostdeps.DerivedSysctlResourcesForOS(candidate, targetOS)...)
+		generated = append(generated, hostdeps.NetworkAdoptionResources(candidate)...)
+		for _, resource := range append(generated, candidate.Spec.Resources...) {
+			if resource.Kind == "SysctlProfile" {
+				spec, err := resource.SysctlProfileSpec()
+				if err != nil {
+					return nil, err
+				}
+				entries, err := sysctlprofile.Entries(spec.Profile, spec.Overrides)
+				if err != nil {
+					return nil, err
+				}
+				for _, entry := range entries {
+					out[api.SystemAPIVersion+"/SysctlProfile/"+resource.Metadata.Name+"-"+sysctlprofile.SafeName(entry.Key)] = true
+				}
+			}
+			out[lifecycle.ResourceKey(resource.APIVersion, resource.Kind, resource.Metadata.Name)] = true
+		}
 	}
 	for _, resource := range router.Spec.Resources {
+		if targetOS == platform.OSLinux {
+			if unit, ok := controllerchain.SynthesizedUnitName(resource); ok {
+				out[api.SystemAPIVersion+"/ServiceUnit/"+unit] = true
+			}
+		}
 		when := resourcequery.ResourceWhen(resource)
 		if !resourcequery.ResourceWhenPresent(when) || resourcequery.ResourceWhenMatches(when, store) {
 			continue

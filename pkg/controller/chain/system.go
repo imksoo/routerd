@@ -1285,6 +1285,12 @@ func (c SystemdUnitController) cleanupWhenFalseSystemdUnits(ctx context.Context)
 	return nil
 }
 
+// SynthesizedUnitName returns the service unit derived from a declared resource.
+func SynthesizedUnitName(resource api.Resource) (string, bool) {
+	ref, ok := synthesizedUnitForResource(resource)
+	return ref.UnitName, ok
+}
+
 func synthesizedUnitForResource(resource api.Resource) (synthesizedUnitRef, bool) {
 	name := strings.TrimSpace(resource.Metadata.Name)
 	if name == "" {
