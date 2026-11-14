@@ -14,147 +14,206 @@
 <li>On Linux, source CIDRs are alternatives; destinationCIDRs and destinationSetRefs form a union; excluded sets are then subtracted. Source/destination/protocol families must be compatible. PF currently ignores address-set references, rateLimit and connLimit despite validation accepting them.</li>
 <li>Linux rateLimit matches traffic OVER the configured rate, and connLimit matches counts OVER maxPerSource; the rule action is applied to the excess. Use a suitable drop/reject action for limiting. With both enabled they produce separate alternatives, not an AND of both thresholds.</li>
 </ul>
-<h2 id="yaml-definition">YAML definition</h2>
-<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
-<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+<h2 id="configuration-syntax">Configuration syntax</h2>
+<p>This is explanatory notation, not YAML to copy. Unbracketed fields are required within their parent; <code>[ ... ]</code> marks fields that can be omitted, subject to the conditions in the table. <code>&lt;type&gt;</code> is a placeholder, and <code>(a | b)</code> lists alternatives. Optional parents may contain required children. Conditional requirements, exclusions and runtime defaults are described below. Use the linked YAML example for an ordinary configuration.</p>
+<pre><code class="language-text">- apiVersion: firewall.routerd.net/v1alpha1
   kind: FirewallRule
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    action: &quot;accept&quot; # Required; string; enum=[&quot;accept&quot;, &quot;drop&quot;, &quot;reject&quot;]
-    connLimit: # optional; object
-      log: true # optional; boolean
-      maxPerSource: 0 # optional; integer; minimum=0
-    destinationCIDRs: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    destinationPorts: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    destinationSetRefs: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    excludeDestinationSetRefs: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    fromZone: &quot;&lt;string&gt;&quot; # Required; string
-    icmpType: &quot;&lt;string&gt;&quot; # optional; string
-    icmpv6Type: &quot;&lt;string&gt;&quot; # optional; string
-    log: true # optional; boolean
-    port: 0 # optional; integer; minimum=0; maximum=65535
-    protocol: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;tcp&quot;, &quot;udp&quot;, &quot;icmp&quot;, &quot;icmpv6&quot;, &quot;ipv6-icmp&quot;, &quot;ipip&quot;]
-    rateLimit: # optional; object
-      burst: 0 # optional; integer; minimum=0
-      log: true # optional; boolean
-      packetsPerSecond: 0 # optional; integer; minimum=0
-      per: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;second&quot;, &quot;minute&quot;]
-      rate: 0 # optional; integer; minimum=0
-      unit: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;packet&quot;, &quot;byte&quot;, &quot;kilobyte&quot;, &quot;megabyte&quot;]
-    sourcePorts: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    srcCIDRs: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    toZone: &quot;&lt;string&gt;&quot; # Required; string
+    action: (&quot;accept&quot; | &quot;drop&quot; | &quot;reject&quot;)
+    [ connLimit:
+        [ log: &lt;boolean&gt; ]
+        [ maxPerSource: &lt;integer&gt; ]
+    ]
+    [ destinationCIDRs:
+        - &lt;string&gt;
+    ]
+    [ destinationPorts:
+        - &lt;string&gt;
+    ]
+    [ destinationSetRefs:
+        - &lt;string&gt;
+    ]
+    [ excludeDestinationSetRefs:
+        - &lt;string&gt;
+    ]
+    fromZone: &lt;string&gt;
+    [ icmpType: &lt;string&gt; ]
+    [ icmpv6Type: &lt;string&gt; ]
+    [ log: &lt;boolean&gt; ]
+    [ port: &lt;integer&gt; ]
+    [ protocol: (&quot;&quot; | &quot;tcp&quot; | &quot;udp&quot; | &quot;icmp&quot; | &quot;icmpv6&quot; | &quot;ipv6-icmp&quot; | &quot;ipip&quot;) ]
+    [ rateLimit:
+        [ burst: &lt;integer&gt; ]
+        [ log: &lt;boolean&gt; ]
+        [ packetsPerSecond: &lt;integer&gt; ]
+        [ per: (&quot;&quot; | &quot;second&quot; | &quot;minute&quot;) ]
+        [ rate: &lt;integer&gt; ]
+        [ unit: (&quot;&quot; | &quot;packet&quot; | &quot;byte&quot; | &quot;kilobyte&quot; | &quot;megabyte&quot;) ]
+    ]
+    [ sourcePorts:
+        - &lt;string&gt;
+    ]
+    [ srcCIDRs:
+        - &lt;string&gt;
+    ]
+    toZone: &lt;string&gt;
 </code></pre>
 <h2 id="field-meaning-and-default">Field meaning and default</h2>
+<p>Required children of optional objects apply only when their parent is used. Other exact conditions are in the explanation; bracketed alternatives may still require one choice.</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>Presence</th>
+<th>Type / constraints</th>
 <th>Field meaning and default</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.fromZone</code></td>
+<td><strong>Required</strong></td>
+<td>string</td>
 <td>Required bare FirewallZone name or self. self is accepted but does not produce local-outbound filtering here.</td>
 </tr>
 <tr>
 <td><code>spec.toZone</code></td>
+<td><strong>Required</strong></td>
+<td>string</td>
 <td>Required bare FirewallZone name or self. Linux matches zone-pair input/output interfaces; self selects local input. PF self uses router addresses; other toZone values do not become an output-zone match.</td>
 </tr>
 <tr>
 <td><code>spec.srcCIDRs</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional IPv4/IPv6 source-prefix alternatives; default empty means any source. Prefixes must parse; Linux masks host bits before rendering.</td>
 </tr>
 <tr>
 <td><code>spec.destinationCIDRs</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional destination-prefix alternatives, default empty. Linux unions these with destinationSetRefs; with neither specified, destination is unrestricted within the zone path. PF uses only these static destination prefixes.</td>
 </tr>
 <tr>
 <td><code>spec.destinationSetRefs</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional existing IPAddressSet/<name> references, default empty; current PF does not enforce them. Linux references the enabled IPv4/IPv6 nftables sets.</td>
 </tr>
 <tr>
 <td><code>spec.excludeDestinationSetRefs</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional existing IPAddressSet/<name> references subtracted from Linux destination matches. Default empty; current PF ignores them.</td>
 </tr>
 <tr>
 <td><code>spec.protocol</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["", "tcp", "udp", "icmp", "icmpv6", "ipv6-icmp", "ipip"]</td>
 <td>Default empty means any protocol. Allowed tcp, udp, icmp, icmpv6, ipv6-icmp, ipip. Here ipip is IPv4 encapsulation in IPv6 (IPv6 next-header 4), not an IPv4-underlay tunnel protocol rule.</td>
 </tr>
 <tr>
 <td><code>spec.port</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=0; maximum=65535</td>
 <td>Optional single destination port, default 0 means absent. Positive 1–65535 requires tcp/udp and excludes destinationPorts.</td>
 </tr>
 <tr>
 <td><code>spec.sourcePorts</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional tcp/udp source-port OR list; each port 1–65535 or a sole start-end range. Default empty means any source port.</td>
 </tr>
 <tr>
 <td><code>spec.destinationPorts</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional tcp/udp destination-port OR list with the same port/range rules. Mutually exclusive with nonzero port; default empty means unrestricted.</td>
 </tr>
 <tr>
 <td><code>spec.icmpType</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional named IPv4 ICMP type, requires icmp. Supported: echo-reply, destination-unreachable, source-quench, redirect, echo-request, router-advertisement, router-solicitation, time-exceeded, parameter-problem, timestamp-request, timestamp-reply. Empty means all types. Camel-case key overrides the accepted YAML alias icmp-type.</td>
 </tr>
 <tr>
 <td><code>spec.icmpv6Type</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional IPv6 ICMP name, requires icmpv6/ipv6-icmp. Supported destination-unreachable, packet-too-big, time-exceeded, parameter-problem, echo-request/reply, router-solicit/advert, neighbor-solicit/advert and their nd- aliases. Empty means all types. Overrides YAML alias icmpv6-type.</td>
 </tr>
 <tr>
 <td><code>spec.action</code></td>
+<td><strong>Required</strong></td>
+<td>string; enum=["accept", "drop", "reject"]</td>
 <td>Required accept, drop or reject; no default. With rate/connection predicates on Linux, applies to excess traffic rather than defining an allowed quota.</td>
 </tr>
 <tr>
 <td><code>spec.log</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false. True adds logging before the rule action; Linux uses kernel logging or enabled FirewallEventLog NFLOG, PF uses its log action.</td>
 </tr>
 <tr>
 <td><code>spec.rateLimit</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional Linux over-rate predicate; default disabled. Current PF ignores all nested rate options.</td>
 </tr>
 <tr>
 <td><code>spec.rateLimit.rate</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=0</td>
 <td>Nonnegative rate, default 0 falls back to packetsPerSecond. Effective 0 disables the predicate and requires unit/per/burst/log to remain empty/zero/false. Positive rate takes precedence over packetsPerSecond.</td>
 </tr>
 <tr>
 <td><code>spec.rateLimit.unit</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["", "packet", "byte", "kilobyte", "megabyte"]</td>
 <td>packet (default when active), byte, kilobyte or megabyte. Selects nftables rate and burst units; no effect without a positive effective rate.</td>
 </tr>
 <tr>
 <td><code>spec.rateLimit.per</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["", "second", "minute"]</td>
 <td>second (default when active) or minute; requires a positive effective rate.</td>
 </tr>
 <tr>
 <td><code>spec.rateLimit.log</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false. True logs rate-exceeding matches before applying action; requires a positive effective rate.</td>
 </tr>
 <tr>
 <td><code>spec.rateLimit.packetsPerSecond</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=0</td>
 <td>Legacy nonnegative rate fallback when rate=0, default 0. Despite its name, explicit unit/per still control the effective units if supplied.</td>
 </tr>
 <tr>
 <td><code>spec.rateLimit.burst</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=0</td>
 <td>Nonnegative burst amount in the selected unit, default 0 omits the burst clause and uses nftables behavior. Requires an active rate if nonzero.</td>
 </tr>
 <tr>
 <td><code>spec.connLimit</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional Linux per-source connection-count predicate; default disabled. Independent from rateLimit; current PF ignores it.</td>
 </tr>
 <tr>
 <td><code>spec.connLimit.maxPerSource</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=0</td>
 <td>Nonnegative maximum, default 0 disabled. Positive N matches ct count over N per source address (separate IPv4/IPv6 meters), then applies action.</td>
 </tr>
 <tr>
 <td><code>spec.connLimit.log</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false. True adds a conn-limit log for excess-count matches; has no effect when maxPerSource=0.</td>
 </tr>
 </tbody>
@@ -166,7 +225,7 @@
 <p><a href="/examples/firewall-rate-limit.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
 <li><a href="#conditions-and-references">Conditions and references</a></li>
-<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#configuration-syntax">Configuration syntax</a></li>
 <li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 <li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
 </ul>

@@ -11,32 +11,39 @@
 <li>role and at least one interface are required; repeated identical interface strings within a zone are rejected. FirewallRule uses the zone metadata.name; self is the special router-local endpoint rather than an ordinary interface zone.</li>
 <li>Implicit policy allows mgmt toward all roles and self; trust toward self and roles other than mgmt; untrust is denied except same-role forwarding is enabled by the current shared policy. Established/related traffic and control-protocol exceptions are evaluated separately. See FirewallPolicy and FirewallRule for OS-specific ordering limits.</li>
 </ul>
-<h2 id="yaml-definition">YAML definition</h2>
-<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
-<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+<h2 id="configuration-syntax">Configuration syntax</h2>
+<p>This is explanatory notation, not YAML to copy. Unbracketed fields are required within their parent; <code>[ ... ]</code> marks fields that can be omitted, subject to the conditions in the table. <code>&lt;type&gt;</code> is a placeholder, and <code>(a | b)</code> lists alternatives. Optional parents may contain required children. Conditional requirements, exclusions and runtime defaults are described below. Use the linked YAML example for an ordinary configuration.</p>
+<pre><code class="language-text">- apiVersion: firewall.routerd.net/v1alpha1
   kind: FirewallZone
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    interfaces: # Required; array
-      - &quot;&lt;string&gt;&quot; # string
-    role: &quot;untrust&quot; # Required; string; enum=[&quot;untrust&quot;, &quot;trust&quot;, &quot;mgmt&quot;]
+    interfaces:
+      - &lt;string&gt;
+    role: (&quot;untrust&quot; | &quot;trust&quot; | &quot;mgmt&quot;)
 </code></pre>
 <h2 id="field-meaning-and-default">Field meaning and default</h2>
+<p>Required children of optional objects apply only when their parent is used. Other exact conditions are in the explanation; bracketed alternatives may still require one choice.</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>Presence</th>
+<th>Type / constraints</th>
 <th>Field meaning and default</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.role</code></td>
+<td><strong>Required</strong></td>
+<td>string; enum=["untrust", "trust", "mgmt"]</td>
 <td>Required untrust, trust or mgmt; no default. Selects implicit firewall behavior, not interface ownership or authentication.</td>
 </tr>
 <tr>
 <td><code>spec.interfaces</code></td>
+<td><strong>Required</strong></td>
+<td>array</td>
 <td>Required nonempty logical interface references. Bare names default to Interface; explicit Interface/name, PPPoESession/name, WireGuardInterface/name and DSLiteTunnel/name forms are accepted. References must resolve in the configuration interface/tunnel indexes and to nonempty kernel interface names for rendering.</td>
 </tr>
 </tbody>
@@ -48,7 +55,7 @@
 <p><a href="/examples/example-basic-ipv4-nat.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
 <li><a href="#conditions-and-references">Conditions and references</a></li>
-<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#configuration-syntax">Configuration syntax</a></li>
 <li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 <li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
 </ul>

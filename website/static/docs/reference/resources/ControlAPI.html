@@ -11,82 +11,112 @@
 <li>Only one ControlAPI resource is supported. Explicit HTTP CLI flags override the matching resource-derived settings. Without a resource or enabling CLI flag, HTTP control is disabled.</li>
 <li>tls.certFile and tls.keyFile must be set together. clientCAFile additionally requires both and enables required, verified client certificates. tokenFrom.file and tokenFrom.env are mutually exclusive.</li>
 </ul>
-<h2 id="yaml-definition">YAML definition</h2>
-<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
-<pre><code class="language-yaml">- apiVersion: system.routerd.net/v1alpha1
+<h2 id="configuration-syntax">Configuration syntax</h2>
+<p>This is explanatory notation, not YAML to copy. Unbracketed fields are required within their parent; <code>[ ... ]</code> marks fields that can be omitted, subject to the conditions in the table. <code>&lt;type&gt;</code> is a placeholder, and <code>(a | b)</code> lists alternatives. Optional parents may contain required children. Conditional requirements, exclusions and runtime defaults are described below. Use the linked YAML example for an ordinary configuration.</p>
+<pre><code class="language-text">- apiVersion: system.routerd.net/v1alpha1
   kind: ControlAPI
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    allowCIDRs: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    enabled: true # optional; boolean
-    listenAddress: &quot;&lt;string&gt;&quot; # optional; string
-    port: 1 # optional; integer; minimum=1; maximum=65535
-    tls: # optional; object
-      certFile: &quot;&lt;string&gt;&quot; # optional; string
-      clientCAFile: &quot;&lt;string&gt;&quot; # optional; string
-      keyFile: &quot;&lt;string&gt;&quot; # optional; string
-    tokenFrom: # optional; object
-      base64: true # optional; boolean
-      env: &quot;&lt;string&gt;&quot; # optional; string
-      file: &quot;&lt;string&gt;&quot; # optional; string
+    [ allowCIDRs:
+        - &lt;string&gt;
+    ]
+    [ enabled: &lt;boolean&gt; ]
+    [ listenAddress: &lt;string&gt; ]
+    [ port: &lt;integer&gt; ]
+    [ tls:
+        [ certFile: &lt;string&gt; ]
+        [ clientCAFile: &lt;string&gt; ]
+        [ keyFile: &lt;string&gt; ]
+    ]
+    [ tokenFrom:
+        [ base64: &lt;boolean&gt; ]
+        [ env: &lt;string&gt; ]
+        [ file: &lt;string&gt; ]
+    ]
 </code></pre>
 <h2 id="field-meaning-and-default">Field meaning and default</h2>
+<p>Required children of optional objects apply only when their parent is used. Other exact conditions are in the explanation; bracketed alternatives may still require one choice.</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>Presence</th>
+<th>Type / constraints</th>
 <th>Field meaning and default</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.enabled</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default true when the resource exists; default disabled when absent. An explicit HTTP-listen CLI flag enables it.</td>
 </tr>
 <tr>
 <td><code>spec.listenAddress</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Bind IP, default 127.0.0.1. Nonblank values must be IP addresses; this does not itself change the source CIDR allowlist.</td>
 </tr>
 <tr>
 <td><code>spec.port</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=1; maximum=65535</td>
 <td>TCP port, default 65432. Decoded zero selects the default; other values must be 1–65535.</td>
 </tr>
 <tr>
 <td><code>spec.allowCIDRs</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Source-IP allowlist, default 127.0.0.1/32 and ::1/128. A nonempty resource list replaces that default. Valid CIDRs are required; 0.0.0.0/0 and ::/0 are rejected. This is separate from firewall rules.</td>
 </tr>
 <tr>
 <td><code>spec.tokenFrom</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional bearer-token source. Default absent means no bearer-token check; source CIDR filtering still applies. Set exactly one of file or env when using a token. Not a reference to a routerd resource.</td>
 </tr>
 <tr>
 <td><code>spec.tokenFrom.file</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Token file path, default empty; mutually exclusive with env. Read by the routerd process at HTTP API setup; inaccessible files fail setup.</td>
 </tr>
 <tr>
 <td><code>spec.tokenFrom.env</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Name of a variable in the routerd process environment, default empty; mutually exclusive with file. Missing variables fail HTTP API setup.</td>
 </tr>
 <tr>
 <td><code>spec.tokenFrom.base64</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false. True decodes the trimmed source using standard Base64, then trims the decoded token. A malformed or empty final token fails setup.</td>
 </tr>
 <tr>
 <td><code>spec.tls</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional server TLS settings. With no certificate/key, the HTTP listener is plaintext.</td>
 </tr>
 <tr>
 <td><code>spec.tls.certFile</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Server certificate file, default absent; requires keyFile. Loaded as an X.509 key pair at startup; TLS minimum is 1.2.</td>
 </tr>
 <tr>
 <td><code>spec.tls.keyFile</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Server private-key file, default absent; requires certFile. This is a local file path, not a resource reference.</td>
 </tr>
 <tr>
 <td><code>spec.tls.clientCAFile</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional PEM client-CA bundle. Requires certFile/keyFile and makes client certificate verification mandatory. Missing/invalid bundles fail startup.</td>
 </tr>
 </tbody>
@@ -98,7 +128,7 @@
 <p><a href="/examples/pve-minimal-rr-b.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
 <li><a href="#conditions-and-references">Conditions and references</a></li>
-<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#configuration-syntax">Configuration syntax</a></li>
 <li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 <li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
 </ul>

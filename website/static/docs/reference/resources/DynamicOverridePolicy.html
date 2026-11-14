@@ -10,59 +10,76 @@
 <ul>
 <li>Policies match the exact source plus operation plus apiVersion/kind/name target. With no matching allow entry, masking is denied. Multiple allowed active masks on one target are combined until the latest expiry.</li>
 </ul>
-<h2 id="yaml-definition">YAML definition</h2>
-<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
-<pre><code class="language-yaml">- apiVersion: config.routerd.net/v1alpha1
+<h2 id="configuration-syntax">Configuration syntax</h2>
+<p>This is explanatory notation, not YAML to copy. Unbracketed fields are required within their parent; <code>[ ... ]</code> marks fields that can be omitted, subject to the conditions in the table. <code>&lt;type&gt;</code> is a placeholder, and <code>(a | b)</code> lists alternatives. Optional parents may contain required children. Conditional requirements, exclusions and runtime defaults are described below. Use the linked YAML example for an ordinary configuration.</p>
+<pre><code class="language-text">- apiVersion: config.routerd.net/v1alpha1
   kind: DynamicOverridePolicy
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    allow: # Required; array
-      - # object
-        operations: # Required; array
-          - &quot;&lt;string&gt;&quot; # string
-        source: &quot;&lt;string&gt;&quot; # Required; string
-        targets: # Required; array
-          - # object
-            apiVersion: &quot;&lt;string&gt;&quot; # Required; string
-            kind: &quot;&lt;string&gt;&quot; # Required; string
-            name: &quot;&lt;string&gt;&quot; # Required; string
+    allow:
+      -
+        operations:
+          - &lt;string&gt;
+        source: &lt;string&gt;
+        targets:
+          -
+            apiVersion: &lt;string&gt;
+            kind: &lt;string&gt;
+            name: &lt;string&gt;
 </code></pre>
 <h2 id="field-meaning-and-default">Field meaning and default</h2>
+<p>Required children of optional objects apply only when their parent is used. Other exact conditions are in the explanation; bracketed alternatives may still require one choice.</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>Presence</th>
+<th>Type / constraints</th>
 <th>Field meaning and default</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.allow</code></td>
+<td><strong>Required</strong></td>
+<td>array</td>
 <td>Allow-rule list. Empty has no effect and grants no permission.</td>
 </tr>
 <tr>
 <td><code>spec.allow[].source</code></td>
+<td><strong>Required</strong></td>
+<td>string</td>
 <td>Required exact DynamicConfigPart.spec.source identity, not necessarily a Plugin or DynamicConfigSource resource name. No wildcard/default.</td>
 </tr>
 <tr>
 <td><code>spec.allow[].operations</code></td>
+<td><strong>Required</strong></td>
+<td>array</td>
 <td>Allowed operations; only mask is accepted. Empty grants no operation.</td>
 </tr>
 <tr>
 <td><code>spec.allow[].targets</code></td>
+<td><strong>Required</strong></td>
+<td>array</td>
 <td>Exact startup-resource identities eligible for masking. Empty grants no targets.</td>
 </tr>
 <tr>
 <td><code>spec.allow[].targets[].apiVersion</code></td>
+<td><strong>Required</strong></td>
+<td>string</td>
 <td>Required API group/version of the exact target; no default.</td>
 </tr>
 <tr>
 <td><code>spec.allow[].targets[].kind</code></td>
+<td><strong>Required</strong></td>
+<td>string</td>
 <td>Required target kind; no wildcard expansion.</td>
 </tr>
 <tr>
 <td><code>spec.allow[].targets[].name</code></td>
+<td><strong>Required</strong></td>
+<td>string</td>
 <td>Required exact target metadata.name; no wildcard expansion.</td>
 </tr>
 </tbody>
@@ -73,7 +90,7 @@
 <p>No fields are registered for this kind in the ordinary status-reference allowlist.</p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
 <li><a href="#conditions-and-references">Conditions and references</a></li>
-<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#configuration-syntax">Configuration syntax</a></li>
 <li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 <li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
 </ul>

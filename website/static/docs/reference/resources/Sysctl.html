@@ -11,56 +11,73 @@
 <li>When runtime=false and persistent=false, the controller records Skipped/RuntimeDisabled and does not apply the value. Both runtime and persistent can be true.</li>
 <li>Duplicate Sysctl keys in one Router are rejected. Linux NAT44SessionSync in conntrackd mode additionally requires an explicit non-optional runtime Sysctl net.netfilter.nf_conntrack_tcp_be_liberal with value and effective expectedValue equal to 1.</li>
 </ul>
-<h2 id="yaml-definition">YAML definition</h2>
-<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
-<pre><code class="language-yaml">- apiVersion: system.routerd.net/v1alpha1
+<h2 id="configuration-syntax">Configuration syntax</h2>
+<p>This is explanatory notation, not YAML to copy. Unbracketed fields are required within their parent; <code>[ ... ]</code> marks fields that can be omitted, subject to the conditions in the table. <code>&lt;type&gt;</code> is a placeholder, and <code>(a | b)</code> lists alternatives. Optional parents may contain required children. Conditional requirements, exclusions and runtime defaults are described below. Use the linked YAML example for an ordinary configuration.</p>
+<pre><code class="language-text">- apiVersion: system.routerd.net/v1alpha1
   kind: Sysctl
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    compare: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;exact&quot;, &quot;atLeast&quot;]
-    expectedValue: &quot;&lt;string&gt;&quot; # optional; string
-    key: &quot;&lt;string&gt;&quot; # Required; string
-    optional: true # optional; boolean
-    persistent: true # optional; boolean
-    runtime: true # optional; boolean
-    value: &quot;&lt;string&gt;&quot; # Required; string
+    [ compare: (&quot;&quot; | &quot;exact&quot; | &quot;atLeast&quot;) ]
+    [ expectedValue: &lt;string&gt; ]
+    key: &lt;string&gt;
+    [ optional: &lt;boolean&gt; ]
+    [ persistent: &lt;boolean&gt; ]
+    [ runtime: &lt;boolean&gt; ]
+    value: &lt;string&gt;
 </code></pre>
 <h2 id="field-meaning-and-default">Field meaning and default</h2>
+<p>Required children of optional objects apply only when their parent is used. Other exact conditions are in the explanation; bracketed alternatives may still require one choice.</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>Presence</th>
+<th>Type / constraints</th>
 <th>Field meaning and default</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.key</code></td>
+<td><strong>Required</strong></td>
+<td>string</td>
 <td>Required sysctl key, e.g. net.ipv4.ip_forward. No default; spaces, tabs, newlines and / are forbidden. This is a kernel key, not a resource reference.</td>
 </tr>
 <tr>
 <td><code>spec.value</code></td>
+<td><strong>Required</strong></td>
+<td>string</td>
 <td>Required nonempty string passed to sysctl -w and persisted when requested. Quote numeric-looking YAML values. No default.</td>
 </tr>
 <tr>
 <td><code>spec.expectedValue</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Runtime value used for drift comparison; default value. Allows the observed representation to differ from the written value. A supplied whitespace-only value is rejected.</td>
 </tr>
 <tr>
 <td><code>spec.compare</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["", "exact", "atLeast"]</td>
 <td>Default exact: compare normalized whitespace-separated values as strings. atLeast compares corresponding signed integer components; component counts must match and every current component must be at least the expected value.</td>
 </tr>
 <tr>
 <td><code>spec.runtime</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Whether to apply the live kernel setting. Default true; false can still write persistent configuration when persistent=true.</td>
 </tr>
 <tr>
 <td><code>spec.persistent</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Write a routerd sysctl.d file. Default false. The file contains key=value; it is independent of the runtime switch.</td>
 </tr>
 <tr>
 <td><code>spec.optional</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false. When true, a failed runtime read records Skipped/ReadFailedOptional and skips the remaining apply for this entry. It does not suppress arbitrary write or persistence errors.</td>
 </tr>
 </tbody>
@@ -71,7 +88,7 @@
 <p><code>phase</code>, <code>key</code>, <code>value</code>, <code>dryRun</code></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
 <li><a href="#conditions-and-references">Conditions and references</a></li>
-<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#configuration-syntax">Configuration syntax</a></li>
 <li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 <li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
 </ul>

@@ -14,75 +14,101 @@
 <li>両待機設定が正でなければ、その時点の処理対象をまとめて1回実行し、1イベントごととは限りません。待機タイマーはメモリー上、イベント・実行履歴は永続化します。待機中は1024件または対象データ約4MiBで早期実行します。</li>
 <li>Pluginには該当イベントと、Plugin.context.resourcesで明示許可した設定だけを渡し、秘密値は伏せます。TTL・生成リソースは本購読でなくPluginResultが指定します。異なるイベント群は別のDynamicConfigPart取得元として共存します。</li>
 </ul>
-<h2 id="yaml定義">YAML定義</h2>
-<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
-<pre><code class="language-yaml">- apiVersion: federation.routerd.net/v1alpha1
+<h2 id="設定構文">設定構文</h2>
+<p>説明用の構文表記であり、そのままコピーするYAMLではありません。囲みのない項目は親の中で必須、<code>[ ... ]</code>は条件に応じて省略できる項目、<code>&lt;型&gt;</code>は差し替え値、<code>(a | b)</code>は選択肢です。任意の親にも必須の子があります。条件付き必須・排他・実効既定値は下の表を確認し、通常のYAMLはリンク先の設定例を使ってください。</p>
+<pre><code class="language-text">- apiVersion: federation.routerd.net/v1alpha1
   kind: EventSubscription
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    groupRef: &quot;&lt;string&gt;&quot; # 必須; string
-    match: # 必須; object
-      payload: # 任意; object
-        &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # 任意; string
-      sourceNodes: # 任意; array
-        - &quot;&lt;string&gt;&quot; # string
-      subjectPrefixes: # 任意; array
-        - &quot;&lt;string&gt;&quot; # string
-      types: # 必須; array
-        - &quot;&lt;string&gt;&quot; # string
-    trigger: # 必須; object
-      batchWindow: &quot;&lt;string&gt;&quot; # 任意; string
-      debounce: &quot;&lt;string&gt;&quot; # 任意; string
-      pluginRef: &quot;&lt;string&gt;&quot; # 必須; string
+    groupRef: &lt;string&gt;
+    match:
+      [ payload:
+          [ &lt;name&gt;: &lt;string&gt; ]
+      ]
+      [ sourceNodes:
+          - &lt;string&gt;
+      ]
+      [ subjectPrefixes:
+          - &lt;string&gt;
+      ]
+      types:
+        - &lt;string&gt;
+    trigger:
+      [ batchWindow: &lt;string&gt; ]
+      [ debounce: &lt;string&gt; ]
+      pluginRef: &lt;string&gt;
 </code></pre>
 <h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<p>任意の親の必須項目は、親を使う場合に必要です。それ以外の具体的な条件は説明欄に記載します。<code>[ ... ]</code>で囲まれた選択肢も、いずれか一方が必要な場合があります。</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>指定要否</th>
+<th>型・制約</th>
 <th>項目の意味と既定値</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.groupRef</code></td>
+<td><strong>必須</strong></td>
+<td>string</td>
 <td>保存イベントのgroup_nameを選ぶ裸のEventGroup名が必須です。既定値・グループの自動作成・起動はありません。</td>
 </tr>
 <tr>
 <td><code>spec.match</code></td>
+<td><strong>必須</strong></td>
+<td>object</td>
 <td>必須の選別条件です。typesは1件以上必要で、他の条件が空ならその制限なしです。</td>
 </tr>
 <tr>
 <td><code>spec.match.types</code></td>
+<td><strong>必須</strong></td>
+<td>array</td>
 <td>空でないイベント型を1件以上指定します。いずれかへの完全一致が必要で、ワイルドカードも単なる文字列です。</td>
 </tr>
 <tr>
 <td><code>spec.match.subjectPrefixes</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>subjectの前方一致一覧です。既定の空は制限なしで、パス区間やワイルドカードでなく単純な文字列前方一致です。</td>
 </tr>
 <tr>
 <td><code>spec.match.payload</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>任意のキー・文字列の完全一致マップで、全項目が必要です。空キーは禁止です。欠落キーは空として読むため、期待値が空ならキー欠落にも一致します。</td>
 </tr>
 <tr>
 <td><code>spec.match.sourceNodes</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>sourceNodeの完全一致許可一覧です。既定の空はすべて許可し、自ノードのイベントも自動除外しません。必要な発信元を明示してください。</td>
 </tr>
 <tr>
 <td><code>spec.trigger</code></td>
+<td><strong>必須</strong></td>
+<td>object</td>
 <td>必須のローカルPlugin起動設定です。Plugin.triggersとは別に、購読コントローラーが実行します。</td>
 </tr>
 <tr>
 <td><code>spec.trigger.pluginRef</code></td>
+<td><strong>必須</strong></td>
+<td>string</td>
 <td>Plugin/nameでなく裸のPlugin metadata.nameが必須です。なければPendingです。そのPluginの実行ファイル・タイムアウト・環境・context制限を使います。</td>
 </tr>
 <tr>
 <td><code>spec.trigger.batchWindow</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>最初の対象イベントから測るGo形式の待機上限です。既定の空・0は上限なしですが、debounceが正なら既定上限1mです。正のbatchWindowでdebounce延長を制限します。負数も検証を通り、非正値として扱います。</td>
 </tr>
 <tr>
 <td><code>spec.trigger.debounce</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>新たに対象となった最後のイベントからの待機期間です。既定の空・0は無効で、同じイベントの再読取では延長しません。debounceとbatchWindowの早い方で実行し、正のbatchWindowがなければ上限1mです。</td>
 </tr>
 </tbody>
@@ -93,7 +119,7 @@
 <p>このKindには通常の状態値参照の許可フィールドが登録されていません。</p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
 <ul>
 <li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
-<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#設定構文">設定構文</a></li>
 <li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
 <li><a href="#状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</a></li>
 </ul>

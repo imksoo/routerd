@@ -13,89 +13,119 @@
 <li>The controller evaluates initially, on local routerd.** events other than its own, and periodically (default 5s). Transition memory and hysteresis timers restart after process restart; saved status does not restore that memory.</li>
 <li>retractWhen is validated but not read by the current evaluator. Retraction follows the inverse of emitWhen, so changing retractWhen does not alter behavior.</li>
 </ul>
-<h2 id="yaml-definition">YAML definition</h2>
-<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
-<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+<h2 id="configuration-syntax">Configuration syntax</h2>
+<p>This is explanatory notation, not YAML to copy. Unbracketed fields are required within their parent; <code>[ ... ]</code> marks fields that can be omitted, subject to the conditions in the table. <code>&lt;type&gt;</code> is a placeholder, and <code>(a | b)</code> lists alternatives. Optional parents may contain required children. Conditional requirements, exclusions and runtime defaults are described below. Use the linked YAML example for an ordinary configuration.</p>
+<pre><code class="language-text">- apiVersion: net.routerd.net/v1alpha1
   kind: DerivedEvent
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    emitInitial: true # optional; boolean
-    emitWhen: &quot;all_true&quot; # optional; string; enum=[&quot;all_true&quot;, &quot;any_true&quot;]
-    hysteresis: &quot;&lt;string&gt;&quot; # optional; string
-    inputs: # Required; array
-      - # object
-        any_of: # optional; array
-          - # array
-            - # object
-              equals: &quot;&lt;string&gt;&quot; # optional; string
-              field: &quot;&lt;string&gt;&quot; # optional; string
-              not_empty: true # optional; boolean
-        equals: &quot;&lt;string&gt;&quot; # optional; string
-        field: &quot;&lt;string&gt;&quot; # optional; string
-        not_empty: true # optional; boolean
-    retractWhen: &quot;any_false&quot; # optional; string; enum=[&quot;any_false&quot;, &quot;all_false&quot;]
-    topic: &quot;&lt;string&gt;&quot; # Required; string
+    [ emitInitial: &lt;boolean&gt; ]
+    [ emitWhen: (&quot;all_true&quot; | &quot;any_true&quot;) ]
+    [ hysteresis: &lt;string&gt; ]
+    inputs:
+      -
+        [ any_of:
+            -
+              -
+                [ equals: &lt;string&gt; ]
+                [ field: &lt;string&gt; ]
+                [ not_empty: &lt;boolean&gt; ]
+        ]
+        [ equals: &lt;string&gt; ]
+        [ field: &lt;string&gt; ]
+        [ not_empty: &lt;boolean&gt; ]
+    [ retractWhen: (&quot;any_false&quot; | &quot;all_false&quot;) ]
+    topic: &lt;string&gt;
 </code></pre>
 <h2 id="field-meaning-and-default">Field meaning and default</h2>
+<p>Required children of optional objects apply only when their parent is used. Other exact conditions are in the explanation; bracketed alternatives may still require one choice.</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>Presence</th>
+<th>Type / constraints</th>
 <th>Field meaning and default</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.topic</code></td>
+<td><strong>Required</strong></td>
+<td>string</td>
 <td>Required base event topic. Emits <topic>.asserted when true and <topic>.retracted when false; no bare-topic event is emitted.</td>
 </tr>
 <tr>
 <td><code>spec.inputs</code></td>
+<td><strong>Required</strong></td>
+<td>array</td>
 <td>Required nonempty list of predicates. emitWhen combines entries. An empty predicate object evaluates true, so write explicit conditions.</td>
 </tr>
 <tr>
 <td><code>spec.inputs[].field</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional string, default empty. Kind/name.status.field reads a top-level status member; missing source/member yields empty. Otherwise evaluated as a literal. Arrays become JSON strings, so equals compares the complete serialized value.</td>
 </tr>
 <tr>
 <td><code>spec.inputs[].equals</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional exact case-sensitive comparison, default empty means no equality comparison. With a nonempty field and neither equals nor not_empty, the implicit condition is nonblank.</td>
 </tr>
 <tr>
 <td><code>spec.inputs[].not_empty</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false. True rejects blank/whitespace values; when equals is also nonempty, both constraints must pass.</td>
 </tr>
 <tr>
 <td><code>spec.inputs[].any_of</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional OR-list of AND-groups. When nonempty, takes precedence over this input’s field/equals/not_empty. Every predicate in a group must pass; empty groups are false.</td>
 </tr>
 <tr>
 <td><code>spec.inputs[].any_of[][].field</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Group predicate field; same status/literal rules as inputs[].field.</td>
 </tr>
 <tr>
 <td><code>spec.inputs[].any_of[][].equals</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Group predicate equality; same empty/default semantics as inputs[].equals.</td>
 </tr>
 <tr>
 <td><code>spec.inputs[].any_of[][].not_empty</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Group predicate nonblank check, default false; same semantics as inputs[].not_empty.</td>
 </tr>
 <tr>
 <td><code>spec.emitWhen</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["all_true", "any_true"]</td>
 <td>Default all_true: every input must pass. any_true: at least one input must pass. This target also determines retraction when it becomes false.</td>
 </tr>
 <tr>
 <td><code>spec.retractWhen</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["any_false", "all_false"]</td>
 <td>Accepted values any_false (default) and all_false; currently unused after validation. Do not rely on an independent retraction predicate.</td>
 </tr>
 <tr>
 <td><code>spec.hysteresis</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional Go duration, default 0 for immediate transitions. A new target must persist until the timer fires, when it is rechecked; a return to the prior target cancels it. Initial state is established without waiting. Validation accepts negative durations, which fire immediately.</td>
 </tr>
 <tr>
 <td><code>spec.emitInitial</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false: save the initial asserted/retracted status without emitting an event. True emits the initial result once for each new controller state, including after restart.</td>
 </tr>
 </tbody>
@@ -106,7 +136,7 @@
 <p><code>phase</code>, <code>topic</code></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
 <li><a href="#conditions-and-references">Conditions and references</a></li>
-<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#configuration-syntax">Configuration syntax</a></li>
 <li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 <li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
 </ul>

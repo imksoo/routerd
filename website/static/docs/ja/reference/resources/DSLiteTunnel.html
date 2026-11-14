@@ -13,150 +13,203 @@
 <li>AFTR・送信元・依存値の未解決はPendingです。Upはトンネル・リンク設定を示し、AFTRやインターネットへの疎通を保証しません。有効化条件が偽、または無効なリソースは未使用のトンネルを削除しますが、依存条件の不成立だけでは処理を見送るため即時削除を保証しません。</li>
 <li>Linuxはip6tnlのipip6、FreeBSDはgifを使います。gif名でない希望名はgif100～gif999へ決定的に変換し、実名を状態で公開します。廃止したaftrSource・ready_whenは拒否されるため、aftrFrom・dependsOnを使います。</li>
 </ul>
-<h2 id="yaml定義">YAML定義</h2>
-<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
-<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+<h2 id="設定構文">設定構文</h2>
+<p>説明用の構文表記であり、そのままコピーするYAMLではありません。囲みのない項目は親の中で必須、<code>[ ... ]</code>は条件に応じて省略できる項目、<code>&lt;型&gt;</code>は差し替え値、<code>(a | b)</code>は選択肢です。任意の親にも必須の子があります。条件付き必須・排他・実効既定値は下の表を確認し、通常のYAMLはリンク先の設定例を使ってください。</p>
+<pre><code class="language-text">- apiVersion: net.routerd.net/v1alpha1
   kind: DSLiteTunnel
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    aftrAddressOrdinal: 1 # 任意; integer; minimum=1
-    aftrAddressSelection: &quot;ordinal&quot; # 任意; string; enum=[&quot;ordinal&quot;, &quot;ordinalModulo&quot;]
-    aftrDNSServers: # 任意; array
-      - &quot;&lt;string&gt;&quot; # string
-    aftrFQDN: &quot;&lt;string&gt;&quot; # 任意; string
-    aftrFrom: # 任意; object
-      field: &quot;&lt;string&gt;&quot; # 任意; string
-      optional: true # 任意; boolean
-      resource: &quot;&lt;string&gt;&quot; # 必須; string
-    aftrIPv6: &quot;&lt;string&gt;&quot; # 任意; string
-    defaultRoute: true # 任意; boolean
-    dependsOn: # 任意; array
-      - # object
-        equals: &quot;&lt;string&gt;&quot; # 任意; string
-        field: &quot;&lt;string&gt;&quot; # 任意; string
-        notEmpty: true # 任意; boolean
-        optional: true # 任意; boolean
-        phase: &quot;&lt;string&gt;&quot; # 任意; string
-        resource: &quot;&lt;string&gt;&quot; # 必須; string
-    enabled: true # 任意; boolean
-    encapsulationLimit: &quot;&lt;string&gt;&quot; # 任意; string
-    interface: &quot;&lt;string&gt;&quot; # 必須; string
-    localAddress: &quot;&lt;string&gt;&quot; # 任意; string
-    localAddressFrom: # 任意; object
-      field: &quot;&lt;string&gt;&quot; # 任意; string
-      optional: true # 任意; boolean
-      resource: &quot;&lt;string&gt;&quot; # 必須; string
-    localAddressSource: &quot;interface&quot; # 任意; string; enum=[&quot;interface&quot;, &quot;static&quot;, &quot;delegatedAddress&quot;]
-    localAddressSuffix: &quot;&lt;string&gt;&quot; # 任意; string
-    localDelegatedAddress: &quot;&lt;string&gt;&quot; # 任意; string
-    mtu: 1280 # 任意; integer; minimum=1280; maximum=65535
-    remoteAddress: &quot;&lt;string&gt;&quot; # 任意; string
-    routeMetric: 0 # 任意; integer; minimum=0
-    tunnelName: &quot;&lt;string&gt;&quot; # 任意; string
-    when: # 任意; object
-      state: # 任意; object
-        &quot;&lt;key&gt;&quot;: # 任意; object
-          contains: &quot;&lt;string&gt;&quot; # 任意; string
-          equals: &quot;&lt;string&gt;&quot; # 任意; string
-          exists: true # 任意; boolean
-          for: &quot;&lt;string&gt;&quot; # 任意; string
-          in: # 任意; array
-            - &quot;&lt;string&gt;&quot; # string
-          maxAge: &quot;&lt;string&gt;&quot; # 任意; string
-          status: &quot;set&quot; # 任意; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+    [ aftrAddressOrdinal: &lt;integer&gt; ]
+    [ aftrAddressSelection: (&quot;ordinal&quot; | &quot;ordinalModulo&quot;) ]
+    [ aftrDNSServers:
+        - &lt;string&gt;
+    ]
+    [ aftrFQDN: &lt;string&gt; ]
+    [ aftrFrom:
+        field: &lt;string&gt;
+        [ optional: &lt;boolean&gt; ]
+        resource: &lt;string&gt;
+    ]
+    [ aftrIPv6: &lt;string&gt; ]
+    [ defaultRoute: &lt;boolean&gt; ]
+    [ dependsOn:
+        -
+          [ equals: &lt;string&gt; ]
+          [ field: &lt;string&gt; ]
+          [ notEmpty: &lt;boolean&gt; ]
+          [ optional: &lt;boolean&gt; ]
+          [ phase: &lt;string&gt; ]
+          resource: &lt;string&gt;
+    ]
+    [ enabled: &lt;boolean&gt; ]
+    [ encapsulationLimit: &lt;string&gt; ]
+    interface: &lt;string&gt;
+    [ localAddress: &lt;string&gt; ]
+    [ localAddressFrom:
+        field: &lt;string&gt;
+        [ optional: &lt;boolean&gt; ]
+        resource: &lt;string&gt;
+    ]
+    [ localAddressSource: (&quot;interface&quot; | &quot;static&quot; | &quot;delegatedAddress&quot;) ]
+    [ localAddressSuffix: &lt;string&gt; ]
+    [ localDelegatedAddress: &lt;string&gt; ]
+    [ mtu: &lt;integer&gt; ]
+    [ remoteAddress: &lt;string&gt; ]
+    [ routeMetric: &lt;integer&gt; ]
+    [ tunnelName: &lt;string&gt; ]
+    [ when:
+        [ state:
+            [ &lt;name&gt;:
+                [ contains: &lt;string&gt; ]
+                [ equals: &lt;string&gt; ]
+                [ exists: &lt;boolean&gt; ]
+                [ for: &lt;string&gt; ]
+                [ in:
+                    - &lt;string&gt;
+                ]
+                [ maxAge: &lt;string&gt; ]
+                [ status: (&quot;set&quot; | &quot;unset&quot; | &quot;unknown&quot;) ]
+            ]
+        ]
+    ]
 </code></pre>
 <h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<p>任意の親の必須項目は、親を使う場合に必要です。それ以外の具体的な条件は説明欄に記載します。<code>[ ... ]</code>で囲まれた選択肢も、いずれか一方が必要な場合があります。</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>指定要否</th>
+<th>型・制約</th>
 <th>項目の意味と既定値</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.interface</code></td>
+<td><strong>必須</strong></td>
+<td>string</td>
 <td>宣言済みの論理アンダーレイインターフェースが必須で、通常の参照検証で存在を確認します。</td>
 </tr>
 <tr>
 <td><code>spec.tunnelName</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>任意のデバイス名で、既定はmetadata.nameです。FreeBSDは前述のgif名に変換する場合があります。</td>
 </tr>
 <tr>
 <td><code>spec.enabled</code></td>
+<td><em>任意</em></td>
+<td>boolean</td>
 <td>既定はtrueです。falseは未使用の設定トンネルを削除しDisabledにしますが、検証は免除しません。</td>
 </tr>
 <tr>
 <td><code>spec.aftrFQDN</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>string</td>
 <td>任意のAFTRホスト名で、空白・スラッシュは禁止です。aftrFromの後、固定アドレスの前に試します。</td>
 </tr>
 <tr>
 <td><code>spec.aftrIPv6</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>string</td>
 <td>任意のAFTR IPv6アドレスです。aftrFQDNの後に試し、既定値はありません。</td>
 </tr>
 <tr>
 <td><code>spec.remoteAddress</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>string</td>
 <td>解決順序の最後に使う任意のAFTR IPv6アドレスです。内側IPv4の宛先ではありません。</td>
 </tr>
 <tr>
 <td><code>spec.aftrFrom</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>object</td>
 <td>共通のresource・field参照で、通常はDHCPv6のAFTR名を使います。実在する参照先・提供フィールドが必要です。同じリソースのdnsServersも読み、aftrDNSServersに加えます。</td>
 </tr>
 <tr>
 <td><code>spec.aftrDNSServers</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>任意のIPv4・IPv6 DNSサーバーです。53番で問い合わせます。明示値・参照由来の両方がなければ実行時は既定で127.0.0.1:1053を使います。宣言してもリゾルバーは起動しないため、利用可能なサーバーを指定します。</td>
 </tr>
 <tr>
 <td><code>spec.aftrAddressOrdinal</code></td>
+<td><em>任意</em></td>
+<td>integer; minimum=1</td>
 <td>AAAAの1始まりの選択番号で、既定は1です。番号・選択モードを明示するとIPv6文字列の辞書順で選び、両方省略ならリゾルバーの順序を使います。</td>
 </tr>
 <tr>
 <td><code>spec.aftrAddressSelection</code></td>
+<td><em>任意</em></td>
+<td>string; enum=["ordinal", "ordinalModulo"]</td>
 <td>既定はordinalで、件数外の番号は失敗します。ordinalModuloは番号−1を件数で循環させ、AFTR間の通信量を分散する指定ではありません。</td>
 </tr>
 <tr>
 <td><code>spec.localAddress</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>string</td>
 <td>任意の外側IPv6送信元です。localAddressSource:staticでは必須で、内側IPv4送信元ではありません。</td>
 </tr>
 <tr>
 <td><code>spec.localAddressFrom</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>内側IPv4の共通状態参照です。状態を先に読み、次に宣言済みIPv4StaticAddress.addressを読みます。必須値未解決はPending、optional:trueは192.0.0.2へ戻ります。有効なユニキャストIPv4が必要です。</td>
 </tr>
 <tr>
 <td><code>spec.localAddressSource</code></td>
+<td><em>任意</em></td>
+<td>string; enum=["interface", "static", "delegatedAddress"]</td>
 <td>既定のinterfaceはlocalAddressがなければ利用可能なグローバルIPv6を探します。staticはlocalAddress必須です。delegatedAddressはlocalDelegatedAddressから導出し、DAD完了まで/128を準備して待つ場合があります。</td>
 </tr>
 <tr>
 <td><code>spec.localDelegatedAddress</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>string</td>
 <td>既存IPv6DelegatedAddressの裸名で、delegatedAddress時に必須です。他モードでも指定した参照は存在を確認します。</td>
 </tr>
 <tr>
 <td><code>spec.localAddressSuffix</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>任意のIPv6サフィックスです。委譲モードの優先順は本項目→参照先addressSuffix→::1です。interfaceモードでもこの値で送信元を導出できます。</td>
 </tr>
 <tr>
 <td><code>spec.defaultRoute</code></td>
+<td><em>任意</em></td>
+<td>boolean</td>
 <td>既定はfalseです。FreeBSDの実行処理は192.0.0.1経由のデフォルト経路を変更・追加できます。Linuxのトンネル処理はこの値でIPv4デフォルトを作らないため、IPv4Route・EgressRoutePolicyを使います。</td>
 </tr>
 <tr>
 <td><code>spec.routeMetric</code></td>
+<td><em>任意</em></td>
+<td>integer; minimum=0</td>
 <td>任意の0以上の整数で、デコード時の既定は0です。現行DS-Liteの実行処理はデフォルト経路設定にこの値を渡しません。</td>
 </tr>
 <tr>
 <td><code>spec.mtu</code></td>
+<td><em>任意</em></td>
+<td>integer; minimum=1280; maximum=65535</td>
 <td>任意の1280～65535で、実行時の既定は1460です。トンネルリンクに適用し、アンダーレイ経路がそのサイズを通すことは保証しません。</td>
 </tr>
 <tr>
 <td><code>spec.encapsulationLimit</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>Linuxのencaplimit引数で、既定はnoneです。詳細値をここでは検証せず、不正値はipコマンドで失敗します。FreeBSDの実行処理では使いません。</td>
 </tr>
 <tr>
 <td><code>spec.when</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>任意の共通有効化条件で、既定は無条件です。偽なら未使用の設定トンネルを削除します。</td>
 </tr>
 <tr>
 <td><code>spec.dependsOn</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>共通依存条件のANDリストで、既定は空です。不成立ならPending/DependsOnFalseとしてトンネル更新を見送ります。</td>
 </tr>
 </tbody>
@@ -168,7 +221,7 @@
 <p><a href="/examples/example-dslite-home.yaml">設定例</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
 <ul>
 <li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
-<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#設定構文">設定構文</a></li>
 <li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
 <li><a href="#状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</a></li>
 </ul>

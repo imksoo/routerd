@@ -12,126 +12,171 @@
 <li>The live supervisor passes authMethod, mtu/mru, serviceName/acName and lcpEchoInterval/lcpEchoFailure to the daemon. It does not pass ifname, managed, persist, ipv6, usePeerDNS, lcpInterval or lcpFailure. Do not infer live behavior from the separate manual FreeBSD render artifact.</li>
 <li>The live daemon defaults to MTU/MRU 1454 and LCP echo 30s/4 on both platforms. The separate manual FreeBSD mpd5 rendering defaults to 1492 and legacy LCP 20s/3. Neither the configured plan nor Connected status proves real upstream reachability.</li>
 </ul>
-<h2 id="yaml-definition">YAML definition</h2>
-<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
-<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+<h2 id="configuration-syntax">Configuration syntax</h2>
+<p>This is explanatory notation, not YAML to copy. Unbracketed fields are required within their parent; <code>[ ... ]</code> marks fields that can be omitted, subject to the conditions in the table. <code>&lt;type&gt;</code> is a placeholder, and <code>(a | b)</code> lists alternatives. Optional parents may contain required children. Conditional requirements, exclusions and runtime defaults are described below. Use the linked YAML example for an ordinary configuration.</p>
+<pre><code class="language-text">- apiVersion: net.routerd.net/v1alpha1
   kind: PPPoESession
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    acName: &quot;&lt;string&gt;&quot; # optional; string
-    authMethod: &quot;chap&quot; # optional; string; enum=[&quot;chap&quot;, &quot;pap&quot;, &quot;both&quot;]
-    defaultRoute: true # optional; boolean
-    enabled: true # optional; boolean
-    ifname: &quot;&lt;string&gt;&quot; # optional; string
-    interface: &quot;&lt;string&gt;&quot; # Required; string
-    ipv6: true # optional; boolean
-    lcpEchoFailure: 0 # optional; integer; minimum=0
-    lcpEchoInterval: 0 # optional; integer; minimum=0
-    lcpFailure: 0 # optional; integer; minimum=0
-    lcpInterval: 0 # optional; integer; minimum=0
-    managed: true # optional; boolean
-    mru: 576 # optional; integer; minimum=576; maximum=1500
-    mtu: 576 # optional; integer; minimum=576; maximum=1500
-    password: &quot;&lt;string&gt;&quot; # optional; string
-    passwordFile: &quot;&lt;string&gt;&quot; # optional; string
-    persist: true # optional; boolean
-    secretEncoding: &quot;plain&quot; # optional; string; enum=[&quot;plain&quot;]
-    serviceName: &quot;&lt;string&gt;&quot; # optional; string
-    usePeerDNS: true # optional; boolean
-    username: &quot;&lt;string&gt;&quot; # Required; string
+    [ acName: &lt;string&gt; ]
+    [ authMethod: (&quot;chap&quot; | &quot;pap&quot; | &quot;both&quot;) ]
+    [ defaultRoute: &lt;boolean&gt; ]
+    [ enabled: &lt;boolean&gt; ]
+    [ ifname: &lt;string&gt; ]
+    interface: &lt;string&gt;
+    [ ipv6: &lt;boolean&gt; ]
+    [ lcpEchoFailure: &lt;integer&gt; ]
+    [ lcpEchoInterval: &lt;integer&gt; ]
+    [ lcpFailure: &lt;integer&gt; ]
+    [ lcpInterval: &lt;integer&gt; ]
+    [ managed: &lt;boolean&gt; ]
+    [ mru: &lt;integer&gt; ]
+    [ mtu: &lt;integer&gt; ]
+    [ password: &lt;string&gt; ]
+    [ passwordFile: &lt;string&gt; ]
+    [ persist: &lt;boolean&gt; ]
+    [ secretEncoding: (&quot;plain&quot;) ]
+    [ serviceName: &lt;string&gt; ]
+    [ usePeerDNS: &lt;boolean&gt; ]
+    username: &lt;string&gt;
 </code></pre>
 <h2 id="field-meaning-and-default">Field meaning and default</h2>
+<p>Required children of optional objects apply only when their parent is used. Other exact conditions are in the explanation; bracketed alternatives may still require one choice.</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>Presence</th>
+<th>Type / constraints</th>
 <th>Field meaning and default</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.interface</code></td>
+<td><strong>Required</strong></td>
+<td>string</td>
 <td>Required lower base Interface metadata.name, resolved to its physical OS name. No status-value source.</td>
 </tr>
 <tr>
 <td><code>spec.ifname</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional desired PPP name, &lt;=15 characters without whitespace/slash; omission requires ppp-<name> to fit 15 characters. The live supervisor currently ignores this field and the daemon uses DefaultIfName; manual FreeBSD render uses this value. Avoid relying on a custom name in the live path.</td>
 </tr>
 <tr>
 <td><code>spec.enabled</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default true. False suppresses startup, stops the supervised session and reports Disabled; it does not waive configuration validation.</td>
 </tr>
 <tr>
 <td><code>spec.authMethod</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["chap", "pap", "both"]</td>
 <td>chap by default; pap or both also accepted. Controls permitted PAP/CHAP authentication in the live pppd/mpd5 configuration.</td>
 </tr>
 <tr>
 <td><code>spec.username</code></td>
+<td><strong>Required</strong></td>
+<td>string</td>
 <td>Required PPP authentication username, with no derived default.</td>
 </tr>
 <tr>
 <td><code>spec.password</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Inline plain-text PPP password, required unless passwordFile is supplied; mutually exclusive with passwordFile.</td>
 </tr>
 <tr>
 <td><code>spec.passwordFile</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Router-local raw password file; required unless password is supplied. Daemon reads it and trims surrounding whitespace at startup; missing/unreadable/empty fails. Not an environment assignment file.</td>
 </tr>
 <tr>
 <td><code>spec.mtu</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=576; maximum=1500</td>
 <td>Optional 576–1500; omitted/0 defaults to 1454 in the live daemon, 1492 in manual FreeBSD render. A 1500-byte PPP MTU requires suitable underlay support; validation does not prove it.</td>
 </tr>
 <tr>
 <td><code>spec.mru</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=576; maximum=1500</td>
 <td>Optional 576–1500 receive limit; omitted/0 defaults to 1454 in the live daemon, 1492 in manual FreeBSD render.</td>
 </tr>
 <tr>
 <td><code>spec.serviceName</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional PPPoE service selector; empty sends no explicit service-name setting. Newlines are rejected.</td>
 </tr>
 <tr>
 <td><code>spec.acName</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional access-concentrator selector; empty sends no explicit AC-name setting. Newlines are rejected.</td>
 </tr>
 <tr>
 <td><code>spec.defaultRoute</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false. The live main-route cleanup preserves an existing default route on the observed PPP device when true, but the daemon configuration does not create that route. Manual FreeBSD render emits a default-route directive when true. Use an explicit IPv4Route if automatic installation is required in the live path.</td>
 </tr>
 <tr>
 <td><code>spec.usePeerDNS</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false but not consulted by the live daemon path. LinuxPeer always emits usepeerdns and negotiated DNS is published in PPP status; this field does not control routerd DNS forwarding or resolv.conf application.</td>
 </tr>
 <tr>
 <td><code>spec.persist</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Optional boolean decoded but not used by the current supervised daemon configuration; omission does not establish a resource-specific retry policy. Supervisor lifecycle is separate.</td>
 </tr>
 <tr>
 <td><code>spec.lcpInterval</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=0</td>
 <td>Legacy nonnegative interval used only by manual FreeBSD render, with 0/omitted →20 seconds. The live daemon ignores it; use lcpEchoInterval.</td>
 </tr>
 <tr>
 <td><code>spec.lcpFailure</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=0</td>
 <td>Legacy nonnegative failure multiplier used only by manual FreeBSD render, with 0/omitted →3. The live daemon ignores it; use lcpEchoFailure.</td>
 </tr>
 <tr>
 <td><code>spec.lcpEchoInterval</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=0</td>
 <td>Nonnegative LCP echo interval in seconds; omitted/0 results in the live daemon default 30s, not disabled echoes. Manual FreeBSD render ignores this field.</td>
 </tr>
 <tr>
 <td><code>spec.lcpEchoFailure</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=0</td>
 <td>Nonnegative LCP echo failure count; omitted/0 results in live default 4. Linux passes lcp-echo-failure; FreeBSD daemon renders keep-alive interval and interval×count.</td>
 </tr>
 <tr>
 <td><code>spec.ipv6</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false; currently not passed to the supervised PPP daemon and does not emit IPv6 negotiation options in its generated configuration. Do not rely on this flag to enable IPv6 over PPP.</td>
 </tr>
 <tr>
 <td><code>spec.managed</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false. The live supervisor starts any enabled session regardless of this flag. In manual FreeBSD render only, true adds an enabled session to the mpd5 default load list. It is not observe-only protection for the live path.</td>
 </tr>
 <tr>
 <td><code>spec.secretEncoding</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["plain"]</td>
 <td>Only omitted or plain is accepted. It does not decode base64 or encrypt password/passwordFile.</td>
 </tr>
 </tbody>
@@ -143,7 +188,7 @@
 <p><a href="/examples/example-pppoe-ipv4-nat.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
 <li><a href="#conditions-and-references">Conditions and references</a></li>
-<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#configuration-syntax">Configuration syntax</a></li>
 <li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 <li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
 </ul>

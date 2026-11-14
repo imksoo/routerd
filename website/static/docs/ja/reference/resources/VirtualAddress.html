@@ -16,246 +16,344 @@
 <li>gracefulActivationはLinux IPv4 VRRP専用です。VIP公開前に選出・VMAC有効化を行い、readyWhenがVIP公開を許可します。期限超過は失敗表示だけでVIPを保留して再試行し、強制公開しません。一度正常に公開したVIPは、主系のままなら後の準備条件低下だけでは取り下げません。</li>
 <li>VRRP広告間隔は実装が決め（通常1秒）、advertInterval・preemptDelayでは設定しません。旧メンバーはYAML・JSONスキーマから除外しています。優先度・認証の実際の動作はkeepalived・CARPにも依存します。</li>
 </ul>
-<h2 id="yaml定義">YAML定義</h2>
-<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
-<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+<h2 id="設定構文">設定構文</h2>
+<p>説明用の構文表記であり、そのままコピーするYAMLではありません。囲みのない項目は親の中で必須、<code>[ ... ]</code>は条件に応じて省略できる項目、<code>&lt;型&gt;</code>は差し替え値、<code>(a | b)</code>は選択肢です。任意の親にも必須の子があります。条件付き必須・排他・実効既定値は下の表を確認し、通常のYAMLはリンク先の設定例を使ってください。</p>
+<pre><code class="language-text">- apiVersion: net.routerd.net/v1alpha1
   kind: VirtualAddress
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    address: &quot;&lt;string&gt;&quot; # 必須; string
-    addressFrom: # 任意; object
-      field: &quot;&lt;string&gt;&quot; # 任意; string
-      optional: true # 任意; boolean
-      resource: &quot;&lt;string&gt;&quot; # 必須; string
-    externalDNS: true # 任意; boolean
-    family: &quot;ipv4&quot; # 必須; string; enum=[&quot;ipv4&quot;, &quot;ipv6&quot;]
-    gratuitousARP: true # 任意; boolean
-    hostname: &quot;&lt;string&gt;&quot; # 任意; string
-    interface: &quot;&lt;string&gt;&quot; # 必須; string
-    mode: &quot;&quot; # 任意; string; enum=[&quot;&quot;, &quot;static&quot;, &quot;vrrp&quot;]
-    track: # 任意; array
-      - # object
-        confirmConsecutiveHealthy: 1 # 任意; integer; minimum=1; maximum=255
-        confirmConsecutiveUnhealthy: 1 # 任意; integer; minimum=1; maximum=255
-        resource: &quot;&lt;string&gt;&quot; # 必須; string
-        unhealthyPenalty: 0 # 任意; integer; minimum=0; maximum=254
-    vrrp: # 任意; object
-      additionalFailoverVMACs: # 任意; array
-        - # object
-          interface: &quot;&lt;string&gt;&quot; # 必須; string
-          linkLocalAddress: &quot;&lt;string&gt;&quot; # 任意; string
-          macAddress: &quot;&lt;string&gt;&quot; # 必須; string
-          parentInterface: &quot;&lt;string&gt;&quot; # 必須; string
-          withdrawRouterAdvertisement: true # 任意; boolean
-      authentication: &quot;&lt;string&gt;&quot; # 任意; string
-      authenticationFrom: # 任意; object
-        base64: true # 任意; boolean
-        env: &quot;&lt;string&gt;&quot; # 任意; string
-        file: &quot;&lt;string&gt;&quot; # 任意; string
-      failoverVMAC: # 任意; object
-        interface: &quot;&lt;string&gt;&quot; # 必須; string
-        linkLocalAddress: &quot;&lt;string&gt;&quot; # 任意; string
-        macAddress: &quot;&lt;string&gt;&quot; # 必須; string
-        parentInterface: &quot;&lt;string&gt;&quot; # 必須; string
-        withdrawRouterAdvertisement: true # 任意; boolean
-      gracefulActivation: # 任意; object
-        readyWhen: # 必須; object
-          state: # 任意; object
-            &quot;&lt;key&gt;&quot;: # 任意; object
-              contains: &quot;&lt;string&gt;&quot; # 任意; string
-              equals: &quot;&lt;string&gt;&quot; # 任意; string
-              exists: true # 任意; boolean
-              for: &quot;&lt;string&gt;&quot; # 任意; string
-              in: # 任意; array
-                - &quot;&lt;string&gt;&quot; # string
-              maxAge: &quot;&lt;string&gt;&quot; # 任意; string
-              status: &quot;set&quot; # 任意; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
-        timeout: &quot;&lt;string&gt;&quot; # 任意; string
-      peers: # 任意; array
-        - &quot;&lt;string&gt;&quot; # string
-      preempt: true # 任意; boolean
-      priority: 1 # 任意; integer; minimum=1; maximum=254
-      virtualRouterID: 1 # 必須; integer; minimum=1; maximum=255
-    when: # 任意; object
-      state: # 任意; object
-        &quot;&lt;key&gt;&quot;: # 任意; object
-          contains: &quot;&lt;string&gt;&quot; # 任意; string
-          equals: &quot;&lt;string&gt;&quot; # 任意; string
-          exists: true # 任意; boolean
-          for: &quot;&lt;string&gt;&quot; # 任意; string
-          in: # 任意; array
-            - &quot;&lt;string&gt;&quot; # string
-          maxAge: &quot;&lt;string&gt;&quot; # 任意; string
-          status: &quot;set&quot; # 任意; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+    [ address: &lt;string&gt; ]
+    [ addressFrom:
+        field: &lt;string&gt;
+        [ optional: &lt;boolean&gt; ]
+        resource: &lt;string&gt;
+    ]
+    [ externalDNS: &lt;boolean&gt; ]
+    family: (&quot;ipv4&quot; | &quot;ipv6&quot;)
+    [ gratuitousARP: &lt;boolean&gt; ]
+    [ hostname: &lt;string&gt; ]
+    interface: &lt;string&gt;
+    [ mode: (&quot;&quot; | &quot;static&quot; | &quot;vrrp&quot;) ]
+    [ track:
+        -
+          [ confirmConsecutiveHealthy: &lt;integer&gt; ]
+          [ confirmConsecutiveUnhealthy: &lt;integer&gt; ]
+          resource: &lt;string&gt;
+          [ unhealthyPenalty: &lt;integer&gt; ]
+    ]
+    [ vrrp:
+        [ additionalFailoverVMACs:
+            -
+              interface: &lt;string&gt;
+              [ linkLocalAddress: &lt;string&gt; ]
+              macAddress: &lt;string&gt;
+              parentInterface: &lt;string&gt;
+              [ withdrawRouterAdvertisement: &lt;boolean&gt; ]
+        ]
+        [ authentication: &lt;string&gt; ]
+        [ authenticationFrom:
+            [ base64: &lt;boolean&gt; ]
+            [ env: &lt;string&gt; ]
+            [ file: &lt;string&gt; ]
+        ]
+        [ failoverVMAC:
+            interface: &lt;string&gt;
+            [ linkLocalAddress: &lt;string&gt; ]
+            macAddress: &lt;string&gt;
+            parentInterface: &lt;string&gt;
+            [ withdrawRouterAdvertisement: &lt;boolean&gt; ]
+        ]
+        [ gracefulActivation:
+            readyWhen:
+              [ state:
+                  [ &lt;name&gt;:
+                      [ contains: &lt;string&gt; ]
+                      [ equals: &lt;string&gt; ]
+                      [ exists: &lt;boolean&gt; ]
+                      [ for: &lt;string&gt; ]
+                      [ in:
+                          - &lt;string&gt;
+                      ]
+                      [ maxAge: &lt;string&gt; ]
+                      [ status: (&quot;set&quot; | &quot;unset&quot; | &quot;unknown&quot;) ]
+                  ]
+              ]
+            [ timeout: &lt;string&gt; ]
+        ]
+        [ peers:
+            - &lt;string&gt;
+        ]
+        [ preempt: &lt;boolean&gt; ]
+        [ priority: &lt;integer&gt; ]
+        [ virtualRouterID: &lt;integer&gt; ]
+    ]
+    [ when:
+        [ state:
+            [ &lt;name&gt;:
+                [ contains: &lt;string&gt; ]
+                [ equals: &lt;string&gt; ]
+                [ exists: &lt;boolean&gt; ]
+                [ for: &lt;string&gt; ]
+                [ in:
+                    - &lt;string&gt;
+                ]
+                [ maxAge: &lt;string&gt; ]
+                [ status: (&quot;set&quot; | &quot;unset&quot; | &quot;unknown&quot;) ]
+            ]
+        ]
+    ]
 </code></pre>
 <h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<p>任意の親の必須項目は、親を使う場合に必要です。それ以外の具体的な条件は説明欄に記載します。<code>[ ... ]</code>で囲まれた選択肢も、いずれか一方が必要な場合があります。</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>指定要否</th>
+<th>型・制約</th>
 <th>項目の意味と既定値</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.family</code></td>
+<td><strong>必須</strong></td>
+<td>string; enum=["ipv4", "ipv6"]</td>
 <td>ipv4・ipv6が必須で既定値はありません。アドレスの系統と一致させます。</td>
 </tr>
 <tr>
 <td><code>spec.interface</code></td>
+<td><strong>必須</strong></td>
+<td>string</td>
 <td>必須の裸の宣言論理インターフェース名で、OS名へ解決します。Kind/nameではありません。</td>
 </tr>
 <tr>
 <td><code>spec.address</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>string</td>
 <td>addressFromと排他の固定プレフィックスです。IPv4は/32、IPv6は固定mode以外/128です。意味検証はaddressFromを許可しますが、JSON Schemaはaddressを必須としています。</td>
 </tr>
 <tr>
 <td><code>spec.addressFrom</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>object</td>
 <td>addressと排他の共通参照です。実効描画は宣言IPv4StaticAddress.address・VirtualAddress.addressで、field明示が必要です。VirtualAddressの参照を再帰的にたどりません。</td>
 </tr>
 <tr>
 <td><code>spec.hostname</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>提供中のDNSZoneへのローカル名登録・状態表示用FQDNです。既定空で、OSホスト名・外部DNS登録は変更しません。</td>
 </tr>
 <tr>
 <td><code>spec.externalDNS</code></td>
+<td><em>任意</em></td>
+<td>boolean</td>
 <td>既定falseです。trueはローカル名登録・DNS提供範囲警告を省き、外部DNSへの通信はしません。</td>
 </tr>
 <tr>
 <td><code>spec.mode</code></td>
+<td><em>任意</em></td>
+<td>string; enum=["", "static", "vrrp"]</td>
 <td>static（既定）・vrrpです。staticは選挙なしで自機に適用し、vrrpはLinux keepalived・FreeBSD CARPです。vrrp・trackオブジェクトは固定の所有を制御しません。</td>
 </tr>
 <tr>
 <td><code>spec.gratuitousARP</code></td>
+<td><em>任意</em></td>
+<td>boolean</td>
 <td>既定falseで、trueはLinux固定IPv4だけです。欠落VIPの追加・復元後にarping -U -c 3を使い、通常の再評価では連発しません。失敗は報告し再試行します。</td>
 </tr>
 <tr>
 <td><code>spec.when</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>共通の有効化条件で、既定は無条件です。リソース全体を除外する条件で、gracefulActivation.readyWhenの公開条件とは別です。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>object</td>
 <td>mode=vrrp専用の選出設定です。staticは使わず、staticでは子項目すべてを検証するわけではありません。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.virtualRouterID</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>integer; minimum=1; maximum=255</td>
 <td>vrrpで必須の1～255で、CARPのvhidへ対応します。同じRouterのfamily・interfaceごとに一意とし、同じ選挙の相手と合わせます。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.priority</code></td>
+<td><em>任意</em></td>
+<td>integer; minimum=1; maximum=254</td>
 <td>1～254で省略・0は100です。trackの減点後も最小1にし、CARPはadvskew=max(1,254-priority)へ変換します。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.preempt</code></td>
+<td><em>任意</em></td>
+<td>boolean</td>
 <td>省略・falseは高優先度だけを理由に主系を奪い返しません。trueで有効です。CARPは全体のnet.inet.carp.preemptで、1定義でもtrueなら有効です。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.peers</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>array</td>
 <td>Linux vrrpで必須の相手アドレス・ホスト名一覧です。構文を検証し、描画で重複排除・ソートします。FreeBSD CARPは相手指定として使いません。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.authentication</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>任意の平文認証値で、既定はなしです。authenticationFromと排他です。Linuxはkeepalived auth_type PASS、CARPはpassで、VRRP通信の暗号化ではありません。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.authenticationFrom</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>平文authenticationと排他の秘密値取得元です。指定時はfile・envのちょうど一方が必要です。描画時に読み、ファイル・環境欠落や不正Base64はそこで失敗します。解決結果が空なら認証を省略します。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.authenticationFrom.file</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>ルーター上の秘密値ファイルでenvと排他です。描画は末尾CR・LFを除きますが、全空白を除くわけではありません。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.authenticationFrom.env</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>routerdプロセスの環境変数名でfileと排他です。シェル展開・相手環境変数ではありません。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.authenticationFrom.base64</code></td>
+<td><em>任意</em></td>
+<td>boolean</td>
 <td>既定falseです。trueは符号化値前後の空白を除いて標準Base64を解読し、結果末尾のCR・LFも除きます。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.failoverVMAC</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>本VRRP選出で制御する任意のLinux macvlan識別です。別選挙はありません。主項目はLinux VRRPで検証し、FreeBSDでは使えません。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.additionalFailoverVMACs</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>同じ役割遷移に従う追加VMACで、既定は空です。子項目はfailoverVMACと同じ意味です。現行YAML検証は限定的ですが、Linuxヘルパー・描画で正しい親・インターフェース名・Ethernet MACが必要です。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.gracefulActivation</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>任意のLinux IPv4 VRRP公開条件です。既定なしで、他family・FreeBSDは禁止です。選出後に依存状態を準備し、VIP公開を待ちます。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.gracefulActivation.readyWhen</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>object</td>
 <td>条件定義時に必須の空でない共通state・all・anyです。参照・条件を検証し、初回公開だけを制御して、正常公開後の継続取り下げ条件ではありません。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.gracefulActivation.timeout</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>正のGo形式期間で既定45sです。満了はFailed・ReadinessTimeout表示に変えるだけで、VIP強制公開・再試行停止・ルーター再起動はしません。</td>
 </tr>
 <tr>
 <td><code>spec.track</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>任意のリソース健全性一覧で既定は空、vrrp専用です。異常の減点を合計して選出優先度を下げ、固定VIPを直接消しません。</td>
 </tr>
 <tr>
 <td><code>spec.track[].resource</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>string</td>
 <td>必須のKind/name形式で、ここでは形式のみを検証します。phaseを読み、通常の準備完了系phaseは正常、BGPRouter・BGPPeerはEstablishedが必要です。Disabled・Standby・NotApplicable・when不成立は中立で現在の減点状態を維持します。</td>
 </tr>
 <tr>
 <td><code>spec.track[].unhealthyPenalty</code></td>
+<td><em>任意</em></td>
+<td>integer; minimum=0; maximum=254</td>
 <td>0～254で省略・0は50です。0で減点を無効にはできません。異常確認後に適用し、正常確認後に戻します。</td>
 </tr>
 <tr>
 <td><code>spec.track[].confirmConsecutiveUnhealthy</code></td>
+<td><em>任意</em></td>
+<td>integer; minimum=1; maximum=255</td>
 <td>減点前の連続異常評価数で、省略・0は3、明示値1～255です。秒数でなく再評価の観測回数です。</td>
 </tr>
 <tr>
 <td><code>spec.track[].confirmConsecutiveHealthy</code></td>
+<td><em>任意</em></td>
+<td>integer; minimum=1; maximum=255</td>
 <td>減点解除までの連続正常評価数で、省略・0は2、明示値1～255です。減点判断・回数は再起動後に保存statusから復元できます。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.failoverVMAC.parentInterface</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>string</td>
 <td>必須の設定論理親インターフェース名で、描画時にOS名へ解決します。状態値参照ではありません。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.additionalFailoverVMACs[].parentInterface</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>string</td>
 <td>必須の設定論理親インターフェース名で、描画時にOS名へ解決します。状態値参照ではありません。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.failoverVMAC.interface</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>string</td>
 <td>必須のLinux VMACデバイス名です。15文字以内の有効なインターフェース名とし、役割ヘルパーが作成・有効化・無効化します。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.additionalFailoverVMACs[].interface</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>string</td>
 <td>必須のLinux VMACデバイス名です。15文字以内の有効なインターフェース名とし、役割ヘルパーが作成・有効化・無効化します。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.failoverVMAC.macAddress</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>string</td>
 <td>必須の6バイトEthernet MACです。同じ切替識別を持つ相手と合わせ、VRIDから自動生成しません。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.additionalFailoverVMACs[].macAddress</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>string</td>
 <td>必須の6バイトEthernet MACです。同じ切替識別を持つ相手と合わせ、VRIDから自動生成しません。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.failoverVMAC.linkLocalAddress</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>任意の裸のIPv6リンクローカル識別（fe80::/10）で、プレフィックス・ゾーン接尾辞なしです。Linuxヘルパーが実行時に検証し、省略時は通常のリンクローカル処理です。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.additionalFailoverVMACs[].linkLocalAddress</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>任意の裸のIPv6リンクローカル識別（fe80::/10）で、プレフィックス・ゾーン接尾辞なしです。Linuxヘルパーが実行時に検証し、省略時は通常のリンクローカル処理です。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.failoverVMAC.withdrawRouterAdvertisement</code></td>
+<td><em>任意</em></td>
+<td>boolean</td>
 <td>既定falseです。複数VMAC引数形式ではtrueで無効化前にrouter lifetime=0のRAを送り、リンクローカル送信元が必要です。linkLocalAddressなしの単一VMAC旧引数形式は本フラグを渡しません。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.additionalFailoverVMACs[].withdrawRouterAdvertisement</code></td>
+<td><em>任意</em></td>
+<td>boolean</td>
 <td>既定falseです。複数VMAC引数形式ではtrueで無効化前にrouter lifetime=0のRAを送り、リンクローカル送信元が必要です。linkLocalAddressなしの単一VMAC旧引数形式は本フラグを渡しません。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.gracefulActivation.readyWhen.state</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>readyWhen内の状態キーと条件のマップで、すべての項目の成立を要求します。空でないstate・all・anyのいずれか1つだけを選びます。equals・in・contains・exists・status・for・maxAgeは共通項に従い、リソース形式のキーは宣言済みリソース・提供フィールドを参照します。</td>
 </tr>
 </tbody>
@@ -267,7 +365,7 @@
 <p><a href="/examples/dhcp-lease-sync-ha.yaml">設定例</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
 <ul>
 <li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
-<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#設定構文">設定構文</a></li>
 <li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
 <li><a href="#状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</a></li>
 </ul>

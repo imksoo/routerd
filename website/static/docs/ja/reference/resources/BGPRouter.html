@@ -11,240 +11,347 @@
 <li>実動作はBGPRouter1件・VRFなしだけに対応します。ASN・VRF・待受が異なれば設定検証に通ることと、実動作対応は別です。</li>
 <li>ルーターの受信一覧・connected一覧・static一覧の3群をまたぐ重複・包含は不可です。各prefix一覧内の正規化後重複も拒否します。</li>
 </ul>
-<h2 id="yaml定義">YAML定義</h2>
-<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
-<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+<h2 id="設定構文">設定構文</h2>
+<p>説明用の構文表記であり、そのままコピーするYAMLではありません。囲みのない項目は親の中で必須、<code>[ ... ]</code>は条件に応じて省略できる項目、<code>&lt;型&gt;</code>は差し替え値、<code>(a | b)</code>は選択肢です。任意の親にも必須の子があります。条件付き必須・排他・実効既定値は下の表を確認し、通常のYAMLはリンク先の設定例を使ってください。</p>
+<pre><code class="language-text">- apiVersion: net.routerd.net/v1alpha1
   kind: BGPRouter
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    asn: 1 # 必須; integer; minimum=1
-    backend: &quot;&quot; # 任意; string; enum=[&quot;&quot;, &quot;gobgp&quot;]
-    communities: # 任意; object
-      accept: # 任意; array
-        - &quot;&lt;string&gt;&quot; # string
-      send: &quot;&quot; # 任意; string; enum=[&quot;&quot;, &quot;standard&quot;, &quot;extended&quot;, &quot;both&quot;]
-      set: # 任意; object
-        in: # 任意; array
-          - &quot;&lt;string&gt;&quot; # string
-        out: # 任意; array
-          - &quot;&lt;string&gt;&quot; # string
-    convergenceProfile: &quot;&quot; # 任意; string; enum=[&quot;&quot;, &quot;default&quot;, &quot;fast&quot;, &quot;stable&quot;]
-    exportPolicy: # 任意; object
-      allowedPrefixes: # 任意; array
-        - &quot;&lt;string&gt;&quot; # string
-    gracefulRestart: # 任意; object
-      enabled: true # 任意; boolean
-      restartTime: &quot;&lt;string&gt;&quot; # 任意; string
-      stalePathTime: &quot;&lt;string&gt;&quot; # 任意; string
-    importPolicy: # 任意; object
-      allowedPrefixLengthMax: 0 # 任意; integer; minimum=0; maximum=128
-      allowedPrefixLengthMin: 0 # 任意; integer; minimum=0; maximum=128
-      allowedPrefixes: # 任意; array
-        - &quot;&lt;string&gt;&quot; # string
-      forbiddenCommunities: # 任意; array
-        - &quot;&lt;string&gt;&quot; # string
-      localPreference: 0 # 任意; integer
-      nextHopRewrite: &quot;&quot; # 任意; string; enum=[&quot;&quot;, &quot;peer-address&quot;, &quot;unchanged&quot;]
-      requiredCommunities: # 任意; array
-        - &quot;&lt;string&gt;&quot; # string
-    listen: # 任意; object
-      address: &quot;&lt;string&gt;&quot; # 任意; string
-      port: 1 # 任意; integer; minimum=1; maximum=65535
-    redistribute: # 任意; object
-      connected: # 任意; object
-        allowedPrefixes: # 任意; array
-          - &quot;&lt;string&gt;&quot; # string
-      static: # 任意; object
-        allowedPrefixes: # 任意; array
-          - &quot;&lt;string&gt;&quot; # string
-    routerID: &quot;&lt;string&gt;&quot; # 必須; string
-    timers: # 任意; object
-      profile: &quot;&quot; # 任意; string; enum=[&quot;&quot;, &quot;default&quot;, &quot;fast&quot;, &quot;slow&quot;]
-    vrf: &quot;&lt;string&gt;&quot; # 任意; string
-    watcher: # 任意; object
-      maxPrefixes: 1 # 任意; integer; minimum=1; maximum=999999
-      peerStateChangeThrottle: &quot;&lt;string&gt;&quot; # 任意; string
-      pollInterval: &quot;&lt;string&gt;&quot; # 任意; string
-    when: # 任意; object
-      state: # 任意; object
-        &quot;&lt;key&gt;&quot;: # 任意; object
-          contains: &quot;&lt;string&gt;&quot; # 任意; string
-          equals: &quot;&lt;string&gt;&quot; # 任意; string
-          exists: true # 任意; boolean
-          for: &quot;&lt;string&gt;&quot; # 任意; string
-          in: # 任意; array
-            - &quot;&lt;string&gt;&quot; # string
-          maxAge: &quot;&lt;string&gt;&quot; # 任意; string
-          status: &quot;set&quot; # 任意; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+    asn: &lt;integer&gt;
+    [ backend: (&quot;&quot; | &quot;gobgp&quot;) ]
+    [ communities:
+        [ accept:
+            - &lt;string&gt;
+        ]
+        [ send: (&quot;&quot; | &quot;standard&quot; | &quot;extended&quot; | &quot;both&quot;) ]
+        [ set:
+            [ in:
+                - &lt;string&gt;
+            ]
+            [ out:
+                - &lt;string&gt;
+            ]
+        ]
+    ]
+    [ convergenceProfile: (&quot;&quot; | &quot;default&quot; | &quot;fast&quot; | &quot;stable&quot;) ]
+    [ exportPolicy:
+        [ allowedPrefixes:
+            - &lt;string&gt;
+        ]
+    ]
+    [ gracefulRestart:
+        [ enabled: &lt;boolean&gt; ]
+        [ restartTime: &lt;string&gt; ]
+        [ stalePathTime: &lt;string&gt; ]
+    ]
+    [ importPolicy:
+        [ allowedPrefixLengthMax: &lt;integer&gt; ]
+        [ allowedPrefixLengthMin: &lt;integer&gt; ]
+        [ allowedPrefixes:
+            - &lt;string&gt;
+        ]
+        [ forbiddenCommunities:
+            - &lt;string&gt;
+        ]
+        [ localPreference: &lt;integer&gt; ]
+        [ nextHopRewrite: (&quot;&quot; | &quot;peer-address&quot; | &quot;unchanged&quot;) ]
+        [ requiredCommunities:
+            - &lt;string&gt;
+        ]
+    ]
+    [ listen:
+        [ address: &lt;string&gt; ]
+        [ port: &lt;integer&gt; ]
+    ]
+    [ redistribute:
+        [ connected:
+            [ allowedPrefixes:
+                - &lt;string&gt;
+            ]
+        ]
+        [ static:
+            [ allowedPrefixes:
+                - &lt;string&gt;
+            ]
+        ]
+    ]
+    routerID: &lt;string&gt;
+    [ timers:
+        [ profile: (&quot;&quot; | &quot;default&quot; | &quot;fast&quot; | &quot;slow&quot;) ]
+    ]
+    [ vrf: &lt;string&gt; ]
+    [ watcher:
+        [ maxPrefixes: &lt;integer&gt; ]
+        [ peerStateChangeThrottle: &lt;string&gt; ]
+        [ pollInterval: &lt;string&gt; ]
+    ]
+    [ when:
+        [ state:
+            [ &lt;name&gt;:
+                [ contains: &lt;string&gt; ]
+                [ equals: &lt;string&gt; ]
+                [ exists: &lt;boolean&gt; ]
+                [ for: &lt;string&gt; ]
+                [ in:
+                    - &lt;string&gt;
+                ]
+                [ maxAge: &lt;string&gt; ]
+                [ status: (&quot;set&quot; | &quot;unset&quot; | &quot;unknown&quot;) ]
+            ]
+        ]
+    ]
 </code></pre>
 <h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<p>任意の親の必須項目は、親を使う場合に必要です。それ以外の具体的な条件は説明欄に記載します。<code>[ ... ]</code>で囲まれた選択肢も、いずれか一方が必要な場合があります。</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>指定要否</th>
+<th>型・制約</th>
 <th>項目の意味と既定値</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.importPolicy</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>独自指定のないピアが継承するルーター全体の受信ポリシーです。空ならルーター受信フィルターを作りませんが、受信した全経路のカーネルFIB適用を自動許可するものではありません。</td>
 </tr>
 <tr>
 <td><code>spec.importPolicy.allowedPrefixes</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>任意のIPv4・IPv6 CIDR許可一覧です。プレフィックスと許可した詳細経路長で照合し、正規化後の同一プレフィックスは拒否します。空なら他条件で構成された受信ポリシーにprefix条件を加えません。</td>
 </tr>
 <tr>
 <td><code>spec.importPolicy.allowedPrefixLengthMin</code></td>
+<td><em>任意</em></td>
+<td>integer; minimum=0; maximum=128</td>
 <td>0～128の整数です。省略・0は各許可プレフィックス自身の長さです。正の指定値は各prefix長以上、ファミリー上限以下、正の最大長以下が必要です。</td>
 </tr>
 <tr>
 <td><code>spec.importPolicy.allowedPrefixLengthMax</code></td>
+<td><em>任意</em></td>
+<td>integer; minimum=0; maximum=128</td>
 <td>0～128の整数です。省略・0はIPv4が32、IPv6が128です。正の値は全許可prefix長以上かつファミリー上限以下が必要です。動的leaf受付はmin=max=32が必須です。</td>
 </tr>
 <tr>
 <td><code>spec.importPolicy.requiredCommunities</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>任意のcommunity一覧です。受理する経路はすべての指定communityを持つ必要があり、空なら必須community条件はありません。</td>
 </tr>
 <tr>
 <td><code>spec.importPolicy.forbiddenCommunities</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>任意の禁止community一覧です。どれか1つでも一致すれば許可判定より先に拒否します。空ならこの禁止条件はありません。</td>
 </tr>
 <tr>
 <td><code>spec.importPolicy.nextHopRewrite</code></td>
+<td><em>任意</em></td>
+<td>string; enum=["", "peer-address", "unchanged"]</td>
 <td>既定はpeer-addressです。unchangedなら広告されたnext hopを維持します。受理経路の選択・FIB投影前に適用します。ピアでこの項目だけを指定しても独自ポリシーとなり、ルーターの許可一覧は継承しません。</td>
 </tr>
 <tr>
 <td><code>spec.importPolicy.localPreference</code></td>
+<td><em>任意</em></td>
+<td>integer</td>
 <td>受理経路へbest-path選択前に設定するuint32のLOCAL_PREFです。既定0ならBGP実装の既定値を変更しません。</td>
 </tr>
 <tr>
 <td><code>spec.exportPolicy</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>任意の送信prefix条件です。ピア側の一覧はルーター由来の静的・動的広告と合成し、RRクライアントではルーターの受信prefixも加えます。ルーター由来の送信prefix全体を絞る置換ではありません。</td>
 </tr>
 <tr>
 <td><code>spec.exportPolicy.allowedPrefixes</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>明示的な自起源広告CIDRで、既定は空です。redistributeのconnected・staticと動的広告へ合成し、ピアの送信条件にも使います。OS経路の存在確認なしで広告します。</td>
 </tr>
 <tr>
 <td><code>spec.timers</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>任意のタイマープロファイルです。現行コントローラーではルーターのtimersをピアへ継承しないため、必要なら各ピアで明示します。</td>
 </tr>
 <tr>
 <td><code>spec.timers.profile</code></td>
+<td><em>任意</em></td>
+<td>string; enum=["", "default", "fast", "slow"]</td>
 <td>default・fast・slowを受け付けますが、現行実行処理はルーター側値からピアタイマーを設定しません。BGPPeer・BGPDynamicPeerのtimers.profileに指定してください。</td>
 </tr>
 <tr>
 <td><code>spec.when</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>任意の共通有効化条件です。省略時は無条件です。state・all・any、参照検証、スキーマ制限は共通項を参照してください。</td>
 </tr>
 <tr>
 <td><code>spec.asn</code></td>
+<td><strong>必須</strong></td>
+<td>integer; minimum=1</td>
 <td>必須の0以外のuint32ローカルASNです。設定ではBGPRouter間の再利用を拒否し、現行実行処理はBGPRouter1件だけに対応します。</td>
 </tr>
 <tr>
 <td><code>spec.routerID</code></td>
+<td><strong>必須</strong></td>
+<td>string</td>
 <td>必須のIPv4形式のBGP識別子で、通信アドレスとは別です。インターフェース指定のないBFDはローカルmultihopアドレスにも使います。</td>
 </tr>
 <tr>
 <td><code>spec.vrf</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>任意のVRF/nameまたはVRF名で、宣言済みVRFを参照します。設定検証は受け付けますが実動作GoBGPコントローラーは非空値をGoBGPVRFUnsupportedとして拒否します。実運用では省略します。</td>
 </tr>
 <tr>
 <td><code>spec.listen</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>任意のローカルTCP待受設定で、既定は全アドレス・179番です。相手のTCPポート選択ではありません。</td>
 </tr>
 <tr>
 <td><code>spec.listen.address</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>任意のIPv4・IPv6バインド先です。空ならGoBGPは全アドレスで待ち受けます。IP指定で、リソース参照・ホスト名は不可です。</td>
 </tr>
 <tr>
 <td><code>spec.listen.port</code></td>
+<td><em>任意</em></td>
+<td>integer; minimum=1; maximum=65535</td>
 <td>TCP待受ポート1～65535で、省略・0は179です。設定されたアドレス・ポートの競合は拒否します。</td>
 </tr>
 <tr>
 <td><code>spec.redistribute</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>任意の明示広告prefix群です。現行実行処理はconnected・static一覧とexportPolicy.allowedPrefixesを合成し、OSから該当経路を検出する処理ではありません。</td>
 </tr>
 <tr>
 <td><code>spec.redistribute.connected</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>connected名の任意広告群で、既定は空です。この名前によってカーネルの直結経路存在を広告条件にするものではありません。</td>
 </tr>
 <tr>
 <td><code>spec.redistribute.connected.allowedPrefixes</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>自起源広告するIPv4・IPv6 CIDRで、既定は空です。ルーターの受信一覧・static一覧と重複・包含不可です。対応する直結経路の存在は要求しません。</td>
 </tr>
 <tr>
 <td><code>spec.redistribute.static</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>static名の任意広告群で、既定は空です。IPv4StaticRoute・IPv6StaticRouteを自動列挙する指定ではありません。</td>
 </tr>
 <tr>
 <td><code>spec.redistribute.static.allowedPrefixes</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>自起源広告するIPv4・IPv6 CIDRで、既定は空です。ルーターの受信一覧・connected一覧と重複・包含不可です。カーネル静的経路の存在は確認しません。</td>
 </tr>
 <tr>
 <td><code>spec.communities</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>任意のcommunity設定です。現行実行処理ではルーターのset.outだけが自起源広告に作用し、send・accept・set.inは読取・検証のみで使いません。</td>
 </tr>
 <tr>
 <td><code>spec.communities.send</code></td>
+<td><em>任意</em></td>
+<td>string; enum=["", "standard", "extended", "both"]</td>
 <td>standard・extended・both・空を受け付けますが実動作には影響せず、GoBGPピアはこの指定によらずSendCommunity=3です。</td>
 </tr>
 <tr>
 <td><code>spec.communities.accept</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>検証される任意の標準community一覧で、既定は空です。現行処理では受信を絞りません。実際の照合にはimportPolicyのrequiredCommunities・forbiddenCommunitiesを使います。</td>
 </tr>
 <tr>
 <td><code>spec.communities.set</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>任意の受信・送信community一覧で、現行コントローラーはルーターのoutだけを使います。</td>
 </tr>
 <tr>
 <td><code>spec.communities.set.in</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>任意の検証対象一覧で、既定は空です。現行処理では受信経路に付与しません。</td>
 </tr>
 <tr>
 <td><code>spec.communities.set.out</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>routerd自起源広告へ付与する標準communityで、既定は空です。全通過経路の書換ではありません。標準の16bit成分のasn:valueや対応する既知名を使い、ここでextended communityは生成しません。</td>
 </tr>
 <tr>
 <td><code>spec.convergenceProfile</code></td>
+<td><em>任意</em></td>
+<td>string; enum=["", "default", "fast", "stable"]</td>
 <td>既定・省略・stableではGRを既定有効、fastでは既定無効にします。gracefulRestart.enabledを明示すれば優先します。timers.profileの自動選択ではありません。</td>
 </tr>
 <tr>
 <td><code>spec.gracefulRestart</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>任意のGR設定です。収束プロファイル選択後にピアにも使い、enabled明示値はプロファイル既定より優先します。</td>
 </tr>
 <tr>
 <td><code>spec.gracefulRestart.enabled</code></td>
+<td><em>任意</em></td>
+<td>boolean</td>
 <td>任意の真偽値です。fast以外は既定trueです。falseなら時間指定があってもGRを無効にします。</td>
 </tr>
 <tr>
 <td><code>spec.gracefulRestart.restartTime</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>正のGo durationで、既定120秒です。秒未満を切り捨てて整数秒へ変換するため、1秒未満は0になり得ます。整数秒を使ってください。</td>
 </tr>
 <tr>
 <td><code>spec.gracefulRestart.stalePathTime</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>古い経路の保持期間を指定する正のGo durationで、既定360秒です。整数秒へ変換し、GR無効時は使いません。</td>
 </tr>
 <tr>
 <td><code>spec.watcher</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>任意の状態観測設定で、BGPのkeepalive・holdタイマーや接続受付制限ではありません。</td>
 </tr>
 <tr>
 <td><code>spec.watcher.pollInterval</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>3秒以上のGo durationです。実間隔は15秒を起点に短い指定値だけ採用するため、15秒超を指定しても長くなりません。</td>
 </tr>
 <tr>
 <td><code>spec.watcher.maxPrefixes</code></td>
+<td><em>任意</em></td>
+<td>integer; minimum=1; maximum=999999</td>
 <td>観測するprefix上限で、既定4096です。正の明示値は1000000未満です。BGPセッションのmaximum-prefix停止ポリシーを設定する項目ではありません。</td>
 </tr>
 <tr>
 <td><code>spec.watcher.peerStateChangeThrottle</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>ピア状態イベントの繰り返し発行を抑える0以上のGo durationです。省略・0は抑制なしです。BGPプロトコルの状態遷移を遅延させる指定ではありません。</td>
 </tr>
 <tr>
 <td><code>spec.backend</code></td>
+<td><em>任意</em></td>
+<td>string; enum=["", "gobgp"]</td>
 <td>既定gobgpで、唯一の対応バックエンドです。FRR BGP設定ファイルではなくrouterd-bgpデーモンと制御クライアントを使います。</td>
 </tr>
 </tbody>
@@ -256,7 +363,7 @@
 <p><a href="/examples/bgp-bfd.yaml">設定例</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
 <ul>
 <li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
-<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#設定構文">設定構文</a></li>
 <li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
 <li><a href="#状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</a></li>
 </ul>

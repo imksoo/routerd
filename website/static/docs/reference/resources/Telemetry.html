@@ -10,53 +10,70 @@
 <ul>
 <li>Only one selected Telemetry or ObservabilityPipeline with a nonempty OTLP endpoint may supply the generated telemetry environment; multiple selected resources fail rendering. No resource-name reference is involved.</li>
 </ul>
-<h2 id="yaml-definition">YAML definition</h2>
-<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
-<pre><code class="language-yaml">- apiVersion: observability.routerd.net/v1alpha1
+<h2 id="configuration-syntax">Configuration syntax</h2>
+<p>This is explanatory notation, not YAML to copy. Unbracketed fields are required within their parent; <code>[ ... ]</code> marks fields that can be omitted, subject to the conditions in the table. <code>&lt;type&gt;</code> is a placeholder, and <code>(a | b)</code> lists alternatives. Optional parents may contain required children. Conditional requirements, exclusions and runtime defaults are described below. Use the linked YAML example for an ordinary configuration.</p>
+<pre><code class="language-text">- apiVersion: observability.routerd.net/v1alpha1
   kind: Telemetry
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    attributes: # optional; object
-      &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # optional; string
-    otlp: # Required; object
-      endpoint: &quot;&lt;string&gt;&quot; # Required; string
-      insecure: true # optional; boolean
-    serviceNamespace: &quot;&lt;string&gt;&quot; # optional; string
-    signals: # optional; array
-      - &quot;logs&quot; # string; enum=[&quot;logs&quot;, &quot;metrics&quot;, &quot;traces&quot;]
+    [ attributes:
+        [ &lt;name&gt;: &lt;string&gt; ]
+    ]
+    otlp:
+      endpoint: &lt;string&gt;
+      [ insecure: &lt;boolean&gt; ]
+    [ serviceNamespace: &lt;string&gt; ]
+    [ signals:
+        - (&quot;logs&quot; | &quot;metrics&quot; | &quot;traces&quot;)
+    ]
 </code></pre>
 <h2 id="field-meaning-and-default">Field meaning and default</h2>
+<p>Required children of optional objects apply only when their parent is used. Other exact conditions are in the explanation; bracketed alternatives may still require one choice.</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>Presence</th>
+<th>Type / constraints</th>
 <th>Field meaning and default</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.otlp</code></td>
+<td><strong>Required</strong></td>
+<td>object</td>
 <td>Required OTLP connection object.</td>
 </tr>
 <tr>
 <td><code>spec.otlp.endpoint</code></td>
+<td><strong>Required</strong></td>
+<td>string</td>
 <td>Required nonblank exporter endpoint; emitted as OTEL_EXPORTER_OTLP_ENDPOINT. No default. This validator checks nonblank content, not endpoint reachability.</td>
 </tr>
 <tr>
 <td><code>spec.otlp.insecure</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false. True emits OTEL_EXPORTER_OTLP_INSECURE=true; false does not emit that variable.</td>
 </tr>
 <tr>
 <td><code>spec.serviceNamespace</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>OpenTelemetry service namespace, default routerd after trimming whitespace.</td>
 </tr>
 <tr>
 <td><code>spec.attributes</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Resource-attribute map, default empty. Sorted and serialized into OTEL_RESOURCE_ATTRIBUTES as comma-separated key=value entries; values are not escaped by this renderer.</td>
 </tr>
 <tr>
 <td><code>spec.signals</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>logs, metrics and traces; default all three. A nonempty list disables omitted signals by emitting their exporter variable as none. It does not itself create a receiver.</td>
 </tr>
 </tbody>
@@ -68,7 +85,7 @@
 <p><a href="/examples/telemetry-export.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
 <li><a href="#conditions-and-references">Conditions and references</a></li>
-<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#configuration-syntax">Configuration syntax</a></li>
 <li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 <li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
 </ul>

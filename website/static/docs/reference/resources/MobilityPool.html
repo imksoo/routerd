@@ -13,591 +13,849 @@
 <li>Linux uses per-interface proxy-ARP controls; FreeBSD uses route-aware global proxyall handling rather than Linux sysctl names. Capture activation still depends on real ownership/readiness facts; a valid YAML or planned intent is not proof of a working extended segment.</li>
 <li>Profiles use nonzero merge semantics: empty strings/lists and false do not clear inherited fields. Source-address literal takes precedence over its status source. Maps merge with local entries winning; target literals then win over targetFrom. Profile use is cloud-only.</li>
 </ul>
-<h2 id="yaml-definition">YAML definition</h2>
-<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
-<pre><code class="language-yaml">- apiVersion: mobility.routerd.net/v1alpha1
+<h2 id="configuration-syntax">Configuration syntax</h2>
+<p>This is explanatory notation, not YAML to copy. Unbracketed fields are required within their parent; <code>[ ... ]</code> marks fields that can be omitted, subject to the conditions in the table. <code>&lt;type&gt;</code> is a placeholder, and <code>(a | b)</code> lists alternatives. Optional parents may contain required children. Conditional requirements, exclusions and runtime defaults are described below. Use the linked YAML example for an ordinary configuration.</p>
+<pre><code class="language-text">- apiVersion: mobility.routerd.net/v1alpha1
   kind: MobilityPool
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    groupRef: &quot;&lt;string&gt;&quot; # Required; string
-    members: # optional; array
-      - # object
-        capture: # optional; object
-          activeWhen: # optional; object
-            type: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;single-router&quot;, &quot;vrrp-master&quot;]
-            virtualAddressRef: &quot;&lt;string&gt;&quot; # optional; string
-          captureStrategy: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;route-table&quot;]
-          excludeAddresses: # optional; array
-            - &quot;&lt;string&gt;&quot; # string
-          gratuitousARP: true # optional; boolean
-          interface: &quot;&lt;string&gt;&quot; # optional; string
-          nicRef: &quot;&lt;string&gt;&quot; # optional; string
-          providerRef: &quot;&lt;string&gt;&quot; # optional; string
-          sourceAddress: &quot;&lt;string&gt;&quot; # optional; string
-          sourceAddressFrom: # optional; object
-            field: &quot;&lt;string&gt;&quot; # optional; string
-            optional: true # optional; boolean
-            resource: &quot;&lt;string&gt;&quot; # Required; string
-          target: # optional; object
-            &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # optional; string
-          targetFrom: # optional; object
-            &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # optional; string
-          type: &quot;provider-secondary-ip&quot; # optional; string; enum=[&quot;provider-secondary-ip&quot;, &quot;proxy-arp&quot;]
-        nodeRef: &quot;&lt;string&gt;&quot; # Required; string
-        ownershipDiscovery: # optional; object
-          allowEmptyAfter: &quot;&lt;string&gt;&quot; # optional; string
-          leaseTTL: &quot;&lt;string&gt;&quot; # optional; string
-          mode: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;disabled&quot;, &quot;provider-private-ip&quot;, &quot;onprem-l2&quot;]
-          pluginRef: &quot;&lt;string&gt;&quot; # optional; string
-          providerRef: &quot;&lt;string&gt;&quot; # optional; string
-          scanInterval: &quot;&lt;string&gt;&quot; # optional; string
-          scope: # optional; object
-            excludeAddresses: # optional; array
-              - &quot;&lt;string&gt;&quot; # string
-            includeAddresses: # optional; array
-              - &quot;&lt;string&gt;&quot; # string
-          selector: # optional; object
-            tags: # optional; object
-              &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # optional; string
-          sources: # optional; array
-            - # object
-              bridge: &quot;&lt;string&gt;&quot; # optional; string
-              interface: &quot;&lt;string&gt;&quot; # optional; string
-              leaseTTL: &quot;&lt;string&gt;&quot; # optional; string
-              network: &quot;&lt;string&gt;&quot; # optional; string
-              probeRetries: 0 # optional; integer; minimum=0; maximum=20
-              probeTimeout: &quot;&lt;string&gt;&quot; # optional; string
-              resource: &quot;&lt;string&gt;&quot; # optional; string
-              scanInterval: &quot;&lt;string&gt;&quot; # optional; string
-              sourceAddressFrom: # optional; object
-                field: &quot;&lt;string&gt;&quot; # optional; string
-                optional: true # optional; boolean
-                resource: &quot;&lt;string&gt;&quot; # Required; string
-              type: &quot;dhcpv4-lease&quot; # Required; string; enum=[&quot;dhcpv4-lease&quot;, &quot;arp-observer&quot;, &quot;on-demand-arp&quot;, &quot;pve-svnet&quot;]
-          stoppedInstancePolicy: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;hold&quot;, &quot;release&quot;]
-          subnetRef: &quot;&lt;string&gt;&quot; # optional; string
-          subnetRefFrom: &quot;&lt;string&gt;&quot; # optional; string
-        profileRef: &quot;&lt;string&gt;&quot; # optional; string
-        staticOwnedAddresses: # optional; array
-          - &quot;&lt;string&gt;&quot; # string
-    membersFrom: # Required; array; minItems=1
-      - # object
-        optional: true # optional; boolean
-        resource: &quot;&lt;string&gt;&quot; # Required; string
-    prefix: &quot;&lt;string&gt;&quot; # Required; string
-    profiles: # optional; object
-      cloudCaptures: # optional; object
-        &quot;&lt;key&gt;&quot;: # optional; object
-          capture: # optional; object
-            activeWhen: # optional; object
-              type: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;single-router&quot;, &quot;vrrp-master&quot;]
-              virtualAddressRef: &quot;&lt;string&gt;&quot; # optional; string
-            captureStrategy: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;route-table&quot;]
-            excludeAddresses: # optional; array
-              - &quot;&lt;string&gt;&quot; # string
-            gratuitousARP: true # optional; boolean
-            interface: &quot;&lt;string&gt;&quot; # optional; string
-            nicRef: &quot;&lt;string&gt;&quot; # optional; string
-            providerRef: &quot;&lt;string&gt;&quot; # optional; string
-            sourceAddress: &quot;&lt;string&gt;&quot; # optional; string
-            sourceAddressFrom: # optional; object
-              field: &quot;&lt;string&gt;&quot; # optional; string
-              optional: true # optional; boolean
-              resource: &quot;&lt;string&gt;&quot; # Required; string
-            target: # optional; object
-              &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # optional; string
-            targetFrom: # optional; object
-              &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # optional; string
-            type: &quot;provider-secondary-ip&quot; # optional; string; enum=[&quot;provider-secondary-ip&quot;, &quot;proxy-arp&quot;]
-          ownershipDiscovery: # optional; object
-            allowEmptyAfter: &quot;&lt;string&gt;&quot; # optional; string
-            leaseTTL: &quot;&lt;string&gt;&quot; # optional; string
-            mode: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;disabled&quot;, &quot;provider-private-ip&quot;, &quot;onprem-l2&quot;]
-            pluginRef: &quot;&lt;string&gt;&quot; # optional; string
-            providerRef: &quot;&lt;string&gt;&quot; # optional; string
-            scanInterval: &quot;&lt;string&gt;&quot; # optional; string
-            scope: # optional; object
-              excludeAddresses: # optional; array
-                - &quot;&lt;string&gt;&quot; # string
-              includeAddresses: # optional; array
-                - &quot;&lt;string&gt;&quot; # string
-            selector: # optional; object
-              tags: # optional; object
-                &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # optional; string
-            sources: # optional; array
-              - # object
-                bridge: &quot;&lt;string&gt;&quot; # optional; string
-                interface: &quot;&lt;string&gt;&quot; # optional; string
-                leaseTTL: &quot;&lt;string&gt;&quot; # optional; string
-                network: &quot;&lt;string&gt;&quot; # optional; string
-                probeRetries: 0 # optional; integer; minimum=0; maximum=20
-                probeTimeout: &quot;&lt;string&gt;&quot; # optional; string
-                resource: &quot;&lt;string&gt;&quot; # optional; string
-                scanInterval: &quot;&lt;string&gt;&quot; # optional; string
-                sourceAddressFrom: # optional; object
-                  field: &quot;&lt;string&gt;&quot; # optional; string
-                  optional: true # optional; boolean
-                  resource: &quot;&lt;string&gt;&quot; # Required; string
-                type: &quot;dhcpv4-lease&quot; # Required; string; enum=[&quot;dhcpv4-lease&quot;, &quot;arp-observer&quot;, &quot;on-demand-arp&quot;, &quot;pve-svnet&quot;]
-            stoppedInstancePolicy: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;hold&quot;, &quot;release&quot;]
-            subnetRef: &quot;&lt;string&gt;&quot; # optional; string
-            subnetRefFrom: &quot;&lt;string&gt;&quot; # optional; string
-    staticHandovers: # optional; array
-      - # object
-        address: &quot;&lt;string&gt;&quot; # Required; string
-        fromNodeRef: &quot;&lt;string&gt;&quot; # Required; string
-        toNodeRef: &quot;&lt;string&gt;&quot; # Required; string
-    values: # optional; object
-      &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # optional; string
+    groupRef: &lt;string&gt;
+    [ members:
+        -
+          [ capture:
+              [ activeWhen:
+                  [ type: (&quot;&quot; | &quot;single-router&quot; | &quot;vrrp-master&quot;) ]
+                  [ virtualAddressRef: &lt;string&gt; ]
+              ]
+              [ captureStrategy: (&quot;&quot; | &quot;route-table&quot;) ]
+              [ excludeAddresses:
+                  - &lt;string&gt;
+              ]
+              [ gratuitousARP: &lt;boolean&gt; ]
+              [ interface: &lt;string&gt; ]
+              [ nicRef: &lt;string&gt; ]
+              [ providerRef: &lt;string&gt; ]
+              [ sourceAddress: &lt;string&gt; ]
+              [ sourceAddressFrom:
+                  field: &lt;string&gt;
+                  [ optional: &lt;boolean&gt; ]
+                  resource: &lt;string&gt;
+              ]
+              [ target:
+                  [ &lt;name&gt;: &lt;string&gt; ]
+              ]
+              [ targetFrom:
+                  [ &lt;name&gt;: &lt;string&gt; ]
+              ]
+              [ type: (&quot;provider-secondary-ip&quot; | &quot;proxy-arp&quot;) ]
+          ]
+          nodeRef: &lt;string&gt;
+          [ ownershipDiscovery:
+              [ allowEmptyAfter: &lt;string&gt; ]
+              [ leaseTTL: &lt;string&gt; ]
+              [ mode: (&quot;&quot; | &quot;disabled&quot; | &quot;provider-private-ip&quot; | &quot;onprem-l2&quot;) ]
+              [ pluginRef: &lt;string&gt; ]
+              [ providerRef: &lt;string&gt; ]
+              [ scanInterval: &lt;string&gt; ]
+              [ scope:
+                  [ excludeAddresses:
+                      - &lt;string&gt;
+                  ]
+                  [ includeAddresses:
+                      - &lt;string&gt;
+                  ]
+              ]
+              [ selector:
+                  [ tags:
+                      [ &lt;name&gt;: &lt;string&gt; ]
+                  ]
+              ]
+              [ sources:
+                  -
+                    [ bridge: &lt;string&gt; ]
+                    [ interface: &lt;string&gt; ]
+                    [ leaseTTL: &lt;string&gt; ]
+                    [ network: &lt;string&gt; ]
+                    [ probeRetries: &lt;integer&gt; ]
+                    [ probeTimeout: &lt;string&gt; ]
+                    [ resource: &lt;string&gt; ]
+                    [ scanInterval: &lt;string&gt; ]
+                    [ sourceAddressFrom:
+                        field: &lt;string&gt;
+                        [ optional: &lt;boolean&gt; ]
+                        resource: &lt;string&gt;
+                    ]
+                    type: (&quot;dhcpv4-lease&quot; | &quot;arp-observer&quot; | &quot;on-demand-arp&quot; | &quot;pve-svnet&quot;)
+              ]
+              [ stoppedInstancePolicy: (&quot;&quot; | &quot;hold&quot; | &quot;release&quot;) ]
+              [ subnetRef: &lt;string&gt; ]
+              [ subnetRefFrom: &lt;string&gt; ]
+          ]
+          [ profileRef: &lt;string&gt; ]
+          [ staticOwnedAddresses:
+              - &lt;string&gt;
+          ]
+    ]
+    membersFrom:
+      -
+        [ optional: &lt;boolean&gt; ]
+        resource: &lt;string&gt;
+    prefix: &lt;string&gt;
+    [ profiles:
+        [ cloudCaptures:
+            [ &lt;name&gt;:
+                [ capture:
+                    [ activeWhen:
+                        [ type: (&quot;&quot; | &quot;single-router&quot; | &quot;vrrp-master&quot;) ]
+                        [ virtualAddressRef: &lt;string&gt; ]
+                    ]
+                    [ captureStrategy: (&quot;&quot; | &quot;route-table&quot;) ]
+                    [ excludeAddresses:
+                        - &lt;string&gt;
+                    ]
+                    [ gratuitousARP: &lt;boolean&gt; ]
+                    [ interface: &lt;string&gt; ]
+                    [ nicRef: &lt;string&gt; ]
+                    [ providerRef: &lt;string&gt; ]
+                    [ sourceAddress: &lt;string&gt; ]
+                    [ sourceAddressFrom:
+                        field: &lt;string&gt;
+                        [ optional: &lt;boolean&gt; ]
+                        resource: &lt;string&gt;
+                    ]
+                    [ target:
+                        [ &lt;name&gt;: &lt;string&gt; ]
+                    ]
+                    [ targetFrom:
+                        [ &lt;name&gt;: &lt;string&gt; ]
+                    ]
+                    [ type: (&quot;provider-secondary-ip&quot; | &quot;proxy-arp&quot;) ]
+                ]
+                [ ownershipDiscovery:
+                    [ allowEmptyAfter: &lt;string&gt; ]
+                    [ leaseTTL: &lt;string&gt; ]
+                    [ mode: (&quot;&quot; | &quot;disabled&quot; | &quot;provider-private-ip&quot; | &quot;onprem-l2&quot;) ]
+                    [ pluginRef: &lt;string&gt; ]
+                    [ providerRef: &lt;string&gt; ]
+                    [ scanInterval: &lt;string&gt; ]
+                    [ scope:
+                        [ excludeAddresses:
+                            - &lt;string&gt;
+                        ]
+                        [ includeAddresses:
+                            - &lt;string&gt;
+                        ]
+                    ]
+                    [ selector:
+                        [ tags:
+                            [ &lt;name&gt;: &lt;string&gt; ]
+                        ]
+                    ]
+                    [ sources:
+                        -
+                          [ bridge: &lt;string&gt; ]
+                          [ interface: &lt;string&gt; ]
+                          [ leaseTTL: &lt;string&gt; ]
+                          [ network: &lt;string&gt; ]
+                          [ probeRetries: &lt;integer&gt; ]
+                          [ probeTimeout: &lt;string&gt; ]
+                          [ resource: &lt;string&gt; ]
+                          [ scanInterval: &lt;string&gt; ]
+                          [ sourceAddressFrom:
+                              field: &lt;string&gt;
+                              [ optional: &lt;boolean&gt; ]
+                              resource: &lt;string&gt;
+                          ]
+                          type: (&quot;dhcpv4-lease&quot; | &quot;arp-observer&quot; | &quot;on-demand-arp&quot; | &quot;pve-svnet&quot;)
+                    ]
+                    [ stoppedInstancePolicy: (&quot;&quot; | &quot;hold&quot; | &quot;release&quot;) ]
+                    [ subnetRef: &lt;string&gt; ]
+                    [ subnetRefFrom: &lt;string&gt; ]
+                ]
+            ]
+        ]
+    ]
+    [ staticHandovers:
+        -
+          address: &lt;string&gt;
+          fromNodeRef: &lt;string&gt;
+          toNodeRef: &lt;string&gt;
+    ]
+    [ values:
+        [ &lt;name&gt;: &lt;string&gt; ]
+    ]
 </code></pre>
 <h2 id="field-meaning-and-default">Field meaning and default</h2>
+<p>Required children of optional objects apply only when their parent is used. Other exact conditions are in the explanation; bracketed alternatives may still require one choice.</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>Presence</th>
+<th>Type / constraints</th>
 <th>Field meaning and default</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.prefix</code></td>
+<td><strong>Required</strong></td>
+<td>string</td>
 <td>Required IPv4 CIDR managed by the pool. Ownership/capture addresses must stay inside it; no default prefix or address auto-allocation.</td>
 </tr>
 <tr>
 <td><code>spec.groupRef</code></td>
+<td><strong>Required</strong></td>
+<td>string</td>
 <td>Required local EventGroup reference with nodeName. Its exact local node identity must exist in membersFrom topology; used for ownership and expiry events.</td>
 </tr>
 <tr>
 <td><code>spec.values</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional string constants for provider identifiers. Referenced by targetFrom/subnetRefFrom; no automatic variable expansion or secret storage.</td>
 </tr>
 <tr>
 <td><code>spec.profiles</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional reusable local capture/discovery defaults. Does not contain shared topology identities.</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Map keyed by profile name. Used only when a local cloud member selects profileRef; cannot enable onprem profile shorthand. Every profile target/value reference is normalized, including unused profiles.</td>
 </tr>
 <tr>
 <td><code>spec.membersFrom</code></td>
+<td><strong>Required</strong></td>
+<td>array; minItems=1</td>
 <td>Required nonempty SAMNodeSet source list; sole source of member identity, site, role, placement, maintenance and capacity. No inline topology fallback from members overlays.</td>
 </tr>
 <tr>
 <td><code>spec.membersFrom[].resource</code></td>
+<td><strong>Required</strong></td>
+<td>string</td>
 <td>Required SAMNodeSet/name. Imported nodeRefs must be distinct and each resolved member requires explicit site and onprem/cloud role.</td>
 </tr>
 <tr>
 <td><code>spec.membersFrom[].optional</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false. A missing nonoptional runtime source is Pending; true can tolerate it, but does not waive the requirement that the exact local EventGroup node resolve in the topology.</td>
 </tr>
 <tr>
 <td><code>spec.members</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional local-only overlays keyed by nodeRef already imported from membersFrom. Cannot set shared site/role/placement/maintenance/capacity or configure remote captures.</td>
 </tr>
 <tr>
 <td><code>spec.members[].nodeRef</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Required imported nodeRef selecting the EventGroup local member. This overlay does not introduce a new member.</td>
 </tr>
 <tr>
 <td><code>spec.members[].profileRef</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional key under profiles.cloudCaptures, supported only for role cloud. Missing profile fails normalization. Nonempty local strings/lists override profile defaults; maps merge, true booleans are additive, empty lists/false cannot clear inherited values.</td>
 </tr>
 <tr>
 <td><code>spec.members[].staticOwnedAddresses</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional explicit IPv4 /32 CIDRs inside prefix, onprem role only. Bare IPv4 is rejected here. Duplicate static ownership is rejected; these declarations do not depend on learned-client events.</td>
 </tr>
 <tr>
 <td><code>spec.staticHandovers</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional planned static ownership transfers. From-member release must be observed before projecting the target; not simultaneous dual ownership.</td>
 </tr>
 <tr>
 <td><code>spec.staticHandovers[].address</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Required IPv4 /32 CIDR within pool, unique across handovers. If declared as static-owned, its owner must equal fromNodeRef.</td>
 </tr>
 <tr>
 <td><code>spec.staticHandovers[].fromNodeRef</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Required existing imported onprem member nodeRef. Must differ from toNodeRef.</td>
 </tr>
 <tr>
 <td><code>spec.staticHandovers[].toNodeRef</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Required existing imported target member nodeRef, different from source. No target member is created implicitly.</td>
 </tr>
 <tr>
 <td><code>spec.members[].capture</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Local capture settings; type is explicit, not inferred from role. Only the local member may carry capture/discovery overlays.</td>
 </tr>
 <tr>
 <td><code>spec.members[].capture.type</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["provider-secondary-ip", "proxy-arp"]</td>
 <td>proxy-arp for role onprem, provider-secondary-ip for role cloud; empty means no capture mechanism. Local cloud member requires a resolved capture configuration.</td>
 </tr>
 <tr>
 <td><code>spec.members[].capture.providerRef</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>CloudProviderProfile name required for provider-secondary-ip. Not a status source. Ownership discovery defaults its providerRef to this value.</td>
 </tr>
 <tr>
 <td><code>spec.members[].capture.captureStrategy</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["", "route-table"]</td>
 <td>Optional route-table only for provider-secondary-ip, requiring target.routeTableRef. Omit for normal secondary-IP or proxy-ARP; explicit secondary-ip/proxy-arp strategy values are rejected.</td>
 </tr>
 <tr>
 <td><code>spec.members[].capture.nicRef</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Provider NIC identifier, required for provider capture unless provider-private-ip discovery can resolve it. Do not place nicRef under target/targetFrom; that spelling is rejected.</td>
 </tr>
 <tr>
 <td><code>spec.members[].capture.interface</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Logical/OS capture interface, required for proxy-arp. Alias is resolved by consumers; no automatic LAN choice.</td>
 </tr>
 <tr>
 <td><code>spec.members[].capture.sourceAddress</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional local IPv4 sender address inside the pool for proxy-ARP/BGP delivery. Literal takes precedence over sourceAddressFrom, without an exclusivity check here. Lowered to a /32 address and preferred source when valid; not a remote owner address.</td>
 </tr>
 <tr>
 <td><code>spec.members[].capture.sourceAddressFrom</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional source-address status reference. Accepts valid pool-local IPv4 values; missing/invalid values remain unavailable. Unlike a literal, it does not generate IPv4StaticAddress because the source resource owns the address lifecycle.</td>
 </tr>
 <tr>
 <td><code>spec.members[].capture.excludeAddresses</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional pool-local IPv4 addresses/CIDRs excluded from proxy-ARP capture, default none. Use for local-only gateways/infrastructure; not a filter of all BGP routes.</td>
 </tr>
 <tr>
 <td><code>spec.members[].capture.gratuitousARP</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false. True requests unsolicited ARP announcements for capture changes. Profile inheritance is additive: a false local override does not clear a true profile setting.</td>
 </tr>
 <tr>
 <td><code>spec.members[].capture.activeWhen</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Required explicit authority for onprem proxy-arp; forbidden for provider-secondary-ip. Not the generic state/all/any predicate.</td>
 </tr>
 <tr>
 <td><code>spec.members[].capture.activeWhen.type</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["", "single-router", "vrrp-master"]</td>
 <td>single-router unconditionally authorizes local proxy-ARP; vrrp-master requires the referenced VirtualAddress MASTER state. No default for proxy-ARP.</td>
 </tr>
 <tr>
 <td><code>spec.members[].capture.activeWhen.virtualAddressRef</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Required existing local VirtualAddress name (or accepted VirtualAddress/name spelling) for vrrp-master, forbidden for single-router. Checked only for the local member.</td>
 </tr>
 <tr>
 <td><code>spec.members[].capture.target</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional nonsecret provider target map. Keys/values cannot be empty; secret/token/password/credential/private-key/access-key-like keys are rejected. Explicit target entries override targetFrom values.</td>
 </tr>
 <tr>
 <td><code>spec.members[].capture.targetFrom</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional map of provider target keys to spec.values keys. Missing/blank referenced constants fail normalization. nicRef is forbidden here; use capture.nicRef.</td>
 </tr>
 <tr>
 <td><code>spec.members[].capture.sourceAddressFrom.resource</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Source Kind/name; existing resource required by common reference validation.</td>
 </tr>
 <tr>
 <td><code>spec.members[].capture.sourceAddressFrom.field</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Explicit field provided by source kind, required when resource is set.</td>
 </tr>
 <tr>
 <td><code>spec.members[].capture.sourceAddressFrom.optional</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false; does not waive reference validation or create a usable sender when missing.</td>
 </tr>
 <tr>
 <td><code>spec.members[].ownershipDiscovery</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Local ownership-fact discovery settings, default disabled. Only the local member may configure these; accepted remote events are separate input.</td>
 </tr>
 <tr>
 <td><code>spec.members[].ownershipDiscovery.mode</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["", "disabled", "provider-private-ip", "onprem-l2"]</td>
 <td>Empty/disabled does nothing. provider-private-ip requires cloud/provider-secondary-ip; onprem-l2 requires onprem/proxy-arp, capture.interface and nonempty sources.</td>
 </tr>
 <tr>
 <td><code>spec.members[].ownershipDiscovery.providerRef</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Provider inventory profile name, default capture.providerRef. Used by provider-private-ip, not an event resource reference.</td>
 </tr>
 <tr>
 <td><code>spec.members[].ownershipDiscovery.pluginRef</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional inventory Plugin name. Empty resolves by provider name or sole observe.providerPrivateIPs-capable plugin; ambiguity/missing capability fails discovery.</td>
 </tr>
 <tr>
 <td><code>spec.members[].ownershipDiscovery.subnetRef</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional provider subnet identifier. Explicit value overrides subnetRefFrom; empty lets the plugin infer from the self NIC where supported.</td>
 </tr>
 <tr>
 <td><code>spec.members[].ownershipDiscovery.subnetRefFrom</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional spec.values key, used only when subnetRef is empty. Missing/empty constant fails normalization; not Kind/name/field.</td>
 </tr>
 <tr>
 <td><code>spec.members[].ownershipDiscovery.scanInterval</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Provider scan interval, default 60s, explicit &gt;=30s. Also validated for onprem-l2, but event-driven sources need no provider scan; observer polling has per-source scanInterval.</td>
 </tr>
 <tr>
 <td><code>spec.members[].ownershipDiscovery.leaseTTL</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Positive Go duration for emitted ownership events, default 5m. Per-source leaseTTL overrides it for onprem observations. Expiry is a protocol ownership lease, not a reboot deadline.</td>
 </tr>
 <tr>
 <td><code>spec.members[].ownershipDiscovery.stoppedInstancePolicy</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["", "hold", "release"]</td>
 <td>provider-private-ip only: hold/omitted retains stopped-instance ownership facts, release expires them. Forbidden for other modes when nonempty.</td>
 </tr>
 <tr>
 <td><code>spec.members[].ownershipDiscovery.allowEmptyAfter</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>onprem-l2 only, positive duration after sources are armed before zero clients may count as complete; omitted leaves zero-client passive discovery pending. With profileRef, the merge currently does not copy the local override of this field; the profile value remains.</td>
 </tr>
 <tr>
 <td><code>spec.members[].ownershipDiscovery.sources</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Nonempty list required for onprem-l2; forbidden for provider-private-ip. Duplicate type/resource/effective-interface/network/bridge combinations are rejected.</td>
 </tr>
 <tr>
 <td><code>spec.members[].ownershipDiscovery.sources[].type</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string; enum=["dhcpv4-lease", "arp-observer", "on-demand-arp", "pve-svnet"]</td>
 <td>Required dhcpv4-lease, arp-observer, on-demand-arp or pve-svnet. ARP/PVE observers derive local observer-daemon intents; DHCP facts are consumed from actual lease events.</td>
 </tr>
 <tr>
 <td><code>spec.members[].ownershipDiscovery.sources[].resource</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional source identity string, default empty. Used in deduplication/observer identity fingerprint, not as the observer process name or an existence-checked Kind/name reference; event matching primarily uses type/interface/network/bridge.</td>
 </tr>
 <tr>
 <td><code>spec.members[].ownershipDiscovery.sources[].interface</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional observation interface, default capture.interface. Required after fallback for on-demand-arp; consumers resolve declared aliases to OS names.</td>
 </tr>
 <tr>
 <td><code>spec.members[].ownershipDiscovery.sources[].bridge</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional local bridge label for PVE/svnet observation matching; default empty adds no bridge-selector restriction. Not a Bridge creation request.</td>
 </tr>
 <tr>
 <td><code>spec.members[].ownershipDiscovery.sources[].network</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional logical PVE/svnet network label, e.g. svnet1. Empty imposes no network-selector match; not an IP CIDR.</td>
 </tr>
 <tr>
 <td><code>spec.members[].ownershipDiscovery.sources[].sourceAddressFrom</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional status source for active ARP sender. If missing/unusable, reuses a verified capture source address; if neither resolves, no on-demand probe intent is emitted.</td>
 </tr>
 <tr>
 <td><code>spec.members[].ownershipDiscovery.sources[].scanInterval</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional observer poll interval, explicit &gt;=1s, default daemon 10s for generated ARP/PVE observers. Event-driven DHCP sources ignore polling.</td>
 </tr>
 <tr>
 <td><code>spec.members[].ownershipDiscovery.sources[].probeTimeout</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Positive Go duration between active ARP retry attempts, default observer 1s. Only meaningful for on-demand probing.</td>
 </tr>
 <tr>
 <td><code>spec.members[].ownershipDiscovery.sources[].probeRetries</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=0; maximum=20</td>
 <td>Integer 0–20 additional ARP retries, default 0. Not total attempts; one initial attempt is separate.</td>
 </tr>
 <tr>
 <td><code>spec.members[].ownershipDiscovery.sources[].leaseTTL</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional positive event-lease duration overriding ownershipDiscovery.leaseTTL for this source. Omitted inherits the pool discovery lease (default 5m).</td>
 </tr>
 <tr>
 <td><code>spec.members[].ownershipDiscovery.scope</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional ownership observation address filters inside the pool. Not an authorization to advertise arbitrary external prefixes.</td>
 </tr>
 <tr>
 <td><code>spec.members[].ownershipDiscovery.scope.includeAddresses</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional IPv4 bare-address/CIDR allowlist contained in the pool; empty allows all candidate pool addresses. Active shard assignment can replace this provider-discovery include list.</td>
 </tr>
 <tr>
 <td><code>spec.members[].ownershipDiscovery.scope.excludeAddresses</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional pool-contained IPv4 bare-address/CIDR denylist, default none. Exclusions are applied after inclusion matching.</td>
 </tr>
 <tr>
 <td><code>spec.members[].ownershipDiscovery.selector</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional provider-inventory tag selector; does not configure cloud tags.</td>
 </tr>
 <tr>
 <td><code>spec.members[].ownershipDiscovery.selector.tags</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Nonempty tag keys with expected string values. All keys must match after trimming values; empty map imposes no tag filter. Used for provider inventory, not onprem event source matching.</td>
 </tr>
 <tr>
 <td><code>spec.members[].ownershipDiscovery.sources[].sourceAddressFrom.resource</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Existing source Kind/name, required if a status source is used.</td>
 </tr>
 <tr>
 <td><code>spec.members[].ownershipDiscovery.sources[].sourceAddressFrom.field</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Explicit field provided by the source kind, required with resource.</td>
 </tr>
 <tr>
 <td><code>spec.members[].ownershipDiscovery.sources[].sourceAddressFrom.optional</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false; does not waive reference validation or supply a sender address if unresolved.</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Local capture settings; type is explicit, not inferred from role. Only the local member may carry capture/discovery overlays.</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.type</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["provider-secondary-ip", "proxy-arp"]</td>
 <td>proxy-arp for role onprem, provider-secondary-ip for role cloud; empty means no capture mechanism. Local cloud member requires a resolved capture configuration.</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.providerRef</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>CloudProviderProfile name required for provider-secondary-ip. Not a status source. Ownership discovery defaults its providerRef to this value.</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.captureStrategy</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["", "route-table"]</td>
 <td>Optional route-table only for provider-secondary-ip, requiring target.routeTableRef. Omit for normal secondary-IP or proxy-ARP; explicit secondary-ip/proxy-arp strategy values are rejected.</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.nicRef</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Provider NIC identifier, required for provider capture unless provider-private-ip discovery can resolve it. Do not place nicRef under target/targetFrom; that spelling is rejected.</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.interface</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Logical/OS capture interface, required for proxy-arp. Alias is resolved by consumers; no automatic LAN choice.</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.sourceAddress</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional local IPv4 sender address inside the pool for proxy-ARP/BGP delivery. Literal takes precedence over sourceAddressFrom, without an exclusivity check here. Lowered to a /32 address and preferred source when valid; not a remote owner address.</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.sourceAddressFrom</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional source-address status reference. Accepts valid pool-local IPv4 values; missing/invalid values remain unavailable. Unlike a literal, it does not generate IPv4StaticAddress because the source resource owns the address lifecycle.</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.excludeAddresses</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional pool-local IPv4 addresses/CIDRs excluded from proxy-ARP capture, default none. Use for local-only gateways/infrastructure; not a filter of all BGP routes.</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.gratuitousARP</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false. True requests unsolicited ARP announcements for capture changes. Profile inheritance is additive: a false local override does not clear a true profile setting.</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.activeWhen</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Required explicit authority for onprem proxy-arp; forbidden for provider-secondary-ip. Not the generic state/all/any predicate.</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.activeWhen.type</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["", "single-router", "vrrp-master"]</td>
 <td>single-router unconditionally authorizes local proxy-ARP; vrrp-master requires the referenced VirtualAddress MASTER state. No default for proxy-ARP.</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.activeWhen.virtualAddressRef</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Required existing local VirtualAddress name (or accepted VirtualAddress/name spelling) for vrrp-master, forbidden for single-router. Checked only for the local member.</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.target</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional nonsecret provider target map. Keys/values cannot be empty; secret/token/password/credential/private-key/access-key-like keys are rejected. Explicit target entries override targetFrom values.</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.targetFrom</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional map of provider target keys to spec.values keys. Missing/blank referenced constants fail normalization. nicRef is forbidden here; use capture.nicRef.</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.sourceAddressFrom.resource</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Source Kind/name; existing resource required by common reference validation.</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.sourceAddressFrom.field</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Explicit field provided by source kind, required when resource is set.</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.sourceAddressFrom.optional</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false; does not waive reference validation or create a usable sender when missing.</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Local ownership-fact discovery settings, default disabled. Only the local member may configure these; accepted remote events are separate input.</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.mode</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["", "disabled", "provider-private-ip", "onprem-l2"]</td>
 <td>Empty/disabled does nothing. provider-private-ip requires cloud/provider-secondary-ip; onprem-l2 requires onprem/proxy-arp, capture.interface and nonempty sources.</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.providerRef</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Provider inventory profile name, default capture.providerRef. Used by provider-private-ip, not an event resource reference.</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.pluginRef</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional inventory Plugin name. Empty resolves by provider name or sole observe.providerPrivateIPs-capable plugin; ambiguity/missing capability fails discovery.</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.subnetRef</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional provider subnet identifier. Explicit value overrides subnetRefFrom; empty lets the plugin infer from the self NIC where supported.</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.subnetRefFrom</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional spec.values key, used only when subnetRef is empty. Missing/empty constant fails normalization; not Kind/name/field.</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.scanInterval</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Provider scan interval, default 60s, explicit &gt;=30s. Also validated for onprem-l2, but event-driven sources need no provider scan; observer polling has per-source scanInterval.</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.leaseTTL</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Positive Go duration for emitted ownership events, default 5m. Per-source leaseTTL overrides it for onprem observations. Expiry is a protocol ownership lease, not a reboot deadline.</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.stoppedInstancePolicy</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["", "hold", "release"]</td>
 <td>provider-private-ip only: hold/omitted retains stopped-instance ownership facts, release expires them. Forbidden for other modes when nonempty.</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.allowEmptyAfter</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>onprem-l2 only, positive duration after sources are armed before zero clients may count as complete; omitted leaves zero-client passive discovery pending. With profileRef, the merge currently does not copy the local override of this field; the profile value remains.</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.sources</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Nonempty list required for onprem-l2; forbidden for provider-private-ip. Duplicate type/resource/effective-interface/network/bridge combinations are rejected.</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.sources[].type</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string; enum=["dhcpv4-lease", "arp-observer", "on-demand-arp", "pve-svnet"]</td>
 <td>Required dhcpv4-lease, arp-observer, on-demand-arp or pve-svnet. ARP/PVE observers derive local observer-daemon intents; DHCP facts are consumed from actual lease events.</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.sources[].resource</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional source identity string, default empty. Used in deduplication/observer identity fingerprint, not as the observer process name or an existence-checked Kind/name reference; event matching primarily uses type/interface/network/bridge.</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.sources[].interface</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional observation interface, default capture.interface. Required after fallback for on-demand-arp; consumers resolve declared aliases to OS names.</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.sources[].bridge</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional local bridge label for PVE/svnet observation matching; default empty adds no bridge-selector restriction. Not a Bridge creation request.</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.sources[].network</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional logical PVE/svnet network label, e.g. svnet1. Empty imposes no network-selector match; not an IP CIDR.</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.sources[].sourceAddressFrom</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional status source for active ARP sender. If missing/unusable, reuses a verified capture source address; if neither resolves, no on-demand probe intent is emitted.</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.sources[].scanInterval</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional observer poll interval, explicit &gt;=1s, default daemon 10s for generated ARP/PVE observers. Event-driven DHCP sources ignore polling.</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.sources[].probeTimeout</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Positive Go duration between active ARP retry attempts, default observer 1s. Only meaningful for on-demand probing.</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.sources[].probeRetries</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=0; maximum=20</td>
 <td>Integer 0–20 additional ARP retries, default 0. Not total attempts; one initial attempt is separate.</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.sources[].leaseTTL</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional positive event-lease duration overriding ownershipDiscovery.leaseTTL for this source. Omitted inherits the pool discovery lease (default 5m).</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.scope</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional ownership observation address filters inside the pool. Not an authorization to advertise arbitrary external prefixes.</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.scope.includeAddresses</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional IPv4 bare-address/CIDR allowlist contained in the pool; empty allows all candidate pool addresses. Active shard assignment can replace this provider-discovery include list.</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.scope.excludeAddresses</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional pool-contained IPv4 bare-address/CIDR denylist, default none. Exclusions are applied after inclusion matching.</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.selector</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional provider-inventory tag selector; does not configure cloud tags.</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.selector.tags</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Nonempty tag keys with expected string values. All keys must match after trimming values; empty map imposes no tag filter. Used for provider inventory, not onprem event source matching.</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.sources[].sourceAddressFrom.resource</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Existing source Kind/name, required if a status source is used.</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.sources[].sourceAddressFrom.field</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Explicit field provided by the source kind, required with resource.</td>
 </tr>
 <tr>
 <td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.sources[].sourceAddressFrom.optional</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false; does not waive reference validation or supply a sender address if unresolved.</td>
 </tr>
 </tbody>
@@ -609,7 +867,7 @@
 <p><a href="/examples/cloudedge-mobility-demo/onprem.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
 <li><a href="#conditions-and-references">Conditions and references</a></li>
-<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#configuration-syntax">Configuration syntax</a></li>
 <li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 <li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
 </ul>

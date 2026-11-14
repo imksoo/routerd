@@ -14,146 +14,205 @@
 <li>The two shapes are mutually exclusive. Alternative shape requires outboundInterface, nonempty IPv4 sourceCIDRs and translation.type; it prohibits all traditional type/egress/sourceRanges/destination/SNAT fields. Irrelevant translation.address/addresses are not mutually rejected, but only the selected branch would use them.</li>
 <li>Linux combines destinationCIDRs and destinationSetRefs as alternatives, then excludes the configured CIDRs/sets. PF applies static destination/exclusion CIDRs but ignores both address-set reference lists. Rule ordering uses metadata.name, not YAML order.</li>
 </ul>
-<h2 id="yaml-definition">YAML definition</h2>
-<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
-<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+<h2 id="configuration-syntax">Configuration syntax</h2>
+<p>This is explanatory notation, not YAML to copy. Unbracketed fields are required within their parent; <code>[ ... ]</code> marks fields that can be omitted, subject to the conditions in the table. <code>&lt;type&gt;</code> is a placeholder, and <code>(a | b)</code> lists alternatives. Optional parents may contain required children. Conditional requirements, exclusions and runtime defaults are described below. Use the linked YAML example for an ordinary configuration.</p>
+<pre><code class="language-text">- apiVersion: net.routerd.net/v1alpha1
   kind: NAT44Rule
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    destinationCIDRs: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    destinationSetRefs: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    egressInterface: &quot;&lt;string&gt;&quot; # optional; string
-    egressPolicyRef: &quot;&lt;string&gt;&quot; # optional; string
-    excludeDestinationCIDRs: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    excludeDestinationSetRefs: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    outboundInterface: &quot;&lt;string&gt;&quot; # optional; string
-    snatAddress: &quot;&lt;string&gt;&quot; # optional; string
-    snatAddressFrom: # optional; object
-      field: &quot;&lt;string&gt;&quot; # optional; string
-      optional: true # optional; boolean
-      resource: &quot;&lt;string&gt;&quot; # Required; string
-    sourceCIDRs: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    sourceRanges: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    translation: # optional; object
-      address: &quot;&lt;string&gt;&quot; # optional; string
-      addresses: # optional; array
-        - &quot;&lt;string&gt;&quot; # string
-      portMapping: # optional; object
-        end: 1 # optional; integer; minimum=1; maximum=65535
-        start: 1 # optional; integer; minimum=1; maximum=65535
-        type: &quot;auto&quot; # optional; string; enum=[&quot;auto&quot;, &quot;preserve&quot;, &quot;range&quot;]
-      type: &quot;interfaceAddress&quot; # Required; string; enum=[&quot;interfaceAddress&quot;, &quot;address&quot;, &quot;pool&quot;]
-    type: &quot;masquerade&quot; # optional; string; enum=[&quot;masquerade&quot;, &quot;snat&quot;]
-    when: # optional; object
-      state: # optional; object
-        &quot;&lt;key&gt;&quot;: # optional; object
-          contains: &quot;&lt;string&gt;&quot; # optional; string
-          equals: &quot;&lt;string&gt;&quot; # optional; string
-          exists: true # optional; boolean
-          for: &quot;&lt;string&gt;&quot; # optional; string
-          in: # optional; array
-            - &quot;&lt;string&gt;&quot; # string
-          maxAge: &quot;&lt;string&gt;&quot; # optional; string
-          status: &quot;set&quot; # optional; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+    [ destinationCIDRs:
+        - &lt;string&gt;
+    ]
+    [ destinationSetRefs:
+        - &lt;string&gt;
+    ]
+    [ egressInterface: &lt;string&gt; ]
+    [ egressPolicyRef: &lt;string&gt; ]
+    [ excludeDestinationCIDRs:
+        - &lt;string&gt;
+    ]
+    [ excludeDestinationSetRefs:
+        - &lt;string&gt;
+    ]
+    [ outboundInterface: &lt;string&gt; ]
+    [ snatAddress: &lt;string&gt; ]
+    [ snatAddressFrom:
+        field: &lt;string&gt;
+        [ optional: &lt;boolean&gt; ]
+        resource: &lt;string&gt;
+    ]
+    [ sourceCIDRs:
+        - &lt;string&gt;
+    ]
+    [ sourceRanges:
+        - &lt;string&gt;
+    ]
+    [ translation:
+        [ address: &lt;string&gt; ]
+        [ addresses:
+            - &lt;string&gt;
+        ]
+        [ portMapping:
+            [ end: &lt;integer&gt; ]
+            [ start: &lt;integer&gt; ]
+            [ type: (&quot;auto&quot; | &quot;preserve&quot; | &quot;range&quot;) ]
+        ]
+        type: (&quot;interfaceAddress&quot; | &quot;address&quot; | &quot;pool&quot;)
+    ]
+    [ type: (&quot;masquerade&quot; | &quot;snat&quot;) ]
+    [ when:
+        [ state:
+            [ &lt;name&gt;:
+                [ contains: &lt;string&gt; ]
+                [ equals: &lt;string&gt; ]
+                [ exists: &lt;boolean&gt; ]
+                [ for: &lt;string&gt; ]
+                [ in:
+                    - &lt;string&gt;
+                ]
+                [ maxAge: &lt;string&gt; ]
+                [ status: (&quot;set&quot; | &quot;unset&quot; | &quot;unknown&quot;) ]
+            ]
+        ]
+    ]
 </code></pre>
 <h2 id="field-meaning-and-default">Field meaning and default</h2>
+<p>Required children of optional objects apply only when their parent is used. Other exact conditions are in the explanation; bracketed alternatives may still require one choice.</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>Presence</th>
+<th>Type / constraints</th>
 <th>Field meaning and default</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.type</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string; enum=["masquerade", "snat"]</td>
 <td>Required in runtime shape: masquerade uses the egress address, snat uses a supplied address. No default; prohibited with alternative source-NAT fields.</td>
 </tr>
 <tr>
 <td><code>spec.egressInterface</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Optional bare configured logical interface/tunnel name; if supplied, must resolve in the interface/DSLite index. Takes precedence over egressPolicyRef.</td>
 </tr>
 <tr>
 <td><code>spec.egressPolicyRef</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Bare EgressRoutePolicy name when egressInterface is absent. The controller requires its status.phase=Applied and selectedDevice nonempty. Reference existence is not checked by the NAT44 validator, so an unresolved/misnamed policy leaves Pending.</td>
 </tr>
 <tr>
 <td><code>spec.sourceRanges</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>array</td>
 <td>Required nonempty IPv4 CIDR alternatives in runtime shape. No implicit LAN discovery; mutually exclusive with sourceCIDRs/translation shape.</td>
 </tr>
 <tr>
 <td><code>spec.destinationCIDRs</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional IPv4 destination alternatives, default empty. Linux unions with destinationSetRefs; PF uses these static CIDRs.</td>
 </tr>
 <tr>
 <td><code>spec.destinationSetRefs</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional existing IPAddressSet/<name> references; duplicates rejected. Default empty. Effective on Linux, ignored by PF.</td>
 </tr>
 <tr>
 <td><code>spec.excludeDestinationCIDRs</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional IPv4 destinations exempt from this NAT selection. Default empty. PF emits no-nat entries before this rule’s translations.</td>
 </tr>
 <tr>
 <td><code>spec.excludeDestinationSetRefs</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional existing IPAddressSet/<name> exclusions, default empty. Effective only on Linux; PF ignores them.</td>
 </tr>
 <tr>
 <td><code>spec.snatAddress</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Bare IPv4 translation address for type=snat; exactly one of this and snatAddressFrom is required. Prohibited with masquerade. Does not assign the address.</td>
 </tr>
 <tr>
 <td><code>spec.snatAddressFrom</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>object</td>
 <td>Optional common resource/field/optional source, only for snat. Reads status first, then a supported declared resource field; unusable value stays Pending. Specify an IPv4 address-providing field.</td>
 </tr>
 <tr>
 <td><code>spec.outboundInterface</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Required bare configured interface name for the alternative validated shape; no runtime-controller support as described above. Do not combine with egressInterface/egressPolicyRef.</td>
 </tr>
 <tr>
 <td><code>spec.sourceCIDRs</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>array</td>
 <td>Required nonempty IPv4 prefixes for the alternative shape; no default. Not consumed by the runtime controller.</td>
 </tr>
 <tr>
 <td><code>spec.translation</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>object</td>
 <td>Alternative-shape translation object; needed with outboundInterface/sourceCIDRs. Validation/planning support is not proof of runtime installation.</td>
 </tr>
 <tr>
 <td><code>spec.translation.type</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string; enum=["interfaceAddress", "address", "pool"]</td>
 <td>Required interfaceAddress, address or pool in the alternative shape. Static PF supports interfaceAddress/address only; runtime controller does not apply this shape.</td>
 </tr>
 <tr>
 <td><code>spec.translation.address</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Bare IPv4 required when translation.type=address; default empty. Other translation types do not consume it.</td>
 </tr>
 <tr>
 <td><code>spec.translation.addresses</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>array</td>
 <td>Nonempty bare IPv4 list required when type=pool. Accepted/planned but not implemented by the current runtime controller or static PF renderer.</td>
 </tr>
 <tr>
 <td><code>spec.translation.portMapping</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional alternative-shape port policy, validated and planned only. Current Linux runtime and PF renderer do not enforce these port settings.</td>
 </tr>
 <tr>
 <td><code>spec.translation.portMapping.type</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["auto", "preserve", "range"]</td>
 <td>auto (default), preserve or range. auto/preserve prohibit start/end; range requires both endpoints. Currently no renderer effect.</td>
 </tr>
 <tr>
 <td><code>spec.translation.portMapping.start</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=1; maximum=65535</td>
 <td>Range start, required only for range: 1–65535 and &lt;= end. Default 0 means absent. Currently validated only.</td>
 </tr>
 <tr>
 <td><code>spec.translation.portMapping.end</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=1; maximum=65535</td>
 <td>Range end, required only for range: 1–65535 and &gt;= start. Default 0 means absent. Currently validated only.</td>
 </tr>
 <tr>
 <td><code>spec.when</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional common activation condition; default unconditional. Inactive/filtered rules are omitted from effective NAT generation. See common fields for predicate semantics and schema limitations.</td>
 </tr>
 </tbody>
@@ -165,7 +224,7 @@
 <p><a href="/examples/dslite-lan-range-snat.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
 <li><a href="#conditions-and-references">Conditions and references</a></li>
-<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#configuration-syntax">Configuration syntax</a></li>
 <li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 <li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
 </ul>

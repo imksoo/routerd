@@ -10,36 +10,38 @@
 
 - state仅支持present，不能移除软件包。找不到匹配OS集合时为Pending/NoMatchingOSPackageSet。集合的optional会被接受但controller不读取，安装失败仍返回错误。
 
-## YAML定义
+## 配置语法
 
-此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。
+这是说明用语法，不是可直接复制的YAML。未加括号的字段在父条目内必填；`[ ... ]`表示按条件可省略，`<类型>`为替换值，`(a | b)`表示选项。选填父条目内仍可能有必填子条目。条件必填、互斥与实际默认值请见下表；常规YAML请使用链接示例。
 
-```yaml
+```text
 - apiVersion: system.routerd.net/v1alpha1
   kind: Package
   metadata:
     name: "<name>"
   spec:
-    packages: # 必填; array
-      - # object
-        manager: "" # 选填; string; enum=["", "apt", "dnf", "pkg"]
-        names: # 必填; array
-          - "<string>" # string
-        optional: true # 选填; boolean
-        os: "ubuntu" # 必填; string; enum=["ubuntu", "debian", "fedora", "rhel", "rocky", "almalinux", "freebsd"]
-    state: "" # 选填; string; enum=["", "present"]
+    packages:
+      -
+        [ manager: ("" | "apt" | "dnf" | "pkg") ]
+        names:
+          - <string>
+        [ optional: <boolean> ]
+        os: ("ubuntu" | "debian" | "fedora" | "rhel" | "rocky" | "almalinux" | "freebsd")
+    [ state: ("" | "present") ]
 ```
 
 ## 字段含义与默认值
 
-| YAML | 字段含义与默认值 |
-| --- | --- |
-| `spec.state` | 期望软件包状态，省略为present，拒绝其他值。 |
-| `spec.packages` | 必填非空的OS软件包集合列表，不是资源引用。 |
-| `spec.packages[].os` | 必填OS标识：ubuntu、debian、fedora、rhel、rocky、almalinux或freebsd。Linux读取/etc/os-release的ID，不按ID_LIKE匹配。 |
-| `spec.packages[].manager` | ubuntu/debian默认apt，fedora/rhel/rocky/almalinux默认dnf，freebsd默认pkg；显式指定也必须符合此映射。 |
-| `spec.packages[].names` | 必填非空软件包名列表，拒绝空白名称及含空白或/的名称；此字段不隐含新增其他名称。 |
-| `spec.packages[].optional` | 默认false；可解码此字段，但当前不影响PackageController的错误处理。 |
+选填父条目的必填子条目仅在使用父条目时需要。其他具体条件列于说明；`[ ... ]`选项仍可能需要择一。
+
+| YAML | 指定要求 | 类型与限制 | 字段含义与默认值 |
+| --- | --- | --- | --- |
+| `spec.state` | *选填* | string; enum=["", "present"] | 期望软件包状态，省略为present，拒绝其他值。 |
+| `spec.packages` | **必填** | array | 必填非空的OS软件包集合列表，不是资源引用。 |
+| `spec.packages[].os` | **必填** | string; enum=["ubuntu", "debian", "fedora", "rhel", "rocky", "almalinux", "freebsd"] | 必填OS标识：ubuntu、debian、fedora、rhel、rocky、almalinux或freebsd。Linux读取/etc/os-release的ID，不按ID_LIKE匹配。 |
+| `spec.packages[].manager` | *选填* | string; enum=["", "apt", "dnf", "pkg"] | ubuntu/debian默认apt，fedora/rhel/rocky/almalinux默认dnf，freebsd默认pkg；显式指定也必须符合此映射。 |
+| `spec.packages[].names` | **必填** | array | 必填非空软件包名列表，拒绝空白名称及含空白或/的名称；此字段不隐含新增其他名称。 |
+| `spec.packages[].optional` | *选填* | boolean | 默认false；可解码此字段，但当前不影响PackageController的错误处理。 |
 
 实现: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate_system.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_system.go) · [pkg/controller/chain/package.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/package.go) · [pkg/hostdeps/hostdeps.go](https://github.com/imksoo/routerd/blob/main/pkg/hostdeps/hostdeps.go)
 

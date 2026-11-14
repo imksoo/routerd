@@ -11,31 +11,38 @@
 <li>No spec field is mandatory. logDeny is ORed across resources. sameRoleAccept starts true in the renderer and no false assignment exists, so setting false does not disable same-role forwarding in the current implementation.</li>
 <li>Linux nftables and FreeBSD PF have different implicit/explicit ordering. PF emits broad implicit passes before explicit deny rules for accepted paths; Linux emits explicit zone-pair rules before that pair’s implicit action. Do not assume an explicit deny overrides every implicit/control/state exception.</li>
 </ul>
-<h2 id="yaml-definition">YAML definition</h2>
-<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
-<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+<h2 id="configuration-syntax">Configuration syntax</h2>
+<p>This is explanatory notation, not YAML to copy. Unbracketed fields are required within their parent; <code>[ ... ]</code> marks fields that can be omitted, subject to the conditions in the table. <code>&lt;type&gt;</code> is a placeholder, and <code>(a | b)</code> lists alternatives. Optional parents may contain required children. Conditional requirements, exclusions and runtime defaults are described below. Use the linked YAML example for an ordinary configuration.</p>
+<pre><code class="language-text">- apiVersion: firewall.routerd.net/v1alpha1
   kind: FirewallPolicy
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    logDeny: true # optional; boolean
-    sameRoleAccept: true # optional; boolean
+    [ logDeny: &lt;boolean&gt; ]
+    [ sameRoleAccept: &lt;boolean&gt; ]
 </code></pre>
 <h2 id="field-meaning-and-default">Field meaning and default</h2>
+<p>Required children of optional objects apply only when their parent is used. Other exact conditions are in the explanation; bracketed alternatives may still require one choice.</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>Presence</th>
+<th>Type / constraints</th>
 <th>Field meaning and default</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.logDeny</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false; any true resource enables Linux implicit input/forward deny logging. It does not log explicit drops without their own log flag. Current PF generation does not read this option.</td>
 </tr>
 <tr>
 <td><code>spec.sameRoleAccept</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Decoded default false, but effective renderer default is always true and false has no effect. This includes untrust-to-untrust in Linux. PF skips its broad untrust-to-untrust forwarding pass.</td>
 </tr>
 </tbody>
@@ -47,7 +54,7 @@
 <p><a href="/examples/example-basic-ipv4-nat.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
 <li><a href="#conditions-and-references">Conditions and references</a></li>
-<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#configuration-syntax">Configuration syntax</a></li>
 <li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 <li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
 </ul>

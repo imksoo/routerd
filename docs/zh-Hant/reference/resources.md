@@ -16,15 +16,16 @@ routerd validate --config router.yaml
 apiVersion: routerd.net/v1alpha1
 kind: Router
 metadata:
-  name: "<router-name>"
+  name: example
 spec:
   resources:
     - apiVersion: net.routerd.net/v1alpha1
       kind: Interface
       metadata:
-        name: "<name>"
+        name: lan
       spec:
-        ifname: "<interface-name>"
+        ifname: ens18
+        managed: true
 ```
 
 依用途分類，分類內按Kind名稱排序。這是閱讀順序，不代表YAML評估、相依或執行順序。

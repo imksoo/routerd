@@ -12,102 +12,138 @@
 <li>The ntpd renderer does not emit allowCIDRs restrictions. Do not assume that declaring this list enforces a client ACL on ntpd.</li>
 <li>In a dynamic source mode, unresolved upstream values do not themselves stop the server renderer; it may emit a configuration with no upstreams. Applied denotes configuration/service work, not proof of clock synchronization.</li>
 </ul>
-<h2 id="yaml-definition">YAML definition</h2>
-<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
-<pre><code class="language-yaml">- apiVersion: system.routerd.net/v1alpha1
+<h2 id="configuration-syntax">Configuration syntax</h2>
+<p>This is explanatory notation, not YAML to copy. Unbracketed fields are required within their parent; <code>[ ... ]</code> marks fields that can be omitted, subject to the conditions in the table. <code>&lt;type&gt;</code> is a placeholder, and <code>(a | b)</code> lists alternatives. Optional parents may contain required children. Conditional requirements, exclusions and runtime defaults are described below. Use the linked YAML example for an ordinary configuration.</p>
+<pre><code class="language-text">- apiVersion: system.routerd.net/v1alpha1
   kind: NTPServer
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    allowCIDRFrom: # optional; array
-      - # object
-        field: &quot;&lt;string&gt;&quot; # optional; string
-        optional: true # optional; boolean
-        resource: &quot;&lt;string&gt;&quot; # Required; string
-    allowCIDRs: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    fallbackServers: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    listenAddressFrom: # optional; array
-      - # object
-        field: &quot;&lt;string&gt;&quot; # optional; string
-        optional: true # optional; boolean
-        resource: &quot;&lt;string&gt;&quot; # Required; string
-    listenAddresses: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    managed: true # optional; boolean
-    provider: &quot;chrony&quot; # optional; string; enum=[&quot;chrony&quot;, &quot;ntpd&quot;]
-    serverFrom: # optional; array
-      - # object
-        field: &quot;&lt;string&gt;&quot; # optional; string
-        optional: true # optional; boolean
-        resource: &quot;&lt;string&gt;&quot; # Required; string
-    servers: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    source: &quot;static&quot; # optional; string; enum=[&quot;static&quot;, &quot;auto&quot;, &quot;dhcp&quot;, &quot;dhcpv6&quot;]
-    when: # optional; object
-      state: # optional; object
-        &quot;&lt;key&gt;&quot;: # optional; object
-          contains: &quot;&lt;string&gt;&quot; # optional; string
-          equals: &quot;&lt;string&gt;&quot; # optional; string
-          exists: true # optional; boolean
-          for: &quot;&lt;string&gt;&quot; # optional; string
-          in: # optional; array
-            - &quot;&lt;string&gt;&quot; # string
-          maxAge: &quot;&lt;string&gt;&quot; # optional; string
-          status: &quot;set&quot; # optional; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+    [ allowCIDRFrom:
+        -
+          field: &lt;string&gt;
+          [ optional: &lt;boolean&gt; ]
+          resource: &lt;string&gt;
+    ]
+    [ allowCIDRs:
+        - &lt;string&gt;
+    ]
+    [ fallbackServers:
+        - &lt;string&gt;
+    ]
+    [ listenAddressFrom:
+        -
+          field: &lt;string&gt;
+          [ optional: &lt;boolean&gt; ]
+          resource: &lt;string&gt;
+    ]
+    [ listenAddresses:
+        - &lt;string&gt;
+    ]
+    [ managed: &lt;boolean&gt; ]
+    [ provider: (&quot;chrony&quot; | &quot;ntpd&quot;) ]
+    [ serverFrom:
+        -
+          field: &lt;string&gt;
+          [ optional: &lt;boolean&gt; ]
+          resource: &lt;string&gt;
+    ]
+    [ servers:
+        - &lt;string&gt;
+    ]
+    [ source: (&quot;static&quot; | &quot;auto&quot; | &quot;dhcp&quot; | &quot;dhcpv6&quot;) ]
+    [ when:
+        [ state:
+            [ &lt;name&gt;:
+                [ contains: &lt;string&gt; ]
+                [ equals: &lt;string&gt; ]
+                [ exists: &lt;boolean&gt; ]
+                [ for: &lt;string&gt; ]
+                [ in:
+                    - &lt;string&gt;
+                ]
+                [ maxAge: &lt;string&gt; ]
+                [ status: (&quot;set&quot; | &quot;unset&quot; | &quot;unknown&quot;) ]
+            ]
+        ]
+    ]
 </code></pre>
 <h2 id="field-meaning-and-default">Field meaning and default</h2>
+<p>Required children of optional objects apply only when their parent is used. Other exact conditions are in the explanation; bracketed alternatives may still require one choice.</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>Presence</th>
+<th>Type / constraints</th>
 <th>Field meaning and default</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.managed</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false: record Observed without configuring or starting the time service. Set true to manage files and services.</td>
 </tr>
 <tr>
 <td><code>spec.source</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["static", "auto", "dhcp", "dhcpv6"]</td>
 <td>Default static: use servers. auto/dhcp/dhcpv6 all use the same order: resolved serverFrom, then fallbackServers, then servers. They do not automatically discover DHCP sources.</td>
 </tr>
 <tr>
 <td><code>spec.servers</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>array</td>
 <td>Upstream hostnames or IP addresses, default empty. Required when managed=true and source is omitted/static. Entries must be nonblank single tokens; they are not resource references.</td>
 </tr>
 <tr>
 <td><code>spec.serverFrom</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>List of explicit value sources, default empty. Use for example DHCPv4Client/wan field ntpServers or DHCPv6PrefixDelegation/wan-pd field sntpServers. Used only for auto/dhcp/dhcpv6; each resource and field must exist. This resolver ignores the optional flag; missing values simply lead to the next source alternative.</td>
 </tr>
 <tr>
 <td><code>spec.when</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Activation condition; omitted means no gate. See the shared condition reference for state/all/any, unknown handling and age predicates.</td>
 </tr>
 <tr>
 <td><code>spec.provider</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["chrony", "ntpd"]</td>
 <td>Server implementation, default chrony except on FreeBSD, where it is ntpd. ntpd is supported only on FreeBSD.</td>
 </tr>
 <tr>
 <td><code>spec.fallbackServers</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Fallback upstream list, default empty. Selected only in auto/dhcp/dhcpv6 mode when serverFrom yields nothing, before servers. No separate fallback directives are written.</td>
 </tr>
 <tr>
 <td><code>spec.listenAddresses</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Static listen IPs, default empty. CIDR values are reduced to their host address. Empty resolved listen settings produce no bindaddress/interface-listen directives, leaving backend defaults.</td>
 </tr>
 <tr>
 <td><code>spec.listenAddressFrom</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Additional listen-address sources, default empty, combined with listenAddresses. Both resource and field are required per source. If any listen setting was declared but the combined result is empty, status is Pending/NoListenAddresses.</td>
 </tr>
 <tr>
 <td><code>spec.allowCIDRs</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Allowed client CIDRs, default empty. chrony emits allow for each; ntpd does not consume this list in its generated configuration. Static entries are checked for nonblank text, not CIDR syntax, during validation.</td>
 </tr>
 <tr>
 <td><code>spec.allowCIDRFrom</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>CIDR value sources combined with allowCIDRs, default empty. Missing values from a nonoptional source cause Pending/AllowCIDRFromPending; invalid derived CIDRs cause Pending/AllowCIDRFromInvalid. Bare addresses are not CIDRs.</td>
 </tr>
 </tbody>
@@ -118,7 +154,7 @@
 <p><code>phase</code>, <code>servers</code>, <code>listenAddresses</code>, <code>allowCIDRs</code>, <code>source</code>, <code>updatedAt</code></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
 <li><a href="#conditions-and-references">Conditions and references</a></li>
-<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#configuration-syntax">Configuration syntax</a></li>
 <li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 <li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
 </ul>

@@ -12,35 +12,38 @@
 - 生成名は一意で、明示IPv4Routeの名前・宛先との衝突はエラーです。同じHybridRoute内の正規化宛先重複も衝突します。HealthCheck異常はHybridRouteの状態表示だけを変え、適用待機・経路撤去・別相手選択は行いません。
 - 生成IPv4Routeはpeerのunderlay.interfaceをdeviceに使います。ipsecだけremote.addressがIPv4ならgatewayにし、他はデバイス経路です。トンネル・VPN設定と到達性は別途用意します。Linuxは正のmetricを使い、FreeBSDのIPv4Route適用はmetricを使いません。
 
-## YAML定義
+## 設定構文
 
-全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。
+説明用の構文表記であり、そのままコピーするYAMLではありません。囲みのない項目は親の中で必須、`[ ... ]`は条件に応じて省略できる項目、`<型>`は差し替え値、`(a | b)`は選択肢です。任意の親にも必須の子があります。条件付き必須・排他・実効既定値は下の表を確認し、通常のYAMLはリンク先の設定例を使ってください。
 
-```yaml
+```text
 - apiVersion: hybrid.routerd.net/v1alpha1
   kind: HybridRoute
   metadata:
     name: "<name>"
   spec:
-    destinationCIDRs: # 必須; array
-      - "<string>" # string
-    healthCheckRef: "<string>" # 任意; string
-    install: # 任意; object
-      metric: 0 # 任意; integer; minimum=0
-      table: "" # 任意; string; enum=["", "main"]
-    peerRef: "<string>" # 必須; string
+    destinationCIDRs:
+      - <string>
+    [ healthCheckRef: <string> ]
+    [ install:
+        [ metric: <integer> ]
+        [ table: ("" | "main") ]
+    ]
+    peerRef: <string>
 ```
 
 ## 項目の意味と既定値
 
-| YAML | 項目の意味と既定値 |
-| --- | --- |
-| `spec.destinationCIDRs` | デフォルト経路を除く1件以上のIPv4 CIDRが必須です。相手ネットワークの補完・検出はしません。 |
-| `spec.peerRef` | 既存OverlayPeerのmetadata.nameが必須です。展開関数はOverlayPeer/nameを正規化できますが、通常参照検証は裸名を必要とします。 |
-| `spec.install` | 経路適用設定です。既定は主表・metric 0で、ポリシールーティング・HA自動選択ではありません。 |
-| `spec.install.table` | 空・mainだけを許し、どちらも主表IPv4Routeにします。他の表名・番号は拒否します。 |
-| `spec.install.metric` | 0以上の整数で既定0です。生成IPv4Routeへコピーし、Linuxは正値だけを出力しFreeBSDは使いません。 |
-| `spec.healthCheckRef` | 既存HealthCheckの任意裸名です。空なら監視状態追加なしです。Unhealthy・failed・errorはDegradedにしますが経路は変えず、この関数は未取得・unknownを異常扱いしません。 |
+任意の親の必須項目は、親を使う場合に必要です。それ以外の具体的な条件は説明欄に記載します。`[ ... ]`で囲まれた選択肢も、いずれか一方が必要な場合があります。
+
+| YAML | 指定要否 | 型・制約 | 項目の意味と既定値 |
+| --- | --- | --- | --- |
+| `spec.destinationCIDRs` | **必須** | array | デフォルト経路を除く1件以上のIPv4 CIDRが必須です。相手ネットワークの補完・検出はしません。 |
+| `spec.peerRef` | **必須** | string | 既存OverlayPeerのmetadata.nameが必須です。展開関数はOverlayPeer/nameを正規化できますが、通常参照検証は裸名を必要とします。 |
+| `spec.install` | *任意* | object | 経路適用設定です。既定は主表・metric 0で、ポリシールーティング・HA自動選択ではありません。 |
+| `spec.install.table` | *任意* | string; enum=["", "main"] | 空・mainだけを許し、どちらも主表IPv4Routeにします。他の表名・番号は拒否します。 |
+| `spec.install.metric` | *任意* | integer; minimum=0 | 0以上の整数で既定0です。生成IPv4Routeへコピーし、Linuxは正値だけを出力しFreeBSDは使いません。 |
+| `spec.healthCheckRef` | *任意* | string | 既存HealthCheckの任意裸名です。空なら監視状態追加なしです。Unhealthy・failed・errorはDegradedにしますが経路は変えず、この関数は未取得・unknownを異常扱いしません。 |
 
 実装: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate_hybrid.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_hybrid.go) · [pkg/config/validate.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go) · [pkg/hybrid/hybrid.go](https://github.com/imksoo/routerd/blob/main/pkg/hybrid/hybrid.go) · [pkg/controller/chain/dynamic_effective.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/dynamic_effective.go) · [pkg/controller/chain/hybrid.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/hybrid.go) · [pkg/controller/chain/phase2.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/phase2.go)
 

@@ -11,61 +11,82 @@
 <li>groupRef is required and must name an existing EventGroup. At most one FederationSLO may reference each group. All numeric fields must be nonnegative; effective lagWarnSeconds must be strictly less than effective lagFailSeconds after zero-value defaults are applied.</li>
 <li>Lag comparisons are inclusive (&gt;= warn/fail threshold). Subscription counts warn/fail only when greater than their allowed maximum. Expiring-soon uses remaining TTL strictly below the threshold; pending/failed delivery can raise that diagnostic from WARN to FAIL.</li>
 </ul>
-<h2 id="yaml-definition">YAML definition</h2>
-<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
-<pre><code class="language-yaml">- apiVersion: federation.routerd.net/v1alpha1
+<h2 id="configuration-syntax">Configuration syntax</h2>
+<p>This is explanatory notation, not YAML to copy. Unbracketed fields are required within their parent; <code>[ ... ]</code> marks fields that can be omitted, subject to the conditions in the table. <code>&lt;type&gt;</code> is a placeholder, and <code>(a | b)</code> lists alternatives. Optional parents may contain required children. Conditional requirements, exclusions and runtime defaults are described below. Use the linked YAML example for an ordinary configuration.</p>
+<pre><code class="language-text">- apiVersion: federation.routerd.net/v1alpha1
   kind: FederationSLO
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    delivery: # optional; object
-      expiresSoonSeconds: 0 # optional; integer; minimum=0
-      lagFailSeconds: 0 # optional; integer; minimum=0
-      lagWarnSeconds: 0 # optional; integer; minimum=0
-    groupRef: &quot;&lt;string&gt;&quot; # Required; string
-    subscription: # optional; object
-      maxFailedRuns: 0 # optional; integer; minimum=0
-      maxPendingRuns: 0 # optional; integer; minimum=0
+    [ delivery:
+        [ expiresSoonSeconds: &lt;integer&gt; ]
+        [ lagFailSeconds: &lt;integer&gt; ]
+        [ lagWarnSeconds: &lt;integer&gt; ]
+    ]
+    groupRef: &lt;string&gt;
+    [ subscription:
+        [ maxFailedRuns: &lt;integer&gt; ]
+        [ maxPendingRuns: &lt;integer&gt; ]
+    ]
 </code></pre>
 <h2 id="field-meaning-and-default">Field meaning and default</h2>
+<p>Required children of optional objects apply only when their parent is used. Other exact conditions are in the explanation; bracketed alternatives may still require one choice.</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>Presence</th>
+<th>Type / constraints</th>
 <th>Field meaning and default</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.groupRef</code></td>
+<td><strong>Required</strong></td>
+<td>string</td>
 <td>Required bare EventGroup metadata.name, not EventGroup/name; existence and uniqueness are validated.</td>
 </tr>
 <tr>
 <td><code>spec.delivery</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional delivery-diagnostic thresholds; omitted fields use defaults below. Not a transport timeout or retry configuration.</td>
 </tr>
 <tr>
 <td><code>spec.delivery.lagWarnSeconds</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=0</td>
 <td>Nonnegative seconds; omitted or 0 means 60. Maximum measured delivery lag &gt;= this value produces WARN unless the fail threshold is met.</td>
 </tr>
 <tr>
 <td><code>spec.delivery.lagFailSeconds</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=0</td>
 <td>Nonnegative seconds; omitted or 0 means 180. Maximum measured delivery lag &gt;= this value produces FAIL. Must exceed the effective warn threshold.</td>
 </tr>
 <tr>
 <td><code>spec.delivery.expiresSoonSeconds</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=0</td>
 <td>Nonnegative seconds; omitted or 0 means 120. Remaining event TTL below this value is expiring soon. Zero cannot disable the check; events with no expiry are handled separately.</td>
 </tr>
 <tr>
 <td><code>spec.subscription</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional subscription-run diagnostic allowances, default zero pending/failed tolerated. This does not cap the controller’s queue or retry count.</td>
 </tr>
 <tr>
 <td><code>spec.subscription.maxPendingRuns</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=0</td>
 <td>Nonnegative count, default 0. Pending run count greater than this value produces WARN when the failed-run allowance has not already produced FAIL.</td>
 </tr>
 <tr>
 <td><code>spec.subscription.maxFailedRuns</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=0</td>
 <td>Nonnegative count, default 0. Failed run count greater than this value produces FAIL. It does not change the three-attempt subscription retry policy.</td>
 </tr>
 </tbody>
@@ -76,7 +97,7 @@
 <p>No fields are registered for this kind in the ordinary status-reference allowlist.</p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
 <li><a href="#conditions-and-references">Conditions and references</a></li>
-<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#configuration-syntax">Configuration syntax</a></li>
 <li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 <li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
 </ul>

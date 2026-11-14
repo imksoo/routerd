@@ -14,146 +14,205 @@
 <li>两种形式互斥。替代形式需 outboundInterface、非空 IPv4 sourceCIDRs 与 translation.type，禁止传统 type/egress/sourceRanges/目标/SNAT 字段。未使用的 translation.address/addresses 不互斥拒绝，但仅所选分支会使用。</li>
 <li>Linux 将 destinationCIDRs 与 destinationSetRefs 作 OR，再排除指定 CIDR/集合。PF 应用静态目标与排除 CIDR，但忽略两个地址集合引用列表。规则按 metadata.name 排序，不按 YAML 顺序。</li>
 </ul>
-<h2 id="yaml定义">YAML定义</h2>
-<p>此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。</p>
-<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+<h2 id="配置语法">配置语法</h2>
+<p>这是说明用语法，不是可直接复制的YAML。未加括号的字段在父条目内必填；<code>[ ... ]</code>表示按条件可省略，<code>&lt;类型&gt;</code>为替换值，<code>(a | b)</code>表示选项。选填父条目内仍可能有必填子条目。条件必填、互斥与实际默认值请见下表；常规YAML请使用链接示例。</p>
+<pre><code class="language-text">- apiVersion: net.routerd.net/v1alpha1
   kind: NAT44Rule
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    destinationCIDRs: # 选填; array
-      - &quot;&lt;string&gt;&quot; # string
-    destinationSetRefs: # 选填; array
-      - &quot;&lt;string&gt;&quot; # string
-    egressInterface: &quot;&lt;string&gt;&quot; # 选填; string
-    egressPolicyRef: &quot;&lt;string&gt;&quot; # 选填; string
-    excludeDestinationCIDRs: # 选填; array
-      - &quot;&lt;string&gt;&quot; # string
-    excludeDestinationSetRefs: # 选填; array
-      - &quot;&lt;string&gt;&quot; # string
-    outboundInterface: &quot;&lt;string&gt;&quot; # 选填; string
-    snatAddress: &quot;&lt;string&gt;&quot; # 选填; string
-    snatAddressFrom: # 选填; object
-      field: &quot;&lt;string&gt;&quot; # 选填; string
-      optional: true # 选填; boolean
-      resource: &quot;&lt;string&gt;&quot; # 必填; string
-    sourceCIDRs: # 选填; array
-      - &quot;&lt;string&gt;&quot; # string
-    sourceRanges: # 选填; array
-      - &quot;&lt;string&gt;&quot; # string
-    translation: # 选填; object
-      address: &quot;&lt;string&gt;&quot; # 选填; string
-      addresses: # 选填; array
-        - &quot;&lt;string&gt;&quot; # string
-      portMapping: # 选填; object
-        end: 1 # 选填; integer; minimum=1; maximum=65535
-        start: 1 # 选填; integer; minimum=1; maximum=65535
-        type: &quot;auto&quot; # 选填; string; enum=[&quot;auto&quot;, &quot;preserve&quot;, &quot;range&quot;]
-      type: &quot;interfaceAddress&quot; # 必填; string; enum=[&quot;interfaceAddress&quot;, &quot;address&quot;, &quot;pool&quot;]
-    type: &quot;masquerade&quot; # 选填; string; enum=[&quot;masquerade&quot;, &quot;snat&quot;]
-    when: # 选填; object
-      state: # 选填; object
-        &quot;&lt;key&gt;&quot;: # 选填; object
-          contains: &quot;&lt;string&gt;&quot; # 选填; string
-          equals: &quot;&lt;string&gt;&quot; # 选填; string
-          exists: true # 选填; boolean
-          for: &quot;&lt;string&gt;&quot; # 选填; string
-          in: # 选填; array
-            - &quot;&lt;string&gt;&quot; # string
-          maxAge: &quot;&lt;string&gt;&quot; # 选填; string
-          status: &quot;set&quot; # 选填; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+    [ destinationCIDRs:
+        - &lt;string&gt;
+    ]
+    [ destinationSetRefs:
+        - &lt;string&gt;
+    ]
+    [ egressInterface: &lt;string&gt; ]
+    [ egressPolicyRef: &lt;string&gt; ]
+    [ excludeDestinationCIDRs:
+        - &lt;string&gt;
+    ]
+    [ excludeDestinationSetRefs:
+        - &lt;string&gt;
+    ]
+    [ outboundInterface: &lt;string&gt; ]
+    [ snatAddress: &lt;string&gt; ]
+    [ snatAddressFrom:
+        field: &lt;string&gt;
+        [ optional: &lt;boolean&gt; ]
+        resource: &lt;string&gt;
+    ]
+    [ sourceCIDRs:
+        - &lt;string&gt;
+    ]
+    [ sourceRanges:
+        - &lt;string&gt;
+    ]
+    [ translation:
+        [ address: &lt;string&gt; ]
+        [ addresses:
+            - &lt;string&gt;
+        ]
+        [ portMapping:
+            [ end: &lt;integer&gt; ]
+            [ start: &lt;integer&gt; ]
+            [ type: (&quot;auto&quot; | &quot;preserve&quot; | &quot;range&quot;) ]
+        ]
+        type: (&quot;interfaceAddress&quot; | &quot;address&quot; | &quot;pool&quot;)
+    ]
+    [ type: (&quot;masquerade&quot; | &quot;snat&quot;) ]
+    [ when:
+        [ state:
+            [ &lt;name&gt;:
+                [ contains: &lt;string&gt; ]
+                [ equals: &lt;string&gt; ]
+                [ exists: &lt;boolean&gt; ]
+                [ for: &lt;string&gt; ]
+                [ in:
+                    - &lt;string&gt;
+                ]
+                [ maxAge: &lt;string&gt; ]
+                [ status: (&quot;set&quot; | &quot;unset&quot; | &quot;unknown&quot;) ]
+            ]
+        ]
+    ]
 </code></pre>
 <h2 id="字段含义与默认值">字段含义与默认值</h2>
+<p>选填父条目的必填子条目仅在使用父条目时需要。其他具体条件列于说明；<code>[ ... ]</code>选项仍可能需要择一。</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>指定要求</th>
+<th>类型与限制</th>
 <th>字段含义与默认值</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.type</code></td>
+<td><strong>条件必填</strong></td>
+<td>string; enum=["masquerade", "snat"]</td>
 <td>运行形式必填：masquerade 使用输出地址，snat 使用提供地址。无默认；不可搭配替代形式。</td>
 </tr>
 <tr>
 <td><code>spec.egressInterface</code></td>
+<td><strong>条件必填</strong></td>
+<td>string</td>
 <td>可选单独配置逻辑接口/隧道名称，指定时须在接口/DSLite 索引中存在，优先于 egressPolicyRef。</td>
 </tr>
 <tr>
 <td><code>spec.egressPolicyRef</code></td>
+<td><strong>条件必填</strong></td>
+<td>string</td>
 <td>egressInterface 缺省时使用的单独 EgressRoutePolicy 名称。需要 status.phase=Applied 与非空 selectedDevice。NAT44 验证不检查存在性，错名或未解析会 Pending。</td>
 </tr>
 <tr>
 <td><code>spec.sourceRanges</code></td>
+<td><strong>条件必填</strong></td>
+<td>array</td>
 <td>运行形式必填非空 IPv4 CIDR OR 列表。不自动发现 LAN，与 sourceCIDRs/translation 形式互斥。</td>
 </tr>
 <tr>
 <td><code>spec.destinationCIDRs</code></td>
+<td><em>选填</em></td>
+<td>array</td>
 <td>可选 IPv4 目标 OR 列表，默认空。Linux 与 destinationSetRefs 取并集；PF 使用静态 CIDR。</td>
 </tr>
 <tr>
 <td><code>spec.destinationSetRefs</code></td>
+<td><em>选填</em></td>
+<td>array</td>
 <td>可选已有 IPAddressSet/<name> 引用，不可重复。默认空，Linux 有效，PF 忽略。</td>
 </tr>
 <tr>
 <td><code>spec.excludeDestinationCIDRs</code></td>
+<td><em>选填</em></td>
+<td>array</td>
 <td>可选从此 NAT 选择排除的 IPv4 目标，默认空。PF 在此规则转换前生成 no-nat。</td>
 </tr>
 <tr>
 <td><code>spec.excludeDestinationSetRefs</code></td>
+<td><em>选填</em></td>
+<td>array</td>
 <td>可选已有 IPAddressSet/<name> 排除，默认空。仅 Linux 有效，PF 忽略。</td>
 </tr>
 <tr>
 <td><code>spec.snatAddress</code></td>
+<td><strong>条件必填</strong></td>
+<td>string</td>
 <td>type=snat 的纯 IPv4 转换地址，与 snatAddressFrom 必须且只能择一。masquerade 禁用。不会分配地址。</td>
 </tr>
 <tr>
 <td><code>spec.snatAddressFrom</code></td>
+<td><strong>条件必填</strong></td>
+<td>object</td>
 <td>仅供 snat 的通用 resource/field/optional 来源。先读状态，再读支持的声明资源字段；无可用值时 Pending。请指定提供 IPv4 地址的字段。</td>
 </tr>
 <tr>
 <td><code>spec.outboundInterface</code></td>
+<td><strong>条件必填</strong></td>
+<td>string</td>
 <td>替代验证形式必填的单独接口名称；如上所述运行控制器不支持。不可搭配 egressInterface/egressPolicyRef。</td>
 </tr>
 <tr>
 <td><code>spec.sourceCIDRs</code></td>
+<td><strong>条件必填</strong></td>
+<td>array</td>
 <td>替代形式必填非空 IPv4 前缀，无默认。运行控制器不使用。</td>
 </tr>
 <tr>
 <td><code>spec.translation</code></td>
+<td><strong>条件必填</strong></td>
+<td>object</td>
 <td>替代形式的转换对象，搭配 outboundInterface/sourceCIDRs。通过验证与出现计划不代表运行安装。</td>
 </tr>
 <tr>
 <td><code>spec.translation.type</code></td>
+<td><strong>条件必填</strong></td>
+<td>string; enum=["interfaceAddress", "address", "pool"]</td>
 <td>替代形式必填 interfaceAddress/address/pool。静态 PF 仅支持前两者，运行控制器不应用此形式。</td>
 </tr>
 <tr>
 <td><code>spec.translation.address</code></td>
+<td><strong>条件必填</strong></td>
+<td>string</td>
 <td>translation.type=address 时必填纯 IPv4，默认空。其他类型不使用。</td>
 </tr>
 <tr>
 <td><code>spec.translation.addresses</code></td>
+<td><strong>条件必填</strong></td>
+<td>array</td>
 <td>type=pool 时必填非空纯 IPv4 列表。接受并规划，但当前运行控制器与静态 PF 未实现。</td>
 </tr>
 <tr>
 <td><code>spec.translation.portMapping</code></td>
+<td><em>选填</em></td>
+<td>object</td>
 <td>可选替代形式端口策略，仅验证与规划。当前 Linux 运行与 PF 不强制这些配置。</td>
 </tr>
 <tr>
 <td><code>spec.translation.portMapping.type</code></td>
+<td><em>选填</em></td>
+<td>string; enum=["auto", "preserve", "range"]</td>
 <td>auto（默认）、preserve 或 range。auto/preserve 禁止 start/end，range 需要两端。当前无生成效果。</td>
 </tr>
 <tr>
 <td><code>spec.translation.portMapping.start</code></td>
+<td><em>选填</em></td>
+<td>integer; minimum=1; maximum=65535</td>
 <td>仅 range 必填起点，1–65535 且 &lt;= end。默认 0 为未指定，当前仅验证。</td>
 </tr>
 <tr>
 <td><code>spec.translation.portMapping.end</code></td>
+<td><em>选填</em></td>
+<td>integer; minimum=1; maximum=65535</td>
 <td>仅 range 必填终点，1–65535 且 &gt;= start。默认 0 为未指定，当前仅验证。</td>
 </tr>
 <tr>
 <td><code>spec.when</code></td>
+<td><em>选填</em></td>
+<td>object</td>
 <td>可选通用启用条件，默认无条件。未启用或已筛除规则不纳入有效 NAT 生成。条件与模式限制请见通用字段。</td>
 </tr>
 </tbody>
@@ -165,7 +224,7 @@
 <p><a href="/examples/dslite-lan-range-snat.yaml">配置示例</a></p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
 <ul>
 <li><a href="#指定条件与引用关系">指定条件与引用关系</a></li>
-<li><a href="#yaml定义">YAML定义</a></li>
+<li><a href="#配置语法">配置语法</a></li>
 <li><a href="#字段含义与默认值">字段含义与默认值</a></li>
 <li><a href="#可引用的状态字段">可引用的状态字段</a></li>
 </ul>

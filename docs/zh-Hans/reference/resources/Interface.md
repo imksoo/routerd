@@ -10,42 +10,48 @@
 
 - 依赖资源的interface使用metadata.name逻辑名称，ifname填写实际设备名。managed=false不会抑制已要求的LinkController启用/MTU变更。
 
-## YAML定义
+## 配置语法
 
-此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。
+这是说明用语法，不是可直接复制的YAML。未加括号的字段在父条目内必填；`[ ... ]`表示按条件可省略，`<类型>`为替换值，`(a | b)`表示选项。选填父条目内仍可能有必填子条目。条件必填、互斥与实际默认值请见下表；常规YAML请使用链接示例。
 
-```yaml
+```text
 - apiVersion: net.routerd.net/v1alpha1
   kind: Interface
   metadata:
     name: "<name>"
   spec:
-    adminUp: true # 选填; boolean
-    ifname: "<string>" # 必填; string
-    managed: true # 必填; boolean
-    mtu: 576 # 选填; integer; minimum=576; maximum=9216
-    when: # 选填; object
-      state: # 选填; object
-        "<key>": # 选填; object
-          contains: "<string>" # 选填; string
-          equals: "<string>" # 选填; string
-          exists: true # 选填; boolean
-          for: "<string>" # 选填; string
-          in: # 选填; array
-            - "<string>" # string
-          maxAge: "<string>" # 选填; string
-          status: "set" # 选填; string; enum=["set", "unset", "unknown"]
+    [ adminUp: <boolean> ]
+    ifname: <string>
+    managed: <boolean>
+    [ mtu: <integer> ]
+    [ when:
+        [ state:
+            [ <name>:
+                [ contains: <string> ]
+                [ equals: <string> ]
+                [ exists: <boolean> ]
+                [ for: <string> ]
+                [ in:
+                    - <string>
+                ]
+                [ maxAge: <string> ]
+                [ status: ("set" | "unset" | "unknown") ]
+            ]
+        ]
+    ]
 ```
 
 ## 字段含义与默认值
 
-| YAML | 字段含义与默认值 |
-| --- | --- |
-| `spec.ifname` | 必填现有内核设备名，例如ens18，无默认值；不存在时不创建，而记为Down/InterfaceNotFound。 |
-| `spec.managed` | 管理声明，解码默认false，但JSON Schema要求显式填写。影响管理/观察信息及周边处理，不保证adminUp/MTU仅观察不变更。 |
-| `spec.adminUp` | 默认false，不要求启用；true会启用已存在但关闭的link。false不表示强制关闭。 |
-| `spec.mtu` | 默认0保留当前MTU；非零值须为576–9216，不同时应用。 |
-| `spec.when` | 启用条件，省略不设限制；state/all/any、unknown及时间条件请见共用条件参考。 |
+选填父条目的必填子条目仅在使用父条目时需要。其他具体条件列于说明；`[ ... ]`选项仍可能需要择一。
+
+| YAML | 指定要求 | 类型与限制 | 字段含义与默认值 |
+| --- | --- | --- | --- |
+| `spec.ifname` | **必填** | string | 必填现有内核设备名，例如ens18，无默认值；不存在时不创建，而记为Down/InterfaceNotFound。 |
+| `spec.managed` | **必填** | boolean | 管理声明，解码默认false，但JSON Schema要求显式填写。影响管理/观察信息及周边处理，不保证adminUp/MTU仅观察不变更。 |
+| `spec.adminUp` | *选填* | boolean | 默认false，不要求启用；true会启用已存在但关闭的link。false不表示强制关闭。 |
+| `spec.mtu` | *选填* | integer; minimum=576; maximum=9216 | 默认0保留当前MTU；非零值须为576–9216，不同时应用。 |
+| `spec.when` | *选填* | object | 启用条件，省略不设限制；state/all/any、unknown及时间条件请见共用条件参考。 |
 
 实现: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate_interface.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_interface.go) · [pkg/config/index.go](https://github.com/imksoo/routerd/blob/main/pkg/config/index.go) · [pkg/controller/chain/chain.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go) · [pkg/resourcequery/when.go](https://github.com/imksoo/routerd/blob/main/pkg/resourcequery/when.go)
 

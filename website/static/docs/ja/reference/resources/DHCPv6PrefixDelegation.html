@@ -12,66 +12,87 @@
 <li>profile・prefixLengthは外部クライアント設定生成と復元スナップショットの整合確認に使います。監督起動するrouterd-dhcpv6-clientにはprofile・prefix-length引数を渡さず、その取得処理で長さ要求には使いません。clientDUIDは渡します。</li>
 <li>iaid・duidTypeのYAML指定は対応しません。routerdデーモンのIA_PD IAIDは既定1で、clientDUIDがなければ上流MACからDUID-LLを生成します。requiredは起動待ちの強制にはなりません。</li>
 </ul>
-<h2 id="yaml定義">YAML定義</h2>
-<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
-<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+<h2 id="設定構文">設定構文</h2>
+<p>説明用の構文表記であり、そのままコピーするYAMLではありません。囲みのない項目は親の中で必須、<code>[ ... ]</code>は条件に応じて省略できる項目、<code>&lt;型&gt;</code>は差し替え値、<code>(a | b)</code>は選択肢です。任意の親にも必須の子があります。条件付き必須・排他・実効既定値は下の表を確認し、通常のYAMLはリンク先の設定例を使ってください。</p>
+<pre><code class="language-text">- apiVersion: net.routerd.net/v1alpha1
   kind: DHCPv6PrefixDelegation
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    client: &quot;&lt;string&gt;&quot; # 任意; string
-    clientDUID: &quot;&lt;string&gt;&quot; # 任意; string
-    interface: &quot;&lt;string&gt;&quot; # 必須; string
-    prefixLength: 1 # 任意; integer; minimum=1; maximum=128
-    profile: &quot;default&quot; # 任意; string; enum=[&quot;default&quot;, &quot;ntt-ngn-direct-hikari-denwa&quot;, &quot;ntt-hgw-lan-pd&quot;]
-    required: true # 任意; boolean
-    when: # 任意; object
-      state: # 任意; object
-        &quot;&lt;key&gt;&quot;: # 任意; object
-          contains: &quot;&lt;string&gt;&quot; # 任意; string
-          equals: &quot;&lt;string&gt;&quot; # 任意; string
-          exists: true # 任意; boolean
-          for: &quot;&lt;string&gt;&quot; # 任意; string
-          in: # 任意; array
-            - &quot;&lt;string&gt;&quot; # string
-          maxAge: &quot;&lt;string&gt;&quot; # 任意; string
-          status: &quot;set&quot; # 任意; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+    [ client: &lt;string&gt; ]
+    [ clientDUID: &lt;string&gt; ]
+    interface: &lt;string&gt;
+    [ prefixLength: &lt;integer&gt; ]
+    [ profile: (&quot;default&quot; | &quot;ntt-ngn-direct-hikari-denwa&quot; | &quot;ntt-hgw-lan-pd&quot;) ]
+    [ required: &lt;boolean&gt; ]
+    [ when:
+        [ state:
+            [ &lt;name&gt;:
+                [ contains: &lt;string&gt; ]
+                [ equals: &lt;string&gt; ]
+                [ exists: &lt;boolean&gt; ]
+                [ for: &lt;string&gt; ]
+                [ in:
+                    - &lt;string&gt;
+                ]
+                [ maxAge: &lt;string&gt; ]
+                [ status: (&quot;set&quot; | &quot;unset&quot; | &quot;unknown&quot;) ]
+            ]
+        ]
+    ]
 </code></pre>
 <h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<p>任意の親の必須項目は、親を使う場合に必要です。それ以外の具体的な条件は説明欄に記載します。<code>[ ... ]</code>で囲まれた選択肢も、いずれか一方が必要な場合があります。</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>指定要否</th>
+<th>型・制約</th>
 <th>項目の意味と既定値</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.interface</code></td>
+<td><strong>必須</strong></td>
+<td>string</td>
 <td>同じRouterの論理上流インターフェースが必須です。同じインターフェースにDHCPv6Addressもある場合、外部dhcp6c・dhcpcdのPD clientはそちらのclientと一致が必要です。</td>
 </tr>
 <tr>
 <td><code>spec.client</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>既定routerd-dhcpv6-clientで、代替はnetworkd・dhcp6c・dhcpcdです。現行の監督処理はrouterd DHCPv6のsystemdユニットも合成するため、外部指定だけで内蔵デーモンの停止を一般には保証しません。</td>
 </tr>
 <tr>
 <td><code>spec.profile</code></td>
+<td><em>任意</em></td>
+<td>string; enum=["default", "ntt-ngn-direct-hikari-denwa", "ntt-hgw-lan-pd"]</td>
 <td>空・default・ntt-ngn-direct-hikari-denwa・ntt-hgw-lan-pdです。NTTは対応する生成経路に/60とlink-layer DUID既定を補いますが、認証情報設定や内蔵デーモン引数変更は行いません。</td>
 </tr>
 <tr>
 <td><code>spec.prefixLength</code></td>
+<td><em>任意</em></td>
+<td>integer; minimum=1; maximum=128</td>
 <td>任意の1～128です。省略・0はNTTで/60、defaultでは長さ指定なしです。割当長を保証せず内蔵取得にも渡しません。一方、HA事前配置の復元は有効長との完全一致が必要で、defaultかつ省略時は0比較となり通常の委任プレフィックスと一致しません。この経路には実際の長さを明示してください。</td>
 </tr>
 <tr>
 <td><code>spec.clientDUID</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>区切りなし・偶数桁16進数の任意DUIDです。コロン・空白は拒否し、空なら内蔵クライアントがMAC由来DUID-LLを生成します。IDは復元リースの再利用条件にも影響します。</td>
 </tr>
 <tr>
 <td><code>spec.required</code></td>
+<td><em>任意</em></td>
+<td>boolean</td>
 <td>真偽値で既定falseです。読み込みますが現行実行処理は起動待ち方針に使いません。依存先は実際のBound状態・依存条件を使います。</td>
 </tr>
 <tr>
 <td><code>spec.when</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>共通の状態条件で、既定無条件です。監督対象は解決した条件で絞り込むため、宣言を残しても不成立なら取得を停止できます。</td>
 </tr>
 </tbody>
@@ -83,7 +104,7 @@
 <p><a href="/examples/example-dslite-home.yaml">設定例</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
 <ul>
 <li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
-<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#設定構文">設定構文</a></li>
 <li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
 <li><a href="#状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</a></li>
 </ul>

@@ -14,146 +14,205 @@
 <li>2形状は排他です。別形状はoutboundInterface・1件以上のIPv4 sourceCIDRs・translation.typeが必須で、従来形状のtype・egress・sourceRanges・宛先・SNAT項目を併用できません。translation.address・addressesの不要側は拒否されませんが、選択した分岐だけが使います。</li>
 <li>LinuxはdestinationCIDRs・destinationSetRefsをORにし、指定CIDR・集合を除外します。PFは静的宛先・除外CIDRを適用しますが、アドレス集合参照は両一覧とも使いません。ルール順はYAML順でなくmetadata.name順です。</li>
 </ul>
-<h2 id="yaml定義">YAML定義</h2>
-<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
-<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+<h2 id="設定構文">設定構文</h2>
+<p>説明用の構文表記であり、そのままコピーするYAMLではありません。囲みのない項目は親の中で必須、<code>[ ... ]</code>は条件に応じて省略できる項目、<code>&lt;型&gt;</code>は差し替え値、<code>(a | b)</code>は選択肢です。任意の親にも必須の子があります。条件付き必須・排他・実効既定値は下の表を確認し、通常のYAMLはリンク先の設定例を使ってください。</p>
+<pre><code class="language-text">- apiVersion: net.routerd.net/v1alpha1
   kind: NAT44Rule
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    destinationCIDRs: # 任意; array
-      - &quot;&lt;string&gt;&quot; # string
-    destinationSetRefs: # 任意; array
-      - &quot;&lt;string&gt;&quot; # string
-    egressInterface: &quot;&lt;string&gt;&quot; # 任意; string
-    egressPolicyRef: &quot;&lt;string&gt;&quot; # 任意; string
-    excludeDestinationCIDRs: # 任意; array
-      - &quot;&lt;string&gt;&quot; # string
-    excludeDestinationSetRefs: # 任意; array
-      - &quot;&lt;string&gt;&quot; # string
-    outboundInterface: &quot;&lt;string&gt;&quot; # 任意; string
-    snatAddress: &quot;&lt;string&gt;&quot; # 任意; string
-    snatAddressFrom: # 任意; object
-      field: &quot;&lt;string&gt;&quot; # 任意; string
-      optional: true # 任意; boolean
-      resource: &quot;&lt;string&gt;&quot; # 必須; string
-    sourceCIDRs: # 任意; array
-      - &quot;&lt;string&gt;&quot; # string
-    sourceRanges: # 任意; array
-      - &quot;&lt;string&gt;&quot; # string
-    translation: # 任意; object
-      address: &quot;&lt;string&gt;&quot; # 任意; string
-      addresses: # 任意; array
-        - &quot;&lt;string&gt;&quot; # string
-      portMapping: # 任意; object
-        end: 1 # 任意; integer; minimum=1; maximum=65535
-        start: 1 # 任意; integer; minimum=1; maximum=65535
-        type: &quot;auto&quot; # 任意; string; enum=[&quot;auto&quot;, &quot;preserve&quot;, &quot;range&quot;]
-      type: &quot;interfaceAddress&quot; # 必須; string; enum=[&quot;interfaceAddress&quot;, &quot;address&quot;, &quot;pool&quot;]
-    type: &quot;masquerade&quot; # 任意; string; enum=[&quot;masquerade&quot;, &quot;snat&quot;]
-    when: # 任意; object
-      state: # 任意; object
-        &quot;&lt;key&gt;&quot;: # 任意; object
-          contains: &quot;&lt;string&gt;&quot; # 任意; string
-          equals: &quot;&lt;string&gt;&quot; # 任意; string
-          exists: true # 任意; boolean
-          for: &quot;&lt;string&gt;&quot; # 任意; string
-          in: # 任意; array
-            - &quot;&lt;string&gt;&quot; # string
-          maxAge: &quot;&lt;string&gt;&quot; # 任意; string
-          status: &quot;set&quot; # 任意; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+    [ destinationCIDRs:
+        - &lt;string&gt;
+    ]
+    [ destinationSetRefs:
+        - &lt;string&gt;
+    ]
+    [ egressInterface: &lt;string&gt; ]
+    [ egressPolicyRef: &lt;string&gt; ]
+    [ excludeDestinationCIDRs:
+        - &lt;string&gt;
+    ]
+    [ excludeDestinationSetRefs:
+        - &lt;string&gt;
+    ]
+    [ outboundInterface: &lt;string&gt; ]
+    [ snatAddress: &lt;string&gt; ]
+    [ snatAddressFrom:
+        field: &lt;string&gt;
+        [ optional: &lt;boolean&gt; ]
+        resource: &lt;string&gt;
+    ]
+    [ sourceCIDRs:
+        - &lt;string&gt;
+    ]
+    [ sourceRanges:
+        - &lt;string&gt;
+    ]
+    [ translation:
+        [ address: &lt;string&gt; ]
+        [ addresses:
+            - &lt;string&gt;
+        ]
+        [ portMapping:
+            [ end: &lt;integer&gt; ]
+            [ start: &lt;integer&gt; ]
+            [ type: (&quot;auto&quot; | &quot;preserve&quot; | &quot;range&quot;) ]
+        ]
+        type: (&quot;interfaceAddress&quot; | &quot;address&quot; | &quot;pool&quot;)
+    ]
+    [ type: (&quot;masquerade&quot; | &quot;snat&quot;) ]
+    [ when:
+        [ state:
+            [ &lt;name&gt;:
+                [ contains: &lt;string&gt; ]
+                [ equals: &lt;string&gt; ]
+                [ exists: &lt;boolean&gt; ]
+                [ for: &lt;string&gt; ]
+                [ in:
+                    - &lt;string&gt;
+                ]
+                [ maxAge: &lt;string&gt; ]
+                [ status: (&quot;set&quot; | &quot;unset&quot; | &quot;unknown&quot;) ]
+            ]
+        ]
+    ]
 </code></pre>
 <h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<p>任意の親の必須項目は、親を使う場合に必要です。それ以外の具体的な条件は説明欄に記載します。<code>[ ... ]</code>で囲まれた選択肢も、いずれか一方が必要な場合があります。</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>指定要否</th>
+<th>型・制約</th>
 <th>項目の意味と既定値</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.type</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>string; enum=["masquerade", "snat"]</td>
 <td>実行形状で必須です。masqueradeは送信側アドレス、snatは指定アドレスを使います。既定なしで別形状とは併用禁止です。</td>
 </tr>
 <tr>
 <td><code>spec.egressInterface</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>string</td>
 <td>任意の裸の論理インターフェース・トンネル名です。指定時は設定内のインターフェース・DSLite索引での解決が必要で、egressPolicyRefより優先します。</td>
 </tr>
 <tr>
 <td><code>spec.egressPolicyRef</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>string</td>
 <td>egressInterface省略時の裸のEgressRoutePolicy名です。status.phase=Appliedと空でないselectedDeviceが必要です。NAT44の検証では存在を確認せず、名前違い・未解決はPendingです。</td>
 </tr>
 <tr>
 <td><code>spec.sourceRanges</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>array</td>
 <td>実行形状で必須の1件以上のIPv4 CIDRです。LAN自動取得はなく、sourceCIDRs・translation形状と排他です。</td>
 </tr>
 <tr>
 <td><code>spec.destinationCIDRs</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>任意のIPv4宛先OR一覧で既定は空です。LinuxはdestinationSetRefsと和集合にし、PFはこの静的CIDRを使います。</td>
 </tr>
 <tr>
 <td><code>spec.destinationSetRefs</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>任意の既存IPAddressSet/<name>参照で重複は禁止です。既定は空、Linuxで有効、PFは無視します。</td>
 </tr>
 <tr>
 <td><code>spec.excludeDestinationCIDRs</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>本NATから除外する任意のIPv4宛先です。既定は空で、PFは本ルールの変換より前にno natを生成します。</td>
 </tr>
 <tr>
 <td><code>spec.excludeDestinationSetRefs</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>任意の既存IPAddressSet/<name>除外で既定は空です。Linuxだけで有効、PFは無視します。</td>
 </tr>
 <tr>
 <td><code>spec.snatAddress</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>string</td>
 <td>type=snat用の裸のIPv4変換アドレスです。snatAddressFromとちょうど一方が必須で、masqueradeでは禁止です。アドレス割当は行いません。</td>
 </tr>
 <tr>
 <td><code>spec.snatAddressFrom</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>object</td>
 <td>snat専用の共通resource・field・optional参照です。状態を先に読み、対応する宣言済みリソース値を次に使い、利用可能な値がなければPendingです。IPv4アドレスを提供するfieldを指定してください。</td>
 </tr>
 <tr>
 <td><code>spec.outboundInterface</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>string</td>
 <td>別形状で必須の裸の設定インターフェース名です。前述のとおり実行コントローラーは対応しません。egressInterface・egressPolicyRefとの併用は禁止です。</td>
 </tr>
 <tr>
 <td><code>spec.sourceCIDRs</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>array</td>
 <td>別形状で1件以上必須のIPv4プレフィックスです。既定なしで、実行コントローラーは読みません。</td>
 </tr>
 <tr>
 <td><code>spec.translation</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>object</td>
 <td>outboundInterface・sourceCIDRsと組み合わせる別形状の変換定義です。検証・計画への対応は実行適用の保証ではありません。</td>
 </tr>
 <tr>
 <td><code>spec.translation.type</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>string; enum=["interfaceAddress", "address", "pool"]</td>
 <td>別形状ではinterfaceAddress・address・poolが必須です。静的PFは前2種だけに対応し、実行コントローラーは本形状を適用しません。</td>
 </tr>
 <tr>
 <td><code>spec.translation.address</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>string</td>
 <td>translation.type=addressで必須の裸のIPv4です。既定は空で、他の型は使いません。</td>
 </tr>
 <tr>
 <td><code>spec.translation.addresses</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>array</td>
 <td>type=poolで必須の1件以上の裸のIPv4です。受理・計画されますが、現行の実行コントローラー・静的PFは実装していません。</td>
 </tr>
 <tr>
 <td><code>spec.translation.portMapping</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>任意の別形状のポート方針で、検証・計画だけです。現行Linux実行・PF描画はこのポート設定を強制しません。</td>
 </tr>
 <tr>
 <td><code>spec.translation.portMapping.type</code></td>
+<td><em>任意</em></td>
+<td>string; enum=["auto", "preserve", "range"]</td>
 <td>auto（既定）・preserve・rangeです。auto・preserveではstart・end禁止、rangeは両端必須です。現行描画の効果はありません。</td>
 </tr>
 <tr>
 <td><code>spec.translation.portMapping.start</code></td>
+<td><em>任意</em></td>
+<td>integer; minimum=1; maximum=65535</td>
 <td>range時だけ必須の開始値です。1～65535でend以下、既定0は未指定です。現行では検証だけです。</td>
 </tr>
 <tr>
 <td><code>spec.translation.portMapping.end</code></td>
+<td><em>任意</em></td>
+<td>integer; minimum=1; maximum=65535</td>
 <td>range時だけ必須の終了値です。1～65535でstart以上、既定0は未指定です。現行では検証だけです。</td>
 </tr>
 <tr>
 <td><code>spec.when</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>共通の有効化条件で、省略は無条件です。不成立で除外したルールは実効NAT生成に含めません。条件とスキーマ制約は共通項を参照してください。</td>
 </tr>
 </tbody>
@@ -165,7 +224,7 @@
 <p><a href="/examples/dslite-lan-range-snat.yaml">設定例</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
 <ul>
 <li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
-<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#設定構文">設定構文</a></li>
 <li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
 <li><a href="#状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</a></li>
 </ul>

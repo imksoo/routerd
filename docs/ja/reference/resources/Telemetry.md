@@ -10,36 +10,40 @@
 
 - 生成するテレメトリー環境の取得元は、TelemetryまたはOTLP endpointが空でないObservabilityPipelineのいずれか1つです。複数が選ばれると生成エラーになります。リソース名による相互参照ではありません。
 
-## YAML定義
+## 設定構文
 
-全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。
+説明用の構文表記であり、そのままコピーするYAMLではありません。囲みのない項目は親の中で必須、`[ ... ]`は条件に応じて省略できる項目、`<型>`は差し替え値、`(a | b)`は選択肢です。任意の親にも必須の子があります。条件付き必須・排他・実効既定値は下の表を確認し、通常のYAMLはリンク先の設定例を使ってください。
 
-```yaml
+```text
 - apiVersion: observability.routerd.net/v1alpha1
   kind: Telemetry
   metadata:
     name: "<name>"
   spec:
-    attributes: # 任意; object
-      "<key>": "<string>" # 任意; string
-    otlp: # 必須; object
-      endpoint: "<string>" # 必須; string
-      insecure: true # 任意; boolean
-    serviceNamespace: "<string>" # 任意; string
-    signals: # 任意; array
-      - "logs" # string; enum=["logs", "metrics", "traces"]
+    [ attributes:
+        [ <name>: <string> ]
+    ]
+    otlp:
+      endpoint: <string>
+      [ insecure: <boolean> ]
+    [ serviceNamespace: <string> ]
+    [ signals:
+        - ("logs" | "metrics" | "traces")
+    ]
 ```
 
 ## 項目の意味と既定値
 
-| YAML | 項目の意味と既定値 |
-| --- | --- |
-| `spec.otlp` | 必須のOTLP接続設定です。 |
-| `spec.otlp.endpoint` | 必須の空白でない送信先。OTEL_EXPORTER_OTLP_ENDPOINTに設定し、既定値はありません。この検証では空白以外であることを確認し、送信先への到達性は確認しません。 |
-| `spec.otlp.insecure` | 省略時false。trueならOTEL_EXPORTER_OTLP_INSECURE=trueを出力し、falseならその変数を出力しません。 |
-| `spec.serviceNamespace` | OpenTelemetryのサービス名前空間。空白を除去した結果が空ならrouterdです。 |
-| `spec.attributes` | リソース属性の対応表。省略時は空です。キー順に並べ、カンマ区切りのkey=valueとしてOTEL_RESOURCE_ATTRIBUTESへ出力します。この生成処理では値をエスケープしません。 |
-| `spec.signals` | logs・metrics・tracesを指定し、省略時は3種類すべてです。空でない一覧では、省略されたsignalのexporter変数をnoneにします。受信プロセスを作る指定ではありません。 |
+任意の親の必須項目は、親を使う場合に必要です。それ以外の具体的な条件は説明欄に記載します。`[ ... ]`で囲まれた選択肢も、いずれか一方が必要な場合があります。
+
+| YAML | 指定要否 | 型・制約 | 項目の意味と既定値 |
+| --- | --- | --- | --- |
+| `spec.otlp` | **必須** | object | 必須のOTLP接続設定です。 |
+| `spec.otlp.endpoint` | **必須** | string | 必須の空白でない送信先。OTEL_EXPORTER_OTLP_ENDPOINTに設定し、既定値はありません。この検証では空白以外であることを確認し、送信先への到達性は確認しません。 |
+| `spec.otlp.insecure` | *任意* | boolean | 省略時false。trueならOTEL_EXPORTER_OTLP_INSECURE=trueを出力し、falseならその変数を出力しません。 |
+| `spec.serviceNamespace` | *任意* | string | OpenTelemetryのサービス名前空間。空白を除去した結果が空ならrouterdです。 |
+| `spec.attributes` | *任意* | object | リソース属性の対応表。省略時は空です。キー順に並べ、カンマ区切りのkey=valueとしてOTEL_RESOURCE_ATTRIBUTESへ出力します。この生成処理では値をエスケープしません。 |
+| `spec.signals` | *任意* | array | logs・metrics・tracesを指定し、省略時は3種類すべてです。空でない一覧では、省略されたsignalのexporter変数をnoneにします。受信プロセスを作る指定ではありません。 |
 
 実装: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate_system.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_system.go) · [pkg/render/telemetry.go](https://github.com/imksoo/routerd/blob/main/pkg/render/telemetry.go)
 

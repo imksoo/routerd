@@ -11,117 +11,164 @@
 <li>type选择一种实现，仅使用该分支；其他分支不会因互斥而报错，也不会合并。otlp验证要求telemetryRef与endpoint恰好一项，但当前OTLPSink.Emit不会发送事件。</li>
 <li>journald分支使用Go的log.Printf，是否进入journald取决于进程日志目的地及服务管理器，不直接调用journald API。</li>
 </ul>
-<h2 id="yaml定义">YAML定义</h2>
-<p>此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。</p>
-<pre><code class="language-yaml">- apiVersion: system.routerd.net/v1alpha1
+<h2 id="配置语法">配置语法</h2>
+<p>这是说明用语法，不是可直接复制的YAML。未加括号的字段在父条目内必填；<code>[ ... ]</code>表示按条件可省略，<code>&lt;类型&gt;</code>为替换值，<code>(a | b)</code>表示选项。选填父条目内仍可能有必填子条目。条件必填、互斥与实际默认值请见下表；常规YAML请使用链接示例。</p>
+<pre><code class="language-text">- apiVersion: system.routerd.net/v1alpha1
   kind: LogSink
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    enabled: true # 选填; boolean
-    file: # 选填; object
-      name: &quot;&lt;string&gt;&quot; # 选填; string
-    journald: # 选填; object
-      identifier: &quot;&lt;string&gt;&quot; # 选填; string
-    minLevel: &quot;debug&quot; # 选填; string; enum=[&quot;debug&quot;, &quot;info&quot;, &quot;warning&quot;, &quot;error&quot;]
-    otlp: # 选填; object
-      endpoint: &quot;&lt;string&gt;&quot; # 选填; string
-      telemetryRef: &quot;&lt;string&gt;&quot; # 选填; string
-    syslog: # 选填; object
-      address: &quot;&lt;string&gt;&quot; # 选填; string
-      facility: &quot;kern&quot; # 选填; string; enum=[&quot;kern&quot;, &quot;user&quot;, &quot;mail&quot;, &quot;daemon&quot;, &quot;auth&quot;, &quot;syslog&quot;, &quot;lpr&quot;, &quot;news&quot;, &quot;uucp&quot;, &quot;cron&quot;, &quot;authpriv&quot;, &quot;ftp&quot;, &quot;local0&quot;, &quot;local1&quot;, &quot;local2&quot;, &quot;local3&quot;, &quot;local4&quot;, &quot;local5&quot;, &quot;local6&quot;, &quot;local7&quot;]
-      network: &quot;&quot; # 选填; string; enum=[&quot;&quot;, &quot;unix&quot;, &quot;unixgram&quot;, &quot;tcp&quot;, &quot;udp&quot;]
-      tag: &quot;&lt;string&gt;&quot; # 选填; string
-    type: &quot;syslog&quot; # 必填; string; enum=[&quot;syslog&quot;, &quot;otlp&quot;, &quot;webhook&quot;, &quot;file&quot;, &quot;journald&quot;]
-    webhook: # 选填; object
-      headers: # 选填; object
-        &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # 选填; string
-      timeout: &quot;&lt;string&gt;&quot; # 选填; string
-      url: &quot;&lt;string&gt;&quot; # 选填; string
+    [ enabled: &lt;boolean&gt; ]
+    [ file:
+        [ name: &lt;string&gt; ]
+    ]
+    [ journald:
+        [ identifier: &lt;string&gt; ]
+    ]
+    [ minLevel: (&quot;debug&quot; | &quot;info&quot; | &quot;warning&quot; | &quot;error&quot;) ]
+    [ otlp:
+        [ endpoint: &lt;string&gt; ]
+        [ telemetryRef: &lt;string&gt; ]
+    ]
+    [ syslog:
+        [ address: &lt;string&gt; ]
+        [ facility: (&quot;kern&quot; | &quot;user&quot; | &quot;mail&quot; | &quot;daemon&quot; | &quot;auth&quot; | &quot;syslog&quot; | &quot;lpr&quot; | &quot;news&quot; | &quot;uucp&quot; | &quot;cron&quot; | &quot;authpriv&quot; | &quot;ftp&quot; | &quot;local0&quot; | &quot;local1&quot; | &quot;local2&quot; | &quot;local3&quot; | &quot;local4&quot; | &quot;local5&quot; | &quot;local6&quot; | &quot;local7&quot;) ]
+        [ network: (&quot;&quot; | &quot;unix&quot; | &quot;unixgram&quot; | &quot;tcp&quot; | &quot;udp&quot;) ]
+        [ tag: &lt;string&gt; ]
+    ]
+    type: (&quot;syslog&quot; | &quot;otlp&quot; | &quot;webhook&quot; | &quot;file&quot; | &quot;journald&quot;)
+    [ webhook:
+        [ headers:
+            [ &lt;name&gt;: &lt;string&gt; ]
+        ]
+        [ timeout: &lt;string&gt; ]
+        [ url: &lt;string&gt; ]
+    ]
 </code></pre>
 <h2 id="字段含义与默认值">字段含义与默认值</h2>
+<p>选填父条目的必填子条目仅在使用父条目时需要。其他具体条件列于说明；<code>[ ... ]</code>选项仍可能需要择一。</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>指定要求</th>
+<th>类型与限制</th>
 <th>字段含义与默认值</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.type</code></td>
+<td><strong>必填</strong></td>
+<td>string; enum=["syslog", "otlp", "webhook", "file", "journald"]</td>
 <td>必填目的地类型：syslog、otlp、webhook、file或journald，无默认值。</td>
 </tr>
 <tr>
 <td><code>spec.enabled</code></td>
+<td><em>选填</em></td>
+<td>boolean</td>
 <td>是否选用此输出端，默认true。false时即使LogRetention引用也跳过。</td>
 </tr>
 <tr>
 <td><code>spec.minLevel</code></td>
+<td><em>选填</em></td>
+<td>string; enum=["debug", "info", "warning", "error"]</td>
 <td>最低严重程度，默认info；接受debug、info、warning、error，丢弃较低程度事件。</td>
 </tr>
 <tr>
 <td><code>spec.syslog</code></td>
+<td><em>选填</em></td>
+<td>object</td>
 <td>仅在type=syslog使用，省略时采用本机syslog、local6与标签routerd。</td>
 </tr>
 <tr>
 <td><code>spec.syslog.network</code></td>
+<td><em>选填</em></td>
+<td>string; enum=["", "unix", "unixgram", "tcp", "udp"]</td>
 <td>传输方式为unix、unixgram、tcp或udp；空值由Go syslog查找本机socket。</td>
 </tr>
 <tr>
 <td><code>spec.syslog.address</code></td>
+<td><em>选填</em></td>
+<td>string</td>
 <td>目标socket路径或host:port，默认空。显式指定传输方式时应提供对应地址；验证器不强制此组合，连接错误在输出时出现。</td>
 </tr>
 <tr>
 <td><code>spec.syslog.facility</code></td>
+<td><em>选填</em></td>
+<td>string; enum=["kern", "user", "mail", "daemon", "auth", "syslog", "lpr", "news", "uucp", "cron", "authpriv", "ftp", "local0", "local1", "local2", "local3", "local4", "local5", "local6", "local7"]</td>
 <td>syslog facility，默认local6；可用值见YAML枚举。</td>
 </tr>
 <tr>
 <td><code>spec.syslog.tag</code></td>
+<td><em>选填</em></td>
+<td>string</td>
 <td>syslog标签，默认routerd，不是资源引用。</td>
 </tr>
 <tr>
 <td><code>spec.otlp</code></td>
+<td><strong>条件必填</strong></td>
+<td>object</td>
 <td>OTLP声明；type=otlp时telemetryRef与endpoint恰好一项必填，此输出端尚无实际发送处理。</td>
 </tr>
 <tr>
 <td><code>spec.otlp.telemetryRef</code></td>
+<td><strong>条件必填</strong></td>
+<td>string</td>
 <td>Telemetry/名称或纯Telemetry名称，与endpoint互斥，默认空。即使选择其他type，Router整体验证仍检查目标存在。当前OTLPSink不使用它发送。</td>
 </tr>
 <tr>
 <td><code>spec.otlp.endpoint</code></td>
+<td><strong>条件必填</strong></td>
+<td>string</td>
 <td>预定目标URI，与telemetryRef互斥，无默认值；验证URI语法，但此LogSink不创建exporter。</td>
 </tr>
 <tr>
 <td><code>spec.webhook</code></td>
+<td><strong>条件必填</strong></td>
+<td>object</td>
 <td>type=webhook使用的JSON HTTP POST目标配置。</td>
 </tr>
 <tr>
 <td><code>spec.webhook.url</code></td>
+<td><strong>条件必填</strong></td>
+<td>string</td>
 <td>type=webhook时必填且无默认值。请使用HTTP(S)绝对URL；验证器仅检查URI语法，只有HTTP 2xx视为发送成功。</td>
 </tr>
 <tr>
 <td><code>spec.webhook.headers</code></td>
+<td><em>选填</em></td>
+<td>object</td>
 <td>额外请求头，默认空；会覆盖同名头，包括默认Content-Type: application/json。</td>
 </tr>
 <tr>
 <td><code>spec.webhook.timeout</code></td>
+<td><em>选填</em></td>
+<td>string</td>
 <td>HTTP请求超时，默认5s，使用Go duration。验证器也接受零及负值；HTTP client中不大于零表示不设超时。</td>
 </tr>
 <tr>
 <td><code>spec.file</code></td>
+<td><em>选填</em></td>
+<td>object</td>
 <td>type=file的文件配置，以JSON Lines追加写入。</td>
 </tr>
 <tr>
 <td><code>spec.file.name</code></td>
+<td><em>选填</em></td>
+<td>string</td>
 <td>逻辑文件名，默认routerd-events，路径为/var/lib/routerd/logs/<name>.jsonl。禁止路径分隔符、NUL及换行，不是任意文件路径。</td>
 </tr>
 <tr>
 <td><code>spec.journald</code></td>
+<td><em>选填</em></td>
+<td>object</td>
 <td>type=journald的配置，通过进程logger输出。</td>
 </tr>
 <tr>
 <td><code>spec.journald.identifier</code></td>
+<td><em>选填</em></td>
+<td>string</td>
 <td>加在进程日志消息前的前缀，默认routerd，不直接设置journald的SYSLOG_IDENTIFIER。</td>
 </tr>
 </tbody>
@@ -132,7 +179,7 @@
 <p><code>phase</code>, <code>type</code></p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
 <ul>
 <li><a href="#指定条件与引用关系">指定条件与引用关系</a></li>
-<li><a href="#yaml定义">YAML定义</a></li>
+<li><a href="#配置语法">配置语法</a></li>
 <li><a href="#字段含义与默认值">字段含义与默认值</a></li>
 <li><a href="#可引用的状态字段">可引用的状态字段</a></li>
 </ul>

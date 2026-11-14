@@ -11,213 +11,304 @@
 <li>OTLP環境の選択と組込みログ転送は別経路です。signalsは前者、logs.enabledは後者を制御します。出力先が空でもstdoutには送りません。</li>
 <li>sampling.rate=0は1として扱います。この実装ではKafka出力先とOTLPの証明書ファイル項目は宣言だけで、対応する実行処理にはつながっていません。</li>
 </ul>
-<h2 id="yaml定義">YAML定義</h2>
-<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
-<pre><code class="language-yaml">- apiVersion: system.routerd.net/v1alpha1
+<h2 id="設定構文">設定構文</h2>
+<p>説明用の構文表記であり、そのままコピーするYAMLではありません。囲みのない項目は親の中で必須、<code>[ ... ]</code>は条件に応じて省略できる項目、<code>&lt;型&gt;</code>は差し替え値、<code>(a | b)</code>は選択肢です。任意の親にも必須の子があります。条件付き必須・排他・実効既定値は下の表を確認し、通常のYAMLはリンク先の設定例を使ってください。</p>
+<pre><code class="language-text">- apiVersion: system.routerd.net/v1alpha1
   kind: ObservabilityPipeline
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    attributes: # 任意; object
-      &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # 任意; string
-    logs: # 任意; object
-      enabled: true # 任意; boolean
-      sinks: # 任意; array
-        - # object
-          enabled: true # 任意; boolean
-          kafka: # 任意; object
-            brokers: # 任意; array
-              - &quot;&lt;string&gt;&quot; # string
-            topic: &quot;&lt;string&gt;&quot; # 任意; string
-          labels: # 任意; object
-            &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # 任意; string
-          loki: # 任意; object
-            headers: # 任意; object
-              &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # 任意; string
-            tenant: &quot;&lt;string&gt;&quot; # 任意; string
-            url: &quot;&lt;string&gt;&quot; # 任意; string
-          minLevel: &quot;debug&quot; # 任意; string; enum=[&quot;debug&quot;, &quot;info&quot;, &quot;warning&quot;, &quot;error&quot;]
-          name: &quot;&lt;string&gt;&quot; # 任意; string
-          syslog: # 任意; object
-            address: &quot;&lt;string&gt;&quot; # 任意; string
-            facility: &quot;kern&quot; # 任意; string; enum=[&quot;kern&quot;, &quot;user&quot;, &quot;mail&quot;, &quot;daemon&quot;, &quot;auth&quot;, &quot;syslog&quot;, &quot;lpr&quot;, &quot;news&quot;, &quot;uucp&quot;, &quot;cron&quot;, &quot;authpriv&quot;, &quot;ftp&quot;, &quot;local0&quot;, &quot;local1&quot;, &quot;local2&quot;, &quot;local3&quot;, &quot;local4&quot;, &quot;local5&quot;, &quot;local6&quot;, &quot;local7&quot;]
-            network: &quot;&quot; # 任意; string; enum=[&quot;&quot;, &quot;unix&quot;, &quot;unixgram&quot;, &quot;tcp&quot;, &quot;udp&quot;]
-            tag: &quot;&lt;string&gt;&quot; # 任意; string
-          type: &quot;stdout&quot; # 必須; string; enum=[&quot;stdout&quot;, &quot;syslog&quot;, &quot;loki&quot;, &quot;kafka&quot;]
-    otlp: # 任意; object
-      endpoint: &quot;&lt;string&gt;&quot; # 任意; string
-      headers: # 任意; object
-        &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # 任意; string
-      insecure: true # 任意; boolean
-      tls: # 任意; object
-        caFile: &quot;&lt;string&gt;&quot; # 任意; string
-        certFile: &quot;&lt;string&gt;&quot; # 任意; string
-        insecureSkipVerify: true # 任意; boolean
-        keyFile: &quot;&lt;string&gt;&quot; # 任意; string
-    sampling: # 任意; object
-      rate: 0 # 任意; number
-    serviceNamespace: &quot;&lt;string&gt;&quot; # 任意; string
-    signals: # 任意; array
-      - &quot;logs&quot; # string; enum=[&quot;logs&quot;, &quot;metrics&quot;, &quot;traces&quot;]
-    when: # 任意; object
-      state: # 任意; object
-        &quot;&lt;key&gt;&quot;: # 任意; object
-          contains: &quot;&lt;string&gt;&quot; # 任意; string
-          equals: &quot;&lt;string&gt;&quot; # 任意; string
-          exists: true # 任意; boolean
-          for: &quot;&lt;string&gt;&quot; # 任意; string
-          in: # 任意; array
-            - &quot;&lt;string&gt;&quot; # string
-          maxAge: &quot;&lt;string&gt;&quot; # 任意; string
-          status: &quot;set&quot; # 任意; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+    [ attributes:
+        [ &lt;name&gt;: &lt;string&gt; ]
+    ]
+    [ logs:
+        [ enabled: &lt;boolean&gt; ]
+        [ sinks:
+            -
+              [ enabled: &lt;boolean&gt; ]
+              [ kafka:
+                  [ brokers:
+                      - &lt;string&gt;
+                  ]
+                  [ topic: &lt;string&gt; ]
+              ]
+              [ labels:
+                  [ &lt;name&gt;: &lt;string&gt; ]
+              ]
+              [ loki:
+                  [ headers:
+                      [ &lt;name&gt;: &lt;string&gt; ]
+                  ]
+                  [ tenant: &lt;string&gt; ]
+                  [ url: &lt;string&gt; ]
+              ]
+              [ minLevel: (&quot;debug&quot; | &quot;info&quot; | &quot;warning&quot; | &quot;error&quot;) ]
+              [ name: &lt;string&gt; ]
+              [ syslog:
+                  [ address: &lt;string&gt; ]
+                  [ facility: (&quot;kern&quot; | &quot;user&quot; | &quot;mail&quot; | &quot;daemon&quot; | &quot;auth&quot; | &quot;syslog&quot; | &quot;lpr&quot; | &quot;news&quot; | &quot;uucp&quot; | &quot;cron&quot; | &quot;authpriv&quot; | &quot;ftp&quot; | &quot;local0&quot; | &quot;local1&quot; | &quot;local2&quot; | &quot;local3&quot; | &quot;local4&quot; | &quot;local5&quot; | &quot;local6&quot; | &quot;local7&quot;) ]
+                  [ network: (&quot;&quot; | &quot;unix&quot; | &quot;unixgram&quot; | &quot;tcp&quot; | &quot;udp&quot;) ]
+                  [ tag: &lt;string&gt; ]
+              ]
+              type: (&quot;stdout&quot; | &quot;syslog&quot; | &quot;loki&quot; | &quot;kafka&quot;)
+        ]
+    ]
+    [ otlp:
+        [ endpoint: &lt;string&gt; ]
+        [ headers:
+            [ &lt;name&gt;: &lt;string&gt; ]
+        ]
+        [ insecure: &lt;boolean&gt; ]
+        [ tls:
+            [ caFile: &lt;string&gt; ]
+            [ certFile: &lt;string&gt; ]
+            [ insecureSkipVerify: &lt;boolean&gt; ]
+            [ keyFile: &lt;string&gt; ]
+        ]
+    ]
+    [ sampling:
+        [ rate: &lt;number&gt; ]
+    ]
+    [ serviceNamespace: &lt;string&gt; ]
+    [ signals:
+        - (&quot;logs&quot; | &quot;metrics&quot; | &quot;traces&quot;)
+    ]
+    [ when:
+        [ state:
+            [ &lt;name&gt;:
+                [ contains: &lt;string&gt; ]
+                [ equals: &lt;string&gt; ]
+                [ exists: &lt;boolean&gt; ]
+                [ for: &lt;string&gt; ]
+                [ in:
+                    - &lt;string&gt;
+                ]
+                [ maxAge: &lt;string&gt; ]
+                [ status: (&quot;set&quot; | &quot;unset&quot; | &quot;unknown&quot;) ]
+            ]
+        ]
+    ]
 </code></pre>
 <h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<p>任意の親の必須項目は、親を使う場合に必要です。それ以外の具体的な条件は説明欄に記載します。<code>[ ... ]</code>で囲まれた選択肢も、いずれか一方が必要な場合があります。</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>指定要否</th>
+<th>型・制約</th>
 <th>項目の意味と既定値</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.serviceNamespace</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>OpenTelemetryのサービス名前空間。空白を除去した結果が空ならrouterdです。</td>
 </tr>
 <tr>
 <td><code>spec.attributes</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>リソース属性の対応表。省略時は空です。キー順に並べ、カンマ区切りのkey=valueとしてOTEL_RESOURCE_ATTRIBUTESへ出力します。この生成処理では値をエスケープしません。</td>
 </tr>
 <tr>
 <td><code>spec.otlp</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>生成するサービス向けの任意のOTLP環境設定。endpointが空白でなければテレメトリー環境の取得元として選びます。組込みログ出力先は別に動作します。</td>
 </tr>
 <tr>
 <td><code>spec.otlp.endpoint</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>送信先。省略時は空です。空白でない値はURIとして解析できる必要があり、OTEL_EXPORTER_OTLP_ENDPOINTへ出力します。Telemetryまたはendpoint付きpipelineが複数あれば環境生成に失敗します。</td>
 </tr>
 <tr>
 <td><code>spec.otlp.insecure</code></td>
+<td><em>任意</em></td>
+<td>boolean</td>
 <td>省略時false。trueでOTEL_EXPORTER_OTLP_INSECURE=trueを出力します。tls.insecureSkipVerify=trueでも同じinsecure変数を出力します。</td>
 </tr>
 <tr>
 <td><code>spec.otlp.headers</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>exporterの要求ヘッダー。省略時は空です。キー順のカンマ区切りkey=valueとしてOTEL_EXPORTER_OTLP_HEADERSへ出力し、値はエスケープしません。Lokiのヘッダーとは別です。</td>
 </tr>
 <tr>
 <td><code>spec.otlp.tls</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>読み込むTLSオプションです。現行の環境生成に影響するのはinsecureSkipVerifyだけで、3つのファイル指定はexporter設定に接続されていません。</td>
 </tr>
 <tr>
 <td><code>spec.otlp.tls.caFile</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>CAファイルの宣言。省略時は空です。現行の生成処理と組込みexporterは読み取らず、指定しても信頼する証明書の設定には反映しません。</td>
 </tr>
 <tr>
 <td><code>spec.otlp.tls.certFile</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>クライアント証明書の宣言。省略時は空で、現行のOTLP設定経路では使いません。</td>
 </tr>
 <tr>
 <td><code>spec.otlp.tls.keyFile</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>クライアント鍵の宣言。省略時は空で、現行では使いません。ここでcertFileとkeyFileを組で指定しても相互TLSは有効になりません。</td>
 </tr>
 <tr>
 <td><code>spec.otlp.tls.insecureSkipVerify</code></td>
+<td><em>任意</em></td>
+<td>boolean</td>
 <td>省略時false。現行処理ではtrueをOTEL_EXPORTER_OTLP_INSECURE=trueへ変換します。証明書検証だけを省くTLS clientの設定ではありません。</td>
 </tr>
 <tr>
 <td><code>spec.signals</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>生成するOpenTelemetry環境では省略時logs/metrics/tracesすべてです。空でない一覧から除いたsignalはexporter=noneにします。組込みログconsumerはこの一覧を使わず、logs.enabledで制御します。</td>
 </tr>
 <tr>
 <td><code>spec.sampling</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>組込みイベントログの抽出設定。生成するOTLP環境とは独立しています。</td>
 </tr>
 <tr>
 <td><code>spec.sampling.rate</code></td>
+<td><em>任意</em></td>
+<td>number</td>
 <td>0〜1を指定します。省略/0は1になり、対象イベントをすべて送ります。小数値では連番の1000周期で抽出し、無作為抽出ではありません。consumerを止める場合はlogs.enabled=falseを使います。</td>
 </tr>
 <tr>
 <td><code>spec.logs</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>DBに保存されたイベントログを転送する組込み処理の設定。OTLP環境とは別です。</td>
 </tr>
 <tr>
 <td><code>spec.logs.enabled</code></td>
+<td><em>任意</em></td>
+<td>boolean</td>
 <td>省略時true。falseで組込みログconsumerを止めますが、生成サービスのOTLP変数は無効にしません。</td>
 </tr>
 <tr>
 <td><code>spec.logs.sinks</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>出力先一覧。省略時は空で、組込みの出力先はありません。stdoutを暗黙には追加しません。Kafkaはenabledでもexporterが除外します。</td>
 </tr>
 <tr>
 <td><code>spec.logs.sinks[].name</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>任意の出力先ラベル。省略時は空です。LogSinkリソースの参照ではなく、現行exporterは選択に使いません。</td>
 </tr>
 <tr>
 <td><code>spec.logs.sinks[].type</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>string; enum=["stdout", "syslog", "loki", "kafka"]</td>
 <td>stdout・syslog・loki・kafkaの指定が必須です。kafkaは宣言を受理しますが実行しません。選択した種類の設定だけを使います。</td>
 </tr>
 <tr>
 <td><code>spec.logs.sinks[].enabled</code></td>
+<td><em>任意</em></td>
+<td>boolean</td>
 <td>省略時true。falseならこの出力先を除外します。kafkaはこの値とは別に除外します。</td>
 </tr>
 <tr>
 <td><code>spec.logs.sinks[].minLevel</code></td>
+<td><em>任意</em></td>
+<td>string; enum=["debug", "info", "warning", "error"]</td>
 <td>最低重要度。省略時infoでdebug/info/warning/errorを受理し、sampling後に判定します。</td>
 </tr>
 <tr>
 <td><code>spec.logs.sinks[].labels</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>追加のLoki streamラベル。省略時は空です。キーを正規化してから同名の全体属性・組込みラベルを上書きします。stdoutやsyslogでは使いません。</td>
 </tr>
 <tr>
 <td><code>spec.logs.sinks[].loki</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>type=lokiで使う設定です。</td>
 </tr>
 <tr>
 <td><code>spec.logs.sinks[].loki.url</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>lokiでは必須で既定値はありません。Lokiのpush先URL全体を指定し、exporterはpush用のパスを付け足しません。成功扱いはHTTP 2xxだけです。</td>
 </tr>
 <tr>
 <td><code>spec.logs.sinks[].loki.tenant</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>任意のテナントID。省略時は空で、空でなければX-Scope-OrgIDを設定します。</td>
 </tr>
 <tr>
 <td><code>spec.logs.sinks[].loki.headers</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>追加HTTPヘッダー。省略時は空です。Content-Typeとテナントのヘッダーを含め、同名の値を上書きします。</td>
 </tr>
 <tr>
 <td><code>spec.logs.sinks[].syslog</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>type=syslogで使う設定です。</td>
 </tr>
 <tr>
 <td><code>spec.logs.sinks[].syslog.network</code></td>
+<td><em>任意</em></td>
+<td>string; enum=["", "unix", "unixgram", "tcp", "udp"]</td>
 <td>転送方式。unix、unixgram、tcp、udpを指定します。省略時はGoのsyslog実装がローカルソケットを探索します。</td>
 </tr>
 <tr>
 <td><code>spec.logs.sinks[].syslog.address</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>ソケットパスまたはhost:port。省略時は空です。転送方式を明示した場合は対応する宛先も指定します。この組合せは設定検証では必須化されず、接続エラーは実際の出力時に生じます。</td>
 </tr>
 <tr>
 <td><code>spec.logs.sinks[].syslog.tag</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>syslogのタグ。省略時routerd。リソース参照ではありません。</td>
 </tr>
 <tr>
 <td><code>spec.logs.sinks[].syslog.facility</code></td>
+<td><em>任意</em></td>
+<td>string; enum=["kern", "user", "mail", "daemon", "auth", "syslog", "lpr", "news", "uucp", "cron", "authpriv", "ftp", "local0", "local1", "local2", "local3", "local4", "local5", "local6", "local7"]</td>
 <td>省略時local6。このexporterが対応づけるのはlocal0〜local7で、それ以外を指定してもlocal6を使います。独立したLogSinkのsyslog実装とは異なります。</td>
 </tr>
 <tr>
 <td><code>spec.logs.sinks[].kafka</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>Kafkaの意図を記述する設定。検証は行いますが、組込みexporterではこの出力先を除外します。</td>
 </tr>
 <tr>
 <td><code>spec.logs.sinks[].kafka.brokers</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>type=kafkaでは空白でないbrokerが1件以上必要です。現行exporterは接続しません。</td>
 </tr>
 <tr>
 <td><code>spec.logs.sinks[].kafka.topic</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>type=kafkaでは空白でないtopicが必須です。EventRuleのtopicやリソース参照ではなく、現行ではKafka送信もしません。</td>
 </tr>
 <tr>
 <td><code>spec.when</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>有効化条件。省略時は条件を設けません。state/all/any、unknown、経過時間の条件は共通の条件指定を参照してください。</td>
 </tr>
 </tbody>
@@ -229,7 +320,7 @@
 <p><a href="/examples/observability-loki.yaml">設定例</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
 <ul>
 <li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
-<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#設定構文">設定構文</a></li>
 <li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
 <li><a href="#状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</a></li>
 </ul>

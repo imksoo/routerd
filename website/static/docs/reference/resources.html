@@ -12,15 +12,16 @@
 <pre><code class="language-yaml">apiVersion: routerd.net/v1alpha1
 kind: Router
 metadata:
-  name: &quot;&lt;router-name&gt;&quot;
+  name: example
 spec:
   resources:
     - apiVersion: net.routerd.net/v1alpha1
       kind: Interface
       metadata:
-        name: &quot;&lt;name&gt;&quot;
+        name: lan
       spec:
-        ifname: &quot;&lt;interface-name&gt;&quot;
+        ifname: ens18
+        managed: true
 </code></pre>
 <p>Resources are grouped by purpose, then sorted by Kind name within each group. This is a reading order, not YAML evaluation, dependency or execution order.</p>
 <h2 id="interfaces-and-addresses">Interfaces and addresses</h2>

@@ -14,46 +14,51 @@ Match nonexpired persisted federation events and invoke a local Plugin, storing 
 - With neither batching option positive, one invocation receives the current eligible batch, not necessarily one event. Batching timers are in memory; event/run records are persisted. Scheduled batches flush early at 1024 events or approximately 4 MiB of selected payload/identity data.
 - The plugin receives matched event facts plus only the config resources explicitly allowlisted by Plugin.context.resources; secrets are redacted. Result TTL and generated resources come from PluginResult, not this subscription. Distinct event batches produce distinct active DynamicConfigPart sources.
 
-## YAML definition
+## Configuration syntax
 
-All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.
+This is explanatory notation, not YAML to copy. Unbracketed fields are required within their parent; `[ ... ]` marks fields that can be omitted, subject to the conditions in the table. `<type>` is a placeholder, and `(a | b)` lists alternatives. Optional parents may contain required children. Conditional requirements, exclusions and runtime defaults are described below. Use the linked YAML example for an ordinary configuration.
 
-```yaml
+```text
 - apiVersion: federation.routerd.net/v1alpha1
   kind: EventSubscription
   metadata:
     name: "<name>"
   spec:
-    groupRef: "<string>" # Required; string
-    match: # Required; object
-      payload: # optional; object
-        "<key>": "<string>" # optional; string
-      sourceNodes: # optional; array
-        - "<string>" # string
-      subjectPrefixes: # optional; array
-        - "<string>" # string
-      types: # Required; array
-        - "<string>" # string
-    trigger: # Required; object
-      batchWindow: "<string>" # optional; string
-      debounce: "<string>" # optional; string
-      pluginRef: "<string>" # Required; string
+    groupRef: <string>
+    match:
+      [ payload:
+          [ <name>: <string> ]
+      ]
+      [ sourceNodes:
+          - <string>
+      ]
+      [ subjectPrefixes:
+          - <string>
+      ]
+      types:
+        - <string>
+    trigger:
+      [ batchWindow: <string> ]
+      [ debounce: <string> ]
+      pluginRef: <string>
 ```
 
 ## Field meaning and default
 
-| YAML | Field meaning and default |
-| --- | --- |
-| `spec.groupRef` | Required bare EventGroup name used to select stored event group_name. No default; does not automatically create or start a group. |
-| `spec.match` | Required matching object; types must be nonempty. Optional empty categories impose no restriction. |
-| `spec.match.types` | Required exact event-type list with nonblank entries. At least one type must match; wildcards are literal strings. |
-| `spec.match.subjectPrefixes` | Optional subject prefix list, default empty allows all. Matching is strings.HasPrefix, not path-component or wildcard matching. |
-| `spec.match.payload` | Optional key-to-string equality map; every entry must match. Keys must be nonblank. A missing payload key reads as empty, so a requested empty value also matches a missing key. |
-| `spec.match.sourceNodes` | Optional exact sourceNode allowlist, default empty permits all. It does not automatically exclude this node’s own events; specify the intended source identities. |
-| `spec.trigger` | Required local plugin invocation settings. This is distinct from Plugin.triggers and is executed by the subscription controller. |
-| `spec.trigger.pluginRef` | Required bare Plugin metadata.name, not Plugin/name. Missing plugin yields Pending. Execution uses that Plugin’s executable, timeout, environment and context restrictions. |
-| `spec.trigger.batchWindow` | Optional Go duration measured from the first selected event; default empty/0 means no batching cap unless debounce is positive, when the cap defaults to 1m. Positive batchWindow bounds repeated debounce. Negative durations pass validation and act as nonpositive. |
-| `spec.trigger.debounce` | Optional Go duration after the latest newly selected event, default empty/0 disabled. Reobserving the same event does not extend it. The earlier of debounce and batchWindow deadlines fires; no positive batchWindow gives a 1m cap. |
+Required children of optional objects apply only when their parent is used. Other exact conditions are in the explanation; bracketed alternatives may still require one choice.
+
+| YAML | Presence | Type / constraints | Field meaning and default |
+| --- | --- | --- | --- |
+| `spec.groupRef` | **Required** | string | Required bare EventGroup name used to select stored event group_name. No default; does not automatically create or start a group. |
+| `spec.match` | **Required** | object | Required matching object; types must be nonempty. Optional empty categories impose no restriction. |
+| `spec.match.types` | **Required** | array | Required exact event-type list with nonblank entries. At least one type must match; wildcards are literal strings. |
+| `spec.match.subjectPrefixes` | *Optional* | array | Optional subject prefix list, default empty allows all. Matching is strings.HasPrefix, not path-component or wildcard matching. |
+| `spec.match.payload` | *Optional* | object | Optional key-to-string equality map; every entry must match. Keys must be nonblank. A missing payload key reads as empty, so a requested empty value also matches a missing key. |
+| `spec.match.sourceNodes` | *Optional* | array | Optional exact sourceNode allowlist, default empty permits all. It does not automatically exclude this node’s own events; specify the intended source identities. |
+| `spec.trigger` | **Required** | object | Required local plugin invocation settings. This is distinct from Plugin.triggers and is executed by the subscription controller. |
+| `spec.trigger.pluginRef` | **Required** | string | Required bare Plugin metadata.name, not Plugin/name. Missing plugin yields Pending. Execution uses that Plugin’s executable, timeout, environment and context restrictions. |
+| `spec.trigger.batchWindow` | *Optional* | string | Optional Go duration measured from the first selected event; default empty/0 means no batching cap unless debounce is positive, when the cap defaults to 1m. Positive batchWindow bounds repeated debounce. Negative durations pass validation and act as nonpositive. |
+| `spec.trigger.debounce` | *Optional* | string | Optional Go duration after the latest newly selected event, default empty/0 disabled. Reobserving the same event does not extend it. The earlier of debounce and batchWindow deadlines fires; no positive batchWindow gives a 1m cap. |
 
 Implementation: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate_event.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_event.go) · [pkg/controller/eventsubscription/controller.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/eventsubscription/controller.go) · [pkg/controller/chain/chain.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go) · [pkg/plugin/context.go](https://github.com/imksoo/routerd/blob/main/pkg/plugin/context.go)
 

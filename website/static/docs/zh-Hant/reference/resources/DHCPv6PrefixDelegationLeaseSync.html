@@ -12,89 +12,120 @@
 <li>僅將 <StateDir>/dhcpv6-client/<name>/lease.json 複製到對端相同絕對路徑。不複製事件日誌、不啟動或啟用對端客戶端，也不延長有效期。還原仍檢查快照新鮮度、身分及 PD 設定相容性。</li>
 <li>每次執行使用 rsync -a --checksum --delay-updates，預設 rsync 無活動限制 60 秒、命令執行限制 2 分鐘。SSH 預設 BatchMode=yes、ConnectTimeout=10，可由 sshOptions 覆寫。Synced 僅表示檔案複製成功，不證明對端重新載入租約或客戶端連續性。</li>
 </ul>
-<h2 id="yaml定義">YAML定義</h2>
-<p>此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。</p>
-<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+<h2 id="設定語法">設定語法</h2>
+<p>這是說明用語法，不是可直接複製的YAML。未加括號的欄位在父項目內必填；<code>[ ... ]</code>表示依條件可省略，<code>&lt;型別&gt;</code>為替換值，<code>(a | b)</code>表示選項。選填父項目內仍可能有必填子項目。條件必填、互斥與實際預設值請見下表；一般YAML請使用連結範例。</p>
+<pre><code class="language-text">- apiVersion: net.routerd.net/v1alpha1
   kind: DHCPv6PrefixDelegationLeaseSync
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    command: &quot;&lt;string&gt;&quot; # 選填; string
-    interval: &quot;&lt;string&gt;&quot; # 選填; string
-    source: # 選填; object
-      resource: &quot;&lt;string&gt;&quot; # 必填; string
-    targets: # 選填; array
-      - # object
-        host: &quot;&lt;string&gt;&quot; # 必填; string
-        name: &quot;&lt;string&gt;&quot; # 選填; string
-        options: # 選填; array
-          - &quot;&lt;string&gt;&quot; # string
-        sshOptions: # 選填; array
-          - &quot;&lt;string&gt;&quot; # string
-        user: &quot;&lt;string&gt;&quot; # 選填; string
-    when: # 選填; object
-      state: # 選填; object
-        &quot;&lt;key&gt;&quot;: # 選填; object
-          contains: &quot;&lt;string&gt;&quot; # 選填; string
-          equals: &quot;&lt;string&gt;&quot; # 選填; string
-          exists: true # 選填; boolean
-          for: &quot;&lt;string&gt;&quot; # 選填; string
-          in: # 選填; array
-            - &quot;&lt;string&gt;&quot; # string
-          maxAge: &quot;&lt;string&gt;&quot; # 選填; string
-          status: &quot;set&quot; # 選填; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+    [ command: &lt;string&gt; ]
+    [ interval: &lt;string&gt; ]
+    source:
+      resource: &lt;string&gt;
+    targets:
+      -
+        host: &lt;string&gt;
+        [ name: &lt;string&gt; ]
+        [ options:
+            - &lt;string&gt;
+        ]
+        [ sshOptions:
+            - &lt;string&gt;
+        ]
+        [ user: &lt;string&gt; ]
+    [ when:
+        [ state:
+            [ &lt;name&gt;:
+                [ contains: &lt;string&gt; ]
+                [ equals: &lt;string&gt; ]
+                [ exists: &lt;boolean&gt; ]
+                [ for: &lt;string&gt; ]
+                [ in:
+                    - &lt;string&gt;
+                ]
+                [ maxAge: &lt;string&gt; ]
+                [ status: (&quot;set&quot; | &quot;unset&quot; | &quot;unknown&quot;) ]
+            ]
+        ]
+    ]
 </code></pre>
 <h2 id="欄位意義與預設值">欄位意義與預設值</h2>
+<p>選填父項目的必填子項目僅在使用父項目時需要。其他具體條件列於說明；<code>[ ... ]</code>選項仍可能需要擇一。</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>指定要求</th>
+<th>型別與限制</th>
 <th>欄位意義與預設值</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.source</code></td>
+<td><strong>必填</strong></td>
+<td>object</td>
 <td>必填含 resource 的來源描述，此處無檔案路徑覆寫。</td>
 </tr>
 <tr>
 <td><code>spec.source.resource</code></td>
+<td><strong>必填</strong></td>
+<td>string</td>
 <td>必填 DHCPv6PrefixDelegation 裸名或 DHCPv6PrefixDelegation/name，來源固定 <StateDir>/dhcpv6-client/<name>/lease.json，無 field/optional 或來源路徑覆寫，不轉換外部客戶端格式。</td>
 </tr>
 <tr>
 <td><code>spec.command</code></td>
+<td><em>選填</em></td>
+<td>string</td>
 <td>選用執行檔名稱或路徑，預設 rsync；直接接收 rsync 引數，不是殼層命令字串。</td>
 </tr>
 <tr>
 <td><code>spec.interval</code></td>
+<td><em>選填</em></td>
+<td>string</td>
 <td>Go duration，預設 30s。距上次成功 syncedAt 未達期間則略過；控制器另以 30 秒週期及訂閱事件執行。零或負值僅停用略過，不會加快週期排程。</td>
 </tr>
 <tr>
 <td><code>spec.targets</code></td>
+<td><strong>必填</strong></td>
+<td>array</td>
 <td>必填非空對等目標清單，逐一傳送檔案，第一個失敗記錄 Error/SyncFailed，不呼叫遠端 routerd API。</td>
 </tr>
 <tr>
 <td><code>spec.targets[].name</code></td>
+<td><em>選填</em></td>
+<td>string</td>
 <td>選用狀態標籤，預設空，不用於選擇目的主機或來源。</td>
 </tr>
 <tr>
 <td><code>spec.targets[].host</code></td>
+<td><strong>必填</strong></td>
+<td>string</td>
 <td>必填 SSH 主機或位址，不可含 CR/LF，須事先具備可達路由及非互動 SSH 認證。</td>
 </tr>
 <tr>
 <td><code>spec.targets[].user</code></td>
+<td><em>選填</em></td>
+<td>string</td>
 <td>選用 SSH 使用者，空值省略 user@ 並由 SSH 設定決定，不可含 CR/LF。</td>
 </tr>
 <tr>
 <td><code>spec.targets[].sshOptions</code></td>
+<td><em>選填</em></td>
+<td>array</td>
 <td>選用 SSH 引數清單，組合至 rsync -e。未指定對應鍵時補上 -o BatchMode=yes 與 -o ConnectTimeout=10，項目不可含 CR/LF。</td>
 </tr>
 <tr>
 <td><code>spec.targets[].options</code></td>
+<td><em>選填</em></td>
+<td>array</td>
 <td>選用額外 rsync 引數，附於預設之後。提供 --timeout 或 --timeout=... 時不補入 --timeout=60，但不變更獨立的 2 分鐘程序限制；不可含 CR/LF。</td>
 </tr>
 <tr>
 <td><code>spec.when</code></td>
+<td><em>選填</em></td>
+<td>object</td>
 <td>選用共用狀態條件，預設無條件。應以實際主用角色狀態避免備用端寫入，本資源不自行協商租約檔擁有者。</td>
 </tr>
 </tbody>
@@ -105,7 +136,7 @@
 <p><code>phase</code>, <code>command</code>, <code>sourceCount</code>, <code>targetCount</code>, <code>sources</code>, <code>targets</code>, <code>syncedAt</code>, <code>dryRun</code></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
 <ul>
 <li><a href="#指定條件與參照關係">指定條件與參照關係</a></li>
-<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#設定語法">設定語法</a></li>
 <li><a href="#欄位意義與預設值">欄位意義與預設值</a></li>
 <li><a href="#可參照的狀態欄位">可參照的狀態欄位</a></li>
 </ul>

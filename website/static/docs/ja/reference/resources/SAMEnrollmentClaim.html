@@ -12,133 +12,185 @@
 <li>joinTokenFrom利用時はnonce・timestamp・HMACが必須で、設定されたaudienceと一致し、ポリシー内のnonce重複は禁止です。HMACはdirectMesh:trueを含む正規化leafペイロードのSHA-256で、署名対象の識別・要求を変えると再署名が必要です。</li>
 <li>失効・期限切れ要求は派生トポロジーから除きます。所有アドレスがないdirect要求はトランスポート接続を保持できても移動経路の受信を許可しません。ポリシー全体の範囲をdirectの全/32許可には使いません。</li>
 </ul>
-<h2 id="yaml定義">YAML定義</h2>
-<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
-<pre><code class="language-yaml">- apiVersion: mobility.routerd.net/v1alpha1
+<h2 id="設定構文">設定構文</h2>
+<p>説明用の構文表記であり、そのままコピーするYAMLではありません。囲みのない項目は親の中で必須、<code>[ ... ]</code>は条件に応じて省略できる項目、<code>&lt;型&gt;</code>は差し替え値、<code>(a | b)</code>は選択肢です。任意の親にも必須の子があります。条件付き必須・排他・実効既定値は下の表を確認し、通常のYAMLはリンク先の設定例を使ってください。</p>
+<pre><code class="language-text">- apiVersion: mobility.routerd.net/v1alpha1
   kind: SAMEnrollmentClaim
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    bgp: # 任意; object
-      asn: 1 # 任意; integer; minimum=1
-      routerID: &quot;&lt;string&gt;&quot; # 任意; string
-    directMesh: true # 任意; boolean
-    endpoint: &quot;&lt;string&gt;&quot; # 任意; string
-    expiresAt: &quot;&lt;string&gt;&quot; # 任意; string
-    joinAudience: &quot;&lt;string&gt;&quot; # 任意; string
-    joinHMAC: &quot;&lt;string&gt;&quot; # 任意; string
-    joinNonce: &quot;&lt;string&gt;&quot; # 任意; string
-    joinTimestamp: &quot;&lt;string&gt;&quot; # 任意; string
-    leafID: &quot;&lt;string&gt;&quot; # 必須; string
-    mobility: # 任意; object
-      ownedAddresses: # 任意; array
-        - &quot;&lt;string&gt;&quot; # string
-    policyRef: &quot;&lt;string&gt;&quot; # 必須; string
-    revoked: true # 任意; boolean
-    rrSetRef: &quot;&lt;string&gt;&quot; # 任意; string
-    tunnelAddress: &quot;&lt;string&gt;&quot; # 必須; string
-    wireGuard: # 任意; object
-      allowedIPs: # 任意; array
-        - &quot;&lt;string&gt;&quot; # string
-      endpoint: &quot;&lt;string&gt;&quot; # 任意; string
-      persistentKeepalive: 0 # 任意; integer; minimum=0; maximum=65535
-      publicKey: &quot;&lt;string&gt;&quot; # 必須; string
+    [ bgp:
+        [ asn: &lt;integer&gt; ]
+        [ routerID: &lt;string&gt; ]
+    ]
+    [ directMesh: &lt;boolean&gt; ]
+    [ endpoint: &lt;string&gt; ]
+    [ expiresAt: &lt;string&gt; ]
+    [ joinAudience: &lt;string&gt; ]
+    [ joinHMAC: &lt;string&gt; ]
+    [ joinNonce: &lt;string&gt; ]
+    [ joinTimestamp: &lt;string&gt; ]
+    leafID: &lt;string&gt;
+    [ mobility:
+        [ ownedAddresses:
+            - &lt;string&gt;
+        ]
+    ]
+    policyRef: &lt;string&gt;
+    [ revoked: &lt;boolean&gt; ]
+    [ rrSetRef: &lt;string&gt; ]
+    tunnelAddress: &lt;string&gt;
+    [ wireGuard:
+        [ allowedIPs:
+            - &lt;string&gt;
+        ]
+        [ endpoint: &lt;string&gt; ]
+        [ persistentKeepalive: &lt;integer&gt; ]
+        publicKey: &lt;string&gt;
+    ]
 </code></pre>
 <h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<p>任意の親の必須項目は、親を使う場合に必要です。それ以外の具体的な条件は説明欄に記載します。<code>[ ... ]</code>で囲まれた選択肢も、いずれか一方が必要な場合があります。</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>指定要否</th>
+<th>型・制約</th>
 <th>項目の意味と既定値</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.policyRef</code></td>
+<td><strong>必須</strong></td>
+<td>string</td>
 <td>必須のSAMEnrollmentPolicy/nameです。SAMEnrollmentClientがリモート登録に使うleaf要求以外は、ローカルの存在が必要です。</td>
 </tr>
 <tr>
 <td><code>spec.rrSetRef</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>形の上では任意ですが、SAMEnrollmentClient実行時にはSAMRRSet/nameが必須です。ポリシーのrrSetRefがあれば一致させます。実行時RRトポロジーの名前で、静的記述するリソースではありません。</td>
 </tr>
 <tr>
 <td><code>spec.leafID</code></td>
+<td><strong>必須</strong></td>
+<td>string</td>
 <td>必須の安定したノード識別子です。allowedLeafIDs.patternに照合し、ポリシー内で一意にします。生成nodeRefにも使います。</td>
 </tr>
 <tr>
 <td><code>spec.joinAudience</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>string</td>
 <td>任意の署名対象audienceです。join-token認証が有効でポリシーaudienceが非空なら一致が必要です。</td>
 </tr>
 <tr>
 <td><code>spec.joinNonce</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>string</td>
 <td>任意の署名対象nonceです。joinHMACまたはjoin-tokenポリシー時に必須で、同ポリシー内の重複を拒否します。このYAML指定では自動生成しません。</td>
 </tr>
 <tr>
 <td><code>spec.joinTimestamp</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>string</td>
 <td>任意の署名対象RFC3339・RFC3339Nano時刻です。join-tokenポリシー時と、明示expiresAtをポリシーTTLに照合する場合は必須です。指定TTLはこの時刻があればここからの寿命も制限します。</td>
 </tr>
 <tr>
 <td><code>spec.joinHMAC</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>string</td>
 <td>正規化要求の任意の16進HMAC-SHA256署名で、join-tokenポリシーでは必須です。共通鍵そのものやControlAPI Bearerトークンではありません。</td>
 </tr>
 <tr>
 <td><code>spec.tunnelAddress</code></td>
+<td><strong>必須</strong></td>
+<td>string</td>
 <td>必須のIPv4アドレス・/32 CIDRです。policy.tunnelAddressPrefixesの許可範囲内かつポリシー内で一意にし、自動割当ではありません。</td>
 </tr>
 <tr>
 <td><code>spec.endpoint</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>任意の外側トンネルIP終端です。policy.endpointPrefixesが非空ならそのIPv4許可範囲内が必要です。WireGuard UDP終端とは別です。</td>
 </tr>
 <tr>
 <td><code>spec.wireGuard</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>任意のWireGuard公開情報です。1項目でも非空ならpublicKeyが必要で、秘密鍵は含めません。</td>
 </tr>
 <tr>
 <td><code>spec.wireGuard.publicKey</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>string</td>
 <td>WireGuard情報があれば必須の公開鍵です。非空鍵はポリシー内で一意にし、ここで自動生成はしません。</td>
 </tr>
 <tr>
 <td><code>spec.wireGuard.endpoint</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>任意のWireGuard UDP host:port（1～65535）です。prefix認可では終端IPの解析が必要で、wireGuard.endpointPrefixesまたはpolicy.endpointPrefixesを使います。ホスト名で認可に通るとは扱わないでください。</td>
 </tr>
 <tr>
 <td><code>spec.wireGuard.allowedIPs</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>任意の追加IPv4 CIDR一覧で、各項目はpolicy.wireGuard.allowedExtraIPPrefixes内が必要です。空なら追加なしで、生成ピアは別にtunnelAddress /32を含めます。</td>
 </tr>
 <tr>
 <td><code>spec.wireGuard.persistentKeepalive</code></td>
+<td><em>任意</em></td>
+<td>integer; minimum=0; maximum=65535</td>
 <td>0～65535の整数秒です。既定0は生成トポロジーでポリシー側のkeepaliveを使い、非0値は上書きします。</td>
 </tr>
 <tr>
 <td><code>spec.directMesh</code></td>
+<td><em>任意</em></td>
+<td>boolean</td>
 <td>既定falseはRRピアのみです。trueはポリシーのdirectピアグループ参加を要求する署名対象で、ポリシー有効化・所有/32認可を回避しません。</td>
 </tr>
 <tr>
 <td><code>spec.mobility</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>任意の宣言した移動所有権です。既定は所有アドレスなしで、端末探索そのものは行いません。</td>
 </tr>
 <tr>
 <td><code>spec.mobility.ownedAddresses</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>ポリシーのmobilityPrefixes・MobilityPool参照で許可されたIPv4アドレス・/32です。同ポリシーの有効要求間重複は拒否し、direct BGP受信は許可された所有/32だけに絞ります。</td>
 </tr>
 <tr>
 <td><code>spec.bgp</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>任意の署名対象BGP識別要求で、BGPRouterリソース参照ではありません。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.asn</code></td>
+<td><em>任意</em></td>
+<td>integer; minimum=1</td>
 <td>署名要求に含める任意のuint32 ASNで、デコード既定0です。スキーマは明示時1以上ですが、形の検証は非0を必須としません。ポリシートランスポートpeerASNの上書きではありません。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.routerID</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>任意のIPv4 BGP識別子で、自動既定値はありません。非空IDはポリシー内で一意にし、BGPRouterを作成しません。</td>
 </tr>
 <tr>
 <td><code>spec.expiresAt</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>任意のRR・管理者側RFC3339期限で、join HMAC対象外です。通常登録でポリシーTTLまたは既定5分の期限を設定します。両方指定時はjoinTimestamp+ポリシーTTLを超えられず、期限切れ要求は除外します。</td>
 </tr>
 <tr>
 <td><code>spec.revoked</code></td>
+<td><em>任意</em></td>
+<td>boolean</td>
 <td>既定falseです。trueはRR・管理者側の失効状態で、join HMAC対象外となりトポロジー取り込みを防ぎます。leafは署名の再送で保持済み失効を解除できません。</td>
 </tr>
 </tbody>
@@ -150,7 +202,7 @@
 <p><a href="/examples/cloudedge-dynamic-leaf-a-wg.yaml">設定例</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
 <ul>
 <li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
-<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#設定構文">設定構文</a></li>
 <li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
 <li><a href="#状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</a></li>
 </ul>

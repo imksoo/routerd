@@ -11,31 +11,38 @@
 <li>没有必填 spec 字段。logDeny 在多个资源间取 OR。生成器的 sameRoleAccept 从 true 开始且没有设为 false 的路径，因此当前填 false 也无法禁用相同角色间转发。</li>
 <li>Linux nftables 与 FreeBSD PF 的隐式/明确规则顺序不同。PF 在已允许路径的明确拒绝前生成广泛隐式允许；Linux 在该区域配对的隐式动作前生成明确规则。不可假定明确拒绝能覆盖所有隐式、控制或状态例外。</li>
 </ul>
-<h2 id="yaml定义">YAML定义</h2>
-<p>此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。</p>
-<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+<h2 id="配置语法">配置语法</h2>
+<p>这是说明用语法，不是可直接复制的YAML。未加括号的字段在父条目内必填；<code>[ ... ]</code>表示按条件可省略，<code>&lt;类型&gt;</code>为替换值，<code>(a | b)</code>表示选项。选填父条目内仍可能有必填子条目。条件必填、互斥与实际默认值请见下表；常规YAML请使用链接示例。</p>
+<pre><code class="language-text">- apiVersion: firewall.routerd.net/v1alpha1
   kind: FirewallPolicy
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    logDeny: true # 选填; boolean
-    sameRoleAccept: true # 选填; boolean
+    [ logDeny: &lt;boolean&gt; ]
+    [ sameRoleAccept: &lt;boolean&gt; ]
 </code></pre>
 <h2 id="字段含义与默认值">字段含义与默认值</h2>
+<p>选填父条目的必填子条目仅在使用父条目时需要。其他具体条件列于说明；<code>[ ... ]</code>选项仍可能需要择一。</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>指定要求</th>
+<th>类型与限制</th>
 <th>字段含义与默认值</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.logDeny</code></td>
+<td><em>选填</em></td>
+<td>boolean</td>
 <td>默认 false，任一资源为 true 即启用 Linux 隐式 input/forward 拒绝日志。明确 drop 仍需其 log 标志。当前 PF 不读取此选项。</td>
 </tr>
 <tr>
 <td><code>spec.sameRoleAccept</code></td>
+<td><em>选填</em></td>
+<td>boolean</td>
 <td>解码默认 false，但生成器有效默认固定 true，false 无效。Linux 包含 untrust 对 untrust；PF 不生成其广泛隐式转发允许。</td>
 </tr>
 </tbody>
@@ -47,7 +54,7 @@
 <p><a href="/examples/example-basic-ipv4-nat.yaml">配置示例</a></p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
 <ul>
 <li><a href="#指定条件与引用关系">指定条件与引用关系</a></li>
-<li><a href="#yaml定义">YAML定义</a></li>
+<li><a href="#配置语法">配置语法</a></li>
 <li><a href="#字段含义与默认值">字段含义与默认值</a></li>
 <li><a href="#可引用的状态字段">可引用的状态字段</a></li>
 </ul>

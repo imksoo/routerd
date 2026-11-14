@@ -185,6 +185,9 @@
       "pkg/api/resource_kinds.go",
       "pkg/config/validate_plugin.go",
       "pkg/plugin/dynamic_config.go"
+    ],
+    "requiredFields": [
+      "ttl"
     ]
   },
   "DynamicOverridePolicy": {
@@ -585,6 +588,13 @@
       "pkg/config/diagnostics.go",
       "pkg/eventlog/eventlog.go",
       "pkg/config/validate.go"
+    ],
+    "conditionalFields": [
+      "otlp",
+      "otlp.telemetryRef",
+      "otlp.endpoint",
+      "webhook",
+      "webhook.url"
     ]
   },
   "Telemetry": {
@@ -777,6 +787,9 @@
       "pkg/controller/chain/ntp.go",
       "pkg/resourcequery/resourcequery.go",
       "pkg/config/validate.go"
+    ],
+    "conditionalFields": [
+      "servers"
     ]
   },
   "NTPServer": {
@@ -878,6 +891,9 @@
       "pkg/api/specs.go",
       "pkg/config/validate_system.go",
       "pkg/controller/chain/ntp.go"
+    ],
+    "conditionalFields": [
+      "servers"
     ]
   },
   "WebConsole": {
@@ -1065,6 +1081,12 @@
       "pkg/config/cluster_secret_validate.go",
       "cmd/routerd/cmd_serve.go",
       "pkg/controlapi/server.go"
+    ],
+    "conditionalFields": [
+      "tokenFrom.file",
+      "tokenFrom.env",
+      "tls.certFile",
+      "tls.keyFile"
     ]
   },
   "RouterdCluster": {
@@ -1120,6 +1142,9 @@
       "pkg/controller/chain/chain.go",
       "pkg/ha/lease.go",
       "cmd/routerd/cmd_apply.go"
+    ],
+    "requiredFields": [
+      "leasePath"
     ]
   },
   "ObservabilityPipeline": {
@@ -2088,6 +2113,10 @@
       "pkg/controller/chain/wireguard.go",
       "pkg/wireguard/wireguard.go",
       "pkg/render/firewall_holes.go"
+    ],
+    "conditionalFields": [
+      "privateKey",
+      "privateKeyFile"
     ]
   },
   "WireGuardPeer": {
@@ -2714,6 +2743,9 @@
       "pkg/controller/chain/system.go",
       "pkg/controller/chain/logretention.go",
       "pkg/platform/platform.go"
+    ],
+    "conditionalFields": [
+      "path"
     ]
   },
   "DNSResolver": {
@@ -2972,6 +3004,10 @@
       "pkg/dnsresolver/dnsresolver.go",
       "cmd/routerd-dns-resolver/main.go",
       "cmd/routerd-dns-resolver/upstream.go"
+    ],
+    "conditionalFields": [
+      "zoneRefs",
+      "upstreams"
     ]
   },
   "DNSUpstream": {
@@ -3072,6 +3108,10 @@
       "cmd/routerd-dns-resolver/upstream.go",
       "cmd/routerd-dns-resolver/upstream_bind_linux.go",
       "cmd/routerd-dns-resolver/upstream_bind_freebsd.go"
+    ],
+    "conditionalFields": [
+      "address",
+      "addressFrom"
     ]
   },
   "DNSZone": {
@@ -3415,6 +3455,9 @@
       "pkg/controller/chain/system.go",
       "cmd/routerd-healthcheck/main.go",
       "pkg/apply/engine.go"
+    ],
+    "conditionalFields": [
+      "target"
     ]
   },
   "IPsecConnection": {
@@ -3500,6 +3543,10 @@
       "pkg/ipsec/ipsec.go",
       "cmd/routerd/ipsec_apply.go",
       "pkg/apply/engine.go"
+    ],
+    "conditionalFields": [
+      "preSharedKey",
+      "certificateRef"
     ]
   },
   "VXLANTunnel": {
@@ -3604,6 +3651,10 @@
       "pkg/controller/chain/vxlan_tunnel.go",
       "pkg/vxlan/vxlan.go",
       "pkg/render/nftables.go"
+    ],
+    "conditionalFields": [
+      "bridge",
+      "mtu"
     ]
   },
   "PPPoESession": {
@@ -3773,6 +3824,10 @@
       "pkg/pppoeclient/client.go",
       "pkg/render/freebsd.go",
       "cmd/routerd/cmd_render.go"
+    ],
+    "conditionalFields": [
+      "password",
+      "passwordFile"
     ]
   },
   "EventGroup": {
@@ -3923,6 +3978,9 @@
       "pkg/eventd/receiver.go",
       "cmd/routerd-eventd/main.go",
       "pkg/state/federation.go"
+    ],
+    "conditionalFields": [
+      "auth.secretFile"
     ]
   },
   "EventPeer": {
@@ -3989,6 +4047,9 @@
       "pkg/config/validate_event.go",
       "pkg/controller/eventfederation/controller.go",
       "pkg/eventd/push.go"
+    ],
+    "requiredFields": [
+      "endpoint"
     ]
   },
   "EventSubscription": {
@@ -4243,6 +4304,9 @@
       "pkg/render/dpi_systemd.go",
       "pkg/render/nftables.go",
       "pkg/controller/chain/logretention.go"
+    ],
+    "conditionalFields": [
+      "path"
     ]
   },
   "DHCPv4Relay": {
@@ -4383,6 +4447,13 @@
       "pkg/config/index.go",
       "pkg/controller/chain/chain.go",
       "pkg/controller/chain/phase2.go"
+    ],
+    "requiredFields": [
+      "server"
+    ],
+    "conditionalFields": [
+      "options[].code",
+      "options[].name"
     ]
   },
   "DHCPv4ServerLeaseSync": {
@@ -4486,6 +4557,10 @@
       "pkg/controller/chain/filesync.go",
       "pkg/controller/chain/chain.go",
       "pkg/platform/platform.go"
+    ],
+    "requiredFields": [
+      "source",
+      "targets"
     ]
   },
   "DHCPv4Server": {
@@ -4961,6 +5036,22 @@
       "pkg/render/dnsmasq.go",
       "cmd/routerd/runtime_services.go",
       "pkg/platform/platform.go"
+    ],
+    "conditionalFields": [
+      "interface",
+      "addressPool",
+      "addressPool.start",
+      "addressPool.end",
+      "router",
+      "dnsInterface",
+      "dns.upstreamInterface",
+      "dns.upstreamServers",
+      "profiles[].options[].code",
+      "profiles[].options[].name",
+      "scopes[].options[].code",
+      "scopes[].options[].name",
+      "options[].code",
+      "options[].name"
     ]
   },
   "IPAddressSet": {
@@ -5022,6 +5113,10 @@
       "pkg/controller/chain/ipaddressset.go",
       "pkg/render/local_service_redirect.go",
       "pkg/resourcequery/when.go"
+    ],
+    "conditionalFields": [
+      "addresses",
+      "names"
     ]
   },
   "LocalServiceRedirect": {
@@ -6075,6 +6170,9 @@
       "pkg/config/bgp_validate.go",
       "pkg/config/cluster_secret_validate.go",
       "pkg/controller/bgp/controller.go"
+    ],
+    "requiredFields": [
+      "peers"
     ]
   },
   "BGPDynamicPeer": {
@@ -6663,6 +6761,10 @@
       "pkg/controller/chain/phase2.go",
       "pkg/controller/chain/routeradvertisement.go",
       "pkg/render/dnsmasq.go"
+    ],
+    "conditionalFields": [
+      "prefix",
+      "prefixFrom"
     ]
   },
   "CloudProviderProfile": {
@@ -6736,6 +6838,9 @@
       "pkg/controller/mobility/planner.go",
       "pkg/provideraction/policy.go",
       "pkg/provideraction/engine.go"
+    ],
+    "requiredFields": [
+      "auth.command"
     ]
   },
   "ProviderActionPolicy": {
@@ -7225,6 +7330,12 @@
       "pkg/controller/mobility/enrollmentclient.go",
       "pkg/controller/mobility/core_helpers.go",
       "pkg/controlapi/client.go"
+    ],
+    "conditionalFields": [
+      "bootstrapEndpoints",
+      "rrSocket",
+      "controlAPITokenFrom.file",
+      "controlAPITokenFrom.env"
     ]
   },
   "DHCPv6ServerLeaseSync": {
@@ -7328,6 +7439,10 @@
       "pkg/controller/chain/filesync.go",
       "pkg/controller/chain/chain.go",
       "pkg/platform/platform.go"
+    ],
+    "requiredFields": [
+      "source",
+      "targets"
     ]
   },
   "DHCPv6PrefixDelegationLeaseSync": {
@@ -7431,6 +7546,10 @@
       "pkg/controller/chain/filesync.go",
       "pkg/controller/chain/chain.go",
       "pkg/platform/platform.go"
+    ],
+    "requiredFields": [
+      "source",
+      "targets"
     ]
   },
   "SelfAddressPolicy": {
@@ -7730,6 +7849,13 @@
       "pkg/render/dnsmasq.go",
       "cmd/routerd/runtime_services.go",
       "pkg/platform/platform.go"
+    ],
+    "conditionalFields": [
+      "interface",
+      "delegatedAddress",
+      "addressPool",
+      "addressPool.start",
+      "addressPool.end"
     ]
   },
   "NAT44Rule": {
@@ -7908,6 +8034,19 @@
       "pkg/render/nftables.go",
       "pkg/render/pf.go",
       "pkg/apply/engine.go"
+    ],
+    "conditionalFields": [
+      "type",
+      "egressInterface",
+      "egressPolicyRef",
+      "sourceRanges",
+      "snatAddress",
+      "snatAddressFrom",
+      "outboundInterface",
+      "sourceCIDRs",
+      "translation",
+      "translation.address",
+      "translation.addresses"
     ]
   },
   "NAT44FlowDNATPinhole": {
@@ -8036,6 +8175,13 @@
       "pkg/render/nftables.go",
       "pkg/render/local_service_redirect.go",
       "pkg/controller/nat44/controller.go"
+    ],
+    "requiredFields": [
+      "fromInterfaceRefs"
+    ],
+    "conditionalFields": [
+      "outbound.sourceCIDRs",
+      "outbound.sourceSetRef"
     ]
   },
   "FirewallFlowPinhole": {
@@ -8169,6 +8315,10 @@
       "pkg/config/validate.go",
       "pkg/render/nftables.go",
       "pkg/render/pf.go"
+    ],
+    "conditionalFields": [
+      "outbound.sourceCIDRs",
+      "outbound.sourceSetRef"
     ]
   },
   "NAT44SessionSync": {
@@ -8336,6 +8486,15 @@
       "pkg/controller/chain/chain.go",
       "pkg/render/conntrackd.go",
       "cmd/routerd-vrrp-vmac/main.go"
+    ],
+    "conditionalFields": [
+      "snatAddresses",
+      "natRules",
+      "targets",
+      "conntrackd",
+      "conntrackd.interface",
+      "conntrackd.localAddress",
+      "conntrackd.peerAddress"
     ]
   },
   "DSLiteTunnel": {
@@ -8505,6 +8664,14 @@
       "pkg/config/validate.go",
       "pkg/controller/chain/phase2.go",
       "pkg/controller/chain/ipv4_main_routes.go"
+    ],
+    "conditionalFields": [
+      "aftrFrom",
+      "aftrFQDN",
+      "aftrIPv6",
+      "remoteAddress",
+      "localAddress",
+      "localDelegatedAddress"
     ]
   },
   "SAMEnrollmentPolicy": {
@@ -8671,6 +8838,13 @@
       "cmd/routerd/sam_enrollment_submit.go",
       "pkg/controller/chain/wireguard.go",
       "pkg/controller/mobility/enrollmentclient.go"
+    ],
+    "conditionalFields": [
+      "rrSetRef",
+      "rrNodeSetRef",
+      "wireGuard.interface",
+      "joinTokenFrom.file",
+      "joinTokenFrom.env"
     ]
   },
   "SAMEnrollmentClaim": {
@@ -8841,6 +9015,12 @@
       "pkg/samenrollment/enrollment.go",
       "cmd/routerd/sam_enrollment_submit.go",
       "pkg/controller/mobility/enrollmentclient.go"
+    ],
+    "conditionalFields": [
+      "joinAudience",
+      "joinNonce",
+      "joinTimestamp",
+      "joinHMAC"
     ]
   },
   "HybridRoute": {
@@ -9159,6 +9339,16 @@
       "pkg/render/mtu.go",
       "pkg/render/nftables.go",
       "pkg/controller/chain/mtu.go"
+    ],
+    "conditionalFields": [
+      "local",
+      "localFrom",
+      "remote",
+      "remoteFrom",
+      "address",
+      "peerAddress",
+      "encapSport",
+      "encapDport"
     ]
   },
   "SAMTransportProfile": {
@@ -9489,6 +9679,13 @@
       "pkg/mobilityconfig/transport_mesh.go",
       "pkg/controller/bgp/controller.go",
       "pkg/controller/bfd/controller.go"
+    ],
+    "conditionalFields": [
+      "localEndpoint",
+      "localEndpointFrom",
+      "encapSport",
+      "encapDport",
+      "peersFrom"
     ]
   },
   "PortForward": {
@@ -10170,6 +10367,13 @@
       "pkg/render/status_source.go",
       "pkg/render/secrets.go",
       "cmd/routerd-vrrp-vmac/main.go"
+    ],
+    "conditionalFields": [
+      "address",
+      "addressFrom",
+      "vrrp",
+      "vrrp.virtualRouterID",
+      "vrrp.peers"
     ]
   },
   "MobilityPool": {
@@ -11240,6 +11444,19 @@
       "pkg/resourcequery/resourcequery.go",
       "pkg/render/nftables.go",
       "pkg/render/pf.go"
+    ],
+    "conditionalFields": [
+      "hashFields",
+      "candidates[].interface",
+      "candidates[].device",
+      "candidates[].deviceFrom",
+      "candidates[].gateway",
+      "candidates[].gatewayFrom",
+      "candidates[].table",
+      "candidates[].routeTable",
+      "candidates[].priority",
+      "candidates[].mark",
+      "candidates[].targets"
     ]
   }
 }

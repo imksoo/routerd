@@ -10,46 +10,50 @@ Serves the read-only router web console from routerd. Its HTTP listener is separ
 
 - The runtime selects the first WebConsole resource; it does not start one listener per resource. A resolved listenAddressFrom takes precedence over listenAddress; the latter is a fallback, not a mutually exclusive option.
 
-## YAML definition
+## Configuration syntax
 
-All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.
+This is explanatory notation, not YAML to copy. Unbracketed fields are required within their parent; `[ ... ]` marks fields that can be omitted, subject to the conditions in the table. `<type>` is a placeholder, and `(a | b)` lists alternatives. Optional parents may contain required children. Conditional requirements, exclusions and runtime defaults are described below. Use the linked YAML example for an ordinary configuration.
 
-```yaml
+```text
 - apiVersion: system.routerd.net/v1alpha1
   kind: WebConsole
   metadata:
     name: "<name>"
   spec:
-    basePath: "<string>" # optional; string
-    enabled: true # optional; boolean
-    links: # optional; array
-      - # object
-        description: "<string>" # optional; string
-        label: "<string>" # Required; string
-        url: "<string>" # Required; string
-    listenAddress: "<string>" # optional; string
-    listenAddressFrom: # optional; object
-      field: "<string>" # optional; string
-      optional: true # optional; boolean
-      resource: "<string>" # Required; string
-    port: 1 # optional; integer; minimum=1; maximum=65535
-    title: "<string>" # optional; string
+    [ basePath: <string> ]
+    [ enabled: <boolean> ]
+    [ links:
+        -
+          [ description: <string> ]
+          label: <string>
+          url: <string>
+    ]
+    [ listenAddress: <string> ]
+    [ listenAddressFrom:
+        field: <string>
+        [ optional: <boolean> ]
+        resource: <string>
+    ]
+    [ port: <integer> ]
+    [ title: <string> ]
 ```
 
 ## Field meaning and default
 
-| YAML | Field meaning and default |
-| --- | --- |
-| `spec.enabled` | Default true when a WebConsole resource exists. False disables the console selected by the runtime. No resource means no console listener. |
-| `spec.listenAddress` | Fallback bind IP, default 127.0.0.1. Must parse as an IP when nonblank. A resolved listenAddressFrom wins. |
-| `spec.listenAddressFrom` | Value source for a bind IP; default absent. Uses status first, then supported configured-interface/address resolution. Requires resource and field. If unresolved and no listenAddress is supplied, console startup fails even if optional=true. |
-| `spec.port` | TCP port, default 8080. Zero in the decoded config means use this default; explicit nonzero values must be 1–65535. |
-| `spec.basePath` | HTTP path prefix, default /. A nonempty value must begin with / and contain no NUL or line breaks. |
-| `spec.title` | Console page title, default routerd. It does not rename the router or any resource. |
-| `spec.links` | Optional additional console links, default empty. Entries with blank label or URL are omitted at display time. |
-| `spec.links[].label` | Visible link text, no default; blank values are not displayed. |
-| `spec.links[].url` | Link destination, no default. This is a URL, not Kind/name. The console trims surrounding whitespace. |
-| `spec.links[].description` | Optional explanatory text, default empty; trimmed for display. |
+Required children of optional objects apply only when their parent is used. Other exact conditions are in the explanation; bracketed alternatives may still require one choice.
+
+| YAML | Presence | Type / constraints | Field meaning and default |
+| --- | --- | --- | --- |
+| `spec.enabled` | *Optional* | boolean | Default true when a WebConsole resource exists. False disables the console selected by the runtime. No resource means no console listener. |
+| `spec.listenAddress` | *Optional* | string | Fallback bind IP, default 127.0.0.1. Must parse as an IP when nonblank. A resolved listenAddressFrom wins. |
+| `spec.listenAddressFrom` | *Optional* | object | Value source for a bind IP; default absent. Uses status first, then supported configured-interface/address resolution. Requires resource and field. If unresolved and no listenAddress is supplied, console startup fails even if optional=true. |
+| `spec.port` | *Optional* | integer; minimum=1; maximum=65535 | TCP port, default 8080. Zero in the decoded config means use this default; explicit nonzero values must be 1–65535. |
+| `spec.basePath` | *Optional* | string | HTTP path prefix, default /. A nonempty value must begin with / and contain no NUL or line breaks. |
+| `spec.title` | *Optional* | string | Console page title, default routerd. It does not rename the router or any resource. |
+| `spec.links` | *Optional* | array | Optional additional console links, default empty. Entries with blank label or URL are omitted at display time. |
+| `spec.links[].label` | **Conditionally required** | string | Visible link text, no default; blank values are not displayed. |
+| `spec.links[].url` | **Conditionally required** | string | Link destination, no default. This is a URL, not Kind/name. The console trims surrounding whitespace. |
+| `spec.links[].description` | *Optional* | string | Optional explanatory text, default empty; trimmed for display. |
 
 Implementation: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate_system.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_system.go) · [cmd/routerd/cmd_serve.go](https://github.com/imksoo/routerd/blob/main/cmd/routerd/cmd_serve.go) · [pkg/webconsole/console.go](https://github.com/imksoo/routerd/blob/main/pkg/webconsole/console.go)
 

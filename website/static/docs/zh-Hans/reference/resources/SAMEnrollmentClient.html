@@ -12,107 +12,148 @@
 <li>至少需一个 bootstrapEndpoints 或 rrSocket，两者不互斥。先使用 Unix 套接字，再依次使用 HTTP(S) 端点。普通接纳可使用成功的 RR 响应；direct 拓扑要求配置端点间一致，无法安全接纳时保留 RR 路径。</li>
 <li>禁用 direct-mesh 时，会先移除缓存 direct 拓扑，再联系可能无法连接的 RR。客户端重试/更新状态会保存，拓扑更新不代表隧道或 BGP 已运行。</li>
 </ul>
-<h2 id="yaml定义">YAML定义</h2>
-<p>此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。</p>
-<pre><code class="language-yaml">- apiVersion: mobility.routerd.net/v1alpha1
+<h2 id="配置语法">配置语法</h2>
+<p>这是说明用语法，不是可直接复制的YAML。未加括号的字段在父条目内必填；<code>[ ... ]</code>表示按条件可省略，<code>&lt;类型&gt;</code>为替换值，<code>(a | b)</code>表示选项。选填父条目内仍可能有必填子条目。条件必填、互斥与实际默认值请见下表；常规YAML请使用链接示例。</p>
+<pre><code class="language-text">- apiVersion: mobility.routerd.net/v1alpha1
   kind: SAMEnrollmentClient
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    bootstrapEndpoints: # 选填; array
-      - &quot;&lt;string&gt;&quot; # string
-    claimRef: &quot;&lt;string&gt;&quot; # 必填; string
-    controlAPITLS: # 选填; object
-      caFile: &quot;&lt;string&gt;&quot; # 选填; string
-      certFile: &quot;&lt;string&gt;&quot; # 选填; string
-      insecureSkipVerify: true # 选填; boolean
-      keyFile: &quot;&lt;string&gt;&quot; # 选填; string
-      serverName: &quot;&lt;string&gt;&quot; # 选填; string
-    controlAPITokenFrom: # 选填; object
-      base64: true # 选填; boolean
-      env: &quot;&lt;string&gt;&quot; # 选填; string
-      file: &quot;&lt;string&gt;&quot; # 选填; string
-    retryBackoff: # 选填; object
-      max: &quot;&lt;string&gt;&quot; # 选填; string
-      min: &quot;&lt;string&gt;&quot; # 选填; string
-    rrSocket: &quot;&lt;string&gt;&quot; # 选填; string
-    stateTTLRefreshBefore: &quot;&lt;string&gt;&quot; # 选填; string
+    [ bootstrapEndpoints:
+        - &lt;string&gt;
+    ]
+    claimRef: &lt;string&gt;
+    [ controlAPITLS:
+        [ caFile: &lt;string&gt; ]
+        [ certFile: &lt;string&gt; ]
+        [ insecureSkipVerify: &lt;boolean&gt; ]
+        [ keyFile: &lt;string&gt; ]
+        [ serverName: &lt;string&gt; ]
+    ]
+    [ controlAPITokenFrom:
+        [ base64: &lt;boolean&gt; ]
+        [ env: &lt;string&gt; ]
+        [ file: &lt;string&gt; ]
+    ]
+    [ retryBackoff:
+        [ max: &lt;string&gt; ]
+        [ min: &lt;string&gt; ]
+    ]
+    [ rrSocket: &lt;string&gt; ]
+    [ stateTTLRefreshBefore: &lt;string&gt; ]
 </code></pre>
 <h2 id="字段含义与默认值">字段含义与默认值</h2>
+<p>选填父条目的必填子条目仅在使用父条目时需要。其他具体条件列于说明；<code>[ ... ]</code>选项仍可能需要择一。</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>指定要求</th>
+<th>类型与限制</th>
 <th>字段含义与默认值</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.claimRef</code></td>
+<td><strong>必填</strong></td>
+<td>string</td>
 <td>必填同一 Router 声明的 SAMEnrollmentClaim/name，不使用状态字段选择器。</td>
 </tr>
 <tr>
 <td><code>spec.bootstrapEndpoints</code></td>
+<td><strong>条件必填</strong></td>
+<td>array</td>
 <td>可选且有顺序的绝对 HTTP(S) ControlAPI URL，须含主机。未提供 rrSocket 时至少一个，不自动发现。每个注册请求目前使用 10 秒请求期限。</td>
 </tr>
 <tr>
 <td><code>spec.controlAPITokenFrom</code></td>
+<td><em>选填</em></td>
+<td>object</td>
 <td>仅供 HTTP(S) 客户端使用的可选 Bearer 令牌来源。省略不传 Bearer 标头，提供时 file/env 只能指定一项，与请求的 join HMAC 凭据不同。</td>
 </tr>
 <tr>
 <td><code>spec.controlAPITokenFrom.file</code></td>
+<td><strong>条件必填</strong></td>
+<td>string</td>
 <td>路由器本机原始令牌文件，与 env 互斥。会移除首尾空白；配置 HTTP 端点时，缺失、无法读取或为空会失败。</td>
 </tr>
 <tr>
 <td><code>spec.controlAPITokenFrom.env</code></td>
+<td><strong>条件必填</strong></td>
+<td>string</td>
 <td>存放令牌的 routerd 进程环境变量名称，与 file 互斥，不是环境文件路径。</td>
 </tr>
 <tr>
 <td><code>spec.controlAPITokenFrom.base64</code></td>
+<td><em>选填</em></td>
+<td>boolean</td>
 <td>默认 false，true 执行标准 Base64 解码并移除解码后首尾空白，不是加密。</td>
 </tr>
 <tr>
 <td><code>spec.controlAPITLS</code></td>
+<td><em>选填</em></td>
+<td>object</td>
 <td>可选 HTTPS 客户端配置，不用于 Unix 套接字，不会将 http URL 自动转成 https。</td>
 </tr>
 <tr>
 <td><code>spec.controlAPITLS.caFile</code></td>
+<td><em>选填</em></td>
+<td>string</td>
 <td>可选 PEM CA 文件，提供时以文件内证书替换客户端根证书集；省略使用普通信任配置。</td>
 </tr>
 <tr>
 <td><code>spec.controlAPITLS.certFile</code></td>
+<td><em>选填</em></td>
+<td>string</td>
 <td>可选客户端证书文件，须与 keyFile 同时配置，没有默认证书或自动生成的凭据。</td>
 </tr>
 <tr>
 <td><code>spec.controlAPITLS.keyFile</code></td>
+<td><em>选填</em></td>
+<td>string</td>
 <td>可选客户端私钥文件，须与 certFile 同时配置。</td>
 </tr>
 <tr>
 <td><code>spec.controlAPITLS.serverName</code></td>
+<td><em>选填</em></td>
+<td>string</td>
 <td>可选 TLS SNI/验证名称覆盖，空值依 URL 主机行为，不更改端点路由。</td>
 </tr>
 <tr>
 <td><code>spec.controlAPITLS.insecureSkipVerify</code></td>
+<td><em>选填</em></td>
+<td>boolean</td>
 <td>默认 false。true 禁用服务器证书链及主机名验证，对纯 HTTP URL 无效。</td>
 </tr>
 <tr>
 <td><code>spec.rrSocket</code></td>
+<td><strong>条件必填</strong></td>
+<td>string</td>
 <td>可选本机 RR Unix 套接字绝对路径，可与 HTTP(S) 端点并用。Unix 客户端不使用 Bearer 令牌或 TLS。</td>
 </tr>
 <tr>
 <td><code>spec.stateTTLRefreshBefore</code></td>
+<td><em>选填</em></td>
+<td>string</td>
 <td>提前更新的 Go duration，默认 10 分钟。若大于等于观察到的正 RR 租约长度，运行时改用一半租约以避免立即重复更新。验证仅检查可解析性，不强制正值，请用正值。</td>
 </tr>
 <tr>
 <td><code>spec.retryBackoff</code></td>
+<td><em>选填</em></td>
+<td>object</td>
 <td>可选指数重试配置，失败时由 min 倍增至 max。direct 拓扑恢复另有较短的收敛重试路径。</td>
 </tr>
 <tr>
 <td><code>spec.retryBackoff.min</code></td>
+<td><em>选填</em></td>
+<td>string</td>
 <td>Go duration，默认 10 秒。仅验证可解析性，接受零或负值；请用正值避免立即或排在过去的重试。</td>
 </tr>
 <tr>
 <td><code>spec.retryBackoff.max</code></td>
+<td><em>选填</em></td>
+<td>string</td>
 <td>Go duration，默认 15 分钟。min/max 都明确指定时要求 max&gt;=min，请用正值。验证比较不纳入省略字段的默认值。</td>
 </tr>
 </tbody>
@@ -124,7 +165,7 @@
 <p><a href="/examples/cloudedge-dynamic-leaf-a-wg.yaml">配置示例</a></p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
 <ul>
 <li><a href="#指定条件与引用关系">指定条件与引用关系</a></li>
-<li><a href="#yaml定义">YAML定义</a></li>
+<li><a href="#配置语法">配置语法</a></li>
 <li><a href="#字段含义与默认值">字段含义与默认值</a></li>
 <li><a href="#可引用的状态字段">可引用的状态字段</a></li>
 </ul>

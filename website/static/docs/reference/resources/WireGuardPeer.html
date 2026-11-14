@@ -12,57 +12,74 @@
 <li>Inline presharedKey takes precedence over presharedKeyFile; they are not mutually exclusive. The file is read and trimmed only when no inline key is supplied; missing, unreadable or empty files fail real application.</li>
 <li>Connected means a handshake timestamp was observed, with its age reported separately; it is not a guarantee that the handshake is recent or that a destination is reachable. A peer with an endpoint but no handshake is Waiting/NoHandshakeYet.</li>
 </ul>
-<h2 id="yaml-definition">YAML definition</h2>
-<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
-<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+<h2 id="configuration-syntax">Configuration syntax</h2>
+<p>This is explanatory notation, not YAML to copy. Unbracketed fields are required within their parent; <code>[ ... ]</code> marks fields that can be omitted, subject to the conditions in the table. <code>&lt;type&gt;</code> is a placeholder, and <code>(a | b)</code> lists alternatives. Optional parents may contain required children. Conditional requirements, exclusions and runtime defaults are described below. Use the linked YAML example for an ordinary configuration.</p>
+<pre><code class="language-text">- apiVersion: net.routerd.net/v1alpha1
   kind: WireGuardPeer
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    allowedIPs: # Required; array
-      - &quot;&lt;string&gt;&quot; # string
-    endpoint: &quot;&lt;string&gt;&quot; # optional; string
-    interface: &quot;&lt;string&gt;&quot; # Required; string
-    persistentKeepalive: 0 # optional; integer; minimum=0; maximum=65535
-    presharedKey: &quot;&lt;string&gt;&quot; # optional; string
-    presharedKeyFile: &quot;&lt;string&gt;&quot; # optional; string
-    publicKey: &quot;&lt;string&gt;&quot; # Required; string
+    allowedIPs:
+      - &lt;string&gt;
+    [ endpoint: &lt;string&gt; ]
+    interface: &lt;string&gt;
+    [ persistentKeepalive: &lt;integer&gt; ]
+    [ presharedKey: &lt;string&gt; ]
+    [ presharedKeyFile: &lt;string&gt; ]
+    publicKey: &lt;string&gt;
 </code></pre>
 <h2 id="field-meaning-and-default">Field meaning and default</h2>
+<p>Required children of optional objects apply only when their parent is used. Other exact conditions are in the explanation; bracketed alternatives may still require one choice.</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>Presence</th>
+<th>Type / constraints</th>
 <th>Field meaning and default</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.interface</code></td>
+<td><strong>Required</strong></td>
+<td>string</td>
 <td>Required metadata.name of an existing WireGuardInterface in the same Router. An OS ifname alone is not sufficient.</td>
 </tr>
 <tr>
 <td><code>spec.publicKey</code></td>
+<td><strong>Required</strong></td>
+<td>string</td>
 <td>Required peer public key in WireGuard base64 format. The validator checks nonempty text, not decoded key length; wg validates during application.</td>
 </tr>
 <tr>
 <td><code>spec.allowedIPs</code></td>
+<td><strong>Required</strong></td>
+<td>array</td>
 <td>Required nonempty list of IPv4/IPv6 CIDR prefixes. Controls the peer selected for outgoing packets and accepted source addresses for incoming packets. No implicit prefix or route creation.</td>
 </tr>
 <tr>
 <td><code>spec.endpoint</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional peer host:UDP-port, using [IPv6]:port for IPv6. Empty omits Endpoint and permits learning the endpoint from received packets. Syntax/DNS reachability is not checked by routerd configuration validation; wg handles it at apply.</td>
 </tr>
 <tr>
 <td><code>spec.persistentKeepalive</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=0; maximum=65535</td>
 <td>Seconds between keepalive packets, integer 0–65535; default 0 disables persistent keepalive. Not a handshake-success deadline.</td>
 </tr>
 <tr>
 <td><code>spec.presharedKey</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional additional symmetric key in WireGuard base64 format; default none. Overrides presharedKeyFile, without an exclusion error.</td>
 </tr>
 <tr>
 <td><code>spec.presharedKeyFile</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional router-local file containing the raw preshared key text, not an environment file. No key is generated for a missing file. Only read when presharedKey is empty.</td>
 </tr>
 </tbody>
@@ -74,7 +91,7 @@
 <p><a href="/examples/hybrid-l3-wireguard.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
 <li><a href="#conditions-and-references">Conditions and references</a></li>
-<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#configuration-syntax">Configuration syntax</a></li>
 <li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 <li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
 </ul>

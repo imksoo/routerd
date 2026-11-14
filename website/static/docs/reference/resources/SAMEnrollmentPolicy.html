@@ -11,137 +11,193 @@
 <li>RR output names are unique per policy; rrSetRef/rrNodeSetRef form a pair. directMesh additionally requires pair-stable transport addressing and an RR fallback.</li>
 <li>Claim IDs, tunnel addresses, nonempty WireGuard keys, owned addresses and nonempty BGP router IDs are checked for collisions within the same policy. Endpoint, WireGuard extra-prefix and mobility authorization checks are separate.</li>
 </ul>
-<h2 id="yaml-definition">YAML definition</h2>
-<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
-<pre><code class="language-yaml">- apiVersion: mobility.routerd.net/v1alpha1
+<h2 id="configuration-syntax">Configuration syntax</h2>
+<p>This is explanatory notation, not YAML to copy. Unbracketed fields are required within their parent; <code>[ ... ]</code> marks fields that can be omitted, subject to the conditions in the table. <code>&lt;type&gt;</code> is a placeholder, and <code>(a | b)</code> lists alternatives. Optional parents may contain required children. Conditional requirements, exclusions and runtime defaults are described below. Use the linked YAML example for an ordinary configuration.</p>
+<pre><code class="language-text">- apiVersion: mobility.routerd.net/v1alpha1
   kind: SAMEnrollmentPolicy
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    allowedLeafIDs: # optional; object
-      pattern: &quot;&lt;string&gt;&quot; # optional; string
-    directMesh: # optional; object
-      peerGroupRef: &quot;&lt;string&gt;&quot; # optional; string
-    endpointPrefixes: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    joinAudience: &quot;&lt;string&gt;&quot; # optional; string
-    joinTokenFrom: # optional; object
-      base64: true # optional; boolean
-      env: &quot;&lt;string&gt;&quot; # optional; string
-      file: &quot;&lt;string&gt;&quot; # optional; string
-    mobilityPoolRefs: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    mobilityPrefixes: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    rrNodeSetRef: &quot;&lt;string&gt;&quot; # optional; string
-    rrSetRef: &quot;&lt;string&gt;&quot; # optional; string
-    transportProfileRef: &quot;&lt;string&gt;&quot; # Required; string
-    ttl: &quot;&lt;string&gt;&quot; # optional; string
-    tunnelAddressPrefixes: # Required; array
-      - &quot;&lt;string&gt;&quot; # string
-    wireGuard: # optional; object
-      allowedExtraIPPrefixes: # optional; array
-        - &quot;&lt;string&gt;&quot; # string
-      endpointPrefixes: # optional; array
-        - &quot;&lt;string&gt;&quot; # string
-      interface: &quot;&lt;string&gt;&quot; # Required; string
-      persistentKeepalive: 0 # optional; integer; minimum=0; maximum=65535
+    [ allowedLeafIDs:
+        [ pattern: &lt;string&gt; ]
+    ]
+    [ directMesh:
+        [ peerGroupRef: &lt;string&gt; ]
+    ]
+    [ endpointPrefixes:
+        - &lt;string&gt;
+    ]
+    [ joinAudience: &lt;string&gt; ]
+    [ joinTokenFrom:
+        [ base64: &lt;boolean&gt; ]
+        [ env: &lt;string&gt; ]
+        [ file: &lt;string&gt; ]
+    ]
+    [ mobilityPoolRefs:
+        - &lt;string&gt;
+    ]
+    [ mobilityPrefixes:
+        - &lt;string&gt;
+    ]
+    [ rrNodeSetRef: &lt;string&gt; ]
+    [ rrSetRef: &lt;string&gt; ]
+    transportProfileRef: &lt;string&gt;
+    [ ttl: &lt;string&gt; ]
+    tunnelAddressPrefixes:
+      - &lt;string&gt;
+    [ wireGuard:
+        [ allowedExtraIPPrefixes:
+            - &lt;string&gt;
+        ]
+        [ endpointPrefixes:
+            - &lt;string&gt;
+        ]
+        [ interface: &lt;string&gt; ]
+        [ persistentKeepalive: &lt;integer&gt; ]
+    ]
 </code></pre>
 <h2 id="field-meaning-and-default">Field meaning and default</h2>
+<p>Required children of optional objects apply only when their parent is used. Other exact conditions are in the explanation; bracketed alternatives may still require one choice.</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>Presence</th>
+<th>Type / constraints</th>
 <th>Field meaning and default</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.transportProfileRef</code></td>
+<td><strong>Required</strong></td>
+<td>string</td>
 <td>Required existing SAMTransportProfile/name in this Router. Binds admitted leaves to that transport profile; not a status source.</td>
 </tr>
 <tr>
 <td><code>spec.rrSetRef</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Optional runtime output name SAMRRSet/name. Must be paired with rrNodeSetRef and unique across enrollment policies. Names a generated snapshot, not a statically authored SAMRRSet. Required for direct mesh and leaf-client topology fetching.</td>
 </tr>
 <tr>
 <td><code>spec.rrNodeSetRef</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Existing SAMNodeSet/name supplying RR identities; required exactly when rrSetRef is supplied. Every node in that NodeSet must have routeReflector:true. No duplicate RR registry in the policy.</td>
 </tr>
 <tr>
 <td><code>spec.joinTokenFrom</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional shared HMAC secret source. If absent, no join HMAC is required; the protected ControlAPI becomes the trust boundary. If present, exactly one file/env and valid claim nonce/timestamp/HMAC are required. Separate from ControlAPI Bearer authentication.</td>
 </tr>
 <tr>
 <td><code>spec.joinTokenFrom.file</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Router-local raw HMAC secret file, exclusive with env. Surrounding whitespace is removed; unavailable secrets fail actual submission even where offline validation cannot read them.</td>
 </tr>
 <tr>
 <td><code>spec.joinTokenFrom.env</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Name of routerd process environment variable holding the HMAC secret; exclusive with file. No automatic environment-file loading.</td>
 </tr>
 <tr>
 <td><code>spec.joinTokenFrom.base64</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false; true standard-Base64-decodes the trimmed secret source. Decoded bytes become the HMAC key; Base64 is not encryption.</td>
 </tr>
 <tr>
 <td><code>spec.joinAudience</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional expected claim audience when joinTokenFrom is configured; nonempty must equal claim.joinAudience. No default audience.</td>
 </tr>
 <tr>
 <td><code>spec.allowedLeafIDs</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional leaf-identity restriction object; omission imposes no regex restriction.</td>
 </tr>
 <tr>
 <td><code>spec.allowedLeafIDs.pattern</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Go regular expression matched against leafID after trimming. Empty accepts any otherwise valid ID; patterns are not implicitly anchored, so use ^...$ for a whole-ID match.</td>
 </tr>
 <tr>
 <td><code>spec.tunnelAddressPrefixes</code></td>
+<td><strong>Required</strong></td>
+<td>array</td>
 <td>Required nonempty IPv4 CIDR list authorizing claim.tunnelAddress /32 identities. No address auto-allocation is performed by this field.</td>
 </tr>
 <tr>
 <td><code>spec.endpointPrefixes</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional IPv4 CIDR allowlist for supplied outer endpoint addresses. Empty imposes no endpoint-prefix restriction. Used as WireGuard endpoint fallback allowlist when wireGuard.endpointPrefixes is empty.</td>
 </tr>
 <tr>
 <td><code>spec.wireGuard</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional admitted-leaf WireGuard controls. interface is required when other operational WireGuard settings are used; endpoint-prefix validation alone does not supply a WireGuard device.</td>
 </tr>
 <tr>
 <td><code>spec.wireGuard.interface</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Optional existing WireGuardInterface metadata.name, not Kind/name. Limits which local WireGuard interface imports this policy; no default creation.</td>
 </tr>
 <tr>
 <td><code>spec.wireGuard.endpointPrefixes</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional IPv4 CIDR allowlist for claim WireGuard outer endpoint IPs. If empty, endpointPrefixes applies; if both empty, no such prefix restriction.</td>
 </tr>
 <tr>
 <td><code>spec.wireGuard.allowedExtraIPPrefixes</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional IPv4 CIDRs authorizing additional claim.wireGuard.allowedIPs. Tunnel /32 is added independently to generated peers. Empty authorizes no additional prefixes.</td>
 </tr>
 <tr>
 <td><code>spec.wireGuard.persistentKeepalive</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=0; maximum=65535</td>
 <td>Seconds 0–65535, default 0. Used for generated WireGuard peers when a claim leaves its keepalive at 0; explicit claim nonzero wins.</td>
 </tr>
 <tr>
 <td><code>spec.directMesh</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional policy-scoped direct leaf mesh output. Does not eliminate the RR fallback.</td>
 </tr>
 <tr>
 <td><code>spec.directMesh.peerGroupRef</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>SAMPeerGroup/name runtime output; empty disables direct mesh. Requires rrSetRef and a referenced SAMTransportProfile with addressingMode: pair-stable; must be unique across policies. Not a statically authored SAMPeerGroup.</td>
 </tr>
 <tr>
 <td><code>spec.mobilityPoolRefs</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional existing MobilityPool/name list supplying authorized ownership prefixes. Combined with mobilityPrefixes, not a request to create pools or cloud resources.</td>
 </tr>
 <tr>
 <td><code>spec.mobilityPrefixes</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional additional CIDRs authorizing claimed owned IPv4 /32 addresses. Combined with referenced pools; empty plus no pool refs authorizes no owned addresses.</td>
 </tr>
 <tr>
 <td><code>spec.ttl</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional Go duration. Actual submitted admission defaults to a 5m lease if omitted. A configured TTL also bounds claim lifetime from joinTimestamp and any explicit expiresAt; invalid/nonpositive lifetimes expire fail-closed at runtime even though shape validation only parses duration.</td>
 </tr>
 </tbody>
@@ -153,7 +209,7 @@
 <p><a href="/examples/cloudedge-dynamic-rr-a-hub.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
 <li><a href="#conditions-and-references">Conditions and references</a></li>
-<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#configuration-syntax">Configuration syntax</a></li>
 <li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 <li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
 </ul>

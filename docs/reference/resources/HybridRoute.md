@@ -12,35 +12,38 @@ Expand explicitly listed IPv4 destination networks into main-table IPv4Route res
 - Generated route names must be unique and cannot collide with explicit IPv4Route names or destinations. Duplicate normalized destinations in one HybridRoute collide. An unhealthy HealthCheck changes HybridRoute status only: it does not gate installation, withdraw routes or select another peer.
 - Each generated IPv4Route uses the peer underlay.interface as device. Only ipsec optionally supplies remote.address as an IPv4 gateway; other types use a device-only route. Existing tunnel/VPN setup and real reachability must be provided separately. Linux honors positive metric; the underlying FreeBSD IPv4Route application does not apply metric.
 
-## YAML definition
+## Configuration syntax
 
-All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.
+This is explanatory notation, not YAML to copy. Unbracketed fields are required within their parent; `[ ... ]` marks fields that can be omitted, subject to the conditions in the table. `<type>` is a placeholder, and `(a | b)` lists alternatives. Optional parents may contain required children. Conditional requirements, exclusions and runtime defaults are described below. Use the linked YAML example for an ordinary configuration.
 
-```yaml
+```text
 - apiVersion: hybrid.routerd.net/v1alpha1
   kind: HybridRoute
   metadata:
     name: "<name>"
   spec:
-    destinationCIDRs: # Required; array
-      - "<string>" # string
-    healthCheckRef: "<string>" # optional; string
-    install: # optional; object
-      metric: 0 # optional; integer; minimum=0
-      table: "" # optional; string; enum=["", "main"]
-    peerRef: "<string>" # Required; string
+    destinationCIDRs:
+      - <string>
+    [ healthCheckRef: <string> ]
+    [ install:
+        [ metric: <integer> ]
+        [ table: ("" | "main") ]
+    ]
+    peerRef: <string>
 ```
 
 ## Field meaning and default
 
-| YAML | Field meaning and default |
-| --- | --- |
-| `spec.destinationCIDRs` | Required nonempty IPv4 CIDR list, no default route. No implicit remote networks or discovery. |
-| `spec.peerRef` | Required bare existing OverlayPeer metadata.name. Although expansion can normalize OverlayPeer/name, normal cross-resource validation requires the bare name. |
-| `spec.install` | Optional route-install settings; default main table, metric 0. No policy routing or automatic HA selection. |
-| `spec.install.table` | Empty or main only; both lower to main-table IPv4Route. Other table names/numbers are rejected. |
-| `spec.install.metric` | Nonnegative integer, default 0, copied to generated IPv4Route. Linux emits positive metrics only; FreeBSD path ignores metric. |
-| `spec.healthCheckRef` | Optional bare existing HealthCheck name. Empty has no health-status augmentation. Unhealthy/failed/error status marks Degraded but does not change the routes; missing/unknown runtime status is not treated as unhealthy by this function. |
+Required children of optional objects apply only when their parent is used. Other exact conditions are in the explanation; bracketed alternatives may still require one choice.
+
+| YAML | Presence | Type / constraints | Field meaning and default |
+| --- | --- | --- | --- |
+| `spec.destinationCIDRs` | **Required** | array | Required nonempty IPv4 CIDR list, no default route. No implicit remote networks or discovery. |
+| `spec.peerRef` | **Required** | string | Required bare existing OverlayPeer metadata.name. Although expansion can normalize OverlayPeer/name, normal cross-resource validation requires the bare name. |
+| `spec.install` | *Optional* | object | Optional route-install settings; default main table, metric 0. No policy routing or automatic HA selection. |
+| `spec.install.table` | *Optional* | string; enum=["", "main"] | Empty or main only; both lower to main-table IPv4Route. Other table names/numbers are rejected. |
+| `spec.install.metric` | *Optional* | integer; minimum=0 | Nonnegative integer, default 0, copied to generated IPv4Route. Linux emits positive metrics only; FreeBSD path ignores metric. |
+| `spec.healthCheckRef` | *Optional* | string | Optional bare existing HealthCheck name. Empty has no health-status augmentation. Unhealthy/failed/error status marks Degraded but does not change the routes; missing/unknown runtime status is not treated as unhealthy by this function. |
 
 Implementation: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate_hybrid.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_hybrid.go) · [pkg/config/validate.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go) · [pkg/hybrid/hybrid.go](https://github.com/imksoo/routerd/blob/main/pkg/hybrid/hybrid.go) · [pkg/controller/chain/dynamic_effective.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/dynamic_effective.go) · [pkg/controller/chain/hybrid.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/hybrid.go) · [pkg/controller/chain/phase2.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/phase2.go)
 

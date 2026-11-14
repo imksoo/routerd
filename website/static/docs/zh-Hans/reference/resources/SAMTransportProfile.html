@@ -12,267 +12,377 @@
 <li>生成 RR 客户端/direct 导入强制 /32 及对等端标识 community，禁止其他已知节点标识。direct 前缀仅为该 leaf 接纳拥有 /32，空值全部拒绝，并强制 nextHopRewrite=peer-address。direct 配置的 RR 备用下一跳也规范化为 peer-address。</li>
 <li>无本机 MobilityPool 的 RR 客户端需明确 IPv4 导入前缀，长度省略或均为 32。FreeBSD 派生 gifN/greN 与明确点对点 peerAddress；Linux 使用短隧道名称。派生成功不证明隧道/BGP 可达。</li>
 </ul>
-<h2 id="yaml定义">YAML定义</h2>
-<p>此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。</p>
-<pre><code class="language-yaml">- apiVersion: mobility.routerd.net/v1alpha1
+<h2 id="配置语法">配置语法</h2>
+<p>这是说明用语法，不是可直接复制的YAML。未加括号的字段在父条目内必填；<code>[ ... ]</code>表示按条件可省略，<code>&lt;类型&gt;</code>为替换值，<code>(a | b)</code>表示选项。选填父条目内仍可能有必填子条目。条件必填、互斥与实际默认值请见下表；常规YAML请使用链接示例。</p>
+<pre><code class="language-text">- apiVersion: mobility.routerd.net/v1alpha1
   kind: SAMTransportProfile
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    addressingMode: &quot;&quot; # 选填; string; enum=[&quot;&quot;, &quot;edge-index&quot;, &quot;pair-stable&quot;]
-    bgp: # 必填; object
-      bfd: # 选填; object
-        detectMultiplier: 1 # 选填; integer; minimum=1; maximum=50
-        enabled: true # 选填; boolean
-        interface: &quot;&lt;string&gt;&quot; # 选填; string
-        minRx: &quot;&lt;string&gt;&quot; # 选填; string
-        minTx: &quot;&lt;string&gt;&quot; # 选填; string
-        profile: &quot;&quot; # 选填; string; enum=[&quot;&quot;, &quot;fast&quot;, &quot;normal&quot;, &quot;slow&quot;]
-      convergenceProfile: &quot;&quot; # 选填; string; enum=[&quot;&quot;, &quot;default&quot;, &quot;fast&quot;, &quot;stable&quot;]
-      directLocalPreference: 0 # 选填; integer
-      ebgpMultihop: 0 # 选填; integer; minimum=0; maximum=255
-      exportPolicy: # 选填; object
-        allowedPrefixes: # 选填; array
-          - &quot;&lt;string&gt;&quot; # string
-      generatePeers: true # 选填; boolean
-      importPolicy: # 选填; object
-        allowedPrefixLengthMax: 0 # 选填; integer; minimum=0; maximum=128
-        allowedPrefixLengthMin: 0 # 选填; integer; minimum=0; maximum=128
-        allowedPrefixes: # 选填; array
-          - &quot;&lt;string&gt;&quot; # string
-        forbiddenCommunities: # 选填; array
-          - &quot;&lt;string&gt;&quot; # string
-        localPreference: 0 # 选填; integer
-        nextHopRewrite: &quot;&quot; # 选填; string; enum=[&quot;&quot;, &quot;peer-address&quot;, &quot;unchanged&quot;]
-        requiredCommunities: # 选填; array
-          - &quot;&lt;string&gt;&quot; # string
-      peerASN: 1 # 必填; integer; minimum=1
-      routeReflectorClient: true # 选填; boolean
-      routeReflectorClusterID: &quot;&lt;string&gt;&quot; # 选填; string
-      routerRef: &quot;&lt;string&gt;&quot; # 必填; string
-      timers: # 选填; object
-        profile: &quot;&quot; # 选填; string; enum=[&quot;&quot;, &quot;default&quot;, &quot;fast&quot;, &quot;slow&quot;]
-      timersPreset: &quot;&quot; # 选填; string; enum=[&quot;&quot;, &quot;default&quot;, &quot;fast&quot;, &quot;slow&quot;]
-    encapDport: 1 # 选填; integer; minimum=1; maximum=65535
-    encapSport: 1 # 选填; integer; minimum=1; maximum=65535
-    encryption: &quot;&quot; # 选填; string; enum=[&quot;&quot;, &quot;none&quot;, &quot;wireguard&quot;]
-    innerPrefix: &quot;&lt;string&gt;&quot; # 必填; string
-    localEndpoint: &quot;&lt;string&gt;&quot; # 选填; string
-    localEndpointFrom: # 选填; object
-      field: &quot;&lt;string&gt;&quot; # 选填; string
-      optional: true # 选填; boolean
-      resource: &quot;&lt;string&gt;&quot; # 必填; string
-    mode: &quot;ipip&quot; # 必填; string; enum=[&quot;ipip&quot;, &quot;gre&quot;, &quot;fou&quot;, &quot;gue&quot;]
-    peersFrom: # 选填; array
-      - # object
-        direct: true # 选填; boolean
-        nodeRefs: # 选填; array
-          - &quot;&lt;string&gt;&quot; # string
-        optional: true # 选填; boolean
-        resource: &quot;&lt;string&gt;&quot; # 必填; string
-    publishPeerGroup: true # 选填; boolean
-    selfNodeRef: &quot;&lt;string&gt;&quot; # 必填; string
-    underlayInterface: &quot;&lt;string&gt;&quot; # 必填; string
+    [ addressingMode: (&quot;&quot; | &quot;edge-index&quot; | &quot;pair-stable&quot;) ]
+    bgp:
+      [ bfd:
+          [ detectMultiplier: &lt;integer&gt; ]
+          [ enabled: &lt;boolean&gt; ]
+          [ interface: &lt;string&gt; ]
+          [ minRx: &lt;string&gt; ]
+          [ minTx: &lt;string&gt; ]
+          [ profile: (&quot;&quot; | &quot;fast&quot; | &quot;normal&quot; | &quot;slow&quot;) ]
+      ]
+      [ convergenceProfile: (&quot;&quot; | &quot;default&quot; | &quot;fast&quot; | &quot;stable&quot;) ]
+      [ directLocalPreference: &lt;integer&gt; ]
+      [ ebgpMultihop: &lt;integer&gt; ]
+      [ exportPolicy:
+          [ allowedPrefixes:
+              - &lt;string&gt;
+          ]
+      ]
+      [ generatePeers: &lt;boolean&gt; ]
+      [ importPolicy:
+          [ allowedPrefixLengthMax: &lt;integer&gt; ]
+          [ allowedPrefixLengthMin: &lt;integer&gt; ]
+          [ allowedPrefixes:
+              - &lt;string&gt;
+          ]
+          [ forbiddenCommunities:
+              - &lt;string&gt;
+          ]
+          [ localPreference: &lt;integer&gt; ]
+          [ nextHopRewrite: (&quot;&quot; | &quot;peer-address&quot; | &quot;unchanged&quot;) ]
+          [ requiredCommunities:
+              - &lt;string&gt;
+          ]
+      ]
+      peerASN: &lt;integer&gt;
+      [ routeReflectorClient: &lt;boolean&gt; ]
+      [ routeReflectorClusterID: &lt;string&gt; ]
+      routerRef: &lt;string&gt;
+      [ timers:
+          [ profile: (&quot;&quot; | &quot;default&quot; | &quot;fast&quot; | &quot;slow&quot;) ]
+      ]
+      [ timersPreset: (&quot;&quot; | &quot;default&quot; | &quot;fast&quot; | &quot;slow&quot;) ]
+    [ encapDport: &lt;integer&gt; ]
+    [ encapSport: &lt;integer&gt; ]
+    [ encryption: (&quot;&quot; | &quot;none&quot; | &quot;wireguard&quot;) ]
+    innerPrefix: &lt;string&gt;
+    [ localEndpoint: &lt;string&gt; ]
+    [ localEndpointFrom:
+        field: &lt;string&gt;
+        [ optional: &lt;boolean&gt; ]
+        resource: &lt;string&gt;
+    ]
+    mode: (&quot;ipip&quot; | &quot;gre&quot; | &quot;fou&quot; | &quot;gue&quot;)
+    [ peersFrom:
+        -
+          [ direct: &lt;boolean&gt; ]
+          [ nodeRefs:
+              - &lt;string&gt;
+          ]
+          [ optional: &lt;boolean&gt; ]
+          resource: &lt;string&gt;
+    ]
+    [ publishPeerGroup: &lt;boolean&gt; ]
+    selfNodeRef: &lt;string&gt;
+    underlayInterface: &lt;string&gt;
 </code></pre>
 <h2 id="字段含义与默认值">字段含义与默认值</h2>
+<p>选填父条目的必填子条目仅在使用父条目时需要。其他具体条件列于说明；<code>[ ... ]</code>选项仍可能需要择一。</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>指定要求</th>
+<th>类型与限制</th>
 <th>字段含义与默认值</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.selfNodeRef</code></td>
+<td><strong>必填</strong></td>
+<td>string</td>
 <td>必填稳定本机 nodeRef，不从主机名/router ID 推定。</td>
 </tr>
 <tr>
 <td><code>spec.mode</code></td>
+<td><strong>必填</strong></td>
+<td>string; enum=["ipip", "gre", "fou", "gue"]</td>
 <td>必填 ipip/gre/fou/gue。FreeBSD 仅支持 ipip/gif 与 gre，fou/gue 需 Linux。派生隧道本身不加密。</td>
 </tr>
 <tr>
 <td><code>spec.encryption</code></td>
+<td><em>选填</em></td>
+<td>string; enum=["", "none", "wireguard"]</td>
 <td>none/省略或 wireguard。wireguard 优先节点 wireGuard.transportEndpoint，不生成私钥或本机 WireGuardInterface，须另配置 WireGuard 底层。</td>
 </tr>
 <tr>
 <td><code>spec.innerPrefix</code></td>
+<td><strong>必填</strong></td>
+<td>string</td>
 <td>必填长度 &lt;=31 的 IPv4 CIDR，拆为 /31 边，须有足够拓扑槽位。pair-stable 冲突会报错，不静默移动端点。</td>
 </tr>
 <tr>
 <td><code>spec.addressingMode</code></td>
+<td><em>选填</em></td>
+<td>string; enum=["", "edge-index", "pair-stable"]</td>
 <td>默认 edge-index 按排序拓扑边分配 /31，拓扑更改可能改变索引。pair-stable 对 innerPrefix 与无序节点配对哈希至固定槽位，direct 来源必填。</td>
 </tr>
 <tr>
 <td><code>spec.underlayInterface</code></td>
+<td><strong>必填</strong></td>
+<td>string</td>
 <td>必填已声明逻辑接口，用于派生隧道及远端端点 /32 设备路由，派生隧道配置 trustedUnderlay:true。</td>
 </tr>
 <tr>
 <td><code>spec.localEndpoint</code></td>
+<td><strong>条件必填</strong></td>
+<td>string</td>
 <td>本机外层 IPv4 固定值，与 localEndpointFrom 必须且只能指定一项，不自动选择接口地址。</td>
 </tr>
 <tr>
 <td><code>spec.localEndpointFrom</code></td>
+<td><strong>条件必填</strong></td>
+<td>object</td>
 <td>替代固定 localEndpoint 的状态来源，适用通用 resource/field 规则，未解析端点使依赖传输待处理。</td>
 </tr>
 <tr>
 <td><code>spec.localEndpointFrom.resource</code></td>
+<td><strong>条件必填</strong></td>
+<td>string</td>
 <td>使用来源时必填已有 Kind/name。</td>
 </tr>
 <tr>
 <td><code>spec.localEndpointFrom.field</code></td>
+<td><strong>条件必填</strong></td>
+<td>string</td>
 <td>必填来源提供字段，例如 currentAddress。</td>
 </tr>
 <tr>
 <td><code>spec.localEndpointFrom.optional</code></td>
+<td><em>选填</em></td>
+<td>boolean</td>
 <td>默认 false，不免除引用验证，也不补入未解析端点。</td>
 </tr>
 <tr>
 <td><code>spec.encapSport</code></td>
+<td><strong>条件必填</strong></td>
+<td>integer; minimum=1; maximum=65535</td>
 <td>fou/gue 必填 UDP 源端口 1–65535，ipip/gre 禁用（省略或 0）。</td>
 </tr>
 <tr>
 <td><code>spec.encapDport</code></td>
+<td><strong>条件必填</strong></td>
+<td>integer; minimum=1; maximum=65535</td>
 <td>fou/gue 必填 UDP 目标端口 1–65535，ipip/gre 禁用，无隐含默认端口。</td>
 </tr>
 <tr>
 <td><code>spec.peersFrom</code></td>
+<td><strong>条件必填</strong></td>
+<td>array</td>
 <td>有顺序的拓扑来源，除 publishPeerGroup:true 外至少一个。自身不作为对等端但保留于共享拓扑，后续重复节点可能覆盖前方数据。</td>
 </tr>
 <tr>
 <td><code>spec.peersFrom[].resource</code></td>
+<td><strong>条件必填</strong></td>
+<td>string</td>
 <td>必填 SAMNodeSet/name、SAMPeerGroup/name、SAMEnrollmentPolicy/name 或 SAMRRSet/name。NodeSet 为静态，运行时来源提供接纳/共享快照。</td>
 </tr>
 <tr>
 <td><code>spec.peersFrom[].optional</code></td>
+<td><em>选填</em></td>
+<td>boolean</td>
 <td>默认 false，非 optional 来源缺失为待处理。direct 不可用/不兼容不移除可用 RR 备用对等端。</td>
 </tr>
 <tr>
 <td><code>spec.peersFrom[].direct</code></td>
+<td><em>选填</em></td>
+<td>boolean</td>
 <td>默认 false，true 仅限必需 SAMRRSet 后的最后 SAMPeerGroup 来源，另适用下述 direct 限制。</td>
 </tr>
 <tr>
 <td><code>spec.peersFrom[].nodeRefs</code></td>
+<td><em>选填</em></td>
+<td>array</td>
 <td>可选唯一非空 nodeRef 选择值，省略选择所有合格来源节点。仅缩小本机邻接，不替换共享权威拓扑。</td>
 </tr>
 <tr>
 <td><code>spec.publishPeerGroup</code></td>
+<td><em>选填</em></td>
+<td>boolean</td>
 <td>默认 false。true 将本机端点发布为运行时 SAMPeerGroup/&lt;配置 metadata.name&gt;，允许 peersFrom 为空，不发布私密凭据。</td>
 </tr>
 <tr>
 <td><code>spec.bgp</code></td>
+<td><strong>必填</strong></td>
+<td>object</td>
 <td>必填生成对等端配置，所引用 BGPRouter 须已存在。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.generatePeers</code></td>
+<td><em>选填</em></td>
+<td>boolean</td>
 <td>默认 true，false 仅生成传输不生成 BGP/BFD，direct 来源时禁用。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.timersPreset</code></td>
+<td><em>选填</em></td>
+<td>string; enum=["", "default", "fast", "slow"]</td>
 <td>可选 default/fast/slow 简写，优先级低于 bgp.timers.profile，两者均空时生成对等端继承 BGPRouter.timers。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.directLocalPreference</code></td>
+<td><em>选填</em></td>
+<td>integer</td>
 <td>direct 对等端 uint32 LOCAL_PREF，省略或 0 默认 200，direct 时须大于正 RR bgp.importPolicy.localPreference。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.bfd</code></td>
+<td><em>选填</em></td>
+<td>object</td>
 <td>可选生成 BFD 配置，仅 generatePeers 与 bfd.enabled 均 true 时使用。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.bfd.enabled</code></td>
+<td><em>选填</em></td>
+<td>boolean</td>
 <td>默认 false。true 派生关联生成 BGPPeer 的 BFD 资源，需 FRR bfdd/vtysh。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.routerRef</code></td>
+<td><strong>必填</strong></td>
+<td>string</td>
 <td>必填 BGPRouter/name，引用同一 Router 配置中声明的路由器，不接受单独名称。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.peerASN</code></td>
+<td><strong>必填</strong></td>
+<td>integer; minimum=1</td>
 <td>必填非零 uint32 远端 ASN，等于本机 ASN 时为 iBGP；routeReflectorClient 要求两者相等。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.ebgpMultihop</code></td>
+<td><em>选填</em></td>
+<td>integer; minimum=0; maximum=255</td>
 <td>整数 0–255，默认 0。仅大于 1 时启用 GoBGP eBGP multihop 并配置 TTL，0/1 保持禁用。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.routeReflectorClient</code></td>
+<td><em>选填</em></td>
+<td>boolean</td>
 <td>默认 false。true 标记 iBGP 路由反射器客户端，要求 peerASN 等于路由器 ASN，并将路由器导入前缀加入有效导出前缀。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.routeReflectorClusterID</code></td>
+<td><em>选填</em></td>
+<td>string</td>
 <td>可选 IPv4 格式集群 ID，仅 routeReflectorClient=true 时传入。空值由 GoBGP 决定，单独配置不启用反射。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.convergenceProfile</code></td>
+<td><em>选填</em></td>
+<td>string; enum=["", "default", "fast", "stable"]</td>
 <td>可选 default/fast/stable，省略继承 BGPRouter convergenceProfile。选择 graceful restart 默认值，不是 timers.profile；路由器 gracefulRestart.enabled 仍优先覆盖。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.importPolicy</code></td>
+<td><em>选填</em></td>
+<td>object</td>
 <td>可选导入策略。对等端若无非空前缀、community 条件、下一跳改写或 localPreference，会完整继承路由器策略；仅前缀长度限制不算覆盖。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.importPolicy.allowedPrefixes</code></td>
+<td><em>选填</em></td>
+<td>array</td>
 <td>可选 IPv4/IPv6 CIDR 允许列表，按前缀及允许的更具体前缀长度匹配。拒绝掩码后重复的前缀。为空时，不在其他已配置导入条件上加入前缀条件。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.importPolicy.allowedPrefixLengthMin</code></td>
+<td><em>选填</em></td>
+<td>integer; minimum=0; maximum=128</td>
 <td>整数 0–128。省略或 0 使用每个允许前缀自身长度。正值须大于等于各前缀长度、小于等于地址族上限及正数最大长度。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.importPolicy.allowedPrefixLengthMax</code></td>
+<td><em>选填</em></td>
+<td>integer; minimum=0; maximum=128</td>
 <td>整数 0–128。省略或 0 时 IPv4 为 32、IPv6 为 128。正值须涵盖所有列出前缀长度且不超过地址族上限。动态 leaf 接纳要求 min=max=32。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.importPolicy.requiredCommunities</code></td>
+<td><em>选填</em></td>
+<td>array</td>
 <td>可选 community 列表；接受的路径必须包含全部列出值。空列表不增加必需 community 条件。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.importPolicy.forbiddenCommunities</code></td>
+<td><em>选填</em></td>
+<td>array</td>
 <td>可选禁止 community 列表；任一匹配就先于接受规则拒绝路径。空列表不增加禁止条件。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.importPolicy.nextHopRewrite</code></td>
+<td><em>选填</em></td>
+<td>string; enum=["", "peer-address", "unchanged"]</td>
 <td>默认 peer-address；unchanged 保留通告的下一跳。在接受路径的选择及 FIB 投影之前应用。对等端只配置此字段也会建立自己的导入策略，不继承路由器允许列表。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.importPolicy.localPreference</code></td>
+<td><em>选填</em></td>
+<td>integer</td>
 <td>可选 uint32 LOCAL_PREF，在最佳路径选择之前设置于接受的路径。默认 0 保留 BGP 实现默认值。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.exportPolicy</code></td>
+<td><em>选填</em></td>
+<td>object</td>
 <td>可选导出前缀过滤。对等端前缀会与路由器静态及动态通告合并；RR 客户端另加入路由器导入前缀，不是替换并限制所有路由器派生导出前缀。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.exportPolicy.allowedPrefixes</code></td>
+<td><em>选填</em></td>
+<td>array</td>
 <td>可选 CIDR 列表，默认为空。合并后非空列表允许列出前缀及更具体路由（至 /32 或 /128），拒绝不符路由。有效列表为空时不安装导出过滤。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.timers</code></td>
+<td><em>选填</em></td>
+<td>object</td>
 <td>生成对等端计时器，优先级为本配置 timers.profile &gt; timersPreset &gt; BGPRouter.timers。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.timers.profile</code></td>
+<td><em>选填</em></td>
+<td>string; enum=["", "default", "fast", "slow"]</td>
 <td>default 或省略：keepalive 30 秒、hold 90 秒、connectRetry 10 秒；fast 为 3/9/1 秒，slow 为 60/180/30 秒。不支持直接指定 keepalive/holdTime/connectRetry YAML。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.bfd.interface</code></td>
+<td><em>选填</em></td>
+<td>string</td>
 <td>可选单跳接口。建议 Interface/name，控制器会解析声明的 Interface.ifname；单独名称虽验证为逻辑接口，却会原样传给 FRR。省略使用多跳。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.bfd.profile</code></td>
+<td><em>选填</em></td>
+<td>string; enum=["", "fast", "normal", "slow"]</td>
 <td>fast 或省略：minRx=minTx=300ms、倍数 3；normal：500ms/500ms/3；slow：1000ms/1000ms/5。明确单独配置优先。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.bfd.minRx</code></td>
+<td><em>选填</em></td>
+<td>string</td>
 <td>可选 Go duration 50ms–60000ms，覆盖配置的接收间隔并转为整数毫秒。省略使用 profile。这是 BFD 协议计时器，不是路由器重启期限。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.bfd.minTx</code></td>
+<td><em>选填</em></td>
+<td>string</td>
 <td>可选 Go duration 50ms–60000ms，覆盖 profile 发送间隔，输出为整数毫秒。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.bfd.detectMultiplier</code></td>
+<td><em>选填</em></td>
+<td>integer; minimum=1; maximum=50</td>
 <td>可选整数 1–50；解码为 0 或省略时使用 profile 默认值（3，slow 为 5）。为协商检测间隔倍数，不是 routerd 协调尝试次数。</td>
 </tr>
 </tbody>
@@ -284,7 +394,7 @@
 <p><a href="/examples/cloudedge-aws-rr-dynamic-leaf.yaml">配置示例</a></p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
 <ul>
 <li><a href="#指定条件与引用关系">指定条件与引用关系</a></li>
-<li><a href="#yaml定义">YAML定义</a></li>
+<li><a href="#配置语法">配置语法</a></li>
 <li><a href="#字段含义与默认值">字段含义与默认值</a></li>
 <li><a href="#可引用的状态字段">可引用的状态字段</a></li>
 </ul>

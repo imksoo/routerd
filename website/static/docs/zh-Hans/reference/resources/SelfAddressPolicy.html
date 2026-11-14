@@ -11,67 +11,88 @@
 <li>当前实时 DHCPv6 LAN 生成不使用 DHCPv6Server.selfAddressPolicy 或 dnsSource: self。策略可影响独立静态渲染器，但声明不会让运行中的服务器通告自身 DNS，实时路径请用明确 dnsServers/dnsServerFrom。</li>
 <li>引用为已声明 Interface/IPv6DelegatedAddress 裸名，即使来源分支不使用仍验证存在。本资源无 when/dependsOn。</li>
 </ul>
-<h2 id="yaml定义">YAML定义</h2>
-<p>此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。</p>
-<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+<h2 id="配置语法">配置语法</h2>
+<p>这是说明用语法，不是可直接复制的YAML。未加括号的字段在父条目内必填；<code>[ ... ]</code>表示按条件可省略，<code>&lt;类型&gt;</code>为替换值，<code>(a | b)</code>表示选项。选填父条目内仍可能有必填子条目。条件必填、互斥与实际默认值请见下表；常规YAML请使用链接示例。</p>
+<pre><code class="language-text">- apiVersion: net.routerd.net/v1alpha1
   kind: SelfAddressPolicy
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    addressFamily: &quot;ipv4&quot; # 必填; string; enum=[&quot;ipv4&quot;, &quot;ipv6&quot;]
-    candidates: # 必填; array
-      - # object
-        address: &quot;&lt;string&gt;&quot; # 选填; string
-        addressSuffix: &quot;&lt;string&gt;&quot; # 选填; string
-        delegatedAddress: &quot;&lt;string&gt;&quot; # 选填; string
-        interface: &quot;&lt;string&gt;&quot; # 选填; string
-        matchSuffix: &quot;&lt;string&gt;&quot; # 选填; string
-        ordinal: 1 # 选填; integer; minimum=1
-        source: &quot;delegatedAddress&quot; # 必填; string; enum=[&quot;delegatedAddress&quot;, &quot;interfaceAddress&quot;, &quot;static&quot;]
+    addressFamily: (&quot;ipv4&quot; | &quot;ipv6&quot;)
+    candidates:
+      -
+        [ address: &lt;string&gt; ]
+        [ addressSuffix: &lt;string&gt; ]
+        [ delegatedAddress: &lt;string&gt; ]
+        [ interface: &lt;string&gt; ]
+        [ matchSuffix: &lt;string&gt; ]
+        [ ordinal: &lt;integer&gt; ]
+        source: (&quot;delegatedAddress&quot; | &quot;interfaceAddress&quot; | &quot;static&quot;)
 </code></pre>
 <h2 id="字段含义与默认值">字段含义与默认值</h2>
+<p>选填父条目的必填子条目仅在使用父条目时需要。其他具体条件列于说明；<code>[ ... ]</code>选项仍可能需要择一。</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>指定要求</th>
+<th>类型与限制</th>
 <th>字段含义与默认值</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.addressFamily</code></td>
+<td><strong>必填</strong></td>
+<td>string; enum=["ipv4", "ipv6"]</td>
 <td>必填 ipv4 或 ipv6，验证接受两者；当前选择使用方为旧 DHCPv6 静态渲染器，ipv4 不会提供独立实时地址选择服务。</td>
 </tr>
 <tr>
 <td><code>spec.candidates</code></td>
+<td><strong>必填</strong></td>
+<td>array</td>
 <td>必填非空有序候选列表，支持的静态渲染器依序选第一个成功值，全部失败则报错；明确引用的策略不自动补候选。</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].source</code></td>
+<td><strong>必填</strong></td>
+<td>string; enum=["delegatedAddress", "interfaceAddress", "static"]</td>
 <td>必填 delegatedAddress/interfaceAddress/static。delegatedAddress 仅限 IPv6，禁止 address/interface；interfaceAddress 需 interface，static 需符合 addressFamily 的 address。后两者多余字段通常不拒绝。</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].interface</code></td>
+<td><em>选填</em></td>
+<td>string</td>
 <td>interfaceAddress 必填的已声明逻辑接口，delegatedAddress 禁用；即使所选来源不使用，提供时仍验证存在。</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].delegatedAddress</code></td>
+<td><em>选填</em></td>
+<td>string</td>
 <td>delegatedAddress 来源必填的 IPv6DelegatedAddress 裸名，资源须存在；支持的渲染器由该资源接口观测前缀派生，不是通用状态 field。</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].address</code></td>
+<td><em>选填</em></td>
+<td>string</td>
 <td>static 来源必填且符合 addressFamily 的纯地址，delegatedAddress 禁用，不会自动分配到 OS。</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].addressSuffix</code></td>
+<td><em>选填</em></td>
+<td>string</td>
 <td>delegatedAddress 的可选 IPv6 后缀，省略继承引用资源 addressSuffix；其他来源不使用此值选择。</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].matchSuffix</code></td>
+<td><em>选填</em></td>
+<td>string</td>
 <td>interfaceAddress 的可选 IPv6 模式，各非零字节须相符，零字节不限制，并非传统连续后缀掩码。设置后选第一个符合的全局 IPv6，忽略 ordinal。</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].ordinal</code></td>
+<td><em>选填</em></td>
+<td>integer; minimum=1</td>
 <td>matchSuffix 空值时的 interfaceAddress 从一开始索引，省略或 0 为 1，模式下限 1，负值验证拒绝。顺序按观测列表，不保证固定身份；越界则尝试下一候选。</td>
 </tr>
 </tbody>
@@ -82,7 +103,7 @@
 <p><code>phase</code>, <code>address</code>, <code>source</code></p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
 <ul>
 <li><a href="#指定条件与引用关系">指定条件与引用关系</a></li>
-<li><a href="#yaml定义">YAML定义</a></li>
+<li><a href="#配置语法">配置语法</a></li>
 <li><a href="#字段含义与默认值">字段含义与默认值</a></li>
 <li><a href="#可引用的状态字段">可引用的状态字段</a></li>
 </ul>

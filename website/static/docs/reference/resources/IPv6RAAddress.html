@@ -10,36 +10,45 @@
 <ul>
 <li>managed controls host RA setup. FreeBSD renders accept_rtadv/rtsold. Linux networkd adoption preserves/enables RA; when DHCPv6 is moved away from networkd, the drop-in also suppresses RA-triggered DHCPv6 startup. This declaration does not guarantee usable upstream RAs.</li>
 </ul>
-<h2 id="yaml-definition">YAML definition</h2>
-<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
-<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+<h2 id="configuration-syntax">Configuration syntax</h2>
+<p>This is explanatory notation, not YAML to copy. Unbracketed fields are required within their parent; <code>[ ... ]</code> marks fields that can be omitted, subject to the conditions in the table. <code>&lt;type&gt;</code> is a placeholder, and <code>(a | b)</code> lists alternatives. Optional parents may contain required children. Conditional requirements, exclusions and runtime defaults are described below. Use the linked YAML example for an ordinary configuration.</p>
+<pre><code class="language-text">- apiVersion: net.routerd.net/v1alpha1
   kind: IPv6RAAddress
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    interface: &quot;&lt;string&gt;&quot; # Required; string
-    managed: true # optional; boolean
-    required: true # optional; boolean
+    interface: &lt;string&gt;
+    [ managed: &lt;boolean&gt; ]
+    [ required: &lt;boolean&gt; ]
 </code></pre>
 <h2 id="field-meaning-and-default">Field meaning and default</h2>
+<p>Required children of optional objects apply only when their parent is used. Other exact conditions are in the explanation; bracketed alternatives may still require one choice.</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>Presence</th>
+<th>Type / constraints</th>
 <th>Field meaning and default</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.interface</code></td>
+<td><strong>Required</strong></td>
+<td>string</td>
 <td>Required logical interface name from the Router interface index, without Interface/ prefix. It must exist in the declared config. No default.</td>
 </tr>
 <tr>
 <td><code>spec.managed</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default true. False selects observation-only RA intent instead of requesting host RA settings. It is independent of the Interface managed flag.</td>
 </tr>
 <tr>
 <td><code>spec.required</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false. The current observation/rendering paths do not read this field; it does not require a completed SLAAC address before apply returns.</td>
 </tr>
 </tbody>
@@ -50,7 +59,7 @@
 <p><code>phase</code>, <code>interface</code>, <code>address</code></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
 <li><a href="#conditions-and-references">Conditions and references</a></li>
-<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#configuration-syntax">Configuration syntax</a></li>
 <li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 <li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
 </ul>

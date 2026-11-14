@@ -11,47 +11,52 @@ Enables the HTTP control API for reading state and changing configuration. Unix-
 - Only one ControlAPI resource is supported. Explicit HTTP CLI flags override the matching resource-derived settings. Without a resource or enabling CLI flag, HTTP control is disabled.
 - tls.certFile and tls.keyFile must be set together. clientCAFile additionally requires both and enables required, verified client certificates. tokenFrom.file and tokenFrom.env are mutually exclusive.
 
-## YAML definition
+## Configuration syntax
 
-All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.
+This is explanatory notation, not YAML to copy. Unbracketed fields are required within their parent; `[ ... ]` marks fields that can be omitted, subject to the conditions in the table. `<type>` is a placeholder, and `(a | b)` lists alternatives. Optional parents may contain required children. Conditional requirements, exclusions and runtime defaults are described below. Use the linked YAML example for an ordinary configuration.
 
-```yaml
+```text
 - apiVersion: system.routerd.net/v1alpha1
   kind: ControlAPI
   metadata:
     name: "<name>"
   spec:
-    allowCIDRs: # optional; array
-      - "<string>" # string
-    enabled: true # optional; boolean
-    listenAddress: "<string>" # optional; string
-    port: 1 # optional; integer; minimum=1; maximum=65535
-    tls: # optional; object
-      certFile: "<string>" # optional; string
-      clientCAFile: "<string>" # optional; string
-      keyFile: "<string>" # optional; string
-    tokenFrom: # optional; object
-      base64: true # optional; boolean
-      env: "<string>" # optional; string
-      file: "<string>" # optional; string
+    [ allowCIDRs:
+        - <string>
+    ]
+    [ enabled: <boolean> ]
+    [ listenAddress: <string> ]
+    [ port: <integer> ]
+    [ tls:
+        [ certFile: <string> ]
+        [ clientCAFile: <string> ]
+        [ keyFile: <string> ]
+    ]
+    [ tokenFrom:
+        [ base64: <boolean> ]
+        [ env: <string> ]
+        [ file: <string> ]
+    ]
 ```
 
 ## Field meaning and default
 
-| YAML | Field meaning and default |
-| --- | --- |
-| `spec.enabled` | Default true when the resource exists; default disabled when absent. An explicit HTTP-listen CLI flag enables it. |
-| `spec.listenAddress` | Bind IP, default 127.0.0.1. Nonblank values must be IP addresses; this does not itself change the source CIDR allowlist. |
-| `spec.port` | TCP port, default 65432. Decoded zero selects the default; other values must be 1–65535. |
-| `spec.allowCIDRs` | Source-IP allowlist, default 127.0.0.1/32 and ::1/128. A nonempty resource list replaces that default. Valid CIDRs are required; 0.0.0.0/0 and ::/0 are rejected. This is separate from firewall rules. |
-| `spec.tokenFrom` | Optional bearer-token source. Default absent means no bearer-token check; source CIDR filtering still applies. Set exactly one of file or env when using a token. Not a reference to a routerd resource. |
-| `spec.tokenFrom.file` | Token file path, default empty; mutually exclusive with env. Read by the routerd process at HTTP API setup; inaccessible files fail setup. |
-| `spec.tokenFrom.env` | Name of a variable in the routerd process environment, default empty; mutually exclusive with file. Missing variables fail HTTP API setup. |
-| `spec.tokenFrom.base64` | Default false. True decodes the trimmed source using standard Base64, then trims the decoded token. A malformed or empty final token fails setup. |
-| `spec.tls` | Optional server TLS settings. With no certificate/key, the HTTP listener is plaintext. |
-| `spec.tls.certFile` | Server certificate file, default absent; requires keyFile. Loaded as an X.509 key pair at startup; TLS minimum is 1.2. |
-| `spec.tls.keyFile` | Server private-key file, default absent; requires certFile. This is a local file path, not a resource reference. |
-| `spec.tls.clientCAFile` | Optional PEM client-CA bundle. Requires certFile/keyFile and makes client certificate verification mandatory. Missing/invalid bundles fail startup. |
+Required children of optional objects apply only when their parent is used. Other exact conditions are in the explanation; bracketed alternatives may still require one choice.
+
+| YAML | Presence | Type / constraints | Field meaning and default |
+| --- | --- | --- | --- |
+| `spec.enabled` | *Optional* | boolean | Default true when the resource exists; default disabled when absent. An explicit HTTP-listen CLI flag enables it. |
+| `spec.listenAddress` | *Optional* | string | Bind IP, default 127.0.0.1. Nonblank values must be IP addresses; this does not itself change the source CIDR allowlist. |
+| `spec.port` | *Optional* | integer; minimum=1; maximum=65535 | TCP port, default 65432. Decoded zero selects the default; other values must be 1–65535. |
+| `spec.allowCIDRs` | *Optional* | array | Source-IP allowlist, default 127.0.0.1/32 and ::1/128. A nonempty resource list replaces that default. Valid CIDRs are required; 0.0.0.0/0 and ::/0 are rejected. This is separate from firewall rules. |
+| `spec.tokenFrom` | *Optional* | object | Optional bearer-token source. Default absent means no bearer-token check; source CIDR filtering still applies. Set exactly one of file or env when using a token. Not a reference to a routerd resource. |
+| `spec.tokenFrom.file` | **Conditionally required** | string | Token file path, default empty; mutually exclusive with env. Read by the routerd process at HTTP API setup; inaccessible files fail setup. |
+| `spec.tokenFrom.env` | **Conditionally required** | string | Name of a variable in the routerd process environment, default empty; mutually exclusive with file. Missing variables fail HTTP API setup. |
+| `spec.tokenFrom.base64` | *Optional* | boolean | Default false. True decodes the trimmed source using standard Base64, then trims the decoded token. A malformed or empty final token fails setup. |
+| `spec.tls` | *Optional* | object | Optional server TLS settings. With no certificate/key, the HTTP listener is plaintext. |
+| `spec.tls.certFile` | **Conditionally required** | string | Server certificate file, default absent; requires keyFile. Loaded as an X.509 key pair at startup; TLS minimum is 1.2. |
+| `spec.tls.keyFile` | **Conditionally required** | string | Server private-key file, default absent; requires certFile. This is a local file path, not a resource reference. |
+| `spec.tls.clientCAFile` | *Optional* | string | Optional PEM client-CA bundle. Requires certFile/keyFile and makes client certificate verification mandatory. Missing/invalid bundles fail startup. |
 
 Implementation: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate_system.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_system.go) · [pkg/config/cluster_secret_validate.go](https://github.com/imksoo/routerd/blob/main/pkg/config/cluster_secret_validate.go) · [cmd/routerd/cmd_serve.go](https://github.com/imksoo/routerd/blob/main/cmd/routerd/cmd_serve.go) · [pkg/controlapi/server.go](https://github.com/imksoo/routerd/blob/main/pkg/controlapi/server.go)
 

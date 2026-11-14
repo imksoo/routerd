@@ -13,205 +13,285 @@
 <li>NoHealthyBackends and policy.onNoHealthyBackends are status outputs, not a generated drop/reject guarantee. When there is no active backend, the NAT controller leaves the original backend definition in place; rendering can fall back to its first configured static backend. Do not rely on this setting for fail-closed behavior.</li>
 <li>failover chooses the first healthy backend in declaration order. Linux sourceHash/random can distribute across all healthy resolved backends; weights are unused. PF emits only the selected first target and does not implement those distribution algorithms. Static rendering has no health-store selection and can use the first declared backend.</li>
 </ul>
-<h2 id="yaml-definition">YAML definition</h2>
-<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
-<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+<h2 id="configuration-syntax">Configuration syntax</h2>
+<p>This is explanatory notation, not YAML to copy. Unbracketed fields are required within their parent; <code>[ ... ]</code> marks fields that can be omitted, subject to the conditions in the table. <code>&lt;type&gt;</code> is a placeholder, and <code>(a | b)</code> lists alternatives. Optional parents may contain required children. Conditional requirements, exclusions and runtime defaults are described below. Use the linked YAML example for an ordinary configuration.</p>
+<pre><code class="language-text">- apiVersion: firewall.routerd.net/v1alpha1
   kind: IngressService
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    backends: # Required; array
-      - # object
-        address: &quot;&lt;string&gt;&quot; # optional; string
-        addressFrom: # optional; object
-          field: &quot;&lt;string&gt;&quot; # optional; string
-          optional: true # optional; boolean
-          resource: &quot;&lt;string&gt;&quot; # Required; string
-        name: &quot;&lt;string&gt;&quot; # optional; string
-        port: 1 # Required; integer; minimum=1; maximum=65535
-        weight: 0 # optional; integer; minimum=0
-    externalDNS: true # optional; boolean
-    hairpin: # optional; object
-      enabled: true # optional; boolean
-      interfaces: # optional; array
-        - &quot;&lt;string&gt;&quot; # string
-      mode: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;auto&quot;, &quot;manual&quot;, &quot;off&quot;]
-    healthCheck: # optional; object
-      expectedBody: &quot;&lt;string&gt;&quot; # optional; string
-      expectedStatus: # optional; array
-        - 0 # integer
-      healthyThreshold: 1 # optional; integer; minimum=1
-      host: &quot;&lt;string&gt;&quot; # optional; string
-      interval: &quot;&lt;string&gt;&quot; # optional; string
-      path: &quot;&lt;string&gt;&quot; # optional; string
-      protocol: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;tcp&quot;, &quot;http&quot;, &quot;https&quot;]
-      timeout: &quot;&lt;string&gt;&quot; # optional; string
-      tlsSkipVerify: true # optional; boolean
-      unhealthyThreshold: 1 # optional; integer; minimum=1
-    hostname: &quot;&lt;string&gt;&quot; # optional; string
-    listen: # Required; object
-      address: &quot;&lt;string&gt;&quot; # optional; string
-      addressFrom: # optional; object
-        field: &quot;&lt;string&gt;&quot; # optional; string
-        optional: true # optional; boolean
-        resource: &quot;&lt;string&gt;&quot; # Required; string
-      interface: &quot;&lt;string&gt;&quot; # Required; string
-      port: 1 # Required; integer; minimum=1; maximum=65535
-      protocol: &quot;tcp&quot; # Required; string; enum=[&quot;tcp&quot;, &quot;udp&quot;]
-    policy: # optional; object
-      onNoHealthyBackends: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;drop&quot;, &quot;reject&quot;]
-      selection: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;failover&quot;, &quot;sourceHash&quot;, &quot;random&quot;]
-    when: # optional; object
-      state: # optional; object
-        &quot;&lt;key&gt;&quot;: # optional; object
-          contains: &quot;&lt;string&gt;&quot; # optional; string
-          equals: &quot;&lt;string&gt;&quot; # optional; string
-          exists: true # optional; boolean
-          for: &quot;&lt;string&gt;&quot; # optional; string
-          in: # optional; array
-            - &quot;&lt;string&gt;&quot; # string
-          maxAge: &quot;&lt;string&gt;&quot; # optional; string
-          status: &quot;set&quot; # optional; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+    backends:
+      -
+        [ address: &lt;string&gt; ]
+        [ addressFrom:
+            field: &lt;string&gt;
+            [ optional: &lt;boolean&gt; ]
+            resource: &lt;string&gt;
+        ]
+        [ name: &lt;string&gt; ]
+        port: &lt;integer&gt;
+        [ weight: &lt;integer&gt; ]
+    [ externalDNS: &lt;boolean&gt; ]
+    [ hairpin:
+        [ enabled: &lt;boolean&gt; ]
+        [ interfaces:
+            - &lt;string&gt;
+        ]
+        [ mode: (&quot;&quot; | &quot;auto&quot; | &quot;manual&quot; | &quot;off&quot;) ]
+    ]
+    [ healthCheck:
+        [ expectedBody: &lt;string&gt; ]
+        [ expectedStatus:
+            - &lt;integer&gt;
+        ]
+        [ healthyThreshold: &lt;integer&gt; ]
+        [ host: &lt;string&gt; ]
+        [ interval: &lt;string&gt; ]
+        [ path: &lt;string&gt; ]
+        [ protocol: (&quot;&quot; | &quot;tcp&quot; | &quot;http&quot; | &quot;https&quot;) ]
+        [ timeout: &lt;string&gt; ]
+        [ tlsSkipVerify: &lt;boolean&gt; ]
+        [ unhealthyThreshold: &lt;integer&gt; ]
+    ]
+    [ hostname: &lt;string&gt; ]
+    listen:
+      [ address: &lt;string&gt; ]
+      [ addressFrom:
+          field: &lt;string&gt;
+          [ optional: &lt;boolean&gt; ]
+          resource: &lt;string&gt;
+      ]
+      interface: &lt;string&gt;
+      port: &lt;integer&gt;
+      protocol: (&quot;tcp&quot; | &quot;udp&quot;)
+    [ policy:
+        [ onNoHealthyBackends: (&quot;&quot; | &quot;drop&quot; | &quot;reject&quot;) ]
+        [ selection: (&quot;&quot; | &quot;failover&quot; | &quot;sourceHash&quot; | &quot;random&quot;) ]
+    ]
+    [ when:
+        [ state:
+            [ &lt;name&gt;:
+                [ contains: &lt;string&gt; ]
+                [ equals: &lt;string&gt; ]
+                [ exists: &lt;boolean&gt; ]
+                [ for: &lt;string&gt; ]
+                [ in:
+                    - &lt;string&gt;
+                ]
+                [ maxAge: &lt;string&gt; ]
+                [ status: (&quot;set&quot; | &quot;unset&quot; | &quot;unknown&quot;) ]
+            ]
+        ]
+    ]
 </code></pre>
 <h2 id="field-meaning-and-default">Field meaning and default</h2>
+<p>Required children of optional objects apply only when their parent is used. Other exact conditions are in the explanation; bracketed alternatives may still require one choice.</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>Presence</th>
+<th>Type / constraints</th>
 <th>Field meaning and default</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.listen</code></td>
+<td><strong>Required</strong></td>
+<td>object</td>
 <td>Required IPv4 ingress endpoint. This creates NAT/firewall rules, not an application listener or address assignment.</td>
 </tr>
 <tr>
 <td><code>spec.listen.interface</code></td>
+<td><strong>Required</strong></td>
+<td>string</td>
 <td>Required bare declared logical interface name, not Kind/name. Must exist in the configuration interface index and resolve to an OS ifname.</td>
 </tr>
 <tr>
 <td><code>spec.listen.address</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional bare IPv4 destination address. Mutually exclusive with addressFrom; omission matches any destination address on the listen interface.</td>
 </tr>
 <tr>
 <td><code>spec.listen.addressFrom</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional common resource/field/optional reference, mutually exclusive with address. NAT/static rendering supports declared IPv4StaticAddress.address or VirtualAddress.address, not arbitrary runtime status. Generic reference validation does not guarantee renderer support.</td>
 </tr>
 <tr>
 <td><code>spec.listen.protocol</code></td>
+<td><strong>Required</strong></td>
+<td>string; enum=["tcp", "udp"]</td>
 <td>Required tcp or udp, no default. This selects forwarded traffic; it does not select the health-check protocol.</td>
 </tr>
 <tr>
 <td><code>spec.listen.port</code></td>
+<td><strong>Required</strong></td>
+<td>integer; minimum=1; maximum=65535</td>
 <td>Required destination port 1–65535. No range/list and no default.</td>
 </tr>
 <tr>
 <td><code>spec.hairpin</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional loopback-through-public-address NAT settings. Requires a resolved listen address when active. PortForward defaults off; IngressService defaults auto.</td>
 </tr>
 <tr>
 <td><code>spec.hairpin.enabled</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false. With omitted mode, true selects manual on PortForward; IngressService still defaults auto. Explicit off disables hairpin even when enabled is true.</td>
 </tr>
 <tr>
 <td><code>spec.hairpin.mode</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["", "auto", "manual", "off"]</td>
 <td>auto, manual or off. auto detects the listen interface when listen and backend share a declared IPv4 subnet or the same private /24; it does not discover arbitrary LAN routes. manual needs enabled=true and interfaces to produce rules.</td>
 </tr>
 <tr>
 <td><code>spec.hairpin.interfaces</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional bare declared logical interface names, no duplicates; enabled/manual requires a nonempty list. auto may additionally use the listen interface. IPv4 DNAT plus masquerade/PF SNAT ensures a return through the router.</td>
 </tr>
 <tr>
 <td><code>spec.when</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional common activation condition, default unconditional. False conditions exclude the resource from effective generation; see common fields for predicates/schema limits.</td>
 </tr>
 <tr>
 <td><code>spec.hostname</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional FQDN for local DNS publication and status, default empty. Does not select HTTP Host routing or health-check Host/SNI. Requires an appropriate DNSZone served by DNSResolver for publication.</td>
 </tr>
 <tr>
 <td><code>spec.externalDNS</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false. True skips routerd’s automatic local hostname record and DNS-coverage warnings; it does not update an external DNS provider.</td>
 </tr>
 <tr>
 <td><code>spec.backends</code></td>
+<td><strong>Required</strong></td>
+<td>array</td>
 <td>Required nonempty backend list; order selects failover priority. Configuration permits hostnames, but static NAT rendering needs IPv4 resolution and does not perform DNS itself.</td>
 </tr>
 <tr>
 <td><code>spec.backends[].name</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional stable health-history key, default backend-<zero-based index>. Duplicate names are not rejected by this validator and can mix history; use unique names.</td>
 </tr>
 <tr>
 <td><code>spec.backends[].address</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Bare IPv4 or hostname, mutually exclusive with addressFrom; one is required. Hostname resolution uses IPv4 only and retains a previous address on DNS failure when available.</td>
 </tr>
 <tr>
 <td><code>spec.backends[].addressFrom</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional common resource/field/optional source, excluding address. The active checker reads runtime status; optional does not make an unresolved backend healthy. Static rendering supports only declared address fields described above.</td>
 </tr>
 <tr>
 <td><code>spec.backends[].port</code></td>
+<td><strong>Required</strong></td>
+<td>integer; minimum=1; maximum=65535</td>
 <td>Required backend port 1–65535. Used by data-plane translation and the configured health-check protocol.</td>
 </tr>
 <tr>
 <td><code>spec.backends[].weight</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=0</td>
 <td>Nonnegative integer accepted, default 0; current health selection and Linux/PF NAT rendering do not read it. No weighted distribution.</td>
 </tr>
 <tr>
 <td><code>spec.healthCheck</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional active check settings. Omission still enables TCP checking rather than disabling checks.</td>
 </tr>
 <tr>
 <td><code>spec.healthCheck.protocol</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["", "tcp", "http", "https"]</td>
 <td>tcp (default), http or https. Independent from listen.protocol. HTTP(S) sends GET directly to the resolved backend address and port.</td>
 </tr>
 <tr>
 <td><code>spec.healthCheck.interval</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Go duration accepted by validation but not read by the controller. Actual scheduling uses the chain’s 5s cadence plus reconciliation events.</td>
 </tr>
 <tr>
 <td><code>spec.healthCheck.timeout</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Positive Go duration, effective default 1s. Omitted/zero/negative values use 1s even though syntax validation accepts nonpositive durations. Applies per backend probe, not the whole cycle or DNS lookup.</td>
 </tr>
 <tr>
 <td><code>spec.healthCheck.path</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>HTTP(S) URL path, default /. Nonempty must begin with /. Not used by TCP checks.</td>
 </tr>
 <tr>
 <td><code>spec.healthCheck.host</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional HTTP Host header and HTTPS TLS ServerName/SNI override, default empty. Without it, URL uses the resolved IP. No whitespace/control characters.</td>
 </tr>
 <tr>
 <td><code>spec.healthCheck.expectedStatus</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional exact HTTP status allowlist 100–599. Omitted/empty accepts 200–399; HTTP client follows redirects by default before evaluating the resulting response.</td>
 </tr>
 <tr>
 <td><code>spec.healthCheck.tlsSkipVerify</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false. True disables HTTPS certificate/hostname verification for health probes only, not data-plane TLS handling.</td>
 </tr>
 <tr>
 <td><code>spec.healthCheck.expectedBody</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional case-sensitive substring in the first 1 MiB of HTTP response body. Default empty disables body matching; not a regular expression.</td>
 </tr>
 <tr>
 <td><code>spec.healthCheck.healthyThreshold</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=1</td>
 <td>Successful consecutive checks to promote healthy; omitted/0 means 1. Healthy state and counts are restored from backend status. Schema minimum 1 differs from accepted zero default.</td>
 </tr>
 <tr>
 <td><code>spec.healthCheck.unhealthyThreshold</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=1</td>
 <td>Consecutive failures to remove an already healthy backend; omitted/0 means 1. Initial unresolved backends start unhealthy.</td>
 </tr>
 <tr>
 <td><code>spec.policy</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional selection settings. Defaults failover/drop, but the no-healthy action is currently reported only.</td>
 </tr>
 <tr>
 <td><code>spec.policy.selection</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["", "failover", "sourceHash", "random"]</td>
 <td>failover (default), sourceHash or random. Linux sourceHash hashes client IPv4 source; random selects modulo equal backend count. One healthy backend falls back to failover. PF always emits one target.</td>
 </tr>
 <tr>
 <td><code>spec.policy.onNoHealthyBackends</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["", "drop", "reject"]</td>
 <td>drop (default) or reject accepted, but only copied to status.conditions.reason. No explicit drop/reject rule is generated; see the no-healthy fallback limitation above.</td>
 </tr>
 </tbody>
@@ -223,7 +303,7 @@
 <p><a href="/examples/k8s-api-vip-dualstack.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
 <li><a href="#conditions-and-references">Conditions and references</a></li>
-<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#configuration-syntax">Configuration syntax</a></li>
 <li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 <li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
 </ul>

@@ -12,199 +12,273 @@
 <li>通常検証はdelegatedAddress指定時にmodeをstateless・ra-onlyへ制限します。delegatedAddressなしではra-onlyを含む非statelessに有効なIPv6開始・終了が必要です。domainSearchとdomainSearchFromは排他で、DNS・SNTPの固定値と参照は併用できます。</li>
 <li>単一dnsmasqで各資源を処理し、constructorは実インターフェースの/64を使います。Appliedは再調整成功で、クライアント取得・RA受信・デフォルト経路成立を意味しません。廃止ready_whenは拒否します。</li>
 </ul>
-<h2 id="yaml定義">YAML定義</h2>
-<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
-<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+<h2 id="設定構文">設定構文</h2>
+<p>説明用の構文表記であり、そのままコピーするYAMLではありません。囲みのない項目は親の中で必須、<code>[ ... ]</code>は条件に応じて省略できる項目、<code>&lt;型&gt;</code>は差し替え値、<code>(a | b)</code>は選択肢です。任意の親にも必須の子があります。条件付き必須・排他・実効既定値は下の表を確認し、通常のYAMLはリンク先の設定例を使ってください。</p>
+<pre><code class="language-text">- apiVersion: net.routerd.net/v1alpha1
   kind: DHCPv6Server
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    addressPool: # 任意; object
-      end: &quot;&lt;string&gt;&quot; # 任意; string
-      leaseTime: &quot;&lt;string&gt;&quot; # 任意; string
-      start: &quot;&lt;string&gt;&quot; # 任意; string
-    configPath: &quot;&lt;string&gt;&quot; # 任意; string
-    defaultRoute: true # 任意; boolean
-    delegatedAddress: &quot;&lt;string&gt;&quot; # 任意; string
-    dependsOn: # 任意; array
-      - # object
-        equals: &quot;&lt;string&gt;&quot; # 任意; string
-        field: &quot;&lt;string&gt;&quot; # 任意; string
-        notEmpty: true # 任意; boolean
-        optional: true # 任意; boolean
-        phase: &quot;&lt;string&gt;&quot; # 任意; string
-        resource: &quot;&lt;string&gt;&quot; # 必須; string
-    dnsServerFrom: # 任意; array
-      - # object
-        field: &quot;&lt;string&gt;&quot; # 任意; string
-        optional: true # 任意; boolean
-        resource: &quot;&lt;string&gt;&quot; # 必須; string
-    dnsServers: # 任意; array
-      - &quot;&lt;string&gt;&quot; # string
-    dnsSource: &quot;self&quot; # 任意; string; enum=[&quot;self&quot;, &quot;static&quot;, &quot;none&quot;]
-    domainSearch: # 任意; array
-      - &quot;&lt;string&gt;&quot; # string
-    domainSearchFrom: # 任意; array
-      - # object
-        field: &quot;&lt;string&gt;&quot; # 任意; string
-        optional: true # 任意; boolean
-        resource: &quot;&lt;string&gt;&quot; # 必須; string
-    interface: &quot;&lt;string&gt;&quot; # 任意; string
-    leaseFile: &quot;&lt;string&gt;&quot; # 任意; string
-    leaseTime: &quot;&lt;string&gt;&quot; # 任意; string
-    listenInterfaces: # 任意; array
-      - &quot;&lt;string&gt;&quot; # string
-    logDHCP: true # 任意; boolean
-    managed: true # 任意; boolean
-    mode: &quot;stateless&quot; # 任意; string; enum=[&quot;stateless&quot;, &quot;stateful&quot;, &quot;both&quot;, &quot;ra-only&quot;]
-    pidFile: &quot;&lt;string&gt;&quot; # 任意; string
-    rapidCommit: true # 任意; boolean
-    role: &quot;server&quot; # 任意; string; enum=[&quot;server&quot;, &quot;transit&quot;]
-    selfAddressPolicy: &quot;&lt;string&gt;&quot; # 任意; string
-    server: &quot;dnsmasq&quot; # 任意; string; enum=[&quot;dnsmasq&quot;]
-    sntpServerFrom: # 任意; array
-      - # object
-        field: &quot;&lt;string&gt;&quot; # 任意; string
-        optional: true # 任意; boolean
-        resource: &quot;&lt;string&gt;&quot; # 必須; string
-    sntpServers: # 任意; array
-      - &quot;&lt;string&gt;&quot; # string
-    stickyHoldDays: 0 # 任意; integer; minimum=0
-    when: # 任意; object
-      state: # 任意; object
-        &quot;&lt;key&gt;&quot;: # 任意; object
-          contains: &quot;&lt;string&gt;&quot; # 任意; string
-          equals: &quot;&lt;string&gt;&quot; # 任意; string
-          exists: true # 任意; boolean
-          for: &quot;&lt;string&gt;&quot; # 任意; string
-          in: # 任意; array
-            - &quot;&lt;string&gt;&quot; # string
-          maxAge: &quot;&lt;string&gt;&quot; # 任意; string
-          status: &quot;set&quot; # 任意; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+    [ addressPool:
+        [ end: &lt;string&gt; ]
+        [ leaseTime: &lt;string&gt; ]
+        [ start: &lt;string&gt; ]
+    ]
+    [ configPath: &lt;string&gt; ]
+    [ defaultRoute: &lt;boolean&gt; ]
+    [ delegatedAddress: &lt;string&gt; ]
+    [ dependsOn:
+        -
+          [ equals: &lt;string&gt; ]
+          [ field: &lt;string&gt; ]
+          [ notEmpty: &lt;boolean&gt; ]
+          [ optional: &lt;boolean&gt; ]
+          [ phase: &lt;string&gt; ]
+          resource: &lt;string&gt;
+    ]
+    [ dnsServerFrom:
+        -
+          field: &lt;string&gt;
+          [ optional: &lt;boolean&gt; ]
+          resource: &lt;string&gt;
+    ]
+    [ dnsServers:
+        - &lt;string&gt;
+    ]
+    [ dnsSource: (&quot;self&quot; | &quot;static&quot; | &quot;none&quot;) ]
+    [ domainSearch:
+        - &lt;string&gt;
+    ]
+    [ domainSearchFrom:
+        -
+          field: &lt;string&gt;
+          [ optional: &lt;boolean&gt; ]
+          resource: &lt;string&gt;
+    ]
+    [ interface: &lt;string&gt; ]
+    [ leaseFile: &lt;string&gt; ]
+    [ leaseTime: &lt;string&gt; ]
+    [ listenInterfaces:
+        - &lt;string&gt;
+    ]
+    [ logDHCP: &lt;boolean&gt; ]
+    [ managed: &lt;boolean&gt; ]
+    [ mode: (&quot;stateless&quot; | &quot;stateful&quot; | &quot;both&quot; | &quot;ra-only&quot;) ]
+    [ pidFile: &lt;string&gt; ]
+    [ rapidCommit: &lt;boolean&gt; ]
+    [ role: (&quot;server&quot; | &quot;transit&quot;) ]
+    [ selfAddressPolicy: &lt;string&gt; ]
+    [ server: (&quot;dnsmasq&quot;) ]
+    [ sntpServerFrom:
+        -
+          field: &lt;string&gt;
+          [ optional: &lt;boolean&gt; ]
+          resource: &lt;string&gt;
+    ]
+    [ sntpServers:
+        - &lt;string&gt;
+    ]
+    [ stickyHoldDays: &lt;integer&gt; ]
+    [ when:
+        [ state:
+            [ &lt;name&gt;:
+                [ contains: &lt;string&gt; ]
+                [ equals: &lt;string&gt; ]
+                [ exists: &lt;boolean&gt; ]
+                [ for: &lt;string&gt; ]
+                [ in:
+                    - &lt;string&gt;
+                ]
+                [ maxAge: &lt;string&gt; ]
+                [ status: (&quot;set&quot; | &quot;unset&quot; | &quot;unknown&quot;) ]
+            ]
+        ]
+    ]
 </code></pre>
 <h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<p>任意の親の必須項目は、親を使う場合に必要です。それ以外の具体的な条件は説明欄に記載します。<code>[ ... ]</code>で囲まれた選択肢も、いずれか一方が必要な場合があります。</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>指定要否</th>
+<th>型・制約</th>
 <th>項目の意味と既定値</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.server</code></td>
+<td><em>任意</em></td>
+<td>string; enum=["dnsmasq"]</td>
 <td>任意のdnsmasqで、既定もdnsmasqです。他バックエンドは許さず、DHCPv4・RAとサービスを共有します。</td>
 </tr>
 <tr>
 <td><code>spec.managed</code></td>
+<td><em>任意</em></td>
+<td>boolean</td>
 <td>真偽値で既定falseです。現行実行処理はこの値で変更を抑止しません。</td>
 </tr>
 <tr>
 <td><code>spec.role</code></td>
+<td><em>任意</em></td>
+<td>string; enum=["server", "transit"]</td>
 <td>server・transitで、検証・静的生成の既定serverです。現行実行時はtransitによるサービス抑止を行いません。</td>
 </tr>
 <tr>
 <td><code>spec.listenInterfaces</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>宣言済み論理インターフェース一覧で全参照の存在を検証します。delegatedAddressがあり一覧が非空なら、その参照先interfaceを含む必要があります。系統・ファイアウォール計画に使いますが、現行実行時プールにはinterface自体が必要です。</td>
 </tr>
 <tr>
 <td><code>spec.logDHCP</code></td>
+<td><em>任意</em></td>
+<td>boolean</td>
 <td>既定falseです。静的生成ではlog-dhcpにしますが、現行実行時は参照しません。</td>
 </tr>
 <tr>
 <td><code>spec.stickyHoldDays</code></td>
+<td><em>任意</em></td>
+<td>integer; minimum=0</td>
 <td>0以上の日数で既定0は無効です。正のdnsmasq値は割当をdhcp-sticky.dbへ保持して再利用し、実行時はIPv6サーバー全体の最大値を全IPv6イベントに使います。インターフェース別ではなく、DHCPv6ServerLeaseSyncはこのDBを複製しません。</td>
 </tr>
 <tr>
 <td><code>spec.interface</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>string</td>
 <td>宣言済み論理LANインターフェースです。検証がdelegatedAddressのみを許しても現行実行時には必要で、省略すると実行時プール生成を飛ばします。</td>
 </tr>
 <tr>
 <td><code>spec.delegatedAddress</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>string</td>
 <td>任意の既存IPv6DelegatedAddress裸名です。静的生成はinterface・prefix・自己DNSを導出しますが、現行実行時はinterface・constructorを直接使い、この参照で補完しません。指定時はmodeをstateless・ra-onlyに制限します。</td>
 </tr>
 <tr>
 <td><code>spec.mode</code></td>
+<td><em>任意</em></td>
+<td>string; enum=["stateless", "stateful", "both", "ra-only"]</td>
 <td>既定statelessです。statefulはconstructor範囲、bothはslaac付きです。現行実行時はra-onlyもra-statelessの既定分岐に入るため、DHCPv6情報サービスの無効化になりません。delegatedAddressなしではra-onlyでも検証上プール必須です。</td>
 </tr>
 <tr>
 <td><code>spec.addressPool</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>object</td>
 <td>IPv6の状態保持型割当範囲です。delegatedAddressなしで非statelessなら必須で、statelessの割当範囲には使いません。開始・終了の自動補完はありません。</td>
 </tr>
 <tr>
 <td><code>spec.addressPool.start</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>string</td>
 <td>境界を含むIPv6開始値でend以下です。実行時のstateful範囲はconstructor:<OS名>・長さ64を使います。</td>
 </tr>
 <tr>
 <td><code>spec.addressPool.end</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>string</td>
 <td>境界を含むIPv6終了値でstart以上です。startと対で指定します。</td>
 </tr>
 <tr>
 <td><code>spec.addressPool.leaseTime</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>バックエンド期間でleaseTimeより優先します。空ならleaseTime・12hの順で補完し、ここではGo durationとして解析しません。</td>
 </tr>
 <tr>
 <td><code>spec.defaultRoute</code></td>
+<td><em>任意</em></td>
+<td>boolean</td>
 <td>真偽値で既定falseです。静的生成はルーター期間制御に使えますが、現行実行時は参照しません。DHCPv6自体がIPv6デフォルト経路を配るわけではありません。</td>
 </tr>
 <tr>
 <td><code>spec.dnsSource</code></td>
+<td><em>任意</em></td>
+<td>string; enum=["self", "static", "none"]</td>
 <td>self・static・noneを検証し、静的生成の既定selfです。staticはdnsServers必須ですが、現行実行時はこの選択を無視して明示dnsServers・dnsServerFromだけを使い、noneでも明示オプションを抑止しません。</td>
 </tr>
 <tr>
 <td><code>spec.selfAddressPolicy</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>任意の既存SelfAddressPolicy裸名です。現行実行時のLAN生成は使わなくても存在検証し、旧静的自己DNS選択で使います。</td>
 </tr>
 <tr>
 <td><code>spec.dnsServers</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>任意のIPv6 DNS一覧で既定空です。dnsServerFromと結合してタグ付きoption6:dns-serverにし、DNS待受は起動しません。</td>
 </tr>
 <tr>
 <td><code>spec.dnsServerFrom</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>共通resource・field参照一覧でoptional既定falseです。必須未解決は固定DNSがあってもPendingにし、この読み取りは解決した全状態値のIP系統を完全検証せず渡します。</td>
 </tr>
 <tr>
 <td><code>spec.sntpServers</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>任意のIPv6 SNTP一覧で既定空です。sntpServerFromと結合してタグ付きoption6:sntp-serverを出力し、NTPデーモンは起動しません。</td>
 </tr>
 <tr>
 <td><code>spec.sntpServerFrom</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>共通状態参照一覧です。必須・optionalの待機はdnsServerFromと同じで、既定参照なしです。</td>
 </tr>
 <tr>
 <td><code>spec.domainSearch</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>任意の単一ドメイン一覧で既定空です。空白・スラッシュ・カンマ不可でdomainSearchFromと排他です。タグ付きoption6:domain-searchにします。</td>
 </tr>
 <tr>
 <td><code>spec.domainSearchFrom</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>DNSZone/<name>・field: zone限定の参照で、存在検証します。状態前でも宣言zoneを読み、必須未解決はサーバー待機、optional trueは省略です。domainSearchと排他です。</td>
 </tr>
 <tr>
 <td><code>spec.leaseTime</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>addressPool.leaseTimeに次ぐ期間補完で、既定12hです。</td>
 </tr>
 <tr>
 <td><code>spec.rapidCommit</code></td>
+<td><em>任意</em></td>
+<td>boolean</td>
 <td>真偽値で既定falseです。現行生成はタグ付きoption6:rapid-commitを出力し、別のdnsmasq dhcp-rapid-commit指令は出しません。この値だけで2メッセージRapid Commitの成立を保証しません。</td>
 </tr>
 <tr>
 <td><code>spec.configPath</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>任意文字列で既定空です。現行コントローラーはリソース別パスではなく共有dnsmasqオプションを使います。</td>
 </tr>
 <tr>
 <td><code>spec.pidFile</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>任意文字列で既定空です。現行コントローラーはリソース別パスではなく共有dnsmasqオプションを使います。</td>
 </tr>
 <tr>
 <td><code>spec.leaseFile</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>リースファイルの任意パスで、既定<StateDir>/dnsmasq/dnsmasq.leasesです。単一サービス共有のため、全DHCPv4/6の明示leaseFileが不一致なら実行時生成で失敗します。</td>
 </tr>
 <tr>
 <td><code>spec.dependsOn</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>共通依存一覧として読み参照検証し、既定空です。現行実行時のDHCPv6サーバー生成・状態処理はこの一覧を評価せず、サービスの抑止条件としては使えません。動的値の必須条件・whenは別途評価します。</td>
 </tr>
 <tr>
 <td><code>spec.when</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>共通条件で既定無条件です。不成立なら有効設定から除外してPending/WhenFalseです。</td>
 </tr>
 </tbody>
@@ -216,7 +290,7 @@
 <p><a href="/examples/dhcp-lease-sync-ha.yaml">設定例</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
 <ul>
 <li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
-<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#設定構文">設定構文</a></li>
 <li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
 <li><a href="#状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</a></li>
 </ul>

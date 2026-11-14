@@ -11,67 +11,88 @@
 <li>現行実行時のDHCPv6 LAN生成はDHCPv6Server.selfAddressPolicy・dnsSource: selfを参照しません。この方針は別の静的生成に作用しますが、宣言だけで稼働サーバーが自己DNSを配布することにはなりません。実行時はdnsServers・dnsServerFromを明示します。</li>
 <li>参照は宣言したInterface・IPv6DelegatedAddressの裸名で、source分岐で使わなくても存在検証します。このリソースにwhen・dependsOnはありません。</li>
 </ul>
-<h2 id="yaml定義">YAML定義</h2>
-<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
-<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+<h2 id="設定構文">設定構文</h2>
+<p>説明用の構文表記であり、そのままコピーするYAMLではありません。囲みのない項目は親の中で必須、<code>[ ... ]</code>は条件に応じて省略できる項目、<code>&lt;型&gt;</code>は差し替え値、<code>(a | b)</code>は選択肢です。任意の親にも必須の子があります。条件付き必須・排他・実効既定値は下の表を確認し、通常のYAMLはリンク先の設定例を使ってください。</p>
+<pre><code class="language-text">- apiVersion: net.routerd.net/v1alpha1
   kind: SelfAddressPolicy
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    addressFamily: &quot;ipv4&quot; # 必須; string; enum=[&quot;ipv4&quot;, &quot;ipv6&quot;]
-    candidates: # 必須; array
-      - # object
-        address: &quot;&lt;string&gt;&quot; # 任意; string
-        addressSuffix: &quot;&lt;string&gt;&quot; # 任意; string
-        delegatedAddress: &quot;&lt;string&gt;&quot; # 任意; string
-        interface: &quot;&lt;string&gt;&quot; # 任意; string
-        matchSuffix: &quot;&lt;string&gt;&quot; # 任意; string
-        ordinal: 1 # 任意; integer; minimum=1
-        source: &quot;delegatedAddress&quot; # 必須; string; enum=[&quot;delegatedAddress&quot;, &quot;interfaceAddress&quot;, &quot;static&quot;]
+    addressFamily: (&quot;ipv4&quot; | &quot;ipv6&quot;)
+    candidates:
+      -
+        [ address: &lt;string&gt; ]
+        [ addressSuffix: &lt;string&gt; ]
+        [ delegatedAddress: &lt;string&gt; ]
+        [ interface: &lt;string&gt; ]
+        [ matchSuffix: &lt;string&gt; ]
+        [ ordinal: &lt;integer&gt; ]
+        source: (&quot;delegatedAddress&quot; | &quot;interfaceAddress&quot; | &quot;static&quot;)
 </code></pre>
 <h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<p>任意の親の必須項目は、親を使う場合に必要です。それ以外の具体的な条件は説明欄に記載します。<code>[ ... ]</code>で囲まれた選択肢も、いずれか一方が必要な場合があります。</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>指定要否</th>
+<th>型・制約</th>
 <th>項目の意味と既定値</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.addressFamily</code></td>
+<td><strong>必須</strong></td>
+<td>string; enum=["ipv4", "ipv6"]</td>
 <td>ipv4・ipv6が必須です。検証は両方を許しますが、現行の選択利用箇所は旧DHCPv6静的生成で、ipv4の独立した実行時選択サービスにはなりません。</td>
 </tr>
 <tr>
 <td><code>spec.candidates</code></td>
+<td><strong>必須</strong></td>
+<td>array</td>
 <td>1件以上の順序付き候補一覧が必須です。対応する静的生成は順に試し、最初の成功を選んで全滅ならエラーです。明示参照したポリシーへの自動候補補完はありません。</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].source</code></td>
+<td><strong>必須</strong></td>
+<td>string; enum=["delegatedAddress", "interfaceAddress", "static"]</td>
 <td>delegatedAddress・interfaceAddress・staticが必須です。delegatedAddressはIPv6専用でaddress・interface禁止です。interfaceAddressはinterface、staticはaddressFamilyに合うaddress必須です。後二者の不要な他フィールドは一般には拒否しません。</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].interface</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>interfaceAddressで必須の宣言済み論理インターフェースです。delegatedAddressでは禁止で、他sourceで使わなくても指定時は存在検証します。</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].delegatedAddress</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>delegatedAddressで必須のIPv6DelegatedAddress裸名です。存在が必要で、対応生成はそのインターフェースの観測プレフィックスから生成し、汎用状態値fieldではありません。</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].address</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>staticで必須の、addressFamilyと一致する裸アドレスです。delegatedAddressでは禁止で、OSへの自動割当は行いません。</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].addressSuffix</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>delegatedAddressの任意IPv6サフィックスです。省略時は参照リソースのaddressSuffixで、他sourceの選択には使いません。</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].matchSuffix</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>interfaceAddressの任意IPv6パターンです。0でない各バイトを比較し、0のバイトは制約なしとなるため通常の連続サフィックスマスクではありません。指定時は最初に一致するグローバルIPv6を選びordinalは無視します。</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].ordinal</code></td>
+<td><em>任意</em></td>
+<td>integer; minimum=1</td>
 <td>matchSuffixが空の場合のinterfaceAddressの1始まり番号です。省略・0は1で、スキーマ下限1、負値は検証拒否です。観測一覧の順序で、安定したアドレスIDではありません。範囲外なら次候補を試します。</td>
 </tr>
 </tbody>
@@ -82,7 +103,7 @@
 <p><code>phase</code>, <code>address</code>, <code>source</code></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
 <ul>
 <li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
-<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#設定構文">設定構文</a></li>
 <li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
 <li><a href="#状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</a></li>
 </ul>

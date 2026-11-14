@@ -13,57 +13,64 @@ Derive and install a local IPv6 address from a DHCPv6PrefixDelegation prefix.
 - Linux uses ip address operations and FreeBSD ifconfig. Active application reads the address back before publishing Applied; tentative/DAD state can stay Pending. Prefix changes can retain previous addresses as deprecated until their valid lifetime ends. /128 is handled as a host address rather than an on-link subnet.
 - sendRA/announce do not cause the current address controller to run an RA service. Configure IPv6RouterAdvertisement or DHCPv6Server separately. Removed prefixSource and ready_when are rejected.
 
-## YAML definition
+## Configuration syntax
 
-All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.
+This is explanatory notation, not YAML to copy. Unbracketed fields are required within their parent; `[ ... ]` marks fields that can be omitted, subject to the conditions in the table. `<type>` is a placeholder, and `(a | b)` lists alternatives. Optional parents may contain required children. Conditional requirements, exclusions and runtime defaults are described below. Use the linked YAML example for an ordinary configuration.
 
-```yaml
+```text
 - apiVersion: net.routerd.net/v1alpha1
   kind: IPv6DelegatedAddress
   metadata:
     name: "<name>"
   spec:
-    addressSuffix: "<string>" # Required; string
-    announce: true # optional; boolean
-    dependsOn: # optional; array
-      - # object
-        equals: "<string>" # optional; string
-        field: "<string>" # optional; string
-        notEmpty: true # optional; boolean
-        optional: true # optional; boolean
-        phase: "<string>" # optional; string
-        resource: "<string>" # Required; string
-    interface: "<string>" # Required; string
-    prefixDelegation: "<string>" # Required; string
-    prefixLength: 1 # optional; integer; minimum=1; maximum=128
-    sendRA: true # optional; boolean
-    subnetID: "<string>" # optional; string
-    when: # optional; object
-      state: # optional; object
-        "<key>": # optional; object
-          contains: "<string>" # optional; string
-          equals: "<string>" # optional; string
-          exists: true # optional; boolean
-          for: "<string>" # optional; string
-          in: # optional; array
-            - "<string>" # string
-          maxAge: "<string>" # optional; string
-          status: "set" # optional; string; enum=["set", "unset", "unknown"]
+    addressSuffix: <string>
+    [ announce: <boolean> ]
+    [ dependsOn:
+        -
+          [ equals: <string> ]
+          [ field: <string> ]
+          [ notEmpty: <boolean> ]
+          [ optional: <boolean> ]
+          [ phase: <string> ]
+          resource: <string>
+    ]
+    interface: <string>
+    prefixDelegation: <string>
+    [ prefixLength: <integer> ]
+    [ sendRA: <boolean> ]
+    [ subnetID: <string> ]
+    [ when:
+        [ state:
+            [ <name>:
+                [ contains: <string> ]
+                [ equals: <string> ]
+                [ exists: <boolean> ]
+                [ for: <string> ]
+                [ in:
+                    - <string>
+                ]
+                [ maxAge: <string> ]
+                [ status: ("set" | "unset" | "unknown") ]
+            ]
+        ]
+    ]
 ```
 
 ## Field meaning and default
 
-| YAML | Field meaning and default |
-| --- | --- |
-| `spec.prefixDelegation` | Required bare DHCPv6PrefixDelegation metadata.name, not Kind/name or a status expression. No default. |
-| `spec.interface` | Required declared logical target interface. The final OS name is resolved from the Router. |
-| `spec.subnetID` | Optional hexadecimal string, default 0; "10" means hex 0x10, not decimal ten. Optional 0x prefix. Use an identifier that fits the delegated block; strict fit checking is absent. |
-| `spec.addressSuffix` | Required IPv6 suffix such as ::1. Only host bits below the derived prefix boundary are used, not the entire literal as an absolute address. No automatic ::1 default. |
-| `spec.prefixLength` | Omitted/0 retains the derived length, normally /64. Runtime accepts that same length or 128; other explicit lengths can pass schema (1–128) but fail apply. /128 avoids creating the usual on-link prefix route. |
-| `spec.sendRA` | Boolean default false. Used by host dependency/forwarding setup in some paths, but not an automatic RA-service switch in the live address controller. |
-| `spec.announce` | Boolean default false; same live RA-service limitation as sendRA. Do not treat it as an unsolicited neighbor/RA transmission guarantee. |
-| `spec.when` | Optional common condition, default unconditional. False can remove the derived address through the explicit cleanup path. |
-| `spec.dependsOn` | Optional common AND-list, default empty. Unsatisfied dependencies keep the address Pending/DependsOnFalse. HA staging has specialized handling for its PD/VMAC prerequisites; use actual resource phases. |
+Required children of optional objects apply only when their parent is used. Other exact conditions are in the explanation; bracketed alternatives may still require one choice.
+
+| YAML | Presence | Type / constraints | Field meaning and default |
+| --- | --- | --- | --- |
+| `spec.prefixDelegation` | **Required** | string | Required bare DHCPv6PrefixDelegation metadata.name, not Kind/name or a status expression. No default. |
+| `spec.interface` | **Required** | string | Required declared logical target interface. The final OS name is resolved from the Router. |
+| `spec.subnetID` | *Optional* | string | Optional hexadecimal string, default 0; "10" means hex 0x10, not decimal ten. Optional 0x prefix. Use an identifier that fits the delegated block; strict fit checking is absent. |
+| `spec.addressSuffix` | **Required** | string | Required IPv6 suffix such as ::1. Only host bits below the derived prefix boundary are used, not the entire literal as an absolute address. No automatic ::1 default. |
+| `spec.prefixLength` | *Optional* | integer; minimum=1; maximum=128 | Omitted/0 retains the derived length, normally /64. Runtime accepts that same length or 128; other explicit lengths can pass schema (1–128) but fail apply. /128 avoids creating the usual on-link prefix route. |
+| `spec.sendRA` | *Optional* | boolean | Boolean default false. Used by host dependency/forwarding setup in some paths, but not an automatic RA-service switch in the live address controller. |
+| `spec.announce` | *Optional* | boolean | Boolean default false; same live RA-service limitation as sendRA. Do not treat it as an unsolicited neighbor/RA transmission guarantee. |
+| `spec.when` | *Optional* | object | Optional common condition, default unconditional. False can remove the derived address through the explicit cleanup path. |
+| `spec.dependsOn` | *Optional* | array | Optional common AND-list, default empty. Unsatisfied dependencies keep the address Pending/DependsOnFalse. HA staging has specialized handling for its PD/VMAC prerequisites; use actual resource phases. |
 
 Implementation: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate_wan.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_wan.go) · [pkg/config/validate.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go) · [pkg/pdclient/derive.go](https://github.com/imksoo/routerd/blob/main/pkg/pdclient/derive.go) · [pkg/controller/chain/chain.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go) · [pkg/hostdeps/hostdeps.go](https://github.com/imksoo/routerd/blob/main/pkg/hostdeps/hostdeps.go)
 

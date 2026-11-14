@@ -10,26 +10,28 @@
 
 - 多个受管Hostname在协调时失败；managed=false条目被controller忽略。Linux使用hostnamectl，FreeBSD使用sysrc与hostname。
 
-## YAML定义
+## 配置语法
 
-此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。
+这是说明用语法，不是可直接复制的YAML。未加括号的字段在父条目内必填；`[ ... ]`表示按条件可省略，`<类型>`为替换值，`(a | b)`表示选项。选填父条目内仍可能有必填子条目。条件必填、互斥与实际默认值请见下表；常规YAML请使用链接示例。
 
-```yaml
+```text
 - apiVersion: net.routerd.net/v1alpha1
   kind: Hostname
   metadata:
     name: "<name>"
   spec:
-    hostname: "<string>" # 必填; string
-    managed: true # 选填; boolean
+    hostname: <string>
+    [ managed: <boolean> ]
 ```
 
 ## 字段含义与默认值
 
-| YAML | 字段含义与默认值 |
-| --- | --- |
-| `spec.hostname` | 必填非空OS主机名，无默认值，拒绝空格、tab、换行与/；不是DNSZone或Interface引用。 |
-| `spec.managed` | 默认false，不变更主机名。true观察当前/静态名称并按需变更；dry-run不调用变更命令。 |
+选填父条目的必填子条目仅在使用父条目时需要。其他具体条件列于说明；`[ ... ]`选项仍可能需要择一。
+
+| YAML | 指定要求 | 类型与限制 | 字段含义与默认值 |
+| --- | --- | --- | --- |
+| `spec.hostname` | **必填** | string | 必填非空OS主机名，无默认值，拒绝空格、tab、换行与/；不是DNSZone或Interface引用。 |
+| `spec.managed` | *选填* | boolean | 默认false，不变更主机名。true观察当前/静态名称并按需变更；dry-run不调用变更命令。 |
 
 实现: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate_system.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_system.go) · [pkg/controller/chain/hostname.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/hostname.go)
 

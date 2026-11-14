@@ -10,42 +10,48 @@
 
 - 依存するリソースのinterfaceには論理名metadata.name、ifnameには実デバイス名を指定します。managed=falseでも、adminUpやMTUを指定した場合のLinkControllerによる変更は抑止しません。
 
-## YAML定義
+## 設定構文
 
-全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。
+説明用の構文表記であり、そのままコピーするYAMLではありません。囲みのない項目は親の中で必須、`[ ... ]`は条件に応じて省略できる項目、`<型>`は差し替え値、`(a | b)`は選択肢です。任意の親にも必須の子があります。条件付き必須・排他・実効既定値は下の表を確認し、通常のYAMLはリンク先の設定例を使ってください。
 
-```yaml
+```text
 - apiVersion: net.routerd.net/v1alpha1
   kind: Interface
   metadata:
     name: "<name>"
   spec:
-    adminUp: true # 任意; boolean
-    ifname: "<string>" # 必須; string
-    managed: true # 必須; boolean
-    mtu: 576 # 任意; integer; minimum=576; maximum=9216
-    when: # 任意; object
-      state: # 任意; object
-        "<key>": # 任意; object
-          contains: "<string>" # 任意; string
-          equals: "<string>" # 任意; string
-          exists: true # 任意; boolean
-          for: "<string>" # 任意; string
-          in: # 任意; array
-            - "<string>" # string
-          maxAge: "<string>" # 任意; string
-          status: "set" # 任意; string; enum=["set", "unset", "unknown"]
+    [ adminUp: <boolean> ]
+    ifname: <string>
+    managed: <boolean>
+    [ mtu: <integer> ]
+    [ when:
+        [ state:
+            [ <name>:
+                [ contains: <string> ]
+                [ equals: <string> ]
+                [ exists: <boolean> ]
+                [ for: <string> ]
+                [ in:
+                    - <string>
+                ]
+                [ maxAge: <string> ]
+                [ status: ("set" | "unset" | "unknown") ]
+            ]
+        ]
+    ]
 ```
 
 ## 項目の意味と既定値
 
-| YAML | 項目の意味と既定値 |
-| --- | --- |
-| `spec.ifname` | ens18などの既存カーネルデバイス名。必須で既定値はありません。存在しなければ新規作成せず、Down/InterfaceNotFoundとして観測します。 |
-| `spec.managed` | 管理対象の宣言。読込み上の既定値はfalseですが、JSON Schemaでは明示を要求します。管理・観測の状態や周辺処理に使いますが、adminUpやMTUを観測だけに限定する保証ではありません。 |
-| `spec.adminUp` | 省略時falseで、UPにする要求を出しません。trueなら存在するDOWNのlinkをUPにします。falseは強制的にDOWNにする指定ではありません。 |
-| `spec.mtu` | 省略時0は現在のMTUを維持します。0以外は576〜9216で、観測値と異なれば反映します。 |
-| `spec.when` | 有効化条件。省略時は条件を設けません。state/all/any、unknown、経過時間の条件は共通の条件指定を参照してください。 |
+任意の親の必須項目は、親を使う場合に必要です。それ以外の具体的な条件は説明欄に記載します。`[ ... ]`で囲まれた選択肢も、いずれか一方が必要な場合があります。
+
+| YAML | 指定要否 | 型・制約 | 項目の意味と既定値 |
+| --- | --- | --- | --- |
+| `spec.ifname` | **必須** | string | ens18などの既存カーネルデバイス名。必須で既定値はありません。存在しなければ新規作成せず、Down/InterfaceNotFoundとして観測します。 |
+| `spec.managed` | **必須** | boolean | 管理対象の宣言。読込み上の既定値はfalseですが、JSON Schemaでは明示を要求します。管理・観測の状態や周辺処理に使いますが、adminUpやMTUを観測だけに限定する保証ではありません。 |
+| `spec.adminUp` | *任意* | boolean | 省略時falseで、UPにする要求を出しません。trueなら存在するDOWNのlinkをUPにします。falseは強制的にDOWNにする指定ではありません。 |
+| `spec.mtu` | *任意* | integer; minimum=576; maximum=9216 | 省略時0は現在のMTUを維持します。0以外は576〜9216で、観測値と異なれば反映します。 |
+| `spec.when` | *任意* | object | 有効化条件。省略時は条件を設けません。state/all/any、unknown、経過時間の条件は共通の条件指定を参照してください。 |
 
 実装: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate_interface.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_interface.go) · [pkg/config/index.go](https://github.com/imksoo/routerd/blob/main/pkg/config/index.go) · [pkg/controller/chain/chain.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go) · [pkg/resourcequery/when.go](https://github.com/imksoo/routerd/blob/main/pkg/resourcequery/when.go)
 

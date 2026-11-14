@@ -12,101 +12,136 @@
 <li>Source binding and socket marks are derived from referring EgressRoutePolicy candidates/targets, not exposed as HealthCheck YAML fields. Conflicting derived bindings cannot select a unique path. DS-Lite-associated probes require their binding to be available.</li>
 <li>TCP checks connection establishment only. DNS resolves example.com A records through the target server. HTTP sends GET http://<target>:<port>/ and accepts status 200–499, including 4xx; it does not check an application-specific URL or response body.</li>
 </ul>
-<h2 id="yaml-definition">YAML definition</h2>
-<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
-<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+<h2 id="configuration-syntax">Configuration syntax</h2>
+<p>This is explanatory notation, not YAML to copy. Unbracketed fields are required within their parent; <code>[ ... ]</code> marks fields that can be omitted, subject to the conditions in the table. <code>&lt;type&gt;</code> is a placeholder, and <code>(a | b)</code> lists alternatives. Optional parents may contain required children. Conditional requirements, exclusions and runtime defaults are described below. Use the linked YAML example for an ordinary configuration.</p>
+<pre><code class="language-text">- apiVersion: net.routerd.net/v1alpha1
   kind: HealthCheck
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    addressFamily: &quot;ipv4&quot; # optional; string; enum=[&quot;ipv4&quot;, &quot;ipv6&quot;]
-    enabled: true # optional; boolean
-    healthyThreshold: 1 # optional; integer; minimum=1
-    interface: &quot;&lt;string&gt;&quot; # optional; string
-    interval: &quot;&lt;string&gt;&quot; # optional; string
-    port: 0 # optional; integer; minimum=0; maximum=65535
-    protocol: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;icmp&quot;, &quot;tcp&quot;, &quot;dns&quot;, &quot;http&quot;]
-    role: &quot;link&quot; # optional; string; enum=[&quot;link&quot;, &quot;next-hop&quot;, &quot;internet&quot;, &quot;service&quot;, &quot;policy&quot;]
-    target: &quot;&lt;string&gt;&quot; # optional; string
-    targetSource: &quot;auto&quot; # optional; string; enum=[&quot;auto&quot;, &quot;static&quot;, &quot;defaultGateway&quot;, &quot;dsliteRemote&quot;]
-    timeout: &quot;&lt;string&gt;&quot; # optional; string
-    type: &quot;ping&quot; # optional; string; enum=[&quot;ping&quot;]
-    unhealthyThreshold: 1 # optional; integer; minimum=1
-    when: # optional; object
-      state: # optional; object
-        &quot;&lt;key&gt;&quot;: # optional; object
-          contains: &quot;&lt;string&gt;&quot; # optional; string
-          equals: &quot;&lt;string&gt;&quot; # optional; string
-          exists: true # optional; boolean
-          for: &quot;&lt;string&gt;&quot; # optional; string
-          in: # optional; array
-            - &quot;&lt;string&gt;&quot; # string
-          maxAge: &quot;&lt;string&gt;&quot; # optional; string
-          status: &quot;set&quot; # optional; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+    [ addressFamily: (&quot;ipv4&quot; | &quot;ipv6&quot;) ]
+    [ enabled: &lt;boolean&gt; ]
+    [ healthyThreshold: &lt;integer&gt; ]
+    [ interface: &lt;string&gt; ]
+    [ interval: &lt;string&gt; ]
+    [ port: &lt;integer&gt; ]
+    [ protocol: (&quot;&quot; | &quot;icmp&quot; | &quot;tcp&quot; | &quot;dns&quot; | &quot;http&quot;) ]
+    [ role: (&quot;link&quot; | &quot;next-hop&quot; | &quot;internet&quot; | &quot;service&quot; | &quot;policy&quot;) ]
+    [ target: &lt;string&gt; ]
+    [ targetSource: (&quot;auto&quot; | &quot;static&quot; | &quot;defaultGateway&quot; | &quot;dsliteRemote&quot;) ]
+    [ timeout: &lt;string&gt; ]
+    [ type: (&quot;ping&quot;) ]
+    [ unhealthyThreshold: &lt;integer&gt; ]
+    [ when:
+        [ state:
+            [ &lt;name&gt;:
+                [ contains: &lt;string&gt; ]
+                [ equals: &lt;string&gt; ]
+                [ exists: &lt;boolean&gt; ]
+                [ for: &lt;string&gt; ]
+                [ in:
+                    - &lt;string&gt;
+                ]
+                [ maxAge: &lt;string&gt; ]
+                [ status: (&quot;set&quot; | &quot;unset&quot; | &quot;unknown&quot;) ]
+            ]
+        ]
+    ]
 </code></pre>
 <h2 id="field-meaning-and-default">Field meaning and default</h2>
+<p>Required children of optional objects apply only when their parent is used. Other exact conditions are in the explanation; bracketed alternatives may still require one choice.</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>Presence</th>
+<th>Type / constraints</th>
 <th>Field meaning and default</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.enabled</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default true; false disables probing.</td>
 </tr>
 <tr>
 <td><code>spec.type</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["ping"]</td>
 <td>Default ping; only ping is accepted. Use protocol to choose TCP/DNS/HTTP despite the type name.</td>
 </tr>
 <tr>
 <td><code>spec.role</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["link", "next-hop", "internet", "service", "policy"]</td>
 <td>Optional link/next-hop/internet/service/policy classification; validation/plan default next-hop. It does not choose the probe target or protocol at runtime.</td>
 </tr>
 <tr>
 <td><code>spec.addressFamily</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["ipv4", "ipv6"]</td>
 <td>Optional ipv4/ipv6. Target validation treats omission as ipv4, so specify ipv6 with an IPv6 target. This is not DNS hostname resolution: target must be an IP literal.</td>
 </tr>
 <tr>
 <td><code>spec.target</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Bare IP address matching addressFamily. Semantically required when targetSource is static; also operationally required by the current helper for all modes. No usable runtime default.</td>
 </tr>
 <tr>
 <td><code>spec.targetSource</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["auto", "static", "defaultGateway", "dsliteRemote"]</td>
 <td>auto by validation default; static/defaultGateway/dsliteRemote also accepted. The current renderer does not implement their automatic target lookup; see the operational restriction above.</td>
 </tr>
 <tr>
 <td><code>spec.interface</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional logical interface/PPPoESession/DSLiteTunnel name; if supplied it must exist in the shared interface/tunnel index. This field alone does not become --source-interface in the current helper renderer.</td>
 </tr>
 <tr>
 <td><code>spec.protocol</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["", "icmp", "tcp", "dns", "http"]</td>
 <td>icmp by default; tcp/dns/http select the checks described above. HTTP is plaintext, not HTTPS.</td>
 </tr>
 <tr>
 <td><code>spec.port</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=0; maximum=65535</td>
 <td>0–65535; default 0 delegates to the protocol: TCP 443, DNS 53, HTTP 80. ICMP does not use a port.</td>
 </tr>
 <tr>
 <td><code>spec.interval</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Positive Go duration; helper/runtime default 30s. The plan observer currently displays 60s on omission, which is not the helper default.</td>
 </tr>
 <tr>
 <td><code>spec.timeout</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Positive Go duration per probe, default 3s. This is the configured probe timeout, not a router reboot deadline.</td>
 </tr>
 <tr>
 <td><code>spec.healthyThreshold</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=1</td>
 <td>Consecutive successful probes to Healthy, default 1. A failure resets the success streak. Use positive integers; explicit 0 is outside the schema minimum.</td>
 </tr>
 <tr>
 <td><code>spec.unhealthyThreshold</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=1</td>
 <td>Consecutive failures to Unhealthy, default 3. A success resets the failure streak; intermediate failures report Failing.</td>
 </tr>
 <tr>
 <td><code>spec.when</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional common activation predicate; omitted means unconditional. Refer to common fields for nested state/all/any and their conditions.</td>
 </tr>
 </tbody>
@@ -118,7 +153,7 @@
 <p><a href="/examples/home-router-mgmt-protected.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
 <li><a href="#conditions-and-references">Conditions and references</a></li>
-<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#configuration-syntax">Configuration syntax</a></li>
 <li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 <li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
 </ul>

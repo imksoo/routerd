@@ -10,39 +10,41 @@
 
 - 取得元・操作・対象のapiVersion/kind/nameを完全一致で照合します。該当するallowがなければmaskは拒否します。同じ対象の許可済みmaskが複数あれば、最も遅い期限まで統合します。
 
-## YAML定義
+## 設定構文
 
-全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。
+説明用の構文表記であり、そのままコピーするYAMLではありません。囲みのない項目は親の中で必須、`[ ... ]`は条件に応じて省略できる項目、`<型>`は差し替え値、`(a | b)`は選択肢です。任意の親にも必須の子があります。条件付き必須・排他・実効既定値は下の表を確認し、通常のYAMLはリンク先の設定例を使ってください。
 
-```yaml
+```text
 - apiVersion: config.routerd.net/v1alpha1
   kind: DynamicOverridePolicy
   metadata:
     name: "<name>"
   spec:
-    allow: # 必須; array
-      - # object
-        operations: # 必須; array
-          - "<string>" # string
-        source: "<string>" # 必須; string
-        targets: # 必須; array
-          - # object
-            apiVersion: "<string>" # 必須; string
-            kind: "<string>" # 必須; string
-            name: "<string>" # 必須; string
+    allow:
+      -
+        operations:
+          - <string>
+        source: <string>
+        targets:
+          -
+            apiVersion: <string>
+            kind: <string>
+            name: <string>
 ```
 
 ## 項目の意味と既定値
 
-| YAML | 項目の意味と既定値 |
-| --- | --- |
-| `spec.allow` | 許可ルール一覧。空の場合は権限を付与せず、効果はありません。 |
-| `spec.allow[].source` | 必須の取得元識別子。DynamicConfigPart.spec.sourceと完全一致で照合します。PluginやDynamicConfigSourceのリソース名とは限りません。ワイルドカード・既定値はありません。 |
-| `spec.allow[].operations` | 許可する操作。受理する値はmaskだけで、空の場合は操作を許可しません。 |
-| `spec.allow[].targets` | maskの対象にできる起動設定リソースの完全識別子一覧。空なら対象を許可しません。 |
-| `spec.allow[].targets[].apiVersion` | 対象のAPIグループとバージョン。各要素で必須、既定値はありません。 |
-| `spec.allow[].targets[].kind` | 必須の対象リソース種類。ワイルドカード展開はありません。 |
-| `spec.allow[].targets[].name` | 対象のmetadata.nameとの完全一致で使う必須値。ワイルドカード展開はありません。 |
+任意の親の必須項目は、親を使う場合に必要です。それ以外の具体的な条件は説明欄に記載します。`[ ... ]`で囲まれた選択肢も、いずれか一方が必要な場合があります。
+
+| YAML | 指定要否 | 型・制約 | 項目の意味と既定値 |
+| --- | --- | --- | --- |
+| `spec.allow` | **必須** | array | 許可ルール一覧。空の場合は権限を付与せず、効果はありません。 |
+| `spec.allow[].source` | **必須** | string | 必須の取得元識別子。DynamicConfigPart.spec.sourceと完全一致で照合します。PluginやDynamicConfigSourceのリソース名とは限りません。ワイルドカード・既定値はありません。 |
+| `spec.allow[].operations` | **必須** | array | 許可する操作。受理する値はmaskだけで、空の場合は操作を許可しません。 |
+| `spec.allow[].targets` | **必須** | array | maskの対象にできる起動設定リソースの完全識別子一覧。空なら対象を許可しません。 |
+| `spec.allow[].targets[].apiVersion` | **必須** | string | 対象のAPIグループとバージョン。各要素で必須、既定値はありません。 |
+| `spec.allow[].targets[].kind` | **必須** | string | 必須の対象リソース種類。ワイルドカード展開はありません。 |
+| `spec.allow[].targets[].name` | **必須** | string | 対象のmetadata.nameとの完全一致で使う必須値。ワイルドカード展開はありません。 |
 
 実装: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate_config.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_config.go) · [pkg/dynamicconfig/merge.go](https://github.com/imksoo/routerd/blob/main/pkg/dynamicconfig/merge.go)
 

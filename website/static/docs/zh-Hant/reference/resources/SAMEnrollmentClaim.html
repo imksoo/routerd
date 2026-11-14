@@ -12,133 +12,185 @@
 <li>設定 joinTokenFrom 時需 nonce/timestamp/HMAC，audience 須符合設定值，且同一原則內 nonce 不可衝突。HMAC 為正規 leaf 酬載的 SHA-256，選用 direct 時包含 directMesh:true；變更簽署身分/意圖須重新簽署。</li>
 <li>已撤銷或過期要求排除於衍生拓撲。無擁有位址的 direct 要求仍可保留傳輸鄰接，但不允許匯入移動路由；原則整體範圍不代表 無限制 direct /32 授權。</li>
 </ul>
-<h2 id="yaml定義">YAML定義</h2>
-<p>此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。</p>
-<pre><code class="language-yaml">- apiVersion: mobility.routerd.net/v1alpha1
+<h2 id="設定語法">設定語法</h2>
+<p>這是說明用語法，不是可直接複製的YAML。未加括號的欄位在父項目內必填；<code>[ ... ]</code>表示依條件可省略，<code>&lt;型別&gt;</code>為替換值，<code>(a | b)</code>表示選項。選填父項目內仍可能有必填子項目。條件必填、互斥與實際預設值請見下表；一般YAML請使用連結範例。</p>
+<pre><code class="language-text">- apiVersion: mobility.routerd.net/v1alpha1
   kind: SAMEnrollmentClaim
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    bgp: # 選填; object
-      asn: 1 # 選填; integer; minimum=1
-      routerID: &quot;&lt;string&gt;&quot; # 選填; string
-    directMesh: true # 選填; boolean
-    endpoint: &quot;&lt;string&gt;&quot; # 選填; string
-    expiresAt: &quot;&lt;string&gt;&quot; # 選填; string
-    joinAudience: &quot;&lt;string&gt;&quot; # 選填; string
-    joinHMAC: &quot;&lt;string&gt;&quot; # 選填; string
-    joinNonce: &quot;&lt;string&gt;&quot; # 選填; string
-    joinTimestamp: &quot;&lt;string&gt;&quot; # 選填; string
-    leafID: &quot;&lt;string&gt;&quot; # 必填; string
-    mobility: # 選填; object
-      ownedAddresses: # 選填; array
-        - &quot;&lt;string&gt;&quot; # string
-    policyRef: &quot;&lt;string&gt;&quot; # 必填; string
-    revoked: true # 選填; boolean
-    rrSetRef: &quot;&lt;string&gt;&quot; # 選填; string
-    tunnelAddress: &quot;&lt;string&gt;&quot; # 必填; string
-    wireGuard: # 選填; object
-      allowedIPs: # 選填; array
-        - &quot;&lt;string&gt;&quot; # string
-      endpoint: &quot;&lt;string&gt;&quot; # 選填; string
-      persistentKeepalive: 0 # 選填; integer; minimum=0; maximum=65535
-      publicKey: &quot;&lt;string&gt;&quot; # 必填; string
+    [ bgp:
+        [ asn: &lt;integer&gt; ]
+        [ routerID: &lt;string&gt; ]
+    ]
+    [ directMesh: &lt;boolean&gt; ]
+    [ endpoint: &lt;string&gt; ]
+    [ expiresAt: &lt;string&gt; ]
+    [ joinAudience: &lt;string&gt; ]
+    [ joinHMAC: &lt;string&gt; ]
+    [ joinNonce: &lt;string&gt; ]
+    [ joinTimestamp: &lt;string&gt; ]
+    leafID: &lt;string&gt;
+    [ mobility:
+        [ ownedAddresses:
+            - &lt;string&gt;
+        ]
+    ]
+    policyRef: &lt;string&gt;
+    [ revoked: &lt;boolean&gt; ]
+    [ rrSetRef: &lt;string&gt; ]
+    tunnelAddress: &lt;string&gt;
+    [ wireGuard:
+        [ allowedIPs:
+            - &lt;string&gt;
+        ]
+        [ endpoint: &lt;string&gt; ]
+        [ persistentKeepalive: &lt;integer&gt; ]
+        publicKey: &lt;string&gt;
+    ]
 </code></pre>
 <h2 id="欄位意義與預設值">欄位意義與預設值</h2>
+<p>選填父項目的必填子項目僅在使用父項目時需要。其他具體條件列於說明；<code>[ ... ]</code>選項仍可能需要擇一。</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>指定要求</th>
+<th>型別與限制</th>
 <th>欄位意義與預設值</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.policyRef</code></td>
+<td><strong>必填</strong></td>
+<td>string</td>
 <td>必填 SAMEnrollmentPolicy/name，除 SAMEnrollmentClient 用於遠端接納的 leaf 要求外，必須在本機存在。</td>
 </tr>
 <tr>
 <td><code>spec.rrSetRef</code></td>
+<td><em>選填</em></td>
+<td>string</td>
 <td>結構上選用，但 SAMEnrollmentClient 執行時需 SAMRRSet/name。原則設定 rrSetRef 時須相等。此為執行時 RR 拓撲名稱，不是需編寫的靜態資源。</td>
 </tr>
 <tr>
 <td><code>spec.leafID</code></td>
+<td><strong>必填</strong></td>
+<td>string</td>
 <td>必填穩定節點身分，須符合 allowedLeafIDs.pattern 且在原則內唯一，用作產生的 nodeRef。</td>
 </tr>
 <tr>
 <td><code>spec.joinAudience</code></td>
+<td><strong>條件必填</strong></td>
+<td>string</td>
 <td>選用且納入簽署的 audience；啟用 join-token 認證且原則 audience 非空時須相等。</td>
 </tr>
 <tr>
 <td><code>spec.joinNonce</code></td>
+<td><strong>條件必填</strong></td>
+<td>string</td>
 <td>選用且納入簽署的 nonce，設定 joinHMAC 或使用 join-token 原則時必填。同一原則內重複會拒絕，此 YAML 欄位不自動產生。</td>
 </tr>
 <tr>
 <td><code>spec.joinTimestamp</code></td>
+<td><strong>條件必填</strong></td>
+<td>string</td>
 <td>選用且納入簽署的 RFC3339/RFC3339Nano 時間戳。join-token 原則或以原則 TTL 檢查明確 expiresAt 時必填；有此時間時，TTL 也限制從此起的要求壽命。</td>
 </tr>
 <tr>
 <td><code>spec.joinHMAC</code></td>
+<td><strong>條件必填</strong></td>
+<td>string</td>
 <td>正規要求的選用十六進位 HMAC-SHA256 簽章，join-token 原則時必填。是簽章，不是 join 密鑰或 ControlAPI Bearer 權杖。</td>
 </tr>
 <tr>
 <td><code>spec.tunnelAddress</code></td>
+<td><strong>必填</strong></td>
+<td>string</td>
 <td>必填純 IPv4 位址或 /32 CIDR，須在 policy.tunnelAddressPrefixes 授權範圍且在原則內唯一，不自動分配。</td>
 </tr>
 <tr>
 <td><code>spec.endpoint</code></td>
+<td><em>選填</em></td>
+<td>string</td>
 <td>選用外層隧道 IP 端點，policy.endpointPrefixes 非空時須位於該 IPv4 允許清單，與 WireGuard UDP 端點不同。</td>
 </tr>
 <tr>
 <td><code>spec.wireGuard</code></td>
+<td><em>選填</em></td>
+<td>object</td>
 <td>選用公開 WireGuard 資料，任一子欄位非空時需 publicKey，不包含私密金鑰。</td>
 </tr>
 <tr>
 <td><code>spec.wireGuard.publicKey</code></td>
+<td><strong>條件必填</strong></td>
+<td>string</td>
 <td>提供 WireGuard 資料時必填公開金鑰，非空金鑰在原則內須唯一，此處不自動產生。</td>
 </tr>
 <tr>
 <td><code>spec.wireGuard.endpoint</code></td>
+<td><em>選填</em></td>
+<td>string</td>
 <td>選用 WireGuard UDP host:port（1–65535）。前綴接納要求端點 IP 可解析，使用 wireGuard.endpointPrefixes 或 policy.endpointPrefixes；不可假設主機名稱會通過接納。</td>
 </tr>
 <tr>
 <td><code>spec.wireGuard.allowedIPs</code></td>
+<td><em>選填</em></td>
+<td>array</td>
 <td>選用額外 IPv4 CIDR，各項須包含於 policy.wireGuard.allowedExtraIPPrefixes。空值無額外前綴，產生對等端另包含 tunnelAddress /32。</td>
 </tr>
 <tr>
 <td><code>spec.wireGuard.persistentKeepalive</code></td>
+<td><em>選填</em></td>
+<td>integer; minimum=0; maximum=65535</td>
 <td>整數秒 0–65535，預設 0 在產生拓撲時使用原則 WireGuard keepalive，非零覆寫預設值。</td>
 </tr>
 <tr>
 <td><code>spec.directMesh</code></td>
+<td><em>選填</em></td>
+<td>boolean</td>
 <td>預設 false 僅使用 RR 對等端。true 要求加入原則 direct 對等群組並納入簽署，不略過原則啟用或擁有 /32 接納檢查。</td>
 </tr>
 <tr>
 <td><code>spec.mobility</code></td>
+<td><em>選填</em></td>
+<td>object</td>
 <td>選用宣告移動所有權，預設無擁有位址，本身不探索用戶端。</td>
 </tr>
 <tr>
 <td><code>spec.mobility.ownedAddresses</code></td>
+<td><em>選填</em></td>
+<td>array</td>
 <td>由原則 mobilityPrefixes/MobilityPool 參照授權的純 IPv4 位址或 /32。同一原則的有效要求間不可重複；direct BGP 匯入僅限接納的擁有 /32。</td>
 </tr>
 <tr>
 <td><code>spec.bgp</code></td>
+<td><em>選填</em></td>
+<td>object</td>
 <td>選用且納入簽署的 BGP 身分意圖，不是 BGPRouter 資源參照。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.asn</code></td>
+<td><em>選填</em></td>
+<td>integer; minimum=1</td>
 <td>簽署要求中的選用 uint32 ASN，解碼預設 0。結構描述要求提供時 &gt;=1，但結構驗證不另要求非零。不是覆寫原則傳輸 peerASN。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.routerID</code></td>
+<td><em>選填</em></td>
+<td>string</td>
 <td>選用 IPv4 BGP 識別碼，無衍生預設值。非空 ID 在原則內須唯一，不建立 BGPRouter。</td>
 </tr>
 <tr>
 <td><code>spec.expiresAt</code></td>
+<td><em>選填</em></td>
+<td>string</td>
 <td>選用 RR/管理者擁有的 RFC3339 到期時間，不納入 join HMAC。接納通常指派原則 TTL 或預設 5 分鐘到期。兩者提供時明確期限不可超過 joinTimestamp+原則 TTL，過期則排除。</td>
 </tr>
 <tr>
 <td><code>spec.revoked</code></td>
+<td><em>選填</em></td>
+<td>boolean</td>
 <td>預設 false，true 為 RR/管理者撤銷狀態，不納入 join HMAC，阻止拓撲接納。leaf 無法重送簽章以清除已保存撤銷。</td>
 </tr>
 </tbody>
@@ -150,7 +202,7 @@
 <p><a href="/examples/cloudedge-dynamic-leaf-a-wg.yaml">設定範例</a></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
 <ul>
 <li><a href="#指定條件與參照關係">指定條件與參照關係</a></li>
-<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#設定語法">設定語法</a></li>
 <li><a href="#欄位意義與預設值">欄位意義與預設值</a></li>
 <li><a href="#可參照的狀態欄位">可參照的狀態欄位</a></li>
 </ul>

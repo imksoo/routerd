@@ -12,87 +12,117 @@
 <li>whenは成立を確認できない場合に転送を止めます。偽・未解決・古い状態・起動前の状態では更新を省略するだけでなく、デバイスをdown後に削除します。参照状態の有効期間は既定30秒でmaxAgeで変更できます。unknownを許容する条件は検証で拒否します。</li>
 <li>tcpMSSClampにはbridgeと明示的なmtu 1280以上が必要です。生成時には実際のBridgeリソースと解決可能なメンバーが必要で、全体の参照検証だけでは共通インターフェース索引の存在しか確認しません。</li>
 </ul>
-<h2 id="yaml定義">YAML定義</h2>
-<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
-<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+<h2 id="設定構文">設定構文</h2>
+<p>説明用の構文表記であり、そのままコピーするYAMLではありません。囲みのない項目は親の中で必須、<code>[ ... ]</code>は条件に応じて省略できる項目、<code>&lt;型&gt;</code>は差し替え値、<code>(a | b)</code>は選択肢です。任意の親にも必須の子があります。条件付き必須・排他・実効既定値は下の表を確認し、通常のYAMLはリンク先の設定例を使ってください。</p>
+<pre><code class="language-text">- apiVersion: net.routerd.net/v1alpha1
   kind: VXLANTunnel
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    bridge: &quot;&lt;string&gt;&quot; # 任意; string
-    ifname: &quot;&lt;string&gt;&quot; # 任意; string
-    localAddress: &quot;&lt;string&gt;&quot; # 必須; string
-    mtu: 0 # 任意; integer; minimum=0
-    outerDF: &quot;&quot; # 任意; string; enum=[&quot;&quot;, &quot;inherit&quot;, &quot;set&quot;, &quot;unset&quot;]
-    peers: # 任意; array
-      - &quot;&lt;string&gt;&quot; # string
-    tcpMSSClamp: true # 任意; boolean
-    udpPort: 1 # 任意; integer; minimum=1; maximum=65535
-    underlayInterface: &quot;&lt;string&gt;&quot; # 必須; string
-    vni: 1 # 必須; integer; minimum=1; maximum=16777215
-    when: # 任意; object
-      state: # 任意; object
-        &quot;&lt;key&gt;&quot;: # 任意; object
-          contains: &quot;&lt;string&gt;&quot; # 任意; string
-          equals: &quot;&lt;string&gt;&quot; # 任意; string
-          exists: true # 任意; boolean
-          for: &quot;&lt;string&gt;&quot; # 任意; string
-          in: # 任意; array
-            - &quot;&lt;string&gt;&quot; # string
-          maxAge: &quot;&lt;string&gt;&quot; # 任意; string
-          status: &quot;set&quot; # 任意; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+    [ bridge: &lt;string&gt; ]
+    [ ifname: &lt;string&gt; ]
+    localAddress: &lt;string&gt;
+    [ mtu: &lt;integer&gt; ]
+    [ outerDF: (&quot;&quot; | &quot;inherit&quot; | &quot;set&quot; | &quot;unset&quot;) ]
+    [ peers:
+        - &lt;string&gt;
+    ]
+    [ tcpMSSClamp: &lt;boolean&gt; ]
+    [ udpPort: &lt;integer&gt; ]
+    underlayInterface: &lt;string&gt;
+    vni: &lt;integer&gt;
+    [ when:
+        [ state:
+            [ &lt;name&gt;:
+                [ contains: &lt;string&gt; ]
+                [ equals: &lt;string&gt; ]
+                [ exists: &lt;boolean&gt; ]
+                [ for: &lt;string&gt; ]
+                [ in:
+                    - &lt;string&gt;
+                ]
+                [ maxAge: &lt;string&gt; ]
+                [ status: (&quot;set&quot; | &quot;unset&quot; | &quot;unknown&quot;) ]
+            ]
+        ]
+    ]
 </code></pre>
 <h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<p>任意の親の必須項目は、親を使う場合に必要です。それ以外の具体的な条件は説明欄に記載します。<code>[ ... ]</code>で囲まれた選択肢も、いずれか一方が必要な場合があります。</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>指定要否</th>
+<th>型・制約</th>
 <th>項目の意味と既定値</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.ifname</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>OS上のVXLAN名です。既定はmetadata.nameで、15文字以内・空白とスラッシュ不可です。</td>
 </tr>
 <tr>
 <td><code>spec.vni</code></td>
+<td><strong>必須</strong></td>
+<td>integer; minimum=1; maximum=16777215</td>
 <td>必須のVXLANネットワーク識別子で、1～16777215の整数です。対向のL2セグメントと合わせます。</td>
 </tr>
 <tr>
 <td><code>spec.localAddress</code></td>
+<td><strong>必須</strong></td>
+<td>string</td>
 <td>必須の外側ローカルIPアドレスです。動的状態参照はありません。検証はIP形式のみで、ローカルへの割当・対向とのファミリー一致までは確認しません。</td>
 </tr>
 <tr>
 <td><code>spec.peers</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>任意の外側対向IP一覧で、既定は空です。00:00:00:00:00:00のpermanent self FDBエントリーとして同期し、不要なフラッド先は削除します。空なら静的な対向フラッド先はありません。</td>
 </tr>
 <tr>
 <td><code>spec.underlayInterface</code></td>
+<td><strong>必須</strong></td>
+<td>string</td>
 <td>同じRouterで宣言した論理インターフェース名が必須で、OSデバイス名へ解決します。状態参照や自動選択はありません。</td>
 </tr>
 <tr>
 <td><code>spec.udpPort</code></td>
+<td><em>任意</em></td>
+<td>integer; minimum=1; maximum=65535</td>
 <td>外側UDP宛先ポートです。省略・0では4789、明示値は1～65535です。</td>
 </tr>
 <tr>
 <td><code>spec.mtu</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>integer; minimum=0</td>
 <td>任意の内側デバイスMTUで576～9216です。省略・0ならOS既定・既存値を使います。スキーマ下限は0ですが、tcpMSSClamp時は1280以上の明示が必要です。</td>
 </tr>
 <tr>
 <td><code>spec.bridge</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>string</td>
 <td>任意の宣言済みブリッジ名で、OS名へ解決してVXLANのmasterに接続します。既定は未接続です。tcpMSSClampでは必須で、他種のインターフェースではなくBridgeリソースを使います。</td>
 </tr>
 <tr>
 <td><code>spec.outerDF</code></td>
+<td><em>任意</em></td>
+<td>string; enum=["", "inherit", "set", "unset"]</td>
 <td>外側IPv4のDF指定で、既定inherit、またはset・unsetです。ip linkのVXLAN dfへ渡します。内側アドレス・経路設定ではありません。</td>
 </tr>
 <tr>
 <td><code>spec.when</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>任意の共通state・all・any条件です。前述の厳密な鮮度確認も適用します。省略時は無条件で、unknownを受け入れる条件は使えません。</td>
 </tr>
 <tr>
 <td><code>spec.tcpMSSClamp</code></td>
+<td><em>任意</em></td>
+<td>boolean</td>
 <td>既定falseです。trueならVXLANとBridgeメンバーポート間にLinux bridgeファミリーのIPv4・IPv6 TCP SYN MSS規則を生成します。正のVXLAN・bridge・メンバーMTUの最小値からIPv4は40、IPv6は60を引き、任意のルーティング通信全般には適用しません。</td>
 </tr>
 </tbody>
@@ -103,7 +133,7 @@
 <p><code>phase</code>, <code>ifname</code>, <code>vni</code></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
 <ul>
 <li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
-<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#設定構文">設定構文</a></li>
 <li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
 <li><a href="#状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</a></li>
 </ul>

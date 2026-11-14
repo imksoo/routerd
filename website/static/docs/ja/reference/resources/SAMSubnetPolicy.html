@@ -11,53 +11,68 @@
 <li>sourcePrefixと全shardはIPv4 CIDRが必要です。各shardはsourcePrefix内で重複・包含不可ですが、元prefix全体を覆う必要はありません。各shardには1件以上の空でない重複しない割当ノードが必要です。</li>
 <li>割当イベントは10分で失効し、再調整で更新します。割当欠落・失効・イベントストア読取エラーでは全拒否ではなくシャード絞り込みなしになります。これだけを認可境界に使わないでください。</li>
 </ul>
-<h2 id="yaml定義">YAML定義</h2>
-<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
-<pre><code class="language-yaml">- apiVersion: mobility.routerd.net/v1alpha1
+<h2 id="設定構文">設定構文</h2>
+<p>説明用の構文表記であり、そのままコピーするYAMLではありません。囲みのない項目は親の中で必須、<code>[ ... ]</code>は条件に応じて省略できる項目、<code>&lt;型&gt;</code>は差し替え値、<code>(a | b)</code>は選択肢です。任意の親にも必須の子があります。条件付き必須・排他・実効既定値は下の表を確認し、通常のYAMLはリンク先の設定例を使ってください。</p>
+<pre><code class="language-text">- apiVersion: mobility.routerd.net/v1alpha1
   kind: SAMSubnetPolicy
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    groupRef: &quot;&lt;string&gt;&quot; # 必須; string
-    poolRef: &quot;&lt;string&gt;&quot; # 必須; string
-    shards: # 必須; array
-      - # object
-        assignedNodes: # 必須; array
-          - &quot;&lt;string&gt;&quot; # string
-        prefix: &quot;&lt;string&gt;&quot; # 必須; string
-    sourcePrefix: &quot;&lt;string&gt;&quot; # 必須; string
+    groupRef: &lt;string&gt;
+    poolRef: &lt;string&gt;
+    shards:
+      -
+        assignedNodes:
+          - &lt;string&gt;
+        prefix: &lt;string&gt;
+    sourcePrefix: &lt;string&gt;
 </code></pre>
 <h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<p>任意の親の必須項目は、親を使う場合に必要です。それ以外の具体的な条件は説明欄に記載します。<code>[ ... ]</code>で囲まれた選択肢も、いずれか一方が必要な場合があります。</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>指定要否</th>
+<th>型・制約</th>
 <th>項目の意味と既定値</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.sourcePrefix</code></td>
+<td><strong>必須</strong></td>
+<td>string</td>
 <td>全shardの範囲を規定する必須IPv4 CIDRで、既定値はありません。包含検証に使い、アドレス・経路として適用しません。</td>
 </tr>
 <tr>
 <td><code>spec.poolRef</code></td>
+<td><strong>必須</strong></td>
+<td>string</td>
 <td>イベントペイロードの照合キーとなる必須MobilityPool名です。Kind/nameではありません。現行検証は非空のみでプール存在までは確認しないため、受信するプールの名前に一致させます。</td>
 </tr>
 <tr>
 <td><code>spec.groupRef</code></td>
+<td><strong>必須</strong></td>
+<td>string</td>
 <td>割当の発行・読取先の必須EventGroup参照です。実行時にグループ解決が必要で、形の検証では非空のみを確認します。対象MobilityPool.groupRefと同じ表記にします。</td>
 </tr>
 <tr>
 <td><code>spec.shards</code></td>
+<td><strong>必須</strong></td>
+<td>array</td>
 <td>重複しないサブネットと担当nodeRefの必須非空一覧です。同じノードが別shardに属することは可能です。</td>
 </tr>
 <tr>
 <td><code>spec.shards[].prefix</code></td>
+<td><strong>必須</strong></td>
+<td>string</td>
 <td>sourcePrefix内の必須IPv4 CIDRです。sourcePrefixと同じ長さの全体割当も可能ですが、shard間の重複・包含は拒否します。</td>
 </tr>
 <tr>
 <td><code>spec.shards[].assignedNodes</code></td>
+<td><strong>必須</strong></td>
+<td>array</td>
 <td>必須の非空nodeRef一覧で、同一shard内で重複不可です。現行検証はSAMNodeSet所属までは確認しないため、受信側EventGroupのローカルノード識別子と一致させます。</td>
 </tr>
 </tbody>
@@ -68,7 +83,7 @@
 <p>このKindには通常の状態値参照の許可フィールドが登録されていません。</p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
 <ul>
 <li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
-<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#設定構文">設定構文</a></li>
 <li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
 <li><a href="#状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</a></li>
 </ul>

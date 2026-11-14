@@ -12,75 +12,102 @@
 <li>Automatic execution requires enabled true, dryRunOnly false, requireApproval false and a positive cap, plus matching allowlists and a suitable executor Plugin with execute.providerAction capability. External credentials and real provider authorization belong to that executor.</li>
 <li>executionWindow currently accepts every string and enforces no time restriction. allowUndo enables only best-effort rollback when suitable undo data exists; it is not an atomic transaction guarantee.</li>
 </ul>
-<h2 id="yaml-definition">YAML definition</h2>
-<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
-<pre><code class="language-yaml">- apiVersion: hybrid.routerd.net/v1alpha1
+<h2 id="configuration-syntax">Configuration syntax</h2>
+<p>This is explanatory notation, not YAML to copy. Unbracketed fields are required within their parent; <code>[ ... ]</code> marks fields that can be omitted, subject to the conditions in the table. <code>&lt;type&gt;</code> is a placeholder, and <code>(a | b)</code> lists alternatives. Optional parents may contain required children. Conditional requirements, exclusions and runtime defaults are described below. Use the linked YAML example for an ordinary configuration.</p>
+<pre><code class="language-text">- apiVersion: hybrid.routerd.net/v1alpha1
   kind: ProviderActionPolicy
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    allowUndo: true # optional; boolean
-    allowedActions: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    allowedCIDRs: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    allowedProviderRefs: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    allowedProviders: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    dryRunOnly: true # optional; boolean
-    enabled: true # optional; boolean
-    executionWindow: &quot;&lt;string&gt;&quot; # optional; string
-    maxActionsPerRun: 0 # optional; integer
-    requireApproval: true # optional; boolean
+    [ allowUndo: &lt;boolean&gt; ]
+    [ allowedActions:
+        - &lt;string&gt;
+    ]
+    [ allowedCIDRs:
+        - &lt;string&gt;
+    ]
+    [ allowedProviderRefs:
+        - &lt;string&gt;
+    ]
+    [ allowedProviders:
+        - &lt;string&gt;
+    ]
+    [ dryRunOnly: &lt;boolean&gt; ]
+    [ enabled: &lt;boolean&gt; ]
+    [ executionWindow: &lt;string&gt; ]
+    [ maxActionsPerRun: &lt;integer&gt; ]
+    [ requireApproval: &lt;boolean&gt; ]
 </code></pre>
 <h2 id="field-meaning-and-default">Field meaning and default</h2>
+<p>Required children of optional objects apply only when their parent is used. Other exact conditions are in the explanation; bracketed alternatives may still require one choice.</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>Presence</th>
+<th>Type / constraints</th>
 <th>Field meaning and default</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.enabled</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false. Must be true to permit action execution or preview.</td>
 </tr>
 <tr>
 <td><code>spec.dryRunOnly</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default true. False permits live mutation only if all other gates pass; true still requires enabled and allowlists for previews.</td>
 </tr>
 <tr>
 <td><code>spec.requireApproval</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default true. False allows auto-approval only with enabled true and dryRunOnly false. This does not bypass allowlists or executor selection.</td>
 </tr>
 <tr>
 <td><code>spec.allowedProviders</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Exact aws/azure/oci/gcp allowlist; default empty denies every provider. Use canonical spelling without surrounding whitespace.</td>
 </tr>
 <tr>
 <td><code>spec.allowedProviderRefs</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional exact action providerRef allowlist; empty imposes no reference restriction. Strings are not resolved as status sources or checked for profile existence by this validator. Match the actual action providerRef spelling.</td>
 </tr>
 <tr>
 <td><code>spec.allowedActions</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Exact canonical verb allowlist: assign-secondary-ip, unassign-secondary-ip, assign-route-table-route, unassign-route-table-route, ensure-forwarding-enabled, ensure-forwarding-disabled. Empty denies all.</td>
 </tr>
 <tr>
 <td><code>spec.allowedCIDRs</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional IPv4/IPv6 CIDRs. Empty adds no CIDR gate; nonempty requires target.address to exist and its IP (including the host part of CIDR input) to fall in any allowed prefix. Not a check of every address an executor might change.</td>
 </tr>
 <tr>
 <td><code>spec.maxActionsPerRun</code></td>
+<td><em>Optional</em></td>
+<td>integer</td>
 <td>Nonnegative integer, default 0 denies execution. Positive value caps candidate selection per automatic controller run; single-action engine calls check only that it is positive. Not a lifetime or billing budget.</td>
 </tr>
 <tr>
 <td><code>spec.allowUndo</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false; true permits best-effort rollback subject to available undo data and policy checks.</td>
 </tr>
 <tr>
 <td><code>spec.executionWindow</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional free-form string, default empty. Currently neither parsed as a schedule nor enforced at runtime; does not restrict execution time.</td>
 </tr>
 </tbody>
@@ -91,7 +118,7 @@
 <p>No fields are registered for this kind in the ordinary status-reference allowlist.</p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
 <li><a href="#conditions-and-references">Conditions and references</a></li>
-<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#configuration-syntax">Configuration syntax</a></li>
 <li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 <li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
 </ul>

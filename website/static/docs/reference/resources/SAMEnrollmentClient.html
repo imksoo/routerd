@@ -12,107 +12,148 @@
 <li>At least one bootstrapEndpoints entry or rrSocket is required; they are not mutually exclusive. The Unix socket client precedes listed HTTP(S) endpoints. Ordinary admission can use a successful RR response, while direct topology requires agreement across configured endpoints and keeps the RR fallback when direct admission is unsafe.</li>
 <li>Direct-mesh opt-out removes cached direct topology before contacting an unreachable RR. Client retry/renewal state is persisted; refreshing topology does not imply that tunnels or BGP sessions are already operational.</li>
 </ul>
-<h2 id="yaml-definition">YAML definition</h2>
-<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
-<pre><code class="language-yaml">- apiVersion: mobility.routerd.net/v1alpha1
+<h2 id="configuration-syntax">Configuration syntax</h2>
+<p>This is explanatory notation, not YAML to copy. Unbracketed fields are required within their parent; <code>[ ... ]</code> marks fields that can be omitted, subject to the conditions in the table. <code>&lt;type&gt;</code> is a placeholder, and <code>(a | b)</code> lists alternatives. Optional parents may contain required children. Conditional requirements, exclusions and runtime defaults are described below. Use the linked YAML example for an ordinary configuration.</p>
+<pre><code class="language-text">- apiVersion: mobility.routerd.net/v1alpha1
   kind: SAMEnrollmentClient
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    bootstrapEndpoints: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    claimRef: &quot;&lt;string&gt;&quot; # Required; string
-    controlAPITLS: # optional; object
-      caFile: &quot;&lt;string&gt;&quot; # optional; string
-      certFile: &quot;&lt;string&gt;&quot; # optional; string
-      insecureSkipVerify: true # optional; boolean
-      keyFile: &quot;&lt;string&gt;&quot; # optional; string
-      serverName: &quot;&lt;string&gt;&quot; # optional; string
-    controlAPITokenFrom: # optional; object
-      base64: true # optional; boolean
-      env: &quot;&lt;string&gt;&quot; # optional; string
-      file: &quot;&lt;string&gt;&quot; # optional; string
-    retryBackoff: # optional; object
-      max: &quot;&lt;string&gt;&quot; # optional; string
-      min: &quot;&lt;string&gt;&quot; # optional; string
-    rrSocket: &quot;&lt;string&gt;&quot; # optional; string
-    stateTTLRefreshBefore: &quot;&lt;string&gt;&quot; # optional; string
+    [ bootstrapEndpoints:
+        - &lt;string&gt;
+    ]
+    claimRef: &lt;string&gt;
+    [ controlAPITLS:
+        [ caFile: &lt;string&gt; ]
+        [ certFile: &lt;string&gt; ]
+        [ insecureSkipVerify: &lt;boolean&gt; ]
+        [ keyFile: &lt;string&gt; ]
+        [ serverName: &lt;string&gt; ]
+    ]
+    [ controlAPITokenFrom:
+        [ base64: &lt;boolean&gt; ]
+        [ env: &lt;string&gt; ]
+        [ file: &lt;string&gt; ]
+    ]
+    [ retryBackoff:
+        [ max: &lt;string&gt; ]
+        [ min: &lt;string&gt; ]
+    ]
+    [ rrSocket: &lt;string&gt; ]
+    [ stateTTLRefreshBefore: &lt;string&gt; ]
 </code></pre>
 <h2 id="field-meaning-and-default">Field meaning and default</h2>
+<p>Required children of optional objects apply only when their parent is used. Other exact conditions are in the explanation; bracketed alternatives may still require one choice.</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>Presence</th>
+<th>Type / constraints</th>
 <th>Field meaning and default</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.claimRef</code></td>
+<td><strong>Required</strong></td>
+<td>string</td>
 <td>Required SAMEnrollmentClaim/name declared in this Router. No status field selector.</td>
 </tr>
 <tr>
 <td><code>spec.bootstrapEndpoints</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>array</td>
 <td>Optional ordered absolute HTTP(S) ControlAPI URLs with hosts; at least one required unless rrSocket is supplied. No automatic discovery. Each enrollment request currently uses a 10s request context.</td>
 </tr>
 <tr>
 <td><code>spec.controlAPITokenFrom</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional Bearer-token source used only for HTTP(S) clients; omitted means no Bearer header. Exactly one file/env if supplied. Separate from the claim join HMAC credential.</td>
 </tr>
 <tr>
 <td><code>spec.controlAPITokenFrom.file</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Router-local raw token file, exclusive with env. Whitespace is trimmed; missing/unreadable/empty values fail when HTTP endpoints are configured.</td>
 </tr>
 <tr>
 <td><code>spec.controlAPITokenFrom.env</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Name of a routerd process environment variable holding the token, exclusive with file; not an environment-file path.</td>
 </tr>
 <tr>
 <td><code>spec.controlAPITokenFrom.base64</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false; true applies standard Base64 decoding and trims the decoded token. It is not encryption.</td>
 </tr>
 <tr>
 <td><code>spec.controlAPITLS</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional HTTPS client settings, unused for Unix sockets. Setting these does not turn an http URL into https.</td>
 </tr>
 <tr>
 <td><code>spec.controlAPITLS.caFile</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional PEM CA file. When supplied it replaces the client root pool with certificates in this file; omission uses the normal trust configuration.</td>
 </tr>
 <tr>
 <td><code>spec.controlAPITLS.certFile</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional client certificate file; must be paired with keyFile. No default certificate or generated credentials.</td>
 </tr>
 <tr>
 <td><code>spec.controlAPITLS.keyFile</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional client private-key file, required together with certFile.</td>
 </tr>
 <tr>
 <td><code>spec.controlAPITLS.serverName</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional TLS SNI/verification name override; empty uses URL host behavior. It does not change endpoint routing.</td>
 </tr>
 <tr>
 <td><code>spec.controlAPITLS.insecureSkipVerify</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false. True disables server certificate-chain/hostname verification; no effect on a plain HTTP URL.</td>
 </tr>
 <tr>
 <td><code>spec.rrSocket</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Optional absolute local RR Unix-socket path; may accompany HTTP(S) endpoints. Unix client does not use Bearer token or TLS settings.</td>
 </tr>
 <tr>
 <td><code>spec.stateTTLRefreshBefore</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Renewal lead-time Go duration, default 10m. If &gt;= an observed positive RR lease duration, runtime uses half that lease to avoid immediate renewal loops. Validator checks parseability, not positivity; use a positive value.</td>
 </tr>
 <tr>
 <td><code>spec.retryBackoff</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional exponential retry settings; failures double min up to max. Direct-topology recovery has an additional short convergence retry path.</td>
 </tr>
 <tr>
 <td><code>spec.retryBackoff.min</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Go duration, default 10s. Parseability is checked, but zero/negative are accepted; choose a positive value to avoid immediate/past-due retry scheduling.</td>
 </tr>
 <tr>
 <td><code>spec.retryBackoff.max</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Go duration, default 15m. When both min and max are explicit, max must be &gt;=min. Use positive values; defaults are not included in that comparison during validation.</td>
 </tr>
 </tbody>
@@ -124,7 +165,7 @@
 <p><a href="/examples/cloudedge-dynamic-leaf-a-wg.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
 <li><a href="#conditions-and-references">Conditions and references</a></li>
-<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#configuration-syntax">Configuration syntax</a></li>
 <li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 <li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
 </ul>

@@ -12,267 +12,377 @@
 <li>Generated RR-client/direct import enforces /32 bounds and peer-identity community, forbidding other known node identities. Direct import prefixes become exactly the admitted leaf owned /32s, with deny-all when empty and nextHopRewrite forced to peer-address. RR fallback next hop is also normalized to peer-address in direct profiles.</li>
 <li>An RR-client profile with no local MobilityPool requires explicit IPv4 import prefixes and bounds omitted or both 32. FreeBSD derives gifN/greN plus explicit point-to-point peerAddress; Linux uses compact tunnel names. Successful derivation is not tunnel/BGP connectivity proof.</li>
 </ul>
-<h2 id="yaml-definition">YAML definition</h2>
-<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
-<pre><code class="language-yaml">- apiVersion: mobility.routerd.net/v1alpha1
+<h2 id="configuration-syntax">Configuration syntax</h2>
+<p>This is explanatory notation, not YAML to copy. Unbracketed fields are required within their parent; <code>[ ... ]</code> marks fields that can be omitted, subject to the conditions in the table. <code>&lt;type&gt;</code> is a placeholder, and <code>(a | b)</code> lists alternatives. Optional parents may contain required children. Conditional requirements, exclusions and runtime defaults are described below. Use the linked YAML example for an ordinary configuration.</p>
+<pre><code class="language-text">- apiVersion: mobility.routerd.net/v1alpha1
   kind: SAMTransportProfile
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    addressingMode: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;edge-index&quot;, &quot;pair-stable&quot;]
-    bgp: # Required; object
-      bfd: # optional; object
-        detectMultiplier: 1 # optional; integer; minimum=1; maximum=50
-        enabled: true # optional; boolean
-        interface: &quot;&lt;string&gt;&quot; # optional; string
-        minRx: &quot;&lt;string&gt;&quot; # optional; string
-        minTx: &quot;&lt;string&gt;&quot; # optional; string
-        profile: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;fast&quot;, &quot;normal&quot;, &quot;slow&quot;]
-      convergenceProfile: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;default&quot;, &quot;fast&quot;, &quot;stable&quot;]
-      directLocalPreference: 0 # optional; integer
-      ebgpMultihop: 0 # optional; integer; minimum=0; maximum=255
-      exportPolicy: # optional; object
-        allowedPrefixes: # optional; array
-          - &quot;&lt;string&gt;&quot; # string
-      generatePeers: true # optional; boolean
-      importPolicy: # optional; object
-        allowedPrefixLengthMax: 0 # optional; integer; minimum=0; maximum=128
-        allowedPrefixLengthMin: 0 # optional; integer; minimum=0; maximum=128
-        allowedPrefixes: # optional; array
-          - &quot;&lt;string&gt;&quot; # string
-        forbiddenCommunities: # optional; array
-          - &quot;&lt;string&gt;&quot; # string
-        localPreference: 0 # optional; integer
-        nextHopRewrite: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;peer-address&quot;, &quot;unchanged&quot;]
-        requiredCommunities: # optional; array
-          - &quot;&lt;string&gt;&quot; # string
-      peerASN: 1 # Required; integer; minimum=1
-      routeReflectorClient: true # optional; boolean
-      routeReflectorClusterID: &quot;&lt;string&gt;&quot; # optional; string
-      routerRef: &quot;&lt;string&gt;&quot; # Required; string
-      timers: # optional; object
-        profile: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;default&quot;, &quot;fast&quot;, &quot;slow&quot;]
-      timersPreset: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;default&quot;, &quot;fast&quot;, &quot;slow&quot;]
-    encapDport: 1 # optional; integer; minimum=1; maximum=65535
-    encapSport: 1 # optional; integer; minimum=1; maximum=65535
-    encryption: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;none&quot;, &quot;wireguard&quot;]
-    innerPrefix: &quot;&lt;string&gt;&quot; # Required; string
-    localEndpoint: &quot;&lt;string&gt;&quot; # optional; string
-    localEndpointFrom: # optional; object
-      field: &quot;&lt;string&gt;&quot; # optional; string
-      optional: true # optional; boolean
-      resource: &quot;&lt;string&gt;&quot; # Required; string
-    mode: &quot;ipip&quot; # Required; string; enum=[&quot;ipip&quot;, &quot;gre&quot;, &quot;fou&quot;, &quot;gue&quot;]
-    peersFrom: # optional; array
-      - # object
-        direct: true # optional; boolean
-        nodeRefs: # optional; array
-          - &quot;&lt;string&gt;&quot; # string
-        optional: true # optional; boolean
-        resource: &quot;&lt;string&gt;&quot; # Required; string
-    publishPeerGroup: true # optional; boolean
-    selfNodeRef: &quot;&lt;string&gt;&quot; # Required; string
-    underlayInterface: &quot;&lt;string&gt;&quot; # Required; string
+    [ addressingMode: (&quot;&quot; | &quot;edge-index&quot; | &quot;pair-stable&quot;) ]
+    bgp:
+      [ bfd:
+          [ detectMultiplier: &lt;integer&gt; ]
+          [ enabled: &lt;boolean&gt; ]
+          [ interface: &lt;string&gt; ]
+          [ minRx: &lt;string&gt; ]
+          [ minTx: &lt;string&gt; ]
+          [ profile: (&quot;&quot; | &quot;fast&quot; | &quot;normal&quot; | &quot;slow&quot;) ]
+      ]
+      [ convergenceProfile: (&quot;&quot; | &quot;default&quot; | &quot;fast&quot; | &quot;stable&quot;) ]
+      [ directLocalPreference: &lt;integer&gt; ]
+      [ ebgpMultihop: &lt;integer&gt; ]
+      [ exportPolicy:
+          [ allowedPrefixes:
+              - &lt;string&gt;
+          ]
+      ]
+      [ generatePeers: &lt;boolean&gt; ]
+      [ importPolicy:
+          [ allowedPrefixLengthMax: &lt;integer&gt; ]
+          [ allowedPrefixLengthMin: &lt;integer&gt; ]
+          [ allowedPrefixes:
+              - &lt;string&gt;
+          ]
+          [ forbiddenCommunities:
+              - &lt;string&gt;
+          ]
+          [ localPreference: &lt;integer&gt; ]
+          [ nextHopRewrite: (&quot;&quot; | &quot;peer-address&quot; | &quot;unchanged&quot;) ]
+          [ requiredCommunities:
+              - &lt;string&gt;
+          ]
+      ]
+      peerASN: &lt;integer&gt;
+      [ routeReflectorClient: &lt;boolean&gt; ]
+      [ routeReflectorClusterID: &lt;string&gt; ]
+      routerRef: &lt;string&gt;
+      [ timers:
+          [ profile: (&quot;&quot; | &quot;default&quot; | &quot;fast&quot; | &quot;slow&quot;) ]
+      ]
+      [ timersPreset: (&quot;&quot; | &quot;default&quot; | &quot;fast&quot; | &quot;slow&quot;) ]
+    [ encapDport: &lt;integer&gt; ]
+    [ encapSport: &lt;integer&gt; ]
+    [ encryption: (&quot;&quot; | &quot;none&quot; | &quot;wireguard&quot;) ]
+    innerPrefix: &lt;string&gt;
+    [ localEndpoint: &lt;string&gt; ]
+    [ localEndpointFrom:
+        field: &lt;string&gt;
+        [ optional: &lt;boolean&gt; ]
+        resource: &lt;string&gt;
+    ]
+    mode: (&quot;ipip&quot; | &quot;gre&quot; | &quot;fou&quot; | &quot;gue&quot;)
+    [ peersFrom:
+        -
+          [ direct: &lt;boolean&gt; ]
+          [ nodeRefs:
+              - &lt;string&gt;
+          ]
+          [ optional: &lt;boolean&gt; ]
+          resource: &lt;string&gt;
+    ]
+    [ publishPeerGroup: &lt;boolean&gt; ]
+    selfNodeRef: &lt;string&gt;
+    underlayInterface: &lt;string&gt;
 </code></pre>
 <h2 id="field-meaning-and-default">Field meaning and default</h2>
+<p>Required children of optional objects apply only when their parent is used. Other exact conditions are in the explanation; bracketed alternatives may still require one choice.</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>Presence</th>
+<th>Type / constraints</th>
 <th>Field meaning and default</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.selfNodeRef</code></td>
+<td><strong>Required</strong></td>
+<td>string</td>
 <td>Required stable local nodeRef; no hostname/router-ID inference.</td>
 </tr>
 <tr>
 <td><code>spec.mode</code></td>
+<td><strong>Required</strong></td>
+<td>string; enum=["ipip", "gre", "fou", "gue"]</td>
 <td>Required ipip/gre/fou/gue. FreeBSD supports only ipip/gif and gre; fou/gue require Linux. Derived tunnels are unencrypted by themselves.</td>
 </tr>
 <tr>
 <td><code>spec.encryption</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["", "none", "wireguard"]</td>
 <td>none/omitted or wireguard. wireguard prefers node.wireGuard.transportEndpoint; does not generate private keys or a local WireGuardInterface. Configure the WireGuard underlay separately.</td>
 </tr>
 <tr>
 <td><code>spec.innerPrefix</code></td>
+<td><strong>Required</strong></td>
+<td>string</td>
 <td>Required IPv4 CIDR with prefix length &lt;=31; subdivided into /31 edges, with enough slots for topology. Pair-stable collisions are errors rather than silently moving endpoints.</td>
 </tr>
 <tr>
 <td><code>spec.addressingMode</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["", "edge-index", "pair-stable"]</td>
 <td>edge-index by default: /31 slots follow sorted topology edges and can change when topology changes. pair-stable hashes innerPrefix and unordered node pair into a fixed slot; required for direct sources.</td>
 </tr>
 <tr>
 <td><code>spec.underlayInterface</code></td>
+<td><strong>Required</strong></td>
+<td>string</td>
 <td>Required declared logical interface. Used by generated tunnels and remote endpoint /32 device routes; generated tunnels assert trustedUnderlay:true.</td>
 </tr>
 <tr>
 <td><code>spec.localEndpoint</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Local outer IPv4 literal; exactly one of localEndpoint/localEndpointFrom is required. No interface-address auto-selection.</td>
 </tr>
 <tr>
 <td><code>spec.localEndpointFrom</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>object</td>
 <td>Status source instead of literal localEndpoint. Common resource/field rules apply; unresolved endpoint leaves dependent transport pending.</td>
 </tr>
 <tr>
 <td><code>spec.localEndpointFrom.resource</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Required existing Kind/name when this source is used.</td>
 </tr>
 <tr>
 <td><code>spec.localEndpointFrom.field</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Required explicit provided field, for example currentAddress.</td>
 </tr>
 <tr>
 <td><code>spec.localEndpointFrom.optional</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false; does not waive reference validation or supply a usable endpoint when unresolved.</td>
 </tr>
 <tr>
 <td><code>spec.encapSport</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>integer; minimum=1; maximum=65535</td>
 <td>UDP source port 1–65535 required for fou/gue, forbidden for ipip/gre (omit/0).</td>
 </tr>
 <tr>
 <td><code>spec.encapDport</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>integer; minimum=1; maximum=65535</td>
 <td>UDP destination port 1–65535 required for fou/gue, forbidden for ipip/gre. No implicit port.</td>
 </tr>
 <tr>
 <td><code>spec.peersFrom</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>array</td>
 <td>Ordered topology sources; at least one required unless publishPeerGroup:true. Self is excluded as a peer but retained in shared topology; later duplicate nodes may replace earlier source material.</td>
 </tr>
 <tr>
 <td><code>spec.peersFrom[].resource</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Required SAMNodeSet/name, SAMPeerGroup/name, SAMEnrollmentPolicy/name or SAMRRSet/name. NodeSet is static; runtime sources supply admitted/shared snapshots.</td>
 </tr>
 <tr>
 <td><code>spec.peersFrom[].optional</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false. Missing nonoptional source is pending. Direct source unavailability/incompatibility does not remove usable RR fallback peers.</td>
 </tr>
 <tr>
 <td><code>spec.peersFrom[].direct</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false. True only for the final SAMPeerGroup source following a mandatory SAMRRSet; see direct-mesh constraints below.</td>
 </tr>
 <tr>
 <td><code>spec.peersFrom[].nodeRefs</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional unique nonempty nodeRef selectors; omitted selects all eligible source nodes. Narrows local adjacency, not shared authoritative topology.</td>
 </tr>
 <tr>
 <td><code>spec.publishPeerGroup</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false. True publishes the local endpoint as runtime SAMPeerGroup/<profile metadata.name> and permits empty peersFrom. Does not publish private credentials.</td>
 </tr>
 <tr>
 <td><code>spec.bgp</code></td>
+<td><strong>Required</strong></td>
+<td>object</td>
 <td>Required generated-peer settings; referenced BGPRouter must already exist.</td>
 </tr>
 <tr>
 <td><code>spec.bgp.generatePeers</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default true. False generates transport without BGP/BFD; prohibited for direct sources.</td>
 </tr>
 <tr>
 <td><code>spec.bgp.timersPreset</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["", "default", "fast", "slow"]</td>
 <td>Optional default/fast/slow shorthand; lower precedence than bgp.timers.profile. If both empty, generated peers inherit BGPRouter.timers.</td>
 </tr>
 <tr>
 <td><code>spec.bgp.directLocalPreference</code></td>
+<td><em>Optional</em></td>
+<td>integer</td>
 <td>Direct-peer uint32 LOCAL_PREF; omitted/0 defaults to 200. Must exceed positive RR bgp.importPolicy.localPreference when direct is configured.</td>
 </tr>
 <tr>
 <td><code>spec.bgp.bfd</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional generated BFD settings, used only if generatePeers and bfd.enabled are true.</td>
 </tr>
 <tr>
 <td><code>spec.bgp.bfd.enabled</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false. True derives BFD resources linked to generated BGPPeers; requires FRR bfdd/vtysh.</td>
 </tr>
 <tr>
 <td><code>spec.bgp.routerRef</code></td>
+<td><strong>Required</strong></td>
+<td>string</td>
 <td>Required BGPRouter/name referencing a declared router in the same Router configuration. Plain names are not accepted.</td>
 </tr>
 <tr>
 <td><code>spec.bgp.peerASN</code></td>
+<td><strong>Required</strong></td>
+<td>integer; minimum=1</td>
 <td>Required nonzero uint32 remote ASN. Matching the local ASN selects iBGP; routeReflectorClient requires this equality.</td>
 </tr>
 <tr>
 <td><code>spec.bgp.ebgpMultihop</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=0; maximum=255</td>
 <td>Integer 0–255, default 0. Only values &gt;1 enable GoBGP eBGP multihop and set its TTL; 0/1 leave multihop disabled.</td>
 </tr>
 <tr>
 <td><code>spec.bgp.routeReflectorClient</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false. True marks an iBGP route-reflector client and requires peerASN=router ASN. It also expands effective export prefixes with router import prefixes.</td>
 </tr>
 <tr>
 <td><code>spec.bgp.routeReflectorClusterID</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional IPv4-form cluster ID, passed only when routeReflectorClient is true. Empty leaves selection to GoBGP; setting it alone does not enable reflection.</td>
 </tr>
 <tr>
 <td><code>spec.bgp.convergenceProfile</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["", "default", "fast", "stable"]</td>
 <td>Optional default/fast/stable; omitted inherits BGPRouter convergenceProfile. Selects the graceful-restart default, not timers.profile; router gracefulRestart.enabled still overrides it.</td>
 </tr>
 <tr>
 <td><code>spec.bgp.importPolicy</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional import policy. A peer with no nonempty prefixes, community constraints, next-hop rewrite or localPreference inherits the router policy as a whole; prefix-length bounds alone do not count as an override.</td>
 </tr>
 <tr>
 <td><code>spec.bgp.importPolicy.allowedPrefixes</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional IPv4/IPv6 CIDR allowlist. Import matches the prefix and its permitted more-specific lengths; masked duplicate prefixes are rejected. Empty adds no prefix match condition to an otherwise configured import policy.</td>
 </tr>
 <tr>
 <td><code>spec.bgp.importPolicy.allowedPrefixLengthMin</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=0; maximum=128</td>
 <td>Integer 0–128; 0/omitted uses each allowlist prefix length. A positive value must be &gt;= each listed prefix length, &lt;= address-family maximum and &lt;= a positive maximum.</td>
 </tr>
 <tr>
 <td><code>spec.bgp.importPolicy.allowedPrefixLengthMax</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=0; maximum=128</td>
 <td>Integer 0–128; 0/omitted uses 32 for IPv4 or 128 for IPv6. A positive value must cover every listed prefix length and not exceed its family maximum. Dynamic leaf admission requires min=max=32.</td>
 </tr>
 <tr>
 <td><code>spec.bgp.importPolicy.requiredCommunities</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional community list; an accepted path must contain ALL listed communities. Empty adds no required-community condition.</td>
 </tr>
 <tr>
 <td><code>spec.bgp.importPolicy.forbiddenCommunities</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional community list; ANY matching community rejects the path before the accept rule. Empty adds no prohibition.</td>
 </tr>
 <tr>
 <td><code>spec.bgp.importPolicy.nextHopRewrite</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["", "peer-address", "unchanged"]</td>
 <td>peer-address by default; unchanged preserves the advertised next hop. Applied on accepted paths before selection/FIB projection. Setting only this field on a peer creates a peer-specific import policy instead of inheriting the router allowlist.</td>
 </tr>
 <tr>
 <td><code>spec.bgp.importPolicy.localPreference</code></td>
+<td><em>Optional</em></td>
+<td>integer</td>
 <td>Optional uint32 LOCAL_PREF for accepted paths before best-path selection. Default 0 leaves the BGP implementation default unchanged.</td>
 </tr>
 <tr>
 <td><code>spec.bgp.exportPolicy</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional export prefix filter. Per-peer prefixes are combined with router static and dynamic advertisements; route-reflector clients also receive router import prefixes. It is not a restrictive replacement for all router-derived export prefixes.</td>
 </tr>
 <tr>
 <td><code>spec.bgp.exportPolicy.allowedPrefixes</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional CIDR list, default empty. Effective nonempty export lists allow the listed prefixes and their more-specifics (through /32 or /128), rejecting unmatched routes. An effective empty list installs no export filter.</td>
 </tr>
 <tr>
 <td><code>spec.bgp.timers</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Generated-peer timers; priority is profile timers.profile &gt; timersPreset &gt; referenced BGPRouter.timers.</td>
 </tr>
 <tr>
 <td><code>spec.bgp.timers.profile</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["", "default", "fast", "slow"]</td>
 <td>default/omitted: keepalive 30s, hold 90s, connectRetry 10s; fast: 3s/9s/1s; slow: 60s/180s/30s. Low-level keepalive/holdTime/connectRetry YAML fields are unsupported.</td>
 </tr>
 <tr>
 <td><code>spec.bgp.bfd.interface</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional single-hop interface. Prefer Interface/name so the controller resolves the declared Interface.ifname; a plain name is validated as a declared logical interface but is passed literally to FRR. Omitted uses multihop.</td>
 </tr>
 <tr>
 <td><code>spec.bgp.bfd.profile</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["", "fast", "normal", "slow"]</td>
 <td>fast/omitted: minRx=minTx=300ms, multiplier=3; normal: 500ms/500ms/3; slow: 1000ms/1000ms/5. Explicit individual settings override these defaults.</td>
 </tr>
 <tr>
 <td><code>spec.bgp.bfd.minRx</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional Go duration, 50ms–60000ms, overriding profile receive interval. Converted to integer milliseconds; omitted uses profile. This is a BFD protocol timer, not a router reboot deadline.</td>
 </tr>
 <tr>
 <td><code>spec.bgp.bfd.minTx</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional Go duration, 50ms–60000ms, overriding profile transmit interval; emitted as integer milliseconds.</td>
 </tr>
 <tr>
 <td><code>spec.bgp.bfd.detectMultiplier</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=1; maximum=50</td>
 <td>Optional integer 1–50. Decoded 0/omission selects profile default (3, or 5 for slow). Multiplies the negotiated detection interval; not a count of routerd reconcile attempts.</td>
 </tr>
 </tbody>
@@ -284,7 +394,7 @@
 <p><a href="/examples/cloudedge-aws-rr-dynamic-leaf.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
 <li><a href="#conditions-and-references">Conditions and references</a></li>
-<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#configuration-syntax">Configuration syntax</a></li>
 <li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 <li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
 </ul>

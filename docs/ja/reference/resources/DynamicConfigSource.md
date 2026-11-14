@@ -10,39 +10,43 @@
 
 - pluginRefは名前の宣言で、検証時に参照先の存在確認は行いません。ここでttlは必須ですが、実際のプラグイン結果の統合は別途PluginResult.status.ttlを使います。このリソースで結果のTTLを上書きできるとは扱いません。
 
-## YAML定義
+## 設定構文
 
-全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。
+説明用の構文表記であり、そのままコピーするYAMLではありません。囲みのない項目は親の中で必須、`[ ... ]`は条件に応じて省略できる項目、`<型>`は差し替え値、`(a | b)`は選択肢です。任意の親にも必須の子があります。条件付き必須・排他・実効既定値は下の表を確認し、通常のYAMLはリンク先の設定例を使ってください。
 
-```yaml
+```text
 - apiVersion: plugin.routerd.net/v1alpha1
   kind: DynamicConfigSource
   metadata:
     name: "<name>"
   spec:
-    mergePolicy: # 任意; object
-      conflict: "" # 任意; string; enum=["", "reject"]
-    pluginRef: "<string>" # 必須; string
-    triggers: # 任意; array
-      - # object
-        every: "<string>" # 任意; string
-        topic: "<string>" # 任意; string
-        type: "interval" # 必須; string; enum=["interval", "event"]
-    ttl: "<string>" # 任意; string
+    [ mergePolicy:
+        [ conflict: ("" | "reject") ]
+    ]
+    pluginRef: <string>
+    [ triggers:
+        -
+          [ every: <string> ]
+          [ topic: <string> ]
+          type: ("interval" | "event")
+    ]
+    ttl: <string>
 ```
 
 ## 項目の意味と既定値
 
-| YAML | 項目の意味と既定値 |
-| --- | --- |
-| `spec.pluginRef` | 取得元として意図するPluginのmetadata.name。空白でない指定が必須で既定値はありません。Plugin/は付けません。現行ではこの宣言を実行時に解決する処理はありません。 |
-| `spec.ttl` | 正のGo durationが必須で既定値はありません。この宣言は検証されますが、runtime側からプラグインの実行や結果の期限に適用する処理はありません。 |
-| `spec.mergePolicy` | 任意の統合方針オブジェクト。現行ではこの取得元宣言を消費するruntime処理はありません。 |
-| `spec.mergePolicy.conflict` | 検証を通るのは空値かrejectです。省略は受理しますが、いずれもこの宣言を介して既存リソースを置換する実行機能を有効にしません。 |
-| `spec.triggers` | トリガー宣言の一覧。省略時は空です。現行runtimeでは検証・表示だけで、動作条件は上記の注意事項を参照してください。 |
-| `spec.triggers[].type` | トリガーの区分。intervalかeventの指定が必須で、既定値はありません。 |
-| `spec.triggers[].every` | intervalでは必須の正のGo duration。eventではこの項目による周期実行はありません。既定値はありません。 |
-| `spec.triggers[].topic` | イベントトピックの宣言。任意で省略時は空です。eventでも検証上は必須になりません。リソース名ではありません。 |
+任意の親の必須項目は、親を使う場合に必要です。それ以外の具体的な条件は説明欄に記載します。`[ ... ]`で囲まれた選択肢も、いずれか一方が必要な場合があります。
+
+| YAML | 指定要否 | 型・制約 | 項目の意味と既定値 |
+| --- | --- | --- | --- |
+| `spec.pluginRef` | **必須** | string | 取得元として意図するPluginのmetadata.name。空白でない指定が必須で既定値はありません。Plugin/は付けません。現行ではこの宣言を実行時に解決する処理はありません。 |
+| `spec.ttl` | **必須** | string | 正のGo durationが必須で既定値はありません。この宣言は検証されますが、runtime側からプラグインの実行や結果の期限に適用する処理はありません。 |
+| `spec.mergePolicy` | *任意* | object | 任意の統合方針オブジェクト。現行ではこの取得元宣言を消費するruntime処理はありません。 |
+| `spec.mergePolicy.conflict` | *任意* | string; enum=["", "reject"] | 検証を通るのは空値かrejectです。省略は受理しますが、いずれもこの宣言を介して既存リソースを置換する実行機能を有効にしません。 |
+| `spec.triggers` | *任意* | array | トリガー宣言の一覧。省略時は空です。現行runtimeでは検証・表示だけで、動作条件は上記の注意事項を参照してください。 |
+| `spec.triggers[].type` | **条件付き必須** | string; enum=["interval", "event"] | トリガーの区分。intervalかeventの指定が必須で、既定値はありません。 |
+| `spec.triggers[].every` | *任意* | string | intervalでは必須の正のGo duration。eventではこの項目による周期実行はありません。既定値はありません。 |
+| `spec.triggers[].topic` | *任意* | string | イベントトピックの宣言。任意で省略時は空です。eventでも検証上は必須になりません。リソース名ではありません。 |
 
 実装: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/api/resource_kinds.go](https://github.com/imksoo/routerd/blob/main/pkg/api/resource_kinds.go) · [pkg/config/validate_plugin.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_plugin.go) · [pkg/plugin/dynamic_config.go](https://github.com/imksoo/routerd/blob/main/pkg/plugin/dynamic_config.go)
 

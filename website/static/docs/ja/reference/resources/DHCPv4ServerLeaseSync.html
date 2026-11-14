@@ -12,89 +12,120 @@
 <li>宛先パスはローカル送信元と同じ絶対パスで、YAMLに宛先パス指定はありません。名前が一致する送信元のstickyHoldDaysが正なら、存在するdhcp-sticky.dbと-walも複製し、-shmは複製しません。主リースファイルは必須です。</li>
 <li>各実行はrsync -a --checksum --delay-updatesを使い、既定のrsync無通信制限60秒とコマンド実行制限2分があります。SSH既定はBatchMode=yes・ConnectTimeout=10でsshOptionsから変更できます。Syncedは複製成功であり、相手のリース再読込や通信継続の証明ではありません。</li>
 </ul>
-<h2 id="yaml定義">YAML定義</h2>
-<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
-<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+<h2 id="設定構文">設定構文</h2>
+<p>説明用の構文表記であり、そのままコピーするYAMLではありません。囲みのない項目は親の中で必須、<code>[ ... ]</code>は条件に応じて省略できる項目、<code>&lt;型&gt;</code>は差し替え値、<code>(a | b)</code>は選択肢です。任意の親にも必須の子があります。条件付き必須・排他・実効既定値は下の表を確認し、通常のYAMLはリンク先の設定例を使ってください。</p>
+<pre><code class="language-text">- apiVersion: net.routerd.net/v1alpha1
   kind: DHCPv4ServerLeaseSync
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    command: &quot;&lt;string&gt;&quot; # 任意; string
-    interval: &quot;&lt;string&gt;&quot; # 任意; string
-    source: # 任意; object
-      resource: &quot;&lt;string&gt;&quot; # 必須; string
-    targets: # 任意; array
-      - # object
-        host: &quot;&lt;string&gt;&quot; # 必須; string
-        name: &quot;&lt;string&gt;&quot; # 任意; string
-        options: # 任意; array
-          - &quot;&lt;string&gt;&quot; # string
-        sshOptions: # 任意; array
-          - &quot;&lt;string&gt;&quot; # string
-        user: &quot;&lt;string&gt;&quot; # 任意; string
-    when: # 任意; object
-      state: # 任意; object
-        &quot;&lt;key&gt;&quot;: # 任意; object
-          contains: &quot;&lt;string&gt;&quot; # 任意; string
-          equals: &quot;&lt;string&gt;&quot; # 任意; string
-          exists: true # 任意; boolean
-          for: &quot;&lt;string&gt;&quot; # 任意; string
-          in: # 任意; array
-            - &quot;&lt;string&gt;&quot; # string
-          maxAge: &quot;&lt;string&gt;&quot; # 任意; string
-          status: &quot;set&quot; # 任意; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+    [ command: &lt;string&gt; ]
+    [ interval: &lt;string&gt; ]
+    source:
+      resource: &lt;string&gt;
+    targets:
+      -
+        host: &lt;string&gt;
+        [ name: &lt;string&gt; ]
+        [ options:
+            - &lt;string&gt;
+        ]
+        [ sshOptions:
+            - &lt;string&gt;
+        ]
+        [ user: &lt;string&gt; ]
+    [ when:
+        [ state:
+            [ &lt;name&gt;:
+                [ contains: &lt;string&gt; ]
+                [ equals: &lt;string&gt; ]
+                [ exists: &lt;boolean&gt; ]
+                [ for: &lt;string&gt; ]
+                [ in:
+                    - &lt;string&gt;
+                ]
+                [ maxAge: &lt;string&gt; ]
+                [ status: (&quot;set&quot; | &quot;unset&quot; | &quot;unknown&quot;) ]
+            ]
+        ]
+    ]
 </code></pre>
 <h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<p>任意の親の必須項目は、親を使う場合に必要です。それ以外の具体的な条件は説明欄に記載します。<code>[ ... ]</code>で囲まれた選択肢も、いずれか一方が必要な場合があります。</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>指定要否</th>
+<th>型・制約</th>
 <th>項目の意味と既定値</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.source</code></td>
+<td><strong>必須</strong></td>
+<td>object</td>
 <td>resourceを持つ送信元指定が必須です。ここでファイルパスは上書きできません。</td>
 </tr>
 <tr>
 <td><code>spec.source.resource</code></td>
+<td><strong>必須</strong></td>
+<td>string</td>
 <td>DHCPv4Serverの裸名またはDHCPv4Server/nameが必須です。そのleaseFileが非空なら使用し、なければ<StateDir>/dnsmasq/dnsmasq.leasesです。状態値参照ではなくfield・optionalはありません。</td>
 </tr>
 <tr>
 <td><code>spec.command</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>任意の実行ファイル名・パスで、既定rsyncです。シェル文字列ではなくrsync引数を直接受け取ります。</td>
 </tr>
 <tr>
 <td><code>spec.interval</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>Go durationで、既定30sです。前回成功syncedAtからの実行抑制期間で、コントローラーは別途30秒周期と購読イベントで動きます。0・負値は抑制をなくすだけで周期を短縮しません。</td>
 </tr>
 <tr>
 <td><code>spec.targets</code></td>
+<td><strong>必須</strong></td>
+<td>array</td>
 <td>1件以上の相手一覧が必須です。ファイルを各相手へ順番に送り、最初の失敗でError/SyncFailedになります。相手routerd APIは呼びません。</td>
 </tr>
 <tr>
 <td><code>spec.targets[].name</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>任意の状態表示名で、既定空です。宛先ホスト・送信元の選択には使いません。</td>
 </tr>
 <tr>
 <td><code>spec.targets[].host</code></td>
+<td><strong>必須</strong></td>
+<td>string</td>
 <td>SSHのホスト・アドレスが必須です。CR/LFは禁止で、到達経路と非対話SSH認証を事前に用意します。</td>
 </tr>
 <tr>
 <td><code>spec.targets[].user</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>任意のSSHユーザーです。空ならuser@を付けずSSH設定のユーザーを使用します。CR/LFは禁止です。</td>
 </tr>
 <tr>
 <td><code>spec.targets[].sshOptions</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>rsync -eへ組み込むSSH引数一覧です。該当キーが未指定なら-o BatchMode=yesと-o ConnectTimeout=10を補います。各項目にCR/LFは使えません。</td>
 </tr>
 <tr>
 <td><code>spec.targets[].options</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>既定の後に追加するrsync引数です。--timeoutまたは--timeout=...があれば既定--timeout=60を補いません。別の実行制限2分は変更しません。CR/LFは禁止です。</td>
 </tr>
 <tr>
 <td><code>spec.when</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>共通の状態条件で、既定無条件です。待機側からの書込を防ぐには実際の役割状態で条件を指定します。本リソース自体はリースファイルの主系を合意しません。</td>
 </tr>
 </tbody>
@@ -106,7 +137,7 @@
 <p><a href="/examples/dhcp-lease-sync-ha.yaml">設定例</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
 <ul>
 <li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
-<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#設定構文">設定構文</a></li>
 <li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
 <li><a href="#状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</a></li>
 </ul>

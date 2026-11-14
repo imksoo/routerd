@@ -10,57 +10,74 @@
 <ul>
 <li>参加者間で同じleasePathと信頼できるロック動作が必要です。peersは識別子で、接続先ではありません。リース実装は空でない一覧を調整の有効化に使い、対向への通信や参加資格の照合は行いません。待機側の変更controllerはdry-runで動作します。</li>
 </ul>
-<h2 id="yaml定義">YAML定義</h2>
-<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
-<pre><code class="language-yaml">- apiVersion: system.routerd.net/v1alpha1
+<h2 id="設定構文">設定構文</h2>
+<p>説明用の構文表記であり、そのままコピーするYAMLではありません。囲みのない項目は親の中で必須、<code>[ ... ]</code>は条件に応じて省略できる項目、<code>&lt;型&gt;</code>は差し替え値、<code>(a | b)</code>は選択肢です。任意の親にも必須の子があります。条件付き必須・排他・実効既定値は下の表を確認し、通常のYAMLはリンク先の設定例を使ってください。</p>
+<pre><code class="language-text">- apiVersion: system.routerd.net/v1alpha1
   kind: RouterdCluster
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    identity: &quot;&lt;string&gt;&quot; # 任意; string
-    leasePath: &quot;&lt;string&gt;&quot; # 任意; string
-    leaseTTL: &quot;&lt;string&gt;&quot; # 任意; string
-    peers: # 必須; array
-      - &quot;&lt;string&gt;&quot; # string
-    when: # 任意; object
-      state: # 任意; object
-        &quot;&lt;key&gt;&quot;: # 任意; object
-          contains: &quot;&lt;string&gt;&quot; # 任意; string
-          equals: &quot;&lt;string&gt;&quot; # 任意; string
-          exists: true # 任意; boolean
-          for: &quot;&lt;string&gt;&quot; # 任意; string
-          in: # 任意; array
-            - &quot;&lt;string&gt;&quot; # string
-          maxAge: &quot;&lt;string&gt;&quot; # 任意; string
-          status: &quot;set&quot; # 任意; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+    [ identity: &lt;string&gt; ]
+    leasePath: &lt;string&gt;
+    [ leaseTTL: &lt;string&gt; ]
+    peers:
+      - &lt;string&gt;
+    [ when:
+        [ state:
+            [ &lt;name&gt;:
+                [ contains: &lt;string&gt; ]
+                [ equals: &lt;string&gt; ]
+                [ exists: &lt;boolean&gt; ]
+                [ for: &lt;string&gt; ]
+                [ in:
+                    - &lt;string&gt;
+                ]
+                [ maxAge: &lt;string&gt; ]
+                [ status: (&quot;set&quot; | &quot;unset&quot; | &quot;unknown&quot;) ]
+            ]
+        ]
+    ]
 </code></pre>
 <h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<p>任意の親の必須項目は、親を使う場合に必要です。それ以外の具体的な条件は説明欄に記載します。<code>[ ... ]</code>で囲まれた選択肢も、いずれか一方が必要な場合があります。</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>指定要否</th>
+<th>型・制約</th>
 <th>項目の意味と既定値</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.peers</code></td>
+<td><strong>必須</strong></td>
+<td>array</td>
 <td>空白・重複を除去した後に2件以上となる一覧が必須です。既定値はなく、Kind/名前の参照や、実際に接続するネットワークアドレスではありません。</td>
 </tr>
 <tr>
 <td><code>spec.leaseTTL</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>リースの有効期間。省略時30sで、明示する場合は5s〜10mのGo durationです。排他的な変更はロックが制御し、期限だけでネットワーク障害を検知する仕組みではありません。</td>
 </tr>
 <tr>
 <td><code>spec.leasePath</code></td>
+<td><strong>必須</strong></td>
+<td>string</td>
 <td>改行を含まない絶対パスのリースファイル。必須で既定値はありません。ホストごとに別のファイルを用意してもホスト間の調整にはなりません。</td>
 </tr>
 <tr>
 <td><code>spec.identity</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>ローカルのリース保持者の識別子。省略時は空白を除去したos.Hostname()です。Router.metadata.nameからは決めません。</td>
 </tr>
 <tr>
 <td><code>spec.when</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>有効化条件。省略時は条件なし。共通の条件指定を参照してください。</td>
 </tr>
 </tbody>
@@ -72,7 +89,7 @@
 <p><a href="/examples/ha-2-node.yaml">設定例</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
 <ul>
 <li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
-<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#設定構文">設定構文</a></li>
 <li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
 <li><a href="#状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</a></li>
 </ul>

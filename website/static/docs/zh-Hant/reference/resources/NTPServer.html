@@ -12,102 +12,138 @@
 <li>ntpd產生器不輸出allowCIDRs限制，不能假設宣告此清單就會對ntpd套用用戶端ACL。</li>
 <li>動態來源模式下，上游值未解析本身不會停止產生伺服器設定，可能沒有上游。Applied表示設定/服務處理，不證明時鐘已同步。</li>
 </ul>
-<h2 id="yaml定義">YAML定義</h2>
-<p>此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。</p>
-<pre><code class="language-yaml">- apiVersion: system.routerd.net/v1alpha1
+<h2 id="設定語法">設定語法</h2>
+<p>這是說明用語法，不是可直接複製的YAML。未加括號的欄位在父項目內必填；<code>[ ... ]</code>表示依條件可省略，<code>&lt;型別&gt;</code>為替換值，<code>(a | b)</code>表示選項。選填父項目內仍可能有必填子項目。條件必填、互斥與實際預設值請見下表；一般YAML請使用連結範例。</p>
+<pre><code class="language-text">- apiVersion: system.routerd.net/v1alpha1
   kind: NTPServer
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    allowCIDRFrom: # 選填; array
-      - # object
-        field: &quot;&lt;string&gt;&quot; # 選填; string
-        optional: true # 選填; boolean
-        resource: &quot;&lt;string&gt;&quot; # 必填; string
-    allowCIDRs: # 選填; array
-      - &quot;&lt;string&gt;&quot; # string
-    fallbackServers: # 選填; array
-      - &quot;&lt;string&gt;&quot; # string
-    listenAddressFrom: # 選填; array
-      - # object
-        field: &quot;&lt;string&gt;&quot; # 選填; string
-        optional: true # 選填; boolean
-        resource: &quot;&lt;string&gt;&quot; # 必填; string
-    listenAddresses: # 選填; array
-      - &quot;&lt;string&gt;&quot; # string
-    managed: true # 選填; boolean
-    provider: &quot;chrony&quot; # 選填; string; enum=[&quot;chrony&quot;, &quot;ntpd&quot;]
-    serverFrom: # 選填; array
-      - # object
-        field: &quot;&lt;string&gt;&quot; # 選填; string
-        optional: true # 選填; boolean
-        resource: &quot;&lt;string&gt;&quot; # 必填; string
-    servers: # 選填; array
-      - &quot;&lt;string&gt;&quot; # string
-    source: &quot;static&quot; # 選填; string; enum=[&quot;static&quot;, &quot;auto&quot;, &quot;dhcp&quot;, &quot;dhcpv6&quot;]
-    when: # 選填; object
-      state: # 選填; object
-        &quot;&lt;key&gt;&quot;: # 選填; object
-          contains: &quot;&lt;string&gt;&quot; # 選填; string
-          equals: &quot;&lt;string&gt;&quot; # 選填; string
-          exists: true # 選填; boolean
-          for: &quot;&lt;string&gt;&quot; # 選填; string
-          in: # 選填; array
-            - &quot;&lt;string&gt;&quot; # string
-          maxAge: &quot;&lt;string&gt;&quot; # 選填; string
-          status: &quot;set&quot; # 選填; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+    [ allowCIDRFrom:
+        -
+          field: &lt;string&gt;
+          [ optional: &lt;boolean&gt; ]
+          resource: &lt;string&gt;
+    ]
+    [ allowCIDRs:
+        - &lt;string&gt;
+    ]
+    [ fallbackServers:
+        - &lt;string&gt;
+    ]
+    [ listenAddressFrom:
+        -
+          field: &lt;string&gt;
+          [ optional: &lt;boolean&gt; ]
+          resource: &lt;string&gt;
+    ]
+    [ listenAddresses:
+        - &lt;string&gt;
+    ]
+    [ managed: &lt;boolean&gt; ]
+    [ provider: (&quot;chrony&quot; | &quot;ntpd&quot;) ]
+    [ serverFrom:
+        -
+          field: &lt;string&gt;
+          [ optional: &lt;boolean&gt; ]
+          resource: &lt;string&gt;
+    ]
+    [ servers:
+        - &lt;string&gt;
+    ]
+    [ source: (&quot;static&quot; | &quot;auto&quot; | &quot;dhcp&quot; | &quot;dhcpv6&quot;) ]
+    [ when:
+        [ state:
+            [ &lt;name&gt;:
+                [ contains: &lt;string&gt; ]
+                [ equals: &lt;string&gt; ]
+                [ exists: &lt;boolean&gt; ]
+                [ for: &lt;string&gt; ]
+                [ in:
+                    - &lt;string&gt;
+                ]
+                [ maxAge: &lt;string&gt; ]
+                [ status: (&quot;set&quot; | &quot;unset&quot; | &quot;unknown&quot;) ]
+            ]
+        ]
+    ]
 </code></pre>
 <h2 id="欄位意義與預設值">欄位意義與預設值</h2>
+<p>選填父項目的必填子項目僅在使用父項目時需要。其他具體條件列於說明；<code>[ ... ]</code>選項仍可能需要擇一。</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>指定要求</th>
+<th>型別與限制</th>
 <th>欄位意義與預設值</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.managed</code></td>
+<td><em>選填</em></td>
+<td>boolean</td>
 <td>預設false，只記錄Observed，不設定或啟動時間服務；管理檔案與服務時設true。</td>
 </tr>
 <tr>
 <td><code>spec.source</code></td>
+<td><em>選填</em></td>
+<td>string; enum=["static", "auto", "dhcp", "dhcpv6"]</td>
 <td>預設static，使用servers。auto/dhcp/dhcpv6皆依serverFrom解析值、fallbackServers、servers的順序選取，不會自動探索DHCP來源。</td>
 </tr>
 <tr>
 <td><code>spec.servers</code></td>
+<td><strong>條件必填</strong></td>
+<td>array</td>
 <td>上游主機名稱或IP，預設空；managed=true且source省略或static時必填。各項須為非空白單一值，不是資源參照。</td>
 </tr>
 <tr>
 <td><code>spec.serverFrom</code></td>
+<td><em>選填</em></td>
+<td>array</td>
 <td>明確值來源清單，預設空。例如DHCPv4Client/wan的ntpServers或DHCPv6PrefixDelegation/wan-pd的sntpServers。只用於auto/dhcp/dhcpv6，每個resource與field須存在。 此解析器不使用optional旗標，缺值即選下一種替代來源。</td>
 </tr>
 <tr>
 <td><code>spec.when</code></td>
+<td><em>選填</em></td>
+<td>object</td>
 <td>啟用條件，省略不設限制；state/all/any、unknown及時間條件請見共用條件參考。</td>
 </tr>
 <tr>
 <td><code>spec.provider</code></td>
+<td><em>選填</em></td>
+<td>string; enum=["chrony", "ntpd"]</td>
 <td>伺服器實作，通常預設chrony，FreeBSD預設ntpd；ntpd僅支援FreeBSD。</td>
 </tr>
 <tr>
 <td><code>spec.fallbackServers</code></td>
+<td><em>選填</em></td>
+<td>array</td>
 <td>備用上游清單，預設空；auto/dhcp/dhcpv6的serverFrom無值時，優先於servers採用，不產生獨立備用指令。</td>
 </tr>
 <tr>
 <td><code>spec.listenAddresses</code></td>
+<td><em>選填</em></td>
+<td>array</td>
 <td>靜態接聽IP，預設空；CIDR取其主機IP。解析結果為空時不產生bindaddress/interface listen指令，使用後端預設行為。</td>
 </tr>
 <tr>
 <td><code>spec.listenAddressFrom</code></td>
+<td><em>選填</em></td>
+<td>array</td>
 <td>額外接聽位址來源，預設空，與listenAddresses合併。每項須有resource與field。已宣告接聽設定但合併結果為空時，為Pending/NoListenAddresses。</td>
 </tr>
 <tr>
 <td><code>spec.allowCIDRs</code></td>
+<td><em>選填</em></td>
+<td>array</td>
 <td>允許用戶端CIDR清單，預設空。chrony產生各allow，ntpd產生設定不使用此清單。靜態值在驗證時只檢查非空白，不檢查CIDR語法。</td>
 </tr>
 <tr>
 <td><code>spec.allowCIDRFrom</code></td>
+<td><em>選填</em></td>
+<td>array</td>
 <td>與allowCIDRs合併的CIDR來源，預設空。非optional來源缺值時為Pending/AllowCIDRFromPending；衍生CIDR錯誤時為Pending/AllowCIDRFromInvalid。不接受沒有前綴長度的裸IP。</td>
 </tr>
 </tbody>
@@ -118,7 +154,7 @@
 <p><code>phase</code>, <code>servers</code>, <code>listenAddresses</code>, <code>allowCIDRs</code>, <code>source</code>, <code>updatedAt</code></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
 <ul>
 <li><a href="#指定條件與參照關係">指定條件與參照關係</a></li>
-<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#設定語法">設定語法</a></li>
 <li><a href="#欄位意義與預設值">欄位意義與預設值</a></li>
 <li><a href="#可參照的狀態欄位">可參照的狀態欄位</a></li>
 </ul>
