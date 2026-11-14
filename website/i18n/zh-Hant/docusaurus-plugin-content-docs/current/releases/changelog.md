@@ -11,6 +11,13 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20261114.0631
+
+### Fixed
+
+- 將空的 IPv4 位址清單視為尚未設定的 IPIP 介面，讓首次啟動可繼續配置位址。
+- Live ISO 採用既有 casper `noprompt` 選項，移除重新啟動時等待媒體移除確認的互動步驟。
+
 ## v20261114.0607
 
 ### Changed

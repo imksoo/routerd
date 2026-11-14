@@ -12,6 +12,13 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20261114.0631
+
+### Fixed
+
+- Treat an empty IPv4 address list as an unconfigured IPIP interface so first-boot reconciliation can assign its addresses.
+- Use the existing casper `noprompt` option for appliance Live ISO reboots; do not require an interactive media-removal confirmation.
+
 ## v20261114.0607
 
 ### Changed

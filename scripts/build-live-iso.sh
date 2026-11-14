@@ -967,7 +967,7 @@ set timeout=5
 set default=0
 
 menuentry "routerd Ubuntu live ${version}" {
-    linux /casper/vmlinuz boot=casper quiet console=tty0 console=ttyS0,115200n8 ---
+    linux /casper/vmlinuz boot=casper noprompt quiet console=tty0 console=ttyS0,115200n8 ---
     initrd /casper/initrd
 }
 EOF
