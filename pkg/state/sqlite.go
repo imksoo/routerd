@@ -1728,6 +1728,20 @@ ON CONFLICT(consumer) DO NOTHING`, consumer, now); err != nil {
 	return cursor, err
 }
 
+// ResetEventConsumerCursor starts a newly enabled consumer at the current tip.
+func (s *SQLiteStore) ResetEventConsumerCursor(consumer string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return sql.ErrConnDone
+	}
+	_, err := s.db.Exec(`INSERT INTO event_consumer_cursors(consumer,cursor,updated_at)
+SELECT ?,COALESCE(MAX(id),0),? FROM events WHERE true
+ON CONFLICT(consumer) DO UPDATE SET cursor=excluded.cursor,updated_at=excluded.updated_at`,
+		consumer, time.Now().UTC().Format(time.RFC3339Nano))
+	return err
+}
+
 func (s *SQLiteStore) SaveEventConsumerCursor(consumer string, cursor int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

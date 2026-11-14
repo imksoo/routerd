@@ -504,6 +504,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	mutator := serveConfigMutator{
 		configPath:           *configPath,
 		statePath:            *statePath,
+		stateStore:           stateStore,
 		baseOpts:             applyOpts,
 		cache:                cache,
 		logger:               logger,

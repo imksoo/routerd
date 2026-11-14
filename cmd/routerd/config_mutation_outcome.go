@@ -4,6 +4,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 
 	"github.com/imksoo/routerd/pkg/api"
@@ -52,6 +53,11 @@ func (m serveConfigMutator) mutateRuntime(next *api.Router, configYAML string) (
 			err = errors.Join(err, restoreErr)
 		}
 	}
+	if err == nil && changed && !hasEventRules(previous) && hasEventRules(next) && m.stateStore != nil {
+		if resetErr := m.stateStore.ResetEventConsumerCursor("eventrule/engine"); resetErr != nil {
+			err = fmt.Errorf("initialize EventRule cursor: %w", resetErr)
+		}
+	}
 	if m.activeRuntime != nil {
 		outcome.Runtime.Active = m.activeRuntime()
 	}
@@ -65,4 +71,15 @@ func (m serveConfigMutator) publishConfirmedRuntime(active controllerchain.Runti
 	if active.Known && active.Available && active.Router != nil && m.setRouter != nil {
 		m.setRouter(active.Router)
 	}
+}
+
+func hasEventRules(router *api.Router) bool {
+	if router != nil {
+		for _, resource := range router.Spec.Resources {
+			if resource.Kind == "EventRule" {
+				return true
+			}
+		}
+	}
+	return false
 }
