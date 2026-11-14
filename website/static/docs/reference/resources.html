@@ -22,445 +22,409 @@ spec:
       spec:
         ifname: &quot;&lt;interface-name&gt;&quot;
 </code></pre>
-<ul>
-<li><a href="resources/Plugin.html">Plugin</a></li>
-<li><a href="resources/DynamicConfigSource.html">DynamicConfigSource</a></li>
-<li><a href="resources/DynamicOverridePolicy.html">DynamicOverridePolicy</a></li>
-<li><a href="resources/LogSink.html">LogSink</a></li>
-<li><a href="resources/Telemetry.html">Telemetry</a></li>
-<li><a href="resources/ObservabilityPipeline.html">ObservabilityPipeline</a></li>
-<li><a href="resources/LogRetention.html">LogRetention</a></li>
-<li><a href="resources/Sysctl.html">Sysctl</a></li>
-<li><a href="resources/SysctlProfile.html">SysctlProfile</a></li>
-<li><a href="resources/Package.html">Package</a></li>
-<li><a href="resources/NTPClient.html">NTPClient</a></li>
-<li><a href="resources/NTPServer.html">NTPServer</a></li>
-<li><a href="resources/WebConsole.html">WebConsole</a></li>
-<li><a href="resources/ControlAPI.html">ControlAPI</a></li>
-<li><a href="resources/RouterdCluster.html">RouterdCluster</a></li>
-<li><a href="resources/Interface.html">Interface</a></li>
-<li><a href="resources/PPPoESession.html">PPPoESession</a></li>
-<li><a href="resources/WireGuardInterface.html">WireGuardInterface</a></li>
-<li><a href="resources/WireGuardPeer.html">WireGuardPeer</a></li>
-<li><a href="resources/TailscaleNode.html">TailscaleNode</a></li>
-<li><a href="resources/IPsecConnection.html">IPsecConnection</a></li>
-<li><a href="resources/VRF.html">VRF</a></li>
-<li><a href="resources/VXLANTunnel.html">VXLANTunnel</a></li>
-<li><a href="resources/IPv4StaticAddress.html">IPv4StaticAddress</a></li>
-<li><a href="resources/VirtualAddress.html">VirtualAddress</a></li>
-<li><a href="resources/BGPRouter.html">BGPRouter</a></li>
-<li><a href="resources/BGPPeer.html">BGPPeer</a></li>
-<li><a href="resources/BGPDynamicPeer.html">BGPDynamicPeer</a></li>
-<li><a href="resources/BFD.html">BFD</a></li>
-<li><a href="resources/DHCPv4Client.html">DHCPv4Client</a></li>
-<li><a href="resources/ClusterNetworkRoute.html">ClusterNetworkRoute</a></li>
-<li><a href="resources/DHCPv4Server.html">DHCPv4Server</a></li>
-<li><a href="resources/DHCPv4Reservation.html">DHCPv4Reservation</a></li>
-<li><a href="resources/DHCPv6Address.html">DHCPv6Address</a></li>
-<li><a href="resources/IPv6RAAddress.html">IPv6RAAddress</a></li>
-<li><a href="resources/DHCPv6PrefixDelegation.html">DHCPv6PrefixDelegation</a></li>
-<li><a href="resources/IPv6DelegatedAddress.html">IPv6DelegatedAddress</a></li>
-<li><a href="resources/DHCPv6Information.html">DHCPv6Information</a></li>
-<li><a href="resources/IPv6RouterAdvertisement.html">IPv6RouterAdvertisement</a></li>
-<li><a href="resources/DHCPv6Server.html">DHCPv6Server</a></li>
-<li><a href="resources/DHCPv4ServerLeaseSync.html">DHCPv4ServerLeaseSync</a></li>
-<li><a href="resources/DHCPv6ServerLeaseSync.html">DHCPv6ServerLeaseSync</a></li>
-<li><a href="resources/DHCPv6PrefixDelegationLeaseSync.html">DHCPv6PrefixDelegationLeaseSync</a></li>
-<li><a href="resources/DHCPv4Relay.html">DHCPv4Relay</a></li>
-<li><a href="resources/SelfAddressPolicy.html">SelfAddressPolicy</a></li>
-<li><a href="resources/DNSZone.html">DNSZone</a></li>
-<li><a href="resources/DNSResolver.html">DNSResolver</a></li>
-<li><a href="resources/DNSForwarder.html">DNSForwarder</a></li>
-<li><a href="resources/DNSUpstream.html">DNSUpstream</a></li>
-<li><a href="resources/DSLiteTunnel.html">DSLiteTunnel</a></li>
-<li><a href="resources/TunnelInterface.html">TunnelInterface</a></li>
-<li><a href="resources/OverlayPeer.html">OverlayPeer</a></li>
-<li><a href="resources/HybridRoute.html">HybridRoute</a></li>
-<li><a href="resources/CloudProviderProfile.html">CloudProviderProfile</a></li>
-<li><a href="resources/ProviderActionPolicy.html">ProviderActionPolicy</a></li>
-<li><a href="resources/EventGroup.html">EventGroup</a></li>
-<li><a href="resources/EventPeer.html">EventPeer</a></li>
-<li><a href="resources/EventSubscription.html">EventSubscription</a></li>
-<li><a href="resources/FederationSLO.html">FederationSLO</a></li>
-<li><a href="resources/MobilityPool.html">MobilityPool</a></li>
-<li><a href="resources/SAMNodeSet.html">SAMNodeSet</a></li>
-<li><a href="resources/SAMEnrollmentPolicy.html">SAMEnrollmentPolicy</a></li>
-<li><a href="resources/SAMEnrollmentClaim.html">SAMEnrollmentClaim</a></li>
-<li><a href="resources/SAMEnrollmentClient.html">SAMEnrollmentClient</a></li>
-<li><a href="resources/SAMTransportProfile.html">SAMTransportProfile</a></li>
-<li><a href="resources/SAMSubnetPolicy.html">SAMSubnetPolicy</a></li>
-<li><a href="resources/IPv4Route.html">IPv4Route</a></li>
-<li><a href="resources/HealthCheck.html">HealthCheck</a></li>
-<li><a href="resources/EgressRoutePolicy.html">EgressRoutePolicy</a></li>
-<li><a href="resources/EventRule.html">EventRule</a></li>
-<li><a href="resources/DerivedEvent.html">DerivedEvent</a></li>
-<li><a href="resources/NAT44Rule.html">NAT44Rule</a></li>
-<li><a href="resources/NAT44FlowDNATPinhole.html">NAT44FlowDNATPinhole</a></li>
-<li><a href="resources/NAT44SessionSync.html">NAT44SessionSync</a></li>
-<li><a href="resources/ManagementAccess.html">ManagementAccess</a></li>
-<li><a href="resources/PortForward.html">PortForward</a></li>
-<li><a href="resources/IngressService.html">IngressService</a></li>
-<li><a href="resources/IPAddressSet.html">IPAddressSet</a></li>
-<li><a href="resources/LocalServiceRedirect.html">LocalServiceRedirect</a></li>
-<li><a href="resources/FirewallFlowPinhole.html">FirewallFlowPinhole</a></li>
-<li><a href="resources/TrafficFlowLog.html">TrafficFlowLog</a></li>
-<li><a href="resources/FirewallZone.html">FirewallZone</a></li>
-<li><a href="resources/FirewallPolicy.html">FirewallPolicy</a></li>
-<li><a href="resources/ClientPolicy.html">ClientPolicy</a></li>
-<li><a href="resources/FirewallRule.html">FirewallRule</a></li>
-<li><a href="resources/FirewallEventLog.html">FirewallEventLog</a></li>
-<li><a href="resources/Hostname.html">Hostname</a></li>
-</ul>
-<h2 id="plugin">Plugin</h2>
-<p><a href="resources/Plugin.html">Plugin</a></p>
-<p>Registers an executable implementing the routerd plugin protocol. Invoke it explicitly or through a configured consumer such as EventSubscription.</p>
-<h2 id="dynamicconfigsource">DynamicConfigSource</h2>
-<p><a href="resources/DynamicConfigSource.html">DynamicConfigSource</a></p>
-<p>Declares a plugin-backed dynamic configuration source. The current implementation decodes and validates this kind, but contains no runtime consumer of DynamicConfigSourceSpec; declaring it does not invoke the plugin.</p>
-<h2 id="dynamicoverridepolicy">DynamicOverridePolicy</h2>
-<p><a href="resources/DynamicOverridePolicy.html">DynamicOverridePolicy</a></p>
-<p>Authorizes selected dynamic sources to mask exact startup resources while the dynamic part is active. It does not rewrite the saved startup configuration.</p>
-<h2 id="logsink">LogSink</h2>
-<p><a href="resources/LogSink.html">LogSink</a></p>
-<p>Defines an operational event-log destination selected by its type. It is separate from ObservabilityPipeline log sinks.</p>
-<h2 id="telemetry">Telemetry</h2>
-<p><a href="resources/Telemetry.html">Telemetry</a></p>
-<p>Configures OpenTelemetry environment variables for rendered managed services. It does not define a LogSink or a separate collector process.</p>
-<h2 id="observabilitypipeline">ObservabilityPipeline</h2>
-<p><a href="resources/ObservabilityPipeline.html">ObservabilityPipeline</a></p>
-<p>Combines an OpenTelemetry environment declaration for managed services with an independent built-in operational-event log consumer.</p>
-<h2 id="logretention">LogRetention</h2>
-<p><a href="resources/LogRetention.html">LogRetention</a></p>
-<p>Prunes operational-log SQLite records and optionally archives them first. It does not control arbitrary system log files.</p>
-<h2 id="sysctl">Sysctl</h2>
-<p><a href="resources/Sysctl.html">Sysctl</a></p>
-<p>Reconciles one kernel sysctl setting and can write a persistent sysctl.d file. This resource has no reference to another routerd resource.</p>
-<h2 id="sysctlprofile">SysctlProfile</h2>
-<p><a href="resources/SysctlProfile.html">SysctlProfile</a></p>
-<p>Applies a named set of router-oriented sysctls, with optional per-key overrides. It does not refer to a Sysctl resource by name.</p>
-<h2 id="package">Package</h2>
-<p><a href="resources/Package.html">Package</a></p>
-<p>Ensures selected OS packages are installed. The controller selects the first package set whose os exactly matches the running host.</p>
-<h2 id="ntpclient">NTPClient</h2>
-<p><a href="resources/NTPClient.html">NTPClient</a></p>
-<p>Manages or observes an upstream time-synchronization client.</p>
-<h2 id="ntpserver">NTPServer</h2>
-<p><a href="resources/NTPServer.html">NTPServer</a></p>
-<p>Configures a time server and its upstream servers using chrony or FreeBSD ntpd.</p>
-<h2 id="webconsole">WebConsole</h2>
-<p><a href="resources/WebConsole.html">WebConsole</a></p>
-<p>Serves the read-only router web console from routerd. Its HTTP listener is separate from the mutating ControlAPI listener.</p>
-<h2 id="controlapi">ControlAPI</h2>
-<p><a href="resources/ControlAPI.html">ControlAPI</a></p>
-<p>Enables the HTTP control API for reading state and changing configuration. Unix-socket control and the WebConsole are separate.</p>
-<h2 id="routerdcluster">RouterdCluster</h2>
-<p><a href="resources/RouterdCluster.html">RouterdCluster</a></p>
-<p>Coordinates which routerd process may perform mutations through a file lease and OS file locking. It is not VRRP election or peer network discovery.</p>
-<h2 id="interface">Interface</h2>
+<p>Resources are grouped by purpose, then sorted by Kind name within each group. This is a reading order, not YAML evaluation, dependency or execution order.</p>
+<h2 id="interfaces-and-addresses">Interfaces and addresses</h2>
+<h3 id="interface">Interface</h3>
 <p><a href="resources/Interface.html">Interface</a></p>
 <p>Names an existing OS interface so other resources can refer to its logical metadata.name. It does not create a physical interface.</p>
-<h2 id="pppoesession">PPPoESession</h2>
-<p><a href="resources/PPPoESession.html">PPPoESession</a></p>
-<p>Run a supervised routerd-pppoe-client using pppd on Linux or mpd5 on FreeBSD, and publish negotiated IPv4 session status. Several legacy fields affect only manual FreeBSD render output, not this daemon path.</p>
-<h2 id="wireguardinterface">WireGuardInterface</h2>
-<p><a href="resources/WireGuardInterface.html">WireGuardInterface</a></p>
-<p>Create or configure a WireGuard device and apply its complete peer configuration with wg setconf. Address assignment and ordinary routing are separate resources.</p>
-<h2 id="wireguardpeer">WireGuardPeer</h2>
-<p><a href="resources/WireGuardPeer.html">WireGuardPeer</a></p>
-<p>Define a peer on a declared WireGuardInterface. Its AllowedIPs configure WireGuard cryptographic routing; they do not automatically create ordinary IP routes in this controller.</p>
-<h2 id="tailscalenode">TailscaleNode</h2>
-<p><a href="resources/TailscaleNode.html">TailscaleNode</a></p>
-<p>Manage Tailscale enrollment options through a routerd-generated systemd oneshot on Linux or rc.d script on FreeBSD, then observe tailscale status --json. Tailscale/Headscale server-side approvals remain separate.</p>
-<h2 id="ipsecconnection">IPsecConnection</h2>
-<p><a href="resources/IPsecConnection.html">IPsecConnection</a></p>
-<p>Render a strongSwan swanctl connection and synchronize all routerd IPsec connections together. A traffic-triggered CHILD_SA trap is configured; loading the connection is not proof of an established SA.</p>
-<h2 id="vrf">VRF</h2>
-<p><a href="resources/VRF.html">VRF</a></p>
-<p>Declares a Linux VRF device, routing table and member intentions. The current implementation renders plans/artifact identities and protects its routing table, but has no VRF creation/member-attachment controller. Do not treat plan output as proof that a VRF was created.</p>
-<h2 id="vxlantunnel">VXLANTunnel</h2>
-<p><a href="resources/VXLANTunnel.html">VXLANTunnel</a></p>
-<p>Manage a Linux VXLAN device with static remote flood destinations and optional bridge attachment. No multicast discovery or dynamic MAC learning is configured.</p>
-<h2 id="ipv4staticaddress">IPv4StaticAddress</h2>
+<h3 id="ipv4staticaddress">IPv4StaticAddress</h3>
 <p><a href="resources/IPv4StaticAddress.html">IPv4StaticAddress</a></p>
 <p>Declares a static IPv4 address on a logical interface. The controller converges configured addresses; this is not a DHCP lease.</p>
-<h2 id="virtualaddress">VirtualAddress</h2>
-<p><a href="resources/VirtualAddress.html">VirtualAddress</a></p>
-<p>Maintain a static address or an elected floating address. Linux uses iproute2 for static addresses and keepalived for VRRP; FreeBSD uses ifconfig and CARP.</p>
-<h2 id="bgprouter">BGPRouter</h2>
-<p><a href="resources/BGPRouter.html">BGPRouter</a></p>
-<p>Configure the local GoBGP instance, its admitted routes and locally originated advertisements. Actual kernel installation and remote reachability are separate from a BGP Established state.</p>
-<h2 id="bgppeer">BGPPeer</h2>
-<p><a href="resources/BGPPeer.html">BGPPeer</a></p>
-<p>Configure one or more static BGP neighbors on a declared BGPRouter.</p>
-<h2 id="bgpdynamicpeer">BGPDynamicPeer</h2>
-<p><a href="resources/BGPDynamicPeer.html">BGPDynamicPeer</a></p>
-<p>Define a GoBGP inbound dynamic-neighbor admission group, not an individual peer instance or a WireGuard/SAM authorization identity.</p>
-<h2 id="bfd">BFD</h2>
-<p><a href="resources/BFD.html">BFD</a></p>
-<p>Configure FRR bfdd sessions through vtysh and observe their status for BGPPeer failure handling. This is a separate backend from GoBGP; BFD Down can trigger a BGP peer reset.</p>
-<h2 id="dhcpv4client">DHCPv4Client</h2>
-<p><a href="resources/DHCPv4Client.html">DHCPv4Client</a></p>
-<p>Runs the managed routerd-dhcpv4-client daemon and applies its current lease address, optional default route and optional host DNS settings.</p>
-<h2 id="clusternetworkroute">ClusterNetworkRoute</h2>
-<p><a href="resources/ClusterNetworkRoute.html">ClusterNetworkRoute</a></p>
-<p>Declare IPv4 routes to Kubernetes Pod and Service networks through explicitly configured next hops. This does not discover cluster CIDRs or nodes.</p>
-<h2 id="dhcpv4server">DHCPv4Server</h2>
-<p><a href="resources/DHCPv4Server.html">DHCPv4Server</a></p>
-<p>Serve IPv4 DHCP pools, tagged selector scopes and reservations through the current shared dnsmasq service.</p>
-<h2 id="dhcpv4reservation">DHCPv4Reservation</h2>
-<p><a href="resources/DHCPv4Reservation.html">DHCPv4Reservation</a></p>
-<p>Reserve one IPv4 address for a MAC address on a declared DHCPv4Server.</p>
-<h2 id="dhcpv6address">DHCPv6Address</h2>
-<p><a href="resources/DHCPv6Address.html">DHCPv6Address</a></p>
-<p>Declares an IPv6 address acquired by a host DHCPv6 client. It is separate from DHCPv6PrefixDelegation and does not allocate LAN prefixes.</p>
-<h2 id="ipv6raaddress">IPv6RAAddress</h2>
-<p><a href="resources/IPv6RAAddress.html">IPv6RAAddress</a></p>
-<p>Declares host-side receipt of IPv6 router advertisements/SLAAC. This is an RA client, not an IPv6RouterAdvertisement server for the LAN.</p>
-<h2 id="dhcpv6prefixdelegation">DHCPv6PrefixDelegation</h2>
-<p><a href="resources/DHCPv6PrefixDelegation.html">DHCPv6PrefixDelegation</a></p>
-<p>Acquire an IPv6 delegated prefix on an uplink. Use IPv6DelegatedAddress to derive and apply downstream or host addresses; obtaining a prefix alone does not advertise it to clients.</p>
-<h2 id="ipv6delegatedaddress">IPv6DelegatedAddress</h2>
-<p><a href="resources/IPv6DelegatedAddress.html">IPv6DelegatedAddress</a></p>
-<p>Derive and install a local IPv6 address from a DHCPv6PrefixDelegation prefix.</p>
-<h2 id="dhcpv6information">DHCPv6Information</h2>
-<p><a href="resources/DHCPv6Information.html">DHCPv6Information</a></p>
-<p>Projects AFTR, DNS, SNTP and domain-search information from the DHCPv6-PD daemon that uses the same interface. It does not start a standalone information-request client.</p>
-<h2 id="ipv6routeradvertisement">IPv6RouterAdvertisement</h2>
-<p><a href="resources/IPv6RouterAdvertisement.html">IPv6RouterAdvertisement</a></p>
-<p>Configure IPv6 router-advertisement options on a LAN and deprecate previously delegated prefixes.</p>
-<h2 id="dhcpv6server">DHCPv6Server</h2>
-<p><a href="resources/DHCPv6Server.html">DHCPv6Server</a></p>
-<p>Provide LAN DHCPv6 address/information service and associated RA behavior using the shared dnsmasq process.</p>
-<h2 id="dhcpv4serverleasesync">DHCPv4ServerLeaseSync</h2>
-<p><a href="resources/DHCPv4ServerLeaseSync.html">DHCPv4ServerLeaseSync</a></p>
-<p>Copy a DHCPv4 server lease file and available sticky-state files to peer hosts using rsync over SSH. This is file replication, not the DHCP failover protocol.</p>
-<h2 id="dhcpv6serverleasesync">DHCPv6ServerLeaseSync</h2>
-<p><a href="resources/DHCPv6ServerLeaseSync.html">DHCPv6ServerLeaseSync</a></p>
-<p>Copy one DHCPv6 server lease file to peer hosts using rsync over SSH; not a DHCP failover protocol.</p>
-<h2 id="dhcpv6prefixdelegationleasesync">DHCPv6PrefixDelegationLeaseSync</h2>
-<p><a href="resources/DHCPv6PrefixDelegationLeaseSync.html">DHCPv6PrefixDelegationLeaseSync</a></p>
-<p>Replicate the built-in DHCPv6-PD client lease snapshot to peer hosts for recovery/takeover.</p>
-<h2 id="dhcpv4relay">DHCPv4Relay</h2>
-<p><a href="resources/DHCPv4Relay.html">DHCPv4Relay</a></p>
-<p>Relay DHCPv4 requests through dnsmasq to one explicitly configured IPv4 server.</p>
-<h2 id="selfaddresspolicy">SelfAddressPolicy</h2>
+<h3 id="selfaddresspolicy">SelfAddressPolicy</h3>
 <p><a href="resources/SelfAddressPolicy.html">SelfAddressPolicy</a></p>
 <p>Describe an ordered self-address selection policy used by supporting static DHCPv6 rendering. It does not assign an address to an interface.</p>
-<h2 id="dnszone">DNSZone</h2>
-<p><a href="resources/DNSZone.html">DNSZone</a></p>
-<p>Local A/AAAA records and generated PTR answers served through a DNSForwarder zoneRefs rule. This is not a general authoritative DNS server with arbitrary record types, zone transfers or signing.</p>
-<h2 id="dnsresolver">DNSResolver</h2>
-<p><a href="resources/DNSResolver.html">DNSResolver</a></p>
-<p>A local DNS service with UDP and TCP listeners, connected to DNSForwarder rules.</p>
-<h2 id="dnsforwarder">DNSForwarder</h2>
-<p><a href="resources/DNSForwarder.html">DNSForwarder</a></p>
-<p>Select local zones or upstream DNS servers for matching query names on one DNSResolver.</p>
-<h2 id="dnsupstream">DNSUpstream</h2>
-<p><a href="resources/DNSUpstream.html">DNSUpstream</a></p>
-<p>A DNS server endpoint referenced by DNSForwarder; declaration alone does not start a listener or forward queries.</p>
-<h2 id="dslitetunnel">DSLiteTunnel</h2>
+<h3 id="virtualaddress">VirtualAddress</h3>
+<p><a href="resources/VirtualAddress.html">VirtualAddress</a></p>
+<p>Maintain a static address or an elected floating address. Linux uses iproute2 for static addresses and keepalived for VRRP; FreeBSD uses ifconfig and CARP.</p>
+<h3 id="vrf">VRF</h3>
+<p><a href="resources/VRF.html">VRF</a></p>
+<p>Declares a Linux VRF device, routing table and member intentions. The current implementation renders plans/artifact identities and protects its routing table, but has no VRF creation/member-attachment controller. Do not treat plan output as proof that a VRF was created.</p>
+<h2 id="wan-and-address-acquisition">WAN and address acquisition</h2>
+<h3 id="dhcpv4client">DHCPv4Client</h3>
+<p><a href="resources/DHCPv4Client.html">DHCPv4Client</a></p>
+<p>Runs the managed routerd-dhcpv4-client daemon and applies its current lease address, optional default route and optional host DNS settings.</p>
+<h3 id="dhcpv6address">DHCPv6Address</h3>
+<p><a href="resources/DHCPv6Address.html">DHCPv6Address</a></p>
+<p>Declares an IPv6 address acquired by a host DHCPv6 client. It is separate from DHCPv6PrefixDelegation and does not allocate LAN prefixes.</p>
+<h3 id="dhcpv6information">DHCPv6Information</h3>
+<p><a href="resources/DHCPv6Information.html">DHCPv6Information</a></p>
+<p>Projects AFTR, DNS, SNTP and domain-search information from the DHCPv6-PD daemon that uses the same interface. It does not start a standalone information-request client.</p>
+<h3 id="dhcpv6prefixdelegation">DHCPv6PrefixDelegation</h3>
+<p><a href="resources/DHCPv6PrefixDelegation.html">DHCPv6PrefixDelegation</a></p>
+<p>Acquire an IPv6 delegated prefix on an uplink. Use IPv6DelegatedAddress to derive and apply downstream or host addresses; obtaining a prefix alone does not advertise it to clients.</p>
+<h3 id="dslitetunnel">DSLiteTunnel</h3>
 <p><a href="resources/DSLiteTunnel.html">DSLiteTunnel</a></p>
 <p>Encapsulate IPv4 in IPv6 toward an AFTR. Tunnel setup, an IPv4 default route, NAT and reachability checks are separate concerns.</p>
-<h2 id="tunnelinterface">TunnelInterface</h2>
-<p><a href="resources/TunnelInterface.html">TunnelInterface</a></p>
-<p>Create and reconcile an unencrypted IPv4 outer tunnel and an optional IPv4 inner address. metadata.name is the actual OS tunnel name.</p>
-<h2 id="overlaypeer">OverlayPeer</h2>
+<h3 id="ipv6delegatedaddress">IPv6DelegatedAddress</h3>
+<p><a href="resources/IPv6DelegatedAddress.html">IPv6DelegatedAddress</a></p>
+<p>Derive and install a local IPv6 address from a DHCPv6PrefixDelegation prefix.</p>
+<h3 id="ipv6raaddress">IPv6RAAddress</h3>
+<p><a href="resources/IPv6RAAddress.html">IPv6RAAddress</a></p>
+<p>Declares host-side receipt of IPv6 router advertisements/SLAAC. This is an RA client, not an IPv6RouterAdvertisement server for the LAN.</p>
+<h3 id="pppoesession">PPPoESession</h3>
+<p><a href="resources/PPPoESession.html">PPPoESession</a></p>
+<p>Run a supervised routerd-pppoe-client using pppd on Linux or mpd5 on FreeBSD, and publish negotiated IPv4 session status. Several legacy fields affect only manual FreeBSD render output, not this daemon path.</p>
+<h2 id="vpn-and-tunnels">VPN and tunnels</h2>
+<h3 id="ipsecconnection">IPsecConnection</h3>
+<p><a href="resources/IPsecConnection.html">IPsecConnection</a></p>
+<p>Render a strongSwan swanctl connection and synchronize all routerd IPsec connections together. A traffic-triggered CHILD_SA trap is configured; loading the connection is not proof of an established SA.</p>
+<h3 id="overlaypeer">OverlayPeer</h3>
 <p><a href="resources/OverlayPeer.html">OverlayPeer</a></p>
 <p>Describe an existing transport used by HybridRoute and path-MTU policy derivation. This resource does not establish WireGuard, Tailscale, IPsec or a tunnel by itself.</p>
-<h2 id="hybridroute">HybridRoute</h2>
-<p><a href="resources/HybridRoute.html">HybridRoute</a></p>
-<p>Expand explicitly listed IPv4 destination networks into main-table IPv4Route resources through an OverlayPeer.</p>
-<h2 id="cloudproviderprofile">CloudProviderProfile</h2>
-<p><a href="resources/CloudProviderProfile.html">CloudProviderProfile</a></p>
-<p>Describe a provider identity and default target metadata used when planning provider actions. This declaration does not authenticate to a cloud or create resources.</p>
-<h2 id="provideractionpolicy">ProviderActionPolicy</h2>
-<p><a href="resources/ProviderActionPolicy.html">ProviderActionPolicy</a></p>
-<p>Gate execution of proposed provider actions by executor Plugins. Declaring a policy is not itself an action or a cloud login.</p>
-<h2 id="eventgroup">EventGroup</h2>
-<p><a href="resources/EventGroup.html">EventGroup</a></p>
-<p>Declare a shared federation event group and this router’s identity, peer discovery, receiver and local retention settings.</p>
-<h2 id="eventpeer">EventPeer</h2>
-<p><a href="resources/EventPeer.html">EventPeer</a></p>
-<p>Declare one remote delivery target for an EventGroup. Transport authentication and local identity come from that group.</p>
-<h2 id="eventsubscription">EventSubscription</h2>
-<p><a href="resources/EventSubscription.html">EventSubscription</a></p>
-<p>Match nonexpired persisted federation events and invoke a local Plugin, storing its result as a DynamicConfigPart.</p>
-<h2 id="federationslo">FederationSLO</h2>
-<p><a href="resources/FederationSLO.html">FederationSLO</a></p>
-<p>Configure per-group thresholds used by routerctl doctor for federation delivery and subscription diagnostics. This does not change delivery retry or plugin execution policy.</p>
-<h2 id="mobilitypool">MobilityPool</h2>
-<p><a href="resources/MobilityPool.html">MobilityPool</a></p>
-<p>Combine shared SAM topology, local ownership observations and BGP/federation state to plan address mobility and local capture. The configured YAML is local intent; shared identity lives in SAMNodeSet.</p>
-<h2 id="samnodeset">SAMNodeSet</h2>
-<p><a href="resources/SAMNodeSet.html">SAMNodeSet</a></p>
-<p>Declare shared SAM node identity/topology used by transport, event peers, WireGuard and MobilityPool member resolution. Local provider capture/discovery details belong in a MobilityPool self overlay, not here.</p>
-<h2 id="samenrollmentpolicy">SAMEnrollmentPolicy</h2>
-<p><a href="resources/SAMEnrollmentPolicy.html">SAMEnrollmentPolicy</a></p>
-<p>Define RR-side admission boundaries for SAM leaf identity, transport addresses, optional join authentication and authorized mobility ownership. Leaves consume the admitted topology instead of copying this policy.</p>
-<h2 id="samenrollmentclaim">SAMEnrollmentClaim</h2>
-<p><a href="resources/SAMEnrollmentClaim.html">SAMEnrollmentClaim</a></p>
-<p>Declare the leaf-authored identity, transport and mobility intent submitted for SAM enrollment. Expiry and revocation are RR/controller administration state, not part of the leaf join HMAC.</p>
-<h2 id="samenrollmentclient">SAMEnrollmentClient</h2>
-<p><a href="resources/SAMEnrollmentClient.html">SAMEnrollmentClient</a></p>
-<p>Submit a local enrollment claim to bootstrap RR control APIs, fetch admitted topology and persist it as dynamic SAMRRSet/optional direct peer-group state for existing controllers. No cloud infrastructure is created.</p>
-<h2 id="samtransportprofile">SAMTransportProfile</h2>
-<p><a href="resources/SAMTransportProfile.html">SAMTransportProfile</a></p>
-<p>Derive SAM per-node tunnels, endpoint /32 routes and optional BGP/BFD peers from shared topology or admitted RR/direct snapshots.</p>
-<h2 id="samsubnetpolicy">SAMSubnetPolicy</h2>
-<p><a href="resources/SAMSubnetPolicy.html">SAMSubnetPolicy</a></p>
-<p>Publish shard assignments as federation events so each node can narrow MobilityPool ownership discovery to its assigned IPv4 subnets. This is a discovery-scope assignment, not an IP routing resource.</p>
-<h2 id="ipv4route">IPv4Route</h2>
-<p><a href="resources/IPv4Route.html">IPv4Route</a></p>
-<p>Install an IPv4 unicast or blackhole route, optionally resolving device and gateway from resource status.</p>
-<h2 id="healthcheck">HealthCheck</h2>
-<p><a href="resources/HealthCheck.html">HealthCheck</a></p>
-<p>Probe an IP target and publish Healthy/Unhealthy state for route selection. A successful probe verifies only its configured protocol and path.</p>
-<h2 id="egressroutepolicy">EgressRoutePolicy</h2>
+<h3 id="tailscalenode">TailscaleNode</h3>
+<p><a href="resources/TailscaleNode.html">TailscaleNode</a></p>
+<p>Manage Tailscale enrollment options through a routerd-generated systemd oneshot on Linux or rc.d script on FreeBSD, then observe tailscale status --json. Tailscale/Headscale server-side approvals remain separate.</p>
+<h3 id="tunnelinterface">TunnelInterface</h3>
+<p><a href="resources/TunnelInterface.html">TunnelInterface</a></p>
+<p>Create and reconcile an unencrypted IPv4 outer tunnel and an optional IPv4 inner address. metadata.name is the actual OS tunnel name.</p>
+<h3 id="vxlantunnel">VXLANTunnel</h3>
+<p><a href="resources/VXLANTunnel.html">VXLANTunnel</a></p>
+<p>Manage a Linux VXLAN device with static remote flood destinations and optional bridge attachment. No multicast discovery or dynamic MAC learning is configured.</p>
+<h3 id="wireguardinterface">WireGuardInterface</h3>
+<p><a href="resources/WireGuardInterface.html">WireGuardInterface</a></p>
+<p>Create or configure a WireGuard device and apply its complete peer configuration with wg setconf. Address assignment and ordinary routing are separate resources.</p>
+<h3 id="wireguardpeer">WireGuardPeer</h3>
+<p><a href="resources/WireGuardPeer.html">WireGuardPeer</a></p>
+<p>Define a peer on a declared WireGuardInterface. Its AllowedIPs configure WireGuard cryptographic routing; they do not automatically create ordinary IP routes in this controller.</p>
+<h2 id="routing-and-path-health">Routing and path health</h2>
+<h3 id="bfd">BFD</h3>
+<p><a href="resources/BFD.html">BFD</a></p>
+<p>Configure FRR bfdd sessions through vtysh and observe their status for BGPPeer failure handling. This is a separate backend from GoBGP; BFD Down can trigger a BGP peer reset.</p>
+<h3 id="bgpdynamicpeer">BGPDynamicPeer</h3>
+<p><a href="resources/BGPDynamicPeer.html">BGPDynamicPeer</a></p>
+<p>Define a GoBGP inbound dynamic-neighbor admission group, not an individual peer instance or a WireGuard/SAM authorization identity.</p>
+<h3 id="bgppeer">BGPPeer</h3>
+<p><a href="resources/BGPPeer.html">BGPPeer</a></p>
+<p>Configure one or more static BGP neighbors on a declared BGPRouter.</p>
+<h3 id="bgprouter">BGPRouter</h3>
+<p><a href="resources/BGPRouter.html">BGPRouter</a></p>
+<p>Configure the local GoBGP instance, its admitted routes and locally originated advertisements. Actual kernel installation and remote reachability are separate from a BGP Established state.</p>
+<h3 id="clusternetworkroute">ClusterNetworkRoute</h3>
+<p><a href="resources/ClusterNetworkRoute.html">ClusterNetworkRoute</a></p>
+<p>Declare IPv4 routes to Kubernetes Pod and Service networks through explicitly configured next hops. This does not discover cluster CIDRs or nodes.</p>
+<h3 id="egressroutepolicy">EgressRoutePolicy</h3>
 <p><a href="resources/EgressRoutePolicy.html">EgressRoutePolicy</a></p>
 <p>Select or program egress routing; the actual behavior depends on explicit mode and hostTraffic.</p>
-<h2 id="eventrule">EventRule</h2>
-<p><a href="resources/EventRule.html">EventRule</a></p>
-<p>Derive an event from patterns in the persisted local event journal, with optional per-correlation state.</p>
-<h2 id="derivedevent">DerivedEvent</h2>
-<p><a href="resources/DerivedEvent.html">DerivedEvent</a></p>
-<p>Publish asserted/retracted events when conditions over resource status change. Unlike EventRule, this evaluates current status rather than an event sequence.</p>
-<h2 id="nat44rule">NAT44Rule</h2>
-<p><a href="resources/NAT44Rule.html">NAT44Rule</a></p>
-<p>Translate routed IPv4 source addresses through an egress interface or selected EgressRoutePolicy device. NAT does not itself permit forwarding or assign the translated address.</p>
-<h2 id="nat44flowdnatpinhole">NAT44FlowDNATPinhole</h2>
-<p><a href="resources/NAT44FlowDNATPinhole.html">NAT44FlowDNATPinhole</a></p>
-<p>Learn an IPv4 UDP internal endpoint from outbound traffic and dynamically DNAT inbound UDP by its destination port. Linux nftables only; the current PF renderer does not implement this resource.</p>
-<h2 id="nat44sessionsync">NAT44SessionSync</h2>
-<p><a href="resources/NAT44SessionSync.html">NAT44SessionSync</a></p>
-<p>Replicate Linux conntrack state using either an SSH event stream or a continuously running conntrackd FTFW peer link. This is not FreeBSD PF state synchronization.</p>
-<h2 id="managementaccess">ManagementAccess</h2>
-<p><a href="resources/ManagementAccess.html">ManagementAccess</a></p>
-<p>Declare the interfaces checked by the pre-apply management-lockout check. This resource does not create a management listener or firewall allow rule.</p>
-<h2 id="portforward">PortForward</h2>
-<p><a href="resources/PortForward.html">PortForward</a></p>
-<p>Forward a TCP/UDP port to one IPv4 endpoint with optional hairpin NAT. Linux generates DNAT plus matching forward allowances; FreeBSD uses rdr pass.</p>
-<h2 id="ingressservice">IngressService</h2>
+<h3 id="healthcheck">HealthCheck</h3>
+<p><a href="resources/HealthCheck.html">HealthCheck</a></p>
+<p>Probe an IP target and publish Healthy/Unhealthy state for route selection. A successful probe verifies only its configured protocol and path.</p>
+<h3 id="hybridroute">HybridRoute</h3>
+<p><a href="resources/HybridRoute.html">HybridRoute</a></p>
+<p>Expand explicitly listed IPv4 destination networks into main-table IPv4Route resources through an OverlayPeer.</p>
+<h3 id="ipv4route">IPv4Route</h3>
+<p><a href="resources/IPv4Route.html">IPv4Route</a></p>
+<p>Install an IPv4 unicast or blackhole route, optionally resolving device and gateway from resource status.</p>
+<h2 id="dhcp-servers-and-advertisements">DHCP servers and advertisements</h2>
+<h3 id="dhcpv4relay">DHCPv4Relay</h3>
+<p><a href="resources/DHCPv4Relay.html">DHCPv4Relay</a></p>
+<p>Relay DHCPv4 requests through dnsmasq to one explicitly configured IPv4 server.</p>
+<h3 id="dhcpv4reservation">DHCPv4Reservation</h3>
+<p><a href="resources/DHCPv4Reservation.html">DHCPv4Reservation</a></p>
+<p>Reserve one IPv4 address for a MAC address on a declared DHCPv4Server.</p>
+<h3 id="dhcpv4server">DHCPv4Server</h3>
+<p><a href="resources/DHCPv4Server.html">DHCPv4Server</a></p>
+<p>Serve IPv4 DHCP pools, tagged selector scopes and reservations through the current shared dnsmasq service.</p>
+<h3 id="dhcpv4serverleasesync">DHCPv4ServerLeaseSync</h3>
+<p><a href="resources/DHCPv4ServerLeaseSync.html">DHCPv4ServerLeaseSync</a></p>
+<p>Copy a DHCPv4 server lease file and available sticky-state files to peer hosts using rsync over SSH. This is file replication, not the DHCP failover protocol.</p>
+<h3 id="dhcpv6prefixdelegationleasesync">DHCPv6PrefixDelegationLeaseSync</h3>
+<p><a href="resources/DHCPv6PrefixDelegationLeaseSync.html">DHCPv6PrefixDelegationLeaseSync</a></p>
+<p>Replicate the built-in DHCPv6-PD client lease snapshot to peer hosts for recovery/takeover.</p>
+<h3 id="dhcpv6server">DHCPv6Server</h3>
+<p><a href="resources/DHCPv6Server.html">DHCPv6Server</a></p>
+<p>Provide LAN DHCPv6 address/information service and associated RA behavior using the shared dnsmasq process.</p>
+<h3 id="dhcpv6serverleasesync">DHCPv6ServerLeaseSync</h3>
+<p><a href="resources/DHCPv6ServerLeaseSync.html">DHCPv6ServerLeaseSync</a></p>
+<p>Copy one DHCPv6 server lease file to peer hosts using rsync over SSH; not a DHCP failover protocol.</p>
+<h3 id="ipv6routeradvertisement">IPv6RouterAdvertisement</h3>
+<p><a href="resources/IPv6RouterAdvertisement.html">IPv6RouterAdvertisement</a></p>
+<p>Configure IPv6 router-advertisement options on a LAN and deprecate previously delegated prefixes.</p>
+<h2 id="dns">DNS</h2>
+<h3 id="dnsforwarder">DNSForwarder</h3>
+<p><a href="resources/DNSForwarder.html">DNSForwarder</a></p>
+<p>Select local zones or upstream DNS servers for matching query names on one DNSResolver.</p>
+<h3 id="dnsresolver">DNSResolver</h3>
+<p><a href="resources/DNSResolver.html">DNSResolver</a></p>
+<p>A local DNS service with UDP and TCP listeners, connected to DNSForwarder rules.</p>
+<h3 id="dnsupstream">DNSUpstream</h3>
+<p><a href="resources/DNSUpstream.html">DNSUpstream</a></p>
+<p>A DNS server endpoint referenced by DNSForwarder; declaration alone does not start a listener or forward queries.</p>
+<h3 id="dnszone">DNSZone</h3>
+<p><a href="resources/DNSZone.html">DNSZone</a></p>
+<p>Local A/AAAA records and generated PTR answers served through a DNSForwarder zoneRefs rule. This is not a general authoritative DNS server with arbitrary record types, zone transfers or signing.</p>
+<h2 id="nat-and-service-publishing">NAT and service publishing</h2>
+<h3 id="ingressservice">IngressService</h3>
 <p><a href="resources/IngressService.html">IngressService</a></p>
 <p>Expose an IPv4 TCP/UDP endpoint through backend selection and active health checks, with optional local DNS publication and hairpin NAT. This is layer-4 NAT, not an HTTP reverse proxy or TLS terminator.</p>
-<h2 id="ipaddressset">IPAddressSet</h2>
+<h3 id="ipaddressset">IPAddressSet</h3>
 <p><a href="resources/IPAddressSet.html">IPAddressSet</a></p>
 <p>Share literal and DNS-resolved IP addresses among supported nftables NAT, routing and firewall rules. It does not create routes or start a DNS service.</p>
-<h2 id="localserviceredirect">LocalServiceRedirect</h2>
+<h3 id="localserviceredirect">LocalServiceRedirect</h3>
 <p><a href="resources/LocalServiceRedirect.html">LocalServiceRedirect</a></p>
 <p>Redirect matching traffic received on a declared interface to a service port on the router itself, using nftables prerouting NAT.</p>
-<h2 id="firewallflowpinhole">FirewallFlowPinhole</h2>
-<p><a href="resources/FirewallFlowPinhole.html">FirewallFlowPinhole</a></p>
-<p>Learn allowed return IPv4 UDP endpoints for a pair of firewall zones, without address translation. Linux nftables only; the current PF renderer omits this resource.</p>
-<h2 id="trafficflowlog">TrafficFlowLog</h2>
-<p><a href="resources/TrafficFlowLog.html">TrafficFlowLog</a></p>
-<p>Record connection snapshots in a SQLite flow database, optionally enriching them from the DPI cache. This is not a packet capture or a log of every packet.</p>
-<h2 id="firewallzone">FirewallZone</h2>
-<p><a href="resources/FirewallZone.html">FirewallZone</a></p>
-<p>Group configured interfaces under a named trust role for firewall generation. This does not create an OS interface or a separate routing/bridge domain.</p>
-<h2 id="firewallpolicy">FirewallPolicy</h2>
-<p><a href="resources/FirewallPolicy.html">FirewallPolicy</a></p>
-<p>Set shared implicit firewall options used alongside zones and explicit rules. Multiple resources are aggregated rather than applied independently.</p>
-<h2 id="clientpolicy">ClientPolicy</h2>
+<h3 id="nat44flowdnatpinhole">NAT44FlowDNATPinhole</h3>
+<p><a href="resources/NAT44FlowDNATPinhole.html">NAT44FlowDNATPinhole</a></p>
+<p>Learn an IPv4 UDP internal endpoint from outbound traffic and dynamically DNAT inbound UDP by its destination port. Linux nftables only; the current PF renderer does not implement this resource.</p>
+<h3 id="nat44rule">NAT44Rule</h3>
+<p><a href="resources/NAT44Rule.html">NAT44Rule</a></p>
+<p>Translate routed IPv4 source addresses through an egress interface or selected EgressRoutePolicy device. NAT does not itself permit forwarding or assign the translated address.</p>
+<h3 id="nat44sessionsync">NAT44SessionSync</h3>
+<p><a href="resources/NAT44SessionSync.html">NAT44SessionSync</a></p>
+<p>Replicate Linux conntrack state using either an SSH event stream or a continuously running conntrackd FTFW peer link. This is not FreeBSD PF state synchronization.</p>
+<h3 id="portforward">PortForward</h3>
+<p><a href="resources/PortForward.html">PortForward</a></p>
+<p>Forward a TCP/UDP port to one IPv4 endpoint with optional hairpin NAT. Linux generates DNAT plus matching forward allowances; FreeBSD uses rdr pass.</p>
+<h2 id="firewall-and-client-control">Firewall and client control</h2>
+<h3 id="clientpolicy">ClientPolicy</h3>
 <p><a href="resources/ClientPolicy.html">ClientPolicy</a></p>
 <p>Apply guest-style local-service and routed-destination restrictions to selected or non-exempt clients. Linux identifies clients by configured MACs; FreeBSD PF requires explicit IP identities.</p>
-<h2 id="firewallrule">FirewallRule</h2>
+<h3 id="firewallflowpinhole">FirewallFlowPinhole</h3>
+<p><a href="resources/FirewallFlowPinhole.html">FirewallFlowPinhole</a></p>
+<p>Learn allowed return IPv4 UDP endpoints for a pair of firewall zones, without address translation. Linux nftables only; the current PF renderer omits this resource.</p>
+<h3 id="firewallpolicy">FirewallPolicy</h3>
+<p><a href="resources/FirewallPolicy.html">FirewallPolicy</a></p>
+<p>Set shared implicit firewall options used alongside zones and explicit rules. Multiple resources are aggregated rather than applied independently.</p>
+<h3 id="firewallrule">FirewallRule</h3>
 <p><a href="resources/FirewallRule.html">FirewallRule</a></p>
 <p>Declare a named accept/drop/reject rule for a zone path, with address/protocol/port matches and Linux rate/connection predicates.</p>
-<h2 id="firewalleventlog">FirewallEventLog</h2>
+<h3 id="firewallzone">FirewallZone</h3>
+<p><a href="resources/FirewallZone.html">FirewallZone</a></p>
+<p>Group configured interfaces under a named trust role for firewall generation. This does not create an OS interface or a separate routing/bridge domain.</p>
+<h2 id="system-and-management">System and management</h2>
+<h3 id="controlapi">ControlAPI</h3>
+<p><a href="resources/ControlAPI.html">ControlAPI</a></p>
+<p>Enables the HTTP control API for reading state and changing configuration. Unix-socket control and the WebConsole are separate.</p>
+<h3 id="hostname">Hostname</h3>
+<p><a href="resources/Hostname.html">Hostname</a></p>
+<p>Manages the OS hostname, separately from Router.metadata.name and resource names.</p>
+<h3 id="managementaccess">ManagementAccess</h3>
+<p><a href="resources/ManagementAccess.html">ManagementAccess</a></p>
+<p>Declare the interfaces checked by the pre-apply management-lockout check. This resource does not create a management listener or firewall allow rule.</p>
+<h3 id="ntpclient">NTPClient</h3>
+<p><a href="resources/NTPClient.html">NTPClient</a></p>
+<p>Manages or observes an upstream time-synchronization client.</p>
+<h3 id="ntpserver">NTPServer</h3>
+<p><a href="resources/NTPServer.html">NTPServer</a></p>
+<p>Configures a time server and its upstream servers using chrony or FreeBSD ntpd.</p>
+<h3 id="package">Package</h3>
+<p><a href="resources/Package.html">Package</a></p>
+<p>Ensures selected OS packages are installed. The controller selects the first package set whose os exactly matches the running host.</p>
+<h3 id="routerdcluster">RouterdCluster</h3>
+<p><a href="resources/RouterdCluster.html">RouterdCluster</a></p>
+<p>Coordinates which routerd process may perform mutations through a file lease and OS file locking. It is not VRRP election or peer network discovery.</p>
+<h3 id="sysctl">Sysctl</h3>
+<p><a href="resources/Sysctl.html">Sysctl</a></p>
+<p>Reconciles one kernel sysctl setting and can write a persistent sysctl.d file. This resource has no reference to another routerd resource.</p>
+<h3 id="sysctlprofile">SysctlProfile</h3>
+<p><a href="resources/SysctlProfile.html">SysctlProfile</a></p>
+<p>Applies a named set of router-oriented sysctls, with optional per-key overrides. It does not refer to a Sysctl resource by name.</p>
+<h3 id="webconsole">WebConsole</h3>
+<p><a href="resources/WebConsole.html">WebConsole</a></p>
+<p>Serves the read-only router web console from routerd. Its HTTP listener is separate from the mutating ControlAPI listener.</p>
+<h2 id="logs-and-telemetry">Logs and telemetry</h2>
+<h3 id="firewalleventlog">FirewallEventLog</h3>
 <p><a href="resources/FirewallEventLog.html">FirewallEventLog</a></p>
 <p>Enable the firewall packet-log collector and configure its database, Linux NFLOG group and renderer logging options. Several accepted filter/archive fields currently have no runtime consumer.</p>
-<h2 id="hostname">Hostname</h2>
-<p><a href="resources/Hostname.html">Hostname</a></p>
-<p>Manages the OS hostname, separately from Router.metadata.name and resource names.</p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<h3 id="logretention">LogRetention</h3>
+<p><a href="resources/LogRetention.html">LogRetention</a></p>
+<p>Prunes operational-log SQLite records and optionally archives them first. It does not control arbitrary system log files.</p>
+<h3 id="logsink">LogSink</h3>
+<p><a href="resources/LogSink.html">LogSink</a></p>
+<p>Defines an operational event-log destination selected by its type. It is separate from ObservabilityPipeline log sinks.</p>
+<h3 id="observabilitypipeline">ObservabilityPipeline</h3>
+<p><a href="resources/ObservabilityPipeline.html">ObservabilityPipeline</a></p>
+<p>Combines an OpenTelemetry environment declaration for managed services with an independent built-in operational-event log consumer.</p>
+<h3 id="telemetry">Telemetry</h3>
+<p><a href="resources/Telemetry.html">Telemetry</a></p>
+<p>Configures OpenTelemetry environment variables for rendered managed services. It does not define a LogSink or a separate collector process.</p>
+<h3 id="trafficflowlog">TrafficFlowLog</h3>
+<p><a href="resources/TrafficFlowLog.html">TrafficFlowLog</a></p>
+<p>Record connection snapshots in a SQLite flow database, optionally enriching them from the DPI cache. This is not a packet capture or a log of every packet.</p>
+<h2 id="events-and-federation">Events and federation</h2>
+<h3 id="derivedevent">DerivedEvent</h3>
+<p><a href="resources/DerivedEvent.html">DerivedEvent</a></p>
+<p>Publish asserted/retracted events when conditions over resource status change. Unlike EventRule, this evaluates current status rather than an event sequence.</p>
+<h3 id="eventgroup">EventGroup</h3>
+<p><a href="resources/EventGroup.html">EventGroup</a></p>
+<p>Declare a shared federation event group and this router’s identity, peer discovery, receiver and local retention settings.</p>
+<h3 id="eventpeer">EventPeer</h3>
+<p><a href="resources/EventPeer.html">EventPeer</a></p>
+<p>Declare one remote delivery target for an EventGroup. Transport authentication and local identity come from that group.</p>
+<h3 id="eventrule">EventRule</h3>
+<p><a href="resources/EventRule.html">EventRule</a></p>
+<p>Derive an event from patterns in the persisted local event journal, with optional per-correlation state.</p>
+<h3 id="eventsubscription">EventSubscription</h3>
+<p><a href="resources/EventSubscription.html">EventSubscription</a></p>
+<p>Match nonexpired persisted federation events and invoke a local Plugin, storing its result as a DynamicConfigPart.</p>
+<h3 id="federationslo">FederationSLO</h3>
+<p><a href="resources/FederationSLO.html">FederationSLO</a></p>
+<p>Configure per-group thresholds used by routerctl doctor for federation delivery and subscription diagnostics. This does not change delivery retry or plugin execution policy.</p>
+<h2 id="sam-and-mobility">SAM and mobility</h2>
+<h3 id="mobilitypool">MobilityPool</h3>
+<p><a href="resources/MobilityPool.html">MobilityPool</a></p>
+<p>Combine shared SAM topology, local ownership observations and BGP/federation state to plan address mobility and local capture. The configured YAML is local intent; shared identity lives in SAMNodeSet.</p>
+<h3 id="samenrollmentclaim">SAMEnrollmentClaim</h3>
+<p><a href="resources/SAMEnrollmentClaim.html">SAMEnrollmentClaim</a></p>
+<p>Declare the leaf-authored identity, transport and mobility intent submitted for SAM enrollment. Expiry and revocation are RR/controller administration state, not part of the leaf join HMAC.</p>
+<h3 id="samenrollmentclient">SAMEnrollmentClient</h3>
+<p><a href="resources/SAMEnrollmentClient.html">SAMEnrollmentClient</a></p>
+<p>Submit a local enrollment claim to bootstrap RR control APIs, fetch admitted topology and persist it as dynamic SAMRRSet/optional direct peer-group state for existing controllers. No cloud infrastructure is created.</p>
+<h3 id="samenrollmentpolicy">SAMEnrollmentPolicy</h3>
+<p><a href="resources/SAMEnrollmentPolicy.html">SAMEnrollmentPolicy</a></p>
+<p>Define RR-side admission boundaries for SAM leaf identity, transport addresses, optional join authentication and authorized mobility ownership. Leaves consume the admitted topology instead of copying this policy.</p>
+<h3 id="samnodeset">SAMNodeSet</h3>
+<p><a href="resources/SAMNodeSet.html">SAMNodeSet</a></p>
+<p>Declare shared SAM node identity/topology used by transport, event peers, WireGuard and MobilityPool member resolution. Local provider capture/discovery details belong in a MobilityPool self overlay, not here.</p>
+<h3 id="samsubnetpolicy">SAMSubnetPolicy</h3>
+<p><a href="resources/SAMSubnetPolicy.html">SAMSubnetPolicy</a></p>
+<p>Publish shard assignments as federation events so each node can narrow MobilityPool ownership discovery to its assigned IPv4 subnets. This is a discovery-scope assignment, not an IP routing resource.</p>
+<h3 id="samtransportprofile">SAMTransportProfile</h3>
+<p><a href="resources/SAMTransportProfile.html">SAMTransportProfile</a></p>
+<p>Derive SAM per-node tunnels, endpoint /32 routes and optional BGP/BFD peers from shared topology or admitted RR/direct snapshots.</p>
+<h2 id="extensions-and-provider-actions">Extensions and provider actions</h2>
+<h3 id="cloudproviderprofile">CloudProviderProfile</h3>
+<p><a href="resources/CloudProviderProfile.html">CloudProviderProfile</a></p>
+<p>Describe a provider identity and default target metadata used when planning provider actions. This declaration does not authenticate to a cloud or create resources.</p>
+<h3 id="dynamicconfigsource">DynamicConfigSource</h3>
+<p><a href="resources/DynamicConfigSource.html">DynamicConfigSource</a></p>
+<p>Declares a plugin-backed dynamic configuration source. The current implementation decodes and validates this kind, but contains no runtime consumer of DynamicConfigSourceSpec; declaring it does not invoke the plugin.</p>
+<h3 id="dynamicoverridepolicy">DynamicOverridePolicy</h3>
+<p><a href="resources/DynamicOverridePolicy.html">DynamicOverridePolicy</a></p>
+<p>Authorizes selected dynamic sources to mask exact startup resources while the dynamic part is active. It does not rewrite the saved startup configuration.</p>
+<h3 id="plugin">Plugin</h3>
+<p><a href="resources/Plugin.html">Plugin</a></p>
+<p>Registers an executable implementing the routerd plugin protocol. Invoke it explicitly or through a configured consumer such as EventSubscription.</p>
+<h3 id="provideractionpolicy">ProviderActionPolicy</h3>
+<p><a href="resources/ProviderActionPolicy.html">ProviderActionPolicy</a></p>
+<p>Gate execution of proposed provider actions by executor Plugins. Declaring a policy is not itself an action or a cloud login.</p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
 <li><a href="#router">Router</a></li>
-<li><a href="#plugin">Plugin</a></li>
-<li><a href="#dynamicconfigsource">DynamicConfigSource</a></li>
-<li><a href="#dynamicoverridepolicy">DynamicOverridePolicy</a></li>
-<li><a href="#logsink">LogSink</a></li>
-<li><a href="#telemetry">Telemetry</a></li>
-<li><a href="#observabilitypipeline">ObservabilityPipeline</a></li>
-<li><a href="#logretention">LogRetention</a></li>
-<li><a href="#sysctl">Sysctl</a></li>
-<li><a href="#sysctlprofile">SysctlProfile</a></li>
-<li><a href="#package">Package</a></li>
-<li><a href="#ntpclient">NTPClient</a></li>
-<li><a href="#ntpserver">NTPServer</a></li>
-<li><a href="#webconsole">WebConsole</a></li>
-<li><a href="#controlapi">ControlAPI</a></li>
-<li><a href="#routerdcluster">RouterdCluster</a></li>
+<li><a href="#interfaces-and-addresses">Interfaces and addresses</a><ul>
 <li><a href="#interface">Interface</a></li>
+<li><a href="#ipv4staticaddress">IPv4StaticAddress</a></li>
+<li><a href="#selfaddresspolicy">SelfAddressPolicy</a></li>
+<li><a href="#virtualaddress">VirtualAddress</a></li>
+<li><a href="#vrf">VRF</a></li>
+</ul>
+</li>
+<li><a href="#wan-and-address-acquisition">WAN and address acquisition</a><ul>
+<li><a href="#dhcpv4client">DHCPv4Client</a></li>
+<li><a href="#dhcpv6address">DHCPv6Address</a></li>
+<li><a href="#dhcpv6information">DHCPv6Information</a></li>
+<li><a href="#dhcpv6prefixdelegation">DHCPv6PrefixDelegation</a></li>
+<li><a href="#dslitetunnel">DSLiteTunnel</a></li>
+<li><a href="#ipv6delegatedaddress">IPv6DelegatedAddress</a></li>
+<li><a href="#ipv6raaddress">IPv6RAAddress</a></li>
 <li><a href="#pppoesession">PPPoESession</a></li>
+</ul>
+</li>
+<li><a href="#vpn-and-tunnels">VPN and tunnels</a><ul>
+<li><a href="#ipsecconnection">IPsecConnection</a></li>
+<li><a href="#overlaypeer">OverlayPeer</a></li>
+<li><a href="#tailscalenode">TailscaleNode</a></li>
+<li><a href="#tunnelinterface">TunnelInterface</a></li>
+<li><a href="#vxlantunnel">VXLANTunnel</a></li>
 <li><a href="#wireguardinterface">WireGuardInterface</a></li>
 <li><a href="#wireguardpeer">WireGuardPeer</a></li>
-<li><a href="#tailscalenode">TailscaleNode</a></li>
-<li><a href="#ipsecconnection">IPsecConnection</a></li>
-<li><a href="#vrf">VRF</a></li>
-<li><a href="#vxlantunnel">VXLANTunnel</a></li>
-<li><a href="#ipv4staticaddress">IPv4StaticAddress</a></li>
-<li><a href="#virtualaddress">VirtualAddress</a></li>
-<li><a href="#bgprouter">BGPRouter</a></li>
-<li><a href="#bgppeer">BGPPeer</a></li>
-<li><a href="#bgpdynamicpeer">BGPDynamicPeer</a></li>
+</ul>
+</li>
+<li><a href="#routing-and-path-health">Routing and path health</a><ul>
 <li><a href="#bfd">BFD</a></li>
-<li><a href="#dhcpv4client">DHCPv4Client</a></li>
+<li><a href="#bgpdynamicpeer">BGPDynamicPeer</a></li>
+<li><a href="#bgppeer">BGPPeer</a></li>
+<li><a href="#bgprouter">BGPRouter</a></li>
 <li><a href="#clusternetworkroute">ClusterNetworkRoute</a></li>
-<li><a href="#dhcpv4server">DHCPv4Server</a></li>
-<li><a href="#dhcpv4reservation">DHCPv4Reservation</a></li>
-<li><a href="#dhcpv6address">DHCPv6Address</a></li>
-<li><a href="#ipv6raaddress">IPv6RAAddress</a></li>
-<li><a href="#dhcpv6prefixdelegation">DHCPv6PrefixDelegation</a></li>
-<li><a href="#ipv6delegatedaddress">IPv6DelegatedAddress</a></li>
-<li><a href="#dhcpv6information">DHCPv6Information</a></li>
-<li><a href="#ipv6routeradvertisement">IPv6RouterAdvertisement</a></li>
-<li><a href="#dhcpv6server">DHCPv6Server</a></li>
-<li><a href="#dhcpv4serverleasesync">DHCPv4ServerLeaseSync</a></li>
-<li><a href="#dhcpv6serverleasesync">DHCPv6ServerLeaseSync</a></li>
-<li><a href="#dhcpv6prefixdelegationleasesync">DHCPv6PrefixDelegationLeaseSync</a></li>
-<li><a href="#dhcpv4relay">DHCPv4Relay</a></li>
-<li><a href="#selfaddresspolicy">SelfAddressPolicy</a></li>
-<li><a href="#dnszone">DNSZone</a></li>
-<li><a href="#dnsresolver">DNSResolver</a></li>
-<li><a href="#dnsforwarder">DNSForwarder</a></li>
-<li><a href="#dnsupstream">DNSUpstream</a></li>
-<li><a href="#dslitetunnel">DSLiteTunnel</a></li>
-<li><a href="#tunnelinterface">TunnelInterface</a></li>
-<li><a href="#overlaypeer">OverlayPeer</a></li>
-<li><a href="#hybridroute">HybridRoute</a></li>
-<li><a href="#cloudproviderprofile">CloudProviderProfile</a></li>
-<li><a href="#provideractionpolicy">ProviderActionPolicy</a></li>
-<li><a href="#eventgroup">EventGroup</a></li>
-<li><a href="#eventpeer">EventPeer</a></li>
-<li><a href="#eventsubscription">EventSubscription</a></li>
-<li><a href="#federationslo">FederationSLO</a></li>
-<li><a href="#mobilitypool">MobilityPool</a></li>
-<li><a href="#samnodeset">SAMNodeSet</a></li>
-<li><a href="#samenrollmentpolicy">SAMEnrollmentPolicy</a></li>
-<li><a href="#samenrollmentclaim">SAMEnrollmentClaim</a></li>
-<li><a href="#samenrollmentclient">SAMEnrollmentClient</a></li>
-<li><a href="#samtransportprofile">SAMTransportProfile</a></li>
-<li><a href="#samsubnetpolicy">SAMSubnetPolicy</a></li>
-<li><a href="#ipv4route">IPv4Route</a></li>
-<li><a href="#healthcheck">HealthCheck</a></li>
 <li><a href="#egressroutepolicy">EgressRoutePolicy</a></li>
-<li><a href="#eventrule">EventRule</a></li>
-<li><a href="#derivedevent">DerivedEvent</a></li>
-<li><a href="#nat44rule">NAT44Rule</a></li>
-<li><a href="#nat44flowdnatpinhole">NAT44FlowDNATPinhole</a></li>
-<li><a href="#nat44sessionsync">NAT44SessionSync</a></li>
-<li><a href="#managementaccess">ManagementAccess</a></li>
-<li><a href="#portforward">PortForward</a></li>
+<li><a href="#healthcheck">HealthCheck</a></li>
+<li><a href="#hybridroute">HybridRoute</a></li>
+<li><a href="#ipv4route">IPv4Route</a></li>
+</ul>
+</li>
+<li><a href="#dhcp-servers-and-advertisements">DHCP servers and advertisements</a><ul>
+<li><a href="#dhcpv4relay">DHCPv4Relay</a></li>
+<li><a href="#dhcpv4reservation">DHCPv4Reservation</a></li>
+<li><a href="#dhcpv4server">DHCPv4Server</a></li>
+<li><a href="#dhcpv4serverleasesync">DHCPv4ServerLeaseSync</a></li>
+<li><a href="#dhcpv6prefixdelegationleasesync">DHCPv6PrefixDelegationLeaseSync</a></li>
+<li><a href="#dhcpv6server">DHCPv6Server</a></li>
+<li><a href="#dhcpv6serverleasesync">DHCPv6ServerLeaseSync</a></li>
+<li><a href="#ipv6routeradvertisement">IPv6RouterAdvertisement</a></li>
+</ul>
+</li>
+<li><a href="#dns">DNS</a><ul>
+<li><a href="#dnsforwarder">DNSForwarder</a></li>
+<li><a href="#dnsresolver">DNSResolver</a></li>
+<li><a href="#dnsupstream">DNSUpstream</a></li>
+<li><a href="#dnszone">DNSZone</a></li>
+</ul>
+</li>
+<li><a href="#nat-and-service-publishing">NAT and service publishing</a><ul>
 <li><a href="#ingressservice">IngressService</a></li>
 <li><a href="#ipaddressset">IPAddressSet</a></li>
 <li><a href="#localserviceredirect">LocalServiceRedirect</a></li>
-<li><a href="#firewallflowpinhole">FirewallFlowPinhole</a></li>
-<li><a href="#trafficflowlog">TrafficFlowLog</a></li>
-<li><a href="#firewallzone">FirewallZone</a></li>
-<li><a href="#firewallpolicy">FirewallPolicy</a></li>
+<li><a href="#nat44flowdnatpinhole">NAT44FlowDNATPinhole</a></li>
+<li><a href="#nat44rule">NAT44Rule</a></li>
+<li><a href="#nat44sessionsync">NAT44SessionSync</a></li>
+<li><a href="#portforward">PortForward</a></li>
+</ul>
+</li>
+<li><a href="#firewall-and-client-control">Firewall and client control</a><ul>
 <li><a href="#clientpolicy">ClientPolicy</a></li>
+<li><a href="#firewallflowpinhole">FirewallFlowPinhole</a></li>
+<li><a href="#firewallpolicy">FirewallPolicy</a></li>
 <li><a href="#firewallrule">FirewallRule</a></li>
-<li><a href="#firewalleventlog">FirewallEventLog</a></li>
+<li><a href="#firewallzone">FirewallZone</a></li>
+</ul>
+</li>
+<li><a href="#system-and-management">System and management</a><ul>
+<li><a href="#controlapi">ControlAPI</a></li>
 <li><a href="#hostname">Hostname</a></li>
+<li><a href="#managementaccess">ManagementAccess</a></li>
+<li><a href="#ntpclient">NTPClient</a></li>
+<li><a href="#ntpserver">NTPServer</a></li>
+<li><a href="#package">Package</a></li>
+<li><a href="#routerdcluster">RouterdCluster</a></li>
+<li><a href="#sysctl">Sysctl</a></li>
+<li><a href="#sysctlprofile">SysctlProfile</a></li>
+<li><a href="#webconsole">WebConsole</a></li>
+</ul>
+</li>
+<li><a href="#logs-and-telemetry">Logs and telemetry</a><ul>
+<li><a href="#firewalleventlog">FirewallEventLog</a></li>
+<li><a href="#logretention">LogRetention</a></li>
+<li><a href="#logsink">LogSink</a></li>
+<li><a href="#observabilitypipeline">ObservabilityPipeline</a></li>
+<li><a href="#telemetry">Telemetry</a></li>
+<li><a href="#trafficflowlog">TrafficFlowLog</a></li>
+</ul>
+</li>
+<li><a href="#events-and-federation">Events and federation</a><ul>
+<li><a href="#derivedevent">DerivedEvent</a></li>
+<li><a href="#eventgroup">EventGroup</a></li>
+<li><a href="#eventpeer">EventPeer</a></li>
+<li><a href="#eventrule">EventRule</a></li>
+<li><a href="#eventsubscription">EventSubscription</a></li>
+<li><a href="#federationslo">FederationSLO</a></li>
+</ul>
+</li>
+<li><a href="#sam-and-mobility">SAM and mobility</a><ul>
+<li><a href="#mobilitypool">MobilityPool</a></li>
+<li><a href="#samenrollmentclaim">SAMEnrollmentClaim</a></li>
+<li><a href="#samenrollmentclient">SAMEnrollmentClient</a></li>
+<li><a href="#samenrollmentpolicy">SAMEnrollmentPolicy</a></li>
+<li><a href="#samnodeset">SAMNodeSet</a></li>
+<li><a href="#samsubnetpolicy">SAMSubnetPolicy</a></li>
+<li><a href="#samtransportprofile">SAMTransportProfile</a></li>
+</ul>
+</li>
+<li><a href="#extensions-and-provider-actions">Extensions and provider actions</a><ul>
+<li><a href="#cloudproviderprofile">CloudProviderProfile</a></li>
+<li><a href="#dynamicconfigsource">DynamicConfigSource</a></li>
+<li><a href="#dynamicoverridepolicy">DynamicOverridePolicy</a></li>
+<li><a href="#plugin">Plugin</a></li>
+<li><a href="#provideractionpolicy">ProviderActionPolicy</a></li>
+</ul>
+</li>
 </ul>
 </div>
 </aside></main>
