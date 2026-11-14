@@ -290,6 +290,7 @@ spec:
 <p>routerctl doctorが共有イベント配送・購読を診断するときのグループ別閾値です。配送再試行やPlugin実行方針自体は変更しません。</p>
 <h2 id="mobilitypool">MobilityPool</h2>
 <p><a href="resources/MobilityPool.html">MobilityPool</a></p>
+<p>共有SAMトポロジー・ローカル所有権観測・BGPと連携状態を組み合わせ、アドレス移動とローカル取得を計画します。YAMLは自ノードの要求で、共有識別情報はSAMNodeSetに置きます。</p>
 <h2 id="samnodeset">SAMNodeSet</h2>
 <p><a href="resources/SAMNodeSet.html">SAMNodeSet</a></p>
 <p>トランスポート・イベントピア・WireGuard・MobilityPoolメンバーで共有するSAMのノード識別・トポロジーを宣言します。ローカルのプロバイダー取得・探索設定はここではなくMobilityPoolの自ノード上書きに置きます。</p>
@@ -316,6 +317,7 @@ spec:
 <p>IP宛先を確認し、経路選択用のHealthy・Unhealthy状態を発行します。成功が示す範囲は指定したプロトコルと経路に限られます。</p>
 <h2 id="egressroutepolicy">EgressRoutePolicy</h2>
 <p><a href="resources/EgressRoutePolicy.html">EgressRoutePolicy</a></p>
+<p>送信経路を選択・設定します。実際の動作は明示modeとhostTrafficによって異なります。</p>
 <h2 id="eventrule">EventRule</h2>
 <p><a href="resources/EventRule.html">EventRule</a></p>
 <p>永続化されたローカルイベント履歴のパターンからイベントを生成します。相関キーごとに状態を分離できます。</p>

@@ -532,6 +532,8 @@ routerctl doctorが共有イベント配送・購読を診断するときのグ�
 
 [MobilityPool](resources/MobilityPool.md)
 
+共有SAMトポロジー・ローカル所有権観測・BGPと連携状態を組み合わせ、アドレス移動とローカル取得を計画します。YAMLは自ノードの要求で、共有識別情報はSAMNodeSetに置きます。
+
 
 ## SAMNodeSet
 
@@ -592,6 +594,8 @@ IP宛先を確認し、経路選択用のHealthy・Unhealthy状態を発行し�
 ## EgressRoutePolicy
 
 [EgressRoutePolicy](resources/EgressRoutePolicy.md)
+
+送信経路を選択・設定します。実際の動作は明示modeとhostTrafficによって異なります。
 
 
 ## EventRule

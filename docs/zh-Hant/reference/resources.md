@@ -532,6 +532,8 @@ spec:
 
 [MobilityPool](resources/MobilityPool.md)
 
+結合共用 SAM 拓撲、本機所有權觀察及 BGP/聯邦狀態，規劃位址移動與本機擷取。YAML 是本機意圖，共用身分位於 SAMNodeSet。
+
 
 ## SAMNodeSet
 
@@ -592,6 +594,8 @@ spec:
 ## EgressRoutePolicy
 
 [EgressRoutePolicy](resources/EgressRoutePolicy.md)
+
+選擇或設定出口路由，實際行為取決於明確 mode 與 hostTraffic。
 
 
 ## EventRule

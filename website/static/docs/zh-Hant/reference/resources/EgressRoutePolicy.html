@@ -5,6 +5,18 @@
 <main class="doclayout wrap"><article class="document"><h1 id="egressroutepolicy">EgressRoutePolicy</h1>
 <p><a href="../resources.html#egressroutepolicy">各資源的設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>選擇或設定出口路由，實際行為取決於明確 mode 與 hostTraffic。</p>
+<h2 id="指定條件與參照關係">指定條件與參照關係</h2>
+<ul>
+<li>請明確選擇路徑：省略 mode 僅公布建議選擇，Linux priority/mark/hash 安裝 IPv4 路由表與 nftables，hostTraffic true 為獨立本機 IPv6 路徑。即使結構描述接受，這些 IPv4 寫入器未實作一般 IPv6 轉送策略。</li>
+<li>有效的直接 Linux 導向須有 interface/device/deviceFrom 輸出，以及正 table/priority/mark 組合。驗證允許三者皆零，但即時直接表安裝會略過，Applied 或選擇狀態不能證明封包導向。設定 metric 零時 Linux 路由用 50。</li>
+<li>priority 選就緒候選最大 weight，以較小 priority、名稱、輸入順序破同分。檢查新鮮健康、實際裝置、直接候選相依與 DS-Lite Up。目標池須至少一個健康且存在的目標，但此 priority 分支不評估候選 dependsOn。無可用者為 Pending/NoReadyCandidates 並移除新流導向，不保證所有探測路由或既有狀態撤除。</li>
+<li>mark 依資源與候選順序寫入各合格直接候選標記，重疊匹配可被後規則覆寫，不選單一最大 weight。hash/priority 目標池用位址 jhash、固定 256 桶 rendezvous 映射及 conntrack 標記，無目標權重可設，變更後既有流仍可保留標記。</li>
+<li>共用 device/gateway 來源須有既有資源與明確提供欄位。DHCP 閘道不自動探索，須給 gatewayFrom。table/routeTable、routeMetric/metric 不可皆非零。targets 與直接 device/gateway/table/mark/metric 互斥，僅明確 hash/priority 可用；雖驗證僅在 hash 要求，產生仍需 hashFields。</li>
+<li>Linux 目標表設定檢查實際鏈路並略過缺失目標，但後續 hash 映射就緒副本對一般非 DS-Lite 目標只檢查健康，不重複檢查鏈路，因此缺失裝置仍可能收到新 hash 桶。依賴分配前須確認目標鏈路與健康。</li>
+<li>FreeBSD 僅支援 mode hash、family ipv4、hashFields: [sourceAddress]、非空 sourceCIDRs、單一啟用候選及至少兩個相異固定 IPv4 介面/閘道目標。省略 selection/hysteresis 與候選直接、動態、健康、相依欄位；目標 table/priority/mark/metric 須零，禁止健康與動態閘道。禁用目的集合參照，最多一個排除 CIDR，包含與排除不可並用。PF 用 route-to round-robin sticky-address，不是 Linux 決定性 hash。</li>
+<li>FreeBSD 轉譯器拒絕此 route-to 與明確 FirewallRule、產生的防火牆孔洞、FirewallEventLog 或 ClientPolicy 混用。若有 FirewallZone 過濾，須有廣泛允許轉送路徑；語法驗證不證明可與其他資源共同產生最終 PF 規則。</li>
+</ul>
 <h2 id="yaml定義">YAML定義</h2>
 <p>此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。</p>
 <pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
@@ -104,12 +116,214 @@
           maxAge: &quot;&lt;string&gt;&quot; # 選填; string
           status: &quot;set&quot; # 選填; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
 </code></pre>
+<h2 id="欄位意義與預設值">欄位意義與預設值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>欄位意義與預設值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.family</code></td>
+<td>預設 ipv4。結構描述與驗證接受 ipv6，但目前 Linux 轉送 mark/priority/hash 實作限 IPv4；IPv6 另有 hostTraffic 路徑，不代表一般 IPv6 轉送同等支援。FreeBSD 子集亦須 ipv4。</td>
+</tr>
+<tr>
+<td><code>spec.hostTraffic</code></td>
+<td>預設 false。Linux true 須 family ipv6、單一候選、preferredSource: interface、固定 static gateway、mark 0 且無 targets。安裝所有本機流量的 iif lo 策略，不套用來源或目的 CIDR；裝置或位址未就緒保留先前有效規則，初次則 Pending。此獨立建構器不評估候選健康、相依或選擇欄位。</td>
+</tr>
+<tr>
+<td><code>spec.mode</code></td>
+<td>省略或空值僅做建議性狀態選擇，不安裝路由表。priority 選一個就緒候選供新流標記，mark 直接標記封包，hash 將流量映射到候選 targets。Linux 轉送請明確設定 mode；FreeBSD 僅限受限 hash 形狀。</td>
+</tr>
+<tr>
+<td><code>spec.sourceCIDRs</code></td>
+<td>選用同位址族來源前綴，預設任意來源，清單為 OR。FreeBSD hash 需非空 IPv4 清單；hostTraffic 不使用此選擇器。</td>
+</tr>
+<tr>
+<td><code>spec.destinationCIDRs</code></td>
+<td>選用同位址族目的前綴，與 destinationSetRefs 皆空時為全部目的。mark/hash 中與集合參照 OR 結合；priority 預設標記產生僅使用 CIDR，不使用位址集合。</td>
+</tr>
+<tr>
+<td><code>spec.destinationSetRefs</code></td>
+<td>選用既有 IPAddressSet/<name> 參照，拒絕重複。用於 Linux mark/hash 匹配，priority 預設標記不套用，FreeBSD 禁用；空值不增加集合替代項。</td>
+</tr>
+<tr>
+<td><code>spec.excludeDestinationCIDRs</code></td>
+<td>選用同位址族目的排除，預設空，須避開所有排除。IPv4 /0 排除不產生導向匹配。FreeBSD 最多一項，且不可與非空 destinationCIDRs 並用。</td>
+</tr>
+<tr>
+<td><code>spec.excludeDestinationSetRefs</code></td>
+<td>選用既有 IPAddressSet/<name> 排除，拒絕重複，用於 Linux mark/hash，priority 預設標記忽略，FreeBSD 禁用。</td>
+</tr>
+<tr>
+<td><code>spec.hashFields</code></td>
+<td>sourceAddress/destinationAddress 的有序清單，hash 必填；含 priority 目標池在內，任何有 targets 的產生也需要。Linux 對位址而非埠做 jhash，使用資源衍生固定種子與 256 個 rendezvous 映射桶。FreeBSD 必須 [sourceAddress]，實作卻是 round-robin sticky-address 而非 jhash。</td>
+</tr>
+<tr>
+<td><code>spec.selection</code></td>
+<td>預設 highest-weight-ready，就緒候選依 weight 降序、priority 升序、有效名稱字典序、輸入順序選擇。weighted-ecmp 雖可通過結構描述，建議或 priority 選擇未實作，為 Pending/UnsupportedSelection。與 hash 目標演算法不同，mark/hash 不用此選項；FreeBSD 須空。</td>
+</tr>
+<tr>
+<td><code>spec.hysteresis</code></td>
+<td>Go duration，僅省略 mode 的建議選擇預設 30s。變更後此期間可保留仍就緒的舊勝者，不保留未就緒者；零或負值無延遲。明確 priority/mark/hash 不使用，FreeBSD 須空。</td>
+</tr>
+<tr>
+<td><code>spec.candidates</code></td>
+<td>必填非空清單，停用項目仍做結構驗證。Linux priority 可混合直接候選與目標池；未驗證候選名稱唯一，請明確使用唯一名稱以免狀態或 hash 身分混淆。</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>選用共用狀態條件，預設無條件。為假時自有效設定移除，候選條件另行篩選；未解析可維持不確定，不保證停止。</td>
+</tr>
+<tr>
+<td><code>spec.candidates[].name</code></td>
+<td>選用明確身分。建議模式依 source、candidate-N（零起算）補名；明確 priority 狀態依 interface/device、targets，未命名 hash 池用輸入索引。穩定身分請用唯一名稱。</td>
+</tr>
+<tr>
+<td><code>spec.candidates[].enabled</code></td>
+<td>預設 true，false 排除選擇與轉譯，但不略過設定或參照驗證，也不單獨保證全部既有連線或路由表項消失。</td>
+</tr>
+<tr>
+<td><code>spec.candidates[].source</code></td>
+<td>選用 Kind/name 建議就緒來源，不自動供應 device/gateway；此字串不受共用型別參照存在驗證。建議模式接受 Applied/Bound/Healthy/Installed/Ready/Running/Up，新鮮通過的健康檢查可替代未就緒來源。明確路由特別要求所參照 DS-Lite 為 Up，但不一般檢查其他來源。</td>
+</tr>
+<tr>
+<td><code>spec.candidates[].interface</code></td>
+<td>明確 Linux 路由的選用已宣告邏輯介面，優先於 device，提供時驗證 Router 介面或 DS-Lite 索引。省略 mode 的建議輸出不使用此別名，該處請用 device/deviceFrom。targets 非空時禁用。</td>
+</tr>
+<tr>
+<td><code>spec.candidates[].device</code></td>
+<td>選用固定裝置替代值，明確路由先用 interface，建議模式直接用 device。此字串無共用存在檢查，但即時安裝與選擇須有實際鏈路。已移除 ${...}，請用 deviceFrom；與 targets 禁止並用。</td>
+</tr>
+<tr>
+<td><code>spec.candidates[].deviceFrom</code></td>
+<td>選用共用 resource/field 狀態來源，驗證既有資源與提供欄位。第一個正規化值優先於 interface/device，缺值退回固定值；optional 不建立裝置，不可與 targets 並用。</td>
+</tr>
+<tr>
+<td><code>spec.candidates[].gateway</code></td>
+<td>固定純位址須符合 family，需要 gatewaySource: static 且與 gatewayFrom 互斥；DHCP 模式禁止固定值，預設空，目標池候選亦禁用。</td>
+</tr>
+<tr>
+<td><code>spec.candidates[].gatewayFrom</code></td>
+<td>選用既有 resource/提供欄位來源。static 恰需 gateway/gatewayFrom 之一；DHCP 模式可用此來源，但不自動從介面探索閘道。建議模式任何未解析來源即使 optional true 仍未就緒；明確安裝在 static/DHCP 閘道缺值時報錯，optional 不是一般略過機制。與 targets 禁止並用。</td>
+</tr>
+<tr>
+<td><code>spec.candidates[].gatewaySource</code></td>
+<td>預設 none，為裝置預設路由並禁止 gateway 欄位。static 需固定或來源恰一個；dhcpv4 需 IPv4、無固定值且明確 gatewayFrom 可用。dhcpv6 雖僅在 IPv6 驗證接受，一般 IPv4 安裝器不支援，獨立 hostTraffic 亦須 static。池候選禁用。</td>
+</tr>
+<tr>
+<td><code>spec.candidates[].preferredSource</code></td>
+<td>空值或 interface，hostTraffic 須 interface，選候選介面第一個非 tentative/deprecated 的全域 IPv6。一般 IPv4 轉送及目標池不使用。</td>
+</tr>
+<tr>
+<td><code>spec.candidates[].table</code></td>
+<td>Linux 路由表編號，結構描述 0–4294967295，預設 0 未設定。與非零 routeTable 互斥；有效直接導向需正 table/priority/mark（hostTraffic mark 為 0）。targets 候選禁用，FreeBSD 須 0。</td>
+</tr>
+<tr>
+<td><code>spec.candidates[].routeTable</code></td>
+<td>table 為 0 時使用的別名，兩者非零拒絕；範圍及要求同 table。</td>
+</tr>
+<tr>
+<td><code>spec.candidates[].priority</code></td>
+<td>設定直接 mark/table/priority 任一時，Linux ip rule 優先序須 1–32765；預設 0 不是有效程式化規則。亦為候選選擇較小優先的同分判定，池候選可不設直接 table/mark 而使用；FreeBSD 須 0。</td>
+</tr>
+<tr>
+<td><code>spec.candidates[].mark</code></td>
+<td>Linux 封包/fwmark 識別碼，結構描述 0–4294967295。直接轉送需正 mark/table/priority，預設 0 會略過直接路由表安裝。hostTraffic 須 0，池候選及 FreeBSD 禁止非零直接 mark。</td>
+</tr>
+<tr>
+<td><code>spec.candidates[].routeMetric</code></td>
+<td>非負優先路由 metric，非零時與非零 metric 互斥；有效 0 在 Linux 安裝含 hostTraffic 時轉為 50，建議狀態仍可能回報 0。targets 禁用，FreeBSD 須 0。</td>
+</tr>
+<tr>
+<td><code>spec.candidates[].metric</code></td>
+<td>routeMetric 為 0 時的替代別名，兩者非零不可並用，Linux 程式化路由有效預設亦為 50。</td>
+</tr>
+<tr>
+<td><code>spec.candidates[].weight</code></td>
+<td>非負整數預設 0，建議或 priority 選擇較大優先，不是百分比、ECMP 或目標 hash 權重。mark/hash 不依此比例分配，FreeBSD 須 0。</td>
+</tr>
+<tr>
+<td><code>spec.candidates[].healthCheck</code></td>
+<td>選用既有 HealthCheck 裸名，空值無健康閘門。選擇須新鮮 Healthy 或未達 unhealthyThreshold 的 Failing，lastCheckedAt 不超過 max(2m,3×interval+timeout)。同 mark 探測的檢查可在未就緒時仍安裝探測表，與流量資格不同。hostTraffic 忽略，FreeBSD 禁用。</td>
+</tr>
+<tr>
+<td><code>spec.candidates[].targets</code></td>
+<td>選用非空目標池，僅限 hash/priority。與直接 interface/device/deviceFrom/gateway/gatewayFrom/gatewaySource/table/routeTable/mark/routeMetric/metric 互斥。Linux 需各目標正 table/priority/mark 及 hashFields；FreeBSD 需單一候選、至少兩個相異固定 routehost 且無 Linux 路由數字。</td>
+</tr>
+<tr>
+<td><code>spec.candidates[].dependsOn</code></td>
+<td>選用共用 AND 相依，預設空，套用一般參照檢查。建議、明確直接路由及 mark/hash 候選篩選會評估；目前 priority 目標池資格不評估候選 dependsOn，hostTraffic 亦忽略。候選整體停止請用 when，FreeBSD 禁用。</td>
+</tr>
+<tr>
+<td><code>spec.candidates[].when</code></td>
+<td>選用共用狀態條件，預設無條件；為假時在控制器選擇前移除，未解析可因不確定而保留，enabled false 亦移除。FreeBSD 固定子集禁止候選條件。</td>
+</tr>
+<tr>
+<td><code>spec.candidates[].targets[].name</code></td>
+<td>選用目標身分，預設空，與有效 interface、mark、table 共同組成穩定 hash 身分，變更可重新分配新流。Linux 通常不驗證名稱/mark/priority/table 唯一。</td>
+</tr>
+<tr>
+<td><code>spec.candidates[].targets[].interface</code></td>
+<td>未提供 outboundInterface 時必填目標邏輯介面，驗證已宣告介面或 DS-Lite 索引。Linux 同時提供時 outboundInterface 優先；FreeBSD 拒絕兩者非空。</td>
+</tr>
+<tr>
+<td><code>spec.candidates[].targets[].outboundInterface</code></td>
+<td>優先於 interface 的別名，套用相同參照檢查；實際傳遞仍須可用 OS 介面，不建立隧道。</td>
+</tr>
+<tr>
+<td><code>spec.candidates[].targets[].gateway</code></td>
+<td>選用符合 family 的固定值，須 gatewaySource static 且與 gatewayFrom 互斥；DHCP 模式禁止固定值。FreeBSD 目標必填此純固定 IPv4。</td>
+</tr>
+<tr>
+<td><code>spec.candidates[].targets[].gatewayFrom</code></td>
+<td>選用共用 resource/field 來源，即使 optional true 仍驗證存在及提供欄位。static 恰需固定值或來源之一，Linux 使用第一個值，optional 不略過閘道缺值；FreeBSD 完全禁止動態閘道欄位。</td>
+</tr>
+<tr>
+<td><code>spec.candidates[].targets[].gatewaySource</code></td>
+<td>預設 none，禁止 gateway/gatewayFrom 並安裝裝置路由。static 恰需 gateway/gatewayFrom 之一；dhcpv4/6 需相應位址族且無固定值，但不自動探索，請用 gatewayFrom。一般即時安裝器僅支援 none/static/dhcpv4，FreeBSD 須明確 static。</td>
+</tr>
+<tr>
+<td><code>spec.candidates[].targets[].table</code></td>
+<td>Linux 每目標必須正 table（結構描述上限 4294967295），與非零 routeTable 互斥；無自動配置、保留表或唯一檢查。FreeBSD 須省略或 0，改用 PF route-to。</td>
+</tr>
+<tr>
+<td><code>spec.candidates[].targets[].routeTable</code></td>
+<td>table 為 0 時使用的別名，兩者非零拒絕，Linux 正值或 FreeBSD 零值要求相同。</td>
+</tr>
+<tr>
+<td><code>spec.candidates[].targets[].priority</code></td>
+<td>Linux 目標 ip rule 優先序必填 1–32765，無自動配置，與候選選擇 priority 不同。FreeBSD 須省略或 0。</td>
+</tr>
+<tr>
+<td><code>spec.candidates[].targets[].mark</code></td>
+<td>Linux 目標 fwmark 必填正值（結構描述上限 4294967295），用於 hash 桶與 ip rule，無自動配置或衝突偵測。FreeBSD 須省略或 0。</td>
+</tr>
+<tr>
+<td><code>spec.candidates[].targets[].routeMetric</code></td>
+<td>非負 Linux 路由 metric，優先於 metric，兩者非零拒絕，有效省略或 0 安裝時為 50。FreeBSD 須省略或 0。</td>
+</tr>
+<tr>
+<td><code>spec.candidates[].targets[].metric</code></td>
+<td>routeMetric 為 0 時的替代別名，要求相同，Linux 有效預設 50。</td>
+</tr>
+<tr>
+<td><code>spec.candidates[].targets[].healthCheck</code></td>
+<td>選用既有 HealthCheck 裸名，預設無健康閘門，同候選鮮度與閾值檢查。失敗目標自新 hash 映射排除，但既有 conntrack 標記會還原而非全面終止連線，同 mark 探測表亦可保留；FreeBSD 禁用。</td>
+</tr>
+</tbody>
+</table>
+<p>實作: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_route.go">pkg/config/validate_route.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go">pkg/config/diagnostics.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/egressroute/selection.go">pkg/egressroute/selection.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/policyroute.go">pkg/controller/chain/policyroute.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/phase_status.go">pkg/controller/chain/phase_status.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/resourcequery/when.go">pkg/resourcequery/when.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/resourcequery/resourcequery.go">pkg/resourcequery/resourcequery.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/nftables.go">pkg/render/nftables.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/pf.go">pkg/render/pf.go</a></p>
 <h2 id="可參照的狀態欄位">可參照的狀態欄位</h2>
 <p>一般狀態參照驗證接受此 Kind 的下列欄位名稱。列於允許清單不保證目前有值，請檢查實際狀態。這些是輸出，不是 YAML spec 設定。</p>
 <p><code>phase</code>, <code>family</code>, <code>selectedCandidate</code>, <code>selectedSource</code>, <code>selectedDevice</code>, <code>selectedGateway</code>, <code>selectedGatewaySource</code>, <code>selectedRouteTable</code>, <code>selectedMetric</code>, <code>selectedWeight</code>, <code>selectedTargets</code>, <code>selectedInterface</code>, <code>candidates</code>, <code>role</code>, <code>advisory</code>, <code>lastTransitionAt</code>, <code>datapathRoleResource</code>, <code>datapathRole</code>, <code>datapathRoleTransitionAt</code>, <code>datapathReady</code>, <code>datapathState</code>, <code>datapathReadyAt</code>, <code>datapathReadyDuration</code>, <code>datapathReadyDurationMillis</code>, <code>datapathFallbackBehavior</code>, <code>newFlowBehavior</code>, <code>updatedAt</code>, <code>dryRun</code></p>
 <p><a href="/examples/home-router-mgmt-protected.yaml">設定範例</a></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
 <ul>
+<li><a href="#指定條件與參照關係">指定條件與參照關係</a></li>
 <li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#欄位意義與預設值">欄位意義與預設值</a></li>
 <li><a href="#可參照的狀態欄位">可參照的狀態欄位</a></li>
 </ul>
 </div>

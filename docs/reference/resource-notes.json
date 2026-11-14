@@ -10171,5 +10171,1075 @@
       "pkg/render/secrets.go",
       "cmd/routerd-vrrp-vmac/main.go"
     ]
+  },
+  "MobilityPool": {
+    "purpose": [
+      "Combine shared SAM topology, local ownership observations and BGP/federation state to plan address mobility and local capture. The configured YAML is local intent; shared identity lives in SAMNodeSet.",
+      "共有SAMトポロジー・ローカル所有権観測・BGPと連携状態を組み合わせ、アドレス移動とローカル取得を計画します。YAMLは自ノードの要求で、共有識別情報はSAMNodeSetに置きます。",
+      "結合共用 SAM 拓撲、本機所有權觀察及 BGP/聯邦狀態，規劃位址移動與本機擷取。YAML 是本機意圖，共用身分位於 SAMNodeSet。",
+      "结合共享 SAM 拓扑、本机所有权观察及 BGP/联邦状态，规划地址移动与本机捕获。YAML 是本机意图，共享身份位于 SAMNodeSet。"
+    ],
+    "rules": [
+      [
+        "prefix must be IPv4; groupRef must resolve to a local EventGroup with nodeName, and that exact node must appear in required membersFrom topology. Every member needs nonempty site and onprem/cloud role. Only this local node may carry capture/discovery/static ownership overlays.",
+        "prefixはIPv4が必要です。groupRefはnodeNameを持つローカルEventGroupへ解決し、その自ノードが必須membersFromトポロジー内に必要です。全メンバーは非空siteとonprem・cloudロールが必要で、取得・探索・静的所有上書きは自ノードだけです。",
+        "prefix 須為 IPv4，groupRef 須解析至有 nodeName 的本機 EventGroup，該節點須存在於必要 membersFrom 拓撲。各成員需非空 site 及 onprem/cloud 角色，僅本機可帶擷取/探索/靜態所有權覆寫。",
+        "prefix 须为 IPv4，groupRef 须解析至有 nodeName 的本机 EventGroup，该节点须存在于必需 membersFrom 拓扑。各成员需非空 site 及 onprem/cloud 角色，仅本机可带捕获/发现/静态所有权覆盖。"
+      ],
+      [
+        "onprem proxy-ARP requires capture.interface and explicit activeWhen single-router or vrrp-master. Provider capture requires providerRef and nicRef unless NIC is discovered; route-table additionally requires target.routeTableRef. Provider capture rejects activeWhen.",
+        "onprem proxy-ARPはcapture.interfaceと明示activeWhenのsingle-router・vrrp-masterが必要です。プロバイダー取得はproviderRefと、探索時を除きnicRefが必須で、route-tableはtarget.routeTableRefも必要です。プロバイダー取得のactiveWhenは禁止です。",
+        "onprem proxy-ARP 需 capture.interface 及明確 single-router/vrrp-master activeWhen。供應者擷取需 providerRef 及 nicRef（探索 NIC 時例外），route-table 另需 target.routeTableRef；供應者擷取禁用 activeWhen。",
+        "onprem proxy-ARP 需 capture.interface 及明确 single-router/vrrp-master activeWhen。提供商捕获需 providerRef 及 nicRef（发现 NIC 时例外），route-table 另需 target.routeTableRef；提供商捕获禁用 activeWhen。"
+      ],
+      [
+        "Linux uses per-interface proxy-ARP controls; FreeBSD uses route-aware global proxyall handling rather than Linux sysctl names. Capture activation still depends on real ownership/readiness facts; a valid YAML or planned intent is not proof of a working extended segment.",
+        "Linuxはインターフェース単位proxy-ARP、FreeBSDはLinux sysctl名ではなく経路に従う全体proxyallで制御します。取得有効化は実所有・準備状態にも依存し、YAML検証・計画だけで拡張セグメントの開通とは判定しません。",
+        "Linux 使用每介面 proxy-ARP 控制，FreeBSD 使用依路由判斷的全域 proxyall，而非 Linux sysctl 名稱。擷取啟用仍依實際所有權/就緒事實，有效 YAML 或計畫意圖不證明延伸網段可運作。",
+        "Linux 使用每接口 proxy-ARP 控制，FreeBSD 使用按路由判断的全局 proxyall，而非 Linux sysctl 名称。捕获启用仍依实际所有权/就绪事实，有效 YAML 或计划意图不证明扩展网段可运行。"
+      ],
+      [
+        "Profiles use nonzero merge semantics: empty strings/lists and false do not clear inherited fields. Source-address literal takes precedence over its status source. Maps merge with local entries winning; target literals then win over targetFrom. Profile use is cloud-only.",
+        "プロファイルは非ゼロ値でマージし、空文字・空一覧・falseで継承項目を解除しません。送信元固定値は状態参照より優先し、mapはローカル値を優先してマージし、target固定値をtargetFromより優先します。プロファイル利用はcloud限定です。",
+        "設定以非零語意合併，空字串/清單及 false 不清除繼承欄位。來源位址固定值優先狀態來源；map 以本機值優先合併，target 固定值再優先於 targetFrom。設定引用僅限 cloud。",
+        "配置以非零语义合并，空字符串/列表及 false 不清除继承字段。源地址固定值优先状态来源；map 以本机值优先合并，target 固定值再优先于 targetFrom。配置引用仅限 cloud。"
+      ]
+    ],
+    "fields": {
+      "prefix": [
+        "Required IPv4 CIDR managed by the pool. Ownership/capture addresses must stay inside it; no default prefix or address auto-allocation.",
+        "必須の管理IPv4 CIDRです。所有・取得アドレスはこの範囲内で、既定prefix・アドレス自動割当はありません。",
+        "必填集區管理的 IPv4 CIDR，所有權/擷取位址須在其內，無預設前綴或自動位址分配。",
+        "必填池管理的 IPv4 CIDR，所有权/捕获地址须在其内，无默认前缀或自动地址分配。"
+      ],
+      "groupRef": [
+        "Required local EventGroup reference with nodeName. Its exact local node identity must exist in membersFrom topology; used for ownership and expiry events.",
+        "nodeNameを持つ必須ローカルEventGroup参照です。その自ノード識別子がmembersFrom内に必要で、所有・失効イベントに使います。",
+        "必填具有 nodeName 的本機 EventGroup 參照，其本機節點識別須存在於 membersFrom 拓撲，用於所有權及到期事件。",
+        "必填具有 nodeName 的本机 EventGroup 引用，其本机节点标识须存在于 membersFrom 拓扑，用于所有权及到期事件。"
+      ],
+      "values": [
+        "Optional string constants for provider identifiers. Referenced by targetFrom/subnetRefFrom; no automatic variable expansion or secret storage.",
+        "プロバイダー識別子用の任意文字列定数mapです。targetFrom・subnetRefFromが参照し、自動変数展開・秘密保存は行いません。",
+        "選用供應者識別字串常數，供 targetFrom/subnetRefFrom 參照，不自動展開變數或儲存密鑰。",
+        "可选提供商标识字符串常量，供 targetFrom/subnetRefFrom 引用，不自动展开变量或保存密钥。"
+      ],
+      "profiles": [
+        "Optional reusable local capture/discovery defaults. Does not contain shared topology identities.",
+        "任意の再利用するローカル取得・探索既定値です。共有ノード識別は含めません。",
+        "選用可重用本機擷取/探索預設值，不包含共用拓撲身分。",
+        "可选可重用本机捕获/发现默认值，不包含共享拓扑身份。"
+      ],
+      "profiles.cloudCaptures": [
+        "Map keyed by profile name. Used only when a local cloud member selects profileRef; cannot enable onprem profile shorthand. Every profile target/value reference is normalized, including unused profiles.",
+        "プロファイル名をキーにするmapです。自cloudメンバーのprofileRefで使い、onpremの短縮指定には使えません。未選択プロファイルもtarget・values参照を正規化します。",
+        "以設定名稱為鍵的 map，僅供本機 cloud 成員 profileRef 選用，不支援 onprem 簡寫。包含未選用設定在內，所有 target/value 參照皆會正規化。",
+        "以配置名称为键的 map，仅供本机 cloud 成员 profileRef 选择，不支持 onprem 简写。包含未选用配置在内，所有 target/value 引用均会规范化。"
+      ],
+      "membersFrom": [
+        "Required nonempty SAMNodeSet source list; sole source of member identity, site, role, placement, maintenance and capacity. No inline topology fallback from members overlays.",
+        "必須の非空SAMNodeSet参照元一覧です。識別・site・role・placement・maintenance・容量の唯一の宣言元で、members上書きからトポロジーを補完しません。",
+        "必填且非空 SAMNodeSet 來源清單，是成員身分、site、role、placement、maintenance 及容量唯一來源，不由 members 覆寫補入拓撲。",
+        "必填且非空 SAMNodeSet 来源列表，是成员身份、site、role、placement、maintenance 及容量唯一来源，不由 members 覆盖补入拓扑。"
+      ],
+      "membersFrom[].resource": [
+        "Required SAMNodeSet/name. Imported nodeRefs must be distinct and each resolved member requires explicit site and onprem/cloud role.",
+        "必須のSAMNodeSet/nameです。取り込むnodeRefは重複不可で、各解決メンバーのsite・onpremまたはcloudロールを明示します。",
+        "必填 SAMNodeSet/name。匯入 nodeRef 不可重複，每個解析成員需明確 site 及 onprem/cloud 角色。",
+        "必填 SAMNodeSet/name。导入 nodeRef 不可重复，每个解析成员需明确 site 及 onprem/cloud 角色。"
+      ],
+      "membersFrom[].optional": [
+        "Default false. A missing nonoptional runtime source is Pending; true can tolerate it, but does not waive the requirement that the exact local EventGroup node resolve in the topology.",
+        "既定falseです。非optional参照元欠落は実行時Pendingで、trueなら許容できますが、EventGroupの自ノードをトポロジー内で解決する条件は省略しません。",
+        "預設 false。非 optional 執行時來源缺少為 Pending，true 可容忍，但不能免除 EventGroup 本機節點必須在拓撲解析的要求。",
+        "默认 false。非 optional 运行时来源缺失为 Pending，true 可容忍，但不能免除 EventGroup 本机节点必须在拓扑解析的要求。"
+      ],
+      "members": [
+        "Optional local-only overlays keyed by nodeRef already imported from membersFrom. Cannot set shared site/role/placement/maintenance/capacity or configure remote captures.",
+        "membersFromから取り込んだnodeRefへの任意の自ノード上書きです。共有site・role・placement・maintenance・容量や、リモート取得を設定できません。",
+        "選用本機專屬覆寫，nodeRef 須已由 membersFrom 匯入。不可設定共用 site/role/placement/maintenance/容量，也不可設定遠端擷取。",
+        "可选本机专属覆盖，nodeRef 须已由 membersFrom 导入。不可配置共享 site/role/placement/maintenance/容量，也不可配置远端捕获。"
+      ],
+      "members[].nodeRef": [
+        "Required imported nodeRef selecting the EventGroup local member. This overlay does not introduce a new member.",
+        "EventGroup自ノードを選ぶ必須の取り込み済みnodeRefです。新メンバーを導入する指定ではありません。",
+        "必填已匯入 nodeRef，選取 EventGroup 本機成員，不能以覆寫新增成員。",
+        "必填已导入 nodeRef，选择 EventGroup 本机成员，不能以覆盖新增成员。"
+      ],
+      "members[].profileRef": [
+        "Optional key under profiles.cloudCaptures, supported only for role cloud. Missing profile fails normalization. Nonempty local strings/lists override profile defaults; maps merge, true booleans are additive, empty lists/false cannot clear inherited values.",
+        "profiles.cloudCapturesの任意キーで、cloud限定です。欠落は正規化失敗です。非空文字列・一覧を上書きしmapをマージしますが、trueは加算し、空一覧・falseで継承値を解除できません。",
+        "選用 profiles.cloudCaptures 鍵，僅支援 cloud，缺少設定使正規化失敗。非空字串/清單覆寫，map 合併，true 布林為累加，空清單/false 無法清除繼承值。",
+        "可选 profiles.cloudCaptures 键，仅支持 cloud，缺少配置使规范化失败。非空字符串/列表覆盖，map 合并，true 布尔为累加，空列表/false 无法清除继承值。"
+      ],
+      "members[].staticOwnedAddresses": [
+        "Optional explicit IPv4 /32 CIDRs inside prefix, onprem role only. Bare IPv4 is rejected here. Duplicate static ownership is rejected; these declarations do not depend on learned-client events.",
+        "prefix内の任意の明示IPv4 /32 CIDRで、onprem限定です。ここでは裸IPv4は拒否し、静的所有重複も不可です。学習端末イベントに依存しない所有宣言です。",
+        "選用 prefix 內明確 IPv4 /32 CIDR，僅 onprem。此處拒絕純 IPv4，靜態所有權不可重複，這些宣告不依賴學習用戶端事件。",
+        "可选 prefix 内明确 IPv4 /32 CIDR，仅 onprem。此处拒绝纯 IPv4，静态所有权不可重复，这些声明不依赖学习客户端事件。"
+      ],
+      "staticHandovers": [
+        "Optional planned static ownership transfers. From-member release must be observed before projecting the target; not simultaneous dual ownership.",
+        "任意の計画的な静的所有権移動です。移動元の解放を観測してから移動先へ投影し、同時二重所有にはしません。",
+        "選用計畫靜態所有權移轉，觀察到來源成員釋放後才投影目標，不是同時雙重擁有。",
+        "可选计划静态所有权转移，观察到源成员释放后才投影目标，不是同时双重拥有。"
+      ],
+      "staticHandovers[].address": [
+        "Required IPv4 /32 CIDR within pool, unique across handovers. If declared as static-owned, its owner must equal fromNodeRef.",
+        "必須のプール内IPv4 /32 CIDRで、handover間で一意です。静的所有宣言がある場合、その所有者はfromNodeRefに一致が必要です。",
+        "必填集區內 IPv4 /32 CIDR，移轉間須唯一。有靜態擁有宣告時，擁有者須等於 fromNodeRef。",
+        "必填池内 IPv4 /32 CIDR，转移间须唯一。有静态拥有声明时，所有者须等于 fromNodeRef。"
+      ],
+      "staticHandovers[].fromNodeRef": [
+        "Required existing imported onprem member nodeRef. Must differ from toNodeRef.",
+        "必須の既存取り込み済みonpremメンバーnodeRefで、toNodeRefと異なる必要があります。",
+        "必填既有已匯入 onprem 成員 nodeRef，須不同於 toNodeRef。",
+        "必填已有已导入 onprem 成员 nodeRef，须不同于 toNodeRef。"
+      ],
+      "staticHandovers[].toNodeRef": [
+        "Required existing imported target member nodeRef, different from source. No target member is created implicitly.",
+        "必須の既存取り込み済み移動先nodeRefで、移動元と異なる必要があります。移動先の自動作成はしません。",
+        "必填既有已匯入目標 nodeRef，須不同於來源，不隱含建立目標成員。",
+        "必填已有已导入目标 nodeRef，须不同于来源，不隐含创建目标成员。"
+      ],
+      "members[].capture": [
+        "Local capture settings; type is explicit, not inferred from role. Only the local member may carry capture/discovery overlays.",
+        "ローカル取得設定です。typeはroleから推定せず明示します。取得・探索の上書きは自ノードのみです。",
+        "本機擷取設定，type 須明確指定，不從 role 推定。僅本機成員可帶擷取/探索覆寫。",
+        "本机捕获配置，type 须明确指定，不从 role 推定。仅本机成员可带捕获/发现覆盖。"
+      ],
+      "members[].capture.type": [
+        "proxy-arp for role onprem, provider-secondary-ip for role cloud; empty means no capture mechanism. Local cloud member requires a resolved capture configuration.",
+        "onpremはproxy-arp、cloudはprovider-secondary-ipです。空なら取得方式なしですが、自cloudメンバーは解決した取得設定が必要です。",
+        "onprem 使用 proxy-arp，cloud 使用 provider-secondary-ip。空值表示無擷取機制，但本機 cloud 成員需解析的擷取設定。",
+        "onprem 使用 proxy-arp，cloud 使用 provider-secondary-ip。空值表示无捕获机制，但本机 cloud 成员需解析的捕获配置。"
+      ],
+      "members[].capture.providerRef": [
+        "CloudProviderProfile name required for provider-secondary-ip. Not a status source. Ownership discovery defaults its providerRef to this value.",
+        "provider-secondary-ipで必須のCloudProviderProfile名です。状態参照ではありません。所有権探索providerRefの既定にも使います。",
+        "provider-secondary-ip 必填的 CloudProviderProfile 名稱，不是狀態來源，亦為所有權探索 providerRef 預設值。",
+        "provider-secondary-ip 必填的 CloudProviderProfile 名称，不是状态来源，亦为所有权发现 providerRef 默认值。"
+      ],
+      "members[].capture.captureStrategy": [
+        "Optional route-table only for provider-secondary-ip, requiring target.routeTableRef. Omit for normal secondary-IP or proxy-ARP; explicit secondary-ip/proxy-arp strategy values are rejected.",
+        "任意のroute-tableだけをprovider-secondary-ipで指定でき、target.routeTableRefが必須です。通常のsecondary-IP・proxy-ARPは省略し、strategyにsecondary-ip・proxy-arpを指定すると拒否します。",
+        "僅 provider-secondary-ip 可選用 route-table，需 target.routeTableRef。一般 secondary-IP/proxy-ARP 請省略，明確 secondary-ip/proxy-arp 策略值會被拒絕。",
+        "仅 provider-secondary-ip 可选用 route-table，需 target.routeTableRef。普通 secondary-IP/proxy-ARP 请省略，明确 secondary-ip/proxy-arp 策略值会被拒绝。"
+      ],
+      "members[].capture.nicRef": [
+        "Provider NIC identifier, required for provider capture unless provider-private-ip discovery can resolve it. Do not place nicRef under target/targetFrom; that spelling is rejected.",
+        "プロバイダーNIC識別子です。provider-private-ip探索から解決する場合以外、プロバイダー取得で必須です。target・targetFrom内のnicRefは禁止です。",
+        "供應者 NIC 識別，除可由 provider-private-ip 探索解析外，供應者擷取必填。不可放在 target/targetFrom 下，該寫法會被拒絕。",
+        "提供商 NIC 标识，除可由 provider-private-ip 发现解析外，提供商捕获必填。不可放在 target/targetFrom 下，该写法会被拒绝。"
+      ],
+      "members[].capture.interface": [
+        "Logical/OS capture interface, required for proxy-arp. Alias is resolved by consumers; no automatic LAN choice.",
+        "proxy-arpで必須の論理・OS取得インターフェースです。利用側で別名を解決し、LANの自動選択はしません。",
+        "proxy-arp 必填的邏輯/OS 擷取介面，由使用端解析別名，不自動選擇 LAN。",
+        "proxy-arp 必填的逻辑/OS 捕获接口，由使用端解析别名，不自动选择 LAN。"
+      ],
+      "members[].capture.sourceAddress": [
+        "Optional local IPv4 sender address inside the pool for proxy-ARP/BGP delivery. Literal takes precedence over sourceAddressFrom, without an exclusivity check here. Lowered to a /32 address and preferred source when valid; not a remote owner address.",
+        "proxy-ARP・BGP配送に使うプール内ローカルIPv4送信元です。固定値はsourceAddressFromより優先し、ここでは排他検証しません。有効なら/32アドレス・優先送信元へ展開し、リモート所有者のアドレスではありません。",
+        "proxy-ARP/BGP 傳送使用的選用集區內本機 IPv4 來源。固定值優先 sourceAddressFrom，此處不檢查互斥；有效時衍生 /32 位址及偏好來源，不是遠端擁有者位址。",
+        "proxy-ARP/BGP 传送使用的可选池内本机 IPv4 源地址。固定值优先 sourceAddressFrom，此处不检查互斥；有效时派生 /32 地址及首选源地址，不是远端所有者地址。"
+      ],
+      "members[].capture.sourceAddressFrom": [
+        "Optional source-address status reference. Accepts valid pool-local IPv4 values; missing/invalid values remain unavailable. Unlike a literal, it does not generate IPv4StaticAddress because the source resource owns the address lifecycle.",
+        "送信元アドレスの任意状態参照です。有効なプール内IPv4値を使い、欠落・不正値は未解決です。固定値と異なり参照元がアドレス寿命を持つためIPv4StaticAddressを生成しません。",
+        "選用來源位址狀態參照，接受有效集區內 IPv4，缺少或無效值仍不可用。不同於固定值，不產生 IPv4StaticAddress，因來源資源管理位址生命週期。",
+        "可选源地址状态引用，接受有效池内 IPv4，缺失或无效值仍不可用。不同于固定值，不生成 IPv4StaticAddress，因来源资源管理地址生命周期。"
+      ],
+      "members[].capture.excludeAddresses": [
+        "Optional pool-local IPv4 addresses/CIDRs excluded from proxy-ARP capture, default none. Use for local-only gateways/infrastructure; not a filter of all BGP routes.",
+        "任意のproxy-ARP取得対象外プール内IPv4アドレス・CIDRで、既定なしです。ローカル限定ゲートウェイ等に使い、BGP全経路のフィルターではありません。",
+        "選用排除於 proxy-ARP 擷取的集區內 IPv4 位址/CIDR，預設無。供僅本機閘道等使用，不是所有 BGP 路由篩選。",
+        "可选排除于 proxy-ARP 捕获的池内 IPv4 地址/CIDR，默认无。供仅本机网关等使用，不是所有 BGP 路由过滤。"
+      ],
+      "members[].capture.gratuitousARP": [
+        "Default false. True requests unsolicited ARP announcements for capture changes. Profile inheritance is additive: a false local override does not clear a true profile setting.",
+        "既定falseです。trueは取得変更のARP通知を要求します。プロファイル継承は加算的で、ローカルfalseではプロファイルtrueを解除できません。",
+        "預設 false。true 要求擷取變更時發送非請求 ARP 通告。設定繼承為累加，本機 false 不清除 profile 的 true。",
+        "默认 false。true 请求捕获更改时发送非请求 ARP 通告。配置继承为累加，本机 false 不清除 profile 的 true。"
+      ],
+      "members[].capture.activeWhen": [
+        "Required explicit authority for onprem proxy-arp; forbidden for provider-secondary-ip. Not the generic state/all/any predicate.",
+        "onprem proxy-arpで必須の明示的な権限条件です。provider-secondary-ipでは禁止で、汎用state・all・any条件ではありません。",
+        "onprem proxy-arp 必填的明確權限條件，provider-secondary-ip 禁用，不是一般 state/all/any 條件。",
+        "onprem proxy-arp 必填的明确权限条件，provider-secondary-ip 禁用，不是普通 state/all/any 条件。"
+      ],
+      "members[].capture.activeWhen.type": [
+        "single-router unconditionally authorizes local proxy-ARP; vrrp-master requires the referenced VirtualAddress MASTER state. No default for proxy-ARP.",
+        "single-routerはローカルproxy-ARPを無条件許可し、vrrp-masterは参照VirtualAddressのMASTER状態を要求します。proxy-ARPでは既定なしです。",
+        "single-router 無條件授權本機 proxy-ARP；vrrp-master 需參照 VirtualAddress 的 MASTER 狀態。proxy-ARP 無預設值。",
+        "single-router 无条件授权本机 proxy-ARP；vrrp-master 需引用 VirtualAddress 的 MASTER 状态。proxy-ARP 无默认值。"
+      ],
+      "members[].capture.activeWhen.virtualAddressRef": [
+        "Required existing local VirtualAddress name (or accepted VirtualAddress/name spelling) for vrrp-master, forbidden for single-router. Checked only for the local member.",
+        "vrrp-masterでは必須の既存ローカルVirtualAddress名（VirtualAddress/name表記も対応）です。single-routerでは禁止で、自メンバーだけを検証します。",
+        "vrrp-master 必填既有本機 VirtualAddress 名稱（也接受 VirtualAddress/name），single-router 禁用，僅對本機成員檢查。",
+        "vrrp-master 必填已有本机 VirtualAddress 名称（也接受 VirtualAddress/name），single-router 禁用，仅对本机成员检查。"
+      ],
+      "members[].capture.target": [
+        "Optional nonsecret provider target map. Keys/values cannot be empty; secret/token/password/credential/private-key/access-key-like keys are rejected. Explicit target entries override targetFrom values.",
+        "任意の非秘密プロバイダー対象mapです。空キー・値と秘密・token・password・credential・private-key・access-key類のキーは禁止し、明示値をtargetFromより優先します。",
+        "選用非秘密供應者目標 map。鍵值不可為空，拒絕 secret/token/password/credential/private-key/access-key 類鍵。明確值優先於 targetFrom。",
+        "可选非秘密提供商目标 map。键值不可为空，拒绝 secret/token/password/credential/private-key/access-key 类键。明确值优先于 targetFrom。"
+      ],
+      "members[].capture.targetFrom": [
+        "Optional map of provider target keys to spec.values keys. Missing/blank referenced constants fail normalization. nicRef is forbidden here; use capture.nicRef.",
+        "プロバイダー対象キーからspec.valuesキーへの任意mapです。参照定数の欠落・空値は正規化を失敗させます。nicRefは禁止でcapture.nicRefを使います。",
+        "選用從供應者目標鍵對應 spec.values 鍵的 map，參照常數缺少或空白會使正規化失敗。禁用 nicRef，請用 capture.nicRef。",
+        "可选从提供商目标键对应 spec.values 键的 map，引用常数缺失或空白会使规范化失败。禁用 nicRef，请用 capture.nicRef。"
+      ],
+      "members[].capture.sourceAddressFrom.resource": [
+        "Source Kind/name; existing resource required by common reference validation.",
+        "参照元Kind/nameで、共通検証によりリソース存在が必要です。",
+        "來源 Kind/name，共用驗證要求資源存在。",
+        "来源 Kind/name，通用验证要求资源存在。"
+      ],
+      "members[].capture.sourceAddressFrom.field": [
+        "Explicit field provided by source kind, required when resource is set.",
+        "resource指定時に必須の参照元提供フィールドです。",
+        "resource 設定時必填來源提供欄位。",
+        "resource 配置时必填来源提供字段。"
+      ],
+      "members[].capture.sourceAddressFrom.optional": [
+        "Default false; does not waive reference validation or create a usable sender when missing.",
+        "既定falseです。参照検証を省略せず、欠落時の送信元補完もしません。",
+        "預設 false，不免除參照驗證或補入缺少來源。",
+        "默认 false，不免除引用验证或补入缺失源地址。"
+      ],
+      "members[].ownershipDiscovery": [
+        "Local ownership-fact discovery settings, default disabled. Only the local member may configure these; accepted remote events are separate input.",
+        "ローカル所有権の事実探索設定で、既定無効です。自ノードだけが設定し、受信するリモートイベントは別入力です。",
+        "本機所有權事實探索設定，預設停用，僅本機成員可設定；接收的遠端事件為另一輸入。",
+        "本机所有权事实发现配置，默认禁用，仅本机成员可配置；接收的远端事件为另一输入。"
+      ],
+      "members[].ownershipDiscovery.mode": [
+        "Empty/disabled does nothing. provider-private-ip requires cloud/provider-secondary-ip; onprem-l2 requires onprem/proxy-arp, capture.interface and nonempty sources.",
+        "空・disabledは処理なしです。provider-private-ipはcloud・provider-secondary-ip、onprem-l2はonprem・proxy-arp・capture.interface・非空sourcesが必要です。",
+        "空/disabled 不執行。provider-private-ip 需 cloud/provider-secondary-ip；onprem-l2 需 onprem/proxy-arp、capture.interface 及非空 sources。",
+        "空/disabled 不执行。provider-private-ip 需 cloud/provider-secondary-ip；onprem-l2 需 onprem/proxy-arp、capture.interface 及非空 sources。"
+      ],
+      "members[].ownershipDiscovery.providerRef": [
+        "Provider inventory profile name, default capture.providerRef. Used by provider-private-ip, not an event resource reference.",
+        "プロバイダー探索プロファイル名で、既定はcapture.providerRefです。provider-private-ipで使い、イベントリソース参照ではありません。",
+        "供應者盤點設定名稱，預設 capture.providerRef，由 provider-private-ip 使用，不是事件資源參照。",
+        "提供商清单配置名称，默认 capture.providerRef，由 provider-private-ip 使用，不是事件资源引用。"
+      ],
+      "members[].ownershipDiscovery.pluginRef": [
+        "Optional inventory Plugin name. Empty resolves by provider name or sole observe.providerPrivateIPs-capable plugin; ambiguity/missing capability fails discovery.",
+        "任意の探索Plugin名です。空ならプロバイダー名または唯一のobserve.providerPrivateIPs対応プラグインで解決し、曖昧・能力欠落は探索失敗です。",
+        "選用盤點 Plugin 名稱，空值依供應者名稱或唯一具 observe.providerPrivateIPs 能力的外掛解析；歧義或能力缺少使探索失敗。",
+        "可选清单 Plugin 名称，空值按提供商名称或唯一具 observe.providerPrivateIPs 能力的插件解析；歧义或能力缺失使发现失败。"
+      ],
+      "members[].ownershipDiscovery.subnetRef": [
+        "Optional provider subnet identifier. Explicit value overrides subnetRefFrom; empty lets the plugin infer from the self NIC where supported.",
+        "任意のプロバイダーサブネット識別子です。明示値をsubnetRefFromより優先し、空なら対応プラグインが自NICから推定します。",
+        "選用供應者子網識別，明確值優先於 subnetRefFrom，空值可由支援的外掛從自身 NIC 推定。",
+        "可选提供商子网标识，明确值优先于 subnetRefFrom，空值可由支持的插件从自身 NIC 推定。"
+      ],
+      "members[].ownershipDiscovery.subnetRefFrom": [
+        "Optional spec.values key, used only when subnetRef is empty. Missing/empty constant fails normalization; not Kind/name/field.",
+        "subnetRefが空のときだけ使う任意のspec.valuesキーです。定数の欠落・空値は正規化失敗で、Kind/name・field形式ではありません。",
+        "僅 subnetRef 為空時使用的選用 spec.values 鍵。常數缺少或為空使正規化失敗，不是 Kind/name/field。",
+        "仅 subnetRef 为空时使用的可选 spec.values 键。常数缺失或为空使规范化失败，不是 Kind/name/field。"
+      ],
+      "members[].ownershipDiscovery.scanInterval": [
+        "Provider scan interval, default 60s, explicit >=30s. Also validated for onprem-l2, but event-driven sources need no provider scan; observer polling has per-source scanInterval.",
+        "プロバイダー探索間隔で、既定60秒、明示値30秒以上です。onprem-l2でも検証しますがイベント入力ではプロバイダー探索は行わず、観測pollingはsource別scanIntervalです。",
+        "供應者掃描間隔，預設 60 秒，明確值 >=30 秒。onprem-l2 也會驗證，但事件來源不需供應者掃描，觀察輪詢使用各來源 scanInterval。",
+        "提供商扫描间隔，默认 60 秒，明确值 >=30 秒。onprem-l2 也会验证，但事件来源不需提供商扫描，观察轮询使用各来源 scanInterval。"
+      ],
+      "members[].ownershipDiscovery.leaseTTL": [
+        "Positive Go duration for emitted ownership events, default 5m. Per-source leaseTTL overrides it for onprem observations. Expiry is a protocol ownership lease, not a reboot deadline.",
+        "所有権イベントの正のGo durationで、既定5分です。onprem観測はsource別leaseTTLを優先します。所有権リースの期限で、再起動の合否時間ではありません。",
+        "所有權事件的正 Go duration，預設 5 分鐘，onprem 觀察由各來源 leaseTTL 覆寫。是所有權租約，不是重新啟動期限。",
+        "所有权事件的正 Go duration，默认 5 分钟，onprem 观察由各来源 leaseTTL 覆盖。是所有权租约，不是重启期限。"
+      ],
+      "members[].ownershipDiscovery.stoppedInstancePolicy": [
+        "provider-private-ip only: hold/omitted retains stopped-instance ownership facts, release expires them. Forbidden for other modes when nonempty.",
+        "provider-private-ip専用です。hold・省略は停止インスタンスの所有事実を保持し、releaseは失効させます。非空値は他modeで禁止です。",
+        "僅 provider-private-ip：hold/省略保留停止執行個體的所有權事實，release 使其過期。其他模式禁止非空值。",
+        "仅 provider-private-ip：hold/省略保留停止实例的所有权事实，release 使其过期。其他模式禁止非空值。"
+      ],
+      "members[].ownershipDiscovery.allowEmptyAfter": [
+        "onprem-l2 only, positive duration after sources are armed before zero clients may count as complete; omitted leaves zero-client passive discovery pending. With profileRef, the merge currently does not copy the local override of this field; the profile value remains.",
+        "onprem-l2専用の正の期間です。観測開始後この期間を経て端末0件を完了扱いにでき、省略時は保留です。profileRef利用時は現行マージがこの項目のローカル上書きをコピーせず、プロファイル値が残ります。",
+        "僅 onprem-l2，來源啟動後正數等待期間，之後零用戶端可視為完成；省略則零用戶端被動探索仍待處理。使用 profileRef 時目前合併不複製本機此欄位覆寫，保留 profile 值。",
+        "仅 onprem-l2，来源启动后正数等待期间，之后零客户端可视为完成；省略则零客户端被动发现仍待处理。使用 profileRef 时目前合并不复制本机此字段覆盖，保留 profile 值。"
+      ],
+      "members[].ownershipDiscovery.sources": [
+        "Nonempty list required for onprem-l2; forbidden for provider-private-ip. Duplicate type/resource/effective-interface/network/bridge combinations are rejected.",
+        "onprem-l2で必須の非空一覧で、provider-private-ipでは禁止です。type・resource・実効interface・network・bridgeの同一組み合わせは拒否します。",
+        "onprem-l2 必填非空清單，provider-private-ip 禁用。拒絕重複的 type/resource/有效介面/network/bridge 組合。",
+        "onprem-l2 必填非空列表，provider-private-ip 禁用。拒绝重复的 type/resource/有效接口/network/bridge 组合。"
+      ],
+      "members[].ownershipDiscovery.sources[].type": [
+        "Required dhcpv4-lease, arp-observer, on-demand-arp or pve-svnet. ARP/PVE observers derive local observer-daemon intents; DHCP facts are consumed from actual lease events.",
+        "必須のdhcpv4-lease・arp-observer・on-demand-arp・pve-svnetです。ARP・PVEはローカル観測デーモンを生成し、DHCPは実リースイベントを使います。",
+        "必填 dhcpv4-lease/arp-observer/on-demand-arp/pve-svnet。ARP/PVE 來源衍生本機觀察精靈意圖，DHCP 事實來自實際租約事件。",
+        "必填 dhcpv4-lease/arp-observer/on-demand-arp/pve-svnet。ARP/PVE 来源派生本机观察守护进程意图，DHCP 事实来自实际租约事件。"
+      ],
+      "members[].ownershipDiscovery.sources[].resource": [
+        "Optional source identity string, default empty. Used in deduplication/observer identity fingerprint, not as the observer process name or an existence-checked Kind/name reference; event matching primarily uses type/interface/network/bridge.",
+        "任意の参照元識別文字列で、既定空です。重複・観測識別fingerprintに使い、観測プロセス名や存在検証付きKind/name参照ではありません。イベント照合は主にtype・interface・network・bridgeです。",
+        "選用來源識別字串，預設為空，用於去重及觀察身分指紋，不是觀察程序名稱或驗證存在的 Kind/name 參照。事件主要依 type/interface/network/bridge 比對。",
+        "可选来源标识字符串，默认为空，用于去重及观察身份指纹，不是观察进程名称或验证存在的 Kind/name 引用。事件主要按 type/interface/network/bridge 匹配。"
+      ],
+      "members[].ownershipDiscovery.sources[].interface": [
+        "Optional observation interface, default capture.interface. Required after fallback for on-demand-arp; consumers resolve declared aliases to OS names.",
+        "任意の観測インターフェースで、既定capture.interfaceです。on-demand-arpでは補完後に必須で、利用側が宣言別名をOS名へ解決します。",
+        "選用觀察介面，預設 capture.interface。on-demand-arp 在替代解析後必填，使用端將宣告別名解析為 OS 名稱。",
+        "可选观察接口，默认 capture.interface。on-demand-arp 在替代解析后必填，使用端将声明别名解析为 OS 名称。"
+      ],
+      "members[].ownershipDiscovery.sources[].bridge": [
+        "Optional local bridge label for PVE/svnet observation matching; default empty adds no bridge-selector restriction. Not a Bridge creation request.",
+        "PVE・svnet観測照合に使う任意のローカルbridgeラベルです。既定空はbridge制限なしで、Bridge作成ではありません。",
+        "選用本機橋接標籤，供 PVE/svnet 觀察比對。預設空值不限制 bridge，不要求建立 Bridge。",
+        "可选本机网桥标签，供 PVE/svnet 观察匹配。默认空值不限制 bridge，不要求创建 Bridge。"
+      ],
+      "members[].ownershipDiscovery.sources[].network": [
+        "Optional logical PVE/svnet network label, e.g. svnet1. Empty imposes no network-selector match; not an IP CIDR.",
+        "svnet1等の任意のPVE・svnet論理networkラベルです。空ならnetwork選択条件なしで、IP CIDRではありません。",
+        "選用 PVE/svnet 邏輯網路標籤，例如 svnet1。空值不限制 network 選擇，不是 IP CIDR。",
+        "可选 PVE/svnet 逻辑网络标签，例如 svnet1。空值不限制 network 选择，不是 IP CIDR。"
+      ],
+      "members[].ownershipDiscovery.sources[].sourceAddressFrom": [
+        "Optional status source for active ARP sender. If missing/unusable, reuses a verified capture source address; if neither resolves, no on-demand probe intent is emitted.",
+        "アクティブARP送信元の任意状態参照です。欠落・利用不能なら検証済み取得送信元へ戻り、どちらも解決しなければon-demand probeを生成しません。",
+        "選用主動 ARP 傳送來源狀態。缺少或無法使用時改用已驗證擷取來源位址；兩者皆無法解析時不產生 on-demand probe 意圖。",
+        "可选主动 ARP 发送源状态。缺失或无法使用时改用已验证捕获源地址；两者均无法解析时不生成 on-demand probe 意图。"
+      ],
+      "members[].ownershipDiscovery.sources[].scanInterval": [
+        "Optional observer poll interval, explicit >=1s, default daemon 10s for generated ARP/PVE observers. Event-driven DHCP sources ignore polling.",
+        "任意の観測poll間隔で、明示値1秒以上、生成ARP・PVEデーモンの既定10秒です。イベント駆動DHCPではpollしません。",
+        "選用觀察輪詢間隔，明確值 >=1 秒；產生 ARP/PVE 精靈預設 10 秒，事件驅動 DHCP 忽略輪詢。",
+        "可选观察轮询间隔，明确值 >=1 秒；生成 ARP/PVE 守护进程默认 10 秒，事件驱动 DHCP 忽略轮询。"
+      ],
+      "members[].ownershipDiscovery.sources[].probeTimeout": [
+        "Positive Go duration between active ARP retry attempts, default observer 1s. Only meaningful for on-demand probing.",
+        "アクティブARP試行間の正のGo durationで、観測デーモン既定1秒です。on-demand probingで使います。",
+        "主動 ARP 重試之間的正 Go duration，觀察精靈預設 1 秒，僅供 on-demand probing。",
+        "主动 ARP 重试之间的正 Go duration，观察守护进程默认 1 秒，仅供 on-demand probing。"
+      ],
+      "members[].ownershipDiscovery.sources[].probeRetries": [
+        "Integer 0–20 additional ARP retries, default 0. Not total attempts; one initial attempt is separate.",
+        "0～20の追加ARP再試行数で、既定0です。総試行回数ではなく初回1回は別です。",
+        "整數 0–20 額外 ARP 重試，預設 0，不是總嘗試次數，初次嘗試另計。",
+        "整数 0–20 额外 ARP 重试，默认 0，不是总尝试次数，初次尝试另计。"
+      ],
+      "members[].ownershipDiscovery.sources[].leaseTTL": [
+        "Optional positive event-lease duration overriding ownershipDiscovery.leaseTTL for this source. Omitted inherits the pool discovery lease (default 5m).",
+        "任意の正のイベント寿命で、このsourceのownershipDiscovery.leaseTTLを上書きします。省略時は探索リース（既定5分）を継承します。",
+        "選用正數事件租約期間，覆寫此來源 ownershipDiscovery.leaseTTL，省略繼承集區探索租約（預設 5 分鐘）。",
+        "可选正数事件租约期间，覆盖此来源 ownershipDiscovery.leaseTTL，省略继承池发现租约（默认 5 分钟）。"
+      ],
+      "members[].ownershipDiscovery.scope": [
+        "Optional ownership observation address filters inside the pool. Not an authorization to advertise arbitrary external prefixes.",
+        "プール内の任意の所有権観測アドレス制限です。外部prefixを任意に広告する認可ではありません。",
+        "選用集區內所有權觀察位址篩選，不授權任意外部前綴廣告。",
+        "可选池内所有权观察地址过滤，不授权任意外部前缀通告。"
+      ],
+      "members[].ownershipDiscovery.scope.includeAddresses": [
+        "Optional IPv4 bare-address/CIDR allowlist contained in the pool; empty allows all candidate pool addresses. Active shard assignment can replace this provider-discovery include list.",
+        "プール内IPv4アドレス・CIDR許可一覧です。空なら全候補を許可し、有効シャード割当はプロバイダー探索のこの一覧を置き換えます。",
+        "選用集區內 IPv4 純位址/CIDR 允許清單，空值允許所有候選集區位址。有效分片指派可取代此供應者探索清單。",
+        "可选池内 IPv4 纯地址/CIDR 允许列表，空值允许所有候选池地址。有效分片分配可替换此提供商发现列表。"
+      ],
+      "members[].ownershipDiscovery.scope.excludeAddresses": [
+        "Optional pool-contained IPv4 bare-address/CIDR denylist, default none. Exclusions are applied after inclusion matching.",
+        "任意のプール内IPv4アドレス・CIDR除外一覧で、既定なしです。許可一覧の照合後に除外します。",
+        "選用集區內 IPv4 純位址/CIDR 排除清單，預設無，在包含比對後排除。",
+        "可选池内 IPv4 纯地址/CIDR 排除列表，默认无，在包含匹配后排除。"
+      ],
+      "members[].ownershipDiscovery.selector": [
+        "Optional provider-inventory tag selector; does not configure cloud tags.",
+        "任意のプロバイダー探索タグ条件です。クラウドのタグ設定を変更しません。",
+        "選用供應者盤點標籤選擇器，不變更雲端標籤。",
+        "可选提供商清单标签选择器，不更改云端标签。"
+      ],
+      "members[].ownershipDiscovery.selector.tags": [
+        "Nonempty tag keys with expected string values. All keys must match after trimming values; empty map imposes no tag filter. Used for provider inventory, not onprem event source matching.",
+        "空でないタグキーと期待文字列のmapです。前後空白除去後の値が全キーで一致する必要があり、空mapなら制限なしです。プロバイダー探索用でonpremイベント照合には使いません。",
+        "非空標籤鍵與預期字串值，所有鍵的修剪值皆須符合，空 map 不限制。供供應者盤點使用，不用於 onprem 事件來源比對。",
+        "非空标签键与预期字符串值，所有键的修剪值均须符合，空 map 不限制。供提供商清单使用，不用于 onprem 事件来源匹配。"
+      ],
+      "members[].ownershipDiscovery.sources[].sourceAddressFrom.resource": [
+        "Existing source Kind/name, required if a status source is used.",
+        "状態参照利用時に必須の既存Kind/nameです。",
+        "使用狀態來源時必填既有 Kind/name。",
+        "使用状态来源时必填已有 Kind/name。"
+      ],
+      "members[].ownershipDiscovery.sources[].sourceAddressFrom.field": [
+        "Explicit field provided by the source kind, required with resource.",
+        "resource利用時必須の参照元提供フィールドです。",
+        "resource 設定時必填來源提供欄位。",
+        "resource 配置时必填来源提供字段。"
+      ],
+      "members[].ownershipDiscovery.sources[].sourceAddressFrom.optional": [
+        "Default false; does not waive reference validation or supply a sender address if unresolved.",
+        "既定falseです。参照検証を省略せず、未解決の送信元アドレスも補完しません。",
+        "預設 false，不免除參照驗證，也不補入未解析傳送來源。",
+        "默认 false，不免除引用验证，也不补入未解析发送源地址。"
+      ],
+      "profiles.cloudCaptures.<name>.capture": [
+        "Local capture settings; type is explicit, not inferred from role. Only the local member may carry capture/discovery overlays.",
+        "ローカル取得設定です。typeはroleから推定せず明示します。取得・探索の上書きは自ノードのみです。",
+        "本機擷取設定，type 須明確指定，不從 role 推定。僅本機成員可帶擷取/探索覆寫。",
+        "本机捕获配置，type 须明确指定，不从 role 推定。仅本机成员可带捕获/发现覆盖。"
+      ],
+      "profiles.cloudCaptures.<name>.capture.type": [
+        "proxy-arp for role onprem, provider-secondary-ip for role cloud; empty means no capture mechanism. Local cloud member requires a resolved capture configuration.",
+        "onpremはproxy-arp、cloudはprovider-secondary-ipです。空なら取得方式なしですが、自cloudメンバーは解決した取得設定が必要です。",
+        "onprem 使用 proxy-arp，cloud 使用 provider-secondary-ip。空值表示無擷取機制，但本機 cloud 成員需解析的擷取設定。",
+        "onprem 使用 proxy-arp，cloud 使用 provider-secondary-ip。空值表示无捕获机制，但本机 cloud 成员需解析的捕获配置。"
+      ],
+      "profiles.cloudCaptures.<name>.capture.providerRef": [
+        "CloudProviderProfile name required for provider-secondary-ip. Not a status source. Ownership discovery defaults its providerRef to this value.",
+        "provider-secondary-ipで必須のCloudProviderProfile名です。状態参照ではありません。所有権探索providerRefの既定にも使います。",
+        "provider-secondary-ip 必填的 CloudProviderProfile 名稱，不是狀態來源，亦為所有權探索 providerRef 預設值。",
+        "provider-secondary-ip 必填的 CloudProviderProfile 名称，不是状态来源，亦为所有权发现 providerRef 默认值。"
+      ],
+      "profiles.cloudCaptures.<name>.capture.captureStrategy": [
+        "Optional route-table only for provider-secondary-ip, requiring target.routeTableRef. Omit for normal secondary-IP or proxy-ARP; explicit secondary-ip/proxy-arp strategy values are rejected.",
+        "任意のroute-tableだけをprovider-secondary-ipで指定でき、target.routeTableRefが必須です。通常のsecondary-IP・proxy-ARPは省略し、strategyにsecondary-ip・proxy-arpを指定すると拒否します。",
+        "僅 provider-secondary-ip 可選用 route-table，需 target.routeTableRef。一般 secondary-IP/proxy-ARP 請省略，明確 secondary-ip/proxy-arp 策略值會被拒絕。",
+        "仅 provider-secondary-ip 可选用 route-table，需 target.routeTableRef。普通 secondary-IP/proxy-ARP 请省略，明确 secondary-ip/proxy-arp 策略值会被拒绝。"
+      ],
+      "profiles.cloudCaptures.<name>.capture.nicRef": [
+        "Provider NIC identifier, required for provider capture unless provider-private-ip discovery can resolve it. Do not place nicRef under target/targetFrom; that spelling is rejected.",
+        "プロバイダーNIC識別子です。provider-private-ip探索から解決する場合以外、プロバイダー取得で必須です。target・targetFrom内のnicRefは禁止です。",
+        "供應者 NIC 識別，除可由 provider-private-ip 探索解析外，供應者擷取必填。不可放在 target/targetFrom 下，該寫法會被拒絕。",
+        "提供商 NIC 标识，除可由 provider-private-ip 发现解析外，提供商捕获必填。不可放在 target/targetFrom 下，该写法会被拒绝。"
+      ],
+      "profiles.cloudCaptures.<name>.capture.interface": [
+        "Logical/OS capture interface, required for proxy-arp. Alias is resolved by consumers; no automatic LAN choice.",
+        "proxy-arpで必須の論理・OS取得インターフェースです。利用側で別名を解決し、LANの自動選択はしません。",
+        "proxy-arp 必填的邏輯/OS 擷取介面，由使用端解析別名，不自動選擇 LAN。",
+        "proxy-arp 必填的逻辑/OS 捕获接口，由使用端解析别名，不自动选择 LAN。"
+      ],
+      "profiles.cloudCaptures.<name>.capture.sourceAddress": [
+        "Optional local IPv4 sender address inside the pool for proxy-ARP/BGP delivery. Literal takes precedence over sourceAddressFrom, without an exclusivity check here. Lowered to a /32 address and preferred source when valid; not a remote owner address.",
+        "proxy-ARP・BGP配送に使うプール内ローカルIPv4送信元です。固定値はsourceAddressFromより優先し、ここでは排他検証しません。有効なら/32アドレス・優先送信元へ展開し、リモート所有者のアドレスではありません。",
+        "proxy-ARP/BGP 傳送使用的選用集區內本機 IPv4 來源。固定值優先 sourceAddressFrom，此處不檢查互斥；有效時衍生 /32 位址及偏好來源，不是遠端擁有者位址。",
+        "proxy-ARP/BGP 传送使用的可选池内本机 IPv4 源地址。固定值优先 sourceAddressFrom，此处不检查互斥；有效时派生 /32 地址及首选源地址，不是远端所有者地址。"
+      ],
+      "profiles.cloudCaptures.<name>.capture.sourceAddressFrom": [
+        "Optional source-address status reference. Accepts valid pool-local IPv4 values; missing/invalid values remain unavailable. Unlike a literal, it does not generate IPv4StaticAddress because the source resource owns the address lifecycle.",
+        "送信元アドレスの任意状態参照です。有効なプール内IPv4値を使い、欠落・不正値は未解決です。固定値と異なり参照元がアドレス寿命を持つためIPv4StaticAddressを生成しません。",
+        "選用來源位址狀態參照，接受有效集區內 IPv4，缺少或無效值仍不可用。不同於固定值，不產生 IPv4StaticAddress，因來源資源管理位址生命週期。",
+        "可选源地址状态引用，接受有效池内 IPv4，缺失或无效值仍不可用。不同于固定值，不生成 IPv4StaticAddress，因来源资源管理地址生命周期。"
+      ],
+      "profiles.cloudCaptures.<name>.capture.excludeAddresses": [
+        "Optional pool-local IPv4 addresses/CIDRs excluded from proxy-ARP capture, default none. Use for local-only gateways/infrastructure; not a filter of all BGP routes.",
+        "任意のproxy-ARP取得対象外プール内IPv4アドレス・CIDRで、既定なしです。ローカル限定ゲートウェイ等に使い、BGP全経路のフィルターではありません。",
+        "選用排除於 proxy-ARP 擷取的集區內 IPv4 位址/CIDR，預設無。供僅本機閘道等使用，不是所有 BGP 路由篩選。",
+        "可选排除于 proxy-ARP 捕获的池内 IPv4 地址/CIDR，默认无。供仅本机网关等使用，不是所有 BGP 路由过滤。"
+      ],
+      "profiles.cloudCaptures.<name>.capture.gratuitousARP": [
+        "Default false. True requests unsolicited ARP announcements for capture changes. Profile inheritance is additive: a false local override does not clear a true profile setting.",
+        "既定falseです。trueは取得変更のARP通知を要求します。プロファイル継承は加算的で、ローカルfalseではプロファイルtrueを解除できません。",
+        "預設 false。true 要求擷取變更時發送非請求 ARP 通告。設定繼承為累加，本機 false 不清除 profile 的 true。",
+        "默认 false。true 请求捕获更改时发送非请求 ARP 通告。配置继承为累加，本机 false 不清除 profile 的 true。"
+      ],
+      "profiles.cloudCaptures.<name>.capture.activeWhen": [
+        "Required explicit authority for onprem proxy-arp; forbidden for provider-secondary-ip. Not the generic state/all/any predicate.",
+        "onprem proxy-arpで必須の明示的な権限条件です。provider-secondary-ipでは禁止で、汎用state・all・any条件ではありません。",
+        "onprem proxy-arp 必填的明確權限條件，provider-secondary-ip 禁用，不是一般 state/all/any 條件。",
+        "onprem proxy-arp 必填的明确权限条件，provider-secondary-ip 禁用，不是普通 state/all/any 条件。"
+      ],
+      "profiles.cloudCaptures.<name>.capture.activeWhen.type": [
+        "single-router unconditionally authorizes local proxy-ARP; vrrp-master requires the referenced VirtualAddress MASTER state. No default for proxy-ARP.",
+        "single-routerはローカルproxy-ARPを無条件許可し、vrrp-masterは参照VirtualAddressのMASTER状態を要求します。proxy-ARPでは既定なしです。",
+        "single-router 無條件授權本機 proxy-ARP；vrrp-master 需參照 VirtualAddress 的 MASTER 狀態。proxy-ARP 無預設值。",
+        "single-router 无条件授权本机 proxy-ARP；vrrp-master 需引用 VirtualAddress 的 MASTER 状态。proxy-ARP 无默认值。"
+      ],
+      "profiles.cloudCaptures.<name>.capture.activeWhen.virtualAddressRef": [
+        "Required existing local VirtualAddress name (or accepted VirtualAddress/name spelling) for vrrp-master, forbidden for single-router. Checked only for the local member.",
+        "vrrp-masterでは必須の既存ローカルVirtualAddress名（VirtualAddress/name表記も対応）です。single-routerでは禁止で、自メンバーだけを検証します。",
+        "vrrp-master 必填既有本機 VirtualAddress 名稱（也接受 VirtualAddress/name），single-router 禁用，僅對本機成員檢查。",
+        "vrrp-master 必填已有本机 VirtualAddress 名称（也接受 VirtualAddress/name），single-router 禁用，仅对本机成员检查。"
+      ],
+      "profiles.cloudCaptures.<name>.capture.target": [
+        "Optional nonsecret provider target map. Keys/values cannot be empty; secret/token/password/credential/private-key/access-key-like keys are rejected. Explicit target entries override targetFrom values.",
+        "任意の非秘密プロバイダー対象mapです。空キー・値と秘密・token・password・credential・private-key・access-key類のキーは禁止し、明示値をtargetFromより優先します。",
+        "選用非秘密供應者目標 map。鍵值不可為空，拒絕 secret/token/password/credential/private-key/access-key 類鍵。明確值優先於 targetFrom。",
+        "可选非秘密提供商目标 map。键值不可为空，拒绝 secret/token/password/credential/private-key/access-key 类键。明确值优先于 targetFrom。"
+      ],
+      "profiles.cloudCaptures.<name>.capture.targetFrom": [
+        "Optional map of provider target keys to spec.values keys. Missing/blank referenced constants fail normalization. nicRef is forbidden here; use capture.nicRef.",
+        "プロバイダー対象キーからspec.valuesキーへの任意mapです。参照定数の欠落・空値は正規化を失敗させます。nicRefは禁止でcapture.nicRefを使います。",
+        "選用從供應者目標鍵對應 spec.values 鍵的 map，參照常數缺少或空白會使正規化失敗。禁用 nicRef，請用 capture.nicRef。",
+        "可选从提供商目标键对应 spec.values 键的 map，引用常数缺失或空白会使规范化失败。禁用 nicRef，请用 capture.nicRef。"
+      ],
+      "profiles.cloudCaptures.<name>.capture.sourceAddressFrom.resource": [
+        "Source Kind/name; existing resource required by common reference validation.",
+        "参照元Kind/nameで、共通検証によりリソース存在が必要です。",
+        "來源 Kind/name，共用驗證要求資源存在。",
+        "来源 Kind/name，通用验证要求资源存在。"
+      ],
+      "profiles.cloudCaptures.<name>.capture.sourceAddressFrom.field": [
+        "Explicit field provided by source kind, required when resource is set.",
+        "resource指定時に必須の参照元提供フィールドです。",
+        "resource 設定時必填來源提供欄位。",
+        "resource 配置时必填来源提供字段。"
+      ],
+      "profiles.cloudCaptures.<name>.capture.sourceAddressFrom.optional": [
+        "Default false; does not waive reference validation or create a usable sender when missing.",
+        "既定falseです。参照検証を省略せず、欠落時の送信元補完もしません。",
+        "預設 false，不免除參照驗證或補入缺少來源。",
+        "默认 false，不免除引用验证或补入缺失源地址。"
+      ],
+      "profiles.cloudCaptures.<name>.ownershipDiscovery": [
+        "Local ownership-fact discovery settings, default disabled. Only the local member may configure these; accepted remote events are separate input.",
+        "ローカル所有権の事実探索設定で、既定無効です。自ノードだけが設定し、受信するリモートイベントは別入力です。",
+        "本機所有權事實探索設定，預設停用，僅本機成員可設定；接收的遠端事件為另一輸入。",
+        "本机所有权事实发现配置，默认禁用，仅本机成员可配置；接收的远端事件为另一输入。"
+      ],
+      "profiles.cloudCaptures.<name>.ownershipDiscovery.mode": [
+        "Empty/disabled does nothing. provider-private-ip requires cloud/provider-secondary-ip; onprem-l2 requires onprem/proxy-arp, capture.interface and nonempty sources.",
+        "空・disabledは処理なしです。provider-private-ipはcloud・provider-secondary-ip、onprem-l2はonprem・proxy-arp・capture.interface・非空sourcesが必要です。",
+        "空/disabled 不執行。provider-private-ip 需 cloud/provider-secondary-ip；onprem-l2 需 onprem/proxy-arp、capture.interface 及非空 sources。",
+        "空/disabled 不执行。provider-private-ip 需 cloud/provider-secondary-ip；onprem-l2 需 onprem/proxy-arp、capture.interface 及非空 sources。"
+      ],
+      "profiles.cloudCaptures.<name>.ownershipDiscovery.providerRef": [
+        "Provider inventory profile name, default capture.providerRef. Used by provider-private-ip, not an event resource reference.",
+        "プロバイダー探索プロファイル名で、既定はcapture.providerRefです。provider-private-ipで使い、イベントリソース参照ではありません。",
+        "供應者盤點設定名稱，預設 capture.providerRef，由 provider-private-ip 使用，不是事件資源參照。",
+        "提供商清单配置名称，默认 capture.providerRef，由 provider-private-ip 使用，不是事件资源引用。"
+      ],
+      "profiles.cloudCaptures.<name>.ownershipDiscovery.pluginRef": [
+        "Optional inventory Plugin name. Empty resolves by provider name or sole observe.providerPrivateIPs-capable plugin; ambiguity/missing capability fails discovery.",
+        "任意の探索Plugin名です。空ならプロバイダー名または唯一のobserve.providerPrivateIPs対応プラグインで解決し、曖昧・能力欠落は探索失敗です。",
+        "選用盤點 Plugin 名稱，空值依供應者名稱或唯一具 observe.providerPrivateIPs 能力的外掛解析；歧義或能力缺少使探索失敗。",
+        "可选清单 Plugin 名称，空值按提供商名称或唯一具 observe.providerPrivateIPs 能力的插件解析；歧义或能力缺失使发现失败。"
+      ],
+      "profiles.cloudCaptures.<name>.ownershipDiscovery.subnetRef": [
+        "Optional provider subnet identifier. Explicit value overrides subnetRefFrom; empty lets the plugin infer from the self NIC where supported.",
+        "任意のプロバイダーサブネット識別子です。明示値をsubnetRefFromより優先し、空なら対応プラグインが自NICから推定します。",
+        "選用供應者子網識別，明確值優先於 subnetRefFrom，空值可由支援的外掛從自身 NIC 推定。",
+        "可选提供商子网标识，明确值优先于 subnetRefFrom，空值可由支持的插件从自身 NIC 推定。"
+      ],
+      "profiles.cloudCaptures.<name>.ownershipDiscovery.subnetRefFrom": [
+        "Optional spec.values key, used only when subnetRef is empty. Missing/empty constant fails normalization; not Kind/name/field.",
+        "subnetRefが空のときだけ使う任意のspec.valuesキーです。定数の欠落・空値は正規化失敗で、Kind/name・field形式ではありません。",
+        "僅 subnetRef 為空時使用的選用 spec.values 鍵。常數缺少或為空使正規化失敗，不是 Kind/name/field。",
+        "仅 subnetRef 为空时使用的可选 spec.values 键。常数缺失或为空使规范化失败，不是 Kind/name/field。"
+      ],
+      "profiles.cloudCaptures.<name>.ownershipDiscovery.scanInterval": [
+        "Provider scan interval, default 60s, explicit >=30s. Also validated for onprem-l2, but event-driven sources need no provider scan; observer polling has per-source scanInterval.",
+        "プロバイダー探索間隔で、既定60秒、明示値30秒以上です。onprem-l2でも検証しますがイベント入力ではプロバイダー探索は行わず、観測pollingはsource別scanIntervalです。",
+        "供應者掃描間隔，預設 60 秒，明確值 >=30 秒。onprem-l2 也會驗證，但事件來源不需供應者掃描，觀察輪詢使用各來源 scanInterval。",
+        "提供商扫描间隔，默认 60 秒，明确值 >=30 秒。onprem-l2 也会验证，但事件来源不需提供商扫描，观察轮询使用各来源 scanInterval。"
+      ],
+      "profiles.cloudCaptures.<name>.ownershipDiscovery.leaseTTL": [
+        "Positive Go duration for emitted ownership events, default 5m. Per-source leaseTTL overrides it for onprem observations. Expiry is a protocol ownership lease, not a reboot deadline.",
+        "所有権イベントの正のGo durationで、既定5分です。onprem観測はsource別leaseTTLを優先します。所有権リースの期限で、再起動の合否時間ではありません。",
+        "所有權事件的正 Go duration，預設 5 分鐘，onprem 觀察由各來源 leaseTTL 覆寫。是所有權租約，不是重新啟動期限。",
+        "所有权事件的正 Go duration，默认 5 分钟，onprem 观察由各来源 leaseTTL 覆盖。是所有权租约，不是重启期限。"
+      ],
+      "profiles.cloudCaptures.<name>.ownershipDiscovery.stoppedInstancePolicy": [
+        "provider-private-ip only: hold/omitted retains stopped-instance ownership facts, release expires them. Forbidden for other modes when nonempty.",
+        "provider-private-ip専用です。hold・省略は停止インスタンスの所有事実を保持し、releaseは失効させます。非空値は他modeで禁止です。",
+        "僅 provider-private-ip：hold/省略保留停止執行個體的所有權事實，release 使其過期。其他模式禁止非空值。",
+        "仅 provider-private-ip：hold/省略保留停止实例的所有权事实，release 使其过期。其他模式禁止非空值。"
+      ],
+      "profiles.cloudCaptures.<name>.ownershipDiscovery.allowEmptyAfter": [
+        "onprem-l2 only, positive duration after sources are armed before zero clients may count as complete; omitted leaves zero-client passive discovery pending. With profileRef, the merge currently does not copy the local override of this field; the profile value remains.",
+        "onprem-l2専用の正の期間です。観測開始後この期間を経て端末0件を完了扱いにでき、省略時は保留です。profileRef利用時は現行マージがこの項目のローカル上書きをコピーせず、プロファイル値が残ります。",
+        "僅 onprem-l2，來源啟動後正數等待期間，之後零用戶端可視為完成；省略則零用戶端被動探索仍待處理。使用 profileRef 時目前合併不複製本機此欄位覆寫，保留 profile 值。",
+        "仅 onprem-l2，来源启动后正数等待期间，之后零客户端可视为完成；省略则零客户端被动发现仍待处理。使用 profileRef 时目前合并不复制本机此字段覆盖，保留 profile 值。"
+      ],
+      "profiles.cloudCaptures.<name>.ownershipDiscovery.sources": [
+        "Nonempty list required for onprem-l2; forbidden for provider-private-ip. Duplicate type/resource/effective-interface/network/bridge combinations are rejected.",
+        "onprem-l2で必須の非空一覧で、provider-private-ipでは禁止です。type・resource・実効interface・network・bridgeの同一組み合わせは拒否します。",
+        "onprem-l2 必填非空清單，provider-private-ip 禁用。拒絕重複的 type/resource/有效介面/network/bridge 組合。",
+        "onprem-l2 必填非空列表，provider-private-ip 禁用。拒绝重复的 type/resource/有效接口/network/bridge 组合。"
+      ],
+      "profiles.cloudCaptures.<name>.ownershipDiscovery.sources[].type": [
+        "Required dhcpv4-lease, arp-observer, on-demand-arp or pve-svnet. ARP/PVE observers derive local observer-daemon intents; DHCP facts are consumed from actual lease events.",
+        "必須のdhcpv4-lease・arp-observer・on-demand-arp・pve-svnetです。ARP・PVEはローカル観測デーモンを生成し、DHCPは実リースイベントを使います。",
+        "必填 dhcpv4-lease/arp-observer/on-demand-arp/pve-svnet。ARP/PVE 來源衍生本機觀察精靈意圖，DHCP 事實來自實際租約事件。",
+        "必填 dhcpv4-lease/arp-observer/on-demand-arp/pve-svnet。ARP/PVE 来源派生本机观察守护进程意图，DHCP 事实来自实际租约事件。"
+      ],
+      "profiles.cloudCaptures.<name>.ownershipDiscovery.sources[].resource": [
+        "Optional source identity string, default empty. Used in deduplication/observer identity fingerprint, not as the observer process name or an existence-checked Kind/name reference; event matching primarily uses type/interface/network/bridge.",
+        "任意の参照元識別文字列で、既定空です。重複・観測識別fingerprintに使い、観測プロセス名や存在検証付きKind/name参照ではありません。イベント照合は主にtype・interface・network・bridgeです。",
+        "選用來源識別字串，預設為空，用於去重及觀察身分指紋，不是觀察程序名稱或驗證存在的 Kind/name 參照。事件主要依 type/interface/network/bridge 比對。",
+        "可选来源标识字符串，默认为空，用于去重及观察身份指纹，不是观察进程名称或验证存在的 Kind/name 引用。事件主要按 type/interface/network/bridge 匹配。"
+      ],
+      "profiles.cloudCaptures.<name>.ownershipDiscovery.sources[].interface": [
+        "Optional observation interface, default capture.interface. Required after fallback for on-demand-arp; consumers resolve declared aliases to OS names.",
+        "任意の観測インターフェースで、既定capture.interfaceです。on-demand-arpでは補完後に必須で、利用側が宣言別名をOS名へ解決します。",
+        "選用觀察介面，預設 capture.interface。on-demand-arp 在替代解析後必填，使用端將宣告別名解析為 OS 名稱。",
+        "可选观察接口，默认 capture.interface。on-demand-arp 在替代解析后必填，使用端将声明别名解析为 OS 名称。"
+      ],
+      "profiles.cloudCaptures.<name>.ownershipDiscovery.sources[].bridge": [
+        "Optional local bridge label for PVE/svnet observation matching; default empty adds no bridge-selector restriction. Not a Bridge creation request.",
+        "PVE・svnet観測照合に使う任意のローカルbridgeラベルです。既定空はbridge制限なしで、Bridge作成ではありません。",
+        "選用本機橋接標籤，供 PVE/svnet 觀察比對。預設空值不限制 bridge，不要求建立 Bridge。",
+        "可选本机网桥标签，供 PVE/svnet 观察匹配。默认空值不限制 bridge，不要求创建 Bridge。"
+      ],
+      "profiles.cloudCaptures.<name>.ownershipDiscovery.sources[].network": [
+        "Optional logical PVE/svnet network label, e.g. svnet1. Empty imposes no network-selector match; not an IP CIDR.",
+        "svnet1等の任意のPVE・svnet論理networkラベルです。空ならnetwork選択条件なしで、IP CIDRではありません。",
+        "選用 PVE/svnet 邏輯網路標籤，例如 svnet1。空值不限制 network 選擇，不是 IP CIDR。",
+        "可选 PVE/svnet 逻辑网络标签，例如 svnet1。空值不限制 network 选择，不是 IP CIDR。"
+      ],
+      "profiles.cloudCaptures.<name>.ownershipDiscovery.sources[].sourceAddressFrom": [
+        "Optional status source for active ARP sender. If missing/unusable, reuses a verified capture source address; if neither resolves, no on-demand probe intent is emitted.",
+        "アクティブARP送信元の任意状態参照です。欠落・利用不能なら検証済み取得送信元へ戻り、どちらも解決しなければon-demand probeを生成しません。",
+        "選用主動 ARP 傳送來源狀態。缺少或無法使用時改用已驗證擷取來源位址；兩者皆無法解析時不產生 on-demand probe 意圖。",
+        "可选主动 ARP 发送源状态。缺失或无法使用时改用已验证捕获源地址；两者均无法解析时不生成 on-demand probe 意图。"
+      ],
+      "profiles.cloudCaptures.<name>.ownershipDiscovery.sources[].scanInterval": [
+        "Optional observer poll interval, explicit >=1s, default daemon 10s for generated ARP/PVE observers. Event-driven DHCP sources ignore polling.",
+        "任意の観測poll間隔で、明示値1秒以上、生成ARP・PVEデーモンの既定10秒です。イベント駆動DHCPではpollしません。",
+        "選用觀察輪詢間隔，明確值 >=1 秒；產生 ARP/PVE 精靈預設 10 秒，事件驅動 DHCP 忽略輪詢。",
+        "可选观察轮询间隔，明确值 >=1 秒；生成 ARP/PVE 守护进程默认 10 秒，事件驱动 DHCP 忽略轮询。"
+      ],
+      "profiles.cloudCaptures.<name>.ownershipDiscovery.sources[].probeTimeout": [
+        "Positive Go duration between active ARP retry attempts, default observer 1s. Only meaningful for on-demand probing.",
+        "アクティブARP試行間の正のGo durationで、観測デーモン既定1秒です。on-demand probingで使います。",
+        "主動 ARP 重試之間的正 Go duration，觀察精靈預設 1 秒，僅供 on-demand probing。",
+        "主动 ARP 重试之间的正 Go duration，观察守护进程默认 1 秒，仅供 on-demand probing。"
+      ],
+      "profiles.cloudCaptures.<name>.ownershipDiscovery.sources[].probeRetries": [
+        "Integer 0–20 additional ARP retries, default 0. Not total attempts; one initial attempt is separate.",
+        "0～20の追加ARP再試行数で、既定0です。総試行回数ではなく初回1回は別です。",
+        "整數 0–20 額外 ARP 重試，預設 0，不是總嘗試次數，初次嘗試另計。",
+        "整数 0–20 额外 ARP 重试，默认 0，不是总尝试次数，初次尝试另计。"
+      ],
+      "profiles.cloudCaptures.<name>.ownershipDiscovery.sources[].leaseTTL": [
+        "Optional positive event-lease duration overriding ownershipDiscovery.leaseTTL for this source. Omitted inherits the pool discovery lease (default 5m).",
+        "任意の正のイベント寿命で、このsourceのownershipDiscovery.leaseTTLを上書きします。省略時は探索リース（既定5分）を継承します。",
+        "選用正數事件租約期間，覆寫此來源 ownershipDiscovery.leaseTTL，省略繼承集區探索租約（預設 5 分鐘）。",
+        "可选正数事件租约期间，覆盖此来源 ownershipDiscovery.leaseTTL，省略继承池发现租约（默认 5 分钟）。"
+      ],
+      "profiles.cloudCaptures.<name>.ownershipDiscovery.scope": [
+        "Optional ownership observation address filters inside the pool. Not an authorization to advertise arbitrary external prefixes.",
+        "プール内の任意の所有権観測アドレス制限です。外部prefixを任意に広告する認可ではありません。",
+        "選用集區內所有權觀察位址篩選，不授權任意外部前綴廣告。",
+        "可选池内所有权观察地址过滤，不授权任意外部前缀通告。"
+      ],
+      "profiles.cloudCaptures.<name>.ownershipDiscovery.scope.includeAddresses": [
+        "Optional IPv4 bare-address/CIDR allowlist contained in the pool; empty allows all candidate pool addresses. Active shard assignment can replace this provider-discovery include list.",
+        "プール内IPv4アドレス・CIDR許可一覧です。空なら全候補を許可し、有効シャード割当はプロバイダー探索のこの一覧を置き換えます。",
+        "選用集區內 IPv4 純位址/CIDR 允許清單，空值允許所有候選集區位址。有效分片指派可取代此供應者探索清單。",
+        "可选池内 IPv4 纯地址/CIDR 允许列表，空值允许所有候选池地址。有效分片分配可替换此提供商发现列表。"
+      ],
+      "profiles.cloudCaptures.<name>.ownershipDiscovery.scope.excludeAddresses": [
+        "Optional pool-contained IPv4 bare-address/CIDR denylist, default none. Exclusions are applied after inclusion matching.",
+        "任意のプール内IPv4アドレス・CIDR除外一覧で、既定なしです。許可一覧の照合後に除外します。",
+        "選用集區內 IPv4 純位址/CIDR 排除清單，預設無，在包含比對後排除。",
+        "可选池内 IPv4 纯地址/CIDR 排除列表，默认无，在包含匹配后排除。"
+      ],
+      "profiles.cloudCaptures.<name>.ownershipDiscovery.selector": [
+        "Optional provider-inventory tag selector; does not configure cloud tags.",
+        "任意のプロバイダー探索タグ条件です。クラウドのタグ設定を変更しません。",
+        "選用供應者盤點標籤選擇器，不變更雲端標籤。",
+        "可选提供商清单标签选择器，不更改云端标签。"
+      ],
+      "profiles.cloudCaptures.<name>.ownershipDiscovery.selector.tags": [
+        "Nonempty tag keys with expected string values. All keys must match after trimming values; empty map imposes no tag filter. Used for provider inventory, not onprem event source matching.",
+        "空でないタグキーと期待文字列のmapです。前後空白除去後の値が全キーで一致する必要があり、空mapなら制限なしです。プロバイダー探索用でonpremイベント照合には使いません。",
+        "非空標籤鍵與預期字串值，所有鍵的修剪值皆須符合，空 map 不限制。供供應者盤點使用，不用於 onprem 事件來源比對。",
+        "非空标签键与预期字符串值，所有键的修剪值均须符合，空 map 不限制。供提供商清单使用，不用于 onprem 事件来源匹配。"
+      ],
+      "profiles.cloudCaptures.<name>.ownershipDiscovery.sources[].sourceAddressFrom.resource": [
+        "Existing source Kind/name, required if a status source is used.",
+        "状態参照利用時に必須の既存Kind/nameです。",
+        "使用狀態來源時必填既有 Kind/name。",
+        "使用状态来源时必填已有 Kind/name。"
+      ],
+      "profiles.cloudCaptures.<name>.ownershipDiscovery.sources[].sourceAddressFrom.field": [
+        "Explicit field provided by the source kind, required with resource.",
+        "resource利用時必須の参照元提供フィールドです。",
+        "resource 設定時必填來源提供欄位。",
+        "resource 配置时必填来源提供字段。"
+      ],
+      "profiles.cloudCaptures.<name>.ownershipDiscovery.sources[].sourceAddressFrom.optional": [
+        "Default false; does not waive reference validation or supply a sender address if unresolved.",
+        "既定falseです。参照検証を省略せず、未解決の送信元アドレスも補完しません。",
+        "預設 false，不免除參照驗證，也不補入未解析傳送來源。",
+        "默认 false，不免除引用验证，也不补入未解析发送源地址。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_mobility.go",
+      "pkg/config/validate.go",
+      "pkg/mobilityconfig/members.go",
+      "pkg/mobilityconfig/normalize.go",
+      "pkg/controller/mobility/controller.go",
+      "pkg/controller/mobility/controller_effects.go",
+      "pkg/controller/mobility/bgp_delivery_planner.go",
+      "pkg/controller/mobility/discovery.go",
+      "pkg/controller/mobility/discovery_support.go",
+      "pkg/controller/mobility/discovery_facts.go",
+      "pkg/controller/mobility/arp_observer_intent.go",
+      "pkg/controller/mobility/pool_plan.go",
+      "pkg/controller/mobility/shard_controller.go",
+      "pkg/controller/chain/sam.go",
+      "pkg/controller/chain/sam_freebsd.go",
+      "cmd/routerd-arp-observer/main.go"
+    ]
+  },
+  "EgressRoutePolicy": {
+    "purpose": [
+      "Select or program egress routing; the actual behavior depends on explicit mode and hostTraffic.",
+      "送信経路を選択・設定します。実際の動作は明示modeとhostTrafficによって異なります。",
+      "選擇或設定出口路由，實際行為取決於明確 mode 與 hostTraffic。",
+      "选择或配置出口路由，实际行为取决于明确 mode 与 hostTraffic。"
+    ],
+    "rules": [
+      [
+        "Choose the path explicitly: omitted mode only publishes advisory selection; Linux priority/mark/hash program IPv4 route tables and nftables, while hostTraffic true is a separate local IPv6 path. General IPv6 forwarded-policy support is not implemented by these IPv4 writers despite schema acceptance.",
+        "経路を明示して選びます。mode省略は助言状態だけで、Linux priority・mark・hashはIPv4表・nftables、hostTraffic trueは別のローカルIPv6処理です。スキーマが許してもIPv4生成経路で一般IPv6転送は実装していません。",
+        "請明確選擇路徑：省略 mode 僅公布建議選擇，Linux priority/mark/hash 安裝 IPv4 路由表與 nftables，hostTraffic true 為獨立本機 IPv6 路徑。即使結構描述接受，這些 IPv4 寫入器未實作一般 IPv6 轉送策略。",
+        "请明确选择路径：省略 mode 仅公布建议选择，Linux priority/mark/hash 安装 IPv4 路由表与 nftables，hostTraffic true 为独立本机 IPv6 路径。即使模式接受，这些 IPv4 写入器未实现常规 IPv6 转发策略。"
+      ],
+      [
+        "For useful direct Linux steering, provide interface/device or deviceFrom and a positive table, priority and mark together. The validator permits all three numbers to remain zero, but the live direct-table installer then skips it; Applied/selection status alone is not proof of packet steering. Linux table routes use metric 50 when the configured metric is zero.",
+        "有効な直接Linux制御にはinterface・device・deviceFromの出力と、正のtable・priority・markの組が必要です。検証は番号全部0を許しても実行時の直接表適用は飛ばすため、Applied・選択表示だけでは通信制御の証明になりません。Linux経路は設定metric 0なら50です。",
+        "有效的直接 Linux 導向須有 interface/device/deviceFrom 輸出，以及正 table/priority/mark 組合。驗證允許三者皆零，但即時直接表安裝會略過，Applied 或選擇狀態不能證明封包導向。設定 metric 零時 Linux 路由用 50。",
+        "有效的直接 Linux 导向须有 interface/device/deviceFrom 输出，以及正 table/priority/mark 组合。验证允许三者皆零，但实时直接表安装会跳过，Applied 或选择状态不能证明数据包导向。配置 metric 零时 Linux 路由用 50。"
+      ],
+      [
+        "priority chooses the highest-weight ready candidate, with lower priority/name/input-order tie breaks. Fresh health, actual device presence, declared dependencies on direct candidates and DS-Lite Up checks participate; a target-pool candidate needs at least one healthy present target but its candidate dependsOn is not evaluated by that priority availability branch. No ready candidate yields Pending/NoReadyCandidates and removes new-flow steering, not necessarily all probe routes or established states.",
+        "priorityは準備済みの最大weightを選び、小priority・名前・入力順で同点判定します。新しい監視、実デバイス、直接候補の依存、DS-Lite Upを確認します。追加プールは正常・存在する対象1件以上が必要ですが、このpriority判定は候補dependsOnを評価しません。候補なしはPending/NoReadyCandidatesで新規通信制御を外し、監視経路・既存状態の全撤去は保証しません。",
+        "priority 選就緒候選最大 weight，以較小 priority、名稱、輸入順序破同分。檢查新鮮健康、實際裝置、直接候選相依與 DS-Lite Up。目標池須至少一個健康且存在的目標，但此 priority 分支不評估候選 dependsOn。無可用者為 Pending/NoReadyCandidates 並移除新流導向，不保證所有探測路由或既有狀態撤除。",
+        "priority 选就绪候选最大 weight，以较小 priority、名称、输入顺序打破同分。检查新鲜健康、实际设备、直接候选依赖与 DS-Lite Up。目标池须至少一个健康且存在的目标，但此 priority 分支不评估候选 dependsOn。无可用者为 Pending/NoReadyCandidates 并移除新流导向，不保证所有探测路由或现有状态撤除。"
+      ],
+      [
+        "mark mode writes each eligible direct candidate mark in resource/candidate order; overlapping matches can be overwritten by later rules. It does not choose one highest-weight candidate. hash/priority target pools use address-based jhash, a fixed 256-bucket rendezvous map and conntrack marks; target weights are not configurable. Existing flows can retain their marks across changes.",
+        "markは適格な直接候補のマークを資源・候補順に書き、重複一致は後の規則で上書きされ得ます。最大weight1件の選択ではありません。hash・priority追加プールはアドレスjhash、固定256バケットのランデブー対応、conntrackマークを使い、対象重みは設定できません。変更後も既存通信のマークは残り得ます。",
+        "mark 依資源與候選順序寫入各合格直接候選標記，重疊匹配可被後規則覆寫，不選單一最大 weight。hash/priority 目標池用位址 jhash、固定 256 桶 rendezvous 映射及 conntrack 標記，無目標權重可設，變更後既有流仍可保留標記。",
+        "mark 按资源与候选顺序写入各合格直接候选标记，重叠匹配可被后规则覆盖，不选单一最大 weight。hash/priority 目标池用地址 jhash、固定 256 桶 rendezvous 映射及 conntrack 标记，无目标权重可设，变更后现有流仍可保留标记。"
+      ],
+      [
+        "Common device/gateway references require existing resources and explicit provided fields. Gateway modes do not discover DHCP gateways automatically: supply gatewayFrom. Literal aliases table/routeTable and routeMetric/metric cannot both be nonzero. Candidate targets exclude direct device/gateway/table/mark/metric fields; targets are valid only with explicit hash or priority, and need hashFields even though validation only mandates it for hash.",
+        "共通device・gateway参照は実在資源・提供field明示が必須です。DHCP gatewayは自動発見せずgatewayFromを指定します。table・routeTable、routeMetric・metricの両非0は不可です。targetsは直接device・gateway・table・mark・metricと排他で、明示hash・priorityだけを許し、検証がhashだけ必須としても生成にはhashFieldsが必要です。",
+        "共用 device/gateway 來源須有既有資源與明確提供欄位。DHCP 閘道不自動探索，須給 gatewayFrom。table/routeTable、routeMetric/metric 不可皆非零。targets 與直接 device/gateway/table/mark/metric 互斥，僅明確 hash/priority 可用；雖驗證僅在 hash 要求，產生仍需 hashFields。",
+        "通用 device/gateway 来源须有现有资源与明确提供字段。DHCP 网关不自动发现，须给 gatewayFrom。table/routeTable、routeMetric/metric 不可均非零。targets 与直接 device/gateway/table/mark/metric 互斥，仅明确 hash/priority 可用；虽验证仅在 hash 要求，生成仍需 hashFields。"
+      ],
+      [
+        "Linux target table setup checks actual link presence and skips missing targets. The later hash-map readiness copy checks health for normal non-DS-Lite targets but does not repeat that link-presence check; therefore a configured absent non-DS-Lite device can still receive new hash buckets. Verify target links as well as health before relying on distribution.",
+        "Linuxの対象表設定は実リンクを確認し欠落を飛ばします。一方、その後のhash対応用コピーは通常の非DS-Lite対象では監視を見てもリンク存在確認を繰り返さないため、欠落デバイスへ新規バケットを割り当て得ます。分配には監視だけでなく実リンクも確認します。",
+        "Linux 目標表設定檢查實際鏈路並略過缺失目標，但後續 hash 映射就緒副本對一般非 DS-Lite 目標只檢查健康，不重複檢查鏈路，因此缺失裝置仍可能收到新 hash 桶。依賴分配前須確認目標鏈路與健康。",
+        "Linux 目标表配置检查实际链路并跳过缺失目标，但后续 hash 映射就绪副本对常规非 DS-Lite 目标只检查健康，不重复检查链路，因此缺失设备仍可能收到新 hash 桶。依赖分配前须确认目标链路与健康。"
+      ],
+      [
+        "FreeBSD supports only mode hash, family ipv4, hashFields: [sourceAddress], nonempty sourceCIDRs, one enabled candidate and at least two distinct static IPv4 interface/gateway targets. Omit selection/hysteresis and all candidate direct/dynamic/health/dependency fields; target table/priority/mark/metric must be 0 and target health/dynamic gateway forbidden. Destination-set refs are forbidden, at most one excluded CIDR is allowed, and includes/excludes cannot coexist. PF uses route-to round-robin sticky-address, not Linux deterministic hashing.",
+        "FreeBSDはmode hash・family ipv4・hashFields: [sourceAddress]・非空sourceCIDRs・有効候補1件・異なる固定IPv4 interface/gateway対象2件以上のみです。selection・hysteresisと候補の直接・動的・監視・依存は省略し、対象table・priority・mark・metricは0、監視・動的gatewayは禁止です。集合参照禁止、除外CIDR最大1件、宛先包含・除外併用不可です。PFはroute-to round-robin sticky-addressで、Linuxの決定的hashではありません。",
+        "FreeBSD 僅支援 mode hash、family ipv4、hashFields: [sourceAddress]、非空 sourceCIDRs、單一啟用候選及至少兩個相異固定 IPv4 介面/閘道目標。省略 selection/hysteresis 與候選直接、動態、健康、相依欄位；目標 table/priority/mark/metric 須零，禁止健康與動態閘道。禁用目的集合參照，最多一個排除 CIDR，包含與排除不可並用。PF 用 route-to round-robin sticky-address，不是 Linux 決定性 hash。",
+        "FreeBSD 仅支持 mode hash、family ipv4、hashFields: [sourceAddress]、非空 sourceCIDRs、单一启用候选及至少两个不同固定 IPv4 接口/网关目标。省略 selection/hysteresis 与候选直接、动态、健康、依赖字段；目标 table/priority/mark/metric 须零，禁止健康与动态网关。禁用目标集合引用，最多一个排除 CIDR，包含与排除不可并用。PF 用 route-to round-robin sticky-address，不是 Linux 确定性 hash。"
+      ],
+      [
+        "The FreeBSD renderer rejects mixing this route-to shape with explicit FirewallRule, generated firewall holes, FirewallEventLog or ClientPolicy. If FirewallZone filtering is present, a broad accepted forwarding path is required. Syntax validation alone does not prove the final PF ruleset can be rendered alongside other resources.",
+        "FreeBSD生成はこのroute-to形と明示FirewallRule・自動穴あけ・FirewallEventLog・ClientPolicyとの混在を拒否します。FirewallZoneの選別がある場合は広い許可転送経路が必要です。構文検証だけでは他資源と組み合わせた最終PF生成を保証しません。",
+        "FreeBSD 轉譯器拒絕此 route-to 與明確 FirewallRule、產生的防火牆孔洞、FirewallEventLog 或 ClientPolicy 混用。若有 FirewallZone 過濾，須有廣泛允許轉送路徑；語法驗證不證明可與其他資源共同產生最終 PF 規則。",
+        "FreeBSD 渲染器拒绝此 route-to 与明确 FirewallRule、生成的防火墙放行、FirewallEventLog 或 ClientPolicy 混用。若有 FirewallZone 过滤，须有广泛允许转发路径；语法验证不证明可与其他资源共同生成最终 PF 规则。"
+      ]
+    ],
+    "fields": {
+      "family": [
+        "Default ipv4. Schema/validation accept ipv6, but current Linux forwarded mark/priority/hash implementation is IPv4-specific. IPv6 has a separate hostTraffic path; do not infer general IPv6 forwarding parity. FreeBSD subset requires ipv4.",
+        "既定ipv4です。スキーマ・検証はipv6も許しますが、現行Linuxの転送mark・priority・hashはIPv4専用です。IPv6はhostTraffic別経路で、一般IPv6転送との同等性はありません。FreeBSDの対応形もipv4必須です。",
+        "預設 ipv4。結構描述與驗證接受 ipv6，但目前 Linux 轉送 mark/priority/hash 實作限 IPv4；IPv6 另有 hostTraffic 路徑，不代表一般 IPv6 轉送同等支援。FreeBSD 子集亦須 ipv4。",
+        "默认 ipv4。模式与验证接受 ipv6，但当前 Linux 转发 mark/priority/hash 实现限 IPv4；IPv6 另有 hostTraffic 路径，不代表常规 IPv6 转发同等支持。FreeBSD 子集也须 ipv4。"
+      ],
+      "hostTraffic": [
+        "Default false. Linux true requires family ipv6 and exactly one candidate with preferredSource: interface, literal static gateway, mark 0 and no targets. Installs an iif lo policy for all local traffic, not source/destination CIDR matches; absent device/address keeps the previous known-good host rule, while first acquisition remains Pending. Candidate health/dependency/selection fields are not evaluated by this separate host-policy builder.",
+        "既定falseです。Linuxのtrueはfamily ipv6・候補1件・preferredSource: interface・固定static gateway・mark 0・targetsなしが必須です。CIDR選別ではなく全ローカル通信のiif lo方針を作ります。デバイス・アドレス未準備時は以前の有効規則を保持し、初回はPendingです。この別処理は候補health・依存・選択条件を評価しません。",
+        "預設 false。Linux true 須 family ipv6、單一候選、preferredSource: interface、固定 static gateway、mark 0 且無 targets。安裝所有本機流量的 iif lo 策略，不套用來源或目的 CIDR；裝置或位址未就緒保留先前有效規則，初次則 Pending。此獨立建構器不評估候選健康、相依或選擇欄位。",
+        "默认 false。Linux true 须 family ipv6、单一候选、preferredSource: interface、固定 static gateway、mark 0 且无 targets。安装所有本机流量的 iif lo 策略，不应用来源或目标 CIDR；设备或地址未就绪保留先前有效规则，首次则 Pending。此独立构建器不评估候选健康、依赖或选择字段。"
+      ],
+      "mode": [
+        "Omitted/empty is advisory status selection only; it does not install route tables. Explicit priority selects one ready candidate for new-flow marking; mark emits direct packet marks; hash maps flows to candidate targets. Set mode explicitly for Linux forwarding. FreeBSD accepts only its restricted hash shape.",
+        "省略・空は助言用の状態選択だけで経路表を適用しません。priorityは準備済み候補1件を新規通信のマークに選び、markは直接パケットマーク、hashは候補targetsへ通信を割り当てます。Linux転送ではmodeを明示します。FreeBSDは制限付きhash形だけです。",
+        "省略或空值僅做建議性狀態選擇，不安裝路由表。priority 選一個就緒候選供新流標記，mark 直接標記封包，hash 將流量映射到候選 targets。Linux 轉送請明確設定 mode；FreeBSD 僅限受限 hash 形狀。",
+        "省略或空值仅做建议性状态选择，不安装路由表。priority 选一个就绪候选供新流标记，mark 直接标记数据包，hash 将流量映射到候选 targets。Linux 转发请明确设置 mode；FreeBSD 仅限受限 hash 形状。"
+      ],
+      "sourceCIDRs": [
+        "Optional family-matching source prefixes, default any source. Lists form alternatives. FreeBSD hash subset requires a nonempty IPv4 list; hostTraffic ignores these selectors.",
+        "任意の同系統送信元プレフィックスで、既定は全送信元、一覧はORです。FreeBSD hashは1件以上のIPv4が必要で、hostTrafficはこの選別を使いません。",
+        "選用同位址族來源前綴，預設任意來源，清單為 OR。FreeBSD hash 需非空 IPv4 清單；hostTraffic 不使用此選擇器。",
+        "可选同地址族源前缀，默认任意来源，列表为 OR。FreeBSD hash 需非空 IPv4 列表；hostTraffic 不使用此选择器。"
+      ],
+      "destinationCIDRs": [
+        "Optional family-matching destination prefixes, default all destinations when no destinationSetRefs. Combined with destinationSetRefs as alternatives in mark/hash rendering. priority default-mark rendering consumes only CIDR selectors, not address-set refs.",
+        "任意の同系統宛先プレフィックスです。destinationSetRefsも空なら全宛先で、mark・hashでは集合参照とOR結合します。priorityの既定マーク生成はCIDRだけを使い集合参照を使いません。",
+        "選用同位址族目的前綴，與 destinationSetRefs 皆空時為全部目的。mark/hash 中與集合參照 OR 結合；priority 預設標記產生僅使用 CIDR，不使用位址集合。",
+        "可选同地址族目标前缀，与 destinationSetRefs 均空时为全部目标。mark/hash 中与集合引用 OR 结合；priority 默认标记生成仅使用 CIDR，不使用地址集合。"
+      ],
+      "destinationSetRefs": [
+        "Optional existing IPAddressSet/<name> references; duplicates rejected. Used by Linux mark/hash policy matches; priority default-mark selection does not apply these refs, and FreeBSD forbids them. Empty adds no match alternative.",
+        "任意の既存IPAddressSet/<name>参照で、重複は拒否します。Linux mark・hashの選別に使いますが、priorityの既定マークは反映せずFreeBSDは禁止です。空なら集合による選択肢はありません。",
+        "選用既有 IPAddressSet/<name> 參照，拒絕重複。用於 Linux mark/hash 匹配，priority 預設標記不套用，FreeBSD 禁用；空值不增加集合替代項。",
+        "可选现有 IPAddressSet/<name> 引用，拒绝重复。用于 Linux mark/hash 匹配，priority 默认标记不应用，FreeBSD 禁用；空值不增加集合替代项。"
+      ],
+      "excludeDestinationCIDRs": [
+        "Optional family-matching destination exclusions, default empty; all exclusions must be avoided. IPv4 /0 exclusion produces no steering matches. FreeBSD allows at most one and forbids combining it with nonempty destinationCIDRs.",
+        "任意の同系統宛先除外で既定空です。全除外を避ける条件となり、IPv4 /0除外では選別対象なしです。FreeBSDは最大1件で非空destinationCIDRsとの併用禁止です。",
+        "選用同位址族目的排除，預設空，須避開所有排除。IPv4 /0 排除不產生導向匹配。FreeBSD 最多一項，且不可與非空 destinationCIDRs 並用。",
+        "可选同地址族目标排除，默认空，须避开所有排除。IPv4 /0 排除不产生导向匹配。FreeBSD 最多一项，且不可与非空 destinationCIDRs 并用。"
+      ],
+      "excludeDestinationSetRefs": [
+        "Optional existing IPAddressSet/<name> exclusions; duplicates rejected. Used in Linux mark/hash policy matches, ignored by priority default-mark rendering and forbidden on FreeBSD.",
+        "任意の既存IPAddressSet/<name>除外です。重複拒否でLinux mark・hashに使い、priority既定マークでは使わずFreeBSDは禁止です。",
+        "選用既有 IPAddressSet/<name> 排除，拒絕重複，用於 Linux mark/hash，priority 預設標記忽略，FreeBSD 禁用。",
+        "可选现有 IPAddressSet/<name> 排除，拒绝重复，用于 Linux mark/hash，priority 默认标记忽略，FreeBSD 禁用。"
+      ],
+      "hashFields": [
+        "Ordered list of sourceAddress and/or destinationAddress; required for mode hash and also needed at rendering whenever candidates have targets, including priority target pools. Linux jhash uses these addresses, not ports, with a resource-derived stable seed and 256 rendezvous-mapped buckets. FreeBSD requires exactly [sourceAddress] but implements round-robin sticky-address instead of jhash.",
+        "sourceAddress・destinationAddressの順序付き一覧です。hashで必須で、priorityの追加プールを含めtargetsがある生成でも必要です。Linuxはポートでなく指定アドレスのjhash、資源由来固定seed、256バケットのランデブー対応を使います。FreeBSDは[sourceAddress]だけを許しますが実処理はjhashでなくround-robin sticky-addressです。",
+        "sourceAddress/destinationAddress 的有序清單，hash 必填；含 priority 目標池在內，任何有 targets 的產生也需要。Linux 對位址而非埠做 jhash，使用資源衍生固定種子與 256 個 rendezvous 映射桶。FreeBSD 必須 [sourceAddress]，實作卻是 round-robin sticky-address 而非 jhash。",
+        "sourceAddress/destinationAddress 的有序列表，hash 必填；含 priority 目标池在内，任何有 targets 的生成也需要。Linux 对地址而非端口做 jhash，使用资源派生固定种子与 256 个 rendezvous 映射桶。FreeBSD 必须 [sourceAddress]，实现却是 round-robin sticky-address 而非 jhash。"
+      ],
+      "selection": [
+        "Default highest-weight-ready: ready candidates sort by descending weight, ascending priority, lexical effective name, then input order. weighted-ecmp is accepted by schema but unsupported for advisory/priority selection (Pending/UnsupportedSelection). Not the hash target algorithm; mark/hash do not use this selection knob. FreeBSD requires empty.",
+        "既定highest-weight-readyです。準備済みをweight降順・priority昇順・有効名辞書順・入力順で選びます。weighted-ecmpはスキーマ上許しても助言・priorityで未実装のPending/UnsupportedSelectionです。hash対象算法とは別でmark・hashはこの選択を使いません。FreeBSDは空必須です。",
+        "預設 highest-weight-ready，就緒候選依 weight 降序、priority 升序、有效名稱字典序、輸入順序選擇。weighted-ecmp 雖可通過結構描述，建議或 priority 選擇未實作，為 Pending/UnsupportedSelection。與 hash 目標演算法不同，mark/hash 不用此選項；FreeBSD 須空。",
+        "默认 highest-weight-ready，就绪候选按 weight 降序、priority 升序、有效名称字典序、输入顺序选择。weighted-ecmp 虽可通过模式，建议或 priority 选择未实现，为 Pending/UnsupportedSelection。与 hash 目标算法不同，mark/hash 不用此选项；FreeBSD 须空。"
+      ],
+      "hysteresis": [
+        "Go duration, default 30s only in omitted-mode advisory selection. During this period after a change, an otherwise ready previous winner can be retained; an unready winner is not held. Zero/negative duration removes the delay. Explicit priority/mark/hash do not use it; FreeBSD requires empty.",
+        "Go durationで、省略modeの助言選択だけ既定30sです。変更後の期間内に以前の選択が準備済みなら保持し、未準備候補は保持しません。0・負値は遅延なしです。明示priority・mark・hashは使わずFreeBSDは空必須です。",
+        "Go duration，僅省略 mode 的建議選擇預設 30s。變更後此期間可保留仍就緒的舊勝者，不保留未就緒者；零或負值無延遲。明確 priority/mark/hash 不使用，FreeBSD 須空。",
+        "Go duration，仅省略 mode 的建议选择默认 30s。更改后此期间可保留仍就绪的旧胜者，不保留未就绪者；零或负值无延迟。明确 priority/mark/hash 不使用，FreeBSD 须空。"
+      ],
+      "candidates": [
+        "Required nonempty list; disabled entries are still structurally validated. Linux can mix direct candidates and target-pool candidates in priority mode. Candidate names are not uniqueness-checked, so choose explicit unique names to avoid ambiguous status/hash identities.",
+        "1件以上の候補が必須で、無効候補も構造検証します。Linux priorityは直接候補・追加プール候補を混在できます。候補名の一意検証はなく、状態・hash識別の曖昧さを避けるため明示の一意名を使います。",
+        "必填非空清單，停用項目仍做結構驗證。Linux priority 可混合直接候選與目標池；未驗證候選名稱唯一，請明確使用唯一名稱以免狀態或 hash 身分混淆。",
+        "必填非空列表，禁用条目仍做结构验证。Linux priority 可混合直接候选与目标池；未验证候选名称唯一，请明确使用唯一名称以免状态或 hash 身份混淆。"
+      ],
+      "when": [
+        "Optional common state condition, default unconditional. A false condition removes the policy from the effective configuration; candidate conditions are filtered separately. Unresolved conditions can remain indeterminate rather than a guaranteed stop.",
+        "共通状態条件で既定無条件です。不成立なら有効設定から除外し、候補条件は別途選別します。未解決条件は未確定として残ることがあり、必ず停止するとは限りません。",
+        "選用共用狀態條件，預設無條件。為假時自有效設定移除，候選條件另行篩選；未解析可維持不確定，不保證停止。",
+        "可选通用状态条件，默认无条件。为假时从有效配置移除，候选条件另行筛选；未解析可维持不确定，不保证停止。"
+      ],
+      "candidates[].name": [
+        "Optional explicit identity. Advisories fall back to source then candidate-N (zero-based); explicit priority status falls back to interface/device then targets, while unnamed hash pools use input index. Use unique names for stable identity.",
+        "任意の識別名です。助言はsource→candidate-N（0始まり）、明示priority状態はinterface/device→targets、無名hashプールは入力番号で補います。安定した識別には一意名を使います。",
+        "選用明確身分。建議模式依 source、candidate-N（零起算）補名；明確 priority 狀態依 interface/device、targets，未命名 hash 池用輸入索引。穩定身分請用唯一名稱。",
+        "可选明确身份。建议模式按 source、candidate-N（从零开始）补名；明确 priority 状态按 interface/device、targets，未命名 hash 池用输入索引。稳定身份请用唯一名称。"
+      ],
+      "candidates[].enabled": [
+        "Default true. false excludes the candidate from selection/rendering, but does not bypass configuration/reference validation or independently guarantee that all established connections or route-table entries disappear.",
+        "既定trueです。falseは選択・生成から除外しますが、設定・参照検証は省略せず、既存通信・経路表の全消去を単独では保証しません。",
+        "預設 true，false 排除選擇與轉譯，但不略過設定或參照驗證，也不單獨保證全部既有連線或路由表項消失。",
+        "默认 true，false 排除选择与渲染，但不跳过配置或引用验证，也不单独保证全部现有连接或路由表项消失。"
+      ],
+      "candidates[].source": [
+        "Optional advisory readiness resource as Kind/name; it does not automatically supply device or gateway. This string is not checked for target existence by common typed-reference validation. Advisory source phases Applied/Bound/Healthy/Installed/Ready/Running/Up qualify; a fresh passing health check can substitute for an unready source. Explicit routing specially guards referenced DS-Lite phase Up, but does not generally check other source kinds.",
+        "Kind/nameで指定する任意の助言準備状態参照で、device・gatewayは自動取得しません。この文字列は型付き共通参照の存在検証対象外です。助言はApplied・Bound・Healthy・Installed・Ready・Running・Upを認め、新しい正常監視で未準備sourceを補える場合があります。明示経路はDS-LiteのUpを特別確認しますが他kindを一般確認しません。",
+        "選用 Kind/name 建議就緒來源，不自動供應 device/gateway；此字串不受共用型別參照存在驗證。建議模式接受 Applied/Bound/Healthy/Installed/Ready/Running/Up，新鮮通過的健康檢查可替代未就緒來源。明確路由特別要求所參照 DS-Lite 為 Up，但不一般檢查其他來源。",
+        "可选 Kind/name 建议就绪来源，不自动提供 device/gateway；此字符串不受通用类型引用存在验证。建议模式接受 Applied/Bound/Healthy/Installed/Ready/Running/Up，新鲜通过的健康检查可替代未就绪来源。明确路由特别要求所引用 DS-Lite 为 Up，但不常规检查其他来源。"
+      ],
+      "candidates[].interface": [
+        "Optional declared logical interface for explicit Linux routing; takes precedence over device. Supplied interface is validated against the Router interface/DS-Lite indexes. Omitted-mode advisory output does not use this alias: use device/deviceFrom there. Forbidden when targets is nonempty.",
+        "明示Linux経路の宣言済み論理名でdeviceより優先します。指定時はRouterのinterface・DS-Lite索引を検証します。省略modeの助言出力はこの別名を使わずdevice・deviceFromを使います。targets非空では禁止です。",
+        "明確 Linux 路由的選用已宣告邏輯介面，優先於 device，提供時驗證 Router 介面或 DS-Lite 索引。省略 mode 的建議輸出不使用此別名，該處請用 device/deviceFrom。targets 非空時禁用。",
+        "明确 Linux 路由的可选已声明逻辑接口，优先于 device，提供时验证 Router 接口或 DS-Lite 索引。省略 mode 的建议输出不使用此别名，该处请用 device/deviceFrom。targets 非空时禁用。"
+      ],
+      "candidates[].device": [
+        "Optional literal device fallback. Explicit routing uses interface first; advisory uses device directly. No common existence check for this string, but actual link must exist for live installation/selection. ${...} was removed; use deviceFrom. Forbidden with targets.",
+        "任意の固定デバイス補完値です。明示経路はinterfaceを先に使い、助言はdeviceを直接使います。この文字列の共通存在検証はありませんが、実行時には実リンクが必要です。${...}は廃止でdeviceFromを使います。targetsとは併用禁止です。",
+        "選用固定裝置替代值，明確路由先用 interface，建議模式直接用 device。此字串無共用存在檢查，但即時安裝與選擇須有實際鏈路。已移除 ${...}，請用 deviceFrom；與 targets 禁止並用。",
+        "可选固定设备替代值，明确路由先用 interface，建议模式直接用 device。此字符串无通用存在检查，但实时安装与选择须有实际链路。已移除 ${...}，请用 deviceFrom；与 targets 禁止并用。"
+      ],
+      "candidates[].deviceFrom": [
+        "Optional common resource/field status source, validated against existing resources/provided fields. First normalized value wins over interface/device; missing values fall back to literals. optional does not create a device. No targets coexistence.",
+        "既存リソース・提供fieldを検証する共通状態参照です。正規化先頭値がinterface・deviceより優先し、未解決なら固定値へ補完します。optionalでもデバイスは作らずtargetsとの併用不可です。",
+        "選用共用 resource/field 狀態來源，驗證既有資源與提供欄位。第一個正規化值優先於 interface/device，缺值退回固定值；optional 不建立裝置，不可與 targets 並用。",
+        "可选通用 resource/field 状态来源，验证现有资源与提供字段。第一个规范化值优先于 interface/device，缺值退回固定值；optional 不创建设备，不可与 targets 并用。"
+      ],
+      "candidates[].gateway": [
+        "Literal bare address matching family. Requires gatewaySource: static and is exclusive with gatewayFrom in that mode; DHCP gateway modes prohibit a literal. Default empty. Forbidden on target-pool candidates.",
+        "familyと同じ裸アドレスです。gatewaySource: staticが必要で、その場合gatewayFromと排他です。DHCPモードの固定値は禁止、既定空、追加プール候補でも禁止です。",
+        "固定純位址須符合 family，需要 gatewaySource: static 且與 gatewayFrom 互斥；DHCP 模式禁止固定值，預設空，目標池候選亦禁用。",
+        "固定纯地址须符合 family，需要 gatewaySource: static 且与 gatewayFrom 互斥；DHCP 模式禁止固定值，默认空，目标池候选也禁用。"
+      ],
+      "candidates[].gatewayFrom": [
+        "Optional common existing-resource/provided-field source. static requires exactly one of gateway/gatewayFrom; DHCP modes may use this source but do not discover a gateway from the interface automatically. In advisory mode any configured unresolved source makes output unready even when optional true. Explicit route installation errors on missing required static/DHCP gateway; optional is not a general bypass. Forbidden with targets.",
+        "既存resource・提供fieldの状態参照です。staticはgateway・gatewayFromの片方必須で、DHCPモードもこれを使えますがinterfaceから自動発見しません。助言はoptional trueでも設定参照の未解決を未準備とし、明示適用はstatic・DHCPの未解決をエラーにするためoptionalは一般回避ではありません。targetsと併用禁止です。",
+        "選用既有 resource/提供欄位來源。static 恰需 gateway/gatewayFrom 之一；DHCP 模式可用此來源，但不自動從介面探索閘道。建議模式任何未解析來源即使 optional true 仍未就緒；明確安裝在 static/DHCP 閘道缺值時報錯，optional 不是一般略過機制。與 targets 禁止並用。",
+        "可选现有 resource/提供字段来源。static 恰需 gateway/gatewayFrom 之一；DHCP 模式可用此来源，但不自动从接口发现网关。建议模式任何未解析来源即使 optional true 仍未就绪；明确安装在 static/DHCP 网关缺值时报错，optional 不是常规跳过机制。与 targets 禁止并用。"
+      ],
+      "candidates[].gatewaySource": [
+        "Default none: device-only default route and gateway fields prohibited. static requires exactly one literal/source; dhcpv4 requires IPv4, no literal and a usable explicitly supplied gatewayFrom value. dhcpv6 is accepted only with IPv6 but unsupported by the normal IPv4 route-table installer; the separate hostTraffic path requires static. Forbidden on pool candidates.",
+        "既定noneでデバイス既定経路となりgateway指定禁止です。staticは固定・参照の片方、dhcpv4はIPv4・固定なし・明示gatewayFromの有効値が必要です。dhcpv6はIPv6で検証許可しても通常IPv4適用は非対応で、hostTraffic別経路もstatic必須です。追加プール候補では禁止です。",
+        "預設 none，為裝置預設路由並禁止 gateway 欄位。static 需固定或來源恰一個；dhcpv4 需 IPv4、無固定值且明確 gatewayFrom 可用。dhcpv6 雖僅在 IPv6 驗證接受，一般 IPv4 安裝器不支援，獨立 hostTraffic 亦須 static。池候選禁用。",
+        "默认 none，为设备默认路由并禁止 gateway 字段。static 需固定或来源恰一个；dhcpv4 需 IPv4、无固定值且明确 gatewayFrom 可用。dhcpv6 虽仅在 IPv6 验证接受，常规 IPv4 安装器不支持，独立 hostTraffic 也须 static。池候选禁用。"
+      ],
+      "candidates[].preferredSource": [
+        "Empty or interface. Required interface for hostTraffic, which chooses the first global non-tentative/non-deprecated IPv6 address on the candidate interface. Not used by normal IPv4 forwarding or target pools.",
+        "空・interfaceです。hostTrafficでinterface必須となり、候補上のtentative・deprecatedでない最初のグローバルIPv6を使います。通常IPv4転送・追加プールでは使いません。",
+        "空值或 interface，hostTraffic 須 interface，選候選介面第一個非 tentative/deprecated 的全域 IPv6。一般 IPv4 轉送及目標池不使用。",
+        "空值或 interface，hostTraffic 须 interface，选候选接口第一个非 tentative/deprecated 的全局 IPv6。常规 IPv4 转发及目标池不使用。"
+      ],
+      "candidates[].table": [
+        "Linux route-table number; schema 0–4294967295, default 0/unconfigured. Nonzero is exclusive with nonzero routeTable. Useful direct steering needs a positive table plus positive priority and mark (hostTraffic mark remains 0). Forbidden when targets exist; FreeBSD requires 0.",
+        "Linux経路表番号でスキーマ0～4294967295、既定0は未設定です。非0のrouteTableと排他です。有効な直接制御は正のtable・priority・markが必要でhostTrafficだけmark 0です。targets候補は禁止、FreeBSDは0必須です。",
+        "Linux 路由表編號，結構描述 0–4294967295，預設 0 未設定。與非零 routeTable 互斥；有效直接導向需正 table/priority/mark（hostTraffic mark 為 0）。targets 候選禁用，FreeBSD 須 0。",
+        "Linux 路由表编号，模式 0–4294967295，默认 0 未配置。与非零 routeTable 互斥；有效直接导向需正 table/priority/mark（hostTraffic mark 为 0）。targets 候选禁用，FreeBSD 须 0。"
+      ],
+      "candidates[].routeTable": [
+        "Alias used only when table is 0; both nonzero rejected. Same range and requirements as table.",
+        "tableが0の場合の別名で、両方非0は拒否します。範囲・条件はtableと同じです。",
+        "table 為 0 時使用的別名，兩者非零拒絕；範圍及要求同 table。",
+        "table 为 0 时使用的别名，两者非零拒绝；范围及要求同 table。"
+      ],
+      "candidates[].priority": [
+        "Linux ip rule priority 1–32765 when any direct mark/table/priority is configured; default 0 is not a useful programmed rule. Also a lower-is-better tie breaker for candidate selection; a pool candidate may use it without setting direct table/mark. FreeBSD requires 0.",
+        "直接mark・table・priorityを設定する場合のip rule優先度1～32765です。既定0は有効な適用規則になりません。候補選択の小さい値優先の同点判定にも使い、追加プール候補でも直接table・markなしで指定できます。FreeBSDは0必須です。",
+        "設定直接 mark/table/priority 任一時，Linux ip rule 優先序須 1–32765；預設 0 不是有效程式化規則。亦為候選選擇較小優先的同分判定，池候選可不設直接 table/mark 而使用；FreeBSD 須 0。",
+        "设置直接 mark/table/priority 任一时，Linux ip rule 优先级须 1–32765；默认 0 不是有效编程规则。也为候选选择较小优先的同分判定，池候选可不设直接 table/mark 而使用；FreeBSD 须 0。"
+      ],
+      "candidates[].mark": [
+        "Linux packet/fwmark identifier, schema 0–4294967295. Direct forwarding requires positive mark together with table/priority; default 0 causes direct route-table installation to be skipped. hostTraffic requires 0. Pool candidates and FreeBSD prohibit nonzero direct mark.",
+        "Linuxのpacket・fwmark識別子でスキーマ0～4294967295です。直接転送は正のmark・table・priorityが必要で、既定0なら直接経路表適用を飛ばします。hostTrafficは0、追加プール候補とFreeBSDは直接非0禁止です。",
+        "Linux 封包/fwmark 識別碼，結構描述 0–4294967295。直接轉送需正 mark/table/priority，預設 0 會略過直接路由表安裝。hostTraffic 須 0，池候選及 FreeBSD 禁止非零直接 mark。",
+        "Linux 数据包/fwmark 标识符，模式 0–4294967295。直接转发需正 mark/table/priority，默认 0 会跳过直接路由表安装。hostTraffic 须 0，池候选及 FreeBSD 禁止非零直接 mark。"
+      ],
+      "candidates[].routeMetric": [
+        "Nonnegative preferred route-metric field. A nonzero value is exclusive with nonzero metric; effective 0 becomes 50 in Linux table installation, including hostTraffic. Advisory status may still report configured 0. Forbidden with targets; FreeBSD requires 0.",
+        "0以上の優先メトリックです。非0のmetricと排他で、有効0ならhostTrafficを含むLinux適用は50にします。助言状態は設定0を表示する場合があります。targetsは禁止、FreeBSDは0必須です。",
+        "非負優先路由 metric，非零時與非零 metric 互斥；有效 0 在 Linux 安裝含 hostTraffic 時轉為 50，建議狀態仍可能回報 0。targets 禁用，FreeBSD 須 0。",
+        "非负优先路由 metric，非零时与非零 metric 互斥；有效 0 在 Linux 安装含 hostTraffic 时转为 50，建议状态仍可能报告 0。targets 禁用，FreeBSD 须 0。"
+      ],
+      "candidates[].metric": [
+        "Alias fallback when routeMetric is 0; nonzero aliases cannot coexist. Same effective default 50 for programmed Linux routes.",
+        "routeMetricが0の場合の別名です。両方非0は不可で、Linux適用時の有効既定は同じ50です。",
+        "routeMetric 為 0 時的替代別名，兩者非零不可並用，Linux 程式化路由有效預設亦為 50。",
+        "routeMetric 为 0 时的替代别名，两者非零不可并用，Linux 编程路由有效默认也为 50。"
+      ],
+      "candidates[].weight": [
+        "Nonnegative integer default 0. Larger wins advisory/priority candidate selection; not a percentage, ECMP weight or per-target hash weight. mark/hash do not proportionally distribute using this field. FreeBSD requires 0.",
+        "0以上で既定0です。助言・priority選択は大きいほど優先します。割合・ECMP重み・対象別hash重みではなく、mark・hashの比例配分には使いません。FreeBSDは0必須です。",
+        "非負整數預設 0，建議或 priority 選擇較大優先，不是百分比、ECMP 或目標 hash 權重。mark/hash 不依此比例分配，FreeBSD 須 0。",
+        "非负整数默认 0，建议或 priority 选择较大优先，不是百分比、ECMP 或目标 hash 权重。mark/hash 不按此比例分配，FreeBSD 须 0。"
+      ],
+      "candidates[].healthCheck": [
+        "Optional bare existing HealthCheck name; empty means no health gate. Selection requires fresh Healthy or tolerated Failing status (below unhealthyThreshold), with lastCheckedAt no older than max(2m,3×interval+timeout). Route tables may still be installed for a check probing through this same mark even while health is unready; that bootstrap is distinct from traffic eligibility. HostTraffic ignores this field; FreeBSD prohibits it.",
+        "既存HealthCheckの任意裸名で、空なら監視条件なしです。選択には新しいHealthyまたは異常閾値前のFailingと、max(2分,3×interval+timeout)以内のlastCheckedAtが必要です。同じmark経由の監視なら異常時でも監視用表を適用し得ますが通信適格性とは別です。hostTrafficは使わずFreeBSDは禁止です。",
+        "選用既有 HealthCheck 裸名，空值無健康閘門。選擇須新鮮 Healthy 或未達 unhealthyThreshold 的 Failing，lastCheckedAt 不超過 max(2m,3×interval+timeout)。同 mark 探測的檢查可在未就緒時仍安裝探測表，與流量資格不同。hostTraffic 忽略，FreeBSD 禁用。",
+        "可选现有 HealthCheck 裸名，空值无健康条件。选择须新鲜 Healthy 或未达 unhealthyThreshold 的 Failing，lastCheckedAt 不超过 max(2m,3×interval+timeout)。同 mark 探测的检查可在未就绪时仍安装探测表，与流量资格不同。hostTraffic 忽略，FreeBSD 禁用。"
+      ],
+      "candidates[].targets": [
+        "Optional nonempty target pool, allowed only in mode hash or priority. Exclusive with direct interface/device/deviceFrom/gateway/gatewayFrom/gatewaySource/table/routeTable/mark/routeMetric/metric. Linux requires per-target positive table/priority/mark and hashFields; FreeBSD requires a single candidate with at least two distinct static routehosts and no Linux routing numbers.",
+        "任意の追加対象プールでhash・priorityだけです。直接interface・device・deviceFrom・gateway・gatewayFrom・gatewaySource・table・routeTable・mark・routeMetric・metricと排他です。Linuxは対象別の正table・priority・markとhashFieldsが必要、FreeBSDは候補1件・異なる固定経路先2件以上でLinux番号なしです。",
+        "選用非空目標池，僅限 hash/priority。與直接 interface/device/deviceFrom/gateway/gatewayFrom/gatewaySource/table/routeTable/mark/routeMetric/metric 互斥。Linux 需各目標正 table/priority/mark 及 hashFields；FreeBSD 需單一候選、至少兩個相異固定 routehost 且無 Linux 路由數字。",
+        "可选非空目标池，仅限 hash/priority。与直接 interface/device/deviceFrom/gateway/gatewayFrom/gatewaySource/table/routeTable/mark/routeMetric/metric 互斥。Linux 需各目标正 table/priority/mark 及 hashFields；FreeBSD 需单一候选、至少两个不同固定 routehost 且无 Linux 路由数字。"
+      ],
+      "candidates[].dependsOn": [
+        "Optional common AND-dependencies, default empty; ordinary resource/field checks apply. Evaluated for advisory and direct explicit routing, and candidate filtering in mark/hash. Current priority target-pool availability does not evaluate candidate dependsOn; hostTraffic ignores it. Prefer when for a whole candidate stop condition. FreeBSD prohibits dependencies.",
+        "共通AND依存で既定空です。通常参照検証を行い、助言・明示直接経路・mark/hash候補選別で評価します。現行priority追加プールの適格判定は候補dependsOnを評価せずhostTrafficも使いません。候補全体の停止にはwhenを使います。FreeBSDは禁止です。",
+        "選用共用 AND 相依，預設空，套用一般參照檢查。建議、明確直接路由及 mark/hash 候選篩選會評估；目前 priority 目標池資格不評估候選 dependsOn，hostTraffic 亦忽略。候選整體停止請用 when，FreeBSD 禁用。",
+        "可选通用 AND 依赖，默认空，应用常规引用检查。建议、明确直接路由及 mark/hash 候选筛选会评估；当前 priority 目标池资格不评估候选 dependsOn，hostTraffic 也忽略。候选整体停止请用 when，FreeBSD 禁用。"
+      ],
+      "candidates[].when": [
+        "Optional common state condition, default unconditional. False removes candidate before controller selection; unresolved values may remain indeterminate and therefore retained. Disabled candidates are also removed. FreeBSD static subset prohibits candidate conditions.",
+        "共通状態条件で既定無条件です。不成立はコントローラー選択前に除外します。未解決は未確定として残る場合があり、enabled falseも除外します。FreeBSD固定形の候補条件は禁止です。",
+        "選用共用狀態條件，預設無條件；為假時在控制器選擇前移除，未解析可因不確定而保留，enabled false 亦移除。FreeBSD 固定子集禁止候選條件。",
+        "可选通用状态条件，默认无条件；为假时在控制器选择前移除，未解析可因不确定而保留，enabled false 也移除。FreeBSD 固定子集禁止候选条件。"
+      ],
+      "candidates[].targets[].name": [
+        "Optional target identity, default empty. Participates in stable hash identity together with effective interface, mark and table; changing these can redistribute new flows. Names/mark/priority/table uniqueness are not generally validated on Linux.",
+        "任意対象名で既定空です。有効interface・mark・tableとともに固定hash識別に使い、変更は新規通信を再配分し得ます。Linuxでは名前・mark・priority・tableの一意性を一般検証しません。",
+        "選用目標身分，預設空，與有效 interface、mark、table 共同組成穩定 hash 身分，變更可重新分配新流。Linux 通常不驗證名稱/mark/priority/table 唯一。",
+        "可选目标身份，默认空，与有效 interface、mark、table 共同组成稳定 hash 身份，更改可重新分配新流。Linux 通常不验证名称/mark/priority/table 唯一。"
+      ],
+      "candidates[].targets[].interface": [
+        "Target logical interface, required unless outboundInterface is supplied. Validated against declared interface/DS-Lite indexes. On Linux outboundInterface wins if both are set; FreeBSD rejects both being nonempty.",
+        "outboundInterfaceがなければ必須の論理対象名です。宣言済みinterface・DS-Lite索引を検証します。Linuxは両指定ならoutboundInterface優先で、FreeBSDは両方非空を拒否します。",
+        "未提供 outboundInterface 時必填目標邏輯介面，驗證已宣告介面或 DS-Lite 索引。Linux 同時提供時 outboundInterface 優先；FreeBSD 拒絕兩者非空。",
+        "未提供 outboundInterface 时必填目标逻辑接口，验证已声明接口或 DS-Lite 索引。Linux 同时提供时 outboundInterface 优先；FreeBSD 拒绝两者非空。"
+      ],
+      "candidates[].targets[].outboundInterface": [
+        "Preferred alias for interface; same reference checks. Required together with a usable OS interface for actual delivery; does not create a tunnel.",
+        "interfaceより優先する別名で、同じ参照検証です。実配送には利用可能なOSインターフェースが必要で、トンネルは作りません。",
+        "優先於 interface 的別名，套用相同參照檢查；實際傳遞仍須可用 OS 介面，不建立隧道。",
+        "优先于 interface 的别名，应用相同引用检查；实际投递仍须可用 OS 接口，不创建隧道。"
+      ],
+      "candidates[].targets[].gateway": [
+        "Optional literal matching family; requires gatewaySource static and excludes gatewayFrom. DHCP gateway modes prohibit literal values. FreeBSD target requires this bare static IPv4 value.",
+        "familyと合う固定値で、gatewaySource staticが必要かつgatewayFromと排他です。DHCPの固定値は禁止し、FreeBSD対象ではこの固定IPv4が必須です。",
+        "選用符合 family 的固定值，須 gatewaySource static 且與 gatewayFrom 互斥；DHCP 模式禁止固定值。FreeBSD 目標必填此純固定 IPv4。",
+        "可选符合 family 的固定值，须 gatewaySource static 且与 gatewayFrom 互斥；DHCP 模式禁止固定值。FreeBSD 目标必填此纯固定 IPv4。"
+      ],
+      "candidates[].targets[].gatewayFrom": [
+        "Optional common resource/field source; existence/provided-field validation applies even when optional true. static requires exactly one literal/source. The Linux reader uses the first value; optional is not a missing-gateway bypass. FreeBSD prohibits dynamic gateway fields entirely.",
+        "共通resource・field参照でoptional trueでも存在・提供fieldを検証します。staticは固定値・参照の片方必須です。Linuxは先頭値を使いoptionalはgateway欠落回避にはなりません。FreeBSDは動的gateway自体を禁止します。",
+        "選用共用 resource/field 來源，即使 optional true 仍驗證存在及提供欄位。static 恰需固定值或來源之一，Linux 使用第一個值，optional 不略過閘道缺值；FreeBSD 完全禁止動態閘道欄位。",
+        "可选通用 resource/field 来源，即使 optional true 仍验证存在及提供字段。static 恰需固定值或来源之一，Linux 使用第一个值，optional 不跳过网关缺值；FreeBSD 完全禁止动态网关字段。"
+      ],
+      "candidates[].targets[].gatewaySource": [
+        "Default none, prohibiting gateway/gatewayFrom and installing a device-only route. static requires exactly one gateway/gatewayFrom. dhcpv4/6 require corresponding family and no literal, but do not discover a gateway automatically: use gatewayFrom. The normal live installer supports only none/static/dhcpv4; FreeBSD requires explicit static.",
+        "既定noneでgateway・gatewayFrom禁止、デバイス経路です。staticはgateway・gatewayFromの片方必須です。dhcpv4/6は同系統・固定なしですが自動取得せずgatewayFromを指定します。通常実行時はnone・static・dhcpv4だけ対応し、FreeBSDはstatic必須です。",
+        "預設 none，禁止 gateway/gatewayFrom 並安裝裝置路由。static 恰需 gateway/gatewayFrom 之一；dhcpv4/6 需相應位址族且無固定值，但不自動探索，請用 gatewayFrom。一般即時安裝器僅支援 none/static/dhcpv4，FreeBSD 須明確 static。",
+        "默认 none，禁止 gateway/gatewayFrom 并安装设备路由。static 恰需 gateway/gatewayFrom 之一；dhcpv4/6 需对应地址族且无固定值，但不自动发现，请用 gatewayFrom。常规实时安装器仅支持 none/static/dhcpv4，FreeBSD 须明确 static。"
+      ],
+      "candidates[].targets[].table": [
+        "Linux requires positive table for every target (schema maximum 4294967295), exclusive with nonzero routeTable. No automatic allocation or reserved-table/uniqueness check. FreeBSD requires omitted/0 and uses PF route-to instead.",
+        "Linuxは全対象で正の表番号が必須で、スキーマ上限4294967295、非0routeTableと排他です。自動採番・予約表・一意検証はありません。FreeBSDは省略・0でPF route-toを使います。",
+        "Linux 每目標必須正 table（結構描述上限 4294967295），與非零 routeTable 互斥；無自動配置、保留表或唯一檢查。FreeBSD 須省略或 0，改用 PF route-to。",
+        "Linux 每目标必须正 table（模式上限 4294967295），与非零 routeTable 互斥；无自动分配、保留表或唯一检查。FreeBSD 须省略或 0，改用 PF route-to。"
+      ],
+      "candidates[].targets[].routeTable": [
+        "Alias used when table is 0. Both aliases nonzero rejected; same Linux-positive / FreeBSD-zero requirement.",
+        "tableが0の場合の別名です。両方非0は拒否し、Linux正値・FreeBSD 0の条件は同じです。",
+        "table 為 0 時使用的別名，兩者非零拒絕，Linux 正值或 FreeBSD 零值要求相同。",
+        "table 为 0 时使用的别名，两者非零拒绝，Linux 正值或 FreeBSD 零值要求相同。"
+      ],
+      "candidates[].targets[].priority": [
+        "Linux target ip rule priority required 1–32765; no default allocation. Distinct from candidate selection priority. FreeBSD requires omitted/0.",
+        "Linuxの対象ip rule優先度1～32765が必須です。自動採番はなく、候補選択のpriorityとは別です。FreeBSDは省略・0です。",
+        "Linux 目標 ip rule 優先序必填 1–32765，無自動配置，與候選選擇 priority 不同。FreeBSD 須省略或 0。",
+        "Linux 目标 ip rule 优先级必填 1–32765，无自动分配，与候选选择 priority 不同。FreeBSD 须省略或 0。"
+      ],
+      "candidates[].targets[].mark": [
+        "Linux target fwmark required >0 (schema maximum 4294967295). Used by the hash bucket map and ip rule. No automatic allocation or collision detection; FreeBSD requires omitted/0.",
+        "Linuxの対象fwmarkは正値必須でスキーマ上限4294967295です。hashバケットとip ruleに使い、自動採番・衝突検証はありません。FreeBSDは省略・0です。",
+        "Linux 目標 fwmark 必填正值（結構描述上限 4294967295），用於 hash 桶與 ip rule，無自動配置或衝突偵測。FreeBSD 須省略或 0。",
+        "Linux 目标 fwmark 必填正值（模式上限 4294967295），用于 hash 桶与 ip rule，无自动分配或冲突检测。FreeBSD 须省略或 0。"
+      ],
+      "candidates[].targets[].routeMetric": [
+        "Nonnegative Linux route metric, preferred over metric; both nonzero rejected. Effective omitted/0 becomes 50 at installation. FreeBSD requires omitted/0.",
+        "0以上のLinuxメトリックでmetricより優先します。両方非0は不可で、有効な省略・0は適用時50です。FreeBSDは省略・0必須です。",
+        "非負 Linux 路由 metric，優先於 metric，兩者非零拒絕，有效省略或 0 安裝時為 50。FreeBSD 須省略或 0。",
+        "非负 Linux 路由 metric，优先于 metric，两者非零拒绝，有效省略或 0 安装时为 50。FreeBSD 须省略或 0。"
+      ],
+      "candidates[].targets[].metric": [
+        "Alias fallback when routeMetric is 0; same requirements and effective Linux default 50.",
+        "routeMetricが0の場合の別名です。同じ条件・Linux有効既定50を適用します。",
+        "routeMetric 為 0 時的替代別名，要求相同，Linux 有效預設 50。",
+        "routeMetric 为 0 时的替代别名，要求相同，Linux 有效默认值 50。"
+      ],
+      "candidates[].targets[].healthCheck": [
+        "Optional bare existing HealthCheck name, default no health gate; uses the same freshness/threshold check as candidate health. A failed target is excluded from new hash maps. Existing conntrack marks are restored rather than globally terminated; route tables can remain for same-mark health probes. FreeBSD forbids this field.",
+        "既存HealthCheckの任意裸名で、既定監視条件なしです。候補と同じ鮮度・閾値を使い、異常対象は新規hash対応から外します。既存conntrackマークは復元するため全通信を終了せず、同markの監視用表は残り得ます。FreeBSDは禁止です。",
+        "選用既有 HealthCheck 裸名，預設無健康閘門，同候選鮮度與閾值檢查。失敗目標自新 hash 映射排除，但既有 conntrack 標記會還原而非全面終止連線，同 mark 探測表亦可保留；FreeBSD 禁用。",
+        "可选现有 HealthCheck 裸名，默认无健康条件，同候选新鲜度与阈值检查。失败目标从新 hash 映射排除，但现有 conntrack 标记会恢复而非全面终止连接，同 mark 探测表也可保留；FreeBSD 禁用。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_route.go",
+      "pkg/config/validate.go",
+      "pkg/config/diagnostics.go",
+      "pkg/egressroute/selection.go",
+      "pkg/controller/chain/policyroute.go",
+      "pkg/controller/chain/phase_status.go",
+      "pkg/resourcequery/when.go",
+      "pkg/resourcequery/resourcequery.go",
+      "pkg/render/nftables.go",
+      "pkg/render/pf.go"
+    ]
   }
 }

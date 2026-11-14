@@ -532,6 +532,8 @@ Configure per-group thresholds used by routerctl doctor for federation delivery 
 
 [MobilityPool](resources/MobilityPool.md)
 
+Combine shared SAM topology, local ownership observations and BGP/federation state to plan address mobility and local capture. The configured YAML is local intent; shared identity lives in SAMNodeSet.
+
 
 ## SAMNodeSet
 
@@ -592,6 +594,8 @@ Probe an IP target and publish Healthy/Unhealthy state for route selection. A su
 ## EgressRoutePolicy
 
 [EgressRoutePolicy](resources/EgressRoutePolicy.md)
+
+Select or program egress routing; the actual behavior depends on explicit mode and hostTraffic.
 
 
 ## EventRule

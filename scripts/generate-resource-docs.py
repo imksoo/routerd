@@ -126,7 +126,7 @@ for locale_index, (locale, labels) in enumerate(LANGUAGES.items()):
         lines.append('- [' + kind + '](resources/' + kind + '.md)')
     for variant in VARIANTS:
         props = variant['properties']; kind = props['kind']['const']
-        notes = NOTES.get(kind)
+        notes = NOTES[kind]
         lines += ['', '## ' + kind, '', '[' + kind + '](resources/' + kind + '.md)', '']
         page = ['# ' + kind, '', '[' + title + '](../resources.md#' + kind.lower() + ') · [Kind/name · when · dependsOn](../common-fields.md)', '', '`apiVersion: ' + props['apiVersion']['const'] + '` · `metadata.name`', '']
         if notes:

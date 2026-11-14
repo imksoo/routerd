@@ -290,6 +290,7 @@ spec:
 <p>Configure per-group thresholds used by routerctl doctor for federation delivery and subscription diagnostics. This does not change delivery retry or plugin execution policy.</p>
 <h2 id="mobilitypool">MobilityPool</h2>
 <p><a href="resources/MobilityPool.html">MobilityPool</a></p>
+<p>Combine shared SAM topology, local ownership observations and BGP/federation state to plan address mobility and local capture. The configured YAML is local intent; shared identity lives in SAMNodeSet.</p>
 <h2 id="samnodeset">SAMNodeSet</h2>
 <p><a href="resources/SAMNodeSet.html">SAMNodeSet</a></p>
 <p>Declare shared SAM node identity/topology used by transport, event peers, WireGuard and MobilityPool member resolution. Local provider capture/discovery details belong in a MobilityPool self overlay, not here.</p>
@@ -316,6 +317,7 @@ spec:
 <p>Probe an IP target and publish Healthy/Unhealthy state for route selection. A successful probe verifies only its configured protocol and path.</p>
 <h2 id="egressroutepolicy">EgressRoutePolicy</h2>
 <p><a href="resources/EgressRoutePolicy.html">EgressRoutePolicy</a></p>
+<p>Select or program egress routing; the actual behavior depends on explicit mode and hostTraffic.</p>
 <h2 id="eventrule">EventRule</h2>
 <p><a href="resources/EventRule.html">EventRule</a></p>
 <p>Derive an event from patterns in the persisted local event journal, with optional per-correlation state.</p>

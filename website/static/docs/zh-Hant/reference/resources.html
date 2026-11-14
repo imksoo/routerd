@@ -290,6 +290,7 @@ spec:
 <p>設定 routerctl doctor 診斷聯邦配送與訂閱時使用的每群組門檻，不改變配送重試或 Plugin 執行策略。</p>
 <h2 id="mobilitypool">MobilityPool</h2>
 <p><a href="resources/MobilityPool.html">MobilityPool</a></p>
+<p>結合共用 SAM 拓撲、本機所有權觀察及 BGP/聯邦狀態，規劃位址移動與本機擷取。YAML 是本機意圖，共用身分位於 SAMNodeSet。</p>
 <h2 id="samnodeset">SAMNodeSet</h2>
 <p><a href="resources/SAMNodeSet.html">SAMNodeSet</a></p>
 <p>宣告供傳輸、事件對等端、WireGuard 與 MobilityPool 成員解析共用的 SAM 節點身分與拓撲。本機供應者擷取/探索設定應放在 MobilityPool 自節點覆寫，不放在此處。</p>
@@ -316,6 +317,7 @@ spec:
 <p>探測 IP 目標並發布 Healthy/Unhealthy 狀態供路由選擇。成功僅代表設定的協定與路徑通過。</p>
 <h2 id="egressroutepolicy">EgressRoutePolicy</h2>
 <p><a href="resources/EgressRoutePolicy.html">EgressRoutePolicy</a></p>
+<p>選擇或設定出口路由，實際行為取決於明確 mode 與 hostTraffic。</p>
 <h2 id="eventrule">EventRule</h2>
 <p><a href="resources/EventRule.html">EventRule</a></p>
 <p>從持久化的本機事件紀錄比對模式並產生事件，可依關聯鍵分開維護狀態。</p>

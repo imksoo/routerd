@@ -5,6 +5,14 @@
 <main class="doclayout wrap"><article class="document"><h1 id="mobilitypool">MobilityPool</h1>
 <p><a href="../resources.html#mobilitypool">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: mobility.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Combine shared SAM topology, local ownership observations and BGP/federation state to plan address mobility and local capture. The configured YAML is local intent; shared identity lives in SAMNodeSet.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>prefix must be IPv4; groupRef must resolve to a local EventGroup with nodeName, and that exact node must appear in required membersFrom topology. Every member needs nonempty site and onprem/cloud role. Only this local node may carry capture/discovery/static ownership overlays.</li>
+<li>onprem proxy-ARP requires capture.interface and explicit activeWhen single-router or vrrp-master. Provider capture requires providerRef and nicRef unless NIC is discovered; route-table additionally requires target.routeTableRef. Provider capture rejects activeWhen.</li>
+<li>Linux uses per-interface proxy-ARP controls; FreeBSD uses route-aware global proxyall handling rather than Linux sysctl names. Capture activation still depends on real ownership/readiness facts; a valid YAML or planned intent is not proof of a working extended segment.</li>
+<li>Profiles use nonzero merge semantics: empty strings/lists and false do not clear inherited fields. Source-address literal takes precedence over its status source. Maps merge with local entries winning; target literals then win over targetFrom. Profile use is cloud-only.</li>
+</ul>
 <h2 id="yaml-definition">YAML definition</h2>
 <p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
 <pre><code class="language-yaml">- apiVersion: mobility.routerd.net/v1alpha1
@@ -143,12 +151,466 @@
     values: # optional; object
       &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # optional; string
 </code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.prefix</code></td>
+<td>Required IPv4 CIDR managed by the pool. Ownership/capture addresses must stay inside it; no default prefix or address auto-allocation.</td>
+</tr>
+<tr>
+<td><code>spec.groupRef</code></td>
+<td>Required local EventGroup reference with nodeName. Its exact local node identity must exist in membersFrom topology; used for ownership and expiry events.</td>
+</tr>
+<tr>
+<td><code>spec.values</code></td>
+<td>Optional string constants for provider identifiers. Referenced by targetFrom/subnetRefFrom; no automatic variable expansion or secret storage.</td>
+</tr>
+<tr>
+<td><code>spec.profiles</code></td>
+<td>Optional reusable local capture/discovery defaults. Does not contain shared topology identities.</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures</code></td>
+<td>Map keyed by profile name. Used only when a local cloud member selects profileRef; cannot enable onprem profile shorthand. Every profile target/value reference is normalized, including unused profiles.</td>
+</tr>
+<tr>
+<td><code>spec.membersFrom</code></td>
+<td>Required nonempty SAMNodeSet source list; sole source of member identity, site, role, placement, maintenance and capacity. No inline topology fallback from members overlays.</td>
+</tr>
+<tr>
+<td><code>spec.membersFrom[].resource</code></td>
+<td>Required SAMNodeSet/name. Imported nodeRefs must be distinct and each resolved member requires explicit site and onprem/cloud role.</td>
+</tr>
+<tr>
+<td><code>spec.membersFrom[].optional</code></td>
+<td>Default false. A missing nonoptional runtime source is Pending; true can tolerate it, but does not waive the requirement that the exact local EventGroup node resolve in the topology.</td>
+</tr>
+<tr>
+<td><code>spec.members</code></td>
+<td>Optional local-only overlays keyed by nodeRef already imported from membersFrom. Cannot set shared site/role/placement/maintenance/capacity or configure remote captures.</td>
+</tr>
+<tr>
+<td><code>spec.members[].nodeRef</code></td>
+<td>Required imported nodeRef selecting the EventGroup local member. This overlay does not introduce a new member.</td>
+</tr>
+<tr>
+<td><code>spec.members[].profileRef</code></td>
+<td>Optional key under profiles.cloudCaptures, supported only for role cloud. Missing profile fails normalization. Nonempty local strings/lists override profile defaults; maps merge, true booleans are additive, empty lists/false cannot clear inherited values.</td>
+</tr>
+<tr>
+<td><code>spec.members[].staticOwnedAddresses</code></td>
+<td>Optional explicit IPv4 /32 CIDRs inside prefix, onprem role only. Bare IPv4 is rejected here. Duplicate static ownership is rejected; these declarations do not depend on learned-client events.</td>
+</tr>
+<tr>
+<td><code>spec.staticHandovers</code></td>
+<td>Optional planned static ownership transfers. From-member release must be observed before projecting the target; not simultaneous dual ownership.</td>
+</tr>
+<tr>
+<td><code>spec.staticHandovers[].address</code></td>
+<td>Required IPv4 /32 CIDR within pool, unique across handovers. If declared as static-owned, its owner must equal fromNodeRef.</td>
+</tr>
+<tr>
+<td><code>spec.staticHandovers[].fromNodeRef</code></td>
+<td>Required existing imported onprem member nodeRef. Must differ from toNodeRef.</td>
+</tr>
+<tr>
+<td><code>spec.staticHandovers[].toNodeRef</code></td>
+<td>Required existing imported target member nodeRef, different from source. No target member is created implicitly.</td>
+</tr>
+<tr>
+<td><code>spec.members[].capture</code></td>
+<td>Local capture settings; type is explicit, not inferred from role. Only the local member may carry capture/discovery overlays.</td>
+</tr>
+<tr>
+<td><code>spec.members[].capture.type</code></td>
+<td>proxy-arp for role onprem, provider-secondary-ip for role cloud; empty means no capture mechanism. Local cloud member requires a resolved capture configuration.</td>
+</tr>
+<tr>
+<td><code>spec.members[].capture.providerRef</code></td>
+<td>CloudProviderProfile name required for provider-secondary-ip. Not a status source. Ownership discovery defaults its providerRef to this value.</td>
+</tr>
+<tr>
+<td><code>spec.members[].capture.captureStrategy</code></td>
+<td>Optional route-table only for provider-secondary-ip, requiring target.routeTableRef. Omit for normal secondary-IP or proxy-ARP; explicit secondary-ip/proxy-arp strategy values are rejected.</td>
+</tr>
+<tr>
+<td><code>spec.members[].capture.nicRef</code></td>
+<td>Provider NIC identifier, required for provider capture unless provider-private-ip discovery can resolve it. Do not place nicRef under target/targetFrom; that spelling is rejected.</td>
+</tr>
+<tr>
+<td><code>spec.members[].capture.interface</code></td>
+<td>Logical/OS capture interface, required for proxy-arp. Alias is resolved by consumers; no automatic LAN choice.</td>
+</tr>
+<tr>
+<td><code>spec.members[].capture.sourceAddress</code></td>
+<td>Optional local IPv4 sender address inside the pool for proxy-ARP/BGP delivery. Literal takes precedence over sourceAddressFrom, without an exclusivity check here. Lowered to a /32 address and preferred source when valid; not a remote owner address.</td>
+</tr>
+<tr>
+<td><code>spec.members[].capture.sourceAddressFrom</code></td>
+<td>Optional source-address status reference. Accepts valid pool-local IPv4 values; missing/invalid values remain unavailable. Unlike a literal, it does not generate IPv4StaticAddress because the source resource owns the address lifecycle.</td>
+</tr>
+<tr>
+<td><code>spec.members[].capture.excludeAddresses</code></td>
+<td>Optional pool-local IPv4 addresses/CIDRs excluded from proxy-ARP capture, default none. Use for local-only gateways/infrastructure; not a filter of all BGP routes.</td>
+</tr>
+<tr>
+<td><code>spec.members[].capture.gratuitousARP</code></td>
+<td>Default false. True requests unsolicited ARP announcements for capture changes. Profile inheritance is additive: a false local override does not clear a true profile setting.</td>
+</tr>
+<tr>
+<td><code>spec.members[].capture.activeWhen</code></td>
+<td>Required explicit authority for onprem proxy-arp; forbidden for provider-secondary-ip. Not the generic state/all/any predicate.</td>
+</tr>
+<tr>
+<td><code>spec.members[].capture.activeWhen.type</code></td>
+<td>single-router unconditionally authorizes local proxy-ARP; vrrp-master requires the referenced VirtualAddress MASTER state. No default for proxy-ARP.</td>
+</tr>
+<tr>
+<td><code>spec.members[].capture.activeWhen.virtualAddressRef</code></td>
+<td>Required existing local VirtualAddress name (or accepted VirtualAddress/name spelling) for vrrp-master, forbidden for single-router. Checked only for the local member.</td>
+</tr>
+<tr>
+<td><code>spec.members[].capture.target</code></td>
+<td>Optional nonsecret provider target map. Keys/values cannot be empty; secret/token/password/credential/private-key/access-key-like keys are rejected. Explicit target entries override targetFrom values.</td>
+</tr>
+<tr>
+<td><code>spec.members[].capture.targetFrom</code></td>
+<td>Optional map of provider target keys to spec.values keys. Missing/blank referenced constants fail normalization. nicRef is forbidden here; use capture.nicRef.</td>
+</tr>
+<tr>
+<td><code>spec.members[].capture.sourceAddressFrom.resource</code></td>
+<td>Source Kind/name; existing resource required by common reference validation.</td>
+</tr>
+<tr>
+<td><code>spec.members[].capture.sourceAddressFrom.field</code></td>
+<td>Explicit field provided by source kind, required when resource is set.</td>
+</tr>
+<tr>
+<td><code>spec.members[].capture.sourceAddressFrom.optional</code></td>
+<td>Default false; does not waive reference validation or create a usable sender when missing.</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery</code></td>
+<td>Local ownership-fact discovery settings, default disabled. Only the local member may configure these; accepted remote events are separate input.</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.mode</code></td>
+<td>Empty/disabled does nothing. provider-private-ip requires cloud/provider-secondary-ip; onprem-l2 requires onprem/proxy-arp, capture.interface and nonempty sources.</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.providerRef</code></td>
+<td>Provider inventory profile name, default capture.providerRef. Used by provider-private-ip, not an event resource reference.</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.pluginRef</code></td>
+<td>Optional inventory Plugin name. Empty resolves by provider name or sole observe.providerPrivateIPs-capable plugin; ambiguity/missing capability fails discovery.</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.subnetRef</code></td>
+<td>Optional provider subnet identifier. Explicit value overrides subnetRefFrom; empty lets the plugin infer from the self NIC where supported.</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.subnetRefFrom</code></td>
+<td>Optional spec.values key, used only when subnetRef is empty. Missing/empty constant fails normalization; not Kind/name/field.</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.scanInterval</code></td>
+<td>Provider scan interval, default 60s, explicit &gt;=30s. Also validated for onprem-l2, but event-driven sources need no provider scan; observer polling has per-source scanInterval.</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.leaseTTL</code></td>
+<td>Positive Go duration for emitted ownership events, default 5m. Per-source leaseTTL overrides it for onprem observations. Expiry is a protocol ownership lease, not a reboot deadline.</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.stoppedInstancePolicy</code></td>
+<td>provider-private-ip only: hold/omitted retains stopped-instance ownership facts, release expires them. Forbidden for other modes when nonempty.</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.allowEmptyAfter</code></td>
+<td>onprem-l2 only, positive duration after sources are armed before zero clients may count as complete; omitted leaves zero-client passive discovery pending. With profileRef, the merge currently does not copy the local override of this field; the profile value remains.</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.sources</code></td>
+<td>Nonempty list required for onprem-l2; forbidden for provider-private-ip. Duplicate type/resource/effective-interface/network/bridge combinations are rejected.</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.sources[].type</code></td>
+<td>Required dhcpv4-lease, arp-observer, on-demand-arp or pve-svnet. ARP/PVE observers derive local observer-daemon intents; DHCP facts are consumed from actual lease events.</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.sources[].resource</code></td>
+<td>Optional source identity string, default empty. Used in deduplication/observer identity fingerprint, not as the observer process name or an existence-checked Kind/name reference; event matching primarily uses type/interface/network/bridge.</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.sources[].interface</code></td>
+<td>Optional observation interface, default capture.interface. Required after fallback for on-demand-arp; consumers resolve declared aliases to OS names.</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.sources[].bridge</code></td>
+<td>Optional local bridge label for PVE/svnet observation matching; default empty adds no bridge-selector restriction. Not a Bridge creation request.</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.sources[].network</code></td>
+<td>Optional logical PVE/svnet network label, e.g. svnet1. Empty imposes no network-selector match; not an IP CIDR.</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.sources[].sourceAddressFrom</code></td>
+<td>Optional status source for active ARP sender. If missing/unusable, reuses a verified capture source address; if neither resolves, no on-demand probe intent is emitted.</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.sources[].scanInterval</code></td>
+<td>Optional observer poll interval, explicit &gt;=1s, default daemon 10s for generated ARP/PVE observers. Event-driven DHCP sources ignore polling.</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.sources[].probeTimeout</code></td>
+<td>Positive Go duration between active ARP retry attempts, default observer 1s. Only meaningful for on-demand probing.</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.sources[].probeRetries</code></td>
+<td>Integer 0–20 additional ARP retries, default 0. Not total attempts; one initial attempt is separate.</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.sources[].leaseTTL</code></td>
+<td>Optional positive event-lease duration overriding ownershipDiscovery.leaseTTL for this source. Omitted inherits the pool discovery lease (default 5m).</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.scope</code></td>
+<td>Optional ownership observation address filters inside the pool. Not an authorization to advertise arbitrary external prefixes.</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.scope.includeAddresses</code></td>
+<td>Optional IPv4 bare-address/CIDR allowlist contained in the pool; empty allows all candidate pool addresses. Active shard assignment can replace this provider-discovery include list.</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.scope.excludeAddresses</code></td>
+<td>Optional pool-contained IPv4 bare-address/CIDR denylist, default none. Exclusions are applied after inclusion matching.</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.selector</code></td>
+<td>Optional provider-inventory tag selector; does not configure cloud tags.</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.selector.tags</code></td>
+<td>Nonempty tag keys with expected string values. All keys must match after trimming values; empty map imposes no tag filter. Used for provider inventory, not onprem event source matching.</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.sources[].sourceAddressFrom.resource</code></td>
+<td>Existing source Kind/name, required if a status source is used.</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.sources[].sourceAddressFrom.field</code></td>
+<td>Explicit field provided by the source kind, required with resource.</td>
+</tr>
+<tr>
+<td><code>spec.members[].ownershipDiscovery.sources[].sourceAddressFrom.optional</code></td>
+<td>Default false; does not waive reference validation or supply a sender address if unresolved.</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture</code></td>
+<td>Local capture settings; type is explicit, not inferred from role. Only the local member may carry capture/discovery overlays.</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.type</code></td>
+<td>proxy-arp for role onprem, provider-secondary-ip for role cloud; empty means no capture mechanism. Local cloud member requires a resolved capture configuration.</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.providerRef</code></td>
+<td>CloudProviderProfile name required for provider-secondary-ip. Not a status source. Ownership discovery defaults its providerRef to this value.</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.captureStrategy</code></td>
+<td>Optional route-table only for provider-secondary-ip, requiring target.routeTableRef. Omit for normal secondary-IP or proxy-ARP; explicit secondary-ip/proxy-arp strategy values are rejected.</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.nicRef</code></td>
+<td>Provider NIC identifier, required for provider capture unless provider-private-ip discovery can resolve it. Do not place nicRef under target/targetFrom; that spelling is rejected.</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.interface</code></td>
+<td>Logical/OS capture interface, required for proxy-arp. Alias is resolved by consumers; no automatic LAN choice.</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.sourceAddress</code></td>
+<td>Optional local IPv4 sender address inside the pool for proxy-ARP/BGP delivery. Literal takes precedence over sourceAddressFrom, without an exclusivity check here. Lowered to a /32 address and preferred source when valid; not a remote owner address.</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.sourceAddressFrom</code></td>
+<td>Optional source-address status reference. Accepts valid pool-local IPv4 values; missing/invalid values remain unavailable. Unlike a literal, it does not generate IPv4StaticAddress because the source resource owns the address lifecycle.</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.excludeAddresses</code></td>
+<td>Optional pool-local IPv4 addresses/CIDRs excluded from proxy-ARP capture, default none. Use for local-only gateways/infrastructure; not a filter of all BGP routes.</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.gratuitousARP</code></td>
+<td>Default false. True requests unsolicited ARP announcements for capture changes. Profile inheritance is additive: a false local override does not clear a true profile setting.</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.activeWhen</code></td>
+<td>Required explicit authority for onprem proxy-arp; forbidden for provider-secondary-ip. Not the generic state/all/any predicate.</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.activeWhen.type</code></td>
+<td>single-router unconditionally authorizes local proxy-ARP; vrrp-master requires the referenced VirtualAddress MASTER state. No default for proxy-ARP.</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.activeWhen.virtualAddressRef</code></td>
+<td>Required existing local VirtualAddress name (or accepted VirtualAddress/name spelling) for vrrp-master, forbidden for single-router. Checked only for the local member.</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.target</code></td>
+<td>Optional nonsecret provider target map. Keys/values cannot be empty; secret/token/password/credential/private-key/access-key-like keys are rejected. Explicit target entries override targetFrom values.</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.targetFrom</code></td>
+<td>Optional map of provider target keys to spec.values keys. Missing/blank referenced constants fail normalization. nicRef is forbidden here; use capture.nicRef.</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.sourceAddressFrom.resource</code></td>
+<td>Source Kind/name; existing resource required by common reference validation.</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.sourceAddressFrom.field</code></td>
+<td>Explicit field provided by source kind, required when resource is set.</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.capture.sourceAddressFrom.optional</code></td>
+<td>Default false; does not waive reference validation or create a usable sender when missing.</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery</code></td>
+<td>Local ownership-fact discovery settings, default disabled. Only the local member may configure these; accepted remote events are separate input.</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.mode</code></td>
+<td>Empty/disabled does nothing. provider-private-ip requires cloud/provider-secondary-ip; onprem-l2 requires onprem/proxy-arp, capture.interface and nonempty sources.</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.providerRef</code></td>
+<td>Provider inventory profile name, default capture.providerRef. Used by provider-private-ip, not an event resource reference.</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.pluginRef</code></td>
+<td>Optional inventory Plugin name. Empty resolves by provider name or sole observe.providerPrivateIPs-capable plugin; ambiguity/missing capability fails discovery.</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.subnetRef</code></td>
+<td>Optional provider subnet identifier. Explicit value overrides subnetRefFrom; empty lets the plugin infer from the self NIC where supported.</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.subnetRefFrom</code></td>
+<td>Optional spec.values key, used only when subnetRef is empty. Missing/empty constant fails normalization; not Kind/name/field.</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.scanInterval</code></td>
+<td>Provider scan interval, default 60s, explicit &gt;=30s. Also validated for onprem-l2, but event-driven sources need no provider scan; observer polling has per-source scanInterval.</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.leaseTTL</code></td>
+<td>Positive Go duration for emitted ownership events, default 5m. Per-source leaseTTL overrides it for onprem observations. Expiry is a protocol ownership lease, not a reboot deadline.</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.stoppedInstancePolicy</code></td>
+<td>provider-private-ip only: hold/omitted retains stopped-instance ownership facts, release expires them. Forbidden for other modes when nonempty.</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.allowEmptyAfter</code></td>
+<td>onprem-l2 only, positive duration after sources are armed before zero clients may count as complete; omitted leaves zero-client passive discovery pending. With profileRef, the merge currently does not copy the local override of this field; the profile value remains.</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.sources</code></td>
+<td>Nonempty list required for onprem-l2; forbidden for provider-private-ip. Duplicate type/resource/effective-interface/network/bridge combinations are rejected.</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.sources[].type</code></td>
+<td>Required dhcpv4-lease, arp-observer, on-demand-arp or pve-svnet. ARP/PVE observers derive local observer-daemon intents; DHCP facts are consumed from actual lease events.</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.sources[].resource</code></td>
+<td>Optional source identity string, default empty. Used in deduplication/observer identity fingerprint, not as the observer process name or an existence-checked Kind/name reference; event matching primarily uses type/interface/network/bridge.</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.sources[].interface</code></td>
+<td>Optional observation interface, default capture.interface. Required after fallback for on-demand-arp; consumers resolve declared aliases to OS names.</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.sources[].bridge</code></td>
+<td>Optional local bridge label for PVE/svnet observation matching; default empty adds no bridge-selector restriction. Not a Bridge creation request.</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.sources[].network</code></td>
+<td>Optional logical PVE/svnet network label, e.g. svnet1. Empty imposes no network-selector match; not an IP CIDR.</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.sources[].sourceAddressFrom</code></td>
+<td>Optional status source for active ARP sender. If missing/unusable, reuses a verified capture source address; if neither resolves, no on-demand probe intent is emitted.</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.sources[].scanInterval</code></td>
+<td>Optional observer poll interval, explicit &gt;=1s, default daemon 10s for generated ARP/PVE observers. Event-driven DHCP sources ignore polling.</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.sources[].probeTimeout</code></td>
+<td>Positive Go duration between active ARP retry attempts, default observer 1s. Only meaningful for on-demand probing.</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.sources[].probeRetries</code></td>
+<td>Integer 0–20 additional ARP retries, default 0. Not total attempts; one initial attempt is separate.</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.sources[].leaseTTL</code></td>
+<td>Optional positive event-lease duration overriding ownershipDiscovery.leaseTTL for this source. Omitted inherits the pool discovery lease (default 5m).</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.scope</code></td>
+<td>Optional ownership observation address filters inside the pool. Not an authorization to advertise arbitrary external prefixes.</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.scope.includeAddresses</code></td>
+<td>Optional IPv4 bare-address/CIDR allowlist contained in the pool; empty allows all candidate pool addresses. Active shard assignment can replace this provider-discovery include list.</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.scope.excludeAddresses</code></td>
+<td>Optional pool-contained IPv4 bare-address/CIDR denylist, default none. Exclusions are applied after inclusion matching.</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.selector</code></td>
+<td>Optional provider-inventory tag selector; does not configure cloud tags.</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.selector.tags</code></td>
+<td>Nonempty tag keys with expected string values. All keys must match after trimming values; empty map imposes no tag filter. Used for provider inventory, not onprem event source matching.</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.sources[].sourceAddressFrom.resource</code></td>
+<td>Existing source Kind/name, required if a status source is used.</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.sources[].sourceAddressFrom.field</code></td>
+<td>Explicit field provided by the source kind, required with resource.</td>
+</tr>
+<tr>
+<td><code>spec.profiles.cloudCaptures.&lt;name&gt;.ownershipDiscovery.sources[].sourceAddressFrom.optional</code></td>
+<td>Default false; does not waive reference validation or supply a sender address if unresolved.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_mobility.go">pkg/config/validate_mobility.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/mobilityconfig/members.go">pkg/mobilityconfig/members.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/mobilityconfig/normalize.go">pkg/mobilityconfig/normalize.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/mobility/controller.go">pkg/controller/mobility/controller.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/mobility/controller_effects.go">pkg/controller/mobility/controller_effects.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/mobility/bgp_delivery_planner.go">pkg/controller/mobility/bgp_delivery_planner.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/mobility/discovery.go">pkg/controller/mobility/discovery.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/mobility/discovery_support.go">pkg/controller/mobility/discovery_support.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/mobility/discovery_facts.go">pkg/controller/mobility/discovery_facts.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/mobility/arp_observer_intent.go">pkg/controller/mobility/arp_observer_intent.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/mobility/pool_plan.go">pkg/controller/mobility/pool_plan.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/mobility/shard_controller.go">pkg/controller/mobility/shard_controller.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/sam.go">pkg/controller/chain/sam.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/sam_freebsd.go">pkg/controller/chain/sam_freebsd.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd-arp-observer/main.go">cmd/routerd-arp-observer/main.go</a></p>
 <h2 id="referenceable-status-fields">Referenceable status fields</h2>
 <p>The ordinary status-reference validator accepts these field names for this kind. This allowlist does not guarantee that every field is currently populated; inspect runtime status. These are outputs, not YAML spec fields.</p>
 <p><code>phase</code>, <code>groupRef</code>, <code>prefix</code>, <code>reason</code>, <code>generatedBGPPaths</code>, <code>resolvedMemberCount</code>, <code>pendingSources</code>, <code>placementGroup</code>, <code>placementActive</code>, <code>placementActiveNode</code>, <code>providerActionPhase</code>, <code>providerActionError</code>, <code>providerActionFailedAddresses</code>, <code>providerObservationPendingAddresses</code>, <code>ownershipResolverControlPlaneOwnerTable</code></p>
 <p><a href="/examples/cloudedge-mobility-demo/onprem.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
 <li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 <li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
 </ul>
 </div>
