@@ -45,7 +45,7 @@ GO_BUILD_ENV := CGO_ENABLED=0 GOOS=$(ROUTERD_OS)
 ifneq ($(GOARCH),)
 GO_BUILD_ENV += GOARCH=$(GOARCH)
 endif
-GIT_COMMIT ?= $(shell git -c safe.directory=/workspace rev-parse --short HEAD 2>/dev/null || true)
+GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || true)
 GO_LDFLAGS ?= -s -w -X github.com/imksoo/routerd/pkg/version.Version=$(VERSION) $(if $(GIT_COMMIT),-X github.com/imksoo/routerd/pkg/version.Commit=$(GIT_COMMIT))
 GO_BUILD_FLAGS ?= -buildvcs=false -trimpath -ldflags="$(GO_LDFLAGS)"
 EXAMPLE_CONFIGS ?= $(wildcard examples/*.yaml)
