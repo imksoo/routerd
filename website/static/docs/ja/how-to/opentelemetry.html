@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OTLP コレクターへテレメトリを送る · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/how-to/opentelemetry.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/how-to/opentelemetry.html" lang="en" hreflang="en">English</a><a href="/docs/ja/how-to/opentelemetry.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/how-to/opentelemetry.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/opentelemetry.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="otlp-コレクターへテレメトリを送る">OTLP コレクターへテレメトリを送る</h1>
+<h2 id="シナリオ">シナリオ</h2>
+<p>ルーターのログ・メトリクス・トレースを、OpenTelemetry 互換のバックエンド（Grafana Loki/Tempo/Mimir、Datadog、Honeycomb、自前の <code>otelcol-contrib</code> など）へ送りたい場合です。<code>journalctl</code> や <code>routerctl get events</code> を毎回叩かずに、外部のダッシュボードで観測したい状態を想定します。</p>
+<p>routerd は、すべての常駐デーモンから OpenTelemetry でエクスポートできます。コレクター本体は routerd のバイナリに同梱しません。すでに運用している外部の OTLP エンドポイントを指定してください。routerd は OTLP/gRPC でデータを送ります。</p>
+<h2 id="routerd-が出すもの">routerd が出すもの</h2>
+<table>
+<thead>
+<tr>
+<th>デーモン</th>
+<th>service.name</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>routerd</code> (制御プレーン)</td>
+<td><code>routerd</code></td>
+<td><code>controller.reconcile</code> トレース、<code>routerd.controller.reconcile</code> カウンター、構造化 slog ログ</td>
+</tr>
+<tr>
+<td><code>routerd-dhcpv6-client</code></td>
+<td><code>routerd-dhcpv6-client</code></td>
+<td>DHCPv6 ライフサイクルのトレースと構造化ログ（Solicit/Request/Renew、リースイベント）</td>
+</tr>
+<tr>
+<td><code>routerd-dhcpv4-client</code></td>
+<td><code>routerd-dhcpv4-client</code></td>
+<td>DHCPv4 ライフサイクルのトレースと構造化ログ</td>
+</tr>
+<tr>
+<td><code>routerd-pppoe-client</code></td>
+<td><code>routerd-pppoe-client</code></td>
+<td>PPPoE セッションのライフサイクル</td>
+</tr>
+<tr>
+<td><code>routerd-healthcheck</code></td>
+<td><code>routerd-healthcheck</code></td>
+<td>ヘルスチェックの結果（target 属性付きの成功・失敗）</td>
+</tr>
+</tbody>
+</table>
+<p>各デーモンはリソース属性に <code>routerd.resource.name</code> を付けるので、リソース単位（例: WAN ごとの DHCPv6 クライアント）でシグナルを分けられます。</p>
+<p>エクスポートは OTLP/gRPC です。logs / metrics / traces は既定で同じエンドポイントを共有しますが、必要なら信号ごとに別のエンドポイントを指定できます。</p>
+<h2 id="エクスポートの設定">エクスポートの設定</h2>
+<p>routerd は OpenTelemetry の標準環境変数を読みます。routerd 独自の構文はありません。OTLP/gRPC エクスポーターの上流が解釈する変数は、そのまま使えます。</p>
+<p>主な変数は次のとおりです。</p>
+<table>
+<thead>
+<tr>
+<th>変数</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>OTEL_EXPORTER_OTLP_ENDPOINT</code></td>
+<td>全シグナル共通のエンドポイント（例: <code>http://collector.lan:4317</code>）</td>
+</tr>
+<tr>
+<td><code>OTEL_EXPORTER_OTLP_LOGS_ENDPOINT</code> / <code>_METRICS_ENDPOINT</code> / <code>_TRACES_ENDPOINT</code></td>
+<td>信号ごとの個別指定</td>
+</tr>
+<tr>
+<td><code>OTEL_EXPORTER_OTLP_INSECURE</code></td>
+<td><code>true</code> で TLS を無効化（ラボ用）</td>
+</tr>
+<tr>
+<td><code>OTEL_EXPORTER_OTLP_HEADERS</code></td>
+<td>例: マネージドバックエンド向けの <code>Authorization=Bearer ...</code></td>
+</tr>
+<tr>
+<td><code>OTEL_SERVICE_NAMESPACE</code></td>
+<td>推奨: 全デーモンで <code>routerd</code> を共有する</td>
+</tr>
+<tr>
+<td><code>OTEL_RESOURCE_ATTRIBUTES</code></td>
+<td>サイト・ホスト属性などを <code>key=value,...</code> で自由に指定する</td>
+</tr>
+</tbody>
+</table>
+<p><code>OTEL_EXPORTER_OTLP_ENDPOINT</code> / <code>_LOGS_ENDPOINT</code> / <code>_METRICS_ENDPOINT</code> / <code>_TRACES_ENDPOINT</code> のいずれも未設定なら、routerd はテレメトリの初期化自体を省きます。デーモン側に有効化フラグはありません。「変数を設定しない」ことが、そのまま無効を意味します。</p>
+<h3 id="systemd-管理の-routerd-へ反映">systemd 管理の routerd へ反映</h3>
+<p>Linux のインストールでは、systemd unit の環境に変数を入れます。上流の unit が更新されても消えないように、drop-in を使うのが無難です。</p>
+<pre><code class="language-ini"># /etc/systemd/system/routerd.service.d/10-otel.conf
+[Service]
+Environment=OTEL_EXPORTER_OTLP_ENDPOINT=http://collector.lan:4317
+Environment=OTEL_EXPORTER_OTLP_INSECURE=true
+Environment=OTEL_SERVICE_NAMESPACE=routerd
+Environment=OTEL_RESOURCE_ATTRIBUTES=deployment.environment=home,host.name=edge-router
+</code></pre>
+<p>エクスポートしたい管理対象デーモンにも、同じ drop-in を入れてください。</p>
+<ul>
+<li><code>/etc/systemd/system/routerd-dhcpv6-client@.service.d/10-otel.conf</code></li>
+<li><code>/etc/systemd/system/routerd-dhcpv4-client@.service.d/10-otel.conf</code></li>
+<li><code>/etc/systemd/system/routerd-pppoe-client@.service.d/10-otel.conf</code></li>
+<li><code>/etc/systemd/system/routerd-healthcheck@.service.d/10-otel.conf</code></li>
+</ul>
+<p>そして、次を実行します。</p>
+<pre><code class="language-bash">sudo systemctl daemon-reload
+sudo systemctl restart routerd.service \
+                       'routerd-dhcpv6-client@*.service' \
+                       'routerd-healthcheck@*.service'
+</code></pre>
+<h3 id="freebsd">FreeBSD</h3>
+<p>routerd が出力する rc.d ラッパーの <code>command_args</code> の環境ブロックに、変数を追加します（ラッパーが対応していれば <code>routerd_envfile=...</code> でも構いません）。</p>
+<h2 id="受信側を立てて検証する">受信側を立てて検証する</h2>
+<p>OTLP/gRPC バックエンドなら何でも構いません。スモークテストには、<code>otelcol-contrib</code> の <code>debug</code> exporter が一番手軽です。</p>
+<pre><code class="language-yaml"># /tmp/otel-test.yaml
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+exporters:
+  debug:
+    verbosity: detailed
+
+service:
+  pipelines:
+    logs:    { receivers: [otlp], exporters: [debug] }
+    metrics: { receivers: [otlp], exporters: [debug] }
+    traces:  { receivers: [otlp], exporters: [debug] }
+</code></pre>
+<pre><code class="language-bash">otelcol-contrib --config /tmp/otel-test.yaml
+</code></pre>
+<p>routerd を再起動すると、数秒以内に次が見えるはずです。</p>
+<ul>
+<li><code>routerd.controller.reconcile</code> の Sum メトリック（増加方向）</li>
+<li><code>controller.reconcile</code> のスパン（status OK）</li>
+<li>routerd の slog 出力が <code>LogRecord</code> として届く</li>
+</ul>
+<p><code>routerd</code> 本体の記録だけ届いてデーモン側が黙っているなら、デーモン用の drop-in が反映されているか、<code>daemon-reload</code> を実行したかを確認してください。</p>
+<h2 id="トラブルシューティング">トラブルシューティング</h2>
+<p><strong>デーモンの journal に <code>address family not supported by protocol</code> が出る。</strong> 現在の
+routerd 生成 systemd unit は address family を制限しません。古いローカル unit や
+drop-in に <code>RestrictAddressFamilies</code> が残っていないか確認し、その override を削除して
+<code>systemctl daemon-reload</code> を実行してください。</p>
+<p><strong>コレクターに何も届かない。</strong> routerd から到達できるホスト・IP か（<code>getent ahosts</code> と <code>nc -vz host port</code> で確認）、TLS 無しなら <code>OTEL_EXPORTER_OTLP_INSECURE=true</code> を入れたかを確認します。</p>
+<p><strong>届いているが service.name がおかしい。</strong> 各デーモンが自分自身の <code>service.name</code> を設定します。バックエンドでまとめたいなら、<code>OTEL_RESOURCE_ATTRIBUTES=service.namespace=routerd,...</code> でグループ化してください。<code>service.name</code> 自体は上書きしないでください。</p>
+<h2 id="routerd-が出さないもの">routerd が出さないもの</h2>
+<ul>
+<li>同梱の OTLP コレクター。routerd の隣で別途立てるか、マネージドバックエンドを使ってください。</li>
+<li>組み込みのストレージバックエンド。routerd はローカルで可視化するための SQLite ログ DB（<code>events.db</code>, <code>dns-queries.db</code>, <code>traffic-flows.db</code>, <code>firewall-logs.db</code>）を持っており、Web 管理画面から確認できます。OTLP エクスポートは「同じデータをホストの外へ送る」用途です。</li>
+</ul>
+<h2 id="宣言型の-telemetry-リソース">宣言型の Telemetry リソース</h2>
+<p><code>Telemetry</code> を使うと、OTLP エンドポイントを router の YAML に書けます。routerd は、対応する OpenTelemetry 環境変数を、生成済みの systemd、FreeBSD rc.d の unit に入れます。コレクターは外部で用意します。routerd はエクスポーターの設定だけを準備します。</p>
+<pre><code class="language-yaml">apiVersion: observability.routerd.net/v1alpha1
+kind: Telemetry
+metadata:
+  name: otlp
+spec:
+  otlp:
+    endpoint: http://collector.example.internal:4317
+    insecure: true
+  serviceNamespace: routerd
+  attributes:
+    deployment.environment: home
+    site: edge
+  signals: [logs, metrics, traces]
+</code></pre>
+<p>routerd 内部のイベントストリームも stdout / syslog / Loki へ転送したい場合は、
+<code>ObservabilityPipeline</code> を使います。詳しくは
+<a href="../operations/observability.html">Observability pipeline の運用</a> を参照してください。</p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#シナリオ">シナリオ</a></li>
+<li><a href="#routerd-が出すもの">routerd が出すもの</a></li>
+<li><a href="#エクスポートの設定">エクスポートの設定</a><ul>
+<li><a href="#systemd-管理の-routerd-へ反映">systemd 管理の routerd へ反映</a></li>
+<li><a href="#freebsd">FreeBSD</a></li>
+</ul>
+</li>
+<li><a href="#受信側を立てて検証する">受信側を立てて検証する</a></li>
+<li><a href="#トラブルシューティング">トラブルシューティング</a></li>
+<li><a href="#routerd-が出さないもの">routerd が出さないもの</a></li>
+<li><a href="#宣言型の-telemetry-リソース">宣言型の Telemetry リソース</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/how-to/opentelemetry.md">GitHub</a></div></footer></body></html>

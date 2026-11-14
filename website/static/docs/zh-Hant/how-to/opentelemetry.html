@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>將遙測資料送到 OTLP 收集器 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/how-to/opentelemetry.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/how-to/opentelemetry.html" lang="en" hreflang="en">English</a><a href="/docs/ja/how-to/opentelemetry.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/how-to/opentelemetry.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/how-to/opentelemetry.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="將遙測資料送到-otlp-收集器">將遙測資料送到 OTLP 收集器</h1>
+<h2 id="情境">情境</h2>
+<p>當您想把路由器的日誌、指標與追蹤，送到 OpenTelemetry 相容的後端（Grafana Loki/Tempo/Mimir、Datadog、Honeycomb、自架的 <code>otelcol-contrib</code> 等），不必每次都執行 <code>journalctl</code> 或 <code>routerctl get events</code>，而是從外部儀表板觀測狀態時，本指南即適用。</p>
+<p>routerd 的所有常駐程式均可透過 OpenTelemetry 匯出資料。收集器本體並不內建於 routerd binary 中，請另行準備外部 OTLP 端點，routerd 會以 OTLP/gRPC 傳送資料。</p>
+<h2 id="routerd-會匯出的內容">routerd 會匯出的內容</h2>
+<table>
+<thead>
+<tr>
+<th>常駐程式</th>
+<th>service.name</th>
+<th>內容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>routerd</code>（控制平面）</td>
+<td><code>routerd</code></td>
+<td><code>controller.reconcile</code> 追蹤、<code>routerd.controller.reconcile</code> 計數器、結構化 slog 日誌</td>
+</tr>
+<tr>
+<td><code>routerd-dhcpv6-client</code></td>
+<td><code>routerd-dhcpv6-client</code></td>
+<td>DHCPv6 生命週期的追蹤與結構化日誌（Solicit/Request/Renew、租約事件）</td>
+</tr>
+<tr>
+<td><code>routerd-dhcpv4-client</code></td>
+<td><code>routerd-dhcpv4-client</code></td>
+<td>DHCPv4 生命週期的追蹤與日誌</td>
+</tr>
+<tr>
+<td><code>routerd-pppoe-client</code></td>
+<td><code>routerd-pppoe-client</code></td>
+<td>PPPoE 連線的生命週期</td>
+</tr>
+<tr>
+<td><code>routerd-healthcheck</code></td>
+<td><code>routerd-healthcheck</code></td>
+<td>健康檢查結果（附 target 屬性的成功/失敗）</td>
+</tr>
+</tbody>
+</table>
+<p>每個常駐程式都會在資源屬性中附上 <code>routerd.resource.name</code>，因此可以依資源（例如每條 WAN 的 DHCPv6 客戶端）分別篩選訊號。</p>
+<p>匯出方式為 OTLP/gRPC。logs / metrics / traces 預設共用同一個端點，若後端有需要也可分別指定。</p>
+<h2 id="匯出設定">匯出設定</h2>
+<p>routerd 讀取 OpenTelemetry 的標準環境變數，沒有 routerd 專屬的語法。OTLP/gRPC 匯出器的上游能解析的變數，可直接使用。</p>
+<p>主要變數如下。</p>
+<table>
+<thead>
+<tr>
+<th>變數</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>OTEL_EXPORTER_OTLP_ENDPOINT</code></td>
+<td>所有訊號共用的端點（例如：<code>http://collector.lan:4317</code>）</td>
+</tr>
+<tr>
+<td><code>OTEL_EXPORTER_OTLP_LOGS_ENDPOINT</code> / <code>_METRICS_ENDPOINT</code> / <code>_TRACES_ENDPOINT</code></td>
+<td>各訊號的個別指定</td>
+</tr>
+<tr>
+<td><code>OTEL_EXPORTER_OTLP_INSECURE</code></td>
+<td>設為 <code>true</code> 可停用 TLS（實驗室用）</td>
+</tr>
+<tr>
+<td><code>OTEL_EXPORTER_OTLP_HEADERS</code></td>
+<td>例如：managed 後端用的 <code>Authorization=Bearer ...</code></td>
+</tr>
+<tr>
+<td><code>OTEL_SERVICE_NAMESPACE</code></td>
+<td>建議：所有常駐程式共用 <code>routerd</code></td>
+</tr>
+<tr>
+<td><code>OTEL_RESOURCE_ATTRIBUTES</code></td>
+<td>以 <code>key=value,...</code> 格式自由指定站點、主機等屬性</td>
+</tr>
+</tbody>
+</table>
+<p>若 <code>OTEL_EXPORTER_OTLP_ENDPOINT</code> / <code>_LOGS_ENDPOINT</code> / <code>_METRICS_ENDPOINT</code> / <code>_TRACES_ENDPOINT</code> 均未設定，routerd 會完全略過遙測初始化。常駐程式端沒有個別的開關，<strong>不設定變數即代表停用</strong>。</p>
+<h3 id="套用至-systemd-管理的-routerd">套用至 systemd 管理的 routerd</h3>
+<p>Linux 安裝時，請將變數加入 systemd unit 的環境中。為避免上游 unit 更新後被覆蓋，建議使用 drop-in 方式。</p>
+<pre><code class="language-ini"># /etc/systemd/system/routerd.service.d/10-otel.conf
+[Service]
+Environment=OTEL_EXPORTER_OTLP_ENDPOINT=http://collector.lan:4317
+Environment=OTEL_EXPORTER_OTLP_INSECURE=true
+Environment=OTEL_SERVICE_NAMESPACE=routerd
+Environment=OTEL_RESOURCE_ATTRIBUTES=deployment.environment=home,host.name=edge-router
+</code></pre>
+<p>每個需要匯出的受管常駐程式也請加入相同的 drop-in。</p>
+<ul>
+<li><code>/etc/systemd/system/routerd-dhcpv6-client@.service.d/10-otel.conf</code></li>
+<li><code>/etc/systemd/system/routerd-dhcpv4-client@.service.d/10-otel.conf</code></li>
+<li><code>/etc/systemd/system/routerd-pppoe-client@.service.d/10-otel.conf</code></li>
+<li><code>/etc/systemd/system/routerd-healthcheck@.service.d/10-otel.conf</code></li>
+</ul>
+<p>接著執行以下指令。</p>
+<pre><code class="language-bash">sudo systemctl daemon-reload
+sudo systemctl restart routerd.service \
+                       'routerd-dhcpv6-client@*.service' \
+                       'routerd-healthcheck@*.service'
+</code></pre>
+<h3 id="freebsd">FreeBSD</h3>
+<p>請將變數加入 routerd 產出的 rc.d 包裝程式的 <code>command_args</code> 環境區塊中（若包裝程式支援，也可使用 <code>routerd_envfile=...</code>）。</p>
+<h2 id="建立接收端進行驗證">建立接收端進行驗證</h2>
+<p>任何 OTLP/gRPC 後端均可。快速冒煙測試最方便的方式是使用 <code>otelcol-contrib</code> 搭配 <code>debug</code> 匯出器。</p>
+<pre><code class="language-yaml"># /tmp/otel-test.yaml
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+exporters:
+  debug:
+    verbosity: detailed
+
+service:
+  pipelines:
+    logs:    { receivers: [otlp], exporters: [debug] }
+    metrics: { receivers: [otlp], exporters: [debug] }
+    traces:  { receivers: [otlp], exporters: [debug] }
+</code></pre>
+<pre><code class="language-bash">otelcol-contrib --config /tmp/otel-test.yaml
+</code></pre>
+<p>重啟 routerd 後數秒內，應可看到以下內容。</p>
+<ul>
+<li><code>routerd.controller.reconcile</code> 的 Sum 指標（持續遞增）</li>
+<li><code>controller.reconcile</code> 的 span（狀態 OK）</li>
+<li>routerd 的 slog 輸出以 <code>LogRecord</code> 形式送達</li>
+</ul>
+<p>若只收到 <code>routerd</code> 本體的記錄，而常駐程式端沉默，請確認常駐程式的 drop-in 是否已套用、以及是否有執行 <code>daemon-reload</code>。</p>
+<h2 id="疑難排解">疑難排解</h2>
+<p><strong>常駐程式的 journal 出現 <code>address family not supported by protocol</code>。</strong> routerd 加固過的 systemd unit 限制了位址家族。若收集器透過 IPv4 連線（大多數情況如此），unit 必須允許 <code>AF_INET</code>。內建範本已包含此設定；若您有舊的 drop-in 覆寫了 <code>RestrictAddressFamilies</code>，請確認 <code>AF_INET AF_INET6</code> 兩者均包含在內。</p>
+<p><strong>收集器未收到任何資料。</strong> 請確認端點是 routerd 可解析的主機/IP（使用 <code>getent ahosts</code> 與 <code>nc -vz host port</code> 確認），以及不使用 TLS 時是否已設定 <code>OTEL_EXPORTER_OTLP_INSECURE=true</code>。</p>
+<p><strong>資料送達但 service.name 不正確。</strong> 每個常駐程式會自行設定 <code>service.name</code>。若要在後端進行群組化，請使用 <code>OTEL_RESOURCE_ATTRIBUTES=service.namespace=routerd,...</code>。請勿覆寫 <code>service.name</code> 本身。</p>
+<h2 id="routerd-不提供的功能">routerd 不提供的功能</h2>
+<ul>
+<li>內建 OTLP 收集器。請在 routerd 旁另行架設，或使用 managed 後端。</li>
+<li>內建儲存後端。routerd 本身具備 SQLite 日誌 DB（<code>events.db</code>、<code>dns-queries.db</code>、<code>traffic-flows.db</code>、<code>firewall-logs.db</code>），可從 Web 管理介面查看。OTLP 匯出的用途是「將相同資料傳送至主機外部」。</li>
+</ul>
+<h2 id="宣告式-telemetry-資源">宣告式 Telemetry 資源</h2>
+<p>使用 <code>Telemetry</code> 可以在路由器的 YAML 中指定 OTLP 端點。routerd 會將對應的 OpenTelemetry 環境變數注入至產生的 systemd 及 FreeBSD rc.d unit 中。收集器需在外部另行準備，routerd 只負責設定匯出器。</p>
+<pre><code class="language-yaml">apiVersion: observability.routerd.net/v1alpha1
+kind: Telemetry
+metadata:
+  name: otlp
+spec:
+  otlp:
+    endpoint: http://collector.example.internal:4317
+    insecure: true
+  serviceNamespace: routerd
+  attributes:
+    deployment.environment: home
+    site: edge
+  signals: [logs, metrics, traces]
+</code></pre>
+<p>若希望也將 routerd 內部的事件串流轉發至 stdout / syslog / Loki，請使用
+<code>ObservabilityPipeline</code>。詳情請參閱
+<a href="../operations/observability.html">Observability pipeline</a>。</p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#情境">情境</a></li>
+<li><a href="#routerd-會匯出的內容">routerd 會匯出的內容</a></li>
+<li><a href="#匯出設定">匯出設定</a><ul>
+<li><a href="#套用至-systemd-管理的-routerd">套用至 systemd 管理的 routerd</a></li>
+<li><a href="#freebsd">FreeBSD</a></li>
+</ul>
+</li>
+<li><a href="#建立接收端進行驗證">建立接收端進行驗證</a></li>
+<li><a href="#疑難排解">疑難排解</a></li>
+<li><a href="#routerd-不提供的功能">routerd 不提供的功能</a></li>
+<li><a href="#宣告式-telemetry-資源">宣告式 Telemetry 資源</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/how-to/opentelemetry.md">GitHub</a></div></footer></body></html>

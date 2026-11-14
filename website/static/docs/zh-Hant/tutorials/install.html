@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>安裝 routerd · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/tutorials/install.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/tutorials/install.html" lang="en" hreflang="en">English</a><a href="/docs/ja/tutorials/install.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/tutorials/install.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/tutorials/install.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="安裝-routerd">安裝 routerd</h1>
+<p>最快的入門方式是在隔離的 Ubuntu Server VM 使用發布封存檔。路由器主機不需要 Go、Makefile 或原始碼樹。以下使用目前建議的穩定里程碑 v20260707.1514。</p>
+<pre><code class="language-bash">RELEASE=v20260707.1514
+curl -fLO https://github.com/imksoo/routerd/releases/download/${RELEASE}/routerd-linux-amd64.tar.gz
+curl -fLO https://github.com/imksoo/routerd/releases/download/${RELEASE}/routerd-linux-amd64.tar.gz.sha256
+sha256sum -c routerd-linux-amd64.tar.gz.sha256
+tar -xzf routerd-linux-amd64.tar.gz
+sudo ./install.sh
+</code></pre>
+<p>arm64 主機請使用 <code>routerd-linux-arm64.tar.gz</code>。安裝腳本會放入執行檔與 systemd 範本、建立設定樣本，但不會覆寫既有 <code>/usr/local/etc/routerd/router.yaml</code>。</p>
+<pre><code class="language-bash">routerd --version
+</code></pre>
+<h2 id="安裝後先完成兩件事">安裝後先完成兩件事</h2>
+<ol>
+<li>編輯自己的設定。</li>
+<li>先用 <code>routerd</code> 檢查檔案，不要先用 <code>routerctl</code>。</li>
+</ol>
+<pre><code class="language-bash">sudo install -d -m 0755 /usr/local/etc/routerd
+sudo install -m 0600 /usr/local/etc/routerd/router.yaml.sample /usr/local/etc/routerd/router.yaml
+sudoedit /usr/local/etc/routerd/router.yaml
+sudo routerd validate --config /usr/local/etc/routerd/router.yaml
+</code></pre>
+<p>接著用暫存目錄執行 dry-run：</p>
+<pre><code class="language-bash">LAB_DIR=&quot;$(mktemp -d)&quot;
+sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once --dry-run \
+  --state-file &quot;$LAB_DIR/state.db&quot; \
+  --status-file &quot;$LAB_DIR/status.json&quot; \
+  --netplan-file &quot;$LAB_DIR/50-routerd.yaml&quot; \
+  --dnsmasq-file &quot;$LAB_DIR/dnsmasq.conf&quot; \
+  --dnsmasq-service-file &quot;$LAB_DIR/routerd-dnsmasq.service&quot; \
+  --nftables-file &quot;$LAB_DIR/routerd-nat.nft&quot;
+</code></pre>
+<p>只有在主控台或獨立管理路徑可用，而且已經看過輸出後，才啟動服務：</p>
+<pre><code class="language-bash">sudo systemctl enable --now routerd
+sudo routerctl get status
+</code></pre>
+<p>現在 <code>routerctl</code> 能運作，是因為 <code>routerd serve</code> 已經作為 systemd 服務執行。它不是離線 YAML 驗證器。</p>
+<p>本教學針對 Ubuntu Server + systemd。FreeBSD 與 NixOS 的支援仍在不同階段，不能直接照搬這裡的服務和 nftables 指令；請先看<a href="../platforms.html">支援的平台</a>。</p>
+<p>升級、相依套件清單、Live ISO 與解除安裝請見<a href="../install-and-upgrade.html">安裝與升級</a>。</p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#安裝後先完成兩件事">安裝後先完成兩件事</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/tutorials/install.md">GitHub</a></div></footer></body></html>

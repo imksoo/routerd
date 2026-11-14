@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>故障排查 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/how-to/troubleshooting.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/how-to/troubleshooting.html" lang="en" hreflang="en">English</a><a href="/docs/ja/how-to/troubleshooting.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/how-to/troubleshooting.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/troubleshooting.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="故障排查">故障排查</h1>
+<p>排查 routerd 问题时，请先区分 <strong>routerd 的意图</strong> 与 <strong>主机的实际状态</strong>。
+确认 routerd 意图达成什么之后，再与 OS 的实际状态进行比对。</p>
+<h2 id="服务或状态命令失败时">服务或状态命令失败时</h2>
+<p>在 Ubuntu 上先检查服务，不要反复尝试 live apply：</p>
+<pre><code class="language-bash">sudo systemctl status routerd.service --no-pager
+sudo journalctl -u routerd.service -n 50 --no-pager
+sudo routerd validate --config /usr/local/etc/routerd/router.yaml
+</code></pre>
+<ul>
+<li>缺少配置或验证失败：返回<a href="../tutorials/first-router.html">第一台实验路由器</a>，启动前先修正文件。</li>
+<li>socket 不存在或连接被拒绝：<code>routerctl</code> 需要运行中的 daemon。<code>routerd apply --once</code> 会退出，不会留下控制 socket。</li>
+<li>权限不足：先用 <code>sudo routerctl get status</code>。免 sudo 只读访问需要管理员把用户加入 <code>routerd</code> 组，并重新登录。</li>
+<li>服务 active 但客户端无法访问：按<a href="../tutorials/first-router.html">客户端检查</a>依次检查 WAN 租约、LAN 地址和网关、DNS。</li>
+</ul>
+<p>不要在现有服务旁另开 <code>routerd serve</code> 或 live one-shot apply。排查网络变更失败时保持控制台可用。</p>
+<h2 id="基本排查顺序">基本排查顺序</h2>
+<ol>
+<li><code>sudo routerctl get status</code> — 总览全局</li>
+<li><code>sudo routerctl describe &lt;kind&gt;/&lt;name&gt;</code> — 深入查看目标资源</li>
+<li><code>sudo routerctl plan</code> — 确认下次应用将会发生什么变更</li>
+<li>OS 命令（<code>ip</code>、<code>nft</code>、<code>ss</code>、<code>journalctl</code>）— 确认实际状态</li>
+<li>对应守护进程的 <code>/v1/status</code> 与事件日志</li>
+</ol>
+<h2 id="dhcpv6-pd">DHCPv6-PD</h2>
+<pre><code class="language-bash">curl --unix-socket /run/routerd/dhcpv6-client/wan-pd.sock http://unix/v1/status
+tail -n 20 /var/lib/routerd/dhcpv6-client/wan-pd/events.jsonl
+</code></pre>
+<p>确认以下项目：</p>
+<ul>
+<li><code>phase</code> 是否为 <code>Bound</code>；未过期的租约在 Renew/Rebind 交换期间对外仍保持 <code>Bound</code></li>
+<li><code>observed.leaseState</code> 是否显示详细交换状态（<code>renewing</code> 或 <code>rebinding</code>），且租约仍可用时
+  <code>LeaseReady</code> condition 是否为 true</li>
+<li><code>currentPrefix</code> 是否已填入</li>
+<li><code>renewAt</code> 是否为未来时刻</li>
+<li>事件日志中是否记录了 <code>Reply</code> 或 <code>Renew</code></li>
+</ul>
+<p>若非 <code>Bound</code> 状态，或 <code>LeaseReady</code> 变为 false，LAN 侧的 IPv6 RA、AAAA 记录和 DHCPv6 应停止
+运作。routerd 的安全约定是在更新期间维持尚未过期的前缀，但在该前缀不再可用后停止下发。</p>
+<h2 id="dhcpv4">DHCPv4</h2>
+<pre><code class="language-bash">curl --unix-socket /run/routerd/dhcpv4-client/wan.sock http://unix/v1/status
+</code></pre>
+<p>确认 <code>DHCPv4Client</code> 是否处于 <code>Bound</code> 状态。
+若需要立即更新，可通过 <code>POST /v1/commands/renew</code> 发出请求。</p>
+<h2 id="dnsmasq">dnsmasq</h2>
+<p>当前的 routerd 中，dnsmasq 专责 DHCPv4、DHCPv6、DHCP 中继及 Router Advertisement。
+DNS 响应与转发由 <code>routerd-dns-resolver</code> 负责。</p>
+<p>请确认生成的 dnsmasq 配置是否符合以下条件：</p>
+<ul>
+<li>包含预期的 <code>dhcp-range</code></li>
+<li>配置为 <code>port=0</code>（禁用 DNS 功能；DNS 是 <code>routerd-dns-resolver</code> 的职责）</li>
+<li>包含 <code>dhcp-script=/usr/local/libexec/routerd/dhcp-event-relay</code>（将租约变更通知 routerd 的路径）</li>
+<li>按需加入 <code>enable-ra</code></li>
+</ul>
+<h2 id="dns-resolver">DNS resolver</h2>
+<pre><code class="language-bash">sudo curl --unix-socket /run/routerd/dns-resolver/&lt;resource&gt;.sock http://unix/v1/healthz
+dig @&lt;lan-ip&gt; router.lan.example.org A
+dig @&lt;lan-ip&gt; example.com A
+</code></pre>
+<p>依次确认以下项目：</p>
+<ul>
+<li>监听地址与端口是否符合预期（<code>ss -lnup</code>）</li>
+<li>本地权威区域是否正常响应（<code>DNSZone</code> 的手动记录与 DHCP 生成的记录）</li>
+<li>条件式转发是否送达指定的上游（<code>dig @&lt;lan-ip&gt; &lt;forwarded-domain&gt;</code>）</li>
+<li>默认上游是以 DoH / DoT / TCP / 明文 UDP 哪种方式响应（查看解析器 status 及上游 health）</li>
+</ul>
+<h2 id="ds-lite">DS-Lite</h2>
+<pre><code class="language-bash">ip -6 tunnel show
+ip route show default
+nft list table ip routerd_nat
+</code></pre>
+<p>若 AFTR 的 FQDN 无法解析，请确认 <code>DNSResolver</code> 的 <code>forward</code> source 配置。
+特定接入网络的 AFTR 记录，通常无法通过公开 DNS 解析。</p>
+<h2 id="conntrack">conntrack</h2>
+<p>依环境不同，<code>/proc/net/nf_conntrack</code> 可能不存在。
+此时 routerd 会退回使用 sysctl 来源的汇总统计。
+即使详细流量清单为空，也不一定代表 NAT 已损坏。请查看 <code>routerctl get connections</code> 的摘要。</p>
+<h2 id="排查时应避免的事项">排查时应避免的事项</h2>
+<ul>
+<li>请勿在生产环境的 WAN 上，同时运行旧有的 DHCP 客户端或手动测试用守护进程与 routerd 并行。从同一接口同时发出多个 DHCPv6-PD 客户端，可能会破坏上游的租约状态。</li>
+<li>更换路由时，请勿 flush <code>nf_conntrack</code>。routerd 刻意不进行 flush，强制 flush 会中断已建立的连接会话。</li>
+<li>请勿在同一主机上编辑 <code>/usr/local/etc/routerd/router.yaml</code> 的同时，在其他位置放置临时的 YAML 覆盖文件。每台主机保持单一配置文件，可维持调和（reconcile）的可预测性。</li>
+</ul>
+<h2 id="相关参考">相关参考</h2>
+<ul>
+<li><a href="../concepts/state.html">状态</a></li>
+<li><a href="../operations/reconcile.html">Reconcile loop</a></li>
+</ul></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#服务或状态命令失败时">服务或状态命令失败时</a></li>
+<li><a href="#基本排查顺序">基本排查顺序</a></li>
+<li><a href="#dhcpv6-pd">DHCPv6-PD</a></li>
+<li><a href="#dhcpv4">DHCPv4</a></li>
+<li><a href="#dnsmasq">dnsmasq</a></li>
+<li><a href="#dns-resolver">DNS resolver</a></li>
+<li><a href="#ds-lite">DS-Lite</a></li>
+<li><a href="#conntrack">conntrack</a></li>
+<li><a href="#排查时应避免的事项">排查时应避免的事项</a></li>
+<li><a href="#相关参考">相关参考</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/how-to/troubleshooting.md">GitHub</a></div></footer></body></html>

@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>How-to: execute the AWS SAM provider action via the gated executor · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/how-to/aws-provider-action-execution.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/how-to/aws-provider-action-execution.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/how-to/aws-provider-action-execution.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/how-to/aws-provider-action-execution.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/aws-provider-action-execution.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="how-to-execute-the-aws-sam-provider-action-via-the-gated-executor">How-to: execute the AWS SAM provider action via the gated executor</h1>
+<p>This is the <strong>gated live-mutation</strong> path for CloudEdge provider action execution.
+It is <strong>experimental</strong> and AWS-only. It builds on
+ADR 0007: Provider Action Execution
+and the <a href="../reference/selective-address-mobility.html">Selective Address Mobility</a>
+dataplane. Do <strong>not</strong> run the live execute step in production or against shared
+resources. Live execute happens <strong>only after explicit owner go</strong> following review
+of this runbook and the read-only preflight evidence.</p>
+<p>The SAM dataplane is already real-cloud validated on AWS×PVE (an ENI secondary
+private IP plus source/dest check disabled). Until now that attach/detach was a
+<strong>manual operator step</strong>. This guide describes the <code>aws-provider-executor</code> plugin
+that performs the same mutation through the <strong>gated, journaled</strong> execution path
+(ADR 0007) instead of by hand.</p>
+<h2 id="1-scope-boundaries">1. Scope &amp; boundaries</h2>
+<ul>
+<li><strong>AWS only. Exactly one provider.</strong> No Azure, no OCI in this runbook.</li>
+<li><strong>Topology:</strong> 1 <code>routerd-cloud</code> node + 1 cloud-client + 1 on-prem-client, with
+  exactly <strong>one captured <code>/32</code></strong> moving from on-prem to the cloud ENI. In lab
+  address terms (per the SAM reference) the cloud-client is <code>.7</code> and the
+  on-prem-client is <code>.9</code>.</li>
+<li><strong>Dedicated lab only.</strong> A throwaway VPC / subnet / instance created for this
+  test. <strong>No production or shared resources.</strong> No EIPs, security groups, route
+  tables, or instances that anything else depends on.</li>
+<li><strong>Live execute only after explicit owner go.</strong> Everything up to and including
+  the read-only preflight (Section 4) is runnable freely; the mutation in
+  Section 7 is gated.</li>
+</ul>
+<h2 id="2-executor-design">2. Executor design</h2>
+<p>The <code>aws-provider-executor</code> is a plugin advertising the capability
+<code>execute.providerAction</code> (the Phase 5 enum value on <code>PluginSpec.Capabilities</code>).
+It runs in <strong>its own process</strong> and authenticates with the <strong>EC2 instance IAM
+role (instance profile)</strong> via the AWS CLI. <strong>routerd core passes it no
+credentials</strong> — the executor uses cloud-native identity only, per the ADR 0007
+hard invariant.</p>
+<p>It reads one <code>ExecuteActionRequest</code> on <strong>stdin</strong> and writes one
+<code>ExecuteActionResult</code> on stdout. The request spec carries <code>Action</code>, <code>Provider</code>,
+<code>ProviderRef</code>, <code>Target</code> (the provider keys: for AWS <code>nicRef</code> = ENI id, <code>address</code>,
+<code>region</code>), <code>Parameters</code>, <code>Mode</code> (<code>dry-run</code> | <code>execute</code>), <code>IdempotencyKey</code>, and the
+allowlisted <code>Context</code>. The result carries <code>Status</code> (<code>succeeded</code> | <code>failed</code> |
+<code>skipped</code>), <code>Message</code>, <code>Observed</code> (non-secret facts the journal records),
+<code>UndoAvailable</code>, and <code>Error</code>.</p>
+<p><strong><code>dry-run</code> mode performs NO mutation</strong> — describe / read-only calls only.
+<code>execute</code> mode mutates.</p>
+<h3 id="assign-secondary-ip"><code>assign-secondary-ip</code></h3>
+<p>Attach the captured <code>/32</code> to the cloud ENI.</p>
+<ul>
+<li><strong>dry-run</strong> (read-only): describe the ENI to report current secondary IPs, then
+  report <code>would assign &lt;address&gt; to &lt;eni&gt;</code>.</li>
+</ul>
+<p><code>sh
+  aws ec2 describe-network-interfaces \
+    --network-interface-ids "&lt;eni-id&gt;" --region "&lt;region&gt;"</code></p>
+<ul>
+<li><strong>execute</strong> (mutating):</li>
+</ul>
+<p><code>sh
+  aws ec2 assign-private-ip-addresses \
+    --network-interface-id "&lt;eni-id&gt;" \
+    --private-ip-addresses "&lt;address&gt;" --region "&lt;region&gt;"</code></p>
+<h3 id="ensure-forwarding-enabled"><code>ensure-forwarding-enabled</code></h3>
+<p>Disable the ENI source/dest check so the cloud node can forward for the captured
+address.</p>
+<ul>
+<li>
+<p><strong>dry-run</strong> (read-only): describe the current <code>SourceDestCheck</code>, report
+  <code>would set SourceDestCheck=false</code>.</p>
+</li>
+<li>
+<p><strong>execute</strong> (mutating): <strong>first describe the current <code>SourceDestCheck</code> and
+  capture the prior value into <code>Observed</code>, then</strong> disable it.</p>
+</li>
+</ul>
+<p>```sh
+  # 1. capture prior state (read-only) BEFORE mutating
+  aws ec2 describe-network-interfaces \
+    --network-interface-ids "<eni-id>" --region "<region>" \
+    --query 'NetworkInterfaces[0].SourceDestCheck'</p>
+<p># 2. mutate
+  aws ec2 modify-network-interface-attribute \
+    --network-interface-id "<eni-id>" \
+    --no-source-dest-check --region "<region>"
+  ```</p>
+<p>The result's <code>Observed</code> <strong>MUST</strong> include <code>priorSourceDestCheck=&lt;true|false&gt;</code> so
+  the journal records the state that existed <em>before</em> this action ran. The undo
+  step depends on it.</p>
+<h3 id="unassign-secondary-ip-undo-of-assign-secondary-ip"><code>unassign-secondary-ip</code> (undo of <code>assign-secondary-ip</code>)</h3>
+<pre><code class="language-sh">aws ec2 unassign-private-ip-addresses \
+  --network-interface-id &quot;&lt;eni-id&gt;&quot; \
+  --private-ip-addresses &quot;&lt;address&gt;&quot; --region &quot;&lt;region&gt;&quot;
+</code></pre>
+<h3 id="ensure-forwarding-disabled-undo-of-ensure-forwarding-enabled"><code>ensure-forwarding-disabled</code> (undo of <code>ensure-forwarding-enabled</code>)</h3>
+<p><strong>Restore the PRIOR state recorded in the journal's <code>Observed.priorSourceDestCheck</code>.</strong>
+This is the load-bearing safety rule:</p>
+<ul>
+<li>If <code>priorSourceDestCheck == true</code> → the check was on before we touched it →
+  restore it:</li>
+</ul>
+<p><code>sh
+  aws ec2 modify-network-interface-attribute \
+    --network-interface-id "&lt;eni-id&gt;" \
+    --source-dest-check --region "&lt;region&gt;"</code></p>
+<ul>
+<li>If <code>priorSourceDestCheck == false</code> → the check was <strong>already disabled</strong> before
+  we ran (the ENI was already a forwarder) → <strong>NO-OP</strong>. Return
+  <code>Status=skipped</code>. Do <strong>not</strong> force the check back on.</li>
+</ul>
+<p><strong>NEVER hardcode undo = enable the check.</strong> A blind "undo re-enables
+source/dest-check" would break an appliance/ENI that was already a forwarder for
+its own reasons. The undo must read back what we observed and only revert what we
+actually changed.</p>
+<h2 id="3-iam-least-privilege">3. IAM least-privilege</h2>
+<p>The instance profile attached to the executor's EC2 instance gets <strong>exactly these
+four EC2 actions and nothing more</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Used by</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ec2:DescribeNetworkInterfaces</code></td>
+<td>dry-run + preflight + prior-state capture</td>
+</tr>
+<tr>
+<td><code>ec2:AssignPrivateIpAddresses</code></td>
+<td><code>assign-secondary-ip</code> execute</td>
+</tr>
+<tr>
+<td><code>ec2:UnassignPrivateIpAddresses</code></td>
+<td><code>unassign-secondary-ip</code> undo</td>
+</tr>
+<tr>
+<td><code>ec2:ModifyNetworkInterfaceAttribute</code></td>
+<td>forwarding enable/disable execute</td>
+</tr>
+</tbody>
+</table>
+<p>Scope to the lab ENI / VPC via resource ARNs and conditions wherever the API
+supports it (the mutating ENI actions are resource-scopable to the lab ENI ARN;
+<code>Describe*</code> is not resource-scopable and is restricted by condition keys such as
+<code>ec2:Region</code> / <code>ec2:Vpc</code> where applicable):</p>
+<pre><code class="language-json">{
+  &quot;Version&quot;: &quot;2012-10-17&quot;,
+  &quot;Statement&quot;: [
+    {
+      &quot;Sid&quot;: &quot;DescribeEnis&quot;,
+      &quot;Effect&quot;: &quot;Allow&quot;,
+      &quot;Action&quot;: &quot;ec2:DescribeNetworkInterfaces&quot;,
+      &quot;Resource&quot;: &quot;*&quot;,
+      &quot;Condition&quot;: { &quot;StringEquals&quot;: { &quot;ec2:Region&quot;: &quot;&lt;region&gt;&quot; } }
+    },
+    {
+      &quot;Sid&quot;: &quot;MutateLabEni&quot;,
+      &quot;Effect&quot;: &quot;Allow&quot;,
+      &quot;Action&quot;: [
+        &quot;ec2:AssignPrivateIpAddresses&quot;,
+        &quot;ec2:UnassignPrivateIpAddresses&quot;,
+        &quot;ec2:ModifyNetworkInterfaceAttribute&quot;
+      ],
+      &quot;Resource&quot;: &quot;arn:aws:ec2:&lt;region&gt;:&lt;account-id&gt;:network-interface/&lt;eni-id&gt;&quot;
+    }
+  ]
+}
+</code></pre>
+<p><strong>No broader EC2 permissions. No IAM/STS write. No other AWS services.</strong> If a
+needed call is not on this list, the runbook stops rather than widening the role.</p>
+<h2 id="4-read-only-preflight">4. Read-only preflight</h2>
+<p>Run <strong>before any mutation</strong>, against the dedicated lab, to confirm the target.
+<strong>None of these mutate.</strong> lab-codex runs these and captures the output as the
+evidence the owner reviews before granting go.</p>
+<pre><code class="language-sh"># Target ENI + its current secondary private IPs + current SourceDestCheck
+aws ec2 describe-network-interfaces \
+  --network-interface-ids &quot;&lt;eni-id&gt;&quot; --region &quot;&lt;region&gt;&quot; \
+  --query 'NetworkInterfaces[0].{Eni:NetworkInterfaceId,SrcDstCheck:SourceDestCheck,PrivateIps:PrivateIpAddresses[*].PrivateIpAddress}'
+
+# The instance the ENI is attached to
+aws ec2 describe-instances \
+  --filters &quot;Name=network-interface.network-interface-id,Values=&lt;eni-id&gt;&quot; \
+  --region &quot;&lt;region&gt;&quot;
+
+# Subnet of the ENI
+aws ec2 describe-subnets \
+  --subnet-ids &quot;&lt;subnet-id&gt;&quot; --region &quot;&lt;region&gt;&quot;
+
+# Route table(s) for that subnet (confirm default gateway / no surprises)
+aws ec2 describe-route-tables \
+  --filters &quot;Name=association.subnet-id,Values=&lt;subnet-id&gt;&quot; \
+  --region &quot;&lt;region&gt;&quot;
+</code></pre>
+<p>Then confirm:</p>
+<ol>
+<li><strong>The IAM role has only the 4 permissions</strong> in Section 3 — inspect the
+   instance profile's attached policy and verify no broader EC2, no IAM/STS write,
+   no other services. (Read-only inspection of the policy document; do not modify
+   it here.)</li>
+<li><strong>The address is not already assigned</strong> — the <code>&lt;address&gt;</code> must <strong>not</strong> already
+   appear in the ENI's <code>PrivateIpAddresses</code> from the first describe above. If it
+   is already there, assign is a no-op / the lab is dirty — stop and investigate.</li>
+<li><strong><code>SourceDestCheck</code> current value is recorded</strong> — this is the value the
+   executor will capture as <code>priorSourceDestCheck</code> during execute.</li>
+</ol>
+<h2 id="5-action-journal-fields-the-smoke-relies-on">5. Action journal fields the smoke relies on</h2>
+<p>The <code>action_executions</code> journal records, per action:</p>
+<ul>
+<li><code>idempotencyKey</code> — the dedupe key; a key that already succeeded is not run again.</li>
+<li><code>provider</code> — <code>aws</code>.</li>
+<li><code>action</code> — e.g. <code>assign-secondary-ip</code>, <code>ensure-forwarding-enabled</code>.</li>
+<li><code>target</code> — <code>eni</code>, <code>address</code>, <code>region</code>.</li>
+<li><code>status</code> — <code>pending</code> / <code>approved</code> / <code>succeeded</code> / <code>failed</code> / <code>skipped</code> /
+  <code>rolledBack</code>.</li>
+<li><code>Observed.priorSourceDestCheck</code> — <code>true</code> | <code>false</code>, captured before mutating;
+  the undo of <code>ensure-forwarding-enabled</code> reads this.</li>
+<li><code>executedAt</code> — timestamp.</li>
+<li><code>result</code> / <code>error</code> — the <code>ExecuteActionResult</code> message / <code>Error</code>.</li>
+</ul>
+<p>The journal is the single source of truth for what ran and for the idempotency
+guard. Credentials are <strong>never</strong> journaled.</p>
+<h2 id="6-undo-teardown-plan">6. Undo / teardown plan</h2>
+<p>Reverse, in order, anything that was applied. Every step must be describable
+<strong>before</strong> the live run begins.</p>
+<ol>
+<li><strong>Undo forwarding</strong> — <code>ensure-forwarding-disabled</code>, applying the
+   <strong>restore-prior rule</strong> from Section 2: if <code>Observed.priorSourceDestCheck</code>
+   was <code>true</code>, run <code>--source-dest-check</code> to re-enable it; if it was <code>false</code>,
+   <strong>NO-OP</strong> (skipped). Never blindly force the check on.</li>
+<li><strong>Unassign the secondary IP</strong> — <code>unassign-secondary-ip</code>:</li>
+</ol>
+<p><code>sh
+   aws ec2 unassign-private-ip-addresses \
+     --network-interface-id "&lt;eni-id&gt;" \
+     --private-ip-addresses "&lt;address&gt;" --region "&lt;region&gt;"</code>
+3. <strong>Stop / terminate lab instances and release cost-bearing resources</strong> — stop
+   or terminate the <code>routerd-cloud</code>, cloud-client, and on-prem-client lab
+   instances; release any allocated <strong>EIP</strong>; delete any orphaned <strong>EBS</strong> volumes;
+   tear down the dedicated VPC/subnet/SG if created only for this test.</p>
+<p><strong>Stop or delete every cost-bearing resource after evidence is captured.</strong> Do not
+leave lab instances running idle.</p>
+<h2 id="7-live-mutation-smoke-plan-acceptance">7. Live mutation smoke plan + acceptance</h2>
+<p>The smoke exercises the full gated path. Run only after the Section 9 gate is
+granted.</p>
+<p>Sequence:</p>
+<ol>
+<li><code>actionPlan</code> generated (planner, dry-run, as Phase 4.1).</li>
+<li>Action <strong>imported</strong> into the journal as <code>pending</code> (keyed by <code>idempotencyKey</code>).</li>
+<li>Action <strong>approved</strong> (<code>routerctl action approve</code>).</li>
+<li>Action <strong>executed by the <code>aws-provider-executor</code></strong>
+   (<code>routerctl action execute --approved</code>).</li>
+<li>Journal shows <code>succeeded</code>.</li>
+</ol>
+<p>Acceptance (all must hold):</p>
+<ul>
+<li>[ ] actionPlan generated → imported → approved → executed → journal <code>succeeded</code>.</li>
+<li>[ ] The <strong>secondary IP exists on the ENI</strong> (<code>describe-network-interfaces</code>
+      shows <code>&lt;address&gt;</code> in <code>PrivateIpAddresses</code>).</li>
+<li>[ ] <strong>Source/dest check disabled</strong> on the ENI (<code>SourceDestCheck=false</code>), with
+      <code>Observed.priorSourceDestCheck</code> recorded in the journal.</li>
+<li>[ ] <code>routerd-cloud</code> does <strong>NOT</strong> retain a BGP provider-secondary address as a
+      local OS address, even while the provider secondary IP remains assigned on
+      the ENI. Capture is provider ingress plus route/forwarding state, not a
+      Linux local <code>/32</code>.</li>
+<li>[ ] <code>MobilityPool</code> reports a healthy capture plan.</li>
+<li>[ ] <code>routerctl doctor</code> hybrid checks <strong>pass</strong>.</li>
+<li>[ ] cloud-client <strong><code>.7</code></strong> ↔ on-prem-client <strong><code>.9</code></strong> — <strong>ping and ssh both
+      ways</strong> succeed.</li>
+<li>[ ] <strong>NAT absent</strong> on the captured path (routed/forwarded, not translated).</li>
+<li>[ ] <strong>Default gateway unchanged</strong> on every node.</li>
+<li>[ ] <strong>Teardown / undo succeeds</strong> (Section 6), including the source/dest-check
+      restore-prior rule.</li>
+<li>[ ] <strong>Cost-bearing resources stopped / deleted</strong> after evidence capture.</li>
+</ul>
+<h2 id="8-hard-stops">8. Hard stops</h2>
+<p>Abort immediately (do not "work around") if any of the following is true:</p>
+<ol>
+<li>Credentials would pass <strong>through routerd core</strong> (they must not — executor uses
+   its own instance profile only).</li>
+<li>The action would affect a <strong>non-lab resource</strong>.</li>
+<li><strong>More than one provider</strong> is in play.</li>
+<li><strong>Rollback / cleanup is not describable beforehand.</strong></li>
+<li>The provider API returns an <strong>ambiguous / partial success</strong>.</li>
+<li>A <strong>cost-bearing resource would be left running</strong> without an active test.</li>
+<li><strong>Waiting more than 10 minutes</strong> for a human decision while cloud resources are
+   running → <strong>stop and deallocate</strong> (stop instances) to cut cost; resume after
+   the decision.</li>
+<li>Any command <strong>implies a production or shared mutation</strong>.</li>
+</ol>
+<h2 id="9-gate-to-run-live">9. Gate to run live</h2>
+<p>Live mutation runs <strong>only after explicit owner go</strong>, granted <strong>after</strong> the owner
+reviews <strong>this runbook</strong> and the <strong>read-only preflight evidence</strong> (Section 4).
+Until that go is given, only the read-only steps may run.</p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#1-scope-boundaries">1. Scope &amp; boundaries</a></li>
+<li><a href="#2-executor-design">2. Executor design</a><ul>
+<li><a href="#assign-secondary-ip">assign-secondary-ip</a></li>
+<li><a href="#ensure-forwarding-enabled">ensure-forwarding-enabled</a></li>
+<li><a href="#unassign-secondary-ip-undo-of-assign-secondary-ip">unassign-secondary-ip (undo of assign-secondary-ip)</a></li>
+<li><a href="#ensure-forwarding-disabled-undo-of-ensure-forwarding-enabled">ensure-forwarding-disabled (undo of ensure-forwarding-enabled)</a></li>
+</ul>
+</li>
+<li><a href="#3-iam-least-privilege">3. IAM least-privilege</a></li>
+<li><a href="#4-read-only-preflight">4. Read-only preflight</a></li>
+<li><a href="#5-action-journal-fields-the-smoke-relies-on">5. Action journal fields the smoke relies on</a></li>
+<li><a href="#6-undo-teardown-plan">6. Undo / teardown plan</a></li>
+<li><a href="#7-live-mutation-smoke-plan-acceptance">7. Live mutation smoke plan + acceptance</a></li>
+<li><a href="#8-hard-stops">8. Hard stops</a></li>
+<li><a href="#9-gate-to-run-live">9. Gate to run live</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/how-to/aws-provider-action-execution.md">GitHub</a></div></footer></body></html>

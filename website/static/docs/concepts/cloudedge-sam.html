@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>What is CloudEdge SAM · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/concepts/cloudedge-sam.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/concepts/cloudedge-sam.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/concepts/cloudedge-sam.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/concepts/cloudedge-sam.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/concepts/cloudedge-sam.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="what-is-cloudedge-sam">What is CloudEdge SAM</h1>
+<p>CloudEdge SAM (Selective Address Mobility) is the routerd capability that treats
+<strong>a chosen set of <code>/32</code> IPv4 addresses as portable "street addresses" that move
+between on-prem and multiple public clouds (AWS / Azure / OCI)</strong>.</p>
+<p>This is a concept you will not find on an ordinary router or cloud load
+balancer, so we start with <em>what is new</em> and <em>what problem it solves</em>. Without
+that, the configuration fields make little sense.</p>
+<h2 id="the-problem">The problem</h2>
+<p>When you want to make a service redundant across clouds, the traditional options
+both hurt:</p>
+<ol>
+<li><strong>L2 extension (stretching a LAN with VXLAN/EVPN, etc.)</strong> — public clouds do
+   not expose an operator-controlled broadcast domain. Each cloud fabric has its
+   own routing and address-ownership model, and you cannot simply stretch an
+   Ethernet segment into it.</li>
+<li><strong>DNS failover or a global load balancer</strong> — the IP address the client sees
+   changes. TCP connections break, DNS TTL caches linger, and any client that
+   holds an IP address directly cannot follow.</li>
+</ol>
+<p>CloudEdge SAM takes a <strong>third path</strong>: instead of moving "a whole LAN" it moves
+"only the <code>/32</code> addresses you want to move", over a routerd-to-routerd overlay.
+The source and destination IP addresses the client sees are preserved, so even
+when the node that holds an address (the <em>holder</em>) moves from AWS to Azure,
+<strong>the same IP address keeps living</strong>.</p>
+<p>You can read this as "a virtual IP that moves across clouds". Where a VRRP
+virtual IP can only move within one L2 segment, a CloudEdge SAM <code>/32</code> moves
+<strong>across cloud boundaries</strong>.</p>
+<h2 id="the-mental-model">The mental model</h2>
+<p>The key to understanding CloudEdge SAM is to <strong>separate two planes</strong>.</p>
+<table>
+<thead>
+<tr>
+<th>Plane</th>
+<th>Responsibility</th>
+<th>Source of truth</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Reachability (overlay)</strong></td>
+<td>which node owns an address, and where to carry its packets</td>
+<td>the <strong>BGP best path</strong> (ADR 0012)</td>
+</tr>
+<tr>
+<td><strong>Cloud ingress</strong></td>
+<td>whether the cloud fabric admits external packets to the right VM</td>
+<td><strong>provider secondary IP / route tables</strong> (reconciled in the background)</td>
+</tr>
+</tbody>
+</table>
+<p>The point is the division of labor: <strong>the BGP RIB owns the truth of
+reachability, and cloud API operations only follow it after the fact</strong>. Older
+routerd did this with a bespoke control plane of lease tables and epochs; today
+it leans on plain BGP unicast <code>/32</code> (see
+ADR 0012).</p>
+<pre><code>            pick only the &quot;addresses to move&quot; out of an on-prem /24
+                              │
+            ┌─────────────────┼─────────────────┐
+            ▼                 ▼                 ▼
+        ┌────────┐        ┌────────┐        ┌────────┐
+        │ AWS    │        │ Azure  │        │ OCI    │   ← routerd nodes
+        │ routerd│◄──────►│ routerd│◄──────►│ routerd│   (WireGuard/IPIP overlay + BGP)
+        └────────┘        └────────┘        └────────┘
+            ▲ holder          standby           standby
+            │
+        the node winning the BGP best path for a /32 is its current holder
+</code></pre>
+<h2 id="the-new-concepts">The new concepts</h2>
+<p>A few routerd-specific terms appear. Here are the ones to learn first (the full
+internals are in <a href="../reference/cloudedge-sam-internals.html">CloudEdge SAM internals</a>).</p>
+<ul>
+<li><strong>SAMNodeSet + MobilityPool</strong> — <code>SAMNodeSet</code> is the static shared
+  identity/topology/placement registry. A per-router <code>MobilityPool</code> declares
+  which <code>/32</code>s move and carries only that router's local capture and provider
+  intent; it imports the shared members instead of repeating remote NIC or
+  subnet details.</li>
+<li><strong>capture</strong> — assigning a target <code>/32</code> to a cloud VM's NIC as a secondary IP so
+  that VM can receive packets for that address. This builds the "cloud ingress".</li>
+<li><strong>holder</strong> — the node that currently captures a <code>/32</code> and advertises it as the
+  BGP best path. There is exactly one per placement group.</li>
+<li><strong>placement group and priority</strong> — the active/standby declaration: "make the
+  higher-priority node in this group active for these <code>/32</code>s". A <strong>lower priority
+  number means higher priority</strong>.</li>
+<li><strong>holder-beacon</strong> — the BGP community (<code>64512:121</code>) that <em>only the active
+  holder</em> attaches to its owner <code>/32</code>. Other nodes decide "only the node
+  advertising a best path carrying this community is the real holder". It is the
+  <strong>authoritative marker</strong> that prevents a standby's weak advertisement or a
+  just-booted advertisement from being mistaken for holdership.</li>
+<li><strong>dynamic transport and enrollment</strong> — generic RR-published <code>SAMPeerGroup</code>
+  transport sync is fail-static: a leaf keeps its last-known-good peer group if
+  the publisher disappears, marks it <code>Stale</code>, and does not tear down generated
+  transport. Enrollment is a separate path: an admitted leaf fetches a
+  policy-scoped runtime <code>SAMRRSet</code> projected from the RR policy's static
+  <code>SAMNodeSet</code>; neither runtime payload is a statically authored RR topology.
+  A policy may also return a signed-claim-only direct-leaf <code>SAMPeerGroup</code> in
+  the same runtime snapshot. It is an opportunistic faster data path, never a
+  replacement for the RR: the RR peers remain present and take over when a
+  direct tunnel or BGP session cannot be established.</li>
+<li><strong>RR admission filter</strong> — on generated RR-client BGP peers, routerd accepts
+  only <code>/32</code> mobility routes that carry the advertising leaf's own node-identity
+  community and rejects routes carrying another topology node's identity. When
+  explicit allowed prefixes are omitted, the generated policy defaults to the
+  declared <code>MobilityPool</code> prefixes.</li>
+</ul>
+<h2 id="the-switching-behavior-this-is-the-value">The switching behavior (this is the value)</h2>
+<p>The hard problem CloudEdge SAM solves is a pair of conflicting demands: <strong>keep
+switching to a minimum, but reliably take over when something truly dies</strong>.
+routerd changes behavior based on the priority relationship.</p>
+<ul>
+<li><strong>Two nodes at equal priority (e.g. a=10, b=10)</strong> → <strong>no-preempt</strong>. Once one
+  becomes holder, the other does not take it back even after it returns, so a
+  pointless switch never shakes the dataplane.</li>
+<li><strong>Unequal priority (e.g. a=10 high, b=20 low)</strong> → <strong>auto-restore</strong>. After the
+  high-priority node dies and the low-priority node takes over, ownership returns
+  to the high-priority node automatically when it comes back — but the <code>/32</code>s
+  move one at a time, with <strong>zero dataplane dip</strong>.</li>
+<li><strong>When the active dies (regardless of priority)</strong> → <strong>reliable failover</strong>. If
+  the holder's VM stops or its OS fails, a standby seizes the secondary IPs,
+  takes over the BGP advertisement, and restores the dataplane automatically for
+  new flows after convergence. Long-lived TCP sessions that were already in
+  flight during an abrupt active loss may reset or stall; applications should
+  retry those sessions, or a future state-sync design must explicitly preserve
+  them.</li>
+</ul>
+<p>To reconcile all three, routerd combines the following mechanisms (details in
+<a href="../reference/cloudedge-sam-internals.html">internals</a>).</p>
+<ol>
+<li><strong>startup fence</strong> — a just-returned node defers asserting active until its
+   observations converge, preventing it from reclaiming holdership using stale
+   self-state.</li>
+<li><strong>holder retention</strong> — while a node physically holds captures it stays active;
+   it does not give up holdership for a deterministic tie-break or a transient
+   observation.</li>
+<li><strong>holder-beacon</strong> — authoritatively decides "who is the real holder" on the
+   BGP best path, also resolving the cold-start mutual-defer deadlock.</li>
+</ol>
+<h2 id="what-cloudedge-sam-is-not-to-avoid-confusion">What CloudEdge SAM is not (to avoid confusion)</h2>
+<ul>
+<li><strong>It is not L2 extension.</strong> It does not stretch an Ethernet broadcast domain
+  into the cloud; it carries only the chosen <code>/32</code>s over the overlay.</li>
+<li><strong>It is not NAT or a load balancer.</strong> Source and destination IPs are preserved.
+  Firewall and NAT are separate routerd layers, not fields on mobility resources.</li>
+<li><strong>It does not magically solve cloud-native ingress.</strong> Overlay reachability
+  recovers from BGP convergence alone, but external ingress entering through a
+  VPC/VNet/VCN must wait for the provider secondary IP / route table to catch up.</li>
+</ul>
+<h2 id="what-to-read-next">What to read next</h2>
+<ul>
+<li><a href="../reference/selective-address-mobility.html">Selective Address Mobility (config model)</a>
+  — how to author <code>SAMNodeSet</code>, a local <code>MobilityPool</code> overlay, and capture policy.</li>
+<li><a href="../reference/cloudedge-sam-internals.html">CloudEdge SAM internals</a>
+  — the BGP community taxonomy, placement, no-preempt, holder-beacon, failover.</li>
+<li>ADR 0012: BGP /32 Address Mobility
+  — the decision to make BGP the source of truth.</li>
+<li><a href="../how-to/cloudedge-mobility-demo.html">CloudEdge mobility demo</a>
+  — a hands-on lab running four sites (on-prem/AWS/Azure/OCI).</li>
+</ul></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#the-problem">The problem</a></li>
+<li><a href="#the-mental-model">The mental model</a></li>
+<li><a href="#the-new-concepts">The new concepts</a></li>
+<li><a href="#the-switching-behavior-this-is-the-value">The switching behavior (this is the value)</a></li>
+<li><a href="#what-cloudedge-sam-is-not-to-avoid-confusion">What CloudEdge SAM is not (to avoid confusion)</a></li>
+<li><a href="#what-to-read-next">What to read next</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/concepts/cloudedge-sam.md">GitHub</a></div></footer></body></html>

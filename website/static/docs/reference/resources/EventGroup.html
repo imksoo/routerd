@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>EventGroup · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/reference/resources/EventGroup.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/reference/resources/EventGroup.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/reference/resources/EventGroup.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/EventGroup.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/EventGroup.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="eventgroup">EventGroup</h1>
+<p><a href="../resources.html#eventgroup">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: federation.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<h2 id="yaml-definition">YAML definition</h2>
+<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
+<pre><code class="language-yaml">- apiVersion: federation.routerd.net/v1alpha1
+  kind: EventGroup
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    auth: # optional; object
+      mode: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;hmac&quot;]
+      secretFile: &quot;&lt;string&gt;&quot; # optional; string
+      secretRef: &quot;&lt;string&gt;&quot; # optional; string
+    listen: # optional; object
+      address: &quot;&lt;string&gt;&quot; # optional; string
+      port: 0 # optional; integer; minimum=0; maximum=65535
+    nodeName: &quot;&lt;string&gt;&quot; # Required; string
+    peersFrom: # optional; array
+      - # object
+        optional: true # optional; boolean
+        resource: &quot;&lt;string&gt;&quot; # Required; string
+    replayWindow: &quot;&lt;string&gt;&quot; # optional; string
+    retention: # optional; object
+      maxAge: &quot;&lt;string&gt;&quot; # optional; string
+      maxEvents: 0 # optional; integer; minimum=0
+    when: # optional; object
+      state: # optional; object
+        &quot;&lt;key&gt;&quot;: # optional; object
+          contains: &quot;&lt;string&gt;&quot; # optional; string
+          equals: &quot;&lt;string&gt;&quot; # optional; string
+          exists: true # optional; boolean
+          for: &quot;&lt;string&gt;&quot; # optional; string
+          in: # optional; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # optional; string
+          status: &quot;set&quot; # optional; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<p><a href="/examples/cloudedge-mobility-demo/aws.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#yaml-definition">YAML definition</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/reference/resources/EventGroup.md">GitHub</a></div></footer></body></html>

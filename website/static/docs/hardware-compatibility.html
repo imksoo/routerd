@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Hardware compatibility · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/hardware-compatibility.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/hardware-compatibility.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/hardware-compatibility.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/hardware-compatibility.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/hardware-compatibility.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="hardware-compatibility">Hardware compatibility</h1>
+<p>routerd can run on any supported OS that exposes the needed kernel and userland
+features. The practical question is whether the hardware has enough network
+interfaces, CPU, memory, and storage endurance for router duty.</p>
+<h2 id="recommended-classes">Recommended classes</h2>
+<table>
+<thead>
+<tr>
+<th>Class</th>
+<th>Fit</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Intel NUC</td>
+<td>Good lab router</td>
+<td>Usually reliable, but many models have only one Ethernet port. Use USB Ethernet or VLAN trunks with care.</td>
+</tr>
+<tr>
+<td>Intel N100 mini PC</td>
+<td>Strong home router</td>
+<td>Good performance per watt. Prefer models with Intel i226/i225 NICs and enough cooling.</td>
+</tr>
+<tr>
+<td>Raspberry Pi 5</td>
+<td>Useful edge or demo router</td>
+<td>Works best with a high-quality power supply and supported USB/NVMe storage. Network throughput depends on adapters.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="candidate-hardware">Candidate hardware</h2>
+<p>This list is a starting point. Unless the status says "verified", treat it as
+an expected fit and validate the NICs, MTU, and reboot convergence before using
+it as a router.</p>
+<table>
+<thead>
+<tr>
+<th>Hardware</th>
+<th>Expected fit</th>
+<th>Status</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Intel NUC with USB Ethernet</td>
+<td>Proxmox lab router or live ISO demo</td>
+<td>Expected</td>
+<td>Prefer known-good USB Ethernet adapters. Keep management on a separate VLAN or interface while testing.</td>
+</tr>
+<tr>
+<td>N100 4-port 2.5GbE mini PC</td>
+<td>Home router, DS-Lite, PPPoE fallback, VPN overlay</td>
+<td>Expected</td>
+<td>The best first target for a diskless routerd appliance. Choose Intel i226/i225 NIC models and check cooling.</td>
+</tr>
+<tr>
+<td>N100 6-port 2.5GbE mini PC</td>
+<td>Multi-LAN home lab, guest network, management separation</td>
+<td>Expected</td>
+<td>Useful when WAN, LAN, guest, and management should be physical ports. Validate BIOS power recovery.</td>
+</tr>
+<tr>
+<td>Raspberry Pi 5 with USB or PCIe NIC</td>
+<td>Demo, edge router, low-power lab</td>
+<td>Expected</td>
+<td>Use a strong power supply. Throughput depends heavily on the NIC and storage path.</td>
+</tr>
+<tr>
+<td>Old thin client with Intel NIC</td>
+<td>Secondary router or lab node</td>
+<td>Expected</td>
+<td>Good for testing, but check AES, thermal behavior, and storage health.</td>
+</tr>
+<tr>
+<td>Virtual machine on Proxmox</td>
+<td>SDN/VNET routing, CI-style lab, integration test</td>
+<td>Verified in lab</td>
+<td>routerd is especially useful when the same resources later move to a physical mini PC.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="cpu-and-memory">CPU and memory</h2>
+<p>For a normal home or small office router:</p>
+<ul>
+<li>2 CPU cores are enough for basic routing, DHCP, DNS, NAT, and Web Console.</li>
+<li>4 CPU cores give more room for encrypted DNS, OpenTelemetry, and log indexing.</li>
+<li>1 GiB RAM is a practical lower bound.</li>
+<li>2 GiB or more is recommended for the live ISO and log buffering.</li>
+</ul>
+<h2 id="network-interfaces">Network interfaces</h2>
+<p>Prefer at least two physical interfaces:</p>
+<ul>
+<li>WAN or untrust</li>
+<li>LAN or trust</li>
+</ul>
+<p>A third management interface is useful when testing firewall changes. It lets
+you keep SSH and Web Console access independent from WAN and LAN policy.</p>
+<p>Single-NIC VLAN routers are possible, but they raise the risk of management
+lockout during early setup. Validate the plan before applying.</p>
+<h2 id="storage">Storage</h2>
+<p>For installed routers, use SSD or NVMe storage when possible. For diskless
+mini PCs, use the live ISO with USB persistence:</p>
+<ul>
+<li>configuration is saved to the USB device</li>
+<li>logs are buffered under <code>/run/routerd/logs</code> on tmpfs</li>
+<li>a daily flush job can copy compressed logs and state snapshots to USB</li>
+</ul>
+<p>This reduces write pressure on low-end flash media.</p>
+<h2 id="live-iso-and-usb-persistence">Live ISO and USB persistence</h2>
+<p>The live ISO is meant for both quick evaluation and diskless operation:</p>
+<ul>
+<li>boot from ISO</li>
+<li>run the text wizard on the video console or serial console</li>
+<li>save <code>router.yaml</code> and selected state to USB</li>
+<li>buffer logs on tmpfs</li>
+<li>flush compressed log and state snapshots to USB once per day</li>
+</ul>
+<p>Without USB persistence, the live ISO is an ephemeral demo router. With USB
+persistence, the same mini PC can reboot into the saved router configuration.</p>
+<h2 id="nic-notes">NIC notes</h2>
+<table>
+<thead>
+<tr>
+<th>NIC type</th>
+<th>Recommendation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Intel i210/i211</td>
+<td>Conservative and reliable.</td>
+</tr>
+<tr>
+<td>Intel i225/i226</td>
+<td>Good 2.5GbE choice. Keep firmware and OS drivers current.</td>
+</tr>
+<tr>
+<td>Realtek 2.5GbE</td>
+<td>Often works, but test under load before relying on it.</td>
+</tr>
+<tr>
+<td>USB Ethernet</td>
+<td>Useful for demos and NUCs. Avoid no-name adapters for production routers.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="platform-notes">Platform notes</h2>
+<p>Ubuntu Server is the primary target. NixOS and FreeBSD are supported through
+their platform-specific renderers and service integrations. Check
+<a href="platforms.html">Platforms</a> before relying on a feature on a non-Linux host.</p>
+<h2 id="validation-checklist">Validation checklist</h2>
+<p>Before putting hardware into service:</p>
+<ol>
+<li>Boot the target OS or live ISO.</li>
+<li>Confirm all NICs have stable names.</li>
+<li>Run <code>routerctl validate</code> and <code>routerctl plan</code>.</li>
+<li>Apply with management access on a separate path when possible.</li>
+<li>Check DHCP, DNS, NAT, firewall, and route policy.</li>
+<li>Run a throughput test.</li>
+<li>Watch CPU temperature and packet drops.</li>
+<li>Reboot and confirm the router converges without manual commands.</li>
+</ol></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#recommended-classes">Recommended classes</a></li>
+<li><a href="#candidate-hardware">Candidate hardware</a></li>
+<li><a href="#cpu-and-memory">CPU and memory</a></li>
+<li><a href="#network-interfaces">Network interfaces</a></li>
+<li><a href="#storage">Storage</a></li>
+<li><a href="#live-iso-and-usb-persistence">Live ISO and USB persistence</a></li>
+<li><a href="#nic-notes">NIC notes</a></li>
+<li><a href="#platform-notes">Platform notes</a></li>
+<li><a href="#validation-checklist">Validation checklist</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/hardware-compatibility.md">GitHub</a></div></footer></body></html>

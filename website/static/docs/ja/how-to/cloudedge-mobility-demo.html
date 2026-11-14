@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CloudEdge Mobility デモ · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/how-to/cloudedge-mobility-demo.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/how-to/cloudedge-mobility-demo.html" lang="en" hreflang="en">English</a><a href="/docs/ja/how-to/cloudedge-mobility-demo.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/how-to/cloudedge-mobility-demo.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/cloudedge-mobility-demo.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="cloudedge-mobility-デモ">CloudEdge Mobility デモ</h1>
+<blockquote>
+<p>実験的機能（CloudEdge）。<strong>Selective Address Mobility (SAM)</strong> のラボデモです。on-prem、AWS、Azure、OCI が 1 つの論理 <code>/24</code> を共有し、各サイトが他のサイトが<em>所有する</em>アドレスを — NAT なしでクライアントのデフォルトゲートウェイも変更せずに — 提供できます。実行可能なパッケージは <a href="https://github.com/imksoo/routerd/tree/main/examples/cloudedge-mobility-demo"><code>examples/cloudedge-mobility-demo/</code></a> にあります。</p>
+</blockquote>
+<h2 id="このデモで示すこと">このデモで示すこと</h2>
+<ul>
+<li><strong>1 つの論理 <code>/24</code> を 4 サイトで共有</strong> — on-prem / AWS / Azure / OCI のすべてが <code>10.77.60.0/24</code> を単一の論理アドレス空間として扱います。</li>
+<li><strong>非オーナーサイトがオーナーのアドレスを捕捉する</strong> — 各オーナーアドレスが<em>他のすべてのサイト</em>で到達可能になります（クラウド: プロバイダーの<strong>セカンダリ IP</strong>、on-prem: <strong>proxy ARP</strong>）。単一オーナーへの調停が行われます。</li>
+<li><strong>12 方向の SSH フローがパス</strong> — 4 つのデモクライアント間で全方向が通信可能です。</li>
+<li><strong>NAT なし、ソース IP 保持、ゲートウェイ変更なし</strong> — 接続は実際のソース IP を維持し、NAT を行わず、クライアントのデフォルトゲートウェイに触れません。</li>
+<li><strong>クラウドメンテナンス捕捉マイグレーション（D5）</strong> — 捕捉されたアドレスが同一プロバイダー内の別のルーターにスタンバイとして移動し、新しいホルダー経由でトラフィックが復旧します。</li>
+</ul>
+<h2 id="アドレス設計">アドレス設計</h2>
+<p>4 サイトすべてが 1 つの論理サブネットを共有し、各サイトはその中の <code>/32</code> を 1 つだけ所有します。</p>
+<table>
+<thead>
+<tr>
+<th>サイト</th>
+<th>routerd ノード</th>
+<th>オーナーアドレス</th>
+<th>捕捉手段</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>On-prem</td>
+<td><code>onprem-router</code></td>
+<td><code>10.77.60.10/32</code></td>
+<td>LAN 上の Proxy ARP</td>
+</tr>
+<tr>
+<td>AWS</td>
+<td><code>aws-router-a</code></td>
+<td><code>10.77.60.11/32</code></td>
+<td>ENI セカンダリ IP</td>
+</tr>
+<tr>
+<td>Azure</td>
+<td><code>azure-router</code></td>
+<td><code>10.77.60.12/32</code></td>
+<td>NIC セカンダリ ipConfig</td>
+</tr>
+<tr>
+<td>OCI</td>
+<td><code>oci-router</code></td>
+<td><code>10.77.60.13/32</code></td>
+<td>VNIC セカンダリプライベート IP</td>
+</tr>
+</tbody>
+</table>
+<p>論理サブネット: <strong><code>10.77.60.0/24</code></strong>。ルーター間トランスポートは別の RFC1918 エンドポイント/内部アドレス体系を使用します（リンクローカル <code>169.254/16</code> や CGNAT <code>100.64/10</code> とは分離）。アドレスの制約については <a href="../reference/selective-address-mobility.html">Selective Address Mobility</a> を参照してください。</p>
+<p>on-prem 側は <code>10.77.60.10/32</code> のみを <code>staticOwnedAddresses</code> で宣言します。
+追加の on-prem クライアントを検知するには、on-prem メンバーで <code>ownershipDiscovery</code>
+<code>mode: onprem-l2</code> と <code>ens21</code> の <code>arp-observer</code> ソースを設定してください。</p>
+<h2 id="データプレーン">データプレーン</h2>
+<ul>
+<li><strong>provider-secondary-ip 捕捉</strong> — 各クラウドルーターで、<em>他の</em>サイトのオーナーアドレスがその ENI / NIC / VNIC にセカンダリ IP としてアタッチされ、クラウドファブリックがそのルーターにトラフィックを配送します。</li>
+<li><strong>proxy-ARP 捕捉</strong> — on-prem では、ルーターが LAN 上で他サイトのオーナーアドレスに対する ARP に応答します。</li>
+<li><strong>BGP <code>/32</code> 配送</strong> — 各オーナーが所有する <code>/32</code> を広告し、他のルーターがベストパスをインポートしてオーバーレイ経由で所有サイトのルーターに転送します。</li>
+<li><strong>生成された SAM トランスポート</strong> — ルーターは <code>SAMTransportProfile</code> から導出された IPIP トンネルと BGP ピアで相互接続します。WireGuard が有効な場合はエンドポイント限定の暗号化アンダーレイです。その <code>AllowedIPs</code> にはトランスポートエンドポイントプレフィックスが含まれ、モバイル <code>/32</code> は含みません。</li>
+</ul>
+<p>配送はルーティング（NAT ではない）のため、<strong>ソース IP は保持</strong>され、クライアントの<strong>デフォルトゲートウェイは変更されません</strong>。</p>
+<h2 id="コントロールプレーン">コントロールプレーン</h2>
+<p>運用者が宣言するのは意図のみで、それ以外はすべて導出されます。</p>
+<ul>
+<li><strong>SAMNodeSet</strong> — 7 台すべてのルーターの共有 identity/topology/placement registry です。</li>
+<li><strong>MobilityPool</strong> — ローカルの address/capture intent です。その node set を取り込み、self の provider、capture、discovery overlay だけを保持します。</li>
+<li><strong>目標メンバー構造</strong> — 各レンダリング設定は <code>profiles.cloudCaptures</code>、<code>spec.values</code>、<code>targetFrom</code>、<code>subnetRefFrom</code> で自サイトを完全に宣言し、remote member entry やその provider NIC/サブネット実装の詳細を繰り返しません。</li>
+<li><strong>SAMTransportProfile</strong> — 共有トポロジと内部プレフィックスからピアごとの <code>TunnelInterface</code>、エンドポイント <code>/32</code> <code>IPv4Route</code>、<code>BGPPeer</code> リソースを導出します。</li>
+<li><strong>BGP <code>/32</code> モビリティパス</strong> — 各オーナーが所有するホストルートを広告し、他サイトが生成された SAM トランスポート上で現在のベストパスを学習します。</li>
+<li><strong>プロバイダー trap アクション</strong> — クラウドルーターはリモート所有の <code>/32</code> をローカルトラッピング用にセカンダリ IP として最終的に assign/unassign します。これらのアクションはクリティカルな転送パス上にはもうありません。</li>
+<li><strong>Event Federation</strong> — <code>routerd.client.ipv4.observed</code> ファクトがサイト間で伝播します（<code>EventGroup</code> / <code>EventPeer</code> / <code>EventSubscription</code>、<a href="../reference/event-federation.html">Event Federation</a> 参照）。</li>
+<li><strong>プロバイダーアクションエグゼキューター</strong> — <code>ProviderActionPolicy</code> の下で、インスタンス自身のクラウドネイティブ識別情報を使用して、ゲート付きクラウド変更（セカンダリ IP の assign / unassign、forwarding）を実行します（ADR 0007 参照）。</li>
+<li><strong>pathSig フェンシング</strong> — プロバイダーアクションは現在の BGP 希望パスシグネチャとホルダーに対してフェンスされるため、古いアクションが他で再収束したルートを変更することはできません。</li>
+</ul>
+<p>サンプル設定は共有 <code>SAMNodeSet</code> と <code>MobilityPool.membersFrom</code> を使います。各 Pool には
+local self overlay をちょうど 1 つだけ残し、remote identity、placement、maintenance は
+node set に置きます。remote member の provider、capture、discovery detail は
+<code>routerctl validate</code>、plan、apply で拒否されます。</p>
+<h2 id="実行方法">実行方法</h2>
+<p><code>examples/cloudedge-mobility-demo/</code> のパッケージを使用します。ラボインスタンス、NIC/VNIC、識別情報の権限、SSH、オプションの WireGuard エンドポイントキー、プロバイダー CLI がすでに準備されていることを前提とします -- スクリプトはクラウドリソースをプロビジョニング<strong>しません</strong>。</p>
+<pre><code class="language-sh">cd examples/cloudedge-mobility-demo
+cp env.example env
+$EDITOR env            # すべてのプレースホルダーを記入。秘密情報は git に入れない
+
+./run-demo.sh          # レンダー + デプロイ、イベント発行、D3 実行、その後 D5 マイグレーション
+./collect-evidence.sh  # プロバイダー状態、ジャーナル、接続情報を収集
+./reset-lab.sh         # ベストエフォートの teardown。アイドルコスト回避のためコンピュートを停止
+</code></pre>
+<p>失敗時も含め、毎回のラン後に <code>reset-lab.sh</code> を実行してください。</p>
+<h2 id="検証済みの結果">検証済みの結果</h2>
+<ul>
+<li><strong>D1</strong> ロケーション自動反映: on-prem に出現したオーナーアドレスを各クラウドルーターが認識。</li>
+<li><strong>D2</strong> クラウド → on-prem 捕捉（proxy ARP）。</li>
+<li><strong>D3</strong> 4 サイト <strong>12 方向 ping + SSH PASS</strong> -- ソース IP 保持、NAT なし、デフォルトゲートウェイ変更なし。</li>
+<li><strong>D4</strong> on-prem HA / VRRP 捕捉フェイルオーバー。</li>
+<li><strong>D5</strong> クラウドメンテナンス / <strong>捕捉マイグレーション PASS</strong> -- <code>aws-router-a</code> をドレインすると、捕捉されたアドレスが <code>aws-router-b</code> に移動し、B 経由でトラフィックが復旧。古い pathSig アクションはフェンスされます（<code>skipped: stale mobility desired path</code>）。D5 エビデンスを参照。</li>
+</ul>
+<h2 id="注意事項">注意事項</h2>
+<ul>
+<li>これは<strong>ラボデモ</strong>であり、本番用のターンキーソリューションではありません。</li>
+<li>完全な L2 拡張 / EVPN では<strong>ありません</strong> — ブロードキャスト/マルチキャストブリッジングはありません。</li>
+<li><strong>選択的な <code>/32</code> アドレスモビリティ</strong>です: サブネット全体ではなく、選択されたアドレスがサイト間でモバイルになります。</li>
+<li>スクリプトは事前プロビジョニング済みのインスタンスを前提とし、プレースホルダーの非秘密論理アドレスを使用します。実際のアカウント/サブスクリプション/OCID/ENI/VNIC ID や秘密鍵は決してコミットしないでください。</li>
+</ul></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#このデモで示すこと">このデモで示すこと</a></li>
+<li><a href="#アドレス設計">アドレス設計</a></li>
+<li><a href="#データプレーン">データプレーン</a></li>
+<li><a href="#コントロールプレーン">コントロールプレーン</a></li>
+<li><a href="#実行方法">実行方法</a></li>
+<li><a href="#検証済みの結果">検証済みの結果</a></li>
+<li><a href="#注意事項">注意事項</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/how-to/cloudedge-mobility-demo.md">GitHub</a></div></footer></body></html>

@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DHCP lease sync for HA routers · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/how-to/dhcp-lease-sync.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/how-to/dhcp-lease-sync.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/how-to/dhcp-lease-sync.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/how-to/dhcp-lease-sync.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/dhcp-lease-sync.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="dhcp-lease-sync-for-ha-routers">DHCP lease sync for HA routers</h1>
+<p>Use <code>DHCPv4ServerLeaseSync</code>, <code>DHCPv6ServerLeaseSync</code>, or
+<code>DHCPv6PrefixDelegationLeaseSync</code> when two routerd nodes share a DHCP role and
+the active node must keep the standby node's lease state warm. These resources
+are intended for active-to-standby sync; they should normally be gated by a
+<code>VirtualAddress</code> role so the backup does not copy stale leases back to the
+active node.</p>
+<p>The complete example is in <code>examples/dhcp-lease-sync-ha.yaml</code>.</p>
+<h2 id="use-persistent-defaults">Use persistent defaults</h2>
+<p>routerd stores dnsmasq server leases under its platform state directory by
+default. Keep the DHCP resources free of runtime-only lease paths:</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DHCPv4Server
+  metadata:
+    name: lan-dhcpv4
+  spec:
+    interface: lan
+    addressPool:
+      start: 192.168.30.100
+      end: 192.168.30.199
+
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DHCPv6Server
+  metadata:
+    name: lan-dhcpv6
+  spec:
+    interface: lan
+    mode: stateful
+    addressPool:
+      start: fd00:30::100
+      end: fd00:30::1ff
+</code></pre>
+<p>The sync resource derives the actual file path from the source kind, so the
+configuration does not need to repeat implementation paths.</p>
+<h2 id="sync-only-from-the-active-node">Sync only from the active node</h2>
+<p>Gate the lease sync on the local <code>VirtualAddress</code> status. The sync runs only
+while the VIP role is <code>master</code>:</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DHCPv4ServerLeaseSync
+  metadata:
+    name: lan-v4-leases
+  spec:
+    source:
+      resource: DHCPv4Server/lan-dhcpv4
+    interval: 30s
+    targets:
+      - name: standby
+        host: routerd-standby.lan.example
+        user: routerd
+    when:
+      state:
+        VirtualAddress/lan-vip.role:
+          equals: master
+</code></pre>
+<p>For a stateful DHCPv6 server, use <code>DHCPv6ServerLeaseSync</code> with
+<code>source.resource: DHCPv6Server/&lt;name&gt;</code>. For WAN-side prefix delegation, use
+<code>DHCPv6PrefixDelegationLeaseSync</code> with
+<code>source.resource: DHCPv6PrefixDelegation/&lt;name&gt;</code>.</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DHCPv6PrefixDelegationLeaseSync
+  metadata:
+    name: wan-pd-lease
+  spec:
+    source:
+      resource: DHCPv6PrefixDelegation/wan-pd
+    targets:
+      - name: standby
+        host: routerd-standby.lan.example
+        user: routerd
+    when:
+      state:
+        VirtualAddress/lan-vip.role:
+          equals: master
+</code></pre>
+<p>On promotion, the standby starts from its last synced lease state instead of an
+empty database.</p>
+<h2 id="ssh-requirements">SSH requirements</h2>
+<p>Lease sync uses <code>rsync</code> over SSH. Prepare non-interactive SSH before enabling
+the resource:</p>
+<ul>
+<li>Create or install an SSH key for the routerd process user on the active node.</li>
+<li>Install the public key in <code>authorized_keys</code> for <code>target.user</code> on the standby
+  node.</li>
+<li>Preload or manage <code>known_hosts</code> for <code>target.host</code>; <code>BatchMode=yes</code> prevents
+  interactive host-key prompts.</li>
+<li>Ensure the target user can create the derived destination directory and write
+  the lease file.</li>
+</ul>
+<p>routerd adds these SSH defaults when <code>target.sshOptions</code> does not override the
+same key:</p>
+<pre><code class="language-text">-o BatchMode=yes -o ConnectTimeout=10
+</code></pre>
+<p>It also adds <code>rsync --timeout=60</code> and runs each sync command with a controller
+context deadline. Operators can override the SSH options with
+<code>target.sshOptions</code> and the rsync timeout with <code>target.options</code>:</p>
+<pre><code class="language-yaml">targets:
+  - host: routerd-standby.lan.example
+    user: routerd
+    sshOptions:
+      - -o
+      - ConnectTimeout=5
+    options:
+      - --timeout=30
+</code></pre>
+<h2 id="check-it">Check it</h2>
+<pre><code class="language-bash">routerctl validate -f examples/dhcp-lease-sync-ha.yaml --replace
+routerctl plan -f examples/dhcp-lease-sync-ha.yaml --replace
+routerctl describe VirtualAddress/lan-vip
+routerctl describe DHCPv4ServerLeaseSync/lan-v4-leases
+</code></pre>
+<p>When the node is not master, <code>routerd serve</code> filters the resource through
+<code>spec.when</code>. When the node is master and the lease file exists, status should
+move to <code>Synced</code>; if the lease file is missing, it stays <code>Pending</code> until dnsmasq
+creates it.</p>
+<h2 id="callback-recovery-across-routerd-restarts">Callback recovery across routerd restarts</h2>
+<p>The managed dnsmasq hook is a symlink to <code>routerd-dhcp-event-relay</code> with no
+additional arguments. It commits each callback to
+<code>&lt;platform StateDir&gt;/dhcp-events/pending.db</code> before exiting; it no longer needs
+a running control socket. Linux uses <code>/var/lib/routerd</code>, FreeBSD uses
+<code>/var/db/routerd</code>.
+Configuration paths, runtime socket paths, and <code>--state-file</code> do not redefine
+this shared directory. <code>--state-file</code> still selects only the main state DB.
+No additional service or dnsmasq configuration change is required.</p>
+<p>A manual relay invocation with explicit <code>--socket</code> keeps HTTP transport and
+uses the receiving daemon's queue. It does not write a second local queue or
+retry through a different transport. An unavailable socket therefore remains
+an explicit failure. Use this API mode to target a daemon with a custom socket, rather than inferring persistence paths from that socket.</p>
+<p>Bounds and ownership:</p>
+<ul>
+<li>The producer has a 3-second operation deadline and a 4-second process ceiling.
+  SQLite lock waits are 100 milliseconds. Storage failures and queue exhaustion
+  return nonzero; a successful callback means a committed queue record.</li>
+<li>The queue holds at most 4,096 pending callbacks. Its database ceiling is 8 MiB;
+  DELETE journaling also bounds the rollback journal by the database size.
+  MAC, IP, and interface fields allow 64 bytes each, hostname allows 253 bytes,
+  and the encoded payload allows 2,048 bytes.</li>
+<li>The queue directory is mode 0700 and files are 0600, owned by the executing
+  user (root for production routerd/dnsmasq). Symlinks, hardlinked files,
+  nonprivate modes, or a different owner are rejected. Existing directories
+  are not silently chmodded. No queue is created by an idle serve startup.</li>
+<li>One consumer in the existing serve process drains FIFO order. A file lock
+  excludes a second consumer without holding a SQLite transaction during event
+  processing. Failure retains the head and does not stop routing controllers.
+  Repair a full/unwritable/corrupt store before expecting the queue to drain.
+  Do not delete or replace the queue while routerd is running.</li>
+<li>Pending callbacks are local to a node and are not replicated by lease sync.
+  Preserve the directory in backups; do not replay both nodes' queues on one
+  node. This is restart recovery, not delivery after destruction of that disk.</li>
+</ul>
+<p>Sticky metadata and the durable journal are processed before removal from the
+queue. A crash between journal commit and queue deletion may repeat a history
+record. Original observation times are preserved in <code>attributes.observedAt</code>;
+the journal's <code>createdAt</code> remains ingestion time. Equal-time retries do not
+extend sticky retention. Newer lease observations, including copied HA state
+and a different MAC on the same IP, prevent older metadata from taking over.
+<code>stickyHoldDays: 0</code> still records ordering metadata with <code>sticky_until=0</code> and
+never creates a held reservation.</p>
+<p>Callbacks captured before the consumer starts are historical. For IPv4, the
+consumer uses the same explicit/default <code>leaseFile</code> selection as dnsmasq. It
+forwards additions/renewals to live DNS only when MAC, IP, hostname, and lease
+validity still match; it forwards removal only when that IP has no active
+lease. Missing, unreadable, malformed, or oversized lease files retain the
+callback for a later attempt. A confirmed mismatch is journaled as
+<code>history-only-lease-state-changed</code>. With no configured DHCP source it is
+<code>history-only-no-dhcp-source</code>. Historical IPv6 identity mapping is not inferred
+from IPv4-style fields: such callbacks are journaled as
+<code>history-only-unverified-dhcpv6-identity</code>, without changing current metadata or
+DNS. Fresh IPv4/IPv6 callbacks retain normal delivery.</p>
+<p>Historical notifications carry <code>replayed=true</code> and never renew or withdraw
+mobility ownership. Ownership waits for a fresh observation or existing expiry
+processing; this change does not add a lease-file rescan to mobility discovery.
+Fresh DHCP notifications preserve their original observation time there too.
+These safeguards intentionally restore audit without applying uncertain old
+state to live consumers. Local subscriber delivery is still best effort; the
+queue does not provide acknowledgements from every DNS or mobility consumer.
+Callbacks lost before this version were never queued and cannot be recovered
+from this mechanism.</p>
+<h2 id="investigate-a-recovered-synchronization-failure">Investigate a recovered synchronization failure</h2>
+<p>The existing routerd service log records <code>DHCP lease synchronization failed</code>
+for all three lease-sync kinds. It includes the resource, reason, source file,
+target, command name, error, and subprocess output. When available, <code>exitCode</code>
+contains the process exit status (<code>-1</code> means no normal exit code); <code>timedOut</code>
+and <code>canceled</code> distinguish the command context cause from an exit error.
+Invalid specifications and source-stat failures are also logged.</p>
+<p>Read the service journal after the resource has recovered:</p>
+<pre><code class="language-sh">journalctl -u routerd.service --since '1 hour ago' --no-pager | grep 'DHCP lease synchronization'
+</code></pre>
+<p>Each textual diagnostic field retains at most its last 4,096 bytes, preserving
+valid UTF-8; a <code>&lt;field&gt;Truncated=true</code> attribute marks truncation. Command
+arguments, SSH options and lease contents are not explicitly logged. Subprocess
+diagnostics may contain paths and host names, so apply normal log access controls.
+Identical consecutive failures are logged once; changed diagnostics and a failure
+after recovery are logged again. Successful recovery emits
+<code>DHCP lease synchronization recovered</code>. Logging happens before status persistence,
+so a failed status write does not hide the original transfer error.</p>
+<p>These records use the existing service logger and its retention settings; they
+do not add a log file, background collector, or status-change event. Current
+resource status still changes to <code>Synced</code> on recovery. Sync cadence, retries,
+timeouts and transfer behavior are unchanged. A sync failure concerns copying
+state to the peer and does not by itself prove a DHCP response failure.</p>
+<p>DHCPv4 sticky lease synchronization copies the SQLite database and WAL, but excludes the transient, machine-local <code>-shm</code> index. SQLite reconstructs that index on the receiver. Database and WAL transfer failures remain errors; this does not provide an atomic snapshot of concurrent database writes.</p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#use-persistent-defaults">Use persistent defaults</a></li>
+<li><a href="#sync-only-from-the-active-node">Sync only from the active node</a></li>
+<li><a href="#ssh-requirements">SSH requirements</a></li>
+<li><a href="#check-it">Check it</a></li>
+<li><a href="#callback-recovery-across-routerd-restarts">Callback recovery across routerd restarts</a></li>
+<li><a href="#investigate-a-recovered-synchronization-failure">Investigate a recovered synchronization failure</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/how-to/dhcp-lease-sync.md">GitHub</a></div></footer></body></html>

@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SAMEnrollmentPolicy · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/reference/resources/SAMEnrollmentPolicy.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/reference/resources/SAMEnrollmentPolicy.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/SAMEnrollmentPolicy.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/reference/resources/SAMEnrollmentPolicy.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/SAMEnrollmentPolicy.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="samenrollmentpolicy">SAMEnrollmentPolicy</h1>
+<p><a href="../resources.html#samenrollmentpolicy">リソース別の設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: mobility.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<h2 id="yaml定義">YAML定義</h2>
+<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
+<pre><code class="language-yaml">- apiVersion: mobility.routerd.net/v1alpha1
+  kind: SAMEnrollmentPolicy
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    allowedLeafIDs: # 任意; object
+      pattern: &quot;&lt;string&gt;&quot; # 任意; string
+    directMesh: # 任意; object
+      peerGroupRef: &quot;&lt;string&gt;&quot; # 任意; string
+    endpointPrefixes: # 任意; array
+      - &quot;&lt;string&gt;&quot; # string
+    joinAudience: &quot;&lt;string&gt;&quot; # 任意; string
+    joinTokenFrom: # 任意; object
+      base64: true # 任意; boolean
+      env: &quot;&lt;string&gt;&quot; # 任意; string
+      file: &quot;&lt;string&gt;&quot; # 任意; string
+    mobilityPoolRefs: # 任意; array
+      - &quot;&lt;string&gt;&quot; # string
+    mobilityPrefixes: # 任意; array
+      - &quot;&lt;string&gt;&quot; # string
+    rrNodeSetRef: &quot;&lt;string&gt;&quot; # 任意; string
+    rrSetRef: &quot;&lt;string&gt;&quot; # 任意; string
+    transportProfileRef: &quot;&lt;string&gt;&quot; # 必須; string
+    ttl: &quot;&lt;string&gt;&quot; # 任意; string
+    tunnelAddressPrefixes: # 必須; array
+      - &quot;&lt;string&gt;&quot; # string
+    wireGuard: # 任意; object
+      allowedExtraIPPrefixes: # 任意; array
+        - &quot;&lt;string&gt;&quot; # string
+      endpointPrefixes: # 任意; array
+        - &quot;&lt;string&gt;&quot; # string
+      interface: &quot;&lt;string&gt;&quot; # 必須; string
+      persistentKeepalive: 0 # 任意; integer; minimum=0; maximum=65535
+</code></pre>
+<p><a href="/examples/cloudedge-dynamic-rr-a-hub.yaml">設定例</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#yaml定義">YAML定義</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/reference/resources/SAMEnrollmentPolicy.md">GitHub</a></div></footer></body></html>

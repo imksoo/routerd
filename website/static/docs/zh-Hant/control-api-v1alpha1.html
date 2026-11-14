@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>控制 API v1alpha1 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/control-api-v1alpha1.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/control-api-v1alpha1.html" lang="en" hreflang="en">English</a><a href="/docs/ja/control-api-v1alpha1.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/control-api-v1alpha1.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/control-api-v1alpha1.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="控制-api-v1alpha1">控制 API v1alpha1</h1>
+<p>routerd 與受管理的常駐程式會在本機的 Unix domain socket 上公開 HTTP+JSON API。
+此 API 並非用於遠端管理，而是供 <code>routerctl</code>、routerd 本體以及運維腳本在同一主機上讀取狀態所使用。</p>
+<h2 id="routerd-本體">routerd 本體</h2>
+<p><code>routerd serve</code> 監聽以下 socket：</p>
+<pre><code class="language-text">/run/routerd/routerd.sock
+/run/routerd/routerd-status.sock
+</code></pre>
+<p>主控制 socket 供具有權限的本機客戶端使用，並公開套用（apply）、刪除等變更類 endpoint。唯讀的 status socket 僅公開狀態查詢類 endpoint，供一般使用者確認系統狀態。</p>
+<p>主控制 socket 的讀取 endpoint 可回傳狀態、事件及資源狀態，主要範例如下：</p>
+<table>
+<thead>
+<tr>
+<th>Method + Path</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET /api/control.routerd.net/v1alpha1/status</code></td>
+<td>routerd 自身的狀態</td>
+</tr>
+<tr>
+<td><code>GET /api/control.routerd.net/v1alpha1/connections</code></td>
+<td>從 conntrack 或 pf state 取得的當前連線</td>
+</tr>
+<tr>
+<td><code>GET /api/control.routerd.net/v1alpha1/dns-queries</code></td>
+<td>DNS 查詢歷程</td>
+</tr>
+<tr>
+<td><code>GET /api/control.routerd.net/v1alpha1/traffic-flows</code></td>
+<td>通訊流量歷程</td>
+</tr>
+<tr>
+<td><code>GET /api/control.routerd.net/v1alpha1/firewall-logs</code></td>
+<td>防火牆日誌</td>
+</tr>
+</tbody>
+</table>
+<h2 id="sam-enrollment-endpoint">SAM enrollment endpoint</h2>
+<p>Dynamic SAM enrollment 也使用同一 API handler，但 RR 只能透過 enrollment runbook 中明確
+設定的已認證 listener 或有權限的本機 socket 公開這些 endpoint。它們不是通用的遠端管理 API。</p>
+<table>
+<thead>
+<tr>
+<th>Method + Path</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>POST /api/control.routerd.net/v1alpha1/sam-enrollment-claims</code></td>
+<td>接納一個 leaf 的 client-authored enrollment claim。</td>
+</tr>
+<tr>
+<td><code>POST /api/control.routerd.net/v1alpha1/sam-enrollment-claims/{name}/revoke</code></td>
+<td>明確 revoke 已接納的 claim；不要將其用於復原。</td>
+</tr>
+<tr>
+<td><code>GET /api/control.routerd.net/v1alpha1/sam-enrollment-topologies/{name}?claim=...&amp;claimDigest=...&amp;claimIdentityDigest=...</code></td>
+<td>取得指定的 RRSet，以及僅在已證明時取得選用的直連 peer group。</td>
+</tr>
+</tbody>
+</table>
+<p><code>claimIdentityDigest</code> 是只包含 client-authored claim material 的 hash。設定 <code>joinTokenFrom</code> 時由
+join HMAC 驗證；未設定時屬於 trusted control-plane。目前 RR 用它區分明確 revoke、clean boot 後
+空的 admission store 和不同的 active identity。只有檢查過所有 bootstrap RR 後，
+<code>SAMEnrollmentClient</code> 才會把 identity-aware 缺失回應視為重新提交目前 direct claim 的許可。不同
+active identity 只可在初次 admission 或本機 claim 變更時替換，periodic renewal 絕不替換。缺少
+digest、舊版／混合 RR、revoke 或任何 request failure 都必須保留 RR-only fallback；呼叫端應使用
+client/controller，而不是自行解讀這些回應。</p>
+<h2 id="controller-status">Controller status</h2>
+<p><code>Status.status.controllers</code> 與 <code>Controllers</code> endpoint 會回傳控制器在設定上的 mode，以及執行時期的調和（reconcile）狀態。runtime 欄位包含 <code>interval</code>、<code>lastTrigger</code>、<code>lastReconcileTime</code>、<code>nextReconcileTime</code>、<code>reconcileCount</code>、<code>reconcileErrorCount</code>、<code>consecutiveErrorCount</code>、<code>currentError</code>、<code>lastDuration</code>、<code>maxDuration</code>、<code>averageDuration</code>、<code>lastError</code>、<code>lastErrorTime</code>、<code>lastErrorClearedAt</code>。<code>reconcileErrorCount</code> 為累計值，如需判斷目前是否處於失敗狀態，請使用 <code>currentError</code> 與 <code>consecutiveErrorCount</code>。這些皆為觀測值，若控制器尚未執行過，請視為欄位不存在。</p>
+<h2 id="受管理的常駐程式">受管理的常駐程式</h2>
+<p>具有狀態的常駐程式各有其專屬的 socket：</p>
+<pre><code class="language-text">/run/routerd/dhcpv6-client/wan-pd.sock
+/run/routerd/dhcpv4-client/wan.sock
+/run/routerd/pppoe-client/wan-pppoe.sock
+/run/routerd/healthcheck/internet.sock
+</code></pre>
+<p>在 FreeBSD 上，對應路徑為 <code>/var/run/routerd/...</code>。</p>
+<h2 id="常駐程式共通-endpoint">常駐程式共通 endpoint</h2>
+<table>
+<thead>
+<tr>
+<th>Method + Path</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET /v1/healthz</code></td>
+<td>存活確認（liveness check）</td>
+</tr>
+<tr>
+<td><code>GET /v1/status</code></td>
+<td>常駐程式的狀態及相關資源的狀態</td>
+</tr>
+<tr>
+<td><code>GET /v1/events</code></td>
+<td>事件日誌。可透過 query 參數指定 <code>since</code>、<code>wait</code>、<code>topic</code></td>
+</tr>
+<tr>
+<td><code>POST /v1/commands/reload</code></td>
+<td>重新載入設定</td>
+</tr>
+<tr>
+<td><code>POST /v1/commands/renew</code></td>
+<td>各常駐程式的主動操作（DHCPv6 Renew、DHCPv4 更新租約、立即執行健康探測等）</td>
+</tr>
+<tr>
+<td><code>POST /v1/commands/stop</code></td>
+<td>安全停止</td>
+</tr>
+</tbody>
+</table>
+<p><code>renew</code> 的意義因常駐程式而異。DHCPv6 為傳送 Renew、DHCPv4 為更新租約、healthcheck 為立即執行探測。</p>
+<h2 id="phase-詞彙">Phase 詞彙</h2>
+<p><code>ResourceStatus.phase</code> 跨資源使用共通詞彙：</p>
+<table>
+<thead>
+<tr>
+<th>Phase</th>
+<th>說明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Pending</code></td>
+<td>等待必要的輸入</td>
+</tr>
+<tr>
+<td><code>Bound</code></td>
+<td>持有 DHCP 等租約</td>
+</tr>
+<tr>
+<td><code>Applied</code></td>
+<td>已套用至主機端</td>
+</tr>
+<tr>
+<td><code>Up</code></td>
+<td>tunnel 或 link 已啟動</td>
+</tr>
+<tr>
+<td><code>Installed</code></td>
+<td>路由或設定檔已就位</td>
+</tr>
+<tr>
+<td><code>Healthy</code></td>
+<td>健康檢查已達成功閾值</td>
+</tr>
+<tr>
+<td><code>Unhealthy</code></td>
+<td>健康檢查已達失敗閾值</td>
+</tr>
+<tr>
+<td><code>Error</code></td>
+<td>操作失敗</td>
+</tr>
+</tbody>
+</table>
+<p>每個 phase 均附有 <code>conditions</code> 陣列。客戶端程式碼應使用 <code>phase</code> 與 <code>conditions</code> 進行判斷，而非解析日誌字串。</p>
+<h2 id="事件">事件</h2>
+<p>事件具有 topic 與 attributes：</p>
+<pre><code class="language-json">{
+  &quot;topic&quot;: &quot;routerd.dhcpv6.client.prefix.renewed&quot;,
+  &quot;attributes&quot;: {
+    &quot;resource.kind&quot;: &quot;DHCPv6PrefixDelegation&quot;,
+    &quot;resource.name&quot;: &quot;wan-pd&quot;
+  }
+}
+</code></pre>
+<p>routerd 將事件持久化至 SQLite。
+受管理的常駐程式另外也會記錄至各自的 <code>events.jsonl</code>。
+<code>EventRule</code> 與 <code>DerivedEvent</code> 以此串流為輸入，發布虛擬事件。</p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#routerd-本體">routerd 本體</a></li>
+<li><a href="#sam-enrollment-endpoint">SAM enrollment endpoint</a></li>
+<li><a href="#controller-status">Controller status</a></li>
+<li><a href="#受管理的常駐程式">受管理的常駐程式</a></li>
+<li><a href="#常駐程式共通-endpoint">常駐程式共通 endpoint</a></li>
+<li><a href="#phase-詞彙">Phase 詞彙</a></li>
+<li><a href="#事件">事件</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/control-api-v1alpha1.md">GitHub</a></div></footer></body></html>

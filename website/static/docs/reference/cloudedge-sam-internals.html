@@ -1,0 +1,461 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CloudEdge SAM Internals · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/reference/cloudedge-sam-internals.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/reference/cloudedge-sam-internals.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/reference/cloudedge-sam-internals.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/cloudedge-sam-internals.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/cloudedge-sam-internals.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="cloudedge-sam-internals">CloudEdge SAM Internals</h1>
+<p>This page explains the <strong>architecture, internal implementation, and
+configuration fields</strong> of CloudEdge SAM (Selective Address Mobility) at a level
+where operators and implementers can both follow "what happens inside". Read
+<a href="../concepts/cloudedge-sam.html">What is CloudEdge SAM</a> for the conceptual
+introduction and <a href="selective-address-mobility.html">Selective Address Mobility</a> for how
+to author the config first.</p>
+<p>The implementation lives in <code>pkg/controller/mobility/</code>. The descriptions here are
+kept consistent with that code (notably <code>planner.go</code> and <code>controller.go</code>).</p>
+<h2 id="architecture-two-planes">Architecture: two planes</h2>
+<p>CloudEdge SAM cleanly separates reachability from cloud ingress.</p>
+<h3 id="plane-1-overlay-reachability-the-bgp-best-path-is-the-truth">Plane 1: overlay reachability — the BGP best path is the truth</h3>
+<p>Each owned address in a <code>MobilityPool</code> is represented as an <strong>IPv4 unicast <code>/32</code>
+BGP advertisement</strong>.</p>
+<ul>
+<li>The <strong>holder of a <code>/32</code> is the node that wins the BGP best path</strong> for that
+  prefix.</li>
+<li>Non-holder nodes learn remote owned addresses from the BGP best path and
+  install delivery routes via the overlay next hop into the FIB.</li>
+<li>Address movement is expressed as <strong>BGP withdraw / advertise and path
+  preference changes</strong>. Operators never hand-author leases, per-address
+  ownership records, or provider actions.</li>
+<li>Failure detection is accelerated by <strong>BFD</strong> (FRR <code>bfdd</code>); when BFD is unstable,
+  BGP hold timers remain the non-destructive authority for route withdrawal.</li>
+</ul>
+<p>This is the decision in ADR 0012, which
+replaced the older bespoke ledgers (<code>AddressLease</code> / <code>ownershipEpoch</code> /
+<code>captureEpoch</code>).</p>
+<h3 id="plane-2-cloud-ingress-provider-operations-are-background-reconciliation">Plane 2: cloud ingress — provider operations are background reconciliation</h3>
+<p>Packets entering <strong>from outside</strong> through a VPC / VNet / VCN follow the cloud
+fabric's routing, not the BGP overlay. So routerd:</p>
+<ul>
+<li>assigns the target <code>/32</code> to the holder VM's NIC as a <strong>secondary IP</strong>, and</li>
+<li><strong>enables forwarding</strong> on that NIC (AWS <code>sourceDestCheck=false</code> / Azure
+  <code>ipForwarding=true</code> / OCI <code>skipSourceDestCheck=true</code> / GCP <code>canIpForward=true</code>).</li>
+</ul>
+<p>But these are <strong>not the source of truth for reachability</strong>; they are operations
+<strong>reconciled eventually in the background</strong> from the BGP mobility view and
+provider inventory. Even if the provider API lags, overlay reachability recovers
+from BGP convergence alone.</p>
+<h2 id="the-bgp-community-taxonomy">The BGP community taxonomy</h2>
+<p>The BGP communities that mobility attaches to <code>/32</code> advertisements are the
+<strong>signal wires</strong> that tell other nodes a node's role, the provenance of an
+advertisement, and whether it is the holder. They are defined in
+<code>pkg/controller/mobility/controller.go</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Community</th>
+<th>Constant</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>64512:100</code></td>
+<td><code>…CommunityOwner</code></td>
+<td>this advertisement is a mobility owner <code>/32</code></td>
+</tr>
+<tr>
+<td><code>64512:101</code></td>
+<td><code>…CommunityRoleOnPrem</code></td>
+<td>advertising node's role is on-prem</td>
+</tr>
+<tr>
+<td><code>64512:102</code></td>
+<td><code>…CommunityRoleCloud</code></td>
+<td>advertising node's role is cloud</td>
+</tr>
+<tr>
+<td><code>64512:110</code></td>
+<td><code>…CommunitySourceObserved</code></td>
+<td>provenance: observation-derived advertisement</td>
+</tr>
+<tr>
+<td><code>64512:111</code></td>
+<td><code>…CommunitySourceStatic</code></td>
+<td>provenance: a static owned-address advertisement</td>
+</tr>
+<tr>
+<td><code>64512:112</code></td>
+<td><code>…CommunitySourceHandover</code></td>
+<td>provenance: advertisement during handover</td>
+</tr>
+<tr>
+<td><code>64512:120</code></td>
+<td><code>…CommunityFailover</code></td>
+<td>a seize advertisement during failover</td>
+</tr>
+<tr>
+<td><strong><code>64512:121</code></strong></td>
+<td><strong><code>…CommunityActiveHolder</code></strong></td>
+<td><strong>holder-beacon: attached only by the active holder</strong></td>
+</tr>
+<tr>
+<td>(per node)</td>
+<td>node-identity community</td>
+<td>identifies which node advertised (derived from nodeRef)</td>
+</tr>
+</tbody>
+</table>
+<p>LOCAL_PREF is set relative to <code>bgpMobilityLocalPrefBase = 200</code>, so an active
+advertisement carries a higher preference than a standby's make-before-break
+advertisement.</p>
+<h3 id="the-holder-beacon-64512121-is-the-linchpin">The holder-beacon (<code>64512:121</code>) is the linchpin</h3>
+<p><code>bgpMobilityPathAttrs</code> (<code>controller.go</code>) attaches <code>64512:121</code> only when the
+advertisement is from an <strong>active holder</strong>.</p>
+<p>On the receiving side, <code>bgpObservedGroupHolder</code> (<code>planner.go</code>) treats a node as
+the group holder only when the best path for a <code>/32</code> carries <strong>both the node's
+node-identity community and <code>64512:121</code></strong>. This means a:</p>
+<ul>
+<li>standby's weak (lower-preference) make-before-break advertisement, and</li>
+<li>just-booted (cold-start) advertisement that is not yet active,</li>
+</ul>
+<p>are <strong>not mistaken</strong> for holdership. It is an <strong>authoritative holder signal</strong>
+that is plugin-independent (BGP is always present) and best-path-independent (only
+the active node emits the beacon).</p>
+<blockquote>
+<p>Design history: earlier attempts inferred holdership from next-hop matching or
+a provider self-scan. Both failed — "the next hop is the tunnel underlay, not
+the SAM endpoint" and "a node cannot observe its peer's NIC holdings",
+respectively. Concentrating on a dedicated beacon community on the BGP best path
+resolves both, including the cold-start mutual-defer deadlock.</p>
+</blockquote>
+<h2 id="placement-deciding-activestandby">Placement: deciding active/standby</h2>
+<p>Each <code>SAMNodeSet</code> node has <code>placement.group</code> and <code>placement.priority</code>; the
+MobilityPool imports that shared placement through <code>membersFrom</code>.</p>
+<ul>
+<li><strong>group</strong> — the unit that competes for active/standby (e.g. <code>azure-edge</code>).</li>
+<li><strong>priority</strong> — a <strong>lower number is higher priority</strong>. Members left at <code>0</code>
+  (unset) are auto-numbered <code>10, 20, 30, …</code> within the group by
+  <code>autoPlacementPriorities</code>.</li>
+</ul>
+<h3 id="the-decision-logic-evaluateplacementwithincumbent">The decision logic (<code>evaluatePlacementWithIncumbent</code>)</h3>
+<ol>
+<li>Order the non-drained members of the same group by <strong>priority ascending, then
+   nodeRef ascending</strong>.</li>
+<li>Take the head as the active candidate.</li>
+<li><strong>No-preempt tie-break</strong>: on an equal-priority tie, prefer the <strong>current holder
+   (incumbent)</strong> over the lexicographic nodeRef winner, so a returning peer does
+   not reclaim a live holder and cause a pointless handoff.</li>
+<li>But a <strong>strictly higher priority (lower number) member still reclaims</strong> — the
+   incumbent override applies only when the incumbent <em>shares</em> the top priority.</li>
+</ol>
+<p>When <code>incumbentHolder</code> is empty the logic is pure priority/nodeRef ordering,
+which is also how the group bootstraps before any holder is observed.</p>
+<h2 id="three-mechanisms-that-reconcile-no-preempt-with-failover">Three mechanisms that reconcile no-preempt with failover</h2>
+<p>On top of the bare placement decision, three mechanisms suppress return-time
+accidents and switch churn (all in <code>planner.go</code>).</p>
+<h3 id="1-startup-fence">1. Startup fence</h3>
+<pre><code>placementSettleStart  = time.Now()        // captured at process start (resets on restart)
+placementSettleWindow = 120 * time.Second
+</code></pre>
+<p><code>fencePlacementForStartupWithReadiness</code> defers an active assertion when all
+three hold: <strong>"about to assert active", "no incumbent peer observed yet", and
+"startup readiness is not complete"</strong>. Readiness means the local BGP control
+plane has completed an initial observation and, for provider-inventory-backed
+captures, provider self-observation has completed. <code>placementSettleWindow</code>
+remains as a conservative fallback for callers that do not provide readiness
+signals. When readiness is known but remains incomplete, the fence is bounded:
+after <code>placementSettleWindow * 3</code> (360 seconds by default) routerd releases the
+active assertion even while readiness remains incomplete, so overlay liveness is
+not blocked forever by a provider API or observation failure.</p>
+<ul>
+<li>A just-returned node would otherwise win the equal-priority tie-break and
+  reclaim holdership before its fresh BGP RIB / provider observations converge.
+  The fence prevents this.</li>
+<li>A node whose BGP/provider observations have completed can leave the fence
+  before the wall-clock window expires, which avoids crash-loop nodes remaining
+  artificially passive after every restart.</li>
+<li>A node whose observations are still incomplete remains fenced even after the
+  wall-clock window, so a partitioned or blind node does not assert active merely
+  because time elapsed.</li>
+<li>A node that already observes an incumbent peer is not fenced; the normal
+  no-preempt placement tie-break already defers to that holder.
+  This is a new-flow reachability guarantee after convergence; in-flight TCP
+  sessions can still reset or stall across an abrupt active loss because SAM
+  does not synchronize conntrack or transport state.</li>
+</ul>
+<h3 id="2-holder-retention">2. Holder retention</h3>
+<p><code>applyHolderRetention</code> keeps a node active <strong>while it physically holds its
+group's captures (<code>selfHolds</code>)</strong>. It applies when:</p>
+<ul>
+<li>the node is not already active,</li>
+<li><code>selfHolds</code> is true,</li>
+<li><code>yieldToHigherPriority</code> is false (see below), and</li>
+<li>the startup settle window has elapsed (so the fresh self-capture observation is
+  trusted rather than a returning node's stale "I used to hold" memory).</li>
+</ul>
+<p>Thus a live holder does not surrender ownership to a deterministic tie-break
+winner or a transient peer observation (the ADR 0016 principle: <strong>yield only on
+losing your own holdership, never because a peer was observed</strong>).</p>
+<h3 id="3-unequal-priority-auto-restore-higherpriorityholderactive">3. Unequal-priority auto-restore (<code>higherPriorityHolderActive</code>)</h3>
+<p><code>higherPriorityHolderActive</code> returns true when the holder observed via the BGP
+holder-beacon is a <strong>strictly higher-priority peer (lower priority number)</strong> than
+self. It feeds the <code>yieldToHigherPriority</code> argument of <code>applyHolderRetention</code>.</p>
+<ul>
+<li>At <strong>equal priority</strong> it is always false → retention holds and the result is
+  no-preempt.</li>
+<li>At <strong>unequal priority</strong>, the low-priority interim holder releases retention and
+  <strong>yields</strong> once the high-priority node returns and starts emitting the beacon →
+  the configured auto-restore proceeds.</li>
+</ul>
+<p>The handover moves <code>/32</code>s one at a time, so the dataplane never dips.</p>
+<h2 id="fencing-rejecting-stale-provider-operations">Fencing: rejecting stale provider operations</h2>
+<p>Provider operations (secondary-IP assign/unassign, etc.) carry the <strong>mobility
+path signature (<code>mobilityPathSig</code>)</strong> at generation time, plus the desired holder
+and the observed provider/journal transition. On reconcile, <strong>operations whose
+desired BGP path no longer matches are skipped</strong>. The old ownership/capture epoch
+tables are gone.</p>
+<p>Seize (the takeover during failover) has dedicated hold-downs:</p>
+<ul>
+<li><code>bgpSeizeLivenessMissingHold = 30s</code> — suppress seize when the liveness marker
+  is missing</li>
+<li><code>bgpProviderMissingRetryHold = 30s</code> — suppress retry when the provider
+  observation is missing</li>
+<li><code>bgpTrapRIBMissingHold = 2m</code> — retention when the trap route is absent from the
+  RIB</li>
+</ul>
+<h2 id="generic-dynamic-rr-peer-group-sync-is-fail-static">Generic dynamic RR peer-group sync is fail-static</h2>
+<p>There are two deliberately separate runtime topology paths. RR nodes may
+publish generic <code>SAMPeerGroup</code> resources over the TCP 19652 sync endpoint so
+leaves can bootstrap transport peers. Fetched peer groups are saved as dynamic
+config parts with ordinary TTLs:</p>
+<ul>
+<li><code>peer-group-sync/&lt;name&gt;</code> for <code>SAMPeerGroup</code></li>
+</ul>
+<p><code>SAMPeerGroup</code> is a runtime payload only; it cannot be declared in the
+operator-authored top-level resource list.</p>
+<p>SAM enrollment does <strong>not</strong> use that peer-group sync path. After an enrollment
+claim is admitted, the RR projects the route-reflector nodes selected by
+<code>SAMEnrollmentPolicy.spec.rrNodeSetRef</code> from its static <code>SAMNodeSet</code> into a
+policy-scoped runtime <code>SAMRRSet</code>. The leaf fetches and persists that snapshot as
+dynamic state; it does not author a local policy, NodeSet, or RRSet. A policy
+with <code>directMesh.peerGroupRef</code> can put a second, policy-scoped <code>SAMPeerGroup</code>
+into that <strong>same</strong> fetched dynamic-config part for a signed <code>directMesh: true</code>
+claim. That group contains eligible remote leaves only; it is not cached through
+TCP 19652 and must match the local transport fingerprint.</p>
+<p>A signed direct leaf may legitimately have an empty <code>mobility.ownedAddresses</code>
+list while it is joining or has no address to capture. routerd still creates its
+authenticated direct BGP session, but gives that neighbor an explicit
+<strong>reject-all</strong> import rule: no mobility route is advertised from the empty
+claim or accepted over that direct link. When a signed <code>/32</code> later appears, the
+allowlist becomes that exact address and the normal direct preference applies.
+This lets a leaf become ready without inventing an address, while the RR path
+continues to carry all usable traffic.</p>
+<p><code>routerctl mobility leaf-config</code> accepts this state without <code>--owned-address</code>.
+It omits the local service address and all BGP export/redistribution prefixes,
+so the generated file has the same no-route behavior as the admitted claim.</p>
+<p>The direct group is deliberately optional. <code>SAMTransportProfile</code> keeps the
+<code>SAMRRSet</code> source and adds the direct group with <code>direct: true</code>. Direct peers
+receive a higher local preference only while their BGP session is alive. If the
+group is missing, expired, incompatible, or its underlay route cannot be built,
+routerd omits those direct artifacts and continues to use the RR peers. See the
+dynamic RR/leaf enrollment runbook.</p>
+<p>TTL expiry does not mean the data plane should be dismantled. If a leaf has a
+previously fetched peer group and the RR publisher disappears, routerd treats the
+expired record as <strong>last-known-good</strong> input, marks the source <code>Stale</code>, and keeps
+the generated tunnel and BGP peer rendered. Only a source that has never been
+seen remains <code>Pending</code>. MobilityPool membership is resolved from the static
+<code>SAMNodeSet</code> configuration, while the MobilityPool itself supplies local <code>/32</code>
+and capture intent; neither is a synced dynamic resource.</p>
+<h2 id="capture-strategies-how-cloud-ingress-is-built">Capture strategies (how cloud ingress is built)</h2>
+<p><code>capture.type</code> selects the normal ingress mechanism. <code>capture.captureStrategy</code>
+is only an explicit <code>route-table</code> override for <code>provider-secondary-ip</code>.</p>
+<table>
+<thead>
+<tr>
+<th>configuration</th>
+<th>providers</th>
+<th>behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>type: provider-secondary-ip</code></td>
+<td>AWS / Azure / OCI / GCP</td>
+<td>assign the <code>/32</code> to the NIC as a secondary IP</td>
+</tr>
+<tr>
+<td><code>captureStrategy: route-table</code></td>
+<td>Azure</td>
+<td>point a UDR entry at the holder's NIC (<code>NextHopType=VirtualAppliance</code>)</td>
+</tr>
+<tr>
+<td><code>type: proxy-arp</code></td>
+<td>on-prem</td>
+<td>capture on the L2 segment via proxy-ARP/GARP</td>
+</tr>
+</tbody>
+</table>
+<p>The current release lab certification covers <code>secondary-ip</code> capture only. The
+<code>route-table</code> strategy is <strong>uncertified</strong>. On Azure it requires
+<code>capture.target.nextHopIPAddress</code> and waits for provider inventory to observe
+the UDR pointing at the local router before routerd advertises the captured
+<code>/32</code> to BGP. That route-table-specific coupling means ARM/provider API latency
+can delay overlay convergence. <code>secondary-ip</code> capture is not gated on
+route-table observation.</p>
+<p>The alternative write-accepted gate is intentionally not used for certification:
+an accepted route-table write only proves that the provider API accepted the
+mutation, not that the effective route table is steering the <code>/32</code> at the local
+router. Advertising BGP on write acceptance can black-hole traffic during the
+write-to-observation window, especially after retries, throttling, or delayed
+inventory propagation. The safer contract is provider-observed ingress before
+overlay advertisement.</p>
+<p><code>secondary-ip</code> remains the certified hybrid strategy for this release. It is
+still confirmed through provider self inventory, but its observation is the NIC
+secondary-address attachment rather than a route-table entry. Any future
+<code>route-table</code> certification must include large-pool behavior, failover rewrite
+ordering, inventory UDR parsing, and ARM/provider delay or throttling evidence
+before the uncertified label can be removed.</p>
+<p><strong>Same-subnet constraint (<a href="https://github.com/imksoo/routerd/issues/516">#516</a>,
+live-validated 2026-06-16):</strong> CloudEdge SAM's primary use case is same-subnet
+lift-and-shift, where the mobility prefix falls inside the VPC/VNet/VCN CIDR.
+Under this constraint, only Azure UDR accepts intra-subnet <code>/32</code> routes. AWS
+rejects VPC-internal <code>/32</code> destinations with <code>InvalidParameterValue</code>, and OCI
+rejects intra-subnet rules with <code>InvalidParameter: Intra-subnet/vlan rule is
+not supported</code>. Consequently <code>route-table</code> is effective only on Azure for
+same-subnet deployments.</p>
+<table>
+<thead>
+<tr>
+<th>Cloud</th>
+<th>Same-subnet <code>/32</code> route</th>
+<th>Recommended strategy</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Azure</strong></td>
+<td>UDR accepted</td>
+<td><code>secondary-ip</code> (few addresses) or <code>route-table</code> (many addresses, UDR limit 1000)</td>
+</tr>
+<tr>
+<td><strong>AWS</strong></td>
+<td>Rejected by VPC API</td>
+<td><code>secondary-ip</code> only; scale via N+1 instance distribution (<a href="https://github.com/imksoo/routerd/issues/352">#352</a>)</td>
+</tr>
+<tr>
+<td><strong>OCI</strong></td>
+<td>Rejected by VCN API</td>
+<td><code>secondary-ip</code> only (VNIC limit ~31)</td>
+</tr>
+</tbody>
+</table>
+<p>Every capture is accompanied by a <strong>forwarding-enable</strong> action so the NIC can
+forward packets that are not addressed to itself.</p>
+<h2 id="provider-split-brain-reconciliation">Provider split-brain reconciliation</h2>
+<p>BGP remains the control-plane truth for overlay reachability, but provider
+inventory can temporarily report the same <code>/32</code> as owned in more than one cloud
+fabric after a partition. When fresh provider-discovery facts disagree, the
+ownership resolver marks the address <code>Conflict</code> with
+<code>conflictReason=duplicate-provider-home-owners</code> and includes all observed owners.</p>
+<p>The resolver also records a deterministic <code>conflictWinnerNode</code>:</p>
+<ul>
+<li>if the healed BGP RIB has a home-owner path for the <code>/32</code>, that BGP owner wins;</li>
+<li>otherwise the lowest stable owner key wins (<code>nodeRef</code>, provider ref, resource
+  ref, NIC ref, subnet ref, then address), independent of provider scan recency.</li>
+</ul>
+<p>Losers do not create new provider capture actions. If the losing node observes
+the conflicting <code>/32</code> still attached to its own provider-secondary capture, the
+status records <code>conflictResolution=loser-release-local-capture</code>; after the same
+stale-capture hold-down used for trap cleanup, routerd emits a scoped
+<code>unassign-secondary-ip</code> for that local capture. Nodes that do not hold a local
+capture report <code>loser-withhold-local-capture</code>. The winner reports
+<code>winner-retain-local-capture</code>.</p>
+<p>The generated RR-client admission policy is a route-admission boundary, not a
+per-address authorization system. It requires the advertising node's identity,
+forbids other topology node identities, and limits accepted routes to <code>/32</code>s
+inside the declared MobilityPool prefixes. A compromised leaf can still advertise
+a pool-local <code>/32</code> with its own identity; preventing that requires an additional
+ownership authorization signal outside this BGP filter.</p>
+<h2 id="on-prem-lan-authority-is-unchanged">On-prem LAN authority is unchanged</h2>
+<p>BGP decides <strong>remote overlay reachability</strong>, but it does not replace the local
+L2/ARP authority. On the on-prem side, the following remain in force as local
+safety mechanisms:</p>
+<ul>
+<li>VRRP-master gating,</li>
+<li>proxy-ARP / GARP,</li>
+<li>non-master fail-closed behavior, and</li>
+<li>the duplicate-holder doctor check.</li>
+</ul>
+<h2 id="graceful-stop-make-before-break-handover">Graceful stop (make-before-break handover)</h2>
+<p><code>routerd serve --graceful-stop-timeout</code> (default <code>20s</code>) makes a node, on
+SIGTERM/SIGINT, <strong>wait up to this long for the mobility make-before-break
+handover</strong>. <code>0</code> disables it. On a planned restart, the new holder establishes its
+advertisement before the old holder steps down, avoiding a dip.</p>
+<p>The handover check reads the live, selected GoBGP RIB; routerd's local
+<code>applied.json</code> path journal is not evidence that a peer has taken over. A stop
+received while routerd is still bootstrapping exits immediately instead of
+waiting for a handover that has not started. The peer-takeover polling phase of
+a normal handover uses the configured <code>graceful-stop-timeout</code>.</p>
+<h2 id="status-fields">Status fields</h2>
+<p><code>MobilityPool</code> status is a display projection, not a desired-state transport.
+It includes <code>prefix</code>, <code>groupRef</code>, <code>placementActive</code>, <code>placementActiveNode</code>,
+and <code>placementGroup</code>; <code>ownershipResolverControlPlaneOwnerTable</code> is the
+operator-facing per-address ownership view. BGP liveness markers are decoded
+into the typed runtime snapshot and are not a second status contract.</p>
+<p>These fields are visible via the <code>routerctl doctor</code> SAM diagnostics and
+<code>routerctl get MobilityPool/&lt;name&gt;</code>.</p>
+<h2 id="behavior-observed-on-real-hardware-for-reference">Behavior observed on real hardware (for reference)</h2>
+<p>Measured on an unequal-priority pair (priority 10 vs 20, Azure hardware):</p>
+<ul>
+<li><strong>A1 failover</strong>: stop the high-priority node → the low-priority node seizes all
+  three <code>/32</code>s in about 132 seconds → new-flow dataplane recovery.</li>
+<li><strong>A2 restore</strong>: bring the high-priority node back → it reclaims the three <code>/32</code>s
+  one at a time (no flapping). Client ping at 1-second intervals during the
+  reclaim had <strong>0% loss</strong>.</li>
+<li>For an equal-priority pair, no-preempt held for 561 seconds with no holder
+  swap, no split, no dip, and no cold-start deadlock.</li>
+<li>A long-lived throttled HTTP transfer that was already active before an abrupt
+  active leaf stop is tracked separately from the normal failover matrix. It can
+  time out even when post-convergence ping, SSH, tracepath, and fresh HTTP
+  transfers pass through the standby. Treat this as expected reset/retry
+  semantics until a future session-continuity design explicitly changes it.</li>
+</ul>
+<h2 id="related">Related</h2>
+<ul>
+<li><a href="../concepts/cloudedge-sam.html">What is CloudEdge SAM</a> — concepts and new terms</li>
+<li><a href="selective-address-mobility.html">Selective Address Mobility</a> — the <code>MobilityPool</code> config model</li>
+<li>ADR 0012: BGP /32 Address Mobility — the decision to make BGP the source of truth</li>
+<li>ADR 0008: Capture Coordination via Fencing — background on fencing</li>
+<li><a href="provider-action-execution.html">provider action execution</a> — the approval/execution gate for provider operations</li>
+</ul></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#architecture-two-planes">Architecture: two planes</a><ul>
+<li><a href="#plane-1-overlay-reachability-the-bgp-best-path-is-the-truth">Plane 1: overlay reachability — the BGP best path is the truth</a></li>
+<li><a href="#plane-2-cloud-ingress-provider-operations-are-background-reconciliation">Plane 2: cloud ingress — provider operations are background reconciliation</a></li>
+</ul>
+</li>
+<li><a href="#the-bgp-community-taxonomy">The BGP community taxonomy</a><ul>
+<li><a href="#the-holder-beacon-64512121-is-the-linchpin">The holder-beacon (64512:121) is the linchpin</a></li>
+</ul>
+</li>
+<li><a href="#placement-deciding-activestandby">Placement: deciding active/standby</a><ul>
+<li><a href="#the-decision-logic-evaluateplacementwithincumbent">The decision logic (evaluatePlacementWithIncumbent)</a></li>
+</ul>
+</li>
+<li><a href="#three-mechanisms-that-reconcile-no-preempt-with-failover">Three mechanisms that reconcile no-preempt with failover</a><ul>
+<li><a href="#1-startup-fence">1. Startup fence</a></li>
+<li><a href="#2-holder-retention">2. Holder retention</a></li>
+<li><a href="#3-unequal-priority-auto-restore-higherpriorityholderactive">3. Unequal-priority auto-restore (higherPriorityHolderActive)</a></li>
+</ul>
+</li>
+<li><a href="#fencing-rejecting-stale-provider-operations">Fencing: rejecting stale provider operations</a></li>
+<li><a href="#generic-dynamic-rr-peer-group-sync-is-fail-static">Generic dynamic RR peer-group sync is fail-static</a></li>
+<li><a href="#capture-strategies-how-cloud-ingress-is-built">Capture strategies (how cloud ingress is built)</a></li>
+<li><a href="#provider-split-brain-reconciliation">Provider split-brain reconciliation</a></li>
+<li><a href="#on-prem-lan-authority-is-unchanged">On-prem LAN authority is unchanged</a></li>
+<li><a href="#graceful-stop-make-before-break-handover">Graceful stop (make-before-break handover)</a></li>
+<li><a href="#status-fields">Status fields</a></li>
+<li><a href="#behavior-observed-on-real-hardware-for-reference">Behavior observed on real hardware (for reference)</a></li>
+<li><a href="#related">Related</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/reference/cloudedge-sam-internals.md">GitHub</a></div></footer></body></html>

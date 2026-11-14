@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Plugin · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/reference/resources/Plugin.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/reference/resources/Plugin.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/Plugin.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/Plugin.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/reference/resources/Plugin.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="plugin">Plugin</h1>
+<p><a href="../resources.html#plugin">各資源的設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: plugin.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>註冊實作routerd外掛協定的執行檔，由明確操作或EventSubscription等使用端呼叫。</p>
+<h2 id="指定條件與參照關係">指定條件與參照關係</h2>
+<ul>
+<li>executable必須是絕對路徑。執行時須為存在的一般檔案，且至少有一個執行權限位元。</li>
+<li>目前實作不會僅因宣告triggers而啟動週期或事件排程；它會驗證並在plugin list顯示，仍須由使用端呼叫。</li>
+<li>context使用apiVersion、kind、name三項識別資源。目標不存在不會造成設定驗證錯誤，而是在執行時省略該項；秘密資訊會遮蔽。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。</p>
+<pre><code class="language-yaml">- apiVersion: plugin.routerd.net/v1alpha1
+  kind: Plugin
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    capabilities: # 選填; array
+      - &quot;observe.cloud&quot; # string; enum=[&quot;observe.cloud&quot;, &quot;observe.providerPrivateIPs&quot;, &quot;propose.dynamicConfig&quot;, &quot;propose.providerAction&quot;, &quot;execute.providerAction&quot;]
+    context: # 選填; object
+      resources: # 選填; array
+        - # object
+          apiVersion: &quot;&lt;string&gt;&quot; # 必填; string
+          kind: &quot;&lt;string&gt;&quot; # 必填; string
+          name: &quot;&lt;string&gt;&quot; # 必填; string
+    env: # 選填; object
+      &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # 選填; string
+    executable: &quot;&lt;string&gt;&quot; # 必填; string
+    timeout: &quot;&lt;string&gt;&quot; # 選填; string
+    triggers: # 選填; array
+      - # object
+        every: &quot;&lt;string&gt;&quot; # 選填; string
+        topic: &quot;&lt;string&gt;&quot; # 選填; string
+        type: &quot;interval&quot; # 必填; string; enum=[&quot;interval&quot;, &quot;event&quot;]
+</code></pre>
+<h2 id="欄位意義與預設值">欄位意義與預設值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>欄位意義與預設值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.executable</code></td>
+<td>外部程式的絕對路徑；必填，無預設值。</td>
+</tr>
+<tr>
+<td><code>spec.timeout</code></td>
+<td>單次執行時間上限。預設10s；明確指定時須為正的Go duration，例如30s。</td>
+</tr>
+<tr>
+<td><code>spec.env</code></td>
+<td>以變數名稱為鍵的額外環境變數，預設空。runner先設定自身PATH，缺少時使用內建路徑，再套用這些值；不繼承其他父程序變數。忽略空鍵及含=的鍵。</td>
+</tr>
+<tr>
+<td><code>spec.capabilities</code></td>
+<td>能力宣告，預設空。接受observe.cloud、observe.providerPrivateIPs、propose.dynamicConfig、propose.providerAction、execute.providerAction。清查執行須有observe.providerPrivateIPs；供應商操作執行須有execute.providerAction；此清單本身不會啟動執行。</td>
+</tr>
+<tr>
+<td><code>spec.context</code></td>
+<td>控制透過標準輸入傳入哪些設定資源的允許清單；預設空，不傳入設定。</td>
+</tr>
+<tr>
+<td><code>spec.context.resources</code></td>
+<td>允許的資源識別清單，預設空；不展開萬用字元。</td>
+</tr>
+<tr>
+<td><code>spec.context.resources[].apiVersion</code></td>
+<td>參照設定資源的API群組與版本；每項必填。</td>
+</tr>
+<tr>
+<td><code>spec.context.resources[].kind</code></td>
+<td>參照設定資源的種類；每項必填。</td>
+</tr>
+<tr>
+<td><code>spec.context.resources[].name</code></td>
+<td>參照設定資源的metadata.name；每項必填。</td>
+</tr>
+<tr>
+<td><code>spec.triggers</code></td>
+<td>觸發宣告清單，預設空；目前runtime僅驗證與顯示，請參照上方限制。</td>
+</tr>
+<tr>
+<td><code>spec.triggers[].type</code></td>
+<td>觸發類型；必須指定interval或event，無預設值。</td>
+</tr>
+<tr>
+<td><code>spec.triggers[].every</code></td>
+<td>interval時必填，須為正的Go duration；event時此欄位不產生週期排程，無預設值。</td>
+</tr>
+<tr>
+<td><code>spec.triggers[].topic</code></td>
+<td>事件主題宣告；選填，預設空，event時驗證器也不強制要求。這不是資源名稱。</td>
+</tr>
+</tbody>
+</table>
+<p>實作: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_plugin.go">pkg/config/validate_plugin.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/plugin/runner.go">pkg/plugin/runner.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/plugin/context.go">pkg/plugin/context.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/providerinventory/executor.go">pkg/providerinventory/executor.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/provideraction/executor.go">pkg/provideraction/executor.go</a></p>
+<p><a href="/examples/cloudedge-mobility-demo/aws.yaml">設定範例</a></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#指定條件與參照關係">指定條件與參照關係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#欄位意義與預設值">欄位意義與預設值</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/reference/resources/Plugin.md">GitHub</a></div></footer></body></html>

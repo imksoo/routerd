@@ -181,4 +181,4 @@ effective-config. `plugin run --dry-run` prints a candidate dynamic part without
 writing the state database.
 
 See Hybrid cloud edge design and
-[Plugin protocol](/docs/reference/plugin-protocol).
+[Plugin protocol](/docs/plugin-protocol.md).

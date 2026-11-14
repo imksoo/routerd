@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DynamicOverridePolicy · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/reference/resources/DynamicOverridePolicy.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/reference/resources/DynamicOverridePolicy.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/reference/resources/DynamicOverridePolicy.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/DynamicOverridePolicy.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/DynamicOverridePolicy.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="dynamicoverridepolicy">DynamicOverridePolicy</h1>
+<p><a href="../resources.html#dynamicoverridepolicy">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: config.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Authorizes selected dynamic sources to mask exact startup resources while the dynamic part is active. It does not rewrite the saved startup configuration.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>Policies match the exact source plus operation plus apiVersion/kind/name target. With no matching allow entry, masking is denied. Multiple allowed active masks on one target are combined until the latest expiry.</li>
+</ul>
+<h2 id="yaml-definition">YAML definition</h2>
+<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
+<pre><code class="language-yaml">- apiVersion: config.routerd.net/v1alpha1
+  kind: DynamicOverridePolicy
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    allow: # Required; array
+      - # object
+        operations: # Required; array
+          - &quot;&lt;string&gt;&quot; # string
+        source: &quot;&lt;string&gt;&quot; # Required; string
+        targets: # Required; array
+          - # object
+            apiVersion: &quot;&lt;string&gt;&quot; # Required; string
+            kind: &quot;&lt;string&gt;&quot; # Required; string
+            name: &quot;&lt;string&gt;&quot; # Required; string
+</code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.allow</code></td>
+<td>Allow-rule list. Empty has no effect and grants no permission.</td>
+</tr>
+<tr>
+<td><code>spec.allow[].source</code></td>
+<td>Required exact DynamicConfigPart.spec.source identity, not necessarily a Plugin or DynamicConfigSource resource name. No wildcard/default.</td>
+</tr>
+<tr>
+<td><code>spec.allow[].operations</code></td>
+<td>Allowed operations; only mask is accepted. Empty grants no operation.</td>
+</tr>
+<tr>
+<td><code>spec.allow[].targets</code></td>
+<td>Exact startup-resource identities eligible for masking. Empty grants no targets.</td>
+</tr>
+<tr>
+<td><code>spec.allow[].targets[].apiVersion</code></td>
+<td>Required API group/version of the exact target; no default.</td>
+</tr>
+<tr>
+<td><code>spec.allow[].targets[].kind</code></td>
+<td>Required target kind; no wildcard expansion.</td>
+</tr>
+<tr>
+<td><code>spec.allow[].targets[].name</code></td>
+<td>Required exact target metadata.name; no wildcard expansion.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_config.go">pkg/config/validate_config.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/dynamicconfig/merge.go">pkg/dynamicconfig/merge.go</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
+<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/reference/resources/DynamicOverridePolicy.md">GitHub</a></div></footer></body></html>

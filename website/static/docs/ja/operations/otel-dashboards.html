@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OpenTelemetry ダッシュボード · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/operations/otel-dashboards.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/operations/otel-dashboards.html" lang="en" hreflang="en">English</a><a href="/docs/ja/operations/otel-dashboards.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/operations/otel-dashboards.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/operations/otel-dashboards.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="opentelemetry-ダッシュボード">OpenTelemetry ダッシュボード</h1>
+<p>routerd は、<code>routerd.&lt;domain&gt;.&lt;metric&gt;</code> という命名規則でメトリクスを出力します。
+Grafana、OpenObserve、その他の OTLP メトリクスバックエンドで、次のパネルを出発点として使えます。</p>
+<table>
+<thead>
+<tr>
+<th>パネル</th>
+<th>メトリクス</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>コントローラーの dry-run 回数</td>
+<td><code>routerd.controller.dry_run.count</code></td>
+</tr>
+<tr>
+<td>リソースのフェーズ</td>
+<td><code>routerd.resource.phase.count</code>（<code>routerd.resource.phase</code> でグループ化）</td>
+</tr>
+<tr>
+<td>アクティブな DHCP リース</td>
+<td><code>routerd.dhcp.lease.active</code>（<code>network.address.family</code> でグループ化）</td>
+</tr>
+<tr>
+<td>sticky な DHCP の hold</td>
+<td><code>routerd.dhcp.sticky.held</code>（<code>network.address.family</code> でグループ化）</td>
+</tr>
+<tr>
+<td>アクティブなクライアント</td>
+<td><code>routerd.client.active.count</code></td>
+</tr>
+<tr>
+<td>BGP ピアとプレフィックス</td>
+<td><code>routerd.bgp.peer.established</code> / <code>routerd.bgp.prefix.accepted</code></td>
+</tr>
+<tr>
+<td>VIP と ingress のフェイルオーバー</td>
+<td><code>routerd.vip.active</code> / <code>routerd.ingress.service.active</code> / <code>routerd.ingress.backend.healthy</code></td>
+</tr>
+<tr>
+<td>conntrack の使用量</td>
+<td><code>routerd.conntrack.count</code> / <code>routerd.conntrack.max</code></td>
+</tr>
+<tr>
+<td>ファイアウォールの拒否</td>
+<td><code>routerd.firewall.deny.total</code>（<code>network.protocol.name</code> でグループ化）</td>
+</tr>
+</tbody>
+</table>
+<p>リソース属性には、<code>service.name</code>、<code>service.version</code>、<code>host.name</code>、<code>routerd.host.role</code>、<code>routerd.os</code> が含まれます。</p>
+<p>PromQL 形式のクエリーの例は次のとおりです。</p>
+<pre><code class="language-promql">routerd_resource_phase_count
+routerd_dhcp_lease_active{network_address_family=&quot;ipv4&quot;}
+routerd_dhcp_sticky_held
+rate(routerd_firewall_deny_total[5m])
+</code></pre></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul></ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/operations/otel-dashboards.md">GitHub</a></div></footer></body></html>

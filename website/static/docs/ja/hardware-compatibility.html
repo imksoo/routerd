@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ハードウェア互換性 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/hardware-compatibility.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/hardware-compatibility.html" lang="en" hreflang="en">English</a><a href="/docs/ja/hardware-compatibility.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/hardware-compatibility.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/hardware-compatibility.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="ハードウェア互換性">ハードウェア互換性</h1>
+<p>routerd は、必要なカーネル機能とユーザーランド機能を持つ対応 OS の上で動きます。
+実用上の論点は、ルーターとして十分なネットワークインターフェース、CPU、
+メモリー、ストレージ耐久性があるかどうかです。</p>
+<h2 id="推奨クラス">推奨クラス</h2>
+<table>
+<thead>
+<tr>
+<th>種別</th>
+<th>適性</th>
+<th>メモ</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Intel NUC</td>
+<td>ラボルーター向き</td>
+<td>信頼性は高い傾向です。ただし Ethernet が 1 ポートのモデルが多いため、USB Ethernet や VLAN trunk は慎重に使います。</td>
+</tr>
+<tr>
+<td>Intel N100 mini PC</td>
+<td>家庭用ルーター向き</td>
+<td>消費電力あたりの性能が高いです。Intel i226/i225 NIC と十分な冷却を備えたモデルを選びます。</td>
+</tr>
+<tr>
+<td>Raspberry Pi 5</td>
+<td>edge やデモ向き</td>
+<td>高品質な電源と、対応する USB/NVMe ストレージが重要です。スループットはアダプターに依存します。</td>
+</tr>
+</tbody>
+</table>
+<h2 id="候補ハードウェア">候補ハードウェア</h2>
+<p>この表は出発点です。
+状態が「検証済み」でないものは、期待される適性として扱ってください。
+ルーターとして使う前に、NIC、MTU、再起動後の収束を確認します。</p>
+<table>
+<thead>
+<tr>
+<th>ハードウェア</th>
+<th>期待する用途</th>
+<th>状態</th>
+<th>メモ</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>USB Ethernet 付き Intel NUC</td>
+<td>Proxmox ラボルーター、ライブ ISO デモ</td>
+<td>期待動作</td>
+<td>実績のある USB Ethernet アダプターを選びます。試験中は管理経路を別の VLAN または別の interface に分けます。</td>
+</tr>
+<tr>
+<td>N100 4 ポート 2.5GbE mini PC</td>
+<td>家庭用ルーター、DS-Lite、PPPoE フォールバック、VPN オーバーレイ</td>
+<td>期待動作</td>
+<td>ディスクレスな routerd アプライアンスの最有力候補です。Intel i226/i225 NIC と冷却を確認します。</td>
+</tr>
+<tr>
+<td>N100 6 ポート 2.5GbE mini PC</td>
+<td>複数 LAN、ゲストネットワーク、管理経路分離</td>
+<td>期待動作</td>
+<td>WAN、LAN、ゲスト、管理用を物理ポートで分けたい場合に向きます。BIOS の電源復帰設定も確認します。</td>
+</tr>
+<tr>
+<td>USB または PCIe NIC 付き Raspberry Pi 5</td>
+<td>デモ、edge router、省電力ラボ</td>
+<td>期待動作</td>
+<td>強力な電源が必要です。スループットは NIC とストレージ経路に強く依存します。</td>
+</tr>
+<tr>
+<td>Intel NIC 搭載の古い thin client</td>
+<td>予備ルーター、ラボノード</td>
+<td>期待動作</td>
+<td>試験には便利です。AES、発熱、ストレージの状態を確認します。</td>
+</tr>
+<tr>
+<td>Proxmox 上の仮想マシン</td>
+<td>SDN/VNET routing、CI 風ラボ、統合試験</td>
+<td>ラボ検証済み</td>
+<td>同じ resource をあとで物理 mini PC へ移せる点が routerd の強みです。</td>
+</tr>
+</tbody>
+</table>
+<h2 id="cpu-とメモリー">CPU とメモリー</h2>
+<p>家庭または小規模オフィスでは、次を目安にします。</p>
+<ul>
+<li>基本的な経路制御、DHCP、DNS、NAT、Web 管理画面なら 2 コアで足ります。</li>
+<li>暗号化 DNS、OpenTelemetry、ログ保存を使うなら 4 コアが扱いやすいです。</li>
+<li>1 GiB RAM が実用下限です。</li>
+<li>ライブ ISO とログバッファーを使う場合は 2 GiB 以上を推奨します。</li>
+</ul>
+<h2 id="ネットワークインターフェース">ネットワークインターフェース</h2>
+<p>物理インターフェースは 2 つ以上を推奨します。</p>
+<ul>
+<li>WAN または untrust</li>
+<li>LAN または trust</li>
+</ul>
+<p>3 つ目の管理インターフェースがあると、ファイアウォール変更の試験が安全になります。
+SSH と Web 管理画面を WAN/LAN policy から分離できます。</p>
+<p>単一 NIC の VLAN ルーターも構成できます。
+ただし、初期設定時に管理経路を失うリスクが上がります。
+反映前に必ず plan を確認してください。</p>
+<h2 id="ストレージ">ストレージ</h2>
+<p>通常インストールでは SSD または NVMe を推奨します。
+ディスクレス mini PC では、USB 永続化付きライブ ISO を使えます。</p>
+<ul>
+<li>設定を USB デバイスへ保存します。</li>
+<li>ログは <code>/run/routerd/logs</code> の tmpfs に一時保存します。</li>
+<li>1 日 1 回、圧縮ログと状態スナップショットを USB へ書き出せます。</li>
+</ul>
+<p>これにより、低価格な flash media への書き込みを減らせます。</p>
+<h2 id="ライブ-iso-と-usb-永続化">ライブ ISO と USB 永続化</h2>
+<p>ライブ ISO は、短時間の評価とディスクレス運用の両方を想定しています。</p>
+<ul>
+<li>ISO から起動します。</li>
+<li>画面またはシリアルコンソールでテキストウィザードを実行します。</li>
+<li><code>router.yaml</code> と選択した状態を USB に保存します。</li>
+<li>ログは tmpfs に一時保存します。</li>
+<li>1 日 1 回、圧縮ログと状態スナップショットを USB へ書き出します。</li>
+</ul>
+<p>USB 永続化がない場合、ライブ ISO は一時的なデモルーターとして動きます。
+USB 永続化がある場合、同じ mini PC が保存済み設定で再起動します。</p>
+<h2 id="nic-メモ">NIC メモ</h2>
+<table>
+<thead>
+<tr>
+<th>NIC 種別</th>
+<th>推奨</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Intel i210/i211</td>
+<td>堅実で信頼性の高い選択です。</td>
+</tr>
+<tr>
+<td>Intel i225/i226</td>
+<td>2.5GbE では良い選択です。firmware と OS driver は新しく保ちます。</td>
+</tr>
+<tr>
+<td>Realtek 2.5GbE</td>
+<td>動くことは多いですが、本番で使う前に負荷試験をしてください。</td>
+</tr>
+<tr>
+<td>USB Ethernet</td>
+<td>デモや NUC では便利です。本番ルーターでは無名アダプターを避けます。</td>
+</tr>
+</tbody>
+</table>
+<h2 id="プラットフォームメモ">プラットフォームメモ</h2>
+<p>Ubuntu Server が主対象です。
+FreeBSD は、プラットフォーム固有の renderer とサービス連携で対応します。
+Linux 以外で特定の機能に依存する場合は、<a href="platforms.html">プラットフォーム</a> を確認してください。</p>
+<h2 id="検証チェックリスト">検証チェックリスト</h2>
+<ol>
+<li>対象 OS またはライブ ISO を起動します。</li>
+<li>すべての NIC 名が安定していることを確認します。</li>
+<li><code>routerctl validate</code> と <code>routerctl plan</code> を実行します。</li>
+<li>可能なら管理経路を分離してから反映します。</li>
+<li>DHCP、DNS、NAT、firewall、route policy を確認します。</li>
+<li>スループット試験を実行します。</li>
+<li>CPU 温度と packet drop を確認します。</li>
+<li>再起動後、手動コマンドなしで収束することを確認します。</li>
+</ol></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#推奨クラス">推奨クラス</a></li>
+<li><a href="#候補ハードウェア">候補ハードウェア</a></li>
+<li><a href="#cpu-とメモリー">CPU とメモリー</a></li>
+<li><a href="#ネットワークインターフェース">ネットワークインターフェース</a></li>
+<li><a href="#ストレージ">ストレージ</a></li>
+<li><a href="#ライブ-iso-と-usb-永続化">ライブ ISO と USB 永続化</a></li>
+<li><a href="#nic-メモ">NIC メモ</a></li>
+<li><a href="#プラットフォームメモ">プラットフォームメモ</a></li>
+<li><a href="#検証チェックリスト">検証チェックリスト</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/hardware-compatibility.md">GitHub</a></div></footer></body></html>

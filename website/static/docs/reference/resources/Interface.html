@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Interface · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/reference/resources/Interface.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/reference/resources/Interface.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/reference/resources/Interface.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/Interface.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/Interface.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="interface">Interface</h1>
+<p><a href="../resources.html#interface">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Names an existing OS interface so other resources can refer to its logical metadata.name. It does not create a physical interface.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>Use the logical metadata.name in interface fields of dependent resources and put the real device name in ifname. managed=false does not suppress LinkController admin-up/MTU operations when those settings are requested.</li>
+</ul>
+<h2 id="yaml-definition">YAML definition</h2>
+<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: Interface
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    adminUp: true # optional; boolean
+    ifname: &quot;&lt;string&gt;&quot; # Required; string
+    managed: true # Required; boolean
+    mtu: 576 # optional; integer; minimum=576; maximum=9216
+    when: # optional; object
+      state: # optional; object
+        &quot;&lt;key&gt;&quot;: # optional; object
+          contains: &quot;&lt;string&gt;&quot; # optional; string
+          equals: &quot;&lt;string&gt;&quot; # optional; string
+          exists: true # optional; boolean
+          for: &quot;&lt;string&gt;&quot; # optional; string
+          in: # optional; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # optional; string
+          status: &quot;set&quot; # optional; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.ifname</code></td>
+<td>Required existing kernel device name, e.g. ens18; no default. Missing devices produce a Down/InterfaceNotFound status rather than being created.</td>
+</tr>
+<tr>
+<td><code>spec.managed</code></td>
+<td>Management declaration, decoded default false; JSON Schema asks for explicit presence. It affects management/observation metadata and surrounding logic, but is not an observe-only guarantee for adminUp or MTU.</td>
+</tr>
+<tr>
+<td><code>spec.adminUp</code></td>
+<td>Default false: no request to bring the link up. True brings an existing down link up. False does not mean administratively force the link down.</td>
+</tr>
+<tr>
+<td><code>spec.mtu</code></td>
+<td>Default zero means preserve the current MTU. Explicit nonzero values must be 576–9216 and are applied when different.</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>Activation condition; omitted means no gate. See the shared condition reference for state/all/any, unknown handling and age predicates.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_interface.go">pkg/config/validate_interface.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/index.go">pkg/config/index.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go">pkg/controller/chain/chain.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/resourcequery/when.go">pkg/resourcequery/when.go</a></p>
+<p><a href="/examples/basic-dhcp.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
+<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/reference/resources/Interface.md">GitHub</a></div></footer></body></html>

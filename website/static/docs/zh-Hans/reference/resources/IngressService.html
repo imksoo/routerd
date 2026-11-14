@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>IngressService · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/reference/resources/IngressService.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/reference/resources/IngressService.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/IngressService.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/IngressService.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/IngressService.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="ingressservice">IngressService</h1>
+<p><a href="../resources.html#ingressservice">各资源的配置</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: firewall.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<h2 id="yaml定义">YAML定义</h2>
+<p>此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。</p>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: IngressService
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    backends: # 必填; array
+      - # object
+        address: &quot;&lt;string&gt;&quot; # 选填; string
+        addressFrom: # 选填; object
+          field: &quot;&lt;string&gt;&quot; # 选填; string
+          optional: true # 选填; boolean
+          resource: &quot;&lt;string&gt;&quot; # 必填; string
+        name: &quot;&lt;string&gt;&quot; # 选填; string
+        port: 1 # 必填; integer; minimum=1; maximum=65535
+        weight: 0 # 选填; integer; minimum=0
+    externalDNS: true # 选填; boolean
+    hairpin: # 选填; object
+      enabled: true # 选填; boolean
+      interfaces: # 选填; array
+        - &quot;&lt;string&gt;&quot; # string
+      mode: &quot;&quot; # 选填; string; enum=[&quot;&quot;, &quot;auto&quot;, &quot;manual&quot;, &quot;off&quot;]
+    healthCheck: # 选填; object
+      expectedBody: &quot;&lt;string&gt;&quot; # 选填; string
+      expectedStatus: # 选填; array
+        - 0 # integer
+      healthyThreshold: 1 # 选填; integer; minimum=1
+      host: &quot;&lt;string&gt;&quot; # 选填; string
+      interval: &quot;&lt;string&gt;&quot; # 选填; string
+      path: &quot;&lt;string&gt;&quot; # 选填; string
+      protocol: &quot;&quot; # 选填; string; enum=[&quot;&quot;, &quot;tcp&quot;, &quot;http&quot;, &quot;https&quot;]
+      timeout: &quot;&lt;string&gt;&quot; # 选填; string
+      tlsSkipVerify: true # 选填; boolean
+      unhealthyThreshold: 1 # 选填; integer; minimum=1
+    hostname: &quot;&lt;string&gt;&quot; # 选填; string
+    listen: # 必填; object
+      address: &quot;&lt;string&gt;&quot; # 选填; string
+      addressFrom: # 选填; object
+        field: &quot;&lt;string&gt;&quot; # 选填; string
+        optional: true # 选填; boolean
+        resource: &quot;&lt;string&gt;&quot; # 必填; string
+      interface: &quot;&lt;string&gt;&quot; # 必填; string
+      port: 1 # 必填; integer; minimum=1; maximum=65535
+      protocol: &quot;tcp&quot; # 必填; string; enum=[&quot;tcp&quot;, &quot;udp&quot;]
+    policy: # 选填; object
+      onNoHealthyBackends: &quot;&quot; # 选填; string; enum=[&quot;&quot;, &quot;drop&quot;, &quot;reject&quot;]
+      selection: &quot;&quot; # 选填; string; enum=[&quot;&quot;, &quot;failover&quot;, &quot;sourceHash&quot;, &quot;random&quot;]
+    when: # 选填; object
+      state: # 选填; object
+        &quot;&lt;key&gt;&quot;: # 选填; object
+          contains: &quot;&lt;string&gt;&quot; # 选填; string
+          equals: &quot;&lt;string&gt;&quot; # 选填; string
+          exists: true # 选填; boolean
+          for: &quot;&lt;string&gt;&quot; # 选填; string
+          in: # 选填; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # 选填; string
+          status: &quot;set&quot; # 选填; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<p><a href="/examples/k8s-api-vip-dualstack.yaml">配置示例</a></p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#yaml定义">YAML定义</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/reference/resources/IngressService.md">GitHub</a></div></footer></body></html>

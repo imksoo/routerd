@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>チュートリアル · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/tutorials/index.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/tutorials/index.html" lang="en" hreflang="en">English</a><a href="/docs/ja/tutorials/index.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/tutorials/index.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/tutorials/index.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="チュートリアル">チュートリアル</h1>
+<p>最初は、<strong>隔離した Ubuntu Server VM</strong> で練習します。VM の画面を直接開ける
+コンソールを用意し、変更する NIC とは別の管理経路を残してください。
+普段使っている家・学校・職場の回線を、最初の練習台にしてはいけません。</p>
+<h2 id="おすすめの順番">おすすめの順番</h2>
+<table>
+<thead>
+<tr>
+<th>順番</th>
+<th>すること</th>
+<th>ページ</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td>WAN、LAN、DHCP、NAT の短い説明を読む</td>
+<td><a href="network-basics.html">ネットワーク基礎</a></td>
+</tr>
+<tr>
+<td>1</td>
+<td>Ubuntu Server VM に routerd を入れる</td>
+<td><a href="install.html">インストール</a></td>
+</tr>
+<tr>
+<td>2</td>
+<td>設定を検証し、ネットワークを変えない dry-run をする</td>
+<td><a href="getting-started.html">はじめに</a></td>
+</tr>
+<tr>
+<td>3</td>
+<td>WAN と LAN を持つ小さなルーターを作る</td>
+<td><a href="first-router.html">最初のルーターを立ち上げる</a></td>
+</tr>
+<tr>
+<td>4</td>
+<td>DHCP、DNS、RA などを LAN 側に足す</td>
+<td><a href="lan-side-services.html">LAN 側サービス</a></td>
+</tr>
+<tr>
+<td>5</td>
+<td>DHCPv6-PD、PPPoE、DS-Lite などを WAN 側に足す</td>
+<td><a href="wan-side-services.html">WAN 側サービス</a></td>
+</tr>
+<tr>
+<td>6</td>
+<td>NAT44 の目的と、ファイアウォールの現在地を知る</td>
+<td><a href="basic-firewall.html">NAT44 とファイアウォールの準備</a></td>
+</tr>
+</tbody>
+</table>
+<p>最初の 3 段階では、先に <code>routerd validate</code>、次に
+<code>routerd apply --once --dry-run</code> を使います。<code>routerctl</code> は、
+<code>routerd.service</code> が起動してから状態を見るためのクライアントです。</p>
+<h2 id="目的から選ぶ">目的から選ぶ</h2>
+<table>
+<thead>
+<tr>
+<th>やりたいこと</th>
+<th>チュートリアル / 例</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>リリースアーカイブから導入する</td>
+<td><a href="install.html">インストール</a></td>
+</tr>
+<tr>
+<td>YAML から最初のルーターを作る</td>
+<td><a href="getting-started.html">はじめに</a></td>
+</tr>
+<tr>
+<td>IPv4 NAT の完全な例を見る</td>
+<td><a href="../config-examples/basic-ipv4-nat.html">基本的な IPv4 NAT ルーター</a></td>
+</tr>
+<tr>
+<td>ゲスト端末を分けるときの注意を知る</td>
+<td><a href="../config-examples/guest-isolation.html">ゲスト / IoT の分離を設計する</a></td>
+</tr>
+<tr>
+<td>ディスクを使わない mini PC を試す</td>
+<td>ディスクレス mini PC</td>
+</tr>
+<tr>
+<td>FreeBSD の導入の土台を確認する</td>
+<td><a href="freebsd-getting-started.html">FreeBSD で始める</a></td>
+</tr>
+</tbody>
+</table>
+<p>ファイアウォールのリソースはまだ土台を整えている段階です。インターネットに
+公開するルーターの唯一の防御には使わないでください。また、同じスイッチや
+同じ Wi-Fi の端末を、本当の意味で分けるには VLAN（スイッチ内の別 LAN） /
+SSID（Wi-Fi の名前）の分離が必要です。</p>
+<h2 id="対応する環境">対応する環境</h2>
+<p>この入門の手順は Ubuntu Server を対象にしています。FreeBSD と NixOS は
+導入とサービス連携の土台がありますが、Ubuntu と同じネットワーク機能の
+対応を意味しません。詳しくは <a href="../platforms.html">対応プラットフォーム</a> を
+確認してください。</p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#おすすめの順番">おすすめの順番</a></li>
+<li><a href="#目的から選ぶ">目的から選ぶ</a></li>
+<li><a href="#対応する環境">対応する環境</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/tutorials/index.md">GitHub</a></div></footer></body></html>

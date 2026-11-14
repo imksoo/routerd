@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>從 FreeBSD 開始 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/tutorials/freebsd-getting-started.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/tutorials/freebsd-getting-started.html" lang="en" hreflang="en">English</a><a href="/docs/ja/tutorials/freebsd-getting-started.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/tutorials/freebsd-getting-started.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/tutorials/freebsd-getting-started.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="從-freebsd-開始">從 FreeBSD 開始</h1>
+<p>FreeBSD 使用與 Ubuntu 相同的 routerd 資源模型，但不是與 Ubuntu 初次實驗相同的
+支援範圍；它是具有部分原生整合的第二目標。第一次請在可使用主控台的隔離測試主機操作。
+產生的主機成果物對應 FreeBSD 的機制。
+routerd 負責處理 <code>rc.conf.d</code>、<code>rc.d</code> script、<code>pf.conf</code>、<code>dhclient.conf</code>、
+dnsmasq 設定、<code>mpd5.conf</code>，以及 DS-Lite 用的動態 <code>ifconfig gif</code> 操作。</p>
+<p>本教學以 FreeBSD 14 系為前提。
+發布安裝程式的安裝位置為 <code>/usr/local</code> 之下。
+參考設定請使用 <code>examples/freebsd-edge.yaml</code>。</p>
+<h2 id="1-從發布封存檔安裝">1. 從發布封存檔安裝</h2>
+<p>從 <a href="https://github.com/imksoo/routerd/releases">GitHub Releases</a> 取得 FreeBSD 用的
+封存檔，並在路由器上執行隨附的安裝程式。</p>
+<pre><code class="language-sh">fetch https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-freebsd-amd64.tar.gz
+fetch https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-freebsd-amd64.tar.gz.sha256
+cat routerd-freebsd-amd64.tar.gz.sha256
+sha256 routerd-freebsd-amd64.tar.gz
+tar -xzf routerd-freebsd-amd64.tar.gz
+sudo ./install.sh
+</code></pre>
+<p><code>install.sh</code> 會安裝 FreeBSD 通常所需的套件。
+對象為 <code>ca_root_nss</code>、<code>curl</code>、<code>dnsmasq</code>、<code>wireguard-tools</code>、<code>mpd5</code>、
+<code>bind-tools</code>、<code>tcpdump</code>、<code>jq</code>、<code>chrony</code>、<code>strongswan</code>。
+同時安裝 Tailscale 時，使用 <code>sudo ./install.sh --with-tailscale</code>。
+FreeBSD 的 base system 包含 <code>ifconfig</code>、<code>route</code>、<code>sysctl</code>、<code>service</code>、<code>sysrc</code>、
+<code>pfctl</code>、<code>pflog0</code>、<code>netstat</code>、<code>sockstat</code>、<code>ping</code>、<code>traceroute</code>。
+相依套件清單可透過 <code>./install.sh --list-deps</code> 確認。</p>
+<h2 id="2-放置路由器設定">2. 放置路由器設定</h2>
+<pre><code class="language-sh">sudo install -d -m 0755 /usr/local/etc/routerd
+sudo install -m 0600 examples/freebsd-edge.yaml /usr/local/etc/routerd/router.yaml
+</code></pre>
+<p>套用前，請編輯介面名稱、位址與密碼。
+初次操作時，請將管理用 SSH 放置於獨立介面，或事先準備 hypervisor 主控台。</p>
+<h2 id="3-驗證並確認產生的檔案">3. 驗證並確認產生的檔案</h2>
+<p>首先驗證設定。</p>
+<pre><code class="language-sh">sudo routerd validate --config /usr/local/etc/routerd/router.yaml
+</code></pre>
+<p>接著將 FreeBSD 用的成果物產生至暫存目錄。</p>
+<pre><code class="language-sh">render_dir=$(mktemp -d)
+sudo routerd render freebsd \
+  --config /usr/local/etc/routerd/router.yaml \
+  --out-dir &quot;$render_dir&quot;
+</code></pre>
+<p>主要輸出如下。</p>
+<ul>
+<li><code>rc.conf.d-routerd</code></li>
+<li><code>dhclient.conf</code></li>
+<li><code>mpd5.conf</code></li>
+<li><code>pf.conf</code></li>
+<li><code>dnsmasq.conf</code></li>
+<li><code>install-packages.sh</code></li>
+<li><code>rc.d-*</code></li>
+</ul>
+<p>套用至實際主機前，請先確認內容。</p>
+<pre><code class="language-sh">sudo less &quot;$render_dir/rc.conf.d-routerd&quot;
+sudo less &quot;$render_dir/pf.conf&quot;
+sudo less &quot;$render_dir/dnsmasq.conf&quot;
+</code></pre>
+<h2 id="4-了解-freebsd-側的角色">4. 了解 FreeBSD 側的角色</h2>
+<p>routerd 將資源對應至以下 FreeBSD 機制。</p>
+<table>
+<thead>
+<tr>
+<th>機制</th>
+<th>角色</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>rc.conf.d-routerd</code></td>
+<td>介面別名、轉送、複製介面、靜態路由、<code>pf</code>、<code>pflog</code>、<code>mpd5</code> 的啟用</td>
+</tr>
+<tr>
+<td><code>rc.d-*</code> script</td>
+<td>dnsmasq、防火牆日誌記錄器、healthcheck、Tailscale、DHCP client 等受管理常駐程式</td>
+</tr>
+<tr>
+<td><code>pf.conf</code></td>
+<td>zone 過濾、受管理服務的開口、NAT、防火牆日誌</td>
+</tr>
+<tr>
+<td><code>pflog0</code></td>
+<td><code>routerd-firewall-logger</code> 讀取的防火牆日誌</td>
+</tr>
+<tr>
+<td><code>dnsmasq.conf</code></td>
+<td>DHCPv4、DHCPv6、DHCP relay、RA</td>
+</tr>
+<tr>
+<td><code>dhclient.conf</code></td>
+<td>接管的上游介面的 DHCPv4 client 行為</td>
+</tr>
+<tr>
+<td><code>mpd5.conf</code></td>
+<td>PPPoE 的 bundle、link、認證、MTU/MRU、預設路由</td>
+</tr>
+<tr>
+<td><code>ifconfig gif</code></td>
+<td>靜態 <code>rc.conf</code> 不足時的動態 DS-Lite tunnel 套用</td>
+</tr>
+</tbody>
+</table>
+<h2 id="5-先-dry-run再從主控台套用">5. 先 dry-run，再從主控台套用</h2>
+<p>使用一次性的 state 檔案進行不變更網路的預覽。</p>
+<pre><code class="language-sh">workdir=$(mktemp -d)
+sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once --dry-run \
+  --state-file &quot;$workdir/state.db&quot; \
+  --status-file &quot;$workdir/status.json&quot;
+</code></pre>
+<p>只有在產生的檔案與 dry-run 都符合預期時，才從主控台或獨立管理路徑套用。下列命令會
+變更主機。</p>
+<pre><code class="language-sh">sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once
+</code></pre>
+<p>routerd 在載入 <code>pf.conf</code> 前以 <code>pfctl -nf</code> 驗證。
+dnsmasq 也在重新啟動前以 <code>dnsmasq --test</code> 驗證設定。
+one-shot apply 成功後再啟動 rc.d 服務：</p>
+<pre><code class="language-sh">sudo sysrc routerd_enable=YES
+sudo service routerd start
+</code></pre>
+<h2 id="6-確認狀態與日誌">6. 確認狀態與日誌</h2>
+<p>確認 routerd 狀態。</p>
+<pre><code class="language-sh">sudo routerctl get status
+sudo routerctl get events --limit 20
+</code></pre>
+<p>追蹤系統日誌。</p>
+<pre><code class="language-sh">tail -f /var/log/routerd.log
+</code></pre>
+<p>確認 pf 狀態。</p>
+<pre><code class="language-sh">sudo pfctl -ss -v
+</code></pre>
+<p>透過 <code>pflog0</code> 確認防火牆日誌。</p>
+<pre><code class="language-sh">sudo tcpdump -n -e -ttt -i pflog0
+</code></pre>
+<p>啟用 <code>FirewallEventLog</code> 後，routerd 會匯入 <code>pflog0</code> 的內容。
+匯入的日誌可透過 <code>routerctl</code> 與 Web 管理介面確認。</p>
+<h2 id="相關項目">相關項目</h2>
+<ul>
+<li><a href="../platforms.html">支援的平台</a></li>
+<li><a href="wan-side-services.html">WAN 側服務</a></li>
+<li><a href="basic-firewall.html">基本防火牆</a></li>
+</ul></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#1-從發布封存檔安裝">1. 從發布封存檔安裝</a></li>
+<li><a href="#2-放置路由器設定">2. 放置路由器設定</a></li>
+<li><a href="#3-驗證並確認產生的檔案">3. 驗證並確認產生的檔案</a></li>
+<li><a href="#4-了解-freebsd-側的角色">4. 了解 FreeBSD 側的角色</a></li>
+<li><a href="#5-先-dry-run再從主控台套用">5. 先 dry-run，再從主控台套用</a></li>
+<li><a href="#6-確認狀態與日誌">6. 確認狀態與日誌</a></li>
+<li><a href="#相關項目">相關項目</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/tutorials/freebsd-getting-started.md">GitHub</a></div></footer></body></html>

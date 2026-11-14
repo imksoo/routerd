@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sysctl · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/reference/resources/Sysctl.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/reference/resources/Sysctl.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/reference/resources/Sysctl.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/Sysctl.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/Sysctl.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="sysctl">Sysctl</h1>
+<p><a href="../resources.html#sysctl">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: system.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Reconciles one kernel sysctl setting and can write a persistent sysctl.d file. This resource has no reference to another routerd resource.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>When runtime=false and persistent=false, the controller records Skipped/RuntimeDisabled and does not apply the value. Both runtime and persistent can be true.</li>
+<li>Duplicate Sysctl keys in one Router are rejected. Linux NAT44SessionSync in conntrackd mode additionally requires an explicit non-optional runtime Sysctl net.netfilter.nf_conntrack_tcp_be_liberal with value and effective expectedValue equal to 1.</li>
+</ul>
+<h2 id="yaml-definition">YAML definition</h2>
+<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
+<pre><code class="language-yaml">- apiVersion: system.routerd.net/v1alpha1
+  kind: Sysctl
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    compare: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;exact&quot;, &quot;atLeast&quot;]
+    expectedValue: &quot;&lt;string&gt;&quot; # optional; string
+    key: &quot;&lt;string&gt;&quot; # Required; string
+    optional: true # optional; boolean
+    persistent: true # optional; boolean
+    runtime: true # optional; boolean
+    value: &quot;&lt;string&gt;&quot; # Required; string
+</code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.key</code></td>
+<td>Required sysctl key, e.g. net.ipv4.ip_forward. No default; spaces, tabs, newlines and / are forbidden. This is a kernel key, not a resource reference.</td>
+</tr>
+<tr>
+<td><code>spec.value</code></td>
+<td>Required nonempty string passed to sysctl -w and persisted when requested. Quote numeric-looking YAML values. No default.</td>
+</tr>
+<tr>
+<td><code>spec.expectedValue</code></td>
+<td>Runtime value used for drift comparison; default value. Allows the observed representation to differ from the written value. A supplied whitespace-only value is rejected.</td>
+</tr>
+<tr>
+<td><code>spec.compare</code></td>
+<td>Default exact: compare normalized whitespace-separated values as strings. atLeast compares corresponding signed integer components; component counts must match and every current component must be at least the expected value.</td>
+</tr>
+<tr>
+<td><code>spec.runtime</code></td>
+<td>Whether to apply the live kernel setting. Default true; false can still write persistent configuration when persistent=true.</td>
+</tr>
+<tr>
+<td><code>spec.persistent</code></td>
+<td>Write a routerd sysctl.d file. Default false. The file contains key=value; it is independent of the runtime switch.</td>
+</tr>
+<tr>
+<td><code>spec.optional</code></td>
+<td>Default false. When true, a failed runtime read records Skipped/ReadFailedOptional and skips the remaining apply for this entry. It does not suppress arbitrary write or persistence errors.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_system.go">pkg/config/validate_system.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/sysctl.go">pkg/controller/chain/sysctl.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/sysctlprofile/compare.go">pkg/sysctlprofile/compare.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/sysctlprofile/persistent.go">pkg/sysctlprofile/persistent.go</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
+<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/reference/resources/Sysctl.md">GitHub</a></div></footer></body></html>

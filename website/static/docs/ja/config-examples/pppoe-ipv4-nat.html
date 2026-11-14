@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PPPoE IPv4 NAT ルーター · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/config-examples/pppoe-ipv4-nat.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/config-examples/pppoe-ipv4-nat.html" lang="en" hreflang="en">English</a><a href="/docs/ja/config-examples/pppoe-ipv4-nat.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/config-examples/pppoe-ipv4-nat.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/config-examples/pppoe-ipv4-nat.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="pppoe-ipv4-nat-ルーター">PPPoE IPv4 NAT ルーター</h1>
+<p>物理 WAN は Ethernet で、IPv4 インターネットへの出口を PPPoE セッションで作る例です。</p>
+<p>完全な YAML は <code>examples/example-pppoe-ipv4-nat.yaml</code> にあります。</p>
+<h2 id="構成図">構成図</h2>
+<pre><code class="language-mermaid">flowchart LR
+  internet((Internet))
+  onu[&quot;[1] ONU / access line&quot;]
+  wan[&quot;[2] wan&lt;br/&gt;ens18&quot;]
+  ppp[&quot;[3] PPPoE&lt;br/&gt;ppp-home&quot;]
+  router[&quot;[4] routerd host&quot;]
+  lan[&quot;[5] lan&lt;br/&gt;192.168.40.1/24&quot;]
+  clients[&quot;[6] LAN clients&quot;]
+
+  internet --- onu --- wan --- router
+  router --- ppp
+  router --- lan --- clients
+</code></pre>
+<h2 id="図の対応表">図の対応表</h2>
+<table>
+<thead>
+<tr>
+<th>番号</th>
+<th>意味</th>
+<th>主なリソース</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>[1]</td>
+<td>routerd の管理外にある回線終端 / ONU。</td>
+<td>routerd 管理外</td>
+</tr>
+<tr>
+<td>[2]</td>
+<td>PPPoE を通す物理 Ethernet インターフェース。</td>
+<td><code>Interface/wan</code></td>
+</tr>
+<tr>
+<td>[3]</td>
+<td>PPPoE セッションと論理的な出口インターフェース。</td>
+<td><code>PPPoESession/pppoe-home</code></td>
+</tr>
+<tr>
+<td>[4]</td>
+<td>IPv4 forwarding を導出し、nftables NAT を適用するホスト。</td>
+<td>Derived host runtime, <code>NAT44Rule/lan-to-pppoe</code></td>
+</tr>
+<tr>
+<td>[5]</td>
+<td>LAN ゲートウェイと DHCPv4 セグメント。</td>
+<td><code>IPv4StaticAddress/lan-base</code>, <code>DHCPv4Server/lan-dhcpv4</code></td>
+</tr>
+<tr>
+<td>[6]</td>
+<td>NAT 経由で PPPoE を IPv4 インターネット経路として使うクライアント。</td>
+<td><code>DHCPv4Server/lan-dhcpv4</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="この例で管理するもの">この例で管理するもの</h2>
+<table>
+<thead>
+<tr>
+<th>領域</th>
+<th>routerd リソース</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>PPPoE セッション</td>
+<td><code>PPPoESession/pppoe-home</code></td>
+</tr>
+<tr>
+<td>LAN アドレス / DHCPv4</td>
+<td><code>IPv4StaticAddress/lan-base</code>, <code>DHCPv4Server/lan-dhcpv4</code></td>
+</tr>
+<tr>
+<td>IPv4 インターネット接続</td>
+<td><code>NAT44Rule/lan-to-pppoe</code></td>
+</tr>
+<tr>
+<td>フィルタリング</td>
+<td><code>FirewallZone/*</code>, <code>FirewallPolicy/home</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="設定の要点">設定の要点</h2>
+<pre><code class="language-yaml"># [3] 物理 WAN 上に作る論理 PPPoE インターフェース。
+- kind: PPPoESession
+  metadata:
+    name: pppoe-home
+  spec:
+    interface: wan
+    ifname: ppp-home
+    username: user@example.jp
+    passwordFile: /usr/local/etc/routerd/secrets/pppoe-home.password
+    mtu: 1454
+    mru: 1454
+    defaultRoute: true
+
+# [5] -&gt; [3] LAN の IPv4 トラフィックを PPPoE セッション側へマスカレードする。
+- kind: NAT44Rule
+  metadata:
+    name: lan-to-pppoe
+  spec:
+    type: masquerade
+    egressInterface: pppoe-home
+    sourceRanges:
+      - 192.168.40.0/24
+</code></pre>
+<h2 id="daemon-の前に確認する">daemon の前に確認する</h2>
+<p>以下は <code>sudo</code> を実行できる通常ユーザーを想定します。まだサービスを起動していないため、
+<code>routerctl</code> ではなく <code>routerd</code> を使い、dry-run の状態ファイルは一時ディレクトリへ隔離します。</p>
+<pre><code class="language-sh">LAB_DIR=&quot;$(mktemp -d)&quot;
+sudo routerd validate --config examples/example-pppoe-ipv4-nat.yaml
+sudo routerd apply --config examples/example-pppoe-ipv4-nat.yaml --once --dry-run \
+  --state-file &quot;$LAB_DIR/state.db&quot; \
+  --status-file &quot;$LAB_DIR/status.json&quot;
+sudo sed -n &quot;1,160p&quot; &quot;$LAB_DIR/status.json&quot;
+</code></pre>
+<h2 id="サービス起動後に確認する">サービス起動後に確認する</h2>
+<p>レビュー済みの設定を適用して <code>routerd.service</code> を起動した<strong>後で</strong>、ルーター上で次を実行します。</p>
+<pre><code class="language-sh">sudo routerctl describe PPPoESession/pppoe-home
+sudo ip link show ppp-home
+sudo ip route show default
+</code></pre>
+<h2 id="よく変えるところ">よく変えるところ</h2>
+<ul>
+<li>PPPoE のパスワードは YAML に直書きせず、参照先の秘密ファイルに置きます。</li>
+<li><code>mtu</code> と <code>mru</code> は ISP の案内に合わせます。</li>
+<li>PPPoE をバックアップ経路にする場合は <code>defaultRoute: false</code> にします。</li>
+</ul></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#構成図">構成図</a></li>
+<li><a href="#図の対応表">図の対応表</a></li>
+<li><a href="#この例で管理するもの">この例で管理するもの</a></li>
+<li><a href="#設定の要点">設定の要点</a></li>
+<li><a href="#daemon-の前に確認する">daemon の前に確認する</a></li>
+<li><a href="#サービス起動後に確認する">サービス起動後に確認する</a></li>
+<li><a href="#よく変えるところ">よく変えるところ</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/config-examples/pppoe-ipv4-nat.md">GitHub</a></div></footer></body></html>

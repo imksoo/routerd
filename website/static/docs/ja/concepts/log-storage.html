@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ログストレージ · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/concepts/log-storage.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/concepts/log-storage.html" lang="en" hreflang="en">English</a><a href="/docs/ja/concepts/log-storage.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/concepts/log-storage.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/concepts/log-storage.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="ログストレージ">ログストレージ</h1>
+<p>routerd は、長期的な状態と運用ログを分けて保存します。</p>
+<p>Linux の既定の配置は次のとおりです。</p>
+<table>
+<thead>
+<tr>
+<th>ファイル</th>
+<th>目的</th>
+<th>標準の保管期間</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/var/lib/routerd/routerd.db</code></td>
+<td>リソース状態、イベント、アクセスログ、プラグイン実行ログ</td>
+<td>イベントは既定24時間、その他は明示した保持ポリシー</td>
+</tr>
+<tr>
+<td><code>/var/lib/routerd/dns-queries.db</code></td>
+<td><code>routerd-dns-resolver</code> の DNS クエリー履歴</td>
+<td>30 日</td>
+</tr>
+<tr>
+<td><code>/var/lib/routerd/traffic-flows.db</code></td>
+<td>conntrack から作った通信フロー履歴</td>
+<td>30 日</td>
+</tr>
+<tr>
+<td><code>/var/lib/routerd/firewall-logs.db</code></td>
+<td>accept、drop、reject のファイアウォールログ</td>
+<td>90 日</td>
+</tr>
+<tr>
+<td><code>/var/lib/routerd/dhcp-fingerprints.db</code></td>
+<td>DHCP クライアントのフィンガープリント観測</td>
+<td>30 日</td>
+</tr>
+</tbody>
+</table>
+<p>FreeBSD では、同じデータベース名を <code>/var/db/routerd</code> 配下に置きます。</p>
+<p>ログテーブルの列名は、OpenTelemetry のログ属性へ変換しやすい名前にしています。
+<code>traffic-flows.db</code> には、nDPI と TLS SNI 用の列を予約しています。
+これらの列へ書き込む処理は、現時点ではまだ実装しておらず、後続の実装で追加します。</p>
+<p>イベント履歴には、<code>LogRetention</code>を設定していない場合にも常に働く安全上限があります。
+24時間、10万行、論理ペイロード64MiBのうち最初に達した上限を使い、古いイベントを
+分割して削除します。状態テーブルは削除しません。これは小容量Live ISOのCOW領域を
+保護する安全装置であり、長期アーカイブの代わりではありません。</p>
+<p><code>LogRetention</code> は、設定可能なローカル SQLite の保持ポリシーです。signal 単位で古い行を削除し、
+SQLite の incremental vacuum も実行できます。DB ファイルのパスや書き込み元ごとの保持期間は設定に現れません。
+routerd は登録済みのログテーブル一覧から、イベント・アクセスログ・プラグイン実行ログ・DNS クエリー・通信フロー・ファイアウォールイベント・DHCP フィンガープリントを導出します。
+新しい運用ログテーブルは、この一覧に signal と時刻列を登録しない限り保持対象にできません。</p>
+<p><code>dhcp-sticky.db</code>、リース同期データ、設定世代、連携状態はログではなく運用状態です。
+削除によりルーターの挙動が変わるため、意図的に <code>LogRetention</code> の対象外です。</p>
+<p><code>LogRetention.spec.sinks</code> へ <code>LogSink</code> を指定すると、ローカル削除前に行を外部へアーカイブします。
+転送に失敗した場合は削除しないため、外部保管の確認前にローカルの記録を失いません。</p>
+<pre><code class="language-yaml">apiVersion: system.routerd.net/v1alpha1
+kind: LogRetention
+metadata:
+  name: default
+spec:
+  retention: 30d
+  schedule: daily
+  vacuum: true
+  signals:
+    - events
+    - accessLogs
+    - pluginRuns
+    - dnsQueries
+    - trafficFlows
+    - dhcpFingerprints
+  sinks:
+    - LogSink/local-syslog
+---
+apiVersion: system.routerd.net/v1alpha1
+kind: LogRetention
+metadata:
+  name: firewall-events
+spec:
+  retention: 90d
+  schedule: daily
+  vacuum: true
+  signals:
+    - firewallEvents
+</code></pre>
+<p>確認には次のコマンドを使います。</p>
+<pre><code class="language-sh">routerctl get dns-queries --limit 100
+routerctl get traffic-flows --limit 100
+routerctl get firewall-logs --limit 100
+routerctl doctor disk
+</code></pre>
+<p>SQLiteがディスク満杯を返した場合、routerdは調査用イベントをDBへ書けなくても、既存の
+ルーティングとローカルイベント配送を可能な限り継続します。全体状態を<code>Degraded</code>にし、
+runtime statsと<code>routerctl doctor</code>へ<code>EventJournalReadOnly</code>を表示し、
+<code>/run/routerd/storage-critical.json</code>と<code>systemctl status routerd</code>にも復旧方法を出します。
+揮発性Live ISOではルーターOSを再起動してCOW領域を初期化し、再起動後に保持設定を
+確認してください。永続ディスクは再起動だけでは空かないため、イベント履歴の整理・圧縮、
+または状態領域の拡張・移動が必要です。</p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul></ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/concepts/log-storage.md">GitHub</a></div></footer></body></html>

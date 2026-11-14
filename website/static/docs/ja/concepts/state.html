@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>状態 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/concepts/state.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/concepts/state.html" lang="en" hreflang="en">English</a><a href="/docs/ja/concepts/state.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/concepts/state.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/concepts/state.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="状態">状態</h1>
+<p>routerd は、宣言した意図と観測した状態を分けて扱います。
+YAML は、利用者が管理する意図です。
+SQLite、lease ファイル、events.jsonl は、routerd と専用デーモンが観測した状態です。</p>
+<h2 id="状態の置き場所">状態の置き場所</h2>
+<p>リリース版のインストールでは、正本の設定を <code>/usr/local/etc/routerd/router.yaml</code>
+に置きます。
+routerd の実行ファイルは <code>/usr/local/sbin</code> に置きます。</p>
+<p>Linux での状態の保存先は次の通りです。</p>
+<table>
+<thead>
+<tr>
+<th>種類</th>
+<th>例</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>routerd 状態データベース</td>
+<td><code>/var/lib/routerd/routerd.db</code></td>
+</tr>
+<tr>
+<td>DHCPv6-PD リース</td>
+<td><code>/var/lib/routerd/dhcpv6-client/wan-pd/lease.json</code></td>
+</tr>
+<tr>
+<td>DHCPv4 リース</td>
+<td><code>/var/lib/routerd/dhcpv4-client/wan/lease.json</code></td>
+</tr>
+<tr>
+<td>PPPoE 状態</td>
+<td><code>/var/lib/routerd/pppoe-client/&lt;name&gt;/state.json</code></td>
+</tr>
+<tr>
+<td>ヘルスチェック状態</td>
+<td><code>/var/lib/routerd/healthcheck/&lt;name&gt;/state.json</code></td>
+</tr>
+<tr>
+<td>実行時ソケット</td>
+<td><code>/run/routerd/.../*.sock</code></td>
+</tr>
+</tbody>
+</table>
+<p>FreeBSD でも、設定と実行ファイルは <code>/usr/local</code> 配下に置きます。
+実行時ソケットは <code>/var/run/routerd</code> に置きます。
+永続状態は <code>/var/db/routerd</code> に置きます。</p>
+<h2 id="古くなった状態を使わない">古くなった状態を使わない</h2>
+<p>リースや観測値は便利ですが、古くなった値を使い続けるのは危険です。
+特に DHCPv6-PD のプレフィックスは、Bound であることを確認できるときだけ下流へ展開します。
+確認できないときは、AAAA、RA、DHCPv6 サーバー、LAN IPv6 アドレスの適用を止めます。</p>
+<h2 id="イベント">イベント</h2>
+<p>routerd と専用デーモンは、状態の変化をイベントとして記録します。
+イベントは、SQLite の <code>events</code> テーブルやデーモンごとの <code>events.jsonl</code> に残ります。
+EventRule と DerivedEvent は、このイベントや状態を使って仮想的な状態変化を作り出します。</p>
+<h2 id="適用世代">適用世代</h2>
+<p>status に出る <code>generation</code> は、最後に完了した適用世代です。
+この値は、<code>routerctl apply</code> がホスト側の意図を更新し、SQLite に適用の完了を記録したときに増えます。
+調整ループの回数ではありません。
+dry-run の計画、デーモンイベント、ヘルスチェック、controller chain の定期調整では増えません。
+新しい適用世代には、そのとき適用した YAML のスナップショットを保存します。
+Web 管理画面は、このスナップショットを使い、読み取り専用の世代履歴と、世代間の差分（unified diff）を表示します。
+YAML 保存を導入する前の行は履歴として残りますが、差分表示の対象にはできません。</p>
+<h2 id="状態を持つパケットフィルター">状態を持つパケットフィルター</h2>
+<p>Linux では、routerd は nftables の管理テーブルを 1 回の <code>nft -f</code> トランザクションで更新します。
+生成したルールセットは、必要なら管理テーブルを作成します。
+その後、同じ nftables バッチの中でテーブルを空にし、新しいチェーンを読み込みます。
+firewall zone のインターフェース set や client-policy の MAC set のように
+routerd が所有する named set は、再定義の前に管理対象の set だけを削除します。
+これにより、削除した set 要素が再読み込み後に残るのを防ぎます。
+稼働中の NAT テーブルやフィルターテーブルを、削除してから作り直すことはしません。
+そのため、routerd の再起動や通常の設定変更を行っても、既存の conntrack エントリーはカーネルの状態テーブルに残ります。</p>
+<p>FreeBSD では、routerd は生成した pf ルールを <code>pfctl -f</code> で読み込みます。
+pf は、状態を明示的に消さない限り、ルールの再読み込み時にも既存の状態テーブルを保持します。
+routerd の通常の適用処理では、pf の状態を消しません。</p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#状態の置き場所">状態の置き場所</a></li>
+<li><a href="#古くなった状態を使わない">古くなった状態を使わない</a></li>
+<li><a href="#イベント">イベント</a></li>
+<li><a href="#適用世代">適用世代</a></li>
+<li><a href="#状態を持つパケットフィルター">状態を持つパケットフィルター</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/concepts/state.md">GitHub</a></div></footer></body></html>

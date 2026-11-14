@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HA 路由器的 DHCP 租约同步 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/how-to/dhcp-lease-sync.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/how-to/dhcp-lease-sync.html" lang="en" hreflang="en">English</a><a href="/docs/ja/how-to/dhcp-lease-sync.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/how-to/dhcp-lease-sync.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/dhcp-lease-sync.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="ha-路由器的-dhcp-租约同步">HA 路由器的 DHCP 租约同步</h1>
+<p>当 2 台 routerd 节点共享 DHCP 角色，且需要将 active 节点的 lease 状态
+温备到 standby 节点时，请使用 <code>DHCPv4ServerLeaseSync</code>、
+<code>DHCPv6ServerLeaseSync</code> 或 <code>DHCPv6PrefixDelegationLeaseSync</code>。
+这些资源假定从 active 同步到 standby。为防止 backup 将旧 lease 写回
+active，通常通过 <code>VirtualAddress</code> 的 role 来限制执行。</p>
+<p>完整示例请见 <code>examples/dhcp-lease-sync-ha.yaml</code>。</p>
+<h2 id="使用默认的持久化设置">使用默认的持久化设置</h2>
+<p>routerd 默认将 dnsmasq server lease 放置在平台 state directory 下。
+DHCP resource 中不要指定实现层面的 lease path。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DHCPv4Server
+  metadata:
+    name: lan-dhcpv4
+  spec:
+    interface: lan
+    addressPool:
+      start: 192.168.30.100
+      end: 192.168.30.199
+
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DHCPv6Server
+  metadata:
+    name: lan-dhcpv6
+  spec:
+    interface: lan
+    mode: stateful
+    addressPool:
+      start: fd00:30::100
+      end: fd00:30::1ff
+</code></pre>
+<p>sync resource 从 source kind 导出实际的文件路径，因此配置中无需重复
+实现层面的路径。</p>
+<h2 id="仅从-active-节点同步">仅从 active 节点同步</h2>
+<p>通过本地 <code>VirtualAddress</code> status 来限制 lease sync。仅当 VIP role 为
+<code>master</code> 时同步。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DHCPv4ServerLeaseSync
+  metadata:
+    name: lan-v4-leases
+  spec:
+    source:
+      resource: DHCPv4Server/lan-dhcpv4
+    interval: 30s
+    targets:
+      - name: standby
+        host: routerd-standby.lan.example
+        user: routerd
+    when:
+      state:
+        VirtualAddress/lan-vip.role:
+          equals: master
+</code></pre>
+<p>对于 stateful DHCPv6 server，在 <code>DHCPv6ServerLeaseSync</code> 中指定
+<code>source.resource: DHCPv6Server/&lt;name&gt;</code>。对于 WAN 侧的 prefix delegation，
+在 <code>DHCPv6PrefixDelegationLeaseSync</code> 中指定
+<code>source.resource: DHCPv6PrefixDelegation/&lt;name&gt;</code>。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DHCPv6PrefixDelegationLeaseSync
+  metadata:
+    name: wan-pd-lease
+  spec:
+    source:
+      resource: DHCPv6PrefixDelegation/wan-pd
+    targets:
+      - name: standby
+        host: routerd-standby.lan.example
+        user: routerd
+    when:
+      state:
+        VirtualAddress/lan-vip.role:
+          equals: master
+</code></pre>
+<p>standby 升级时，可以从最后一次同步的 lease 状态开始，而非空数据库。</p>
+<h2 id="ssh-前提条件">SSH 前提条件</h2>
+<p>lease sync 使用基于 SSH 的 <code>rsync</code>。在启用资源之前，请准备好非交互式
+SSH。</p>
+<ul>
+<li>为 active 节点上 routerd 运行用户创建或部署 SSH key。</li>
+<li>将公钥加入 standby 节点 <code>target.user</code> 的 <code>authorized_keys</code>。</li>
+<li>预先管理 <code>target.host</code> 的 <code>known_hosts</code>。<code>BatchMode=yes</code> 下无法进行
+  交互式 host-key 确认。</li>
+<li>target user 需要能创建导出的同步目标目录并写入 lease 文件。</li>
+</ul>
+<p>如果 <code>target.sshOptions</code> 未覆盖相同的键，routerd 会附加以下 SSH
+默认值：</p>
+<pre><code class="language-text">-o BatchMode=yes -o ConnectTimeout=10
+</code></pre>
+<p>同时附加 <code>rsync --timeout=60</code>，并在 controller 的 context deadline 内
+执行每个 sync 命令。SSH option 可通过 <code>target.sshOptions</code> 覆盖，
+rsync timeout 可通过 <code>target.options</code> 覆盖。</p>
+<pre><code class="language-yaml">targets:
+  - host: routerd-standby.lan.example
+    user: routerd
+    sshOptions:
+      - -o
+      - ConnectTimeout=5
+    options:
+      - --timeout=30
+</code></pre>
+<h2 id="确认">确认</h2>
+<pre><code class="language-bash">routerctl validate -f examples/dhcp-lease-sync-ha.yaml --replace
+routerctl plan -f examples/dhcp-lease-sync-ha.yaml --replace
+routerctl describe VirtualAddress/lan-vip
+routerctl describe DHCPv4ServerLeaseSync/lan-v4-leases
+</code></pre>
+<p>当节点不是 master 时，<code>routerd serve</code> 会根据 <code>spec.when</code> 排除此
+resource。当节点是 master 且 lease 文件存在时，status 会进入 <code>Synced</code>。
+如果 lease 文件尚不存在，则保持 <code>Pending</code> 直到 dnsmasq 创建。</p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#使用默认的持久化设置">使用默认的持久化设置</a></li>
+<li><a href="#仅从-active-节点同步">仅从 active 节点同步</a></li>
+<li><a href="#ssh-前提条件">SSH 前提条件</a></li>
+<li><a href="#确认">确认</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/how-to/dhcp-lease-sync.md">GitHub</a></div></footer></body></html>

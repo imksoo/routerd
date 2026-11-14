@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>routerctl doctor — 執行時健康診斷 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/operations/routerctl-doctor.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/operations/routerctl-doctor.html" lang="en" hreflang="en">English</a><a href="/docs/ja/operations/routerctl-doctor.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/operations/routerctl-doctor.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/operations/routerctl-doctor.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="routerctl-doctor-執行時健康診斷">routerctl doctor — 執行時健康診斷</h1>
+<p><code>routerctl doctor</code> 執行一組唯讀檢查，回報目前 routerd 是否作為家庭閘道器正常運作。
+不會變更主機狀態。面向維運人員、CI、監控代理與下游工具（Prometheus exporter、
+Web Console、LLM 輔助診斷等）。</p>
+<h2 id="使用方式">使用方式</h2>
+<pre><code class="language-sh"># 全部 area（預設）
+routerctl doctor
+
+# 單一 area
+routerctl doctor dns
+
+# 不執行主機指令（只看資源 status）
+routerctl doctor --no-host
+
+# 機器可讀輸出
+routerctl doctor -o json
+routerctl doctor -o yaml
+</code></pre>
+<p>選項與 <code>diagnose</code> 一致：<code>--config</code>, <code>--state-file</code>,
+<code>--no-host</code> / <code>--host</code>, <code>-o</code> / <code>--output</code>, <code>--timeout</code>。</p>
+<h2 id="areas">Areas</h2>
+<table>
+<thead>
+<tr>
+<th>Area</th>
+<th>檢查內容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>wan</code></td>
+<td><code>EgressRoutePolicy</code> 與 <code>HealthCheck</code> 的資源 status；IPv4 / IPv6 預設路由（<code>ip -4/-6 route show default</code>）。</td>
+</tr>
+<tr>
+<td><code>dns</code></td>
+<td><code>DNSResolver</code> 的資源 status；透過 <code>dig @127.0.0.1</code> 進行 A 紀錄探測。</td>
+</tr>
+<tr>
+<td><code>dslite</code></td>
+<td><code>DSLiteTunnel</code> 的資源 status；AFTR FQDN 的 AAAA 探測；tunnel device 存在性（<code>ip link show</code>）。</td>
+</tr>
+<tr>
+<td><code>dhcpv6-pd</code></td>
+<td><code>DHCPv6PrefixDelegation</code> 的 status（Bound、委派前綴）。PD 未取得時依設計為 <strong>WARN</strong>（不在 LAN 廣告壞掉的 IPv6）。</td>
+</tr>
+<tr>
+<td><code>nat</code></td>
+<td><code>NAT44Rule</code> 的資源 status；<code>nft list table ip routerd_nat</code> 存在。</td>
+</tr>
+<tr>
+<td><code>firewall</code></td>
+<td><code>FirewallZone</code> / <code>FirewallPolicy</code> 的 status；<code>nft list table inet routerd_filter</code> 存在且 input 鏈為 <code>policy drop</code>（否則視為 permissive）。</td>
+</tr>
+<tr>
+<td><code>rollback</code></td>
+<td>至少存在一個已儲存世代，讓 <code>routerctl rollback --to</code> 可使用。</td>
+</tr>
+<tr>
+<td><code>disk</code></td>
+<td><code>/var/lib/routerd</code> 與 <code>/run/routerd</code> 的容量。≥90% 或 <code>&lt;256 MiB</code> 時 WARN，≥98% 或 <code>&lt;64 MiB</code> 時 FAIL。</td>
+</tr>
+<tr>
+<td><code>mgmt</code></td>
+<td>管理介面的存在性（從 <code>ManagementAccess</code> 或 <code>FirewallZone role=mgmt</code> 推斷）；WebConsole 的 bind（<code>0.0.0.0</code> / <code>::</code> 為 WARN/FAIL）。</td>
+</tr>
+<tr>
+<td><code>reconcile</code></td>
+<td>從唯讀狀態 socket 讀取每個 controller 的 reconcile 失敗歷史。<code>--since &lt;duration&gt;</code> 限定時間視窗。視窗內 ≥1 筆為 WARN，≥10 筆為 FAIL；detail 中最多顯示 5 筆樣本。</td>
+</tr>
+<tr>
+<td><code>runtime</code></td>
+<td>從唯讀狀態 socket 讀取 routerd 自身的 heap / goroutine / fd：<code>heapAlloc</code>、<code>heapObjects</code>、<code>numGoroutine</code>、<code>numGC</code>、<code>openFds</code>/<code>maxFds</code>。當 <code>numGoroutine</code> 超過 10000，或開啟的 fd 達到 <code>RLIMIT_NOFILE</code> 的 80% 以上時為 WARN。僅作觀測，不會 FAIL。</td>
+</tr>
+</tbody>
+</table>
+<p>每個檢查回傳 <code>pass</code>、<code>warn</code>、<code>fail</code>、<code>skip</code>（資源或訊號不存在）其一。</p>
+<h2 id="json-輸出契約">JSON 輸出契約</h2>
+<p><code>routerctl doctor -o json</code> 是<strong>穩定的</strong>機器可讀介面。形式：</p>
+<pre><code class="language-jsonc">{
+  &quot;summary&quot;: {
+    &quot;overall&quot;: &quot;pass&quot;,      // &quot;pass&quot; | &quot;warn&quot; | &quot;fail&quot; | &quot;skip&quot;
+    &quot;pass&quot;: 7,
+    &quot;warn&quot;: 1,
+    &quot;fail&quot;: 0,
+    &quot;skip&quot;: 2
+  },
+  &quot;checks&quot;: [
+    {
+      &quot;area&quot;:   &quot;dns&quot;,                          // 見上方 Areas 表
+      &quot;name&quot;:   &quot;DNSResolver/lan-resolver&quot;,     // 人類可讀對象名稱
+      &quot;status&quot;: &quot;warn&quot;,                         // &quot;pass&quot; | &quot;warn&quot; | &quot;fail&quot; | &quot;skip&quot;
+      &quot;detail&quot;: &quot;phase=Degraded,waiting=...&quot;,   // 可選
+      &quot;remedy&quot;: &quot;wait for or repair dependency wan-pd&quot; // 可選
+    }
+    // ...
+  ]
+}
+</code></pre>
+<p>保證：</p>
+<ul>
+<li><code>summary.overall</code> 取 <code>checks[].status</code> 的最差值（<code>fail</code> &gt; <code>warn</code> &gt; <code>unknown</code>/<code>skip</code> &gt; <code>pass</code>）。</li>
+<li><code>summary.pass/warn/fail/skip</code> 為整數計數，總和等於 <code>len(checks)</code>。</li>
+<li><code>checks[].status</code> 僅為 <code>pass</code>、<code>warn</code>、<code>fail</code>、<code>skip</code>（不會出現其他值）。</li>
+<li><code>checks[].area</code> 取自 Areas 表的穩定識別字集合。</li>
+<li><code>checks[].name</code> 為人類可讀，請勿對其精確形式做樣式比對。</li>
+<li><code>detail</code> / <code>remedy</code> 為可選的自由文字，面向維運人員。</li>
+</ul>
+<p>例如 <code>routerctl doctor runtime -o json</code> 會從唯讀狀態 socket 顯示 routerd
+自身的程序 footprint：</p>
+<pre><code class="language-jsonc">{
+  &quot;summary&quot;: { &quot;overall&quot;: &quot;pass&quot;, &quot;pass&quot;: 1, &quot;warn&quot;: 0, &quot;fail&quot;: 0, &quot;skip&quot;: 0 },
+  &quot;checks&quot;: [
+    {
+      &quot;area&quot;: &quot;runtime&quot;,
+      &quot;name&quot;: &quot;process&quot;,
+      &quot;status&quot;: &quot;pass&quot;,
+      &quot;detail&quot;: &quot;heapAlloc=11.0MiB heapObjects=84213 numGoroutine=187 numGC=14 openFds=23/1024&quot;
+    }
+  ]
+}
+</code></pre>
+<h2 id="結束碼">結束碼</h2>
+<ul>
+<li><code>0</code> — 沒有 <code>fail</code> 檢查（<code>pass</code>、<code>warn</code>、<code>skip</code> 都不視為失敗）。</li>
+<li>非 0 — 至少一個 <code>fail</code>。可寫成 <code>routerctl doctor || alert</code>。</li>
+</ul>
+<p><code>warn</code> 不會讓結束碼變為非 0（例如開機後 DHCPv6-PD 尚未 Bound 這類資訊性情況）。
+若要更嚴格的閘門，請明確選擇 area（如 <code>routerctl doctor wan</code> 只在 <code>wan</code> fail 時非 0）。</p>
+<h2 id="穩定性">穩定性</h2>
+<p>JSON 形式、area 識別字與 status 列舉是 v1alpha1 的維運契約。後續版本<strong>可能新增 area 或可選欄位</strong>，
+但既有的 area 名稱與 status 取值在 v1alpha1 的 minor 版本之間不會改名或改變用途。</p>
+<h2 id="相關項目">相關項目</h2>
+<ul>
+<li><a href="reconcile.html">調整（reconcile）與回滾</a></li>
+<li><a href="reconcile.html#刪除"><code>routerctl ledger</code> 維護</a></li>
+</ul></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#使用方式">使用方式</a></li>
+<li><a href="#areas">Areas</a></li>
+<li><a href="#json-輸出契約">JSON 輸出契約</a></li>
+<li><a href="#結束碼">結束碼</a></li>
+<li><a href="#穩定性">穩定性</a></li>
+<li><a href="#相關項目">相關項目</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/operations/routerctl-doctor.md">GitHub</a></div></footer></body></html>

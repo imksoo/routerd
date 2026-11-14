@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Dynamic config · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/reference/dynamic-config.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/reference/dynamic-config.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/reference/dynamic-config.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/dynamic-config.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/dynamic-config.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="dynamic-config">Dynamic config</h1>
+<p>Dynamic config lets trusted local sources contribute runtime intent without
+editing startup-config. routerd derives one effective-config from startup YAML,
+active dynamic parts, and active masks. Effective-config is the only reconcile
+target.</p>
+<p>This page documents the dynamic-config API shape for the CloudEdge MVP. The
+plugin runner can store validated plugin output as <code>DynamicConfigPart</code> records;
+provider actions from <code>actionPlans</code> remain inert inside dynamic config and are
+not merged into effective config. The separate provider-action engine can import
+them into its journal and execute them only through <code>ProviderActionPolicy</code>,
+approval, and executor-plugin gates.</p>
+<h2 id="dynamicconfigpart">DynamicConfigPart</h2>
+<p><code>DynamicConfigPart</code> is one validated runtime fragment from a dynamic source.
+The source can contribute normal <code>api.Resource</code> objects and directives. Mobility
+controllers additionally persist the typed <code>mobilityDataplane</code> plan,
+<code>fibVerdicts</code>, and fact-side <code>arpObserverIntents</code>; those are controller-owned
+outputs, not plugin-authored resources.</p>
+<pre><code class="language-yaml">apiVersion: config.routerd.net/v1alpha1
+kind: DynamicConfigPart
+metadata:
+  name: oci-inventory
+spec:
+  source: Plugin/oci-inventory
+  generation: 12
+  observedAt: &quot;2026-05-29T12:00:00Z&quot;
+  expiresAt: &quot;2026-05-29T12:05:00Z&quot;
+  digest: sha256:...
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4Route
+      metadata: { name: cloud-app-static-fallback }
+      spec: { destination: 10.0.1.123/32, gateway: 192.0.2.1 }
+  directives:
+    - op: mask
+      target: { apiVersion: net.routerd.net/v1alpha1, kind: IPv4Route, name: cloud-app-static-fallback }
+      reason: &quot;provider inventory confirms the dynamic route&quot;
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.source</code></td>
+<td>Stable source identity, for example <code>Plugin/oci-inventory</code>.</td>
+</tr>
+<tr>
+<td><code>spec.generation</code></td>
+<td>Monotonic source generation for explanation and ordering.</td>
+</tr>
+<tr>
+<td><code>spec.observedAt</code></td>
+<td>RFC3339 time when the source observed the input.</td>
+</tr>
+<tr>
+<td><code>spec.expiresAt</code></td>
+<td>RFC3339 time after which the part is inactive.</td>
+</tr>
+<tr>
+<td><code>spec.digest</code></td>
+<td>Digest of the validated part payload.</td>
+</tr>
+<tr>
+<td><code>spec.resources</code></td>
+<td>Resources contributed to effective-config while active.</td>
+</tr>
+<tr>
+<td><code>spec.directives</code></td>
+<td>Merge directives, currently only <code>op: mask</code>.</td>
+</tr>
+<tr>
+<td><code>spec.actionPlans</code></td>
+<td>Provider action proposals. They are not resources; the provider-action engine imports only active parts and applies its own gates before execution.</td>
+</tr>
+</tbody>
+</table>
+<p>Plugins return a TTL duration in <code>PluginResult.status.ttl</code>; routerd resolves it
+against <code>observedAt</code> into the stored <code>expiresAt</code>.</p>
+<h2 id="dynamicconfigsource">DynamicConfigSource</h2>
+<p><code>DynamicConfigSource</code> is startup-config policy that binds one plugin to dynamic
+config production.</p>
+<pre><code class="language-yaml">apiVersion: plugin.routerd.net/v1alpha1
+kind: DynamicConfigSource
+metadata: { name: oci-inventory }
+spec:
+  pluginRef: oci-inventory
+  ttl: 300s
+  mergePolicy:
+    conflict: reject
+</code></pre>
+<p>The MVP merge policy supports only <code>conflict: reject</code>.</p>
+<h2 id="dynamicconfigdirective">DynamicConfigDirective</h2>
+<p>The MVP supports one directive operation:</p>
+<table>
+<thead>
+<tr>
+<th>Operation</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>mask</code></td>
+<td>Suppress one matching startup-config resource while the directive is active.</td>
+</tr>
+</tbody>
+</table>
+<p>A directive target is identified by <code>apiVersion</code>, <code>kind</code>, and <code>name</code>. The
+target is intentionally exact; wildcard masks are out of scope for the MVP.</p>
+<h2 id="dynamicoverridepolicy">DynamicOverridePolicy</h2>
+<p><code>DynamicOverridePolicy</code> grants a source permission to use dynamic directives
+against selected resources. A plugin can propose a mask, but the mask is active
+only if policy allows that source, operation, and target.</p>
+<pre><code class="language-yaml">apiVersion: config.routerd.net/v1alpha1
+kind: DynamicOverridePolicy
+metadata: { name: allow-cloud-plugin-mask }
+spec:
+  allow:
+    - source: Plugin/oci-inventory
+      operations: [mask]
+      targets:
+        - { apiVersion: net.routerd.net/v1alpha1, kind: IPv4Route, name: cloud-app-static-fallback }
+</code></pre>
+<p>Policy is startup-config intent. Dynamic sources do not grant themselves
+override permissions.</p>
+<h2 id="merge-algorithm">Merge Algorithm</h2>
+<p>The effective-config merge is deterministic:</p>
+<ol>
+<li>Load and validate startup-config.</li>
+<li>Load validated dynamic parts from the state database.</li>
+<li>Drop dynamic parts whose <code>expiresAt</code> is at or before the merge time.</li>
+<li>Sort active dynamic parts by <code>source</code>, then <code>generation</code>, then
+   <code>metadata.name</code> for stable rendering and diagnostics.</li>
+<li>Evaluate active directives against <code>DynamicOverridePolicy</code>.</li>
+<li>Mark startup resources targeted by allowed active masks as suppressed.</li>
+<li>Build effective-config from unsuppressed startup resources plus active
+   dynamic resources.</li>
+<li>Validate the resulting effective-config before reconcile or dry-run output.</li>
+</ol>
+<p>Conflict rules:</p>
+<ul>
+<li>A dynamic resource must not replace a startup resource with the same
+  <code>apiVersion</code>, <code>kind</code>, and <code>metadata.name</code>.</li>
+<li>Two active dynamic resources with the same identity conflict unless a later
+  design defines source-specific ownership rules.</li>
+<li>A disallowed directive is ignored for merge and reported as a validation or
+  diagnostic finding.</li>
+<li>Expired dynamic parts do not contribute resources or masks.</li>
+</ul>
+<h2 id="mask-semantics">Mask Semantics</h2>
+<p>A mask suppresses; it does not delete. The startup YAML remains unchanged, git
+history remains operator-owned, and the static resource becomes active again
+when every matching active mask expires or is removed.</p>
+<p>Suppressed resources should surface status similar to:</p>
+<pre><code class="language-yaml">status:
+  phase: Suppressed
+  maskedBy:
+    - Plugin/oci-inventory#12
+  maskedUntil: &quot;2026-05-29T12:05:00Z&quot;
+</code></pre>
+<p>When multiple masks target the same resource, the resource remains suppressed
+until the last active mask expires. <code>maskedBy</code> lists every active source and
+generation. <code>maskedUntil</code> is the latest <code>expiresAt</code> among active masks.</p>
+<p>The MVP expiry behavior is <code>onExpire=restoreStatic</code>: when a mask expires,
+routerd restores the startup-config resource to effective-config during the
+next merge. There is no destructive cleanup step because no startup resource was
+modified.</p>
+<h2 id="cli">CLI</h2>
+<p>The current operator surface is:</p>
+<pre><code class="language-text">routerctl dynamic list
+routerctl dynamic describe &lt;source-or-part&gt;
+routerctl dynamic render
+routerctl dynamic diff
+routerctl plugin list
+routerctl plugin run &lt;name&gt; [--dry-run]
+</code></pre>
+<p><code>dynamic list</code> shows active and expired parts. <code>dynamic describe</code> explains
+source, generation, digest, resources, directives, and expiry. <code>dynamic render</code>
+prints effective-config. <code>dynamic diff</code> compares startup-config to
+effective-config. <code>plugin run --dry-run</code> prints a candidate dynamic part without
+writing the state database.</p>
+<p>See Hybrid cloud edge design and
+<a href="/docs/plugin-protocol.html">Plugin protocol</a>.</p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#dynamicconfigpart">DynamicConfigPart</a></li>
+<li><a href="#dynamicconfigsource">DynamicConfigSource</a></li>
+<li><a href="#dynamicconfigdirective">DynamicConfigDirective</a></li>
+<li><a href="#dynamicoverridepolicy">DynamicOverridePolicy</a></li>
+<li><a href="#merge-algorithm">Merge Algorithm</a></li>
+<li><a href="#mask-semantics">Mask Semantics</a></li>
+<li><a href="#cli">CLI</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/reference/dynamic-config.md">GitHub</a></div></footer></body></html>

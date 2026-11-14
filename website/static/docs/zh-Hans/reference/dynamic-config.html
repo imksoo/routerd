@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Dynamic config · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/reference/dynamic-config.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/reference/dynamic-config.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/dynamic-config.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/dynamic-config.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/dynamic-config.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="dynamic-config">Dynamic config</h1>
+<p>Dynamic config 是一种机制，允许受信任的本地源在不编辑 startup-config 的情况下提供
+运行时 intent。routerd 从 startup YAML、活跃的 dynamic part 和活跃的 mask 中导出
+一个 effective-config。effective-config 是唯一的 reconcile 对象。</p>
+<p>本页说明面向 CloudEdge MVP 的 dynamic-config API 形状。plugin runner 可以将验证过的
+plugin 输出保存为 <code>DynamicConfigPart</code> 记录。源自 <code>actionPlans</code> 的 provider action
+在 dynamic config 中保持不活跃状态，不会合并到 effective config 中。独立的
+provider-action 引擎仅从活跃的 part 导入，并仅在通过 <code>ProviderActionPolicy</code>、
+审批和 executor-plugin 门控后才执行。</p>
+<h2 id="dynamicconfigpart">DynamicConfigPart</h2>
+<p><code>DynamicConfigPart</code> 是来自 dynamic 源的已验证运行时片段。源可以提供常规的
+<code>api.Resource</code> 对象和指令。Mobility controller 还会持久化类型化的
+<code>localCaptureIntents</code> 与 <code>fibVerdicts</code>；它们是 controller 输出的计划，而非 plugin
+编写的 resource。</p>
+<pre><code class="language-yaml">apiVersion: config.routerd.net/v1alpha1
+kind: DynamicConfigPart
+metadata:
+  name: oci-inventory
+spec:
+  source: Plugin/oci-inventory
+  generation: 12
+  observedAt: &quot;2026-05-29T12:00:00Z&quot;
+  expiresAt: &quot;2026-05-29T12:05:00Z&quot;
+  digest: sha256:...
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4Route
+      metadata: { name: cloud-app-static-fallback }
+      spec: { destination: 10.0.1.123/32, gateway: 192.0.2.1 }
+  directives:
+    - op: mask
+      target: { apiVersion: net.routerd.net/v1alpha1, kind: IPv4Route, name: cloud-app-static-fallback }
+      reason: &quot;provider inventory confirms the dynamic route&quot;
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.source</code></td>
+<td>稳定的源标识符。例：<code>Plugin/oci-inventory</code>。</td>
+</tr>
+<tr>
+<td><code>spec.generation</code></td>
+<td>单调递增的源世代号。用于说明和排序。</td>
+</tr>
+<tr>
+<td><code>spec.observedAt</code></td>
+<td>源观测输入的 RFC3339 时间。</td>
+</tr>
+<tr>
+<td><code>spec.expiresAt</code></td>
+<td>此 part 变为不活跃的 RFC3339 时间。</td>
+</tr>
+<tr>
+<td><code>spec.digest</code></td>
+<td>已验证 part 载荷的摘要。</td>
+</tr>
+<tr>
+<td><code>spec.resources</code></td>
+<td>在活跃期间提供给 effective-config 的资源。</td>
+</tr>
+<tr>
+<td><code>spec.directives</code></td>
+<td>合并指令。当前仅支持 <code>op: mask</code>。</td>
+</tr>
+<tr>
+<td><code>spec.actionPlans</code></td>
+<td>provider action 提案。不是资源。provider-action 引擎仅从活跃的 part 导入，并在执行前应用自身的门控。</td>
+</tr>
+</tbody>
+</table>
+<p>plugin 通过 <code>PluginResult.status.ttl</code> 返回 TTL duration。routerd 将其相对于
+<code>observedAt</code> 解析，得到保存的 <code>expiresAt</code>。</p>
+<h2 id="dynamicconfigsource">DynamicConfigSource</h2>
+<p><code>DynamicConfigSource</code> 是将一个 plugin 绑定到 dynamic config 生成的 startup-config
+策略。</p>
+<pre><code class="language-yaml">apiVersion: plugin.routerd.net/v1alpha1
+kind: DynamicConfigSource
+metadata: { name: oci-inventory }
+spec:
+  pluginRef: oci-inventory
+  ttl: 300s
+  mergePolicy:
+    conflict: reject
+</code></pre>
+<p>MVP 的合并策略仅支持 <code>conflict: reject</code>。</p>
+<h2 id="dynamicconfigdirective">DynamicConfigDirective</h2>
+<p>MVP 支持以下指令操作。</p>
+<table>
+<thead>
+<tr>
+<th>操作</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>mask</code></td>
+<td>当指令活跃时，抑制匹配的 startup-config 资源。</td>
+</tr>
+</tbody>
+</table>
+<p>指令的目标通过 <code>apiVersion</code>、<code>kind</code>、<code>name</code> 标识。目标故意采用精确匹配。
+通配符 mask 不在 MVP 范围内。</p>
+<h2 id="dynamicoverridepolicy">DynamicOverridePolicy</h2>
+<p><code>DynamicOverridePolicy</code> 授权源对选定的资源使用 dynamic 指令。plugin 可以提议 mask，
+但 mask 仅在策略允许该源、操作和目标时才会生效。</p>
+<pre><code class="language-yaml">apiVersion: config.routerd.net/v1alpha1
+kind: DynamicOverridePolicy
+metadata: { name: allow-cloud-plugin-mask }
+spec:
+  allow:
+    - source: Plugin/oci-inventory
+      operations: [mask]
+      targets:
+        - { apiVersion: net.routerd.net/v1alpha1, kind: IPv4Route, name: cloud-app-static-fallback }
+</code></pre>
+<p>策略是 startup-config 的 intent。dynamic 源不能为自身授予覆盖权限。</p>
+<h2 id="合并算法">合并算法</h2>
+<p>effective-config 的合并是确定性的。</p>
+<ol>
+<li>读取并验证 startup-config。</li>
+<li>从状态数据库读取已验证的 dynamic part。</li>
+<li>丢弃 <code>expiresAt</code> 在合并时间之前的 dynamic part。</li>
+<li>将活跃的 dynamic part 按 <code>source</code>、然后 <code>generation</code>、然后 <code>metadata.name</code>
+   排序，实现稳定的渲染和诊断。</li>
+<li>将活跃的指令与 <code>DynamicOverridePolicy</code> 进行匹配评估。</li>
+<li>将被允许的活跃 mask 所针对的 startup 资源标记为已抑制。</li>
+<li>从未被抑制的 startup 资源和活跃的 dynamic 资源构建 effective-config。</li>
+<li>在 reconcile 或 dry-run 输出之前验证生成的 effective-config。</li>
+</ol>
+<p>冲突规则：</p>
+<ul>
+<li>dynamic 资源不得替换具有相同 <code>apiVersion</code>、<code>kind</code>、<code>metadata.name</code> 的
+  startup 资源。</li>
+<li>具有相同 identity 的两个活跃 dynamic 资源会产生冲突，除非后续定义了
+  源特定的所有权规则。</li>
+<li>未被许可的指令在合并中被忽略，并作为验证或诊断发现报告。</li>
+<li>过期的 dynamic part 不提供资源，也不提供 mask。</li>
+</ul>
+<h2 id="mask-语义">mask 语义</h2>
+<p>mask 是抑制而非删除。startup YAML 不会被修改，git 历史仍由运维人员拥有，
+当所有匹配的活跃 mask 过期或被移除时，静态资源将重新变为活跃。</p>
+<p>被抑制的资源应显示如下状态。</p>
+<pre><code class="language-yaml">status:
+  phase: Suppressed
+  maskedBy:
+    - Plugin/oci-inventory#12
+  maskedUntil: &quot;2026-05-29T12:05:00Z&quot;
+</code></pre>
+<p>当多个 mask 针对同一资源时，资源将保持被抑制状态直到最后一个活跃 mask 过期。
+<code>maskedBy</code> 列出所有活跃的源和世代号，<code>maskedUntil</code> 是活跃 mask 中最晚的 <code>expiresAt</code>。</p>
+<p>MVP 的过期行为是 <code>onExpire=restoreStatic</code>。当 mask 过期时，routerd 会在下次合并时
+将 startup-config 资源恢复到 effective-config 中。由于 startup 资源未被修改，
+不需要破坏性的清理步骤。</p>
+<h2 id="cli">CLI</h2>
+<p>当前面向运维人员的接口如下。</p>
+<pre><code class="language-text">routerctl dynamic list
+routerctl dynamic describe &lt;source-or-part&gt;
+routerctl dynamic render
+routerctl dynamic diff
+routerctl plugin list
+routerctl plugin run &lt;name&gt; [--dry-run]
+</code></pre>
+<p><code>dynamic list</code> 显示活跃和过期的 part。<code>dynamic describe</code> 说明源、世代号、摘要、
+资源、指令和有效期限。<code>dynamic render</code> 输出 effective-config。<code>dynamic diff</code> 比较
+startup-config 和 effective-config。<code>plugin run --dry-run</code> 在不写入状态数据库的
+情况下输出候选的 dynamic part。</p>
+<p>参见混合云边缘设计和
+<a href="/docs/zh-Hans/plugin-protocol.html">Plugin protocol</a>。</p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#dynamicconfigpart">DynamicConfigPart</a></li>
+<li><a href="#dynamicconfigsource">DynamicConfigSource</a></li>
+<li><a href="#dynamicconfigdirective">DynamicConfigDirective</a></li>
+<li><a href="#dynamicoverridepolicy">DynamicOverridePolicy</a></li>
+<li><a href="#合并算法">合并算法</a></li>
+<li><a href="#mask-语义">mask 语义</a></li>
+<li><a href="#cli">CLI</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/reference/dynamic-config.md">GitHub</a></div></footer></body></html>

@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ファイアウォール例外を追加する · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/how-to/firewall-rule.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/how-to/firewall-rule.html" lang="en" hreflang="en">English</a><a href="/docs/ja/how-to/firewall-rule.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/how-to/firewall-rule.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/firewall-rule.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="ファイアウォール例外を追加する">ファイアウォール例外を追加する</h1>
+<h2 id="想定するシーン">想定するシーン</h2>
+<p><code>FirewallZone</code> のロールベースの既定で大半はまかなえますが、例外が必要になる場面もあります。</p>
+<ul>
+<li>特定の管理サブネットからの SSH を許可したい。</li>
+<li>ルーター本体上のサービスポート（メトリクスのエンドポイント、独自のリスナー）を開けたい。</li>
+<li>特定の LAN ホストへの、WAN からの着信接続を通したい（ポート転送や DMZ のような用途）。</li>
+</ul>
+<h2 id="routerd-での解決方法">routerd での解決方法</h2>
+<p><code>FirewallRule</code> で、暗黙のロールマトリクスを上書きする例外を宣言します。
+ルールはロールマトリクスより <strong>先</strong> に評価し、routerd が自動で派生する内部用の穴（DHCP、DNS、DHCPv6-PD、DS-Lite 制御など）は、さらにユーザールールより先に評価します。
+この順序のおかげで、制限ルールを追加しても管理対象サービスは生き残ります。</p>
+<h2 id="例-管理ネットワークからの-ssh-を許可する">例: 管理ネットワークからの SSH を許可する</h2>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallRule
+  metadata:
+    name: allow-admin-ssh
+  spec:
+    fromZone: management
+    toZone: self
+    protocol: tcp
+    port: 22
+    action: accept
+</code></pre>
+<p><code>fromZone</code> / <code>toZone</code> は <code>FirewallZone</code> 名を参照します。
+<code>toZone: self</code> は、ルーター自身が終端する通信（転送ではない）を意味します。</p>
+<h2 id="例-ルーター本体のサービスポートを開ける">例: ルーター本体のサービスポートを開ける</h2>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallRule
+  metadata:
+    name: allow-metrics
+  spec:
+    fromZone: lan
+    toZone: self
+    protocol: tcp
+    destinationPorts:
+      - &quot;9100&quot;
+    action: accept
+</code></pre>
+<h2 id="例-lan-から管理セグメント上の-1-台だけを許可する">例: LAN から管理セグメント上の 1 台だけを許可する</h2>
+<p>宛先ゾーン内の特定ホストだけを例外にしたい場合は、
+<code>destinationCIDRs</code> を指定します。
+これにより、管理セグメント全体を開けずに済みます。</p>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallRule
+  metadata:
+    name: allow-lan-to-admin-console
+  spec:
+    fromZone: lan
+    toZone: management
+    destinationCIDRs:
+      - 192.0.2.126/32
+    protocol: tcp
+    destinationPorts:
+      - &quot;8080&quot;
+    action: accept
+</code></pre>
+<h2 id="例-複数の-web-ポートと-icmp-echo">例: 複数の web ポートと ICMP echo</h2>
+<p>TCP / UDP の複数ポートを 1 つのルールで扱う場合は <code>destinationPorts</code> を使います。
+ICMP ルールは type 名で絞り込めます。</p>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallRule
+  metadata:
+    name: wan-web
+  spec:
+    fromZone: wan
+    toZone: self
+    protocol: tcp
+    destinationPorts:
+      - &quot;80&quot;
+      - &quot;443&quot;
+    action: accept
+
+- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallRule
+  metadata:
+    name: wan-icmp-echo
+  spec:
+    fromZone: wan
+    toZone: self
+    protocol: icmp
+    icmpType: echo-request
+    action: accept
+</code></pre>
+<h2 id="例-レート制限や接続数制限を超えた-ssh-を拒否する">例: レート制限や接続数制限を超えた SSH を拒否する</h2>
+<p><code>rateLimit</code> は、設定した閾値を超えた通信に一致します。<code>connLimit</code> は、同じ送信元が
+許可数を超える同時追跡状態をすでに持っている場合に一致します。</p>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallRule
+  metadata:
+    name: ssh-bruteforce-over-limit
+  spec:
+    fromZone: wan
+    toZone: self
+    protocol: tcp
+    destinationPorts:
+      - &quot;22&quot;
+    action: reject
+    rateLimit:
+      rate: 8
+      burst: 16
+      unit: packet
+      per: minute
+      log: true
+    connLimit:
+      maxPerSource: 4
+      log: true
+</code></pre>
+<h2 id="適用前の確認">適用前の確認</h2>
+<p>ローカルのシミュレーターで動作を確かめてから適用してください。</p>
+<pre><code class="language-sh">routerctl firewall test from=wan to=self proto=tcp dport=22
+</code></pre>
+<p>最初のコマンドは、指定した 5-tuple に対して <code>accept</code> / <code>drop</code> を返します。</p>
+<h2 id="関連項目">関連項目</h2>
+<ul>
+<li><a href="firewall-zone.html">ファイアウォールゾーンを定義する</a></li>
+<li><a href="../concepts/firewall.html">ファイアウォールのコンセプト</a></li>
+</ul></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#想定するシーン">想定するシーン</a></li>
+<li><a href="#routerd-での解決方法">routerd での解決方法</a></li>
+<li><a href="#例-管理ネットワークからの-ssh-を許可する">例: 管理ネットワークからの SSH を許可する</a></li>
+<li><a href="#例-ルーター本体のサービスポートを開ける">例: ルーター本体のサービスポートを開ける</a></li>
+<li><a href="#例-lan-から管理セグメント上の-1-台だけを許可する">例: LAN から管理セグメント上の 1 台だけを許可する</a></li>
+<li><a href="#例-複数の-web-ポートと-icmp-echo">例: 複数の web ポートと ICMP echo</a></li>
+<li><a href="#例-レート制限や接続数制限を超えた-ssh-を拒否する">例: レート制限や接続数制限を超えた SSH を拒否する</a></li>
+<li><a href="#適用前の確認">適用前の確認</a></li>
+<li><a href="#関連項目">関連項目</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/how-to/firewall-rule.md">GitHub</a></div></footer></body></html>

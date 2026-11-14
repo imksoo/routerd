@@ -1,0 +1,456 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Isolate guest devices by MAC address · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/how-to/guest-mode.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/how-to/guest-mode.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/how-to/guest-mode.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/how-to/guest-mode.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/guest-mode.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="isolate-guest-devices-by-mac-address">Isolate guest devices by MAC address</h1>
+<p><code>ClientPolicy</code> is routerd's guest mode. It classifies clients by MAC address on
+a shared LAN and applies a stricter forwarding policy before the normal
+zone-to-zone firewall matrix is evaluated.</p>
+<p>The feature is useful when you do not want to build a separate VLAN yet, but
+you still want a clear boundary between trusted devices and devices that should
+only reach the public internet.</p>
+<h2 id="use-cases">Use cases</h2>
+<p>Common uses include:</p>
+<ul>
+<li>Home networks where a visitor phone, game console, appliance, or BYOD laptop
+  should not reach the management network or home servers.</li>
+<li>Apartment or shared-house networks where the default should be guest access,
+  and only explicitly listed devices become trusted.</li>
+<li>IoT isolation, where cameras, HEMS controllers, TVs, and speakers need DNS,
+  DHCP, NTP, and internet access but do not need lateral access.</li>
+<li>Small office visitor networks where guests share a physical LAN for now, but
+  internal RFC 1918 and ULA destinations must stay blocked.</li>
+</ul>
+<p>For a complete example, see
+<a href="/examples/guest-mode.yaml">examples/guest-mode.yaml</a>.</p>
+<h2 id="how-it-works">How it works</h2>
+<p>On Linux, routerd renders <code>ClientPolicy</code> into the nftables table
+<code>inet routerd_filter</code>.</p>
+<p>For each policy it generates:</p>
+<ul>
+<li>an nftables <code>ether_addr</code> set such as <code>client_policy_guest_devices</code>;</li>
+<li><code>ether saddr @set</code> matches for <code>mode: include</code>;</li>
+<li><code>ether saddr != @set</code> matches for <code>mode: exclude</code>;</li>
+<li>self-service accept rules for selected local router services;</li>
+<li>forwarding deny rules for private IPv4 and ULA IPv6 destinations;</li>
+<li>optional allow rules before the deny list.</li>
+</ul>
+<p>The generated rules are placed early in the <code>input</code> and <code>forward</code> chains. That
+means guest isolation narrows access before a <code>trust -&gt; self</code> or <code>trust -&gt;
+trust</code> role-matrix accept rule can allow the packet.</p>
+<p><code>ClientPolicy</code> does not replace <code>FirewallZone</code>. The usual model still applies:</p>
+<ul>
+<li><code>FirewallZone</code> decides the normal zone role of an interface.</li>
+<li><code>FirewallPolicy</code> decides global logging behavior.</li>
+<li><code>FirewallRule</code> adds explicit exceptions.</li>
+<li><code>ClientPolicy</code> adds per-client restrictions inside a LAN-like zone.</li>
+</ul>
+<p>DHCP leases are not required for MAC matching, because nftables sees the
+Ethernet source address directly. <code>DHCPv4Reservation</code> is still useful because
+it gives the same device a stable IP address and a stable name in DNS and the
+Web Console.</p>
+<h2 id="specification">Specification</h2>
+<p><code>ClientPolicy</code> belongs to <code>firewall.routerd.net/v1alpha1</code>.</p>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: ClientPolicy
+  metadata:
+    name: guest-devices
+  spec:
+    mode: include
+    macs:
+      - &quot;18:ec:e7:33:12:6c&quot;
+    isolation:
+      lanInternet: allow
+      lanLAN: deny
+      lanMgmt: deny
+      mDNSBroadcast: deny
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Required</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>mode</code></td>
+<td>yes</td>
+<td><code>include</code> or <code>exclude</code>.</td>
+</tr>
+<tr>
+<td><code>interfaces</code></td>
+<td>no</td>
+<td>LAN-side <code>Interface</code> references where the policy applies. <code>Interface/lan</code> and <code>lan</code> both resolve to the same interface. When omitted, routerd targets every <code>trust</code> <code>FirewallZone</code> interface.</td>
+</tr>
+<tr>
+<td><code>macs</code></td>
+<td>no</td>
+<td>Short-form MAC list. In <code>include</code> mode these are guests. In <code>exclude</code> mode these are trusted.</td>
+</tr>
+<tr>
+<td><code>isolation</code></td>
+<td>no</td>
+<td>High-level guest intent. <code>lanInternet</code>, <code>lanLAN</code>, <code>lanMgmt</code>, and <code>mDNSBroadcast</code> accept <code>allow</code> or <code>deny</code>.</td>
+</tr>
+<tr>
+<td><code>classification</code></td>
+<td>no</td>
+<td>Structured client classification entries.</td>
+</tr>
+<tr>
+<td><code>classification[].mode</code></td>
+<td>yes</td>
+<td><code>trusted</code>, <code>guest</code>, or <code>isolated</code>.</td>
+</tr>
+<tr>
+<td><code>classification[].match.macs</code></td>
+<td>no</td>
+<td>Client MAC addresses. routerd normalizes them before rendering.</td>
+</tr>
+<tr>
+<td><code>classification[].match.ouiPrefixes</code></td>
+<td>no</td>
+<td>Vendor OUI prefixes such as <code>18:ec:e7</code>.</td>
+</tr>
+<tr>
+<td><code>classification[].match.hostnamePatterns</code></td>
+<td>no</td>
+<td>Glob patterns for observed DHCP hostnames.</td>
+</tr>
+<tr>
+<td><code>classification[].match.dhcpFingerprints</code></td>
+<td>no</td>
+<td>DHCP fingerprint labels observed by routerd.</td>
+</tr>
+<tr>
+<td><code>classification[].name</code></td>
+<td>no</td>
+<td>Human-readable device name. It is documentation for now.</td>
+</tr>
+<tr>
+<td><code>classification[].ipv4Reservation</code></td>
+<td>no</td>
+<td>Name of a <code>DHCPv4Reservation</code>. Use a bare resource name such as <code>aiseg2</code>, not <code>DHCPv4Reservation/aiseg2</code>.</td>
+</tr>
+<tr>
+<td><code>guestServices</code></td>
+<td>no</td>
+<td>Local router services allowed for guests. Default is <code>dhcp</code>, <code>dns</code>, <code>ntp</code>. Supported values are <code>dhcp</code>, <code>dns</code>, <code>ntp</code>, <code>mdns</code>, and <code>ssdp</code>.</td>
+</tr>
+<tr>
+<td><code>guestEgressDeny</code></td>
+<td>no</td>
+<td>CIDR list denied for guest forwarding. Defaults to RFC 1918 plus ULA.</td>
+</tr>
+<tr>
+<td><code>guestEgressAllow</code></td>
+<td>no</td>
+<td>CIDR list explicitly allowed before deny rules.</td>
+</tr>
+</tbody>
+</table>
+<p>Default <code>guestEgressDeny</code>:</p>
+<ul>
+<li><code>10.0.0.0/8</code></li>
+<li><code>172.16.0.0/12</code></li>
+<li><code>192.168.0.0/16</code></li>
+<li><code>fc00::/7</code></li>
+</ul>
+<p>When <code>isolation.mDNSBroadcast: deny</code> is set, routerd drops guest mDNS, SSDP,
+and NetBIOS discovery forwarding so a guest device does not browse LAN peers by
+local multicast or broadcast discovery.</p>
+<p>Allow rules are rendered before deny rules. This lets you create narrow
+exceptions, such as a single printer or captive-portal helper, without opening
+the whole private range.</p>
+<h2 id="example-1-minimal-include-mode">Example 1: minimal include mode</h2>
+<p>Only one MAC address is treated as a guest.</p>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: ClientPolicy
+  metadata:
+    name: guest-devices
+  spec:
+    mode: include
+    interfaces:
+      - Interface/lan
+    classification:
+      - mode: guest
+        match:
+          macs:
+            - &quot;18:ec:e7:33:12:6c&quot;
+        name: aiseg2
+</code></pre>
+<h2 id="example-2-include-mode-with-several-devices">Example 2: include mode with several devices</h2>
+<p>Multiple devices can share the same guest rule set.</p>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: ClientPolicy
+  metadata:
+    name: household-guests
+  spec:
+    mode: include
+    interfaces:
+      - Interface/lan
+    classification:
+      - mode: guest
+        match:
+          macs:
+            - &quot;18:ec:e7:33:12:6c&quot;
+        name: aiseg2
+        ipv4Reservation: aiseg2
+      - mode: guest
+        match:
+          macs:
+            - &quot;7c:2f:80:11:22:33&quot;
+        name: guest-phone
+      - mode: guest
+        match:
+          macs:
+            - &quot;90:09:d0:44:55:66&quot;
+        name: smart-tv
+</code></pre>
+<h2 id="example-3-exclude-mode-for-byod">Example 3: exclude mode for BYOD</h2>
+<p>All clients become guests by default. Only listed MAC addresses remain trusted.</p>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: ClientPolicy
+  metadata:
+    name: byod-default-guest
+  spec:
+    mode: exclude
+    interfaces:
+      - Interface/lan
+    classification:
+      - mode: trusted
+        match:
+          macs:
+            - &quot;bc:24:11:e0:8e:3a&quot;
+        name: admin-laptop
+      - mode: trusted
+        match:
+          macs:
+            - &quot;4e:20:15:aa:e0:67&quot;
+        name: owner-phone
+</code></pre>
+<h2 id="example-4-custom-deny-and-allow-lists">Example 4: custom deny and allow lists</h2>
+<p>This policy keeps the default private deny behavior but allows guests to reach
+one printer.</p>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: ClientPolicy
+  metadata:
+    name: guest-with-printer
+  spec:
+    mode: include
+    interfaces:
+      - Interface/lan
+    guestEgressAllow:
+      - 172.18.20.10/32
+    guestEgressDeny:
+      - 10.0.0.0/8
+      - 172.16.0.0/12
+      - 192.168.0.0/16
+      - fc00::/7
+    classification:
+      - mode: guest
+        match:
+          macs:
+            - &quot;7c:2f:80:11:22:33&quot;
+        name: guest-phone
+</code></pre>
+<h2 id="example-5-local-discovery-services">Example 5: local discovery services</h2>
+<p>By default, guests can use DHCP, DNS, and NTP. If the router is also running a
+local discovery proxy or relay, add <code>mdns</code> or <code>ssdp</code> deliberately.</p>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: ClientPolicy
+  metadata:
+    name: media-guests
+  spec:
+    mode: include
+    interfaces:
+      - Interface/lan
+    guestServices:
+      - dhcp
+      - dns
+      - ntp
+      - mdns
+      - ssdp
+    classification:
+      - mode: guest
+        match:
+          macs:
+            - &quot;90:09:d0:44:55:66&quot;
+        name: smart-tv
+</code></pre>
+<p>Only enable discovery services when you understand what the local relay exposes.
+mDNS and SSDP are convenient, but they can reveal device names and service
+metadata.</p>
+<h2 id="example-6-iot-isolation-with-reservations">Example 6: IoT isolation with reservations</h2>
+<p>Stable reservations make troubleshooting easier. They also make Web Console
+client inventory and DNS records less ambiguous.</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DHCPv4Reservation
+  metadata:
+    name: thermostat
+  spec:
+    server: lan-v4
+    macAddress: &quot;02:11:22:33:44:55&quot;
+    hostname: thermostat
+    ipAddress: 172.18.0.151
+
+- apiVersion: firewall.routerd.net/v1alpha1
+  kind: ClientPolicy
+  metadata:
+    name: iot-isolation
+  spec:
+    mode: include
+    interfaces:
+      - Interface/lan
+    classification:
+      - mode: guest
+        match:
+          macs:
+            - &quot;02:11:22:33:44:55&quot;
+        name: thermostat
+        ipv4Reservation: thermostat
+</code></pre>
+<h2 id="dhcpv4reservation-integration">DHCPv4Reservation integration</h2>
+<p><code>classification[].ipv4Reservation</code> is a reference check. routerctl validates that
+the named <code>DHCPv4Reservation</code> exists. The firewall match is still based on MAC
+address, not on the leased IP address.</p>
+<p>This split is intentional:</p>
+<ul>
+<li>MAC matching catches the client before IP-layer policy decisions.</li>
+<li>A fixed IPv4 lease gives the device stable DNS and Web Console identity.</li>
+<li>If the device changes IP address, the guest isolation still follows the MAC.</li>
+</ul>
+<p>When a device uses randomized MAC addresses, create the reservation and
+classification for the actual MAC address used on that SSID or wired segment.</p>
+<h2 id="verify-generated-rules">Verify generated rules</h2>
+<p>Render or inspect the active nftables table:</p>
+<pre><code class="language-sh">routerd render nftables --config /usr/local/etc/routerd/router.yaml
+sudo nft list table inet routerd_filter
+</code></pre>
+<p>Look for:</p>
+<pre><code class="language-nft">set client_policy_guest_devices {
+  type ether_addr
+  elements = { 18:ec:e7:33:12:6c }
+}
+
+iifname &quot;ens19&quot; ether saddr @client_policy_guest_devices udp dport 53 counter accept
+iifname &quot;ens19&quot; ether saddr @client_policy_guest_devices ip daddr 10.0.0.0/8 counter log prefix &quot;routerd client-policy guest-devices deny &quot; drop
+</code></pre>
+<h2 id="verify-from-a-guest-device">Verify from a guest device</h2>
+<p>From a guest client:</p>
+<pre><code class="language-sh">curl -4 https://www.google.com/generate_204
+curl -4 --connect-timeout 3 http://192.168.1.1/
+curl -4 --connect-timeout 3 http://172.18.0.1:8080/
+</code></pre>
+<p>Expected result:</p>
+<ul>
+<li>public internet succeeds;</li>
+<li>private destinations time out or fail;</li>
+<li>DNS, DHCP, and NTP continue to work.</li>
+</ul>
+<p>On the router, use tcpdump to see the packet path:</p>
+<pre><code class="language-sh">sudo tcpdump -ni ens19 ether host 18:ec:e7:33:12:6c
+sudo nft list chain inet routerd_filter forward
+</code></pre>
+<p>The nftables counters on the generated <code>ClientPolicy</code> rules should increment
+when private destinations are denied.</p>
+<h2 id="troubleshooting">Troubleshooting</h2>
+<h3 id="mac-address-does-not-match">MAC address does not match</h3>
+<p>Check the MAC address seen by the router:</p>
+<pre><code class="language-sh">ip neigh show dev ens19
+sudo tcpdump -eni ens19
+</code></pre>
+<p>Wireless clients often use different MAC addresses per SSID. Phones and laptops
+may also use private randomized MAC addresses. Use the address visible on the
+router-facing LAN, not the hardware address printed on the device.</p>
+<h3 id="guest-can-still-reach-private-networks">Guest can still reach private networks</h3>
+<p>Check these points:</p>
+<ul>
+<li>The policy references the correct <code>Interface</code>.</li>
+<li>The packet enters through that interface.</li>
+<li><code>routerctl apply</code> installed the current nftables table.</li>
+<li><code>guestEgressAllow</code> does not contain a broad private prefix.</li>
+<li>Another path, such as a VPN client on the endpoint itself, is not bypassing
+  the router.</li>
+</ul>
+<h3 id="guest-cannot-reach-the-internet">Guest cannot reach the internet</h3>
+<p><code>ClientPolicy</code> only narrows private and self traffic. Internet failure usually
+comes from route policy, NAT44, DS-Lite, DNS, or IP forwarding. Check:</p>
+<pre><code class="language-sh">routerctl get status
+sysctl net.ipv4.ip_forward
+sudo nft list table ip routerd_nat
+</code></pre>
+<h3 id="guestservices-ordering">guestServices ordering</h3>
+<p><code>guestServices</code> only controls access to local router services. It does not
+permit forwarding to private subnets. Forwarding exceptions belong in
+<code>guestEgressAllow</code>.</p>
+<h2 id="security-considerations">Security considerations</h2>
+<p>MAC-based isolation is useful, but it is not a cryptographic identity system.
+A malicious user can spoof a trusted MAC address if they have enough control
+over their device.</p>
+<p>Use <code>ClientPolicy</code> as a practical home and small-office control, not as the
+only boundary for hostile users. Stronger designs include:</p>
+<ul>
+<li>separate VLANs or SSIDs;</li>
+<li>WPA3 Enterprise or 802.1X;</li>
+<li>switch port isolation;</li>
+<li>per-device credentials;</li>
+<li>a dedicated guest bridge or VRF.</li>
+</ul>
+<p><code>ClientPolicy</code> is still valuable with those designs because it documents the
+intended classification in routerd's resource model and gives consistent
+firewall rendering.</p>
+<h2 id="os-support">OS support</h2>
+<p>Linux nftables is supported.</p>
+<p>FreeBSD pf does not provide the same MAC-based routed filtering model in the
+path routerd uses for <code>FirewallZone</code> and <code>FirewallRule</code>. FreeBSD ClientPolicy
+therefore uses an address-backed approximation: an IPv4 class needs a
+<code>DHCPv4Reservation</code>, and an IPv6 class needs explicit
+<code>classification[].ipv6Addresses</code>. routerd does not infer an IPv6 identity from
+a MAC or IPv4 reservation. The generated IPv6 rules are limited to those
+literal addresses, so privacy or unlisted IPv6 clients require separate
+network segmentation.</p>
+<p>Possible future FreeBSD designs include bridge-level filtering or a dedicated
+layer-2 segmentation resource, but those should be designed separately because
+they are not equivalent to routed pf rules.</p>
+<h2 id="related-resources">Related resources</h2>
+<ul>
+<li><code>FirewallZone</code>: assigns the interface to <code>trust</code>, <code>untrust</code>, or <code>mgmt</code>.</li>
+<li><code>FirewallPolicy</code>: enables deny logging and shared firewall behavior.</li>
+<li><code>FirewallRule</code>: expresses exceptions that are not tied to MAC
+  classification.</li>
+<li><code>DHCPv4Reservation</code>: gives a classified device a stable IPv4 address and
+  hostname.</li>
+<li>Tunnel-derived TCP MSS clamping still applies to forwarded guest traffic
+  when the firewall zones and tunnel path match. Guest isolation does not
+  bypass MSS clamping.</li>
+</ul></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#use-cases">Use cases</a></li>
+<li><a href="#how-it-works">How it works</a></li>
+<li><a href="#specification">Specification</a></li>
+<li><a href="#example-1-minimal-include-mode">Example 1: minimal include mode</a></li>
+<li><a href="#example-2-include-mode-with-several-devices">Example 2: include mode with several devices</a></li>
+<li><a href="#example-3-exclude-mode-for-byod">Example 3: exclude mode for BYOD</a></li>
+<li><a href="#example-4-custom-deny-and-allow-lists">Example 4: custom deny and allow lists</a></li>
+<li><a href="#example-5-local-discovery-services">Example 5: local discovery services</a></li>
+<li><a href="#example-6-iot-isolation-with-reservations">Example 6: IoT isolation with reservations</a></li>
+<li><a href="#dhcpv4reservation-integration">DHCPv4Reservation integration</a></li>
+<li><a href="#verify-generated-rules">Verify generated rules</a></li>
+<li><a href="#verify-from-a-guest-device">Verify from a guest device</a></li>
+<li><a href="#troubleshooting">Troubleshooting</a><ul>
+<li><a href="#mac-address-does-not-match">MAC address does not match</a></li>
+<li><a href="#guest-can-still-reach-private-networks">Guest can still reach private networks</a></li>
+<li><a href="#guest-cannot-reach-the-internet">Guest cannot reach the internet</a></li>
+<li><a href="#guestservices-ordering">guestServices ordering</a></li>
+</ul>
+</li>
+<li><a href="#security-considerations">Security considerations</a></li>
+<li><a href="#os-support">OS support</a></li>
+<li><a href="#related-resources">Related resources</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/how-to/guest-mode.md">GitHub</a></div></footer></body></html>

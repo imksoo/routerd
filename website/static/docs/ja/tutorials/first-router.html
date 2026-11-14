@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>最初の実験用ルーターを立ち上げる · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/tutorials/first-router.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/tutorials/first-router.html" lang="en" hreflang="en">English</a><a href="/docs/ja/tutorials/first-router.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/tutorials/first-router.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/tutorials/first-router.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="最初の実験用ルーターを立ち上げる">最初の実験用ルーターを立ち上げる</h1>
+<p>このチュートリアルでは、隔離した LAN のテスト用クライアントにプライベート IPv4
+アドレスとゲートウェイを渡し、上流ネットワークへ IPv4 で出られるようにします。完全な例
+<a href="/examples/example-basic-ipv4-nat.yaml"><code>examples/example-basic-ipv4-nat.yaml</code></a>
+を使います。</p>
+<p>家庭用ルーターへそのまま貼り付ける手順ではなく、実験用の手順です。</p>
+<p>VM コンソール、シリアルコンソール、または別の管理 NIC を使います。下の <code>ens18</code> と
+<code>ens19</code> は例です。<code>ip -br link</code> で自分の NIC 名を確認し、管理接続に使っている NIC を
+推測で選ばないでください。例の <code>192.168.10.0/24</code> は、上流、VPN、学校、管理ネットワーク
+と重なるなら別の未使用範囲に変えます。</p>
+<h2 id="始める前に">始める前に</h2>
+<ul>
+<li><a href="../install-and-upgrade.html">インストールとアップグレード</a>に従って導入します。</li>
+<li>Ubuntu Server のラボホストに WAN/LAN の2つの NIC と、コンソールまたは
+  独立した管理経路を用意します。名前は <code>ip -br link</code> で確認します。</li>
+<li>WAN はインターネットへ接続できる上流 DHCP ネットワークへ、LAN は隔離した
+  スイッチ/ブリッジとテスト端末だけへ接続します。LAN に別の DHCP サーバーを置きません。</li>
+<li>sudo を使えるユーザーとダウンロード用の通信経路が必要です。端末の確認例は Linux 用です。</li>
+<li>以下は <code>routerd.service</code> が停止中の初回導入手順です。既に稼働中なら、別の live
+  one-shot apply を同時に実行しません。候補を確認してから、手順3の代わりに
+  <code>sudo routerctl plan -f first-router.yaml --replace</code> と
+  <code>sudo routerctl apply -f first-router.yaml --replace</code> をラボのコンソールで使います。
+  全置換はファイルにないリソースを削除するので、本番設定を実験用ファイルで置換しません。</li>
+</ul>
+<h2 id="成功した状態">成功した状態</h2>
+<pre><code class="language-text">上流ネットワーク -- WAN -- routerd ホスト -- LAN -- テスト用クライアント
+                              DHCP + NAT
+</code></pre>
+<ol>
+<li>上流が WAN に DHCP で IPv4 アドレスを渡す。</li>
+<li>ルーターが LAN のテスト用クライアントに <code>192.168.10.100</code> から
+   <code>192.168.10.199</code> のアドレスを渡す。</li>
+<li>テスト用クライアントが <code>192.168.10.1</code> をゲートウェイとして使う。</li>
+<li>NAT により、クライアントの IPv4 通信が 1 つの上流アドレスを通って外へ出る。</li>
+</ol>
+<p>DHCP、ゲートウェイ、NAT という言葉が初めてなら、先に
+<a href="network-basics.html">ネットワークの基本</a>を読んでください。</p>
+<h2 id="1-完成した実験用ファイルを取得して直す">1. 完成した実験用ファイルを取得して直す</h2>
+<pre><code class="language-bash"># インストール済み release には router.yaml.sample だけがあり、全ての例は含まれません。
+# インストール済み routerd と同じ release から例を取得します。
+ROUTERD_VERSION=&quot;$(sudo routerd version | awk '{print $2}')&quot;
+curl --fail --location --output first-router.yaml \
+  &quot;https://raw.githubusercontent.com/imksoo/routerd/${ROUTERD_VERSION}/examples/example-basic-ipv4-nat.yaml&quot;
+</code></pre>
+<p>同じ release tag の source checkout がすでにある場合は、代わりにその checkout の
+<code>examples/example-basic-ipv4-nat.yaml</code> をコピーできます。</p>
+<p>最初の preview の前に、<code>first-router.yaml</code> で次だけを自分の実験環境に合わせます。</p>
+<ul>
+<li><code>Interface/wan.spec.ifname</code>: 実験用 WAN の NIC 名。</li>
+<li><code>Interface/lan.spec.ifname</code>: 隔離した LAN の NIC 名。</li>
+<li><code>192.168.10.0/24</code>: 接続済みのネットワークと重なる場合だけ変更する。</li>
+<li>公開 DNS サーバー: 実験環境で別のリゾルバーを使う必要がある場合だけ変更する。</li>
+</ul>
+<p>このファイルでは WAN を外部管理のままにし、LAN を routerd が管理します。DHCPv4
+サーバー、NAT44 ルール、基本的な zone リソースを含みます。</p>
+<p>routerd の firewall リソースは機能の基礎であり、安全性の認証ではありません。この例だけを
+唯一の防御境界にしてインターネットへ公開しないでください。最初の実験は隔離した仮想
+スイッチまたは物理ラボネットワークの内側で行います。</p>
+<h2 id="2-daemon-を起動する前に検証と-preview-をする">2. daemon を起動する前に検証と preview をする</h2>
+<pre><code class="language-bash">sudo routerd validate --config first-router.yaml
+
+LAB_DIR=&quot;$(mktemp -d)&quot;
+sudo routerd apply --config first-router.yaml --once --dry-run \
+  --state-file &quot;$LAB_DIR/state.db&quot; \
+  --status-file &quot;$LAB_DIR/status.json&quot;
+rm -rf &quot;$LAB_DIR&quot;
+</code></pre>
+<p>この 2 つのコマンドはホストのネットワークを変更しません。検証に失敗したら、live apply を
+試すのではなく YAML を直します。dry-run に管理 NIC、経路、生成されるファイルが予想どおりに
+表示されていることを確認してください。</p>
+<h2 id="3-コンソールから適用する">3. コンソールから適用する</h2>
+<p>preview が想定どおりの NIC と生成物を示したときだけ、コンソールまたは独立した管理経路から
+変更します。</p>
+<pre><code class="language-bash">sudo routerd apply --config first-router.yaml --once
+</code></pre>
+<p>一時的な実験でも、次の状態確認とクライアントの通信確認にはサービスの起動が必要です。
+one-shot apply は処理後に終了し、<code>routerctl</code> が接続する daemon は残りません。
+確認済みのファイルを標準の場所に置いてサービスを起動します。</p>
+<pre><code class="language-bash">sudo install -d -m 0755 /usr/local/etc/routerd
+sudo install -m 0600 first-router.yaml /usr/local/etc/routerd/router.yaml
+sudo systemctl start routerd.service
+sudo systemctl is-active routerd.service
+</code></pre>
+<p><code>active</code> と表示されてから次へ進みます。再起動後も実験用ルーターを自動で起動したい場合は、
+任意でサービスの自動起動を有効にします。</p>
+<pre><code class="language-bash">sudo systemctl enable routerd.service
+</code></pre>
+<h2 id="4-小さな通信経路を最後まで確認する">4. 小さな通信経路を最後まで確認する</h2>
+<p>ルーター上で確認します。</p>
+<pre><code class="language-bash">sudo routerctl get status
+sudo routerctl describe DHCPv4Client/wan-dhcpv4
+sudo routerctl describe DHCPv4Server/lan-dhcpv4
+sudo routerctl describe NAT44Rule/lan-to-wan
+</code></pre>
+<p>隔離した LAN だけにつないだクライアントで DHCP リースを更新し、次を確認します。</p>
+<pre><code class="language-bash">ip route
+ping 192.168.10.1
+curl -I https://example.com/
+</code></pre>
+<p>最後のコマンドが失敗したときは、原因を分けて確認します。最初にクライアントがアドレスと
+ゲートウェイを受け取ったか、次に WAN のリースがあるか、最後に DNS を確認します。原因が
+不明なまま何度も apply しないでください。</p>
+<h2 id="次に読むもの">次に読むもの</h2>
+<ul>
+<li><a href="../config-examples/basic-ipv4-nat.html">基本 IPv4 NAT ゲートウェイ</a> — このファイルを
+  図と YAML の対応で説明します</li>
+<li><a href="lan-side-services.html">LAN 側サービス</a> — IPv4 が動いてからローカル DNS と IPv6 を
+  足します</li>
+<li><a href="basic-firewall.html">基本 NAT と firewall policy</a> — 現在の firewall の範囲と安全な次の手順</li>
+</ul>
+<p>起動や状態確認に失敗したら、再度 live apply を試す前に
+<a href="../how-to/troubleshooting.html">トラブルシュート</a>を参照します。</p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#始める前に">始める前に</a></li>
+<li><a href="#成功した状態">成功した状態</a></li>
+<li><a href="#1-完成した実験用ファイルを取得して直す">1. 完成した実験用ファイルを取得して直す</a></li>
+<li><a href="#2-daemon-を起動する前に検証と-preview-をする">2. daemon を起動する前に検証と preview をする</a></li>
+<li><a href="#3-コンソールから適用する">3. コンソールから適用する</a></li>
+<li><a href="#4-小さな通信経路を最後まで確認する">4. 小さな通信経路を最後まで確認する</a></li>
+<li><a href="#次に読むもの">次に読むもの</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/tutorials/first-router.md">GitHub</a></div></footer></body></html>

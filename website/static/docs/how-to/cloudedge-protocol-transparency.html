@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CloudEdge Protocol Transparency Acceptance · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/how-to/cloudedge-protocol-transparency.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/how-to/cloudedge-protocol-transparency.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/how-to/cloudedge-protocol-transparency.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/how-to/cloudedge-protocol-transparency.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/cloudedge-protocol-transparency.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="cloudedge-protocol-transparency-acceptance">CloudEdge Protocol Transparency Acceptance</h1>
+<p>This is the no-cloud harness plan for validating that CloudEdge mobility is
+transparent to connection-oriented protocols that are sensitive to NAT, helper
+ALGs, dynamic ports, and MTU/PMTU behavior. The live run is performed later by a
+lab operator; this document and the scripts under <code>scripts/</code> only prepare the
+contract and evidence shape.</p>
+<h2 id="goal">Goal</h2>
+<p>For traffic over the logical shared subnet (<code>10.77.60.0/24</code> in the demo), prove:</p>
+<ul>
+<li>No NAT: the server sees the client site's mobility <code>/32</code> as the peer address.</li>
+<li>The client default gateway is unchanged from the local site.</li>
+<li>FTP active mode and passive mode both transfer data without NAT ALG.</li>
+<li>RPC endpoint discovery through <code>rpcbind</code> and an NFSv3 mount/read/write work
+  across sites.</li>
+<li>Large transfers complete without PMTU black holes.</li>
+<li>MSS/PMTU evidence records the overlay MTU, route MTU/advmss when available,
+  and the configured MSS clamp value.</li>
+</ul>
+<h2 id="minimal-live-matrix">Minimal Live Matrix</h2>
+<p>Run the protocol probe after the normal D3 directed matrix is already green.
+Use two representative pairs:</p>
+<table>
+<thead>
+<tr>
+<th>Pair</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>aws -&gt; azure</code></td>
+<td>cloud-to-cloud overlay path with cloud provider trapping on both ends</td>
+</tr>
+<tr>
+<td><code>aws -&gt; onprem</code></td>
+<td>cloud-to-onprem path with on-prem proxy-ARP/VRRP authority</td>
+</tr>
+</tbody>
+</table>
+<p>The scenario catalog encodes this as <code>d11-protocol-transparency</code> in
+<code>examples/cloudedge-acceptance-scenarios.json</code>.</p>
+<p>Larger parity runs may add <code>azure -&gt; oci</code>, <code>oci -&gt; aws</code>, or reverse directions,
+but the minimal acceptance should stay small enough to run inside one 4-site lab
+window.</p>
+<h2 id="harness">Harness</h2>
+<p>The wrapper is:</p>
+<pre><code class="language-sh">PROTOCOL_PROBE_RUNNER=scripts/runners/cloudedge-protocol-runner.sh \
+  scripts/cloudedge-protocol-probe.sh \
+    --pairs aws:azure,aws:onprem \
+    --bytes 104857600 \
+    --out evidence/protocol-probe.json
+</code></pre>
+<p>The full acceptance scenario uses the same wrapper through:</p>
+<pre><code class="language-sh">PROTOCOL_PROBE_RUNNER=scripts/runners/cloudedge-protocol-runner.sh \
+MATRIX_RUNNER=scripts/runners/cloudedge-matrix-runner.sh \
+scripts/cloudedge-acceptance.sh run \
+  --scenario d11-protocol-transparency \
+  --out evidence/d11-protocol \
+  --commit &lt;routerd-commit&gt;
+</code></pre>
+<p>The output is validated by <code>scripts/cloudedge-protocol-result-schema.json</code> and is
+folded into <code>result.json</code> under the <code>protocols</code> object.</p>
+<h2 id="runner-contract">Runner Contract</h2>
+<p><code>scripts/runners/cloudedge-protocol-runner.sh</code> implements
+<code>PROTOCOL_PROBE_RUNNER</code>. It is intentionally parameterized by environment
+variables and contains no provider account IDs, resource IDs, or secrets.</p>
+<p>Required per site:</p>
+<pre><code class="language-sh">export CE_AWS_CLIENT_SSH_HOST=&lt;ssh-host-or-user@host&gt;
+export AWS_CLIENT_IP=10.77.60.11
+export CE_AZURE_CLIENT_SSH_HOST=&lt;ssh-host-or-user@host&gt;
+export AZURE_CLIENT_IP=10.77.60.12
+export CE_ONPREM_CLIENT_SSH_HOST=&lt;ssh-host-or-user@host&gt;
+export ONPREM_CLIENT_IP=10.77.60.10
+export SSH_KEY_FILE=&lt;private-key&gt;
+export SSH_USER=ubuntu
+export CLIENT_SSH_USER=ubuntu
+</code></pre>
+<p>Useful protocol variables:</p>
+<pre><code class="language-sh">export CE_PROTOCOL_INSTALL=1
+export CE_PROTOCOL_CONFIGURE_SERVICES=1
+export CE_PROTOCOL_FTP_PASSIVE_PORTS=40000:40100
+export CE_PROTOCOL_BULK_BYTES=104857600
+export CE_PROTOCOL_PMTU_SIZE=1300
+export CE_PROTOCOL_OVERLAY_IFACE=wg-hybrid
+</code></pre>
+<p>The wrapper calls these operations per pair:</p>
+<table>
+<thead>
+<tr>
+<th>Operation</th>
+<th>Assertion</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>setup</code></td>
+<td>Installs/configures <code>vsftpd</code>, <code>rpcbind</code>, NFS server/client tools, and <code>iperf3</code> when enabled</td>
+</tr>
+<tr>
+<td><code>ftp-active</code></td>
+<td>FTP <code>PORT</code> mode data channel completes</td>
+</tr>
+<tr>
+<td><code>ftp-passive</code></td>
+<td>FTP passive mode data channel completes</td>
+</tr>
+<tr>
+<td><code>nfs</code></td>
+<td>NFSv3 mount plus write/read of the requested byte budget completes</td>
+</tr>
+<tr>
+<td><code>rpc</code></td>
+<td><code>rpcinfo -p</code> finds <code>rpcbind</code> and at least one dynamic RPC/NFS port</td>
+</tr>
+<tr>
+<td><code>bulk</code></td>
+<td><code>iperf3 -n &lt;bytes&gt;</code> completes and records throughput/retransmits</td>
+</tr>
+<tr>
+<td><code>pmtu</code></td>
+<td>DF ping succeeds and records overlay MTU, route MTU/advmss, MSS clamp</td>
+</tr>
+<tr>
+<td><code>source-preserved</code></td>
+<td>Server-side SSH sees the client mobility <code>/32</code> as peer IP</td>
+</tr>
+<tr>
+<td><code>no-nat</code></td>
+<td>Same peer-IP check, recorded as an explicit no-NAT assertion</td>
+</tr>
+</tbody>
+</table>
+<h2 id="forcefrag-mss-comparison">Forcefrag / MSS Comparison</h2>
+<p>The normal run should pass with the routerd-derived MSS clamp. If a lab needs to
+prove P2-b force fragmentation behavior, run the same D11 pair set twice:</p>
+<ol>
+<li><code>forceFragmentIPv4: false</code> (default): TCP transfers should pass through MSS
+   clamp; oversized DF non-TCP may fail depending on underlay PMTU.</li>
+<li><code>forceFragmentIPv4: true</code> on the relevant <code>OverlayPeer</code> or <code>TunnelInterface</code>:
+   the same DF probe should pass and <code>routerd_forcefrag</code> should appear in
+   router evidence.</li>
+</ol>
+<p>Do not enable force fragmentation globally. Keep it path-scoped and record the
+before/after config digest in the evidence bundle.</p>
+<h2 id="evidence-review-checklist">Evidence Review Checklist</h2>
+<p>For each pair in <code>protocol-probe.json</code>:</p>
+<ul>
+<li><code>checks.ftpActive</code>, <code>ftpPassive</code>, <code>nfs</code>, <code>rpc</code>, <code>bulkTransfer</code>, <code>pmtu</code>,
+  <code>sourceIpPreserved</code>, and <code>noNat</code> are all <code>pass</code>.</li>
+<li><code>details.sourceIpPreserved.peer_ip</code> equals the client site's mobility <code>/32</code>.</li>
+<li><code>details.rpc.dynamic_port</code> is present and not <code>111</code>.</li>
+<li><code>details.bulkTransfer.retransmits</code> is recorded when <code>iperf3</code> is available.</li>
+<li><code>details.pmtu.overlay_mtu</code>, <code>route_mtu</code> or <code>route_advmss</code>, and <code>mss_clamp</code>
+  are recorded.</li>
+</ul>
+<p>The outer <code>result.json</code> must include passing assertions:</p>
+<ul>
+<li><code>protocol_transparency</code></li>
+<li><code>ftp_active_passive</code></li>
+<li><code>nfs_rpc</code></li>
+<li><code>bulk_transfer_pmtu</code></li>
+<li><code>protocol_source_ip_preserved</code></li>
+<li><code>protocol_no_nat</code></li>
+</ul>
+<p>The SAM E2E harness checks the exact read and written content for FTP, NFS and CIFS. Performance values remain separate from the normal post-failover matrix verdict. Deploy copies use a fresh directory, propagate every required copy/setup failure, and compare the installed binaries and configuration with this attempt's payload before restarting services.</p>
+<p>L2 qualification needs exactly the before and after observations from one provider and threshold configuration, including the suppression mechanism. A successful before acquisition permits the next orchestration step, while the saved aggregate remains inconclusive until after; after returns the aggregate verdict. Failover durations use a monotonic clock, with UTC recorded separately for journal correlation. Provider VM stop implementations handle <code>stop-active</code>; <code>drain</code> requires an explicit <code>CE_&lt;PROVIDER&gt;_DRAIN_INJECT_COMMAND</code> or <code>CE_DRAIN_INJECT_COMMAND</code>, and on-premises stop requires an explicit node-stop command. Stopping keepalived does not establish a node-stop qualification.</p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#goal">Goal</a></li>
+<li><a href="#minimal-live-matrix">Minimal Live Matrix</a></li>
+<li><a href="#harness">Harness</a></li>
+<li><a href="#runner-contract">Runner Contract</a></li>
+<li><a href="#forcefrag-mss-comparison">Forcefrag / MSS Comparison</a></li>
+<li><a href="#evidence-review-checklist">Evidence Review Checklist</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/how-to/cloudedge-protocol-transparency.md">GitHub</a></div></footer></body></html>

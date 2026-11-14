@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>透過閘控 executor 執行 AWS SAM 提供者操作 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/how-to/aws-provider-action-execution.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/how-to/aws-provider-action-execution.html" lang="en" hreflang="en">English</a><a href="/docs/ja/how-to/aws-provider-action-execution.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/how-to/aws-provider-action-execution.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/how-to/aws-provider-action-execution.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="透過閘控-executor-執行-aws-sam-提供者操作">透過閘控 executor 執行 AWS SAM 提供者操作</h1>
+<p>這是 CloudEdge 提供者操作執行的<strong>閘控即時變更</strong>路徑。
+<strong>實驗性</strong>功能，僅限 AWS。
+建構於 ADR 0007: Provider Action Execution 和
+<a href="../reference/selective-address-mobility.html">Selective Address Mobility</a>
+資料平面之上。<strong>請勿</strong>對生產環境或共用資源執行即時變更步驟。即時執行僅在審閱本 Runbook 和唯讀 preflight 證據後，<strong>取得擁有者明確核准後</strong>方可進行。</p>
+<p>SAM 資料平面已在 AWS x PVE（ENI 次要私有 IP + source/dest check 停用）上完成實際雲端驗證。在此之前，這些 attach/detach 操作都是<strong>操作人員手動</strong>執行的。本指南介紹 <code>aws-provider-executor</code> 外掛程式，該外掛程式透過<strong>閘控日誌化</strong>執行路徑（ADR 0007）取代手動操作來執行相同的變更。</p>
+<h2 id="1-範圍與邊界">1. 範圍與邊界</h2>
+<ul>
+<li><strong>僅限 AWS。只有一個提供者。</strong> 本 Runbook 不涉及 Azure 或 OCI。</li>
+<li><strong>拓撲：</strong> 1 台 <code>routerd-cloud</code> 節點 + 1 台 cloud-client + 1 台 on-prem-client，從 on-prem 遷移到 cloud ENI 的已捕獲 <strong><code>/32</code> 僅 1 個</strong>。實驗室位址遵循 SAM 參考：cloud-client 為 <code>.7</code>，on-prem-client 為 <code>.9</code>。</li>
+<li><strong>僅限專用實驗室。</strong> 使用為此測試建立的拋棄式 VPC / 子網路 / 執行個體。<strong>不使用生產或共用資源。</strong> 沒有其他相依的 EIP、安全群組、路由表或執行個體。</li>
+<li><strong>即時執行僅在擁有者明確核准後進行。</strong> 唯讀 preflight（第 4 節）可隨時執行。第 7 節的變更操作受閘控保護。</li>
+</ul>
+<h2 id="2-executor-設計">2. Executor 設計</h2>
+<p><code>aws-provider-executor</code> 是一個通告 <code>execute.providerAction</code> 能力（<code>PluginSpec.Capabilities</code> 的 Phase 5 列舉值）的外掛程式。它以<strong>獨立程序</strong>運行，透過 AWS CLI 使用 <strong>EC2 執行個體 IAM 角色（執行個體設定檔）</strong> 進行驗證。<strong>routerd 核心不傳遞任何憑證</strong> — executor 僅使用雲端原生身分，遵循 ADR 0007 的硬性不變量。</p>
+<p>executor 從 <strong>stdin</strong> 讀取 1 個 <code>ExecuteActionRequest</code>，向 stdout 輸出 1 個 <code>ExecuteActionResult</code>。請求規格包含 <code>Action</code>、<code>Provider</code>、<code>ProviderRef</code>、<code>Target</code>（提供者金鑰：AWS 為 <code>nicRef</code> = ENI id、<code>address</code>、<code>region</code>）、<code>Parameters</code>、<code>Mode</code>（<code>dry-run</code> | <code>execute</code>）、<code>IdempotencyKey</code>、允許清單中的 <code>Context</code>。結果包含 <code>Status</code>（<code>succeeded</code> | <code>failed</code> | <code>skipped</code>）、<code>Message</code>、<code>Observed</code>（日誌記錄的非機密事實）、<code>UndoAvailable</code>、<code>Error</code>。</p>
+<p><strong><code>dry-run</code> 模式不執行任何變更</strong> — 僅進行 describe / 唯讀呼叫。<code>execute</code> 模式執行變更。</p>
+<h3 id="assign-secondary-ip"><code>assign-secondary-ip</code></h3>
+<p>將已捕獲的 <code>/32</code> 附加到 cloud ENI。</p>
+<ul>
+<li><strong>dry-run</strong>（唯讀）：describe ENI 並報告目前的次要 IP，輸出 <code>would assign &lt;address&gt; to &lt;eni&gt;</code>。</li>
+</ul>
+<p><code>sh
+  aws ec2 describe-network-interfaces \
+    --network-interface-ids "&lt;eni-id&gt;" --region "&lt;region&gt;"</code></p>
+<ul>
+<li><strong>execute</strong>（變更）：</li>
+</ul>
+<p><code>sh
+  aws ec2 assign-private-ip-addresses \
+    --network-interface-id "&lt;eni-id&gt;" \
+    --private-ip-addresses "&lt;address&gt;" --region "&lt;region&gt;"</code></p>
+<h3 id="ensure-forwarding-enabled"><code>ensure-forwarding-enabled</code></h3>
+<p>停用 ENI 的 source/dest check，使 cloud 節點能夠轉發已捕獲位址的流量。</p>
+<ul>
+<li>
+<p><strong>dry-run</strong>（唯讀）：describe 目前的 <code>SourceDestCheck</code>，輸出 <code>would set SourceDestCheck=false</code>。</p>
+</li>
+<li>
+<p><strong>execute</strong>（變更）：<strong>先 describe 目前的 <code>SourceDestCheck</code>，將變更前的值記錄到 <code>Observed</code>，然後</strong>停用。</p>
+</li>
+</ul>
+<p>```sh
+  # 1. 變更前擷取先前狀態（唯讀）
+  aws ec2 describe-network-interfaces \
+    --network-interface-ids "<eni-id>" --region "<region>" \
+    --query 'NetworkInterfaces[0].SourceDestCheck'</p>
+<p># 2. 變更
+  aws ec2 modify-network-interface-attribute \
+    --network-interface-id "<eni-id>" \
+    --no-source-dest-check --region "<region>"
+  ```</p>
+<p>結果的 <code>Observed</code> 中<strong>必須</strong>包含 <code>priorSourceDestCheck=&lt;true|false&gt;</code>。如此日誌便記錄了此操作執行前存在的狀態。undo 步驟依賴此值。</p>
+<h3 id="unassign-secondary-ipassign-secondary-ip-的-undo"><code>unassign-secondary-ip</code>（<code>assign-secondary-ip</code> 的 undo）</h3>
+<pre><code class="language-sh">aws ec2 unassign-private-ip-addresses \
+  --network-interface-id &quot;&lt;eni-id&gt;&quot; \
+  --private-ip-addresses &quot;&lt;address&gt;&quot; --region &quot;&lt;region&gt;&quot;
+</code></pre>
+<h3 id="ensure-forwarding-disabledensure-forwarding-enabled-的-undo"><code>ensure-forwarding-disabled</code>（<code>ensure-forwarding-enabled</code> 的 undo）</h3>
+<p><strong>還原日誌 <code>Observed.priorSourceDestCheck</code> 中記錄的變更前狀態。</strong>
+這是支撐安全性的關鍵規則：</p>
+<ul>
+<li><code>priorSourceDestCheck == true</code> → 操作前 check 是啟用的 → 還原：</li>
+</ul>
+<p><code>sh
+  aws ec2 modify-network-interface-attribute \
+    --network-interface-id "&lt;eni-id&gt;" \
+    --source-dest-check --region "&lt;region&gt;"</code></p>
+<ul>
+<li><code>priorSourceDestCheck == false</code> → 操作前<strong>已經停用</strong>（ENI 已是轉發器）→ <strong>不做任何操作</strong>。回傳 <code>Status=skipped</code>。<strong>不要</strong>強制重新啟用 check。</li>
+</ul>
+<p><strong>不要將 undo 寫死為啟用 check。</strong> 盲目地「undo 時重新啟用 source/dest-check」會破壞因自身原因已作為轉發器運作的設備/ENI。undo 必須讀回觀測值，僅還原實際變更的部分。</p>
+<h2 id="3-iam-最小權限">3. IAM 最小權限</h2>
+<p>附加到 executor EC2 執行個體的執行個體設定檔應僅授予<strong>以下 4 個 EC2 操作</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>操作</th>
+<th>使用情境</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ec2:DescribeNetworkInterfaces</code></td>
+<td>dry-run + preflight + 變更前狀態擷取</td>
+</tr>
+<tr>
+<td><code>ec2:AssignPrivateIpAddresses</code></td>
+<td><code>assign-secondary-ip</code> 的 execute</td>
+</tr>
+<tr>
+<td><code>ec2:UnassignPrivateIpAddresses</code></td>
+<td><code>unassign-secondary-ip</code> 的 undo</td>
+</tr>
+<tr>
+<td><code>ec2:ModifyNetworkInterfaceAttribute</code></td>
+<td>forwarding 的啟用/停用 execute</td>
+</tr>
+</tbody>
+</table>
+<p>為將範圍限定到實驗室 ENI / VPC，在 API 支援的範圍內設定資源 ARN 和條件（變更類 ENI 操作可按實驗室 ENI ARN 限定資源範圍，<code>Describe*</code> 不支援資源範圍限定，因此使用 <code>ec2:Region</code> / <code>ec2:Vpc</code> 等條件金鑰限制）：</p>
+<pre><code class="language-json">{
+  &quot;Version&quot;: &quot;2012-10-17&quot;,
+  &quot;Statement&quot;: [
+    {
+      &quot;Sid&quot;: &quot;DescribeEnis&quot;,
+      &quot;Effect&quot;: &quot;Allow&quot;,
+      &quot;Action&quot;: &quot;ec2:DescribeNetworkInterfaces&quot;,
+      &quot;Resource&quot;: &quot;*&quot;,
+      &quot;Condition&quot;: { &quot;StringEquals&quot;: { &quot;ec2:Region&quot;: &quot;&lt;region&gt;&quot; } }
+    },
+    {
+      &quot;Sid&quot;: &quot;MutateLabEni&quot;,
+      &quot;Effect&quot;: &quot;Allow&quot;,
+      &quot;Action&quot;: [
+        &quot;ec2:AssignPrivateIpAddresses&quot;,
+        &quot;ec2:UnassignPrivateIpAddresses&quot;,
+        &quot;ec2:ModifyNetworkInterfaceAttribute&quot;
+      ],
+      &quot;Resource&quot;: &quot;arn:aws:ec2:&lt;region&gt;:&lt;account-id&gt;:network-interface/&lt;eni-id&gt;&quot;
+    }
+  ]
+}
+</code></pre>
+<p><strong>不需要更多 EC2 權限。不需要 IAM/STS 寫入權限。不需要其他 AWS 服務。</strong> 如果所需呼叫不在此清單中，請停止 Runbook 而非擴大角色權限。</p>
+<h2 id="4-唯讀-preflight">4. 唯讀 preflight</h2>
+<p>在<strong>變更之前</strong>，對專用實驗室執行以確認目標。<strong>這些操作均不執行變更。</strong> lab-codex 執行這些操作並擷取輸出，作為擁有者核准前審閱的證據。</p>
+<pre><code class="language-sh"># 目標 ENI + 目前次要私有 IP + 目前 SourceDestCheck
+aws ec2 describe-network-interfaces \
+  --network-interface-ids &quot;&lt;eni-id&gt;&quot; --region &quot;&lt;region&gt;&quot; \
+  --query 'NetworkInterfaces[0].{Eni:NetworkInterfaceId,SrcDstCheck:SourceDestCheck,PrivateIps:PrivateIpAddresses[*].PrivateIpAddress}'
+
+# ENI 附加的執行個體
+aws ec2 describe-instances \
+  --filters &quot;Name=network-interface.network-interface-id,Values=&lt;eni-id&gt;&quot; \
+  --region &quot;&lt;region&gt;&quot;
+
+# ENI 的子網路
+aws ec2 describe-subnets \
+  --subnet-ids &quot;&lt;subnet-id&gt;&quot; --region &quot;&lt;region&gt;&quot;
+
+# 該子網路的路由表（確認預設閘道無意外變更）
+aws ec2 describe-route-tables \
+  --filters &quot;Name=association.subnet-id,Values=&lt;subnet-id&gt;&quot; \
+  --region &quot;&lt;region&gt;&quot;
+</code></pre>
+<p>確認事項：</p>
+<ol>
+<li><strong>IAM 角色僅具有第 3 節的 4 個權限</strong> — 檢查執行個體設定檔附加的政策，驗證沒有寬泛的 EC2 權限、IAM/STS 寫入權限或其他服務。（這是政策文件的唯讀檢查，不做任何變更。）</li>
+<li><strong>位址尚未分配</strong> — 確認 <code>&lt;address&gt;</code> <strong>尚未</strong>包含在上述第一個 describe 取得的 ENI <code>PrivateIpAddresses</code> 中。如果已包含，assign 將是空操作，表示實驗室狀態不乾淨 — 停止並調查。</li>
+<li><strong><code>SourceDestCheck</code> 的目前值已記錄</strong> — 此值是 executor 在 execute 時作為 <code>priorSourceDestCheck</code> 擷取的值。</li>
+</ol>
+<h2 id="5-冒煙測試依賴的操作日誌欄位">5. 冒煙測試依賴的操作日誌欄位</h2>
+<p><code>action_executions</code> 日誌為每個操作記錄以下內容：</p>
+<ul>
+<li><code>idempotencyKey</code> — 去重金鑰。已成功的金鑰不會被重新執行。</li>
+<li><code>provider</code> — <code>aws</code>。</li>
+<li><code>action</code> — 如：<code>assign-secondary-ip</code>、<code>ensure-forwarding-enabled</code>。</li>
+<li><code>target</code> — <code>eni</code>、<code>address</code>、<code>region</code>。</li>
+<li><code>status</code> — <code>pending</code> / <code>approved</code> / <code>succeeded</code> / <code>failed</code> / <code>skipped</code> / <code>rolledBack</code>。</li>
+<li><code>Observed.priorSourceDestCheck</code> — <code>true</code> | <code>false</code>。變更前擷取的值，<code>ensure-forwarding-enabled</code> 的 undo 讀取此值。</li>
+<li><code>executedAt</code> — 時間戳記。</li>
+<li><code>result</code> / <code>error</code> — <code>ExecuteActionResult</code> 的訊息 / <code>Error</code>。</li>
+</ul>
+<p>日誌是執行內容和冪等性守衛的唯一可信來源。憑證<strong>絕不</strong>記錄在日誌中。</p>
+<h2 id="6-undo-清理計畫">6. Undo / 清理計畫</h2>
+<p>按逆序還原已套用的操作。所有步驟必須在即時執行<strong>之前</strong>就能描述。</p>
+<ol>
+<li><strong>Forwarding 的 undo</strong> — <code>ensure-forwarding-disabled</code>。套用第 2 節的<strong>變更前狀態還原規則</strong>：如果 <code>Observed.priorSourceDestCheck</code> 為 <code>true</code>，執行 <code>--source-dest-check</code> 重新啟用。如果為 <code>false</code>，<strong>不做任何操作</strong>（skipped）。不要盲目啟用 check。</li>
+<li><strong>取消次要 IP 分配</strong> — <code>unassign-secondary-ip</code>：</li>
+</ol>
+<p><code>sh
+   aws ec2 unassign-private-ip-addresses \
+     --network-interface-id "&lt;eni-id&gt;" \
+     --private-ip-addresses "&lt;address&gt;" --region "&lt;region&gt;"</code>
+3. <strong>停止/終止實驗室執行個體並釋放產生費用的資源</strong> — 停止或終止 <code>routerd-cloud</code>、cloud-client、on-prem-client 實驗室執行個體。釋放已配置的 <strong>EIP</strong>，刪除孤立的 <strong>EBS</strong> 磁碟區，刪除為此測試專門建立的 VPC/子網路/SG。</p>
+<p><strong>在擷取證據後，停止或刪除所有產生費用的資源。</strong> 不要讓實驗室執行個體處於閒置狀態。</p>
+<h2 id="7-即時變更冒煙計畫-驗收">7. 即時變更冒煙計畫 + 驗收</h2>
+<p>此冒煙測試驗證整個閘控路徑。僅在第 9 節的閘控取得核准後執行。</p>
+<p>序列：</p>
+<ol>
+<li><code>actionPlan</code> 產生（planner、dry-run，與 Phase 4.1 相同）。</li>
+<li>操作作為 <code>pending</code> <strong>匯入</strong>到日誌中（以 <code>idempotencyKey</code> 為金鑰）。</li>
+<li>操作被<strong>核准</strong>（<code>routerctl action approve</code>）。</li>
+<li>操作由 <strong><code>aws-provider-executor</code> 執行</strong>（<code>routerctl action execute --approved</code>）。</li>
+<li>日誌中顯示 <code>succeeded</code>。</li>
+</ol>
+<p>驗收條件（必須全部滿足）：</p>
+<ul>
+<li>[ ] actionPlan 產生 -&gt; 匯入 -&gt; 核准 -&gt; 執行 -&gt; 日誌 <code>succeeded</code>。</li>
+<li>[ ] <strong>次要 IP 存在於 ENI 上</strong>（<code>describe-network-interfaces</code> 中 <code>&lt;address&gt;</code> 顯示在 <code>PrivateIpAddresses</code> 中）。</li>
+<li>[ ] ENI 的 <strong>Source/dest check 已停用</strong>（<code>SourceDestCheck=false</code>）。日誌中記錄了 <code>Observed.priorSourceDestCheck</code>。</li>
+<li>[ ] 對於 BGP <code>provider-secondary-ip</code>，<code>routerd-cloud</code> <strong>不持有</strong>該位址作為 OS 本機位址；即使 provider secondary IP 仍保留在 ENI 上也是如此（捕獲僅用於路由/轉發，無 OS 位址）。</li>
+<li>[ ] <code>MobilityPool</code> 達到 <strong>Ready</strong> 狀態，目標位址的 provider action 已成功或確認無須執行。</li>
+<li>[ ] <code>routerctl doctor</code> 的 hybrid 檢查<strong>通過</strong>。</li>
+<li>[ ] cloud-client <strong><code>.7</code></strong> 和 on-prem-client <strong><code>.9</code></strong> — <strong>雙向 ping 和 ssh</strong> 成功。</li>
+<li>[ ] 捕獲路徑上<strong>不存在 NAT</strong>（流量被路由/轉發，而非轉換）。</li>
+<li>[ ] 所有節點的<strong>預設閘道未變更</strong>。</li>
+<li>[ ] 第 6 節的 <strong>Teardown / undo 成功</strong>（包括 source/dest-check 的變更前狀態還原規則）。</li>
+<li>[ ] 證據擷取後<strong>產生費用的資源已停止/刪除</strong>。</li>
+</ul>
+<h2 id="8-硬性停止">8. 硬性停止</h2>
+<p>如果出現以下任何情況，立即中止（不採取「變通方案」）：</p>
+<ol>
+<li>憑證<strong>經由 routerd 核心傳遞</strong>（不允許 — executor 僅使用自身的執行個體設定檔）。</li>
+<li>操作<strong>影響非實驗室資源</strong>。</li>
+<li><strong>涉及多個提供者</strong>。</li>
+<li><strong>無法事先描述復原/清理計畫。</strong></li>
+<li>提供者 API 回傳<strong>模糊/部分成功</strong>。</li>
+<li><strong>產生費用的資源在沒有活躍測試的情況下持續運行。</strong></li>
+<li>雲端資源運行期間等待人工判斷<strong>超過 10 分鐘</strong> → <strong>停止並釋放資源</strong>（停止執行個體以降低成本）。判斷後恢復。</li>
+<li>任何命令<strong>意味著對生產或共用資源的變更</strong>。</li>
+</ol>
+<h2 id="9-即時執行的閘控">9. 即時執行的閘控</h2>
+<p>即時變更僅在擁有者審閱<strong>本 Runbook</strong> 和<strong>唯讀 preflight 證據</strong>（第 4 節）後<strong>明確核准後</strong>執行。在取得核准前，只能執行唯讀步驟。</p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#1-範圍與邊界">1. 範圍與邊界</a></li>
+<li><a href="#2-executor-設計">2. Executor 設計</a><ul>
+<li><a href="#assign-secondary-ip">assign-secondary-ip</a></li>
+<li><a href="#ensure-forwarding-enabled">ensure-forwarding-enabled</a></li>
+<li><a href="#unassign-secondary-ipassign-secondary-ip-的-undo">unassign-secondary-ip（assign-secondary-ip 的 undo）</a></li>
+<li><a href="#ensure-forwarding-disabledensure-forwarding-enabled-的-undo">ensure-forwarding-disabled（ensure-forwarding-enabled 的 undo）</a></li>
+</ul>
+</li>
+<li><a href="#3-iam-最小權限">3. IAM 最小權限</a></li>
+<li><a href="#4-唯讀-preflight">4. 唯讀 preflight</a></li>
+<li><a href="#5-冒煙測試依賴的操作日誌欄位">5. 冒煙測試依賴的操作日誌欄位</a></li>
+<li><a href="#6-undo-清理計畫">6. Undo / 清理計畫</a></li>
+<li><a href="#7-即時變更冒煙計畫-驗收">7. 即時變更冒煙計畫 + 驗收</a></li>
+<li><a href="#8-硬性停止">8. 硬性停止</a></li>
+<li><a href="#9-即時執行的閘控">9. 即時執行的閘控</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/how-to/aws-provider-action-execution.md">GitHub</a></div></footer></body></html>

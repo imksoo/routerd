@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>法律与再分发 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/legal.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/legal.html" lang="en" hreflang="en">English</a><a href="/docs/ja/legal.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/legal.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/legal.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="法律与再分发">法律与再分发</h1>
+<p>routerd 本体以 BSD 3-Clause License 分发。
+完整许可证文本位于 repository root 的 <code>LICENSE</code>。</p>
+<p>routerd 的版权声明如下。</p>
+<pre><code class="language-text">Copyright (c) 2026 Kirino Minato &lt;kirino.minato@gmail.com&gt; (https://github.com/imksoo) and routerd contributors
+</code></pre>
+<p>本页汇整再分发 routerd release archive 及 Live ISO 时的实际确认事项。本页内容不构成法律建议。</p>
+<h2 id="routerd-二进制文件">routerd 二进制文件</h2>
+<p>routerd 二进制文件由本 repository 的 Go source code 构建。
+发布前请执行：</p>
+<pre><code class="language-sh">make third-party-licenses
+</code></pre>
+<p>此命令会重新生成 <code>THIRD_PARTY_LICENSES.md</code>，并列出下列信息：</p>
+<ul>
+<li>链接进 routerd 二进制文件的 Go 模块</li>
+<li>检测到的许可证文本类型</li>
+<li>许可证文件名称</li>
+<li>模块的 source URL</li>
+<li>Live ISO 使用的 OS 软件包</li>
+<li>OS 软件包的许可证 metadata 与 upstream URL</li>
+</ul>
+<p>目前的审计流程会扫描 Go 模块许可证文件中的 GPL、LGPL、AGPL 文本。
+若在被链接的 Go 模块中检测到此类文本，请停止发布，
+并确认是否需要变更 routerd 二进制文件的许可证，或移除该依赖软件包。</p>
+<p>source 文件使用下列 SPDX 标识符：</p>
+<pre><code class="language-text">SPDX-License-Identifier: BSD-3-Clause
+</code></pre>
+<p>此标识符仅表示 routerd source code 的许可证。
+它不会变更随包附带的工具、OS 软件包、Go 模块或其他第三方组件的许可证。
+这些组件的许可证信息列于 <code>THIRD_PARTY_LICENSES.md</code>。</p>
+<h2 id="release-archive">Release archive</h2>
+<p>Release archive 包含下列内容：</p>
+<ul>
+<li>routerd 二进制文件</li>
+<li>安装程序 script</li>
+<li>systemd 或 rc.d 服务模板</li>
+<li>示例配置</li>
+<li><code>share/doc/LICENSE</code></li>
+<li><code>share/doc/THIRD_PARTY_LICENSES.md</code></li>
+</ul>
+<p>再分发 release archive 时，请一并保留上述文件。</p>
+<h2 id="live-iso">Live ISO</h2>
+<p>当前 Live ISO 通过 <code>debootstrap</code> 构建，基于 Ubuntu，默认 suite 为 <code>noble</code>。
+生成的清单指向 Ubuntu archive 的基础系统软件包信息，并不是逐包源码清单。
+重新分发镜像前，请核对实际使用的 Ubuntu 版本的源码和授权信息。</p>
+<p>Live ISO 是汇总式发布物，组合了下列内容：</p>
+<ul>
+<li>routerd 二进制文件与 script</li>
+<li>Ubuntu 基础文件</li>
+<li>dnsmasq、nftables、WireGuard tools、ppp、iproute2、chrony、
+  tcpdump 等 OS 软件包</li>
+</ul>
+<p>这些 OS 软件包各自保留其 upstream 许可证。部分软件包采用 GPL 许可证。
+Live ISO 整体并不因此被重新授权为单一 GPL 著作物。</p>
+<p>Live ISO 在下列路径提供 routerd 的许可声明：</p>
+<pre><code class="language-text">/usr/local/share/doc/routerd/LICENSE
+/usr/local/share/doc/routerd/THIRD_PARTY_LICENSES.txt
+</code></pre>
+<p>OS 软件包的 source 信息可通过各 OS 软件包仓库，
+以及 <code>THIRD_PARTY_LICENSES.md</code> 中列出的 upstream URL 查阅。</p>
+<h2 id="release-检查清单">Release 检查清单</h2>
+<p>发布前请确认下列事项：</p>
+<ol>
+<li>执行 <code>make third-party-licenses</code>。</li>
+<li>确认 Go 模块 copyleft 检查未报告 GPL、LGPL 或 AGPL 模块。</li>
+<li>确认 GPL 系列许可证仅出现在单独分发的 OS 软件包或其他外部工具中。</li>
+<li>执行常规的测试、schema、example、website、archive 及 Live ISO 检查。</li>
+<li>确认 release archive 包含 <code>share/doc/LICENSE</code> 与 <code>share/doc/THIRD_PARTY_LICENSES.md</code>。</li>
+<li>确认 Live ISO 包含 <code>/usr/local/share/doc/routerd/</code>。</li>
+</ol>
+<p>若依赖软件包集合有较大幅度的变动，请在创建 tag 前重新审查本页与已生成的许可证清单。</p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#routerd-二进制文件">routerd 二进制文件</a></li>
+<li><a href="#release-archive">Release archive</a></li>
+<li><a href="#live-iso">Live ISO</a></li>
+<li><a href="#release-检查清单">Release 检查清单</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/legal.md">GitHub</a></div></footer></body></html>

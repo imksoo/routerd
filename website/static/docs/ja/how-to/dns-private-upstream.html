@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>専用 DNS 上流 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/how-to/dns-private-upstream.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/how-to/dns-private-upstream.html" lang="en" hreflang="en">English</a><a href="/docs/ja/how-to/dns-private-upstream.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/how-to/dns-private-upstream.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/dns-private-upstream.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="専用-dns-上流">専用 DNS 上流</h1>
+<h2 id="想定するシーン">想定するシーン</h2>
+<p>ルーター上のリゾルバに、次のような振る舞いをさせたい場合です。</p>
+<ul>
+<li>アクセス網の内部ゾーン（例: ISP の AFTR FQDN、社内ドメイン）を、動的に学習した DNS サーバーへ転送する。</li>
+<li>ふだんは暗号化 DNS プロバイダー（DoH / DoT）を既定の上流として使う。</li>
+<li>暗号化上流が不調になったら、平文 DNS にフォールバックする。</li>
+<li>プロバイダーのアカウント ID やプライベートなエンドポイントを、共有する example に書かない。</li>
+</ul>
+<h2 id="routerd-での解決方法">routerd での解決方法</h2>
+<p><code>DNSResolver</code> は <code>routerd-dns-resolver</code> を起動します。
+デーモンは UDP/TCP で待ち受けます。リゾルバに属する <code>DNSForwarder</code> が match ルールを表し、<code>DNSUpstream</code> が再利用できる上流エンドポイントを表します。</p>
+<table>
+<thead>
+<tr>
+<th>Scheme</th>
+<th>種別</th>
+<th>既定ポート</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>https://</code></td>
+<td>DNS over HTTPS</td>
+<td>URL 依存</td>
+</tr>
+<tr>
+<td><code>tls://</code></td>
+<td>DNS over TLS</td>
+<td>853</td>
+</tr>
+<tr>
+<td><code>udp://</code></td>
+<td>平文の DNS over UDP</td>
+<td>53</td>
+</tr>
+<tr>
+<td><code>tcp://</code></td>
+<td>平文の DNS over TCP</td>
+<td>53</td>
+</tr>
+</tbody>
+</table>
+<p><code>DNSForwarder.spec.upstreams</code> の順序が優先度です。まず優先度が最も高く健全なものを試し、失敗したらリストを順に下ります。</p>
+<p><code>DNSUpstream.spec.addressFrom</code> を使うと、上流アドレスの一覧を別リソースの status から取れます。
+DHCPv6 information-request で得た DNS サーバーを使うときの仕組みです。</p>
+<h2 id="条件付き転送の例">条件付き転送の例</h2>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSResolver
+  metadata:
+    name: lan-resolver
+  spec:
+    listen:
+      - name: lan
+        addresses:
+          - 192.0.2.1
+        port: 53
+        sources:
+          - local-zone
+          - access-network
+          - provider-bootstrap
+          - default
+    cache:
+      enabled: true
+      maxEntries: 10000
+      minTTL: 60s
+      maxTTL: 24h
+      negativeTTL: 30s
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSForwarder
+  metadata:
+    name: local-zone
+  spec:
+    resolver: DNSResolver/lan-resolver
+    match: [lan.example.org]
+    zoneRefs: [DNSZone/lan]
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSForwarder
+  metadata:
+    name: access-network
+  spec:
+    resolver: DNSResolver/lan-resolver
+    match: [transix.jp, corp.example.com]
+    upstreams: [DNSUpstream/access-network]
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSUpstream
+  metadata:
+    name: access-network
+  spec:
+    protocol: udp
+    addressFrom:
+      - resource: DHCPv6Information/wan-info
+        field: dnsServers
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSForwarder
+  metadata:
+    name: provider-bootstrap
+  spec:
+    resolver: DNSResolver/lan-resolver
+    match: [dns.example-provider.net]
+    upstreams: [DNSUpstream/cloudflare-udp, DNSUpstream/google-udp]
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSForwarder
+  metadata:
+    name: default
+  spec:
+    resolver: DNSResolver/lan-resolver
+    match: [&quot;.&quot;]
+    upstreams: [DNSUpstream/provider-doh, DNSUpstream/provider-dot, DNSUpstream/cloudflare-udp]
+    healthcheck:
+      interval: 15s
+      timeout: 3s
+      failThreshold: 3
+      passThreshold: 2
+    dnssecValidate: true
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSUpstream
+  metadata:
+    name: provider-doh
+  spec:
+    protocol: doh
+    address: dns.example-provider.net
+    path: /dns-query
+    sourceInterface: ens18
+    bootstrap: [1.1.1.1, 2606:4700:4700::1111]
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSUpstream
+  metadata:
+    name: provider-dot
+  spec:
+    protocol: dot
+    address: dns.example-provider.net
+    sourceInterface: ens18
+    bootstrap: [1.1.1.1, 2606:4700:4700::1111]
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSUpstream
+  metadata:
+    name: cloudflare-udp
+  spec:
+    protocol: udp
+    address: 1.1.1.1
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSUpstream
+  metadata:
+    name: google-udp
+  spec:
+    protocol: udp
+    address: 8.8.8.8
+</code></pre>
+<h2 id="nextdns-を優先し1-秒で代替先を試す">NextDNS を優先し、1 秒で代替先を試す</h2>
+<p>次のリソースを既存の <code>DNSResolver/lan-resolver</code> に接続します。
+ループバックだけで待ち受ける完全な設定例は
+<a href="/examples/dns-nextdns-failover.yaml"><code>examples/dns-nextdns-failover.yaml</code></a>
+にあります。<code>YOUR_PROFILE_ID</code> は手元の設定だけで置き換えてください。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSForwarder
+  metadata:
+    name: default
+  spec:
+    resolver: DNSResolver/lan-resolver
+    match: [&quot;.&quot;]
+    queryTimeout: 1s
+    upstreams: [DNSUpstream/nextdns, DNSUpstream/cloudflare]
+    healthcheck:
+      interval: 15s
+      timeout: 3s
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSUpstream
+  metadata:
+    name: nextdns
+  spec:
+    protocol: doh
+    address: dns.nextdns.io
+    path: /YOUR_PROFILE_ID
+    bootstrap: [1.1.1.1]
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSUpstream
+  metadata:
+    name: cloudflare
+  spec:
+    protocol: doh
+    address: cloudflare-dns.com
+    path: /dns-query
+    bootstrap: [1.1.1.1]
+</code></pre>
+<p>キャッシュにない問い合わせは、正常な NextDNS を優先します。
+1 秒で応答しない場合や通信が失敗した場合は、明示指定した Cloudflare DoH を試します。
+定期的なヘルスチェックの失敗回数がしきい値に達するまで待つ必要はありません。
+正当な <code>NXDOMAIN</code> などの応答では切り替えません。
+代替 DNS には <strong>NextDNS のフィルタリング・ログ方針は適用されません</strong>。</p>
+<p><code>queryTimeout</code> は候補ごとの待ち時間なので、2 台の試行には約 2 秒とローカル処理時間が
+かかる場合があります。未指定時は従来の <code>healthcheck.timeout</code>、既定値は <code>3s</code> を使います。
+LAN → 中核リゾルバの構成では、外側の待ち時間を内側の全試行より長くしてください。
+全候補の失敗時はキャッシュしない <code>SERVFAIL</code> を返し、別の転送元や公開 DNS の
+既定転送先には進みません。</p>
+<h2 id="プロバイダーの-bootstrap">プロバイダーの bootstrap</h2>
+<p>一部のプライベート DNS プロバイダーは、リゾルバのエンドポイントを、そのプロバイダー自身のドメインで配布します。
+ホストがそのプロバイダー名を「プロバイダー本体を経由して」解決しようとすると、リゾルバが健全になる前にループするか、失敗します。</p>
+<p>そのプロバイダーのドメインに対する条件付き source を作り、公衆リゾルバか access-network の DNS へ向けます。
+プロバイダーのアカウント ID（例: profile ID）は、共有する example には書かず、ホストローカルの secrets ファイルやホストごとの YAML overlay にだけ置いてください。</p>
+<p><code>DNSUpstream.spec.bootstrap</code> は、同じ保護をより細かく行います。暗号化 transport を確立する前に、その上流エンドポイント名を解決するためのリゾルバを指定します。</p>
+<h2 id="インターフェース束縛">インターフェース束縛</h2>
+<p><code>DNSUpstream.spec.sourceInterface</code> は、外向きの DNS クエリを Linux のインターフェース名に束縛します。
+リテラルの OS インターフェース名（例: <code>ens18</code>）を使ってください。
+そのインターフェースをほかのリソース（トンネルなど）が作る場合は、順序で関係を宣言し、インターフェースができるまでリゾルバを pending にしてください。</p>
+<p>FreeBSD には同等の <code>SO_BINDTODEVICE</code> の強制がないため、プラットフォーム固有のドキュメントでは同じ挙動を約束しないでください。</p>
+<h2 id="関連項目">関連項目</h2>
+<ul>
+<li><a href="dns-local-zone.html">ローカル DNS ゾーン</a></li>
+<li><a href="../concepts/dns-resolver.html">DNS リゾルバのコンセプト</a></li>
+</ul></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#想定するシーン">想定するシーン</a></li>
+<li><a href="#routerd-での解決方法">routerd での解決方法</a></li>
+<li><a href="#条件付き転送の例">条件付き転送の例</a></li>
+<li><a href="#nextdns-を優先し1-秒で代替先を試す">NextDNS を優先し、1 秒で代替先を試す</a></li>
+<li><a href="#プロバイダーの-bootstrap">プロバイダーの bootstrap</a></li>
+<li><a href="#インターフェース束縛">インターフェース束縛</a></li>
+<li><a href="#関連項目">関連項目</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/how-to/dns-private-upstream.md">GitHub</a></div></footer></body></html>

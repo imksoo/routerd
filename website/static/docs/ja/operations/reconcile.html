@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>設定の反映と復旧 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/operations/reconcile.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/operations/reconcile.html" lang="en" hreflang="en">English</a><a href="/docs/ja/operations/reconcile.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/operations/reconcile.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/operations/reconcile.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="設定の反映と復旧">設定の反映と復旧</h1>
+<p>設定が反映内容の基準です。設定したオブジェクトの欠落や変更を修復し、設定や有効な動的状態に不要なオブジェクトを削除します。routerd自身が作成していないという理由だけで手作業の設定を保護しません。OSの基盤と、動作に必要なDHCP・PD・BGP・SAMの動的状態は静的設定とは区別します。</p>
+<p>--replaceには全体設定を渡します。--replaceなしの部分更新では、省略した全リソースを削除するわけではありません。削除計画を確認し、独立したコンソールを確保してください。</p>
+<pre><code class="language-sh">routerctl validate -f router.yaml --replace
+routerctl plan -f router.yaml --replace
+routerctl apply -f router.yaml --replace
+routerctl get status
+routerctl get events --limit 20
+</code></pre>
+<p>常駐デーモンが実行中の構成を収束させます。validateやplanの成功だけでは疎通を保証しません。反映後は状態とイベントを確認し、実際の対向との通信を確認します。</p>
+<pre><code class="language-sh">routerd serve --config router.yaml
+</code></pre>
+<p>ロールバックは保存済み設定を再反映します。過去のカーネル状態・通信セッション・デーモンのリースを復元するものではありません。</p>
+<pre><code class="language-sh">routerctl rollback --list
+routerctl rollback --to &lt;generation&gt;
+</code></pre>
+<p>importは選択した物理インターフェースと静的アドレスを明示的に取り込む操作です。結果を全体設定へ統合してから--replaceを使います。取得した動的状態を静的YAMLとして取り込みません。</p>
+<pre><code class="language-sh">routerctl import --interface ens18 --address 192.0.2.1/24 --config router.yaml &gt; candidate.yaml
+</code></pre>
+<p><a href="state-database.html">DB</a> · <a href="../reference/resources.html">YAML</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul></ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/operations/reconcile.md">GitHub</a></div></footer></body></html>

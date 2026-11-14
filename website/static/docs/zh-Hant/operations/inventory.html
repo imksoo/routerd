@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>主機清單 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/operations/inventory.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/operations/inventory.html" lang="en" hreflang="en">English</a><a href="/docs/ja/operations/inventory.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/operations/inventory.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/operations/inventory.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="主機清單">主機清單</h1>
+<p>routerd 會調查主機的 OS、可用指令及網路功能。
+此清單供產生器與套用處理在驗證或計畫階段，明確標示各 OS 特定的判斷。</p>
+<h2 id="routerd-確認的項目">routerd 確認的項目</h2>
+<ul>
+<li>OS 與發行版本</li>
+<li>服務管理方式（systemd、rc.d）</li>
+<li>可用指令（iproute2、nftables、conntrack、dnsmasq、radvd、pppd、WireGuard、strongSwan 等）</li>
+<li>核心功能（IPv6、VRF、VXLAN、WireGuard）</li>
+<li><code>/run/routerd</code> 與 <code>/var/lib/routerd</code> 的可用性</li>
+</ul>
+<h2 id="對行為的影響">對行為的影響</h2>
+<ul>
+<li>在 Ubuntu 上，以 systemd 與 Linux 網路堆疊為目標。</li>
+<li>在 FreeBSD 上，以 <code>daemon(8)</code> 與 rc.d 控制服務。</li>
+</ul>
+<p>依賴主機未提供功能的設定，會在驗證或計畫階段明確標示，而不是在 <code>apply</code> 中途失敗。</p>
+<h2 id="routerd-搜尋的代表性指令">routerd 搜尋的代表性指令</h2>
+<table>
+<thead>
+<tr>
+<th>指令</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ip</code>, <code>bridge</code></td>
+<td>位址、路由、DS-Lite、VRF、VXLAN</td>
+</tr>
+<tr>
+<td><code>nft</code></td>
+<td>NAT、防火牆、route mark</td>
+</tr>
+<tr>
+<td><code>dnsmasq</code></td>
+<td>DHCPv4、DHCPv6、RA</td>
+</tr>
+<tr>
+<td><code>conntrack</code></td>
+<td>IPv4/IPv6 連線觀測</td>
+</tr>
+<tr>
+<td><code>pppd</code>, <code>ppp</code></td>
+<td>PPPoE</td>
+</tr>
+<tr>
+<td><code>wg</code></td>
+<td>WireGuard</td>
+</tr>
+<tr>
+<td><code>tailscale</code></td>
+<td>Tailscale exit node 與 subnet router 廣播</td>
+</tr>
+<tr>
+<td><code>swanctl</code></td>
+<td>IPsec</td>
+</tr>
+<tr>
+<td><code>radvd</code></td>
+<td>透過 radvd 的 RA（選用）</td>
+</tr>
+<tr>
+<td><code>sysctl</code></td>
+<td>核心設定</td>
+</tr>
+<tr>
+<td><code>systemctl</code>, <code>resolvectl</code>, <code>networkctl</code>, <code>journalctl</code></td>
+<td>systemd 環境管理</td>
+</tr>
+<tr>
+<td><code>service</code>, <code>sysrc</code>, <code>pfctl</code></td>
+<td>FreeBSD 環境管理</td>
+</tr>
+<tr>
+<td><code>dig</code>, <code>ping</code>, <code>ping6</code>, <code>tcpdump</code>, <code>tracepath</code>, <code>traceroute</code>, <code>netstat</code>, <code>sockstat</code></td>
+<td>疑難排解</td>
+</tr>
+</tbody>
+</table>
+<h2 id="相關參考">相關參考</h2>
+<ul>
+<li><a href="../platforms.html">支援平台</a></li>
+<li><a href="reconcile.html">Reconcile 與刪除</a></li>
+</ul></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#routerd-確認的項目">routerd 確認的項目</a></li>
+<li><a href="#對行為的影響">對行為的影響</a></li>
+<li><a href="#routerd-搜尋的代表性指令">routerd 搜尋的代表性指令</a></li>
+<li><a href="#相關參考">相關參考</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/operations/inventory.md">GitHub</a></div></footer></body></html>

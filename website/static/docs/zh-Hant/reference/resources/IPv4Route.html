@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>IPv4Route · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/reference/resources/IPv4Route.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/reference/resources/IPv4Route.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/IPv4Route.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/IPv4Route.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/reference/resources/IPv4Route.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="ipv4route">IPv4Route</h1>
+<p><a href="../resources.html#ipv4route">各資源的設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>安裝 IPv4 單播或黑洞路由，可從資源狀態取得裝置與閘道。</p>
+<h2 id="指定條件與參照關係">指定條件與參照關係</h2>
+<ul>
+<li>blackhole 不可搭配 device、deviceFrom、gateway、gatewayFrom 或 preferredSource。unicast 執行時必須能解析裝置；直接連接路由可省略閘道。</li>
+<li>動態值優先於 device/gateway 固定值；無法解析時使用固定值。沒有可用值時，來源的 optional 不會略過 DeviceMissing 或 GatewayMissing。參照仍須指向已宣告的資源，並明確指定該資源提供的欄位。</li>
+<li>Linux 使用 ip route replace；preferredSource 對應 src，僅正數 metric 會傳入。FreeBSD 使用 route change/add 與 -ifa，此路徑不套用 metric。Installed 不代表端到端連線成功。</li>
+<li>ready_when 與 device/gateway 中的 ${...} 運算式已移除，驗證會拒絕。請使用 dependsOn 與 deviceFrom/gatewayFrom。preferredSource 也不支援狀態運算式。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: IPv4Route
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    dependsOn: # 選填; array
+      - # object
+        equals: &quot;&lt;string&gt;&quot; # 選填; string
+        field: &quot;&lt;string&gt;&quot; # 選填; string
+        notEmpty: true # 選填; boolean
+        optional: true # 選填; boolean
+        phase: &quot;&lt;string&gt;&quot; # 選填; string
+        resource: &quot;&lt;string&gt;&quot; # 必填; string
+    destination: &quot;&lt;string&gt;&quot; # 必填; string
+    device: &quot;&lt;string&gt;&quot; # 選填; string
+    deviceFrom: # 選填; object
+      field: &quot;&lt;string&gt;&quot; # 選填; string
+      optional: true # 選填; boolean
+      resource: &quot;&lt;string&gt;&quot; # 必填; string
+    gateway: &quot;&lt;string&gt;&quot; # 選填; string
+    gatewayFrom: # 選填; object
+      field: &quot;&lt;string&gt;&quot; # 選填; string
+      optional: true # 選填; boolean
+      resource: &quot;&lt;string&gt;&quot; # 必填; string
+    metric: 0 # 選填; integer; minimum=0
+    preferredSource: &quot;&lt;string&gt;&quot; # 選填; string
+    type: &quot;unicast&quot; # 選填; string; enum=[&quot;unicast&quot;, &quot;blackhole&quot;]
+</code></pre>
+<h2 id="欄位意義與預設值">欄位意義與預設值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>欄位意義與預設值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.destination</code></td>
+<td>必填的目的 IPv4 CIDR。預設路由請使用 0.0.0.0/0，而非 default。目前驗證僅解析前綴，未在此拒絕 IPv6，但此資源與控制器供 IPv4 使用。</td>
+</tr>
+<tr>
+<td><code>spec.type</code></td>
+<td>預設 unicast。blackhole 丟棄流量，不可指定裝置、閘道或來源。</td>
+</tr>
+<tr>
+<td><code>spec.device</code></td>
+<td>選用的邏輯介面或 OS 裝置名稱，deviceFrom 無值時使用。unicast 為空時為 Pending/DeviceMissing；OS 裝置不存在時為 DeviceNotReady。blackhole 禁用。</td>
+</tr>
+<tr>
+<td><code>spec.deviceFrom</code></td>
+<td>選用的裝置狀態值來源；resource 與 field 遵循共用參照規則。正規化後第一個值優先於 device。預設無來源，blackhole 禁用。</td>
+</tr>
+<tr>
+<td><code>spec.gateway</code></td>
+<td>選用的純 IPv4 下一跳，預設為空，表示透過裝置且無閘道的路由。也是 gatewayFrom 無法解析時的替代值。blackhole 禁用。</td>
+</tr>
+<tr>
+<td><code>spec.gatewayFrom</code></td>
+<td>選用的狀態來源，遵循共用 resource/field 規則。第一個正規化值優先於 gateway。設有來源但來源與固定值皆無值時，維持 Pending/GatewayMissing。blackhole 禁用。</td>
+</tr>
+<tr>
+<td><code>spec.preferredSource</code></td>
+<td>本機發起流量的選用優先 IPv4 來源，預設不指定。套用時必須已是本機位址，否則為 Pending/PreferredSourceNotLocal。不會指派位址或執行 SNAT。blackhole 禁用。</td>
+</tr>
+<tr>
+<td><code>spec.metric</code></td>
+<td>選用的非負整數，預設 0。Linux 僅傳入正值；FreeBSD 套用時忽略。其他條件相同時通常優先使用較低 metric。</td>
+</tr>
+<tr>
+<td><code>spec.dependsOn</code></td>
+<td>選用的共用資源相依條件 AND 清單，預設為空。不滿足時以 DependsOnFalse 略過安裝。resource/field/phase/equals/notEmpty/optional 請見共用欄位。</td>
+</tr>
+</tbody>
+</table>
+<p>實作: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_route.go">pkg/config/validate_route.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go">pkg/config/diagnostics.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/resourcequery/resourcequery.go">pkg/resourcequery/resourcequery.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/phase2.go">pkg/controller/chain/phase2.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/ipv4_main_routes.go">pkg/controller/chain/ipv4_main_routes.go</a></p>
+<p><a href="/examples/lan-advertise-with-community.yaml">設定範例</a></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#指定條件與參照關係">指定條件與參照關係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#欄位意義與預設值">欄位意義與預設值</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/reference/resources/IPv4Route.md">GitHub</a></div></footer></body></html>

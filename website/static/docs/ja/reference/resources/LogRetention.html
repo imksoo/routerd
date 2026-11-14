@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LogRetention · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/reference/resources/LogRetention.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/reference/resources/LogRetention.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/LogRetention.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/reference/resources/LogRetention.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/LogRetention.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="logretention">LogRetention</h1>
+<p><a href="../resources.html#logretention">リソース別の設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: system.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>運用ログのSQLiteレコードを削除し、必要なら削除前に保管先へ転送します。任意のOSログファイルを整理する設定ではありません。</p>
+<h2 id="指定条件と参照関係">指定条件と参照関係</h2>
+<ul>
+<li>初回のreconcileで実行し、その後はlastRunAtから23時間以上経過した時点で実行します。schedule省略時もdailyも、この経過時間で判定し、午前0時のcron実行ではありません。dry-runでは外部ログDBを開いたり削除したりしません。</li>
+<li>イベントジャーナルには独立した24時間の保持上限と行数・容量上限があります。ここで長期間を指定しても、そのイベント保持上限は延長しません。</li>
+<li>sinksを指定した場合は各行を削除する前に転送します。保管先への送信が失敗した行は正常削除として扱いません。LogSinkのotlpは現行では送信しないため、機能する保管先として使えません。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
+<pre><code class="language-yaml">- apiVersion: system.routerd.net/v1alpha1
+  kind: LogRetention
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    retention: &quot;&lt;string&gt;&quot; # 必須; string
+    schedule: &quot;&quot; # 任意; string; enum=[&quot;&quot;, &quot;daily&quot;]
+    signals: # 任意; array
+      - &quot;events&quot; # string; enum=[&quot;events&quot;, &quot;accessLogs&quot;, &quot;pluginRuns&quot;, &quot;dnsQueries&quot;, &quot;trafficFlows&quot;, &quot;firewallEvents&quot;, &quot;dhcpFingerprints&quot;]
+    sinks: # 任意; array
+      - &quot;&lt;string&gt;&quot; # string
+    vacuum: true # 任意; boolean
+</code></pre>
+<h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>項目の意味と既定値</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.retention</code></td>
+<td>保持期間。7dや24hなどの指定が必須で既定値はありません。dは整数日数×24時間、それ以外はGo duration形式です。検証は構文の解析までで、正の値であることは要求しません。 保持期間には正の値を指定してください。</td>
+</tr>
+<tr>
+<td><code>spec.signals</code></td>
+<td>削除対象のログ区分。省略時はevents、accessLogs、pluginRuns、dnsQueries、trafficFlows、firewallEvents、dhcpFingerprintsの7種類すべてです。格納DBは関連ログリソースのパスまたはOS既定値から決めます。</td>
+</tr>
+<tr>
+<td><code>spec.sinks</code></td>
+<td>削除前の保管先。省略時は保管しません。LogSink/名前または名前だけで指定します。Router全体の検証で各LogSinkの存在を確認し、実行時には無効な出力先を除きます。</td>
+</tr>
+<tr>
+<td><code>spec.vacuum</code></td>
+<td>削除後に対象SQLiteファイルをVACUUMする指定。省略時falseです。保持対象の選択ではなく、DBファイルの領域整理を行います。</td>
+</tr>
+<tr>
+<td><code>spec.schedule</code></td>
+<td>省略またはdaily。いずれも初回実行と、その後23時間以上経過してからの実行です。時刻指定やcron式は受理しません。</td>
+</tr>
+</tbody>
+</table>
+<p>実装: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_system.go">pkg/config/validate_system.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go">pkg/config/diagnostics.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/logretention.go">pkg/controller/chain/logretention.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/logstore/retention.go">pkg/logstore/retention.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/eventlog/eventlog.go">pkg/eventlog/eventlog.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/reference/resources/LogRetention.md">GitHub</a></div></footer></body></html>

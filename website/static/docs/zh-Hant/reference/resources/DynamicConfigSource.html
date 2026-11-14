@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DynamicConfigSource · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/reference/resources/DynamicConfigSource.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/reference/resources/DynamicConfigSource.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/DynamicConfigSource.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/DynamicConfigSource.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/reference/resources/DynamicConfigSource.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="dynamicconfigsource">DynamicConfigSource</h1>
+<p><a href="../resources.html#dynamicconfigsource">各資源的設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: plugin.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>宣告以外掛取得的動態設定來源。目前有型別解碼與驗證，但沒有讀取DynamicConfigSourceSpec的runtime處理，宣告本身不會執行外掛。</p>
+<h2 id="指定條件與參照關係">指定條件與參照關係</h2>
+<ul>
+<li>pluginRef只宣告名稱，驗證時不檢查目標是否存在。此處ttl必填，但實際外掛結果合併另用PluginResult.status.ttl，不能依此資源覆寫結果TTL。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。</p>
+<pre><code class="language-yaml">- apiVersion: plugin.routerd.net/v1alpha1
+  kind: DynamicConfigSource
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    mergePolicy: # 選填; object
+      conflict: &quot;&quot; # 選填; string; enum=[&quot;&quot;, &quot;reject&quot;]
+    pluginRef: &quot;&lt;string&gt;&quot; # 必填; string
+    triggers: # 選填; array
+      - # object
+        every: &quot;&lt;string&gt;&quot; # 選填; string
+        topic: &quot;&lt;string&gt;&quot; # 選填; string
+        type: &quot;interval&quot; # 必填; string; enum=[&quot;interval&quot;, &quot;event&quot;]
+    ttl: &quot;&lt;string&gt;&quot; # 選填; string
+</code></pre>
+<h2 id="欄位意義與預設值">欄位意義與預設值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>欄位意義與預設值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.pluginRef</code></td>
+<td>預定來源Plugin的metadata.name；必填且不可為空白，無預設值。不加Plugin/；目前沒有此宣告的執行期解析器。</td>
+</tr>
+<tr>
+<td><code>spec.ttl</code></td>
+<td>必須為正的Go duration，無預設值。目前僅驗證此宣告，沒有runtime將它套用至外掛執行或結果期限。</td>
+</tr>
+<tr>
+<td><code>spec.mergePolicy</code></td>
+<td>選填合併策略物件；目前沒有讀取此來源宣告的runtime處理。</td>
+</tr>
+<tr>
+<td><code>spec.mergePolicy.conflict</code></td>
+<td>驗證只接受空值或reject；兩者都不會透過此宣告啟用既有資源替換。</td>
+</tr>
+<tr>
+<td><code>spec.triggers</code></td>
+<td>觸發宣告清單，預設空；目前runtime僅驗證與顯示，請參照上方限制。</td>
+</tr>
+<tr>
+<td><code>spec.triggers[].type</code></td>
+<td>觸發類型；必須指定interval或event，無預設值。</td>
+</tr>
+<tr>
+<td><code>spec.triggers[].every</code></td>
+<td>interval時必填，須為正的Go duration；event時此欄位不產生週期排程，無預設值。</td>
+</tr>
+<tr>
+<td><code>spec.triggers[].topic</code></td>
+<td>事件主題宣告；選填，預設空，event時驗證器也不強制要求。這不是資源名稱。</td>
+</tr>
+</tbody>
+</table>
+<p>實作: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/resource_kinds.go">pkg/api/resource_kinds.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_plugin.go">pkg/config/validate_plugin.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/plugin/dynamic_config.go">pkg/plugin/dynamic_config.go</a></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#指定條件與參照關係">指定條件與參照關係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#欄位意義與預設值">欄位意義與預設值</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/reference/resources/DynamicConfigSource.md">GitHub</a></div></footer></body></html>

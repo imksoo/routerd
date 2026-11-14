@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>EgressRoutePolicy · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/concepts/egress-route.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/concepts/egress-route.html" lang="en" hreflang="en">English</a><a href="/docs/ja/concepts/egress-route.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/concepts/egress-route.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/concepts/egress-route.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="egressroutepolicy">EgressRoutePolicy</h1>
+<p><code>EgressRoutePolicy</code> は、外向き通信で使う経路を選びます。
+以前の WAN 経路ポリシーを置き換えます。
+旧 Kind 名は受け付けません。</p>
+<p>このポリシーは候補リソースと HealthCheck を見て、選んだ候補を status に保存します。
+ほかのリソースは、その status を参照できます。</p>
+<p><code>spec.mode</code> によって、status の所有者が変わります。<code>mode</code> を省略した場合は、
+egress-route セレクターが選択のみの status と、<code>role: advisory</code> / <code>advisory: true</code>
+を付けた <code>routerd.lan.route.changed</code> イベントを発行します。この status は稼働中の
+コントローラーの出力であり、適用のドライランではありません。
+<code>mode: priority</code>、<code>mark</code>、<code>hash</code> の場合は、ポリシー経路コントローラーが、実際に
+適用したルーティング・NAT mark の状態の所有者になります。依存するコントローラーは、
+旧来の route-changed イベントではなく <code>routerd.resource.status.changed</code> を見て追従します。</p>
+<p><code>mode: priority</code> でも <code>selection: highest-weight-ready</code> を使います。
+準備完了した候補のうち weight が最も高いものを選び、<code>priority</code> は同点時の
+決着と、ポリシー経路ルールの優先度として扱います。<code>priority</code> は選択ポリシーの
+代替ではありません。<code>weighted-ecmp</code> は実装されるまでの予約値であり、
+黙って無視せず <code>UnsupportedSelection</code> として報告します。<code>enabled: false</code> の候補は
+選択対象から外れ、生成されるポリシー経路ルール・経路表の所有からも外れます。</p>
+<pre><code class="language-yaml">apiVersion: net.routerd.net/v1alpha1
+kind: EgressRoutePolicy
+metadata:
+  name: ipv4-default
+spec:
+  family: ipv4
+  destinationCIDRs:
+    - 0.0.0.0/0
+  selection: highest-weight-ready
+  candidates:
+    - name: ds-lite
+      source: DSLiteTunnel/ds-lite
+      deviceFrom:
+        resource: DSLiteTunnel/ds-lite
+        field: interface
+      gatewaySource: none
+      weight: 80
+      healthCheck: internet-tcp443
+    - name: ix2215
+      source: Interface/ix2215
+      deviceFrom:
+        resource: Interface/ix2215
+        field: ifname
+      gatewaySource: static
+      gateway: 172.17.0.1
+      weight: 50
+</code></pre>
+<p><code>destinationCIDRs</code> は、ポリシーの対象宛先です。
+省略時は IPv4 で <code>0.0.0.0/0</code> を使います。
+IPv6 では <code>::/0</code> を使います。</p>
+<p><code>gatewaySource</code> はゲートウェイの決め方です。</p>
+<ul>
+<li><code>none</code>: DS-Lite などのポイントツーポイントデバイスで使います。</li>
+<li><code>static</code>: <code>gateway</code> にネクストホップアドレスを書きます。</li>
+<li><code>dhcpv4</code> と <code>dhcpv6</code>: DHCP クライアント由来のゲートウェイ用です。</li>
+</ul>
+<p>選択結果は次の status に入ります。</p>
+<ul>
+<li><code>status.selectedCandidate</code></li>
+<li><code>status.selectedDevice</code></li>
+<li><code>status.selectedGateway</code></li>
+<li><code>status.selectedWeight</code></li>
+<li><code>status.selectedTargets</code></li>
+<li><code>status.destinationCIDRs</code></li>
+</ul>
+<p>起動直後は、まず準備完了の候補を選びます。
+重みが最も高い経路を無期限には待ちません。
+あとから重みの高い候補が準備完了になると、
+routerd は <code>routerd.lan.route.changed</code> を発行します。
+それを受けて <code>IPv4Route</code> と <code>NAT44Rule</code> を更新します。
+このとき conntrack は消しません。
+既存の通信はカーネルが持つ状態に従い、
+新しい通信は、新しい経路と NAT の向きを使います。</p>
+<p><code>IPv4Route</code> は、これらの status を参照できます。</p>
+<pre><code class="language-yaml">apiVersion: net.routerd.net/v1alpha1
+kind: IPv4Route
+metadata:
+  name: default-route
+spec:
+  destination: 0.0.0.0/0
+  deviceFrom:
+    resource: EgressRoutePolicy/ipv4-default
+    field: selectedDevice
+  gatewayFrom:
+    resource: EgressRoutePolicy/ipv4-default
+    field: selectedGateway
+</code></pre>
+<p>DS-Lite（あるいはどのトンネル）へ出してはいけない内部向けの宛先は、通常の経路として表現します。
+上流ゲートウェイ側のプライベートサブネットは WAN 側へ、内部の <code>10.0.0.0/8</code> や <code>172.16.0.0/12</code> は専用経路へ、破棄したい範囲は <code>type: blackhole</code> を使います。</p>
+<pre><code class="language-yaml">apiVersion: net.routerd.net/v1alpha1
+kind: IPv4Route
+metadata:
+  name: private-10-blackhole
+spec:
+  type: blackhole
+  destination: 10.0.0.0/8
+</code></pre>
+<h2 id="healthcheck">HealthCheck</h2>
+<p><code>HealthCheck</code> は、プローブの意図を宣言します。</p>
+<pre><code class="language-yaml">apiVersion: net.routerd.net/v1alpha1
+kind: HealthCheck
+metadata:
+  name: internet-tcp443
+spec:
+  target: 1.1.1.1
+  protocol: tcp
+  port: 443
+</code></pre>
+<p><code>HealthCheck</code> が <code>EgressRoutePolicy</code> の候補やターゲットから参照されている場合、
+routerd は health-check デーモン、socket mark、送信元バインドを、その経路ターゲットから
+自動導出します。設定はプローブの意図だけを持ち、プラットフォームごとのソケットの仕組みは
+コントローラーとレンダラーの内部に閉じ込めます。</p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#healthcheck">HealthCheck</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/concepts/egress-route.md">GitHub</a></div></footer></body></html>

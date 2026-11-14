@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>routerctl doctor — ランタイム健全性診断 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/operations/routerctl-doctor.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/operations/routerctl-doctor.html" lang="en" hreflang="en">English</a><a href="/docs/ja/operations/routerctl-doctor.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/operations/routerctl-doctor.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/operations/routerctl-doctor.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="routerctl-doctor-ランタイム健全性診断">routerctl doctor — ランタイム健全性診断</h1>
+<p><code>routerctl doctor</code> は読み取り専用のチェックを一通り実行し、いまこの routerd が
+家庭ゲートウェイとして機能しているかを報告します。ホスト状態は変更しません。
+運用者・CI・監視エージェント・下流ツール（Prometheus exporter、Web Console、
+LLM 補助診断など）から使われることを想定しています。</p>
+<h2 id="使い方">使い方</h2>
+<pre><code class="language-sh"># 全エリア実行（既定）
+routerctl doctor
+
+# 単一エリア
+routerctl doctor dns
+
+# ホストコマンドを使わない（リソース status のみ）
+routerctl doctor --no-host
+
+# 機械可読出力
+routerctl doctor -o json
+routerctl doctor -o yaml
+</code></pre>
+<p>オプションは <code>diagnose</code> と共通: <code>--config</code>, <code>--state-file</code>,
+<code>--no-host</code> / <code>--host</code>, <code>-o</code> / <code>--output</code>, <code>--timeout</code>。</p>
+<h2 id="エリア">エリア</h2>
+<table>
+<thead>
+<tr>
+<th>エリア</th>
+<th>チェック内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>wan</code></td>
+<td><code>EgressRoutePolicy</code> と <code>HealthCheck</code> のリソース status、IPv4 / IPv6 のデフォルト経路（<code>ip -4/-6 route show default</code>）。</td>
+</tr>
+<tr>
+<td><code>dns</code></td>
+<td><code>DNSResolver</code> のリソース status、<code>dig @127.0.0.1</code> での A レコード応答プローブ。</td>
+</tr>
+<tr>
+<td><code>dslite</code></td>
+<td><code>DSLiteTunnel</code> のリソース status、AFTR FQDN の AAAA プローブ、tunnel device の存在（<code>ip link show</code>）。</td>
+</tr>
+<tr>
+<td><code>dhcpv6-pd</code></td>
+<td><code>DHCPv6PrefixDelegation</code> の status（Bound、委任 prefix）。PD 未取得時は設計上 <strong>WARN</strong>（壊れている IPv6 を LAN に出さない）。</td>
+</tr>
+<tr>
+<td><code>nat</code></td>
+<td><code>NAT44Rule</code> のリソース status、<code>nft list table ip routerd_nat</code> の存在。Linux で <code>NAT44SessionSync</code> が conntrackd mode を使う場合は、runtime の <code>net.netfilter.nf_conntrack_tcp_be_liberal</code> が <code>1</code> であることも確認し、読取不能または異なる値を FAIL にします。</td>
+</tr>
+<tr>
+<td><code>firewall</code></td>
+<td><code>FirewallZone</code> / <code>FirewallPolicy</code> の status、<code>nft list table inet routerd_filter</code> の存在と input チェインの <code>policy drop</code>（無いと permissive）、current config から render される ruleset に含まれない routerd-prefixed nft table が Linux host 上に残っていないか。</td>
+</tr>
+<tr>
+<td><code>rollback</code></td>
+<td>1 つ以上の世代が保存されていて <code>routerctl rollback --to</code> が使えること。</td>
+</tr>
+<tr>
+<td><code>disk</code></td>
+<td><code>/var/lib/routerd</code> と <code>/run/routerd</code> の容量。90% 以上 or 256 MiB 未満で WARN、98% 以上 or 64 MiB 未満で FAIL。Linux では一時ディレクトリの不変条件も確認します。<code>/tmp</code> と <code>/var/tmp</code> は <code>root:root</code> の sticky <code>1777</code> directory である必要があります。</td>
+</tr>
+<tr>
+<td><code>mgmt</code></td>
+<td>管理用 interface の存在（<code>ManagementAccess</code> または <code>FirewallZone role=mgmt</code> から推定）。WebConsole の bind 先（<code>0.0.0.0</code> / <code>::</code> は WARN/FAIL）。</td>
+</tr>
+<tr>
+<td><code>reconcile</code></td>
+<td>読み取り専用ステータスソケットから、コントローラーごとの reconcile 失敗履歴を確認します。<code>--since &lt;duration&gt;</code> で対象期間を区切ります。期間内に 1 件以上で WARN、10 件以上で FAIL。detail に最大 5 件のサンプルを表示します。</td>
+</tr>
+<tr>
+<td><code>runtime</code></td>
+<td>読み取り専用ステータスソケットから、routerd 自身の heap / goroutine / fd を確認します: <code>heapAlloc</code>、<code>heapObjects</code>、<code>numGoroutine</code>、<code>numGC</code>、<code>openFds</code>/<code>maxFds</code>。<code>numGoroutine</code> が 10000 超、または open fd が <code>RLIMIT_NOFILE</code> の 80% 以上で WARN。観測用で FAIL にはなりません。</td>
+</tr>
+<tr>
+<td><code>dynamic</code></td>
+<td><code>DynamicConfigPart</code> の鮮度、mask、override policy を確認し、effective config が意図した生成状態からズレる原因になる stale part や mask を検出します。</td>
+</tr>
+<tr>
+<td><code>routes</code></td>
+<td>Installed な <code>IPv4Route</code> status と Linux host FIB（<code>ip -4 route show &lt;destination&gt;</code>）を比較します。destination、type、gateway、device、必要な場合の preferred source、metric を確認します。drift の証跡用であり、dataplane probe の代替ではありません。</td>
+</tr>
+<tr>
+<td><code>plugin</code></td>
+<td>trusted local plugin executable の存在、権限、status から見える直近実行の鮮度を確認します。</td>
+</tr>
+<tr>
+<td><code>hybrid</code></td>
+<td><code>HybridRoute</code> / <code>OverlayPeer</code> の参照、Selective Address Mobility の設定参照、デフォルト経路を触らない安全性、MTU 推定、任意の <code>HealthCheck</code> status、読み取り専用の経路表確認（<code>ip -4 route show &lt;prefix&gt;</code>）。Linux SAM では <code>/32</code> delivery route、provider local-address absence、proxy neighbor capture、<code>proxy_arp</code>、<code>ip_forward</code>、route lookup、warning-only の <code>rp_filter</code>、default-drop <code>FORWARD</code> policy heuristic も確認します。</td>
+</tr>
+<tr>
+<td><code>sam</code></td>
+<td>CloudEdge SAM の ownership/capture 診断です。provider ownership の鮮度、OS capture state、delivery route lookup、forwarding prerequisites、blocking reasons、owner-table/FIB drift を確認します。host check が有効な場合、<code>doctor sam</code> は <code>ownershipResolverControlPlaneOwnerTable</code> の endpoint owner としてローカル所有する行を Linux main FIB と比較します。これらの <code>/32</code> 行は SAM overlay route ではなく local/cloud route に解決される必要があります。一方で、BGP remote owner 向けの provider-secondary capture ホルダー行は、この local-route 要件の対象外です。no-local のまま、delivery/forwarding check と dataplane probe で overlay path を確認します。MobilityPool prefix 内に owner-table へ載っていない予期しない <code>/32</code> route residue が残っていれば報告します。ただし provider DHCP/link state と観測済み BGP return route は除外します。これは診断ビューであり、CloudEdge acceptance は実 dataplane check で判断します。</td>
+</tr>
+</tbody>
+</table>
+<p>各チェックは <code>pass</code> / <code>warn</code> / <code>fail</code> / <code>skip</code>（該当リソース/シグナルが無い）のいずれかを返します。</p>
+<h2 id="json-出力契約">JSON 出力契約</h2>
+<p><code>routerctl doctor -o json</code> は<strong>安定した</strong>機械可読インターフェースです。形:</p>
+<pre><code class="language-jsonc">{
+  &quot;summary&quot;: {
+    &quot;overall&quot;: &quot;pass&quot;,      // &quot;pass&quot; | &quot;warn&quot; | &quot;fail&quot; | &quot;skip&quot;
+    &quot;pass&quot;: 7,
+    &quot;warn&quot;: 1,
+    &quot;fail&quot;: 0,
+    &quot;skip&quot;: 2
+  },
+  &quot;checks&quot;: [
+    {
+      &quot;area&quot;:   &quot;dns&quot;,                          // 上記エリア表のいずれか
+      &quot;name&quot;:   &quot;DNSResolver/lan-resolver&quot;,     // 人間可読の対象名
+      &quot;status&quot;: &quot;warn&quot;,                         // &quot;pass&quot; | &quot;warn&quot; | &quot;fail&quot; | &quot;skip&quot;
+      &quot;detail&quot;: &quot;phase=Degraded,waiting=...&quot;,   // 任意
+      &quot;remedy&quot;: &quot;wait for or repair dependency wan-pd&quot; // 任意
+    }
+    // ...
+  ]
+}
+</code></pre>
+<p>保証内容:</p>
+<ul>
+<li><code>summary.overall</code> は <code>checks[].status</code> の最悪値（<code>fail</code> &gt; <code>warn</code> &gt; <code>unknown</code>/<code>skip</code> &gt; <code>pass</code>）。</li>
+<li><code>summary.pass/warn/fail/skip</code> は整数件数で、合計は <code>len(checks)</code>。</li>
+<li><code>checks[].status</code> は <code>pass</code>, <code>warn</code>, <code>fail</code>, <code>skip</code> のいずれか（他の値は出ない）。</li>
+<li><code>checks[].area</code> はエリア表の識別子のいずれか。集合は安定。</li>
+<li><code>checks[].name</code> は人間可読。厳密な形にパターンマッチしないこと。</li>
+<li><code>detail</code> / <code>remedy</code> は任意のフリーフォーム文字列で、運用者向け。</li>
+</ul>
+<p>例えば <code>routerctl doctor runtime -o json</code> は、読み取り専用ステータス
+ソケットから routerd 自身のプロセス footprint を表示します:</p>
+<pre><code class="language-jsonc">{
+  &quot;summary&quot;: { &quot;overall&quot;: &quot;pass&quot;, &quot;pass&quot;: 1, &quot;warn&quot;: 0, &quot;fail&quot;: 0, &quot;skip&quot;: 0 },
+  &quot;checks&quot;: [
+    {
+      &quot;area&quot;: &quot;runtime&quot;,
+      &quot;name&quot;: &quot;process&quot;,
+      &quot;status&quot;: &quot;pass&quot;,
+      &quot;detail&quot;: &quot;heapAlloc=11.0MiB heapObjects=84213 numGoroutine=187 numGC=14 openFds=23/1024&quot;
+    }
+  ]
+}
+</code></pre>
+<h2 id="終了コード">終了コード</h2>
+<ul>
+<li><code>0</code> — <code>fail</code> が 1 件も無い（<code>pass</code> / <code>warn</code> / <code>skip</code> は失敗扱いではない）。</li>
+<li>非0 — <code>fail</code> が 1 件以上。<code>routerctl doctor || alert</code> のように使えます。</li>
+</ul>
+<p><code>warn</code> は exit code を非0 にしません（例: 起動直後で DHCPv6-PD がまだ Bound でない、など情報的なもの）。
+厳しめのゲートが欲しい場合はエリアを絞ってください（<code>routerctl doctor wan</code> は <code>wan</code> の fail でだけ非0）。</p>
+<h2 id="安定性">安定性</h2>
+<p>JSON の形、エリア識別子、status の enum は v1alpha1 の運用者向け契約です。今後のバージョンで
+<strong>エリアやオプショナルフィールドが追加されることはあります</strong>が、既存エリア名や status 値は
+v1alpha1 の minor 間で改名・再用途化しません。</p>
+<h2 id="関連項目">関連項目</h2>
+<ul>
+<li><a href="reconcile.html">調整（reconcile）とロールバック</a></li>
+<li><a href="reconcile.html#削除"><code>routerctl ledger</code> 保守</a></li>
+</ul></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#使い方">使い方</a></li>
+<li><a href="#エリア">エリア</a></li>
+<li><a href="#json-出力契約">JSON 出力契約</a></li>
+<li><a href="#終了コード">終了コード</a></li>
+<li><a href="#安定性">安定性</a></li>
+<li><a href="#関連項目">関連項目</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/operations/routerctl-doctor.md">GitHub</a></div></footer></body></html>

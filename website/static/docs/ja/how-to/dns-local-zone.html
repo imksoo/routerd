@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ローカル DNS ゾーン · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/how-to/dns-local-zone.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/how-to/dns-local-zone.html" lang="en" hreflang="en">English</a><a href="/docs/ja/how-to/dns-local-zone.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/how-to/dns-local-zone.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/dns-local-zone.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="ローカル-dns-ゾーン">ローカル DNS ゾーン</h1>
+<h2 id="想定するシーン">想定するシーン</h2>
+<p>社内ホストを名前で解決したいが、各端末の <code>/etc/hosts</code> を手作業でそろえたくない場合です。具体的には次を実現したいときです。</p>
+<ul>
+<li>ひと握りの固定レコード（router、NAS、プリンタ）を持つ。</li>
+<li>DHCP リースを取得した端末ごとに、A / AAAA / PTR を自動生成する。</li>
+<li>順引きと逆引きの両方を動かす。</li>
+</ul>
+<h2 id="routerd-での解決方法">routerd での解決方法</h2>
+<p><code>DNSZone</code> で、1 つの DNS ドメインのローカル権威レコードを管理します。
+<strong>手書きのレコード</strong>（YAML で宣言）と、<strong>DHCP 由来のレコード</strong>（リース DB から構築）を組み合わせられます。
+<code>DNSResolver</code> がこれらを応答元の 1 つとして読み込むため、内部の問い合わせはローカルで応答し、外部の問い合わせは設定済みの上流へ送ります。</p>
+<p>DHCP 由来のレコードはイベントバスを経由して同期します。dnsmasq がリース変更で <code>routerd-dhcp-event-relay</code> を呼び、relay が routerd のイベントを発行し、<code>routerd-dns-resolver</code> がメモリ上のゾーンを更新します。
+dnsmasq のリースファイルは起動時にも読み直すので、デーモンを再起動してもレコードは失われません。</p>
+<h2 id="例">例</h2>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSZone
+  metadata:
+    name: lan
+  spec:
+    zone: lan.example.org
+    ttl: 300
+    dnssec:
+      enabled: false
+    records:
+      - hostname: router
+        ipv4: 192.0.2.1
+        ipv6: 2001:db8:1::1
+      - hostname: nas
+        ipv4: 192.0.2.10
+    dhcpDerived:
+      sources:
+        - DHCPv4Server/lan-dhcpv4
+        - DHCPv6Server/lan-dhcpv6
+      hostnameSuffix: lan.example.org
+      ddns: true
+      ttl: 60
+      leaseFile: /run/routerd/dnsmasq.leases
+    reverseZones:
+      - name: 2.0.192.in-addr.arpa
+</code></pre>
+<p>これを適用すると、<code>nas.lan.example.org</code> や <code>&lt;dhcp-client-name&gt;.lan.example.org</code> がローカルアドレスに解決され、<code>192.0.2.x</code> の PTR ルックアップも同じ名前を返します。</p>
+<h2 id="補足">補足</h2>
+<ul>
+<li>異なる静的ホスト名に同じ IPv4・IPv6 アドレスを指定できます。宣言した名前の A・AAAA 応答はすべて保持し、PTR 応答にはアドレスごとに最初に宣言した静的ホスト名を使います。DHCP 由来の名前は、これらの静的応答を置き換えません。</li>
+<li>管理権を持つドメインか、社内向けに予約されたドメイン（<code>example.org</code>、<code>home.arpa</code> など）を選んでください。<code>.lan</code> のように公衆 DNS と衝突する suffix は使わないでください。</li>
+<li>DNSSEC を有効（<code>dnssec.enabled: true</code>）にしておけば、外部の DNSSEC 検証は引き続き動きます。ローカルゾーンは設計上 unsigned です。</li>
+<li>内部サブネットが複数ある場合は、<code>reverseZones</code> をサブネットの数だけ書いてください。これで両方向の PTR が動きます。</li>
+</ul>
+<h2 id="関連項目">関連項目</h2>
+<ul>
+<li><a href="dns-private-upstream.html">専用 DNS 上流</a></li>
+<li><a href="../concepts/dns-resolver.html">DNS リゾルバのコンセプト</a></li>
+</ul></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#想定するシーン">想定するシーン</a></li>
+<li><a href="#routerd-での解決方法">routerd での解決方法</a></li>
+<li><a href="#例">例</a></li>
+<li><a href="#補足">補足</a></li>
+<li><a href="#関連項目">関連項目</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/how-to/dns-local-zone.md">GitHub</a></div></footer></body></html>

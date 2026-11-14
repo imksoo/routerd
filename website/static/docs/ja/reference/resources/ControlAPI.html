@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ControlAPI · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/reference/resources/ControlAPI.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/reference/resources/ControlAPI.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/ControlAPI.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/reference/resources/ControlAPI.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/ControlAPI.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="controlapi">ControlAPI</h1>
+<p><a href="../resources.html#controlapi">リソース別の設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: system.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>状態の取得と設定変更に使うHTTP Control APIを有効化します。Unixソケット経由の制御とWebConsoleは別です。</p>
+<h2 id="指定条件と参照関係">指定条件と参照関係</h2>
+<ul>
+<li>ControlAPIは1つだけ対応します。HTTP関連のCLIフラグを明示した場合は、対応するリソース由来の値より優先します。リソースも有効化するフラグもなければHTTP制御は無効です。</li>
+<li>tls.certFileとtls.keyFileは組で指定します。clientCAFileには両方が必要で、クライアント証明書の提示と検証を必須にします。tokenFrom.fileとtokenFrom.envは排他です。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
+<pre><code class="language-yaml">- apiVersion: system.routerd.net/v1alpha1
+  kind: ControlAPI
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    allowCIDRs: # 任意; array
+      - &quot;&lt;string&gt;&quot; # string
+    enabled: true # 任意; boolean
+    listenAddress: &quot;&lt;string&gt;&quot; # 任意; string
+    port: 1 # 任意; integer; minimum=1; maximum=65535
+    tls: # 任意; object
+      certFile: &quot;&lt;string&gt;&quot; # 任意; string
+      clientCAFile: &quot;&lt;string&gt;&quot; # 任意; string
+      keyFile: &quot;&lt;string&gt;&quot; # 任意; string
+    tokenFrom: # 任意; object
+      base64: true # 任意; boolean
+      env: &quot;&lt;string&gt;&quot; # 任意; string
+      file: &quot;&lt;string&gt;&quot; # 任意; string
+</code></pre>
+<h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>項目の意味と既定値</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.enabled</code></td>
+<td>リソースがあれば省略時true、なければ無効です。HTTP待受のCLIフラグを明示すると有効になります。</td>
+</tr>
+<tr>
+<td><code>spec.listenAddress</code></td>
+<td>待受IP。省略時127.0.0.1です。空白でない値はIPアドレスである必要があり、指定しても接続元CIDR許可一覧は変更しません。</td>
+</tr>
+<tr>
+<td><code>spec.port</code></td>
+<td>TCPポート。省略時65432。読込み値0も既定値を選び、他の値は1〜65535です。</td>
+</tr>
+<tr>
+<td><code>spec.allowCIDRs</code></td>
+<td>接続元IPの許可一覧。省略時127.0.0.1/32と::1/128で、空でない一覧を指定すると置換します。有効なCIDRが必要で、0.0.0.0/0と::/0は拒否します。ファイアウォール設定とは別です。</td>
+</tr>
+<tr>
+<td><code>spec.tokenFrom</code></td>
+<td>任意のBearerトークン取得元。省略時はトークン確認を行いませんが、接続元CIDRの制限は適用します。使う場合はfileかenvのどちらか1つを指定し、routerdリソースは参照しません。</td>
+</tr>
+<tr>
+<td><code>spec.tokenFrom.file</code></td>
+<td>トークンのファイルパス。省略時は空でenvと排他です。HTTP APIの初期化時にrouterdが読み、読めなければ初期化は失敗します。</td>
+</tr>
+<tr>
+<td><code>spec.tokenFrom.env</code></td>
+<td>routerdプロセスの環境変数名。省略時は空でfileと排他です。変数がなければHTTP APIの初期化は失敗します。</td>
+</tr>
+<tr>
+<td><code>spec.tokenFrom.base64</code></td>
+<td>省略時false。trueなら取得値の前後空白を除去して標準Base64で復号し、復号後も前後空白を除去します。不正な値や最終的な空トークンは初期化エラーです。</td>
+</tr>
+<tr>
+<td><code>spec.tls</code></td>
+<td>任意のサーバーTLS設定。証明書・鍵を指定しなければHTTP待受は平文です。</td>
+</tr>
+<tr>
+<td><code>spec.tls.certFile</code></td>
+<td>サーバー証明書ファイル。省略時は未指定でkeyFileが必要です。起動時にX.509の鍵ペアとして読み込み、TLSの下限は1.2です。</td>
+</tr>
+<tr>
+<td><code>spec.tls.keyFile</code></td>
+<td>サーバー秘密鍵のファイル。省略時は未指定でcertFileが必要です。ローカルファイルのパスでありリソース参照ではありません。</td>
+</tr>
+<tr>
+<td><code>spec.tls.clientCAFile</code></td>
+<td>任意のPEM形式クライアントCA束。certFileとkeyFileが必要で、クライアント証明書の検証を必須にします。ファイルがない場合や不正な場合は起動エラーです。</td>
+</tr>
+</tbody>
+</table>
+<p>実装: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_system.go">pkg/config/validate_system.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/cluster_secret_validate.go">pkg/config/cluster_secret_validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd/cmd_serve.go">cmd/routerd/cmd_serve.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controlapi/server.go">pkg/controlapi/server.go</a></p>
+<p><a href="/examples/pve-minimal-rr-b.yaml">設定例</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/reference/resources/ControlAPI.md">GitHub</a></div></footer></body></html>

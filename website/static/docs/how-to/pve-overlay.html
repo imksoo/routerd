@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Replacing a hypervisor-to-hypervisor overlay VPN · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/how-to/pve-overlay.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/how-to/pve-overlay.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/how-to/pve-overlay.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/how-to/pve-overlay.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/pve-overlay.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="replacing-a-hypervisor-to-hypervisor-overlay-vpn">Replacing a hypervisor-to-hypervisor overlay VPN</h1>
+<h2 id="scenario">Scenario</h2>
+<p>You run a hypervisor cluster (Proxmox VE, KVM, etc.) where the inter-node bridge currently rides on top of a heavyweight overlay VPN — for example, a vendor-supplied SoftEther bridge or another tap-based tunnel. Symptoms include poor throughput between guests on different hosts, MTU mismatches, and operational fragility because the overlay is a separate product from the hypervisor and the router.</p>
+<p>You want to replace that overlay with something:</p>
+<ul>
+<li>declaratively configured alongside the rest of the network</li>
+<li>routed (L3) by default, with L2 extension only where strictly necessary</li>
+<li>predictable on MTU</li>
+<li>observable through the same <code>routerctl</code> and Web Console you already use</li>
+</ul>
+<h2 id="how-routerd-solves-it">How routerd solves it</h2>
+<p>routerd models the overlay as four primitives:</p>
+<table>
+<thead>
+<tr>
+<th>Resource</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>WireGuardInterface</code></td>
+<td>the encrypted L3 underlay between hypervisor hosts</td>
+</tr>
+<tr>
+<td><code>WireGuardPeer</code></td>
+<td>one entry per remote host with its public key, endpoint, and allowed IPs</td>
+</tr>
+<tr>
+<td><code>VXLANTunnel</code></td>
+<td>an L2 segment riding on top of the WireGuard underlay (only when L2 extension is required)</td>
+</tr>
+<tr>
+<td><code>EgressRoutePolicy</code> + <code>HealthCheck</code></td>
+<td>optional readiness gating and L3 failover on top of the underlay</td>
+</tr>
+</tbody>
+</table>
+<p>Prefer L3 routing over L2 extension whenever possible. L2 extension multiplies MTU constraints (Ethernet header + WireGuard overhead + VXLAN header) and turns broadcast storms into multi-host issues. Use <code>VXLANTunnel</code> only for the segments that genuinely need to span hosts.</p>
+<h2 id="minimal-configuration">Minimal configuration</h2>
+<p>The example below assumes two hypervisor hosts (<code>alpha</code> and <code>beta</code>) connected through their existing IP transport. We bring up a WireGuard underlay between them, then add a single VXLAN segment.</p>
+<h3 id="underlay-between-two-hosts">Underlay between two hosts</h3>
+<pre><code class="language-yaml">apiVersion: net.routerd.net/v1alpha1
+kind: WireGuardInterface
+metadata:
+  name: wg-cluster
+spec:
+  listenPort: 51820
+  mtu: 1420
+  privateKeyFile: /usr/local/etc/routerd/secrets/wg-cluster.key
+---
+apiVersion: net.routerd.net/v1alpha1
+kind: WireGuardPeer
+metadata:
+  name: beta
+spec:
+  interface: wg-cluster
+  publicKey: &quot;&lt;beta-public-key&gt;&quot;
+  endpoint: &quot;beta.cluster.example.net:51820&quot;
+  allowedIPs:
+    - 10.250.0.2/32
+  persistentKeepalive: 25
+</code></pre>
+<p>The <code>mtu: 1420</code> value matches WireGuard's default with IPv4 underlay (1500 - 20 IP - 8 UDP - 32 WireGuard overhead - 8 nonce/key = 1432; conservative 1420 leaves headroom).</p>
+<h3 id="stretched-l2-segment-over-the-underlay">Stretched L2 segment over the underlay</h3>
+<pre><code class="language-yaml">apiVersion: net.routerd.net/v1alpha1
+kind: Bridge
+metadata:
+  name: legacy-bridge
+spec:
+  ifname: br-legacy
+---
+apiVersion: net.routerd.net/v1alpha1
+kind: VXLANTunnel
+metadata:
+  name: vx-bridge1
+spec:
+  vni: 123001
+  localAddress: 10.250.0.1
+  peers:
+    - 10.250.0.2
+  underlayInterface: wg-cluster
+  udpPort: 4789
+  mtu: 1370
+  bridge: legacy-bridge
+</code></pre>
+<p>VXLAN adds 50 bytes of header (14 outer Ethernet + 20 outer IPv4 + 8 UDP + 8 VXLAN). On a 1420-byte WireGuard MTU, the inner MTU drops to 1370. Set this explicitly; do not rely on default MTU calculation when stacking encapsulations.</p>
+<p><code>VXLANTunnel</code> is a transparent Ethernet attachment. With a unicast peer list,
+routerd installs the all-zero FDB entries required to replicate broadcast and
+unknown-unicast traffic to every peer. When the VXLAN interface and a LAN/tap
+interface are members of the same bridge, ARP, DHCPv4, IPv6 Router and Neighbor
+Discovery, and DHCPv6 cross the overlay. Choose <code>VXLANTunnel</code> for a deliberately
+stretched broadcast domain.</p>
+<p><code>VXLANTunnel.spec.bridge</code> references the Bridge resource name
+(<code>legacy-bridge</code>), while <code>Bridge.spec.ifname</code> selects the kernel link name
+(<code>br-legacy</code>). The <code>Bridge</code> resource above creates the empty bridge and routerd adds the VXLAN
+port. The hypervisor or VM launcher must add the intended LAN/tap ports to
+<code>br-legacy</code>; do not add the physical underlay interface.</p>
+<p>Full transparency also carries a rogue DHCP server or router advertisement in
+the opposite direction. Do not attach the bridge until the remote test guests
+are trusted or a separately verified directional bridge firewall is in place.</p>
+<h2 id="verification">Verification</h2>
+<pre><code class="language-sh"># Underlay
+routerctl describe WireGuardInterface/wg-cluster
+ip -d link show wg-cluster
+ping -M do -s 1392 &lt;peer-underlay-address&gt;   # 1420 - 20 IP - 8 ICMP
+
+# Overlay
+routerctl describe VXLANTunnel/vx-bridge1
+ip -d link show vx-bridge1
+bridge fdb show dev vx-bridge1
+ping -M do -s 1342 &lt;peer-overlay-host&gt;        # 1370 - 20 IP - 8 ICMP
+
+</code></pre>
+<p><code>routerctl doctor --probe egress</code> is also useful when the underlay is itself a candidate egress (for example, when traffic to a remote office should ride the WireGuard underlay rather than the public default route).</p>
+<h2 id="operational-notes">Operational notes</h2>
+<ul>
+<li><strong>Roll out one host pair first.</strong> Keep hypervisor console access available so you can recover if WireGuard or VXLAN does not converge.</li>
+<li><strong>MTU mistakes are the most common cause of "fast ping but slow large transfers."</strong> Use <code>ping -M do -s &lt;size&gt;</code> to confirm both underlay and overlay MTUs before routing real traffic.</li>
+<li><strong>Do not blindly disable Linux NIC offload features.</strong> TSO/GSO/GRO are usually fine; problems with <code>mtu greater than device maximum</code> more often come from the hypervisor host's tap/veth offload settings, not the guest.</li>
+<li><strong>Avoid running redundant overlays during the transition.</strong> Place the new WireGuard underlay on a different segment from the old SoftEther tunnel and cut over deliberately.</li>
+</ul>
+<h2 id="see-also">See also</h2>
+<ul>
+<li><a href="oci-qemu-vxlan-l2.html">Stretching a PVE LAN to QEMU guests on OCI</a></li>
+<li><a href="../concepts/path-mtu.html">Path MTU and MSS clamping</a></li>
+<li><a href="multi-wan.html">Multi-WAN egress with health-based selection</a></li>
+</ul></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#scenario">Scenario</a></li>
+<li><a href="#how-routerd-solves-it">How routerd solves it</a></li>
+<li><a href="#minimal-configuration">Minimal configuration</a><ul>
+<li><a href="#underlay-between-two-hosts">Underlay between two hosts</a></li>
+<li><a href="#stretched-l2-segment-over-the-underlay">Stretched L2 segment over the underlay</a></li>
+</ul>
+</li>
+<li><a href="#verification">Verification</a></li>
+<li><a href="#operational-notes">Operational notes</a></li>
+<li><a href="#see-also">See also</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/how-to/pve-overlay.md">GitHub</a></div></footer></body></html>

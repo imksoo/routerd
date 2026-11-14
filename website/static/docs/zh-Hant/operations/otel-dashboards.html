@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OpenTelemetry 儀表板 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/operations/otel-dashboards.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/operations/otel-dashboards.html" lang="en" hreflang="en">English</a><a href="/docs/ja/operations/otel-dashboards.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/operations/otel-dashboards.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/operations/otel-dashboards.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="opentelemetry-儀表板">OpenTelemetry 儀表板</h1>
+<p>routerd 以 <code>routerd.&lt;domain&gt;.&lt;metric&gt;</code> 命名規則輸出指標。
+您可在 Grafana、OpenObserve 或其他 OTLP 指標後端使用下列面板作為起點。</p>
+<table>
+<thead>
+<tr>
+<th>面板</th>
+<th>指標</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>控制器 dry-run 次數</td>
+<td><code>routerd.controller.dry_run.count</code></td>
+</tr>
+<tr>
+<td>資源 phase</td>
+<td><code>routerd.resource.phase.count</code>（依 <code>routerd.resource.phase</code> 分組）</td>
+</tr>
+<tr>
+<td>作用中的 DHCP 租約</td>
+<td><code>routerd.dhcp.lease.active</code>（依 <code>network.address.family</code> 分組）</td>
+</tr>
+<tr>
+<td>sticky DHCP hold</td>
+<td><code>routerd.dhcp.sticky.held</code>（依 <code>network.address.family</code> 分組）</td>
+</tr>
+<tr>
+<td>作用中的用戶端</td>
+<td><code>routerd.client.active.count</code></td>
+</tr>
+<tr>
+<td>BGP peer 與前綴</td>
+<td><code>routerd.bgp.peer.established</code> / <code>routerd.bgp.prefix.accepted</code></td>
+</tr>
+<tr>
+<td>VIP 與 ingress 故障切換</td>
+<td><code>routerd.vip.active</code> / <code>routerd.ingress.service.active</code> / <code>routerd.ingress.backend.healthy</code></td>
+</tr>
+<tr>
+<td>conntrack 使用量</td>
+<td><code>routerd.conntrack.count</code> / <code>routerd.conntrack.max</code></td>
+</tr>
+<tr>
+<td>防火牆拒絕</td>
+<td><code>routerd.firewall.deny.total</code>（依 <code>network.protocol.name</code> 分組）</td>
+</tr>
+</tbody>
+</table>
+<p>資源屬性包含 <code>service.name</code>、<code>service.version</code>、<code>host.name</code>、<code>routerd.host.role</code>、<code>routerd.os</code>。</p>
+<p>PromQL 格式的查詢範例如下：</p>
+<pre><code class="language-promql">routerd_resource_phase_count
+routerd_dhcp_lease_active{network_address_family=&quot;ipv4&quot;}
+routerd_dhcp_sticky_held
+rate(routerd_firewall_deny_total[5m])
+</code></pre></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul></ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/operations/otel-dashboards.md">GitHub</a></div></footer></body></html>

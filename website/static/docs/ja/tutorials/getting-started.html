@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>はじめに · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/tutorials/getting-started.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/tutorials/getting-started.html" lang="en" hreflang="en">English</a><a href="/docs/ja/tutorials/getting-started.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/tutorials/getting-started.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/tutorials/getting-started.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="はじめに">はじめに</h1>
+<p>このページでは、ネットワークを急に変えない最初の手順を試します。
+最初の 4 段階では daemon（起動し続けるプログラム）を起動せず、VM のネットワークを
+本当に変更しません。</p>
+<h2 id="0-安全を確認する">0. 安全を確認する</h2>
+<p>次の条件がそろってから進めます。</p>
+<ul>
+<li>隔離した Ubuntu Server VM を使っている。</li>
+<li>Proxmox、KVM、VirtualBox などの <strong>VM コンソール</strong>を開ける。</li>
+<li>変更する WAN / LAN 用 NIC（ネットワークにつなぐ口）とは別に、管理用 NIC または
+  コンソールがある。</li>
+<li>WAN / LAN 用の仮想ネットワークは、普段の家・学校・職場のネットワークから分かれている。</li>
+</ul>
+<p>routerd は、起動後にインターフェース、アドレス、経路、サービスを変えることが
+あります。SSH 接続が切れても直せることを先に確認してください。</p>
+<p>まだ routerd を入れていなければ、<a href="install.html">インストール</a> を先に行います。</p>
+<h2 id="1-インターフェース名を調べる">1. インターフェース名を調べる</h2>
+<pre><code class="language-sh">ip -br link
+ip -br address
+</code></pre>
+<p>ここでは例として、<code>ens18</code> を WAN、<code>ens19</code> を LAN にします。
+あなたの VM の表示に合わせて必ず読み替えてください。管理用 NIC を <code>ens20</code> に
+していても、この最初の YAML には入れません。routerd に管理させないからです。</p>
+<h2 id="2-小さな-yaml-を作る">2. 小さな YAML を作る</h2>
+<p>作業用ディレクトリで <code>first-router.yaml</code> を作り、次を書きます。</p>
+<pre><code class="language-yaml">apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: first-router
+spec:
+  resources:
+    # 上流側は、最初は外部のネットワーク設定に任せる。
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: wan
+      spec:
+        ifname: ens18
+        adminUp: true
+        managed: false
+    # LAN 側だけを routerd が管理する候補にする。
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: lan
+      spec:
+        ifname: ens19
+        adminUp: true
+        managed: true
+</code></pre>
+<p>この段階ではまだ WAN の DHCP、LAN の IP アドレス、NAT は入れません。
+一度にたくさん変えるより、役割を一つずつ足す方が原因を見つけやすくなります。</p>
+<h2 id="3-daemon-の前に検証する">3. daemon の前に検証する</h2>
+<p><code>routerctl validate</code> は動いている daemon のソケットに接続するコマンドです。
+まだサービスを起動していない最初の確認では、<code>routerd validate</code> を使います。</p>
+<pre><code class="language-sh">sudo routerd validate --config ./first-router.yaml
+</code></pre>
+<p><code>config is valid</code> と表示されれば、YAML の形は通っています。エラーが出たら
+サービスを起動せず、ファイル名、インデント、インターフェース名を見直します。</p>
+<h2 id="4-使い捨ての場所で-dry-run-する">4. 使い捨ての場所で dry-run する</h2>
+<p>次は、適用の流れを試します。<code>state</code>、<code>status</code> の保存先を明示的に
+一時ディレクトリへ向けます。</p>
+<pre><code class="language-sh">LAB_DIR=&quot;$(mktemp -d)&quot;
+sudo routerd apply --config ./first-router.yaml --once --dry-run \
+  --state-file &quot;$LAB_DIR/state.db&quot; \
+  --status-file &quot;$LAB_DIR/status.json&quot;
+sudo sed -n &quot;1,120p&quot; &quot;$LAB_DIR/status.json&quot;
+rm -rf &quot;$LAB_DIR&quot;
+</code></pre>
+<p><code>--dry-run</code> があるため、routerd は本当のネットワーク変更をしません。
+表示された plan と <code>status.json</code> で、<code>ens18</code> と <code>ens19</code> が意図どおりかを
+確認します。知らない NIC、知らないファイル、警告が出たら、ここで止めて YAML を
+直します。</p>
+<h2 id="5-実際の変更は次の手順で行う">5. 実際の変更は次の手順で行う</h2>
+<p>この小さな設定はインターフェースの宣言だけで、DHCP、NAT、インターネット共有は
+まだ提供しません。サービスは停止したまま、<a href="first-router.html">最初のルーター</a>へ
+進みます。完成した設定の確認、起動、状態確認、LAN クライアントの通信確認を
+そこで順に行います。</p>
+<h2 id="次に読むもの">次に読むもの</h2>
+<ul>
+<li><a href="first-router.html">最初のルーターを立ち上げる</a> — DHCPv4 WAN と LAN の IP アドレスを足す</li>
+<li><a href="../concepts/apply-and-render.html">適用と生成</a> — <code>routerd</code> と <code>routerctl</code> の役割を知る</li>
+<li><a href="basic-firewall.html">NAT44 とファイアウォールの準備</a> — NAT と現在のファイアウォール機能の注意</li>
+</ul></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#0-安全を確認する">0. 安全を確認する</a></li>
+<li><a href="#1-インターフェース名を調べる">1. インターフェース名を調べる</a></li>
+<li><a href="#2-小さな-yaml-を作る">2. 小さな YAML を作る</a></li>
+<li><a href="#3-daemon-の前に検証する">3. daemon の前に検証する</a></li>
+<li><a href="#4-使い捨ての場所で-dry-run-する">4. 使い捨ての場所で dry-run する</a></li>
+<li><a href="#5-実際の変更は次の手順で行う">5. 実際の変更は次の手順で行う</a></li>
+<li><a href="#次に読むもの">次に読むもの</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/tutorials/getting-started.md">GitHub</a></div></footer></body></html>

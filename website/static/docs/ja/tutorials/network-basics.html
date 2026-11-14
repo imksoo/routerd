@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>routerd の前に知っておくネットワークの基本 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/tutorials/network-basics.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/tutorials/network-basics.html" lang="en" hreflang="en">English</a><a href="/docs/ja/tutorials/network-basics.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/tutorials/network-basics.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/tutorials/network-basics.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="routerd-の前に知っておくネットワークの基本">routerd の前に知っておくネットワークの基本</h1>
+<p>routerd を試す前に、ネットワーク用語を全部覚える必要はありません。このページでは、
+最初のチュートリアルに必要な考え方だけを、短く説明します。</p>
+<h2 id="まずはこの絵">まずはこの絵</h2>
+<pre><code class="language-text">インターネット / 学校 / 回線事業者のネットワーク
+                    |
+                   WAN
+                    |
+             [ routerd のホスト ]
+                    |
+                   LAN
+                    |
+       PC、スマートフォン、ゲーム機など
+</code></pre>
+<ul>
+<li><strong>WAN</strong> は、回線事業者・学校・上流ルーターにつながる側です。</li>
+<li><strong>LAN</strong> は、自分で管理する側です。家、教室、部室、検証用ネットワークなどが該当します。</li>
+<li><strong>ルーター</strong> は WAN と LAN の間で通信を運びます。Wi-Fi アクセスポイントや
+  Ethernet スイッチとは別の役割です。</li>
+</ul>
+<h2 id="最初に役立つ6つの言葉">最初に役立つ6つの言葉</h2>
+<table>
+<thead>
+<tr>
+<th>言葉</th>
+<th>やさしい説明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>IP アドレス</td>
+<td>機器のネットワーク上の住所です。</td>
+</tr>
+<tr>
+<td>ゲートウェイ</td>
+<td>同じ LAN の外へ通信を出すとき、端末が最初に渡す相手です。小さなネットワークでは通常ルーターです。</td>
+</tr>
+<tr>
+<td>DHCP</td>
+<td>IP アドレス、ゲートウェイ、DNS サーバーを端末へ自動で配る仕組みです。</td>
+</tr>
+<tr>
+<td>DNS</td>
+<td><code>example.com</code> のような名前を IP アドレスに引き換える電話帳です。</td>
+</tr>
+<tr>
+<td>NAT</td>
+<td>LAN 内の複数端末で、外向きの IPv4 接続を共有する仕組みです。</td>
+</tr>
+<tr>
+<td><code>/24</code></td>
+<td><code>192.168.10.1</code> から <code>192.168.10.254</code> のような、ひとまとまりの小さな IPv4 LAN を表す短い書き方です。</td>
+</tr>
+</tbody>
+</table>
+<p>routerd では、これらの選択を YAML に書きます。<code>Router</code> ファイルは
+<strong>resource（部品）</strong> のリストを入れる箱です。各 resource には、種類を表す
+<code>kind</code>、自分で付けるラベルの <code>metadata.name</code>、詳細を書く <code>spec</code> があります。</p>
+<pre><code class="language-yaml">apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: my-lab-router
+spec:
+  resources:
+    # Interface、DHCPv4Server、NAT44Rule などの部品をここへ並べます。
+</code></pre>
+<p>resource 名を暗記する必要はありません。チュートリアルでは、一度に一つの役割だけを
+追加し、必要なときにリファレンスへ案内します。</p>
+<h2 id="最初は安全な場所で試す">最初は安全な場所で試す</h2>
+<p>最初の実験は、隔離した Ubuntu Server VM か予備の PC で行ってください。
+Proxmox/VM のコンソール、シリアルコンソール、または別の管理 NIC を確保します。
+家庭・学校・職場で実際に使っている唯一のルーターを、最初の実験で変更してはいけません。</p>
+<p><code>routerd validate</code> と <code>routerd apply --once --dry-run</code> は、ネットワーク変更を
+確定せずに設定ファイルを確かめるためのコマンドです。<code>routerd apply --once</code> と
+<code>routerd serve</code> はホストのネットワークを変更する可能性があります。実行するのは、
+コンソールまたは独立した管理経路があるときだけにしてください。</p>
+<p>routerd はプレリリースソフトウェアです。ファイアウォール resource は groundwork
+であり、安全性の認証ではありません。インターネットへ公開するルーターや、唯一の
+安全境界として、一つの設定例だけに依存しないでください。</p>
+<h2 id="次に進む">次に進む</h2>
+<ol>
+<li>隔離した Ubuntu Server VM に <a href="../install-and-upgrade.html">routerd を導入する</a>。</li>
+<li>ネットワークを変えずに <a href="getting-started.html">最初の確認を行う</a>。</li>
+<li>コンソール経路を確保してから、<a href="first-router.html">最初の IPv4 ラボルーターを作る</a>。</li>
+</ol></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#まずはこの絵">まずはこの絵</a></li>
+<li><a href="#最初に役立つ6つの言葉">最初に役立つ6つの言葉</a></li>
+<li><a href="#最初は安全な場所で試す">最初は安全な場所で試す</a></li>
+<li><a href="#次に進む">次に進む</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/tutorials/network-basics.md">GitHub</a></div></footer></body></html>

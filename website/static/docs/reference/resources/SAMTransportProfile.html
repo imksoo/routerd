@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SAMTransportProfile · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/reference/resources/SAMTransportProfile.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/reference/resources/SAMTransportProfile.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/reference/resources/SAMTransportProfile.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/SAMTransportProfile.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/SAMTransportProfile.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="samtransportprofile">SAMTransportProfile</h1>
+<p><a href="../resources.html#samtransportprofile">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: mobility.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<h2 id="yaml-definition">YAML definition</h2>
+<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
+<pre><code class="language-yaml">- apiVersion: mobility.routerd.net/v1alpha1
+  kind: SAMTransportProfile
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    addressingMode: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;edge-index&quot;, &quot;pair-stable&quot;]
+    bgp: # Required; object
+      bfd: # optional; object
+        detectMultiplier: 1 # optional; integer; minimum=1; maximum=50
+        enabled: true # optional; boolean
+        interface: &quot;&lt;string&gt;&quot; # optional; string
+        minRx: &quot;&lt;string&gt;&quot; # optional; string
+        minTx: &quot;&lt;string&gt;&quot; # optional; string
+        profile: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;fast&quot;, &quot;normal&quot;, &quot;slow&quot;]
+      convergenceProfile: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;default&quot;, &quot;fast&quot;, &quot;stable&quot;]
+      directLocalPreference: 0 # optional; integer
+      ebgpMultihop: 0 # optional; integer; minimum=0; maximum=255
+      exportPolicy: # optional; object
+        allowedPrefixes: # optional; array
+          - &quot;&lt;string&gt;&quot; # string
+      generatePeers: true # optional; boolean
+      importPolicy: # optional; object
+        allowedPrefixLengthMax: 0 # optional; integer; minimum=0; maximum=128
+        allowedPrefixLengthMin: 0 # optional; integer; minimum=0; maximum=128
+        allowedPrefixes: # optional; array
+          - &quot;&lt;string&gt;&quot; # string
+        forbiddenCommunities: # optional; array
+          - &quot;&lt;string&gt;&quot; # string
+        localPreference: 0 # optional; integer
+        nextHopRewrite: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;peer-address&quot;, &quot;unchanged&quot;]
+        requiredCommunities: # optional; array
+          - &quot;&lt;string&gt;&quot; # string
+      peerASN: 1 # Required; integer; minimum=1
+      routeReflectorClient: true # optional; boolean
+      routeReflectorClusterID: &quot;&lt;string&gt;&quot; # optional; string
+      routerRef: &quot;&lt;string&gt;&quot; # Required; string
+      timers: # optional; object
+        profile: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;default&quot;, &quot;fast&quot;, &quot;slow&quot;]
+      timersPreset: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;default&quot;, &quot;fast&quot;, &quot;slow&quot;]
+    encapDport: 1 # optional; integer; minimum=1; maximum=65535
+    encapSport: 1 # optional; integer; minimum=1; maximum=65535
+    encryption: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;none&quot;, &quot;wireguard&quot;]
+    innerPrefix: &quot;&lt;string&gt;&quot; # Required; string
+    localEndpoint: &quot;&lt;string&gt;&quot; # optional; string
+    localEndpointFrom: # optional; object
+      field: &quot;&lt;string&gt;&quot; # optional; string
+      optional: true # optional; boolean
+      resource: &quot;&lt;string&gt;&quot; # Required; string
+    mode: &quot;ipip&quot; # Required; string; enum=[&quot;ipip&quot;, &quot;gre&quot;, &quot;fou&quot;, &quot;gue&quot;]
+    peersFrom: # optional; array
+      - # object
+        direct: true # optional; boolean
+        nodeRefs: # optional; array
+          - &quot;&lt;string&gt;&quot; # string
+        optional: true # optional; boolean
+        resource: &quot;&lt;string&gt;&quot; # Required; string
+    publishPeerGroup: true # optional; boolean
+    selfNodeRef: &quot;&lt;string&gt;&quot; # Required; string
+    underlayInterface: &quot;&lt;string&gt;&quot; # Required; string
+</code></pre>
+<p><a href="/examples/cloudedge-aws-rr-dynamic-leaf.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#yaml-definition">YAML definition</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/reference/resources/SAMTransportProfile.md">GitHub</a></div></footer></body></html>

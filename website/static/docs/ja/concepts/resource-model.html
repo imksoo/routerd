@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>リソースモデル · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/concepts/resource-model.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/concepts/resource-model.html" lang="en" hreflang="en">English</a><a href="/docs/ja/concepts/resource-model.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/concepts/resource-model.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/concepts/resource-model.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="リソースモデル">リソースモデル</h1>
+<p>routerd の設定は、最上位の <code>Router</code> と、その下に並ぶ複数のリソースで構成します。
+各リソースは Kubernetes に近い形をとります。</p>
+<pre><code class="language-yaml">apiVersion: net.routerd.net/v1alpha1
+kind: DHCPv6PrefixDelegation
+metadata:
+  name: wan-pd
+spec:
+  interface: wan
+</code></pre>
+<h2 id="共通フィールド">共通フィールド</h2>
+<ul>
+<li><code>apiVersion</code>: リソースが属する API グループと版です。</li>
+<li><code>kind</code>: リソースの種類です。</li>
+<li><code>metadata.name</code>: 同じ <code>kind</code> の中で一意な名前です。</li>
+<li><code>spec</code>: 利用者が宣言する意図です。</li>
+<li><code>status</code>: routerd や専用デーモンが観測した状態です。</li>
+</ul>
+<p>設定ファイルに書くのは主に <code>spec</code> です。
+<code>status</code> は制御 API、状態データベース、デーモンの <code>/v1/status</code>、<code>routerctl</code>、Web 管理画面で確認します。</p>
+<h2 id="api-グループ">API グループ</h2>
+<p>routerd は次の API グループを使います。</p>
+<table>
+<thead>
+<tr>
+<th>グループ</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>routerd.net/v1alpha1</code></td>
+<td>最上位の <code>Router</code></td>
+</tr>
+<tr>
+<td><code>net.routerd.net/v1alpha1</code></td>
+<td>インターフェース、DHCP、DNS、経路、トンネル、WAN 選択、通信フローログ</td>
+</tr>
+<tr>
+<td><code>firewall.routerd.net/v1alpha1</code></td>
+<td>ファイアウォールゾーン、ポリシー、規則、ログ</td>
+</tr>
+<tr>
+<td><code>system.routerd.net/v1alpha1</code></td>
+<td>ホスト名、パッケージ、sysctl、ネットワーク引き継ぎ、systemd ユニット、NTP、ログ転送、Web 管理画面</td>
+</tr>
+<tr>
+<td><code>plugin.routerd.net/v1alpha1</code></td>
+<td>信頼済みローカルプラグイン</td>
+</tr>
+</tbody>
+</table>
+<p><code>routerd.io</code> のような仮のグループは使いません。</p>
+<h2 id="依存関係">依存関係</h2>
+<p>リソースは他のリソースを名前で参照します。
+たとえば <code>IPv6DelegatedAddress</code> は <code>DHCPv6PrefixDelegation</code> を参照し、<code>DSLiteTunnel</code> は <code>DHCPv6Information</code> や <code>DNSResolver</code> の結果を参照します。</p>
+<p>参照先がまだ準備できていないと、リソースは <code>Pending</code> のままです。
+参照先が整うと <code>Applied</code>、<code>Bound</code>、<code>Up</code>、<code>Installed</code>、<code>Healthy</code> などの段階へ進みます。</p>
+<h2 id="dependson">dependsOn</h2>
+<p>一部のリソースは <code>dependsOn</code> で適用の条件を指定できます。
+<code>dependsOn</code> には、参照するリソースとその状態フィールドを明示します。</p>
+<pre><code class="language-yaml">dependsOn:
+  - resource: DHCPv6PrefixDelegation/wan-pd
+    phase: Bound
+  - resource: Interface/lan
+    phase: Up
+</code></pre>
+<p>他リソースの状態値を使うときは、通常のフィールドに式を書きません。
+<code>deviceFrom</code>、<code>gatewayFrom</code>、<code>addressFrom</code>、<code>ipv4From</code>、<code>ipv6From</code>、
+<code>prefixFrom</code>、<code>rdnssFrom</code>、<code>addressFrom</code> といった専用フィールドを使います。</p>
+<pre><code class="language-yaml">deviceFrom:
+  resource: DSLiteTunnel/ds-lite
+  field: interface
+</code></pre>
+<p>この形にすることで、検証、計画、イベント購読、コントローラーの調整（リコンサイル）から依存関係が見えるようになります。</p>
+<h2 id="dhcpv6-pd">DHCPv6-PD</h2>
+<p>DHCPv6-PD が失われたときに古い LAN IPv6 設定を残さないための重要な仕組みです。
+委任されたプレフィックスに依存する LAN IPv6 アドレス、RA、DNS レコード、DS-Lite は、
+親が準備できない間は古い状態を出さないようにします。</p>
+<h2 id="次に読むもの">次に読むもの</h2>
+<ul>
+<li><a href="apply-and-render.html">適用と生成</a> — validate、plan、dry-run、serve がリソースグラフをどう使うか</li>
+<li><a href="state.html">状態</a> — 実行状態の保存先</li>
+<li><a href="../api-v1alpha1.html">リソース API リファレンス</a> — 全リソース Kind のフィールドリファレンス</li>
+</ul></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#共通フィールド">共通フィールド</a></li>
+<li><a href="#api-グループ">API グループ</a></li>
+<li><a href="#依存関係">依存関係</a></li>
+<li><a href="#dependson">dependsOn</a></li>
+<li><a href="#dhcpv6-pd">DHCPv6-PD</a></li>
+<li><a href="#次に読むもの">次に読むもの</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/concepts/resource-model.md">GitHub</a></div></footer></body></html>

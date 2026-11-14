@@ -257,5 +257,4 @@ routerd の主要なルーター機能は、本体のバイナリと専用デー
 マニフェストの形式と入出力の契約は、安定した公開インターフェースとして固定するまでに
 変更される可能性があります。
 
-[ハイブリッドクラウドエッジ設計](/docs/design-hybrid-cloud-edge) および
 [Dynamic config リファレンス](reference/dynamic-config.md) も参照してください。

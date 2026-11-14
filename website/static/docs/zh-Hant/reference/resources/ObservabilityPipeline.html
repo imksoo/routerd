@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ObservabilityPipeline · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/reference/resources/ObservabilityPipeline.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/reference/resources/ObservabilityPipeline.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/ObservabilityPipeline.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/ObservabilityPipeline.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/reference/resources/ObservabilityPipeline.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="observabilitypipeline">ObservabilityPipeline</h1>
+<p><a href="../resources.html#observabilitypipeline">各資源的設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: system.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>結合受管服務的OpenTelemetry環境宣告與獨立內建操作事件記錄consumer。</p>
+<h2 id="指定條件與參照關係">指定條件與參照關係</h2>
+<ul>
+<li>OTLP環境選擇與內建記錄轉送是兩條路徑，signals控制前者，logs.enabled控制後者；輸出清單空白不代表stdout。</li>
+<li>sampling.rate=0轉為1；此實作中的Kafka輸出端與OTLP憑證檔欄位只有宣告，沒有相應執行處理。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。</p>
+<pre><code class="language-yaml">- apiVersion: system.routerd.net/v1alpha1
+  kind: ObservabilityPipeline
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    attributes: # 選填; object
+      &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # 選填; string
+    logs: # 選填; object
+      enabled: true # 選填; boolean
+      sinks: # 選填; array
+        - # object
+          enabled: true # 選填; boolean
+          kafka: # 選填; object
+            brokers: # 選填; array
+              - &quot;&lt;string&gt;&quot; # string
+            topic: &quot;&lt;string&gt;&quot; # 選填; string
+          labels: # 選填; object
+            &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # 選填; string
+          loki: # 選填; object
+            headers: # 選填; object
+              &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # 選填; string
+            tenant: &quot;&lt;string&gt;&quot; # 選填; string
+            url: &quot;&lt;string&gt;&quot; # 選填; string
+          minLevel: &quot;debug&quot; # 選填; string; enum=[&quot;debug&quot;, &quot;info&quot;, &quot;warning&quot;, &quot;error&quot;]
+          name: &quot;&lt;string&gt;&quot; # 選填; string
+          syslog: # 選填; object
+            address: &quot;&lt;string&gt;&quot; # 選填; string
+            facility: &quot;kern&quot; # 選填; string; enum=[&quot;kern&quot;, &quot;user&quot;, &quot;mail&quot;, &quot;daemon&quot;, &quot;auth&quot;, &quot;syslog&quot;, &quot;lpr&quot;, &quot;news&quot;, &quot;uucp&quot;, &quot;cron&quot;, &quot;authpriv&quot;, &quot;ftp&quot;, &quot;local0&quot;, &quot;local1&quot;, &quot;local2&quot;, &quot;local3&quot;, &quot;local4&quot;, &quot;local5&quot;, &quot;local6&quot;, &quot;local7&quot;]
+            network: &quot;&quot; # 選填; string; enum=[&quot;&quot;, &quot;unix&quot;, &quot;unixgram&quot;, &quot;tcp&quot;, &quot;udp&quot;]
+            tag: &quot;&lt;string&gt;&quot; # 選填; string
+          type: &quot;stdout&quot; # 必填; string; enum=[&quot;stdout&quot;, &quot;syslog&quot;, &quot;loki&quot;, &quot;kafka&quot;]
+    otlp: # 選填; object
+      endpoint: &quot;&lt;string&gt;&quot; # 選填; string
+      headers: # 選填; object
+        &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # 選填; string
+      insecure: true # 選填; boolean
+      tls: # 選填; object
+        caFile: &quot;&lt;string&gt;&quot; # 選填; string
+        certFile: &quot;&lt;string&gt;&quot; # 選填; string
+        insecureSkipVerify: true # 選填; boolean
+        keyFile: &quot;&lt;string&gt;&quot; # 選填; string
+    sampling: # 選填; object
+      rate: 0 # 選填; number
+    serviceNamespace: &quot;&lt;string&gt;&quot; # 選填; string
+    signals: # 選填; array
+      - &quot;logs&quot; # string; enum=[&quot;logs&quot;, &quot;metrics&quot;, &quot;traces&quot;]
+    when: # 選填; object
+      state: # 選填; object
+        &quot;&lt;key&gt;&quot;: # 選填; object
+          contains: &quot;&lt;string&gt;&quot; # 選填; string
+          equals: &quot;&lt;string&gt;&quot; # 選填; string
+          exists: true # 選填; boolean
+          for: &quot;&lt;string&gt;&quot; # 選填; string
+          in: # 選填; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # 選填; string
+          status: &quot;set&quot; # 選填; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<h2 id="欄位意義與預設值">欄位意義與預設值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>欄位意義與預設值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.serviceNamespace</code></td>
+<td>OpenTelemetry服務命名空間，去除前後空白後為空時預設routerd。</td>
+</tr>
+<tr>
+<td><code>spec.attributes</code></td>
+<td>資源屬性對照，預設空；按鍵排序並以逗號分隔key=value寫入OTEL_RESOURCE_ATTRIBUTES，此產生器不跳脫值。</td>
+</tr>
+<tr>
+<td><code>spec.otlp</code></td>
+<td>產生服務用的選填OTLP環境設定；endpoint非空白時選為遙測環境來源，內建記錄輸出端另行運作。</td>
+</tr>
+<tr>
+<td><code>spec.otlp.endpoint</code></td>
+<td>匯出端點預設空；非空白值須可解析為URI，寫入OTEL_EXPORTER_OTLP_ENDPOINT。多個Telemetry或含endpoint的pipeline會使環境產生失敗。</td>
+</tr>
+<tr>
+<td><code>spec.otlp.insecure</code></td>
+<td>預設false；true產生OTEL_EXPORTER_OTLP_INSECURE=true，tls.insecureSkipVerify=true也設定相同變數。</td>
+</tr>
+<tr>
+<td><code>spec.otlp.headers</code></td>
+<td>exporter請求標頭對照，預設空；排序後以逗號分隔key=value寫入OTEL_EXPORTER_OTLP_HEADERS，不跳脫值。與Loki標頭不同。</td>
+</tr>
+<tr>
+<td><code>spec.otlp.tls</code></td>
+<td>可解碼的TLS選項；目前只有insecureSkipVerify影響環境產生，三個檔案欄位未接至exporter設定。</td>
+</tr>
+<tr>
+<td><code>spec.otlp.tls.caFile</code></td>
+<td>CA檔案宣告預設空，目前產生器與內建exporter不讀取，設定後不會配置信任庫。</td>
+</tr>
+<tr>
+<td><code>spec.otlp.tls.certFile</code></td>
+<td>用戶端憑證宣告預設空，目前OTLP設定路徑不使用。</td>
+</tr>
+<tr>
+<td><code>spec.otlp.tls.keyFile</code></td>
+<td>用戶端金鑰宣告預設空，目前不使用；在此成對設定certFile/keyFile不會啟用雙向TLS。</td>
+</tr>
+<tr>
+<td><code>spec.otlp.tls.insecureSkipVerify</code></td>
+<td>預設false，目前將true轉成OTEL_EXPORTER_OTLP_INSECURE=true，不是只略過憑證檢查的TLS client設定。</td>
+</tr>
+<tr>
+<td><code>spec.signals</code></td>
+<td>產生OpenTelemetry環境時預設logs/metrics/traces全部，非空清單未列出的訊號設exporter=none。內建記錄consumer不使用此清單，改由logs.enabled控制。</td>
+</tr>
+<tr>
+<td><code>spec.sampling</code></td>
+<td>內建事件記錄抽樣設定，獨立於產生的OTLP環境。</td>
+</tr>
+<tr>
+<td><code>spec.sampling.rate</code></td>
+<td>須為0–1；省略/0轉為1，傳送全部符合事件。小數使用序號模1000的確定性抽樣，不是隨機。停止consumer請用logs.enabled=false。</td>
+</tr>
+<tr>
+<td><code>spec.logs</code></td>
+<td>內建DB事件記錄轉送設定，與OTLP環境分開。</td>
+</tr>
+<tr>
+<td><code>spec.logs.enabled</code></td>
+<td>預設true；false停止內建記錄consumer，但不停用產生服務的OTLP變數。</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks</code></td>
+<td>輸出端清單預設空，沒有內建目的地；不會隱含stdout。Kafka項目即使啟用仍被exporter略過。</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].name</code></td>
+<td>選填輸出標籤，預設空；不是LogSink資源參照，目前exporter不用它選目的地。</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].type</code></td>
+<td>必填stdout、syslog、loki或kafka；kafka只接受宣告而不執行，僅使用所選分支設定。</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].enabled</code></td>
+<td>預設true；false排除此輸出端，kafka另行無條件排除。</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].minLevel</code></td>
+<td>最低嚴重程度預設info，接受debug/info/warning/error，在抽樣後判斷。</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].labels</code></td>
+<td>額外Loki stream標籤預設空；鍵正規化後覆寫同名全域屬性及內建標籤，stdout/syslog不使用。</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].loki</code></td>
+<td>只用於type=loki的設定。</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].loki.url</code></td>
+<td>loki時必填且無預設值，須提供完整Loki push URL，exporter不補push路徑；只有HTTP 2xx算成功。</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].loki.tenant</code></td>
+<td>選填租戶ID預設空，非空時設定X-Scope-OrgID。</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].loki.headers</code></td>
+<td>額外HTTP標頭預設空，覆寫同名標頭，包括Content-Type與租戶標頭。</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].syslog</code></td>
+<td>只用於type=syslog的設定。</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].syslog.network</code></td>
+<td>傳輸方式為unix、unixgram、tcp或udp；空值由Go syslog探索本機socket。</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].syslog.address</code></td>
+<td>目的socket路徑或host:port，預設空。明確指定傳輸方式時應提供對應位址；驗證器不強制此組合，連線錯誤在輸出時出現。</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].syslog.tag</code></td>
+<td>syslog標籤，預設routerd，不是資源參照。</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].syslog.facility</code></td>
+<td>預設local6，此exporter只對應local0–local7，其他值也改用local6，與獨立LogSink的syslog實作不同。</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].kafka</code></td>
+<td>Kafka意圖設定，會驗證但內建exporter略過此輸出端。</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].kafka.brokers</code></td>
+<td>type=kafka須至少一個非空白broker，目前exporter不連線。</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].kafka.topic</code></td>
+<td>type=kafka必填非空白topic，不是EventRule topic或資源參照，目前不傳送Kafka。</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>啟用條件，省略不設限制；state/all/any、unknown及時間條件請見共用條件參考。</td>
+</tr>
+</tbody>
+</table>
+<p>實作: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_system.go">pkg/config/validate_system.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go">pkg/config/diagnostics.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/telemetry.go">pkg/render/telemetry.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/observabilitypipeline/exporter.go">pkg/observabilitypipeline/exporter.go</a></p>
+<p><a href="/examples/observability-loki.yaml">設定範例</a></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#指定條件與參照關係">指定條件與參照關係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#欄位意義與預設值">欄位意義與預設值</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/reference/resources/ObservabilityPipeline.md">GitHub</a></div></footer></body></html>

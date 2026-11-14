@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cloud Edge SAM transport layering · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/how-to/cloudedge-sam-transport-layering.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/how-to/cloudedge-sam-transport-layering.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/how-to/cloudedge-sam-transport-layering.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/how-to/cloudedge-sam-transport-layering.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/cloudedge-sam-transport-layering.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="cloud-edge-sam-transport-layering">Cloud Edge SAM transport layering</h1>
+<p>Cloud Edge SAM should keep address mobility routes out of WireGuard
+<code>AllowedIPs</code>.</p>
+<p>WireGuard treats <code>AllowedIPs</code> as cryptokey routing state. Outbound packets use
+the inner destination address to select a peer, and inbound packets are accepted
+only when the decrypted inner source address is allowed for that peer. This is
+the right behavior for WireGuard, but it conflicts with SAM mobility when BGP,
+route reflectors, or ECMP can move a <code>/32</code> between peers.</p>
+<h2 id="recommended-layers">Recommended layers</h2>
+<p>Trusted on-prem or home underlay can use direct IPIP or GRE:</p>
+<pre><code class="language-text">physical underlay
+  IPIP or GRE tunnel
+    SAM overlay packets
+</code></pre>
+<p>Encrypted transport should keep WireGuard as an endpoint-only layer and put IPIP
+or GRE above it:</p>
+<pre><code class="language-text">physical underlay
+  WireGuard endpoint transport
+    IPIP or GRE tunnel
+      SAM overlay packets
+</code></pre>
+<p>In that model, WireGuard peers should only contain router-to-router endpoint
+prefixes such as <code>10.252.0.2/32</code>. SAM prefixes such as
+<code>192.168.123.10/32</code> remain in BGP, the kernel FIB, and SAM resources.</p>
+<h2 id="protocol-choice">Protocol choice</h2>
+<p>Use IPIP first when SAM carries IPv4 mobility prefixes. It is the default
+delivery plane for current <code>SAMTransportProfile</code> examples because it adds the
+least tunnel overhead while preserving the separation between WireGuard
+cryptokey routing and SAM route mobility. When encryption is required, run IPIP
+over a WireGuard interface whose <code>AllowedIPs</code> contain only transport endpoint
+addresses.</p>
+<p>Use GRE when the deployment needs protocol identification beyond IPv4, a GRE
+key, or stronger FreeBSD interoperability.</p>
+<p>Avoid VXLAN, Geneve, or GRETAP unless L2 semantics are explicitly required. SAM
+is selective L3 address mobility, so L2 overlay headers are usually unnecessary.</p>
+<p>FOU and GUE can help when UDP encapsulation is useful on the physical underlay,
+but using them inside WireGuard usually adds overhead without improving physical
+underlay load balancing, because the physical network only sees WireGuard UDP.</p>
+<h2 id="configuration-ergonomics">Configuration ergonomics</h2>
+<p>Low-level resources must still support DHCP/IPAM-safe endpoints. A
+<code>TunnelInterface</code> should be able to derive <code>local</code> or <code>remote</code> from resource
+status so operators do not duplicate DHCP-managed addresses in static config.
+When the underlay address is managed outside routerd, such as a live image
+DHCP client, use the adopted interface status:</p>
+<pre><code class="language-yaml">apiVersion: hybrid.routerd.net/v1alpha1
+kind: TunnelInterface
+metadata:
+  name: tun-k8s-rt02
+spec:
+  mode: ipip
+  localFrom:
+    resource: Interface/mgmt
+    field: primaryIPv4
+  remote: 192.168.1.53
+  trustedUnderlay: true
+</code></pre>
+<p><code>primaryIPv4</code> may include a prefix length, for example <code>192.168.1.32/24</code>; the
+tunnel controller resolves it to the address form required by <code>ip tunnel</code>.
+When using an <code>Interface/...</code> status source, the link controller must publish the
+interface status into the same state database. Normal <code>routerd serve</code> runs this
+controller, but isolated tunnel tests should include both <code>link</code> and <code>tunnel</code>.</p>
+<p>Common SAM topologies can use <code>SAMTransportProfile</code> to generate the low-level
+<code>TunnelInterface</code>, endpoint <code>/32</code> route, and <code>BGPPeer</code> resources while preserving
+these invariants:</p>
+<ul>
+<li>WireGuard <code>AllowedIPs</code> contains only transport endpoint prefixes.</li>
+<li>SAM mobility <code>/32</code>s are never injected into WireGuard peers.</li>
+<li>IPIP/GRE endpoint addresses can come from DHCP/IPAM-derived status fields.</li>
+<li>MTU and MSS behavior is explicit for each transport mode.</li>
+</ul>
+<p><code>spec.selfNodeRef</code> is required on every router. It is the stable identity used
+for deterministic <code>/31</code> inner address derivation; routerd does not infer it from
+hostname or BGP router ID.</p>
+<ul>
+<li><code>addressingMode: edge-index</code> (default) uses the shared <code>SAMNodeSet</code> named by
+  <code>spec.peersFrom</code>. routerd sorts that node set, ranks unordered node pairs, and
+  allocates ranked <code>/31</code> edges from <code>innerPrefix</code>.</li>
+<li><code>addressingMode: pair-stable</code> derives <code>/31</code> slots from a stable hash of each
+  node pair, so an adjacency selector can choose only actual peers (for example
+  RR nodes) without changing the shared node set.</li>
+</ul>
+<p>For production fabrics, size <code>innerPrefix</code> with collision probability in mind.
+<code>/24</code> has only 128 <code>/31</code> slots; with hash+mod allocation this can collide at
+modest edge counts. Use <code>/20</code> or larger where feasible.</p>
+<p><code>SAMNodeSet</code> remains the shared mobility placement and transport topology.
+<code>MobilityPool.spec.members</code> contains only the local ownership/capture overlay;
+it is not the SAM transport BGP peer topology.</p>
+<pre><code class="language-yaml">apiVersion: mobility.routerd.net/v1alpha1
+kind: SAMNodeSet
+metadata:
+  name: lab-nodes
+spec:
+  nodes:
+    - nodeRef: pve-rt
+      site: pve
+      role: onprem
+      routeReflector: true
+      samEndpoint: 10.99.0.1
+    - nodeRef: k8s-rt
+      site: k8s
+      role: cloud
+      samEndpoint: 10.99.0.2
+---
+apiVersion: mobility.routerd.net/v1alpha1
+kind: SAMTransportProfile
+metadata:
+  name: lab-sam-transport
+spec:
+  selfNodeRef: pve-rt
+  mode: ipip
+  innerPrefix: 10.255.1.0/24
+  addressingMode: pair-stable
+  underlayInterface: wg-hybrid
+  localEndpointFrom:
+    resource: Interface/wg-hybrid
+    field: primaryIPv4
+  bgp:
+    routerRef: BGPRouter/mobility
+    peerASN: 64512
+    timersPreset: fast
+    # Set these only on route-reflector core routers.
+    routeReflectorClient: true
+    routeReflectorClusterID: 192.168.1.38
+    # A transit RR without a local MobilityPool must state its mobility /32
+    # boundary here; generic BGPRouter import policy is not transit authority.
+    importPolicy:
+      allowedPrefixes: [192.168.123.0/24]
+      allowedPrefixLengthMin: 32
+      allowedPrefixLengthMax: 32
+  peersFrom:
+    - resource: SAMNodeSet/lab-nodes
+      nodeRefs: [k8s-rt]
+</code></pre>
+<p><code>SAMTransportProfile</code> has no direct peer or topology list. Keep the full shared
+identity and endpoint registry in <code>SAMNodeSet</code>; use <code>nodeRefs</code> only to select
+which non-self nodes become transport peers. Omitting <code>nodeRefs</code> selects every
+non-self node with a <code>samEndpoint</code>.</p>
+<p>A static RR that does not run <code>MobilityPool</code> planning still needs a narrow FIB
+authority for leaf-owned routes. The generated RR-client <code>BGPPeer</code> derives that
+authority from this profile's explicit <code>/32</code> import policy plus peer identity;
+it does not fall back to the global BGP policy, and validation rejects this RR
+role if that explicit policy is absent. Do not create a no-capture
+placeholder pool for this role. Use one shared full <code>SAMNodeSet</code> on RR and leaf
+profiles with <code>nodeRefs</code> to select hub-spoke adjacency, or use <code>pair-stable</code>
+and verify the derived <code>/31</code> peer addresses before cutover.</p>
+<p>The controller writes one <code>DynamicConfigPart</code> per profile and self node. Peer
+removal replaces that part with the new generated resource set. Profile deletion
+replaces the old part with an empty active part, causing the effective config to
+drop generated tunnels, BGP peers, and endpoint routes.</p>
+<p>Cleanup then uses the normal lifecycle GC path. The desired set is the effective
+view after dynamic SAM generation, so generated transport resources are retained
+while the profile exists and become GC candidates only after the profile output
+removes them. The generated <code>TunnelInterface</code>, <code>BGPPeer</code>, and <code>IPv4Route</code>
+resources keep their own owner/status records and teardown through the generic
+GC planner plus resource-specific teardown contracts.</p>
+<p>Related issues:</p>
+<ul>
+<li>
+<h1 id="194-decouple-sam-mobility-prefixes-from-wireguard-allowedips">194: decouple SAM mobility prefixes from WireGuard <code>AllowedIPs</code>.</h1>
+</li>
+<li>
+<h1 id="196-allow-tunnelinterface-endpoints-to-come-from-resource-status">196: allow <code>TunnelInterface</code> endpoints to come from resource status.</h1>
+</li>
+<li>
+<h1 id="197-add-compact-sam-underlay-transport-profiles">197: add compact SAM underlay transport profiles.</h1>
+</li>
+</ul>
+<p>References:</p>
+<ul>
+<li>WireGuard conceptual overview and cryptokey routing:
+  https://www.wireguard.com/</li>
+<li>Linux tunnel link types:
+  https://man7.org/linux/man-pages/man8/ip-link.8.html</li>
+<li>FreeBSD GRE:
+  https://man.freebsd.org/gre/4</li>
+</ul></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#recommended-layers">Recommended layers</a></li>
+<li><a href="#protocol-choice">Protocol choice</a></li>
+<li><a href="#configuration-ergonomics">Configuration ergonomics</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/how-to/cloudedge-sam-transport-layering.md">GitHub</a></div></footer></body></html>

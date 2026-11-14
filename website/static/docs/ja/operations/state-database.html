@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>状態データベース · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/operations/state-database.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/operations/state-database.html" lang="en" hreflang="en">English</a><a href="/docs/ja/operations/state-database.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/operations/state-database.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/operations/state-database.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="状態データベース">状態データベース</h1>
+<p>routerd は状態とイベントを SQLite に永続化します。各デーモンはこれに加えて、自身のリースまたは状態ファイルとイベントログを持ちます。</p>
+<h2 id="主なパス">主なパス</h2>
+<table>
+<thead>
+<tr>
+<th>種類</th>
+<th>パス</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>routerd 状態 DB</td>
+<td><code>/var/lib/routerd/routerd.db</code></td>
+</tr>
+<tr>
+<td>DHCPv6-PD リース</td>
+<td><code>/var/lib/routerd/dhcpv6-client/&lt;name&gt;/lease.json</code></td>
+</tr>
+<tr>
+<td>DHCPv4 リース</td>
+<td><code>/var/lib/routerd/dhcpv4-client/&lt;name&gt;/lease.json</code></td>
+</tr>
+<tr>
+<td>PPPoE 状態</td>
+<td><code>/var/lib/routerd/pppoe-client/&lt;name&gt;/state.json</code></td>
+</tr>
+<tr>
+<td>HealthCheck 状態</td>
+<td><code>/var/lib/routerd/healthcheck/&lt;name&gt;/state.json</code></td>
+</tr>
+<tr>
+<td>デーモン別イベント</td>
+<td><code>/var/lib/routerd/&lt;daemon&gt;/&lt;name&gt;/events.jsonl</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="events-テーブル">events テーブル</h2>
+<p>イベントバスはイベントを SQLite に永続化します。<code>EventRule</code> や <code>DerivedEvent</code> は、このストリームを入力にします。
+日常の運用では <code>sqlite3</code> を直接叩かず、<code>routerctl get events</code> を使ってください。</p>
+<pre><code class="language-sh">routerctl get events --limit 20
+routerctl get events --topic routerd.resource.status.changed
+routerctl get events --resource DNSResolver/lan-resolver -o json
+</code></pre>
+<p><code>LogRetention</code>リソースがなくても、ローカルイベント履歴には24時間、10万行、論理
+ペイロード64MiBの安全上限が適用されます。ローカル保持を延ばす前に<code>LogSink</code>へ
+退避してください。ルーター稼働を無制限なイベントテーブルへ依存させません。</p>
+<h3 id="ディスク満杯からの復旧">ディスク満杯からの復旧</h3>
+<p><code>routerctl doctor disk</code>、<code>systemctl status routerd</code>、
+<code>/run/routerd/storage-critical.json</code>を確認します。揮発性Live ISOのCOW領域なら
+ルーターOSを再起動し、永続設定に意図した<code>LogRetention</code>があることを確認します。
+永続ディスクではrouterdを停止して<code>routerctl ledger prune-events --older-than 24h</code>
+を実行し、作業用空き容量を確保してから<code>routerctl ledger vacuum</code>を実行します。
+再起動だけでは永続領域は空きません。</p>
+<h3 id="mobility-holder-transitions">Mobility holder transitions</h3>
+<p>CloudEdge SAM の failover は、<code>transitionKind</code>、<code>address</code>、<code>timestamp</code>、
+<code>issuedAt</code>、<code>fromNode</code>、<code>toNode</code>、<code>mobilityPathSig</code>、
+<code>assignmentGeneration</code> などの機械可読属性を持つ
+<code>routerd.mobility.holder.transition</code> イベントを出します。</p>
+<p>provider-secondary-IP capture では、<code>seize-complete</code> は Active な <code>/32</code>
+<code>bgpCaptureAssignment</code> に対する provider capture assign action が action
+journal で succeeded になった事実を意味します。<code>issuedAt</code> は journal の
+<code>ExecutedAt</code> なので、<code>timestamp - issuedAt</code> は provider が受理してから
+イベントを記録するまでの遅延です。<code>T_seize</code> は provider の受理時刻です。</p>
+<p><code>capture-confirmed</code> は従来どおり discovery による観測に基づきます。
+<code>T_confirm</code> は provider capture がローカルで効いたと観測した時刻です。
+この 2 つで、受理から実効までの区間を測れます。</p>
+<p>ノードの再起動や rejoin 後の再確認イベントでは、元の journal 受理時刻が
+<code>issuedAt</code> として再利用されることがあります。その場合、
+<code>timestamp - issuedAt</code> にはノードが停止または不在だった時間も含まれます。
+この差分は再確認までの経過時間として扱い、収束レイテンシとして解釈しないでください。</p>
+<p>static-owned、static-handover、local-home など capture 以外のフローでは、
+<code>seize-complete</code> は引き続き active-holder と self-identity の BGP 観測から
+導出します。lab 実証済みなのは capture フローで、static/handover の
+completion event は実環境ではまだ未実証です。</p>
+<h2 id="バックアップの考え方">バックアップの考え方</h2>
+<p>状態 DB は<strong>観測した</strong>状態を持つもので、設定の代わりにはなりません。
+意図の正本は YAML 設定ファイルなので、git で管理してください。
+ホストを再構築するときは、SQLite を復元するよりも、設定ファイルを当てて routerd に調整（リコンサイル）させる方が確実です。</p>
+<p>事後調査のために履歴を残す場合は、<code>routerd.db</code>、<code>dns-queries.db</code>、<code>traffic-flows.db</code>、<code>firewall-logs.db</code>を外部へ退避するか、定期的にスナップショットしてください。コントローラーのイベント履歴は現在<code>routerd.db</code>内にあるため、必要ならDB全体を保全します。</p>
+<h2 id="関連項目">関連項目</h2>
+<ul>
+<li><a href="../concepts/log-storage.html">ログストレージ</a></li>
+<li><a href="reconcile.html">Reconcile と削除</a></li>
+</ul></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#主なパス">主なパス</a></li>
+<li><a href="#events-テーブル">events テーブル</a><ul>
+<li><a href="#ディスク満杯からの復旧">ディスク満杯からの復旧</a></li>
+<li><a href="#mobility-holder-transitions">Mobility holder transitions</a></li>
+</ul>
+</li>
+<li><a href="#バックアップの考え方">バックアップの考え方</a></li>
+<li><a href="#関連項目">関連項目</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/operations/state-database.md">GitHub</a></div></footer></body></html>

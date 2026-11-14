@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>内部 Web サーバーへのポートフォワード · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/config-examples/port-forward-web.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/config-examples/port-forward-web.html" lang="en" hreflang="en">English</a><a href="/docs/ja/config-examples/port-forward-web.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/config-examples/port-forward-web.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/config-examples/port-forward-web.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="内部-web-サーバーへのポートフォワード">内部 Web サーバーへのポートフォワード</h1>
+<p>内部の HTTPS サーバーを WAN 側の IPv4 アドレスで公開し、LAN クライアントからも同じ公開名で
+到達できるよう hairpin を有効にする例です。</p>
+<p>完全な YAML は <code>examples/example-port-forward-web.yaml</code> にあります。</p>
+<p>この例は内部サービスを WAN から到達可能にします。最初はテスト用アドレスを使い、
+backend の更新と認証を確認してから、実サービスを公開する前に独立した
+ファイアウォール／セキュリティレビューを行ってください。</p>
+<h2 id="構成図">構成図</h2>
+<pre><code class="language-mermaid">flowchart LR
+  internet((Internet))
+  wan[&quot;[1] wan&lt;br/&gt;203.0.113.10:443&quot;]
+  router[&quot;[2] routerd host&quot;]
+  lan[&quot;[3] lan&quot;]
+  web[&quot;[4] inside web server&lt;br/&gt;192.168.10.20:443&quot;]
+  client[&quot;[5] LAN client&quot;]
+
+  internet --- wan --- router --- lan --- web
+  client --- lan
+</code></pre>
+<h2 id="図の対応表">図の対応表</h2>
+<table>
+<thead>
+<tr>
+<th>番号</th>
+<th>意味</th>
+<th>主なリソース</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>[1]</td>
+<td>外部クライアントが接続する公開側のアドレスと port。</td>
+<td><code>PortForward/web-https.spec.listen</code></td>
+</tr>
+<tr>
+<td>[2]</td>
+<td>ingress DNAT と hairpin ルールを生成するルーター。</td>
+<td><code>PortForward/web-https</code></td>
+</tr>
+<tr>
+<td>[3]</td>
+<td>hairpin のトラフィックが入ってくる LAN インターフェース。</td>
+<td><code>PortForward/web-https.spec.hairpin.interfaces</code></td>
+</tr>
+<tr>
+<td>[4]</td>
+<td>DNAT 先の内部 HTTPS バックエンド。</td>
+<td><code>PortForward/web-https.spec.target</code></td>
+</tr>
+<tr>
+<td>[5]</td>
+<td>公開アドレスや公開 DNS 名を使う LAN クライアント。</td>
+<td>ヘアピン経路</td>
+</tr>
+</tbody>
+</table>
+<h2 id="この例で管理するもの">この例で管理するもの</h2>
+<table>
+<thead>
+<tr>
+<th>領域</th>
+<th>routerd リソース</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>受信 DNAT</td>
+<td><code>PortForward/web-https</code></td>
+</tr>
+<tr>
+<td>ヘアピンアクセス</td>
+<td><code>PortForward.spec.hairpin</code></td>
+</tr>
+<tr>
+<td>ゾーンとポリシー</td>
+<td><code>FirewallZone/wan</code>, <code>FirewallZone/lan</code>, <code>FirewallPolicy/home</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="設定の要点">設定の要点</h2>
+<pre><code class="language-yaml"># [1] 公開側のリスナー。ヘアピンではここに具体的なアドレスが必要。
+- apiVersion: firewall.routerd.net/v1alpha1
+  kind: PortForward
+  metadata:
+    name: web-https
+  spec:
+    listen:
+      interface: wan
+      address: 203.0.113.10
+      protocol: tcp
+      port: 443
+    # [4] DNAT された接続を受ける内部バックエンド。
+    target:
+      address: 192.168.10.20
+      port: 443
+    # [3] LAN クライアントから同じ公開アドレスを使えるようにする。
+    hairpin:
+      enabled: true
+      interfaces:
+        - lan
+</code></pre>
+<p>hairpin を使うには、LAN 側から見える公開宛先のアドレスが必要です。
+そのため <code>listen.address</code> または <code>listen.addressFrom</code> を指定します。</p>
+<h2 id="daemon-の前に確認する">daemon の前に確認する</h2>
+<p>以下は <code>sudo</code> を実行できる通常ユーザーを想定します。まだサービスを起動していないため、
+<code>routerctl</code> ではなく <code>routerd</code> を使い、dry-run の状態ファイルは一時ディレクトリへ隔離します。</p>
+<pre><code class="language-sh">LAB_DIR=&quot;$(mktemp -d)&quot;
+sudo routerd validate --config examples/example-port-forward-web.yaml
+sudo routerd apply --config examples/example-port-forward-web.yaml --once --dry-run \
+  --state-file &quot;$LAB_DIR/state.db&quot; \
+  --status-file &quot;$LAB_DIR/status.json&quot;
+sudo sed -n &quot;1,160p&quot; &quot;$LAB_DIR/status.json&quot;
+</code></pre>
+<h2 id="サービス起動後に確認する">サービス起動後に確認する</h2>
+<p>レビュー済みの設定を適用して <code>routerd.service</code> を起動した<strong>後で</strong>、ルーター上で次を実行します。</p>
+<pre><code class="language-sh">sudo routerctl describe PortForward/web-https
+sudo nft list table ip routerd_nat
+</code></pre>
+<h2 id="よく変えるところ">よく変えるところ</h2>
+<ul>
+<li><code>203.0.113.10</code> を実際の WAN 側 IPv4 アドレスに変えます。</li>
+<li>公開名がこのアドレスを返すよう、DNS は別途設定します。</li>
+<li>公開する port は必要最小限にします。</li>
+</ul></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#構成図">構成図</a></li>
+<li><a href="#図の対応表">図の対応表</a></li>
+<li><a href="#この例で管理するもの">この例で管理するもの</a></li>
+<li><a href="#設定の要点">設定の要点</a></li>
+<li><a href="#daemon-の前に確認する">daemon の前に確認する</a></li>
+<li><a href="#サービス起動後に確認する">サービス起動後に確認する</a></li>
+<li><a href="#よく変えるところ">よく変えるところ</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/config-examples/port-forward-web.md">GitHub</a></div></footer></body></html>

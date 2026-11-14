@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tailscale の subnet router / exit node · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/config-examples/tailscale-subnet-exit.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/config-examples/tailscale-subnet-exit.html" lang="en" hreflang="en">English</a><a href="/docs/ja/config-examples/tailscale-subnet-exit.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/config-examples/tailscale-subnet-exit.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/config-examples/tailscale-subnet-exit.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="tailscale-の-subnet-router-exit-node">Tailscale の subnet router / exit node</h1>
+<p>すでにインストールして enrollment を済ませた Tailscale client を使い、ルーターを
+subnet router 兼 exit node として広告する例です。この YAML には <code>TailscaleNode</code> はありますが、
+Tailscale をインストールする <code>Package</code> リソースはありません。先に自分の OS 向けの方法で
+Tailscale を導入し、tailnet の enrollment 手順を完了してください。</p>
+<p>完全な YAML は <code>examples/tailscale-exit-subnet.yaml</code> にあります。</p>
+<p>subnet route や exit node を広告すると、tailnet の利用者が LAN へ到達したり、
+このルーター経由でインターネットへ出たりできるようになります。最初はテスト用 tailnet を使い、
+auth key を保護し、Tailscale admin console では意図した経路だけを承認してください。</p>
+<h2 id="構成図">構成図</h2>
+<pre><code class="language-mermaid">flowchart LR
+  tailnet[&quot;[1] Tailscale tailnet&quot;]
+  router[&quot;[2] routerd host&lt;br/&gt;edge-router&quot;]
+  lan[&quot;[3] LAN&lt;br/&gt;172.18.0.0/16&quot;]
+  mgmt[&quot;[4] management&lt;br/&gt;192.168.20.0/24&quot;]
+  internet((Internet))
+
+  tailnet --- router
+  router --- lan
+  router --- mgmt
+  router --- internet
+</code></pre>
+<h2 id="図の対応表">図の対応表</h2>
+<table>
+<thead>
+<tr>
+<th>番号</th>
+<th>意味</th>
+<th>主なリソース</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>[1]</td>
+<td>経路と exit node の広告を受ける tailnet。</td>
+<td>Tailscale control plane</td>
+</tr>
+<tr>
+<td>[2]</td>
+<td>Tailscale node として登録されるルーター。</td>
+<td><code>TailscaleNode/home</code></td>
+</tr>
+<tr>
+<td>[3]</td>
+<td>tailnet に広告する LAN プレフィックス。</td>
+<td><code>advertiseRoutes</code></td>
+</tr>
+<tr>
+<td>[4]</td>
+<td>リモート管理用に広告する管理プレフィックス。</td>
+<td><code>advertiseRoutes</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="この例で管理するもの">この例で管理するもの</h2>
+<table>
+<thead>
+<tr>
+<th>領域</th>
+<th>routerd リソース</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>tailnet ノード</td>
+<td><code>TailscaleNode/home</code></td>
+</tr>
+<tr>
+<td>経路の広告</td>
+<td><code>advertiseRoutes</code></td>
+</tr>
+<tr>
+<td>exit node</td>
+<td><code>advertiseExitNode</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="設定の要点">設定の要点</h2>
+<pre><code class="language-yaml"># [2] ルーターを名前付き Tailscale ノードとして登録する。
+- apiVersion: net.routerd.net/v1alpha1
+  kind: TailscaleNode
+  metadata:
+    name: home
+  spec:
+    hostname: edge-router
+    advertiseExitNode: true
+    # [3] + [4] tailnet に広告する prefix。
+    advertiseRoutes:
+      - 172.18.0.0/16
+      - 192.168.20.0/24
+    acceptDNS: false
+    authKeyEnv: TS_AUTHKEY
+    authKeyFile: /usr/local/etc/routerd/secrets/tailscale.env
+</code></pre>
+<h2 id="daemon-の前に確認する">daemon の前に確認する</h2>
+<p>以下は <code>sudo</code> を実行できる通常ユーザーを想定します。まだサービスを起動していないため、
+<code>routerctl</code> ではなく <code>routerd</code> を使い、dry-run の状態ファイルは一時ディレクトリへ隔離します。</p>
+<pre><code class="language-sh">LAB_DIR=&quot;$(mktemp -d)&quot;
+sudo routerd validate --config examples/tailscale-exit-subnet.yaml
+sudo routerd apply --config examples/tailscale-exit-subnet.yaml --once --dry-run \
+  --state-file &quot;$LAB_DIR/state.db&quot; \
+  --status-file &quot;$LAB_DIR/status.json&quot;
+sudo sed -n &quot;1,160p&quot; &quot;$LAB_DIR/status.json&quot;
+</code></pre>
+<h2 id="サービス起動後に確認する">サービス起動後に確認する</h2>
+<p>レビュー済みの設定を適用して <code>routerd.service</code> を起動した<strong>後で</strong>、ルーター上で次を実行します。</p>
+<pre><code class="language-sh">sudo routerctl describe TailscaleNode/home
+sudo tailscale status
+</code></pre>
+<p>tailnet のポリシーに応じて、Tailscale admin console 側で経路と exit node を承認します。</p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#構成図">構成図</a></li>
+<li><a href="#図の対応表">図の対応表</a></li>
+<li><a href="#この例で管理するもの">この例で管理するもの</a></li>
+<li><a href="#設定の要点">設定の要点</a></li>
+<li><a href="#daemon-の前に確認する">daemon の前に確認する</a></li>
+<li><a href="#サービス起動後に確認する">サービス起動後に確認する</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/config-examples/tailscale-subnet-exit.md">GitHub</a></div></footer></body></html>

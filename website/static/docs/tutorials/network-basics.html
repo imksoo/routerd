@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Network basics before routerd · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/tutorials/network-basics.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/tutorials/network-basics.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/tutorials/network-basics.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/tutorials/network-basics.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/tutorials/network-basics.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="network-basics-before-routerd">Network basics before routerd</h1>
+<p>You do not need to know every networking term before trying routerd. This page
+gives you the small mental model needed for the first tutorial.</p>
+<h2 id="the-picture-to-keep-in-mind">The picture to keep in mind</h2>
+<pre><code class="language-text">Internet / school / provider network
+                |
+               WAN
+                |
+          [ routerd host ]
+                |
+               LAN
+                |
+       PCs, phones, game consoles
+</code></pre>
+<ul>
+<li><strong>WAN</strong> is the side that faces a provider, school, or upstream router.</li>
+<li><strong>LAN</strong> is the side you control: a room, home, class, or test network.</li>
+<li>A <strong>router</strong> moves packets between those two sides. It is not the same thing
+  as a Wi-Fi access point or an Ethernet switch.</li>
+</ul>
+<h2 id="six-useful-words">Six useful words</h2>
+<table>
+<thead>
+<tr>
+<th>Word</th>
+<th>Plain-language meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>IP address</td>
+<td>A network address, like a delivery address for a device.</td>
+</tr>
+<tr>
+<td>Gateway</td>
+<td>The device a computer sends traffic to when the destination is outside its own LAN. In a small network this is usually the router.</td>
+</tr>
+<tr>
+<td>DHCP</td>
+<td>A service that automatically gives a device an IP address, gateway, and often DNS server.</td>
+</tr>
+<tr>
+<td>DNS</td>
+<td>A phone book that turns a name such as <code>example.com</code> into an IP address.</td>
+</tr>
+<tr>
+<td>NAT</td>
+<td>A way for many LAN devices to share one IPv4 connection to the outside.</td>
+</tr>
+<tr>
+<td><code>/24</code></td>
+<td>A short way to say that addresses such as <code>192.168.10.1</code> through <code>192.168.10.254</code> belong to one small IPv4 LAN.</td>
+</tr>
+</tbody>
+</table>
+<p>routerd writes these choices as YAML. A <code>Router</code> file is a box containing a
+list of <strong>resources</strong>. Each resource has a <code>kind</code> (what it is), a
+<code>metadata.name</code> (a label you choose), and a <code>spec</code> (the details).</p>
+<pre><code class="language-yaml">apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: my-lab-router
+spec:
+  resources:
+    # Resources such as Interface, DHCPv4Server, and NAT44Rule go here.
+</code></pre>
+<p>You do not need to memorize the resource names. The tutorials introduce one
+job at a time and link to the reference when you need it.</p>
+<h2 id="start-safely">Start safely</h2>
+<p>For a first experiment, use an isolated Ubuntu Server VM or a spare computer.
+Keep a Proxmox/VM console, serial console, or a separate management NIC. Do not
+start by changing the only router that carries your home, school, or work
+connection.</p>
+<p><code>routerd validate</code> and <code>routerd apply --once --dry-run</code> are for checking a
+file without committing network changes. <code>routerd apply --once</code> and
+<code>routerd serve</code> can change the host network. Only run those live commands from
+a console or an independent management path.</p>
+<p>routerd is pre-release software. Its firewall resources are groundwork, not a
+security certification. Do not expose an Internet-facing router or rely on a
+single example as your only security boundary.</p>
+<h2 id="next-steps">Next steps</h2>
+<ol>
+<li><a href="../install-and-upgrade.html">Install routerd</a> on an isolated Ubuntu Server VM.</li>
+<li><a href="getting-started.html">Run the safe first check</a> without changing its network.</li>
+<li><a href="first-router.html">Build the first IPv4 lab router</a> only after you have a
+   console path.</li>
+</ol></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#the-picture-to-keep-in-mind">The picture to keep in mind</a></li>
+<li><a href="#six-useful-words">Six useful words</a></li>
+<li><a href="#start-safely">Start safely</a></li>
+<li><a href="#next-steps">Next steps</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/tutorials/network-basics.md">GitHub</a></div></footer></body></html>

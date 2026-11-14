@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MobilityPool · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/reference/resources/MobilityPool.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/reference/resources/MobilityPool.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/reference/resources/MobilityPool.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/MobilityPool.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/MobilityPool.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="mobilitypool">MobilityPool</h1>
+<p><a href="../resources.html#mobilitypool">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: mobility.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<h2 id="yaml-definition">YAML definition</h2>
+<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
+<pre><code class="language-yaml">- apiVersion: mobility.routerd.net/v1alpha1
+  kind: MobilityPool
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    groupRef: &quot;&lt;string&gt;&quot; # Required; string
+    members: # optional; array
+      - # object
+        capture: # optional; object
+          activeWhen: # optional; object
+            type: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;single-router&quot;, &quot;vrrp-master&quot;]
+            virtualAddressRef: &quot;&lt;string&gt;&quot; # optional; string
+          captureStrategy: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;route-table&quot;]
+          excludeAddresses: # optional; array
+            - &quot;&lt;string&gt;&quot; # string
+          gratuitousARP: true # optional; boolean
+          interface: &quot;&lt;string&gt;&quot; # optional; string
+          nicRef: &quot;&lt;string&gt;&quot; # optional; string
+          providerRef: &quot;&lt;string&gt;&quot; # optional; string
+          sourceAddress: &quot;&lt;string&gt;&quot; # optional; string
+          sourceAddressFrom: # optional; object
+            field: &quot;&lt;string&gt;&quot; # optional; string
+            optional: true # optional; boolean
+            resource: &quot;&lt;string&gt;&quot; # Required; string
+          target: # optional; object
+            &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # optional; string
+          targetFrom: # optional; object
+            &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # optional; string
+          type: &quot;provider-secondary-ip&quot; # optional; string; enum=[&quot;provider-secondary-ip&quot;, &quot;proxy-arp&quot;]
+        nodeRef: &quot;&lt;string&gt;&quot; # Required; string
+        ownershipDiscovery: # optional; object
+          allowEmptyAfter: &quot;&lt;string&gt;&quot; # optional; string
+          leaseTTL: &quot;&lt;string&gt;&quot; # optional; string
+          mode: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;disabled&quot;, &quot;provider-private-ip&quot;, &quot;onprem-l2&quot;]
+          pluginRef: &quot;&lt;string&gt;&quot; # optional; string
+          providerRef: &quot;&lt;string&gt;&quot; # optional; string
+          scanInterval: &quot;&lt;string&gt;&quot; # optional; string
+          scope: # optional; object
+            excludeAddresses: # optional; array
+              - &quot;&lt;string&gt;&quot; # string
+            includeAddresses: # optional; array
+              - &quot;&lt;string&gt;&quot; # string
+          selector: # optional; object
+            tags: # optional; object
+              &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # optional; string
+          sources: # optional; array
+            - # object
+              bridge: &quot;&lt;string&gt;&quot; # optional; string
+              interface: &quot;&lt;string&gt;&quot; # optional; string
+              leaseTTL: &quot;&lt;string&gt;&quot; # optional; string
+              network: &quot;&lt;string&gt;&quot; # optional; string
+              probeRetries: 0 # optional; integer; minimum=0; maximum=20
+              probeTimeout: &quot;&lt;string&gt;&quot; # optional; string
+              resource: &quot;&lt;string&gt;&quot; # optional; string
+              scanInterval: &quot;&lt;string&gt;&quot; # optional; string
+              sourceAddressFrom: # optional; object
+                field: &quot;&lt;string&gt;&quot; # optional; string
+                optional: true # optional; boolean
+                resource: &quot;&lt;string&gt;&quot; # Required; string
+              type: &quot;dhcpv4-lease&quot; # Required; string; enum=[&quot;dhcpv4-lease&quot;, &quot;arp-observer&quot;, &quot;on-demand-arp&quot;, &quot;pve-svnet&quot;]
+          stoppedInstancePolicy: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;hold&quot;, &quot;release&quot;]
+          subnetRef: &quot;&lt;string&gt;&quot; # optional; string
+          subnetRefFrom: &quot;&lt;string&gt;&quot; # optional; string
+        profileRef: &quot;&lt;string&gt;&quot; # optional; string
+        staticOwnedAddresses: # optional; array
+          - &quot;&lt;string&gt;&quot; # string
+    membersFrom: # Required; array; minItems=1
+      - # object
+        optional: true # optional; boolean
+        resource: &quot;&lt;string&gt;&quot; # Required; string
+    prefix: &quot;&lt;string&gt;&quot; # Required; string
+    profiles: # optional; object
+      cloudCaptures: # optional; object
+        &quot;&lt;key&gt;&quot;: # optional; object
+          capture: # optional; object
+            activeWhen: # optional; object
+              type: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;single-router&quot;, &quot;vrrp-master&quot;]
+              virtualAddressRef: &quot;&lt;string&gt;&quot; # optional; string
+            captureStrategy: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;route-table&quot;]
+            excludeAddresses: # optional; array
+              - &quot;&lt;string&gt;&quot; # string
+            gratuitousARP: true # optional; boolean
+            interface: &quot;&lt;string&gt;&quot; # optional; string
+            nicRef: &quot;&lt;string&gt;&quot; # optional; string
+            providerRef: &quot;&lt;string&gt;&quot; # optional; string
+            sourceAddress: &quot;&lt;string&gt;&quot; # optional; string
+            sourceAddressFrom: # optional; object
+              field: &quot;&lt;string&gt;&quot; # optional; string
+              optional: true # optional; boolean
+              resource: &quot;&lt;string&gt;&quot; # Required; string
+            target: # optional; object
+              &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # optional; string
+            targetFrom: # optional; object
+              &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # optional; string
+            type: &quot;provider-secondary-ip&quot; # optional; string; enum=[&quot;provider-secondary-ip&quot;, &quot;proxy-arp&quot;]
+          ownershipDiscovery: # optional; object
+            allowEmptyAfter: &quot;&lt;string&gt;&quot; # optional; string
+            leaseTTL: &quot;&lt;string&gt;&quot; # optional; string
+            mode: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;disabled&quot;, &quot;provider-private-ip&quot;, &quot;onprem-l2&quot;]
+            pluginRef: &quot;&lt;string&gt;&quot; # optional; string
+            providerRef: &quot;&lt;string&gt;&quot; # optional; string
+            scanInterval: &quot;&lt;string&gt;&quot; # optional; string
+            scope: # optional; object
+              excludeAddresses: # optional; array
+                - &quot;&lt;string&gt;&quot; # string
+              includeAddresses: # optional; array
+                - &quot;&lt;string&gt;&quot; # string
+            selector: # optional; object
+              tags: # optional; object
+                &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # optional; string
+            sources: # optional; array
+              - # object
+                bridge: &quot;&lt;string&gt;&quot; # optional; string
+                interface: &quot;&lt;string&gt;&quot; # optional; string
+                leaseTTL: &quot;&lt;string&gt;&quot; # optional; string
+                network: &quot;&lt;string&gt;&quot; # optional; string
+                probeRetries: 0 # optional; integer; minimum=0; maximum=20
+                probeTimeout: &quot;&lt;string&gt;&quot; # optional; string
+                resource: &quot;&lt;string&gt;&quot; # optional; string
+                scanInterval: &quot;&lt;string&gt;&quot; # optional; string
+                sourceAddressFrom: # optional; object
+                  field: &quot;&lt;string&gt;&quot; # optional; string
+                  optional: true # optional; boolean
+                  resource: &quot;&lt;string&gt;&quot; # Required; string
+                type: &quot;dhcpv4-lease&quot; # Required; string; enum=[&quot;dhcpv4-lease&quot;, &quot;arp-observer&quot;, &quot;on-demand-arp&quot;, &quot;pve-svnet&quot;]
+            stoppedInstancePolicy: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;hold&quot;, &quot;release&quot;]
+            subnetRef: &quot;&lt;string&gt;&quot; # optional; string
+            subnetRefFrom: &quot;&lt;string&gt;&quot; # optional; string
+    staticHandovers: # optional; array
+      - # object
+        address: &quot;&lt;string&gt;&quot; # Required; string
+        fromNodeRef: &quot;&lt;string&gt;&quot; # Required; string
+        toNodeRef: &quot;&lt;string&gt;&quot; # Required; string
+    values: # optional; object
+      &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # optional; string
+</code></pre>
+<p><a href="/examples/cloudedge-mobility-demo/aws.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#yaml-definition">YAML definition</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/reference/resources/MobilityPool.md">GitHub</a></div></footer></body></html>

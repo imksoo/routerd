@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Telemetry export to an OTLP collector · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/config-examples/telemetry-export.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/config-examples/telemetry-export.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/config-examples/telemetry-export.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/config-examples/telemetry-export.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/config-examples/telemetry-export.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="telemetry-export-to-an-otlp-collector">Telemetry export to an OTLP collector</h1>
+<p>This example sends routerd telemetry to an OpenTelemetry collector. It is useful
+when testing long-running behavior, health checks, DPI, or apply latency.</p>
+<p>The complete, validated YAML is in <code>examples/telemetry-export.yaml</code>.</p>
+<h2 id="topology">Topology</h2>
+<pre><code class="language-mermaid">flowchart LR
+  router[&quot;[1] routerd host&quot;]
+  collector[&quot;[2] OTLP collector&lt;br/&gt;collector.example.internal:4317&quot;]
+  backend[&quot;[3] metrics / logs / traces backend&quot;]
+
+  router --&gt; collector --&gt; backend
+</code></pre>
+<h2 id="diagram-map">Diagram map</h2>
+<table>
+<thead>
+<tr>
+<th>No.</th>
+<th>Meaning</th>
+<th>Main resources</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>[1]</td>
+<td>routerd process producing logs, metrics, and traces.</td>
+<td><code>Telemetry/otlp</code></td>
+</tr>
+<tr>
+<td>[2]</td>
+<td>OTLP collector endpoint.</td>
+<td><code>Telemetry.spec.otlp.endpoint</code></td>
+</tr>
+<tr>
+<td>[3]</td>
+<td>Backend selected by the collector configuration.</td>
+<td>External to routerd</td>
+</tr>
+</tbody>
+</table>
+<h2 id="what-this-manages">What this manages</h2>
+<table>
+<thead>
+<tr>
+<th>Area</th>
+<th>routerd resources</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Telemetry sink</td>
+<td><code>Telemetry/otlp</code></td>
+</tr>
+<tr>
+<td>Service identity</td>
+<td><code>serviceNamespace</code>, <code>attributes</code></td>
+</tr>
+<tr>
+<td>Signals</td>
+<td><code>logs</code>, <code>metrics</code>, <code>traces</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="key-config">Key config</h2>
+<pre><code class="language-yaml"># [1] Enable routerd telemetry export.
+- apiVersion: observability.routerd.net/v1alpha1
+  kind: Telemetry
+  metadata:
+    name: otlp
+  spec:
+    # [2] OTLP collector endpoint.
+    otlp:
+      endpoint: http://collector.example.internal:4317
+      insecure: true
+    serviceNamespace: routerd
+    attributes:
+      deployment.environment: lab
+      site: example
+    signals:
+      - logs
+      - metrics
+      - traces
+</code></pre>
+<h2 id="checks">Checks</h2>
+<pre><code class="language-bash">routerd validate --config examples/telemetry-export.yaml
+
+workdir=$(mktemp -d)
+routerd apply --config examples/telemetry-export.yaml --once --dry-run \
+  --state-file &quot;$workdir/state.db&quot; \
+  --status-file &quot;$workdir/status.json&quot;
+rm -rf &quot;$workdir&quot;
+</code></pre>
+<p>Confirm data arrival from the collector or backend side. Keep the endpoint on a
+trusted management or observability network.</p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#topology">Topology</a></li>
+<li><a href="#diagram-map">Diagram map</a></li>
+<li><a href="#what-this-manages">What this manages</a></li>
+<li><a href="#key-config">Key config</a></li>
+<li><a href="#checks">Checks</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/config-examples/telemetry-export.md">GitHub</a></div></footer></body></html>

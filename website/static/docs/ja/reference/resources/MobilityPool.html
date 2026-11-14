@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MobilityPool · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/reference/resources/MobilityPool.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/reference/resources/MobilityPool.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/MobilityPool.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/reference/resources/MobilityPool.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/MobilityPool.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="mobilitypool">MobilityPool</h1>
+<p><a href="../resources.html#mobilitypool">リソース別の設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: mobility.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<h2 id="yaml定義">YAML定義</h2>
+<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
+<pre><code class="language-yaml">- apiVersion: mobility.routerd.net/v1alpha1
+  kind: MobilityPool
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    groupRef: &quot;&lt;string&gt;&quot; # 必須; string
+    members: # 任意; array
+      - # object
+        capture: # 任意; object
+          activeWhen: # 任意; object
+            type: &quot;&quot; # 任意; string; enum=[&quot;&quot;, &quot;single-router&quot;, &quot;vrrp-master&quot;]
+            virtualAddressRef: &quot;&lt;string&gt;&quot; # 任意; string
+          captureStrategy: &quot;&quot; # 任意; string; enum=[&quot;&quot;, &quot;route-table&quot;]
+          excludeAddresses: # 任意; array
+            - &quot;&lt;string&gt;&quot; # string
+          gratuitousARP: true # 任意; boolean
+          interface: &quot;&lt;string&gt;&quot; # 任意; string
+          nicRef: &quot;&lt;string&gt;&quot; # 任意; string
+          providerRef: &quot;&lt;string&gt;&quot; # 任意; string
+          sourceAddress: &quot;&lt;string&gt;&quot; # 任意; string
+          sourceAddressFrom: # 任意; object
+            field: &quot;&lt;string&gt;&quot; # 任意; string
+            optional: true # 任意; boolean
+            resource: &quot;&lt;string&gt;&quot; # 必須; string
+          target: # 任意; object
+            &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # 任意; string
+          targetFrom: # 任意; object
+            &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # 任意; string
+          type: &quot;provider-secondary-ip&quot; # 任意; string; enum=[&quot;provider-secondary-ip&quot;, &quot;proxy-arp&quot;]
+        nodeRef: &quot;&lt;string&gt;&quot; # 必須; string
+        ownershipDiscovery: # 任意; object
+          allowEmptyAfter: &quot;&lt;string&gt;&quot; # 任意; string
+          leaseTTL: &quot;&lt;string&gt;&quot; # 任意; string
+          mode: &quot;&quot; # 任意; string; enum=[&quot;&quot;, &quot;disabled&quot;, &quot;provider-private-ip&quot;, &quot;onprem-l2&quot;]
+          pluginRef: &quot;&lt;string&gt;&quot; # 任意; string
+          providerRef: &quot;&lt;string&gt;&quot; # 任意; string
+          scanInterval: &quot;&lt;string&gt;&quot; # 任意; string
+          scope: # 任意; object
+            excludeAddresses: # 任意; array
+              - &quot;&lt;string&gt;&quot; # string
+            includeAddresses: # 任意; array
+              - &quot;&lt;string&gt;&quot; # string
+          selector: # 任意; object
+            tags: # 任意; object
+              &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # 任意; string
+          sources: # 任意; array
+            - # object
+              bridge: &quot;&lt;string&gt;&quot; # 任意; string
+              interface: &quot;&lt;string&gt;&quot; # 任意; string
+              leaseTTL: &quot;&lt;string&gt;&quot; # 任意; string
+              network: &quot;&lt;string&gt;&quot; # 任意; string
+              probeRetries: 0 # 任意; integer; minimum=0; maximum=20
+              probeTimeout: &quot;&lt;string&gt;&quot; # 任意; string
+              resource: &quot;&lt;string&gt;&quot; # 任意; string
+              scanInterval: &quot;&lt;string&gt;&quot; # 任意; string
+              sourceAddressFrom: # 任意; object
+                field: &quot;&lt;string&gt;&quot; # 任意; string
+                optional: true # 任意; boolean
+                resource: &quot;&lt;string&gt;&quot; # 必須; string
+              type: &quot;dhcpv4-lease&quot; # 必須; string; enum=[&quot;dhcpv4-lease&quot;, &quot;arp-observer&quot;, &quot;on-demand-arp&quot;, &quot;pve-svnet&quot;]
+          stoppedInstancePolicy: &quot;&quot; # 任意; string; enum=[&quot;&quot;, &quot;hold&quot;, &quot;release&quot;]
+          subnetRef: &quot;&lt;string&gt;&quot; # 任意; string
+          subnetRefFrom: &quot;&lt;string&gt;&quot; # 任意; string
+        profileRef: &quot;&lt;string&gt;&quot; # 任意; string
+        staticOwnedAddresses: # 任意; array
+          - &quot;&lt;string&gt;&quot; # string
+    membersFrom: # 必須; array; minItems=1
+      - # object
+        optional: true # 任意; boolean
+        resource: &quot;&lt;string&gt;&quot; # 必須; string
+    prefix: &quot;&lt;string&gt;&quot; # 必須; string
+    profiles: # 任意; object
+      cloudCaptures: # 任意; object
+        &quot;&lt;key&gt;&quot;: # 任意; object
+          capture: # 任意; object
+            activeWhen: # 任意; object
+              type: &quot;&quot; # 任意; string; enum=[&quot;&quot;, &quot;single-router&quot;, &quot;vrrp-master&quot;]
+              virtualAddressRef: &quot;&lt;string&gt;&quot; # 任意; string
+            captureStrategy: &quot;&quot; # 任意; string; enum=[&quot;&quot;, &quot;route-table&quot;]
+            excludeAddresses: # 任意; array
+              - &quot;&lt;string&gt;&quot; # string
+            gratuitousARP: true # 任意; boolean
+            interface: &quot;&lt;string&gt;&quot; # 任意; string
+            nicRef: &quot;&lt;string&gt;&quot; # 任意; string
+            providerRef: &quot;&lt;string&gt;&quot; # 任意; string
+            sourceAddress: &quot;&lt;string&gt;&quot; # 任意; string
+            sourceAddressFrom: # 任意; object
+              field: &quot;&lt;string&gt;&quot; # 任意; string
+              optional: true # 任意; boolean
+              resource: &quot;&lt;string&gt;&quot; # 必須; string
+            target: # 任意; object
+              &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # 任意; string
+            targetFrom: # 任意; object
+              &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # 任意; string
+            type: &quot;provider-secondary-ip&quot; # 任意; string; enum=[&quot;provider-secondary-ip&quot;, &quot;proxy-arp&quot;]
+          ownershipDiscovery: # 任意; object
+            allowEmptyAfter: &quot;&lt;string&gt;&quot; # 任意; string
+            leaseTTL: &quot;&lt;string&gt;&quot; # 任意; string
+            mode: &quot;&quot; # 任意; string; enum=[&quot;&quot;, &quot;disabled&quot;, &quot;provider-private-ip&quot;, &quot;onprem-l2&quot;]
+            pluginRef: &quot;&lt;string&gt;&quot; # 任意; string
+            providerRef: &quot;&lt;string&gt;&quot; # 任意; string
+            scanInterval: &quot;&lt;string&gt;&quot; # 任意; string
+            scope: # 任意; object
+              excludeAddresses: # 任意; array
+                - &quot;&lt;string&gt;&quot; # string
+              includeAddresses: # 任意; array
+                - &quot;&lt;string&gt;&quot; # string
+            selector: # 任意; object
+              tags: # 任意; object
+                &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # 任意; string
+            sources: # 任意; array
+              - # object
+                bridge: &quot;&lt;string&gt;&quot; # 任意; string
+                interface: &quot;&lt;string&gt;&quot; # 任意; string
+                leaseTTL: &quot;&lt;string&gt;&quot; # 任意; string
+                network: &quot;&lt;string&gt;&quot; # 任意; string
+                probeRetries: 0 # 任意; integer; minimum=0; maximum=20
+                probeTimeout: &quot;&lt;string&gt;&quot; # 任意; string
+                resource: &quot;&lt;string&gt;&quot; # 任意; string
+                scanInterval: &quot;&lt;string&gt;&quot; # 任意; string
+                sourceAddressFrom: # 任意; object
+                  field: &quot;&lt;string&gt;&quot; # 任意; string
+                  optional: true # 任意; boolean
+                  resource: &quot;&lt;string&gt;&quot; # 必須; string
+                type: &quot;dhcpv4-lease&quot; # 必須; string; enum=[&quot;dhcpv4-lease&quot;, &quot;arp-observer&quot;, &quot;on-demand-arp&quot;, &quot;pve-svnet&quot;]
+            stoppedInstancePolicy: &quot;&quot; # 任意; string; enum=[&quot;&quot;, &quot;hold&quot;, &quot;release&quot;]
+            subnetRef: &quot;&lt;string&gt;&quot; # 任意; string
+            subnetRefFrom: &quot;&lt;string&gt;&quot; # 任意; string
+    staticHandovers: # 任意; array
+      - # object
+        address: &quot;&lt;string&gt;&quot; # 必須; string
+        fromNodeRef: &quot;&lt;string&gt;&quot; # 必須; string
+        toNodeRef: &quot;&lt;string&gt;&quot; # 必須; string
+    values: # 任意; object
+      &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # 任意; string
+</code></pre>
+<p><a href="/examples/cloudedge-mobility-demo/aws.yaml">設定例</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#yaml定義">YAML定義</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/reference/resources/MobilityPool.md">GitHub</a></div></footer></body></html>

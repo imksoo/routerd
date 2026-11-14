@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Changelog · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/releases/changelog.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/releases/changelog.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/releases/changelog.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/releases/changelog.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/releases/changelog.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="changelog">Changelog</h1>
+<p>routerd release history. The format follows <a href="https://keepachangelog.com/">Keep a Changelog</a>.
+Changes are grouped under Added, Changed, Deprecated, Removed, Fixed, and Security.
+Versions, however, do not follow Semantic Versioning; routerd uses date-and-time-based
+release versions in <code>vYYYYMMDD.HHmm</code> format.
+The software is at the v1alpha1 stage; releases may contain breaking changes.</p>
+<h2 id="unreleased">Unreleased</h2>
+<ul>
+<li>Remove the browser configuration wizard and publish plain Markdown documentation with YAML definitions for every resource kind.</li>
+</ul>
+<h2 id="v202611140631">v20261114.0631</h2>
+<h3 id="fixed">Fixed</h3>
+<ul>
+<li>Treat an empty IPv4 address list as an unconfigured IPIP interface so first-boot reconciliation can assign its addresses.</li>
+<li>Use the existing casper <code>noprompt</code> option for appliance Live ISO reboots; do not require an interactive media-removal confirmation.</li>
+</ul>
+<h2 id="v202611140607">v20261114.0607</h2>
+<h3 id="changed">Changed</h3>
+<ul>
+<li>Simplify typed configuration access, SQLite-backed controller stores, status transitions, event consumers, MTU selection, SAM input decoding, and Linux IPIP observation. Remove unused compatibility paths and redundant test-only code.</li>
+<li>Keep PD lease data in one authoritative object status and define its stored fields once, preserving lease identities, deadlines, and previous prefixes.</li>
+</ul>
+<h3 id="fixed_1">Fixed</h3>
+<ul>
+<li>Restore the matching applied configuration generation after daemon restart.</li>
+<li>Stop pending EventRule timers when configuration changes remove their controller generation, and remove stale object statuses after successful configuration persistence.</li>
+</ul>
+<p><a href="https://github.com/imksoo/routerd/releases">Release history</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#unreleased">Unreleased</a></li>
+<li><a href="#v202611140631">v20261114.0631</a><ul>
+<li><a href="#fixed">Fixed</a></li>
+</ul>
+</li>
+<li><a href="#v202611140607">v20261114.0607</a><ul>
+<li><a href="#changed">Changed</a></li>
+<li><a href="#fixed_1">Fixed</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/releases/changelog.md">GitHub</a></div></footer></body></html>

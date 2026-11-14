@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WAN 侧服务 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/tutorials/wan-side-services.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/tutorials/wan-side-services.html" lang="en" hreflang="en">English</a><a href="/docs/ja/tutorials/wan-side-services.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/tutorials/wan-side-services.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/tutorials/wan-side-services.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="wan-侧服务">WAN 侧服务</h1>
+<p>本页介绍处理路由器 WAN 侧的 routerd 资源。
+WAN 侧资源负责建立上游链路、从 ISP 获取 IP 地址与前缀、终结隧道，以及向控制器链提供多条上游路由等功能。</p>
+<p>LAN 侧（路由器向内侧提供的服务）请参阅 <a href="lan-side-services.html">LAN 侧服务</a>。</p>
+<h2 id="一览">一览</h2>
+<table>
+<thead>
+<tr>
+<th>功能</th>
+<th>资源</th>
+<th>负责守护进程</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>物理 / 虚拟接口</td>
+<td><code>Interface</code>、<code>IPv4StaticAddress</code></td>
+<td>（kernel）</td>
+</tr>
+<tr>
+<td>通过 DHCP 从 ISP 获取 IPv4</td>
+<td><code>DHCPv4Client</code></td>
+<td><code>routerd-dhcpv4-client</code></td>
+</tr>
+<tr>
+<td>从 ISP 获取 IPv6 前缀</td>
+<td><code>DHCPv6PrefixDelegation</code>、<code>IPv6DelegatedAddress</code></td>
+<td><code>routerd-dhcpv6-client</code></td>
+</tr>
+<tr>
+<td>其他 DHCPv6 选项（DNS、AFTR 等）</td>
+<td><code>DHCPv6Information</code></td>
+<td><code>routerd-dhcpv6-client</code></td>
+</tr>
+<tr>
+<td>上游时间服务器</td>
+<td><code>NTPClient</code></td>
+<td><code>systemd-timesyncd</code> 或 <code>ntpd</code></td>
+</tr>
+<tr>
+<td>PPPoE 会话</td>
+<td><code>PPPoESession</code></td>
+<td><code>routerd-pppoe-client</code></td>
+</tr>
+<tr>
+<td>IPv6 上的 IPv4（DS-Lite）</td>
+<td><code>DSLiteTunnel</code></td>
+<td>（kernel <code>ip6tnl</code>）</td>
+</tr>
+<tr>
+<td>WAN 路由选择</td>
+<td><code>EgressRoutePolicy</code>、<code>HealthCheck</code></td>
+<td><code>routerd-healthcheck@&lt;name&gt;</code></td>
+</tr>
+<tr>
+<td>IPv4 NAT（masquerade）</td>
+<td><code>NAT44Rule</code></td>
+<td>（nftables）</td>
+</tr>
+<tr>
+<td>静态 IPv4 路由</td>
+<td><code>IPv4Route</code></td>
+<td>（kernel）</td>
+</tr>
+</tbody>
+</table>
+<p>请根据 ISP 的提供形态，选择所需资源的组合。</p>
+<h2 id="模式-a原生双栈ipv4-ipv6">模式 A：原生双栈（IPv4 + IPv6）</h2>
+<p>ISP 在同一 WAN 接口上同时发送 IPv4（DHCPv4）与 IPv6 前缀（DHCPv6-PD）的配置。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: Interface
+  metadata: {name: wan}
+  spec:
+    ifname: ens18
+    role: untrust
+
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DHCPv4Client
+  metadata: {name: wan-v4}
+  spec:
+    interface: wan
+
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DHCPv6PrefixDelegation
+  metadata: {name: wan-pd}
+  spec:
+    interface: wan
+
+- apiVersion: net.routerd.net/v1alpha1
+  kind: IPv6DelegatedAddress
+  metadata: {name: lan-base}
+  spec:
+    pdRef: wan-pd
+    interface: lan
+    suffix: ::1/64
+
+- apiVersion: net.routerd.net/v1alpha1
+  kind: NAT44Rule
+  metadata: {name: lan-to-wan}
+  spec:
+    type: masquerade
+    egressInterface: wan
+    sourceRanges:
+      - 192.0.2.0/24
+</code></pre>
+<p><code>DHCPv4Client</code> 启动 <code>routerd-dhcpv4-client</code>，并将租约内容写入 <code>lease.json</code>。地址本身由 kernel 持有，routerd 向下游资源发出事件。</p>
+<p><code>DHCPv6PrefixDelegation</code> 使用 <code>routerd-dhcpv6-client</code> 获取 IA_PD。<code>IPv6DelegatedAddress</code> 从获取的前缀中切出分配给 LAN 侧的 <code>/64</code>（或其他长度）。</p>
+<h2 id="上游-ntp-sntp">上游 NTP / SNTP</h2>
+<p><code>NTPClient</code> 可从 DHCPv4 option 42 或 DHCPv6 option 31 中提取时间服务器。
+若上游不发送时间服务器，则将指定的公共 NTP 服务器配置至 OS 的 NTP 客户端。
+Linux 使用 <code>systemd-timesyncd</code>，FreeBSD 使用 <code>ntpd</code>。</p>
+<pre><code class="language-yaml">- apiVersion: system.routerd.net/v1alpha1
+  kind: NTPClient
+  metadata: {name: system-time}
+  spec:
+    provider: systemd-timesyncd
+    managed: true
+    source: auto
+    serverFrom:
+      - resource: DHCPv4Client/wan-v4
+        field: ntpServers
+      - resource: DHCPv6Information/wan-info
+        field: sntpServers
+    fallbackServers:
+      - ntp.jst.mfeed.ad.jp
+      - ntp.nict.jp
+</code></pre>
+<p>若要将路由器本身作为 LAN 客户端的时间参考来源，请并用 LAN 侧的 <code>ntpServerFrom</code> 与 <code>sntpServerFrom</code>。</p>
+<h2 id="模式-bpppoeipv4-dhcpv6-pdipv6">模式 B：PPPoE（IPv4）+ DHCPv6-PD（IPv6）</h2>
+<p>旧式 xDSL 系配置，IPv4 通过 PPPoE 获取，IPv6 通过相同物理链路的原生 DHCPv6-PD 获取。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: PPPoESession
+  metadata: {name: wan-pppoe}
+  spec:
+    interface: wan
+    user: &quot;user@isp.example&quot;
+    passwordFromSecret: pppoe-password
+    mtu: 1454
+    mru: 1454
+
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DHCPv6PrefixDelegation
+  metadata: {name: wan-pd}
+  spec:
+    interface: wan
+</code></pre>
+<p><code>PPPoESession</code> 启动 <code>routerd-pppoe-client</code>，在 Linux 上封装 <code>pppd</code>/<code>rp-pppoe</code>，在 FreeBSD 上封装 <code>ppp(8)</code>。PPPoE 会话的接口（通常为 <code>ppp0</code>）可作为路由或 <code>NAT44Rule</code> 的参照对象。</p>
+<h2 id="模式-cds-lite在仅-ipv6-的接入网络上隧道-ipv4">模式 C：DS-Lite（在仅 IPv6 的接入网络上隧道 IPv4）</h2>
+<p>ISP 不提供原生 IPv4，仅提供 IPv6 的配置。IPv4 通过连往 AFTR（Address Family Transition Router）的 DS-Lite 隧道实现。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DHCPv6PrefixDelegation
+  metadata: {name: wan-pd}
+  spec:
+    interface: wan
+
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DHCPv6Information
+  metadata: {name: wan-info}
+  spec:
+    interface: wan
+
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DSLiteTunnel
+  metadata: {name: ds-lite-primary}
+  spec:
+    sourceInterface: wan
+    aftrFQDN: gw.transix.jp
+    aftrFQDNResolverFromResource:
+      resource: DHCPv6Information/wan-info
+      field: dnsServers
+    mtu: 1454
+</code></pre>
+<p><code>DSLiteTunnel</code> 在解析到 AFTR 地址后，以 kernel 的 <code>ip6tnl</code> 设备建立。
+AFTR 记录通常只能通过接入网络内的 DNS 解析，因此请使用 <code>aftrFQDNResolverFromResource</code> 指定 ISP 的 DNS。</p>
+<h2 id="模式-d多-wan主线路-备援">模式 D：多 WAN（主线路 + 备援）</h2>
+<p>有多条路由时，请将 <code>EgressRoutePolicy</code> 与 <code>HealthCheck</code> 组合至 WAN 获取资源中使用。详细请参阅<a href="../how-to/multi-wan.html">多 WAN 切换</a>。</p>
+<h2 id="状态确认">状态确认</h2>
+<p>各 WAN 资源的状况可通过 <code>routerctl describe &lt;kind&gt;/&lt;name&gt;</code> 确认。示例：</p>
+<pre><code class="language-sh">routerctl describe DHCPv6PrefixDelegation/wan-pd      # phase: Bound, prefix: 2001:db8:1::/56
+routerctl describe DSLiteTunnel/ds-lite-primary       # phase: Up, aftr: 2001:db8:cafe::1
+routerctl describe EgressRoutePolicy/ipv4-default     # selectedCandidate: ds-lite-primary
+</code></pre>
+<p>亦可从 Web 管理界面的「Overview」「Resources」分页确认相同信息。「Connections」分页显示各 WAN 路由的实际 conntrack/pf 状态。</p>
+<h2 id="相关项目">相关项目</h2>
+<ul>
+<li><a href="lan-side-services.html">LAN 侧服务</a></li>
+<li><a href="../how-to/multi-wan.html">多 WAN 切换</a></li>
+<li><a href="../how-to/flets-ipv6-setup.html">NTT NGN 的 DS-Lite</a></li>
+<li><a href="../concepts/path-mtu.html">Path MTU 与 MSS clamping</a></li>
+</ul></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#一览">一览</a></li>
+<li><a href="#模式-a原生双栈ipv4-ipv6">模式 A：原生双栈（IPv4 + IPv6）</a></li>
+<li><a href="#上游-ntp-sntp">上游 NTP / SNTP</a></li>
+<li><a href="#模式-bpppoeipv4-dhcpv6-pdipv6">模式 B：PPPoE（IPv4）+ DHCPv6-PD（IPv6）</a></li>
+<li><a href="#模式-cds-lite在仅-ipv6-的接入网络上隧道-ipv4">模式 C：DS-Lite（在仅 IPv6 的接入网络上隧道 IPv4）</a></li>
+<li><a href="#模式-d多-wan主线路-备援">模式 D：多 WAN（主线路 + 备援）</a></li>
+<li><a href="#状态确认">状态确认</a></li>
+<li><a href="#相关项目">相关项目</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/tutorials/wan-side-services.md">GitHub</a></div></footer></body></html>

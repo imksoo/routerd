@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Path MTU and TCP MSS · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/concepts/path-mtu.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/concepts/path-mtu.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/concepts/path-mtu.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/concepts/path-mtu.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/concepts/path-mtu.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="path-mtu-and-tcp-mss">Path MTU and TCP MSS</h1>
+<p>routerd derives path MTU behavior from the resources that create tunnel paths.
+DS-Lite, PPPoE, WireGuard, and <code>TunnelInterface</code> underlays (<code>ipip</code>, <code>gre</code>,
+<code>fou</code>, <code>gue</code>) provide the effective tunnel MTU, and firewall zones identify the
+LAN-to-WAN forwarding direction.</p>
+<p>When a trusted interface forwards through an untrusted tunnel, routerd renders
+TCP MSS clamping automatically. For IPv4 TCP, MSS is <code>MTU - 40</code>. For IPv6 TCP,
+MSS is <code>MTU - 60</code>. The effective value is computed per source and destination
+path as the lower of the source interface MTU and destination path MTU. The
+Linux nftables renderer only rewrites SYN packets whose advertised MSS is
+higher than that derived value, so a lower MSS from another small-MTU interface
+is never raised and does not force unrelated LAN paths down.</p>
+<p>For trusted overlay paths that still black-hole oversized non-TCP IPv4 traffic
+with the DF bit set, <code>OverlayPeer.spec.pathMTU.forceFragmentIPv4</code> and
+<code>TunnelInterface.spec.pathMTU.forceFragmentIPv4</code> enable an explicit last-resort
+fallback. On Linux, routerd renders an <code>ip routerd_forcefrag</code> nftables table
+that matches the derived forwarded path, clears DF only when <code>ip length</code> is
+larger than the derived path MTU, and then lets the kernel fragment on egress.
+This is IPv4-only and default-off. Prefer correct MTU, PMTUD, and TCP MSS clamp
+first; use force fragmentation only on a trusted overlay or underlay where
+fragmentation is an accepted tradeoff.</p>
+<p>Router advertisements also receive a derived MTU when the trusted interface has
+a <code>DHCPv6Server</code> or <code>IPv6RouterAdvertisement</code> and the forwarding path uses a
+smaller tunnel MTU. The config should declare the LAN, WAN, tunnel, firewall
+zones, and RA/DHCPv6 intent; it should not contain a separate MTU policy
+resource.</p>
+<p>Reverse path filter sysctls follow the same rule: routerd derives conservative
+router defaults and tunnel-specific <code>rp_filter=0</code> settings from router and
+tunnel resources.</p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul></ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/concepts/path-mtu.md">GitHub</a></div></footer></body></html>

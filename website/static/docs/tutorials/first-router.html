@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bring up the first lab router · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/tutorials/first-router.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/tutorials/first-router.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/tutorials/first-router.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/tutorials/first-router.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/tutorials/first-router.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="bring-up-the-first-lab-router">Bring up the first lab router</h1>
+<p>This tutorial gives an isolated LAN client a private IPv4 address, a gateway,
+and an IPv4 path to an upstream network. It uses the complete example
+<a href="/examples/example-basic-ipv4-nat.yaml"><code>examples/example-basic-ipv4-nat.yaml</code></a>.</p>
+<p>It is a lab tutorial, not a copy-and-paste replacement for a household router.</p>
+<p>Use a VM console, serial console, or a separate management NIC. <code>ens18</code> and
+<code>ens19</code> below are example names. Check yours with <code>ip -br link</code>, and never
+guess which interface carries the management connection. The example uses the
+private range <code>192.168.10.0/24</code>; change it if it overlaps with an upstream,
+VPN, school, or management network.</p>
+<h2 id="before-you-start">Before you start</h2>
+<ul>
+<li>Install routerd using <a href="../install-and-upgrade.html">Install and upgrade</a>.</li>
+<li>Use an Ubuntu Server lab host with two distinct WAN/LAN interfaces, plus a
+  console or independent management path. Identify them with <code>ip -br link</code>.</li>
+<li>Connect WAN to an upstream DHCP network with Internet access. Connect LAN
+  only to an isolated switch/bridge and a test client; no other DHCP server
+  should serve that LAN.</li>
+<li>Keep a sudo-capable login and Internet access for the download. The client
+  checks below use Linux commands.</li>
+<li>This is a first-install path with <code>routerd.service</code> stopped. If it is already
+  running, do not run a second live one-shot apply alongside it. After reviewing
+  the candidate, use <code>sudo routerctl plan -f first-router.yaml --replace</code> and
+  <code>sudo routerctl apply -f first-router.yaml --replace</code> from the lab console
+  instead of step 3. Full replacement removes resources omitted from the file;
+  do not use a lab file to replace a production configuration.</li>
+</ul>
+<h2 id="what-success-looks-like">What success looks like</h2>
+<pre><code class="language-text">upstream network -- WAN -- routerd host -- LAN -- test client
+                         DHCP + NAT
+</code></pre>
+<ol>
+<li>The upstream gives the WAN an IPv4 address with DHCP.</li>
+<li>The router gives the LAN test client an address from <code>192.168.10.100</code> to
+   <code>192.168.10.199</code>.</li>
+<li>The test client uses <code>192.168.10.1</code> as its gateway.</li>
+<li>NAT lets the client send IPv4 traffic through the one upstream address.</li>
+</ol>
+<p>Read <a href="network-basics.html">Network basics</a> if words such as DHCP, gateway, or
+NAT are new.</p>
+<h2 id="1-download-and-adapt-the-complete-lab-file">1. Download and adapt the complete lab file</h2>
+<pre><code class="language-bash"># The installed release contains router.yaml.sample, not every repository example.
+# Download the example from the same release as the installed routerd binary.
+ROUTERD_VERSION=&quot;$(sudo routerd version | awk '{print $2}')&quot;
+curl --fail --location --output first-router.yaml \
+  &quot;https://raw.githubusercontent.com/imksoo/routerd/${ROUTERD_VERSION}/examples/example-basic-ipv4-nat.yaml&quot;
+</code></pre>
+<p>If you already have a checkout at that same release tag, you can instead copy
+<code>examples/example-basic-ipv4-nat.yaml</code> from the checkout.</p>
+<p>Open <code>first-router.yaml</code> and change only these values before the first preview:</p>
+<ul>
+<li><code>Interface/wan.spec.ifname</code>: the lab WAN interface name.</li>
+<li><code>Interface/lan.spec.ifname</code>: the isolated LAN interface name.</li>
+<li><code>192.168.10.0/24</code>, if it conflicts with any connected network.</li>
+<li>The public DNS servers if your lab must use different resolvers.</li>
+</ul>
+<p>The file deliberately leaves the WAN externally owned and lets routerd manage
+the LAN. It includes a DHCPv4 server, a NAT44 rule, and basic zone resources.</p>
+<p>routerd's firewall resources are groundwork, not a security certification.
+Do not expose an Internet-facing router or rely on this example as the only
+security boundary. Keep the first exercise behind an isolated virtual switch or
+physical lab network.</p>
+<h2 id="2-validate-and-preview-before-a-daemon-exists">2. Validate and preview before a daemon exists</h2>
+<pre><code class="language-bash">sudo routerd validate --config first-router.yaml
+
+LAB_DIR=&quot;$(mktemp -d)&quot;
+sudo routerd apply --config first-router.yaml --once --dry-run \
+  --state-file &quot;$LAB_DIR/state.db&quot; \
+  --status-file &quot;$LAB_DIR/status.json&quot;
+rm -rf &quot;$LAB_DIR&quot;
+</code></pre>
+<p>These commands do not commit a network change. A validation failure is a reason
+to edit the YAML, not to try a live apply.</p>
+<h2 id="3-start-the-router-service">3. Start the router service</h2>
+<p>When the preview names the expected interfaces and artifacts, use a console or
+separate management path to install the reviewed configuration and start the
+service. The service applies the configuration and supervises DHCP and other
+client processes:</p>
+<pre><code class="language-bash">sudo install -d -m 0755 /usr/local/etc/routerd
+sudo install -m 0600 first-router.yaml /usr/local/etc/routerd/router.yaml
+sudo systemctl start routerd.service
+sudo systemctl is-active routerd.service
+</code></pre>
+<p>A standalone <code>routerd apply --once</code> exits without supervising those clients.
+For a DHCP handoff, verify the lease and management connection after starting
+the service; the change is not guaranteed to be interruption-free.</p>
+<p>To start the lab router automatically after a reboot, optionally enable it:</p>
+<pre><code class="language-bash">sudo systemctl enable routerd.service
+</code></pre>
+<h2 id="4-check-the-whole-small-path">4. Check the whole small path</h2>
+<p>On the router:</p>
+<pre><code class="language-bash">sudo routerctl get status
+sudo routerctl describe DHCPv4Client/wan-dhcpv4
+sudo routerctl describe DHCPv4Server/lan-dhcpv4
+sudo routerctl describe NAT44Rule/lan-to-wan
+</code></pre>
+<p>On a client connected only to the lab LAN, renew its DHCP lease, then check:</p>
+<pre><code class="language-bash">ip route
+ping 192.168.10.1
+curl -I https://example.com/
+</code></pre>
+<p>If the final command fails, separate the problem: first check that the client
+received an address and gateway, then that the WAN lease exists, then DNS.
+Do not keep applying the file repeatedly while the cause is unknown.</p>
+<h2 id="next">Next</h2>
+<ul>
+<li><a href="../config-examples/basic-ipv4-nat.html">Basic IPv4 NAT gateway</a> — a guided
+  explanation of this file</li>
+<li><a href="lan-side-services.html">LAN-side services</a> — make the router answer local
+  DNS names and add IPv6 only after IPv4 works</li>
+<li><a href="basic-firewall.html">Basic NAT and firewall policy</a> — current firewall scope
+  and safer next steps</li>
+</ul>
+<p>If startup or status fails, use <a href="../how-to/troubleshooting.html">Troubleshooting</a>
+before trying another live apply.</p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#before-you-start">Before you start</a></li>
+<li><a href="#what-success-looks-like">What success looks like</a></li>
+<li><a href="#1-download-and-adapt-the-complete-lab-file">1. Download and adapt the complete lab file</a></li>
+<li><a href="#2-validate-and-preview-before-a-daemon-exists">2. Validate and preview before a daemon exists</a></li>
+<li><a href="#3-start-the-router-service">3. Start the router service</a></li>
+<li><a href="#4-check-the-whole-small-path">4. Check the whole small path</a></li>
+<li><a href="#next">Next</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/tutorials/first-router.md">GitHub</a></div></footer></body></html>

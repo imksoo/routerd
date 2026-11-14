@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Azure と PVE の同一サブネット SAM スモークテスト · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/how-to/hybrid-azure-pve-same-subnet.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/how-to/hybrid-azure-pve-same-subnet.html" lang="en" hreflang="en">English</a><a href="/docs/ja/how-to/hybrid-azure-pve-same-subnet.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/how-to/hybrid-azure-pve-same-subnet.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/hybrid-azure-pve-same-subnet.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="azure-と-pve-の同一サブネット-sam-スモークテスト">Azure と PVE の同一サブネット SAM スモークテスト</h1>
+<p>このガイドは、Azure の routerd ノードとオンプレミスの Proxmox VE routerd ノードで、Selective Address Mobility (SAM) により選択した <code>/32</code> アドレスを交換する、検証済みの運用形をまとめたものです。リソースの意味論は<a href="../reference/selective-address-mobility.html">選択的アドレス移動性のリファレンス</a>を参照してください。</p>
+<h2 id="azure-側">Azure 側</h2>
+<ul>
+<li>Azure NIC のセカンダリ IP は Azure 側に残します。このプロバイダー側のオブジェクトが、オンプレミスの <code>/32</code> 宛てのパケットを捕捉します。</li>
+<li>Ubuntu ゲスト OS には、捕捉した <code>/32</code> を持たせないでください。cloud-init や netplan がセカンダリ NIC の IP を自動付与することがあります。その設定は抑止するか削除します。routerd は BGP <code>provider-secondary-ip</code> の各リコンサイルでそのアドレスをローカルインターフェースから外し、アドレスが存在しない状態を維持します。Azure にセカンダリ IP を残したままでも同じです。この BGP ケースでは、Azure NIC が ingress を所有し、Linux はローカル <code>/32</code> アドレスではなく proxy neighbor、forwarding sysctl/rule、インポートされた <code>/32</code> route で転送します。</li>
+<li>Azure NIC と Linux の両方で IP 転送を有効化します（<code>net.ipv4.ip_forward=1</code>）。</li>
+</ul>
+<h2 id="オンプレミス-pve-側">オンプレミス PVE 側</h2>
+<ul>
+<li>同一サブネットのローカルホストが見える LAN やブリッジのインターフェースで、<code>proxy-arp</code> 捕捉を使います。</li>
+<li>Linux の転送を有効化します。SAM では routerd が通常の sysctl パスで <code>ip_forward</code> と <code>proxy_arp</code> を有効化します。</li>
+<li>捕捉インターフェースと WireGuard トンネルの間で、捕捉した <code>/32</code> の転送をファイアウォールで許可します。SAM はファイアウォールルールや NAT ルールを追加しません。</li>
+<li>クラウドのゲストイメージでは、プロバイダーのファブリックがパケットを落としていると判断する前に、ホスト側ファイアウォールの既定値も確認してください。ルーターは WireGuard の UDP 待ち受けポートを受け付け、捕捉インターフェースと <code>wg-hybrid</code> の間の転送を許可する必要があります。<code>routerctl doctor hybrid</code> は、iptables の終端 drop/reject パターンと、SAM MSS clamp ルールの不足を警告します。</li>
+</ul>
+<h2 id="トンネルとルーティング">トンネルとルーティング</h2>
+<ul>
+<li>WireGuard はオンプレミスから Azure のパブリック IP へ接続する形にします。</li>
+<li>オンプレミス側のピアには <code>persistentKeepalive</code> を設定し、NAT やクラウドエッジの状態を維持します。</li>
+<li>最初のスモークテストは UDR なしで実施します。後で UDR フォールバックを追加する場合は、Azure が捕捉した <code>/32</code> を配送元のルーターへ戻してしまう、同一サブネットのループに注意してください。</li>
+<li>リモートオーナーの <code>/32</code> 配送経路は、BGP best path をトンネルインターフェース経由でインポートして得ます。デフォルト経路は変更しません。</li>
+</ul>
+<h2 id="検証">検証</h2>
+<p>実行:</p>
+<pre><code class="language-sh">routerctl doctor hybrid
+</code></pre>
+<p><code>provider-secondary-ip</code> の BGP delivery では、捕捉した <code>/32</code> がローカルの <code>ip addr</code> に存在しないこと、配送経路がトンネルを向いていること、<code>ip_forward=1</code> であることを確認します。<code>proxy-arp</code> では、<code>proxy_arp=1</code>、プロキシネイバーの存在、トンネルへの配送経路、<code>ip_forward=1</code> を確認します。</p>
+<p>低 MTU のオーバーレイでは、<code>doctor hybrid</code> が SAM MSS clamp を報告し、<code>nft list table inet routerd_mss</code> に、選択した <code>/32</code> 経路の捕捉からトンネルへ、およびトンネルから捕捉への両方のルールが含まれていることを確認します。</p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#azure-側">Azure 側</a></li>
+<li><a href="#オンプレミス-pve-側">オンプレミス PVE 側</a></li>
+<li><a href="#トンネルとルーティング">トンネルとルーティング</a></li>
+<li><a href="#検証">検証</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/how-to/hybrid-azure-pve-same-subnet.md">GitHub</a></div></footer></body></html>

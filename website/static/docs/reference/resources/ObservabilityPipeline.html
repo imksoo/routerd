@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ObservabilityPipeline · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/reference/resources/ObservabilityPipeline.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/reference/resources/ObservabilityPipeline.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/reference/resources/ObservabilityPipeline.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/ObservabilityPipeline.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/ObservabilityPipeline.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="observabilitypipeline">ObservabilityPipeline</h1>
+<p><a href="../resources.html#observabilitypipeline">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: system.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Combines an OpenTelemetry environment declaration for managed services with an independent built-in operational-event log consumer.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>OTLP environment selection and built-in log forwarding are separate paths. signals controls the former; logs.enabled controls the latter. Empty log sinks do not imply stdout.</li>
+<li>sampling.rate=0 is promoted to 1. kafka sinks and OTLP certificate-file fields are declarations without corresponding runtime execution in this implementation.</li>
+</ul>
+<h2 id="yaml-definition">YAML definition</h2>
+<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
+<pre><code class="language-yaml">- apiVersion: system.routerd.net/v1alpha1
+  kind: ObservabilityPipeline
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    attributes: # optional; object
+      &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # optional; string
+    logs: # optional; object
+      enabled: true # optional; boolean
+      sinks: # optional; array
+        - # object
+          enabled: true # optional; boolean
+          kafka: # optional; object
+            brokers: # optional; array
+              - &quot;&lt;string&gt;&quot; # string
+            topic: &quot;&lt;string&gt;&quot; # optional; string
+          labels: # optional; object
+            &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # optional; string
+          loki: # optional; object
+            headers: # optional; object
+              &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # optional; string
+            tenant: &quot;&lt;string&gt;&quot; # optional; string
+            url: &quot;&lt;string&gt;&quot; # optional; string
+          minLevel: &quot;debug&quot; # optional; string; enum=[&quot;debug&quot;, &quot;info&quot;, &quot;warning&quot;, &quot;error&quot;]
+          name: &quot;&lt;string&gt;&quot; # optional; string
+          syslog: # optional; object
+            address: &quot;&lt;string&gt;&quot; # optional; string
+            facility: &quot;kern&quot; # optional; string; enum=[&quot;kern&quot;, &quot;user&quot;, &quot;mail&quot;, &quot;daemon&quot;, &quot;auth&quot;, &quot;syslog&quot;, &quot;lpr&quot;, &quot;news&quot;, &quot;uucp&quot;, &quot;cron&quot;, &quot;authpriv&quot;, &quot;ftp&quot;, &quot;local0&quot;, &quot;local1&quot;, &quot;local2&quot;, &quot;local3&quot;, &quot;local4&quot;, &quot;local5&quot;, &quot;local6&quot;, &quot;local7&quot;]
+            network: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;unix&quot;, &quot;unixgram&quot;, &quot;tcp&quot;, &quot;udp&quot;]
+            tag: &quot;&lt;string&gt;&quot; # optional; string
+          type: &quot;stdout&quot; # Required; string; enum=[&quot;stdout&quot;, &quot;syslog&quot;, &quot;loki&quot;, &quot;kafka&quot;]
+    otlp: # optional; object
+      endpoint: &quot;&lt;string&gt;&quot; # optional; string
+      headers: # optional; object
+        &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # optional; string
+      insecure: true # optional; boolean
+      tls: # optional; object
+        caFile: &quot;&lt;string&gt;&quot; # optional; string
+        certFile: &quot;&lt;string&gt;&quot; # optional; string
+        insecureSkipVerify: true # optional; boolean
+        keyFile: &quot;&lt;string&gt;&quot; # optional; string
+    sampling: # optional; object
+      rate: 0 # optional; number
+    serviceNamespace: &quot;&lt;string&gt;&quot; # optional; string
+    signals: # optional; array
+      - &quot;logs&quot; # string; enum=[&quot;logs&quot;, &quot;metrics&quot;, &quot;traces&quot;]
+    when: # optional; object
+      state: # optional; object
+        &quot;&lt;key&gt;&quot;: # optional; object
+          contains: &quot;&lt;string&gt;&quot; # optional; string
+          equals: &quot;&lt;string&gt;&quot; # optional; string
+          exists: true # optional; boolean
+          for: &quot;&lt;string&gt;&quot; # optional; string
+          in: # optional; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # optional; string
+          status: &quot;set&quot; # optional; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.serviceNamespace</code></td>
+<td>OpenTelemetry service namespace, default routerd after trimming whitespace.</td>
+</tr>
+<tr>
+<td><code>spec.attributes</code></td>
+<td>Resource-attribute map, default empty. Sorted and serialized into OTEL_RESOURCE_ATTRIBUTES as comma-separated key=value entries; values are not escaped by this renderer.</td>
+</tr>
+<tr>
+<td><code>spec.otlp</code></td>
+<td>Optional OTLP environment settings for generated services. A nonblank endpoint selects this resource as the telemetry environment source. Built-in log sinks operate separately.</td>
+</tr>
+<tr>
+<td><code>spec.otlp.endpoint</code></td>
+<td>Exporter endpoint, default empty. A nonblank value must parse as a URI and is emitted as OTEL_EXPORTER_OTLP_ENDPOINT. Multiple Telemetry/endpoint-bearing pipeline sources fail environment rendering.</td>
+</tr>
+<tr>
+<td><code>spec.otlp.insecure</code></td>
+<td>Default false. True sets OTEL_EXPORTER_OTLP_INSECURE=true. tls.insecureSkipVerify=true also sets that same insecure variable.</td>
+</tr>
+<tr>
+<td><code>spec.otlp.headers</code></td>
+<td>Exporter request-header map, default empty. Serialized as sorted comma-separated key=value entries in OTEL_EXPORTER_OTLP_HEADERS without value escaping. It is not the header map of a Loki sink.</td>
+</tr>
+<tr>
+<td><code>spec.otlp.tls</code></td>
+<td>Decoded TLS options. Only insecureSkipVerify affects the current environment renderer; the three file fields are not wired into exporter configuration.</td>
+</tr>
+<tr>
+<td><code>spec.otlp.tls.caFile</code></td>
+<td>CA-file declaration, default empty. The current renderer and built-in exporter do not read it; setting it does not configure a trust store.</td>
+</tr>
+<tr>
+<td><code>spec.otlp.tls.certFile</code></td>
+<td>Client-certificate declaration, default empty and not consumed by the current OTLP configuration path.</td>
+</tr>
+<tr>
+<td><code>spec.otlp.tls.keyFile</code></td>
+<td>Client-key declaration, default empty and not consumed. A certFile/keyFile pair here does not enable mutual TLS.</td>
+</tr>
+<tr>
+<td><code>spec.otlp.tls.insecureSkipVerify</code></td>
+<td>Default false. The current renderer maps true to OTEL_EXPORTER_OTLP_INSECURE=true; it does not configure a TLS client that merely skips certificate checks.</td>
+</tr>
+<tr>
+<td><code>spec.signals</code></td>
+<td>Default logs/metrics/traces for generated OpenTelemetry environment. Omitted members of a nonempty list get exporter=none. The built-in log consumer ignores this list and is controlled by logs.enabled.</td>
+</tr>
+<tr>
+<td><code>spec.sampling</code></td>
+<td>Built-in event-log sampling settings, independent of the generated OTLP environment.</td>
+</tr>
+<tr>
+<td><code>spec.sampling.rate</code></td>
+<td>Must be between 0 and 1. Omitted/zero becomes 1, sending all eligible events. Fractions use a deterministic sequence modulo 1000, not random sampling. Use logs.enabled=false to stop this consumer.</td>
+</tr>
+<tr>
+<td><code>spec.logs</code></td>
+<td>Built-in database event-log forwarding settings, separate from the OTLP environment.</td>
+</tr>
+<tr>
+<td><code>spec.logs.enabled</code></td>
+<td>Default true. False stops the built-in log consumer, but does not disable OTLP variables in rendered services.</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks</code></td>
+<td>Sink list, default empty: no built-in output destination. There is no implicit stdout sink. Kafka entries are skipped by the exporter even when enabled.</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].name</code></td>
+<td>Optional sink label, default empty. Not a LogSink resource reference; the current exporter does not use it to select destinations.</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].type</code></td>
+<td>Required stdout, syslog, loki or kafka. kafka is accepted as a declaration but not executed. Only the selected branch is used.</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].enabled</code></td>
+<td>Default true. False excludes this sink; kafka is excluded independently of this flag.</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].minLevel</code></td>
+<td>Minimum severity, default info; accepts debug/info/warning/error. Applied after sampling.</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].labels</code></td>
+<td>Additional Loki stream labels, default empty. Sink labels override same-name global attributes and built-in labels after key sanitization. They are not used by stdout or syslog.</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].loki</code></td>
+<td>Settings used only for type=loki.</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].loki.url</code></td>
+<td>Required for loki, with no default. Use the complete Loki push URL; the exporter does not append a push path. Only HTTP 2xx counts as success.</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].loki.tenant</code></td>
+<td>Optional tenant ID, default empty. Nonempty values set X-Scope-OrgID.</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].loki.headers</code></td>
+<td>Additional HTTP headers, default empty. Override matching headers including Content-Type and the tenant header.</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].syslog</code></td>
+<td>Settings used only for type=syslog.</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].syslog.network</code></td>
+<td>Transport: unix, unixgram, tcp or udp. Empty delegates to Go syslog local-socket discovery.</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].syslog.address</code></td>
+<td>Destination socket path or host:port, default empty. Set a suitable address for an explicit transport; validation does not enforce this pairing, and connection errors surface during emission.</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].syslog.tag</code></td>
+<td>Syslog tag; default routerd. Not a resource reference.</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].syslog.facility</code></td>
+<td>Default local6. This exporter maps local0–local7; any other supplied facility also falls back to local6, unlike the standalone LogSink syslog implementation.</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].kafka</code></td>
+<td>Kafka intention settings. They are validated but the built-in exporter skips this sink.</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].kafka.brokers</code></td>
+<td>For type=kafka, at least one nonblank broker is required. No connections are made by the current exporter.</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].kafka.topic</code></td>
+<td>Required nonblank topic for type=kafka. Not an EventRule topic or a resource reference; no current Kafka transmission.</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>Activation condition; omitted means no gate. See the shared condition reference for state/all/any, unknown handling and age predicates.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_system.go">pkg/config/validate_system.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go">pkg/config/diagnostics.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/telemetry.go">pkg/render/telemetry.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/observabilitypipeline/exporter.go">pkg/observabilitypipeline/exporter.go</a></p>
+<p><a href="/examples/observability-loki.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
+<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/reference/resources/ObservabilityPipeline.md">GitHub</a></div></footer></body></html>

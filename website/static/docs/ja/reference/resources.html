@@ -1,0 +1,405 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>リソース別の設定 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/reference/resources.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/reference/resources.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/reference/resources.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="リソース別の設定">リソース別の設定</h1>
+<p>各リソースはRouter.spec.resourcesに記述します。例の名前・インターフェース・アドレス・認証情報・対向設定は環境に合わせて変更してください。必須は親オブジェクト内での指定要否です。リソース間参照や意味上の制約はスキーマだけでは確定せず、routerd validateで確認します。</p>
+<p><a href="common-fields.html">Kind/name · when · dependsOn</a></p>
+<pre><code class="language-sh">routerd validate --config router.yaml
+</code></pre>
+<p><a href="https://github.com/imksoo/routerd/blob/main/schemas/routerd-config-v1alpha1.schema.json">JSON Schema</a> · <a href="https://github.com/imksoo/routerd/tree/main/examples">YAML</a></p>
+<h3 id="router">Router</h3>
+<pre><code class="language-yaml">apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: &quot;&lt;router-name&gt;&quot;
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: &quot;&lt;name&gt;&quot;
+      spec:
+        ifname: &quot;&lt;interface-name&gt;&quot;
+</code></pre>
+<ul>
+<li><a href="resources/Plugin.html">Plugin</a></li>
+<li><a href="resources/DynamicConfigSource.html">DynamicConfigSource</a></li>
+<li><a href="resources/DynamicOverridePolicy.html">DynamicOverridePolicy</a></li>
+<li><a href="resources/LogSink.html">LogSink</a></li>
+<li><a href="resources/Telemetry.html">Telemetry</a></li>
+<li><a href="resources/ObservabilityPipeline.html">ObservabilityPipeline</a></li>
+<li><a href="resources/LogRetention.html">LogRetention</a></li>
+<li><a href="resources/Sysctl.html">Sysctl</a></li>
+<li><a href="resources/SysctlProfile.html">SysctlProfile</a></li>
+<li><a href="resources/Package.html">Package</a></li>
+<li><a href="resources/NTPClient.html">NTPClient</a></li>
+<li><a href="resources/NTPServer.html">NTPServer</a></li>
+<li><a href="resources/WebConsole.html">WebConsole</a></li>
+<li><a href="resources/ControlAPI.html">ControlAPI</a></li>
+<li><a href="resources/RouterdCluster.html">RouterdCluster</a></li>
+<li><a href="resources/Interface.html">Interface</a></li>
+<li><a href="resources/PPPoESession.html">PPPoESession</a></li>
+<li><a href="resources/WireGuardInterface.html">WireGuardInterface</a></li>
+<li><a href="resources/WireGuardPeer.html">WireGuardPeer</a></li>
+<li><a href="resources/TailscaleNode.html">TailscaleNode</a></li>
+<li><a href="resources/IPsecConnection.html">IPsecConnection</a></li>
+<li><a href="resources/VRF.html">VRF</a></li>
+<li><a href="resources/VXLANTunnel.html">VXLANTunnel</a></li>
+<li><a href="resources/IPv4StaticAddress.html">IPv4StaticAddress</a></li>
+<li><a href="resources/VirtualAddress.html">VirtualAddress</a></li>
+<li><a href="resources/BGPRouter.html">BGPRouter</a></li>
+<li><a href="resources/BGPPeer.html">BGPPeer</a></li>
+<li><a href="resources/BGPDynamicPeer.html">BGPDynamicPeer</a></li>
+<li><a href="resources/BFD.html">BFD</a></li>
+<li><a href="resources/DHCPv4Client.html">DHCPv4Client</a></li>
+<li><a href="resources/ClusterNetworkRoute.html">ClusterNetworkRoute</a></li>
+<li><a href="resources/DHCPv4Server.html">DHCPv4Server</a></li>
+<li><a href="resources/DHCPv4Reservation.html">DHCPv4Reservation</a></li>
+<li><a href="resources/DHCPv6Address.html">DHCPv6Address</a></li>
+<li><a href="resources/IPv6RAAddress.html">IPv6RAAddress</a></li>
+<li><a href="resources/DHCPv6PrefixDelegation.html">DHCPv6PrefixDelegation</a></li>
+<li><a href="resources/IPv6DelegatedAddress.html">IPv6DelegatedAddress</a></li>
+<li><a href="resources/DHCPv6Information.html">DHCPv6Information</a></li>
+<li><a href="resources/IPv6RouterAdvertisement.html">IPv6RouterAdvertisement</a></li>
+<li><a href="resources/DHCPv6Server.html">DHCPv6Server</a></li>
+<li><a href="resources/DHCPv4ServerLeaseSync.html">DHCPv4ServerLeaseSync</a></li>
+<li><a href="resources/DHCPv6ServerLeaseSync.html">DHCPv6ServerLeaseSync</a></li>
+<li><a href="resources/DHCPv6PrefixDelegationLeaseSync.html">DHCPv6PrefixDelegationLeaseSync</a></li>
+<li><a href="resources/DHCPv4Relay.html">DHCPv4Relay</a></li>
+<li><a href="resources/SelfAddressPolicy.html">SelfAddressPolicy</a></li>
+<li><a href="resources/DNSZone.html">DNSZone</a></li>
+<li><a href="resources/DNSResolver.html">DNSResolver</a></li>
+<li><a href="resources/DNSForwarder.html">DNSForwarder</a></li>
+<li><a href="resources/DNSUpstream.html">DNSUpstream</a></li>
+<li><a href="resources/DSLiteTunnel.html">DSLiteTunnel</a></li>
+<li><a href="resources/TunnelInterface.html">TunnelInterface</a></li>
+<li><a href="resources/OverlayPeer.html">OverlayPeer</a></li>
+<li><a href="resources/HybridRoute.html">HybridRoute</a></li>
+<li><a href="resources/CloudProviderProfile.html">CloudProviderProfile</a></li>
+<li><a href="resources/ProviderActionPolicy.html">ProviderActionPolicy</a></li>
+<li><a href="resources/EventGroup.html">EventGroup</a></li>
+<li><a href="resources/EventPeer.html">EventPeer</a></li>
+<li><a href="resources/EventSubscription.html">EventSubscription</a></li>
+<li><a href="resources/FederationSLO.html">FederationSLO</a></li>
+<li><a href="resources/MobilityPool.html">MobilityPool</a></li>
+<li><a href="resources/SAMNodeSet.html">SAMNodeSet</a></li>
+<li><a href="resources/SAMEnrollmentPolicy.html">SAMEnrollmentPolicy</a></li>
+<li><a href="resources/SAMEnrollmentClaim.html">SAMEnrollmentClaim</a></li>
+<li><a href="resources/SAMEnrollmentClient.html">SAMEnrollmentClient</a></li>
+<li><a href="resources/SAMTransportProfile.html">SAMTransportProfile</a></li>
+<li><a href="resources/SAMSubnetPolicy.html">SAMSubnetPolicy</a></li>
+<li><a href="resources/IPv4Route.html">IPv4Route</a></li>
+<li><a href="resources/HealthCheck.html">HealthCheck</a></li>
+<li><a href="resources/EgressRoutePolicy.html">EgressRoutePolicy</a></li>
+<li><a href="resources/EventRule.html">EventRule</a></li>
+<li><a href="resources/DerivedEvent.html">DerivedEvent</a></li>
+<li><a href="resources/NAT44Rule.html">NAT44Rule</a></li>
+<li><a href="resources/NAT44FlowDNATPinhole.html">NAT44FlowDNATPinhole</a></li>
+<li><a href="resources/NAT44SessionSync.html">NAT44SessionSync</a></li>
+<li><a href="resources/ManagementAccess.html">ManagementAccess</a></li>
+<li><a href="resources/PortForward.html">PortForward</a></li>
+<li><a href="resources/IngressService.html">IngressService</a></li>
+<li><a href="resources/IPAddressSet.html">IPAddressSet</a></li>
+<li><a href="resources/LocalServiceRedirect.html">LocalServiceRedirect</a></li>
+<li><a href="resources/FirewallFlowPinhole.html">FirewallFlowPinhole</a></li>
+<li><a href="resources/TrafficFlowLog.html">TrafficFlowLog</a></li>
+<li><a href="resources/FirewallZone.html">FirewallZone</a></li>
+<li><a href="resources/FirewallPolicy.html">FirewallPolicy</a></li>
+<li><a href="resources/ClientPolicy.html">ClientPolicy</a></li>
+<li><a href="resources/FirewallRule.html">FirewallRule</a></li>
+<li><a href="resources/FirewallEventLog.html">FirewallEventLog</a></li>
+<li><a href="resources/Hostname.html">Hostname</a></li>
+</ul>
+<h2 id="plugin">Plugin</h2>
+<p><a href="resources/Plugin.html">Plugin</a></p>
+<p>routerdのプラグインプロトコルで実行する外部プログラムを登録します。明示的な実行、またはEventSubscriptionなどの利用側から呼び出します。</p>
+<h2 id="dynamicconfigsource">DynamicConfigSource</h2>
+<p><a href="resources/DynamicConfigSource.html">DynamicConfigSource</a></p>
+<p>プラグインを使う動的設定取得元の宣言です。現行実装には型の読込みと検証はありますが、DynamicConfigSourceSpecを消費するruntime処理はなく、宣言だけではプラグインを実行しません。</p>
+<h2 id="dynamicoverridepolicy">DynamicOverridePolicy</h2>
+<p><a href="resources/DynamicOverridePolicy.html">DynamicOverridePolicy</a></p>
+<p>動的設定の有効期間中、指定した取得元が起動設定の特定リソースをmaskできるよう許可します。保存済みの起動設定自体は書き換えません。</p>
+<h2 id="logsink">LogSink</h2>
+<p><a href="resources/LogSink.html">LogSink</a></p>
+<p>typeで選ぶ運用イベントログの出力先です。ObservabilityPipeline内のログ出力先とは別の設定です。</p>
+<h2 id="telemetry">Telemetry</h2>
+<p><a href="resources/Telemetry.html">Telemetry</a></p>
+<p>生成する管理サービスにOpenTelemetryの環境変数を設定します。LogSinkや独立したcollectorプロセスを定義するリソースではありません。</p>
+<h2 id="observabilitypipeline">ObservabilityPipeline</h2>
+<p><a href="resources/ObservabilityPipeline.html">ObservabilityPipeline</a></p>
+<p>管理サービス向けOpenTelemetry環境の宣言と、独立した組込み運用イベントログconsumerをまとめた設定です。</p>
+<h2 id="logretention">LogRetention</h2>
+<p><a href="resources/LogRetention.html">LogRetention</a></p>
+<p>運用ログのSQLiteレコードを削除し、必要なら削除前に保管先へ転送します。任意のOSログファイルを整理する設定ではありません。</p>
+<h2 id="sysctl">Sysctl</h2>
+<p><a href="resources/Sysctl.html">Sysctl</a></p>
+<p>カーネルのsysctlを1項目反映し、必要ならsysctl.dへ永続設定を書きます。他のrouterdリソースへの参照項目はありません。</p>
+<h2 id="sysctlprofile">SysctlProfile</h2>
+<p><a href="resources/SysctlProfile.html">SysctlProfile</a></p>
+<p>ルーター向けのsysctlセットを名前で選び、必要ならキー単位で上書きします。Sysctlリソースの名前を参照する設定ではありません。</p>
+<h2 id="package">Package</h2>
+<p><a href="resources/Package.html">Package</a></p>
+<p>指定したOSパッケージの導入を確認します。稼働ホストのOSに完全一致する、最初のパッケージセットを選びます。</p>
+<h2 id="ntpclient">NTPClient</h2>
+<p><a href="resources/NTPClient.html">NTPClient</a></p>
+<p>上流との時刻同期クライアントを管理、または観測します。</p>
+<h2 id="ntpserver">NTPServer</h2>
+<p><a href="resources/NTPServer.html">NTPServer</a></p>
+<p>chronyまたはFreeBSD ntpdを使い、時刻サーバーと上流サーバーを設定します。</p>
+<h2 id="webconsole">WebConsole</h2>
+<p><a href="resources/WebConsole.html">WebConsole</a></p>
+<p>routerdから読取り用のWebコンソールを公開します。設定変更を行うControlAPIとは別のHTTP待受です。</p>
+<h2 id="controlapi">ControlAPI</h2>
+<p><a href="resources/ControlAPI.html">ControlAPI</a></p>
+<p>状態の取得と設定変更に使うHTTP Control APIを有効化します。Unixソケット経由の制御とWebConsoleは別です。</p>
+<h2 id="routerdcluster">RouterdCluster</h2>
+<p><a href="resources/RouterdCluster.html">RouterdCluster</a></p>
+<p>ファイルのリースとOSファイルロックで、どのrouterdが変更処理を行うかを調整します。VRRPの選出や対向ネットワークの自動探索ではありません。</p>
+<h2 id="interface">Interface</h2>
+<p><a href="resources/Interface.html">Interface</a></p>
+<p>既存のOSインターフェースに論理名metadata.nameを付け、他のリソースから参照できるようにします。物理インターフェースを新規作成する設定ではありません。</p>
+<h2 id="pppoesession">PPPoESession</h2>
+<p><a href="resources/PPPoESession.html">PPPoESession</a></p>
+<h2 id="wireguardinterface">WireGuardInterface</h2>
+<p><a href="resources/WireGuardInterface.html">WireGuardInterface</a></p>
+<h2 id="wireguardpeer">WireGuardPeer</h2>
+<p><a href="resources/WireGuardPeer.html">WireGuardPeer</a></p>
+<h2 id="tailscalenode">TailscaleNode</h2>
+<p><a href="resources/TailscaleNode.html">TailscaleNode</a></p>
+<h2 id="ipsecconnection">IPsecConnection</h2>
+<p><a href="resources/IPsecConnection.html">IPsecConnection</a></p>
+<h2 id="vrf">VRF</h2>
+<p><a href="resources/VRF.html">VRF</a></p>
+<p>LinuxのVRFデバイス・経路表・参加インターフェースの意図を宣言します。現行実装は計画とartifact識別子の生成、経路表の保護を行いますが、VRF作成・メンバー接続のcontrollerはありません。plan表示をVRF作成済みの証拠とは扱わないでください。</p>
+<h2 id="vxlantunnel">VXLANTunnel</h2>
+<p><a href="resources/VXLANTunnel.html">VXLANTunnel</a></p>
+<h2 id="ipv4staticaddress">IPv4StaticAddress</h2>
+<p><a href="resources/IPv4StaticAddress.html">IPv4StaticAddress</a></p>
+<p>論理インターフェースへ固定IPv4アドレスを宣言します。controllerが設定に収束させるアドレスであり、DHCPリースではありません。</p>
+<h2 id="virtualaddress">VirtualAddress</h2>
+<p><a href="resources/VirtualAddress.html">VirtualAddress</a></p>
+<h2 id="bgprouter">BGPRouter</h2>
+<p><a href="resources/BGPRouter.html">BGPRouter</a></p>
+<h2 id="bgppeer">BGPPeer</h2>
+<p><a href="resources/BGPPeer.html">BGPPeer</a></p>
+<h2 id="bgpdynamicpeer">BGPDynamicPeer</h2>
+<p><a href="resources/BGPDynamicPeer.html">BGPDynamicPeer</a></p>
+<h2 id="bfd">BFD</h2>
+<p><a href="resources/BFD.html">BFD</a></p>
+<h2 id="dhcpv4client">DHCPv4Client</h2>
+<p><a href="resources/DHCPv4Client.html">DHCPv4Client</a></p>
+<p>管理下のrouterd-dhcpv4-client daemonを動かし、取得したリースのアドレス、必要に応じて既定経路とホストのDNS設定を反映します。</p>
+<h2 id="clusternetworkroute">ClusterNetworkRoute</h2>
+<p><a href="resources/ClusterNetworkRoute.html">ClusterNetworkRoute</a></p>
+<p>KubernetesのPod・ServiceネットワークへのIPv4経路を、明示したネクストホップ経由で設定します。クラスターのCIDRやノードを自動検出する機能ではありません。</p>
+<h2 id="dhcpv4server">DHCPv4Server</h2>
+<p><a href="resources/DHCPv4Server.html">DHCPv4Server</a></p>
+<h2 id="dhcpv4reservation">DHCPv4Reservation</h2>
+<p><a href="resources/DHCPv4Reservation.html">DHCPv4Reservation</a></p>
+<h2 id="dhcpv6address">DHCPv6Address</h2>
+<p><a href="resources/DHCPv6Address.html">DHCPv6Address</a></p>
+<p>ホストのDHCPv6 clientで取得するIPv6アドレスを宣言します。DHCPv6PrefixDelegationとは別で、LAN向けプレフィックスの配布は行いません。</p>
+<h2 id="ipv6raaddress">IPv6RAAddress</h2>
+<p><a href="resources/IPv6RAAddress.html">IPv6RAAddress</a></p>
+<p>ホスト側でIPv6 RA/SLAACを受信する宣言です。RA clientであり、LANへRAを送るIPv6RouterAdvertisementとは別です。</p>
+<h2 id="dhcpv6prefixdelegation">DHCPv6PrefixDelegation</h2>
+<p><a href="resources/DHCPv6PrefixDelegation.html">DHCPv6PrefixDelegation</a></p>
+<h2 id="ipv6delegatedaddress">IPv6DelegatedAddress</h2>
+<p><a href="resources/IPv6DelegatedAddress.html">IPv6DelegatedAddress</a></p>
+<h2 id="dhcpv6information">DHCPv6Information</h2>
+<p><a href="resources/DHCPv6Information.html">DHCPv6Information</a></p>
+<p>同じインターフェースを使うDHCPv6-PD daemonから、AFTR・DNS・SNTP・検索ドメインの情報を取り込みます。独立したInformation-request clientを起動するリソースではありません。</p>
+<h2 id="ipv6routeradvertisement">IPv6RouterAdvertisement</h2>
+<p><a href="resources/IPv6RouterAdvertisement.html">IPv6RouterAdvertisement</a></p>
+<h2 id="dhcpv6server">DHCPv6Server</h2>
+<p><a href="resources/DHCPv6Server.html">DHCPv6Server</a></p>
+<h2 id="dhcpv4serverleasesync">DHCPv4ServerLeaseSync</h2>
+<p><a href="resources/DHCPv4ServerLeaseSync.html">DHCPv4ServerLeaseSync</a></p>
+<h2 id="dhcpv6serverleasesync">DHCPv6ServerLeaseSync</h2>
+<p><a href="resources/DHCPv6ServerLeaseSync.html">DHCPv6ServerLeaseSync</a></p>
+<h2 id="dhcpv6prefixdelegationleasesync">DHCPv6PrefixDelegationLeaseSync</h2>
+<p><a href="resources/DHCPv6PrefixDelegationLeaseSync.html">DHCPv6PrefixDelegationLeaseSync</a></p>
+<h2 id="dhcpv4relay">DHCPv4Relay</h2>
+<p><a href="resources/DHCPv4Relay.html">DHCPv4Relay</a></p>
+<h2 id="selfaddresspolicy">SelfAddressPolicy</h2>
+<p><a href="resources/SelfAddressPolicy.html">SelfAddressPolicy</a></p>
+<h2 id="dnszone">DNSZone</h2>
+<p><a href="resources/DNSZone.html">DNSZone</a></p>
+<h2 id="dnsresolver">DNSResolver</h2>
+<p><a href="resources/DNSResolver.html">DNSResolver</a></p>
+<h2 id="dnsforwarder">DNSForwarder</h2>
+<p><a href="resources/DNSForwarder.html">DNSForwarder</a></p>
+<h2 id="dnsupstream">DNSUpstream</h2>
+<p><a href="resources/DNSUpstream.html">DNSUpstream</a></p>
+<h2 id="dslitetunnel">DSLiteTunnel</h2>
+<p><a href="resources/DSLiteTunnel.html">DSLiteTunnel</a></p>
+<h2 id="tunnelinterface">TunnelInterface</h2>
+<p><a href="resources/TunnelInterface.html">TunnelInterface</a></p>
+<h2 id="overlaypeer">OverlayPeer</h2>
+<p><a href="resources/OverlayPeer.html">OverlayPeer</a></p>
+<h2 id="hybridroute">HybridRoute</h2>
+<p><a href="resources/HybridRoute.html">HybridRoute</a></p>
+<h2 id="cloudproviderprofile">CloudProviderProfile</h2>
+<p><a href="resources/CloudProviderProfile.html">CloudProviderProfile</a></p>
+<h2 id="provideractionpolicy">ProviderActionPolicy</h2>
+<p><a href="resources/ProviderActionPolicy.html">ProviderActionPolicy</a></p>
+<h2 id="eventgroup">EventGroup</h2>
+<p><a href="resources/EventGroup.html">EventGroup</a></p>
+<h2 id="eventpeer">EventPeer</h2>
+<p><a href="resources/EventPeer.html">EventPeer</a></p>
+<h2 id="eventsubscription">EventSubscription</h2>
+<p><a href="resources/EventSubscription.html">EventSubscription</a></p>
+<h2 id="federationslo">FederationSLO</h2>
+<p><a href="resources/FederationSLO.html">FederationSLO</a></p>
+<h2 id="mobilitypool">MobilityPool</h2>
+<p><a href="resources/MobilityPool.html">MobilityPool</a></p>
+<h2 id="samnodeset">SAMNodeSet</h2>
+<p><a href="resources/SAMNodeSet.html">SAMNodeSet</a></p>
+<h2 id="samenrollmentpolicy">SAMEnrollmentPolicy</h2>
+<p><a href="resources/SAMEnrollmentPolicy.html">SAMEnrollmentPolicy</a></p>
+<h2 id="samenrollmentclaim">SAMEnrollmentClaim</h2>
+<p><a href="resources/SAMEnrollmentClaim.html">SAMEnrollmentClaim</a></p>
+<h2 id="samenrollmentclient">SAMEnrollmentClient</h2>
+<p><a href="resources/SAMEnrollmentClient.html">SAMEnrollmentClient</a></p>
+<h2 id="samtransportprofile">SAMTransportProfile</h2>
+<p><a href="resources/SAMTransportProfile.html">SAMTransportProfile</a></p>
+<h2 id="samsubnetpolicy">SAMSubnetPolicy</h2>
+<p><a href="resources/SAMSubnetPolicy.html">SAMSubnetPolicy</a></p>
+<h2 id="ipv4route">IPv4Route</h2>
+<p><a href="resources/IPv4Route.html">IPv4Route</a></p>
+<p>リソースの状態からデバイス・ゲートウェイを取得できる、IPv4の通常経路または破棄経路です。</p>
+<h2 id="healthcheck">HealthCheck</h2>
+<p><a href="resources/HealthCheck.html">HealthCheck</a></p>
+<h2 id="egressroutepolicy">EgressRoutePolicy</h2>
+<p><a href="resources/EgressRoutePolicy.html">EgressRoutePolicy</a></p>
+<h2 id="eventrule">EventRule</h2>
+<p><a href="resources/EventRule.html">EventRule</a></p>
+<h2 id="derivedevent">DerivedEvent</h2>
+<p><a href="resources/DerivedEvent.html">DerivedEvent</a></p>
+<h2 id="nat44rule">NAT44Rule</h2>
+<p><a href="resources/NAT44Rule.html">NAT44Rule</a></p>
+<h2 id="nat44flowdnatpinhole">NAT44FlowDNATPinhole</h2>
+<p><a href="resources/NAT44FlowDNATPinhole.html">NAT44FlowDNATPinhole</a></p>
+<h2 id="nat44sessionsync">NAT44SessionSync</h2>
+<p><a href="resources/NAT44SessionSync.html">NAT44SessionSync</a></p>
+<h2 id="managementaccess">ManagementAccess</h2>
+<p><a href="resources/ManagementAccess.html">ManagementAccess</a></p>
+<h2 id="portforward">PortForward</h2>
+<p><a href="resources/PortForward.html">PortForward</a></p>
+<h2 id="ingressservice">IngressService</h2>
+<p><a href="resources/IngressService.html">IngressService</a></p>
+<h2 id="ipaddressset">IPAddressSet</h2>
+<p><a href="resources/IPAddressSet.html">IPAddressSet</a></p>
+<h2 id="localserviceredirect">LocalServiceRedirect</h2>
+<p><a href="resources/LocalServiceRedirect.html">LocalServiceRedirect</a></p>
+<h2 id="firewallflowpinhole">FirewallFlowPinhole</h2>
+<p><a href="resources/FirewallFlowPinhole.html">FirewallFlowPinhole</a></p>
+<h2 id="trafficflowlog">TrafficFlowLog</h2>
+<p><a href="resources/TrafficFlowLog.html">TrafficFlowLog</a></p>
+<h2 id="firewallzone">FirewallZone</h2>
+<p><a href="resources/FirewallZone.html">FirewallZone</a></p>
+<h2 id="firewallpolicy">FirewallPolicy</h2>
+<p><a href="resources/FirewallPolicy.html">FirewallPolicy</a></p>
+<h2 id="clientpolicy">ClientPolicy</h2>
+<p><a href="resources/ClientPolicy.html">ClientPolicy</a></p>
+<h2 id="firewallrule">FirewallRule</h2>
+<p><a href="resources/FirewallRule.html">FirewallRule</a></p>
+<h2 id="firewalleventlog">FirewallEventLog</h2>
+<p><a href="resources/FirewallEventLog.html">FirewallEventLog</a></p>
+<h2 id="hostname">Hostname</h2>
+<p><a href="resources/Hostname.html">Hostname</a></p>
+<p>OSのホスト名を管理します。Router.metadata.nameや各リソース名とは別です。</p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#router">Router</a></li>
+<li><a href="#plugin">Plugin</a></li>
+<li><a href="#dynamicconfigsource">DynamicConfigSource</a></li>
+<li><a href="#dynamicoverridepolicy">DynamicOverridePolicy</a></li>
+<li><a href="#logsink">LogSink</a></li>
+<li><a href="#telemetry">Telemetry</a></li>
+<li><a href="#observabilitypipeline">ObservabilityPipeline</a></li>
+<li><a href="#logretention">LogRetention</a></li>
+<li><a href="#sysctl">Sysctl</a></li>
+<li><a href="#sysctlprofile">SysctlProfile</a></li>
+<li><a href="#package">Package</a></li>
+<li><a href="#ntpclient">NTPClient</a></li>
+<li><a href="#ntpserver">NTPServer</a></li>
+<li><a href="#webconsole">WebConsole</a></li>
+<li><a href="#controlapi">ControlAPI</a></li>
+<li><a href="#routerdcluster">RouterdCluster</a></li>
+<li><a href="#interface">Interface</a></li>
+<li><a href="#pppoesession">PPPoESession</a></li>
+<li><a href="#wireguardinterface">WireGuardInterface</a></li>
+<li><a href="#wireguardpeer">WireGuardPeer</a></li>
+<li><a href="#tailscalenode">TailscaleNode</a></li>
+<li><a href="#ipsecconnection">IPsecConnection</a></li>
+<li><a href="#vrf">VRF</a></li>
+<li><a href="#vxlantunnel">VXLANTunnel</a></li>
+<li><a href="#ipv4staticaddress">IPv4StaticAddress</a></li>
+<li><a href="#virtualaddress">VirtualAddress</a></li>
+<li><a href="#bgprouter">BGPRouter</a></li>
+<li><a href="#bgppeer">BGPPeer</a></li>
+<li><a href="#bgpdynamicpeer">BGPDynamicPeer</a></li>
+<li><a href="#bfd">BFD</a></li>
+<li><a href="#dhcpv4client">DHCPv4Client</a></li>
+<li><a href="#clusternetworkroute">ClusterNetworkRoute</a></li>
+<li><a href="#dhcpv4server">DHCPv4Server</a></li>
+<li><a href="#dhcpv4reservation">DHCPv4Reservation</a></li>
+<li><a href="#dhcpv6address">DHCPv6Address</a></li>
+<li><a href="#ipv6raaddress">IPv6RAAddress</a></li>
+<li><a href="#dhcpv6prefixdelegation">DHCPv6PrefixDelegation</a></li>
+<li><a href="#ipv6delegatedaddress">IPv6DelegatedAddress</a></li>
+<li><a href="#dhcpv6information">DHCPv6Information</a></li>
+<li><a href="#ipv6routeradvertisement">IPv6RouterAdvertisement</a></li>
+<li><a href="#dhcpv6server">DHCPv6Server</a></li>
+<li><a href="#dhcpv4serverleasesync">DHCPv4ServerLeaseSync</a></li>
+<li><a href="#dhcpv6serverleasesync">DHCPv6ServerLeaseSync</a></li>
+<li><a href="#dhcpv6prefixdelegationleasesync">DHCPv6PrefixDelegationLeaseSync</a></li>
+<li><a href="#dhcpv4relay">DHCPv4Relay</a></li>
+<li><a href="#selfaddresspolicy">SelfAddressPolicy</a></li>
+<li><a href="#dnszone">DNSZone</a></li>
+<li><a href="#dnsresolver">DNSResolver</a></li>
+<li><a href="#dnsforwarder">DNSForwarder</a></li>
+<li><a href="#dnsupstream">DNSUpstream</a></li>
+<li><a href="#dslitetunnel">DSLiteTunnel</a></li>
+<li><a href="#tunnelinterface">TunnelInterface</a></li>
+<li><a href="#overlaypeer">OverlayPeer</a></li>
+<li><a href="#hybridroute">HybridRoute</a></li>
+<li><a href="#cloudproviderprofile">CloudProviderProfile</a></li>
+<li><a href="#provideractionpolicy">ProviderActionPolicy</a></li>
+<li><a href="#eventgroup">EventGroup</a></li>
+<li><a href="#eventpeer">EventPeer</a></li>
+<li><a href="#eventsubscription">EventSubscription</a></li>
+<li><a href="#federationslo">FederationSLO</a></li>
+<li><a href="#mobilitypool">MobilityPool</a></li>
+<li><a href="#samnodeset">SAMNodeSet</a></li>
+<li><a href="#samenrollmentpolicy">SAMEnrollmentPolicy</a></li>
+<li><a href="#samenrollmentclaim">SAMEnrollmentClaim</a></li>
+<li><a href="#samenrollmentclient">SAMEnrollmentClient</a></li>
+<li><a href="#samtransportprofile">SAMTransportProfile</a></li>
+<li><a href="#samsubnetpolicy">SAMSubnetPolicy</a></li>
+<li><a href="#ipv4route">IPv4Route</a></li>
+<li><a href="#healthcheck">HealthCheck</a></li>
+<li><a href="#egressroutepolicy">EgressRoutePolicy</a></li>
+<li><a href="#eventrule">EventRule</a></li>
+<li><a href="#derivedevent">DerivedEvent</a></li>
+<li><a href="#nat44rule">NAT44Rule</a></li>
+<li><a href="#nat44flowdnatpinhole">NAT44FlowDNATPinhole</a></li>
+<li><a href="#nat44sessionsync">NAT44SessionSync</a></li>
+<li><a href="#managementaccess">ManagementAccess</a></li>
+<li><a href="#portforward">PortForward</a></li>
+<li><a href="#ingressservice">IngressService</a></li>
+<li><a href="#ipaddressset">IPAddressSet</a></li>
+<li><a href="#localserviceredirect">LocalServiceRedirect</a></li>
+<li><a href="#firewallflowpinhole">FirewallFlowPinhole</a></li>
+<li><a href="#trafficflowlog">TrafficFlowLog</a></li>
+<li><a href="#firewallzone">FirewallZone</a></li>
+<li><a href="#firewallpolicy">FirewallPolicy</a></li>
+<li><a href="#clientpolicy">ClientPolicy</a></li>
+<li><a href="#firewallrule">FirewallRule</a></li>
+<li><a href="#firewalleventlog">FirewallEventLog</a></li>
+<li><a href="#hostname">Hostname</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/reference/resources.md">GitHub</a></div></footer></body></html>

@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OpenTelemetry dashboards · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/operations/otel-dashboards.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/operations/otel-dashboards.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/operations/otel-dashboards.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/operations/otel-dashboards.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/operations/otel-dashboards.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="opentelemetry-dashboards">OpenTelemetry dashboards</h1>
+<p>routerd exports metrics with the <code>routerd.&lt;domain&gt;.&lt;metric&gt;</code> naming pattern.
+Use these starter panels in Grafana, OpenObserve, or any OTLP metrics backend:</p>
+<table>
+<thead>
+<tr>
+<th>Panel</th>
+<th>Metric</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Controller dry-run count</td>
+<td><code>routerd.controller.dry_run.count</code></td>
+</tr>
+<tr>
+<td>Resource phases</td>
+<td><code>routerd.resource.phase.count</code> grouped by <code>routerd.resource.phase</code></td>
+</tr>
+<tr>
+<td>Active DHCP leases</td>
+<td><code>routerd.dhcp.lease.active</code> grouped by <code>network.address.family</code></td>
+</tr>
+<tr>
+<td>Sticky DHCP holds</td>
+<td><code>routerd.dhcp.sticky.held</code> grouped by <code>network.address.family</code></td>
+</tr>
+<tr>
+<td>Active clients</td>
+<td><code>routerd.client.active.count</code></td>
+</tr>
+<tr>
+<td>BGP peers and prefixes</td>
+<td><code>routerd.bgp.peer.established</code> / <code>routerd.bgp.prefix.accepted</code></td>
+</tr>
+<tr>
+<td>VIP and ingress failover</td>
+<td><code>routerd.vip.active</code> / <code>routerd.ingress.service.active</code> / <code>routerd.ingress.backend.healthy</code></td>
+</tr>
+<tr>
+<td>Conntrack usage</td>
+<td><code>routerd.conntrack.count</code> / <code>routerd.conntrack.max</code></td>
+</tr>
+<tr>
+<td>Firewall denies</td>
+<td><code>routerd.firewall.deny.total</code> grouped by <code>network.protocol.name</code></td>
+</tr>
+</tbody>
+</table>
+<p>Resource attributes include <code>service.name</code>, <code>service.version</code>, <code>host.name</code>,
+<code>routerd.host.role</code>, and <code>routerd.os</code>.</p>
+<p>Example PromQL-style queries:</p>
+<pre><code class="language-promql">routerd_resource_phase_count
+routerd_dhcp_lease_active{network_address_family=&quot;ipv4&quot;}
+routerd_dhcp_sticky_held
+rate(routerd_firewall_deny_total[5m])
+</code></pre></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul></ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/operations/otel-dashboards.md">GitHub</a></div></footer></body></html>

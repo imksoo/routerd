@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>高可用性 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/operations/high-availability.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/operations/high-availability.html" lang="en" hreflang="en">English</a><a href="/docs/ja/operations/high-availability.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/operations/high-availability.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/operations/high-availability.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="高可用性">高可用性</h1>
+<p><code>RouterdCluster</code> は、軽量なファイルベースのリースで、レンダラーと適用処理の動作を制御します。VIP の所有権とは分離しています。VIP をどのルーターが持つかは keepalived または CARP が決め、routerd はリースによって、ホスト設定を変更してよいノードを決めます。</p>
+<p>リーダーは <code>spec.leasePath</code> の排他ロックを保持し、<code>spec.leaseTTL</code> が切れる前にリースを更新します。スタンバイのノードは、観測のためにコントローラーチェーンを動かし続けますが、状態を変更するコントローラーは dry-run モードに強制されます。one-shot apply モードでは、通常どおり計画を作成し、クラスターの状態を記録したうえで apply を skip します。</p>
+<p>設定例:</p>
+<pre><code class="language-yaml">apiVersion: system.routerd.net/v1alpha1
+kind: RouterdCluster
+metadata:
+  name: edge-ha
+spec:
+  peers:
+    - routerd-01.lain.local
+    - routerd-02.lain.local
+  leaseTTL: 30s
+  leasePath: /var/lib/routerd/ha-lease
+</code></pre>
+<p>同一ホスト上で routerd プロセスを 1 つだけにしたい場合は、ローカルパスで十分です。複数ホストの間で 1 つの適用ノードを選びたい場合は、共有ファイルシステム上のパスを使います。ファイルシステムは advisory lock が正しく動作する必要があります。動作しない場合は、このリソースはステータスの記録だけに使い、実際の apply サービスは 1 台のノードだけで有効にしてください。</p>
+<p>ステータスのフィールド:</p>
+<table>
+<thead>
+<tr>
+<th>フィールド</th>
+<th>意味</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>phase</code></td>
+<td><code>Leader</code> または <code>Standby</code></td>
+</tr>
+<tr>
+<td><code>identity</code></td>
+<td>ローカルの routerd 識別情報（デフォルトはホスト名）</td>
+</tr>
+<tr>
+<td><code>holder</code></td>
+<td>現在のリース保持者</td>
+</tr>
+<tr>
+<td><code>expiresAt</code></td>
+<td>リースの有効期限</td>
+</tr>
+<tr>
+<td><code>leasePath</code></td>
+<td>リースファイルのパス</td>
+</tr>
+</tbody>
+</table>
+<p>最小構成は <code>examples/ha-2-node.yaml</code> にあります。</p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul></ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/operations/high-availability.md">GitHub</a></div></footer></body></html>

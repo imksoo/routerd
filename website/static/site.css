@@ -335,3 +335,24 @@ nav {
 }
 
 }
+
+.doclayout { display:grid; grid-template-columns:minmax(0,1fr) 220px; gap:48px; padding-block:40px 64px; align-items:start }
+.document { min-width:0; line-height:1.85; overflow-wrap:anywhere }
+.document h1 { font-size:34px; line-height:1.35; margin-top:0 }
+.document h2 { margin-top:2em; border-bottom:1px solid #dde5ed; padding-bottom:.3em }
+.document h3 { margin-top:1.6em }
+.document a { color:#147581; text-decoration:underline; text-underline-offset:3px }
+.document pre { background:#112538; color:#e0edf5; border-radius:9px; margin-block:20px; overflow:auto }
+.document code { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:.88em }
+.document :not(pre)>code { background:#e8eef3; padding:2px 5px; border-radius:4px }
+.document table { border-collapse:collapse; display:block; overflow:auto; margin-block:20px; font-size:14px }
+.document th,.document td { border:1px solid #d8e2ec; padding:10px 14px; vertical-align:top; min-width:150px }
+.document th { background:#eaf0f6; text-align:left }
+.document img { max-width:100% }
+.document blockquote { margin-inline:0; border-left:3px solid #16818c; padding-left:18px; color:#53677c }
+.doccontents { position:sticky; top:24px; font-size:13px; max-height:calc(100vh - 48px); overflow:auto }
+.doccontents ul { list-style:none; padding-left:14px }
+.doccontents>.toc>ul { padding-left:0 }
+.doccontents li { margin-block:9px }
+.doccontents a { color:#53677c }
+@media(max-width:900px) { .doclayout { grid-template-columns:minmax(0,1fr); gap:20px } .doccontents { position:static; grid-row:1; max-height:none } .document h1 { font-size:28px } }

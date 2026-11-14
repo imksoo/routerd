@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Private DNS upstreams · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/how-to/dns-private-upstream.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/how-to/dns-private-upstream.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/how-to/dns-private-upstream.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/how-to/dns-private-upstream.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/dns-private-upstream.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="private-dns-upstreams">Private DNS upstreams</h1>
+<h2 id="scenario">Scenario</h2>
+<p>You want the resolver on the router to:</p>
+<ul>
+<li>Forward queries for the access network's internal zones (e.g. an ISP's AFTR FQDN, an enterprise intranet domain) to a specific DNS server learned dynamically.</li>
+<li>Use a private encrypted DNS provider (DoH / DoT) as the default upstream.</li>
+<li>Keep a fast plain-DNS fallback if the encrypted upstream becomes unhealthy.</li>
+<li>Avoid exposing provider account IDs or private endpoints in shared examples.</li>
+</ul>
+<h2 id="how-routerd-solves-it">How routerd solves it</h2>
+<p><code>DNSResolver</code> runs <code>routerd-dns-resolver</code>. The daemon listens on UDP/TCP. <code>DNSForwarder</code> resources attached to the resolver define the ordered match rules, and <code>DNSUpstream</code> resources define reusable upstream endpoints.</p>
+<table>
+<thead>
+<tr>
+<th>Scheme</th>
+<th>Protocol</th>
+<th>Default port</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>https://</code></td>
+<td>DNS over HTTPS</td>
+<td>URL-dependent</td>
+</tr>
+<tr>
+<td><code>tls://</code></td>
+<td>DNS over TLS</td>
+<td>853</td>
+</tr>
+<tr>
+<td><code>udp://</code></td>
+<td>Plain DNS over UDP</td>
+<td>53</td>
+</tr>
+<tr>
+<td><code>tcp://</code></td>
+<td>Plain DNS over TCP</td>
+<td>53</td>
+</tr>
+</tbody>
+</table>
+<p>The order in <code>DNSForwarder.spec.upstreams</code> is the priority order. routerd tries the highest-priority upstream that is healthy, and falls back through the list when one fails.</p>
+<p><code>DNSUpstream.spec.addressFrom</code> lets the upstream address list come from another resource's status. This is the mechanism for using DNS servers learned through DHCPv6 information request.</p>
+<h2 id="conditional-forwarding-example">Conditional forwarding example</h2>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSResolver
+  metadata:
+    name: lan-resolver
+  spec:
+    listen:
+      - name: lan
+        addresses:
+          - 192.0.2.1
+        port: 53
+        sources:
+          - local-zone
+          - access-network
+          - provider-bootstrap
+          - default
+    cache:
+      enabled: true
+      maxEntries: 10000
+      minTTL: 60s
+      maxTTL: 24h
+      negativeTTL: 30s
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSForwarder
+  metadata:
+    name: local-zone
+  spec:
+    resolver: DNSResolver/lan-resolver
+    match: [lan.example.org]
+    zoneRefs: [DNSZone/lan]
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSForwarder
+  metadata:
+    name: access-network
+  spec:
+    resolver: DNSResolver/lan-resolver
+    match: [transix.jp, corp.example.com]
+    upstreams: [DNSUpstream/access-network]
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSUpstream
+  metadata:
+    name: access-network
+  spec:
+    protocol: udp
+    addressFrom:
+      - resource: DHCPv6Information/wan-info
+        field: dnsServers
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSForwarder
+  metadata:
+    name: provider-bootstrap
+  spec:
+    resolver: DNSResolver/lan-resolver
+    match: [dns.example-provider.net]
+    upstreams: [DNSUpstream/cloudflare-udp, DNSUpstream/google-udp]
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSForwarder
+  metadata:
+    name: default
+  spec:
+    resolver: DNSResolver/lan-resolver
+    match: [&quot;.&quot;]
+    upstreams: [DNSUpstream/provider-doh, DNSUpstream/provider-dot, DNSUpstream/cloudflare-udp]
+    healthcheck:
+      interval: 15s
+      timeout: 3s
+      failThreshold: 3
+      passThreshold: 2
+    dnssecValidate: true
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSUpstream
+  metadata:
+    name: provider-doh
+  spec:
+    protocol: doh
+    address: dns.example-provider.net
+    path: /dns-query
+    sourceInterface: ens18
+    bootstrap: [1.1.1.1, 2606:4700:4700::1111]
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSUpstream
+  metadata:
+    name: provider-dot
+  spec:
+    protocol: dot
+    address: dns.example-provider.net
+    sourceInterface: ens18
+    bootstrap: [1.1.1.1, 2606:4700:4700::1111]
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSUpstream
+  metadata:
+    name: cloudflare-udp
+  spec:
+    protocol: udp
+    address: 1.1.1.1
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSUpstream
+  metadata:
+    name: google-udp
+  spec:
+    protocol: udp
+    address: 8.8.8.8
+</code></pre>
+<h2 id="nextdns-with-a-one-second-query-deadline">NextDNS with a one-second query deadline</h2>
+<p>Use the following resources with an existing <code>DNSResolver/lan-resolver</code>.
+The complete, loopback-only example is
+<a href="/examples/dns-nextdns-failover.yaml"><code>examples/dns-nextdns-failover.yaml</code></a>.
+Replace <code>YOUR_PROFILE_ID</code> only in your local configuration.</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSForwarder
+  metadata:
+    name: default
+  spec:
+    resolver: DNSResolver/lan-resolver
+    match: [&quot;.&quot;]
+    queryTimeout: 1s
+    upstreams: [DNSUpstream/nextdns, DNSUpstream/cloudflare]
+    healthcheck:
+      interval: 15s
+      timeout: 3s
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSUpstream
+  metadata:
+    name: nextdns
+  spec:
+    protocol: doh
+    address: dns.nextdns.io
+    path: /YOUR_PROFILE_ID
+    bootstrap: [1.1.1.1]
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSUpstream
+  metadata:
+    name: cloudflare
+  spec:
+    protocol: doh
+    address: cloudflare-dns.com
+    path: /dns-query
+    bootstrap: [1.1.1.1]
+</code></pre>
+<p>For an uncached query, NextDNS is preferred when healthy. If it does not respond
+within one second, or the attempt fails, routerd tries the explicitly listed
+Cloudflare DoH endpoint. It does not wait for the background health-check
+failure threshold. A valid <code>NXDOMAIN</code> or other valid answer does not trigger a
+switch. Cloudflare does <strong>not</strong> apply your NextDNS filtering or logging policy.</p>
+<p><code>queryTimeout</code> applies separately to each candidate; two attempts can take about
+two seconds plus local processing. Without it, <code>healthcheck.timeout</code> remains the
+query deadline (default <code>3s</code>). In a LAN → core chain, configure the outer timeout
+with room for the inner attempts. Exhausting the candidates returns uncached
+<code>SERVFAIL</code> without trying a different forwarder or public default source.</p>
+<h2 id="provider-bootstrap">Provider bootstrap</h2>
+<p>Some private DNS providers serve their resolver endpoint from a domain that the resolver itself is going to use. If a host tries to resolve that provider name through the provider, the query loops or fails before the resolver is healthy.</p>
+<p>Add a conditional source for the provider domain that points to a public resolver or to access-network DNS. Keep account IDs (e.g. provider profile IDs) out of shared examples; put them only in your local secrets file or in a per-host YAML overlay.</p>
+<p>The <code>DNSUpstream.spec.bootstrap</code> field provides the same protection at a finer granularity: it specifies which resolvers to use for resolving the upstream endpoint name itself, before the encrypted transport is established. Use <code>bootstrapFrom</code> when those resolver addresses come from another resource status, such as DHCPv6-provided DNS servers.</p>
+<h2 id="interface-binding">Interface binding</h2>
+<p><code>DNSUpstream.spec.sourceInterface</code> binds outgoing DNS queries to a specific Linux interface name. Use a literal OS interface name such as <code>ens18</code>. If the interface is created by another resource (e.g. a tunnel), use resource ordering and keep the resolver pending until the interface exists.</p>
+<p>FreeBSD does not currently provide the same <code>SO_BINDTODEVICE</code> enforcement, so platform-specific docs do not promise identical behaviour there.</p>
+<h2 id="see-also">See also</h2>
+<ul>
+<li><a href="dns-local-zone.html">Local DNS zones</a></li>
+<li><a href="../concepts/dns-resolver.html">DNS resolver concept</a></li>
+</ul></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#scenario">Scenario</a></li>
+<li><a href="#how-routerd-solves-it">How routerd solves it</a></li>
+<li><a href="#conditional-forwarding-example">Conditional forwarding example</a></li>
+<li><a href="#nextdns-with-a-one-second-query-deadline">NextDNS with a one-second query deadline</a></li>
+<li><a href="#provider-bootstrap">Provider bootstrap</a></li>
+<li><a href="#interface-binding">Interface binding</a></li>
+<li><a href="#see-also">See also</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/how-to/dns-private-upstream.md">GitHub</a></div></footer></body></html>

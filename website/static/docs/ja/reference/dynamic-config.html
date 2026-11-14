@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Dynamic config · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/reference/dynamic-config.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/reference/dynamic-config.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/dynamic-config.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/reference/dynamic-config.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/dynamic-config.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="dynamic-config">Dynamic config</h1>
+<p>Dynamic config は、信頼されたローカルソースが startup-config を編集せずにランタイムの
+意図を提供する仕組みです。routerd は startup YAML、アクティブな dynamic part、
+アクティブな mask から一つの effective-config を導出します。effective-config が唯一の
+リコンサイル対象です。</p>
+<p>このページでは CloudEdge MVP 向けの dynamic-config API の形状を説明します。
+プラグインランナーは検証済みのプラグイン出力を <code>DynamicConfigPart</code> レコードとして保存
+できます。<code>actionPlans</code> 由来のプロバイダー action は dynamic config 内で不活性のまま
+保持され、effective config にはマージされません。別の provider-action エンジンが
+アクティブな part からのみインポートし、<code>ProviderActionPolicy</code>、承認、
+エグゼキュータープラグインのゲートを経てのみ実行します。</p>
+<h2 id="dynamicconfigpart">DynamicConfigPart</h2>
+<p><code>DynamicConfigPart</code> は、動的ソースからの検証済みランタイムフラグメントです。
+ソースは通常の <code>api.Resource</code> オブジェクトとディレクティブを提供できます。Mobility
+controller は型付き <code>mobilityDataplane</code> 計画、<code>fibVerdicts</code>、fact-side の
+<code>arpObserverIntents</code> も保存します。これらは controller が出力するものであり、plugin
+が記述する resource ではありません。</p>
+<pre><code class="language-yaml">apiVersion: config.routerd.net/v1alpha1
+kind: DynamicConfigPart
+metadata:
+  name: oci-inventory
+spec:
+  source: Plugin/oci-inventory
+  generation: 12
+  observedAt: &quot;2026-05-29T12:00:00Z&quot;
+  expiresAt: &quot;2026-05-29T12:05:00Z&quot;
+  digest: sha256:...
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4Route
+      metadata: { name: cloud-app-static-fallback }
+      spec: { destination: 10.0.1.123/32, gateway: 192.0.2.1 }
+  directives:
+    - op: mask
+      target: { apiVersion: net.routerd.net/v1alpha1, kind: IPv4Route, name: cloud-app-static-fallback }
+      reason: &quot;provider inventory confirms the dynamic route&quot;
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>フィールド</th>
+<th>意味</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.source</code></td>
+<td>安定したソース識別子。例: <code>Plugin/oci-inventory</code>。</td>
+</tr>
+<tr>
+<td><code>spec.generation</code></td>
+<td>単調増加のソース世代番号。説明と順序付けに使用。</td>
+</tr>
+<tr>
+<td><code>spec.observedAt</code></td>
+<td>ソースが入力を観測した RFC3339 時刻。</td>
+</tr>
+<tr>
+<td><code>spec.expiresAt</code></td>
+<td>この part が非アクティブになる RFC3339 時刻。</td>
+</tr>
+<tr>
+<td><code>spec.digest</code></td>
+<td>検証済み part ペイロードのダイジェスト。</td>
+</tr>
+<tr>
+<td><code>spec.resources</code></td>
+<td>アクティブな間 effective-config に提供されるリソース。</td>
+</tr>
+<tr>
+<td><code>spec.directives</code></td>
+<td>マージディレクティブ。現在は <code>op: mask</code> のみ。</td>
+</tr>
+<tr>
+<td><code>spec.actionPlans</code></td>
+<td>プロバイダー action の提案。リソースではない。provider-action エンジンがアクティブな part からのみインポートし、実行前に独自のゲートを適用する。</td>
+</tr>
+</tbody>
+</table>
+<p>プラグインは <code>PluginResult.status.ttl</code> で TTL duration を返します。routerd はそれを
+<code>observedAt</code> に対して解決し、保存される <code>expiresAt</code> にします。</p>
+<h2 id="dynamicconfigsource">DynamicConfigSource</h2>
+<p><code>DynamicConfigSource</code> は、一つのプラグインを dynamic config 生成にバインドする
+startup-config ポリシーです。</p>
+<pre><code class="language-yaml">apiVersion: plugin.routerd.net/v1alpha1
+kind: DynamicConfigSource
+metadata: { name: oci-inventory }
+spec:
+  pluginRef: oci-inventory
+  ttl: 300s
+  mergePolicy:
+    conflict: reject
+</code></pre>
+<p>MVP のマージポリシーは <code>conflict: reject</code> のみをサポートします。</p>
+<h2 id="dynamicconfigdirective">DynamicConfigDirective</h2>
+<p>MVP は以下のディレクティブ操作をサポートします。</p>
+<table>
+<thead>
+<tr>
+<th>操作</th>
+<th>意味</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>mask</code></td>
+<td>ディレクティブがアクティブな間、一致する startup-config リソースを抑制する。</td>
+</tr>
+</tbody>
+</table>
+<p>ディレクティブのターゲットは <code>apiVersion</code>、<code>kind</code>、<code>name</code> で識別します。
+ターゲットは意図的に完全一致です。ワイルドカード mask は MVP のスコープ外です。</p>
+<h2 id="dynamicoverridepolicy">DynamicOverridePolicy</h2>
+<p><code>DynamicOverridePolicy</code> は、ソースが選択したリソースに対して動的ディレクティブ
+を使用する権限を付与します。プラグインは mask を提案できますが、mask がアクティブになる
+のはポリシーがそのソース、操作、ターゲットを許可している場合のみです。</p>
+<pre><code class="language-yaml">apiVersion: config.routerd.net/v1alpha1
+kind: DynamicOverridePolicy
+metadata: { name: allow-cloud-plugin-mask }
+spec:
+  allow:
+    - source: Plugin/oci-inventory
+      operations: [mask]
+      targets:
+        - { apiVersion: net.routerd.net/v1alpha1, kind: IPv4Route, name: cloud-app-static-fallback }
+</code></pre>
+<p>ポリシーは startup-config の意図です。動的ソースが自身にオーバーライド権限を
+付与することはできません。</p>
+<h2 id="マージアルゴリズム">マージアルゴリズム</h2>
+<p>effective-config のマージは決定的です。</p>
+<ol>
+<li>startup-config を読み込み検証。</li>
+<li>状態データベースから検証済み dynamic part を読み込み。</li>
+<li><code>expiresAt</code> がマージ時刻以前の dynamic part を破棄。</li>
+<li>アクティブな dynamic part を <code>source</code>、次に <code>generation</code>、次に <code>metadata.name</code> で
+   ソートし、安定したレンダリングと診断を実現。</li>
+<li>アクティブなディレクティブを <code>DynamicOverridePolicy</code> に照合して評価。</li>
+<li>許可されたアクティブ mask の対象となる startup リソースを抑制済みとしてマーク。</li>
+<li>抑制されていない startup リソースとアクティブな dynamic リソースから
+   effective-config を構築。</li>
+<li>リコンサイルまたはドライラン出力の前に、結果の effective-config を検証。</li>
+</ol>
+<p>競合ルール:</p>
+<ul>
+<li>動的リソースは、同じ <code>apiVersion</code>、<code>kind</code>、<code>metadata.name</code> の startup リソース
+  を置き換えてはならない。</li>
+<li>同一の識別子を持つ 2 つのアクティブな動的リソースは、ソース固有の所有権
+  ルールが後に定義されない限り競合する。</li>
+<li>不許可のディレクティブはマージでは無視され、検証または診断の所見として報告される。</li>
+<li>期限切れの動的 part はリソースも mask も提供しない。</li>
+</ul>
+<h2 id="mask-セマンティクス">mask セマンティクス</h2>
+<p>mask は抑制であり、削除ではありません。startup YAML は変更されず、git 履歴は運用者が
+所有したままで、一致するすべてのアクティブ mask が期限切れまたは削除されると静的
+リソースが再びアクティブになります。</p>
+<p>抑制されたリソースは以下のようなステータスを表示するべきです。</p>
+<pre><code class="language-yaml">status:
+  phase: Suppressed
+  maskedBy:
+    - Plugin/oci-inventory#12
+  maskedUntil: &quot;2026-05-29T12:05:00Z&quot;
+</code></pre>
+<p>複数の mask が同じリソースを対象とする場合、最後のアクティブ mask が期限切れになる
+までリソースは抑制され続けます。<code>maskedBy</code> はすべてのアクティブなソースと世代番号を
+リストし、<code>maskedUntil</code> はアクティブ mask のうち最も遅い <code>expiresAt</code> です。</p>
+<p>MVP の期限切れ動作は <code>onExpire=restoreStatic</code> です。mask が期限切れになると、
+routerd は次のマージで startup-config リソースを effective-config に復元します。
+startup リソースが変更されていないため、破壊的なクリーンアップステップはありません。</p>
+<h2 id="cli">CLI</h2>
+<p>現在の運用者向けインターフェースは以下の通りです。</p>
+<pre><code class="language-text">routerctl dynamic list
+routerctl dynamic describe &lt;source-or-part&gt;
+routerctl dynamic render
+routerctl dynamic diff
+routerctl plugin list
+routerctl plugin run &lt;name&gt; [--dry-run]
+</code></pre>
+<p><code>dynamic list</code> はアクティブおよび期限切れの part を表示します。<code>dynamic describe</code> は
+ソース、世代番号、ダイジェスト、リソース、ディレクティブ、有効期限を説明します。
+<code>dynamic render</code> は effective-config を出力します。<code>dynamic diff</code> は startup-config と
+effective-config を比較します。<code>plugin run --dry-run</code> は状態データベースに書き込まず
+に候補の dynamic part を出力します。</p>
+<p>ハイブリッドクラウドエッジ設計 および
+<a href="/docs/ja/plugin-protocol.html">プラグインプロトコル</a> を参照してください。</p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#dynamicconfigpart">DynamicConfigPart</a></li>
+<li><a href="#dynamicconfigsource">DynamicConfigSource</a></li>
+<li><a href="#dynamicconfigdirective">DynamicConfigDirective</a></li>
+<li><a href="#dynamicoverridepolicy">DynamicOverridePolicy</a></li>
+<li><a href="#マージアルゴリズム">マージアルゴリズム</a></li>
+<li><a href="#mask-セマンティクス">mask セマンティクス</a></li>
+<li><a href="#cli">CLI</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/reference/dynamic-config.md">GitHub</a></div></footer></body></html>

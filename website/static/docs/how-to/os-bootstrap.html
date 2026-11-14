@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bootstrap a router host declaratively · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/how-to/os-bootstrap.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/how-to/os-bootstrap.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/how-to/os-bootstrap.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/how-to/os-bootstrap.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/os-bootstrap.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="bootstrap-a-router-host-declaratively">Bootstrap a router host declaratively</h1>
+<p>routerd can describe most first-boot host preparation in the router YAML. The
+goal is not to replace an installer, but to keep the router-specific drift out
+of ad hoc shell history.</p>
+<h2 id="package-dependencies">Package Dependencies</h2>
+<p>routerd derives normal OS package dependencies from the resources in the
+config. Use <code>Package</code> only as a narrow override for dependencies that cannot
+yet be derived.</p>
+<pre><code class="language-yaml">apiVersion: system.routerd.net/v1alpha1
+kind: Package
+metadata:
+  name: router-service-dependencies
+spec:
+  packages:
+    - os: ubuntu
+      manager: apt
+      names:
+        - dnsmasq
+        - nftables
+        - conntrack
+        - kmod
+        - wireguard-tools
+        - tailscale
+    - os: alpine
+      manager: apk
+      names:
+        - dnsmasq
+        - nftables
+        - conntrack-tools
+        - iproute2
+        - wireguard-tools
+        - tailscale
+    - os: freebsd
+      manager: pkg
+      names:
+        - dnsmasq
+        - wireguard-tools
+        - mpd5
+</code></pre>
+<h2 id="kernel-modules">Kernel modules</h2>
+<p>Linux kernel modules are derived from the router resources that need them, such
+as NAT, firewall logging, traffic flow logging, and WireGuard. <code>KernelModule</code>
+is not a user-facing config kind.</p>
+<h2 id="sysctl-profile">Sysctl profile</h2>
+<p>routerd derives forwarding, conntrack accounting, reverse-path-filter, redirect,
+TCP, and RA sysctls from router resources. Do not list <code>SysctlProfile</code> in normal
+configs.</p>
+<p>Use <code>SysctlProfile</code> only as a narrow escape hatch for a platform-specific kernel
+setting that routerd cannot yet derive. Override only the values that differ
+from the profile.</p>
+<pre><code class="language-yaml">apiVersion: system.routerd.net/v1alpha1
+kind: SysctlProfile
+metadata:
+  name: router-runtime
+spec:
+  profile: router-linux
+  runtime: true
+  persistent: true
+  overrides:
+    net.netfilter.nf_conntrack_udp_timeout: &quot;60&quot;
+</code></pre>
+<h2 id="existing-host-networking">Existing host networking</h2>
+<p>routerd derives systemd-networkd and systemd-resolved adoption drop-ins from
+<code>Interface</code>, DHCP, DNS, and RA resources. Do not declare those drop-ins in YAML.</p>
+<p>On Ubuntu 26.04 LTS, systemd-networkd may bind a DHCPv6 client socket on an
+interface even when the installer netplan sets <code>dhcp6: false</code>, depending on RA
+state. For routerd-owned WAN/LAN links, also set <code>accept-ra: false</code> during OS
+bootstrap and leave only IPv6 link-local addressing at the installer netplan
+layer. This keeps UDP port 546 available for <code>routerd-dhcpv6-client</code> and avoids
+the install-time network policy competing with routerd's DHCPv6-PD and
+RA/DHCPv6 renderers. Keep management DHCP on a separate management interface.</p>
+<pre><code class="language-yaml">network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    wan0:
+      dhcp4: false
+      dhcp6: false
+      accept-ra: false
+      link-local: [ipv6]
+      optional: true
+    lan0:
+      dhcp4: false
+      dhcp6: false
+      accept-ra: false
+      link-local: [ipv6]
+      optional: true
+    mgmt0:
+      dhcp4: true
+      dhcp6: false
+      accept-ra: false
+      link-local: [ipv6]
+      optional: true
+</code></pre>
+<p>If the WAN needs an RA-learned IPv6 default route for provider DNS or AFTR
+resolution, declare the WAN interface and the DHCPv6/RA resources. routerd will
+derive the required systemd-networkd drop-in while keeping systemd-networkd's
+DHCP clients out of the way.</p>
+<p>routerd-managed service units and init scripts are generated from the owning
+resource kinds. Do not declare local service-manager units in routerd config;
+write the desired router resources and let the renderer derive the host
+artifacts.</p>
+<p>On Alpine/OpenRC, <code>routerd render alpine --out-dir &lt;dir&gt;</code> can render OpenRC
+scripts for routerd, managed dnsmasq, <code>routerd-healthcheck</code>, DNS resolver,
+firewall logger, PPPoE, and Tailscale. During apply, routerd installs those
+scripts under <code>/etc/init.d</code> and uses <code>rc-update</code> and <code>rc-service</code> only when the
+current OpenRC state needs a change.
+Synthesized DNS resolver scripts are rendered but not enabled or started until
+runtime config materialization is available outside the controller loop.
+It does not emulate systemd-only concepts. systemd-networkd/resolved drop-ins,
+systemd sandboxing fields, and timesyncd ownership remain unsupported on OpenRC
+until they have native Alpine semantics.</p>
+<h2 id="apply-order">Apply order</h2>
+<p>For a remote router, keep the operational order conservative:</p>
+<ol>
+<li>Install the routerd binaries and a minimal config.</li>
+<li>Validate the full config.</li>
+<li>Run a dry-run apply.</li>
+<li>Confirm management interface and SSH are protected.</li>
+<li>Apply.</li>
+<li>Verify <code>routerctl get status</code>, forwarding, DNS, and the Web Console.</li>
+</ol></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#package-dependencies">Package Dependencies</a></li>
+<li><a href="#kernel-modules">Kernel modules</a></li>
+<li><a href="#sysctl-profile">Sysctl profile</a></li>
+<li><a href="#existing-host-networking">Existing host networking</a></li>
+<li><a href="#apply-order">Apply order</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/how-to/os-bootstrap.md">GitHub</a></div></footer></body></html>

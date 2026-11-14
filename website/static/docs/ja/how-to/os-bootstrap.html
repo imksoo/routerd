@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ルーターホストを宣言型でブートストラップする · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/how-to/os-bootstrap.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/how-to/os-bootstrap.html" lang="en" hreflang="en">English</a><a href="/docs/ja/how-to/os-bootstrap.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/how-to/os-bootstrap.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/os-bootstrap.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="ルーターホストを宣言型でブートストラップする">ルーターホストを宣言型でブートストラップする</h1>
+<p>routerd は、初回構築時に手作業になりがちなホスト準備を YAML へ寄せられます。インストーラーの代替ではなく、ルーター固有の差分を shell 履歴ではなく設定として残すための機能です。</p>
+<h2 id="パッケージ">パッケージ</h2>
+<p>routerd は、設定内のリソースから通常の OS パッケージ依存を自動で導出します。<code>Package</code> は、まだ導出できない依存だけを補う、狭いオーバーライドとして使います。</p>
+<pre><code class="language-yaml">apiVersion: system.routerd.net/v1alpha1
+kind: Package
+metadata:
+  name: router-service-dependencies
+spec:
+  packages:
+    - os: ubuntu
+      manager: apt
+      names:
+        - dnsmasq
+        - nftables
+        - conntrack
+        - kmod
+        - wireguard-tools
+        - tailscale
+    - os: freebsd
+      manager: pkg
+      names:
+        - dnsmasq
+        - wireguard-tools
+        - mpd5
+</code></pre>
+<h2 id="カーネルモジュール">カーネルモジュール</h2>
+<p>Linux のカーネルモジュールは、NAT、ファイアウォールログ、トラフィックフローログ、WireGuard などのリソースから自動で導出します。<code>KernelModule</code> は、利用者が直接書く設定 Kind ではありません。</p>
+<h2 id="sysctl">Sysctl</h2>
+<p>routerd は、forwarding、conntrack accounting、reverse path filter、redirect、TCP、RA の sysctl を、ルーターのリソースから自動で導出します。通常、設定に <code>SysctlProfile</code> を書く必要はありません。</p>
+<p><code>SysctlProfile</code> は、routerd がまだ導出できないプラットフォーム固有のカーネル設定を補う、狭い逃げ道としてだけ使います。差分だけを <code>overrides</code> で指定します。</p>
+<pre><code class="language-yaml">apiVersion: system.routerd.net/v1alpha1
+kind: SysctlProfile
+metadata:
+  name: router-runtime
+spec:
+  profile: router-linux
+  runtime: true
+  persistent: true
+  overrides:
+    net.netfilter.nf_conntrack_udp_timeout: &quot;60&quot;
+</code></pre>
+<h2 id="既存ホスト設定の引き継ぎ">既存ホスト設定の引き継ぎ</h2>
+<p>systemd-networkd や systemd-resolved の引き継ぎ用 drop-in は、<code>Interface</code>、DHCP、DNS、RA などのリソースから自動で導出します。DHCP、DNS、PPPoE、healthcheck、Tailscale などの routerd 管理ユニットも、それぞれのリソース Kind から生成されるため、重複して定義しないでください。</p>
+<p>Ubuntu 26.04 LTS では、RA の状態によっては、インストーラーが書いた netplan で <code>dhcp6: false</code> にしていても、
+systemd-networkd がインターフェース上で DHCPv6 クライアントのソケットを開くことがあります。
+routerd が所有する WAN/LAN リンクでは、OS のブートストラップ時に <code>accept-ra: false</code> も明示し、
+インストーラーの netplan レイヤーでは IPv6 のリンクローカルのみにしてください。
+こうすると、UDP ポート 546 を <code>routerd-dhcpv6-client</code> が使える状態に保てます。OS の初期ネットワーク設定が、routerd の DHCPv6-PD や RA/DHCPv6 の生成と競合するのを避けられます。
+管理用 DHCP は、別の管理インターフェースに残してください。</p>
+<pre><code class="language-yaml">network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    wan0:
+      dhcp4: false
+      dhcp6: false
+      accept-ra: false
+      link-local: [ipv6]
+      optional: true
+    lan0:
+      dhcp4: false
+      dhcp6: false
+      accept-ra: false
+      link-local: [ipv6]
+      optional: true
+    mgmt0:
+      dhcp4: true
+      dhcp6: false
+      accept-ra: false
+      link-local: [ipv6]
+      optional: true
+</code></pre>
+<p>プロバイダー DNS や AFTR の解決のために、WAN リンクで RA 由来の IPv6 デフォルト経路が必要な場合は、その WAN インターフェースと DHCPv6 / RA のリソースを宣言します。routerd は必要な systemd-networkd の drop-in を導出し、systemd-networkd の DHCP クライアントが競合しないようにします。</p>
+<h2 id="適用の順序">適用の順序</h2>
+<p>リモートのルーターでは、手順を堅実に進めてください。</p>
+<ol>
+<li>routerd のバイナリと最小限の設定をインストールする。</li>
+<li>完全な設定を検証する。</li>
+<li>dry-run で適用を試す。</li>
+<li>管理インターフェースと SSH が保護されていることを確認する。</li>
+<li>適用する。</li>
+<li><code>routerctl get status</code>、転送、DNS、Web 管理画面を確認する。</li>
+</ol></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#パッケージ">パッケージ</a></li>
+<li><a href="#カーネルモジュール">カーネルモジュール</a></li>
+<li><a href="#sysctl">Sysctl</a></li>
+<li><a href="#既存ホスト設定の引き継ぎ">既存ホスト設定の引き継ぎ</a></li>
+<li><a href="#適用の順序">適用の順序</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/how-to/os-bootstrap.md">GitHub</a></div></footer></body></html>

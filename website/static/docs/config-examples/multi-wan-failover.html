@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Multi-WAN IPv4 failover · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/config-examples/multi-wan-failover.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/config-examples/multi-wan-failover.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/config-examples/multi-wan-failover.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/config-examples/multi-wan-failover.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/config-examples/multi-wan-failover.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="multi-wan-ipv4-failover">Multi-WAN IPv4 failover</h1>
+<p>This example selects one IPv4 default route from two DS-Lite tunnels and a
+direct upstream-router IPv4 fallback. It does not configure PPPoE.</p>
+<p>The complete, validated YAML is in <code>examples/multi-wan-home.yaml</code>.</p>
+<h2 id="topology">Topology</h2>
+<pre><code class="language-mermaid">flowchart LR
+  internet((Internet))
+  wan[&quot;[1] wan access line&quot;]
+  router[&quot;[2] routerd host&quot;]
+  dsa[&quot;[3] DS-Lite A&quot;]
+  dsb[&quot;[4] DS-Lite B&quot;]
+  hgw[&quot;[5] HGW direct IPv4&quot;]
+  lan[&quot;[6] LAN clients&quot;]
+
+  internet --- dsa --- router
+  internet --- dsb --- router
+  internet --- hgw --- router
+  wan --- router --- lan
+</code></pre>
+<h2 id="diagram-map">Diagram map</h2>
+<table>
+<thead>
+<tr>
+<th>No.</th>
+<th>Meaning</th>
+<th>Main resources</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>[1]</td>
+<td>Physical access line used by all WAN candidates.</td>
+<td><code>Interface/wan</code>, <code>DHCPv4Client/wan-dhcpv4</code></td>
+</tr>
+<tr>
+<td>[2]</td>
+<td>Router selecting one default route.</td>
+<td><code>EgressRoutePolicy/ipv4-default</code></td>
+</tr>
+<tr>
+<td>[3]</td>
+<td>Primary DS-Lite candidate.</td>
+<td><code>DSLiteTunnel/ds-lite-a</code>, <code>HealthCheck/internet-a</code></td>
+</tr>
+<tr>
+<td>[4]</td>
+<td>Additional DS-Lite candidate.</td>
+<td><code>DSLiteTunnel/ds-lite-b</code>, <code>HealthCheck/internet-b</code></td>
+</tr>
+<tr>
+<td>[5]</td>
+<td>Direct upstream-router IPv4 fallback.</td>
+<td><code>DHCPv4Client/wan-dhcpv4</code></td>
+</tr>
+<tr>
+<td>[6]</td>
+<td>LAN clients using the selected egress path through NAT.</td>
+<td><code>NAT44Rule/lan-to-selected-wan</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="what-this-manages">What this manages</h2>
+<table>
+<thead>
+<tr>
+<th>Area</th>
+<th>routerd resources</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Egress paths</td>
+<td><code>DSLiteTunnel/*</code>, <code>DHCPv4Client/wan-dhcpv4</code></td>
+</tr>
+<tr>
+<td>Link readiness</td>
+<td><code>HealthCheck/internet-a</code>, <code>HealthCheck/internet-b</code></td>
+</tr>
+<tr>
+<td>Selection</td>
+<td><code>EgressRoutePolicy/ipv4-default</code></td>
+</tr>
+<tr>
+<td>Default route</td>
+<td>Derived by <code>EgressRoutePolicy/ipv4-default</code></td>
+</tr>
+<tr>
+<td>NAT</td>
+<td><code>NAT44Rule/lan-to-selected-wan</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="key-config">Key config</h2>
+<pre><code class="language-yaml"># [2] Choose the highest-weight candidate that is currently healthy.
+- kind: EgressRoutePolicy
+  metadata:
+    name: ipv4-default
+  spec:
+    family: ipv4
+    destinationCIDRs:
+      - 0.0.0.0/0
+    selection: highest-weight-ready
+    candidates:
+      # [3] Primary DS-Lite candidate.
+      - name: ds-lite-a
+        deviceFrom:
+          resource: DSLiteTunnel/ds-lite-a
+          field: device
+        gatewaySource: none
+        weight: 100
+        healthCheck: internet-a
+      # [4] Second DS-Lite candidate.
+      - name: ds-lite-b
+        deviceFrom:
+          resource: DSLiteTunnel/ds-lite-b
+          field: device
+        gatewaySource: none
+        weight: 80
+        healthCheck: internet-b
+      # [5] Direct HGW route is the last fallback in this example.
+      - name: hgw-direct
+        deviceFrom:
+          resource: Interface/wan
+          field: ifname
+        gatewaySource: dhcpv4
+        gatewayFrom:
+          resource: DHCPv4Client/wan-dhcpv4
+          field: gateway
+        weight: 40
+</code></pre>
+<h2 id="checks">Checks</h2>
+<pre><code class="language-bash">sudo routerd validate --config examples/multi-wan-home.yaml
+
+workdir=$(mktemp -d)
+sudo routerd apply --config examples/multi-wan-home.yaml --once --dry-run \
+  --state-file &quot;$workdir/state.db&quot; \
+  --status-file &quot;$workdir/status.json&quot;
+rm -rf &quot;$workdir&quot;
+</code></pre>
+<p>After the service is running, inspect <code>sudo routerctl describe
+EgressRoutePolicy/ipv4-default</code> and <code>ip route show default</code>. The policy
+controller owns the selected route; this example does not declare an
+<code>IPv4Route/default</code> resource.</p>
+<h2 id="operational-notes">Operational notes</h2>
+<ul>
+<li>Keep health checks conservative. Very short intervals can make a weak link flap.</li>
+<li>This exact example has no <code>hysteresis</code> value. Add one only after checking the
+  current API documentation and observing a real flap you need to dampen.</li>
+<li>Keep RFC1918 destinations excluded from NAT and policy routing unless you really want to NAT private routed networks.</li>
+</ul></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#topology">Topology</a></li>
+<li><a href="#diagram-map">Diagram map</a></li>
+<li><a href="#what-this-manages">What this manages</a></li>
+<li><a href="#key-config">Key config</a></li>
+<li><a href="#checks">Checks</a></li>
+<li><a href="#operational-notes">Operational notes</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/config-examples/multi-wan-failover.md">GitHub</a></div></footer></body></html>

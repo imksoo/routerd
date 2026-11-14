@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PPPoESession · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/reference/resources/PPPoESession.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/reference/resources/PPPoESession.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/reference/resources/PPPoESession.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/PPPoESession.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/PPPoESession.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="pppoesession">PPPoESession</h1>
+<p><a href="../resources.html#pppoesession">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<h2 id="yaml-definition">YAML definition</h2>
+<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: PPPoESession
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    acName: &quot;&lt;string&gt;&quot; # optional; string
+    authMethod: &quot;chap&quot; # optional; string; enum=[&quot;chap&quot;, &quot;pap&quot;, &quot;both&quot;]
+    defaultRoute: true # optional; boolean
+    enabled: true # optional; boolean
+    ifname: &quot;&lt;string&gt;&quot; # optional; string
+    interface: &quot;&lt;string&gt;&quot; # Required; string
+    ipv6: true # optional; boolean
+    lcpEchoFailure: 0 # optional; integer; minimum=0
+    lcpEchoInterval: 0 # optional; integer; minimum=0
+    lcpFailure: 0 # optional; integer; minimum=0
+    lcpInterval: 0 # optional; integer; minimum=0
+    managed: true # optional; boolean
+    mru: 576 # optional; integer; minimum=576; maximum=1500
+    mtu: 576 # optional; integer; minimum=576; maximum=1500
+    password: &quot;&lt;string&gt;&quot; # optional; string
+    passwordFile: &quot;&lt;string&gt;&quot; # optional; string
+    persist: true # optional; boolean
+    secretEncoding: &quot;plain&quot; # optional; string; enum=[&quot;plain&quot;]
+    serviceName: &quot;&lt;string&gt;&quot; # optional; string
+    usePeerDNS: true # optional; boolean
+    username: &quot;&lt;string&gt;&quot; # Required; string
+</code></pre>
+<p><a href="/examples/example-pppoe-ipv4-nat.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#yaml-definition">YAML definition</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/reference/resources/PPPoESession.md">GitHub</a></div></footer></body></html>

@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>资源模型 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/concepts/resource-model.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/concepts/resource-model.html" lang="en" hreflang="en">English</a><a href="/docs/ja/concepts/resource-model.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/concepts/resource-model.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/concepts/resource-model.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="资源模型">资源模型</h1>
+<p>routerd 的配置由最上层的 <code>Router</code> 以及其下并列的多个资源所构成。
+每个资源的格式与 Kubernetes 相近。</p>
+<pre><code class="language-yaml">apiVersion: net.routerd.net/v1alpha1
+kind: DHCPv6PrefixDelegation
+metadata:
+  name: wan-pd
+spec:
+  interface: wan
+</code></pre>
+<h2 id="公共字段">公共字段</h2>
+<ul>
+<li><code>apiVersion</code>：资源所属的 API 组与版本。</li>
+<li><code>kind</code>：资源的类别（Kind）。</li>
+<li><code>metadata.name</code>：在相同 <code>kind</code> 中唯一的名称。</li>
+<li><code>spec</code>：用户声明的意图。</li>
+<li><code>status</code>：routerd 或专属守护进程观测到的状态。</li>
+</ul>
+<p>配置文件中主要编写的是 <code>spec</code>。
+<code>status</code> 则通过控制 API、状态数据库，以及守护进程的 <code>/v1/status</code> 来确认。</p>
+<h2 id="api-组">API 组</h2>
+<p>routerd 使用以下 API 组。</p>
+<table>
+<thead>
+<tr>
+<th>组</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>routerd.net/v1alpha1</code></td>
+<td>最上层的 <code>Router</code></td>
+</tr>
+<tr>
+<td><code>net.routerd.net/v1alpha1</code></td>
+<td>接口、DHCP、DNS、路由、隧道、WAN 选择、连接流量记录</td>
+</tr>
+<tr>
+<td><code>firewall.routerd.net/v1alpha1</code></td>
+<td>防火墙区域、策略、规则、记录</td>
+</tr>
+<tr>
+<td><code>system.routerd.net/v1alpha1</code></td>
+<td>主机名、软件包、sysctl、网络接管、systemd 单元、NTP、日志转发、Web 管理界面</td>
+</tr>
+<tr>
+<td><code>plugin.routerd.net/v1alpha1</code></td>
+<td>受信任的本地插件</td>
+</tr>
+</tbody>
+</table>
+<p>不使用 <code>routerd.io</code> 这类临时组名称。</p>
+<h2 id="依赖关系">依赖关系</h2>
+<p>资源以名称互相引用。
+例如 <code>IPv6DelegatedAddress</code> 引用 <code>DHCPv6PrefixDelegation</code>，<code>DSLiteTunnel</code> 引用 <code>DHCPv6Information</code> 和 <code>DNSResolver</code> 的结果。</p>
+<p>当被引用的资源尚未就绪时，资源会维持在 <code>Pending</code> 状态。
+待引用资源就绪后，会依次进入 <code>Applied</code>、<code>Bound</code>、<code>Up</code>、<code>Installed</code>、<code>Healthy</code> 等阶段。</p>
+<h2 id="dependson">dependsOn</h2>
+<p>部分资源可通过 <code>dependsOn</code> 指定应用的前置条件。
+<code>dependsOn</code> 中需明确指定所引用的资源及其状态字段。</p>
+<pre><code class="language-yaml">dependsOn:
+  - resource: DHCPv6PrefixDelegation/wan-pd
+    phase: Bound
+  - resource: Interface/lan
+    phase: Up
+</code></pre>
+<p>若要使用其他资源的状态值，不在一般字段中编写表达式，而是使用
+<code>deviceFrom</code>、<code>gatewayFrom</code>、<code>addressFrom</code>、<code>ipv4From</code>、<code>ipv6From</code>、
+<code>prefixFrom</code>、<code>rdnssFrom</code>、<code>addressFrom</code> 等专用字段。</p>
+<pre><code class="language-yaml">deviceFrom:
+  resource: DSLiteTunnel/ds-lite
+  field: interface
+</code></pre>
+<h2 id="dhcpv6-pd">DHCPv6-PD</h2>
+<p>这可防止 DHCPv6-PD 丢失时遗留旧有的 LAN IPv6 配置。
+依赖委派前缀的 LAN IPv6 地址、RA、DNS 记录、DS-Lite，在父资源尚未就绪期间均不会输出过时状态。</p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#公共字段">公共字段</a></li>
+<li><a href="#api-组">API 组</a></li>
+<li><a href="#依赖关系">依赖关系</a></li>
+<li><a href="#dependson">dependsOn</a></li>
+<li><a href="#dhcpv6-pd">DHCPv6-PD</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/concepts/resource-model.md">GitHub</a></div></footer></body></html>

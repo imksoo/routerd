@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>用語集 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/concepts/glossary.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/concepts/glossary.html" lang="en" hreflang="en">English</a><a href="/docs/ja/concepts/glossary.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/concepts/glossary.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/concepts/glossary.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="用語集">用語集</h1>
+<p>routerd のドキュメントで使う主な用語と、その日本語訳をまとめます。訳語は次の方針で選んでいます。</p>
+<ul>
+<li><strong>ネットワーク用語</strong>は、国内の商用ルーター（NEC IX / ヤマハ RTX）のマニュアル表記に合わせています。日本のネットワーク技術者が読み慣れた言葉を優先します。</li>
+<li><strong>宣言型モデルの用語</strong>（リソース、調整ループなど）は、Kubernetes / Terraform 日本語ドキュメントの慣習に合わせています。</li>
+</ul>
+<h2 id="ネットワーク用語">ネットワーク用語</h2>
+<table>
+<thead>
+<tr>
+<th>英語</th>
+<th>表記（本ドキュメント）</th>
+<th>備考</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>interface</td>
+<td>インターフェース</td>
+<td>末尾は長音「ー」。ヤマハ表記に合わせる</td>
+</tr>
+<tr>
+<td>route / routing</td>
+<td>経路 / ルーティング</td>
+<td>経路情報・経路表のように使う</td>
+</tr>
+<tr>
+<td>gateway</td>
+<td>ゲートウェイ</td>
+<td></td>
+</tr>
+<tr>
+<td>NAT</td>
+<td>NAT</td>
+<td></td>
+</tr>
+<tr>
+<td>NAPT</td>
+<td>NAPT</td>
+<td>動的な多対一変換。商用機の「IPマスカレード」に相当</td>
+</tr>
+<tr>
+<td>firewall</td>
+<td>ファイアウォール</td>
+<td>routerd のゾーン型ステートフル機能</td>
+</tr>
+<tr>
+<td>filter / rule</td>
+<td>フィルター / ルール</td>
+<td>個々の許可・拒否規則</td>
+</tr>
+<tr>
+<td>prefix delegation (PD)</td>
+<td>プレフィックス委任（PD）</td>
+<td>「委譲」は使わない。NTT / ヤマハ / RFC の標準語に統一</td>
+</tr>
+<tr>
+<td>upstream</td>
+<td>上流</td>
+<td>DNS / 経路の上位側</td>
+</tr>
+<tr>
+<td>egress</td>
+<td>egress（送出側）</td>
+<td>初出のみ注記し、以降は英字のまま</td>
+</tr>
+<tr>
+<td>ingress</td>
+<td>ingress（受信側）</td>
+<td>初出のみ注記し、以降は英字のまま</td>
+</tr>
+</tbody>
+</table>
+<h2 id="宣言型モデルの用語">宣言型モデルの用語</h2>
+<table>
+<thead>
+<tr>
+<th>英語</th>
+<th>表記（本ドキュメント）</th>
+<th>備考</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>declarative</td>
+<td>宣言型</td>
+<td>「宣言的」も可だが「宣言型」に統一</td>
+</tr>
+<tr>
+<td>resource</td>
+<td>リソース</td>
+<td></td>
+</tr>
+<tr>
+<td>Kind</td>
+<td>Kind（種別）</td>
+<td>大文字 Kind を保持</td>
+</tr>
+<tr>
+<td>spec</td>
+<td>spec（仕様）</td>
+<td>望ましい状態を書く側</td>
+</tr>
+<tr>
+<td>status</td>
+<td>status（状態）</td>
+<td>実際の状態を表す側</td>
+</tr>
+<tr>
+<td>apply</td>
+<td>適用</td>
+<td><code>routerctl apply</code> の動作</td>
+</tr>
+<tr>
+<td>reconcile / reconcile loop</td>
+<td>調整（リコンサイル）/ 調整ループ</td>
+<td>実状態を望ましい状態へ近づける処理</td>
+</tr>
+<tr>
+<td>controller</td>
+<td>コントローラー</td>
+<td></td>
+</tr>
+<tr>
+<td>render / rendering</td>
+<td>生成（レンダリング）</td>
+<td>設定ファイル等を組み立てる処理</td>
+</tr>
+<tr>
+<td>daemon</td>
+<td>デーモン</td>
+<td></td>
+</tr>
+<tr>
+<td>generation</td>
+<td>世代（generation）</td>
+<td>SQLite の世代番号</td>
+</tr>
+<tr>
+<td>owned / ownership</td>
+<td>所有 / 所有権</td>
+<td></td>
+</tr>
+<tr>
+<td>bootstrap</td>
+<td>ブートストラップ</td>
+<td></td>
+</tr>
+<tr>
+<td>appliance</td>
+<td>アプライアンス</td>
+<td></td>
+</tr>
+<tr>
+<td>Tier (H/S/C/E)</td>
+<td>Tier H / Tier S …</td>
+<td>機能段階の固有名詞として保持</td>
+</tr>
+</tbody>
+</table>
+<h2 id="その他の表記">その他の表記</h2>
+<ul>
+<li><strong>Web Console</strong>（routerd の Web UI）は「<strong>Web 管理画面</strong>」と表記します。ただし <code>WebConsole</code>（その UI を有効にする Kind 名）はコード識別子なので、原文のまま <code>WebConsole</code> と書きます。</li>
+</ul></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#ネットワーク用語">ネットワーク用語</a></li>
+<li><a href="#宣言型モデルの用語">宣言型モデルの用語</a></li>
+<li><a href="#その他の表記">その他の表記</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/concepts/glossary.md">GitHub</a></div></footer></body></html>

@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>套用、產生與調和 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/concepts/apply-and-render.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/concepts/apply-and-render.html" lang="en" hreflang="en">English</a><a href="/docs/ja/concepts/apply-and-render.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/concepts/apply-and-render.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/concepts/apply-and-render.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="套用產生與調和">套用、產生與調和</h1>
+<p>這些詞容易混在一起，實際上代表不同風險。先辨別它們，才不會把「檢查一份檔案」誤當成「正在修改路由器」。</p>
+<table>
+<thead>
+<tr>
+<th>操作</th>
+<th>執行者</th>
+<th>是否需要常駐 daemon</th>
+<th>是否會改變主機網路</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>routerd validate --config FILE</code></td>
+<td>本機 <code>routerd</code></td>
+<td>不需要</td>
+<td>不會</td>
+</tr>
+<tr>
+<td><code>routerd apply --once --dry-run …</code></td>
+<td>本機 <code>routerd</code></td>
+<td>不需要</td>
+<td>不會提交網路變更</td>
+</tr>
+<tr>
+<td><code>routerd apply --once …</code></td>
+<td>本機 <code>routerd</code></td>
+<td>不需要</td>
+<td>會，可能改變網路</td>
+</tr>
+<tr>
+<td><code>routerd serve --config FILE</code></td>
+<td>常駐 <code>routerd</code></td>
+<td>它本身就是 daemon</td>
+<td>會，可能改變網路</td>
+</tr>
+<tr>
+<td><code>routerctl …</code></td>
+<td>客戶端</td>
+<td>需要 <code>routerd serve</code></td>
+<td>由 daemon 執行請求</td>
+</tr>
+</tbody>
+</table>
+<h2 id="驗證先看檔案是否合法">驗證：先看檔案是否合法</h2>
+<p><code>routerd validate</code> 會讀取 YAML，檢查資源種類、必要欄位、值的格式與明顯的參照錯誤。這是服務啟動前應該使用的命令。</p>
+<pre><code class="language-bash">routerd validate --config first-router.yaml
+</code></pre>
+<p>它不會檢查真實網線、上游 ISP 或封包是否可達；它回答的是「這份 routerd 設定是否有效」。</p>
+<h2 id="dry-run把一次套用限制在暫存位置">Dry-run：把一次套用限制在暫存位置</h2>
+<p>dry-run 會計算資源順序、衍生項目和產生意圖，但不提交網路變更。請替它建立新的暫存目錄，避免報告或輸出落到系統預設位置：</p>
+<pre><code class="language-bash">workdir=$(mktemp -d)
+routerd apply --once --dry-run --config first-router.yaml --status-file &quot;$workdir/status.json&quot; --state-file &quot;$workdir/state.db&quot; --netplan-file &quot;$workdir/50-routerd.yaml&quot; --dnsmasq-file &quot;$workdir/dnsmasq.conf&quot; --dnsmasq-service-file &quot;$workdir/routerd-dnsmasq.service&quot; --nftables-file &quot;$workdir/routerd-nat.nft&quot;
+</code></pre>
+<p><code>--state-file</code>、<code>--status-file</code> 和各個產生檔參數都指向暫存路徑。dry-run 仍可能讀取主機狀態來形成計畫，因此它不是完全脫離主機的模擬器。</p>
+<h2 id="套用與-serve真的會影響主機">套用與 serve：真的會影響主機</h2>
+<p>不帶 <code>--dry-run</code> 的 <code>routerd apply --once</code> 會做一次真實套用；<code>routerd serve</code> 則持續執行、維護 Unix socket，並在需要時調和資源。兩者都可能改變位址、路由、服務和 nftables 規則。</p>
+<p>只有在已準備主控台或獨立管理網卡、確認管理連線不會被移除後，才執行真實套用。一般 Ubuntu 安裝由 systemd 啟動 <code>routerd serve</code>。</p>
+<h2 id="routerctl對執行中的-routerd-提出要求">routerctl：對執行中的 routerd 提出要求</h2>
+<p><code>routerctl</code> 不會直接在離線狀態處理候選 YAML，而是將請求交給運行中的 <code>routerd serve</code>：</p>
+<pre><code class="language-bash">sudo routerctl get status
+sudo routerctl describe Interface/lan
+sudo routerctl validate -f candidate.yaml --replace
+sudo routerctl plan -f candidate.yaml --replace
+</code></pre>
+<p>前兩個指令讀取執行期狀態；後兩個讓 daemon 驗證或計畫候選設定。若 socket 無法連線，先啟動或檢查 <code>routerd serve</code>，不要誤認成 YAML 驗證失敗。</p>
+<p><code>routerctl apply -f candidate.yaml --replace</code> 也只適用於運行中的服務：它要求 daemon 寫入候選設定並調和。它不是比 <code>routerd apply --once</code> 更安全的離線替代品。</p>
+<h2 id="產生與調和">產生與調和</h2>
+<p><strong>產生（render）</strong> 是把資源轉換為主機使用的內容，例如 dnsmasq 設定、nftables 規則集或 systemd 單元。是否真的修改主機，取決於目前是 validate、dry-run、真實 apply 還是 serve。</p>
+<p><strong>調和（reconcile）</strong> 是 serve 模式持續縮小「YAML 期望的狀態」與「主機目前狀態」差距的處理。例如 DHCPv6-PD 更新前綴後，相關 LAN 位址、RA 和路由會再次被評估。</p>
+<p>routerd 的防火牆資源仍在預發布的基礎實作階段，並非通用規則語言或安全認證。dry-run 和產生成功也不能取代對真實介面、VLAN、公開服務和回程路徑的安全審查。</p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#驗證先看檔案是否合法">驗證：先看檔案是否合法</a></li>
+<li><a href="#dry-run把一次套用限制在暫存位置">Dry-run：把一次套用限制在暫存位置</a></li>
+<li><a href="#套用與-serve真的會影響主機">套用與 serve：真的會影響主機</a></li>
+<li><a href="#routerctl對執行中的-routerd-提出要求">routerctl：對執行中的 routerd 提出要求</a></li>
+<li><a href="#產生與調和">產生與調和</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/concepts/apply-and-render.md">GitHub</a></div></footer></body></html>

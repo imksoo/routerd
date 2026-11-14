@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Path MTU と TCP MSS · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/concepts/path-mtu.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/concepts/path-mtu.html" lang="en" hreflang="en">English</a><a href="/docs/ja/concepts/path-mtu.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/concepts/path-mtu.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/concepts/path-mtu.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="path-mtu-と-tcp-mss">Path MTU と TCP MSS</h1>
+<p>routerd は、トンネル経路を作るリソースから、Path MTU の扱いを自動で導出します。
+DS-Lite、PPPoE、WireGuard、<code>TunnelInterface</code> underlay（<code>ipip</code>、<code>gre</code>、<code>fou</code>、<code>gue</code>）
+が有効 MTU を提供し、firewall zone が LAN から WAN へ転送する向きを表します。</p>
+<p>trusted インターフェースから untrusted トンネルへ転送する場合、routerd は TCP MSS の
+clamp を自動で生成します。MSS は、IPv4 TCP では <code>MTU - 40</code>、IPv6 TCP では
+<code>MTU - 60</code> にします。有効値は、送信元インターフェースの MTU と宛先経路の Path MTU の
+うち小さい方を、送信元経路・宛先経路ごとに計算します。Linux の nftables 生成器は、
+SYN パケットが広告する MSS がこの派生値より大きいときだけ書き換えます。
+そのため、別の小さい MTU を持つインターフェースから来た低い MSS を引き上げることはなく、
+無関係な LAN 経路まで低い MTU に引っ張ることもありません。</p>
+<p>それでも、TCP 以外の IPv4 通信や DF ビットが立った過大パケットが、信頼済みオーバーレイ上で
+PMTU ブラックホールに落ちる場合があります。このとき、<code>OverlayPeer.spec.pathMTU.forceFragmentIPv4</code> と
+<code>TunnelInterface.spec.pathMTU.forceFragmentIPv4</code> を明示的に有効化できます。Linux では
+routerd が <code>ip routerd_forcefrag</code> nftables テーブルを生成し、導出した転送経路上で
+<code>ip length</code> が Path MTU より大きく、かつ DF が立っている IPv4 パケットだけの DF
+を消します。その後の分割はカーネルの送出側 MTU に任せます。この機能は IPv4 専用で、
+既定では無効です。まず正しい MTU、PMTUD、TCP MSS clamp を優先し、強制分割は
+分割を許容できる信頼済みオーバーレイやアンダーレイでの最終手段として使ってください。</p>
+<p>trusted インターフェースに <code>DHCPv6Server</code> または <code>IPv6RouterAdvertisement</code> があり、
+転送経路が小さいトンネル MTU を使う場合、RA にも派生した MTU を反映します。
+設定には LAN、WAN、トンネル、firewall zone、RA/DHCPv6 の意図を宣言するだけで、
+個別の MTU ポリシーのリソースは書きません。</p>
+<p>Reverse path filter の sysctl も同じ考え方です。routerd はルーターとトンネルの
+リソースから、ルーター向けの保守的な既定値と、トンネル別の <code>rp_filter=0</code> を
+自動で導出します。</p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul></ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/concepts/path-mtu.md">GitHub</a></div></footer></body></html>

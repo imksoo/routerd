@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Basic NAT and firewall policy · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/tutorials/basic-firewall.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/tutorials/basic-firewall.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/tutorials/basic-firewall.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/tutorials/basic-firewall.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/tutorials/basic-firewall.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="basic-nat-and-firewall-policy">Basic NAT and firewall policy</h1>
+<p>NAT and packet filtering are easy to confuse. NAT lets several private LAN
+addresses share one upstream IPv4 address. A firewall decides which packets may
+pass. They are separate jobs.</p>
+<p>routerd's firewall resources are groundwork, not a complete security product or
+security certification. Do not expose an Internet-facing router or rely on this
+example as the only protection for a home, school, or work network. First test
+it in an isolated lab and keep a console recovery path.</p>
+<h2 id="scenario">Scenario</h2>
+<p>The router has a WAN interface (<code>wan</code>) connected to an upstream network and a
+LAN interface (<code>lan</code>) with private IPv4 addresses. The LAN range in this
+example is <code>192.168.50.0/24</code>; choose a range that does not overlap with your
+WAN, VPN, management, or another LAN.</p>
+<h2 id="nat44-one-clear-modern-form">NAT44: one clear modern form</h2>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: NAT44Rule
+  metadata:
+    name: lan-to-wan
+  spec:
+    type: masquerade
+    egressInterface: wan
+    sourceRanges:
+      - 192.168.50.0/24
+</code></pre>
+<p><code>masquerade</code> is the NAT mode, not a true/false switch. It means that packets
+leaving <code>wan</code> use the current IPv4 address of <code>wan</code> as their source address.
+That is commonly useful when the upstream gives the WAN address by DHCP or
+PPPoE.</p>
+<h2 id="zone-labels">Zone labels</h2>
+<p>The following labels describe the intended trust level of each interface. They
+make the policy readable and provide inputs for routerd's current firewall
+groundwork.</p>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallZone
+  metadata:
+    name: wan
+  spec:
+    role: untrust
+    interfaces:
+      - wan
+
+- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallZone
+  metadata:
+    name: lan
+  spec:
+    role: trust
+    interfaces:
+      - lan
+
+- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallPolicy
+  metadata:
+    name: home
+  spec:
+    logDeny: true
+</code></pre>
+<p>Add only the resources you understand, validate the whole file, and inspect the
+generated result on an isolated host. Do not infer a complete default
+accept/drop matrix from this short example.</p>
+<h2 id="check-before-a-live-change">Check before a live change</h2>
+<pre><code class="language-sh">routerd validate --config router.yaml
+
+workdir=$(mktemp -d)
+routerd apply --config router.yaml --once --dry-run \
+  --state-file &quot;$workdir/state.db&quot; \
+  --status-file &quot;$workdir/status.json&quot;
+rm -rf &quot;$workdir&quot;
+</code></pre>
+<p>After a reviewed configuration is running, inspect it with the daemon-backed
+tools:</p>
+<pre><code class="language-sh">sudo routerctl describe NAT44Rule/lan-to-wan
+sudo nft list table ip routerd_nat
+sudo nft list table inet routerd_filter
+</code></pre>
+<h2 id="see-also">See also</h2>
+<ul>
+<li><a href="../config-examples/basic-ipv4-nat.html">Basic IPv4 NAT gateway</a></li>
+<li><a href="../how-to/firewall-zone.html">Define firewall zones</a></li>
+<li><a href="../how-to/firewall-rule.html">Add firewall exceptions</a></li>
+<li><a href="../concepts/firewall.html">Firewall concept</a></li>
+</ul></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#scenario">Scenario</a></li>
+<li><a href="#nat44-one-clear-modern-form">NAT44: one clear modern form</a></li>
+<li><a href="#zone-labels">Zone labels</a></li>
+<li><a href="#check-before-a-live-change">Check before a live change</a></li>
+<li><a href="#see-also">See also</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/tutorials/basic-firewall.md">GitHub</a></div></footer></body></html>

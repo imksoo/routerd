@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CloudEdge プロトコル透過性の受け入れ検証 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/how-to/cloudedge-protocol-transparency.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/how-to/cloudedge-protocol-transparency.html" lang="en" hreflang="en">English</a><a href="/docs/ja/how-to/cloudedge-protocol-transparency.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/how-to/cloudedge-protocol-transparency.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/cloudedge-protocol-transparency.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="cloudedge-プロトコル透過性の受け入れ検証">CloudEdge プロトコル透過性の受け入れ検証</h1>
+<p>CloudEdge mobility が、NAT、ヘルパー ALG、動的ポート、MTU/PMTU の振る舞いに敏感なコネクション指向プロトコルに対して透過的であることを検証するための、クラウドを使わないハーネス計画です。実際のライブランはラボ運用者が後日実施します。このドキュメントと <code>scripts/</code> 配下のスクリプトは、契約とエビデンスの形式を準備するだけです。</p>
+<h2 id="目標">目標</h2>
+<p>論理共有サブネット（デモでは <code>10.77.60.0/24</code>）上のトラフィックについて、以下を証明します:</p>
+<ul>
+<li>NAT なし: サーバーがクライアントサイトの mobility <code>/32</code> をピアアドレスとして認識する。</li>
+<li>クライアントのデフォルトゲートウェイがローカルサイトから変更されていない。</li>
+<li>FTP アクティブモードとパッシブモードの両方で、NAT ALG なしにデータ転送が完了する。</li>
+<li><code>rpcbind</code> 経由の RPC エンドポイント探索と、NFSv3 のマウント/読み書きがサイト間で動作する。</li>
+<li>大容量転送が PMTU ブラックホールなしに完了する。</li>
+<li>MSS/PMTU エビデンスがオーバーレイ MTU、ルート MTU/advmss（利用可能な場合）、設定済み MSS clamp 値を記録する。</li>
+</ul>
+<h2 id="最小限のライブマトリクス">最小限のライブマトリクス</h2>
+<p>通常の D3 方向付きマトリクスがすでにグリーンになった後で、プロトコルプローブを実行します。代表的な 2 ペアを使用します:</p>
+<table>
+<thead>
+<tr>
+<th>ペア</th>
+<th>理由</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>aws -&gt; azure</code></td>
+<td>両端でクラウドプロバイダートラッピングを行うクラウド間オーバーレイパス</td>
+</tr>
+<tr>
+<td><code>aws -&gt; onprem</code></td>
+<td>on-prem 側で proxy-ARP/VRRP 権限を持つクラウド-on-prem 間パス</td>
+</tr>
+</tbody>
+</table>
+<p>シナリオカタログでは、これを <code>examples/cloudedge-acceptance-scenarios.json</code> の <code>d11-protocol-transparency</code> としてエンコードしています。</p>
+<p>パリティ検証を拡大する場合は <code>azure -&gt; oci</code>、<code>oci -&gt; aws</code>、逆方向などを追加できますが、最小限の受け入れ検証は 1 回の 4 サイトラボウィンドウ内で実行できる規模に収めるべきです。</p>
+<h2 id="ハーネス">ハーネス</h2>
+<p>ラッパーは以下の通りです:</p>
+<pre><code class="language-sh">PROTOCOL_PROBE_RUNNER=scripts/runners/cloudedge-protocol-runner.sh \
+  scripts/cloudedge-protocol-probe.sh \
+    --pairs aws:azure,aws:onprem \
+    --bytes 104857600 \
+    --out evidence/protocol-probe.json
+</code></pre>
+<p>完全な受け入れシナリオは同じラッパーを以下のように使用します:</p>
+<pre><code class="language-sh">PROTOCOL_PROBE_RUNNER=scripts/runners/cloudedge-protocol-runner.sh \
+MATRIX_RUNNER=scripts/runners/cloudedge-matrix-runner.sh \
+scripts/cloudedge-acceptance.sh run \
+  --scenario d11-protocol-transparency \
+  --out evidence/d11-protocol \
+  --commit &lt;routerd-commit&gt;
+</code></pre>
+<p>出力は <code>scripts/cloudedge-protocol-result-schema.json</code> で検証され、<code>result.json</code> の <code>protocols</code> オブジェクト配下に取り込まれます。</p>
+<h2 id="ランナーコントラクト">ランナーコントラクト</h2>
+<p><code>scripts/runners/cloudedge-protocol-runner.sh</code> は <code>PROTOCOL_PROBE_RUNNER</code> を実装します。意図的に環境変数でパラメーター化されており、プロバイダーアカウント ID、リソース ID、秘密情報は含まれていません。</p>
+<p>サイトごとに必要な設定:</p>
+<pre><code class="language-sh">export CE_AWS_CLIENT_SSH_HOST=&lt;ssh-host-or-user@host&gt;
+export AWS_CLIENT_IP=10.77.60.11
+export CE_AZURE_CLIENT_SSH_HOST=&lt;ssh-host-or-user@host&gt;
+export AZURE_CLIENT_IP=10.77.60.12
+export CE_ONPREM_CLIENT_SSH_HOST=&lt;ssh-host-or-user@host&gt;
+export ONPREM_CLIENT_IP=10.77.60.10
+export SSH_KEY_FILE=&lt;private-key&gt;
+export SSH_USER=ubuntu
+export CLIENT_SSH_USER=ubuntu
+</code></pre>
+<p>プロトコル関連の変数:</p>
+<pre><code class="language-sh">export CE_PROTOCOL_INSTALL=1
+export CE_PROTOCOL_CONFIGURE_SERVICES=1
+export CE_PROTOCOL_FTP_PASSIVE_PORTS=40000:40100
+export CE_PROTOCOL_BULK_BYTES=104857600
+export CE_PROTOCOL_PMTU_SIZE=1300
+export CE_PROTOCOL_OVERLAY_IFACE=wg-hybrid
+</code></pre>
+<p>ラッパーはペアごとに以下のオペレーションを呼び出します:</p>
+<table>
+<thead>
+<tr>
+<th>オペレーション</th>
+<th>アサーション</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>setup</code></td>
+<td>有効時に <code>vsftpd</code>、<code>rpcbind</code>、NFS サーバー/クライアントツール、<code>iperf3</code> をインストール/設定</td>
+</tr>
+<tr>
+<td><code>ftp-active</code></td>
+<td>FTP <code>PORT</code> モードデータチャネルが完了</td>
+</tr>
+<tr>
+<td><code>ftp-passive</code></td>
+<td>FTP パッシブモードデータチャネルが完了</td>
+</tr>
+<tr>
+<td><code>nfs</code></td>
+<td>NFSv3 マウント + 要求バイト量の書き込み/読み取りが完了</td>
+</tr>
+<tr>
+<td><code>rpc</code></td>
+<td><code>rpcinfo -p</code> が <code>rpcbind</code> と少なくとも 1 つの動的 RPC/NFS ポートを検出</td>
+</tr>
+<tr>
+<td><code>bulk</code></td>
+<td><code>iperf3 -n &lt;bytes&gt;</code> が完了し、スループット/再送を記録</td>
+</tr>
+<tr>
+<td><code>pmtu</code></td>
+<td>DF ping が成功し、オーバーレイ MTU、ルート MTU/advmss、MSS clamp を記録</td>
+</tr>
+<tr>
+<td><code>source-preserved</code></td>
+<td>サーバー側 SSH がクライアントの mobility <code>/32</code> をピア IP として認識</td>
+</tr>
+<tr>
+<td><code>no-nat</code></td>
+<td>同じピア IP チェックを、明示的な no-NAT アサーションとして記録</td>
+</tr>
+</tbody>
+</table>
+<h2 id="forcefrag-mss-の比較">Forcefrag / MSS の比較</h2>
+<p>通常の実行では routerd 導出の MSS clamp で問題なくパスするはずです。ラボで P2-b の force fragmentation 動作を証明する必要がある場合は、同じ D11 ペアセットを 2 回実行します:</p>
+<ol>
+<li><code>forceFragmentIPv4: false</code>（デフォルト）: TCP 転送は MSS clamp で通過するはず。オーバーサイズの DF 非 TCP はアンダーレイの PMTU に依存して失敗する場合があります。</li>
+<li>該当する <code>OverlayPeer</code> または <code>TunnelInterface</code> で <code>forceFragmentIPv4: true</code>: 同じ DF プローブがパスし、ルーターエビデンスに <code>routerd_forcefrag</code> が表示されるはずです。</li>
+</ol>
+<p>force fragmentation をグローバルに有効化しないでください。パススコープに限定し、before/after の設定ダイジェストをエビデンスバンドルに記録してください。</p>
+<h2 id="エビデンスレビューチェックリスト">エビデンスレビューチェックリスト</h2>
+<p><code>protocol-probe.json</code> の各ペアについて:</p>
+<ul>
+<li><code>checks.ftpActive</code>、<code>ftpPassive</code>、<code>nfs</code>、<code>rpc</code>、<code>bulkTransfer</code>、<code>pmtu</code>、<code>sourceIpPreserved</code>、<code>noNat</code> がすべて <code>pass</code>。</li>
+<li><code>details.sourceIpPreserved.peer_ip</code> がクライアントサイトの mobility <code>/32</code> と一致。</li>
+<li><code>details.rpc.dynamic_port</code> が存在し、<code>111</code> ではない。</li>
+<li><code>iperf3</code> が利用可能な場合、<code>details.bulkTransfer.retransmits</code> が記録されている。</li>
+<li><code>details.pmtu.overlay_mtu</code>、<code>route_mtu</code> または <code>route_advmss</code>、<code>mss_clamp</code> が記録されている。</li>
+</ul>
+<p>外側の <code>result.json</code> には以下のパスアサーションを含める必要があります:</p>
+<ul>
+<li><code>protocol_transparency</code></li>
+<li><code>ftp_active_passive</code></li>
+<li><code>nfs_rpc</code></li>
+<li><code>bulk_transfer_pmtu</code></li>
+<li><code>protocol_source_ip_preserved</code></li>
+<li><code>protocol_no_nat</code></li>
+</ul>
+<p>SAM E2EハーネスはFTP、NFS、CIFSの読み取り・書き込み内容を完全一致で確認します。failover転送には既知の64 MiBペイロードを使い、ダウンロード後のサイズとSHA-256を照合します。故障注入前に今回の転送jobが実行中で部分データが到着していることを確認し、進行を取得できなければ未判定として停止し、故障注入や再試行を行いません。開始、結果、失敗試行の証跡を保持します。任意の転送観測と性能値は通常の故障後matrixの合否から分離します。deployでは今回専用ディレクトリを使い、必須copy/setupの失敗を伝播し、サービス再起動前にインストール済みbinaryと設定を今回のペイロードと照合します。</p>
+<p>L2 qualificationには同じproviderと閾値設定によるbefore/afterの両観測と抑制機構の記録が必要です。beforeの取得成功は次の操作を許可しますが、保存した集計はafter取得まで未判定で、afterは集計合否を終了コードに反映します。failoverの経過時間は単調時計で計測し、journal照合用UTCを別記録します。providerのVM停止実装は<code>stop-active</code>を扱います。<code>drain</code>には明示的な<code>CE_&lt;PROVIDER&gt;_DRAIN_INJECT_COMMAND</code>または<code>CE_DRAIN_INJECT_COMMAND</code>が必要で、on-premisesの停止にも明示的なnode-stop commandが必要です。keepalivedの停止だけでnode停止のqualificationを成立させません。</p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#目標">目標</a></li>
+<li><a href="#最小限のライブマトリクス">最小限のライブマトリクス</a></li>
+<li><a href="#ハーネス">ハーネス</a></li>
+<li><a href="#ランナーコントラクト">ランナーコントラクト</a></li>
+<li><a href="#forcefrag-mss-の比較">Forcefrag / MSS の比較</a></li>
+<li><a href="#エビデンスレビューチェックリスト">エビデンスレビューチェックリスト</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/how-to/cloudedge-protocol-transparency.md">GitHub</a></div></footer></body></html>

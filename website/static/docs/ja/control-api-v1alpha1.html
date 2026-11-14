@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>制御 API v1alpha1 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/control-api-v1alpha1.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/control-api-v1alpha1.html" lang="en" hreflang="en">English</a><a href="/docs/ja/control-api-v1alpha1.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/control-api-v1alpha1.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/control-api-v1alpha1.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="制御-api-v1alpha1">制御 API v1alpha1</h1>
+<p>routerd と管理対象デーモンは、ローカルの Unix domain socket 上に HTTP+JSON API を公開します。
+この API はリモート管理用ではなく、<code>routerctl</code>、routerd 本体、運用スクリプトが同じホスト上で状態を読むためのものです。</p>
+<h2 id="routerd-本体">routerd 本体</h2>
+<p><code>routerd serve</code> は次を待ち受けます。</p>
+<pre><code class="language-text">/run/routerd/routerd.sock
+/run/routerd/routerd-status.sock
+</code></pre>
+<p>主 control socket は権限を持つローカル client 向けで、apply や delete などの変更系
+エンドポイントも公開します。読み取り専用 status socket は status 系エンドポイントだけを
+公開し、一般ユーザーが状態確認に使えます。</p>
+<p>主 control socket の読み取りエンドポイントは、状態、event、resource state を返します。
+代表例は次の通りです。</p>
+<table>
+<thead>
+<tr>
+<th>Method + Path</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET /api/control.routerd.net/v1alpha1/status</code></td>
+<td>routerd 自身の状態</td>
+</tr>
+<tr>
+<td><code>GET /api/control.routerd.net/v1alpha1/connections</code></td>
+<td>conntrack または pf state から得た現在のコネクション</td>
+</tr>
+<tr>
+<td><code>GET /api/control.routerd.net/v1alpha1/dns-queries</code></td>
+<td>DNS クエリー履歴</td>
+</tr>
+<tr>
+<td><code>GET /api/control.routerd.net/v1alpha1/traffic-flows</code></td>
+<td>通信フロー履歴</td>
+</tr>
+<tr>
+<td><code>GET /api/control.routerd.net/v1alpha1/firewall-logs</code></td>
+<td>ファイアウォールログ</td>
+</tr>
+</tbody>
+</table>
+<h2 id="sam-enrollment-endpoint">SAM enrollment endpoint</h2>
+<p>Dynamic SAM enrollment も同じ API handler を使いますが、RR が公開するのは enrollment
+runbook で明示した認証済み listener、または権限を持つ local socket だけです。一般的な
+remote 管理 API ではありません。</p>
+<table>
+<thead>
+<tr>
+<th>Method + Path</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>POST /api/control.routerd.net/v1alpha1/sam-enrollment-claims</code></td>
+<td>leaf の client-authored enrollment claim を受理します。</td>
+</tr>
+<tr>
+<td><code>POST /api/control.routerd.net/v1alpha1/sam-enrollment-claims/{name}/revoke</code></td>
+<td>受理済み claim を明示的に revoke します。復旧用途には使いません。</td>
+</tr>
+<tr>
+<td><code>GET /api/control.routerd.net/v1alpha1/sam-enrollment-topologies/{name}?claim=...&amp;claimDigest=...&amp;claimIdentityDigest=...</code></td>
+<td>指定した RRSet と、確認できた場合だけ任意の direct peer group を取得します。</td>
+</tr>
+</tbody>
+</table>
+<p><code>claimIdentityDigest</code> は client-authored claim material だけの hash です。<code>joinTokenFrom</code> が
+あれば join HMAC で認証され、無い場合は trusted control-plane です。現行 RR はこれで明示的な
+revoke、clean boot による空の admission store、別 active identity を区別します。
+<code>SAMEnrollmentClient</code> は、すべての bootstrap RR を確認した後に限り identity-aware な absence
+応答を現在の direct claim の再送許可として扱います。別 active identity を置き換えられるのは
+初回 admission または local claim 変更時だけで、periodic renewal ではありません。digest が無い場合、
+旧版／混在 RR、revoke、request failure では RR-only fallback を維持します。caller が応答を直接
+解釈せず、client/controller を使ってください。</p>
+<h2 id="宣言したリソースの件数">宣言したリソースの件数</h2>
+<p><code>Status.status.resourceCount</code> は、現在の実行時設定で宣言したリソースの件数です。
+<code>when</code> 条件を満たさないリソースや、それらを参照するために除外される関連リソースも含みます。
+起動時の観測、即時適用、適用失敗で集計範囲は変わりません。計画用に生成した項目は含みません。
+宣言を変更すると件数も変わりますが、冗長化の役割や観測方法だけでは変わりません。
+この値は構成の件数であり、リソースの稼働状態や通信の成功を示すものではありません。</p>
+<h2 id="コントローラーの状態">コントローラーの状態</h2>
+<p><code>Status.status.controllers</code> と <code>Controllers</code> エンドポイントは、コントローラーの設定上の
+mode と、実行時の reconcile 状態を返します。runtime field には <code>interval</code>、
+<code>lastTrigger</code>、<code>lastReconcileTime</code>、<code>nextReconcileTime</code>、<code>reconcileCount</code>、
+<code>reconcileErrorCount</code>、<code>consecutiveErrorCount</code>、<code>currentError</code>、
+<code>lastDuration</code>、<code>maxDuration</code>、<code>averageDuration</code>、<code>lastError</code>、
+<code>lastErrorTime</code>、<code>lastErrorClearedAt</code> が含まれます。<code>reconcileErrorCount</code> は
+累積値なので、現在失敗中かどうかは <code>currentError</code> と <code>consecutiveErrorCount</code> で
+判定してください。これらは観測値なので、controller がまだ一度も実行されて
+いない場合は、field が無いものとして扱ってください。</p>
+<h2 id="管理対象デーモン">管理対象デーモン</h2>
+<p>状態を持つデーモンは、それぞれ独自の socket を持ちます。</p>
+<pre><code class="language-text">/run/routerd/dhcpv6-client/wan-pd.sock
+/run/routerd/dhcpv4-client/wan.sock
+/run/routerd/pppoe-client/wan-pppoe.sock
+/run/routerd/healthcheck/internet.sock
+</code></pre>
+<p>FreeBSD では、対応するパスは <code>/var/run/routerd/...</code> です。</p>
+<h2 id="デーモン共通エンドポイント">デーモン共通エンドポイント</h2>
+<table>
+<thead>
+<tr>
+<th>Method + Path</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET /v1/healthz</code></td>
+<td>liveness check</td>
+</tr>
+<tr>
+<td><code>GET /v1/status</code></td>
+<td>デーモンの状態と、関連リソースの状態</td>
+</tr>
+<tr>
+<td><code>GET /v1/events</code></td>
+<td>event log。<code>since</code>、<code>wait</code>、<code>topic</code> を query で指定します</td>
+</tr>
+<tr>
+<td><code>POST /v1/commands/reload</code></td>
+<td>設定の再読み込み</td>
+</tr>
+<tr>
+<td><code>POST /v1/commands/renew</code></td>
+<td>デーモンごとの能動操作（DHCPv6 Renew、DHCPv4 のリース更新、即時の health probe など）</td>
+</tr>
+<tr>
+<td><code>POST /v1/commands/stop</code></td>
+<td>安全に停止</td>
+</tr>
+</tbody>
+</table>
+<p><code>renew</code> の意味はデーモンごとに異なります。DHCPv6 は Renew の送信、DHCPv4 はリース更新、healthcheck は即時の probe です。</p>
+<p>ARP observerの <code>POST /v1/commands</code> は <code>probe-target</code> を受け付けます。成功すると
+<code>GET /v1/status</code> の <code>observed.lastCommandProbe</code> に、<code>sequence</code>・<code>target</code>・
+UTC RFC3339の <code>startedAt</code> / <code>completedAt</code>・<code>packetsSent</code> をJSON文字列で返します。
+sequenceは同じ読取の <code>commandProbeCount</code> と一致します。保持するのは直近の成功1件で、
+拒否・cooldown抑止・途中失敗・自律探索では更新しません。要求IDや永続履歴ではないため、
+要求との照合には監視プロセスの識別情報と実パケットも使用します。</p>
+<h2 id="フェーズ語彙">フェーズ語彙</h2>
+<p><code>ResourceStatus.phase</code> は、リソース横断で共通の語彙を使います。</p>
+<table>
+<thead>
+<tr>
+<th>フェーズ</th>
+<th>意味</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Pending</code></td>
+<td>必要な入力を待機中です</td>
+</tr>
+<tr>
+<td><code>Bound</code></td>
+<td>DHCP などのリースを保持中です</td>
+</tr>
+<tr>
+<td><code>Applied</code></td>
+<td>ホスト側へ適用済みです</td>
+</tr>
+<tr>
+<td><code>Up</code></td>
+<td>tunnel または link が up しています</td>
+</tr>
+<tr>
+<td><code>Installed</code></td>
+<td>経路または設定ファイルが入っています</td>
+</tr>
+<tr>
+<td><code>Healthy</code></td>
+<td>health check が success threshold を満たしています</td>
+</tr>
+<tr>
+<td><code>Unhealthy</code></td>
+<td>health check が failure threshold を満たしています</td>
+</tr>
+<tr>
+<td><code>Error</code></td>
+<td>操作に失敗しました</td>
+</tr>
+</tbody>
+</table>
+<p>各 phase には <code>conditions</code> 配列が付きます。client 側のコードでは、log 文字列ではなく <code>phase</code> と <code>conditions</code> で判定してください。</p>
+<h2 id="イベント">イベント</h2>
+<p>イベントは topic と attributes を持ちます。</p>
+<pre><code class="language-json">{
+  &quot;topic&quot;: &quot;routerd.dhcpv6.client.prefix.renewed&quot;,
+  &quot;attributes&quot;: {
+    &quot;resource.kind&quot;: &quot;DHCPv6PrefixDelegation&quot;,
+    &quot;resource.name&quot;: &quot;wan-pd&quot;
+  }
+}
+</code></pre>
+<p>routerd は event を SQLite に永続化します。
+管理対象デーモンは、加えて自身の <code>events.jsonl</code> にも記録します。
+<code>EventRule</code> と <code>DerivedEvent</code> は、このストリームを入力にして仮想 event を発行します。</p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#routerd-本体">routerd 本体</a></li>
+<li><a href="#sam-enrollment-endpoint">SAM enrollment endpoint</a></li>
+<li><a href="#宣言したリソースの件数">宣言したリソースの件数</a></li>
+<li><a href="#コントローラーの状態">コントローラーの状態</a></li>
+<li><a href="#管理対象デーモン">管理対象デーモン</a></li>
+<li><a href="#デーモン共通エンドポイント">デーモン共通エンドポイント</a></li>
+<li><a href="#フェーズ語彙">フェーズ語彙</a></li>
+<li><a href="#イベント">イベント</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/control-api-v1alpha1.md">GitHub</a></div></footer></body></html>

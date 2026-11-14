@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CloudEdge 协议透明性验收检验 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/how-to/cloudedge-protocol-transparency.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/how-to/cloudedge-protocol-transparency.html" lang="en" hreflang="en">English</a><a href="/docs/ja/how-to/cloudedge-protocol-transparency.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/how-to/cloudedge-protocol-transparency.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/cloudedge-protocol-transparency.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="cloudedge-协议透明性验收检验">CloudEdge 协议透明性验收检验</h1>
+<p>这是一个不使用云端的线束计划，用于验证 CloudEdge mobility 对面向连接的协议（这些协议对 NAT、辅助 ALG、动态端口、MTU/PMTU 行为敏感）的透明性。实际的实时运行将由实验室操作员稍后执行。本文档和 <code>scripts/</code> 目录下的脚本仅准备契约和证据格式。</p>
+<h2 id="目标">目标</h2>
+<p>对逻辑共享子网（演示中为 <code>10.77.60.0/24</code>）上的流量，证明以下几点：</p>
+<ul>
+<li>无 NAT：服务器将客户端站点的 mobility <code>/32</code> 识别为对等地址。</li>
+<li>客户端的默认网关未从本地站点变更。</li>
+<li>FTP 主动模式和被动模式均在无 NAT ALG 的情况下完成数据传输。</li>
+<li>通过 <code>rpcbind</code> 的 RPC 端点发现和 NFSv3 的挂载/读写在站点间正常工作。</li>
+<li>大容量传输在无 PMTU 黑洞的情况下完成。</li>
+<li>MSS/PMTU 证据记录了 overlay MTU、路由 MTU/advmss（如可用）、配置的 MSS clamp 值。</li>
+</ul>
+<h2 id="最小实时矩阵">最小实时矩阵</h2>
+<p>在常规 D3 有向矩阵已全部通过后，运行协议探针。使用 2 个代表性对：</p>
+<table>
+<thead>
+<tr>
+<th>对</th>
+<th>理由</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>aws -&gt; azure</code></td>
+<td>两端均使用云端提供商捕获的云间 overlay 路径</td>
+</tr>
+<tr>
+<td><code>aws -&gt; onprem</code></td>
+<td>on-prem 端使用 proxy-ARP/VRRP 权限的云-on-prem 路径</td>
+</tr>
+</tbody>
+</table>
+<p>在场景目录中，这编码为 <code>examples/cloudedge-acceptance-scenarios.json</code> 的 <code>d11-protocol-transparency</code>。</p>
+<p>如需扩大对等性验证，可添加 <code>azure -&gt; oci</code>、<code>oci -&gt; aws</code>、反向等，但最小验收检验应控制在单次 4 站点实验室窗口内可执行的规模。</p>
+<h2 id="线束">线束</h2>
+<p>封装器如下：</p>
+<pre><code class="language-sh">PROTOCOL_PROBE_RUNNER=scripts/runners/cloudedge-protocol-runner.sh \
+  scripts/cloudedge-protocol-probe.sh \
+    --pairs aws:azure,aws:onprem \
+    --bytes 104857600 \
+    --out evidence/protocol-probe.json
+</code></pre>
+<p>完整验收场景使用相同封装器：</p>
+<pre><code class="language-sh">PROTOCOL_PROBE_RUNNER=scripts/runners/cloudedge-protocol-runner.sh \
+MATRIX_RUNNER=scripts/runners/cloudedge-matrix-runner.sh \
+scripts/cloudedge-acceptance.sh run \
+  --scenario d11-protocol-transparency \
+  --out evidence/d11-protocol \
+  --commit &lt;routerd-commit&gt;
+</code></pre>
+<p>输出通过 <code>scripts/cloudedge-protocol-result-schema.json</code> 验证，并导入到 <code>result.json</code> 的 <code>protocols</code> 对象下。</p>
+<h2 id="运行器契约">运行器契约</h2>
+<p><code>scripts/runners/cloudedge-protocol-runner.sh</code> 实现 <code>PROTOCOL_PROBE_RUNNER</code>。有意通过环境变量参数化，不包含提供商账户 ID、资源 ID、secret。</p>
+<p>每个站点所需的设置：</p>
+<pre><code class="language-sh">export CE_AWS_CLIENT_SSH_HOST=&lt;ssh-host-or-user@host&gt;
+export AWS_CLIENT_IP=10.77.60.11
+export CE_AZURE_CLIENT_SSH_HOST=&lt;ssh-host-or-user@host&gt;
+export AZURE_CLIENT_IP=10.77.60.12
+export CE_ONPREM_CLIENT_SSH_HOST=&lt;ssh-host-or-user@host&gt;
+export ONPREM_CLIENT_IP=10.77.60.10
+export SSH_KEY_FILE=&lt;private-key&gt;
+export SSH_USER=ubuntu
+export CLIENT_SSH_USER=ubuntu
+</code></pre>
+<p>协议相关变量：</p>
+<pre><code class="language-sh">export CE_PROTOCOL_INSTALL=1
+export CE_PROTOCOL_CONFIGURE_SERVICES=1
+export CE_PROTOCOL_FTP_PASSIVE_PORTS=40000:40100
+export CE_PROTOCOL_BULK_BYTES=104857600
+export CE_PROTOCOL_PMTU_SIZE=1300
+export CE_PROTOCOL_OVERLAY_IFACE=wg-hybrid
+</code></pre>
+<p>封装器对每个对调用以下操作：</p>
+<table>
+<thead>
+<tr>
+<th>操作</th>
+<th>断言</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>setup</code></td>
+<td>启用时安装/配置 <code>vsftpd</code>、<code>rpcbind</code>、NFS 服务器/客户端工具、<code>iperf3</code></td>
+</tr>
+<tr>
+<td><code>ftp-active</code></td>
+<td>FTP <code>PORT</code> 模式数据通道完成</td>
+</tr>
+<tr>
+<td><code>ftp-passive</code></td>
+<td>FTP 被动模式数据通道完成</td>
+</tr>
+<tr>
+<td><code>nfs</code></td>
+<td>NFSv3 挂载 + 要求字节数的写入/读取完成</td>
+</tr>
+<tr>
+<td><code>rpc</code></td>
+<td><code>rpcinfo -p</code> 发现 <code>rpcbind</code> 和至少 1 个动态 RPC/NFS 端口</td>
+</tr>
+<tr>
+<td><code>bulk</code></td>
+<td><code>iperf3 -n &lt;bytes&gt;</code> 完成，记录吞吐量/重传</td>
+</tr>
+<tr>
+<td><code>pmtu</code></td>
+<td>DF ping 成功，记录 overlay MTU、路由 MTU/advmss、MSS clamp</td>
+</tr>
+<tr>
+<td><code>source-preserved</code></td>
+<td>服务器端 SSH 将客户端的 mobility <code>/32</code> 识别为对等 IP</td>
+</tr>
+<tr>
+<td><code>no-nat</code></td>
+<td>相同的对等 IP 检查，作为显式 no-NAT 断言记录</td>
+</tr>
+</tbody>
+</table>
+<h2 id="forcefrag-mss-比较">Forcefrag / MSS 比较</h2>
+<p>常规运行中，routerd 导出的 MSS clamp 应能正常通过。如果需要在实验室中验证 P2-b 的强制分片行为，请对同一 D11 对集运行 2 次：</p>
+<ol>
+<li><code>forceFragmentIPv4: false</code>（默认）：TCP 传输应通过 MSS clamp 通过。超大的 DF 非 TCP 可能因底层网络 PMTU 而失败。</li>
+<li>在相关 <code>OverlayPeer</code> 或 <code>TunnelInterface</code> 上 <code>forceFragmentIPv4: true</code>：相同的 DF 探针应通过，路由器证据中应显示 <code>routerd_forcefrag</code>。</li>
+</ol>
+<p>不要全局启用 force fragmentation。限定在路径范围内，并在证据包中记录 before/after 的配置摘要。</p>
+<h2 id="证据审查清单">证据审查清单</h2>
+<p>对 <code>protocol-probe.json</code> 中的每个对：</p>
+<ul>
+<li><code>checks.ftpActive</code>、<code>ftpPassive</code>、<code>nfs</code>、<code>rpc</code>、<code>bulkTransfer</code>、<code>pmtu</code>、<code>sourceIpPreserved</code>、<code>noNat</code> 均为 <code>pass</code>。</li>
+<li><code>details.sourceIpPreserved.peer_ip</code> 与客户端站点的 mobility <code>/32</code> 一致。</li>
+<li><code>details.rpc.dynamic_port</code> 存在且不是 <code>111</code>。</li>
+<li>如果 <code>iperf3</code> 可用，<code>details.bulkTransfer.retransmits</code> 已记录。</li>
+<li><code>details.pmtu.overlay_mtu</code>、<code>route_mtu</code> 或 <code>route_advmss</code>、<code>mss_clamp</code> 已记录。</li>
+</ul>
+<p>外层 <code>result.json</code> 应包含以下通过断言：</p>
+<ul>
+<li><code>protocol_transparency</code></li>
+<li><code>ftp_active_passive</code></li>
+<li><code>nfs_rpc</code></li>
+<li><code>bulk_transfer_pmtu</code></li>
+<li><code>protocol_source_ip_preserved</code></li>
+<li><code>protocol_no_nat</code></li>
+</ul>
+<p>SAM E2E工具逐字节核对FTP、NFS和CIFS的读取与写入内容。故障切换传输使用已知的64 MiB数据，下载后同时核对大小和SHA-256。注入故障前，必须确认本次传输任务仍在运行且已收到部分数据；无法确认进度时，以未判定状态停止，不注入故障或重试。保留启动、结果和失败尝试的证据。可选的传输观测和性能值与正常故障后matrix判定分开。部署使用本次专用目录，传播每个必要复制或配置步骤的失败，并在重启服务前比较已安装的binary和配置与本次数据。</p>
+<p>L2 qualification需要同一provider和阈值配置的before与after观测以及抑制机制记录。before采集成功可进入下一操作，但保存的汇总在after采集前仍为未判定；after的退出码反映汇总结果。故障切换时长使用单调时钟，journal关联用UTC另行记录。provider的VM停止实现处理<code>stop-active</code>；<code>drain</code>需要显式配置<code>CE_&lt;PROVIDER&gt;_DRAIN_INJECT_COMMAND</code>或<code>CE_DRAIN_INJECT_COMMAND</code>，on-premises停止也需要明确的node-stop command。仅停止keepalived不能证明node停止qualification。</p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#目标">目标</a></li>
+<li><a href="#最小实时矩阵">最小实时矩阵</a></li>
+<li><a href="#线束">线束</a></li>
+<li><a href="#运行器契约">运行器契约</a></li>
+<li><a href="#forcefrag-mss-比较">Forcefrag / MSS 比较</a></li>
+<li><a href="#证据审查清单">证据审查清单</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/how-to/cloudedge-protocol-transparency.md">GitHub</a></div></footer></body></html>

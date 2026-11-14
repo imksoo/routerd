@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AWS/Azure/OCI/PVE SAM Hub-Leaf Architecture · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/how-to/cloudedge-sam-aws-azure-oci-pve-hub-leaf.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/how-to/cloudedge-sam-aws-azure-oci-pve-hub-leaf.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/intro.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/intro.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/intro.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="awsazureocipve-sam-hub-leaf-architecture">AWS/Azure/OCI/PVE SAM Hub-Leaf Architecture</h1>
+<p>This page summarizes the reviewed live-test shape for dynamic SAM enrollment
+across AWS, Azure, OCI, and PVE. The 2026-06-29 merge gate used an Azure RR/hub
+and one client-bearing leaf site in each provider. "Full mesh" means every
+AWS/Azure/OCI/PVE client pair passed through the SAM fabric; it does not require
+direct leaf-to-leaf adjacency for every site pair.</p>
+<p>See the detailed runbook in
+<code>docs/operations/dynamic-rr-leaf-enrollment-test.md</code> and live evidence in
+<code>docs/releases/evidence/sam-aws-azure-oci-pve-fullmesh-20260629.md</code>.
+The PVE dual-RR FOU redundancy gate also passed on 2026-06-29 and is
+evidence-frozen in
+<code>docs/releases/manifests/v20260629.samred.yaml</code>.</p>
+<h2 id="roles">Roles</h2>
+<table>
+<thead>
+<tr>
+<th>Role</th>
+<th>Responsibility</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RR/hub</td>
+<td>Stable admission point. Owns <code>BGPRouter</code>, <code>BGPDynamicPeer</code>, static <code>SAMNodeSet</code> topology, <code>SAMTransportProfile</code>, <code>SAMEnrollmentPolicy</code>, <code>MobilityPool</code>, local transport endpoint, and optional <code>WireGuardInterface</code>.</td>
+</tr>
+<tr>
+<td>Leaf</td>
+<td>Runs routerd at each AWS/Azure/OCI/PVE site. Owns only a local remote-request <code>SAMEnrollmentClaim</code> and <code>SAMEnrollmentClient</code>, fetches the authorized <code>SAMRRSet</code>, and materializes transport plus BGP peers from dynamic state.</td>
+</tr>
+<tr>
+<td>Client/workload</td>
+<td>Uses the local leaf as the next hop for remote client /32s and advertises or is represented by MobilityPool-owned /32 reachability.</td>
+</tr>
+</tbody>
+</table>
+<p>The RR base config must not list leaves. It must contain zero
+<code>SAMEnrollmentClaim/leaf-*</code>, zero per-leaf <code>BGPPeer</code>, and zero hand-written
+per-leaf <code>WireGuardPeer</code> resources. Accepted claims are runtime admission
+state.</p>
+<h2 id="rrhub-shape">RR/Hub Shape</h2>
+<p>The hub config is stable across leaf additions. The important pieces are:</p>
+<pre><code class="language-yaml">- kind: BGPRouter
+  metadata: { name: mobility-bgp }
+  spec:
+    asn: 64577
+    listen: { port: 179 }
+    importPolicy:
+      allowedPrefixes: [10.77.60.0/24]
+      allowedPrefixLengthMin: 32
+      allowedPrefixLengthMax: 32
+
+- kind: BGPDynamicPeer
+  metadata: { name: fullmesh-leaves }
+  spec:
+    routerRef: BGPRouter/mobility-bgp
+    peerASN: 64577
+    listen:
+      sourcePrefixes: [10.255.0.0/20]
+    routeReflectorClient: true
+    importPolicy:
+      allowedPrefixes: [10.77.60.0/24]
+      allowedPrefixLengthMin: 32
+      allowedPrefixLengthMax: 32
+      nextHopRewrite: peer-address
+
+- kind: SAMNodeSet
+  metadata: { name: fullmesh-rr-nodes }
+  spec:
+    nodes:
+      - nodeRef: azure-rr
+        routeReflector: true
+        samEndpoint: 10.82.10.5
+
+- kind: SAMEnrollmentPolicy
+  metadata: { name: fullmesh-public-leaves }
+  spec:
+    transportProfileRef: SAMTransportProfile/azure-rr-public
+    rrSetRef: SAMRRSet/fullmesh-rrs
+    rrNodeSetRef: SAMNodeSet/fullmesh-rr-nodes
+    joinTokenFrom:
+      file: /usr/local/etc/routerd/secrets/fullmesh-join-token
+    joinAudience: fullmesh-public-underlay
+    allowedLeafIDs:
+      pattern: ^(aws|azure|oci|pve)-leaf$
+    tunnelAddressPrefixes: [10.255.0.0/20]
+    endpointPrefixes: [10.80.0.0/12]
+    mobilityPoolRefs: [MobilityPool/fullmesh]
+    ttl: 24h
+</code></pre>
+<p><code>BGPDynamicPeer</code> is only the BGP acceptor. <code>SAMNodeSet</code> is the static RR
+identity/topology source. <code>SAMEnrollmentPolicy.spec.rrNodeSetRef</code> is required
+server-side to project its route-reflector nodes into the policy-scoped,
+runtime-only <code>SAMRRSet/fullmesh-rrs</code> returned to an admitted leaf; that RRSet
+is not declared in the hub YAML. Leaf identity, join authentication, tunnel
+address authorization, and MobilityPool /32 ownership stay in SAM enrollment
+and MobilityPool resources.</p>
+<h2 id="leaf-shape">Leaf Shape</h2>
+<p>A leaf keeps only its own claim and a bootstrap client. Its claim references
+the policy owned by the RR, but the leaf does not declare a copy of
+<code>SAMEnrollmentPolicy</code> or the RR <code>SAMNodeSet</code>. It learns the RRSet from the RR
+admission API, then the SAM transport controller uses that fetched RRSet to
+create RR-facing <code>TunnelInterface</code> and <code>BGPPeer</code> resources.</p>
+<pre><code class="language-yaml">- kind: SAMEnrollmentClaim
+  metadata: { name: aws-leaf }
+  spec:
+    policyRef: SAMEnrollmentPolicy/fullmesh-public-leaves
+    rrSetRef: SAMRRSet/fullmesh-rrs
+    leafID: aws-leaf
+    joinAudience: fullmesh-public-underlay
+    joinNonce: aws-leaf-20260629T092330Z
+    joinTimestamp: &quot;2026-06-29T09:23:30Z&quot;
+    joinHMAC: &quot;&lt;hmac-sha256&gt;&quot;
+    tunnelAddress: 10.255.0.11/32
+    endpoint: 10.81.10.10
+    mobility:
+      ownedAddresses: [10.81.10.20/32]
+    bgp:
+      asn: 64577
+      routerID: 10.255.0.11
+
+- kind: SAMEnrollmentClient
+  metadata: { name: fullmesh }
+  spec:
+    claimRef: SAMEnrollmentClaim/aws-leaf
+    bootstrapEndpoints: [http://10.82.10.5:8080]
+    stateTTLRefreshBefore: 2h
+
+- kind: SAMTransportProfile
+  metadata: { name: aws-leaf-public }
+  spec:
+    selfNodeRef: aws-leaf
+    mode: ipip
+    encryption: wireguard
+    underlayInterface: wg-fullmesh
+    peersFrom:
+      - resource: SAMRRSet/fullmesh-rrs
+    bgp:
+      routerRef: BGPRouter/mobility-bgp
+      peerASN: 64577
+</code></pre>
+<p>For a private WAN or leased-line underlay, use <code>encryption: none</code> with
+<code>mode: ipip</code>, <code>gre</code>, or <code>fou</code> and omit WireGuard fields. The PVE redundancy
+evidence covered FOU with no encryption. The public AWS/Azure/OCI/PVE merge
+gate used IPIP plus WireGuard because NAT/public reachability made it the
+common practical transport.</p>
+<h2 id="provider-route-requirements">Provider Route Requirements</h2>
+<p>Each provider must allow the leaf VM to forward traffic and must route remote
+client /32s to the local leaf:</p>
+<table>
+<thead>
+<tr>
+<th>Provider</th>
+<th>Required routing control</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>AWS</td>
+<td>Disable source/destination check on the leaf instance or ENI. Route remote client /32s to the leaf ENI in the site route table.</td>
+</tr>
+<tr>
+<td>Azure</td>
+<td>Enable NIC IP forwarding on RR and leaf NICs. Add UDR entries for remote client /32s with next hop set to the leaf private IP.</td>
+</tr>
+<tr>
+<td>OCI</td>
+<td>Enable skip source/destination check on the leaf VNIC. Add route rules for remote client /32s to the leaf private IP target used by the VCN. Allow forwarding in the guest firewall when the image defaults reject FORWARD.</td>
+</tr>
+<tr>
+<td>PVE</td>
+<td>Attach the leaf and client to the intended bridge/VLAN. Add client routes for remote client /32s via the leaf site gateway when the client default gateway is not the leaf.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="client-matrix">Client Matrix</h2>
+<p>The accepted live gate used these client /32s:</p>
+<table>
+<thead>
+<tr>
+<th>Site</th>
+<th>Client /32</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>AWS</td>
+<td><code>10.81.10.20/32</code></td>
+</tr>
+<tr>
+<td>Azure</td>
+<td><code>10.82.10.20/32</code></td>
+</tr>
+<tr>
+<td>OCI</td>
+<td><code>10.83.10.20/32</code></td>
+</tr>
+<tr>
+<td>PVE</td>
+<td><code>10.99.9.10/32</code></td>
+</tr>
+</tbody>
+</table>
+<p>Pass criteria were all 12 directed pairs passing ping and SSH:</p>
+<ul>
+<li>AWS <code>&lt;-&gt;</code> Azure</li>
+<li>AWS <code>&lt;-&gt;</code> OCI</li>
+<li>AWS <code>&lt;-&gt;</code> PVE</li>
+<li>Azure <code>&lt;-&gt;</code> OCI</li>
+<li>Azure <code>&lt;-&gt;</code> PVE</li>
+<li>OCI <code>&lt;-&gt;</code> PVE</li>
+</ul>
+<h2 id="security-boundary">Security Boundary</h2>
+<p>The TCP control API defaults to <code>127.0.0.1:65432</code> and loopback-only source
+admission. It is still the mutation/control API and does not preserve Unix
+socket filesystem-permission semantics; on multi-user hosts, disable it with a
+<code>ControlAPI</code> resource using <code>enabled: false</code> and use the Unix socket instead.
+RR-side SAM enrollment over a private underlay should declare a
+<code>system.routerd.net/v1alpha1</code> <code>ControlAPI</code> resource with a protected
+<code>listenAddress</code>, <code>port: 65432</code>, and a narrow <code>allowCIDRs</code> list such as the leaf
+management subnet. <code>0.0.0.0/0</code> and <code>::/0</code> are rejected; this is not an
+Internet-safe listener.
+For RR-side HTTP enrollment, prefer adding <code>ControlAPI.spec.tokenFrom</code> and
+configuring each leaf <code>SAMEnrollmentClient.spec.controlAPITokenFrom</code> with the
+same secret source so submit/fetch calls require both source-CIDR admission and
+a bearer token. For stronger RR admission, configure
+<code>ControlAPI.spec.tls.certFile</code>, <code>keyFile</code>, and <code>clientCAFile</code>, then configure
+each leaf <code>SAMEnrollmentClient.spec.controlAPITLS</code> with the RR CA and a
+leaf-specific client certificate/key. Source CIDR, bearer token, and mTLS are
+additive controls; public Internet exposure still requires a deliberately
+designed management plane.</p>
+<p>The join token authorizes enrollment requests, not long-term route ownership by
+itself. The RR still validates claim TTL, HMAC, tunnel address prefixes,
+endpoint prefixes, duplicate constraints, and MobilityPool /32 ownership before
+the accepted claim can materialize runtime resources.</p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#roles">Roles</a></li>
+<li><a href="#rrhub-shape">RR/Hub Shape</a></li>
+<li><a href="#leaf-shape">Leaf Shape</a></li>
+<li><a href="#provider-route-requirements">Provider Route Requirements</a></li>
+<li><a href="#client-matrix">Client Matrix</a></li>
+<li><a href="#security-boundary">Security Boundary</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/how-to/cloudedge-sam-aws-azure-oci-pve-hub-leaf.md">GitHub</a></div></footer></body></html>

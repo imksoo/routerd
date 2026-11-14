@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WebConsole · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/reference/resources/WebConsole.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/reference/resources/WebConsole.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/reference/resources/WebConsole.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/WebConsole.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/WebConsole.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="webconsole">WebConsole</h1>
+<p><a href="../resources.html#webconsole">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: system.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Serves the read-only router web console from routerd. Its HTTP listener is separate from the mutating ControlAPI listener.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>The runtime selects the first WebConsole resource; it does not start one listener per resource. A resolved listenAddressFrom takes precedence over listenAddress; the latter is a fallback, not a mutually exclusive option.</li>
+</ul>
+<h2 id="yaml-definition">YAML definition</h2>
+<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
+<pre><code class="language-yaml">- apiVersion: system.routerd.net/v1alpha1
+  kind: WebConsole
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    basePath: &quot;&lt;string&gt;&quot; # optional; string
+    enabled: true # optional; boolean
+    links: # optional; array
+      - # object
+        description: &quot;&lt;string&gt;&quot; # optional; string
+        label: &quot;&lt;string&gt;&quot; # Required; string
+        url: &quot;&lt;string&gt;&quot; # Required; string
+    listenAddress: &quot;&lt;string&gt;&quot; # optional; string
+    listenAddressFrom: # optional; object
+      field: &quot;&lt;string&gt;&quot; # optional; string
+      optional: true # optional; boolean
+      resource: &quot;&lt;string&gt;&quot; # Required; string
+    port: 1 # optional; integer; minimum=1; maximum=65535
+    title: &quot;&lt;string&gt;&quot; # optional; string
+</code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.enabled</code></td>
+<td>Default true when a WebConsole resource exists. False disables the console selected by the runtime. No resource means no console listener.</td>
+</tr>
+<tr>
+<td><code>spec.listenAddress</code></td>
+<td>Fallback bind IP, default 127.0.0.1. Must parse as an IP when nonblank. A resolved listenAddressFrom wins.</td>
+</tr>
+<tr>
+<td><code>spec.listenAddressFrom</code></td>
+<td>Value source for a bind IP; default absent. Uses status first, then supported configured-interface/address resolution. Requires resource and field. If unresolved and no listenAddress is supplied, console startup fails even if optional=true.</td>
+</tr>
+<tr>
+<td><code>spec.port</code></td>
+<td>TCP port, default 8080. Zero in the decoded config means use this default; explicit nonzero values must be 1–65535.</td>
+</tr>
+<tr>
+<td><code>spec.basePath</code></td>
+<td>HTTP path prefix, default /. A nonempty value must begin with / and contain no NUL or line breaks.</td>
+</tr>
+<tr>
+<td><code>spec.title</code></td>
+<td>Console page title, default routerd. It does not rename the router or any resource.</td>
+</tr>
+<tr>
+<td><code>spec.links</code></td>
+<td>Optional additional console links, default empty. Entries with blank label or URL are omitted at display time.</td>
+</tr>
+<tr>
+<td><code>spec.links[].label</code></td>
+<td>Visible link text, no default; blank values are not displayed.</td>
+</tr>
+<tr>
+<td><code>spec.links[].url</code></td>
+<td>Link destination, no default. This is a URL, not Kind/name. The console trims surrounding whitespace.</td>
+</tr>
+<tr>
+<td><code>spec.links[].description</code></td>
+<td>Optional explanatory text, default empty; trimmed for display.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_system.go">pkg/config/validate_system.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd/cmd_serve.go">cmd/routerd/cmd_serve.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/webconsole/console.go">pkg/webconsole/console.go</a></p>
+<p><a href="/examples/home-router-mgmt-protected.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
+<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/reference/resources/WebConsole.md">GitHub</a></div></footer></body></html>

@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>以宣告式方式進行路由器主機的啟動設定 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/how-to/os-bootstrap.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/how-to/os-bootstrap.html" lang="en" hreflang="en">English</a><a href="/docs/ja/how-to/os-bootstrap.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/how-to/os-bootstrap.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/how-to/os-bootstrap.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="以宣告式方式進行路由器主機的啟動設定">以宣告式方式進行路由器主機的啟動設定</h1>
+<p>routerd 能將初次建置時容易變成手動作業的主機準備工作，整合至 YAML 管理。
+這不是安裝程式的替代方案，而是將路由器特有的差異以設定檔保留，而非散落在 shell 歷史記錄中的功能。</p>
+<h2 id="套件">套件</h2>
+<p>routerd 會從設定內的資源自動推導一般 OS 套件相依。
+<code>Package</code> 作為窄範圍的覆寫，僅用於補充尚無法自動推導的相依套件。</p>
+<pre><code class="language-yaml">apiVersion: system.routerd.net/v1alpha1
+kind: Package
+metadata:
+  name: router-service-dependencies
+spec:
+  packages:
+    - os: ubuntu
+      manager: apt
+      names:
+        - dnsmasq
+        - nftables
+        - conntrack
+        - kmod
+        - wireguard-tools
+        - tailscale
+    - os: freebsd
+      manager: pkg
+      names:
+        - dnsmasq
+        - wireguard-tools
+        - mpd5
+</code></pre>
+<h2 id="核心模組">核心模組</h2>
+<p>Linux 的核心模組會從 NAT、防火牆記錄、流量記錄、WireGuard 等資源自動推導。
+<code>KernelModule</code> 不是使用者直接撰寫的設定 Kind。</p>
+<h2 id="sysctl">Sysctl</h2>
+<p>routerd 會從路由器資源自動推導 forwarding、conntrack accounting、reverse path filter、redirect、TCP、RA 等 sysctl 設定。
+通常不需要在設定中撰寫 <code>SysctlProfile</code>。</p>
+<p><code>SysctlProfile</code> 僅作為窄範圍的逃生出口，用於補充 routerd 尚無法推導的平台特定核心設定。
+請只在 <code>overrides</code> 中指定差異部分。</p>
+<pre><code class="language-yaml">apiVersion: system.routerd.net/v1alpha1
+kind: SysctlProfile
+metadata:
+  name: router-runtime
+spec:
+  profile: router-linux
+  runtime: true
+  persistent: true
+  overrides:
+    net.netfilter.nf_conntrack_udp_timeout: &quot;60&quot;
+</code></pre>
+<h2 id="接手現有主機設定">接手現有主機設定</h2>
+<p>systemd-networkd 與 systemd-resolved 的接手用 drop-in 會從 <code>Interface</code>、DHCP、DNS、RA 等資源自動推導。
+DHCP、DNS、PPPoE、healthcheck、Tailscale 等 routerd 受管 unit 也從各自的資源 Kind 產生，
+請勿重複定義。</p>
+<p>在 Ubuntu 26.04 LTS 上，依 RA 狀態不同，即使安裝程式寫入的 netplan 設定了 <code>dhcp6: false</code>，
+systemd-networkd 仍可能在介面上開啟 DHCPv6 用戶端 socket。
+對於 routerd 所管理的 WAN/LAN 連結，請在 OS 啟動設定（bootstrap）階段明確加入 <code>accept-ra: false</code>，
+並在安裝程式的 netplan 層中僅保留 IPv6 link-local。
+這樣可確保 <code>routerd-dhcpv6-client</code> 能使用 UDP port 546，
+避免 OS 初始網路設定與 routerd 的 DHCPv6-PD 及 RA/DHCPv6 產生競合。
+管理用 DHCP 請保留在獨立的管理介面上。</p>
+<pre><code class="language-yaml">network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    wan0:
+      dhcp4: false
+      dhcp6: false
+      accept-ra: false
+      link-local: [ipv6]
+      optional: true
+    lan0:
+      dhcp4: false
+      dhcp6: false
+      accept-ra: false
+      link-local: [ipv6]
+      optional: true
+    mgmt0:
+      dhcp4: true
+      dhcp6: false
+      accept-ra: false
+      link-local: [ipv6]
+      optional: true
+</code></pre>
+<p>若需要 WAN 連結上來自 RA 的 IPv6 預設路由（例如用於解析 ISP DNS 或 AFTR），
+請宣告該 WAN 介面與 DHCPv6 / RA 的資源。
+routerd 會推導所需的 systemd-networkd drop-in，並避免 systemd-networkd DHCP 用戶端產生競合。</p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#套件">套件</a></li>
+<li><a href="#核心模組">核心模組</a></li>
+<li><a href="#sysctl">Sysctl</a></li>
+<li><a href="#接手現有主機設定">接手現有主機設定</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/how-to/os-bootstrap.md">GitHub</a></div></footer></body></html>

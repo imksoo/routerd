@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>逐步教學 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/tutorials/index.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/tutorials/index.html" lang="en" hreflang="en">English</a><a href="/docs/ja/tutorials/index.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/tutorials/index.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/tutorials/index.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="逐步教學">逐步教學</h1>
+<p>這些教學依照「先理解、再檢查、最後接上真實網路」排序。第一輪請使用隔離的 Ubuntu Server VM，並保留虛擬機主控台、序列主控台或獨立的管理網卡。</p>
+<table>
+<thead>
+<tr>
+<th>目標</th>
+<th>建議閱讀</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>先弄清楚 WAN、LAN、DHCP、DNS、NAT</td>
+<td><a href="network-basics.html">網路基礎</a></td>
+</tr>
+<tr>
+<td>從發布封存檔安裝程式</td>
+<td><a href="install.html">安裝</a></td>
+</tr>
+<tr>
+<td>撰寫第一份 YAML，但不變更網路</td>
+<td><a href="getting-started.html">安全起步</a></td>
+</tr>
+<tr>
+<td>設定 WAN DHCP 與 LAN 閘道位址</td>
+<td><a href="first-router.html">第一台實驗路由器</a></td>
+</tr>
+<tr>
+<td>加入 WAN 取得、PPPoE、DS-Lite 或 DHCPv6-PD</td>
+<td><a href="wan-side-services.html">WAN 側服務</a></td>
+</tr>
+<tr>
+<td>加入 LAN DHCP、RA、DNS 或 NTP</td>
+<td><a href="lan-side-services.html">LAN 側服務</a></td>
+</tr>
+<tr>
+<td>了解 NAT 和防火牆資源的邊界</td>
+<td><a href="basic-firewall.html">基本 NAT 與防火牆</a></td>
+</tr>
+<tr>
+<td>查看完整設定如何組合</td>
+<td><a href="../config-examples/index.html">設定範例集</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="請記住兩段流程">請記住兩段流程</h2>
+<p>第一次檢查本機檔案時：</p>
+<pre><code class="language-text">routerd validate  →  routerd apply --once --dry-run
+</code></pre>
+<p>前者檢查 YAML；後者在不提交網路變更的情況下跑一次控制器與產生流程。真正的 <code>routerd serve</code> 會管理主機，所以一定要在確認管理路徑安全後才啟動。</p>
+<p>服務運行後，才使用另一段流程：</p>
+<pre><code class="language-text">routerd serve  →  routerctl get / describe / validate / plan / apply
+</code></pre>
+<p><code>routerctl</code> 是執行中 daemon 的客戶端，不能拿來取代離線檔案檢查。</p>
+<p>後續的 NAT、防火牆與訪客裝置範例用來理解資源模型，但防火牆仍在預發布的基礎實作階段。若訪客裝置和受信任裝置共用同一二層網路，真正的隔離通常需要 VLAN、獨立 SSID 或獨立交換器埠。</p>
+<h2 id="下一步">下一步</h2>
+<p>從<a href="network-basics.html">網路基礎</a>或<a href="getting-started.html">安全起步</a>開始。</p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#請記住兩段流程">請記住兩段流程</a></li>
+<li><a href="#下一步">下一步</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/tutorials/index.md">GitHub</a></div></footer></body></html>

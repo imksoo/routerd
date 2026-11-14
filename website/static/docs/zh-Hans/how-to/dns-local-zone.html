@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>本地 DNS 区域 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/how-to/dns-local-zone.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/how-to/dns-local-zone.html" lang="en" hreflang="en">English</a><a href="/docs/ja/how-to/dns-local-zone.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/how-to/dns-local-zone.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/dns-local-zone.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="本地-dns-区域">本地 DNS 区域</h1>
+<h2 id="适用场景">适用场景</h2>
+<p>当您希望通过名称解析内部主机，但又不想手动同步各设备的 <code>/etc/hosts</code> 时，具体而言是希望实现以下目标：</p>
+<ul>
+<li>拥有少量固定记录（路由器、NAS、打印机）。</li>
+<li>为取得 DHCP 租约的设备自动生成 A / AAAA / PTR 记录。</li>
+<li>正向查询与反向查询均正常运作。</li>
+</ul>
+<h2 id="routerd-的解决方式">routerd 的解决方式</h2>
+<p>使用 <code>DNSZone</code> 管理单一 DNS 域的本地权威记录。
+可以结合<strong>手动记录</strong>（以 YAML 声明）与<strong>来自 DHCP 的记录</strong>（从租约数据库建立）。
+<code>DNSResolver</code> 将这些记录作为响应来源之一加载，使内部查询在本地响应，外部查询则转发至配置的上游解析器。</p>
+<p>DHCP 衍生的记录通过事件总线同步。dnsmasq 在租约变更时调用 <code>routerd-dhcp-event-relay</code>，relay 发布 routerd 事件，<code>routerd-dns-resolver</code> 则更新内存中的区域数据。
+dnsmasq 的租约文件在启动时也会重新读取，因此即使重启守护进程也不会丢失记录。</p>
+<h2 id="示例">示例</h2>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSZone
+  metadata:
+    name: lan
+  spec:
+    zone: lan.example.org
+    ttl: 300
+    dnssec:
+      enabled: false
+    records:
+      - hostname: router
+        ipv4: 192.0.2.1
+        ipv6: 2001:db8:1::1
+      - hostname: nas
+        ipv4: 192.0.2.10
+    dhcpDerived:
+      sources:
+        - DHCPv4Server/lan-dhcpv4
+        - DHCPv6Server/lan-dhcpv6
+      hostnameSuffix: lan.example.org
+      ddns: true
+      ttl: 60
+      leaseFile: /run/routerd/dnsmasq.leases
+    reverseZones:
+      - name: 2.0.192.in-addr.arpa
+</code></pre>
+<p>应用后，<code>nas.lan.example.org</code> 及 <code>&lt;dhcp-client-name&gt;.lan.example.org</code> 将解析为本地地址，<code>192.0.2.x</code> 的 PTR 查询也会返回对应的名称。</p>
+<h2 id="补充说明">补充说明</h2>
+<ul>
+<li>请选择您拥有管理权的域，或为内部使用保留的域（如 <code>example.org</code>、<code>home.arpa</code>）。请勿使用可能与公众 DNS 冲突的 suffix，例如 <code>.lan</code>。</li>
+<li>启用 DNSSEC（<code>dnssec.enabled: true</code>）后，外部的 DNSSEC 验证仍可正常运作。本地区域在设计上不签署。</li>
+<li>若有多个内部子网，请为每个子网分别撰写一条 <code>reverseZones</code> 条目，以确保双向 PTR 查询均可运作。</li>
+</ul>
+<h2 id="相关文件">相关文件</h2>
+<ul>
+<li><a href="dns-private-upstream.html">专用 DNS 上游</a></li>
+<li><a href="../concepts/dns-resolver.html">DNS 解析器概念</a></li>
+</ul></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#适用场景">适用场景</a></li>
+<li><a href="#routerd-的解决方式">routerd 的解决方式</a></li>
+<li><a href="#示例">示例</a></li>
+<li><a href="#补充说明">补充说明</a></li>
+<li><a href="#相关文件">相关文件</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/how-to/dns-local-zone.md">GitHub</a></div></footer></body></html>

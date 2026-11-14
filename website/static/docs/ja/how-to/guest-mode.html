@@ -1,0 +1,427 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MAC アドレスでゲスト端末を隔離する · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/how-to/guest-mode.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/how-to/guest-mode.html" lang="en" hreflang="en">English</a><a href="/docs/ja/how-to/guest-mode.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/how-to/guest-mode.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/guest-mode.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="mac-アドレスでゲスト端末を隔離する">MAC アドレスでゲスト端末を隔離する</h1>
+<p><code>ClientPolicy</code> は routerd のゲストモードです。
+同じ LAN 上の端末を MAC アドレスで分類し、通常のゾーン間ファイアウォールマトリクスより先に、より厳しい転送方針を適用します。</p>
+<p>VLAN をまだ分けていない構成でも、信頼済みの端末と、インターネットだけを使わせたい端末との境界を明確にできます。</p>
+<h2 id="ユースケース">ユースケース</h2>
+<p>代表的な用途は次の通りです。</p>
+<ul>
+<li>家庭内で、来客のスマートフォン、ゲーム機、家電、持ち込み PC を、管理網や自宅サーバーへ届かせたくない場合。</li>
+<li>集合住宅や共有住宅で、既定をゲストとし、明示した端末だけを信頼済みにしたい場合。</li>
+<li>カメラ、HEMS、テレビ、スピーカーなどの IoT 端末を隔離する場合。DNS、DHCP、NTP、インターネットは使わせますが、横方向の通信は不要です。</li>
+<li>小規模オフィスの来客用ネットワークで、物理 LAN は共有しつつ、RFC 1918 や ULA 宛ての通信を遮断したい場合。</li>
+</ul>
+<p>完全な例は <a href="/examples/guest-mode.yaml">examples/guest-mode.yaml</a> を参照してください。</p>
+<h2 id="仕組み">仕組み</h2>
+<p>Linux では、routerd は <code>ClientPolicy</code> を nftables の <code>inet routerd_filter</code> テーブルに生成します。</p>
+<p>各方針から、次の規則を生成します。</p>
+<ul>
+<li><code>client_policy_guest_devices</code> のような nftables の <code>ether_addr</code> set。</li>
+<li><code>mode: include</code> 用の <code>ether saddr @set</code> 照合。</li>
+<li><code>mode: exclude</code> 用の <code>ether saddr != @set</code> 照合。</li>
+<li>選択したルーター内サービスへの、self 向け許可規則。</li>
+<li>プライベート IPv4 宛てと ULA IPv6 宛ての転送拒否規則。</li>
+<li>拒否規則より前に置く、任意の許可規則。</li>
+</ul>
+<p>生成した規則は、<code>input</code> チェーンと <code>forward</code> チェーンの早い位置に入ります。
+そのため、通常なら <code>trust -&gt; self</code> や <code>trust -&gt; trust</code> の役割マトリクスで許可される通信でも、ゲスト端末の通信は先に絞り込まれます。</p>
+<p><code>ClientPolicy</code> は <code>FirewallZone</code> の代替ではありません。
+通常のモデルはそのまま使います。</p>
+<ul>
+<li><code>FirewallZone</code> は、インターフェースの通常の役割を決めます。</li>
+<li><code>FirewallPolicy</code> は、拒否ログなどの共通動作を決めます。</li>
+<li><code>FirewallRule</code> は、明示的な例外を追加します。</li>
+<li><code>ClientPolicy</code> は、LAN の中に端末単位の制限を重ねます。</li>
+</ul>
+<p>MAC 照合は、Ethernet の送信元アドレスを直接見ます。
+そのため、DHCP リースは必須ではありません。
+ただし <code>DHCPv4Reservation</code> を併用すると、端末の IPv4 アドレス、名前、Web 管理画面での表示が安定します。</p>
+<h2 id="仕様">仕様</h2>
+<p><code>ClientPolicy</code> は <code>firewall.routerd.net/v1alpha1</code> に属します。</p>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: ClientPolicy
+  metadata:
+    name: guest-devices
+  spec:
+    mode: include
+    macs:
+      - &quot;18:ec:e7:33:12:6c&quot;
+    isolation:
+      lanInternet: allow
+      lanLAN: deny
+      lanMgmt: deny
+      mDNSBroadcast: deny
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>フィールド</th>
+<th>必須</th>
+<th>意味</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>mode</code></td>
+<td>はい</td>
+<td><code>include</code> または <code>exclude</code> です。</td>
+</tr>
+<tr>
+<td><code>interfaces</code></td>
+<td>いいえ</td>
+<td>方針を適用する LAN 側の <code>Interface</code> 参照です。<code>Interface/lan</code> と <code>lan</code> は同じインターフェースを指します。省略時は <code>trust</code> の <code>FirewallZone</code> に属する全インターフェースへ適用します。</td>
+</tr>
+<tr>
+<td><code>macs</code></td>
+<td>いいえ</td>
+<td>短縮形の MAC 一覧です。include モードではゲスト、exclude モードでは信頼済みとして扱います。</td>
+</tr>
+<tr>
+<td><code>isolation</code></td>
+<td>いいえ</td>
+<td>ゲストの意図を表します。<code>lanInternet</code>、<code>lanLAN</code>、<code>lanMgmt</code>、<code>mDNSBroadcast</code> に <code>allow</code> または <code>deny</code> を指定できます。</td>
+</tr>
+<tr>
+<td><code>classification</code></td>
+<td>いいえ</td>
+<td>構造化したクライアント分類のエントリです。</td>
+</tr>
+<tr>
+<td><code>classification[].mode</code></td>
+<td>はい</td>
+<td><code>trusted</code>、<code>guest</code>、<code>isolated</code> のいずれかです。</td>
+</tr>
+<tr>
+<td><code>classification[].match.macs</code></td>
+<td>いいえ</td>
+<td>端末の MAC アドレスです。routerd は生成前に正規化します。</td>
+</tr>
+<tr>
+<td><code>classification[].match.ouiPrefixes</code></td>
+<td>いいえ</td>
+<td><code>18:ec:e7</code> のようなベンダーの OUI プレフィックスです。</td>
+</tr>
+<tr>
+<td><code>classification[].match.hostnamePatterns</code></td>
+<td>いいえ</td>
+<td>観測した DHCP ホスト名に対する glob パターンです。</td>
+</tr>
+<tr>
+<td><code>classification[].match.dhcpFingerprints</code></td>
+<td>いいえ</td>
+<td>routerd が観測した DHCP フィンガープリントのラベルです。</td>
+</tr>
+<tr>
+<td><code>classification[].name</code></td>
+<td>いいえ</td>
+<td>人が読むための端末名です。現時点では説明用の値です。</td>
+</tr>
+<tr>
+<td><code>classification[].ipv4Reservation</code></td>
+<td>いいえ</td>
+<td><code>DHCPv4Reservation</code> の名前です。<code>DHCPv4Reservation/aiseg2</code> ではなく <code>aiseg2</code> と書きます。</td>
+</tr>
+<tr>
+<td><code>guestServices</code></td>
+<td>いいえ</td>
+<td>ゲスト端末に許可するルーター内サービスです。既定値は <code>dhcp</code>、<code>dns</code>、<code>ntp</code> です。指定できる値は <code>dhcp</code>、<code>dns</code>、<code>ntp</code>、<code>mdns</code>、<code>ssdp</code> です。</td>
+</tr>
+<tr>
+<td><code>guestEgressDeny</code></td>
+<td>いいえ</td>
+<td>ゲスト端末の転送先として拒否する CIDR です。省略時は RFC 1918 と ULA を拒否します。</td>
+</tr>
+<tr>
+<td><code>guestEgressAllow</code></td>
+<td>いいえ</td>
+<td>拒否規則より先に許可する CIDR です。</td>
+</tr>
+</tbody>
+</table>
+<p>既定の <code>guestEgressDeny</code> は次の通りです。</p>
+<ul>
+<li><code>10.0.0.0/8</code></li>
+<li><code>172.16.0.0/12</code></li>
+<li><code>192.168.0.0/16</code></li>
+<li><code>fc00::/7</code></li>
+</ul>
+<p><code>isolation.mDNSBroadcast: deny</code> を指定すると、ゲストからの mDNS、SSDP、NetBIOS による探索の転送も拒否します。ゲスト端末がマルチキャストやブロードキャストの探索で LAN 内の端末を見つける挙動を抑えます。</p>
+<p>許可規則は、拒否規則より先に生成されます。
+プリンターやキャプティブポータルの補助サーバーなど、狭い例外を作るときに使えます。</p>
+<h2 id="例-1-最小の-include-モード">例 1: 最小の include モード</h2>
+<p>1 つの MAC アドレスだけをゲストとして扱います。</p>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: ClientPolicy
+  metadata:
+    name: guest-devices
+  spec:
+    mode: include
+    interfaces:
+      - Interface/lan
+    classification:
+      - mode: guest
+        match:
+          macs:
+            - &quot;18:ec:e7:33:12:6c&quot;
+        name: aiseg2
+</code></pre>
+<h2 id="例-2-複数端末の-include-モード">例 2: 複数端末の include モード</h2>
+<p>複数の端末を同じゲスト規則で扱えます。</p>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: ClientPolicy
+  metadata:
+    name: household-guests
+  spec:
+    mode: include
+    interfaces:
+      - Interface/lan
+    classification:
+      - mode: guest
+        match:
+          macs:
+            - &quot;18:ec:e7:33:12:6c&quot;
+        name: aiseg2
+        ipv4Reservation: aiseg2
+      - mode: guest
+        match:
+          macs:
+            - &quot;7c:2f:80:11:22:33&quot;
+        name: guest-phone
+      - mode: guest
+        match:
+          macs:
+            - &quot;90:09:d0:44:55:66&quot;
+        name: smart-tv
+</code></pre>
+<h2 id="例-3-byod-向けの-exclude-モード">例 3: BYOD 向けの exclude モード</h2>
+<p>対象インターフェース上の端末を、既定でゲストとして扱います。
+一覧に書いた MAC アドレスだけを信頼済みとして扱います。</p>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: ClientPolicy
+  metadata:
+    name: byod-default-guest
+  spec:
+    mode: exclude
+    interfaces:
+      - Interface/lan
+    classification:
+      - mode: trusted
+        match:
+          macs:
+            - &quot;bc:24:11:e0:8e:3a&quot;
+        name: admin-laptop
+      - mode: trusted
+        match:
+          macs:
+            - &quot;4e:20:15:aa:e0:67&quot;
+        name: owner-phone
+</code></pre>
+<h2 id="例-4-拒否と許可のカスタム-cidr">例 4: 拒否と許可のカスタム CIDR</h2>
+<p>既定のプライベート宛て拒否を保ちつつ、1 台のプリンターだけ許可します。</p>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: ClientPolicy
+  metadata:
+    name: guest-with-printer
+  spec:
+    mode: include
+    interfaces:
+      - Interface/lan
+    guestEgressAllow:
+      - 172.18.20.10/32
+    guestEgressDeny:
+      - 10.0.0.0/8
+      - 172.16.0.0/12
+      - 192.168.0.0/16
+      - fc00::/7
+    classification:
+      - mode: guest
+        match:
+          macs:
+            - &quot;7c:2f:80:11:22:33&quot;
+        name: guest-phone
+</code></pre>
+<h2 id="例-5-ローカル探索サービス">例 5: ローカル探索サービス</h2>
+<p>既定では、ゲスト端末に DHCP、DNS、NTP を許可します。
+ルーター上でローカル探索のプロキシや中継を動かす場合は、<code>mdns</code> や <code>ssdp</code> を明示的に追加します。</p>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: ClientPolicy
+  metadata:
+    name: media-guests
+  spec:
+    mode: include
+    interfaces:
+      - Interface/lan
+    guestServices:
+      - dhcp
+      - dns
+      - ntp
+      - mdns
+      - ssdp
+    classification:
+      - mode: guest
+        match:
+          macs:
+            - &quot;90:09:d0:44:55:66&quot;
+        name: smart-tv
+</code></pre>
+<p>探索サービスは、公開される情報を理解したうえで有効にしてください。
+mDNS や SSDP は便利ですが、端末名やサービス情報を見せてしまうことがあります。</p>
+<h2 id="例-6-iot-の隔離と固定割り当て">例 6: IoT の隔離と固定割り当て</h2>
+<p>固定割り当てがあると、調査しやすくなります。
+Web 管理画面の端末一覧や DNS レコードも分かりやすくなります。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DHCPv4Reservation
+  metadata:
+    name: thermostat
+  spec:
+    server: lan-v4
+    macAddress: &quot;02:11:22:33:44:55&quot;
+    hostname: thermostat
+    ipAddress: 172.18.0.151
+
+- apiVersion: firewall.routerd.net/v1alpha1
+  kind: ClientPolicy
+  metadata:
+    name: iot-isolation
+  spec:
+    mode: include
+    interfaces:
+      - Interface/lan
+    classification:
+      - mode: guest
+        match:
+          macs:
+            - &quot;02:11:22:33:44:55&quot;
+        name: thermostat
+        ipv4Reservation: thermostat
+</code></pre>
+<h2 id="dhcpv4reservation-との連携">DHCPv4Reservation との連携</h2>
+<p><code>classification[].ipv4Reservation</code> は参照の検証用です。
+routerd は、指定した <code>DHCPv4Reservation</code> が存在することを確認します。
+ファイアウォールの照合は、リースされた IP アドレスではなく MAC アドレスで行います。</p>
+<p>この分離は意図的です。</p>
+<ul>
+<li>MAC 照合により、IP 層の判断より前に端末を分類できます。</li>
+<li>IPv4 の固定リースにより、DNS と Web 管理画面の表示が安定します。</li>
+<li>端末の IP アドレスが変わっても、ゲスト隔離は MAC アドレスに追従します。</li>
+</ul>
+<p>端末がランダム MAC アドレスを使う場合は、その SSID または有線セグメントで実際に見えている MAC アドレスを登録してください。</p>
+<h2 id="生成規則の確認">生成規則の確認</h2>
+<p>設定を生成するか、稼働中の nftables テーブルを確認します。</p>
+<pre><code class="language-sh">routerd render nftables --config /usr/local/etc/routerd/router.yaml
+sudo nft list table inet routerd_filter
+</code></pre>
+<p>次のような規則を確認します。</p>
+<pre><code class="language-nft">set client_policy_guest_devices {
+  type ether_addr
+  elements = { 18:ec:e7:33:12:6c }
+}
+
+iifname &quot;ens19&quot; ether saddr @client_policy_guest_devices udp dport 53 counter accept
+iifname &quot;ens19&quot; ether saddr @client_policy_guest_devices ip daddr 10.0.0.0/8 counter log prefix &quot;routerd client-policy guest-devices deny &quot; drop
+</code></pre>
+<h2 id="ゲスト端末からの動作確認">ゲスト端末からの動作確認</h2>
+<p>ゲスト端末から確認します。</p>
+<pre><code class="language-sh">curl -4 https://www.google.com/generate_204
+curl -4 --connect-timeout 3 http://192.168.1.1/
+curl -4 --connect-timeout 3 http://172.18.0.1:8080/
+</code></pre>
+<p>期待する結果は次の通りです。</p>
+<ul>
+<li>インターネットへの通信は成功します。</li>
+<li>プライベート宛ては、タイムアウトするか失敗します。</li>
+<li>DNS、DHCP、NTP は動き続けます。</li>
+</ul>
+<p>ルーター側では、tcpdump でパケットの経路を確認します。</p>
+<pre><code class="language-sh">sudo tcpdump -ni ens19 ether host 18:ec:e7:33:12:6c
+sudo nft list chain inet routerd_filter forward
+</code></pre>
+<p>プライベート宛てが拒否されると、生成された <code>ClientPolicy</code> 規則のカウンターが増えます。</p>
+<h2 id="トラブルシューティング">トラブルシューティング</h2>
+<h3 id="mac-アドレスが一致しない">MAC アドレスが一致しない</h3>
+<p>ルーターから見えている MAC アドレスを確認します。</p>
+<pre><code class="language-sh">ip neigh show dev ens19
+sudo tcpdump -eni ens19
+</code></pre>
+<p>無線端末は、SSID ごとに異なる MAC アドレスを使うことがあります。
+スマートフォンやノート PC は、ランダム MAC アドレスを使うこともあります。
+端末に印字された MAC アドレスではなく、ルーター側の LAN で見えているアドレスを使ってください。</p>
+<h3 id="ゲスト端末からプライベートネットワークに届いてしまう">ゲスト端末からプライベートネットワークに届いてしまう</h3>
+<p>次を確認してください。</p>
+<ul>
+<li>方針が正しい <code>Interface</code> を参照している。</li>
+<li>パケットがそのインターフェースから入っている。</li>
+<li><code>routerctl apply</code> で最新の nftables テーブルが反映されている。</li>
+<li><code>guestEgressAllow</code> に広いプライベートプレフィックスが入っていない。</li>
+<li>端末側の VPN クライアントなど、ルーターを迂回する経路がない。</li>
+</ul>
+<h3 id="ゲスト端末からインターネットに出られない">ゲスト端末からインターネットに出られない</h3>
+<p><code>ClientPolicy</code> は、プライベート宛てと self 宛てを絞ります。
+インターネットへの疎通が失敗する場合は、経路方針、NAT44、DS-Lite、DNS、IP forwarding を確認します。</p>
+<pre><code class="language-sh">routerctl get status
+sysctl net.ipv4.ip_forward
+sudo nft list table ip routerd_nat
+</code></pre>
+<h3 id="guestservices-の役割">guestServices の役割</h3>
+<p><code>guestServices</code> は、ルーター自身のローカルサービスへのアクセスだけを制御します。
+プライベートサブネットへの転送許可ではありません。
+転送の例外は <code>guestEgressAllow</code> で表します。</p>
+<h2 id="セキュリティ上の注意">セキュリティ上の注意</h2>
+<p>MAC アドレスによる隔離は実用的ですが、暗号学的な識別ではありません。
+悪意ある利用者は、端末を操作できれば信頼済みの MAC アドレスを偽装できます。</p>
+<p><code>ClientPolicy</code> は、家庭や小規模オフィス向けの実用的な制御として使ってください。
+敵対的な利用者に対する唯一の境界にはしないでください。
+より強い設計には、次があります。</p>
+<ul>
+<li>VLAN または SSID の分離。</li>
+<li>WPA3 Enterprise または 802.1X。</li>
+<li>スイッチのポート分離。</li>
+<li>端末ごとの資格情報。</li>
+<li>専用のゲスト bridge または VRF。</li>
+</ul>
+<p>これらと組み合わせても、<code>ClientPolicy</code> は有用です。
+端末分類の意図を routerd のリソースモデルに残せるためです。</p>
+<h2 id="os-対応">OS 対応</h2>
+<p>Linux の nftables に対応しています。</p>
+<p>FreeBSD の pf は、routerd が <code>FirewallZone</code> と <code>FirewallRule</code> で使うルーティング経路上のフィルタリングに、同じ MAC ベースの分類モデルを持ちません。
+そのため routerd は、FreeBSD では <code>ClientPolicy</code> を明示的に未対応として扱います。何の効果も生まないまま黙って適用する、という方針はとりません。</p>
+<p>将来の FreeBSD 対応としては、ブリッジ階層のフィルターや、専用のレイヤー 2 分離リソースが考えられます。
+ただし、ルーティング層の pf 規則とは等価ではないため、別の設計として扱うべきです。</p>
+<h2 id="関連リソース">関連リソース</h2>
+<ul>
+<li><code>FirewallZone</code>: インターフェースを <code>trust</code>、<code>untrust</code>、<code>mgmt</code> へ割り当てます。</li>
+<li><code>FirewallPolicy</code>: 拒否ログなどの共通動作を有効にします。</li>
+<li><code>FirewallRule</code>: MAC 分類に紐付かない例外を表します。</li>
+<li><code>DHCPv4Reservation</code>: 分類済みの端末へ、安定した IPv4 アドレスとホスト名を与えます。</li>
+<li>トンネルから自動導出される TCP MSS clamp は、ファイアウォールのゾーンとトンネル経路が一致するゲスト転送にも適用されます。ゲスト隔離が MSS clamp を迂回することはありません。</li>
+</ul></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#ユースケース">ユースケース</a></li>
+<li><a href="#仕組み">仕組み</a></li>
+<li><a href="#仕様">仕様</a></li>
+<li><a href="#例-1-最小の-include-モード">例 1: 最小の include モード</a></li>
+<li><a href="#例-2-複数端末の-include-モード">例 2: 複数端末の include モード</a></li>
+<li><a href="#例-3-byod-向けの-exclude-モード">例 3: BYOD 向けの exclude モード</a></li>
+<li><a href="#例-4-拒否と許可のカスタム-cidr">例 4: 拒否と許可のカスタム CIDR</a></li>
+<li><a href="#例-5-ローカル探索サービス">例 5: ローカル探索サービス</a></li>
+<li><a href="#例-6-iot-の隔離と固定割り当て">例 6: IoT の隔離と固定割り当て</a></li>
+<li><a href="#dhcpv4reservation-との連携">DHCPv4Reservation との連携</a></li>
+<li><a href="#生成規則の確認">生成規則の確認</a></li>
+<li><a href="#ゲスト端末からの動作確認">ゲスト端末からの動作確認</a></li>
+<li><a href="#トラブルシューティング">トラブルシューティング</a><ul>
+<li><a href="#mac-アドレスが一致しない">MAC アドレスが一致しない</a></li>
+<li><a href="#ゲスト端末からプライベートネットワークに届いてしまう">ゲスト端末からプライベートネットワークに届いてしまう</a></li>
+<li><a href="#ゲスト端末からインターネットに出られない">ゲスト端末からインターネットに出られない</a></li>
+<li><a href="#guestservices-の役割">guestServices の役割</a></li>
+</ul>
+</li>
+<li><a href="#セキュリティ上の注意">セキュリティ上の注意</a></li>
+<li><a href="#os-対応">OS 対応</a></li>
+<li><a href="#関連リソース">関連リソース</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/how-to/guest-mode.md">GitHub</a></div></footer></body></html>

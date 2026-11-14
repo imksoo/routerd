@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>routerctl doctor — runtime health diagnostics · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/operations/routerctl-doctor.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/operations/routerctl-doctor.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/operations/routerctl-doctor.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/operations/routerctl-doctor.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/operations/routerctl-doctor.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="routerctl-doctor-runtime-health-diagnostics">routerctl doctor — runtime health diagnostics</h1>
+<p><code>routerctl doctor</code> runs a battery of read-only checks and reports whether
+this router is currently functioning as a home gateway. It does not
+change host state. It is designed to be used by operators, CI, monitoring
+agents, and downstream tools (a Prometheus exporter, the Web Console, or
+an LLM-assisted diagnostic).</p>
+<h2 id="usage">Usage</h2>
+<pre><code class="language-sh"># Run every area (default)
+routerctl doctor
+
+# Run a single area
+routerctl doctor dns
+
+# Skip host commands (resource-status checks only)
+routerctl doctor --no-host
+
+# Machine-readable output
+routerctl doctor -o json
+routerctl doctor -o yaml
+</code></pre>
+<p>Per-call options reuse the <code>diagnose</code> flag set: <code>--config</code>, <code>--state-file</code>,
+<code>--no-host</code> / <code>--host</code>, <code>-o</code> / <code>--output</code>, <code>--timeout</code>.</p>
+<h2 id="areas">Areas</h2>
+<table>
+<thead>
+<tr>
+<th>Area</th>
+<th>Checks</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>wan</code></td>
+<td><code>EgressRoutePolicy</code> and <code>HealthCheck</code> resource status; IPv4 / IPv6 default route presence (<code>ip -4/-6 route show default</code>).</td>
+</tr>
+<tr>
+<td><code>dns</code></td>
+<td><code>DNSResolver</code> resource status; an A-record probe via <code>dig @127.0.0.1</code>.</td>
+</tr>
+<tr>
+<td><code>dslite</code></td>
+<td><code>DSLiteTunnel</code> resource status; AFTR FQDN AAAA probe; tunnel device existence (<code>ip link show</code>).</td>
+</tr>
+<tr>
+<td><code>dhcpv6-pd</code></td>
+<td><code>DHCPv6PrefixDelegation</code> status (Bound, delegated prefix). PD pending is <strong>WARN</strong> by design (do not advertise stale IPv6 on the LAN).</td>
+</tr>
+<tr>
+<td><code>nat</code></td>
+<td><code>NAT44Rule</code> resource status; <code>nft list table ip routerd_nat</code> exists. When <code>NAT44SessionSync</code> uses conntrackd mode on Linux, the runtime <code>net.netfilter.nf_conntrack_tcp_be_liberal</code> value must be <code>1</code>; unreadable or different values are FAIL.</td>
+</tr>
+<tr>
+<td><code>firewall</code></td>
+<td><code>FirewallZone</code> / <code>FirewallPolicy</code> resource status; <code>nft list table inet routerd_filter</code> exists with <code>policy drop</code> on the input chain (otherwise the router is permissive); Linux host check for marked routerd-owned nft tables that are present but not expected by the current config-rendered ruleset.</td>
+</tr>
+<tr>
+<td><code>rollback</code></td>
+<td>At least one stored generation exists, so <code>routerctl rollback --to</code> is usable.</td>
+</tr>
+<tr>
+<td><code>disk</code></td>
+<td><code>/var/lib/routerd</code> and <code>/run/routerd</code> capacity; WARN at 90% or <code>&lt;256 MiB</code>, FAIL at 98% or <code>&lt;64 MiB</code>. On Linux, also fails when temporary directory invariants are broken: <code>/tmp</code> and <code>/var/tmp</code> must be <code>root:root</code> sticky <code>1777</code> directories.</td>
+</tr>
+<tr>
+<td><code>mgmt</code></td>
+<td>Management interface presence (best-effort from <code>ManagementAccess</code> or <code>FirewallZone role=mgmt</code>); WebConsole binding (FAIL/WARN on <code>0.0.0.0</code> / <code>::</code>).</td>
+</tr>
+<tr>
+<td><code>reconcile</code></td>
+<td>Per-controller reconcile error history from the read-only status socket. <code>--since &lt;duration&gt;</code> bounds the window. WARN at ≥1 error in the window, FAIL at ≥10; up to 5 sample entries are shown in the detail.</td>
+</tr>
+<tr>
+<td><code>runtime</code></td>
+<td>routerd's own heap / goroutine / fd footprint from the read-only status socket: <code>heapAlloc</code>, <code>heapObjects</code>, <code>numGoroutine</code>, <code>numGC</code>, <code>openFds</code>/<code>maxFds</code>. WARN when <code>numGoroutine</code> exceeds 10000 or open fds reach ≥80% of <code>RLIMIT_NOFILE</code>. Observational — never FAILs.</td>
+</tr>
+<tr>
+<td><code>dynamic</code></td>
+<td><code>DynamicConfigPart</code> freshness, masks, and override policies, including stale or masking parts that can make the effective config diverge from the intended generated state.</td>
+</tr>
+<tr>
+<td><code>routes</code></td>
+<td>Installed <code>IPv4Route</code> status compared with the Linux host FIB (<code>ip -4 route show &lt;destination&gt;</code>), including destination, type, gateway, device, preferred source when applicable, and metric. Use this as drift evidence; it does not replace dataplane probes.</td>
+</tr>
+<tr>
+<td><code>plugin</code></td>
+<td>Trusted local plugin executable presence, permissions, and recent run freshness from plugin status where available.</td>
+</tr>
+<tr>
+<td><code>hybrid</code></td>
+<td><code>HybridRoute</code> / <code>OverlayPeer</code> references, Selective Address Mobility config references, default-route safety, MTU estimate, optional <code>HealthCheck</code> status, read-only route-table observation (<code>ip -4 route show &lt;prefix&gt;</code>), and Linux SAM checks for <code>/32</code> delivery routes, provider local-address absence, proxy-neighbor capture, <code>proxy_arp</code>, <code>ip_forward</code>, route lookup, warning-only <code>rp_filter</code>, and default-drop <code>FORWARD</code> policy heuristics. When the FORWARD policy table cannot be inspected, the detail distinguishes <code>nft</code> unavailable, permission denied, <code>routerd_filter</code> table absent, and other <code>nft list table</code> failures.</td>
+</tr>
+<tr>
+<td><code>sam</code></td>
+<td>CloudEdge SAM ownership/capture diagnostics, including provider ownership freshness, OS capture state, delivery route lookup, forwarding prerequisites, blocking reasons, and owner-table/FIB drift. When host checks are enabled, <code>doctor sam</code> compares endpoint-owned local rows from <code>ownershipResolverControlPlaneOwnerTable</code> with the Linux main FIB: those <code>/32</code> rows must resolve to a local/cloud route instead of a SAM overlay route. Provider-secondary capture-holder rows for BGP remote owners are not subject to that local-route requirement; they may legitimately stay no-local, with delivery/forwarding checks and dataplane probes proving the overlay path. Unexpected <code>/32</code> route residue inside the MobilityPool prefix is reported unless it is known provider DHCP/link state or an observed BGP return route. This is a diagnostic view only; real dataplane checks still decide CloudEdge acceptance.</td>
+</tr>
+<tr>
+<td><code>sam-enrollment-client</code></td>
+<td>Leaf-side <code>SAMEnrollmentClient</code> diagnostics: referenced claim existence, RR bootstrap endpoint/socket shape, controller phase, last success/backoff reason, and fetched <code>SAMRRSet</code> dynamic-state freshness. <code>Degraded</code> is FAIL; <code>Backoff</code> and missing/expired RRSet state are WARN. <code>directTopologyPending: true</code> is the safe RR-only convergence state: inspect <code>reason</code>, allow the GET-only retry to finish, and never manually add a partial direct peer group.</td>
+</tr>
+<tr>
+<td><code>bgp-dynamic-peer</code></td>
+<td>RR-side <code>BGPDynamicPeer</code> diagnostics: source-prefix/import-policy shape, observed dynamic-peer count, accepted/rejected route counters, and rejected-route summary. No discovered peers is WARN; connected peers with all observed routes rejected is FAIL.</td>
+</tr>
+</tbody>
+</table>
+<p>Each check returns one of <code>pass</code>, <code>warn</code>, <code>fail</code>, or <code>skip</code> (the resource
+or signal is not present on this router).</p>
+<h2 id="json-output-contract">JSON output contract</h2>
+<p><code>routerctl doctor -o json</code> is a <strong>stable</strong> machine-readable interface. The
+shape is:</p>
+<pre><code class="language-jsonc">{
+  &quot;summary&quot;: {
+    &quot;overall&quot;: &quot;pass&quot;,      // &quot;pass&quot; | &quot;warn&quot; | &quot;fail&quot; | &quot;skip&quot;
+    &quot;pass&quot;: 7,
+    &quot;warn&quot;: 1,
+    &quot;fail&quot;: 0,
+    &quot;skip&quot;: 2
+  },
+  &quot;checks&quot;: [
+    {
+      &quot;area&quot;:   &quot;dns&quot;,                          // see Areas table above
+      &quot;name&quot;:   &quot;DNSResolver/lan-resolver&quot;,     // human-readable subject
+      &quot;status&quot;: &quot;warn&quot;,                         // &quot;pass&quot; | &quot;warn&quot; | &quot;fail&quot; | &quot;skip&quot;
+      &quot;detail&quot;: &quot;phase=Degraded,waiting=...&quot;,   // optional
+      &quot;remedy&quot;: &quot;wait for or repair dependency wan-pd&quot; // optional
+    }
+    // ...
+  ]
+}
+</code></pre>
+<p>Field guarantees:</p>
+<ul>
+<li><code>summary.overall</code> is the worst-of <code>checks[].status</code> (<code>fail</code> &gt; <code>warn</code> &gt; <code>unknown</code>/<code>skip</code> &gt; <code>pass</code>).</li>
+<li><code>summary.pass/warn/fail/skip</code> are integer counts and sum to <code>len(checks)</code>.</li>
+<li><code>checks[].status</code> is one of <code>pass</code>, <code>warn</code>, <code>fail</code>, <code>skip</code> — no other values.</li>
+<li><code>checks[].area</code> is one of the identifiers in the <strong>Areas</strong> table above; the set is stable.</li>
+<li><code>checks[].name</code> is human-readable; do not pattern-match on its exact form.</li>
+<li><code>detail</code> and <code>remedy</code> are optional, free-form text intended for operators.</li>
+</ul>
+<p>For example, <code>routerctl doctor runtime -o json</code> surfaces routerd's own
+process footprint from the read-only status socket:</p>
+<pre><code class="language-jsonc">{
+  &quot;summary&quot;: { &quot;overall&quot;: &quot;pass&quot;, &quot;pass&quot;: 1, &quot;warn&quot;: 0, &quot;fail&quot;: 0, &quot;skip&quot;: 0 },
+  &quot;checks&quot;: [
+    {
+      &quot;area&quot;: &quot;runtime&quot;,
+      &quot;name&quot;: &quot;process&quot;,
+      &quot;status&quot;: &quot;pass&quot;,
+      &quot;detail&quot;: &quot;heapAlloc=11.0MiB heapObjects=84213 numGoroutine=187 numGC=14 openFds=23/1024&quot;
+    }
+  ]
+}
+</code></pre>
+<h2 id="exit-code">Exit code</h2>
+<ul>
+<li><code>0</code> — no <code>fail</code> checks (<code>pass</code>, <code>warn</code>, and <code>skip</code> are all considered non-failure for exit purposes).</li>
+<li>non-zero — at least one <code>fail</code> check. Scriptable as <code>routerctl doctor || alert</code>.</li>
+</ul>
+<p><code>warn</code> does <strong>not</strong> fail the exit code (e.g., DHCPv6-PD not yet Bound on a
+fresh boot is informational). Tighten this with an explicit area
+selection if you want stricter gates (<code>routerctl doctor wan</code> exits
+non-zero only if <code>wan</code> fails).</p>
+<h2 id="stability">Stability</h2>
+<p>The JSON shape, area identifiers, and status enum are part of the v1alpha1
+operator contract. Future versions may add new areas and optional fields;
+existing area names and status values will not be renamed or repurposed in
+v1alpha1 minor builds.</p>
+<h2 id="see-also">See also</h2>
+<ul>
+<li><a href="reconcile.html">Reconcile and rollback</a></li>
+<li><a href="reconcile.html#removal"><code>routerctl ledger</code> maintenance</a></li>
+</ul></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#usage">Usage</a></li>
+<li><a href="#areas">Areas</a></li>
+<li><a href="#json-output-contract">JSON output contract</a></li>
+<li><a href="#exit-code">Exit code</a></li>
+<li><a href="#stability">Stability</a></li>
+<li><a href="#see-also">See also</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/operations/routerctl-doctor.md">GitHub</a></div></footer></body></html>

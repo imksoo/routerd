@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CloudEdge SAM：OCI Ubuntu 镜像的防火墙引导 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/how-to/cloudedge-sam-oci-firewall-bootstrap.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/how-to/cloudedge-sam-oci-firewall-bootstrap.html" lang="en" hreflang="en">English</a><a href="/docs/ja/how-to/cloudedge-sam-oci-firewall-bootstrap.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/how-to/cloudedge-sam-oci-firewall-bootstrap.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/cloudedge-sam-oci-firewall-bootstrap.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="cloudedge-samoci-ubuntu-镜像的防火墙引导">CloudEdge SAM：OCI Ubuntu 镜像的防火墙引导</h1>
+<blockquote>
+<p>实验性功能（CloudEdge SAM）。这是<strong>主机引导/提供商镜像行为</strong>问题，不是 routerd 数据平面的问题。适用于作为 SAM 路由器使用的 OCI Canonical Ubuntu 镜像。</p>
+</blockquote>
+<h2 id="症状">症状</h2>
+<p>在 OCI 中，Canonical Ubuntu 24.04 镜像在启动时启用了 <code>iptables-nft</code> 过滤规则，<strong>reject SSH/ICMP 以外的入站流量，并 reject 所有 FORWARD 流量</strong>。在此默认设置下，SAM 路由器：</p>
+<ul>
+<li>即使 OCI 安全列表允许 <code>UDP/51820</code> 且 VNIC 设置了 <code>skipSourceDestCheck=true</code>，也<strong>无法</strong>接收 WireGuard 握手 — 主机防火墙在入站 WireGuard 数据包到达 <code>wg-hybrid</code> 监听器之前就将其丢弃。</li>
+<li><strong>无法</strong>转发捕获/overlay 流量 — 默认的 <code>FORWARD</code> reject 阻止了 VNIC 接口和 <code>wg-hybrid</code> 之间的 SAM 交付路径。</li>
+</ul>
+<p>这与云端安全列表 / VNIC 的 source-dest-check 无关。它们在 fabric 层运作。<strong>来宾 OS 防火墙</strong>是独立的层，需要单独许可 SAM 路径。</p>
+<h2 id="所需许可来宾-os">所需许可（来宾 OS）</h2>
+<p>在每台 OCI SAM 路由器上，确保主机防火墙许可以下内容：</p>
+<ul>
+<li>到 <code>wg-hybrid</code> WireGuard 监听器的<strong>入站 <code>UDP/51820</code></strong>。</li>
+<li>OCI VNIC 接口（如 <code>ens3</code>）和 <code>wg-hybrid</code> 之间的双向 <strong><code>FORWARD</code></strong>。</li>
+</ul>
+<p>这些应作为路由器配置中主机引导的一部分以声明方式记述，而不是依赖临时的 <code>iptables</code> 规则（重建时会丢失）（与其他"路由器前提条件"一样，要能在干净主机上证明）。</p>
+<h2 id="诊断方法">诊断方法</h2>
+<p><code>routerctl doctor hybrid</code> 会检测来宾防火墙中阻止 WireGuard / SAM 路径的 reject-all <code>FORWARD</code>/<code>INPUT</code> 模式，因此许可遗漏会以报告形式显示，而不是静默的"无握手"。部署后在 OCI 路由器上运行：</p>
+<pre><code>routerctl doctor hybrid
+</code></pre>
+<p>如果 WireGuard 端点未显示握手但对端正在发送 keepalive，请先检查来宾防火墙（本 How-to），然后检查 OCI 安全列表，再检查 VNIC 的 source-dest-check。</p>
+<h2 id="相关内容">相关内容</h2>
+<ul>
+<li><a href="../reference/selective-address-mobility.html">Selective Address Mobility</a></li>
+<li>OCI Ubuntu 镜像的默认 <code>iptables-nft</code> 配置与 AWS/Azure 镜像不同。AWS/Azure 的 SAM 冒烟测试未出现此问题，是因为那些镜像默认不会对 <code>FORWARD</code> 做 reject-all。</li>
+</ul></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#症状">症状</a></li>
+<li><a href="#所需许可来宾-os">所需许可（来宾 OS）</a></li>
+<li><a href="#诊断方法">诊断方法</a></li>
+<li><a href="#相关内容">相关内容</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/how-to/cloudedge-sam-oci-firewall-bootstrap.md">GitHub</a></div></footer></body></html>

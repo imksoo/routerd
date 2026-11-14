@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>法務と再配布 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/legal.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/legal.html" lang="en" hreflang="en">English</a><a href="/docs/ja/legal.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/legal.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/legal.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="法務と再配布">法務と再配布</h1>
+<p>routerd 本体は BSD 3-Clause License で配布します。
+全文はリポジトリルートの <code>LICENSE</code> にあります。</p>
+<p>routerd の著作権表示は次の通りです。</p>
+<pre><code class="language-text">Copyright (c) 2026 Kirino Minato &lt;kirino.minato@gmail.com&gt; (https://github.com/imksoo) and routerd contributors
+</code></pre>
+<p>このページは、routerd のリリースアーカイブとライブ ISO を再配布する際の、
+実務上の確認事項をまとめたものです。法的助言ではありません。</p>
+<h2 id="routerd-バイナリ">routerd バイナリ</h2>
+<p>routerd バイナリは、このリポジトリの Go ソースコードからビルドします。
+リリース前に次を実行します。</p>
+<pre><code class="language-sh">make third-party-licenses
+</code></pre>
+<p>このコマンドは <code>THIRD_PARTY_LICENSES.md</code> を再生成し、次の情報を一覧化します。</p>
+<ul>
+<li>routerd バイナリにリンクする Go モジュール</li>
+<li>検出したライセンステキストの種類</li>
+<li>ライセンスファイル名</li>
+<li>モジュールのソース URL</li>
+</ul>
+<p>現在の監査処理は、Go モジュールのライセンスファイルから GPL、LGPL、AGPL の
+テキストを検出します。リンクする Go モジュールとして見つかった場合は、リリースを
+止めます。その上で、routerd バイナリのライセンスを変える必要があるか、依存を外す
+べきかを確認します。</p>
+<p>ソースファイルには次のような SPDX 識別子を付けます。</p>
+<pre><code class="language-text">SPDX-License-Identifier: BSD-3-Clause
+</code></pre>
+<p>このヘッダーは routerd ソースのライセンスを示します。
+同梱するツール、Go モジュール、その他の第三者コンポーネントの
+ライセンスを変えるものではありません。
+それらは <code>THIRD_PARTY_LICENSES.md</code> に一覧化します。</p>
+<h2 id="リリースアーカイブ">リリースアーカイブ</h2>
+<p>リリースアーカイブには次を入れます。</p>
+<ul>
+<li>routerd バイナリ</li>
+<li>インストーラースクリプト</li>
+<li>systemd または rc.d のサービステンプレート</li>
+<li>サンプル設定</li>
+<li><code>share/doc/LICENSE</code></li>
+<li><code>share/doc/THIRD_PARTY_LICENSES.md</code></li>
+</ul>
+<p>リリースアーカイブを再配布する場合は、これらのファイルを一緒に配布します。</p>
+<h2 id="ライブ-iso">ライブ ISO</h2>
+<p>現在のライブ ISO は <code>debootstrap</code> で作る Ubuntu ベースで、既定の suite は
+<code>noble</code> です。生成される一覧は Ubuntu archive の OS パッケージ情報への案内を
+含みますが、全パッケージのソース一覧ではありません。再配布時は実際に使用した
+Ubuntu リリースのソースとライセンス情報を確認してください。</p>
+<p>ライブ ISO は集合的な配布物で、次を組み合わせています。</p>
+<ul>
+<li>routerd バイナリとスクリプト</li>
+<li>Ubuntu のベースファイル</li>
+<li>dnsmasq、nftables、WireGuard tools、ppp、iproute2、chrony、
+  tcpdump などのパッケージ</li>
+</ul>
+<p>これらのパッケージは、それぞれの upstream ライセンスを保ちます。
+一部は GPL ライセンスです。
+ライブ ISO 全体を 1 つの GPL 著作物として再ライセンスする扱いではありません。</p>
+<p>ライブ ISO では、次の場所から routerd の通知を確認できます。</p>
+<pre><code class="language-text">/usr/local/share/doc/routerd/LICENSE
+/usr/local/share/doc/routerd/THIRD_PARTY_LICENSES.txt
+</code></pre>
+<h2 id="リリースチェックリスト">リリースチェックリスト</h2>
+<p>リリース前に確認します。</p>
+<ol>
+<li><code>make third-party-licenses</code> を実行します。</li>
+<li>Go モジュールの copyleft チェックで、GPL、LGPL、AGPL のモジュールがないことを確認します。</li>
+<li>GPL 系ライセンスが、分離して配布するパッケージや外部ツールにだけ
+   現れることを確認します。</li>
+<li>通常のテスト、スキーマ、example、website、アーカイブ、ライブ ISO のチェックを実行します。</li>
+<li>リリースアーカイブに <code>share/doc/LICENSE</code> と
+   <code>share/doc/THIRD_PARTY_LICENSES.md</code> があることを確認します。</li>
+<li>ライブ ISO に <code>/usr/local/share/doc/routerd/</code> があることを確認します。</li>
+</ol>
+<p>依存関係が大きく変わった場合は、タグを作る前にこのページと、生成済みの
+ライセンス一覧を見直します。</p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#routerd-バイナリ">routerd バイナリ</a></li>
+<li><a href="#リリースアーカイブ">リリースアーカイブ</a></li>
+<li><a href="#ライブ-iso">ライブ ISO</a></li>
+<li><a href="#リリースチェックリスト">リリースチェックリスト</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/legal.md">GitHub</a></div></footer></body></html>

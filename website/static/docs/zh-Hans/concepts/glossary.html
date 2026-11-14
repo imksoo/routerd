@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>词汇表 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/concepts/glossary.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/concepts/glossary.html" lang="en" hreflang="en">English</a><a href="/docs/ja/concepts/glossary.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/concepts/glossary.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/concepts/glossary.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="词汇表">词汇表</h1>
+<p>routerd 文档中使用的主要术语与译词。</p>
+<h2 id="网络术语">网络术语</h2>
+<table>
+<thead>
+<tr>
+<th>英文</th>
+<th>译词（本文档）</th>
+<th>备注</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>interface</td>
+<td>接口</td>
+<td>主机上的网络接口</td>
+</tr>
+<tr>
+<td>route / routing</td>
+<td>路由</td>
+<td>转发条目及其选择</td>
+</tr>
+<tr>
+<td>gateway</td>
+<td>网关</td>
+<td>离开网络时使用的下一跳路由器</td>
+</tr>
+<tr>
+<td>NAT</td>
+<td>NAT</td>
+<td></td>
+</tr>
+<tr>
+<td>NAPT</td>
+<td>NAPT</td>
+<td>动态的多对一转换</td>
+</tr>
+<tr>
+<td>firewall</td>
+<td>防火墙</td>
+<td>routerd 的区域式有状态过滤功能</td>
+</tr>
+<tr>
+<td>filter / rule</td>
+<td>过滤条件 / 规则</td>
+<td>单条允许或拒绝规则</td>
+</tr>
+<tr>
+<td>prefix delegation (PD)</td>
+<td>前缀委派（PD）</td>
+<td>DHCPv6 前缀委派</td>
+</tr>
+<tr>
+<td>upstream</td>
+<td>上游</td>
+<td>DNS 或路由的上游侧</td>
+</tr>
+<tr>
+<td>egress / ingress</td>
+<td>egress / ingress</td>
+<td>出向 / 入向，保留英文</td>
+</tr>
+</tbody>
+</table>
+<h2 id="声明式模型术语">声明式模型术语</h2>
+<table>
+<thead>
+<tr>
+<th>英文</th>
+<th>译词（本文档）</th>
+<th>备注</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>declarative</td>
+<td>声明式</td>
+<td>描述期望状态而非步骤</td>
+</tr>
+<tr>
+<td>resource</td>
+<td>资源</td>
+<td></td>
+</tr>
+<tr>
+<td>Kind</td>
+<td>Kind（类别）</td>
+<td>保留大写 Kind</td>
+</tr>
+<tr>
+<td>spec</td>
+<td>spec</td>
+<td>期望状态</td>
+</tr>
+<tr>
+<td>status</td>
+<td>status</td>
+<td>实际观测状态</td>
+</tr>
+<tr>
+<td>apply</td>
+<td>应用</td>
+<td><code>routerctl apply</code> 的动作</td>
+</tr>
+<tr>
+<td>reconcile</td>
+<td>调和（reconcile）</td>
+<td>使实际状态趋近期望状态的处理</td>
+</tr>
+<tr>
+<td>controller</td>
+<td>控制器</td>
+<td></td>
+</tr>
+<tr>
+<td>render</td>
+<td>生成（render）</td>
+<td>由资源组装出配置文件等产物</td>
+</tr>
+<tr>
+<td>daemon</td>
+<td>守护进程</td>
+<td></td>
+</tr>
+<tr>
+<td>generation</td>
+<td>世代（generation）</td>
+<td>SQLite 的世代编号</td>
+</tr>
+<tr>
+<td>ownership</td>
+<td>拥有 / 拥有权</td>
+<td></td>
+</tr>
+<tr>
+<td>bootstrap</td>
+<td>引导配置（bootstrap）</td>
+<td></td>
+</tr>
+<tr>
+<td>Tier (H/S/C/E)</td>
+<td>Tier H / Tier S …</td>
+<td>功能阶段的专有名词</td>
+</tr>
+</tbody>
+</table>
+<h2 id="其他标记">其他标记</h2>
+<ul>
+<li><strong>Web Console</strong>（routerd 的网页 UI）写作「Web 管理界面」。但 <code>WebConsole</code>（启用该 UI 的 Kind 名称）是代码标识符，保留原文。</li>
+<li><strong>HGW</strong> 保留为「HGW」，不展开。</li>
+</ul></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#网络术语">网络术语</a></li>
+<li><a href="#声明式模型术语">声明式模型术语</a></li>
+<li><a href="#其他标记">其他标记</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/concepts/glossary.md">GitHub</a></div></footer></body></html>

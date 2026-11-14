@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RouterdCluster · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/reference/resources/RouterdCluster.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/reference/resources/RouterdCluster.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/RouterdCluster.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/reference/resources/RouterdCluster.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/RouterdCluster.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="routerdcluster">RouterdCluster</h1>
+<p><a href="../resources.html#routerdcluster">リソース別の設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: system.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>ファイルのリースとOSファイルロックで、どのrouterdが変更処理を行うかを調整します。VRRPの選出や対向ネットワークの自動探索ではありません。</p>
+<h2 id="指定条件と参照関係">指定条件と参照関係</h2>
+<ul>
+<li>参加者間で同じleasePathと信頼できるロック動作が必要です。peersは識別子で、接続先ではありません。リース実装は空でない一覧を調整の有効化に使い、対向への通信や参加資格の照合は行いません。待機側の変更controllerはdry-runで動作します。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
+<pre><code class="language-yaml">- apiVersion: system.routerd.net/v1alpha1
+  kind: RouterdCluster
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    identity: &quot;&lt;string&gt;&quot; # 任意; string
+    leasePath: &quot;&lt;string&gt;&quot; # 任意; string
+    leaseTTL: &quot;&lt;string&gt;&quot; # 任意; string
+    peers: # 必須; array
+      - &quot;&lt;string&gt;&quot; # string
+    when: # 任意; object
+      state: # 任意; object
+        &quot;&lt;key&gt;&quot;: # 任意; object
+          contains: &quot;&lt;string&gt;&quot; # 任意; string
+          equals: &quot;&lt;string&gt;&quot; # 任意; string
+          exists: true # 任意; boolean
+          for: &quot;&lt;string&gt;&quot; # 任意; string
+          in: # 任意; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # 任意; string
+          status: &quot;set&quot; # 任意; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>項目の意味と既定値</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.peers</code></td>
+<td>空白・重複を除去した後に2件以上となる一覧が必須です。既定値はなく、Kind/名前の参照や、実際に接続するネットワークアドレスではありません。</td>
+</tr>
+<tr>
+<td><code>spec.leaseTTL</code></td>
+<td>リースの有効期間。省略時30sで、明示する場合は5s〜10mのGo durationです。排他的な変更はロックが制御し、期限だけでネットワーク障害を検知する仕組みではありません。</td>
+</tr>
+<tr>
+<td><code>spec.leasePath</code></td>
+<td>改行を含まない絶対パスのリースファイル。必須で既定値はありません。ホストごとに別のファイルを用意してもホスト間の調整にはなりません。</td>
+</tr>
+<tr>
+<td><code>spec.identity</code></td>
+<td>ローカルのリース保持者の識別子。省略時は空白を除去したos.Hostname()です。Router.metadata.nameからは決めません。</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>有効化条件。省略時は条件なし。共通の条件指定を参照してください。</td>
+</tr>
+</tbody>
+</table>
+<p>実装: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_system.go">pkg/config/validate_system.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go">pkg/controller/chain/chain.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/ha/lease.go">pkg/ha/lease.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd/cmd_apply.go">cmd/routerd/cmd_apply.go</a></p>
+<p><a href="/examples/ha-2-node.yaml">設定例</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/reference/resources/RouterdCluster.md">GitHub</a></div></footer></body></html>

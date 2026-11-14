@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Supported platforms · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/platforms.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/platforms.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/platforms.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/platforms.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/platforms.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="supported-platforms">Supported platforms</h1>
+<p>routerd is designed to be cross-OS, but each platform uses a different host integration model. This page lists the concrete OS surfaces routerd uses on each platform, so you can review generated files and runtime ownership before applying a router configuration.</p>
+<p>Ubuntu Server is the primary, most exercised target. FreeBSD and NixOS are
+second-tier: some feature areas are groundwork or have narrower native evidence.
+Read the relevant section before assuming the same YAML has identical host
+behavior on every OS.</p>
+<h2 id="linux-ubuntu-debian">Linux (Ubuntu / Debian)</h2>
+<p>Linux with systemd is the primary platform. Release installs land under <code>/usr/local</code> by default.
+Install from the Linux release archive and run <code>sudo ./install.sh</code>.
+The installer can install runtime packages with <code>apt-get</code>, <code>dnf</code>, or <code>pacman</code>.</p>
+<p>routerd uses the following OS surfaces on Linux:</p>
+<ul>
+<li>systemd unit files</li>
+<li><code>/run/routerd</code> and <code>/var/lib/routerd</code> for runtime and persistent state</li>
+<li>dnsmasq for DHCPv4, DHCPv6, DHCP relay, and Router Advertisement</li>
+<li>nftables for filtering and NAT</li>
+<li>conntrack for connection observation</li>
+<li>iproute2 for interfaces and routes</li>
+<li>long-lived <code>routerd-bgp</code> GoBGP daemon for BGP peering and route installation</li>
+<li>keepalived for VRRP VIP ownership</li>
+<li>pppd / rp-pppoe for PPPoE</li>
+<li>WireGuard, Tailscale, strongSwan, radvd</li>
+</ul>
+<p>Even on Ubuntu, routerd does not assume packages are pre-installed.
+For first bootstrap, <code>install.sh</code> installs a practical default set.
+For ongoing declarative management, declare dependencies with the <code>Package</code> resource.
+The reference list:</p>
+<table>
+<thead>
+<tr>
+<th>Category</th>
+<th>Packages</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Runtime</td>
+<td><code>dnsmasq-base</code>, <code>nftables</code>, <code>conntrack</code>, <code>iproute2</code>, <code>keepalived</code>, <code>ppp</code>, <code>wireguard-tools</code>, <code>tailscale</code>, <code>tailscale-archive-keyring</code>, <code>strongswan-swanctl</code>, <code>radvd</code></td>
+</tr>
+<tr>
+<td>Diagnostics</td>
+<td><code>dnsutils</code>, <code>iputils-ping</code>, <code>iputils-tracepath</code>, <code>tcpdump</code>, <code>traceroute</code>, <code>net-tools</code></td>
+</tr>
+<tr>
+<td>OS control</td>
+<td><code>procps</code>, <code>systemd</code>, <code>kmod</code></td>
+</tr>
+</tbody>
+</table>
+<p>Long-running <code>routerd serve</code> directly supervises <code>routerd-dhcpv6-client</code>,
+<code>routerd-dhcpv4-client</code>, and <code>routerd-pppoe-client</code> on Linux. Do not run the
+legacy per-resource systemd units alongside it. <code>routerd-healthcheck</code> remains a
+managed systemd service.</p>
+<p>Ubuntu 26.04 LTS (<code>resolute</code>) has been validated with the same Linux data-plane
+renderers used by Ubuntu 24.04 for managed dnsmasq, nftables, DHCPv6-PD,
+delegated LAN IPv6 address derivation, and the control API. The host bootstrap
+did need one OS-level networking adjustment: on interfaces that routerd owns for
+DHCPv6-PD or LAN RA/DHCPv6 service, configure installer netplan/systemd-networkd
+so the OS does not run its own DHCPv6 client. Otherwise systemd-networkd can
+bind UDP port 546 before <code>routerd-dhcpv6-client</code>.</p>
+<p>For Ubuntu 26.04 router lab hosts, keep only the management interface on OS
+DHCP and make routerd-owned WAN/LAN interfaces link-local-only at the OS layer:</p>
+<pre><code class="language-yaml">network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    ens18:
+      dhcp4: false
+      dhcp6: false
+      accept-ra: false
+      link-local: [ipv6]
+      optional: true
+    ens19:
+      dhcp4: false
+      dhcp6: false
+      accept-ra: false
+      link-local: [ipv6]
+      optional: true
+    ens20:
+      dhcp4: true
+      dhcp6: false
+      accept-ra: false
+      link-local: [ipv6]
+      optional: true
+</code></pre>
+<p>For WAN links that still need the RA-learned IPv6 default route, declare the
+WAN interface and DHCPv6 / RA resources. routerd derives a systemd-networkd
+drop-in with <code>IPv6AcceptRA=yes</code> and <code>[IPv6AcceptRA] DHCPv6Client=no</code>, so RA is
+accepted while the OS DHCPv6 client stays disabled.</p>
+<h2 id="freebsd">FreeBSD</h2>
+<p>FreeBSD uses the same routerd resource model as Ubuntu, mapped onto FreeBSD
+host mechanisms. The DHCPv6-PD client runs under <code>daemon(8)</code> and reliably keeps
+a lease bound. routerd maps resources to FreeBSD-native <code>rc.conf</code>, <code>rc.d</code>,
+<code>pf</code>, <code>mpd5</code>, <code>ifconfig</code>, and dnsmasq surfaces instead of using Linux tools.
+Install from the FreeBSD release archive and run <code>sudo ./install.sh</code>.
+The installer uses <code>pkg</code> for ports packages and leaves base-system tools alone.</p>
+<p>Implemented:</p>
+<ul>
+<li>DHCPv6-PD daemon with persistent lease</li>
+<li>WireGuard interop with Linux / NixOS</li>
+<li>VXLAN over WireGuard</li>
+<li>PPPoE via generated <code>mpd5.conf</code>, <code>mpd_enable</code>, and <code>mpd5</code> service restart</li>
+<li><code>Package</code> install through <code>pkg</code></li>
+<li><code>render freebsd --out-dir</code> emits <code>install-packages.sh</code> for reviewable <code>pkg install</code> bootstrap</li>
+<li>FreeBSD-idiomatic <code>rc.conf.d</code> output for <code>gateway_enable</code>, <code>ipv6_gateway_enable</code>, <code>cloned_interfaces</code>, <code>ifconfig_*</code>, <code>static_routes</code>, <code>ipv6_static_routes</code>, <code>pf_enable</code>, <code>pflog_enable</code>, and <code>mpd_enable</code></li>
+<li><code>dhclient.conf</code>, <code>mpd5.conf</code>, <code>pf.conf</code>, dnsmasq config, and generated <code>rc.d</code> scripts from <code>routerd render freebsd --out-dir</code></li>
+<li>pf rendering from <code>FirewallZone</code>, <code>FirewallPolicy</code>, <code>FirewallRule</code></li>
+<li>pf NAT rendering from <code>NAT44Rule</code></li>
+<li>automatic <code>pfctl -nf</code> validation and <code>pfctl -f</code> application for generated <code>pf.conf</code></li>
+<li>conntrack-equivalent traffic flows from <code>pfctl -ss -v</code></li>
+<li><code>pflog0</code> ingestion through direct BPF reads for firewall logs; packet parsing avoids dependency on vendor-specific tcpdump text formats</li>
+<li>managed dnsmasq for DHCPv4, DHCPv6, and Router Advertisement</li>
+<li>dnsmasq lease persistence under <code>/var/db/routerd/dnsmasq</code></li>
+<li>dnsmasq config validation with <code>dnsmasq --test</code> before service restart</li>
+<li>automatic pf holes for routerd-owned DHCP, DNS, RA, DHCPv6-PD, DS-Lite, WireGuard, and healthcheck traffic</li>
+<li>DNS resolver daemon builds on FreeBSD; <code>DNSUpstream.spec.sourceInterface</code> can target <code>fib:&lt;n&gt;</code> for FIB-bound upstream routing</li>
+<li>cloud VPN <code>IPsecConnection</code> validates and renders strongSwan <code>swanctl</code> connection definitions; live cloud gateway validation remains deployment-specific</li>
+<li>rc.d script generation, installation, and <code>service &lt;name&gt; onestart</code> activation from generated service artifacts</li>
+<li>rc.d script generation for <code>routerd-healthcheck</code></li>
+<li>rc.d script generation for <code>routerd-firewall-logger</code> with direct <code>pflog0</code> input</li>
+<li>rc.d script generation for <code>TailscaleNode</code></li>
+<li>CARP-backed <code>VirtualAddress</code> in <code>mode: vrrp</code>, configured on the parent interface with <code>vhid</code></li>
+<li>dnsmasq rc.d ordering after <code>mpd5</code> for PPPoE coexistence</li>
+<li>Static DS-Lite gif tunnel rendering</li>
+<li>Dynamic DS-Lite apply from static AFTR IPv6, AFTR FQDN, or delegated-address local source</li>
+<li>native <code>route -n get</code> evidence for health checks and BGP FIB ownership through
+  <code>RTF_PROTO1</code>, including replace/withdraw/foreign-route preservation</li>
+<li>FRR <code>bfdd</code> reconciliation and observed Up → Down → Up recovery on a native
+  FreeBSD peer</li>
+<li>FreeBSD-native doctor checks, KernelModule <code>kldload</code> reconciliation with
+  routerd-owned <code>/boot/loader.conf.d</code> boot persistence, and BGP-specific
+  <code>routerd_bgp</code> rc.d generation</li>
+<li>explicit rejection of Linux <code>SO_MARK</code> health-check steering: FreeBSD does
+  not map a probe mark to a request-scoped policy route; use an unmarked route
+  with <code>sourceInterface</code>/<code>sourceAddress</code> instead</li>
+<li>explicit rejection of non-local DNS resolver binds because FreeBSD has no
+  Linux <code>IP_FREEBIND</code> equivalent; assign the address before starting the
+  resolver. <code>DNSUpstream.spec.sourceInterface: fib:&lt;n&gt;</code> remains the separate,
+  explicit FreeBSD FIB mechanism for outbound upstream queries</li>
+</ul>
+<p>The ARP and RA observer daemons capture through the FreeBSD base-system
+tcpdump/libpcap BPF path; proactive ARP writes retain a separate direct-BPF
+descriptor. The provisioned native CI exercises both daemons in a disposable
+VNET and requires the expected ARP observation and rogue-RA events. The tagged
+native DPI backend supports the FreeBSD ports <code>ndpi</code> 5.0 ABI and is verified by
+the same native gate with a TLS/SNI classification self-test.</p>
+<p><code>ClientPolicy</code> is supported on FreeBSD with an address-backed pf
+approximation. Each IPv4 guest or isolated classification references a
+<code>DHCPv4Reservation</code>; an IPv6 guest identity must instead be declared explicitly
+as <code>classification[].ipv6Addresses</code>. For a FreeBSD-targeted policy, those
+stable address fields are the identity contract: MAC, OUI, hostname, and DHCP
+fingerprint match selectors are rejected instead of being silently ignored.
+routerd never infers an IPv6 identity from an IPv4 reservation, MAC address,
+hostname, OUI, or DHCP fingerprint. The
+FreeBSD renderer uses those literal IPv6 addresses for family-safe <code>inet6</code>
+guest-egress deny rules. This is not Linux-equivalent MAC-based isolation: pf
+does not provide the Ethernet-source matching model used by nftables in the
+routed filter path. Privacy or unlisted IPv6 addresses are therefore outside
+this FreeBSD ClientPolicy slice and need separate network segmentation.</p>
+<p>FreeBSD does not use Linux-specific nftables, conntrack, or iproute2. The
+<code>Package</code> examples declare FreeBSD-native replacements: <code>pf</code> and <code>pflog0</code> from
+the base system, <code>mpd5</code> for PPPoE, <code>ifconfig gif</code> for DS-Lite, dnsmasq for LAN
+DHCP/RA service, and ports packages for WireGuard, Tailscale, and strongSwan.</p>
+<table>
+<thead>
+<tr>
+<th>Category</th>
+<th>Packages</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Runtime</td>
+<td><code>dnsmasq</code>, <code>wireguard-tools</code>, <code>tailscale</code>, <code>strongswan</code>, <code>mpd5</code></td>
+</tr>
+<tr>
+<td>Optional native DPI</td>
+<td><code>ndpi</code></td>
+</tr>
+<tr>
+<td>Diagnostics</td>
+<td><code>bind-tools</code></td>
+</tr>
+<tr>
+<td>Base system</td>
+<td><code>ifconfig</code>, <code>sysctl</code>, <code>service</code>, <code>sysrc</code>, <code>netstat</code>, <code>sockstat</code>, <code>tcpdump</code>, <code>ping</code>, <code>traceroute</code></td>
+</tr>
+</tbody>
+</table>
+<p><code>routerd render freebsd --out-dir &lt;dir&gt;</code> produces:</p>
+<ul>
+<li><code>rc.conf.d-routerd</code></li>
+<li><code>dhclient.conf</code></li>
+<li><code>mpd5.conf</code></li>
+<li><code>pf.conf</code></li>
+<li><code>dnsmasq.conf</code></li>
+<li><code>rc.d-*</code></li>
+</ul>
+<p><code>routerctl apply</code> installs the generated <code>pf.conf</code>, validates it with <code>pfctl -nf</code>, applies it with <code>pfctl -f</code>, validates dnsmasq with <code>dnsmasq --test</code>, starts generated rc.d scripts with <code>service &lt;name&gt; onestart</code>, and applies dynamic DS-Lite tunnels with <code>ifconfig gif</code> when static <code>rc.conf</code> rendering is not enough. Use <code>routerd render freebsd</code> for review and offline validation before pointing real traffic at a FreeBSD host.</p>
+<p>Current release qualification is deliberately narrower than the rendered feature
+list. FreeBSD explicitly rejects an <code>EgressRoutePolicy</code> resource whose
+<code>spec.family</code> is <code>ipv6</code>, because the certified PF <code>route-to</code> slice is IPv4
+static route host only. Package install/upgrade/uninstall, owned cleanup, and
+foreign-service preservation are certified on native amd64 and arm64. The
+following additional slices have amd64-only native evidence: <code>TunnelInterface</code>
+gif/GRE dataplane and lifecycle, owned cleanup, and foreign-interface
+preservation; credential-free Tailscale external-auth boundary, rollback, and
+foreign preservation; and CARP failover/recovery, owned cleanup, and foreign
+preservation across three independent FreeBSD VMs. Tailscale authenticated
+enrollment is not claimed. FreeBSD 14.3 GRE keys control outbound encapsulation;
+the kernel does not enforce inbound key matching.</p>
+<h2 id="platform-parity-backlog">Platform parity backlog</h2>
+<p>These are the current known level differences to track when comparing Ubuntu
+and FreeBSD:</p>
+<table>
+<thead>
+<tr>
+<th>Area</th>
+<th>Current gap</th>
+<th>Backlog</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CI/runtime coverage</td>
+<td>Pull requests compile FreeBSD amd64/arm64 binaries. Provisioned FreeBSD 14.3 native evidence covers the full unfiltered <code>go test ./...</code>, live routerd smoke, ARP/RA observers, native nDPI, amd64/arm64 package lifecycle, and amd64 TunnelInterface/Tailscale/CARP slices described above. Retained VM115 evidence additionally covers route lookup, BFD, and supported PF dataplane slices.</td>
+<td>Do not generalize the amd64 TunnelInterface, Tailscale, or CARP evidence to arm64; authenticated Tailscale enrollment remains outside this release claim.</td>
+</tr>
+<tr>
+<td>FreeBSD feature limitations</td>
+<td><code>ClientPolicy</code> uses DHCPv4 reservations for IPv4 and explicit <code>classification[].ipv6Addresses</code> for IPv6 pf rules. It cannot match MAC addresses or infer IPv6 identity from DHCPv4.</td>
+<td>Keep the explicit-address and MAC/L2 limitation visible; require separate segmentation for unlisted or privacy IPv6 addresses (<a href="https://github.com/imksoo/routerd/issues/849">#849</a>).</td>
+</tr>
+<tr>
+<td>IPv6 policy routing</td>
+<td>The certified PF <code>route-to</code> slice is IPv4 static route host source affinity only.</td>
+<td>An <code>EgressRoutePolicy</code> with <code>spec.family: ipv6</code> is explicitly rejected on FreeBSD; it is an approved product boundary, not implemented parity (<a href="https://github.com/imksoo/routerd/issues/904">#904</a>).</td>
+</tr>
+<tr>
+<td>Package bootstrap</td>
+<td>Ubuntu and FreeBSD can install packages imperatively.</td>
+<td>Keep schema, validation, installer package lists, examples, and generated docs in sync for <code>apt</code> and <code>pkg</code>.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="implementation-guideline-for-os-abstraction">Implementation guideline for OS abstraction</h2>
+<p>When you add a new OS-specific behaviour, do not branch on <code>runtime.GOOS</code> in business logic. Use the <code>pkg/platform</code> layer (<code>platform.Features</code>) or Go build tags to keep the boundaries explicit. Failing fast at validation or planning is preferred over surprising the operator at runtime on an unsupported OS.</p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#linux-ubuntu-debian">Linux (Ubuntu / Debian)</a></li>
+<li><a href="#freebsd">FreeBSD</a></li>
+<li><a href="#platform-parity-backlog">Platform parity backlog</a></li>
+<li><a href="#implementation-guideline-for-os-abstraction">Implementation guideline for OS abstraction</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/platforms.md">GitHub</a></div></footer></body></html>

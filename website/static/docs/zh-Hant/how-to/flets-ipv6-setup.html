@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DHCPv6-PD 上的 DS-Lite（僅 IPv6 接入網路） · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/how-to/flets-ipv6-setup.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/how-to/flets-ipv6-setup.html" lang="en" hreflang="en">English</a><a href="/docs/ja/how-to/flets-ipv6-setup.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/how-to/flets-ipv6-setup.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/how-to/flets-ipv6-setup.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="dhcpv6-pd-上的-ds-lite僅-ipv6-接入網路">DHCPv6-PD 上的 DS-Lite（僅 IPv6 接入網路）</h1>
+<h2 id="適用情境">適用情境</h2>
+<p>ISP 提供僅 IPv6 的接入網路，IPv4 連線透過 AFTR（Address Family Transition Router）的 DS-Lite 隧道實現。在這種配置中，路由器負責以下工作：</p>
+<ul>
+<li>透過 DHCPv6-PD 取得 IPv6 前綴，並分配給 LAN。</li>
+<li>建立通往 AFTR 的 DS-Lite（IPv4-in-IPv6 / <code>ip6tnl</code>）隧道。</li>
+<li>AFTR 的 FQDN 有時只有接入網路的 DNS 才能解析，因此使用條件式轉送。</li>
+<li>在 IPv6 RA 中加入 RDNSS，讓 SLAAC 用戶端（包含 Android）自動取得 DNS 設定。</li>
+</ul>
+<p>此模式在日本 FLET'S 系列線路（NTT NGN + <code>gw.transix.jp</code> 等）中最為典型，但同樣適用於類似的 DS-Lite 部署。</p>
+<h2 id="前提條件">前提條件</h2>
+<ul>
+<li>WAN 介面已透過 HGW 或 ONU 連接至僅 IPv6 的接入網路。</li>
+<li>該介面可使用 DHCPv6-PD。</li>
+<li>AFTR 的 DNS 是否會透過 DHCPv6 information-request 回傳，因 ISP 或 HGW 而異，請針對兩種情況做好準備。</li>
+</ul>
+<h2 id="dhcpv6-pd">DHCPv6-PD</h2>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DHCPv6PrefixDelegation
+  metadata:
+    name: wan-pd
+  spec:
+    interface: wan
+</code></pre>
+<p>租約儲存於：</p>
+<pre><code class="language-text">/var/lib/routerd/dhcpv6-client/wan-pd/lease.json
+</code></pre>
+<p>可透過 Unix socket 確認常駐程式狀態：</p>
+<pre><code class="language-bash">curl --unix-socket /run/routerd/dhcpv6-client/wan-pd.sock http://unix/v1/status
+</code></pre>
+<h2 id="lan-位址推導與-ra">LAN 位址推導與 RA</h2>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: IPv6DelegatedAddress
+  metadata:
+    name: lan-from-pd
+  spec:
+    interface: lan
+    prefixDelegation: wan-pd
+    dependsOn:
+      - resource: DHCPv6PrefixDelegation/wan-pd
+        phase: Bound
+    addressSuffix: &quot;::1&quot;
+
+- apiVersion: net.routerd.net/v1alpha1
+  kind: IPv6RouterAdvertisement
+  metadata:
+    name: lan-ra
+  spec:
+    interface: lan
+    prefixFrom:
+      resource: IPv6DelegatedAddress/lan-from-pd
+      field: address
+    oFlag: true
+    rdnssFrom:
+      - resource: IPv6DelegatedAddress/lan-from-pd
+        field: address
+</code></pre>
+<p>RA 廣播的 RDNSS 使用從委派前綴推導出的 LAN 側位址。
+SLAAC 用戶端會自動取得此解析器位址。</p>
+<h2 id="aftr-的條件式-dns-轉送">AFTR 的條件式 DNS 轉送</h2>
+<p>AFTR 的 FQDN 通常只有 ISP 接入網路的 DNS 才能解析。
+只將該網域轉送至接入網路的解析器，其餘流量交由一般上游處理。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSResolver
+  metadata:
+    name: resolver
+  spec:
+    listen:
+      - name: local
+        addresses: [127.0.0.1]
+        port: 53
+    sources:
+      - name: aftr
+        kind: forward
+        match: [transix.jp]
+        upstreams:
+          - udp://[2404:8e00::feed:101]:53
+      - name: default
+        kind: upstream
+        match: [&quot;.&quot;]
+        upstreams:
+          - udp://1.1.1.1:53
+</code></pre>
+<p>請將 <code>transix.jp</code> 及上游 IPv6 位址替換為 ISP 公告的實際值。</p>
+<h2 id="ds-lite-隧道">DS-Lite 隧道</h2>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DSLiteTunnel
+  metadata:
+    name: ds-lite
+  spec:
+    interface: wan
+    tunnelName: ds-routerd
+    localAddressSource: interface
+    aftrFQDN: gw.transix.jp
+    dependsOn:
+      - resource: DNSResolver/resolver
+        phase: Applied
+</code></pre>
+<p><code>localAddressSource: interface</code> 使用 WAN 側透過 SLAAC/RA 取得的 IPv6 位址作為隧道的本地端點。
+此位址比 LAN 側推導更早取得，因此隧道可更快建立。</p>
+<p>若 ISP 公告了穩定的 AFTR 位址且希望省略 DNS 解析，可直接指定 <code>aftrIPv6</code>：</p>
+<pre><code class="language-yaml">spec:
+  aftrIPv6: 2001:db8:cafe::1
+</code></pre>
+<p>在 NTT NGN 的 HGW 等不透過 DHCPv6 information-request 回傳 AFTR 的環境中，靜態指定 <code>aftrFQDN</code> 或 <code>aftrIPv6</code> 是正確的備援方式。</p>
+<p>隧道內側的 IPv4 位址通常使用 RFC 6333 的 B4-AFTR 連結範圍 <code>192.0.0.0/29</code>。
+若要使用從 LAN 範圍切出的位址，請以 <code>IPv4StaticAddress</code> 資源定義，
+並從 <code>DSLiteTunnel.localAddressFrom</code> 與 <code>NAT44Rule.snatAddressFrom</code> 參照該值。
+自訂範例請參閱 <code>examples/dslite-lan-range-snat.yaml</code>。</p>
+<h2 id="驗證">驗證</h2>
+<pre><code class="language-bash">routerctl plan -f router.yaml --replace
+routerctl get status
+
+ip -6 tunnel show
+ip route show default
+nft list table ip routerd_nat
+
+# 確認可透過隧道取得 IPv4 連線
+curl --interface ds-routerd https://1.1.1.1/
+</code></pre>
+<p>請先以 dry-run 確認計畫無誤、且已備妥回滾路徑後，再正式套用。</p>
+<h2 id="相關項目">相關項目</h2>
+<ul>
+<li><a href="../tutorials/wan-side-services.html">WAN 側服務</a></li>
+<li><a href="multi-wan.html">多 WAN 切換</a></li>
+<li><a href="../concepts/path-mtu.html">Path MTU 與 MSS clamping</a></li>
+</ul></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#適用情境">適用情境</a></li>
+<li><a href="#前提條件">前提條件</a></li>
+<li><a href="#dhcpv6-pd">DHCPv6-PD</a></li>
+<li><a href="#lan-位址推導與-ra">LAN 位址推導與 RA</a></li>
+<li><a href="#aftr-的條件式-dns-轉送">AFTR 的條件式 DNS 轉送</a></li>
+<li><a href="#ds-lite-隧道">DS-Lite 隧道</a></li>
+<li><a href="#驗證">驗證</a></li>
+<li><a href="#相關項目">相關項目</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/how-to/flets-ipv6-setup.md">GitHub</a></div></footer></body></html>

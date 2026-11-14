@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sysctl · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/reference/resources/Sysctl.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/reference/resources/Sysctl.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/Sysctl.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/reference/resources/Sysctl.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/Sysctl.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="sysctl">Sysctl</h1>
+<p><a href="../resources.html#sysctl">リソース別の設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: system.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>カーネルのsysctlを1項目反映し、必要ならsysctl.dへ永続設定を書きます。他のrouterdリソースへの参照項目はありません。</p>
+<h2 id="指定条件と参照関係">指定条件と参照関係</h2>
+<ul>
+<li>runtime=falseかつpersistent=falseならSkipped/RuntimeDisabledとなり、値を反映しません。runtimeとpersistentは両方trueにできます。</li>
+<li>同じRouterでのSysctlキーの重複は拒否します。LinuxのNAT44SessionSyncでconntrackdを使う場合、net.netfilter.nf_conntrack_tcp_be_liberalについてruntime有効・optional=false・valueと実効expectedValueが1の明示的Sysctlが別途必要です。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
+<pre><code class="language-yaml">- apiVersion: system.routerd.net/v1alpha1
+  kind: Sysctl
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    compare: &quot;&quot; # 任意; string; enum=[&quot;&quot;, &quot;exact&quot;, &quot;atLeast&quot;]
+    expectedValue: &quot;&lt;string&gt;&quot; # 任意; string
+    key: &quot;&lt;string&gt;&quot; # 必須; string
+    optional: true # 任意; boolean
+    persistent: true # 任意; boolean
+    runtime: true # 任意; boolean
+    value: &quot;&lt;string&gt;&quot; # 必須; string
+</code></pre>
+<h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>項目の意味と既定値</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.key</code></td>
+<td>net.ipv4.ip_forwardなどのカーネルキー。必須で既定値はなく、空白・タブ・改行・/は使えません。リソース参照ではありません。</td>
+</tr>
+<tr>
+<td><code>spec.value</code></td>
+<td>sysctl -wへ渡す必須の空でない文字列。永続化時もこの値を保存します。数値に見えるYAML値も引用符で囲みます。既定値はありません。</td>
+</tr>
+<tr>
+<td><code>spec.expectedValue</code></td>
+<td>実行中の値との比較に使う期待値。省略時はvalueです。書込値と観測される表現が異なる場合に使います。空白だけの指定は拒否します。</td>
+</tr>
+<tr>
+<td><code>spec.compare</code></td>
+<td>省略時exactで、空白を正規化した文字列として比較します。atLeastは対応する整数要素を比較し、要素数が同じで、各観測値が期待値以上であることを要求します。</td>
+</tr>
+<tr>
+<td><code>spec.runtime</code></td>
+<td>稼働中のカーネルへ反映する指定。省略時true。falseでもpersistent=trueなら永続設定を書けます。</td>
+</tr>
+<tr>
+<td><code>spec.persistent</code></td>
+<td>routerd用sysctl.dファイルへkey=valueを保存します。省略時false。runtimeとは独立した指定です。</td>
+</tr>
+<tr>
+<td><code>spec.optional</code></td>
+<td>省略時false。trueなら実行時の読取り失敗をSkipped/ReadFailedOptionalとして扱い、その項目の以降の反映を省きます。任意の書込・永続化エラーを隠す指定ではありません。</td>
+</tr>
+</tbody>
+</table>
+<p>実装: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_system.go">pkg/config/validate_system.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/sysctl.go">pkg/controller/chain/sysctl.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/sysctlprofile/compare.go">pkg/sysctlprofile/compare.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/sysctlprofile/persistent.go">pkg/sysctlprofile/persistent.go</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/reference/resources/Sysctl.md">GitHub</a></div></footer></body></html>

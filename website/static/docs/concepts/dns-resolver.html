@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DNS resolver · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/concepts/dns-resolver.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/concepts/dns-resolver.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/concepts/dns-resolver.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/concepts/dns-resolver.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/concepts/dns-resolver.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="dns-resolver">DNS resolver</h1>
+<p>routerd splits DNS into small resources with a clear boundary between authoritative data, the resolver process, forwarding rules, and upstream endpoints.</p>
+<p><code>DNSZone</code> owns local authoritative data. It stores manual records and records derived from DHCP leases.</p>
+<p><code>DNSResolver</code> owns the daemon instance. It defines listen addresses, cache policy, metrics, and query logging. Each <code>DNSResolver</code> resource starts one <code>routerd-dns-resolver</code> process.</p>
+<p><code>DNSForwarder</code> owns one match rule for a resolver. It either serves <code>DNSZone</code> resources or forwards matching queries to <code>DNSUpstream</code> resources.</p>
+<p><code>DNSUpstream</code> owns one upstream endpoint. It can be plain UDP/TCP DNS, DoT, or DoH.</p>
+<h2 id="startup-and-partial-bring-up">Startup and partial bring-up</h2>
+<p><code>DNSResolver</code> does not wait for every dependency before it serves. At startup it
+brings up the daemon with whatever listen addresses and sources already resolve,
+and converges later as the rest become ready:</p>
+<ul>
+<li>A listen entry binds the addresses that resolve now; an address whose <code>*From</code>
+  source is not ready yet (for example a delegated-prefix address still waiting
+  on DHCPv6 prefix delegation) is added on a later reconcile.</li>
+<li>A forward/upstream source whose dynamic upstream is unresolved (for example an
+  AFTR forwarder whose upstream comes from a <code>DHCPv6Information</code> server) is
+  omitted until that upstream appears. Zone sources, and sources with static or
+  already-resolved upstreams, are served immediately.</li>
+</ul>
+<p>While some parts are still waiting, the resource reports <code>phase: Degraded</code> with a
+<code>waiting</code> list naming each listen/source and what it is waiting on. This is a
+normal bootstrap state, not a failure: general DNS already answers. Once the
+dependencies publish their status the controller re-reconciles and converges to
+<code>phase: Applied</code> with the full configuration (identical to a fully-resolved
+start). The resolver only reports <code>phase: Pending</code> (serving nothing) when no
+listen address resolves at all, or no usable source remains.</p>
+<p>This removes the boot-time window where DNS was refused while waiting on a
+DHCPv6 prefix delegation (measured on a production router: general DNS answered
+from the first second while the AFTR forwarder showed <code>Degraded</code>, then converged
+to <code>Applied</code> once the delegated prefix arrived). The resolver runs as its own
+service unit, so a deliberate <code>routerd</code> restart does not restart DNS; restart
+the resolver unit explicitly when a process restart is needed.</p>
+<h2 id="source-ordering">Source ordering</h2>
+<p><code>DNSForwarder</code> resources that reference a resolver are evaluated in config order.
+A forwarder with <code>zoneRefs</code> answers from <code>DNSZone</code>.
+A forwarder with <code>upstreams</code> sends matching queries to selected upstreams.
+Use <code>match: ["."]</code> for the default recursive path.</p>
+<p>The resolver supports DoH, DoT, TCP DNS, and plain UDP DNS.
+Within the matching source, it tries the explicitly listed upstreams by health
+and priority. If all fail, it returns <code>SERVFAIL</code> without moving to another source.</p>
+<h2 id="multiple-listen-profiles">Multiple listen profiles</h2>
+<p><code>spec.listen</code> is a list.
+Each entry can select a subset of source names.
+This allows LAN and VPN listeners to behave differently while sharing one resolver resource.
+The names in <code>listen[].sources</code> refer to <code>DNSForwarder</code> resources. If omitted,
+the listener uses every forwarder attached to the resolver.</p>
+<p>Use <code>listen[].addressFrom</code> when a listen address comes from another
+resource status. This keeps the dependency explicit and lets the controller
+reconfigure the daemon when the source resource changes.</p>
+<pre><code class="language-yaml">listen:
+  - name: lan
+    addresses:
+      - 192.0.2.1
+    addressFrom:
+      - resource: IPv6DelegatedAddress/lan-base
+        field: address
+    port: 53
+</code></pre>
+<p>If a required address source is not available yet, the resolver stays
+<code>Pending(AddressUnresolved)</code> instead of starting with a stale address.</p>
+<h2 id="dynamic-zone-records">Dynamic zone records</h2>
+<p><code>DNSZone.spec.records[].ipv4</code> and <code>ipv6</code> are literal addresses.
+Use <code>ipv4From</code> or <code>ipv6From</code> when a record address comes from another
+resource status.</p>
+<pre><code class="language-yaml">records:
+  - hostname: router
+    ipv4From:
+      resource: IPv4StaticAddress/lan-base
+      field: address
+    ipv6From:
+      resource: IPv6DelegatedAddress/lan-base
+      field: address
+</code></pre>
+<p>If a required record source is not available yet, the record field is marked in
+<code>DNSZone.status.pendingRecords</code>. The resolver is regenerated when the source
+resource changes, and the record is published after the field resolves.</p>
+<h2 id="network-constrained-upstreams">Network-constrained upstreams</h2>
+<p><code>DNSUpstream.spec.sourceInterface</code> binds outgoing queries to a specific interface on Linux.
+Use a literal OS interface name, for example <code>ens18</code> or <code>wg0</code>.
+When a tunnel or VRF resource creates that interface, make the dependency
+explicit with resource ownership or ordering and keep the resolver pending
+until the interface exists.</p>
+<p><code>DNSUpstream.spec.bootstrap</code> supplies DNS server addresses for resolving DoH and DoT endpoint names.
+<code>DNSUpstream.spec.bootstrapFrom</code> can derive those resolver addresses from another
+resource status, such as <code>DHCPv6Information/&lt;name&gt;.dnsServers</code>.
+These fields are useful when the endpoint name is only resolvable inside an access network.</p>
+<p>Use <code>addressFrom</code> when the upstream server list comes from another resource
+status.</p>
+<pre><code class="language-yaml">apiVersion: net.routerd.net/v1alpha1
+kind: DNSForwarder
+metadata:
+  name: ngn-aftr
+spec:
+  resolver: DNSResolver/lan-resolver
+  match:
+    - transix.jp
+  upstreams:
+    - DNSUpstream/wan-dns
+---
+apiVersion: net.routerd.net/v1alpha1
+kind: DNSUpstream
+metadata:
+  name: wan-dns
+spec:
+  protocol: udp
+  addressFrom:
+    - resource: DHCPv6Information/wan-info
+      field: dnsServers
+</code></pre>
+<p><code>DNSResolver.spec.sources</code> is not accepted in user YAML. Split old inline
+source entries into <code>DNSForwarder</code> and <code>DNSUpstream</code>.</p>
+<pre><code class="language-yaml">apiVersion: net.routerd.net/v1alpha1
+kind: DNSForwarder
+metadata:
+  name: default
+spec:
+  resolver: DNSResolver/lan-resolver
+  match:
+    - &quot;.&quot;
+  upstreams:
+    - DNSUpstream/cloudflare
+---
+apiVersion: net.routerd.net/v1alpha1
+kind: DNSUpstream
+metadata:
+  name: cloudflare
+spec:
+  protocol: doh
+  address: cloudflare-dns.com
+  path: /dns-query
+</code></pre>
+<h2 id="query-deadlines-and-explicit-alternatives">Query deadlines and explicit alternatives</h2>
+<p><code>DNSForwarder.spec.queryTimeout</code> is a positive duration (for example, <code>1s</code>)
+for each ordinary upstream query, independent of the background health check.
+When omitted, it retains the previous <code>healthcheck.timeout</code> behavior (<code>3s</code>
+when that field is also omitted). Healthy upstreams are tried before failing or
+unavailable ones; within each health group, the same forwarder's <code>upstreams</code>
+list determines priority.
+A timeout, transport error, or server failure can advance to the next endpoint.
+A valid answer, including <code>NXDOMAIN</code>, is returned unchanged rather than bypassed.</p>
+<p>If all candidates in a matching forward/upstream source fail, routerd returns
+<code>SERVFAIL</code>, not <code>NXDOMAIN</code>, and does not cache that failure. It does not continue
+into a different source: a private-zone query must not leak into a public
+default source. Declare any permitted alternatives in that same forwarder.
+DNSSEC validation failures also return <code>SERVFAIL</code>.</p>
+<p>Sequential deadlines add up: two candidates with <code>queryTimeout: 1s</code> can consume
+about two seconds before failure, plus local processing. In a LAN → core resolver
+chain, allow the outer resolver and client sufficient time for all inner attempts.
+See <a href="../how-to/dns-private-upstream.html#nextdns-with-a-one-second-query-deadline">the NextDNS example</a>.</p>
+<h2 id="dnsmasq-boundary">dnsmasq boundary</h2>
+<p>dnsmasq is now limited to DHCPv4, DHCPv6, DHCP relay, and RA.
+It does not generate <code>server=</code>, <code>local=</code>, or <code>host-record=</code> lines.
+All DNS answering and forwarding goes through <code>routerd-dns-resolver</code>.</p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#startup-and-partial-bring-up">Startup and partial bring-up</a></li>
+<li><a href="#source-ordering">Source ordering</a></li>
+<li><a href="#multiple-listen-profiles">Multiple listen profiles</a></li>
+<li><a href="#dynamic-zone-records">Dynamic zone records</a></li>
+<li><a href="#network-constrained-upstreams">Network-constrained upstreams</a></li>
+<li><a href="#query-deadlines-and-explicit-alternatives">Query deadlines and explicit alternatives</a></li>
+<li><a href="#dnsmasq-boundary">dnsmasq boundary</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/concepts/dns-resolver.md">GitHub</a></div></footer></body></html>

@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/reference/resources/Package.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/reference/resources/Package.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/reference/resources/Package.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/Package.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/Package.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="package">Package</h1>
+<p><a href="../resources.html#package">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: system.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Ensures selected OS packages are installed. The controller selects the first package set whose os exactly matches the running host.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>Only present is supported; this resource cannot remove packages. An unmatched host OS produces Pending/NoMatchingOSPackageSet. optional is accepted in each set but is not read by this controller; installation failures still return an error.</li>
+</ul>
+<h2 id="yaml-definition">YAML definition</h2>
+<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
+<pre><code class="language-yaml">- apiVersion: system.routerd.net/v1alpha1
+  kind: Package
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    packages: # Required; array
+      - # object
+        manager: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;apt&quot;, &quot;dnf&quot;, &quot;pkg&quot;]
+        names: # Required; array
+          - &quot;&lt;string&gt;&quot; # string
+        optional: true # optional; boolean
+        os: &quot;ubuntu&quot; # Required; string; enum=[&quot;ubuntu&quot;, &quot;debian&quot;, &quot;fedora&quot;, &quot;rhel&quot;, &quot;rocky&quot;, &quot;almalinux&quot;, &quot;freebsd&quot;]
+    state: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;present&quot;]
+</code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.state</code></td>
+<td>Desired package state; omitted means present. Other values are rejected.</td>
+</tr>
+<tr>
+<td><code>spec.packages</code></td>
+<td>Required nonempty list of OS-specific package sets. No resource references.</td>
+</tr>
+<tr>
+<td><code>spec.packages[].os</code></td>
+<td>Required OS ID: ubuntu, debian, fedora, rhel, rocky, almalinux or freebsd. Linux reads /etc/os-release ID; there is no ID_LIKE matching.</td>
+</tr>
+<tr>
+<td><code>spec.packages[].manager</code></td>
+<td>Default apt for ubuntu/debian, dnf for fedora/rhel/rocky/almalinux, pkg for freebsd. An explicit manager must match this OS mapping.</td>
+</tr>
+<tr>
+<td><code>spec.packages[].names</code></td>
+<td>Required nonempty package-name list. Each name must be nonblank and contain no whitespace or /. No implicit package names are added by this field.</td>
+</tr>
+<tr>
+<td><code>spec.packages[].optional</code></td>
+<td>Default false. The field is decoded but currently has no effect on PackageController error handling.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_system.go">pkg/config/validate_system.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/package.go">pkg/controller/chain/package.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/hostdeps/hostdeps.go">pkg/hostdeps/hostdeps.go</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
+<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/reference/resources/Package.md">GitHub</a></div></footer></body></html>

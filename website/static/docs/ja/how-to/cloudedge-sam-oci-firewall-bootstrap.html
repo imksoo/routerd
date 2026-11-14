@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CloudEdge SAM: OCI Ubuntu イメージのファイアウォールブートストラップ · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/how-to/cloudedge-sam-oci-firewall-bootstrap.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/how-to/cloudedge-sam-oci-firewall-bootstrap.html" lang="en" hreflang="en">English</a><a href="/docs/ja/how-to/cloudedge-sam-oci-firewall-bootstrap.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/how-to/cloudedge-sam-oci-firewall-bootstrap.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/cloudedge-sam-oci-firewall-bootstrap.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="cloudedge-sam-oci-ubuntu-イメージのファイアウォールブートストラップ">CloudEdge SAM: OCI Ubuntu イメージのファイアウォールブートストラップ</h1>
+<blockquote>
+<p>実験的機能（CloudEdge SAM）。これは SAM ルーターとして使用する OCI の Canonical Ubuntu イメージで観測された<strong>プロバイダーイメージのホストファイアウォール動作</strong>と、クリーンホスト上で収束すべき routerd 管理の許可を記録するものです。</p>
+</blockquote>
+<h2 id="症状">症状</h2>
+<p>OCI では、Canonical Ubuntu 24.04 イメージが <code>iptables-nft</code> フィルタールールを有効な状態で起動し、<strong>SSH/ICMP 以外のインバウンドトラフィックを reject し、すべての FORWARD トラフィックを reject</strong> します。このデフォルトでは SAM ルーターは:</p>
+<ul>
+<li>OCI セキュリティリストが <code>UDP/51820</code> を許可し、VNIC が <code>skipSourceDestCheck=true</code> であっても、WireGuard ハンドシェイクを受信<strong>できません</strong> — ホストファイアウォールがインバウンドの WireGuard パケットを <code>wg-hybrid</code> リスナーに到達する前にドロップします。</li>
+<li>捕捉/オーバーレイトラフィックを転送<strong>できません</strong> -- デフォルトの <code>FORWARD</code> reject が VNIC インターフェースと <code>wg-hybrid</code> 間の SAM 配送パスをブロックします。</li>
+</ul>
+<p>これはクラウドセキュリティリスト / VNIC の source-dest-check とは独立しています。それらはファブリック層で動作します。<strong>ゲスト OS ファイアウォール</strong>は別レイヤーであり、SAM パスを個別に許可する必要があります。</p>
+<h2 id="必要な許可ゲスト-os">必要な許可（ゲスト OS）</h2>
+<p>各 OCI SAM ルーターで、ホストファイアウォールは以下を許可している必要があります:</p>
+<ul>
+<li><code>wg-hybrid</code> WireGuard リスナーへの<strong>インバウンド <code>UDP/51820</code></strong>。</li>
+<li>OCI VNIC インターフェース（例: <code>ens3</code>）と <code>wg-hybrid</code> の間の双方向 <strong><code>FORWARD</code></strong>。</li>
+</ul>
+<p><code>WireGuardInterface.spec.listenPort</code> は Linux 上では routerd の所有範囲です。<code>WireGuardInterface</code> controller はその UDP port への <code>INPUT</code> accept rule を保証し、結果を <code>WireGuardInterface.status.hostFirewall</code> に出します。</p>
+<p>転送許可はパスごとに扱います。管理対象の capture path では、<code>MobilityPool</code> が出力する型付き local capture intent が、capture interface から tunnel への <code>FORWARD</code> 許可を導出します。CloudEdge SAM の全経路がクリーンな OCI ホストで green になるまでは、イメージ由来の reject-all <code>FORWARD</code> がサイレントな dataplane failure にならないよう、<code>routerctl doctor hybrid</code> を acceptance gate に残してください。</p>
+<h2 id="診断方法">診断方法</h2>
+<p><code>routerctl doctor hybrid</code> は、WireGuard / SAM パスをブロックするゲストファイアウォールの reject-all <code>FORWARD</code>/<code>INPUT</code> パターンを検出するため、許可漏れがサイレントな「ハンドシェイクなし」ではなくレポートとして表示されます。<code>routerctl describe WireGuardInterface/&lt;name&gt;</code> でも、listen port の許可が <code>status.hostFirewall</code> に反映されたか確認できます。デプロイ後に OCI ルーターで実行してください:</p>
+<pre><code>routerctl doctor hybrid
+routerctl describe WireGuardInterface/wg-hybrid
+</code></pre>
+<p>WireGuard エンドポイントがハンドシェイクを示さないのにピアが keepalive を送信している場合は、まずゲストファイアウォール（この How-to）を確認し、次に OCI セキュリティリスト、次に VNIC の source-dest-check を確認してください。</p>
+<h2 id="関連項目">関連項目</h2>
+<ul>
+<li><a href="../reference/selective-address-mobility.html">Selective Address Mobility</a></li>
+<li>OCI Ubuntu イメージはデフォルトの <code>iptables-nft</code> 設定が AWS/Azure イメージと異なります。AWS/Azure の SAM スモークでこの問題が発生しなかったのは、それらのイメージがデフォルトで <code>FORWARD</code> を reject-all しないためです。</li>
+</ul></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#症状">症状</a></li>
+<li><a href="#必要な許可ゲスト-os">必要な許可（ゲスト OS）</a></li>
+<li><a href="#診断方法">診断方法</a></li>
+<li><a href="#関連項目">関連項目</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/how-to/cloudedge-sam-oci-firewall-bootstrap.md">GitHub</a></div></footer></body></html>

@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DNS 解析器 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/concepts/dns-resolver.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/concepts/dns-resolver.html" lang="en" hreflang="en">English</a><a href="/docs/ja/concepts/dns-resolver.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/concepts/dns-resolver.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/concepts/dns-resolver.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="dns-解析器">DNS 解析器</h1>
+<p>routerd 的 DNS 将权威数据、解析器程序、转发规则与上游端点，分别以小型资源表达。</p>
+<p><code>DNSZone</code> 保存本地的权威数据，包含手动录入的记录，以及从 DHCP 租约衍生的记录。</p>
+<p><code>DNSResolver</code> 管理守护进程实例，定义监听地址、缓存、metrics 及查询日志。一个 <code>DNSResolver</code> 资源启动一个 <code>routerd-dns-resolver</code> 进程。</p>
+<p><code>DNSForwarder</code> 是隶属于解析器的一条 match 规则，可从 <code>DNSZone</code> 响应，或将符合的查询转发至 <code>DNSUpstream</code>。</p>
+<p><code>DNSUpstream</code> 是一个上游端点，可表示纯文本的 UDP/TCP DNS、DoT 及 DoH。</p>
+<h2 id="启动与部分拉起">启动与部分拉起</h2>
+<p><code>DNSResolver</code> 不会等到所有依赖都就绪才开始服务。启动时，它会使用当时已经解析出的监听地址与
+source 拉起守护进程，并在其余依赖就绪后收敛：</p>
+<ul>
+<li>listen entry 会绑定当前已解析出的地址；若某个地址的 <code>*From</code> source 尚未就绪
+  （例如仍在等待 DHCPv6 prefix delegation 的 delegated-prefix address），会在后续
+  reconcile 中加入。</li>
+<li>若某个 forward/upstream source 的动态上游尚未解析（例如上游来自
+  <code>DHCPv6Information</code> server 的 AFTR forwarder），会先省略该 source，直到该上游出现。
+  zone source 以及使用静态或已解析上游的 source 会立即提供服务。</li>
+</ul>
+<p>当仍有部分内容在等待时，资源会报告 <code>phase: Degraded</code>，并带有 <code>waiting</code> list，列出每个
+listen/source 正在等待什么。这是正常的 bootstrap 状态，不是故障：通用 DNS 已经可以响应。
+依赖资源发布 status 后，controller 会重新 reconcile，并以完整配置收敛到
+<code>phase: Applied</code>（与一开始就全部解析完成的启动结果相同）。只有在完全没有监听地址可解析，
+或没有任何可用 source 保留时，解析器才会报告 <code>phase: Pending</code>（不提供任何服务）。</p>
+<p>这消除了等待 DHCPv6 prefix delegation 时 DNS 被拒绝的启动窗口（在生产路由器上的实测：
+AFTR forwarder 显示 <code>Degraded</code> 时，通用 DNS 从第一秒起即可响应；delegated prefix 到达后
+收敛到 <code>Applied</code>）。解析器作为独立的服务单元运行，因此主动重启 <code>routerd</code> 不会重启 DNS；需要重启进程时请显式重启解析器单元。</p>
+<h2 id="响应来源的评估顺序">响应来源的评估顺序</h2>
+<p>引用解析器的 <code>DNSForwarder</code> 依配置中的顺序评估。
+具有 <code>zoneRefs</code> 的转发器从 <code>DNSZone</code> 响应。
+具有 <code>upstreams</code> 的转发器将符合的查询转发至上游。
+<code>match: ["."]</code> 是默认的递归查询路径。</p>
+<p>解析器支持 DoH、DoT、TCP DNS 及纯文本 UDP DNS。
+上游依优先顺序尝试。
+优先级高的上游失败时，切换至下一个上游。</p>
+<h2 id="多监听配置">多监听配置</h2>
+<p><code>spec.listen</code> 是数组。
+每个监听可选择要使用的响应来源名称子集合。
+这让 LAN 用与 VPN 用的监听可有不同的行为，
+同时仍共用一个解析器资源。
+<code>listen[].sources</code> 中的名称引用 <code>DNSForwarder</code>。省略时，使用该解析器所属的所有转发器。</p>
+<p>若监听地址需从其他资源状态获取，请使用 <code>listen[].addressFrom</code>。
+由于明确表达了依赖关系，当来源资源变更时，可重新配置守护进程。</p>
+<pre><code class="language-yaml">listen:
+  - name: lan
+    addresses:
+      - 192.0.2.1
+    addressFrom:
+      - resource: IPv6DelegatedAddress/lan-base
+        field: address
+    port: 53
+</code></pre>
+<p>若所需地址尚无法解析，解析器不会以旧地址启动，
+而是保持 <code>Pending(AddressUnresolved)</code> 状态等待。</p>
+<h2 id="动态区域记录">动态区域记录</h2>
+<p><code>DNSZone.spec.records[].ipv4</code> 与 <code>ipv6</code> 为固定值。
+若记录的地址需从其他资源状态获取，请使用 <code>ipv4From</code> 或
+<code>ipv6From</code>。</p>
+<pre><code class="language-yaml">records:
+  - hostname: router
+    ipv4From:
+      resource: IPv4StaticAddress/lan-base
+      field: address
+    ipv6From:
+      resource: IPv6DelegatedAddress/lan-base
+      field: address
+</code></pre>
+<p>若所需的引用来源尚无法解析，该记录会记录至 <code>DNSZone.status.pendingRecords</code>。
+来源资源变更时，解析器会重新生成，并在成功解析后发布记录。</p>
+<h2 id="限定网络的上游">限定网络的上游</h2>
+<p><code>DNSUpstream.spec.sourceInterface</code> 在 Linux 上绑定发出接口。
+以固定值指定 <code>ens18</code> 或 <code>wg0</code> 等 OS 接口名称。
+若隧道或 VRF 资源负责建立该接口，请通过资源的拥有权或顺序明确表达依赖关系，
+让解析器等待接口就绪后再启动。</p>
+<p><code>DNSUpstream.spec.bootstrap</code> 是用于解析 DoH 或 DoT 连接目标名称的辅助 DNS 服务器，
+适用于连接目标名称只能在接入网络内部解析的场景。</p>
+<p>若上游服务器列表需从其他资源状态获取，请使用 <code>addressFrom</code>。</p>
+<pre><code class="language-yaml">apiVersion: net.routerd.net/v1alpha1
+kind: DNSForwarder
+metadata:
+  name: ngn-aftr
+spec:
+  resolver: DNSResolver/lan-resolver
+  match:
+    - transix.jp
+  upstreams:
+    - DNSUpstream/wan-dns
+---
+apiVersion: net.routerd.net/v1alpha1
+kind: DNSUpstream
+metadata:
+  name: wan-dns
+spec:
+  protocol: udp
+  addressFrom:
+    - resource: DHCPv6Information/wan-info
+      field: dnsServers
+</code></pre>
+<p>用户编写的 YAML 不接受 <code>DNSResolver.spec.sources</code>。请将旧式的内嵌 source 拆分为 <code>DNSForwarder</code> 与 <code>DNSUpstream</code>。</p>
+<pre><code class="language-yaml">apiVersion: net.routerd.net/v1alpha1
+kind: DNSForwarder
+metadata:
+  name: default
+spec:
+  resolver: DNSResolver/lan-resolver
+  match:
+    - &quot;.&quot;
+  upstreams:
+    - DNSUpstream/cloudflare
+---
+apiVersion: net.routerd.net/v1alpha1
+kind: DNSUpstream
+metadata:
+  name: cloudflare
+spec:
+  protocol: doh
+  address: cloudflare-dns.com
+  path: /dns-query
+</code></pre>
+<h2 id="与-dnsmasq-的界线">与 dnsmasq 的界线</h2>
+<p>dnsmasq 仅负责 DHCPv4、DHCPv6、DHCP 中继及 RA。
+不生成 <code>server=</code>、<code>local=</code>、<code>host-record=</code>。
+DNS 的响应与转发全部由 <code>routerd-dns-resolver</code> 负责。</p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#启动与部分拉起">启动与部分拉起</a></li>
+<li><a href="#响应来源的评估顺序">响应来源的评估顺序</a></li>
+<li><a href="#多监听配置">多监听配置</a></li>
+<li><a href="#动态区域记录">动态区域记录</a></li>
+<li><a href="#限定网络的上游">限定网络的上游</a></li>
+<li><a href="#与-dnsmasq-的界线">与 dnsmasq 的界线</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/concepts/dns-resolver.md">GitHub</a></div></footer></body></html>

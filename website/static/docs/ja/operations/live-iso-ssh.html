@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ライブ ISO での SSH リモート管理 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/operations/live-iso-ssh.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/operations/live-iso-ssh.html" lang="en" hreflang="en">English</a><a href="/docs/ja/operations/live-iso-ssh.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/operations/live-iso-ssh.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/operations/live-iso-ssh.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="ライブ-iso-での-ssh-リモート管理">ライブ ISO での SSH リモート管理</h1>
+<p>routerd ライブ ISO はデフォルトで SSH デーモンを実行しません。デフォルトでは
+閉鎖的な構成となっており、ローカルコンソールとシリアルコンソール（<code>tty1</code>、<code>tty2</code>、<code>ttyS0</code>）のみ
+利用できます。これにより、パスワードなしの root アクセスがネットワーク上に露出しません。</p>
+<p>ハイパーバイザー VM（Proxmox VE、KVM 等）としてアプライアンスを実行していて
+シリアルコンソールのアクセスが不便な場合、ISO イメージに認証情報を組み込むこと
+なくオプトイン SSH モードを有効化できます。</p>
+<h2 id="前提条件">前提条件</h2>
+<ul>
+<li><code>authorized_keys</code> ファイルを含む config ディスク（ラベルが <code>ROUTERD_CONFIG</code> または
+  <code>ROUTERD</code>、あるいは <code>routerd.usb=</code> で指定）。</li>
+<li>ブート時にカーネルパラメータを設定する手段（GRUB エントリの編集、またはハイパー
+  バイザーから VM のカーネル引数を設定）。</li>
+</ul>
+<h2 id="ssh-の有効化">SSH の有効化</h2>
+<h3 id="ステップ-1-config-ディスクに公開鍵を配置">ステップ 1 — config ディスクに公開鍵を配置</h3>
+<p>config ディスク（例: <code>router.yaml</code> を格納する Proxmox VM ディスク）上の <code>routerd/</code>
+ディレクトリ内に <code>authorized_keys</code> ファイルを作成します。</p>
+<pre><code class="language-text">routerd/
+  router.yaml
+  authorized_keys       ← このファイルを追加
+</code></pre>
+<p>ファイルは標準的な OpenSSH <code>authorized_keys</code> フォーマットに従います。</p>
+<pre><code class="language-text">ssh-ed25519 AAAA...yourkey... user@host
+</code></pre>
+<p>ホスト固有の鍵ファイルもサポートされています（汎用ファイルより先に検索されます）。</p>
+<pre><code class="language-text">routerd/hosts/&lt;hostname&gt;/authorized_keys
+routerd/hosts/&lt;mac&gt;/authorized_keys   (コロン区切りまたはコンパクト小文字)
+</code></pre>
+<h3 id="ステップ-2-routerdssh1-でブート">ステップ 2 — <code>routerd.ssh=1</code> でブート</h3>
+<p>カーネルコマンドラインに <code>routerd.ssh=1</code> パラメータを追加します。</p>
+<p><strong>GRUB（ライブ ISO ブートメニュー — <code>e</code> を押して編集）:</strong></p>
+<pre><code class="language-text">linux /boot/vmlinuz-lts ... routerd.ssh=1
+</code></pre>
+<p><strong>Proxmox VE — VM のブート引数を設定:</strong></p>
+<pre><code class="language-sh">qm set &lt;vmid&gt; --args &quot;-append routerd.ssh=1&quot;
+</code></pre>
+<p>または VM の GRUB エントリに一度設定すれば、再起動をまたいで永続化します。</p>
+<h2 id="ブート時の動作">ブート時の動作</h2>
+<ol>
+<li><code>live-persistence.sh init</code> が config ディスクをマウントし、<code>router.yaml</code> を復元。</li>
+<li><code>live-autostart.sh</code> が依存パッケージをインストール（まだ存在しなければ <code>openssh</code>
+   を含む）。</li>
+<li><code>live-ssh.sh</code> がカーネルコマンドラインで <code>routerd.ssh=1</code> を確認。</li>
+<li>フラグが設定されていれば、マウント済みの config ディスク上で <code>authorized_keys</code> を
+   検索。</li>
+<li>見つかった場合、鍵を <code>/root/.ssh/authorized_keys</code> にインストールし、
+   <code>ssh-keygen -A</code> でホスト鍵を生成し、<code>sshd</code> を起動。</li>
+<li><code>routerd.ssh=1</code> が設定されているが <code>authorized_keys</code> ファイルが見つからない場合、
+   sshd は<strong>起動されず</strong>、<code>/run/routerd/logs/routerd-ssh.log</code> に警告がログ出力される。</li>
+</ol>
+<h2 id="セキュリティモデル">セキュリティモデル</h2>
+<table>
+<thead>
+<tr>
+<th>プロパティ</th>
+<th>値</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>デフォルト状態</td>
+<td>SSH 無効</td>
+</tr>
+<tr>
+<td>認証方式</td>
+<td>公開鍵のみ</td>
+</tr>
+<tr>
+<td>root のパスワード認証</td>
+<td>恒久的に無効（<code>PasswordAuthentication no</code>）</td>
+</tr>
+<tr>
+<td>root ログイン</td>
+<td><code>PermitRootLogin prohibit-password</code>（鍵認証のみ）</td>
+</tr>
+<tr>
+<td>ISO 内の認証情報</td>
+<td>なし — 鍵は実行時に config ディスクから取得</td>
+</tr>
+</tbody>
+</table>
+<p>SSH は明示的なオプトインによってのみ有効化され、外部メディアに認証情報が
+提供されている場合にのみ動作します。パスワード認証へのフォールバックはありません。</p>
+<h2 id="トラブルシューティング">トラブルシューティング</h2>
+<p><strong>sshd が起動しない場合:</strong></p>
+<pre><code class="language-sh">cat /run/routerd/logs/routerd-ssh.log
+</code></pre>
+<p>よくある原因:
+- カーネルコマンドラインに <code>routerd.ssh=1</code> がない — <code>/proc/cmdline</code> を確認。
+- config ディスクがマウントされていない — <code>/proc/mounts</code> で <code>/media/routerd-usb</code> を確認。
+- 期待されるパスに <code>authorized_keys</code> が見つからない — <code>live-ssh.sh</code> が期待する場所を
+  ログに記録している。</p>
+<p><strong>sshd が動作中か確認:</strong></p>
+<pre><code class="language-sh">pgrep -x sshd
+ss -tlnp | grep :22
+</code></pre>
+<p><strong>再起動なしで SSH セットアップを再実行:</strong></p>
+<pre><code class="language-sh">/usr/share/routerd/live-ssh.sh
+</code></pre>
+<h2 id="関連項目">関連項目</h2>
+<ul>
+<li><a href="usb-persistence.html">USB 永続化</a> — config ディスクのレイアウトとデバイス検出</li>
+</ul></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#前提条件">前提条件</a></li>
+<li><a href="#ssh-の有効化">SSH の有効化</a><ul>
+<li><a href="#ステップ-1-config-ディスクに公開鍵を配置">ステップ 1 — config ディスクに公開鍵を配置</a></li>
+<li><a href="#ステップ-2-routerdssh1-でブート">ステップ 2 — routerd.ssh=1 でブート</a></li>
+</ul>
+</li>
+<li><a href="#ブート時の動作">ブート時の動作</a></li>
+<li><a href="#セキュリティモデル">セキュリティモデル</a></li>
+<li><a href="#トラブルシューティング">トラブルシューティング</a></li>
+<li><a href="#関連項目">関連項目</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/operations/live-iso-ssh.md">GitHub</a></div></footer></body></html>

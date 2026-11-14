@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>定义防火墙区域 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/how-to/firewall-zone.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/how-to/firewall-zone.html" lang="en" hreflang="en">English</a><a href="/docs/ja/how-to/firewall-zone.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/how-to/firewall-zone.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/firewall-zone.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="定义防火墙区域">定义防火墙区域</h1>
+<h2 id="适用场景">适用场景</h2>
+<p>「WAN 无法到达 LAN、LAN 可以到达 WAN、管理路径可以到达所有地方」，这是家庭与 SOHO 路由器的基本策略矩阵。
+若以单独的 <code>accept</code> / <code>drop</code> 规则来编写，不仅重复性高，也容易出错。</p>
+<h2 id="routerd-的解决方式">routerd 的解决方式</h2>
+<p>使用 <code>FirewallZone</code> 将接口与<strong>角色（role）</strong>绑定。
+routerd 会根据内置的角色矩阵，自动推导各方向的默认动作，因此在典型配置下，甚至不需要编写任何 <code>FirewallRule</code>。</p>
+<table>
+<thead>
+<tr>
+<th>role</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>untrust</code></td>
+<td>WAN 侧（上游线路、DSLite 隧道、PPPoE 虚拟接口）</td>
+</tr>
+<tr>
+<td><code>trust</code></td>
+<td>一般 LAN 区段</td>
+</tr>
+<tr>
+<td><code>mgmt</code></td>
+<td>带外管理网络</td>
+</tr>
+</tbody>
+</table>
+<p>隐含的矩阵如下：</p>
+<table>
+<thead>
+<tr>
+<th>from \ to</th>
+<th>self</th>
+<th>trust</th>
+<th>mgmt</th>
+<th>untrust</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>mgmt</code></td>
+<td>accept</td>
+<td>accept</td>
+<td>n/a</td>
+<td>accept</td>
+</tr>
+<tr>
+<td><code>trust</code></td>
+<td>accept</td>
+<td>accept</td>
+<td>drop</td>
+<td>accept</td>
+</tr>
+<tr>
+<td><code>untrust</code></td>
+<td>drop</td>
+<td>drop</td>
+<td>drop</td>
+<td>n/a</td>
+</tr>
+<tr>
+<td><code>self</code></td>
+<td>accept</td>
+<td>accept</td>
+<td>accept</td>
+<td>accept</td>
+</tr>
+</tbody>
+</table>
+<p>established/related 的连接一律允许。</p>
+<h2 id="示例">示例</h2>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallZone
+  metadata:
+    name: wan
+  spec:
+    role: untrust
+    interfaces:
+      - Interface/wan
+      - DSLiteTunnel/ds-lite-primary
+
+- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallZone
+  metadata:
+    name: lan
+  spec:
+    role: trust
+    interfaces:
+      - Interface/lan
+
+- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallZone
+  metadata:
+    name: management
+  spec:
+    role: mgmt
+    interfaces:
+      - Interface/mgmt
+</code></pre>
+<p>对于典型的家庭路由器，这样就已足够。<code>FirewallRule</code> 只在需要表达例外时才新增。</p>
+<h2 id="相关项目">相关项目</h2>
+<ul>
+<li><a href="firewall-rule.html">新增防火墙例外规则</a></li>
+<li><a href="guest-mode.html">以 MAC 地址隔离访客设备</a></li>
+<li><a href="../concepts/firewall.html">防火墙概念说明</a></li>
+</ul></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#适用场景">适用场景</a></li>
+<li><a href="#routerd-的解决方式">routerd 的解决方式</a></li>
+<li><a href="#示例">示例</a></li>
+<li><a href="#相关项目">相关项目</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/how-to/firewall-zone.md">GitHub</a></div></footer></body></html>

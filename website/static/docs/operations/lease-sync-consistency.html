@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DHCP lease synchronization content checks · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/operations/lease-sync-consistency.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/operations/lease-sync-consistency.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/intro.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/intro.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/intro.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="dhcp-lease-synchronization-content-checks">DHCP lease synchronization content checks</h1>
+<p>Lease synchronization adds <code>--checksum</code> to the default rsync arguments. A
+successful transfer must not leave old contents merely because the source and
+destination have equal sizes and modification times. This applies to lease
+files, the sticky lease database and its WAL, and prefix-delegation state.
+Both ends read matching-size files to compare their contents, so this adds
+read I/O. User-supplied rsync options retain their existing ordering after the
+defaults; options that disable content comparison can weaken this behavior.</p>
+<p>One failure path is a SQLite checkpoint between the database copy and the WAL
+copy. The WAL can disappear when the last writer closes. That transfer still
+reports <code>SyncFailed</code>; the next reconciliation inventories the files again and
+copies the checkpointed database using content comparison. Missing WAL is not
+ignored or removed from the configured transfer set.</p>
+<p>This does not create an atomic SQLite snapshot. The database and WAL still
+transfer separately, and arbitrary concurrent writes or a role transition
+during transfer require separate consistency analysis. A recovery log confirms
+the command result; it does not independently verify every consumer.</p>
+<p>Regression tests use the actual generated arguments with only remote transport
+and destination replaced by local temporary paths. They reproduce unchanged
+size/mtime with different contents, and a real SQLite writer closing before
+the WAL transfer. They verify receiver contents and integrity after retry.
+No host networking or production service is modified.</p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul></ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/operations/lease-sync-consistency.md">GitHub</a></div></footer></body></html>

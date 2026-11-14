@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Azure and PVE same-subnet SAM smoke · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/how-to/hybrid-azure-pve-same-subnet.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/how-to/hybrid-azure-pve-same-subnet.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/how-to/hybrid-azure-pve-same-subnet.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/how-to/hybrid-azure-pve-same-subnet.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/hybrid-azure-pve-same-subnet.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="azure-and-pve-same-subnet-sam-smoke">Azure and PVE same-subnet SAM smoke</h1>
+<p>This guide captures the validated operational shape for an Azure routerd node
+and an on-prem Proxmox VE routerd node that exchange selected <code>/32</code> addresses
+with Selective Address Mobility (SAM). See the
+<a href="../reference/selective-address-mobility.html">Selective Address Mobility reference</a>
+for resource semantics.</p>
+<h2 id="azure-side">Azure side</h2>
+<ul>
+<li>Keep the Azure NIC secondary IP assigned in Azure. That provider-side object
+  is what captures packets for the on-prem <code>/32</code>.</li>
+<li>Do not let the Ubuntu guest OS hold the captured <code>/32</code>. cloud-init or netplan
+  may auto-assign secondary NIC IPs; suppress that configuration or remove it.
+  routerd enforces this during every BGP provider-secondary reconcile, even
+  while Azure keeps the secondary IP assigned. The Azure NIC owns ingress, while
+  Linux forwards by proxy-neighbor, forwarding sysctls/rules, and the imported
+  <code>/32</code> route instead of a local <code>/32</code> address.</li>
+<li>Enable IP forwarding on the Azure NIC and in Linux
+  (<code>net.ipv4.ip_forward=1</code>).</li>
+</ul>
+<h2 id="on-prem-pve-side">On-Prem PVE Side</h2>
+<ul>
+<li>Use <code>proxy-arp</code> capture on the LAN or bridge interface that sees the local
+  same-subnet hosts.</li>
+<li>Enable Linux forwarding. routerd enables <code>ip_forward</code> and <code>proxy_arp</code> for SAM
+  through the normal sysctl path.</li>
+<li>Permit forwarding between the capture interface and the WireGuard tunnel for
+  the captured <code>/32</code>. SAM does not add firewall or NAT rules.</li>
+<li>On cloud guest images, also check host firewall defaults before assuming the
+  provider fabric is dropping packets. The router must accept the WireGuard UDP
+  listen port, and it must permit forwarding between the capture interface and
+  <code>wg-hybrid</code>. <code>routerctl doctor hybrid</code> warns on terminal iptables
+  drop/reject patterns and missing SAM MSS clamp rules.</li>
+</ul>
+<h2 id="tunnel-and-routing">Tunnel And Routing</h2>
+<ul>
+<li>WireGuard should dial from on-prem to the Azure public IP.</li>
+<li>Set <code>persistentKeepalive</code> on the on-prem peer so NAT and cloud edge state stay
+  warm.</li>
+<li>Run the initial smoke without UDRs. If you add UDR fallback later, avoid a
+  same-subnet loop where Azure routes the captured <code>/32</code> back to the same router
+  that is trying to deliver it.</li>
+<li>Remote-owner <code>/32</code> delivery comes from the BGP best-path import over the
+  tunnel interface; it does not change the default route.</li>
+</ul>
+<h2 id="verification">Verification</h2>
+<p>Run:</p>
+<pre><code class="language-sh">routerctl doctor hybrid
+</code></pre>
+<p>For <code>provider-secondary-ip</code> in BGP mode, confirm the doctor reports the
+captured <code>/32</code> absent from local <code>ip addr</code>, the delivery route points at the
+tunnel, and <code>ip_forward=1</code>. For <code>proxy-arp</code>, confirm <code>proxy_arp=1</code>, the
+proxy neighbor exists, the delivery route points at the tunnel, and
+<code>ip_forward=1</code>.</p>
+<p>For low-MTU overlays, confirm <code>doctor hybrid</code> reports a SAM MSS clamp and
+<code>nft list table inet routerd_mss</code> contains both capture-to-tunnel and
+tunnel-to-capture rules for the selected <code>/32</code> path.</p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#azure-side">Azure side</a></li>
+<li><a href="#on-prem-pve-side">On-Prem PVE Side</a></li>
+<li><a href="#tunnel-and-routing">Tunnel And Routing</a></li>
+<li><a href="#verification">Verification</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/how-to/hybrid-azure-pve-same-subnet.md">GitHub</a></div></footer></body></html>

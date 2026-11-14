@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>訪客與 IoT 裝置隔離：先理解限制 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/config-examples/guest-isolation.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/config-examples/guest-isolation.html" lang="en" hreflang="en">English</a><a href="/docs/ja/config-examples/guest-isolation.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/config-examples/guest-isolation.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/config-examples/guest-isolation.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="訪客與-iot-裝置隔離先理解限制">訪客與 IoT 裝置隔離：先理解限制</h1>
+<p><code>ClientPolicy</code> 可將列出的 MAC 位址視為訪客或 IoT 裝置：允許它們連往網際網路，同時表達不應存取受信任 LAN 和管理網路的意圖。完整 YAML 位於 <code>examples/guest-mode.yaml</code>。</p>
+<p>它適合用來學習共用 LAN 的分類方式，但<strong>不能把共用的二層網路變成真正隔離的網路</strong>。</p>
+<h2 id="關鍵限制同一二層網路仍可直接通訊">關鍵限制：同一二層網路仍可直接通訊</h2>
+<p>如果訪客裝置和受信任裝置接在同一台交換器、同一個未分 VLAN 的 Wi-Fi SSID，或同一個乙太網路廣播域，它們的流量可能根本不會經過路由器。路由器規則看不到這種直接的二層通訊。</p>
+<p>需要真正訪客隔離時，請使用：</p>
+<ul>
+<li>獨立 VLAN，並讓交換器和 AP 正確標記與隔離埠；</li>
+<li>對應該 VLAN 的獨立訪客 SSID；</li>
+<li>或完全分開的實體埠／交換器與子網。</li>
+</ul>
+<p>MAC 位址是網卡在二層網路使用的硬體識別，也可能被偽造，或因裝置的「私有 MAC」功能改變。因此 MAC 分類不適合作為高安全情境的身分驗證。</p>
+<p>VLAN 是由交換器或無線 AP 在二層劃出的虛擬網路，不只是替同一條網線換一段 IPv4 位址。只有交換器、AP 和路由器都依同一 VLAN 設計設定，訪客流量才會被迫經過應有的三層策略點。</p>
+<h2 id="clientpolicy-的最小結構">ClientPolicy 的最小結構</h2>
+<p>下例假設 <code>lan</code> 已經是 <code>trust</code> 區域中的 <code>Interface</code>：</p>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: ClientPolicy
+  metadata:
+    name: guest-devices
+  spec:
+    mode: include
+    macs:
+      - 18:ec:e7:33:12:6c
+    isolation:
+      lanInternet: allow
+      lanLAN: deny
+      lanMgmt: deny
+      mDNSBroadcast: deny
+</code></pre>
+<p><code>mode: include</code> 表示只有列出的 MAC 位址當作訪客，其餘裝置維持原本分類。<code>mode: exclude</code> 則相反：列出的裝置信任，其餘裝置視為訪客。</p>
+<p>可搭配 <code>DHCPv4Reservation</code> 固定裝置名稱和 IPv4 位址，讓識別較容易；但這不會解決共用二層網路繞過路由器的問題。</p>
+<p>routerd 的防火牆與 ClientPolicy 仍在預發布的基礎實作階段。這個 Linux/nftables 範例不能取代 VLAN 設計、無線隔離、交換器設定或安全審查。要保護管理網路與可信任裝置，先做二層分段，再把路由器策略當作額外一層。</p>
+<h2 id="安全檢查">安全檢查</h2>
+<p>先使用本機 <code>routerd</code> 檢查檔案。下列獨立檢查需要具有 <code>sudo</code> 權限的本機使用者，不需要 daemon，也不會套用網路變更：</p>
+<pre><code class="language-bash">LAB_DIR=&quot;$(mktemp -d)&quot;
+sudo routerd validate --config examples/guest-mode.yaml
+sudo routerd apply --config examples/guest-mode.yaml --once --dry-run \
+  --state-file &quot;$LAB_DIR/state.db&quot; \
+  --status-file &quot;$LAB_DIR/status.json&quot;
+rm -rf &quot;$LAB_DIR&quot;
+</code></pre>
+<p>不應使用 <code>routerctl validate</code> 或 <code>routerctl plan</code> 代替它們。當 <code>routerd serve</code> 已在有主控台保護的真實主機上運行後，才查詢結果；首次安裝請保留 <code>sudo</code>。若管理員透過 <code>routerd</code> 群組授予本機 socket 存取權，加入後必須重新登入才會生效：</p>
+<pre><code class="language-bash">sudo routerctl get status
+sudo routerctl describe ClientPolicy/guest-devices
+</code></pre>
+<p>這個範例對應 Linux 的 nftables 路徑。不要假定 FreeBSD 或 NixOS 會以完全相同的 MAC／二層方式執行；部署前請查看<a href="../platforms.html">支援的平台</a>。</p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#關鍵限制同一二層網路仍可直接通訊">關鍵限制：同一二層網路仍可直接通訊</a></li>
+<li><a href="#clientpolicy-的最小結構">ClientPolicy 的最小結構</a></li>
+<li><a href="#安全檢查">安全檢查</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/config-examples/guest-isolation.md">GitHub</a></div></footer></body></html>

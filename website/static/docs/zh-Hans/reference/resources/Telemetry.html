@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Telemetry · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/reference/resources/Telemetry.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/reference/resources/Telemetry.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/Telemetry.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/Telemetry.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/Telemetry.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="telemetry">Telemetry</h1>
+<p><a href="../resources.html#telemetry">各资源的配置</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: observability.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>为生成的受管服务设置OpenTelemetry环境变量，不定义LogSink或独立collector进程。</p>
+<h2 id="指定条件与引用关系">指定条件与引用关系</h2>
+<ul>
+<li>生成的遥测环境仅可选择一个Telemetry或OTLP endpoint非空的ObservabilityPipeline；同时选到多个会生成错误，不通过资源名互相引用。</li>
+</ul>
+<h2 id="yaml定义">YAML定义</h2>
+<p>此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。</p>
+<pre><code class="language-yaml">- apiVersion: observability.routerd.net/v1alpha1
+  kind: Telemetry
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    attributes: # 选填; object
+      &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # 选填; string
+    otlp: # 必填; object
+      endpoint: &quot;&lt;string&gt;&quot; # 必填; string
+      insecure: true # 选填; boolean
+    serviceNamespace: &quot;&lt;string&gt;&quot; # 选填; string
+    signals: # 选填; array
+      - &quot;logs&quot; # string; enum=[&quot;logs&quot;, &quot;metrics&quot;, &quot;traces&quot;]
+</code></pre>
+<h2 id="字段含义与默认值">字段含义与默认值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>字段含义与默认值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.otlp</code></td>
+<td>必填OTLP连接配置。</td>
+</tr>
+<tr>
+<td><code>spec.otlp.endpoint</code></td>
+<td>必填且不可空白的导出端点，写入OTEL_EXPORTER_OTLP_ENDPOINT，无默认值。验证器仅检查非空白，不确认可达性。</td>
+</tr>
+<tr>
+<td><code>spec.otlp.insecure</code></td>
+<td>默认false；true生成OTEL_EXPORTER_OTLP_INSECURE=true，false不生成此变量。</td>
+</tr>
+<tr>
+<td><code>spec.serviceNamespace</code></td>
+<td>OpenTelemetry服务命名空间，去除首尾空白后为空时默认routerd。</td>
+</tr>
+<tr>
+<td><code>spec.attributes</code></td>
+<td>资源属性映射，默认空；按键排序并以逗号分隔key=value写入OTEL_RESOURCE_ATTRIBUTES，此生成器不转义值。</td>
+</tr>
+<tr>
+<td><code>spec.signals</code></td>
+<td>接受logs、metrics、traces，默认三者全部。非空列表会将省略信号的exporter变量设为none，不会创建接收进程。</td>
+</tr>
+</tbody>
+</table>
+<p>实现: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_system.go">pkg/config/validate_system.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/telemetry.go">pkg/render/telemetry.go</a></p>
+<p><a href="/examples/telemetry-export.yaml">配置示例</a></p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件与引用关系">指定条件与引用关系</a></li>
+<li><a href="#yaml定义">YAML定义</a></li>
+<li><a href="#字段含义与默认值">字段含义与默认值</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/reference/resources/Telemetry.md">GitHub</a></div></footer></body></html>

@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DynamicOverridePolicy · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/reference/resources/DynamicOverridePolicy.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/reference/resources/DynamicOverridePolicy.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/DynamicOverridePolicy.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/DynamicOverridePolicy.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/reference/resources/DynamicOverridePolicy.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="dynamicoverridepolicy">DynamicOverridePolicy</h1>
+<p><a href="../resources.html#dynamicoverridepolicy">各資源的設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: config.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>授權指定動態來源在動態部分有效期間遮蔽特定啟動設定資源，不改寫已儲存的啟動設定。</p>
+<h2 id="指定條件與參照關係">指定條件與參照關係</h2>
+<ul>
+<li>以來源、操作及目標apiVersion/kind/name完全相符判定。沒有匹配allow時拒絕遮蔽；同一目標的多個有效遮蔽合併至最晚到期時間。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。</p>
+<pre><code class="language-yaml">- apiVersion: config.routerd.net/v1alpha1
+  kind: DynamicOverridePolicy
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    allow: # 必填; array
+      - # object
+        operations: # 必填; array
+          - &quot;&lt;string&gt;&quot; # string
+        source: &quot;&lt;string&gt;&quot; # 必填; string
+        targets: # 必填; array
+          - # object
+            apiVersion: &quot;&lt;string&gt;&quot; # 必填; string
+            kind: &quot;&lt;string&gt;&quot; # 必填; string
+            name: &quot;&lt;string&gt;&quot; # 必填; string
+</code></pre>
+<h2 id="欄位意義與預設值">欄位意義與預設值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>欄位意義與預設值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.allow</code></td>
+<td>允許規則清單；空清單無效果且不授權。</td>
+</tr>
+<tr>
+<td><code>spec.allow[].source</code></td>
+<td>必填來源識別，須與DynamicConfigPart.spec.source完全一致；不一定是Plugin或DynamicConfigSource名稱，無萬用字元與預設值。</td>
+</tr>
+<tr>
+<td><code>spec.allow[].operations</code></td>
+<td>允許操作；只接受mask，空清單不允許任何操作。</td>
+</tr>
+<tr>
+<td><code>spec.allow[].targets</code></td>
+<td>可遮蔽的啟動設定資源完整識別清單；空清單不允許任何目標。</td>
+</tr>
+<tr>
+<td><code>spec.allow[].targets[].apiVersion</code></td>
+<td>目標API群組與版本；每項必填，無預設值。</td>
+</tr>
+<tr>
+<td><code>spec.allow[].targets[].kind</code></td>
+<td>目標資源種類，必填；不展開萬用字元。</td>
+</tr>
+<tr>
+<td><code>spec.allow[].targets[].name</code></td>
+<td>必填，與目標metadata.name完全相符；不展開萬用字元。</td>
+</tr>
+</tbody>
+</table>
+<p>實作: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_config.go">pkg/config/validate_config.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/dynamicconfig/merge.go">pkg/dynamicconfig/merge.go</a></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#指定條件與參照關係">指定條件與參照關係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#欄位意義與預設值">欄位意義與預設值</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/reference/resources/DynamicOverridePolicy.md">GitHub</a></div></footer></body></html>

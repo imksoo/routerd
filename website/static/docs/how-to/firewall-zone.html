@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Define firewall zones · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/how-to/firewall-zone.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/how-to/firewall-zone.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/how-to/firewall-zone.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/how-to/firewall-zone.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/firewall-zone.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="define-firewall-zones">Define firewall zones</h1>
+<h2 id="scenario">Scenario</h2>
+<p>You want a stateful firewall whose default behaviour is "WAN cannot reach LAN, LAN can reach WAN, management can reach everything." That is the matrix every home or SOHO router needs, and writing it as individual <code>accept</code> / <code>drop</code> rules is repetitive and error-prone.</p>
+<h2 id="how-routerd-solves-it">How routerd solves it</h2>
+<p><code>FirewallZone</code> maps interfaces to a <strong>role</strong>. routerd has a built-in role matrix that derives the directional default actions, so you usually do not need any explicit <code>FirewallRule</code> for the common case.</p>
+<table>
+<thead>
+<tr>
+<th>role</th>
+<th>Typical use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>untrust</code></td>
+<td>WAN-facing interfaces (uplink, DSLite tunnel, PPPoE pseudo-interface)</td>
+</tr>
+<tr>
+<td><code>trust</code></td>
+<td>Normal LAN segments</td>
+</tr>
+<tr>
+<td><code>mgmt</code></td>
+<td>Out-of-band management network</td>
+</tr>
+</tbody>
+</table>
+<p>The implicit matrix is:</p>
+<table>
+<thead>
+<tr>
+<th>from \ to</th>
+<th>self</th>
+<th>trust</th>
+<th>mgmt</th>
+<th>untrust</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>mgmt</code></td>
+<td>accept</td>
+<td>accept</td>
+<td>n/a</td>
+<td>accept</td>
+</tr>
+<tr>
+<td><code>trust</code></td>
+<td>accept</td>
+<td>accept</td>
+<td>drop</td>
+<td>accept</td>
+</tr>
+<tr>
+<td><code>untrust</code></td>
+<td>drop</td>
+<td>drop</td>
+<td>drop</td>
+<td>n/a</td>
+</tr>
+<tr>
+<td><code>self</code></td>
+<td>accept</td>
+<td>accept</td>
+<td>accept</td>
+<td>accept</td>
+</tr>
+</tbody>
+</table>
+<p>Established/related connections are always allowed.</p>
+<h2 id="example">Example</h2>
+<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallZone
+  metadata:
+    name: wan
+  spec:
+    role: untrust
+    interfaces:
+      - Interface/wan
+      - DSLiteTunnel/ds-lite-primary
+
+- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallZone
+  metadata:
+    name: lan
+  spec:
+    role: trust
+    interfaces:
+      - Interface/lan
+
+- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallZone
+  metadata:
+    name: management
+  spec:
+    role: mgmt
+    interfaces:
+      - Interface/mgmt
+</code></pre>
+<p>This is enough for a typical home router. The role matrix supplies the defaults; you only add explicit <code>FirewallRule</code> resources to express exceptions.</p>
+<h2 id="see-also">See also</h2>
+<ul>
+<li><a href="firewall-rule.html">Add firewall exceptions</a></li>
+<li><a href="guest-mode.html">Isolate guest devices by MAC address</a></li>
+<li><a href="../concepts/firewall.html">Firewall concept</a></li>
+</ul></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#scenario">Scenario</a></li>
+<li><a href="#how-routerd-solves-it">How routerd solves it</a></li>
+<li><a href="#example">Example</a></li>
+<li><a href="#see-also">See also</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/how-to/firewall-zone.md">GitHub</a></div></footer></body></html>

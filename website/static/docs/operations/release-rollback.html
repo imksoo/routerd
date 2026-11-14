@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Release rollback procedure · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/operations/release-rollback.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/operations/release-rollback.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/intro.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/intro.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/intro.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="release-rollback-procedure">Release rollback procedure</h1>
+<p>This procedure keeps a release rollback from silently replacing the router's
+current configuration with an old release snapshot. It applies to release
+certification and qualification operations. Host-specific execution scripts
+belong in the operator's configuration-management repository and must refer to
+this procedure.</p>
+<h2 id="default-rollback-scope">Default rollback scope</h2>
+<p>The default rollback changes <strong>binaries only</strong>. It may restore the selected
+release archive, restart the routerd service, and verify readiness and
+connectivity. It must not run <code>routerctl apply --replace</code>, <code>routerctl rollback</code>,
+or copy a configuration file into the canonical config path.</p>
+<p>This separation matters because a release artifact and a router configuration
+have independent lifecycles. A binary rollback must not implicitly replace
+newer configuration resources with a snapshot taken before those resources
+existed.</p>
+<h2 id="exceptional-configuration-rollback">Exceptional configuration rollback</h2>
+<p>Change configuration only when the incident requires it and the operator has
+explicitly selected configuration rollback.</p>
+<ol>
+<li>Read the canonical configuration from the router at the time of rollback.</li>
+<li>Derive the rollback candidate from that current canonical configuration; do
+   not use a configuration snapshot bundled with, or previously used for, an
+   older release.</li>
+<li>Store the candidate in a tracked evidence path before it is transferred to
+   the router.</li>
+<li>Record the UTC timestamp, target host, candidate path, SHA-256, source
+   canonical path and SHA-256, generator or operator identity, and purpose.</li>
+<li>Transfer only an execution copy to <code>/tmp</code>. <code>/tmp</code> is not an evidence or
+   provenance store and must not be the only surviving copy of a candidate.</li>
+</ol>
+<h2 id="applying-a-configuration-candidate">Applying a configuration candidate</h2>
+<p>For every <code>routerctl apply</code>, record the complete command line, standard output,
+standard error, and exit code. Also record all of the following before treating
+the apply as successful:</p>
+<ul>
+<li>the <code>ApplyResult</code> phase;</li>
+<li>the <code>committed canonical router config</code> journal event;</li>
+<li>the canonical config mtime and SHA-256 after the apply.</li>
+</ul>
+<p>An exit status of zero alone is insufficient. Until the control API reports a
+non-success result for an uncommitted apply, an <code>ApplyResult</code> phase that does
+not commit canonical config, a missing commit event, or an unchanged canonical
+mtime is a failed configuration rollback. Stop and preserve evidence rather
+than restarting routerd with an ambiguous runtime-only configuration.</p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#default-rollback-scope">Default rollback scope</a></li>
+<li><a href="#exceptional-configuration-rollback">Exceptional configuration rollback</a></li>
+<li><a href="#applying-a-configuration-candidate">Applying a configuration candidate</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/operations/release-rollback.md">GitHub</a></div></footer></body></html>

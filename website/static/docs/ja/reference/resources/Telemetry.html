@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Telemetry · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/reference/resources/Telemetry.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/reference/resources/Telemetry.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/Telemetry.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/reference/resources/Telemetry.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/Telemetry.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="telemetry">Telemetry</h1>
+<p><a href="../resources.html#telemetry">リソース別の設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: observability.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>生成する管理サービスにOpenTelemetryの環境変数を設定します。LogSinkや独立したcollectorプロセスを定義するリソースではありません。</p>
+<h2 id="指定条件と参照関係">指定条件と参照関係</h2>
+<ul>
+<li>生成するテレメトリー環境の取得元は、TelemetryまたはOTLP endpointが空でないObservabilityPipelineのいずれか1つです。複数が選ばれると生成エラーになります。リソース名による相互参照ではありません。</li>
+</ul>
+<h2 id="yaml定義">YAML定義</h2>
+<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
+<pre><code class="language-yaml">- apiVersion: observability.routerd.net/v1alpha1
+  kind: Telemetry
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    attributes: # 任意; object
+      &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # 任意; string
+    otlp: # 必須; object
+      endpoint: &quot;&lt;string&gt;&quot; # 必須; string
+      insecure: true # 任意; boolean
+    serviceNamespace: &quot;&lt;string&gt;&quot; # 任意; string
+    signals: # 任意; array
+      - &quot;logs&quot; # string; enum=[&quot;logs&quot;, &quot;metrics&quot;, &quot;traces&quot;]
+</code></pre>
+<h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>項目の意味と既定値</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.otlp</code></td>
+<td>必須のOTLP接続設定です。</td>
+</tr>
+<tr>
+<td><code>spec.otlp.endpoint</code></td>
+<td>必須の空白でない送信先。OTEL_EXPORTER_OTLP_ENDPOINTに設定し、既定値はありません。この検証では空白以外であることを確認し、送信先への到達性は確認しません。</td>
+</tr>
+<tr>
+<td><code>spec.otlp.insecure</code></td>
+<td>省略時false。trueならOTEL_EXPORTER_OTLP_INSECURE=trueを出力し、falseならその変数を出力しません。</td>
+</tr>
+<tr>
+<td><code>spec.serviceNamespace</code></td>
+<td>OpenTelemetryのサービス名前空間。空白を除去した結果が空ならrouterdです。</td>
+</tr>
+<tr>
+<td><code>spec.attributes</code></td>
+<td>リソース属性の対応表。省略時は空です。キー順に並べ、カンマ区切りのkey=valueとしてOTEL_RESOURCE_ATTRIBUTESへ出力します。この生成処理では値をエスケープしません。</td>
+</tr>
+<tr>
+<td><code>spec.signals</code></td>
+<td>logs・metrics・tracesを指定し、省略時は3種類すべてです。空でない一覧では、省略されたsignalのexporter変数をnoneにします。受信プロセスを作る指定ではありません。</td>
+</tr>
+</tbody>
+</table>
+<p>実装: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_system.go">pkg/config/validate_system.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/telemetry.go">pkg/render/telemetry.go</a></p>
+<p><a href="/examples/telemetry-export.yaml">設定例</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
+<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/reference/resources/Telemetry.md">GitHub</a></div></footer></body></html>

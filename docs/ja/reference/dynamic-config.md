@@ -179,4 +179,4 @@ effective-config を比較します。`plugin run --dry-run` は状態データ�
 に候補の dynamic part を出力します。
 
 ハイブリッドクラウドエッジ設計 および
-[プラグインプロトコル](/docs/reference/plugin-protocol) を参照してください。
+[プラグインプロトコル](/docs/ja/plugin-protocol.md) を参照してください。

@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Stretching a PVE LAN to QEMU guests on OCI · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/how-to/oci-qemu-vxlan-l2.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/how-to/oci-qemu-vxlan-l2.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/how-to/oci-qemu-vxlan-l2.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/intro.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/intro.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="stretching-a-pve-lan-to-qemu-guests-on-oci">Stretching a PVE LAN to QEMU guests on OCI</h1>
+<p>This pattern carries one deliberately selected Ethernet broadcast domain from
+a PVE bridge to QEMU guests on an OCI Compute instance. The OCI VCN remains an
+L3 transport. It is never joined to the stretched bridge.</p>
+<h2 id="topology">Topology</h2>
+<pre><code class="language-text">PVE vmbr0 -- lan0 [routerd VM] wg0 -- VXLAN/200001 -- wg0 [routerd QEMU guest] lan0
+                    |                                      |
+                  br-l2                                  br-l2
+                                                           |
+                                              OCI host br-legacy -- Windows taps
+
+OCI VCN VNIC -- OCI host routed/NAT transit -- routerd guest underlay NIC
+</code></pre>
+<p>The OCI routerd appliance is itself a QEMU guest. On VM.Standard.E5.Flex it
+must initially be treated as a TCG guest unless <code>/dev/kvm</code> is positively
+verified. Give it two NICs:</p>
+<ol>
+<li>an underlay/management NIC on an internal host transit network; and</li>
+<li>an unnumbered LAN NIC attached to the host-only <code>br-legacy</code> bridge.</li>
+</ol>
+<p>Attach every legacy Windows tap to <code>br-legacy</code>. Never attach the OCI VCN VNIC
+to that bridge. If the routerd guest uses a private transit address, forward
+only its WireGuard UDP port on the OCI host and keep VXLAN/UDP 4789 inside
+WireGuard.</p>
+<h2 id="routerd-overlay-resource">routerd overlay resource</h2>
+<p>Use the same VNI and UDP port at both endpoints, exchanging the two WireGuard
+addresses. The LAN-facing NIC and VXLAN device must share one bridge.</p>
+<pre><code class="language-yaml">apiVersion: net.routerd.net/v1alpha1
+kind: Bridge
+metadata:
+  name: legacy-l2
+spec:
+  ifname: br-l2
+  members:
+    - lan0
+  stp: true
+  multicastSnooping: false
+---
+apiVersion: net.routerd.net/v1alpha1
+kind: VXLANTunnel
+metadata:
+  name: legacy-l2
+spec:
+  ifname: vx-l2
+  vni: 200001
+  localAddress: 10.254.200.1
+  peers:
+    - 10.254.200.2
+  underlayInterface: wg-l2
+  udpPort: 4789
+  mtu: 1370
+  # Keep the compatibility default unless the trusted underlay has been tested.
+  # `unset` permits outer IPv4 fragmentation but does not make inner DF packets
+  # ignore the learned VXLAN path MTU.
+  outerDF: inherit
+  bridge: legacy-l2
+  tcpMSSClamp: true
+</code></pre>
+<p><code>VXLANTunnel.spec.bridge</code> references the Bridge resource name (<code>legacy-l2</code>),
+not its kernel <code>ifname</code> (<code>br-l2</code>). Swap <code>.1</code> and <code>.2</code> on the OCI endpoint.
+<code>VXLANTunnel</code> installs an all-zero MAC
+FDB entry per peer, so broadcast and unknown-unicast frames are replicated over
+the unicast underlay. ARP, DHCPv4, IPv6 RS/RA/NS/NA, and DHCPv6 cross the bridge.</p>
+<p>Set <code>spec.tcpMSSClamp: true</code> when the stretched L2 path has a smaller effective
+MTU than its attached LAN. routerd then owns <code>table bridge routerd_l2_mss</code> and
+lowers only oversized IPv4 and IPv6 SYN MSS values in both directions. The
+ceiling is the minimum of the VXLAN, Bridge, and member-interface MTUs; smaller
+MSS values and non-TCP Ethernet control traffic are unchanged. Disabling the
+field or removing the tunnel removes only the table carrying routerd's owner
+marker.</p>
+<h2 id="safety-gates">Safety gates</h2>
+<ul>
+<li>Reserve one guest IP and MAC with the network administrator before the final
+  attachment to <code>vmbr0</code>.</li>
+<li>The routerd appliances must not run DHCP, DNS, or RA services on <code>br-l2</code>.</li>
+<li>Full transparency is symmetric: a guest could emit DHCP Offers or RAs. Keep
+  the Windows guests trusted and offline until a directional bridge-firewall
+  policy has separately passed positive and negative tests.</li>
+<li>Verify PVE firewall/MAC filtering and the physical switch allow the remote
+  guest MAC. Watch for MAC flaps, duplicate IPs, and broadcast storms.</li>
+</ul>
+<h2 id="evidence">Evidence</h2>
+<p>Record the routerd commit, rendered plan, <code>ip -d link</code>, <code>bridge link</code>,
+<code>bridge fdb</code>, WireGuard handshake, VXLAN packet capture, protocol test output,
+MTU probes, and rollback timestamps. Rollback starts by disconnecting the PVE
+appliance LAN NIC from <code>vmbr0</code>; then stop the VXLAN and WireGuard resources.</p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#topology">Topology</a></li>
+<li><a href="#routerd-overlay-resource">routerd overlay resource</a></li>
+<li><a href="#safety-gates">Safety gates</a></li>
+<li><a href="#evidence">Evidence</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/how-to/oci-qemu-vxlan-l2.md">GitHub</a></div></footer></body></html>

@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NTPClient · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/reference/resources/NTPClient.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/reference/resources/NTPClient.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/reference/resources/NTPClient.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/NTPClient.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/NTPClient.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="ntpclient">NTPClient</h1>
+<p><a href="../resources.html#ntpclient">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: system.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Manages or observes an upstream time-synchronization client.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>With managed=true, at least one of servers/serverFrom/fallbackServers must be declared. Static mode additionally requires servers itself. With no resolved servers the client remains Pending/NoServers. chrony management disables the stock systemd-timesyncd service.</li>
+</ul>
+<h2 id="yaml-definition">YAML definition</h2>
+<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
+<pre><code class="language-yaml">- apiVersion: system.routerd.net/v1alpha1
+  kind: NTPClient
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    fallbackServers: # optional; array
+      - &quot;&lt;string&gt;&quot; # string
+    interface: &quot;&lt;string&gt;&quot; # optional; string
+    managed: true # optional; boolean
+    provider: &quot;systemd-timesyncd&quot; # optional; string; enum=[&quot;systemd-timesyncd&quot;, &quot;chrony&quot;, &quot;ntpd&quot;]
+    serverFrom: # optional; array
+      - # object
+        field: &quot;&lt;string&gt;&quot; # optional; string
+        optional: true # optional; boolean
+        resource: &quot;&lt;string&gt;&quot; # Required; string
+    servers: # optional; array
+      - &quot;&lt;string&gt;&quot; # string
+    source: &quot;static&quot; # optional; string; enum=[&quot;static&quot;, &quot;auto&quot;, &quot;dhcp&quot;, &quot;dhcpv6&quot;]
+    when: # optional; object
+      state: # optional; object
+        &quot;&lt;key&gt;&quot;: # optional; object
+          contains: &quot;&lt;string&gt;&quot; # optional; string
+          equals: &quot;&lt;string&gt;&quot; # optional; string
+          exists: true # optional; boolean
+          for: &quot;&lt;string&gt;&quot; # optional; string
+          in: # optional; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # optional; string
+          status: &quot;set&quot; # optional; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.provider</code></td>
+<td>Client implementation. Default systemd-timesyncd except on FreeBSD, where it is ntpd. chrony is also accepted. ntpd requires FreeBSD rc.d support; systemd-timesyncd requires the platform feature.</td>
+</tr>
+<tr>
+<td><code>spec.managed</code></td>
+<td>Default false: record Observed without configuring or starting the time service. Set true to manage files and services.</td>
+</tr>
+<tr>
+<td><code>spec.source</code></td>
+<td>Default static: use servers. auto/dhcp/dhcpv6 all use the same order: resolved serverFrom, then fallbackServers, then servers. They do not automatically discover DHCP sources.</td>
+</tr>
+<tr>
+<td><code>spec.interface</code></td>
+<td>Optional logical interface name, default empty. Router-wide validation requires it to exist when supplied. The NTP controller does not use it for source selection or service binding.</td>
+</tr>
+<tr>
+<td><code>spec.servers</code></td>
+<td>Upstream hostnames or IP addresses, default empty. Required when managed=true and source is omitted/static. Entries must be nonblank single tokens; they are not resource references.</td>
+</tr>
+<tr>
+<td><code>spec.serverFrom</code></td>
+<td>List of explicit value sources, default empty. Use for example DHCPv4Client/wan field ntpServers or DHCPv6PrefixDelegation/wan-pd field sntpServers. Used only for auto/dhcp/dhcpv6; each resource and field must exist. This resolver ignores the optional flag; missing values simply lead to the next source alternative.</td>
+</tr>
+<tr>
+<td><code>spec.fallbackServers</code></td>
+<td>Fallback upstreams, default empty. For dynamic source modes they are selected when serverFrom yields no servers. systemd-timesyncd additionally receives FallbackNTP; chrony and ntpd do not receive a separate fallback directive.</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>Activation condition; omitted means no gate. See the shared condition reference for state/all/any, unknown handling and age predicates.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_system.go">pkg/config/validate_system.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/ntp.go">pkg/controller/chain/ntp.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/resourcequery/resourcequery.go">pkg/resourcequery/resourcequery.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a></p>
+<p><a href="/examples/router-lab.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
+<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/reference/resources/NTPClient.md">GitHub</a></div></footer></body></html>

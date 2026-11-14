@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>啟動第一台實驗路由器 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/tutorials/first-router.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/tutorials/first-router.html" lang="en" hreflang="en">English</a><a href="/docs/ja/tutorials/first-router.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/tutorials/first-router.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/tutorials/first-router.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="啟動第一台實驗路由器">啟動第一台實驗路由器</h1>
+<p>本教學讓隔離 LAN 上的測試用戶端取得私有 IPv4 位址與閘道，並透過 IPv4 連到上游網路。
+它使用完整範例
+<a href="/examples/example-basic-ipv4-nat.yaml"><code>examples/example-basic-ipv4-nat.yaml</code></a>。</p>
+<p>這是實驗教學，不是可直接貼到家用路由器上的設定。</p>
+<p>請使用 VM 主控台、序列主控台或另一張管理 NIC。下方的 <code>ens18</code> 與 <code>ens19</code> 只是範例。
+先用 <code>ip -br link</code> 查看真正的介面名稱，絕不要猜測哪張介面正承載管理連線。範例的
+<code>192.168.10.0/24</code> 若和上游、VPN、學校或管理網路重疊，請換成未使用的私有網段。</p>
+<h2 id="開始前準備">開始前準備</h2>
+<ul>
+<li>先依<a href="../install-and-upgrade.html">安裝與升級</a>安裝 routerd。</li>
+<li>Ubuntu Server 實驗主機需要兩個獨立的 WAN/LAN 介面，以及主控台或獨立管理路徑；用 <code>ip -br link</code> 確認名稱。</li>
+<li>WAN 接到能存取網際網路的上游 DHCP 網路；LAN 只接隔離交換器/橋接器和測試用戶端，不要讓其他 DHCP 伺服器服務這個 LAN。</li>
+<li>需要可用 sudo 的帳號和下載檔案的網路。下面的用戶端檢查指令適用於 Linux。</li>
+<li>本文是 <code>routerd.service</code> 已停止的首次安裝流程。若服務已執行，不要同時執行另一個 live one-shot apply。審閱候選檔案後，在實驗主控台使用 <code>sudo routerctl plan -f first-router.yaml --replace</code> 和 <code>sudo routerctl apply -f first-router.yaml --replace</code> 代替第3步。完整取代會刪除檔案未包含的資源，不要用實驗檔案取代正式設定。</li>
+</ul>
+<h2 id="成功時會看到什麼">成功時會看到什麼</h2>
+<pre><code class="language-text">上游網路 -- WAN -- routerd 主機 -- LAN -- 測試用戶端
+                              DHCP + NAT
+</code></pre>
+<ol>
+<li>上游透過 DHCP 將 IPv4 位址交給 WAN。</li>
+<li>路由器將 <code>192.168.10.100</code> 到 <code>192.168.10.199</code> 的位址交給 LAN 測試用戶端。</li>
+<li>測試用戶端使用 <code>192.168.10.1</code> 作為閘道。</li>
+<li>NAT 讓用戶端的 IPv4 流量共用一個上游位址往外送出。</li>
+</ol>
+<p>如果 DHCP、閘道或 NAT 是新詞，請先閱讀<a href="network-basics.html">網路基本概念</a>。</p>
+<h2 id="1-取得完整的實驗檔案並調整">1. 取得完整的實驗檔案並調整</h2>
+<pre><code class="language-bash"># 已安裝的 release 只有 router.yaml.sample，不含所有 repository 範例。
+# 從與已安裝 routerd 相同的 release 取得這個範例。
+ROUTERD_VERSION=&quot;$(sudo routerd version | awk '{print $2}')&quot;
+curl --fail --location --output first-router.yaml \
+  &quot;https://raw.githubusercontent.com/imksoo/routerd/${ROUTERD_VERSION}/examples/example-basic-ipv4-nat.yaml&quot;
+</code></pre>
+<p>若你已有相同 release tag 的 source checkout，也可以改為複製該 checkout 的
+<code>examples/example-basic-ipv4-nat.yaml</code>。</p>
+<p>在第一次 preview 前，只調整 <code>first-router.yaml</code> 中下列值。</p>
+<ul>
+<li><code>Interface/wan.spec.ifname</code>: 實驗 WAN 的介面名稱。</li>
+<li><code>Interface/lan.spec.ifname</code>: 隔離 LAN 的介面名稱。</li>
+<li><code>192.168.10.0/24</code>: 只有在它與已連接網路重疊時才修改。</li>
+<li>公開 DNS 伺服器: 只有實驗必須使用其他 resolver 時才修改。</li>
+</ul>
+<p>這個檔案讓 WAN 維持由外部管理，並讓 routerd 管理 LAN。它包含 DHCPv4 伺服器、NAT44
+規則與基本 zone 資源。</p>
+<p>routerd 的 firewall 資源只是功能基礎，不是安全認證。請勿只依靠這個範例就把路由器公開到
+網際網路。第一次實驗應放在隔離的虛擬交換器或實體實驗網路內。</p>
+<h2 id="2-在-daemon-存在前先驗證與-preview">2. 在 daemon 存在前先驗證與 preview</h2>
+<pre><code class="language-bash">sudo routerd validate --config first-router.yaml
+
+LAB_DIR=&quot;$(mktemp -d)&quot;
+sudo routerd apply --config first-router.yaml --once --dry-run \
+  --state-file &quot;$LAB_DIR/state.db&quot; \
+  --status-file &quot;$LAB_DIR/status.json&quot;
+rm -rf &quot;$LAB_DIR&quot;
+</code></pre>
+<p>這兩個命令不會變更主機網路。驗證失敗時，請修改 YAML，而不是嘗試 live apply。請確認
+dry-run 顯示的管理介面、路由和將產生的檔案都符合預期。</p>
+<h2 id="3-從主控台套用">3. 從主控台套用</h2>
+<p>只有當 preview 顯示預期的介面與產生物時，才從主控台或獨立管理路徑套用變更。</p>
+<pre><code class="language-bash">sudo routerd apply --config first-router.yaml --once
+</code></pre>
+<p>即使只是臨時實驗，也必須先啟動服務，才能進行後續的狀態檢查與用戶端連線檢查。
+one-shot apply 執行後就會結束，不會留下供 <code>routerctl</code> 連線的 daemon。
+請將確認過的檔案放到標準位置並啟動服務。</p>
+<pre><code class="language-bash">sudo install -d -m 0755 /usr/local/etc/routerd
+sudo install -m 0600 first-router.yaml /usr/local/etc/routerd/router.yaml
+sudo systemctl start routerd.service
+sudo systemctl is-active routerd.service
+</code></pre>
+<p>確認顯示 <code>active</code> 後再繼續。若希望實驗路由器在重新開機後自動啟動，可以選擇啟用服務的自動啟動：</p>
+<pre><code class="language-bash">sudo systemctl enable routerd.service
+</code></pre>
+<h2 id="4-完整檢查這條小路徑">4. 完整檢查這條小路徑</h2>
+<p>在路由器上執行：</p>
+<pre><code class="language-bash">sudo routerctl get status
+sudo routerctl describe DHCPv4Client/wan-dhcpv4
+sudo routerctl describe DHCPv4Server/lan-dhcpv4
+sudo routerctl describe NAT44Rule/lan-to-wan
+</code></pre>
+<p>在只連到隔離 LAN 的用戶端更新 DHCP 租約，再執行：</p>
+<pre><code class="language-bash">ip route
+ping 192.168.10.1
+curl -I https://example.com/
+</code></pre>
+<p>如果最後一個命令失敗，請分開找原因：先確認用戶端是否取得位址與閘道，再確認 WAN 是否有
+租約，最後才檢查 DNS。原因不明時，不要重複套用檔案。</p>
+<h2 id="下一步">下一步</h2>
+<ul>
+<li><a href="../config-examples/basic-ipv4-nat.html">基本 IPv4 NAT 閘道</a> — 以圖和 YAML 對照說明這個檔案</li>
+<li><a href="lan-side-services.html">LAN 側服務</a> — IPv4 正常後再加入本地 DNS 與 IPv6</li>
+<li><a href="basic-firewall.html">基本 NAT 與 firewall policy</a> — 目前 firewall 的範圍與較安全的下一步</li>
+</ul>
+<p>若啟動或狀態檢查失敗，先看<a href="../how-to/troubleshooting.html">疑難排解</a>，不要反覆 live apply。</p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#開始前準備">開始前準備</a></li>
+<li><a href="#成功時會看到什麼">成功時會看到什麼</a></li>
+<li><a href="#1-取得完整的實驗檔案並調整">1. 取得完整的實驗檔案並調整</a></li>
+<li><a href="#2-在-daemon-存在前先驗證與-preview">2. 在 daemon 存在前先驗證與 preview</a></li>
+<li><a href="#3-從主控台套用">3. 從主控台套用</a></li>
+<li><a href="#4-完整檢查這條小路徑">4. 完整檢查這條小路徑</a></li>
+<li><a href="#下一步">下一步</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/tutorials/first-router.md">GitHub</a></div></footer></body></html>

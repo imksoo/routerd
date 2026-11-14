@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LAN 側サービス · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/tutorials/lan-side-services.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/tutorials/lan-side-services.html" lang="en" hreflang="en">English</a><a href="/docs/ja/tutorials/lan-side-services.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/tutorials/lan-side-services.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/tutorials/lan-side-services.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="lan-側サービス">LAN 側サービス</h1>
+<p>このページでは、ルーターの LAN 側を扱う routerd リソースを紹介します。
+LAN 側のリソースは、内側インターフェースのアドレス、DHCPv4 / DHCPv6 の配布、IPv6 Router Advertisement、ローカル DNS リゾルバーといった役割を担います。</p>
+<p>WAN 側 (上流からのアドレス取得) は <a href="wan-side-services.html">WAN 側サービス</a> を参照してください。</p>
+<h2 id="サービス分担">サービス分担</h2>
+<p>routerd は LAN 側サービスを 2 つのデーモンに明確に分けます。</p>
+<ul>
+<li><strong>dnsmasq</strong> が DHCPv4、DHCPv6、DHCP relay、IPv6 Router Advertisement を担当します。</li>
+<li><strong><code>routerd-dns-resolver</code></strong> が DNS ゾーン、条件付き転送、キャッシュ、クエリログを担当します。</li>
+</ul>
+<p>実績のある dnsmasq をそのまま DHCP に使い、DNS のポリシーは型付き routerd リソース (<code>DNSResolver</code>、<code>DNSZone</code>) で表現する、という分担です。</p>
+<h2 id="一覧">一覧</h2>
+<table>
+<thead>
+<tr>
+<th>役割</th>
+<th>リソース</th>
+<th>担当デーモン</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>LAN インターフェースのアドレス</td>
+<td><code>IPv4StaticAddress</code>、<code>IPv6DelegatedAddress</code></td>
+<td>(kernel)</td>
+</tr>
+<tr>
+<td>DHCPv4 スコープ</td>
+<td><code>DHCPv4Server</code></td>
+<td>dnsmasq</td>
+</tr>
+<tr>
+<td>DHCPv4 固定割り当て</td>
+<td><code>DHCPv4Reservation</code></td>
+<td>dnsmasq</td>
+</tr>
+<tr>
+<td>DHCPv6 (stateless / stateful)</td>
+<td><code>DHCPv6Server</code></td>
+<td>dnsmasq</td>
+</tr>
+<tr>
+<td>IPv6 Router Advertisement</td>
+<td><code>IPv6RouterAdvertisement</code></td>
+<td>dnsmasq (RA mode)</td>
+</tr>
+<tr>
+<td>LAN 側の時刻サーバー広告</td>
+<td><code>DHCPv4Server</code>、<code>DHCPv6Server</code></td>
+<td>dnsmasq</td>
+</tr>
+<tr>
+<td>DNS ゾーン (ローカル権威)</td>
+<td><code>DNSZone</code></td>
+<td><code>routerd-dns-resolver</code></td>
+</tr>
+<tr>
+<td>DNS リゾルバーの待ち受け</td>
+<td><code>DNSResolver</code></td>
+<td><code>routerd-dns-resolver</code></td>
+</tr>
+<tr>
+<td>DHCP リースイベントの中継</td>
+<td>(組み込み)</td>
+<td><code>routerd-dhcp-event-relay</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="dhcpv4-スコープ">DHCPv4 スコープ</h2>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DHCPv4Server
+  metadata:
+    name: lan-dhcpv4
+  spec:
+    interface: lan
+    addressPool:
+      start: 192.0.2.64
+      end: 192.0.2.191
+      leaseTime: 12h
+    gatewayFrom:
+      resource: IPv4StaticAddress/lan-base
+      field: address
+    dnsServerFrom:
+      - resource: IPv4StaticAddress/lan-base
+        field: address
+    ntpServerFrom:
+      - resource: IPv4StaticAddress/lan-base
+        field: address
+    domainFrom:
+      resource: DNSZone/lan
+      field: zone
+    stickyHoldDays: 3
+</code></pre>
+<p>自動割り当てするクライアント用と固定アドレス用で範囲を分けると、運用が読みやすくなります。
+<code>stickyHoldDays</code> は任意の項目です。0 より大きい値を指定すると、routerd は DHCP リース履歴を短期間保持し、リースの解放または期限切れの後に一時的な dnsmasq の <code>dhcp-host</code> hold を生成します。同じ MAC は hold 期間内に同じアドレスを再取得でき、そのアドレスはすぐには別のクライアントへ割り当てられません。</p>
+<h2 id="静的-dhcpv4-予約">静的 DHCPv4 予約</h2>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DHCPv4Reservation
+  metadata:
+    name: smart-meter
+  spec:
+    server: lan-dhcpv4
+    macAddress: &quot;02:00:00:00:00:01&quot;
+    hostname: smart-meter
+    ipAddress: 192.0.2.10
+</code></pre>
+<p><code>DHCPv4Reservation</code> は dnsmasq のホスト予約エントリに展開されます。
+Web 管理画面とイベントログには、デバイスの現在の IP に依存しない安定したリソース名で現れます。
+明示的な予約は、同じ MAC アドレスまたは IP アドレスを持つ sticky hold より優先されます。
+予約の追加や変更前に sticky database を消去する必要はありません。routerd は dnsmasq の設定を
+生成するとき、競合する一時 hold を除外します。</p>
+<p>FreeBSD では、dnsmasq のリースファイルを <code>/var/db/routerd/dnsmasq</code> 配下に置きます。
+<code>/var/run</code> だけに置くと、再起動でリースが失われるためです。
+rc.d スクリプトは、起動前にランタイムディレクトリとリースディレクトリを作成します。
+<code>routerctl apply</code> は、dnsmasq を再起動する前に <code>dnsmasq --test</code> を実行します。
+あわせて、DHCP、DHCPv6、RA、DNS に必要な pf の穴も自動で生成します。</p>
+<h2 id="ipv6-ra-と-dhcpv6">IPv6 RA と DHCPv6</h2>
+<p>IPv6 LAN では、Router Advertisement に RDNSS を含めて配布してください。
+Android は DHCPv6 で DNS を取得しないため、RDNSS が必要です。
+Windows クライアントには、加えて DHCPv6 stateless サーバーも用意します。</p>
+<p>Router Advertisement には、標準の NTP サーバー広告がありません。
+ルーター自身を LAN の時刻参照先として配る場合は、DHCPv4 option 42 と DHCPv6 option 31 (SNTP) を使います。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: IPv6RouterAdvertisement
+  metadata:
+    name: lan-ra
+  spec:
+    interface: lan
+    prefixFrom:
+      resource: IPv6DelegatedAddress/lan-base
+      field: address
+    mFlag: false
+    oFlag: true
+    rdnssFrom:
+      - resource: IPv6DelegatedAddress/lan-base
+        field: address
+    dnsslFrom:
+      - resource: DNSZone/lan
+        field: zone
+    mtu: 1454
+
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DHCPv6Server
+  metadata:
+    name: lan-dhcpv6
+  spec:
+    interface: lan
+    mode: stateless
+    dnsServerFrom:
+      - resource: IPv6DelegatedAddress/lan-base
+        field: address
+    sntpServerFrom:
+      - resource: IPv6DelegatedAddress/lan-base
+        field: address
+    domainSearchFrom:
+      - resource: DNSZone/lan
+        field: zone
+</code></pre>
+<p>DHCPv6 でアドレス自体も配布したい場合は、<code>mode: stateful</code> または <code>mode: both</code> を使います。
+LAN の DNS suffix を <code>DNSZone</code> に合わせたい場合は、<code>domainFrom</code>、<code>dnsslFrom</code>、<code>domainSearchFrom</code> を使います。
+DHCPv4 の domain-name、RA の DNSSL、DHCPv6 の domain-search がいずれも同じローカルゾーンを参照するため、ドメイン文字列を重複して書かずに済みます。</p>
+<h2 id="ローカル-dns-ゾーン">ローカル DNS ゾーン</h2>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSZone
+  metadata:
+    name: lan
+  spec:
+    zone: lan.example.org
+    ttl: 300
+    records:
+      - hostname: router
+        ipv4From:
+          resource: IPv4StaticAddress/lan-base
+          field: address
+        ipv6From:
+          resource: IPv6DelegatedAddress/lan-base
+          field: address
+    dhcpDerived:
+      sources:
+        - DHCPv4Server/lan-dhcpv4
+        - DHCPv6Server/lan-dhcpv6
+      ddns: true
+      ttl: 60
+</code></pre>
+<p>固定レコードは <code>records:</code> に、DHCP リース由来のレコードは <code>dhcpDerived.sources</code> に書きます。
+両者は問い合わせ時に統合されます。
+DHCP 由来の hostname が相対名の場合は DNSZone 自身の下に公開されるため、通常は <code>hostnameSuffix</code> を書く必要はありません。</p>
+<h2 id="dns-リゾルバーの待ち受け">DNS リゾルバーの待ち受け</h2>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSResolver
+  metadata:
+    name: lan-resolver
+  spec:
+    listen:
+      - name: lan
+        addressFrom:
+          - resource: IPv4StaticAddress/lan-base
+            field: address
+          - resource: IPv6DelegatedAddress/lan-base
+            field: address
+        port: 53
+        sources: [local-zone, default]
+    sources:
+      - name: local-zone
+        kind: zone
+        match:
+          - lan.example.org
+        zoneRef:
+          - DNSZone/lan
+      - name: default
+        kind: upstream
+        match:
+          - &quot;.&quot;
+        upstreams:
+          - https://dns.example.net/dns-query
+          - udp://1.1.1.1:53
+    cache:
+      enabled: true
+      maxEntries: 10000
+</code></pre>
+<p>リゾルバーは、参照先の status から得られるすべてのアドレスで待ち受けます。
+PD 更新などで IPv6 アドレスが増えても、再起動なしで追従します。</p>
+<h2 id="動作確認">動作確認</h2>
+<pre><code class="language-sh"># LAN インターフェースに v4 / v6 が乗っていることを確認
+routerctl describe Interface/lan
+
+# DHCP イベントをリアルタイムに tail
+routerctl get events --topic 'routerd.dhcp.lease.**' --resource DHCPv4Server/lan-dhcpv4
+
+# ローカルリゾルバで名前解決
+dig @&lt;lan-ip&gt; router.lan.example.org
+dig @&lt;lan-ip&gt; example.com
+</code></pre>
+<h2 id="運用上のヒント">運用上のヒント</h2>
+<ul>
+<li>最初は <code>routerctl plan</code> から始めます。本番の LAN 待ち受けを有効化するのは、管理経路と既知のロールバック経路を確保した後にしてください。</li>
+<li>dnsmasq のリースファイルを手で書き換えても、routerd には自動通知されません。サポートされる設定ワークフローで対象リースを再調整してください。<code>routerd-dhcp-event-relay</code> は再起動するサービスではなく、dnsmasq から都度呼ばれる one-shot フックです。リースの変更は、できる限り routerd 経由で行ってください。</li>
+<li>公共 DNS はフォールバックとして残してください。<code>routerd-dns-resolver</code> はヘルスチェックに失敗したフォワーダーを降格しますが、これは健全な代替がない場合に限ります。</li>
+</ul>
+<h2 id="関連項目">関連項目</h2>
+<ul>
+<li><a href="wan-side-services.html">WAN 側サービス</a></li>
+<li><a href="../how-to/dns-local-zone.html">ローカル DNS ゾーン</a></li>
+<li><a href="../how-to/dns-private-upstream.html">専用 DNS upstream</a></li>
+</ul></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#サービス分担">サービス分担</a></li>
+<li><a href="#一覧">一覧</a></li>
+<li><a href="#dhcpv4-スコープ">DHCPv4 スコープ</a></li>
+<li><a href="#静的-dhcpv4-予約">静的 DHCPv4 予約</a></li>
+<li><a href="#ipv6-ra-と-dhcpv6">IPv6 RA と DHCPv6</a></li>
+<li><a href="#ローカル-dns-ゾーン">ローカル DNS ゾーン</a></li>
+<li><a href="#dns-リゾルバーの待ち受け">DNS リゾルバーの待ち受け</a></li>
+<li><a href="#動作確認">動作確認</a></li>
+<li><a href="#運用上のヒント">運用上のヒント</a></li>
+<li><a href="#関連項目">関連項目</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/tutorials/lan-side-services.md">GitHub</a></div></footer></body></html>

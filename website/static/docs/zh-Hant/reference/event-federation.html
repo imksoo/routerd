@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Event Federation 參考 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/reference/event-federation.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/reference/event-federation.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/event-federation.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/event-federation.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/reference/event-federation.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="event-federation-參考">Event Federation 參考</h1>
+<blockquote>
+<p>實驗性（CloudEdge）。關於設計和不變條件，請參見 ADR 0006: CloudEdge Event Federation；
+關於實踐範例，請參見 how-to 的
+<a href="../how-to/cloudedge-mobility-demo.html">CloudEdge mobility demo</a>。</p>
+</blockquote>
+<p>Event Federation 是一種機制，透過 overlay 在 routerd 節點之間交換<strong>類型化的觀測事實</strong>
+（例如：「此用戶端 IPv4 已被觀測到」、「此位址已過期」），訂閱者將比對的事件透過 plugin
+轉換為衍生設定。它是<a href="selective-address-mobility.html">選擇性位址移動性</a>下的控制平面基礎設施，
+一個節點上觀測到的位址會成為另一個節點 <code>MobilityPool</code> 計畫使用的型別化 ownership fact。</p>
+<p>模型是<strong>冪等觀測事實事件的 at-least-once 分發</strong>。事件是關於世界的不可變描述
+（"observed"），而非命令式指令。對於從同一事件重新導出相同狀態的接收者來說是 no-op。</p>
+<h2 id="kind">Kind</h2>
+<h3 id="eventgroup"><code>EventGroup</code></h3>
+<p>節點參加的匯流排。每個節點在每個群組中擁有一個 identity。</p>
+<table>
+<thead>
+<tr>
+<th>欄位</th>
+<th>含義</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>nodeName</code></td>
+<td>此節點在群組內的 identity。作為 <code>sourceNode</code> 印刻在發佈的事件上。</td>
+</tr>
+<tr>
+<td><code>retention</code></td>
+<td>本機儲存保留事件的數量/時長上限。空/零 = 無限制。</td>
+</tr>
+<tr>
+<td><code>auth</code></td>
+<td>對等分發（push）用的 HMAC 金鑰材料。</td>
+</tr>
+<tr>
+<td><code>listen</code></td>
+<td>入站對等 push 的接收器繫結（<code>address</code>）。空 = 僅 push（無接收器）。</td>
+</tr>
+<tr>
+<td><code>replayWindow</code></td>
+<td>用於重放保護而接受的訊息時間戳偏差上限的 Go duration（預設 <code>5m</code>）。</td>
+</tr>
+</tbody>
+</table>
+<h3 id="eventpeer"><code>EventPeer</code></h3>
+<p>此節點向其 push 事件的遠端節點。</p>
+<table>
+<thead>
+<tr>
+<th>欄位</th>
+<th>含義</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>groupRef</code></td>
+<td>此對等方所屬的 <code>EventGroup</code>（必要）。</td>
+</tr>
+<tr>
+<td><code>nodeName</code></td>
+<td>遠端對等方的節點 identity（必要）。</td>
+</tr>
+<tr>
+<td><code>endpoint</code></td>
+<td>push 目標的基礎 URL。例：<code>http://10.99.0.7:8787</code>（push 時必要）。</td>
+</tr>
+<tr>
+<td><code>direction</code></td>
+<td>分發方向。僅支援 <code>push</code>。為空時預設 <code>push</code>。</td>
+</tr>
+<tr>
+<td><code>types</code></td>
+<td>選用的事件類型允許清單。為空時全部分發。</td>
+</tr>
+<tr>
+<td><code>subjectPrefixes</code></td>
+<td>選用的主題前綴允許清單。為空時全部分發。</td>
+</tr>
+</tbody>
+</table>
+<h3 id="eventsubscription"><code>EventSubscription</code></h3>
+<p>將比對的事件轉換為發出 <code>DynamicConfigPart</code> 的 plugin 呼叫。</p>
+<table>
+<thead>
+<tr>
+<th>欄位</th>
+<th>含義</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>groupRef</code></td>
+<td>消費的 <code>EventGroup</code>。</td>
+</tr>
+<tr>
+<td><code>match</code></td>
+<td>按類型/主題比對事件的條件。</td>
+</tr>
+<tr>
+<td><code>trigger.pluginRef</code></td>
+<td>比對事件時呼叫的 <code>Plugin</code>。</td>
+</tr>
+<tr>
+<td><code>trigger.batchWindow</code></td>
+<td>將比對事件彙總為一次呼叫的 Go duration。</td>
+</tr>
+<tr>
+<td><code>trigger.debounce</code></td>
+<td>在最後一個比對事件之後延遲呼叫的 Go duration。</td>
+</tr>
+</tbody>
+</table>
+<h2 id="routerctl-federation-cli"><code>routerctl federation</code> CLI</h2>
+<pre><code>routerctl federation event emit  --group &lt;g&gt; --type &lt;topic&gt; --subject &lt;entity&gt; [--source-node &lt;n&gt;] [--ttl &lt;dur&gt;] [--payload k=v ...]
+routerctl federation event list  --group &lt;g&gt;
+routerctl federation event deliveries --group &lt;g&gt;
+</code></pre>
+<p><code>emit</code> 將觀測事實記錄到本機儲存（例如：
+<code>--type routerd.client.ipv4.observed --subject 10.88.60.9/32</code>）。<code>list</code> 顯示已記錄的
+事件，<code>deliveries</code> 顯示每個對等方的 push 分發狀態。</p>
+<blockquote>
+<p>自我擷取保護（ADR 0006 的 no-feedback-loop 不變條件）：節點不得為自身透過本機
+<code>MobilityPool</code> 計畫已 capture 的位址發出 <code>routerd.client.ipv4.observed</code>。否則，
+已分發的 capture 位址將作為新觀測回圈。</p>
+</blockquote>
+<h2 id="傳輸-routerd-eventd">傳輸 — <code>routerd-eventd</code></h2>
+<p><code>routerd-eventd@&lt;group&gt;</code> 是每組一個的長壽命常駐程式（Linux 上由產生的 systemd unit
+管理，FreeBSD 上由 rc.d 管理），執行以下操作：</p>
+<ul>
+<li>將本機記錄的事件透過 HTTP <strong>push</strong> 到每個 <code>EventPeer</code>，並使用群組 HMAC 簽章。
+  接收方驗證簽章並拒絕 <code>replayWindow</code> 之外的訊息。</li>
+<li>按對等方/事件記錄<strong>分發</strong>狀態，限制 at-least-once 重試的範圍並使其可觀測。</li>
+<li>根據群組的 <code>retention</code> <strong>修剪</strong>本機事件儲存。</li>
+</ul>
+<p>outbox 具有 <code>sourceNode</code> 保護，接收到的事件不會被轉發回發起方（無分發迴圈）。</p>
+<h2 id="subscription-plugin-dynamicconfigpart-流程">Subscription -&gt; plugin -&gt; DynamicConfigPart 流程</h2>
+<ol>
+<li>節點發出觀測事實（<code>routerctl federation event emit</code>，或未來的 observer）。</li>
+<li><code>routerd-eventd</code> 向對等方分發，各對等方記錄到自身的事件儲存。</li>
+<li>對等方的 <code>EventSubscription</code> 比對事件並呼叫 <code>trigger.pluginRef</code>
+   （透過 <code>batchWindow</code> / <code>debounce</code> 彙總）。</li>
+<li>plugin 回傳觀測事實或一般 dynamic resource，Mobility controller 持久化型別化的
+   local capture plan 並將其 reconcile 到資料平面。</li>
+</ol>
+<p>這樣維運人員編寫的 intent 保持宣告式。維運人員宣告 group/peers/subscription，
+capture 與 action plan 均為<strong>衍生</strong>產物。</p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#kind">Kind</a><ul>
+<li><a href="#eventgroup">EventGroup</a></li>
+<li><a href="#eventpeer">EventPeer</a></li>
+<li><a href="#eventsubscription">EventSubscription</a></li>
+</ul>
+</li>
+<li><a href="#routerctl-federation-cli">routerctl federation CLI</a></li>
+<li><a href="#傳輸-routerd-eventd">傳輸 — routerd-eventd</a></li>
+<li><a href="#subscription-plugin-dynamicconfigpart-流程">Subscription -&gt; plugin -&gt; DynamicConfigPart 流程</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/reference/event-federation.md">GitHub</a></div></footer></body></html>

@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>トラブルシューティング · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/how-to/troubleshooting.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/how-to/troubleshooting.html" lang="en" hreflang="en">English</a><a href="/docs/ja/how-to/troubleshooting.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/how-to/troubleshooting.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/how-to/troubleshooting.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="トラブルシューティング">トラブルシューティング</h1>
+<p>routerd の調査では、まず <strong>routerd の意図</strong> と <strong>ホストの実状態</strong> を分けます。
+routerd が何を意図しているかを確認してから、OS の状態と突き合わせてください。</p>
+<h2 id="サービスの起動や状態確認に失敗したら">サービスの起動や状態確認に失敗したら</h2>
+<p>Ubuntu では live apply を繰り返す前に、サービスとログを確認します。</p>
+<pre><code class="language-bash">sudo systemctl status routerd.service --no-pager
+sudo journalctl -u routerd.service -n 50 --no-pager
+sudo routerd validate --config /usr/local/etc/routerd/router.yaml
+</code></pre>
+<ul>
+<li>設定がない・検証エラー：<a href="../tutorials/first-router.html">最初のルーター</a>に戻り、起動前にファイルを直します。</li>
+<li>ソケットがない・接続拒否：<code>routerctl</code> には稼働中の daemon が必要です。<code>routerd apply --once</code> は終了し、ソケットは残しません。</li>
+<li>権限エラー：まず <code>sudo routerctl get status</code> を使います。sudo なしの読み取りには、管理者が <code>routerd</code> グループへ追加した後、新しいログインが必要です。</li>
+<li>サービスは active だが端末が通信できない：WAN のリース、LAN のアドレスと gateway、DNS の順で<a href="../tutorials/first-router.html">端末の確認</a>を行います。</li>
+</ul>
+<p>既存サービスと別の <code>routerd serve</code> や live one-shot apply を同時に実行しません。
+ネットワーク変更に失敗したときは、コンソールを開いたまま原因を調べます。</p>
+<h2 id="基本順序">基本順序</h2>
+<ol>
+<li><code>sudo routerctl get status</code> — 全体を見る</li>
+<li><code>sudo routerctl describe &lt;kind&gt;/&lt;name&gt;</code> — 対象リソースを掘り下げる</li>
+<li><code>sudo routerctl plan</code> — 次の適用で何が変わるか</li>
+<li>OS コマンド (<code>ip</code>、<code>nft</code>、<code>ss</code>、<code>journalctl</code>) — 実状態</li>
+<li>該当デーモンの <code>/v1/status</code> とイベントログ</li>
+</ol>
+<h2 id="dhcpv6-pd">DHCPv6-PD</h2>
+<pre><code class="language-bash">curl --unix-socket /run/routerd/dhcpv6-client/wan-pd.sock http://unix/v1/status
+tail -n 20 /var/lib/routerd/dhcpv6-client/wan-pd/events.jsonl
+</code></pre>
+<p>確認点は次の通りです。</p>
+<ul>
+<li><code>phase</code> が <code>Bound</code> になっている。未失効のリースは Renew/Rebind の交換中も公開上は
+  <code>Bound</code> のままです</li>
+<li><code>observed.leaseState</code> で詳細な交換状態（<code>renewing</code> または <code>rebinding</code>）を確認でき、
+  リースが利用可能な間は <code>LeaseReady</code> condition が true になっている</li>
+<li><code>currentPrefix</code> が入っている</li>
+<li><code>renewAt</code> が未来の時刻になっている</li>
+<li>イベントログに <code>Reply</code> や <code>Renew</code> が記録されている</li>
+</ul>
+<p><code>Bound</code> でない場合、または <code>LeaseReady</code> が false になった場合、LAN 側の IPv6 RA、AAAA、
+DHCPv6 は止まるべきです。未失効のプレフィックスは更新中も維持し、利用不能になった後は
+配り続けないことが、routerd の安全上の約束です。</p>
+<h2 id="dhcpv4">DHCPv4</h2>
+<pre><code class="language-bash">curl --unix-socket /run/routerd/dhcpv4-client/wan.sock http://unix/v1/status
+</code></pre>
+<p><code>DHCPv4Client</code> が <code>Bound</code> かどうかを確認します。
+即時の更新が必要なら、<code>POST /v1/commands/renew</code> で要求します。</p>
+<h2 id="dnsmasq">dnsmasq</h2>
+<p>現在の routerd では、dnsmasq は DHCPv4、DHCPv6、DHCP 中継、Router Advertisement に専念しています。
+DNS の応答と転送は、<code>routerd-dns-resolver</code> が担当します。</p>
+<p>生成された dnsmasq の設定が、以下を満たしているか確認します。</p>
+<ul>
+<li>期待する <code>dhcp-range</code> が含まれている</li>
+<li><code>port=0</code> になっている (DNS 機能が止まっている。DNS は <code>routerd-dns-resolver</code> の責務です)</li>
+<li><code>dhcp-script=/usr/local/libexec/routerd/dhcp-event-relay</code> がある (リースの変化を routerd へ通知する経路)</li>
+<li>必要な構成で <code>enable-ra</code> が入っている</li>
+</ul>
+<h2 id="dns-リゾルバー">DNS リゾルバー</h2>
+<pre><code class="language-bash">sudo curl --unix-socket /run/routerd/dns-resolver/&lt;resource&gt;.sock http://unix/v1/healthz
+dig @&lt;lan-ip&gt; router.lan.example.org A
+dig @&lt;lan-ip&gt; example.com A
+</code></pre>
+<p>順に確認します。</p>
+<ul>
+<li>待ち受けが、想定したアドレスとポートで開いているか (<code>ss -lnup</code>)</li>
+<li>ローカルの権威ゾーンが応答するか (<code>DNSZone</code> の手動レコードと DHCP 由来のレコード)</li>
+<li>条件付き転送が、指定した上流へ届いているか (<code>dig @&lt;lan-ip&gt; &lt;forwarded-domain&gt;</code>)</li>
+<li>既定の上流が、DoH / DoT / TCP / 平文 UDP のいずれで応答しているか (リゾルバーの status と上流の health を見る)</li>
+</ul>
+<h2 id="ds-lite">DS-Lite</h2>
+<pre><code class="language-bash">ip -6 tunnel show
+ip route show default
+nft list table ip routerd_nat
+</code></pre>
+<p>AFTR の FQDN が解決できない場合は、<code>DNSResolver</code> の <code>forward</code> source を確認します。
+公衆 DNS では、特定のアクセス網向けの AFTR レコードを解けないことが多いです。</p>
+<h2 id="conntrack">conntrack</h2>
+<p>環境によっては、<code>/proc/net/nf_conntrack</code> がありません。
+この場合、routerd は sysctl 由来の集計へ縮退します。
+詳細なフロー一覧が空でも、必ずしも NAT が壊れているとは限りません。<code>routerctl get connections</code> のサマリーを見てください。</p>
+<h2 id="調査時に避けること">調査時に避けること</h2>
+<ul>
+<li>本番 WAN で、古い DHCP クライアントや手動の試験用デーモンを、routerd と並行して動かさないでください。同じインターフェースから複数の DHCPv6-PD クライアントを出すと、上流のリース状態を壊すことがあります。</li>
+<li>経路変更時に <code>nf_conntrack</code> を flush しないでください。routerd は意図的に flush しません。flush すると、確立済みのセッションが切れます。</li>
+<li>1 ホスト上で <code>/usr/local/etc/routerd/router.yaml</code> を編集しつつ、別の場所にその場しのぎの YAML オーバーレイを置かないでください。1 ホストにつき設定ファイルを 1 つに保つと、調整（リコンサイル）の予測性が保たれます。</li>
+</ul>
+<h2 id="関連項目">関連項目</h2>
+<ul>
+<li><a href="../concepts/state.html">状態</a></li>
+<li><a href="../operations/reconcile.html">リコンサイルループ</a></li>
+</ul></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#サービスの起動や状態確認に失敗したら">サービスの起動や状態確認に失敗したら</a></li>
+<li><a href="#基本順序">基本順序</a></li>
+<li><a href="#dhcpv6-pd">DHCPv6-PD</a></li>
+<li><a href="#dhcpv4">DHCPv4</a></li>
+<li><a href="#dnsmasq">dnsmasq</a></li>
+<li><a href="#dns-リゾルバー">DNS リゾルバー</a></li>
+<li><a href="#ds-lite">DS-Lite</a></li>
+<li><a href="#conntrack">conntrack</a></li>
+<li><a href="#調査時に避けること">調査時に避けること</a></li>
+<li><a href="#関連項目">関連項目</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/how-to/troubleshooting.md">GitHub</a></div></footer></body></html>

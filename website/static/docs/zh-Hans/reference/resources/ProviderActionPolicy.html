@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ProviderActionPolicy · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/reference/resources/ProviderActionPolicy.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/reference/resources/ProviderActionPolicy.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/ProviderActionPolicy.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/ProviderActionPolicy.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/ProviderActionPolicy.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="provideractionpolicy">ProviderActionPolicy</h1>
+<p><a href="../resources.html#provideractionpolicy">各资源的配置</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: hybrid.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<h2 id="yaml定义">YAML定义</h2>
+<p>此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。</p>
+<pre><code class="language-yaml">- apiVersion: hybrid.routerd.net/v1alpha1
+  kind: ProviderActionPolicy
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    allowUndo: true # 选填; boolean
+    allowedActions: # 选填; array
+      - &quot;&lt;string&gt;&quot; # string
+    allowedCIDRs: # 选填; array
+      - &quot;&lt;string&gt;&quot; # string
+    allowedProviderRefs: # 选填; array
+      - &quot;&lt;string&gt;&quot; # string
+    allowedProviders: # 选填; array
+      - &quot;&lt;string&gt;&quot; # string
+    dryRunOnly: true # 选填; boolean
+    enabled: true # 选填; boolean
+    executionWindow: &quot;&lt;string&gt;&quot; # 选填; string
+    maxActionsPerRun: 0 # 选填; integer
+    requireApproval: true # 选填; boolean
+</code></pre>
+<p><a href="/examples/cloudedge-mobility-demo/aws.yaml">配置示例</a></p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#yaml定义">YAML定义</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/reference/resources/ProviderActionPolicy.md">GitHub</a></div></footer></body></html>

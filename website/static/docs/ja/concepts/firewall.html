@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>状態を持つファイアウォール · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/concepts/firewall.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/concepts/firewall.html" lang="en" hreflang="en">English</a><a href="/docs/ja/concepts/firewall.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/concepts/firewall.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/concepts/firewall.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="状態を持つファイアウォール">状態を持つファイアウォール</h1>
+<p>routerd は nftables の <code>inet routerd_filter</code> テーブルを管理します。
+ファイアウォールは 4 種類のリソースで表します。</p>
+<ul>
+<li><code>FirewallZone</code> は、インターフェースをゾーンに割り当てます。</li>
+<li><code>FirewallPolicy</code> は、拒否ログなどの全体設定を表します。</li>
+<li><code>FirewallRule</code> は、役割の組み合わせでは表せない例外を表します。</li>
+<li><code>ClientPolicy</code> は、MAC アドレスで LAN クライアントを分類します。</li>
+</ul>
+<p>役割は <code>untrust</code>、<code>trust</code>、<code>mgmt</code> の 3 種類です。<code>wan</code>、<code>lan</code>、
+<code>management</code> などはゾーン名であり、役割とは分けて考えます。</p>
+<p>既定の動作は次の表で決まります。</p>
+<table>
+<thead>
+<tr>
+<th>送信元</th>
+<th>self</th>
+<th>mgmt</th>
+<th>trust</th>
+<th>untrust</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>mgmt</code></td>
+<td>許可</td>
+<td>許可</td>
+<td>許可</td>
+<td>許可</td>
+</tr>
+<tr>
+<td><code>trust</code></td>
+<td>許可</td>
+<td>拒否</td>
+<td>許可</td>
+<td>許可</td>
+</tr>
+<tr>
+<td><code>untrust</code></td>
+<td>拒否</td>
+<td>拒否</td>
+<td>拒否</td>
+<td>拒否</td>
+</tr>
+</tbody>
+</table>
+<p>生成するルールは、確立済みの通信、関連する通信、loopback、必要な ICMPv6
+を常に許可します。DHCPv6 PD、DS-Lite、dnsmasq の DHCP、<code>routerd-dns-resolver</code>
+などに必要な穴も、routerd が内部で生成します。</p>
+<p>NAT44 は別の <code>ip routerd_nat</code> テーブルを使います。</p>
+<h2 id="ルール式">ルール式</h2>
+<p><code>FirewallRule</code> は、CIDR による送信元 / 宛先の照合、再利用できる <code>IPAddressSet</code>
+への宛先参照、TCP/UDP の <code>sourcePorts</code> / <code>destinationPorts</code>、ICMP / ICMPv6
+の type 名、nftables の <code>rateLimit</code>、送信元ごとの <code>connLimit</code> を扱えます。
+<code>rateLimit</code> と <code>connLimit</code> は閾値を超えた通信に一致するため、スキャンや
+ブルートフォースを緩和する <code>drop</code> / <code>reject</code> ルールと組み合わせるのが基本です。</p>
+<h2 id="ゲスト端末の隔離">ゲスト端末の隔離</h2>
+<p><code>ClientPolicy</code> は、同じ LAN セグメント上の端末を MAC アドレスで分類するゲストモードです。
+信頼済みの端末とゲスト端末が同じ DHCP サーバーからアドレスを受け取る構成で使います。
+ゲスト端末はルーターの最小限のサービスだけを使い、プライベートネットワークへは到達させません。</p>
+<p>方針は 2 種類です。</p>
+<table>
+<thead>
+<tr>
+<th>mode</th>
+<th>動作</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>include</code></td>
+<td>一覧に書いた MAC アドレスだけを guest として扱います。残りは trusted です。</td>
+</tr>
+<tr>
+<td><code>exclude</code></td>
+<td>一覧に書いた MAC アドレスだけを trusted として扱います。対象インターフェース上の残りは guest です。</td>
+</tr>
+</tbody>
+</table>
+<p><code>ClientPolicy.spec.macs</code> は、よく使う場合の短縮形です。<code>interfaces</code> を省略すると、<code>trust</code> の <code>FirewallZone</code> に属する全インターフェースが対象になります。<code>spec.isolation</code> では、internet、LAN、management、local discovery の allow / deny を読みやすく表現できます。</p>
+<p>ゲスト端末は、既定で DNS、DHCP、NTP を使えます。
+転送先が <code>10.0.0.0/8</code>、<code>172.16.0.0/12</code>、<code>192.168.0.0/16</code>、<code>fc00::/7</code> の通信は拒否します。
+グローバルインターネット向けの通信は、通常のゾーンマトリクスと経路方針に従います。</p>
+<p><code>ClientPolicy</code> は、Linux nftables の Ethernet 送信元アドレス set で実装しています。
+FreeBSD pf は routed filter path で同じ MAC 照合モデルを持たないため、routerd はこのリソースを明示的に未対応として扱います。</p>
+<h2 id="ログ">ログ</h2>
+<p><code>FirewallPolicy.spec.logDeny</code> が true で、<code>FirewallEventLog</code> リソースが有効な場合、
+生成した nftables ルールは、拒否したパケットを設定済みの NFLOG group へ送ります。
+Linux では、<code>routerd-firewall-logger</code> が nfnetlink から直接その group を読み取り、
+<code>firewall-logs.db</code> に保存します。別のパケット取得プロセスは起動しません。
+NFLOG の prefix、インターフェース、パケットファミリー、プロトコル、
+アドレス、ポートをそのまま保存できます。</p>
+<p>Web 管理画面のファイアウォールタブと <code>routerctl get firewall-logs</code> は、このデータベースを読みます。
+<code>FirewallEventLog.spec.enabled</code> が true のとき、routerd は <code>routerd-firewall-logger</code> のサービス成果物を導出し、設定済みのデータベースパスと NFLOG グループを渡します。</p>
+<p>accept した通信フローを DPI の観測に使う場合は、<code>FirewallEventLog.spec.log.copyRange</code>
+で、NFLOG が各パケットからコピーするペイロード量に上限を設定できます。
+<code>1536</code> や <code>2048</code> バイト程度にしておくと、TLS/HTTP/DNS の分類に必要な先頭部分は見えつつ、
+パケット全体をユーザー空間へコピーし続けることを避けられます。</p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#ルール式">ルール式</a></li>
+<li><a href="#ゲスト端末の隔離">ゲスト端末の隔離</a></li>
+<li><a href="#ログ">ログ</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/concepts/firewall.md">GitHub</a></div></footer></body></html>

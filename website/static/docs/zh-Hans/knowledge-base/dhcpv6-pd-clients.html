@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>routerd 自行实现 DHCPv6-PD 客户端的原因 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/knowledge-base/dhcpv6-pd-clients.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/knowledge-base/dhcpv6-pd-clients.html" lang="en" hreflang="en">English</a><a href="/docs/ja/knowledge-base/dhcpv6-pd-clients.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/knowledge-base/dhcpv6-pd-clients.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/knowledge-base/dhcpv6-pd-clients.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="routerd-自行实现-dhcpv6-pd-客户端的原因">routerd 自行实现 DHCPv6-PD 客户端的原因</h1>
+<p>routerd 当前的方针是由专属守护进程 <code>routerd-dhcpv6-client</code> 负责 DHCPv6-PD。
+过去评估过的 OS 内置客户端方案，并未纳入现行配置示例。</p>
+<h2 id="改采专属守护进程的原因">改采专属守护进程的原因</h2>
+<p>DHCPv6-PD 不仅止于获取前缀，Renew、重启后的还原，以及事件日志同样重要。
+若只是为 OS 内置客户端生成配置，难以将 routerd 的状态模型与 LAN 侧的应用过程整合得干净利落。</p>
+<p>改为专属守护进程后，具备以下能力：</p>
+<ul>
+<li>将租约保存至 <code>lease.json</code></li>
+<li>启动时还原租约</li>
+<li>将 Renew 结果记录至事件日志</li>
+<li>通过 <code>/v1/status</code> 返回 <code>Bound</code> / <code>Pending</code> 状态</li>
+<li>发出供其他控制器（LAN 地址派生、RA、DHCPv6 服务器、DS-Lite、DNS）消费的事件</li>
+</ul>
+<h2 id="二进制与部署位置">二进制与部署位置</h2>
+<pre><code class="language-text">routerd-dhcpv6-client
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>路径</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/run/routerd/dhcpv6-client/&lt;name&gt;.sock</code></td>
+<td>各资源的控制插槽</td>
+</tr>
+<tr>
+<td><code>/var/lib/routerd/dhcpv6-client/&lt;name&gt;/lease.json</code></td>
+<td>租约持久化</td>
+</tr>
+<tr>
+<td><code>/var/lib/routerd/dhcpv6-client/&lt;name&gt;/events.jsonl</code></td>
+<td>仅追加的事件日志</td>
+</tr>
+</tbody>
+</table>
+<h2 id="评估后未采用的替代方案">评估后未采用的替代方案</h2>
+<p>我们比较了 <code>systemd-networkd</code>、WIDE/KAME 系客户端及其他 DHCP 客户端，
+最终采用由 routerd 自行拥有的守护进程。
+这些调查结果作为背景资料仍具参考价值，但不包含在当前的出货配置中。</p>
+<p>当前的 Kind 为 <code>DHCPv6PrefixDelegation</code>，并未提供用于选择 OS 内置实现的 <code>client</code> 字段，此为刻意设计。</p>
+<h2 id="操作注意事项">操作注意事项</h2>
+<p>请勿在同一个 WAN 接口上同时运行多个 DHCPv6-PD 客户端。
+同时发出两个客户端会造成上游混乱，导致无法收到 Reply。</p>
+<p>迁移至 routerd 管理时，请先停止旧有客户端
+（包含其租约文件，以及启动该客户端的 systemd / rc.d 配置），
+再启动 <code>routerd-dhcpv6-client</code>。</p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#改采专属守护进程的原因">改采专属守护进程的原因</a></li>
+<li><a href="#二进制与部署位置">二进制与部署位置</a></li>
+<li><a href="#评估后未采用的替代方案">评估后未采用的替代方案</a></li>
+<li><a href="#操作注意事项">操作注意事项</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/knowledge-base/dhcpv6-pd-clients.md">GitHub</a></div></footer></body></html>

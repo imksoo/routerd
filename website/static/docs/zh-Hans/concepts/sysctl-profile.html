@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>sysctl 配置文件 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/concepts/sysctl-profile.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/concepts/sysctl-profile.html" lang="en" hreflang="en">English</a><a href="/docs/ja/concepts/sysctl-profile.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/concepts/sysctl-profile.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/concepts/sysctl-profile.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="sysctl-配置文件">sysctl 配置文件</h1>
+<p>routerd 会从路由器的资源中自动推导出适用于 Linux 路由器的 sysctl 配置。
+在一般的家用路由器配置中，不需要列举大量的 <code>SysctlProfile</code> 或 <code>Sysctl</code>。
+routerd 会从 NAT、DS-Lite、BGP、IPv6 前缀委派（PD）、RA、LAN 服务等资源，
+自动推导出 forwarding、redirect、reverse path filter、conntrack、TCP，以及各接口的 RA 配置。</p>
+<p><code>Sysctl</code> 和 <code>SysctlProfile</code> 仅作为有限的逃生出口，用来补充 routerd 尚无法自动推导的
+硬件、内核或发行版特有配置。它们不是表达路由器需求的主要手段，
+而是作为实现层面的覆盖选项。</p>
+<p><code>runtime: true</code> 会在控制器链 serve 执行期间，立即将配置反映至运行中的内核。
+<code>persistent: true</code> 会将持久配置写入 <code>/etc/sysctl.d/</code>。
+<code>routerctl apply</code> 只会将明确指定的 <code>Sysctl</code> / <code>SysctlProfile</code> 应用至主机。
+推导生成的 sysctl 属于 plan / render 的对象，实际应用由 <code>routerd serve</code> 负责。</p>
+<p>仅在需要使用明确配置文件作为逃生出口时，才通过 <code>overrides</code> 覆盖差异。</p>
+<pre><code class="language-yaml">spec:
+  profile: router-linux
+  overrides:
+    net.netfilter.nf_conntrack_max: &quot;524288&quot;
+</code></pre>
+<p>routerd 在写入前会先读回确认现有值。
+若当前的值已符合预期，则不执行写入。
+此情况下也不会发出应用事件。</p>
+<p>部分 sysctl 的值会被内核向上取整。
+对于这类值，请使用 <code>compare: atLeast</code>。
+<code>value</code> 是写入的值，<code>expectedValue</code> 是读回时预期的值。
+省略 <code>expectedValue</code> 时，以 <code>value</code> 作为预期值。</p>
+<pre><code class="language-yaml">apiVersion: system.routerd.net/v1alpha1
+kind: Sysctl
+metadata:
+  name: socket-buffer
+spec:
+  key: net.core.rmem_max
+  value: &quot;16777216&quot;
+  expectedValue: &quot;16777216&quot;
+  compare: atLeast
+  runtime: true
+</code></pre>
+<h2 id="router-linux-的配置值">router-linux 的配置值</h2>
+<table>
+<thead>
+<tr>
+<th>键</th>
+<th>值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>net.ipv4.ip_forward</code></td>
+<td><code>1</code></td>
+<td>启用 IPv4 数据包转发。</td>
+</tr>
+<tr>
+<td><code>net.ipv4.conf.all.forwarding</code></td>
+<td><code>1</code></td>
+<td>启用各接口的 IPv4 转发。</td>
+</tr>
+<tr>
+<td><code>net.ipv4.conf.all.rp_filter</code></td>
+<td><code>0</code></td>
+<td>避免 reverse path filter 丢弃策略路由或 DS-Lite 隧道的回程数据包。</td>
+</tr>
+<tr>
+<td><code>net.ipv4.conf.default.rp_filter</code></td>
+<td><code>0</code></td>
+<td>对之后创建的隧道接口也禁用 reverse path filter。</td>
+</tr>
+<tr>
+<td><code>net.ipv4.conf.all.send_redirects</code></td>
+<td><code>0</code></td>
+<td>不从路由器发送 ICMP redirect。</td>
+</tr>
+<tr>
+<td><code>net.ipv4.conf.default.send_redirects</code></td>
+<td><code>0</code></td>
+<td>对之后创建的接口应用相同配置。</td>
+</tr>
+<tr>
+<td><code>net.ipv4.conf.all.src_valid_mark</code></td>
+<td><code>1</code></td>
+<td>让使用 fwmark 的路由选择在 reverse path 判断时能够考虑 mark 值。</td>
+</tr>
+<tr>
+<td><code>net.ipv6.conf.all.forwarding</code></td>
+<td><code>1</code></td>
+<td>启用 IPv6 数据包转发。</td>
+</tr>
+<tr>
+<td><code>net.ipv6.conf.default.forwarding</code></td>
+<td><code>1</code></td>
+<td>对之后创建的接口也启用 IPv6 转发。</td>
+</tr>
+<tr>
+<td><code>net.netfilter.nf_conntrack_acct</code></td>
+<td><code>1</code></td>
+<td>启用 conntrack 的数据包与字节统计，用于 Web 管理界面的客户端流量汇总。在未载入 conntrack 的环境中为可选。</td>
+</tr>
+<tr>
+<td><code>net.netfilter.nf_conntrack_max</code></td>
+<td><code>262144</code></td>
+<td>避免大量设备和应用程序同时连接时 conntrack 满载。在未载入 conntrack 的环境中为可选。</td>
+</tr>
+<tr>
+<td><code>net.netfilter.nf_conntrack_buckets</code></td>
+<td><code>65536</code></td>
+<td>建议设为 <code>nf_conntrack_max / 4</code>。因环境而异可能无法写入，故为可选。</td>
+</tr>
+<tr>
+<td><code>net.netfilter.nf_conntrack_tcp_timeout_established</code></td>
+<td><code>86400</code></td>
+<td>默认的 5 天对家用路由器而言过长，缩短为 24 小时。在未载入 conntrack 的环境中为可选。</td>
+</tr>
+<tr>
+<td><code>net.netfilter.nf_conntrack_udp_timeout</code></td>
+<td><code>30</code></td>
+<td>缩短单次 UDP 的保留时间。在未载入 conntrack 的环境中为可选。</td>
+</tr>
+<tr>
+<td><code>net.netfilter.nf_conntrack_udp_timeout_stream</code></td>
+<td><code>180</code></td>
+<td>将持续 UDP 的保留时间设为 3 分钟。在未载入 conntrack 的环境中为可选。</td>
+</tr>
+<tr>
+<td><code>net.core.rmem_max</code></td>
+<td><code>16777216</code></td>
+<td>将接收缓冲区上限设为 16 MiB。</td>
+</tr>
+<tr>
+<td><code>net.core.wmem_max</code></td>
+<td><code>16777216</code></td>
+<td>将发送缓冲区上限设为 16 MiB。</td>
+</tr>
+<tr>
+<td><code>net.ipv4.tcp_rmem</code></td>
+<td><code>4096 87380 16777216</code></td>
+<td>扩大 TCP 接收缓冲区的自动调整范围。</td>
+</tr>
+<tr>
+<td><code>net.ipv4.tcp_wmem</code></td>
+<td><code>4096 65536 16777216</code></td>
+<td>扩大 TCP 发送缓冲区的自动调整范围。</td>
+</tr>
+<tr>
+<td><code>net.core.netdev_max_backlog</code></td>
+<td><code>5000</code></td>
+<td>降低瞬间接收突发流量时发生丢包的概率。</td>
+</tr>
+<tr>
+<td><code>net.core.somaxconn</code></td>
+<td><code>4096</code></td>
+<td>明确指定 listen backlog 的上限。</td>
+</tr>
+<tr>
+<td><code>net.ipv4.ip_local_port_range</code></td>
+<td><code>1024 65535</code></td>
+<td>扩大路由器本身使用的临时端口范围。</td>
+</tr>
+<tr>
+<td><code>net.ipv4.tcp_fin_timeout</code></td>
+<td><code>30</code></td>
+<td>缩短 FIN-WAIT-2 的保留时间。</td>
+</tr>
+<tr>
+<td><code>net.ipv4.tcp_mtu_probing</code></td>
+<td><code>1</code></td>
+<td>让 TCP 在无法收到 Path MTU notification 的路径上也能退回较小的 segment。</td>
+</tr>
+<tr>
+<td><code>net.ipv4.tcp_tw_reuse</code></td>
+<td><code>1</code></td>
+<td>允许重复使用 TIME-WAIT socket。</td>
+</tr>
+<tr>
+<td><code>net.ipv6.route.max_size</code></td>
+<td><code>16384</code></td>
+<td>提高 IPv6 路由缓存的上限。</td>
+</tr>
+</tbody>
+</table>
+<p><code>net.ipv4.route.max_size</code> 在现行 Linux 的部分环境中效果有限，
+routerd 的默认配置文件不予设置。
+若有需要，请以单独 <code>Sysctl</code> 的形式（而非 <code>overrides</code>）添加，并在实机上确认该键是否存在。</p>
+<p><code>net.netfilter.nf_conntrack_udp_timeout</code> 的默认值为 <code>30</code> 秒，
+与 Linux conntrack 对无响应 UDP 的默认值一致。
+若需要稍长时间以便与防火墙拒绝或 DPI 观测记录相关联，可覆盖为 <code>60</code> 秒。</p>
+<pre><code class="language-yaml">spec:
+  profile: router-linux
+  overrides:
+    net.netfilter.nf_conntrack_udp_timeout: &quot;60&quot;
+</code></pre>
+<p>conntrack、NFLOG、WireGuard 等模块的载入，routerd 会从 NAT、防火墙记录、
+连接流量记录、WireGuard 等资源自动推导。
+<code>KernelModule</code> 不是用户编写的配置 Kind。若有推导遗漏，
+应视为实现端推导逻辑的错误加以修正。</p>
+<h2 id="与单独-sysctl-的使用区别">与单独 Sysctl 的使用区别</h2>
+<p>单独 <code>Sysctl</code> 仅用于真正偏离 routerd 推导模型的值。
+DS-Lite 隧道的 <code>rp_filter=0</code>、WAN/LAN 的 <code>accept_ra=2</code>、LAN 的
+<code>send_redirects=0</code> 等 routerd 能够理解的接口配置，会从资源自动推导，
+通常不需要在配置中手动编写。</p>
+<p>示例：在验证用内核上临时提高 socket 缓冲区大小</p>
+<pre><code class="language-yaml">apiVersion: system.routerd.net/v1alpha1
+kind: Sysctl
+metadata:
+  name: lab-rmem-max
+spec:
+  key: net.core.rmem_max
+  value: &quot;33554432&quot;
+  compare: atLeast
+  runtime: true
+  persistent: true
+</code></pre></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#router-linux-的配置值">router-linux 的配置值</a></li>
+<li><a href="#与单独-sysctl-的使用区别">与单独 Sysctl 的使用区别</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/concepts/sysctl-profile.md">GitHub</a></div></footer></body></html>

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Install and upgrade · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/install-and-upgrade.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/install-and-upgrade.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/install-and-upgrade.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/install-and-upgrade.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/install-and-upgrade.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="install-and-upgrade">Install and upgrade</h1>
+<p>Download the official Linux amd64 archive and verify its checksum. For another architecture or OS, select the corresponding archive from Releases. The installer preserves an existing configuration.</p>
+<pre><code class="language-sh">curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-linux-amd64.tar.gz.sha256
+sha256sum -c routerd-linux-amd64.tar.gz.sha256
+tar -xzf routerd-linux-amd64.tar.gz
+sudo ./install.sh
+</code></pre>
+<p><a href="https://github.com/imksoo/routerd/releases/latest">Releases</a></p>
+<p>Change the example interface names, addresses and peer settings before using it. Validate locally, then inspect the plan on the target router. Use --replace only for a complete router configuration. Applying can change management access; keep a console.</p>
+<pre><code class="language-sh">routerd validate --config router.yaml
+# On an existing router:
+routerctl validate -f router.yaml --replace
+routerctl plan -f router.yaml --replace
+routerctl apply -f router.yaml --replace
+</code></pre>
+<p>On an existing router, inspect the diff and use routerctl. On a fresh Linux host, install the reviewed configuration and start routerd.service.</p>
+<pre><code class="language-sh">sudo install -d -m 0755 /usr/local/etc/routerd
+sudo install -m 0600 router.yaml /usr/local/etc/routerd/router.yaml
+sudo systemctl enable --now routerd.service
+sudo routerctl get status
+sudo routerctl get events --limit 20
+</code></pre>
+<p>For Live ISO, the working root and state database are volatile. Keep YAML and secrets on the configured persistent medium; do not swap a running VM’s backing ISO. Shut down, confirm it has stopped, then replace the medium and start it.</p>
+<p><a href="how-to/pve-live-iso-nocloud.html">Live ISO</a> · <a href="operations/usb-persistence.html">USB</a> · <a href="operations/state-database.html">DB</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul></ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/install-and-upgrade.md">GitHub</a></div></footer></body></html>

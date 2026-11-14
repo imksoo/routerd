@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>安裝與更新 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/install-and-upgrade.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/install-and-upgrade.html" lang="en" hreflang="en">English</a><a href="/docs/ja/install-and-upgrade.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/install-and-upgrade.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/install-and-upgrade.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="安裝與更新">安裝與更新</h1>
+<p>下載官方Linux amd64封存檔並驗證檢查碼。其他OS或架構請在Releases選擇對應檔案。安裝程式保留既有設定。</p>
+<pre><code class="language-sh">curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-linux-amd64.tar.gz.sha256
+sha256sum -c routerd-linux-amd64.tar.gz.sha256
+tar -xzf routerd-linux-amd64.tar.gz
+sudo ./install.sh
+</code></pre>
+<p><a href="https://github.com/imksoo/routerd/releases/latest">Releases</a></p>
+<p>使用前修改介面名稱、位址與對端設定。先在本機驗證，再於目標路由器檢查計畫。--replace只用於完整設定。套用可能影響管理連線，請保留主控台。</p>
+<pre><code class="language-sh">routerd validate --config router.yaml
+# On an existing router:
+routerctl validate -f router.yaml --replace
+routerctl plan -f router.yaml --replace
+routerctl apply -f router.yaml --replace
+</code></pre>
+<p>既有路由器應先檢查差異，再用routerctl套用。新的Linux主機則放置確認後的設定並啟動routerd.service。</p>
+<pre><code class="language-sh">sudo install -d -m 0755 /usr/local/etc/routerd
+sudo install -m 0600 router.yaml /usr/local/etc/routerd/router.yaml
+sudo systemctl enable --now routerd.service
+sudo routerctl get status
+sudo routerctl get events --limit 20
+</code></pre>
+<p>Live ISO的工作根目錄與狀態DB是暫存空間。YAML與秘密資訊須放在已設定的持久媒體。不要更換執行中VM的ISO；先關機並確認停止，再更換媒體及開機。</p>
+<p><a href="/docs/how-to/pve-live-iso-nocloud.html">Live ISO</a> · <a href="operations/usb-persistence.html">USB</a> · <a href="operations/state-database.html">DB</a></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul></ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/install-and-upgrade.md">GitHub</a></div></footer></body></html>

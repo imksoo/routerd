@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ObservabilityPipeline · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/reference/resources/ObservabilityPipeline.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/reference/resources/ObservabilityPipeline.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/ObservabilityPipeline.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/ObservabilityPipeline.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/ObservabilityPipeline.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="observabilitypipeline">ObservabilityPipeline</h1>
+<p><a href="../resources.html#observabilitypipeline">各资源的配置</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: system.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>结合受管服务的OpenTelemetry环境声明与独立内置运维事件日志consumer。</p>
+<h2 id="指定条件与引用关系">指定条件与引用关系</h2>
+<ul>
+<li>OTLP环境选择与内置日志转发是两条路径，signals控制前者，logs.enabled控制后者；输出列表为空不代表stdout。</li>
+<li>sampling.rate=0转为1；此实现中的Kafka输出端与OTLP证书文件字段仅有声明，没有对应执行处理。</li>
+</ul>
+<h2 id="yaml定义">YAML定义</h2>
+<p>此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。</p>
+<pre><code class="language-yaml">- apiVersion: system.routerd.net/v1alpha1
+  kind: ObservabilityPipeline
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    attributes: # 选填; object
+      &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # 选填; string
+    logs: # 选填; object
+      enabled: true # 选填; boolean
+      sinks: # 选填; array
+        - # object
+          enabled: true # 选填; boolean
+          kafka: # 选填; object
+            brokers: # 选填; array
+              - &quot;&lt;string&gt;&quot; # string
+            topic: &quot;&lt;string&gt;&quot; # 选填; string
+          labels: # 选填; object
+            &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # 选填; string
+          loki: # 选填; object
+            headers: # 选填; object
+              &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # 选填; string
+            tenant: &quot;&lt;string&gt;&quot; # 选填; string
+            url: &quot;&lt;string&gt;&quot; # 选填; string
+          minLevel: &quot;debug&quot; # 选填; string; enum=[&quot;debug&quot;, &quot;info&quot;, &quot;warning&quot;, &quot;error&quot;]
+          name: &quot;&lt;string&gt;&quot; # 选填; string
+          syslog: # 选填; object
+            address: &quot;&lt;string&gt;&quot; # 选填; string
+            facility: &quot;kern&quot; # 选填; string; enum=[&quot;kern&quot;, &quot;user&quot;, &quot;mail&quot;, &quot;daemon&quot;, &quot;auth&quot;, &quot;syslog&quot;, &quot;lpr&quot;, &quot;news&quot;, &quot;uucp&quot;, &quot;cron&quot;, &quot;authpriv&quot;, &quot;ftp&quot;, &quot;local0&quot;, &quot;local1&quot;, &quot;local2&quot;, &quot;local3&quot;, &quot;local4&quot;, &quot;local5&quot;, &quot;local6&quot;, &quot;local7&quot;]
+            network: &quot;&quot; # 选填; string; enum=[&quot;&quot;, &quot;unix&quot;, &quot;unixgram&quot;, &quot;tcp&quot;, &quot;udp&quot;]
+            tag: &quot;&lt;string&gt;&quot; # 选填; string
+          type: &quot;stdout&quot; # 必填; string; enum=[&quot;stdout&quot;, &quot;syslog&quot;, &quot;loki&quot;, &quot;kafka&quot;]
+    otlp: # 选填; object
+      endpoint: &quot;&lt;string&gt;&quot; # 选填; string
+      headers: # 选填; object
+        &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # 选填; string
+      insecure: true # 选填; boolean
+      tls: # 选填; object
+        caFile: &quot;&lt;string&gt;&quot; # 选填; string
+        certFile: &quot;&lt;string&gt;&quot; # 选填; string
+        insecureSkipVerify: true # 选填; boolean
+        keyFile: &quot;&lt;string&gt;&quot; # 选填; string
+    sampling: # 选填; object
+      rate: 0 # 选填; number
+    serviceNamespace: &quot;&lt;string&gt;&quot; # 选填; string
+    signals: # 选填; array
+      - &quot;logs&quot; # string; enum=[&quot;logs&quot;, &quot;metrics&quot;, &quot;traces&quot;]
+    when: # 选填; object
+      state: # 选填; object
+        &quot;&lt;key&gt;&quot;: # 选填; object
+          contains: &quot;&lt;string&gt;&quot; # 选填; string
+          equals: &quot;&lt;string&gt;&quot; # 选填; string
+          exists: true # 选填; boolean
+          for: &quot;&lt;string&gt;&quot; # 选填; string
+          in: # 选填; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # 选填; string
+          status: &quot;set&quot; # 选填; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<h2 id="字段含义与默认值">字段含义与默认值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>字段含义与默认值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.serviceNamespace</code></td>
+<td>OpenTelemetry服务命名空间，去除首尾空白后为空时默认routerd。</td>
+</tr>
+<tr>
+<td><code>spec.attributes</code></td>
+<td>资源属性映射，默认空；按键排序并以逗号分隔key=value写入OTEL_RESOURCE_ATTRIBUTES，此生成器不转义值。</td>
+</tr>
+<tr>
+<td><code>spec.otlp</code></td>
+<td>生成服务用的选填OTLP环境配置；endpoint非空白时选为遥测环境来源，内置日志输出端独立运行。</td>
+</tr>
+<tr>
+<td><code>spec.otlp.endpoint</code></td>
+<td>导出端点默认空；非空白值须可解析为URI，写入OTEL_EXPORTER_OTLP_ENDPOINT。多个Telemetry或含endpoint的pipeline会使环境生成失败。</td>
+</tr>
+<tr>
+<td><code>spec.otlp.insecure</code></td>
+<td>默认false；true生成OTEL_EXPORTER_OTLP_INSECURE=true，tls.insecureSkipVerify=true也设置相同变量。</td>
+</tr>
+<tr>
+<td><code>spec.otlp.headers</code></td>
+<td>exporter请求头映射，默认空；排序后以逗号分隔key=value写入OTEL_EXPORTER_OTLP_HEADERS，不转义值。与Loki请求头不同。</td>
+</tr>
+<tr>
+<td><code>spec.otlp.tls</code></td>
+<td>可解码的TLS选项；当前仅insecureSkipVerify影响环境生成，三个文件字段未接入exporter配置。</td>
+</tr>
+<tr>
+<td><code>spec.otlp.tls.caFile</code></td>
+<td>CA文件声明默认空，当前生成器与内置exporter不读取，设置后不会配置信任库。</td>
+</tr>
+<tr>
+<td><code>spec.otlp.tls.certFile</code></td>
+<td>客户端证书声明默认空，当前OTLP配置路径不使用。</td>
+</tr>
+<tr>
+<td><code>spec.otlp.tls.keyFile</code></td>
+<td>客户端密钥声明默认空，当前不使用；在此成对设置certFile/keyFile不会启用双向TLS。</td>
+</tr>
+<tr>
+<td><code>spec.otlp.tls.insecureSkipVerify</code></td>
+<td>默认false，当前将true转为OTEL_EXPORTER_OTLP_INSECURE=true，不是仅跳过证书检查的TLS client配置。</td>
+</tr>
+<tr>
+<td><code>spec.signals</code></td>
+<td>生成OpenTelemetry环境时默认logs/metrics/traces全部，非空列表未列出的信号设exporter=none。内置日志consumer不使用此列表，改由logs.enabled控制。</td>
+</tr>
+<tr>
+<td><code>spec.sampling</code></td>
+<td>内置事件日志采样配置，独立于生成的OTLP环境。</td>
+</tr>
+<tr>
+<td><code>spec.sampling.rate</code></td>
+<td>须为0–1；省略/0转为1，发送全部符合事件。小数使用序号模1000的确定性采样，不是随机。停止consumer请用logs.enabled=false。</td>
+</tr>
+<tr>
+<td><code>spec.logs</code></td>
+<td>内置DB事件日志转发配置，与OTLP环境分开。</td>
+</tr>
+<tr>
+<td><code>spec.logs.enabled</code></td>
+<td>默认true；false停止内置日志consumer，但不禁用生成服务的OTLP变量。</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks</code></td>
+<td>输出端列表默认空，没有内置目的地；不会隐含stdout。Kafka条目即使启用仍被exporter跳过。</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].name</code></td>
+<td>选填输出标签，默认空；不是LogSink资源引用，当前exporter不用它选择目的地。</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].type</code></td>
+<td>必填stdout、syslog、loki或kafka；kafka仅接受声明而不执行，仅使用所选分支配置。</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].enabled</code></td>
+<td>默认true；false排除此输出端，kafka另行无条件排除。</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].minLevel</code></td>
+<td>最低严重程度默认info，接受debug/info/warning/error，在采样后判断。</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].labels</code></td>
+<td>额外Loki stream标签默认空；键规范化后覆盖同名全局属性及内置标签，stdout/syslog不使用。</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].loki</code></td>
+<td>仅用于type=loki的配置。</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].loki.url</code></td>
+<td>loki时必填且无默认值，须提供完整Loki push URL，exporter不补push路径；只有HTTP 2xx算成功。</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].loki.tenant</code></td>
+<td>选填租户ID默认空，非空时设置X-Scope-OrgID。</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].loki.headers</code></td>
+<td>额外HTTP请求头默认空，覆盖同名请求头，包括Content-Type与租户头。</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].syslog</code></td>
+<td>仅用于type=syslog的配置。</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].syslog.network</code></td>
+<td>传输方式为unix、unixgram、tcp或udp；空值由Go syslog查找本机socket。</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].syslog.address</code></td>
+<td>目标socket路径或host:port，默认空。显式指定传输方式时应提供对应地址；验证器不强制此组合，连接错误在输出时出现。</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].syslog.tag</code></td>
+<td>syslog标签，默认routerd，不是资源引用。</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].syslog.facility</code></td>
+<td>默认local6，此exporter仅映射local0–local7，其他值也改用local6，与独立LogSink的syslog实现不同。</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].kafka</code></td>
+<td>Kafka意图配置，会验证但内置exporter跳过此输出端。</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].kafka.brokers</code></td>
+<td>type=kafka须至少一个非空白broker，当前exporter不连接。</td>
+</tr>
+<tr>
+<td><code>spec.logs.sinks[].kafka.topic</code></td>
+<td>type=kafka必填非空白topic，不是EventRule topic或资源引用，当前不发送Kafka。</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>启用条件，省略不设限制；state/all/any、unknown及时间条件请见共用条件参考。</td>
+</tr>
+</tbody>
+</table>
+<p>实现: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_system.go">pkg/config/validate_system.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go">pkg/config/diagnostics.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/telemetry.go">pkg/render/telemetry.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/observabilitypipeline/exporter.go">pkg/observabilitypipeline/exporter.go</a></p>
+<p><a href="/examples/observability-loki.yaml">配置示例</a></p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件与引用关系">指定条件与引用关系</a></li>
+<li><a href="#yaml定义">YAML定义</a></li>
+<li><a href="#字段含义与默认值">字段含义与默认值</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/reference/resources/ObservabilityPipeline.md">GitHub</a></div></footer></body></html>

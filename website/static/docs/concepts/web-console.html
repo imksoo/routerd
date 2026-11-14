@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Web Console · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/concepts/web-console.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/">routerd</a><div class="navlinks"><a href="/docs/intro.html">Documentation</a><a href="/docs/install-and-upgrade.html">Setup</a><a href="/docs/reference/resources.html">Resources</a><a href="/docs/config-examples/index.html">Examples</a></div><div class="languages"><a href="/docs/concepts/web-console.html" lang="en" hreflang="en" aria-current="page">English</a><a href="/docs/ja/concepts/web-console.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/concepts/web-console.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/concepts/web-console.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="web-console">Web Console</h1>
+<p>Missing DNS, traffic flow, or firewall log databases produce empty log lists
+(and empty DNS/traffic aggregates), as when the optional collector has not yet
+created its store. These reads do not create files or directories. Errors from
+existing stores, such as database corruption, remain visible.</p>
+<p>Connections includes per-DS-Lite local IPv4 SNAT counts from the complete
+conntrack snapshot, independent of display limits and filters. Total/TCP/UDP/other
+counts are keyed by observed <code>innerLocalIPv4</code>; shared addresses show combined
+counts. Unavailable observations are not zero. These are not provider AFTR
+counts or port capacity. Direct access and automatic refresh fetch tunnel status.</p>
+<p><code>WebConsole</code> enables a read-only HTTP view for routerd. It is intended for
+local operations on a management network. It does not change configuration,
+restart services, apply resources, or edit the state database.</p>
+<p>Configuration changes remain limited to YAML files and <code>routerctl</code> commands.
+The browser is for observation only.</p>
+<pre><code class="language-yaml">apiVersion: system.routerd.net/v1alpha1
+kind: WebConsole
+metadata:
+  name: mgmt
+spec:
+  enabled: true
+  listenAddressFrom:
+    resource: Interface/mgmt
+    field: ipv4Addresses
+  port: 8080
+  title: edge-router
+</code></pre>
+<p>Keep the listener on a management address. Do not expose it on an untrusted
+WAN interface. Use <code>listenAddressFrom</code> when the management address is owned by
+the operating system or IPAM. The value is resolved from resource status at
+startup, and <code>listenAddress</code> remains available for a literal fallback address.</p>
+<h2 id="what-the-console-reads">What the console reads</h2>
+<p>The Web Console reads:</p>
+<ul>
+<li>routerd daemon status</li>
+<li>resource status in the SQLite state database</li>
+<li>bus events in the SQLite event table</li>
+<li>live connection observations from conntrack or pf state</li>
+<li>DNS query history from <code>dns-queries.db</code></li>
+<li>traffic flow history from <code>traffic-flows.db</code></li>
+<li>firewall deny history from <code>firewall-logs.db</code></li>
+<li>current dnsmasq DHCP lease files for client names, MAC addresses, and local
+  vendor hints</li>
+<li>the active YAML configuration, shown read-only with secret fields redacted</li>
+</ul>
+<h2 id="current-screens">Current screens</h2>
+<p>The current Fluent UI web app provides:</p>
+<ul>
+<li>a status overview for PD, DS-Lite, DNS, NAT, routes, health checks, VPN,
+  packages, sysctl, systemd units, and log resources</li>
+<li>resource change highlighting when a phase or observed value changes</li>
+<li>an Events view with a selectable detail pane, so large attributes do not
+  crowd the event table</li>
+<li>DHCP lease event details, including MAC address, IP address, hostname, and
+  resource names when present</li>
+<li>a Connections view grouped by family and protocol, with filtering, sorting,
+  pagination, and page size controls</li>
+<li>DNS query, traffic flow, and firewall log views backed by separate log
+  databases</li>
+<li>dedicated BGP, VRRP, and IngressService operational pages at <code>/bgp</code>, <code>/vrrp</code>,
+  and <code>/ingress</code>. These pages use Server-Sent Events to refresh resource
+  tables, keep a local 5/15/60 minute SVG trend, and show a filtered event log
+  for the relevant resources.</li>
+<li>Firewall rows combine firewall logs, DNS answers, DHCP leases, MAC vendor
+  hints, and current conntrack reply tuples. This helps explain whether a
+  denied packet is unsolicited traffic or an off-path reply for an existing
+  NAT mapping.</li>
+<li>a Config view with a structured, foldable YAML tree and a raw YAML fallback</li>
+</ul>
+<p>Connection rows show the forward direction by default. Return-path data is not
+shown as a separate primary row because conntrack commonly reports the same
+conversation from both directions.</p>
+<h2 id="api-boundary">API boundary</h2>
+<p>Web Console APIs are read-only. The JSON endpoints are under <code>/api/v1</code>; the
+SSE stream is also available through the short <code>/api/events/stream</code> alias.</p>
+<table>
+<thead>
+<tr>
+<th>Path</th>
+<th>Content</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/api/v1/summary</code></td>
+<td>status, resource phases, recent events, and connection summary</td>
+</tr>
+<tr>
+<td><code>/api/v1/resources</code></td>
+<td>resource statuses from the state database</td>
+</tr>
+<tr>
+<td><code>/api/v1/events?limit=200&amp;resourceKind=&amp;resourceName=&amp;q=</code></td>
+<td>recent bus events with optional filters</td>
+</tr>
+<tr>
+<td><code>/api/v1/events/stream</code> or <code>/api/events/stream</code></td>
+<td>Server-Sent Events stream for <code>routerd.*</code> bus events</td>
+</tr>
+<tr>
+<td><code>/api/v1/connections</code></td>
+<td>live connection observation from conntrack or pf state</td>
+</tr>
+<tr>
+<td><code>/api/v1/dns-queries?since=1h&amp;client=&amp;qname=&amp;limit=100</code></td>
+<td>DNS query log rows</td>
+</tr>
+<tr>
+<td><code>/api/v1/traffic-flows?since=1h&amp;client=&amp;peer=&amp;limit=100</code></td>
+<td>traffic flow log rows with DNS-derived hostnames</td>
+</tr>
+<tr>
+<td><code>/api/v1/firewall-logs?since=24h&amp;action=drop&amp;src=&amp;limit=100</code></td>
+<td>firewall log rows</td>
+</tr>
+<tr>
+<td><code>/api/v1/bgp</code>, <code>/api/v1/vrrp</code>, <code>/api/v1/ingress</code></td>
+<td>filtered operational status for Kubernetes-edge routing and VIP resources</td>
+</tr>
+<tr>
+<td><code>/api/v1/config</code></td>
+<td>active YAML configuration, redacted</td>
+</tr>
+<tr>
+<td><code>/api/v1/generations?limit=100</code></td>
+<td>completed apply generations and whether a YAML snapshot is stored</td>
+</tr>
+<tr>
+<td><code>/api/v1/generations/&lt;id&gt;/config</code></td>
+<td>stored YAML for one apply generation, redacted</td>
+</tr>
+<tr>
+<td><code>/api/v1/generations/&lt;from&gt;/diff/&lt;to&gt;</code></td>
+<td>unified diff between two stored YAML generations, redacted</td>
+</tr>
+</tbody>
+</table>
+<h2 id="secret-redaction">Secret redaction</h2>
+<p>The config-bearing endpoints — <code>/api/v1/config</code>,
+<code>/api/v1/generations/&lt;id&gt;/config</code>, and
+<code>/api/v1/generations/&lt;from&gt;/diff/&lt;to&gt;</code> — <strong>redact secrets before
+serializing</strong>. WireGuard <code>privateKey</code> / <code>preSharedKey</code>, Tailscale
+<code>authKey</code>, BGP/PPPoE/IPsec <code>password</code>, WebConsole <code>initialPassword</code>, and
+bearer/token/API-key style fields are replaced with a marker value
+(<code>***REDACTED***</code>); keys stay in place so the UI structure is
+unaffected.</p>
+<p>The read-only Web Console never exposes raw secret material. Privileged
+local control paths (the routerd control socket, <code>routerctl describe</code>)
+are intentionally unchanged and continue to show raw intent where
+appropriate; those paths should be protected by local socket permissions
+and <code>routerd</code> group membership.</p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+<ul>
+<li><a href="#what-the-console-reads">What the console reads</a></li>
+<li><a href="#current-screens">Current screens</a></li>
+<li><a href="#api-boundary">API boundary</a></li>
+<li><a href="#secret-redaction">Secret redaction</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/concepts/web-console.md">GitHub</a></div></footer></body></html>

@@ -170,4 +170,4 @@ startup-config 和 effective-config。`plugin run --dry-run` 在不写入状态�
 情况下输出候选的 dynamic part。
 
 参见混合云边缘设计和
-[Plugin protocol](/docs/reference/plugin-protocol)。
+[Plugin protocol](/docs/zh-Hans/plugin-protocol.md)。

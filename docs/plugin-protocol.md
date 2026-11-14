@@ -33,7 +33,7 @@ A plugin can take part in:
 - Host state observation
 - Host state application
 
-Validate network behavior on the actual target and its peers as required by [AGENTS.md](../AGENTS.md).
+Validate network behavior on the actual target and its peers as required by [AGENTS.md](https://github.com/imksoo/routerd/blob/main/AGENTS.md).
 
 ## MVP policy
 
@@ -257,5 +257,4 @@ database.
 
 The main router features are advanced inside the routerd binary and its managed daemons. The plugin protocol is the safe foundation for site-local extensions; the manifest format and the I/O contract may still change before the protocol is frozen as a stable public surface.
 
-See also [Hybrid cloud edge design](/docs/design-hybrid-cloud-edge) and
-[Dynamic config reference](reference/dynamic-config.md).
+See also [Dynamic config reference](reference/dynamic-config.md).

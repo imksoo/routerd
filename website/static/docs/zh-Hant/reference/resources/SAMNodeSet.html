@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SAMNodeSet · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hant/reference/resources/SAMNodeSet.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hant/">routerd</a><div class="navlinks"><a href="/docs/zh-Hant/intro.html">文件</a><a href="/docs/zh-Hant/install-and-upgrade.html">設定步驟</a><a href="/docs/zh-Hant/reference/resources.html">資源一覽</a><a href="/docs/zh-Hant/config-examples/index.html">設定範例</a></div><div class="languages"><a href="/docs/reference/resources/SAMNodeSet.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/SAMNodeSet.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/SAMNodeSet.html" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/docs/zh-Hans/reference/resources/SAMNodeSet.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="samnodeset">SAMNodeSet</h1>
+<p><a href="../resources.html#samnodeset">各資源的設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: mobility.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<h2 id="yaml定義">YAML定義</h2>
+<p>此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。</p>
+<pre><code class="language-yaml">- apiVersion: mobility.routerd.net/v1alpha1
+  kind: SAMNodeSet
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    nodes: # 必填; array
+      - # object
+        eventEndpoint: &quot;&lt;string&gt;&quot; # 選填; string
+        macAddresses: # 選填; array
+          - &quot;&lt;string&gt;&quot; # string; pattern=&quot;^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$&quot;
+        maintenance: # 選填; object
+          drain: true # 選填; boolean
+        maxSecondaryIPs: 0 # 選填; integer; minimum=0
+        nodeRef: &quot;&lt;string&gt;&quot; # 必填; string
+        placement: # 選填; object
+          group: &quot;&lt;string&gt;&quot; # 選填; string
+          priority: 0 # 選填; integer; minimum=0; maximum=1000000
+        role: &quot;&quot; # 選填; string; enum=[&quot;&quot;, &quot;onprem&quot;, &quot;cloud&quot;]
+        routeReflector: true # 選填; boolean
+        samEndpoint: &quot;&lt;string&gt;&quot; # 選填; string
+        samEndpointFrom: # 選填; object
+          field: &quot;&lt;string&gt;&quot; # 選填; string
+          optional: true # 選填; boolean
+          resource: &quot;&lt;string&gt;&quot; # 必填; string
+        site: &quot;&lt;string&gt;&quot; # 選填; string
+        wireGuard: # 選填; object
+          allowedIPs: # 選填; array
+            - &quot;&lt;string&gt;&quot; # string
+          endpoint: &quot;&lt;string&gt;&quot; # 選填; string
+          persistentKeepalive: 0 # 選填; integer; minimum=0; maximum=65535
+          publicKey: &quot;&lt;string&gt;&quot; # 選填; string
+          transportEndpoint: &quot;&lt;string&gt;&quot; # 選填; string
+</code></pre>
+<p><a href="/examples/cloudedge-dynamic-rr-a-hub.yaml">設定範例</a></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<ul>
+<li><a href="#yaml定義">YAML定義</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/reference/resources/SAMNodeSet.md">GitHub</a></div></footer></body></html>

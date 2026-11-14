@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>routerd が DHCPv6-PD クライアントを自前で持つ理由 · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/ja/knowledge-base/dhcpv6-pd-clients.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/ja/">routerd</a><div class="navlinks"><a href="/docs/ja/intro.html">文書</a><a href="/docs/ja/install-and-upgrade.html">設定手順</a><a href="/docs/ja/reference/resources.html">リソース一覧</a><a href="/docs/ja/config-examples/index.html">設定例</a></div><div class="languages"><a href="/docs/knowledge-base/dhcpv6-pd-clients.html" lang="en" hreflang="en">English</a><a href="/docs/ja/knowledge-base/dhcpv6-pd-clients.html" lang="ja" hreflang="ja" aria-current="page">日本語</a><a href="/docs/zh-Hant/knowledge-base/dhcpv6-pd-clients.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/knowledge-base/dhcpv6-pd-clients.html" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="routerd-が-dhcpv6-pd-クライアントを自前で持つ理由">routerd が DHCPv6-PD クライアントを自前で持つ理由</h1>
+<p>routerd の現在の方針では、DHCPv6-PD は専用デーモン <code>routerd-dhcpv6-client</code> が担当します。
+過去に評価した OS 付属クライアントを使う方法は、現在の設定例としては採用していません。</p>
+<h2 id="専用デーモンにした理由">専用デーモンにした理由</h2>
+<p>DHCPv6-PD は取得だけで終わらず、Renew、再起動後の復元、イベントの記録までが重要です。
+OS 付属クライアント向けに設定を生成するだけでは、routerd の状態モデルと LAN 側への反映をきれいにつなげられませんでした。</p>
+<p>専用デーモンにしたことで、次が揃います。</p>
+<ul>
+<li>リースを <code>lease.json</code> に保存します。</li>
+<li>起動時にリースを復元します。</li>
+<li>Renew の結果をイベントに記録します。</li>
+<li><code>/v1/status</code> で <code>Bound</code> / <code>Pending</code> を返します。</li>
+<li>他のコントローラー (LAN アドレス導出、RA、DHCPv6 サーバー、DS-Lite、DNS) が消費するイベントを発行します。</li>
+</ul>
+<h2 id="バイナリと配置">バイナリと配置</h2>
+<pre><code class="language-text">routerd-dhcpv6-client
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>パス</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/run/routerd/dhcpv6-client/&lt;name&gt;.sock</code></td>
+<td>リソースごとの制御ソケット</td>
+</tr>
+<tr>
+<td><code>/var/lib/routerd/dhcpv6-client/&lt;name&gt;/lease.json</code></td>
+<td>リースの永続化</td>
+</tr>
+<tr>
+<td><code>/var/lib/routerd/dhcpv6-client/&lt;name&gt;/events.jsonl</code></td>
+<td>追記専用のイベントログ</td>
+</tr>
+</tbody>
+</table>
+<h2 id="評価して採用しなかった選択肢">評価して採用しなかった選択肢</h2>
+<p><code>systemd-networkd</code>、WIDE/KAME 系のクライアント、その他の DHCP クライアントを比較しましたが、最終的に routerd が所有するデーモンを採用しました。
+これらの調査は背景として有用ですが、現在の出荷構成には含めていません。</p>
+<p>現在の Kind は <code>DHCPv6PrefixDelegation</code> です。OS 付属の実装を選ぶ <code>client</code> フィールドは、意図的に用意していません。</p>
+<h2 id="運用上の注意">運用上の注意</h2>
+<p>同じ WAN インターフェースで、複数の DHCPv6-PD クライアントを並行して動かさないでください。
+2 つを同時に出すと、上流が混乱して Reply が返らなくなります。</p>
+<p>routerd の管理へ移行するときは、まず古いクライアント (とそのリースファイル、それを起動していた systemd / rc.d の設定) を停止してから、<code>routerd-dhcpv6-client</code> を起動してください。</p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+<ul>
+<li><a href="#専用デーモンにした理由">専用デーモンにした理由</a></li>
+<li><a href="#バイナリと配置">バイナリと配置</a></li>
+<li><a href="#評価して採用しなかった選択肢">評価して採用しなかった選択肢</a></li>
+<li><a href="#運用上の注意">運用上の注意</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/ja/knowledge-base/dhcpv6-pd-clients.md">GitHub</a></div></footer></body></html>

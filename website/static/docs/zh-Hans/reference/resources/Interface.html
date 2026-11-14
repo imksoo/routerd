@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Interface · routerd</title><link rel="stylesheet" href="/site.css"><link rel="canonical" href="https://routerd.net/docs/zh-Hans/reference/resources/Interface.html"></head>
+<body><header><nav class="wrap"><a class="brand" href="/zh-Hans/">routerd</a><div class="navlinks"><a href="/docs/zh-Hans/intro.html">文档</a><a href="/docs/zh-Hans/install-and-upgrade.html">配置步骤</a><a href="/docs/zh-Hans/reference/resources.html">资源列表</a><a href="/docs/zh-Hans/config-examples/index.html">配置示例</a></div><div class="languages"><a href="/docs/reference/resources/Interface.html" lang="en" hreflang="en">English</a><a href="/docs/ja/reference/resources/Interface.html" lang="ja" hreflang="ja">日本語</a><a href="/docs/zh-Hant/reference/resources/Interface.html" lang="zh-Hant" hreflang="zh-Hant">繁體中文</a><a href="/docs/zh-Hans/reference/resources/Interface.html" lang="zh-Hans" hreflang="zh-Hans" aria-current="page">简体中文</a></div></nav></header>
+<main class="doclayout wrap"><article class="document"><h1 id="interface">Interface</h1>
+<p><a href="../resources.html#interface">各资源的配置</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
+<p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>为现有OS接口提供metadata.name逻辑名称，供其他资源引用，不创建物理接口。</p>
+<h2 id="指定条件与引用关系">指定条件与引用关系</h2>
+<ul>
+<li>依赖资源的interface使用metadata.name逻辑名称，ifname填写实际设备名。managed=false不会抑制已要求的LinkController启用/MTU变更。</li>
+</ul>
+<h2 id="yaml定义">YAML定义</h2>
+<p>此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。</p>
+<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+  kind: Interface
+  metadata:
+    name: &quot;&lt;name&gt;&quot;
+  spec:
+    adminUp: true # 选填; boolean
+    ifname: &quot;&lt;string&gt;&quot; # 必填; string
+    managed: true # 必填; boolean
+    mtu: 576 # 选填; integer; minimum=576; maximum=9216
+    when: # 选填; object
+      state: # 选填; object
+        &quot;&lt;key&gt;&quot;: # 选填; object
+          contains: &quot;&lt;string&gt;&quot; # 选填; string
+          equals: &quot;&lt;string&gt;&quot; # 选填; string
+          exists: true # 选填; boolean
+          for: &quot;&lt;string&gt;&quot; # 选填; string
+          in: # 选填; array
+            - &quot;&lt;string&gt;&quot; # string
+          maxAge: &quot;&lt;string&gt;&quot; # 选填; string
+          status: &quot;set&quot; # 选填; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+</code></pre>
+<h2 id="字段含义与默认值">字段含义与默认值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>字段含义与默认值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.ifname</code></td>
+<td>必填现有内核设备名，例如ens18，无默认值；不存在时不创建，而记为Down/InterfaceNotFound。</td>
+</tr>
+<tr>
+<td><code>spec.managed</code></td>
+<td>管理声明，解码默认false，但JSON Schema要求显式填写。影响管理/观察信息及周边处理，不保证adminUp/MTU仅观察不变更。</td>
+</tr>
+<tr>
+<td><code>spec.adminUp</code></td>
+<td>默认false，不要求启用；true会启用已存在但关闭的link。false不表示强制关闭。</td>
+</tr>
+<tr>
+<td><code>spec.mtu</code></td>
+<td>默认0保留当前MTU；非零值须为576–9216，不同时应用。</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>启用条件，省略不设限制；state/all/any、unknown及时间条件请见共用条件参考。</td>
+</tr>
+</tbody>
+</table>
+<p>实现: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_interface.go">pkg/config/validate_interface.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/index.go">pkg/config/index.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go">pkg/controller/chain/chain.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/resourcequery/when.go">pkg/resourcequery/when.go</a></p>
+<p><a href="/examples/basic-dhcp.yaml">配置示例</a></p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+<ul>
+<li><a href="#指定条件与引用关系">指定条件与引用关系</a></li>
+<li><a href="#yaml定义">YAML定义</a></li>
+<li><a href="#字段含义与默认值">字段含义与默认值</a></li>
+</ul>
+</div>
+</aside></main>
+<footer><div class="wrap footerrow"><span>routerd · BSD 3-Clause</span><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/reference/resources/Interface.md">GitHub</a></div></footer></body></html>
