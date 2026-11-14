@@ -163,10 +163,13 @@ spec:
 <p><a href="resources/PPPoESession.html">PPPoESession</a></p>
 <h2 id="wireguardinterface">WireGuardInterface</h2>
 <p><a href="resources/WireGuardInterface.html">WireGuardInterface</a></p>
+<p>建立或設定 WireGuard 裝置，透過 wg setconf 套用完整對等端設定。位址指派與一般路由由其他資源設定。</p>
 <h2 id="wireguardpeer">WireGuardPeer</h2>
 <p><a href="resources/WireGuardPeer.html">WireGuardPeer</a></p>
+<p>定義已宣告 WireGuardInterface 上的對等端。AllowedIPs 設定 WireGuard 的加密路由；此控制器不會自動建立一般 IP 路由。</p>
 <h2 id="tailscalenode">TailscaleNode</h2>
 <p><a href="resources/TailscaleNode.html">TailscaleNode</a></p>
+<p>透過 routerd 產生的 Linux systemd oneshot 或 FreeBSD rc.d 指令稿管理 Tailscale 註冊選項，再讀取 tailscale status --json。Tailscale/Headscale 伺服器端核准仍需另行處理。</p>
 <h2 id="ipsecconnection">IPsecConnection</h2>
 <p><a href="resources/IPsecConnection.html">IPsecConnection</a></p>
 <h2 id="vrf">VRF</h2>
@@ -275,8 +278,10 @@ spec:
 <p><a href="resources/EgressRoutePolicy.html">EgressRoutePolicy</a></p>
 <h2 id="eventrule">EventRule</h2>
 <p><a href="resources/EventRule.html">EventRule</a></p>
+<p>從持久化的本機事件紀錄比對模式並產生事件，可依關聯鍵分開維護狀態。</p>
 <h2 id="derivedevent">DerivedEvent</h2>
 <p><a href="resources/DerivedEvent.html">DerivedEvent</a></p>
+<p>資源狀態條件改變時，發送成立或撤回事件。與 EventRule 不同，此處評估目前狀態而非事件序列。</p>
 <h2 id="nat44rule">NAT44Rule</h2>
 <p><a href="resources/NAT44Rule.html">NAT44Rule</a></p>
 <h2 id="nat44flowdnatpinhole">NAT44FlowDNATPinhole</h2>
@@ -307,6 +312,7 @@ spec:
 <p><a href="resources/FirewallRule.html">FirewallRule</a></p>
 <h2 id="firewalleventlog">FirewallEventLog</h2>
 <p><a href="resources/FirewallEventLog.html">FirewallEventLog</a></p>
+<p>啟用防火牆封包紀錄收集器，設定資料庫、Linux NFLOG 群組與規則產生時的紀錄選項。部分接受的篩選與封存欄位目前沒有執行期使用者。</p>
 <h2 id="hostname">Hostname</h2>
 <p><a href="resources/Hostname.html">Hostname</a></p>
 <p>管理OS主機名稱，與Router.metadata.name及資源名稱不同。</p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">

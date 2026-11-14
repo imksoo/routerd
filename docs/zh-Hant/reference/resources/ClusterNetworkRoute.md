@@ -11,6 +11,7 @@
 - pods 與 services 合計至少需要一個 CIDR，via 至少需要一個項目。僅接受 IPv4，兩個清單之間也不允許重複或重疊的網段。
 - 每個 CIDR 與 via 的組合會產生名為 <name>-pods-NN-via-NN 或 <name>-services-NN-via-NN 的 IPv4StaticRoute，編號從 1 開始。若已明確宣告相同 apiVersion、kind、name 的資源，則優先使用該資源並略過產生。
 - weight 轉換為路由 metric，並非 ECMP 流量分配權重：省略或 0 為 100；1–999 為 1000 − weight。正值越大，metric 越低；0 與 900 的 metric 相同。
+- 產生的路由亦受 IPv4StaticRoute 實作限制：FreeBSD 會輸出，但目前 Linux 流程不安裝產生的靜態路由。展開與驗證成功並不證明能正常轉送。
 
 ## YAML定義
 

@@ -236,15 +236,21 @@ spec:
 
 [WireGuardInterface](resources/WireGuardInterface.md)
 
+创建或配置 WireGuard 设备，通过 wg setconf 应用完整对等端配置。地址分配与普通路由由其他资源配置。
+
 
 ## WireGuardPeer
 
 [WireGuardPeer](resources/WireGuardPeer.md)
 
+定义已声明 WireGuardInterface 上的对等端。AllowedIPs 配置 WireGuard 的加密路由；此控制器不会自动创建普通 IP 路由。
+
 
 ## TailscaleNode
 
 [TailscaleNode](resources/TailscaleNode.md)
+
+通过 routerd 生成的 Linux systemd oneshot 或 FreeBSD rc.d 脚本管理 Tailscale 注册选项，再读取 tailscale status --json。Tailscale/Headscale 服务端批准仍需另行处理。
 
 
 ## IPsecConnection
@@ -512,10 +518,14 @@ spec:
 
 [EventRule](resources/EventRule.md)
 
+从持久化的本机事件记录匹配模式并生成事件，可按关联键分别维护状态。
+
 
 ## DerivedEvent
 
 [DerivedEvent](resources/DerivedEvent.md)
+
+资源状态条件改变时，发送成立或撤回事件。与 EventRule 不同，此处评估当前状态而非事件序列。
 
 
 ## NAT44Rule
@@ -591,6 +601,8 @@ spec:
 ## FirewallEventLog
 
 [FirewallEventLog](resources/FirewallEventLog.md)
+
+启用防火墙数据包日志收集器，配置数据库、Linux NFLOG 组与规则生成时的日志选项。部分接受的筛选与归档字段当前没有运行时使用者。
 
 
 ## Hostname

@@ -5,6 +5,14 @@
 <main class="doclayout wrap"><article class="document"><h1 id="derivedevent">DerivedEvent</h1>
 <p><a href="../resources.html#derivedevent">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Publish asserted/retracted events when conditions over resource status change. Unlike EventRule, this evaluates current status rather than an event sequence.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>topic and a nonempty inputs list are required. Inputs use the older field/equals/not_empty/any_of structure, not common resource/field sources, dependsOn or when.</li>
+<li>Current evaluation reads net.routerd.net/v1alpha1 status through Kind/name.status.field, optionally wrapped in ${...}. Strings without .status. are treated as literal values, not status references. These inputs are not checked for source existence or provided-field compatibility by ordinary status-source validation.</li>
+<li>The controller evaluates initially, on local routerd.** events other than its own, and periodically (default 5s). Transition memory and hysteresis timers restart after process restart; saved status does not restore that memory.</li>
+<li>retractWhen is validated but not read by the current evaluator. Retraction follows the inverse of emitWhen, so changing retractWhen does not alter behavior.</li>
+</ul>
 <h2 id="yaml-definition">YAML definition</h2>
 <p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
 <pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
@@ -28,9 +36,75 @@
         not_empty: true # optional; boolean
     retractWhen: &quot;any_false&quot; # optional; string; enum=[&quot;any_false&quot;, &quot;all_false&quot;]
     topic: &quot;&lt;string&gt;&quot; # Required; string
-</code></pre></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+</code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.topic</code></td>
+<td>Required base event topic. Emits <topic>.asserted when true and <topic>.retracted when false; no bare-topic event is emitted.</td>
+</tr>
+<tr>
+<td><code>spec.inputs</code></td>
+<td>Required nonempty list of predicates. emitWhen combines entries. An empty predicate object evaluates true, so write explicit conditions.</td>
+</tr>
+<tr>
+<td><code>spec.inputs[].field</code></td>
+<td>Optional string, default empty. Kind/name.status.field reads a top-level status member; missing source/member yields empty. Otherwise evaluated as a literal. Arrays become JSON strings, so equals compares the complete serialized value.</td>
+</tr>
+<tr>
+<td><code>spec.inputs[].equals</code></td>
+<td>Optional exact case-sensitive comparison, default empty means no equality comparison. With a nonempty field and neither equals nor not_empty, the implicit condition is nonblank.</td>
+</tr>
+<tr>
+<td><code>spec.inputs[].not_empty</code></td>
+<td>Default false. True rejects blank/whitespace values; when equals is also nonempty, both constraints must pass.</td>
+</tr>
+<tr>
+<td><code>spec.inputs[].any_of</code></td>
+<td>Optional OR-list of AND-groups. When nonempty, takes precedence over this input’s field/equals/not_empty. Every predicate in a group must pass; empty groups are false.</td>
+</tr>
+<tr>
+<td><code>spec.inputs[].any_of[][].field</code></td>
+<td>Group predicate field; same status/literal rules as inputs[].field.</td>
+</tr>
+<tr>
+<td><code>spec.inputs[].any_of[][].equals</code></td>
+<td>Group predicate equality; same empty/default semantics as inputs[].equals.</td>
+</tr>
+<tr>
+<td><code>spec.inputs[].any_of[][].not_empty</code></td>
+<td>Group predicate nonblank check, default false; same semantics as inputs[].not_empty.</td>
+</tr>
+<tr>
+<td><code>spec.emitWhen</code></td>
+<td>Default all_true: every input must pass. any_true: at least one input must pass. This target also determines retraction when it becomes false.</td>
+</tr>
+<tr>
+<td><code>spec.retractWhen</code></td>
+<td>Accepted values any_false (default) and all_false; currently unused after validation. Do not rely on an independent retraction predicate.</td>
+</tr>
+<tr>
+<td><code>spec.hysteresis</code></td>
+<td>Optional Go duration, default 0 for immediate transitions. A new target must persist until the timer fires, when it is rechecked; a return to the prior target cancels it. Initial state is established without waiting. Validation accepts negative durations, which fire immediately.</td>
+</tr>
+<tr>
+<td><code>spec.emitInitial</code></td>
+<td>Default false: save the initial asserted/retracted status without emitting an event. True emits the initial result once for each new controller state, including after restart.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_route.go">pkg/config/validate_route.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go">pkg/config/diagnostics.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/derived/engine.go">pkg/derived/engine.go</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
 <li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 </ul>
 </div>
 </aside></main>

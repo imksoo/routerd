@@ -236,15 +236,21 @@ routerdから読取り用のWebコンソールを公開します。設定変更�
 
 [WireGuardInterface](resources/WireGuardInterface.md)
 
+WireGuardデバイスを作成・設定し、wg setconfでピア設定全体を適用します。アドレス割当と通常の経路設定は別リソースです。
+
 
 ## WireGuardPeer
 
 [WireGuardPeer](resources/WireGuardPeer.md)
 
+宣言済みWireGuardInterfaceのピアを定義します。AllowedIPsはWireGuard内の送信先・受信元選択を設定し、このコントローラーは通常のIP経路を自動作成しません。
+
 
 ## TailscaleNode
 
 [TailscaleNode](resources/TailscaleNode.md)
+
+Linuxのsystemd oneshotまたはFreeBSDのrc.dスクリプトを生成してTailscale登録オプションを適用し、tailscale status --jsonで状態を取得します。Tailscale・Headscaleサーバー側の承認は別操作です。
 
 
 ## IPsecConnection
@@ -512,10 +518,14 @@ KubernetesのPod・ServiceネットワークへのIPv4経路を、明示した�
 
 [EventRule](resources/EventRule.md)
 
+永続化されたローカルイベント履歴のパターンからイベントを生成します。相関キーごとに状態を分離できます。
+
 
 ## DerivedEvent
 
 [DerivedEvent](resources/DerivedEvent.md)
+
+リソースの現在状態の条件が変わると、成立・取り消しイベントを発行します。EventRuleのようなイベント列の判定ではありません。
 
 
 ## NAT44Rule
@@ -591,6 +601,8 @@ KubernetesのPod・ServiceネットワークへのIPv4経路を、明示した�
 ## FirewallEventLog
 
 [FirewallEventLog](resources/FirewallEventLog.md)
+
+ファイアウォールのパケットログ収集と、保存DB・Linux NFLOGグループ・描画時のログ設定を指定します。受理される項目の一部は、現在の実行処理で使われません。
 
 
 ## Hostname

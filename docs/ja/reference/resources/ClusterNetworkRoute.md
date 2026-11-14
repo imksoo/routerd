@@ -11,6 +11,7 @@ KubernetesのPod・ServiceネットワークへのIPv4経路を、明示した�
 - podsとservicesを合わせて1件以上のCIDRと、1件以上のviaが必要です。CIDRはIPv4限定で、両リストをまたぐ重複・包含関係も拒否されます。
 - CIDRとviaの組み合わせごとに、<name>-pods-NN-via-NNまたは<name>-services-NN-via-NNというIPv4StaticRouteを生成します。番号は1始まりです。同じapiVersion・kind・nameの明示リソースがある場合、その経路を優先して生成を省略します。
 - weightはECMPの通信量配分ではなく経路メトリックです。省略・0は100、1～999は1000−weightに変換します。正の値は大きいほどメトリックが小さくなり、0と900は同じメトリックになります。
+- 生成経路にもIPv4StaticRouteの実装制限が適用されます。FreeBSDは出力しますが、現行Linuxの処理は生成された静的経路をインストールしません。展開・検証の成功だけでは転送動作の証明になりません。
 
 ## YAML定義
 

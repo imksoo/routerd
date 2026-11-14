@@ -5,6 +5,15 @@
 <main class="doclayout wrap"><article class="document"><h1 id="eventrule">EventRule</h1>
 <p><a href="../resources.html#eventrule">各资源的配置</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>从持久化的本机事件记录匹配模式并生成事件，可按关联键分别维护状态。</p>
+<h2 id="指定条件与引用关系">指定条件与引用关系</h2>
+<ul>
+<li>pattern.operator 与 emit.topic 必填。topic、topics、trigger、expected 至少提供一项，但宽松的验证不保证模式可运行：只有 expected 不构成输入列表，absence 需要 trigger/topic。不会检查主题对应的资源是否存在。</li>
+<li>输入顺序为 topics、topic、trigger。all_of 与 sequence 使用完整主题字符串匹配；any_of、window、count、throttle、debounce、absence 支持以点分隔的 *（一段）与 **（零段以上）。</li>
+<li>all_of 触发后仍保留已见主题，全部见过后每个符合事件都会再次触发。sequence 完成后重置；strict 时列表内乱序事件也会重置。window 达阈值后清空时间桶，count 达阈值后重置计数。</li>
+<li>计数、未完成序列与计时器仅存于内存，进程重启后从空状态开始。事件读取位置会持久化；新读取者从当前记录末尾开始。位置保存失败可能重复处理输入。所有规则都排除 routerd-eventrule 生成的事件，以避免连锁循环。</li>
+<li>每条规则最多保留 4096 个关联键，会移除最久未观测键的计数与计时器。window/throttle 比较输入事件时间；absence/debounce 使用进程经过时间计时。</li>
+</ul>
 <h2 id="yaml定义">YAML定义</h2>
 <p>此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。</p>
 <pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
@@ -32,9 +41,95 @@
         - &quot;&lt;string&gt;&quot; # string
       trigger: &quot;&lt;string&gt;&quot; # 选填; string
       window: &quot;&lt;string&gt;&quot; # 选填; string
-</code></pre></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
+</code></pre>
+<h2 id="字段含义与默认值">字段含义与默认值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>字段含义与默认值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.pattern</code></td>
+<td>必填的模式对象；不会拒绝所选运算符未使用的字段。</td>
+</tr>
+<tr>
+<td><code>spec.pattern.operator</code></td>
+<td>必填：all_of、any_of、sequence、window、absence、throttle、debounce 或 count，无默认值。</td>
+</tr>
+<tr>
+<td><code>spec.pattern.topic</code></td>
+<td>可选的单一输入主题，附加于 topics 后。absence 的 trigger 为空时以此作为启动主题。默认空。</td>
+</tr>
+<tr>
+<td><code>spec.pattern.topics</code></td>
+<td>可选的有序输入列表，默认空。sequence 按此顺序；all_of 要求每个完整主题都曾出现。</td>
+</tr>
+<tr>
+<td><code>spec.pattern.trigger</code></td>
+<td>可选的 absence 启动主题，优先于 topic，会启动或重新启动计时器。其他运算符的输入列表也会在 topic 后加入此值。默认空。</td>
+</tr>
+<tr>
+<td><code>spec.pattern.expected</code></td>
+<td>可选的 absence 取消主题，同键匹配时取消待处理计时器，优先于 trigger 匹配。不是普通输入主题。默认空，表示不取消。</td>
+</tr>
+<tr>
+<td><code>spec.pattern.duration</code></td>
+<td>可选 Go 时长；window/throttle/absence 默认 1m，debounce 默认 1s。专用 window/interval/quiet 优先。验证也接受零或负值，延迟行为请使用正值。</td>
+</tr>
+<tr>
+<td><code>spec.pattern.window</code></td>
+<td>window 的回溯期间，优先于 duration，均省略时为 1m。含起始边界；达阈值后清空时间桶。其他运算符不使用。</td>
+</tr>
+<tr>
+<td><code>spec.pattern.quiet</code></td>
+<td>debounce 的静默期间，优先于 duration，均省略时为 1s。每次匹配输入都重启计时器，按最后输入生成事件。</td>
+</tr>
+<tr>
+<td><code>spec.pattern.interval</code></td>
+<td>throttle 每个关联键的最短发送间隔，优先于 duration，均省略时为 1m。第一个匹配事件立即发送。</td>
+</tr>
+<tr>
+<td><code>spec.pattern.rate</code></td>
+<td>验证接受的非负整数，默认 0，但当前引擎不读取。无法控制 throttle；请使用 interval。</td>
+</tr>
+<tr>
+<td><code>spec.pattern.threshold</code></td>
+<td>window/count 的事件阈值，非负整数；省略或 0 表示 1。其他运算符不使用。</td>
+</tr>
+<tr>
+<td><code>spec.pattern.correlate_by</code></td>
+<td>可选 attributes.<key>、resource.name/kind/apiVersion 或 daemon.instance/kind 以分开状态。空值使用共享键 default。输入主题是字符串，并非 Kind/name 引用。</td>
+</tr>
+<tr>
+<td><code>spec.pattern.allow_missing_correlation</code></td>
+<td>默认 false：跳过缺少关联值的输入并增加 warningCount。true 将缺值归入空键。但 resource 对象存在而所选成员为空时，false 也会接受。</td>
+</tr>
+<tr>
+<td><code>spec.pattern.strict</code></td>
+<td>默认 false，仅供 sequence。列表内主题乱序时进度归零，该事件不会重新作为首项；忽略列表外主题。</td>
+</tr>
+<tr>
+<td><code>spec.emit</code></td>
+<td>必填的输出事件对象。严重性固定 info，resource 为此 EventRule。</td>
+</tr>
+<tr>
+<td><code>spec.emit.topic</code></td>
+<td>必填且不可为空的输出事件类型，无默认值。规则引擎不会消费自身生成的事件。</td>
+</tr>
+<tr>
+<td><code>spec.emit.attributes</code></td>
+<td>可选字符串映射。展开 ${event.type}、${correlation}、${count}、${resource.name/kind/apiVersion}、${attributes.<key>}；无法解析的占位符保持原样。正 count 与非空 correlation 会覆盖同名输出键。</td>
+</tr>
+</tbody>
+</table>
+<p>实现: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_route.go">pkg/config/validate_route.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/eventrule/engine.go">pkg/eventrule/engine.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/eventconsumer/consumer.go">pkg/eventconsumer/consumer.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/bus/bus.go">pkg/bus/bus.go</a></p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
 <ul>
+<li><a href="#指定条件与引用关系">指定条件与引用关系</a></li>
 <li><a href="#yaml定义">YAML定义</a></li>
+<li><a href="#字段含义与默认值">字段含义与默认值</a></li>
 </ul>
 </div>
 </aside></main>

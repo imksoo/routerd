@@ -11,6 +11,7 @@ Declare IPv4 routes to Kubernetes Pod and Service networks through explicitly co
 - At least one CIDR across pods and services, and at least one via entry, are required. All CIDRs must be IPv4; duplicates and overlapping prefixes are rejected across both lists.
 - Each CIDR × via pair expands to an IPv4StaticRoute named <name>-pods-NN-via-NN or <name>-services-NN-via-NN (one-based indices). An explicitly declared resource with the same API version, kind and name takes precedence over the generated route.
 - weight becomes a route metric, not an ECMP traffic-share weight: omitted/0 → 100; 1–999 → 1000 − weight. Larger positive weights therefore produce lower metrics; weight 0 has the same metric as 900.
+- Generated routes inherit the implementation limits of IPv4StaticRoute: FreeBSD renders them, but the current Linux path does not install generated static routes. Expansion and successful validation alone do not prove forwarding works.
 
 ## YAML definition
 

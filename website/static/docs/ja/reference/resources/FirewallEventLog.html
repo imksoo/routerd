@@ -5,6 +5,13 @@
 <main class="doclayout wrap"><article class="document"><h1 id="firewalleventlog">FirewallEventLog</h1>
 <p><a href="../resources.html#firewalleventlog">リソース別の設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: firewall.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>ファイアウォールのパケットログ収集と、保存DB・Linux NFLOGグループ・描画時のログ設定を指定します。受理される項目の一部は、現在の実行処理で使われません。</p>
+<h2 id="指定条件と参照関係">指定条件と参照関係</h2>
+<ul>
+<li>enabledの既定はfalseです。LinuxはNFLOG、FreeBSDはpflog0から収集します。これだけで全許可・拒否ルールを記録するわけではなく、FirewallRule.logとFirewallPolicy.logDenyも記録対象を決めます。</li>
+<li>有効なリソースは1件にしてください。描画設定は最初の有効リソースを使い、サービス生成は共通のrouterd-firewall-logger名を使います。名前を増やしても独立した収集プロセスにはなりません。</li>
+<li>fromZones・toZonesは既存FirewallZone名またはself、rulesはFirewallRule/nameまたは裸のルール名、sinksはLogSink/nameまたは裸の出力先名、retentionはLogRetention/nameまたは裸の名前です。これらは実行時の絞り込み・転送・保持ポリシー選択に使われませんが、参照検証は行います。</li>
+</ul>
 <h2 id="yaml定義">YAML定義</h2>
 <p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
 <pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
@@ -32,9 +39,87 @@
       - &quot;&lt;string&gt;&quot; # string
     toZones: # 任意; array
       - &quot;&lt;string&gt;&quot; # string
-</code></pre></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
+</code></pre>
+<h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>項目の意味と既定値</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.enabled</code></td>
+<td>既定falseです。trueで収集サービスとグループログ設定を有効にし、現行のサービス描画ではDPI分類ヘルパーも要求します。</td>
+</tr>
+<tr>
+<td><code>spec.path</code></td>
+<td>SQLite DBのパスです。既定はLinuxで/var/lib/routerd/firewall-logs.db、FreeBSDで/var/db/routerd/firewall-logs.dbです。JSON行形式の出力ファイルではありません。</td>
+</tr>
+<tr>
+<td><code>spec.events</code></td>
+<td>deny・allow・rateLimit・connLimitを受け付け、既定は空です。検証のみで、現在の収集入力・生成ログの絞り込みには使いません。</td>
+</tr>
+<tr>
+<td><code>spec.fromZones</code></td>
+<td>既定は空です。送信元としてFirewallZone名またはselfを検証しますが、実行時のログ絞り込みには使いません。</td>
+</tr>
+<tr>
+<td><code>spec.fromZones[]</code></td>
+<td>既存FirewallZoneのmetadata.nameまたは特別なselfです。Kind/name形式ではなく、現在の絞り込み効果はありません。</td>
+</tr>
+<tr>
+<td><code>spec.toZones</code></td>
+<td>既定は空です。宛先としてFirewallZone名またはselfを検証しますが、実行時のログ絞り込みには使いません。</td>
+</tr>
+<tr>
+<td><code>spec.rules</code></td>
+<td>既定は空です。指定時は既存FirewallRuleの裸の名前またはFirewallRule/nameが必要ですが、現在の記録ルール選択には使いません。対象ルールのFirewallRule.logを設定してください。</td>
+</tr>
+<tr>
+<td><code>spec.sampleRate</code></td>
+<td>0以上の整数で既定は0ですが、収集・描画は使用しません。対応する描画制御にはlog.acceptSampleRate・log.dropSampleRateを使います。</td>
+</tr>
+<tr>
+<td><code>spec.sinks</code></td>
+<td>既定は空です。既存LogSinkへの参照は検証しますが、収集処理は転送しません。出力先はpathのDBです。</td>
+</tr>
+<tr>
+<td><code>spec.retention</code></td>
+<td>任意の既存LogRetention参照で、既定は空です。現在の保持ポリシー選択には使いません。本DBの保持処理にはLogRetention側でfirewallEventsを指定してください。</td>
+</tr>
+<tr>
+<td><code>spec.nflogGroup</code></td>
+<td>0～65535の整数です。Linuxでは省略・0をグループ1にし、nftablesと収集で合わせます。FreeBSDはpflog0を使い、このグループを使いません。</td>
+</tr>
+<tr>
+<td><code>spec.log</code></td>
+<td>任意の描画ログ設定です。省略項目は0・falseになります。未使用のトップレベルのイベント・ゾーン・ルール絞り込みを実現する項目ではありません。</td>
+</tr>
+<tr>
+<td><code>spec.log.acceptSampleRate</code></td>
+<td>既定0は暗黙許可の追加ログを無効にします。nftablesは正のNで対象パケットの約1/Nを記録し、1はすべてです。PFは正数を有効化の切替としてのみ使い、1/Nの間引きはしません。明示的なFirewallRule.logとは別です。</td>
+</tr>
+<tr>
+<td><code>spec.log.dropSampleRate</code></td>
+<td>既定0です。nftablesは既に有効な暗黙拒否ログに対し0・1で全記録、N&gt;1で約1/Nを記録します。この値自体ではFirewallPolicy.logDenyを有効にしません。PFは使いません。</td>
+</tr>
+<tr>
+<td><code>spec.log.copyRange</code></td>
+<td>0以上のNFLOGコピー長（バイト）です。既定0はnftablesのsnaplen引数を省略し、正数でコピー長を制限します。PF描画では使いません。</td>
+</tr>
+<tr>
+<td><code>spec.log.reject</code></td>
+<td>既定falseですが、現行の描画・収集は読みません。ルールの判定変更やrejectログの有効化にはなりません。</td>
+</tr>
+</tbody>
+</table>
+<p>実装: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_firewall.go">pkg/config/validate_firewall.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/nftables.go">pkg/render/nftables.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/pf.go">pkg/render/pf.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/firewall_logger.go">pkg/render/firewall_logger.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/freebsd_rcd.go">pkg/render/freebsd_rcd.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/dpi_systemd.go">pkg/render/dpi_systemd.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/system.go">pkg/controller/chain/system.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/logretention.go">pkg/controller/chain/logretention.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/platform/platform.go">pkg/platform/platform.go</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
 <ul>
+<li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
 <li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
 </ul>
 </div>
 </aside></main>

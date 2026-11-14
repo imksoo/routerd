@@ -236,15 +236,21 @@ Names an existing OS interface so other resources can refer to its logical metad
 
 [WireGuardInterface](resources/WireGuardInterface.md)
 
+Create or configure a WireGuard device and apply its complete peer configuration with wg setconf. Address assignment and ordinary routing are separate resources.
+
 
 ## WireGuardPeer
 
 [WireGuardPeer](resources/WireGuardPeer.md)
 
+Define a peer on a declared WireGuardInterface. Its AllowedIPs configure WireGuard cryptographic routing; they do not automatically create ordinary IP routes in this controller.
+
 
 ## TailscaleNode
 
 [TailscaleNode](resources/TailscaleNode.md)
+
+Manage Tailscale enrollment options through a routerd-generated systemd oneshot on Linux or rc.d script on FreeBSD, then observe tailscale status --json. Tailscale/Headscale server-side approvals remain separate.
 
 
 ## IPsecConnection
@@ -512,10 +518,14 @@ Install an IPv4 unicast or blackhole route, optionally resolving device and gate
 
 [EventRule](resources/EventRule.md)
 
+Derive an event from patterns in the persisted local event journal, with optional per-correlation state.
+
 
 ## DerivedEvent
 
 [DerivedEvent](resources/DerivedEvent.md)
+
+Publish asserted/retracted events when conditions over resource status change. Unlike EventRule, this evaluates current status rather than an event sequence.
 
 
 ## NAT44Rule
@@ -591,6 +601,8 @@ Install an IPv4 unicast or blackhole route, optionally resolving device and gate
 ## FirewallEventLog
 
 [FirewallEventLog](resources/FirewallEventLog.md)
+
+Enable the firewall packet-log collector and configure its database, Linux NFLOG group and renderer logging options. Several accepted filter/archive fields currently have no runtime consumer.
 
 
 ## Hostname

@@ -163,10 +163,13 @@ spec:
 <p><a href="resources/PPPoESession.html">PPPoESession</a></p>
 <h2 id="wireguardinterface">WireGuardInterface</h2>
 <p><a href="resources/WireGuardInterface.html">WireGuardInterface</a></p>
+<p>WireGuardデバイスを作成・設定し、wg setconfでピア設定全体を適用します。アドレス割当と通常の経路設定は別リソースです。</p>
 <h2 id="wireguardpeer">WireGuardPeer</h2>
 <p><a href="resources/WireGuardPeer.html">WireGuardPeer</a></p>
+<p>宣言済みWireGuardInterfaceのピアを定義します。AllowedIPsはWireGuard内の送信先・受信元選択を設定し、このコントローラーは通常のIP経路を自動作成しません。</p>
 <h2 id="tailscalenode">TailscaleNode</h2>
 <p><a href="resources/TailscaleNode.html">TailscaleNode</a></p>
+<p>Linuxのsystemd oneshotまたはFreeBSDのrc.dスクリプトを生成してTailscale登録オプションを適用し、tailscale status --jsonで状態を取得します。Tailscale・Headscaleサーバー側の承認は別操作です。</p>
 <h2 id="ipsecconnection">IPsecConnection</h2>
 <p><a href="resources/IPsecConnection.html">IPsecConnection</a></p>
 <h2 id="vrf">VRF</h2>
@@ -275,8 +278,10 @@ spec:
 <p><a href="resources/EgressRoutePolicy.html">EgressRoutePolicy</a></p>
 <h2 id="eventrule">EventRule</h2>
 <p><a href="resources/EventRule.html">EventRule</a></p>
+<p>永続化されたローカルイベント履歴のパターンからイベントを生成します。相関キーごとに状態を分離できます。</p>
 <h2 id="derivedevent">DerivedEvent</h2>
 <p><a href="resources/DerivedEvent.html">DerivedEvent</a></p>
+<p>リソースの現在状態の条件が変わると、成立・取り消しイベントを発行します。EventRuleのようなイベント列の判定ではありません。</p>
 <h2 id="nat44rule">NAT44Rule</h2>
 <p><a href="resources/NAT44Rule.html">NAT44Rule</a></p>
 <h2 id="nat44flowdnatpinhole">NAT44FlowDNATPinhole</h2>
@@ -307,6 +312,7 @@ spec:
 <p><a href="resources/FirewallRule.html">FirewallRule</a></p>
 <h2 id="firewalleventlog">FirewallEventLog</h2>
 <p><a href="resources/FirewallEventLog.html">FirewallEventLog</a></p>
+<p>ファイアウォールのパケットログ収集と、保存DB・Linux NFLOGグループ・描画時のログ設定を指定します。受理される項目の一部は、現在の実行処理で使われません。</p>
 <h2 id="hostname">Hostname</h2>
 <p><a href="resources/Hostname.html">Hostname</a></p>
 <p>OSのホスト名を管理します。Router.metadata.nameや各リソース名とは別です。</p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">

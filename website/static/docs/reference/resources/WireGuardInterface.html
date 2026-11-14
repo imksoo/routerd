@@ -5,6 +5,14 @@
 <main class="doclayout wrap"><article class="document"><h1 id="wireguardinterface">WireGuardInterface</h1>
 <p><a href="../resources.html#wireguardinterface">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Create or configure a WireGuard device and apply its complete peer configuration with wg setconf. Address assignment and ordinary routing are separate resources.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>Supply privateKey or privateKeyFile for runtime application; otherwise the interface remains Pending/PrivateKeyMissing. They are not mutually exclusive: inline privateKey wins, but a supplied privateKeyFile is still checked/generated during apply.</li>
+<li>Static WireGuardPeer.interface must reference this resource by metadata.name, not ifname. Imported peers are merged by Kind/name; later sources replace earlier generated peers and explicit WireGuardPeer resources replace generated peers with the same name.</li>
+<li>For enrollment direct SAMPeerGroup use, the direct group must be the final peersFrom entry and a nonoptional SAMRRSet must precede it. Runtime also requires usable RR peers for the same enrollment policy; unavailable or incompatible direct peers do not suppress the RR fallback.</li>
+<li>listenPort reserves that UDP port against other configured listeners. Linux additionally inserts an INPUT UDP accept rule when a positive port is configured. Up means interface configuration, not a successful peer handshake.</li>
+</ul>
 <h2 id="yaml-definition">YAML definition</h2>
 <p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
 <pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
@@ -23,9 +31,59 @@
     privateKeyFile: &quot;&lt;string&gt;&quot; # optional; string
     selfNodeRef: &quot;&lt;string&gt;&quot; # optional; string
 </code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.ifname</code></td>
+<td>OS device name; defaults to metadata.name. The validator currently checks metadata.name for whitespace, slash and a 15-character limit even when ifname is supplied; it does not apply the same checks to ifname.</td>
+</tr>
+<tr>
+<td><code>spec.selfNodeRef</code></td>
+<td>Local SAM node identity to exclude from imported peers; defaults to Router.metadata.name. This is a nodeRef value, not a Kind/name status reference.</td>
+</tr>
+<tr>
+<td><code>spec.privateKey</code></td>
+<td>Inline WireGuard private key, default empty; takes precedence over privateKeyFile. Use the WireGuard base64 key format. Configuration validation does not prove key validity; wg or file-key validation can fail during application.</td>
+</tr>
+<tr>
+<td><code>spec.privateKeyFile</code></td>
+<td>Optional key-file path on the router. On real apply, a missing file is generated with mode 0600 (new parent directories 0700); existing files must contain a valid 32-byte base64 private key. Empty/unreadable files fail rather than being overwritten. Not an environment file.</td>
+</tr>
+<tr>
+<td><code>spec.listenPort</code></td>
+<td>Optional UDP listening port 1–65535. Omitted/0 does not emit ListenPort in wg configuration, leaving WireGuard to choose/retain its port; routerd adds no explicit port exception for 0.</td>
+</tr>
+<tr>
+<td><code>spec.mtu</code></td>
+<td>Optional MTU 576–9216. Omitted/0 leaves the device MTU unchanged or at the OS creation default; no wg-quick MTU calculation is performed here.</td>
+</tr>
+<tr>
+<td><code>spec.peersFrom</code></td>
+<td>Optional ordered list of SAM peer sources, default empty. Missing nonoptional sources leave the interface Pending/PeersFromPending; static peers do not bypass that gate. Empty resolved lists are distinct from missing sources.</td>
+</tr>
+<tr>
+<td><code>spec.peersFrom[].resource</code></td>
+<td>Required source as SAMNodeSet/name, SAMPeerGroup/name, SAMEnrollmentPolicy/name or SAMRRSet/name; no field selector. Syntax is validated here; source lookup happens during peer resolution. Self nodes and nodes without WireGuard data are skipped.</td>
+</tr>
+<tr>
+<td><code>spec.peersFrom[].optional</code></td>
+<td>Default false. True tolerates a missing source without making the interface pending; it does not suppress malformed source errors. Enrollment direct groups have additional opportunistic fallback rules described above.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_interface.go">pkg/config/validate_interface.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/index.go">pkg/config/index.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/wireguard.go">pkg/controller/chain/wireguard.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/wireguard/wireguard.go">pkg/wireguard/wireguard.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/firewall_holes.go">pkg/render/firewall_holes.go</a></p>
 <p><a href="/examples/cloudedge-aws-rr-dynamic-leaf.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
 <li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 </ul>
 </div>
 </aside></main>

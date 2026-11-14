@@ -163,10 +163,13 @@ spec:
 <p><a href="resources/PPPoESession.html">PPPoESession</a></p>
 <h2 id="wireguardinterface">WireGuardInterface</h2>
 <p><a href="resources/WireGuardInterface.html">WireGuardInterface</a></p>
+<p>Create or configure a WireGuard device and apply its complete peer configuration with wg setconf. Address assignment and ordinary routing are separate resources.</p>
 <h2 id="wireguardpeer">WireGuardPeer</h2>
 <p><a href="resources/WireGuardPeer.html">WireGuardPeer</a></p>
+<p>Define a peer on a declared WireGuardInterface. Its AllowedIPs configure WireGuard cryptographic routing; they do not automatically create ordinary IP routes in this controller.</p>
 <h2 id="tailscalenode">TailscaleNode</h2>
 <p><a href="resources/TailscaleNode.html">TailscaleNode</a></p>
+<p>Manage Tailscale enrollment options through a routerd-generated systemd oneshot on Linux or rc.d script on FreeBSD, then observe tailscale status --json. Tailscale/Headscale server-side approvals remain separate.</p>
 <h2 id="ipsecconnection">IPsecConnection</h2>
 <p><a href="resources/IPsecConnection.html">IPsecConnection</a></p>
 <h2 id="vrf">VRF</h2>
@@ -275,8 +278,10 @@ spec:
 <p><a href="resources/EgressRoutePolicy.html">EgressRoutePolicy</a></p>
 <h2 id="eventrule">EventRule</h2>
 <p><a href="resources/EventRule.html">EventRule</a></p>
+<p>Derive an event from patterns in the persisted local event journal, with optional per-correlation state.</p>
 <h2 id="derivedevent">DerivedEvent</h2>
 <p><a href="resources/DerivedEvent.html">DerivedEvent</a></p>
+<p>Publish asserted/retracted events when conditions over resource status change. Unlike EventRule, this evaluates current status rather than an event sequence.</p>
 <h2 id="nat44rule">NAT44Rule</h2>
 <p><a href="resources/NAT44Rule.html">NAT44Rule</a></p>
 <h2 id="nat44flowdnatpinhole">NAT44FlowDNATPinhole</h2>
@@ -307,6 +312,7 @@ spec:
 <p><a href="resources/FirewallRule.html">FirewallRule</a></p>
 <h2 id="firewalleventlog">FirewallEventLog</h2>
 <p><a href="resources/FirewallEventLog.html">FirewallEventLog</a></p>
+<p>Enable the firewall packet-log collector and configure its database, Linux NFLOG group and renderer logging options. Several accepted filter/archive fields currently have no runtime consumer.</p>
 <h2 id="hostname">Hostname</h2>
 <p><a href="resources/Hostname.html">Hostname</a></p>
 <p>Manages the OS hostname, separately from Router.metadata.name and resource names.</p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">

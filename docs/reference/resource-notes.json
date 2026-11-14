@@ -1818,6 +1818,12 @@
         "weightはECMPの通信量配分ではなく経路メトリックです。省略・0は100、1～999は1000−weightに変換します。正の値は大きいほどメトリックが小さくなり、0と900は同じメトリックになります。",
         "weight 轉換為路由 metric，並非 ECMP 流量分配權重：省略或 0 為 100；1–999 為 1000 − weight。正值越大，metric 越低；0 與 900 的 metric 相同。",
         "weight 转换为路由 metric，并非 ECMP 流量分配权重：省略或 0 为 100；1–999 为 1000 − weight。正值越大，metric 越低；0 与 900 的 metric 相同。"
+      ],
+      [
+        "Generated routes inherit the implementation limits of IPv4StaticRoute: FreeBSD renders them, but the current Linux path does not install generated static routes. Expansion and successful validation alone do not prove forwarding works.",
+        "生成経路にもIPv4StaticRouteの実装制限が適用されます。FreeBSDは出力しますが、現行Linuxの処理は生成された静的経路をインストールしません。展開・検証の成功だけでは転送動作の証明になりません。",
+        "產生的路由亦受 IPv4StaticRoute 實作限制：FreeBSD 會輸出，但目前 Linux 流程不安裝產生的靜態路由。展開與驗證成功並不證明能正常轉送。",
+        "生成的路由也受 IPv4StaticRoute 实现限制：FreeBSD 会输出，但目前 Linux 流程不安装生成的静态路由。展开与验证成功并不证明能正常转发。"
       ]
     ],
     "fields": {
@@ -1983,6 +1989,849 @@
       "pkg/resourcequery/resourcequery.go",
       "pkg/controller/chain/phase2.go",
       "pkg/controller/chain/ipv4_main_routes.go"
+    ]
+  },
+  "IPv4StaticRoute": {
+    "purpose": [
+      "Declare a static IPv4 route with a literal next hop and logical output interface.",
+      "固定ネクストホップと論理インターフェースで宣言するIPv4の静的経路です。",
+      "以固定下一跳與邏輯輸出介面宣告 IPv4 靜態路由。",
+      "以固定下一跳与逻辑输出接口声明 IPv4 静态路由。"
+    ],
+    "rules": [
+      [
+        "destination, via and interface are required. There are no dynamic status sources or per-resource activation/dependency fields on this kind.",
+        "destination・via・interfaceは必須です。このKindには動的な状態参照やリソース単位の有効化・依存条件フィールドはありません。",
+        "destination、via 與 interface 必填。此 Kind 沒有動態狀態來源或個別資源的啟用／相依條件欄位。",
+        "destination、via 与 interface 必填。此 Kind 没有动态状态来源或单个资源的启用／依赖条件字段。"
+      ],
+      [
+        "FreeBSD renders rc.conf static-route entries. This is not a standalone Linux route installer: the current Linux code declares route artifacts but does not render or install this kind. Use IPv4Route for an actively reconciled Linux IPv4 route.",
+        "FreeBSDではrc.confの静的経路項目を生成します。現行LinuxコードにはこのKindを描画・インストールする単独の処理がなく、経路成果物を宣言するだけです。Linuxで能動的に再適用するIPv4経路にはIPv4Routeを使用してください。",
+        "FreeBSD 會產生 rc.conf 靜態路由項目。目前 Linux 程式碼僅宣告路由產物，沒有描繪或安裝此 Kind 的獨立流程。Linux 上需持續協調的 IPv4 路由請使用 IPv4Route。",
+        "FreeBSD 会生成 rc.conf 静态路由条目。目前 Linux 代码仅声明路由产物，没有渲染或安装此 Kind 的独立流程。Linux 上需持续协调的 IPv4 路由请使用 IPv4Route。"
+      ]
+    ],
+    "fields": {
+      "destination": [
+        "Required IPv4 CIDR. The default route is 0.0.0.0/0; the literal word default is rejected by validation.",
+        "必須のIPv4 CIDRです。デフォルト経路は0.0.0.0/0で指定し、defaultという文字列は検証で拒否されます。",
+        "必填的 IPv4 CIDR。預設路由使用 0.0.0.0/0；驗證不接受 default 字串。",
+        "必填的 IPv4 CIDR。默认路由使用 0.0.0.0/0；验证不接受 default 字符串。"
+      ],
+      "via": [
+        "Required bare IPv4 next-hop address, not a CIDR or resource reference. No default.",
+        "必須のIPv4ネクストホップアドレスです。CIDRやリソース参照は指定できず、既定値はありません。",
+        "必填的純 IPv4 下一跳位址，不接受 CIDR 或資源參照，沒有預設值。",
+        "必填的纯 IPv4 下一跳地址，不接受 CIDR 或资源引用，没有默认值。"
+      ],
+      "interface": [
+        "Required logical interface name declared in the same Router, resolved through the configuration interface index. Do not substitute an undeclared OS name.",
+        "同じRouterで宣言した論理インターフェース名が必須です。設定のインターフェース索引で解決するため、未宣言のOS名では代用できません。",
+        "必填，為同一 Router 內宣告的邏輯介面名稱，透過設定的介面索引解析，不可替換為未宣告的 OS 名稱。",
+        "必填，为同一 Router 内声明的逻辑接口名称，通过配置的接口索引解析，不可替换为未声明的 OS 名称。"
+      ],
+      "metric": [
+        "Optional integer, schema minimum 0, decoded default 0. FreeBSD static-route rendering does not emit this field. Declaring it does not make the Linux installer described above exist.",
+        "スキーマ上は0以上の任意の整数で、デコード時の既定は0です。FreeBSDの静的経路出力には含めません。指定しても前述のLinuxのインストール処理が有効になるわけではありません。",
+        "選用整數，結構描述最小值為 0，解碼預設值為 0。FreeBSD 靜態路由不輸出此欄位。設定它不會啟用上述不存在的 Linux 安裝流程。",
+        "可选整数，模式最小值为 0，解码默认值为 0。FreeBSD 静态路由不输出此字段。设置它不会启用上述不存在的 Linux 安装流程。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_wan.go",
+      "pkg/config/validate.go",
+      "pkg/render/freebsd.go",
+      "pkg/apply/artifacts.go",
+      "pkg/controller/chain/ipv4_main_routes.go"
+    ]
+  },
+  "IPv6StaticRoute": {
+    "purpose": [
+      "Declare a static IPv6 route with a literal next hop and logical output interface.",
+      "固定ネクストホップと論理インターフェースで宣言するIPv6の静的経路です。",
+      "以固定下一跳與邏輯輸出介面宣告 IPv6 靜態路由。",
+      "以固定下一跳与逻辑输出接口声明 IPv6 静态路由。"
+    ],
+    "rules": [
+      [
+        "destination, via and interface are required. There are no dynamic status sources or per-resource activation/dependency fields on this kind.",
+        "destination・via・interfaceは必須です。このKindには動的な状態参照やリソース単位の有効化・依存条件フィールドはありません。",
+        "destination、via 與 interface 必填。此 Kind 沒有動態狀態來源或個別資源的啟用／相依條件欄位。",
+        "destination、via 与 interface 必填。此 Kind 没有动态状态来源或单个资源的启用／依赖条件字段。"
+      ],
+      [
+        "FreeBSD renders rc.conf static-route entries. This is not a standalone Linux route installer: the current Linux code declares route artifacts but does not render or install this kind. Use IPv4Route for an actively reconciled Linux IPv4 route.",
+        "FreeBSDではrc.confの静的経路項目を生成します。現行LinuxコードにはこのKindを描画・インストールする単独の処理がなく、経路成果物を宣言するだけです。Linuxで能動的に再適用するIPv4経路にはIPv4Routeを使用してください。",
+        "FreeBSD 會產生 rc.conf 靜態路由項目。目前 Linux 程式碼僅宣告路由產物，沒有描繪或安裝此 Kind 的獨立流程。Linux 上需持續協調的 IPv4 路由請使用 IPv4Route。",
+        "FreeBSD 会生成 rc.conf 静态路由条目。目前 Linux 代码仅声明路由产物，没有渲染或安装此 Kind 的独立流程。Linux 上需持续协调的 IPv4 路由请使用 IPv4Route。"
+      ],
+      [
+        "For a link-local next hop beginning fe80:, FreeBSD appends %<OS-interface> when no scope is present. The logical interface is resolved before adding this scope.",
+        "fe80:で始まるリンクローカルのネクストホップにスコープ指定がない場合、FreeBSDの出力では%<OSインターフェース名>を補います。論理名をOS名に解決してから追加します。",
+        "下一跳以 fe80: 開頭且未指定作用域時，FreeBSD 輸出會補上 %<OS介面名稱>，先解析邏輯介面名稱再加入作用域。",
+        "下一跳以 fe80: 开头且未指定作用域时，FreeBSD 输出会补上 %<OS接口名称>，先解析逻辑接口名称再加入作用域。"
+      ]
+    ],
+    "fields": {
+      "destination": [
+        "Required IPv6 CIDR. The default route is ::/0; the literal word default is rejected by validation.",
+        "必須のIPv6 CIDRです。デフォルト経路は::/0で指定し、defaultという文字列は検証で拒否されます。",
+        "必填的 IPv6 CIDR。預設路由使用 ::/0；驗證不接受 default 字串。",
+        "必填的 IPv6 CIDR。默认路由使用 ::/0；验证不接受 default 字符串。"
+      ],
+      "via": [
+        "Required bare IPv6 next-hop address, not a CIDR or resource reference. No default.",
+        "必須のIPv6ネクストホップアドレスです。CIDRやリソース参照は指定できず、既定値はありません。",
+        "必填的純 IPv6 下一跳位址，不接受 CIDR 或資源參照，沒有預設值。",
+        "必填的纯 IPv6 下一跳地址，不接受 CIDR 或资源引用，没有默认值。"
+      ],
+      "interface": [
+        "Required logical interface name declared in the same Router, resolved through the configuration interface index. Do not substitute an undeclared OS name.",
+        "同じRouterで宣言した論理インターフェース名が必須です。設定のインターフェース索引で解決するため、未宣言のOS名では代用できません。",
+        "必填，為同一 Router 內宣告的邏輯介面名稱，透過設定的介面索引解析，不可替換為未宣告的 OS 名稱。",
+        "必填，为同一 Router 内声明的逻辑接口名称，通过配置的接口索引解析，不可替换为未声明的 OS 名称。"
+      ],
+      "metric": [
+        "Optional integer, schema minimum 0, decoded default 0. FreeBSD static-route rendering does not emit this field. Declaring it does not make the Linux installer described above exist.",
+        "スキーマ上は0以上の任意の整数で、デコード時の既定は0です。FreeBSDの静的経路出力には含めません。指定しても前述のLinuxのインストール処理が有効になるわけではありません。",
+        "選用整數，結構描述最小值為 0，解碼預設值為 0。FreeBSD 靜態路由不輸出此欄位。設定它不會啟用上述不存在的 Linux 安裝流程。",
+        "可选整数，模式最小值为 0，解码默认值为 0。FreeBSD 静态路由不输出此字段。设置它不会启用上述不存在的 Linux 安装流程。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_wan.go",
+      "pkg/config/validate.go",
+      "pkg/render/freebsd.go",
+      "pkg/apply/artifacts.go",
+      "pkg/controller/chain/ipv4_main_routes.go"
+    ]
+  },
+  "WireGuardInterface": {
+    "purpose": [
+      "Create or configure a WireGuard device and apply its complete peer configuration with wg setconf. Address assignment and ordinary routing are separate resources.",
+      "WireGuardデバイスを作成・設定し、wg setconfでピア設定全体を適用します。アドレス割当と通常の経路設定は別リソースです。",
+      "建立或設定 WireGuard 裝置，透過 wg setconf 套用完整對等端設定。位址指派與一般路由由其他資源設定。",
+      "创建或配置 WireGuard 设备，通过 wg setconf 应用完整对等端配置。地址分配与普通路由由其他资源配置。"
+    ],
+    "rules": [
+      [
+        "Supply privateKey or privateKeyFile for runtime application; otherwise the interface remains Pending/PrivateKeyMissing. They are not mutually exclusive: inline privateKey wins, but a supplied privateKeyFile is still checked/generated during apply.",
+        "実行時の適用にはprivateKeyまたはprivateKeyFileが必要で、どちらもなければPending/PrivateKeyMissingです。排他ではなくprivateKeyを優先しますが、併記したprivateKeyFileも適用時に確認・生成します。",
+        "執行時需提供 privateKey 或 privateKeyFile，否則維持 Pending/PrivateKeyMissing。兩者並非互斥：優先使用直接指定的鍵，但套用時仍會檢查或建立 privateKeyFile。",
+        "运行时需提供 privateKey 或 privateKeyFile，否则维持 Pending/PrivateKeyMissing。两者并非互斥：优先使用直接指定的密钥，但应用时仍会检查或创建 privateKeyFile。"
+      ],
+      [
+        "Static WireGuardPeer.interface must reference this resource by metadata.name, not ifname. Imported peers are merged by Kind/name; later sources replace earlier generated peers and explicit WireGuardPeer resources replace generated peers with the same name.",
+        "静的WireGuardPeer.interfaceはifnameではなく本リソースのmetadata.nameを参照します。取り込むピアはKind/nameで統合し、後の参照元が先の生成ピアを、明示的なWireGuardPeerが同名の生成ピアを置き換えます。",
+        "靜態 WireGuardPeer.interface 參照此資源的 metadata.name，而非 ifname。匯入的對等端依 Kind/name 合併；較後來源覆蓋較早來源，明確宣告的同名 WireGuardPeer 覆蓋產生的對等端。",
+        "静态 WireGuardPeer.interface 引用此资源的 metadata.name，而非 ifname。导入的对等端按 Kind/name 合并；较后来源覆盖较早来源，明确声明的同名 WireGuardPeer 覆盖生成的对等端。"
+      ],
+      [
+        "For enrollment direct SAMPeerGroup use, the direct group must be the final peersFrom entry and a nonoptional SAMRRSet must precede it. Runtime also requires usable RR peers for the same enrollment policy; unavailable or incompatible direct peers do not suppress the RR fallback.",
+        "登録に基づくdirect SAMPeerGroupはpeersFromの最後に置き、その前にoptionalでないSAMRRSetが必要です。実行時は同じ登録ポリシーの利用可能なRRピアも必要で、direct側が利用不能・非互換でもRRピアを抑止しません。",
+        "使用註冊式 direct SAMPeerGroup 時，必須放在 peersFrom 最後，前方須有非 optional 的 SAMRRSet。執行時也需相同註冊原則的可用 RR 對等端；direct 不可用或不相容時仍保留 RR 連線。",
+        "使用注册式 direct SAMPeerGroup 时，必须放在 peersFrom 最后，前方须有非 optional 的 SAMRRSet。运行时也需相同注册策略的可用 RR 对等端；direct 不可用或不兼容时仍保留 RR 连接。"
+      ],
+      [
+        "listenPort reserves that UDP port against other configured listeners. Linux additionally inserts an INPUT UDP accept rule when a positive port is configured. Up means interface configuration, not a successful peer handshake.",
+        "listenPortは他の設定済み待受と重複できません。Linuxでは正のポート指定時にINPUTのUDP許可規則も追加します。Upはインターフェース設定を示し、ピアのハンドシェイク成功を保証しません。",
+        "listenPort 會保留該 UDP 埠，不可與其他設定的監聽衝突。Linux 在指定正數埠時也會加入 INPUT UDP 允許規則。Up 表示介面已設定，不保證對等端交握成功。",
+        "listenPort 会保留该 UDP 端口，不可与其他配置的监听冲突。Linux 在指定正数端口时也会加入 INPUT UDP 允许规则。Up 表示接口已配置，不保证对等端握手成功。"
+      ]
+    ],
+    "fields": {
+      "ifname": [
+        "OS device name; defaults to metadata.name. The validator currently checks metadata.name for whitespace, slash and a 15-character limit even when ifname is supplied; it does not apply the same checks to ifname.",
+        "OSデバイス名です。既定はmetadata.nameです。現行検証はifname指定時もmetadata.nameの空白・スラッシュ・15文字上限を確認し、ifname自体には同じ検査を行いません。",
+        "OS 裝置名稱，預設 metadata.name。目前即使指定 ifname，驗證仍檢查 metadata.name 的空白、斜線及 15 字元上限，未對 ifname 套用相同檢查。",
+        "OS 设备名称，默认 metadata.name。目前即使指定 ifname，验证仍检查 metadata.name 的空白、斜线及 15 字符上限，未对 ifname 应用相同检查。"
+      ],
+      "selfNodeRef": [
+        "Local SAM node identity to exclude from imported peers; defaults to Router.metadata.name. This is a nodeRef value, not a Kind/name status reference.",
+        "取り込みから除外する自身のSAMノード識別子です。既定はRouter.metadata.nameで、Kind/name形式の状態参照ではなくnodeRefの値です。",
+        "匯入時排除的本機 SAM 節點識別，預設 Router.metadata.name。這是 nodeRef 值，不是 Kind/name 狀態參照。",
+        "导入时排除的本机 SAM 节点标识，默认 Router.metadata.name。这是 nodeRef 值，不是 Kind/name 状态引用。"
+      ],
+      "privateKey": [
+        "Inline WireGuard private key, default empty; takes precedence over privateKeyFile. Use the WireGuard base64 key format. Configuration validation does not prove key validity; wg or file-key validation can fail during application.",
+        "WireGuard秘密鍵の直接指定です。既定は空でprivateKeyFileより優先します。WireGuardのBase64鍵形式を使います。設定検証だけでは鍵の正当性を保証せず、適用時のwgやファイル鍵検証で失敗する場合があります。",
+        "直接指定 WireGuard 私密金鑰，預設為空，優先於 privateKeyFile。使用 WireGuard Base64 金鑰格式；設定驗證不保證金鑰有效，套用時 wg 或檔案金鑰檢查仍可能失敗。",
+        "直接指定 WireGuard 私钥，默认为空，优先于 privateKeyFile。使用 WireGuard Base64 密钥格式；配置验证不保证密钥有效，应用时 wg 或文件密钥检查仍可能失败。"
+      ],
+      "privateKeyFile": [
+        "Optional key-file path on the router. On real apply, a missing file is generated with mode 0600 (new parent directories 0700); existing files must contain a valid 32-byte base64 private key. Empty/unreadable files fail rather than being overwritten. Not an environment file.",
+        "ルーター上の鍵ファイルのパスです。実適用時にファイルがなければ0600で生成し、新規親ディレクトリは0700にします。既存ファイルは32バイトの有効なBase64秘密鍵が必要で、空・読取不能なら上書きせず失敗します。環境変数ファイルではありません。",
+        "路由器上的選用金鑰檔案路徑。實際套用時，缺少的檔案以 0600 建立，新父目錄為 0700。既有檔案須含有效的 32 位元組 Base64 私密金鑰；空檔或無法讀取會失敗，不會覆寫。不是環境變數檔。",
+        "路由器上的可选密钥文件路径。实际应用时，缺少的文件以 0600 创建，新父目录为 0700。已有文件须含有效的 32 字节 Base64 私钥；空文件或无法读取会失败，不会覆盖。不是环境变量文件。"
+      ],
+      "listenPort": [
+        "Optional UDP listening port 1–65535. Omitted/0 does not emit ListenPort in wg configuration, leaving WireGuard to choose/retain its port; routerd adds no explicit port exception for 0.",
+        "UDP待受ポート1～65535です。省略・0ではwg設定にListenPortを出力せず、WireGuard側の選択・保持に任せます。0の場合、routerdは明示的なポート許可を追加しません。",
+        "選用 UDP 監聽埠 1–65535。省略或 0 時不輸出 ListenPort，由 WireGuard 選擇或保留埠；routerd 不為 0 新增明確的埠例外。",
+        "可选 UDP 监听端口 1–65535。省略或 0 时不输出 ListenPort，由 WireGuard 选择或保留端口；routerd 不为 0 添加明确的端口例外。"
+      ],
+      "mtu": [
+        "Optional MTU 576–9216. Omitted/0 leaves the device MTU unchanged or at the OS creation default; no wg-quick MTU calculation is performed here.",
+        "任意のMTUで576～9216です。省略・0なら既存値・OS作成時の既定値を使い、この処理ではwg-quickのMTU自動計算を行いません。",
+        "選用 MTU 576–9216。省略或 0 保留既有值或 OS 建立時預設值；此處不執行 wg-quick 的 MTU 計算。",
+        "可选 MTU 576–9216。省略或 0 保留已有值或 OS 创建时默认值；此处不执行 wg-quick 的 MTU 计算。"
+      ],
+      "peersFrom": [
+        "Optional ordered list of SAM peer sources, default empty. Missing nonoptional sources leave the interface Pending/PeersFromPending; static peers do not bypass that gate. Empty resolved lists are distinct from missing sources.",
+        "順序付きSAMピア参照元一覧です。既定は空です。optionalでない参照元が見つからないとPending/PeersFromPendingになり、静的ピアがあっても適用を保留します。解決済みの空リストと参照元欠落は区別します。",
+        "選用且有順序的 SAM 對等端來源清單，預設為空。非 optional 來源缺少時介面維持 Pending/PeersFromPending，靜態對等端不會略過此條件。已解析但為空的清單不同於來源缺少。",
+        "可选且有顺序的 SAM 对等端来源列表，默认为空。非 optional 来源缺少时接口维持 Pending/PeersFromPending，静态对等端不会跳过此条件。已解析但为空的列表不同于来源缺失。"
+      ],
+      "peersFrom[].resource": [
+        "Required source as SAMNodeSet/name, SAMPeerGroup/name, SAMEnrollmentPolicy/name or SAMRRSet/name; no field selector. Syntax is validated here; source lookup happens during peer resolution. Self nodes and nodes without WireGuard data are skipped.",
+        "SAMNodeSet/name、SAMPeerGroup/name、SAMEnrollmentPolicy/name、SAMRRSet/nameの参照が必須です。field指定はありません。構文検証後、ピア解決時に参照元を検索します。自身とWireGuard情報のないノードは除外します。",
+        "必填來源，格式為 SAMNodeSet/name、SAMPeerGroup/name、SAMEnrollmentPolicy/name 或 SAMRRSet/name，不使用 field。此處驗證語法，解析對等端時查找來源。會略過自己及沒有 WireGuard 資料的節點。",
+        "必填来源，格式为 SAMNodeSet/name、SAMPeerGroup/name、SAMEnrollmentPolicy/name 或 SAMRRSet/name，不使用 field。此处验证语法，解析对等端时查找来源。会跳过自身及没有 WireGuard 数据的节点。"
+      ],
+      "peersFrom[].optional": [
+        "Default false. True tolerates a missing source without making the interface pending; it does not suppress malformed source errors. Enrollment direct groups have additional opportunistic fallback rules described above.",
+        "既定はfalseです。trueなら参照元欠落だけではインターフェースを保留しませんが、不正な参照元のエラー全般を抑止するものではありません。登録directグループには前述のRR維持規則も適用します。",
+        "預設 false。true 允許來源缺少而不使介面待處理，但不會全面忽略格式錯誤的來源。註冊式 direct 群組另適用上述保留 RR 的規則。",
+        "默认 false。true 允许来源缺失而不使接口待处理，但不会全面忽略格式错误的来源。注册式 direct 组另适用上述保留 RR 的规则。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_interface.go",
+      "pkg/config/validate.go",
+      "pkg/config/index.go",
+      "pkg/controller/chain/wireguard.go",
+      "pkg/wireguard/wireguard.go",
+      "pkg/render/firewall_holes.go"
+    ]
+  },
+  "WireGuardPeer": {
+    "purpose": [
+      "Define a peer on a declared WireGuardInterface. Its AllowedIPs configure WireGuard cryptographic routing; they do not automatically create ordinary IP routes in this controller.",
+      "宣言済みWireGuardInterfaceのピアを定義します。AllowedIPsはWireGuard内の送信先・受信元選択を設定し、このコントローラーは通常のIP経路を自動作成しません。",
+      "定義已宣告 WireGuardInterface 上的對等端。AllowedIPs 設定 WireGuard 的加密路由；此控制器不會自動建立一般 IP 路由。",
+      "定义已声明 WireGuardInterface 上的对等端。AllowedIPs 配置 WireGuard 的加密路由；此控制器不会自动创建普通 IP 路由。"
+    ],
+    "rules": [
+      [
+        "The peer is applied as part of its interface complete wg setconf configuration, not as an independently scheduled service. An explicit peer with the same metadata.name replaces a peersFrom-generated peer, even if its interface differs.",
+        "ピアは独立サービスではなく、所属インターフェースのwg setconf設定全体の一部として適用します。同じmetadata.nameの明示ピアは、所属interfaceが違ってもpeersFromによる生成ピアを置き換えます。",
+        "對等端是介面完整 wg setconf 設定的一部分，並非獨立服務。同 metadata.name 的明確對等端會覆蓋 peersFrom 產生的對等端，即使 interface 不同。",
+        "对等端是接口完整 wg setconf 配置的一部分，并非独立服务。同 metadata.name 的明确对等端会覆盖 peersFrom 生成的对等端，即使 interface 不同。"
+      ],
+      [
+        "Inline presharedKey takes precedence over presharedKeyFile; they are not mutually exclusive. The file is read and trimmed only when no inline key is supplied; missing, unreadable or empty files fail real application.",
+        "presharedKeyとpresharedKeyFileは排他ではなく、直接指定を優先します。直接指定がない場合だけファイルを読み前後空白を除去します。欠落・読取不能・空ファイルは実適用で失敗します。",
+        "presharedKey 優先於 presharedKeyFile，兩者不互斥。只有未直接指定時才讀檔並移除首尾空白；缺少、無法讀取或空檔會使實際套用失敗。",
+        "presharedKey 优先于 presharedKeyFile，两者不互斥。只有未直接指定时才读文件并移除首尾空白；缺少、无法读取或空文件会使实际应用失败。"
+      ],
+      [
+        "Connected means a handshake timestamp was observed, with its age reported separately; it is not a guarantee that the handshake is recent or that a destination is reachable. A peer with an endpoint but no handshake is Waiting/NoHandshakeYet.",
+        "Connectedはハンドシェイク時刻を観測したことを示し、その経過時間は別項目です。直近の成功や宛先疎通を保証しません。endpointがあってハンドシェイクがない場合はWaiting/NoHandshakeYetです。",
+        "Connected 表示觀察到交握時間戳，經過時間另行回報；不保證交握是最近發生或目的地可達。有 endpoint 但無交握時為 Waiting/NoHandshakeYet。",
+        "Connected 表示观察到握手时间戳，经过时间另行报告；不保证握手是最近发生或目标可达。有 endpoint 但无握手时为 Waiting/NoHandshakeYet。"
+      ]
+    ],
+    "fields": {
+      "interface": [
+        "Required metadata.name of an existing WireGuardInterface in the same Router. An OS ifname alone is not sufficient.",
+        "同じRouter内の既存WireGuardInterfaceのmetadata.nameが必須です。OS上のifnameだけでは参照できません。",
+        "必填，同一 Router 中既有 WireGuardInterface 的 metadata.name，僅填 OS ifname 不足以建立參照。",
+        "必填，同一 Router 中已有 WireGuardInterface 的 metadata.name，仅填 OS ifname 不足以建立引用。"
+      ],
+      "publicKey": [
+        "Required peer public key in WireGuard base64 format. The validator checks nonempty text, not decoded key length; wg validates during application.",
+        "WireGuardのBase64形式の相手公開鍵が必須です。設定検証は非空だけを確認し、鍵長のデコード検証は行わず、適用時にwgが検証します。",
+        "必填的對等端 WireGuard Base64 公開金鑰。驗證僅檢查非空，不解碼確認長度；套用時由 wg 檢查。",
+        "必填的对等端 WireGuard Base64 公钥。验证仅检查非空，不解码确认长度；应用时由 wg 检查。"
+      ],
+      "allowedIPs": [
+        "Required nonempty list of IPv4/IPv6 CIDR prefixes. Controls the peer selected for outgoing packets and accepted source addresses for incoming packets. No implicit prefix or route creation.",
+        "IPv4・IPv6 CIDRの空でない一覧が必須です。送信時のピア選択と受信時に許可する送信元を設定します。プレフィックス補完・通常経路作成はありません。",
+        "必填且不可為空的 IPv4/IPv6 CIDR 清單，控制送出封包的對等端選擇及接收封包允許的來源。不會補入前綴或建立一般路由。",
+        "必填且不可为空的 IPv4/IPv6 CIDR 列表，控制发送数据包的对等端选择及接收数据包允许的源地址。不会补入前缀或创建普通路由。"
+      ],
+      "endpoint": [
+        "Optional peer host:UDP-port, using [IPv6]:port for IPv6. Empty omits Endpoint and permits learning the endpoint from received packets. Syntax/DNS reachability is not checked by routerd configuration validation; wg handles it at apply.",
+        "任意の相手host:UDPポートです。IPv6は[IPv6]:port形式です。空ならEndpointを省略し、受信パケットからの学習に任せます。routerdの設定検証は構文・DNS疎通を確認せず、適用時にwgが処理します。",
+        "選用的對等端 host:UDP-port，IPv6 使用 [IPv6]:port。空值省略 Endpoint，可從收到的封包學習端點。routerd 設定驗證不檢查語法或 DNS 可達性，套用時由 wg 處理。",
+        "可选的对等端 host:UDP-port，IPv6 使用 [IPv6]:port。空值省略 Endpoint，可从收到的数据包学习端点。routerd 配置验证不检查语法或 DNS 可达性，应用时由 wg 处理。"
+      ],
+      "persistentKeepalive": [
+        "Seconds between keepalive packets, integer 0–65535; default 0 disables persistent keepalive. Not a handshake-success deadline.",
+        "キープアライブの送信間隔（秒）で、0～65535の整数です。既定0では継続キープアライブを無効にします。ハンドシェイク成功の期限ではありません。",
+        "持續保活封包間隔秒數，整數 0–65535；預設 0 表示停用。不是交握成功期限。",
+        "持续保活数据包间隔秒数，整数 0–65535；默认 0 表示禁用。不是握手成功期限。"
+      ],
+      "presharedKey": [
+        "Optional additional symmetric key in WireGuard base64 format; default none. Overrides presharedKeyFile, without an exclusion error.",
+        "任意の追加共通鍵をWireGuardのBase64形式で指定します。既定はなしです。presharedKeyFileと併記してもエラーにはせず、こちらを優先します。",
+        "選用的額外對稱金鑰，使用 WireGuard Base64 格式，預設無。與 presharedKeyFile 併用不報互斥錯誤，優先使用此值。",
+        "可选的额外对称密钥，使用 WireGuard Base64 格式，默认无。与 presharedKeyFile 并用不报互斥错误，优先使用此值。"
+      ],
+      "presharedKeyFile": [
+        "Optional router-local file containing the raw preshared key text, not an environment file. No key is generated for a missing file. Only read when presharedKey is empty.",
+        "ルーター上で共通鍵そのものを格納するファイルです。環境変数ファイルではありません。欠落時の鍵生成は行わず、presharedKeyが空の場合だけ読みます。",
+        "選用的路由器本機檔案，內容為共用金鑰本身，不是環境變數檔。缺少時不會產生金鑰，僅在 presharedKey 為空時讀取。",
+        "可选的路由器本机文件，内容为预共享密钥本身，不是环境变量文件。缺少时不会生成密钥，仅在 presharedKey 为空时读取。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_interface.go",
+      "pkg/config/validate.go",
+      "pkg/wireguard/wireguard.go",
+      "pkg/controller/chain/wireguard.go"
+    ]
+  },
+  "TailscaleNode": {
+    "purpose": [
+      "Manage Tailscale enrollment options through a routerd-generated systemd oneshot on Linux or rc.d script on FreeBSD, then observe tailscale status --json. Tailscale/Headscale server-side approvals remain separate.",
+      "Linuxのsystemd oneshotまたはFreeBSDのrc.dスクリプトを生成してTailscale登録オプションを適用し、tailscale status --jsonで状態を取得します。Tailscale・Headscaleサーバー側の承認は別操作です。",
+      "透過 routerd 產生的 Linux systemd oneshot 或 FreeBSD rc.d 指令稿管理 Tailscale 註冊選項，再讀取 tailscale status --json。Tailscale/Headscale 伺服器端核准仍需另行處理。",
+      "通过 routerd 生成的 Linux systemd oneshot 或 FreeBSD rc.d 脚本管理 Tailscale 注册选项，再读取 tailscale status --json。Tailscale/Headscale 服务端批准仍需另行处理。"
+    ],
+    "rules": [
+      [
+        "authKey is mutually exclusive with authKeyEnv and authKeyFile. authKeyEnv and authKeyFile may be combined: the former chooses the variable read from the latter; without authKeyEnv, a supplied file uses TS_AUTHKEY.",
+        "authKeyはauthKeyEnv・authKeyFileと排他です。authKeyEnvとauthKeyFileは併用でき、ファイルから読む変数名をauthKeyEnvで選びます。ファイルだけならTS_AUTHKEYです。",
+        "authKey 與 authKeyEnv、authKeyFile 互斥。authKeyEnv 可與 authKeyFile 搭配，指定從檔案讀取的變數名稱；僅提供檔案時使用 TS_AUTHKEY。",
+        "authKey 与 authKeyEnv、authKeyFile 互斥。authKeyEnv 可与 authKeyFile 搭配，指定从文件读取的变量名称；仅提供文件时使用 TS_AUTHKEY。"
+      ],
+      [
+        "authKeyFile is an environment-variable assignment file, not a raw key. Use TS_AUTHKEY=tskey-... (or the authKeyEnv variable). On FreeBSD use one unquoted assignment on its own line; missing, duplicate or empty selected values fail. On Linux it is loaded as systemd EnvironmentFile.",
+        "authKeyFileは生の鍵ではなく、TS_AUTHKEY=tskey-...（またはauthKeyEnvで指定した変数）の環境変数代入ファイルです。FreeBSDでは引用符なしの代入を1行に1件書き、対象変数の欠落・重複・空値は失敗します。LinuxではsystemdのEnvironmentFileとして読みます。",
+        "authKeyFile 是環境變數指派檔，不是原始金鑰，使用 TS_AUTHKEY=tskey-... 或 authKeyEnv 指定的變數。FreeBSD 每行使用一個不加引號的指派；選定變數缺少、重複或為空會失敗。Linux 以 systemd EnvironmentFile 載入。",
+        "authKeyFile 是环境变量赋值文件，不是原始密钥，使用 TS_AUTHKEY=tskey-... 或 authKeyEnv 指定的变量。FreeBSD 每行使用一个不加引号的赋值；选定变量缺失、重复或为空会失败。Linux 以 systemd EnvironmentFile 加载。"
+      ],
+      [
+        "A present node reserves UDP 41641 against configured listener conflicts. The generated command uses tailscale up --timeout=30s. Applied/Rendered describes service application, while Running is reported only after observing BackendState=Running; neither proves an advertised subnet is reachable.",
+        "presentのノードはUDP 41641を予約し、他の設定済み待受との競合を拒否します。生成コマンドはtailscale up --timeout=30sです。Applied・Renderedはサービス適用を示し、RunningはBackendState=Runningを観測した場合です。いずれも広告したサブネットの疎通を保証しません。",
+        "present 節點會保留 UDP 41641，拒絕與其他已設定監聽衝突。產生的命令為 tailscale up --timeout=30s。Applied/Rendered 表示服務套用，只有觀察到 BackendState=Running 才回報 Running，均不保證廣告子網可達。",
+        "present 节点会保留 UDP 41641，拒绝与其他已配置监听冲突。生成的命令为 tailscale up --timeout=30s。Applied/Rendered 表示服务应用，只有观察到 BackendState=Running 才报告 Running，均不保证通告子网可达。"
+      ],
+      [
+        "FreeBSD rc.d refuses mutation of a pre-existing tailscaled process whose routerd ownership marker is absent. Linux uses the shared tailscaled.service and a routerd-tailscale-<name>.service enrollment unit. state: absent removes the enrollment unit; it is not a package-uninstall or tailnet node-deletion request.",
+        "FreeBSDのrc.dはrouterdの管理マーカーがない既存tailscaledプロセスの変更を拒否します。Linuxは共有のtailscaled.serviceとrouterd-tailscale-<name>.serviceを使います。state: absentは登録用ユニットを除去する指定で、パッケージのアンインストールやtailnet上のノード削除ではありません。",
+        "FreeBSD rc.d 拒絕變更缺少 routerd 管理標記的既有 tailscaled 程序。Linux 使用共用 tailscaled.service 與 routerd-tailscale-<name>.service 註冊單元。state: absent 移除註冊單元，不代表解除安裝套件或刪除 tailnet 節點。",
+        "FreeBSD rc.d 拒绝更改缺少 routerd 管理标记的已有 tailscaled 进程。Linux 使用共享 tailscaled.service 与 routerd-tailscale-<name>.service 注册单元。state: absent 移除注册单元，不代表卸载软件包或删除 tailnet 节点。"
+      ]
+    ],
+    "fields": {
+      "state": [
+        "present by default; absent removes the managed enrollment service. No package removal or control-server node deletion is performed by this field.",
+        "既定はpresentです。absentは管理する登録サービスを除去します。この項目でパッケージ除去・管理サーバー上のノード削除は行いません。",
+        "預設 present；absent 移除管理的註冊服務，不移除套件或刪除控制伺服器上的節點。",
+        "默认 present；absent 移除管理的注册服务，不移除软件包或删除控制服务器上的节点。"
+      ],
+      "hostname": [
+        "Optional tailscale up --hostname value, not Router.metadata.name or an OS hostname change. Omitted leaves the flag absent.",
+        "任意のtailscale up --hostname値です。Router.metadata.nameではなく、OSのホスト名も変更しません。省略すると引数を出しません。",
+        "選用的 tailscale up --hostname 值，不是 Router.metadata.name，也不變更 OS 主機名稱。省略時不傳入參數。",
+        "可选的 tailscale up --hostname 值，不是 Router.metadata.name，也不更改 OS 主机名。省略时不传入参数。"
+      ],
+      "loginServer": [
+        "Optional control-server URL for --login-server, for example a Headscale server. Omitted delegates to the Tailscale client configuration/default; routerd provides no URL default or resource lookup.",
+        "--login-serverに渡す管理サーバーURLです。Headscale等を指定します。省略時はクライアントの設定・既定に任せ、routerd独自のURL既定値・リソース検索はありません。",
+        "選用的 --login-server 控制伺服器 URL，例如 Headscale。省略時依 Tailscale 用戶端設定或預設值；routerd 不提供 URL 預設值或資源查找。",
+        "可选的 --login-server 控制服务器 URL，例如 Headscale。省略时依 Tailscale 客户端配置或默认值；routerd 不提供 URL 默认值或资源查找。"
+      ],
+      "authKey": [
+        "Optional inline enrollment key; excludes authKeyEnv/authKeyFile. Omitted supplies no key flag unless another key source is configured; existing client login state or interactive enrollment requirements then apply.",
+        "任意の登録鍵の直接指定です。authKeyEnv・authKeyFileとは排他です。他の鍵参照もなければ鍵引数を渡さず、既存ログイン状態やクライアント側の登録要件に従います。",
+        "選用的直接註冊金鑰，與 authKeyEnv/authKeyFile 互斥。若未設定其他來源則不傳入金鑰參數，依既有登入狀態或用戶端註冊需求處理。",
+        "可选的直接注册密钥，与 authKeyEnv/authKeyFile 互斥。若未配置其他来源则不传入密钥参数，依已有登录状态或客户端注册要求处理。"
+      ],
+      "authKeyEnv": [
+        "Optional environment variable name for the enrollment key, not the key itself. May select a variable from authKeyFile. Linux uses the generated service environment; this does not automatically copy routerd process environment into that service.",
+        "登録鍵を格納する環境変数名です。鍵そのものではありません。authKeyFileから選ぶ変数名にも使います。Linuxでは生成サービスの環境を使い、routerdプロセスの環境を自動で引き継ぐ指定ではありません。",
+        "選用的註冊金鑰環境變數名稱，不是金鑰本身。可指定 authKeyFile 中的變數。Linux 使用產生服務的環境，不會自動複製 routerd 程序環境。",
+        "可选的注册密钥环境变量名称，不是密钥本身。可指定 authKeyFile 中的变量。Linux 使用生成服务的环境，不会自动复制 routerd 进程环境。"
+      ],
+      "authKeyFile": [
+        "Optional absolute environment-file path on the router; selected variable defaults to TS_AUTHKEY. Use a simple unquoted NAME=value line for Linux/FreeBSD portability. Not a Secret resource reference.",
+        "ルーター上の絶対パスの環境変数ファイルです。読む変数の既定はTS_AUTHKEYです。Linux・FreeBSD共通なら引用符なしのNAME=value形式にします。Secretリソース参照ではありません。",
+        "選用的路由器本機環境檔絕對路徑，預設讀取 TS_AUTHKEY。跨 Linux/FreeBSD 請用不加引號的 NAME=value 格式。不是 Secret 資源參照。",
+        "可选的路由器本机环境文件绝对路径，默认读取 TS_AUTHKEY。跨 Linux/FreeBSD 请用不加引号的 NAME=value 格式。不是 Secret 资源引用。"
+      ],
+      "advertiseExitNode": [
+        "Default false; true emits --advertise-exit-node. Does not approve exit-node use on the control server or make this router use another exit node.",
+        "既定falseです。trueなら--advertise-exit-nodeを出力します。管理サーバー上の承認や、他の出口ノードを本機で利用する設定は行いません。",
+        "預設 false；true 傳入 --advertise-exit-node。不會在控制伺服器核准出口節點，也不會讓本機改用其他出口節點。",
+        "默认 false；true 传入 --advertise-exit-node。不会在控制服务器批准出口节点，也不会让本机改用其他出口节点。"
+      ],
+      "advertiseRoutes": [
+        "Optional IPv4/IPv6 CIDR list passed as comma-separated --advertise-routes. Empty omits the flag, rather than explicitly passing an empty route list. Required control-server approval is separate.",
+        "IPv4・IPv6 CIDR一覧をカンマ区切りで--advertise-routesへ渡します。空なら引数自体を省略し、空リストを明示送信するものではありません。管理サーバー上の承認は別です。",
+        "選用 IPv4/IPv6 CIDR 清單，以逗號分隔傳入 --advertise-routes。空清單省略參數，而非明確傳入空值。控制伺服器所需核准另行處理。",
+        "可选 IPv4/IPv6 CIDR 列表，以逗号分隔传入 --advertise-routes。空列表省略参数，而非明确传入空值。控制服务器所需批准另行处理。"
+      ],
+      "advertiseTags": [
+        "Optional tag strings passed as comma-separated --advertise-tags. Validator rejects empty/whitespace entries but does not enforce a tag: prefix or verify server ACL permissions. Empty omits the flag.",
+        "タグ文字列をカンマ区切りで--advertise-tagsへ渡します。検証は空・空白入りを拒否しますが、tag:接頭辞やサーバーACL権限までは確認しません。空なら引数を省略します。",
+        "選用標籤字串，以逗號分隔傳入 --advertise-tags。驗證拒絕空值及空白字元，但不強制 tag: 前綴或查驗伺服器 ACL 權限。空清單省略參數。",
+        "可选标签字符串，以逗号分隔传入 --advertise-tags。验证拒绝空值及空白字符，但不强制 tag: 前缀或查验服务器 ACL 权限。空列表省略参数。"
+      ],
+      "acceptRoutes": [
+        "Optional boolean for --accept-routes. Omitted leaves the flag absent and delegates behavior to the Tailscale client; explicit false is emitted, unlike omission.",
+        "--accept-routesの任意の真偽値です。省略時は引数を出さずクライアントに任せます。falseの明示は省略とは異なり、引数として出力します。",
+        "選用的 --accept-routes 布林值。省略時不傳入參數，由 Tailscale 用戶端決定；明確 false 仍會傳入，與省略不同。",
+        "可选的 --accept-routes 布尔值。省略时不传入参数，由 Tailscale 客户端决定；明确 false 仍会传入，与省略不同。"
+      ],
+      "acceptDNS": [
+        "Optional boolean for --accept-dns. Omitted does not force either true or false; explicit values are passed to the client. This does not configure routerd DNSResolver/DNSForwarder resources.",
+        "--accept-dnsの任意の真偽値です。省略時はtrue・falseのどちらにも固定せず、明示値だけを渡します。routerdのDNSResolver・DNSForwarderを設定する項目ではありません。",
+        "選用的 --accept-dns 布林值，省略時不強制 true 或 false，僅傳入明確值。不會設定 routerd DNSResolver/DNSForwarder 資源。",
+        "可选的 --accept-dns 布尔值，省略时不强制 true 或 false，仅传入明确值。不会配置 routerd DNSResolver/DNSForwarder 资源。"
+      ],
+      "ssh": [
+        "Default false omits the flag; true emits --ssh to request Tailscale SSH. This is separate from OS sshd and routerd management access.",
+        "既定falseなら引数を省略し、trueならTailscale SSHを要求する--sshを出します。OSのsshdやrouterdの管理アクセス設定とは別です。",
+        "預設 false 省略參數；true 傳入 --ssh 啟用 Tailscale SSH 要求。與 OS sshd 及 routerd 管理存取不同。",
+        "默认 false 省略参数；true 传入 --ssh 启用 Tailscale SSH 请求。与 OS sshd 及 routerd 管理访问不同。"
+      ],
+      "shieldsUp": [
+        "Optional boolean for --shields-up; omission leaves the client flag unset, while explicit true/false is emitted.",
+        "--shields-upの任意の真偽値です。省略時は引数を出さず、true・falseを明示した場合だけ出力します。",
+        "選用的 --shields-up 布林值，省略不傳入參數，明確 true/false 才傳入。",
+        "可选的 --shields-up 布尔值，省略不传入参数，明确 true/false 才传入。"
+      ],
+      "when": [
+        "Optional common activation predicate; omission is unconditional. Consult common fields for state/all/any and field-reference rules. It gates the generated service rather than deleting a tailnet node.",
+        "共通の有効化条件です。省略時は無条件です。state・all・anyとフィールド参照は共通項を参照してください。生成サービスを制御する条件で、tailnetノードの削除ではありません。",
+        "選用的共用啟用條件，省略表示無條件。state/all/any 及欄位參照規則請見共用欄位。控制產生服務，不會刪除 tailnet 節點。",
+        "可选的通用启用条件，省略表示无条件。state/all/any 及字段引用规则请见通用字段。控制生成服务，不会删除 tailnet 节点。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_interface.go",
+      "pkg/config/index.go",
+      "pkg/config/validate.go",
+      "pkg/render/tailscale_systemd.go",
+      "pkg/render/freebsd_rcd.go",
+      "pkg/controller/chain/system.go",
+      "pkg/tailscale/tailscale.go",
+      "pkg/render/firewall_holes.go"
+    ]
+  },
+  "EventRule": {
+    "purpose": [
+      "Derive an event from patterns in the persisted local event journal, with optional per-correlation state.",
+      "永続化されたローカルイベント履歴のパターンからイベントを生成します。相関キーごとに状態を分離できます。",
+      "從持久化的本機事件紀錄比對模式並產生事件，可依關聯鍵分開維護狀態。",
+      "从持久化的本机事件记录匹配模式并生成事件，可按关联键分别维护状态。"
+    ],
+    "rules": [
+      [
+        "pattern.operator and emit.topic are required. At least one of topic, topics, trigger or expected must be supplied, but this loose validation does not guarantee a usable pattern: expected alone is not an input list and absence needs a trigger/topic. No topic-to-resource existence check is performed.",
+        "pattern.operatorとemit.topicが必須です。topic・topics・trigger・expectedのいずれかも必要ですが、この検証だけでは動作するパターンとは限りません。expectedだけでは入力一覧にならず、absenceにはtriggerまたはtopicが必要です。トピックのリソース存在確認は行いません。",
+        "pattern.operator 與 emit.topic 必填。topic、topics、trigger、expected 至少提供一項，但寬鬆的驗證不保證模式可運作：只有 expected 不構成輸入清單，absence 需要 trigger/topic。不會檢查主題對應的資源是否存在。",
+        "pattern.operator 与 emit.topic 必填。topic、topics、trigger、expected 至少提供一项，但宽松的验证不保证模式可运行：只有 expected 不构成输入列表，absence 需要 trigger/topic。不会检查主题对应的资源是否存在。"
+      ],
+      [
+        "Input order is topics, then topic, then trigger. all_of and sequence use exact topic strings; any_of, window, count, throttle, debounce and absence support dot-separated * (one segment) and ** (zero or more segments).",
+        "入力順はtopics、topic、triggerです。all_of・sequenceはトピックの完全一致を使います。any_of・window・count・throttle・debounce・absenceはドット区切りの*（1区間）と**（0区間以上）に対応します。",
+        "輸入順序為 topics、topic、trigger。all_of 與 sequence 使用完整主題字串比對；any_of、window、count、throttle、debounce、absence 支援以點分隔的 *（一段）與 **（零段以上）。",
+        "输入顺序为 topics、topic、trigger。all_of 与 sequence 使用完整主题字符串匹配；any_of、window、count、throttle、debounce、absence 支持以点分隔的 *（一段）与 **（零段以上）。"
+      ],
+      [
+        "all_of remembers each seen topic and does not clear the set after firing, so later matching events fire again once all have been seen. sequence resets only after completion or a strict out-of-order listed event. window clears its time bucket after reaching threshold; count resets its counter after reaching threshold.",
+        "all_ofは受信済みトピックを発火後も保持し、すべて受信した後は該当イベントのたびに再発火します。sequenceは完了時、またはstrict指定時の一覧内順序違反でリセットします。windowは閾値到達後に時間窓を、countはカウンターをリセットします。",
+        "all_of 觸發後仍保留已見主題，全部見過後每個符合事件都會再次觸發。sequence 完成後重設；strict 時清單內亂序事件也會重設。window 達門檻後清空時間桶，count 達門檻後重設計數。",
+        "all_of 触发后仍保留已见主题，全部见过后每个符合事件都会再次触发。sequence 完成后重置；strict 时列表内乱序事件也会重置。window 达阈值后清空时间桶，count 达阈值后重置计数。"
+      ],
+      [
+        "Rule counters, partial sequences and timers are in memory and restart from empty after process restart. The journal consumer cursor is persisted; a new consumer starts at the current journal tip. Delivery is at least once, so cursor-save failure can repeat an input. Events emitted by routerd-eventrule are excluded from all rules to avoid chaining loops.",
+        "カウンター・途中の順序・タイマーはメモリー上にあり、プロセス再起動後は空から開始します。イベント読取位置は永続化し、新規読取処理は履歴の現在の末尾から開始します。読取位置の保存失敗時は入力が再処理され得ます。routerd-eventruleが生成したイベントは、連鎖ループ防止のため全ルールから除外します。",
+        "計數、未完成序列與計時器僅存於記憶體，程序重啟後從空狀態開始。事件讀取位置會持久化；新讀取者從目前紀錄尾端開始。位置儲存失敗可能重複處理輸入。所有規則都排除 routerd-eventrule 產生的事件，以避免連鎖迴圈。",
+        "计数、未完成序列与计时器仅存于内存，进程重启后从空状态开始。事件读取位置会持久化；新读取者从当前记录末尾开始。位置保存失败可能重复处理输入。所有规则都排除 routerd-eventrule 生成的事件，以避免连锁循环。"
+      ],
+      [
+        "Correlation state is capped at 4096 keys per rule; the least recently observed key is evicted with its counters and timers. Time-window/throttle comparisons use input event timestamps, while absence/debounce timers use elapsed process time.",
+        "相関状態はルールごとに最大4096キーで、最も古く観測したキーのカウンター・タイマーを破棄します。window・throttleは入力イベント時刻で比較し、absence・debounceのタイマーは処理中の経過時間を使います。",
+        "每條規則最多保留 4096 個關聯鍵，會移除最久未觀測鍵的計數與計時器。window/throttle 比較輸入事件時間；absence/debounce 使用程序經過時間計時。",
+        "每条规则最多保留 4096 个关联键，会移除最久未观测键的计数与计时器。window/throttle 比较输入事件时间；absence/debounce 使用进程经过时间计时。"
+      ]
+    ],
+    "fields": {
+      "pattern": [
+        "Required pattern object; fields not used by the selected operator are not rejected as mutually exclusive.",
+        "必須のパターン定義です。選択した演算子で使わない項目も排他エラーにはなりません。",
+        "必填的模式物件；不會拒絕所選運算子未使用的欄位。",
+        "必填的模式对象；不会拒绝所选运算符未使用的字段。"
+      ],
+      "pattern.operator": [
+        "Required: all_of, any_of, sequence, window, absence, throttle, debounce or count. No default.",
+        "all_of・any_of・sequence・window・absence・throttle・debounce・countのいずれかが必須で、既定値はありません。",
+        "必填：all_of、any_of、sequence、window、absence、throttle、debounce 或 count，無預設值。",
+        "必填：all_of、any_of、sequence、window、absence、throttle、debounce 或 count，无默认值。"
+      ],
+      "pattern.topic": [
+        "Optional single input topic appended after topics. For absence, used as trigger only when trigger is empty. Default empty.",
+        "topicsの後に追加する単一入力トピックです。absenceではtriggerが空の場合の開始トピックになります。既定は空です。",
+        "選用的單一輸入主題，附加於 topics 後。absence 的 trigger 為空時以此作為啟動主題。預設空。",
+        "可选的单一输入主题，附加于 topics 后。absence 的 trigger 为空时以此作为启动主题。默认空。"
+      ],
+      "pattern.topics": [
+        "Optional ordered input list, default empty. Order matters for sequence; all_of requires every listed exact topic to have occurred.",
+        "順序付きの入力一覧で、既定は空です。sequenceでは順序に意味があり、all_ofでは一覧の全トピックの受信が必要です。",
+        "選用的有序輸入清單，預設空。sequence 依此順序；all_of 要求每個完整主題都曾出現。",
+        "可选的有序输入列表，默认空。sequence 按此顺序；all_of 要求每个完整主题都曾出现。"
+      ],
+      "pattern.trigger": [
+        "Optional absence trigger, overriding topic for starting/restarting its timer. Also appended to ordinary input lists after topic. Default empty.",
+        "absenceのタイマーを開始・再開するトピックで、topicより優先します。他の演算子の入力一覧にもtopicの後で追加されます。既定は空です。",
+        "選用的 absence 啟動主題，優先於 topic，會啟動或重新啟動計時器。其他運算子的輸入清單也會在 topic 後加入此值。預設空。",
+        "可选的 absence 启动主题，优先于 topic，会启动或重新启动计时器。其他运算符的输入列表也会在 topic 后加入此值。默认空。"
+      ],
+      "pattern.expected": [
+        "Optional cancellation topic for absence. Matching cancels a pending timer for the same correlation key and takes precedence over trigger matching. Not an ordinary input topic. Default empty: no cancellation.",
+        "absenceの取り消しトピックです。同じ相関キーの待機タイマーを取り消し、triggerの一致より先に判定します。通常の入力一覧には入りません。既定は空で、取り消しなしです。",
+        "選用的 absence 取消主題，同鍵符合時取消待處理計時器，優先於 trigger 比對。不是一般輸入主題。預設空，表示不取消。",
+        "可选的 absence 取消主题，同键匹配时取消待处理计时器，优先于 trigger 匹配。不是普通输入主题。默认空，表示不取消。"
+      ],
+      "pattern.duration": [
+        "Optional Go duration fallback: window/throttle/absence default 1m; debounce defaults 1s. Operator-specific window/interval/quiet takes precedence. Valid durations are accepted even when zero or negative; use positive values for delayed behavior.",
+        "Go形式の期間です。window・throttle・absenceの既定は1m、debounceは1sです。個別のwindow・interval・quietを優先します。0・負数も検証を通るため、待機には正の値を使用してください。",
+        "選用 Go 時間長度；window/throttle/absence 預設 1m，debounce 預設 1s。專用 window/interval/quiet 優先。驗證也接受零或負值，延遲行為請使用正值。",
+        "可选 Go 时长；window/throttle/absence 默认 1m，debounce 默认 1s。专用 window/interval/quiet 优先。验证也接受零或负值，延迟行为请使用正值。"
+      ],
+      "pattern.window": [
+        "window operator lookback duration; overrides duration, otherwise 1m. Events at or after the cutoff count; threshold firing clears the bucket. Unused by other operators.",
+        "windowの集計期間です。durationより優先し、両方省略時は1mです。開始境界以降を数え、閾値到達後は窓を空にします。他の演算子では使いません。",
+        "window 的回溯期間，優先於 duration，皆省略時為 1m。含起始邊界；達門檻後清空時間桶。其他運算子不使用。",
+        "window 的回溯期间，优先于 duration，均省略时为 1m。含起始边界；达阈值后清空时间桶。其他运算符不使用。"
+      ],
+      "pattern.quiet": [
+        "debounce quiet duration; overrides duration, otherwise 1s. Each matching input restarts the timer; emission uses the last matching input.",
+        "debounceの無入力待機期間です。durationより優先し、両方省略時は1sです。該当入力ごとにタイマーを再開し、最後の入力に基づき発火します。",
+        "debounce 的安靜期間，優先於 duration，皆省略時為 1s。每次符合輸入都重啟計時器，依最後輸入產生事件。",
+        "debounce 的静默期间，优先于 duration，均省略时为 1s。每次匹配输入都重启计时器，按最后输入生成事件。"
+      ],
+      "pattern.interval": [
+        "throttle minimum time between emissions per correlation key; overrides duration, otherwise 1m. First matching event emits immediately.",
+        "throttleの相関キーごとの最短発火間隔です。durationより優先し、両方省略時は1mです。最初の該当イベントは直ちに発火します。",
+        "throttle 每個關聯鍵的最短發送間隔，優先於 duration，皆省略時為 1m。第一個符合事件立即發送。",
+        "throttle 每个关联键的最短发送间隔，优先于 duration，均省略时为 1m。第一个匹配事件立即发送。"
+      ],
+      "pattern.rate": [
+        "Nonnegative integer accepted by validation, default 0, but not read by the current engine. It does not control throttle; use interval.",
+        "0以上の整数で既定は0ですが、現行エンジンは読みません。throttleの制御にはintervalを使用してください。",
+        "驗證接受的非負整數，預設 0，但目前引擎不讀取。無法控制 throttle；請使用 interval。",
+        "验证接受的非负整数，默认 0，但当前引擎不读取。无法控制 throttle；请使用 interval。"
+      ],
+      "pattern.threshold": [
+        "Nonnegative event count for window/count; omitted or 0 means 1. Unused by other operators.",
+        "window・countの必要イベント数です。0以上で、省略・0は1として扱います。他の演算子では使いません。",
+        "window/count 的事件門檻，非負整數；省略或 0 表示 1。其他運算子不使用。",
+        "window/count 的事件阈值，非负整数；省略或 0 表示 1。其他运算符不使用。"
+      ],
+      "pattern.correlate_by": [
+        "Optional attributes.<key>, resource.name/kind/apiVersion or daemon.instance/kind. Empty uses the shared key default. Input topics are strings, not Kind/name references.",
+        "attributes.<key>、resource.name/kind/apiVersion、daemon.instance/kindで状態を分離します。空なら共通キーdefaultです。入力トピックは文字列で、Kind/name参照ではありません。",
+        "選用 attributes.<key>、resource.name/kind/apiVersion 或 daemon.instance/kind 以分開狀態。空值使用共用鍵 default。輸入主題是字串，並非 Kind/name 參照。",
+        "可选 attributes.<key>、resource.name/kind/apiVersion 或 daemon.instance/kind 以分开状态。空值使用共享键 default。输入主题是字符串，并非 Kind/name 引用。"
+      ],
+      "pattern.allow_missing_correlation": [
+        "Default false: skip inputs with missing selected correlation and increment warningCount. True groups missing values under an empty key. For resource selectors, an existing resource object with an empty selected member is accepted even when false.",
+        "既定はfalseで、相関値欠落の入力を飛ばしwarningCountを増やします。trueでは空キーにまとめます。ただしresourceオブジェクトが存在して選択メンバーだけ空の場合は、falseでも受け入れます。",
+        "預設 false：略過缺少關聯值的輸入並增加 warningCount。true 將缺值歸入空鍵。但 resource 物件存在而所選成員為空時，false 也會接受。",
+        "默认 false：跳过缺少关联值的输入并增加 warningCount。true 将缺值归入空键。但 resource 对象存在而所选成员为空时，false 也会接受。"
+      ],
+      "pattern.strict": [
+        "Default false. sequence only: a listed topic arriving out of order resets progress to zero; that mismatching event is not reused as a new first item. Unlisted topics are ignored.",
+        "既定はfalseです。sequenceで一覧内のトピックが順序違いで来ると進行を0に戻します。その入力を新しい先頭として再利用しません。一覧外のトピックは無視します。",
+        "預設 false，僅供 sequence。清單內主題亂序時進度歸零，該事件不會重新作為首項；忽略清單外主題。",
+        "默认 false，仅供 sequence。列表内主题乱序时进度归零，该事件不会重新作为首项；忽略列表外主题。"
+      ],
+      "emit": [
+        "Required output event object. Emitted severity is info and resource is this EventRule.",
+        "必須の出力イベント定義です。重要度はinfoで、resourceは本EventRuleになります。",
+        "必填的輸出事件物件。嚴重性固定 info，resource 為此 EventRule。",
+        "必填的输出事件对象。严重性固定 info，resource 为此 EventRule。"
+      ],
+      "emit.topic": [
+        "Required nonempty emitted event type; no default. The rule engine does not consume its own emitted events.",
+        "空でない出力イベント型が必須です。既定値はなく、ルールエンジンは自身の生成イベントを入力にしません。",
+        "必填且不可為空的輸出事件型別，無預設值。規則引擎不會消費自身產生的事件。",
+        "必填且不可为空的输出事件类型，无默认值。规则引擎不会消费自身生成的事件。"
+      ],
+      "emit.attributes": [
+        "Optional string map. Expands ${event.type}, ${correlation}, ${count}, ${resource.name/kind/apiVersion} and ${attributes.<key>}; unresolved placeholders remain literal. Positive count and nonempty correlation overwrite those output keys.",
+        "任意の文字列マップです。${event.type}・${correlation}・${count}・${resource.name/kind/apiVersion}・${attributes.<key>}を展開し、未解決の式は文字列のまま残ります。正のcountと空でないcorrelationは同名の出力キーを上書きします。",
+        "選用字串映射。展開 ${event.type}、${correlation}、${count}、${resource.name/kind/apiVersion}、${attributes.<key>}；無法解析的標記保持原樣。正 count 與非空 correlation 會覆寫同名輸出鍵。",
+        "可选字符串映射。展开 ${event.type}、${correlation}、${count}、${resource.name/kind/apiVersion}、${attributes.<key>}；无法解析的占位符保持原样。正 count 与非空 correlation 会覆盖同名输出键。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_route.go",
+      "pkg/eventrule/engine.go",
+      "pkg/eventconsumer/consumer.go",
+      "pkg/bus/bus.go"
+    ]
+  },
+  "DerivedEvent": {
+    "purpose": [
+      "Publish asserted/retracted events when conditions over resource status change. Unlike EventRule, this evaluates current status rather than an event sequence.",
+      "リソースの現在状態の条件が変わると、成立・取り消しイベントを発行します。EventRuleのようなイベント列の判定ではありません。",
+      "資源狀態條件改變時，發送成立或撤回事件。與 EventRule 不同，此處評估目前狀態而非事件序列。",
+      "资源状态条件改变时，发送成立或撤回事件。与 EventRule 不同，此处评估当前状态而非事件序列。"
+    ],
+    "rules": [
+      [
+        "topic and a nonempty inputs list are required. Inputs use the older field/equals/not_empty/any_of structure, not common resource/field sources, dependsOn or when.",
+        "topicと空でないinputsが必須です。入力は旧来のfield・equals・not_empty・any_of構造であり、共通のresource・field参照、dependsOn、whenではありません。",
+        "topic 與非空 inputs 清單必填。輸入使用 field/equals/not_empty/any_of 結構，不是共用 resource/field 來源、dependsOn 或 when。",
+        "topic 与非空 inputs 列表必填。输入使用 field/equals/not_empty/any_of 结构，不是通用 resource/field 来源、dependsOn 或 when。"
+      ],
+      [
+        "Current evaluation reads net.routerd.net/v1alpha1 status through Kind/name.status.field, optionally wrapped in ${...}. Strings without .status. are treated as literal values, not status references. These inputs are not checked for source existence or provided-field compatibility by ordinary status-source validation.",
+        "現在の評価はKind/name.status.field（${...}で囲んでも可）でnet.routerd.net/v1alpha1の状態を読みます。.status.を含まない文字列は状態参照でなく固定値です。通常の状態値参照検証による、参照先存在・提供フィールドの確認は行いません。",
+        "目前以 Kind/name.status.field（可包在 ${...} 中）讀取 net.routerd.net/v1alpha1 狀態。不含 .status. 的字串視為固定值，不是狀態參照。一般狀態來源驗證不會檢查這些輸入的來源存在性或提供欄位相容性。",
+        "当前以 Kind/name.status.field（可包在 ${...} 中）读取 net.routerd.net/v1alpha1 状态。不含 .status. 的字符串视为固定值，不是状态引用。普通状态来源验证不会检查这些输入的来源存在性或提供字段兼容性。"
+      ],
+      [
+        "The controller evaluates initially, on local routerd.** events other than its own, and periodically (default 5s). Transition memory and hysteresis timers restart after process restart; saved status does not restore that memory.",
+        "起動時、自身以外のローカルrouterd.**イベント受信時、定期処理時（既定5秒）に評価します。遷移状態・待機タイマーはプロセス再起動で初期化され、保存済みstatusからは復元しません。",
+        "控制器在啟動、收到自身以外的本機 routerd.** 事件及定期處理時評估（預設 5 秒）。程序重啟會重設轉換狀態與遲滯計時器，不會從已存狀態還原。",
+        "控制器在启动、收到自身以外的本机 routerd.** 事件及定期处理时评估（默认 5 秒）。进程重启会重置转换状态与滞后计时器，不会从已存状态恢复。"
+      ],
+      [
+        "retractWhen is validated but not read by the current evaluator. Retraction follows the inverse of emitWhen, so changing retractWhen does not alter behavior.",
+        "retractWhenは検証されますが、現行の評価処理では読みません。取り消しはemitWhenの判定の反転に従い、retractWhenの変更は挙動を変えません。",
+        "retractWhen 會驗證，但目前評估器不讀取。撤回依 emitWhen 判定的反值，因此改變 retractWhen 不會改變行為。",
+        "retractWhen 会验证，但当前评估器不读取。撤回按 emitWhen 判定的反值，因此改变 retractWhen 不会改变行为。"
+      ]
+    ],
+    "fields": {
+      "topic": [
+        "Required base event topic. Emits <topic>.asserted when true and <topic>.retracted when false; no bare-topic event is emitted.",
+        "必須の基底トピックです。成立時に<topic>.asserted、不成立時に<topic>.retractedを発行し、基底名のみのイベントは発行しません。",
+        "必填的基底事件主題。成立發送 <topic>.asserted，不成立發送 <topic>.retracted；不發送裸主題事件。",
+        "必填的基础事件主题。成立发送 <topic>.asserted，不成立发送 <topic>.retracted；不发送裸主题事件。"
+      ],
+      "inputs": [
+        "Required nonempty list of predicates. emitWhen combines entries. An empty predicate object evaluates true, so write explicit conditions.",
+        "1件以上必要な条件一覧で、emitWhenで組み合わせます。空の条件オブジェクトはtrueになるため、条件を明示してください。",
+        "必填且非空的條件清單，由 emitWhen 組合。空條件物件會評估為 true，請明確填寫條件。",
+        "必填且非空的条件列表，由 emitWhen 组合。空条件对象会评估为 true，请明确填写条件。"
+      ],
+      "inputs[].field": [
+        "Optional string, default empty. Kind/name.status.field reads a top-level status member; missing source/member yields empty. Otherwise evaluated as a literal. Arrays become JSON strings, so equals compares the complete serialized value.",
+        "既定は空の文字列です。Kind/name.status.fieldはstatus直下の値を読み、参照先・項目がなければ空です。他の文字列は固定値として評価します。配列はJSON文字列になり、equalsは直列化した全体と比較します。",
+        "選用字串，預設空。Kind/name.status.field 讀取狀態頂層成員；來源或成員不存在則為空。其他字串視為固定值。陣列轉為 JSON 字串，equals 比較完整序列化值。",
+        "可选字符串，默认空。Kind/name.status.field 读取状态顶层成员；来源或成员不存在则为空。其他字符串视为固定值。数组转为 JSON 字符串，equals 比较完整序列化值。"
+      ],
+      "inputs[].equals": [
+        "Optional exact case-sensitive comparison, default empty means no equality comparison. With a nonempty field and neither equals nor not_empty, the implicit condition is nonblank.",
+        "大文字小文字を区別する完全一致です。空が既定で、一致比較をしません。fieldが空でなく、equals・not_emptyが未指定なら、暗黙に空でないことを要求します。",
+        "選用、區分大小寫的完整比對。預設空表示不比較。field 非空且未設 equals/not_empty 時，隱含要求值非空白。",
+        "可选、区分大小写的完全匹配。默认空表示不比较。field 非空且未设 equals/not_empty 时，隐含要求值非空白。"
+      ],
+      "inputs[].not_empty": [
+        "Default false. True rejects blank/whitespace values; when equals is also nonempty, both constraints must pass.",
+        "既定はfalseです。trueは空・空白だけの値を拒否し、equalsも非空なら両条件が必要です。",
+        "預設 false。true 拒絕空值或純空白；equals 亦非空時，兩個條件都須成立。",
+        "默认 false。true 拒绝空值或纯空白；equals 亦非空时，两个条件均须成立。"
+      ],
+      "inputs[].any_of": [
+        "Optional OR-list of AND-groups. When nonempty, takes precedence over this input’s field/equals/not_empty. Every predicate in a group must pass; empty groups are false.",
+        "AND条件群のORリストです。空でなければ、その入力直下のfield・equals・not_emptyを使わずこちらを優先します。各群は1件以上の条件がすべて成立する必要があり、空群はfalseです。",
+        "選用的 AND 群組 OR 清單。非空時優先於此輸入的 field/equals/not_empty。每組至少一個條件且全部成立；空群組為 false。",
+        "可选的 AND 组 OR 列表。非空时优先于此输入的 field/equals/not_empty。每组至少一个条件且全部成立；空组为 false。"
+      ],
+      "inputs[].any_of[][].field": [
+        "Group predicate field; same status/literal rules as inputs[].field.",
+        "群内の参照・固定値です。inputs[].fieldと同じ解決規則です。",
+        "群組條件欄位，狀態或固定值規則同 inputs[].field。",
+        "组条件字段，状态或固定值规则同 inputs[].field。"
+      ],
+      "inputs[].any_of[][].equals": [
+        "Group predicate equality; same empty/default semantics as inputs[].equals.",
+        "群内の一致条件で、空・既定値の意味はinputs[].equalsと同じです。",
+        "群組完整比對；空值與預設語意同 inputs[].equals。",
+        "组完全匹配；空值与默认语义同 inputs[].equals。"
+      ],
+      "inputs[].any_of[][].not_empty": [
+        "Group predicate nonblank check, default false; same semantics as inputs[].not_empty.",
+        "群内の非空条件で、既定はfalseです。inputs[].not_emptyと同じ意味です。",
+        "群組非空白檢查，預設 false，語意同 inputs[].not_empty。",
+        "组非空白检查，默认 false，语义同 inputs[].not_empty。"
+      ],
+      "emitWhen": [
+        "Default all_true: every input must pass. any_true: at least one input must pass. This target also determines retraction when it becomes false.",
+        "既定all_trueは全入力の成立、any_trueは1件以上の成立を要求します。この判定がfalseになると取り消しに遷移します。",
+        "預設 all_true 要求所有輸入成立；any_true 要求至少一項成立。此目標變為 false 也會決定撤回。",
+        "默认 all_true 要求所有输入成立；any_true 要求至少一项成立。此目标变为 false 也会决定撤回。"
+      ],
+      "retractWhen": [
+        "Accepted values any_false (default) and all_false; currently unused after validation. Do not rely on an independent retraction predicate.",
+        "any_false（既定）・all_falseを受け付けますが、検証後は使用しません。独立した取り消し条件としては使えません。",
+        "接受 any_false（預設）與 all_false，但驗證後未使用。不可依賴獨立的撤回條件。",
+        "接受 any_false（默认）与 all_false，但验证后未使用。不可依赖独立的撤回条件。"
+      ],
+      "hysteresis": [
+        "Optional Go duration, default 0 for immediate transitions. A new target must persist until the timer fires, when it is rechecked; a return to the prior target cancels it. Initial state is established without waiting. Validation accepts negative durations, which fire immediately.",
+        "任意のGo形式期間で、既定0は即時遷移です。新しい判定が待機満了時の再確認まで維持される必要があり、元に戻ると取り消します。初回状態は待機せず決めます。負数も検証を通り、即時に発火します。",
+        "選用 Go 時間長度，預設 0 為立即轉換。新目標須持續至計時到期再檢查；回復舊目標會取消。初始狀態不等待。驗證接受負值，會立即觸發。",
+        "可选 Go 时长，默认 0 为立即转换。新目标须持续至计时到期再检查；恢复旧目标会取消。初始状态不等待。验证接受负值，会立即触发。"
+      ],
+      "emitInitial": [
+        "Default false: save the initial asserted/retracted status without emitting an event. True emits the initial result once for each new controller state, including after restart.",
+        "既定falseは初回状態だけを保存してイベントを出しません。trueはコントローラー状態の初期化時に結果を発行し、再起動後も対象です。",
+        "預設 false，只儲存初始狀態而不發送事件。true 在每次新控制器狀態建立時發送初始結果，包含重啟後。",
+        "默认 false，仅保存初始状态而不发送事件。true 在每次新控制器状态建立时发送初始结果，包含重启后。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_route.go",
+      "pkg/config/diagnostics.go",
+      "pkg/derived/engine.go"
+    ]
+  },
+  "FirewallEventLog": {
+    "purpose": [
+      "Enable the firewall packet-log collector and configure its database, Linux NFLOG group and renderer logging options. Several accepted filter/archive fields currently have no runtime consumer.",
+      "ファイアウォールのパケットログ収集と、保存DB・Linux NFLOGグループ・描画時のログ設定を指定します。受理される項目の一部は、現在の実行処理で使われません。",
+      "啟用防火牆封包紀錄收集器，設定資料庫、Linux NFLOG 群組與規則產生時的紀錄選項。部分接受的篩選與封存欄位目前沒有執行期使用者。",
+      "启用防火墙数据包日志收集器，配置数据库、Linux NFLOG 组与规则生成时的日志选项。部分接受的筛选与归档字段当前没有运行时使用者。"
+    ],
+    "rules": [
+      [
+        "enabled defaults false. On Linux the collector uses NFLOG; FreeBSD uses pflog0. This does not turn every accept/deny rule into a logged rule: FirewallRule.log and FirewallPolicy.logDeny also determine which packets are logged.",
+        "enabledの既定はfalseです。LinuxはNFLOG、FreeBSDはpflog0から収集します。これだけで全許可・拒否ルールを記録するわけではなく、FirewallRule.logとFirewallPolicy.logDenyも記録対象を決めます。",
+        "enabled 預設 false。Linux 從 NFLOG 收集，FreeBSD 使用 pflog0。此設定不會讓所有允許或拒絕規則都記錄；FirewallRule.log 與 FirewallPolicy.logDeny 也決定哪些封包被記錄。",
+        "enabled 默认 false。Linux 从 NFLOG 收集，FreeBSD 使用 pflog0。此配置不会让所有允许或拒绝规则都记录；FirewallRule.log 与 FirewallPolicy.logDeny 也决定哪些数据包被记录。"
+      ],
+      [
+        "Use one enabled resource: renderer options come from the first enabled resource, while service generation uses a shared routerd-firewall-logger service name. Multiple independent collector instances are not provided by multiple resource names.",
+        "有効なリソースは1件にしてください。描画設定は最初の有効リソースを使い、サービス生成は共通のrouterd-firewall-logger名を使います。名前を増やしても独立した収集プロセスにはなりません。",
+        "請只啟用一個資源：規則產生使用第一個啟用資源的選項，服務產生則共用 routerd-firewall-logger 名稱。多個資源名稱不會建立獨立收集器。",
+        "请仅启用一个资源：规则生成使用第一个启用资源的选项，服务生成则共用 routerd-firewall-logger 名称。多个资源名称不会创建独立收集器。"
+      ],
+      [
+        "fromZones/toZones must reference existing FirewallZone names or self; rules accepts FirewallRule/name or a bare rule name; sinks accepts LogSink/name or a bare sink name; retention accepts LogRetention/name or a bare retention name. These references are validated even though these fields currently do not filter, export or select retention at runtime.",
+        "fromZones・toZonesは既存FirewallZone名またはself、rulesはFirewallRule/nameまたは裸のルール名、sinksはLogSink/nameまたは裸の出力先名、retentionはLogRetention/nameまたは裸の名前です。これらは実行時の絞り込み・転送・保持ポリシー選択に使われませんが、参照検証は行います。",
+        "fromZones/toZones 須為既有 FirewallZone 名稱或 self；rules 接受 FirewallRule/name 或單純規則名稱；sinks 接受 LogSink/name 或單純輸出名稱；retention 接受 LogRetention/name 或單純名稱。雖然目前不會用這些欄位篩選、匯出或選擇保留規則，仍會驗證參照。",
+        "fromZones/toZones 须为已有 FirewallZone 名称或 self；rules 接受 FirewallRule/name 或单独规则名称；sinks 接受 LogSink/name 或单独输出名称；retention 接受 LogRetention/name 或单独名称。虽然当前不会用这些字段筛选、导出或选择保留规则，仍会验证引用。"
+      ]
+    ],
+    "fields": {
+      "enabled": [
+        "Default false; true requests the collector service and enables grouped logging options. Also requests the DPI classifier helper in the current service renderer.",
+        "既定falseです。trueで収集サービスとグループログ設定を有効にし、現行のサービス描画ではDPI分類ヘルパーも要求します。",
+        "預設 false。true 要求收集服務並啟用群組紀錄選項；目前服務產生也會要求 DPI 分類輔助程式。",
+        "默认 false。true 请求收集服务并启用组日志选项；当前服务生成也会请求 DPI 分类辅助程序。"
+      ],
+      "path": [
+        "Optional SQLite database path. Default /var/lib/routerd/firewall-logs.db on Linux and /var/db/routerd/firewall-logs.db on FreeBSD. This is a database, not a JSON-lines output file.",
+        "SQLite DBのパスです。既定はLinuxで/var/lib/routerd/firewall-logs.db、FreeBSDで/var/db/routerd/firewall-logs.dbです。JSON行形式の出力ファイルではありません。",
+        "選用 SQLite 資料庫路徑。Linux 預設 /var/lib/routerd/firewall-logs.db，FreeBSD 為 /var/db/routerd/firewall-logs.db。這是資料庫，不是逐行 JSON 檔案。",
+        "可选 SQLite 数据库路径。Linux 默认 /var/lib/routerd/firewall-logs.db，FreeBSD 为 /var/db/routerd/firewall-logs.db。这是数据库，不是逐行 JSON 文件。"
+      ],
+      "events": [
+        "Accepted values deny, allow, rateLimit, connLimit; default empty. Currently validated but not used to filter collector input or generated firewall logging.",
+        "deny・allow・rateLimit・connLimitを受け付け、既定は空です。検証のみで、現在の収集入力・生成ログの絞り込みには使いません。",
+        "接受 deny、allow、rateLimit、connLimit，預設空。目前僅驗證，不篩選收集輸入或產生的防火牆紀錄。",
+        "接受 deny、allow、rateLimit、connLimit，默认空。当前仅验证，不筛选收集输入或生成的防火墙日志。"
+      ],
+      "fromZones": [
+        "Default empty. Source-zone references validated against FirewallZone names or self, but not used as a logging filter at runtime.",
+        "既定は空です。送信元としてFirewallZone名またはselfを検証しますが、実行時のログ絞り込みには使いません。",
+        "預設空。來源區域須為 FirewallZone 名稱或 self，但執行時不作紀錄篩選。",
+        "默认空。源区域须为 FirewallZone 名称或 self，但运行时不作日志筛选。"
+      ],
+      "fromZones[]": [
+        "Existing FirewallZone metadata.name or the special self zone; not Kind/name. No runtime filtering effect currently.",
+        "既存FirewallZoneのmetadata.nameまたは特別なselfです。Kind/name形式ではなく、現在の絞り込み効果はありません。",
+        "既有 FirewallZone 的 metadata.name 或特殊 self 區域，不是 Kind/name。目前不影響篩選。",
+        "已有 FirewallZone 的 metadata.name 或特殊 self 区域，不是 Kind/name。当前不影响筛选。"
+      ],
+      "toZones": [
+        "Default empty. Destination-zone references validated against FirewallZone names or self, but not used as a logging filter at runtime.",
+        "既定は空です。宛先としてFirewallZone名またはselfを検証しますが、実行時のログ絞り込みには使いません。",
+        "預設空。目的區域須為 FirewallZone 名稱或 self，但執行時不作紀錄篩選。",
+        "默认空。目标区域须为 FirewallZone 名称或 self，但运行时不作日志筛选。"
+      ],
+      "rules": [
+        "Default empty. Existing FirewallRule references (bare name or FirewallRule/name) are required when supplied; currently not used to select logged rules. Set FirewallRule.log on the actual rule.",
+        "既定は空です。指定時は既存FirewallRuleの裸の名前またはFirewallRule/nameが必要ですが、現在の記録ルール選択には使いません。対象ルールのFirewallRule.logを設定してください。",
+        "預設空。指定時須參照既有 FirewallRule（單純名稱或 FirewallRule/name），目前不選擇記錄規則。請設定實際規則的 FirewallRule.log。",
+        "默认空。指定时须引用已有 FirewallRule（单独名称或 FirewallRule/name），当前不选择记录规则。请设置实际规则的 FirewallRule.log。"
+      ],
+      "sampleRate": [
+        "Nonnegative integer, default 0; accepted but unused by the collector and renderer. Use log.acceptSampleRate/log.dropSampleRate for the supported renderer controls.",
+        "0以上の整数で既定は0ですが、収集・描画は使用しません。対応する描画制御にはlog.acceptSampleRate・log.dropSampleRateを使います。",
+        "非負整數，預設 0；收集器與規則產生器均未使用。支援的產生控制請用 log.acceptSampleRate/log.dropSampleRate。",
+        "非负整数，默认 0；收集器与规则生成器均未使用。支持的生成控制请用 log.acceptSampleRate/log.dropSampleRate。"
+      ],
+      "sinks": [
+        "Default empty. Existing LogSink references are validated but the collector does not export to them; its output is the path database.",
+        "既定は空です。既存LogSinkへの参照は検証しますが、収集処理は転送しません。出力先はpathのDBです。",
+        "預設空。會驗證既有 LogSink 參照，但收集器不會匯出至這些來源，輸出為 path 資料庫。",
+        "默认空。会验证已有 LogSink 引用，但收集器不会导出至这些目标，输出为 path 数据库。"
+      ],
+      "retention": [
+        "Optional existing LogRetention reference, default empty; currently not read to select a retention policy. Configure LogRetention with the firewallEvents signal to perform retention on this database.",
+        "任意の既存LogRetention参照で、既定は空です。現在の保持ポリシー選択には使いません。本DBの保持処理にはLogRetention側でfirewallEventsを指定してください。",
+        "選用的既有 LogRetention 參照，預設空；目前不讀取以選擇保留規則。請在 LogRetention 設定 firewallEvents 訊號以處理此資料庫。",
+        "可选的已有 LogRetention 引用，默认空；当前不读取以选择保留规则。请在 LogRetention 配置 firewallEvents 信号以处理此数据库。"
+      ],
+      "nflogGroup": [
+        "Integer 0–65535; omitted or 0 selects group 1 on Linux for both nftables logging and the collector. FreeBSD uses pflog0 and ignores this group.",
+        "0～65535の整数です。Linuxでは省略・0をグループ1にし、nftablesと収集で合わせます。FreeBSDはpflog0を使い、このグループを使いません。",
+        "整數 0–65535；Linux 省略或 0 時，nftables 與收集器都使用群組 1。FreeBSD 使用 pflog0，忽略此群組。",
+        "整数 0–65535；Linux 省略或 0 时，nftables 与收集器都使用组 1。FreeBSD 使用 pflog0，忽略此组。"
+      ],
+      "log": [
+        "Optional renderer logging options; omitted fields decode to zero/false. These options do not implement the unused top-level event/zone/rule filters.",
+        "任意の描画ログ設定です。省略項目は0・falseになります。未使用のトップレベルのイベント・ゾーン・ルール絞り込みを実現する項目ではありません。",
+        "選用的規則產生紀錄選項，省略欄位為 0/false。這些選項不會實作未使用的頂層事件、區域或規則篩選。",
+        "可选的规则生成日志选项，省略字段为 0/false。这些选项不会实现未使用的顶层事件、区域或规则筛选。"
+      ],
+      "log.acceptSampleRate": [
+        "Default 0 disables extra implicit-accept logging. On nftables, positive N logs approximately 1/N of eligible packets (1 logs all). PF uses a positive value only as an enable switch, not a 1/N sampler. Explicit FirewallRule.log is separate.",
+        "既定0は暗黙許可の追加ログを無効にします。nftablesは正のNで対象パケットの約1/Nを記録し、1はすべてです。PFは正数を有効化の切替としてのみ使い、1/Nの間引きはしません。明示的なFirewallRule.logとは別です。",
+        "預設 0 停用額外的隱含允許紀錄。nftables 正 N 約記錄合格封包的 1/N（1 全部記錄）。PF 只把正值當啟用開關，不做 1/N 抽樣。明確的 FirewallRule.log 另行控制。",
+        "默认 0 禁用额外的隐式允许日志。nftables 正 N 约记录合格数据包的 1/N（1 全部记录）。PF 仅把正值当启用开关，不做 1/N 采样。明确的 FirewallRule.log 另行控制。"
+      ],
+      "log.dropSampleRate": [
+        "Default 0; nftables rates 0/1 log all already-enabled implicit deny logs, positive N>1 samples approximately 1/N. This does not itself enable FirewallPolicy.logDeny. PF does not use this sampling value.",
+        "既定0です。nftablesは既に有効な暗黙拒否ログに対し0・1で全記録、N>1で約1/Nを記録します。この値自体ではFirewallPolicy.logDenyを有効にしません。PFは使いません。",
+        "預設 0。對已啟用的隱含拒絕紀錄，nftables 0/1 全部記錄，N>1 約抽樣 1/N。此值不會自行啟用 FirewallPolicy.logDeny。PF 不使用此抽樣值。",
+        "默认 0。对已启用的隐式拒绝日志，nftables 0/1 全部记录，N>1 约采样 1/N。此值不会自行启用 FirewallPolicy.logDeny。PF 不使用此采样值。"
+      ],
+      "log.copyRange": [
+        "Nonnegative NFLOG snaplen in bytes; default 0 omits the nftables snaplen argument. Positive values cap copied packet bytes. Not applied by the PF renderer.",
+        "0以上のNFLOGコピー長（バイト）です。既定0はnftablesのsnaplen引数を省略し、正数でコピー長を制限します。PF描画では使いません。",
+        "非負的 NFLOG snaplen 位元組數。預設 0 省略 nftables snaplen 參數；正值限制複製的封包長度。PF 不套用。",
+        "非负的 NFLOG snaplen 字节数。默认 0 省略 nftables snaplen 参数；正值限制复制的数据包长度。PF 不应用。"
+      ],
+      "log.reject": [
+        "Default false; decoded but not read by the current renderer or collector. It does not change a rule verdict or turn on reject logging.",
+        "既定falseですが、現行の描画・収集は読みません。ルールの判定変更やrejectログの有効化にはなりません。",
+        "預設 false；目前規則產生器與收集器不讀取。不改變規則裁決，也不啟用 reject 紀錄。",
+        "默认 false；当前规则生成器与收集器不读取。不改变规则裁决，也不启用 reject 日志。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_firewall.go",
+      "pkg/config/validate.go",
+      "pkg/render/nftables.go",
+      "pkg/render/pf.go",
+      "pkg/render/firewall_logger.go",
+      "pkg/render/freebsd_rcd.go",
+      "pkg/render/dpi_systemd.go",
+      "pkg/controller/chain/system.go",
+      "pkg/controller/chain/logretention.go",
+      "pkg/platform/platform.go"
     ]
   }
 }

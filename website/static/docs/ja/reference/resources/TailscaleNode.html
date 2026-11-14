@@ -5,6 +5,14 @@
 <main class="doclayout wrap"><article class="document"><h1 id="tailscalenode">TailscaleNode</h1>
 <p><a href="../resources.html#tailscalenode">リソース別の設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Linuxのsystemd oneshotまたはFreeBSDのrc.dスクリプトを生成してTailscale登録オプションを適用し、tailscale status --jsonで状態を取得します。Tailscale・Headscaleサーバー側の承認は別操作です。</p>
+<h2 id="指定条件と参照関係">指定条件と参照関係</h2>
+<ul>
+<li>authKeyはauthKeyEnv・authKeyFileと排他です。authKeyEnvとauthKeyFileは併用でき、ファイルから読む変数名をauthKeyEnvで選びます。ファイルだけならTS_AUTHKEYです。</li>
+<li>authKeyFileは生の鍵ではなく、TS_AUTHKEY=tskey-...（またはauthKeyEnvで指定した変数）の環境変数代入ファイルです。FreeBSDでは引用符なしの代入を1行に1件書き、対象変数の欠落・重複・空値は失敗します。LinuxではsystemdのEnvironmentFileとして読みます。</li>
+<li>presentのノードはUDP 41641を予約し、他の設定済み待受との競合を拒否します。生成コマンドはtailscale up --timeout=30sです。Applied・Renderedはサービス適用を示し、RunningはBackendState=Runningを観測した場合です。いずれも広告したサブネットの疎通を保証しません。</li>
+<li>FreeBSDのrc.dはrouterdの管理マーカーがない既存tailscaledプロセスの変更を拒否します。Linuxは共有のtailscaled.serviceとrouterd-tailscale-<name>.serviceを使います。state: absentは登録用ユニットを除去する指定で、パッケージのアンインストールやtailnet上のノード削除ではありません。</li>
+</ul>
 <h2 id="yaml定義">YAML定義</h2>
 <p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
 <pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
@@ -39,9 +47,79 @@
           maxAge: &quot;&lt;string&gt;&quot; # 任意; string
           status: &quot;set&quot; # 任意; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
 </code></pre>
+<h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>項目の意味と既定値</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.state</code></td>
+<td>既定はpresentです。absentは管理する登録サービスを除去します。この項目でパッケージ除去・管理サーバー上のノード削除は行いません。</td>
+</tr>
+<tr>
+<td><code>spec.hostname</code></td>
+<td>任意のtailscale up --hostname値です。Router.metadata.nameではなく、OSのホスト名も変更しません。省略すると引数を出しません。</td>
+</tr>
+<tr>
+<td><code>spec.loginServer</code></td>
+<td>--login-serverに渡す管理サーバーURLです。Headscale等を指定します。省略時はクライアントの設定・既定に任せ、routerd独自のURL既定値・リソース検索はありません。</td>
+</tr>
+<tr>
+<td><code>spec.authKey</code></td>
+<td>任意の登録鍵の直接指定です。authKeyEnv・authKeyFileとは排他です。他の鍵参照もなければ鍵引数を渡さず、既存ログイン状態やクライアント側の登録要件に従います。</td>
+</tr>
+<tr>
+<td><code>spec.authKeyEnv</code></td>
+<td>登録鍵を格納する環境変数名です。鍵そのものではありません。authKeyFileから選ぶ変数名にも使います。Linuxでは生成サービスの環境を使い、routerdプロセスの環境を自動で引き継ぐ指定ではありません。</td>
+</tr>
+<tr>
+<td><code>spec.authKeyFile</code></td>
+<td>ルーター上の絶対パスの環境変数ファイルです。読む変数の既定はTS_AUTHKEYです。Linux・FreeBSD共通なら引用符なしのNAME=value形式にします。Secretリソース参照ではありません。</td>
+</tr>
+<tr>
+<td><code>spec.advertiseExitNode</code></td>
+<td>既定falseです。trueなら--advertise-exit-nodeを出力します。管理サーバー上の承認や、他の出口ノードを本機で利用する設定は行いません。</td>
+</tr>
+<tr>
+<td><code>spec.advertiseRoutes</code></td>
+<td>IPv4・IPv6 CIDR一覧をカンマ区切りで--advertise-routesへ渡します。空なら引数自体を省略し、空リストを明示送信するものではありません。管理サーバー上の承認は別です。</td>
+</tr>
+<tr>
+<td><code>spec.advertiseTags</code></td>
+<td>タグ文字列をカンマ区切りで--advertise-tagsへ渡します。検証は空・空白入りを拒否しますが、tag:接頭辞やサーバーACL権限までは確認しません。空なら引数を省略します。</td>
+</tr>
+<tr>
+<td><code>spec.acceptRoutes</code></td>
+<td>--accept-routesの任意の真偽値です。省略時は引数を出さずクライアントに任せます。falseの明示は省略とは異なり、引数として出力します。</td>
+</tr>
+<tr>
+<td><code>spec.acceptDNS</code></td>
+<td>--accept-dnsの任意の真偽値です。省略時はtrue・falseのどちらにも固定せず、明示値だけを渡します。routerdのDNSResolver・DNSForwarderを設定する項目ではありません。</td>
+</tr>
+<tr>
+<td><code>spec.ssh</code></td>
+<td>既定falseなら引数を省略し、trueならTailscale SSHを要求する--sshを出します。OSのsshdやrouterdの管理アクセス設定とは別です。</td>
+</tr>
+<tr>
+<td><code>spec.shieldsUp</code></td>
+<td>--shields-upの任意の真偽値です。省略時は引数を出さず、true・falseを明示した場合だけ出力します。</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>共通の有効化条件です。省略時は無条件です。state・all・anyとフィールド参照は共通項を参照してください。生成サービスを制御する条件で、tailnetノードの削除ではありません。</td>
+</tr>
+</tbody>
+</table>
+<p>実装: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_interface.go">pkg/config/validate_interface.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/index.go">pkg/config/index.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/tailscale_systemd.go">pkg/render/tailscale_systemd.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/freebsd_rcd.go">pkg/render/freebsd_rcd.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/system.go">pkg/controller/chain/system.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/tailscale/tailscale.go">pkg/tailscale/tailscale.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/firewall_holes.go">pkg/render/firewall_holes.go</a></p>
 <p><a href="/examples/tailscale-exit-subnet.yaml">設定例</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
 <ul>
+<li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
 <li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
 </ul>
 </div>
 </aside></main>
