@@ -217,10 +217,17 @@ func (c PathMTUController) applyTable(ctx context.Context, nft, path, family, ta
 	if listErr != nil && !missing {
 		return changed, fmt.Errorf("list nft table %s %s: %w: %s", family, table, listErr, strings.TrimSpace(string(out)))
 	}
-	// The file and table can both exist while the kernel rules have changed.
-	// Reapply the rendered table atomically on every reconciliation.
-	if out, err := c.runNFT(ctx, nft, "-f", path); err != nil {
-		return changed, fmt.Errorf("%s -f %s: %w: %s", nft, path, err, strings.TrimSpace(string(out)))
+	// Flush alone leaves unexpected chains and sets behind. Replace the whole
+	// table in one nft transaction so missing and extra objects are repaired.
+	var batch bytes.Buffer
+	if !missing {
+		fmt.Fprintf(&batch, "delete table %s %s\n", family, table)
+	}
+	batch.Write(data)
+	cmd := exec.CommandContext(ctx, nft, "-f", "-")
+	cmd.Stdin = &batch
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return changed, fmt.Errorf("apply nft table %s %s: %w: %s", family, table, err, strings.TrimSpace(string(out)))
 	}
 	return changed || missing, nil
 }
