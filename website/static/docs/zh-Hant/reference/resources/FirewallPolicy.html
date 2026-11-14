@@ -5,6 +5,12 @@
 <main class="doclayout wrap"><article class="document"><h1 id="firewallpolicy">FirewallPolicy</h1>
 <p><a href="../resources.html#firewallpolicy">各資源的設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: firewall.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>設定與區域及明確規則搭配的共用隱含防火牆選項。多個資源會彙總，不是獨立套用。</p>
+<h2 id="指定條件與參照關係">指定條件與參照關係</h2>
+<ul>
+<li>沒有必填 spec 欄位。logDeny 在多個資源間取 OR。產生器的 sameRoleAccept 從 true 開始且沒有設為 false 的路徑，因此目前填 false 也無法停用相同角色間轉送。</li>
+<li>Linux nftables 與 FreeBSD PF 的隱含/明確規則順序不同。PF 在已允許路徑的明確拒絕前產生廣泛隱含允許；Linux 在該區域配對的隱含動作前產生明確規則。不可假定明確拒絕能覆蓋所有隱含、控制或狀態例外。</li>
+</ul>
 <h2 id="yaml定義">YAML定義</h2>
 <p>此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。</p>
 <pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
@@ -15,9 +21,31 @@
     logDeny: true # 選填; boolean
     sameRoleAccept: true # 選填; boolean
 </code></pre>
+<h2 id="欄位意義與預設值">欄位意義與預設值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>欄位意義與預設值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.logDeny</code></td>
+<td>預設 false，任一資源為 true 即啟用 Linux 隱含 input/forward 拒絕紀錄。明確 drop 仍需其 log 旗標。目前 PF 不讀取此選項。</td>
+</tr>
+<tr>
+<td><code>spec.sameRoleAccept</code></td>
+<td>解碼預設 false，但產生器有效預設固定 true，false 無效。Linux 包含 untrust 對 untrust；PF 不產生其廣泛隱含轉送允許。</td>
+</tr>
+</tbody>
+</table>
+<p>實作: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_firewall.go">pkg/config/validate_firewall.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/nftables.go">pkg/render/nftables.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/pf.go">pkg/render/pf.go</a></p>
 <p><a href="/examples/example-basic-ipv4-nat.yaml">設定範例</a></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
 <ul>
+<li><a href="#指定條件與參照關係">指定條件與參照關係</a></li>
 <li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#欄位意義與預設值">欄位意義與預設值</a></li>
 </ul>
 </div>
 </aside></main>

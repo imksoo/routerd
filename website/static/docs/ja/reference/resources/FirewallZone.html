@@ -5,6 +5,12 @@
 <main class="doclayout wrap"><article class="document"><h1 id="firewallzone">FirewallZone</h1>
 <p><a href="../resources.html#firewallzone">リソース別の設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: firewall.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>設定済みインターフェースを名前付きの信頼区分にまとめ、ファイアウォール生成に使います。OSインターフェースや独立した経路・ブリッジ領域は作りません。</p>
+<h2 id="指定条件と参照関係">指定条件と参照関係</h2>
+<ul>
+<li>roleと1件以上のinterfacesが必須で、同一ゾーン内の同じインターフェース文字列の重複は禁止です。FirewallRuleはmetadata.nameを参照します。selfは通常のインターフェースゾーンでなく、ルーター自身を示す特別な宛先です。</li>
+<li>暗黙方針はmgmtから全区分・self、trustからself・mgmt以外を許可します。untrustは原則拒否ですが、現行の共通方針では同一区分間の転送を許可します。確立済み・関連通信と制御プロトコルの例外は別に評価します。OSごとの順序制約はFirewallPolicy・FirewallRuleを参照してください。</li>
+</ul>
 <h2 id="yaml定義">YAML定義</h2>
 <p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
 <pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
@@ -16,9 +22,31 @@
       - &quot;&lt;string&gt;&quot; # string
     role: &quot;untrust&quot; # 必須; string; enum=[&quot;untrust&quot;, &quot;trust&quot;, &quot;mgmt&quot;]
 </code></pre>
+<h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>項目の意味と既定値</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.role</code></td>
+<td>untrust・trust・mgmtのいずれかが必須で、既定値はありません。暗黙の通信方針を選び、所有権・認証の設定ではありません。</td>
+</tr>
+<tr>
+<td><code>spec.interfaces</code></td>
+<td>1件以上の論理インターフェース参照が必須です。裸の名前はInterfaceとして扱い、Interface/name・PPPoESession/name・WireGuardInterface/name・DSLiteTunnel/nameを受け付けます。設定内のインターフェース・トンネル索引で解決でき、描画時にOS名が必要です。</td>
+</tr>
+</tbody>
+</table>
+<p>実装: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_firewall.go">pkg/config/validate_firewall.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/nftables.go">pkg/render/nftables.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/pf.go">pkg/render/pf.go</a></p>
 <p><a href="/examples/example-basic-ipv4-nat.yaml">設定例</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
 <ul>
+<li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
 <li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
 </ul>
 </div>
 </aside></main>

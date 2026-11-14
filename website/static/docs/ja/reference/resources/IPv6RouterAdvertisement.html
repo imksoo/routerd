@@ -5,6 +5,13 @@
 <main class="doclayout wrap"><article class="document"><h1 id="ipv6routeradvertisement">IPv6RouterAdvertisement</h1>
 <p><a href="../resources.html#ipv6routeradvertisement">リソース別の設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>LANのIPv6ルーター広告オプションと、以前の委任プレフィックスの非推奨化を設定します。</p>
+<h2 id="指定条件と参照関係">指定条件と参照関係</h2>
+<ul>
+<li>interfaceとprefixまたはprefixFromが必須です。静的生成と実行時生成は異なり、現行実行時はinterface・enable-ra・オプションを出力してもprefix・prefixFromから通常dhcp-rangeを生成しません。実際に動作するDHCPv6Server・アドレス設定と組み合わせ、実通信のPIOを確認してください。スキーマ・Appliedだけでは広告を証明しません。</li>
+<li>dnsslとdnsslFromは排他ですが、prefixとprefixFrom、rdnssとrdnssFromは併用できます。共通参照はoptional trueでも既存リソース・提供フィールド明示が必要です。廃止prefixSource・ready_whenは拒否します。</li>
+<li>prefixFromがIPv6DelegatedAddressなら、有効期限内の旧/64をpreferred 0・残存valid lifetimeのPIOとして直接送信します。実リンクローカル送信元・hop limit 255を使い、現在の通常広告は共有dnsmasq側です。</li>
+</ul>
 <h2 id="yaml定義">YAML定義</h2>
 <p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
 <pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
@@ -60,9 +67,91 @@
           maxAge: &quot;&lt;string&gt;&quot; # 任意; string
           status: &quot;set&quot; # 任意; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
 </code></pre>
+<h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>項目の意味と既定値</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.interface</code></td>
+<td>必須の論理インターフェースです。他のアドレス資源と異なりRAのこの値は全体参照検証で存在確認せず、実行時は別名解決後に未解決ならOS名として使います。Interfaceを宣言して名前を指定してください。</td>
+</tr>
+<tr>
+<td><code>spec.prefix</code></td>
+<td>固定IPv6プレフィックスで、prefixFrom.resourceがなければ必須です。prefixFromの状態補完として併用できます。現行実行時はこの値から通常のプレフィックス範囲を生成しないため、宣言だけで広告されるとは限りません。</td>
+</tr>
+<tr>
+<td><code>spec.prefixFrom</code></td>
+<td>既存resource・提供fieldの明示が必要な状態値参照です。表示プレフィックスと、IPv6DelegatedAddress参照時の非推奨化対象旧/64の取得に使います。未解決だけでは通常設定生成を待機にしません。</td>
+</tr>
+<tr>
+<td><code>spec.rdnss</code></td>
+<td>任意のIPv6 DNS一覧で、既定空です。rdnssFromと結合し、共有dnsmasqにタグなしoption6:dns-serverとして出力するため、この生成処理ではRAインターフェース別に分離しません。</td>
+</tr>
+<tr>
+<td><code>spec.rdnssFrom</code></td>
+<td>共通の状態値参照一覧で、既定参照なしです。現行RA処理は未解決の待機理由を捨て、得られた値だけを使います。optionalをサービス準備条件としては使えません。</td>
+</tr>
+<tr>
+<td><code>spec.dnssl</code></td>
+<td>任意の検索ドメイン一覧で既定空です。各値は空白・スラッシュ・カンマのない単一ドメインで、dnsslFromと排他です。共有タグなしoption6:domain-searchに出力します。</td>
+</tr>
+<tr>
+<td><code>spec.dnsslFrom</code></td>
+<td>DNSZone/<name>・field: zoneに限定した参照一覧です。各参照先の存在が必要で、状態前でも宣言zoneを読み、dnsslと排他です。現行通常生成は未解決の待機理由を無視します。</td>
+</tr>
+<tr>
+<td><code>spec.mFlag</code></td>
+<td>真偽値で既定falseです。旧委任プレフィックスを非推奨化する直接RAで使いますが、現行通常dnsmasq生成ではMへ反映しません。</td>
+</tr>
+<tr>
+<td><code>spec.oFlag</code></td>
+<td>真偽値で既定falseです。mFlagと同じ直接非推奨化経路で使い、通常dnsmasqのOビット切替にはなりません。</td>
+</tr>
+<tr>
+<td><code>spec.mtu</code></td>
+<td>任意の1280～65535です。省略・0は明示MTUなしですが、PathMTU由来値があればそちらを優先します。dnsmasqのra-param mtu:&lt;値&gt;に渡します。</td>
+</tr>
+<tr>
+<td><code>spec.prfPreference</code></td>
+<td>空・mediumは通常優先度です。low・highはdnsmasq優先度指定と旧プレフィックス直接広告に使います。</td>
+</tr>
+<tr>
+<td><code>spec.preferredLifetime</code></td>
+<td>任意文字列で既定空です。現行の通常実行時生成では使いません。旧プレフィックス直接PIOはこの指定によらずpreferred lifetime 0です。</td>
+</tr>
+<tr>
+<td><code>spec.validLifetime</code></td>
+<td>通常のdnsmasq実行時生成では現在プレフィックスのPIO期限ではなくra-paramのルーター有効期間です。十進秒数で指定し、省略時はdnsmasq既定です。旧プレフィックス直接RAは十進秒として読み、空・不正なら1800、上限65535で、旧PIO自体は残りリース期間を使います。</td>
+</tr>
+<tr>
+<td><code>spec.configPath</code></td>
+<td>任意文字列で既定空です。現行実行コントローラーは共有dnsmasqのConfigPath・PIDFileオプションを使い、このリソース別指定は使用しません。</td>
+</tr>
+<tr>
+<td><code>spec.pidFile</code></td>
+<td>任意文字列で既定空です。現行実行コントローラーは共有dnsmasqのConfigPath・PIDFileオプションを使い、このリソース別指定は使用しません。</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>共通の状態条件で既定無条件です。不成立なら有効設定から除外してPending/WhenFalseです。</td>
+</tr>
+<tr>
+<td><code>spec.dependsOn</code></td>
+<td>共通AND依存一覧で既定空です。不成立はPending/DependsOnFalseとなり旧プレフィックス直接広告を省略しますが、通常共有dnsmasqの行生成はこの条件を確認しません。通常サービス全体の抑止スイッチとはなりません。</td>
+</tr>
+</tbody>
+</table>
+<p>実装: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_dhcp.go">pkg/config/validate_dhcp.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go">pkg/controller/chain/chain.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/phase2.go">pkg/controller/chain/phase2.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/routeradvertisement.go">pkg/controller/chain/routeradvertisement.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/dnsmasq.go">pkg/render/dnsmasq.go</a></p>
 <p><a href="/examples/example-dslite-home.yaml">設定例</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
 <ul>
+<li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
 <li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
 </ul>
 </div>
 </aside></main>

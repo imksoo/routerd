@@ -5,6 +5,13 @@
 <main class="doclayout wrap"><article class="document"><h1 id="ipv6routeradvertisement">IPv6RouterAdvertisement</h1>
 <p><a href="../resources.html#ipv6routeradvertisement">各資源的設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>設定 LAN 的 IPv6 路由器公告選項，並棄用先前委派的前綴。</p>
+<h2 id="指定條件與參照關係">指定條件與參照關係</h2>
+<ul>
+<li>interface 及 prefix 或 prefixFrom 必填。靜態轉譯與即時寫入不同：目前即時產生 interface/enable-ra/選項，但不由 prefix/prefixFrom 衍生一般 dhcp-range。須搭配可用 DHCPv6Server/位址設定並確認實際線上 PIO，結構描述或 Applied 無法證明目前前綴公告。</li>
+<li>dnssl 與 dnsslFrom 互斥，prefix/prefixFrom、rdnss/rdnssFrom 可並用。即使 optional true，共用參照仍須有既有資源與明確提供欄位。已移除 prefixSource/ready_when 會被拒絕。</li>
+<li>prefixFrom 指向 IPv6DelegatedAddress 時，仍有效的舊 /64 以前綴偏好期 0、剩餘有效期的 PIO 直接發送，使用實際鏈路本地來源與跳數限制 255。一般目前前綴服務仍走共用 dnsmasq。</li>
+</ul>
 <h2 id="yaml定義">YAML定義</h2>
 <p>此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。</p>
 <pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
@@ -60,9 +67,91 @@
           maxAge: &quot;&lt;string&gt;&quot; # 選填; string
           status: &quot;set&quot; # 選填; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
 </code></pre>
+<h2 id="欄位意義與預設值">欄位意義與預設值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>欄位意義與預設值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.interface</code></td>
+<td>必填邏輯介面。不同於許多位址資源，RA 此欄位未由全域參照驗證確認存在；執行時先解析別名，失敗則原樣作 OS 名稱。請宣告 Interface 並使用其名稱。</td>
+</tr>
+<tr>
+<td><code>spec.prefix</code></td>
+<td>固定 IPv6 前綴，未提供 prefixFrom.resource 時必填，可作 prefixFrom 狀態替代值。目前即時寫入不以此產生一般前綴範圍，不能假設僅宣告即可公告。</td>
+</tr>
+<tr>
+<td><code>spec.prefixFrom</code></td>
+<td>選用共用 resource/field/optional 來源，須有既有資源與明確提供欄位。用於回報前綴，參照 IPv6DelegatedAddress 時也找出待棄用的舊 /64；單純缺值不阻擋一般設定產生。</td>
+</tr>
+<tr>
+<td><code>spec.rdnss</code></td>
+<td>選用固定 IPv6 DNS 清單，預設空，與 rdnssFrom 合併。於共用 dnsmasq 輸出無標籤 option6:dns-server，此寫入器不依 RA 介面隔離。</td>
+</tr>
+<tr>
+<td><code>spec.rdnssFrom</code></td>
+<td>選用共用狀態來源清單，無自動來源。目前 RA 路徑忽略未解析來源的等待原因，僅使用已有值；optional 在此不提供服務就緒閘門。</td>
+</tr>
+<tr>
+<td><code>spec.dnssl</code></td>
+<td>選用搜尋網域清單，預設空；每值為不含空白、斜線或逗號的單一網域，與 dnsslFrom 互斥，輸出共用無標籤 option6:domain-search。</td>
+</tr>
+<tr>
+<td><code>spec.dnsslFrom</code></td>
+<td>選用來源清單，限 DNSZone/<name>、field: zone，資源須存在；可先讀宣告值，與 dnssl 互斥。目前一般 RA 產生忽略來源缺值的等待原因。</td>
+</tr>
+<tr>
+<td><code>spec.mFlag</code></td>
+<td>布林值預設 false，供直接棄用舊委派前綴的 RA 使用；目前一般 dnsmasq RA 產生不映射至 M。</td>
+</tr>
+<tr>
+<td><code>spec.oFlag</code></td>
+<td>布林值預設 false，使用路徑同 mFlag 的直接棄用公告，不是一般 dnsmasq O 位元開關。</td>
+</tr>
+<tr>
+<td><code>spec.mtu</code></td>
+<td>選用 1280–65535，省略或 0 不輸出明確 MTU，除非有優先的 PathMTU 衍生值。經 dnsmasq ra-param mtu:&lt;值&gt; 傳入。</td>
+</tr>
+<tr>
+<td><code>spec.prfPreference</code></td>
+<td>空值或 medium 使用一般偏好，low/high 輸出 dnsmasq 路由器偏好並影響舊前綴直接公告。</td>
+</tr>
+<tr>
+<td><code>spec.preferredLifetime</code></td>
+<td>選用字串，預設空，目前一般即時寫入不使用。舊前綴直接 PIO 一律使用 preferred lifetime 0，不受此值影響。</td>
+</tr>
+<tr>
+<td><code>spec.validLifetime</code></td>
+<td>一般即時 dnsmasq 轉譯將此值作 ra-param 路由器有效期，不是目前前綴 PIO 有效期。請用十進位秒，省略保留 dnsmasq 預設。舊前綴直接 RA 空值或無效值為 1800、上限 65535，舊 PIO 則用租約剩餘期間。</td>
+</tr>
+<tr>
+<td><code>spec.configPath</code></td>
+<td>選用解碼字串，預設空；目前即時控制器使用共用 dnsmasq ConfigPath/PIDFile 選項，不使用此資源覆寫。</td>
+</tr>
+<tr>
+<td><code>spec.pidFile</code></td>
+<td>選用解碼字串，預設空；目前即時控制器使用共用 dnsmasq ConfigPath/PIDFile 選項，不使用此資源覆寫。</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>選用共用狀態條件，預設無條件；為假時自有效設定排除並為 Pending/WhenFalse。</td>
+</tr>
+<tr>
+<td><code>spec.dependsOn</code></td>
+<td>選用共用 AND 相依清單，預設空。不成立回報 Pending/DependsOnFalse 並略過舊前綴直接公告，但一般共用 dnsmasq 行寫入器不檢查此閘門，不能完全抑制一般服務。</td>
+</tr>
+</tbody>
+</table>
+<p>實作: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_dhcp.go">pkg/config/validate_dhcp.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go">pkg/controller/chain/chain.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/phase2.go">pkg/controller/chain/phase2.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/routeradvertisement.go">pkg/controller/chain/routeradvertisement.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/dnsmasq.go">pkg/render/dnsmasq.go</a></p>
 <p><a href="/examples/example-dslite-home.yaml">設定範例</a></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
 <ul>
+<li><a href="#指定條件與參照關係">指定條件與參照關係</a></li>
 <li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#欄位意義與預設值">欄位意義與預設值</a></li>
 </ul>
 </div>
 </aside></main>

@@ -5,6 +5,13 @@
 <main class="doclayout wrap"><article class="document"><h1 id="dhcpv6prefixdelegation">DHCPv6PrefixDelegation</h1>
 <p><a href="../resources.html#dhcpv6prefixdelegation">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Acquire an IPv6 delegated prefix on an uplink. Use IPv6DelegatedAddress to derive and apply downstream or host addresses; obtaining a prefix alone does not advertise it to clients.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>interface must name an existing logical interface. The default client is routerd-dhcpv6-client. networkd, dhcp6c and dhcpcd are recognized alternatives with platform-specific generation, but the live supervisor/status socket path is built around the routerd daemon; do not assume equivalent lifecycle support.</li>
+<li>profile and prefixLength influence generated external-client configuration and restored-snapshot matching. The supervised routerd-dhcpv6-client command does not receive a prefix-length or profile flag: its acquisition does not use these fields as a length hint. clientDUID is passed to it.</li>
+<li>IAID/duidType YAML controls are not supported; the routerd daemon defaults IA_PD IAID to 1 and derives DUID-LL from the uplink MAC unless clientDUID is specified. required does not implement a boot-blocking requirement.</li>
+</ul>
 <h2 id="yaml-definition">YAML definition</h2>
 <p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
 <pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
@@ -30,9 +37,51 @@
           maxAge: &quot;&lt;string&gt;&quot; # optional; string
           status: &quot;set&quot; # optional; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
 </code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.interface</code></td>
+<td>Required logical uplink interface in this Router. An external dhcp6c/dhcpcd PD client must match a DHCPv6Address client declared on the same interface.</td>
+</tr>
+<tr>
+<td><code>spec.client</code></td>
+<td>Default routerd-dhcpv6-client; accepted alternatives networkd/dhcp6c/dhcpcd. Current supervision can also synthesize a routerd DHCPv6 systemd unit, so selecting an external client is not a general guarantee that the built-in daemon is disabled.</td>
+</tr>
+<tr>
+<td><code>spec.profile</code></td>
+<td>Empty/default, ntt-ngn-direct-hikari-denwa or ntt-hgw-lan-pd. NTT profiles supply /60 and link-layer DUID defaults to supporting generation paths; they do not configure provider credentials or change the built-in daemon command.</td>
+</tr>
+<tr>
+<td><code>spec.prefixLength</code></td>
+<td>Optional 1–128. Omitted/0 means /60 for NTT profiles and no configured hint for default; it is not a guarantee of the prefix size assigned by the server. See the built-in acquisition limitation above.</td>
+</tr>
+<tr>
+<td><code>spec.clientDUID</code></td>
+<td>Optional DUID as unseparated even-length hexadecimal. Colons/whitespace are rejected. Empty lets the built-in client derive DUID-LL from MAC; identity affects whether a restored lease can be reused.</td>
+</tr>
+<tr>
+<td><code>spec.required</code></td>
+<td>Boolean default false, decoded but not consumed as a required/startup wait policy by current runtime. Dependents should use actual Bound status and dependency predicates.</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>Optional common state condition, default unconditional. Supervised client generation filters resolved conditions; false can stop acquisition while the declared resource remains.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/profiles.go">pkg/api/profiles.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_wan.go">pkg/config/validate_wan.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/index.go">pkg/config/index.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go">pkg/controller/chain/chain.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/system.go">pkg/controller/chain/system.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd-dhcpv6-client/main.go">cmd/routerd-dhcpv6-client/main.go</a></p>
 <p><a href="/examples/example-dslite-home.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
 <li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 </ul>
 </div>
 </aside></main>

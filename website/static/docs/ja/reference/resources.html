@@ -187,12 +187,16 @@ spec:
 <p><a href="resources/VirtualAddress.html">VirtualAddress</a></p>
 <h2 id="bgprouter">BGPRouter</h2>
 <p><a href="resources/BGPRouter.html">BGPRouter</a></p>
+<p>ローカルGoBGPインスタンス・受理経路・自起源広告を設定します。カーネルへの適用や対向疎通はBGPのEstablishedとは別です。</p>
 <h2 id="bgppeer">BGPPeer</h2>
 <p><a href="resources/BGPPeer.html">BGPPeer</a></p>
+<p>宣言したBGPRouterに1件以上の静的BGPピアを設定します。</p>
 <h2 id="bgpdynamicpeer">BGPDynamicPeer</h2>
 <p><a href="resources/BGPDynamicPeer.html">BGPDynamicPeer</a></p>
+<p>GoBGPの動的着信ピア受付グループを定義します。個々のピアやWireGuard・SAMの認証識別子ではありません。</p>
 <h2 id="bfd">BFD</h2>
 <p><a href="resources/BFD.html">BFD</a></p>
+<p>vtysh経由でFRR bfddのセッションを設定・観測し、BGPPeerの障害処理に使います。GoBGPとは別バックエンドで、BFD DownによりBGPピアをリセットします。</p>
 <h2 id="dhcpv4client">DHCPv4Client</h2>
 <p><a href="resources/DHCPv4Client.html">DHCPv4Client</a></p>
 <p>管理下のrouterd-dhcpv4-client daemonを動かし、取得したリースのアドレス、必要に応じて既定経路とホストのDNS設定を反映します。</p>
@@ -213,13 +217,16 @@ spec:
 <p>ホスト側でIPv6 RA/SLAACを受信する宣言です。RA clientであり、LANへRAを送るIPv6RouterAdvertisementとは別です。</p>
 <h2 id="dhcpv6prefixdelegation">DHCPv6PrefixDelegation</h2>
 <p><a href="resources/DHCPv6PrefixDelegation.html">DHCPv6PrefixDelegation</a></p>
+<p>上流でIPv6プレフィックスを取得します。下流・ホストのアドレス生成と適用はIPv6DelegatedAddressを使い、取得だけではクライアントへ広告しません。</p>
 <h2 id="ipv6delegatedaddress">IPv6DelegatedAddress</h2>
 <p><a href="resources/IPv6DelegatedAddress.html">IPv6DelegatedAddress</a></p>
+<p>DHCPv6PrefixDelegationのプレフィックスからローカルIPv6アドレスを生成・適用します。</p>
 <h2 id="dhcpv6information">DHCPv6Information</h2>
 <p><a href="resources/DHCPv6Information.html">DHCPv6Information</a></p>
 <p>同じインターフェースを使うDHCPv6-PD daemonから、AFTR・DNS・SNTP・検索ドメインの情報を取り込みます。独立したInformation-request clientを起動するリソースではありません。</p>
 <h2 id="ipv6routeradvertisement">IPv6RouterAdvertisement</h2>
 <p><a href="resources/IPv6RouterAdvertisement.html">IPv6RouterAdvertisement</a></p>
+<p>LANのIPv6ルーター広告オプションと、以前の委任プレフィックスの非推奨化を設定します。</p>
 <h2 id="dhcpv6server">DHCPv6Server</h2>
 <p><a href="resources/DHCPv6Server.html">DHCPv6Server</a></p>
 <h2 id="dhcpv4serverleasesync">DHCPv4ServerLeaseSync</h2>
@@ -316,6 +323,7 @@ spec:
 <p>固定IPとDNS解決したIPを、対応するnftablesのNAT・経路・ファイアウォールルールで共有します。経路やDNSサービスを作成する機能ではありません。</p>
 <h2 id="localserviceredirect">LocalServiceRedirect</h2>
 <p><a href="resources/LocalServiceRedirect.html">LocalServiceRedirect</a></p>
+<p>宣言したインターフェースで受信した対象通信を、nftablesのprerouting NATでルーター自身のサービスポートへ転送します。</p>
 <h2 id="firewallflowpinhole">FirewallFlowPinhole</h2>
 <p><a href="resources/FirewallFlowPinhole.html">FirewallFlowPinhole</a></p>
 <h2 id="trafficflowlog">TrafficFlowLog</h2>
@@ -323,12 +331,16 @@ spec:
 <p>接続のスナップショットをSQLiteのフローDBに記録し、利用可能ならDPIキャッシュの情報を補います。パケットキャプチャーや全パケットの記録ではありません。</p>
 <h2 id="firewallzone">FirewallZone</h2>
 <p><a href="resources/FirewallZone.html">FirewallZone</a></p>
+<p>設定済みインターフェースを名前付きの信頼区分にまとめ、ファイアウォール生成に使います。OSインターフェースや独立した経路・ブリッジ領域は作りません。</p>
 <h2 id="firewallpolicy">FirewallPolicy</h2>
 <p><a href="resources/FirewallPolicy.html">FirewallPolicy</a></p>
+<p>ゾーン・明示ルールと併用する共通の暗黙ファイアウォール設定です。複数定義は独立せず集約します。</p>
 <h2 id="clientpolicy">ClientPolicy</h2>
 <p><a href="resources/ClientPolicy.html">ClientPolicy</a></p>
+<p>対象クライアント、または例外以外のクライアントへ、ゲスト用の自機サービス・転送宛先制限を適用します。Linuxは設定MAC、FreeBSD PFは明示IPで識別します。</p>
 <h2 id="firewallrule">FirewallRule</h2>
 <p><a href="resources/FirewallRule.html">FirewallRule</a></p>
+<p>ゾーン間の許可・破棄・拒否ルールです。アドレス・プロトコル・ポート条件と、Linuxのレート・接続数条件を指定できます。</p>
 <h2 id="firewalleventlog">FirewallEventLog</h2>
 <p><a href="resources/FirewallEventLog.html">FirewallEventLog</a></p>
 <p>ファイアウォールのパケットログ収集と、保存DB・Linux NFLOGグループ・描画時のログ設定を指定します。受理される項目の一部は、現在の実行処理で使われません。</p>

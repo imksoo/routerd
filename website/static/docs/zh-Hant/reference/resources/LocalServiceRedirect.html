@@ -5,6 +5,14 @@
 <main class="doclayout wrap"><article class="document"><h1 id="localserviceredirect">LocalServiceRedirect</h1>
 <p><a href="../resources.html#localserviceredirect">各資源的設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: firewall.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>以 nftables prerouting NAT 將指定介面收到的符合流量重新導向路由器本機服務連接埠。</p>
+<h2 id="指定條件與參照關係">指定條件與參照關係</h2>
+<ul>
+<li>interface 與非空 rules 必填。每條規則都需要 protocols、destinationSetRef 及兩個連接埠。規則內條件為 AND，協定選項為 OR。</li>
+<li>比對接收介面、目的位址集合及目的連接埠。影響接收封包，不處理本機發起的 OUTPUT 流量。目標是本機服務，不是遠端後端；其他用途請用 PortForward/IngressService。</li>
+<li>本機接聽服務與防火牆許可須另行設定。重新導向不啟動 DNSResolver 或其他程式，也不新增通用允許規則。依參照集合的位址家族產生 IPv4/IPv6 規則；DNS 集合由 IPAddressSet 更新。此實作產生 nftables 規則，不產生 FreeBSD PF 重新導向。</li>
+<li>規則依資源 ID 再依名稱排序，不依 YAML 清單順序。省略名稱時使用從 0 開始的十進位索引字串，字典序可能使 10 在 2 前面。條件重疊時請明確命名以控制順序。</li>
+</ul>
 <h2 id="yaml定義">YAML定義</h2>
 <p>此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。</p>
 <pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
@@ -33,9 +41,55 @@
           maxAge: &quot;&lt;string&gt;&quot; # 選填; string
           status: &quot;set&quot; # 選填; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
 </code></pre>
+<h2 id="欄位意義與預設值">欄位意義與預設值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>欄位意義與預設值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.interface</code></td>
+<td>必填，同一 Router 宣告的邏輯介面，解析為 OS 接收介面名稱。無預設值或狀態來源。</td>
+</tr>
+<tr>
+<td><code>spec.rules</code></td>
+<td>必填且非空的重新導向清單。協定、位址集合及連接埠不從其他規則繼承。</td>
+</tr>
+<tr>
+<td><code>spec.rules[].name</code></td>
+<td>選用的排序／註解標籤，預設為從 0 開始的十進位索引。不是資源參照，此處不拒絕重複名稱。</td>
+</tr>
+<tr>
+<td><code>spec.rules[].protocols</code></td>
+<td>必填且非空的 tcp/udp 子集，拒絕重複或其他協定。不會預設同時啟用兩者。</td>
+</tr>
+<tr>
+<td><code>spec.rules[].destinationSetRef</code></td>
+<td>必填，同一 Router 宣告的 IPAddressSet 裸名稱或 IPAddressSet/name。不支援欄位選擇或內嵌位址清單。</td>
+</tr>
+<tr>
+<td><code>spec.rules[].destinationPort</code></td>
+<td>必填的原目的連接埠 1–65535，無範圍語法或預設值。</td>
+</tr>
+<tr>
+<td><code>spec.rules[].redirectPort</code></td>
+<td>必填的本機服務連接埠 1–65535。重新導向後需有可連接的接聽服務，YAML 驗證不檢查該服務。</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>選用的共用啟用條件，預設無條件。state/all/any 與參照限制請見共用欄位。</td>
+</tr>
+</tbody>
+</table>
+<p>實作: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_firewall.go">pkg/config/validate_firewall.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go">pkg/config/diagnostics.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/local_service_redirect.go">pkg/render/local_service_redirect.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/nftables.go">pkg/render/nftables.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/ipaddressset.go">pkg/controller/chain/ipaddressset.go</a></p>
 <p><a href="/examples/example-local-dns-redirect.yaml">設定範例</a></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
 <ul>
+<li><a href="#指定條件與參照關係">指定條件與參照關係</a></li>
 <li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#欄位意義與預設值">欄位意義與預設值</a></li>
 </ul>
 </div>
 </aside></main>

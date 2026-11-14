@@ -5,6 +5,15 @@
 <main class="doclayout wrap"><article class="document"><h1 id="clientpolicy">ClientPolicy</h1>
 <p><a href="../resources.html#clientpolicy">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: firewall.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Apply guest-style local-service and routed-destination restrictions to selected or non-exempt clients. Linux identifies clients by configured MACs; FreeBSD PF requires explicit IP identities.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>mode must be include or exclude. include restricts the selected set; exclude restricts clients outside the selected trusted set. Linux include with no selected MACs produces no restriction; exclude with no selected MACs matches all clients on the selected interfaces.</li>
+<li>Linux classification only contributes match.macs: guest/isolated classes enter include sets, trusted classes enter exclude sets. OUI/hostname/fingerprint selectors are validated but not used by the firewall renderer. ipv4Reservation/ipv6Addresses do not become Linux match identities.</li>
+<li>FreeBSD rejects top-level MACs and every match selector. Each class instead needs ipv4Reservation and/or explicit ipv6Addresses. PF uses the reservation’s ipAddress, not its MAC. Interfaces must be explicit for PF; its renderer does not inherit trust-zone interfaces when omitted.</li>
+<li>These are routed/input firewall restrictions, not L2 switch-port isolation. Existing-state/control/service allowances may run earlier. PF’s implicit trust/mgmt-to-self pass precedes its client self restrictions, and PF’s client local-service restrictions currently use IPv4 identities only. Do not treat the policy as uniform enforcement across both OSes or all address families.</li>
+<li>Linux guestEgressAllow is evaluated before discovery/deny blocks, so it can override them; remaining traffic continues into zone policy. PF IPv4 allow precedes deny, but PF IPv6 deny rules are emitted earlier globally and cannot be overridden by its later IPv6 allow rules.</li>
+</ul>
 <h2 id="yaml-definition">YAML definition</h2>
 <p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
 <pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
@@ -45,9 +54,107 @@
       - &quot;&lt;string&gt;&quot; # string
     mode: &quot;include&quot; # Required; string; enum=[&quot;include&quot;, &quot;exclude&quot;]
 </code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.mode</code></td>
+<td>Required include or exclude, no default. Determines whether the configured identity set is restricted or exempt.</td>
+</tr>
+<tr>
+<td><code>spec.interfaces</code></td>
+<td>Optional Interface/name or bare logical-interface names; references must exist and may not repeat. Linux omitted list uses all trust-zone interfaces and errors if none exist. PF omitted list produces no applicable interface restrictions.</td>
+</tr>
+<tr>
+<td><code>spec.macs</code></td>
+<td>Optional Linux static identity list, default empty. Normalized MAC duplicates across this list and classification.match.macs are rejected. Forbidden on FreeBSD.</td>
+</tr>
+<tr>
+<td><code>spec.classification</code></td>
+<td>Optional classes, default empty. Linux requires at least one selector per class, but only MAC selectors enforce firewall membership. FreeBSD requires stable IP identities and forbids selectors.</td>
+</tr>
+<tr>
+<td><code>spec.classification[].name</code></td>
+<td>Optional descriptive class name, default empty. Does not change matching precedence or create a resource identity.</td>
+</tr>
+<tr>
+<td><code>spec.classification[].mode</code></td>
+<td>Required trusted, guest or isolated. guest and isolated are equivalent for membership in an include policy; trusted contributes to an exclude policy’s exemption set.</td>
+</tr>
+<tr>
+<td><code>spec.classification[].match</code></td>
+<td>Selector object; Linux needs at least one nonempty selector list. FreeBSD requires it empty even when stable IP identities are supplied. Different selectors are not dynamically resolved into client MACs by the current firewall.</td>
+</tr>
+<tr>
+<td><code>spec.classification[].match.macs</code></td>
+<td>Optional exact MAC list; effective Linux classifier. MACs must parse and cannot repeat across classes or top-level macs.</td>
+</tr>
+<tr>
+<td><code>spec.classification[].match.ouiPrefixes</code></td>
+<td>Accepted three hex octets such as 18:ec:e7; duplicates within a class are rejected. Currently no firewall enforcement from this selector. FreeBSD rejects it.</td>
+</tr>
+<tr>
+<td><code>spec.classification[].match.hostnamePatterns</code></td>
+<td>Accepted nonblank Go path.Match glob patterns, not regexes. Syntax is validated but the current firewall does not resolve them into identities; FreeBSD rejects them.</td>
+</tr>
+<tr>
+<td><code>spec.classification[].match.dhcpFingerprints</code></td>
+<td>Accepted nonblank, whitespace-free tokens with no within-class duplicates. Currently not used for firewall membership; FreeBSD rejects them.</td>
+</tr>
+<tr>
+<td><code>spec.classification[].ipv4Reservation</code></td>
+<td>Optional existing DHCPv4Reservation bare metadata.name; Kind/name is rejected. PF takes its nonempty ipAddress. Linux validates the reference but does not use its address for client matching.</td>
+</tr>
+<tr>
+<td><code>spec.classification[].ipv6Addresses</code></td>
+<td>Optional bare IPv6 addresses for PF, no CIDRs or IPv4-mapped forms. Normalized duplicates across all classes are rejected. Never inferred from MAC or IPv4 reservations; not used by Linux client matching.</td>
+</tr>
+<tr>
+<td><code>spec.isolation</code></td>
+<td>Optional allow/deny hints. Only the Linux renderer reads these four fields; PF uses explicit guest egress lists/defaults instead. This is not independently applied per class.</td>
+</tr>
+<tr>
+<td><code>spec.isolation.lanInternet</code></td>
+<td>Empty by default. Linux deny with no explicit guestEgressDeny replaces the default denied CIDRs with 0.0.0.0/0 and ::/0. allow/empty does not add an unconditional Internet accept. PF ignores this field.</td>
+</tr>
+<tr>
+<td><code>spec.isolation.lanLAN</code></td>
+<td>Empty by default. Linux removes the default private-prefix deny list only when both lanLAN and lanMgmt are allow; this does not distinguish individual LAN networks. Explicit guestEgressDeny overrides the default. PF ignores it.</td>
+</tr>
+<tr>
+<td><code>spec.isolation.lanMgmt</code></td>
+<td>Empty by default; same combined-default rule as lanLAN. It does not independently resolve management-zone destinations. PF ignores it.</td>
+</tr>
+<tr>
+<td><code>spec.isolation.mDNSBroadcast</code></td>
+<td>Empty by default. Linux deny adds forwarded mDNS/SSDP multicast and UDP 137/138 drop rules after guestEgressAllow. It does not control L2 bridging or independently block local services. PF ignores it.</td>
+</tr>
+<tr>
+<td><code>spec.guestServices</code></td>
+<td>Allowed local-service names: dns, dhcp, ntp, mdns, ssdp. Omitted or empty defaults to dhcp/dns/ntp; an empty list cannot disable all exceptions. Services open firewall access but do not start their daemons.</td>
+</tr>
+<tr>
+<td><code>spec.guestEgressDeny</code></td>
+<td>Optional IPv4/IPv6 CIDRs. Omitted/empty defaults to 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 and fc00::/7, subject to the Linux isolation adjustments above. Explicit values replace, not append to, defaults. PF always uses the private-prefix defaults when empty.</td>
+</tr>
+<tr>
+<td><code>spec.guestEgressAllow</code></td>
+<td>Optional IPv4/IPv6 CIDR exceptions, default empty. Linux and PF IPv4 evaluate them before deny; PF IPv6 deny precedes the allow rules. These are routing destination prefixes, not resource references.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_firewall.go">pkg/config/validate_firewall.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/nftables.go">pkg/render/nftables.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/pf.go">pkg/render/pf.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/webconsole/clients.go">pkg/webconsole/clients.go</a></p>
 <p><a href="/examples/guest-mode.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
 <li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 </ul>
 </div>
 </aside></main>

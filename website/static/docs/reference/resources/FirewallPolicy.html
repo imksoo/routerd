@@ -5,6 +5,12 @@
 <main class="doclayout wrap"><article class="document"><h1 id="firewallpolicy">FirewallPolicy</h1>
 <p><a href="../resources.html#firewallpolicy">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: firewall.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Set shared implicit firewall options used alongside zones and explicit rules. Multiple resources are aggregated rather than applied independently.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>No spec field is mandatory. logDeny is ORed across resources. sameRoleAccept starts true in the renderer and no false assignment exists, so setting false does not disable same-role forwarding in the current implementation.</li>
+<li>Linux nftables and FreeBSD PF have different implicit/explicit ordering. PF emits broad implicit passes before explicit deny rules for accepted paths; Linux emits explicit zone-pair rules before that pair’s implicit action. Do not assume an explicit deny overrides every implicit/control/state exception.</li>
+</ul>
 <h2 id="yaml-definition">YAML definition</h2>
 <p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
 <pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
@@ -15,9 +21,31 @@
     logDeny: true # optional; boolean
     sameRoleAccept: true # optional; boolean
 </code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.logDeny</code></td>
+<td>Default false; any true resource enables Linux implicit input/forward deny logging. It does not log explicit drops without their own log flag. Current PF generation does not read this option.</td>
+</tr>
+<tr>
+<td><code>spec.sameRoleAccept</code></td>
+<td>Decoded default false, but effective renderer default is always true and false has no effect. This includes untrust-to-untrust in Linux. PF skips its broad untrust-to-untrust forwarding pass.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_firewall.go">pkg/config/validate_firewall.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/nftables.go">pkg/render/nftables.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/pf.go">pkg/render/pf.go</a></p>
 <p><a href="/examples/example-basic-ipv4-nat.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
 <li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 </ul>
 </div>
 </aside></main>

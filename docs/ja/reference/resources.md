@@ -292,20 +292,28 @@ LinuxのVRFデバイス・経路表・参加インターフェースの意図を
 
 [BGPRouter](resources/BGPRouter.md)
 
+ローカルGoBGPインスタンス・受理経路・自起源広告を設定します。カーネルへの適用や対向疎通はBGPのEstablishedとは別です。
+
 
 ## BGPPeer
 
 [BGPPeer](resources/BGPPeer.md)
+
+宣言したBGPRouterに1件以上の静的BGPピアを設定します。
 
 
 ## BGPDynamicPeer
 
 [BGPDynamicPeer](resources/BGPDynamicPeer.md)
 
+GoBGPの動的着信ピア受付グループを定義します。個々のピアやWireGuard・SAMの認証識別子ではありません。
+
 
 ## BFD
 
 [BFD](resources/BFD.md)
+
+vtysh経由でFRR bfddのセッションを設定・観測し、BGPPeerの障害処理に使います。GoBGPとは別バックエンドで、BFD DownによりBGPピアをリセットします。
 
 
 ## DHCPv4Client
@@ -354,10 +362,14 @@ KubernetesのPod・ServiceネットワークへのIPv4経路を、明示した�
 
 [DHCPv6PrefixDelegation](resources/DHCPv6PrefixDelegation.md)
 
+上流でIPv6プレフィックスを取得します。下流・ホストのアドレス生成と適用はIPv6DelegatedAddressを使い、取得だけではクライアントへ広告しません。
+
 
 ## IPv6DelegatedAddress
 
 [IPv6DelegatedAddress](resources/IPv6DelegatedAddress.md)
+
+DHCPv6PrefixDelegationのプレフィックスからローカルIPv6アドレスを生成・適用します。
 
 
 ## DHCPv6Information
@@ -370,6 +382,8 @@ KubernetesのPod・ServiceネットワークへのIPv4経路を、明示した�
 ## IPv6RouterAdvertisement
 
 [IPv6RouterAdvertisement](resources/IPv6RouterAdvertisement.md)
+
+LANのIPv6ルーター広告オプションと、以前の委任プレフィックスの非推奨化を設定します。
 
 
 ## DHCPv6Server
@@ -603,6 +617,8 @@ IP宛先を確認し、経路選択用のHealthy・Unhealthy状態を発行し�
 
 [LocalServiceRedirect](resources/LocalServiceRedirect.md)
 
+宣言したインターフェースで受信した対象通信を、nftablesのprerouting NATでルーター自身のサービスポートへ転送します。
+
 
 ## FirewallFlowPinhole
 
@@ -620,20 +636,28 @@ IP宛先を確認し、経路選択用のHealthy・Unhealthy状態を発行し�
 
 [FirewallZone](resources/FirewallZone.md)
 
+設定済みインターフェースを名前付きの信頼区分にまとめ、ファイアウォール生成に使います。OSインターフェースや独立した経路・ブリッジ領域は作りません。
+
 
 ## FirewallPolicy
 
 [FirewallPolicy](resources/FirewallPolicy.md)
+
+ゾーン・明示ルールと併用する共通の暗黙ファイアウォール設定です。複数定義は独立せず集約します。
 
 
 ## ClientPolicy
 
 [ClientPolicy](resources/ClientPolicy.md)
 
+対象クライアント、または例外以外のクライアントへ、ゲスト用の自機サービス・転送宛先制限を適用します。Linuxは設定MAC、FreeBSD PFは明示IPで識別します。
+
 
 ## FirewallRule
 
 [FirewallRule](resources/FirewallRule.md)
+
+ゾーン間の許可・破棄・拒否ルールです。アドレス・プロトコル・ポート条件と、Linuxのレート・接続数条件を指定できます。
 
 
 ## FirewallEventLog

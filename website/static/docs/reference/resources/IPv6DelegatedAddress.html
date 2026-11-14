@@ -5,6 +5,14 @@
 <main class="doclayout wrap"><article class="document"><h1 id="ipv6delegatedaddress">IPv6DelegatedAddress</h1>
 <p><a href="../resources.html#ipv6delegatedaddress">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Derive and install a local IPv6 address from a DHCPv6PrefixDelegation prefix.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>prefixDelegation must be the bare name of an existing DHCPv6PrefixDelegation and interface must exist in the Router interface index. Normal active installation needs a usable Bound prefix, a ready link and satisfied dependencies. HA VMAC staging can use a fresh synchronized snapshot before active acquisition.</li>
+<li>The derived prefix length is max(64, delegated length). subnetID is hexadecimal, shifted to that boundary and ORed into the base; the suffix is masked to remaining host bits and ORed in. Current derivation does not check that subnetID fits the delegated block, so choose an in-range value.</li>
+<li>Linux uses ip address operations and FreeBSD ifconfig. Active application reads the address back before publishing Applied; tentative/DAD state can stay Pending. Prefix changes can retain previous addresses as deprecated until their valid lifetime ends. /128 is handled as a host address rather than an on-link subnet.</li>
+<li>sendRA/announce do not cause the current address controller to run an RA service. Configure IPv6RouterAdvertisement or DHCPv6Server separately. Removed prefixSource and ready_when are rejected.</li>
+</ul>
 <h2 id="yaml-definition">YAML definition</h2>
 <p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
 <pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
@@ -39,9 +47,59 @@
           maxAge: &quot;&lt;string&gt;&quot; # optional; string
           status: &quot;set&quot; # optional; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
 </code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.prefixDelegation</code></td>
+<td>Required bare DHCPv6PrefixDelegation metadata.name, not Kind/name or a status expression. No default.</td>
+</tr>
+<tr>
+<td><code>spec.interface</code></td>
+<td>Required declared logical target interface. The final OS name is resolved from the Router.</td>
+</tr>
+<tr>
+<td><code>spec.subnetID</code></td>
+<td>Optional hexadecimal string, default 0; "10" means hex 0x10, not decimal ten. Optional 0x prefix. Use an identifier that fits the delegated block; strict fit checking is absent.</td>
+</tr>
+<tr>
+<td><code>spec.addressSuffix</code></td>
+<td>Required IPv6 suffix such as ::1. Only host bits below the derived prefix boundary are used, not the entire literal as an absolute address. No automatic ::1 default.</td>
+</tr>
+<tr>
+<td><code>spec.prefixLength</code></td>
+<td>Omitted/0 retains the derived length, normally /64. Runtime accepts that same length or 128; other explicit lengths can pass schema (1–128) but fail apply. /128 avoids creating the usual on-link prefix route.</td>
+</tr>
+<tr>
+<td><code>spec.sendRA</code></td>
+<td>Boolean default false. Used by host dependency/forwarding setup in some paths, but not an automatic RA-service switch in the live address controller.</td>
+</tr>
+<tr>
+<td><code>spec.announce</code></td>
+<td>Boolean default false; same live RA-service limitation as sendRA. Do not treat it as an unsolicited neighbor/RA transmission guarantee.</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>Optional common condition, default unconditional. False can remove the derived address through the explicit cleanup path.</td>
+</tr>
+<tr>
+<td><code>spec.dependsOn</code></td>
+<td>Optional common AND-list, default empty. Unsatisfied dependencies keep the address Pending/DependsOnFalse. HA staging has specialized handling for its PD/VMAC prerequisites; use actual resource phases.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_wan.go">pkg/config/validate_wan.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/pdclient/derive.go">pkg/pdclient/derive.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go">pkg/controller/chain/chain.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/hostdeps/hostdeps.go">pkg/hostdeps/hostdeps.go</a></p>
 <p><a href="/examples/example-dslite-home.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
 <li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 </ul>
 </div>
 </aside></main>

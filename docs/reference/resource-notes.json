@@ -5023,5 +5023,1646 @@
       "pkg/render/local_service_redirect.go",
       "pkg/resourcequery/when.go"
     ]
+  },
+  "LocalServiceRedirect": {
+    "purpose": [
+      "Redirect matching traffic received on a declared interface to a service port on the router itself, using nftables prerouting NAT.",
+      "宣言したインターフェースで受信した対象通信を、nftablesのprerouting NATでルーター自身のサービスポートへ転送します。",
+      "以 nftables prerouting NAT 將指定介面收到的符合流量重新導向路由器本機服務連接埠。",
+      "以 nftables prerouting NAT 将指定接口收到的匹配流量重定向至路由器本机服务端口。"
+    ],
+    "rules": [
+      [
+        "interface and a nonempty rules list are required. Each rule requires protocols, destinationSetRef and both ports. These are AND conditions per rule; selected protocol alternatives are OR.",
+        "interfaceと1件以上のrulesが必須です。各ルールにはprotocols・destinationSetRef・両ポートが必要です。ルール内の条件はANDで、指定プロトコルの選択肢はORです。",
+        "interface 與非空 rules 必填。每條規則都需要 protocols、destinationSetRef 及兩個連接埠。規則內條件為 AND，協定選項為 OR。",
+        "interface 与非空 rules 必填。每条规则都需要 protocols、destinationSetRef 及两个端口。规则内条件为 AND，协议选项为 OR。"
+      ],
+      [
+        "Matching uses the received interface, destination address set and destination port. It affects incoming packets, not locally originated OUTPUT traffic. The target is local redirect, not forwarding to a remote backend; use PortForward/IngressService for other use cases.",
+        "受信インターフェース・宛先アドレス集合・宛先ポートで照合します。ローカル発信のOUTPUTではなく、受信パケットが対象です。転送先はルーター自身で、リモートのバックエンドへの転送ではありません。別用途にはPortForward・IngressServiceを使います。",
+        "比對接收介面、目的位址集合及目的連接埠。影響接收封包，不處理本機發起的 OUTPUT 流量。目標是本機服務，不是遠端後端；其他用途請用 PortForward/IngressService。",
+        "匹配接收接口、目标地址集合及目标端口。影响接收数据包，不处理本机发起的 OUTPUT 流量。目标是本机服务，不是远端后端；其他用途请用 PortForward/IngressService。"
+      ],
+      [
+        "Provide the local listening service and its firewall access separately. The redirect does not start DNSResolver or another daemon and does not add a universal firewall allow rule. IPv4/IPv6 rules are emitted according to the referenced set families; DNS-backed sets are refreshed by IPAddressSet. This implementation renders nftables rules, not FreeBSD PF redirects.",
+        "ローカルの待受サービスとファイアウォール許可は別途設定します。リダイレクトはDNSResolverなどのデーモンを起動せず、包括的な許可ルールも追加しません。参照集合のアドレスファミリーに応じてIPv4・IPv6ルールを出力し、DNS由来の集合はIPAddressSetが更新します。この実装はnftables用で、FreeBSDのPFリダイレクトは出力しません。",
+        "本機接聽服務與防火牆許可須另行設定。重新導向不啟動 DNSResolver 或其他程式，也不新增通用允許規則。依參照集合的位址家族產生 IPv4/IPv6 規則；DNS 集合由 IPAddressSet 更新。此實作產生 nftables 規則，不產生 FreeBSD PF 重新導向。",
+        "本机监听服务与防火墙许可须另行配置。重定向不启动 DNSResolver 或其他程序，也不新增通用允许规则。按引用集合的地址族生成 IPv4/IPv6 规则；DNS 集合由 IPAddressSet 更新。此实现生成 nftables 规则，不生成 FreeBSD PF 重定向。"
+      ],
+      [
+        "Rules are sorted by resource ID and then rule name, not YAML list order. An omitted name becomes its zero-based decimal list index; lexical sorting can put 10 before 2. Use explicit ordered names when rules overlap.",
+        "ルールはYAMLの並び順ではなく、リソースID・ルール名の順にソートします。name省略時は0始まりのリスト番号を文字列にし、辞書順では10が2より先になります。重複する条件がある場合は順序を意図した名前を明示してください。",
+        "規則依資源 ID 再依名稱排序，不依 YAML 清單順序。省略名稱時使用從 0 開始的十進位索引字串，字典序可能使 10 在 2 前面。條件重疊時請明確命名以控制順序。",
+        "规则按资源 ID 再按名称排序，不按 YAML 列表顺序。省略名称时使用从 0 开始的十进制索引字符串，字典序可能使 10 在 2 前面。条件重叠时请明确命名以控制顺序。"
+      ]
+    ],
+    "fields": {
+      "interface": [
+        "Required logical interface declared in the same Router; resolves to an OS input-interface name. No default or status source.",
+        "同じRouterで宣言した論理インターフェースが必須です。OS上の受信インターフェース名に解決し、既定値・状態参照はありません。",
+        "必填，同一 Router 宣告的邏輯介面，解析為 OS 接收介面名稱。無預設值或狀態來源。",
+        "必填，同一 Router 声明的逻辑接口，解析为 OS 接收接口名称。无默认值或状态来源。"
+      ],
+      "rules": [
+        "Required nonempty redirect list. Rules do not inherit missing protocol, address set or ports from another rule.",
+        "1件以上のリダイレクト定義が必須です。プロトコル・宛先集合・ポートは他ルールから継承しません。",
+        "必填且非空的重新導向清單。協定、位址集合及連接埠不從其他規則繼承。",
+        "必填且非空的重定向列表。协议、地址集合及端口不从其他规则继承。"
+      ],
+      "rules[].name": [
+        "Optional ordering/comment label, default decimal zero-based index. It is not a resource reference; duplicates are not rejected here.",
+        "任意の並び順・コメント用ラベルです。既定は0始まりの番号で、リソース参照ではありません。ここでは重複名を拒否しません。",
+        "選用的排序／註解標籤，預設為從 0 開始的十進位索引。不是資源參照，此處不拒絕重複名稱。",
+        "可选的排序／注释标签，默认为从 0 开始的十进制索引。不是资源引用，此处不拒绝重复名称。"
+      ],
+      "rules[].protocols": [
+        "Required nonempty subset of tcp/udp; duplicates and other protocols are rejected. No implicit both-protocol default.",
+        "tcp・udpの1件以上が必須です。重複や別プロトコルは拒否し、両方を暗黙に指定する既定値はありません。",
+        "必填且非空的 tcp/udp 子集，拒絕重複或其他協定。不會預設同時啟用兩者。",
+        "必填且非空的 tcp/udp 子集，拒绝重复或其他协议。不会默认同时启用两者。"
+      ],
+      "rules[].destinationSetRef": [
+        "Required bare IPAddressSet name or IPAddressSet/name, declared in the same Router. No field selector or automatic inline address list.",
+        "同じRouterで宣言したIPAddressSetの名前またはIPAddressSet/nameが必須です。field指定やインラインのアドレス一覧は扱いません。",
+        "必填，同一 Router 宣告的 IPAddressSet 裸名稱或 IPAddressSet/name。不支援欄位選擇或內嵌位址清單。",
+        "必填，同一 Router 声明的 IPAddressSet 裸名称或 IPAddressSet/name。不支持字段选择或内嵌地址列表。"
+      ],
+      "rules[].destinationPort": [
+        "Required original destination port 1–65535; no range syntax or default.",
+        "転送前の宛先ポート1～65535が必須です。範囲指定や既定値はありません。",
+        "必填的原目的連接埠 1–65535，無範圍語法或預設值。",
+        "必填的原目标端口 1–65535，无范围语法或默认值。"
+      ],
+      "rules[].redirectPort": [
+        "Required local service port 1–65535. Must have a suitable listener reachable after redirect; YAML validation does not check that listener.",
+        "転送先のローカルポート1～65535が必須です。転送後に接続できる待受が必要ですが、YAML検証では待受を確認しません。",
+        "必填的本機服務連接埠 1–65535。重新導向後需有可連接的接聽服務，YAML 驗證不檢查該服務。",
+        "必填的本机服务端口 1–65535。重定向后需有可连接的监听服务，YAML 验证不检查该服务。"
+      ],
+      "when": [
+        "Optional common activation predicate, default unconditional. See common fields for state/all/any and reference constraints.",
+        "任意の共通有効化条件で、既定は無条件です。state・all・anyと参照制約は共通項を参照してください。",
+        "選用的共用啟用條件，預設無條件。state/all/any 與參照限制請見共用欄位。",
+        "可选的通用启用条件，默认无条件。state/all/any 与引用限制请见通用字段。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_firewall.go",
+      "pkg/config/validate.go",
+      "pkg/config/diagnostics.go",
+      "pkg/render/local_service_redirect.go",
+      "pkg/render/nftables.go",
+      "pkg/controller/chain/ipaddressset.go"
+    ]
+  },
+  "FirewallZone": {
+    "purpose": [
+      "Group configured interfaces under a named trust role for firewall generation. This does not create an OS interface or a separate routing/bridge domain.",
+      "設定済みインターフェースを名前付きの信頼区分にまとめ、ファイアウォール生成に使います。OSインターフェースや独立した経路・ブリッジ領域は作りません。",
+      "將已設定介面歸入具名信任角色，用於產生防火牆規則。不建立 OS 介面或獨立路由、橋接網域。",
+      "将已配置接口归入具名信任角色，用于生成防火墙规则。不创建 OS 接口或独立路由、桥接域。"
+    ],
+    "rules": [
+      [
+        "role and at least one interface are required; repeated identical interface strings within a zone are rejected. FirewallRule uses the zone metadata.name; self is the special router-local endpoint rather than an ordinary interface zone.",
+        "roleと1件以上のinterfacesが必須で、同一ゾーン内の同じインターフェース文字列の重複は禁止です。FirewallRuleはmetadata.nameを参照します。selfは通常のインターフェースゾーンでなく、ルーター自身を示す特別な宛先です。",
+        "role 與至少一個介面必填，同一區域內重複的介面字串會被拒絕。FirewallRule 使用區域 metadata.name；self 是路由器本機的特殊端點，不是一般介面區域。",
+        "role 与至少一个接口必填，同一区域内重复的接口字符串会被拒绝。FirewallRule 使用区域 metadata.name；self 是路由器本机的特殊端点，不是普通接口区域。"
+      ],
+      [
+        "Implicit policy allows mgmt toward all roles and self; trust toward self and roles other than mgmt; untrust is denied except same-role forwarding is enabled by the current shared policy. Established/related traffic and control-protocol exceptions are evaluated separately. See FirewallPolicy and FirewallRule for OS-specific ordering limits.",
+        "暗黙方針はmgmtから全区分・self、trustからself・mgmt以外を許可します。untrustは原則拒否ですが、現行の共通方針では同一区分間の転送を許可します。確立済み・関連通信と制御プロトコルの例外は別に評価します。OSごとの順序制約はFirewallPolicy・FirewallRuleを参照してください。",
+        "隱含規則允許 mgmt 前往所有角色與 self，trust 前往 self 及 mgmt 以外的角色。untrust 原則拒絕，但目前共用規則允許相同角色間轉送。既有連線、相關流量與控制協定例外另行評估。OS 順序限制請見 FirewallPolicy/FirewallRule。",
+        "隐式规则允许 mgmt 前往所有角色与 self，trust 前往 self 及 mgmt 以外的角色。untrust 原则拒绝，但当前共享规则允许相同角色间转发。已有连接、相关流量与控制协议例外另行评估。OS 顺序限制请见 FirewallPolicy/FirewallRule。"
+      ]
+    ],
+    "fields": {
+      "role": [
+        "Required untrust, trust or mgmt; no default. Selects implicit firewall behavior, not interface ownership or authentication.",
+        "untrust・trust・mgmtのいずれかが必須で、既定値はありません。暗黙の通信方針を選び、所有権・認証の設定ではありません。",
+        "必填 untrust、trust 或 mgmt，無預設值。選擇隱含防火牆行為，不是介面所有權或驗證設定。",
+        "必填 untrust、trust 或 mgmt，无默认值。选择隐式防火墙行为，不是接口所有权或认证配置。"
+      ],
+      "interfaces": [
+        "Required nonempty logical interface references. Bare names default to Interface; explicit Interface/name, PPPoESession/name, WireGuardInterface/name and DSLiteTunnel/name forms are accepted. References must resolve in the configuration interface/tunnel indexes and to nonempty kernel interface names for rendering.",
+        "1件以上の論理インターフェース参照が必須です。裸の名前はInterfaceとして扱い、Interface/name・PPPoESession/name・WireGuardInterface/name・DSLiteTunnel/nameを受け付けます。設定内のインターフェース・トンネル索引で解決でき、描画時にOS名が必要です。",
+        "必填且非空的邏輯介面參照。單純名稱預設為 Interface；接受 Interface/name、PPPoESession/name、WireGuardInterface/name、DSLiteTunnel/name。必須可在設定介面/通道索引中解析，且產生規則時有非空核心介面名稱。",
+        "必填且非空的逻辑接口引用。单独名称默认为 Interface；接受 Interface/name、PPPoESession/name、WireGuardInterface/name、DSLiteTunnel/name。必须可在配置接口/隧道索引中解析，且生成规则时有非空内核接口名称。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_firewall.go",
+      "pkg/config/validate.go",
+      "pkg/render/nftables.go",
+      "pkg/render/pf.go"
+    ]
+  },
+  "FirewallPolicy": {
+    "purpose": [
+      "Set shared implicit firewall options used alongside zones and explicit rules. Multiple resources are aggregated rather than applied independently.",
+      "ゾーン・明示ルールと併用する共通の暗黙ファイアウォール設定です。複数定義は独立せず集約します。",
+      "設定與區域及明確規則搭配的共用隱含防火牆選項。多個資源會彙總，不是獨立套用。",
+      "配置与区域及明确规则搭配的共享隐式防火墙选项。多个资源会汇总，不是独立应用。"
+    ],
+    "rules": [
+      [
+        "No spec field is mandatory. logDeny is ORed across resources. sameRoleAccept starts true in the renderer and no false assignment exists, so setting false does not disable same-role forwarding in the current implementation.",
+        "必須のspec項目はありません。logDenyは複数定義のORです。描画側のsameRoleAcceptはtrueで開始しfalseを代入する経路がないため、現行実装ではfalseを指定しても同じ区分間の転送を無効化できません。",
+        "沒有必填 spec 欄位。logDeny 在多個資源間取 OR。產生器的 sameRoleAccept 從 true 開始且沒有設為 false 的路徑，因此目前填 false 也無法停用相同角色間轉送。",
+        "没有必填 spec 字段。logDeny 在多个资源间取 OR。生成器的 sameRoleAccept 从 true 开始且没有设为 false 的路径，因此当前填 false 也无法禁用相同角色间转发。"
+      ],
+      [
+        "Linux nftables and FreeBSD PF have different implicit/explicit ordering. PF emits broad implicit passes before explicit deny rules for accepted paths; Linux emits explicit zone-pair rules before that pair’s implicit action. Do not assume an explicit deny overrides every implicit/control/state exception.",
+        "Linux nftablesとFreeBSD PFでは暗黙・明示ルールの順序が違います。PFは許可経路の広い暗黙許可を明示拒否より前に出し、Linuxはゾーン間の明示ルールをその組の暗黙判定より先に出します。明示拒否が暗黙許可・制御通信・状態追跡の全例外を上書きするとは限りません。",
+        "Linux nftables 與 FreeBSD PF 的隱含/明確規則順序不同。PF 在已允許路徑的明確拒絕前產生廣泛隱含允許；Linux 在該區域配對的隱含動作前產生明確規則。不可假定明確拒絕能覆蓋所有隱含、控制或狀態例外。",
+        "Linux nftables 与 FreeBSD PF 的隐式/明确规则顺序不同。PF 在已允许路径的明确拒绝前生成广泛隐式允许；Linux 在该区域配对的隐式动作前生成明确规则。不可假定明确拒绝能覆盖所有隐式、控制或状态例外。"
+      ]
+    ],
+    "fields": {
+      "logDeny": [
+        "Default false; any true resource enables Linux implicit input/forward deny logging. It does not log explicit drops without their own log flag. Current PF generation does not read this option.",
+        "既定falseです。いずれかがtrueならLinuxの暗黙input・forward拒否ログを有効にします。明示dropにはそのルールのlogが必要です。現行PFは本項目を読みません。",
+        "預設 false，任一資源為 true 即啟用 Linux 隱含 input/forward 拒絕紀錄。明確 drop 仍需其 log 旗標。目前 PF 不讀取此選項。",
+        "默认 false，任一资源为 true 即启用 Linux 隐式 input/forward 拒绝日志。明确 drop 仍需其 log 标志。当前 PF 不读取此选项。"
+      ],
+      "sameRoleAccept": [
+        "Decoded default false, but effective renderer default is always true and false has no effect. This includes untrust-to-untrust in Linux. PF skips its broad untrust-to-untrust forwarding pass.",
+        "デコード時の既定はfalseですが、実効値は常にtrueでfalseの効果はありません。Linuxではuntrust同士も含みます。PFはuntrust同士の広い暗黙転送許可を出しません。",
+        "解碼預設 false，但產生器有效預設固定 true，false 無效。Linux 包含 untrust 對 untrust；PF 不產生其廣泛隱含轉送允許。",
+        "解码默认 false，但生成器有效默认固定 true，false 无效。Linux 包含 untrust 对 untrust；PF 不生成其广泛隐式转发允许。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_firewall.go",
+      "pkg/render/nftables.go",
+      "pkg/render/pf.go"
+    ]
+  },
+  "FirewallRule": {
+    "purpose": [
+      "Declare a named accept/drop/reject rule for a zone path, with address/protocol/port matches and Linux rate/connection predicates.",
+      "ゾーン間の許可・破棄・拒否ルールです。アドレス・プロトコル・ポート条件と、Linuxのレート・接続数条件を指定できます。",
+      "宣告區域路徑的具名允許、丟棄或拒絕規則，支援位址、協定、連接埠比對及 Linux 速率/連線條件。",
+      "声明区域路径的具名允许、丢弃或拒绝规则，支持地址、协议、端口匹配及 Linux 速率/连接条件。"
+    ],
+    "rules": [
+      [
+        "fromZone, toZone and action are required. Zone names must exist or be self. Although fromZone=self passes validation, these renderers do not generate a self-origin chain from it: local outbound traffic follows the OS/output policy instead.",
+        "fromZone・toZone・actionが必須です。ゾーンは既存名またはselfです。fromZone=selfも検証を通りますが、この描画処理は自発通信のチェーンを生成せず、ローカル発信はOS・outputの方針に従います。",
+        "fromZone、toZone、action 必填。區域須存在或為 self。雖然 fromZone=self 可通過驗證，這些產生器不會為它產生本機來源鏈；本機送出流量依 OS/output 規則處理。",
+        "fromZone、toZone、action 必填。区域须存在或为 self。虽然 fromZone=self 可通过验证，这些生成器不会为它生成本机源链；本机发出流量按 OS/output 规则处理。"
+      ],
+      [
+        "Rules are sorted by metadata.name, not YAML order. Existing state, IPv6 control traffic and generated service/ingress allowances can be accepted earlier. PF also emits broad implicit passes before explicit rules; for forwarded PF rules toZone does not add an output-interface/destination-zone match, so specify destinationCIDRs when destination scope is needed.",
+        "ルール順はYAML順でなくmetadata.name順です。既存状態・IPv6制御・生成サービスや公開通信の許可が先に成立する場合があります。PFは広い暗黙許可も先に出し、転送ルールのtoZoneから出力インターフェース・宛先ゾーン条件を作らないため、宛先制限にはdestinationCIDRsを明示してください。",
+        "規則依 metadata.name 排序，不依 YAML 順序。既有狀態、IPv6 控制流量與產生的服務/入口允許可能先符合。PF 也先產生廣泛隱含允許；轉送規則的 toZone 不形成輸出介面或目的區域條件，需要目的範圍時請指定 destinationCIDRs。",
+        "规则按 metadata.name 排序，不按 YAML 顺序。已有状态、IPv6 控制流量与生成的服务/入口允许可能先匹配。PF 也先生成广泛隐式允许；转发规则的 toZone 不形成输出接口或目标区域条件，需要目标范围时请指定 destinationCIDRs。"
+      ],
+      [
+        "port and destinationPorts are mutually exclusive. Any source/destination port requires tcp or udp. A range must be the only entry in its list; numeric ports and start-end strings are accepted. ICMP type selectors require their matching protocol.",
+        "portとdestinationPortsは排他です。送信元・宛先ポートの指定にはtcpまたはudpが必要です。範囲は一覧内の唯一の項目とし、数値ポート・start-end文字列を指定できます。ICMP型には対応するプロトコルが必要です。",
+        "port 與 destinationPorts 互斥。指定來源或目的連接埠需要 tcp/udp。範圍須為清單中唯一項目；接受數值連接埠與 start-end 字串。ICMP 型別需要對應協定。",
+        "port 与 destinationPorts 互斥。指定源或目标端口需要 tcp/udp。范围须为列表中唯一条目；接受数值端口与 start-end 字符串。ICMP 类型需要对应协议。"
+      ],
+      [
+        "On Linux, source CIDRs are alternatives; destinationCIDRs and destinationSetRefs form a union; excluded sets are then subtracted. Source/destination/protocol families must be compatible. PF currently ignores address-set references, rateLimit and connLimit despite validation accepting them.",
+        "Linuxでは送信元CIDRはOR、destinationCIDRsとdestinationSetRefsは和集合で、除外集合をその後で除きます。送信元・宛先・プロトコルのアドレスファミリーは整合が必要です。PFは検証を通してもアドレス集合参照・rateLimit・connLimitを使用しません。",
+        "Linux 的來源 CIDR 為 OR；destinationCIDRs 與 destinationSetRefs 取聯集，再排除指定集合。來源、目的與協定位址族須相容。PF 目前忽略位址集合參照、rateLimit、connLimit，即使驗證接受。",
+        "Linux 的源 CIDR 为 OR；destinationCIDRs 与 destinationSetRefs 取并集，再排除指定集合。源、目标与协议地址族须兼容。PF 当前忽略地址集合引用、rateLimit、connLimit，即使验证接受。"
+      ],
+      [
+        "Linux rateLimit matches traffic OVER the configured rate, and connLimit matches counts OVER maxPerSource; the rule action is applied to the excess. Use a suitable drop/reject action for limiting. With both enabled they produce separate alternatives, not an AND of both thresholds.",
+        "LinuxのrateLimitは指定レート超過、connLimitはmaxPerSource超過に一致し、超過分へactionを適用します。制限には適切なdrop・rejectを指定してください。両方を設定すると別々の選択肢を生成し、両閾値のANDにはなりません。",
+        "Linux rateLimit 比對超過設定速率的流量，connLimit 比對超過 maxPerSource 的數量，將 action 套用於超額流量。限制時請使用適當 drop/reject。兩者同時啟用會產生獨立替代規則，不是兩個門檻的 AND。",
+        "Linux rateLimit 匹配超过配置速率的流量，connLimit 匹配超过 maxPerSource 的数量，将 action 应用于超额流量。限制时请使用适当 drop/reject。两者同时启用会生成独立替代规则，不是两个阈值的 AND。"
+      ]
+    ],
+    "fields": {
+      "fromZone": [
+        "Required bare FirewallZone name or self. self is accepted but does not produce local-outbound filtering here.",
+        "必須の裸のFirewallZone名またはselfです。selfは受理しますが、ここでローカル発信のフィルターにはなりません。",
+        "必填單純 FirewallZone 名稱或 self。接受 self，但此處不產生本機送出篩選。",
+        "必填单独 FirewallZone 名称或 self。接受 self，但此处不生成本机发出筛选。"
+      ],
+      "toZone": [
+        "Required bare FirewallZone name or self. Linux matches zone-pair input/output interfaces; self selects local input. PF self uses router addresses; other toZone values do not become an output-zone match.",
+        "必須の裸のFirewallZone名またはselfです。Linuxは入出力ゾーンのインターフェース、selfはローカル入力を選びます。PFのselfはルーターアドレスで、他のtoZoneは出力ゾーン条件になりません。",
+        "必填單純 FirewallZone 名稱或 self。Linux 比對區域配對輸入/輸出介面；self 選擇本機輸入。PF self 使用路由器位址，其他 toZone 不形成輸出區域條件。",
+        "必填单独 FirewallZone 名称或 self。Linux 匹配区域配对输入/输出接口；self 选择本机输入。PF self 使用路由器地址，其他 toZone 不形成输出区域条件。"
+      ],
+      "srcCIDRs": [
+        "Optional IPv4/IPv6 source-prefix alternatives; default empty means any source. Prefixes must parse; Linux masks host bits before rendering.",
+        "任意の送信元IPv4・IPv6プレフィックスのOR一覧です。既定の空は送信元不問で、解析可能なCIDRが必要です。Linuxはホスト部をマスクして描画します。",
+        "選用 IPv4/IPv6 來源前綴 OR 清單；預設空為任意來源。須為有效 CIDR；Linux 產生前會遮罩主機位元。",
+        "可选 IPv4/IPv6 源前缀 OR 列表；默认空为任意源。须为有效 CIDR；Linux 生成前会掩码主机位。"
+      ],
+      "destinationCIDRs": [
+        "Optional destination-prefix alternatives, default empty. Linux unions these with destinationSetRefs; with neither specified, destination is unrestricted within the zone path. PF uses only these static destination prefixes.",
+        "任意の宛先CIDR一覧で既定は空です。LinuxはdestinationSetRefsと合わせてORにし、両方なければゾーン経路内の宛先不問です。PFはこの静的CIDRだけを使います。",
+        "選用目的前綴清單，預設空。Linux 與 destinationSetRefs 取聯集；兩者皆無時區域路徑內不限制目的。PF 僅使用這些靜態目的前綴。",
+        "可选目标前缀列表，默认空。Linux 与 destinationSetRefs 取并集；两者均无时区域路径内不限制目标。PF 仅使用这些静态目标前缀。"
+      ],
+      "destinationSetRefs": [
+        "Optional existing IPAddressSet/<name> references, default empty; current PF does not enforce them. Linux references the enabled IPv4/IPv6 nftables sets.",
+        "任意の既存IPAddressSet/<name>参照で、既定は空です。Linuxは有効なIPv4・IPv6集合を参照しますが、現行PFは適用しません。",
+        "選用既有 IPAddressSet/<name> 參照，預設空。Linux 使用啟用的 IPv4/IPv6 nftables 集合；目前 PF 不執行。",
+        "可选已有 IPAddressSet/<name> 引用，默认空。Linux 使用启用的 IPv4/IPv6 nftables 集合；当前 PF 不执行。"
+      ],
+      "excludeDestinationSetRefs": [
+        "Optional existing IPAddressSet/<name> references subtracted from Linux destination matches. Default empty; current PF ignores them.",
+        "Linuxの宛先条件から除外する既存IPAddressSet/<name>参照です。既定は空で、現行PFは使いません。",
+        "選用既有 IPAddressSet/<name> 參照，從 Linux 目的比對中排除。預設空；目前 PF 忽略。",
+        "可选已有 IPAddressSet/<name> 引用，从 Linux 目标匹配中排除。默认空；当前 PF 忽略。"
+      ],
+      "protocol": [
+        "Default empty means any protocol. Allowed tcp, udp, icmp, icmpv6, ipv6-icmp, ipip. Here ipip is IPv4 encapsulation in IPv6 (IPv6 next-header 4), not an IPv4-underlay tunnel protocol rule.",
+        "既定の空はプロトコル不問です。tcp・udp・icmp・icmpv6・ipv6-icmp・ipipを指定できます。ここでipipはIPv6 next-header 4のIPv4カプセル化であり、IPv4下位網のトンネル指定ではありません。",
+        "預設空為任意協定。接受 tcp、udp、icmp、icmpv6、ipv6-icmp、ipip。此處 ipip 是 IPv6 內封裝 IPv4（next-header 4），不是 IPv4 底層通道協定規則。",
+        "默认空为任意协议。接受 tcp、udp、icmp、icmpv6、ipv6-icmp、ipip。此处 ipip 是 IPv6 内封装 IPv4（next-header 4），不是 IPv4 底层隧道协议规则。"
+      ],
+      "port": [
+        "Optional single destination port, default 0 means absent. Positive 1–65535 requires tcp/udp and excludes destinationPorts.",
+        "任意の単一宛先ポートで、既定0は指定なしです。1～65535にはtcp・udpが必要で、destinationPortsと排他です。",
+        "選用單一目的連接埠，預設 0 為未指定。正值 1–65535 需要 tcp/udp，且與 destinationPorts 互斥。",
+        "可选单一目标端口，默认 0 为未指定。正值 1–65535 需要 tcp/udp，且与 destinationPorts 互斥。"
+      ],
+      "sourcePorts": [
+        "Optional tcp/udp source-port OR list; each port 1–65535 or a sole start-end range. Default empty means any source port.",
+        "任意のtcp・udp送信元ポートOR一覧です。各値は1～65535か唯一のstart-end範囲とし、既定の空はポート不問です。",
+        "選用 tcp/udp 來源連接埠 OR 清單，各值為 1–65535 或唯一 start-end 範圍。預設空為任意來源連接埠。",
+        "可选 tcp/udp 源端口 OR 列表，各值为 1–65535 或唯一 start-end 范围。默认空为任意源端口。"
+      ],
+      "destinationPorts": [
+        "Optional tcp/udp destination-port OR list with the same port/range rules. Mutually exclusive with nonzero port; default empty means unrestricted.",
+        "任意のtcp・udp宛先ポートOR一覧で、送信元と同じ数値・範囲制約です。0以外のportと排他で、既定の空は制限なしです。",
+        "選用 tcp/udp 目的連接埠 OR 清單，規則與來源相同。與非零 port 互斥，預設空為不限制。",
+        "可选 tcp/udp 目标端口 OR 列表，规则与源相同。与非零 port 互斥，默认空为不限制。"
+      ],
+      "icmpType": [
+        "Optional named IPv4 ICMP type, requires icmp. Supported: echo-reply, destination-unreachable, source-quench, redirect, echo-request, router-advertisement, router-solicitation, time-exceeded, parameter-problem, timestamp-request, timestamp-reply. Empty means all types. Camel-case key overrides the accepted YAML alias icmp-type.",
+        "icmpが必要なIPv4 ICMP型です。echo-reply・destination-unreachable・source-quench・redirect・echo-request・router-advertisement・router-solicitation・time-exceeded・parameter-problem・timestamp-request・timestamp-replyに対応します。空は全型です。YAML別名icmp-typeより本キーを優先します。",
+        "選用 IPv4 ICMP 名稱，須為 icmp。支援 echo-reply、destination-unreachable、source-quench、redirect、echo-request、router-advertisement、router-solicitation、time-exceeded、parameter-problem、timestamp-request、timestamp-reply。空表示全部型別；此鍵優先於 YAML 別名 icmp-type。",
+        "可选 IPv4 ICMP 名称，须为 icmp。支持 echo-reply、destination-unreachable、source-quench、redirect、echo-request、router-advertisement、router-solicitation、time-exceeded、parameter-problem、timestamp-request、timestamp-reply。空表示全部类型；此键优先于 YAML 别名 icmp-type。"
+      ],
+      "icmpv6Type": [
+        "Optional IPv6 ICMP name, requires icmpv6/ipv6-icmp. Supported destination-unreachable, packet-too-big, time-exceeded, parameter-problem, echo-request/reply, router-solicit/advert, neighbor-solicit/advert and their nd- aliases. Empty means all types. Overrides YAML alias icmpv6-type.",
+        "icmpv6・ipv6-icmpが必要です。destination-unreachable・packet-too-big・time-exceeded・parameter-problem・echo-request/reply・router-solicit/advert・neighbor-solicit/advertと、そのnd-別名に対応します。空は全型で、YAML別名icmpv6-typeより本キーを優先します。",
+        "選用 IPv6 ICMP 名稱，須為 icmpv6/ipv6-icmp。支援 destination-unreachable、packet-too-big、time-exceeded、parameter-problem、echo-request/reply、router-solicit/advert、neighbor-solicit/advert 及其 nd- 別名。空為全部型別，優先於 icmpv6-type 別名。",
+        "可选 IPv6 ICMP 名称，须为 icmpv6/ipv6-icmp。支持 destination-unreachable、packet-too-big、time-exceeded、parameter-problem、echo-request/reply、router-solicit/advert、neighbor-solicit/advert 及其 nd- 别名。空为全部类型，优先于 icmpv6-type 别名。"
+      ],
+      "action": [
+        "Required accept, drop or reject; no default. With rate/connection predicates on Linux, applies to excess traffic rather than defining an allowed quota.",
+        "accept・drop・rejectが必須で既定値はありません。Linuxのレート・接続条件付きでは許容量でなく超過通信への判定です。",
+        "必填 accept、drop 或 reject，無預設值。Linux 搭配速率/連線條件時，動作用於超額流量，不是允許配額。",
+        "必填 accept、drop 或 reject，无默认值。Linux 搭配速率/连接条件时，动作用于超额流量，不是允许配额。"
+      ],
+      "log": [
+        "Default false. True adds logging before the rule action; Linux uses kernel logging or enabled FirewallEventLog NFLOG, PF uses its log action.",
+        "既定falseです。trueで判定前にログを出し、Linuxはカーネルログまたは有効なFirewallEventLogのNFLOG、PFはlogを使います。",
+        "預設 false。true 在動作前加入紀錄；Linux 使用核心紀錄或已啟用 FirewallEventLog 的 NFLOG，PF 使用 log。",
+        "默认 false。true 在动作前加入日志；Linux 使用内核日志或已启用 FirewallEventLog 的 NFLOG，PF 使用 log。"
+      ],
+      "rateLimit": [
+        "Optional Linux over-rate predicate; default disabled. Current PF ignores all nested rate options.",
+        "任意のLinuxレート超過条件で、既定は無効です。現行PFは子項目を含め使いません。",
+        "選用 Linux 超速率條件，預設停用。目前 PF 忽略所有內層速率選項。",
+        "可选 Linux 超速率条件，默认禁用。当前 PF 忽略所有内层速率选项。"
+      ],
+      "rateLimit.rate": [
+        "Nonnegative rate, default 0 falls back to packetsPerSecond. Effective 0 disables the predicate and requires unit/per/burst/log to remain empty/zero/false. Positive rate takes precedence over packetsPerSecond.",
+        "0以上のレートで、既定0はpacketsPerSecondを使います。実効0は無効でunit・per・burst・logも空・0・falseが必要です。正のrateはpacketsPerSecondより優先します。",
+        "非負速率，預設 0 改用 packetsPerSecond。有效值 0 停用條件，且 unit/per/burst/log 須為空/0/false。正 rate 優先於 packetsPerSecond。",
+        "非负速率，默认 0 改用 packetsPerSecond。有效值 0 禁用条件，且 unit/per/burst/log 须为空/0/false。正 rate 优先于 packetsPerSecond。"
+      ],
+      "rateLimit.unit": [
+        "packet (default when active), byte, kilobyte or megabyte. Selects nftables rate and burst units; no effect without a positive effective rate.",
+        "有効時の既定はpacketで、byte・kilobyte・megabyteも選べます。nftablesのレート・バースト単位で、正の実効レートが必要です。",
+        "啟用時預設 packet，也接受 byte、kilobyte、megabyte。選擇 nftables 速率與突發單位，需要正有效速率。",
+        "启用时默认 packet，也接受 byte、kilobyte、megabyte。选择 nftables 速率与突发单位，需要正有效速率。"
+      ],
+      "rateLimit.per": [
+        "second (default when active) or minute; requires a positive effective rate.",
+        "有効時の既定はsecondで、minuteも選べます。正の実効レートが必要です。",
+        "啟用時預設 second，或 minute，需要正有效速率。",
+        "启用时默认 second，或 minute，需要正有效速率。"
+      ],
+      "rateLimit.log": [
+        "Default false. True logs rate-exceeding matches before applying action; requires a positive effective rate.",
+        "既定falseです。trueでレート超過一致を判定前に記録し、正の実効レートが必要です。",
+        "預設 false。true 在動作前記錄超速率比對，需要正有效速率。",
+        "默认 false。true 在动作前记录超速率匹配，需要正有效速率。"
+      ],
+      "rateLimit.packetsPerSecond": [
+        "Legacy nonnegative rate fallback when rate=0, default 0. Despite its name, explicit unit/per still control the effective units if supplied.",
+        "rate=0時に使う旧来の0以上のレートで、既定0です。名前にかかわらずunit・perを明示した場合はその単位に従います。",
+        "rate=0 時使用的舊式非負速率，預設 0。雖有此名稱，明確 unit/per 仍決定有效單位。",
+        "rate=0 时使用的旧式非负速率，默认 0。虽有此名称，明确 unit/per 仍决定有效单位。"
+      ],
+      "rateLimit.burst": [
+        "Nonnegative burst amount in the selected unit, default 0 omits the burst clause and uses nftables behavior. Requires an active rate if nonzero.",
+        "選択単位の0以上のバースト量です。既定0はburst句を省略しnftablesの挙動に従います。0以外には有効なレートが必要です。",
+        "所選單位的非負突發量。預設 0 省略 burst 子句，依 nftables 行為。非零需要啟用速率。",
+        "所选单位的非负突发量。默认 0 省略 burst 子句，按 nftables 行为。非零需要启用速率。"
+      ],
+      "connLimit": [
+        "Optional Linux per-source connection-count predicate; default disabled. Independent from rateLimit; current PF ignores it.",
+        "任意のLinux送信元別接続数条件で、既定は無効です。rateLimitと独立し、現行PFは使いません。",
+        "選用 Linux 每來源連線數條件，預設停用。獨立於 rateLimit，目前 PF 忽略。",
+        "可选 Linux 每源连接数条件，默认禁用。独立于 rateLimit，当前 PF 忽略。"
+      ],
+      "connLimit.maxPerSource": [
+        "Nonnegative maximum, default 0 disabled. Positive N matches ct count over N per source address (separate IPv4/IPv6 meters), then applies action.",
+        "0以上の上限で既定0は無効です。正のNでは送信元アドレス別のct count>Nに一致しactionを適用します。IPv4・IPv6で別の計測を使います。",
+        "非負上限，預設 0 停用。正 N 比對每來源位址 ct count 超過 N，再套用 action；IPv4/IPv6 使用獨立計量。",
+        "非负上限，默认 0 禁用。正 N 匹配每源地址 ct count 超过 N，再应用 action；IPv4/IPv6 使用独立计量。"
+      ],
+      "connLimit.log": [
+        "Default false. True adds a conn-limit log for excess-count matches; has no effect when maxPerSource=0.",
+        "既定falseです。trueで接続数超過ログを加え、maxPerSource=0なら効果はありません。",
+        "預設 false。true 為超額連線數比對加入 conn-limit 紀錄；maxPerSource=0 時無效。",
+        "默认 false。true 为超额连接数匹配加入 conn-limit 日志；maxPerSource=0 时无效。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_firewall.go",
+      "pkg/config/validate.go",
+      "pkg/config/diagnostics.go",
+      "pkg/render/nftables.go",
+      "pkg/render/pf.go"
+    ]
+  },
+  "ClientPolicy": {
+    "purpose": [
+      "Apply guest-style local-service and routed-destination restrictions to selected or non-exempt clients. Linux identifies clients by configured MACs; FreeBSD PF requires explicit IP identities.",
+      "対象クライアント、または例外以外のクライアントへ、ゲスト用の自機サービス・転送宛先制限を適用します。Linuxは設定MAC、FreeBSD PFは明示IPで識別します。",
+      "對選定或非例外用戶端套用訪客服務與路由目的限制。Linux 以設定的 MAC 識別，FreeBSD PF 需要明確 IP 身分。",
+      "对选定或非例外客户端应用访客服务与路由目标限制。Linux 以配置的 MAC 标识，FreeBSD PF 需要明确 IP 身份。"
+    ],
+    "rules": [
+      [
+        "mode must be include or exclude. include restricts the selected set; exclude restricts clients outside the selected trusted set. Linux include with no selected MACs produces no restriction; exclude with no selected MACs matches all clients on the selected interfaces.",
+        "modeはinclude・excludeが必須です。includeは選択集合、excludeは選択した信頼集合の外側を制限します。Linuxのincludeで対象MACがなければ制限を生成せず、excludeで集合が空なら対象インターフェース上の全クライアントに一致します。",
+        "mode 必須為 include/exclude。include 限制選定集合，exclude 限制選定可信集合以外的用戶端。Linux include 沒有選定 MAC 時不產生限制；exclude 集合空時比對所選介面全部用戶端。",
+        "mode 必须为 include/exclude。include 限制所选集合，exclude 限制所选可信集合以外的客户端。Linux include 没有所选 MAC 时不生成限制；exclude 集合空时匹配所选接口全部客户端。"
+      ],
+      [
+        "Linux classification only contributes match.macs: guest/isolated classes enter include sets, trusted classes enter exclude sets. OUI/hostname/fingerprint selectors are validated but not used by the firewall renderer. ipv4Reservation/ipv6Addresses do not become Linux match identities.",
+        "Linuxの分類はmatch.macsだけを使い、guest・isolatedをinclude、trustedをexcludeの集合に加えます。OUI・ホスト名・指紋は検証されても描画の選別には使いません。ipv4Reservation・ipv6AddressesもLinuxの選別条件にはなりません。",
+        "Linux 分類僅使用 match.macs：guest/isolated 加入 include 集合，trusted 加入 exclude 集合。OUI、主機名、指紋選擇器會驗證，但防火牆產生器不使用。ipv4Reservation/ipv6Addresses 不形成 Linux 比對身分。",
+        "Linux 分类仅使用 match.macs：guest/isolated 加入 include 集合，trusted 加入 exclude 集合。OUI、主机名、指纹选择器会验证，但防火墙生成器不使用。ipv4Reservation/ipv6Addresses 不形成 Linux 匹配身份。"
+      ],
+      [
+        "FreeBSD rejects top-level MACs and every match selector. Each class instead needs ipv4Reservation and/or explicit ipv6Addresses. PF uses the reservation’s ipAddress, not its MAC. Interfaces must be explicit for PF; its renderer does not inherit trust-zone interfaces when omitted.",
+        "FreeBSDはトップレベルMAC・全match選別を拒否します。各分類にipv4Reservationまたは明示ipv6Addressesが必要で、PFは予約のMACでなくipAddressを使います。PFのinterfacesは明示してください。省略してもtrustゾーンを引き継ぎません。",
+        "FreeBSD 拒絕頂層 MAC 與所有 match 選擇器；每類改需 ipv4Reservation 或明確 ipv6Addresses。PF 使用預約的 ipAddress，不是 MAC。PF 請明確提供 interfaces；省略時不繼承 trust 區域介面。",
+        "FreeBSD 拒绝顶层 MAC 与所有 match 选择器；每类改需 ipv4Reservation 或明确 ipv6Addresses。PF 使用预约的 ipAddress，不是 MAC。PF 请明确提供 interfaces；省略时不继承 trust 区域接口。"
+      ],
+      [
+        "These are routed/input firewall restrictions, not L2 switch-port isolation. Existing-state/control/service allowances may run earlier. PF’s implicit trust/mgmt-to-self pass precedes its client self restrictions, and PF’s client local-service restrictions currently use IPv4 identities only. Do not treat the policy as uniform enforcement across both OSes or all address families.",
+        "経路転送・自機入力の制限であり、L2スイッチポート分離ではありません。既存状態・制御・サービス許可が先に動く場合があります。PFはtrust・mgmtからselfへの暗黙許可がクライアント自機制限より先で、自機サービス制限も現在はIPv4識別だけです。両OS・全アドレスファミリーで同一の強制とは扱えません。",
+        "這是路由/本機輸入限制，不是 L2 交換器埠隔離。既有狀態、控制與服務允許可能先執行。PF 的 trust/mgmt-to-self 隱含允許在用戶端本機限制之前，且目前本機服務限制僅使用 IPv4 身分。不可視為兩個 OS 或所有位址族皆一致強制。",
+        "这是路由/本机输入限制，不是 L2 交换机端口隔离。已有状态、控制与服务允许可能先执行。PF 的 trust/mgmt-to-self 隐式允许在客户端本机限制之前，且当前本机服务限制仅使用 IPv4 身份。不可视为两个 OS 或所有地址族均一致强制。"
+      ],
+      [
+        "Linux guestEgressAllow is evaluated before discovery/deny blocks, so it can override them; remaining traffic continues into zone policy. PF IPv4 allow precedes deny, but PF IPv6 deny rules are emitted earlier globally and cannot be overridden by its later IPv6 allow rules.",
+        "LinuxはguestEgressAllowを探索遮断・拒否より先に評価するため上書きできます。残りはゾーン方針へ進みます。PFのIPv4許可は拒否より先ですが、IPv6拒否は全体の前段に出すため後のIPv6許可では上書きできません。",
+        "Linux guestEgressAllow 先於探索/拒絕規則，可覆蓋它們；其餘流量繼續區域規則。PF IPv4 允許先於拒絕，但 IPv6 拒絕規則在全域前段，無法由之後的 IPv6 允許覆蓋。",
+        "Linux guestEgressAllow 先于发现/拒绝规则，可覆盖它们；其余流量继续区域规则。PF IPv4 允许先于拒绝，但 IPv6 拒绝规则在全局前段，无法由之后的 IPv6 允许覆盖。"
+      ]
+    ],
+    "fields": {
+      "mode": [
+        "Required include or exclude, no default. Determines whether the configured identity set is restricted or exempt.",
+        "include・excludeが必須で既定値はありません。識別集合を制限対象にするか、例外にするかを選びます。",
+        "必填 include/exclude，無預設值。決定身分集合為限制對象或例外。",
+        "必填 include/exclude，无默认值。决定身份集合为限制对象或例外。"
+      ],
+      "interfaces": [
+        "Optional Interface/name or bare logical-interface names; references must exist and may not repeat. Linux omitted list uses all trust-zone interfaces and errors if none exist. PF omitted list produces no applicable interface restrictions.",
+        "既存のInterface/nameまたは裸の論理名の一覧で、重複不可です。Linuxの省略時はtrustゾーン全インターフェースを使い、なければエラーです。PFの省略時は適用先がなく制限が生成されません。",
+        "選用 Interface/name 或單純邏輯介面名，參照須存在且不可重複。Linux 省略時使用所有 trust 區域介面，皆無則失敗。PF 省略時沒有適用介面限制。",
+        "可选 Interface/name 或单独逻辑接口名，引用须存在且不可重复。Linux 省略时使用所有 trust 区域接口，均无则失败。PF 省略时没有适用接口限制。"
+      ],
+      "macs": [
+        "Optional Linux static identity list, default empty. Normalized MAC duplicates across this list and classification.match.macs are rejected. Forbidden on FreeBSD.",
+        "任意のLinux固定MAC集合で既定は空です。本一覧・classification.match.macsをまたぐ正規化後の重複は禁止です。FreeBSDは禁止です。",
+        "選用 Linux 固定 MAC 清單，預設空。此清單與 classification.match.macs 間正規化後的重複會被拒絕。FreeBSD 禁用。",
+        "可选 Linux 固定 MAC 列表，默认空。此列表与 classification.match.macs 间规范化后的重复会被拒绝。FreeBSD 禁用。"
+      ],
+      "classification": [
+        "Optional classes, default empty. Linux requires at least one selector per class, but only MAC selectors enforce firewall membership. FreeBSD requires stable IP identities and forbids selectors.",
+        "任意の分類一覧で既定は空です。Linuxは各分類で1種類以上の選別が必須ですが、実際の集合にはMACだけを使います。FreeBSDは安定IPが必須で選別条件は禁止です。",
+        "選用分類清單，預設空。Linux 每類需至少一個選擇器，但只有 MAC 形成防火牆集合。FreeBSD 需要穩定 IP 身分並禁止選擇器。",
+        "可选分类列表，默认空。Linux 每类需至少一个选择器，但仅 MAC 形成防火墙集合。FreeBSD 需要稳定 IP 身份并禁止选择器。"
+      ],
+      "classification[].name": [
+        "Optional descriptive class name, default empty. Does not change matching precedence or create a resource identity.",
+        "任意の説明名で既定は空です。優先順位を変えず、リソース識別子にもなりません。",
+        "選用描述名稱，預設空。不改變比對優先順序，也不建立資源識別。",
+        "可选描述名称，默认空。不改变匹配优先顺序，也不创建资源标识。"
+      ],
+      "classification[].mode": [
+        "Required trusted, guest or isolated. guest and isolated are equivalent for membership in an include policy; trusted contributes to an exclude policy’s exemption set.",
+        "trusted・guest・isolatedが必須です。includeではguest・isolatedを同じ対象集合に、excludeではtrustedを例外集合に加えます。",
+        "必填 trusted、guest 或 isolated。include 將 guest/isolated 同樣加入限制集合；exclude 將 trusted 加入例外集合。",
+        "必填 trusted、guest 或 isolated。include 将 guest/isolated 同样加入限制集合；exclude 将 trusted 加入例外集合。"
+      ],
+      "classification[].match": [
+        "Selector object; Linux needs at least one nonempty selector list. FreeBSD requires it empty even when stable IP identities are supplied. Different selectors are not dynamically resolved into client MACs by the current firewall.",
+        "Linuxでは1件以上の選別一覧が必要です。FreeBSDは安定IPを指定しても空にします。現行ファイアウォールは各種選別を動的にMACへ解決しません。",
+        "Linux 至少需要一個非空選擇器清單。FreeBSD 即使提供穩定 IP 也須留空。目前防火牆不將各選擇器動態解析成用戶端 MAC。",
+        "Linux 至少需要一个非空选择器列表。FreeBSD 即使提供稳定 IP 也须留空。当前防火墙不将各选择器动态解析成客户端 MAC。"
+      ],
+      "classification[].match.macs": [
+        "Optional exact MAC list; effective Linux classifier. MACs must parse and cannot repeat across classes or top-level macs.",
+        "任意の完全MAC一覧で、Linuxで実効のある選別です。解釈可能なMACとし、分類間・トップレベルとの重複は禁止です。",
+        "選用完整 MAC 清單，是 Linux 的有效分類器。MAC 須有效，且不可跨類別或頂層 macs 重複。",
+        "可选完整 MAC 列表，是 Linux 的有效分类器。MAC 须有效，且不可跨类别或顶层 macs 重复。"
+      ],
+      "classification[].match.ouiPrefixes": [
+        "Accepted three hex octets such as 18:ec:e7; duplicates within a class are rejected. Currently no firewall enforcement from this selector. FreeBSD rejects it.",
+        "18:ec:e7のような3個の16進オクテットで、分類内重複は禁止です。現行ファイアウォールの選別効果はなく、FreeBSDは拒否します。",
+        "接受如 18:ec:e7 的三個十六進位八位元組，同類重複會被拒絕。目前不形成防火牆強制，FreeBSD 拒絕。",
+        "接受如 18:ec:e7 的三个十六进制八位组，同类重复会被拒绝。当前不形成防火墙强制，FreeBSD 拒绝。"
+      ],
+      "classification[].match.hostnamePatterns": [
+        "Accepted nonblank Go path.Match glob patterns, not regexes. Syntax is validated but the current firewall does not resolve them into identities; FreeBSD rejects them.",
+        "空でないGo path.Match形式のglobです。正規表現ではありません。構文だけを検証し、現行ファイアウォールは識別集合へ解決しません。FreeBSDは拒否します。",
+        "接受非空 Go path.Match glob，不是正規表示式。目前僅驗證語法，不解析為防火牆身分；FreeBSD 拒絕。",
+        "接受非空 Go path.Match glob，不是正则表达式。当前仅验证语法，不解析为防火墙身份；FreeBSD 拒绝。"
+      ],
+      "classification[].match.dhcpFingerprints": [
+        "Accepted nonblank, whitespace-free tokens with no within-class duplicates. Currently not used for firewall membership; FreeBSD rejects them.",
+        "空白を含まない空でないトークンで、分類内重複は禁止です。現行のファイアウォール集合には使わず、FreeBSDは拒否します。",
+        "接受非空且不含空白的代碼，同類不可重複。目前不形成防火牆集合；FreeBSD 拒絕。",
+        "接受非空且不含空白的标记，同类不可重复。当前不形成防火墙集合；FreeBSD 拒绝。"
+      ],
+      "classification[].ipv4Reservation": [
+        "Optional existing DHCPv4Reservation bare metadata.name; Kind/name is rejected. PF takes its nonempty ipAddress. Linux validates the reference but does not use its address for client matching.",
+        "既存DHCPv4Reservationの裸のmetadata.nameです。Kind/nameは禁止です。PFはその空でないipAddressを使い、Linuxは参照検証だけで選別には使いません。",
+        "選用既有 DHCPv4Reservation 的單純 metadata.name，拒絕 Kind/name。PF 使用其非空 ipAddress；Linux 驗證參照但不以位址比對用戶端。",
+        "可选已有 DHCPv4Reservation 的单独 metadata.name，拒绝 Kind/name。PF 使用其非空 ipAddress；Linux 验证引用但不以地址匹配客户端。"
+      ],
+      "classification[].ipv6Addresses": [
+        "Optional bare IPv6 addresses for PF, no CIDRs or IPv4-mapped forms. Normalized duplicates across all classes are rejected. Never inferred from MAC or IPv4 reservations; not used by Linux client matching.",
+        "PF用のCIDRでないIPv6アドレスです。IPv4射影形式は禁止で、全分類を通して正規化後の重複も禁止です。MAC・IPv4予約から推測せず、Linuxの選別には使いません。",
+        "選用 PF 的純 IPv6 位址，不接受 CIDR 或 IPv4 映射格式。所有類別間正規化後不可重複。不從 MAC/IPv4 預約推導，Linux 用戶端比對不使用。",
+        "可选 PF 的纯 IPv6 地址，不接受 CIDR 或 IPv4 映射格式。所有类别间规范化后不可重复。不从 MAC/IPv4 预约推导，Linux 客户端匹配不使用。"
+      ],
+      "isolation": [
+        "Optional allow/deny hints. Only the Linux renderer reads these four fields; PF uses explicit guest egress lists/defaults instead. This is not independently applied per class.",
+        "任意のallow・deny設定です。4項目を読むのはLinuxだけで、PFはguestEgressの明示一覧・既定値を使います。分類ごとに独立適用する設定ではありません。",
+        "選用 allow/deny 提示，只有 Linux 產生器讀取這四個欄位；PF 使用明確 guest egress 清單或預設。不會逐類獨立套用。",
+        "可选 allow/deny 提示，仅 Linux 生成器读取这四个字段；PF 使用明确 guest egress 列表或默认值。不会逐类独立应用。"
+      ],
+      "isolation.lanInternet": [
+        "Empty by default. Linux deny with no explicit guestEgressDeny replaces the default denied CIDRs with 0.0.0.0/0 and ::/0. allow/empty does not add an unconditional Internet accept. PF ignores this field.",
+        "既定は空です。LinuxのdenyはguestEgressDeny未指定時に拒否集合を0.0.0.0/0・::/0へ置き換えます。allow・空はインターネット無条件許可を追加しません。PFは使いません。",
+        "預設空。Linux deny 且未明確設 guestEgressDeny 時，將拒絕集合換成 0.0.0.0/0 與 ::/0。allow/空不增加無條件網際網路允許。PF 忽略。",
+        "默认空。Linux deny 且未明确设 guestEgressDeny 时，将拒绝集合换成 0.0.0.0/0 与 ::/0。allow/空不增加无条件互联网允许。PF 忽略。"
+      ],
+      "isolation.lanLAN": [
+        "Empty by default. Linux removes the default private-prefix deny list only when both lanLAN and lanMgmt are allow; this does not distinguish individual LAN networks. Explicit guestEgressDeny overrides the default. PF ignores it.",
+        "既定は空です。LinuxはlanLAN・lanMgmtが両方allowのときだけ既定のプライベートCIDR拒否を外し、個別LANを識別しません。guestEgressDeny明示値が既定値に優先します。PFは使いません。",
+        "預設空。Linux 僅在 lanLAN 與 lanMgmt 皆 allow 時移除預設私有前綴拒絕，不區分個別 LAN。明確 guestEgressDeny 覆寫預設。PF 忽略。",
+        "默认空。Linux 仅在 lanLAN 与 lanMgmt 均 allow 时移除默认私有前缀拒绝，不区分个别 LAN。明确 guestEgressDeny 覆盖默认。PF 忽略。"
+      ],
+      "isolation.lanMgmt": [
+        "Empty by default; same combined-default rule as lanLAN. It does not independently resolve management-zone destinations. PF ignores it.",
+        "既定は空で、lanLANと組み合わせた既定集合の判定にだけ使います。管理ゾーンの宛先を独立に解決しません。PFは使いません。",
+        "預設空，與 lanLAN 共同決定預設集合。不會獨立解析管理區域目的。PF 忽略。",
+        "默认空，与 lanLAN 共同决定默认集合。不会独立解析管理区域目标。PF 忽略。"
+      ],
+      "isolation.mDNSBroadcast": [
+        "Empty by default. Linux deny adds forwarded mDNS/SSDP multicast and UDP 137/138 drop rules after guestEgressAllow. It does not control L2 bridging or independently block local services. PF ignores it.",
+        "既定は空です。LinuxのdenyはguestEgressAllowより後に、転送mDNS・SSDPマルチキャストとUDP 137・138の拒否を加えます。L2ブリッジ・自機サービスを独立には制御しません。PFは使いません。",
+        "預設空。Linux deny 在 guestEgressAllow 後加入轉送 mDNS/SSDP 多播與 UDP 137/138 丟棄。不控制 L2 橋接或獨立封鎖本機服務。PF 忽略。",
+        "默认空。Linux deny 在 guestEgressAllow 后加入转发 mDNS/SSDP 多播与 UDP 137/138 丢弃。不控制 L2 桥接或独立封锁本机服务。PF 忽略。"
+      ],
+      "guestServices": [
+        "Allowed local-service names: dns, dhcp, ntp, mdns, ssdp. Omitted or empty defaults to dhcp/dns/ntp; an empty list cannot disable all exceptions. Services open firewall access but do not start their daemons.",
+        "自機で許可するdns・dhcp・ntp・mdns・ssdpです。省略・空はdhcp・dns・ntpが既定で、空一覧で例外をすべて無効にはできません。通信を開けるだけでデーモンは起動しません。",
+        "允許的本機服務名稱：dns、dhcp、ntp、mdns、ssdp。省略或空預設 dhcp/dns/ntp，空清單無法停用全部例外。只開放防火牆，不啟動服務。",
+        "允许的本机服务名称：dns、dhcp、ntp、mdns、ssdp。省略或空默认 dhcp/dns/ntp，空列表无法禁用全部例外。仅开放防火墙，不启动服务。"
+      ],
+      "guestEgressDeny": [
+        "Optional IPv4/IPv6 CIDRs. Omitted/empty defaults to 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 and fc00::/7, subject to the Linux isolation adjustments above. Explicit values replace, not append to, defaults. PF always uses the private-prefix defaults when empty.",
+        "任意のIPv4・IPv6 CIDRです。省略・空は10.0.0.0/8・172.16.0.0/12・192.168.0.0/16・fc00::/7で、Linuxでは前述のisolationにより調整します。明示値は追加でなく置換です。PFは空なら常にこのプライベート集合です。",
+        "選用 IPv4/IPv6 CIDR。省略或空預設 10.0.0.0/8、172.16.0.0/12、192.168.0.0/16、fc00::/7，Linux 依上述 isolation 調整。明確值取代而非附加預設；PF 空時固定使用私有前綴預設。",
+        "可选 IPv4/IPv6 CIDR。省略或空默认 10.0.0.0/8、172.16.0.0/12、192.168.0.0/16、fc00::/7，Linux 按上述 isolation 调整。明确值替换而非追加默认；PF 空时固定使用私有前缀默认。"
+      ],
+      "guestEgressAllow": [
+        "Optional IPv4/IPv6 CIDR exceptions, default empty. Linux and PF IPv4 evaluate them before deny; PF IPv6 deny precedes the allow rules. These are routing destination prefixes, not resource references.",
+        "任意のIPv4・IPv6 CIDR例外で、既定は空です。Linux・PF IPv4は拒否より先、PF IPv6は拒否より後に評価します。リソース参照でなく転送宛先プレフィックスです。",
+        "選用 IPv4/IPv6 CIDR 例外，預設空。Linux 與 PF IPv4 先於拒絕評估，PF IPv6 則在拒絕之後。這些是路由目的前綴，不是資源參照。",
+        "可选 IPv4/IPv6 CIDR 例外，默认空。Linux 与 PF IPv4 先于拒绝评估，PF IPv6 则在拒绝之后。这些是路由目标前缀，不是资源引用。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_firewall.go",
+      "pkg/config/validate.go",
+      "pkg/render/nftables.go",
+      "pkg/render/pf.go",
+      "pkg/webconsole/clients.go"
+    ]
+  },
+  "BGPRouter": {
+    "purpose": [
+      "Configure the local GoBGP instance, its admitted routes and locally originated advertisements. Actual kernel installation and remote reachability are separate from a BGP Established state.",
+      "ローカルGoBGPインスタンス・受理経路・自起源広告を設定します。カーネルへの適用や対向疎通はBGPのEstablishedとは別です。",
+      "設定本機 GoBGP 執行個體、接納路由及本機起源廣告。核心安裝與遠端可達性不同於 BGP Established 狀態。",
+      "配置本机 GoBGP 实例、接纳路由及本机起源通告。内核安装与远端可达性不同于 BGP Established 状态。"
+    ],
+    "rules": [
+      [
+        "Live operation currently supports one BGPRouter and no VRF. Validator acceptance of distinct ASN/VRF/listen instances does not imply runtime support.",
+        "実動作はBGPRouter1件・VRFなしだけに対応します。ASN・VRF・待受が異なれば設定検証に通ることと、実動作対応は別です。",
+        "實際操作目前只支援一個 BGPRouter 且不支援 VRF。驗證接受不同 ASN/VRF/監聽執行個體不代表執行階段支援。",
+        "实际操作目前只支持一个 BGPRouter 且不支持 VRF。验证接受不同 ASN/VRF/监听实例不代表运行时支持。"
+      ],
+      [
+        "Router import, connected redistribution and static redistribution prefix lists cannot overlap across these three groups. Masked duplicates within prefix lists are rejected.",
+        "ルーターの受信一覧・connected一覧・static一覧の3群をまたぐ重複・包含は不可です。各prefix一覧内の正規化後重複も拒否します。",
+        "路由器匯入、connected 與 static 再分配三組前綴不可跨組重疊；清單內遮罩後重複也會拒絕。",
+        "路由器导入、connected 与 static 重分发三组前缀不可跨组重叠；列表内掩码后重复也会拒绝。"
+      ]
+    ],
+    "fields": {
+      "importPolicy": [
+        "Optional router-wide import policy inherited by peers without an override. Empty installs no router import filter, but does not itself authorize every received route for kernel FIB installation.",
+        "独自指定のないピアが継承するルーター全体の受信ポリシーです。空ならルーター受信フィルターを作りませんが、受信した全経路のカーネルFIB適用を自動許可するものではありません。",
+        "無覆寫對等端繼承的選用路由器匯入原則。空設定不安裝路由器匯入篩選，但不會自動授權所有收到路由安裝至核心 FIB。",
+        "无覆盖对等端继承的可选路由器导入策略。空配置不安装路由器导入过滤，但不会自动授权所有收到路由安装至内核 FIB。"
+      ],
+      "importPolicy.allowedPrefixes": [
+        "Optional IPv4/IPv6 CIDR allowlist. Import matches the prefix and its permitted more-specific lengths; masked duplicate prefixes are rejected. Empty adds no prefix match condition to an otherwise configured import policy.",
+        "任意のIPv4・IPv6 CIDR許可一覧です。プレフィックスと許可した詳細経路長で照合し、正規化後の同一プレフィックスは拒否します。空なら他条件で構成された受信ポリシーにprefix条件を加えません。",
+        "選用 IPv4/IPv6 CIDR 允許清單，依前綴及允許的更細前綴長度比對。拒絕遮罩後重複的前綴。為空時，不在其他已設定匯入條件上加入前綴條件。",
+        "可选 IPv4/IPv6 CIDR 允许列表，按前缀及允许的更具体前缀长度匹配。拒绝掩码后重复的前缀。为空时，不在其他已配置导入条件上加入前缀条件。"
+      ],
+      "importPolicy.allowedPrefixLengthMin": [
+        "Integer 0–128; 0/omitted uses each allowlist prefix length. A positive value must be >= each listed prefix length, <= address-family maximum and <= a positive maximum.",
+        "0～128の整数です。省略・0は各許可プレフィックス自身の長さです。正の指定値は各prefix長以上、ファミリー上限以下、正の最大長以下が必要です。",
+        "整數 0–128。省略或 0 使用每個允許前綴自身長度。正值須大於等於各前綴長度、小於等於家族上限及正數最大長度。",
+        "整数 0–128。省略或 0 使用每个允许前缀自身长度。正值须大于等于各前缀长度、小于等于地址族上限及正数最大长度。"
+      ],
+      "importPolicy.allowedPrefixLengthMax": [
+        "Integer 0–128; 0/omitted uses 32 for IPv4 or 128 for IPv6. A positive value must cover every listed prefix length and not exceed its family maximum. Dynamic leaf admission requires min=max=32.",
+        "0～128の整数です。省略・0はIPv4が32、IPv6が128です。正の値は全許可prefix長以上かつファミリー上限以下が必要です。動的leaf受付はmin=max=32が必須です。",
+        "整數 0–128。省略或 0 時 IPv4 為 32、IPv6 為 128。正值須涵蓋所有列出前綴長度且不超過家族上限。動態 leaf 接納要求 min=max=32。",
+        "整数 0–128。省略或 0 时 IPv4 为 32、IPv6 为 128。正值须涵盖所有列出前缀长度且不超过地址族上限。动态 leaf 接纳要求 min=max=32。"
+      ],
+      "importPolicy.requiredCommunities": [
+        "Optional community list; an accepted path must contain ALL listed communities. Empty adds no required-community condition.",
+        "任意のcommunity一覧です。受理する経路はすべての指定communityを持つ必要があり、空なら必須community条件はありません。",
+        "選用 community 清單；接受的路徑必須包含全部列出值。空清單不增加必要 community 條件。",
+        "可选 community 列表；接受的路径必须包含全部列出值。空列表不增加必需 community 条件。"
+      ],
+      "importPolicy.forbiddenCommunities": [
+        "Optional community list; ANY matching community rejects the path before the accept rule. Empty adds no prohibition.",
+        "任意の禁止community一覧です。どれか1つでも一致すれば許可判定より先に拒否します。空ならこの禁止条件はありません。",
+        "選用禁止 community 清單；任一符合就先於接受規則拒絕路徑。空清單不增加禁止條件。",
+        "可选禁止 community 列表；任一匹配就先于接受规则拒绝路径。空列表不增加禁止条件。"
+      ],
+      "importPolicy.nextHopRewrite": [
+        "peer-address by default; unchanged preserves the advertised next hop. Applied on accepted paths before selection/FIB projection. Setting only this field on a peer creates a peer-specific import policy instead of inheriting the router allowlist.",
+        "既定はpeer-addressです。unchangedなら広告されたnext hopを維持します。受理経路の選択・FIB投影前に適用します。ピアでこの項目だけを指定しても独自ポリシーとなり、ルーターの許可一覧は継承しません。",
+        "預設 peer-address；unchanged 保留廣告的下一跳。在接受路徑的選擇及 FIB 投影之前套用。對等端只設定此欄位也會建立自己的匯入原則，不繼承路由器允許清單。",
+        "默认 peer-address；unchanged 保留通告的下一跳。在接受路径的选择及 FIB 投影之前应用。对等端只配置此字段也会建立自己的导入策略，不继承路由器允许列表。"
+      ],
+      "importPolicy.localPreference": [
+        "Optional uint32 LOCAL_PREF for accepted paths before best-path selection. Default 0 leaves the BGP implementation default unchanged.",
+        "受理経路へbest-path選択前に設定するuint32のLOCAL_PREFです。既定0ならBGP実装の既定値を変更しません。",
+        "選用 uint32 LOCAL_PREF，在最佳路徑選擇之前設定於接受的路徑。預設 0 保留 BGP 實作預設值。",
+        "可选 uint32 LOCAL_PREF，在最佳路径选择之前设置于接受的路径。默认 0 保留 BGP 实现默认值。"
+      ],
+      "exportPolicy": [
+        "Optional export prefix filter. Per-peer prefixes are combined with router static and dynamic advertisements; route-reflector clients also receive router import prefixes. It is not a restrictive replacement for all router-derived export prefixes.",
+        "任意の送信prefix条件です。ピア側の一覧はルーター由来の静的・動的広告と合成し、RRクライアントではルーターの受信prefixも加えます。ルーター由来の送信prefix全体を絞る置換ではありません。",
+        "選用匯出前綴篩選。對等端前綴會與路由器靜態及動態廣告合併；RR 用戶端另加入路由器匯入前綴，不是取代並限制所有路由器衍生匯出前綴。",
+        "可选导出前缀过滤。对等端前缀会与路由器静态及动态通告合并；RR 客户端另加入路由器导入前缀，不是替换并限制所有路由器派生导出前缀。"
+      ],
+      "exportPolicy.allowedPrefixes": [
+        "Explicit local advertisement CIDRs, default empty. Combined with redistribute.connected/static and dynamic advertisements, and also used in peer export filtering; these prefixes are originated without an OS-route existence check.",
+        "明示的な自起源広告CIDRで、既定は空です。redistributeのconnected・staticと動的広告へ合成し、ピアの送信条件にも使います。OS経路の存在確認なしで広告します。",
+        "明確的本機起源廣告 CIDR，預設為空，與 redistribute.connected/static 及動態廣告合併，也用於對等端匯出篩選。不檢查 OS 路由存在就會起源廣告。",
+        "明确的本机起源通告 CIDR，默认为空，与 redistribute.connected/static 及动态通告合并，也用于对等端导出过滤。不检查 OS 路由存在就会起源通告。"
+      ],
+      "timers": [
+        "Optional timer-profile object. Router-level timers are not inherited by peers in the current controller; specify each peer timer profile explicitly when needed.",
+        "任意のタイマープロファイルです。現行コントローラーではルーターのtimersをピアへ継承しないため、必要なら各ピアで明示します。",
+        "選用計時器設定。目前控制器不將路由器層級 timers 繼承給對等端，需要時請在各對等端明確設定。",
+        "可选计时器配置。目前控制器不将路由器级 timers 继承给对等端，需要时请在各对等端明确配置。"
+      ],
+      "timers.profile": [
+        "Accepted default/fast/slow, but router-level timer settings are not used to build peer timers in the current runtime. Configure BGPPeer.timers.profile or BGPDynamicPeer.timers.profile instead.",
+        "default・fast・slowを受け付けますが、現行実行処理はルーター側値からピアタイマーを設定しません。BGPPeer・BGPDynamicPeerのtimers.profileに指定してください。",
+        "接受 default/fast/slow，但目前執行階段不以路由器層級值建立對等端計時器，請設定 BGPPeer/BGPDynamicPeer 的 timers.profile。",
+        "接受 default/fast/slow，但目前运行时不以路由器级值建立对等端计时器，请配置 BGPPeer/BGPDynamicPeer 的 timers.profile。"
+      ],
+      "when": [
+        "Optional common activation predicate; omitted is unconditional. See common fields for state/all/any, reference validation and schema limitations.",
+        "任意の共通有効化条件です。省略時は無条件です。state・all・any、参照検証、スキーマ制限は共通項を参照してください。",
+        "選用的共用啟用條件，省略表示無條件。state/all/any、參照驗證與結構描述限制請見共用欄位。",
+        "可选的通用启用条件，省略表示无条件。state/all/any、引用验证与模式限制请见通用字段。"
+      ],
+      "asn": [
+        "Required nonzero uint32 local ASN. Configuration rejects reuse across BGPRouter resources; runtime currently supports one BGPRouter only.",
+        "必須の0以外のuint32ローカルASNです。設定ではBGPRouter間の再利用を拒否し、現行実行処理はBGPRouter1件だけに対応します。",
+        "必填非零 uint32 本機 ASN。設定拒絕 BGPRouter 間重複使用；目前執行階段僅支援一個 BGPRouter。",
+        "必填非零 uint32 本机 ASN。配置拒绝 BGPRouter 间重复使用；目前运行时仅支持一个 BGPRouter。"
+      ],
+      "routerID": [
+        "Required IPv4-form BGP router identifier; independent of the transport address. BFD without an interface also uses it as the local multihop address.",
+        "必須のIPv4形式のBGP識別子で、通信アドレスとは別です。インターフェース指定のないBFDはローカルmultihopアドレスにも使います。",
+        "必填 IPv4 格式 BGP 路由器識別碼，與傳輸位址不同。未指定介面的 BFD 也將其用作本機多跳位址。",
+        "必填 IPv4 格式 BGP 路由器标识符，与传输地址不同。未指定接口的 BFD 也将其用作本机多跳地址。"
+      ],
+      "vrf": [
+        "Optional VRF/name or plain VRF name referencing a declared VRF. Validation supports it, but the operational GoBGP controller currently rejects any nonempty vrf as GoBGPVRFUnsupported. Omit for live use.",
+        "任意のVRF/nameまたはVRF名で、宣言済みVRFを参照します。設定検証は受け付けますが実動作GoBGPコントローラーは非空値をGoBGPVRFUnsupportedとして拒否します。実運用では省略します。",
+        "選用 VRF/name 或一般 VRF 名稱，須參照已宣告 VRF。驗證接受，但實際 GoBGP 控制器拒絕任何非空 vrf，回報 GoBGPVRFUnsupported。實際使用請省略。",
+        "可选 VRF/name 或普通 VRF 名称，须引用已声明 VRF。验证接受，但实际 GoBGP 控制器拒绝任何非空 vrf，报告 GoBGPVRFUnsupported。实际使用请省略。"
+      ],
+      "listen": [
+        "Optional local TCP listener configuration; default all addresses, port 179. Does not select the remote peer TCP port.",
+        "任意のローカルTCP待受設定で、既定は全アドレス・179番です。相手のTCPポート選択ではありません。",
+        "選用本機 TCP 監聽設定，預設所有位址、埠 179，不是選擇遠端 TCP 埠。",
+        "可选本机 TCP 监听配置，默认所有地址、端口 179，不是选择远端 TCP 端口。"
+      ],
+      "listen.address": [
+        "Optional local IPv4/IPv6 bind address. Empty leaves GoBGP listening on all addresses; must be an IP, not a resource reference or hostname.",
+        "任意のIPv4・IPv6バインド先です。空ならGoBGPは全アドレスで待ち受けます。IP指定で、リソース参照・ホスト名は不可です。",
+        "選用本機 IPv4/IPv6 綁定位址，空值讓 GoBGP 監聽所有位址。必須為 IP，不接受資源參照或主機名稱。",
+        "可选本机 IPv4/IPv6 绑定地址，空值让 GoBGP 监听所有地址。必须为 IP，不接受资源引用或主机名。"
+      ],
+      "listen.port": [
+        "TCP listen port 1–65535, default 179 when omitted/0. Conflicting configured address/port claims are rejected.",
+        "TCP待受ポート1～65535で、省略・0は179です。設定されたアドレス・ポートの競合は拒否します。",
+        "TCP 監聽埠 1–65535，省略或 0 為 179。拒絕設定中的位址/埠衝突。",
+        "TCP 监听端口 1–65535，省略或 0 为 179。拒绝配置中的地址/端口冲突。"
+      ],
+      "redistribute": [
+        "Optional explicitly advertised prefix groups. Current runtime unions connected/static lists with exportPolicy.allowedPrefixes; it does not discover matching routes from the OS.",
+        "任意の明示広告prefix群です。現行実行処理はconnected・static一覧とexportPolicy.allowedPrefixesを合成し、OSから該当経路を検出する処理ではありません。",
+        "選用的明確廣告前綴群組。目前執行階段將 connected/static 與 exportPolicy.allowedPrefixes 聯集，不從 OS 探索相符路由。",
+        "可选的明确通告前缀组。目前运行时将 connected/static 与 exportPolicy.allowedPrefixes 求并集，不从 OS 发现匹配路由。"
+      ],
+      "redistribute.connected": [
+        "Optional connected-labelled advertisement group; default empty. The label does not gate advertisements on kernel connected-route presence.",
+        "connected名の任意広告群で、既定は空です。この名前によってカーネルの直結経路存在を広告条件にするものではありません。",
+        "選用的 connected 標示廣告群組，預設為空；不以核心直連路由存在與否作為廣告條件。",
+        "可选的 connected 标记通告组，默认为空；不以内核直连路由存在与否作为通告条件。"
+      ],
+      "redistribute.connected.allowedPrefixes": [
+        "Explicit IPv4/IPv6 CIDRs to originate, default empty. Cannot overlap router import or static redistribution prefixes. Does not require a corresponding connected route.",
+        "自起源広告するIPv4・IPv6 CIDRで、既定は空です。ルーターの受信一覧・static一覧と重複・包含不可です。対応する直結経路の存在は要求しません。",
+        "明確起源的 IPv4/IPv6 CIDR，預設為空，不可與路由器匯入或 static 再分配前綴重疊。不要求對應直連路由存在。",
+        "明确起源的 IPv4/IPv6 CIDR，默认为空，不可与路由器导入或 static 重分发前缀重叠。不要求对应直连路由存在。"
+      ],
+      "redistribute.static": [
+        "Optional static-labelled advertisement group; default empty. Not an automatic scan of IPv4StaticRoute/IPv6StaticRoute resources.",
+        "static名の任意広告群で、既定は空です。IPv4StaticRoute・IPv6StaticRouteを自動列挙する指定ではありません。",
+        "選用的 static 標示廣告群組，預設為空，不會自動列舉 IPv4StaticRoute/IPv6StaticRoute 資源。",
+        "可选的 static 标记通告组，默认为空，不会自动列举 IPv4StaticRoute/IPv6StaticRoute 资源。"
+      ],
+      "redistribute.static.allowedPrefixes": [
+        "Explicit IPv4/IPv6 CIDRs to originate, default empty. Cannot overlap router import or connected redistribution prefixes; no kernel static-route existence check.",
+        "自起源広告するIPv4・IPv6 CIDRで、既定は空です。ルーターの受信一覧・connected一覧と重複・包含不可です。カーネル静的経路の存在は確認しません。",
+        "明確起源的 IPv4/IPv6 CIDR，預設為空，不可與路由器匯入或 connected 前綴重疊，不檢查核心靜態路由存在。",
+        "明确起源的 IPv4/IPv6 CIDR，默认为空，不可与路由器导入或 connected 前缀重叠，不检查内核静态路由存在。"
+      ],
+      "communities": [
+        "Optional community settings. Only router set.out affects locally originated advertisements in the present runtime; send, accept and set.in are decoded/validated but unused.",
+        "任意のcommunity設定です。現行実行処理ではルーターのset.outだけが自起源広告に作用し、send・accept・set.inは読取・検証のみで使いません。",
+        "選用 community 設定。目前僅路由器 set.out 影響本機起源廣告；send、accept、set.in 會解碼及驗證但不使用。",
+        "可选 community 配置。目前仅路由器 set.out 影响本机起源通告；send、accept、set.in 会解码及验证但不使用。"
+      ],
+      "communities.send": [
+        "Accepted values standard, extended, both or empty; no operational effect. GoBGP peers use SendCommunity=3 regardless of this setting.",
+        "standard・extended・both・空を受け付けますが実動作には影響せず、GoBGPピアはこの指定によらずSendCommunity=3です。",
+        "接受 standard/extended/both 或空，但不影響操作；GoBGP 對等端固定使用 SendCommunity=3。",
+        "接受 standard/extended/both 或空，但不影响操作；GoBGP 对等端固定使用 SendCommunity=3。"
+      ],
+      "communities.accept": [
+        "Optional validated standard community list, default empty; currently does not filter import. Use importPolicy.requiredCommunities/forbiddenCommunities for actual matching.",
+        "検証される任意の標準community一覧で、既定は空です。現行処理では受信を絞りません。実際の照合にはimportPolicyのrequiredCommunities・forbiddenCommunitiesを使います。",
+        "選用且受驗證的標準 community 清單，預設為空，目前不篩選匯入。實際比對請用 importPolicy.requiredCommunities/forbiddenCommunities。",
+        "可选且受验证的标准 community 列表，默认为空，目前不过滤导入。实际匹配请用 importPolicy.requiredCommunities/forbiddenCommunities。"
+      ],
+      "communities.set": [
+        "Optional inbound/outbound community lists; only router out is consumed by the present controller.",
+        "任意の受信・送信community一覧で、現行コントローラーはルーターのoutだけを使います。",
+        "選用的傳入/傳出 community 清單，目前控制器僅使用路由器 out。",
+        "可选的传入/传出 community 列表，目前控制器仅使用路由器 out。"
+      ],
+      "communities.set.in": [
+        "Optional validated list, default empty; currently not applied to imported paths.",
+        "任意の検証対象一覧で、既定は空です。現行処理では受信経路に付与しません。",
+        "選用且受驗證的清單，預設為空，目前不套用至匯入路徑。",
+        "可选且受验证的列表，默认为空，目前不应用至导入路径。"
+      ],
+      "communities.set.out": [
+        "Standard communities attached to router-created local advertisements, default empty. Does not rewrite every transit route. Use asn:value (standard 16-bit components) or supported well-known names; extended communities are not encoded here.",
+        "routerd自起源広告へ付与する標準communityで、既定は空です。全通過経路の書換ではありません。標準の16bit成分のasn:valueや対応する既知名を使い、ここでextended communityは生成しません。",
+        "附加於 routerd 本機起源廣告的標準 community，預設為空，不改寫所有轉送路徑。使用標準 16 位元的組成的 asn:value 或支援的已知名稱，此處不編碼 extended community。",
+        "附加于 routerd 本机起源通告的标准 community，默认为空，不改写所有转发路径。使用标准 16 位组成的 asn:value 或支持的已知名称，此处不编码 extended community。"
+      ],
+      "convergenceProfile": [
+        "default/omitted or stable keeps graceful restart enabled by default; fast disables it unless gracefulRestart.enabled explicitly overrides. It does not automatically select timers.profile.",
+        "既定・省略・stableではGRを既定有効、fastでは既定無効にします。gracefulRestart.enabledを明示すれば優先します。timers.profileの自動選択ではありません。",
+        "default、省略或 stable 預設啟用 graceful restart；fast 預設停用，可由 gracefulRestart.enabled 明確覆寫。不會自動選擇 timers.profile。",
+        "default、省略或 stable 默认启用 graceful restart；fast 默认禁用，可由 gracefulRestart.enabled 明确覆盖。不会自动选择 timers.profile。"
+      ],
+      "gracefulRestart": [
+        "Optional graceful restart settings shared with peers after convergence-profile selection. Explicit enabled overrides the profile default.",
+        "任意のGR設定です。収束プロファイル選択後にピアにも使い、enabled明示値はプロファイル既定より優先します。",
+        "選用 graceful restart 設定，選擇收斂設定後也用於對等端。明確 enabled 優先於設定預設值。",
+        "可选 graceful restart 配置，选择收敛配置后也用于对等端。明确 enabled 优先于配置默认值。"
+      ],
+      "gracefulRestart.enabled": [
+        "Optional boolean; default true except fast convergence. False disables GR even if durations are specified.",
+        "任意の真偽値です。fast以外は既定trueです。falseなら時間指定があってもGRを無効にします。",
+        "選用布林值，fast 收斂以外預設 true。false 即使指定時間也會停用 GR。",
+        "可选布尔值，fast 收敛以外默认 true。false 即使指定时间也会禁用 GR。"
+      ],
+      "gracefulRestart.restartTime": [
+        "Positive Go duration, default 120s, converted to whole seconds by truncation. Subsecond values can therefore become 0; use whole-second values.",
+        "正のGo durationで、既定120秒です。秒未満を切り捨てて整数秒へ変換するため、1秒未満は0になり得ます。整数秒を使ってください。",
+        "正數 Go duration，預設 120 秒，轉為整秒時截斷小數，低於一秒可能變成 0，請使用整秒。",
+        "正数 Go duration，默认 120 秒，转为整秒时截断小数，低于一秒可能变成 0，请使用整秒。"
+      ],
+      "gracefulRestart.stalePathTime": [
+        "Positive Go duration for stale-route retention, default 360s; converted to whole seconds. Ignored when GR is disabled.",
+        "古い経路の保持期間を指定する正のGo durationで、既定360秒です。整数秒へ変換し、GR無効時は使いません。",
+        "保留過時路由的正數 Go duration，預設 360 秒，轉為整秒。GR 停用時不使用。",
+        "保留陈旧路由的正数 Go duration，默认 360 秒，转为整秒。GR 禁用时不使用。"
+      ],
+      "watcher": [
+        "Optional status-observation settings; these are not BGP keepalive/hold timers or peer admission limits.",
+        "任意の状態観測設定で、BGPのkeepalive・holdタイマーや接続受付制限ではありません。",
+        "選用狀態觀察設定，不是 BGP keepalive/hold 計時器或對等端接納限制。",
+        "可选状态观察配置，不是 BGP keepalive/hold 计时器或对等端接纳限制。"
+      ],
+      "watcher.pollInterval": [
+        "Go duration >=3s. Effective polling starts at 15s and only decreases for smaller configured values, so values above 15s do not lengthen the interval.",
+        "3秒以上のGo durationです。実間隔は15秒を起点に短い指定値だけ採用するため、15秒超を指定しても長くなりません。",
+        "Go duration，至少 3 秒。有效輪詢從 15 秒起僅採用較短值，因此大於 15 秒不會延長間隔。",
+        "Go duration，至少 3 秒。有效轮询从 15 秒起仅采用较短值，因此大于 15 秒不会延长间隔。"
+      ],
+      "watcher.maxPrefixes": [
+        "Observation prefix limit, default 4096; explicit positive values must be <1000000. Does not configure a remote session maximum-prefix shutdown policy.",
+        "観測するprefix上限で、既定4096です。正の明示値は1000000未満です。BGPセッションのmaximum-prefix停止ポリシーを設定する項目ではありません。",
+        "觀察前綴上限，預設 4096，明確正值須小於 1000000。不設定遠端工作階段的 maximum-prefix 關閉原則。",
+        "观察前缀上限，默认 4096，明确正值须小于 1000000。不配置远端会话的 maximum-prefix 关闭策略。"
+      ],
+      "watcher.peerStateChangeThrottle": [
+        "Nonnegative Go duration limiting repeated peer-state event publication; omitted/0 has no throttling. Does not delay the BGP protocol state machine.",
+        "ピア状態イベントの繰り返し発行を抑える0以上のGo durationです。省略・0は抑制なしです。BGPプロトコルの状態遷移を遅延させる指定ではありません。",
+        "限制重複對等端狀態事件發布的非負 Go duration，省略或 0 不節流，不延遲 BGP 協定狀態機。",
+        "限制重复对等端状态事件发布的非负 Go duration，省略或 0 不节流，不延迟 BGP 协议状态机。"
+      ],
+      "backend": [
+        "gobgp by default and the only accepted backend. Uses the routerd-bgp daemon/control client, not an FRR BGP configuration file.",
+        "既定gobgpで、唯一の対応バックエンドです。FRR BGP設定ファイルではなくrouterd-bgpデーモンと制御クライアントを使います。",
+        "預設 gobgp，也是唯一接受的後端，使用 routerd-bgp 精靈及控制用戶端，不是 FRR BGP 設定檔。",
+        "默认 gobgp，也是唯一接受的后端，使用 routerd-bgp 守护进程及控制客户端，不是 FRR BGP 配置文件。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_route.go",
+      "pkg/config/bgp_validate.go",
+      "pkg/config/validate.go",
+      "pkg/config/diagnostics.go",
+      "pkg/controller/bgp/controller.go",
+      "pkg/bgp/watcher.go",
+      "pkg/controller/bgp/fib_linux.go",
+      "pkg/controller/bgp/fib_bsd.go"
+    ]
+  },
+  "BGPPeer": {
+    "purpose": [
+      "Configure one or more static BGP neighbors on a declared BGPRouter.",
+      "宣言したBGPRouterに1件以上の静的BGPピアを設定します。",
+      "在已宣告的 BGPRouter 設定一個或多個靜態 BGP 鄰居。",
+      "在已声明的 BGPRouter 配置一个或多个静态 BGP 邻居。"
+    ],
+    "rules": [
+      [
+        "Peer import policies replace router import policy as a whole when considered configured; their fields are not merged individually. Export prefixes, in contrast, are unioned with router and runtime-derived advertisement prefixes.",
+        "ピアの受信ポリシーが設定済みと判断されるとルーター側を全体置換し、項目ごとのマージは行いません。一方、送信prefixはルーター・実行時由来の広告prefixと合成します。",
+        "對等端匯入原則被視為已設定時，完整取代路由器原則，不逐欄合併。匯出前綴則與路由器及執行時衍生廣告前綴聯集。",
+        "对等端导入策略被视为已配置时，完整替换路由器策略，不逐字段合并。导出前缀则与路由器及运行时派生通告前缀求并集。"
+      ],
+      [
+        "Both IPv4 and IPv6 unicast families are enabled by the current controller. An Established session does not by itself authorize all routes for FIB installation or prove data-plane connectivity.",
+        "現行コントローラーはIPv4・IPv6 unicastを両方有効にします。Establishedだけでは全経路のFIB適用許可や実通信の疎通成功を意味しません。",
+        "目前控制器同時啟用 IPv4/IPv6 unicast。Established 工作階段不會自動授權所有路由安裝至 FIB，也不證明資料轉送可達。",
+        "目前控制器同时启用 IPv4/IPv6 unicast。Established 会话不会自动授权所有路由安装至 FIB，也不证明数据转发可达。"
+      ]
+    ],
+    "fields": {
+      "importPolicy": [
+        "Optional import policy. A peer with no nonempty prefixes, community constraints, next-hop rewrite or localPreference inherits the router policy as a whole; prefix-length bounds alone do not count as an override.",
+        "任意の受信ポリシーです。ピアに非空のprefix・community条件・nextHopRewrite・localPreferenceがなければルーター側を全体継承します。長さ制限だけでは上書きと認識しません。",
+        "選用匯入原則。對等端若無非空前綴、community 條件、下一跳改寫或 localPreference，會完整繼承路由器原則；僅前綴長度限制不算覆寫。",
+        "可选导入策略。对等端若无非空前缀、community 条件、下一跳改写或 localPreference，会完整继承路由器策略；仅前缀长度限制不算覆盖。"
+      ],
+      "importPolicy.allowedPrefixes": [
+        "Optional IPv4/IPv6 CIDR allowlist. Import matches the prefix and its permitted more-specific lengths; masked duplicate prefixes are rejected. Empty adds no prefix match condition to an otherwise configured import policy.",
+        "任意のIPv4・IPv6 CIDR許可一覧です。プレフィックスと許可した詳細経路長で照合し、正規化後の同一プレフィックスは拒否します。空なら他条件で構成された受信ポリシーにprefix条件を加えません。",
+        "選用 IPv4/IPv6 CIDR 允許清單，依前綴及允許的更細前綴長度比對。拒絕遮罩後重複的前綴。為空時，不在其他已設定匯入條件上加入前綴條件。",
+        "可选 IPv4/IPv6 CIDR 允许列表，按前缀及允许的更具体前缀长度匹配。拒绝掩码后重复的前缀。为空时，不在其他已配置导入条件上加入前缀条件。"
+      ],
+      "importPolicy.allowedPrefixLengthMin": [
+        "Integer 0–128; 0/omitted uses each allowlist prefix length. A positive value must be >= each listed prefix length, <= address-family maximum and <= a positive maximum.",
+        "0～128の整数です。省略・0は各許可プレフィックス自身の長さです。正の指定値は各prefix長以上、ファミリー上限以下、正の最大長以下が必要です。",
+        "整數 0–128。省略或 0 使用每個允許前綴自身長度。正值須大於等於各前綴長度、小於等於家族上限及正數最大長度。",
+        "整数 0–128。省略或 0 使用每个允许前缀自身长度。正值须大于等于各前缀长度、小于等于地址族上限及正数最大长度。"
+      ],
+      "importPolicy.allowedPrefixLengthMax": [
+        "Integer 0–128; 0/omitted uses 32 for IPv4 or 128 for IPv6. A positive value must cover every listed prefix length and not exceed its family maximum. Dynamic leaf admission requires min=max=32.",
+        "0～128の整数です。省略・0はIPv4が32、IPv6が128です。正の値は全許可prefix長以上かつファミリー上限以下が必要です。動的leaf受付はmin=max=32が必須です。",
+        "整數 0–128。省略或 0 時 IPv4 為 32、IPv6 為 128。正值須涵蓋所有列出前綴長度且不超過家族上限。動態 leaf 接納要求 min=max=32。",
+        "整数 0–128。省略或 0 时 IPv4 为 32、IPv6 为 128。正值须涵盖所有列出前缀长度且不超过地址族上限。动态 leaf 接纳要求 min=max=32。"
+      ],
+      "importPolicy.requiredCommunities": [
+        "Optional community list; an accepted path must contain ALL listed communities. Empty adds no required-community condition.",
+        "任意のcommunity一覧です。受理する経路はすべての指定communityを持つ必要があり、空なら必須community条件はありません。",
+        "選用 community 清單；接受的路徑必須包含全部列出值。空清單不增加必要 community 條件。",
+        "可选 community 列表；接受的路径必须包含全部列出值。空列表不增加必需 community 条件。"
+      ],
+      "importPolicy.forbiddenCommunities": [
+        "Optional community list; ANY matching community rejects the path before the accept rule. Empty adds no prohibition.",
+        "任意の禁止community一覧です。どれか1つでも一致すれば許可判定より先に拒否します。空ならこの禁止条件はありません。",
+        "選用禁止 community 清單；任一符合就先於接受規則拒絕路徑。空清單不增加禁止條件。",
+        "可选禁止 community 列表；任一匹配就先于接受规则拒绝路径。空列表不增加禁止条件。"
+      ],
+      "importPolicy.nextHopRewrite": [
+        "peer-address by default; unchanged preserves the advertised next hop. Applied on accepted paths before selection/FIB projection. Setting only this field on a peer creates a peer-specific import policy instead of inheriting the router allowlist.",
+        "既定はpeer-addressです。unchangedなら広告されたnext hopを維持します。受理経路の選択・FIB投影前に適用します。ピアでこの項目だけを指定しても独自ポリシーとなり、ルーターの許可一覧は継承しません。",
+        "預設 peer-address；unchanged 保留廣告的下一跳。在接受路徑的選擇及 FIB 投影之前套用。對等端只設定此欄位也會建立自己的匯入原則，不繼承路由器允許清單。",
+        "默认 peer-address；unchanged 保留通告的下一跳。在接受路径的选择及 FIB 投影之前应用。对等端只配置此字段也会建立自己的导入策略，不继承路由器允许列表。"
+      ],
+      "importPolicy.localPreference": [
+        "Optional uint32 LOCAL_PREF for accepted paths before best-path selection. Default 0 leaves the BGP implementation default unchanged.",
+        "受理経路へbest-path選択前に設定するuint32のLOCAL_PREFです。既定0ならBGP実装の既定値を変更しません。",
+        "選用 uint32 LOCAL_PREF，在最佳路徑選擇之前設定於接受的路徑。預設 0 保留 BGP 實作預設值。",
+        "可选 uint32 LOCAL_PREF，在最佳路径选择之前设置于接受的路径。默认 0 保留 BGP 实现默认值。"
+      ],
+      "exportPolicy": [
+        "Optional export prefix filter. Per-peer prefixes are combined with router static and dynamic advertisements; route-reflector clients also receive router import prefixes. It is not a restrictive replacement for all router-derived export prefixes.",
+        "任意の送信prefix条件です。ピア側の一覧はルーター由来の静的・動的広告と合成し、RRクライアントではルーターの受信prefixも加えます。ルーター由来の送信prefix全体を絞る置換ではありません。",
+        "選用匯出前綴篩選。對等端前綴會與路由器靜態及動態廣告合併；RR 用戶端另加入路由器匯入前綴，不是取代並限制所有路由器衍生匯出前綴。",
+        "可选导出前缀过滤。对等端前缀会与路由器静态及动态通告合并；RR 客户端另加入路由器导入前缀，不是替换并限制所有路由器派生导出前缀。"
+      ],
+      "exportPolicy.allowedPrefixes": [
+        "Optional CIDR list, default empty. Effective nonempty export lists allow the listed prefixes and their more-specifics (through /32 or /128), rejecting unmatched routes. An effective empty list installs no export filter.",
+        "任意のCIDR一覧で既定は空です。合成後に非空なら各prefixとその詳細経路（/32・/128まで）を許可し、非一致を拒否します。合成後も空なら送信フィルターを設定しません。",
+        "選用 CIDR 清單，預設為空。合併後非空清單允許列出前綴及更細路由（至 /32 或 /128），拒絕不符路由。有效清單為空時不安裝匯出篩選。",
+        "可选 CIDR 列表，默认为空。合并后非空列表允许列出前缀及更具体路由（至 /32 或 /128），拒绝不符路由。有效列表为空时不安装导出过滤。"
+      ],
+      "timers": [
+        "Optional timer-profile object. Router-level timers are not inherited by peers in the current controller; specify each peer timer profile explicitly when needed.",
+        "任意のタイマープロファイルです。現行コントローラーではルーターのtimersをピアへ継承しないため、必要なら各ピアで明示します。",
+        "選用計時器設定。目前控制器不將路由器層級 timers 繼承給對等端，需要時請在各對等端明確設定。",
+        "可选计时器配置。目前控制器不将路由器级 timers 继承给对等端，需要时请在各对等端明确配置。"
+      ],
+      "timers.profile": [
+        "default/omitted: keepalive 30s, hold 90s, connectRetry 10s; fast: 3s/9s/1s; slow: 60s/180s/30s. Low-level keepalive/holdTime/connectRetry YAML fields are unsupported.",
+        "既定・省略はkeepalive 30秒・hold 90秒・connectRetry 10秒、fastは3秒・9秒・1秒、slowは60秒・180秒・30秒です。個別のkeepalive・holdTime・connectRetryのYAML指定は非対応です。",
+        "default 或省略：keepalive 30 秒、hold 90 秒、connectRetry 10 秒；fast 為 3/9/1 秒，slow 為 60/180/30 秒。不支援直接指定 keepalive/holdTime/connectRetry YAML。",
+        "default 或省略：keepalive 30 秒、hold 90 秒、connectRetry 10 秒；fast 为 3/9/1 秒，slow 为 60/180/30 秒。不支持直接指定 keepalive/holdTime/connectRetry YAML。"
+      ],
+      "when": [
+        "Optional common activation predicate; omitted is unconditional. See common fields for state/all/any, reference validation and schema limitations.",
+        "任意の共通有効化条件です。省略時は無条件です。state・all・any、参照検証、スキーマ制限は共通項を参照してください。",
+        "選用的共用啟用條件，省略表示無條件。state/all/any、參照驗證與結構描述限制請見共用欄位。",
+        "可选的通用启用条件，省略表示无条件。state/all/any、引用验证与模式限制请见通用字段。"
+      ],
+      "routerRef": [
+        "Required BGPRouter/name referencing a declared router in the same Router configuration. Plain names are not accepted.",
+        "同じRouter設定内のBGPRouterを指すBGPRouter/nameが必須です。名前だけの指定は不可です。",
+        "必填 BGPRouter/name，參照同一 Router 設定中宣告的路由器，不接受單獨名稱。",
+        "必填 BGPRouter/name，引用同一 Router 配置中声明的路由器，不接受单独名称。"
+      ],
+      "peerASN": [
+        "Required nonzero uint32 remote ASN. Matching the local ASN selects iBGP; routeReflectorClient requires this equality.",
+        "必須の0以外のuint32相手ASNです。ローカルASNと一致すればiBGPになり、routeReflectorClientでは一致が必要です。",
+        "必填非零 uint32 遠端 ASN，等於本機 ASN 時為 iBGP；routeReflectorClient 要求兩者相等。",
+        "必填非零 uint32 远端 ASN，等于本机 ASN 时为 iBGP；routeReflectorClient 要求两者相等。"
+      ],
+      "peers": [
+        "Required nonempty address/hostname list, unique after trimming and without whitespace. Hostnames are passed to GoBGP, not resolved by configuration validation; protocol acceptance is checked at application. Overlapping addresses across separate BGPPeer resources are not rejected here and share one runtime address key.",
+        "必須の非空アドレス・ホスト名一覧です。前後空白除去後の重複・空白入りは不可です。ホスト名は設定検証で解決せずGoBGPへ渡すため、適用可否は実行時に決まります。別BGPPeer間の同一アドレスはここでは拒否せず、実動作では同じアドレスキーを共有します。",
+        "必填且不可為空的位址/主機名稱清單，去除首尾空白後不可重複或包含空白。設定驗證不解析主機名稱，直接交給 GoBGP，套用時才確認接受性。不同 BGPPeer 的重複位址未在此拒絕，執行階段共用同一位址鍵。",
+        "必填且不可为空的地址/主机名列表，移除首尾空白后不可重复或包含空白。配置验证不解析主机名，直接交给 GoBGP，应用时才确认接受性。不同 BGPPeer 的重复地址未在此拒绝，运行时共用同一地址键。"
+      ],
+      "passiveMode": [
+        "Default false initiates connections normally; true sets GoBGP passive transport and waits for inbound connections. Not a dynamic source-prefix admission rule.",
+        "既定falseなら通常の接続開始を行い、trueならGoBGPのpassive transportで着信を待ちます。動的source-prefix受付規則ではありません。",
+        "預設 false 正常主動連線，true 設定 GoBGP passive transport 等待傳入連線，不是動態來源前綴接納規則。",
+        "默认 false 正常主动连接，true 配置 GoBGP passive transport 等待传入连接，不是动态来源前缀接纳规则。"
+      ],
+      "password": [
+        "Optional inline BGP TCP authentication secret, default none; mutually exclusive with a nonempty passwordFrom source. Not a SAM enrollment token.",
+        "任意のBGP TCP認証鍵です。既定なしで、非空passwordFrom参照と排他です。SAM登録トークンではありません。",
+        "選用直接指定的 BGP TCP 認證密鑰，預設無，與非空 passwordFrom 來源互斥，不是 SAM 註冊權杖。",
+        "可选直接指定的 BGP TCP 认证密钥，默认无，与非空 passwordFrom 来源互斥，不是 SAM 注册令牌。"
+      ],
+      "passwordFrom": [
+        "Optional secret source; exactly one of file/env when used. Omitted means no external secret. Not a status-value or Kind/name reference. Missing runtime files/environment variables fail peer reconciliation.",
+        "任意の秘密値参照で、利用時はfile・envのどちらか一方を指定します。省略時は外部参照なしです。状態値・Kind/name参照ではなく、実行時のファイル・環境変数欠落はピア調整を失敗させます。",
+        "選用密鑰來源，使用時 file/env 必須且只能指定一項。省略表示無外部密鑰。不是狀態值或 Kind/name 參照，執行時檔案或環境變數缺少會使對等端調整失敗。",
+        "可选密钥来源，使用时 file/env 必须且只能指定一项。省略表示无外部密钥。不是状态值或 Kind/name 引用，运行时文件或环境变量缺失会使对等端协调失败。"
+      ],
+      "passwordFrom.file": [
+        "Router-local file containing raw password text. Exclusive with env and inline password. Trailing CR/LF is removed, but surrounding spaces are otherwise retained.",
+        "生の鍵を格納したルーター上のファイルです。env・直接passwordと排他で、末尾CR・LFだけを除去し、その他の空白は保持します。",
+        "路由器本機原始密碼文字檔，與 env 及直接 password 互斥。移除尾端 CR/LF，其餘空白保留。",
+        "路由器本机原始密码文本文件，与 env 及直接 password 互斥。移除末尾 CR/LF，其余空白保留。"
+      ],
+      "passwordFrom.env": [
+        "Name of a routerd process environment variable containing the secret, not the secret itself. Exclusive with file and inline password. No automatic environment-file loading.",
+        "秘密値を格納するrouterdプロセス環境変数の名前です。値そのものではありません。file・直接passwordとは排他で、環境変数ファイルの自動読込は行いません。",
+        "存放密鑰的 routerd 程序環境變數名稱，不是密鑰本身。與 file 及直接 password 互斥，不自動載入環境檔。",
+        "存放密钥的 routerd 进程环境变量名称，不是密钥本身。与 file 及直接 password 互斥，不自动加载环境文件。"
+      ],
+      "passwordFrom.base64": [
+        "Default false. True decodes standard Base64 from the selected file/env value, then removes trailing CR/LF. This is encoding, not encryption.",
+        "既定falseです。trueならfile・env値を標準Base64デコードし、末尾CR・LFを除去します。暗号化ではなく符号化です。",
+        "預設 false。true 對選定 file/env 值執行標準 Base64 解碼，再移除尾端 CR/LF。這是編碼，不是加密。",
+        "默认 false。true 对选定 file/env 值执行标准 Base64 解码，再移除末尾 CR/LF。这是编码，不是加密。"
+      ],
+      "ebgpMultihop": [
+        "Integer 0–255, default 0. Only values >1 enable GoBGP eBGP multihop and set its TTL; 0/1 leave multihop disabled.",
+        "0～255の整数で既定0です。2以上の場合だけGoBGPのeBGP multihopを有効にしてTTLを設定し、0・1では無効です。",
+        "整數 0–255，預設 0。僅大於 1 時啟用 GoBGP eBGP multihop 並設定 TTL，0/1 保持停用。",
+        "整数 0–255，默认 0。仅大于 1 时启用 GoBGP eBGP multihop 并配置 TTL，0/1 保持禁用。"
+      ],
+      "routeReflectorClient": [
+        "Default false. True marks an iBGP route-reflector client and requires peerASN=router ASN. It also expands effective export prefixes with router import prefixes.",
+        "既定falseです。trueはiBGPのRRクライアント指定で、peerASNとルーターASNの一致が必要です。実効送信prefixにはルーターの受信prefixも加えます。",
+        "預設 false。true 標記 iBGP 路由反射器用戶端，要求 peerASN 等於路由器 ASN，並將路由器匯入前綴加入有效匯出前綴。",
+        "默认 false。true 标记 iBGP 路由反射器客户端，要求 peerASN 等于路由器 ASN，并将路由器导入前缀加入有效导出前缀。"
+      ],
+      "routeReflectorClusterID": [
+        "Optional IPv4-form cluster ID, passed only when routeReflectorClient is true. Empty leaves selection to GoBGP; setting it alone does not enable reflection.",
+        "任意のIPv4形式クラスタIDで、routeReflectorClient=trueの場合だけ渡します。空ならGoBGPに任せ、これだけ指定しても反射は有効になりません。",
+        "選用 IPv4 格式叢集 ID，僅 routeReflectorClient=true 時傳入。空值由 GoBGP 決定，單獨設定不啟用反射。",
+        "可选 IPv4 格式集群 ID，仅 routeReflectorClient=true 时传入。空值由 GoBGP 决定，单独配置不启用反射。"
+      ],
+      "convergenceProfile": [
+        "Optional default/fast/stable; omitted inherits BGPRouter convergenceProfile. Selects the graceful-restart default, not timers.profile; router gracefulRestart.enabled still overrides it.",
+        "任意のdefault・fast・stableです。省略時はBGPRouterから継承します。timers.profileではなくGR既定値を選び、ルーターのgracefulRestart.enabled明示値がさらに優先します。",
+        "選用 default/fast/stable，省略繼承 BGPRouter convergenceProfile。選擇 graceful restart 預設值，不是 timers.profile；路由器 gracefulRestart.enabled 仍優先覆寫。",
+        "可选 default/fast/stable，省略继承 BGPRouter convergenceProfile。选择 graceful restart 默认值，不是 timers.profile；路由器 gracefulRestart.enabled 仍优先覆盖。"
+      ],
+      "bfd": [
+        "Optional BFD/name of a declared BFD resource. Its peer must identify this BGPPeer or one of these peer addresses; BFD Down after Up/Established triggers BGP reset. Omitted means no BFD linkage.",
+        "任意の宣言済みBFD/name参照です。BFDのpeerは本BGPPeerかその相手アドレスに一致する必要があり、Up・Established後のDownでBGPリセットを行います。省略時はBFD連携なしです。",
+        "選用的已宣告 BFD/name 參照。其 peer 必須識別此 BGPPeer 或其中一個對等端位址；Up/Established 後 BFD Down 會觸發 BGP 重設。省略不連結 BFD。",
+        "可选的已声明 BFD/name 引用。其 peer 必须标识此 BGPPeer 或其中一个对等端地址；Up/Established 后 BFD Down 会触发 BGP 重置。省略不关联 BFD。"
+      ],
+      "communities": [
+        "Decoded and validated but not used by the current BGPPeer runtime. GoBGP SendCommunity is fixed to both; configure actual import matching under importPolicy. Peer community sets do not inherit or alter router local-advertisement communities.",
+        "現行BGPPeerでは読取・検証のみで使いません。GoBGP SendCommunityはboth固定で、受信照合はimportPolicyを使います。ピアのcommunity指定はルーターの自起源広告communityを継承・変更しません。",
+        "目前 BGPPeer 僅解碼及驗證，不在執行時使用。GoBGP SendCommunity 固定 both，實際匯入比對請設定 importPolicy。對等端 community 設定不繼承或變更路由器本機廣告 community。",
+        "目前 BGPPeer 仅解码及验证，不在运行时使用。GoBGP SendCommunity 固定 both，实际导入匹配请配置 importPolicy。对等端 community 配置不继承或更改路由器本机通告 community。"
+      ],
+      "communities.send": [
+        "Decoded and validated but not used by the current BGPPeer runtime. GoBGP SendCommunity is fixed to both; configure actual import matching under importPolicy. Peer community sets do not inherit or alter router local-advertisement communities.",
+        "現行BGPPeerでは読取・検証のみで使いません。GoBGP SendCommunityはboth固定で、受信照合はimportPolicyを使います。ピアのcommunity指定はルーターの自起源広告communityを継承・変更しません。",
+        "目前 BGPPeer 僅解碼及驗證，不在執行時使用。GoBGP SendCommunity 固定 both，實際匯入比對請設定 importPolicy。對等端 community 設定不繼承或變更路由器本機廣告 community。",
+        "目前 BGPPeer 仅解码及验证，不在运行时使用。GoBGP SendCommunity 固定 both，实际导入匹配请配置 importPolicy。对等端 community 配置不继承或更改路由器本机通告 community。"
+      ],
+      "communities.accept": [
+        "Decoded and validated but not used by the current BGPPeer runtime. GoBGP SendCommunity is fixed to both; configure actual import matching under importPolicy. Peer community sets do not inherit or alter router local-advertisement communities.",
+        "現行BGPPeerでは読取・検証のみで使いません。GoBGP SendCommunityはboth固定で、受信照合はimportPolicyを使います。ピアのcommunity指定はルーターの自起源広告communityを継承・変更しません。",
+        "目前 BGPPeer 僅解碼及驗證，不在執行時使用。GoBGP SendCommunity 固定 both，實際匯入比對請設定 importPolicy。對等端 community 設定不繼承或變更路由器本機廣告 community。",
+        "目前 BGPPeer 仅解码及验证，不在运行时使用。GoBGP SendCommunity 固定 both，实际导入匹配请配置 importPolicy。对等端 community 配置不继承或更改路由器本机通告 community。"
+      ],
+      "communities.set": [
+        "Decoded and validated but not used by the current BGPPeer runtime. GoBGP SendCommunity is fixed to both; configure actual import matching under importPolicy. Peer community sets do not inherit or alter router local-advertisement communities.",
+        "現行BGPPeerでは読取・検証のみで使いません。GoBGP SendCommunityはboth固定で、受信照合はimportPolicyを使います。ピアのcommunity指定はルーターの自起源広告communityを継承・変更しません。",
+        "目前 BGPPeer 僅解碼及驗證，不在執行時使用。GoBGP SendCommunity 固定 both，實際匯入比對請設定 importPolicy。對等端 community 設定不繼承或變更路由器本機廣告 community。",
+        "目前 BGPPeer 仅解码及验证，不在运行时使用。GoBGP SendCommunity 固定 both，实际导入匹配请配置 importPolicy。对等端 community 配置不继承或更改路由器本机通告 community。"
+      ],
+      "communities.set.in": [
+        "Decoded and validated but not used by the current BGPPeer runtime. GoBGP SendCommunity is fixed to both; configure actual import matching under importPolicy. Peer community sets do not inherit or alter router local-advertisement communities.",
+        "現行BGPPeerでは読取・検証のみで使いません。GoBGP SendCommunityはboth固定で、受信照合はimportPolicyを使います。ピアのcommunity指定はルーターの自起源広告communityを継承・変更しません。",
+        "目前 BGPPeer 僅解碼及驗證，不在執行時使用。GoBGP SendCommunity 固定 both，實際匯入比對請設定 importPolicy。對等端 community 設定不繼承或變更路由器本機廣告 community。",
+        "目前 BGPPeer 仅解码及验证，不在运行时使用。GoBGP SendCommunity 固定 both，实际导入匹配请配置 importPolicy。对等端 community 配置不继承或更改路由器本机通告 community。"
+      ],
+      "communities.set.out": [
+        "Decoded and validated but not used by the current BGPPeer runtime. GoBGP SendCommunity is fixed to both; configure actual import matching under importPolicy. Peer community sets do not inherit or alter router local-advertisement communities.",
+        "現行BGPPeerでは読取・検証のみで使いません。GoBGP SendCommunityはboth固定で、受信照合はimportPolicyを使います。ピアのcommunity指定はルーターの自起源広告communityを継承・変更しません。",
+        "目前 BGPPeer 僅解碼及驗證，不在執行時使用。GoBGP SendCommunity 固定 both，實際匯入比對請設定 importPolicy。對等端 community 設定不繼承或變更路由器本機廣告 community。",
+        "目前 BGPPeer 仅解码及验证，不在运行时使用。GoBGP SendCommunity 固定 both，实际导入匹配请配置 importPolicy。对等端 community 配置不继承或更改路由器本机通告 community。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_route.go",
+      "pkg/config/validate.go",
+      "pkg/config/bgp_validate.go",
+      "pkg/config/cluster_secret_validate.go",
+      "pkg/controller/bgp/controller.go"
+    ]
+  },
+  "BGPDynamicPeer": {
+    "purpose": [
+      "Define a GoBGP inbound dynamic-neighbor admission group, not an individual peer instance or a WireGuard/SAM authorization identity.",
+      "GoBGPの動的着信ピア受付グループを定義します。個々のピアやWireGuard・SAMの認証識別子ではありません。",
+      "定義 GoBGP 傳入動態鄰居接納群組，不是個別對等端或 WireGuard/SAM 授權身分。",
+      "定义 GoBGP 传入动态邻居接纳组，不是单独对等端或 WireGuard/SAM 授权身份。"
+    ],
+    "rules": [
+      [
+        "Peer import policies replace router import policy as a whole when considered configured; their fields are not merged individually. Export prefixes, in contrast, are unioned with router and runtime-derived advertisement prefixes.",
+        "ピアの受信ポリシーが設定済みと判断されるとルーター側を全体置換し、項目ごとのマージは行いません。一方、送信prefixはルーター・実行時由来の広告prefixと合成します。",
+        "對等端匯入原則被視為已設定時，完整取代路由器原則，不逐欄合併。匯出前綴則與路由器及執行時衍生廣告前綴聯集。",
+        "对等端导入策略被视为已配置时，完整替换路由器策略，不逐字段合并。导出前缀则与路由器及运行时派生通告前缀求并集。"
+      ],
+      [
+        "Both IPv4 and IPv6 unicast families are enabled by the current controller. An Established session does not by itself authorize all routes for FIB installation or prove data-plane connectivity.",
+        "現行コントローラーはIPv4・IPv6 unicastを両方有効にします。Establishedだけでは全経路のFIB適用許可や実通信の疎通成功を意味しません。",
+        "目前控制器同時啟用 IPv4/IPv6 unicast。Established 工作階段不會自動授權所有路由安裝至 FIB，也不證明資料轉送可達。",
+        "目前控制器同时启用 IPv4/IPv6 unicast。Established 会话不会自动授权所有路由安装至 FIB，也不证明数据转发可达。"
+      ],
+      [
+        "Ready means the peer group and source-prefix listener rules were applied. It does not mean that any dynamic neighbor is Established. The router convergence/graceful-restart configuration supplies dynamic-peer GR defaults.",
+        "Readyはピアグループと送信元受付規則を適用した状態で、動的ピアのEstablishedを意味しません。動的ピアのGR既定値はルーターの収束・GR設定を使います。",
+        "Ready 表示已套用對等端群組及來源前綴接納規則，不表示已有動態鄰居 Established。動態對等端 GR 預設值來自路由器收斂/GR 設定。",
+        "Ready 表示已应用对等端组及来源前缀接纳规则，不表示已有动态邻居 Established。动态对等端 GR 默认值来自路由器收敛/GR 配置。"
+      ]
+    ],
+    "fields": {
+      "importPolicy": [
+        "Effective import must have a nonempty IPv4 allowlist and min=max=32 for dynamic leaf route admission. If the peer allowlist is empty, validation uses the router import policy as a whole; a peer nextHopRewrite without a peer allowlist is rejected. Specify the full policy here rather than only ancillary overrides.",
+        "動的leafの受信にはIPv4許可一覧とmin=max=32が必須です。ピアの許可一覧が空なら検証はルーター側を全体採用し、許可一覧なしのピアnextHopRewriteを拒否します。補助項目だけの上書きでなく、ここにポリシー全体を指定してください。",
+        "動態 leaf 路由接納要求有效匯入具有非空 IPv4 允許清單及 min=max=32。對等端允許清單為空時，驗證完整採用路由器原則；對等端 nextHopRewrite 無自己的允許清單會被拒絕。請在此指定完整原則，避免僅覆寫附加欄位。",
+        "动态 leaf 路由接纳要求有效导入具有非空 IPv4 允许列表及 min=max=32。对等端允许列表为空时，验证完整采用路由器策略；对等端 nextHopRewrite 无自己的允许列表会被拒绝。请在此指定完整策略，避免仅覆盖附加字段。"
+      ],
+      "importPolicy.allowedPrefixes": [
+        "Optional IPv4/IPv6 CIDR allowlist. Import matches the prefix and its permitted more-specific lengths; masked duplicate prefixes are rejected. Empty adds no prefix match condition to an otherwise configured import policy.",
+        "任意のIPv4・IPv6 CIDR許可一覧です。プレフィックスと許可した詳細経路長で照合し、正規化後の同一プレフィックスは拒否します。空なら他条件で構成された受信ポリシーにprefix条件を加えません。",
+        "選用 IPv4/IPv6 CIDR 允許清單，依前綴及允許的更細前綴長度比對。拒絕遮罩後重複的前綴。為空時，不在其他已設定匯入條件上加入前綴條件。",
+        "可选 IPv4/IPv6 CIDR 允许列表，按前缀及允许的更具体前缀长度匹配。拒绝掩码后重复的前缀。为空时，不在其他已配置导入条件上加入前缀条件。"
+      ],
+      "importPolicy.allowedPrefixLengthMin": [
+        "Integer 0–128; 0/omitted uses each allowlist prefix length. A positive value must be >= each listed prefix length, <= address-family maximum and <= a positive maximum.",
+        "0～128の整数です。省略・0は各許可プレフィックス自身の長さです。正の指定値は各prefix長以上、ファミリー上限以下、正の最大長以下が必要です。",
+        "整數 0–128。省略或 0 使用每個允許前綴自身長度。正值須大於等於各前綴長度、小於等於家族上限及正數最大長度。",
+        "整数 0–128。省略或 0 使用每个允许前缀自身长度。正值须大于等于各前缀长度、小于等于地址族上限及正数最大长度。"
+      ],
+      "importPolicy.allowedPrefixLengthMax": [
+        "Integer 0–128; 0/omitted uses 32 for IPv4 or 128 for IPv6. A positive value must cover every listed prefix length and not exceed its family maximum. Dynamic leaf admission requires min=max=32.",
+        "0～128の整数です。省略・0はIPv4が32、IPv6が128です。正の値は全許可prefix長以上かつファミリー上限以下が必要です。動的leaf受付はmin=max=32が必須です。",
+        "整數 0–128。省略或 0 時 IPv4 為 32、IPv6 為 128。正值須涵蓋所有列出前綴長度且不超過家族上限。動態 leaf 接納要求 min=max=32。",
+        "整数 0–128。省略或 0 时 IPv4 为 32、IPv6 为 128。正值须涵盖所有列出前缀长度且不超过地址族上限。动态 leaf 接纳要求 min=max=32。"
+      ],
+      "importPolicy.requiredCommunities": [
+        "Optional community list; an accepted path must contain ALL listed communities. Empty adds no required-community condition.",
+        "任意のcommunity一覧です。受理する経路はすべての指定communityを持つ必要があり、空なら必須community条件はありません。",
+        "選用 community 清單；接受的路徑必須包含全部列出值。空清單不增加必要 community 條件。",
+        "可选 community 列表；接受的路径必须包含全部列出值。空列表不增加必需 community 条件。"
+      ],
+      "importPolicy.forbiddenCommunities": [
+        "Optional community list; ANY matching community rejects the path before the accept rule. Empty adds no prohibition.",
+        "任意の禁止community一覧です。どれか1つでも一致すれば許可判定より先に拒否します。空ならこの禁止条件はありません。",
+        "選用禁止 community 清單；任一符合就先於接受規則拒絕路徑。空清單不增加禁止條件。",
+        "可选禁止 community 列表；任一匹配就先于接受规则拒绝路径。空列表不增加禁止条件。"
+      ],
+      "importPolicy.nextHopRewrite": [
+        "peer-address by default; unchanged preserves the advertised next hop. Applied on accepted paths before selection/FIB projection. Setting only this field on a peer creates a peer-specific import policy instead of inheriting the router allowlist.",
+        "既定はpeer-addressです。unchangedなら広告されたnext hopを維持します。受理経路の選択・FIB投影前に適用します。ピアでこの項目だけを指定しても独自ポリシーとなり、ルーターの許可一覧は継承しません。",
+        "預設 peer-address；unchanged 保留廣告的下一跳。在接受路徑的選擇及 FIB 投影之前套用。對等端只設定此欄位也會建立自己的匯入原則，不繼承路由器允許清單。",
+        "默认 peer-address；unchanged 保留通告的下一跳。在接受路径的选择及 FIB 投影之前应用。对等端只配置此字段也会建立自己的导入策略，不继承路由器允许列表。"
+      ],
+      "importPolicy.localPreference": [
+        "Optional uint32 LOCAL_PREF for accepted paths before best-path selection. Default 0 leaves the BGP implementation default unchanged.",
+        "受理経路へbest-path選択前に設定するuint32のLOCAL_PREFです。既定0ならBGP実装の既定値を変更しません。",
+        "選用 uint32 LOCAL_PREF，在最佳路徑選擇之前設定於接受的路徑。預設 0 保留 BGP 實作預設值。",
+        "可选 uint32 LOCAL_PREF，在最佳路径选择之前设置于接受的路径。默认 0 保留 BGP 实现默认值。"
+      ],
+      "exportPolicy": [
+        "Optional export prefix filter. Per-peer prefixes are combined with router static and dynamic advertisements; route-reflector clients also receive router import prefixes. It is not a restrictive replacement for all router-derived export prefixes.",
+        "任意の送信prefix条件です。ピア側の一覧はルーター由来の静的・動的広告と合成し、RRクライアントではルーターの受信prefixも加えます。ルーター由来の送信prefix全体を絞る置換ではありません。",
+        "選用匯出前綴篩選。對等端前綴會與路由器靜態及動態廣告合併；RR 用戶端另加入路由器匯入前綴，不是取代並限制所有路由器衍生匯出前綴。",
+        "可选导出前缀过滤。对等端前缀会与路由器静态及动态通告合并；RR 客户端另加入路由器导入前缀，不是替换并限制所有路由器派生导出前缀。"
+      ],
+      "exportPolicy.allowedPrefixes": [
+        "Optional CIDR list, default empty. Effective nonempty export lists allow the listed prefixes and their more-specifics (through /32 or /128), rejecting unmatched routes. An effective empty list installs no export filter.",
+        "任意のCIDR一覧で既定は空です。合成後に非空なら各prefixとその詳細経路（/32・/128まで）を許可し、非一致を拒否します。合成後も空なら送信フィルターを設定しません。",
+        "選用 CIDR 清單，預設為空。合併後非空清單允許列出前綴及更細路由（至 /32 或 /128），拒絕不符路由。有效清單為空時不安裝匯出篩選。",
+        "可选 CIDR 列表，默认为空。合并后非空列表允许列出前缀及更具体路由（至 /32 或 /128），拒绝不符路由。有效列表为空时不安装导出过滤。"
+      ],
+      "timers": [
+        "Optional timer-profile object. Router-level timers are not inherited by peers in the current controller; specify each peer timer profile explicitly when needed.",
+        "任意のタイマープロファイルです。現行コントローラーではルーターのtimersをピアへ継承しないため、必要なら各ピアで明示します。",
+        "選用計時器設定。目前控制器不將路由器層級 timers 繼承給對等端，需要時請在各對等端明確設定。",
+        "可选计时器配置。目前控制器不将路由器级 timers 继承给对等端，需要时请在各对等端明确配置。"
+      ],
+      "timers.profile": [
+        "default/omitted: keepalive 30s, hold 90s, connectRetry 10s; fast: 3s/9s/1s; slow: 60s/180s/30s. Low-level keepalive/holdTime/connectRetry YAML fields are unsupported.",
+        "既定・省略はkeepalive 30秒・hold 90秒・connectRetry 10秒、fastは3秒・9秒・1秒、slowは60秒・180秒・30秒です。個別のkeepalive・holdTime・connectRetryのYAML指定は非対応です。",
+        "default 或省略：keepalive 30 秒、hold 90 秒、connectRetry 10 秒；fast 為 3/9/1 秒，slow 為 60/180/30 秒。不支援直接指定 keepalive/holdTime/connectRetry YAML。",
+        "default 或省略：keepalive 30 秒、hold 90 秒、connectRetry 10 秒；fast 为 3/9/1 秒，slow 为 60/180/30 秒。不支持直接指定 keepalive/holdTime/connectRetry YAML。"
+      ],
+      "when": [
+        "Optional common activation predicate; omitted is unconditional. See common fields for state/all/any, reference validation and schema limitations.",
+        "任意の共通有効化条件です。省略時は無条件です。state・all・any、参照検証、スキーマ制限は共通項を参照してください。",
+        "選用的共用啟用條件，省略表示無條件。state/all/any、參照驗證與結構描述限制請見共用欄位。",
+        "可选的通用启用条件，省略表示无条件。state/all/any、引用验证与模式限制请见通用字段。"
+      ],
+      "routerRef": [
+        "Required BGPRouter/name referencing a declared router in the same Router configuration. Plain names are not accepted.",
+        "同じRouter設定内のBGPRouterを指すBGPRouter/nameが必須です。名前だけの指定は不可です。",
+        "必填 BGPRouter/name，參照同一 Router 設定中宣告的路由器，不接受單獨名稱。",
+        "必填 BGPRouter/name，引用同一 Router 配置中声明的路由器，不接受单独名称。"
+      ],
+      "peerASN": [
+        "Required nonzero uint32 remote ASN. Matching the local ASN selects iBGP; routeReflectorClient requires this equality.",
+        "必須の0以外のuint32相手ASNです。ローカルASNと一致すればiBGPになり、routeReflectorClientでは一致が必要です。",
+        "必填非零 uint32 遠端 ASN，等於本機 ASN 時為 iBGP；routeReflectorClient 要求兩者相等。",
+        "必填非零 uint32 远端 ASN，等于本机 ASN 时为 iBGP；routeReflectorClient 要求两者相等。"
+      ],
+      "password": [
+        "Optional inline BGP TCP authentication secret, default none; mutually exclusive with a nonempty passwordFrom source. Not a SAM enrollment token.",
+        "任意のBGP TCP認証鍵です。既定なしで、非空passwordFrom参照と排他です。SAM登録トークンではありません。",
+        "選用直接指定的 BGP TCP 認證密鑰，預設無，與非空 passwordFrom 來源互斥，不是 SAM 註冊權杖。",
+        "可选直接指定的 BGP TCP 认证密钥，默认无，与非空 passwordFrom 来源互斥，不是 SAM 注册令牌。"
+      ],
+      "passwordFrom": [
+        "Optional secret source; exactly one of file/env when used. Omitted means no external secret. Not a status-value or Kind/name reference. Missing runtime files/environment variables fail peer reconciliation.",
+        "任意の秘密値参照で、利用時はfile・envのどちらか一方を指定します。省略時は外部参照なしです。状態値・Kind/name参照ではなく、実行時のファイル・環境変数欠落はピア調整を失敗させます。",
+        "選用密鑰來源，使用時 file/env 必須且只能指定一項。省略表示無外部密鑰。不是狀態值或 Kind/name 參照，執行時檔案或環境變數缺少會使對等端調整失敗。",
+        "可选密钥来源，使用时 file/env 必须且只能指定一项。省略表示无外部密钥。不是状态值或 Kind/name 引用，运行时文件或环境变量缺失会使对等端协调失败。"
+      ],
+      "passwordFrom.file": [
+        "Router-local file containing raw password text. Exclusive with env and inline password. Trailing CR/LF is removed, but surrounding spaces are otherwise retained.",
+        "生の鍵を格納したルーター上のファイルです。env・直接passwordと排他で、末尾CR・LFだけを除去し、その他の空白は保持します。",
+        "路由器本機原始密碼文字檔，與 env 及直接 password 互斥。移除尾端 CR/LF，其餘空白保留。",
+        "路由器本机原始密码文本文件，与 env 及直接 password 互斥。移除末尾 CR/LF，其余空白保留。"
+      ],
+      "passwordFrom.env": [
+        "Name of a routerd process environment variable containing the secret, not the secret itself. Exclusive with file and inline password. No automatic environment-file loading.",
+        "秘密値を格納するrouterdプロセス環境変数の名前です。値そのものではありません。file・直接passwordとは排他で、環境変数ファイルの自動読込は行いません。",
+        "存放密鑰的 routerd 程序環境變數名稱，不是密鑰本身。與 file 及直接 password 互斥，不自動載入環境檔。",
+        "存放密钥的 routerd 进程环境变量名称，不是密钥本身。与 file 及直接 password 互斥，不自动加载环境文件。"
+      ],
+      "passwordFrom.base64": [
+        "Default false. True decodes standard Base64 from the selected file/env value, then removes trailing CR/LF. This is encoding, not encryption.",
+        "既定falseです。trueならfile・env値を標準Base64デコードし、末尾CR・LFを除去します。暗号化ではなく符号化です。",
+        "預設 false。true 對選定 file/env 值執行標準 Base64 解碼，再移除尾端 CR/LF。這是編碼，不是加密。",
+        "默认 false。true 对选定 file/env 值执行标准 Base64 解码，再移除末尾 CR/LF。这是编码，不是加密。"
+      ],
+      "ebgpMultihop": [
+        "Integer 0–255, default 0. Only values >1 enable GoBGP eBGP multihop and set its TTL; 0/1 leave multihop disabled.",
+        "0～255の整数で既定0です。2以上の場合だけGoBGPのeBGP multihopを有効にしてTTLを設定し、0・1では無効です。",
+        "整數 0–255，預設 0。僅大於 1 時啟用 GoBGP eBGP multihop 並設定 TTL，0/1 保持停用。",
+        "整数 0–255，默认 0。仅大于 1 时启用 GoBGP eBGP multihop 并配置 TTL，0/1 保持禁用。"
+      ],
+      "routeReflectorClient": [
+        "Default false. True marks an iBGP route-reflector client and requires peerASN=router ASN. It also expands effective export prefixes with router import prefixes.",
+        "既定falseです。trueはiBGPのRRクライアント指定で、peerASNとルーターASNの一致が必要です。実効送信prefixにはルーターの受信prefixも加えます。",
+        "預設 false。true 標記 iBGP 路由反射器用戶端，要求 peerASN 等於路由器 ASN，並將路由器匯入前綴加入有效匯出前綴。",
+        "默认 false。true 标记 iBGP 路由反射器客户端，要求 peerASN 等于路由器 ASN，并将路由器导入前缀加入有效导出前缀。"
+      ],
+      "routeReflectorClusterID": [
+        "Optional IPv4-form cluster ID, passed only when routeReflectorClient is true. Empty leaves selection to GoBGP; setting it alone does not enable reflection.",
+        "任意のIPv4形式クラスタIDで、routeReflectorClient=trueの場合だけ渡します。空ならGoBGPに任せ、これだけ指定しても反射は有効になりません。",
+        "選用 IPv4 格式叢集 ID，僅 routeReflectorClient=true 時傳入。空值由 GoBGP 決定，單獨設定不啟用反射。",
+        "可选 IPv4 格式集群 ID，仅 routeReflectorClient=true 时传入。空值由 GoBGP 决定，单独配置不启用反射。"
+      ],
+      "listen": [
+        "Required inbound admission rules, not a discovered peer or SAM enrollment object.",
+        "必須の着信受付規則で、発見したピア・SAM登録オブジェクトではありません。",
+        "必填的傳入接納規則，不是探索到的對等端或 SAM 註冊物件。",
+        "必填的传入接纳规则，不是发现的对等端或 SAM 注册对象。"
+      ],
+      "listen.sourcePrefixes": [
+        "Required nonempty IPv4/IPv6 source CIDR list for GoBGP dynamic neighbors; masked duplicates are rejected. Restricts the incoming TCP peer address, not the routes it may advertise. Route admission uses importPolicy separately.",
+        "GoBGP動的ピアの送信元IPv4・IPv6 CIDRの非空一覧が必須で、正規化後の重複は拒否します。着信TCPの相手アドレスを制限するもので、広告できる経路は別のimportPolicyで制限します。",
+        "必填且不可為空的 GoBGP 動態鄰居來源 IPv4/IPv6 CIDR 清單，拒絕遮罩後重複。限制傳入 TCP 對等端位址，不是可廣告路由；路由接納由 importPolicy 另行處理。",
+        "必填且不可为空的 GoBGP 动态邻居来源 IPv4/IPv6 CIDR 列表，拒绝掩码后重复。限制传入 TCP 对等端地址，不是可通告路由；路由接纳由 importPolicy 另行处理。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_route.go",
+      "pkg/config/validate.go",
+      "pkg/config/bgp_validate.go",
+      "pkg/config/cluster_secret_validate.go",
+      "pkg/controller/bgp/controller.go"
+    ]
+  },
+  "BFD": {
+    "purpose": [
+      "Configure FRR bfdd sessions through vtysh and observe their status for BGPPeer failure handling. This is a separate backend from GoBGP; BFD Down can trigger a BGP peer reset.",
+      "vtysh経由でFRR bfddのセッションを設定・観測し、BGPPeerの障害処理に使います。GoBGPとは別バックエンドで、BFD DownによりBGPピアをリセットします。",
+      "透過 vtysh 設定及觀察 FRR bfdd 工作階段，供 BGPPeer 故障處理使用。與 GoBGP 為不同後端，BFD Down 可觸發 BGP 對等端重設。",
+      "通过 vtysh 配置及观察 FRR bfdd 会话，供 BGPPeer 故障处理使用。与 GoBGP 为不同后端，BFD Down 可触发 BGP 对等端重置。"
+    ],
+    "rules": [
+      [
+        "Every declared BFD must be referenced by at least one BGPPeer.bfd. The BFD peer must match that BGPPeer name or one of its configured peer addresses. BGPDynamicPeer has no bfd field.",
+        "宣言したBFDは少なくとも1つのBGPPeer.bfdから参照される必要があります。BFDのpeerは参照元BGPPeer名またはその相手アドレスに一致する必要があり、BGPDynamicPeerにはbfd項目がありません。",
+        "每個已宣告 BFD 至少須由一個 BGPPeer.bfd 參照，BFD peer 必須符合該 BGPPeer 名稱或其對等端位址。BGPDynamicPeer 沒有 bfd 欄位。",
+        "每个已声明 BFD 至少须由一个 BGPPeer.bfd 引用，BFD peer 必须符合该 BGPPeer 名称或其对等端地址。BGPDynamicPeer 没有 bfd 字段。"
+      ],
+      [
+        "Supported operating systems are Linux and FreeBSD with FRR bfdd/vtysh available. No interface means a multihop session using the referenced BGPRouter.routerID as local address; a direct IP peer without an interface requires exactly one BGPRouter. An interface selects a single-hop session.",
+        "Linux・FreeBSDでFRR bfdd・vtyshが必要です。interfaceなしは参照BGPRouter.routerIDをローカルに使うmultihopで、直接IP指定かつinterfaceなしの場合はBGPRouterがちょうど1件必要です。interfaceありはsingle-hopです。",
+        "支援 Linux/FreeBSD，需有 FRR bfdd/vtysh。無介面時為多跳，使用參照 BGPRouter.routerID 作為本機位址；直接 IP 對等端且無介面時要求恰有一個 BGPRouter。指定介面則為單跳。",
+        "支持 Linux/FreeBSD，需有 FRR bfdd/vtysh。无接口时为多跳，使用引用 BGPRouter.routerID 作为本机地址；直接 IP 对等端且无接口时要求恰有一个 BGPRouter。指定接口则为单跳。"
+      ],
+      [
+        "BFD detects its own forwarding/session failure; its Up status does not prove every routed destination is reachable. The GoBGP controller acts on observed Down after a previously Up BFD or established BGP session, rather than treating every unknown/startup state as Down.",
+        "BFDはそのセッションの障害を検出するもので、Upでも全宛先の疎通は保証しません。GoBGPは過去のBFD UpまたはBGP確立後のDown観測に反応し、起動時・不明状態をすべてDownとは扱いません。",
+        "BFD 僅偵測自身工作階段故障，Up 不代表所有路由目的地可達。GoBGP 在先前 BFD Up 或 BGP 已建立後觀察到 Down 才處理，不將所有未知或啟動狀態視為 Down。",
+        "BFD 仅检测自身会话故障，Up 不代表所有路由目标可达。GoBGP 在先前 BFD Up 或 BGP 已建立后观察到 Down 才处理，不将所有未知或启动状态视为 Down。"
+      ]
+    ],
+    "fields": {
+      "peer": [
+        "Required bare IP address or BGPPeer/name reference. A BGPPeer reference expands to all its peer addresses and takes the local address from its routerRef routerID. No hostname form for a direct peer.",
+        "IPアドレスそのものかBGPPeer/name参照が必須です。BGPPeer参照は全相手アドレスへ展開し、routerRef先のrouterIDをローカルアドレスに使います。直接指定のホスト名は不可です。",
+        "必填純 IP 位址或 BGPPeer/name 參照。BGPPeer 參照展開為其所有對等端位址，並從 routerRef 的 routerID 取得本機位址。直接對等端不接受主機名稱。",
+        "必填纯 IP 地址或 BGPPeer/name 引用。BGPPeer 引用展开为其所有对等端地址，并从 routerRef 的 routerID 取得本机地址。直接对等端不接受主机名。"
+      ],
+      "interface": [
+        "Optional single-hop interface. Prefer Interface/name so the controller resolves the declared Interface.ifname; a plain name is validated as a declared logical interface but is passed literally to FRR. Omitted uses multihop.",
+        "任意のsingle-hopインターフェースです。Interface/nameなら宣言したInterface.ifnameへ解決します。名前だけの場合は論理インターフェースの存在を検証しますが、実行時はその文字列をFRRへ渡すため、Interface/nameを推奨します。省略時はmultihopです。",
+        "選用單跳介面。建議 Interface/name，控制器會解析宣告的 Interface.ifname；單獨名稱雖驗證為邏輯介面，卻會原樣傳給 FRR。省略使用多跳。",
+        "可选单跳接口。建议 Interface/name，控制器会解析声明的 Interface.ifname；单独名称虽验证为逻辑接口，却会原样传给 FRR。省略使用多跳。"
+      ],
+      "profile": [
+        "fast/omitted: minRx=minTx=300ms, multiplier=3; normal: 500ms/500ms/3; slow: 1000ms/1000ms/5. Explicit individual settings override these defaults.",
+        "fast・省略はminRx=minTx=300ms・倍率3、normalは500ms・500ms・3、slowは1000ms・1000ms・5です。個別指定があれば優先します。",
+        "fast 或省略：minRx=minTx=300ms、倍數 3；normal：500ms/500ms/3；slow：1000ms/1000ms/5。明確個別設定優先。",
+        "fast 或省略：minRx=minTx=300ms、倍数 3；normal：500ms/500ms/3；slow：1000ms/1000ms/5。明确单独配置优先。"
+      ],
+      "minRx": [
+        "Optional Go duration, 50ms–60000ms, overriding profile receive interval. Converted to integer milliseconds; omitted uses profile. This is a BFD protocol timer, not a router reboot deadline.",
+        "任意のGo durationで50ms～60000msです。プロファイルの受信間隔を上書きして整数msに変換し、省略時はプロファイル値です。BFDプロトコルタイマーであり、ルーター再起動の期限ではありません。",
+        "選用 Go duration 50ms–60000ms，覆寫設定的接收間隔並轉為整數毫秒。省略使用 profile。這是 BFD 協定計時器，不是路由器重新啟動期限。",
+        "可选 Go duration 50ms–60000ms，覆盖配置的接收间隔并转为整数毫秒。省略使用 profile。这是 BFD 协议计时器，不是路由器重启期限。"
+      ],
+      "minTx": [
+        "Optional Go duration, 50ms–60000ms, overriding profile transmit interval; emitted as integer milliseconds.",
+        "任意のGo durationで50ms～60000msです。プロファイルの送信間隔を上書きし、整数msで出力します。",
+        "選用 Go duration 50ms–60000ms，覆寫 profile 傳送間隔，輸出為整數毫秒。",
+        "可选 Go duration 50ms–60000ms，覆盖 profile 发送间隔，输出为整数毫秒。"
+      ],
+      "detectMultiplier": [
+        "Optional integer 1–50. Decoded 0/omission selects profile default (3, or 5 for slow). Multiplies the negotiated detection interval; not a count of routerd reconcile attempts.",
+        "任意の整数1～50です。省略・デコード値0ならプロファイル既定（通常3、slowは5）です。交渉された検出間隔の倍率で、routerdの再調整回数ではありません。",
+        "選用整數 1–50；解碼為 0 或省略時使用 profile 預設值（3，slow 為 5）。為協商偵測間隔倍數，不是 routerd 調整嘗試次數。",
+        "可选整数 1–50；解码为 0 或省略时使用 profile 默认值（3，slow 为 5）。为协商检测间隔倍数，不是 routerd 协调尝试次数。"
+      ],
+      "when": [
+        "Optional common activation predicate; omitted is unconditional. See common fields for state/all/any, reference validation and schema limitations.",
+        "任意の共通有効化条件です。省略時は無条件です。state・all・any、参照検証、スキーマ制限は共通項を参照してください。",
+        "選用的共用啟用條件，省略表示無條件。state/all/any、參照驗證與結構描述限制請見共用欄位。",
+        "可选的通用启用条件，省略表示无条件。state/all/any、引用验证与模式限制请见通用字段。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/bgp_validate.go",
+      "pkg/config/validate.go",
+      "pkg/controller/bfd/controller.go",
+      "pkg/controller/bgp/controller.go"
+    ]
+  },
+  "DHCPv6PrefixDelegation": {
+    "purpose": [
+      "Acquire an IPv6 delegated prefix on an uplink. Use IPv6DelegatedAddress to derive and apply downstream or host addresses; obtaining a prefix alone does not advertise it to clients.",
+      "上流でIPv6プレフィックスを取得します。下流・ホストのアドレス生成と適用はIPv6DelegatedAddressを使い、取得だけではクライアントへ広告しません。",
+      "在上行介面取得 IPv6 委派前綴。下游或主機位址須以 IPv6DelegatedAddress 衍生並套用，僅取得前綴不會向客戶端公告。",
+      "在上行接口取得 IPv6 委派前缀。下游或主机地址须以 IPv6DelegatedAddress 派生并应用，仅取得前缀不会向客户端通告。"
+    ],
+    "rules": [
+      [
+        "interface must name an existing logical interface. The default client is routerd-dhcpv6-client. networkd, dhcp6c and dhcpcd are recognized alternatives with platform-specific generation, but the live supervisor/status socket path is built around the routerd daemon; do not assume equivalent lifecycle support.",
+        "interfaceは既存論理インターフェース名が必要です。既定clientはrouterd-dhcpv6-clientです。networkd・dhcp6c・dhcpcdも認識してOS別設定を生成しますが、実行時の監督・状態ソケットはrouterdデーモン中心で、同等のライフサイクル対応とは限りません。",
+        "interface 須為既有邏輯介面名稱，預設 client 為 routerd-dhcpv6-client。亦識別 networkd、dhcp6c、dhcpcd 並產生平台設定，但即時監督與狀態通訊端以 routerd 常駐程式為主，生命週期支援不應視為等同。",
+        "interface 须为现有逻辑接口名称，默认 client 为 routerd-dhcpv6-client。也识别 networkd、dhcp6c、dhcpcd 并生成平台配置，但实时监督与状态套接字以 routerd 守护进程为主，生命周期支持不应视为等同。"
+      ],
+      [
+        "profile and prefixLength influence generated external-client configuration and restored-snapshot matching. The supervised routerd-dhcpv6-client command does not receive a prefix-length or profile flag: its acquisition does not use these fields as a length hint. clientDUID is passed to it.",
+        "profile・prefixLengthは外部クライアント設定生成と復元スナップショットの整合確認に使います。監督起動するrouterd-dhcpv6-clientにはprofile・prefix-length引数を渡さず、その取得処理で長さ要求には使いません。clientDUIDは渡します。",
+        "profile/prefixLength 影響外部客戶端設定及還原快照比對。受監督的 routerd-dhcpv6-client 不接收 profile 或 prefix-length 旗標，取得時不以此提示長度；clientDUID 會傳入。",
+        "profile/prefixLength 影响外部客户端配置及还原快照比对。受监督的 routerd-dhcpv6-client 不接收 profile 或 prefix-length 标志，获取时不以此提示长度；clientDUID 会传入。"
+      ],
+      [
+        "IAID/duidType YAML controls are not supported; the routerd daemon defaults IA_PD IAID to 1 and derives DUID-LL from the uplink MAC unless clientDUID is specified. required does not implement a boot-blocking requirement.",
+        "iaid・duidTypeのYAML指定は対応しません。routerdデーモンのIA_PD IAIDは既定1で、clientDUIDがなければ上流MACからDUID-LLを生成します。requiredは起動待ちの強制にはなりません。",
+        "不支援 iaid/duidType YAML 控制。routerd 常駐程式 IA_PD IAID 預設 1，未指定 clientDUID 時由上行 MAC 衍生 DUID-LL。required 不會實作阻擋開機的要求。",
+        "不支持 iaid/duidType YAML 控制。routerd 守护进程 IA_PD IAID 默认 1，未指定 clientDUID 时由上行 MAC 派生 DUID-LL。required 不会实现阻挡启动的要求。"
+      ]
+    ],
+    "fields": {
+      "interface": [
+        "Required logical uplink interface in this Router. An external dhcp6c/dhcpcd PD client must match a DHCPv6Address client declared on the same interface.",
+        "同じRouterの論理上流インターフェースが必須です。外部dhcp6c・dhcpcdを使う場合、同じインターフェースのDHCPv6Addressのclientと一致が必要です。",
+        "必填同一 Router 的邏輯上行介面。外部 dhcp6c/dhcpcd PD 客戶端須與同介面的 DHCPv6Address client 相符。",
+        "必填同一 Router 的逻辑上行接口。外部 dhcp6c/dhcpcd PD 客户端须与同接口的 DHCPv6Address client 相符。"
+      ],
+      "client": [
+        "Default routerd-dhcpv6-client; accepted alternatives networkd/dhcp6c/dhcpcd. Current supervision can also synthesize a routerd DHCPv6 systemd unit, so selecting an external client is not a general guarantee that the built-in daemon is disabled.",
+        "既定routerd-dhcpv6-clientで、代替はnetworkd・dhcp6c・dhcpcdです。現行の監督処理はrouterd DHCPv6のsystemdユニットも合成するため、外部指定だけで内蔵デーモンの停止を一般には保証しません。",
+        "預設 routerd-dhcpv6-client，接受 networkd/dhcp6c/dhcpcd。目前監督亦可能合成 routerd DHCPv6 systemd 單元，選外部客戶端不普遍保證停用內建常駐程式。",
+        "默认 routerd-dhcpv6-client，接受 networkd/dhcp6c/dhcpcd。当前监督也可能合成 routerd DHCPv6 systemd 单元，选外部客户端不普遍保证禁用内置守护进程。"
+      ],
+      "profile": [
+        "Empty/default, ntt-ngn-direct-hikari-denwa or ntt-hgw-lan-pd. NTT profiles supply /60 and link-layer DUID defaults to supporting generation paths; they do not configure provider credentials or change the built-in daemon command.",
+        "空・default・ntt-ngn-direct-hikari-denwa・ntt-hgw-lan-pdです。NTTは対応する生成経路に/60とlink-layer DUID既定を補いますが、認証情報設定や内蔵デーモン引数変更は行いません。",
+        "空值/default、ntt-ngn-direct-hikari-denwa 或 ntt-hgw-lan-pd。NTT 在支援的產生路徑提供 /60 與 link-layer DUID 預設，不設定業者憑證或變更內建命令。",
+        "空值/default、ntt-ngn-direct-hikari-denwa 或 ntt-hgw-lan-pd。NTT 在支持的生成路径提供 /60 与 link-layer DUID 默认值，不配置运营商凭据或变更内置命令。"
+      ],
+      "prefixLength": [
+        "Optional 1–128. Omitted/0 means /60 for NTT profiles and no configured hint for default; it is not a guarantee of the prefix size assigned by the server. See the built-in acquisition limitation above.",
+        "任意の1～128です。省略・0はNTTで/60、defaultでは長さ指定なしです。サーバーの割当長を保証せず、内蔵取得処理には上記制限があります。",
+        "選用 1–128，省略或 0 時 NTT 為 /60，default 無長度提示，不保證伺服器分配長度；內建取得限制見上文。",
+        "可选 1–128，省略或 0 时 NTT 为 /60，default 无长度提示，不保证服务器分配长度；内置获取限制见上文。"
+      ],
+      "clientDUID": [
+        "Optional DUID as unseparated even-length hexadecimal. Colons/whitespace are rejected. Empty lets the built-in client derive DUID-LL from MAC; identity affects whether a restored lease can be reused.",
+        "区切りなし・偶数桁16進数の任意DUIDです。コロン・空白は拒否し、空なら内蔵クライアントがMAC由来DUID-LLを生成します。IDは復元リースの再利用条件にも影響します。",
+        "選用無分隔符且偶數長度的十六進位 DUID，拒絕冒號與空白。空值由內建客戶端從 MAC 衍生 DUID-LL，身分亦影響還原租約是否可重用。",
+        "可选无分隔符且偶数长度的十六进制 DUID，拒绝冒号与空白。空值由内置客户端从 MAC 派生 DUID-LL，身份也影响恢复租约是否可复用。"
+      ],
+      "required": [
+        "Boolean default false, decoded but not consumed as a required/startup wait policy by current runtime. Dependents should use actual Bound status and dependency predicates.",
+        "真偽値で既定falseです。読み込みますが現行実行処理は起動待ち方針に使いません。依存先は実際のBound状態・依存条件を使います。",
+        "布林值預設 false，會解碼但目前不作為必要性或開機等待策略。相依者應使用實際 Bound 狀態及相依條件。",
+        "布尔值默认 false，会解码但当前不作为必要性或启动等待策略。依赖方应使用实际 Bound 状态及依赖条件。"
+      ],
+      "when": [
+        "Optional common state condition, default unconditional. Supervised client generation filters resolved conditions; false can stop acquisition while the declared resource remains.",
+        "共通の状態条件で、既定無条件です。監督対象は解決した条件で絞り込むため、宣言を残しても不成立なら取得を停止できます。",
+        "選用共用狀態條件，預設無條件。監督客戶端依已解析條件篩選，條件為假可在保留宣告時停止取得。",
+        "可选通用状态条件，默认无条件。监督客户端按已解析条件筛选，条件为假可在保留声明时停止获取。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/api/profiles.go",
+      "pkg/config/validate_wan.go",
+      "pkg/config/validate.go",
+      "pkg/config/index.go",
+      "pkg/controller/chain/chain.go",
+      "pkg/controller/chain/system.go",
+      "cmd/routerd-dhcpv6-client/main.go"
+    ]
+  },
+  "IPv6DelegatedAddress": {
+    "purpose": [
+      "Derive and install a local IPv6 address from a DHCPv6PrefixDelegation prefix.",
+      "DHCPv6PrefixDelegationのプレフィックスからローカルIPv6アドレスを生成・適用します。",
+      "從 DHCPv6PrefixDelegation 前綴衍生並安裝本機 IPv6 位址。",
+      "从 DHCPv6PrefixDelegation 前缀派生并安装本机 IPv6 地址。"
+    ],
+    "rules": [
+      [
+        "prefixDelegation must be the bare name of an existing DHCPv6PrefixDelegation and interface must exist in the Router interface index. Normal active installation needs a usable Bound prefix, a ready link and satisfied dependencies. HA VMAC staging can use a fresh synchronized snapshot before active acquisition.",
+        "prefixDelegationは既存DHCPv6PrefixDelegationの裸名で、interfaceもRouter索引に必要です。通常の主系適用には有効なBoundプレフィックス、準備済みリンク、依存条件が必要です。HAのVMAC事前配置は主系取得前に新しい同期スナップショットを使えます。",
+        "prefixDelegation 須為既有 DHCPv6PrefixDelegation 裸名，interface 亦須存在於 Router 索引。一般主用安裝需要可用 Bound 前綴、就緒鏈路及成立的相依條件。HA VMAC 預置可在主用取得前使用新鮮同步快照。",
+        "prefixDelegation 须为现有 DHCPv6PrefixDelegation 裸名，interface 也须存在于 Router 索引。常规主用安装需要可用 Bound 前缀、就绪链路及成立的依赖条件。HA VMAC 预置可在主用获取前使用新鲜同步快照。"
+      ],
+      [
+        "The derived prefix length is max(64, delegated length). subnetID is hexadecimal, shifted to that boundary and ORed into the base; the suffix is masked to remaining host bits and ORed in. Current derivation does not check that subnetID fits the delegated block, so choose an in-range value.",
+        "生成のプレフィックス長はmax(64,委任長)です。subnetIDを16進数としてその境界へシフトしてORし、suffixは残りのホストビットにマスクしてORします。現行処理はsubnetIDが委任範囲に収まるか検査しないため、範囲内の値を指定してください。",
+        "衍生前綴長為 max(64,委派長度)。subnetID 以十六進位移至該邊界後與基底 OR，suffix 僅取剩餘主機位元再 OR。目前不檢查 subnetID 是否落在委派區塊內，請選有效範圍。",
+        "派生前缀长为 max(64,委派长度)。subnetID 以十六进制移至该边界后与基底 OR，suffix 仅取剩余主机位再 OR。当前不检查 subnetID 是否落在委派块内，请选有效范围。"
+      ],
+      [
+        "Linux uses ip address operations and FreeBSD ifconfig. Active application reads the address back before publishing Applied; tentative/DAD state can stay Pending. Prefix changes can retain previous addresses as deprecated until their valid lifetime ends. /128 is handled as a host address rather than an on-link subnet.",
+        "Linuxはip address、FreeBSDはifconfigで操作します。主系は適用後に読み戻してAppliedを公開し、DAD中などはPendingになり得ます。変更前のアドレスは有効期限まで非推奨として保持でき、/128は直結サブネットではなくホストアドレスとして扱います。",
+        "Linux 使用 ip address、FreeBSD 使用 ifconfig。主用套用後讀回位址才公布 Applied，暫定或 DAD 中可維持 Pending。前綴變更可將舊位址保留為已棄用直到有效期限，/128 作主機位址而非直連子網。",
+        "Linux 使用 ip address、FreeBSD 使用 ifconfig。主用应用后读回地址才公布 Applied，暂定或 DAD 中可保持 Pending。前缀变更可将旧地址保留为弃用直到有效期，/128 作主机地址而非直连子网。"
+      ],
+      [
+        "sendRA/announce do not cause the current address controller to run an RA service. Configure IPv6RouterAdvertisement or DHCPv6Server separately. Removed prefixSource and ready_when are rejected.",
+        "sendRA・announceだけで現行アドレスコントローラーがRAサービスを起動することはありません。IPv6RouterAdvertisementまたはDHCPv6Serverを別途設定します。廃止prefixSource・ready_whenは拒否されます。",
+        "sendRA/announce 不會讓目前位址控制器啟動 RA 服務，須另設 IPv6RouterAdvertisement 或 DHCPv6Server。已移除的 prefixSource/ready_when 會被拒絕。",
+        "sendRA/announce 不会让当前地址控制器启动 RA 服务，须另设 IPv6RouterAdvertisement 或 DHCPv6Server。已移除的 prefixSource/ready_when 会被拒绝。"
+      ]
+    ],
+    "fields": {
+      "prefixDelegation": [
+        "Required bare DHCPv6PrefixDelegation metadata.name, not Kind/name or a status expression. No default.",
+        "DHCPv6PrefixDelegationのmetadata.nameが必須です。Kind/name・状態式ではなく、既定値はありません。",
+        "必填 DHCPv6PrefixDelegation metadata.name 裸名，不是 Kind/name 或狀態運算式，無預設值。",
+        "必填 DHCPv6PrefixDelegation metadata.name 裸名，不是 Kind/name 或状态表达式，无默认值。"
+      ],
+      "interface": [
+        "Required declared logical target interface. The final OS name is resolved from the Router.",
+        "適用先の宣言済み論理インターフェースが必須です。OS名はRouterから解決します。",
+        "必填已宣告的目標邏輯介面，最終 OS 名稱由 Router 解析。",
+        "必填已声明的目标逻辑接口，最终 OS 名称由 Router 解析。"
+      ],
+      "subnetID": [
+        "Optional hexadecimal string, default 0; \"10\" means hex 0x10, not decimal ten. Optional 0x prefix. Use an identifier that fits the delegated block; strict fit checking is absent.",
+        "任意の16進文字列で既定0です。\"10\"は十進10ではなく0x10で、0x接頭辞も可能です。厳密な収容検証がないため委任範囲内の番号を指定してください。",
+        "選用十六進位字串，預設 0；\"10\" 為 0x10 而非十進位十，可加 0x。未嚴格檢查容納範圍，請選委派區塊內編號。",
+        "可选十六进制字符串，默认 0；\"10\" 为 0x10 而非十进制十，可加 0x。未严格检查容纳范围，请选委派块内编号。"
+      ],
+      "addressSuffix": [
+        "Required IPv6 suffix such as ::1. Only host bits below the derived prefix boundary are used, not the entire literal as an absolute address. No automatic ::1 default.",
+        "::1などのIPv6サフィックスが必須です。生成境界より下のホストビットだけを使い、絶対アドレスとしては扱いません。::1の自動補完はありません。",
+        "必填 IPv6 後綴如 ::1，僅使用衍生前綴邊界以下的主機位元，不作完整絕對位址，無自動 ::1 預設。",
+        "必填 IPv6 后缀如 ::1，仅使用派生前缀边界以下的主机位，不作完整绝对地址，无自动 ::1 默认值。"
+      ],
+      "prefixLength": [
+        "Omitted/0 retains the derived length, normally /64. Runtime accepts that same length or 128; other explicit lengths can pass schema (1–128) but fail apply. /128 avoids creating the usual on-link prefix route.",
+        "省略・0は生成長、通常/64です。実行時に同じ長さまたは128を許し、他の明示長はスキーマ範囲1～128を通っても適用で失敗します。/128は通常の直結プレフィックス経路を作りません。",
+        "省略或 0 保留衍生長度，通常 /64。執行時接受相同長度或 128；其他明確長度雖可通過 1–128 結構描述，套用仍失敗。/128 避免建立通常的直連前綴路由。",
+        "省略或 0 保留派生长度，通常 /64。运行时接受相同长度或 128；其他明确长度虽可通过 1–128 模式，应用仍失败。/128 避免建立通常的直连前缀路由。"
+      ],
+      "sendRA": [
+        "Boolean default false. Used by host dependency/forwarding setup in some paths, but not an automatic RA-service switch in the live address controller.",
+        "真偽値で既定falseです。一部のホスト依存・転送準備に使いますが、実行時のアドレスコントローラーでRAを自動起動するスイッチではありません。",
+        "布林值預設 false，部分主機相依或轉送準備路徑使用，但不是即時位址控制器的自動 RA 開關。",
+        "布尔值默认 false，部分主机依赖或转发准备路径使用，但不是实时地址控制器的自动 RA 开关。"
+      ],
+      "announce": [
+        "Boolean default false; same live RA-service limitation as sendRA. Do not treat it as an unsolicited neighbor/RA transmission guarantee.",
+        "真偽値で既定falseです。RAサービスに関する制限はsendRAと同じで、自発的近隣広告・RA送信を保証しません。",
+        "布林值預設 false，即時 RA 服務限制同 sendRA，不保證主動鄰居或 RA 公告。",
+        "布尔值默认 false，实时 RA 服务限制同 sendRA，不保证主动邻居或 RA 通告。"
+      ],
+      "when": [
+        "Optional common condition, default unconditional. False can remove the derived address through the explicit cleanup path.",
+        "共通条件で既定無条件です。不成立時は明示的な後片付け処理で生成アドレスを除去できます。",
+        "選用共用條件，預設無條件；條件為假可經明確清理路徑移除衍生位址。",
+        "可选通用条件，默认无条件；条件为假可经明确清理路径移除派生地址。"
+      ],
+      "dependsOn": [
+        "Optional common AND-list, default empty. Unsatisfied dependencies keep the address Pending/DependsOnFalse. HA staging has specialized handling for its PD/VMAC prerequisites; use actual resource phases.",
+        "共通AND依存一覧で既定空です。不成立ならPending/DependsOnFalseです。HA事前配置はPD・VMAC前提の特別処理を持つため、実際のリソースphaseを使います。",
+        "選用共用 AND 相依清單，預設空。不成立時為 Pending/DependsOnFalse。HA 預置對 PD/VMAC 前提有特定處理，請用實際資源 phase。",
+        "可选通用 AND 依赖列表，默认空。不成立时为 Pending/DependsOnFalse。HA 预置对 PD/VMAC 前提有特定处理，请用实际资源 phase。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_wan.go",
+      "pkg/config/validate.go",
+      "pkg/pdclient/derive.go",
+      "pkg/controller/chain/chain.go",
+      "pkg/hostdeps/hostdeps.go"
+    ]
+  },
+  "IPv6RouterAdvertisement": {
+    "purpose": [
+      "Configure IPv6 router-advertisement options on a LAN and deprecate previously delegated prefixes.",
+      "LANのIPv6ルーター広告オプションと、以前の委任プレフィックスの非推奨化を設定します。",
+      "設定 LAN 的 IPv6 路由器公告選項，並棄用先前委派的前綴。",
+      "配置 LAN 的 IPv6 路由器通告选项，并弃用先前委派的前缀。"
+    ],
+    "rules": [
+      [
+        "interface plus prefix or prefixFrom is required. The static renderer and live writer differ: current live generation emits interface/enable-ra/options but does not derive a normal dhcp-range from prefix/prefixFrom. Pair with a working DHCPv6Server/address configuration and confirm actual on-wire PIOs; the schema/Applied status alone cannot prove current-prefix advertisements.",
+        "interfaceとprefixまたはprefixFromが必須です。静的生成と実行時生成は異なり、現行実行時はinterface・enable-ra・オプションを出力してもprefix・prefixFromから通常dhcp-rangeを生成しません。実際に動作するDHCPv6Server・アドレス設定と組み合わせ、実通信のPIOを確認してください。スキーマ・Appliedだけでは広告を証明しません。",
+        "interface 及 prefix 或 prefixFrom 必填。靜態轉譯與即時寫入不同：目前即時產生 interface/enable-ra/選項，但不由 prefix/prefixFrom 衍生一般 dhcp-range。須搭配可用 DHCPv6Server/位址設定並確認實際線上 PIO，結構描述或 Applied 無法證明目前前綴公告。",
+        "interface 及 prefix 或 prefixFrom 必填。静态渲染与实时写入不同：当前实时生成 interface/enable-ra/选项，但不由 prefix/prefixFrom 派生常规 dhcp-range。须搭配可用 DHCPv6Server/地址配置并确认实际线上 PIO，模式或 Applied 无法证明当前前缀通告。"
+      ],
+      [
+        "dnssl and dnsslFrom are mutually exclusive; prefix and prefixFrom, or rdnss and rdnssFrom, are not. All common resource references must exist and specify a provided field even when optional true. Removed prefixSource/ready_when are rejected.",
+        "dnsslとdnsslFromは排他ですが、prefixとprefixFrom、rdnssとrdnssFromは併用できます。共通参照はoptional trueでも既存リソース・提供フィールド明示が必要です。廃止prefixSource・ready_whenは拒否します。",
+        "dnssl 與 dnsslFrom 互斥，prefix/prefixFrom、rdnss/rdnssFrom 可並用。即使 optional true，共用參照仍須有既有資源與明確提供欄位。已移除 prefixSource/ready_when 會被拒絕。",
+        "dnssl 与 dnsslFrom 互斥，prefix/prefixFrom、rdnss/rdnssFrom 可并用。即使 optional true，通用引用仍须有现有资源与明确提供字段。已移除 prefixSource/ready_when 会被拒绝。"
+      ],
+      [
+        "When prefixFrom points to IPv6DelegatedAddress, still-valid previous /64 prefixes are sent directly as deprecated PIOs (preferred 0, remaining valid lifetime), from a real link-local source with hop limit 255. Current-prefix normal service remains the shared dnsmasq path.",
+        "prefixFromがIPv6DelegatedAddressなら、有効期限内の旧/64をpreferred 0・残存valid lifetimeのPIOとして直接送信します。実リンクローカル送信元・hop limit 255を使い、現在の通常広告は共有dnsmasq側です。",
+        "prefixFrom 指向 IPv6DelegatedAddress 時，仍有效的舊 /64 以前綴偏好期 0、剩餘有效期的 PIO 直接發送，使用實際鏈路本地來源與跳數限制 255。一般目前前綴服務仍走共用 dnsmasq。",
+        "prefixFrom 指向 IPv6DelegatedAddress 时，仍有效的旧 /64 以前缀首选期 0、剩余有效期的 PIO 直接发送，使用实际链路本地源地址与跳数限制 255。常规当前前缀服务仍走共用 dnsmasq。"
+      ]
+    ],
+    "fields": {
+      "interface": [
+        "Required logical interface. Current global reference validation does not verify this field for RA, unlike many address resources; runtime attempts alias resolution and then uses the literal as an OS name. Declare an Interface and use its name.",
+        "必須の論理インターフェースです。他のアドレス資源と異なりRAのこの値は全体参照検証で存在確認せず、実行時は別名解決後に未解決ならOS名として使います。Interfaceを宣言して名前を指定してください。",
+        "必填邏輯介面。不同於許多位址資源，RA 此欄位未由全域參照驗證確認存在；執行時先解析別名，失敗則原樣作 OS 名稱。請宣告 Interface 並使用其名稱。",
+        "必填逻辑接口。不同于许多地址资源，RA 此字段未由全局引用验证确认存在；运行时先解析别名，失败则原样作 OS 名称。请声明 Interface 并使用其名称。"
+      ],
+      "prefix": [
+        "Literal IPv6 prefix, required unless prefixFrom.resource is supplied. May coexist with prefixFrom as a status fallback. Current live writer does not generate a normal prefix range from this field; do not assume declaration alone advertises it.",
+        "固定IPv6プレフィックスで、prefixFrom.resourceがなければ必須です。prefixFromの状態補完として併用できます。現行実行時はこの値から通常のプレフィックス範囲を生成しないため、宣言だけで広告されるとは限りません。",
+        "固定 IPv6 前綴，未提供 prefixFrom.resource 時必填，可作 prefixFrom 狀態替代值。目前即時寫入不以此產生一般前綴範圍，不能假設僅宣告即可公告。",
+        "固定 IPv6 前缀，未提供 prefixFrom.resource 时必填，可作 prefixFrom 状态替代值。当前实时写入不以此生成常规前缀范围，不能假设仅声明即可通告。"
+      ],
+      "prefixFrom": [
+        "Optional common resource/field/optional source, existing resource and explicit provided field required. Used for reported prefix and, when referencing IPv6DelegatedAddress, discovery of previous /64s to deprecate. Missing values do not gate normal config generation by themselves.",
+        "既存resource・提供fieldの明示が必要な状態値参照です。表示プレフィックスと、IPv6DelegatedAddress参照時の非推奨化対象旧/64の取得に使います。未解決だけでは通常設定生成を待機にしません。",
+        "選用共用 resource/field/optional 來源，須有既有資源與明確提供欄位。用於回報前綴，參照 IPv6DelegatedAddress 時也找出待棄用的舊 /64；單純缺值不阻擋一般設定產生。",
+        "可选通用 resource/field/optional 来源，须有现有资源与明确提供字段。用于报告前缀，引用 IPv6DelegatedAddress 时也找出待弃用的旧 /64；单纯缺值不阻挡常规配置生成。"
+      ],
+      "rdnss": [
+        "Optional literal IPv6 DNS-server list, default empty. Merged with rdnssFrom; emitted as untagged option6:dns-server in shared dnsmasq, not isolated per RA interface by this writer.",
+        "任意のIPv6 DNS一覧で、既定空です。rdnssFromと結合し、共有dnsmasqにタグなしoption6:dns-serverとして出力するため、この生成処理ではRAインターフェース別に分離しません。",
+        "選用固定 IPv6 DNS 清單，預設空，與 rdnssFrom 合併。於共用 dnsmasq 輸出無標籤 option6:dns-server，此寫入器不依 RA 介面隔離。",
+        "可选固定 IPv6 DNS 列表，默认空，与 rdnssFrom 合并。在共用 dnsmasq 输出无标签 option6:dns-server，此写入器不按 RA 接口隔离。"
+      ],
+      "rdnssFrom": [
+        "Optional common status-value source list. No automatic source. Current RA path discards unresolved-source pending reasons and uses the values available; optional does not provide a service-readiness gate here.",
+        "共通の状態値参照一覧で、既定参照なしです。現行RA処理は未解決の待機理由を捨て、得られた値だけを使います。optionalをサービス準備条件としては使えません。",
+        "選用共用狀態來源清單，無自動來源。目前 RA 路徑忽略未解析來源的等待原因，僅使用已有值；optional 在此不提供服務就緒閘門。",
+        "可选通用状态来源列表，无自动来源。当前 RA 路径忽略未解析来源的等待原因，仅使用已有值；optional 在此不提供服务就绪条件。"
+      ],
+      "dnssl": [
+        "Optional search-domain list, default empty; each value is a single domain without whitespace/slash/comma. Exclusive with dnsslFrom. Emitted as shared untagged option6:domain-search.",
+        "任意の検索ドメイン一覧で既定空です。各値は空白・スラッシュ・カンマのない単一ドメインで、dnsslFromと排他です。共有タグなしoption6:domain-searchに出力します。",
+        "選用搜尋網域清單，預設空；每值為不含空白、斜線或逗號的單一網域，與 dnsslFrom 互斥，輸出共用無標籤 option6:domain-search。",
+        "可选搜索域列表，默认空；每值为不含空白、斜线或逗号的单一域名，与 dnsslFrom 互斥，输出共用无标签 option6:domain-search。"
+      ],
+      "dnsslFrom": [
+        "Optional source list restricted to DNSZone/<name>, field: zone. Each resource must exist. Reads declared zone values before status; exclusive with dnssl. Current normal RA rendering ignores missing-source pending reasons.",
+        "DNSZone/<name>・field: zoneに限定した参照一覧です。各参照先の存在が必要で、状態前でも宣言zoneを読み、dnsslと排他です。現行通常生成は未解決の待機理由を無視します。",
+        "選用來源清單，限 DNSZone/<name>、field: zone，資源須存在；可先讀宣告值，與 dnssl 互斥。目前一般 RA 產生忽略來源缺值的等待原因。",
+        "可选来源列表，限 DNSZone/<name>、field: zone，资源须存在；可先读声明值，与 dnssl 互斥。当前常规 RA 生成忽略来源缺值的等待原因。"
+      ],
+      "mFlag": [
+        "Boolean default false. Used in direct advertisements deprecating previous delegated prefixes; current normal dnsmasq RA option generation does not map it to M.",
+        "真偽値で既定falseです。旧委任プレフィックスを非推奨化する直接RAで使いますが、現行通常dnsmasq生成ではMへ反映しません。",
+        "布林值預設 false，供直接棄用舊委派前綴的 RA 使用；目前一般 dnsmasq RA 產生不映射至 M。",
+        "布尔值默认 false，供直接弃用旧委派前缀的 RA 使用；当前常规 dnsmasq RA 生成不映射至 M。"
+      ],
+      "oFlag": [
+        "Boolean default false. Same restricted direct-deprecation path as mFlag; not a current normal dnsmasq O-bit switch.",
+        "真偽値で既定falseです。mFlagと同じ直接非推奨化経路で使い、通常dnsmasqのOビット切替にはなりません。",
+        "布林值預設 false，使用路徑同 mFlag 的直接棄用公告，不是一般 dnsmasq O 位元開關。",
+        "布尔值默认 false，使用路径同 mFlag 的直接弃用通告，不是常规 dnsmasq O 位开关。"
+      ],
+      "mtu": [
+        "Optional 1280–65535. Zero/omitted emits no explicit MTU unless a PathMTU-derived RA value takes precedence. Passed via dnsmasq ra-param mtu:<value>.",
+        "任意の1280～65535です。省略・0は明示MTUなしですが、PathMTU由来値があればそちらを優先します。dnsmasqのra-param mtu:<値>に渡します。",
+        "選用 1280–65535，省略或 0 不輸出明確 MTU，除非有優先的 PathMTU 衍生值。經 dnsmasq ra-param mtu:<值> 傳入。",
+        "可选 1280–65535，省略或 0 不输出明确 MTU，除非有优先的 PathMTU 派生值。经 dnsmasq ra-param mtu:<值> 传入。"
+      ],
+      "prfPreference": [
+        "Empty/medium default uses normal preference; low/high emit dnsmasq router preference and affect direct old-prefix advertisements.",
+        "空・mediumは通常優先度です。low・highはdnsmasq優先度指定と旧プレフィックス直接広告に使います。",
+        "空值或 medium 使用一般偏好，low/high 輸出 dnsmasq 路由器偏好並影響舊前綴直接公告。",
+        "空值或 medium 使用常规偏好，low/high 输出 dnsmasq 路由器偏好并影响旧前缀直接通告。"
+      ],
+      "preferredLifetime": [
+        "Optional string, default empty. Current live normal writer does not use it. Direct old-prefix PIOs always use preferred lifetime 0 regardless of this setting.",
+        "任意文字列で既定空です。現行の通常実行時生成では使いません。旧プレフィックス直接PIOはこの指定によらずpreferred lifetime 0です。",
+        "選用字串，預設空，目前一般即時寫入不使用。舊前綴直接 PIO 一律使用 preferred lifetime 0，不受此值影響。",
+        "可选字符串，默认空，当前常规实时写入不使用。旧前缀直接 PIO 一律使用 preferred lifetime 0，不受此值影响。"
+      ],
+      "validLifetime": [
+        "For normal live dnsmasq rendering this is the ra-param router lifetime, not the current prefix PIO lifetime. Supply decimal seconds; omitted leaves dnsmasq default. Direct old-prefix RA parses decimal seconds, defaults 1800 on empty/invalid and caps at 65535, while old PIO validity is its remaining lease lifetime.",
+        "通常のdnsmasq実行時生成では現在プレフィックスのPIO期限ではなくra-paramのルーター有効期間です。十進秒数で指定し、省略時はdnsmasq既定です。旧プレフィックス直接RAは十進秒として読み、空・不正なら1800、上限65535で、旧PIO自体は残りリース期間を使います。",
+        "一般即時 dnsmasq 轉譯將此值作 ra-param 路由器有效期，不是目前前綴 PIO 有效期。請用十進位秒，省略保留 dnsmasq 預設。舊前綴直接 RA 空值或無效值為 1800、上限 65535，舊 PIO 則用租約剩餘期間。",
+        "常规实时 dnsmasq 渲染将此值作 ra-param 路由器有效期，不是当前前缀 PIO 有效期。请用十进制秒，省略保留 dnsmasq 默认值。旧前缀直接 RA 空值或无效值为 1800、上限 65535，旧 PIO 则用租约剩余时长。"
+      ],
+      "configPath": [
+        "Optional decoded string, default empty; current live controller uses its shared dnsmasq ConfigPath/PIDFile options and does not consume this per-resource override.",
+        "任意文字列で既定空です。現行実行コントローラーは共有dnsmasqのConfigPath・PIDFileオプションを使い、このリソース別指定は使用しません。",
+        "選用解碼字串，預設空；目前即時控制器使用共用 dnsmasq ConfigPath/PIDFile 選項，不使用此資源覆寫。",
+        "可选解码字符串，默认空；当前实时控制器使用共用 dnsmasq ConfigPath/PIDFile 选项，不使用此资源覆盖。"
+      ],
+      "pidFile": [
+        "Optional decoded string, default empty; current live controller uses its shared dnsmasq ConfigPath/PIDFile options and does not consume this per-resource override.",
+        "任意文字列で既定空です。現行実行コントローラーは共有dnsmasqのConfigPath・PIDFileオプションを使い、このリソース別指定は使用しません。",
+        "選用解碼字串，預設空；目前即時控制器使用共用 dnsmasq ConfigPath/PIDFile 選項，不使用此資源覆寫。",
+        "可选解码字符串，默认空；当前实时控制器使用共用 dnsmasq ConfigPath/PIDFile 选项，不使用此资源覆盖。"
+      ],
+      "when": [
+        "Optional common state predicate, default unconditional. False filters the resource from effective config and reports Pending/WhenFalse.",
+        "共通の状態条件で既定無条件です。不成立なら有効設定から除外してPending/WhenFalseです。",
+        "選用共用狀態條件，預設無條件；為假時自有效設定排除並為 Pending/WhenFalse。",
+        "可选通用状态条件，默认无条件；为假时从有效配置排除并为 Pending/WhenFalse。"
+      ],
+      "dependsOn": [
+        "Optional common AND-list, default empty. Failed predicates report Pending/DependsOnFalse and skip direct old-prefix advertisements, but the normal shared dnsmasq line writer does not check this gate. It is not a complete normal-service suppression switch here.",
+        "共通AND依存一覧で既定空です。不成立はPending/DependsOnFalseとなり旧プレフィックス直接広告を省略しますが、通常共有dnsmasqの行生成はこの条件を確認しません。通常サービス全体の抑止スイッチとはなりません。",
+        "選用共用 AND 相依清單，預設空。不成立回報 Pending/DependsOnFalse 並略過舊前綴直接公告，但一般共用 dnsmasq 行寫入器不檢查此閘門，不能完全抑制一般服務。",
+        "可选通用 AND 依赖列表，默认空。不成立报告 Pending/DependsOnFalse 并跳过旧前缀直接通告，但常规共用 dnsmasq 行写入器不检查此条件，不能完全抑制常规服务。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_dhcp.go",
+      "pkg/config/validate.go",
+      "pkg/controller/chain/chain.go",
+      "pkg/controller/chain/phase2.go",
+      "pkg/controller/chain/routeradvertisement.go",
+      "pkg/render/dnsmasq.go"
+    ]
   }
 }

@@ -5,6 +5,12 @@
 <main class="doclayout wrap"><article class="document"><h1 id="firewallzone">FirewallZone</h1>
 <p><a href="../resources.html#firewallzone">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: firewall.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Group configured interfaces under a named trust role for firewall generation. This does not create an OS interface or a separate routing/bridge domain.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>role and at least one interface are required; repeated identical interface strings within a zone are rejected. FirewallRule uses the zone metadata.name; self is the special router-local endpoint rather than an ordinary interface zone.</li>
+<li>Implicit policy allows mgmt toward all roles and self; trust toward self and roles other than mgmt; untrust is denied except same-role forwarding is enabled by the current shared policy. Established/related traffic and control-protocol exceptions are evaluated separately. See FirewallPolicy and FirewallRule for OS-specific ordering limits.</li>
+</ul>
 <h2 id="yaml-definition">YAML definition</h2>
 <p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
 <pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
@@ -16,9 +22,31 @@
       - &quot;&lt;string&gt;&quot; # string
     role: &quot;untrust&quot; # Required; string; enum=[&quot;untrust&quot;, &quot;trust&quot;, &quot;mgmt&quot;]
 </code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.role</code></td>
+<td>Required untrust, trust or mgmt; no default. Selects implicit firewall behavior, not interface ownership or authentication.</td>
+</tr>
+<tr>
+<td><code>spec.interfaces</code></td>
+<td>Required nonempty logical interface references. Bare names default to Interface; explicit Interface/name, PPPoESession/name, WireGuardInterface/name and DSLiteTunnel/name forms are accepted. References must resolve in the configuration interface/tunnel indexes and to nonempty kernel interface names for rendering.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_firewall.go">pkg/config/validate_firewall.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/nftables.go">pkg/render/nftables.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/pf.go">pkg/render/pf.go</a></p>
 <p><a href="/examples/example-basic-ipv4-nat.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
 <li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 </ul>
 </div>
 </aside></main>

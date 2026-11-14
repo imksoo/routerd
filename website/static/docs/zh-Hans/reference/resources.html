@@ -187,12 +187,16 @@ spec:
 <p><a href="resources/VirtualAddress.html">VirtualAddress</a></p>
 <h2 id="bgprouter">BGPRouter</h2>
 <p><a href="resources/BGPRouter.html">BGPRouter</a></p>
+<p>配置本机 GoBGP 实例、接纳路由及本机起源通告。内核安装与远端可达性不同于 BGP Established 状态。</p>
 <h2 id="bgppeer">BGPPeer</h2>
 <p><a href="resources/BGPPeer.html">BGPPeer</a></p>
+<p>在已声明的 BGPRouter 配置一个或多个静态 BGP 邻居。</p>
 <h2 id="bgpdynamicpeer">BGPDynamicPeer</h2>
 <p><a href="resources/BGPDynamicPeer.html">BGPDynamicPeer</a></p>
+<p>定义 GoBGP 传入动态邻居接纳组，不是单独对等端或 WireGuard/SAM 授权身份。</p>
 <h2 id="bfd">BFD</h2>
 <p><a href="resources/BFD.html">BFD</a></p>
+<p>通过 vtysh 配置及观察 FRR bfdd 会话，供 BGPPeer 故障处理使用。与 GoBGP 为不同后端，BFD Down 可触发 BGP 对等端重置。</p>
 <h2 id="dhcpv4client">DHCPv4Client</h2>
 <p><a href="resources/DHCPv4Client.html">DHCPv4Client</a></p>
 <p>运行受管routerd-dhcpv4-client daemon，应用租约地址，以及可选的默认路由与主机DNS配置。</p>
@@ -213,13 +217,16 @@ spec:
 <p>声明主机接收IPv6 RA/SLAAC，属于RA client，不是向LAN通告的IPv6RouterAdvertisement。</p>
 <h2 id="dhcpv6prefixdelegation">DHCPv6PrefixDelegation</h2>
 <p><a href="resources/DHCPv6PrefixDelegation.html">DHCPv6PrefixDelegation</a></p>
+<p>在上行接口取得 IPv6 委派前缀。下游或主机地址须以 IPv6DelegatedAddress 派生并应用，仅取得前缀不会向客户端通告。</p>
 <h2 id="ipv6delegatedaddress">IPv6DelegatedAddress</h2>
 <p><a href="resources/IPv6DelegatedAddress.html">IPv6DelegatedAddress</a></p>
+<p>从 DHCPv6PrefixDelegation 前缀派生并安装本机 IPv6 地址。</p>
 <h2 id="dhcpv6information">DHCPv6Information</h2>
 <p><a href="resources/DHCPv6Information.html">DHCPv6Information</a></p>
 <p>从使用同接口的DHCPv6-PD daemon获取AFTR、DNS、SNTP与搜索域信息，不启动独立Information-request client。</p>
 <h2 id="ipv6routeradvertisement">IPv6RouterAdvertisement</h2>
 <p><a href="resources/IPv6RouterAdvertisement.html">IPv6RouterAdvertisement</a></p>
+<p>配置 LAN 的 IPv6 路由器通告选项，并弃用先前委派的前缀。</p>
 <h2 id="dhcpv6server">DHCPv6Server</h2>
 <p><a href="resources/DHCPv6Server.html">DHCPv6Server</a></p>
 <h2 id="dhcpv4serverleasesync">DHCPv4ServerLeaseSync</h2>
@@ -316,6 +323,7 @@ spec:
 <p>在支持的 nftables NAT、路由及防火墙规则间共享固定与 DNS 解析的 IP 地址。不创建路由或启动 DNS 服务。</p>
 <h2 id="localserviceredirect">LocalServiceRedirect</h2>
 <p><a href="resources/LocalServiceRedirect.html">LocalServiceRedirect</a></p>
+<p>以 nftables prerouting NAT 将指定接口收到的匹配流量重定向至路由器本机服务端口。</p>
 <h2 id="firewallflowpinhole">FirewallFlowPinhole</h2>
 <p><a href="resources/FirewallFlowPinhole.html">FirewallFlowPinhole</a></p>
 <h2 id="trafficflowlog">TrafficFlowLog</h2>
@@ -323,12 +331,16 @@ spec:
 <p>将连接快照记录至 SQLite 流量数据库，并可从 DPI 缓存补充信息。不是抓包，也不记录每个数据包。</p>
 <h2 id="firewallzone">FirewallZone</h2>
 <p><a href="resources/FirewallZone.html">FirewallZone</a></p>
+<p>将已配置接口归入具名信任角色，用于生成防火墙规则。不创建 OS 接口或独立路由、桥接域。</p>
 <h2 id="firewallpolicy">FirewallPolicy</h2>
 <p><a href="resources/FirewallPolicy.html">FirewallPolicy</a></p>
+<p>配置与区域及明确规则搭配的共享隐式防火墙选项。多个资源会汇总，不是独立应用。</p>
 <h2 id="clientpolicy">ClientPolicy</h2>
 <p><a href="resources/ClientPolicy.html">ClientPolicy</a></p>
+<p>对选定或非例外客户端应用访客服务与路由目标限制。Linux 以配置的 MAC 标识，FreeBSD PF 需要明确 IP 身份。</p>
 <h2 id="firewallrule">FirewallRule</h2>
 <p><a href="resources/FirewallRule.html">FirewallRule</a></p>
+<p>声明区域路径的具名允许、丢弃或拒绝规则，支持地址、协议、端口匹配及 Linux 速率/连接条件。</p>
 <h2 id="firewalleventlog">FirewallEventLog</h2>
 <p><a href="resources/FirewallEventLog.html">FirewallEventLog</a></p>
 <p>启用防火墙数据包日志收集器，配置数据库、Linux NFLOG 组与规则生成时的日志选项。部分接受的筛选与归档字段当前没有运行时使用者。</p>

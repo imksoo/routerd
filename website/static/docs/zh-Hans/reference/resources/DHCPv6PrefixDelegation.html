@@ -5,6 +5,13 @@
 <main class="doclayout wrap"><article class="document"><h1 id="dhcpv6prefixdelegation">DHCPv6PrefixDelegation</h1>
 <p><a href="../resources.html#dhcpv6prefixdelegation">各资源的配置</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>在上行接口取得 IPv6 委派前缀。下游或主机地址须以 IPv6DelegatedAddress 派生并应用，仅取得前缀不会向客户端通告。</p>
+<h2 id="指定条件与引用关系">指定条件与引用关系</h2>
+<ul>
+<li>interface 须为现有逻辑接口名称，默认 client 为 routerd-dhcpv6-client。也识别 networkd、dhcp6c、dhcpcd 并生成平台配置，但实时监督与状态套接字以 routerd 守护进程为主，生命周期支持不应视为等同。</li>
+<li>profile/prefixLength 影响外部客户端配置及还原快照比对。受监督的 routerd-dhcpv6-client 不接收 profile 或 prefix-length 标志，获取时不以此提示长度；clientDUID 会传入。</li>
+<li>不支持 iaid/duidType YAML 控制。routerd 守护进程 IA_PD IAID 默认 1，未指定 clientDUID 时由上行 MAC 派生 DUID-LL。required 不会实现阻挡启动的要求。</li>
+</ul>
 <h2 id="yaml定义">YAML定义</h2>
 <p>此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。</p>
 <pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
@@ -30,9 +37,51 @@
           maxAge: &quot;&lt;string&gt;&quot; # 选填; string
           status: &quot;set&quot; # 选填; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
 </code></pre>
+<h2 id="字段含义与默认值">字段含义与默认值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>字段含义与默认值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.interface</code></td>
+<td>必填同一 Router 的逻辑上行接口。外部 dhcp6c/dhcpcd PD 客户端须与同接口的 DHCPv6Address client 相符。</td>
+</tr>
+<tr>
+<td><code>spec.client</code></td>
+<td>默认 routerd-dhcpv6-client，接受 networkd/dhcp6c/dhcpcd。当前监督也可能合成 routerd DHCPv6 systemd 单元，选外部客户端不普遍保证禁用内置守护进程。</td>
+</tr>
+<tr>
+<td><code>spec.profile</code></td>
+<td>空值/default、ntt-ngn-direct-hikari-denwa 或 ntt-hgw-lan-pd。NTT 在支持的生成路径提供 /60 与 link-layer DUID 默认值，不配置运营商凭据或变更内置命令。</td>
+</tr>
+<tr>
+<td><code>spec.prefixLength</code></td>
+<td>可选 1–128，省略或 0 时 NTT 为 /60，default 无长度提示，不保证服务器分配长度；内置获取限制见上文。</td>
+</tr>
+<tr>
+<td><code>spec.clientDUID</code></td>
+<td>可选无分隔符且偶数长度的十六进制 DUID，拒绝冒号与空白。空值由内置客户端从 MAC 派生 DUID-LL，身份也影响恢复租约是否可复用。</td>
+</tr>
+<tr>
+<td><code>spec.required</code></td>
+<td>布尔值默认 false，会解码但当前不作为必要性或启动等待策略。依赖方应使用实际 Bound 状态及依赖条件。</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>可选通用状态条件，默认无条件。监督客户端按已解析条件筛选，条件为假可在保留声明时停止获取。</td>
+</tr>
+</tbody>
+</table>
+<p>实现: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/profiles.go">pkg/api/profiles.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_wan.go">pkg/config/validate_wan.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/index.go">pkg/config/index.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go">pkg/controller/chain/chain.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/system.go">pkg/controller/chain/system.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd-dhcpv6-client/main.go">cmd/routerd-dhcpv6-client/main.go</a></p>
 <p><a href="/examples/example-dslite-home.yaml">配置示例</a></p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
 <ul>
+<li><a href="#指定条件与引用关系">指定条件与引用关系</a></li>
 <li><a href="#yaml定义">YAML定义</a></li>
+<li><a href="#字段含义与默认值">字段含义与默认值</a></li>
 </ul>
 </div>
 </aside></main>

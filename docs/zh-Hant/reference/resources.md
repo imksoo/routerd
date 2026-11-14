@@ -292,20 +292,28 @@ spec:
 
 [BGPRouter](resources/BGPRouter.md)
 
+設定本機 GoBGP 執行個體、接納路由及本機起源廣告。核心安裝與遠端可達性不同於 BGP Established 狀態。
+
 
 ## BGPPeer
 
 [BGPPeer](resources/BGPPeer.md)
+
+在已宣告的 BGPRouter 設定一個或多個靜態 BGP 鄰居。
 
 
 ## BGPDynamicPeer
 
 [BGPDynamicPeer](resources/BGPDynamicPeer.md)
 
+定義 GoBGP 傳入動態鄰居接納群組，不是個別對等端或 WireGuard/SAM 授權身分。
+
 
 ## BFD
 
 [BFD](resources/BFD.md)
+
+透過 vtysh 設定及觀察 FRR bfdd 工作階段，供 BGPPeer 故障處理使用。與 GoBGP 為不同後端，BFD Down 可觸發 BGP 對等端重設。
 
 
 ## DHCPv4Client
@@ -354,10 +362,14 @@ spec:
 
 [DHCPv6PrefixDelegation](resources/DHCPv6PrefixDelegation.md)
 
+在上行介面取得 IPv6 委派前綴。下游或主機位址須以 IPv6DelegatedAddress 衍生並套用，僅取得前綴不會向客戶端公告。
+
 
 ## IPv6DelegatedAddress
 
 [IPv6DelegatedAddress](resources/IPv6DelegatedAddress.md)
+
+從 DHCPv6PrefixDelegation 前綴衍生並安裝本機 IPv6 位址。
 
 
 ## DHCPv6Information
@@ -370,6 +382,8 @@ spec:
 ## IPv6RouterAdvertisement
 
 [IPv6RouterAdvertisement](resources/IPv6RouterAdvertisement.md)
+
+設定 LAN 的 IPv6 路由器公告選項，並棄用先前委派的前綴。
 
 
 ## DHCPv6Server
@@ -603,6 +617,8 @@ spec:
 
 [LocalServiceRedirect](resources/LocalServiceRedirect.md)
 
+以 nftables prerouting NAT 將指定介面收到的符合流量重新導向路由器本機服務連接埠。
+
 
 ## FirewallFlowPinhole
 
@@ -620,20 +636,28 @@ spec:
 
 [FirewallZone](resources/FirewallZone.md)
 
+將已設定介面歸入具名信任角色，用於產生防火牆規則。不建立 OS 介面或獨立路由、橋接網域。
+
 
 ## FirewallPolicy
 
 [FirewallPolicy](resources/FirewallPolicy.md)
+
+設定與區域及明確規則搭配的共用隱含防火牆選項。多個資源會彙總，不是獨立套用。
 
 
 ## ClientPolicy
 
 [ClientPolicy](resources/ClientPolicy.md)
 
+對選定或非例外用戶端套用訪客服務與路由目的限制。Linux 以設定的 MAC 識別，FreeBSD PF 需要明確 IP 身分。
+
 
 ## FirewallRule
 
 [FirewallRule](resources/FirewallRule.md)
+
+宣告區域路徑的具名允許、丟棄或拒絕規則，支援位址、協定、連接埠比對及 Linux 速率/連線條件。
 
 
 ## FirewallEventLog

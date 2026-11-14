@@ -187,12 +187,16 @@ spec:
 <p><a href="resources/VirtualAddress.html">VirtualAddress</a></p>
 <h2 id="bgprouter">BGPRouter</h2>
 <p><a href="resources/BGPRouter.html">BGPRouter</a></p>
+<p>Configure the local GoBGP instance, its admitted routes and locally originated advertisements. Actual kernel installation and remote reachability are separate from a BGP Established state.</p>
 <h2 id="bgppeer">BGPPeer</h2>
 <p><a href="resources/BGPPeer.html">BGPPeer</a></p>
+<p>Configure one or more static BGP neighbors on a declared BGPRouter.</p>
 <h2 id="bgpdynamicpeer">BGPDynamicPeer</h2>
 <p><a href="resources/BGPDynamicPeer.html">BGPDynamicPeer</a></p>
+<p>Define a GoBGP inbound dynamic-neighbor admission group, not an individual peer instance or a WireGuard/SAM authorization identity.</p>
 <h2 id="bfd">BFD</h2>
 <p><a href="resources/BFD.html">BFD</a></p>
+<p>Configure FRR bfdd sessions through vtysh and observe their status for BGPPeer failure handling. This is a separate backend from GoBGP; BFD Down can trigger a BGP peer reset.</p>
 <h2 id="dhcpv4client">DHCPv4Client</h2>
 <p><a href="resources/DHCPv4Client.html">DHCPv4Client</a></p>
 <p>Runs the managed routerd-dhcpv4-client daemon and applies its current lease address, optional default route and optional host DNS settings.</p>
@@ -213,13 +217,16 @@ spec:
 <p>Declares host-side receipt of IPv6 router advertisements/SLAAC. This is an RA client, not an IPv6RouterAdvertisement server for the LAN.</p>
 <h2 id="dhcpv6prefixdelegation">DHCPv6PrefixDelegation</h2>
 <p><a href="resources/DHCPv6PrefixDelegation.html">DHCPv6PrefixDelegation</a></p>
+<p>Acquire an IPv6 delegated prefix on an uplink. Use IPv6DelegatedAddress to derive and apply downstream or host addresses; obtaining a prefix alone does not advertise it to clients.</p>
 <h2 id="ipv6delegatedaddress">IPv6DelegatedAddress</h2>
 <p><a href="resources/IPv6DelegatedAddress.html">IPv6DelegatedAddress</a></p>
+<p>Derive and install a local IPv6 address from a DHCPv6PrefixDelegation prefix.</p>
 <h2 id="dhcpv6information">DHCPv6Information</h2>
 <p><a href="resources/DHCPv6Information.html">DHCPv6Information</a></p>
 <p>Projects AFTR, DNS, SNTP and domain-search information from the DHCPv6-PD daemon that uses the same interface. It does not start a standalone information-request client.</p>
 <h2 id="ipv6routeradvertisement">IPv6RouterAdvertisement</h2>
 <p><a href="resources/IPv6RouterAdvertisement.html">IPv6RouterAdvertisement</a></p>
+<p>Configure IPv6 router-advertisement options on a LAN and deprecate previously delegated prefixes.</p>
 <h2 id="dhcpv6server">DHCPv6Server</h2>
 <p><a href="resources/DHCPv6Server.html">DHCPv6Server</a></p>
 <h2 id="dhcpv4serverleasesync">DHCPv4ServerLeaseSync</h2>
@@ -316,6 +323,7 @@ spec:
 <p>Share literal and DNS-resolved IP addresses among supported nftables NAT, routing and firewall rules. It does not create routes or start a DNS service.</p>
 <h2 id="localserviceredirect">LocalServiceRedirect</h2>
 <p><a href="resources/LocalServiceRedirect.html">LocalServiceRedirect</a></p>
+<p>Redirect matching traffic received on a declared interface to a service port on the router itself, using nftables prerouting NAT.</p>
 <h2 id="firewallflowpinhole">FirewallFlowPinhole</h2>
 <p><a href="resources/FirewallFlowPinhole.html">FirewallFlowPinhole</a></p>
 <h2 id="trafficflowlog">TrafficFlowLog</h2>
@@ -323,12 +331,16 @@ spec:
 <p>Record connection snapshots in a SQLite flow database, optionally enriching them from the DPI cache. This is not a packet capture or a log of every packet.</p>
 <h2 id="firewallzone">FirewallZone</h2>
 <p><a href="resources/FirewallZone.html">FirewallZone</a></p>
+<p>Group configured interfaces under a named trust role for firewall generation. This does not create an OS interface or a separate routing/bridge domain.</p>
 <h2 id="firewallpolicy">FirewallPolicy</h2>
 <p><a href="resources/FirewallPolicy.html">FirewallPolicy</a></p>
+<p>Set shared implicit firewall options used alongside zones and explicit rules. Multiple resources are aggregated rather than applied independently.</p>
 <h2 id="clientpolicy">ClientPolicy</h2>
 <p><a href="resources/ClientPolicy.html">ClientPolicy</a></p>
+<p>Apply guest-style local-service and routed-destination restrictions to selected or non-exempt clients. Linux identifies clients by configured MACs; FreeBSD PF requires explicit IP identities.</p>
 <h2 id="firewallrule">FirewallRule</h2>
 <p><a href="resources/FirewallRule.html">FirewallRule</a></p>
+<p>Declare a named accept/drop/reject rule for a zone path, with address/protocol/port matches and Linux rate/connection predicates.</p>
 <h2 id="firewalleventlog">FirewallEventLog</h2>
 <p><a href="resources/FirewallEventLog.html">FirewallEventLog</a></p>
 <p>Enable the firewall packet-log collector and configure its database, Linux NFLOG group and renderer logging options. Several accepted filter/archive fields currently have no runtime consumer.</p>

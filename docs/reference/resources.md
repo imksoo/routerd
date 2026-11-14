@@ -292,20 +292,28 @@ Declares a static IPv4 address on a logical interface. The controller converges 
 
 [BGPRouter](resources/BGPRouter.md)
 
+Configure the local GoBGP instance, its admitted routes and locally originated advertisements. Actual kernel installation and remote reachability are separate from a BGP Established state.
+
 
 ## BGPPeer
 
 [BGPPeer](resources/BGPPeer.md)
+
+Configure one or more static BGP neighbors on a declared BGPRouter.
 
 
 ## BGPDynamicPeer
 
 [BGPDynamicPeer](resources/BGPDynamicPeer.md)
 
+Define a GoBGP inbound dynamic-neighbor admission group, not an individual peer instance or a WireGuard/SAM authorization identity.
+
 
 ## BFD
 
 [BFD](resources/BFD.md)
+
+Configure FRR bfdd sessions through vtysh and observe their status for BGPPeer failure handling. This is a separate backend from GoBGP; BFD Down can trigger a BGP peer reset.
 
 
 ## DHCPv4Client
@@ -354,10 +362,14 @@ Declares host-side receipt of IPv6 router advertisements/SLAAC. This is an RA cl
 
 [DHCPv6PrefixDelegation](resources/DHCPv6PrefixDelegation.md)
 
+Acquire an IPv6 delegated prefix on an uplink. Use IPv6DelegatedAddress to derive and apply downstream or host addresses; obtaining a prefix alone does not advertise it to clients.
+
 
 ## IPv6DelegatedAddress
 
 [IPv6DelegatedAddress](resources/IPv6DelegatedAddress.md)
+
+Derive and install a local IPv6 address from a DHCPv6PrefixDelegation prefix.
 
 
 ## DHCPv6Information
@@ -370,6 +382,8 @@ Projects AFTR, DNS, SNTP and domain-search information from the DHCPv6-PD daemon
 ## IPv6RouterAdvertisement
 
 [IPv6RouterAdvertisement](resources/IPv6RouterAdvertisement.md)
+
+Configure IPv6 router-advertisement options on a LAN and deprecate previously delegated prefixes.
 
 
 ## DHCPv6Server
@@ -603,6 +617,8 @@ Share literal and DNS-resolved IP addresses among supported nftables NAT, routin
 
 [LocalServiceRedirect](resources/LocalServiceRedirect.md)
 
+Redirect matching traffic received on a declared interface to a service port on the router itself, using nftables prerouting NAT.
+
 
 ## FirewallFlowPinhole
 
@@ -620,20 +636,28 @@ Record connection snapshots in a SQLite flow database, optionally enriching them
 
 [FirewallZone](resources/FirewallZone.md)
 
+Group configured interfaces under a named trust role for firewall generation. This does not create an OS interface or a separate routing/bridge domain.
+
 
 ## FirewallPolicy
 
 [FirewallPolicy](resources/FirewallPolicy.md)
+
+Set shared implicit firewall options used alongside zones and explicit rules. Multiple resources are aggregated rather than applied independently.
 
 
 ## ClientPolicy
 
 [ClientPolicy](resources/ClientPolicy.md)
 
+Apply guest-style local-service and routed-destination restrictions to selected or non-exempt clients. Linux identifies clients by configured MACs; FreeBSD PF requires explicit IP identities.
+
 
 ## FirewallRule
 
 [FirewallRule](resources/FirewallRule.md)
+
+Declare a named accept/drop/reject rule for a zone path, with address/protocol/port matches and Linux rate/connection predicates.
 
 
 ## FirewallEventLog

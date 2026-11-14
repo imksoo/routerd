@@ -5,6 +5,13 @@
 <main class="doclayout wrap"><article class="document"><h1 id="bfd">BFD</h1>
 <p><a href="../resources.html#bfd">各资源的配置</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>通过 vtysh 配置及观察 FRR bfdd 会话，供 BGPPeer 故障处理使用。与 GoBGP 为不同后端，BFD Down 可触发 BGP 对等端重置。</p>
+<h2 id="指定条件与引用关系">指定条件与引用关系</h2>
+<ul>
+<li>每个已声明 BFD 至少须由一个 BGPPeer.bfd 引用，BFD peer 必须符合该 BGPPeer 名称或其对等端地址。BGPDynamicPeer 没有 bfd 字段。</li>
+<li>支持 Linux/FreeBSD，需有 FRR bfdd/vtysh。无接口时为多跳，使用引用 BGPRouter.routerID 作为本机地址；直接 IP 对等端且无接口时要求恰有一个 BGPRouter。指定接口则为单跳。</li>
+<li>BFD 仅检测自身会话故障，Up 不代表所有路由目标可达。GoBGP 在先前 BFD Up 或 BGP 已建立后观察到 Down 才处理，不将所有未知或启动状态视为 Down。</li>
+</ul>
 <h2 id="yaml定义">YAML定义</h2>
 <p>此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。</p>
 <pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
@@ -30,9 +37,51 @@
           maxAge: &quot;&lt;string&gt;&quot; # 选填; string
           status: &quot;set&quot; # 选填; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
 </code></pre>
+<h2 id="字段含义与默认值">字段含义与默认值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>字段含义与默认值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.peer</code></td>
+<td>必填纯 IP 地址或 BGPPeer/name 引用。BGPPeer 引用展开为其所有对等端地址，并从 routerRef 的 routerID 取得本机地址。直接对等端不接受主机名。</td>
+</tr>
+<tr>
+<td><code>spec.interface</code></td>
+<td>可选单跳接口。建议 Interface/name，控制器会解析声明的 Interface.ifname；单独名称虽验证为逻辑接口，却会原样传给 FRR。省略使用多跳。</td>
+</tr>
+<tr>
+<td><code>spec.profile</code></td>
+<td>fast 或省略：minRx=minTx=300ms、倍数 3；normal：500ms/500ms/3；slow：1000ms/1000ms/5。明确单独配置优先。</td>
+</tr>
+<tr>
+<td><code>spec.minRx</code></td>
+<td>可选 Go duration 50ms–60000ms，覆盖配置的接收间隔并转为整数毫秒。省略使用 profile。这是 BFD 协议计时器，不是路由器重启期限。</td>
+</tr>
+<tr>
+<td><code>spec.minTx</code></td>
+<td>可选 Go duration 50ms–60000ms，覆盖 profile 发送间隔，输出为整数毫秒。</td>
+</tr>
+<tr>
+<td><code>spec.detectMultiplier</code></td>
+<td>可选整数 1–50；解码为 0 或省略时使用 profile 默认值（3，slow 为 5）。为协商检测间隔倍数，不是 routerd 协调尝试次数。</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>可选的通用启用条件，省略表示无条件。state/all/any、引用验证与模式限制请见通用字段。</td>
+</tr>
+</tbody>
+</table>
+<p>实现: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/bgp_validate.go">pkg/config/bgp_validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/bfd/controller.go">pkg/controller/bfd/controller.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/bgp/controller.go">pkg/controller/bgp/controller.go</a></p>
 <p><a href="/examples/bgp-bfd.yaml">配置示例</a></p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
 <ul>
+<li><a href="#指定条件与引用关系">指定条件与引用关系</a></li>
 <li><a href="#yaml定义">YAML定义</a></li>
+<li><a href="#字段含义与默认值">字段含义与默认值</a></li>
 </ul>
 </div>
 </aside></main>
