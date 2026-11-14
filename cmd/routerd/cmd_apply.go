@@ -364,27 +364,12 @@ func desiredObjectStatusKeysForOS(router *api.Router, store staleObjectStatusCle
 			out[lifecycle.ResourceKey(resource.APIVersion, resource.Kind, resource.Metadata.Name)] = true
 		}
 	}
-	for _, resource := range router.Spec.Resources {
-		if targetOS == platform.OSLinux {
+	if targetOS == platform.OSLinux {
+		for _, resource := range router.Spec.Resources {
 			if unit, ok := controllerchain.SynthesizedUnitName(resource); ok {
 				out[api.SystemAPIVersion+"/ServiceUnit/"+unit] = true
 			}
 		}
-		when := resourcequery.ResourceWhen(resource)
-		if !resourcequery.ResourceWhenPresent(when) || resourcequery.ResourceWhenMatches(when, store) {
-			continue
-		}
-		if strings.TrimSpace(resource.Kind) == "" || strings.TrimSpace(resource.Metadata.Name) == "" {
-			continue
-		}
-		apiVersion := resource.APIVersion
-		if apiVersion == "" {
-			apiVersion = lifecycle.APIVersionForKind(resource.Kind)
-		}
-		if strings.TrimSpace(apiVersion) == "" {
-			continue
-		}
-		out[apiVersion+"/"+resource.Kind+"/"+resource.Metadata.Name] = true
 	}
 	return out, nil
 }
