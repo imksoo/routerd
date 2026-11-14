@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>routerd — 用 YAML 定義路由器設定。</title><meta name="description" content="將介面、位址、路由、DHCP、DNS及防火牆規則整合為一份設定。檢查變更計畫、套用設定，並觀察路由器的運作狀態。">
+<link rel="canonical" href="https://routerd.net/zh-Hant/"><link rel="alternate" hreflang="en" href="https://routerd.net/"><link rel="alternate" hreflang="ja" href="https://routerd.net/ja/"><link rel="alternate" hreflang="zh-Hant" href="https://routerd.net/zh-Hant/"><link rel="alternate" hreflang="zh-Hans" href="https://routerd.net/zh-Hans/">
+<link rel="stylesheet" href="/site.css"></head>
+<body><header><nav class="wrap" aria-label="routerd"><a class="brand" href="/zh-Hant/"><svg viewBox="0 0 36 36" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 9h10v18h8M19 18H9"/><circle cx="8" cy="9" r="4" fill="white"/><circle cx="8" cy="18" r="4" fill="white"/><circle cx="28" cy="27" r="4" fill="white"/></svg>routerd</a>
+<div class="navlinks"><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/intro.md">使用文件</a><a href="https://github.com/imksoo/routerd/tree/main/examples">YAML範例</a><a href="https://github.com/imksoo/routerd/releases/latest">下載</a><a href="https://github.com/imksoo/routerd/">GitHub</a></div>
+<div class="languages" aria-label="語言"><a href="/" lang="en" hreflang="en">English</a><a href="/ja/" lang="ja" hreflang="ja">日本語</a><a href="/zh-Hant/" lang="zh-Hant" hreflang="zh-Hant" aria-current="page">繁體中文</a><a href="/zh-Hans/" lang="zh-Hans" hreflang="zh-Hans">简体中文</a></div></nav></header>
+<main class="wrap"><section class="hero"><div><p class="eyebrow">宣告式網路設定</p><h1>用 YAML 定義路由器設定。</h1><p class="lead">將介面、位址、路由、DHCP、DNS及防火牆規則整合為一份設定。檢查變更計畫、套用設定，並觀察路由器的運作狀態。</p><div class="actions"><a class="button" href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/install-and-upgrade.md">開始使用 →</a><a class="button secondary" href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/reference/resources.md">設定參考</a></div></div>
+<div class="codewindow"><div class="codebar"><span>router.yaml</span><span>介面與位址範例</span></div><pre><code><span class="key">apiVersion:</span><span class="value"> routerd.net/v1alpha1</span>
+<span class="key">kind:</span><span class="value"> Router</span>
+<span class="key">metadata:</span><span class="value"></span>
+  <span class="key">name:</span><span class="value"> example</span>
+<span class="key">spec:</span><span class="value"></span>
+  <span class="key">resources:</span><span class="value"></span>
+    - <span class="key">apiVersion:</span><span class="value"> net.routerd.net/v1alpha1</span>
+      <span class="key">kind:</span><span class="value"> Interface</span>
+      <span class="key">metadata:</span><span class="value"></span>
+        <span class="key">name:</span><span class="value"> lan</span>
+      <span class="key">spec:</span><span class="value"></span>
+        <span class="key">ifname:</span><span class="value"> ens18</span>
+        <span class="key">managed:</span><span class="value"> true</span>
+        <span class="key">adminUp:</span><span class="value"> true</span>
+    - <span class="key">apiVersion:</span><span class="value"> net.routerd.net/v1alpha1</span>
+      <span class="key">kind:</span><span class="value"> IPv4StaticAddress</span>
+      <span class="key">metadata:</span><span class="value"></span>
+        <span class="key">name:</span><span class="value"> lan-address</span>
+      <span class="key">spec:</span><span class="value"></span>
+        <span class="key">interface:</span><span class="value"> lan</span>
+        <span class="key">address:</span><span class="value"> 192.0.2.1/24</span></code></pre><div class="codehint">套用前，請將介面名稱與位址改為實際環境的值。</div></div></section>
+<section class="section"><h2>從設定到操作</h2><p class="sectionintro">選擇範例、理解資源關係，再確認套用結果。</p><div class="cards"><a class="card" href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/install-and-upgrade.md"><span class="number">01</span><h3>安裝與設定</h3><p>安裝發行版本、選擇設定，並保留管理連線。</p><span class="link">閱讀設定步驟 →</span></a><a class="card" href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/reference/resources.md"><span class="number">02</span><h3>理解各項資源</h3><p>查閱YAML定義、設定欄位與資源間的參照關係。</p><span class="link">開啟設定參考 →</span></a><a class="card" href="https://github.com/imksoo/routerd/tree/main/examples"><span class="number">03</span><h3>從範例開始</h3><p>以完整設定為起點，依自己的網路環境調整。</p><span class="link">瀏覽YAML範例 →</span></a></div><div class="resources"><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/reference/resources.md#interface">Interface</a><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/reference/resources.md#dhcpv4client">DHCPv4Client</a><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/reference/resources.md#dnsresolver">DNSResolver</a><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/reference/resources.md#dslitetunnel">DSLiteTunnel</a><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/reference/resources.md#bgprouter">BGPRouter</a><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/reference/resources.md#localserviceredirect">LocalServiceRedirect</a></div></section>
+<section class="section workflow"><div><h2>套用前，先檢查計畫。</h2><p>驗證YAML、檢查變更計畫，再套用完整設定。之後確認狀態與實際連線。--replace只用於路由器的完整設定。</p></div><pre class="commands"><code>routerd validate --config router.yaml
+routerctl plan -f router.yaml --replace
+routerctl apply -f router.yaml --replace
+routerctl get status</code></pre></section>
+<section class="section"><h2>原始碼與專案資訊</h2><div class="bottomlinks"><a href="/schemas/routerd-config-v1alpha1.schema.json">JSON Schema ↗</a><a href="https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/releases/changelog.md">變更紀錄 ↗</a><a href="https://github.com/imksoo/routerd/blob/main/LICENSE">授權條款 ↗</a><a href="https://github.com/imksoo/routerd/">GitHub ↗</a></div></section></main>
+<footer><div class="wrap footerrow"><span>routerd · 宣告式路由器設定 · BSD 3-Clause</span><span>© 2026 routerd contributors</span></div></footer></body></html>
