@@ -208,6 +208,38 @@ func (s *SQLiteStore) ListFederationEvents(group string, includeExpired bool, no
 		return nil, fmt.Errorf("list federation events: %w", err)
 	}
 	defer rows.Close()
+	return scanFederationEvents(rows)
+}
+
+// ListPendingSubscriptionEvents excludes already completed and exhausted runs
+// before decoding event payloads. Processing rechecks the run before execution.
+func (s *SQLiteStore) ListPendingSubscriptionEvents(group, subscription string, now int64, maxAttempts int) ([]EventRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil, errStoreClosed
+	}
+	query := `SELECT e.id,e.group_name,e.source_node,e.type,e.subject,e.dedupe_key,e.payload,e.observed_at,e.expires_at,e.recorded_at
+		FROM federation_events e
+		WHERE (e.expires_at IS NULL OR e.expires_at = 0 OR e.expires_at >= ?)
+		AND NOT EXISTS (SELECT 1 FROM event_subscription_runs r
+		  WHERE r.subscription = ? AND r.event_id = e.id
+		    AND (r.status = 'succeeded' OR (r.status = 'failed' AND r.attempts >= ?)))`
+	args := []any{now, subscription, maxAttempts}
+	if group != "" {
+		query += ` AND e.group_name = ?`
+		args = append(args, group)
+	}
+	query += ` ORDER BY e.observed_at, e.recorded_at, e.id`
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list pending subscription events: %w", err)
+	}
+	defer rows.Close()
+	return scanFederationEvents(rows)
+}
+
+func scanFederationEvents(rows *sql.Rows) ([]EventRecord, error) {
 	var records []EventRecord
 	for rows.Next() {
 		var (
