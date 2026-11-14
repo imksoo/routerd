@@ -121,6 +121,11 @@ func (c *Controller) drainStoredEvents(ctx context.Context) error {
 }
 
 func (c *Controller) Reconcile(ctx context.Context, event daemonapi.DaemonEvent) error {
+	// Rule bookkeeping produces status events through routerd, not eventrule.
+	// Feeding those events back can make one or more rules fire indefinitely.
+	if event.Type == "routerd.resource.status.changed" && event.Resource != nil && event.Resource.APIVersion == api.NetAPIVersion && event.Resource.Kind == "EventRule" {
+		return nil
+	}
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "EventRule" {
 			continue
@@ -155,9 +160,7 @@ func (c *Controller) reconcileRule(resource api.Resource, event daemonapi.Daemon
 	}
 	key, ok := correlationKey(event, spec.Pattern)
 	if !ok {
-		if event.Type != "routerd.resource.status.changed" || event.Resource == nil || event.Resource.Kind != "EventRule" {
-			c.warn(resource.Metadata.Name)
-		}
+		c.warn(resource.Metadata.Name)
 		return nil, nil
 	}
 	c.mu.Lock()
