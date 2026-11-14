@@ -4,6 +4,13 @@
 
 `apiVersion: mobility.routerd.net/v1alpha1` · `metadata.name`
 
+將分片指派發布為聯邦事件，讓各節點將 MobilityPool 所有權探索限縮至負責的 IPv4 子網。這是探索範圍指派，不是 IP 路由資源。
+
+## 指定條件與參照關係
+
+- sourcePrefix 及所有分片須為 IPv4 CIDR。分片須位於 sourcePrefix 內且不可重疊，但不要求完整涵蓋來源前綴。每個分片至少需一個非空且不重複的指派節點。
+- 指派事件 10 分鐘後過期，由調整程序更新。指派缺少、過期或事件儲存區讀取錯誤時，不套用分片篩選，而非拒絕全部。不可僅以此資源作為授權邊界。
+
 ## YAML定義
 
 此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。
@@ -23,3 +30,16 @@
         prefix: "<string>" # 必填; string
     sourcePrefix: "<string>" # 必填; string
 ```
+
+## 欄位意義與預設值
+
+| YAML | 欄位意義與預設值 |
+| --- | --- |
+| `spec.sourcePrefix` | 必填 IPv4 CIDR，限制所有分片範圍，無預設值。用於包含驗證，不套用為位址或路由。 |
+| `spec.poolRef` | 必填 MobilityPool metadata.name，作為事件酬載精確比對鍵，不是 Kind/name。目前驗證只檢查非空，不確認資源存在，須符合使用該事件的集區名稱。 |
+| `spec.groupRef` | 必填 EventGroup 參照，供發布及讀取指派使用。執行時須能解析群組，結構驗證僅檢查非空。請與目標 MobilityPool.groupRef 使用相同參照拼寫。 |
+| `spec.shards` | 必填且不可為空的不重疊子網及負責 nodeRef 清單。同一節點可出現在不同分片。 |
+| `spec.shards[].prefix` | 必填且位於 sourcePrefix 內的 IPv4 CIDR，可等於整個來源前綴。拒絕分片間重複或重疊。 |
+| `spec.shards[].assignedNodes` | 必填且不可為空的 nodeRef 清單，同一分片內不可重複。目前不檢查 SAMNodeSet 成員資格，值須符合消費端 EventGroup 本機節點識別。 |
+
+實作: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate_mobility.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_mobility.go) · [pkg/controller/mobility/shard_controller.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/mobility/shard_controller.go) · [pkg/controller/mobility/discovery.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/mobility/discovery.go)

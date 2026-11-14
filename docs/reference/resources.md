@@ -519,6 +519,8 @@ Configure per-group thresholds used by routerctl doctor for federation delivery 
 
 [SAMNodeSet](resources/SAMNodeSet.md)
 
+Declare shared SAM node identity/topology used by transport, event peers, WireGuard and MobilityPool member resolution. Local provider capture/discovery details belong in a MobilityPool self overlay, not here.
+
 
 ## SAMEnrollmentPolicy
 
@@ -534,6 +536,8 @@ Configure per-group thresholds used by routerctl doctor for federation delivery 
 
 [SAMEnrollmentClient](resources/SAMEnrollmentClient.md)
 
+Submit a local enrollment claim to bootstrap RR control APIs, fetch admitted topology and persist it as dynamic SAMRRSet/optional direct peer-group state for existing controllers. No cloud infrastructure is created.
+
 
 ## SAMTransportProfile
 
@@ -543,6 +547,8 @@ Configure per-group thresholds used by routerctl doctor for federation delivery 
 ## SAMSubnetPolicy
 
 [SAMSubnetPolicy](resources/SAMSubnetPolicy.md)
+
+Publish shard assignments as federation events so each node can narrow MobilityPool ownership discovery to its assigned IPv4 subnets. This is a discovery-scope assignment, not an IP routing resource.
 
 
 ## IPv4Route

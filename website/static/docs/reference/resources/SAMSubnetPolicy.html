@@ -5,6 +5,12 @@
 <main class="doclayout wrap"><article class="document"><h1 id="samsubnetpolicy">SAMSubnetPolicy</h1>
 <p><a href="../resources.html#samsubnetpolicy">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: mobility.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Publish shard assignments as federation events so each node can narrow MobilityPool ownership discovery to its assigned IPv4 subnets. This is a discovery-scope assignment, not an IP routing resource.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>sourcePrefix and all shards must be IPv4 CIDRs. Shards must be contained in sourcePrefix and cannot overlap; full coverage of the source prefix is not required. Each shard needs at least one distinct nonempty assigned node.</li>
+<li>Assignment events expire after 10 minutes and are refreshed by reconciliation. Missing/expired assignments or an event-store read error produce no shard filter, not a deny-all scope. Do not use this resource as the sole authorization boundary.</li>
+</ul>
 <h2 id="yaml-definition">YAML definition</h2>
 <p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
 <pre><code class="language-yaml">- apiVersion: mobility.routerd.net/v1alpha1
@@ -20,9 +26,47 @@
           - &quot;&lt;string&gt;&quot; # string
         prefix: &quot;&lt;string&gt;&quot; # Required; string
     sourcePrefix: &quot;&lt;string&gt;&quot; # Required; string
-</code></pre></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
+</code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.sourcePrefix</code></td>
+<td>Required IPv4 CIDR bounding all shards. No default. It is validated as containment input, not programmed as an address/route.</td>
+</tr>
+<tr>
+<td><code>spec.poolRef</code></td>
+<td>Required MobilityPool metadata.name used as an exact event payload key; not Kind/name. The current validator checks nonempty text but does not verify pool existence. It must match the consuming pool name.</td>
+</tr>
+<tr>
+<td><code>spec.groupRef</code></td>
+<td>Required EventGroup reference for publishing and reading assignments. Group lookup must resolve at runtime; shape validation only checks nonempty. Use the same reference spelling as the target MobilityPool.groupRef.</td>
+</tr>
+<tr>
+<td><code>spec.shards</code></td>
+<td>Required nonempty list of disjoint subnets and responsible nodeRefs. Each node may appear in multiple different shards.</td>
+</tr>
+<tr>
+<td><code>spec.shards[].prefix</code></td>
+<td>Required IPv4 CIDR within sourcePrefix, including equal-length whole-prefix assignment. Duplicates/overlaps across shards are rejected.</td>
+</tr>
+<tr>
+<td><code>spec.shards[].assignedNodes</code></td>
+<td>Required nonempty nodeRef list, unique within the shard. Current validation does not check SAMNodeSet membership; values must match the consuming EventGroup local-node identity.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_mobility.go">pkg/config/validate_mobility.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/mobility/shard_controller.go">pkg/controller/mobility/shard_controller.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/mobility/discovery.go">pkg/controller/mobility/discovery.go</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
 <li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 </ul>
 </div>
 </aside></main>

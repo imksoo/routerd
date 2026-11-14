@@ -88,7 +88,7 @@
 </tr>
 <tr>
 <td><code>spec.bootstrapFrom</code></td>
-<td>選用且 field 必填的狀態來源清單；resource 與 field 須存在，optional 預設 false。動態與固定伺服器合併；固定 bootstrap 可補足必要動態值的缺值。</td>
+<td>選用且 field 必填的來源清單；resource/field 須非空，optional 預設 false。請使用既有 Kind/name 及其提供的狀態欄位；但此型別不同於一般 StatusValueSourceSpec，目前驗證不檢查目標存在或提供欄位成員資格。動態與固定 bootstrap 合併，固定清單可補足必要動態值的缺值。</td>
 </tr>
 <tr>
 <td><code>spec.sourceInterface</code></td>

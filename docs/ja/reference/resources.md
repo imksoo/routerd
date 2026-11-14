@@ -519,6 +519,8 @@ routerctl doctorが共有イベント配送・購読を診断するときのグ�
 
 [SAMNodeSet](resources/SAMNodeSet.md)
 
+トランスポート・イベントピア・WireGuard・MobilityPoolメンバーで共有するSAMのノード識別・トポロジーを宣言します。ローカルのプロバイダー取得・探索設定はここではなくMobilityPoolの自ノード上書きに置きます。
+
 
 ## SAMEnrollmentPolicy
 
@@ -534,6 +536,8 @@ routerctl doctorが共有イベント配送・購読を診断するときのグ�
 
 [SAMEnrollmentClient](resources/SAMEnrollmentClient.md)
 
+ローカル登録要求を起動用RRのControlAPIへ送り、許可されたトポロジーを取得して動的SAMRRSet・任意のdirectピアグループとして既存コントローラーへ渡します。クラウド基盤の新規作成は行いません。
+
 
 ## SAMTransportProfile
 
@@ -543,6 +547,8 @@ routerctl doctorが共有イベント配送・購読を診断するときのグ�
 ## SAMSubnetPolicy
 
 [SAMSubnetPolicy](resources/SAMSubnetPolicy.md)
+
+シャード割当を連携イベントとして公開し、各ノードのMobilityPool所有権探索を担当IPv4サブネットに絞ります。探索範囲の割当であり、IP経路を直接設定するリソースではありません。
 
 
 ## IPv4Route

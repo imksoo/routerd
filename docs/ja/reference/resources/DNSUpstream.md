@@ -64,7 +64,7 @@ DNSForwarderが参照するDNSサーバーの接続先です。宣言だけで�
 | `spec.path` | DoHのURLパスで、既定は/dns-queryです。dohで指定する場合は/始まりが必須です。他プロトコルでは使いません。 |
 | `spec.tlsName` | DoTの証明書検証・SNI用サーバー名です。省略時は接続先ホスト名を使用します。DoHでは明示指定が検証で拒否されます。UDP/TCPは検証で許しても使用しません。 |
 | `spec.bootstrap` | 上流ホスト名の解決用DNS一覧です。bootstrapFromも空・省略で必須依存待ちがなければOSのリゾルバーを使います。同じ転送規則内の上流で結合した設定を共有します。 |
-| `spec.bootstrapFrom` | field必須の状態値参照一覧です。resource・fieldの存在が必要で、optional既定falseです。動的・固定サーバーを結合し、固定bootstrapがあれば必須の動的値が未解決でも利用できます。 |
+| `spec.bootstrapFrom` | field必須の参照一覧で、resource・fieldは非空必須、optional既定falseです。実在するKind/nameと提供状態フィールドを指定してください。ただし通常のStatusValueSourceSpecとは別型のため、現行検証は参照先の存在・提供リストへの所属まで検査しません。動的・固定サーバーを結合し、固定bootstrapがあれば必須動的値の未解決を補えます。 |
 | `spec.sourceInterface` | 宣言したInterfaceまたはWireGuardInterfaceの名前です。既定空ならOSの経路選択に任せます。転送プール単位で共有し、裸のOS名・FreeBSDに関する上記制限があります。 |
 | `spec.when` | 共通の状態条件です。既定は無条件で、除外されると転送規則に有効な接続先がなくなる場合があります。 |
 

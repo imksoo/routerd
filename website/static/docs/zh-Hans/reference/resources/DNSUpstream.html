@@ -88,7 +88,7 @@
 </tr>
 <tr>
 <td><code>spec.bootstrapFrom</code></td>
-<td>可选且 field 必填的状态来源列表；resource 与 field 须存在，optional 默认 false。动态与固定服务器合并；固定 bootstrap 可补足必要动态值的缺值。</td>
+<td>可选且 field 必填的来源列表；resource/field 须非空，optional 默认 false。请使用现有 Kind/name 及其提供的状态字段；但此类型不同于常规 StatusValueSourceSpec，当前验证不检查目标存在或提供字段成员资格。动态与固定 bootstrap 合并，固定列表可补足必要动态值的缺值。</td>
 </tr>
 <tr>
 <td><code>spec.sourceInterface</code></td>

@@ -519,6 +519,8 @@ spec:
 
 [SAMNodeSet](resources/SAMNodeSet.md)
 
+宣告供傳輸、事件對等端、WireGuard 與 MobilityPool 成員解析共用的 SAM 節點身分與拓撲。本機供應者擷取/探索設定應放在 MobilityPool 自節點覆寫，不放在此處。
+
 
 ## SAMEnrollmentPolicy
 
@@ -534,6 +536,8 @@ spec:
 
 [SAMEnrollmentClient](resources/SAMEnrollmentClient.md)
 
+將本機註冊要求提交至啟動 RR ControlAPI，取得允許的拓撲，儲存為動態 SAMRRSet 及選用 direct 對等群組供既有控制器使用，不建立雲端基礎設施。
+
 
 ## SAMTransportProfile
 
@@ -543,6 +547,8 @@ spec:
 ## SAMSubnetPolicy
 
 [SAMSubnetPolicy](resources/SAMSubnetPolicy.md)
+
+將分片指派發布為聯邦事件，讓各節點將 MobilityPool 所有權探索限縮至負責的 IPv4 子網。這是探索範圍指派，不是 IP 路由資源。
 
 
 ## IPv4Route

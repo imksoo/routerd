@@ -64,7 +64,7 @@
 | `spec.path` | DoH URL 路徑，預設 /dns-query；doh 提供此值時須以 / 開頭。其他協定不使用。 |
 | `spec.tlsName` | DoT 憑證驗證與 SNI 伺服器名稱，省略使用端點主機名稱。DoH 明確設定會被驗證拒絕；UDP/TCP 雖可通過驗證但會忽略。 |
 | `spec.bootstrap` | 選用的上游主機名稱解析 DNS 清單。與 bootstrapFrom 皆空或省略且無必要相依等待時，使用 OS 解析器。同一轉送規則的上游共用合併後設定。 |
-| `spec.bootstrapFrom` | 選用且 field 必填的狀態來源清單；resource 與 field 須存在，optional 預設 false。動態與固定伺服器合併；固定 bootstrap 可補足必要動態值的缺值。 |
+| `spec.bootstrapFrom` | 選用且 field 必填的來源清單；resource/field 須非空，optional 預設 false。請使用既有 Kind/name 及其提供的狀態欄位；但此型別不同於一般 StatusValueSourceSpec，目前驗證不檢查目標存在或提供欄位成員資格。動態與固定 bootstrap 合併，固定清單可補足必要動態值的缺值。 |
 | `spec.sourceInterface` | 選用的已宣告 Interface 或 WireGuardInterface 名稱；預設空值由 OS 選路。綁定由轉送池共用，須注意上述原樣名稱及 FreeBSD 限制。 |
 | `spec.when` | 選用共用狀態條件，預設無條件。篩除此上游可能使轉送規則沒有可用端點。 |
 

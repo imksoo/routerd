@@ -64,7 +64,7 @@ All fields are shown as a structural reference, not a configuration to apply unc
 | `spec.path` | DoH URL path, default /dns-query; when supplied for doh it must start with /. Other protocols do not consume it. |
 | `spec.tlsName` | DoT TLS server name for certificate verification/SNI; omitted uses the endpoint hostname. Explicit tlsName is rejected for DoH. UDP/TCP ignore it even though accepted by validation. |
 | `spec.bootstrap` | Optional DNS server list for resolving upstream hostnames. Empty together with unresolved/absent bootstrapFrom uses the OS resolver only when no required dynamic dependency is waiting. All referenced upstreams in a forwarder share merged bootstrap settings. |
-| `spec.bootstrapFrom` | Optional list of required-field status sources; resource and field must exist, optional defaults false. Dynamic and static bootstrap servers are combined; static bootstrap satisfies a missing required dynamic value. |
+| `spec.bootstrapFrom` | Optional required-field source list. resource and field must be nonempty, optional defaults false. Use an existing Kind/name and its provided status field; unlike ordinary StatusValueSourceSpec, current validation does not check target existence or provided-field membership for this distinct type. Dynamic and static bootstrap servers are combined; static bootstrap satisfies a missing required dynamic value. |
 | `spec.sourceInterface` | Optional declared Interface or WireGuardInterface name. Default empty lets OS routing choose. Binding is shared at forwarder-pool level; see the literal-name and FreeBSD restrictions above. |
 | `spec.when` | Optional common state predicate; default unconditional. Filtering this upstream can leave its forwarder without usable endpoints. |
 

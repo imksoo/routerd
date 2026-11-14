@@ -88,7 +88,7 @@
 </tr>
 <tr>
 <td><code>spec.bootstrapFrom</code></td>
-<td>field必須の状態値参照一覧です。resource・fieldの存在が必要で、optional既定falseです。動的・固定サーバーを結合し、固定bootstrapがあれば必須の動的値が未解決でも利用できます。</td>
+<td>field必須の参照一覧で、resource・fieldは非空必須、optional既定falseです。実在するKind/nameと提供状態フィールドを指定してください。ただし通常のStatusValueSourceSpecとは別型のため、現行検証は参照先の存在・提供リストへの所属まで検査しません。動的・固定サーバーを結合し、固定bootstrapがあれば必須動的値の未解決を補えます。</td>
 </tr>
 <tr>
 <td><code>spec.sourceInterface</code></td>

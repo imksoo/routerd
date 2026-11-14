@@ -88,7 +88,7 @@
 </tr>
 <tr>
 <td><code>spec.bootstrapFrom</code></td>
-<td>Optional list of required-field status sources; resource and field must exist, optional defaults false. Dynamic and static bootstrap servers are combined; static bootstrap satisfies a missing required dynamic value.</td>
+<td>Optional required-field source list. resource and field must be nonempty, optional defaults false. Use an existing Kind/name and its provided status field; unlike ordinary StatusValueSourceSpec, current validation does not check target existence or provided-field membership for this distinct type. Dynamic and static bootstrap servers are combined; static bootstrap satisfies a missing required dynamic value.</td>
 </tr>
 <tr>
 <td><code>spec.sourceInterface</code></td>

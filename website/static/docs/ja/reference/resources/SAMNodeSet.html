@@ -5,6 +5,13 @@
 <main class="doclayout wrap"><article class="document"><h1 id="samnodeset">SAMNodeSet</h1>
 <p><a href="../resources.html#samnodeset">リソース別の設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: mobility.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>トランスポート・イベントピア・WireGuard・MobilityPoolメンバーで共有するSAMのノード識別・トポロジーを宣言します。ローカルのプロバイダー取得・探索設定はここではなくMobilityPoolの自ノード上書きに置きます。</p>
+<h2 id="指定条件と参照関係">指定条件と参照関係</h2>
+<ul>
+<li>nodesは1件以上必要で、前後空白除去後のnodeRef重複は不可です。nodeRefからrole・siteは推定せず、MobilityPool等の利用側が追加条件を課します。</li>
+<li>WireGuard情報を1項目でも指定すればpublicKeyと非空allowedIPsが必須です。endpoint・transportEndpointは形の検証では任意ですが、使用するトランスポートに合わせます。samEndpointとsamEndpointFromは排他です。</li>
+<li>placementグループはrole=cloudとグループ内で同じsiteが必要です。priority・drain=true・正のmaxSecondaryIPsはいずれも非空placement.groupが必要です。</li>
+</ul>
 <h2 id="yaml定義">YAML定義</h2>
 <p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
 <pre><code class="language-yaml">- apiVersion: mobility.routerd.net/v1alpha1
@@ -40,9 +47,119 @@
           publicKey: &quot;&lt;string&gt;&quot; # 任意; string
           transportEndpoint: &quot;&lt;string&gt;&quot; # 任意; string
 </code></pre>
+<h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>項目の意味と既定値</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.nodes</code></td>
+<td>必須の非空共有ノード一覧です。自ノードの自動追加はありません。</td>
+</tr>
+<tr>
+<td><code>spec.nodes[].nodeRef</code></td>
+<td>必須の安定したノード識別子で、本NodeSet内で一意です。EventGroupのローカル識別子やSAMTransportProfile.selfNodeRefと照合し、Kind/name参照ではありません。</td>
+</tr>
+<tr>
+<td><code>spec.nodes[].site</code></td>
+<td>任意の拠点ラベルで、既定は空です。roleからは導出せず、MobilityPoolメンバー・placementの規則に応じた明示が必要です。</td>
+</tr>
+<tr>
+<td><code>spec.nodes[].role</code></td>
+<td>NodeSet検証では空・onprem・cloudを指定でき、自動既定値はありません。MobilityPoolメンバーでは実際のonprem・cloudを指定し、placementはcloud限定です。</td>
+</tr>
+<tr>
+<td><code>spec.nodes[].routeReflector</code></td>
+<td>既定falseです。登録トポロジーでRR識別子として選ぶ対象を示し、これだけでBGPRouter作成・BGP接続は行いません。</td>
+</tr>
+<tr>
+<td><code>spec.nodes[].eventEndpoint</code></td>
+<td>生成するイベントピアの任意の絶対HTTP(S) URLです。hostが必要で、既定・状態値参照はありません。</td>
+</tr>
+<tr>
+<td><code>spec.nodes[].samEndpoint</code></td>
+<td>ノード外側トランスポート終端の任意のIPv4アドレス・CIDRです。DNS名は使えず、samEndpointFromと排他です。WireGuard暗号化ではwireGuard.transportEndpointが優先します。</td>
+</tr>
+<tr>
+<td><code>spec.nodes[].samEndpointFrom</code></td>
+<td>共通resource・field規則に従う任意の実行時状態参照です。値がなければトランスポート参照は未解決となり、optionalで終端を補完したり不正アドレスを許容したりはしません。</td>
+</tr>
+<tr>
+<td><code>spec.nodes[].samEndpointFrom.resource</code></td>
+<td>利用時必須の宣言済み参照元Kind/nameで、固定samEndpointと排他です。</td>
+</tr>
+<tr>
+<td><code>spec.nodes[].samEndpointFrom.field</code></td>
+<td>resource指定時に必須の提供状態フィールドです。例はDHCPv4ClientのcurrentAddressです。</td>
+</tr>
+<tr>
+<td><code>spec.nodes[].samEndpointFrom.optional</code></td>
+<td>既定falseです。存在・field検証を省略せず、この利用側は終端欠落を引き続き未解決とします。</td>
+</tr>
+<tr>
+<td><code>spec.nodes[].macAddresses</code></td>
+<td>任意のMACアドレス一覧で、既定は空です。ARP観測ではSAMルーターを端末として再発見しないための送信元除外に使います。MAC変更指定ではありません。</td>
+</tr>
+<tr>
+<td><code>spec.nodes[].wireGuard</code></td>
+<td>任意のWireGuard公開情報です。1つでも非空ならpublicKey・allowedIPsが必須で、秘密鍵はNodeSetトポロジーに置きません。</td>
+</tr>
+<tr>
+<td><code>spec.nodes[].wireGuard.publicKey</code></td>
+<td>wireGuard利用時に必須の相手公開鍵で、生成WireGuardPeerへ渡します。自動既定値はありません。</td>
+</tr>
+<tr>
+<td><code>spec.nodes[].wireGuard.endpoint</code></td>
+<td>任意のWireGuard外側UDP host:portです。IPv6は[IPv6]:portで、ポートは1～65535です。内側transportEndpointとは別です。</td>
+</tr>
+<tr>
+<td><code>spec.nodes[].wireGuard.transportEndpoint</code></td>
+<td>encryption=wireguard時に使う内側SAMトンネル終端の任意のIPv4アドレス・CIDRです。samEndpoint・samEndpointFromより優先し、UDPソケットのアドレスとは別です。</td>
+</tr>
+<tr>
+<td><code>spec.nodes[].wireGuard.allowedIPs</code></td>
+<td>WireGuard利用時必須の非空IPv4・IPv6 CIDR一覧で、生成ピアへ渡します。各prefixの通常経路を自動生成する指定ではありません。</td>
+</tr>
+<tr>
+<td><code>spec.nodes[].wireGuard.persistentKeepalive</code></td>
+<td>0～65535の整数秒です。既定0では継続キープアライブを無効にし、生成ピアへ値を渡します。</td>
+</tr>
+<tr>
+<td><code>spec.nodes[].placement</code></td>
+<td>任意の共有取得配置情報です。グループ指定はcloudロール限定で、メンバーのsite・roleと利用側のプロバイダー識別に整合が必要です。</td>
+</tr>
+<tr>
+<td><code>spec.nodes[].placement.group</code></td>
+<td>任意の配置グループ名で、既定は空（グループ選択なし）です。priority・drain・正の容量指定時は必須です。</td>
+</tr>
+<tr>
+<td><code>spec.nodes[].placement.priority</code></td>
+<td>0～1000000の整数です。省略・0は解決したメンバー順に10・20…を割り当て、明示値を避けます。single-active選択は有効な小さい優先度が勝ち、非0はgroupが必要です。</td>
+</tr>
+<tr>
+<td><code>spec.nodes[].maintenance</code></td>
+<td>任意の宣言的保守指定です。既定はdrainなしです。共有トポロジー情報で、ローカルプロバイダー認証情報ではありません。</td>
+</tr>
+<tr>
+<td><code>spec.nodes[].maintenance.drain</code></td>
+<td>既定falseです。trueはグループメンバーをactive取得候補から除き、placement.groupが必要です。</td>
+</tr>
+<tr>
+<td><code>spec.nodes[].maxSecondaryIPs</code></td>
+<td>0以上の整数で、既定0です。正の値はplacement.groupが必要で、そのグループの容量考慮分散取得を有効にします。0はメンバー容量上限なしで、クラウド側のクォータ変更ではありません。</td>
+</tr>
+</tbody>
+</table>
+<p>実装: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_mobility.go">pkg/config/validate_mobility.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go">pkg/config/diagnostics.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/mobilityconfig/members.go">pkg/mobilityconfig/members.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/mobilityconfig/normalize.go">pkg/mobilityconfig/normalize.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/mobility/transport.go">pkg/controller/mobility/transport.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/mobility/arp_observer_intent.go">pkg/controller/mobility/arp_observer_intent.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/mobility/placement.go">pkg/controller/mobility/placement.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/mobility/capture_distribution.go">pkg/controller/mobility/capture_distribution.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/wireguard.go">pkg/controller/chain/wireguard.go</a></p>
 <p><a href="/examples/cloudedge-dynamic-rr-a-hub.yaml">設定例</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
 <ul>
+<li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
 <li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
 </ul>
 </div>
 </aside></main>

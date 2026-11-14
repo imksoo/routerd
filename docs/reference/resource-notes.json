@@ -3045,10 +3045,10 @@
         "可选的上游主机名解析 DNS 列表。与 bootstrapFrom 均空或省略且无必要依赖等待时，使用 OS 解析器。同一转发规则的上游共用合并后设置。"
       ],
       "bootstrapFrom": [
-        "Optional list of required-field status sources; resource and field must exist, optional defaults false. Dynamic and static bootstrap servers are combined; static bootstrap satisfies a missing required dynamic value.",
-        "field必須の状態値参照一覧です。resource・fieldの存在が必要で、optional既定falseです。動的・固定サーバーを結合し、固定bootstrapがあれば必須の動的値が未解決でも利用できます。",
-        "選用且 field 必填的狀態來源清單；resource 與 field 須存在，optional 預設 false。動態與固定伺服器合併；固定 bootstrap 可補足必要動態值的缺值。",
-        "可选且 field 必填的状态来源列表；resource 与 field 须存在，optional 默认 false。动态与固定服务器合并；固定 bootstrap 可补足必要动态值的缺值。"
+        "Optional required-field source list. resource and field must be nonempty, optional defaults false. Use an existing Kind/name and its provided status field; unlike ordinary StatusValueSourceSpec, current validation does not check target existence or provided-field membership for this distinct type. Dynamic and static bootstrap servers are combined; static bootstrap satisfies a missing required dynamic value.",
+        "field必須の参照一覧で、resource・fieldは非空必須、optional既定falseです。実在するKind/nameと提供状態フィールドを指定してください。ただし通常のStatusValueSourceSpecとは別型のため、現行検証は参照先の存在・提供リストへの所属まで検査しません。動的・固定サーバーを結合し、固定bootstrapがあれば必須動的値の未解決を補えます。",
+        "選用且 field 必填的來源清單；resource/field 須非空，optional 預設 false。請使用既有 Kind/name 及其提供的狀態欄位；但此型別不同於一般 StatusValueSourceSpec，目前驗證不檢查目標存在或提供欄位成員資格。動態與固定 bootstrap 合併，固定清單可補足必要動態值的缺值。",
+        "可选且 field 必填的来源列表；resource/field 须非空，optional 默认 false。请使用现有 Kind/name 及其提供的状态字段；但此类型不同于常规 StatusValueSourceSpec，当前验证不检查目标存在或提供字段成员资格。动态与固定 bootstrap 合并，固定列表可补足必要动态值的缺值。"
       ],
       "sourceInterface": [
         "Optional declared Interface or WireGuardInterface name. Default empty lets OS routing choose. Binding is shared at forwarder-pool level; see the literal-name and FreeBSD restrictions above.",
@@ -6833,6 +6833,398 @@
       "pkg/provideraction/policy.go",
       "pkg/provideraction/engine.go",
       "pkg/controller/provideraction/controller.go"
+    ]
+  },
+  "SAMSubnetPolicy": {
+    "purpose": [
+      "Publish shard assignments as federation events so each node can narrow MobilityPool ownership discovery to its assigned IPv4 subnets. This is a discovery-scope assignment, not an IP routing resource.",
+      "シャード割当を連携イベントとして公開し、各ノードのMobilityPool所有権探索を担当IPv4サブネットに絞ります。探索範囲の割当であり、IP経路を直接設定するリソースではありません。",
+      "將分片指派發布為聯邦事件，讓各節點將 MobilityPool 所有權探索限縮至負責的 IPv4 子網。這是探索範圍指派，不是 IP 路由資源。",
+      "将分片分配发布为联邦事件，让各节点将 MobilityPool 所有权发现限缩至负责的 IPv4 子网。这是发现范围分配，不是 IP 路由资源。"
+    ],
+    "rules": [
+      [
+        "sourcePrefix and all shards must be IPv4 CIDRs. Shards must be contained in sourcePrefix and cannot overlap; full coverage of the source prefix is not required. Each shard needs at least one distinct nonempty assigned node.",
+        "sourcePrefixと全shardはIPv4 CIDRが必要です。各shardはsourcePrefix内で重複・包含不可ですが、元prefix全体を覆う必要はありません。各shardには1件以上の空でない重複しない割当ノードが必要です。",
+        "sourcePrefix 及所有分片須為 IPv4 CIDR。分片須位於 sourcePrefix 內且不可重疊，但不要求完整涵蓋來源前綴。每個分片至少需一個非空且不重複的指派節點。",
+        "sourcePrefix 及所有分片须为 IPv4 CIDR。分片须位于 sourcePrefix 内且不可重叠，但不要求完整覆盖源前缀。每个分片至少需一个非空且不重复的分配节点。"
+      ],
+      [
+        "Assignment events expire after 10 minutes and are refreshed by reconciliation. Missing/expired assignments or an event-store read error produce no shard filter, not a deny-all scope. Do not use this resource as the sole authorization boundary.",
+        "割当イベントは10分で失効し、再調整で更新します。割当欠落・失効・イベントストア読取エラーでは全拒否ではなくシャード絞り込みなしになります。これだけを認可境界に使わないでください。",
+        "指派事件 10 分鐘後過期，由調整程序更新。指派缺少、過期或事件儲存區讀取錯誤時，不套用分片篩選，而非拒絕全部。不可僅以此資源作為授權邊界。",
+        "分配事件 10 分钟后过期，由协调程序更新。分配缺失、过期或事件存储读取错误时，不应用分片过滤，而非拒绝全部。不可仅以此资源作为授权边界。"
+      ]
+    ],
+    "fields": {
+      "sourcePrefix": [
+        "Required IPv4 CIDR bounding all shards. No default. It is validated as containment input, not programmed as an address/route.",
+        "全shardの範囲を規定する必須IPv4 CIDRで、既定値はありません。包含検証に使い、アドレス・経路として適用しません。",
+        "必填 IPv4 CIDR，限制所有分片範圍，無預設值。用於包含驗證，不套用為位址或路由。",
+        "必填 IPv4 CIDR，限制所有分片范围，无默认值。用于包含验证，不应用为地址或路由。"
+      ],
+      "poolRef": [
+        "Required MobilityPool metadata.name used as an exact event payload key; not Kind/name. The current validator checks nonempty text but does not verify pool existence. It must match the consuming pool name.",
+        "イベントペイロードの照合キーとなる必須MobilityPool名です。Kind/nameではありません。現行検証は非空のみでプール存在までは確認しないため、受信するプールの名前に一致させます。",
+        "必填 MobilityPool metadata.name，作為事件酬載精確比對鍵，不是 Kind/name。目前驗證只檢查非空，不確認資源存在，須符合使用該事件的集區名稱。",
+        "必填 MobilityPool metadata.name，作为事件载荷精确匹配键，不是 Kind/name。目前验证只检查非空，不确认资源存在，须符合使用该事件的池名称。"
+      ],
+      "groupRef": [
+        "Required EventGroup reference for publishing and reading assignments. Group lookup must resolve at runtime; shape validation only checks nonempty. Use the same reference spelling as the target MobilityPool.groupRef.",
+        "割当の発行・読取先の必須EventGroup参照です。実行時にグループ解決が必要で、形の検証では非空のみを確認します。対象MobilityPool.groupRefと同じ表記にします。",
+        "必填 EventGroup 參照，供發布及讀取指派使用。執行時須能解析群組，結構驗證僅檢查非空。請與目標 MobilityPool.groupRef 使用相同參照拼寫。",
+        "必填 EventGroup 引用，供发布及读取分配使用。运行时须能解析组，结构验证仅检查非空。请与目标 MobilityPool.groupRef 使用相同引用写法。"
+      ],
+      "shards": [
+        "Required nonempty list of disjoint subnets and responsible nodeRefs. Each node may appear in multiple different shards.",
+        "重複しないサブネットと担当nodeRefの必須非空一覧です。同じノードが別shardに属することは可能です。",
+        "必填且不可為空的不重疊子網及負責 nodeRef 清單。同一節點可出現在不同分片。",
+        "必填且不可为空的不重叠子网及负责 nodeRef 列表。同一节点可出现在不同分片。"
+      ],
+      "shards[].prefix": [
+        "Required IPv4 CIDR within sourcePrefix, including equal-length whole-prefix assignment. Duplicates/overlaps across shards are rejected.",
+        "sourcePrefix内の必須IPv4 CIDRです。sourcePrefixと同じ長さの全体割当も可能ですが、shard間の重複・包含は拒否します。",
+        "必填且位於 sourcePrefix 內的 IPv4 CIDR，可等於整個來源前綴。拒絕分片間重複或重疊。",
+        "必填且位于 sourcePrefix 内的 IPv4 CIDR，可等于整个源前缀。拒绝分片间重复或重叠。"
+      ],
+      "shards[].assignedNodes": [
+        "Required nonempty nodeRef list, unique within the shard. Current validation does not check SAMNodeSet membership; values must match the consuming EventGroup local-node identity.",
+        "必須の非空nodeRef一覧で、同一shard内で重複不可です。現行検証はSAMNodeSet所属までは確認しないため、受信側EventGroupのローカルノード識別子と一致させます。",
+        "必填且不可為空的 nodeRef 清單，同一分片內不可重複。目前不檢查 SAMNodeSet 成員資格，值須符合消費端 EventGroup 本機節點識別。",
+        "必填且不可为空的 nodeRef 列表，同一分片内不可重复。目前不检查 SAMNodeSet 成员资格，值须符合消费端 EventGroup 本机节点标识。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_mobility.go",
+      "pkg/controller/mobility/shard_controller.go",
+      "pkg/controller/mobility/discovery.go"
+    ]
+  },
+  "SAMNodeSet": {
+    "purpose": [
+      "Declare shared SAM node identity/topology used by transport, event peers, WireGuard and MobilityPool member resolution. Local provider capture/discovery details belong in a MobilityPool self overlay, not here.",
+      "トランスポート・イベントピア・WireGuard・MobilityPoolメンバーで共有するSAMのノード識別・トポロジーを宣言します。ローカルのプロバイダー取得・探索設定はここではなくMobilityPoolの自ノード上書きに置きます。",
+      "宣告供傳輸、事件對等端、WireGuard 與 MobilityPool 成員解析共用的 SAM 節點身分與拓撲。本機供應者擷取/探索設定應放在 MobilityPool 自節點覆寫，不放在此處。",
+      "声明供传输、事件对等端、WireGuard 与 MobilityPool 成员解析共享的 SAM 节点身份与拓扑。本机提供商捕获/发现配置应放在 MobilityPool 自节点覆盖，不放在此处。"
+    ],
+    "rules": [
+      [
+        "nodes must be nonempty and nodeRef unique after trimming. Role/site are not inferred from the nodeRef. Consumers such as MobilityPool impose additional role/site requirements on the shared entries.",
+        "nodesは1件以上必要で、前後空白除去後のnodeRef重複は不可です。nodeRefからrole・siteは推定せず、MobilityPool等の利用側が追加条件を課します。",
+        "nodes 不可為空，移除首尾空白後 nodeRef 不可重複。不從 nodeRef 推定 role/site；MobilityPool 等使用端另施加角色及站點要求。",
+        "nodes 不可为空，移除首尾空白后 nodeRef 不可重复。不从 nodeRef 推定 role/site；MobilityPool 等使用端另施加角色及站点要求。"
+      ],
+      [
+        "Any nonempty WireGuard data requires publicKey and a nonempty allowedIPs list. endpoint and transportEndpoint remain optional in shape validation but must suit the chosen transport. samEndpoint and samEndpointFrom are mutually exclusive.",
+        "WireGuard情報を1項目でも指定すればpublicKeyと非空allowedIPsが必須です。endpoint・transportEndpointは形の検証では任意ですが、使用するトランスポートに合わせます。samEndpointとsamEndpointFromは排他です。",
+        "設定任一 WireGuard 資料時，publicKey 及非空 allowedIPs 必填。結構驗證中 endpoint/transportEndpoint 仍選用，但須符合選用傳輸。samEndpoint 與 samEndpointFrom 互斥。",
+        "配置任一 WireGuard 数据时，publicKey 及非空 allowedIPs 必填。结构验证中 endpoint/transportEndpoint 仍可选，但须符合所选传输。samEndpoint 与 samEndpointFrom 互斥。"
+      ],
+      [
+        "Placement groups require role cloud and a consistent site across the group. priority, drain=true and positive maxSecondaryIPs all require a nonempty placement.group.",
+        "placementグループはrole=cloudとグループ内で同じsiteが必要です。priority・drain=true・正のmaxSecondaryIPsはいずれも非空placement.groupが必要です。",
+        "placement 群組要求 role=cloud，且群組內 site 一致。priority、drain=true 及正數 maxSecondaryIPs 皆需非空 placement.group。",
+        "placement 组要求 role=cloud，且组内 site 一致。priority、drain=true 及正数 maxSecondaryIPs 均需非空 placement.group。"
+      ]
+    ],
+    "fields": {
+      "nodes": [
+        "Required nonempty shared node list. No implicit local node is added.",
+        "必須の非空共有ノード一覧です。自ノードの自動追加はありません。",
+        "必填且不可為空的共用節點清單，不自動加入本機節點。",
+        "必填且不可为空的共享节点列表，不自动加入本机节点。"
+      ],
+      "nodes[].nodeRef": [
+        "Required stable node identity, unique in this NodeSet. Consumers compare it with EventGroup local identity or SAMTransportProfile.selfNodeRef; it is not a Kind/name reference.",
+        "必須の安定したノード識別子で、本NodeSet内で一意です。EventGroupのローカル識別子やSAMTransportProfile.selfNodeRefと照合し、Kind/name参照ではありません。",
+        "必填穩定節點識別，在此 NodeSet 內唯一。使用端與 EventGroup 本機識別或 SAMTransportProfile.selfNodeRef 比對，不是 Kind/name 參照。",
+        "必填稳定节点标识，在此 NodeSet 内唯一。使用端与 EventGroup 本机标识或 SAMTransportProfile.selfNodeRef 匹配，不是 Kind/name 引用。"
+      ],
+      "nodes[].site": [
+        "Optional topology/site label, default empty; not derived from role. MobilityPool membership and placement rules may require an explicit compatible site.",
+        "任意の拠点ラベルで、既定は空です。roleからは導出せず、MobilityPoolメンバー・placementの規則に応じた明示が必要です。",
+        "選用站點標籤，預設為空，不由 role 衍生。MobilityPool 成員及 placement 規則可能要求明確且相容的 site。",
+        "可选站点标签，默认为空，不由 role 派生。MobilityPool 成员及 placement 规则可能要求明确且兼容的 site。"
+      ],
+      "nodes[].role": [
+        "Optional empty/onprem/cloud in NodeSet validation; no inferred default. A MobilityPool member needs its actual onprem/cloud role, and placement is cloud-only.",
+        "NodeSet検証では空・onprem・cloudを指定でき、自動既定値はありません。MobilityPoolメンバーでは実際のonprem・cloudを指定し、placementはcloud限定です。",
+        "NodeSet 驗證接受空值/onprem/cloud，無推定預設值。MobilityPool 成員需實際 onprem/cloud 角色，placement 僅供 cloud。",
+        "NodeSet 验证接受空值/onprem/cloud，无推定默认值。MobilityPool 成员需实际 onprem/cloud 角色，placement 仅供 cloud。"
+      ],
+      "nodes[].routeReflector": [
+        "Default false. Marks a node eligible as an RR identity in enrollment topology selection; does not alone create a BGPRouter or establish BGP.",
+        "既定falseです。登録トポロジーでRR識別子として選ぶ対象を示し、これだけでBGPRouter作成・BGP接続は行いません。",
+        "預設 false，標記節點可供註冊拓撲選為 RR 身分，不會單獨建立 BGPRouter 或 BGP 連線。",
+        "默认 false，标记节点可供注册拓扑选为 RR 身份，不会单独创建 BGPRouter 或 BGP 连接。"
+      ],
+      "nodes[].eventEndpoint": [
+        "Optional absolute HTTP(S) URL with host for generated event peers. No default or status-value source.",
+        "生成するイベントピアの任意の絶対HTTP(S) URLです。hostが必要で、既定・状態値参照はありません。",
+        "供產生事件對等端使用的選用絕對 HTTP(S) URL，須含主機，無預設值或狀態來源。",
+        "供生成事件对等端使用的可选绝对 HTTP(S) URL，须含主机，无默认值或状态来源。"
+      ],
+      "nodes[].samEndpoint": [
+        "Optional IPv4 address or IPv4 CIDR carrying the node outer transport endpoint; no DNS hostname. Exclusive with samEndpointFrom. With WireGuard encryption, wireGuard.transportEndpoint takes precedence.",
+        "ノード外側トランスポート終端の任意のIPv4アドレス・CIDRです。DNS名は使えず、samEndpointFromと排他です。WireGuard暗号化ではwireGuard.transportEndpointが優先します。",
+        "選用的節點外層傳輸端點 IPv4 位址或 CIDR，不接受 DNS 名稱，與 samEndpointFrom 互斥。WireGuard 加密時優先使用 wireGuard.transportEndpoint。",
+        "可选的节点外层传输端点 IPv4 地址或 CIDR，不接受 DNS 名称，与 samEndpointFrom 互斥。WireGuard 加密时优先使用 wireGuard.transportEndpoint。"
+      ],
+      "nodes[].samEndpointFrom": [
+        "Optional runtime status-value source following common resource/field rules. A missing value remains an unresolved transport source; optional does not supply an endpoint or bypass malformed-address errors.",
+        "共通resource・field規則に従う任意の実行時状態参照です。値がなければトランスポート参照は未解決となり、optionalで終端を補完したり不正アドレスを許容したりはしません。",
+        "遵循共用 resource/field 規則的選用執行時狀態來源。缺少值仍屬未解析傳輸來源，optional 不會補入端點或忽略格式錯誤位址。",
+        "遵循通用 resource/field 规则的可选运行时状态来源。缺少值仍属未解析传输来源，optional 不会补入端点或忽略格式错误地址。"
+      ],
+      "nodes[].samEndpointFrom.resource": [
+        "Kind/name of a declared source resource, required when the source is used. Exclusive with literal samEndpoint.",
+        "利用時必須の宣言済み参照元Kind/nameで、固定samEndpointと排他です。",
+        "使用來源時必填的已宣告資源 Kind/name，與固定 samEndpoint 互斥。",
+        "使用来源时必填的已声明资源 Kind/name，与固定 samEndpoint 互斥。"
+      ],
+      "nodes[].samEndpointFrom.field": [
+        "Explicit provided status field, required with resource; for example currentAddress from DHCPv4Client.",
+        "resource指定時に必須の提供状態フィールドです。例はDHCPv4ClientのcurrentAddressです。",
+        "指定 resource 時必填的明確提供狀態欄位，例如 DHCPv4Client 的 currentAddress。",
+        "指定 resource 时必填的明确提供状态字段，例如 DHCPv4Client 的 currentAddress。"
+      ],
+      "nodes[].samEndpointFrom.optional": [
+        "Default false. Does not bypass existence/field validation; this transport consumer still reports a missing endpoint as unresolved.",
+        "既定falseです。存在・field検証を省略せず、この利用側は終端欠落を引き続き未解決とします。",
+        "預設 false，不略過存在/欄位驗證；此傳輸使用端仍將端點缺少回報為未解析。",
+        "默认 false，不跳过存在/字段验证；此传输使用端仍将端点缺失报告为未解析。"
+      ],
+      "nodes[].macAddresses": [
+        "Optional MAC-address list, default empty. The ARP-observer intent collects these as ignored sender MACs to avoid rediscovering SAM router identities as clients. Not a MAC-change request.",
+        "任意のMACアドレス一覧で、既定は空です。ARP観測ではSAMルーターを端末として再発見しないための送信元除外に使います。MAC変更指定ではありません。",
+        "選用 MAC 位址清單，預設為空。ARP 觀察意圖將其列為忽略的傳送端 MAC，避免將 SAM 路由器當用戶端重新探索；不是變更 MAC 的要求。",
+        "可选 MAC 地址列表，默认为空。ARP 观察意图将其列为忽略的发送端 MAC，避免将 SAM 路由器当客户端重新发现；不是更改 MAC 的请求。"
+      ],
+      "nodes[].wireGuard": [
+        "Optional public WireGuard transport identity. Any nonempty subfield requires publicKey and allowedIPs. Private keys never belong in NodeSet topology.",
+        "任意のWireGuard公開情報です。1つでも非空ならpublicKey・allowedIPsが必須で、秘密鍵はNodeSetトポロジーに置きません。",
+        "選用公開 WireGuard 傳輸身分，任一子欄位非空時需 publicKey 與 allowedIPs。私密金鑰不應放入 NodeSet 拓撲。",
+        "可选公开 WireGuard 传输身份，任一子字段非空时需 publicKey 与 allowedIPs。私钥不应放入 NodeSet 拓扑。"
+      ],
+      "nodes[].wireGuard.publicKey": [
+        "Required when wireGuard is configured; peer public key passed to generated WireGuardPeer. No derived default.",
+        "wireGuard利用時に必須の相手公開鍵で、生成WireGuardPeerへ渡します。自動既定値はありません。",
+        "設定 wireGuard 時必填的對等端公開金鑰，傳入產生的 WireGuardPeer，無衍生預設值。",
+        "配置 wireGuard 时必填的对等端公钥，传入生成的 WireGuardPeer，无派生默认值。"
+      ],
+      "nodes[].wireGuard.endpoint": [
+        "Optional WireGuard outer UDP host:port, [IPv6]:port for IPv6; port 1–65535. Distinct from the inner transportEndpoint.",
+        "任意のWireGuard外側UDP host:portです。IPv6は[IPv6]:portで、ポートは1～65535です。内側transportEndpointとは別です。",
+        "選用 WireGuard 外層 UDP host:port，IPv6 使用 [IPv6]:port，埠 1–65535，與內層 transportEndpoint 不同。",
+        "可选 WireGuard 外层 UDP host:port，IPv6 使用 [IPv6]:port，端口 1–65535，与内层 transportEndpoint 不同。"
+      ],
+      "nodes[].wireGuard.transportEndpoint": [
+        "Optional IPv4 address/CIDR for the inner SAM tunnel endpoint when encryption=wireguard. Preferred over samEndpoint/samEndpointFrom; not the UDP socket address.",
+        "encryption=wireguard時に使う内側SAMトンネル終端の任意のIPv4アドレス・CIDRです。samEndpoint・samEndpointFromより優先し、UDPソケットのアドレスとは別です。",
+        "encryption=wireguard 時選用的內層 SAM 隧道 IPv4 位址/CIDR，優先於 samEndpoint/samEndpointFrom，不是 UDP 通訊端位址。",
+        "encryption=wireguard 时可选的内层 SAM 隧道 IPv4 地址/CIDR，优先于 samEndpoint/samEndpointFrom，不是 UDP 套接字地址。"
+      ],
+      "nodes[].wireGuard.allowedIPs": [
+        "Required nonempty IPv4/IPv6 CIDRs when WireGuard is configured; passed to generated peers. Does not automatically create ordinary routes for every prefix.",
+        "WireGuard利用時必須の非空IPv4・IPv6 CIDR一覧で、生成ピアへ渡します。各prefixの通常経路を自動生成する指定ではありません。",
+        "設定 WireGuard 時必填且非空的 IPv4/IPv6 CIDR，傳入產生的對等端，不會為每個前綴自動建立一般路由。",
+        "配置 WireGuard 时必填且非空的 IPv4/IPv6 CIDR，传入生成的对等端，不会为每个前缀自动创建普通路由。"
+      ],
+      "nodes[].wireGuard.persistentKeepalive": [
+        "Integer seconds 0–65535, default 0 disables persistent keepalive; copied to generated peers.",
+        "0～65535の整数秒です。既定0では継続キープアライブを無効にし、生成ピアへ値を渡します。",
+        "整數秒 0–65535，預設 0 停用持續保活，複製至產生的對等端。",
+        "整数秒 0–65535，默认 0 禁用持续保活，复制至生成的对等端。"
+      ],
+      "nodes[].placement": [
+        "Optional shared capture placement metadata. Only cloud role may declare a group; group members must share site/role and compatible provider identity in consumers.",
+        "任意の共有取得配置情報です。グループ指定はcloudロール限定で、メンバーのsite・roleと利用側のプロバイダー識別に整合が必要です。",
+        "選用共用擷取配置資訊，僅 cloud 角色可宣告群組；成員須有一致 site/role，使用端也須符合供應者身分相容性。",
+        "可选共享捕获放置信息，仅 cloud 角色可声明组；成员须有一致 site/role，使用端也须符合提供商身份兼容性。"
+      ],
+      "nodes[].placement.group": [
+        "Optional placement group name, default empty means no grouped selection. Required for priority/drain/positive capacity settings.",
+        "任意の配置グループ名で、既定は空（グループ選択なし）です。priority・drain・正の容量指定時は必須です。",
+        "選用配置群組名稱，預設空值表示不群組選擇。priority、drain 或正容量設定時必填。",
+        "可选放置组名称，默认空值表示不分组选择。priority、drain 或正容量配置时必填。"
+      ],
+      "nodes[].placement.priority": [
+        "Integer 0–1000000. 0/omitted is assigned 10,20,… by resolved member order, skipping explicit values; smaller priority wins eligible single-active selection. Requires group when nonzero.",
+        "0～1000000の整数です。省略・0は解決したメンバー順に10・20…を割り当て、明示値を避けます。single-active選択は有効な小さい優先度が勝ち、非0はgroupが必要です。",
+        "整數 0–1000000。省略或 0 依解析成員順序指派 10、20…並避開明確值；單一作用中選擇優先較小的有效數值，非零需 group。",
+        "整数 0–1000000。省略或 0 按解析成员顺序分配 10、20…并避开明确值；单活选择优先较小的有效数值，非零需 group。"
+      ],
+      "nodes[].maintenance": [
+        "Optional declarative maintenance intent; default no drain. Shared topology metadata, not local provider credentials.",
+        "任意の宣言的保守指定です。既定はdrainなしです。共有トポロジー情報で、ローカルプロバイダー認証情報ではありません。",
+        "選用宣告式維護意圖，預設不 drain，是共用拓撲資訊，不是本機供應者憑證。",
+        "可选声明式维护意图，默认不 drain，是共享拓扑信息，不是本机提供商凭据。"
+      ],
+      "nodes[].maintenance.drain": [
+        "Default false. True excludes the grouped member from active capture selection and requires placement.group.",
+        "既定falseです。trueはグループメンバーをactive取得候補から除き、placement.groupが必要です。",
+        "預設 false。true 將群組成員排除於作用中擷取選擇之外，需 placement.group。",
+        "默认 false。true 将组成员排除于活动捕获选择之外，需 placement.group。"
+      ],
+      "nodes[].maxSecondaryIPs": [
+        "Nonnegative integer, default 0. Positive requires placement.group and enables capacity-aware distributed capture for that group; 0 has no per-member capacity limit. Not a cloud quota change.",
+        "0以上の整数で、既定0です。正の値はplacement.groupが必要で、そのグループの容量考慮分散取得を有効にします。0はメンバー容量上限なしで、クラウド側のクォータ変更ではありません。",
+        "非負整數，預設 0。正值需 placement.group，啟用該群組依容量分散擷取；0 表示無個別成員容量上限，不變更雲端配額。",
+        "非负整数，默认 0。正值需 placement.group，启用该组按容量分散捕获；0 表示无单个成员容量上限，不更改云端配额。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_mobility.go",
+      "pkg/config/diagnostics.go",
+      "pkg/mobilityconfig/members.go",
+      "pkg/mobilityconfig/normalize.go",
+      "pkg/controller/mobility/transport.go",
+      "pkg/controller/mobility/arp_observer_intent.go",
+      "pkg/controller/mobility/placement.go",
+      "pkg/controller/mobility/capture_distribution.go",
+      "pkg/controller/chain/wireguard.go"
+    ]
+  },
+  "SAMEnrollmentClient": {
+    "purpose": [
+      "Submit a local enrollment claim to bootstrap RR control APIs, fetch admitted topology and persist it as dynamic SAMRRSet/optional direct peer-group state for existing controllers. No cloud infrastructure is created.",
+      "ローカル登録要求を起動用RRのControlAPIへ送り、許可されたトポロジーを取得して動的SAMRRSet・任意のdirectピアグループとして既存コントローラーへ渡します。クラウド基盤の新規作成は行いません。",
+      "將本機註冊要求提交至啟動 RR ControlAPI，取得允許的拓撲，儲存為動態 SAMRRSet 及選用 direct 對等群組供既有控制器使用，不建立雲端基礎設施。",
+      "将本机注册请求提交至引导 RR ControlAPI，取得允许的拓扑，保存为动态 SAMRRSet 及可选 direct 对等组供已有控制器使用，不创建云端基础设施。"
+    ],
+    "rules": [
+      [
+        "claimRef must resolve to a local SAMEnrollmentClaim, whose rrSetRef must name SAMRRSet/name for runtime use. A leaf claim may refer to a remote policy without duplicating that SAMEnrollmentPolicy locally.",
+        "claimRefはローカルSAMEnrollmentClaimを参照し、実行時はそのrrSetRefにSAMRRSet/nameが必要です。leaf要求はローカルにSAMEnrollmentPolicyを複製せず、リモートのポリシーを参照できます。",
+        "claimRef 須解析為本機 SAMEnrollmentClaim，執行時該要求的 rrSetRef 須為 SAMRRSet/name。leaf 要求可參照遠端原則，不需在本機複製 SAMEnrollmentPolicy。",
+        "claimRef 须解析为本机 SAMEnrollmentClaim，运行时该请求的 rrSetRef 须为 SAMRRSet/name。leaf 请求可引用远端策略，不需在本机复制 SAMEnrollmentPolicy。"
+      ],
+      [
+        "At least one bootstrapEndpoints entry or rrSocket is required; they are not mutually exclusive. The Unix socket client precedes listed HTTP(S) endpoints. Ordinary admission can use a successful RR response, while direct topology requires agreement across configured endpoints and keeps the RR fallback when direct admission is unsafe.",
+        "bootstrapEndpointsを1件以上またはrrSocketが必要で、両者は排他ではありません。Unixソケットの後にHTTP(S)を一覧順で使います。通常登録は成功したRR応答を利用でき、directトポロジーは設定した接続先の合意が必要で、安全を確認できなければRR経路を維持します。",
+        "至少需一個 bootstrapEndpoints 或 rrSocket，兩者不互斥。先使用 Unix 通訊端，再依序使用 HTTP(S) 端點。一般接納可使用成功的 RR 回應；direct 拓撲要求設定端點間一致，無法安全接納時保留 RR 路徑。",
+        "至少需一个 bootstrapEndpoints 或 rrSocket，两者不互斥。先使用 Unix 套接字，再依次使用 HTTP(S) 端点。普通接纳可使用成功的 RR 响应；direct 拓扑要求配置端点间一致，无法安全接纳时保留 RR 路径。"
+      ],
+      [
+        "Direct-mesh opt-out removes cached direct topology before contacting an unreachable RR. Client retry/renewal state is persisted; refreshing topology does not imply that tunnels or BGP sessions are already operational.",
+        "direct-meshを無効化すると、RRへの接続前にキャッシュ済みdirectトポロジーを除きます。再試行・更新状態は永続化しますが、トポロジー更新成功はトンネル・BGPの開通を意味しません。",
+        "停用 direct-mesh 時，會先移除快取 direct 拓撲，再聯絡可能無法連線的 RR。用戶端重試/更新狀態會保存，拓撲更新不代表隧道或 BGP 已運作。",
+        "禁用 direct-mesh 时，会先移除缓存 direct 拓扑，再联系可能无法连接的 RR。客户端重试/更新状态会保存，拓扑更新不代表隧道或 BGP 已运行。"
+      ]
+    ],
+    "fields": {
+      "claimRef": [
+        "Required SAMEnrollmentClaim/name declared in this Router. No status field selector.",
+        "このRouterで宣言したSAMEnrollmentClaim/nameが必須です。状態field指定はありません。",
+        "必填同一 Router 宣告的 SAMEnrollmentClaim/name，不使用狀態欄位選擇器。",
+        "必填同一 Router 声明的 SAMEnrollmentClaim/name，不使用状态字段选择器。"
+      ],
+      "bootstrapEndpoints": [
+        "Optional ordered absolute HTTP(S) ControlAPI URLs with hosts; at least one required unless rrSocket is supplied. No automatic discovery. Each enrollment request currently uses a 10s request context.",
+        "任意のhost付き絶対HTTP(S) ControlAPI URL一覧です。rrSocketがなければ1件以上必要で、自動探索はありません。各登録要求には現行で10秒の要求コンテキストを使います。",
+        "選用且有順序的絕對 HTTP(S) ControlAPI URL，須含主機。未提供 rrSocket 時至少一個，不自動探索。每個註冊要求目前使用 10 秒要求期限。",
+        "可选且有顺序的绝对 HTTP(S) ControlAPI URL，须含主机。未提供 rrSocket 时至少一个，不自动发现。每个注册请求目前使用 10 秒请求期限。"
+      ],
+      "controlAPITokenFrom": [
+        "Optional Bearer-token source used only for HTTP(S) clients; omitted means no Bearer header. Exactly one file/env if supplied. Separate from the claim join HMAC credential.",
+        "HTTP(S)クライアント用の任意Bearerトークン参照です。省略時はBearerヘッダーを付けません。指定時file・envは排他で、要求のjoin HMAC認証とは別です。",
+        "僅供 HTTP(S) 用戶端使用的選用 Bearer 權杖來源。省略不傳 Bearer 標頭，提供時 file/env 只能指定一項，與要求的 join HMAC 憑證不同。",
+        "仅供 HTTP(S) 客户端使用的可选 Bearer 令牌来源。省略不传 Bearer 标头，提供时 file/env 只能指定一项，与请求的 join HMAC 凭据不同。"
+      ],
+      "controlAPITokenFrom.file": [
+        "Router-local raw token file, exclusive with env. Whitespace is trimmed; missing/unreadable/empty values fail when HTTP endpoints are configured.",
+        "ルーター上の生トークンファイルで、envと排他です。前後空白を除去し、HTTP接続先がある場合に欠落・読取不能・空値なら失敗します。",
+        "路由器本機原始權杖檔，與 env 互斥。會移除首尾空白；設定 HTTP 端點時，缺少、無法讀取或為空會失敗。",
+        "路由器本机原始令牌文件，与 env 互斥。会移除首尾空白；配置 HTTP 端点时，缺失、无法读取或为空会失败。"
+      ],
+      "controlAPITokenFrom.env": [
+        "Name of a routerd process environment variable holding the token, exclusive with file; not an environment-file path.",
+        "トークンを持つrouterdプロセス環境変数名です。fileと排他で、環境ファイルのパスではありません。",
+        "存放權杖的 routerd 程序環境變數名稱，與 file 互斥，不是環境檔路徑。",
+        "存放令牌的 routerd 进程环境变量名称，与 file 互斥，不是环境文件路径。"
+      ],
+      "controlAPITokenFrom.base64": [
+        "Default false; true applies standard Base64 decoding and trims the decoded token. It is not encryption.",
+        "既定falseです。trueなら標準Base64デコード後にも前後空白を除去します。暗号化ではありません。",
+        "預設 false，true 執行標準 Base64 解碼並移除解碼後首尾空白，不是加密。",
+        "默认 false，true 执行标准 Base64 解码并移除解码后首尾空白，不是加密。"
+      ],
+      "controlAPITLS": [
+        "Optional HTTPS client settings, unused for Unix sockets. Setting these does not turn an http URL into https.",
+        "任意のHTTPSクライアント設定で、Unixソケットには使いません。http URLをhttpsへ変更する指定ではありません。",
+        "選用 HTTPS 用戶端設定，不用於 Unix 通訊端，不會將 http URL 自動轉成 https。",
+        "可选 HTTPS 客户端配置，不用于 Unix 套接字，不会将 http URL 自动转成 https。"
+      ],
+      "controlAPITLS.caFile": [
+        "Optional PEM CA file. When supplied it replaces the client root pool with certificates in this file; omission uses the normal trust configuration.",
+        "任意のPEM CAファイルです。指定時はこのファイルの証明書でクライアントの信頼元プールを置き換え、省略時は通常の信頼設定です。",
+        "選用 PEM CA 檔，提供時以檔案內憑證取代用戶端根憑證集；省略使用一般信任設定。",
+        "可选 PEM CA 文件，提供时以文件内证书替换客户端根证书集；省略使用普通信任配置。"
+      ],
+      "controlAPITLS.certFile": [
+        "Optional client certificate file; must be paired with keyFile. No default certificate or generated credentials.",
+        "任意のクライアント証明書ファイルで、keyFileと同時指定が必要です。既定証明書・認証情報の自動生成はありません。",
+        "選用用戶端憑證檔，須與 keyFile 同時設定，沒有預設憑證或自動產生的憑證。",
+        "可选客户端证书文件，须与 keyFile 同时配置，没有默认证书或自动生成的凭据。"
+      ],
+      "controlAPITLS.keyFile": [
+        "Optional client private-key file, required together with certFile.",
+        "任意のクライアント秘密鍵ファイルです。certFileと同時指定が必要です。",
+        "選用用戶端私密金鑰檔，須與 certFile 同時設定。",
+        "可选客户端私钥文件，须与 certFile 同时配置。"
+      ],
+      "controlAPITLS.serverName": [
+        "Optional TLS SNI/verification name override; empty uses URL host behavior. It does not change endpoint routing.",
+        "任意のTLS SNI・検証名の上書きです。空ならURLホストに従い、接続先の経路は変更しません。",
+        "選用 TLS SNI/驗證名稱覆寫，空值依 URL 主機行為，不變更端點路由。",
+        "可选 TLS SNI/验证名称覆盖，空值依 URL 主机行为，不更改端点路由。"
+      ],
+      "controlAPITLS.insecureSkipVerify": [
+        "Default false. True disables server certificate-chain/hostname verification; no effect on a plain HTTP URL.",
+        "既定falseです。trueはサーバー証明書チェーン・ホスト名検証を無効にし、平文HTTP URLには影響しません。",
+        "預設 false。true 停用伺服器憑證鏈及主機名稱驗證，對純 HTTP URL 無效。",
+        "默认 false。true 禁用服务器证书链及主机名验证，对纯 HTTP URL 无效。"
+      ],
+      "rrSocket": [
+        "Optional absolute local RR Unix-socket path; may accompany HTTP(S) endpoints. Unix client does not use Bearer token or TLS settings.",
+        "任意のローカルRR Unixソケット絶対パスです。HTTP(S)と併用でき、UnixクライアントにはBearer・TLS設定を使いません。",
+        "選用本機 RR Unix 通訊端絕對路徑，可與 HTTP(S) 端點並用。Unix 用戶端不使用 Bearer 權杖或 TLS。",
+        "可选本机 RR Unix 套接字绝对路径，可与 HTTP(S) 端点并用。Unix 客户端不使用 Bearer 令牌或 TLS。"
+      ],
+      "stateTTLRefreshBefore": [
+        "Renewal lead-time Go duration, default 10m. If >= an observed positive RR lease duration, runtime uses half that lease to avoid immediate renewal loops. Validator checks parseability, not positivity; use a positive value.",
+        "更新を前倒しするGo durationで、既定10分です。観測した正のRRリース期間以上なら、即時再更新を避けるため実行時にリースの半分へ調整します。検証は構文のみで正値までは要求しないため、正の値を使います。",
+        "提前更新的 Go duration，預設 10 分鐘。若大於等於觀察到的正 RR 租約長度，執行時改用一半租約以避免立即重複更新。驗證僅檢查可解析性，不強制正值，請用正值。",
+        "提前更新的 Go duration，默认 10 分钟。若大于等于观察到的正 RR 租约长度，运行时改用一半租约以避免立即重复更新。验证仅检查可解析性，不强制正值，请用正值。"
+      ],
+      "retryBackoff": [
+        "Optional exponential retry settings; failures double min up to max. Direct-topology recovery has an additional short convergence retry path.",
+        "任意の指数再試行設定です。失敗ごとにminを倍にしてmaxで制限します。directトポロジー回復には別の短い収束再試行もあります。",
+        "選用指數重試設定，失敗時由 min 倍增至 max。direct 拓撲恢復另有較短的收斂重試路徑。",
+        "可选指数重试配置，失败时由 min 倍增至 max。direct 拓扑恢复另有较短的收敛重试路径。"
+      ],
+      "retryBackoff.min": [
+        "Go duration, default 10s. Parseability is checked, but zero/negative are accepted; choose a positive value to avoid immediate/past-due retry scheduling.",
+        "Go durationで、既定10秒です。構文検証のみで0・負値も受け付けるため、即時・過去時刻の再試行を避けるには正値を使います。",
+        "Go duration，預設 10 秒。僅驗證可解析性，接受零或負值；請用正值避免立即或排在過去的重試。",
+        "Go duration，默认 10 秒。仅验证可解析性，接受零或负值；请用正值避免立即或排在过去的重试。"
+      ],
+      "retryBackoff.max": [
+        "Go duration, default 15m. When both min and max are explicit, max must be >=min. Use positive values; defaults are not included in that comparison during validation.",
+        "Go durationで、既定15分です。min・maxを両方明示した場合はmax>=minが必要です。正値を使い、検証時の比較には省略項目の既定値を含めません。",
+        "Go duration，預設 15 分鐘。min/max 都明確指定時要求 max>=min，請用正值。驗證比較不納入省略欄位的預設值。",
+        "Go duration，默认 15 分钟。min/max 都明确指定时要求 max>=min，请用正值。验证比较不纳入省略字段的默认值。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_mobility.go",
+      "pkg/config/validate.go",
+      "pkg/controller/mobility/enrollmentclient.go",
+      "pkg/controller/mobility/core_helpers.go",
+      "pkg/controlapi/client.go"
     ]
   }
 }

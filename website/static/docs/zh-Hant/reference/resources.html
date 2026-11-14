@@ -283,16 +283,19 @@ spec:
 <p><a href="resources/MobilityPool.html">MobilityPool</a></p>
 <h2 id="samnodeset">SAMNodeSet</h2>
 <p><a href="resources/SAMNodeSet.html">SAMNodeSet</a></p>
+<p>宣告供傳輸、事件對等端、WireGuard 與 MobilityPool 成員解析共用的 SAM 節點身分與拓撲。本機供應者擷取/探索設定應放在 MobilityPool 自節點覆寫，不放在此處。</p>
 <h2 id="samenrollmentpolicy">SAMEnrollmentPolicy</h2>
 <p><a href="resources/SAMEnrollmentPolicy.html">SAMEnrollmentPolicy</a></p>
 <h2 id="samenrollmentclaim">SAMEnrollmentClaim</h2>
 <p><a href="resources/SAMEnrollmentClaim.html">SAMEnrollmentClaim</a></p>
 <h2 id="samenrollmentclient">SAMEnrollmentClient</h2>
 <p><a href="resources/SAMEnrollmentClient.html">SAMEnrollmentClient</a></p>
+<p>將本機註冊要求提交至啟動 RR ControlAPI，取得允許的拓撲，儲存為動態 SAMRRSet 及選用 direct 對等群組供既有控制器使用，不建立雲端基礎設施。</p>
 <h2 id="samtransportprofile">SAMTransportProfile</h2>
 <p><a href="resources/SAMTransportProfile.html">SAMTransportProfile</a></p>
 <h2 id="samsubnetpolicy">SAMSubnetPolicy</h2>
 <p><a href="resources/SAMSubnetPolicy.html">SAMSubnetPolicy</a></p>
+<p>將分片指派發布為聯邦事件，讓各節點將 MobilityPool 所有權探索限縮至負責的 IPv4 子網。這是探索範圍指派，不是 IP 路由資源。</p>
 <h2 id="ipv4route">IPv4Route</h2>
 <p><a href="resources/IPv4Route.html">IPv4Route</a></p>
 <p>安裝 IPv4 單播或黑洞路由，可從資源狀態取得裝置與閘道。</p>
