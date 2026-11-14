@@ -4,6 +4,7 @@ package eventrule
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -113,22 +114,43 @@ func (c *Controller) Start(ctx context.Context) {
 }
 
 func (c *Controller) drainStoredEvents(ctx context.Context) error {
-	return eventconsumer.Drain(ctx, c.Events, "eventrule/engine", func(ctx context.Context, event daemonapi.DaemonEvent) error {
-		if event.Daemon.Kind == "routerd-eventrule" {
-			return nil
+	cursorMoved := errors.New("event rule cursor changed while waiting for configuration")
+	for {
+		first := true
+		err := eventconsumer.Drain(ctx, c.Events, "eventrule/engine", func(ctx context.Context, event daemonapi.DaemonEvent) error {
+			if c.MutationGate != nil {
+				c.MutationGate.RLock()
+				defer c.MutationGate.RUnlock()
+			}
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if first {
+				first = false
+				cursor, err := c.Events.LoadOrInitializeEventConsumerCursor("eventrule/engine")
+				if err != nil {
+					return err
+				}
+				id, err := strconv.ParseInt(event.Cursor, 10, 64)
+				if err != nil {
+					return err
+				}
+				if id <= cursor {
+					return cursorMoved
+				}
+			}
+			if event.Daemon.Kind == "routerd-eventrule" {
+				return nil
+			}
+			return c.Reconcile(ctx, event)
+		})
+		if !errors.Is(err, cursorMoved) {
+			return err
 		}
-		return c.Reconcile(ctx, event)
-	})
+	}
 }
 
 func (c *Controller) Reconcile(ctx context.Context, event daemonapi.DaemonEvent) error {
-	if c.MutationGate != nil {
-		c.MutationGate.RLock()
-		defer c.MutationGate.RUnlock()
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
 	// Rule bookkeeping produces status events through routerd, not eventrule.
 	// Feeding those events back can make one or more rules fire indefinitely.
 	if event.Type == "routerd.resource.status.changed" && event.Resource != nil && event.Resource.APIVersion == api.NetAPIVersion && event.Resource.Kind == "EventRule" {

@@ -1749,7 +1749,7 @@ func (s *SQLiteStore) SaveEventConsumerCursor(consumer string, cursor int64) err
 		return nil
 	}
 	_, err := s.db.Exec(`INSERT INTO event_consumer_cursors(consumer,cursor,updated_at) VALUES(?,?,?)
-ON CONFLICT(consumer) DO UPDATE SET cursor=excluded.cursor,updated_at=excluded.updated_at`,
+ON CONFLICT(consumer) DO UPDATE SET cursor=MAX(event_consumer_cursors.cursor,excluded.cursor),updated_at=excluded.updated_at`,
 		consumer, cursor, time.Now().UTC().Format(time.RFC3339Nano))
 	return err
 }
