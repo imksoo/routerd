@@ -4,6 +4,7 @@ package main
 
 import (
 	"errors"
+	"reflect"
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/apply"
@@ -15,7 +16,7 @@ import (
 // the requested runtime; a restoration error never proves that the old one runs.
 func (m serveConfigMutator) mutateRuntime(next *api.Router, configYAML string) (_ *apply.Result, err error) {
 	previous := m.getRouter()
-	shapeChanged, _ := runtimeShapeChanged(previous, next)
+	changed := !reflect.DeepEqual(previous, next)
 	outcome := applyAttemptOutcome{Stage: "runtime-reload", Canonical: canonicalNotRequested}
 	if m.activeRuntime != nil {
 		outcome.Runtime.Active = m.activeRuntime()
@@ -30,7 +31,7 @@ func (m serveConfigMutator) mutateRuntime(next *api.Router, configYAML string) (
 			m.cache.StoreAttempt(outcome, nil)
 		}
 	}()
-	if shapeChanged {
+	if changed {
 		outcome.Runtime, err = m.reloadRuntimeOutcome(next)
 		m.publishConfirmedRuntime(outcome.Runtime.Active)
 		if err != nil {
@@ -43,16 +44,7 @@ func (m serveConfigMutator) mutateRuntime(next *api.Router, configYAML string) (
 	runtimeOutcome := outcome.Runtime
 	outcome, err = m.reconcileWithOutcome(next, configYAML)
 	outcome.Runtime = runtimeOutcome
-	if outcome.Canonical == canonicalReplaced || err == nil {
-		if !shapeChanged {
-			if updateErr := m.updateConfirmedRuntime(next); updateErr != nil {
-				if err == nil {
-					outcome.Stage = "runtime-publish"
-				}
-				err = errors.Join(err, updateErr)
-			}
-		}
-	} else if shapeChanged {
+	if changed && outcome.Canonical != canonicalReplaced && err != nil {
 		restored, restoreErr := m.reloadRuntimeOutcome(previous)
 		outcome.Runtime = restored
 		m.publishConfirmedRuntime(restored.Active)
@@ -73,16 +65,4 @@ func (m serveConfigMutator) publishConfirmedRuntime(active controllerchain.Runti
 	if active.Known && active.Available && active.Router != nil && m.setRouter != nil {
 		m.setRouter(active.Router)
 	}
-}
-
-func (m serveConfigMutator) updateConfirmedRuntime(next *api.Router) error {
-	if m.updateRuntime != nil {
-		if err := m.updateRuntime(next); err != nil {
-			return err
-		}
-	}
-	if m.setRouter != nil {
-		m.setRouter(next)
-	}
-	return nil
 }

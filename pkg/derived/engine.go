@@ -143,11 +143,10 @@ func (c *Controller) reconcileResource(ctx context.Context, resource api.Resourc
 	if target == state.asserted {
 		return c.saveStatus(resource, state)
 	}
-	return c.schedule(ctx, resource, spec, state, target)
+	return c.schedule(resource, spec, state, target)
 }
 
-func (c *Controller) schedule(ctx context.Context, resource api.Resource, spec api.DerivedEventSpec, state *derivedState, target bool) error {
-	_ = ctx
+func (c *Controller) schedule(resource api.Resource, spec api.DerivedEventSpec, state *derivedState, target bool) error {
 	pending := PendingRetracting
 	if target {
 		pending = PendingAsserting

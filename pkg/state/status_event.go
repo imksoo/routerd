@@ -128,7 +128,9 @@ ON CONFLICT(api_version,kind,name) DO UPDATE SET resource_version=resource_versi
 			prepared.Time = now
 		}
 		event = &prepared
-		cursor, eventPayloadBytes, err = recordBusEvent(tx, s.generation, now, *event)
+		bounded, attrs := boundedJournalEvent(*event)
+		eventPayloadBytes = busEventJournalPayloadBytes(bounded, attrs)
+		cursor, err = recordBusEvent(tx, s.generation, now, bounded, attrs)
 		if err != nil {
 			return nil, s.noteStorageWriteErrorLocked(err)
 		}

@@ -110,24 +110,6 @@ func (r *Runner) RuntimeMutationError() error {
 	return nil
 }
 
-// UpdateRuntimeRouter updates a confirmed generation after a shape-preserving
-// apply. The caller must hold the exclusive mutation gate and verify that the
-// controller/daemon lifecycle shape is unchanged. It cannot revive a stopped
-// generation or turn an in-progress preparation into a confirmed one.
-func (r *Runner) UpdateRuntimeRouter(router *api.Router) error {
-	if router == nil {
-		return errors.New("runtime router is required")
-	}
-	r.reloadMu.Lock()
-	defer r.reloadMu.Unlock()
-	if r.runtimeFenced || !r.runtimeSnapshot.Known || !r.runtimeSnapshot.Available {
-		return ErrRuntimeMutationStopped
-	}
-	r.setRuntimeRouter(router)
-	r.runtimeSnapshot.Router = router
-	return nil
-}
-
 func (r *Runner) currentRouter() *api.Router {
 	r.routerMu.RLock()
 	defer r.routerMu.RUnlock()

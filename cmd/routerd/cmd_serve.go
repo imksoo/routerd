@@ -511,7 +511,6 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		setRouter:            setCurrentRouter,
 		reloadWithOutcome:    chainRunner.ReloadRuntimeWithOutcome,
 		activeRuntime:        chainRunner.ActiveRuntimeSnapshot,
-		updateRuntime:        chainRunner.UpdateRuntimeRouter,
 		runtimeMutationError: chainRunner.RuntimeMutationError,
 		stopping:             stopping.Load,
 	}

@@ -516,9 +516,6 @@ func stopRuleTimers(state *ruleState) {
 }
 
 func (c *Controller) noteCorrelationLocked(state *ruleState, key string, seen time.Time) {
-	if state.lastSeen == nil {
-		state.lastSeen = map[string]time.Time{}
-	}
 	state.lastSeen[key] = seen
 	for len(state.lastSeen) > maxRuleCorrelationKeys {
 		oldestKey := ""
