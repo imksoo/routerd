@@ -20,14 +20,11 @@
 /ja/docs/ https://github.com/imksoo/routerd/blob/main/docs/ja/intro.md 302
 /ja/docs https://github.com/imksoo/routerd/blob/main/docs/ja/intro.md 302
 /ja/docs/* https://github.com/imksoo/routerd/blob/main/docs/ja/:splat.md 302
-/ja/ / 302
 /zh-Hant/docs/ https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/intro.md 302
 /zh-Hant/docs https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/intro.md 302
 /zh-Hant/docs/* https://github.com/imksoo/routerd/blob/main/docs/zh-Hant/:splat.md 302
-/zh-Hant/ / 302
 /zh-Hans/docs/ https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/intro.md 302
 /zh-Hans/docs https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/intro.md 302
 /zh-Hans/docs/* https://github.com/imksoo/routerd/blob/main/docs/zh-Hans/:splat.md 302
-/zh-Hans/ / 302
 /wizard https://github.com/imksoo/routerd/tree/main/examples 302
 /blog/* / 302
