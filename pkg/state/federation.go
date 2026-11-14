@@ -167,6 +167,15 @@ func (s *SQLiteStore) CountFederationEvents(group string) (int, error) {
 // events whose expires_at is set and in the past relative to now (unix seconds)
 // are excluded.
 func (s *SQLiteStore) ListFederationEvents(group string, includeExpired bool, now int64) ([]EventRecord, error) {
+	return s.listFederationEvents(group, nil, includeExpired, now)
+}
+
+// ListLocalFederationEvents reads live events originating on the given node.
+func (s *SQLiteStore) ListLocalFederationEvents(group, node string, now int64) ([]EventRecord, error) {
+	return s.listFederationEvents(group, &node, false, now)
+}
+
+func (s *SQLiteStore) listFederationEvents(group string, node *string, includeExpired bool, now int64) ([]EventRecord, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -183,6 +192,10 @@ func (s *SQLiteStore) ListFederationEvents(group string, includeExpired bool, no
 	if group != "" {
 		clauses = append(clauses, "group_name = ?")
 		args = append(args, group)
+	}
+	if node != nil {
+		clauses = append(clauses, "source_node = ?")
+		args = append(args, *node)
 	}
 	if !includeExpired {
 		// Keep rows with no expiry (0/NULL) or that have not yet expired.

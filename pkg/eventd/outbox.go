@@ -92,7 +92,7 @@ func (o *Outbox) RunOnce(ctx context.Context) error {
 
 func (o *Outbox) runOnceInner(ctx context.Context) error {
 	now := time.Now()
-	records, err := o.store.ListFederationEvents(o.group, false, now.Unix())
+	records, err := o.store.ListLocalFederationEvents(o.group, o.nodeName, now.Unix())
 	if err != nil {
 		return err
 	}
@@ -106,9 +106,6 @@ func (o *Outbox) runOnceInner(ctx context.Context) error {
 		// originated on THIS node. Events received FROM peers carry a
 		// different SourceNode and must NEVER be re-emitted, otherwise a
 		// federated event would ping-pong around the mesh.
-		if rec.SourceNode != o.nodeName {
-			continue
-		}
 		ev := federation.Event{
 			ID:         rec.ID,
 			Group:      rec.Group,
