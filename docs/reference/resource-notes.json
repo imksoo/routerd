@@ -1886,5 +1886,103 @@
       "pkg/render/freebsd.go",
       "pkg/controller/chain/ipv4_main_routes.go"
     ]
+  },
+  "IPv4Route": {
+    "purpose": [
+      "Install an IPv4 unicast or blackhole route, optionally resolving device and gateway from resource status.",
+      "リソースの状態からデバイス・ゲートウェイを取得できる、IPv4の通常経路または破棄経路です。",
+      "安裝 IPv4 單播或黑洞路由，可從資源狀態取得裝置與閘道。",
+      "安装 IPv4 单播或黑洞路由，可从资源状态取得设备与网关。"
+    ],
+    "rules": [
+      [
+        "blackhole excludes device, deviceFrom, gateway, gatewayFrom and preferredSource. unicast needs a resolved device at runtime; a gateway is optional for a directly connected route.",
+        "blackholeではdevice、deviceFrom、gateway、gatewayFrom、preferredSourceを併用できません。unicastは実行時にデバイスの解決が必要で、直接接続経路ならgatewayは省略できます。",
+        "blackhole 不可搭配 device、deviceFrom、gateway、gatewayFrom 或 preferredSource。unicast 執行時必須能解析裝置；直接連接路由可省略閘道。",
+        "blackhole 不可搭配 device、deviceFrom、gateway、gatewayFrom 或 preferredSource。unicast 运行时必须能解析设备；直连路由可省略网关。"
+      ],
+      [
+        "Dynamic values take precedence over literal device/gateway; unresolved values fall back to the literals. The source optional flag does not bypass DeviceMissing or GatewayMissing when no usable value remains. References must still identify an existing resource and an explicitly provided field.",
+        "動的な値をdevice・gatewayの固定値より優先し、未解決なら固定値を使います。有効な値が残らない場合、参照のoptionalではDeviceMissing・GatewayMissingを回避できません。参照先は設定内に存在し、fieldの明示と提供フィールドへの適合が必要です。",
+        "動態值優先於 device/gateway 固定值；無法解析時使用固定值。沒有可用值時，來源的 optional 不會略過 DeviceMissing 或 GatewayMissing。參照仍須指向已宣告的資源，並明確指定該資源提供的欄位。",
+        "动态值优先于 device/gateway 固定值；无法解析时使用固定值。没有可用值时，来源的 optional 不会跳过 DeviceMissing 或 GatewayMissing。引用仍须指向已声明的资源，并明确指定该资源提供的字段。"
+      ],
+      [
+        "Linux uses ip route replace, with src for preferredSource and metric only when positive. FreeBSD uses route change/add and -ifa for preferredSource; this path does not apply metric. Installed status is not an end-to-end reachability check.",
+        "Linuxはip route replaceを使い、preferredSourceはsrc、正のmetricのみmetric引数にします。FreeBSDはroute change/addと-ifaを使い、この経路ではmetricを適用しません。Installedは宛先までの疎通成功を意味しません。",
+        "Linux 使用 ip route replace；preferredSource 對應 src，僅正數 metric 會傳入。FreeBSD 使用 route change/add 與 -ifa，此路徑不套用 metric。Installed 不代表端到端連線成功。",
+        "Linux 使用 ip route replace；preferredSource 对应 src，仅正数 metric 会传入。FreeBSD 使用 route change/add 与 -ifa，此路径不应用 metric。Installed 不代表端到端连接成功。"
+      ],
+      [
+        "ready_when and ${...} expressions in device/gateway were removed: use dependsOn and explicit deviceFrom/gatewayFrom. preferredSource does not support status expressions.",
+        "ready_whenとdevice・gateway内の${...}式は廃止され、検証で拒否されます。dependsOnとdeviceFrom・gatewayFromを使用してください。preferredSourceも状態式を扱いません。",
+        "ready_when 與 device/gateway 中的 ${...} 運算式已移除，驗證會拒絕。請使用 dependsOn 與 deviceFrom/gatewayFrom。preferredSource 也不支援狀態運算式。",
+        "ready_when 与 device/gateway 中的 ${...} 表达式已移除，验证会拒绝。请使用 dependsOn 与 deviceFrom/gatewayFrom。preferredSource 也不支持状态表达式。"
+      ]
+    ],
+    "fields": {
+      "destination": [
+        "Required IPv4 CIDR; use 0.0.0.0/0 for the default route, not the word default. The current validator parses prefixes without rejecting IPv6 here, but this resource/controller is for IPv4.",
+        "宛先のIPv4 CIDRが必須です。デフォルト経路はdefaultではなく0.0.0.0/0を指定します。現行の検証はここでIPv6を拒否しませんが、本リソース・コントローラーはIPv4用です。",
+        "必填的目的 IPv4 CIDR。預設路由請使用 0.0.0.0/0，而非 default。目前驗證僅解析前綴，未在此拒絕 IPv6，但此資源與控制器供 IPv4 使用。",
+        "必填的目标 IPv4 CIDR。默认路由请使用 0.0.0.0/0，而非 default。目前验证仅解析前缀，未在此拒绝 IPv6，但此资源与控制器供 IPv4 使用。"
+      ],
+      "type": [
+        "unicast by default; blackhole discards traffic and prohibits the device/gateway/source fields.",
+        "既定はunicastです。blackholeは通信を破棄し、デバイス・ゲートウェイ・送信元の指定を禁止します。",
+        "預設 unicast。blackhole 丟棄流量，不可指定裝置、閘道或來源。",
+        "默认 unicast。blackhole 丢弃流量，不可指定设备、网关或源地址。"
+      ],
+      "device": [
+        "Optional literal logical interface or OS device name, used when deviceFrom has no value. Empty on unicast becomes Pending/DeviceMissing; a missing OS device becomes DeviceNotReady. Forbidden for blackhole.",
+        "deviceFromで値が得られない場合の論理インターフェース名・OSデバイス名です。unicastで空ならPending/DeviceMissing、OS上に存在しなければDeviceNotReadyです。blackholeでは禁止です。",
+        "選用的邏輯介面或 OS 裝置名稱，deviceFrom 無值時使用。unicast 為空時為 Pending/DeviceMissing；OS 裝置不存在時為 DeviceNotReady。blackhole 禁用。",
+        "可选的逻辑接口或 OS 设备名称，deviceFrom 无值时使用。unicast 为空时为 Pending/DeviceMissing；OS 设备不存在时为 DeviceNotReady。blackhole 禁用。"
+      ],
+      "deviceFrom": [
+        "Optional status-value source for the device; resource and field follow the common reference rules. First normalized value takes precedence over device. No source by default; forbidden for blackhole.",
+        "デバイスを取得する状態値参照です。resource・fieldは共通の参照規則に従います。正規化後の先頭値をdeviceより優先します。既定は参照なしで、blackholeでは禁止です。",
+        "選用的裝置狀態值來源；resource 與 field 遵循共用參照規則。正規化後第一個值優先於 device。預設無來源，blackhole 禁用。",
+        "可选的设备状态值来源；resource 与 field 遵循通用引用规则。规范化后第一个值优先于 device。默认无来源，blackhole 禁用。"
+      ],
+      "gateway": [
+        "Optional bare IPv4 next hop, default empty for a route through the device without a gateway. Used as fallback for gatewayFrom. Forbidden for blackhole.",
+        "任意のIPv4ネクストホップです。既定は空で、ゲートウェイを使わないデバイス経由の経路になります。gatewayFrom未解決時の固定値でもあります。blackholeでは禁止です。",
+        "選用的純 IPv4 下一跳，預設為空，表示透過裝置且無閘道的路由。也是 gatewayFrom 無法解析時的替代值。blackhole 禁用。",
+        "可选的纯 IPv4 下一跳，默认为空，表示通过设备且无网关的路由。也是 gatewayFrom 无法解析时的替代值。blackhole 禁用。"
+      ],
+      "gatewayFrom": [
+        "Optional status source following common resource/field rules. Its first normalized value precedes gateway. If configured and neither source nor literal yields a value, reconciliation stays Pending/GatewayMissing. Forbidden for blackhole.",
+        "共通のresource・field規則に従う状態値参照です。正規化後の先頭値をgatewayより優先します。参照を設定しても固定値を含め値が得られなければPending/GatewayMissingになります。blackholeでは禁止です。",
+        "選用的狀態來源，遵循共用 resource/field 規則。第一個正規化值優先於 gateway。設有來源但來源與固定值皆無值時，維持 Pending/GatewayMissing。blackhole 禁用。",
+        "可选的状态来源，遵循通用 resource/field 规则。第一个规范化值优先于 gateway。设有来源但来源与固定值均无值时，维持 Pending/GatewayMissing。blackhole 禁用。"
+      ],
+      "preferredSource": [
+        "Optional bare IPv4 preferred source for locally originated traffic; default none. Must already be a local address when applied, otherwise Pending/PreferredSourceNotLocal. This does not assign an address or perform SNAT. Forbidden for blackhole.",
+        "ローカル発信時の優先送信元IPv4アドレスです。既定は指定なしです。適用時にローカルアドレスとして存在しないとPending/PreferredSourceNotLocalになります。アドレス割当やSNATは行いません。blackholeでは禁止です。",
+        "本機發起流量的選用優先 IPv4 來源，預設不指定。套用時必須已是本機位址，否則為 Pending/PreferredSourceNotLocal。不會指派位址或執行 SNAT。blackhole 禁用。",
+        "本机发起流量的可选首选 IPv4 源地址，默认不指定。应用时必须已是本机地址，否则为 Pending/PreferredSourceNotLocal。不会分配地址或执行 SNAT。blackhole 禁用。"
+      ],
+      "metric": [
+        "Optional nonnegative integer, default 0. Linux passes it only when positive; FreeBSD apply ignores this field. Lower metrics normally win among otherwise matching routes.",
+        "0以上の整数で、既定は0です。Linuxは正の値だけをコマンドに渡し、FreeBSDの適用では使用しません。通常、同条件の経路では小さいメトリックが優先されます。",
+        "選用的非負整數，預設 0。Linux 僅傳入正值；FreeBSD 套用時忽略。其他條件相同時通常優先使用較低 metric。",
+        "可选的非负整数，默认 0。Linux 仅传入正值；FreeBSD 应用时忽略。其他条件相同时通常优先使用较低 metric。"
+      ],
+      "dependsOn": [
+        "Optional AND-list of common resource dependency predicates; default empty. Unsatisfied predicates prevent installation with DependsOnFalse. See common fields for resource/field/phase/equals/notEmpty/optional.",
+        "共通のリソース依存条件のANDリストで、既定は空です。不成立ならDependsOnFalseとしてインストールを見送ります。resource・field・phase・equals・notEmpty・optionalは共通項を参照してください。",
+        "選用的共用資源相依條件 AND 清單，預設為空。不滿足時以 DependsOnFalse 略過安裝。resource/field/phase/equals/notEmpty/optional 請見共用欄位。",
+        "可选的通用资源依赖条件 AND 列表，默认为空。不满足时以 DependsOnFalse 跳过安装。resource/field/phase/equals/notEmpty/optional 请见通用字段。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_route.go",
+      "pkg/config/diagnostics.go",
+      "pkg/resourcequery/resourcequery.go",
+      "pkg/controller/chain/phase2.go",
+      "pkg/controller/chain/ipv4_main_routes.go"
+    ]
   }
 }

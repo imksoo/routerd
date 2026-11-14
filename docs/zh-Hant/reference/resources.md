@@ -495,6 +495,8 @@ spec:
 
 [IPv4Route](resources/IPv4Route.md)
 
+安裝 IPv4 單播或黑洞路由，可從資源狀態取得裝置與閘道。
+
 
 ## HealthCheck
 

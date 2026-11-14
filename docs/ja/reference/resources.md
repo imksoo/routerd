@@ -495,6 +495,8 @@ KubernetesのPod・ServiceネットワークへのIPv4経路を、明示した�
 
 [IPv4Route](resources/IPv4Route.md)
 
+リソースの状態からデバイス・ゲートウェイを取得できる、IPv4の通常経路または破棄経路です。
+
 
 ## HealthCheck
 

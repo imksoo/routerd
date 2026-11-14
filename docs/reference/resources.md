@@ -495,6 +495,8 @@ Projects AFTR, DNS, SNTP and domain-search information from the DHCPv6-PD daemon
 
 [IPv4Route](resources/IPv4Route.md)
 
+Install an IPv4 unicast or blackhole route, optionally resolving device and gateway from resource status.
+
 
 ## HealthCheck
 
