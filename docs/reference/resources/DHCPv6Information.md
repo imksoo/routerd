@@ -55,3 +55,9 @@ All fields are shown as a structural reference, not a configuration to apply unc
 | `spec.dependsOn` | Dependency declaration, default empty. Reference targets/fields are validated, but this controller does not enforce these predicates before reading or requesting information. |
 
 Implementation: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate_wan.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_wan.go) · [pkg/config/diagnostics.go](https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go) · [pkg/controller/chain/phase2.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/phase2.go) · [pkg/controller/chain/chain.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go) · [pkg/pdclient/client.go](https://github.com/imksoo/routerd/blob/main/pkg/pdclient/client.go)
+
+## Referenceable status fields
+
+The ordinary status-reference validator accepts these field names for this kind. This allowlist does not guarantee that every field is currently populated; inspect runtime status. These are outputs, not YAML spec fields.
+
+`phase`, `source`, `aftrName`, `dnsServers`, `sntpServers`, `domainSearch`

@@ -40,3 +40,9 @@
 | `spec.includeTLSSNI` | 預設 false。與 enabled 同為 true 時要求相同 DPI 輔助程式及觀察流程。不是 TLS 解密、SNI 擷取保證或獨立儲存遮蔽／篩選開關；加密或未觀察到的名稱可能不可用。 |
 
 實作: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate_firewall.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_firewall.go) · [pkg/controller/conntrackobserver/controller.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/conntrackobserver/controller.go) · [pkg/render/dpi_systemd.go](https://github.com/imksoo/routerd/blob/main/pkg/render/dpi_systemd.go) · [pkg/render/nftables.go](https://github.com/imksoo/routerd/blob/main/pkg/render/nftables.go) · [pkg/controller/chain/logretention.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/logretention.go)
+
+## 可參照的狀態欄位
+
+一般狀態參照驗證接受此 Kind 的下列欄位名稱。列於允許清單不保證目前有值，請檢查實際狀態。這些是輸出，不是 YAML spec 設定。
+
+`phase`, `path`, `sinks`

@@ -32,3 +32,9 @@ All fields are shown as a structural reference, not a configuration to apply unc
 | `spec.managed` | Default false: no hostname changes. True observes the current/static hostname and changes it when needed; dry-run does not invoke the changing commands. |
 
 Implementation: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate_system.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_system.go) · [pkg/controller/chain/hostname.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/hostname.go)
+
+## Referenceable status fields
+
+The ordinary status-reference validator accepts these field names for this kind. This allowlist does not guarantee that every field is currently populated; inspect runtime status. These are outputs, not YAML spec fields.
+
+`phase`, `hostname`

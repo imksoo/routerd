@@ -53,4 +53,10 @@ routerdから読取り用のWebコンソールを公開します。設定変更�
 
 実装: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate_system.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_system.go) · [cmd/routerd/cmd_serve.go](https://github.com/imksoo/routerd/blob/main/cmd/routerd/cmd_serve.go) · [pkg/webconsole/console.go](https://github.com/imksoo/routerd/blob/main/pkg/webconsole/console.go)
 
+## 状態値の参照に使えるフィールド
+
+通常の状態値参照の検証で、このKindについて許可するフィールド名です。許可一覧にあるだけでは値の生成・取得を保証しないため、実際の状態を確認してください。YAMLのspecに設定する項目ではなく出力です。
+
+`phase`, `listenAddress`, `port`
+
 [設定例](https://github.com/imksoo/routerd/blob/main/examples/home-router-mgmt-protected.yaml)

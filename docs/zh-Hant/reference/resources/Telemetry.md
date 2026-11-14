@@ -43,4 +43,10 @@
 
 實作: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate_system.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_system.go) · [pkg/render/telemetry.go](https://github.com/imksoo/routerd/blob/main/pkg/render/telemetry.go)
 
+## 可參照的狀態欄位
+
+一般狀態參照驗證接受此 Kind 的下列欄位名稱。列於允許清單不保證目前有值，請檢查實際狀態。這些是輸出，不是 YAML spec 設定。
+
+`phase`, `signals`
+
 [設定範例](https://github.com/imksoo/routerd/blob/main/examples/telemetry-export.yaml)

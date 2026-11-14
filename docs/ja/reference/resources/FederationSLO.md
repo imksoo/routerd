@@ -45,3 +45,9 @@ routerctl doctorが共有イベント配送・購読を診断するときのグ�
 | `spec.subscription.maxFailedRuns` | 0以上の件数で既定0です。失敗件数がこの値を超えるとFAILになります。購読の最大3回の試行方針は変わりません。 |
 
 実装: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate_event.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_event.go) · [cmd/routerctl/doctor_federation.go](https://github.com/imksoo/routerd/blob/main/cmd/routerctl/doctor_federation.go)
+
+## 状態値の参照に使えるフィールド
+
+通常の状態値参照の検証で、このKindについて許可するフィールド名です。許可一覧にあるだけでは値の生成・取得を保証しないため、実際の状態を確認してください。YAMLのspecに設定する項目ではなく出力です。
+
+このKindには通常の状態値参照の許可フィールドが登録されていません。

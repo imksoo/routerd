@@ -145,11 +145,15 @@
 </tr>
 </tbody>
 </table>
-<p>實作: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_firewall.go">pkg/config/validate_firewall.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/nat44sessionsync.go">pkg/controller/chain/nat44sessionsync.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/filesync.go">pkg/controller/chain/filesync.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/system.go">pkg/controller/chain/system.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go">pkg/controller/chain/chain.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/conntrackd.go">pkg/render/conntrackd.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd-vrrp-vmac/main.go">cmd/routerd-vrrp-vmac/main.go</a></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
+<p>實作: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_firewall.go">pkg/config/validate_firewall.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/nat44sessionsync.go">pkg/controller/chain/nat44sessionsync.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/filesync.go">pkg/controller/chain/filesync.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/system.go">pkg/controller/chain/system.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go">pkg/controller/chain/chain.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/conntrackd.go">pkg/render/conntrackd.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd-vrrp-vmac/main.go">cmd/routerd-vrrp-vmac/main.go</a></p>
+<h2 id="可參照的狀態欄位">可參照的狀態欄位</h2>
+<p>一般狀態參照驗證接受此 Kind 的下列欄位名稱。列於允許清單不保證目前有值，請檢查實際狀態。這些是輸出，不是 YAML spec 設定。</p>
+<p><code>phase</code>, <code>mode</code>, <code>streamState</code>, <code>sessionCount</code>, <code>remoteSessionCount</code>, <code>targetCount</code>, <code>snatAddresses</code>, <code>targets</code>, <code>deleteOK</code>, <code>deleteMissing</code>, <code>deleteFailed</code>, <code>pruneOK</code>, <code>pruneMissing</code>, <code>pruneFailed</code>, <code>pruneCandidateCount</code>, <code>insertOK</code>, <code>insertExisting</code>, <code>insertFailed</code>, <code>queuedEventCount</code>, <code>lastBatchEvents</code>, <code>resyncCount</code>, <code>syncedAt</code>, <code>lastEventAt</code>, <code>lastBatchAt</code>, <code>lastResyncAt</code>, <code>dryRun</code></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
 <ul>
 <li><a href="#指定條件與參照關係">指定條件與參照關係</a></li>
 <li><a href="#yaml定義">YAML定義</a></li>
 <li><a href="#欄位意義與預設值">欄位意義與預設值</a></li>
+<li><a href="#可參照的狀態欄位">可參照的狀態欄位</a></li>
 </ul>
 </div>
 </aside></main>

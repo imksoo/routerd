@@ -16,6 +16,18 @@ NOTE_LABELS = {
     'zh-Hans': ('指定条件与引用关系', '字段含义与默认值', '实现'),
 }
 
+# This is the same allowlist used by ordinary status-reference validation.
+# Names are identifiers; availability still depends on the actual controller.
+PROVIDED = {}
+for kind, fields in re.findall(r'^\s*"(\w+)":\s+withCommon\((.*)\),$', (ROOT / 'pkg/api/provides.go').read_text(), re.M):
+    PROVIDED[kind] = ['phase'] + re.findall(r'\b(?:s|ss|i|b|o|os|t)\("([^"]+)",', fields)
+PROVIDED_LABELS = {
+    'en': ('Referenceable status fields', 'The ordinary status-reference validator accepts these field names for this kind. This allowlist does not guarantee that every field is currently populated; inspect runtime status. These are outputs, not YAML spec fields.', 'No fields are registered for this kind in the ordinary status-reference allowlist.'),
+    'ja': ('状態値の参照に使えるフィールド', '通常の状態値参照の検証で、このKindについて許可するフィールド名です。許可一覧にあるだけでは値の生成・取得を保証しないため、実際の状態を確認してください。YAMLのspecに設定する項目ではなく出力です。', 'このKindには通常の状態値参照の許可フィールドが登録されていません。'),
+    'zh-Hant': ('可參照的狀態欄位', '一般狀態參照驗證接受此 Kind 的下列欄位名稱。列於允許清單不保證目前有值，請檢查實際狀態。這些是輸出，不是 YAML spec 設定。', '此 Kind 未登錄一般狀態參照的允許欄位。'),
+    'zh-Hans': ('可引用的状态字段', '常规状态引用验证接受此 Kind 的下列字段名称。列于允许列表不保证目前有值，请检查实际状态。这些是输出，不是 YAML spec 配置。', '此 Kind 未登记常规状态引用的允许字段。'),
+}
+
 EXAMPLES = {}
 # Only resource blocks under Router.spec.resources, not nested kinds or templates.
 paths = sorted((ROOT / 'examples').glob('*.yaml'))
@@ -126,6 +138,9 @@ for locale_index, (locale, labels) in enumerate(LANGUAGES.items()):
             for path, text in notes['fields'].items():
                 page.append('| `spec.' + path + '` | ' + text[locale_index].replace('|', '&#124;') + ' |')
             page += ['', implementation + ': ' + ' · '.join('[' + path + '](' + REPO + path + ')' for path in notes['sources']), '']
+        provided_title, provided_intro, provided_empty = PROVIDED_LABELS[locale]
+        page += ['## ' + provided_title, '', provided_intro, '']
+        page += [', '.join('`' + field + '`' for field in PROVIDED[kind]) if kind in PROVIDED else provided_empty, '']
         if kind in EXAMPLES:
             path = EXAMPLES[kind]
             page += ['[' + example + '](' + REPO + path.relative_to(ROOT).as_posix() + ')', '']

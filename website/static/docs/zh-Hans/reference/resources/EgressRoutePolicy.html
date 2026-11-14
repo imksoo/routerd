@@ -104,9 +104,13 @@
           maxAge: &quot;&lt;string&gt;&quot; # 选填; string
           status: &quot;set&quot; # 选填; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
 </code></pre>
+<h2 id="可引用的状态字段">可引用的状态字段</h2>
+<p>常规状态引用验证接受此 Kind 的下列字段名称。列于允许列表不保证目前有值，请检查实际状态。这些是输出，不是 YAML spec 配置。</p>
+<p><code>phase</code>, <code>family</code>, <code>selectedCandidate</code>, <code>selectedSource</code>, <code>selectedDevice</code>, <code>selectedGateway</code>, <code>selectedGatewaySource</code>, <code>selectedRouteTable</code>, <code>selectedMetric</code>, <code>selectedWeight</code>, <code>selectedTargets</code>, <code>selectedInterface</code>, <code>candidates</code>, <code>role</code>, <code>advisory</code>, <code>lastTransitionAt</code>, <code>datapathRoleResource</code>, <code>datapathRole</code>, <code>datapathRoleTransitionAt</code>, <code>datapathReady</code>, <code>datapathState</code>, <code>datapathReadyAt</code>, <code>datapathReadyDuration</code>, <code>datapathReadyDurationMillis</code>, <code>datapathFallbackBehavior</code>, <code>newFlowBehavior</code>, <code>updatedAt</code>, <code>dryRun</code></p>
 <p><a href="/examples/home-router-mgmt-protected.yaml">配置示例</a></p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
 <ul>
 <li><a href="#yaml定义">YAML定义</a></li>
+<li><a href="#可引用的状态字段">可引用的状态字段</a></li>
 </ul>
 </div>
 </aside></main>

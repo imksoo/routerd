@@ -98,4 +98,10 @@ AFTRへ向けてIPv4をIPv6にカプセル化します。トンネル作成、IP
 
 実装: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate_wan.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_wan.go) · [pkg/config/validate.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go) · [pkg/controller/chain/phase2.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/phase2.go) · [pkg/controller/chain/ipv4_main_routes.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/ipv4_main_routes.go)
 
+## 状態値の参照に使えるフィールド
+
+通常の状態値参照の検証で、このKindについて許可するフィールド名です。許可一覧にあるだけでは値の生成・取得を保証しないため、実際の状態を確認してください。YAMLのspecに設定する項目ではなく出力です。
+
+`phase`, `interface`, `device`, `tunnelName`, `localIPv6`, `innerLocalIPv4`, `innerRemoteIPv4`, `localInterface`, `aftrName`, `aftrIPv6`, `mtu`, `dryRun`
+
 [設定例](https://github.com/imksoo/routerd/blob/main/examples/example-dslite-home.yaml)

@@ -63,3 +63,9 @@ All fields are shown as a structural reference, not a configuration to apply unc
 | `spec.tcpMSSClamp` | Default false. True creates Linux bridge-family IPv4/IPv6 TCP SYN MSS rules between this VXLAN and Bridge member ports. Uses the minimum positive VXLAN/bridge/member MTU, minus 40 for IPv4 or 60 for IPv6; does not clamp arbitrary routed traffic. |
 
 Implementation: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate_interface.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_interface.go) · [pkg/config/validate.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go) · [pkg/controller/chain/vxlan_tunnel.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/vxlan_tunnel.go) · [pkg/vxlan/vxlan.go](https://github.com/imksoo/routerd/blob/main/pkg/vxlan/vxlan.go) · [pkg/render/nftables.go](https://github.com/imksoo/routerd/blob/main/pkg/render/nftables.go)
+
+## Referenceable status fields
+
+The ordinary status-reference validator accepts these field names for this kind. This allowlist does not guarantee that every field is currently populated; inspect runtime status. These are outputs, not YAML spec fields.
+
+`phase`, `ifname`, `vni`

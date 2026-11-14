@@ -78,3 +78,9 @@ All fields are shown as a structural reference, not a configuration to apply unc
 | `spec.allowCIDRFrom` | CIDR value sources combined with allowCIDRs, default empty. Missing values from a nonoptional source cause Pending/AllowCIDRFromPending; invalid derived CIDRs cause Pending/AllowCIDRFromInvalid. Bare addresses are not CIDRs. |
 
 Implementation: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate_system.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_system.go) · [pkg/controller/chain/ntp.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/ntp.go)
+
+## Referenceable status fields
+
+The ordinary status-reference validator accepts these field names for this kind. This allowlist does not guarantee that every field is currently populated; inspect runtime status. These are outputs, not YAML spec fields.
+
+`phase`, `servers`, `listenAddresses`, `allowCIDRs`, `source`, `updatedAt`

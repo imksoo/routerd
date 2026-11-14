@@ -43,3 +43,9 @@ All fields are shown as a structural reference, not a configuration to apply unc
 | `spec.shards[].assignedNodes` | Required nonempty nodeRef list, unique within the shard. Current validation does not check SAMNodeSet membership; values must match the consuming EventGroup local-node identity. |
 
 Implementation: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate_mobility.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_mobility.go) · [pkg/controller/mobility/shard_controller.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/mobility/shard_controller.go) · [pkg/controller/mobility/discovery.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/mobility/discovery.go)
+
+## Referenceable status fields
+
+The ordinary status-reference validator accepts these field names for this kind. This allowlist does not guarantee that every field is currently populated; inspect runtime status. These are outputs, not YAML spec fields.
+
+No fields are registered for this kind in the ordinary status-reference allowlist.

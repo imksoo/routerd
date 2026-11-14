@@ -85,11 +85,15 @@
 </tbody>
 </table>
 <p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_wan.go">pkg/config/validate_wan.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/listen_ports.go">pkg/config/listen_ports.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/system.go">pkg/controller/chain/system.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/dhcpv4client/controller.go">pkg/controller/dhcpv4client/controller.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/dhcpv4client/message.go">pkg/dhcpv4client/message.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd-dhcpv4-client/main.go">cmd/routerd-dhcpv4-client/main.go</a></p>
+<h2 id="referenceable-status-fields">Referenceable status fields</h2>
+<p>The ordinary status-reference validator accepts these field names for this kind. This allowlist does not guarantee that every field is currently populated; inspect runtime status. These are outputs, not YAML spec fields.</p>
+<p><code>phase</code>, <code>interface</code>, <code>device</code>, <code>currentAddress</code>, <code>gateway</code>, <code>defaultGateway</code>, <code>dnsServers</code>, <code>ntpServers</code>, <code>domain</code>, <code>leaseTime</code>, <code>renewAt</code>, <code>rebindAt</code>, <code>expiresAt</code></p>
 <p><a href="/examples/basic-dhcp.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
 <li><a href="#conditions-and-references">Conditions and references</a></li>
 <li><a href="#yaml-definition">YAML definition</a></li>
 <li><a href="#field-meaning-and-default">Field meaning and default</a></li>
+<li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
 </ul>
 </div>
 </aside></main>

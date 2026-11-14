@@ -48,3 +48,9 @@ All fields are shown as a structural reference, not a configuration to apply unc
 | `spec.candidates[].ordinal` | One-based interfaceAddress index when matchSuffix is empty; omitted/0 becomes 1. Schema minimum 1; negative validation rejected. Ordering follows the observed-address list, not a promised stable address identity. Out-of-range tries the next candidate. |
 
 Implementation: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate_dhcp.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_dhcp.go) · [pkg/config/validate.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go) · [pkg/render/dnsmasq.go](https://github.com/imksoo/routerd/blob/main/pkg/render/dnsmasq.go) · [pkg/controller/chain/chain.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go)
+
+## Referenceable status fields
+
+The ordinary status-reference validator accepts these field names for this kind. This allowlist does not guarantee that every field is currently populated; inspect runtime status. These are outputs, not YAML spec fields.
+
+`phase`, `address`, `source`

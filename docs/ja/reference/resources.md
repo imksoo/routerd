@@ -563,6 +563,8 @@ SAM登録へ送るleaf自身の識別・トランスポート・所有権の要�
 
 [SAMTransportProfile](resources/SAMTransportProfile.md)
 
+共有トポロジーや許可済みRR・directスナップショットからノード間SAMトンネル・終端/32経路・任意のBGP/BFDを生成します。
+
 
 ## SAMSubnetPolicy
 

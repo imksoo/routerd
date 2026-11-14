@@ -118,11 +118,15 @@
 </tbody>
 </table>
 <p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_mobility.go">pkg/config/validate_mobility.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/mobility/enrollmentclient.go">pkg/controller/mobility/enrollmentclient.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/mobility/core_helpers.go">pkg/controller/mobility/core_helpers.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controlapi/client.go">pkg/controlapi/client.go</a></p>
+<h2 id="referenceable-status-fields">Referenceable status fields</h2>
+<p>The ordinary status-reference validator accepts these field names for this kind. This allowlist does not guarantee that every field is currently populated; inspect runtime status. These are outputs, not YAML spec fields.</p>
+<p><code>phase</code>, <code>claimRef</code>, <code>observedRRSet</code>, <code>observedDirectPeerGroup</code>, <code>lastAttempt</code>, <code>lastSuccess</code>, <code>nextAttempt</code>, <code>backoff</code>, <code>failureCount</code>, <code>directTopologyPending</code>, <code>reason</code></p>
 <p><a href="/examples/cloudedge-dynamic-leaf-a-wg.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
 <li><a href="#conditions-and-references">Conditions and references</a></li>
 <li><a href="#yaml-definition">YAML definition</a></li>
 <li><a href="#field-meaning-and-default">Field meaning and default</a></li>
+<li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
 </ul>
 </div>
 </aside></main>

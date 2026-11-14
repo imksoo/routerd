@@ -125,11 +125,15 @@
 </tbody>
 </table>
 <p>実装: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_event.go">pkg/config/validate_event.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/eventfederation/controller.go">pkg/controller/eventfederation/controller.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go">pkg/controller/chain/chain.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/system.go">pkg/controller/chain/system.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/eventd/config.go">pkg/eventd/config.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/eventd/prune.go">pkg/eventd/prune.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/eventd/receiver.go">pkg/eventd/receiver.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd-eventd/main.go">cmd/routerd-eventd/main.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/state/federation.go">pkg/state/federation.go</a></p>
+<h2 id="状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</h2>
+<p>通常の状態値参照の検証で、このKindについて許可するフィールド名です。許可一覧にあるだけでは値の生成・取得を保証しないため、実際の状態を確認してください。YAMLのspecに設定する項目ではなく出力です。</p>
+<p><code>phase</code>, <code>group</code>, <code>nodeName</code>, <code>peers</code>, <code>peersFrom</code>, <code>pendingSources</code>, <code>listenAddress</code>, <code>listenPort</code></p>
 <p><a href="/examples/cloudedge-mobility-demo/aws.yaml">設定例</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
 <ul>
 <li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
 <li><a href="#yaml定義">YAML定義</a></li>
 <li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
+<li><a href="#状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</a></li>
 </ul>
 </div>
 </aside></main>

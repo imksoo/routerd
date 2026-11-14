@@ -48,4 +48,10 @@
           status: "set" # 选填; string; enum=["set", "unset", "unknown"]
 ```
 
+## 可引用的状态字段
+
+常规状态引用验证接受此 Kind 的下列字段名称。列于允许列表不保证目前有值，请检查实际状态。这些是输出，不是 YAML spec 配置。
+
+`phase`, `listenAddress`, `target`, `dryRun`
+
 [配置示例](https://github.com/imksoo/routerd/blob/main/examples/example-port-forward-web.yaml)

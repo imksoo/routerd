@@ -9160,5 +9160,335 @@
       "pkg/render/nftables.go",
       "pkg/controller/chain/mtu.go"
     ]
+  },
+  "SAMTransportProfile": {
+    "purpose": [
+      "Derive SAM per-node tunnels, endpoint /32 routes and optional BGP/BFD peers from shared topology or admitted RR/direct snapshots.",
+      "共有トポロジーや許可済みRR・directスナップショットからノード間SAMトンネル・終端/32経路・任意のBGP/BFDを生成します。",
+      "從共用拓撲或接納的 RR/direct 快照衍生節點間 SAM 隧道、端點 /32 路由及選用 BGP/BFD。",
+      "从共享拓扑或接纳的 RR/direct 快照派生节点间 SAM 隧道、端点 /32 路由及可选 BGP/BFD。"
+    ],
+    "rules": [
+      [
+        "Direct requires a final direct SAMPeerGroup after mandatory SAMRRSet, pair-stable addressing, BGP generation, routeReflectorClient:false, IPv4 import prefixes with min=max=32, positive RR LOCAL_PREF below direct preference, and local node identity community in BGPRouter.communities.set.out. Unusable direct data retains RR paths.",
+        "directには必須SAMRRSet後の最後のdirect SAMPeerGroup・pair-stable・BGP生成・routeReflectorClient:false・IPv4受信prefixとmin=max=32・direct未満の正のRR LOCAL_PREF・BGPRouter.communities.set.outの自ノード識別communityが必要です。directが使えなくてもRR経路を維持します。",
+        "direct 要求必要 SAMRRSet 後的最後 direct SAMPeerGroup、pair-stable、產生 BGP、routeReflectorClient:false、IPv4 匯入及 min=max=32、低於 direct 的正 RR LOCAL_PREF，以及 BGPRouter.communities.set.out 的本節點識別 community。direct 不可用時保留 RR。",
+        "direct 要求必需 SAMRRSet 后的最后 direct SAMPeerGroup、pair-stable、生成 BGP、routeReflectorClient:false、IPv4 导入及 min=max=32、低于 direct 的正 RR LOCAL_PREF，以及 BGPRouter.communities.set.out 的自身节点标识 community。direct 不可用时保留 RR。"
+      ],
+      [
+        "Generated RR-client/direct import enforces /32 bounds and peer-identity community, forbidding other known node identities. Direct import prefixes become exactly the admitted leaf owned /32s, with deny-all when empty and nextHopRewrite forced to peer-address. RR fallback next hop is also normalized to peer-address in direct profiles.",
+        "生成RRクライアント・direct受信は/32と相手識別communityを必須化し、他既知ノード識別を禁止します。directのprefixはそのleafの許可所有/32へ置換し、空なら全拒否・nextHopRewriteはpeer-addressです。directプロファイルではRR側もpeer-addressに正規化します。",
+        "產生 RR 用戶端/direct 匯入強制 /32 及對等端識別 community，禁止其他已知節點識別。direct 前綴僅為該 leaf 接納擁有 /32，空值全部拒絕，並強制 nextHopRewrite=peer-address。direct 設定的 RR 備援下一跳也正規化為 peer-address。",
+        "生成 RR 客户端/direct 导入强制 /32 及对等端标识 community，禁止其他已知节点标识。direct 前缀仅为该 leaf 接纳拥有 /32，空值全部拒绝，并强制 nextHopRewrite=peer-address。direct 配置的 RR 备用下一跳也规范化为 peer-address。"
+      ],
+      [
+        "An RR-client profile with no local MobilityPool requires explicit IPv4 import prefixes and bounds omitted or both 32. FreeBSD derives gifN/greN plus explicit point-to-point peerAddress; Linux uses compact tunnel names. Successful derivation is not tunnel/BGP connectivity proof.",
+        "ローカルMobilityPoolのないRRクライアントでは明示IPv4受信prefixと、長さ省略または両方32が必要です。FreeBSDはgifN・greNと明示peerAddress、Linuxは短縮トンネル名を生成します。生成成功はトンネル・BGP疎通の証明ではありません。",
+        "無本機 MobilityPool 的 RR 用戶端需明確 IPv4 匯入前綴，長度省略或皆 32。FreeBSD 衍生 gifN/greN 與明確點對點 peerAddress；Linux 使用短隧道名稱。衍生成功不證明隧道/BGP 可達。",
+        "无本机 MobilityPool 的 RR 客户端需明确 IPv4 导入前缀，长度省略或均为 32。FreeBSD 派生 gifN/greN 与明确点对点 peerAddress；Linux 使用短隧道名称。派生成功不证明隧道/BGP 可达。"
+      ]
+    ],
+    "fields": {
+      "selfNodeRef": [
+        "Required stable local nodeRef; no hostname/router-ID inference.",
+        "必須の安定した自ノードnodeRefです。ホスト名・router IDから推定しません。",
+        "必填穩定本機 nodeRef，不從主機名稱/router ID 推定。",
+        "必填稳定本机 nodeRef，不从主机名/router ID 推定。"
+      ],
+      "mode": [
+        "Required ipip/gre/fou/gue. FreeBSD supports only ipip/gif and gre; fou/gue require Linux. Derived tunnels are unencrypted by themselves.",
+        "必須のipip・gre・fou・gueです。FreeBSDはipip/gif・greのみで、fou・gueはLinuxが必要です。生成トンネル自体は暗号化しません。",
+        "必填 ipip/gre/fou/gue。FreeBSD 僅支援 ipip/gif 與 gre，fou/gue 需 Linux。衍生隧道本身不加密。",
+        "必填 ipip/gre/fou/gue。FreeBSD 仅支持 ipip/gif 与 gre，fou/gue 需 Linux。派生隧道本身不加密。"
+      ],
+      "encryption": [
+        "none/omitted or wireguard. wireguard prefers node.wireGuard.transportEndpoint; does not generate private keys or a local WireGuardInterface. Configure the WireGuard underlay separately.",
+        "既定・省略はnoneです。wireguardならノードのwireGuard.transportEndpointを優先します。秘密鍵・ローカルWireGuardInterfaceは生成せず、下位WireGuardは別途設定します。",
+        "none/省略或 wireguard。wireguard 優先節點 wireGuard.transportEndpoint，不產生私密金鑰或本機 WireGuardInterface，須另設定 WireGuard 底層。",
+        "none/省略或 wireguard。wireguard 优先节点 wireGuard.transportEndpoint，不生成私钥或本机 WireGuardInterface，须另配置 WireGuard 底层。"
+      ],
+      "innerPrefix": [
+        "Required IPv4 CIDR with prefix length <=31; subdivided into /31 edges, with enough slots for topology. Pair-stable collisions are errors rather than silently moving endpoints.",
+        "必須の長さ31以下のIPv4 CIDRです。/31の辺へ分割するため、トポロジーに十分な枠が必要です。pair-stableの衝突時は終端を移動せずエラーにします。",
+        "必填長度 <=31 的 IPv4 CIDR，拆為 /31 邊，須有足夠拓撲插槽。pair-stable 衝突會報錯，不靜默移動端點。",
+        "必填长度 <=31 的 IPv4 CIDR，拆为 /31 边，须有足够拓扑槽位。pair-stable 冲突会报错，不静默移动端点。"
+      ],
+      "addressingMode": [
+        "edge-index by default: /31 slots follow sorted topology edges and can change when topology changes. pair-stable hashes innerPrefix and unordered node pair into a fixed slot; required for direct sources.",
+        "既定edge-indexは並べ替えた辺へ/31を割り当て、トポロジー変更で番号が変わり得ます。pair-stableはinnerPrefixと順不同ノード対のハッシュで固定枠を選び、direct参照で必須です。",
+        "預設 edge-index 依排序拓撲邊指派 /31，拓撲變更可能改變索引。pair-stable 對 innerPrefix 與無序節點配對雜湊至固定插槽，direct 來源必填。",
+        "默认 edge-index 按排序拓扑边分配 /31，拓扑更改可能改变索引。pair-stable 对 innerPrefix 与无序节点配对哈希至固定槽位，direct 来源必填。"
+      ],
+      "underlayInterface": [
+        "Required declared logical interface. Used by generated tunnels and remote endpoint /32 device routes; generated tunnels assert trustedUnderlay:true.",
+        "必須の宣言済み論理インターフェースです。生成トンネルとリモート終端/32デバイス経路に使い、生成トンネルはtrustedUnderlay:trueです。",
+        "必填已宣告邏輯介面，用於衍生隧道及遠端端點 /32 裝置路由，衍生隧道設定 trustedUnderlay:true。",
+        "必填已声明逻辑接口，用于派生隧道及远端端点 /32 设备路由，派生隧道配置 trustedUnderlay:true。"
+      ],
+      "localEndpoint": [
+        "Local outer IPv4 literal; exactly one of localEndpoint/localEndpointFrom is required. No interface-address auto-selection.",
+        "ローカル外側IPv4の固定値です。localEndpointFromとどちらか一方が必須で、インターフェースアドレスの自動選択はありません。",
+        "本機外層 IPv4 固定值，與 localEndpointFrom 必須且只能指定一項，不自動選擇介面位址。",
+        "本机外层 IPv4 固定值，与 localEndpointFrom 必须且只能指定一项，不自动选择接口地址。"
+      ],
+      "localEndpointFrom": [
+        "Status source instead of literal localEndpoint. Common resource/field rules apply; unresolved endpoint leaves dependent transport pending.",
+        "localEndpoint固定値の代わりの状態参照です。共通resource・field規則に従い、未解決なら依存トランスポートは保留です。",
+        "取代固定 localEndpoint 的狀態來源，適用共用 resource/field 規則，未解析端點使相依傳輸待處理。",
+        "替代固定 localEndpoint 的状态来源，适用通用 resource/field 规则，未解析端点使依赖传输待处理。"
+      ],
+      "localEndpointFrom.resource": [
+        "Required existing Kind/name when this source is used.",
+        "参照利用時に必須の既存Kind/nameです。",
+        "使用來源時必填既有 Kind/name。",
+        "使用来源时必填已有 Kind/name。"
+      ],
+      "localEndpointFrom.field": [
+        "Required explicit provided field, for example currentAddress.",
+        "currentAddress等の参照元提供フィールドが必須です。",
+        "必填來源提供欄位，例如 currentAddress。",
+        "必填来源提供字段，例如 currentAddress。"
+      ],
+      "localEndpointFrom.optional": [
+        "Default false; does not waive reference validation or supply a usable endpoint when unresolved.",
+        "既定falseです。参照検証を省略せず、未解決時の終端補完もしません。",
+        "預設 false，不免除參照驗證，也不補入未解析端點。",
+        "默认 false，不免除引用验证，也不补入未解析端点。"
+      ],
+      "encapSport": [
+        "UDP source port 1–65535 required for fou/gue, forbidden for ipip/gre (omit/0).",
+        "fou・gueで必須のUDP送信元ポート1～65535です。ipip・greでは禁止（省略・0）です。",
+        "fou/gue 必填 UDP 來源埠 1–65535，ipip/gre 禁用（省略或 0）。",
+        "fou/gue 必填 UDP 源端口 1–65535，ipip/gre 禁用（省略或 0）。"
+      ],
+      "encapDport": [
+        "UDP destination port 1–65535 required for fou/gue, forbidden for ipip/gre. No implicit port.",
+        "fou・gueで必須のUDP宛先ポート1～65535です。ipip・greでは禁止で、自動既定ポートはありません。",
+        "fou/gue 必填 UDP 目的埠 1–65535，ipip/gre 禁用，無隱含預設埠。",
+        "fou/gue 必填 UDP 目标端口 1–65535，ipip/gre 禁用，无隐含默认端口。"
+      ],
+      "peersFrom": [
+        "Ordered topology sources; at least one required unless publishPeerGroup:true. Self is excluded as a peer but retained in shared topology; later duplicate nodes may replace earlier source material.",
+        "順序付きトポロジー参照元です。publishPeerGroup:true以外は1件以上必須です。自身はピアから除きますが共有トポロジーには含め、後の重複ノードが先の情報を置換し得ます。",
+        "有順序的拓撲來源，除 publishPeerGroup:true 外至少一個。自己不作為對等端但保留於共用拓撲，後續重複節點可能覆寫前方資料。",
+        "有顺序的拓扑来源，除 publishPeerGroup:true 外至少一个。自身不作为对等端但保留于共享拓扑，后续重复节点可能覆盖前方数据。"
+      ],
+      "peersFrom[].resource": [
+        "Required SAMNodeSet/name, SAMPeerGroup/name, SAMEnrollmentPolicy/name or SAMRRSet/name. NodeSet is static; runtime sources supply admitted/shared snapshots.",
+        "必須のSAMNodeSet/name・SAMPeerGroup/name・SAMEnrollmentPolicy/name・SAMRRSet/nameです。NodeSetは静的で、実行時参照は許可済み・共有スナップショットを供給します。",
+        "必填 SAMNodeSet/name、SAMPeerGroup/name、SAMEnrollmentPolicy/name 或 SAMRRSet/name。NodeSet 為靜態，執行時來源提供接納/共用快照。",
+        "必填 SAMNodeSet/name、SAMPeerGroup/name、SAMEnrollmentPolicy/name 或 SAMRRSet/name。NodeSet 为静态，运行时来源提供接纳/共享快照。"
+      ],
+      "peersFrom[].optional": [
+        "Default false. Missing nonoptional source is pending. Direct source unavailability/incompatibility does not remove usable RR fallback peers.",
+        "既定falseです。非optional参照元欠落は保留です。directの利用不能・非互換でも利用可能なRRピアは除きません。",
+        "預設 false，非 optional 來源缺少為待處理。direct 不可用/不相容不移除可用 RR 備援對等端。",
+        "默认 false，非 optional 来源缺失为待处理。direct 不可用/不兼容不移除可用 RR 备用对等端。"
+      ],
+      "peersFrom[].direct": [
+        "Default false. True only for the final SAMPeerGroup source following a mandatory SAMRRSet; see direct-mesh constraints below.",
+        "既定falseです。trueは必須SAMRRSetに続く最後のSAMPeerGroupのみで、後述のdirect条件が適用されます。",
+        "預設 false，true 僅限必要 SAMRRSet 後的最後 SAMPeerGroup 來源，另適用下述 direct 限制。",
+        "默认 false，true 仅限必需 SAMRRSet 后的最后 SAMPeerGroup 来源，另适用下述 direct 限制。"
+      ],
+      "peersFrom[].nodeRefs": [
+        "Optional unique nonempty nodeRef selectors; omitted selects all eligible source nodes. Narrows local adjacency, not shared authoritative topology.",
+        "任意の空・重複なしnodeRef選択一覧で、省略時は参照元の有効ノード全体です。ローカル隣接を絞るだけで、共有トポロジー自体の置換ではありません。",
+        "選用唯一非空 nodeRef 選擇值，省略選取所有合格來源節點。僅縮小本機鄰接，不取代共用權威拓撲。",
+        "可选唯一非空 nodeRef 选择值，省略选择所有合格来源节点。仅缩小本机邻接，不替换共享权威拓扑。"
+      ],
+      "publishPeerGroup": [
+        "Default false. True publishes the local endpoint as runtime SAMPeerGroup/<profile metadata.name> and permits empty peersFrom. Does not publish private credentials.",
+        "既定falseです。trueなら自終端を実行時SAMPeerGroup/<本プロファイル名>として公開し、peersFrom空を許可します。秘密認証情報は公開しません。",
+        "預設 false。true 將本機端點發布為執行時 SAMPeerGroup/<設定 metadata.name>，允許 peersFrom 為空，不發布私密憑證。",
+        "默认 false。true 将本机端点发布为运行时 SAMPeerGroup/<配置 metadata.name>，允许 peersFrom 为空，不发布私密凭据。"
+      ],
+      "bgp": [
+        "Required generated-peer settings; referenced BGPRouter must already exist.",
+        "必須の生成ピア設定です。参照BGPRouterは既存のものが必要です。",
+        "必填產生對等端設定，所參照 BGPRouter 須已存在。",
+        "必填生成对等端配置，所引用 BGPRouter 须已存在。"
+      ],
+      "bgp.generatePeers": [
+        "Default true. False generates transport without BGP/BFD; prohibited for direct sources.",
+        "既定trueです。falseはBGP・BFDを生成せずトランスポートのみ作り、direct参照時は禁止です。",
+        "預設 true，false 僅產生傳輸不產生 BGP/BFD，direct 來源時禁用。",
+        "默认 true，false 仅生成传输不生成 BGP/BFD，direct 来源时禁用。"
+      ],
+      "bgp.timersPreset": [
+        "Optional default/fast/slow shorthand; lower precedence than bgp.timers.profile. If both empty, generated peers inherit BGPRouter.timers.",
+        "任意のdefault・fast・slow短縮指定で、bgp.timers.profileより低優先です。両方空なら生成ピアはBGPRouter.timersを継承します。",
+        "選用 default/fast/slow 簡寫，優先序低於 bgp.timers.profile，兩者皆空時產生對等端繼承 BGPRouter.timers。",
+        "可选 default/fast/slow 简写，优先级低于 bgp.timers.profile，两者均空时生成对等端继承 BGPRouter.timers。"
+      ],
+      "bgp.directLocalPreference": [
+        "Direct-peer uint32 LOCAL_PREF; omitted/0 defaults to 200. Must exceed positive RR bgp.importPolicy.localPreference when direct is configured.",
+        "directピアのuint32 LOCAL_PREFで、省略・0は200です。direct指定時は正のRR bgp.importPolicy.localPreferenceを超える必要があります。",
+        "direct 對等端 uint32 LOCAL_PREF，省略或 0 預設 200，direct 時須大於正 RR bgp.importPolicy.localPreference。",
+        "direct 对等端 uint32 LOCAL_PREF，省略或 0 默认 200，direct 时须大于正 RR bgp.importPolicy.localPreference。"
+      ],
+      "bgp.bfd": [
+        "Optional generated BFD settings, used only if generatePeers and bfd.enabled are true.",
+        "任意の生成BFD設定で、generatePeers・bfd.enabledがともにtrueの場合だけ使います。",
+        "選用產生 BFD 設定，僅 generatePeers 與 bfd.enabled 皆 true 時使用。",
+        "可选生成 BFD 配置，仅 generatePeers 与 bfd.enabled 均 true 时使用。"
+      ],
+      "bgp.bfd.enabled": [
+        "Default false. True derives BFD resources linked to generated BGPPeers; requires FRR bfdd/vtysh.",
+        "既定falseです。trueなら生成BGPPeerと連携するBFDを導出し、FRR bfdd・vtyshが必要です。",
+        "預設 false。true 衍生連結產生 BGPPeer 的 BFD 資源，需 FRR bfdd/vtysh。",
+        "默认 false。true 派生关联生成 BGPPeer 的 BFD 资源，需 FRR bfdd/vtysh。"
+      ],
+      "bgp.routerRef": [
+        "Required BGPRouter/name referencing a declared router in the same Router configuration. Plain names are not accepted.",
+        "同じRouter設定内のBGPRouterを指すBGPRouter/nameが必須です。名前だけの指定は不可です。",
+        "必填 BGPRouter/name，參照同一 Router 設定中宣告的路由器，不接受單獨名稱。",
+        "必填 BGPRouter/name，引用同一 Router 配置中声明的路由器，不接受单独名称。"
+      ],
+      "bgp.peerASN": [
+        "Required nonzero uint32 remote ASN. Matching the local ASN selects iBGP; routeReflectorClient requires this equality.",
+        "必須の0以外のuint32相手ASNです。ローカルASNと一致すればiBGPになり、routeReflectorClientでは一致が必要です。",
+        "必填非零 uint32 遠端 ASN，等於本機 ASN 時為 iBGP；routeReflectorClient 要求兩者相等。",
+        "必填非零 uint32 远端 ASN，等于本机 ASN 时为 iBGP；routeReflectorClient 要求两者相等。"
+      ],
+      "bgp.ebgpMultihop": [
+        "Integer 0–255, default 0. Only values >1 enable GoBGP eBGP multihop and set its TTL; 0/1 leave multihop disabled.",
+        "0～255の整数で既定0です。2以上の場合だけGoBGPのeBGP multihopを有効にしてTTLを設定し、0・1では無効です。",
+        "整數 0–255，預設 0。僅大於 1 時啟用 GoBGP eBGP multihop 並設定 TTL，0/1 保持停用。",
+        "整数 0–255，默认 0。仅大于 1 时启用 GoBGP eBGP multihop 并配置 TTL，0/1 保持禁用。"
+      ],
+      "bgp.routeReflectorClient": [
+        "Default false. True marks an iBGP route-reflector client and requires peerASN=router ASN. It also expands effective export prefixes with router import prefixes.",
+        "既定falseです。trueはiBGPのRRクライアント指定で、peerASNとルーターASNの一致が必要です。実効送信prefixにはルーターの受信prefixも加えます。",
+        "預設 false。true 標記 iBGP 路由反射器用戶端，要求 peerASN 等於路由器 ASN，並將路由器匯入前綴加入有效匯出前綴。",
+        "默认 false。true 标记 iBGP 路由反射器客户端，要求 peerASN 等于路由器 ASN，并将路由器导入前缀加入有效导出前缀。"
+      ],
+      "bgp.routeReflectorClusterID": [
+        "Optional IPv4-form cluster ID, passed only when routeReflectorClient is true. Empty leaves selection to GoBGP; setting it alone does not enable reflection.",
+        "任意のIPv4形式クラスタIDで、routeReflectorClient=trueの場合だけ渡します。空ならGoBGPに任せ、これだけ指定しても反射は有効になりません。",
+        "選用 IPv4 格式叢集 ID，僅 routeReflectorClient=true 時傳入。空值由 GoBGP 決定，單獨設定不啟用反射。",
+        "可选 IPv4 格式集群 ID，仅 routeReflectorClient=true 时传入。空值由 GoBGP 决定，单独配置不启用反射。"
+      ],
+      "bgp.convergenceProfile": [
+        "Optional default/fast/stable; omitted inherits BGPRouter convergenceProfile. Selects the graceful-restart default, not timers.profile; router gracefulRestart.enabled still overrides it.",
+        "任意のdefault・fast・stableです。省略時はBGPRouterから継承します。timers.profileではなくGR既定値を選び、ルーターのgracefulRestart.enabled明示値がさらに優先します。",
+        "選用 default/fast/stable，省略繼承 BGPRouter convergenceProfile。選擇 graceful restart 預設值，不是 timers.profile；路由器 gracefulRestart.enabled 仍優先覆寫。",
+        "可选 default/fast/stable，省略继承 BGPRouter convergenceProfile。选择 graceful restart 默认值，不是 timers.profile；路由器 gracefulRestart.enabled 仍优先覆盖。"
+      ],
+      "bgp.importPolicy": [
+        "Optional import policy. A peer with no nonempty prefixes, community constraints, next-hop rewrite or localPreference inherits the router policy as a whole; prefix-length bounds alone do not count as an override.",
+        "任意の受信ポリシーです。ピアに非空のprefix・community条件・nextHopRewrite・localPreferenceがなければルーター側を全体継承します。長さ制限だけでは上書きと認識しません。",
+        "選用匯入原則。對等端若無非空前綴、community 條件、下一跳改寫或 localPreference，會完整繼承路由器原則；僅前綴長度限制不算覆寫。",
+        "可选导入策略。对等端若无非空前缀、community 条件、下一跳改写或 localPreference，会完整继承路由器策略；仅前缀长度限制不算覆盖。"
+      ],
+      "bgp.importPolicy.allowedPrefixes": [
+        "Optional IPv4/IPv6 CIDR allowlist. Import matches the prefix and its permitted more-specific lengths; masked duplicate prefixes are rejected. Empty adds no prefix match condition to an otherwise configured import policy.",
+        "任意のIPv4・IPv6 CIDR許可一覧です。プレフィックスと許可した詳細経路長で照合し、正規化後の同一プレフィックスは拒否します。空なら他条件で構成された受信ポリシーにprefix条件を加えません。",
+        "選用 IPv4/IPv6 CIDR 允許清單，依前綴及允許的更細前綴長度比對。拒絕遮罩後重複的前綴。為空時，不在其他已設定匯入條件上加入前綴條件。",
+        "可选 IPv4/IPv6 CIDR 允许列表，按前缀及允许的更具体前缀长度匹配。拒绝掩码后重复的前缀。为空时，不在其他已配置导入条件上加入前缀条件。"
+      ],
+      "bgp.importPolicy.allowedPrefixLengthMin": [
+        "Integer 0–128; 0/omitted uses each allowlist prefix length. A positive value must be >= each listed prefix length, <= address-family maximum and <= a positive maximum.",
+        "0～128の整数です。省略・0は各許可プレフィックス自身の長さです。正の指定値は各prefix長以上、ファミリー上限以下、正の最大長以下が必要です。",
+        "整數 0–128。省略或 0 使用每個允許前綴自身長度。正值須大於等於各前綴長度、小於等於家族上限及正數最大長度。",
+        "整数 0–128。省略或 0 使用每个允许前缀自身长度。正值须大于等于各前缀长度、小于等于地址族上限及正数最大长度。"
+      ],
+      "bgp.importPolicy.allowedPrefixLengthMax": [
+        "Integer 0–128; 0/omitted uses 32 for IPv4 or 128 for IPv6. A positive value must cover every listed prefix length and not exceed its family maximum. Dynamic leaf admission requires min=max=32.",
+        "0～128の整数です。省略・0はIPv4が32、IPv6が128です。正の値は全許可prefix長以上かつファミリー上限以下が必要です。動的leaf受付はmin=max=32が必須です。",
+        "整數 0–128。省略或 0 時 IPv4 為 32、IPv6 為 128。正值須涵蓋所有列出前綴長度且不超過家族上限。動態 leaf 接納要求 min=max=32。",
+        "整数 0–128。省略或 0 时 IPv4 为 32、IPv6 为 128。正值须涵盖所有列出前缀长度且不超过地址族上限。动态 leaf 接纳要求 min=max=32。"
+      ],
+      "bgp.importPolicy.requiredCommunities": [
+        "Optional community list; an accepted path must contain ALL listed communities. Empty adds no required-community condition.",
+        "任意のcommunity一覧です。受理する経路はすべての指定communityを持つ必要があり、空なら必須community条件はありません。",
+        "選用 community 清單；接受的路徑必須包含全部列出值。空清單不增加必要 community 條件。",
+        "可选 community 列表；接受的路径必须包含全部列出值。空列表不增加必需 community 条件。"
+      ],
+      "bgp.importPolicy.forbiddenCommunities": [
+        "Optional community list; ANY matching community rejects the path before the accept rule. Empty adds no prohibition.",
+        "任意の禁止community一覧です。どれか1つでも一致すれば許可判定より先に拒否します。空ならこの禁止条件はありません。",
+        "選用禁止 community 清單；任一符合就先於接受規則拒絕路徑。空清單不增加禁止條件。",
+        "可选禁止 community 列表；任一匹配就先于接受规则拒绝路径。空列表不增加禁止条件。"
+      ],
+      "bgp.importPolicy.nextHopRewrite": [
+        "peer-address by default; unchanged preserves the advertised next hop. Applied on accepted paths before selection/FIB projection. Setting only this field on a peer creates a peer-specific import policy instead of inheriting the router allowlist.",
+        "既定はpeer-addressです。unchangedなら広告されたnext hopを維持します。受理経路の選択・FIB投影前に適用します。ピアでこの項目だけを指定しても独自ポリシーとなり、ルーターの許可一覧は継承しません。",
+        "預設 peer-address；unchanged 保留廣告的下一跳。在接受路徑的選擇及 FIB 投影之前套用。對等端只設定此欄位也會建立自己的匯入原則，不繼承路由器允許清單。",
+        "默认 peer-address；unchanged 保留通告的下一跳。在接受路径的选择及 FIB 投影之前应用。对等端只配置此字段也会建立自己的导入策略，不继承路由器允许列表。"
+      ],
+      "bgp.importPolicy.localPreference": [
+        "Optional uint32 LOCAL_PREF for accepted paths before best-path selection. Default 0 leaves the BGP implementation default unchanged.",
+        "受理経路へbest-path選択前に設定するuint32のLOCAL_PREFです。既定0ならBGP実装の既定値を変更しません。",
+        "選用 uint32 LOCAL_PREF，在最佳路徑選擇之前設定於接受的路徑。預設 0 保留 BGP 實作預設值。",
+        "可选 uint32 LOCAL_PREF，在最佳路径选择之前设置于接受的路径。默认 0 保留 BGP 实现默认值。"
+      ],
+      "bgp.exportPolicy": [
+        "Optional export prefix filter. Per-peer prefixes are combined with router static and dynamic advertisements; route-reflector clients also receive router import prefixes. It is not a restrictive replacement for all router-derived export prefixes.",
+        "任意の送信prefix条件です。ピア側の一覧はルーター由来の静的・動的広告と合成し、RRクライアントではルーターの受信prefixも加えます。ルーター由来の送信prefix全体を絞る置換ではありません。",
+        "選用匯出前綴篩選。對等端前綴會與路由器靜態及動態廣告合併；RR 用戶端另加入路由器匯入前綴，不是取代並限制所有路由器衍生匯出前綴。",
+        "可选导出前缀过滤。对等端前缀会与路由器静态及动态通告合并；RR 客户端另加入路由器导入前缀，不是替换并限制所有路由器派生导出前缀。"
+      ],
+      "bgp.exportPolicy.allowedPrefixes": [
+        "Optional CIDR list, default empty. Effective nonempty export lists allow the listed prefixes and their more-specifics (through /32 or /128), rejecting unmatched routes. An effective empty list installs no export filter.",
+        "任意のCIDR一覧で既定は空です。合成後に非空なら各prefixとその詳細経路（/32・/128まで）を許可し、非一致を拒否します。合成後も空なら送信フィルターを設定しません。",
+        "選用 CIDR 清單，預設為空。合併後非空清單允許列出前綴及更細路由（至 /32 或 /128），拒絕不符路由。有效清單為空時不安裝匯出篩選。",
+        "可选 CIDR 列表，默认为空。合并后非空列表允许列出前缀及更具体路由（至 /32 或 /128），拒绝不符路由。有效列表为空时不安装导出过滤。"
+      ],
+      "bgp.timers": [
+        "Generated-peer timers; priority is profile timers.profile > timersPreset > referenced BGPRouter.timers.",
+        "生成ピアのタイマーで、優先順は本profileのtimers.profile・timersPreset・参照BGPRouter.timersです。",
+        "產生對等端計時器，優先序為本設定 timers.profile > timersPreset > BGPRouter.timers。",
+        "生成对等端计时器，优先级为本配置 timers.profile > timersPreset > BGPRouter.timers。"
+      ],
+      "bgp.timers.profile": [
+        "default/omitted: keepalive 30s, hold 90s, connectRetry 10s; fast: 3s/9s/1s; slow: 60s/180s/30s. Low-level keepalive/holdTime/connectRetry YAML fields are unsupported.",
+        "既定・省略はkeepalive 30秒・hold 90秒・connectRetry 10秒、fastは3秒・9秒・1秒、slowは60秒・180秒・30秒です。個別のkeepalive・holdTime・connectRetryのYAML指定は非対応です。",
+        "default 或省略：keepalive 30 秒、hold 90 秒、connectRetry 10 秒；fast 為 3/9/1 秒，slow 為 60/180/30 秒。不支援直接指定 keepalive/holdTime/connectRetry YAML。",
+        "default 或省略：keepalive 30 秒、hold 90 秒、connectRetry 10 秒；fast 为 3/9/1 秒，slow 为 60/180/30 秒。不支持直接指定 keepalive/holdTime/connectRetry YAML。"
+      ],
+      "bgp.bfd.interface": [
+        "Optional single-hop interface. Prefer Interface/name so the controller resolves the declared Interface.ifname; a plain name is validated as a declared logical interface but is passed literally to FRR. Omitted uses multihop.",
+        "任意のsingle-hopインターフェースです。Interface/nameなら宣言したInterface.ifnameへ解決します。名前だけの場合は論理インターフェースの存在を検証しますが、実行時はその文字列をFRRへ渡すため、Interface/nameを推奨します。省略時はmultihopです。",
+        "選用單跳介面。建議 Interface/name，控制器會解析宣告的 Interface.ifname；單獨名稱雖驗證為邏輯介面，卻會原樣傳給 FRR。省略使用多跳。",
+        "可选单跳接口。建议 Interface/name，控制器会解析声明的 Interface.ifname；单独名称虽验证为逻辑接口，却会原样传给 FRR。省略使用多跳。"
+      ],
+      "bgp.bfd.profile": [
+        "fast/omitted: minRx=minTx=300ms, multiplier=3; normal: 500ms/500ms/3; slow: 1000ms/1000ms/5. Explicit individual settings override these defaults.",
+        "fast・省略はminRx=minTx=300ms・倍率3、normalは500ms・500ms・3、slowは1000ms・1000ms・5です。個別指定があれば優先します。",
+        "fast 或省略：minRx=minTx=300ms、倍數 3；normal：500ms/500ms/3；slow：1000ms/1000ms/5。明確個別設定優先。",
+        "fast 或省略：minRx=minTx=300ms、倍数 3；normal：500ms/500ms/3；slow：1000ms/1000ms/5。明确单独配置优先。"
+      ],
+      "bgp.bfd.minRx": [
+        "Optional Go duration, 50ms–60000ms, overriding profile receive interval. Converted to integer milliseconds; omitted uses profile. This is a BFD protocol timer, not a router reboot deadline.",
+        "任意のGo durationで50ms～60000msです。プロファイルの受信間隔を上書きして整数msに変換し、省略時はプロファイル値です。BFDプロトコルタイマーであり、ルーター再起動の期限ではありません。",
+        "選用 Go duration 50ms–60000ms，覆寫設定的接收間隔並轉為整數毫秒。省略使用 profile。這是 BFD 協定計時器，不是路由器重新啟動期限。",
+        "可选 Go duration 50ms–60000ms，覆盖配置的接收间隔并转为整数毫秒。省略使用 profile。这是 BFD 协议计时器，不是路由器重启期限。"
+      ],
+      "bgp.bfd.minTx": [
+        "Optional Go duration, 50ms–60000ms, overriding profile transmit interval; emitted as integer milliseconds.",
+        "任意のGo durationで50ms～60000msです。プロファイルの送信間隔を上書きし、整数msで出力します。",
+        "選用 Go duration 50ms–60000ms，覆寫 profile 傳送間隔，輸出為整數毫秒。",
+        "可选 Go duration 50ms–60000ms，覆盖 profile 发送间隔，输出为整数毫秒。"
+      ],
+      "bgp.bfd.detectMultiplier": [
+        "Optional integer 1–50. Decoded 0/omission selects profile default (3, or 5 for slow). Multiplies the negotiated detection interval; not a count of routerd reconcile attempts.",
+        "任意の整数1～50です。省略・デコード値0ならプロファイル既定（通常3、slowは5）です。交渉された検出間隔の倍率で、routerdの再調整回数ではありません。",
+        "選用整數 1–50；解碼為 0 或省略時使用 profile 預設值（3，slow 為 5）。為協商偵測間隔倍數，不是 routerd 調整嘗試次數。",
+        "可选整数 1–50；解码为 0 或省略时使用 profile 默认值（3，slow 为 5）。为协商检测间隔倍数，不是 routerd 协调尝试次数。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_mobility.go",
+      "pkg/config/validate.go",
+      "pkg/config/validate_hybrid.go",
+      "pkg/controller/mobility/transport.go",
+      "pkg/controller/mobility/transport_support.go",
+      "pkg/mobilityconfig/sam_transport_slots.go",
+      "pkg/mobilityconfig/transport_mesh.go",
+      "pkg/controller/bgp/controller.go",
+      "pkg/controller/bfd/controller.go"
+    ]
   }
 }

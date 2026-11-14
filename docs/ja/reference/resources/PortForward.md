@@ -48,4 +48,10 @@
           status: "set" # 任意; string; enum=["set", "unset", "unknown"]
 ```
 
+## 状態値の参照に使えるフィールド
+
+通常の状態値参照の検証で、このKindについて許可するフィールド名です。許可一覧にあるだけでは値の生成・取得を保証しないため、実際の状態を確認してください。YAMLのspecに設定する項目ではなく出力です。
+
+`phase`, `listenAddress`, `target`, `dryRun`
+
 [設定例](https://github.com/imksoo/routerd/blob/main/examples/example-port-forward-web.yaml)

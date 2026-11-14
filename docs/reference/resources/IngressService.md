@@ -68,4 +68,10 @@ All fields are shown as a structural reference, not a configuration to apply unc
           status: "set" # optional; string; enum=["set", "unset", "unknown"]
 ```
 
+## Referenceable status fields
+
+The ordinary status-reference validator accepts these field names for this kind. This allowlist does not guarantee that every field is currently populated; inspect runtime status. These are outputs, not YAML spec fields.
+
+`phase`, `hostname`, `listenAddress`, `activeBackend`, `activeBackends`, `healthyBackends`, `totalBackends`, `backends`, `observedAt`, `dryRun`
+
 [Example](https://github.com/imksoo/routerd/blob/main/examples/k8s-api-vip-dualstack.yaml)

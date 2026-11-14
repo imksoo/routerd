@@ -563,6 +563,8 @@ Submit a local enrollment claim to bootstrap RR control APIs, fetch admitted top
 
 [SAMTransportProfile](resources/SAMTransportProfile.md)
 
+Derive SAM per-node tunnels, endpoint /32 routes and optional BGP/BFD peers from shared topology or admitted RR/direct snapshots.
+
 
 ## SAMSubnetPolicy
 

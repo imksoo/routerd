@@ -78,3 +78,9 @@
 | `spec.allowCIDRFrom` | 與allowCIDRs合併的CIDR來源，預設空。非optional來源缺值時為Pending/AllowCIDRFromPending；衍生CIDR錯誤時為Pending/AllowCIDRFromInvalid。不接受沒有前綴長度的裸IP。 |
 
 實作: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate_system.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_system.go) · [pkg/controller/chain/ntp.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/ntp.go)
+
+## 可參照的狀態欄位
+
+一般狀態參照驗證接受此 Kind 的下列欄位名稱。列於允許清單不保證目前有值，請檢查實際狀態。這些是輸出，不是 YAML spec 設定。
+
+`phase`, `servers`, `listenAddresses`, `allowCIDRs`, `source`, `updatedAt`

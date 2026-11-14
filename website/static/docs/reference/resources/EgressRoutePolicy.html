@@ -104,9 +104,13 @@
           maxAge: &quot;&lt;string&gt;&quot; # optional; string
           status: &quot;set&quot; # optional; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
 </code></pre>
+<h2 id="referenceable-status-fields">Referenceable status fields</h2>
+<p>The ordinary status-reference validator accepts these field names for this kind. This allowlist does not guarantee that every field is currently populated; inspect runtime status. These are outputs, not YAML spec fields.</p>
+<p><code>phase</code>, <code>family</code>, <code>selectedCandidate</code>, <code>selectedSource</code>, <code>selectedDevice</code>, <code>selectedGateway</code>, <code>selectedGatewaySource</code>, <code>selectedRouteTable</code>, <code>selectedMetric</code>, <code>selectedWeight</code>, <code>selectedTargets</code>, <code>selectedInterface</code>, <code>candidates</code>, <code>role</code>, <code>advisory</code>, <code>lastTransitionAt</code>, <code>datapathRoleResource</code>, <code>datapathRole</code>, <code>datapathRoleTransitionAt</code>, <code>datapathReady</code>, <code>datapathState</code>, <code>datapathReadyAt</code>, <code>datapathReadyDuration</code>, <code>datapathReadyDurationMillis</code>, <code>datapathFallbackBehavior</code>, <code>newFlowBehavior</code>, <code>updatedAt</code>, <code>dryRun</code></p>
 <p><a href="/examples/home-router-mgmt-protected.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
 <li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
 </ul>
 </div>
 </aside></main>

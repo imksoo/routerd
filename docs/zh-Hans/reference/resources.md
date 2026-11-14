@@ -563,6 +563,8 @@ spec:
 
 [SAMTransportProfile](resources/SAMTransportProfile.md)
 
+从共享拓扑或接纳的 RR/direct 快照派生节点间 SAM 隧道、端点 /32 路由及可选 BGP/BFD。
+
 
 ## SAMSubnetPolicy
 

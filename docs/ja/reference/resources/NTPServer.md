@@ -78,3 +78,9 @@ chronyまたはFreeBSD ntpdを使い、時刻サーバーと上流サーバー�
 | `spec.allowCIDRFrom` | allowCIDRsと結合するCIDR取得元。省略時は空です。optionalでない取得元に値がなければPending/AllowCIDRFromPending、取得値が不正なCIDRならPending/AllowCIDRFromInvalidです。プレフィックス長のないIPアドレスはCIDRとして受理しません。 |
 
 実装: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate_system.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_system.go) · [pkg/controller/chain/ntp.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/ntp.go)
+
+## 状態値の参照に使えるフィールド
+
+通常の状態値参照の検証で、このKindについて許可するフィールド名です。許可一覧にあるだけでは値の生成・取得を保証しないため、実際の状態を確認してください。YAMLのspecに設定する項目ではなく出力です。
+
+`phase`, `servers`, `listenAddresses`, `allowCIDRs`, `source`, `updatedAt`
