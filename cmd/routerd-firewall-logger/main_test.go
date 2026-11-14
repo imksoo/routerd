@@ -222,7 +222,7 @@ func TestAcceptDPIFlowEnrichesLaterDeny(t *testing.T) {
 		DPIConfidence: 90,
 		DPITLSSNI:     "cached.example",
 	}
-	if err := recordFirewallEntry(context.Background(), log, accept, nil, opts); err != nil {
+	if err := recordFirewallEntryWithRecorder(context.Background(), log, log, accept, nil, opts); err != nil {
 		t.Fatal(err)
 	}
 	deny := logstore.FirewallLogEntry{
@@ -294,13 +294,13 @@ func TestShouldClassifyForwardDPIStopsAfterUnknownPacketBudget(t *testing.T) {
 			Reason:  "no_application_signal",
 		}),
 	}
-	if err := recordFirewallEntry(context.Background(), log, entry, nil, opts); err != nil {
+	if err := recordFirewallEntryWithRecorder(context.Background(), log, log, entry, nil, opts); err != nil {
 		t.Fatal(err)
 	}
 	if !shouldClassifyForwardDPI(context.Background(), log, entry, opts, time.Now().UTC()) {
 		t.Fatal("unknown flow below packet budget should still classify")
 	}
-	if err := recordFirewallEntry(context.Background(), log, entry, nil, opts); err != nil {
+	if err := recordFirewallEntryWithRecorder(context.Background(), log, log, entry, nil, opts); err != nil {
 		t.Fatal(err)
 	}
 	if shouldClassifyForwardDPI(context.Background(), log, entry, opts, time.Now().UTC()) {

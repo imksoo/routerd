@@ -132,10 +132,6 @@ func runNFLogDaemon(ctx context.Context, opts options, log *logstore.FirewallLog
 	}
 }
 
-func recordFirewallEntry(ctx context.Context, log *logstore.FirewallLog, entry logstore.FirewallLogEntry, telemetry *routerotel.Runtime, opts options) error {
-	return recordFirewallEntryWithRecorder(ctx, log, log, entry, telemetry, opts)
-}
-
 type firewallEntryRecorder interface {
 	Record(context.Context, logstore.FirewallLogEntry) error
 }
