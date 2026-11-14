@@ -37,11 +37,12 @@ type Store interface {
 }
 
 type Controller struct {
-	Router *api.Router
-	Bus    *bus.Bus
-	Store  Store
-	Events eventconsumer.Store
-	Logger *slog.Logger
+	Router       *api.Router
+	Bus          *bus.Bus
+	Store        Store
+	Events       eventconsumer.Store
+	Logger       *slog.Logger
+	MutationGate *sync.RWMutex
 
 	mu    sync.Mutex
 	state map[string]*ruleState
@@ -121,6 +122,13 @@ func (c *Controller) drainStoredEvents(ctx context.Context) error {
 }
 
 func (c *Controller) Reconcile(ctx context.Context, event daemonapi.DaemonEvent) error {
+	if c.MutationGate != nil {
+		c.MutationGate.RLock()
+		defer c.MutationGate.RUnlock()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	// Rule bookkeeping produces status events through routerd, not eventrule.
 	// Feeding those events back can make one or more rules fire indefinitely.
 	if event.Type == "routerd.resource.status.changed" && event.Resource != nil && event.Resource.APIVersion == api.NetAPIVersion && event.Resource.Kind == "EventRule" {
@@ -130,7 +138,7 @@ func (c *Controller) Reconcile(ctx context.Context, event daemonapi.DaemonEvent)
 		if resource.Kind != "EventRule" {
 			continue
 		}
-		events, err := c.reconcileRule(resource, event)
+		events, err := c.reconcileRule(ctx, resource, event)
 		if err != nil {
 			if c.Logger != nil {
 				c.Logger.Warn("event rule configuration is invalid; skipping rule", "rule", resource.Metadata.Name, "error", err)
@@ -146,7 +154,7 @@ func (c *Controller) Reconcile(ctx context.Context, event daemonapi.DaemonEvent)
 	return nil
 }
 
-func (c *Controller) reconcileRule(resource api.Resource, event daemonapi.DaemonEvent) ([]daemonapi.DaemonEvent, error) {
+func (c *Controller) reconcileRule(ctx context.Context, resource api.Resource, event daemonapi.DaemonEvent) ([]daemonapi.DaemonEvent, error) {
 	spec, err := resource.EventRuleSpec()
 	if err != nil {
 		return nil, err
@@ -181,11 +189,11 @@ func (c *Controller) reconcileRule(resource api.Resource, event daemonapi.Daemon
 	case OperatorWindow:
 		out = c.evalWindow(resource, spec, state, key, event, now)
 	case OperatorAbsence:
-		c.evalAbsence(resource, spec, state, key, event)
+		c.evalAbsence(ctx, resource, spec, state, key, event)
 	case OperatorThrottle:
 		out = c.evalThrottle(resource, spec, state, key, event, now)
 	case OperatorDebounce:
-		c.evalDebounce(resource, spec, state, key, event)
+		c.evalDebounce(ctx, resource, spec, state, key, event)
 	case OperatorCount:
 		out = c.evalCount(resource, spec, state, key, event)
 	}
@@ -253,7 +261,7 @@ func (c *Controller) evalWindow(resource api.Resource, spec api.EventRuleSpec, s
 	return []daemonapi.DaemonEvent{c.emitEvent(resource, spec, event, key, len(kept))}
 }
 
-func (c *Controller) evalAbsence(resource api.Resource, spec api.EventRuleSpec, state *ruleState, key string, event daemonapi.DaemonEvent) {
+func (c *Controller) evalAbsence(ctx context.Context, resource api.Resource, spec api.EventRuleSpec, state *ruleState, key string, event daemonapi.DaemonEvent) {
 	if spec.Pattern.Expected != "" && bus.MatchTopic(spec.Pattern.Expected, event.Type) {
 		if timer := state.absence[key]; timer != nil {
 			timer.Stop()
@@ -274,6 +282,13 @@ func (c *Controller) evalAbsence(resource api.Resource, spec api.EventRuleSpec, 
 	delay := durationOr(spec.Pattern.Duration, time.Minute)
 	var timer *time.Timer
 	timer = time.AfterFunc(delay, func() {
+		if c.MutationGate != nil {
+			c.MutationGate.RLock()
+			defer c.MutationGate.RUnlock()
+		}
+		if ctx.Err() != nil {
+			return
+		}
 		c.mu.Lock()
 		current := c.ruleStateLocked(resource.Metadata.Name)
 		if current.absence[key] != timer {
@@ -283,7 +298,7 @@ func (c *Controller) evalAbsence(resource api.Resource, spec api.EventRuleSpec, 
 		delete(current.absence, key)
 		c.mu.Unlock()
 		emitted := c.emitEvent(resource, spec, event, key, 0)
-		_ = c.publish(context.Background(), resource, emitted)
+		_ = c.publish(ctx, resource, emitted)
 	})
 	state.absence[key] = timer
 }
@@ -301,7 +316,7 @@ func (c *Controller) evalThrottle(resource api.Resource, spec api.EventRuleSpec,
 	return []daemonapi.DaemonEvent{c.emitEvent(resource, spec, event, key, 0)}
 }
 
-func (c *Controller) evalDebounce(resource api.Resource, spec api.EventRuleSpec, state *ruleState, key string, event daemonapi.DaemonEvent) {
+func (c *Controller) evalDebounce(ctx context.Context, resource api.Resource, spec api.EventRuleSpec, state *ruleState, key string, event daemonapi.DaemonEvent) {
 	if !eventMatchesAny(spec.Pattern, event.Type) {
 		return
 	}
@@ -311,6 +326,13 @@ func (c *Controller) evalDebounce(resource api.Resource, spec api.EventRuleSpec,
 	quiet := durationOr(spec.Pattern.Quiet, durationOr(spec.Pattern.Duration, time.Second))
 	var timer *time.Timer
 	timer = time.AfterFunc(quiet, func() {
+		if c.MutationGate != nil {
+			c.MutationGate.RLock()
+			defer c.MutationGate.RUnlock()
+		}
+		if ctx.Err() != nil {
+			return
+		}
 		c.mu.Lock()
 		current := c.ruleStateLocked(resource.Metadata.Name)
 		if current.debounce[key] != timer {
@@ -320,7 +342,7 @@ func (c *Controller) evalDebounce(resource api.Resource, spec api.EventRuleSpec,
 		delete(current.debounce, key)
 		c.mu.Unlock()
 		emitted := c.emitEvent(resource, spec, event, key, 0)
-		_ = c.publish(context.Background(), resource, emitted)
+		_ = c.publish(ctx, resource, emitted)
 	})
 	state.debounce[key] = timer
 }
