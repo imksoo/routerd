@@ -11,27 +11,29 @@
 - role 與至少一個介面必填，同一區域內重複的介面字串會被拒絕。FirewallRule 使用區域 metadata.name；self 是路由器本機的特殊端點，不是一般介面區域。
 - 隱含規則允許 mgmt 前往所有角色與 self，trust 前往 self 及 mgmt 以外的角色。untrust 原則拒絕，但目前共用規則允許相同角色間轉送。既有連線、相關流量與控制協定例外另行評估。OS 順序限制請見 FirewallPolicy/FirewallRule。
 
-## YAML定義
+## 設定語法
 
-此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。
+這是說明用語法，不是可直接複製的YAML。未加括號的欄位在父項目內必填；`[ ... ]`表示依條件可省略，`<型別>`為替換值，`(a | b)`表示選項。選填父項目內仍可能有必填子項目。條件必填、互斥與實際預設值請見下表；一般YAML請使用連結範例。
 
-```yaml
+```text
 - apiVersion: firewall.routerd.net/v1alpha1
   kind: FirewallZone
   metadata:
     name: "<name>"
   spec:
-    interfaces: # 必填; array
-      - "<string>" # string
-    role: "untrust" # 必填; string; enum=["untrust", "trust", "mgmt"]
+    interfaces:
+      - <string>
+    role: ("untrust" | "trust" | "mgmt")
 ```
 
 ## 欄位意義與預設值
 
-| YAML | 欄位意義與預設值 |
-| --- | --- |
-| `spec.role` | 必填 untrust、trust 或 mgmt，無預設值。選擇隱含防火牆行為，不是介面所有權或驗證設定。 |
-| `spec.interfaces` | 必填且非空的邏輯介面參照。單純名稱預設為 Interface；接受 Interface/name、PPPoESession/name、WireGuardInterface/name、DSLiteTunnel/name。必須可在設定介面/通道索引中解析，且產生規則時有非空核心介面名稱。 |
+選填父項目的必填子項目僅在使用父項目時需要。其他具體條件列於說明；`[ ... ]`選項仍可能需要擇一。
+
+| YAML | 指定要求 | 型別與限制 | 欄位意義與預設值 |
+| --- | --- | --- | --- |
+| `spec.role` | **必填** | string; enum=["untrust", "trust", "mgmt"] | 必填 untrust、trust 或 mgmt，無預設值。選擇隱含防火牆行為，不是介面所有權或驗證設定。 |
+| `spec.interfaces` | **必填** | array | 必填且非空的邏輯介面參照。單純名稱預設為 Interface；接受 Interface/name、PPPoESession/name、WireGuardInterface/name、DSLiteTunnel/name。必須可在設定介面/通道索引中解析，且產生規則時有非空核心介面名稱。 |
 
 實作: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate_firewall.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_firewall.go) · [pkg/config/validate.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go) · [pkg/render/nftables.go](https://github.com/imksoo/routerd/blob/main/pkg/render/nftables.go) · [pkg/render/pf.go](https://github.com/imksoo/routerd/blob/main/pkg/render/pf.go)
 

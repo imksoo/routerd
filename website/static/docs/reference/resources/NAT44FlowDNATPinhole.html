@@ -13,107 +13,146 @@
 <li>Inbound DNAT checks selected incoming interfaces, allowed remote source ports and a learned destination port. It does not reapply outbound destination CIDRs/sets to the inbound remote address and does not create a firewall forward-accept rule; the firewall policy must also permit the translated traffic.</li>
 <li>Learned maps are kernel runtime state, not configuration or persistent DB records; recreating the NAT table or rebooting loses them. Outbound traffic must relearn mappings.</li>
 </ul>
-<h2 id="yaml-definition">YAML definition</h2>
-<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
-<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+<h2 id="configuration-syntax">Configuration syntax</h2>
+<p>This is explanatory notation, not YAML to copy. Unbracketed fields are required within their parent; <code>[ ... ]</code> marks fields that can be omitted, subject to the conditions in the table. <code>&lt;type&gt;</code> is a placeholder, and <code>(a | b)</code> lists alternatives. Optional parents may contain required children. Conditional requirements, exclusions and runtime defaults are described below. Use the linked YAML example for an ordinary configuration.</p>
+<pre><code class="language-text">- apiVersion: net.routerd.net/v1alpha1
   kind: NAT44FlowDNATPinhole
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    correlation: # optional; object
-      key: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;localPort&quot;]
-    fromInterfaceRefs: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    inbound: # Required; object
-      sourcePorts: # Required; array
-        - &quot;&lt;string&gt;&quot; # string
-    outbound: # Required; object
-      destinationCIDRs: # optional; array
-        - &quot;&lt;string&gt;&quot; # string
-      destinationPorts: # Required; array
-        - &quot;&lt;string&gt;&quot; # string
-      destinationSetRefs: # optional; array
-        - &quot;&lt;string&gt;&quot; # string
-      protocol: &quot;udp&quot; # Required; string; enum=[&quot;udp&quot;]
-      sourceCIDRs: # optional; array
-        - &quot;&lt;string&gt;&quot; # string
-      sourceSetRef: &quot;&lt;string&gt;&quot; # optional; string
-    timeout: &quot;&lt;string&gt;&quot; # optional; string
-    when: # optional; object
-      state: # optional; object
-        &quot;&lt;key&gt;&quot;: # optional; object
-          contains: &quot;&lt;string&gt;&quot; # optional; string
-          equals: &quot;&lt;string&gt;&quot; # optional; string
-          exists: true # optional; boolean
-          for: &quot;&lt;string&gt;&quot; # optional; string
-          in: # optional; array
-            - &quot;&lt;string&gt;&quot; # string
-          maxAge: &quot;&lt;string&gt;&quot; # optional; string
-          status: &quot;set&quot; # optional; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+    [ correlation:
+        [ key: (&quot;&quot; | &quot;localPort&quot;) ]
+    ]
+    fromInterfaceRefs:
+      - &lt;string&gt;
+    inbound:
+      sourcePorts:
+        - &lt;string&gt;
+    outbound:
+      [ destinationCIDRs:
+          - &lt;string&gt;
+      ]
+      destinationPorts:
+        - &lt;string&gt;
+      [ destinationSetRefs:
+          - &lt;string&gt;
+      ]
+      protocol: (&quot;udp&quot;)
+      [ sourceCIDRs:
+          - &lt;string&gt;
+      ]
+      [ sourceSetRef: &lt;string&gt; ]
+    [ timeout: &lt;string&gt; ]
+    [ when:
+        [ state:
+            [ &lt;name&gt;:
+                [ contains: &lt;string&gt; ]
+                [ equals: &lt;string&gt; ]
+                [ exists: &lt;boolean&gt; ]
+                [ for: &lt;string&gt; ]
+                [ in:
+                    - &lt;string&gt;
+                ]
+                [ maxAge: &lt;string&gt; ]
+                [ status: (&quot;set&quot; | &quot;unset&quot; | &quot;unknown&quot;) ]
+            ]
+        ]
+    ]
 </code></pre>
 <h2 id="field-meaning-and-default">Field meaning and default</h2>
+<p>Required children of optional objects apply only when their parent is used. Other exact conditions are in the explanation; bracketed alternatives may still require one choice.</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>Presence</th>
+<th>Type / constraints</th>
 <th>Field meaning and default</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.outbound</code></td>
+<td><strong>Required</strong></td>
+<td>object</td>
 <td>Required outbound-learning match. It records eligible UDP flow identities but does not itself allow outbound traffic through the firewall.</td>
 </tr>
 <tr>
 <td><code>spec.outbound.sourceSetRef</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Optional existing IPAddressSet/<name> source selector. At least this or sourceCIDRs is required; both may be combined as OR alternatives. Default empty.</td>
 </tr>
 <tr>
 <td><code>spec.outbound.sourceCIDRs</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>array</td>
 <td>Optional IPv4 source-prefix OR list, default empty. At least one source selector is required. IPv6 is rejected; host bits are masked for rendering.</td>
 </tr>
 <tr>
 <td><code>spec.outbound.destinationCIDRs</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional IPv4 remote destinations for learning, default empty. Combined with destinationSetRefs as OR; no destination selector means any remote address.</td>
 </tr>
 <tr>
 <td><code>spec.outbound.destinationSetRefs</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional existing IPAddressSet/<name> remote destination references; duplicates rejected. Default empty. Source and destination categories combine with AND.</td>
 </tr>
 <tr>
 <td><code>spec.outbound.protocol</code></td>
+<td><strong>Required</strong></td>
+<td>string; enum=["udp"]</td>
 <td>Required udp; no default and no TCP/IPv6 support for this learning mechanism.</td>
 </tr>
 <tr>
 <td><code>spec.outbound.destinationPorts</code></td>
+<td><strong>Required</strong></td>
+<td>array</td>
 <td>Required nonempty outbound UDP destination ports: numeric 1–65535 or a sole start-end range. A range cannot be combined with other list entries.</td>
 </tr>
 <tr>
 <td><code>spec.inbound</code></td>
+<td><strong>Required</strong></td>
+<td>object</td>
 <td>Required return-traffic match; sourcePorts selects allowed remote UDP sender ports, not local destination ports.</td>
 </tr>
 <tr>
 <td><code>spec.inbound.sourcePorts</code></td>
+<td><strong>Required</strong></td>
+<td>array</td>
 <td>Required nonempty remote UDP source-port list with the same 1–65535 / sole-range constraints as outbound.destinationPorts.</td>
 </tr>
 <tr>
 <td><code>spec.timeout</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional strictly positive Go duration; default 3m. Each matching outbound packet refreshes the learned element. Rendering rounds to seconds with a minimum of 1s; this is learned-state expiry, not a UDP protocol timeout.</td>
 </tr>
 <tr>
 <td><code>spec.when</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional common activation condition, default unconditional. A filtered resource contributes no learned map/set rules. See common fields for nested conditions and schema limitations.</td>
 </tr>
 <tr>
 <td><code>spec.fromInterfaceRefs</code></td>
+<td><strong>Required</strong></td>
+<td>array</td>
 <td>Required nonempty egress/ingress interface list; bare names or Interface/name, PPPoESession/name, DSLiteTunnel/name. Outbound matches oifname and inbound matches iifname on this same list.</td>
 </tr>
 <tr>
 <td><code>spec.correlation</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional correlation object; only localPort is supported. Default omitted uses the same key.</td>
 </tr>
 <tr>
 <td><code>spec.correlation.key</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["", "localPort"]</td>
 <td>Empty or localPort only. The configured key is not otherwise branched by the renderer: UDP source port always indexes the learned map.</td>
 </tr>
 </tbody>
@@ -124,7 +163,7 @@
 <p><code>phase</code></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
 <li><a href="#conditions-and-references">Conditions and references</a></li>
-<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#configuration-syntax">Configuration syntax</a></li>
 <li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 <li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
 </ul>

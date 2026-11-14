@@ -12,30 +12,33 @@
 - 每個介面必須宣告為 Interface。只要存在任何 FirewallZone，每個管理介面就必須屬於 role 為 trust 或 mgmt 的區域。僅有同名 Bridge/WireGuard 資源無法滿足此檢查。
 - 未宣告 ManagementAccess 時，此檢查不產生結果。requireWebConsoleBound 檢查明確的萬用接聽位址，不要求 WebConsole 存在，也不證明其位址屬於所列管理介面。
 
-## YAML定義
+## 設定語法
 
-此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。
+這是說明用語法，不是可直接複製的YAML。未加括號的欄位在父項目內必填；`[ ... ]`表示依條件可省略，`<型別>`為替換值，`(a | b)`表示選項。選填父項目內仍可能有必填子項目。條件必填、互斥與實際預設值請見下表；一般YAML請使用連結範例。
 
-```yaml
+```text
 - apiVersion: net.routerd.net/v1alpha1
   kind: ManagementAccess
   metadata:
     name: "<name>"
   spec:
-    allowSourceCIDRs: # 選填; array
-      - "<string>" # string
-    interfaces: # 必填; array
-      - "<string>" # string
-    requireWebConsoleBound: true # 選填; boolean
+    [ allowSourceCIDRs:
+        - <string>
+    ]
+    interfaces:
+      - <string>
+    [ requireWebConsoleBound: <boolean> ]
 ```
 
 ## 欄位意義與預設值
 
-| YAML | 欄位意義與預設值 |
-| --- | --- |
-| `spec.interfaces` | 必填且不可為空的 Interface 名稱或 Interface/name 清單。正規化後重複會被拒絕。指的是已宣告資源，不是任意 OS 名稱。 |
-| `spec.allowSourceCIDRs` | 選用的 IPv4/IPv6 CIDR 清單，預設為空。會驗證語法，但目前管理檢查與防火牆產生器不使用此欄位，不會強制來源位址存取限制。 |
-| `spec.requireWebConsoleBound` | 預設 true。啟用的 WebConsole 明確接聽 0.0.0.0 或 :: 時產生 fail；false 則降為 warn。多個 ManagementAccess 中任一省略或 true 都會啟用要求。動態接聽位址僅警告；未設定來源且省略 listenAddress 時，此處不產生結果。 |
+選填父項目的必填子項目僅在使用父項目時需要。其他具體條件列於說明；`[ ... ]`選項仍可能需要擇一。
+
+| YAML | 指定要求 | 型別與限制 | 欄位意義與預設值 |
+| --- | --- | --- | --- |
+| `spec.interfaces` | **必填** | array | 必填且不可為空的 Interface 名稱或 Interface/name 清單。正規化後重複會被拒絕。指的是已宣告資源，不是任意 OS 名稱。 |
+| `spec.allowSourceCIDRs` | *選填* | array | 選用的 IPv4/IPv6 CIDR 清單，預設為空。會驗證語法，但目前管理檢查與防火牆產生器不使用此欄位，不會強制來源位址存取限制。 |
+| `spec.requireWebConsoleBound` | *選填* | boolean | 預設 true。啟用的 WebConsole 明確接聽 0.0.0.0 或 :: 時產生 fail；false 則降為 warn。多個 ManagementAccess 中任一省略或 true 都會啟用要求。動態接聽位址僅警告；未設定來源且省略 listenAddress 時，此處不產生結果。 |
 
 實作: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate_firewall.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_firewall.go) · [pkg/config/management.go](https://github.com/imksoo/routerd/blob/main/pkg/config/management.go) · [cmd/routerd/cmd_apply.go](https://github.com/imksoo/routerd/blob/main/cmd/routerd/cmd_apply.go) · [cmd/routerctl/doctor.go](https://github.com/imksoo/routerd/blob/main/cmd/routerctl/doctor.go)
 

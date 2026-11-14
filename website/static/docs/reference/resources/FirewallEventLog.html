@@ -12,105 +12,146 @@
 <li>Use one enabled resource: renderer options come from the first enabled resource, while service generation uses a shared routerd-firewall-logger service name. Multiple independent collector instances are not provided by multiple resource names.</li>
 <li>fromZones/toZones must reference existing FirewallZone names or self; rules accepts FirewallRule/name or a bare rule name; sinks accepts LogSink/name or a bare sink name; retention accepts LogRetention/name or a bare retention name. These references are validated even though these fields currently do not filter, export or select retention at runtime.</li>
 </ul>
-<h2 id="yaml-definition">YAML definition</h2>
-<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
-<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+<h2 id="configuration-syntax">Configuration syntax</h2>
+<p>This is explanatory notation, not YAML to copy. Unbracketed fields are required within their parent; <code>[ ... ]</code> marks fields that can be omitted, subject to the conditions in the table. <code>&lt;type&gt;</code> is a placeholder, and <code>(a | b)</code> lists alternatives. Optional parents may contain required children. Conditional requirements, exclusions and runtime defaults are described below. Use the linked YAML example for an ordinary configuration.</p>
+<pre><code class="language-text">- apiVersion: firewall.routerd.net/v1alpha1
   kind: FirewallEventLog
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    enabled: true # optional; boolean
-    events: # optional; array
-      - &quot;deny&quot; # string; enum=[&quot;deny&quot;, &quot;allow&quot;, &quot;rateLimit&quot;, &quot;connLimit&quot;]
-    fromZones: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    log: # optional; object
-      acceptSampleRate: 0 # optional; integer; minimum=0
-      copyRange: 0 # optional; integer; minimum=0
-      dropSampleRate: 0 # optional; integer; minimum=0
-      reject: true # optional; boolean
-    nflogGroup: 0 # optional; integer; minimum=0; maximum=65535
-    path: &quot;&lt;string&gt;&quot; # optional; string
-    retention: &quot;&lt;string&gt;&quot; # optional; string
-    rules: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    sampleRate: 0 # optional; integer; minimum=0
-    sinks: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    toZones: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
+    [ enabled: &lt;boolean&gt; ]
+    [ events:
+        - (&quot;deny&quot; | &quot;allow&quot; | &quot;rateLimit&quot; | &quot;connLimit&quot;)
+    ]
+    [ fromZones:
+        - &lt;string&gt;
+    ]
+    [ log:
+        [ acceptSampleRate: &lt;integer&gt; ]
+        [ copyRange: &lt;integer&gt; ]
+        [ dropSampleRate: &lt;integer&gt; ]
+        [ reject: &lt;boolean&gt; ]
+    ]
+    [ nflogGroup: &lt;integer&gt; ]
+    [ path: &lt;string&gt; ]
+    [ retention: &lt;string&gt; ]
+    [ rules:
+        - &lt;string&gt;
+    ]
+    [ sampleRate: &lt;integer&gt; ]
+    [ sinks:
+        - &lt;string&gt;
+    ]
+    [ toZones:
+        - &lt;string&gt;
+    ]
 </code></pre>
 <h2 id="field-meaning-and-default">Field meaning and default</h2>
+<p>Required children of optional objects apply only when their parent is used. Other exact conditions are in the explanation; bracketed alternatives may still require one choice.</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>Presence</th>
+<th>Type / constraints</th>
 <th>Field meaning and default</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.enabled</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false; true requests the collector service and enables grouped logging options. Also requests the DPI classifier helper in the current service renderer.</td>
 </tr>
 <tr>
 <td><code>spec.path</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Optional SQLite database path. Default /var/lib/routerd/firewall-logs.db on Linux and /var/db/routerd/firewall-logs.db on FreeBSD. This is a database, not a JSON-lines output file.</td>
 </tr>
 <tr>
 <td><code>spec.events</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Accepted values deny, allow, rateLimit, connLimit; default empty. Currently validated but not used to filter collector input or generated firewall logging.</td>
 </tr>
 <tr>
 <td><code>spec.fromZones</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Default empty. Source-zone references validated against FirewallZone names or self, but not used as a logging filter at runtime.</td>
 </tr>
 <tr>
 <td><code>spec.fromZones[]</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Existing FirewallZone metadata.name or the special self zone; not Kind/name. No runtime filtering effect currently.</td>
 </tr>
 <tr>
 <td><code>spec.toZones</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Default empty. Destination-zone references validated against FirewallZone names or self, but not used as a logging filter at runtime.</td>
 </tr>
 <tr>
 <td><code>spec.rules</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Default empty. Existing FirewallRule references (bare name or FirewallRule/name) are required when supplied; currently not used to select logged rules. Set FirewallRule.log on the actual rule.</td>
 </tr>
 <tr>
 <td><code>spec.sampleRate</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=0</td>
 <td>Nonnegative integer, default 0; accepted but unused by the collector and renderer. Use log.acceptSampleRate/log.dropSampleRate for the supported renderer controls.</td>
 </tr>
 <tr>
 <td><code>spec.sinks</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Default empty. Existing LogSink references are validated but the collector does not export to them; its output is the path database.</td>
 </tr>
 <tr>
 <td><code>spec.retention</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional existing LogRetention reference, default empty; currently not read to select a retention policy. Configure LogRetention with the firewallEvents signal to perform retention on this database.</td>
 </tr>
 <tr>
 <td><code>spec.nflogGroup</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=0; maximum=65535</td>
 <td>Integer 0–65535; omitted or 0 selects group 1 on Linux for both nftables logging and the collector. FreeBSD uses pflog0 and ignores this group.</td>
 </tr>
 <tr>
 <td><code>spec.log</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional renderer logging options; omitted fields decode to zero/false. These options do not implement the unused top-level event/zone/rule filters.</td>
 </tr>
 <tr>
 <td><code>spec.log.acceptSampleRate</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=0</td>
 <td>Default 0 disables extra implicit-accept logging. On nftables, positive N logs approximately 1/N of eligible packets (1 logs all). PF uses a positive value only as an enable switch, not a 1/N sampler. Explicit FirewallRule.log is separate.</td>
 </tr>
 <tr>
 <td><code>spec.log.dropSampleRate</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=0</td>
 <td>Default 0; nftables rates 0/1 log all already-enabled implicit deny logs, positive N&gt;1 samples approximately 1/N. This does not itself enable FirewallPolicy.logDeny. PF does not use this sampling value.</td>
 </tr>
 <tr>
 <td><code>spec.log.copyRange</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=0</td>
 <td>Nonnegative NFLOG snaplen in bytes; default 0 omits the nftables snaplen argument. Positive values cap copied packet bytes. Not applied by the PF renderer.</td>
 </tr>
 <tr>
 <td><code>spec.log.reject</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false; decoded but not read by the current renderer or collector. It does not change a rule verdict or turn on reject logging.</td>
 </tr>
 </tbody>
@@ -121,7 +162,7 @@
 <p><code>phase</code>, <code>path</code>, <code>sinks</code></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
 <li><a href="#conditions-and-references">Conditions and references</a></li>
-<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#configuration-syntax">Configuration syntax</a></li>
 <li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 <li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
 </ul>

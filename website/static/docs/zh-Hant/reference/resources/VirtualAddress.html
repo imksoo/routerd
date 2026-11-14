@@ -16,246 +16,344 @@
 <li>gracefulActivation 僅 Linux IPv4 VRRP。選舉/VMAC 可先於 VIP 公布，準備條件允許 VIP 加入。逾時只報失敗並持續保留與重試，絕不強制公布。VIP 成功公布後，只要仍為 master，後續準備條件退化不撤回 VIP。</li>
 <li>VRRP 公告時間由實作決定（通常 1 秒），不透過 advertInterval/preemptDelay 設定；這些舊成員排除於 YAML/JSON 結構描述。協定優先權/驗證仍依 keepalived/CARP。</li>
 </ul>
-<h2 id="yaml定義">YAML定義</h2>
-<p>此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。</p>
-<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+<h2 id="設定語法">設定語法</h2>
+<p>這是說明用語法，不是可直接複製的YAML。未加括號的欄位在父項目內必填；<code>[ ... ]</code>表示依條件可省略，<code>&lt;型別&gt;</code>為替換值，<code>(a | b)</code>表示選項。選填父項目內仍可能有必填子項目。條件必填、互斥與實際預設值請見下表；一般YAML請使用連結範例。</p>
+<pre><code class="language-text">- apiVersion: net.routerd.net/v1alpha1
   kind: VirtualAddress
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    address: &quot;&lt;string&gt;&quot; # 必填; string
-    addressFrom: # 選填; object
-      field: &quot;&lt;string&gt;&quot; # 選填; string
-      optional: true # 選填; boolean
-      resource: &quot;&lt;string&gt;&quot; # 必填; string
-    externalDNS: true # 選填; boolean
-    family: &quot;ipv4&quot; # 必填; string; enum=[&quot;ipv4&quot;, &quot;ipv6&quot;]
-    gratuitousARP: true # 選填; boolean
-    hostname: &quot;&lt;string&gt;&quot; # 選填; string
-    interface: &quot;&lt;string&gt;&quot; # 必填; string
-    mode: &quot;&quot; # 選填; string; enum=[&quot;&quot;, &quot;static&quot;, &quot;vrrp&quot;]
-    track: # 選填; array
-      - # object
-        confirmConsecutiveHealthy: 1 # 選填; integer; minimum=1; maximum=255
-        confirmConsecutiveUnhealthy: 1 # 選填; integer; minimum=1; maximum=255
-        resource: &quot;&lt;string&gt;&quot; # 必填; string
-        unhealthyPenalty: 0 # 選填; integer; minimum=0; maximum=254
-    vrrp: # 選填; object
-      additionalFailoverVMACs: # 選填; array
-        - # object
-          interface: &quot;&lt;string&gt;&quot; # 必填; string
-          linkLocalAddress: &quot;&lt;string&gt;&quot; # 選填; string
-          macAddress: &quot;&lt;string&gt;&quot; # 必填; string
-          parentInterface: &quot;&lt;string&gt;&quot; # 必填; string
-          withdrawRouterAdvertisement: true # 選填; boolean
-      authentication: &quot;&lt;string&gt;&quot; # 選填; string
-      authenticationFrom: # 選填; object
-        base64: true # 選填; boolean
-        env: &quot;&lt;string&gt;&quot; # 選填; string
-        file: &quot;&lt;string&gt;&quot; # 選填; string
-      failoverVMAC: # 選填; object
-        interface: &quot;&lt;string&gt;&quot; # 必填; string
-        linkLocalAddress: &quot;&lt;string&gt;&quot; # 選填; string
-        macAddress: &quot;&lt;string&gt;&quot; # 必填; string
-        parentInterface: &quot;&lt;string&gt;&quot; # 必填; string
-        withdrawRouterAdvertisement: true # 選填; boolean
-      gracefulActivation: # 選填; object
-        readyWhen: # 必填; object
-          state: # 選填; object
-            &quot;&lt;key&gt;&quot;: # 選填; object
-              contains: &quot;&lt;string&gt;&quot; # 選填; string
-              equals: &quot;&lt;string&gt;&quot; # 選填; string
-              exists: true # 選填; boolean
-              for: &quot;&lt;string&gt;&quot; # 選填; string
-              in: # 選填; array
-                - &quot;&lt;string&gt;&quot; # string
-              maxAge: &quot;&lt;string&gt;&quot; # 選填; string
-              status: &quot;set&quot; # 選填; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
-        timeout: &quot;&lt;string&gt;&quot; # 選填; string
-      peers: # 選填; array
-        - &quot;&lt;string&gt;&quot; # string
-      preempt: true # 選填; boolean
-      priority: 1 # 選填; integer; minimum=1; maximum=254
-      virtualRouterID: 1 # 必填; integer; minimum=1; maximum=255
-    when: # 選填; object
-      state: # 選填; object
-        &quot;&lt;key&gt;&quot;: # 選填; object
-          contains: &quot;&lt;string&gt;&quot; # 選填; string
-          equals: &quot;&lt;string&gt;&quot; # 選填; string
-          exists: true # 選填; boolean
-          for: &quot;&lt;string&gt;&quot; # 選填; string
-          in: # 選填; array
-            - &quot;&lt;string&gt;&quot; # string
-          maxAge: &quot;&lt;string&gt;&quot; # 選填; string
-          status: &quot;set&quot; # 選填; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+    [ address: &lt;string&gt; ]
+    [ addressFrom:
+        field: &lt;string&gt;
+        [ optional: &lt;boolean&gt; ]
+        resource: &lt;string&gt;
+    ]
+    [ externalDNS: &lt;boolean&gt; ]
+    family: (&quot;ipv4&quot; | &quot;ipv6&quot;)
+    [ gratuitousARP: &lt;boolean&gt; ]
+    [ hostname: &lt;string&gt; ]
+    interface: &lt;string&gt;
+    [ mode: (&quot;&quot; | &quot;static&quot; | &quot;vrrp&quot;) ]
+    [ track:
+        -
+          [ confirmConsecutiveHealthy: &lt;integer&gt; ]
+          [ confirmConsecutiveUnhealthy: &lt;integer&gt; ]
+          resource: &lt;string&gt;
+          [ unhealthyPenalty: &lt;integer&gt; ]
+    ]
+    [ vrrp:
+        [ additionalFailoverVMACs:
+            -
+              interface: &lt;string&gt;
+              [ linkLocalAddress: &lt;string&gt; ]
+              macAddress: &lt;string&gt;
+              parentInterface: &lt;string&gt;
+              [ withdrawRouterAdvertisement: &lt;boolean&gt; ]
+        ]
+        [ authentication: &lt;string&gt; ]
+        [ authenticationFrom:
+            [ base64: &lt;boolean&gt; ]
+            [ env: &lt;string&gt; ]
+            [ file: &lt;string&gt; ]
+        ]
+        [ failoverVMAC:
+            interface: &lt;string&gt;
+            [ linkLocalAddress: &lt;string&gt; ]
+            macAddress: &lt;string&gt;
+            parentInterface: &lt;string&gt;
+            [ withdrawRouterAdvertisement: &lt;boolean&gt; ]
+        ]
+        [ gracefulActivation:
+            readyWhen:
+              [ state:
+                  [ &lt;name&gt;:
+                      [ contains: &lt;string&gt; ]
+                      [ equals: &lt;string&gt; ]
+                      [ exists: &lt;boolean&gt; ]
+                      [ for: &lt;string&gt; ]
+                      [ in:
+                          - &lt;string&gt;
+                      ]
+                      [ maxAge: &lt;string&gt; ]
+                      [ status: (&quot;set&quot; | &quot;unset&quot; | &quot;unknown&quot;) ]
+                  ]
+              ]
+            [ timeout: &lt;string&gt; ]
+        ]
+        [ peers:
+            - &lt;string&gt;
+        ]
+        [ preempt: &lt;boolean&gt; ]
+        [ priority: &lt;integer&gt; ]
+        [ virtualRouterID: &lt;integer&gt; ]
+    ]
+    [ when:
+        [ state:
+            [ &lt;name&gt;:
+                [ contains: &lt;string&gt; ]
+                [ equals: &lt;string&gt; ]
+                [ exists: &lt;boolean&gt; ]
+                [ for: &lt;string&gt; ]
+                [ in:
+                    - &lt;string&gt;
+                ]
+                [ maxAge: &lt;string&gt; ]
+                [ status: (&quot;set&quot; | &quot;unset&quot; | &quot;unknown&quot;) ]
+            ]
+        ]
+    ]
 </code></pre>
 <h2 id="欄位意義與預設值">欄位意義與預設值</h2>
+<p>選填父項目的必填子項目僅在使用父項目時需要。其他具體條件列於說明；<code>[ ... ]</code>選項仍可能需要擇一。</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>指定要求</th>
+<th>型別與限制</th>
 <th>欄位意義與預設值</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.family</code></td>
+<td><strong>必填</strong></td>
+<td>string; enum=["ipv4", "ipv6"]</td>
 <td>必填 ipv4/ipv6，無預設，須與位址族一致。</td>
 </tr>
 <tr>
 <td><code>spec.interface</code></td>
+<td><strong>必填</strong></td>
+<td>string</td>
 <td>必填單純宣告邏輯介面名稱，解析為 OS 裝置，不是 Kind/name。</td>
 </tr>
 <tr>
 <td><code>spec.address</code></td>
+<td><strong>條件必填</strong></td>
+<td>string</td>
 <td>與 addressFrom 互斥的固定位址前綴。IPv4 /32；IPv6 除靜態模式外 /128。語意驗證允許 addressFrom 替代，但 JSON Schema 將 address 標為必填。</td>
 </tr>
 <tr>
 <td><code>spec.addressFrom</code></td>
+<td><strong>條件必填</strong></td>
+<td>object</td>
 <td>與 address 互斥的共用來源，產生器支援宣告 IPv4StaticAddress.address/VirtualAddress.address，須明確 field。不遞迴解析巢狀 VirtualAddress 來源。</td>
 </tr>
 <tr>
 <td><code>spec.hostname</code></td>
+<td><em>選填</em></td>
+<td>string</td>
 <td>選用 FQDN，用於已服務 DNSZone 的自動本機 DNS 紀錄與狀態。不改 OS 主機名或建立外部 DNS 紀錄。</td>
 </tr>
 <tr>
 <td><code>spec.externalDNS</code></td>
+<td><em>選填</em></td>
+<td>boolean</td>
 <td>預設 false，true 略過自動本機名稱紀錄與 DNS 範圍警告，不連絡外部 DNS 供應商。</td>
 </tr>
 <tr>
 <td><code>spec.mode</code></td>
+<td><em>選填</em></td>
+<td>string; enum=["", "static", "vrrp"]</td>
 <td>static（預設）或 vrrp。static 不選舉直接套用本機；vrrp 使用 Linux keepalived/FreeBSD CARP。VRRP/track 物件不限制靜態持有。</td>
 </tr>
 <tr>
 <td><code>spec.gratuitousARP</code></td>
+<td><em>選填</em></td>
+<td>boolean</td>
 <td>預設 false，僅 Linux 靜態 IPv4 可 true。新增/恢復遺失 VIP 後執行 arping -U -c 3，一般協調不反覆公告。失敗會報告並重試。</td>
 </tr>
 <tr>
 <td><code>spec.when</code></td>
+<td><em>選填</em></td>
+<td>object</td>
 <td>選用共用資源啟用條件，預設無條件。篩選整個資源，與 gracefulActivation.readyWhen 的加入閘門不同。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp</code></td>
+<td><strong>條件必填</strong></td>
+<td>object</td>
 <td>僅 mode=vrrp 使用的選舉設定。靜態模式忽略，且不驗證所有內層值。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.virtualRouterID</code></td>
+<td><strong>條件必填</strong></td>
+<td>integer; minimum=1; maximum=255</td>
 <td>vrrp 必填 1–255，映射 CARP vhid。同 Router 的 family/interface 內唯一，同次選舉的節點須一致。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.priority</code></td>
+<td><em>選填</em></td>
+<td>integer; minimum=1; maximum=254</td>
 <td>1–254，省略/0 為 100。追蹤扣分後至少 1；CARP 轉換為 advskew=max(1,254-priority)。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.preempt</code></td>
+<td><em>選填</em></td>
+<td>boolean</td>
 <td>省略/false 不僅因較高優先權奪回持有；true 啟用搶占。CARP 使用主機全域 net.inet.carp.preempt，任一設定實例 true 即啟用。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.peers</code></td>
+<td><strong>條件必填</strong></td>
+<td>array</td>
 <td>Linux vrrp 必填非空對等位址/主機名清單。語法驗證，產生時去重排序。FreeBSD CARP 不將此清單作對等設定。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.authentication</code></td>
+<td><em>選填</em></td>
+<td>string</td>
 <td>選用明文驗證值，預設無，與 authenticationFrom 互斥。Linux 產生 keepalived auth_type PASS，CARP 使用 pass。是協定驗證，不是加密 VRRP 流量。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.authenticationFrom</code></td>
+<td><em>選填</em></td>
+<td>object</td>
 <td>選用密鑰來源，與明文 authentication 互斥。設定時 file/env 必須擇一。產生時讀取，遺失檔案/環境或無效 Base64 會失敗；解析空值會省略驗證。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.authenticationFrom.file</code></td>
+<td><em>選填</em></td>
+<td>string</td>
 <td>路由器上的密鑰檔案路徑，與 env 互斥。產生器移除尾端 CR/LF，不移除全部前後空格。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.authenticationFrom.env</code></td>
+<td><em>選填</em></td>
+<td>string</td>
 <td>routerd 程序的環境變數名稱，與 file 互斥。不是 shell 展開或遠端環境變數。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.authenticationFrom.base64</code></td>
+<td><em>選填</em></td>
+<td>boolean</td>
 <td>預設 false。true 在移除編碼值前後空白後解碼標準 Base64，再移除解碼結果尾端 CR/LF。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.failoverVMAC</code></td>
+<td><em>選填</em></td>
+<td>object</td>
 <td>選用由同一 VRRP 選舉控制的 Linux macvlan L2 身分，不另選舉。主項目在 Linux VRRP 模式驗證，FreeBSD 不支援。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.additionalFailoverVMACs</code></td>
+<td><em>選填</em></td>
+<td>array</td>
 <td>選用依相同角色轉換的額外 VMAC，預設空，欄位同 failoverVMAC。目前 YAML 驗證不完整，Linux 輔助程式/產生仍需有效父介面、名稱與 Ethernet MAC。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.gracefulActivation</code></td>
+<td><em>選填</em></td>
+<td>object</td>
 <td>選用 Linux IPv4 VRRP 加入閘門，預設無；其他位址族/FreeBSD 拒絕。選舉後準備相依狀態並等待公布 VIP。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.gracefulActivation.readyWhen</code></td>
+<td><strong>條件必填</strong></td>
+<td>object</td>
 <td>提供閘門時必填非空共用 state/all/any 條件。驗證參照與條件，只控制初次公布，不控制成功公布後的持續撤回。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.gracefulActivation.timeout</code></td>
+<td><em>選填</em></td>
+<td>string</td>
 <td>嚴格正 Go 時間長度，預設 45s。到期只將啟用狀態改為 Failed/ReadinessTimeout，不強制公布、不停止重試或重啟路由器。</td>
 </tr>
 <tr>
 <td><code>spec.track</code></td>
+<td><em>選填</em></td>
+<td>array</td>
 <td>選用資源健康追蹤清單，預設空，僅 vrrp。異常扣分累加影響選舉優先權，不直接移除靜態 VIP。</td>
 </tr>
 <tr>
 <td><code>spec.track[].resource</code></td>
+<td><strong>條件必填</strong></td>
+<td>string</td>
 <td>必填 Kind/name 格式，此處驗證格式不驗存在。讀取 phase，一般就緒 phase 為健康，BGPRouter/BGPPeer 需 Established。Disabled/Standby/NotApplicable 與 when=false 為中立，保留目前扣分決定。</td>
 </tr>
 <tr>
 <td><code>spec.track[].unhealthyPenalty</code></td>
+<td><em>選填</em></td>
+<td>integer; minimum=0; maximum=254</td>
 <td>0–254，省略/0 為 50，零無法停用扣分。確認異常後套用，確認健康後移除。</td>
 </tr>
 <tr>
 <td><code>spec.track[].confirmConsecutiveUnhealthy</code></td>
+<td><em>選填</em></td>
+<td>integer; minimum=1; maximum=255</td>
 <td>扣分前連續異常評估次數，省略/0 為 3，明確 1–255。是協調觀測次數，不是秒數。</td>
 </tr>
 <tr>
 <td><code>spec.track[].confirmConsecutiveHealthy</code></td>
+<td><em>選填</em></td>
+<td>integer; minimum=1; maximum=255</td>
 <td>解除扣分前連續健康次數，省略/0 為 2，明確 1–255。追蹤決定/計數可在重啟後由保存狀態還原。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.failoverVMAC.parentInterface</code></td>
+<td><strong>條件必填</strong></td>
+<td>string</td>
 <td>必填設定的邏輯父介面，產生時解析為 OS 名稱，不是狀態來源。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.additionalFailoverVMACs[].parentInterface</code></td>
+<td><strong>條件必填</strong></td>
+<td>string</td>
 <td>必填設定的邏輯父介面，產生時解析為 OS 名稱，不是狀態來源。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.failoverVMAC.interface</code></td>
+<td><strong>條件必填</strong></td>
+<td>string</td>
 <td>必填 Linux VMAC 裝置名稱，最多 15 字元且須有效介面語法，由角色輔助程式建立/啟用/停用。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.additionalFailoverVMACs[].interface</code></td>
+<td><strong>條件必填</strong></td>
+<td>string</td>
 <td>必填 Linux VMAC 裝置名稱，最多 15 字元且須有效介面語法，由角色輔助程式建立/啟用/停用。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.failoverVMAC.macAddress</code></td>
+<td><strong>條件必填</strong></td>
+<td>string</td>
 <td>必填六位元組 Ethernet MAC，共用切換身分的節點須一致，不從 VRID 自動產生。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.additionalFailoverVMACs[].macAddress</code></td>
+<td><strong>條件必填</strong></td>
+<td>string</td>
 <td>必填六位元組 Ethernet MAC，共用切換身分的節點須一致，不從 VRID 自動產生。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.failoverVMAC.linkLocalAddress</code></td>
+<td><em>選填</em></td>
+<td>string</td>
 <td>選用純 IPv6 鏈路本地身分（fe80::/10），不含前綴/區域後綴。Linux 輔助程式呼叫時驗證，省略採一般鏈路本地處理。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.additionalFailoverVMACs[].linkLocalAddress</code></td>
+<td><em>選填</em></td>
+<td>string</td>
 <td>選用純 IPv6 鏈路本地身分（fe80::/10），不含前綴/區域後綴。Linux 輔助程式呼叫時驗證，省略採一般鏈路本地處理。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.failoverVMAC.withdrawRouterAdvertisement</code></td>
+<td><em>選填</em></td>
+<td>boolean</td>
 <td>預設 false。多 VMAC 引數形式中 true 會在停用前以鏈路本地來源送出 router lifetime=0 RA。未明確 linkLocalAddress 的單 VMAC 舊引數形式不傳遞此旗標。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.additionalFailoverVMACs[].withdrawRouterAdvertisement</code></td>
+<td><em>選填</em></td>
+<td>boolean</td>
 <td>預設 false。多 VMAC 引數形式中 true 會在停用前以鏈路本地來源送出 router lifetime=0 RA。未明確 linkLocalAddress 的單 VMAC 舊引數形式不傳遞此旗標。</td>
 </tr>
 <tr>
 <td><code>spec.vrrp.gracefulActivation.readyWhen.state</code></td>
+<td><em>選填</em></td>
+<td>object</td>
 <td>readyWhen 內的選用狀態鍵條件對應表，所有項目皆須符合。state/all/any 須擇一且非空。equals/in/contains/exists/status/for/maxAge 遵循共用欄位；資源形式的鍵須參照已宣告資源及提供欄位。</td>
 </tr>
 </tbody>
@@ -267,7 +365,7 @@
 <p><a href="/examples/dhcp-lease-sync-ha.yaml">設定範例</a></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
 <ul>
 <li><a href="#指定條件與參照關係">指定條件與參照關係</a></li>
-<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#設定語法">設定語法</a></li>
 <li><a href="#欄位意義與預設值">欄位意義與預設值</a></li>
 <li><a href="#可參照的狀態欄位">可參照的狀態欄位</a></li>
 </ul>

@@ -10,53 +10,68 @@
 <ul>
 <li>stateはpresentだけを扱い、パッケージの削除はできません。OSに一致するセットがなければPending/NoMatchingOSPackageSetです。各セットのoptionalは入力として受理しますが、このcontrollerは読み取らず、導入失敗はエラーになります。</li>
 </ul>
-<h2 id="yaml定義">YAML定義</h2>
-<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
-<pre><code class="language-yaml">- apiVersion: system.routerd.net/v1alpha1
+<h2 id="設定構文">設定構文</h2>
+<p>説明用の構文表記であり、そのままコピーするYAMLではありません。囲みのない項目は親の中で必須、<code>[ ... ]</code>は条件に応じて省略できる項目、<code>&lt;型&gt;</code>は差し替え値、<code>(a | b)</code>は選択肢です。任意の親にも必須の子があります。条件付き必須・排他・実効既定値は下の表を確認し、通常のYAMLはリンク先の設定例を使ってください。</p>
+<pre><code class="language-text">- apiVersion: system.routerd.net/v1alpha1
   kind: Package
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    packages: # 必須; array
-      - # object
-        manager: &quot;&quot; # 任意; string; enum=[&quot;&quot;, &quot;apt&quot;, &quot;dnf&quot;, &quot;pkg&quot;]
-        names: # 必須; array
-          - &quot;&lt;string&gt;&quot; # string
-        optional: true # 任意; boolean
-        os: &quot;ubuntu&quot; # 必須; string; enum=[&quot;ubuntu&quot;, &quot;debian&quot;, &quot;fedora&quot;, &quot;rhel&quot;, &quot;rocky&quot;, &quot;almalinux&quot;, &quot;freebsd&quot;]
-    state: &quot;&quot; # 任意; string; enum=[&quot;&quot;, &quot;present&quot;]
+    packages:
+      -
+        [ manager: (&quot;&quot; | &quot;apt&quot; | &quot;dnf&quot; | &quot;pkg&quot;) ]
+        names:
+          - &lt;string&gt;
+        [ optional: &lt;boolean&gt; ]
+        os: (&quot;ubuntu&quot; | &quot;debian&quot; | &quot;fedora&quot; | &quot;rhel&quot; | &quot;rocky&quot; | &quot;almalinux&quot; | &quot;freebsd&quot;)
+    [ state: (&quot;&quot; | &quot;present&quot;) ]
 </code></pre>
 <h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<p>任意の親の必須項目は、親を使う場合に必要です。それ以外の具体的な条件は説明欄に記載します。<code>[ ... ]</code>で囲まれた選択肢も、いずれか一方が必要な場合があります。</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>指定要否</th>
+<th>型・制約</th>
 <th>項目の意味と既定値</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.state</code></td>
+<td><em>任意</em></td>
+<td>string; enum=["", "present"]</td>
 <td>希望するパッケージの状態。省略時presentで、他の値は拒否します。</td>
 </tr>
 <tr>
 <td><code>spec.packages</code></td>
+<td><strong>必須</strong></td>
+<td>array</td>
 <td>OS別パッケージセットの空でない配列が必須です。リソース参照ではありません。</td>
 </tr>
 <tr>
 <td><code>spec.packages[].os</code></td>
+<td><strong>必須</strong></td>
+<td>string; enum=["ubuntu", "debian", "fedora", "rhel", "rocky", "almalinux", "freebsd"]</td>
 <td>OS識別子。ubuntu、debian、fedora、rhel、rocky、almalinux、freebsdのいずれかが必須です。Linuxでは/etc/os-releaseのIDを読み、ID_LIKEによる類似判定は行いません。</td>
 </tr>
 <tr>
 <td><code>spec.packages[].manager</code></td>
+<td><em>任意</em></td>
+<td>string; enum=["", "apt", "dnf", "pkg"]</td>
 <td>省略時はubuntu/debianならapt、fedora/rhel/rocky/almalinuxならdnf、freebsdならpkgです。明示する場合もこのOS対応と一致する必要があります。</td>
 </tr>
 <tr>
 <td><code>spec.packages[].names</code></td>
+<td><strong>必須</strong></td>
+<td>array</td>
 <td>必須の空でないパッケージ名一覧。空白の名前、空白文字や/を含む名前は拒否します。この項目から暗黙のパッケージ名を追加しません。</td>
 </tr>
 <tr>
 <td><code>spec.packages[].optional</code></td>
+<td><em>任意</em></td>
+<td>boolean</td>
 <td>省略時false。値は読み込みますが、現行のPackageControllerのエラー処理には影響しません。</td>
 </tr>
 </tbody>
@@ -67,7 +82,7 @@
 <p><code>phase</code>, <code>packages</code>, <code>dryRun</code></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
 <ul>
 <li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
-<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#設定構文">設定構文</a></li>
 <li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
 <li><a href="#状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</a></li>
 </ul>

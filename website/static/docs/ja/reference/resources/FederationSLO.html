@@ -11,61 +11,82 @@
 <li>groupRefは必須で、既存のEventGroup名が必要です。同じグループへのFederationSLOは最大1件です。数値はすべて0以上で、0の既定値適用後もlagWarnSeconds&lt;lagFailSecondsが必要です。</li>
 <li>遅延は閾値以上でWARN・FAIL、購読件数は許容最大を超えた場合にWARN・FAILです。期限接近は残TTLが閾値未満のときで、未配送・失敗があるとWARNからFAILになる場合があります。</li>
 </ul>
-<h2 id="yaml定義">YAML定義</h2>
-<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
-<pre><code class="language-yaml">- apiVersion: federation.routerd.net/v1alpha1
+<h2 id="設定構文">設定構文</h2>
+<p>説明用の構文表記であり、そのままコピーするYAMLではありません。囲みのない項目は親の中で必須、<code>[ ... ]</code>は条件に応じて省略できる項目、<code>&lt;型&gt;</code>は差し替え値、<code>(a | b)</code>は選択肢です。任意の親にも必須の子があります。条件付き必須・排他・実効既定値は下の表を確認し、通常のYAMLはリンク先の設定例を使ってください。</p>
+<pre><code class="language-text">- apiVersion: federation.routerd.net/v1alpha1
   kind: FederationSLO
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    delivery: # 任意; object
-      expiresSoonSeconds: 0 # 任意; integer; minimum=0
-      lagFailSeconds: 0 # 任意; integer; minimum=0
-      lagWarnSeconds: 0 # 任意; integer; minimum=0
-    groupRef: &quot;&lt;string&gt;&quot; # 必須; string
-    subscription: # 任意; object
-      maxFailedRuns: 0 # 任意; integer; minimum=0
-      maxPendingRuns: 0 # 任意; integer; minimum=0
+    [ delivery:
+        [ expiresSoonSeconds: &lt;integer&gt; ]
+        [ lagFailSeconds: &lt;integer&gt; ]
+        [ lagWarnSeconds: &lt;integer&gt; ]
+    ]
+    groupRef: &lt;string&gt;
+    [ subscription:
+        [ maxFailedRuns: &lt;integer&gt; ]
+        [ maxPendingRuns: &lt;integer&gt; ]
+    ]
 </code></pre>
 <h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<p>任意の親の必須項目は、親を使う場合に必要です。それ以外の具体的な条件は説明欄に記載します。<code>[ ... ]</code>で囲まれた選択肢も、いずれか一方が必要な場合があります。</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>指定要否</th>
+<th>型・制約</th>
 <th>項目の意味と既定値</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.groupRef</code></td>
+<td><strong>必須</strong></td>
+<td>string</td>
 <td>EventGroup/nameでなく裸のEventGroup metadata.nameが必須です。存在とグループごとの一意性を検証します。</td>
 </tr>
 <tr>
 <td><code>spec.delivery</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>任意の配送診断閾値です。省略項目は以下の既定値になり、通信タイムアウト・再試行設定ではありません。</td>
 </tr>
 <tr>
 <td><code>spec.delivery.lagWarnSeconds</code></td>
+<td><em>任意</em></td>
+<td>integer; minimum=0</td>
 <td>0以上の秒数です。省略・0は60で、配送遅延の最大測定値がこの値以上なら、FAIL条件でない限りWARNです。</td>
 </tr>
 <tr>
 <td><code>spec.delivery.lagFailSeconds</code></td>
+<td><em>任意</em></td>
+<td>integer; minimum=0</td>
 <td>0以上の秒数で、省略・0は180です。配送遅延の最大測定値がこの値以上ならFAILです。実効WARN閾値より大きくする必要があります。</td>
 </tr>
 <tr>
 <td><code>spec.delivery.expiresSoonSeconds</code></td>
+<td><em>任意</em></td>
+<td>integer; minimum=0</td>
 <td>0以上の秒数で、省略・0は120です。イベントの残TTLがこの値未満なら期限接近です。0で無効化はできず、期限のないイベントは別扱いです。</td>
 </tr>
 <tr>
 <td><code>spec.subscription</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>任意の購読実行診断の許容件数です。既定はpending・failedとも許容0件で、処理キュー・再試行回数の制限ではありません。</td>
 </tr>
 <tr>
 <td><code>spec.subscription.maxPendingRuns</code></td>
+<td><em>任意</em></td>
+<td>integer; minimum=0</td>
 <td>0以上の件数で既定0です。pendingがこの値を超えるとWARNですが、failed側がFAILならそちらを優先します。</td>
 </tr>
 <tr>
 <td><code>spec.subscription.maxFailedRuns</code></td>
+<td><em>任意</em></td>
+<td>integer; minimum=0</td>
 <td>0以上の件数で既定0です。失敗件数がこの値を超えるとFAILになります。購読の最大3回の試行方針は変わりません。</td>
 </tr>
 </tbody>
@@ -76,7 +97,7 @@
 <p>このKindには通常の状態値参照の許可フィールドが登録されていません。</p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
 <ul>
 <li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
-<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#設定構文">設定構文</a></li>
 <li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
 <li><a href="#状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</a></li>
 </ul>

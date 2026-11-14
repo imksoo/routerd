@@ -16,127 +16,144 @@
 - gracefulActivation 仅 Linux IPv4 VRRP。选举/VMAC 可先于 VIP 发布，就绪条件允许 VIP 加入。超时仅报失败并持续保留与重试，绝不强制发布。VIP 成功发布后，只要仍为 master，后续就绪条件退化不撤回 VIP。
 - VRRP 通告时间由实现决定（通常 1 秒），不通过 advertInterval/preemptDelay 配置；这些旧成员排除于 YAML/JSON 模式。协议优先级/认证仍依 keepalived/CARP。
 
-## YAML定义
+## 配置语法
 
-此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。
+这是说明用语法，不是可直接复制的YAML。未加括号的字段在父条目内必填；`[ ... ]`表示按条件可省略，`<类型>`为替换值，`(a | b)`表示选项。选填父条目内仍可能有必填子条目。条件必填、互斥与实际默认值请见下表；常规YAML请使用链接示例。
 
-```yaml
+```text
 - apiVersion: net.routerd.net/v1alpha1
   kind: VirtualAddress
   metadata:
     name: "<name>"
   spec:
-    address: "<string>" # 必填; string
-    addressFrom: # 选填; object
-      field: "<string>" # 选填; string
-      optional: true # 选填; boolean
-      resource: "<string>" # 必填; string
-    externalDNS: true # 选填; boolean
-    family: "ipv4" # 必填; string; enum=["ipv4", "ipv6"]
-    gratuitousARP: true # 选填; boolean
-    hostname: "<string>" # 选填; string
-    interface: "<string>" # 必填; string
-    mode: "" # 选填; string; enum=["", "static", "vrrp"]
-    track: # 选填; array
-      - # object
-        confirmConsecutiveHealthy: 1 # 选填; integer; minimum=1; maximum=255
-        confirmConsecutiveUnhealthy: 1 # 选填; integer; minimum=1; maximum=255
-        resource: "<string>" # 必填; string
-        unhealthyPenalty: 0 # 选填; integer; minimum=0; maximum=254
-    vrrp: # 选填; object
-      additionalFailoverVMACs: # 选填; array
-        - # object
-          interface: "<string>" # 必填; string
-          linkLocalAddress: "<string>" # 选填; string
-          macAddress: "<string>" # 必填; string
-          parentInterface: "<string>" # 必填; string
-          withdrawRouterAdvertisement: true # 选填; boolean
-      authentication: "<string>" # 选填; string
-      authenticationFrom: # 选填; object
-        base64: true # 选填; boolean
-        env: "<string>" # 选填; string
-        file: "<string>" # 选填; string
-      failoverVMAC: # 选填; object
-        interface: "<string>" # 必填; string
-        linkLocalAddress: "<string>" # 选填; string
-        macAddress: "<string>" # 必填; string
-        parentInterface: "<string>" # 必填; string
-        withdrawRouterAdvertisement: true # 选填; boolean
-      gracefulActivation: # 选填; object
-        readyWhen: # 必填; object
-          state: # 选填; object
-            "<key>": # 选填; object
-              contains: "<string>" # 选填; string
-              equals: "<string>" # 选填; string
-              exists: true # 选填; boolean
-              for: "<string>" # 选填; string
-              in: # 选填; array
-                - "<string>" # string
-              maxAge: "<string>" # 选填; string
-              status: "set" # 选填; string; enum=["set", "unset", "unknown"]
-        timeout: "<string>" # 选填; string
-      peers: # 选填; array
-        - "<string>" # string
-      preempt: true # 选填; boolean
-      priority: 1 # 选填; integer; minimum=1; maximum=254
-      virtualRouterID: 1 # 必填; integer; minimum=1; maximum=255
-    when: # 选填; object
-      state: # 选填; object
-        "<key>": # 选填; object
-          contains: "<string>" # 选填; string
-          equals: "<string>" # 选填; string
-          exists: true # 选填; boolean
-          for: "<string>" # 选填; string
-          in: # 选填; array
-            - "<string>" # string
-          maxAge: "<string>" # 选填; string
-          status: "set" # 选填; string; enum=["set", "unset", "unknown"]
+    [ address: <string> ]
+    [ addressFrom:
+        field: <string>
+        [ optional: <boolean> ]
+        resource: <string>
+    ]
+    [ externalDNS: <boolean> ]
+    family: ("ipv4" | "ipv6")
+    [ gratuitousARP: <boolean> ]
+    [ hostname: <string> ]
+    interface: <string>
+    [ mode: ("" | "static" | "vrrp") ]
+    [ track:
+        -
+          [ confirmConsecutiveHealthy: <integer> ]
+          [ confirmConsecutiveUnhealthy: <integer> ]
+          resource: <string>
+          [ unhealthyPenalty: <integer> ]
+    ]
+    [ vrrp:
+        [ additionalFailoverVMACs:
+            -
+              interface: <string>
+              [ linkLocalAddress: <string> ]
+              macAddress: <string>
+              parentInterface: <string>
+              [ withdrawRouterAdvertisement: <boolean> ]
+        ]
+        [ authentication: <string> ]
+        [ authenticationFrom:
+            [ base64: <boolean> ]
+            [ env: <string> ]
+            [ file: <string> ]
+        ]
+        [ failoverVMAC:
+            interface: <string>
+            [ linkLocalAddress: <string> ]
+            macAddress: <string>
+            parentInterface: <string>
+            [ withdrawRouterAdvertisement: <boolean> ]
+        ]
+        [ gracefulActivation:
+            readyWhen:
+              [ state:
+                  [ <name>:
+                      [ contains: <string> ]
+                      [ equals: <string> ]
+                      [ exists: <boolean> ]
+                      [ for: <string> ]
+                      [ in:
+                          - <string>
+                      ]
+                      [ maxAge: <string> ]
+                      [ status: ("set" | "unset" | "unknown") ]
+                  ]
+              ]
+            [ timeout: <string> ]
+        ]
+        [ peers:
+            - <string>
+        ]
+        [ preempt: <boolean> ]
+        [ priority: <integer> ]
+        [ virtualRouterID: <integer> ]
+    ]
+    [ when:
+        [ state:
+            [ <name>:
+                [ contains: <string> ]
+                [ equals: <string> ]
+                [ exists: <boolean> ]
+                [ for: <string> ]
+                [ in:
+                    - <string>
+                ]
+                [ maxAge: <string> ]
+                [ status: ("set" | "unset" | "unknown") ]
+            ]
+        ]
+    ]
 ```
 
 ## 字段含义与默认值
 
-| YAML | 字段含义与默认值 |
-| --- | --- |
-| `spec.family` | 必填 ipv4/ipv6，无默认，须与地址族一致。 |
-| `spec.interface` | 必填单独声明逻辑接口名称，解析为 OS 设备，不是 Kind/name。 |
-| `spec.address` | 与 addressFrom 互斥的固定地址前缀。IPv4 /32；IPv6 除静态模式外 /128。语义验证允许 addressFrom 替代，但 JSON Schema 将 address 标为必填。 |
-| `spec.addressFrom` | 与 address 互斥的通用来源，生成器支持声明 IPv4StaticAddress.address/VirtualAddress.address，须明确 field。不递归解析嵌套 VirtualAddress 来源。 |
-| `spec.hostname` | 可选 FQDN，用于已服务 DNSZone 的自动本机 DNS 记录与状态。不改 OS 主机名或创建外部 DNS 记录。 |
-| `spec.externalDNS` | 默认 false，true 跳过自动本机名称记录与 DNS 范围警告，不联系外部 DNS 提供商。 |
-| `spec.mode` | static（默认）或 vrrp。static 不选举直接应用本机；vrrp 使用 Linux keepalived/FreeBSD CARP。VRRP/track 对象不限制静态持有。 |
-| `spec.gratuitousARP` | 默认 false，仅 Linux 静态 IPv4 可 true。新增/恢复缺失 VIP 后执行 arping -U -c 3，普通协调不反复公告。失败会报告并重试。 |
-| `spec.when` | 可选通用资源启用条件，默认无条件。筛选整个资源，与 gracefulActivation.readyWhen 的加入门槛不同。 |
-| `spec.vrrp` | 仅 mode=vrrp 使用的选举配置。静态模式忽略，且不验证所有内层值。 |
-| `spec.vrrp.virtualRouterID` | vrrp 必填 1–255，映射 CARP vhid。同 Router 的 family/interface 内唯一，同次选举的节点须一致。 |
-| `spec.vrrp.priority` | 1–254，省略/0 为 100。跟踪扣分后至少 1；CARP 转换为 advskew=max(1,254-priority)。 |
-| `spec.vrrp.preempt` | 省略/false 不仅因较高优先级夺回持有；true 启用抢占。CARP 使用主机全局 net.inet.carp.preempt，任一配置实例 true 即启用。 |
-| `spec.vrrp.peers` | Linux vrrp 必填非空对等地址/主机名列表。语法验证，生成时去重排序。FreeBSD CARP 不将此列表作对等配置。 |
-| `spec.vrrp.authentication` | 可选明文认证值，默认无，与 authenticationFrom 互斥。Linux 生成 keepalived auth_type PASS，CARP 使用 pass。是协议认证，不是加密 VRRP 流量。 |
-| `spec.vrrp.authenticationFrom` | 可选密钥来源，与明文 authentication 互斥。配置时 file/env 必须择一。生成时读取，缺失文件/环境或无效 Base64 会失败；解析空值会省略认证。 |
-| `spec.vrrp.authenticationFrom.file` | 路由器上的密钥文件路径，与 env 互斥。生成器移除末尾 CR/LF，不移除全部前后空格。 |
-| `spec.vrrp.authenticationFrom.env` | routerd 进程的环境变量名称，与 file 互斥。不是 shell 展开或远端环境变量。 |
-| `spec.vrrp.authenticationFrom.base64` | 默认 false。true 在移除编码值前后空白后解码标准 Base64，再移除解码结果末尾 CR/LF。 |
-| `spec.vrrp.failoverVMAC` | 可选由同一 VRRP 选举控制的 Linux macvlan L2 身份，不另选举。主条目在 Linux VRRP 模式验证，FreeBSD 不支持。 |
-| `spec.vrrp.additionalFailoverVMACs` | 可选依相同角色转换的额外 VMAC，默认空，字段同 failoverVMAC。当前 YAML 验证不完整，Linux 辅助程序/生成仍需有效父接口、名称与 Ethernet MAC。 |
-| `spec.vrrp.gracefulActivation` | 可选 Linux IPv4 VRRP 加入门槛，默认无；其他地址族/FreeBSD 拒绝。选举后准备依赖状态并等待发布 VIP。 |
-| `spec.vrrp.gracefulActivation.readyWhen` | 提供门槛时必填非空通用 state/all/any 条件。验证引用与条件，仅控制初次发布，不控制成功发布后的持续撤回。 |
-| `spec.vrrp.gracefulActivation.timeout` | 严格正 Go 时长，默认 45s。到期仅将启用状态改为 Failed/ReadinessTimeout，不强制发布、不停止重试或重启路由器。 |
-| `spec.track` | 可选资源健康跟踪列表，默认空，仅 vrrp。异常扣分累加影响选举优先级，不直接移除静态 VIP。 |
-| `spec.track[].resource` | 必填 Kind/name 格式，此处验证格式不验存在。读取 phase，普通就绪 phase 为健康，BGPRouter/BGPPeer 需 Established。Disabled/Standby/NotApplicable 与 when=false 为中立，保留当前扣分决定。 |
-| `spec.track[].unhealthyPenalty` | 0–254，省略/0 为 50，零无法禁用扣分。确认异常后应用，确认健康后移除。 |
-| `spec.track[].confirmConsecutiveUnhealthy` | 扣分前连续异常评估次数，省略/0 为 3，明确 1–255。是协调观测次数，不是秒数。 |
-| `spec.track[].confirmConsecutiveHealthy` | 解除扣分前连续健康次数，省略/0 为 2，明确 1–255。跟踪决定/计数可在重启后由保存状态恢复。 |
-| `spec.vrrp.failoverVMAC.parentInterface` | 必填配置的逻辑父接口，生成时解析为 OS 名称，不是状态来源。 |
-| `spec.vrrp.additionalFailoverVMACs[].parentInterface` | 必填配置的逻辑父接口，生成时解析为 OS 名称，不是状态来源。 |
-| `spec.vrrp.failoverVMAC.interface` | 必填 Linux VMAC 设备名称，最多 15 字符且须有效接口语法，由角色辅助程序创建/启用/禁用。 |
-| `spec.vrrp.additionalFailoverVMACs[].interface` | 必填 Linux VMAC 设备名称，最多 15 字符且须有效接口语法，由角色辅助程序创建/启用/禁用。 |
-| `spec.vrrp.failoverVMAC.macAddress` | 必填六字节 Ethernet MAC，共享切换身份的节点须一致，不从 VRID 自动生成。 |
-| `spec.vrrp.additionalFailoverVMACs[].macAddress` | 必填六字节 Ethernet MAC，共享切换身份的节点须一致，不从 VRID 自动生成。 |
-| `spec.vrrp.failoverVMAC.linkLocalAddress` | 可选纯 IPv6 链路本地身份（fe80::/10），不含前缀/区域后缀。Linux 辅助程序调用时验证，省略采用普通链路本地处理。 |
-| `spec.vrrp.additionalFailoverVMACs[].linkLocalAddress` | 可选纯 IPv6 链路本地身份（fe80::/10），不含前缀/区域后缀。Linux 辅助程序调用时验证，省略采用普通链路本地处理。 |
-| `spec.vrrp.failoverVMAC.withdrawRouterAdvertisement` | 默认 false。多 VMAC 参数形式中 true 会在禁用前以链路本地源发出 router lifetime=0 RA。未明确 linkLocalAddress 的单 VMAC 旧参数形式不传递此标志。 |
-| `spec.vrrp.additionalFailoverVMACs[].withdrawRouterAdvertisement` | 默认 false。多 VMAC 参数形式中 true 会在禁用前以链路本地源发出 router lifetime=0 RA。未明确 linkLocalAddress 的单 VMAC 旧参数形式不传递此标志。 |
-| `spec.vrrp.gracefulActivation.readyWhen.state` | readyWhen 内的可选状态键条件映射，所有条目均须匹配。state/all/any 须择一且非空。equals/in/contains/exists/status/for/maxAge 遵循通用字段；资源形式的键须引用已声明资源及提供字段。 |
+选填父条目的必填子条目仅在使用父条目时需要。其他具体条件列于说明；`[ ... ]`选项仍可能需要择一。
+
+| YAML | 指定要求 | 类型与限制 | 字段含义与默认值 |
+| --- | --- | --- | --- |
+| `spec.family` | **必填** | string; enum=["ipv4", "ipv6"] | 必填 ipv4/ipv6，无默认，须与地址族一致。 |
+| `spec.interface` | **必填** | string | 必填单独声明逻辑接口名称，解析为 OS 设备，不是 Kind/name。 |
+| `spec.address` | **条件必填** | string | 与 addressFrom 互斥的固定地址前缀。IPv4 /32；IPv6 除静态模式外 /128。语义验证允许 addressFrom 替代，但 JSON Schema 将 address 标为必填。 |
+| `spec.addressFrom` | **条件必填** | object | 与 address 互斥的通用来源，生成器支持声明 IPv4StaticAddress.address/VirtualAddress.address，须明确 field。不递归解析嵌套 VirtualAddress 来源。 |
+| `spec.hostname` | *选填* | string | 可选 FQDN，用于已服务 DNSZone 的自动本机 DNS 记录与状态。不改 OS 主机名或创建外部 DNS 记录。 |
+| `spec.externalDNS` | *选填* | boolean | 默认 false，true 跳过自动本机名称记录与 DNS 范围警告，不联系外部 DNS 提供商。 |
+| `spec.mode` | *选填* | string; enum=["", "static", "vrrp"] | static（默认）或 vrrp。static 不选举直接应用本机；vrrp 使用 Linux keepalived/FreeBSD CARP。VRRP/track 对象不限制静态持有。 |
+| `spec.gratuitousARP` | *选填* | boolean | 默认 false，仅 Linux 静态 IPv4 可 true。新增/恢复缺失 VIP 后执行 arping -U -c 3，普通协调不反复公告。失败会报告并重试。 |
+| `spec.when` | *选填* | object | 可选通用资源启用条件，默认无条件。筛选整个资源，与 gracefulActivation.readyWhen 的加入门槛不同。 |
+| `spec.vrrp` | **条件必填** | object | 仅 mode=vrrp 使用的选举配置。静态模式忽略，且不验证所有内层值。 |
+| `spec.vrrp.virtualRouterID` | **条件必填** | integer; minimum=1; maximum=255 | vrrp 必填 1–255，映射 CARP vhid。同 Router 的 family/interface 内唯一，同次选举的节点须一致。 |
+| `spec.vrrp.priority` | *选填* | integer; minimum=1; maximum=254 | 1–254，省略/0 为 100。跟踪扣分后至少 1；CARP 转换为 advskew=max(1,254-priority)。 |
+| `spec.vrrp.preempt` | *选填* | boolean | 省略/false 不仅因较高优先级夺回持有；true 启用抢占。CARP 使用主机全局 net.inet.carp.preempt，任一配置实例 true 即启用。 |
+| `spec.vrrp.peers` | **条件必填** | array | Linux vrrp 必填非空对等地址/主机名列表。语法验证，生成时去重排序。FreeBSD CARP 不将此列表作对等配置。 |
+| `spec.vrrp.authentication` | *选填* | string | 可选明文认证值，默认无，与 authenticationFrom 互斥。Linux 生成 keepalived auth_type PASS，CARP 使用 pass。是协议认证，不是加密 VRRP 流量。 |
+| `spec.vrrp.authenticationFrom` | *选填* | object | 可选密钥来源，与明文 authentication 互斥。配置时 file/env 必须择一。生成时读取，缺失文件/环境或无效 Base64 会失败；解析空值会省略认证。 |
+| `spec.vrrp.authenticationFrom.file` | *选填* | string | 路由器上的密钥文件路径，与 env 互斥。生成器移除末尾 CR/LF，不移除全部前后空格。 |
+| `spec.vrrp.authenticationFrom.env` | *选填* | string | routerd 进程的环境变量名称，与 file 互斥。不是 shell 展开或远端环境变量。 |
+| `spec.vrrp.authenticationFrom.base64` | *选填* | boolean | 默认 false。true 在移除编码值前后空白后解码标准 Base64，再移除解码结果末尾 CR/LF。 |
+| `spec.vrrp.failoverVMAC` | *选填* | object | 可选由同一 VRRP 选举控制的 Linux macvlan L2 身份，不另选举。主条目在 Linux VRRP 模式验证，FreeBSD 不支持。 |
+| `spec.vrrp.additionalFailoverVMACs` | *选填* | array | 可选依相同角色转换的额外 VMAC，默认空，字段同 failoverVMAC。当前 YAML 验证不完整，Linux 辅助程序/生成仍需有效父接口、名称与 Ethernet MAC。 |
+| `spec.vrrp.gracefulActivation` | *选填* | object | 可选 Linux IPv4 VRRP 加入门槛，默认无；其他地址族/FreeBSD 拒绝。选举后准备依赖状态并等待发布 VIP。 |
+| `spec.vrrp.gracefulActivation.readyWhen` | **条件必填** | object | 提供门槛时必填非空通用 state/all/any 条件。验证引用与条件，仅控制初次发布，不控制成功发布后的持续撤回。 |
+| `spec.vrrp.gracefulActivation.timeout` | *选填* | string | 严格正 Go 时长，默认 45s。到期仅将启用状态改为 Failed/ReadinessTimeout，不强制发布、不停止重试或重启路由器。 |
+| `spec.track` | *选填* | array | 可选资源健康跟踪列表，默认空，仅 vrrp。异常扣分累加影响选举优先级，不直接移除静态 VIP。 |
+| `spec.track[].resource` | **条件必填** | string | 必填 Kind/name 格式，此处验证格式不验存在。读取 phase，普通就绪 phase 为健康，BGPRouter/BGPPeer 需 Established。Disabled/Standby/NotApplicable 与 when=false 为中立，保留当前扣分决定。 |
+| `spec.track[].unhealthyPenalty` | *选填* | integer; minimum=0; maximum=254 | 0–254，省略/0 为 50，零无法禁用扣分。确认异常后应用，确认健康后移除。 |
+| `spec.track[].confirmConsecutiveUnhealthy` | *选填* | integer; minimum=1; maximum=255 | 扣分前连续异常评估次数，省略/0 为 3，明确 1–255。是协调观测次数，不是秒数。 |
+| `spec.track[].confirmConsecutiveHealthy` | *选填* | integer; minimum=1; maximum=255 | 解除扣分前连续健康次数，省略/0 为 2，明确 1–255。跟踪决定/计数可在重启后由保存状态恢复。 |
+| `spec.vrrp.failoverVMAC.parentInterface` | **条件必填** | string | 必填配置的逻辑父接口，生成时解析为 OS 名称，不是状态来源。 |
+| `spec.vrrp.additionalFailoverVMACs[].parentInterface` | **条件必填** | string | 必填配置的逻辑父接口，生成时解析为 OS 名称，不是状态来源。 |
+| `spec.vrrp.failoverVMAC.interface` | **条件必填** | string | 必填 Linux VMAC 设备名称，最多 15 字符且须有效接口语法，由角色辅助程序创建/启用/禁用。 |
+| `spec.vrrp.additionalFailoverVMACs[].interface` | **条件必填** | string | 必填 Linux VMAC 设备名称，最多 15 字符且须有效接口语法，由角色辅助程序创建/启用/禁用。 |
+| `spec.vrrp.failoverVMAC.macAddress` | **条件必填** | string | 必填六字节 Ethernet MAC，共享切换身份的节点须一致，不从 VRID 自动生成。 |
+| `spec.vrrp.additionalFailoverVMACs[].macAddress` | **条件必填** | string | 必填六字节 Ethernet MAC，共享切换身份的节点须一致，不从 VRID 自动生成。 |
+| `spec.vrrp.failoverVMAC.linkLocalAddress` | *选填* | string | 可选纯 IPv6 链路本地身份（fe80::/10），不含前缀/区域后缀。Linux 辅助程序调用时验证，省略采用普通链路本地处理。 |
+| `spec.vrrp.additionalFailoverVMACs[].linkLocalAddress` | *选填* | string | 可选纯 IPv6 链路本地身份（fe80::/10），不含前缀/区域后缀。Linux 辅助程序调用时验证，省略采用普通链路本地处理。 |
+| `spec.vrrp.failoverVMAC.withdrawRouterAdvertisement` | *选填* | boolean | 默认 false。多 VMAC 参数形式中 true 会在禁用前以链路本地源发出 router lifetime=0 RA。未明确 linkLocalAddress 的单 VMAC 旧参数形式不传递此标志。 |
+| `spec.vrrp.additionalFailoverVMACs[].withdrawRouterAdvertisement` | *选填* | boolean | 默认 false。多 VMAC 参数形式中 true 会在禁用前以链路本地源发出 router lifetime=0 RA。未明确 linkLocalAddress 的单 VMAC 旧参数形式不传递此标志。 |
+| `spec.vrrp.gracefulActivation.readyWhen.state` | *选填* | object | readyWhen 内的可选状态键条件映射，所有条目均须匹配。state/all/any 须择一且非空。equals/in/contains/exists/status/for/maxAge 遵循通用字段；资源形式的键须引用已声明资源及提供字段。 |
 
 实现: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/diagnostics.go](https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go) · [pkg/config/validate.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go) · [pkg/config/index.go](https://github.com/imksoo/routerd/blob/main/pkg/config/index.go) · [pkg/config/cluster_secret_validate.go](https://github.com/imksoo/routerd/blob/main/pkg/config/cluster_secret_validate.go) · [pkg/controller/vrrp/controller.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/vrrp/controller.go) · [pkg/controller/vrrp/backend.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/vrrp/backend.go) · [pkg/controller/dnsresolver/controller.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/dnsresolver/controller.go) · [pkg/render/vrrp.go](https://github.com/imksoo/routerd/blob/main/pkg/render/vrrp.go) · [pkg/render/carp.go](https://github.com/imksoo/routerd/blob/main/pkg/render/carp.go) · [pkg/render/status_source.go](https://github.com/imksoo/routerd/blob/main/pkg/render/status_source.go) · [pkg/render/secrets.go](https://github.com/imksoo/routerd/blob/main/pkg/render/secrets.go) · [cmd/routerd-vrrp-vmac/main.go](https://github.com/imksoo/routerd/blob/main/cmd/routerd-vrrp-vmac/main.go)
 

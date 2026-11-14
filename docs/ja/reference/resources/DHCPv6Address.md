@@ -11,28 +11,30 @@
 - 現行コードでは宣言の検証・索引化・観測・ホストのネットワーク引継ぎ判定に使います。DHCPv6Address専用daemonを生成する処理はありません。planの成功だけでホストのclient設定が完了したとは判断できません。
 - 同じインターフェースで外部PD clientを使う場合、DHCPv6Addressのclient選択と一致する必要があります。設定索引はclient省略をnetworkdと扱い、現行observe/planの表示はdhcpcdと扱います。省略時の扱いが一貫しないため、利用するclientを明示してください。
 
-## YAML定義
+## 設定構文
 
-全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。
+説明用の構文表記であり、そのままコピーするYAMLではありません。囲みのない項目は親の中で必須、`[ ... ]`は条件に応じて省略できる項目、`<型>`は差し替え値、`(a | b)`は選択肢です。任意の親にも必須の子があります。条件付き必須・排他・実効既定値は下の表を確認し、通常のYAMLはリンク先の設定例を使ってください。
 
-```yaml
+```text
 - apiVersion: net.routerd.net/v1alpha1
   kind: DHCPv6Address
   metadata:
     name: "<name>"
   spec:
-    client: "<string>" # 任意; string
-    interface: "<string>" # 必須; string
-    required: true # 任意; boolean
+    [ client: <string> ]
+    interface: <string>
+    [ required: <boolean> ]
 ```
 
 ## 項目の意味と既定値
 
-| YAML | 項目の意味と既定値 |
-| --- | --- |
-| `spec.interface` | 必須の論理インターフェース名。Interface/は付けず、宣言済みRouterのインターフェース一覧に存在する必要があります。既定値はありません。 |
-| `spec.client` | ホストDHCPv6 client・プログラムの選択。読込み上は省略時空です。networkdは引継ぎ判定で識別し、別名を明示した場合はそのIFのnetworkd DHCPv6を無効にします。検証時の既知の列挙値制限はなく、リソース名参照ではありません。 |
-| `spec.required` | 省略時false。現行のアドレス観測・引継ぎ実装では使わず、アドレス取得を待つ条件は追加しません。 |
+任意の親の必須項目は、親を使う場合に必要です。それ以外の具体的な条件は説明欄に記載します。`[ ... ]`で囲まれた選択肢も、いずれか一方が必要な場合があります。
+
+| YAML | 指定要否 | 型・制約 | 項目の意味と既定値 |
+| --- | --- | --- | --- |
+| `spec.interface` | **必須** | string | 必須の論理インターフェース名。Interface/は付けず、宣言済みRouterのインターフェース一覧に存在する必要があります。既定値はありません。 |
+| `spec.client` | *任意* | string | ホストDHCPv6 client・プログラムの選択。読込み上は省略時空です。networkdは引継ぎ判定で識別し、別名を明示した場合はそのIFのnetworkd DHCPv6を無効にします。検証時の既知の列挙値制限はなく、リソース名参照ではありません。 |
+| `spec.required` | *任意* | boolean | 省略時false。現行のアドレス観測・引継ぎ実装では使わず、アドレス取得を待つ条件は追加しません。 |
 
 実装: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go) · [pkg/config/index.go](https://github.com/imksoo/routerd/blob/main/pkg/config/index.go) · [pkg/config/validate_wan.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_wan.go) · [pkg/apply/engine.go](https://github.com/imksoo/routerd/blob/main/pkg/apply/engine.go) · [pkg/hostdeps/hostdeps.go](https://github.com/imksoo/routerd/blob/main/pkg/hostdeps/hostdeps.go) · [pkg/controller/chain/system.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/system.go)
 

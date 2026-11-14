@@ -13,71 +13,80 @@ Local A/AAAA records and generated PTR answers served through a DNSForwarder zon
 - dnssec.enabled only sets AD on local answers; it does not generate RRSIG/DNSKEY or validate signatures. dnssec.mode, dhcpDerived.hostnameSuffix, dhcpDerived.ddns and reverseZones do not currently change answer behavior. Do not interpret these fields as working signing, DDNS or reverse-zone access controls.
 - Only A/AAAA and generated PTR records are answered. An existing name with no requested address family returns NOERROR/NODATA; an absent name within the zone returns NXDOMAIN. Wildcard names are supported. Repeated static hostnames use the last record rather than accumulating addresses across entries.
 
-## YAML definition
+## Configuration syntax
 
-All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.
+This is explanatory notation, not YAML to copy. Unbracketed fields are required within their parent; `[ ... ]` marks fields that can be omitted, subject to the conditions in the table. `<type>` is a placeholder, and `(a | b)` lists alternatives. Optional parents may contain required children. Conditional requirements, exclusions and runtime defaults are described below. Use the linked YAML example for an ordinary configuration.
 
-```yaml
+```text
 - apiVersion: net.routerd.net/v1alpha1
   kind: DNSZone
   metadata:
     name: "<name>"
   spec:
-    dhcpDerived: # optional; object
-      ddns: true # optional; boolean
-      hostnameSuffix: "<string>" # optional; string
-      leaseFile: "<string>" # optional; string
-      sources: # optional; array
-        - "<string>" # string
-      ttl: 0 # optional; integer; minimum=0
-    dnssec: # optional; object
-      enabled: true # optional; boolean
-      mode: "" # optional; string; enum=["", "validate", "sign"]
-    records: # optional; array
-      - # object
-        hostname: "<string>" # Required; string
-        ipv4: "<string>" # optional; string
-        ipv4From: # optional; object
-          field: "<string>" # optional; string
-          optional: true # optional; boolean
-          resource: "<string>" # Required; string
-        ipv6: "<string>" # optional; string
-        ipv6From: # optional; object
-          field: "<string>" # optional; string
-          optional: true # optional; boolean
-          resource: "<string>" # Required; string
-        ttl: 0 # optional; integer; minimum=0
-    reverseZones: # optional; array
-      - # object
-        name: "<string>" # Required; string
-    ttl: 0 # optional; integer; minimum=0
-    zone: "<string>" # Required; string
+    [ dhcpDerived:
+        [ ddns: <boolean> ]
+        [ hostnameSuffix: <string> ]
+        [ leaseFile: <string> ]
+        [ sources:
+            - <string>
+        ]
+        [ ttl: <integer> ]
+    ]
+    [ dnssec:
+        [ enabled: <boolean> ]
+        [ mode: ("" | "validate" | "sign") ]
+    ]
+    [ records:
+        -
+          hostname: <string>
+          [ ipv4: <string> ]
+          [ ipv4From:
+              field: <string>
+              [ optional: <boolean> ]
+              resource: <string>
+          ]
+          [ ipv6: <string> ]
+          [ ipv6From:
+              field: <string>
+              [ optional: <boolean> ]
+              resource: <string>
+          ]
+          [ ttl: <integer> ]
+    ]
+    [ reverseZones:
+        -
+          name: <string>
+    ]
+    [ ttl: <integer> ]
+    zone: <string>
 ```
 
 ## Field meaning and default
 
-| YAML | Field meaning and default |
-| --- | --- |
-| `spec.zone` | Required zone domain, for example home.example.net. Runtime adds a trailing dot; no default. Use normal lowercase DNS names because the current validator only checks nonempty. |
-| `spec.ttl` | Zone default TTL in seconds; omitted/0 becomes 300. Schema permits nonnegative values. Used by static records without TTL and generated PTR replies. |
-| `spec.dnssec` | Optional local-answer AD flag settings; no cryptographic signing or validation. |
-| `spec.dnssec.enabled` | Default false; true sets AD even on local negative/NODATA replies without producing signatures. |
-| `spec.dnssec.mode` | Schema accepts empty, validate or sign; default empty. Decoded but not used by current local-zone answer logic. |
-| `spec.records` | Optional static A/AAAA record list, default empty. A hostname with no addresses is accepted but has no A/AAAA answer. |
-| `spec.records[].hostname` | Required name without whitespace or comma. Relative names are suffixed with zone; a full name already inside zone stays unchanged. A name outside zone is also suffixed, not served as an external zone. Use *.subdomain for a wildcard. |
-| `spec.records[].ipv4` | Optional bare IPv4 address; default none. Can coexist with ipv4From as a fallback retained when the source is unresolved. |
-| `spec.records[].ipv4From` | Optional common status-value source; explicit resource/field required and validated. First usable value must be IPv4; CIDR input is reduced to its host address. Runtime reads status, not the declared IPv4StaticAddress fallback used by some other consumers. |
-| `spec.records[].ipv6` | Optional bare IPv6 address; default none. Can coexist with ipv6From using the same fallback behavior. |
-| `spec.records[].ipv6From` | Optional common resource/field/optional source; first value must be IPv6. Same reference, CIDR and missing-value rules as ipv4From; optional defaults false. |
-| `spec.records[].ttl` | Record TTL in seconds; omitted/0 inherits zone TTL. Schema nonnegative; does not affect DHCP-derived TTL. |
-| `spec.dhcpDerived` | Optional DHCP lease-to-record settings. Runtime lease events can update enabled zones; this is not RFC 2136 DDNS. |
-| `spec.dhcpDerived.sources` | Default empty disables live lease-event import and sticky snapshot import. Any nonempty list enables them; current runtime does not filter by these source strings or validate referenced DHCP resources. All received lease events are offered to each enabled zone. |
-| `spec.dhcpDerived.hostnameSuffix` | Decoded optional string, default empty; not read by current lease record generation. Zone suffixing uses zone instead. |
-| `spec.dhcpDerived.ddns` | Decoded boolean default false; current daemon neither gates event updates on this flag nor implements DNS UPDATE from it. |
-| `spec.dhcpDerived.ttl` | TTL seconds for DHCP-derived forward records; omitted/0 becomes 60, independent of zone TTL. PTR replies use zone TTL. |
-| `spec.dhcpDerived.leaseFile` | Optional dnsmasq lease-file path read when constructing/reloading the zone. Empty disables this file import; it is separate from live-event source enablement and not a continuously watched file. |
-| `spec.reverseZones` | Optional reverse-zone metadata list, default empty. Current daemon records these names but does not consult them when answering PTR; PTR is generated from records regardless of this list. |
-| `spec.reverseZones[].name` | Schema-required string inside each entry. Stored as a fully qualified reverse-zone name but currently has no answer-selection effect. |
+Required children of optional objects apply only when their parent is used. Other exact conditions are in the explanation; bracketed alternatives may still require one choice.
+
+| YAML | Presence | Type / constraints | Field meaning and default |
+| --- | --- | --- | --- |
+| `spec.zone` | **Required** | string | Required zone domain, for example home.example.net. Runtime adds a trailing dot; no default. Use normal lowercase DNS names because the current validator only checks nonempty. |
+| `spec.ttl` | *Optional* | integer; minimum=0 | Zone default TTL in seconds; omitted/0 becomes 300. Schema permits nonnegative values. Used by static records without TTL and generated PTR replies. |
+| `spec.dnssec` | *Optional* | object | Optional local-answer AD flag settings; no cryptographic signing or validation. |
+| `spec.dnssec.enabled` | *Optional* | boolean | Default false; true sets AD even on local negative/NODATA replies without producing signatures. |
+| `spec.dnssec.mode` | *Optional* | string; enum=["", "validate", "sign"] | Schema accepts empty, validate or sign; default empty. Decoded but not used by current local-zone answer logic. |
+| `spec.records` | *Optional* | array | Optional static A/AAAA record list, default empty. A hostname with no addresses is accepted but has no A/AAAA answer. |
+| `spec.records[].hostname` | **Conditionally required** | string | Required name without whitespace or comma. Relative names are suffixed with zone; a full name already inside zone stays unchanged. A name outside zone is also suffixed, not served as an external zone. Use *.subdomain for a wildcard. |
+| `spec.records[].ipv4` | *Optional* | string | Optional bare IPv4 address; default none. Can coexist with ipv4From as a fallback retained when the source is unresolved. |
+| `spec.records[].ipv4From` | *Optional* | object | Optional common status-value source; explicit resource/field required and validated. First usable value must be IPv4; CIDR input is reduced to its host address. Runtime reads status, not the declared IPv4StaticAddress fallback used by some other consumers. |
+| `spec.records[].ipv6` | *Optional* | string | Optional bare IPv6 address; default none. Can coexist with ipv6From using the same fallback behavior. |
+| `spec.records[].ipv6From` | *Optional* | object | Optional common resource/field/optional source; first value must be IPv6. Same reference, CIDR and missing-value rules as ipv4From; optional defaults false. |
+| `spec.records[].ttl` | *Optional* | integer; minimum=0 | Record TTL in seconds; omitted/0 inherits zone TTL. Schema nonnegative; does not affect DHCP-derived TTL. |
+| `spec.dhcpDerived` | *Optional* | object | Optional DHCP lease-to-record settings. Runtime lease events can update enabled zones; this is not RFC 2136 DDNS. |
+| `spec.dhcpDerived.sources` | *Optional* | array | Default empty disables live lease-event import and sticky snapshot import. Any nonempty list enables them; current runtime does not filter by these source strings or validate referenced DHCP resources. All received lease events are offered to each enabled zone. |
+| `spec.dhcpDerived.hostnameSuffix` | *Optional* | string | Decoded optional string, default empty; not read by current lease record generation. Zone suffixing uses zone instead. |
+| `spec.dhcpDerived.ddns` | *Optional* | boolean | Decoded boolean default false; current daemon neither gates event updates on this flag nor implements DNS UPDATE from it. |
+| `spec.dhcpDerived.ttl` | *Optional* | integer; minimum=0 | TTL seconds for DHCP-derived forward records; omitted/0 becomes 60, independent of zone TTL. PTR replies use zone TTL. |
+| `spec.dhcpDerived.leaseFile` | *Optional* | string | Optional dnsmasq lease-file path read when constructing/reloading the zone. Empty disables this file import; it is separate from live-event source enablement and not a continuously watched file. |
+| `spec.reverseZones` | *Optional* | array | Optional reverse-zone metadata list, default empty. Current daemon records these names but does not consult them when answering PTR; PTR is generated from records regardless of this list. |
+| `spec.reverseZones[].name` | **Conditionally required** | string | Schema-required string inside each entry. Stored as a fully qualified reverse-zone name but currently has no answer-selection effect. |
 
 Implementation: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate_dns.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_dns.go) · [pkg/config/diagnostics.go](https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go) · [pkg/controller/dnsresolver/controller.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/dnsresolver/controller.go) · [cmd/routerd-dns-resolver/zone.go](https://github.com/imksoo/routerd/blob/main/cmd/routerd-dns-resolver/zone.go)
 

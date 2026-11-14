@@ -13,79 +13,103 @@
 <li>Linux uses ip route replace, with src for preferredSource and metric only when positive. FreeBSD uses route change/add and -ifa for preferredSource; this path does not apply metric. Installed status is not an end-to-end reachability check.</li>
 <li>ready_when and ${...} expressions in device/gateway were removed: use dependsOn and explicit deviceFrom/gatewayFrom. preferredSource does not support status expressions.</li>
 </ul>
-<h2 id="yaml-definition">YAML definition</h2>
-<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
-<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+<h2 id="configuration-syntax">Configuration syntax</h2>
+<p>This is explanatory notation, not YAML to copy. Unbracketed fields are required within their parent; <code>[ ... ]</code> marks fields that can be omitted, subject to the conditions in the table. <code>&lt;type&gt;</code> is a placeholder, and <code>(a | b)</code> lists alternatives. Optional parents may contain required children. Conditional requirements, exclusions and runtime defaults are described below. Use the linked YAML example for an ordinary configuration.</p>
+<pre><code class="language-text">- apiVersion: net.routerd.net/v1alpha1
   kind: IPv4Route
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    dependsOn: # optional; array
-      - # object
-        equals: &quot;&lt;string&gt;&quot; # optional; string
-        field: &quot;&lt;string&gt;&quot; # optional; string
-        notEmpty: true # optional; boolean
-        optional: true # optional; boolean
-        phase: &quot;&lt;string&gt;&quot; # optional; string
-        resource: &quot;&lt;string&gt;&quot; # Required; string
-    destination: &quot;&lt;string&gt;&quot; # Required; string
-    device: &quot;&lt;string&gt;&quot; # optional; string
-    deviceFrom: # optional; object
-      field: &quot;&lt;string&gt;&quot; # optional; string
-      optional: true # optional; boolean
-      resource: &quot;&lt;string&gt;&quot; # Required; string
-    gateway: &quot;&lt;string&gt;&quot; # optional; string
-    gatewayFrom: # optional; object
-      field: &quot;&lt;string&gt;&quot; # optional; string
-      optional: true # optional; boolean
-      resource: &quot;&lt;string&gt;&quot; # Required; string
-    metric: 0 # optional; integer; minimum=0
-    preferredSource: &quot;&lt;string&gt;&quot; # optional; string
-    type: &quot;unicast&quot; # optional; string; enum=[&quot;unicast&quot;, &quot;blackhole&quot;]
+    [ dependsOn:
+        -
+          [ equals: &lt;string&gt; ]
+          [ field: &lt;string&gt; ]
+          [ notEmpty: &lt;boolean&gt; ]
+          [ optional: &lt;boolean&gt; ]
+          [ phase: &lt;string&gt; ]
+          resource: &lt;string&gt;
+    ]
+    destination: &lt;string&gt;
+    [ device: &lt;string&gt; ]
+    [ deviceFrom:
+        field: &lt;string&gt;
+        [ optional: &lt;boolean&gt; ]
+        resource: &lt;string&gt;
+    ]
+    [ gateway: &lt;string&gt; ]
+    [ gatewayFrom:
+        field: &lt;string&gt;
+        [ optional: &lt;boolean&gt; ]
+        resource: &lt;string&gt;
+    ]
+    [ metric: &lt;integer&gt; ]
+    [ preferredSource: &lt;string&gt; ]
+    [ type: (&quot;unicast&quot; | &quot;blackhole&quot;) ]
 </code></pre>
 <h2 id="field-meaning-and-default">Field meaning and default</h2>
+<p>Required children of optional objects apply only when their parent is used. Other exact conditions are in the explanation; bracketed alternatives may still require one choice.</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>Presence</th>
+<th>Type / constraints</th>
 <th>Field meaning and default</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.destination</code></td>
+<td><strong>Required</strong></td>
+<td>string</td>
 <td>Required IPv4 CIDR; use 0.0.0.0/0 for the default route, not the word default. The current validator parses prefixes without rejecting IPv6 here, but this resource/controller is for IPv4.</td>
 </tr>
 <tr>
 <td><code>spec.type</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["unicast", "blackhole"]</td>
 <td>unicast by default; blackhole discards traffic and prohibits the device/gateway/source fields.</td>
 </tr>
 <tr>
 <td><code>spec.device</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional literal logical interface or OS device name, used when deviceFrom has no value. Empty on unicast becomes Pending/DeviceMissing; a missing OS device becomes DeviceNotReady. Forbidden for blackhole.</td>
 </tr>
 <tr>
 <td><code>spec.deviceFrom</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional status-value source for the device; resource and field follow the common reference rules. First normalized value takes precedence over device. No source by default; forbidden for blackhole.</td>
 </tr>
 <tr>
 <td><code>spec.gateway</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional bare IPv4 next hop, default empty for a route through the device without a gateway. Used as fallback for gatewayFrom. Forbidden for blackhole.</td>
 </tr>
 <tr>
 <td><code>spec.gatewayFrom</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional status source following common resource/field rules. Its first normalized value precedes gateway. If configured and neither source nor literal yields a value, reconciliation stays Pending/GatewayMissing. Forbidden for blackhole.</td>
 </tr>
 <tr>
 <td><code>spec.preferredSource</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional bare IPv4 preferred source for locally originated traffic; default none. Must already be a local address when applied, otherwise Pending/PreferredSourceNotLocal. This does not assign an address or perform SNAT. Forbidden for blackhole.</td>
 </tr>
 <tr>
 <td><code>spec.metric</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=0</td>
 <td>Optional nonnegative integer, default 0. Linux passes it only when positive; FreeBSD apply ignores this field. Lower metrics normally win among otherwise matching routes.</td>
 </tr>
 <tr>
 <td><code>spec.dependsOn</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional AND-list of common resource dependency predicates; default empty. Unsatisfied predicates prevent installation with DependsOnFalse. See common fields for resource/field/phase/equals/notEmpty/optional.</td>
 </tr>
 </tbody>
@@ -97,7 +121,7 @@
 <p><a href="/examples/lan-advertise-with-community.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
 <li><a href="#conditions-and-references">Conditions and references</a></li>
-<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#configuration-syntax">Configuration syntax</a></li>
 <li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 <li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
 </ul>

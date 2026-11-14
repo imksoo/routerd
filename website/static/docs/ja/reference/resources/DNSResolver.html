@@ -12,128 +12,177 @@
 <li>listenの省略・空リストは127.0.0.1:5053になります。各待受はUDPとTCPの両方で動作します。再帰問い合わせを許す待受は信頼するネットワークに限定してください。</li>
 <li>固定値と動的な待受アドレスを結合して重複を除きます。必須参照の未解決は依存待ちとして記録しますが、他の有効なアドレスは利用します。待受が一つも解決しない場合はPendingです。</li>
 </ul>
-<h2 id="yaml定義">YAML定義</h2>
-<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
-<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+<h2 id="設定構文">設定構文</h2>
+<p>説明用の構文表記であり、そのままコピーするYAMLではありません。囲みのない項目は親の中で必須、<code>[ ... ]</code>は条件に応じて省略できる項目、<code>&lt;型&gt;</code>は差し替え値、<code>(a | b)</code>は選択肢です。任意の親にも必須の子があります。条件付き必須・排他・実効既定値は下の表を確認し、通常のYAMLはリンク先の設定例を使ってください。</p>
+<pre><code class="language-text">- apiVersion: net.routerd.net/v1alpha1
   kind: DNSResolver
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    cache: # 任意; object
-      enabled: true # 任意; boolean
-      maxEntries: 0 # 任意; integer; minimum=0
-      maxTTL: &quot;&lt;string&gt;&quot; # 任意; string
-      minTTL: &quot;&lt;string&gt;&quot; # 任意; string
-      negativeTTL: &quot;&lt;string&gt;&quot; # 任意; string
-    listen: # 必須; array
-      - # object
-        addressFrom: # 任意; array
-          - # object
-            field: &quot;&lt;string&gt;&quot; # 任意; string
-            optional: true # 任意; boolean
-            resource: &quot;&lt;string&gt;&quot; # 必須; string
-        addresses: # 任意; array
-          - &quot;&lt;string&gt;&quot; # string
-        name: &quot;&lt;string&gt;&quot; # 任意; string
-        port: 1 # 任意; integer; minimum=1; maximum=65535
-        sources: # 任意; array
-          - &quot;&lt;string&gt;&quot; # string
-    metrics: # 任意; object
-      perUpstream: true # 任意; boolean
-    queryLog: # 任意; object
-      enabled: true # 任意; boolean
-      path: &quot;&lt;string&gt;&quot; # 任意; string
-    when: # 任意; object
-      state: # 任意; object
-        &quot;&lt;key&gt;&quot;: # 任意; object
-          contains: &quot;&lt;string&gt;&quot; # 任意; string
-          equals: &quot;&lt;string&gt;&quot; # 任意; string
-          exists: true # 任意; boolean
-          for: &quot;&lt;string&gt;&quot; # 任意; string
-          in: # 任意; array
-            - &quot;&lt;string&gt;&quot; # string
-          maxAge: &quot;&lt;string&gt;&quot; # 任意; string
-          status: &quot;set&quot; # 任意; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+    [ cache:
+        [ enabled: &lt;boolean&gt; ]
+        [ maxEntries: &lt;integer&gt; ]
+        [ maxTTL: &lt;string&gt; ]
+        [ minTTL: &lt;string&gt; ]
+        [ negativeTTL: &lt;string&gt; ]
+    ]
+    listen:
+      -
+        [ addressFrom:
+            -
+              field: &lt;string&gt;
+              [ optional: &lt;boolean&gt; ]
+              resource: &lt;string&gt;
+        ]
+        [ addresses:
+            - &lt;string&gt;
+        ]
+        [ name: &lt;string&gt; ]
+        [ port: &lt;integer&gt; ]
+        [ sources:
+            - &lt;string&gt;
+        ]
+    [ metrics:
+        [ perUpstream: &lt;boolean&gt; ]
+    ]
+    [ queryLog:
+        [ enabled: &lt;boolean&gt; ]
+        [ path: &lt;string&gt; ]
+    ]
+    [ when:
+        [ state:
+            [ &lt;name&gt;:
+                [ contains: &lt;string&gt; ]
+                [ equals: &lt;string&gt; ]
+                [ exists: &lt;boolean&gt; ]
+                [ for: &lt;string&gt; ]
+                [ in:
+                    - &lt;string&gt;
+                ]
+                [ maxAge: &lt;string&gt; ]
+                [ status: (&quot;set&quot; | &quot;unset&quot; | &quot;unknown&quot;) ]
+            ]
+        ]
+    ]
 </code></pre>
 <h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<p>任意の親の必須項目は、親を使う場合に必要です。それ以外の具体的な条件は説明欄に記載します。<code>[ ... ]</code>で囲まれた選択肢も、いずれか一方が必要な場合があります。</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>指定要否</th>
+<th>型・制約</th>
 <th>項目の意味と既定値</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.listen</code></td>
+<td><strong>必須</strong></td>
+<td>array</td>
 <td>待受一覧です。空なら正規化でループバック待受を補います。</td>
 </tr>
 <tr>
 <td><code>spec.listen[].name</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>待受の識別名です。省略時はリスト順にlisten-0、listen-1…となります。</td>
 </tr>
 <tr>
 <td><code>spec.listen[].addresses</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>ポート・CIDRを含まないIPv4/IPv6アドレスです。addressesとaddressFromが両方空なら[127.0.0.1]です。</td>
 </tr>
 <tr>
 <td><code>spec.listen[].addressFrom</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>共通のresource・field・optionalによる参照一覧です。設定内の参照先と提供フィールドの明示が必要です。IPv4StaticAddress.addressは状態確定前でも宣言値を参照し、CIDRはアドレス部分を使用します。optional既定falseで、trueの未解決値は省略します。</td>
 </tr>
 <tr>
 <td><code>spec.listen[].port</code></td>
+<td><em>任意</em></td>
+<td>integer; minimum=1; maximum=65535</td>
 <td>1～65535のポートです。省略・0は5053に正規化します。</td>
 </tr>
 <tr>
 <td><code>spec.listen[].sources</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>このリゾルバーに属するDNSForwarderの名前一覧です。空なら全規則を選びます。metadata.nameの裸名を指定してください。検証は修飾名も許しますが、デーモンは接頭辞を除かず裸名と完全一致させます。このリスト順で規則順序は変わりません。</td>
 </tr>
 <tr>
 <td><code>spec.cache</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>応答キャッシュ設定です。対象は上流応答で、ローカルゾーンの応答は保存しません。既定は無効です。</td>
 </tr>
 <tr>
 <td><code>spec.cache.enabled</code></td>
+<td><em>任意</em></td>
+<td>boolean</td>
 <td>既定falseです。trueでメモリ内応答キャッシュを有効にします。</td>
 </tr>
 <tr>
 <td><code>spec.cache.maxEntries</code></td>
+<td><em>任意</em></td>
+<td>integer; minimum=0</td>
 <td>省略・0は10000です。スキーマ上は0以上で、バイト数ではなくエントリー数の上限です。</td>
 </tr>
 <tr>
 <td><code>spec.cache.minTTL</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>キャッシュ保持時間の下限をGo durationで指定します。空なら下限なしです。この処理では不正な期間は拒否せず無視します。応答内レコードのTTLは書き換えません。</td>
 </tr>
 <tr>
 <td><code>spec.cache.maxTTL</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>Go durationによる上限で、minTTLの後に適用します。空なら上限なしで、不正な期間は無視します。</td>
 </tr>
 <tr>
 <td><code>spec.cache.negativeTTL</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>空の正常応答・NXDOMAINの保持時間をGo durationで上書きし、min/max制限より後に適用します。既定空では制限適用前60秒です。SERVFAILなど一時失敗は保存しません。</td>
 </tr>
 <tr>
 <td><code>spec.metrics</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>メトリクス設定ですが、現行実行処理にperUpstreamの利用箇所はありません。</td>
 </tr>
 <tr>
 <td><code>spec.metrics.perUpstream</code></td>
+<td><em>任意</em></td>
+<td>boolean</td>
 <td>既定falseの真偽値として読み込みますが、現行実装では上流別メトリクスを切り替えません。</td>
 </tr>
 <tr>
 <td><code>spec.queryLog</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>SQLiteデータベースへの問い合わせ記録です。既定は無効です。</td>
 </tr>
 <tr>
 <td><code>spec.queryLog.enabled</code></td>
+<td><em>任意</em></td>
+<td>boolean</td>
 <td>既定falseです。trueでqueryLog.pathへ問い合わせを記録します。</td>
 </tr>
 <tr>
 <td><code>spec.queryLog.path</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>有効時に省略・空白なら/var/lib/routerd/dns-queries.dbです。テキストログではなくデータベースのパスです。</td>
 </tr>
 <tr>
 <td><code>spec.when</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>共通の状態条件です。省略時は無条件です。state/all/anyとスキーマ制限は共通項を参照してください。</td>
 </tr>
 </tbody>
@@ -145,7 +194,7 @@
 <p><a href="/examples/example-dslite-home.yaml">設定例</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
 <ul>
 <li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
-<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#設定構文">設定構文</a></li>
 <li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
 <li><a href="#状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</a></li>
 </ul>

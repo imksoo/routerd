@@ -12,136 +12,183 @@
 <li>dnssl and dnsslFrom are mutually exclusive; prefix and prefixFrom, or rdnss and rdnssFrom, are not. All common resource references must exist and specify a provided field even when optional true. Removed prefixSource/ready_when are rejected.</li>
 <li>When prefixFrom points to IPv6DelegatedAddress, still-valid previous /64 prefixes are sent directly as deprecated PIOs (preferred 0, remaining valid lifetime), from a real link-local source with hop limit 255. Current-prefix normal service remains the shared dnsmasq path.</li>
 </ul>
-<h2 id="yaml-definition">YAML definition</h2>
-<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
-<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+<h2 id="configuration-syntax">Configuration syntax</h2>
+<p>This is explanatory notation, not YAML to copy. Unbracketed fields are required within their parent; <code>[ ... ]</code> marks fields that can be omitted, subject to the conditions in the table. <code>&lt;type&gt;</code> is a placeholder, and <code>(a | b)</code> lists alternatives. Optional parents may contain required children. Conditional requirements, exclusions and runtime defaults are described below. Use the linked YAML example for an ordinary configuration.</p>
+<pre><code class="language-text">- apiVersion: net.routerd.net/v1alpha1
   kind: IPv6RouterAdvertisement
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    configPath: &quot;&lt;string&gt;&quot; # optional; string
-    dependsOn: # optional; array
-      - # object
-        equals: &quot;&lt;string&gt;&quot; # optional; string
-        field: &quot;&lt;string&gt;&quot; # optional; string
-        notEmpty: true # optional; boolean
-        optional: true # optional; boolean
-        phase: &quot;&lt;string&gt;&quot; # optional; string
-        resource: &quot;&lt;string&gt;&quot; # Required; string
-    dnssl: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    dnsslFrom: # optional; array
-      - # object
-        field: &quot;&lt;string&gt;&quot; # optional; string
-        optional: true # optional; boolean
-        resource: &quot;&lt;string&gt;&quot; # Required; string
-    interface: &quot;&lt;string&gt;&quot; # Required; string
-    mFlag: true # optional; boolean
-    mtu: 1280 # optional; integer; minimum=1280; maximum=65535
-    oFlag: true # optional; boolean
-    pidFile: &quot;&lt;string&gt;&quot; # optional; string
-    preferredLifetime: &quot;&lt;string&gt;&quot; # optional; string
-    prefix: &quot;&lt;string&gt;&quot; # optional; string
-    prefixFrom: # optional; object
-      field: &quot;&lt;string&gt;&quot; # optional; string
-      optional: true # optional; boolean
-      resource: &quot;&lt;string&gt;&quot; # Required; string
-    prfPreference: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;low&quot;, &quot;medium&quot;, &quot;high&quot;]
-    rdnss: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    rdnssFrom: # optional; array
-      - # object
-        field: &quot;&lt;string&gt;&quot; # optional; string
-        optional: true # optional; boolean
-        resource: &quot;&lt;string&gt;&quot; # Required; string
-    validLifetime: &quot;&lt;string&gt;&quot; # optional; string
-    when: # optional; object
-      state: # optional; object
-        &quot;&lt;key&gt;&quot;: # optional; object
-          contains: &quot;&lt;string&gt;&quot; # optional; string
-          equals: &quot;&lt;string&gt;&quot; # optional; string
-          exists: true # optional; boolean
-          for: &quot;&lt;string&gt;&quot; # optional; string
-          in: # optional; array
-            - &quot;&lt;string&gt;&quot; # string
-          maxAge: &quot;&lt;string&gt;&quot; # optional; string
-          status: &quot;set&quot; # optional; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+    [ configPath: &lt;string&gt; ]
+    [ dependsOn:
+        -
+          [ equals: &lt;string&gt; ]
+          [ field: &lt;string&gt; ]
+          [ notEmpty: &lt;boolean&gt; ]
+          [ optional: &lt;boolean&gt; ]
+          [ phase: &lt;string&gt; ]
+          resource: &lt;string&gt;
+    ]
+    [ dnssl:
+        - &lt;string&gt;
+    ]
+    [ dnsslFrom:
+        -
+          field: &lt;string&gt;
+          [ optional: &lt;boolean&gt; ]
+          resource: &lt;string&gt;
+    ]
+    interface: &lt;string&gt;
+    [ mFlag: &lt;boolean&gt; ]
+    [ mtu: &lt;integer&gt; ]
+    [ oFlag: &lt;boolean&gt; ]
+    [ pidFile: &lt;string&gt; ]
+    [ preferredLifetime: &lt;string&gt; ]
+    [ prefix: &lt;string&gt; ]
+    [ prefixFrom:
+        field: &lt;string&gt;
+        [ optional: &lt;boolean&gt; ]
+        resource: &lt;string&gt;
+    ]
+    [ prfPreference: (&quot;&quot; | &quot;low&quot; | &quot;medium&quot; | &quot;high&quot;) ]
+    [ rdnss:
+        - &lt;string&gt;
+    ]
+    [ rdnssFrom:
+        -
+          field: &lt;string&gt;
+          [ optional: &lt;boolean&gt; ]
+          resource: &lt;string&gt;
+    ]
+    [ validLifetime: &lt;string&gt; ]
+    [ when:
+        [ state:
+            [ &lt;name&gt;:
+                [ contains: &lt;string&gt; ]
+                [ equals: &lt;string&gt; ]
+                [ exists: &lt;boolean&gt; ]
+                [ for: &lt;string&gt; ]
+                [ in:
+                    - &lt;string&gt;
+                ]
+                [ maxAge: &lt;string&gt; ]
+                [ status: (&quot;set&quot; | &quot;unset&quot; | &quot;unknown&quot;) ]
+            ]
+        ]
+    ]
 </code></pre>
 <h2 id="field-meaning-and-default">Field meaning and default</h2>
+<p>Required children of optional objects apply only when their parent is used. Other exact conditions are in the explanation; bracketed alternatives may still require one choice.</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>Presence</th>
+<th>Type / constraints</th>
 <th>Field meaning and default</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.interface</code></td>
+<td><strong>Required</strong></td>
+<td>string</td>
 <td>Required logical interface. Current global reference validation does not verify this field for RA, unlike many address resources; runtime attempts alias resolution and then uses the literal as an OS name. Declare an Interface and use its name.</td>
 </tr>
 <tr>
 <td><code>spec.prefix</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Literal IPv6 prefix, required unless prefixFrom.resource is supplied. May coexist with prefixFrom as a status fallback. Current live writer does not generate a normal prefix range from this field; do not assume declaration alone advertises it.</td>
 </tr>
 <tr>
 <td><code>spec.prefixFrom</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>object</td>
 <td>Optional common resource/field/optional source, existing resource and explicit provided field required. Used for reported prefix and, when referencing IPv6DelegatedAddress, discovery of previous /64s to deprecate. Missing values do not gate normal config generation by themselves.</td>
 </tr>
 <tr>
 <td><code>spec.rdnss</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional literal IPv6 DNS-server list, default empty. Merged with rdnssFrom; emitted as untagged option6:dns-server in shared dnsmasq, not isolated per RA interface by this writer.</td>
 </tr>
 <tr>
 <td><code>spec.rdnssFrom</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional common status-value source list. No automatic source. Current RA path discards unresolved-source pending reasons and uses the values available; optional does not provide a service-readiness gate here.</td>
 </tr>
 <tr>
 <td><code>spec.dnssl</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional search-domain list, default empty; each value is a single domain without whitespace/slash/comma. Exclusive with dnsslFrom. Emitted as shared untagged option6:domain-search.</td>
 </tr>
 <tr>
 <td><code>spec.dnsslFrom</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional source list restricted to DNSZone/<name>, field: zone. Each resource must exist. Reads declared zone values before status; exclusive with dnssl. Current normal RA rendering ignores missing-source pending reasons.</td>
 </tr>
 <tr>
 <td><code>spec.mFlag</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Boolean default false. Used in direct advertisements deprecating previous delegated prefixes; current normal dnsmasq RA option generation does not map it to M.</td>
 </tr>
 <tr>
 <td><code>spec.oFlag</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Boolean default false. Same restricted direct-deprecation path as mFlag; not a current normal dnsmasq O-bit switch.</td>
 </tr>
 <tr>
 <td><code>spec.mtu</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=1280; maximum=65535</td>
 <td>Optional 1280–65535. Zero/omitted emits no explicit MTU unless a PathMTU-derived RA value takes precedence. Passed via dnsmasq ra-param mtu:<value>.</td>
 </tr>
 <tr>
 <td><code>spec.prfPreference</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["", "low", "medium", "high"]</td>
 <td>Empty/medium default uses normal preference; low/high emit dnsmasq router preference and affect direct old-prefix advertisements.</td>
 </tr>
 <tr>
 <td><code>spec.preferredLifetime</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional string, default empty. Current live normal writer does not use it. Direct old-prefix PIOs always use preferred lifetime 0 regardless of this setting.</td>
 </tr>
 <tr>
 <td><code>spec.validLifetime</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>For normal live dnsmasq rendering this is the ra-param router lifetime, not the current prefix PIO lifetime. Supply decimal seconds; omitted leaves dnsmasq default. Direct old-prefix RA parses decimal seconds, defaults 1800 on empty/invalid and caps at 65535, while old PIO validity is its remaining lease lifetime.</td>
 </tr>
 <tr>
 <td><code>spec.configPath</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional decoded string, default empty; current live controller uses its shared dnsmasq ConfigPath/PIDFile options and does not consume this per-resource override.</td>
 </tr>
 <tr>
 <td><code>spec.pidFile</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional decoded string, default empty; current live controller uses its shared dnsmasq ConfigPath/PIDFile options and does not consume this per-resource override.</td>
 </tr>
 <tr>
 <td><code>spec.when</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional common state predicate, default unconditional. False filters the resource from effective config and reports Pending/WhenFalse.</td>
 </tr>
 <tr>
 <td><code>spec.dependsOn</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional common AND-list, default empty. Failed predicates report Pending/DependsOnFalse and skip direct old-prefix advertisements, but the normal shared dnsmasq line writer does not check this gate. It is not a complete normal-service suppression switch here.</td>
 </tr>
 </tbody>
@@ -153,7 +200,7 @@
 <p><a href="/examples/example-dslite-home.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
 <li><a href="#conditions-and-references">Conditions and references</a></li>
-<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#configuration-syntax">Configuration syntax</a></li>
 <li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 <li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
 </ul>

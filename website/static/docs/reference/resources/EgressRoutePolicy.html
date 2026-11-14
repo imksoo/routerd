@@ -17,300 +17,416 @@
 <li>FreeBSD supports only mode hash, family ipv4, hashFields: [sourceAddress], nonempty sourceCIDRs, one enabled candidate and at least two distinct static IPv4 interface/gateway targets. Omit selection/hysteresis and all candidate direct/dynamic/health/dependency fields; target table/priority/mark/metric must be 0 and target health/dynamic gateway forbidden. Destination-set refs are forbidden, at most one excluded CIDR is allowed, and includes/excludes cannot coexist. PF uses route-to round-robin sticky-address, not Linux deterministic hashing.</li>
 <li>The FreeBSD renderer rejects mixing this route-to shape with explicit FirewallRule, generated firewall holes, FirewallEventLog or ClientPolicy. If FirewallZone filtering is present, a broad accepted forwarding path is required. Syntax validation alone does not prove the final PF ruleset can be rendered alongside other resources.</li>
 </ul>
-<h2 id="yaml-definition">YAML definition</h2>
-<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
-<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+<h2 id="configuration-syntax">Configuration syntax</h2>
+<p>This is explanatory notation, not YAML to copy. Unbracketed fields are required within their parent; <code>[ ... ]</code> marks fields that can be omitted, subject to the conditions in the table. <code>&lt;type&gt;</code> is a placeholder, and <code>(a | b)</code> lists alternatives. Optional parents may contain required children. Conditional requirements, exclusions and runtime defaults are described below. Use the linked YAML example for an ordinary configuration.</p>
+<pre><code class="language-text">- apiVersion: net.routerd.net/v1alpha1
   kind: EgressRoutePolicy
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    candidates: # Required; array
-      - # object
-        dependsOn: # optional; array
-          - # object
-            equals: &quot;&lt;string&gt;&quot; # optional; string
-            field: &quot;&lt;string&gt;&quot; # optional; string
-            notEmpty: true # optional; boolean
-            optional: true # optional; boolean
-            phase: &quot;&lt;string&gt;&quot; # optional; string
-            resource: &quot;&lt;string&gt;&quot; # Required; string
-        device: &quot;&lt;string&gt;&quot; # optional; string
-        deviceFrom: # optional; object
-          field: &quot;&lt;string&gt;&quot; # optional; string
-          optional: true # optional; boolean
-          resource: &quot;&lt;string&gt;&quot; # Required; string
-        enabled: true # optional; boolean
-        gateway: &quot;&lt;string&gt;&quot; # optional; string
-        gatewayFrom: # optional; object
-          field: &quot;&lt;string&gt;&quot; # optional; string
-          optional: true # optional; boolean
-          resource: &quot;&lt;string&gt;&quot; # Required; string
-        gatewaySource: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;static&quot;, &quot;dhcpv4&quot;, &quot;dhcpv6&quot;, &quot;none&quot;]
-        healthCheck: &quot;&lt;string&gt;&quot; # optional; string
-        interface: &quot;&lt;string&gt;&quot; # optional; string
-        mark: 0 # optional; integer; minimum=0; maximum=4294967295
-        metric: 0 # optional; integer; minimum=0
-        name: &quot;&lt;string&gt;&quot; # optional; string
-        preferredSource: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;interface&quot;]
-        priority: 0 # optional; integer; minimum=0; maximum=32765
-        routeMetric: 0 # optional; integer; minimum=0
-        routeTable: 0 # optional; integer; minimum=0; maximum=4294967295
-        source: &quot;&lt;string&gt;&quot; # optional; string
-        table: 0 # optional; integer; minimum=0; maximum=4294967295
-        targets: # optional; array
-          - # object
-            gateway: &quot;&lt;string&gt;&quot; # optional; string
-            gatewayFrom: # optional; object
-              field: &quot;&lt;string&gt;&quot; # optional; string
-              optional: true # optional; boolean
-              resource: &quot;&lt;string&gt;&quot; # Required; string
-            gatewaySource: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;static&quot;, &quot;dhcpv4&quot;, &quot;dhcpv6&quot;, &quot;none&quot;]
-            healthCheck: &quot;&lt;string&gt;&quot; # optional; string
-            interface: &quot;&lt;string&gt;&quot; # optional; string
-            mark: 0 # optional; integer; minimum=0; maximum=4294967295
-            metric: 0 # optional; integer; minimum=0
-            name: &quot;&lt;string&gt;&quot; # optional; string
-            outboundInterface: &quot;&lt;string&gt;&quot; # optional; string
-            priority: 0 # optional; integer; minimum=0; maximum=32765
-            routeMetric: 0 # optional; integer; minimum=0
-            routeTable: 0 # optional; integer; minimum=0; maximum=4294967295
-            table: 0 # optional; integer; minimum=0; maximum=4294967295
-        weight: 0 # optional; integer; minimum=0
-        when: # optional; object
-          state: # optional; object
-            &quot;&lt;key&gt;&quot;: # optional; object
-              contains: &quot;&lt;string&gt;&quot; # optional; string
-              equals: &quot;&lt;string&gt;&quot; # optional; string
-              exists: true # optional; boolean
-              for: &quot;&lt;string&gt;&quot; # optional; string
-              in: # optional; array
-                - &quot;&lt;string&gt;&quot; # string
-              maxAge: &quot;&lt;string&gt;&quot; # optional; string
-              status: &quot;set&quot; # optional; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
-    destinationCIDRs: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    destinationSetRefs: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    excludeDestinationCIDRs: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    excludeDestinationSetRefs: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    family: &quot;ipv4&quot; # optional; string; enum=[&quot;ipv4&quot;, &quot;ipv6&quot;]
-    hashFields: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    hostTraffic: true # optional; boolean
-    hysteresis: &quot;&lt;string&gt;&quot; # optional; string
-    mode: &quot;priority&quot; # optional; string; enum=[&quot;priority&quot;, &quot;mark&quot;, &quot;hash&quot;]
-    selection: &quot;highest-weight-ready&quot; # optional; string; enum=[&quot;highest-weight-ready&quot;, &quot;weighted-ecmp&quot;]
-    sourceCIDRs: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    when: # optional; object
-      state: # optional; object
-        &quot;&lt;key&gt;&quot;: # optional; object
-          contains: &quot;&lt;string&gt;&quot; # optional; string
-          equals: &quot;&lt;string&gt;&quot; # optional; string
-          exists: true # optional; boolean
-          for: &quot;&lt;string&gt;&quot; # optional; string
-          in: # optional; array
-            - &quot;&lt;string&gt;&quot; # string
-          maxAge: &quot;&lt;string&gt;&quot; # optional; string
-          status: &quot;set&quot; # optional; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+    candidates:
+      -
+        [ dependsOn:
+            -
+              [ equals: &lt;string&gt; ]
+              [ field: &lt;string&gt; ]
+              [ notEmpty: &lt;boolean&gt; ]
+              [ optional: &lt;boolean&gt; ]
+              [ phase: &lt;string&gt; ]
+              resource: &lt;string&gt;
+        ]
+        [ device: &lt;string&gt; ]
+        [ deviceFrom:
+            field: &lt;string&gt;
+            [ optional: &lt;boolean&gt; ]
+            resource: &lt;string&gt;
+        ]
+        [ enabled: &lt;boolean&gt; ]
+        [ gateway: &lt;string&gt; ]
+        [ gatewayFrom:
+            field: &lt;string&gt;
+            [ optional: &lt;boolean&gt; ]
+            resource: &lt;string&gt;
+        ]
+        [ gatewaySource: (&quot;&quot; | &quot;static&quot; | &quot;dhcpv4&quot; | &quot;dhcpv6&quot; | &quot;none&quot;) ]
+        [ healthCheck: &lt;string&gt; ]
+        [ interface: &lt;string&gt; ]
+        [ mark: &lt;integer&gt; ]
+        [ metric: &lt;integer&gt; ]
+        [ name: &lt;string&gt; ]
+        [ preferredSource: (&quot;&quot; | &quot;interface&quot;) ]
+        [ priority: &lt;integer&gt; ]
+        [ routeMetric: &lt;integer&gt; ]
+        [ routeTable: &lt;integer&gt; ]
+        [ source: &lt;string&gt; ]
+        [ table: &lt;integer&gt; ]
+        [ targets:
+            -
+              [ gateway: &lt;string&gt; ]
+              [ gatewayFrom:
+                  field: &lt;string&gt;
+                  [ optional: &lt;boolean&gt; ]
+                  resource: &lt;string&gt;
+              ]
+              [ gatewaySource: (&quot;&quot; | &quot;static&quot; | &quot;dhcpv4&quot; | &quot;dhcpv6&quot; | &quot;none&quot;) ]
+              [ healthCheck: &lt;string&gt; ]
+              [ interface: &lt;string&gt; ]
+              [ mark: &lt;integer&gt; ]
+              [ metric: &lt;integer&gt; ]
+              [ name: &lt;string&gt; ]
+              [ outboundInterface: &lt;string&gt; ]
+              [ priority: &lt;integer&gt; ]
+              [ routeMetric: &lt;integer&gt; ]
+              [ routeTable: &lt;integer&gt; ]
+              [ table: &lt;integer&gt; ]
+        ]
+        [ weight: &lt;integer&gt; ]
+        [ when:
+            [ state:
+                [ &lt;name&gt;:
+                    [ contains: &lt;string&gt; ]
+                    [ equals: &lt;string&gt; ]
+                    [ exists: &lt;boolean&gt; ]
+                    [ for: &lt;string&gt; ]
+                    [ in:
+                        - &lt;string&gt;
+                    ]
+                    [ maxAge: &lt;string&gt; ]
+                    [ status: (&quot;set&quot; | &quot;unset&quot; | &quot;unknown&quot;) ]
+                ]
+            ]
+        ]
+    [ destinationCIDRs:
+        - &lt;string&gt;
+    ]
+    [ destinationSetRefs:
+        - &lt;string&gt;
+    ]
+    [ excludeDestinationCIDRs:
+        - &lt;string&gt;
+    ]
+    [ excludeDestinationSetRefs:
+        - &lt;string&gt;
+    ]
+    [ family: (&quot;ipv4&quot; | &quot;ipv6&quot;) ]
+    [ hashFields:
+        - &lt;string&gt;
+    ]
+    [ hostTraffic: &lt;boolean&gt; ]
+    [ hysteresis: &lt;string&gt; ]
+    [ mode: (&quot;priority&quot; | &quot;mark&quot; | &quot;hash&quot;) ]
+    [ selection: (&quot;highest-weight-ready&quot; | &quot;weighted-ecmp&quot;) ]
+    [ sourceCIDRs:
+        - &lt;string&gt;
+    ]
+    [ when:
+        [ state:
+            [ &lt;name&gt;:
+                [ contains: &lt;string&gt; ]
+                [ equals: &lt;string&gt; ]
+                [ exists: &lt;boolean&gt; ]
+                [ for: &lt;string&gt; ]
+                [ in:
+                    - &lt;string&gt;
+                ]
+                [ maxAge: &lt;string&gt; ]
+                [ status: (&quot;set&quot; | &quot;unset&quot; | &quot;unknown&quot;) ]
+            ]
+        ]
+    ]
 </code></pre>
 <h2 id="field-meaning-and-default">Field meaning and default</h2>
+<p>Required children of optional objects apply only when their parent is used. Other exact conditions are in the explanation; bracketed alternatives may still require one choice.</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>Presence</th>
+<th>Type / constraints</th>
 <th>Field meaning and default</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.family</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["ipv4", "ipv6"]</td>
 <td>Default ipv4. Schema/validation accept ipv6, but current Linux forwarded mark/priority/hash implementation is IPv4-specific. IPv6 has a separate hostTraffic path; do not infer general IPv6 forwarding parity. FreeBSD subset requires ipv4.</td>
 </tr>
 <tr>
 <td><code>spec.hostTraffic</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false. Linux true requires family ipv6 and exactly one candidate with preferredSource: interface, literal static gateway, mark 0 and no targets. Installs an iif lo policy for all local traffic, not source/destination CIDR matches; absent device/address keeps the previous known-good host rule, while first acquisition remains Pending. Candidate health/dependency/selection fields are not evaluated by this separate host-policy builder.</td>
 </tr>
 <tr>
 <td><code>spec.mode</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["priority", "mark", "hash"]</td>
 <td>Omitted/empty is advisory status selection only; it does not install route tables. Explicit priority selects one ready candidate for new-flow marking; mark emits direct packet marks; hash maps flows to candidate targets. Set mode explicitly for Linux forwarding. FreeBSD accepts only its restricted hash shape.</td>
 </tr>
 <tr>
 <td><code>spec.sourceCIDRs</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional family-matching source prefixes, default any source. Lists form alternatives. FreeBSD hash subset requires a nonempty IPv4 list; hostTraffic ignores these selectors.</td>
 </tr>
 <tr>
 <td><code>spec.destinationCIDRs</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional family-matching destination prefixes, default all destinations when no destinationSetRefs. Combined with destinationSetRefs as alternatives in mark/hash rendering. priority default-mark rendering consumes only CIDR selectors, not address-set refs.</td>
 </tr>
 <tr>
 <td><code>spec.destinationSetRefs</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional existing IPAddressSet/<name> references; duplicates rejected. Used by Linux mark/hash policy matches; priority default-mark selection does not apply these refs, and FreeBSD forbids them. Empty adds no match alternative.</td>
 </tr>
 <tr>
 <td><code>spec.excludeDestinationCIDRs</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional family-matching destination exclusions, default empty; all exclusions must be avoided. IPv4 /0 exclusion produces no steering matches. FreeBSD allows at most one and forbids combining it with nonempty destinationCIDRs.</td>
 </tr>
 <tr>
 <td><code>spec.excludeDestinationSetRefs</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional existing IPAddressSet/<name> exclusions; duplicates rejected. Used in Linux mark/hash policy matches, ignored by priority default-mark rendering and forbidden on FreeBSD.</td>
 </tr>
 <tr>
 <td><code>spec.hashFields</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>array</td>
 <td>Ordered list of sourceAddress and/or destinationAddress; required for mode hash and also needed at rendering whenever candidates have targets, including priority target pools. Linux jhash uses these addresses, not ports, with a resource-derived stable seed and 256 rendezvous-mapped buckets. FreeBSD requires exactly [sourceAddress] but implements round-robin sticky-address instead of jhash.</td>
 </tr>
 <tr>
 <td><code>spec.selection</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["highest-weight-ready", "weighted-ecmp"]</td>
 <td>Default highest-weight-ready: ready candidates sort by descending weight, ascending priority, lexical effective name, then input order. weighted-ecmp is accepted by schema but unsupported for advisory/priority selection (Pending/UnsupportedSelection). Not the hash target algorithm; mark/hash do not use this selection knob. FreeBSD requires empty.</td>
 </tr>
 <tr>
 <td><code>spec.hysteresis</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Go duration, default 30s only in omitted-mode advisory selection. During this period after a change, an otherwise ready previous winner can be retained; an unready winner is not held. Zero/negative duration removes the delay. Explicit priority/mark/hash do not use it; FreeBSD requires empty.</td>
 </tr>
 <tr>
 <td><code>spec.candidates</code></td>
+<td><strong>Required</strong></td>
+<td>array</td>
 <td>Required nonempty list; disabled entries are still structurally validated. Linux can mix direct candidates and target-pool candidates in priority mode. Candidate names are not uniqueness-checked, so choose explicit unique names to avoid ambiguous status/hash identities.</td>
 </tr>
 <tr>
 <td><code>spec.when</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional common state condition, default unconditional. A false condition removes the policy from the effective configuration; candidate conditions are filtered separately. Unresolved conditions can remain indeterminate rather than a guaranteed stop.</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].name</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional explicit identity. Advisories fall back to source then candidate-N (zero-based); explicit priority status falls back to interface/device then targets, while unnamed hash pools use input index. Use unique names for stable identity.</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].enabled</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default true. false excludes the candidate from selection/rendering, but does not bypass configuration/reference validation or independently guarantee that all established connections or route-table entries disappear.</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].source</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional advisory readiness resource as Kind/name; it does not automatically supply device or gateway. This string is not checked for target existence by common typed-reference validation. Advisory source phases Applied/Bound/Healthy/Installed/Ready/Running/Up qualify; a fresh passing health check can substitute for an unready source. Explicit routing specially guards referenced DS-Lite phase Up, but does not generally check other source kinds.</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].interface</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Optional declared logical interface for explicit Linux routing; takes precedence over device. Supplied interface is validated against the Router interface/DS-Lite indexes. Omitted-mode advisory output does not use this alias: use device/deviceFrom there. Forbidden when targets is nonempty.</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].device</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Optional literal device fallback. Explicit routing uses interface first; advisory uses device directly. No common existence check for this string, but actual link must exist for live installation/selection. ${...} was removed; use deviceFrom. Forbidden with targets.</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].deviceFrom</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>object</td>
 <td>Optional common resource/field status source, validated against existing resources/provided fields. First normalized value wins over interface/device; missing values fall back to literals. optional does not create a device. No targets coexistence.</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].gateway</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Literal bare address matching family. Requires gatewaySource: static and is exclusive with gatewayFrom in that mode; DHCP gateway modes prohibit a literal. Default empty. Forbidden on target-pool candidates.</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].gatewayFrom</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>object</td>
 <td>Optional common existing-resource/provided-field source. static requires exactly one of gateway/gatewayFrom; DHCP modes may use this source but do not discover a gateway from the interface automatically. In advisory mode any configured unresolved source makes output unready even when optional true. Explicit route installation errors on missing required static/DHCP gateway; optional is not a general bypass. Forbidden with targets.</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].gatewaySource</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["", "static", "dhcpv4", "dhcpv6", "none"]</td>
 <td>Default none: device-only default route and gateway fields prohibited. static requires exactly one literal/source; dhcpv4 requires IPv4, no literal and a usable explicitly supplied gatewayFrom value. dhcpv6 is accepted only with IPv6 but unsupported by the normal IPv4 route-table installer; the separate hostTraffic path requires static. Forbidden on pool candidates.</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].preferredSource</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["", "interface"]</td>
 <td>Empty or interface. Required interface for hostTraffic, which chooses the first global non-tentative/non-deprecated IPv6 address on the candidate interface. Not used by normal IPv4 forwarding or target pools.</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].table</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>integer; minimum=0; maximum=4294967295</td>
 <td>Linux route-table number; schema 0–4294967295, default 0/unconfigured. Nonzero is exclusive with nonzero routeTable. Useful direct steering needs a positive table plus positive priority and mark (hostTraffic mark remains 0). Forbidden when targets exist; FreeBSD requires 0.</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].routeTable</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>integer; minimum=0; maximum=4294967295</td>
 <td>Alias used only when table is 0; both nonzero rejected. Same range and requirements as table.</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].priority</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>integer; minimum=0; maximum=32765</td>
 <td>Linux ip rule priority 1–32765 when any direct mark/table/priority is configured; default 0 is not a useful programmed rule. Also a lower-is-better tie breaker for candidate selection; a pool candidate may use it without setting direct table/mark. FreeBSD requires 0.</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].mark</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>integer; minimum=0; maximum=4294967295</td>
 <td>Linux packet/fwmark identifier, schema 0–4294967295. Direct forwarding requires positive mark together with table/priority; default 0 causes direct route-table installation to be skipped. hostTraffic requires 0. Pool candidates and FreeBSD prohibit nonzero direct mark.</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].routeMetric</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=0</td>
 <td>Nonnegative preferred route-metric field. A nonzero value is exclusive with nonzero metric; effective 0 becomes 50 in Linux table installation, including hostTraffic. Advisory status may still report configured 0. Forbidden with targets; FreeBSD requires 0.</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].metric</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=0</td>
 <td>Alias fallback when routeMetric is 0; nonzero aliases cannot coexist. Same effective default 50 for programmed Linux routes.</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].weight</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=0</td>
 <td>Nonnegative integer default 0. Larger wins advisory/priority candidate selection; not a percentage, ECMP weight or per-target hash weight. mark/hash do not proportionally distribute using this field. FreeBSD requires 0.</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].healthCheck</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional bare existing HealthCheck name; empty means no health gate. Selection requires fresh Healthy or tolerated Failing status (below unhealthyThreshold), with lastCheckedAt no older than max(2m,3×interval+timeout). Route tables may still be installed for a check probing through this same mark even while health is unready; that bootstrap is distinct from traffic eligibility. HostTraffic ignores this field; FreeBSD prohibits it.</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].targets</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>array</td>
 <td>Optional nonempty target pool, allowed only in mode hash or priority. Exclusive with direct interface/device/deviceFrom/gateway/gatewayFrom/gatewaySource/table/routeTable/mark/routeMetric/metric. Linux requires per-target positive table/priority/mark and hashFields; FreeBSD requires a single candidate with at least two distinct static routehosts and no Linux routing numbers.</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].dependsOn</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional common AND-dependencies, default empty; ordinary resource/field checks apply. Evaluated for advisory and direct explicit routing, and candidate filtering in mark/hash. Current priority target-pool availability does not evaluate candidate dependsOn; hostTraffic ignores it. Prefer when for a whole candidate stop condition. FreeBSD prohibits dependencies.</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].when</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional common state condition, default unconditional. False removes candidate before controller selection; unresolved values may remain indeterminate and therefore retained. Disabled candidates are also removed. FreeBSD static subset prohibits candidate conditions.</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].targets[].name</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional target identity, default empty. Participates in stable hash identity together with effective interface, mark and table; changing these can redistribute new flows. Names/mark/priority/table uniqueness are not generally validated on Linux.</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].targets[].interface</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Target logical interface, required unless outboundInterface is supplied. Validated against declared interface/DS-Lite indexes. On Linux outboundInterface wins if both are set; FreeBSD rejects both being nonempty.</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].targets[].outboundInterface</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Preferred alias for interface; same reference checks. Required together with a usable OS interface for actual delivery; does not create a tunnel.</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].targets[].gateway</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional literal matching family; requires gatewaySource static and excludes gatewayFrom. DHCP gateway modes prohibit literal values. FreeBSD target requires this bare static IPv4 value.</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].targets[].gatewayFrom</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional common resource/field source; existence/provided-field validation applies even when optional true. static requires exactly one literal/source. The Linux reader uses the first value; optional is not a missing-gateway bypass. FreeBSD prohibits dynamic gateway fields entirely.</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].targets[].gatewaySource</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["", "static", "dhcpv4", "dhcpv6", "none"]</td>
 <td>Default none, prohibiting gateway/gatewayFrom and installing a device-only route. static requires exactly one gateway/gatewayFrom. dhcpv4/6 require corresponding family and no literal, but do not discover a gateway automatically: use gatewayFrom. The normal live installer supports only none/static/dhcpv4; FreeBSD requires explicit static.</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].targets[].table</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=0; maximum=4294967295</td>
 <td>Linux requires positive table for every target (schema maximum 4294967295), exclusive with nonzero routeTable. No automatic allocation or reserved-table/uniqueness check. FreeBSD requires omitted/0 and uses PF route-to instead.</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].targets[].routeTable</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=0; maximum=4294967295</td>
 <td>Alias used when table is 0. Both aliases nonzero rejected; same Linux-positive / FreeBSD-zero requirement.</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].targets[].priority</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=0; maximum=32765</td>
 <td>Linux target ip rule priority required 1–32765; no default allocation. Distinct from candidate selection priority. FreeBSD requires omitted/0.</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].targets[].mark</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=0; maximum=4294967295</td>
 <td>Linux target fwmark required &gt;0 (schema maximum 4294967295). Used by the hash bucket map and ip rule. No automatic allocation or collision detection; FreeBSD requires omitted/0.</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].targets[].routeMetric</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=0</td>
 <td>Nonnegative Linux route metric, preferred over metric; both nonzero rejected. Effective omitted/0 becomes 50 at installation. FreeBSD requires omitted/0.</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].targets[].metric</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=0</td>
 <td>Alias fallback when routeMetric is 0; same requirements and effective Linux default 50.</td>
 </tr>
 <tr>
 <td><code>spec.candidates[].targets[].healthCheck</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional bare existing HealthCheck name, default no health gate; uses the same freshness/threshold check as candidate health. A failed target is excluded from new hash maps. Existing conntrack marks are restored rather than globally terminated; route tables can remain for same-mark health probes. FreeBSD forbids this field.</td>
 </tr>
 </tbody>
@@ -322,7 +438,7 @@
 <p><a href="/examples/home-router-mgmt-protected.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
 <li><a href="#conditions-and-references">Conditions and references</a></li>
-<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#configuration-syntax">Configuration syntax</a></li>
 <li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 <li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
 </ul>

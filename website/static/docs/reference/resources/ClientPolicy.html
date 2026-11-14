@@ -14,137 +14,194 @@
 <li>These are routed/input firewall restrictions, not L2 switch-port isolation. Existing-state/control/service allowances may run earlier. PF’s implicit trust/mgmt-to-self pass precedes its client self restrictions, and PF’s client local-service restrictions currently use IPv4 identities only. Do not treat the policy as uniform enforcement across both OSes or all address families.</li>
 <li>Linux guestEgressAllow is evaluated before discovery/deny blocks, so it can override them; remaining traffic continues into zone policy. PF IPv4 allow precedes deny, but PF IPv6 deny rules are emitted earlier globally and cannot be overridden by its later IPv6 allow rules.</li>
 </ul>
-<h2 id="yaml-definition">YAML definition</h2>
-<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
-<pre><code class="language-yaml">- apiVersion: firewall.routerd.net/v1alpha1
+<h2 id="configuration-syntax">Configuration syntax</h2>
+<p>This is explanatory notation, not YAML to copy. Unbracketed fields are required within their parent; <code>[ ... ]</code> marks fields that can be omitted, subject to the conditions in the table. <code>&lt;type&gt;</code> is a placeholder, and <code>(a | b)</code> lists alternatives. Optional parents may contain required children. Conditional requirements, exclusions and runtime defaults are described below. Use the linked YAML example for an ordinary configuration.</p>
+<pre><code class="language-text">- apiVersion: firewall.routerd.net/v1alpha1
   kind: ClientPolicy
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    classification: # optional; array
-      - # object
-        ipv4Reservation: &quot;&lt;string&gt;&quot; # optional; string
-        ipv6Addresses: # optional; array
-          - &quot;&lt;string&gt;&quot; # string
-        match: # Required; object
-          dhcpFingerprints: # optional; array
-            - &quot;&lt;string&gt;&quot; # string
-          hostnamePatterns: # optional; array
-            - &quot;&lt;string&gt;&quot; # string
-          macs: # optional; array
-            - &quot;&lt;string&gt;&quot; # string
-          ouiPrefixes: # optional; array
-            - &quot;&lt;string&gt;&quot; # string
-        mode: &quot;trusted&quot; # Required; string; enum=[&quot;trusted&quot;, &quot;guest&quot;, &quot;isolated&quot;]
-        name: &quot;&lt;string&gt;&quot; # optional; string
-    guestEgressAllow: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    guestEgressDeny: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    guestServices: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    interfaces: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    isolation: # optional; object
-      lanInternet: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;allow&quot;, &quot;deny&quot;]
-      lanLAN: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;allow&quot;, &quot;deny&quot;]
-      lanMgmt: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;allow&quot;, &quot;deny&quot;]
-      mDNSBroadcast: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;allow&quot;, &quot;deny&quot;]
-    macs: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    mode: &quot;include&quot; # Required; string; enum=[&quot;include&quot;, &quot;exclude&quot;]
+    [ classification:
+        -
+          [ ipv4Reservation: &lt;string&gt; ]
+          [ ipv6Addresses:
+              - &lt;string&gt;
+          ]
+          match:
+            [ dhcpFingerprints:
+                - &lt;string&gt;
+            ]
+            [ hostnamePatterns:
+                - &lt;string&gt;
+            ]
+            [ macs:
+                - &lt;string&gt;
+            ]
+            [ ouiPrefixes:
+                - &lt;string&gt;
+            ]
+          mode: (&quot;trusted&quot; | &quot;guest&quot; | &quot;isolated&quot;)
+          [ name: &lt;string&gt; ]
+    ]
+    [ guestEgressAllow:
+        - &lt;string&gt;
+    ]
+    [ guestEgressDeny:
+        - &lt;string&gt;
+    ]
+    [ guestServices:
+        - &lt;string&gt;
+    ]
+    [ interfaces:
+        - &lt;string&gt;
+    ]
+    [ isolation:
+        [ lanInternet: (&quot;&quot; | &quot;allow&quot; | &quot;deny&quot;) ]
+        [ lanLAN: (&quot;&quot; | &quot;allow&quot; | &quot;deny&quot;) ]
+        [ lanMgmt: (&quot;&quot; | &quot;allow&quot; | &quot;deny&quot;) ]
+        [ mDNSBroadcast: (&quot;&quot; | &quot;allow&quot; | &quot;deny&quot;) ]
+    ]
+    [ macs:
+        - &lt;string&gt;
+    ]
+    mode: (&quot;include&quot; | &quot;exclude&quot;)
 </code></pre>
 <h2 id="field-meaning-and-default">Field meaning and default</h2>
+<p>Required children of optional objects apply only when their parent is used. Other exact conditions are in the explanation; bracketed alternatives may still require one choice.</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>Presence</th>
+<th>Type / constraints</th>
 <th>Field meaning and default</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.mode</code></td>
+<td><strong>Required</strong></td>
+<td>string; enum=["include", "exclude"]</td>
 <td>Required include or exclude, no default. Determines whether the configured identity set is restricted or exempt.</td>
 </tr>
 <tr>
 <td><code>spec.interfaces</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional Interface/name or bare logical-interface names; references must exist and may not repeat. Linux omitted list uses all trust-zone interfaces and errors if none exist. PF omitted list produces no applicable interface restrictions.</td>
 </tr>
 <tr>
 <td><code>spec.macs</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional Linux static identity list, default empty. Normalized MAC duplicates across this list and classification.match.macs are rejected. Forbidden on FreeBSD.</td>
 </tr>
 <tr>
 <td><code>spec.classification</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional classes, default empty. Linux requires at least one selector per class, but only MAC selectors enforce firewall membership. FreeBSD requires stable IP identities and forbids selectors.</td>
 </tr>
 <tr>
 <td><code>spec.classification[].name</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional descriptive class name, default empty. Does not change matching precedence or create a resource identity.</td>
 </tr>
 <tr>
 <td><code>spec.classification[].mode</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string; enum=["trusted", "guest", "isolated"]</td>
 <td>Required trusted, guest or isolated. guest and isolated are equivalent for membership in an include policy; trusted contributes to an exclude policy’s exemption set.</td>
 </tr>
 <tr>
 <td><code>spec.classification[].match</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>object</td>
 <td>Selector object; Linux needs at least one nonempty selector list. FreeBSD requires it empty even when stable IP identities are supplied. Different selectors are not dynamically resolved into client MACs by the current firewall.</td>
 </tr>
 <tr>
 <td><code>spec.classification[].match.macs</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional exact MAC list; effective Linux classifier. MACs must parse and cannot repeat across classes or top-level macs.</td>
 </tr>
 <tr>
 <td><code>spec.classification[].match.ouiPrefixes</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Accepted three hex octets such as 18:ec:e7; duplicates within a class are rejected. Currently no firewall enforcement from this selector. FreeBSD rejects it.</td>
 </tr>
 <tr>
 <td><code>spec.classification[].match.hostnamePatterns</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Accepted nonblank Go path.Match glob patterns, not regexes. Syntax is validated but the current firewall does not resolve them into identities; FreeBSD rejects them.</td>
 </tr>
 <tr>
 <td><code>spec.classification[].match.dhcpFingerprints</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Accepted nonblank, whitespace-free tokens with no within-class duplicates. Currently not used for firewall membership; FreeBSD rejects them.</td>
 </tr>
 <tr>
 <td><code>spec.classification[].ipv4Reservation</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional existing DHCPv4Reservation bare metadata.name; Kind/name is rejected. PF takes its nonempty ipAddress. Linux validates the reference but does not use its address for client matching.</td>
 </tr>
 <tr>
 <td><code>spec.classification[].ipv6Addresses</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional bare IPv6 addresses for PF, no CIDRs or IPv4-mapped forms. Normalized duplicates across all classes are rejected. Never inferred from MAC or IPv4 reservations; not used by Linux client matching.</td>
 </tr>
 <tr>
 <td><code>spec.isolation</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional allow/deny hints. Only the Linux renderer reads these four fields; PF uses explicit guest egress lists/defaults instead. This is not independently applied per class.</td>
 </tr>
 <tr>
 <td><code>spec.isolation.lanInternet</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["", "allow", "deny"]</td>
 <td>Empty by default. Linux deny with no explicit guestEgressDeny replaces the default denied CIDRs with 0.0.0.0/0 and ::/0. allow/empty does not add an unconditional Internet accept. PF ignores this field.</td>
 </tr>
 <tr>
 <td><code>spec.isolation.lanLAN</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["", "allow", "deny"]</td>
 <td>Empty by default. Linux removes the default private-prefix deny list only when both lanLAN and lanMgmt are allow; this does not distinguish individual LAN networks. Explicit guestEgressDeny overrides the default. PF ignores it.</td>
 </tr>
 <tr>
 <td><code>spec.isolation.lanMgmt</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["", "allow", "deny"]</td>
 <td>Empty by default; same combined-default rule as lanLAN. It does not independently resolve management-zone destinations. PF ignores it.</td>
 </tr>
 <tr>
 <td><code>spec.isolation.mDNSBroadcast</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["", "allow", "deny"]</td>
 <td>Empty by default. Linux deny adds forwarded mDNS/SSDP multicast and UDP 137/138 drop rules after guestEgressAllow. It does not control L2 bridging or independently block local services. PF ignores it.</td>
 </tr>
 <tr>
 <td><code>spec.guestServices</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Allowed local-service names: dns, dhcp, ntp, mdns, ssdp. Omitted or empty defaults to dhcp/dns/ntp; an empty list cannot disable all exceptions. Services open firewall access but do not start their daemons.</td>
 </tr>
 <tr>
 <td><code>spec.guestEgressDeny</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional IPv4/IPv6 CIDRs. Omitted/empty defaults to 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 and fc00::/7, subject to the Linux isolation adjustments above. Explicit values replace, not append to, defaults. PF always uses the private-prefix defaults when empty.</td>
 </tr>
 <tr>
 <td><code>spec.guestEgressAllow</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional IPv4/IPv6 CIDR exceptions, default empty. Linux and PF IPv4 evaluate them before deny; PF IPv6 deny precedes the allow rules. These are routing destination prefixes, not resource references.</td>
 </tr>
 </tbody>
@@ -156,7 +213,7 @@
 <p><a href="/examples/guest-mode.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
 <li><a href="#conditions-and-references">Conditions and references</a></li>
-<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#configuration-syntax">Configuration syntax</a></li>
 <li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 <li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
 </ul>

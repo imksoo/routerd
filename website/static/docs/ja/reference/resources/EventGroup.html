@@ -14,112 +14,155 @@
 <li>peersFromはSAMNodeSet内のeventEndpointがあるノードを取得し、nodeRefがnodeNameと同じ自ノードは除外します。相手nodeNameで重複をまとめ、後の取得元が先を上書きし、最後に静的EventPeerが優先します。必須の取得元が欠けるとPendingになり、前の実行設定を残します。optionalの欠落は飛ばします。</li>
 <li>保持削除はeventdが起動時と定期処理（既定1分）でローカルに実施します。期間・件数制限を両方適用し、期間はobservedAt、件数は観測日時が新しい順で残します。各イベントのexpiresAtやローカルEventRule履歴の保持とは別です。</li>
 </ul>
-<h2 id="yaml定義">YAML定義</h2>
-<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
-<pre><code class="language-yaml">- apiVersion: federation.routerd.net/v1alpha1
+<h2 id="設定構文">設定構文</h2>
+<p>説明用の構文表記であり、そのままコピーするYAMLではありません。囲みのない項目は親の中で必須、<code>[ ... ]</code>は条件に応じて省略できる項目、<code>&lt;型&gt;</code>は差し替え値、<code>(a | b)</code>は選択肢です。任意の親にも必須の子があります。条件付き必須・排他・実効既定値は下の表を確認し、通常のYAMLはリンク先の設定例を使ってください。</p>
+<pre><code class="language-text">- apiVersion: federation.routerd.net/v1alpha1
   kind: EventGroup
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    auth: # 任意; object
-      mode: &quot;&quot; # 任意; string; enum=[&quot;&quot;, &quot;hmac&quot;]
-      secretFile: &quot;&lt;string&gt;&quot; # 任意; string
-      secretRef: &quot;&lt;string&gt;&quot; # 任意; string
-    listen: # 任意; object
-      address: &quot;&lt;string&gt;&quot; # 任意; string
-      port: 0 # 任意; integer; minimum=0; maximum=65535
-    nodeName: &quot;&lt;string&gt;&quot; # 必須; string
-    peersFrom: # 任意; array
-      - # object
-        optional: true # 任意; boolean
-        resource: &quot;&lt;string&gt;&quot; # 必須; string
-    replayWindow: &quot;&lt;string&gt;&quot; # 任意; string
-    retention: # 任意; object
-      maxAge: &quot;&lt;string&gt;&quot; # 任意; string
-      maxEvents: 0 # 任意; integer; minimum=0
-    when: # 任意; object
-      state: # 任意; object
-        &quot;&lt;key&gt;&quot;: # 任意; object
-          contains: &quot;&lt;string&gt;&quot; # 任意; string
-          equals: &quot;&lt;string&gt;&quot; # 任意; string
-          exists: true # 任意; boolean
-          for: &quot;&lt;string&gt;&quot; # 任意; string
-          in: # 任意; array
-            - &quot;&lt;string&gt;&quot; # string
-          maxAge: &quot;&lt;string&gt;&quot; # 任意; string
-          status: &quot;set&quot; # 任意; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+    [ auth:
+        [ mode: (&quot;&quot; | &quot;hmac&quot;) ]
+        [ secretFile: &lt;string&gt; ]
+        [ secretRef: &lt;string&gt; ]
+    ]
+    [ listen:
+        [ address: &lt;string&gt; ]
+        [ port: &lt;integer&gt; ]
+    ]
+    nodeName: &lt;string&gt;
+    [ peersFrom:
+        -
+          [ optional: &lt;boolean&gt; ]
+          resource: &lt;string&gt;
+    ]
+    [ replayWindow: &lt;string&gt; ]
+    [ retention:
+        [ maxAge: &lt;string&gt; ]
+        [ maxEvents: &lt;integer&gt; ]
+    ]
+    [ when:
+        [ state:
+            [ &lt;name&gt;:
+                [ contains: &lt;string&gt; ]
+                [ equals: &lt;string&gt; ]
+                [ exists: &lt;boolean&gt; ]
+                [ for: &lt;string&gt; ]
+                [ in:
+                    - &lt;string&gt;
+                ]
+                [ maxAge: &lt;string&gt; ]
+                [ status: (&quot;set&quot; | &quot;unset&quot; | &quot;unknown&quot;) ]
+            ]
+        ]
+    ]
 </code></pre>
 <h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<p>任意の親の必須項目は、親を使う場合に必要です。それ以外の具体的な条件は説明欄に記載します。<code>[ ... ]</code>で囲まれた選択肢も、いずれか一方が必要な場合があります。</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>指定要否</th>
+<th>型・制約</th>
 <th>項目の意味と既定値</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.nodeName</code></td>
+<td><strong>必須</strong></td>
+<td>string</td>
 <td>必須の空でない自ノード識別名です。ローカル生成した共有イベントに付与します。ホスト名の自動設定はなく、peersFrom利用時はSAMNodeSetのnodeRefに合わせます。</td>
 </tr>
 <tr>
 <td><code>spec.peersFrom</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>任意の順序付き取得元一覧で、既定は空です。すべてoptionalでも、配送先が0件でも、指定するとauth.secretFileが必要です。</td>
 </tr>
 <tr>
 <td><code>spec.peersFrom[].resource</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>string</td>
 <td>SAMNodeSet/<name>が必須です。形式を検証しますが、宣言がない場合は通常の状態値参照のように拒否せず、実行時にoptional・Pendingで処理します。</td>
 </tr>
 <tr>
 <td><code>spec.peersFrom[].optional</code></td>
+<td><em>任意</em></td>
+<td>boolean</td>
 <td>既定falseでは欠落が新設定を止めます。trueは欠落を飛ばしますが、不正形式や解釈不能な取得元はエラーです。</td>
 </tr>
 <tr>
 <td><code>spec.retention</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>任意のローカル共有イベント保持設定です。既定では期間・件数制限なしです。eventdの保持削除が動く間に適用します。</td>
 </tr>
 <tr>
 <td><code>spec.retention.maxEvents</code></td>
+<td><em>任意</em></td>
+<td>integer; minimum=0</td>
 <td>グループごとの最大件数で、0以上です。既定0は無制限、正数は期間削除後にobservedAt・idが新しいものを残します。</td>
 </tr>
 <tr>
 <td><code>spec.retention.maxAge</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>任意のGo形式期間で、既定の空は無制限です。0・負数も検証を通り、実行設定から省略されるため期間制限なしです。</td>
 </tr>
 <tr>
 <td><code>spec.auth</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>任意の通信完全性設定です。現行通信は常にHMACを使い、無認証モードはありません。</td>
 </tr>
 <tr>
 <td><code>spec.auth.mode</code></td>
+<td><em>任意</em></td>
+<td>string; enum=["", "hmac"]</td>
 <td>空またはhmacを受け付け、既定は空です。通信時はどちらもHMACになり、別方式の選択には使いません。</td>
 </tr>
 <tr>
 <td><code>spec.auth.secretRef</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>既定は空です。受理されますが現行の処理は解決せず、secretFileの代用にもリソース参照検証の対象にもなりません。</td>
 </tr>
 <tr>
 <td><code>spec.auth.secretFile</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>string</td>
 <td>共有HMAC秘密鍵のファイルパスです。空は通信ヘルパー無効で、前述の受信アドレス・配送先指定時には必須です。秘密鍵の自動配布は行いません。</td>
 </tr>
 <tr>
 <td><code>spec.listen</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>任意のHTTP受信設定で、既定はaddress空・port 0です。受信には両方を明示してください。</td>
 </tr>
 <tr>
 <td><code>spec.listen.address</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>受信待受アドレスで、既定は空です。非空ならport 1～65535とsecretFileが必要です。デーモンはaddressが空という理由だけでは受信を止めず、portの規則で決まります。</td>
 </tr>
 <tr>
 <td><code>spec.listen.port</code></td>
+<td><em>任意</em></td>
+<td>integer; minimum=0; maximum=65535</td>
 <td>0～65535の整数で、既定0は受信無効です。正数はaddressで平文HTTPを受信します。本リソースにTLS証明書の設定項目はありません。</td>
 </tr>
 <tr>
 <td><code>spec.replayWindow</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>署名付き要求の時刻ずれ許容範囲をGo形式で指定します。省略・0・負数は5mです。イベント保持期間やメッセージ重複排除TTLではありません。</td>
 </tr>
 <tr>
 <td><code>spec.when</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>共通の有効化条件で、省略時は無条件です。有効設定の絞り込みを通して通信設定・サービス動作を制御します。条件とスキーマ制限は共通項を参照してください。</td>
 </tr>
 </tbody>
@@ -131,7 +174,7 @@
 <p><a href="/examples/cloudedge-mobility-demo/onprem.yaml">設定例</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
 <ul>
 <li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
-<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#設定構文">設定構文</a></li>
 <li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
 <li><a href="#状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</a></li>
 </ul>

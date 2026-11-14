@@ -13,57 +13,64 @@
 - Linux 使用 ip address、FreeBSD 使用 ifconfig。主用套用後讀回位址才公布 Applied，暫定或 DAD 中可維持 Pending。前綴變更可將舊位址保留為已棄用直到有效期限，/128 作主機位址而非直連子網。
 - sendRA/announce 不會讓目前位址控制器啟動 RA 服務，須另設 IPv6RouterAdvertisement 或 DHCPv6Server。已移除的 prefixSource/ready_when 會被拒絕。
 
-## YAML定義
+## 設定語法
 
-此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。
+這是說明用語法，不是可直接複製的YAML。未加括號的欄位在父項目內必填；`[ ... ]`表示依條件可省略，`<型別>`為替換值，`(a | b)`表示選項。選填父項目內仍可能有必填子項目。條件必填、互斥與實際預設值請見下表；一般YAML請使用連結範例。
 
-```yaml
+```text
 - apiVersion: net.routerd.net/v1alpha1
   kind: IPv6DelegatedAddress
   metadata:
     name: "<name>"
   spec:
-    addressSuffix: "<string>" # 必填; string
-    announce: true # 選填; boolean
-    dependsOn: # 選填; array
-      - # object
-        equals: "<string>" # 選填; string
-        field: "<string>" # 選填; string
-        notEmpty: true # 選填; boolean
-        optional: true # 選填; boolean
-        phase: "<string>" # 選填; string
-        resource: "<string>" # 必填; string
-    interface: "<string>" # 必填; string
-    prefixDelegation: "<string>" # 必填; string
-    prefixLength: 1 # 選填; integer; minimum=1; maximum=128
-    sendRA: true # 選填; boolean
-    subnetID: "<string>" # 選填; string
-    when: # 選填; object
-      state: # 選填; object
-        "<key>": # 選填; object
-          contains: "<string>" # 選填; string
-          equals: "<string>" # 選填; string
-          exists: true # 選填; boolean
-          for: "<string>" # 選填; string
-          in: # 選填; array
-            - "<string>" # string
-          maxAge: "<string>" # 選填; string
-          status: "set" # 選填; string; enum=["set", "unset", "unknown"]
+    addressSuffix: <string>
+    [ announce: <boolean> ]
+    [ dependsOn:
+        -
+          [ equals: <string> ]
+          [ field: <string> ]
+          [ notEmpty: <boolean> ]
+          [ optional: <boolean> ]
+          [ phase: <string> ]
+          resource: <string>
+    ]
+    interface: <string>
+    prefixDelegation: <string>
+    [ prefixLength: <integer> ]
+    [ sendRA: <boolean> ]
+    [ subnetID: <string> ]
+    [ when:
+        [ state:
+            [ <name>:
+                [ contains: <string> ]
+                [ equals: <string> ]
+                [ exists: <boolean> ]
+                [ for: <string> ]
+                [ in:
+                    - <string>
+                ]
+                [ maxAge: <string> ]
+                [ status: ("set" | "unset" | "unknown") ]
+            ]
+        ]
+    ]
 ```
 
 ## 欄位意義與預設值
 
-| YAML | 欄位意義與預設值 |
-| --- | --- |
-| `spec.prefixDelegation` | 必填 DHCPv6PrefixDelegation metadata.name 裸名，不是 Kind/name 或狀態運算式，無預設值。 |
-| `spec.interface` | 必填已宣告的目標邏輯介面，最終 OS 名稱由 Router 解析。 |
-| `spec.subnetID` | 選用十六進位字串，預設 0；"10" 為 0x10 而非十進位十，可加 0x。未嚴格檢查容納範圍，請選委派區塊內編號。 |
-| `spec.addressSuffix` | 必填 IPv6 後綴如 ::1，僅使用衍生前綴邊界以下的主機位元，不作完整絕對位址，無自動 ::1 預設。 |
-| `spec.prefixLength` | 省略或 0 保留衍生長度，通常 /64。執行時接受相同長度或 128；其他明確長度雖可通過 1–128 結構描述，套用仍失敗。/128 避免建立通常的直連前綴路由。 |
-| `spec.sendRA` | 布林值預設 false，部分主機相依或轉送準備路徑使用，但不是即時位址控制器的自動 RA 開關。 |
-| `spec.announce` | 布林值預設 false，即時 RA 服務限制同 sendRA，不保證主動鄰居或 RA 公告。 |
-| `spec.when` | 選用共用條件，預設無條件；條件為假可經明確清理路徑移除衍生位址。 |
-| `spec.dependsOn` | 選用共用 AND 相依清單，預設空。不成立時為 Pending/DependsOnFalse。HA 預置對 PD/VMAC 前提有特定處理，請用實際資源 phase。 |
+選填父項目的必填子項目僅在使用父項目時需要。其他具體條件列於說明；`[ ... ]`選項仍可能需要擇一。
+
+| YAML | 指定要求 | 型別與限制 | 欄位意義與預設值 |
+| --- | --- | --- | --- |
+| `spec.prefixDelegation` | **必填** | string | 必填 DHCPv6PrefixDelegation metadata.name 裸名，不是 Kind/name 或狀態運算式，無預設值。 |
+| `spec.interface` | **必填** | string | 必填已宣告的目標邏輯介面，最終 OS 名稱由 Router 解析。 |
+| `spec.subnetID` | *選填* | string | 選用十六進位字串，預設 0；"10" 為 0x10 而非十進位十，可加 0x。未嚴格檢查容納範圍，請選委派區塊內編號。 |
+| `spec.addressSuffix` | **必填** | string | 必填 IPv6 後綴如 ::1，僅使用衍生前綴邊界以下的主機位元，不作完整絕對位址，無自動 ::1 預設。 |
+| `spec.prefixLength` | *選填* | integer; minimum=1; maximum=128 | 省略或 0 保留衍生長度，通常 /64。執行時接受相同長度或 128；其他明確長度雖可通過 1–128 結構描述，套用仍失敗。/128 避免建立通常的直連前綴路由。 |
+| `spec.sendRA` | *選填* | boolean | 布林值預設 false，部分主機相依或轉送準備路徑使用，但不是即時位址控制器的自動 RA 開關。 |
+| `spec.announce` | *選填* | boolean | 布林值預設 false，即時 RA 服務限制同 sendRA，不保證主動鄰居或 RA 公告。 |
+| `spec.when` | *選填* | object | 選用共用條件，預設無條件；條件為假可經明確清理路徑移除衍生位址。 |
+| `spec.dependsOn` | *選填* | array | 選用共用 AND 相依清單，預設空。不成立時為 Pending/DependsOnFalse。HA 預置對 PD/VMAC 前提有特定處理，請用實際資源 phase。 |
 
 實作: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate_wan.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_wan.go) · [pkg/config/validate.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go) · [pkg/pdclient/derive.go](https://github.com/imksoo/routerd/blob/main/pkg/pdclient/derive.go) · [pkg/controller/chain/chain.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go) · [pkg/hostdeps/hostdeps.go](https://github.com/imksoo/routerd/blob/main/pkg/hostdeps/hostdeps.go)
 

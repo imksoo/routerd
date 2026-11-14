@@ -10,56 +10,73 @@
 <ul>
 <li>Use the logical metadata.name in interface fields of dependent resources and put the real device name in ifname. managed=false does not suppress LinkController admin-up/MTU operations when those settings are requested.</li>
 </ul>
-<h2 id="yaml-definition">YAML definition</h2>
-<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
-<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+<h2 id="configuration-syntax">Configuration syntax</h2>
+<p>This is explanatory notation, not YAML to copy. Unbracketed fields are required within their parent; <code>[ ... ]</code> marks fields that can be omitted, subject to the conditions in the table. <code>&lt;type&gt;</code> is a placeholder, and <code>(a | b)</code> lists alternatives. Optional parents may contain required children. Conditional requirements, exclusions and runtime defaults are described below. Use the linked YAML example for an ordinary configuration.</p>
+<pre><code class="language-text">- apiVersion: net.routerd.net/v1alpha1
   kind: Interface
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    adminUp: true # optional; boolean
-    ifname: &quot;&lt;string&gt;&quot; # Required; string
-    managed: true # Required; boolean
-    mtu: 576 # optional; integer; minimum=576; maximum=9216
-    when: # optional; object
-      state: # optional; object
-        &quot;&lt;key&gt;&quot;: # optional; object
-          contains: &quot;&lt;string&gt;&quot; # optional; string
-          equals: &quot;&lt;string&gt;&quot; # optional; string
-          exists: true # optional; boolean
-          for: &quot;&lt;string&gt;&quot; # optional; string
-          in: # optional; array
-            - &quot;&lt;string&gt;&quot; # string
-          maxAge: &quot;&lt;string&gt;&quot; # optional; string
-          status: &quot;set&quot; # optional; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+    [ adminUp: &lt;boolean&gt; ]
+    ifname: &lt;string&gt;
+    managed: &lt;boolean&gt;
+    [ mtu: &lt;integer&gt; ]
+    [ when:
+        [ state:
+            [ &lt;name&gt;:
+                [ contains: &lt;string&gt; ]
+                [ equals: &lt;string&gt; ]
+                [ exists: &lt;boolean&gt; ]
+                [ for: &lt;string&gt; ]
+                [ in:
+                    - &lt;string&gt;
+                ]
+                [ maxAge: &lt;string&gt; ]
+                [ status: (&quot;set&quot; | &quot;unset&quot; | &quot;unknown&quot;) ]
+            ]
+        ]
+    ]
 </code></pre>
 <h2 id="field-meaning-and-default">Field meaning and default</h2>
+<p>Required children of optional objects apply only when their parent is used. Other exact conditions are in the explanation; bracketed alternatives may still require one choice.</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>Presence</th>
+<th>Type / constraints</th>
 <th>Field meaning and default</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.ifname</code></td>
+<td><strong>Required</strong></td>
+<td>string</td>
 <td>Required existing kernel device name, e.g. ens18; no default. Missing devices produce a Down/InterfaceNotFound status rather than being created.</td>
 </tr>
 <tr>
 <td><code>spec.managed</code></td>
+<td><strong>Required</strong></td>
+<td>boolean</td>
 <td>Management declaration, decoded default false; JSON Schema asks for explicit presence. It affects management/observation metadata and surrounding logic, but is not an observe-only guarantee for adminUp or MTU.</td>
 </tr>
 <tr>
 <td><code>spec.adminUp</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false: no request to bring the link up. True brings an existing down link up. False does not mean administratively force the link down.</td>
 </tr>
 <tr>
 <td><code>spec.mtu</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=576; maximum=9216</td>
 <td>Default zero means preserve the current MTU. Explicit nonzero values must be 576–9216 and are applied when different.</td>
 </tr>
 <tr>
 <td><code>spec.when</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Activation condition; omitted means no gate. See the shared condition reference for state/all/any, unknown handling and age predicates.</td>
 </tr>
 </tbody>
@@ -71,7 +88,7 @@
 <p><a href="/examples/basic-dhcp.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
 <li><a href="#conditions-and-references">Conditions and references</a></li>
-<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#configuration-syntax">Configuration syntax</a></li>
 <li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 <li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
 </ul>

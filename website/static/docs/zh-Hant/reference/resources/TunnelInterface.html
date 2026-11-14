@@ -12,107 +12,145 @@
 <li>Linux 以 ip link/address 及 FOU 接聽支援四模式。FreeBSD 僅 IPIP/gifN、GRE/greN，拒絕明確 TTL，address 非空時須明確內層 peerAddress。控制器強制鏈路 up，無 managed/enabled 停用選項。</li>
 <li>設定 address 取代隧道其他 IPv4，空值全移除。Linux 清理亦移除未設定 IPIP/GRE（內建及其他設定保留者除外）及不用的 FOU 接聽；FreeBSD 撤除依記錄狀態及類型檢查。變更依整體設定，不以所有權限制。</li>
 </ul>
-<h2 id="yaml定義">YAML定義</h2>
-<p>此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。</p>
-<pre><code class="language-yaml">- apiVersion: hybrid.routerd.net/v1alpha1
+<h2 id="設定語法">設定語法</h2>
+<p>這是說明用語法，不是可直接複製的YAML。未加括號的欄位在父項目內必填；<code>[ ... ]</code>表示依條件可省略，<code>&lt;型別&gt;</code>為替換值，<code>(a | b)</code>表示選項。選填父項目內仍可能有必填子項目。條件必填、互斥與實際預設值請見下表；一般YAML請使用連結範例。</p>
+<pre><code class="language-text">- apiVersion: hybrid.routerd.net/v1alpha1
   kind: TunnelInterface
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    address: &quot;&lt;string&gt;&quot; # 選填; string
-    encapDport: 1 # 選填; integer; minimum=1; maximum=65535
-    encapSport: 1 # 選填; integer; minimum=1; maximum=65535
-    key: 0 # 選填; integer; minimum=0; maximum=4294967295
-    local: &quot;&lt;string&gt;&quot; # 選填; string
-    localFrom: # 選填; object
-      field: &quot;&lt;string&gt;&quot; # 選填; string
-      optional: true # 選填; boolean
-      resource: &quot;&lt;string&gt;&quot; # 必填; string
-    mode: &quot;ipip&quot; # 必填; string; enum=[&quot;ipip&quot;, &quot;gre&quot;, &quot;fou&quot;, &quot;gue&quot;]
-    mtu: 576 # 選填; integer; minimum=576; maximum=9216
-    pathMTU: # 選填; object
-      forceFragmentIPv4: true # 選填; boolean
-    peerAddress: &quot;&lt;string&gt;&quot; # 選填; string
-    remote: &quot;&lt;string&gt;&quot; # 選填; string
-    remoteFrom: # 選填; object
-      field: &quot;&lt;string&gt;&quot; # 選填; string
-      optional: true # 選填; boolean
-      resource: &quot;&lt;string&gt;&quot; # 必填; string
-    trustedUnderlay: true # 必填; boolean
-    ttl: 1 # 選填; integer; minimum=1; maximum=255
-    underlayInterface: &quot;&lt;string&gt;&quot; # 選填; string
+    [ address: &lt;string&gt; ]
+    [ encapDport: &lt;integer&gt; ]
+    [ encapSport: &lt;integer&gt; ]
+    [ key: &lt;integer&gt; ]
+    [ local: &lt;string&gt; ]
+    [ localFrom:
+        field: &lt;string&gt;
+        [ optional: &lt;boolean&gt; ]
+        resource: &lt;string&gt;
+    ]
+    mode: (&quot;ipip&quot; | &quot;gre&quot; | &quot;fou&quot; | &quot;gue&quot;)
+    [ mtu: &lt;integer&gt; ]
+    [ pathMTU:
+        [ forceFragmentIPv4: &lt;boolean&gt; ]
+    ]
+    [ peerAddress: &lt;string&gt; ]
+    [ remote: &lt;string&gt; ]
+    [ remoteFrom:
+        field: &lt;string&gt;
+        [ optional: &lt;boolean&gt; ]
+        resource: &lt;string&gt;
+    ]
+    trustedUnderlay: &lt;boolean&gt;
+    [ ttl: &lt;integer&gt; ]
+    [ underlayInterface: &lt;string&gt; ]
 </code></pre>
 <h2 id="欄位意義與預設值">欄位意義與預設值</h2>
+<p>選填父項目的必填子項目僅在使用父項目時需要。其他具體條件列於說明；<code>[ ... ]</code>選項仍可能需要擇一。</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>指定要求</th>
+<th>型別與限制</th>
 <th>欄位意義與預設值</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.mode</code></td>
+<td><strong>必填</strong></td>
+<td>string; enum=["ipip", "gre", "fou", "gue"]</td>
 <td>必填 ipip/gre/fou/gue，無預設。Linux FOU/GUE 使用 UDP 封裝 IPIP 鏈路；FreeBSD 僅支援 ipip（gifN）及 gre（greN），拒絕 FOU/GUE。</td>
 </tr>
 <tr>
 <td><code>spec.local</code></td>
+<td><strong>條件必填</strong></td>
+<td>string</td>
 <td>本機外層純 IPv4 端點，local/localFrom 恰需一個。拒絕固定 CIDR、主機名稱與 IPv6，不自動選擇介面位址。</td>
 </tr>
 <tr>
 <td><code>spec.localFrom</code></td>
+<td><strong>條件必填</strong></td>
+<td>object</td>
 <td>選用共用狀態來源，須明確指定既有 Kind/name 與提供欄位，與 local 互斥。執行時僅讀狀態，接受單一 IPv4 或 CIDR 並正規化；即使 optional true，缺值仍為 Pending/EndpointSourcePending，無端點替代值。</td>
 </tr>
 <tr>
 <td><code>spec.remote</code></td>
+<td><strong>條件必填</strong></td>
+<td>string</td>
 <td>遠端外層純 IPv4 端點，remote/remoteFrom 恰需一個，拒絕固定主機名稱、IPv6 與 CIDR。</td>
 </tr>
 <tr>
 <td><code>spec.remoteFrom</code></td>
+<td><strong>條件必填</strong></td>
+<td>object</td>
 <td>選用共用狀態來源，與 remote 互斥；必要 field、IPv4/CIDR 正規化及忽略 optional 行為同 localFrom。狀態缺值暫停調和，但不自動拆除既有隧道。</td>
 </tr>
 <tr>
 <td><code>spec.address</code></td>
+<td><strong>條件必填</strong></td>
+<td>string</td>
 <td>選用內層 IPv4 主機/CIDR。控制器移除隧道其他 IPv4，省略或空值因此亦移除既有 IPv4；無自動內層位址。FreeBSD 設定後需 peerAddress。</td>
 </tr>
 <tr>
 <td><code>spec.peerAddress</code></td>
+<td><strong>條件必填</strong></td>
+<td>string</td>
 <td>僅 FreeBSD 的明確內層純 IPv4 對端，與 address 必須成對，不由 CIDR 推導，Linux 拒絕。</td>
 </tr>
 <tr>
 <td><code>spec.underlayInterface</code></td>
+<td><em>選填</em></td>
+<td>string</td>
 <td>選用 MTU 估算資源名稱（Interface、WireGuardInterface、巢狀 TunnelInterface）。此處非必填且未全域驗證存在，未知使用 1500 替代。目前隧道命令不綁定此裝置，外層出口由主機選路，請避免遞迴參照。</td>
 </tr>
 <tr>
 <td><code>spec.mtu</code></td>
+<td><em>選填</em></td>
+<td>integer; minimum=576; maximum=9216</td>
 <td>選用明確 576–9216，原樣使用。省略或 0 為設定底層 MTU（替代 1500）減 ipip 20、gre 24（有 key 加 4）、fou 28、gue 32。替代預設 1480/1476/1472/1468，有 key GRE 1472，非即時 PMTU 探索。</td>
 </tr>
 <tr>
 <td><code>spec.ttl</code></td>
+<td><em>選填</em></td>
+<td>integer; minimum=1; maximum=255</td>
 <td>Linux 外層 TTL 1–255，省略或 0 為 64。FreeBSD 拒絕非零明確 TTL，ifconfig 路徑亦不套用內部回報預設 64。</td>
 </tr>
 <tr>
 <td><code>spec.key</code></td>
+<td><em>選填</em></td>
+<td>integer; minimum=0; maximum=4294967295</td>
 <td>僅 GRE 的整數 0–4294967295，預設 0 表示無 key；其他模式非零拒絕。FreeBSD 使用 ifconfig grekey，Linux key/nokey。它是識別碼，不是加密或認證秘密。</td>
 </tr>
 <tr>
 <td><code>spec.encapSport</code></td>
+<td><strong>條件必填</strong></td>
+<td>integer; minimum=1; maximum=65535</td>
 <td>fou/gue 必填 UDP 來源及本機接收連接埠 1–65535，無預設，控制器亦在此建立 FOU/GUE 接聽；ipip/gre 非零拒絕。</td>
 </tr>
 <tr>
 <td><code>spec.encapDport</code></td>
+<td><strong>條件必填</strong></td>
+<td>integer; minimum=1; maximum=65535</td>
 <td>fou/gue 必填遠端 UDP 目的連接埠 1–65535，須符合對端接收埠，無預設；ipip/gre 非零拒絕。</td>
 </tr>
 <tr>
 <td><code>spec.trustedUnderlay</code></td>
+<td><strong>必填</strong></td>
+<td>boolean</td>
 <td>必須 true，false 或省略會拒絕。IPIP/GRE/FOU/GUE 不提供加密或對端認證，此確認亦不增加這些功能。</td>
 </tr>
 <tr>
 <td><code>spec.pathMTU</code></td>
+<td><em>選填</em></td>
+<td>object</td>
 <td>選用轉送路徑策略選項，預設不強制 IPv4 分片，獨立於明確隧道 MTU。</td>
 </tr>
 <tr>
 <td><code>spec.pathMTU.forceFragmentIPv4</code></td>
+<td><em>選填</em></td>
+<td>boolean</td>
 <td>預設 false，Linux 路徑 MTU 策略可清除符合衍生轉送路徑之過大 IPv4 的 DF，不是隧道 ignore-df 選項或 IPv6 功能。FreeBSD 略過此 nftables 控制器，此路徑無同等動作。</td>
 </tr>
 </tbody>
@@ -124,7 +162,7 @@
 <p><a href="/examples/hybrid-l3-fou.yaml">設定範例</a></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
 <ul>
 <li><a href="#指定條件與參照關係">指定條件與參照關係</a></li>
-<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#設定語法">設定語法</a></li>
 <li><a href="#欄位意義與預設值">欄位意義與預設值</a></li>
 <li><a href="#可參照的狀態欄位">可參照的狀態欄位</a></li>
 </ul>

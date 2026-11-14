@@ -12,66 +12,87 @@
 <li>profile/prefixLength 影響外部客戶端設定及還原快照比對。受監督的 routerd-dhcpv6-client 不接收 profile 或 prefix-length 旗標，取得時不以此提示長度；clientDUID 會傳入。</li>
 <li>不支援 iaid/duidType YAML 控制。routerd 常駐程式 IA_PD IAID 預設 1，未指定 clientDUID 時由上行 MAC 衍生 DUID-LL。required 不會實作阻擋開機的要求。</li>
 </ul>
-<h2 id="yaml定義">YAML定義</h2>
-<p>此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。</p>
-<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+<h2 id="設定語法">設定語法</h2>
+<p>這是說明用語法，不是可直接複製的YAML。未加括號的欄位在父項目內必填；<code>[ ... ]</code>表示依條件可省略，<code>&lt;型別&gt;</code>為替換值，<code>(a | b)</code>表示選項。選填父項目內仍可能有必填子項目。條件必填、互斥與實際預設值請見下表；一般YAML請使用連結範例。</p>
+<pre><code class="language-text">- apiVersion: net.routerd.net/v1alpha1
   kind: DHCPv6PrefixDelegation
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    client: &quot;&lt;string&gt;&quot; # 選填; string
-    clientDUID: &quot;&lt;string&gt;&quot; # 選填; string
-    interface: &quot;&lt;string&gt;&quot; # 必填; string
-    prefixLength: 1 # 選填; integer; minimum=1; maximum=128
-    profile: &quot;default&quot; # 選填; string; enum=[&quot;default&quot;, &quot;ntt-ngn-direct-hikari-denwa&quot;, &quot;ntt-hgw-lan-pd&quot;]
-    required: true # 選填; boolean
-    when: # 選填; object
-      state: # 選填; object
-        &quot;&lt;key&gt;&quot;: # 選填; object
-          contains: &quot;&lt;string&gt;&quot; # 選填; string
-          equals: &quot;&lt;string&gt;&quot; # 選填; string
-          exists: true # 選填; boolean
-          for: &quot;&lt;string&gt;&quot; # 選填; string
-          in: # 選填; array
-            - &quot;&lt;string&gt;&quot; # string
-          maxAge: &quot;&lt;string&gt;&quot; # 選填; string
-          status: &quot;set&quot; # 選填; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+    [ client: &lt;string&gt; ]
+    [ clientDUID: &lt;string&gt; ]
+    interface: &lt;string&gt;
+    [ prefixLength: &lt;integer&gt; ]
+    [ profile: (&quot;default&quot; | &quot;ntt-ngn-direct-hikari-denwa&quot; | &quot;ntt-hgw-lan-pd&quot;) ]
+    [ required: &lt;boolean&gt; ]
+    [ when:
+        [ state:
+            [ &lt;name&gt;:
+                [ contains: &lt;string&gt; ]
+                [ equals: &lt;string&gt; ]
+                [ exists: &lt;boolean&gt; ]
+                [ for: &lt;string&gt; ]
+                [ in:
+                    - &lt;string&gt;
+                ]
+                [ maxAge: &lt;string&gt; ]
+                [ status: (&quot;set&quot; | &quot;unset&quot; | &quot;unknown&quot;) ]
+            ]
+        ]
+    ]
 </code></pre>
 <h2 id="欄位意義與預設值">欄位意義與預設值</h2>
+<p>選填父項目的必填子項目僅在使用父項目時需要。其他具體條件列於說明；<code>[ ... ]</code>選項仍可能需要擇一。</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>指定要求</th>
+<th>型別與限制</th>
 <th>欄位意義與預設值</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.interface</code></td>
+<td><strong>必填</strong></td>
+<td>string</td>
 <td>必填同一 Router 的邏輯上行介面。若 DHCPv6Address 亦使用同一介面，外部 dhcp6c/dhcpcd PD client 須與該資源 client 相符。</td>
 </tr>
 <tr>
 <td><code>spec.client</code></td>
+<td><em>選填</em></td>
+<td>string</td>
 <td>預設 routerd-dhcpv6-client，接受 networkd/dhcp6c/dhcpcd。目前監督亦可能合成 routerd DHCPv6 systemd 單元，選外部客戶端不普遍保證停用內建常駐程式。</td>
 </tr>
 <tr>
 <td><code>spec.profile</code></td>
+<td><em>選填</em></td>
+<td>string; enum=["default", "ntt-ngn-direct-hikari-denwa", "ntt-hgw-lan-pd"]</td>
 <td>空值/default、ntt-ngn-direct-hikari-denwa 或 ntt-hgw-lan-pd。NTT 在支援的產生路徑提供 /60 與 link-layer DUID 預設，不設定業者憑證或變更內建命令。</td>
 </tr>
 <tr>
 <td><code>spec.prefixLength</code></td>
+<td><em>選填</em></td>
+<td>integer; minimum=1; maximum=128</td>
 <td>選用 1–128，省略或 0 時 NTT 為 /60，default 無長度提示，不保證分配長度，也不傳入內建取得。HA 預置快照重用卻要求有效長度完全相同：default 省略時為 0，不符合一般委派前綴，此路徑須明確指定實際長度。</td>
 </tr>
 <tr>
 <td><code>spec.clientDUID</code></td>
+<td><em>選填</em></td>
+<td>string</td>
 <td>選用無分隔符且偶數長度的十六進位 DUID，拒絕冒號與空白。空值由內建客戶端從 MAC 衍生 DUID-LL，身分亦影響還原租約是否可重用。</td>
 </tr>
 <tr>
 <td><code>spec.required</code></td>
+<td><em>選填</em></td>
+<td>boolean</td>
 <td>布林值預設 false，會解碼但目前不作為必要性或開機等待策略。相依者應使用實際 Bound 狀態及相依條件。</td>
 </tr>
 <tr>
 <td><code>spec.when</code></td>
+<td><em>選填</em></td>
+<td>object</td>
 <td>選用共用狀態條件，預設無條件。監督客戶端依已解析條件篩選，條件為假可在保留宣告時停止取得。</td>
 </tr>
 </tbody>
@@ -83,7 +104,7 @@
 <p><a href="/examples/example-dslite-home.yaml">設定範例</a></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
 <ul>
 <li><a href="#指定條件與參照關係">指定條件與參照關係</a></li>
-<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#設定語法">設定語法</a></li>
 <li><a href="#欄位意義與預設值">欄位意義與預設值</a></li>
 <li><a href="#可參照的狀態欄位">可參照的狀態欄位</a></li>
 </ul>

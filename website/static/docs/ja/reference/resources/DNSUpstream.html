@@ -12,90 +12,120 @@
 <li>必須addressFromが未解決なら固定アドレスがあっても、それを含む転送規則全体を見送ります。optionalの未解決値は省略します。bootstrapは異なり、固定一覧があれば必須の動的bootstrapの未解決を補えます。</li>
 <li>sourceInterfaceは論理名・Kind/nameから変換せず、そのままソケットに渡します。Linuxではmetadata.nameとOSのifnameが一致する宣言を使ってください。FreeBSDのソケット処理はifname直接指定を拒否し、通常設定の検証もここで利用できるfib:<n>の代替指定を提供していません。</li>
 </ul>
-<h2 id="yaml定義">YAML定義</h2>
-<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
-<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+<h2 id="設定構文">設定構文</h2>
+<p>説明用の構文表記であり、そのままコピーするYAMLではありません。囲みのない項目は親の中で必須、<code>[ ... ]</code>は条件に応じて省略できる項目、<code>&lt;型&gt;</code>は差し替え値、<code>(a | b)</code>は選択肢です。任意の親にも必須の子があります。条件付き必須・排他・実効既定値は下の表を確認し、通常のYAMLはリンク先の設定例を使ってください。</p>
+<pre><code class="language-text">- apiVersion: net.routerd.net/v1alpha1
   kind: DNSUpstream
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    address: &quot;&lt;string&gt;&quot; # 任意; string
-    addressFrom: # 任意; array
-      - # object
-        field: &quot;&lt;string&gt;&quot; # 任意; string
-        optional: true # 任意; boolean
-        resource: &quot;&lt;string&gt;&quot; # 必須; string
-    bootstrap: # 任意; array
-      - &quot;&lt;string&gt;&quot; # string
-    bootstrapFrom: # 任意; array
-      - # object
-        field: &quot;&lt;string&gt;&quot; # 必須; string
-        optional: true # 任意; boolean
-        resource: &quot;&lt;string&gt;&quot; # 必須; string
-    path: &quot;&lt;string&gt;&quot; # 任意; string
-    port: 1 # 任意; integer; minimum=1; maximum=65535
-    protocol: &quot;udp&quot; # 必須; string; enum=[&quot;udp&quot;, &quot;tcp&quot;, &quot;dot&quot;, &quot;doh&quot;]
-    sourceInterface: &quot;&lt;string&gt;&quot; # 任意; string
-    tlsName: &quot;&lt;string&gt;&quot; # 任意; string
-    when: # 任意; object
-      state: # 任意; object
-        &quot;&lt;key&gt;&quot;: # 任意; object
-          contains: &quot;&lt;string&gt;&quot; # 任意; string
-          equals: &quot;&lt;string&gt;&quot; # 任意; string
-          exists: true # 任意; boolean
-          for: &quot;&lt;string&gt;&quot; # 任意; string
-          in: # 任意; array
-            - &quot;&lt;string&gt;&quot; # string
-          maxAge: &quot;&lt;string&gt;&quot; # 任意; string
-          status: &quot;set&quot; # 任意; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+    [ address: &lt;string&gt; ]
+    [ addressFrom:
+        -
+          field: &lt;string&gt;
+          [ optional: &lt;boolean&gt; ]
+          resource: &lt;string&gt;
+    ]
+    [ bootstrap:
+        - &lt;string&gt;
+    ]
+    [ bootstrapFrom:
+        -
+          field: &lt;string&gt;
+          [ optional: &lt;boolean&gt; ]
+          resource: &lt;string&gt;
+    ]
+    [ path: &lt;string&gt; ]
+    [ port: &lt;integer&gt; ]
+    protocol: (&quot;udp&quot; | &quot;tcp&quot; | &quot;dot&quot; | &quot;doh&quot;)
+    [ sourceInterface: &lt;string&gt; ]
+    [ tlsName: &lt;string&gt; ]
+    [ when:
+        [ state:
+            [ &lt;name&gt;:
+                [ contains: &lt;string&gt; ]
+                [ equals: &lt;string&gt; ]
+                [ exists: &lt;boolean&gt; ]
+                [ for: &lt;string&gt; ]
+                [ in:
+                    - &lt;string&gt;
+                ]
+                [ maxAge: &lt;string&gt; ]
+                [ status: (&quot;set&quot; | &quot;unset&quot; | &quot;unknown&quot;) ]
+            ]
+        ]
+    ]
 </code></pre>
 <h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<p>任意の親の必須項目は、親を使う場合に必要です。それ以外の具体的な条件は説明欄に記載します。<code>[ ... ]</code>で囲まれた選択肢も、いずれか一方が必要な場合があります。</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>指定要否</th>
+<th>型・制約</th>
 <th>項目の意味と既定値</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.protocol</code></td>
+<td><strong>必須</strong></td>
+<td>string; enum=["udp", "tcp", "dot", "doh"]</td>
 <td>udp・tcp・dot・dohのいずれかが必須です。小文字の正式表記を使用します。UDP/TCPは平文DNS、DoTはTLS、DoHはHTTPSです。</td>
 </tr>
 <tr>
 <td><code>spec.address</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>string</td>
 <td>スキーム・ポート・パスを含まないサーバーIPまたはホスト名です。addressFromが空なら必須です。暗黙のサーバーはなく、bootstrap指定時は名前解決に使用します。</td>
 </tr>
 <tr>
 <td><code>spec.addressFrom</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>array</td>
 <td>UDP専用の状態値参照一覧です。各項目に設定内のresourceと提供フィールドの明示が必要で、optional既定falseです。動的な裸アドレスは本リソースのportとは独立してUDP 53へ正規化します。複数サーバーの返却も可能です。</td>
 </tr>
 <tr>
 <td><code>spec.port</code></td>
+<td><em>任意</em></td>
+<td>integer; minimum=1; maximum=65535</td>
 <td>1～65535です。省略・0はudp/tcpで53、dotで853、dohで443です。固定addressに適用し、addressFromが返す裸値には適用しません。</td>
 </tr>
 <tr>
 <td><code>spec.path</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>DoHのURLパスで、既定は/dns-queryです。dohで指定する場合は/始まりが必須です。他プロトコルでは使いません。</td>
 </tr>
 <tr>
 <td><code>spec.tlsName</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>DoTの証明書検証・SNI用サーバー名です。省略時は接続先ホスト名を使用します。DoHでは明示指定が検証で拒否されます。UDP/TCPは検証で許しても使用しません。</td>
 </tr>
 <tr>
 <td><code>spec.bootstrap</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>上流ホスト名の解決用DNS一覧です。bootstrapFromも空・省略で必須依存待ちがなければOSのリゾルバーを使います。同じ転送規則内の上流で結合した設定を共有します。</td>
 </tr>
 <tr>
 <td><code>spec.bootstrapFrom</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>field必須の参照一覧で、resource・fieldは非空必須、optional既定falseです。実在するKind/nameと提供状態フィールドを指定してください。ただし通常のStatusValueSourceSpecとは別型のため、現行検証は参照先の存在・提供リストへの所属まで検査しません。動的・固定サーバーを結合し、固定bootstrapがあれば必須動的値の未解決を補えます。</td>
 </tr>
 <tr>
 <td><code>spec.sourceInterface</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>宣言したInterfaceまたはWireGuardInterfaceの名前です。既定空ならOSの経路選択に任せます。転送プール単位で共有し、裸のOS名・FreeBSDに関する上記制限があります。</td>
 </tr>
 <tr>
 <td><code>spec.when</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>共通の状態条件です。既定は無条件で、除外されると転送規則に有効な接続先がなくなる場合があります。</td>
 </tr>
 </tbody>
@@ -107,7 +137,7 @@
 <p><a href="/examples/example-dslite-home.yaml">設定例</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
 <ul>
 <li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
-<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#設定構文">設定構文</a></li>
 <li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
 <li><a href="#状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</a></li>
 </ul>

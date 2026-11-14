@@ -10,39 +10,41 @@ Authorizes selected dynamic sources to mask exact startup resources while the dy
 
 - Policies match the exact source plus operation plus apiVersion/kind/name target. With no matching allow entry, masking is denied. Multiple allowed active masks on one target are combined until the latest expiry.
 
-## YAML definition
+## Configuration syntax
 
-All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.
+This is explanatory notation, not YAML to copy. Unbracketed fields are required within their parent; `[ ... ]` marks fields that can be omitted, subject to the conditions in the table. `<type>` is a placeholder, and `(a | b)` lists alternatives. Optional parents may contain required children. Conditional requirements, exclusions and runtime defaults are described below. Use the linked YAML example for an ordinary configuration.
 
-```yaml
+```text
 - apiVersion: config.routerd.net/v1alpha1
   kind: DynamicOverridePolicy
   metadata:
     name: "<name>"
   spec:
-    allow: # Required; array
-      - # object
-        operations: # Required; array
-          - "<string>" # string
-        source: "<string>" # Required; string
-        targets: # Required; array
-          - # object
-            apiVersion: "<string>" # Required; string
-            kind: "<string>" # Required; string
-            name: "<string>" # Required; string
+    allow:
+      -
+        operations:
+          - <string>
+        source: <string>
+        targets:
+          -
+            apiVersion: <string>
+            kind: <string>
+            name: <string>
 ```
 
 ## Field meaning and default
 
-| YAML | Field meaning and default |
-| --- | --- |
-| `spec.allow` | Allow-rule list. Empty has no effect and grants no permission. |
-| `spec.allow[].source` | Required exact DynamicConfigPart.spec.source identity, not necessarily a Plugin or DynamicConfigSource resource name. No wildcard/default. |
-| `spec.allow[].operations` | Allowed operations; only mask is accepted. Empty grants no operation. |
-| `spec.allow[].targets` | Exact startup-resource identities eligible for masking. Empty grants no targets. |
-| `spec.allow[].targets[].apiVersion` | Required API group/version of the exact target; no default. |
-| `spec.allow[].targets[].kind` | Required target kind; no wildcard expansion. |
-| `spec.allow[].targets[].name` | Required exact target metadata.name; no wildcard expansion. |
+Required children of optional objects apply only when their parent is used. Other exact conditions are in the explanation; bracketed alternatives may still require one choice.
+
+| YAML | Presence | Type / constraints | Field meaning and default |
+| --- | --- | --- | --- |
+| `spec.allow` | **Required** | array | Allow-rule list. Empty has no effect and grants no permission. |
+| `spec.allow[].source` | **Required** | string | Required exact DynamicConfigPart.spec.source identity, not necessarily a Plugin or DynamicConfigSource resource name. No wildcard/default. |
+| `spec.allow[].operations` | **Required** | array | Allowed operations; only mask is accepted. Empty grants no operation. |
+| `spec.allow[].targets` | **Required** | array | Exact startup-resource identities eligible for masking. Empty grants no targets. |
+| `spec.allow[].targets[].apiVersion` | **Required** | string | Required API group/version of the exact target; no default. |
+| `spec.allow[].targets[].kind` | **Required** | string | Required target kind; no wildcard expansion. |
+| `spec.allow[].targets[].name` | **Required** | string | Required exact target metadata.name; no wildcard expansion. |
 
 Implementation: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate_config.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_config.go) · [pkg/dynamicconfig/merge.go](https://github.com/imksoo/routerd/blob/main/pkg/dynamicconfig/merge.go)
 

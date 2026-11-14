@@ -12,32 +12,34 @@
 - 記録はconntrack情報の取得成功後に行い、取得できない回は記録しません。接続一覧の取得上限は10000件です。監視処理の再実行時に記録し、通常は30秒間隔ですが実行オプションによって変わります。
 - DPI補完は最初の有効なFirewallEventLogのDBが利用できる場合に、接続情報に一致する1時間以内の分類キャッシュを使います。includeの各フラグは補完成功を保証せず、両方falseでも利用可能なキャッシュから補完します。フローの保持期間はLogRetentionのtrafficFlowsで管理します。
 
-## YAML定義
+## 設定構文
 
-全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。
+説明用の構文表記であり、そのままコピーするYAMLではありません。囲みのない項目は親の中で必須、`[ ... ]`は条件に応じて省略できる項目、`<型>`は差し替え値、`(a | b)`は選択肢です。任意の親にも必須の子があります。条件付き必須・排他・実効既定値は下の表を確認し、通常のYAMLはリンク先の設定例を使ってください。
 
-```yaml
+```text
 - apiVersion: net.routerd.net/v1alpha1
   kind: TrafficFlowLog
   metadata:
     name: "<name>"
   spec:
-    enabled: true # 任意; boolean
-    includeApplicationLayer: true # 任意; boolean
-    includeTLSSNI: true # 任意; boolean
-    path: "<string>" # 任意; string
-    source: "" # 任意; string; enum=["", "conntrack"]
+    [ enabled: <boolean> ]
+    [ includeApplicationLayer: <boolean> ]
+    [ includeTLSSNI: <boolean> ]
+    [ path: <string> ]
+    [ source: ("" | "conntrack") ]
 ```
 
 ## 項目の意味と既定値
 
-| YAML | 項目の意味と既定値 |
-| --- | --- |
-| `spec.enabled` | 既定はfalseです。trueは選ばれたリソースの記録を有効にしますが、取得不能な接続情報を利用可能にする指定ではありません。 |
-| `spec.path` | ルーター上のSQLite DBパスです。通常の設定検証ではenabled時に必須です。読み取り側には/var/lib/routerd/traffic-flows.dbの内部既定値がありますが、enabled時の指定要件は免除されません。 |
-| `spec.source` | 省略またはconntrackのみを指定でき、実効ラベルの既定はconntrackです。別の収集処理や任意のバックエンドを選ぶ項目ではありません。 |
-| `spec.includeApplicationLayer` | 既定はfalseです。enabledとともにtrueにするとDPIヘルパーとLinuxのDPI観測ルールを要求し、nDPIエージェントの利用可否をapplicationLayerとして状態に記録します。libndpiのロードや分類結果の存在は保証しません。 |
-| `spec.includeTLSSNI` | 既定はfalseです。enabledとともにtrueにすると同じDPIヘルパー・観測経路を要求します。TLS復号やSNI取得の保証、保存内容の独立した秘匿化・フィルタースイッチではなく、暗号化・未観測の名前は取得できない場合があります。 |
+任意の親の必須項目は、親を使う場合に必要です。それ以外の具体的な条件は説明欄に記載します。`[ ... ]`で囲まれた選択肢も、いずれか一方が必要な場合があります。
+
+| YAML | 指定要否 | 型・制約 | 項目の意味と既定値 |
+| --- | --- | --- | --- |
+| `spec.enabled` | *任意* | boolean | 既定はfalseです。trueは選ばれたリソースの記録を有効にしますが、取得不能な接続情報を利用可能にする指定ではありません。 |
+| `spec.path` | **条件付き必須** | string | ルーター上のSQLite DBパスです。通常の設定検証ではenabled時に必須です。読み取り側には/var/lib/routerd/traffic-flows.dbの内部既定値がありますが、enabled時の指定要件は免除されません。 |
+| `spec.source` | *任意* | string; enum=["", "conntrack"] | 省略またはconntrackのみを指定でき、実効ラベルの既定はconntrackです。別の収集処理や任意のバックエンドを選ぶ項目ではありません。 |
+| `spec.includeApplicationLayer` | *任意* | boolean | 既定はfalseです。enabledとともにtrueにするとDPIヘルパーとLinuxのDPI観測ルールを要求し、nDPIエージェントの利用可否をapplicationLayerとして状態に記録します。libndpiのロードや分類結果の存在は保証しません。 |
+| `spec.includeTLSSNI` | *任意* | boolean | 既定はfalseです。enabledとともにtrueにすると同じDPIヘルパー・観測経路を要求します。TLS復号やSNI取得の保証、保存内容の独立した秘匿化・フィルタースイッチではなく、暗号化・未観測の名前は取得できない場合があります。 |
 
 実装: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate_firewall.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_firewall.go) · [pkg/controller/conntrackobserver/controller.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/conntrackobserver/controller.go) · [pkg/render/dpi_systemd.go](https://github.com/imksoo/routerd/blob/main/pkg/render/dpi_systemd.go) · [pkg/render/nftables.go](https://github.com/imksoo/routerd/blob/main/pkg/render/nftables.go) · [pkg/controller/chain/logretention.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/logretention.go)
 

@@ -11,56 +11,73 @@
 <li>runtime与persistent均false时记为Skipped/RuntimeDisabled，不应用值；两者可以同时为true。</li>
 <li>同一Router不可重复Sysctl键。Linux的NAT44SessionSync使用conntrackd时，另须显式声明net.netfilter.nf_conntrack_tcp_be_liberal，启用runtime、optional=false，且value与有效expectedValue均为1。</li>
 </ul>
-<h2 id="yaml定义">YAML定义</h2>
-<p>此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。</p>
-<pre><code class="language-yaml">- apiVersion: system.routerd.net/v1alpha1
+<h2 id="配置语法">配置语法</h2>
+<p>这是说明用语法，不是可直接复制的YAML。未加括号的字段在父条目内必填；<code>[ ... ]</code>表示按条件可省略，<code>&lt;类型&gt;</code>为替换值，<code>(a | b)</code>表示选项。选填父条目内仍可能有必填子条目。条件必填、互斥与实际默认值请见下表；常规YAML请使用链接示例。</p>
+<pre><code class="language-text">- apiVersion: system.routerd.net/v1alpha1
   kind: Sysctl
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    compare: &quot;&quot; # 选填; string; enum=[&quot;&quot;, &quot;exact&quot;, &quot;atLeast&quot;]
-    expectedValue: &quot;&lt;string&gt;&quot; # 选填; string
-    key: &quot;&lt;string&gt;&quot; # 必填; string
-    optional: true # 选填; boolean
-    persistent: true # 选填; boolean
-    runtime: true # 选填; boolean
-    value: &quot;&lt;string&gt;&quot; # 必填; string
+    [ compare: (&quot;&quot; | &quot;exact&quot; | &quot;atLeast&quot;) ]
+    [ expectedValue: &lt;string&gt; ]
+    key: &lt;string&gt;
+    [ optional: &lt;boolean&gt; ]
+    [ persistent: &lt;boolean&gt; ]
+    [ runtime: &lt;boolean&gt; ]
+    value: &lt;string&gt;
 </code></pre>
 <h2 id="字段含义与默认值">字段含义与默认值</h2>
+<p>选填父条目的必填子条目仅在使用父条目时需要。其他具体条件列于说明；<code>[ ... ]</code>选项仍可能需要择一。</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>指定要求</th>
+<th>类型与限制</th>
 <th>字段含义与默认值</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.key</code></td>
+<td><strong>必填</strong></td>
+<td>string</td>
 <td>必填内核键，例如net.ipv4.ip_forward，无默认值；禁止空格、tab、换行及/，不是资源引用。</td>
 </tr>
 <tr>
 <td><code>spec.value</code></td>
+<td><strong>必填</strong></td>
+<td>string</td>
 <td>传给sysctl -w的必填非空字符串，持久化时也使用此值。YAML中看似数字的值须加引号，无默认值。</td>
 </tr>
 <tr>
 <td><code>spec.expectedValue</code></td>
+<td><em>选填</em></td>
+<td>string</td>
 <td>用于运行时偏差比较的预期值，默认为value，可处理写入值与观测表示不同的情况。拒绝仅空白的值。</td>
 </tr>
 <tr>
 <td><code>spec.compare</code></td>
+<td><em>选填</em></td>
+<td>string; enum=["", "exact", "atLeast"]</td>
 <td>默认exact，将空白规范化后按字符串比较。atLeast逐一比较有符号整数，要求元素数相同且每个当前值不小于预期值。</td>
 </tr>
 <tr>
 <td><code>spec.runtime</code></td>
+<td><em>选填</em></td>
+<td>boolean</td>
 <td>是否应用到当前内核，默认true；false时仍可在persistent=true下写入持久配置。</td>
 </tr>
 <tr>
 <td><code>spec.persistent</code></td>
+<td><em>选填</em></td>
+<td>boolean</td>
 <td>将key=value写入routerd的sysctl.d文件，默认false，与runtime独立。</td>
 </tr>
 <tr>
 <td><code>spec.optional</code></td>
+<td><em>选填</em></td>
+<td>boolean</td>
 <td>默认false。true时读取失败记为Skipped/ReadFailedOptional并跳过此项后续应用；不会忽略任意写入或持久化错误。</td>
 </tr>
 </tbody>
@@ -71,7 +88,7 @@
 <p><code>phase</code>, <code>key</code>, <code>value</code>, <code>dryRun</code></p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
 <ul>
 <li><a href="#指定条件与引用关系">指定条件与引用关系</a></li>
-<li><a href="#yaml定义">YAML定义</a></li>
+<li><a href="#配置语法">配置语法</a></li>
 <li><a href="#字段含义与默认值">字段含义与默认值</a></li>
 <li><a href="#可引用的状态字段">可引用的状态字段</a></li>
 </ul>

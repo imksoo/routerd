@@ -12,76 +12,103 @@
 <li>ipip/gre/fou/gue 的 underlay.interface 裸名须引用已声明 TunnelInterface，但不验证 mode 与 underlay.type 相符。WireGuard 可使用外部管理设备，仅警告不拒绝；其他设备也须事先可用。</li>
 <li>nodeID/remote.nodeID/role 为描述信息，不提供发现、认证、HA 选举或自动拓扑匹配；无 when/dependsOn。</li>
 </ul>
-<h2 id="yaml定义">YAML定义</h2>
-<p>此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。</p>
-<pre><code class="language-yaml">- apiVersion: hybrid.routerd.net/v1alpha1
+<h2 id="配置语法">配置语法</h2>
+<p>这是说明用语法，不是可直接复制的YAML。未加括号的字段在父条目内必填；<code>[ ... ]</code>表示按条件可省略，<code>&lt;类型&gt;</code>为替换值，<code>(a | b)</code>表示选项。选填父条目内仍可能有必填子条目。条件必填、互斥与实际默认值请见下表；常规YAML请使用链接示例。</p>
+<pre><code class="language-text">- apiVersion: hybrid.routerd.net/v1alpha1
   kind: OverlayPeer
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    nodeID: &quot;&lt;string&gt;&quot; # 必填; string
-    pathMTU: # 选填; object
-      forceFragmentIPv4: true # 选填; boolean
-    remote: # 选填; object
-      address: &quot;&lt;string&gt;&quot; # 选填; string
-      nodeID: &quot;&lt;string&gt;&quot; # 选填; string
-    role: &quot;onprem&quot; # 必填; string; enum=[&quot;onprem&quot;, &quot;cloud&quot;]
-    underlay: # 必填; object
-      address: &quot;&lt;string&gt;&quot; # 选填; string
-      interface: &quot;&lt;string&gt;&quot; # 选填; string
-      type: &quot;wireguard&quot; # 必填; string; enum=[&quot;wireguard&quot;, &quot;tailscale&quot;, &quot;ipsec&quot;, &quot;route&quot;, &quot;ipip&quot;, &quot;gre&quot;, &quot;fou&quot;, &quot;gue&quot;]
+    nodeID: &lt;string&gt;
+    [ pathMTU:
+        [ forceFragmentIPv4: &lt;boolean&gt; ]
+    ]
+    [ remote:
+        [ address: &lt;string&gt; ]
+        [ nodeID: &lt;string&gt; ]
+    ]
+    role: (&quot;onprem&quot; | &quot;cloud&quot;)
+    underlay:
+      [ address: &lt;string&gt; ]
+      [ interface: &lt;string&gt; ]
+      type: (&quot;wireguard&quot; | &quot;tailscale&quot; | &quot;ipsec&quot; | &quot;route&quot; | &quot;ipip&quot; | &quot;gre&quot; | &quot;fou&quot; | &quot;gue&quot;)
 </code></pre>
 <h2 id="字段含义与默认值">字段含义与默认值</h2>
+<p>选填父条目的必填子条目仅在使用父条目时需要。其他具体条件列于说明；<code>[ ... ]</code>选项仍可能需要择一。</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>指定要求</th>
+<th>类型与限制</th>
 <th>字段含义与默认值</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.role</code></td>
+<td><strong>必填</strong></td>
+<td>string; enum=["onprem", "cloud"]</td>
 <td>必填 onprem 或 cloud，无默认值，不创建云资源或选择云厂商。</td>
 </tr>
 <tr>
 <td><code>spec.nodeID</code></td>
+<td><strong>必填</strong></td>
+<td>string</td>
 <td>必填非空本机节点身份标签，不解析为主机或外部账户。</td>
 </tr>
 <tr>
 <td><code>spec.underlay</code></td>
+<td><strong>必填</strong></td>
+<td>object</td>
 <td>必填传输描述，实际网络传输须另行配置。</td>
 </tr>
 <tr>
 <td><code>spec.underlay.type</code></td>
+<td><strong>必填</strong></td>
+<td>string; enum=["wireguard", "tailscale", "ipsec", "route", "ipip", "gre", "fou", "gue"]</td>
 <td>必填 wireguard/tailscale/ipsec/route/ipip/gre/fou/gue，选择路由展开与 MTU 开销估算，不创建守护进程。</td>
 </tr>
 <tr>
 <td><code>spec.underlay.interface</code></td>
+<td><em>选填</em></td>
+<td>string</td>
 <td>生成 IPv4Route 所用设备或逻辑接口，路由展开时必填。隧道模式使用 TunnelInterface 裸名，外部管理设备使用实际 OS 名称，不自动发现。</td>
 </tr>
 <tr>
 <td><code>spec.underlay.address</code></td>
+<td><em>选填</em></td>
+<td>string</td>
 <td>可选纯 IPv4/IPv6 描述，验证为 IP。当前 HybridRoute 目标派生不将其用作网关或本机绑定，也不分配到接口。</td>
 </tr>
 <tr>
 <td><code>spec.remote</code></td>
+<td><em>选填</em></td>
+<td>object</td>
 <td>可选远端描述，默认空，不注册或协商对端。</td>
 </tr>
 <tr>
 <td><code>spec.remote.nodeID</code></td>
+<td><em>选填</em></td>
+<td>string</td>
 <td>可选远端身份标签，默认空，不用于实时发现或授权。</td>
 </tr>
 <tr>
 <td><code>spec.remote.address</code></td>
+<td><em>选填</em></td>
+<td>string</td>
 <td>可选 IP 字符串。仅 ipsec 路由展开会以有效 IPv4 作 gateway，无效/IPv6/空值为设备路由。其他类型不以此作网关，OverlayPeer 验证也未单独检查其为 IP。</td>
 </tr>
 <tr>
 <td><code>spec.pathMTU</code></td>
+<td><em>选填</em></td>
+<td>object</td>
 <td>可选转发路径 MTU 选项，默认不要求强制分片，不会加密底层。</td>
 </tr>
 <tr>
 <td><code>spec.pathMTU.forceFragmentIPv4</code></td>
+<td><em>选填</em></td>
+<td>boolean</td>
 <td>默认 false，true 仅限 wireguard/ipip/gre/fou/gue。通过 Linux nftables 对符合派生转发路径的过大 IPv4 清除 DF，不是全局隧道标志或 IPv6 分片。FreeBSD 跳过此控制器，此路径无同等 DF 清除动作。</td>
 </tr>
 </tbody>
@@ -93,7 +120,7 @@
 <p><a href="/examples/hybrid-l3-fou.yaml">配置示例</a></p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
 <ul>
 <li><a href="#指定条件与引用关系">指定条件与引用关系</a></li>
-<li><a href="#yaml定义">YAML定义</a></li>
+<li><a href="#配置语法">配置语法</a></li>
 <li><a href="#字段含义与默认值">字段含义与默认值</a></li>
 <li><a href="#可引用的状态字段">可引用的状态字段</a></li>
 </ul>

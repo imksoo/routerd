@@ -11,36 +11,38 @@ Publish shard assignments as federation events so each node can narrow MobilityP
 - sourcePrefix and all shards must be IPv4 CIDRs. Shards must be contained in sourcePrefix and cannot overlap; full coverage of the source prefix is not required. Each shard needs at least one distinct nonempty assigned node.
 - Assignment events expire after 10 minutes and are refreshed by reconciliation. Missing/expired assignments or an event-store read error produce no shard filter, not a deny-all scope. Do not use this resource as the sole authorization boundary.
 
-## YAML definition
+## Configuration syntax
 
-All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.
+This is explanatory notation, not YAML to copy. Unbracketed fields are required within their parent; `[ ... ]` marks fields that can be omitted, subject to the conditions in the table. `<type>` is a placeholder, and `(a | b)` lists alternatives. Optional parents may contain required children. Conditional requirements, exclusions and runtime defaults are described below. Use the linked YAML example for an ordinary configuration.
 
-```yaml
+```text
 - apiVersion: mobility.routerd.net/v1alpha1
   kind: SAMSubnetPolicy
   metadata:
     name: "<name>"
   spec:
-    groupRef: "<string>" # Required; string
-    poolRef: "<string>" # Required; string
-    shards: # Required; array
-      - # object
-        assignedNodes: # Required; array
-          - "<string>" # string
-        prefix: "<string>" # Required; string
-    sourcePrefix: "<string>" # Required; string
+    groupRef: <string>
+    poolRef: <string>
+    shards:
+      -
+        assignedNodes:
+          - <string>
+        prefix: <string>
+    sourcePrefix: <string>
 ```
 
 ## Field meaning and default
 
-| YAML | Field meaning and default |
-| --- | --- |
-| `spec.sourcePrefix` | Required IPv4 CIDR bounding all shards. No default. It is validated as containment input, not programmed as an address/route. |
-| `spec.poolRef` | Required MobilityPool metadata.name used as an exact event payload key; not Kind/name. The current validator checks nonempty text but does not verify pool existence. It must match the consuming pool name. |
-| `spec.groupRef` | Required EventGroup reference for publishing and reading assignments. Group lookup must resolve at runtime; shape validation only checks nonempty. Use the same reference spelling as the target MobilityPool.groupRef. |
-| `spec.shards` | Required nonempty list of disjoint subnets and responsible nodeRefs. Each node may appear in multiple different shards. |
-| `spec.shards[].prefix` | Required IPv4 CIDR within sourcePrefix, including equal-length whole-prefix assignment. Duplicates/overlaps across shards are rejected. |
-| `spec.shards[].assignedNodes` | Required nonempty nodeRef list, unique within the shard. Current validation does not check SAMNodeSet membership; values must match the consuming EventGroup local-node identity. |
+Required children of optional objects apply only when their parent is used. Other exact conditions are in the explanation; bracketed alternatives may still require one choice.
+
+| YAML | Presence | Type / constraints | Field meaning and default |
+| --- | --- | --- | --- |
+| `spec.sourcePrefix` | **Required** | string | Required IPv4 CIDR bounding all shards. No default. It is validated as containment input, not programmed as an address/route. |
+| `spec.poolRef` | **Required** | string | Required MobilityPool metadata.name used as an exact event payload key; not Kind/name. The current validator checks nonempty text but does not verify pool existence. It must match the consuming pool name. |
+| `spec.groupRef` | **Required** | string | Required EventGroup reference for publishing and reading assignments. Group lookup must resolve at runtime; shape validation only checks nonempty. Use the same reference spelling as the target MobilityPool.groupRef. |
+| `spec.shards` | **Required** | array | Required nonempty list of disjoint subnets and responsible nodeRefs. Each node may appear in multiple different shards. |
+| `spec.shards[].prefix` | **Required** | string | Required IPv4 CIDR within sourcePrefix, including equal-length whole-prefix assignment. Duplicates/overlaps across shards are rejected. |
+| `spec.shards[].assignedNodes` | **Required** | array | Required nonempty nodeRef list, unique within the shard. Current validation does not check SAMNodeSet membership; values must match the consuming EventGroup local-node identity. |
 
 Implementation: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate_mobility.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_mobility.go) · [pkg/controller/mobility/shard_controller.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/mobility/shard_controller.go) · [pkg/controller/mobility/discovery.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/mobility/discovery.go)
 

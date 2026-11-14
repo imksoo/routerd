@@ -10,50 +10,56 @@ Runs the managed routerd-dhcpv4-client daemon and applies its current lease addr
 
 - The interface must exist in the declared Router. DHCP identity fields are sent as protocol options, not resource references. Lease expiry/release removes the previously applied address, route and host DNS state; useRoutes/useDNS do not stop lease acquisition.
 
-## YAML definition
+## Configuration syntax
 
-All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.
+This is explanatory notation, not YAML to copy. Unbracketed fields are required within their parent; `[ ... ]` marks fields that can be omitted, subject to the conditions in the table. `<type>` is a placeholder, and `(a | b)` lists alternatives. Optional parents may contain required children. Conditional requirements, exclusions and runtime defaults are described below. Use the linked YAML example for an ordinary configuration.
 
-```yaml
+```text
 - apiVersion: net.routerd.net/v1alpha1
   kind: DHCPv4Client
   metadata:
     name: "<name>"
   spec:
-    classID: "<string>" # optional; string
-    clientID: "<string>" # optional; string
-    hostname: "<string>" # optional; string
-    interface: "<string>" # Required; string
-    requestedAddress: "<string>" # optional; string
-    routeMetric: 0 # optional; integer; minimum=0
-    useDNS: true # optional; boolean
-    useRoutes: true # optional; boolean
-    when: # optional; object
-      state: # optional; object
-        "<key>": # optional; object
-          contains: "<string>" # optional; string
-          equals: "<string>" # optional; string
-          exists: true # optional; boolean
-          for: "<string>" # optional; string
-          in: # optional; array
-            - "<string>" # string
-          maxAge: "<string>" # optional; string
-          status: "set" # optional; string; enum=["set", "unset", "unknown"]
+    [ classID: <string> ]
+    [ clientID: <string> ]
+    [ hostname: <string> ]
+    interface: <string>
+    [ requestedAddress: <string> ]
+    [ routeMetric: <integer> ]
+    [ useDNS: <boolean> ]
+    [ useRoutes: <boolean> ]
+    [ when:
+        [ state:
+            [ <name>:
+                [ contains: <string> ]
+                [ equals: <string> ]
+                [ exists: <boolean> ]
+                [ for: <string> ]
+                [ in:
+                    - <string>
+                ]
+                [ maxAge: <string> ]
+                [ status: ("set" | "unset" | "unknown") ]
+            ]
+        ]
+    ]
 ```
 
 ## Field meaning and default
 
-| YAML | Field meaning and default |
-| --- | --- |
-| `spec.interface` | Required logical interface name from the Router interface index, without Interface/ prefix. It must exist in the declared config. No default. |
-| `spec.hostname` | DHCP option 12 hostname. Default empty: omit the option; it is not automatically filled from the OS hostname. Whitespace is rejected. |
-| `spec.requestedAddress` | Optional preferred IPv4 address, default absent. Must be a bare IPv4 address without prefix. Sent as option 50; it is a request, not a guaranteed/static assignment. |
-| `spec.classID` | Vendor class identifier sent as option 60 string bytes. Default empty: omit it. No hexadecimal decoding. |
-| `spec.clientID` | Option 61 client identity. An explicit value is sent as string bytes, not decoded hex. Default is byte 1 followed by the interface hardware address. Keep the value stable when the DHCP server identifies leases by client ID. |
-| `spec.useRoutes` | Default true: apply the lease defaultGateway as a default route when present. False removes the prior managed default route but retains lease acquisition and address application. It does not suppress the gateway value in status. |
-| `spec.useDNS` | Default true: apply leased DNS servers to the host via resolvectl when /etc/resolv.conf points to systemd-resolved, otherwise write resolv.conf. False clears prior managed DNS state; DNS addresses remain available in status for DNSResolver-related references. |
-| `spec.routeMetric` | Default 0. Used for the applied default-route metric and platform-specific lease-address reconciliation. Schema requires a nonnegative integer. It is not a routing-table ID. |
-| `spec.when` | Activation condition; omitted means no gate. See the shared condition reference for state/all/any, unknown handling and age predicates. |
+Required children of optional objects apply only when their parent is used. Other exact conditions are in the explanation; bracketed alternatives may still require one choice.
+
+| YAML | Presence | Type / constraints | Field meaning and default |
+| --- | --- | --- | --- |
+| `spec.interface` | **Required** | string | Required logical interface name from the Router interface index, without Interface/ prefix. It must exist in the declared config. No default. |
+| `spec.hostname` | *Optional* | string | DHCP option 12 hostname. Default empty: omit the option; it is not automatically filled from the OS hostname. Whitespace is rejected. |
+| `spec.requestedAddress` | *Optional* | string | Optional preferred IPv4 address, default absent. Must be a bare IPv4 address without prefix. Sent as option 50; it is a request, not a guaranteed/static assignment. |
+| `spec.classID` | *Optional* | string | Vendor class identifier sent as option 60 string bytes. Default empty: omit it. No hexadecimal decoding. |
+| `spec.clientID` | *Optional* | string | Option 61 client identity. An explicit value is sent as string bytes, not decoded hex. Default is byte 1 followed by the interface hardware address. Keep the value stable when the DHCP server identifies leases by client ID. |
+| `spec.useRoutes` | *Optional* | boolean | Default true: apply the lease defaultGateway as a default route when present. False removes the prior managed default route but retains lease acquisition and address application. It does not suppress the gateway value in status. |
+| `spec.useDNS` | *Optional* | boolean | Default true: apply leased DNS servers to the host via resolvectl when /etc/resolv.conf points to systemd-resolved, otherwise write resolv.conf. False clears prior managed DNS state; DNS addresses remain available in status for DNSResolver-related references. |
+| `spec.routeMetric` | *Optional* | integer; minimum=0 | Default 0. Used for the applied default-route metric and platform-specific lease-address reconciliation. Schema requires a nonnegative integer. It is not a routing-table ID. |
+| `spec.when` | *Optional* | object | Activation condition; omitted means no gate. See the shared condition reference for state/all/any, unknown handling and age predicates. |
 
 Implementation: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate_wan.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_wan.go) · [pkg/config/validate.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go) · [pkg/config/listen_ports.go](https://github.com/imksoo/routerd/blob/main/pkg/config/listen_ports.go) · [pkg/controller/chain/system.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/system.go) · [pkg/controller/dhcpv4client/controller.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/dhcpv4client/controller.go) · [pkg/dhcpv4client/message.go](https://github.com/imksoo/routerd/blob/main/pkg/dhcpv4client/message.go) · [cmd/routerd-dhcpv4-client/main.go](https://github.com/imksoo/routerd/blob/main/cmd/routerd-dhcpv4-client/main.go)
 

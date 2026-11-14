@@ -16,15 +16,16 @@ routerd validate --config router.yaml
 apiVersion: routerd.net/v1alpha1
 kind: Router
 metadata:
-  name: "<router-name>"
+  name: example
 spec:
   resources:
     - apiVersion: net.routerd.net/v1alpha1
       kind: Interface
       metadata:
-        name: "<name>"
+        name: lan
       spec:
-        ifname: "<interface-name>"
+        ifname: ens18
+        managed: true
 ```
 
 Resources are grouped by purpose, then sorted by Kind name within each group. This is a reading order, not YAML evaluation, dependency or execution order.

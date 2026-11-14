@@ -14,46 +14,51 @@
 - 兩個批次選項都非正值時，一次呼叫接收當前合格批次，不一定逐事件呼叫。批次計時器在記憶體中，事件與執行紀錄持久化。排程批次達 1024 件或約 4 MiB 的選定資料時提早執行。
 - Plugin 接收符合事件，以及僅由 Plugin.context.resources 明確允許的設定資源；密鑰會遮蔽。TTL 與產生資源由 PluginResult 決定，不由此訂閱決定。不同事件批次產生不同的有效 DynamicConfigPart 來源。
 
-## YAML定義
+## 設定語法
 
-此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。
+這是說明用語法，不是可直接複製的YAML。未加括號的欄位在父項目內必填；`[ ... ]`表示依條件可省略，`<型別>`為替換值，`(a | b)`表示選項。選填父項目內仍可能有必填子項目。條件必填、互斥與實際預設值請見下表；一般YAML請使用連結範例。
 
-```yaml
+```text
 - apiVersion: federation.routerd.net/v1alpha1
   kind: EventSubscription
   metadata:
     name: "<name>"
   spec:
-    groupRef: "<string>" # 必填; string
-    match: # 必填; object
-      payload: # 選填; object
-        "<key>": "<string>" # 選填; string
-      sourceNodes: # 選填; array
-        - "<string>" # string
-      subjectPrefixes: # 選填; array
-        - "<string>" # string
-      types: # 必填; array
-        - "<string>" # string
-    trigger: # 必填; object
-      batchWindow: "<string>" # 選填; string
-      debounce: "<string>" # 選填; string
-      pluginRef: "<string>" # 必填; string
+    groupRef: <string>
+    match:
+      [ payload:
+          [ <name>: <string> ]
+      ]
+      [ sourceNodes:
+          - <string>
+      ]
+      [ subjectPrefixes:
+          - <string>
+      ]
+      types:
+        - <string>
+    trigger:
+      [ batchWindow: <string> ]
+      [ debounce: <string> ]
+      pluginRef: <string>
 ```
 
 ## 欄位意義與預設值
 
-| YAML | 欄位意義與預設值 |
-| --- | --- |
-| `spec.groupRef` | 必填單純 EventGroup 名稱，用於選擇保存事件的 group_name。無預設，不會自動建立或啟動群組。 |
-| `spec.match` | 必填比對物件，types 不可為空。其他選用條件為空時不限制。 |
-| `spec.match.types` | 必填完整事件型別清單，至少一個非空項目。符合任一型別即可；萬用字元視為一般字串。 |
-| `spec.match.subjectPrefixes` | 選用 subject 前綴清單，預設空允許全部。使用字串前綴比對，不是路徑區段或萬用字元比對。 |
-| `spec.match.payload` | 選用的鍵/字串完整比對映射，每個項目都須符合，鍵不可空白。遺失鍵讀為空字串，因此要求空值也會符合遺失鍵。 |
-| `spec.match.sourceNodes` | 選用 sourceNode 完整比對允許清單，預設空允許全部。不會自動排除自身事件，請指定所需來源識別。 |
-| `spec.trigger` | 必填的本機 Plugin 呼叫設定。與 Plugin.triggers 不同，由訂閱控制器執行。 |
-| `spec.trigger.pluginRef` | 必填單純 Plugin metadata.name，不是 Plugin/name。Plugin 遺失時為 Pending。使用該 Plugin 的執行檔、逾時、環境與 context 限制。 |
-| `spec.trigger.batchWindow` | 選用 Go 時間長度，自首個選定事件起算。預設空/0 無批次上限；但 debounce 為正時預設上限為 1m。正 batchWindow 限制反覆 debounce。負值可通過驗證，視為非正值。 |
-| `spec.trigger.debounce` | 選用 Go 時間長度，自最後新增選定事件起算，預設空/0 停用。重讀相同事件不延長。debounce 與 batchWindow 較早期限觸發；無正 batchWindow 時上限 1m。 |
+選填父項目的必填子項目僅在使用父項目時需要。其他具體條件列於說明；`[ ... ]`選項仍可能需要擇一。
+
+| YAML | 指定要求 | 型別與限制 | 欄位意義與預設值 |
+| --- | --- | --- | --- |
+| `spec.groupRef` | **必填** | string | 必填單純 EventGroup 名稱，用於選擇保存事件的 group_name。無預設，不會自動建立或啟動群組。 |
+| `spec.match` | **必填** | object | 必填比對物件，types 不可為空。其他選用條件為空時不限制。 |
+| `spec.match.types` | **必填** | array | 必填完整事件型別清單，至少一個非空項目。符合任一型別即可；萬用字元視為一般字串。 |
+| `spec.match.subjectPrefixes` | *選填* | array | 選用 subject 前綴清單，預設空允許全部。使用字串前綴比對，不是路徑區段或萬用字元比對。 |
+| `spec.match.payload` | *選填* | object | 選用的鍵/字串完整比對映射，每個項目都須符合，鍵不可空白。遺失鍵讀為空字串，因此要求空值也會符合遺失鍵。 |
+| `spec.match.sourceNodes` | *選填* | array | 選用 sourceNode 完整比對允許清單，預設空允許全部。不會自動排除自身事件，請指定所需來源識別。 |
+| `spec.trigger` | **必填** | object | 必填的本機 Plugin 呼叫設定。與 Plugin.triggers 不同，由訂閱控制器執行。 |
+| `spec.trigger.pluginRef` | **必填** | string | 必填單純 Plugin metadata.name，不是 Plugin/name。Plugin 遺失時為 Pending。使用該 Plugin 的執行檔、逾時、環境與 context 限制。 |
+| `spec.trigger.batchWindow` | *選填* | string | 選用 Go 時間長度，自首個選定事件起算。預設空/0 無批次上限；但 debounce 為正時預設上限為 1m。正 batchWindow 限制反覆 debounce。負值可通過驗證，視為非正值。 |
+| `spec.trigger.debounce` | *選填* | string | 選用 Go 時間長度，自最後新增選定事件起算，預設空/0 停用。重讀相同事件不延長。debounce 與 batchWindow 較早期限觸發；無正 batchWindow 時上限 1m。 |
 
 實作: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate_event.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_event.go) · [pkg/controller/eventsubscription/controller.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/eventsubscription/controller.go) · [pkg/controller/chain/chain.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go) · [pkg/plugin/context.go](https://github.com/imksoo/routerd/blob/main/pkg/plugin/context.go)
 

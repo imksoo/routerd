@@ -12,46 +12,59 @@
 <li>Recording runs after successful conntrack observation; unavailable observation prevents that round of recording. The connection query is limited to 10000 entries. Sampling occurs on observer reconciliation, normally every 30s unless runtime options change it.</li>
 <li>DPI enrichment reads the first enabled FirewallEventLog database when available, matching connection tuples against cached classification within one hour. Enrichment is not guaranteed by either include flag; both false also do not prevent enrichment if that cache is available. Use LogRetention signal trafficFlows to manage flow retention.</li>
 </ul>
-<h2 id="yaml-definition">YAML definition</h2>
-<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
-<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+<h2 id="configuration-syntax">Configuration syntax</h2>
+<p>This is explanatory notation, not YAML to copy. Unbracketed fields are required within their parent; <code>[ ... ]</code> marks fields that can be omitted, subject to the conditions in the table. <code>&lt;type&gt;</code> is a placeholder, and <code>(a | b)</code> lists alternatives. Optional parents may contain required children. Conditional requirements, exclusions and runtime defaults are described below. Use the linked YAML example for an ordinary configuration.</p>
+<pre><code class="language-text">- apiVersion: net.routerd.net/v1alpha1
   kind: TrafficFlowLog
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    enabled: true # optional; boolean
-    includeApplicationLayer: true # optional; boolean
-    includeTLSSNI: true # optional; boolean
-    path: &quot;&lt;string&gt;&quot; # optional; string
-    source: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;conntrack&quot;]
+    [ enabled: &lt;boolean&gt; ]
+    [ includeApplicationLayer: &lt;boolean&gt; ]
+    [ includeTLSSNI: &lt;boolean&gt; ]
+    [ path: &lt;string&gt; ]
+    [ source: (&quot;&quot; | &quot;conntrack&quot;) ]
 </code></pre>
 <h2 id="field-meaning-and-default">Field meaning and default</h2>
+<p>Required children of optional objects apply only when their parent is used. Other exact conditions are in the explanation; bracketed alternatives may still require one choice.</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>Presence</th>
+<th>Type / constraints</th>
 <th>Field meaning and default</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.enabled</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false. True enables recording for the selected resource; it does not make an unavailable connection source work.</td>
 </tr>
 <tr>
 <td><code>spec.path</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>SQLite database path on the router. Required when enabled by normal validation. The reader has an internal /var/lib/routerd/traffic-flows.db fallback, but it does not waive that enabled-path requirement.</td>
 </tr>
 <tr>
 <td><code>spec.source</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["", "conntrack"]</td>
 <td>Only omitted/conntrack is accepted; effective label defaults to conntrack. It does not select a different collector or allow arbitrary backend names.</td>
 </tr>
 <tr>
 <td><code>spec.includeApplicationLayer</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false. With enabled true, requests DPI helper services and Linux DPI observation rules. Also includes applicationLayer availability/status from the nDPI agent in resource status; it does not guarantee libndpi is loaded or classification exists.</td>
 </tr>
 <tr>
 <td><code>spec.includeTLSSNI</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false. With enabled true, requests the same DPI helpers/observation path. Not a TLS decryption option, guaranteed SNI capture, or a separate storage redaction/filter switch; encrypted/unobserved names may remain unavailable.</td>
 </tr>
 </tbody>
@@ -62,7 +75,7 @@
 <p><code>phase</code>, <code>path</code>, <code>sinks</code></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
 <li><a href="#conditions-and-references">Conditions and references</a></li>
-<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#configuration-syntax">Configuration syntax</a></li>
 <li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 <li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
 </ul>

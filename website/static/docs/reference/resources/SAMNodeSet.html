@@ -12,144 +12,201 @@
 <li>Any nonempty WireGuard data requires publicKey and a nonempty allowedIPs list. endpoint and transportEndpoint remain optional in shape validation but must suit the chosen transport. samEndpoint and samEndpointFrom are mutually exclusive.</li>
 <li>Placement groups require role cloud and a consistent site across the group. priority, drain=true and positive maxSecondaryIPs all require a nonempty placement.group.</li>
 </ul>
-<h2 id="yaml-definition">YAML definition</h2>
-<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
-<pre><code class="language-yaml">- apiVersion: mobility.routerd.net/v1alpha1
+<h2 id="configuration-syntax">Configuration syntax</h2>
+<p>This is explanatory notation, not YAML to copy. Unbracketed fields are required within their parent; <code>[ ... ]</code> marks fields that can be omitted, subject to the conditions in the table. <code>&lt;type&gt;</code> is a placeholder, and <code>(a | b)</code> lists alternatives. Optional parents may contain required children. Conditional requirements, exclusions and runtime defaults are described below. Use the linked YAML example for an ordinary configuration.</p>
+<pre><code class="language-text">- apiVersion: mobility.routerd.net/v1alpha1
   kind: SAMNodeSet
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    nodes: # Required; array
-      - # object
-        eventEndpoint: &quot;&lt;string&gt;&quot; # optional; string
-        macAddresses: # optional; array
-          - &quot;&lt;string&gt;&quot; # string; pattern=&quot;^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$&quot;
-        maintenance: # optional; object
-          drain: true # optional; boolean
-        maxSecondaryIPs: 0 # optional; integer; minimum=0
-        nodeRef: &quot;&lt;string&gt;&quot; # Required; string
-        placement: # optional; object
-          group: &quot;&lt;string&gt;&quot; # optional; string
-          priority: 0 # optional; integer; minimum=0; maximum=1000000
-        role: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;onprem&quot;, &quot;cloud&quot;]
-        routeReflector: true # optional; boolean
-        samEndpoint: &quot;&lt;string&gt;&quot; # optional; string
-        samEndpointFrom: # optional; object
-          field: &quot;&lt;string&gt;&quot; # optional; string
-          optional: true # optional; boolean
-          resource: &quot;&lt;string&gt;&quot; # Required; string
-        site: &quot;&lt;string&gt;&quot; # optional; string
-        wireGuard: # optional; object
-          allowedIPs: # optional; array
-            - &quot;&lt;string&gt;&quot; # string
-          endpoint: &quot;&lt;string&gt;&quot; # optional; string
-          persistentKeepalive: 0 # optional; integer; minimum=0; maximum=65535
-          publicKey: &quot;&lt;string&gt;&quot; # optional; string
-          transportEndpoint: &quot;&lt;string&gt;&quot; # optional; string
+    nodes:
+      -
+        [ eventEndpoint: &lt;string&gt; ]
+        [ macAddresses:
+            - &lt;string&gt;
+        ]
+        [ maintenance:
+            [ drain: &lt;boolean&gt; ]
+        ]
+        [ maxSecondaryIPs: &lt;integer&gt; ]
+        nodeRef: &lt;string&gt;
+        [ placement:
+            [ group: &lt;string&gt; ]
+            [ priority: &lt;integer&gt; ]
+        ]
+        [ role: (&quot;&quot; | &quot;onprem&quot; | &quot;cloud&quot;) ]
+        [ routeReflector: &lt;boolean&gt; ]
+        [ samEndpoint: &lt;string&gt; ]
+        [ samEndpointFrom:
+            field: &lt;string&gt;
+            [ optional: &lt;boolean&gt; ]
+            resource: &lt;string&gt;
+        ]
+        [ site: &lt;string&gt; ]
+        [ wireGuard:
+            [ allowedIPs:
+                - &lt;string&gt;
+            ]
+            [ endpoint: &lt;string&gt; ]
+            [ persistentKeepalive: &lt;integer&gt; ]
+            [ publicKey: &lt;string&gt; ]
+            [ transportEndpoint: &lt;string&gt; ]
+        ]
 </code></pre>
 <h2 id="field-meaning-and-default">Field meaning and default</h2>
+<p>Required children of optional objects apply only when their parent is used. Other exact conditions are in the explanation; bracketed alternatives may still require one choice.</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>Presence</th>
+<th>Type / constraints</th>
 <th>Field meaning and default</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.nodes</code></td>
+<td><strong>Required</strong></td>
+<td>array</td>
 <td>Required nonempty shared node list. No implicit local node is added.</td>
 </tr>
 <tr>
 <td><code>spec.nodes[].nodeRef</code></td>
+<td><strong>Required</strong></td>
+<td>string</td>
 <td>Required stable node identity, unique in this NodeSet. Consumers compare it with EventGroup local identity or SAMTransportProfile.selfNodeRef; it is not a Kind/name reference.</td>
 </tr>
 <tr>
 <td><code>spec.nodes[].site</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional topology/site label, default empty; not derived from role. MobilityPool membership and placement rules may require an explicit compatible site.</td>
 </tr>
 <tr>
 <td><code>spec.nodes[].role</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["", "onprem", "cloud"]</td>
 <td>Optional empty/onprem/cloud in NodeSet validation; no inferred default. A MobilityPool member needs its actual onprem/cloud role, and placement is cloud-only.</td>
 </tr>
 <tr>
 <td><code>spec.nodes[].routeReflector</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false. Marks a node eligible as an RR identity in enrollment topology selection; does not alone create a BGPRouter or establish BGP.</td>
 </tr>
 <tr>
 <td><code>spec.nodes[].eventEndpoint</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional absolute HTTP(S) URL with host for generated event peers. No default or status-value source.</td>
 </tr>
 <tr>
 <td><code>spec.nodes[].samEndpoint</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional IPv4 address or IPv4 CIDR carrying the node outer transport endpoint; no DNS hostname. Exclusive with samEndpointFrom. With WireGuard encryption, wireGuard.transportEndpoint takes precedence.</td>
 </tr>
 <tr>
 <td><code>spec.nodes[].samEndpointFrom</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional runtime status-value source following common resource/field rules. A missing value remains an unresolved transport source; optional does not supply an endpoint or bypass malformed-address errors.</td>
 </tr>
 <tr>
 <td><code>spec.nodes[].samEndpointFrom.resource</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Kind/name of a declared source resource, required when the source is used. Exclusive with literal samEndpoint.</td>
 </tr>
 <tr>
 <td><code>spec.nodes[].samEndpointFrom.field</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Explicit provided status field, required with resource; for example currentAddress from DHCPv4Client.</td>
 </tr>
 <tr>
 <td><code>spec.nodes[].samEndpointFrom.optional</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false. Does not bypass existence/field validation; this transport consumer still reports a missing endpoint as unresolved.</td>
 </tr>
 <tr>
 <td><code>spec.nodes[].macAddresses</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional MAC-address list, default empty. The ARP-observer intent collects these as ignored sender MACs to avoid rediscovering SAM router identities as clients. Not a MAC-change request.</td>
 </tr>
 <tr>
 <td><code>spec.nodes[].wireGuard</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional public WireGuard transport identity. Any nonempty subfield requires publicKey and allowedIPs. Private keys never belong in NodeSet topology.</td>
 </tr>
 <tr>
 <td><code>spec.nodes[].wireGuard.publicKey</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Required when wireGuard is configured; peer public key passed to generated WireGuardPeer. No derived default.</td>
 </tr>
 <tr>
 <td><code>spec.nodes[].wireGuard.endpoint</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional WireGuard outer UDP host:port, [IPv6]:port for IPv6; port 1–65535. Distinct from the inner transportEndpoint.</td>
 </tr>
 <tr>
 <td><code>spec.nodes[].wireGuard.transportEndpoint</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional IPv4 address/CIDR for the inner SAM tunnel endpoint when encryption=wireguard. Preferred over samEndpoint/samEndpointFrom; not the UDP socket address.</td>
 </tr>
 <tr>
 <td><code>spec.nodes[].wireGuard.allowedIPs</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Required nonempty IPv4/IPv6 CIDRs when WireGuard is configured; passed to generated peers. Does not automatically create ordinary routes for every prefix.</td>
 </tr>
 <tr>
 <td><code>spec.nodes[].wireGuard.persistentKeepalive</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=0; maximum=65535</td>
 <td>Integer seconds 0–65535, default 0 disables persistent keepalive; copied to generated peers.</td>
 </tr>
 <tr>
 <td><code>spec.nodes[].placement</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional shared capture placement metadata. Only cloud role may declare a group; group members must share site/role and compatible provider identity in consumers.</td>
 </tr>
 <tr>
 <td><code>spec.nodes[].placement.group</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional placement group name, default empty means no grouped selection. Required for priority/drain/positive capacity settings.</td>
 </tr>
 <tr>
 <td><code>spec.nodes[].placement.priority</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=0; maximum=1000000</td>
 <td>Integer 0–1000000. 0/omitted is assigned 10,20,… by resolved member order, skipping explicit values; smaller priority wins eligible single-active selection. Requires group when nonzero.</td>
 </tr>
 <tr>
 <td><code>spec.nodes[].maintenance</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional declarative maintenance intent; default no drain. Shared topology metadata, not local provider credentials.</td>
 </tr>
 <tr>
 <td><code>spec.nodes[].maintenance.drain</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false. True excludes the grouped member from active capture selection and requires placement.group.</td>
 </tr>
 <tr>
 <td><code>spec.nodes[].maxSecondaryIPs</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=0</td>
 <td>Nonnegative integer, default 0. Positive requires placement.group and enables capacity-aware distributed capture for that group; 0 has no per-member capacity limit. Not a cloud quota change.</td>
 </tr>
 </tbody>
@@ -161,7 +218,7 @@
 <p><a href="/examples/cloudedge-dynamic-rr-a-hub.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
 <li><a href="#conditions-and-references">Conditions and references</a></li>
-<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#configuration-syntax">Configuration syntax</a></li>
 <li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 <li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
 </ul>

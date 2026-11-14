@@ -12,94 +12,128 @@
 <li>Rules are tried in Router resource order after listener filtering, not longest-suffix order. Put private/specific rules before a catch-all. Once a matching upstream source is selected, failure returns SERVFAIL; it does not fall through to another source and leak private queries.</li>
 <li>Upstream references are combined into one source/pool. Bootstrap settings are merged, and the first nonempty sourceInterface is shared by the entire pool; conflicting per-upstream bindings are not independently honored.</li>
 </ul>
-<h2 id="yaml-definition">YAML definition</h2>
-<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
-<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+<h2 id="configuration-syntax">Configuration syntax</h2>
+<p>This is explanatory notation, not YAML to copy. Unbracketed fields are required within their parent; <code>[ ... ]</code> marks fields that can be omitted, subject to the conditions in the table. <code>&lt;type&gt;</code> is a placeholder, and <code>(a | b)</code> lists alternatives. Optional parents may contain required children. Conditional requirements, exclusions and runtime defaults are described below. Use the linked YAML example for an ordinary configuration.</p>
+<pre><code class="language-text">- apiVersion: net.routerd.net/v1alpha1
   kind: DNSForwarder
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    dnssecValidate: true # optional; boolean
-    healthcheck: # optional; object
-      failThreshold: 1 # optional; integer; minimum=1
-      interval: &quot;&lt;string&gt;&quot; # optional; string
-      passThreshold: 1 # optional; integer; minimum=1
-      timeout: &quot;&lt;string&gt;&quot; # optional; string
-    match: # Required; array
-      - &quot;&lt;string&gt;&quot; # string
-    queryTimeout: &quot;&lt;string&gt;&quot; # optional; string
-    resolver: &quot;&lt;string&gt;&quot; # Required; string
-    upstreams: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    when: # optional; object
-      state: # optional; object
-        &quot;&lt;key&gt;&quot;: # optional; object
-          contains: &quot;&lt;string&gt;&quot; # optional; string
-          equals: &quot;&lt;string&gt;&quot; # optional; string
-          exists: true # optional; boolean
-          for: &quot;&lt;string&gt;&quot; # optional; string
-          in: # optional; array
-            - &quot;&lt;string&gt;&quot; # string
-          maxAge: &quot;&lt;string&gt;&quot; # optional; string
-          status: &quot;set&quot; # optional; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
-    zoneRefs: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
+    [ dnssecValidate: &lt;boolean&gt; ]
+    [ healthcheck:
+        [ failThreshold: &lt;integer&gt; ]
+        [ interval: &lt;string&gt; ]
+        [ passThreshold: &lt;integer&gt; ]
+        [ timeout: &lt;string&gt; ]
+    ]
+    match:
+      - &lt;string&gt;
+    [ queryTimeout: &lt;string&gt; ]
+    resolver: &lt;string&gt;
+    [ upstreams:
+        - &lt;string&gt;
+    ]
+    [ when:
+        [ state:
+            [ &lt;name&gt;:
+                [ contains: &lt;string&gt; ]
+                [ equals: &lt;string&gt; ]
+                [ exists: &lt;boolean&gt; ]
+                [ for: &lt;string&gt; ]
+                [ in:
+                    - &lt;string&gt;
+                ]
+                [ maxAge: &lt;string&gt; ]
+                [ status: (&quot;set&quot; | &quot;unset&quot; | &quot;unknown&quot;) ]
+            ]
+        ]
+    ]
+    [ zoneRefs:
+        - &lt;string&gt;
+    ]
 </code></pre>
 <h2 id="field-meaning-and-default">Field meaning and default</h2>
+<p>Required children of optional objects apply only when their parent is used. Other exact conditions are in the explanation; bracketed alternatives may still require one choice.</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>Presence</th>
+<th>Type / constraints</th>
 <th>Field meaning and default</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.resolver</code></td>
+<td><strong>Required</strong></td>
+<td>string</td>
 <td>Required existing DNSResolver name or DNSResolver/name. No default.</td>
 </tr>
 <tr>
 <td><code>spec.match</code></td>
+<td><strong>Required</strong></td>
+<td>array</td>
 <td>Required nonempty domain-suffix list; comparisons ignore case and a trailing dot. example.net matches the name and its subdomains; "." matches all queries. No implicit catch-all.</td>
 </tr>
 <tr>
 <td><code>spec.zoneRefs</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>array</td>
 <td>Existing DNSZone names or DNSZone/name references for local answers. Mutually exclusive with upstreams; required when upstreams is empty.</td>
 </tr>
 <tr>
 <td><code>spec.upstreams</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>array</td>
 <td>Existing DNSUpstream names or DNSUpstream/name, not raw server IPs/URLs. Mutually exclusive with zoneRefs. Servers from these resources form one failover pool.</td>
 </tr>
 <tr>
 <td><code>spec.dnssecValidate</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false. true sets the DNSSEC DO bit on upstream queries and requires AD in the reply; it does not perform local cryptographic DNSSEC validation. Zone sources do not use this field.</td>
 </tr>
 <tr>
 <td><code>spec.queryTimeout</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Positive Go duration for each upstream query attempt. Omitted inherits a positive healthcheck.timeout, otherwise 3s. Distinct from background probe timing; zone answers do not use it.</td>
 </tr>
 <tr>
 <td><code>spec.healthcheck</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Background upstream probe options; defaults interval 15s, timeout 3s, failThreshold 3, passThreshold 2. Not used for local-zone sources.</td>
 </tr>
 <tr>
 <td><code>spec.healthcheck.interval</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Go duration; omitted/empty or nonpositive at runtime uses 15s. Duration syntax is validated but positivity is not enforced at configuration validation.</td>
 </tr>
 <tr>
 <td><code>spec.healthcheck.timeout</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Probe Go duration; omitted/empty or nonpositive uses 3s. Also supplies the default queryTimeout when positive.</td>
 </tr>
 <tr>
 <td><code>spec.healthcheck.failThreshold</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=1</td>
 <td>Consecutive failures to mark an upstream unhealthy; default 3 (0/nonpositive runtime normalizes to 3; schema minimum 1).</td>
 </tr>
 <tr>
 <td><code>spec.healthcheck.passThreshold</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=1</td>
 <td>Consecutive successes for recovery; default 2 (0/nonpositive runtime normalizes to 2; schema minimum 1).</td>
 </tr>
 <tr>
 <td><code>spec.when</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional common state predicate; omitted means unconditional. A condition can remove this rule from the effective resolver configuration.</td>
 </tr>
 </tbody>
@@ -111,7 +145,7 @@
 <p><a href="/examples/example-dslite-home.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
 <li><a href="#conditions-and-references">Conditions and references</a></li>
-<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#configuration-syntax">Configuration syntax</a></li>
 <li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 <li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
 </ul>

@@ -11,48 +11,56 @@
 - 同じ論理interfaceのDHCPv6PrefixDelegationがBoundになってから、そのdaemon socketを読みます。対応するPDリソースがなければ取得元はありません。Info-requestはbootstrap/Bound遷移時に送り、独立したリース管理にはしません。
 - 情報controllerはwhenで絞った実効構成ではなく宣言済みRouterを使い、dependsOnを評価しません。Readyはdaemon状態を読めたことを示し、新しい情報応答を受信した証明ではありません。ready_whenは拒否し、下記の実装上の制約も確認してください。
 
-## YAML定義
+## 設定構文
 
-全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。
+説明用の構文表記であり、そのままコピーするYAMLではありません。囲みのない項目は親の中で必須、`[ ... ]`は条件に応じて省略できる項目、`<型>`は差し替え値、`(a | b)`は選択肢です。任意の親にも必須の子があります。条件付き必須・排他・実効既定値は下の表を確認し、通常のYAMLはリンク先の設定例を使ってください。
 
-```yaml
+```text
 - apiVersion: net.routerd.net/v1alpha1
   kind: DHCPv6Information
   metadata:
     name: "<name>"
   spec:
-    dependsOn: # 任意; array
-      - # object
-        equals: "<string>" # 任意; string
-        field: "<string>" # 任意; string
-        notEmpty: true # 任意; boolean
-        optional: true # 任意; boolean
-        phase: "<string>" # 任意; string
-        resource: "<string>" # 必須; string
-    interface: "<string>" # 必須; string
-    request: # 任意; array
-      - "<string>" # string
-    when: # 任意; object
-      state: # 任意; object
-        "<key>": # 任意; object
-          contains: "<string>" # 任意; string
-          equals: "<string>" # 任意; string
-          exists: true # 任意; boolean
-          for: "<string>" # 任意; string
-          in: # 任意; array
-            - "<string>" # string
-          maxAge: "<string>" # 任意; string
-          status: "set" # 任意; string; enum=["set", "unset", "unknown"]
+    [ dependsOn:
+        -
+          [ equals: <string> ]
+          [ field: <string> ]
+          [ notEmpty: <boolean> ]
+          [ optional: <boolean> ]
+          [ phase: <string> ]
+          resource: <string>
+    ]
+    interface: <string>
+    [ request:
+        - <string>
+    ]
+    [ when:
+        [ state:
+            [ <name>:
+                [ contains: <string> ]
+                [ equals: <string> ]
+                [ exists: <boolean> ]
+                [ for: <string> ]
+                [ in:
+                    - <string>
+                ]
+                [ maxAge: <string> ]
+                [ status: ("set" | "unset" | "unknown") ]
+            ]
+        ]
+    ]
 ```
 
 ## 項目の意味と既定値
 
-| YAML | 項目の意味と既定値 |
-| --- | --- |
-| `spec.interface` | DHCPv6PrefixDelegation.spec.interfaceと完全一致で照合する必須の識別子。既定値はありません。両方の宣言で同じ論理インターフェース名を使います。 |
-| `spec.request` | 要求オプションの宣言。省略時は空ですが、現行controllerは使いません。daemonのInfoRequestはAFTR名・DNS・SNTP・検索ドメインを固定のOROで要求します。 |
-| `spec.when` | 条件の宣言。省略時は未指定で、共通whenのルールで検証します。ただし現行の情報controllerはこの値で自身の処理を絞らず、情報要求の停止スイッチには使えません。 |
-| `spec.dependsOn` | 依存条件の宣言。省略時は空です。参照先・fieldは検証しますが、このcontrollerは情報の読取り・要求の前提としてこれらの条件を評価しません。 |
+任意の親の必須項目は、親を使う場合に必要です。それ以外の具体的な条件は説明欄に記載します。`[ ... ]`で囲まれた選択肢も、いずれか一方が必要な場合があります。
+
+| YAML | 指定要否 | 型・制約 | 項目の意味と既定値 |
+| --- | --- | --- | --- |
+| `spec.interface` | **必須** | string | DHCPv6PrefixDelegation.spec.interfaceと完全一致で照合する必須の識別子。既定値はありません。両方の宣言で同じ論理インターフェース名を使います。 |
+| `spec.request` | *任意* | array | 要求オプションの宣言。省略時は空ですが、現行controllerは使いません。daemonのInfoRequestはAFTR名・DNS・SNTP・検索ドメインを固定のOROで要求します。 |
+| `spec.when` | *任意* | object | 条件の宣言。省略時は未指定で、共通whenのルールで検証します。ただし現行の情報controllerはこの値で自身の処理を絞らず、情報要求の停止スイッチには使えません。 |
+| `spec.dependsOn` | *任意* | array | 依存条件の宣言。省略時は空です。参照先・fieldは検証しますが、このcontrollerは情報の読取り・要求の前提としてこれらの条件を評価しません。 |
 
 実装: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate_wan.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_wan.go) · [pkg/config/diagnostics.go](https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go) · [pkg/controller/chain/phase2.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/phase2.go) · [pkg/controller/chain/chain.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/chain.go) · [pkg/pdclient/client.go](https://github.com/imksoo/routerd/blob/main/pkg/pdclient/client.go)
 

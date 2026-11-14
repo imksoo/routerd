@@ -10,29 +10,32 @@ LinuxのVRFデバイス・経路表・参加インターフェースの意図を
 
 - membersにはRouterに宣言済みの論理インターフェース名を指定します。自分自身への参加は拒否します。routeTableはポリシー経路の掃除でその表を維持するためにも使い、BGPのVRF設定からも参照します。
 
-## YAML定義
+## 設定構文
 
-全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。
+説明用の構文表記であり、そのままコピーするYAMLではありません。囲みのない項目は親の中で必須、`[ ... ]`は条件に応じて省略できる項目、`<型>`は差し替え値、`(a | b)`は選択肢です。任意の親にも必須の子があります。条件付き必須・排他・実効既定値は下の表を確認し、通常のYAMLはリンク先の設定例を使ってください。
 
-```yaml
+```text
 - apiVersion: net.routerd.net/v1alpha1
   kind: VRF
   metadata:
     name: "<name>"
   spec:
-    ifname: "<string>" # 任意; string
-    members: # 任意; array
-      - "<string>" # string
-    routeTable: 1 # 必須; integer; minimum=1; maximum=4294967295
+    [ ifname: <string> ]
+    [ members:
+        - <string>
+    ]
+    routeTable: <integer>
 ```
 
 ## 項目の意味と既定値
 
-| YAML | 項目の意味と既定値 |
-| --- | --- |
-| `spec.ifname` | カーネルのVRF名。省略時metadata.name。15文字以下で、空白や/は使えません。 |
-| `spec.routeTable` | 必須の正の経路表IDで既定値はありません。スキーマ上は1〜4294967295で、現行Go検証は下限を確認します。 |
-| `spec.members` | 論理インターフェース名の一覧。省略時は空でKind/は付けません。各要素が存在し、このVRFのmetadata.nameとは異なる必要があります。実際の接続処理は未実装です。 |
+任意の親の必須項目は、親を使う場合に必要です。それ以外の具体的な条件は説明欄に記載します。`[ ... ]`で囲まれた選択肢も、いずれか一方が必要な場合があります。
+
+| YAML | 指定要否 | 型・制約 | 項目の意味と既定値 |
+| --- | --- | --- | --- |
+| `spec.ifname` | *任意* | string | カーネルのVRF名。省略時metadata.name。15文字以下で、空白や/は使えません。 |
+| `spec.routeTable` | **必須** | integer; minimum=1; maximum=4294967295 | 必須の正の経路表IDで既定値はありません。スキーマ上は1〜4294967295で、現行Go検証は下限を確認します。 |
+| `spec.members` | *任意* | array | 論理インターフェース名の一覧。省略時は空でKind/は付けません。各要素が存在し、このVRFのmetadata.nameとは異なる必要があります。実際の接続処理は未実装です。 |
 
 実装: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate_interface.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_interface.go) · [pkg/config/validate.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go) · [pkg/apply/engine.go](https://github.com/imksoo/routerd/blob/main/pkg/apply/engine.go) · [pkg/apply/artifacts.go](https://github.com/imksoo/routerd/blob/main/pkg/apply/artifacts.go) · [pkg/controller/chain/policyroute.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/policyroute.go)
 

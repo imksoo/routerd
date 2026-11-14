@@ -13,415 +13,585 @@
 <li>Common value sources require an existing resource and explicit provided field. A missing required gateway/DNS/NTP/domain source with optional false suspends the pool even if literal alternatives exist; optional true skips missing values. Dynamic address readers do not themselves enforce IPv4 on every resolved status value.</li>
 <li>Scopes use MAC/OUI alternatives and either a local profileRef or inline settings, never both. Profiles/scopes require valid endpoint pairs. When a dynamic lease matches a selector but lies outside all matching pools, apply prunes it and restarts dnsmasq; explicit reservations are preserved. This does not force the client to renew immediately.</li>
 </ul>
-<h2 id="yaml-definition">YAML definition</h2>
-<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
-<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+<h2 id="configuration-syntax">Configuration syntax</h2>
+<p>This is explanatory notation, not YAML to copy. Unbracketed fields are required within their parent; <code>[ ... ]</code> marks fields that can be omitted, subject to the conditions in the table. <code>&lt;type&gt;</code> is a placeholder, and <code>(a | b)</code> lists alternatives. Optional parents may contain required children. Conditional requirements, exclusions and runtime defaults are described below. Use the linked YAML example for an ordinary configuration.</p>
+<pre><code class="language-text">- apiVersion: net.routerd.net/v1alpha1
   kind: DHCPv4Server
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    addressPool: # optional; object
-      end: &quot;&lt;string&gt;&quot; # optional; string
-      leaseTime: &quot;&lt;string&gt;&quot; # optional; string
-      start: &quot;&lt;string&gt;&quot; # optional; string
-    authoritative: true # optional; boolean
-    dns: # optional; object
-      cacheSize: 0 # optional; integer; minimum=0
-      enabled: true # optional; boolean
-      upstreamInterface: &quot;&lt;string&gt;&quot; # optional; string
-      upstreamServers: # optional; array
-        - &quot;&lt;string&gt;&quot; # string
-      upstreamSource: &quot;dhcpv4&quot; # optional; string; enum=[&quot;dhcpv4&quot;, &quot;static&quot;, &quot;system&quot;, &quot;none&quot;]
-    dnsInterface: &quot;&lt;string&gt;&quot; # optional; string
-    dnsServerFrom: # optional; array
-      - # object
-        field: &quot;&lt;string&gt;&quot; # optional; string
-        optional: true # optional; boolean
-        resource: &quot;&lt;string&gt;&quot; # Required; string
-    dnsServers: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    dnsSource: &quot;dhcpv4&quot; # optional; string; enum=[&quot;dhcpv4&quot;, &quot;static&quot;, &quot;self&quot;, &quot;none&quot;]
-    domain: &quot;&lt;string&gt;&quot; # optional; string
-    domainFrom: # optional; object
-      field: &quot;&lt;string&gt;&quot; # optional; string
-      optional: true # optional; boolean
-      resource: &quot;&lt;string&gt;&quot; # Required; string
-    gateway: &quot;&lt;string&gt;&quot; # optional; string
-    gatewayFrom: # optional; object
-      field: &quot;&lt;string&gt;&quot; # optional; string
-      optional: true # optional; boolean
-      resource: &quot;&lt;string&gt;&quot; # Required; string
-    interface: &quot;&lt;string&gt;&quot; # optional; string
-    leaseFile: &quot;&lt;string&gt;&quot; # optional; string
-    leaseTime: &quot;&lt;string&gt;&quot; # optional; string
-    listenInterfaces: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    logDHCP: true # optional; boolean
-    managed: true # optional; boolean
-    ntpServerFrom: # optional; array
-      - # object
-        field: &quot;&lt;string&gt;&quot; # optional; string
-        optional: true # optional; boolean
-        resource: &quot;&lt;string&gt;&quot; # Required; string
-    ntpServers: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    options: # optional; array
-      - # object
-        code: 1 # optional; integer; minimum=1; maximum=65535
-        name: &quot;&lt;string&gt;&quot; # optional; string
-        value: &quot;&lt;string&gt;&quot; # optional; string
-    profiles: # optional; array
-      - # object
-        addressPool: # Required; object
-          end: &quot;&lt;string&gt;&quot; # optional; string
-          leaseTime: &quot;&lt;string&gt;&quot; # optional; string
-          start: &quot;&lt;string&gt;&quot; # optional; string
-        dnsServers: # optional; array
-          - &quot;&lt;string&gt;&quot; # string
-        gateway: &quot;&lt;string&gt;&quot; # optional; string
-        name: &quot;&lt;string&gt;&quot; # Required; string
-        netmask: &quot;&lt;string&gt;&quot; # optional; string
-        ntpServers: # optional; array
-          - &quot;&lt;string&gt;&quot; # string
-        options: # optional; array
-          - # object
-            code: 1 # optional; integer; minimum=1; maximum=65535
-            name: &quot;&lt;string&gt;&quot; # optional; string
-            value: &quot;&lt;string&gt;&quot; # optional; string
-    rangeEnd: &quot;&lt;string&gt;&quot; # optional; string
-    rangeStart: &quot;&lt;string&gt;&quot; # optional; string
-    role: &quot;server&quot; # optional; string; enum=[&quot;server&quot;, &quot;transit&quot;]
-    router: &quot;&lt;string&gt;&quot; # optional; string
-    routerSource: &quot;interfaceAddress&quot; # optional; string; enum=[&quot;interfaceAddress&quot;, &quot;static&quot;, &quot;none&quot;]
-    scopes: # optional; array
-      - # object
-        addressPool: # Required; object
-          end: &quot;&lt;string&gt;&quot; # optional; string
-          leaseTime: &quot;&lt;string&gt;&quot; # optional; string
-          start: &quot;&lt;string&gt;&quot; # optional; string
-        dnsServers: # optional; array
-          - &quot;&lt;string&gt;&quot; # string
-        gateway: &quot;&lt;string&gt;&quot; # optional; string
-        match: # Required; object
-          macAddresses: # optional; array
-            - &quot;&lt;string&gt;&quot; # string
-          ouiPrefixes: # optional; array
-            - &quot;&lt;string&gt;&quot; # string
-        name: &quot;&lt;string&gt;&quot; # Required; string
-        netmask: &quot;&lt;string&gt;&quot; # optional; string
-        ntpServers: # optional; array
-          - &quot;&lt;string&gt;&quot; # string
-        options: # optional; array
-          - # object
-            code: 1 # optional; integer; minimum=1; maximum=65535
-            name: &quot;&lt;string&gt;&quot; # optional; string
-            value: &quot;&lt;string&gt;&quot; # optional; string
-        profileRef: &quot;&lt;string&gt;&quot; # optional; string
-    server: &quot;dnsmasq&quot; # optional; string; enum=[&quot;dnsmasq&quot;, &quot;kea&quot;, &quot;dhcpd&quot;]
-    stickyHoldDays: 0 # optional; integer; minimum=0
-    when: # optional; object
-      state: # optional; object
-        &quot;&lt;key&gt;&quot;: # optional; object
-          contains: &quot;&lt;string&gt;&quot; # optional; string
-          equals: &quot;&lt;string&gt;&quot; # optional; string
-          exists: true # optional; boolean
-          for: &quot;&lt;string&gt;&quot; # optional; string
-          in: # optional; array
-            - &quot;&lt;string&gt;&quot; # string
-          maxAge: &quot;&lt;string&gt;&quot; # optional; string
-          status: &quot;set&quot; # optional; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+    [ addressPool:
+        [ end: &lt;string&gt; ]
+        [ leaseTime: &lt;string&gt; ]
+        [ start: &lt;string&gt; ]
+    ]
+    [ authoritative: &lt;boolean&gt; ]
+    [ dns:
+        [ cacheSize: &lt;integer&gt; ]
+        [ enabled: &lt;boolean&gt; ]
+        [ upstreamInterface: &lt;string&gt; ]
+        [ upstreamServers:
+            - &lt;string&gt;
+        ]
+        [ upstreamSource: (&quot;dhcpv4&quot; | &quot;static&quot; | &quot;system&quot; | &quot;none&quot;) ]
+    ]
+    [ dnsInterface: &lt;string&gt; ]
+    [ dnsServerFrom:
+        -
+          field: &lt;string&gt;
+          [ optional: &lt;boolean&gt; ]
+          resource: &lt;string&gt;
+    ]
+    [ dnsServers:
+        - &lt;string&gt;
+    ]
+    [ dnsSource: (&quot;dhcpv4&quot; | &quot;static&quot; | &quot;self&quot; | &quot;none&quot;) ]
+    [ domain: &lt;string&gt; ]
+    [ domainFrom:
+        field: &lt;string&gt;
+        [ optional: &lt;boolean&gt; ]
+        resource: &lt;string&gt;
+    ]
+    [ gateway: &lt;string&gt; ]
+    [ gatewayFrom:
+        field: &lt;string&gt;
+        [ optional: &lt;boolean&gt; ]
+        resource: &lt;string&gt;
+    ]
+    [ interface: &lt;string&gt; ]
+    [ leaseFile: &lt;string&gt; ]
+    [ leaseTime: &lt;string&gt; ]
+    [ listenInterfaces:
+        - &lt;string&gt;
+    ]
+    [ logDHCP: &lt;boolean&gt; ]
+    [ managed: &lt;boolean&gt; ]
+    [ ntpServerFrom:
+        -
+          field: &lt;string&gt;
+          [ optional: &lt;boolean&gt; ]
+          resource: &lt;string&gt;
+    ]
+    [ ntpServers:
+        - &lt;string&gt;
+    ]
+    [ options:
+        -
+          [ code: &lt;integer&gt; ]
+          [ name: &lt;string&gt; ]
+          [ value: &lt;string&gt; ]
+    ]
+    [ profiles:
+        -
+          addressPool:
+            [ end: &lt;string&gt; ]
+            [ leaseTime: &lt;string&gt; ]
+            [ start: &lt;string&gt; ]
+          [ dnsServers:
+              - &lt;string&gt;
+          ]
+          [ gateway: &lt;string&gt; ]
+          name: &lt;string&gt;
+          [ netmask: &lt;string&gt; ]
+          [ ntpServers:
+              - &lt;string&gt;
+          ]
+          [ options:
+              -
+                [ code: &lt;integer&gt; ]
+                [ name: &lt;string&gt; ]
+                [ value: &lt;string&gt; ]
+          ]
+    ]
+    [ rangeEnd: &lt;string&gt; ]
+    [ rangeStart: &lt;string&gt; ]
+    [ role: (&quot;server&quot; | &quot;transit&quot;) ]
+    [ router: &lt;string&gt; ]
+    [ routerSource: (&quot;interfaceAddress&quot; | &quot;static&quot; | &quot;none&quot;) ]
+    [ scopes:
+        -
+          addressPool:
+            [ end: &lt;string&gt; ]
+            [ leaseTime: &lt;string&gt; ]
+            [ start: &lt;string&gt; ]
+          [ dnsServers:
+              - &lt;string&gt;
+          ]
+          [ gateway: &lt;string&gt; ]
+          match:
+            [ macAddresses:
+                - &lt;string&gt;
+            ]
+            [ ouiPrefixes:
+                - &lt;string&gt;
+            ]
+          name: &lt;string&gt;
+          [ netmask: &lt;string&gt; ]
+          [ ntpServers:
+              - &lt;string&gt;
+          ]
+          [ options:
+              -
+                [ code: &lt;integer&gt; ]
+                [ name: &lt;string&gt; ]
+                [ value: &lt;string&gt; ]
+          ]
+          [ profileRef: &lt;string&gt; ]
+    ]
+    [ server: (&quot;dnsmasq&quot; | &quot;kea&quot; | &quot;dhcpd&quot;) ]
+    [ stickyHoldDays: &lt;integer&gt; ]
+    [ when:
+        [ state:
+            [ &lt;name&gt;:
+                [ contains: &lt;string&gt; ]
+                [ equals: &lt;string&gt; ]
+                [ exists: &lt;boolean&gt; ]
+                [ for: &lt;string&gt; ]
+                [ in:
+                    - &lt;string&gt;
+                ]
+                [ maxAge: &lt;string&gt; ]
+                [ status: (&quot;set&quot; | &quot;unset&quot; | &quot;unknown&quot;) ]
+            ]
+        ]
+    ]
 </code></pre>
 <h2 id="field-meaning-and-default">Field meaning and default</h2>
+<p>Required children of optional objects apply only when their parent is used. Other exact conditions are in the explanation; bracketed alternatives may still require one choice.</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>Presence</th>
+<th>Type / constraints</th>
 <th>Field meaning and default</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.server</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["dnsmasq", "kea", "dhcpd"]</td>
 <td>Schema accepts dnsmasq/kea/dhcpd; default dnsmasq in planners/dependency selection. Current live controller still launches dnsmasq regardless of this field; kea/dhcpd are not working backend switches. Sticky-retention day selection only includes dnsmasq servers.</td>
 </tr>
 <tr>
 <td><code>spec.managed</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Boolean default false. Current live DHCP service controller does not check it: false is not an observe-only or disabled mode.</td>
 </tr>
 <tr>
 <td><code>spec.role</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["server", "transit"]</td>
 <td>Validated server/transit, default server. The static renderer distinguishes transit, but current live LAN-line generation does not honor this switch. Do not use transit to suppress allocations.</td>
 </tr>
 <tr>
 <td><code>spec.listenInterfaces</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional declared logical interfaces; all names must exist. Used by validation/firewall planning, but current live pool generation uses only interface, not this list. It cannot replace interface.</td>
 </tr>
 <tr>
 <td><code>spec.logDHCP</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false. Static rendering can emit log-dhcp, but current live config writer does not consume this flag; lease-event callback generation is independent.</td>
 </tr>
 <tr>
 <td><code>spec.stickyHoldDays</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=0</td>
 <td>Nonnegative retention days, default 0 (off). Positive values retain released/expired DHCP assignments in dhcp-sticky.db for reuse. Runtime uses the maximum value across dnsmasq DHCPv4Server resources for all IPv4 lease events, not a per-interface lookup. Explicit reservations take precedence.</td>
 </tr>
 <tr>
 <td><code>spec.interface</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Declared logical interface for the primary pool; required for useful current live pool generation, although schema/validation permit omission. Must exist in the Router interface index.</td>
 </tr>
 <tr>
 <td><code>spec.addressPool</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>object</td>
 <td>Primary IPv4 allocation pool; start/end required when interface is set. These fields take precedence over legacy rangeStart/rangeEnd/leaseTime.</td>
 </tr>
 <tr>
 <td><code>spec.addressPool.start</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Bare IPv4 first address, inclusive; required unless rangeStart supplies it. Must be &lt;= end. No inferred subnet/pool.</td>
 </tr>
 <tr>
 <td><code>spec.addressPool.end</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Bare IPv4 last address, inclusive; required unless rangeEnd supplies it, and &gt;= start.</td>
 </tr>
 <tr>
 <td><code>spec.addressPool.leaseTime</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Backend lease-duration string; precedence addressPool.leaseTime → leaseTime → 12h. Not parsed as Go duration by this resource validator.</td>
 </tr>
 <tr>
 <td><code>spec.rangeStart</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Legacy fallback for addressPool.start, default empty. Also switches the static renderer to its older scope-style path; prefer addressPool.</td>
 </tr>
 <tr>
 <td><code>spec.rangeEnd</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Legacy fallback for addressPool.end; same static-renderer switch as rangeStart.</td>
 </tr>
 <tr>
 <td><code>spec.leaseTime</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Fallback backend lease duration when addressPool.leaseTime is empty; default 12h.</td>
 </tr>
 <tr>
 <td><code>spec.routerSource</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["interfaceAddress", "static", "none"]</td>
 <td>Validated interfaceAddress/static/none; static requires router. Static renderer defaults interfaceAddress and derives from IPv4StaticAddress, but current live writer ignores routerSource/router and uses gateway/gatewayFrom instead.</td>
 </tr>
 <tr>
 <td><code>spec.router</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>IPv4 value required with routerSource: static. Used by the older static renderer only, not the current live gateway option path.</td>
 </tr>
 <tr>
 <td><code>spec.gateway</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional bare IPv4 DHCP router option; default no explicit router option. A usable gatewayFrom value takes precedence. Not exclusive with gatewayFrom.</td>
 </tr>
 <tr>
 <td><code>spec.gatewayFrom</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional common status source with resource and field. Default optional false: unresolved source makes this server Pending even if gateway is set. With optional true, missing values can use gateway.</td>
 </tr>
 <tr>
 <td><code>spec.dnsSource</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["dhcpv4", "static", "self", "none"]</td>
 <td>Validated dhcpv4/static/self/none; static requires dnsServers, dhcpv4 requires dnsInterface. Default self in static renderer. Current live writer ignores this selector and uses dnsServers plus dnsServerFrom.</td>
 </tr>
 <tr>
 <td><code>spec.dnsInterface</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Declared logical interface required by dnsSource: dhcpv4. Reference is validated even when another selector is used; current live writer does not use this field to discover DNS servers.</td>
 </tr>
 <tr>
 <td><code>spec.dnsServers</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional bare IPv4 DNS-server list. Default empty; merged with resolved dnsServerFrom values for DHCP option 6. Does not start DNSResolver or a DNS listener.</td>
 </tr>
 <tr>
 <td><code>spec.dnsServerFrom</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional common resource/field source list; optional defaults false. Required missing values block the whole server despite static DNS entries. Runtime reads status and strips CIDR to addresses; use IPv4-providing fields.</td>
 </tr>
 <tr>
 <td><code>spec.ntpServers</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional bare IPv4 NTP-server list; default empty. Merged with ntpServerFrom for DHCP option 42; does not run NTPServer.</td>
 </tr>
 <tr>
 <td><code>spec.ntpServerFrom</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional common resource/field source list. Same required/optional gating and status-only resolution as dnsServerFrom; default no references.</td>
 </tr>
 <tr>
 <td><code>spec.domain</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional single domain without whitespace, slash or comma. Exclusive with domainFrom. Emits domain-name and, unless option 119/name domain-search is explicitly supplied, domain-search.</td>
 </tr>
 <tr>
 <td><code>spec.domainFrom</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional source restricted to DNSZone/<name>, field: zone; resource must exist. Declared zone value is readable before status. optional false blocks on no value; true can omit the domain. Exclusive with domain.</td>
 </tr>
 <tr>
 <td><code>spec.authoritative</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false. Affects the older static renderer and selects its scope-style path; current live writer does not emit dhcp-authoritative from it.</td>
 </tr>
 <tr>
 <td><code>spec.leaseFile</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional path, default <StateDir>/dnsmasq/dnsmasq.leases (normally /var/lib/routerd/dnsmasq/dnsmasq.leases). One dnsmasq instance shares the file: all explicit DHCPv4/6 server leaseFile values must agree or runtime fails.</td>
 </tr>
 <tr>
 <td><code>spec.when</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional common state predicate; default unconditional. False excludes the pool and yields Pending/WhenFalse. Required dynamic values can separately keep the server Pending.</td>
 </tr>
 <tr>
 <td><code>spec.dns</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Legacy embedded dnsmasq DNS settings. Current live writer forces port=0 and no-resolv, so these settings do not enable DNS forwarding. Use DNSResolver/DNSForwarder/DNSUpstream instead. Some values still affect validation.</td>
 </tr>
 <tr>
 <td><code>spec.dns.enabled</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false. true reserves TCP/UDP 53 in listener-conflict validation but does not actually open a live DNS listener.</td>
 </tr>
 <tr>
 <td><code>spec.dns.upstreamSource</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["dhcpv4", "static", "system", "none"]</td>
 <td>Accepted empty/dhcpv4/static/system/none. dhcpv4 requires upstreamInterface, static requires upstreamServers. No current live DNS-forwarding effect.</td>
 </tr>
 <tr>
 <td><code>spec.dns.upstreamInterface</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Required nonempty string with dns.upstreamSource: dhcpv4; not used for current live DNS resolution. Unlike dnsInterface, this legacy field is not checked against the interface index here.</td>
 </tr>
 <tr>
 <td><code>spec.dns.upstreamServers</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>array</td>
 <td>IPv4/IPv6 literals required when upstreamSource is static; default empty. Validated but not consumed by current live DNS forwarding.</td>
 </tr>
 <tr>
 <td><code>spec.dns.cacheSize</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=0</td>
 <td>Nonnegative schema integer, default 0; not used by the current live config writer. DNSResolver.cache is separate.</td>
 </tr>
 <tr>
 <td><code>spec.profiles</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional reusable settings local to this server. Profiles are inert unless selected by scopes[].profileRef; they are not separate resources. Default empty.</td>
 </tr>
 <tr>
 <td><code>spec.profiles[].name</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Required unique profile name within the server, with no whitespace or commas. No Kind/name prefix.</td>
 </tr>
 <tr>
 <td><code>spec.scopes</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional selector-specific pools rendered before the primary catch-all pool. Clients that match no selector use the primary pool. Default empty. Multiple matching scopes are not rejected by validation.</td>
 </tr>
 <tr>
 <td><code>spec.scopes[].name</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Required unique scope name within this server; no whitespace or commas. Used to derive dnsmasq tags, not an external resource reference.</td>
 </tr>
 <tr>
 <td><code>spec.scopes[].match</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>object</td>
 <td>Required selector with at least one macAddresses or ouiPrefixes entry. Entries are alternatives, not a requirement to match both lists.</td>
 </tr>
 <tr>
 <td><code>spec.scopes[].match.macAddresses</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional exact MAC list parsed by net.ParseMAC. Default empty. Use canonical colon-separated six-octet MACs for dnsmasq output.</td>
 </tr>
 <tr>
 <td><code>spec.scopes[].match.ouiPrefixes</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional three-octet OUI prefixes. Use aa:bb:cc: runtime appends :<em>:</em>:* to the literal value. Validator normalizes alternate spellings for checking but live writer does not reuse that normalization.</td>
 </tr>
 <tr>
 <td><code>spec.scopes[].profileRef</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Bare name of an existing profiles[] entry in the same server. Exclusive with inline addressPool fields, netmask, gateway, dnsServers, ntpServers and options. Empty selects inline settings.</td>
 </tr>
 <tr>
 <td><code>spec.profiles[].addressPool</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>object</td>
 <td>Required IPv4 pool settings in profiles and inline scopes; no default endpoints.</td>
 </tr>
 <tr>
 <td><code>spec.profiles[].addressPool.start</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Required inclusive bare IPv4 start, &lt;= end. No cross-pool overlap validation.</td>
 </tr>
 <tr>
 <td><code>spec.profiles[].addressPool.end</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Required inclusive bare IPv4 end, &gt;= start.</td>
 </tr>
 <tr>
 <td><code>spec.profiles[].addressPool.leaseTime</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional backend lease duration. Empty inherits the server effective lease duration (addressPool.leaseTime → leaseTime → 12h).</td>
 </tr>
 <tr>
 <td><code>spec.profiles[].netmask</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional contiguous IPv4 dotted netmask with 1–32 one bits. Empty omits the explicit mask and lets dnsmasq derive it; not inherited from another profile.</td>
 </tr>
 <tr>
 <td><code>spec.profiles[].gateway</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional bare IPv4 router option for this tagged pool. Empty does not copy server.gateway.</td>
 </tr>
 <tr>
 <td><code>spec.profiles[].dnsServers</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional IPv4 DNS addresses for this tagged pool, default empty; no dynamic-source field or automatic server-list inheritance.</td>
 </tr>
 <tr>
 <td><code>spec.profiles[].ntpServers</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional IPv4 NTP addresses for this tagged pool, default empty; no dynamic-source field.</td>
 </tr>
 <tr>
 <td><code>spec.profiles[].options</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional extra options for this pool; exactly one code/name and a nonempty value per item. Default empty.</td>
 </tr>
 <tr>
 <td><code>spec.profiles[].options[].code</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>integer; minimum=1; maximum=65535</td>
 <td>Numeric option, exclusive with name; schema 1–65535.</td>
 </tr>
 <tr>
 <td><code>spec.profiles[].options[].name</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>dnsmasq option name, exclusive with code; whitespace and comma prohibited.</td>
 </tr>
 <tr>
 <td><code>spec.profiles[].options[].value</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Required backend-formatted value, no CR/LF; commas may separate multiple values.</td>
 </tr>
 <tr>
 <td><code>spec.scopes[].addressPool</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>object</td>
 <td>Required IPv4 pool settings in profiles and inline scopes; no default endpoints.</td>
 </tr>
 <tr>
 <td><code>spec.scopes[].addressPool.start</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Required inclusive bare IPv4 start, &lt;= end. No cross-pool overlap validation.</td>
 </tr>
 <tr>
 <td><code>spec.scopes[].addressPool.end</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Required inclusive bare IPv4 end, &gt;= start.</td>
 </tr>
 <tr>
 <td><code>spec.scopes[].addressPool.leaseTime</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional backend lease duration. Empty inherits the server effective lease duration (addressPool.leaseTime → leaseTime → 12h).</td>
 </tr>
 <tr>
 <td><code>spec.scopes[].netmask</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional contiguous IPv4 dotted netmask with 1–32 one bits. Empty omits the explicit mask and lets dnsmasq derive it; not inherited from another profile.</td>
 </tr>
 <tr>
 <td><code>spec.scopes[].gateway</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional bare IPv4 router option for this tagged pool. Empty does not copy server.gateway.</td>
 </tr>
 <tr>
 <td><code>spec.scopes[].dnsServers</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional IPv4 DNS addresses for this tagged pool, default empty; no dynamic-source field or automatic server-list inheritance.</td>
 </tr>
 <tr>
 <td><code>spec.scopes[].ntpServers</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional IPv4 NTP addresses for this tagged pool, default empty; no dynamic-source field.</td>
 </tr>
 <tr>
 <td><code>spec.scopes[].options</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional extra options for this pool; exactly one code/name and a nonempty value per item. Default empty.</td>
 </tr>
 <tr>
 <td><code>spec.scopes[].options[].code</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>integer; minimum=1; maximum=65535</td>
 <td>Numeric option, exclusive with name; schema 1–65535.</td>
 </tr>
 <tr>
 <td><code>spec.scopes[].options[].name</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>dnsmasq option name, exclusive with code; whitespace and comma prohibited.</td>
 </tr>
 <tr>
 <td><code>spec.scopes[].options[].value</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Required backend-formatted value, no CR/LF; commas may separate multiple values.</td>
 </tr>
 <tr>
 <td><code>spec.options</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional extra options for this pool; exactly one code/name and a nonempty value per item. Default empty.</td>
 </tr>
 <tr>
 <td><code>spec.options[].code</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>integer; minimum=1; maximum=65535</td>
 <td>Numeric option, exclusive with name; schema 1–65535.</td>
 </tr>
 <tr>
 <td><code>spec.options[].name</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>dnsmasq option name, exclusive with code; whitespace and comma prohibited.</td>
 </tr>
 <tr>
 <td><code>spec.options[].value</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Required backend-formatted value, no CR/LF; commas may separate multiple values.</td>
 </tr>
 </tbody>
@@ -433,7 +603,7 @@
 <p><a href="/examples/dhcp-lease-sync-ha.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
 <li><a href="#conditions-and-references">Conditions and references</a></li>
-<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#configuration-syntax">Configuration syntax</a></li>
 <li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 <li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
 </ul>

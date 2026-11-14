@@ -12,90 +12,124 @@
 <li>目前實作不會僅因宣告triggers而啟動週期或事件排程；它會驗證並在plugin list顯示，仍須由使用端呼叫。</li>
 <li>context使用apiVersion、kind、name三項識別資源。目標不存在不會造成設定驗證錯誤，而是在執行時省略該項；秘密資訊會遮蔽。</li>
 </ul>
-<h2 id="yaml定義">YAML定義</h2>
-<p>此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。</p>
-<pre><code class="language-yaml">- apiVersion: plugin.routerd.net/v1alpha1
+<h2 id="設定語法">設定語法</h2>
+<p>這是說明用語法，不是可直接複製的YAML。未加括號的欄位在父項目內必填；<code>[ ... ]</code>表示依條件可省略，<code>&lt;型別&gt;</code>為替換值，<code>(a | b)</code>表示選項。選填父項目內仍可能有必填子項目。條件必填、互斥與實際預設值請見下表；一般YAML請使用連結範例。</p>
+<pre><code class="language-text">- apiVersion: plugin.routerd.net/v1alpha1
   kind: Plugin
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    capabilities: # 選填; array
-      - &quot;observe.cloud&quot; # string; enum=[&quot;observe.cloud&quot;, &quot;observe.providerPrivateIPs&quot;, &quot;propose.dynamicConfig&quot;, &quot;propose.providerAction&quot;, &quot;execute.providerAction&quot;]
-    context: # 選填; object
-      resources: # 選填; array
-        - # object
-          apiVersion: &quot;&lt;string&gt;&quot; # 必填; string
-          kind: &quot;&lt;string&gt;&quot; # 必填; string
-          name: &quot;&lt;string&gt;&quot; # 必填; string
-    env: # 選填; object
-      &quot;&lt;key&gt;&quot;: &quot;&lt;string&gt;&quot; # 選填; string
-    executable: &quot;&lt;string&gt;&quot; # 必填; string
-    timeout: &quot;&lt;string&gt;&quot; # 選填; string
-    triggers: # 選填; array
-      - # object
-        every: &quot;&lt;string&gt;&quot; # 選填; string
-        topic: &quot;&lt;string&gt;&quot; # 選填; string
-        type: &quot;interval&quot; # 必填; string; enum=[&quot;interval&quot;, &quot;event&quot;]
+    [ capabilities:
+        - (&quot;observe.cloud&quot; | &quot;observe.providerPrivateIPs&quot; | &quot;propose.dynamicConfig&quot; | &quot;propose.providerAction&quot; | &quot;execute.providerAction&quot;)
+    ]
+    [ context:
+        [ resources:
+            -
+              apiVersion: &lt;string&gt;
+              kind: &lt;string&gt;
+              name: &lt;string&gt;
+        ]
+    ]
+    [ env:
+        [ &lt;name&gt;: &lt;string&gt; ]
+    ]
+    executable: &lt;string&gt;
+    [ timeout: &lt;string&gt; ]
+    [ triggers:
+        -
+          [ every: &lt;string&gt; ]
+          [ topic: &lt;string&gt; ]
+          type: (&quot;interval&quot; | &quot;event&quot;)
+    ]
 </code></pre>
 <h2 id="欄位意義與預設值">欄位意義與預設值</h2>
+<p>選填父項目的必填子項目僅在使用父項目時需要。其他具體條件列於說明；<code>[ ... ]</code>選項仍可能需要擇一。</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>指定要求</th>
+<th>型別與限制</th>
 <th>欄位意義與預設值</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.executable</code></td>
+<td><strong>必填</strong></td>
+<td>string</td>
 <td>外部程式的絕對路徑；必填，無預設值。</td>
 </tr>
 <tr>
 <td><code>spec.timeout</code></td>
+<td><em>選填</em></td>
+<td>string</td>
 <td>單次執行時間上限。預設10s；明確指定時須為正的Go duration，例如30s。</td>
 </tr>
 <tr>
 <td><code>spec.env</code></td>
+<td><em>選填</em></td>
+<td>object</td>
 <td>以變數名稱為鍵的額外環境變數，預設空。runner先設定自身PATH，缺少時使用內建路徑，再套用這些值；不繼承其他父程序變數。忽略空鍵及含=的鍵。</td>
 </tr>
 <tr>
 <td><code>spec.capabilities</code></td>
+<td><em>選填</em></td>
+<td>array</td>
 <td>能力宣告，預設空。接受observe.cloud、observe.providerPrivateIPs、propose.dynamicConfig、propose.providerAction、execute.providerAction。清查執行須有observe.providerPrivateIPs；供應商操作執行須有execute.providerAction；此清單本身不會啟動執行。</td>
 </tr>
 <tr>
 <td><code>spec.context</code></td>
+<td><em>選填</em></td>
+<td>object</td>
 <td>控制透過標準輸入傳入哪些設定資源的允許清單；預設空，不傳入設定。</td>
 </tr>
 <tr>
 <td><code>spec.context.resources</code></td>
+<td><em>選填</em></td>
+<td>array</td>
 <td>允許的資源識別清單，預設空；不展開萬用字元。</td>
 </tr>
 <tr>
 <td><code>spec.context.resources[].apiVersion</code></td>
+<td><strong>條件必填</strong></td>
+<td>string</td>
 <td>參照設定資源的API群組與版本；每項必填。</td>
 </tr>
 <tr>
 <td><code>spec.context.resources[].kind</code></td>
+<td><strong>條件必填</strong></td>
+<td>string</td>
 <td>參照設定資源的種類；每項必填。</td>
 </tr>
 <tr>
 <td><code>spec.context.resources[].name</code></td>
+<td><strong>條件必填</strong></td>
+<td>string</td>
 <td>參照設定資源的metadata.name；每項必填。</td>
 </tr>
 <tr>
 <td><code>spec.triggers</code></td>
+<td><em>選填</em></td>
+<td>array</td>
 <td>觸發宣告清單，預設空；目前runtime僅驗證與顯示，請參照上方限制。</td>
 </tr>
 <tr>
 <td><code>spec.triggers[].type</code></td>
+<td><strong>條件必填</strong></td>
+<td>string; enum=["interval", "event"]</td>
 <td>觸發類型；必須指定interval或event，無預設值。</td>
 </tr>
 <tr>
 <td><code>spec.triggers[].every</code></td>
+<td><em>選填</em></td>
+<td>string</td>
 <td>interval時必填，須為正的Go duration；event時此欄位不產生週期排程，無預設值。</td>
 </tr>
 <tr>
 <td><code>spec.triggers[].topic</code></td>
+<td><em>選填</em></td>
+<td>string</td>
 <td>事件主題宣告；選填，預設空，event時驗證器也不強制要求。這不是資源名稱。</td>
 </tr>
 </tbody>
@@ -106,7 +140,7 @@
 <p>此 Kind 未登錄一般狀態參照的允許欄位。</p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
 <ul>
 <li><a href="#指定條件與參照關係">指定條件與參照關係</a></li>
-<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#設定語法">設定語法</a></li>
 <li><a href="#欄位意義與預設值">欄位意義與預設值</a></li>
 <li><a href="#可參照的狀態欄位">可參照的狀態欄位</a></li>
 </ul>

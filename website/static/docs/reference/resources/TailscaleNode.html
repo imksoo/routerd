@@ -13,103 +13,140 @@
 <li>A present node reserves UDP 41641 against configured listener conflicts. The generated command uses tailscale up --timeout=30s. Applied/Rendered describes service application, while Running is reported only after observing BackendState=Running; neither proves an advertised subnet is reachable.</li>
 <li>FreeBSD rc.d refuses mutation of a pre-existing tailscaled process whose routerd ownership marker is absent. Linux uses the shared tailscaled.service and a routerd-tailscale-<name>.service enrollment unit. state: absent removes the enrollment unit; it is not a package-uninstall or tailnet node-deletion request.</li>
 </ul>
-<h2 id="yaml-definition">YAML definition</h2>
-<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
-<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+<h2 id="configuration-syntax">Configuration syntax</h2>
+<p>This is explanatory notation, not YAML to copy. Unbracketed fields are required within their parent; <code>[ ... ]</code> marks fields that can be omitted, subject to the conditions in the table. <code>&lt;type&gt;</code> is a placeholder, and <code>(a | b)</code> lists alternatives. Optional parents may contain required children. Conditional requirements, exclusions and runtime defaults are described below. Use the linked YAML example for an ordinary configuration.</p>
+<pre><code class="language-text">- apiVersion: net.routerd.net/v1alpha1
   kind: TailscaleNode
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    acceptDNS: true # optional; boolean
-    acceptRoutes: true # optional; boolean
-    advertiseExitNode: true # optional; boolean
-    advertiseRoutes: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    advertiseTags: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    authKey: &quot;&lt;string&gt;&quot; # optional; string
-    authKeyEnv: &quot;&lt;string&gt;&quot; # optional; string
-    authKeyFile: &quot;&lt;string&gt;&quot; # optional; string
-    hostname: &quot;&lt;string&gt;&quot; # optional; string
-    loginServer: &quot;&lt;string&gt;&quot; # optional; string
-    shieldsUp: true # optional; boolean
-    ssh: true # optional; boolean
-    state: &quot;&quot; # optional; string; enum=[&quot;&quot;, &quot;present&quot;, &quot;absent&quot;]
-    when: # optional; object
-      state: # optional; object
-        &quot;&lt;key&gt;&quot;: # optional; object
-          contains: &quot;&lt;string&gt;&quot; # optional; string
-          equals: &quot;&lt;string&gt;&quot; # optional; string
-          exists: true # optional; boolean
-          for: &quot;&lt;string&gt;&quot; # optional; string
-          in: # optional; array
-            - &quot;&lt;string&gt;&quot; # string
-          maxAge: &quot;&lt;string&gt;&quot; # optional; string
-          status: &quot;set&quot; # optional; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+    [ acceptDNS: &lt;boolean&gt; ]
+    [ acceptRoutes: &lt;boolean&gt; ]
+    [ advertiseExitNode: &lt;boolean&gt; ]
+    [ advertiseRoutes:
+        - &lt;string&gt;
+    ]
+    [ advertiseTags:
+        - &lt;string&gt;
+    ]
+    [ authKey: &lt;string&gt; ]
+    [ authKeyEnv: &lt;string&gt; ]
+    [ authKeyFile: &lt;string&gt; ]
+    [ hostname: &lt;string&gt; ]
+    [ loginServer: &lt;string&gt; ]
+    [ shieldsUp: &lt;boolean&gt; ]
+    [ ssh: &lt;boolean&gt; ]
+    [ state: (&quot;&quot; | &quot;present&quot; | &quot;absent&quot;) ]
+    [ when:
+        [ state:
+            [ &lt;name&gt;:
+                [ contains: &lt;string&gt; ]
+                [ equals: &lt;string&gt; ]
+                [ exists: &lt;boolean&gt; ]
+                [ for: &lt;string&gt; ]
+                [ in:
+                    - &lt;string&gt;
+                ]
+                [ maxAge: &lt;string&gt; ]
+                [ status: (&quot;set&quot; | &quot;unset&quot; | &quot;unknown&quot;) ]
+            ]
+        ]
+    ]
 </code></pre>
 <h2 id="field-meaning-and-default">Field meaning and default</h2>
+<p>Required children of optional objects apply only when their parent is used. Other exact conditions are in the explanation; bracketed alternatives may still require one choice.</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>Presence</th>
+<th>Type / constraints</th>
 <th>Field meaning and default</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.state</code></td>
+<td><em>Optional</em></td>
+<td>string; enum=["", "present", "absent"]</td>
 <td>present by default; absent removes the managed enrollment service. No package removal or control-server node deletion is performed by this field.</td>
 </tr>
 <tr>
 <td><code>spec.hostname</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional tailscale up --hostname value, not Router.metadata.name or an OS hostname change. Omitted leaves the flag absent.</td>
 </tr>
 <tr>
 <td><code>spec.loginServer</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional control-server URL for --login-server, for example a Headscale server. Omitted delegates to the Tailscale client configuration/default; routerd provides no URL default or resource lookup.</td>
 </tr>
 <tr>
 <td><code>spec.authKey</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional inline enrollment key; excludes authKeyEnv/authKeyFile. Omitted supplies no key flag unless another key source is configured; existing client login state or interactive enrollment requirements then apply.</td>
 </tr>
 <tr>
 <td><code>spec.authKeyEnv</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional environment variable name for the enrollment key, not the key itself. May select a variable from authKeyFile. Linux uses the generated service environment; this does not automatically copy routerd process environment into that service.</td>
 </tr>
 <tr>
 <td><code>spec.authKeyFile</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional absolute environment-file path on the router; selected variable defaults to TS_AUTHKEY. Use a simple unquoted NAME=value line for Linux/FreeBSD portability. Not a Secret resource reference.</td>
 </tr>
 <tr>
 <td><code>spec.advertiseExitNode</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false; true emits --advertise-exit-node. Does not approve exit-node use on the control server or make this router use another exit node.</td>
 </tr>
 <tr>
 <td><code>spec.advertiseRoutes</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional IPv4/IPv6 CIDR list passed as comma-separated --advertise-routes. Empty omits the flag, rather than explicitly passing an empty route list. Required control-server approval is separate.</td>
 </tr>
 <tr>
 <td><code>spec.advertiseTags</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional tag strings passed as comma-separated --advertise-tags. Validator rejects empty/whitespace entries but does not enforce a tag: prefix or verify server ACL permissions. Empty omits the flag.</td>
 </tr>
 <tr>
 <td><code>spec.acceptRoutes</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Optional boolean for --accept-routes. Omitted leaves the flag absent and delegates behavior to the Tailscale client; explicit false is emitted, unlike omission.</td>
 </tr>
 <tr>
 <td><code>spec.acceptDNS</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Optional boolean for --accept-dns. Omitted does not force either true or false; explicit values are passed to the client. This does not configure routerd DNSResolver/DNSForwarder resources.</td>
 </tr>
 <tr>
 <td><code>spec.ssh</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false omits the flag; true emits --ssh to request Tailscale SSH. This is separate from OS sshd and routerd management access.</td>
 </tr>
 <tr>
 <td><code>spec.shieldsUp</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Optional boolean for --shields-up; omission leaves the client flag unset, while explicit true/false is emitted.</td>
 </tr>
 <tr>
 <td><code>spec.when</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional common activation predicate; omission is unconditional. Consult common fields for state/all/any and field-reference rules. It gates the generated service rather than deleting a tailnet node.</td>
 </tr>
 </tbody>
@@ -121,7 +158,7 @@
 <p><a href="/examples/tailscale-exit-subnet.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
 <li><a href="#conditions-and-references">Conditions and references</a></li>
-<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#configuration-syntax">Configuration syntax</a></li>
 <li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 <li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
 </ul>

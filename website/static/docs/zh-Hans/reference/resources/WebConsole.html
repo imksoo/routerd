@@ -10,75 +10,100 @@
 <ul>
 <li>runtime选择第一个WebConsole，不为每项分别开启监听。listenAddressFrom解析值优先，listenAddress可作备用，两者不互斥。</li>
 </ul>
-<h2 id="yaml定义">YAML定义</h2>
-<p>此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。</p>
-<pre><code class="language-yaml">- apiVersion: system.routerd.net/v1alpha1
+<h2 id="配置语法">配置语法</h2>
+<p>这是说明用语法，不是可直接复制的YAML。未加括号的字段在父条目内必填；<code>[ ... ]</code>表示按条件可省略，<code>&lt;类型&gt;</code>为替换值，<code>(a | b)</code>表示选项。选填父条目内仍可能有必填子条目。条件必填、互斥与实际默认值请见下表；常规YAML请使用链接示例。</p>
+<pre><code class="language-text">- apiVersion: system.routerd.net/v1alpha1
   kind: WebConsole
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    basePath: &quot;&lt;string&gt;&quot; # 选填; string
-    enabled: true # 选填; boolean
-    links: # 选填; array
-      - # object
-        description: &quot;&lt;string&gt;&quot; # 选填; string
-        label: &quot;&lt;string&gt;&quot; # 必填; string
-        url: &quot;&lt;string&gt;&quot; # 必填; string
-    listenAddress: &quot;&lt;string&gt;&quot; # 选填; string
-    listenAddressFrom: # 选填; object
-      field: &quot;&lt;string&gt;&quot; # 选填; string
-      optional: true # 选填; boolean
-      resource: &quot;&lt;string&gt;&quot; # 必填; string
-    port: 1 # 选填; integer; minimum=1; maximum=65535
-    title: &quot;&lt;string&gt;&quot; # 选填; string
+    [ basePath: &lt;string&gt; ]
+    [ enabled: &lt;boolean&gt; ]
+    [ links:
+        -
+          [ description: &lt;string&gt; ]
+          label: &lt;string&gt;
+          url: &lt;string&gt;
+    ]
+    [ listenAddress: &lt;string&gt; ]
+    [ listenAddressFrom:
+        field: &lt;string&gt;
+        [ optional: &lt;boolean&gt; ]
+        resource: &lt;string&gt;
+    ]
+    [ port: &lt;integer&gt; ]
+    [ title: &lt;string&gt; ]
 </code></pre>
 <h2 id="字段含义与默认值">字段含义与默认值</h2>
+<p>选填父条目的必填子条目仅在使用父条目时需要。其他具体条件列于说明；<code>[ ... ]</code>选项仍可能需要择一。</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>指定要求</th>
+<th>类型与限制</th>
 <th>字段含义与默认值</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.enabled</code></td>
+<td><em>选填</em></td>
+<td>boolean</td>
 <td>存在WebConsole资源时默认true；false禁用所选控制台，没有资源则不开启监听。</td>
 </tr>
 <tr>
 <td><code>spec.listenAddress</code></td>
+<td><em>选填</em></td>
+<td>string</td>
 <td>备用绑定地址，默认127.0.0.1；非空白值须为IP，listenAddressFrom解析值优先。</td>
 </tr>
 <tr>
 <td><code>spec.listenAddressFrom</code></td>
+<td><em>选填</em></td>
+<td>object</td>
 <td>绑定IP来源，默认未指定；先读状态，再尝试支持的配置接口/地址解析。须有resource与field；无法解析且无listenAddress时，即使optional=true仍无法启动。</td>
 </tr>
 <tr>
 <td><code>spec.port</code></td>
+<td><em>选填</em></td>
+<td>integer; minimum=1; maximum=65535</td>
 <td>TCP端口，默认8080；解码后0也选默认，非零值须为1–65535。</td>
 </tr>
 <tr>
 <td><code>spec.basePath</code></td>
+<td><em>选填</em></td>
+<td>string</td>
 <td>HTTP路径前缀，默认/；非空值须以/开头，不可含NUL或换行。</td>
 </tr>
 <tr>
 <td><code>spec.title</code></td>
+<td><em>选填</em></td>
+<td>string</td>
 <td>控制台页面标题，默认routerd，不会重命名路由器或资源。</td>
 </tr>
 <tr>
 <td><code>spec.links</code></td>
+<td><em>选填</em></td>
+<td>array</td>
 <td>额外控制台链接，默认空；label或URL空白时显示阶段跳过。</td>
 </tr>
 <tr>
 <td><code>spec.links[].label</code></td>
+<td><strong>条件必填</strong></td>
+<td>string</td>
 <td>链接文字，无默认值，空白不显示。</td>
 </tr>
 <tr>
 <td><code>spec.links[].url</code></td>
+<td><strong>条件必填</strong></td>
+<td>string</td>
 <td>链接目标URL，无默认值，不是Kind/名称引用，会去除首尾空白。</td>
 </tr>
 <tr>
 <td><code>spec.links[].description</code></td>
+<td><em>选填</em></td>
+<td>string</td>
 <td>选填说明，默认空，显示时去除首尾空白。</td>
 </tr>
 </tbody>
@@ -90,7 +115,7 @@
 <p><a href="/examples/home-router-mgmt-protected.yaml">配置示例</a></p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
 <ul>
 <li><a href="#指定条件与引用关系">指定条件与引用关系</a></li>
-<li><a href="#yaml定义">YAML定义</a></li>
+<li><a href="#配置语法">配置语法</a></li>
 <li><a href="#字段含义与默认值">字段含义与默认值</a></li>
 <li><a href="#可引用的状态字段">可引用的状态字段</a></li>
 </ul>

@@ -12,76 +12,103 @@
 <li>For ipip/gre/fou/gue the bare underlay.interface must reference a declared TunnelInterface; validation does not check that its mode matches underlay.type. WireGuard may reference an externally managed device (warning rather than rejection). Other underlay devices must already be usable.</li>
 <li>nodeID/remote.nodeID and role are descriptors, not discovery, authentication, HA election or automatic topology matching. No when or dependsOn exists on this resource.</li>
 </ul>
-<h2 id="yaml-definition">YAML definition</h2>
-<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
-<pre><code class="language-yaml">- apiVersion: hybrid.routerd.net/v1alpha1
+<h2 id="configuration-syntax">Configuration syntax</h2>
+<p>This is explanatory notation, not YAML to copy. Unbracketed fields are required within their parent; <code>[ ... ]</code> marks fields that can be omitted, subject to the conditions in the table. <code>&lt;type&gt;</code> is a placeholder, and <code>(a | b)</code> lists alternatives. Optional parents may contain required children. Conditional requirements, exclusions and runtime defaults are described below. Use the linked YAML example for an ordinary configuration.</p>
+<pre><code class="language-text">- apiVersion: hybrid.routerd.net/v1alpha1
   kind: OverlayPeer
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    nodeID: &quot;&lt;string&gt;&quot; # Required; string
-    pathMTU: # optional; object
-      forceFragmentIPv4: true # optional; boolean
-    remote: # optional; object
-      address: &quot;&lt;string&gt;&quot; # optional; string
-      nodeID: &quot;&lt;string&gt;&quot; # optional; string
-    role: &quot;onprem&quot; # Required; string; enum=[&quot;onprem&quot;, &quot;cloud&quot;]
-    underlay: # Required; object
-      address: &quot;&lt;string&gt;&quot; # optional; string
-      interface: &quot;&lt;string&gt;&quot; # optional; string
-      type: &quot;wireguard&quot; # Required; string; enum=[&quot;wireguard&quot;, &quot;tailscale&quot;, &quot;ipsec&quot;, &quot;route&quot;, &quot;ipip&quot;, &quot;gre&quot;, &quot;fou&quot;, &quot;gue&quot;]
+    nodeID: &lt;string&gt;
+    [ pathMTU:
+        [ forceFragmentIPv4: &lt;boolean&gt; ]
+    ]
+    [ remote:
+        [ address: &lt;string&gt; ]
+        [ nodeID: &lt;string&gt; ]
+    ]
+    role: (&quot;onprem&quot; | &quot;cloud&quot;)
+    underlay:
+      [ address: &lt;string&gt; ]
+      [ interface: &lt;string&gt; ]
+      type: (&quot;wireguard&quot; | &quot;tailscale&quot; | &quot;ipsec&quot; | &quot;route&quot; | &quot;ipip&quot; | &quot;gre&quot; | &quot;fou&quot; | &quot;gue&quot;)
 </code></pre>
 <h2 id="field-meaning-and-default">Field meaning and default</h2>
+<p>Required children of optional objects apply only when their parent is used. Other exact conditions are in the explanation; bracketed alternatives may still require one choice.</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>Presence</th>
+<th>Type / constraints</th>
 <th>Field meaning and default</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.role</code></td>
+<td><strong>Required</strong></td>
+<td>string; enum=["onprem", "cloud"]</td>
 <td>Required onprem or cloud. No default; does not create cloud resources or choose a provider.</td>
 </tr>
 <tr>
 <td><code>spec.nodeID</code></td>
+<td><strong>Required</strong></td>
+<td>string</td>
 <td>Required nonblank local node identity label. Not resolved to a host or external account.</td>
 </tr>
 <tr>
 <td><code>spec.underlay</code></td>
+<td><strong>Required</strong></td>
+<td>object</td>
 <td>Required transport descriptor. Configure the actual network transport separately.</td>
 </tr>
 <tr>
 <td><code>spec.underlay.type</code></td>
+<td><strong>Required</strong></td>
+<td>string; enum=["wireguard", "tailscale", "ipsec", "route", "ipip", "gre", "fou", "gue"]</td>
 <td>Required wireguard/tailscale/ipsec/route/ipip/gre/fou/gue. Selects route lowering and MTU-overhead estimation, not daemon creation.</td>
 </tr>
 <tr>
 <td><code>spec.underlay.interface</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Device/logical interface used by generated IPv4Route; required for route expansion. Bare TunnelInterface name for tunnel modes; use actual OS device name for externally managed devices. No automatic interface discovery.</td>
 </tr>
 <tr>
 <td><code>spec.underlay.address</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional bare IPv4/IPv6 descriptor, validated as an IP. Current HybridRoute target derivation does not use it as gateway/local bind or assign it to the interface.</td>
 </tr>
 <tr>
 <td><code>spec.remote</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional remote descriptor, default empty. No peer registration or negotiation.</td>
 </tr>
 <tr>
 <td><code>spec.remote.nodeID</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional remote identity label; default empty, not used for live peer discovery or authorization.</td>
 </tr>
 <tr>
 <td><code>spec.remote.address</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional IP string. For ipsec route lowering, a parseable IPv4 value becomes gateway; invalid/IPv6/empty yields a device-only route. Other types do not use it as a gateway, and this field is not separately validated as an IP by OverlayPeer validation.</td>
 </tr>
 <tr>
 <td><code>spec.pathMTU</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional forwarded-path MTU options, default no force-fragment request. Does not encrypt the underlay.</td>
 </tr>
 <tr>
 <td><code>spec.pathMTU.forceFragmentIPv4</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false; true accepted only for wireguard/ipip/gre/fou/gue. Requests DF clearing for oversized IPv4 on matching derived forwarded paths using Linux nftables; not a global tunnel flag or IPv6 fragmentation. FreeBSD skips this nftables controller and has no equivalent DF-clear action in this path.</td>
 </tr>
 </tbody>
@@ -93,7 +120,7 @@
 <p><a href="/examples/hybrid-l3-fou.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
 <li><a href="#conditions-and-references">Conditions and references</a></li>
-<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#configuration-syntax">Configuration syntax</a></li>
 <li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 <li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
 </ul>

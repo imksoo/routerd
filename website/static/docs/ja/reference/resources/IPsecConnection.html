@@ -11,68 +11,91 @@
 <li>preSharedKeyとcertificateRefのどちらか一方が必須です。certificateRefはswanctlのlocal.certsに直接渡し、routerdのリソースとしては解決しません。</li>
 <li>集約設定はLinuxの/etc/routerd/swanctl、FreeBSDの/usr/local/etc/routerd/swanctlに置き、swanctl --load-all --fileで鍵を含む管理対象全体を同期します。証明書・信頼元・対応秘密鍵は、その設定の認証情報ストアに別途配置が必要です。</li>
 </ul>
-<h2 id="yaml定義">YAML定義</h2>
-<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
-<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+<h2 id="設定構文">設定構文</h2>
+<p>説明用の構文表記であり、そのままコピーするYAMLではありません。囲みのない項目は親の中で必須、<code>[ ... ]</code>は条件に応じて省略できる項目、<code>&lt;型&gt;</code>は差し替え値、<code>(a | b)</code>は選択肢です。任意の親にも必須の子があります。条件付き必須・排他・実効既定値は下の表を確認し、通常のYAMLはリンク先の設定例を使ってください。</p>
+<pre><code class="language-text">- apiVersion: net.routerd.net/v1alpha1
   kind: IPsecConnection
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    certificateRef: &quot;&lt;string&gt;&quot; # 任意; string
-    cloudProviderHint: &quot;&quot; # 任意; string; enum=[&quot;&quot;, &quot;aws&quot;, &quot;azure&quot;, &quot;gcp&quot;]
-    leftSubnet: &quot;&lt;string&gt;&quot; # 必須; string
-    localAddress: &quot;&lt;string&gt;&quot; # 必須; string
-    phase1Proposals: # 任意; array
-      - &quot;&lt;string&gt;&quot; # string
-    phase2Proposals: # 任意; array
-      - &quot;&lt;string&gt;&quot; # string
-    preSharedKey: &quot;&lt;string&gt;&quot; # 任意; string
-    remoteAddress: &quot;&lt;string&gt;&quot; # 必須; string
-    rightSubnet: &quot;&lt;string&gt;&quot; # 必須; string
+    [ certificateRef: &lt;string&gt; ]
+    [ cloudProviderHint: (&quot;&quot; | &quot;aws&quot; | &quot;azure&quot; | &quot;gcp&quot;) ]
+    leftSubnet: &lt;string&gt;
+    localAddress: &lt;string&gt;
+    [ phase1Proposals:
+        - &lt;string&gt;
+    ]
+    [ phase2Proposals:
+        - &lt;string&gt;
+    ]
+    [ preSharedKey: &lt;string&gt; ]
+    remoteAddress: &lt;string&gt;
+    rightSubnet: &lt;string&gt;
 </code></pre>
 <h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<p>任意の親の必須項目は、親を使う場合に必要です。それ以外の具体的な条件は説明欄に記載します。<code>[ ... ]</code>で囲まれた選択肢も、いずれか一方が必要な場合があります。</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>指定要否</th>
+<th>型・制約</th>
 <th>項目の意味と既定値</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.localAddress</code></td>
+<td><strong>必須</strong></td>
+<td>string</td>
 <td>必須のローカル終端IPアドレスです。IPv4・IPv6を使え、ホスト名・インターフェース参照ではありません。</td>
 </tr>
 <tr>
 <td><code>spec.remoteAddress</code></td>
+<td><strong>必須</strong></td>
+<td>string</td>
 <td>必須のリモート終端IPv4・IPv6アドレスです。検証は両終端・トラフィックセレクター間のアドレスファミリー一致までは確認しません。</td>
 </tr>
 <tr>
 <td><code>spec.preSharedKey</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>string</td>
 <td>IKEの共通鍵そのものです。certificateRefを使わない場合は必須で、既定値・ファイル・環境変数参照はありません。管理するswanctlのsecrets節に出力します。</td>
 </tr>
 <tr>
 <td><code>spec.certificateRef</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>string</td>
 <td>strongSwanのlocal.certsが扱う証明書名・パスです。preSharedKeyを使わない場合に必須で、相手認証をpubkeyにします。証明書の作成やrouterdのSecret参照ではありません。</td>
 </tr>
 <tr>
 <td><code>spec.phase1Proposals</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>IKE proposal一覧で、既定は[aes256-sha256-modp2048]です。指定一覧をそのままカンマで結合し、アルゴリズムの対応可否はrouterdで検証しません。</td>
 </tr>
 <tr>
 <td><code>spec.phase2Proposals</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>ESP proposal一覧で、既定は[aes256-sha256]です。netという子接続に適用し、アルゴリズムの妥当性は読み込み時にstrongSwanが確認します。</td>
 </tr>
 <tr>
 <td><code>spec.leftSubnet</code></td>
+<td><strong>必須</strong></td>
+<td>string</td>
 <td>必須のローカルトラフィックセレクターCIDRです。IPv4・IPv6を使え、local_tsに出力します。</td>
 </tr>
 <tr>
 <td><code>spec.rightSubnet</code></td>
+<td><strong>必須</strong></td>
+<td>string</td>
 <td>必須のリモートトラフィックセレクターCIDRです。IPv4・IPv6を使え、remote_tsに出力します。</td>
 </tr>
 <tr>
 <td><code>spec.cloudProviderHint</code></td>
+<td><em>任意</em></td>
+<td>string; enum=["", "aws", "azure", "gcp"]</td>
 <td>任意のaws・azure・gcpラベルで、既定は空です。観測結果には載せますが、proposal・認証情報・swanctl生成には影響せず、クラウド資源も作成しません。</td>
 </tr>
 </tbody>
@@ -83,7 +106,7 @@
 <p><code>phase</code></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
 <ul>
 <li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
-<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#設定構文">設定構文</a></li>
 <li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
 <li><a href="#状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</a></li>
 </ul>

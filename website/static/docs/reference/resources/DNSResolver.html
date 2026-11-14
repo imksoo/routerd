@@ -12,128 +12,177 @@
 <li>Omitting listen or using an empty list normalizes to 127.0.0.1:5053. Each endpoint serves both UDP and TCP. Do not expose an unrestricted recursive resolver to untrusted networks.</li>
 <li>Static and resolved listen addresses are merged and deduplicated. Missing required dynamic addresses mark dependencies as waiting but do not stop other usable addresses; with no resolved listeners the resolver stays Pending.</li>
 </ul>
-<h2 id="yaml-definition">YAML definition</h2>
-<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
-<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+<h2 id="configuration-syntax">Configuration syntax</h2>
+<p>This is explanatory notation, not YAML to copy. Unbracketed fields are required within their parent; <code>[ ... ]</code> marks fields that can be omitted, subject to the conditions in the table. <code>&lt;type&gt;</code> is a placeholder, and <code>(a | b)</code> lists alternatives. Optional parents may contain required children. Conditional requirements, exclusions and runtime defaults are described below. Use the linked YAML example for an ordinary configuration.</p>
+<pre><code class="language-text">- apiVersion: net.routerd.net/v1alpha1
   kind: DNSResolver
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    cache: # optional; object
-      enabled: true # optional; boolean
-      maxEntries: 0 # optional; integer; minimum=0
-      maxTTL: &quot;&lt;string&gt;&quot; # optional; string
-      minTTL: &quot;&lt;string&gt;&quot; # optional; string
-      negativeTTL: &quot;&lt;string&gt;&quot; # optional; string
-    listen: # Required; array
-      - # object
-        addressFrom: # optional; array
-          - # object
-            field: &quot;&lt;string&gt;&quot; # optional; string
-            optional: true # optional; boolean
-            resource: &quot;&lt;string&gt;&quot; # Required; string
-        addresses: # optional; array
-          - &quot;&lt;string&gt;&quot; # string
-        name: &quot;&lt;string&gt;&quot; # optional; string
-        port: 1 # optional; integer; minimum=1; maximum=65535
-        sources: # optional; array
-          - &quot;&lt;string&gt;&quot; # string
-    metrics: # optional; object
-      perUpstream: true # optional; boolean
-    queryLog: # optional; object
-      enabled: true # optional; boolean
-      path: &quot;&lt;string&gt;&quot; # optional; string
-    when: # optional; object
-      state: # optional; object
-        &quot;&lt;key&gt;&quot;: # optional; object
-          contains: &quot;&lt;string&gt;&quot; # optional; string
-          equals: &quot;&lt;string&gt;&quot; # optional; string
-          exists: true # optional; boolean
-          for: &quot;&lt;string&gt;&quot; # optional; string
-          in: # optional; array
-            - &quot;&lt;string&gt;&quot; # string
-          maxAge: &quot;&lt;string&gt;&quot; # optional; string
-          status: &quot;set&quot; # optional; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+    [ cache:
+        [ enabled: &lt;boolean&gt; ]
+        [ maxEntries: &lt;integer&gt; ]
+        [ maxTTL: &lt;string&gt; ]
+        [ minTTL: &lt;string&gt; ]
+        [ negativeTTL: &lt;string&gt; ]
+    ]
+    listen:
+      -
+        [ addressFrom:
+            -
+              field: &lt;string&gt;
+              [ optional: &lt;boolean&gt; ]
+              resource: &lt;string&gt;
+        ]
+        [ addresses:
+            - &lt;string&gt;
+        ]
+        [ name: &lt;string&gt; ]
+        [ port: &lt;integer&gt; ]
+        [ sources:
+            - &lt;string&gt;
+        ]
+    [ metrics:
+        [ perUpstream: &lt;boolean&gt; ]
+    ]
+    [ queryLog:
+        [ enabled: &lt;boolean&gt; ]
+        [ path: &lt;string&gt; ]
+    ]
+    [ when:
+        [ state:
+            [ &lt;name&gt;:
+                [ contains: &lt;string&gt; ]
+                [ equals: &lt;string&gt; ]
+                [ exists: &lt;boolean&gt; ]
+                [ for: &lt;string&gt; ]
+                [ in:
+                    - &lt;string&gt;
+                ]
+                [ maxAge: &lt;string&gt; ]
+                [ status: (&quot;set&quot; | &quot;unset&quot; | &quot;unknown&quot;) ]
+            ]
+        ]
+    ]
 </code></pre>
 <h2 id="field-meaning-and-default">Field meaning and default</h2>
+<p>Required children of optional objects apply only when their parent is used. Other exact conditions are in the explanation; bracketed alternatives may still require one choice.</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>Presence</th>
+<th>Type / constraints</th>
 <th>Field meaning and default</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.listen</code></td>
+<td><strong>Required</strong></td>
+<td>array</td>
 <td>Listener list; normalization supplies a loopback endpoint when empty.</td>
 </tr>
 <tr>
 <td><code>spec.listen[].name</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional label; default listen-0, listen-1, … in list order.</td>
 </tr>
 <tr>
 <td><code>spec.listen[].addresses</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Literal IPv4/IPv6 addresses without ports or CIDR. If both addresses and addressFrom are empty, defaults to [127.0.0.1].</td>
 </tr>
 <tr>
 <td><code>spec.listen[].addressFrom</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional list of common resource/field/optional value sources. Existing resource and explicit provided field required. Declared IPv4StaticAddress.address can be read before status exists; CIDR values are reduced to addresses. optional defaults false; missing optional values are skipped.</td>
 </tr>
 <tr>
 <td><code>spec.listen[].port</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=1; maximum=65535</td>
 <td>Optional port 1–65535; omitted/0 normalizes to 5053.</td>
 </tr>
 <tr>
 <td><code>spec.listen[].sources</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional DNSForwarder names attached to this resolver. Empty selects all its forwarders. Use bare metadata.name: validation accepts qualified names, but the daemon matches bare names literally and does not strip a prefix. List order does not reorder the forwarders.</td>
 </tr>
 <tr>
 <td><code>spec.cache</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional response-cache settings. Caches upstream replies, not local-zone responses; disabled by default.</td>
 </tr>
 <tr>
 <td><code>spec.cache.enabled</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false. true enables the in-memory response cache.</td>
 </tr>
 <tr>
 <td><code>spec.cache.maxEntries</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=0</td>
 <td>Default 10000 when omitted/0; nonnegative schema value. Bounds cached entries, not bytes.</td>
 </tr>
 <tr>
 <td><code>spec.cache.minTTL</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional Go duration lower bound on cache lifetime. Empty imposes no lower bound; invalid duration is ignored by this path rather than rejected. Does not rewrite record TTLs in the response.</td>
 </tr>
 <tr>
 <td><code>spec.cache.maxTTL</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional Go duration upper bound, applied after minTTL; empty imposes none and invalid duration is ignored.</td>
 </tr>
 <tr>
 <td><code>spec.cache.negativeTTL</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional Go duration replacing lifetime for successful empty answers or NXDOMAIN, after min/max bounds. Default empty uses 60s before those bounds. SERVFAIL and other transient failures are not cached.</td>
 </tr>
 <tr>
 <td><code>spec.metrics</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Metrics options; no current runtime consumer for perUpstream.</td>
 </tr>
 <tr>
 <td><code>spec.metrics.perUpstream</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Decoded boolean default false; does not currently enable or disable per-upstream metrics.</td>
 </tr>
 <tr>
 <td><code>spec.queryLog</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional query logging in a SQLite database; disabled by default.</td>
 </tr>
 <tr>
 <td><code>spec.queryLog.enabled</code></td>
+<td><em>Optional</em></td>
+<td>boolean</td>
 <td>Default false; true records queries using queryLog.path.</td>
 </tr>
 <tr>
 <td><code>spec.queryLog.path</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>When enabled, omitted/blank defaults to /var/lib/routerd/dns-queries.db. This is a database path, not a text log.</td>
 </tr>
 <tr>
 <td><code>spec.when</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional common state condition, default unconditional. See common fields for state/all/any and schema limitations.</td>
 </tr>
 </tbody>
@@ -145,7 +194,7 @@
 <p><a href="/examples/example-dslite-home.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
 <li><a href="#conditions-and-references">Conditions and references</a></li>
-<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#configuration-syntax">Configuration syntax</a></li>
 <li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 <li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
 </ul>

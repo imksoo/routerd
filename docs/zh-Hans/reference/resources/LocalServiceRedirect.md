@@ -13,50 +13,56 @@
 - 本机监听服务与防火墙许可须另行配置。重定向不启动 DNSResolver 或其他程序，也不新增通用允许规则。按引用集合的地址族生成 IPv4/IPv6 规则；DNS 集合由 IPAddressSet 更新。此实现生成 nftables 规则，不生成 FreeBSD PF 重定向。
 - 规则按资源 ID 再按名称排序，不按 YAML 列表顺序。省略名称时使用从 0 开始的十进制索引字符串，字典序可能使 10 在 2 前面。条件重叠时请明确命名以控制顺序。
 
-## YAML定义
+## 配置语法
 
-此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。
+这是说明用语法，不是可直接复制的YAML。未加括号的字段在父条目内必填；`[ ... ]`表示按条件可省略，`<类型>`为替换值，`(a | b)`表示选项。选填父条目内仍可能有必填子条目。条件必填、互斥与实际默认值请见下表；常规YAML请使用链接示例。
 
-```yaml
+```text
 - apiVersion: firewall.routerd.net/v1alpha1
   kind: LocalServiceRedirect
   metadata:
     name: "<name>"
   spec:
-    interface: "<string>" # 必填; string
-    rules: # 必填; array
-      - # object
-        destinationPort: 1 # 必填; integer; minimum=1; maximum=65535
-        destinationSetRef: "<string>" # 必填; string
-        name: "<string>" # 选填; string
-        protocols: # 必填; array
-          - "<string>" # string
-        redirectPort: 1 # 必填; integer; minimum=1; maximum=65535
-    when: # 选填; object
-      state: # 选填; object
-        "<key>": # 选填; object
-          contains: "<string>" # 选填; string
-          equals: "<string>" # 选填; string
-          exists: true # 选填; boolean
-          for: "<string>" # 选填; string
-          in: # 选填; array
-            - "<string>" # string
-          maxAge: "<string>" # 选填; string
-          status: "set" # 选填; string; enum=["set", "unset", "unknown"]
+    interface: <string>
+    rules:
+      -
+        destinationPort: <integer>
+        destinationSetRef: <string>
+        [ name: <string> ]
+        protocols:
+          - <string>
+        redirectPort: <integer>
+    [ when:
+        [ state:
+            [ <name>:
+                [ contains: <string> ]
+                [ equals: <string> ]
+                [ exists: <boolean> ]
+                [ for: <string> ]
+                [ in:
+                    - <string>
+                ]
+                [ maxAge: <string> ]
+                [ status: ("set" | "unset" | "unknown") ]
+            ]
+        ]
+    ]
 ```
 
 ## 字段含义与默认值
 
-| YAML | 字段含义与默认值 |
-| --- | --- |
-| `spec.interface` | 必填，同一 Router 声明的逻辑接口，解析为 OS 接收接口名称。无默认值或状态来源。 |
-| `spec.rules` | 必填且非空的重定向列表。协议、地址集合及端口不从其他规则继承。 |
-| `spec.rules[].name` | 可选的排序／注释标签，默认为从 0 开始的十进制索引。不是资源引用，此处不拒绝重复名称。 |
-| `spec.rules[].protocols` | 必填且非空的 tcp/udp 子集，拒绝重复或其他协议。不会默认同时启用两者。 |
-| `spec.rules[].destinationSetRef` | 必填，同一 Router 声明的 IPAddressSet 裸名称或 IPAddressSet/name。不支持字段选择或内嵌地址列表。 |
-| `spec.rules[].destinationPort` | 必填的原目标端口 1–65535，无范围语法或默认值。 |
-| `spec.rules[].redirectPort` | 必填的本机服务端口 1–65535。重定向后需有可连接的监听服务，YAML 验证不检查该服务。 |
-| `spec.when` | 可选的通用启用条件，默认无条件。state/all/any 与引用限制请见通用字段。 |
+选填父条目的必填子条目仅在使用父条目时需要。其他具体条件列于说明；`[ ... ]`选项仍可能需要择一。
+
+| YAML | 指定要求 | 类型与限制 | 字段含义与默认值 |
+| --- | --- | --- | --- |
+| `spec.interface` | **必填** | string | 必填，同一 Router 声明的逻辑接口，解析为 OS 接收接口名称。无默认值或状态来源。 |
+| `spec.rules` | **必填** | array | 必填且非空的重定向列表。协议、地址集合及端口不从其他规则继承。 |
+| `spec.rules[].name` | *选填* | string | 可选的排序／注释标签，默认为从 0 开始的十进制索引。不是资源引用，此处不拒绝重复名称。 |
+| `spec.rules[].protocols` | **必填** | array | 必填且非空的 tcp/udp 子集，拒绝重复或其他协议。不会默认同时启用两者。 |
+| `spec.rules[].destinationSetRef` | **必填** | string | 必填，同一 Router 声明的 IPAddressSet 裸名称或 IPAddressSet/name。不支持字段选择或内嵌地址列表。 |
+| `spec.rules[].destinationPort` | **必填** | integer; minimum=1; maximum=65535 | 必填的原目标端口 1–65535，无范围语法或默认值。 |
+| `spec.rules[].redirectPort` | **必填** | integer; minimum=1; maximum=65535 | 必填的本机服务端口 1–65535。重定向后需有可连接的监听服务，YAML 验证不检查该服务。 |
+| `spec.when` | *选填* | object | 可选的通用启用条件，默认无条件。state/all/any 与引用限制请见通用字段。 |
 
 实现: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate_firewall.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_firewall.go) · [pkg/config/validate.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go) · [pkg/config/diagnostics.go](https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go) · [pkg/render/local_service_redirect.go](https://github.com/imksoo/routerd/blob/main/pkg/render/local_service_redirect.go) · [pkg/render/nftables.go](https://github.com/imksoo/routerd/blob/main/pkg/render/nftables.go) · [pkg/controller/chain/ipaddressset.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/ipaddressset.go)
 

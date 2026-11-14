@@ -12,267 +12,377 @@
 <li>生成RRクライアント・direct受信は/32と相手識別communityを必須化し、他既知ノード識別を禁止します。directのprefixはそのleafの許可所有/32へ置換し、空なら全拒否・nextHopRewriteはpeer-addressです。directプロファイルではRR側もpeer-addressに正規化します。</li>
 <li>ローカルMobilityPoolのないRRクライアントでは明示IPv4受信prefixと、長さ省略または両方32が必要です。FreeBSDはgifN・greNと明示peerAddress、Linuxは短縮トンネル名を生成します。生成成功はトンネル・BGP疎通の証明ではありません。</li>
 </ul>
-<h2 id="yaml定義">YAML定義</h2>
-<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
-<pre><code class="language-yaml">- apiVersion: mobility.routerd.net/v1alpha1
+<h2 id="設定構文">設定構文</h2>
+<p>説明用の構文表記であり、そのままコピーするYAMLではありません。囲みのない項目は親の中で必須、<code>[ ... ]</code>は条件に応じて省略できる項目、<code>&lt;型&gt;</code>は差し替え値、<code>(a | b)</code>は選択肢です。任意の親にも必須の子があります。条件付き必須・排他・実効既定値は下の表を確認し、通常のYAMLはリンク先の設定例を使ってください。</p>
+<pre><code class="language-text">- apiVersion: mobility.routerd.net/v1alpha1
   kind: SAMTransportProfile
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    addressingMode: &quot;&quot; # 任意; string; enum=[&quot;&quot;, &quot;edge-index&quot;, &quot;pair-stable&quot;]
-    bgp: # 必須; object
-      bfd: # 任意; object
-        detectMultiplier: 1 # 任意; integer; minimum=1; maximum=50
-        enabled: true # 任意; boolean
-        interface: &quot;&lt;string&gt;&quot; # 任意; string
-        minRx: &quot;&lt;string&gt;&quot; # 任意; string
-        minTx: &quot;&lt;string&gt;&quot; # 任意; string
-        profile: &quot;&quot; # 任意; string; enum=[&quot;&quot;, &quot;fast&quot;, &quot;normal&quot;, &quot;slow&quot;]
-      convergenceProfile: &quot;&quot; # 任意; string; enum=[&quot;&quot;, &quot;default&quot;, &quot;fast&quot;, &quot;stable&quot;]
-      directLocalPreference: 0 # 任意; integer
-      ebgpMultihop: 0 # 任意; integer; minimum=0; maximum=255
-      exportPolicy: # 任意; object
-        allowedPrefixes: # 任意; array
-          - &quot;&lt;string&gt;&quot; # string
-      generatePeers: true # 任意; boolean
-      importPolicy: # 任意; object
-        allowedPrefixLengthMax: 0 # 任意; integer; minimum=0; maximum=128
-        allowedPrefixLengthMin: 0 # 任意; integer; minimum=0; maximum=128
-        allowedPrefixes: # 任意; array
-          - &quot;&lt;string&gt;&quot; # string
-        forbiddenCommunities: # 任意; array
-          - &quot;&lt;string&gt;&quot; # string
-        localPreference: 0 # 任意; integer
-        nextHopRewrite: &quot;&quot; # 任意; string; enum=[&quot;&quot;, &quot;peer-address&quot;, &quot;unchanged&quot;]
-        requiredCommunities: # 任意; array
-          - &quot;&lt;string&gt;&quot; # string
-      peerASN: 1 # 必須; integer; minimum=1
-      routeReflectorClient: true # 任意; boolean
-      routeReflectorClusterID: &quot;&lt;string&gt;&quot; # 任意; string
-      routerRef: &quot;&lt;string&gt;&quot; # 必須; string
-      timers: # 任意; object
-        profile: &quot;&quot; # 任意; string; enum=[&quot;&quot;, &quot;default&quot;, &quot;fast&quot;, &quot;slow&quot;]
-      timersPreset: &quot;&quot; # 任意; string; enum=[&quot;&quot;, &quot;default&quot;, &quot;fast&quot;, &quot;slow&quot;]
-    encapDport: 1 # 任意; integer; minimum=1; maximum=65535
-    encapSport: 1 # 任意; integer; minimum=1; maximum=65535
-    encryption: &quot;&quot; # 任意; string; enum=[&quot;&quot;, &quot;none&quot;, &quot;wireguard&quot;]
-    innerPrefix: &quot;&lt;string&gt;&quot; # 必須; string
-    localEndpoint: &quot;&lt;string&gt;&quot; # 任意; string
-    localEndpointFrom: # 任意; object
-      field: &quot;&lt;string&gt;&quot; # 任意; string
-      optional: true # 任意; boolean
-      resource: &quot;&lt;string&gt;&quot; # 必須; string
-    mode: &quot;ipip&quot; # 必須; string; enum=[&quot;ipip&quot;, &quot;gre&quot;, &quot;fou&quot;, &quot;gue&quot;]
-    peersFrom: # 任意; array
-      - # object
-        direct: true # 任意; boolean
-        nodeRefs: # 任意; array
-          - &quot;&lt;string&gt;&quot; # string
-        optional: true # 任意; boolean
-        resource: &quot;&lt;string&gt;&quot; # 必須; string
-    publishPeerGroup: true # 任意; boolean
-    selfNodeRef: &quot;&lt;string&gt;&quot; # 必須; string
-    underlayInterface: &quot;&lt;string&gt;&quot; # 必須; string
+    [ addressingMode: (&quot;&quot; | &quot;edge-index&quot; | &quot;pair-stable&quot;) ]
+    bgp:
+      [ bfd:
+          [ detectMultiplier: &lt;integer&gt; ]
+          [ enabled: &lt;boolean&gt; ]
+          [ interface: &lt;string&gt; ]
+          [ minRx: &lt;string&gt; ]
+          [ minTx: &lt;string&gt; ]
+          [ profile: (&quot;&quot; | &quot;fast&quot; | &quot;normal&quot; | &quot;slow&quot;) ]
+      ]
+      [ convergenceProfile: (&quot;&quot; | &quot;default&quot; | &quot;fast&quot; | &quot;stable&quot;) ]
+      [ directLocalPreference: &lt;integer&gt; ]
+      [ ebgpMultihop: &lt;integer&gt; ]
+      [ exportPolicy:
+          [ allowedPrefixes:
+              - &lt;string&gt;
+          ]
+      ]
+      [ generatePeers: &lt;boolean&gt; ]
+      [ importPolicy:
+          [ allowedPrefixLengthMax: &lt;integer&gt; ]
+          [ allowedPrefixLengthMin: &lt;integer&gt; ]
+          [ allowedPrefixes:
+              - &lt;string&gt;
+          ]
+          [ forbiddenCommunities:
+              - &lt;string&gt;
+          ]
+          [ localPreference: &lt;integer&gt; ]
+          [ nextHopRewrite: (&quot;&quot; | &quot;peer-address&quot; | &quot;unchanged&quot;) ]
+          [ requiredCommunities:
+              - &lt;string&gt;
+          ]
+      ]
+      peerASN: &lt;integer&gt;
+      [ routeReflectorClient: &lt;boolean&gt; ]
+      [ routeReflectorClusterID: &lt;string&gt; ]
+      routerRef: &lt;string&gt;
+      [ timers:
+          [ profile: (&quot;&quot; | &quot;default&quot; | &quot;fast&quot; | &quot;slow&quot;) ]
+      ]
+      [ timersPreset: (&quot;&quot; | &quot;default&quot; | &quot;fast&quot; | &quot;slow&quot;) ]
+    [ encapDport: &lt;integer&gt; ]
+    [ encapSport: &lt;integer&gt; ]
+    [ encryption: (&quot;&quot; | &quot;none&quot; | &quot;wireguard&quot;) ]
+    innerPrefix: &lt;string&gt;
+    [ localEndpoint: &lt;string&gt; ]
+    [ localEndpointFrom:
+        field: &lt;string&gt;
+        [ optional: &lt;boolean&gt; ]
+        resource: &lt;string&gt;
+    ]
+    mode: (&quot;ipip&quot; | &quot;gre&quot; | &quot;fou&quot; | &quot;gue&quot;)
+    [ peersFrom:
+        -
+          [ direct: &lt;boolean&gt; ]
+          [ nodeRefs:
+              - &lt;string&gt;
+          ]
+          [ optional: &lt;boolean&gt; ]
+          resource: &lt;string&gt;
+    ]
+    [ publishPeerGroup: &lt;boolean&gt; ]
+    selfNodeRef: &lt;string&gt;
+    underlayInterface: &lt;string&gt;
 </code></pre>
 <h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<p>任意の親の必須項目は、親を使う場合に必要です。それ以外の具体的な条件は説明欄に記載します。<code>[ ... ]</code>で囲まれた選択肢も、いずれか一方が必要な場合があります。</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>指定要否</th>
+<th>型・制約</th>
 <th>項目の意味と既定値</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.selfNodeRef</code></td>
+<td><strong>必須</strong></td>
+<td>string</td>
 <td>必須の安定した自ノードnodeRefです。ホスト名・router IDから推定しません。</td>
 </tr>
 <tr>
 <td><code>spec.mode</code></td>
+<td><strong>必須</strong></td>
+<td>string; enum=["ipip", "gre", "fou", "gue"]</td>
 <td>必須のipip・gre・fou・gueです。FreeBSDはipip/gif・greのみで、fou・gueはLinuxが必要です。生成トンネル自体は暗号化しません。</td>
 </tr>
 <tr>
 <td><code>spec.encryption</code></td>
+<td><em>任意</em></td>
+<td>string; enum=["", "none", "wireguard"]</td>
 <td>既定・省略はnoneです。wireguardならノードのwireGuard.transportEndpointを優先します。秘密鍵・ローカルWireGuardInterfaceは生成せず、下位WireGuardは別途設定します。</td>
 </tr>
 <tr>
 <td><code>spec.innerPrefix</code></td>
+<td><strong>必須</strong></td>
+<td>string</td>
 <td>必須の長さ31以下のIPv4 CIDRです。/31の辺へ分割するため、トポロジーに十分な枠が必要です。pair-stableの衝突時は終端を移動せずエラーにします。</td>
 </tr>
 <tr>
 <td><code>spec.addressingMode</code></td>
+<td><em>任意</em></td>
+<td>string; enum=["", "edge-index", "pair-stable"]</td>
 <td>既定edge-indexは並べ替えた辺へ/31を割り当て、トポロジー変更で番号が変わり得ます。pair-stableはinnerPrefixと順不同ノード対のハッシュで固定枠を選び、direct参照で必須です。</td>
 </tr>
 <tr>
 <td><code>spec.underlayInterface</code></td>
+<td><strong>必須</strong></td>
+<td>string</td>
 <td>必須の宣言済み論理インターフェースです。生成トンネルとリモート終端/32デバイス経路に使い、生成トンネルはtrustedUnderlay:trueです。</td>
 </tr>
 <tr>
 <td><code>spec.localEndpoint</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>string</td>
 <td>ローカル外側IPv4の固定値です。localEndpointFromとどちらか一方が必須で、インターフェースアドレスの自動選択はありません。</td>
 </tr>
 <tr>
 <td><code>spec.localEndpointFrom</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>object</td>
 <td>localEndpoint固定値の代わりの状態参照です。共通resource・field規則に従い、未解決なら依存トランスポートは保留です。</td>
 </tr>
 <tr>
 <td><code>spec.localEndpointFrom.resource</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>string</td>
 <td>参照利用時に必須の既存Kind/nameです。</td>
 </tr>
 <tr>
 <td><code>spec.localEndpointFrom.field</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>string</td>
 <td>currentAddress等の参照元提供フィールドが必須です。</td>
 </tr>
 <tr>
 <td><code>spec.localEndpointFrom.optional</code></td>
+<td><em>任意</em></td>
+<td>boolean</td>
 <td>既定falseです。参照検証を省略せず、未解決時の終端補完もしません。</td>
 </tr>
 <tr>
 <td><code>spec.encapSport</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>integer; minimum=1; maximum=65535</td>
 <td>fou・gueで必須のUDP送信元ポート1～65535です。ipip・greでは禁止（省略・0）です。</td>
 </tr>
 <tr>
 <td><code>spec.encapDport</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>integer; minimum=1; maximum=65535</td>
 <td>fou・gueで必須のUDP宛先ポート1～65535です。ipip・greでは禁止で、自動既定ポートはありません。</td>
 </tr>
 <tr>
 <td><code>spec.peersFrom</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>array</td>
 <td>順序付きトポロジー参照元です。publishPeerGroup:true以外は1件以上必須です。自身はピアから除きますが共有トポロジーには含め、後の重複ノードが先の情報を置換し得ます。</td>
 </tr>
 <tr>
 <td><code>spec.peersFrom[].resource</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>string</td>
 <td>必須のSAMNodeSet/name・SAMPeerGroup/name・SAMEnrollmentPolicy/name・SAMRRSet/nameです。NodeSetは静的で、実行時参照は許可済み・共有スナップショットを供給します。</td>
 </tr>
 <tr>
 <td><code>spec.peersFrom[].optional</code></td>
+<td><em>任意</em></td>
+<td>boolean</td>
 <td>既定falseです。非optional参照元欠落は保留です。directの利用不能・非互換でも利用可能なRRピアは除きません。</td>
 </tr>
 <tr>
 <td><code>spec.peersFrom[].direct</code></td>
+<td><em>任意</em></td>
+<td>boolean</td>
 <td>既定falseです。trueは必須SAMRRSetに続く最後のSAMPeerGroupのみで、後述のdirect条件が適用されます。</td>
 </tr>
 <tr>
 <td><code>spec.peersFrom[].nodeRefs</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>任意の空・重複なしnodeRef選択一覧で、省略時は参照元の有効ノード全体です。ローカル隣接を絞るだけで、共有トポロジー自体の置換ではありません。</td>
 </tr>
 <tr>
 <td><code>spec.publishPeerGroup</code></td>
+<td><em>任意</em></td>
+<td>boolean</td>
 <td>既定falseです。trueなら自終端を実行時SAMPeerGroup/&lt;本プロファイル名&gt;として公開し、peersFrom空を許可します。秘密認証情報は公開しません。</td>
 </tr>
 <tr>
 <td><code>spec.bgp</code></td>
+<td><strong>必須</strong></td>
+<td>object</td>
 <td>必須の生成ピア設定です。参照BGPRouterは既存のものが必要です。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.generatePeers</code></td>
+<td><em>任意</em></td>
+<td>boolean</td>
 <td>既定trueです。falseはBGP・BFDを生成せずトランスポートのみ作り、direct参照時は禁止です。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.timersPreset</code></td>
+<td><em>任意</em></td>
+<td>string; enum=["", "default", "fast", "slow"]</td>
 <td>任意のdefault・fast・slow短縮指定で、bgp.timers.profileより低優先です。両方空なら生成ピアはBGPRouter.timersを継承します。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.directLocalPreference</code></td>
+<td><em>任意</em></td>
+<td>integer</td>
 <td>directピアのuint32 LOCAL_PREFで、省略・0は200です。direct指定時は正のRR bgp.importPolicy.localPreferenceを超える必要があります。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.bfd</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>任意の生成BFD設定で、generatePeers・bfd.enabledがともにtrueの場合だけ使います。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.bfd.enabled</code></td>
+<td><em>任意</em></td>
+<td>boolean</td>
 <td>既定falseです。trueなら生成BGPPeerと連携するBFDを導出し、FRR bfdd・vtyshが必要です。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.routerRef</code></td>
+<td><strong>必須</strong></td>
+<td>string</td>
 <td>同じRouter設定内のBGPRouterを指すBGPRouter/nameが必須です。名前だけの指定は不可です。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.peerASN</code></td>
+<td><strong>必須</strong></td>
+<td>integer; minimum=1</td>
 <td>必須の0以外のuint32相手ASNです。ローカルASNと一致すればiBGPになり、routeReflectorClientでは一致が必要です。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.ebgpMultihop</code></td>
+<td><em>任意</em></td>
+<td>integer; minimum=0; maximum=255</td>
 <td>0～255の整数で既定0です。2以上の場合だけGoBGPのeBGP multihopを有効にしてTTLを設定し、0・1では無効です。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.routeReflectorClient</code></td>
+<td><em>任意</em></td>
+<td>boolean</td>
 <td>既定falseです。trueはiBGPのRRクライアント指定で、peerASNとルーターASNの一致が必要です。実効送信prefixにはルーターの受信prefixも加えます。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.routeReflectorClusterID</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>任意のIPv4形式クラスタIDで、routeReflectorClient=trueの場合だけ渡します。空ならGoBGPに任せ、これだけ指定しても反射は有効になりません。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.convergenceProfile</code></td>
+<td><em>任意</em></td>
+<td>string; enum=["", "default", "fast", "stable"]</td>
 <td>任意のdefault・fast・stableです。省略時はBGPRouterから継承します。timers.profileではなくGR既定値を選び、ルーターのgracefulRestart.enabled明示値がさらに優先します。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.importPolicy</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>任意の受信ポリシーです。ピアに非空のprefix・community条件・nextHopRewrite・localPreferenceがなければルーター側を全体継承します。長さ制限だけでは上書きと認識しません。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.importPolicy.allowedPrefixes</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>任意のIPv4・IPv6 CIDR許可一覧です。プレフィックスと許可した詳細経路長で照合し、正規化後の同一プレフィックスは拒否します。空なら他条件で構成された受信ポリシーにprefix条件を加えません。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.importPolicy.allowedPrefixLengthMin</code></td>
+<td><em>任意</em></td>
+<td>integer; minimum=0; maximum=128</td>
 <td>0～128の整数です。省略・0は各許可プレフィックス自身の長さです。正の指定値は各prefix長以上、ファミリー上限以下、正の最大長以下が必要です。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.importPolicy.allowedPrefixLengthMax</code></td>
+<td><em>任意</em></td>
+<td>integer; minimum=0; maximum=128</td>
 <td>0～128の整数です。省略・0はIPv4が32、IPv6が128です。正の値は全許可prefix長以上かつファミリー上限以下が必要です。動的leaf受付はmin=max=32が必須です。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.importPolicy.requiredCommunities</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>任意のcommunity一覧です。受理する経路はすべての指定communityを持つ必要があり、空なら必須community条件はありません。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.importPolicy.forbiddenCommunities</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>任意の禁止community一覧です。どれか1つでも一致すれば許可判定より先に拒否します。空ならこの禁止条件はありません。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.importPolicy.nextHopRewrite</code></td>
+<td><em>任意</em></td>
+<td>string; enum=["", "peer-address", "unchanged"]</td>
 <td>既定はpeer-addressです。unchangedなら広告されたnext hopを維持します。受理経路の選択・FIB投影前に適用します。ピアでこの項目だけを指定しても独自ポリシーとなり、ルーターの許可一覧は継承しません。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.importPolicy.localPreference</code></td>
+<td><em>任意</em></td>
+<td>integer</td>
 <td>受理経路へbest-path選択前に設定するuint32のLOCAL_PREFです。既定0ならBGP実装の既定値を変更しません。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.exportPolicy</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>任意の送信prefix条件です。ピア側の一覧はルーター由来の静的・動的広告と合成し、RRクライアントではルーターの受信prefixも加えます。ルーター由来の送信prefix全体を絞る置換ではありません。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.exportPolicy.allowedPrefixes</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>任意のCIDR一覧で既定は空です。合成後に非空なら各prefixとその詳細経路（/32・/128まで）を許可し、非一致を拒否します。合成後も空なら送信フィルターを設定しません。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.timers</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>生成ピアのタイマーで、優先順は本profileのtimers.profile・timersPreset・参照BGPRouter.timersです。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.timers.profile</code></td>
+<td><em>任意</em></td>
+<td>string; enum=["", "default", "fast", "slow"]</td>
 <td>既定・省略はkeepalive 30秒・hold 90秒・connectRetry 10秒、fastは3秒・9秒・1秒、slowは60秒・180秒・30秒です。個別のkeepalive・holdTime・connectRetryのYAML指定は非対応です。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.bfd.interface</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>任意のsingle-hopインターフェースです。Interface/nameなら宣言したInterface.ifnameへ解決します。名前だけの場合は論理インターフェースの存在を検証しますが、実行時はその文字列をFRRへ渡すため、Interface/nameを推奨します。省略時はmultihopです。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.bfd.profile</code></td>
+<td><em>任意</em></td>
+<td>string; enum=["", "fast", "normal", "slow"]</td>
 <td>fast・省略はminRx=minTx=300ms・倍率3、normalは500ms・500ms・3、slowは1000ms・1000ms・5です。個別指定があれば優先します。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.bfd.minRx</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>任意のGo durationで50ms～60000msです。プロファイルの受信間隔を上書きして整数msに変換し、省略時はプロファイル値です。BFDプロトコルタイマーであり、ルーター再起動の期限ではありません。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.bfd.minTx</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>任意のGo durationで50ms～60000msです。プロファイルの送信間隔を上書きし、整数msで出力します。</td>
 </tr>
 <tr>
 <td><code>spec.bgp.bfd.detectMultiplier</code></td>
+<td><em>任意</em></td>
+<td>integer; minimum=1; maximum=50</td>
 <td>任意の整数1～50です。省略・デコード値0ならプロファイル既定（通常3、slowは5）です。交渉された検出間隔の倍率で、routerdの再調整回数ではありません。</td>
 </tr>
 </tbody>
@@ -284,7 +394,7 @@
 <p><a href="/examples/cloudedge-aws-rr-dynamic-leaf.yaml">設定例</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
 <ul>
 <li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
-<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#設定構文">設定構文</a></li>
 <li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
 <li><a href="#状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</a></li>
 </ul>

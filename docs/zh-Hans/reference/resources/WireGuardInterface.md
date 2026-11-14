@@ -13,41 +13,44 @@
 - 使用注册式 direct SAMPeerGroup 时，必须放在 peersFrom 最后，前方须有非 optional 的 SAMRRSet。运行时也需相同注册策略的可用 RR 对等端；direct 不可用或不兼容时仍保留 RR 连接。
 - listenPort 会保留该 UDP 端口，不可与其他配置的监听冲突。Linux 在指定正数端口时也会加入 INPUT UDP 允许规则。Up 表示接口已配置，不保证对等端握手成功。
 
-## YAML定义
+## 配置语法
 
-此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。
+这是说明用语法，不是可直接复制的YAML。未加括号的字段在父条目内必填；`[ ... ]`表示按条件可省略，`<类型>`为替换值，`(a | b)`表示选项。选填父条目内仍可能有必填子条目。条件必填、互斥与实际默认值请见下表；常规YAML请使用链接示例。
 
-```yaml
+```text
 - apiVersion: net.routerd.net/v1alpha1
   kind: WireGuardInterface
   metadata:
     name: "<name>"
   spec:
-    ifname: "<string>" # 选填; string
-    listenPort: 1 # 选填; integer; minimum=1; maximum=65535
-    mtu: 576 # 选填; integer; minimum=576; maximum=9216
-    peersFrom: # 选填; array
-      - # object
-        optional: true # 选填; boolean
-        resource: "<string>" # 必填; string
-    privateKey: "<string>" # 选填; string
-    privateKeyFile: "<string>" # 选填; string
-    selfNodeRef: "<string>" # 选填; string
+    [ ifname: <string> ]
+    [ listenPort: <integer> ]
+    [ mtu: <integer> ]
+    [ peersFrom:
+        -
+          [ optional: <boolean> ]
+          resource: <string>
+    ]
+    [ privateKey: <string> ]
+    [ privateKeyFile: <string> ]
+    [ selfNodeRef: <string> ]
 ```
 
 ## 字段含义与默认值
 
-| YAML | 字段含义与默认值 |
-| --- | --- |
-| `spec.ifname` | OS 设备名称，默认 metadata.name。目前即使指定 ifname，验证仍检查 metadata.name 的空白、斜线及 15 字符上限，未对 ifname 应用相同检查。 |
-| `spec.selfNodeRef` | 导入时排除的本机 SAM 节点标识，默认 Router.metadata.name。这是 nodeRef 值，不是 Kind/name 状态引用。 |
-| `spec.privateKey` | 直接指定 WireGuard 私钥，默认为空，优先于 privateKeyFile。使用 WireGuard Base64 密钥格式；配置验证不保证密钥有效，应用时 wg 或文件密钥检查仍可能失败。 |
-| `spec.privateKeyFile` | 路由器上的可选密钥文件路径。实际应用时，缺少的文件以 0600 创建，新父目录为 0700。已有文件须含有效的 32 字节 Base64 私钥；空文件或无法读取会失败，不会覆盖。不是环境变量文件。 |
-| `spec.listenPort` | 可选 UDP 监听端口 1–65535。省略或 0 时不输出 ListenPort，由 WireGuard 选择或保留端口；routerd 不为 0 添加明确的端口例外。 |
-| `spec.mtu` | 可选 MTU 576–9216。省略或 0 保留已有值或 OS 创建时默认值；此处不执行 wg-quick 的 MTU 计算。 |
-| `spec.peersFrom` | 可选且有顺序的 SAM 对等端来源列表，默认为空。非 optional 来源缺少时接口维持 Pending/PeersFromPending，静态对等端不会跳过此条件。已解析但为空的列表不同于来源缺失。 |
-| `spec.peersFrom[].resource` | 必填来源，格式为 SAMNodeSet/name、SAMPeerGroup/name、SAMEnrollmentPolicy/name 或 SAMRRSet/name，不使用 field。此处验证语法，解析对等端时查找来源。会跳过自身及没有 WireGuard 数据的节点。 |
-| `spec.peersFrom[].optional` | 默认 false。true 允许来源缺失而不使接口待处理，但不会全面忽略格式错误的来源。注册式 direct 组另适用上述保留 RR 的规则。 |
+选填父条目的必填子条目仅在使用父条目时需要。其他具体条件列于说明；`[ ... ]`选项仍可能需要择一。
+
+| YAML | 指定要求 | 类型与限制 | 字段含义与默认值 |
+| --- | --- | --- | --- |
+| `spec.ifname` | *选填* | string | OS 设备名称，默认 metadata.name。目前即使指定 ifname，验证仍检查 metadata.name 的空白、斜线及 15 字符上限，未对 ifname 应用相同检查。 |
+| `spec.selfNodeRef` | *选填* | string | 导入时排除的本机 SAM 节点标识，默认 Router.metadata.name。这是 nodeRef 值，不是 Kind/name 状态引用。 |
+| `spec.privateKey` | **条件必填** | string | 直接指定 WireGuard 私钥，默认为空，优先于 privateKeyFile。使用 WireGuard Base64 密钥格式；配置验证不保证密钥有效，应用时 wg 或文件密钥检查仍可能失败。 |
+| `spec.privateKeyFile` | **条件必填** | string | 路由器上的可选密钥文件路径。实际应用时，缺少的文件以 0600 创建，新父目录为 0700。已有文件须含有效的 32 字节 Base64 私钥；空文件或无法读取会失败，不会覆盖。不是环境变量文件。 |
+| `spec.listenPort` | *选填* | integer; minimum=1; maximum=65535 | 可选 UDP 监听端口 1–65535。省略或 0 时不输出 ListenPort，由 WireGuard 选择或保留端口；routerd 不为 0 添加明确的端口例外。 |
+| `spec.mtu` | *选填* | integer; minimum=576; maximum=9216 | 可选 MTU 576–9216。省略或 0 保留已有值或 OS 创建时默认值；此处不执行 wg-quick 的 MTU 计算。 |
+| `spec.peersFrom` | *选填* | array | 可选且有顺序的 SAM 对等端来源列表，默认为空。非 optional 来源缺少时接口维持 Pending/PeersFromPending，静态对等端不会跳过此条件。已解析但为空的列表不同于来源缺失。 |
+| `spec.peersFrom[].resource` | **条件必填** | string | 必填来源，格式为 SAMNodeSet/name、SAMPeerGroup/name、SAMEnrollmentPolicy/name 或 SAMRRSet/name，不使用 field。此处验证语法，解析对等端时查找来源。会跳过自身及没有 WireGuard 数据的节点。 |
+| `spec.peersFrom[].optional` | *选填* | boolean | 默认 false。true 允许来源缺失而不使接口待处理，但不会全面忽略格式错误的来源。注册式 direct 组另适用上述保留 RR 的规则。 |
 
 实现: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate_interface.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_interface.go) · [pkg/config/validate.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go) · [pkg/config/index.go](https://github.com/imksoo/routerd/blob/main/pkg/config/index.go) · [pkg/controller/chain/wireguard.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/wireguard.go) · [pkg/wireguard/wireguard.go](https://github.com/imksoo/routerd/blob/main/pkg/wireguard/wireguard.go) · [pkg/render/firewall_holes.go](https://github.com/imksoo/routerd/blob/main/pkg/render/firewall_holes.go)
 

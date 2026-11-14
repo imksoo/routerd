@@ -11,87 +11,117 @@
 <li>スキーマ上serverが任意でも、server・macAddress・ipAddressは意味上必須です。serverはinterfaceを持つDHCPv4Serverの裸名です。通常検証はサーバー1台でも省略を許しません。scopeは拒否されます。</li>
 <li>現行実行処理は、リソース別タグを付けた予約を共有dnsmasqホスト補助ファイルへ書きます。serverとの関連は検証・状態・個別オプション生成に使いますが、別プロセスや独立した予約ファイルにはなりません。Appliedはクライアントの取得成功を示しません。</li>
 </ul>
-<h2 id="yaml定義">YAML定義</h2>
-<p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
-<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+<h2 id="設定構文">設定構文</h2>
+<p>説明用の構文表記であり、そのままコピーするYAMLではありません。囲みのない項目は親の中で必須、<code>[ ... ]</code>は条件に応じて省略できる項目、<code>&lt;型&gt;</code>は差し替え値、<code>(a | b)</code>は選択肢です。任意の親にも必須の子があります。条件付き必須・排他・実効既定値は下の表を確認し、通常のYAMLはリンク先の設定例を使ってください。</p>
+<pre><code class="language-text">- apiVersion: net.routerd.net/v1alpha1
   kind: DHCPv4Reservation
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    hostname: &quot;&lt;string&gt;&quot; # 任意; string
-    ipAddress: &quot;&lt;string&gt;&quot; # 必須; string
-    leaseTime: &quot;&lt;string&gt;&quot; # 任意; string
-    macAddress: &quot;&lt;string&gt;&quot; # 必須; string
-    options: # 任意; array
-      - # object
-        code: 1 # 任意; integer; minimum=1; maximum=65535
-        name: &quot;&lt;string&gt;&quot; # 任意; string
-        value: &quot;&lt;string&gt;&quot; # 任意; string
-    scope: &quot;&lt;string&gt;&quot; # 任意; string
-    server: &quot;&lt;string&gt;&quot; # 任意; string
-    when: # 任意; object
-      state: # 任意; object
-        &quot;&lt;key&gt;&quot;: # 任意; object
-          contains: &quot;&lt;string&gt;&quot; # 任意; string
-          equals: &quot;&lt;string&gt;&quot; # 任意; string
-          exists: true # 任意; boolean
-          for: &quot;&lt;string&gt;&quot; # 任意; string
-          in: # 任意; array
-            - &quot;&lt;string&gt;&quot; # string
-          maxAge: &quot;&lt;string&gt;&quot; # 任意; string
-          status: &quot;set&quot; # 任意; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+    [ hostname: &lt;string&gt; ]
+    ipAddress: &lt;string&gt;
+    [ leaseTime: &lt;string&gt; ]
+    macAddress: &lt;string&gt;
+    [ options:
+        -
+          [ code: &lt;integer&gt; ]
+          [ name: &lt;string&gt; ]
+          [ value: &lt;string&gt; ]
+    ]
+    [ scope: &lt;string&gt; ]
+    server: &lt;string&gt;
+    [ when:
+        [ state:
+            [ &lt;name&gt;:
+                [ contains: &lt;string&gt; ]
+                [ equals: &lt;string&gt; ]
+                [ exists: &lt;boolean&gt; ]
+                [ for: &lt;string&gt; ]
+                [ in:
+                    - &lt;string&gt;
+                ]
+                [ maxAge: &lt;string&gt; ]
+                [ status: (&quot;set&quot; | &quot;unset&quot; | &quot;unknown&quot;) ]
+            ]
+        ]
+    ]
 </code></pre>
 <h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<p>任意の親の必須項目は、親を使う場合に必要です。それ以外の具体的な条件は説明欄に記載します。<code>[ ... ]</code>で囲まれた選択肢も、いずれか一方が必要な場合があります。</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>指定要否</th>
+<th>型・制約</th>
 <th>項目の意味と既定値</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.scope</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>廃止フィールドで、非空値は拒否されます。serverを使用してください。</td>
 </tr>
 <tr>
 <td><code>spec.server</code></td>
+<td><strong>必須</strong></td>
+<td>string</td>
 <td>interfaceを指定した既存DHCPv4Serverのmetadata.nameが必須です。Kind/nameの接頭辞はここでは除去しません。</td>
 </tr>
 <tr>
 <td><code>spec.macAddress</code></td>
+<td><strong>必須</strong></td>
+<td>string</td>
 <td>net.ParseMACで解析できるMACアドレスが必須です。小文字で出力し、既定値はありません。</td>
 </tr>
 <tr>
 <td><code>spec.hostname</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>空白・カンマを含まない任意ホスト名で、既定は省略です。有効化したDNSZoneのDHCP由来ホスト情報にも利用できます。</td>
 </tr>
 <tr>
 <td><code>spec.ipAddress</code></td>
+<td><strong>必須</strong></td>
+<td>string</td>
 <td>予約する裸のIPv4アドレスが必須です。現行検証は系統を確認しますが、サーバープール内所属や予約IP・MACの重複はここで検査しません。</td>
 </tr>
 <tr>
 <td><code>spec.leaseTime</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>任意のバックエンド期間文字列で、既定空です。カンマは拒否します。現行実行時の予約ホスト行には出力しないため、この経路でリース期間を変更しません。</td>
 </tr>
 <tr>
 <td><code>spec.options</code></td>
+<td><em>任意</em></td>
+<td>array</td>
 <td>予約タグに対応する任意DHCPオプション一覧です。各項目はcode・nameの片方と非空valueが必要です。既定空です。</td>
 </tr>
 <tr>
 <td><code>spec.options[].code</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>integer; minimum=1; maximum=65535</td>
 <td>数値のオプション識別子でnameと排他です。スキーマ範囲1～65535で、既定識別子はありません。</td>
 </tr>
 <tr>
 <td><code>spec.options[].name</code></td>
+<td><strong>条件付き必須</strong></td>
+<td>string</td>
 <td>dnsmasqのオプション名でcodeと排他です。空白・カンマは不可です。</td>
 </tr>
 <tr>
 <td><code>spec.options[].value</code></td>
+<td><em>任意</em></td>
+<td>string</td>
 <td>非空のバックエンド形式値が必須です。CR/LFは不可で、そのまま出力するためカンマによる複数値指定は可能です。</td>
 </tr>
 <tr>
 <td><code>spec.when</code></td>
+<td><em>任意</em></td>
+<td>object</td>
 <td>共通の状態条件で、既定無条件です。不成立なら予約を除外しPending/WhenFalse、サーバー利用不可ならServerPendingです。</td>
 </tr>
 </tbody>
@@ -103,7 +133,7 @@
 <p><a href="/examples/example-lan-dns-dhcp.yaml">設定例</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
 <ul>
 <li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
-<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#設定構文">設定構文</a></li>
 <li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
 <li><a href="#状態値の参照に使えるフィールド">状態値の参照に使えるフィールド</a></li>
 </ul>

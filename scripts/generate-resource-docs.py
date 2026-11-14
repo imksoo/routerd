@@ -72,18 +72,24 @@ EXAMPLES['DSLiteTunnel'] = ROOT / 'examples/example-dslite-home.yaml'
 EXAMPLES['LocalServiceRedirect'] = ROOT / 'examples/example-local-dns-redirect.yaml'
 
 LANGUAGES = {
-    'en': ('Resource configuration reference', 'Required', 'Example', 'Place resources inside Router.spec.resources. Names, interfaces, addresses, credentials and peer settings in examples must be adapted. A schema-required field is required within its parent object; cross-resource and semantic constraints are checked by routerd validate, not by the schema alone.'),
-    'ja': ('リソース別の設定', '必須', '設定例', '各リソースはRouter.spec.resourcesに記述します。例の名前・インターフェース・アドレス・認証情報・対向設定は環境に合わせて変更してください。必須は親オブジェクト内での指定要否です。リソース間参照や意味上の制約はスキーマだけでは確定せず、routerd validateで確認します。'),
-    'zh-Hant': ('各資源的設定', '必填', '設定範例', '資源寫在Router.spec.resources內。範例的名稱、介面、位址、憑證及對端設定必須依環境調整。必填表示在所屬物件內必須指定。跨資源參照與語意限制還須以routerd validate確認。'),
-    'zh-Hans': ('各资源的配置', '必填', '配置示例', '资源写在Router.spec.resources内。示例中的名称、接口、地址、凭据及对端配置必须按环境调整。必填表示在所属对象内必须指定。跨资源引用与语义限制还须通过routerd validate确认。'),
+    'en': ('Resource configuration reference', 'Example', 'Place resources inside Router.spec.resources. Names, interfaces, addresses, credentials and peer settings in examples must be adapted. A schema-required field is required within its parent object; cross-resource and semantic constraints are checked by routerd validate, not by the schema alone.'),
+    'ja': ('リソース別の設定', '設定例', '各リソースはRouter.spec.resourcesに記述します。例の名前・インターフェース・アドレス・認証情報・対向設定は環境に合わせて変更してください。必須は親オブジェクト内での指定要否です。リソース間参照や意味上の制約はスキーマだけでは確定せず、routerd validateで確認します。'),
+    'zh-Hant': ('各資源的設定', '設定範例', '資源寫在Router.spec.resources內。範例的名稱、介面、位址、憑證及對端設定必須依環境調整。必填表示在所屬物件內必須指定。跨資源參照與語意限制還須以routerd validate確認。'),
+    'zh-Hans': ('各资源的配置', '配置示例', '资源写在Router.spec.resources内。示例中的名称、接口、地址、凭据及对端配置必须按环境调整。必填表示在所属对象内必须指定。跨资源引用与语义限制还须通过routerd validate确认。'),
 }
 
 
 DEFINITIONS = {
-    'en': ('YAML definition', 'optional', 'All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.'),
-    'ja': ('YAML定義', '任意', '全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。'),
-    'zh-Hant': ('YAML定義', '選填', '此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。'),
-    'zh-Hans': ('YAML定义', '选填', '此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。'),
+    'en': ('Configuration syntax', 'This is explanatory notation, not YAML to copy. Unbracketed fields are required within their parent; `[ ... ]` marks fields that can be omitted, subject to the conditions in the table. `<type>` is a placeholder, and `(a | b)` lists alternatives. Optional parents may contain required children. Conditional requirements, exclusions and runtime defaults are described below. Use the linked YAML example for an ordinary configuration.'),
+    'ja': ('設定構文', '説明用の構文表記であり、そのままコピーするYAMLではありません。囲みのない項目は親の中で必須、`[ ... ]`は条件に応じて省略できる項目、`<型>`は差し替え値、`(a | b)`は選択肢です。任意の親にも必須の子があります。条件付き必須・排他・実効既定値は下の表を確認し、通常のYAMLはリンク先の設定例を使ってください。'),
+    'zh-Hant': ('設定語法', '這是說明用語法，不是可直接複製的YAML。未加括號的欄位在父項目內必填；`[ ... ]`表示依條件可省略，`<型別>`為替換值，`(a | b)`表示選項。選填父項目內仍可能有必填子項目。條件必填、互斥與實際預設值請見下表；一般YAML請使用連結範例。'),
+    'zh-Hans': ('配置语法', '这是说明用语法，不是可直接复制的YAML。未加括号的字段在父条目内必填；`[ ... ]`表示按条件可省略，`<类型>`为替换值，`(a | b)`表示选项。选填父条目内仍可能有必填子条目。条件必填、互斥与实际默认值请见下表；常规YAML请使用链接示例。'),
+}
+PRESENCE_LABELS = {
+    'en': ('Presence', 'Type / constraints', 'Required', 'Conditionally required', 'Optional', 'Required children of optional objects apply only when their parent is used. Other exact conditions are in the explanation; bracketed alternatives may still require one choice.'),
+    'ja': ('指定要否', '型・制約', '必須', '条件付き必須', '任意', '任意の親の必須項目は、親を使う場合に必要です。それ以外の具体的な条件は説明欄に記載します。`[ ... ]`で囲まれた選択肢も、いずれか一方が必要な場合があります。'),
+    'zh-Hant': ('指定要求', '型別與限制', '必填', '條件必填', '選填', '選填父項目的必填子項目僅在使用父項目時需要。其他具體條件列於說明；`[ ... ]`選項仍可能需要擇一。'),
+    'zh-Hans': ('指定要求', '类型与限制', '必填', '条件必填', '选填', '选填父条目的必填子条目仅在使用父条目时需要。其他具体条件列于说明；`[ ... ]`选项仍可能需要择一。'),
 }
 
 
@@ -97,59 +103,93 @@ def annotation(node):
 
 def scalar(node):
     if 'const' in node:
-        value = node['const']
-    elif 'default' in node:
-        value = node['default']
-    elif 'enum' in node:
-        value = node['enum'][0]
-    else:
-        value = {'boolean': True, 'integer': node.get('minimum', 0), 'number': node.get('minimum', 0), 'null': None}.get(node.get('type'), '<value>' if node.get('type') == 'any' else '<string>')
-    return json.dumps(value, ensure_ascii=False)
+        return json.dumps(node['const'], ensure_ascii=False)
+    if 'enum' in node:
+        return '(' + ' | '.join(json.dumps(v, ensure_ascii=False) for v in node['enum']) + ')'
+    return '<' + node.get('type', 'value') + '>'
 
 
-def yaml_fields(node, required_label, optional_label, indent=0):
-    properties = node.get('properties', {})
-    if not properties and isinstance(node.get('additionalProperties'), dict):
-        properties = {'<key>': node['additionalProperties']}
-    elif not properties and node.get('additionalProperties') is True:
-        properties = {'<key>': {'type': 'any'}}
-    for name, value in properties.items():
-        key = json.dumps(name) if name.startswith('<') else name
-        comment = required_label if name in node.get('required', []) else optional_label
-        comment += '; ' + annotation(value)
-        prefix = ' ' * indent + key + ':'
+def properties(node):
+    props = node.get('properties', {})
+    if not props and isinstance(node.get('additionalProperties'), dict):
+        return {'<name>': node['additionalProperties']}
+    if not props and node.get('additionalProperties') is True:
+        return {'<name>': {'type': 'value'}}
+    return props
+
+
+def locally_required(node, name, path, notes):
+    if path in notes.get('conditionalFields', []):
+        return False
+    if path in notes.get('requiredFields', []):
+        return True
+    props = properties(node)
+    if name == 'field' and 'resource' in props and set(props) <= {'resource', 'field', 'optional'}:
+        return True
+    return name in node.get('required', [])
+
+
+def syntax_fields(node, notes, indent=0, path=''):
+    for name, value in properties(node).items():
+        field = path + '.' + name if path else name
+        optional = not locally_required(node, name, field, notes)
+        lines = []
         kind = value.get('type', 'object')
+        child_indent = indent + (4 if optional else 2)
         if kind == 'object':
-            children = list(yaml_fields(value, required_label, optional_label, indent + 2))
-            yield prefix + (' ' if children else ' {} ') + '# ' + comment
-            yield from children
+            children = list(syntax_fields(value, notes, child_indent, field))
+            lines = [name + (':' if children else ': {}')] + children
         elif kind == 'array':
-            yield prefix + ' # ' + comment
-            yield from yaml_items(value.get('items', {}), required_label, optional_label, indent + 2)
+            lines = [name + ':'] + list(syntax_items(value.get('items', {}), notes, child_indent, field + '[]'))
         else:
-            yield prefix + ' ' + scalar(value) + ' # ' + comment
+            lines = [name + ': ' + scalar(value)]
+        prefix = ' ' * indent
+        if optional:
+            if len(lines) == 1:
+                yield prefix + '[ ' + lines[0] + ' ]'
+            else:
+                yield prefix + '[ ' + lines[0]
+                yield from lines[1:]
+                yield prefix + ']'
+        else:
+            yield prefix + lines[0]
+            yield from lines[1:]
 
 
-def yaml_items(node, required_label, optional_label, indent):
-    prefix = ' ' * indent + '-'
-    kind = node.get('type', 'any')
+def syntax_items(node, notes, indent, path):
+    kind = node.get('type', 'value')
     if kind == 'object':
-        yield prefix + ' # object'
-        children = list(yaml_fields(node, required_label, optional_label, indent + 2))
-        yield from children or [' ' * (indent + 2) + '{}']
+        yield ' ' * indent + '-'
+        yield from syntax_fields(node, notes, indent + 2, path)
     elif kind == 'array':
-        yield prefix + ' # array'
-        yield from yaml_items(node.get('items', {}), required_label, optional_label, indent + 2)
+        yield ' ' * indent + '-'
+        yield from syntax_items(node.get('items', {}), notes, indent + 2, path + '[]')
     else:
-        yield prefix + ' ' + scalar(node) + ' # ' + annotation(node)
+        yield ' ' * indent + '- ' + scalar(node)
+
+
+def field_nodes(node, notes, path='', optional_parent=False):
+    result = {}
+    for name, value in properties(node).items():
+        field = path + '.' + name if path else name
+        required = locally_required(node, name, field, notes)
+        condition = field in notes.get('conditionalFields', []) or (required and optional_parent)
+        result[field] = (value, 'conditional' if condition else 'required' if required else 'optional')
+        child, childpath = value, field
+        while child.get('type') == 'array':
+            child = child.get('items', {})
+            childpath += '[]'
+            result[childpath] = (child, 'conditional')
+        result.update(field_nodes(child, notes, childpath, optional_parent or not required))
+    return result
 
 
 for locale_index, (locale, labels) in enumerate(LANGUAGES.items()):
-    title, required, example, intro = labels
-    definition, optional, guidance = DEFINITIONS[locale]
+    title, example, intro = labels
+    definition, guidance = DEFINITIONS[locale]
     conditions, field_notes, implementation = NOTE_LABELS[locale]
     base = ROOT / 'docs' if locale == 'en' else ROOT / 'docs' / locale
-    lines = ['# ' + title, '', intro, '', '[Kind/name · when · dependsOn](common-fields.md)', '', '```sh', 'routerd validate --config router.yaml', '```', '', '[JSON Schema](' + REPO + 'schemas/routerd-config-v1alpha1.schema.json) · [YAML](' + REPO.replace('/blob/', '/tree/') + 'examples)', '', '### Router', '', '```yaml', 'apiVersion: routerd.net/v1alpha1', 'kind: Router', 'metadata:', '  name: "<router-name>"', 'spec:', '  resources:', '    - apiVersion: net.routerd.net/v1alpha1', '      kind: Interface', '      metadata:', '        name: "<name>"', '      spec:', '        ifname: "<interface-name>"', '```', '']
+    lines = ['# ' + title, '', intro, '', '[Kind/name · when · dependsOn](common-fields.md)', '', '```sh', 'routerd validate --config router.yaml', '```', '', '[JSON Schema](' + REPO + 'schemas/routerd-config-v1alpha1.schema.json) · [YAML](' + REPO.replace('/blob/', '/tree/') + 'examples)', '', '### Router', '', '```yaml', 'apiVersion: routerd.net/v1alpha1', 'kind: Router', 'metadata:', '  name: example', 'spec:', '  resources:', '    - apiVersion: net.routerd.net/v1alpha1', '      kind: Interface', '      metadata:', '        name: lan', '      spec:', '        ifname: ens18', '        managed: true', '```', '']
     lines += [ORDER_POLICY[locale_index], '']
     for group_labels, names in GROUP_KINDS:
         lines += ['## ' + group_labels[locale_index], '']
@@ -163,13 +203,18 @@ for locale_index, (locale, labels) in enumerate(LANGUAGES.items()):
             page += [notes['purpose'][locale_index], '', '## ' + conditions, '']
             page += ['- ' + rule[locale_index] for rule in notes['rules']]
             page += ['']
-        page += ['## ' + definition, '', guidance, '', '```yaml', '- apiVersion: ' + props['apiVersion']['const'], '  kind: ' + kind, '  metadata:', '    name: "<name>"', '  spec:']
-        page += list(yaml_fields(props['spec'], required, optional, 4))
+        page += ['## ' + definition, '', guidance, '', '```text', '- apiVersion: ' + props['apiVersion']['const'], '  kind: ' + kind, '  metadata:', '    name: "<name>"', '  spec:']
+        page += list(syntax_fields(props['spec'], notes, 4))
         page += ['```', '']
         if notes:
-            page += ['## ' + field_notes, '', '| YAML | ' + field_notes + ' |', '| --- | --- |']
+            presence, type_label, req, cond, opt, legend = PRESENCE_LABELS[locale]
+            nodes = field_nodes(props['spec'], notes)
+            page += ['## ' + field_notes, '', legend, '', '| YAML | ' + presence + ' | ' + type_label + ' | ' + field_notes + ' |', '| --- | --- | --- | --- |']
             for path, text in notes['fields'].items():
-                page.append('| `spec.' + path + '` | ' + text[locale_index].replace('|', '&#124;') + ' |')
+                node, status = nodes[path]
+                marker = '**' + (req if status == 'required' else cond) + '**' if status != 'optional' else '*' + opt + '*'
+                constraint = annotation(node).replace('|', '&#124;') if node else '—'
+                page.append('| `spec.' + path + '` | ' + marker + ' | ' + constraint + ' | ' + text[locale_index].replace('|', '&#124;') + ' |')
             page += ['', implementation + ': ' + ' · '.join('[' + path + '](' + REPO + path + ')' for path in notes['sources']), '']
         provided_title, provided_intro, provided_empty = PROVIDED_LABELS[locale]
         page += ['## ' + provided_title, '', provided_intro, '']

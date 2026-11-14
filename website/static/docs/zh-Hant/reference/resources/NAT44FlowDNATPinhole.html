@@ -13,107 +13,146 @@
 <li>入站 DNAT 檢查選定輸入介面、允許的遠端來源連接埠與已學習目的連接埠。不會將送出目的 CIDR/集合重新套用到入站遠端位址，也不建立防火牆轉送允許；轉換流量仍需防火牆允許。</li>
 <li>學習映射是核心執行狀態，不是設定或持久化資料庫。重建 NAT 表或重啟會遺失，需送出流量重新學習。</li>
 </ul>
-<h2 id="yaml定義">YAML定義</h2>
-<p>此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。</p>
-<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+<h2 id="設定語法">設定語法</h2>
+<p>這是說明用語法，不是可直接複製的YAML。未加括號的欄位在父項目內必填；<code>[ ... ]</code>表示依條件可省略，<code>&lt;型別&gt;</code>為替換值，<code>(a | b)</code>表示選項。選填父項目內仍可能有必填子項目。條件必填、互斥與實際預設值請見下表；一般YAML請使用連結範例。</p>
+<pre><code class="language-text">- apiVersion: net.routerd.net/v1alpha1
   kind: NAT44FlowDNATPinhole
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    correlation: # 選填; object
-      key: &quot;&quot; # 選填; string; enum=[&quot;&quot;, &quot;localPort&quot;]
-    fromInterfaceRefs: # 選填; array
-      - &quot;&lt;string&gt;&quot; # string
-    inbound: # 必填; object
-      sourcePorts: # 必填; array
-        - &quot;&lt;string&gt;&quot; # string
-    outbound: # 必填; object
-      destinationCIDRs: # 選填; array
-        - &quot;&lt;string&gt;&quot; # string
-      destinationPorts: # 必填; array
-        - &quot;&lt;string&gt;&quot; # string
-      destinationSetRefs: # 選填; array
-        - &quot;&lt;string&gt;&quot; # string
-      protocol: &quot;udp&quot; # 必填; string; enum=[&quot;udp&quot;]
-      sourceCIDRs: # 選填; array
-        - &quot;&lt;string&gt;&quot; # string
-      sourceSetRef: &quot;&lt;string&gt;&quot; # 選填; string
-    timeout: &quot;&lt;string&gt;&quot; # 選填; string
-    when: # 選填; object
-      state: # 選填; object
-        &quot;&lt;key&gt;&quot;: # 選填; object
-          contains: &quot;&lt;string&gt;&quot; # 選填; string
-          equals: &quot;&lt;string&gt;&quot; # 選填; string
-          exists: true # 選填; boolean
-          for: &quot;&lt;string&gt;&quot; # 選填; string
-          in: # 選填; array
-            - &quot;&lt;string&gt;&quot; # string
-          maxAge: &quot;&lt;string&gt;&quot; # 選填; string
-          status: &quot;set&quot; # 選填; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+    [ correlation:
+        [ key: (&quot;&quot; | &quot;localPort&quot;) ]
+    ]
+    fromInterfaceRefs:
+      - &lt;string&gt;
+    inbound:
+      sourcePorts:
+        - &lt;string&gt;
+    outbound:
+      [ destinationCIDRs:
+          - &lt;string&gt;
+      ]
+      destinationPorts:
+        - &lt;string&gt;
+      [ destinationSetRefs:
+          - &lt;string&gt;
+      ]
+      protocol: (&quot;udp&quot;)
+      [ sourceCIDRs:
+          - &lt;string&gt;
+      ]
+      [ sourceSetRef: &lt;string&gt; ]
+    [ timeout: &lt;string&gt; ]
+    [ when:
+        [ state:
+            [ &lt;name&gt;:
+                [ contains: &lt;string&gt; ]
+                [ equals: &lt;string&gt; ]
+                [ exists: &lt;boolean&gt; ]
+                [ for: &lt;string&gt; ]
+                [ in:
+                    - &lt;string&gt;
+                ]
+                [ maxAge: &lt;string&gt; ]
+                [ status: (&quot;set&quot; | &quot;unset&quot; | &quot;unknown&quot;) ]
+            ]
+        ]
+    ]
 </code></pre>
 <h2 id="欄位意義與預設值">欄位意義與預設值</h2>
+<p>選填父項目的必填子項目僅在使用父項目時需要。其他具體條件列於說明；<code>[ ... ]</code>選項仍可能需要擇一。</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>指定要求</th>
+<th>型別與限制</th>
 <th>欄位意義與預設值</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.outbound</code></td>
+<td><strong>必填</strong></td>
+<td>object</td>
 <td>必填的送出學習比對。記錄符合的 UDP 流量身分，但不會自行允許流量通過防火牆。</td>
 </tr>
 <tr>
 <td><code>spec.outbound.sourceSetRef</code></td>
+<td><strong>條件必填</strong></td>
+<td>string</td>
 <td>選用既有 IPAddressSet/<name> 來源選擇器。此欄或 sourceCIDRs 至少一者必填；兩者可作 OR。預設空。</td>
 </tr>
 <tr>
 <td><code>spec.outbound.sourceCIDRs</code></td>
+<td><strong>條件必填</strong></td>
+<td>array</td>
 <td>選用 IPv4 來源前綴 OR 清單，預設空，至少需要一個來源選擇器。拒絕 IPv6，產生時遮罩主機位元。</td>
 </tr>
 <tr>
 <td><code>spec.outbound.destinationCIDRs</code></td>
+<td><em>選填</em></td>
+<td>array</td>
 <td>選用學習用 IPv4 遠端目的，預設空。與 destinationSetRefs 作 OR；兩者皆無時任意遠端位址。</td>
 </tr>
 <tr>
 <td><code>spec.outbound.destinationSetRefs</code></td>
+<td><em>選填</em></td>
+<td>array</td>
 <td>選用既有 IPAddressSet/<name> 遠端目的參照，不可重複，預設空。來源與目的兩類以 AND 組合。</td>
 </tr>
 <tr>
 <td><code>spec.outbound.protocol</code></td>
+<td><strong>必填</strong></td>
+<td>string; enum=["udp"]</td>
 <td>必填 udp，無預設值。此學習機制不支援 TCP/IPv6。</td>
 </tr>
 <tr>
 <td><code>spec.outbound.destinationPorts</code></td>
+<td><strong>必填</strong></td>
+<td>array</td>
 <td>必填非空送出 UDP 目的連接埠：數字 1–65535 或唯一 start-end 範圍。範圍不可與其他項目混用。</td>
 </tr>
 <tr>
 <td><code>spec.inbound</code></td>
+<td><strong>必填</strong></td>
+<td>object</td>
 <td>必填返回流量比對。sourcePorts 選擇遠端 UDP 傳送者連接埠，不是本機目的連接埠。</td>
 </tr>
 <tr>
 <td><code>spec.inbound.sourcePorts</code></td>
+<td><strong>必填</strong></td>
+<td>array</td>
 <td>必填非空遠端 UDP 來源連接埠清單，與 outbound.destinationPorts 相同的 1–65535/單獨範圍限制。</td>
 </tr>
 <tr>
 <td><code>spec.timeout</code></td>
+<td><em>選填</em></td>
+<td>string</td>
 <td>選用嚴格為正的 Go 時間長度，預設 3m。每個符合送出封包更新學習項目。產生時四捨五入為秒且至少 1s；這是學習狀態到期，不是 UDP 協定逾時。</td>
 </tr>
 <tr>
 <td><code>spec.when</code></td>
+<td><em>選填</em></td>
+<td>object</td>
 <td>選用共用啟用條件，預設無條件。篩除資源不產生學習映射/集合規則。巢狀條件與結構描述限制請見共用欄位。</td>
 </tr>
 <tr>
 <td><code>spec.fromInterfaceRefs</code></td>
+<td><strong>必填</strong></td>
+<td>array</td>
 <td>必填非空輸出/輸入介面清單，接受單純名稱或 Interface/name、PPPoESession/name、DSLiteTunnel/name。送出比對 oifname，入站比對同清單的 iifname。</td>
 </tr>
 <tr>
 <td><code>spec.correlation</code></td>
+<td><em>選填</em></td>
+<td>object</td>
 <td>選用關聯物件，僅支援 localPort，省略亦使用相同鍵。</td>
 </tr>
 <tr>
 <td><code>spec.correlation.key</code></td>
+<td><em>選填</em></td>
+<td>string; enum=["", "localPort"]</td>
 <td>僅空或 localPort。產生器無其他分支，一律以 UDP 來源連接埠索引學習映射。</td>
 </tr>
 </tbody>
@@ -124,7 +163,7 @@
 <p><code>phase</code></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
 <ul>
 <li><a href="#指定條件與參照關係">指定條件與參照關係</a></li>
-<li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#設定語法">設定語法</a></li>
 <li><a href="#欄位意義與預設值">欄位意義與預設值</a></li>
 <li><a href="#可參照的狀態欄位">可參照的狀態欄位</a></li>
 </ul>

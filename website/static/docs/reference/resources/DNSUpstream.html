@@ -12,90 +12,120 @@
 <li>Required unresolved addressFrom values suspend the containing forwarder source even if static addresses are available; optional missing values are skipped. Bootstrap references differ: a static bootstrap list can satisfy a missing required dynamic bootstrap.</li>
 <li>sourceInterface is passed verbatim to socket binding, with no logical-name or Kind/name resolution. On Linux use a declared interface whose metadata.name equals its OS ifname. The FreeBSD socket path rejects direct ifname binding, while normal configuration validation does not offer a valid fib:<n> alternative here.</li>
 </ul>
-<h2 id="yaml-definition">YAML definition</h2>
-<p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
-<pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
+<h2 id="configuration-syntax">Configuration syntax</h2>
+<p>This is explanatory notation, not YAML to copy. Unbracketed fields are required within their parent; <code>[ ... ]</code> marks fields that can be omitted, subject to the conditions in the table. <code>&lt;type&gt;</code> is a placeholder, and <code>(a | b)</code> lists alternatives. Optional parents may contain required children. Conditional requirements, exclusions and runtime defaults are described below. Use the linked YAML example for an ordinary configuration.</p>
+<pre><code class="language-text">- apiVersion: net.routerd.net/v1alpha1
   kind: DNSUpstream
   metadata:
     name: &quot;&lt;name&gt;&quot;
   spec:
-    address: &quot;&lt;string&gt;&quot; # optional; string
-    addressFrom: # optional; array
-      - # object
-        field: &quot;&lt;string&gt;&quot; # optional; string
-        optional: true # optional; boolean
-        resource: &quot;&lt;string&gt;&quot; # Required; string
-    bootstrap: # optional; array
-      - &quot;&lt;string&gt;&quot; # string
-    bootstrapFrom: # optional; array
-      - # object
-        field: &quot;&lt;string&gt;&quot; # Required; string
-        optional: true # optional; boolean
-        resource: &quot;&lt;string&gt;&quot; # Required; string
-    path: &quot;&lt;string&gt;&quot; # optional; string
-    port: 1 # optional; integer; minimum=1; maximum=65535
-    protocol: &quot;udp&quot; # Required; string; enum=[&quot;udp&quot;, &quot;tcp&quot;, &quot;dot&quot;, &quot;doh&quot;]
-    sourceInterface: &quot;&lt;string&gt;&quot; # optional; string
-    tlsName: &quot;&lt;string&gt;&quot; # optional; string
-    when: # optional; object
-      state: # optional; object
-        &quot;&lt;key&gt;&quot;: # optional; object
-          contains: &quot;&lt;string&gt;&quot; # optional; string
-          equals: &quot;&lt;string&gt;&quot; # optional; string
-          exists: true # optional; boolean
-          for: &quot;&lt;string&gt;&quot; # optional; string
-          in: # optional; array
-            - &quot;&lt;string&gt;&quot; # string
-          maxAge: &quot;&lt;string&gt;&quot; # optional; string
-          status: &quot;set&quot; # optional; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
+    [ address: &lt;string&gt; ]
+    [ addressFrom:
+        -
+          field: &lt;string&gt;
+          [ optional: &lt;boolean&gt; ]
+          resource: &lt;string&gt;
+    ]
+    [ bootstrap:
+        - &lt;string&gt;
+    ]
+    [ bootstrapFrom:
+        -
+          field: &lt;string&gt;
+          [ optional: &lt;boolean&gt; ]
+          resource: &lt;string&gt;
+    ]
+    [ path: &lt;string&gt; ]
+    [ port: &lt;integer&gt; ]
+    protocol: (&quot;udp&quot; | &quot;tcp&quot; | &quot;dot&quot; | &quot;doh&quot;)
+    [ sourceInterface: &lt;string&gt; ]
+    [ tlsName: &lt;string&gt; ]
+    [ when:
+        [ state:
+            [ &lt;name&gt;:
+                [ contains: &lt;string&gt; ]
+                [ equals: &lt;string&gt; ]
+                [ exists: &lt;boolean&gt; ]
+                [ for: &lt;string&gt; ]
+                [ in:
+                    - &lt;string&gt;
+                ]
+                [ maxAge: &lt;string&gt; ]
+                [ status: (&quot;set&quot; | &quot;unset&quot; | &quot;unknown&quot;) ]
+            ]
+        ]
+    ]
 </code></pre>
 <h2 id="field-meaning-and-default">Field meaning and default</h2>
+<p>Required children of optional objects apply only when their parent is used. Other exact conditions are in the explanation; bracketed alternatives may still require one choice.</p>
 <table>
 <thead>
 <tr>
 <th>YAML</th>
+<th>Presence</th>
+<th>Type / constraints</th>
 <th>Field meaning and default</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>spec.protocol</code></td>
+<td><strong>Required</strong></td>
+<td>string; enum=["udp", "tcp", "dot", "doh"]</td>
 <td>Required udp, tcp, dot or doh. Use lowercase canonical spelling. UDP/TCP use plaintext DNS, DoT TLS, DoH HTTPS.</td>
 </tr>
 <tr>
 <td><code>spec.address</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>string</td>
 <td>Server IP or hostname without scheme, port or path. Required if addressFrom is empty. No implicit server; hostname resolution uses bootstrap when supplied.</td>
 </tr>
 <tr>
 <td><code>spec.addressFrom</code></td>
+<td><strong>Conditionally required</strong></td>
+<td>array</td>
 <td>Optional UDP-only common status-value source list. Each item requires existing resource and explicit provided field; optional defaults false. Dynamic bare addresses normalize to UDP port 53 independently of this resource port. Sources may return multiple servers.</td>
 </tr>
 <tr>
 <td><code>spec.port</code></td>
+<td><em>Optional</em></td>
+<td>integer; minimum=1; maximum=65535</td>
 <td>Optional 1–65535; omitted/0 defaults to 53 for udp/tcp, 853 for dot, 443 for doh. Used for the static address endpoint, not bare values returned by addressFrom.</td>
 </tr>
 <tr>
 <td><code>spec.path</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>DoH URL path, default /dns-query; when supplied for doh it must start with /. Other protocols do not consume it.</td>
 </tr>
 <tr>
 <td><code>spec.tlsName</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>DoT TLS server name for certificate verification/SNI; omitted uses the endpoint hostname. Explicit tlsName is rejected for DoH. UDP/TCP ignore it even though accepted by validation.</td>
 </tr>
 <tr>
 <td><code>spec.bootstrap</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional DNS server list for resolving upstream hostnames. Empty together with unresolved/absent bootstrapFrom uses the OS resolver only when no required dynamic dependency is waiting. All referenced upstreams in a forwarder share merged bootstrap settings.</td>
 </tr>
 <tr>
 <td><code>spec.bootstrapFrom</code></td>
+<td><em>Optional</em></td>
+<td>array</td>
 <td>Optional required-field source list. resource and field must be nonempty, optional defaults false. Use an existing Kind/name and its provided status field; unlike ordinary StatusValueSourceSpec, current validation does not check target existence or provided-field membership for this distinct type. Dynamic and static bootstrap servers are combined; static bootstrap satisfies a missing required dynamic value.</td>
 </tr>
 <tr>
 <td><code>spec.sourceInterface</code></td>
+<td><em>Optional</em></td>
+<td>string</td>
 <td>Optional declared Interface or WireGuardInterface name. Default empty lets OS routing choose. Binding is shared at forwarder-pool level; see the literal-name and FreeBSD restrictions above.</td>
 </tr>
 <tr>
 <td><code>spec.when</code></td>
+<td><em>Optional</em></td>
+<td>object</td>
 <td>Optional common state predicate; default unconditional. Filtering this upstream can leave its forwarder without usable endpoints.</td>
 </tr>
 </tbody>
@@ -107,7 +137,7 @@
 <p><a href="/examples/example-dslite-home.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
 <li><a href="#conditions-and-references">Conditions and references</a></li>
-<li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#configuration-syntax">Configuration syntax</a></li>
 <li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 <li><a href="#referenceable-status-fields">Referenceable status fields</a></li>
 </ul>

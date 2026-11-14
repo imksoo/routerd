@@ -12,46 +12,52 @@ Configure FRR bfdd sessions through vtysh and observe their status for BGPPeer f
 - Supported operating systems are Linux and FreeBSD with FRR bfdd/vtysh available. No interface means a multihop session using the referenced BGPRouter.routerID as local address; a direct IP peer without an interface requires exactly one BGPRouter. An interface selects a single-hop session.
 - BFD detects its own forwarding/session failure; its Up status does not prove every routed destination is reachable. The GoBGP controller acts on observed Down after a previously Up BFD or established BGP session, rather than treating every unknown/startup state as Down.
 
-## YAML definition
+## Configuration syntax
 
-All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.
+This is explanatory notation, not YAML to copy. Unbracketed fields are required within their parent; `[ ... ]` marks fields that can be omitted, subject to the conditions in the table. `<type>` is a placeholder, and `(a | b)` lists alternatives. Optional parents may contain required children. Conditional requirements, exclusions and runtime defaults are described below. Use the linked YAML example for an ordinary configuration.
 
-```yaml
+```text
 - apiVersion: net.routerd.net/v1alpha1
   kind: BFD
   metadata:
     name: "<name>"
   spec:
-    detectMultiplier: 1 # optional; integer; minimum=1; maximum=50
-    interface: "<string>" # optional; string
-    minRx: "<string>" # optional; string
-    minTx: "<string>" # optional; string
-    peer: "<string>" # Required; string
-    profile: "" # optional; string; enum=["", "fast", "normal", "slow"]
-    when: # optional; object
-      state: # optional; object
-        "<key>": # optional; object
-          contains: "<string>" # optional; string
-          equals: "<string>" # optional; string
-          exists: true # optional; boolean
-          for: "<string>" # optional; string
-          in: # optional; array
-            - "<string>" # string
-          maxAge: "<string>" # optional; string
-          status: "set" # optional; string; enum=["set", "unset", "unknown"]
+    [ detectMultiplier: <integer> ]
+    [ interface: <string> ]
+    [ minRx: <string> ]
+    [ minTx: <string> ]
+    peer: <string>
+    [ profile: ("" | "fast" | "normal" | "slow") ]
+    [ when:
+        [ state:
+            [ <name>:
+                [ contains: <string> ]
+                [ equals: <string> ]
+                [ exists: <boolean> ]
+                [ for: <string> ]
+                [ in:
+                    - <string>
+                ]
+                [ maxAge: <string> ]
+                [ status: ("set" | "unset" | "unknown") ]
+            ]
+        ]
+    ]
 ```
 
 ## Field meaning and default
 
-| YAML | Field meaning and default |
-| --- | --- |
-| `spec.peer` | Required bare IP address or BGPPeer/name reference. A BGPPeer reference expands to all its peer addresses and takes the local address from its routerRef routerID. No hostname form for a direct peer. |
-| `spec.interface` | Optional single-hop interface. Prefer Interface/name so the controller resolves the declared Interface.ifname; a plain name is validated as a declared logical interface but is passed literally to FRR. Omitted uses multihop. |
-| `spec.profile` | fast/omitted: minRx=minTx=300ms, multiplier=3; normal: 500ms/500ms/3; slow: 1000ms/1000ms/5. Explicit individual settings override these defaults. |
-| `spec.minRx` | Optional Go duration, 50ms–60000ms, overriding profile receive interval. Converted to integer milliseconds; omitted uses profile. This is a BFD protocol timer, not a router reboot deadline. |
-| `spec.minTx` | Optional Go duration, 50ms–60000ms, overriding profile transmit interval; emitted as integer milliseconds. |
-| `spec.detectMultiplier` | Optional integer 1–50. Decoded 0/omission selects profile default (3, or 5 for slow). Multiplies the negotiated detection interval; not a count of routerd reconcile attempts. |
-| `spec.when` | Optional common activation predicate; omitted is unconditional. See common fields for state/all/any, reference validation and schema limitations. |
+Required children of optional objects apply only when their parent is used. Other exact conditions are in the explanation; bracketed alternatives may still require one choice.
+
+| YAML | Presence | Type / constraints | Field meaning and default |
+| --- | --- | --- | --- |
+| `spec.peer` | **Required** | string | Required bare IP address or BGPPeer/name reference. A BGPPeer reference expands to all its peer addresses and takes the local address from its routerRef routerID. No hostname form for a direct peer. |
+| `spec.interface` | *Optional* | string | Optional single-hop interface. Prefer Interface/name so the controller resolves the declared Interface.ifname; a plain name is validated as a declared logical interface but is passed literally to FRR. Omitted uses multihop. |
+| `spec.profile` | *Optional* | string; enum=["", "fast", "normal", "slow"] | fast/omitted: minRx=minTx=300ms, multiplier=3; normal: 500ms/500ms/3; slow: 1000ms/1000ms/5. Explicit individual settings override these defaults. |
+| `spec.minRx` | *Optional* | string | Optional Go duration, 50ms–60000ms, overriding profile receive interval. Converted to integer milliseconds; omitted uses profile. This is a BFD protocol timer, not a router reboot deadline. |
+| `spec.minTx` | *Optional* | string | Optional Go duration, 50ms–60000ms, overriding profile transmit interval; emitted as integer milliseconds. |
+| `spec.detectMultiplier` | *Optional* | integer; minimum=1; maximum=50 | Optional integer 1–50. Decoded 0/omission selects profile default (3, or 5 for slow). Multiplies the negotiated detection interval; not a count of routerd reconcile attempts. |
+| `spec.when` | *Optional* | object | Optional common activation predicate; omitted is unconditional. See common fields for state/all/any, reference validation and schema limitations. |
 
 Implementation: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/bgp_validate.go](https://github.com/imksoo/routerd/blob/main/pkg/config/bgp_validate.go) · [pkg/config/validate.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go) · [pkg/controller/bfd/controller.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/bfd/controller.go) · [pkg/controller/bgp/controller.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/bgp/controller.go)
 
