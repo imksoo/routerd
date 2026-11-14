@@ -472,10 +472,14 @@ spec:
 
 [CloudProviderProfile](resources/CloudProviderProfile.md)
 
+描述规划提供商操作所用的身份及目标元数据默认值。此声明本身不进行云端认证或创建资源。
+
 
 ## ProviderActionPolicy
 
 [ProviderActionPolicy](resources/ProviderActionPolicy.md)
+
+控制交给执行 Plugin 的提供商操作。声明策略本身不会执行操作或登录云端。
 
 
 ## EventGroup

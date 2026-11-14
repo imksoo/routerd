@@ -472,10 +472,14 @@ spec:
 
 [CloudProviderProfile](resources/CloudProviderProfile.md)
 
+描述規劃供應商操作所用的身分及目標中繼資料預設值。此宣告本身不進行雲端驗證或建立資源。
+
 
 ## ProviderActionPolicy
 
 [ProviderActionPolicy](resources/ProviderActionPolicy.md)
+
+控制交給執行 Plugin 的供應商操作。宣告政策本身不會執行操作或登入雲端。
 
 
 ## EventGroup

@@ -5,6 +5,13 @@
 <main class="doclayout wrap"><article class="document"><h1 id="provideractionpolicy">ProviderActionPolicy</h1>
 <p><a href="../resources.html#provideractionpolicy">各資源的設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: hybrid.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>控制交給執行 Plugin 的供應商操作。宣告政策本身不會執行操作或登入雲端。</p>
+<h2 id="指定條件與參照關係">指定條件與參照關係</h2>
+<ul>
+<li>僅使用第一個 ProviderActionPolicy。省略時 enabled=false、dryRunOnly=true、requireApproval=true，無供應商／操作允許項目且 maxActionsPerRun=0。所有條件共同生效，適用條件也約束 dry-run 預覽。</li>
+<li>自動執行需 enabled=true、dryRunOnly=false、requireApproval=false、正上限，並符合允許清單及具 execute.providerAction 能力的合適 Plugin。外部憑證與實際供應商權限由執行器處理。</li>
+<li>目前 executionWindow 接受所有字串，不限制執行時間。allowUndo 僅在有合適 undo 資料時允許盡力回復，不保證原子交易。</li>
+</ul>
 <h2 id="yaml定義">YAML定義</h2>
 <p>此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。</p>
 <pre><code class="language-yaml">- apiVersion: hybrid.routerd.net/v1alpha1
@@ -27,9 +34,63 @@
     maxActionsPerRun: 0 # 選填; integer
     requireApproval: true # 選填; boolean
 </code></pre>
+<h2 id="欄位意義與預設值">欄位意義與預設值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>欄位意義與預設值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.enabled</code></td>
+<td>預設 false。允許執行或預覽操作需為 true。</td>
+</tr>
+<tr>
+<td><code>spec.dryRunOnly</code></td>
+<td>預設 true。false 僅在其他條件全數通過時允許實際變更；true 的預覽仍需 enabled 與允許清單。</td>
+</tr>
+<tr>
+<td><code>spec.requireApproval</code></td>
+<td>預設 true。false 僅在 enabled=true 且 dryRunOnly=false 時允許自動核准，不略過允許清單或執行器選擇。</td>
+</tr>
+<tr>
+<td><code>spec.allowedProviders</code></td>
+<td>精確比對 aws/azure/oci/gcp 的允許清單，預設空表示全部拒絕。使用無前後空白的標準拼寫。</td>
+</tr>
+<tr>
+<td><code>spec.allowedProviderRefs</code></td>
+<td>選用的操作 providerRef 精確允許清單，空表示不限制參照。不解析為狀態來源，此驗證也不檢查設定檔存在；須符合實際操作的 providerRef 拼寫。</td>
+</tr>
+<tr>
+<td><code>spec.allowedActions</code></td>
+<td>精確允許標準操作：assign-secondary-ip、unassign-secondary-ip、assign-route-table-route、unassign-route-table-route、ensure-forwarding-enabled、ensure-forwarding-disabled。空表示全拒絕。</td>
+</tr>
+<tr>
+<td><code>spec.allowedCIDRs</code></td>
+<td>選用 IPv4/IPv6 CIDR。空不加限制；非空要求 target.address 存在，且其 IP（含 CIDR 輸入的主機部分）落於任一前綴。不檢查執行器可能變更的所有位址。</td>
+</tr>
+<tr>
+<td><code>spec.maxActionsPerRun</code></td>
+<td>非負整數，預設 0 拒絕執行。正值限制自動控制器每輪候選數；單一操作引擎呼叫僅檢查為正值。不是累計或費用預算。</td>
+</tr>
+<tr>
+<td><code>spec.allowUndo</code></td>
+<td>預設 false；true 允許在具備 undo 資料並符合政策檢查時盡力回復。</td>
+</tr>
+<tr>
+<td><code>spec.executionWindow</code></td>
+<td>選用的自由字串，預設空。目前不解析為排程，也不在執行時強制限制，因此不限制時間。</td>
+</tr>
+</tbody>
+</table>
+<p>實作: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_hybrid.go">pkg/config/validate_hybrid.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/provideraction/policy.go">pkg/provideraction/policy.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/provideraction/engine.go">pkg/provideraction/engine.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/provideraction/controller.go">pkg/controller/provideraction/controller.go</a></p>
 <p><a href="/examples/cloudedge-mobility-demo/aws.yaml">設定範例</a></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
 <ul>
+<li><a href="#指定條件與參照關係">指定條件與參照關係</a></li>
 <li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#欄位意義與預設值">欄位意義與預設值</a></li>
 </ul>
 </div>
 </aside></main>

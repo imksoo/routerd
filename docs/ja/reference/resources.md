@@ -472,10 +472,14 @@ DNSForwarderが参照するDNSサーバーの接続先です。宣言だけで�
 
 [CloudProviderProfile](resources/CloudProviderProfile.md)
 
+プロバイダー操作の計画で使う識別情報・対象メタデータの既定値です。この宣言自体はクラウド認証や資源作成を行いません。
+
 
 ## ProviderActionPolicy
 
 [ProviderActionPolicy](resources/ProviderActionPolicy.md)
+
+実行用Pluginに渡すプロバイダー操作の許可条件です。ポリシーの宣言だけでは操作やクラウドへのログインは行いません。
 
 
 ## EventGroup

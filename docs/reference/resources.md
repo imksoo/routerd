@@ -472,10 +472,14 @@ A DNS server endpoint referenced by DNSForwarder; declaration alone does not sta
 
 [CloudProviderProfile](resources/CloudProviderProfile.md)
 
+Describe a provider identity and default target metadata used when planning provider actions. This declaration does not authenticate to a cloud or create resources.
+
 
 ## ProviderActionPolicy
 
 [ProviderActionPolicy](resources/ProviderActionPolicy.md)
+
+Gate execution of proposed provider actions by executor Plugins. Declaring a policy is not itself an action or a cloud login.
 
 
 ## EventGroup

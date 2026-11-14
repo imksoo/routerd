@@ -6664,5 +6664,175 @@
       "pkg/controller/chain/routeradvertisement.go",
       "pkg/render/dnsmasq.go"
     ]
+  },
+  "CloudProviderProfile": {
+    "purpose": [
+      "Describe a provider identity and default target metadata used when planning provider actions. This declaration does not authenticate to a cloud or create resources.",
+      "プロバイダー操作の計画で使う識別情報・対象メタデータの既定値です。この宣言自体はクラウド認証や資源作成を行いません。",
+      "描述規劃供應商操作所用的身分及目標中繼資料預設值。此宣告本身不進行雲端驗證或建立資源。",
+      "描述规划提供商操作所用的身份及目标元数据默认值。此声明本身不进行云端认证或创建资源。"
+    ],
+    "rules": [
+      [
+        "provider, nonempty capabilities, auth.mode and auth.command are required. Auth settings are validated declarations: current runtime does not execute auth.command. Provider mutations are performed by separate executor Plugins under ProviderActionPolicy.",
+        "provider、空でないcapabilities、auth.mode・auth.commandが必須です。認証設定は宣言を検証するだけで、現行実行処理はauth.commandを実行しません。プロバイダー変更はProviderActionPolicyに従う別の実行用Pluginが行います。",
+        "provider、非空 capabilities、auth.mode 與 auth.command 必填。驗證會檢查宣告，但目前執行流程不執行 auth.command。供應商變更由受 ProviderActionPolicy 控制的獨立執行 Plugin 處理。",
+        "provider、非空 capabilities、auth.mode 与 auth.command 必填。验证会检查声明，但目前执行流程不执行 auth.command。提供商变更由受 ProviderActionPolicy 控制的独立执行 Plugin 处理。"
+      ],
+      [
+        "Consumers such as mobility capture select the profile by its metadata.name; this is not a common status-value source. subscriptionID/resourceGroup fill missing action-target values rather than overriding explicit target values.",
+        "Mobilityのcaptureなどの利用側はmetadata.nameでプロファイルを選び、共通の状態値参照ではありません。subscriptionID・resourceGroupは操作対象の値が未指定の場合にだけ補い、明示値を上書きしません。",
+        "Mobility capture 等使用端以 metadata.name 選擇設定檔，不是共用狀態值來源。subscriptionID/resourceGroup 只補足未設定的操作目標值，不覆蓋明確值。",
+        "Mobility capture 等使用端以 metadata.name 选择配置，不是通用状态值来源。subscriptionID/resourceGroup 只补足未配置的操作目标值，不覆盖明确值。"
+      ]
+    ],
+    "fields": {
+      "provider": [
+        "Required azure/aws/oci/gcp; no default. Selects the provider label for planning/executor matching, not automatic credential discovery.",
+        "azure・aws・oci・gcpが必須で、既定値はありません。計画・実行Plugin選択用の識別子で、認証情報を自動検出する指定ではありません。",
+        "必填 azure/aws/oci/gcp，無預設值。選擇規劃／執行器標籤，不會自動探索憑證。",
+        "必填 azure/aws/oci/gcp，无默认值。选择规划／执行器标签，不会自动发现凭证。"
+      ],
+      "subscriptionID": [
+        "Optional target subscription ID, default empty. Copied as subscriptionId only when that target value is absent. No existence check or login.",
+        "対象サブスクリプションIDで、既定は空です。対象のsubscriptionIdが未設定の場合に補い、実在確認やログインは行いません。",
+        "選用的目標訂閱 ID，預設空。僅在目標缺少 subscriptionId 時補入，不檢查存在或登入。",
+        "可选的目标订阅 ID，默认空。仅在目标缺少 subscriptionId 时补入，不检查存在或登录。"
+      ],
+      "resourceGroup": [
+        "Optional default resourceGroup action-target value, default empty. Does not create or validate a resource group.",
+        "操作対象のresourceGroupの補完値で、既定は空です。資源グループの作成・検証は行いません。",
+        "選用的操作目標 resourceGroup 預設值，預設空。不建立或驗證資源群組。",
+        "可选的操作目标 resourceGroup 默认值，默认空。不创建或验证资源组。"
+      ],
+      "capabilities": [
+        "Required nonempty string list with no blank entries. The current validator does not restrict it to a known capability vocabulary, and the executor policy does not treat it as its action allowlist.",
+        "空でない文字列一覧が必須で、空要素は不可です。現行の検証は既知の語彙に制限せず、実行ポリシーの操作許可リストとしても扱いません。",
+        "必填非空字串清單，不可含空項目。目前驗證不限制為已知能力詞彙，執行政策也不將它視為操作允許清單。",
+        "必填非空字符串列表，不可含空条目。目前验证不限制为已知能力词汇，执行策略也不将它视为操作允许列表。"
+      ],
+      "auth": [
+        "Required authentication descriptor. Current implementation validates it without invoking the command.",
+        "必須の認証宣言です。現行実装は検証だけを行い、コマンドを呼び出しません。",
+        "必填的驗證描述。目前實作僅驗證，不呼叫命令。",
+        "必填的认证描述。目前实现仅验证，不调用命令。"
+      ],
+      "auth.mode": [
+        "Required external-command; only accepted mode. It does not make auth.command a running service.",
+        "external-commandが必須で、唯一の許可値です。auth.commandを常駐サービスとして起動するものではありません。",
+        "必填 external-command，唯一接受的模式。不會將 auth.command 啟動為服務。",
+        "必填 external-command，唯一接受的模式。不会将 auth.command 启动为服务。"
+      ],
+      "auth.command": [
+        "Required nonblank declaration; no default. Current runtime does not execute it or pass credentials obtained from it.",
+        "空でない宣言が必須で、既定値はありません。現行の実行処理は実行せず、そこから取得した認証情報を渡す処理もありません。",
+        "必填非空宣告，無預設值。目前執行流程不執行，也不傳遞由此取得的憑證。",
+        "必填非空声明，无默认值。目前执行流程不执行，也不传递由此取得的凭证。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_hybrid.go",
+      "pkg/controller/mobility/planner.go",
+      "pkg/provideraction/policy.go",
+      "pkg/provideraction/engine.go"
+    ]
+  },
+  "ProviderActionPolicy": {
+    "purpose": [
+      "Gate execution of proposed provider actions by executor Plugins. Declaring a policy is not itself an action or a cloud login.",
+      "実行用Pluginに渡すプロバイダー操作の許可条件です。ポリシーの宣言だけでは操作やクラウドへのログインは行いません。",
+      "控制交給執行 Plugin 的供應商操作。宣告政策本身不會執行操作或登入雲端。",
+      "控制交给执行 Plugin 的提供商操作。声明策略本身不会执行操作或登录云端。"
+    ],
+    "rules": [
+      [
+        "Only the first ProviderActionPolicy is used. Omission is locked down: enabled false, dryRunOnly true, requireApproval true, no provider/action allowlist and maxActionsPerRun 0. All gates apply together, including for dry-run previews where applicable.",
+        "最初のProviderActionPolicyだけを使います。省略時はenabled:false・dryRunOnly:true・requireApproval:true・プロバイダーと操作の許可なし・maxActionsPerRun:0です。各許可条件は組み合わせて適用し、適用対象の条件はdry-runの事前確認にも必要です。",
+        "僅使用第一個 ProviderActionPolicy。省略時 enabled=false、dryRunOnly=true、requireApproval=true，無供應商／操作允許項目且 maxActionsPerRun=0。所有條件共同生效，適用條件也約束 dry-run 預覽。",
+        "仅使用第一个 ProviderActionPolicy。省略时 enabled=false、dryRunOnly=true、requireApproval=true，无提供商／操作允许条目且 maxActionsPerRun=0。所有条件共同生效，适用条件也约束 dry-run 预览。"
+      ],
+      [
+        "Automatic execution requires enabled true, dryRunOnly false, requireApproval false and a positive cap, plus matching allowlists and a suitable executor Plugin with execute.providerAction capability. External credentials and real provider authorization belong to that executor.",
+        "自動実行にはenabled:true・dryRunOnly:false・requireApproval:false・正の上限に加え、許可リストへの適合とexecute.providerAction能力を持つ適切な実行Pluginが必要です。外部認証情報と実際のプロバイダー権限は実行Plugin側で扱います。",
+        "自動執行需 enabled=true、dryRunOnly=false、requireApproval=false、正上限，並符合允許清單及具 execute.providerAction 能力的合適 Plugin。外部憑證與實際供應商權限由執行器處理。",
+        "自动执行需 enabled=true、dryRunOnly=false、requireApproval=false、正上限，并符合允许列表及具 execute.providerAction 能力的合适 Plugin。外部凭证与实际提供商权限由执行器处理。"
+      ],
+      [
+        "executionWindow currently accepts every string and enforces no time restriction. allowUndo enables only best-effort rollback when suitable undo data exists; it is not an atomic transaction guarantee.",
+        "executionWindowは現行実装でどの文字列も許可し、実行時間を制限しません。allowUndoは必要なundo情報がある場合のベストエフォートな巻き戻しを許可するだけで、原子的なトランザクションを保証しません。",
+        "目前 executionWindow 接受所有字串，不限制執行時間。allowUndo 僅在有合適 undo 資料時允許盡力回復，不保證原子交易。",
+        "目前 executionWindow 接受所有字符串，不限制执行时间。allowUndo 仅在有合适 undo 数据时允许尽力回滚，不保证原子事务。"
+      ]
+    ],
+    "fields": {
+      "enabled": [
+        "Default false. Must be true to permit action execution or preview.",
+        "既定はfalseです。操作実行・事前確認の許可にはtrueが必要です。",
+        "預設 false。允許執行或預覽操作需為 true。",
+        "默认 false。允许执行或预览操作需为 true。"
+      ],
+      "dryRunOnly": [
+        "Default true. False permits live mutation only if all other gates pass; true still requires enabled and allowlists for previews.",
+        "既定はtrueです。falseでも他の条件をすべて満たす必要があります。trueの事前確認にもenabled・許可リストが必要です。",
+        "預設 true。false 僅在其他條件全數通過時允許實際變更；true 的預覽仍需 enabled 與允許清單。",
+        "默认 true。false 仅在其他条件全部通过时允许实际变更；true 的预览仍需 enabled 与允许列表。"
+      ],
+      "requireApproval": [
+        "Default true. False allows auto-approval only with enabled true and dryRunOnly false. This does not bypass allowlists or executor selection.",
+        "既定はtrueです。falseによる自動承認はenabled:true・dryRunOnly:falseの場合だけです。許可リストやPlugin選択を回避しません。",
+        "預設 true。false 僅在 enabled=true 且 dryRunOnly=false 時允許自動核准，不略過允許清單或執行器選擇。",
+        "默认 true。false 仅在 enabled=true 且 dryRunOnly=false 时允许自动批准，不跳过允许列表或执行器选择。"
+      ],
+      "allowedProviders": [
+        "Exact aws/azure/oci/gcp allowlist; default empty denies every provider. Use canonical spelling without surrounding whitespace.",
+        "aws・azure・oci・gcpの完全一致許可リストです。既定の空はすべて拒否し、前後空白のない標準表記を使います。",
+        "精確比對 aws/azure/oci/gcp 的允許清單，預設空表示全部拒絕。使用無前後空白的標準拼寫。",
+        "精确匹配 aws/azure/oci/gcp 的允许列表，默认空表示全部拒绝。使用无前后空白的标准拼写。"
+      ],
+      "allowedProviderRefs": [
+        "Optional exact action providerRef allowlist; empty imposes no reference restriction. Strings are not resolved as status sources or checked for profile existence by this validator. Match the actual action providerRef spelling.",
+        "操作のproviderRefに対する任意の完全一致リストです。空なら参照名の制限なしです。状態値参照として解決せず、この検証ではプロファイルの存在も確認しません。実際の操作のproviderRefと表記を合わせます。",
+        "選用的操作 providerRef 精確允許清單，空表示不限制參照。不解析為狀態來源，此驗證也不檢查設定檔存在；須符合實際操作的 providerRef 拼寫。",
+        "可选的操作 providerRef 精确允许列表，空表示不限制引用。不解析为状态来源，此验证也不检查配置存在；须符合实际操作的 providerRef 拼写。"
+      ],
+      "allowedActions": [
+        "Exact canonical verb allowlist: assign-secondary-ip, unassign-secondary-ip, assign-route-table-route, unassign-route-table-route, ensure-forwarding-enabled, ensure-forwarding-disabled. Empty denies all.",
+        "assign-secondary-ip・unassign-secondary-ip・assign-route-table-route・unassign-route-table-route・ensure-forwarding-enabled・ensure-forwarding-disabledの完全一致許可リストです。空ならすべて拒否します。",
+        "精確允許標準操作：assign-secondary-ip、unassign-secondary-ip、assign-route-table-route、unassign-route-table-route、ensure-forwarding-enabled、ensure-forwarding-disabled。空表示全拒絕。",
+        "精确允许标准操作：assign-secondary-ip、unassign-secondary-ip、assign-route-table-route、unassign-route-table-route、ensure-forwarding-enabled、ensure-forwarding-disabled。空表示全拒绝。"
+      ],
+      "allowedCIDRs": [
+        "Optional IPv4/IPv6 CIDRs. Empty adds no CIDR gate; nonempty requires target.address to exist and its IP (including the host part of CIDR input) to fall in any allowed prefix. Not a check of every address an executor might change.",
+        "任意のIPv4・IPv6 CIDRです。空ならCIDR制限なし、指定時はtarget.addressの存在と、IP部分がいずれかの範囲内であることを要求します。CIDR形式の対象でもホスト部で判定し、Pluginが変更する全アドレスを検査するものではありません。",
+        "選用 IPv4/IPv6 CIDR。空不加限制；非空要求 target.address 存在，且其 IP（含 CIDR 輸入的主機部分）落於任一前綴。不檢查執行器可能變更的所有位址。",
+        "可选 IPv4/IPv6 CIDR。空不加限制；非空要求 target.address 存在，且其 IP（含 CIDR 输入的主机部分）落于任一前缀。不检查执行器可能变更的所有地址。"
+      ],
+      "maxActionsPerRun": [
+        "Nonnegative integer, default 0 denies execution. Positive value caps candidate selection per automatic controller run; single-action engine calls check only that it is positive. Not a lifetime or billing budget.",
+        "0以上の整数で、既定の0は実行を拒否します。正の値は自動コントローラーの1回の候補選択件数を制限し、単一操作のエンジン呼び出しは正であることだけを確認します。累計件数や課金額の上限ではありません。",
+        "非負整數，預設 0 拒絕執行。正值限制自動控制器每輪候選數；單一操作引擎呼叫僅檢查為正值。不是累計或費用預算。",
+        "非负整数，默认 0 拒绝执行。正值限制自动控制器每轮候选数；单个操作引擎调用仅检查为正值。不是累计或费用预算。"
+      ],
+      "allowUndo": [
+        "Default false; true permits best-effort rollback subject to available undo data and policy checks.",
+        "既定はfalseです。trueはundo情報とポリシー条件を満たす場合のベストエフォートな巻き戻しを許可します。",
+        "預設 false；true 允許在具備 undo 資料並符合政策檢查時盡力回復。",
+        "默认 false；true 允许在具备 undo 数据并符合策略检查时尽力回滚。"
+      ],
+      "executionWindow": [
+        "Optional free-form string, default empty. Currently neither parsed as a schedule nor enforced at runtime; does not restrict execution time.",
+        "任意の自由形式文字列で、既定は空です。現行処理ではスケジュールとして解析せず実行時にも制約しないため、時間制限にはなりません。",
+        "選用的自由字串，預設空。目前不解析為排程，也不在執行時強制限制，因此不限制時間。",
+        "可选的自由字符串，默认空。目前不解析为计划，也不在运行时强制限制，因此不限制时间。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_hybrid.go",
+      "pkg/provideraction/policy.go",
+      "pkg/provideraction/engine.go",
+      "pkg/controller/provideraction/controller.go"
+    ]
   }
 }

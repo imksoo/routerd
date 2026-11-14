@@ -5,6 +5,13 @@
 <main class="doclayout wrap"><article class="document"><h1 id="provideractionpolicy">ProviderActionPolicy</h1>
 <p><a href="../resources.html#provideractionpolicy">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: hybrid.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Gate execution of proposed provider actions by executor Plugins. Declaring a policy is not itself an action or a cloud login.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>Only the first ProviderActionPolicy is used. Omission is locked down: enabled false, dryRunOnly true, requireApproval true, no provider/action allowlist and maxActionsPerRun 0. All gates apply together, including for dry-run previews where applicable.</li>
+<li>Automatic execution requires enabled true, dryRunOnly false, requireApproval false and a positive cap, plus matching allowlists and a suitable executor Plugin with execute.providerAction capability. External credentials and real provider authorization belong to that executor.</li>
+<li>executionWindow currently accepts every string and enforces no time restriction. allowUndo enables only best-effort rollback when suitable undo data exists; it is not an atomic transaction guarantee.</li>
+</ul>
 <h2 id="yaml-definition">YAML definition</h2>
 <p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
 <pre><code class="language-yaml">- apiVersion: hybrid.routerd.net/v1alpha1
@@ -27,9 +34,63 @@
     maxActionsPerRun: 0 # optional; integer
     requireApproval: true # optional; boolean
 </code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.enabled</code></td>
+<td>Default false. Must be true to permit action execution or preview.</td>
+</tr>
+<tr>
+<td><code>spec.dryRunOnly</code></td>
+<td>Default true. False permits live mutation only if all other gates pass; true still requires enabled and allowlists for previews.</td>
+</tr>
+<tr>
+<td><code>spec.requireApproval</code></td>
+<td>Default true. False allows auto-approval only with enabled true and dryRunOnly false. This does not bypass allowlists or executor selection.</td>
+</tr>
+<tr>
+<td><code>spec.allowedProviders</code></td>
+<td>Exact aws/azure/oci/gcp allowlist; default empty denies every provider. Use canonical spelling without surrounding whitespace.</td>
+</tr>
+<tr>
+<td><code>spec.allowedProviderRefs</code></td>
+<td>Optional exact action providerRef allowlist; empty imposes no reference restriction. Strings are not resolved as status sources or checked for profile existence by this validator. Match the actual action providerRef spelling.</td>
+</tr>
+<tr>
+<td><code>spec.allowedActions</code></td>
+<td>Exact canonical verb allowlist: assign-secondary-ip, unassign-secondary-ip, assign-route-table-route, unassign-route-table-route, ensure-forwarding-enabled, ensure-forwarding-disabled. Empty denies all.</td>
+</tr>
+<tr>
+<td><code>spec.allowedCIDRs</code></td>
+<td>Optional IPv4/IPv6 CIDRs. Empty adds no CIDR gate; nonempty requires target.address to exist and its IP (including the host part of CIDR input) to fall in any allowed prefix. Not a check of every address an executor might change.</td>
+</tr>
+<tr>
+<td><code>spec.maxActionsPerRun</code></td>
+<td>Nonnegative integer, default 0 denies execution. Positive value caps candidate selection per automatic controller run; single-action engine calls check only that it is positive. Not a lifetime or billing budget.</td>
+</tr>
+<tr>
+<td><code>spec.allowUndo</code></td>
+<td>Default false; true permits best-effort rollback subject to available undo data and policy checks.</td>
+</tr>
+<tr>
+<td><code>spec.executionWindow</code></td>
+<td>Optional free-form string, default empty. Currently neither parsed as a schedule nor enforced at runtime; does not restrict execution time.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_hybrid.go">pkg/config/validate_hybrid.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/provideraction/policy.go">pkg/provideraction/policy.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/provideraction/engine.go">pkg/provideraction/engine.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/provideraction/controller.go">pkg/controller/provideraction/controller.go</a></p>
 <p><a href="/examples/cloudedge-mobility-demo/aws.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
 <li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 </ul>
 </div>
 </aside></main>
