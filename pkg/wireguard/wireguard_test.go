@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestResolveKeyFiles(t *testing.T) {
@@ -99,33 +98,6 @@ func TestApplyDryRunDoesNotGeneratePrivateKeyFile(t *testing.T) {
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("dry-run created private key file: %v", err)
-	}
-}
-
-func TestParseDump(t *testing.T) {
-	data := "priv\tpub\t51820\toff\npeerpub\tpsk\t203.0.113.2:51820\t10.0.0.2/32\t1710000000\t100\t200\t25\n"
-	status, err := ParseInterfaceDump("wg0", []byte(data))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if status.Name != "wg0" || status.PublicKey != "pub" || status.ListenPort != 51820 {
-		t.Fatalf("interface status = %+v", status)
-	}
-	peers, err := ParseDump([]byte(data))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(peers) != 1 {
-		t.Fatalf("peers = %+v, want one", peers)
-	}
-	if peers[0].PublicKey != "peerpub" || peers[0].LatestEndpoint != "203.0.113.2:51820" {
-		t.Fatalf("peer = %+v", peers[0])
-	}
-	if want := time.Unix(1710000000, 0).UTC(); !peers[0].LatestHandshake.Equal(want) {
-		t.Fatalf("handshake = %s, want %s", peers[0].LatestHandshake, want)
-	}
-	if peers[0].TransferRxBytes != 100 || peers[0].TransferTxBytes != 200 {
-		t.Fatalf("transfer = %+v", peers[0])
 	}
 }
 

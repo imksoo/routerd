@@ -210,11 +210,6 @@ func DeleteResourceYAML(currentYAML []byte, target MutationTarget) ([]byte, *api
 	return out, router, removed, err
 }
 
-func AtomicWriteFile(path string, data []byte) error {
-	_, err := AtomicWriteFileWithOutcome(path, data)
-	return err
-}
-
 // AtomicWriteFileWithOutcome reports whether rename completed, even if a later operation fails.
 func AtomicWriteFileWithOutcome(path string, data []byte) (replaced bool, err error) {
 	path = strings.TrimSpace(path)

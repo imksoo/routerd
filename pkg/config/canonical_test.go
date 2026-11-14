@@ -3,8 +3,6 @@
 package config
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -37,30 +35,6 @@ spec:
 	}
 	if strings.Index(out, "apiVersion:") > strings.Index(out, "kind:") {
 		t.Fatalf("canonical output reordered top-level fields:\n%s", out)
-	}
-}
-
-func TestAtomicWriteFileReplacesContentAndKeepsMode(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "router.yaml")
-	if err := os.WriteFile(path, []byte("old\n"), 0600); err != nil {
-		t.Fatalf("seed file: %v", err)
-	}
-	if err := AtomicWriteFile(path, []byte("new\n")); err != nil {
-		t.Fatalf("atomic write: %v", err)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read file: %v", err)
-	}
-	if string(data) != "new\n" {
-		t.Fatalf("file data = %q, want new", data)
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("stat file: %v", err)
-	}
-	if got := info.Mode().Perm(); got != 0600 {
-		t.Fatalf("mode = %v, want 0600", got)
 	}
 }
 

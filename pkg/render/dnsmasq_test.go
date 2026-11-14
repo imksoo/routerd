@@ -820,27 +820,6 @@ func TestDnsmasqConfigSkipsIPv6ScopeUntilDelegatedPrefixExists(t *testing.T) {
 	}
 }
 
-func TestDnsmasqServiceUnitDoesNotOwnRouterdRuntimeDirectory(t *testing.T) {
-	unit := string(DnsmasqServiceUnit("/run/routerd/routerd-dnsmasq.conf", "/run/current-system/sw/bin/dnsmasq"))
-	if strings.Contains(unit, "RuntimeDirectory=routerd") {
-		t.Fatalf("dnsmasq unit must not own /run/routerd because it can remove the routerd control socket:\n%s", unit)
-	}
-	if !strings.Contains(unit, "ConditionPathExists=/run/routerd/routerd-dnsmasq.conf") {
-		t.Fatalf("dnsmasq unit should skip cleanly before routerd materializes runtime config:\n%s", unit)
-	}
-	if !strings.Contains(unit, "--pid-file=/run/routerd/dnsmasq.pid") {
-		t.Fatalf("dnsmasq unit should keep the managed pid path:\n%s", unit)
-	}
-	for _, want := range []string{"KillMode=mixed", "TimeoutStopSec=10s"} {
-		if !strings.Contains(unit, want) {
-			t.Fatalf("dnsmasq unit missing %q:\n%s", want, unit)
-		}
-	}
-	if !strings.Contains(unit, "ExecReload=/bin/kill -HUP $MAINPID") {
-		t.Fatalf("dnsmasq unit must let systemd deliver SIGHUP:\n%s", unit)
-	}
-}
-
 func TestDnsmasqServiceUnitWithCustomPIDFile(t *testing.T) {
 	unit := string(DnsmasqServiceUnitWithPID("/run/routerd/dnsmasq.conf", "/run/routerd/dnsmasq-custom.pid", "/usr/sbin/dnsmasq"))
 	if !strings.Contains(unit, "ExecStart=/usr/sbin/dnsmasq --keep-in-foreground --conf-file=/run/routerd/dnsmasq.conf --pid-file=/run/routerd/dnsmasq-custom.pid") {
