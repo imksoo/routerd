@@ -65,6 +65,16 @@ func (c *Controller) Start(ctx context.Context) {
 	if c.Router == nil || c.Bus == nil || c.Store == nil || c.Events == nil {
 		return
 	}
+	hasRules := false
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.Kind == "EventRule" {
+			hasRules = true
+			break
+		}
+	}
+	if !hasRules {
+		return
+	}
 	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.**"}}, 128)
 	go func() {
 		defer func() {
@@ -136,9 +146,18 @@ func (c *Controller) reconcileRule(resource api.Resource, event daemonapi.Daemon
 	if err != nil {
 		return nil, err
 	}
+	if spec.Pattern.Operator == OperatorAllOf || spec.Pattern.Operator == OperatorSequence {
+		if !topicInList(event.Type, inputTopics(spec.Pattern)) {
+			return nil, nil
+		}
+	} else if !eventMatchesAny(spec.Pattern, event.Type) && !(spec.Pattern.Operator == OperatorAbsence && spec.Pattern.Expected != "" && bus.MatchTopic(spec.Pattern.Expected, event.Type)) {
+		return nil, nil
+	}
 	key, ok := correlationKey(event, spec.Pattern)
 	if !ok {
-		c.warn(resource.Metadata.Name)
+		if event.Type != "routerd.resource.status.changed" || event.Resource == nil || event.Resource.Kind != "EventRule" {
+			c.warn(resource.Metadata.Name)
+		}
 		return nil, nil
 	}
 	c.mu.Lock()
