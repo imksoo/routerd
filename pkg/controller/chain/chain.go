@@ -51,7 +51,6 @@ import (
 	"github.com/imksoo/routerd/pkg/derived"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	"github.com/imksoo/routerd/pkg/egressroute"
-	"github.com/imksoo/routerd/pkg/eventconsumer"
 	"github.com/imksoo/routerd/pkg/eventrule"
 	"github.com/imksoo/routerd/pkg/ha"
 	"github.com/imksoo/routerd/pkg/healthcheck"
@@ -83,195 +82,83 @@ type dnsmasqSystemdState struct {
 }
 
 type Store interface {
+	ListObjectStatuses() ([]routerstate.ObjectStatus, error)
+	DeleteObject(apiVersion, kind, name string) error
+	Get(name string) routerstate.Value
+	Age(name string) time.Duration
+	Now() time.Time
+	PruneEventsOlderThan(cutoff time.Time) (int64, error)
 	SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error
 	ObjectStatus(apiVersion, kind, name string) map[string]any
 	ListDynamicConfigParts() ([]routerstate.DynamicConfigPartRecord, error)
 }
 
-type objectStatusMerger interface {
-	MergeObjectStatus(apiVersion, kind, name string, updates map[string]any) error
-}
-
 type eventedStore struct {
-	Store  Store
-	Bus    *bus.Bus
-	Router *api.Router
-}
-
-// eventSubscriptionStore composes the evented status store (ownership + bus
-// publication on status changes) with the raw SQLite data store that the
-// EventSubscriptionController needs for federation events, subscription runs,
-// dynamic config parts, and plugin runs.
-type eventSubscriptionStore struct {
-	evented eventedStore
-	data    eventsubscriptioncontroller.DataStore
-}
-
-type mobilityDataStore interface {
-	ListFederationEvents(group string, includeExpired bool, now int64) ([]routerstate.EventRecord, error)
-	RecordFederationEvent(routerstate.EventRecord) error
-	UpsertDynamicConfigPart(routerstate.DynamicConfigPartRecord) error
-	GetDynamicConfigPartsBySource(source string) ([]routerstate.DynamicConfigPartRecord, error)
-	ListDynamicConfigParts() ([]routerstate.DynamicConfigPartRecord, error)
-	ListActions(routerstate.ActionExecutionFilter) ([]routerstate.ActionExecutionRecord, error)
+	*routerstate.SQLiteStore
+	Bus                   *bus.Bus
+	Router                *api.Router
+	statusHistoryRequired bool
 }
 
 type mobilityStore struct {
-	evented eventedStore
-	data    mobilityDataStore
-}
-
-func (s mobilityStore) SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error {
-	return s.evented.SaveObjectStatus(apiVersion, kind, name, status)
-}
-
-func (s mobilityStore) MergeObjectStatus(apiVersion, kind, name string, updates map[string]any) error {
-	return s.evented.MergeObjectStatus(apiVersion, kind, name, updates)
-}
-
-func (s mobilityStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
-	return s.evented.ObjectStatus(apiVersion, kind, name)
+	eventedStore
 }
 
 func (s mobilityStore) RecordBusEvent(ctx context.Context, event daemonapi.DaemonEvent) (string, error) {
-	if s.evented.Bus != nil {
-		return "", s.evented.Bus.Publish(ctx, event)
-	}
-	if store, ok := s.data.(bus.EventStore); ok {
-		return store.RecordBusEvent(ctx, event)
-	}
-	return "", nil
-}
-
-func (s mobilityStore) ListFederationEvents(group string, includeExpired bool, now int64) ([]routerstate.EventRecord, error) {
-	return s.data.ListFederationEvents(group, includeExpired, now)
-}
-
-func (s mobilityStore) RecordFederationEvent(rec routerstate.EventRecord) error {
-	return s.data.RecordFederationEvent(rec)
-}
-
-func (s mobilityStore) UpsertDynamicConfigPart(rec routerstate.DynamicConfigPartRecord) error {
-	return s.data.UpsertDynamicConfigPart(rec)
-}
-
-func (s mobilityStore) GetDynamicConfigPartsBySource(source string) ([]routerstate.DynamicConfigPartRecord, error) {
-	return s.data.GetDynamicConfigPartsBySource(source)
-}
-
-func (s mobilityStore) ListDynamicConfigParts() ([]routerstate.DynamicConfigPartRecord, error) {
-	return s.data.ListDynamicConfigParts()
-}
-
-func (s mobilityStore) ListActions(filter routerstate.ActionExecutionFilter) ([]routerstate.ActionExecutionRecord, error) {
-	return s.data.ListActions(filter)
-}
-
-func (s eventSubscriptionStore) SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error {
-	return s.evented.SaveObjectStatus(apiVersion, kind, name, status)
-}
-
-func (s eventSubscriptionStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
-	return s.evented.ObjectStatus(apiVersion, kind, name)
-}
-
-func (s eventSubscriptionStore) ListFederationEvents(group string, includeExpired bool, now int64) ([]routerstate.EventRecord, error) {
-	return s.data.ListFederationEvents(group, includeExpired, now)
-}
-
-func (s eventSubscriptionStore) SubscriptionRunStatus(subscription, eventID string) (string, int, bool, error) {
-	return s.data.SubscriptionRunStatus(subscription, eventID)
-}
-
-func (s eventSubscriptionStore) UpsertSubscriptionRunStart(subscription, eventID, eventGroup, plugin string) error {
-	return s.data.UpsertSubscriptionRunStart(subscription, eventID, eventGroup, plugin)
-}
-
-func (s eventSubscriptionStore) MarkSubscriptionRunResult(subscription, eventID, status, dynamicSource string, dynamicGeneration int64, errMsg string) error {
-	return s.data.MarkSubscriptionRunResult(subscription, eventID, status, dynamicSource, dynamicGeneration, errMsg)
-}
-
-func (s eventSubscriptionStore) UpsertDynamicConfigPart(part routerstate.DynamicConfigPartRecord) error {
-	return s.data.UpsertDynamicConfigPart(part)
-}
-
-func (s eventSubscriptionStore) GetDynamicConfigPartsBySource(source string) ([]routerstate.DynamicConfigPartRecord, error) {
-	return s.data.GetDynamicConfigPartsBySource(source)
-}
-
-func (s eventSubscriptionStore) RecordPluginRun(run routerstate.PluginRunRecord) (int64, error) {
-	return s.data.RecordPluginRun(run)
-}
-
-func (s eventSubscriptionStore) CompletePluginRun(id int64, completedAt time.Time, exitCode *int, status, stdoutDigest, stderrText, runError string) error {
-	return s.data.CompletePluginRun(id, completedAt, exitCode, status, stdoutDigest, stderrText, runError)
+	return "", s.Bus.Publish(ctx, event)
 }
 
 func (s eventedStore) SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error {
-	if s.Store == nil {
+	return s.saveStatus(apiVersion, kind, name, status, false)
+}
+
+func (s eventedStore) MergeObjectStatus(apiVersion, kind, name string, updates map[string]any) error {
+	return s.saveStatus(apiVersion, kind, name, updates, true)
+}
+
+func (s eventedStore) saveStatus(apiVersion, kind, name string, updates map[string]any, merge bool) error {
+	if s.statusHistoryRequired {
+		return s.saveStatusWithHistory(apiVersion, kind, name, updates, merge)
+	}
+	current := s.SQLiteStore.ObjectStatus(apiVersion, kind, name)
+	next := updates
+	if merge {
+		next = copyStatusMap(current)
+		for key, value := range updates {
+			next[key] = value
+		}
+	}
+	if apiVersion == api.NetAPIVersion && kind == "DHCPv6PrefixDelegation" {
+		if err := routerstate.PreparePDLeaseStatus(current, next); err != nil {
+			return err
+		}
+	}
+	write, event := buildStatusTransition(apiVersion, kind, name, current, next)
+	if !write {
 		return nil
 	}
-	if statusEventHistoryRequired(s.Router) {
-		return s.saveStatusWithHistory(apiVersion, kind, name, status, false)
+	var err error
+	if merge {
+		err = s.SQLiteStore.MergeObjectStatus(apiVersion, kind, name, updates)
+	} else {
+		err = s.SQLiteStore.SaveObjectStatus(apiVersion, kind, name, updates)
 	}
-	current := s.Store.ObjectStatus(apiVersion, kind, name)
-	if newerStatus(current, status) {
-		return nil
-	}
-	publishChanged := shouldPublishStatusChangedEvent(apiVersion, kind, current, status)
-	if err := s.Store.SaveObjectStatus(apiVersion, kind, name, status); err != nil {
+	if err != nil {
 		return err
 	}
-	if publishChanged && s.Bus != nil {
-		changedFields := statusChangedFieldsForEvent(apiVersion, kind, current, status)
-		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "store"}, "routerd.resource.status.changed", statusChangedEventSeverity(apiVersion, kind, current, status, changedFields))
-		event.Resource = &daemonapi.ResourceRef{APIVersion: apiVersion, Kind: kind, Name: name}
-		event.Attributes = map[string]string{
-			"phase":         fmt.Sprint(status["phase"]),
-			"previousPhase": fmt.Sprint(current["phase"]),
-			"changedFields": strings.Join(changedFields, ","),
-		}
-		return s.Bus.Publish(context.Background(), event)
+	if event != nil && s.Bus != nil {
+		event.Time = time.Now().UTC()
+		return s.Bus.Publish(context.Background(), *event)
 	}
 	return nil
 }
 
-func (s eventedStore) MergeObjectStatus(apiVersion, kind, name string, updates map[string]any) error {
-	if s.Store == nil {
-		return nil
-	}
-	status := copyStatusMap(updates)
-	if statusEventHistoryRequired(s.Router) {
-		return s.saveStatusWithHistory(apiVersion, kind, name, status, true)
-	}
-	current := s.Store.ObjectStatus(apiVersion, kind, name)
-	next := copyStatusMap(current)
-	for key, value := range status {
-		next[key] = value
-	}
-	if newerStatus(current, next) {
-		return nil
-	}
-	publishChanged := shouldPublishStatusChangedEvent(apiVersion, kind, current, next)
-	if store, ok := s.Store.(objectStatusMerger); ok {
-		if err := store.MergeObjectStatus(apiVersion, kind, name, status); err != nil {
-			return err
-		}
-	} else if err := s.Store.SaveObjectStatus(apiVersion, kind, name, next); err != nil {
-		return err
-	}
-	if publishChanged && s.Bus != nil {
-		changedFields := statusChangedFieldsForEvent(apiVersion, kind, current, next)
-		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "store"}, "routerd.resource.status.changed", statusChangedEventSeverity(apiVersion, kind, current, next, changedFields))
-		event.Resource = &daemonapi.ResourceRef{APIVersion: apiVersion, Kind: kind, Name: name}
-		event.Attributes = map[string]string{
-			"phase":         fmt.Sprint(next["phase"]),
-			"previousPhase": fmt.Sprint(current["phase"]),
-			"changedFields": strings.Join(changedFields, ","),
-		}
-		return s.Bus.Publish(context.Background(), event)
-	}
-	return nil
+// Only declaration-generation changes recalculate history requirements.
+// Effective controller routers may temporarily omit rules due to when/HA.
+func (s eventedStore) withDeclaredRouter(router *api.Router) eventedStore {
+	s.Router = router
+	s.statusHistoryRequired = statusEventHistoryRequired(router)
+	return s
 }
 
 func (s eventedStore) withRouter(router *api.Router) eventedStore {
@@ -327,121 +214,6 @@ func preserveStatusFields(status, current map[string]any, fields ...string) map[
 		}
 	}
 	return out
-}
-
-func (s eventedStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
-	if s.Store == nil {
-		return nil
-	}
-	return s.Store.ObjectStatus(apiVersion, kind, name)
-}
-
-func (s eventedStore) Get(name string) routerstate.Value {
-	store, ok := s.Store.(routerstate.Store)
-	if !ok {
-		now := time.Now().UTC()
-		return routerstate.Value{Status: routerstate.StatusUnknown, Since: now, UpdatedAt: now}
-	}
-	return store.Get(name)
-}
-
-func (s eventedStore) Set(name, value, reason string) routerstate.Value {
-	store, ok := s.Store.(routerstate.Store)
-	if !ok {
-		now := time.Now().UTC()
-		return routerstate.Value{Status: routerstate.StatusUnknown, Value: value, Reason: reason, Since: now, UpdatedAt: now}
-	}
-	return store.Set(name, value, reason)
-}
-
-func (s eventedStore) Unset(name, reason string) routerstate.Value {
-	store, ok := s.Store.(routerstate.Store)
-	if !ok {
-		now := time.Now().UTC()
-		return routerstate.Value{Status: routerstate.StatusUnknown, Reason: reason, Since: now, UpdatedAt: now}
-	}
-	return store.Unset(name, reason)
-}
-
-func (s eventedStore) Forget(name, reason string) routerstate.Value {
-	store, ok := s.Store.(routerstate.Store)
-	if !ok {
-		now := time.Now().UTC()
-		return routerstate.Value{Status: routerstate.StatusUnknown, Reason: reason, Since: now, UpdatedAt: now}
-	}
-	return store.Forget(name, reason)
-}
-
-func (s eventedStore) Delete(name string) {
-	store, ok := s.Store.(routerstate.Store)
-	if ok {
-		store.Delete(name)
-	}
-}
-
-func (s eventedStore) Age(name string) time.Duration {
-	store, ok := s.Store.(routerstate.Store)
-	if !ok {
-		return 0
-	}
-	return store.Age(name)
-}
-
-func (s eventedStore) Now() time.Time {
-	store, ok := s.Store.(routerstate.Store)
-	if !ok {
-		return time.Now().UTC()
-	}
-	return store.Now()
-}
-
-func (s eventedStore) Save(path string) error {
-	store, ok := s.Store.(routerstate.Store)
-	if !ok {
-		return nil
-	}
-	return store.Save(path)
-}
-
-func (s eventedStore) Variables() map[string]routerstate.Value {
-	store, ok := s.Store.(routerstate.Store)
-	if !ok {
-		return nil
-	}
-	return store.Variables()
-}
-
-func (s eventedStore) ListObjectStatuses() ([]routerstate.ObjectStatus, error) {
-	if s.Store == nil {
-		return nil, nil
-	}
-	lister, ok := s.Store.(interface {
-		ListObjectStatuses() ([]routerstate.ObjectStatus, error)
-	})
-	if !ok {
-		return nil, nil
-	}
-	return lister.ListObjectStatuses()
-}
-
-func (s eventedStore) ListDynamicConfigParts() ([]routerstate.DynamicConfigPartRecord, error) {
-	if s.Store == nil {
-		return nil, nil
-	}
-	return s.Store.ListDynamicConfigParts()
-}
-
-func (s eventedStore) DeleteObject(apiVersion, kind, name string) error {
-	if s.Store == nil {
-		return nil
-	}
-	deleter, ok := s.Store.(interface {
-		DeleteObject(apiVersion, kind, name string) error
-	})
-	if !ok {
-		return nil
-	}
-	return deleter.DeleteObject(apiVersion, kind, name)
 }
 
 func newerStatus(current, next map[string]any) bool {
@@ -501,27 +273,22 @@ func changedFields(currentStable, nextStable map[string]any) []string {
 	return out
 }
 
-func statusChangedForEvent(apiVersion, kind string, current, next map[string]any) bool {
+func statusEventChange(apiVersion, kind string, current, next map[string]any) (bool, []string) {
 	currentStable := statusForEvent(apiVersion, kind, current)
 	nextStable := statusForEvent(apiVersion, kind, next)
 	currentData, currentErr := json.Marshal(currentStable)
 	nextData, nextErr := json.Marshal(nextStable)
+	var changed bool
 	if currentErr == nil && nextErr == nil {
-		return !bytes.Equal(currentData, nextData)
+		changed = !bytes.Equal(currentData, nextData)
+	} else {
+		changed = !reflect.DeepEqual(currentStable, nextStable)
 	}
-	return !reflect.DeepEqual(currentStable, nextStable)
-}
-
-func statusChangedFieldsForEvent(apiVersion, kind string, current, next map[string]any) []string {
-	return changedFields(statusForEvent(apiVersion, kind, current), statusForEvent(apiVersion, kind, next))
-}
-
-func shouldPublishStatusChangedEvent(apiVersion, kind string, current, next map[string]any) bool {
-	if !statusChangedForEvent(apiVersion, kind, current, next) {
-		return false
+	if !changed {
+		return false, nil
 	}
-	fields := statusChangedFieldsForEvent(apiVersion, kind, current, next)
-	return !suppressStatusChangedEvent(apiVersion, kind, current, next, fields)
+	fields := changedFields(currentStable, nextStable)
+	return !suppressStatusChangedEvent(apiVersion, kind, current, next, fields), fields
 }
 
 func suppressStatusChangedEvent(apiVersion, kind string, current, next map[string]any, fields []string) bool {
@@ -1116,7 +883,7 @@ func ntpControllersForOptions(router *api.Router, eventBus *bus.Bus, store Store
 type Runner struct {
 	Router              *api.Router
 	Bus                 *bus.Bus
-	Store               Store
+	Store               *routerstate.SQLiteStore
 	Opts                Options
 	HADecision          *ha.Decision
 	CancelServe         context.CancelFunc
@@ -1362,7 +1129,7 @@ func (r *Runner) startClientDaemonSources(ctx context.Context, logger *slog.Logg
 		if err != nil {
 			return err
 		}
-		if api.EffectiveIPv6PDClient(string(platform.CurrentOS()), spec.Profile, spec.Client) != api.IPv6PDClientRouterd {
+		if api.EffectiveIPv6PDClient(spec.Client) != api.IPv6PDClientRouterd {
 			continue
 		}
 		name := resource.Metadata.Name
@@ -1466,7 +1233,7 @@ func (r *Runner) Start(ctx context.Context) error {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	store := eventedStore{Store: r.Store, Bus: r.Bus, Router: r.currentRouter()}
+	store := (eventedStore{SQLiteStore: r.Store, Bus: r.Bus}).withDeclaredRouter(r.currentRouter())
 	if arpSpecs, err := r.mobilityARPObserverDaemonSpecsWithError(); err != nil {
 		logger.Warn("read ARP observer configuration", "error", err)
 	} else {
@@ -1598,7 +1365,7 @@ func (r *Runner) runControllerGenerations(ctx context.Context, logger *slog.Logg
 					return runtimeStoppedError(reloadErr)
 				}
 			default:
-				generation, err = r.prepareControllerGeneration(ctx, logger, store.withRouter(r.currentRouter()))
+				generation, err = r.prepareControllerGeneration(ctx, logger, store.withDeclaredRouter(r.currentRouter()))
 				if err != nil {
 					return err
 				}
@@ -1695,7 +1462,7 @@ func (r *Runner) prepareRuntimeReload(ctx context.Context, logger *slog.Logger, 
 		return nil, err
 	}
 	r.setRuntimeRouter(request.router)
-	next, err := r.prepareControllerGenerationForRequest(ctx, request.ctx, logger, store.withRouter(request.router), nil)
+	next, err := r.prepareControllerGenerationForRequest(ctx, request.ctx, logger, store.withDeclaredRouter(request.router), nil)
 	if err == nil {
 		return next, nil
 	}
@@ -1703,7 +1470,7 @@ func (r *Runner) prepareRuntimeReload(ctx context.Context, logger *slog.Logger, 
 		return nil, errors.Join(err, ctx.Err(), r.RuntimeMutationError())
 	}
 	r.setRuntimeRouter(previous)
-	rollback, rollbackErr := r.prepareControllerGenerationWithGate(ctx, logger, store.withRouter(previous), nil)
+	rollback, rollbackErr := r.prepareControllerGenerationWithGate(ctx, logger, store.withDeclaredRouter(previous), nil)
 	if rollbackErr != nil {
 		return nil, errors.Join(err, fmt.Errorf("restore previous generation: %w", rollbackErr))
 	}
@@ -1744,7 +1511,7 @@ func (r *Runner) ReconcileOnce(ctx context.Context) error {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	store := eventedStore{Store: r.Store, Bus: r.Bus, Router: r.currentRouter()}
+	store := (eventedStore{SQLiteStore: r.Store, Bus: r.Bus}).withDeclaredRouter(r.currentRouter())
 	decision, closeLease, err := r.oneShotHADecision(ctx, store)
 	if err != nil {
 		return err
@@ -1766,7 +1533,7 @@ func (r *Runner) ReconcileScheduled(ctx context.Context) error {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	store := eventedStore{Store: r.Store, Bus: r.Bus, Router: r.currentRouter()}
+	store := (eventedStore{SQLiteStore: r.Store, Bus: r.Bus}).withDeclaredRouter(r.currentRouter())
 	decision, closeLease, err := r.oneShotHADecision(ctx, store)
 	if err != nil {
 		return err
@@ -1906,77 +1673,62 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	if strings.TrimSpace(opts.BGPStatePath) != "" {
 		bgpDaemon.StatePath = strings.TrimSpace(opts.BGPStatePath)
 	}
-	// EventSubscriptionController needs the SQLite-backed federation/dynamic/
-	// plugin methods in addition to status writes. The raw r.Store is the
-	// *state.SQLiteStore; status writes are routed through the evented store so
-	// they keep ownership annotation + bus publication parity with peers.
-	var eventSubscription eventsubscriptioncontroller.Controller
-	if rawStore, ok := r.Store.(eventsubscriptioncontroller.DataStore); ok {
-		eventSubscription = eventsubscriptioncontroller.Controller{
-			Router:     r.currentRouter(),
-			Bus:        r.Bus,
-			Store:      eventSubscriptionStore{evented: store, data: rawStore},
-			DryRun:     opts.DryRunEventSubscription,
-			RuntimeDir: defaults.RuntimeDir,
-			StateDir:   defaults.StateDir,
-		}
+	eventSubscription := eventsubscriptioncontroller.Controller{
+		Router:     r.currentRouter(),
+		Bus:        r.Bus,
+		Store:      store,
+		DryRun:     opts.DryRunEventSubscription,
+		RuntimeDir: defaults.RuntimeDir,
+		StateDir:   defaults.StateDir,
 	}
-	var mobility mobilitycontroller.Controller
-	var mobilityDiscovery mobilitycontroller.DiscoveryController
-	var mobilityTransport mobilitycontroller.TransportController
-	var mobilityEnrollmentClient mobilitycontroller.SAMEnrollmentClientController
-	var mobilityShard mobilitycontroller.ShardController
-	if rawStore, ok := r.Store.(mobilityDataStore); ok {
-		mobilityData := mobilityStore{evented: store, data: rawStore}
-		peerGroupSync := opts.PeerGroupSyncClient
-		if peerGroupSync == nil {
-			peerGroupSync = mobilitycontroller.NewPeerGroupSyncClient(rawStore)
-		}
-		mobilityDiscovery = mobilitycontroller.DiscoveryController{
-			Router:           r.currentRouter(),
-			Bus:              r.Bus,
-			Store:            mobilityData,
-			ProbeARP:         r.probeARPObservers,
-			ARPProbeRequests: mobilitycontroller.NewARPProbeRequestTracker(),
-			StartedAt:        r.startedAt(),
-		}
-		mobility = mobilitycontroller.Controller{
-			Router:    r.currentRouter(),
-			Bus:       r.Bus,
-			Store:     mobilityData,
-			BGPPaths:  bgpdaemon.NewControlClient(bgpDaemon.ControlSocketPath),
-			StartedAt: r.startedAt(),
-		}
-		mobilityTransport = mobilitycontroller.TransportController{
-			Router:        r.currentRouter(),
-			Bus:           r.Bus,
-			Store:         mobilityData,
-			PeerGroupSync: peerGroupSync,
-			OS:            platform.CurrentOS(),
-		}
-		mobilityEnrollmentClient = mobilitycontroller.SAMEnrollmentClientController{
-			Router: r.currentRouter(),
-			Store:  mobilityData,
-		}
-		mobilityShard = mobilitycontroller.ShardController{
-			Router: r.currentRouter(),
-			Bus:    r.Bus,
-			Store:  mobilityData,
-		}
+
+	mobilityData := mobilityStore{eventedStore: store}
+	peerGroupSync := opts.PeerGroupSyncClient
+	if peerGroupSync == nil {
+		peerGroupSync = mobilitycontroller.NewPeerGroupSyncClient(r.Store)
 	}
-	var providerAction provideractioncontroller.Controller
-	if rawStore, ok := r.Store.(provideractioncontroller.Store); ok {
-		providerAction = provideractioncontroller.Controller{
-			Router: r.currentRouter(),
-			Bus:    r.Bus,
-			Store:  rawStore,
-			DryRun: opts.DryRunProviderAction,
-			Logger: logger,
-		}
+	mobilityDiscovery := mobilitycontroller.DiscoveryController{
+		Router:           r.currentRouter(),
+		Bus:              r.Bus,
+		Store:            mobilityData,
+		ProbeARP:         r.probeARPObservers,
+		ARPProbeRequests: mobilitycontroller.NewARPProbeRequestTracker(),
+		StartedAt:        r.startedAt(),
+	}
+	mobility := mobilitycontroller.Controller{
+		Router:    r.currentRouter(),
+		Bus:       r.Bus,
+		Store:     mobilityData,
+		BGPPaths:  bgpdaemon.NewControlClient(bgpDaemon.ControlSocketPath),
+		StartedAt: r.startedAt(),
+	}
+	mobilityTransport := mobilitycontroller.TransportController{
+		Router:        r.currentRouter(),
+		Bus:           r.Bus,
+		Store:         mobilityData,
+		PeerGroupSync: peerGroupSync,
+		OS:            platform.CurrentOS(),
+	}
+	mobilityEnrollmentClient := mobilitycontroller.SAMEnrollmentClientController{
+		Router: r.currentRouter(),
+		Store:  mobilityData,
+	}
+	mobilityShard := mobilitycontroller.ShardController{
+		Router: r.currentRouter(),
+		Bus:    r.Bus,
+		Store:  mobilityData,
+	}
+
+	providerAction := provideractioncontroller.Controller{
+		Router: r.currentRouter(),
+		Bus:    r.Bus,
+		Store:  r.Store,
+		DryRun: opts.DryRunProviderAction,
+		Logger: logger,
 	}
 	daemonStatusSync := DaemonStatusController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DaemonSockets: opts.DaemonSockets, Logger: logger}
 	wan := egressroute.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store}
-	durableEvents, _ := r.Store.(eventconsumer.Store)
+	durableEvents := r.Store
 	rules := eventrule.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, Events: durableEvents, Logger: logger}
 	derivedEvents := derived.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, Logger: logger}
 	observabilityPipeline := observabilitypipeline.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, Events: durableEvents}
@@ -2744,7 +2496,7 @@ func (r *Runner) clientDaemonSpecs(router *api.Router) []supervisedDaemonSpec {
 		switch resource.Kind {
 		case "DHCPv6PrefixDelegation":
 			spec, err := resource.DHCPv6PrefixDelegationSpec()
-			if err != nil || api.EffectiveIPv6PDClient(string(platform.CurrentOS()), spec.Profile, spec.Client) != api.IPv6PDClientRouterd {
+			if err != nil || api.EffectiveIPv6PDClient(spec.Client) != api.IPv6PDClientRouterd {
 				continue
 			}
 			ifname := interfaceIfName(router, spec.Interface)
@@ -3626,7 +3378,10 @@ func (c LinkController) Reconcile(ctx context.Context) error {
 	if declared == nil {
 		declared = c.Router
 	}
-	inactiveTunnels := apply.InactiveDSLiteInterfaces(c.Router, declared, c.Store)
+	inactiveTunnels, err := apply.InactiveDSLiteInterfaces(c.Router, declared, c.Store)
+	if err != nil {
+		return err
+	}
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "Interface" {
 			continue
@@ -3960,7 +3715,7 @@ func (c DaemonStatusController) daemonSockets() ([]string, error) {
 			if err != nil {
 				return nil, err
 			}
-			if api.EffectiveIPv6PDClient(string(platform.CurrentOS()), spec.Profile, spec.Client) != api.IPv6PDClientRouterd {
+			if api.EffectiveIPv6PDClient(spec.Client) != api.IPv6PDClientRouterd {
 				continue
 			}
 			socket := c.DaemonSockets[resource.Metadata.Name]
@@ -4017,8 +3772,12 @@ func (c DaemonStatusController) daemonSockets() ([]string, error) {
 			add(socket)
 		}
 	}
-	runner := Runner{Router: c.Router, Store: c.Store, Opts: Options{DaemonSockets: c.DaemonSockets}}
-	arpSpecs, err := runner.mobilityARPObserverDaemonSpecsWithError()
+	runner := Runner{Router: c.Router, Opts: Options{DaemonSockets: c.DaemonSockets}}
+	records, err := c.Store.ListDynamicConfigParts()
+	if err != nil {
+		return out, fmt.Errorf("read ARP observer configuration: %w", err)
+	}
+	arpSpecs := runner.mobilityARPObserverDaemonSpecsFromIntents(mobilityARPObserverIntentsFromRecords(records, time.Now().UTC()))
 	for _, spec := range arpSpecs {
 		add(spec.Socket)
 	}
@@ -4035,8 +3794,8 @@ func (c IPv4StaticAddressController) Reconcile(ctx context.Context) error {
 			return err
 		}
 		if resourcequery.ResourceWhenPresent(spec.When) {
-			stateStore, ok := c.Store.(resourcequery.StateStore)
-			if ok && !resourcequery.ResourceWhenMatches(spec.When, stateStore) {
+			stateStore := c.Store
+			if stateStore != nil && !resourcequery.ResourceWhenMatches(spec.When, stateStore) {
 				if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", resource.Metadata.Name, map[string]any{
 					"phase":     "Pending",
 					"reason":    "WhenFalse",
@@ -4130,18 +3889,10 @@ func (c IPv4StaticAddressController) Reconcile(ctx context.Context) error {
 }
 
 func (c IPv4StaticAddressController) cleanupRemovedIPv4StaticAddresses() error {
-	if c.DryRun {
+	if c.DryRun || c.Store == nil {
 		return nil
 	}
-	lister, ok := c.Store.(routerstate.ObjectStatusLister)
-	if !ok {
-		return nil
-	}
-	deleter, ok := c.Store.(routerstate.ObjectDeleteStore)
-	if !ok {
-		return nil
-	}
-	statuses, err := lister.ListObjectStatuses()
+	statuses, err := c.Store.ListObjectStatuses()
 	if err != nil {
 		return err
 	}
@@ -4158,7 +3909,7 @@ func (c IPv4StaticAddressController) cleanupRemovedIPv4StaticAddresses() error {
 	}
 	for _, status := range lifecycle.PlanResourceTeardownGC(desired, statuses) {
 		if status.APIVersion == api.NetAPIVersion && status.Kind == "IPv4StaticAddress" {
-			if err := deleter.DeleteObject(status.APIVersion, status.Kind, status.Name); err != nil {
+			if err := c.Store.DeleteObject(status.APIVersion, status.Kind, status.Name); err != nil {
 				return err
 			}
 		}
@@ -4892,8 +4643,8 @@ func (c LANAddressController) delegatedAddressStagingEligible(resource api.Resou
 	if !resourcequery.ResourceWhenPresent(when) {
 		return true
 	}
-	stateStore, ok := c.Store.(resourcequery.StateStore)
-	if !ok {
+	stateStore := c.Store
+	if stateStore == nil {
 		return false
 	}
 	return resourcequery.ResourceWhenMatches(when, stateStore) || resourcequery.ResourceWhenIndeterminate(when, stateStore)
@@ -5081,7 +4832,7 @@ func (c LANAddressController) freshStagedPDSnapshot(pdName string) (pdclient.Sna
 		found = true
 		break
 	}
-	if !found || api.EffectiveIPv6PDClient(string(platform.CurrentOS()), spec.Profile, spec.Client) != api.IPv6PDClientRouterd {
+	if !found || api.EffectiveIPv6PDClient(spec.Client) != api.IPv6PDClientRouterd {
 		return pdclient.Snapshot{}, false
 	}
 	ifname := interfaceIfName(declared, spec.Interface)
@@ -5148,8 +4899,8 @@ func (c LANAddressController) cleanupWhenFalseIPv6DelegatedAddresses(ctx context
 	if declared == nil {
 		return nil
 	}
-	stateStore, ok := c.Store.(resourcequery.StateStore)
-	if !ok {
+	stateStore := c.Store
+	if stateStore == nil {
 		return nil
 	}
 	pdStatus := c.Store.ObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", pdName)

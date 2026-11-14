@@ -52,7 +52,6 @@ type derivedState struct {
 	initialized       bool
 	asserted          bool
 	pendingTransition string
-	pendingTarget     bool
 	timer             *time.Timer
 	lastAssertedAt    time.Time
 	lastRetractedAt   time.Time
@@ -68,6 +67,13 @@ func (c *Controller) Start(ctx context.Context) {
 	}
 	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.**"}}, 64)
 	go func() {
+		defer func() {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			for _, state := range c.state {
+				c.cancelPending(state)
+			}
+		}()
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		c.reconcileLogged(ctx, false)
@@ -97,8 +103,6 @@ func (c *Controller) reconcileLogged(ctx context.Context, emitInitial bool) {
 }
 
 func (c *Controller) Reconcile(ctx context.Context, emitInitial bool) error {
-	c.init()
-	c.pruneRemovedResources()
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "DerivedEvent" {
 			continue
@@ -139,21 +143,19 @@ func (c *Controller) reconcileResource(ctx context.Context, resource api.Resourc
 	if target == state.asserted {
 		return c.saveStatus(resource, state)
 	}
-	return c.schedule(ctx, resource, spec, state, target)
+	return c.schedule(resource, spec, state, target)
 }
 
-func (c *Controller) schedule(ctx context.Context, resource api.Resource, spec api.DerivedEventSpec, state *derivedState, target bool) error {
-	_ = ctx
+func (c *Controller) schedule(resource api.Resource, spec api.DerivedEventSpec, state *derivedState, target bool) error {
 	pending := PendingRetracting
 	if target {
 		pending = PendingAsserting
 	}
-	if state.pendingTransition == pending && state.pendingTarget == target {
+	if state.pendingTransition == pending {
 		return c.saveStatus(resource, state)
 	}
 	c.cancelPending(state)
 	state.pendingTransition = pending
-	state.pendingTarget = target
 	delay := durationOr(spec.Hysteresis, 0)
 	if delay == 0 {
 		state.asserted = target
@@ -211,24 +213,20 @@ func (c *Controller) publish(ctx context.Context, resource api.Resource, spec ap
 }
 
 func (c *Controller) target(spec api.DerivedEventSpec) bool {
-	values := make([]bool, 0, len(spec.Inputs))
-	for _, input := range spec.Inputs {
-		values = append(values, c.eval(input))
-	}
-	if len(values) == 0 {
+	if len(spec.Inputs) == 0 {
 		return false
 	}
 	switch defaultString(spec.EmitWhen, EmitAllTrue) {
 	case EmitAnyTrue:
-		for _, value := range values {
-			if value {
+		for _, input := range spec.Inputs {
+			if c.eval(input) {
 				return true
 			}
 		}
 		return false
 	default:
-		for _, value := range values {
-			if !value {
+		for _, input := range spec.Inputs {
+			if !c.eval(input) {
 				return false
 			}
 		}
@@ -332,12 +330,6 @@ func (c *Controller) saveStatusWithPhase(resource api.Resource, state *derivedSt
 	return c.Store.SaveObjectStatus(api.NetAPIVersion, "DerivedEvent", resource.Metadata.Name, status)
 }
 
-func (c *Controller) resourceState(name string) *derivedState {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.resourceStateLocked(name)
-}
-
 func (c *Controller) resourceStateLocked(name string) *derivedState {
 	if c.state == nil {
 		c.state = map[string]*derivedState{}
@@ -348,35 +340,6 @@ func (c *Controller) resourceStateLocked(name string) *derivedState {
 		c.state[name] = state
 	}
 	return state
-}
-
-func (c *Controller) init() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.state == nil {
-		c.state = map[string]*derivedState{}
-	}
-}
-
-func (c *Controller) pruneRemovedResources() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if len(c.state) == 0 || c.Router == nil {
-		return
-	}
-	present := map[string]struct{}{}
-	for _, resource := range c.Router.Spec.Resources {
-		if resource.Kind == "DerivedEvent" {
-			present[resource.Metadata.Name] = struct{}{}
-		}
-	}
-	for name, state := range c.state {
-		if _, ok := present[name]; ok {
-			continue
-		}
-		c.cancelPending(state)
-		delete(c.state, name)
-	}
 }
 
 func (c *Controller) cancelPending(state *derivedState) {

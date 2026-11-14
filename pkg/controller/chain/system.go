@@ -1269,8 +1269,8 @@ func (c SystemdUnitController) cleanupWhenFalseSystemdUnits(ctx context.Context)
 	if c.DeclaredRouter == nil {
 		return nil
 	}
-	stateStore, ok := c.Store.(resourcequery.StateStore)
-	if !ok {
+	stateStore := c.Store
+	if stateStore == nil {
 		return nil
 	}
 	for _, resource := range c.DeclaredRouter.Spec.Resources {
@@ -2202,7 +2202,7 @@ func networkdIPv6Configured(router *api.Router, ifname string) (bool, error) {
 			if err != nil {
 				return false, err
 			}
-			if interfaceIfName(router, spec.Interface) == ifname && api.EffectiveIPv6PDClient(string(platform.CurrentOS()), spec.Profile, spec.Client) == api.IPv6PDClientNetworkd {
+			if interfaceIfName(router, spec.Interface) == ifname && api.EffectiveIPv6PDClient(spec.Client) == api.IPv6PDClientNetworkd {
 				return true, nil
 			}
 		}

@@ -3,7 +3,6 @@
 package api
 
 import (
-	"encoding/json"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -90,21 +89,6 @@ func normalizeSecretKey(key string) string {
 	return key
 }
 
-// RedactSecrets returns a JSON-compatible copy of value with secret-looking
-// fields replaced by RedactedSecret.
-func RedactSecrets(value any) (any, error) {
-	data, err := json.Marshal(value)
-	if err != nil {
-		return nil, err
-	}
-	var out any
-	if err := json.Unmarshal(data, &out); err != nil {
-		return nil, err
-	}
-	redactJSONLike(out)
-	return out, nil
-}
-
 // RedactYAMLSecrets returns YAML with secret-looking fields replaced by
 // RedactedSecret while preserving keys for read-only config viewers.
 func RedactYAMLSecrets(text string) (string, error) {
@@ -121,23 +105,6 @@ func RedactYAMLSecrets(text string) (string, error) {
 		return "", err
 	}
 	return string(out), nil
-}
-
-func redactJSONLike(value any) {
-	switch typed := value.(type) {
-	case map[string]any:
-		for key, child := range typed {
-			if IsSecretKey(key) {
-				typed[key] = RedactedSecret
-				continue
-			}
-			redactJSONLike(child)
-		}
-	case []any:
-		for _, child := range typed {
-			redactJSONLike(child)
-		}
-	}
 }
 
 func redactYAMLNode(node *yaml.Node) {

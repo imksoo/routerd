@@ -63,7 +63,7 @@ func ValidIPv6PDProfile(profile string) bool {
 	}
 }
 
-func EffectiveIPv6PDClient(osName, profile, configured string) string {
+func EffectiveIPv6PDClient(configured string) string {
 	if configured != "" {
 		return configured
 	}

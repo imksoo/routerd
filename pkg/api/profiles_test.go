@@ -7,20 +7,15 @@ import "testing"
 func TestEffectiveIPv6PDClient(t *testing.T) {
 	tests := []struct {
 		name       string
-		osName     string
-		profile    string
 		configured string
 		want       string
 	}{
-		{name: "freebsd default", osName: "freebsd", want: IPv6PDClientRouterd},
-		{name: "linux default profile", osName: "linux", profile: IPv6PDProfileDefault, want: IPv6PDClientRouterd},
-		{name: "linux ntt profile", osName: "linux", profile: IPv6PDProfileNTTHGWLANPD, want: IPv6PDClientRouterd},
-		{name: "configured wins", osName: "linux", profile: IPv6PDProfileNTTHGWLANPD, configured: IPv6PDClientNetworkd, want: IPv6PDClientNetworkd},
-		{name: "unknown os", osName: "plan9", want: IPv6PDClientRouterd},
+		{name: "default", want: IPv6PDClientRouterd},
+		{name: "configured wins", configured: IPv6PDClientNetworkd, want: IPv6PDClientNetworkd},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := EffectiveIPv6PDClient(tt.osName, tt.profile, tt.configured); got != tt.want {
+			if got := EffectiveIPv6PDClient(tt.configured); got != tt.want {
 				t.Fatalf("EffectiveIPv6PDClient() = %q, want %q", got, tt.want)
 			}
 		})

@@ -250,6 +250,42 @@
           },
           "type": "object"
         },
+        "byPurpose": {
+          "additionalProperties": false,
+          "properties": {
+            "destinationNAT": {
+              "type": "integer"
+            },
+            "externalWithoutNAT": {
+              "type": "integer"
+            },
+            "internal": {
+              "type": "integer"
+            },
+            "ipv4": {
+              "type": "integer"
+            },
+            "localRedirect": {
+              "type": "integer"
+            },
+            "sourceNAT": {
+              "type": "integer"
+            },
+            "unclassified": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "ipv4",
+            "sourceNAT",
+            "localRedirect",
+            "destinationNAT",
+            "externalWithoutNAT",
+            "internal",
+            "unclassified"
+          ],
+          "type": "object"
+        },
         "bySNAT": {
           "additionalProperties": {
             "additionalProperties": false,
@@ -375,6 +411,9 @@
                 "type": "object"
               },
               "protocol": {
+                "type": "string"
+              },
+              "purpose": {
                 "type": "string"
               },
               "rawAttributes": {
@@ -871,6 +910,9 @@
                 "type": "string"
               },
               "attributes": {
+                "additionalProperties": {
+                  "type": "string"
+                },
                 "type": "object"
               },
               "createdAt": {

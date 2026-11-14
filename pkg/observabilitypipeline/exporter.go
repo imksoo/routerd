@@ -173,10 +173,15 @@ func (e *Exporter) run(ctx context.Context, wakeEvents <-chan bus.Event, store e
 	}
 	ticker := time.NewTicker(poll)
 	defer ticker.Stop()
-	wake := make(chan struct{}, 1)
 	var retry eventconsumer.Backoff
-	wake <- struct{}{}
 	for {
+		if retry.Ready() {
+			if err := eventconsumer.Drain(ctx, store, "observabilitypipeline/"+e.name, e.processStoredEvent); err != nil {
+				retry.Failure()
+			} else {
+				retry.Success()
+			}
+		}
 		select {
 		case <-ctx.Done():
 			return
@@ -184,24 +189,7 @@ func (e *Exporter) run(ctx context.Context, wakeEvents <-chan bus.Event, store e
 			if !ok {
 				return
 			}
-			select {
-			case wake <- struct{}{}:
-			default:
-			}
 		case <-ticker.C:
-			select {
-			case wake <- struct{}{}:
-			default:
-			}
-		case <-wake:
-			if !retry.Ready() {
-				continue
-			}
-			if err := eventconsumer.Drain(ctx, store, "observabilitypipeline/"+e.name, e.processStoredEvent); err != nil {
-				retry.Failure()
-			} else {
-				retry.Success()
-			}
 		}
 	}
 }

@@ -1,4 +1,4 @@
-VERSION ?= v20261110.0354
+VERSION ?= v20261114.0607
 DISTBASE ?= dist
 DISTARCH ?= $(if $(GOARCH),$(GOARCH),$(shell go env GOARCH))
 DISTPLATFORM ?= $(ROUTERD_OS)-$(DISTARCH)
@@ -56,7 +56,7 @@ CONTROL_OPENAPI_SCHEMA := routerd-control-openapi-v1alpha1.json
 
 WEBSITE_NODE_MODULES_STAMP := website/node_modules/.package-lock.json
 
-.PHONY: test check-version-ldflags build build-daemons build-provider-executors build-ndpi-agent build-ndpi-agent-libndpi build-daemons-freebsd check-freebsd-cross-compile check-linux-static check-ndpi-agent-libndpi cloudedge-acceptance-lint webconsole-build generate-schema sync-website-schemas check-schema check-website-schemas website-deps website-build third-party-licenses check-build-deps dist deb deb-ndpi dist-ndpi-agent-libndpi live-iso validate-example release clean
+.PHONY: build-routerd test check-version-ldflags build build-daemons build-provider-executors build-ndpi-agent build-ndpi-agent-libndpi build-daemons-freebsd check-freebsd-cross-compile check-linux-static check-ndpi-agent-libndpi cloudedge-acceptance-lint webconsole-build generate-schema sync-website-schemas check-schema check-website-schemas website-deps website-build third-party-licenses check-build-deps dist deb deb-ndpi dist-ndpi-agent-libndpi live-iso validate-example release clean
 
 test: check-version-ldflags
 	go test ./...
@@ -67,9 +67,11 @@ check-version-ldflags:
 build: webconsole-build
 	$(MAKE) build-daemons
 
-build-daemons:
+build-routerd:
 	install -d $(BUILDDIR)
 	$(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(ROUTERD_BIN) ./cmd/routerd
+
+build-daemons: build-routerd
 	$(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(ROUTERCTL_BIN) ./cmd/routerctl
 	$(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(ROUTERD_DHCPv4_CLIENT_BIN) ./cmd/routerd-dhcpv4-client
 	$(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(ROUTERD_DHCPv6_CLIENT_BIN) ./cmd/routerd-dhcpv6-client

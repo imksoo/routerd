@@ -26,6 +26,8 @@ type Value struct {
 }
 
 type Store interface {
+	PDLease(base string) (PDLease, bool, error)
+	SavePDLease(base string, lease PDLease, reason string) (Value, error)
 	Get(name string) Value
 	Set(name, value, reason string) Value
 	Unset(name, reason string) Value
@@ -71,23 +73,23 @@ type EventQuery struct {
 }
 
 type StoredEvent struct {
-	ID                 int64          `json:"id" yaml:"id"`
-	APIVersion         string         `json:"apiVersion,omitempty" yaml:"apiVersion,omitempty"`
-	Kind               string         `json:"kind,omitempty" yaml:"kind,omitempty"`
-	Name               string         `json:"name,omitempty" yaml:"name,omitempty"`
-	Type               string         `json:"type" yaml:"type"`
-	Reason             string         `json:"reason,omitempty" yaml:"reason,omitempty"`
-	Message            string         `json:"message,omitempty" yaml:"message,omitempty"`
-	Generation         int64          `json:"generation,omitempty" yaml:"generation,omitempty"`
-	CreatedAt          time.Time      `json:"createdAt" yaml:"createdAt"`
-	Topic              string         `json:"topic,omitempty" yaml:"topic,omitempty"`
-	SourceKind         string         `json:"sourceKind,omitempty" yaml:"sourceKind,omitempty"`
-	SourceInstance     string         `json:"sourceInstance,omitempty" yaml:"sourceInstance,omitempty"`
-	ResourceAPIVersion string         `json:"resourceApiVersion,omitempty" yaml:"resourceApiVersion,omitempty"`
-	ResourceKind       string         `json:"resourceKind,omitempty" yaml:"resourceKind,omitempty"`
-	ResourceName       string         `json:"resourceName,omitempty" yaml:"resourceName,omitempty"`
-	Severity           string         `json:"severity,omitempty" yaml:"severity,omitempty"`
-	Attributes         map[string]any `json:"attributes,omitempty" yaml:"attributes,omitempty"`
+	ID                 int64             `json:"id" yaml:"id"`
+	APIVersion         string            `json:"apiVersion,omitempty" yaml:"apiVersion,omitempty"`
+	Kind               string            `json:"kind,omitempty" yaml:"kind,omitempty"`
+	Name               string            `json:"name,omitempty" yaml:"name,omitempty"`
+	Type               string            `json:"type" yaml:"type"`
+	Reason             string            `json:"reason,omitempty" yaml:"reason,omitempty"`
+	Message            string            `json:"message,omitempty" yaml:"message,omitempty"`
+	Generation         int64             `json:"generation,omitempty" yaml:"generation,omitempty"`
+	CreatedAt          time.Time         `json:"createdAt" yaml:"createdAt"`
+	Topic              string            `json:"topic,omitempty" yaml:"topic,omitempty"`
+	SourceKind         string            `json:"sourceKind,omitempty" yaml:"sourceKind,omitempty"`
+	SourceInstance     string            `json:"sourceInstance,omitempty" yaml:"sourceInstance,omitempty"`
+	ResourceAPIVersion string            `json:"resourceApiVersion,omitempty" yaml:"resourceApiVersion,omitempty"`
+	ResourceKind       string            `json:"resourceKind,omitempty" yaml:"resourceKind,omitempty"`
+	ResourceName       string            `json:"resourceName,omitempty" yaml:"resourceName,omitempty"`
+	Severity           string            `json:"severity,omitempty" yaml:"severity,omitempty"`
+	Attributes         map[string]string `json:"attributes,omitempty" yaml:"attributes,omitempty"`
 }
 
 type EventLister interface {

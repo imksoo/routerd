@@ -10,9 +10,11 @@ import (
 	"log/slog"
 	"net/netip"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/imksoo/routerd/internal/ipiptunnel"
 	"github.com/imksoo/routerd/internal/statusvalue"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/apply"
@@ -20,7 +22,6 @@ import (
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/hybrid"
 	"github.com/imksoo/routerd/pkg/platform"
-	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 type TunnelInterfaceController struct {
@@ -125,15 +126,7 @@ func (c TunnelInterfaceController) cleanupStaleResources(ctx context.Context) er
 			return err
 		}
 	}
-	lister, ok := c.Store.(routerstate.ObjectStatusLister)
-	if !ok {
-		return nil
-	}
-	deleter, ok := c.Store.(routerstate.ObjectDeleteStore)
-	if !ok {
-		return nil
-	}
-	statuses, err := lister.ListObjectStatuses()
+	statuses, err := c.Store.ListObjectStatuses()
 	if err != nil {
 		return err
 	}
@@ -162,7 +155,7 @@ func (c TunnelInterfaceController) cleanupStaleResources(ctx context.Context) er
 				}
 			}
 		}
-		if err := deleter.DeleteObject(item.APIVersion, item.Kind, item.Name); err != nil {
+		if err := c.Store.DeleteObject(item.APIVersion, item.Kind, item.Name); err != nil {
 			return err
 		}
 	}
@@ -202,7 +195,14 @@ func (c TunnelInterfaceController) reconcileInterface(ctx context.Context, resou
 		status["phase"] = "Planned"
 		return c.Store.SaveObjectStatus(api.HybridAPIVersion, "TunnelInterface", resource.Metadata.Name, status)
 	}
-	observed, err := c.observeTunnel(ctx, desired.Name)
+	var ipipObserved ipiptunnel.Observed
+	var observed tunnelObserved
+	if desired.Mode == "ipip" && platform.CurrentOS() == platform.OSLinux {
+		ipipObserved, err = ipiptunnel.Observe(ctx, desired.Name)
+		observed = tunnelObserved{Exists: ipipObserved.Exists, Mode: ipipObserved.Info.Kind, Local: ipipObserved.Info.Data.Local, Remote: ipipObserved.Info.Data.Remote, MTU: ipipObserved.MTU, Up: slices.Contains(ipipObserved.Flags, "UP")}
+	} else {
+		observed, err = c.observeTunnel(ctx, desired.Name)
+	}
 	if err != nil {
 		status["phase"] = "Error"
 		status["reason"] = "StatusFailed"
@@ -238,7 +238,11 @@ func (c TunnelInterfaceController) reconcileInterface(ctx context.Context, resou
 			// Compare the remaining attributes, then explicitly enforce the key.
 			observed.Key = desired.Key
 		}
-		if !tunnelLinkMatches(observed, desired) {
+		matches := tunnelLinkMatches(observed, desired)
+		if desired.Mode == "ipip" && platform.CurrentOS() == platform.OSLinux {
+			matches = ipipObserved.LinkMatches(ipipDesired(desired))
+		}
+		if !matches {
 			if err := c.changeTunnelInterface(ctx, desired); err != nil {
 				return c.saveApplyError(resource, desired, err)
 			}
@@ -266,6 +270,15 @@ func (c TunnelInterfaceController) reconcileInterface(ctx context.Context, resou
 		return c.saveApplyError(resource, desired, err)
 	}
 	applied = applied || addressChanged
+	if desired.Mode == "ipip" && platform.CurrentOS() == platform.OSLinux {
+		actual, err := ipiptunnel.Observe(ctx, desired.Name)
+		if err != nil {
+			return c.saveApplyError(resource, desired, err)
+		}
+		if !actual.Matches(ipipDesired(desired)) {
+			return c.saveApplyError(resource, desired, fmt.Errorf("IPIP tunnel %s differs after reconciliation", desired.Name))
+		}
+	}
 	status = tunnelStatus(desired, c.DryRun, map[string]any{"phase": "Up"})
 	if platform.CurrentOS() == platform.OSFreeBSD && desired.Address != "" {
 		out, err := c.run(ctx, "ifconfig", desired.Name)
@@ -348,6 +361,14 @@ func tunnelDesiredFromSpec(router api.Router, name string, spec api.TunnelInterf
 }
 
 func (c TunnelInterfaceController) resolveTunnelDesired(name string, spec api.TunnelInterfaceSpec) (tunnelDesired, bool, string, error) {
+	if spec.Mode == "ipip" && platform.CurrentOS() == platform.OSLinux {
+		shared, pending, err := ipiptunnel.Resolve(*c.Router, c.Store, name, spec)
+		desired := tunnelDesired{Name: shared.Name, Mode: "ipip", UnderlayInterface: strings.TrimSpace(spec.UnderlayInterface), PeerAddress: strings.TrimSpace(spec.PeerAddress)}
+		desired.Local, desired.Remote, desired.Address = shared.Local, shared.Remote, shared.Address
+		desired.TTL, desired.MTU = shared.TTL, shared.MTU
+		desired.UnderlayMTU, desired.Overhead = shared.UnderlayMTU, shared.Overhead
+		return desired, pending != "", pending, err
+	}
 	desired := tunnelDesiredFromSpec(*c.Router, name, spec)
 	if strings.TrimSpace(spec.LocalFrom.Resource) != "" {
 		value, pending, err := c.tunnelEndpointFromSource(spec.LocalFrom)
@@ -748,7 +769,13 @@ func (c TunnelInterfaceController) setTunnelLinkUp(ctx context.Context, ifname s
 }
 
 func (c TunnelInterfaceController) reconcileTunnelAddress(ctx context.Context, desired tunnelDesired) (bool, error) {
-	current, err := c.tunnelIPv4Addresses(ctx, desired.Name)
+	var current []string
+	var err error
+	if desired.Mode == "ipip" && platform.CurrentOS() == platform.OSLinux {
+		current, err = ipiptunnel.IPv4Addresses(ctx, desired.Name)
+	} else {
+		current, err = c.tunnelIPv4Addresses(ctx, desired.Name)
+	}
 	if err != nil {
 		return false, err
 	}
@@ -989,6 +1016,9 @@ func tunnelChangeArgs(desired tunnelDesired) []string {
 		linkMode = "ipip"
 	}
 	args := []string{"link", "set", "dev", desired.Name, "type", linkMode, "local", desired.Local, "remote", desired.Remote, "ttl", strconv.Itoa(desired.TTL)}
+	if desired.Mode == "ipip" {
+		args = append(args, "encap", "none")
+	}
 	if desired.Mode == "gre" {
 		if desired.Key == 0 {
 			args = append(args, "nokey")
@@ -1041,4 +1071,8 @@ func tunnelFOUMissing(out []byte, err error) bool {
 	}
 	msg := strings.ToLower(string(out) + " " + err.Error())
 	return strings.Contains(msg, "not found") || strings.Contains(msg, "no such") || strings.Contains(msg, "does not exist")
+}
+
+func ipipDesired(d tunnelDesired) ipiptunnel.Desired {
+	return ipiptunnel.Desired{Name: d.Name, Local: d.Local, Remote: d.Remote, Address: d.Address, TTL: d.TTL, MTU: d.MTU}
 }

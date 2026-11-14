@@ -1843,10 +1843,10 @@ type EventSubscriptionTrigger struct {
 	// PluginRef names the Plugin resource invoked for matched events.
 	PluginRef string `yaml:"pluginRef" json:"pluginRef"`
 	// BatchWindow optionally coalesces matched events into one invocation
-	// (Go duration). MVP invokes per poll tick; this is accepted forward-compat.
+	// (Go duration), measured from the first matched event.
 	BatchWindow string `yaml:"batchWindow,omitempty" json:"batchWindow,omitempty"`
 	// Debounce optionally delays invocation after the last matched event
-	// (Go duration). Accepted forward-compat; MVP uses poll-tick batching.
+	// (Go duration), bounded by BatchWindow or the default maximum wait.
 	Debounce string `yaml:"debounce,omitempty" json:"debounce,omitempty"`
 }
 
@@ -3064,25 +3064,24 @@ func (r Resource) DynamicOverridePolicySpec() (DynamicOverridePolicySpec, error)
 }
 
 func specAs[T any](r Resource) (T, error) {
-	spec, ok := r.Spec.(T)
-	if !ok {
-		if ptr, ok := r.Spec.(*T); ok && ptr != nil {
-			return *ptr, nil
-		}
-		var zero T
-		if r.Spec == nil {
-			return zero, fmt.Errorf("%s has unexpected spec type <nil>", r.ID())
-		}
-		data, err := json.Marshal(r.Spec)
+	if spec, ok := r.Spec.(T); ok {
+		return spec, nil
+	}
+	if ptr, ok := r.Spec.(*T); ok && ptr != nil {
+		return *ptr, nil
+	}
+	var zero T
+	if spec, ok := r.Spec.(map[string]any); ok {
+		data, err := json.Marshal(spec)
 		if err != nil {
-			return zero, fmt.Errorf("%s has unexpected spec type %T", r.ID(), r.Spec)
+			return zero, fmt.Errorf("%s has unexpected spec type %T: %w", r.ID(), r.Spec, err)
 		}
 		if err := json.Unmarshal(data, &zero); err != nil {
 			return zero, fmt.Errorf("%s has unexpected spec type %T: %w", r.ID(), r.Spec, err)
 		}
 		return zero, nil
 	}
-	return spec, nil
+	return zero, fmt.Errorf("%s has unexpected spec type %T", r.ID(), r.Spec)
 }
 
 func BoolDefault(value *bool, fallback bool) bool {

@@ -23,7 +23,6 @@ import (
 	"github.com/imksoo/routerd/pkg/mobilityconfig"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/samenrollment"
-	routerstate "github.com/imksoo/routerd/pkg/state"
 	"github.com/imksoo/routerd/pkg/wireguard"
 )
 
@@ -1000,15 +999,7 @@ func (c WireGuardController) cleanupStaleResources(ctx context.Context) error {
 			}
 		}
 	}
-	lister, ok := c.Store.(routerstate.ObjectStatusLister)
-	if !ok {
-		return nil
-	}
-	deleter, ok := c.Store.(routerstate.ObjectDeleteStore)
-	if !ok {
-		return nil
-	}
-	statuses, err := lister.ListObjectStatuses()
+	statuses, err := c.Store.ListObjectStatuses()
 	if err != nil {
 		return err
 	}
@@ -1036,7 +1027,7 @@ func (c WireGuardController) cleanupStaleResources(ctx context.Context) error {
 				}
 			}
 		}
-		if err := deleter.DeleteObject(item.APIVersion, item.Kind, item.Name); err != nil {
+		if err := c.Store.DeleteObject(item.APIVersion, item.Kind, item.Name); err != nil {
 			return err
 		}
 	}

@@ -114,7 +114,7 @@ func routerWithIPv6PDClientOptions(router *api.Router, osName string) (*api.Rout
 			return nil, nil, err
 		}
 		profile := defaultString(spec.Profile, api.IPv6PDProfileDefault)
-		spec.Client = api.EffectiveIPv6PDClient(osName, profile, spec.Client)
+		spec.Client = api.EffectiveIPv6PDClient(spec.Client)
 		if !api.ValidIPv6PDClient(spec.Client) {
 			return nil, nil, fmt.Errorf("%s spec.client is invalid: %q", res.ID(), spec.Client)
 		}
@@ -286,7 +286,7 @@ type staleObjectStatusCleanupStore interface {
 	resourcequery.StateStore
 }
 
-func cleanupUnsupportedLegacyObjectStatuses(router *api.Router, store staleObjectStatusCleanupStore) error {
+func cleanupStaleObjectStatuses(router *api.Router, store staleObjectStatusCleanupStore) error {
 	statuses, err := store.ListObjectStatuses()
 	if err != nil {
 		return err
@@ -514,6 +514,9 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 			}
 			generationPhase := result.Phase
 			if outcome.Canonical == canonicalReplaced {
+				if err := cleanupStaleObjectStatuses(router, stateStore); err != nil {
+					return result, err
+				}
 				generationPhase = "Committed"
 			}
 			outcome.Stage = "finish-generation"
@@ -588,6 +591,11 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 	if !opts.DryRun && configCommitPhase(result.Phase) {
 		if err := outcome.commit(opts, configYAML); err != nil {
 			return result, err
+		}
+		if outcome.Canonical == canonicalReplaced {
+			if err := cleanupStaleObjectStatuses(router, stateStore); err != nil {
+				return result, err
+			}
 		}
 	}
 	outcome.Stage = "finish-generation"

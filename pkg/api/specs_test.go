@@ -9,10 +9,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func TestIPsecConnectionUsesCanonicalPhaseProposalFieldsAndAcceptsLegacyAlias(t *testing.T) {
+func TestIPsecConnectionUsesCanonicalPhaseProposalFields(t *testing.T) {
 	for name, field := range map[string]string{
 		"canonical": "phase1Proposals",
-		"legacy":    "psPhase1Proposals",
 	} {
 		t.Run(name, func(t *testing.T) {
 			var resource Resource

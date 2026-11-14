@@ -22,7 +22,11 @@ func appendPrefixDelegationStateWarnings(result *apply.Result, router *api.Route
 			continue
 		}
 		base := "ipv6PrefixDelegation." + res.Metadata.Name
-		lease, _ := routerstate.PDLeaseFromStore(store, base)
+		lease, _, err := routerstate.PDLeaseFromStore(store, base)
+		if err != nil {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("%s: %v", res.ID(), err))
+			continue
+		}
 		if lease.CurrentPrefix != "" {
 			continue
 		}

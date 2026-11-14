@@ -28,8 +28,6 @@ type Bus struct {
 	mu          sync.Mutex
 	nextCursor  uint64
 	subscribers map[uint64]*subscriber
-	recent      map[string][]Event
-	recentLimit int
 	store       EventStore
 	logger      *slog.Logger
 }
@@ -54,8 +52,6 @@ type dropNotice struct {
 func New() *Bus {
 	return &Bus{
 		subscribers: map[uint64]*subscriber{},
-		recent:      map[string][]Event{},
-		recentLimit: 200,
 	}
 }
 
@@ -146,7 +142,6 @@ func (b *Bus) publishLocal(ctx context.Context, event Event, storeErr error) err
 		event.Cursor = strconv.FormatUint(b.nextCursor, 10)
 	}
 	logger := b.logger
-	b.appendRecentLocked(event)
 	var drops []dropNotice
 	for _, sub := range b.subscribers {
 		if !sub.matches(event) {
@@ -284,24 +279,6 @@ func (b *Bus) Subscribe(ctx context.Context, sub Subscription, buffer int) (<-ch
 		}()
 	}
 	return ch, cancel
-}
-
-func (b *Bus) Recent(topic string) []Event {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	events := b.recent[topic]
-	return append([]Event(nil), events...)
-}
-
-func (b *Bus) appendRecentLocked(event Event) {
-	if event.Type == "" {
-		return
-	}
-	events := append(b.recent[event.Type], event)
-	if len(events) > b.recentLimit {
-		events = append([]Event(nil), events[len(events)-b.recentLimit:]...)
-	}
-	b.recent[event.Type] = events
 }
 
 func (s *subscriber) matches(event Event) bool {

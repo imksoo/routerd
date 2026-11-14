@@ -13,7 +13,10 @@ func ConfiguredVXLANInterfaces(routers ...*api.Router) (map[string]bool, error) 
 		if router == nil {
 			continue
 		}
-		aliases := interfaceAliases(router)
+		aliases, err := interfaceAliases(router)
+		if err != nil {
+			return nil, err
+		}
 		for _, resource := range router.Spec.Resources {
 			switch resource.Kind {
 			case "Interface":

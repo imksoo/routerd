@@ -167,32 +167,6 @@ func startPeerGroupSyncServer(ctx context.Context, store *routerstate.SQLiteStor
 	return nil
 }
 
-var legacyServeBoolFlags = []string{
-	"controller-chain",
-	"controller-chain-dry-run-address",
-	"controller-chain-dry-run-dhcpv4lease",
-	"controller-chain-dry-run-dhcpv6",
-	"controller-chain-dry-run-dns-resolver",
-	"controller-chain-dry-run-dslite",
-	"controller-chain-dry-run-firewall",
-	"controller-chain-dry-run-nat",
-	"controller-chain-dry-run-network-adoption",
-	"controller-chain-dry-run-package",
-	"controller-chain-dry-run-ra",
-	"controller-chain-dry-run-route",
-	"controller-chain-dry-run-systemd-unit",
-}
-
-var legacyServeStringFlags = []string{
-	"observe-interval",
-	"controller-chain-daemon-sockets",
-	"controller-chain-dnsmasq-command",
-	"controller-chain-dnsmasq-config",
-	"controller-chain-dnsmasq-listen-addresses",
-	"controller-chain-dnsmasq-pid",
-	"controller-chain-dnsmasq-port",
-}
-
 type repeatedStringFlag []string
 
 func (f *repeatedStringFlag) String() string {
@@ -231,39 +205,6 @@ const (
 	defaultControlAPIPort          = 65432
 )
 
-func registerLegacyServeFlags(fs *flag.FlagSet) {
-	for _, name := range legacyServeBoolFlags {
-		fs.Bool(name, false, "ignored legacy controller-chain compatibility flag")
-	}
-	for _, name := range legacyServeStringFlags {
-		fs.String(name, "", "ignored legacy controller-chain compatibility flag")
-	}
-}
-
-func ignoredLegacyServeFlagNames(setFlags map[string]bool) []string {
-	ignored := make([]string, 0, len(legacyServeBoolFlags)+len(legacyServeStringFlags))
-	for _, name := range legacyServeBoolFlags {
-		if setFlags[name] {
-			ignored = append(ignored, "--"+name)
-		}
-	}
-	for _, name := range legacyServeStringFlags {
-		if setFlags[name] {
-			ignored = append(ignored, "--"+name)
-		}
-	}
-	sort.Strings(ignored)
-	return ignored
-}
-
-func warnIgnoredLegacyServeFlags(stderr io.Writer, setFlags map[string]bool) {
-	ignored := ignoredLegacyServeFlagNames(setFlags)
-	if len(ignored) == 0 || stderr == nil {
-		return
-	}
-	fmt.Fprintf(stderr, "warning: routerd serve ignored legacy flag(s): %s\n", strings.Join(ignored, ", "))
-}
-
 func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -292,7 +233,6 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	bgpStatePath := fs.String("bgp-state-file", defaultBGPState, "routerd-bgp applied state JSON path")
 	gracefulStopTimeout := fs.Duration("graceful-stop-timeout", 20*time.Second, "wait up to this duration for mobility make-before-break handoff on SIGTERM/SIGINT; 0 disables")
 	once := fs.Bool("once", false, "converge once and exit without serving control sockets")
-	registerLegacyServeFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -300,7 +240,6 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	fs.Visit(func(f *flag.Flag) {
 		setFlags[f.Name] = true
 	})
-	warnIgnoredLegacyServeFlags(stderr, setFlags)
 	if *statusSocketPath == *socketPath {
 		return errors.New("--status-socket must differ from --socket")
 	}
@@ -421,12 +360,16 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		cancelControllers()
 	}()
 	var controllerBus *bus.Bus
-	if cleanupErr := cleanupUnsupportedLegacyObjectStatuses(router, stateStore); cleanupErr != nil {
+	if cleanupErr := cleanupStaleObjectStatuses(router, stateStore); cleanupErr != nil {
 		logger.Emit(eventlog.LevelWarning, "serve", "stale state cleanup encountered an error", map[string]string{"error": cleanupErr.Error()})
 	}
 	engine := apply.New()
 	engine.Store = stateStore
 	if result, observeErr := engine.ObserveEffective(filterRouterByWhen(router, stateStore), router); observeErr == nil {
+		result, err = restoreInitialGeneration(result, stateStore, router, applyOpts)
+		if err != nil {
+			return fmt.Errorf("restore initial observation generation: %w", err)
+		}
 		cache.Store(result)
 		_ = statuswriter.Write(*statusFile, result)
 	} else {
@@ -568,7 +511,6 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		setRouter:            setCurrentRouter,
 		reloadWithOutcome:    chainRunner.ReloadRuntimeWithOutcome,
 		activeRuntime:        chainRunner.ActiveRuntimeSnapshot,
-		updateRuntime:        chainRunner.UpdateRuntimeRouter,
 		runtimeMutationError: chainRunner.RuntimeMutationError,
 		stopping:             stopping.Load,
 	}
@@ -2000,6 +1942,43 @@ func (c *resultCache) Load() *apply.Result {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.result
+}
+
+// restoreInitialGeneration only associates the startup observation with the latest
+// completed configuration when both the source and effective settings match.
+func restoreInitialGeneration(result *apply.Result, store *routerstate.SQLiteStore, router *api.Router, opts applyOptions) (*apply.Result, error) {
+	if result == nil || result.Generation != 0 {
+		return result, nil
+	}
+	generations, err := store.ListGenerations(1)
+	if err != nil {
+		return nil, err
+	}
+	if len(generations) == 0 {
+		return result, nil
+	}
+	latest := generations[0]
+	if !latest.HasYAML || (latest.Phase != "Healthy" && latest.Phase != "Applied") {
+		return result, nil
+	}
+	configYAML, err := routerConfigYAML(router, opts)
+	if err != nil {
+		return nil, err
+	}
+	effective, _, err := routerWithIPv6PDClientOptions(router, string(platformDefaults.OS))
+	if err != nil {
+		return nil, err
+	}
+	hash, err := configGenerationHash(configYAML, effective)
+	if err != nil {
+		return nil, err
+	}
+	if hash != latest.ConfigHash {
+		return result, nil
+	}
+	observed := *result
+	observed.Generation = latest.Generation
+	return &observed, nil
 }
 
 func resultWithLatestGeneration(result *apply.Result, store *routerstate.SQLiteStore) *apply.Result {
