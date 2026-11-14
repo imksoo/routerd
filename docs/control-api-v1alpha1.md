@@ -10,8 +10,6 @@ entry counts (total, tcp, udp, other), computed before the entry limit. An empty
 object means no SNAT entries; an omitted field means unavailable/unsupported (including PF).
 Counts do not describe provider AFTR state or port-allocation capacity.
 
-![Diagram showing the Control API v1alpha1 local socket model from routerd main sockets and managed daemon sockets to status, events, commands, resource phases, and local-only client contracts](/img/diagrams/control-api-v1alpha1.png)
-
 routerd and its managed daemons expose a local HTTP+JSON API over Unix domain sockets. The API is **not** for remote management — it is the channel through which `routerctl`, the routerd controllers themselves, and operations scripts on the same host read state.
 
 ## routerd main process
@@ -158,7 +156,7 @@ The sequence equals the same snapshot's `commandProbeCount`; timestamps use UTC
 RFC3339. Only the last success is retained. Rejections, cooldown suppression,
 partial failures, and autonomous probes do not replace it. Bind this diagnostic
 to the observer process and packet capture when correlating requests; it is not
-a request identifier or durable history. See [the design](design.md#52-controller-chain).
+a request identifier or durable history. See the design.
 
 ## Phase vocabulary
 

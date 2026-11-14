@@ -11,8 +11,6 @@ counts are keyed by observed `innerLocalIPv4`; shared addresses show combined
 counts. Unavailable observations are not zero. These are not provider AFTR
 counts or port capacity. Direct access and automatic refresh fetch tunnel status.
 
-![Diagram showing the Web Console as a read-only browser path to routerd local API status, events, logs, and diagnostics](/img/diagrams/concept-web-console.png)
-
 `WebConsole` enables a read-only HTTP view for routerd. It is intended for
 local operations on a management network. It does not change configuration,
 restart services, apply resources, or edit the state database.

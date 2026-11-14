@@ -1,8 +1,6 @@
 # Event Federation reference
 
-![Diagram showing Event Federation from observed local facts through EventGroup, routerd-eventd push delivery, EventSubscription matching, and plugin-derived DynamicConfigPart output](/img/diagrams/reference-event-federation.png)
-
-> Experimental (CloudEdge). See [ADR 0006: CloudEdge Event Federation](../adr/0006-event-federation.md)
+> Experimental (CloudEdge). See ADR 0006: CloudEdge Event Federation
 > for the design and invariants, and the how-to
 > [CloudEdge mobility demo](../how-to/cloudedge-mobility-demo.md) for a worked
 > example.
@@ -11,7 +9,7 @@ Event Federation lets routerd nodes exchange **typed, observed facts** (e.g. "th
 client IPv4 was observed", "this address expired") over the overlay, and lets a
 subscriber turn matched events into derived configuration via a plugin. It is the
 control-plane substrate beneath
-[Cloud SAM](./cloudedge-sam-internals): an observed address contributes typed
+[Cloud SAM](cloudedge-sam-internals.md): an observed address contributes typed
 ownership facts used by the receiving `MobilityPool` plan.
 
 The model is **at-least-once delivery with idempotent, observed-fact events**.

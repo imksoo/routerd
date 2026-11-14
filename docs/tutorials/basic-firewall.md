@@ -5,18 +5,14 @@ sidebar_position: 6
 
 # Basic NAT and firewall policy
 
-![Diagram showing a basic routerd NAT44 and firewall tutorial with WAN, LAN, optional management, NAT44Rule, FirewallZone, FirewallPolicy, and nftables validation](/img/diagrams/tutorial-basic-firewall.png)
-
 NAT and packet filtering are easy to confuse. NAT lets several private LAN
 addresses share one upstream IPv4 address. A firewall decides which packets may
 pass. They are separate jobs.
 
-:::caution Current firewall scope
 routerd's firewall resources are groundwork, not a complete security product or
 security certification. Do not expose an Internet-facing router or rely on this
 example as the only protection for a home, school, or work network. First test
 it in an isolated lab and keep a console recovery path.
-:::
 
 ## Scenario
 

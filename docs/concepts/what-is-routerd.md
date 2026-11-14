@@ -6,8 +6,6 @@ sidebar_position: 1
 
 # What is routerd?
 
-![Diagram showing routerd turning YAML resources into local host networking, daemons, state, status, and owned cleanup](/img/diagrams/concept-what-is-routerd.png)
-
 routerd is a declarative router control plane with Ubuntu Server as its primary
 host target. NixOS and FreeBSD have selected integration paths and groundwork;
 they are not first-lab equivalents. You write the router intent as YAML resources. routerd turns that
@@ -94,8 +92,8 @@ are tracked in the platform matrix.
 
 ## Next Pages
 
-- [Design philosophy](./design-philosophy)
-- [Resource model](./resource-model)
-- [Apply and render](./apply-and-render)
-- [State](./state)
-- [Install](../tutorials/install)
+- [Design philosophy](design-philosophy.md)
+- [Resource model](resource-model.md)
+- [Apply and render](apply-and-render.md)
+- [State](state.md)
+- [Install](../tutorials/install.md)

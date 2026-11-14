@@ -5,8 +5,6 @@ sidebar_position: 70
 
 # Multi-WAN IPv4 failover
 
-![Diagram showing two DS-Lite candidates and a direct IPv4 fallback selected by health checks and EgressRoutePolicy for one default route](/img/diagrams/config-example-multi-wan-failover.png)
-
 This example selects one IPv4 default route from two DS-Lite tunnels and a
 direct upstream-router IPv4 fallback. It does not configure PPPoE.
 

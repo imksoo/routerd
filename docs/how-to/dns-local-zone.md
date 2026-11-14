@@ -5,8 +5,6 @@ slug: /how-to/dns-local-zone
 
 # Local DNS zones
 
-![Diagram showing DNSZone combining manual records, DHCP-derived lease records, reverse zones, event relay updates, and DNSResolver local answers](/img/diagrams/how-to-dns-local-zone.png)
-
 ## Scenario
 
 You want internal hosts to be reachable by name without hand-maintaining `/etc/hosts` files on every device. Specifically:
@@ -62,5 +60,5 @@ After this resource is applied, queries for `nas.lan.example.org` and `<dhcp-cli
 
 ## See also
 
-- [Private DNS upstreams](./dns-private-upstream.md)
+- [Private DNS upstreams](dns-private-upstream.md)
 - [DNS resolver concept](../concepts/dns-resolver.md)

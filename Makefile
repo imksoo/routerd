@@ -55,7 +55,7 @@ CONTROL_SCHEMA := routerd-control-v1alpha1.schema.json
 CONTROL_OPENAPI_SCHEMA := routerd-control-openapi-v1alpha1.json
 
 
-.PHONY: build-routerd test check-version-ldflags build build-daemons build-provider-executors build-ndpi-agent build-ndpi-agent-libndpi build-daemons-freebsd check-freebsd-cross-compile check-linux-static check-ndpi-agent-libndpi cloudedge-acceptance-lint webconsole-build generate-schema sync-website-schemas check-schema check-website-schemas website-deps website-build third-party-licenses check-build-deps dist deb deb-ndpi dist-ndpi-agent-libndpi live-iso validate-example release clean
+.PHONY: build-routerd test check-version-ldflags build build-daemons build-provider-executors build-ndpi-agent build-ndpi-agent-libndpi build-daemons-freebsd check-freebsd-cross-compile check-linux-static check-ndpi-agent-libndpi cloudedge-acceptance-lint webconsole-build generate-schema generate-resource-docs sync-website-schemas check-schema check-website-schemas website-build third-party-licenses check-build-deps dist deb deb-ndpi dist-ndpi-agent-libndpi live-iso validate-example release clean
 
 test: check-version-ldflags
 	go test ./...
@@ -156,6 +156,9 @@ generate-schema:
 	go run ./cmd/routerd-schema --schema control > schemas/$(CONTROL_SCHEMA)
 	go run ./cmd/routerd-schema --schema control-openapi > schemas/$(CONTROL_OPENAPI_SCHEMA)
 
+generate-resource-docs:
+	python3 scripts/generate-resource-docs.py
+
 sync-website-schemas: generate-schema
 	install -d $(WEBSITE_SCHEMA_DIR)
 	cp schemas/$(CONFIG_SCHEMA) $(WEBSITE_SCHEMA_DIR)/$(CONFIG_SCHEMA)
@@ -177,9 +180,6 @@ check-website-schemas:
 	jq -e '."$$id" == "https://routerd.net/schemas/$(CONFIG_SCHEMA)"' $(WEBSITE_SCHEMA_DIR)/$(CONFIG_SCHEMA)
 	jq -e '."$$id" == "https://routerd.net/schemas/$(CONTROL_SCHEMA)"' $(WEBSITE_SCHEMA_DIR)/$(CONTROL_SCHEMA)
 	jq -e '."$$id" == "https://routerd.net/schemas/$(CONTROL_OPENAPI_SCHEMA)"' $(WEBSITE_SCHEMA_DIR)/$(CONTROL_OPENAPI_SCHEMA)
-
-website-deps:
-	@echo "Static contents: no dependencies"
 
 website-build:
 	cd website && sh build.sh

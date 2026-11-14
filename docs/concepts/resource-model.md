@@ -95,6 +95,6 @@ stop or become pending rather than continuing to advertise an old prefix.
 
 ## Next steps
 
-- [Apply and render](./apply-and-render.md) — how validate, plan, dry-run, and serve use the resource graph
-- [State](./state.md) — where runtime state is stored
+- [Apply and render](apply-and-render.md) — how validate, plan, dry-run, and serve use the resource graph
+- [State](state.md) — where runtime state is stored
 - [Resource API reference](../api-v1alpha1.md) — full field reference for every resource kind

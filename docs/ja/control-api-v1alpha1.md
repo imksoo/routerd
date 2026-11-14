@@ -1,0 +1,142 @@
+---
+title: 制御 API v1alpha1
+slug: /reference/control-api-v1alpha1
+---
+
+# 制御 API v1alpha1
+
+routerd と管理対象デーモンは、ローカルの Unix domain socket 上に HTTP+JSON API を公開します。
+この API はリモート管理用ではなく、`routerctl`、routerd 本体、運用スクリプトが同じホスト上で状態を読むためのものです。
+
+## routerd 本体
+
+`routerd serve` は次を待ち受けます。
+
+```text
+/run/routerd/routerd.sock
+/run/routerd/routerd-status.sock
+```
+
+主 control socket は権限を持つローカル client 向けで、apply や delete などの変更系
+エンドポイントも公開します。読み取り専用 status socket は status 系エンドポイントだけを
+公開し、一般ユーザーが状態確認に使えます。
+
+主 control socket の読み取りエンドポイントは、状態、event、resource state を返します。
+代表例は次の通りです。
+
+| Method + Path | 用途 |
+| --- | --- |
+| `GET /api/control.routerd.net/v1alpha1/status` | routerd 自身の状態 |
+| `GET /api/control.routerd.net/v1alpha1/connections` | conntrack または pf state から得た現在のコネクション |
+| `GET /api/control.routerd.net/v1alpha1/dns-queries` | DNS クエリー履歴 |
+| `GET /api/control.routerd.net/v1alpha1/traffic-flows` | 通信フロー履歴 |
+| `GET /api/control.routerd.net/v1alpha1/firewall-logs` | ファイアウォールログ |
+
+## SAM enrollment endpoint
+
+Dynamic SAM enrollment も同じ API handler を使いますが、RR が公開するのは enrollment
+runbook で明示した認証済み listener、または権限を持つ local socket だけです。一般的な
+remote 管理 API ではありません。
+
+| Method + Path | 用途 |
+| --- | --- |
+| `POST /api/control.routerd.net/v1alpha1/sam-enrollment-claims` | leaf の client-authored enrollment claim を受理します。 |
+| `POST /api/control.routerd.net/v1alpha1/sam-enrollment-claims/{name}/revoke` | 受理済み claim を明示的に revoke します。復旧用途には使いません。 |
+| `GET /api/control.routerd.net/v1alpha1/sam-enrollment-topologies/{name}?claim=...&claimDigest=...&claimIdentityDigest=...` | 指定した RRSet と、確認できた場合だけ任意の direct peer group を取得します。 |
+
+`claimIdentityDigest` は client-authored claim material だけの hash です。`joinTokenFrom` が
+あれば join HMAC で認証され、無い場合は trusted control-plane です。現行 RR はこれで明示的な
+revoke、clean boot による空の admission store、別 active identity を区別します。
+`SAMEnrollmentClient` は、すべての bootstrap RR を確認した後に限り identity-aware な absence
+応答を現在の direct claim の再送許可として扱います。別 active identity を置き換えられるのは
+初回 admission または local claim 変更時だけで、periodic renewal ではありません。digest が無い場合、
+旧版／混在 RR、revoke、request failure では RR-only fallback を維持します。caller が応答を直接
+解釈せず、client/controller を使ってください。
+
+## 宣言したリソースの件数
+
+`Status.status.resourceCount` は、現在の実行時設定で宣言したリソースの件数です。
+`when` 条件を満たさないリソースや、それらを参照するために除外される関連リソースも含みます。
+起動時の観測、即時適用、適用失敗で集計範囲は変わりません。計画用に生成した項目は含みません。
+宣言を変更すると件数も変わりますが、冗長化の役割や観測方法だけでは変わりません。
+この値は構成の件数であり、リソースの稼働状態や通信の成功を示すものではありません。
+
+## コントローラーの状態
+
+`Status.status.controllers` と `Controllers` エンドポイントは、コントローラーの設定上の
+mode と、実行時の reconcile 状態を返します。runtime field には `interval`、
+`lastTrigger`、`lastReconcileTime`、`nextReconcileTime`、`reconcileCount`、
+`reconcileErrorCount`、`consecutiveErrorCount`、`currentError`、
+`lastDuration`、`maxDuration`、`averageDuration`、`lastError`、
+`lastErrorTime`、`lastErrorClearedAt` が含まれます。`reconcileErrorCount` は
+累積値なので、現在失敗中かどうかは `currentError` と `consecutiveErrorCount` で
+判定してください。これらは観測値なので、controller がまだ一度も実行されて
+いない場合は、field が無いものとして扱ってください。
+
+## 管理対象デーモン
+
+状態を持つデーモンは、それぞれ独自の socket を持ちます。
+
+```text
+/run/routerd/dhcpv6-client/wan-pd.sock
+/run/routerd/dhcpv4-client/wan.sock
+/run/routerd/pppoe-client/wan-pppoe.sock
+/run/routerd/healthcheck/internet.sock
+```
+
+FreeBSD では、対応するパスは `/var/run/routerd/...` です。
+
+## デーモン共通エンドポイント
+
+| Method + Path | 用途 |
+| --- | --- |
+| `GET /v1/healthz` | liveness check |
+| `GET /v1/status` | デーモンの状態と、関連リソースの状態 |
+| `GET /v1/events` | event log。`since`、`wait`、`topic` を query で指定します |
+| `POST /v1/commands/reload` | 設定の再読み込み |
+| `POST /v1/commands/renew` | デーモンごとの能動操作（DHCPv6 Renew、DHCPv4 のリース更新、即時の health probe など） |
+| `POST /v1/commands/stop` | 安全に停止 |
+
+`renew` の意味はデーモンごとに異なります。DHCPv6 は Renew の送信、DHCPv4 はリース更新、healthcheck は即時の probe です。
+
+ARP observerの `POST /v1/commands` は `probe-target` を受け付けます。成功すると
+`GET /v1/status` の `observed.lastCommandProbe` に、`sequence`・`target`・
+UTC RFC3339の `startedAt` / `completedAt`・`packetsSent` をJSON文字列で返します。
+sequenceは同じ読取の `commandProbeCount` と一致します。保持するのは直近の成功1件で、
+拒否・cooldown抑止・途中失敗・自律探索では更新しません。要求IDや永続履歴ではないため、
+要求との照合には監視プロセスの識別情報と実パケットも使用します。
+
+## フェーズ語彙
+
+`ResourceStatus.phase` は、リソース横断で共通の語彙を使います。
+
+| フェーズ | 意味 |
+| --- | --- |
+| `Pending` | 必要な入力を待機中です |
+| `Bound` | DHCP などのリースを保持中です |
+| `Applied` | ホスト側へ適用済みです |
+| `Up` | tunnel または link が up しています |
+| `Installed` | 経路または設定ファイルが入っています |
+| `Healthy` | health check が success threshold を満たしています |
+| `Unhealthy` | health check が failure threshold を満たしています |
+| `Error` | 操作に失敗しました |
+
+各 phase には `conditions` 配列が付きます。client 側のコードでは、log 文字列ではなく `phase` と `conditions` で判定してください。
+
+## イベント
+
+イベントは topic と attributes を持ちます。
+
+```json
+{
+  "topic": "routerd.dhcpv6.client.prefix.renewed",
+  "attributes": {
+    "resource.kind": "DHCPv6PrefixDelegation",
+    "resource.name": "wan-pd"
+  }
+}
+```
+
+routerd は event を SQLite に永続化します。
+管理対象デーモンは、加えて自身の `events.jsonl` にも記録します。
+`EventRule` と `DerivedEvent` は、このストリームを入力にして仮想 event を発行します。

@@ -46,7 +46,7 @@ while IFS= read -r -d '' path; do
       webconsole=true
       backend=true
       ;;
-    docs/releases/changelog.md|website/i18n/*/releases/changelog.md)
+    docs/releases/changelog.md|docs/*/releases/changelog.md)
       ;;
     docs/*|README*|AGENTS.md|LICENSE*|NOTICE*)
       docs=true

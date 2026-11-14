@@ -5,8 +5,6 @@ slug: /how-to/nat44-session-sync
 
 # NAT44 session sync for HA routers
 
-![Diagram showing NAT44SessionSync dumping selected conntrack SNAT entries from the active router, restoring them over SSH, and surfacing insert failures in standby status](/img/diagrams/how-to-nat44-session-sync.png)
-
 Use `NAT44SessionSync` when two routerd nodes share a LAN gateway role and the
 active node should keep selected NAT44 conntrack sessions warm on a standby
 node. It starts with a one-time conntrack snapshot safety net, then keeps a
@@ -141,7 +139,7 @@ The first event stream implementation still uses the existing SSH restore path
 for each event batch. Long-lived target restore sessions can be added later if
 the batch restore path becomes the next bottleneck.
 
-See [ADR 0016](../adr/0016-nat44-session-sync-event-stream.md) for the design
+See ADR 0016 for the design
 and migration plan.
 
 ## Check it

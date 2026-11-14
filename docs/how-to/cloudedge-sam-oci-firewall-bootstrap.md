@@ -1,7 +1,5 @@
 # CloudEdge SAM: OCI Ubuntu image firewall bootstrap
 
-![Diagram showing OCI Ubuntu guest firewall defaults blocking WireGuard and SAM forwarding, required bootstrap allowances, and routerctl doctor checks](/img/diagrams/how-to-cloudedge-sam-oci-firewall-bootstrap.png)
-
 > Experimental (CloudEdge SAM). This documents **provider-image host firewall
 > behavior** seen on OCI Canonical Ubuntu images used as SAM routers, and the
 > routerd-owned allowances that must converge on a clean host.
@@ -59,7 +57,7 @@ VNIC source-dest-check.
 
 ## Related
 
-- [Selective Address Mobility](../reference/selective-address-mobility)
+- [Selective Address Mobility](../reference/selective-address-mobility.md)
 - OCI Ubuntu images differ from AWS/Azure images in their default `iptables-nft`
   posture; AWS/Azure SAM smokes did not hit this because their images do not
   reject-all `FORWARD` by default.

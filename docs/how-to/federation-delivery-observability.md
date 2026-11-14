@@ -490,7 +490,7 @@ appears, check the plugin output format.
 ## OpenTelemetry metrics reference
 
 `routerd-eventd` emits the following metrics when an OTLP endpoint is configured
-(see [Send telemetry to an OTLP collector](./opentelemetry)):
+(see [Send telemetry to an OTLP collector](opentelemetry.md)):
 
 ### Outbox delivery metrics
 

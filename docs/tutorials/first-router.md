@@ -5,21 +5,17 @@ sidebar_position: 2
 
 # Bring up the first lab router
 
-![Diagram showing a first router tutorial with DHCPv4 WAN, LAN DHCP, NAT44, validate, dry-run, live apply, and status checks](/img/diagrams/tutorial-first-router.png)
-
 This tutorial gives an isolated LAN client a private IPv4 address, a gateway,
 and an IPv4 path to an upstream network. It uses the complete example
 [`examples/example-basic-ipv4-nat.yaml`](https://github.com/imksoo/routerd/blob/main/examples/example-basic-ipv4-nat.yaml).
 
 It is a lab tutorial, not a copy-and-paste replacement for a household router.
 
-:::danger Keep a recovery path
 Use a VM console, serial console, or a separate management NIC. `ens18` and
 `ens19` below are example names. Check yours with `ip -br link`, and never
 guess which interface carries the management connection. The example uses the
 private range `192.168.10.0/24`; change it if it overlaps with an upstream,
 VPN, school, or management network.
-:::
 
 ## Before you start
 
@@ -51,7 +47,7 @@ upstream network -- WAN -- routerd host -- LAN -- test client
 3. The test client uses `192.168.10.1` as its gateway.
 4. NAT lets the client send IPv4 traffic through the one upstream address.
 
-Read [Network basics](./network-basics.md) if words such as DHCP, gateway, or
+Read [Network basics](network-basics.md) if words such as DHCP, gateway, or
 NAT are new.
 
 ## 1. Download and adapt the complete lab file
@@ -77,12 +73,10 @@ Open `first-router.yaml` and change only these values before the first preview:
 The file deliberately leaves the WAN externally owned and lets routerd manage
 the LAN. It includes a DHCPv4 server, a NAT44 rule, and basic zone resources.
 
-:::caution Firewall scope
 routerd's firewall resources are groundwork, not a security certification.
 Do not expose an Internet-facing router or rely on this example as the only
 security boundary. Keep the first exercise behind an isolated virtual switch or
 physical lab network.
-:::
 
 ## 2. Validate and preview before a daemon exists
 
@@ -150,9 +144,9 @@ Do not keep applying the file repeatedly while the cause is unknown.
 
 - [Basic IPv4 NAT gateway](../config-examples/basic-ipv4-nat.md) — a guided
   explanation of this file
-- [LAN-side services](./lan-side-services.md) — make the router answer local
+- [LAN-side services](lan-side-services.md) — make the router answer local
   DNS names and add IPv6 only after IPv4 works
-- [Basic NAT and firewall policy](./basic-firewall.md) — current firewall scope
+- [Basic NAT and firewall policy](basic-firewall.md) — current firewall scope
   and safer next steps
 
 If startup or status fails, use [Troubleshooting](../how-to/troubleshooting.md)

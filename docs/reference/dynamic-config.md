@@ -17,8 +17,6 @@ not merged into effective config. The separate provider-action engine can import
 them into its journal and execute them only through `ProviderActionPolicy`,
 approval, and executor-plugin gates.
 
-![Dynamic config diagram showing startup config, DynamicOverridePolicy, trusted local plugin output, DynamicConfigPart, effective config, inert actionPlans, action journal, and gated executor plugin path](/img/diagrams/dynamic-config-provider-actions.png)
-
 ## DynamicConfigPart
 
 `DynamicConfigPart` is one validated runtime fragment from a dynamic source.
@@ -182,5 +180,5 @@ prints effective-config. `dynamic diff` compares startup-config to
 effective-config. `plugin run --dry-run` prints a candidate dynamic part without
 writing the state database.
 
-See [Hybrid cloud edge design](../design-hybrid-cloud-edge) and
+See Hybrid cloud edge design and
 [Plugin protocol](/docs/reference/plugin-protocol).
