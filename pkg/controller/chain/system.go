@@ -1327,14 +1327,13 @@ func (c SystemdUnitController) cleanupWhenFalseSystemdUnit(ctx context.Context, 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if err != nil {
 		status := map[string]any{
-			"phase":     "Error",
-			"reason":    "WhenFalseCleanupFailed",
-			"unitName":  ref.UnitName,
-			"path":      path,
-			"source":    ref.Source,
-			"error":     err.Error(),
-			"dryRun":    c.DryRun,
-			"updatedAt": now,
+			"phase":    "Error",
+			"reason":   "WhenFalseCleanupFailed",
+			"unitName": ref.UnitName,
+			"path":     path,
+			"source":   ref.Source,
+			"error":    err.Error(),
+			"dryRun":   c.DryRun,
 		}
 		if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", ref.UnitName, status); saveErr != nil {
 			return saveErr
@@ -1346,14 +1345,13 @@ func (c SystemdUnitController) cleanupWhenFalseSystemdUnit(ctx context.Context, 
 		unitPhase = "Rendered"
 	}
 	if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", ref.UnitName, map[string]any{
-		"phase":     unitPhase,
-		"reason":    "WhenFalse",
-		"unitName":  ref.UnitName,
-		"path":      path,
-		"source":    ref.Source,
-		"changed":   changed,
-		"dryRun":    c.DryRun,
-		"updatedAt": now,
+		"phase":    unitPhase,
+		"reason":   "WhenFalse",
+		"unitName": ref.UnitName,
+		"path":     path,
+		"source":   ref.Source,
+		"changed":  changed,
+		"dryRun":   c.DryRun,
 	}); err != nil {
 		return err
 	}
