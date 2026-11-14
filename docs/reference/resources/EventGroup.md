@@ -82,4 +82,4 @@ The ordinary status-reference validator accepts these field names for this kind.
 
 `phase`, `group`, `nodeName`, `peers`, `peersFrom`, `pendingSources`, `listenAddress`, `listenPort`
 
-[Example](https://github.com/imksoo/routerd/blob/main/examples/cloudedge-mobility-demo/aws.yaml)
+[Example](https://github.com/imksoo/routerd/blob/main/examples/cloudedge-mobility-demo/onprem.yaml)

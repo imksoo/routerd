@@ -50,4 +50,4 @@ EventGroupの相手側配送先を1件宣言します。通信認証と自ノー
 
 このKindには通常の状態値参照の許可フィールドが登録されていません。
 
-[設定例](https://github.com/imksoo/routerd/blob/main/examples/cloudedge-mobility-demo/aws.yaml)
+[設定例](https://github.com/imksoo/routerd/blob/main/examples/cloudedge-mobility-demo/onprem.yaml)

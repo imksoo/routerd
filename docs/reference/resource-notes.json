@@ -10148,6 +10148,12 @@
         "既定falseです。複数VMAC引数形式ではtrueで無効化前にrouter lifetime=0のRAを送り、リンクローカル送信元が必要です。linkLocalAddressなしの単一VMAC旧引数形式は本フラグを渡しません。",
         "預設 false。多 VMAC 引數形式中 true 會在停用前以鏈路本地來源送出 router lifetime=0 RA。未明確 linkLocalAddress 的單 VMAC 舊引數形式不傳遞此旗標。",
         "默认 false。多 VMAC 参数形式中 true 会在禁用前以链路本地源发出 router lifetime=0 RA。未明确 linkLocalAddress 的单 VMAC 旧参数形式不传递此标志。"
+      ],
+      "vrrp.gracefulActivation.readyWhen.state": [
+        "Optional state-key predicate map within readyWhen; all entries must match. Select exactly one nonempty state/all/any branch. Predicate fields (equals/in/contains/exists/status/for/maxAge) follow common fields; resource-style keys must reference declared resources and provided fields.",
+        "readyWhen内の状態キーと条件のマップで、すべての項目の成立を要求します。空でないstate・all・anyのいずれか1つだけを選びます。equals・in・contains・exists・status・for・maxAgeは共通項に従い、リソース形式のキーは宣言済みリソース・提供フィールドを参照します。",
+        "readyWhen 內的選用狀態鍵條件對應表，所有項目皆須符合。state/all/any 須擇一且非空。equals/in/contains/exists/status/for/maxAge 遵循共用欄位；資源形式的鍵須參照已宣告資源及提供欄位。",
+        "readyWhen 内的可选状态键条件映射，所有条目均须匹配。state/all/any 须择一且非空。equals/in/contains/exists/status/for/maxAge 遵循通用字段；资源形式的键须引用已声明资源及提供字段。"
       ]
     },
     "sources": [

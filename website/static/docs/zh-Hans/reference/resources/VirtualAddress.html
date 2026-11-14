@@ -254,6 +254,10 @@
 <td><code>spec.vrrp.additionalFailoverVMACs[].withdrawRouterAdvertisement</code></td>
 <td>默认 false。多 VMAC 参数形式中 true 会在禁用前以链路本地源发出 router lifetime=0 RA。未明确 linkLocalAddress 的单 VMAC 旧参数形式不传递此标志。</td>
 </tr>
+<tr>
+<td><code>spec.vrrp.gracefulActivation.readyWhen.state</code></td>
+<td>readyWhen 内的可选状态键条件映射，所有条目均须匹配。state/all/any 须择一且非空。equals/in/contains/exists/status/for/maxAge 遵循通用字段；资源形式的键须引用已声明资源及提供字段。</td>
+</tr>
 </tbody>
 </table>
 <p>实现: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go">pkg/config/diagnostics.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/index.go">pkg/config/index.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/cluster_secret_validate.go">pkg/config/cluster_secret_validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/vrrp/controller.go">pkg/controller/vrrp/controller.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/vrrp/backend.go">pkg/controller/vrrp/backend.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/dnsresolver/controller.go">pkg/controller/dnsresolver/controller.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/vrrp.go">pkg/render/vrrp.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/carp.go">pkg/render/carp.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/status_source.go">pkg/render/status_source.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/secrets.go">pkg/render/secrets.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd-vrrp-vmac/main.go">cmd/routerd-vrrp-vmac/main.go</a></p>

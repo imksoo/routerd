@@ -50,4 +50,4 @@ The ordinary status-reference validator accepts these field names for this kind.
 
 No fields are registered for this kind in the ordinary status-reference allowlist.
 
-[Example](https://github.com/imksoo/routerd/blob/main/examples/cloudedge-mobility-demo/aws.yaml)
+[Example](https://github.com/imksoo/routerd/blob/main/examples/cloudedge-mobility-demo/onprem.yaml)

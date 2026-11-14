@@ -33,7 +33,11 @@ EXAMPLES = {}
 paths = sorted((ROOT / 'examples').glob('*.yaml'))
 paths += sorted((ROOT / 'examples').glob('*/*.yaml'))
 for path in paths:
-    for kind in re.findall(r'^      kind: (\w+)\s*$', path.read_text(), re.M):
+    text = path.read_text()
+    # Demo templates require external substitution and are not ready YAML examples.
+    if '${DEMO_' in text:
+        continue
+    for kind in re.findall(r'^      kind: (\w+)\s*$', text, re.M):
         EXAMPLES.setdefault(kind, path)
 EXAMPLES['DSLiteTunnel'] = ROOT / 'examples/example-dslite-home.yaml'
 EXAMPLES['LocalServiceRedirect'] = ROOT / 'examples/example-local-dns-redirect.yaml'
