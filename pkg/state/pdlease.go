@@ -120,79 +120,8 @@ func pdObject(ref objectRef) bool {
 	return ref.APIVersion == pdAPIVersion && ref.Kind == "DHCPv6PrefixDelegation"
 }
 
-func pdLeaseFields(l PDLease) objectStatus {
-	out := objectStatus{}
-	if l.CurrentPrefix != "" {
-		out["currentPrefix"] = l.CurrentPrefix
-	}
-	if l.LastPrefix != "" {
-		out["lastPrefix"] = l.LastPrefix
-	}
-	if len(l.PreviousPrefixes) > 0 {
-		out["previousPrefixes"] = l.PreviousPrefixes
-	}
-	if l.Prefix != "" {
-		out["prefix"] = l.Prefix
-	}
-	if l.T1 != "" {
-		out["t1"] = l.T1
-	}
-	if l.T2 != "" {
-		out["t2"] = l.T2
-	}
-	if l.PLTime != "" {
-		out["pltime"] = l.PLTime
-	}
-	if l.VLTime != "" {
-		out["vltime"] = l.VLTime
-	}
-	if l.SourceMAC != "" {
-		out["sourceMAC"] = l.SourceMAC
-	}
-	if l.SourceLL != "" {
-		out["sourceLL"] = l.SourceLL
-	}
-	if l.LastObservedAt != "" {
-		out["lastObservedAt"] = l.LastObservedAt
-	}
-	if l.LastReplyAt != "" {
-		out["lastReplyAt"] = l.LastReplyAt
-	}
-	if l.LastSolicitAt != "" {
-		out["lastSolicitAt"] = l.LastSolicitAt
-	}
-	if l.LastRequestAt != "" {
-		out["lastRequestAt"] = l.LastRequestAt
-	}
-	if l.LastRenewAt != "" {
-		out["lastRenewAt"] = l.LastRenewAt
-	}
-	if l.LastRebindAt != "" {
-		out["lastRebindAt"] = l.LastRebindAt
-	}
-	if l.LastReleaseAt != "" {
-		out["lastReleaseAt"] = l.LastReleaseAt
-	}
-	if l.DUID != "" {
-		out["duid"] = l.DUID
-	}
-	if l.DUIDText != "" {
-		out["duidText"] = l.DUIDText
-	}
-	if l.IAID != "" {
-		out["iaid"] = l.IAID
-	}
-	if l.ExpectedDUID != "" {
-		out["expectedDUID"] = l.ExpectedDUID
-	}
-	return out
-}
-func pdLeaseFromStatus(status objectStatus) (PDLease, bool, error) {
-	var lease PDLease
-	found := false
-	// This is the existing untyped SQLite object-status boundary, not an
-	// internal JSON round trip. Each stored field is checked once here.
-	for key, target := range map[string]*string{
+func pdLeaseStrings(lease *PDLease) map[string]*string {
+	return map[string]*string{
 		"currentPrefix":  &lease.CurrentPrefix,
 		"lastPrefix":     &lease.LastPrefix,
 		"prefix":         &lease.Prefix,
@@ -213,7 +142,27 @@ func pdLeaseFromStatus(status objectStatus) (PDLease, bool, error) {
 		"duidText":       &lease.DUIDText,
 		"iaid":           &lease.IAID,
 		"expectedDUID":   &lease.ExpectedDUID,
-	} {
+	}
+}
+
+func pdLeaseFields(lease PDLease) objectStatus {
+	out := objectStatus{}
+	for key, value := range pdLeaseStrings(&lease) {
+		if *value != "" {
+			out[key] = *value
+		}
+	}
+	if len(lease.PreviousPrefixes) > 0 {
+		out["previousPrefixes"] = lease.PreviousPrefixes
+	}
+	return out
+}
+func pdLeaseFromStatus(status objectStatus) (PDLease, bool, error) {
+	var lease PDLease
+	found := false
+	// This is the existing untyped SQLite object-status boundary, not an
+	// internal JSON round trip. Each stored field is checked once here.
+	for key, target := range pdLeaseStrings(&lease) {
 		if raw, exists := status[key]; exists {
 			value, ok := raw.(string)
 			if !ok {
@@ -255,27 +204,15 @@ func pdLeaseFromStatus(status objectStatus) (PDLease, bool, error) {
 	return lease, found, nil
 }
 func samePDLease(a, b PDLease) bool {
-	return a.CurrentPrefix == b.CurrentPrefix &&
-		a.LastPrefix == b.LastPrefix &&
-		slices.EqualFunc(a.PreviousPrefixes, b.PreviousPrefixes, func(a, b PDPreviousPrefix) bool { return a.Prefix == b.Prefix && a.ExpiresAt.Equal(b.ExpiresAt) }) &&
-		a.Prefix == b.Prefix &&
-		a.T1 == b.T1 &&
-		a.T2 == b.T2 &&
-		a.PLTime == b.PLTime &&
-		a.VLTime == b.VLTime &&
-		a.SourceMAC == b.SourceMAC &&
-		a.SourceLL == b.SourceLL &&
-		a.LastObservedAt == b.LastObservedAt &&
-		a.LastReplyAt == b.LastReplyAt &&
-		a.LastSolicitAt == b.LastSolicitAt &&
-		a.LastRequestAt == b.LastRequestAt &&
-		a.LastRenewAt == b.LastRenewAt &&
-		a.LastRebindAt == b.LastRebindAt &&
-		a.LastReleaseAt == b.LastReleaseAt &&
-		a.DUID == b.DUID &&
-		a.DUIDText == b.DUIDText &&
-		a.IAID == b.IAID &&
-		a.ExpectedDUID == b.ExpectedDUID
+	right := pdLeaseStrings(&b)
+	for key, value := range pdLeaseStrings(&a) {
+		if *value != *right[key] {
+			return false
+		}
+	}
+	return slices.EqualFunc(a.PreviousPrefixes, b.PreviousPrefixes, func(a, b PDPreviousPrefix) bool {
+		return a.Prefix == b.Prefix && a.ExpiresAt.Equal(b.ExpiresAt)
+	})
 }
 
 // normalizePDLease validates the two observed old representations before
@@ -372,27 +309,10 @@ func pdLeaseValue(status objectStatus) (Value, bool, error) {
 }
 
 func replacePDLease(status objectStatus, lease PDLease, meta Value) {
-	delete(status, "currentPrefix")
-	delete(status, "lastPrefix")
+	for key := range pdLeaseStrings(&lease) {
+		delete(status, key)
+	}
 	delete(status, "previousPrefixes")
-	delete(status, "prefix")
-	delete(status, "t1")
-	delete(status, "t2")
-	delete(status, "pltime")
-	delete(status, "vltime")
-	delete(status, "sourceMAC")
-	delete(status, "sourceLL")
-	delete(status, "lastObservedAt")
-	delete(status, "lastReplyAt")
-	delete(status, "lastSolicitAt")
-	delete(status, "lastRequestAt")
-	delete(status, "lastRenewAt")
-	delete(status, "lastRebindAt")
-	delete(status, "lastReleaseAt")
-	delete(status, "duid")
-	delete(status, "duidText")
-	delete(status, "iaid")
-	delete(status, "expectedDUID")
 	// Delete even fields omitted by the new value, without deleting phase,
 	// conditions, HA state, or other producers' observations.
 	for key, value := range pdLeaseFields(lease) {

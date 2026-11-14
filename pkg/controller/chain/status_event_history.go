@@ -38,7 +38,7 @@ func statusEventHistoryRequired(router *api.Router) bool {
 }
 
 func (s eventedStore) saveStatusWithHistory(apiVersion, kind, name string, updates map[string]any, merge bool) error {
-	store := s.Store
+	store := s.SQLiteStore
 	if s.Bus == nil || !s.Bus.PersistsTo(store) {
 		return fmt.Errorf("EventRule status history requires status and bus to share a transactional event store")
 	}

@@ -455,54 +455,9 @@ func pathMTUResourceInterface(router *api.Router, res api.Resource) (pathMTUTunn
 	if strings.TrimSpace(res.Metadata.Name) == "" {
 		return pathMTUTunnel{}, false
 	}
-	// Accept only the current concrete specs, in value or pointer form.
-	// Do not decode untyped specs or infer participation from field or Kind names.
-	value := res.Spec
-	switch spec := value.(type) {
-	case *api.InterfaceSpec:
-		if spec == nil {
-			return pathMTUTunnel{}, false
-		}
-		value = *spec
-	case *api.DSLiteTunnelSpec:
-		if spec == nil {
-			return pathMTUTunnel{}, false
-		}
-		value = *spec
-	case *api.PPPoESessionSpec:
-		if spec == nil {
-			return pathMTUTunnel{}, false
-		}
-		value = *spec
-	case *api.WireGuardInterfaceSpec:
-		if spec == nil {
-			return pathMTUTunnel{}, false
-		}
-		value = *spec
-	case *api.TunnelInterfaceSpec:
-		if spec == nil {
-			return pathMTUTunnel{}, false
-		}
-		value = *spec
-	case *api.BridgeSpec:
-		if spec == nil {
-			return pathMTUTunnel{}, false
-		}
-		value = *spec
-	case *api.VXLANSegmentSpec:
-		if spec == nil {
-			return pathMTUTunnel{}, false
-		}
-		value = *spec
-	case *api.VXLANTunnelSpec:
-		if spec == nil {
-			return pathMTUTunnel{}, false
-		}
-		value = *spec
-	}
 	var mtu, defaultMTU int
 	var underlay string
-	switch spec := value.(type) {
+	switch spec := res.Spec.(type) {
 	case api.InterfaceSpec:
 		mtu, defaultMTU = spec.MTU, 1500
 	case api.DSLiteTunnelSpec:

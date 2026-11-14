@@ -94,104 +94,18 @@ type Store interface {
 }
 
 type eventedStore struct {
-	Store                 *routerstate.SQLiteStore
+	*routerstate.SQLiteStore
 	Bus                   *bus.Bus
 	Router                *api.Router
 	statusHistoryRequired bool
 }
 
-// eventSubscriptionStore composes the evented status store (bus
-// publication on status changes) with the raw SQLite data store that the
-// EventSubscriptionController needs for federation events, subscription runs,
-// dynamic config parts, and plugin runs.
-type eventSubscriptionStore struct {
-	evented eventedStore
-	data    *routerstate.SQLiteStore
-}
-
 type mobilityStore struct {
-	evented eventedStore
-	data    *routerstate.SQLiteStore
-}
-
-func (s mobilityStore) SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error {
-	return s.evented.SaveObjectStatus(apiVersion, kind, name, status)
-}
-
-func (s mobilityStore) MergeObjectStatus(apiVersion, kind, name string, updates map[string]any) error {
-	return s.evented.MergeObjectStatus(apiVersion, kind, name, updates)
-}
-
-func (s mobilityStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
-	return s.evented.ObjectStatus(apiVersion, kind, name)
+	eventedStore
 }
 
 func (s mobilityStore) RecordBusEvent(ctx context.Context, event daemonapi.DaemonEvent) (string, error) {
-	return "", s.evented.Bus.Publish(ctx, event)
-}
-
-func (s mobilityStore) ListFederationEvents(group string, includeExpired bool, now int64) ([]routerstate.EventRecord, error) {
-	return s.data.ListFederationEvents(group, includeExpired, now)
-}
-
-func (s mobilityStore) RecordFederationEvent(rec routerstate.EventRecord) error {
-	return s.data.RecordFederationEvent(rec)
-}
-
-func (s mobilityStore) UpsertDynamicConfigPart(rec routerstate.DynamicConfigPartRecord) error {
-	return s.data.UpsertDynamicConfigPart(rec)
-}
-
-func (s mobilityStore) GetDynamicConfigPartsBySource(source string) ([]routerstate.DynamicConfigPartRecord, error) {
-	return s.data.GetDynamicConfigPartsBySource(source)
-}
-
-func (s mobilityStore) ListDynamicConfigParts() ([]routerstate.DynamicConfigPartRecord, error) {
-	return s.data.ListDynamicConfigParts()
-}
-
-func (s mobilityStore) ListActions(filter routerstate.ActionExecutionFilter) ([]routerstate.ActionExecutionRecord, error) {
-	return s.data.ListActions(filter)
-}
-
-func (s eventSubscriptionStore) SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error {
-	return s.evented.SaveObjectStatus(apiVersion, kind, name, status)
-}
-
-func (s eventSubscriptionStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
-	return s.evented.ObjectStatus(apiVersion, kind, name)
-}
-
-func (s eventSubscriptionStore) ListFederationEvents(group string, includeExpired bool, now int64) ([]routerstate.EventRecord, error) {
-	return s.data.ListFederationEvents(group, includeExpired, now)
-}
-
-func (s eventSubscriptionStore) SubscriptionRunStatus(subscription, eventID string) (string, int, bool, error) {
-	return s.data.SubscriptionRunStatus(subscription, eventID)
-}
-
-func (s eventSubscriptionStore) UpsertSubscriptionRunStart(subscription, eventID, eventGroup, plugin string) error {
-	return s.data.UpsertSubscriptionRunStart(subscription, eventID, eventGroup, plugin)
-}
-
-func (s eventSubscriptionStore) MarkSubscriptionRunResult(subscription, eventID, status, dynamicSource string, dynamicGeneration int64, errMsg string) error {
-	return s.data.MarkSubscriptionRunResult(subscription, eventID, status, dynamicSource, dynamicGeneration, errMsg)
-}
-
-func (s eventSubscriptionStore) UpsertDynamicConfigPart(part routerstate.DynamicConfigPartRecord) error {
-	return s.data.UpsertDynamicConfigPart(part)
-}
-
-func (s eventSubscriptionStore) GetDynamicConfigPartsBySource(source string) ([]routerstate.DynamicConfigPartRecord, error) {
-	return s.data.GetDynamicConfigPartsBySource(source)
-}
-
-func (s eventSubscriptionStore) RecordPluginRun(run routerstate.PluginRunRecord) (int64, error) {
-	return s.data.RecordPluginRun(run)
-}
-
-func (s eventSubscriptionStore) CompletePluginRun(id int64, completedAt time.Time, exitCode *int, status, stdoutDigest, stderrText, runError string) error {
-	return s.data.CompletePluginRun(id, completedAt, exitCode, status, stdoutDigest, stderrText, runError)
+	return "", s.Bus.Publish(ctx, event)
 }
 
 func (s eventedStore) SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error {
@@ -206,7 +120,7 @@ func (s eventedStore) saveStatus(apiVersion, kind, name string, updates map[stri
 	if s.statusHistoryRequired {
 		return s.saveStatusWithHistory(apiVersion, kind, name, updates, merge)
 	}
-	current := s.Store.ObjectStatus(apiVersion, kind, name)
+	current := s.SQLiteStore.ObjectStatus(apiVersion, kind, name)
 	next := updates
 	if merge {
 		next = copyStatusMap(current)
@@ -225,9 +139,9 @@ func (s eventedStore) saveStatus(apiVersion, kind, name string, updates map[stri
 	}
 	var err error
 	if merge {
-		err = s.Store.MergeObjectStatus(apiVersion, kind, name, updates)
+		err = s.SQLiteStore.MergeObjectStatus(apiVersion, kind, name, updates)
 	} else {
-		err = s.Store.SaveObjectStatus(apiVersion, kind, name, updates)
+		err = s.SQLiteStore.SaveObjectStatus(apiVersion, kind, name, updates)
 	}
 	if err != nil {
 		return err
@@ -300,69 +214,6 @@ func preserveStatusFields(status, current map[string]any, fields ...string) map[
 		}
 	}
 	return out
-}
-
-func (s eventedStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
-	return s.Store.ObjectStatus(apiVersion, kind, name)
-}
-
-func (s eventedStore) PDLease(base string) (routerstate.PDLease, bool, error) {
-	return s.Store.PDLease(base)
-}
-func (s eventedStore) SavePDLease(base string, lease routerstate.PDLease, reason string) (routerstate.Value, error) {
-	return s.Store.SavePDLease(base, lease, reason)
-}
-
-func (s eventedStore) Get(name string) routerstate.Value {
-	return s.Store.Get(name)
-}
-
-func (s eventedStore) Set(name, value, reason string) routerstate.Value {
-	return s.Store.Set(name, value, reason)
-}
-
-func (s eventedStore) Unset(name, reason string) routerstate.Value {
-	return s.Store.Unset(name, reason)
-}
-
-func (s eventedStore) Forget(name, reason string) routerstate.Value {
-	return s.Store.Forget(name, reason)
-}
-
-func (s eventedStore) Delete(name string) {
-	s.Store.Delete(name)
-}
-
-func (s eventedStore) Age(name string) time.Duration {
-	return s.Store.Age(name)
-}
-
-func (s eventedStore) Now() time.Time {
-	return s.Store.Now()
-}
-
-func (s eventedStore) Save(path string) error {
-	return s.Store.Save(path)
-}
-
-func (s eventedStore) Variables() map[string]routerstate.Value {
-	return s.Store.Variables()
-}
-
-func (s eventedStore) ListObjectStatuses() ([]routerstate.ObjectStatus, error) {
-	return s.Store.ListObjectStatuses()
-}
-
-func (s eventedStore) ListDynamicConfigParts() ([]routerstate.DynamicConfigPartRecord, error) {
-	return s.Store.ListDynamicConfigParts()
-}
-
-func (s eventedStore) DeleteObject(apiVersion, kind, name string) error {
-	return s.Store.DeleteObject(apiVersion, kind, name)
-}
-
-func (s eventedStore) PruneEventsOlderThan(cutoff time.Time) (int64, error) {
-	return s.Store.PruneEventsOlderThan(cutoff)
 }
 
 func newerStatus(current, next map[string]any) bool {
@@ -1382,7 +1233,7 @@ func (r *Runner) Start(ctx context.Context) error {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	store := (eventedStore{Store: r.Store, Bus: r.Bus}).withDeclaredRouter(r.currentRouter())
+	store := (eventedStore{SQLiteStore: r.Store, Bus: r.Bus}).withDeclaredRouter(r.currentRouter())
 	if arpSpecs, err := r.mobilityARPObserverDaemonSpecsWithError(); err != nil {
 		logger.Warn("read ARP observer configuration", "error", err)
 	} else {
@@ -1660,7 +1511,7 @@ func (r *Runner) ReconcileOnce(ctx context.Context) error {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	store := (eventedStore{Store: r.Store, Bus: r.Bus}).withDeclaredRouter(r.currentRouter())
+	store := (eventedStore{SQLiteStore: r.Store, Bus: r.Bus}).withDeclaredRouter(r.currentRouter())
 	decision, closeLease, err := r.oneShotHADecision(ctx, store)
 	if err != nil {
 		return err
@@ -1682,7 +1533,7 @@ func (r *Runner) ReconcileScheduled(ctx context.Context) error {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	store := (eventedStore{Store: r.Store, Bus: r.Bus}).withDeclaredRouter(r.currentRouter())
+	store := (eventedStore{SQLiteStore: r.Store, Bus: r.Bus}).withDeclaredRouter(r.currentRouter())
 	decision, closeLease, err := r.oneShotHADecision(ctx, store)
 	if err != nil {
 		return err
@@ -1822,21 +1673,16 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	if strings.TrimSpace(opts.BGPStatePath) != "" {
 		bgpDaemon.StatePath = strings.TrimSpace(opts.BGPStatePath)
 	}
-	// EventSubscriptionController needs the SQLite-backed federation/dynamic/
-	// plugin methods in addition to status writes. The raw r.Store is the
-	// *state.SQLiteStore; status writes are routed through the evented store so
-	// they keep status-change publication parity with peers.
-
 	eventSubscription := eventsubscriptioncontroller.Controller{
 		Router:     r.currentRouter(),
 		Bus:        r.Bus,
-		Store:      eventSubscriptionStore{evented: store, data: r.Store},
+		Store:      store,
 		DryRun:     opts.DryRunEventSubscription,
 		RuntimeDir: defaults.RuntimeDir,
 		StateDir:   defaults.StateDir,
 	}
 
-	mobilityData := mobilityStore{evented: store, data: r.Store}
+	mobilityData := mobilityStore{eventedStore: store}
 	peerGroupSync := opts.PeerGroupSyncClient
 	if peerGroupSync == nil {
 		peerGroupSync = mobilitycontroller.NewPeerGroupSyncClient(r.Store)
