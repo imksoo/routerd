@@ -1,0 +1,588 @@
+{
+  "Plugin": {
+    "purpose": [
+      "Registers an executable implementing the routerd plugin protocol. Invoke it explicitly or through a configured consumer such as EventSubscription.",
+      "routerdのプラグインプロトコルで実行する外部プログラムを登録します。明示的な実行、またはEventSubscriptionなどの利用側から呼び出します。",
+      "註冊實作routerd外掛協定的執行檔，由明確操作或EventSubscription等使用端呼叫。",
+      "注册实现routerd插件协议的可执行文件，由显式操作或EventSubscription等使用方调用。"
+    ],
+    "rules": [
+      [
+        "The executable must be an absolute path. At execution it must exist, be a regular file, and have at least one executable permission bit.",
+        "executableは絶対パスが必須です。実行時には存在する通常ファイルであり、実行権限のビットが少なくとも1つあることを確認します。",
+        "executable必須是絕對路徑。執行時須為存在的一般檔案，且至少有一個執行權限位元。",
+        "executable必须是绝对路径。执行时须为存在的普通文件，且至少有一个执行权限位。"
+      ],
+      [
+        "Declaring triggers does not start an interval/event scheduler in the current runtime. The values are validated and displayed by plugin list; a real caller must invoke the plugin.",
+        "現行実装ではtriggersの宣言だけで周期・イベント実行は開始しません。値の検証とplugin listでの表示はありますが、プラグインを呼び出す利用側が必要です。",
+        "目前實作不會僅因宣告triggers而啟動週期或事件排程；它會驗證並在plugin list顯示，仍須由使用端呼叫。",
+        "当前实现不会仅因声明triggers而启动周期或事件调度；它会验证并在plugin list显示，仍须由使用方调用。"
+      ],
+      [
+        "Context references use the full apiVersion/kind/name identity. Missing targets yield no context entry at execution; they are not a configuration-validation error. Secrets are redacted.",
+        "contextの参照はapiVersion・kind・nameの3項目で指定します。参照先が存在しなくても設定検証ではエラーにせず、実行時の渡し先一覧から省きます。秘密情報は秘匿化されます。",
+        "context使用apiVersion、kind、name三項識別資源。目標不存在不會造成設定驗證錯誤，而是在執行時省略該項；秘密資訊會遮蔽。",
+        "context使用apiVersion、kind、name三项标识资源。目标不存在不会造成配置验证错误，而是在执行时省略该项；秘密信息会脱敏。"
+      ]
+    ],
+    "fields": {
+      "executable": [
+        "Absolute executable path; required, with no default.",
+        "外部プログラムの絶対パス。必須で既定値はありません。",
+        "外部程式的絕對路徑；必填，無預設值。",
+        "外部程序的绝对路径；必填，无默认值。"
+      ],
+      "timeout": [
+        "Maximum duration of one invocation. Default 10s; an explicit value must be a positive Go duration, such as 30s.",
+        "1回の実行時間の上限。省略時10s。指定する場合は30sなど、正のGo duration形式です。",
+        "單次執行時間上限。預設10s；明確指定時須為正的Go duration，例如30s。",
+        "单次执行时间上限。默认10s；显式指定时须为正的Go duration，例如30s。"
+      ],
+      "env": [
+        "Additional environment variables, keyed by variable name. Default empty; the runner supplies PATH from its own environment, or its built-in path if absent, and overlays these entries. Other parent variables are not inherited. Empty keys and keys containing = are ignored.",
+        "環境変数名をキーにした追加変数。省略時は空です。runner自身のPATH、なければ組込PATHを用意してから上書きします。それ以外の親環境変数は継承しません。空のキーと=を含むキーは無視します。",
+        "以變數名稱為鍵的額外環境變數，預設空。runner先設定自身PATH，缺少時使用內建路徑，再套用這些值；不繼承其他父程序變數。忽略空鍵及含=的鍵。",
+        "以变量名为键的额外环境变量，默认空。runner先设置自身PATH，缺少时使用内置路径，再应用这些值；不继承其他父进程变量。忽略空键及含=的键。"
+      ],
+      "capabilities": [
+        "Declared capabilities; default empty. Allowed values are observe.cloud, observe.providerPrivateIPs, propose.dynamicConfig, propose.providerAction and execute.providerAction. Inventory execution requires observe.providerPrivateIPs; provider action execution requires execute.providerAction. This list does not itself schedule execution.",
+        "能力の宣言。省略時は空です。observe.cloud、observe.providerPrivateIPs、propose.dynamicConfig、propose.providerAction、execute.providerActionを受理します。インベントリ取得にはobserve.providerPrivateIPs、事業者操作の実行にはexecute.providerActionが必要です。この一覧自体は実行を開始しません。",
+        "能力宣告，預設空。接受observe.cloud、observe.providerPrivateIPs、propose.dynamicConfig、propose.providerAction、execute.providerAction。清查執行須有observe.providerPrivateIPs；供應商操作執行須有execute.providerAction；此清單本身不會啟動執行。",
+        "能力声明，默认空。接受observe.cloud、observe.providerPrivateIPs、propose.dynamicConfig、propose.providerAction、execute.providerAction。清单获取须有observe.providerPrivateIPs；供应商操作执行须有execute.providerAction；此列表本身不会启动执行。"
+      ],
+      "context": [
+        "Allowlist controlling which configuration resources are passed on stdin. Default empty, so no configuration is passed.",
+        "標準入力に渡す設定リソースの許可一覧。省略時は空で、設定を渡しません。",
+        "控制透過標準輸入傳入哪些設定資源的允許清單；預設空，不傳入設定。",
+        "控制通过标准输入传入哪些配置资源的允许列表；默认空，不传入配置。"
+      ],
+      "context.resources": [
+        "List of allowed resource identities. Default empty; no wildcard expansion.",
+        "許可するリソース識別子の一覧。省略時は空です。ワイルドカード展開は行いません。",
+        "允許的資源識別清單，預設空；不展開萬用字元。",
+        "允许的资源标识列表，默认空；不展开通配符。"
+      ],
+      "context.resources[].apiVersion": [
+        "API group and version of the referenced configuration resource; required in every entry.",
+        "参照する設定リソースのAPIグループとバージョン。各要素で必須です。",
+        "參照設定資源的API群組與版本；每項必填。",
+        "引用配置资源的API组与版本；每项必填。"
+      ],
+      "context.resources[].kind": [
+        "Kind of the referenced configuration resource; required in every entry.",
+        "参照する設定リソースの種類。各要素で必須です。",
+        "參照設定資源的種類；每項必填。",
+        "引用配置资源的类型；每项必填。"
+      ],
+      "context.resources[].name": [
+        "metadata.name of the referenced configuration resource; required in every entry.",
+        "参照する設定リソースのmetadata.name。各要素で必須です。",
+        "參照設定資源的metadata.name；每項必填。",
+        "引用配置资源的metadata.name；每项必填。"
+      ],
+      "triggers": [
+        "Declared trigger list, default empty. The current runtime only validates/displays this list; see the resource rules.",
+        "トリガー宣言の一覧。省略時は空です。現行runtimeでは検証・表示だけで、動作条件は上記の注意事項を参照してください。",
+        "觸發宣告清單，預設空；目前runtime僅驗證與顯示，請參照上方限制。",
+        "触发声明列表，默认空；当前runtime仅验证与显示，请参照上方限制。"
+      ],
+      "triggers[].type": [
+        "Required trigger category: interval or event. There is no default.",
+        "トリガーの区分。intervalかeventの指定が必須で、既定値はありません。",
+        "觸發類型；必須指定interval或event，無預設值。",
+        "触发类型；必须指定interval或event，无默认值。"
+      ],
+      "triggers[].every": [
+        "Required for interval; positive Go duration. For event, this field has no scheduling effect. No default.",
+        "intervalでは必須の正のGo duration。eventではこの項目による周期実行はありません。既定値はありません。",
+        "interval時必填，須為正的Go duration；event時此欄位不產生週期排程，無預設值。",
+        "interval时必填，须为正的Go duration；event时此字段不产生周期调度，无默认值。"
+      ],
+      "triggers[].topic": [
+        "Event-topic declaration; optional and empty by default. The validator does not require it even for event. It is not a resource name.",
+        "イベントトピックの宣言。任意で省略時は空です。eventでも検証上は必須になりません。リソース名ではありません。",
+        "事件主題宣告；選填，預設空，event時驗證器也不強制要求。這不是資源名稱。",
+        "事件主题声明；选填，默认空，event时验证器也不强制要求。这不是资源名称。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_plugin.go",
+      "pkg/plugin/runner.go",
+      "pkg/plugin/context.go",
+      "pkg/providerinventory/executor.go",
+      "pkg/provideraction/executor.go"
+    ]
+  },
+  "DynamicConfigSource": {
+    "purpose": [
+      "Declares a plugin-backed dynamic configuration source. The current implementation decodes and validates this kind, but contains no runtime consumer of DynamicConfigSourceSpec; declaring it does not invoke the plugin.",
+      "プラグインを使う動的設定取得元の宣言です。現行実装には型の読込みと検証はありますが、DynamicConfigSourceSpecを消費するruntime処理はなく、宣言だけではプラグインを実行しません。",
+      "宣告以外掛取得的動態設定來源。目前有型別解碼與驗證，但沒有讀取DynamicConfigSourceSpec的runtime處理，宣告本身不會執行外掛。",
+      "声明通过插件获取的动态配置来源。当前有类型解码与验证，但没有读取DynamicConfigSourceSpec的runtime处理，声明本身不会执行插件。"
+    ],
+    "rules": [
+      [
+        "pluginRef is a name declaration, not a validated existence check. TTL is required here, but the actual plugin-result merge uses PluginResult.status.ttl independently. Do not rely on this resource to override a result TTL.",
+        "pluginRefは名前の宣言で、検証時に参照先の存在確認は行いません。ここでttlは必須ですが、実際のプラグイン結果の統合は別途PluginResult.status.ttlを使います。このリソースで結果のTTLを上書きできるとは扱いません。",
+        "pluginRef只宣告名稱，驗證時不檢查目標是否存在。此處ttl必填，但實際外掛結果合併另用PluginResult.status.ttl，不能依此資源覆寫結果TTL。",
+        "pluginRef仅声明名称，验证时不检查目标是否存在。此处ttl必填，但实际插件结果合并另用PluginResult.status.ttl，不能依此资源覆盖结果TTL。"
+      ]
+    ],
+    "fields": {
+      "pluginRef": [
+        "Intended Plugin metadata.name; required nonblank string, no default. Do not prefix Plugin/; the declaration has no runtime resolver.",
+        "取得元として意図するPluginのmetadata.name。空白でない指定が必須で既定値はありません。Plugin/は付けません。現行ではこの宣言を実行時に解決する処理はありません。",
+        "預定來源Plugin的metadata.name；必填且不可為空白，無預設值。不加Plugin/；目前沒有此宣告的執行期解析器。",
+        "预定来源Plugin的metadata.name；必填且不可为空白，无默认值。不加Plugin/；当前没有此声明的运行时解析器。"
+      ],
+      "ttl": [
+        "Required positive Go duration, with no default. This declaration is validated but is not applied to plugin execution or result expiry by a runtime consumer.",
+        "正のGo durationが必須で既定値はありません。この宣言は検証されますが、runtime側からプラグインの実行や結果の期限に適用する処理はありません。",
+        "必須為正的Go duration，無預設值。目前僅驗證此宣告，沒有runtime將它套用至外掛執行或結果期限。",
+        "必须为正的Go duration，无默认值。当前仅验证此声明，没有runtime将它应用于插件执行或结果期限。"
+      ],
+      "mergePolicy": [
+        "Optional policy object; no runtime consumer for this source declaration.",
+        "任意の統合方針オブジェクト。現行ではこの取得元宣言を消費するruntime処理はありません。",
+        "選填合併策略物件；目前沒有讀取此來源宣告的runtime處理。",
+        "选填合并策略对象；当前没有读取此来源声明的runtime处理。"
+      ],
+      "mergePolicy.conflict": [
+        "Only empty or reject passes validation. Empty is accepted; neither value enables replacement of existing resources through this declaration.",
+        "検証を通るのは空値かrejectです。省略は受理しますが、いずれもこの宣言を介して既存リソースを置換する実行機能を有効にしません。",
+        "驗證只接受空值或reject；兩者都不會透過此宣告啟用既有資源替換。",
+        "验证仅接受空值或reject；两者都不会通过此声明启用现有资源替换。"
+      ],
+      "triggers": [
+        "Declared trigger list, default empty. The current runtime only validates/displays this list; see the resource rules.",
+        "トリガー宣言の一覧。省略時は空です。現行runtimeでは検証・表示だけで、動作条件は上記の注意事項を参照してください。",
+        "觸發宣告清單，預設空；目前runtime僅驗證與顯示，請參照上方限制。",
+        "触发声明列表，默认空；当前runtime仅验证与显示，请参照上方限制。"
+      ],
+      "triggers[].type": [
+        "Required trigger category: interval or event. There is no default.",
+        "トリガーの区分。intervalかeventの指定が必須で、既定値はありません。",
+        "觸發類型；必須指定interval或event，無預設值。",
+        "触发类型；必须指定interval或event，无默认值。"
+      ],
+      "triggers[].every": [
+        "Required for interval; positive Go duration. For event, this field has no scheduling effect. No default.",
+        "intervalでは必須の正のGo duration。eventではこの項目による周期実行はありません。既定値はありません。",
+        "interval時必填，須為正的Go duration；event時此欄位不產生週期排程，無預設值。",
+        "interval时必填，须为正的Go duration；event时此字段不产生周期调度，无默认值。"
+      ],
+      "triggers[].topic": [
+        "Event-topic declaration; optional and empty by default. The validator does not require it even for event. It is not a resource name.",
+        "イベントトピックの宣言。任意で省略時は空です。eventでも検証上は必須になりません。リソース名ではありません。",
+        "事件主題宣告；選填，預設空，event時驗證器也不強制要求。這不是資源名稱。",
+        "事件主题声明；选填，默认空，event时验证器也不强制要求。这不是资源名称。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/api/resource_kinds.go",
+      "pkg/config/validate_plugin.go",
+      "pkg/plugin/dynamic_config.go"
+    ]
+  },
+  "DynamicOverridePolicy": {
+    "purpose": [
+      "Authorizes selected dynamic sources to mask exact startup resources while the dynamic part is active. It does not rewrite the saved startup configuration.",
+      "動的設定の有効期間中、指定した取得元が起動設定の特定リソースをmaskできるよう許可します。保存済みの起動設定自体は書き換えません。",
+      "授權指定動態來源在動態部分有效期間遮蔽特定啟動設定資源，不改寫已儲存的啟動設定。",
+      "授权指定动态来源在动态部分有效期间屏蔽特定启动配置资源，不改写已保存的启动配置。"
+    ],
+    "rules": [
+      [
+        "Policies match the exact source plus operation plus apiVersion/kind/name target. With no matching allow entry, masking is denied. Multiple allowed active masks on one target are combined until the latest expiry.",
+        "取得元・操作・対象のapiVersion/kind/nameを完全一致で照合します。該当するallowがなければmaskは拒否します。同じ対象の許可済みmaskが複数あれば、最も遅い期限まで統合します。",
+        "以來源、操作及目標apiVersion/kind/name完全相符判定。沒有匹配allow時拒絕遮蔽；同一目標的多個有效遮蔽合併至最晚到期時間。",
+        "以来源、操作及目标apiVersion/kind/name完全匹配判定。没有匹配allow时拒绝屏蔽；同一目标的多个有效屏蔽合并至最晚到期时间。"
+      ]
+    ],
+    "fields": {
+      "allow": [
+        "Allow-rule list. Empty has no effect and grants no permission.",
+        "許可ルール一覧。空の場合は権限を付与せず、効果はありません。",
+        "允許規則清單；空清單無效果且不授權。",
+        "允许规则列表；空列表无效果且不授权。"
+      ],
+      "allow[].source": [
+        "Required exact DynamicConfigPart.spec.source identity, not necessarily a Plugin or DynamicConfigSource resource name. No wildcard/default.",
+        "必須の取得元識別子。DynamicConfigPart.spec.sourceと完全一致で照合します。PluginやDynamicConfigSourceのリソース名とは限りません。ワイルドカード・既定値はありません。",
+        "必填來源識別，須與DynamicConfigPart.spec.source完全一致；不一定是Plugin或DynamicConfigSource名稱，無萬用字元與預設值。",
+        "必填来源标识，须与DynamicConfigPart.spec.source完全一致；不一定是Plugin或DynamicConfigSource名称，无通配符与默认值。"
+      ],
+      "allow[].operations": [
+        "Allowed operations; only mask is accepted. Empty grants no operation.",
+        "許可する操作。受理する値はmaskだけで、空の場合は操作を許可しません。",
+        "允許操作；只接受mask，空清單不允許任何操作。",
+        "允许操作；仅接受mask，空列表不允许任何操作。"
+      ],
+      "allow[].targets": [
+        "Exact startup-resource identities eligible for masking. Empty grants no targets.",
+        "maskの対象にできる起動設定リソースの完全識別子一覧。空なら対象を許可しません。",
+        "可遮蔽的啟動設定資源完整識別清單；空清單不允許任何目標。",
+        "可屏蔽的启动配置资源完整标识列表；空列表不允许任何目标。"
+      ],
+      "allow[].targets[].apiVersion": [
+        "Required API group/version of the exact target; no default.",
+        "対象のAPIグループとバージョン。各要素で必須、既定値はありません。",
+        "目標API群組與版本；每項必填，無預設值。",
+        "目标API组与版本；每项必填，无默认值。"
+      ],
+      "allow[].targets[].kind": [
+        "Required target kind; no wildcard expansion.",
+        "必須の対象リソース種類。ワイルドカード展開はありません。",
+        "目標資源種類，必填；不展開萬用字元。",
+        "目标资源类型，必填；不展开通配符。"
+      ],
+      "allow[].targets[].name": [
+        "Required exact target metadata.name; no wildcard expansion.",
+        "対象のmetadata.nameとの完全一致で使う必須値。ワイルドカード展開はありません。",
+        "必填，與目標metadata.name完全相符；不展開萬用字元。",
+        "必填，与目标metadata.name完全匹配；不展开通配符。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_config.go",
+      "pkg/dynamicconfig/merge.go"
+    ]
+  },
+  "LogRetention": {
+    "purpose": [
+      "Prunes operational-log SQLite records and optionally archives them first. It does not control arbitrary system log files.",
+      "運用ログのSQLiteレコードを削除し、必要なら削除前に保管先へ転送します。任意のOSログファイルを整理する設定ではありません。",
+      "清除操作記錄的SQLite資料列，並可在刪除前轉送保存；不管理任意OS記錄檔。",
+      "清理运维日志的SQLite记录，并可在删除前转发保存；不管理任意OS日志文件。"
+    ],
+    "rules": [
+      [
+        "Runs on the first reconciliation, then when at least 23 hours have elapsed since lastRunAt. Both omitted schedule and daily use this elapsed-time rule, not a midnight cron schedule. Dry-run does not open or prune external log databases.",
+        "初回のreconcileで実行し、その後はlastRunAtから23時間以上経過した時点で実行します。schedule省略時もdailyも、この経過時間で判定し、午前0時のcron実行ではありません。dry-runでは外部ログDBを開いたり削除したりしません。",
+        "首次協調執行，之後距lastRunAt至少23小時才再次執行。省略schedule與daily都依經過時間判斷，不是午夜cron；dry-run不開啟或清除外部記錄DB。",
+        "首次协调执行，之后距lastRunAt至少23小时才再次执行。省略schedule与daily都按经过时间判断，不是午夜cron；dry-run不开启或清理外部日志DB。"
+      ],
+      [
+        "The event journal independently enforces a 24-hour age bound, plus its own row/payload bounds. A longer retention here cannot extend the event journal beyond that bound.",
+        "イベントジャーナルには独立した24時間の保持上限と行数・容量上限があります。ここで長期間を指定しても、そのイベント保持上限は延長しません。",
+        "事件日誌另有24小時及資料列數、容量上限；此處設定較長期間不會延長事件日誌上限。",
+        "事件日志另有24小时及记录数、容量上限；此处设置更长时间不会延长事件日志上限。"
+      ],
+      [
+        "When sinks are set, each row is sent before deletion. A sink error prevents successful deletion of that row. LogSink type otlp currently sends nothing, so it must not be treated as a working archive destination.",
+        "sinksを指定した場合は各行を削除する前に転送します。保管先への送信が失敗した行は正常削除として扱いません。LogSinkのotlpは現行では送信しないため、機能する保管先として使えません。",
+        "指定sinks時，每列刪除前先轉送；保存端錯誤會阻止該列成功刪除。目前LogSink的otlp不會傳送，不能當作有效保存目的地。",
+        "指定sinks时，每条记录删除前先转发；保存端错误会阻止该条记录成功删除。当前LogSink的otlp不会发送，不能作为有效保存目的地。"
+      ]
+    ],
+    "fields": {
+      "retention": [
+        "Required retention interval, e.g. 7d or 24h. d means an integer number of 24-hour days; other values use Go duration syntax. No default. The validator parses the duration but does not require it to be positive.",
+        "保持期間。7dや24hなどの指定が必須で既定値はありません。dは整数日数×24時間、それ以外はGo duration形式です。検証は構文の解析までで、正の値であることは要求しません。",
+        "保留期間，必填且無預設值，例如7d或24h。d為整數天數乘24小時，其他使用Go duration。驗證器只解析，不要求正值。",
+        "保留期限，必填且无默认值，例如7d或24h。d为整数天数乘24小时，其他使用Go duration。验证器仅解析，不要求正值。"
+      ],
+      "signals": [
+        "Log categories to prune. Default all seven: events, accessLogs, pluginRuns, dnsQueries, trafficFlows, firewallEvents, dhcpFingerprints. Storage files are resolved from the relevant logging resources or platform defaults.",
+        "削除対象のログ区分。省略時はevents、accessLogs、pluginRuns、dnsQueries、trafficFlows、firewallEvents、dhcpFingerprintsの7種類すべてです。格納DBは関連ログリソースのパスまたはOS既定値から決めます。",
+        "要清除的記錄類別；預設包含events、accessLogs、pluginRuns、dnsQueries、trafficFlows、firewallEvents、dhcpFingerprints全部七種。DB路徑來自相關記錄資源或OS預設值。",
+        "要清理的日志类别；默认包含events、accessLogs、pluginRuns、dnsQueries、trafficFlows、firewallEvents、dhcpFingerprints全部七种。DB路径来自相关日志资源或OS默认值。"
+      ],
+      "sinks": [
+        "Archive destinations before deletion. Default empty: no archive. Entries accept LogSink/name or plain name and select enabled system.routerd.net/v1alpha1 LogSink resources. Missing names are silently unselected; check names carefully.",
+        "削除前の保管先。省略時は保管しません。LogSink/名前または名前だけを受理し、有効なsystem.routerd.net/v1alpha1のLogSinkを選びます。存在しない名前は選択されずエラーにもならないため、指定を確認してください。",
+        "刪除前保存目的地；預設空，不保存。接受LogSink/名稱或單純名稱，選取啟用的system.routerd.net/v1alpha1 LogSink。不存在的名稱不會被選取，也不報錯，須確認名稱。",
+        "删除前保存目的地；默认空，不保存。接受LogSink/名称或纯名称，选择启用的system.routerd.net/v1alpha1 LogSink。不存在的名称不会被选中，也不报错，须确认名称。"
+      ],
+      "vacuum": [
+        "Whether to VACUUM the target SQLite files after pruning. Default false. This changes database storage, not retention selection.",
+        "削除後に対象SQLiteファイルをVACUUMする指定。省略時falseです。保持対象の選択ではなく、DBファイルの領域整理を行います。",
+        "刪除後是否對目標SQLite執行VACUUM；預設false，用於整理DB空間而非選擇保留對象。",
+        "删除后是否对目标SQLite执行VACUUM；默认false，用于整理DB空间而非选择保留对象。"
+      ],
+      "schedule": [
+        "Omit or set daily. Both mean the first run and subsequent runs after at least 23 hours. No time-of-day or cron expression is supported.",
+        "省略またはdaily。いずれも初回実行と、その後23時間以上経過してからの実行です。時刻指定やcron式は受理しません。",
+        "省略或daily；皆為首次及之後至少23小時才執行。不支援時刻或cron表示式。",
+        "省略或daily；均为首次及之后至少23小时才执行。不支持时刻或cron表达式。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_system.go",
+      "pkg/config/diagnostics.go",
+      "pkg/controller/chain/logretention.go",
+      "pkg/logstore/retention.go",
+      "pkg/eventlog/eventlog.go"
+    ]
+  },
+  "Sysctl": {
+    "purpose": [
+      "Reconciles one kernel sysctl setting and can write a persistent sysctl.d file. This resource has no reference to another routerd resource.",
+      "カーネルのsysctlを1項目反映し、必要ならsysctl.dへ永続設定を書きます。他のrouterdリソースへの参照項目はありません。",
+      "協調一項核心sysctl，並可寫入持久sysctl.d檔案；沒有指向其他routerd資源的參照欄位。",
+      "协调一项内核sysctl，并可写入持久sysctl.d文件；没有指向其他routerd资源的引用字段。"
+    ],
+    "rules": [
+      [
+        "When runtime=false and persistent=false, the controller records Skipped/RuntimeDisabled and does not apply the value. Both runtime and persistent can be true.",
+        "runtime=falseかつpersistent=falseならSkipped/RuntimeDisabledとなり、値を反映しません。runtimeとpersistentは両方trueにできます。",
+        "runtime與persistent皆false時記為Skipped/RuntimeDisabled，不套用值；兩者可以同時為true。",
+        "runtime与persistent均false时记为Skipped/RuntimeDisabled，不应用值；两者可以同时为true。"
+      ],
+      [
+        "Duplicate Sysctl keys in one Router are rejected. Linux NAT44SessionSync in conntrackd mode additionally requires an explicit non-optional runtime Sysctl net.netfilter.nf_conntrack_tcp_be_liberal with value and effective expectedValue equal to 1.",
+        "同じRouterでのSysctlキーの重複は拒否します。LinuxのNAT44SessionSyncでconntrackdを使う場合、net.netfilter.nf_conntrack_tcp_be_liberalについてruntime有効・optional=false・valueと実効expectedValueが1の明示的Sysctlが別途必要です。",
+        "同一Router不可重複Sysctl鍵。Linux的NAT44SessionSync使用conntrackd時，另須明確宣告net.netfilter.nf_conntrack_tcp_be_liberal，啟用runtime、optional=false，且value與有效expectedValue皆為1。",
+        "同一Router不可重复Sysctl键。Linux的NAT44SessionSync使用conntrackd时，另须显式声明net.netfilter.nf_conntrack_tcp_be_liberal，启用runtime、optional=false，且value与有效expectedValue均为1。"
+      ]
+    ],
+    "fields": {
+      "key": [
+        "Required sysctl key, e.g. net.ipv4.ip_forward. No default; spaces, tabs, newlines and / are forbidden. This is a kernel key, not a resource reference.",
+        "net.ipv4.ip_forwardなどのカーネルキー。必須で既定値はなく、空白・タブ・改行・/は使えません。リソース参照ではありません。",
+        "必填核心鍵，例如net.ipv4.ip_forward，無預設值；禁止空格、tab、換行及/，不是資源參照。",
+        "必填内核键，例如net.ipv4.ip_forward，无默认值；禁止空格、tab、换行及/，不是资源引用。"
+      ],
+      "value": [
+        "Required nonempty string passed to sysctl -w and persisted when requested. Quote numeric-looking YAML values. No default.",
+        "sysctl -wへ渡す必須の空でない文字列。永続化時もこの値を保存します。数値に見えるYAML値も引用符で囲みます。既定値はありません。",
+        "傳給sysctl -w的必填非空字串，持久化時也使用此值。YAML中看似數字的值須加引號，無預設值。",
+        "传给sysctl -w的必填非空字符串，持久化时也使用此值。YAML中看似数字的值须加引号，无默认值。"
+      ],
+      "expectedValue": [
+        "Runtime value used for drift comparison; default value. Allows the observed representation to differ from the written value. A supplied whitespace-only value is rejected.",
+        "実行中の値との比較に使う期待値。省略時はvalueです。書込値と観測される表現が異なる場合に使います。空白だけの指定は拒否します。",
+        "用於執行期偏差比較的預期值，預設為value，可處理寫入值與觀測表示不同的情況。拒絕僅空白的值。",
+        "用于运行时偏差比较的预期值，默认为value，可处理写入值与观测表示不同的情况。拒绝仅空白的值。"
+      ],
+      "compare": [
+        "Default exact: compare normalized whitespace-separated values as strings. atLeast compares corresponding signed integer components; component counts must match and every current component must be at least the expected value.",
+        "省略時exactで、空白を正規化した文字列として比較します。atLeastは対応する整数要素を比較し、要素数が同じで、各観測値が期待値以上であることを要求します。",
+        "預設exact，將空白正規化後以字串比較。atLeast逐一比較帶正負號整數，要求元素數相同且每個目前值不小於預期值。",
+        "默认exact，将空白规范化后按字符串比较。atLeast逐一比较有符号整数，要求元素数相同且每个当前值不小于预期值。"
+      ],
+      "runtime": [
+        "Whether to apply the live kernel setting. Default true; false can still write persistent configuration when persistent=true.",
+        "稼働中のカーネルへ反映する指定。省略時true。falseでもpersistent=trueなら永続設定を書けます。",
+        "是否套用至目前核心，預設true；false時仍可在persistent=true下寫入持久設定。",
+        "是否应用到当前内核，默认true；false时仍可在persistent=true下写入持久配置。"
+      ],
+      "persistent": [
+        "Write a routerd sysctl.d file. Default false. The file contains key=value; it is independent of the runtime switch.",
+        "routerd用sysctl.dファイルへkey=valueを保存します。省略時false。runtimeとは独立した指定です。",
+        "將key=value寫入routerd的sysctl.d檔案，預設false，與runtime獨立。",
+        "将key=value写入routerd的sysctl.d文件，默认false，与runtime独立。"
+      ],
+      "optional": [
+        "Default false. When true, a failed runtime read records Skipped/ReadFailedOptional and skips the remaining apply for this entry. It does not suppress arbitrary write or persistence errors.",
+        "省略時false。trueなら実行時の読取り失敗をSkipped/ReadFailedOptionalとして扱い、その項目の以降の反映を省きます。任意の書込・永続化エラーを隠す指定ではありません。",
+        "預設false。true時讀取失敗記為Skipped/ReadFailedOptional並略過此項後續套用；不會忽略任意寫入或持久化錯誤。",
+        "默认false。true时读取失败记为Skipped/ReadFailedOptional并跳过此项后续应用；不会忽略任意写入或持久化错误。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_system.go",
+      "pkg/config/validate.go",
+      "pkg/controller/chain/sysctl.go",
+      "pkg/sysctlprofile/compare.go",
+      "pkg/sysctlprofile/persistent.go"
+    ]
+  },
+  "SysctlProfile": {
+    "purpose": [
+      "Applies a named set of router-oriented sysctls, with optional per-key overrides. It does not refer to a Sysctl resource by name.",
+      "ルーター向けのsysctlセットを名前で選び、必要ならキー単位で上書きします。Sysctlリソースの名前を参照する設定ではありません。",
+      "依名稱套用路由器用sysctl集合，並可逐鍵覆寫；不是依名稱參照Sysctl資源。",
+      "按名称应用路由器用sysctl集合，并可逐键覆盖；不是按名称引用Sysctl资源。"
+    ],
+    "rules": [
+      [
+        "Profile entries keep their comparison mode and optional flag when an override changes their value. New override keys are added with exact comparison and optional=false.",
+        "overridesで既存キーの値を変えても、そのキーの比較方式とoptional指定は維持します。新規キーはexact比較・optional=falseで追加します。",
+        "覆寫既有鍵只改變值，保留比較方式與optional。新增鍵採exact比較及optional=false。",
+        "覆盖现有键仅改变值，保留比较方式与optional。新增键采用exact比较及optional=false。"
+      ]
+    ],
+    "fields": {
+      "profile": [
+        "Required selector: router-linux or router-freebsd. No automatic OS-based choice. The FreeBSD set enables IPv4/IPv6 forwarding; the Linux set also declares queue, socket, TCP and optional conntrack tuning. See the linked implementation for the exact key/value list.",
+        "必須の選択値router-linuxまたはrouter-freebsd。OSからの自動選択はありません。FreeBSD用はIPv4/IPv6転送、Linux用は転送に加えてキュー・ソケット・TCP・optionalなconntrack調整を含みます。正確な全キーと値はリンク先の実装を参照してください。",
+        "必填router-linux或router-freebsd，不依OS自動選擇。FreeBSD集合啟用IPv4/IPv6轉送；Linux還包含佇列、socket、TCP及可選conntrack調整。完整鍵值請見實作連結。",
+        "必填router-linux或router-freebsd，不按OS自动选择。FreeBSD集合启用IPv4/IPv6转发；Linux还包含队列、socket、TCP及可选conntrack调优。完整键值请见实现链接。"
+      ],
+      "runtime": [
+        "Apply profile entries to the live kernel; default true.",
+        "セットの各項目を稼働中のカーネルへ反映します。省略時trueです。",
+        "將集合各項套用至目前核心；預設true。",
+        "将集合各项应用到当前内核；默认true。"
+      ],
+      "persistent": [
+        "Write per-entry persistent sysctl.d files; default false. Independent of runtime.",
+        "各項目の永続sysctl.dファイルを作ります。省略時false。runtimeとは独立です。",
+        "為各項寫入持久sysctl.d檔案；預設false，與runtime獨立。",
+        "为各项写入持久sysctl.d文件；默认false，与runtime独立。"
+      ],
+      "overrides": [
+        "Map from kernel sysctl key to nonblank string value; default empty. Existing keys are replaced and new keys are appended. Whitespace and / in keys, or blank values, are rejected. No resource references.",
+        "カーネルのsysctlキーから空白でない文字列値への対応表。省略時は空です。既存キーの値を置換し、新規キーは追加します。キーの空白や/、空白だけの値は拒否します。リソース参照ではありません。",
+        "核心sysctl鍵至非空白字串值的對照，預設空；替換既有鍵值並新增其他鍵。拒絕含空白或/的鍵及空白值，不是資源參照。",
+        "内核sysctl键到非空白字符串值的映射，默认空；替换现有键值并新增其他键。拒绝含空白或/的键及空白值，不是资源引用。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_system.go",
+      "pkg/controller/chain/sysctl.go",
+      "pkg/sysctlprofile/profile.go"
+    ]
+  },
+  "LogSink": {
+    "purpose": [
+      "Defines an operational event-log destination selected by its type. It is separate from ObservabilityPipeline log sinks.",
+      "typeで選ぶ運用イベントログの出力先です。ObservabilityPipeline内のログ出力先とは別の設定です。",
+      "依type選擇操作事件記錄的輸出目的地，與ObservabilityPipeline內的記錄輸出設定不同。",
+      "按type选择运维事件日志的输出目的地，与ObservabilityPipeline内的日志输出配置不同。"
+    ],
+    "rules": [
+      [
+        "type selects one implementation. Only that branch is used; other branch objects are not mutually rejected or merged. For otlp, exactly one of telemetryRef and endpoint is required by validation, but the current OTLPSink.Emit does not send events.",
+        "typeで実装を1つ選び、その種類のオブジェクトだけを使います。他の種類のオブジェクトは排他エラーにはせず、統合もしません。otlpは検証上telemetryRefとendpointのどちらか1つだけが必須ですが、現行OTLPSink.Emitはイベントを送信しません。",
+        "type選擇一種實作，只使用該分支；其他分支不會因互斥而報錯，也不會合併。otlp驗證要求telemetryRef與endpoint恰好一項，但目前OTLPSink.Emit不會傳送事件。",
+        "type选择一种实现，仅使用该分支；其他分支不会因互斥而报错，也不会合并。otlp验证要求telemetryRef与endpoint恰好一项，但当前OTLPSink.Emit不会发送事件。"
+      ],
+      [
+        "The journald branch writes through Go log.Printf; it relies on the process log destination and service manager to reach journald. It is not a direct journald API client.",
+        "journaldの実装はGoのlog.Printfへ出力します。journaldへの到達はプロセスのログ出力先とサービス管理側に依存し、journald APIへ直接送信する実装ではありません。",
+        "journald分支使用Go的log.Printf，是否進入journald取決於程序記錄目的地及服務管理器，不直接呼叫journald API。",
+        "journald分支使用Go的log.Printf，是否进入journald取决于进程日志目的地及服务管理器，不直接调用journald API。"
+      ]
+    ],
+    "fields": {
+      "type": [
+        "Required destination selector: syslog, otlp, webhook, file or journald. No default.",
+        "出力先の区分。syslog、otlp、webhook、file、journaldの指定が必須で既定値はありません。",
+        "必填目的地類型：syslog、otlp、webhook、file或journald，無預設值。",
+        "必填目的地类型：syslog、otlp、webhook、file或journald，无默认值。"
+      ],
+      "enabled": [
+        "Whether the logger selects this sink; default true. False skips it even when referenced by LogRetention.",
+        "ログ出力先として選択するかの指定。省略時true。falseならLogRetentionから参照していても選びません。",
+        "是否選用此輸出端，預設true。false時即使LogRetention參照也略過。",
+        "是否选用此输出端，默认true。false时即使LogRetention引用也跳过。"
+      ],
+      "minLevel": [
+        "Minimum event severity, default info. Accepts debug, info, warning or error; lower-severity events are dropped.",
+        "最低重要度。省略時info。debug、info、warning、errorを指定し、下位の重要度のイベントを除外します。",
+        "最低嚴重程度，預設info；接受debug、info、warning、error，略過較低程度事件。",
+        "最低严重程度，默认info；接受debug、info、warning、error，丢弃较低程度事件。"
+      ],
+      "syslog": [
+        "Settings used only with type=syslog. Empty settings use local syslog, local6 and tag routerd.",
+        "type=syslogで使う設定。省略時はローカルsyslog、facility=local6、tag=routerdです。",
+        "只在type=syslog使用，省略時採本機syslog、local6與標籤routerd。",
+        "仅在type=syslog使用，省略时采用本机syslog、local6与标签routerd。"
+      ],
+      "syslog.network": [
+        "Transport: unix, unixgram, tcp or udp. Empty delegates to Go syslog local-socket discovery.",
+        "転送方式。unix、unixgram、tcp、udpを指定します。省略時はGoのsyslog実装がローカルソケットを探索します。",
+        "傳輸方式為unix、unixgram、tcp或udp；空值由Go syslog探索本機socket。",
+        "传输方式为unix、unixgram、tcp或udp；空值由Go syslog查找本机socket。"
+      ],
+      "syslog.address": [
+        "Destination socket path or host:port, default empty. Set a suitable address for an explicit transport; validation does not enforce this pairing, and connection errors surface during emission.",
+        "ソケットパスまたはhost:port。省略時は空です。転送方式を明示した場合は対応する宛先も指定します。この組合せは設定検証では必須化されず、接続エラーは実際の出力時に生じます。",
+        "目的socket路徑或host:port，預設空。明確指定傳輸方式時應提供對應位址；驗證器不強制此組合，連線錯誤在輸出時出現。",
+        "目标socket路径或host:port，默认空。显式指定传输方式时应提供对应地址；验证器不强制此组合，连接错误在输出时出现。"
+      ],
+      "syslog.facility": [
+        "Syslog facility, default local6. Accepted values are listed in the YAML enum.",
+        "syslogのfacility。省略時local6。受理する値はYAML内の列挙を参照してください。",
+        "syslog facility，預設local6；可用值見YAML列舉。",
+        "syslog facility，默认local6；可用值见YAML枚举。"
+      ],
+      "syslog.tag": [
+        "Syslog tag; default routerd. Not a resource reference.",
+        "syslogのタグ。省略時routerd。リソース参照ではありません。",
+        "syslog標籤，預設routerd，不是資源參照。",
+        "syslog标签，默认routerd，不是资源引用。"
+      ],
+      "otlp": [
+        "OTLP declaration. Exactly one of telemetryRef and endpoint is required for type=otlp; actual transmission is not implemented in this sink.",
+        "OTLPの宣言。type=otlpではtelemetryRefとendpointのどちらか1つが必須です。この出力先の実送信処理は実装されていません。",
+        "OTLP宣告；type=otlp時telemetryRef與endpoint恰好一項必填，此輸出端尚無實際傳送處理。",
+        "OTLP声明；type=otlp时telemetryRef与endpoint恰好一项必填，此输出端尚无实际发送处理。"
+      ],
+      "otlp.telemetryRef": [
+        "Intended Telemetry reference; mutually exclusive with endpoint and default empty. The current implementation checks only that a value is present; it does not resolve a Telemetry target or send through it.",
+        "意図するTelemetryの参照。endpointと排他で省略時は空です。現行実装は値の有無だけを検証し、参照先Telemetryの解決や、それを使う送信は行いません。",
+        "預定Telemetry參照，與endpoint互斥，預設空。目前僅檢查是否有值，不解析Telemetry目標也不透過它傳送。",
+        "预定Telemetry引用，与endpoint互斥，默认空。当前仅检查是否有值，不解析Telemetry目标也不通过它发送。"
+      ],
+      "otlp.endpoint": [
+        "Intended endpoint URI, mutually exclusive with telemetryRef; no default. URI syntax is validated, but this LogSink does not create an exporter.",
+        "意図する送信先URI。telemetryRefと排他で既定値はありません。URI構文は検証しますが、このLogSinkではexporterを生成しません。",
+        "預定目的URI，與telemetryRef互斥，無預設值；驗證URI語法，但此LogSink不建立exporter。",
+        "预定目标URI，与telemetryRef互斥，无默认值；验证URI语法，但此LogSink不创建exporter。"
+      ],
+      "webhook": [
+        "JSON HTTP POST destination settings, used only for type=webhook.",
+        "type=webhookで使う、JSONをHTTP POSTする送信先の設定です。",
+        "type=webhook使用的JSON HTTP POST目的地設定。",
+        "type=webhook使用的JSON HTTP POST目标配置。"
+      ],
+      "webhook.url": [
+        "Required when type=webhook, no default. Use an absolute HTTP(S) URL; the validator only checks URI syntax. Only HTTP 2xx counts as successful delivery.",
+        "type=webhookでは必須で既定値はありません。HTTP(S)の絶対URLを指定してください。検証はURI構文までです。送信成功と扱うのはHTTP 2xxだけです。",
+        "type=webhook時必填且無預設值。請使用HTTP(S)絕對URL；驗證器只檢查URI語法，只有HTTP 2xx視為傳送成功。",
+        "type=webhook时必填且无默认值。请使用HTTP(S)绝对URL；验证器仅检查URI语法，只有HTTP 2xx视为发送成功。"
+      ],
+      "webhook.headers": [
+        "Additional request headers, default empty. Entries override headers with the same name, including the default Content-Type: application/json.",
+        "追加の要求ヘッダー。省略時は空です。既定のContent-Type: application/jsonを含め、同名ヘッダーを上書きします。",
+        "額外請求標頭，預設空；會覆寫同名標頭，包括預設Content-Type: application/json。",
+        "额外请求头，默认空；会覆盖同名头，包括默认Content-Type: application/json。"
+      ],
+      "webhook.timeout": [
+        "HTTP request timeout, default 5s. Uses Go duration syntax. The validator accepts zero and negative durations; HTTP client values at or below zero mean no timeout.",
+        "HTTP要求の制限時間。省略時5sでGo duration形式です。検証は0や負値も受理し、HTTP clientでは0以下が時間制限なしになります。",
+        "HTTP請求逾時，預設5s，使用Go duration。驗證器也接受零及負值；HTTP client中不大於零表示不設逾時。",
+        "HTTP请求超时，默认5s，使用Go duration。验证器也接受零及负值；HTTP client中不大于零表示不设超时。"
+      ],
+      "file": [
+        "File destination settings for type=file. Output is append-only JSON Lines.",
+        "type=fileの保存先設定。JSON Lines形式で追記します。",
+        "type=file的檔案設定，以JSON Lines附加寫入。",
+        "type=file的文件配置，以JSON Lines追加写入。"
+      ],
+      "file.name": [
+        "Logical filename, default routerd-events. The path is /var/lib/routerd/logs/<name>.jsonl; separators, NUL and line breaks are forbidden. It is not an arbitrary filesystem path.",
+        "論理ファイル名。省略時routerd-eventsで、保存先は/var/lib/routerd/logs/<name>.jsonlです。パス区切り、NUL、改行は使えません。任意のファイルパスを指定する項目ではありません。",
+        "邏輯檔名，預設routerd-events，路徑為/var/lib/routerd/logs/<name>.jsonl。禁止路徑分隔符、NUL及換行，不是任意檔案路徑。",
+        "逻辑文件名，默认routerd-events，路径为/var/lib/routerd/logs/<name>.jsonl。禁止路径分隔符、NUL及换行，不是任意文件路径。"
+      ],
+      "journald": [
+        "Settings for type=journald; output goes through the process logger.",
+        "type=journaldの設定。プロセスのloggerを通して出力します。",
+        "type=journald的設定，透過程序logger輸出。",
+        "type=journald的配置，通过进程logger输出。"
+      ],
+      "journald.identifier": [
+        "Prefix added to the process log message, default routerd. It is not a direct assignment of the journald SYSLOG_IDENTIFIER field.",
+        "プロセスのログメッセージに付ける接頭辞。省略時routerd。journaldのSYSLOG_IDENTIFIERを直接設定する実装ではありません。",
+        "加在程序記錄訊息前的前綴，預設routerd，不直接設定journald的SYSLOG_IDENTIFIER。",
+        "加在进程日志消息前的前缀，默认routerd，不直接设置journald的SYSLOG_IDENTIFIER。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/diagnostics.go",
+      "pkg/eventlog/eventlog.go"
+    ]
+  }
+}

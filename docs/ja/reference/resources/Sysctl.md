@@ -1,0 +1,45 @@
+# Sysctl
+
+[リソース別の設定](../resources.md#sysctl) · [Kind/name · when · dependsOn](../common-fields.md)
+
+`apiVersion: system.routerd.net/v1alpha1` · `metadata.name`
+
+カーネルのsysctlを1項目反映し、必要ならsysctl.dへ永続設定を書きます。他のrouterdリソースへの参照項目はありません。
+
+## 指定条件と参照関係
+
+- runtime=falseかつpersistent=falseならSkipped/RuntimeDisabledとなり、値を反映しません。runtimeとpersistentは両方trueにできます。
+- 同じRouterでのSysctlキーの重複は拒否します。LinuxのNAT44SessionSyncでconntrackdを使う場合、net.netfilter.nf_conntrack_tcp_be_liberalについてruntime有効・optional=false・valueと実効expectedValueが1の明示的Sysctlが別途必要です。
+
+## YAML定義
+
+全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。
+
+```yaml
+- apiVersion: system.routerd.net/v1alpha1
+  kind: Sysctl
+  metadata:
+    name: "<name>"
+  spec:
+    compare: "" # 任意; string; enum=["", "exact", "atLeast"]
+    expectedValue: "<string>" # 任意; string
+    key: "<string>" # 必須; string
+    optional: true # 任意; boolean
+    persistent: true # 任意; boolean
+    runtime: true # 任意; boolean
+    value: "<string>" # 必須; string
+```
+
+## 項目の意味と既定値
+
+| YAML | 項目の意味と既定値 |
+| --- | --- |
+| `spec.key` | net.ipv4.ip_forwardなどのカーネルキー。必須で既定値はなく、空白・タブ・改行・/は使えません。リソース参照ではありません。 |
+| `spec.value` | sysctl -wへ渡す必須の空でない文字列。永続化時もこの値を保存します。数値に見えるYAML値も引用符で囲みます。既定値はありません。 |
+| `spec.expectedValue` | 実行中の値との比較に使う期待値。省略時はvalueです。書込値と観測される表現が異なる場合に使います。空白だけの指定は拒否します。 |
+| `spec.compare` | 省略時exactで、空白を正規化した文字列として比較します。atLeastは対応する整数要素を比較し、要素数が同じで、各観測値が期待値以上であることを要求します。 |
+| `spec.runtime` | 稼働中のカーネルへ反映する指定。省略時true。falseでもpersistent=trueなら永続設定を書けます。 |
+| `spec.persistent` | routerd用sysctl.dファイルへkey=valueを保存します。省略時false。runtimeとは独立した指定です。 |
+| `spec.optional` | 省略時false。trueなら実行時の読取り失敗をSkipped/ReadFailedOptionalとして扱い、その項目の以降の反映を省きます。任意の書込・永続化エラーを隠す指定ではありません。 |
+
+実装: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate_system.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_system.go) · [pkg/config/validate.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go) · [pkg/controller/chain/sysctl.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/sysctl.go) · [pkg/sysctlprofile/compare.go](https://github.com/imksoo/routerd/blob/main/pkg/sysctlprofile/compare.go) · [pkg/sysctlprofile/persistent.go](https://github.com/imksoo/routerd/blob/main/pkg/sysctlprofile/persistent.go)
