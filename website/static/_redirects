@@ -1,0 +1,17 @@
+/docs/ https://github.com/imksoo/routerd/blob/main/docs/intro.md 302
+/docs https://github.com/imksoo/routerd/blob/main/docs/intro.md 302
+/docs/* https://github.com/imksoo/routerd/blob/main/docs/:splat.md 302
+/ja/docs/ https://github.com/imksoo/routerd/blob/main/website/i18n/ja/docusaurus-plugin-content-docs/current/intro.md 302
+/ja/docs https://github.com/imksoo/routerd/blob/main/website/i18n/ja/docusaurus-plugin-content-docs/current/intro.md 302
+/ja/docs/* https://github.com/imksoo/routerd/blob/main/website/i18n/ja/docusaurus-plugin-content-docs/current/:splat.md 302
+/ja/ / 302
+/zh-Hant/docs/ https://github.com/imksoo/routerd/blob/main/website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/intro.md 302
+/zh-Hant/docs https://github.com/imksoo/routerd/blob/main/website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/intro.md 302
+/zh-Hant/docs/* https://github.com/imksoo/routerd/blob/main/website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/:splat.md 302
+/zh-Hant/ / 302
+/zh-Hans/docs/ https://github.com/imksoo/routerd/blob/main/website/i18n/zh-Hans/docusaurus-plugin-content-docs/current/intro.md 302
+/zh-Hans/docs https://github.com/imksoo/routerd/blob/main/website/i18n/zh-Hans/docusaurus-plugin-content-docs/current/intro.md 302
+/zh-Hans/docs/* https://github.com/imksoo/routerd/blob/main/website/i18n/zh-Hans/docusaurus-plugin-content-docs/current/:splat.md 302
+/zh-Hans/ / 302
+/wizard https://github.com/imksoo/routerd/tree/main/examples 302
+/blog/* / 302

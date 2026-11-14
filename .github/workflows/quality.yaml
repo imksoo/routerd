@@ -8,11 +8,6 @@ on:
         required: false
         type: string
         default: ""
-      force-website-build:
-        description: "Build the website even when docs/website files did not change."
-        required: false
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -23,10 +18,10 @@ env:
 
 jobs:
   detect-website-changes:
-    name: Detect website changes
+    name: Detect relevant changes
     runs-on: ubuntu-latest
     outputs:
-      website: ${{ steps.filter.outputs.docs == 'true' || steps.filter.outputs.website == 'true' }}
+      backend: ${{ steps.filter.outputs.backend }}
       webconsole: ${{ steps.filter.outputs.webconsole }}
     steps:
       - name: Checkout
@@ -36,7 +31,7 @@ jobs:
           # PR merge-base comparisons require complete ancestry.
           fetch-depth: 0
 
-      - name: Detect docs and website changes
+      - name: Detect relevant changes
         id: filter
         shell: bash
         env:
@@ -87,6 +82,8 @@ jobs:
         run: git diff --exit-code -- pkg/webconsole/static
 
   linux-static:
+    needs: detect-website-changes
+    if: ${{ needs.detect-website-changes.outputs.backend == 'true' }}
     name: Linux static binaries
     runs-on: ubuntu-latest
     steps:
@@ -108,6 +105,8 @@ jobs:
           make check-linux-static ROUTERD_OS=linux GOARCH=amd64
 
   freebsd-cross-compile:
+    needs: detect-website-changes
+    if: ${{ needs.detect-website-changes.outputs.backend == 'true' }}
     name: FreeBSD cross-compile
     runs-on: ubuntu-latest
     steps:
@@ -126,6 +125,8 @@ jobs:
         run: make check-freebsd-cross-compile
 
   schema:
+    needs: detect-website-changes
+    if: ${{ needs.detect-website-changes.outputs.backend == 'true' }}
     name: Generated schemas
     runs-on: ubuntu-latest
     steps:
@@ -144,6 +145,8 @@ jobs:
         run: make check-schema check-website-schemas
 
   install-deps-smoke:
+    needs: detect-website-changes
+    if: ${{ needs.detect-website-changes.outputs.backend == 'true' }}
     name: Installer and release checks
     runs-on: ubuntu-latest
     steps:
@@ -161,10 +164,9 @@ jobs:
       - name: Smoke install.sh script-dir resolution
         run: bash scripts/install-sh-cwd-smoke.sh
 
-      - name: Active stable version consistency
-        run: bash scripts/check-active-stable.sh
-
   examples:
+    needs: detect-website-changes
+    if: ${{ needs.detect-website-changes.outputs.backend == 'true' }}
     name: Example configs
     runs-on: ubuntu-latest
     steps:
@@ -179,17 +181,12 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Set up Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: website/package-lock.json
-
       - name: Validate examples
         run: make validate-example
 
   shellcheck:
+    needs: detect-website-changes
+    if: ${{ needs.detect-website-changes.outputs.backend == 'true' }}
     name: Shell scripts
     runs-on: ubuntu-latest
     steps:
@@ -205,66 +202,4 @@ jobs:
 
       - name: Lint shell scripts
         run: |
-          shellcheck scripts/ci/detect-quality-changes.sh packaging/install.sh packaging/uninstall.sh packaging/bootstrap.sh scripts/pre-commit.sh scripts/release.sh scripts/build-live-iso.sh scripts/install-sh-cwd-smoke.sh scripts/check-active-stable.sh tests/e2e/cloudedge/scripts/sam-pve-qga-addresses.sh
-
-  warm-iso-rootfs-cache:
-    name: Warm ISO rootfs cache
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ inputs.checkout-ref || github.ref }}
-
-      - name: Compute rootfs cache key
-        id: rootfs-key
-        shell: bash
-        run: |
-          hash=$(grep -E '^ubuntu_(suite|arch|base_packages|packages)=' scripts/build-live-iso.sh | sha256sum | awk '{print $1}')
-          echo "hash=${hash}" >> "$GITHUB_OUTPUT"
-
-      - name: Restore rootfs cache
-        id: cache
-        uses: actions/cache@v4
-        with:
-          path: dist/live/rootfs-cache.tar
-          key: live-iso-rootfs-${{ steps.rootfs-key.outputs.hash }}
-
-      - name: Install debootstrap
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y debootstrap
-
-      - name: Build rootfs cache
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: sudo --preserve-env=ROOTFS_CACHE_TAR bash scripts/build-live-iso.sh --rootfs-only
-        env:
-          ROOTFS_CACHE_TAR: dist/live/rootfs-cache.tar
-
-  website:
-    name: Website build
-    runs-on: ubuntu-latest
-    needs: detect-website-changes
-    if: ${{ inputs['force-website-build'] == true || inputs['force-website-build'] == 'true' || needs.detect-website-changes.outputs.website == 'true' }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ inputs.checkout-ref || github.ref }}
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: website/package-lock.json
-
-      - name: Install website dependencies
-        run: make website-deps
-
-      - name: Restore Docusaurus build cache
-        uses: docuactions/cache@v1
-
-      - name: Build website
-        run: make website-build
+          shellcheck scripts/ci/detect-quality-changes.sh packaging/install.sh packaging/uninstall.sh packaging/bootstrap.sh scripts/pre-commit.sh scripts/release.sh scripts/build-live-iso.sh scripts/install-sh-cwd-smoke.sh tests/e2e/cloudedge/scripts/sam-pve-qga-addresses.sh

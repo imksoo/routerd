@@ -1,29 +1,13 @@
 # routerd.net
 
-This directory contains the Docusaurus site for `routerd.net`.
+HTML、Markdown、YAML、JSON Schemaをそのまま公開する静的サイトです。
+コンフィグ作成ツール、React、Docusaurusは使用しません。
+文書はGitHubのMarkdown表示で読み、設定例は `examples/` を参照します。
 
-The English docs source is the repository `docs/` directory. Localized docs
-live under `website/i18n/<locale>/docusaurus-plugin-content-docs/current/`.
+公開用ファイルは `sh build.sh` で `build/` にコピーします。
+外部依存の取得、Markdown変換、言語別コンパイルはありません。
 
-For beginner-facing changes, start by checking that the Japanese explanation is
-natural and understandable to a network-curious student, then keep the English,
-Traditional Chinese, and Simplified Chinese core onboarding pages equivalent in
-meaning. The source layout stays English for Docusaurus mechanics; this is an
-editorial review order, not a claim that a translation is less important.
-
-Cloudflare Pages settings:
-
-- Root directory: `website`
-- Build command: `npm ci && npm run build`
-- Build output directory: `build`
-- Node.js version: `22`
-
-Local build:
-
-```bash
-npm ci
-npm run build
-```
-
-Run this after documentation rewrites because Docusaurus catches broken links and
-frontmatter errors that Markdown-only checks miss.
+既存のCloudflare Pages設定（ルート `website`、コマンド
+`npm ci && npm run build`、出力 `build`）もそのまま利用できます。
+package.jsonはこの設定用の互換入口であり、npm依存はありません。
+新規設定ではビルドコマンドを `sh build.sh` にできます。

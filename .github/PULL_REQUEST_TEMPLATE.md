@@ -1,17 +1,6 @@
-## Summary
+## 変更内容
 
-- 
+## 確認
 
-## Validation
-
-- [ ] `make test`
-- [ ] `make check-schema`
-- [ ] `make validate-example`
-- [ ] `make website-build`
-
-## Router safety
-
-- [ ] Management access remains reachable.
-- [ ] Host network changes are declarative.
-- [ ] No lab-specific secrets or addresses were added to public docs.
-- [ ] Platform-specific behavior is gated through platform features or renderers.
+変更に関係する確認だけを記載する。文書だけの変更に製品ビルドや実機試験は不要。
+実行したコマンドと結果、実施していない確認を明記する。
