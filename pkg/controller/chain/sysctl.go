@@ -100,7 +100,6 @@ func (c SysctlController) Reconcile(ctx context.Context) error {
 				"runtime":    api.BoolDefault(spec.Runtime, true),
 				"persistent": spec.Persistent,
 				"dryRun":     c.DryRun,
-				"updatedAt":  time.Now().UTC().Format(time.RFC3339Nano),
 			}); err != nil {
 				errs = append(errs, err)
 				continue
@@ -147,7 +146,6 @@ func (c SysctlController) applyOne(ctx context.Context, name, kind string, spec 
 			"reason":     "RuntimeDisabled",
 			"key":        spec.Key,
 			"value":      spec.Value,
-			"updatedAt":  time.Now().UTC().Format(time.RFC3339Nano),
 			"persistent": spec.Persistent,
 			"dryRun":     c.DryRun,
 		}); err != nil {
@@ -165,12 +163,11 @@ func (c SysctlController) applyOne(ctx context.Context, name, kind string, spec 
 		current = normalizeSysctlRuntimeValue(string(currentOut))
 		if currentErr != nil && spec.Optional {
 			if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, kind, name, map[string]any{
-				"phase":     "Skipped",
-				"reason":    "ReadFailedOptional",
-				"key":       spec.Key,
-				"value":     spec.Value,
-				"error":     currentErr.Error(),
-				"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+				"phase":  "Skipped",
+				"reason": "ReadFailedOptional",
+				"key":    spec.Key,
+				"value":  spec.Value,
+				"error":  currentErr.Error(),
 			}); err != nil {
 				return sysctlApplyResult{}, err
 			}
@@ -190,7 +187,6 @@ func (c SysctlController) applyOne(ctx context.Context, name, kind string, spec 
 					"value":        spec.Value,
 					"currentValue": current,
 					"error":        strings.TrimSpace(string(out)),
-					"updatedAt":    time.Now().UTC().Format(time.RFC3339Nano),
 				}
 				if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, kind, name, status); saveErr != nil {
 					return sysctlApplyResult{}, saveErr
@@ -217,7 +213,6 @@ func (c SysctlController) applyOne(ctx context.Context, name, kind string, spec 
 				"persistent":   true,
 				"path":         persistentPath,
 				"error":        err.Error(),
-				"updatedAt":    time.Now().UTC().Format(time.RFC3339Nano),
 			}
 			if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, kind, name, status); saveErr != nil {
 				return sysctlApplyResult{}, saveErr
@@ -243,7 +238,6 @@ func (c SysctlController) applyOne(ctx context.Context, name, kind string, spec 
 		"optional":      spec.Optional,
 		"path":          persistentPath,
 		"dryRun":        c.DryRun,
-		"updatedAt":     time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	if runtimeChanged && currentErr == nil {
 		status["previousValue"] = normalizeSysctlRuntimeValue(string(currentOut))

@@ -11,7 +11,6 @@ import (
 	"runtime"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/daemonapi"
@@ -47,11 +46,10 @@ func (c KernelModuleController) Reconcile(ctx context.Context) error {
 		}
 		if !kernelModuleSupportedOS(osName) {
 			if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "KernelModule", resource.Metadata.Name, map[string]any{
-				"phase":     "Pending",
-				"reason":    "UnsupportedOS",
-				"os":        osName,
-				"modules":   compactStringList(append([]string(nil), spec.Modules...)),
-				"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+				"phase":   "Pending",
+				"reason":  "UnsupportedOS",
+				"os":      osName,
+				"modules": compactStringList(append([]string(nil), spec.Modules...)),
 			}); err != nil {
 				return err
 			}
@@ -66,12 +64,11 @@ func (c KernelModuleController) Reconcile(ctx context.Context) error {
 				skipped = append(skipped, err.Error())
 			} else {
 				_ = c.Store.SaveObjectStatus(api.SystemAPIVersion, "KernelModule", resource.Metadata.Name, map[string]any{
-					"phase":     "Error",
-					"reason":    "ApplyFailed",
-					"modules":   compactStringList(append([]string(nil), spec.Modules...)),
-					"error":     err.Error(),
-					"dryRun":    c.DryRun,
-					"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+					"phase":   "Error",
+					"reason":  "ApplyFailed",
+					"modules": compactStringList(append([]string(nil), spec.Modules...)),
+					"error":   err.Error(),
+					"dryRun":  c.DryRun,
 				})
 				return err
 			}
@@ -92,7 +89,6 @@ func (c KernelModuleController) Reconcile(ctx context.Context) error {
 			"runtime":    api.BoolDefault(spec.Runtime, true),
 			"persistent": spec.Persistent,
 			"dryRun":     c.DryRun,
-			"updatedAt":  time.Now().UTC().Format(time.RFC3339Nano),
 		}); err != nil {
 			return err
 		}

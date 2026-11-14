@@ -65,10 +65,9 @@ func (c NetworkAdoptionController) Reconcile(ctx context.Context) error {
 		osName := networkAdoptionOSName(runtime.GOOS)
 		if !features.HasSystemd {
 			if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "NetworkAdoption", resource.Metadata.Name, map[string]any{
-				"phase":     "Pending",
-				"reason":    "SystemdUnsupported",
-				"os":        osName,
-				"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+				"phase":  "Pending",
+				"reason": "SystemdUnsupported",
+				"os":     osName,
 			}); err != nil {
 				return err
 			}
@@ -84,13 +83,12 @@ func (c NetworkAdoptionController) Reconcile(ctx context.Context) error {
 		}
 		if err != nil {
 			if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "NetworkAdoption", resource.Metadata.Name, map[string]any{
-				"phase":     "Error",
-				"reason":    "ApplyFailed",
-				"ifname":    ifname,
-				"paths":     paths,
-				"error":     err.Error(),
-				"dryRun":    c.DryRun,
-				"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+				"phase":  "Error",
+				"reason": "ApplyFailed",
+				"ifname": ifname,
+				"paths":  paths,
+				"error":  err.Error(),
+				"dryRun": c.DryRun,
 			}); saveErr != nil {
 				adoptionErrors = append(adoptionErrors, saveErr)
 			}
@@ -107,12 +105,11 @@ func (c NetworkAdoptionController) Reconcile(ctx context.Context) error {
 			phase = "Rendered"
 		}
 		if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "NetworkAdoption", resource.Metadata.Name, map[string]any{
-			"phase":     phase,
-			"ifname":    ifname,
-			"paths":     paths,
-			"changed":   changed,
-			"dryRun":    c.DryRun,
-			"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+			"phase":   phase,
+			"ifname":  ifname,
+			"paths":   paths,
+			"changed": changed,
+			"dryRun":  c.DryRun,
 		}); err != nil {
 			return err
 		}
@@ -631,13 +628,12 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 			changed, activationQueued, err := c.applyHealthCheckSystemdUnit(ctx, path, unitName, resource.Metadata.Name, spec, telemetryEnv)
 			if err != nil {
 				if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, map[string]any{
-					"phase":     "Error",
-					"reason":    "ApplyFailed",
-					"unitName":  unitName,
-					"path":      path,
-					"error":     err.Error(),
-					"dryRun":    c.DryRun,
-					"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+					"phase":    "Error",
+					"reason":   "ApplyFailed",
+					"unitName": unitName,
+					"path":     path,
+					"error":    err.Error(),
+					"dryRun":   c.DryRun,
 				}); saveErr != nil {
 					return saveErr
 				}
@@ -665,12 +661,11 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 				}
 			}
 			status := map[string]any{
-				"phase":     phase,
-				"unitName":  unitName,
-				"path":      path,
-				"changed":   changed,
-				"dryRun":    c.DryRun,
-				"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+				"phase":    phase,
+				"unitName": unitName,
+				"path":     path,
+				"changed":  changed,
+				"dryRun":   c.DryRun,
 			}
 			if reason != "" {
 				status["reason"] = reason

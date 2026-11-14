@@ -8,7 +8,6 @@ import (
 	"os"
 	"runtime"
 	"strings"
-	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/daemonapi"
@@ -34,22 +33,20 @@ func (c PackageController) Reconcile(ctx context.Context) error {
 		set, ok := packageSetForOS(spec, osName)
 		if !ok {
 			_ = c.Store.SaveObjectStatus(api.SystemAPIVersion, "Package", resource.Metadata.Name, map[string]any{
-				"phase":     "Pending",
-				"reason":    "NoMatchingOSPackageSet",
-				"os":        osName,
-				"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+				"phase":  "Pending",
+				"reason": "NoMatchingOSPackageSet",
+				"os":     osName,
 			})
 			continue
 		}
 		manager := firstNonEmpty(set.Manager, hostdeps.PackageManagerForOS(set.OS))
 		if manager != "apt" && manager != "dnf" && manager != "pkg" {
 			_ = c.Store.SaveObjectStatus(api.SystemAPIVersion, "Package", resource.Metadata.Name, map[string]any{
-				"phase":     "Pending",
-				"reason":    "UnsupportedManagerRuntime",
-				"os":        set.OS,
-				"manager":   manager,
-				"names":     set.Names,
-				"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+				"phase":   "Pending",
+				"reason":  "UnsupportedManagerRuntime",
+				"os":      set.OS,
+				"manager": manager,
+				"names":   set.Names,
 			})
 			continue
 		}
@@ -68,14 +65,13 @@ func (c PackageController) Reconcile(ctx context.Context) error {
 		changed := len(missing) > 0
 		if changed && c.DryRun {
 			if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "Package", resource.Metadata.Name, map[string]any{
-				"phase":     "Pending",
-				"reason":    "DryRun",
-				"os":        set.OS,
-				"manager":   manager,
-				"missing":   missing,
-				"names":     set.Names,
-				"dryRun":    true,
-				"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+				"phase":   "Pending",
+				"reason":  "DryRun",
+				"os":      set.OS,
+				"manager": manager,
+				"missing": missing,
+				"names":   set.Names,
+				"dryRun":  true,
 			}); err != nil {
 				return err
 			}
@@ -85,12 +81,11 @@ func (c PackageController) Reconcile(ctx context.Context) error {
 			name, args := packageInstallCommand(manager, missing)
 			if out, err := runOutputCommandContext(ctx, name, args...); err != nil {
 				if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "Package", resource.Metadata.Name, map[string]any{
-					"phase":     "Error",
-					"reason":    "InstallFailed",
-					"manager":   manager,
-					"missing":   missing,
-					"error":     strings.TrimSpace(string(out)),
-					"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+					"phase":   "Error",
+					"reason":  "InstallFailed",
+					"manager": manager,
+					"missing": missing,
+					"error":   strings.TrimSpace(string(out)),
 				}); saveErr != nil {
 					return saveErr
 				}
@@ -98,13 +93,12 @@ func (c PackageController) Reconcile(ctx context.Context) error {
 			}
 		}
 		if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "Package", resource.Metadata.Name, map[string]any{
-			"phase":     "Applied",
-			"os":        set.OS,
-			"manager":   manager,
-			"names":     set.Names,
-			"changed":   changed,
-			"dryRun":    c.DryRun,
-			"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+			"phase":   "Applied",
+			"os":      set.OS,
+			"manager": manager,
+			"names":   set.Names,
+			"changed": changed,
+			"dryRun":  c.DryRun,
 		}); err != nil {
 			return err
 		}
