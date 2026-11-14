@@ -12,7 +12,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/daemonapi"
@@ -49,9 +48,8 @@ func (c PathMTUController) Reconcile(ctx context.Context) error {
 			return nil
 		}
 		return c.Store.SaveObjectStatus(api.RouterAPIVersion, "Router", "derived-path-mtu", map[string]any{
-			"phase":     "Skipped",
-			"reason":    "path MTU policy is enforced by pf",
-			"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+			"phase":  "Skipped",
+			"reason": "path MTU policy is enforced by pf",
 		})
 	}
 	mssData, err := render.NftablesTCPMSSClampWithLocalCaptureIntents(c.Router, c.LocalCaptureIntents)
@@ -101,7 +99,6 @@ func (c PathMTUController) Reconcile(ctx context.Context) error {
 			"forceFragmentChanged":    forceFragmentChanged,
 			"forceFragmentIPv4Active": len(bytes.TrimSpace(forceFragmentData)) > 0,
 			"dryRun":                  c.DryRun,
-			"updatedAt":               time.Now().UTC().Format(time.RFC3339Nano),
 		}
 		if len(bytes.TrimSpace(mssData)) == 0 && len(bytes.TrimSpace(l2MSSData)) == 0 && len(bytes.TrimSpace(forceFragmentData)) == 0 {
 			status["phase"] = "Skipped"
@@ -125,8 +122,7 @@ func (c PathMTUController) savePathMTUError(reason string, cause error) error {
 	if c.Store != nil {
 		if err := c.Store.SaveObjectStatus(api.RouterAPIVersion, "Router", "derived-path-mtu", map[string]any{
 			"phase": "Error", "reason": reason, "error": cause.Error(),
-			"drifted":   strings.Contains(strings.ToLower(cause.Error()), "drift"),
-			"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+			"drifted": strings.Contains(strings.ToLower(cause.Error()), "drift"),
 		}); err != nil {
 			return fmt.Errorf("%v (saving PathMTU error status: %w)", cause, err)
 		}
