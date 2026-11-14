@@ -8,9 +8,12 @@ compatibility, and release procedures. Do not weaken these rules yourself.
 
 There is one user. Build on routerd 1.0 for homert02/03, k8s-rt01/02,
 and pve-rt01..08. Preserve their actual configurations and required behavior.
-Remove unnecessary code only after tracing runtime generation, references,
-startup, renewal, recovery, and removal. Examples, old plans, and tests alone
-are not evidence of live use.
+Remove unused features, configuration fields, APIs, helpers, dependencies,
+documentation, tests, and CI jobs in the active scope. Trace runtime generation,
+references, startup, renewal, recovery, and removal before declaring them unused.
+Hypothetical users, possible future use, existing tests, and the mere existence
+of code are not reasons to keep it. Examples, old plans, and tests alone are
+not evidence of live use.
 
 Cloud SAM is shelved until a separately requested development task. It is not
 an acceptance criterion, pending blocker, or reason to ask the owner again in
