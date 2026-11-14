@@ -291,5 +291,16 @@ func (s *SQLiteStore) PruneFederationEvents(group string, maxAge time.Duration, 
 			total += n
 		}
 	}
+	// A delivered row with an expired delivery TTL and no retained event cannot
+	// suppress a delivery of that expired event. If the same ID is renewed, its
+	// later expiry must be delivered again. Keep pending and failed attempts.
+	if _, err := s.db.Exec(`DELETE FROM event_deliveries
+		WHERE status = ? AND event_expires_at IS NOT NULL AND event_expires_at > 0
+		  AND event_expires_at < ?
+		  AND NOT EXISTS (SELECT 1 FROM federation_events WHERE id = event_deliveries.event_id)`,
+		DeliveryDelivered, now.UTC().Unix()); err != nil {
+		return total, fmt.Errorf("prune expired orphan federation deliveries: %w", err)
+	}
+
 	return total, nil
 }
