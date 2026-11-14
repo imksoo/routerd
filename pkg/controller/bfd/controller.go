@@ -20,7 +20,6 @@ import (
 
 type Store interface {
 	SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error
-	ObjectStatus(apiVersion, kind, name string) map[string]any
 }
 
 type Controller struct {
@@ -387,7 +386,6 @@ func interfaceName(ref string) string {
 }
 
 func (c Controller) saveStatus(name, phase string, sessions []session, observed map[string]string, extra map[string]any) error {
-	now := time.Now().UTC().Format(time.RFC3339Nano)
 	peers := make([]map[string]any, 0, len(sessions))
 	peerStates := map[string]string{}
 	for _, s := range sessions {
@@ -412,7 +410,6 @@ func (c Controller) saveStatus(name, phase string, sessions []session, observed 
 		"phase":      phase,
 		"peerStates": peerStates,
 		"peers":      peers,
-		"observedAt": now,
 	}
 	for key, value := range extra {
 		status[key] = value
