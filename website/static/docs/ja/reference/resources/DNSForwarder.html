@@ -5,6 +5,13 @@
 <main class="doclayout wrap"><article class="document"><h1 id="dnsforwarder">DNSForwarder</h1>
 <p><a href="../resources.html#dnsforwarder">リソース別の設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>1つのDNSResolverに対し、問い合わせ名に応じてローカルゾーンまたは上流DNSを選ぶ規則です。</p>
+<h2 id="指定条件と参照関係">指定条件と参照関係</h2>
+<ul>
+<li>resolverと空でないmatchに加え、zoneRefsとupstreamsの片方だけに1件以上必要です。参照先は同じRouter内に必要で、裸名または対応するKind/nameを使用します。</li>
+<li>待受の絞り込み後、Router内のリソース順に評価します。最長サフィックス順ではないため、個別・内部向け規則を全体規則より前に置きます。一致した上流の失敗はSERVFAILとなり、別規則への転送はしません。</li>
+<li>複数の上流参照は1つのプールに結合します。bootstrapは結合し、最初の空でないsourceInterfaceをプール全体で共有します。異なる上流ごとのインターフェース指定は個別に適用しません。</li>
+</ul>
 <h2 id="yaml定義">YAML定義</h2>
 <p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
 <pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
@@ -38,9 +45,71 @@
     zoneRefs: # 任意; array
       - &quot;&lt;string&gt;&quot; # string
 </code></pre>
+<h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>項目の意味と既定値</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.resolver</code></td>
+<td>既存DNSResolverの名前またはDNSResolver/nameが必須です。既定値はありません。</td>
+</tr>
+<tr>
+<td><code>spec.match</code></td>
+<td>1件以上のドメインサフィックスが必須です。大文字・小文字と末尾ドットを区別せず、example.netは同名とサブドメイン、"."は全問い合わせに一致します。全体一致の自動補完はありません。</td>
+</tr>
+<tr>
+<td><code>spec.zoneRefs</code></td>
+<td>ローカル応答を返す既存DNSZoneの名前またはDNSZone/nameです。upstreamsと排他で、upstreamsが空なら必須です。</td>
+</tr>
+<tr>
+<td><code>spec.upstreams</code></td>
+<td>既存DNSUpstreamの名前またはDNSUpstream/nameで、IPやURLの直接指定ではありません。zoneRefsと排他で、参照したサーバーを1つの代替先プールにまとめます。</td>
+</tr>
+<tr>
+<td><code>spec.dnssecValidate</code></td>
+<td>既定falseです。trueは上流問い合わせのDOビットを設定し、応答のADを必須にします。ローカルで暗号学的DNSSEC検証を行うものではありません。ゾーン参照では使用しません。</td>
+</tr>
+<tr>
+<td><code>spec.queryTimeout</code></td>
+<td>上流への各問い合わせ試行に使う正のGo durationです。省略時は正のhealthcheck.timeoutを継承し、それ以外は3sです。背景監視の間隔とは別で、ローカルゾーン応答には使用しません。</td>
+</tr>
+<tr>
+<td><code>spec.healthcheck</code></td>
+<td>上流の背景監視設定です。既定はinterval 15s、timeout 3s、failThreshold 3、passThreshold 2です。ローカルゾーンでは使用しません。</td>
+</tr>
+<tr>
+<td><code>spec.healthcheck.interval</code></td>
+<td>Go durationです。省略・空、または実行時に0以下なら15sです。設定検証は期間の構文のみで正値は強制しません。</td>
+</tr>
+<tr>
+<td><code>spec.healthcheck.timeout</code></td>
+<td>監視試行のGo durationです。省略・空・0以下なら3sです。正なら省略したqueryTimeoutの既定にもなります。</td>
+</tr>
+<tr>
+<td><code>spec.healthcheck.failThreshold</code></td>
+<td>上流を異常とする連続失敗回数です。既定3で、実行時の0以下も3になります。スキーマの下限は1です。</td>
+</tr>
+<tr>
+<td><code>spec.healthcheck.passThreshold</code></td>
+<td>回復に必要な連続成功回数です。既定2で、実行時の0以下も2になります。スキーマの下限は1です。</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>共通の状態条件です。省略時は無条件で、条件により有効なリゾルバー設定から規則を除外できます。</td>
+</tr>
+</tbody>
+</table>
+<p>実装: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_dns.go">pkg/config/validate_dns.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go">pkg/config/diagnostics.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/dnsresolver/controller.go">pkg/controller/dnsresolver/controller.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/dnsresolver/dnsresolver.go">pkg/dnsresolver/dnsresolver.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd-dns-resolver/main.go">cmd/routerd-dns-resolver/main.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd-dns-resolver/upstream.go">cmd/routerd-dns-resolver/upstream.go</a></p>
 <p><a href="/examples/example-dslite-home.yaml">設定例</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
 <ul>
+<li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
 <li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
 </ul>
 </div>
 </aside></main>

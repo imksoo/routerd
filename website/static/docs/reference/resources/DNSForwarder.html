@@ -5,6 +5,13 @@
 <main class="doclayout wrap"><article class="document"><h1 id="dnsforwarder">DNSForwarder</h1>
 <p><a href="../resources.html#dnsforwarder">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Select local zones or upstream DNS servers for matching query names on one DNSResolver.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>Exactly one nonempty list of zoneRefs or upstreams is required, along with resolver and nonempty match. Every reference must exist in the same Router; use a bare name or the corresponding Kind/name.</li>
+<li>Rules are tried in Router resource order after listener filtering, not longest-suffix order. Put private/specific rules before a catch-all. Once a matching upstream source is selected, failure returns SERVFAIL; it does not fall through to another source and leak private queries.</li>
+<li>Upstream references are combined into one source/pool. Bootstrap settings are merged, and the first nonempty sourceInterface is shared by the entire pool; conflicting per-upstream bindings are not independently honored.</li>
+</ul>
 <h2 id="yaml-definition">YAML definition</h2>
 <p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
 <pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
@@ -38,9 +45,71 @@
     zoneRefs: # optional; array
       - &quot;&lt;string&gt;&quot; # string
 </code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.resolver</code></td>
+<td>Required existing DNSResolver name or DNSResolver/name. No default.</td>
+</tr>
+<tr>
+<td><code>spec.match</code></td>
+<td>Required nonempty domain-suffix list; comparisons ignore case and a trailing dot. example.net matches the name and its subdomains; "." matches all queries. No implicit catch-all.</td>
+</tr>
+<tr>
+<td><code>spec.zoneRefs</code></td>
+<td>Existing DNSZone names or DNSZone/name references for local answers. Mutually exclusive with upstreams; required when upstreams is empty.</td>
+</tr>
+<tr>
+<td><code>spec.upstreams</code></td>
+<td>Existing DNSUpstream names or DNSUpstream/name, not raw server IPs/URLs. Mutually exclusive with zoneRefs. Servers from these resources form one failover pool.</td>
+</tr>
+<tr>
+<td><code>spec.dnssecValidate</code></td>
+<td>Default false. true sets the DNSSEC DO bit on upstream queries and requires AD in the reply; it does not perform local cryptographic DNSSEC validation. Zone sources do not use this field.</td>
+</tr>
+<tr>
+<td><code>spec.queryTimeout</code></td>
+<td>Positive Go duration for each upstream query attempt. Omitted inherits a positive healthcheck.timeout, otherwise 3s. Distinct from background probe timing; zone answers do not use it.</td>
+</tr>
+<tr>
+<td><code>spec.healthcheck</code></td>
+<td>Background upstream probe options; defaults interval 15s, timeout 3s, failThreshold 3, passThreshold 2. Not used for local-zone sources.</td>
+</tr>
+<tr>
+<td><code>spec.healthcheck.interval</code></td>
+<td>Go duration; omitted/empty or nonpositive at runtime uses 15s. Duration syntax is validated but positivity is not enforced at configuration validation.</td>
+</tr>
+<tr>
+<td><code>spec.healthcheck.timeout</code></td>
+<td>Probe Go duration; omitted/empty or nonpositive uses 3s. Also supplies the default queryTimeout when positive.</td>
+</tr>
+<tr>
+<td><code>spec.healthcheck.failThreshold</code></td>
+<td>Consecutive failures to mark an upstream unhealthy; default 3 (0/nonpositive runtime normalizes to 3; schema minimum 1).</td>
+</tr>
+<tr>
+<td><code>spec.healthcheck.passThreshold</code></td>
+<td>Consecutive successes for recovery; default 2 (0/nonpositive runtime normalizes to 2; schema minimum 1).</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>Optional common state predicate; omitted means unconditional. A condition can remove this rule from the effective resolver configuration.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_dns.go">pkg/config/validate_dns.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go">pkg/config/diagnostics.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/dnsresolver/controller.go">pkg/controller/dnsresolver/controller.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/dnsresolver/dnsresolver.go">pkg/dnsresolver/dnsresolver.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd-dns-resolver/main.go">cmd/routerd-dns-resolver/main.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd-dns-resolver/upstream.go">cmd/routerd-dns-resolver/upstream.go</a></p>
 <p><a href="/examples/example-dslite-home.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
 <li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 </ul>
 </div>
 </aside></main>

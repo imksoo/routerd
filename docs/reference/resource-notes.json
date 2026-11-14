@@ -2833,5 +2833,526 @@
       "pkg/controller/chain/logretention.go",
       "pkg/platform/platform.go"
     ]
+  },
+  "DNSResolver": {
+    "purpose": [
+      "A local DNS service with UDP and TCP listeners, connected to DNSForwarder rules.",
+      "DNSForwarderの規則に接続する、UDP・TCP待受を備えたローカルDNSサービスです。",
+      "具有 UDP 與 TCP 接聽端點、連接 DNSForwarder 規則的本機 DNS 服務。",
+      "具有 UDP 与 TCP 监听端点、连接 DNSForwarder 规则的本机 DNS 服务。"
+    ],
+    "rules": [
+      [
+        "At least one DNSForwarder must refer to this resolver. Configure forwarding through separate resources; the old inline sources field is not a supported YAML input.",
+        "このリゾルバーを参照するDNSForwarderが1件以上必要です。転送規則は別リソースで設定します。旧インラインsourcesは対応するYAML入力ではありません。",
+        "至少一個 DNSForwarder 必須參照此解析器。請以獨立資源設定轉送規則，舊式內嵌 sources 並非支援的 YAML 輸入。",
+        "至少一个 DNSForwarder 必须引用此解析器。请以独立资源配置转发规则，旧式内嵌 sources 并非支持的 YAML 输入。"
+      ],
+      [
+        "Omitting listen or using an empty list normalizes to 127.0.0.1:5053. Each endpoint serves both UDP and TCP. Do not expose an unrestricted recursive resolver to untrusted networks.",
+        "listenの省略・空リストは127.0.0.1:5053になります。各待受はUDPとTCPの両方で動作します。再帰問い合わせを許す待受は信頼するネットワークに限定してください。",
+        "省略 listen 或使用空清單會正規化為 127.0.0.1:5053。每個端點皆提供 UDP 與 TCP。允許遞迴查詢的端點應限於可信任網路。",
+        "省略 listen 或使用空列表会规范化为 127.0.0.1:5053。每个端点均提供 UDP 与 TCP。允许递归查询的端点应限于可信任网络。"
+      ],
+      [
+        "Static and resolved listen addresses are merged and deduplicated. Missing required dynamic addresses mark dependencies as waiting but do not stop other usable addresses; with no resolved listeners the resolver stays Pending.",
+        "固定値と動的な待受アドレスを結合して重複を除きます。必須参照の未解決は依存待ちとして記録しますが、他の有効なアドレスは利用します。待受が一つも解決しない場合はPendingです。",
+        "固定與動態接聽位址會合併去重。必要動態值未解析時會記錄等待相依，但仍使用其他有效位址；若無任何可用端點則維持 Pending。",
+        "固定与动态监听地址会合并去重。必要动态值未解析时会记录等待依赖，但仍使用其他有效地址；若无任何可用端点则维持 Pending。"
+      ]
+    ],
+    "fields": {
+      "listen": [
+        "Listener list; normalization supplies a loopback endpoint when empty.",
+        "待受一覧です。空なら正規化でループバック待受を補います。",
+        "接聽端點清單；為空時補入回送端點。",
+        "监听端点列表；为空时补入回环端点。"
+      ],
+      "listen[].name": [
+        "Optional label; default listen-0, listen-1, … in list order.",
+        "待受の識別名です。省略時はリスト順にlisten-0、listen-1…となります。",
+        "選用標籤，依清單順序預設 listen-0、listen-1……。",
+        "可选标签，按列表顺序默认 listen-0、listen-1……。"
+      ],
+      "listen[].addresses": [
+        "Literal IPv4/IPv6 addresses without ports or CIDR. If both addresses and addressFrom are empty, defaults to [127.0.0.1].",
+        "ポート・CIDRを含まないIPv4/IPv6アドレスです。addressesとaddressFromが両方空なら[127.0.0.1]です。",
+        "不含連接埠或 CIDR 的 IPv4/IPv6 位址；與 addressFrom 同時為空時預設 [127.0.0.1]。",
+        "不含端口或 CIDR 的 IPv4/IPv6 地址；与 addressFrom 同时为空时默认 [127.0.0.1]。"
+      ],
+      "listen[].addressFrom": [
+        "Optional list of common resource/field/optional value sources. Existing resource and explicit provided field required. Declared IPv4StaticAddress.address can be read before status exists; CIDR values are reduced to addresses. optional defaults false; missing optional values are skipped.",
+        "共通のresource・field・optionalによる参照一覧です。設定内の参照先と提供フィールドの明示が必要です。IPv4StaticAddress.addressは状態確定前でも宣言値を参照し、CIDRはアドレス部分を使用します。optional既定falseで、trueの未解決値は省略します。",
+        "選用的共用 resource/field/optional 來源清單。須有已宣告資源與明確的提供欄位。IPv4StaticAddress.address 可在狀態建立前讀取宣告值，CIDR 取位址部分。optional 預設 false；選用值未解析則略過。",
+        "可选的通用 resource/field/optional 来源列表。须有已声明资源与明确的提供字段。IPv4StaticAddress.address 可在状态建立前读取声明值，CIDR 取地址部分。optional 默认 false；可选值未解析则跳过。"
+      ],
+      "listen[].port": [
+        "Optional port 1–65535; omitted/0 normalizes to 5053.",
+        "1～65535のポートです。省略・0は5053に正規化します。",
+        "選用連接埠 1–65535，省略或 0 會正規化為 5053。",
+        "可选端口 1–65535，省略或 0 会规范化为 5053。"
+      ],
+      "listen[].sources": [
+        "Optional DNSForwarder names attached to this resolver. Empty selects all its forwarders. Use bare metadata.name: validation accepts qualified names, but the daemon matches bare names literally and does not strip a prefix. List order does not reorder the forwarders.",
+        "このリゾルバーに属するDNSForwarderの名前一覧です。空なら全規則を選びます。metadata.nameの裸名を指定してください。検証は修飾名も許しますが、デーモンは接頭辞を除かず裸名と完全一致させます。このリスト順で規則順序は変わりません。",
+        "此解析器所屬 DNSForwarder 名稱清單；空值選取全部。請用裸 metadata.name：驗證雖接受帶類型前綴的名稱，但常駐程序不移除前綴。清單順序不會重排轉送規則。",
+        "此解析器所属 DNSForwarder 名称列表；空值选取全部。请用裸 metadata.name：验证虽接受带类型前缀的名称，但守护进程不移除前缀。列表顺序不会重排转发规则。"
+      ],
+      "cache": [
+        "Optional response-cache settings. Caches upstream replies, not local-zone responses; disabled by default.",
+        "応答キャッシュ設定です。対象は上流応答で、ローカルゾーンの応答は保存しません。既定は無効です。",
+        "選用的回應快取設定。僅快取上游回應，不快取本機區域回應；預設停用。",
+        "可选的响应缓存设置。仅缓存上游响应，不缓存本地区域响应；默认禁用。"
+      ],
+      "cache.enabled": [
+        "Default false. true enables the in-memory response cache.",
+        "既定falseです。trueでメモリ内応答キャッシュを有効にします。",
+        "預設 false；true 啟用記憶體回應快取。",
+        "默认 false；true 启用内存响应缓存。"
+      ],
+      "cache.maxEntries": [
+        "Default 10000 when omitted/0; nonnegative schema value. Bounds cached entries, not bytes.",
+        "省略・0は10000です。スキーマ上は0以上で、バイト数ではなくエントリー数の上限です。",
+        "省略或 0 時為 10000；結構描述要求非負值。限制項目數而非位元組數。",
+        "省略或 0 时为 10000；模式要求非负值。限制条目数而非字节数。"
+      ],
+      "cache.minTTL": [
+        "Optional Go duration lower bound on cache lifetime. Empty imposes no lower bound; invalid duration is ignored by this path rather than rejected. Does not rewrite record TTLs in the response.",
+        "キャッシュ保持時間の下限をGo durationで指定します。空なら下限なしです。この処理では不正な期間は拒否せず無視します。応答内レコードのTTLは書き換えません。",
+        "選用的 Go duration 快取時間下限；空值不限制。不合法期間在此路徑會被忽略，不會改寫回應中的 TTL。",
+        "可选的 Go duration 缓存时间下限；空值不限制。无效时长在此路径会被忽略，不会改写响应中的 TTL。"
+      ],
+      "cache.maxTTL": [
+        "Optional Go duration upper bound, applied after minTTL; empty imposes none and invalid duration is ignored.",
+        "Go durationによる上限で、minTTLの後に適用します。空なら上限なしで、不正な期間は無視します。",
+        "選用的 Go duration 上限，於 minTTL 之後套用；空值不限制，不合法期間忽略。",
+        "可选的 Go duration 上限，在 minTTL 之后应用；空值不限制，无效时长忽略。"
+      ],
+      "cache.negativeTTL": [
+        "Optional Go duration replacing lifetime for successful empty answers or NXDOMAIN, after min/max bounds. Default empty uses 60s before those bounds. SERVFAIL and other transient failures are not cached.",
+        "空の正常応答・NXDOMAINの保持時間をGo durationで上書きし、min/max制限より後に適用します。既定空では制限適用前60秒です。SERVFAILなど一時失敗は保存しません。",
+        "選用的 Go duration，於 min/max 之後覆寫空的成功回應或 NXDOMAIN 保留時間。預設空值使用套用上下限前的 60 秒；不快取 SERVFAIL 等暫時失敗。",
+        "可选的 Go duration，在 min/max 之后覆盖空的成功响应或 NXDOMAIN 保留时间。默认空值使用应用上下限前的 60 秒；不缓存 SERVFAIL 等暂时失败。"
+      ],
+      "metrics": [
+        "Metrics options; no current runtime consumer for perUpstream.",
+        "メトリクス設定ですが、現行実行処理にperUpstreamの利用箇所はありません。",
+        "指標選項；目前執行程式未使用 perUpstream。",
+        "指标选项；当前运行代码未使用 perUpstream。"
+      ],
+      "metrics.perUpstream": [
+        "Decoded boolean default false; does not currently enable or disable per-upstream metrics.",
+        "既定falseの真偽値として読み込みますが、現行実装では上流別メトリクスを切り替えません。",
+        "解碼為布林值，預設 false；目前不切換個別上游指標。",
+        "解码为布尔值，默认 false；当前不切换各上游指标。"
+      ],
+      "queryLog": [
+        "Optional query logging in a SQLite database; disabled by default.",
+        "SQLiteデータベースへの問い合わせ記録です。既定は無効です。",
+        "選用的 SQLite 查詢記錄，預設停用。",
+        "可选的 SQLite 查询记录，默认禁用。"
+      ],
+      "queryLog.enabled": [
+        "Default false; true records queries using queryLog.path.",
+        "既定falseです。trueでqueryLog.pathへ問い合わせを記録します。",
+        "預設 false；true 依 queryLog.path 記錄查詢。",
+        "默认 false；true 按 queryLog.path 记录查询。"
+      ],
+      "queryLog.path": [
+        "When enabled, omitted/blank defaults to /var/lib/routerd/dns-queries.db. This is a database path, not a text log.",
+        "有効時に省略・空白なら/var/lib/routerd/dns-queries.dbです。テキストログではなくデータベースのパスです。",
+        "啟用時省略或空白預設 /var/lib/routerd/dns-queries.db，為資料庫路徑而非文字記錄。",
+        "启用时省略或空白默认 /var/lib/routerd/dns-queries.db，为数据库路径而非文本日志。"
+      ],
+      "when": [
+        "Optional common state condition, default unconditional. See common fields for state/all/any and schema limitations.",
+        "共通の状態条件です。省略時は無条件です。state/all/anyとスキーマ制限は共通項を参照してください。",
+        "選用共用狀態條件，預設無條件。state/all/any 與結構描述限制請見共用欄位。",
+        "可选通用状态条件，默认无条件。state/all/any 与模式限制请见通用字段。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_dns.go",
+      "pkg/config/diagnostics.go",
+      "pkg/controller/dnsresolver/controller.go",
+      "pkg/dnsresolver/dnsresolver.go",
+      "cmd/routerd-dns-resolver/main.go",
+      "cmd/routerd-dns-resolver/zone.go"
+    ]
+  },
+  "DNSForwarder": {
+    "purpose": [
+      "Select local zones or upstream DNS servers for matching query names on one DNSResolver.",
+      "1つのDNSResolverに対し、問い合わせ名に応じてローカルゾーンまたは上流DNSを選ぶ規則です。",
+      "依查詢名稱替一個 DNSResolver 選擇本機區域或上游 DNS 的規則。",
+      "按查询名称为一个 DNSResolver 选择本地区域或上游 DNS 的规则。"
+    ],
+    "rules": [
+      [
+        "Exactly one nonempty list of zoneRefs or upstreams is required, along with resolver and nonempty match. Every reference must exist in the same Router; use a bare name or the corresponding Kind/name.",
+        "resolverと空でないmatchに加え、zoneRefsとupstreamsの片方だけに1件以上必要です。参照先は同じRouter内に必要で、裸名または対応するKind/nameを使用します。",
+        "resolver 與非空 match 必填，且 zoneRefs 與 upstreams 恰有一個非空清單。所有參照皆須存在於同一 Router，可用裸名或對應 Kind/name。",
+        "resolver 与非空 match 必填，且 zoneRefs 与 upstreams 恰有一个非空列表。所有引用均须存在于同一 Router，可用裸名或对应 Kind/name。"
+      ],
+      [
+        "Rules are tried in Router resource order after listener filtering, not longest-suffix order. Put private/specific rules before a catch-all. Once a matching upstream source is selected, failure returns SERVFAIL; it does not fall through to another source and leak private queries.",
+        "待受の絞り込み後、Router内のリソース順に評価します。最長サフィックス順ではないため、個別・内部向け規則を全体規則より前に置きます。一致した上流の失敗はSERVFAILとなり、別規則への転送はしません。",
+        "接聽端點篩選後依 Router 資源順序評估，並非最長後綴優先。內部或特定規則應置於全域規則之前。已選上游失敗時回傳 SERVFAIL，不會轉往其他來源洩漏內部查詢。",
+        "监听端点筛选后按 Router 资源顺序评估，并非最长后缀优先。内部或特定规则应置于全局规则之前。已选上游失败时返回 SERVFAIL，不会转往其他来源泄漏内部查询。"
+      ],
+      [
+        "Upstream references are combined into one source/pool. Bootstrap settings are merged, and the first nonempty sourceInterface is shared by the entire pool; conflicting per-upstream bindings are not independently honored.",
+        "複数の上流参照は1つのプールに結合します。bootstrapは結合し、最初の空でないsourceInterfaceをプール全体で共有します。異なる上流ごとのインターフェース指定は個別に適用しません。",
+        "多個上游參照合併為一個來源池。bootstrap 合併，第一個非空 sourceInterface 由整個池共用；不會分別遵循互相衝突的上游介面設定。",
+        "多个上游引用合并为一个来源池。bootstrap 合并，第一个非空 sourceInterface 由整个池共用；不会分别遵循互相冲突的上游接口设置。"
+      ]
+    ],
+    "fields": {
+      "resolver": [
+        "Required existing DNSResolver name or DNSResolver/name. No default.",
+        "既存DNSResolverの名前またはDNSResolver/nameが必須です。既定値はありません。",
+        "必填的既有 DNSResolver 名稱或 DNSResolver/name，無預設值。",
+        "必填的现有 DNSResolver 名称或 DNSResolver/name，无默认值。"
+      ],
+      "match": [
+        "Required nonempty domain-suffix list; comparisons ignore case and a trailing dot. example.net matches the name and its subdomains; \".\" matches all queries. No implicit catch-all.",
+        "1件以上のドメインサフィックスが必須です。大文字・小文字と末尾ドットを区別せず、example.netは同名とサブドメイン、\".\"は全問い合わせに一致します。全体一致の自動補完はありません。",
+        "必填非空網域後綴清單；忽略大小寫與尾端句點。example.net 匹配本身及子網域，\".\" 匹配全部。無隱含全域規則。",
+        "必填非空域名后缀列表；忽略大小写与末尾句点。example.net 匹配本身及子域名，\".\" 匹配全部。无隐含全局规则。"
+      ],
+      "zoneRefs": [
+        "Existing DNSZone names or DNSZone/name references for local answers. Mutually exclusive with upstreams; required when upstreams is empty.",
+        "ローカル応答を返す既存DNSZoneの名前またはDNSZone/nameです。upstreamsと排他で、upstreamsが空なら必須です。",
+        "供本機回答的既有 DNSZone 名稱或 DNSZone/name，與 upstreams 互斥；upstreams 為空時必填。",
+        "供本地应答的现有 DNSZone 名称或 DNSZone/name，与 upstreams 互斥；upstreams 为空时必填。"
+      ],
+      "upstreams": [
+        "Existing DNSUpstream names or DNSUpstream/name, not raw server IPs/URLs. Mutually exclusive with zoneRefs. Servers from these resources form one failover pool.",
+        "既存DNSUpstreamの名前またはDNSUpstream/nameで、IPやURLの直接指定ではありません。zoneRefsと排他で、参照したサーバーを1つの代替先プールにまとめます。",
+        "既有 DNSUpstream 名稱或 DNSUpstream/name，不是直接 IP 或 URL。與 zoneRefs 互斥；各資源的伺服器組成一個備援池。",
+        "现有 DNSUpstream 名称或 DNSUpstream/name，不是直接 IP 或 URL。与 zoneRefs 互斥；各资源的服务器组成一个故障转移池。"
+      ],
+      "dnssecValidate": [
+        "Default false. true sets the DNSSEC DO bit on upstream queries and requires AD in the reply; it does not perform local cryptographic DNSSEC validation. Zone sources do not use this field.",
+        "既定falseです。trueは上流問い合わせのDOビットを設定し、応答のADを必須にします。ローカルで暗号学的DNSSEC検証を行うものではありません。ゾーン参照では使用しません。",
+        "預設 false；true 設定上游查詢 DO 位元並要求回應 AD，不執行本機密碼學 DNSSEC 驗證。區域來源不使用此欄位。",
+        "默认 false；true 设置上游查询 DO 位并要求响应 AD，不执行本机密码学 DNSSEC 验证。区域来源不使用此字段。"
+      ],
+      "queryTimeout": [
+        "Positive Go duration for each upstream query attempt. Omitted inherits a positive healthcheck.timeout, otherwise 3s. Distinct from background probe timing; zone answers do not use it.",
+        "上流への各問い合わせ試行に使う正のGo durationです。省略時は正のhealthcheck.timeoutを継承し、それ以外は3sです。背景監視の間隔とは別で、ローカルゾーン応答には使用しません。",
+        "每次上游查詢嘗試的正 Go duration。省略時繼承正的 healthcheck.timeout，否則為 3s。不同於背景探測間隔，區域回應不使用。",
+        "每次上游查询尝试的正 Go duration。省略时继承正的 healthcheck.timeout，否则为 3s。不同于后台探测间隔，区域响应不使用。"
+      ],
+      "healthcheck": [
+        "Background upstream probe options; defaults interval 15s, timeout 3s, failThreshold 3, passThreshold 2. Not used for local-zone sources.",
+        "上流の背景監視設定です。既定はinterval 15s、timeout 3s、failThreshold 3、passThreshold 2です。ローカルゾーンでは使用しません。",
+        "上游背景探測選項，預設 interval 15s、timeout 3s、failThreshold 3、passThreshold 2；本機區域來源不使用。",
+        "上游后台探测选项，默认 interval 15s、timeout 3s、failThreshold 3、passThreshold 2；本地区域来源不使用。"
+      ],
+      "healthcheck.interval": [
+        "Go duration; omitted/empty or nonpositive at runtime uses 15s. Duration syntax is validated but positivity is not enforced at configuration validation.",
+        "Go durationです。省略・空、または実行時に0以下なら15sです。設定検証は期間の構文のみで正値は強制しません。",
+        "Go duration；省略、空值或執行時非正值使用 15s。設定驗證僅檢查語法，不強制正值。",
+        "Go duration；省略、空值或运行时非正值使用 15s。配置验证仅检查语法，不强制正值。"
+      ],
+      "healthcheck.timeout": [
+        "Probe Go duration; omitted/empty or nonpositive uses 3s. Also supplies the default queryTimeout when positive.",
+        "監視試行のGo durationです。省略・空・0以下なら3sです。正なら省略したqueryTimeoutの既定にもなります。",
+        "探測 Go duration；省略、空值或非正值使用 3s。正值亦作為省略 queryTimeout 的預設值。",
+        "探测 Go duration；省略、空值或非正值使用 3s。正值亦作为省略 queryTimeout 的默认值。"
+      ],
+      "healthcheck.failThreshold": [
+        "Consecutive failures to mark an upstream unhealthy; default 3 (0/nonpositive runtime normalizes to 3; schema minimum 1).",
+        "上流を異常とする連続失敗回数です。既定3で、実行時の0以下も3になります。スキーマの下限は1です。",
+        "標示上游異常的連續失敗次數，預設 3；執行時非正值亦為 3，結構描述下限 1。",
+        "标记上游异常的连续失败次数，默认 3；运行时非正值亦为 3，模式下限 1。"
+      ],
+      "healthcheck.passThreshold": [
+        "Consecutive successes for recovery; default 2 (0/nonpositive runtime normalizes to 2; schema minimum 1).",
+        "回復に必要な連続成功回数です。既定2で、実行時の0以下も2になります。スキーマの下限は1です。",
+        "恢復所需的連續成功次數，預設 2；執行時非正值亦為 2，結構描述下限 1。",
+        "恢复所需的连续成功次数，默认 2；运行时非正值亦为 2，模式下限 1。"
+      ],
+      "when": [
+        "Optional common state predicate; omitted means unconditional. A condition can remove this rule from the effective resolver configuration.",
+        "共通の状態条件です。省略時は無条件で、条件により有効なリゾルバー設定から規則を除外できます。",
+        "選用共用狀態條件；省略表示無條件，可將此規則自有效解析器設定排除。",
+        "可选通用状态条件；省略表示无条件，可将此规则从有效解析器配置排除。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_dns.go",
+      "pkg/config/diagnostics.go",
+      "pkg/controller/dnsresolver/controller.go",
+      "pkg/dnsresolver/dnsresolver.go",
+      "cmd/routerd-dns-resolver/main.go",
+      "cmd/routerd-dns-resolver/upstream.go"
+    ]
+  },
+  "DNSUpstream": {
+    "purpose": [
+      "A DNS server endpoint referenced by DNSForwarder; declaration alone does not start a listener or forward queries.",
+      "DNSForwarderが参照するDNSサーバーの接続先です。宣言だけで待受を開始したり問い合わせを転送したりはしません。",
+      "供 DNSForwarder 參照的 DNS 伺服器端點；僅宣告不會啟動接聽或轉送查詢。",
+      "供 DNSForwarder 引用的 DNS 服务器端点；仅声明不会启动监听或转发查询。"
+    ],
+    "rules": [
+      [
+        "protocol is required despite an internal URL-builder fallback to udp. At least one of address or addressFrom is required; they may coexist and their endpoints are combined. Dynamic addressFrom is currently UDP-only.",
+        "内部URL生成にはudpの補完がありますが、設定ではprotocolが必須です。addressまたはaddressFromの1つ以上が必要で、併用時は接続先を結合します。動的addressFromは現行UDPのみです。",
+        "protocol 必填，即使內部 URL 產生器有 udp 預設。address 或 addressFrom 至少提供一個，可同時使用並合併端點。動態 addressFrom 目前僅支援 UDP。",
+        "protocol 必填，即使内部 URL 生成器有 udp 默认值。address 或 addressFrom 至少提供一个，可同时使用并合并端点。动态 addressFrom 当前仅支持 UDP。"
+      ],
+      [
+        "Required unresolved addressFrom values suspend the containing forwarder source even if static addresses are available; optional missing values are skipped. Bootstrap references differ: a static bootstrap list can satisfy a missing required dynamic bootstrap.",
+        "必須addressFromが未解決なら固定アドレスがあっても、それを含む転送規則全体を見送ります。optionalの未解決値は省略します。bootstrapは異なり、固定一覧があれば必須の動的bootstrapの未解決を補えます。",
+        "必要 addressFrom 未解析時，即使有固定端點，仍暫停包含它的整個轉送來源；選用值則略過。bootstrap 不同：固定清單可補足必要動態 bootstrap 的缺值。",
+        "必要 addressFrom 未解析时，即使有固定端点，仍暂停包含它的整个转发来源；可选值则跳过。bootstrap 不同：固定列表可补足必要动态 bootstrap 的缺值。"
+      ],
+      [
+        "sourceInterface is passed verbatim to socket binding, with no logical-name or Kind/name resolution. On Linux use a declared interface whose metadata.name equals its OS ifname. The FreeBSD socket path rejects direct ifname binding, while normal configuration validation does not offer a valid fib:<n> alternative here.",
+        "sourceInterfaceは論理名・Kind/nameから変換せず、そのままソケットに渡します。Linuxではmetadata.nameとOSのifnameが一致する宣言を使ってください。FreeBSDのソケット処理はifname直接指定を拒否し、通常設定の検証もここで利用できるfib:<n>の代替指定を提供していません。",
+        "sourceInterface 原樣傳入通訊端綁定，不解析邏輯名稱或 Kind/name。Linux 請宣告 metadata.name 與 OS ifname 相同的介面。FreeBSD 通訊端路徑拒絕直接 ifname 綁定，而一般設定驗證也未提供可用的 fib:<n> 替代方式。",
+        "sourceInterface 原样传入套接字绑定，不解析逻辑名称或 Kind/name。Linux 请声明 metadata.name 与 OS ifname 相同的接口。FreeBSD 套接字路径拒绝直接 ifname 绑定，而常规配置验证也未提供可用的 fib:<n> 替代方式。"
+      ]
+    ],
+    "fields": {
+      "protocol": [
+        "Required udp, tcp, dot or doh. Use lowercase canonical spelling. UDP/TCP use plaintext DNS, DoT TLS, DoH HTTPS.",
+        "udp・tcp・dot・dohのいずれかが必須です。小文字の正式表記を使用します。UDP/TCPは平文DNS、DoTはTLS、DoHはHTTPSです。",
+        "必填 udp、tcp、dot 或 doh，請用標準小寫。UDP/TCP 為明文 DNS，DoT 使用 TLS，DoH 使用 HTTPS。",
+        "必填 udp、tcp、dot 或 doh，请用标准小写。UDP/TCP 为明文 DNS，DoT 使用 TLS，DoH 使用 HTTPS。"
+      ],
+      "address": [
+        "Server IP or hostname without scheme, port or path. Required if addressFrom is empty. No implicit server; hostname resolution uses bootstrap when supplied.",
+        "スキーム・ポート・パスを含まないサーバーIPまたはホスト名です。addressFromが空なら必須です。暗黙のサーバーはなく、bootstrap指定時は名前解決に使用します。",
+        "不含協定、連接埠或路徑的伺服器 IP 或主機名稱；addressFrom 為空時必填。無隱含伺服器，若提供 bootstrap 則用於名稱解析。",
+        "不含协议、端口或路径的服务器 IP 或主机名；addressFrom 为空时必填。无隐含服务器，若提供 bootstrap 则用于名称解析。"
+      ],
+      "addressFrom": [
+        "Optional UDP-only common status-value source list. Each item requires existing resource and explicit provided field; optional defaults false. Dynamic bare addresses normalize to UDP port 53 independently of this resource port. Sources may return multiple servers.",
+        "UDP専用の状態値参照一覧です。各項目に設定内のresourceと提供フィールドの明示が必要で、optional既定falseです。動的な裸アドレスは本リソースのportとは独立してUDP 53へ正規化します。複数サーバーの返却も可能です。",
+        "選用且僅限 UDP 的狀態值來源清單，每項須有已宣告 resource 與明確提供欄位；optional 預設 false。動態純位址會獨立於此資源 port 正規化為 UDP 53，可傳回多個伺服器。",
+        "可选且仅限 UDP 的状态值来源列表，每项须有已声明 resource 与明确提供字段；optional 默认 false。动态纯地址会独立于此资源 port 规范化为 UDP 53，可返回多个服务器。"
+      ],
+      "port": [
+        "Optional 1–65535; omitted/0 defaults to 53 for udp/tcp, 853 for dot, 443 for doh. Used for the static address endpoint, not bare values returned by addressFrom.",
+        "1～65535です。省略・0はudp/tcpで53、dotで853、dohで443です。固定addressに適用し、addressFromが返す裸値には適用しません。",
+        "選用 1–65535；省略或 0 時 udp/tcp 為 53、dot 為 853、doh 為 443。用於固定 address，不套用至 addressFrom 傳回的純位址。",
+        "可选 1–65535；省略或 0 时 udp/tcp 为 53、dot 为 853、doh 为 443。用于固定 address，不应用于 addressFrom 返回的纯地址。"
+      ],
+      "path": [
+        "DoH URL path, default /dns-query; when supplied for doh it must start with /. Other protocols do not consume it.",
+        "DoHのURLパスで、既定は/dns-queryです。dohで指定する場合は/始まりが必須です。他プロトコルでは使いません。",
+        "DoH URL 路徑，預設 /dns-query；doh 提供此值時須以 / 開頭。其他協定不使用。",
+        "DoH URL 路径，默认 /dns-query；doh 提供此值时须以 / 开头。其他协议不使用。"
+      ],
+      "tlsName": [
+        "DoT TLS server name for certificate verification/SNI; omitted uses the endpoint hostname. Explicit tlsName is rejected for DoH. UDP/TCP ignore it even though accepted by validation.",
+        "DoTの証明書検証・SNI用サーバー名です。省略時は接続先ホスト名を使用します。DoHでは明示指定が検証で拒否されます。UDP/TCPは検証で許しても使用しません。",
+        "DoT 憑證驗證與 SNI 伺服器名稱，省略使用端點主機名稱。DoH 明確設定會被驗證拒絕；UDP/TCP 雖可通過驗證但會忽略。",
+        "DoT 证书验证与 SNI 服务器名称，省略使用端点主机名。DoH 明确设置会被验证拒绝；UDP/TCP 虽可通过验证但会忽略。"
+      ],
+      "bootstrap": [
+        "Optional DNS server list for resolving upstream hostnames. Empty together with unresolved/absent bootstrapFrom uses the OS resolver only when no required dynamic dependency is waiting. All referenced upstreams in a forwarder share merged bootstrap settings.",
+        "上流ホスト名の解決用DNS一覧です。bootstrapFromも空・省略で必須依存待ちがなければOSのリゾルバーを使います。同じ転送規則内の上流で結合した設定を共有します。",
+        "選用的上游主機名稱解析 DNS 清單。與 bootstrapFrom 皆空或省略且無必要相依等待時，使用 OS 解析器。同一轉送規則的上游共用合併後設定。",
+        "可选的上游主机名解析 DNS 列表。与 bootstrapFrom 均空或省略且无必要依赖等待时，使用 OS 解析器。同一转发规则的上游共用合并后设置。"
+      ],
+      "bootstrapFrom": [
+        "Optional list of required-field status sources; resource and field must exist, optional defaults false. Dynamic and static bootstrap servers are combined; static bootstrap satisfies a missing required dynamic value.",
+        "field必須の状態値参照一覧です。resource・fieldの存在が必要で、optional既定falseです。動的・固定サーバーを結合し、固定bootstrapがあれば必須の動的値が未解決でも利用できます。",
+        "選用且 field 必填的狀態來源清單；resource 與 field 須存在，optional 預設 false。動態與固定伺服器合併；固定 bootstrap 可補足必要動態值的缺值。",
+        "可选且 field 必填的状态来源列表；resource 与 field 须存在，optional 默认 false。动态与固定服务器合并；固定 bootstrap 可补足必要动态值的缺值。"
+      ],
+      "sourceInterface": [
+        "Optional declared Interface or WireGuardInterface name. Default empty lets OS routing choose. Binding is shared at forwarder-pool level; see the literal-name and FreeBSD restrictions above.",
+        "宣言したInterfaceまたはWireGuardInterfaceの名前です。既定空ならOSの経路選択に任せます。転送プール単位で共有し、裸のOS名・FreeBSDに関する上記制限があります。",
+        "選用的已宣告 Interface 或 WireGuardInterface 名稱；預設空值由 OS 選路。綁定由轉送池共用，須注意上述原樣名稱及 FreeBSD 限制。",
+        "可选的已声明 Interface 或 WireGuardInterface 名称；默认空值由 OS 选路。绑定由转发池共用，须注意上述原样名称及 FreeBSD 限制。"
+      ],
+      "when": [
+        "Optional common state predicate; default unconditional. Filtering this upstream can leave its forwarder without usable endpoints.",
+        "共通の状態条件です。既定は無条件で、除外されると転送規則に有効な接続先がなくなる場合があります。",
+        "選用共用狀態條件，預設無條件。篩除此上游可能使轉送規則沒有可用端點。",
+        "可选通用状态条件，默认无条件。筛除此上游可能使转发规则没有可用端点。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_dns.go",
+      "pkg/config/diagnostics.go",
+      "pkg/controller/dnsresolver/controller.go",
+      "pkg/dnsresolver/dnsresolver.go",
+      "cmd/routerd-dns-resolver/upstream.go",
+      "cmd/routerd-dns-resolver/upstream_bind_linux.go",
+      "cmd/routerd-dns-resolver/upstream_bind_freebsd.go"
+    ]
+  },
+  "DNSZone": {
+    "purpose": [
+      "Local A/AAAA records and generated PTR answers served through a DNSForwarder zoneRefs rule. This is not a general authoritative DNS server with arbitrary record types, zone transfers or signing.",
+      "DNSForwarder.zoneRefs経由で提供するローカルA/AAAAレコードと自動PTR応答です。任意レコード型・ゾーン転送・署名を備えた汎用権威DNSではありません。",
+      "透過 DNSForwarder.zoneRefs 提供本機 A/AAAA 記錄及自動 PTR 回應；不是支援任意記錄類型、區域傳送或簽署的通用權威 DNS。",
+      "通过 DNSForwarder.zoneRefs 提供本地 A/AAAA 记录及自动 PTR 响应；不是支持任意记录类型、区域传送或签名的通用权威 DNS。"
+    ],
+    "rules": [
+      [
+        "A DNSForwarder must refer to this zone, and its match list must include the queried forward or reverse domain. Merely declaring DNSZone does not open a DNS port. The resolver also imports matching VirtualAddress/IngressService hostnames unless those resources specify externalDNS.",
+        "DNSForwarderから参照し、正引き・逆引きの問い合わせ名をmatchに含めてください。DNSZoneの宣言だけではDNSポートを開きません。該当ゾーンのVirtualAddress・IngressServiceのhostnameも、各externalDNS指定がなければ取り込みます。",
+        "須由 DNSForwarder 參照，且 match 須涵蓋查詢的正向或反向網域。僅宣告 DNSZone 不會開啟 DNS 連接埠。符合區域的 VirtualAddress/IngressService hostname 亦會匯入，除非其指定 externalDNS。",
+        "须由 DNSForwarder 引用，且 match 须涵盖查询的正向或反向域名。仅声明 DNSZone 不会开启 DNS 端口。符合区域的 VirtualAddress/IngressService hostname 也会导入，除非其指定 externalDNS。"
+      ],
+      [
+        "Static ipv4/ipv6 and dynamic ipv4From/ipv6From may coexist. A resolved dynamic value replaces the literal for that family; missing values retain the literal. Missing required sources record pending metadata rather than blocking the entire resolver; optional missing sources do not record pending. Wrong-family or invalid resolved values are errors.",
+        "固定ipv4/ipv6と動的ipv4From/ipv6Fromは併用できます。解決した動的値が同じ系統の固定値を上書きし、未解決なら固定値を保持します。必須参照の未解決は記録単位の待ち情報となり、リゾルバー全体は停止しません。optionalの未解決は待ち情報を記録しません。系統違い・不正な解決値はエラーです。",
+        "固定 ipv4/ipv6 可與動態 ipv4From/ipv6From 並用。已解析動態值取代同位址族固定值，未解析時保留固定值。必要來源缺值記錄於個別記錄的等待資訊，不阻擋整個解析器；選用缺值不記錄等待。位址族錯誤或無效值會報錯。",
+        "固定 ipv4/ipv6 可与动态 ipv4From/ipv6From 并用。已解析动态值替换同地址族固定值，未解析时保留固定值。必要来源缺值记录于各记录的等待信息，不阻挡整个解析器；可选缺值不记录等待。地址族错误或无效值会报错。"
+      ],
+      [
+        "dnssec.enabled only sets AD on local answers; it does not generate RRSIG/DNSKEY or validate signatures. dnssec.mode, dhcpDerived.hostnameSuffix, dhcpDerived.ddns and reverseZones do not currently change answer behavior. Do not interpret these fields as working signing, DDNS or reverse-zone access controls.",
+        "dnssec.enabledはローカル応答にADを立てるだけで、RRSIG・DNSKEYの生成や署名検証は行いません。dnssec.mode、dhcpDerived.hostnameSuffix、dhcpDerived.ddns、reverseZonesは現行の応答処理を変えません。署名・DDNS・逆引きゾーン制限として機能すると解釈しないでください。",
+        "dnssec.enabled 僅在本機回應設定 AD，不產生 RRSIG/DNSKEY 或驗證簽章。dnssec.mode、dhcpDerived.hostnameSuffix、dhcpDerived.ddns、reverseZones 目前不改變回應行為，不能視為可用的簽署、DDNS 或反向區域存取控制。",
+        "dnssec.enabled 仅在本地响应设置 AD，不生成 RRSIG/DNSKEY 或验证签名。dnssec.mode、dhcpDerived.hostnameSuffix、dhcpDerived.ddns、reverseZones 当前不改变响应行为，不能视为可用的签名、DDNS 或反向区域访问控制。"
+      ],
+      [
+        "Only A/AAAA and generated PTR records are answered. An existing name with no requested address family returns NOERROR/NODATA; an absent name within the zone returns NXDOMAIN. Wildcard names are supported. Repeated static hostnames use the last record rather than accumulating addresses across entries.",
+        "A/AAAAと自動生成PTRのみを応答します。存在する名前に対象系統がなければNOERROR/NODATA、ゾーン内の未登録名はNXDOMAINです。ワイルドカード名に対応します。同じ静的hostnameの重複はアドレス追加ではなく後のレコードで置換します。",
+        "僅回答 A/AAAA 與自動 PTR。名稱存在但無所查位址族時為 NOERROR/NODATA，區域內名稱不存在時為 NXDOMAIN。支援萬用字元。重複固定 hostname 採最後記錄，不累加各項位址。",
+        "仅应答 A/AAAA 与自动 PTR。名称存在但无所查地址族时为 NOERROR/NODATA，区域内名称不存在时为 NXDOMAIN。支持通配符。重复固定 hostname 采用最后记录，不累加各项地址。"
+      ]
+    ],
+    "fields": {
+      "zone": [
+        "Required zone domain, for example home.example.net. Runtime adds a trailing dot; no default. Use normal lowercase DNS names because the current validator only checks nonempty.",
+        "home.example.netなどのゾーン名が必須です。実行時に末尾ドットを補い、既定値はありません。検証は空でないことのみのため、通常の小文字DNS名を使用してください。",
+        "必填區域網域，例如 home.example.net，執行時補尾端句點，無預設值。目前僅驗證非空，請使用一般小寫 DNS 名稱。",
+        "必填区域域名，例如 home.example.net，运行时补末尾句点，无默认值。当前仅验证非空，请使用常规小写 DNS 名称。"
+      ],
+      "ttl": [
+        "Zone default TTL in seconds; omitted/0 becomes 300. Schema permits nonnegative values. Used by static records without TTL and generated PTR replies.",
+        "ゾーンの既定TTL秒数で、省略・0は300です。スキーマ上0以上です。TTL省略の静的レコードと自動PTR応答に使います。",
+        "區域預設 TTL 秒數；省略或 0 為 300，結構描述要求非負值。用於未指定 TTL 的固定記錄及自動 PTR。",
+        "区域默认 TTL 秒数；省略或 0 为 300，模式要求非负值。用于未指定 TTL 的固定记录及自动 PTR。"
+      ],
+      "dnssec": [
+        "Optional local-answer AD flag settings; no cryptographic signing or validation.",
+        "ローカル応答のADフラグ設定です。暗号学的な署名・検証は行いません。",
+        "選用的本機回應 AD 旗標設定，不提供密碼學簽署或驗證。",
+        "可选的本地响应 AD 标志设置，不提供密码学签名或验证。"
+      ],
+      "dnssec.enabled": [
+        "Default false; true sets AD even on local negative/NODATA replies without producing signatures.",
+        "既定falseです。trueは署名を生成せず、ローカルの否定・NODATA応答にもADを立てます。",
+        "預設 false；true 不產生簽章，連本機否定或 NODATA 回應也設定 AD。",
+        "默认 false；true 不生成签名，连本地否定或 NODATA 响应也设置 AD。"
+      ],
+      "dnssec.mode": [
+        "Schema accepts empty, validate or sign; default empty. Decoded but not used by current local-zone answer logic.",
+        "スキーマは空・validate・signを許し、既定空です。読み込みますが、現行のローカルゾーン応答では使いません。",
+        "結構描述接受空值、validate 或 sign，預設空值。會解碼但目前本機區域回應邏輯不使用。",
+        "模式接受空值、validate 或 sign，默认空值。会解码但当前本地区域响应逻辑不使用。"
+      ],
+      "records": [
+        "Optional static A/AAAA record list, default empty. A hostname with no addresses is accepted but has no A/AAAA answer.",
+        "静的A/AAAAレコードの一覧で、既定空です。アドレスなしhostnameも検証を通りますがA/AAAA応答を持ちません。",
+        "選用固定 A/AAAA 記錄清單，預設空。無位址 hostname 也可通過驗證，但不提供 A/AAAA 回應。",
+        "可选固定 A/AAAA 记录列表，默认空。无地址 hostname 也可通过验证，但不提供 A/AAAA 响应。"
+      ],
+      "records[].hostname": [
+        "Required name without whitespace or comma. Relative names are suffixed with zone; a full name already inside zone stays unchanged. A name outside zone is also suffixed, not served as an external zone. Use *.subdomain for a wildcard.",
+        "空白・カンマを含まない名前が必須です。相対名にはzoneを付加し、ゾーン内の完全名はそのままです。ゾーン外名にもzoneを付けるため、別ゾーンの公開にはなりません。ワイルドカードは*.subdomainなどです。",
+        "必填且不可含空白或逗號。相對名稱附加 zone；已在區域內的完整名稱維持原樣，區域外名稱也會附加 zone，不會另行提供外部區域。萬用字元可用 *.subdomain。",
+        "必填且不可含空白或逗号。相对名称附加 zone；已在区域内的完整名称保持原样，区域外名称也会附加 zone，不会另行提供外部区域。通配符可用 *.subdomain。"
+      ],
+      "records[].ipv4": [
+        "Optional bare IPv4 address; default none. Can coexist with ipv4From as a fallback retained when the source is unresolved.",
+        "任意の裸IPv4アドレスで、既定なしです。ipv4Fromと併用でき、未解決時に残る固定値になります。",
+        "選用的純 IPv4 位址，預設無；可與 ipv4From 並用，來源未解析時保留此值。",
+        "可选的纯 IPv4 地址，默认无；可与 ipv4From 并用，来源未解析时保留此值。"
+      ],
+      "records[].ipv4From": [
+        "Optional common status-value source; explicit resource/field required and validated. First usable value must be IPv4; CIDR input is reduced to its host address. Runtime reads status, not the declared IPv4StaticAddress fallback used by some other consumers.",
+        "共通の状態値参照で、resource・fieldの明示と存在検証が必要です。先頭の有効値はIPv4必須で、CIDRはホストアドレス部分を使います。実行時は状態だけを読み、他の利用箇所と異なりIPv4StaticAddressの宣言値補完は行いません。",
+        "選用共用狀態來源，須明確指定並驗證 resource/field。第一個有效值須為 IPv4，CIDR 取主機位址。執行時僅讀狀態，不像部分其他使用者會以 IPv4StaticAddress 宣告值補足。",
+        "可选通用状态来源，须明确指定并验证 resource/field。第一个有效值须为 IPv4，CIDR 取主机地址。运行时仅读状态，不像部分其他使用方会以 IPv4StaticAddress 声明值补足。"
+      ],
+      "records[].ipv6": [
+        "Optional bare IPv6 address; default none. Can coexist with ipv6From using the same fallback behavior.",
+        "任意の裸IPv6アドレスで、既定なしです。ipv6Fromとの併用・未解決時の補完はIPv4と同じです。",
+        "選用的純 IPv6 位址，預設無；與 ipv6From 並用及缺值處理方式同 IPv4。",
+        "可选的纯 IPv6 地址，默认无；与 ipv6From 并用及缺值处理方式同 IPv4。"
+      ],
+      "records[].ipv6From": [
+        "Optional common resource/field/optional source; first value must be IPv6. Same reference, CIDR and missing-value rules as ipv4From; optional defaults false.",
+        "共通のresource・field・optionalによる参照で、先頭値はIPv6必須です。参照・CIDR・未解決時の規則はipv4Fromと同じで、optional既定falseです。",
+        "選用共用 resource/field/optional 來源，第一個值須為 IPv6。參照、CIDR 與缺值規則同 ipv4From；optional 預設 false。",
+        "可选通用 resource/field/optional 来源，第一个值须为 IPv6。引用、CIDR 与缺值规则同 ipv4From；optional 默认 false。"
+      ],
+      "records[].ttl": [
+        "Record TTL in seconds; omitted/0 inherits zone TTL. Schema nonnegative; does not affect DHCP-derived TTL.",
+        "レコードのTTL秒数です。省略・0はゾーンTTLを継承します。スキーマ上0以上で、DHCP由来のTTLには影響しません。",
+        "記錄 TTL 秒數；省略或 0 繼承區域 TTL。結構描述要求非負，不影響 DHCP 衍生 TTL。",
+        "记录 TTL 秒数；省略或 0 继承区域 TTL。模式要求非负，不影响 DHCP 派生 TTL。"
+      ],
+      "dhcpDerived": [
+        "Optional DHCP lease-to-record settings. Runtime lease events can update enabled zones; this is not RFC 2136 DDNS.",
+        "DHCPリースからのレコード生成設定です。有効なゾーンは実行時リースイベントで更新できます。RFC 2136のDDNSではありません。",
+        "選用 DHCP 租約衍生記錄設定，啟用區域可由執行時租約事件更新，並非 RFC 2136 DDNS。",
+        "可选 DHCP 租约派生记录设置，启用区域可由运行时租约事件更新，并非 RFC 2136 DDNS。"
+      ],
+      "dhcpDerived.sources": [
+        "Default empty disables live lease-event import and sticky snapshot import. Any nonempty list enables them; current runtime does not filter by these source strings or validate referenced DHCP resources. All received lease events are offered to each enabled zone.",
+        "既定空ではライブリースイベント・保全ホスト情報の取り込みを無効にします。非空なら有効ですが、現行実装は文字列による送信元選別やDHCPリソース参照検証をしません。受信リースイベントを有効な各ゾーンに渡します。",
+        "預設空值停用即時租約事件與保存主機快照匯入。任意非空清單會啟用，但目前不依字串篩選來源或驗證 DHCP 資源參照；所有收到的租約事件皆提供給各啟用區域。",
+        "默认空值禁用实时租约事件与保存主机快照导入。任意非空列表会启用，但当前不按字符串筛选来源或验证 DHCP 资源引用；所有收到的租约事件均提供给各启用区域。"
+      ],
+      "dhcpDerived.hostnameSuffix": [
+        "Decoded optional string, default empty; not read by current lease record generation. Zone suffixing uses zone instead.",
+        "任意文字列として読み込み、既定空です。現行リースレコード生成では使わず、末尾補完はzoneを使います。",
+        "解碼的選用字串，預設空值；目前租約記錄產生不讀取，後綴使用 zone。",
+        "解码的可选字符串，默认空值；当前租约记录生成不读取，后缀使用 zone。"
+      ],
+      "dhcpDerived.ddns": [
+        "Decoded boolean default false; current daemon neither gates event updates on this flag nor implements DNS UPDATE from it.",
+        "既定falseの真偽値として読み込みますが、イベント更新の可否判定にもDNS UPDATE実装にも使いません。",
+        "解碼布林值，預設 false；目前不以此旗標控制事件更新，也不據此實作 DNS UPDATE。",
+        "解码布尔值，默认 false；当前不以此标志控制事件更新，也不据此实现 DNS UPDATE。"
+      ],
+      "dhcpDerived.ttl": [
+        "TTL seconds for DHCP-derived forward records; omitted/0 becomes 60, independent of zone TTL. PTR replies use zone TTL.",
+        "DHCP由来の正引きレコードのTTL秒数です。省略・0はゾーンTTLと独立して60です。PTR応答はゾーンTTLを使います。",
+        "DHCP 衍生正向記錄 TTL 秒數；省略或 0 為 60，與區域 TTL 無關。PTR 回應使用區域 TTL。",
+        "DHCP 派生正向记录 TTL 秒数；省略或 0 为 60，与区域 TTL 无关。PTR 响应使用区域 TTL。"
+      ],
+      "dhcpDerived.leaseFile": [
+        "Optional dnsmasq lease-file path read when constructing/reloading the zone. Empty disables this file import; it is separate from live-event source enablement and not a continuously watched file.",
+        "ゾーン構築・再読込時に読むdnsmasqリースファイルです。空ならファイル取込なしで、ライブイベントの有効化とは別です。継続監視するファイルではありません。",
+        "建構或重新載入區域時讀取的選用 dnsmasq 租約檔案。空值不匯入，與即時事件啟用分開，並非持續監看檔案。",
+        "构建或重新加载区域时读取的可选 dnsmasq 租约文件。空值不导入，与实时事件启用分开，并非持续监视文件。"
+      ],
+      "reverseZones": [
+        "Optional reverse-zone metadata list, default empty. Current daemon records these names but does not consult them when answering PTR; PTR is generated from records regardless of this list.",
+        "逆引きゾーンの補助情報で、既定空です。現行デーモンは名前を保持してもPTR応答時に参照せず、この一覧によらずレコードからPTRを生成します。",
+        "選用反向區域中繼資料清單，預設空。常駐程序保存名稱但不在 PTR 回應時查閱；PTR 依記錄產生，不受此清單控制。",
+        "可选反向区域元数据列表，默认空。守护进程保存名称但不在 PTR 响应时查阅；PTR 按记录生成，不受此列表控制。"
+      ],
+      "reverseZones[].name": [
+        "Schema-required string inside each entry. Stored as a fully qualified reverse-zone name but currently has no answer-selection effect.",
+        "各項目内でスキーマ上必須の文字列です。完全逆引きゾーン名として保持しますが、現行の応答選択には影響しません。",
+        "每項內結構描述要求的字串，保存為完整反向區域名稱，但目前不影響回應選擇。",
+        "每项内模式要求的字符串，保存为完整反向区域名称，但当前不影响响应选择。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_dns.go",
+      "pkg/config/diagnostics.go",
+      "pkg/controller/dnsresolver/controller.go",
+      "cmd/routerd-dns-resolver/zone.go"
+    ]
   }
 }

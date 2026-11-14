@@ -5,6 +5,14 @@
 <main class="doclayout wrap"><article class="document"><h1 id="dnszone">DNSZone</h1>
 <p><a href="../resources.html#dnszone">リソース別の設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>DNSForwarder.zoneRefs経由で提供するローカルA/AAAAレコードと自動PTR応答です。任意レコード型・ゾーン転送・署名を備えた汎用権威DNSではありません。</p>
+<h2 id="指定条件と参照関係">指定条件と参照関係</h2>
+<ul>
+<li>DNSForwarderから参照し、正引き・逆引きの問い合わせ名をmatchに含めてください。DNSZoneの宣言だけではDNSポートを開きません。該当ゾーンのVirtualAddress・IngressServiceのhostnameも、各externalDNS指定がなければ取り込みます。</li>
+<li>固定ipv4/ipv6と動的ipv4From/ipv6Fromは併用できます。解決した動的値が同じ系統の固定値を上書きし、未解決なら固定値を保持します。必須参照の未解決は記録単位の待ち情報となり、リゾルバー全体は停止しません。optionalの未解決は待ち情報を記録しません。系統違い・不正な解決値はエラーです。</li>
+<li>dnssec.enabledはローカル応答にADを立てるだけで、RRSIG・DNSKEYの生成や署名検証は行いません。dnssec.mode、dhcpDerived.hostnameSuffix、dhcpDerived.ddns、reverseZonesは現行の応答処理を変えません。署名・DDNS・逆引きゾーン制限として機能すると解釈しないでください。</li>
+<li>A/AAAAと自動生成PTRのみを応答します。存在する名前に対象系統がなければNOERROR/NODATA、ゾーン内の未登録名はNXDOMAINです。ワイルドカード名に対応します。同じ静的hostnameの重複はアドレス追加ではなく後のレコードで置換します。</li>
+</ul>
 <h2 id="yaml定義">YAML定義</h2>
 <p>全フィールドを示す構造参照です。そのまま反映する設定例ではありません。プレースホルダーを実値に置換し、不要な項目を省き、両立する選択肢だけを使います。表示値は型を示す仮値であり、実効的な既定値と指定条件は下の項目説明に記載します。必須の表示はJSON Schemaに基づく親オブジェクト内での指定要否であり、意味上の検証では追加の項目や参照が必要になる場合があります。</p>
 <pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
@@ -42,9 +50,103 @@
     ttl: 0 # 任意; integer; minimum=0
     zone: &quot;&lt;string&gt;&quot; # 必須; string
 </code></pre>
+<h2 id="項目の意味と既定値">項目の意味と既定値</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>項目の意味と既定値</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.zone</code></td>
+<td>home.example.netなどのゾーン名が必須です。実行時に末尾ドットを補い、既定値はありません。検証は空でないことのみのため、通常の小文字DNS名を使用してください。</td>
+</tr>
+<tr>
+<td><code>spec.ttl</code></td>
+<td>ゾーンの既定TTL秒数で、省略・0は300です。スキーマ上0以上です。TTL省略の静的レコードと自動PTR応答に使います。</td>
+</tr>
+<tr>
+<td><code>spec.dnssec</code></td>
+<td>ローカル応答のADフラグ設定です。暗号学的な署名・検証は行いません。</td>
+</tr>
+<tr>
+<td><code>spec.dnssec.enabled</code></td>
+<td>既定falseです。trueは署名を生成せず、ローカルの否定・NODATA応答にもADを立てます。</td>
+</tr>
+<tr>
+<td><code>spec.dnssec.mode</code></td>
+<td>スキーマは空・validate・signを許し、既定空です。読み込みますが、現行のローカルゾーン応答では使いません。</td>
+</tr>
+<tr>
+<td><code>spec.records</code></td>
+<td>静的A/AAAAレコードの一覧で、既定空です。アドレスなしhostnameも検証を通りますがA/AAAA応答を持ちません。</td>
+</tr>
+<tr>
+<td><code>spec.records[].hostname</code></td>
+<td>空白・カンマを含まない名前が必須です。相対名にはzoneを付加し、ゾーン内の完全名はそのままです。ゾーン外名にもzoneを付けるため、別ゾーンの公開にはなりません。ワイルドカードは*.subdomainなどです。</td>
+</tr>
+<tr>
+<td><code>spec.records[].ipv4</code></td>
+<td>任意の裸IPv4アドレスで、既定なしです。ipv4Fromと併用でき、未解決時に残る固定値になります。</td>
+</tr>
+<tr>
+<td><code>spec.records[].ipv4From</code></td>
+<td>共通の状態値参照で、resource・fieldの明示と存在検証が必要です。先頭の有効値はIPv4必須で、CIDRはホストアドレス部分を使います。実行時は状態だけを読み、他の利用箇所と異なりIPv4StaticAddressの宣言値補完は行いません。</td>
+</tr>
+<tr>
+<td><code>spec.records[].ipv6</code></td>
+<td>任意の裸IPv6アドレスで、既定なしです。ipv6Fromとの併用・未解決時の補完はIPv4と同じです。</td>
+</tr>
+<tr>
+<td><code>spec.records[].ipv6From</code></td>
+<td>共通のresource・field・optionalによる参照で、先頭値はIPv6必須です。参照・CIDR・未解決時の規則はipv4Fromと同じで、optional既定falseです。</td>
+</tr>
+<tr>
+<td><code>spec.records[].ttl</code></td>
+<td>レコードのTTL秒数です。省略・0はゾーンTTLを継承します。スキーマ上0以上で、DHCP由来のTTLには影響しません。</td>
+</tr>
+<tr>
+<td><code>spec.dhcpDerived</code></td>
+<td>DHCPリースからのレコード生成設定です。有効なゾーンは実行時リースイベントで更新できます。RFC 2136のDDNSではありません。</td>
+</tr>
+<tr>
+<td><code>spec.dhcpDerived.sources</code></td>
+<td>既定空ではライブリースイベント・保全ホスト情報の取り込みを無効にします。非空なら有効ですが、現行実装は文字列による送信元選別やDHCPリソース参照検証をしません。受信リースイベントを有効な各ゾーンに渡します。</td>
+</tr>
+<tr>
+<td><code>spec.dhcpDerived.hostnameSuffix</code></td>
+<td>任意文字列として読み込み、既定空です。現行リースレコード生成では使わず、末尾補完はzoneを使います。</td>
+</tr>
+<tr>
+<td><code>spec.dhcpDerived.ddns</code></td>
+<td>既定falseの真偽値として読み込みますが、イベント更新の可否判定にもDNS UPDATE実装にも使いません。</td>
+</tr>
+<tr>
+<td><code>spec.dhcpDerived.ttl</code></td>
+<td>DHCP由来の正引きレコードのTTL秒数です。省略・0はゾーンTTLと独立して60です。PTR応答はゾーンTTLを使います。</td>
+</tr>
+<tr>
+<td><code>spec.dhcpDerived.leaseFile</code></td>
+<td>ゾーン構築・再読込時に読むdnsmasqリースファイルです。空ならファイル取込なしで、ライブイベントの有効化とは別です。継続監視するファイルではありません。</td>
+</tr>
+<tr>
+<td><code>spec.reverseZones</code></td>
+<td>逆引きゾーンの補助情報で、既定空です。現行デーモンは名前を保持してもPTR応答時に参照せず、この一覧によらずレコードからPTRを生成します。</td>
+</tr>
+<tr>
+<td><code>spec.reverseZones[].name</code></td>
+<td>各項目内でスキーマ上必須の文字列です。完全逆引きゾーン名として保持しますが、現行の応答選択には影響しません。</td>
+</tr>
+</tbody>
+</table>
+<p>実装: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_dns.go">pkg/config/validate_dns.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go">pkg/config/diagnostics.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/dnsresolver/controller.go">pkg/controller/dnsresolver/controller.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd-dns-resolver/zone.go">cmd/routerd-dns-resolver/zone.go</a></p>
 <p><a href="/examples/example-dslite-home.yaml">設定例</a></p></article><aside class="doccontents"><strong>このページの内容</strong><div class="toc">
 <ul>
+<li><a href="#指定条件と参照関係">指定条件と参照関係</a></li>
 <li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#項目の意味と既定値">項目の意味と既定値</a></li>
 </ul>
 </div>
 </aside></main>

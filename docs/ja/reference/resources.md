@@ -396,20 +396,28 @@ KubernetesのPod・ServiceネットワークへのIPv4経路を、明示した�
 
 [DNSZone](resources/DNSZone.md)
 
+DNSForwarder.zoneRefs経由で提供するローカルA/AAAAレコードと自動PTR応答です。任意レコード型・ゾーン転送・署名を備えた汎用権威DNSではありません。
+
 
 ## DNSResolver
 
 [DNSResolver](resources/DNSResolver.md)
+
+DNSForwarderの規則に接続する、UDP・TCP待受を備えたローカルDNSサービスです。
 
 
 ## DNSForwarder
 
 [DNSForwarder](resources/DNSForwarder.md)
 
+1つのDNSResolverに対し、問い合わせ名に応じてローカルゾーンまたは上流DNSを選ぶ規則です。
+
 
 ## DNSUpstream
 
 [DNSUpstream](resources/DNSUpstream.md)
+
+DNSForwarderが参照するDNSサーバーの接続先です。宣言だけで待受を開始したり問い合わせを転送したりはしません。
 
 
 ## DSLiteTunnel

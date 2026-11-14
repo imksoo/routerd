@@ -5,6 +5,13 @@
 <main class="doclayout wrap"><article class="document"><h1 id="dnsupstream">DNSUpstream</h1>
 <p><a href="../resources.html#dnsupstream">各资源的配置</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>供 DNSForwarder 引用的 DNS 服务器端点；仅声明不会启动监听或转发查询。</p>
+<h2 id="指定条件与引用关系">指定条件与引用关系</h2>
+<ul>
+<li>protocol 必填，即使内部 URL 生成器有 udp 默认值。address 或 addressFrom 至少提供一个，可同时使用并合并端点。动态 addressFrom 当前仅支持 UDP。</li>
+<li>必要 addressFrom 未解析时，即使有固定端点，仍暂停包含它的整个转发来源；可选值则跳过。bootstrap 不同：固定列表可补足必要动态 bootstrap 的缺值。</li>
+<li>sourceInterface 原样传入套接字绑定，不解析逻辑名称或 Kind/name。Linux 请声明 metadata.name 与 OS ifname 相同的接口。FreeBSD 套接字路径拒绝直接 ifname 绑定，而常规配置验证也未提供可用的 fib:<n> 替代方式。</li>
+</ul>
 <h2 id="yaml定义">YAML定义</h2>
 <p>此处列出所有字段的结构，不是可直接应用的配置示例。请替换占位值、省略不使用的选项，并选择兼容的组合。显示值仅表示类型；有效默认值及条件列于下方字段说明。必填标记来自JSON Schema，表示在所属对象内必须指定；语义验证可能要求其他字段或引用。</p>
 <pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
@@ -42,9 +49,63 @@
           maxAge: &quot;&lt;string&gt;&quot; # 选填; string
           status: &quot;set&quot; # 选填; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
 </code></pre>
+<h2 id="字段含义与默认值">字段含义与默认值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>字段含义与默认值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.protocol</code></td>
+<td>必填 udp、tcp、dot 或 doh，请用标准小写。UDP/TCP 为明文 DNS，DoT 使用 TLS，DoH 使用 HTTPS。</td>
+</tr>
+<tr>
+<td><code>spec.address</code></td>
+<td>不含协议、端口或路径的服务器 IP 或主机名；addressFrom 为空时必填。无隐含服务器，若提供 bootstrap 则用于名称解析。</td>
+</tr>
+<tr>
+<td><code>spec.addressFrom</code></td>
+<td>可选且仅限 UDP 的状态值来源列表，每项须有已声明 resource 与明确提供字段；optional 默认 false。动态纯地址会独立于此资源 port 规范化为 UDP 53，可返回多个服务器。</td>
+</tr>
+<tr>
+<td><code>spec.port</code></td>
+<td>可选 1–65535；省略或 0 时 udp/tcp 为 53、dot 为 853、doh 为 443。用于固定 address，不应用于 addressFrom 返回的纯地址。</td>
+</tr>
+<tr>
+<td><code>spec.path</code></td>
+<td>DoH URL 路径，默认 /dns-query；doh 提供此值时须以 / 开头。其他协议不使用。</td>
+</tr>
+<tr>
+<td><code>spec.tlsName</code></td>
+<td>DoT 证书验证与 SNI 服务器名称，省略使用端点主机名。DoH 明确设置会被验证拒绝；UDP/TCP 虽可通过验证但会忽略。</td>
+</tr>
+<tr>
+<td><code>spec.bootstrap</code></td>
+<td>可选的上游主机名解析 DNS 列表。与 bootstrapFrom 均空或省略且无必要依赖等待时，使用 OS 解析器。同一转发规则的上游共用合并后设置。</td>
+</tr>
+<tr>
+<td><code>spec.bootstrapFrom</code></td>
+<td>可选且 field 必填的状态来源列表；resource 与 field 须存在，optional 默认 false。动态与固定服务器合并；固定 bootstrap 可补足必要动态值的缺值。</td>
+</tr>
+<tr>
+<td><code>spec.sourceInterface</code></td>
+<td>可选的已声明 Interface 或 WireGuardInterface 名称；默认空值由 OS 选路。绑定由转发池共用，须注意上述原样名称及 FreeBSD 限制。</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>可选通用状态条件，默认无条件。筛除此上游可能使转发规则没有可用端点。</td>
+</tr>
+</tbody>
+</table>
+<p>实现: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_dns.go">pkg/config/validate_dns.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go">pkg/config/diagnostics.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/dnsresolver/controller.go">pkg/controller/dnsresolver/controller.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/dnsresolver/dnsresolver.go">pkg/dnsresolver/dnsresolver.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd-dns-resolver/upstream.go">cmd/routerd-dns-resolver/upstream.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd-dns-resolver/upstream_bind_linux.go">cmd/routerd-dns-resolver/upstream_bind_linux.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd-dns-resolver/upstream_bind_freebsd.go">cmd/routerd-dns-resolver/upstream_bind_freebsd.go</a></p>
 <p><a href="/examples/example-dslite-home.yaml">配置示例</a></p></article><aside class="doccontents"><strong>本页内容</strong><div class="toc">
 <ul>
+<li><a href="#指定条件与引用关系">指定条件与引用关系</a></li>
 <li><a href="#yaml定义">YAML定义</a></li>
+<li><a href="#字段含义与默认值">字段含义与默认值</a></li>
 </ul>
 </div>
 </aside></main>

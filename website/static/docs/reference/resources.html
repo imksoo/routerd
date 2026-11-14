@@ -229,12 +229,16 @@ spec:
 <p><a href="resources/SelfAddressPolicy.html">SelfAddressPolicy</a></p>
 <h2 id="dnszone">DNSZone</h2>
 <p><a href="resources/DNSZone.html">DNSZone</a></p>
+<p>Local A/AAAA records and generated PTR answers served through a DNSForwarder zoneRefs rule. This is not a general authoritative DNS server with arbitrary record types, zone transfers or signing.</p>
 <h2 id="dnsresolver">DNSResolver</h2>
 <p><a href="resources/DNSResolver.html">DNSResolver</a></p>
+<p>A local DNS service with UDP and TCP listeners, connected to DNSForwarder rules.</p>
 <h2 id="dnsforwarder">DNSForwarder</h2>
 <p><a href="resources/DNSForwarder.html">DNSForwarder</a></p>
+<p>Select local zones or upstream DNS servers for matching query names on one DNSResolver.</p>
 <h2 id="dnsupstream">DNSUpstream</h2>
 <p><a href="resources/DNSUpstream.html">DNSUpstream</a></p>
+<p>A DNS server endpoint referenced by DNSForwarder; declaration alone does not start a listener or forward queries.</p>
 <h2 id="dslitetunnel">DSLiteTunnel</h2>
 <p><a href="resources/DSLiteTunnel.html">DSLiteTunnel</a></p>
 <h2 id="tunnelinterface">TunnelInterface</h2>

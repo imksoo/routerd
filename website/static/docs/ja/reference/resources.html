@@ -229,12 +229,16 @@ spec:
 <p><a href="resources/SelfAddressPolicy.html">SelfAddressPolicy</a></p>
 <h2 id="dnszone">DNSZone</h2>
 <p><a href="resources/DNSZone.html">DNSZone</a></p>
+<p>DNSForwarder.zoneRefs経由で提供するローカルA/AAAAレコードと自動PTR応答です。任意レコード型・ゾーン転送・署名を備えた汎用権威DNSではありません。</p>
 <h2 id="dnsresolver">DNSResolver</h2>
 <p><a href="resources/DNSResolver.html">DNSResolver</a></p>
+<p>DNSForwarderの規則に接続する、UDP・TCP待受を備えたローカルDNSサービスです。</p>
 <h2 id="dnsforwarder">DNSForwarder</h2>
 <p><a href="resources/DNSForwarder.html">DNSForwarder</a></p>
+<p>1つのDNSResolverに対し、問い合わせ名に応じてローカルゾーンまたは上流DNSを選ぶ規則です。</p>
 <h2 id="dnsupstream">DNSUpstream</h2>
 <p><a href="resources/DNSUpstream.html">DNSUpstream</a></p>
+<p>DNSForwarderが参照するDNSサーバーの接続先です。宣言だけで待受を開始したり問い合わせを転送したりはしません。</p>
 <h2 id="dslitetunnel">DSLiteTunnel</h2>
 <p><a href="resources/DSLiteTunnel.html">DSLiteTunnel</a></p>
 <h2 id="tunnelinterface">TunnelInterface</h2>

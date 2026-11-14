@@ -396,20 +396,28 @@ Projects AFTR, DNS, SNTP and domain-search information from the DHCPv6-PD daemon
 
 [DNSZone](resources/DNSZone.md)
 
+Local A/AAAA records and generated PTR answers served through a DNSForwarder zoneRefs rule. This is not a general authoritative DNS server with arbitrary record types, zone transfers or signing.
+
 
 ## DNSResolver
 
 [DNSResolver](resources/DNSResolver.md)
+
+A local DNS service with UDP and TCP listeners, connected to DNSForwarder rules.
 
 
 ## DNSForwarder
 
 [DNSForwarder](resources/DNSForwarder.md)
 
+Select local zones or upstream DNS servers for matching query names on one DNSResolver.
+
 
 ## DNSUpstream
 
 [DNSUpstream](resources/DNSUpstream.md)
+
+A DNS server endpoint referenced by DNSForwarder; declaration alone does not start a listener or forward queries.
 
 
 ## DSLiteTunnel

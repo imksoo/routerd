@@ -5,6 +5,13 @@
 <main class="doclayout wrap"><article class="document"><h1 id="dnsresolver">DNSResolver</h1>
 <p><a href="../resources.html#dnsresolver">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>A local DNS service with UDP and TCP listeners, connected to DNSForwarder rules.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>At least one DNSForwarder must refer to this resolver. Configure forwarding through separate resources; the old inline sources field is not a supported YAML input.</li>
+<li>Omitting listen or using an empty list normalizes to 127.0.0.1:5053. Each endpoint serves both UDP and TCP. Do not expose an unrestricted recursive resolver to untrusted networks.</li>
+<li>Static and resolved listen addresses are merged and deduplicated. Missing required dynamic addresses mark dependencies as waiting but do not stop other usable addresses; with no resolved listeners the resolver stays Pending.</li>
+</ul>
 <h2 id="yaml-definition">YAML definition</h2>
 <p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
 <pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
@@ -48,9 +55,95 @@
           maxAge: &quot;&lt;string&gt;&quot; # optional; string
           status: &quot;set&quot; # optional; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
 </code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.listen</code></td>
+<td>Listener list; normalization supplies a loopback endpoint when empty.</td>
+</tr>
+<tr>
+<td><code>spec.listen[].name</code></td>
+<td>Optional label; default listen-0, listen-1, … in list order.</td>
+</tr>
+<tr>
+<td><code>spec.listen[].addresses</code></td>
+<td>Literal IPv4/IPv6 addresses without ports or CIDR. If both addresses and addressFrom are empty, defaults to [127.0.0.1].</td>
+</tr>
+<tr>
+<td><code>spec.listen[].addressFrom</code></td>
+<td>Optional list of common resource/field/optional value sources. Existing resource and explicit provided field required. Declared IPv4StaticAddress.address can be read before status exists; CIDR values are reduced to addresses. optional defaults false; missing optional values are skipped.</td>
+</tr>
+<tr>
+<td><code>spec.listen[].port</code></td>
+<td>Optional port 1–65535; omitted/0 normalizes to 5053.</td>
+</tr>
+<tr>
+<td><code>spec.listen[].sources</code></td>
+<td>Optional DNSForwarder names attached to this resolver. Empty selects all its forwarders. Use bare metadata.name: validation accepts qualified names, but the daemon matches bare names literally and does not strip a prefix. List order does not reorder the forwarders.</td>
+</tr>
+<tr>
+<td><code>spec.cache</code></td>
+<td>Optional response-cache settings. Caches upstream replies, not local-zone responses; disabled by default.</td>
+</tr>
+<tr>
+<td><code>spec.cache.enabled</code></td>
+<td>Default false. true enables the in-memory response cache.</td>
+</tr>
+<tr>
+<td><code>spec.cache.maxEntries</code></td>
+<td>Default 10000 when omitted/0; nonnegative schema value. Bounds cached entries, not bytes.</td>
+</tr>
+<tr>
+<td><code>spec.cache.minTTL</code></td>
+<td>Optional Go duration lower bound on cache lifetime. Empty imposes no lower bound; invalid duration is ignored by this path rather than rejected. Does not rewrite record TTLs in the response.</td>
+</tr>
+<tr>
+<td><code>spec.cache.maxTTL</code></td>
+<td>Optional Go duration upper bound, applied after minTTL; empty imposes none and invalid duration is ignored.</td>
+</tr>
+<tr>
+<td><code>spec.cache.negativeTTL</code></td>
+<td>Optional Go duration replacing lifetime for successful empty answers or NXDOMAIN, after min/max bounds. Default empty uses 60s before those bounds. SERVFAIL and other transient failures are not cached.</td>
+</tr>
+<tr>
+<td><code>spec.metrics</code></td>
+<td>Metrics options; no current runtime consumer for perUpstream.</td>
+</tr>
+<tr>
+<td><code>spec.metrics.perUpstream</code></td>
+<td>Decoded boolean default false; does not currently enable or disable per-upstream metrics.</td>
+</tr>
+<tr>
+<td><code>spec.queryLog</code></td>
+<td>Optional query logging in a SQLite database; disabled by default.</td>
+</tr>
+<tr>
+<td><code>spec.queryLog.enabled</code></td>
+<td>Default false; true records queries using queryLog.path.</td>
+</tr>
+<tr>
+<td><code>spec.queryLog.path</code></td>
+<td>When enabled, omitted/blank defaults to /var/lib/routerd/dns-queries.db. This is a database path, not a text log.</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>Optional common state condition, default unconditional. See common fields for state/all/any and schema limitations.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_dns.go">pkg/config/validate_dns.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go">pkg/config/diagnostics.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/dnsresolver/controller.go">pkg/controller/dnsresolver/controller.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/dnsresolver/dnsresolver.go">pkg/dnsresolver/dnsresolver.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd-dns-resolver/main.go">cmd/routerd-dns-resolver/main.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/cmd/routerd-dns-resolver/zone.go">cmd/routerd-dns-resolver/zone.go</a></p>
 <p><a href="/examples/example-dslite-home.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
 <li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 </ul>
 </div>
 </aside></main>

@@ -396,20 +396,28 @@ spec:
 
 [DNSZone](resources/DNSZone.md)
 
+透過 DNSForwarder.zoneRefs 提供本機 A/AAAA 記錄及自動 PTR 回應；不是支援任意記錄類型、區域傳送或簽署的通用權威 DNS。
+
 
 ## DNSResolver
 
 [DNSResolver](resources/DNSResolver.md)
+
+具有 UDP 與 TCP 接聽端點、連接 DNSForwarder 規則的本機 DNS 服務。
 
 
 ## DNSForwarder
 
 [DNSForwarder](resources/DNSForwarder.md)
 
+依查詢名稱替一個 DNSResolver 選擇本機區域或上游 DNS 的規則。
+
 
 ## DNSUpstream
 
 [DNSUpstream](resources/DNSUpstream.md)
+
+供 DNSForwarder 參照的 DNS 伺服器端點；僅宣告不會啟動接聽或轉送查詢。
 
 
 ## DSLiteTunnel
