@@ -1182,14 +1182,13 @@ func (c SystemdUnitController) reconcileLongLivedSystemdHelperUnit(ctx context.C
 	changed, err := c.applyLongLivedSystemdUnit(ctx, path, unitName, spec)
 	if err != nil {
 		if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, map[string]any{
-			"phase":     "Error",
-			"reason":    "ApplyFailed",
-			"unitName":  unitName,
-			"path":      path,
-			"source":    source,
-			"error":     err.Error(),
-			"dryRun":    c.DryRun,
-			"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+			"phase":    "Error",
+			"reason":   "ApplyFailed",
+			"unitName": unitName,
+			"path":     path,
+			"source":   source,
+			"error":    err.Error(),
+			"dryRun":   c.DryRun,
 		}); saveErr != nil {
 			return saveErr
 		}
@@ -1207,7 +1206,6 @@ func (c SystemdUnitController) reconcileLongLivedSystemdHelperUnit(ctx context.C
 		"changed":            changed,
 		"dryRun":             c.DryRun,
 		"restartOnReconcile": false,
-		"updatedAt":          time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	return c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, status)
 }
