@@ -1663,10 +1663,9 @@ FROM events`+where+` ORDER BY id `+order+` LIMIT ?`, args...)
 			return nil, err
 		}
 		event.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
-		if attributes != "" && attributes != "null" {
-			var decoded map[string]any
-			if err := json.Unmarshal([]byte(attributes), &decoded); err == nil && len(decoded) > 0 {
-				event.Attributes = decoded
+		if attributes != "" {
+			if err := json.Unmarshal([]byte(attributes), &event.Attributes); err != nil {
+				return nil, err
 			}
 		}
 		events = append(events, event)
@@ -1683,14 +1682,18 @@ func (s *SQLiteStore) LoadOrInitializeEventConsumerCursor(consumer string) (int6
 	if s.closed {
 		return 0, nil
 	}
+	var cursor int64
+	err := s.db.QueryRow(`SELECT cursor FROM event_consumer_cursors WHERE consumer = ?`, consumer).Scan(&cursor)
+	if err != sql.ErrNoRows {
+		return cursor, err
+	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if _, err := s.db.Exec(`INSERT INTO event_consumer_cursors(consumer,cursor,updated_at)
 SELECT ?,COALESCE(MAX(id),0),? FROM events WHERE true
 ON CONFLICT(consumer) DO NOTHING`, consumer, now); err != nil {
 		return 0, err
 	}
-	var cursor int64
-	err := s.db.QueryRow(`SELECT cursor FROM event_consumer_cursors WHERE consumer = ?`, consumer).Scan(&cursor)
+	err = s.db.QueryRow(`SELECT cursor FROM event_consumer_cursors WHERE consumer = ?`, consumer).Scan(&cursor)
 	return cursor, err
 }
 

@@ -48,7 +48,7 @@ type Controller struct {
 }
 
 type ruleState struct {
-	latest       map[string]daemonapi.DaemonEvent
+	seen         map[string]bool
 	sequence     map[string]int
 	windows      map[string][]time.Time
 	lastEmit     map[string]time.Time
@@ -61,42 +61,24 @@ type ruleState struct {
 	warningCount int
 }
 
-type pendingEvent struct {
-	resource api.Resource
-	event    daemonapi.DaemonEvent
-}
-
 func (c *Controller) Start(ctx context.Context) {
 	if c.Router == nil || c.Bus == nil || c.Store == nil || c.Events == nil {
 		return
 	}
-	c.init()
 	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.**"}}, 128)
 	go func() {
+		defer func() {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			for _, state := range c.state {
+				stopRuleTimers(state)
+			}
+		}()
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
-		wake := make(chan struct{}, 1)
 		var retry eventconsumer.Backoff
-		wake <- struct{}{}
 		for {
-			select {
-			case _, ok := <-ch:
-				if !ok {
-					return
-				}
-				select {
-				case wake <- struct{}{}:
-				default:
-				}
-			case <-ticker.C:
-				select {
-				case wake <- struct{}{}:
-				default:
-				}
-			case <-wake:
-				if !retry.Ready() {
-					continue
-				}
+			if retry.Ready() {
 				if err := c.drainStoredEvents(ctx); err != nil {
 					retry.Failure()
 					if ctx.Err() == nil && c.Logger != nil {
@@ -105,6 +87,13 @@ func (c *Controller) Start(ctx context.Context) {
 				} else {
 					retry.Success()
 				}
+			}
+			select {
+			case _, ok := <-ch:
+				if !ok {
+					return
+				}
+			case <-ticker.C:
 			case <-ctx.Done():
 				return
 			}
@@ -122,14 +111,11 @@ func (c *Controller) drainStoredEvents(ctx context.Context) error {
 }
 
 func (c *Controller) Reconcile(ctx context.Context, event daemonapi.DaemonEvent) error {
-	c.init()
-	c.pruneRemovedRules()
-	var pending []pendingEvent
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "EventRule" {
 			continue
 		}
-		events, err := c.reconcileRule(ctx, resource, event)
+		events, err := c.reconcileRule(resource, event)
 		if err != nil {
 			if c.Logger != nil {
 				c.Logger.Warn("event rule configuration is invalid; skipping rule", "rule", resource.Metadata.Name, "error", err)
@@ -137,19 +123,15 @@ func (c *Controller) Reconcile(ctx context.Context, event daemonapi.DaemonEvent)
 			continue
 		}
 		for _, emitted := range events {
-			pending = append(pending, pendingEvent{resource: resource, event: emitted})
-		}
-	}
-	for _, item := range pending {
-		if err := c.publish(ctx, item.resource, item.event); err != nil {
-			return err
+			if err := c.publish(ctx, resource, emitted); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
 }
 
-func (c *Controller) reconcileRule(ctx context.Context, resource api.Resource, event daemonapi.DaemonEvent) ([]daemonapi.DaemonEvent, error) {
-	_ = ctx
+func (c *Controller) reconcileRule(resource api.Resource, event daemonapi.DaemonEvent) ([]daemonapi.DaemonEvent, error) {
 	spec, err := resource.EventRuleSpec()
 	if err != nil {
 		return nil, err
@@ -194,9 +176,9 @@ func (c *Controller) evalAllOf(resource api.Resource, spec api.EventRuleSpec, st
 		return nil
 	}
 	slot := key + "\x00" + event.Type
-	state.latest[slot] = event
+	state.seen[slot] = true
 	for _, topic := range topics {
-		if _, ok := state.latest[key+"\x00"+topic]; !ok {
+		if !state.seen[key+"\x00"+topic] {
 			return nil
 		}
 	}
@@ -379,12 +361,6 @@ func (c *Controller) warn(name string) {
 	_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "EventRule", name, status)
 }
 
-func (c *Controller) ruleState(name string) *ruleState {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.ruleStateLocked(name)
-}
-
 func (c *Controller) ruleStateLocked(name string) *ruleState {
 	if c.state == nil {
 		c.state = map[string]*ruleState{}
@@ -392,7 +368,7 @@ func (c *Controller) ruleStateLocked(name string) *ruleState {
 	state := c.state[name]
 	if state == nil {
 		state = &ruleState{
-			latest:   map[string]daemonapi.DaemonEvent{},
+			seen:     map[string]bool{},
 			sequence: map[string]int{},
 			windows:  map[string][]time.Time{},
 			lastEmit: map[string]time.Time{},
@@ -404,35 +380,6 @@ func (c *Controller) ruleStateLocked(name string) *ruleState {
 		c.state[name] = state
 	}
 	return state
-}
-
-func (c *Controller) init() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.state == nil {
-		c.state = map[string]*ruleState{}
-	}
-}
-
-func (c *Controller) pruneRemovedRules() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if len(c.state) == 0 || c.Router == nil {
-		return
-	}
-	present := map[string]struct{}{}
-	for _, resource := range c.Router.Spec.Resources {
-		if resource.Kind == "EventRule" {
-			present[resource.Metadata.Name] = struct{}{}
-		}
-	}
-	for name, state := range c.state {
-		if _, ok := present[name]; ok {
-			continue
-		}
-		stopRuleTimers(state)
-		delete(c.state, name)
-	}
 }
 
 func (c *Controller) eventTime(event daemonapi.DaemonEvent) time.Time {
@@ -604,9 +551,9 @@ func removeCorrelationLocked(state *ruleState, key string) {
 	}
 	delete(state.lastSeen, key)
 	prefix := key + "\x00"
-	for slot := range state.latest {
+	for slot := range state.seen {
 		if strings.HasPrefix(slot, prefix) {
-			delete(state.latest, slot)
+			delete(state.seen, slot)
 		}
 	}
 }

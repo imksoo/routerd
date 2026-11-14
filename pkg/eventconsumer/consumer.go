@@ -4,7 +4,6 @@ package eventconsumer
 
 import (
 	"context"
-	"fmt"
 	"strconv"
 	"time"
 
@@ -63,38 +62,26 @@ func Drain(ctx context.Context, store Store, consumer string, process func(conte
 // Backoff suppresses drain attempts after a consumer failure. It is intended
 // to be owned by one consumer loop.
 type Backoff struct {
-	failures int
-	retryAt  time.Time
+	delay   time.Duration
+	retryAt time.Time
 }
 
 func (b *Backoff) Ready() bool {
-	if b.retryAt.IsZero() {
-		return true
-	}
 	return !time.Now().Before(b.retryAt)
 }
 
 func (b *Backoff) Success() {
-	b.failures = 0
+	b.delay = 0
 	b.retryAt = time.Time{}
 }
 
 func (b *Backoff) Failure() {
-	initial := time.Second
-	maximum := time.Minute
-	delay := initial
-	for i := 0; i < b.failures && delay < maximum; i++ {
-		if delay > maximum/2 {
-			delay = maximum
-			break
-		}
-		delay *= 2
+	if b.delay == 0 {
+		b.delay = time.Second
+	} else {
+		b.delay = min(2*b.delay, time.Minute)
 	}
-	if delay > maximum {
-		delay = maximum
-	}
-	b.failures++
-	b.retryAt = time.Now().Add(delay)
+	b.retryAt = time.Now().Add(b.delay)
 }
 
 func Event(stored routerstate.StoredEvent) daemonapi.DaemonEvent {
@@ -103,12 +90,13 @@ func Event(stored routerstate.StoredEvent) daemonapi.DaemonEvent {
 		topic = stored.Type
 	}
 	event := daemonapi.DaemonEvent{
-		Cursor:   strconv.FormatInt(stored.ID, 10),
-		Time:     stored.CreatedAt,
-		Type:     topic,
-		Severity: stored.Severity,
-		Reason:   stored.Reason,
-		Message:  stored.Message,
+		Cursor:     strconv.FormatInt(stored.ID, 10),
+		Time:       stored.CreatedAt,
+		Type:       topic,
+		Severity:   stored.Severity,
+		Reason:     stored.Reason,
+		Message:    stored.Message,
+		Attributes: stored.Attributes,
 		Daemon: daemonapi.DaemonRef{
 			Kind:     stored.SourceKind,
 			Instance: stored.SourceInstance,
@@ -119,12 +107,6 @@ func Event(stored routerstate.StoredEvent) daemonapi.DaemonEvent {
 			APIVersion: stored.ResourceAPIVersion,
 			Kind:       stored.ResourceKind,
 			Name:       stored.ResourceName,
-		}
-	}
-	if len(stored.Attributes) > 0 {
-		event.Attributes = make(map[string]string, len(stored.Attributes))
-		for key, value := range stored.Attributes {
-			event.Attributes[key] = fmt.Sprint(value)
 		}
 	}
 	return event
