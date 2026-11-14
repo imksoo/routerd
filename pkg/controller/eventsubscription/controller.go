@@ -49,6 +49,7 @@ const (
 // events, subscription runs, dynamic config parts, plugin runs). It is
 // satisfied by *state.SQLiteStore.
 type DataStore interface {
+	PruneExpiredSubscriptionParts(now time.Time) error
 	ListPendingSubscriptionEvents(group, subscription string, now int64, maxAttempts int) ([]routerstate.EventRecord, error)
 	SubscriptionRunStatus(subscription, eventID string) (status string, attempts int, found bool, err error)
 	UpsertSubscriptionRunStart(subscription, eventID, eventGroup, plugin string) error
@@ -105,6 +106,11 @@ type subscriptionSchedule struct {
 func (c *Controller) Reconcile(ctx context.Context) error {
 	if c.Router == nil || c.Store == nil {
 		return nil
+	}
+	if !c.DryRun {
+		if err := c.Store.PruneExpiredSubscriptionParts(time.Now().UTC()); err != nil {
+			return err
+		}
 	}
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "EventSubscription" {

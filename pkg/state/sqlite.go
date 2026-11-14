@@ -869,6 +869,38 @@ func (s *SQLiteStore) UpsertDynamicConfigPart(part DynamicConfigPartRecord) erro
 	return err
 }
 
+// PruneExpiredSubscriptionParts removes expired, event-specific resource parts.
+// Parts containing action or typed dataplane payloads are retained for their
+// respective controllers. Active generations and non-expiring parts are kept.
+func (s *SQLiteStore) PruneExpiredSubscriptionParts(now time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return fmt.Errorf("state store is closed")
+	}
+	where := ` WHERE source LIKE 'EventSubscription/%/%'
+		  AND expires_at <> '0001-01-01T00:00:00Z'
+		  AND julianday(expires_at) < julianday(?)
+		  AND coalesce(actionplans_json, '') IN ('', 'null', '[]')
+		  AND coalesce(mobility_dataplane_json, '') IN ('', 'null', '{}')
+		  AND coalesce(arp_observer_intents_json, '') IN ('', 'null', '[]')
+		  AND coalesce(fib_verdicts_json, '') IN ('', 'null', '[]')`
+	when := formatStateTime(now.UTC())
+	var found int
+	err := s.db.QueryRow(`SELECT 1 FROM dynamic_config_parts`+where+` LIMIT 1`, when).Scan(&found)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("find expired event subscription parts: %w", err)
+	}
+	_, err = s.db.Exec(`DELETE FROM dynamic_config_parts`+where, when)
+	if err != nil {
+		return fmt.Errorf("prune expired event subscription parts: %w", err)
+	}
+	return nil
+}
+
 func (s *SQLiteStore) ListDynamicConfigParts() ([]DynamicConfigPartRecord, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
