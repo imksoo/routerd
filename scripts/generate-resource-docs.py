@@ -7,6 +7,35 @@ import re
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA = ROOT / 'schemas/routerd-config-v1alpha1.schema.json'
 VARIANTS = json.loads(SCHEMA.read_text())['properties']['spec']['properties']['resources']['items']['oneOf']
+# Publication order is independent of schema registration and runtime ordering.
+# Within each purpose group, use case-insensitive Kind-name order.
+GROUPS = [
+    (('Interfaces and addresses', 'インターフェース・アドレス', '介面與位址', '接口与地址'), 'Interface IPv4StaticAddress VirtualAddress VRF SelfAddressPolicy'),
+    (('WAN and address acquisition', 'WAN接続・アドレス取得', 'WAN連線與位址取得', 'WAN连接与地址获取'), 'DHCPv4Client DHCPv6Address IPv6RAAddress DHCPv6PrefixDelegation IPv6DelegatedAddress DHCPv6Information PPPoESession DSLiteTunnel'),
+    (('VPN and tunnels', 'VPN・トンネル', 'VPN與通道', 'VPN与隧道'), 'IPsecConnection WireGuardInterface WireGuardPeer TailscaleNode TunnelInterface VXLANTunnel OverlayPeer'),
+    (('Routing and path health', '経路・経路監視', '路由與路徑監控', '路由与路径监控'), 'IPv4Route ClusterNetworkRoute BGPRouter BGPPeer BGPDynamicPeer BFD EgressRoutePolicy HealthCheck HybridRoute'),
+    (('DHCP servers and advertisements', 'DHCP配布・RA・リース同期', 'DHCP配發、RA與租約同步', 'DHCP分配、RA与租约同步'), 'DHCPv4Server DHCPv4Reservation DHCPv4Relay DHCPv6Server IPv6RouterAdvertisement DHCPv4ServerLeaseSync DHCPv6ServerLeaseSync DHCPv6PrefixDelegationLeaseSync'),
+    (('DNS', 'DNS', 'DNS', 'DNS'), 'DNSZone DNSResolver DNSForwarder DNSUpstream'),
+    (('NAT and service publishing', 'NAT・サービス公開', 'NAT與服務發布', 'NAT与服务发布'), 'NAT44Rule NAT44FlowDNATPinhole NAT44SessionSync PortForward IngressService LocalServiceRedirect IPAddressSet'),
+    (('Firewall and client control', 'ファイアウォール・クライアント制御', '防火牆與用戶端控制', '防火墙与客户端控制'), 'FirewallZone FirewallPolicy FirewallRule ClientPolicy FirewallFlowPinhole'),
+    (('System and management', 'システム・管理', '系統與管理', '系统与管理'), 'Hostname Sysctl SysctlProfile Package NTPClient NTPServer WebConsole ControlAPI RouterdCluster ManagementAccess'),
+    (('Logs and telemetry', 'ログ・監視', '日誌與監控', '日志与监控'), 'LogSink LogRetention Telemetry ObservabilityPipeline TrafficFlowLog FirewallEventLog'),
+    (('Events and federation', 'イベント・イベント連携', '事件與事件聯邦', '事件与事件联邦'), 'EventRule DerivedEvent EventGroup EventPeer EventSubscription FederationSLO'),
+    (('SAM and mobility', 'SAM・モビリティ', 'SAM與行動性', 'SAM与移动性'), 'MobilityPool SAMNodeSet SAMEnrollmentPolicy SAMEnrollmentClaim SAMEnrollmentClient SAMTransportProfile SAMSubnetPolicy'),
+    (('Extensions and provider actions', '拡張・動的設定・プロバイダー操作', '擴充、動態設定與供應商操作', '扩展、动态配置与提供商操作'), 'Plugin DynamicConfigSource DynamicOverridePolicy CloudProviderProfile ProviderActionPolicy'),
+]
+BY_KIND = {v['properties']['kind']['const']: v for v in VARIANTS}
+GROUP_KINDS = [(labels, sorted(names.split(), key=str.casefold)) for labels, names in GROUPS]
+ordered_kinds = [kind for _, names in GROUP_KINDS for kind in names]
+if len(ordered_kinds) != len(set(ordered_kinds)) or set(ordered_kinds) != set(BY_KIND):
+    raise ValueError('Documentation groups must contain every schema Kind exactly once')
+VARIANTS = [BY_KIND[kind] for kind in ordered_kinds]
+ORDER_POLICY = [
+    'Resources are grouped by purpose, then sorted by Kind name within each group. This is a reading order, not YAML evaluation, dependency or execution order.',
+    '用途別に分類し、分類内はKind名順に並べています。閲覧用の順序であり、YAMLの評価順・依存順・実行順ではありません。',
+    '依用途分類，分類內按Kind名稱排序。這是閱讀順序，不代表YAML評估、相依或執行順序。',
+    '按用途分类，分类内按Kind名称排序。这是阅读顺序，不代表YAML求值、依赖或执行顺序。',
+]
 REPO = 'https://github.com/imksoo/routerd/blob/main/'
 NOTES = json.loads((ROOT / 'docs/reference/resource-notes.json').read_text())
 NOTE_LABELS = {
@@ -121,16 +150,16 @@ for locale_index, (locale, labels) in enumerate(LANGUAGES.items()):
     conditions, field_notes, implementation = NOTE_LABELS[locale]
     base = ROOT / 'docs' if locale == 'en' else ROOT / 'docs' / locale
     lines = ['# ' + title, '', intro, '', '[Kind/name · when · dependsOn](common-fields.md)', '', '```sh', 'routerd validate --config router.yaml', '```', '', '[JSON Schema](' + REPO + 'schemas/routerd-config-v1alpha1.schema.json) · [YAML](' + REPO.replace('/blob/', '/tree/') + 'examples)', '', '### Router', '', '```yaml', 'apiVersion: routerd.net/v1alpha1', 'kind: Router', 'metadata:', '  name: "<router-name>"', 'spec:', '  resources:', '    - apiVersion: net.routerd.net/v1alpha1', '      kind: Interface', '      metadata:', '        name: "<name>"', '      spec:', '        ifname: "<interface-name>"', '```', '']
-    for variant in VARIANTS:
-        kind = variant['properties']['kind']['const']
-        lines.append('- [' + kind + '](resources/' + kind + '.md)')
+    lines += [ORDER_POLICY[locale_index], '']
+    for group_labels, names in GROUP_KINDS:
+        lines += ['## ' + group_labels[locale_index], '']
+        for kind in names:
+            lines += ['### ' + kind, '', '[' + kind + '](resources/' + kind + '.md)', '', NOTES[kind]['purpose'][locale_index], '']
     for variant in VARIANTS:
         props = variant['properties']; kind = props['kind']['const']
         notes = NOTES[kind]
-        lines += ['', '## ' + kind, '', '[' + kind + '](resources/' + kind + '.md)', '']
         page = ['# ' + kind, '', '[' + title + '](../resources.md#' + kind.lower() + ') · [Kind/name · when · dependsOn](../common-fields.md)', '', '`apiVersion: ' + props['apiVersion']['const'] + '` · `metadata.name`', '']
         if notes:
-            lines += [notes['purpose'][locale_index], '']
             page += [notes['purpose'][locale_index], '', '## ' + conditions, '']
             page += ['- ' + rule[locale_index] for rule in notes['rules']]
             page += ['']
