@@ -189,9 +189,6 @@ func (c PathMTUController) applyL2MSSTable(ctx context.Context, nft, path string
 	if err != nil {
 		return false, err
 	}
-	if out, err := c.runNFT(ctx, nft, "-c", "-f", path); err != nil {
-		return false, fmt.Errorf("%s -c -f %s: %w: %s", nft, path, err, strings.TrimSpace(string(out)))
-	}
 	if out, err := c.runNFT(ctx, nft, "-f", path); err != nil {
 		return false, fmt.Errorf("%s -f %s: %w: %s", nft, path, err, strings.TrimSpace(string(out)))
 	}
@@ -238,9 +235,6 @@ func (c PathMTUController) applyTable(ctx context.Context, nft, path, family, ta
 	}
 	// The file and table can both exist while the kernel rules have changed.
 	// Reapply the rendered table atomically on every reconciliation.
-	if out, err := c.runNFT(ctx, nft, "-c", "-f", path); err != nil {
-		return changed, fmt.Errorf("%s -c -f %s: %w: %s", nft, path, err, strings.TrimSpace(string(out)))
-	}
 	if out, err := c.runNFT(ctx, nft, "-f", path); err != nil {
 		return changed, fmt.Errorf("%s -f %s: %w: %s", nft, path, err, strings.TrimSpace(string(out)))
 	}
