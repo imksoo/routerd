@@ -2,9 +2,8 @@
 
 ## Authority and scope
 
-The latest explicit instructions from the owner govern this work. This file and
-docs/design/routerd11-mvp.md replace conflicting legacy development, testing,
-compatibility, and release procedures. Do not weaken these rules yourself.
+The latest explicit instructions from the owner govern this work. This file replaces conflicting legacy development, testing, compatibility,
+and release procedures. Do not weaken these rules yourself.
 
 There is one user. Build on routerd 1.0 for homert02/03, k8s-rt01/02,
 and pve-rt01..08. Preserve their actual configurations and required behavior.
@@ -23,8 +22,8 @@ request to remove functionality. Local SAM/IPIP/BGP used by k8s-rt and pve-rt
 remains in scope. If Cloud SAM is explicitly resumed, use
 nwadmin03.lain.local:/home/imksoo/routerd-labs as a reference and minimize cost.
 
-The current MVP contains standing product requirements, not a replayable work
-queue. Completed plans and historical audit verdicts must not become new tasks.
+This file contains standing rules, not a replayable work queue. Completed MVPs,
+plans, and historical audit verdicts must not become new tasks.
 Consult Git/PR history to investigate a current failure, not to reopen finished
 work. The owner's current request defines the active task.
 
@@ -36,6 +35,11 @@ the configuration or its valid dynamic state. Do not preserve objects solely
 because they were manually added. Do not track or check ownership or creation
 history. Retain the OS foundation and valid DHCP/PD/BGP/SAM and other dynamic
 state required by configured operation; do not treat it as static YAML.
+
+Import is an explicit operator action for selected physical interfaces and
+static IPv4/IPv6 addresses. Do not import acquired dynamic state as static YAML.
+Integrate the candidate into the complete host configuration before using
+`--replace`; partial upsert and complete replacement are different operations.
 
 ## Real operation first
 
@@ -85,8 +89,9 @@ protocols and configured HA/SAM operation. Do not hide OS or process errors.
 
 ## Working discipline
 
-Read this file and the current MVP before editing, after a context handoff,
-and before committing. At task start, briefly state the specific change and
+Read this file and the current owner request before editing, after a context
+handoff, and before committing. Consult the maintained operational procedure
+for the affected path. At task start, briefly state the specific change and
 real-target check. Routine work inside the authorized scope proceeds without
 repeated permission requests. Exceptions to prohibitions require owner approval
 before the prohibited work begins; general best-practice claims are insufficient.
