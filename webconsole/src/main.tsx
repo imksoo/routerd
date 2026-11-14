@@ -2597,6 +2597,8 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [streamState, setStreamState] = useState<"connecting" | "live" | "polling">("connecting");
   const [lastStreamEvent, setLastStreamEvent] = useState<StreamEvent | null>(null);
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
   const refreshInFlight = useRef(false);
   const queuedRefresh = useRef(false);
   const refreshTimer = useRef<number | null>(null);
@@ -2754,12 +2756,15 @@ function App() {
       source.addEventListener("routerd-event", event => {
         try {
           const parsed = JSON.parse((event as MessageEvent).data) as StreamEvent;
-          setLastStreamEvent(parsed);
+          setStreamState("live");
+          if (streamAffectsView(selectedRef.current, parsed)) {
+            setLastStreamEvent(parsed);
+            scheduleRefresh(250);
+          }
         } catch {
           setLastStreamEvent(null);
+          scheduleRefresh(250);
         }
-        setStreamState("live");
-        scheduleRefresh(250);
       });
       source.onerror = () => {
         setStreamState("polling");
@@ -8480,6 +8485,18 @@ function formatDetailValue(value: unknown) {
   } catch {
     return String(value);
   }
+}
+
+function streamAffectsView(view: ViewKey, event: StreamEvent) {
+  if (view === "events") return true;
+  const type = event.type ?? "";
+  if (view === "config" || view === "generations") {
+    return !type || type.startsWith("routerd.config.") || type.startsWith("routerd.generation.");
+  }
+  if (type === "routerd.client.ipv4.observed" || type.startsWith("routerd.mobility.arp.")) {
+    return view === "overview" || view === "clients" || view === "connections" || view === "firewall";
+  }
+  return true;
 }
 
 function unifiedLineDiff(fromName: string, toName: string, fromText: string, toText: string) {
