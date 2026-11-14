@@ -11,6 +11,16 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### Changed
+
+- 简化类型化配置访问、SQLite 存储层、状态转换、事件处理、MTU 选择、SAM 输入解码及 Linux IPIP 观测，移除未使用的兼容路径及测试专用代码。
+- 将 PD 租约集中至单一权威状态并统一存储字段定义，保留身份、期限及旧前缀。
+
+### Fixed
+
+- daemon 重启后恢复匹配的已应用配置世代。
+- 配置变更时停止旧 EventRule 的待处理计时器，并在配置保存成功后清理过时状态。
+
 ## v20261110.0354
 
 ### Fixed

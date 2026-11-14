@@ -12,6 +12,16 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Changed
+
+- Simplify typed configuration access, SQLite-backed controller stores, status transitions, event consumers, MTU selection, SAM input decoding, and Linux IPIP observation. Remove unused compatibility paths and redundant test-only code.
+- Keep PD lease data in one authoritative object status and define its stored fields once, preserving lease identities, deadlines, and previous prefixes.
+
+### Fixed
+
+- Restore the matching applied configuration generation after daemon restart.
+- Stop pending EventRule timers when configuration changes remove their controller generation, and remove stale object statuses after successful configuration persistence.
+
 ## v20261110.0354
 
 ### Fixed
