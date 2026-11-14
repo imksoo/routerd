@@ -77,19 +77,23 @@ func (h Handler) snapshot(ctx context.Context, opts SnapshotOptions) Snapshot {
 			}
 		}
 	}
-	var dnsQueries []logstore.DNSQuery
-	if opts.DNSQueryLimit >= 0 {
-		dnsQueries, err = h.queryLogList(ctx, logstore.DNSQueryFilter{Since: clientSince, Limit: opts.DNSQueryLimit})
+	var dnsQueries, fingerprintDNSQueries []logstore.DNSQuery
+	queryLimit := opts.DNSQueryLimit
+	if opts.IncludeClients && opts.FingerprintQueryLimit > queryLimit {
+		queryLimit = opts.FingerprintQueryLimit
+	}
+	if queryLimit >= 0 {
+		queries, err := h.queryLogList(ctx, logstore.DNSQueryFilter{Since: clientSince, Limit: queryLimit})
 		if err != nil {
 			errors = append(errors, err.Error())
-		}
-	}
-	fingerprintDNSQueries := dnsQueries
-	if opts.IncludeClients && opts.FingerprintQueryLimit > opts.DNSQueryLimit {
-		if queries, err := h.queryLogList(ctx, logstore.DNSQueryFilter{Since: clientSince, Limit: opts.FingerprintQueryLimit}); err == nil {
-			fingerprintDNSQueries = queries
 		} else {
-			errors = append(errors, err.Error())
+			fingerprintDNSQueries = queries
+			if opts.DNSQueryLimit >= 0 {
+				dnsQueries = queries
+				if len(dnsQueries) > opts.DNSQueryLimit {
+					dnsQueries = dnsQueries[:opts.DNSQueryLimit]
+				}
+			}
 		}
 	}
 	var trafficFlows []logstore.TrafficFlow
