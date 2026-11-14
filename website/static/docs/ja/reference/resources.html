@@ -262,10 +262,13 @@ spec:
 <p>AFTRへ向けてIPv4をIPv6にカプセル化します。トンネル作成、IPv4デフォルト経路、NAT、疎通確認は別の設定・処理です。</p>
 <h2 id="tunnelinterface">TunnelInterface</h2>
 <p><a href="resources/TunnelInterface.html">TunnelInterface</a></p>
+<p>非暗号化のIPv4外側トンネルと、任意の内側IPv4アドレスを生成・再調整します。metadata.nameが実OSトンネル名です。</p>
 <h2 id="overlaypeer">OverlayPeer</h2>
 <p><a href="resources/OverlayPeer.html">OverlayPeer</a></p>
+<p>HybridRouteと経路MTU方針の生成に使う、既存の転送手段を記述します。本リソースだけでWireGuard・Tailscale・IPsec・トンネルは構築しません。</p>
 <h2 id="hybridroute">HybridRoute</h2>
 <p><a href="resources/HybridRoute.html">HybridRoute</a></p>
+<p>列挙したIPv4宛先網を、OverlayPeer経由の主経路表IPv4Routeへ展開します。</p>
 <h2 id="cloudproviderprofile">CloudProviderProfile</h2>
 <p><a href="resources/CloudProviderProfile.html">CloudProviderProfile</a></p>
 <p>プロバイダー操作の計画で使う識別情報・対象メタデータの既定値です。この宣言自体はクラウド認証や資源作成を行いません。</p>

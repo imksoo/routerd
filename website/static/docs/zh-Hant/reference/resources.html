@@ -262,10 +262,13 @@ spec:
 <p>向 AFTR 以 IPv6 封裝 IPv4。通道設定、IPv4 預設路由、NAT 與連通檢查是不同事項。</p>
 <h2 id="tunnelinterface">TunnelInterface</h2>
 <p><a href="resources/TunnelInterface.html">TunnelInterface</a></p>
+<p>建立並調和未加密的 IPv4 外層隧道及選用內層 IPv4 位址，metadata.name 為實際 OS 隧道名稱。</p>
 <h2 id="overlaypeer">OverlayPeer</h2>
 <p><a href="resources/OverlayPeer.html">OverlayPeer</a></p>
+<p>描述供 HybridRoute 與路徑 MTU 策略衍生使用的既有傳輸；本資源不自行建立 WireGuard、Tailscale、IPsec 或隧道。</p>
 <h2 id="hybridroute">HybridRoute</h2>
 <p><a href="resources/HybridRoute.html">HybridRoute</a></p>
+<p>將明確列出的 IPv4 目的網路展開為經 OverlayPeer 的主路由表 IPv4Route。</p>
 <h2 id="cloudproviderprofile">CloudProviderProfile</h2>
 <p><a href="resources/CloudProviderProfile.html">CloudProviderProfile</a></p>
 <p>描述規劃供應商操作所用的身分及目標中繼資料預設值。此宣告本身不進行雲端驗證或建立資源。</p>

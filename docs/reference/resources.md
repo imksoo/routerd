@@ -467,15 +467,21 @@ Encapsulate IPv4 in IPv6 toward an AFTR. Tunnel setup, an IPv4 default route, NA
 
 [TunnelInterface](resources/TunnelInterface.md)
 
+Create and reconcile an unencrypted IPv4 outer tunnel and an optional IPv4 inner address. metadata.name is the actual OS tunnel name.
+
 
 ## OverlayPeer
 
 [OverlayPeer](resources/OverlayPeer.md)
 
+Describe an existing transport used by HybridRoute and path-MTU policy derivation. This resource does not establish WireGuard, Tailscale, IPsec or a tunnel by itself.
+
 
 ## HybridRoute
 
 [HybridRoute](resources/HybridRoute.md)
+
+Expand explicitly listed IPv4 destination networks into main-table IPv4Route resources through an OverlayPeer.
 
 
 ## CloudProviderProfile

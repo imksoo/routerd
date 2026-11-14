@@ -262,10 +262,13 @@ spec:
 <p>Encapsulate IPv4 in IPv6 toward an AFTR. Tunnel setup, an IPv4 default route, NAT and reachability checks are separate concerns.</p>
 <h2 id="tunnelinterface">TunnelInterface</h2>
 <p><a href="resources/TunnelInterface.html">TunnelInterface</a></p>
+<p>Create and reconcile an unencrypted IPv4 outer tunnel and an optional IPv4 inner address. metadata.name is the actual OS tunnel name.</p>
 <h2 id="overlaypeer">OverlayPeer</h2>
 <p><a href="resources/OverlayPeer.html">OverlayPeer</a></p>
+<p>Describe an existing transport used by HybridRoute and path-MTU policy derivation. This resource does not establish WireGuard, Tailscale, IPsec or a tunnel by itself.</p>
 <h2 id="hybridroute">HybridRoute</h2>
 <p><a href="resources/HybridRoute.html">HybridRoute</a></p>
+<p>Expand explicitly listed IPv4 destination networks into main-table IPv4Route resources through an OverlayPeer.</p>
 <h2 id="cloudproviderprofile">CloudProviderProfile</h2>
 <p><a href="resources/CloudProviderProfile.html">CloudProviderProfile</a></p>
 <p>Describe a provider identity and default target metadata used when planning provider actions. This declaration does not authenticate to a cloud or create resources.</p>

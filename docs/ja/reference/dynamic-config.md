@@ -1,182 +1,25 @@
----
-title: Dynamic config
-slug: /reference/dynamic-config
----
+# 動的設定
 
-# Dynamic config
+起動時のYAMLは利用者が管理する設定です。検証済みの実行時データは一時的にリソースを追加でき、期限切れになると次の統合から除外されます。宣言した設定とDHCP・PD・BGPで得た状態は、リソースの状態表示で区別します。
 
-Dynamic config は、信頼されたローカルソースが startup-config を編集せずにランタイムの
-意図を提供する仕組みです。routerd は startup YAML、アクティブな dynamic part、
-アクティブな mask から一つの effective-config を導出します。effective-config が唯一の
-リコンサイル対象です。
+DynamicConfigSourceは現行実装では宣言の検証のみで、実行時の利用処理がありません。宣言してもPluginを定期実行せず、ttlもPluginResult.status.ttlを設定しません。EventSubscriptionはローカルのPluginを呼び出せます。手動呼び出しはrouterctl plugin runを使います。
 
-このページでは CloudEdge MVP 向けの dynamic-config API の形状を説明します。
-プラグインランナーは検証済みのプラグイン出力を `DynamicConfigPart` レコードとして保存
-できます。`actionPlans` 由来のプロバイダー action は dynamic config 内で不活性のまま
-保持され、effective config にはマージされません。別の provider-action エンジンが
-アクティブな part からのみインポートし、`ProviderActionPolicy`、承認、
-エグゼキュータープラグインのゲートを経てのみ実行します。
+Pluginは結果にTTLを返します。ポリシーで許可した完全一致のmaskだけが、有効期間中に起動設定の対象リソースを抑制し、YAML自体は変更しません。プロバイダー操作案は別のProviderActionPolicyの条件に従い、実行時データの統合だけでは適用しません。
 
-## DynamicConfigPart
+変更を反映する前に、実効設定を確認します。
 
-`DynamicConfigPart` は、動的ソースからの検証済みランタイムフラグメントです。
-ソースは通常の `api.Resource` オブジェクトとディレクティブを提供できます。Mobility
-controller は型付き `mobilityDataplane` 計画、`fibVerdicts`、fact-side の
-`arpObserverIntents` も保存します。これらは controller が出力するものであり、plugin
-が記述する resource ではありません。
-
-```yaml
-apiVersion: config.routerd.net/v1alpha1
-kind: DynamicConfigPart
-metadata:
-  name: oci-inventory
-spec:
-  source: Plugin/oci-inventory
-  generation: 12
-  observedAt: "2026-05-29T12:00:00Z"
-  expiresAt: "2026-05-29T12:05:00Z"
-  digest: sha256:...
-  resources:
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv4Route
-      metadata: { name: cloud-app-static-fallback }
-      spec: { destination: 10.0.1.123/32, gateway: 192.0.2.1 }
-  directives:
-    - op: mask
-      target: { apiVersion: net.routerd.net/v1alpha1, kind: IPv4Route, name: cloud-app-static-fallback }
-      reason: "provider inventory confirms the dynamic route"
-```
-
-| フィールド | 意味 |
-| --- | --- |
-| `spec.source` | 安定したソース識別子。例: `Plugin/oci-inventory`。 |
-| `spec.generation` | 単調増加のソース世代番号。説明と順序付けに使用。 |
-| `spec.observedAt` | ソースが入力を観測した RFC3339 時刻。 |
-| `spec.expiresAt` | この part が非アクティブになる RFC3339 時刻。 |
-| `spec.digest` | 検証済み part ペイロードのダイジェスト。 |
-| `spec.resources` | アクティブな間 effective-config に提供されるリソース。 |
-| `spec.directives` | マージディレクティブ。現在は `op: mask` のみ。 |
-| `spec.actionPlans` | プロバイダー action の提案。リソースではない。provider-action エンジンがアクティブな part からのみインポートし、実行前に独自のゲートを適用する。 |
-
-プラグインは `PluginResult.status.ttl` で TTL duration を返します。routerd はそれを
-`observedAt` に対して解決し、保存される `expiresAt` にします。
-
-## DynamicConfigSource
-
-`DynamicConfigSource` は、一つのプラグインを dynamic config 生成にバインドする
-startup-config ポリシーです。
-
-```yaml
-apiVersion: plugin.routerd.net/v1alpha1
-kind: DynamicConfigSource
-metadata: { name: oci-inventory }
-spec:
-  pluginRef: oci-inventory
-  ttl: 300s
-  mergePolicy:
-    conflict: reject
-```
-
-MVP のマージポリシーは `conflict: reject` のみをサポートします。
-
-## DynamicConfigDirective
-
-MVP は以下のディレクティブ操作をサポートします。
-
-| 操作 | 意味 |
-| --- | --- |
-| `mask` | ディレクティブがアクティブな間、一致する startup-config リソースを抑制する。 |
-
-ディレクティブのターゲットは `apiVersion`、`kind`、`name` で識別します。
-ターゲットは意図的に完全一致です。ワイルドカード mask は MVP のスコープ外です。
-
-## DynamicOverridePolicy
-
-`DynamicOverridePolicy` は、ソースが選択したリソースに対して動的ディレクティブ
-を使用する権限を付与します。プラグインは mask を提案できますが、mask がアクティブになる
-のはポリシーがそのソース、操作、ターゲットを許可している場合のみです。
-
-```yaml
-apiVersion: config.routerd.net/v1alpha1
-kind: DynamicOverridePolicy
-metadata: { name: allow-cloud-plugin-mask }
-spec:
-  allow:
-    - source: Plugin/oci-inventory
-      operations: [mask]
-      targets:
-        - { apiVersion: net.routerd.net/v1alpha1, kind: IPv4Route, name: cloud-app-static-fallback }
-```
-
-ポリシーは startup-config の意図です。動的ソースが自身にオーバーライド権限を
-付与することはできません。
-
-## マージアルゴリズム
-
-effective-config のマージは決定的です。
-
-1. startup-config を読み込み検証。
-2. 状態データベースから検証済み dynamic part を読み込み。
-3. `expiresAt` がマージ時刻以前の dynamic part を破棄。
-4. アクティブな dynamic part を `source`、次に `generation`、次に `metadata.name` で
-   ソートし、安定したレンダリングと診断を実現。
-5. アクティブなディレクティブを `DynamicOverridePolicy` に照合して評価。
-6. 許可されたアクティブ mask の対象となる startup リソースを抑制済みとしてマーク。
-7. 抑制されていない startup リソースとアクティブな dynamic リソースから
-   effective-config を構築。
-8. リコンサイルまたはドライラン出力の前に、結果の effective-config を検証。
-
-競合ルール:
-
-- 動的リソースは、同じ `apiVersion`、`kind`、`metadata.name` の startup リソース
-  を置き換えてはならない。
-- 同一の識別子を持つ 2 つのアクティブな動的リソースは、ソース固有の所有権
-  ルールが後に定義されない限り競合する。
-- 不許可のディレクティブはマージでは無視され、検証または診断の所見として報告される。
-- 期限切れの動的 part はリソースも mask も提供しない。
-
-## mask セマンティクス
-
-mask は抑制であり、削除ではありません。startup YAML は変更されず、git 履歴は運用者が
-所有したままで、一致するすべてのアクティブ mask が期限切れまたは削除されると静的
-リソースが再びアクティブになります。
-
-抑制されたリソースは以下のようなステータスを表示するべきです。
-
-```yaml
-status:
-  phase: Suppressed
-  maskedBy:
-    - Plugin/oci-inventory#12
-  maskedUntil: "2026-05-29T12:05:00Z"
-```
-
-複数の mask が同じリソースを対象とする場合、最後のアクティブ mask が期限切れになる
-までリソースは抑制され続けます。`maskedBy` はすべてのアクティブなソースと世代番号を
-リストし、`maskedUntil` はアクティブ mask のうち最も遅い `expiresAt` です。
-
-MVP の期限切れ動作は `onExpire=restoreStatic` です。mask が期限切れになると、
-routerd は次のマージで startup-config リソースを effective-config に復元します。
-startup リソースが変更されていないため、破壊的なクリーンアップステップはありません。
-
-## CLI
-
-現在の運用者向けインターフェースは以下の通りです。
-
-```text
+```sh
 routerctl dynamic list
 routerctl dynamic describe <source-or-part>
 routerctl dynamic render
 routerctl dynamic diff
 routerctl plugin list
-routerctl plugin run <name> [--dry-run]
 ```
 
-`dynamic list` はアクティブおよび期限切れの part を表示します。`dynamic describe` は
-ソース、世代番号、ダイジェスト、リソース、ディレクティブ、有効期限を説明します。
-`dynamic render` は effective-config を出力します。`dynamic diff` は startup-config と
-effective-config を比較します。`plugin run --dry-run` は状態データベースに書き込まず
-に候補の dynamic part を出力します。
+各項目の意味と実装上の制約はリソース別の説明を参照してください。
 
-ハイブリッドクラウドエッジ設計 および
-[プラグインプロトコル](/docs/ja/plugin-protocol.md) を参照してください。
+- [Plugin](resources/Plugin.md)
+- [DynamicConfigSource](resources/DynamicConfigSource.md)
+- [DynamicOverridePolicy](resources/DynamicOverridePolicy.md)
+- [EventSubscription](resources/EventSubscription.md)
+- [ProviderActionPolicy](resources/ProviderActionPolicy.md)

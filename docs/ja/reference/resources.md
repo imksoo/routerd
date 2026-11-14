@@ -467,15 +467,21 @@ AFTRへ向けてIPv4をIPv6にカプセル化します。トンネル作成、IP
 
 [TunnelInterface](resources/TunnelInterface.md)
 
+非暗号化のIPv4外側トンネルと、任意の内側IPv4アドレスを生成・再調整します。metadata.nameが実OSトンネル名です。
+
 
 ## OverlayPeer
 
 [OverlayPeer](resources/OverlayPeer.md)
 
+HybridRouteと経路MTU方針の生成に使う、既存の転送手段を記述します。本リソースだけでWireGuard・Tailscale・IPsec・トンネルは構築しません。
+
 
 ## HybridRoute
 
 [HybridRoute](resources/HybridRoute.md)
+
+列挙したIPv4宛先網を、OverlayPeer経由の主経路表IPv4Routeへ展開します。
 
 
 ## CloudProviderProfile

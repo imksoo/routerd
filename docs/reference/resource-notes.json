@@ -8842,5 +8842,323 @@
       "cmd/routerd/sam_enrollment_submit.go",
       "pkg/controller/mobility/enrollmentclient.go"
     ]
+  },
+  "HybridRoute": {
+    "purpose": [
+      "Expand explicitly listed IPv4 destination networks into main-table IPv4Route resources through an OverlayPeer.",
+      "列挙したIPv4宛先網を、OverlayPeer経由の主経路表IPv4Routeへ展開します。",
+      "將明確列出的 IPv4 目的網路展開為經 OverlayPeer 的主路由表 IPv4Route。",
+      "将明确列出的 IPv4 目标网络展开为经 OverlayPeer 的主路由表 IPv4Route。"
+    ],
+    "rules": [
+      [
+        "Only nondefault IPv4 CIDRs are supported. default, 0.0.0.0/0, IPv6 and non-main tables are rejected. Each destination is masked and generates <resource-name>-<CIDR-with-nonalphanumeric-runs-replaced-by-hyphens>, such as branch-10-20-0-0-16.",
+        "デフォルトでないIPv4 CIDRのみです。default・0.0.0.0/0・IPv6・主表以外は拒否します。宛先をネットワーク化し、<資源名>-<CIDR内の英数字以外の連続をハイフン化>、例branch-10-20-0-0-16の名前を生成します。",
+        "僅支援非預設 IPv4 CIDR，拒絕 default、0.0.0.0/0、IPv6 及非主表。目的前綴遮罩化後產生 <資源名>-<CIDR非英數連續字元改連字號>，例如 branch-10-20-0-0-16。",
+        "仅支持非默认 IPv4 CIDR，拒绝 default、0.0.0.0/0、IPv6 及非主表。目标前缀掩码化后生成 <资源名>-<CIDR非字母数字连续字符改连字符>，例如 branch-10-20-0-0-16。"
+      ],
+      [
+        "Generated route names must be unique and cannot collide with explicit IPv4Route names or destinations. Duplicate normalized destinations in one HybridRoute collide. An unhealthy HealthCheck changes HybridRoute status only: it does not gate installation, withdraw routes or select another peer.",
+        "生成名は一意で、明示IPv4Routeの名前・宛先との衝突はエラーです。同じHybridRoute内の正規化宛先重複も衝突します。HealthCheck異常はHybridRouteの状態表示だけを変え、適用待機・経路撤去・別相手選択は行いません。",
+        "產生名稱須唯一，不可與明確 IPv4Route 名稱或目的衝突。同一 HybridRoute 內重複正規化目的也會衝突。HealthCheck 異常僅改變狀態，不阻擋安裝、撤回路由或改選對端。",
+        "生成名称须唯一，不可与明确 IPv4Route 名称或目标冲突。同一 HybridRoute 内重复规范化目标也会冲突。HealthCheck 异常仅改变状态，不阻挡安装、撤回路由或改选对端。"
+      ],
+      [
+        "Each generated IPv4Route uses the peer underlay.interface as device. Only ipsec optionally supplies remote.address as an IPv4 gateway; other types use a device-only route. Existing tunnel/VPN setup and real reachability must be provided separately. Linux honors positive metric; the underlying FreeBSD IPv4Route application does not apply metric.",
+        "生成IPv4Routeはpeerのunderlay.interfaceをdeviceに使います。ipsecだけremote.addressがIPv4ならgatewayにし、他はデバイス経路です。トンネル・VPN設定と到達性は別途用意します。Linuxは正のmetricを使い、FreeBSDのIPv4Route適用はmetricを使いません。",
+        "產生 IPv4Route 使用 peer.underlay.interface 作 device，僅 ipsec 可將 IPv4 remote.address 作 gateway，其他為裝置路由。須另行提供隧道/VPN 與實際可達性。Linux 使用正 metric，FreeBSD 底層 IPv4Route 不套用 metric。",
+        "生成 IPv4Route 使用 peer.underlay.interface 作 device，仅 ipsec 可将 IPv4 remote.address 作 gateway，其他为设备路由。须另行提供隧道/VPN 与实际可达性。Linux 使用正 metric，FreeBSD 底层 IPv4Route 不应用 metric。"
+      ]
+    ],
+    "fields": {
+      "destinationCIDRs": [
+        "Required nonempty IPv4 CIDR list, no default route. No implicit remote networks or discovery.",
+        "デフォルト経路を除く1件以上のIPv4 CIDRが必須です。相手ネットワークの補完・検出はしません。",
+        "必填非空且不含預設路由的 IPv4 CIDR 清單，不自動補遠端網路或探索。",
+        "必填非空且不含默认路由的 IPv4 CIDR 列表，不自动补远端网络或发现。"
+      ],
+      "peerRef": [
+        "Required bare existing OverlayPeer metadata.name. Although expansion can normalize OverlayPeer/name, normal cross-resource validation requires the bare name.",
+        "既存OverlayPeerのmetadata.nameが必須です。展開関数はOverlayPeer/nameを正規化できますが、通常参照検証は裸名を必要とします。",
+        "必填既有 OverlayPeer metadata.name 裸名；展開雖可正規化 OverlayPeer/name，一般跨資源驗證仍要求裸名。",
+        "必填现有 OverlayPeer metadata.name 裸名；展开虽可规范化 OverlayPeer/name，常规跨资源验证仍要求裸名。"
+      ],
+      "install": [
+        "Optional route-install settings; default main table, metric 0. No policy routing or automatic HA selection.",
+        "経路適用設定です。既定は主表・metric 0で、ポリシールーティング・HA自動選択ではありません。",
+        "選用路由安裝設定，預設主表、metric 0，不提供策略路由或自動 HA 選擇。",
+        "可选路由安装配置，默认主表、metric 0，不提供策略路由或自动 HA 选择。"
+      ],
+      "install.table": [
+        "Empty or main only; both lower to main-table IPv4Route. Other table names/numbers are rejected.",
+        "空・mainだけを許し、どちらも主表IPv4Routeにします。他の表名・番号は拒否します。",
+        "僅空值或 main，兩者均展開為主表 IPv4Route，拒絕其他表名或編號。",
+        "仅空值或 main，两者均展开为主表 IPv4Route，拒绝其他表名或编号。"
+      ],
+      "install.metric": [
+        "Nonnegative integer, default 0, copied to generated IPv4Route. Linux emits positive metrics only; FreeBSD path ignores metric.",
+        "0以上の整数で既定0です。生成IPv4Routeへコピーし、Linuxは正値だけを出力しFreeBSDは使いません。",
+        "非負整數，預設 0，複製至產生 IPv4Route；Linux 僅輸出正值，FreeBSD 路徑忽略。",
+        "非负整数，默认 0，复制至生成 IPv4Route；Linux 仅输出正值，FreeBSD 路径忽略。"
+      ],
+      "healthCheckRef": [
+        "Optional bare existing HealthCheck name. Empty has no health-status augmentation. Unhealthy/failed/error status marks Degraded but does not change the routes; missing/unknown runtime status is not treated as unhealthy by this function.",
+        "既存HealthCheckの任意裸名です。空なら監視状態追加なしです。Unhealthy・failed・errorはDegradedにしますが経路は変えず、この関数は未取得・unknownを異常扱いしません。",
+        "選用既有 HealthCheck 裸名，空值不附加健康狀態。unhealthy/failed/error 標示 Degraded 但不變更路由，此函式不將缺少或 unknown 狀態視為異常。",
+        "可选现有 HealthCheck 裸名，空值不附加健康状态。unhealthy/failed/error 标记 Degraded 但不更改路由，此函数不将缺少或 unknown 状态视为异常。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_hybrid.go",
+      "pkg/config/validate.go",
+      "pkg/hybrid/hybrid.go",
+      "pkg/controller/chain/dynamic_effective.go",
+      "pkg/controller/chain/hybrid.go",
+      "pkg/controller/chain/phase2.go"
+    ]
+  },
+  "OverlayPeer": {
+    "purpose": [
+      "Describe an existing transport used by HybridRoute and path-MTU policy derivation. This resource does not establish WireGuard, Tailscale, IPsec or a tunnel by itself.",
+      "HybridRouteと経路MTU方針の生成に使う、既存の転送手段を記述します。本リソースだけでWireGuard・Tailscale・IPsec・トンネルは構築しません。",
+      "描述供 HybridRoute 與路徑 MTU 策略衍生使用的既有傳輸；本資源不自行建立 WireGuard、Tailscale、IPsec 或隧道。",
+      "描述供 HybridRoute 与路径 MTU 策略派生使用的现有传输；本资源不自行建立 WireGuard、Tailscale、IPsec 或隧道。"
+    ],
+    "rules": [
+      [
+        "role, nodeID and underlay.type are required. wireguard/ipip/gre/fou/gue require underlay.interface in normal validation; using any type through HybridRoute requires it at expansion time, including tailscale/ipsec/route.",
+        "role・nodeID・underlay.typeは必須です。通常検証はwireguard・ipip・gre・fou・gueでunderlay.interfaceを要求し、HybridRouteへの展開時はtailscale・ipsec・routeを含む全タイプで必要です。",
+        "role、nodeID、underlay.type 必填。一般驗證在 wireguard/ipip/gre/fou/gue 要求 underlay.interface，HybridRoute 展開時則所有類型均需要，含 tailscale/ipsec/route。",
+        "role、nodeID、underlay.type 必填。常规验证在 wireguard/ipip/gre/fou/gue 要求 underlay.interface，HybridRoute 展开时则所有类型均需要，含 tailscale/ipsec/route。"
+      ],
+      [
+        "For ipip/gre/fou/gue the bare underlay.interface must reference a declared TunnelInterface; validation does not check that its mode matches underlay.type. WireGuard may reference an externally managed device (warning rather than rejection). Other underlay devices must already be usable.",
+        "ipip・gre・fou・gueの裸underlay.interfaceは宣言済みTunnelInterfaceの参照が必要です。ただしmodeとの一致は検証しません。WireGuardは外部管理デバイスも許し警告にとどめます。他のデバイスも別途利用可能にしておきます。",
+        "ipip/gre/fou/gue 的 underlay.interface 裸名須參照已宣告 TunnelInterface，但不驗證 mode 與 underlay.type 相符。WireGuard 可使用外部管理裝置，僅警告不拒絕；其他裝置亦須事先可用。",
+        "ipip/gre/fou/gue 的 underlay.interface 裸名须引用已声明 TunnelInterface，但不验证 mode 与 underlay.type 相符。WireGuard 可使用外部管理设备，仅警告不拒绝；其他设备也须事先可用。"
+      ],
+      [
+        "nodeID/remote.nodeID and role are descriptors, not discovery, authentication, HA election or automatic topology matching. No when or dependsOn exists on this resource.",
+        "nodeID・remote.nodeID・roleは記述情報で、自動検出・認証・HA選出・トポロジー自動照合はしません。when・dependsOnはありません。",
+        "nodeID/remote.nodeID/role 為描述資訊，不提供探索、認證、HA 選舉或自動拓撲匹配；無 when/dependsOn。",
+        "nodeID/remote.nodeID/role 为描述信息，不提供发现、认证、HA 选举或自动拓扑匹配；无 when/dependsOn。"
+      ]
+    ],
+    "fields": {
+      "role": [
+        "Required onprem or cloud. No default; does not create cloud resources or choose a provider.",
+        "onprem・cloudが必須です。既定値はなく、クラウド資源作成・事業者選択は行いません。",
+        "必填 onprem 或 cloud，無預設值，不建立雲端資源或選擇業者。",
+        "必填 onprem 或 cloud，无默认值，不创建云资源或选择云厂商。"
+      ],
+      "nodeID": [
+        "Required nonblank local node identity label. Not resolved to a host or external account.",
+        "空でないローカルノード識別名が必須です。ホストや外部アカウントへの解決は行いません。",
+        "必填非空本機節點身分標籤，不解析為主機或外部帳戶。",
+        "必填非空本机节点身份标签，不解析为主机或外部账户。"
+      ],
+      "underlay": [
+        "Required transport descriptor. Configure the actual network transport separately.",
+        "転送手段の記述が必須です。実ネットワークの設定は別途必要です。",
+        "必填傳輸描述，實際網路傳輸須另行設定。",
+        "必填传输描述，实际网络传输须另行配置。"
+      ],
+      "underlay.type": [
+        "Required wireguard/tailscale/ipsec/route/ipip/gre/fou/gue. Selects route lowering and MTU-overhead estimation, not daemon creation.",
+        "wireguard・tailscale・ipsec・route・ipip・gre・fou・gueが必須です。経路変換とMTU推定を選び、デーモンは作りません。",
+        "必填 wireguard/tailscale/ipsec/route/ipip/gre/fou/gue，選擇路由展開與 MTU 開銷估算，不建立常駐程式。",
+        "必填 wireguard/tailscale/ipsec/route/ipip/gre/fou/gue，选择路由展开与 MTU 开销估算，不创建守护进程。"
+      ],
+      "underlay.interface": [
+        "Device/logical interface used by generated IPv4Route; required for route expansion. Bare TunnelInterface name for tunnel modes; use actual OS device name for externally managed devices. No automatic interface discovery.",
+        "生成IPv4Routeのデバイス・論理名で、経路展開には必須です。トンネル型はTunnelInterface裸名、外部管理なら実OS名を使い、自動検出はしません。",
+        "產生 IPv4Route 所用裝置或邏輯介面，路由展開時必填。隧道模式使用 TunnelInterface 裸名，外部管理裝置使用實際 OS 名稱，不自動探索。",
+        "生成 IPv4Route 所用设备或逻辑接口，路由展开时必填。隧道模式使用 TunnelInterface 裸名，外部管理设备使用实际 OS 名称，不自动发现。"
+      ],
+      "underlay.address": [
+        "Optional bare IPv4/IPv6 descriptor, validated as an IP. Current HybridRoute target derivation does not use it as gateway/local bind or assign it to the interface.",
+        "任意の裸IPv4/IPv6記述で、IPとして検証します。現行HybridRouteはこれをゲートウェイ・送信元として使わず、インターフェースへの割当もしません。",
+        "選用純 IPv4/IPv6 描述，驗證為 IP。目前 HybridRoute 目標衍生不將其用作閘道或本機綁定，也不指派到介面。",
+        "可选纯 IPv4/IPv6 描述，验证为 IP。当前 HybridRoute 目标派生不将其用作网关或本机绑定，也不分配到接口。"
+      ],
+      "remote": [
+        "Optional remote descriptor, default empty. No peer registration or negotiation.",
+        "任意の相手記述で既定空です。相手登録・交渉は行いません。",
+        "選用遠端描述，預設空，不註冊或協商對端。",
+        "可选远端描述，默认空，不注册或协商对端。"
+      ],
+      "remote.nodeID": [
+        "Optional remote identity label; default empty, not used for live peer discovery or authorization.",
+        "任意の相手識別名で既定空です。実行時の相手検出・認可には使いません。",
+        "選用遠端身分標籤，預設空，不用於即時探索或授權。",
+        "可选远端身份标签，默认空，不用于实时发现或授权。"
+      ],
+      "remote.address": [
+        "Optional IP string. For ipsec route lowering, a parseable IPv4 value becomes gateway; invalid/IPv6/empty yields a device-only route. Other types do not use it as a gateway, and this field is not separately validated as an IP by OverlayPeer validation.",
+        "任意IP文字列です。ipsecの経路変換だけ、解析できるIPv4をgatewayにし、不正・IPv6・空ならデバイス経路です。他型のgatewayには使わず、OverlayPeerの検証もこの値を個別IP検査しません。",
+        "選用 IP 字串。僅 ipsec 路由展開會以有效 IPv4 作 gateway，無效/IPv6/空值為裝置路由。其他類型不以此作閘道，OverlayPeer 驗證亦未單獨檢查其為 IP。",
+        "可选 IP 字符串。仅 ipsec 路由展开会以有效 IPv4 作 gateway，无效/IPv6/空值为设备路由。其他类型不以此作网关，OverlayPeer 验证也未单独检查其为 IP。"
+      ],
+      "pathMTU": [
+        "Optional forwarded-path MTU options, default no force-fragment request. Does not encrypt the underlay.",
+        "任意の転送経路MTU設定で、既定は強制分割要求なしです。暗号化設定ではありません。",
+        "選用轉送路徑 MTU 選項，預設不要求強制分片，不會加密底層。",
+        "可选转发路径 MTU 选项，默认不要求强制分片，不会加密底层。"
+      ],
+      "pathMTU.forceFragmentIPv4": [
+        "Default false; true accepted only for wireguard/ipip/gre/fou/gue. Requests DF clearing for oversized IPv4 on matching derived forwarded paths using Linux nftables; not a global tunnel flag or IPv6 fragmentation. FreeBSD skips this nftables controller and has no equivalent DF-clear action in this path.",
+        "既定falseで、trueはwireguard・ipip・gre・fou・gueだけです。Linux nftablesで派生転送経路に一致する過大IPv4のDF解除を要求します。トンネル全体のフラグやIPv6分割ではありません。FreeBSDはこのコントローラーを省略し、この経路に同等のDF解除はありません。",
+        "預設 false，true 僅限 wireguard/ipip/gre/fou/gue。透過 Linux nftables 對符合衍生轉送路徑的過大 IPv4 清除 DF，不是全域隧道旗標或 IPv6 分片。FreeBSD 略過此控制器，此路徑無同等 DF 清除動作。",
+        "默认 false，true 仅限 wireguard/ipip/gre/fou/gue。通过 Linux nftables 对符合派生转发路径的过大 IPv4 清除 DF，不是全局隧道标志或 IPv6 分片。FreeBSD 跳过此控制器，此路径无同等 DF 清除动作。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_hybrid.go",
+      "pkg/config/validate.go",
+      "pkg/config/cluster_secret_validate.go",
+      "pkg/hybrid/hybrid.go",
+      "pkg/render/mtu.go",
+      "pkg/render/nftables.go",
+      "pkg/controller/chain/mtu.go"
+    ]
+  },
+  "TunnelInterface": {
+    "purpose": [
+      "Create and reconcile an unencrypted IPv4 outer tunnel and an optional IPv4 inner address. metadata.name is the actual OS tunnel name.",
+      "非暗号化のIPv4外側トンネルと、任意の内側IPv4アドレスを生成・再調整します。metadata.nameが実OSトンネル名です。",
+      "建立並調和未加密的 IPv4 外層隧道及選用內層 IPv4 位址，metadata.name 為實際 OS 隧道名稱。",
+      "创建并协调未加密的 IPv4 外层隧道及可选内层 IPv4 地址，metadata.name 为实际 OS 隧道名称。"
+    ],
+    "rules": [
+      [
+        "Each endpoint requires exactly one literal or common status source. Both are IPv4-only. Missing dynamic endpoint state pauses reconciliation even when optional true; existing forwarding is not automatically withdrawn by that missing value. No when/dependsOn fields exist here.",
+        "両端点は固定値または共通状態参照の片方が必要でIPv4専用です。動的端点の未解決はoptional trueでも再調整待ちとなり、既存の転送は自動撤去しません。when・dependsOnはありません。",
+        "兩端點各須固定值或共用狀態來源其中之一，僅限 IPv4。動態端點缺值即使 optional true 仍暫停調和，不自動撤回既有轉送；無 when/dependsOn。",
+        "两端点各须固定值或通用状态来源其中之一，仅限 IPv4。动态端点缺值即使 optional true 仍暂停协调，不自动撤回现有转发；无 when/dependsOn。"
+      ],
+      [
+        "Linux supports all four modes using ip link/address and FOU listeners. FreeBSD supports IPIP/gifN and GRE/greN only, rejects explicit TTL and requires an explicit inner peerAddress whenever address is set. The controller forces the link up; there is no managed/enabled opt-out.",
+        "Linuxはip link・addressとFOU待受で4modeを扱います。FreeBSDはIPIP/gifN・GRE/greNのみでTTL明示を拒否し、address指定時は内側peerAddress必須です。コントローラーはリンクをupにし、managed・enabledの抑止指定はありません。",
+        "Linux 以 ip link/address 及 FOU 接聽支援四模式。FreeBSD 僅 IPIP/gifN、GRE/greN，拒絕明確 TTL，address 非空時須明確內層 peerAddress。控制器強制鏈路 up，無 managed/enabled 停用選項。",
+        "Linux 以 ip link/address 及 FOU 监听支持四模式。FreeBSD 仅 IPIP/gifN、GRE/greN，拒绝明确 TTL，address 非空时须明确内层 peerAddress。控制器强制链路 up，无 managed/enabled 禁用选项。"
+      ],
+      [
+        "Configured address replaces other IPv4 addresses on the tunnel; empty removes them. Linux cleanup also removes unconfigured IPIP/GRE interfaces except built-in or otherwise retained configured devices, and unused FOU listeners; FreeBSD removal uses recorded TunnelInterface status and type checks. Changes are configuration-wide, not ownership-limited.",
+        "設定address以外のトンネルIPv4は除去し、空なら全除去します。Linuxは組込・他設定で保持するものを除く未設定IPIP/GREと不要FOU待受も削除します。FreeBSDの撤去は記録したTunnelInterface状態と型確認を使います。変更は所有者追跡ではなく設定全体に従います。",
+        "設定 address 取代隧道其他 IPv4，空值全移除。Linux 清理亦移除未設定 IPIP/GRE（內建及其他設定保留者除外）及不用的 FOU 接聽；FreeBSD 撤除依記錄狀態及類型檢查。變更依整體設定，不以所有權限制。",
+        "配置 address 替换隧道其他 IPv4，空值全移除。Linux 清理也移除未配置 IPIP/GRE（内置及其他配置保留者除外）及不用的 FOU 监听；FreeBSD 撤除依记录状态及类型检查。变更按整体配置，不以所有权限制。"
+      ]
+    ],
+    "fields": {
+      "mode": [
+        "Required ipip/gre/fou/gue, no default. Linux FOU/GUE use an IPIP link with UDP encapsulation. FreeBSD supports only ipip (gifN) and gre (greN); FOU/GUE are rejected.",
+        "ipip・gre・fou・gueが必須で既定なしです。LinuxのFOU/GUEはUDPカプセル化IPIPリンクです。FreeBSDはipip（gifN）・gre（greN）だけでFOU/GUEを拒否します。",
+        "必填 ipip/gre/fou/gue，無預設。Linux FOU/GUE 使用 UDP 封裝 IPIP 鏈路；FreeBSD 僅支援 ipip（gifN）及 gre（greN），拒絕 FOU/GUE。",
+        "必填 ipip/gre/fou/gue，无默认值。Linux FOU/GUE 使用 UDP 封装 IPIP 链路；FreeBSD 仅支持 ipip（gifN）及 gre（greN），拒绝 FOU/GUE。"
+      ],
+      "local": [
+        "Local outer bare IPv4 endpoint. Exactly one of local or localFrom is required; literal CIDR/hostname/IPv6 is rejected. No implicit interface-address selection.",
+        "外側送信元の裸IPv4です。local・localFromの片方だけが必須で、固定CIDR・ホスト名・IPv6は拒否します。インターフェースアドレスの自動選択はありません。",
+        "本機外層純 IPv4 端點，local/localFrom 恰需一個。拒絕固定 CIDR、主機名稱與 IPv6，不自動選擇介面位址。",
+        "本机外层纯 IPv4 端点，local/localFrom 恰需一个。拒绝固定 CIDR、主机名与 IPv6，不自动选择接口地址。"
+      ],
+      "localFrom": [
+        "Optional common status source with explicit existing Kind/name and provided field, exclusive with local. Runtime reads status only; a single IPv4 address or CIDR is accepted and normalized. Missing values yield Pending/EndpointSourcePending even with optional true; no endpoint fallback.",
+        "既存Kind/name・提供fieldを明示する共通状態参照で、localと排他です。実行時は状態だけを読み、単一IPv4・CIDRを正規化します。optional trueでも未解決はPending/EndpointSourcePendingで、補完値はありません。",
+        "選用共用狀態來源，須明確指定既有 Kind/name 與提供欄位，與 local 互斥。執行時僅讀狀態，接受單一 IPv4 或 CIDR 並正規化；即使 optional true，缺值仍為 Pending/EndpointSourcePending，無端點替代值。",
+        "可选通用状态来源，须明确指定现有 Kind/name 与提供字段，与 local 互斥。运行时仅读状态，接受单一 IPv4 或 CIDR 并规范化；即使 optional true，缺值仍为 Pending/EndpointSourcePending，无端点替代值。"
+      ],
+      "remote": [
+        "Remote outer bare IPv4 endpoint. Exactly one of remote or remoteFrom is required; literal hostnames, IPv6 and CIDR are rejected.",
+        "外側宛先の裸IPv4です。remote・remoteFromの片方だけ必須で、固定ホスト名・IPv6・CIDRは拒否します。",
+        "遠端外層純 IPv4 端點，remote/remoteFrom 恰需一個，拒絕固定主機名稱、IPv6 與 CIDR。",
+        "远端外层纯 IPv4 端点，remote/remoteFrom 恰需一个，拒绝固定主机名、IPv6 与 CIDR。"
+      ],
+      "remoteFrom": [
+        "Optional common status source, exclusive with remote. Same required field, IPv4/CIDR normalization and ignored optional flag as localFrom. Missing status pauses reconciliation without automatically tearing down an already existing tunnel.",
+        "remoteと排他の共通状態参照です。field必須・IPv4/CIDR正規化・optionalを待機回避に使わない点はlocalFromと同じです。未解決は再調整を見送りますが、既存トンネルを自動撤去しません。",
+        "選用共用狀態來源，與 remote 互斥；必要 field、IPv4/CIDR 正規化及忽略 optional 行為同 localFrom。狀態缺值暫停調和，但不自動拆除既有隧道。",
+        "可选通用状态来源，与 remote 互斥；必要 field、IPv4/CIDR 规范化及忽略 optional 行为同 localFrom。状态缺值暂停协调，但不自动拆除现有隧道。"
+      ],
+      "address": [
+        "Optional inner IPv4 host/CIDR. Controller removes other IPv4 addresses from this tunnel; omitted/empty therefore removes existing IPv4 addresses. No automatic inner address. FreeBSD requires peerAddress when this is set.",
+        "任意の内側IPv4ホスト/CIDRです。コントローラーは他のIPv4を除去するため、省略・空なら既存IPv4も除去します。内側の自動割当はなく、FreeBSDは指定時にpeerAddressも必須です。",
+        "選用內層 IPv4 主機/CIDR。控制器移除隧道其他 IPv4，省略或空值因此亦移除既有 IPv4；無自動內層位址。FreeBSD 設定後需 peerAddress。",
+        "可选内层 IPv4 主机/CIDR。控制器移除隧道其他 IPv4，省略或空值因此也移除现有 IPv4；无自动内层地址。FreeBSD 设置后需 peerAddress。"
+      ],
+      "peerAddress": [
+        "FreeBSD-only explicit inner bare IPv4 peer paired with address. Both must be supplied together; no derivation from CIDR. Rejected on Linux.",
+        "FreeBSD専用の内側対向IPv4でaddressと対に指定します。片方だけは不可で、CIDRから自動導出せずLinuxでは拒否します。",
+        "僅 FreeBSD 的明確內層純 IPv4 對端，與 address 必須成對，不由 CIDR 推導，Linux 拒絕。",
+        "仅 FreeBSD 的明确内层纯 IPv4 对端，与 address 必须成对，不从 CIDR 推导，Linux 拒绝。"
+      ],
+      "underlayInterface": [
+        "Optional declared resource name for MTU estimation (Interface, WireGuardInterface or nested TunnelInterface). Not required or globally checked for existence here; unknown uses the 1500 fallback. Current tunnel commands do not bind to this device: host routing selects outer egress. Avoid recursive references.",
+        "MTU推定用の任意リソース名（Interface・WireGuardInterface・入れ子TunnelInterface）です。ここでは必須・全体存在検証はなく、不明なら1500を補います。現行コマンドはこのデバイスへ固定せず外側経路はOSが選びます。循環参照は避けてください。",
+        "選用 MTU 估算資源名稱（Interface、WireGuardInterface、巢狀 TunnelInterface）。此處非必填且未全域驗證存在，未知使用 1500 替代。目前隧道命令不綁定此裝置，外層出口由主機選路，請避免遞迴參照。",
+        "可选 MTU 估算资源名称（Interface、WireGuardInterface、嵌套 TunnelInterface）。此处非必填且未全局验证存在，未知使用 1500 替代。当前隧道命令不绑定此设备，外层出口由主机选路，请避免递归引用。"
+      ],
+      "mtu": [
+        "Optional explicit 576–9216, used unchanged. Omitted/0 derives configured underlay MTU (fallback 1500) minus overhead: ipip 20, gre 24 (+4 if keyed), fou 28, gue 32. Thus fallback defaults are 1480/1476/1472/1468 (keyed GRE 1472). Not live PMTU discovery.",
+        "任意の576～9216をそのまま使います。省略・0は設定上流MTU（不明なら1500）からipip 20・gre 24（keyあり+4）・fou 28・gue 32を引きます。補完既定は1480・1476・1472・1468、key付きGREは1472です。実通信PMTU探索ではありません。",
+        "選用明確 576–9216，原樣使用。省略或 0 為設定底層 MTU（替代 1500）減 ipip 20、gre 24（有 key 加 4）、fou 28、gue 32。替代預設 1480/1476/1472/1468，有 key GRE 1472，非即時 PMTU 探索。",
+        "可选明确 576–9216，原样使用。省略或 0 为配置底层 MTU（替代 1500）减 ipip 20、gre 24（有 key 加 4）、fou 28、gue 32。替代默认 1480/1476/1472/1468，有 key GRE 1472，非实时 PMTU 探测。"
+      ],
+      "ttl": [
+        "Linux outer TTL 1–255, omitted/0 becomes 64. FreeBSD rejects nonzero explicit TTL; its ifconfig tunnel path does not apply the internal reported default 64.",
+        "Linuxの外側TTL 1～255で、省略・0は64です。FreeBSDは明示非0を拒否し、内部表示の既定64もifconfig経路には適用しません。",
+        "Linux 外層 TTL 1–255，省略或 0 為 64。FreeBSD 拒絕非零明確 TTL，ifconfig 路徑亦不套用內部回報預設 64。",
+        "Linux 外层 TTL 1–255，省略或 0 为 64。FreeBSD 拒绝非零明确 TTL，ifconfig 路径也不应用内部报告默认 64。"
+      ],
+      "key": [
+        "GRE-only integer 0–4294967295; default 0 means no key. Nonzero with other modes is rejected. FreeBSD uses ifconfig grekey and Linux key/nokey. It is an identifier, not an encryption/authentication secret.",
+        "GRE専用の0～4294967295で、既定0はkeyなしです。他modeの非0は拒否し、FreeBSDはifconfig grekey、Linuxはkey/nokeyです。識別子であり暗号・認証秘密ではありません。",
+        "僅 GRE 的整數 0–4294967295，預設 0 表示無 key；其他模式非零拒絕。FreeBSD 使用 ifconfig grekey，Linux key/nokey。它是識別碼，不是加密或認證秘密。",
+        "仅 GRE 的整数 0–4294967295，默认 0 表示无 key；其他模式非零拒绝。FreeBSD 使用 ifconfig grekey，Linux key/nokey。它是标识符，不是加密或认证秘密。"
+      ],
+      "encapSport": [
+        "Required UDP source/local receive port 1–65535 for fou/gue; no default. Controller also creates a local FOU/GUE listener on this port. Nonzero rejected for ipip/gre.",
+        "fou・gueで必須のUDP送信元・ローカル受信ポート1～65535です。既定なしで、同ポートのFOU/GUE待受も作ります。ipip・greの非0は拒否します。",
+        "fou/gue 必填 UDP 來源及本機接收連接埠 1–65535，無預設，控制器亦在此建立 FOU/GUE 接聽；ipip/gre 非零拒絕。",
+        "fou/gue 必填 UDP 源及本机接收端口 1–65535，无默认值，控制器也在此建立 FOU/GUE 监听；ipip/gre 非零拒绝。"
+      ],
+      "encapDport": [
+        "Required remote UDP destination port 1–65535 for fou/gue; must match peer receive port. No default; nonzero rejected in ipip/gre.",
+        "fou・gueで必須の対向UDP宛先1～65535です。相手受信ポートと合わせます。既定なしでipip・greの非0は拒否します。",
+        "fou/gue 必填遠端 UDP 目的連接埠 1–65535，須符合對端接收埠，無預設；ipip/gre 非零拒絕。",
+        "fou/gue 必填远端 UDP 目标端口 1–65535，须符合对端接收端口，无默认值；ipip/gre 非零拒绝。"
+      ],
+      "trustedUnderlay": [
+        "Required true; false/omitted is rejected. IPIP/GRE/FOU/GUE do not provide encryption or peer authentication, and this acknowledgement does not add either.",
+        "trueが必須でfalse・省略は拒否します。IPIP・GRE・FOU・GUEは暗号化・相手認証を持たず、この確認指定で追加されるものでもありません。",
+        "必須 true，false 或省略會拒絕。IPIP/GRE/FOU/GUE 不提供加密或對端認證，此確認亦不增加這些功能。",
+        "必须 true，false 或省略会拒绝。IPIP/GRE/FOU/GUE 不提供加密或对端认证，此确认也不增加这些功能。"
+      ],
+      "pathMTU": [
+        "Optional forwarded-path policy options, default no forced IPv4 fragmentation. Independent of explicit tunnel MTU.",
+        "任意の転送経路設定で、既定はIPv4強制分割なしです。明示トンネルMTUとは別です。",
+        "選用轉送路徑策略選項，預設不強制 IPv4 分片，獨立於明確隧道 MTU。",
+        "可选转发路径策略选项，默认不强制 IPv4 分片，独立于明确隧道 MTU。"
+      ],
+      "pathMTU.forceFragmentIPv4": [
+        "Default false. Linux path-MTU policy can clear DF for oversized IPv4 on matching derived forwarded paths; not a per-tunnel ignore-df option or an IPv6 feature. FreeBSD skips this nftables controller without an equivalent action in this path.",
+        "既定falseです。Linuxの経路MTU方針で該当派生転送経路の過大IPv4のDFを解除できます。トンネルのignore-df設定でもIPv6機能でもありません。FreeBSDはこのnftables制御を省略し、この経路に同等処理はありません。",
+        "預設 false，Linux 路徑 MTU 策略可清除符合衍生轉送路徑之過大 IPv4 的 DF，不是隧道 ignore-df 選項或 IPv6 功能。FreeBSD 略過此 nftables 控制器，此路徑無同等動作。",
+        "默认 false，Linux 路径 MTU 策略可清除符合派生转发路径之过大 IPv4 的 DF，不是隧道 ignore-df 选项或 IPv6 功能。FreeBSD 跳过此 nftables 控制器，此路径无同等动作。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_hybrid.go",
+      "pkg/config/validate.go",
+      "pkg/controller/chain/tunnel.go",
+      "internal/ipiptunnel/ipip.go",
+      "pkg/hybrid/hybrid.go",
+      "pkg/render/mtu.go",
+      "pkg/render/nftables.go",
+      "pkg/controller/chain/mtu.go"
+    ]
   }
 }

@@ -5,6 +5,13 @@
 <main class="doclayout wrap"><article class="document"><h1 id="tunnelinterface">TunnelInterface</h1>
 <p><a href="../resources.html#tunnelinterface">各資源的設定</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: hybrid.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>建立並調和未加密的 IPv4 外層隧道及選用內層 IPv4 位址，metadata.name 為實際 OS 隧道名稱。</p>
+<h2 id="指定條件與參照關係">指定條件與參照關係</h2>
+<ul>
+<li>兩端點各須固定值或共用狀態來源其中之一，僅限 IPv4。動態端點缺值即使 optional true 仍暫停調和，不自動撤回既有轉送；無 when/dependsOn。</li>
+<li>Linux 以 ip link/address 及 FOU 接聽支援四模式。FreeBSD 僅 IPIP/gifN、GRE/greN，拒絕明確 TTL，address 非空時須明確內層 peerAddress。控制器強制鏈路 up，無 managed/enabled 停用選項。</li>
+<li>設定 address 取代隧道其他 IPv4，空值全移除。Linux 清理亦移除未設定 IPIP/GRE（內建及其他設定保留者除外）及不用的 FOU 接聽；FreeBSD 撤除依記錄狀態及類型檢查。變更依整體設定，不以所有權限制。</li>
+</ul>
 <h2 id="yaml定義">YAML定義</h2>
 <p>此處列出所有欄位的結構，不是可直接套用的設定範例。請替換佔位值、省略不使用的選項，並選擇相容的組合。顯示值只表示型別；有效預設值及條件列於下方欄位說明。必填標記來自JSON Schema，表示在所屬物件內必須指定；語意驗證可能要求其他欄位或參照。</p>
 <pre><code class="language-yaml">- apiVersion: hybrid.routerd.net/v1alpha1
@@ -35,9 +42,87 @@
     ttl: 1 # 選填; integer; minimum=1; maximum=255
     underlayInterface: &quot;&lt;string&gt;&quot; # 選填; string
 </code></pre>
+<h2 id="欄位意義與預設值">欄位意義與預設值</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>欄位意義與預設值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.mode</code></td>
+<td>必填 ipip/gre/fou/gue，無預設。Linux FOU/GUE 使用 UDP 封裝 IPIP 鏈路；FreeBSD 僅支援 ipip（gifN）及 gre（greN），拒絕 FOU/GUE。</td>
+</tr>
+<tr>
+<td><code>spec.local</code></td>
+<td>本機外層純 IPv4 端點，local/localFrom 恰需一個。拒絕固定 CIDR、主機名稱與 IPv6，不自動選擇介面位址。</td>
+</tr>
+<tr>
+<td><code>spec.localFrom</code></td>
+<td>選用共用狀態來源，須明確指定既有 Kind/name 與提供欄位，與 local 互斥。執行時僅讀狀態，接受單一 IPv4 或 CIDR 並正規化；即使 optional true，缺值仍為 Pending/EndpointSourcePending，無端點替代值。</td>
+</tr>
+<tr>
+<td><code>spec.remote</code></td>
+<td>遠端外層純 IPv4 端點，remote/remoteFrom 恰需一個，拒絕固定主機名稱、IPv6 與 CIDR。</td>
+</tr>
+<tr>
+<td><code>spec.remoteFrom</code></td>
+<td>選用共用狀態來源，與 remote 互斥；必要 field、IPv4/CIDR 正規化及忽略 optional 行為同 localFrom。狀態缺值暫停調和，但不自動拆除既有隧道。</td>
+</tr>
+<tr>
+<td><code>spec.address</code></td>
+<td>選用內層 IPv4 主機/CIDR。控制器移除隧道其他 IPv4，省略或空值因此亦移除既有 IPv4；無自動內層位址。FreeBSD 設定後需 peerAddress。</td>
+</tr>
+<tr>
+<td><code>spec.peerAddress</code></td>
+<td>僅 FreeBSD 的明確內層純 IPv4 對端，與 address 必須成對，不由 CIDR 推導，Linux 拒絕。</td>
+</tr>
+<tr>
+<td><code>spec.underlayInterface</code></td>
+<td>選用 MTU 估算資源名稱（Interface、WireGuardInterface、巢狀 TunnelInterface）。此處非必填且未全域驗證存在，未知使用 1500 替代。目前隧道命令不綁定此裝置，外層出口由主機選路，請避免遞迴參照。</td>
+</tr>
+<tr>
+<td><code>spec.mtu</code></td>
+<td>選用明確 576–9216，原樣使用。省略或 0 為設定底層 MTU（替代 1500）減 ipip 20、gre 24（有 key 加 4）、fou 28、gue 32。替代預設 1480/1476/1472/1468，有 key GRE 1472，非即時 PMTU 探索。</td>
+</tr>
+<tr>
+<td><code>spec.ttl</code></td>
+<td>Linux 外層 TTL 1–255，省略或 0 為 64。FreeBSD 拒絕非零明確 TTL，ifconfig 路徑亦不套用內部回報預設 64。</td>
+</tr>
+<tr>
+<td><code>spec.key</code></td>
+<td>僅 GRE 的整數 0–4294967295，預設 0 表示無 key；其他模式非零拒絕。FreeBSD 使用 ifconfig grekey，Linux key/nokey。它是識別碼，不是加密或認證秘密。</td>
+</tr>
+<tr>
+<td><code>spec.encapSport</code></td>
+<td>fou/gue 必填 UDP 來源及本機接收連接埠 1–65535，無預設，控制器亦在此建立 FOU/GUE 接聽；ipip/gre 非零拒絕。</td>
+</tr>
+<tr>
+<td><code>spec.encapDport</code></td>
+<td>fou/gue 必填遠端 UDP 目的連接埠 1–65535，須符合對端接收埠，無預設；ipip/gre 非零拒絕。</td>
+</tr>
+<tr>
+<td><code>spec.trustedUnderlay</code></td>
+<td>必須 true，false 或省略會拒絕。IPIP/GRE/FOU/GUE 不提供加密或對端認證，此確認亦不增加這些功能。</td>
+</tr>
+<tr>
+<td><code>spec.pathMTU</code></td>
+<td>選用轉送路徑策略選項，預設不強制 IPv4 分片，獨立於明確隧道 MTU。</td>
+</tr>
+<tr>
+<td><code>spec.pathMTU.forceFragmentIPv4</code></td>
+<td>預設 false，Linux 路徑 MTU 策略可清除符合衍生轉送路徑之過大 IPv4 的 DF，不是隧道 ignore-df 選項或 IPv6 功能。FreeBSD 略過此 nftables 控制器，此路徑無同等動作。</td>
+</tr>
+</tbody>
+</table>
+<p>實作: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_hybrid.go">pkg/config/validate_hybrid.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go">pkg/config/validate.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/tunnel.go">pkg/controller/chain/tunnel.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/internal/ipiptunnel/ipip.go">internal/ipiptunnel/ipip.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/hybrid/hybrid.go">pkg/hybrid/hybrid.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/mtu.go">pkg/render/mtu.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/nftables.go">pkg/render/nftables.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/mtu.go">pkg/controller/chain/mtu.go</a></p>
 <p><a href="/examples/hybrid-l3-fou.yaml">設定範例</a></p></article><aside class="doccontents"><strong>本頁內容</strong><div class="toc">
 <ul>
+<li><a href="#指定條件與參照關係">指定條件與參照關係</a></li>
 <li><a href="#yaml定義">YAML定義</a></li>
+<li><a href="#欄位意義與預設值">欄位意義與預設值</a></li>
 </ul>
 </div>
 </aside></main>

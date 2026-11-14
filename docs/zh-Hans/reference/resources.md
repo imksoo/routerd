@@ -467,15 +467,21 @@ spec:
 
 [TunnelInterface](resources/TunnelInterface.md)
 
+创建并协调未加密的 IPv4 外层隧道及可选内层 IPv4 地址，metadata.name 为实际 OS 隧道名称。
+
 
 ## OverlayPeer
 
 [OverlayPeer](resources/OverlayPeer.md)
 
+描述供 HybridRoute 与路径 MTU 策略派生使用的现有传输；本资源不自行建立 WireGuard、Tailscale、IPsec 或隧道。
+
 
 ## HybridRoute
 
 [HybridRoute](resources/HybridRoute.md)
+
+将明确列出的 IPv4 目标网络展开为经 OverlayPeer 的主路由表 IPv4Route。
 
 
 ## CloudProviderProfile
