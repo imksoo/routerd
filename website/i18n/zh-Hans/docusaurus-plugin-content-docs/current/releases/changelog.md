@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20261114.0631
+
 ### Fixed
 
 - 将空的 IPv4 地址列表视为尚未配置的 IPIP 接口，让首次启动可继续配置地址。

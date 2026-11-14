@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20261114.0631
+
 ### Fixed
 
 - IPIPのIPv4アドレス一覧が空の場合は未設定として扱い、初回起動時に設定を進められるよう修正しました。
