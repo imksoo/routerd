@@ -596,6 +596,8 @@ spec:
 
 [IPAddressSet](resources/IPAddressSet.md)
 
+在支援的 nftables NAT、路由及防火牆規則間共用固定與 DNS 解析的 IP 位址。不建立路由或啟動 DNS 服務。
+
 
 ## LocalServiceRedirect
 

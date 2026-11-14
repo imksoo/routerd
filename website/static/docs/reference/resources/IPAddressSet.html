@@ -5,6 +5,13 @@
 <main class="doclayout wrap"><article class="document"><h1 id="ipaddressset">IPAddressSet</h1>
 <p><a href="../resources.html#ipaddressset">Resource configuration reference</a> · <a href="../common-fields.html">Kind/name · when · dependsOn</a></p>
 <p><code>apiVersion: net.routerd.net/v1alpha1</code> · <code>metadata.name</code></p>
+<p>Share literal and DNS-resolved IP addresses among supported nftables NAT, routing and firewall rules. It does not create routes or start a DNS service.</p>
+<h2 id="conditions-and-references">Conditions and references</h2>
+<ul>
+<li>At least one address or name is required; both lists may coexist. Addresses are individual IPv4/IPv6 literals, not CIDRs. Duplicates in each configured list are rejected; resolved results are combined and deduplicated.</li>
+<li>Consumers reference a bare name or IPAddressSet/name. Supported nftables consumers include LocalServiceRedirect, NAT44Rule/FlowDNATPinhole, EgressRoutePolicy and FirewallRule/FlowPinhole. Declaring an unused set only reports Observed/referenced:false and does not resolve names or create a kernel set.</li>
+<li>The consumer renderer must create the target nftables set before refresh; missing sets yield Pending/SetMissing. Name resolution uses A and AAAA queries through /etc/resolv.conf, not DNSUpstream resource references. Partial DNS failure is reported while usable remaining addresses can still be applied. Total resolution failure yields Pending/ResolveFailed and does not replace the existing set in that round.</li>
+</ul>
 <h2 id="yaml-definition">YAML definition</h2>
 <p>All fields are shown as a structural reference, not a configuration to apply unchanged. Replace placeholders, omit unused options, and select compatible alternatives. Shown values illustrate types, not defaults; defaults and runtime conditions are described in the field explanations below. Required markers come from JSON Schema and apply inside the parent object; semantic validation can require additional fields or references.</p>
 <pre><code class="language-yaml">- apiVersion: net.routerd.net/v1alpha1
@@ -29,9 +36,39 @@
           maxAge: &quot;&lt;string&gt;&quot; # optional; string
           status: &quot;set&quot; # optional; string; enum=[&quot;set&quot;, &quot;unset&quot;, &quot;unknown&quot;]
 </code></pre>
+<h2 id="field-meaning-and-default">Field meaning and default</h2>
+<table>
+<thead>
+<tr>
+<th>YAML</th>
+<th>Field meaning and default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spec.addresses</code></td>
+<td>Optional literal IPv4/IPv6 list, default empty; required when names is empty. IPv4-mapped IPv6 is normalized to IPv4. No subnet expansion.</td>
+</tr>
+<tr>
+<td><code>spec.names</code></td>
+<td>Optional DNS names, default empty; required when addresses is empty. Blank names and duplicates after trimming are rejected. A/AAAA results are merged with literals; no wildcard-name expansion.</td>
+</tr>
+<tr>
+<td><code>spec.refreshInterval</code></td>
+<td>Optional Go duration. Default schedule is half the smallest positive DNS TTL, with a 1m floor; without a positive TTL, 5m is assumed, giving 2m30s. A positive configured interval only shortens that schedule and can be below 1m. Zero/negative parses but has no shortening effect. Actual refresh occurs on controller reconciliation.</td>
+</tr>
+<tr>
+<td><code>spec.when</code></td>
+<td>Optional common activation predicate; default unconditional. Consult common fields for state/all/any and consumer activation behavior.</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation: <a href="https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go">pkg/api/specs.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/config/validate_firewall.go">pkg/config/validate_firewall.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/ipaddressset.go">pkg/controller/chain/ipaddressset.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/render/local_service_redirect.go">pkg/render/local_service_redirect.go</a> · <a href="https://github.com/imksoo/routerd/blob/main/pkg/resourcequery/when.go">pkg/resourcequery/when.go</a></p>
 <p><a href="/examples/example-local-dns-redirect.yaml">Example</a></p></article><aside class="doccontents"><strong>On this page</strong><div class="toc">
 <ul>
+<li><a href="#conditions-and-references">Conditions and references</a></li>
 <li><a href="#yaml-definition">YAML definition</a></li>
+<li><a href="#field-meaning-and-default">Field meaning and default</a></li>
 </ul>
 </div>
 </aside></main>

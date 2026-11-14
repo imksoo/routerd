@@ -4962,5 +4962,66 @@
       "cmd/routerd/runtime_services.go",
       "pkg/platform/platform.go"
     ]
+  },
+  "IPAddressSet": {
+    "purpose": [
+      "Share literal and DNS-resolved IP addresses among supported nftables NAT, routing and firewall rules. It does not create routes or start a DNS service.",
+      "固定IPとDNS解決したIPを、対応するnftablesのNAT・経路・ファイアウォールルールで共有します。経路やDNSサービスを作成する機能ではありません。",
+      "在支援的 nftables NAT、路由及防火牆規則間共用固定與 DNS 解析的 IP 位址。不建立路由或啟動 DNS 服務。",
+      "在支持的 nftables NAT、路由及防火墙规则间共享固定与 DNS 解析的 IP 地址。不创建路由或启动 DNS 服务。"
+    ],
+    "rules": [
+      [
+        "At least one address or name is required; both lists may coexist. Addresses are individual IPv4/IPv6 literals, not CIDRs. Duplicates in each configured list are rejected; resolved results are combined and deduplicated.",
+        "addresses・namesのどちらか1件以上が必須で、両方を併用できます。addressesはIPv4・IPv6の単一アドレスで、CIDRではありません。設定リスト内の重複は拒否し、解決後の値は統合・重複排除します。",
+        "addresses 或 names 至少一筆，兩者可並用。位址為單一 IPv4/IPv6，不接受 CIDR。各設定清單內重複會被拒絕；解析結果則合併並去重。",
+        "addresses 或 names 至少一条，两者可并用。地址为单个 IPv4/IPv6，不接受 CIDR。各配置列表内重复会被拒绝；解析结果则合并并去重。"
+      ],
+      [
+        "Consumers reference a bare name or IPAddressSet/name. Supported nftables consumers include LocalServiceRedirect, NAT44Rule/FlowDNATPinhole, EgressRoutePolicy and FirewallRule/FlowPinhole. Declaring an unused set only reports Observed/referenced:false and does not resolve names or create a kernel set.",
+        "利用側は名前またはIPAddressSet/nameで参照します。nftablesの対応先はLocalServiceRedirect、NAT44Rule・FlowDNATPinhole、EgressRoutePolicy、FirewallRule・FlowPinholeです。未参照の宣言はObserved・referenced:falseを記録するだけで、名前解決やカーネル集合の作成は行いません。",
+        "使用端以裸名稱或 IPAddressSet/name 參照。支援的 nftables 使用端包含 LocalServiceRedirect、NAT44Rule/FlowDNATPinhole、EgressRoutePolicy 與 FirewallRule/FlowPinhole。未被參照時僅回報 Observed/referenced:false，不解析名稱或建立核心集合。",
+        "使用端以裸名称或 IPAddressSet/name 引用。支持的 nftables 使用端包含 LocalServiceRedirect、NAT44Rule/FlowDNATPinhole、EgressRoutePolicy 与 FirewallRule/FlowPinhole。未被引用时仅报告 Observed/referenced:false，不解析名称或创建内核集合。"
+      ],
+      [
+        "The consumer renderer must create the target nftables set before refresh; missing sets yield Pending/SetMissing. Name resolution uses A and AAAA queries through /etc/resolv.conf, not DNSUpstream resource references. Partial DNS failure is reported while usable remaining addresses can still be applied. Total resolution failure yields Pending/ResolveFailed and does not replace the existing set in that round.",
+        "更新前に利用側の生成処理がnftables集合を作成する必要があり、存在しなければPending/SetMissingです。名前解決は/etc/resolv.confのサーバーへA・AAAAを問い合わせ、DNSUpstream参照は使いません。一部の解決に失敗しても残るアドレスは適用できます。全件解決失敗ではPending/ResolveFailedとなり、その回は既存集合を置換しません。",
+        "更新前須由使用端產生器建立 nftables 集合，否則為 Pending/SetMissing。名稱透過 /etc/resolv.conf 查詢 A/AAAA，不使用 DNSUpstream 參照。部分 DNS 失敗仍可套用其餘位址；全數失敗則為 Pending/ResolveFailed，該輪不替換現有集合。",
+        "更新前须由使用端生成器创建 nftables 集合，否则为 Pending/SetMissing。名称通过 /etc/resolv.conf 查询 A/AAAA，不使用 DNSUpstream 引用。部分 DNS 失败仍可应用其余地址；全部失败则为 Pending/ResolveFailed，该轮不替换现有集合。"
+      ]
+    ],
+    "fields": {
+      "addresses": [
+        "Optional literal IPv4/IPv6 list, default empty; required when names is empty. IPv4-mapped IPv6 is normalized to IPv4. No subnet expansion.",
+        "任意の固定IPv4・IPv6一覧で、既定は空です。namesも空なら必須です。IPv4射影IPv6はIPv4へ正規化し、サブネット展開はしません。",
+        "選用的固定 IPv4/IPv6 清單，預設為空；names 為空時必填。IPv4 映射 IPv6 會轉為 IPv4，不展開子網路。",
+        "可选的固定 IPv4/IPv6 列表，默认为空；names 为空时必填。IPv4 映射 IPv6 会转为 IPv4，不展开子网。"
+      ],
+      "names": [
+        "Optional DNS names, default empty; required when addresses is empty. Blank names and duplicates after trimming are rejected. A/AAAA results are merged with literals; no wildcard-name expansion.",
+        "任意のDNS名一覧で、既定は空です。addressesも空なら必須です。空文字と前後空白を除いた重複を拒否します。A・AAAA結果を固定値に加え、ワイルドカード名の展開は行いません。",
+        "選用的 DNS 名稱，預設為空；addresses 為空時必填。拒絕空名稱與去除前後空白後的重複。A/AAAA 結果與固定值合併，不展開萬用名稱。",
+        "可选的 DNS 名称，默认为空；addresses 为空时必填。拒绝空名称与去除前后空白后的重复。A/AAAA 结果与固定值合并，不展开通配名称。"
+      ],
+      "refreshInterval": [
+        "Optional Go duration. Default schedule is half the smallest positive DNS TTL, with a 1m floor; without a positive TTL, 5m is assumed, giving 2m30s. A positive configured interval only shortens that schedule and can be below 1m. Zero/negative parses but has no shortening effect. Actual refresh occurs on controller reconciliation.",
+        "任意のGo durationです。既定は最小の正のDNS TTLの半分で、下限は1mです。正のTTLがなければ5mを仮定し2m30sです。正の指定値は更新を早める方向にだけ作用し、1m未満も指定できます。0・負値は解析できますが短縮効果はありません。実際の更新はコントローラーの再実行時です。",
+        "選用 Go duration。預設為最小正 DNS TTL 的一半，最低 1m；無正 TTL 時視為 5m，因此為 2m30s。正設定值只能縮短週期，可低於 1m。0／負值可解析但不縮短。實際更新在控制器協調時執行。",
+        "可选 Go duration。默认为最小正 DNS TTL 的一半，最低 1m；无正 TTL 时视为 5m，因此为 2m30s。正配置值只能缩短周期，可低于 1m。0／负值可解析但不缩短。实际更新在控制器协调时执行。"
+      ],
+      "when": [
+        "Optional common activation predicate; default unconditional. Consult common fields for state/all/any and consumer activation behavior.",
+        "任意の共通有効化条件で、省略時は無条件です。state・all・anyと利用側の有効化条件は共通項を参照してください。",
+        "選用的共用啟用條件，預設無條件。state/all/any 與使用端啟用行為請見共用欄位。",
+        "可选的通用启用条件，默认无条件。state/all/any 与使用端启用行为请见通用字段。"
+      ]
+    },
+    "sources": [
+      "pkg/api/specs.go",
+      "pkg/config/validate_firewall.go",
+      "pkg/controller/chain/ipaddressset.go",
+      "pkg/render/local_service_redirect.go",
+      "pkg/resourcequery/when.go"
+    ]
   }
 }

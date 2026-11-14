@@ -596,6 +596,8 @@ IP宛先を確認し、経路選択用のHealthy・Unhealthy状態を発行し�
 
 [IPAddressSet](resources/IPAddressSet.md)
 
+固定IPとDNS解決したIPを、対応するnftablesのNAT・経路・ファイアウォールルールで共有します。経路やDNSサービスを作成する機能ではありません。
+
 
 ## LocalServiceRedirect
 

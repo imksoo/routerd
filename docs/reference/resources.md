@@ -596,6 +596,8 @@ Declare the interfaces checked by the pre-apply management-lockout check. This r
 
 [IPAddressSet](resources/IPAddressSet.md)
 
+Share literal and DNS-resolved IP addresses among supported nftables NAT, routing and firewall rules. It does not create routes or start a DNS service.
+
 
 ## LocalServiceRedirect
 
