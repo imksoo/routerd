@@ -6,13 +6,27 @@ The latest explicit instructions from the owner govern this work. This file and
 docs/design/routerd11-mvp.md replace conflicting legacy development, testing,
 compatibility, and release procedures. Do not weaken these rules yourself.
 
-There is one user. Build on routerd 1.0 for that user's homert, k8s-rt, pve-rt,
-and Cloud SAM. Preserve their actual configurations and required behavior.
+There is one user. Build on routerd 1.0 for homert02/03, k8s-rt01/02,
+and pve-rt01..08. Preserve their actual configurations and required behavior.
 Remove unused features, configuration fields, APIs, helpers, dependencies,
-documentation, tests, and CI jobs. Hypothetical users, possible future use,
-existing tests, and the mere existence of code are not reasons to keep them.
-Trace runtime generation, references, startup, renewal, recovery, and removal
-before declaring a dependency unused. Examples are not live configurations.
+documentation, tests, and CI jobs in the active scope. Trace runtime generation,
+references, startup, renewal, recovery, and removal before declaring them unused.
+Hypothetical users, possible future use, existing tests, and the mere existence
+of code are not reasons to keep it. Examples, old plans, and tests alone are
+not evidence of live use.
+
+Cloud SAM is shelved until a separately requested development task. It is not
+an acceptance criterion, pending blocker, or reason to ask the owner again in
+the current work. Do not create cloud resources or run chargeable cloud tests.
+Keep its existing code and shared SAM dependencies intact; shelving is not a
+request to remove functionality. Local SAM/IPIP/BGP used by k8s-rt and pve-rt
+remains in scope. If Cloud SAM is explicitly resumed, use
+nwadmin03.lain.local:/home/imksoo/routerd-labs as a reference and minimize cost.
+
+The current MVP contains standing product requirements, not a replayable work
+queue. Completed plans and historical audit verdicts must not become new tasks.
+Consult Git/PR history to investigate a current failure, not to reopen finished
+work. The owner's current request defines the active task.
 
 ## Apply the configuration
 
